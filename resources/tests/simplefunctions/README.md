@@ -71,4 +71,8 @@ table 3-1 water shows the report's uranium; that an edit marks the results
 stale, a broken reaction is reported, and reset and a new run bring it back;
 that the seven downloads come out with the right first bytes; that the CSOL
 MAT file written by the page reads back as a reference with a KS distance of
-zero for every element; and that an (i) opens and closes its panel.
+zero for every element; that an (i) opens and closes its panel; and that no
+control is inside a `<summary>` -- a section heading's (i) is in the slot
+before its `<details>`, centred on its line, since Chrome reports any control
+inside a summary (`An interactive element was found within a <summary>
+element`).

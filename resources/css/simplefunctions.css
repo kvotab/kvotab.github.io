@@ -362,7 +362,24 @@
 .sf-sec > summary { display: flex; align-items: center; gap: 6px; }
 .sf-sec > summary .sf-sec-title { flex: 1 1 auto; }
 .sf-sec > summary .sf-count { float: none; order: 2; }
-.sf-sec > summary .sf-info-slot { order: 3; }
+/*
+  The heading's (i) is not in the <summary> but in a slot before the
+  <details>, in a box holding the two: a button inside a <summary> is out of
+  reach of some keyboards and screen readers, and Chrome reports each one in
+  the console. The summary keeps the room the (i) took, an empty ::after last
+  in its row, and the slot is drawn over it, as tall as the summary's line
+  (the summary's font, and a zero-width space to make a line of it), so the
+  (i) is centred where it was. The space above a section is the box's, so
+  that the box starts where the summary does.
+*/
+.sf-info-sec { position: relative; margin-top: 10px; }
+.sf-info-sec > .sf-sec > summary { margin-top: 0; }
+.sf-info-sec > .sf-sec > summary::after { content: ''; flex: none; order: 99; width: 17px; height: 17px; }
+.sf-info-sec > .sf-info-slot {
+  position: absolute; top: 0; right: 0; z-index: 1;
+  align-items: center; font: 700 0.95rem RawengulkSans, sans-serif;
+}
+.sf-info-sec > .sf-info-slot::before { content: '\200b'; }
 .sf-label-line { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; }
 .sf-label-line label { flex: 1 1 auto; margin: 0; }
 .sf-check-line { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 6px; }

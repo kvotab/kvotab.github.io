@@ -26,7 +26,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/farf31.css?v=20260927">
+  <link rel="stylesheet" href="./resources/css/farf31.css?v=20261004">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -38,147 +38,162 @@
       <aside class="f31-side" id="f31Side">
         <div class="f31-side-scroll">
 
-          <details class="f31-sec" id="sec-case" open>
-            <summary><span class="f31-sec-title">Case and files</span><span class="f31-count" id="f31CaseName"></span><span class="f31-info-slot" data-info-key="sec:case"></span></summary>
-            <div class="f31-drop" id="f31Drop">Drop FARF31’s in.dat, in.par, in.ts, casename31.prm, a case file (.json) or an out.ts to compare, or
-              <button type="button" class="f31-btn secondary small" data-on-click="f31:openFiles">Open…</button>
-            </div>
-            <input type="file" id="f31Files" multiple accept=".dat,.par,.ts,.prm,.json,.csv,.txt,.tsv,.response" hidden data-on-change="f31:filesChosen">
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31Example">Built-in example</label><span class="f31-info-slot" data-info-key="set:example"></span></div>
-              <select id="f31Example" data-on-change="f31:chooseExample"></select>
-            </div>
-            <ul class="f31-files" id="f31FileList"></ul>
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31Casename">Case name<span class="f31-unit">CASENAME</span></label><span class="f31-info-slot" data-info-key="set:casename"></span></div>
-              <input id="f31Casename" type="text" data-on-change="f31:caseField" data-key="casename">
-            </div>
-            <div class="f31-row">
-              <div class="f31-label-line"><label>Write FARF31’s files</label><span class="f31-info-slot" data-info-key="set:write"></span></div>
-              <div class="f31-actions">
-                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="dat">in.dat</button>
-                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="par">in.par</button>
-                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="ts">in.ts</button>
-                <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="prm">.prm</button>
+          <div class="f31-info-sec">
+            <span class="f31-info-slot" data-info-key="sec:case"></span>
+            <details class="f31-sec" id="sec-case" open>
+              <summary><span class="f31-sec-title">Case and files</span><span class="f31-count" id="f31CaseName"></span></summary>
+              <div class="f31-drop" id="f31Drop">Drop FARF31’s in.dat, in.par, in.ts, casename31.prm, a case file (.json) or an out.ts to compare, or
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:openFiles">Open…</button>
               </div>
-            </div>
-          </details>
+              <input type="file" id="f31Files" multiple accept=".dat,.par,.ts,.prm,.json,.csv,.txt,.tsv,.response" hidden data-on-change="f31:filesChosen">
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Example">Built-in example</label><span class="f31-info-slot" data-info-key="set:example"></span></div>
+                <select id="f31Example" data-on-change="f31:chooseExample"></select>
+              </div>
+              <ul class="f31-files" id="f31FileList"></ul>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31Casename">Case name<span class="f31-unit">CASENAME</span></label><span class="f31-info-slot" data-info-key="set:casename"></span></div>
+                <input id="f31Casename" type="text" data-on-change="f31:caseField" data-key="casename">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label>Write FARF31’s files</label><span class="f31-info-slot" data-info-key="set:write"></span></div>
+                <div class="f31-actions">
+                  <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="dat">in.dat</button>
+                  <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="par">in.par</button>
+                  <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="ts">in.ts</button>
+                  <button type="button" class="f31-btn secondary small" data-on-click="f31:writeFile" data-kind="prm">.prm</button>
+                </div>
+              </div>
+            </details>
+          </div>
 
-          <details class="f31-sec" id="sec-tube" open>
-            <summary><span class="f31-sec-title">Stream tube</span><span class="f31-info-slot" data-info-key="sec:tube"></span></summary>
-            <div class="f31-inline">
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31Tw">Travel time <i>t</i><sub>w</sub><span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:tw"></span></div>
-                <input id="f31Tw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="tw">
+          <div class="f31-info-sec">
+            <span class="f31-info-slot" data-info-key="sec:tube"></span>
+            <details class="f31-sec" id="sec-tube" open>
+              <summary><span class="f31-sec-title">Stream tube</span></summary>
+              <div class="f31-inline">
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31Tw">Travel time <i>t</i><sub>w</sub><span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:tw"></span></div>
+                  <input id="f31Tw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="tw">
+                </div>
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31Pe">Peclet number</label><span class="f31-info-slot" data-info-key="set:pe"></span></div>
+                  <input id="f31Pe" type="text" inputmode="decimal" data-on-change="f31:param" data-key="Pe">
+                </div>
               </div>
               <div class="f31-row">
-                <div class="f31-label-line"><label for="f31Pe">Peclet number</label><span class="f31-info-slot" data-info-key="set:pe"></span></div>
-                <input id="f31Pe" type="text" inputmode="decimal" data-on-change="f31:param" data-key="Pe">
+                <div class="f31-label-line"><label for="f31AwMode">Flow-wetted surface given as</label><span class="f31-info-slot" data-info-key="set:aw"></span></div>
+                <select id="f31AwMode" data-on-change="f31:param" data-key="awMode">
+                  <option value="aw">aw per volume of water (1/m)</option>
+                  <option value="F">F-factor tw·aw (a/m)</option>
+                </select>
               </div>
-            </div>
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31AwMode">Flow-wetted surface given as</label><span class="f31-info-slot" data-info-key="set:aw"></span></div>
-              <select id="f31AwMode" data-on-change="f31:param" data-key="awMode">
-                <option value="aw">aw per volume of water (1/m)</option>
-                <option value="F">F-factor tw·aw (a/m)</option>
-              </select>
-            </div>
-            <div class="f31-row" id="f31AwRow">
-              <div class="f31-label-line"><label for="f31Aw"><i>a</i><sub>w</sub><span class="f31-unit">1/m</span></label><span class="f31-muted" id="f31AwNote"></span></div>
-              <input id="f31Aw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="aw">
-            </div>
-            <div class="f31-row" id="f31FRow" hidden>
-              <div class="f31-label-line"><label for="f31F">F-factor <i>F</i><span class="f31-unit">a/m</span></label><span class="f31-muted" id="f31FNote"></span></div>
-              <input id="f31F" type="text" inputmode="decimal" data-on-change="f31:param" data-key="F">
-            </div>
-            <div class="f31-row">
-              <div class="f31-label-line"><span class="f31-label-text">Sorption on the fracture surfaces</span><span class="f31-info-slot" data-info-key="set:ka"></span></div>
-              <div class="f31-muted" id="f31KaNote"></div>
-              <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Set Ka per element…</button>
-            </div>
-          </details>
+              <div class="f31-row" id="f31AwRow">
+                <div class="f31-label-line"><label for="f31Aw"><i>a</i><sub>w</sub><span class="f31-unit">1/m</span></label><span class="f31-muted" id="f31AwNote"></span></div>
+                <input id="f31Aw" type="text" inputmode="decimal" data-on-change="f31:param" data-key="aw">
+              </div>
+              <div class="f31-row" id="f31FRow" hidden>
+                <div class="f31-label-line"><label for="f31F">F-factor <i>F</i><span class="f31-unit">a/m</span></label><span class="f31-muted" id="f31FNote"></span></div>
+                <input id="f31F" type="text" inputmode="decimal" data-on-change="f31:param" data-key="F">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><span class="f31-label-text">Sorption on the fracture surfaces</span><span class="f31-info-slot" data-info-key="set:ka"></span></div>
+                <div class="f31-muted" id="f31KaNote"></div>
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Set Ka per element…</button>
+              </div>
+            </details>
+          </div>
 
-          <details class="f31-sec" id="sec-matrix" open>
-            <summary><span class="f31-sec-title">Rock matrix</span><span class="f31-info-slot" data-info-key="sec:matrix"></span></summary>
-            <div class="f31-inline">
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31Eps">Porosity ε</label><span class="f31-info-slot" data-info-key="set:eps"></span></div>
-                <input id="f31Eps" type="text" inputmode="decimal" data-on-change="f31:param" data-key="eps">
+          <div class="f31-info-sec">
+            <span class="f31-info-slot" data-info-key="sec:matrix"></span>
+            <details class="f31-sec" id="sec-matrix" open>
+              <summary><span class="f31-sec-title">Rock matrix</span></summary>
+              <div class="f31-inline">
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31Eps">Porosity ε</label><span class="f31-info-slot" data-info-key="set:eps"></span></div>
+                  <input id="f31Eps" type="text" inputmode="decimal" data-on-change="f31:param" data-key="eps">
+                </div>
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31Rho">Density ρ<span class="f31-unit">kg/m³</span></label><span class="f31-info-slot" data-info-key="set:rho"></span></div>
+                  <input id="f31Rho" type="text" inputmode="decimal" data-on-change="f31:param" data-key="rho">
+                </div>
               </div>
               <div class="f31-row">
-                <div class="f31-label-line"><label for="f31Rho">Density ρ<span class="f31-unit">kg/m³</span></label><span class="f31-info-slot" data-info-key="set:rho"></span></div>
-                <input id="f31Rho" type="text" inputmode="decimal" data-on-change="f31:param" data-key="rho">
+                <div class="f31-label-line"><label for="f31DeMode">Effective diffusivity</label><span class="f31-info-slot" data-info-key="set:de"></span></div>
+                <select id="f31DeMode" data-on-change="f31:param" data-key="diffusivity">
+                  <option value="SINGLE">one value for all nuclides (SINGLE)</option>
+                  <option value="ELEMENT_SPECIFIC">one per element (ELEMENT_SPECIFIC)</option>
+                </select>
               </div>
-            </div>
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31DeMode">Effective diffusivity</label><span class="f31-info-slot" data-info-key="set:de"></span></div>
-              <select id="f31DeMode" data-on-change="f31:param" data-key="diffusivity">
-                <option value="SINGLE">one value for all nuclides (SINGLE)</option>
-                <option value="ELEMENT_SPECIFIC">one per element (ELEMENT_SPECIFIC)</option>
-              </select>
-            </div>
-            <div class="f31-row" id="f31DeRow">
-              <div class="f31-label-line"><label for="f31De"><i>D</i><sub>e</sub><span class="f31-unit">m²/a</span></label><span class="f31-muted" id="f31DeNote"></span></div>
-              <input id="f31De" type="text" inputmode="decimal" data-on-change="f31:param" data-key="de">
-            </div>
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31X0">Penetration depth <i>x</i><sub>0</sub><span class="f31-unit">m</span></label><span class="f31-info-slot" data-info-key="set:x0"></span></div>
-              <input id="f31X0" type="text" inputmode="decimal" data-on-change="f31:param" data-key="x0">
-            </div>
-            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31X0Inf" data-on-change="f31:param" data-key="x0Inf"><span>Infinitely deep matrix</span></label></div>
-          </details>
+              <div class="f31-row" id="f31DeRow">
+                <div class="f31-label-line"><label for="f31De"><i>D</i><sub>e</sub><span class="f31-unit">m²/a</span></label><span class="f31-muted" id="f31DeNote"></span></div>
+                <input id="f31De" type="text" inputmode="decimal" data-on-change="f31:param" data-key="de">
+              </div>
+              <div class="f31-row">
+                <div class="f31-label-line"><label for="f31X0">Penetration depth <i>x</i><sub>0</sub><span class="f31-unit">m</span></label><span class="f31-info-slot" data-info-key="set:x0"></span></div>
+                <input id="f31X0" type="text" inputmode="decimal" data-on-change="f31:param" data-key="x0">
+              </div>
+              <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31X0Inf" data-on-change="f31:param" data-key="x0Inf"><span>Infinitely deep matrix</span></label></div>
+            </details>
+          </div>
 
-          <details class="f31-sec" id="sec-chain" open>
-            <summary><span class="f31-sec-title">Nuclides</span><span class="f31-count" id="f31NucCount"></span><span class="f31-info-slot" data-info-key="sec:chain"></span></summary>
-            <div id="f31ChainChips" class="f31-muted"></div>
-            <div class="f31-actions" style="margin-top:6px">
-              <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Edit nuclides and releases…</button>
-            </div>
-          </details>
+          <div class="f31-info-sec">
+            <span class="f31-info-slot" data-info-key="sec:chain"></span>
+            <details class="f31-sec" id="sec-chain" open>
+              <summary><span class="f31-sec-title">Nuclides</span><span class="f31-count" id="f31NucCount"></span></summary>
+              <div id="f31ChainChips" class="f31-muted"></div>
+              <div class="f31-actions" style="margin-top:6px">
+                <button type="button" class="f31-btn secondary small" data-on-click="f31:tab" data-tab="input">Edit nuclides and releases…</button>
+              </div>
+            </details>
+          </div>
 
-          <details class="f31-sec" id="sec-num">
-            <summary><span class="f31-sec-title">Numerics and output</span><span class="f31-info-slot" data-info-key="sec:num"></span></summary>
-            <div class="f31-row">
-              <div class="f31-label-line"><label for="f31Method">Laplace inversion</label><span class="f31-info-slot" data-info-key="set:method"></span></div>
-              <select id="f31Method" data-on-change="f31:setting" data-key="method">
-                <option value="parabola">saddle-point contour (default)</option>
-                <option value="talbot">Talbot’s fixed contour</option>
-                <option value="dehoog">de Hoog on the Bromwich line</option>
-              </select>
-            </div>
-            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31Check" data-on-change="f31:setting" data-key="check"><span>Check against a second method</span></label><span class="f31-info-slot" data-info-key="set:check"></span></div>
-            <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31AllResp" data-on-change="f31:setting" data-key="allResponses"><span>Unit responses of every pair in a chain</span></label><span class="f31-info-slot" data-info-key="set:allResponses"></span></div>
-            <div class="f31-inline">
+          <div class="f31-info-sec">
+            <span class="f31-info-slot" data-info-key="sec:num"></span>
+            <details class="f31-sec" id="sec-num">
+              <summary><span class="f31-sec-title">Numerics and output</span></summary>
               <div class="f31-row">
-                <div class="f31-label-line"><label for="f31TStart">Output from<span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:range"></span></div>
-                <input id="f31TStart" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tStart">
+                <div class="f31-label-line"><label for="f31Method">Laplace inversion</label><span class="f31-info-slot" data-info-key="set:method"></span></div>
+                <select id="f31Method" data-on-change="f31:setting" data-key="method">
+                  <option value="parabola">saddle-point contour (default)</option>
+                  <option value="talbot">Talbot’s fixed contour</option>
+                  <option value="dehoog">de Hoog on the Bromwich line</option>
+                </select>
               </div>
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31TEnd">to<span class="f31-unit">a</span></label></div>
-                <input id="f31TEnd" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tEnd">
+              <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31Check" data-on-change="f31:setting" data-key="check"><span>Check against a second method</span></label><span class="f31-info-slot" data-info-key="set:check"></span></div>
+              <div class="f31-check-line"><label class="f31-check"><input type="checkbox" id="f31AllResp" data-on-change="f31:setting" data-key="allResponses"><span>Unit responses of every pair in a chain</span></label><span class="f31-info-slot" data-info-key="set:allResponses"></span></div>
+              <div class="f31-inline">
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31TStart">Output from<span class="f31-unit">a</span></label><span class="f31-info-slot" data-info-key="set:range"></span></div>
+                  <input id="f31TStart" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tStart">
+                </div>
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31TEnd">to<span class="f31-unit">a</span></label></div>
+                  <input id="f31TEnd" type="text" inputmode="decimal" placeholder="auto" data-on-change="f31:setting" data-key="tEnd">
+                </div>
               </div>
-            </div>
-            <div class="f31-inline">
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31PerDecade">Points per decade</label><span class="f31-info-slot" data-info-key="set:grid"></span></div>
-                <input id="f31PerDecade" type="text" inputmode="numeric" placeholder="auto: 20" data-on-change="f31:setting" data-key="perDecade">
+              <div class="f31-inline">
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31PerDecade">Points per decade</label><span class="f31-info-slot" data-info-key="set:grid"></span></div>
+                  <input id="f31PerDecade" type="text" inputmode="numeric" placeholder="auto: 20" data-on-change="f31:setting" data-key="perDecade">
+                </div>
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31Relint">RELINT</label></div>
+                  <input id="f31Relint" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="relint">
+                </div>
               </div>
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31Relint">RELINT</label></div>
-                <input id="f31Relint" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="relint">
+              <div class="f31-inline">
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31NpMax">At most, points</label></div>
+                  <input id="f31NpMax" type="text" inputmode="numeric" placeholder="auto: 2500" data-on-change="f31:setting" data-key="npMax">
+                </div>
+                <div class="f31-row">
+                  <div class="f31-label-line"><label for="f31BqMin">out.ts from<span class="f31-unit">Bq/a</span></label><span class="f31-info-slot" data-info-key="set:bqmin"></span></div>
+                  <input id="f31BqMin" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="bqMin">
+                </div>
               </div>
-            </div>
-            <div class="f31-inline">
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31NpMax">At most, points</label></div>
-                <input id="f31NpMax" type="text" inputmode="numeric" placeholder="auto: 2500" data-on-change="f31:setting" data-key="npMax">
-              </div>
-              <div class="f31-row">
-                <div class="f31-label-line"><label for="f31BqMin">out.ts from<span class="f31-unit">Bq/a</span></label><span class="f31-info-slot" data-info-key="set:bqmin"></span></div>
-                <input id="f31BqMin" type="text" inputmode="decimal" placeholder="auto: 1e-3" data-on-change="f31:setting" data-key="bqMin">
-              </div>
-            </div>
-          </details>
+            </details>
+          </div>
         </div>
 
         <div class="f31-side-foot">

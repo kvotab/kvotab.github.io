@@ -177,17 +177,32 @@ class Book:
         if 'xl/sharedStrings.xml' in self.zip.namelist():
             for si in ET.fromstring(self.zip.read('xl/sharedStrings.xml')).findall('m:si', NS):
                 strings.append(''.join(t.text or '' for t in si.iter(f"{{{NS['m']}}}t")))
+        # Each style as a cell shows it: bold, italic, size and number format.
+        st = ET.fromstring(self.zip.read('xl/styles.xml'))
+        codes = {n.get('numFmtId'): n.get('formatCode') for n in st.iter(f"{{{NS['m']}}}numFmt")}
+        fonts = [{'bold': f.find('m:b', NS) is not None, 'italic': f.find('m:i', NS) is not None,
+                  'size': float(f.find('m:sz', NS).get('val'))}
+                 for f in st.find('m:fonts', NS).findall('m:font', NS)]
+        self.xf = []
+        for x in st.find('m:cellXfs', NS).findall('m:xf', NS):
+            fmt = x.get('numFmtId', '0')
+            self.xf.append(dict(fonts[int(x.get('fontId', '0'))],
+                                format=codes.get(fmt, 'General' if fmt == '0' else fmt)))
         self.cells = {}
+        self.styles = {}
         self.merged = {}
         for name, part in self.sheets.items():
             root = ET.fromstring(self.zip.read(part))
             cells = {}
+            styles = {}
             for c in root.iter(f"{{{NS['m']}}}c"):
                 v = c.find('m:v', NS)
                 if v is None:
                     continue
                 cells[c.get('r')] = strings[int(v.text)] if c.get('t') == 's' else float(v.text)
+                styles[c.get('r')] = self.xf[int(c.get('s', '0'))]
             self.cells[name] = cells
+            self.styles[name] = styles
             self.merged[name] = [m.get('ref') for m in root.iter(f"{{{NS['m']}}}mergeCell")]
         self.charts = [ET.fromstring(self.zip.read(n)) for n in sorted(
             (n for n in self.zip.namelist() if re.fullmatch(r'xl/charts/chart\d+\.xml', n)),
@@ -198,6 +213,25 @@ class Book:
         sheet, col, r0 = m.group(1), m.group(2), int(m.group(3))
         r1 = int(m.group(5) or r0)
         return [self.cells[sheet].get(f'{col}{r}') for r in range(r0, r1 + 1)]
+
+
+def value_formats(book, names):
+    """For each column headed by one of `names`, the format the page gives its
+    values (xlValueFormat: scientific where General would print a long
+    decimal) and the styles they are in: [(name, wanted, set of (format,
+    bold, italic))]. The values start two rows under the name, below the unit."""
+    out = []
+    cells, styles = book.cells['Data'], book.styles['Data']
+    for ref, head in cells.items():
+        if head not in names:
+            continue
+        col, row = re.fullmatch(r'([A-Z]+)(\d+)', ref).groups()
+        refs = [k for k, v in cells.items() if isinstance(v, float)
+                and re.fullmatch(col + r'\d+', k) and int(k[len(col):]) >= int(row) + 2]
+        mags = [abs(cells[k]) for k in refs if cells[k] != 0]
+        wanted = '0.000E+00' if mags and (max(mags) >= 1e6 or min(mags) < 1e-3) else 'General'
+        out.append((head, wanted, {(styles[k]['format'], styles[k]['bold'], styles[k]['italic']) for k in refs}))
+    return out
 
 
 def chart_info(book, chart):
@@ -358,6 +392,17 @@ async def main():
                 names = [s['name'] for s in infos[0]['series']]
                 heads = [v for k, v in book.cells['Data'].items() if isinstance(v, str)]
                 check('group:   each line\'s column is headed by its name', all(n in heads for n in names), True)
+                # In the formats the page asks for. xlsxwrite.js put every
+                # format one style late and dropped the number formats until
+                # 2026-10-04: the names came out plain and the values in General
+                # and in the unit row's small italics.
+                looks = {(s['bold'], s['italic'], s['size']) for s in
+                         (book.styles['Data'][k] for k, v in book.cells['Data'].items() if v in names)}
+                check('group:   the names are bold, at the sheet\'s size', sorted(looks), [(True, False, 11.0)])
+                formats = value_formats(book, names)
+                check('group:   and each column\'s values plain, in the number format the page chose for them',
+                      [(n, sorted(got)) for n, wanted, got in formats if got != {(wanted, False, False)}], [])
+                check('group:   scientific for at least one', any(w == '0.000E+00' for _, w, _ in formats), True)
 
             # --- CI bands, an iteration and log axes --------------------------
             await page.ev("(async () => { document.getElementById('showCI').click(); await __wait(1500); const i = document.getElementById('showIterNum'); i.value = '3'; i.dispatchEvent(new Event('input', { bubbles: true })); await __wait(1500); await __scale('x', 'log'); await __scale('y', 'log'); })()")

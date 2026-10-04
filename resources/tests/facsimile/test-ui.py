@@ -36,6 +36,8 @@ import shutil
 import sys
 import tempfile
 import urllib.request
+import zipfile
+from xml.etree import ElementTree as ET
 
 import websockets
 
@@ -692,6 +694,38 @@ async def main():
             await asyncio.sleep(0.4)
             check('and going back restores the label', await page.ev(
                 "document.getElementById('facCsvBtn').textContent"), 'Download CSV (all steps)')
+
+            # --- Download Excel --------------------------------------------------
+            # It built the workbook and never handed it over (save() only
+            # makes the file), so the button did nothing at all from the day
+            # it was added until 2026-10-04. Read back with the standard
+            # library: the three sheets of the Python port's layout, and a row
+            # for every solver step under the headings.
+            downloads = tempfile.mkdtemp(prefix='fac-xlsx-')
+            try:
+                await page.send('Browser.setDownloadBehavior', {'behavior': 'allow', 'downloadPath': downloads})
+                steps = int(await page.ev(
+                    "(document.getElementById('facTableNote').textContent.match(/of ([\\d,]+) rows/) || [, '0'])[1]"
+                    ".replace(/,/g, '')"))
+                await click(page, '[data-on-click="fac:downloadXlsx"]')
+                got = []
+                for _ in range(80):
+                    got = [f for f in os.listdir(downloads) if f.endswith('.xlsx')]
+                    if got:
+                        break
+                    await asyncio.sleep(0.25)
+                check('Download Excel downloads a workbook', [f.startswith('canister_') for f in got], [True])
+                if got:
+                    with zipfile.ZipFile(os.path.join(downloads, got[0])) as z:
+                        ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                        names = [s.get('name') for s in ET.fromstring(z.read('xl/workbook.xml')).iter(f"{{{ns['m']}}}sheet")]
+                        check('with the sheets of the Python port', names, ['SETTINGS', 'DATA', 'STATES'])
+                        rows = [len(ET.fromstring(z.read(f'xl/worksheets/sheet{i}.xml')).findall('.//m:row', ns))
+                                for i in (2, 3)]
+                        check('and a row for each solver step under the headings, on DATA and STATES',
+                              rows, [steps + 1, steps + 1])
+            finally:
+                shutil.rmtree(downloads, ignore_errors=True)
 
             await click(page, '[data-tab="jacobian"]')
             await asyncio.sleep(0.5)
@@ -1441,6 +1475,23 @@ async def main():
             check('the (i)s of the panel are in one line down its right-hand edge', await page.ev(
                 "new Set([...document.querySelectorAll('#facSide .info-btn')].filter(b => b.checkVisibility())"
                 ".map(b => Math.round(b.getBoundingClientRect().right))).size"), 1)
+            # Chrome reports every control inside a <summary> -- a button, a
+            # link, a field, a label, anything with a tabindex -- as "An
+            # interactive element was found within a <summary> element", and
+            # the headings' (i)s were five of them. They are beside the
+            # summary now, drawn on its line.
+            check('nothing that is a control is inside a <summary>', await page.ev(
+                "[...document.querySelectorAll('summary')].filter(s => s.querySelector("
+                "'a[href], audio[controls], button, details, embed, iframe, img[usemap], input:not([type=hidden]),"
+                " label, object[usemap], select, textarea, video[controls], [tabindex], [contenteditable]'))"
+                ".map(s => s.closest('details').id).join(',')"), '')
+            check('and each heading\'s (i) is on its heading\'s line', await page.ev(
+                "[...document.querySelectorAll('details.fac-sec')].filter(d => {"
+                " const t = d.querySelector('summary .fac-sec-title').getBoundingClientRect();"
+                " const b = d.parentElement.querySelector(':scope > .kvot-info-slot .info-btn');"
+                " if (!b) return true; const r = b.getBoundingClientRect();"
+                " return Math.abs((r.top + r.bottom) / 2 - (t.top + t.bottom) / 2) > 0.5"
+                " || r.left < t.right; }).map(d => d.id).join(',')"), '')
 
             panel_title = "(document.querySelector('.info-panel .info-panel-title') || {}).textContent"
             panel_open = "!!document.querySelector('.info-panel')"

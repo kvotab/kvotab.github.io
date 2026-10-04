@@ -225,6 +225,19 @@ const PATTERN_TYPES = {
     'lightTrellis': 'lightTrellis'
 };
 
+/**
+ * XlsxWriter's names for an alignment where OOXML's differ. A Format takes
+ * XlsxWriter's (valign 'vcenter', as its docs above say); written as they
+ * are, they make styles.xml invalid, and Excel repairs the file on opening.
+ */
+const ALIGN_NAMES = { center_across: 'centerContinuous' };
+const VALIGN_NAMES = { vcenter: 'center', vjustify: 'justify', vdistributed: 'distributed' };
+
+/** XlsxWriter's pattern numbers (Format pattern, and the 1 set_bg_color sets). */
+const PATTERN_NAMES = ['none', 'solid', 'mediumGray', 'darkGray', 'lightGray', 'darkHorizontal',
+    'darkVertical', 'darkDown', 'darkUp', 'darkGrid', 'darkTrellis', 'lightHorizontal', 'lightVertical',
+    'lightDown', 'lightUp', 'lightGrid', 'lightTrellis', 'gray125', 'gray0625'];
+
 /** Cache for column letter lookups (A-ZZ = 702 columns) */
 const XL_COLUMN_CACHE = {};
 
@@ -1569,6 +1582,9 @@ class XlsxWriter {
             };
             this.sheets.push(sheetObj);
             existingSheetIndex = this.sheets.length - 1;
+            // Known by name, or setColumn, write and the rest would make a
+            // second sheet of the same name.
+            this.sheetMap.set(sheetName, existingSheetIndex);
         }
         
         // Process data and collect shared strings
@@ -2617,9 +2633,13 @@ class XlsxWriter {
         ];
         const borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
         
-        const fontMap = { 'default': 0 };
-        const fillMap = { 'none': 0, 'gray125': 1 };
-        const borderMap = { 'default': 0 };
+        // The first font, fill and border are the default format's (formats[0],
+        // made by the constructor), so a format that leaves one of them as it
+        // is shares it instead of adding a copy.
+        const base = this.formats[0];
+        const fontMap = { [this._buildFontKey(base)]: 0 };
+        const fillMap = { [this._buildFillKey(base)]: 0, 'gray125': 1 };
+        const borderMap = { [this._buildBorderKey(base)]: 0 };
         
         for (const format of this.formats) {
             this._addUniqueStyle(fonts, fontMap, this._buildFontKey(format), () => this._buildFontXML(format));
@@ -2668,14 +2688,17 @@ class XlsxWriter {
             '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
         ];
         
-        // Cell XFs
-        const cellXfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>']; // Default format
+        // Cell XFs. The first is the default format, formats[0], so every
+        // other format's xfIndex, its place in this.formats, is its place here
+        // too. (Writing an xf for formats[0] as well put each format's style
+        // one place after the index its cells name.)
+        const cellXfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
         
-        for (const format of this.formats) {
+        for (const format of this.formats.slice(1)) {
             const fontId = fontMap[this._buildFontKey(format)];
             const fillId = fillMap[this._buildFillKey(format)];
             const borderId = borderMap[this._buildBorderKey(format)];
-            const numFmtId = format.numFmtId || 0;
+            const numFmtId = format.numFormatIndex || 0;
             
             let xfXml = `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="0"`;
             
@@ -2690,8 +2713,8 @@ class XlsxWriter {
             if (hasAlignment) {
                 xfXml += ' applyAlignment="1">';
                 xfXml += '<alignment';
-                if (format.align) xfXml += ` horizontal="${format.align}"`;
-                if (format.valign) xfXml += ` vertical="${format.valign}"`;
+                if (format.align) xfXml += ` horizontal="${ALIGN_NAMES[format.align] || format.align}"`;
+                if (format.valign) xfXml += ` vertical="${VALIGN_NAMES[format.valign] || format.valign}"`;
                 if (format.textWrap) xfXml += ' wrapText="1"';
                 if (format.rotation) xfXml += ` textRotation="${format.rotation}"`;
                 if (format.indent) xfXml += ` indent="${format.indent}"`;
@@ -2724,7 +2747,7 @@ class XlsxWriter {
             bold: format.bold,
             italic: format.italic,
             underline: format.underline,
-            strikeout: format.strikeout,
+            strikeout: format.fontStrikeout,
             fontColor: format.fontColor
         });
     }
@@ -2739,7 +2762,7 @@ class XlsxWriter {
         if (format.bold) parts.push('<b/>');
         if (format.italic) parts.push('<i/>');
         if (format.underline) parts.push('<u/>');
-        if (format.strikeout) parts.push('<strike/>');
+        if (format.fontStrikeout) parts.push('<strike/>');
         
         // Font size and color
         parts.push(`<sz val="${format.fontSize || DEFAULT_FONT.SIZE}"/>`);
@@ -2777,7 +2800,9 @@ class XlsxWriter {
         if (!format.bgColor) {
             return '<fill><patternFill patternType="none"/></fill>';
         }
-        const pattern = format.pattern || 'solid';
+        // A colour with no pattern is a solid fill.
+        const pattern = !format.pattern ? 'solid'
+            : typeof format.pattern === 'number' ? (PATTERN_NAMES[format.pattern] || 'solid') : format.pattern;
         let xml = `<fill><patternFill patternType="${pattern}">`;
         xml += `<fgColor rgb="FF${format.bgColor.toUpperCase()}"/>`;
         xml += '</patternFill></fill>';
@@ -2955,7 +2980,7 @@ class XlsxWriter {
                     xml += `<col min="${col}" max="${col}"`;
                     if (info.width !== undefined) xml += ` width="${info.width}"`;
                     if (info.hidden) xml += ' hidden="1"';
-                    if (info.formatId) xml += ` style="${info.formatId}"`;
+                    if (info.format && info.format.xfIndex) xml += ` style="${info.format.xfIndex}"`;
                     xml += ' customWidth="1"/>';
                 }
                 xml += '</cols>';

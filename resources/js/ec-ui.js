@@ -125,11 +125,12 @@
     for (const g of ECModel.GROUPS) {
       const items = ECModel.PARAMS.filter((d) => d.group === g.id);
       if (!items.length) continue;
-      html.push(`<details class="ec-sec" id="sec-${g.id}"><summary><span class="ec-sec-title">${esc(g.label)}</span><span class="ec-count" id="ecChanged-${g.id}"></span>`
-        + `<span class="kvot-info-slot" data-info-key="sec:${g.id}"></span></summary>`);
+      // The heading's (i) goes before the <details>, not in its summary (kvot-info.css).
+      html.push(`<div class="kvot-info-sec"><span class="kvot-info-slot" data-info-key="sec:${g.id}"></span>`
+        + `<details class="ec-sec" id="sec-${g.id}"><summary><span class="ec-sec-title">${esc(g.label)}</span><span class="ec-count" id="ecChanged-${g.id}"></span></summary>`);
       if (g.about) html.push(`<p class="ec-about">${esc(g.about)}</p>`);
       for (const d of items) html.push(paramControl(d));
-      html.push('</details>');
+      html.push('</details></div>');
     }
     host.innerHTML = html.join('');
   }

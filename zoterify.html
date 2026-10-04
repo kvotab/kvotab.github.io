@@ -26,7 +26,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
   <link rel="stylesheet" href="./resources/css/zoterify.css?v=20260926">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
@@ -39,83 +39,104 @@
       <aside class="zf-side">
         <div class="zf-side-scroll">
 
-          <details class="zf-sec" id="sec-doc" open>
-            <summary><span class="zf-sec-title">Word document</span><span class="kvot-info-slot" data-info-key="sec:doc"></span></summary>
-            <p class="zf-about">The .docx whose citations are plain text. It is read here, in the browser; nothing is uploaded.</p>
-            <div class="zf-drop" id="zfDocDrop">Drop a .docx here, or
-              <button type="button" class="zf-btn secondary small" data-on-click="zf:openDoc">Open…</button>
-            </div>
-            <input type="file" id="zfDocFile" accept=".docx,.docm,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden data-on-change="zf:docChosen">
-            <div class="zf-file" id="zfDocInfo" hidden></div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:doc"></span>
+            <details class="zf-sec" id="sec-doc" open>
+              <summary><span class="zf-sec-title">Word document</span></summary>
+              <p class="zf-about">The .docx whose citations are plain text. It is read here, in the browser; nothing is uploaded.</p>
+              <div class="zf-drop" id="zfDocDrop">Drop a .docx here, or
+                <button type="button" class="zf-btn secondary small" data-on-click="zf:openDoc">Open…</button>
+              </div>
+              <input type="file" id="zfDocFile" accept=".docx,.docm,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden data-on-change="zf:docChosen">
+              <div class="zf-file" id="zfDocInfo" hidden></div>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-db" open>
-            <summary><span class="zf-sec-title">Zotero library</span><span class="kvot-info-slot" data-info-key="sec:db"></span></summary>
-            <p class="zf-about"><b>zotero.sqlite</b> from your Zotero data directory: <code>~/Zotero</code> on a Mac or Linux, <code>C:\Users\<i>you</i>\Zotero</code> on Windows, or Zotero → Settings → Advanced → Files and Folders → Show Data Directory. If Zotero is running, pick <b>zotero.sqlite-wal</b> from the same folder as well, or the newest items may be missing.</p>
-            <div class="zf-drop" id="zfDbDrop">Drop zotero.sqlite here, or
-              <button type="button" class="zf-btn secondary small" data-on-click="zf:openDb">Open…</button>
-            </div>
-            <input type="file" id="zfDbFile" multiple hidden data-on-change="zf:dbChosen">
-            <div class="zf-file" id="zfDbInfo" hidden></div>
-            <div class="zf-row">
-              <div class="kvot-info-line zf-label-line"><label for="zfScope">Look for items in</label><span class="kvot-info-slot" data-info-key="set:scope"></span></div>
-              <select id="zfScope" data-on-change="zf:optionChanged" disabled>
-                <option value="">All libraries</option>
-              </select>
-            </div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:db"></span>
+            <details class="zf-sec" id="sec-db" open>
+              <summary><span class="zf-sec-title">Zotero library</span></summary>
+              <p class="zf-about"><b>zotero.sqlite</b> from your Zotero data directory: <code>~/Zotero</code> on a Mac or Linux, <code>C:\Users\<i>you</i>\Zotero</code> on Windows, or Zotero → Settings → Advanced → Files and Folders → Show Data Directory. If Zotero is running, pick <b>zotero.sqlite-wal</b> from the same folder as well, or the newest items may be missing.</p>
+              <div class="zf-drop" id="zfDbDrop">Drop zotero.sqlite here, or
+                <button type="button" class="zf-btn secondary small" data-on-click="zf:openDb">Open…</button>
+              </div>
+              <input type="file" id="zfDbFile" multiple hidden data-on-change="zf:dbChosen">
+              <div class="zf-file" id="zfDbInfo" hidden></div>
+              <div class="zf-row">
+                <div class="kvot-info-line zf-label-line"><label for="zfScope">Look for items in</label><span class="kvot-info-slot" data-info-key="set:scope"></span></div>
+                <select id="zfScope" data-on-change="zf:optionChanged" disabled>
+                  <option value="">All libraries</option>
+                </select>
+              </div>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-match" open>
-            <summary><span class="zf-sec-title">Matching</span><span class="kvot-info-slot" data-info-key="sec:match"></span></summary>
-            <div class="zf-slider">
-              <div class="kvot-info-line zf-label-line"><label for="zfLevel">How close a fit must be</label><span class="kvot-info-slot" data-info-key="set:level"></span></div>
-              <input type="range" id="zfLevel" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
-              <div class="zf-ticks"><span>Lenient</span><span>Balanced</span><span>Strict</span></div>
-            </div>
-            <div class="zf-slider">
-              <div class="kvot-info-line zf-label-line"><label for="zfYearTolerance">Offer items whose year is off by</label><span class="kvot-info-slot" data-info-key="set:yearTolerance"></span></div>
-              <input type="range" id="zfYearTolerance" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
-              <div class="zf-ticks"><span>nothing</span><span>1 year</span><span>2 years</span></div>
-            </div>
-            <p class="zf-about">Lenient links more on its own and asks less; strict asks whenever two items are near. A changed setting takes effect on the next Analyse.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:match"></span>
+            <details class="zf-sec" id="sec-match" open>
+              <summary><span class="zf-sec-title">Matching</span></summary>
+              <div class="zf-slider">
+                <div class="kvot-info-line zf-label-line"><label for="zfLevel">How close a fit must be</label><span class="kvot-info-slot" data-info-key="set:level"></span></div>
+                <input type="range" id="zfLevel" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
+                <div class="zf-ticks"><span>Lenient</span><span>Balanced</span><span>Strict</span></div>
+              </div>
+              <div class="zf-slider">
+                <div class="kvot-info-line zf-label-line"><label for="zfYearTolerance">Offer items whose year is off by</label><span class="kvot-info-slot" data-info-key="set:yearTolerance"></span></div>
+                <input type="range" id="zfYearTolerance" min="0" max="2" step="1" value="1" data-on-change="zf:optionChanged">
+                <div class="zf-ticks"><span>nothing</span><span>1 year</span><span>2 years</span></div>
+              </div>
+              <p class="zf-about">Lenient links more on its own and asks less; strict asks whenever two items are near. A changed setting takes effect on the next Analyse.</p>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-names" open>
-            <summary><span class="zf-sec-title">Abbreviated names</span><span class="kvot-info-slot" data-info-key="sec:names"></span></summary>
-            <div class="zf-row">
-              <div class="kvot-info-line zf-label-line"><label for="zfNames">Names and the works they stand for</label><span class="kvot-info-slot" data-info-key="set:names"></span></div>
-              <textarea id="zfNames" rows="4" spellcheck="false" autocomplete="off" placeholder="Data report: SKB TR-10-52&#10;Main report: SKB TR-11-01" data-on-input="zf:namesTyped" data-on-change="zf:namesChanged"></textarea>
-            </div>
-            <div class="zf-names" id="zfNamesInfo" hidden></div>
-            <div class="zf-names-add" id="zfNamesAdd" hidden></div>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfBoldNames" checked data-on-change="zf:trackChanged"><span>Write the names in bold</span></label><span class="kvot-info-slot" data-info-key="set:boldNames"></span></div>
-            <p class="zf-about">One per line: the name as it stands in the text, a colon, and the work — an SKB report number, a designation such as SSMFS 2008:37, a Zotero item key, an author and year such as SKB 2010, or words of its title. An entry pasted from “References with abbreviated names” works too. Wherever the name stands it becomes a citation of that work, and keeps the name as its text. It is found in bold; not in bold, only when written exactly as here and inside a sentence.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:names"></span>
+            <details class="zf-sec" id="sec-names" open>
+              <summary><span class="zf-sec-title">Abbreviated names</span></summary>
+              <div class="zf-row">
+                <div class="kvot-info-line zf-label-line"><label for="zfNames">Names and the works they stand for</label><span class="kvot-info-slot" data-info-key="set:names"></span></div>
+                <textarea id="zfNames" rows="4" spellcheck="false" autocomplete="off" placeholder="Data report: SKB TR-10-52&#10;Main report: SKB TR-11-01" data-on-input="zf:namesTyped" data-on-change="zf:namesChanged"></textarea>
+              </div>
+              <div class="zf-names" id="zfNamesInfo" hidden></div>
+              <div class="zf-names-add" id="zfNamesAdd" hidden></div>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfBoldNames" checked data-on-change="zf:trackChanged"><span>Write the names in bold</span></label><span class="kvot-info-slot" data-info-key="set:boldNames"></span></div>
+              <p class="zf-about">One per line: the name as it stands in the text, a colon, and the work — an SKB report number, a designation such as SSMFS 2008:37, a Zotero item key, an author and year such as SKB 2010, or words of its title. An entry pasted from “References with abbreviated names” works too. Wherever the name stands it becomes a citation of that work, and keeps the name as its text. It is found in bold; not in bold, only when written exactly as here and inside a sentence.</p>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-fields">
-            <summary><span class="zf-sec-title">Citations that are already fields</span><span class="kvot-info-slot" data-info-key="sec:fields"></span></summary>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfRecodeOther" checked data-on-change="zf:optionChanged"><span>Convert EndNote and Mendeley citations to Zotero</span></label><span class="kvot-info-slot" data-info-key="set:recodeOther"></span></div>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfRecodeZotero" data-on-change="zf:optionChanged"><span>Match Zotero citations again as well</span></label><span class="kvot-info-slot" data-info-key="set:recodeZotero"></span></div>
-            <p class="zf-about">Left as they are, existing Zotero citations are counted as cited when the reference list is checked.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:fields"></span>
+            <details class="zf-sec" id="sec-fields">
+              <summary><span class="zf-sec-title">Citations that are already fields</span></summary>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfRecodeOther" checked data-on-change="zf:optionChanged"><span>Convert EndNote and Mendeley citations to Zotero</span></label><span class="kvot-info-slot" data-info-key="set:recodeOther"></span></div>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfRecodeZotero" data-on-change="zf:optionChanged"><span>Match Zotero citations again as well</span></label><span class="kvot-info-slot" data-info-key="set:recodeZotero"></span></div>
+              <p class="zf-about">Left as they are, existing Zotero citations are counted as cited when the reference list is checked.</p>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-track" open>
-            <summary><span class="zf-sec-title">Track changes</span><span class="kvot-info-slot" data-info-key="sec:track"></span></summary>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfTrack" checked data-on-change="zf:trackChanged"><span>Record every conversion as a tracked change</span></label><span class="kvot-info-slot" data-info-key="set:track"></span></div>
-            <div class="zf-row">
-              <div class="kvot-info-line zf-label-line"><label for="zfAuthor">Author of the changes and comments</label><span class="kvot-info-slot" data-info-key="set:author"></span></div>
-              <input type="text" id="zfAuthor" value="Zoterify" maxlength="80" data-on-change="zf:trackChanged">
-            </div>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfKeepTracking" checked data-on-change="zf:trackChanged"><span>Leave Track Changes switched on in the saved document</span></label><span class="kvot-info-slot" data-info-key="set:keepTracking"></span></div>
-            <p class="zf-about">Review the changes in Word, then accept them <em>before</em> you press Refresh in Zotero's tab: Zotero expects its citations not to be inside tracked changes.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:track"></span>
+            <details class="zf-sec" id="sec-track" open>
+              <summary><span class="zf-sec-title">Track changes</span></summary>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfTrack" checked data-on-change="zf:trackChanged"><span>Record every conversion as a tracked change</span></label><span class="kvot-info-slot" data-info-key="set:track"></span></div>
+              <div class="zf-row">
+                <div class="kvot-info-line zf-label-line"><label for="zfAuthor">Author of the changes and comments</label><span class="kvot-info-slot" data-info-key="set:author"></span></div>
+                <input type="text" id="zfAuthor" value="Zoterify" maxlength="80" data-on-change="zf:trackChanged">
+              </div>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfKeepTracking" checked data-on-change="zf:trackChanged"><span>Leave Track Changes switched on in the saved document</span></label><span class="kvot-info-slot" data-info-key="set:keepTracking"></span></div>
+              <p class="zf-about">Review the changes in Word, then accept them <em>before</em> you press Refresh in Zotero's tab: Zotero expects its citations not to be inside tracked changes.</p>
+            </details>
+          </div>
 
-          <details class="zf-sec" id="sec-comments" open>
-            <summary><span class="zf-sec-title">Comments in the document</span><span class="kvot-info-slot" data-info-key="sec:comments"></span></summary>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfComment" checked data-on-change="zf:trackChanged"><span>Comment on each citation left as text, saying why</span></label><span class="kvot-info-slot" data-info-key="set:comment"></span></div>
-            <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfSummaryComment" checked data-on-change="zf:trackChanged"><span>Add a summary comment at the start of the document</span></label><span class="kvot-info-slot" data-info-key="set:summary"></span></div>
-            <p class="zf-about">A citation is left as text when a reference in it was not found in the library or not decided, or when it cannot be replaced safely. The summary says what was converted, what was left and why, and which reference-list entries nothing cites. Comments are by the author named above and are not tracked changes.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:comments"></span>
+            <details class="zf-sec" id="sec-comments" open>
+              <summary><span class="zf-sec-title">Comments in the document</span></summary>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfComment" checked data-on-change="zf:trackChanged"><span>Comment on each citation left as text, saying why</span></label><span class="kvot-info-slot" data-info-key="set:comment"></span></div>
+              <div class="kvot-info-line zf-check-line"><label class="zf-check"><input type="checkbox" id="zfSummaryComment" checked data-on-change="zf:trackChanged"><span>Add a summary comment at the start of the document</span></label><span class="kvot-info-slot" data-info-key="set:summary"></span></div>
+              <p class="zf-about">A citation is left as text when a reference in it was not found in the library or not decided, or when it cannot be replaced safely. The summary says what was converted, what was left and why, and which reference-list entries nothing cites. Comments are by the author named above and are not tracked changes.</p>
+            </details>
+          </div>
         </div>
 
         <div class="zf-side-foot">
@@ -320,7 +341,7 @@
   <script src="./resources/js/zoterify-match.js?v=20260923a"></script>
   <script src="./resources/js/zoterify-zotero.js?v=20260923"></script>
   <script src="./resources/js/zoterify-docx.js?v=20260923b"></script>
-  <script src="./resources/js/kvot-info.js?v=20260926"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
   <script src="./resources/js/zoterify-ui.js?v=20260926"></script>
 </body>
 </html>

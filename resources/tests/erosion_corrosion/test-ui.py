@@ -31,6 +31,27 @@ import websockets
 
 HTTP = int(os.environ.get('EC_HTTP_PORT', '8765'))
 CDP = int(os.environ.get('EC_CDP_PORT', '9222'))
+
+# Chrome's rule for a control inside a <summary> ("An interactive element was
+# found within a <summary> element"): the summaries that break it, or ''.
+NO_CONTROL_IN_SUMMARY = (
+    "[...document.querySelectorAll('summary')].filter((s) => s.querySelector('a[href], audio[controls], button,"
+    " details, embed, iframe, img[usemap], input:not([type=hidden]), label, object[usemap], select, textarea,"
+    " video[controls], [tabindex], [contenteditable]')).map((s) => s.textContent.trim()).join(' | ')")
+# The headings whose (i), in the slot before their <details>, is not centred
+# on the summary's line and at its end, or ''; %s is the box holding the two.
+HEADING_I_OFF = (
+    "[...document.querySelectorAll('%s > details')].filter((d) => {"
+    " const s = d.querySelector(':scope > summary');"
+    " const b = d.previousElementSibling && d.previousElementSibling.querySelector('.info-btn');"
+    " if (!s || !b || !s.getClientRects().length) return false;"
+    " const cs = getComputedStyle(s), r = s.getBoundingClientRect(), q = b.getBoundingClientRect();"
+    " const px = (v) => parseFloat(v) || 0;"
+    " const top = r.top + px(cs.borderTopWidth) + px(cs.paddingTop);"
+    " const bottom = r.bottom - px(cs.borderBottomWidth) - px(cs.paddingBottom);"
+    " const right = r.right - px(cs.borderRightWidth) - px(cs.paddingRight);"
+    " return Math.abs((q.top + q.bottom) / 2 - (top + bottom) / 2) > 0.5 || Math.abs(q.right - right) > 0.5;"
+    "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 URL = f'http://127.0.0.1:{HTTP}/erosion_corrosion.html'
 CASE = './resources/tests/erosion_corrosion/local/TestCaseHydro_2_0.csv'
 # Drops the local copy of the test file on the panel, under the given name.
@@ -148,9 +169,16 @@ async def main():
             check('every catalogue parameter has its (i)',
                   await page.ev("ECModel.PARAMS.filter((d) => !document.querySelector("
                                 "`#ecParamSections .kvot-info-slot[data-info-key=\"p:${d.key}\"] .info-btn`)).map((d) => d.key)"), [])
+            # A heading's (i) is in the slot before its <details>, not in the
+            # summary: Chrome reports every control inside a <summary>.
             check('every section heading of the panel has one',
-                  await page.ev("Array.from(document.querySelectorAll('.ec-side details.ec-sec > summary'))"
-                                ".filter((s) => !s.querySelector('.info-btn')).map((s) => s.textContent)"), [])
+                  await page.ev("Array.from(document.querySelectorAll('.ec-side details.ec-sec'))"
+                                ".filter((d) => !(d.previousElementSibling && d.previousElementSibling.matches('.kvot-info-slot')"
+                                " && d.previousElementSibling.querySelector('.info-btn')))"
+                                ".map((d) => d.querySelector('summary').textContent)"), [])
+            check('no (i) slot is inside a <summary>', audit.get('inSummary'), [])
+            check('nor any other control', await page.ev(NO_CONTROL_IN_SUMMARY), '')
+            check('each heading\'s (i) is centred on its line, at its end', await page.ev(HEADING_I_OFF % '.kvot-info-sec'), '')
             check('and every result tab’s toolbar',
                   await page.ev("['failures', 'time', 'distributions', 'holes']"
                                 ".filter((t) => !document.querySelector(`.ec-pane[data-pane=\"${t}\"] .ec-toolbar .info-btn`))"), [])

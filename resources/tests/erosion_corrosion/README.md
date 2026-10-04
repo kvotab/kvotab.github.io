@@ -82,7 +82,10 @@ per catalogue parameter; that every catalogue parameter, every section heading
 of the panel and every result tab's toolbar has its (i), with a topic behind
 each slot and every "Read more in Help" link pointing at a heading that exists
 (`KvotInfo.audit()`), that no hover tooltips are left on the settings, that the
-(i)s line up at the right, and that an (i) opens the panel between the header
+(i)s line up at the right, that a section heading's (i) is in the slot before
+its `<details>`, centred on its line, with no control inside any `<summary>`
+(Chrome reports one: `An interactive element was found within a <summary>
+element`), and that an (i) opens the panel between the header
 and the footer with the title, the value in force and the names of the
 parameter, follows a change of the value or of a tab's choice while open,
 closes by its ×, by the same (i) and by Escape, and that its Help link opens

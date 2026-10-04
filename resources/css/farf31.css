@@ -362,7 +362,24 @@
 .f31-sec > summary { display: flex; align-items: center; gap: 6px; }
 .f31-sec > summary .f31-sec-title { flex: 1 1 auto; }
 .f31-sec > summary .f31-count { float: none; order: 2; }
-.f31-sec > summary .f31-info-slot { order: 3; }
+/*
+  The heading's (i) is not in the <summary> but in a slot before the
+  <details>, in a box holding the two: a button inside a <summary> is out of
+  reach of some keyboards and screen readers, and Chrome reports each one in
+  the console. The summary keeps the room the (i) took, an empty ::after last
+  in its row, and the slot is drawn over it, as tall as the summary's line
+  (the summary's font, and a zero-width space to make a line of it), so the
+  (i) is centred where it was. The space above a section is the box's, so
+  that the box starts where the summary does.
+*/
+.f31-info-sec { position: relative; margin-top: 10px; }
+.f31-info-sec > .f31-sec > summary { margin-top: 0; }
+.f31-info-sec > .f31-sec > summary::after { content: ''; flex: none; order: 99; width: 17px; height: 17px; }
+.f31-info-sec > .f31-info-slot {
+  position: absolute; top: 0; right: 0; z-index: 1;
+  align-items: center; font: 700 0.95rem RawengulkSans, sans-serif;
+}
+.f31-info-sec > .f31-info-slot::before { content: '\200b'; }
 .f31-label-line { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; }
 .f31-label-line label { flex: 1 1 auto; margin: 0; }
 .f31-label-line .f31-label-text { flex: 1 1 auto; color: var(--text-primary); }

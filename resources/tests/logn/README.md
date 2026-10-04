@@ -32,7 +32,13 @@ heading into view below the header. The metrics topic lists what cannot be
 chosen and why, the Distributions topic counts the distributions and names
 the hidden ones, and the (i) in a panel's heading follows the metric in the
 panel. The fit method's (i) is in a cloned template, so it is checked that it
-works there.
+works there. The section headings' (i)s are in slots before their `<details>`,
+not in the summaries, since Chrome reports any control inside a `<summary>`
+(`An interactive element was found within a <summary> element`): no slot
+(`audit().inSummary`) and no other control is inside one, and each heading's
+(i) is centred on its line, at its end -- in the four layouts, and while the
+results heading carries the chip naming its distribution, which makes that
+line taller.
 
 **Where they stand.** The (i)s of the two bars, the right-hand panel and the
 section headings share one right-hand edge, in all four layouts; a setting's

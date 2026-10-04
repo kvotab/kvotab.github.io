@@ -104,7 +104,7 @@
   outline: 2px solid var(--color-kvot-bright);
   outline-offset: 2px;
 }
-.fac-sec:first-child > summary { margin-top: 2px; }
+.kvot-info-sec:first-child > .fac-sec > summary { margin-top: 2px; }
 /*
   THE (i) AT THE RIGHT-HAND EDGE (the button and its panel are kvot-info.css's)
 
@@ -112,6 +112,9 @@
   17px for it after the field, the width of the button, and a heading and a
   tick-box line put it at their right-hand end, so every (i) in the panel is
   in one line down the right whichever kind of line it is on.
+
+  A heading's (i) is beside its summary rather than in it, drawn over the
+  room the summary keeps for it at the end (kvot-info.css and kvot-info.js).
 */
 .fac-sec > summary { display: flex; align-items: center; gap: 6px; }
 .fac-sec > summary .fac-sec-title { flex: 1 1 auto; min-width: 0; }

@@ -31,6 +31,27 @@ import websockets
 
 HTTP = int(os.environ.get('LOGN_HTTP_PORT', '8813'))
 CDP = int(os.environ.get('LOGN_CDP_PORT', '9313'))
+
+# Chrome's rule for a control inside a <summary> ("An interactive element was
+# found within a <summary> element"): the summaries that break it, or ''.
+NO_CONTROL_IN_SUMMARY = (
+    "[...document.querySelectorAll('summary')].filter((s) => s.querySelector('a[href], audio[controls], button,"
+    " details, embed, iframe, img[usemap], input:not([type=hidden]), label, object[usemap], select, textarea,"
+    " video[controls], [tabindex], [contenteditable]')).map((s) => s.textContent.trim()).join(' | ')")
+# The headings whose (i), in the slot before their <details>, is not centred
+# on the summary's line and at its end, or ''; %s is the box holding the two.
+HEADING_I_OFF = (
+    "[...document.querySelectorAll('%s > details')].filter((d) => {"
+    " const s = d.querySelector(':scope > summary');"
+    " const b = d.previousElementSibling && d.previousElementSibling.querySelector('.info-btn');"
+    " if (!s || !b || !s.getClientRects().length) return false;"
+    " const cs = getComputedStyle(s), r = s.getBoundingClientRect(), q = b.getBoundingClientRect();"
+    " const px = (v) => parseFloat(v) || 0;"
+    " const top = r.top + px(cs.borderTopWidth) + px(cs.paddingTop);"
+    " const bottom = r.bottom - px(cs.borderBottomWidth) - px(cs.paddingBottom);"
+    " const right = r.right - px(cs.borderRightWidth) - px(cs.paddingRight);"
+    " return Math.abs((q.top + q.bottom) / 2 - (top + bottom) / 2) > 0.5 || Math.abs(q.right - right) > 0.5;"
+    "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 URL = f'http://127.0.0.1:{HTTP}/logn.html'
 SHOTS = os.environ.get('LOGN_SHOTS')
 
@@ -200,6 +221,11 @@ async def main():
             check('no slot without a topic', audit['noTopic'], [])
             check('no "Read more" without a target in the page', audit['brokenMore'], [])
             check('every slot with a topic has its (i)', audit['buttons'], audit['slots'])
+            # A section heading's (i) is in the slot before its <details>, not in the
+            # summary: Chrome reports every control inside a <summary>.
+            check('no (i) slot is inside a <summary>', audit.get('inSummary'), [])
+            check('nor any other control inside a <summary>', await page.ev(NO_CONTROL_IN_SUMMARY), '')
+            check('each heading\'s (i) is centred on its line, at its end', await page.ev(HEADING_I_OFF % '.kvot-info-sec'), '')
             check('the (i)s on screen at load', await page.ev(VISIBLE), AT_LOAD)
             await page.ev("document.getElementById('settings-details').open = true")
             await asyncio.sleep(0.3)
@@ -355,6 +381,11 @@ async def main():
             await asyncio.sleep(0.5)
             check('a second distribution brings the comparison with its (i)',
                   'sec:compare' in await page.ev(VISIBLE), True)
+            # The results heading now shows which distribution it is of, a chip
+            # that makes its line taller; the (i)s follow their lines.
+            check('with the chip on the results heading, every heading\'s (i) still centred on its line',
+                  [await page.ev("!document.getElementById('computed-for').hidden"),
+                   await page.ev(HEADING_I_OFF % '.kvot-info-sec')], [True, ''])
             await page.ev(js_click_info('set:dists'))
             await asyncio.sleep(0.3)
             check('the Distributions topic counts them',
@@ -378,6 +409,8 @@ async def main():
                 check(f'{width} px, {theme}: the (i)s of the bars, panels and headings line up',
                       len({geo['column'][k] for k in COLUMN + ['sec:settings']}), 1)
                 check(f'{width} px, {theme}: no horizontal scroll', geo['scrollX'], 0)
+                check(f'{width} px, {theme}: each heading\'s (i) centred on its line, at its end',
+                      await page.ev(HEADING_I_OFF % '.kvot-info-sec'), '')
                 if key.startswith('set:') and key not in ('set:metrics',):
                     await page.ev(f"document.querySelector('[data-info=\"{key}\"]').scrollIntoView({{ block: 'center' }})")
                 await page.ev(js_click_info(key))

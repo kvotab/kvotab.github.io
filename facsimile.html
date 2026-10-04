@@ -16,7 +16,7 @@
   <meta name="twitter:card" content="summary">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
-  <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20261004"></script>
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -28,8 +28,8 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20260926">
-  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
+  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20261004">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -53,183 +53,202 @@
           Each heading and each setting has an (i) at the right-hand edge,
           which opens a panel of what it is and what its choices do; the
           topics are in facsimile-ui.js (TOPICS) and the slots are filled by
-          kvot-info.js. They replace the hover tooltips these rows had.
+          kvot-info.js. They replace the hover tooltips these rows had. A
+          heading's (i) is not in its <summary> but before the <details>, in
+          a kvot-info-sec box that draws it on the summary's line: a button
+          inside a <summary> is out of reach of some keyboards and screen
+          readers, and Chrome reports each one (kvot-info.css says more).
         -->
         <div class="fac-side-scroll" id="facSideScroll">
-          <details class="fac-sec" id="sec-scenario" open>
-            <summary><span class="fac-sec-title">Scenario</span><span class="kvot-info-slot" data-info-key="sec:scenario"></span></summary>
-            <div class="fac-preset">
-              <select id="facPreset" data-on-change="fac:choosePreset" aria-label="Scenario"></select>
-              <div class="fac-preset-desc" id="facPresetDesc"></div>
-              <div class="fac-preset-ref" id="facPresetRef" hidden></div>
-            </div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:scenario"></span>
+            <details class="fac-sec" id="sec-scenario" open>
+              <summary><span class="fac-sec-title">Scenario</span></summary>
+              <div class="fac-preset">
+                <select id="facPreset" data-on-change="fac:choosePreset" aria-label="Scenario"></select>
+                <div class="fac-preset-desc" id="facPresetDesc"></div>
+                <div class="fac-preset-ref" id="facPresetRef" hidden></div>
+              </div>
+            </details>
+          </div>
 
-          <details class="fac-sec" id="sec-file">
-            <summary><span class="fac-sec-title">Model file</span><span class="kvot-info-slot" data-info-key="sec:file"></span></summary>
-            <div class="fac-actions">
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
-              <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel">Reset</button>
-            </div>
-            <p class="fac-muted">A .fac file dropped anywhere on the page opens too. The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:file"></span>
+            <details class="fac-sec" id="sec-file">
+              <summary><span class="fac-sec-title">Model file</span></summary>
+              <div class="fac-actions">
+                <button type="button" class="fac-btn secondary small" data-on-click="fac:loadFile">Open…</button>
+                <button type="button" class="fac-btn secondary small" data-on-click="fac:saveFile">Save as .fac</button>
+                <button type="button" class="fac-btn secondary small" data-on-click="fac:resetModel">Reset</button>
+              </div>
+              <p class="fac-muted">A .fac file dropped anywhere on the page opens too. The model text, the settings and the solver options are kept in this browser between visits. Nothing leaves your machine.</p>
+            </details>
+          </div>
 
-          <details class="fac-sec" id="sec-case" open>
-            <summary><span class="fac-sec-title">Case settings</span><span class="kvot-info-slot" data-info-key="sec:case"></span></summary>
-            <div id="facSettings"></div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:case"></span>
+            <details class="fac-sec" id="sec-case" open>
+              <summary><span class="fac-sec-title">Case settings</span></summary>
+              <div id="facSettings"></div>
+            </details>
+          </div>
 
-          <details class="fac-sec" id="sec-solver" open>
-            <summary><span class="fac-sec-title">Solver</span><span class="kvot-info-slot" data-info-key="sec:solver"></span></summary>
-            <!--
-              The same settings as rtm.html's panel, by the same names and in the
-              same order, since the two pages run the same solver; Kompartment's
-              Advanced settings use the same names where they fit. Each row has
-              an (i) that explains it.
-            -->
-            <div class="fac-row">
-              <label for="facMethod">Method</label>
-              <select id="facMethod" data-on-change="fac:solverChanged">
-                <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
-                <option value="ndf">NDF</option>
-                <!-- Ported from DifferentialEquations.jl; see resources/js/ode/julia/. -->
-                <option value="julia_fbdf">FBDF (Julia port)</option>
-                <option value="julia_qndf">QNDF (Julia port)</option>
-                <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
-                <option value="julia_radau5">RadauIIA5 (Julia port)</option>
-                <option value="julia_rodas5p">Rodas5P (Julia port)</option>
-                <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:method"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="rtol">
-              <label for="facRtol">Relative tolerance<span class="fac-name">rtol</span></label>
-              <input id="facRtol" type="text" value="1e-5" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:rtol"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="atol">
-              <label for="facAtol">Absolute tolerance (mol/cm³)<span class="fac-name">atol</span></label>
-              <input id="facAtol" type="text" value="1e-30" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:atol"></span>
-            </div>
-            <!--
-              Everything below is the advanced half of the panel, folded away
-              by default: the three settings above are the ones a reader
-              changes, and the rest were arriving as a wall of fifteen. Folded
-              with the container's own `hidden`, not the rows', because
-              updateSolverOptions owns each row's `hidden` and the two would
-              otherwise overwrite each other.
-            -->
-            <button type="button" class="fac-more" id="facSolverMore"
-                    data-on-click="fac:solverMore"
-                    aria-expanded="false" aria-controls="facSolverAdvanced">Advanced settings</button>
-            <div id="facSolverAdvanced" hidden>
-            <!--
-              A tick box and its (i) are a line of their own, the (i) at the
-              right-hand end: the (i) is a button, and a button inside the
-              label would be a second control labelled by it. The line carries
-              data-solver-opt, so hiding a setting hides its (i) with it.
-            -->
-            <div class="fac-check-line" data-solver-opt="bdf"><label class="fac-check"><input type="checkbox" id="facBdf" data-on-change="fac:solverChanged"> BDF formulas: every κ of the NDF zero</label><span class="kvot-info-slot" data-info-key="set:bdf"></span></div>
-            <div class="fac-row" data-solver-opt="atolSpecies">
-              <label for="facAtolSpecies">Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
-              <textarea id="facAtolSpecies" rows="3" spellcheck="false" placeholder="H2O 1e-12&#10;OH 1e-22" data-on-change="fac:solverChanged"></textarea>
-              <span class="kvot-info-slot" data-info-key="set:atolSpecies"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="norm">
-              <label for="facNorm">Error norm<span class="fac-name">max: the worst-resolved species decides · rms: averaged over all of them, as in CVODE</span></label>
-              <select id="facNorm" data-on-change="fac:solverChanged">
-                <option value="max">max</option>
-                <option value="rms">rms</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:norm"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="maxOrder">
-              <label for="facMaxOrder">Maximum order<span class="fac-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
-              <select id="facMaxOrder" data-on-change="fac:solverChanged">
-                <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:maxOrder"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="minOrder">
-              <label for="facMinOrder">Minimum order<span class="fac-name">pin both to the same value to hold the order fixed</span></label>
-              <select id="facMinOrder" data-on-change="fac:solverChanged">
-                <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:minOrder"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="hmax">
-              <label for="facHmax">Maximum step (years)<span class="fac-name">0: a tenth of the run for the NDF, no limit for the ports</span></label>
-              <input id="facHmax" type="text" value="0" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:hmax"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="matrix">
-              <label for="facMatrix">Iteration matrix<span class="fac-name">I − hJ; auto: chosen by the measured fill</span></label>
-              <select id="facMatrix" data-on-change="fac:solverChanged">
-                <option value="auto">auto</option>
-                <option value="refactor">sparse LU, pivots kept</option>
-                <option value="sparse">sparse LU</option>
-                <option value="dense">dense LU</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:matrix"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="jacobian">
-              <label for="facJacobian">Jacobian<span class="fac-name">analytic from the equations, or differenced through its pattern</span></label>
-              <select id="facJacobian" data-on-change="fac:solverChanged">
-                <option value="analytic">analytic, sparse</option>
-                <option value="numeric">finite differences</option>
-              </select>
-              <span class="kvot-info-slot" data-info-key="set:jacobian"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="kappa">
-              <label for="facKappa">Newton tolerance<span class="fac-name">κ: how closely each stage is solved, as a share of one tolerance</span></label>
-              <input id="facKappa" type="text" value="1e-3" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:kappa"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="maxJacAge">
-              <label for="facJacAge">Jacobian reuse<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
-              <input id="facJacAge" type="text" value="20" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:maxJacAge"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="belowTolRun">
-              <label for="facBelowTol">Steps at the floor<span class="fac-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
-              <input id="facBelowTol" type="text" value="5" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:belowTolRun"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="maxSteps">
-              <label for="facMaxSteps">Step budget<span class="fac-name">the run gives up past this, and hands back what it had</span></label>
-              <input id="facMaxSteps" type="text" value="2000000" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:maxSteps"></span>
-            </div>
-            <div class="fac-row" data-solver-opt="stagnationTol">
-              <label for="facStagnation">Stall tolerance<span class="fac-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
-              <input id="facStagnation" type="text" value="0" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:stagnationTol"></span>
-            </div>
-            <div class="fac-row">
-              <label for="facMaxPoints">Points kept<span class="fac-name">thinned as it goes to stay inside this</span></label>
-              <input id="facMaxPoints" type="text" value="20000" data-on-change="fac:solverChanged">
-              <span class="kvot-info-slot" data-info-key="set:maxPoints"></span>
-            </div>
-            <div class="fac-check-line" data-solver-opt="autoAtol"><label class="fac-check"><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label><span class="kvot-info-slot" data-info-key="set:autoAtol"></span></div>
-            <div class="fac-check-line" data-solver-opt="smoothEst"><label class="fac-check"><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label><span class="kvot-info-slot" data-info-key="set:smoothEst"></span></div>
-            <div class="fac-check-line" data-solver-opt="clamp"><label class="fac-check"><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label><span class="kvot-info-slot" data-info-key="set:clamp"></span></div>
-            <div class="fac-check-line" data-solver-opt="nonNegative"><label class="fac-check"><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label><span class="kvot-info-slot" data-info-key="set:nonNegative"></span></div>
-            <!--
-              Filled in by updateSolverOptions: which of the settings above the
-              chosen method does not read. Said rather than silently hidden,
-              because a setting that vanishes is otherwise indistinguishable
-              from one that was never there.
-            -->
-            <p class="fac-muted" id="facSolverNote" hidden></p>
-            </div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:solver"></span>
+            <details class="fac-sec" id="sec-solver" open>
+              <summary><span class="fac-sec-title">Solver</span></summary>
+              <!--
+                The same settings as rtm.html's panel, by the same names and in the
+                same order, since the two pages run the same solver; Kompartment's
+                Advanced settings use the same names where they fit. Each row has
+                an (i) that explains it.
+              -->
+              <div class="fac-row">
+                <label for="facMethod">Method</label>
+                <select id="facMethod" data-on-change="fac:solverChanged">
+                  <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
+                  <option value="ndf">NDF</option>
+                  <!-- Ported from DifferentialEquations.jl; see resources/js/ode/julia/. -->
+                  <option value="julia_fbdf">FBDF (Julia port)</option>
+                  <option value="julia_qndf">QNDF (Julia port)</option>
+                  <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
+                  <option value="julia_radau5">RadauIIA5 (Julia port)</option>
+                  <option value="julia_rodas5p">Rodas5P (Julia port)</option>
+                  <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:method"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="rtol">
+                <label for="facRtol">Relative tolerance<span class="fac-name">rtol</span></label>
+                <input id="facRtol" type="text" value="1e-5" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:rtol"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="atol">
+                <label for="facAtol">Absolute tolerance (mol/cm³)<span class="fac-name">atol</span></label>
+                <input id="facAtol" type="text" value="1e-30" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:atol"></span>
+              </div>
+              <!--
+                Everything below is the advanced half of the panel, folded away
+                by default: the three settings above are the ones a reader
+                changes, and the rest were arriving as a wall of fifteen. Folded
+                with the container's own `hidden`, not the rows', because
+                updateSolverOptions owns each row's `hidden` and the two would
+                otherwise overwrite each other.
+              -->
+              <button type="button" class="fac-more" id="facSolverMore"
+                      data-on-click="fac:solverMore"
+                      aria-expanded="false" aria-controls="facSolverAdvanced">Advanced settings</button>
+              <div id="facSolverAdvanced" hidden>
+              <!--
+                A tick box and its (i) are a line of their own, the (i) at the
+                right-hand end: the (i) is a button, and a button inside the
+                label would be a second control labelled by it. The line carries
+                data-solver-opt, so hiding a setting hides its (i) with it.
+              -->
+              <div class="fac-check-line" data-solver-opt="bdf"><label class="fac-check"><input type="checkbox" id="facBdf" data-on-change="fac:solverChanged"> BDF formulas: every κ of the NDF zero</label><span class="kvot-info-slot" data-info-key="set:bdf"></span></div>
+              <div class="fac-row" data-solver-opt="atolSpecies">
+                <label for="facAtolSpecies">Per-species absolute tolerance<span class="fac-name">one <code>SPECIES VALUE</code> a line; everything unlisted keeps the value above</span></label>
+                <textarea id="facAtolSpecies" rows="3" spellcheck="false" placeholder="H2O 1e-12&#10;OH 1e-22" data-on-change="fac:solverChanged"></textarea>
+                <span class="kvot-info-slot" data-info-key="set:atolSpecies"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="norm">
+                <label for="facNorm">Error norm<span class="fac-name">max: the worst-resolved species decides · rms: averaged over all of them, as in CVODE</span></label>
+                <select id="facNorm" data-on-change="fac:solverChanged">
+                  <option value="max">max</option>
+                  <option value="rms">rms</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:norm"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="maxOrder">
+                <label for="facMaxOrder">Maximum order<span class="fac-name">the variable-order methods: NDF, FBDF and QNDF</span></label>
+                <select id="facMaxOrder" data-on-change="fac:solverChanged">
+                  <option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:maxOrder"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="minOrder">
+                <label for="facMinOrder">Minimum order<span class="fac-name">pin both to the same value to hold the order fixed</span></label>
+                <select id="facMinOrder" data-on-change="fac:solverChanged">
+                  <option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:minOrder"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="hmax">
+                <label for="facHmax">Maximum step (years)<span class="fac-name">0: a tenth of the run for the NDF, no limit for the ports</span></label>
+                <input id="facHmax" type="text" value="0" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:hmax"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="matrix">
+                <label for="facMatrix">Iteration matrix<span class="fac-name">I − hJ; auto: chosen by the measured fill</span></label>
+                <select id="facMatrix" data-on-change="fac:solverChanged">
+                  <option value="auto">auto</option>
+                  <option value="refactor">sparse LU, pivots kept</option>
+                  <option value="sparse">sparse LU</option>
+                  <option value="dense">dense LU</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:matrix"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="jacobian">
+                <label for="facJacobian">Jacobian<span class="fac-name">analytic from the equations, or differenced through its pattern</span></label>
+                <select id="facJacobian" data-on-change="fac:solverChanged">
+                  <option value="analytic">analytic, sparse</option>
+                  <option value="numeric">finite differences</option>
+                </select>
+                <span class="kvot-info-slot" data-info-key="set:jacobian"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="kappa">
+                <label for="facKappa">Newton tolerance<span class="fac-name">κ: how closely each stage is solved, as a share of one tolerance</span></label>
+                <input id="facKappa" type="text" value="1e-3" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:kappa"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="maxJacAge">
+                <label for="facJacAge">Jacobian reuse<span class="fac-name">steps, at most; 1 re-evaluates every step</span></label>
+                <input id="facJacAge" type="text" value="20" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:maxJacAge"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="belowTolRun">
+                <label for="facBelowTol">Steps at the floor<span class="fac-name">failing steps accepted in a row when no shorter step exists; 0 stops and returns what it has</span></label>
+                <input id="facBelowTol" type="text" value="5" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:belowTolRun"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="maxSteps">
+                <label for="facMaxSteps">Step budget<span class="fac-name">the run gives up past this, and hands back what it had</span></label>
+                <input id="facMaxSteps" type="text" value="2000000" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:maxSteps"></span>
+              </div>
+              <div class="fac-row" data-solver-opt="stagnationTol">
+                <label for="facStagnation">Stall tolerance<span class="fac-name">a stalled Newton correction is taken when within this share of one tolerance; 0 never</span></label>
+                <input id="facStagnation" type="text" value="0" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:stagnationTol"></span>
+              </div>
+              <div class="fac-row">
+                <label for="facMaxPoints">Points kept<span class="fac-name">thinned as it goes to stay inside this</span></label>
+                <input id="facMaxPoints" type="text" value="20000" data-on-change="fac:solverChanged">
+                <span class="kvot-info-slot" data-info-key="set:maxPoints"></span>
+              </div>
+              <div class="fac-check-line" data-solver-opt="autoAtol"><label class="fac-check"><input type="checkbox" id="facAutoAtol" data-on-change="fac:solverChanged"> Absolute tolerance follows the solution</label><span class="kvot-info-slot" data-info-key="set:autoAtol"></span></div>
+              <div class="fac-check-line" data-solver-opt="smoothEst"><label class="fac-check"><input type="checkbox" id="facSmoothEst" checked data-on-change="fac:solverChanged"> Smooth the error estimate through I − hJ (Shampine)</label><span class="kvot-info-slot" data-info-key="set:smoothEst"></span></div>
+              <div class="fac-check-line" data-solver-opt="clamp"><label class="fac-check"><input type="checkbox" id="facClamp" checked data-on-change="fac:solverChanged"> Read negative concentrations as zero in the rate laws</label><span class="kvot-info-slot" data-info-key="set:clamp"></span></div>
+              <div class="fac-check-line" data-solver-opt="nonNegative"><label class="fac-check"><input type="checkbox" id="facNonNeg" checked data-on-change="fac:solverChanged"> Keep every species non-negative</label><span class="kvot-info-slot" data-info-key="set:nonNegative"></span></div>
+              <!--
+                Filled in by updateSolverOptions: which of the settings above the
+                chosen method does not read. Said rather than silently hidden,
+                because a setting that vanishes is otherwise indistinguishable
+                from one that was never there.
+              -->
+              <p class="fac-muted" id="facSolverNote" hidden></p>
+              </div>
+            </details>
+          </div>
 
-          <details class="fac-sec" id="sec-run" open>
-            <summary><span class="fac-sec-title">Last run</span><span class="kvot-info-slot" data-info-key="sec:run"></span></summary>
-            <div class="fac-stats" id="facStats">Nothing has been solved yet.</div>
-          </details>
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:run"></span>
+            <details class="fac-sec" id="sec-run" open>
+              <summary><span class="fac-sec-title">Last run</span></summary>
+              <div class="fac-stats" id="facStats">Nothing has been solved yet.</div>
+            </details>
+          </div>
 
         </div>
 
@@ -616,7 +635,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-worker.js?v=20260923f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/kvot-info.js?v=20260926"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20260926"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20261004"></script>
 </body>
 </html>

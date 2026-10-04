@@ -979,3 +979,38 @@ widths from 390 down to 320. At each one the footer must be a single line,
 wholly on the screen, not running off the sides, with the switch clear of
 the last icon and the map button kept. At 1400 the address is still there.
 There are 45 checks.
+
+## test-xlsxwrite.py
+
+`resources/js/xlsxwrite.js`, the Excel writer that facsimile, rb,
+erosion_corrosion, SimpleFunctions, smui and dose_coefficients share: a cell
+comes out in the format it was written with, and a sheet is one sheet
+whichever call made it.
+
+    python3 resources/tests/site/test-xlsxwrite.py
+
+No server and no browser. `xlsxwrite-parts.mjs` runs the writer under Node,
+with JSZip stood in for by a map of the parts, and prints them; the test zips
+them and reads them back with openpyxl, which resolves a cell's style the way
+a spreadsheet program does. With `SML_XSD` set to the path of a transitional
+`sml.xsd` (ECMA-376, ISO/IEC 29500-4), every part the schema covers is checked
+against it as well. It was written for four faults (2026-10-04):
+
+- every format came out one place late. The writer wrote a style for the
+  default format after the one that already stood for it, so a cell named the
+  style before its own: the bold header plain, the cells after it bold;
+- a number format never reached its style, so every number was General;
+- a sheet made by `writeData` was unknown to the calls that find a sheet by
+  name, so a `setColumn` after it made a second sheet of the same name, which
+  openpyxl reads as `Settings1`;
+- XlsxWriter's names for an alignment (`valign: 'vcenter'`) and its pattern
+  numbers went into the file as they are, which OOXML does not allow: openpyxl
+  will not open such a file, and Excel repairs it.
+
+Against the writer before the fixes, 18 of the 24 checks fail. Only rb.html's
+two exports write formats, so they are where it showed. In the chart export's
+Data sheet the column names came out in the group row's style and the values
+in General, in the unit row's small italics. The dataset export asks for
+`vcenter`, so its file was one Excel had to repair, and its header row was
+plain. `resources/tests/rb/test-excel.py` checks the chart export's Data sheet
+styles now.

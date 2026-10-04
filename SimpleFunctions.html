@@ -27,7 +27,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/simplefunctions.css?v=20260927">
+  <link rel="stylesheet" href="./resources/css/simplefunctions.css?v=20261004">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -39,94 +39,106 @@
       <aside class="sf-side" id="sfSide">
         <div class="sf-side-scroll">
 
-          <details class="sf-sec" id="sec-water" open>
-            <summary><span class="sf-sec-title">Groundwater</span><span class="sf-count" id="sfWaterCount"></span><span class="sf-info-slot" data-info-key="sec:water"></span></summary>
-            <p class="sf-about">A table of groundwater compositions, one per row: pH, total Ca (with Mg), Cl, Na, SO4 and Si, the ionic strength, and the free HCO3-, in mol/kg. Each realisation draws one row.</p>
-            <div class="sf-drop" id="sfDrop">Drop a CSV or Excel table here, or
-              <button type="button" class="sf-btn secondary small" data-on-click="sf:openWater">Open…</button>
-            </div>
-            <input type="file" id="sfWaterFile" accept=".csv,.txt,.tsv,.dat,.xlsx,.xlsm,.json" hidden data-on-change="sf:waterChosen">
-            <div class="sf-row">
-              <div class="sf-label-line"><label for="sfExample">Built-in example</label><span class="sf-info-slot" data-info-key="set:example"></span></div>
-              <select id="sfExample" data-on-change="sf:chooseExample">
-                <option value="">— choose —</option>
-                <option value="tr1061range">TR-10-61 waters in the tool’s range (6)</option>
-                <option value="tr1061">TR-10-61 reference waters (all 12, table A-1)</option>
-                <option value="tr1061ex">TR-10-61 example water (table 3-1)</option>
-              </select>
-            </div>
-            <ul class="sf-files" id="sfTableInfo"></ul>
-            <label class="sf-check" id="sfAddMgRow" hidden><input type="checkbox" id="sfAddMg" checked data-on-change="sf:addMgChanged"><span>Add Mg to Ca<span class="sf-desc">The Simple Functions have no Mg: [Ca]tot stands for Ca + Mg.</span></span></label>
-            <div class="sf-row">
-              <div class="sf-label-line"><label for="sfVersion">Redox and iron</label><span class="sf-info-slot" data-info-key="set:version"></span></div>
-              <select id="sfVersion" data-on-change="sf:optionChanged" data-key="version">
-                <option value="B">Version B: magnetite/goethite (SR-Site, PSAR)</option>
-                <option value="A">Version A: Eh and [Fe]tot from the table</option>
-              </select>
-            </div>
-          </details>
-
-          <details class="sf-sec" id="sec-sampling" open>
-            <summary><span class="sf-sec-title">Sampling</span><span class="sf-info-slot" data-info-key="sec:sampling"></span></summary>
-            <div class="sf-inline">
+          <div class="sf-info-sec">
+            <span class="sf-info-slot" data-info-key="sec:water"></span>
+            <details class="sf-sec" id="sec-water" open>
+              <summary><span class="sf-sec-title">Groundwater</span><span class="sf-count" id="sfWaterCount"></span></summary>
+              <p class="sf-about">A table of groundwater compositions, one per row: pH, total Ca (with Mg), Cl, Na, SO4 and Si, the ionic strength, and the free HCO3-, in mol/kg. Each realisation draws one row.</p>
+              <div class="sf-drop" id="sfDrop">Drop a CSV or Excel table here, or
+                <button type="button" class="sf-btn secondary small" data-on-click="sf:openWater">Open…</button>
+              </div>
+              <input type="file" id="sfWaterFile" accept=".csv,.txt,.tsv,.dat,.xlsx,.xlsm,.json" hidden data-on-change="sf:waterChosen">
               <div class="sf-row">
-                <div class="sf-label-line"><label for="sfN">Realisations</label><span class="sf-info-slot" data-info-key="set:n"></span></div>
-                <input id="sfN" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="n">
+                <div class="sf-label-line"><label for="sfExample">Built-in example</label><span class="sf-info-slot" data-info-key="set:example"></span></div>
+                <select id="sfExample" data-on-change="sf:chooseExample">
+                  <option value="">— choose —</option>
+                  <option value="tr1061range">TR-10-61 waters in the tool’s range (6)</option>
+                  <option value="tr1061">TR-10-61 reference waters (all 12, table A-1)</option>
+                  <option value="tr1061ex">TR-10-61 example water (table 3-1)</option>
+                </select>
+              </div>
+              <ul class="sf-files" id="sfTableInfo"></ul>
+              <label class="sf-check" id="sfAddMgRow" hidden><input type="checkbox" id="sfAddMg" checked data-on-change="sf:addMgChanged"><span>Add Mg to Ca<span class="sf-desc">The Simple Functions have no Mg: [Ca]tot stands for Ca + Mg.</span></span></label>
+              <div class="sf-row">
+                <div class="sf-label-line"><label for="sfVersion">Redox and iron</label><span class="sf-info-slot" data-info-key="set:version"></span></div>
+                <select id="sfVersion" data-on-change="sf:optionChanged" data-key="version">
+                  <option value="B">Version B: magnetite/goethite (SR-Site, PSAR)</option>
+                  <option value="A">Version A: Eh and [Fe]tot from the table</option>
+                </select>
+              </div>
+            </details>
+          </div>
+
+          <div class="sf-info-sec">
+            <span class="sf-info-slot" data-info-key="sec:sampling"></span>
+            <details class="sf-sec" id="sec-sampling" open>
+              <summary><span class="sf-sec-title">Sampling</span></summary>
+              <div class="sf-inline">
+                <div class="sf-row">
+                  <div class="sf-label-line"><label for="sfN">Realisations</label><span class="sf-info-slot" data-info-key="set:n"></span></div>
+                  <input id="sfN" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="n">
+                </div>
+                <div class="sf-row">
+                  <div class="sf-label-line"><label for="sfSeed">Seed</label><span class="sf-info-slot" data-info-key="set:seed"></span></div>
+                  <input id="sfSeed" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="seed">
+                </div>
               </div>
               <div class="sf-row">
-                <div class="sf-label-line"><label for="sfSeed">Seed</label><span class="sf-info-slot" data-info-key="set:seed"></span></div>
-                <input id="sfSeed" type="text" inputmode="numeric" data-on-change="sf:runSettingChanged" data-key="seed">
+                <div class="sf-label-line"><label for="sfDraw">Groundwater draw</label><span class="sf-info-slot" data-info-key="set:draw"></span></div>
+                <select id="sfDraw" data-on-change="sf:runSettingChanged" data-key="draw">
+                  <option value="randrep">at random, with replacement (SR-Site)</option>
+                  <option value="randnorep">at random, without replacement</option>
+                  <option value="inorder">in table order</option>
+                  <option value="fixed">one water only</option>
+                </select>
               </div>
-            </div>
-            <div class="sf-row">
-              <div class="sf-label-line"><label for="sfDraw">Groundwater draw</label><span class="sf-info-slot" data-info-key="set:draw"></span></div>
-              <select id="sfDraw" data-on-change="sf:runSettingChanged" data-key="draw">
-                <option value="randrep">at random, with replacement (SR-Site)</option>
-                <option value="randnorep">at random, without replacement</option>
-                <option value="inorder">in table order</option>
-                <option value="fixed">one water only</option>
-              </select>
-            </div>
-            <div class="sf-row" id="sfFixedRow" hidden>
-              <div class="sf-label-line"><label for="sfFixedWater">The water</label></div>
-              <select id="sfFixedWater" data-on-change="sf:runSettingChanged" data-key="fixedWater"></select>
-            </div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfLhs" data-on-change="sf:runSettingChanged" data-key="lhs"><span>Latin hypercube</span></label><span class="sf-info-slot" data-info-key="set:lhs"></span></div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfVaryTD" data-on-change="sf:runSettingChanged" data-key="varyTD"><span>Sample the equilibrium constants</span></label><span class="sf-info-slot" data-info-key="set:varyTD"></span></div>
-          </details>
+              <div class="sf-row" id="sfFixedRow" hidden>
+                <div class="sf-label-line"><label for="sfFixedWater">The water</label></div>
+                <select id="sfFixedWater" data-on-change="sf:runSettingChanged" data-key="fixedWater"></select>
+              </div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfLhs" data-on-change="sf:runSettingChanged" data-key="lhs"><span>Latin hypercube</span></label><span class="sf-info-slot" data-info-key="set:lhs"></span></div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfVaryTD" data-on-change="sf:runSettingChanged" data-key="varyTD"><span>Sample the equilibrium constants</span></label><span class="sf-info-slot" data-info-key="set:varyTD"></span></div>
+            </details>
+          </div>
 
-          <details class="sf-sec" id="sec-data">
-            <summary><span class="sf-sec-title">Thermodynamic data</span><span class="sf-count" id="sfDataCount"></span><span class="sf-info-slot" data-info-key="sec:data"></span></summary>
-            <p class="sf-about" id="sfDataLabel"></p>
-            <div class="sf-actions">
-              <button type="button" class="sf-btn secondary small" data-on-click="sf:tab" data-tab="data">Edit…</button>
-              <button type="button" class="sf-btn secondary small" data-on-click="sf:resetData">Reset to SR-Site</button>
-              <button type="button" class="sf-btn secondary small" data-on-click="sf:saveData">Save data</button>
-              <button type="button" class="sf-btn secondary small" data-on-click="sf:openData">Open data…</button>
-            </div>
-            <input type="file" id="sfDataFile" accept=".json" hidden data-on-change="sf:dataChosen">
-            <p class="sf-muted">The SR-Site workbooks as they calculated, unless you tick:</p>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfReactionTerms" data-on-change="sf:optionChanged" data-key="reactionTerms"><span>Every term from the reactions</span></label><span class="sf-info-slot" data-info-key="set:reactionTerms"></span></div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfPoly" data-on-change="sf:optionChanged" data-key="polyStoichiometry"><span>Count a polynuclear complex by its metal atoms</span></label><span class="sf-info-slot" data-info-key="set:poly"></span></div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfRaOH" data-on-change="sf:optionChanged" data-key="singleRaOH"><span>Sample Ra(OH)+ once</span></label><span class="sf-info-slot" data-info-key="set:raoh"></span></div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfEh" data-on-change="sf:optionChanged" data-key="ehExact"><span>Eh with RT ln10/F = 0.05916 V</span></label><span class="sf-info-slot" data-info-key="set:eh"></span></div>
-            <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfAnalogue" data-on-change="sf:optionChanged" data-key="analogueDraws"><span>Cm drawn with the Am numbers</span></label><span class="sf-info-slot" data-info-key="set:analogue"></span></div>
-          </details>
+          <div class="sf-info-sec">
+            <span class="sf-info-slot" data-info-key="sec:data"></span>
+            <details class="sf-sec" id="sec-data">
+              <summary><span class="sf-sec-title">Thermodynamic data</span><span class="sf-count" id="sfDataCount"></span></summary>
+              <p class="sf-about" id="sfDataLabel"></p>
+              <div class="sf-actions">
+                <button type="button" class="sf-btn secondary small" data-on-click="sf:tab" data-tab="data">Edit…</button>
+                <button type="button" class="sf-btn secondary small" data-on-click="sf:resetData">Reset to SR-Site</button>
+                <button type="button" class="sf-btn secondary small" data-on-click="sf:saveData">Save data</button>
+                <button type="button" class="sf-btn secondary small" data-on-click="sf:openData">Open data…</button>
+              </div>
+              <input type="file" id="sfDataFile" accept=".json" hidden data-on-change="sf:dataChosen">
+              <p class="sf-muted">The SR-Site workbooks as they calculated, unless you tick:</p>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfReactionTerms" data-on-change="sf:optionChanged" data-key="reactionTerms"><span>Every term from the reactions</span></label><span class="sf-info-slot" data-info-key="set:reactionTerms"></span></div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfPoly" data-on-change="sf:optionChanged" data-key="polyStoichiometry"><span>Count a polynuclear complex by its metal atoms</span></label><span class="sf-info-slot" data-info-key="set:poly"></span></div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfRaOH" data-on-change="sf:optionChanged" data-key="singleRaOH"><span>Sample Ra(OH)+ once</span></label><span class="sf-info-slot" data-info-key="set:raoh"></span></div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfEh" data-on-change="sf:optionChanged" data-key="ehExact"><span>Eh with RT ln10/F = 0.05916 V</span></label><span class="sf-info-slot" data-info-key="set:eh"></span></div>
+              <div class="sf-check-line"><label class="sf-check"><input type="checkbox" id="sfAnalogue" data-on-change="sf:optionChanged" data-key="analogueDraws"><span>Cm drawn with the Am numbers</span></label><span class="sf-info-slot" data-info-key="set:analogue"></span></div>
+            </details>
+          </div>
 
-          <details class="sf-sec" id="sec-output">
-            <summary><span class="sf-sec-title">Output</span><span class="sf-info-slot" data-info-key="sec:output"></span></summary>
-            <div class="sf-row">
-              <div class="sf-label-line"><label for="sfUnits">Units</label></div>
-              <select id="sfUnits" data-on-change="sf:unitsChanged">
-                <option value="molkg">mol/kg water (as the tool and CSOL)</option>
-                <option value="molm3">mol/m³ (× 1000)</option>
-              </select>
-            </div>
-            <div class="sf-row">
-              <div class="sf-label-line"><label for="sfLimit">“Not solubility limited” above<span class="sf-unit">mol/kg</span></label><span class="sf-info-slot" data-info-key="set:limit"></span></div>
-              <input id="sfLimit" type="text" inputmode="decimal" data-on-change="sf:optionChanged" data-key="limit">
-            </div>
-          </details>
+          <div class="sf-info-sec">
+            <span class="sf-info-slot" data-info-key="sec:output"></span>
+            <details class="sf-sec" id="sec-output">
+              <summary><span class="sf-sec-title">Output</span></summary>
+              <div class="sf-row">
+                <div class="sf-label-line"><label for="sfUnits">Units</label></div>
+                <select id="sfUnits" data-on-change="sf:unitsChanged">
+                  <option value="molkg">mol/kg water (as the tool and CSOL)</option>
+                  <option value="molm3">mol/m³ (× 1000)</option>
+                </select>
+              </div>
+              <div class="sf-row">
+                <div class="sf-label-line"><label for="sfLimit">“Not solubility limited” above<span class="sf-unit">mol/kg</span></label><span class="sf-info-slot" data-info-key="set:limit"></span></div>
+                <input id="sfLimit" type="text" inputmode="decimal" data-on-change="sf:optionChanged" data-key="limit">
+              </div>
+            </details>
+          </div>
         </div>
 
         <div class="sf-side-foot">

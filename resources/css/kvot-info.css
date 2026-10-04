@@ -14,6 +14,29 @@
 .kvot-info-line { display: flex; align-items: center; gap: 6px; }
 .kvot-info-line > :first-child { flex: 1 1 auto; min-width: 0; }
 
+/*
+  A <details> section's (i). Not in its <summary>: a button there is a control
+  inside a control, which keyboards and screen readers do not all reach, and
+  Chrome reports each one ("An interactive element was found within a
+  <summary> element"; it counts any button, link, field or label, and anything
+  with a tabindex). Nor after the <summary> inside the <details>, which shows
+  nothing else while it is shut. So the slot goes before the <details>, in a
+  box holding the two, and is drawn at the right-hand end of the summary's line:
+
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:solver"></span>
+        <details> <summary>Solver</summary> ... </details>
+      </div>
+
+  The summary, a flex row, keeps the room the (i) took in it: an empty
+  ::after of the button's size, last in the row. kvot-info.js draws the slot
+  over that room, as tall as the summary's line, so the (i) is centred where
+  it was, and fits it again whenever the summary changes size.
+*/
+.kvot-info-sec { position: relative; }
+.kvot-info-sec > details > summary::after { content: ''; flex: none; order: 99; width: 17px; height: 17px; margin-left: auto; }
+.kvot-info-sec > .kvot-info-slot { position: absolute; top: 0; right: 0; z-index: 1; }
+
 .info-btn {
   display: inline-flex;
   align-items: center;

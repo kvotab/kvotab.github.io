@@ -186,3 +186,9 @@ Two things the browser test learned: the (i) panel slides in for 140 ms, so a
 click on its × straight after opening misses; and out.ts rounds times as well
 as rates to seven digits, which moves a rate on a rising edge by a few 10^-6.
 Close panels with clicks, not a CDP Escape (headless Chrome 153 can hang).
+
+A section heading's (i) is in a slot before its `<details>`, not in the
+summary, since Chrome reports any control inside a `<summary>` (`An
+interactive element was found within a <summary> element`). The test checks
+that no control is inside one and that each heading's (i) is centred on its
+line, at its end.

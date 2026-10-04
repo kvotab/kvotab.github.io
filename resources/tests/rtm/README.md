@@ -314,4 +314,8 @@ header and the footer; the ×, the same (i) and an Escape key press each close
 it, the last giving the focus back; the (i) on a section heading leaves the
 section open; a topic with choices marks the chosen one and follows the
 setting while it is open; its Help link lands on its heading; and the (i)s of
-the panel line up at its right-hand edge.
+the panel line up at its right-hand edge. A section heading's (i) is in a slot
+before its `<details>`, not in the summary, since Chrome reports any control
+inside a `<summary>` (`An interactive element was found within a <summary>
+element`): the test finds no slot (`audit().inSummary`) and no other control
+inside one, and each heading's (i) centred on its line, at its end.

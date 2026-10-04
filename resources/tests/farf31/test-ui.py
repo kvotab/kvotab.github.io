@@ -39,6 +39,27 @@ import websockets
 
 HTTP = int(os.environ.get('F31_HTTP_PORT', '8794'))
 CDP = int(os.environ.get('F31_CDP_PORT', '9294'))
+
+# Chrome's rule for a control inside a <summary> ("An interactive element was
+# found within a <summary> element"): the summaries that break it, or ''.
+NO_CONTROL_IN_SUMMARY = (
+    "[...document.querySelectorAll('summary')].filter((s) => s.querySelector('a[href], audio[controls], button,"
+    " details, embed, iframe, img[usemap], input:not([type=hidden]), label, object[usemap], select, textarea,"
+    " video[controls], [tabindex], [contenteditable]')).map((s) => s.textContent.trim()).join(' | ')")
+# The headings whose (i), in the slot before their <details>, is not centred
+# on the summary's line and at its end, or ''; %s is the box holding the two.
+HEADING_I_OFF = (
+    "[...document.querySelectorAll('%s > details')].filter((d) => {"
+    " const s = d.querySelector(':scope > summary');"
+    " const b = d.previousElementSibling && d.previousElementSibling.querySelector('.info-btn');"
+    " if (!s || !b || !s.getClientRects().length) return false;"
+    " const cs = getComputedStyle(s), r = s.getBoundingClientRect(), q = b.getBoundingClientRect();"
+    " const px = (v) => parseFloat(v) || 0;"
+    " const top = r.top + px(cs.borderTopWidth) + px(cs.paddingTop);"
+    " const bottom = r.bottom - px(cs.borderBottomWidth) - px(cs.paddingBottom);"
+    " const right = r.right - px(cs.borderRightWidth) - px(cs.paddingRight);"
+    " return Math.abs((q.top + q.bottom) / 2 - (top + bottom) / 2) > 0.5 || Math.abs(q.right - right) > 0.5;"
+    "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 URL = f'http://127.0.0.1:{HTTP}/FARF31.html'
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, 'fixture')
@@ -297,6 +318,10 @@ async def main():
             await page.click('.info-panel-close')
             check('the × closes it', await settle(page, "!document.querySelector('.info-panel')", True), True)
             check('every (i) slot got its button', await page.ev("Array.from(document.querySelectorAll('.f31-info-slot[data-info-key]')).every((s) => s.querySelector('.info-btn'))"), True)
+            # A section heading's (i) is in the slot before its <details>, not in the
+            # summary: Chrome reports every control inside a <summary>.
+            check('no control is inside a <summary>', await page.ev(NO_CONTROL_IN_SUMMARY), '')
+            check('each heading\'s (i) is centred on its line, at its end', await page.ev(HEADING_I_OFF % '.f31-info-sec'), '')
 
             # ---- a built-in example from the select
             await page.ev("(() => { const s = document.getElementById('f31Example'); s.value = 'radium'; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()")

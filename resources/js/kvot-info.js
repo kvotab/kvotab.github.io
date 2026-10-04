@@ -13,7 +13,17 @@
 
        <span class="kvot-info-slot" data-info-key="set:seed"></span>
 
-   and a page registers its topics once:
+   A <details> section's heading has its slot before the <details>, in a box
+   holding the two, never inside the <summary> (kvot-info.css says why):
+
+       <div class="kvot-info-sec">
+         <span class="kvot-info-slot" data-info-key="sec:solver"></span>
+         <details> <summary>...</summary> ... </details>
+       </div>
+
+   and mount() keeps that slot over the room the summary keeps for it.
+
+   A page registers its topics once:
 
        KvotInfo.setup({
          topics: { 'set:seed': { kicker, title, lead, facts, sections, more }, ... },
@@ -117,9 +127,53 @@
       const key = slot.dataset.infoKey;
       if (!state.topics[key]) return;
       const have = slot.querySelector('.info-btn');
-      if (have && bound.has(have) && have.dataset.info === key) return;
-      slot.replaceChildren(button(key));
+      if (!(have && bound.has(have) && have.dataset.info === key)) slot.replaceChildren(button(key));
+      placeSection(slot);
     });
+  }
+
+  /* A section heading's slot is drawn over the room at the end of its
+     summary's line (kvot-info.css), as tall as that line, so that the (i) is
+     centred where it was when it was in the line. Where the line is and how
+     tall it is are the summary's to say -- a chip shown in it or a title that
+     wraps makes it taller -- so the slot is fitted again whenever the summary
+     changes size, and hidden while the summary is. */
+  const sections = new WeakMap();   // summary -> the slot drawn over it
+  const resized = typeof ResizeObserver === 'function'
+    ? new ResizeObserver((entries) => { for (const e of entries) fitSection(e.target); })
+    : null;
+
+  function placeSection(slot) {
+    const box = slot.parentElement;
+    const details = slot.nextElementSibling;
+    if (!box || !box.classList.contains('kvot-info-sec') || !details || details.tagName !== 'DETAILS') return;
+    const summary = details.querySelector(':scope > summary');
+    if (!summary || sections.get(summary) === slot) return;
+    sections.set(summary, slot);
+    fitSection(summary);
+    if (resized) resized.observe(summary);
+  }
+
+  function fitSection(summary) {
+    const slot = sections.get(summary);
+    if (!slot) return;
+    if (!summary.isConnected || !slot.isConnected) {
+      if (resized) resized.unobserve(summary);
+      sections.delete(summary);
+      return;
+    }
+    const shown = summary.getClientRects().length > 0;
+    slot.style.display = shown ? '' : 'none';
+    if (!shown) return;
+    const cs = getComputedStyle(summary);
+    const px = (v) => parseFloat(v) || 0;
+    const box = slot.parentElement.getBoundingClientRect();
+    const s = summary.getBoundingClientRect();
+    const top = s.top - box.top + px(cs.borderTopWidth) + px(cs.paddingTop);
+    const bottom = s.bottom - box.top - px(cs.borderBottomWidth) - px(cs.paddingBottom);
+    slot.style.top = `${top}px`;
+    slot.style.height = `${Math.max(0, bottom - top)}px`;
+    slot.style.right = `${box.right - s.right + px(cs.borderRightWidth) + px(cs.paddingRight)}px`;
   }
 
   /* A filled slot, for rows that are built in script. */
@@ -267,8 +321,9 @@
     if (!at || at === document.body || (state.panel && state.panel.contains(at)) || (at.closest && at.closest('[data-info]'))) close();
   });
 
-  /* For the tests: slots without a topic, and topics whose Help link has no
-     target in the page. */
+  /* For the tests: slots without a topic, topics whose Help link has no
+     target in the page, and slots inside a <summary>, of which there should
+     be none (a section heading's goes before its <details>). */
   function audit() {
     const keys = Object.keys(state.topics);
     const slots = Array.from(document.querySelectorAll('.kvot-info-slot[data-info-key]')).map((s) => s.dataset.infoKey);
@@ -277,7 +332,8 @@
       const t = resolve(k);
       return !t || !t.title || (t.more && !document.getElementById(t.more.id));
     });
-    return { topics: keys.length, slots: slots.length, buttons: document.querySelectorAll('.kvot-info-slot .info-btn').length, noTopic, brokenMore };
+    const inSummary = Array.from(document.querySelectorAll('summary .kvot-info-slot[data-info-key]')).map((s) => s.dataset.infoKey);
+    return { topics: keys.length, slots: slots.length, buttons: document.querySelectorAll('.kvot-info-slot .info-btn').length, noTopic, brokenMore, inSummary };
   }
 
   root.KvotInfo = Object.freeze({ setup, add, mount, slot, open, close, refresh, audit, current: () => state.key });

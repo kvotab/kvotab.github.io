@@ -15,7 +15,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <title>Lognormal Conversions — kvot ab</title>
   <meta name="description" content="Convert between lognormal parameterisations — mu and sigma, geometric mean and GSD, percentiles — with plots and the underlying equations.">
@@ -158,7 +158,8 @@
     details[open]>summary.eq-summary::before { transform:rotate(90deg); }
     details summary.eq-summary:hover { background:var(--bg-surface);border-color:var(--color-kvot-bright); }
     details[open]>summary.eq-summary { border-radius:10px 10px 0 0;border-bottom-color:transparent; }
-    details summary.eq-summary > .kvot-info-slot { margin-left:auto; }
+    /* A heading's (i) is in a slot before its <details>, drawn over the room
+       the summary keeps at its right-hand end (kvot-info.css, kvot-info.js). */
     .section-body { padding:18px 20px;background:var(--bg-secondary);border:1px solid var(--border-color);border-top:none;border-radius:0 0 10px 10px; }
 
     /* Result summary cards */
@@ -344,169 +345,184 @@
       </div>
 
       <!-- Computed results -->
-      <details id="computed-details" open>
-        <summary class="eq-summary">Computed results<span class="computed-for" id="computed-for" hidden><span class="computed-for-swatch"></span><span id="computed-for-name"></span></span><span class="kvot-info-slot" data-info-key="sec:results"></span></summary>
-        <div class="section-body" id="logn-output">
-          <div id="result-summary">
-            <div class="stat-card primary">
-              <div class="stat-card-label">&#956;</div>
-              <div class="stat-card-value" id="res-mu">&#8212;</div>
-              <div class="stat-card-sub">log-mean</div>
-            </div>
-            <div class="stat-card primary">
-              <div class="stat-card-label">&#963;</div>
-              <div class="stat-card-value" id="res-sigma">&#8212;</div>
-              <div class="stat-card-sub">log-std dev</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-card-label">Mean</div>
-              <div class="stat-card-value" id="res-mean">&#8212;</div>
-              <div class="stat-card-sub">arithmetic</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-card-label">Median</div>
-              <div class="stat-card-value" id="res-median">&#8212;</div>
-              <div class="stat-card-sub">= geom. mean</div>
-            </div>
-          </div>
-          <div id="result-error"></div>
-          <div id="result-details">
-            <div class="stats-grid">
-              <div class="sg-item"><span class="sg-label">Mode</span><span class="sg-value" id="res-mode">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Std dev</span><span class="sg-value" id="res-sd">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Variance</span><span class="sg-value" id="res-variance">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">GSD</span><span class="sg-value" id="res-gsd">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">CV</span><span class="sg-value" id="res-cv">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Error factor</span><span class="sg-value" id="res-ef">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Skewness</span><span class="sg-value" id="res-skew">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Excess kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
-              <div class="sg-item"><span class="sg-label">Entropy</span><span class="sg-value" id="res-entropy">&#8212;</span></div>
-            </div>
-            <div class="pct-band">
-              <div class="pct-band-header">Percentiles</div>
-              <div class="pct-row">
-                <div class="pct-cell"><div class="pct-p">5%</div><div class="pct-v" id="res-p5">&#8212;</div></div>
-                <div class="pct-cell"><div class="pct-p">25%</div><div class="pct-v" id="res-p25">&#8212;</div></div>
-                <div class="pct-cell is-median"><div class="pct-p">50%</div><div class="pct-v" id="res-p50">&#8212;</div></div>
-                <div class="pct-cell"><div class="pct-p">75%</div><div class="pct-v" id="res-p75">&#8212;</div></div>
-                <div class="pct-cell"><div class="pct-p">95%</div><div class="pct-v" id="res-p95">&#8212;</div></div>
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:results"></span>
+        <details id="computed-details" open>
+          <summary class="eq-summary">Computed results<span class="computed-for" id="computed-for" hidden><span class="computed-for-swatch"></span><span id="computed-for-name"></span></span></summary>
+          <div class="section-body" id="logn-output">
+            <div id="result-summary">
+              <div class="stat-card primary">
+                <div class="stat-card-label">&#956;</div>
+                <div class="stat-card-value" id="res-mu">&#8212;</div>
+                <div class="stat-card-sub">log-mean</div>
+              </div>
+              <div class="stat-card primary">
+                <div class="stat-card-label">&#963;</div>
+                <div class="stat-card-value" id="res-sigma">&#8212;</div>
+                <div class="stat-card-sub">log-std dev</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-card-label">Mean</div>
+                <div class="stat-card-value" id="res-mean">&#8212;</div>
+                <div class="stat-card-sub">arithmetic</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-card-label">Median</div>
+                <div class="stat-card-value" id="res-median">&#8212;</div>
+                <div class="stat-card-sub">= geom. mean</div>
               </div>
             </div>
-            <div id="result-data-stats" style="display:none;"></div>
+            <div id="result-error"></div>
+            <div id="result-details">
+              <div class="stats-grid">
+                <div class="sg-item"><span class="sg-label">Mode</span><span class="sg-value" id="res-mode">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Std dev</span><span class="sg-value" id="res-sd">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Variance</span><span class="sg-value" id="res-variance">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">GSD</span><span class="sg-value" id="res-gsd">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">CV</span><span class="sg-value" id="res-cv">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Error factor</span><span class="sg-value" id="res-ef">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Skewness</span><span class="sg-value" id="res-skew">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Excess kurtosis</span><span class="sg-value" id="res-kurt">&#8212;</span></div>
+                <div class="sg-item"><span class="sg-label">Entropy</span><span class="sg-value" id="res-entropy">&#8212;</span></div>
+              </div>
+              <div class="pct-band">
+                <div class="pct-band-header">Percentiles</div>
+                <div class="pct-row">
+                  <div class="pct-cell"><div class="pct-p">5%</div><div class="pct-v" id="res-p5">&#8212;</div></div>
+                  <div class="pct-cell"><div class="pct-p">25%</div><div class="pct-v" id="res-p25">&#8212;</div></div>
+                  <div class="pct-cell is-median"><div class="pct-p">50%</div><div class="pct-v" id="res-p50">&#8212;</div></div>
+                  <div class="pct-cell"><div class="pct-p">75%</div><div class="pct-v" id="res-p75">&#8212;</div></div>
+                  <div class="pct-cell"><div class="pct-p">95%</div><div class="pct-v" id="res-p95">&#8212;</div></div>
+                </div>
+              </div>
+              <div id="result-data-stats" style="display:none;"></div>
+            </div>
+            <pre id="ln-output" style="display:none;"></pre>
           </div>
-          <pre id="ln-output" style="display:none;"></pre>
-        </div>
-      </details>
+        </details>
+      </div>
 
       <!-- Chart -->
-      <details id="chart-details" open>
-        <summary class="eq-summary">Distribution chart<span class="kvot-info-slot" data-info-key="sec:chart"></span></summary>
-        <div class="section-body" style="padding:0;overflow:hidden;">
-          <div id="chart" aria-label="Lognormal distribution chart"></div>
-        </div>
-      </details>
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:chart"></span>
+        <details id="chart-details" open>
+          <summary class="eq-summary">Distribution chart</summary>
+          <div class="section-body" style="padding:0;overflow:hidden;">
+            <div id="chart" aria-label="Lognormal distribution chart"></div>
+          </div>
+        </details>
+      </div>
 
       <!-- Settings. A section of their own because they govern the results,
            the chart and the comparison alike, not the results on their own. -->
-      <details id="settings-details">
-        <summary class="eq-summary">Display and chart settings<span class="kvot-info-slot" data-info-key="sec:settings"></span></summary>
-        <div class="section-body">
-          <div class="settings-body">
-            <div class="setting-field">
-              <div class="kvot-info-line"><label for="precisionSelect">Significant digits</label><span class="kvot-info-slot" data-info-key="set:digits"></span></div>
-              <select id="precisionSelect"><option>3</option><option selected>5</option><option>7</option><option>10</option></select>
-            </div>
-            <div class="setting-field">
-              <div class="kvot-info-line"><label for="unitInput">Optional unit</label><span class="kvot-info-slot" data-info-key="set:unit"></span></div>
-              <input id="unitInput" type="text" maxlength="20" placeholder="e.g. mg/L">
-            </div>
-            <div class="setting-field setting-check">
-              <div class="kvot-info-line"><label for="logViewToggle">log₁₀(x) view</label><span class="kvot-info-slot" data-info-key="set:logview"></span></div>
-              <input id="logViewToggle" type="checkbox" checked>
-            </div>
-            <div class="setting-field">
-              <div class="kvot-info-line"><label for="curveMode">Curves</label><span class="kvot-info-slot" data-info-key="set:curves"></span></div>
-              <select id="curveMode"><option value="both">PDF and CDF</option><option value="pdf">PDF only</option><option value="cdf">CDF only</option></select>
-            </div>
-            <div class="setting-field setting-check">
-              <div class="kvot-info-line"><label for="showRawData">Raw data</label><span class="kvot-info-slot" data-info-key="set:raw"></span></div>
-              <input id="showRawData" type="checkbox" checked>
-            </div>
-            <div class="setting-field">
-              <div class="kvot-info-line"><label for="chartMinPct">Chart minimum percentile</label><span class="kvot-info-slot" data-info-key="set:chartMin"></span></div>
-              <input id="chartMinPct" type="number" min="0.001" max="99.997" step="any" value="0.1">
-            </div>
-            <div class="setting-field">
-              <div class="kvot-info-line"><label for="chartMaxPct">Chart maximum percentile</label><span class="kvot-info-slot" data-info-key="set:chartMax"></span></div>
-              <input id="chartMaxPct" type="number" min="0.002" max="99.999" step="any" value="99.9">
-            </div>
-            <div class="setting-group">
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:settings"></span>
+        <details id="settings-details">
+          <summary class="eq-summary">Display and chart settings</summary>
+          <div class="section-body">
+            <div class="settings-body">
+              <div class="setting-field">
+                <div class="kvot-info-line"><label for="precisionSelect">Significant digits</label><span class="kvot-info-slot" data-info-key="set:digits"></span></div>
+                <select id="precisionSelect"><option>3</option><option selected>5</option><option>7</option><option>10</option></select>
+              </div>
+              <div class="setting-field">
+                <div class="kvot-info-line"><label for="unitInput">Optional unit</label><span class="kvot-info-slot" data-info-key="set:unit"></span></div>
+                <input id="unitInput" type="text" maxlength="20" placeholder="e.g. mg/L">
+              </div>
               <div class="setting-field setting-check">
-                <div class="kvot-info-line"><label for="shadeBand">Shaded band</label><span class="kvot-info-slot" data-info-key="set:band"></span></div>
-                <input id="shadeBand" type="checkbox" checked>
+                <div class="kvot-info-line"><label for="logViewToggle">log₁₀(x) view</label><span class="kvot-info-slot" data-info-key="set:logview"></span></div>
+                <input id="logViewToggle" type="checkbox" checked>
               </div>
               <div class="setting-field">
-                <div class="kvot-info-line"><label for="shadeLower">Shade from percentile</label><span class="kvot-info-slot" data-info-key="set:shadeFrom"></span></div>
-                <input id="shadeLower" type="number" min="0.001" max="99.998" step="any" value="5">
+                <div class="kvot-info-line"><label for="curveMode">Curves</label><span class="kvot-info-slot" data-info-key="set:curves"></span></div>
+                <select id="curveMode"><option value="both">PDF and CDF</option><option value="pdf">PDF only</option><option value="cdf">CDF only</option></select>
               </div>
-              <div class="setting-field">
-                <div class="kvot-info-line"><label for="shadeUpper">Shade to percentile</label><span class="kvot-info-slot" data-info-key="set:shadeTo"></span></div>
-                <input id="shadeUpper" type="number" min="0.002" max="99.999" step="any" value="95">
-              </div>
-            </div>
-            <div class="setting-group">
               <div class="setting-field setting-check">
-                <div class="kvot-info-line"><label for="referenceLine">Reference line</label><span class="kvot-info-slot" data-info-key="set:ref"></span></div>
-                <input id="referenceLine" type="checkbox" checked>
+                <div class="kvot-info-line"><label for="showRawData">Raw data</label><span class="kvot-info-slot" data-info-key="set:raw"></span></div>
+                <input id="showRawData" type="checkbox" checked>
               </div>
               <div class="setting-field">
-                <div class="kvot-info-line"><label for="referencePct">Reference-line percentile</label><span class="kvot-info-slot" data-info-key="set:refPct"></span></div>
-                <input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50">
+                <div class="kvot-info-line"><label for="chartMinPct">Chart minimum percentile</label><span class="kvot-info-slot" data-info-key="set:chartMin"></span></div>
+                <input id="chartMinPct" type="number" min="0.001" max="99.997" step="any" value="0.1">
               </div>
+              <div class="setting-field">
+                <div class="kvot-info-line"><label for="chartMaxPct">Chart maximum percentile</label><span class="kvot-info-slot" data-info-key="set:chartMax"></span></div>
+                <input id="chartMaxPct" type="number" min="0.002" max="99.999" step="any" value="99.9">
+              </div>
+              <div class="setting-group">
+                <div class="setting-field setting-check">
+                  <div class="kvot-info-line"><label for="shadeBand">Shaded band</label><span class="kvot-info-slot" data-info-key="set:band"></span></div>
+                  <input id="shadeBand" type="checkbox" checked>
+                </div>
+                <div class="setting-field">
+                  <div class="kvot-info-line"><label for="shadeLower">Shade from percentile</label><span class="kvot-info-slot" data-info-key="set:shadeFrom"></span></div>
+                  <input id="shadeLower" type="number" min="0.001" max="99.998" step="any" value="5">
+                </div>
+                <div class="setting-field">
+                  <div class="kvot-info-line"><label for="shadeUpper">Shade to percentile</label><span class="kvot-info-slot" data-info-key="set:shadeTo"></span></div>
+                  <input id="shadeUpper" type="number" min="0.002" max="99.999" step="any" value="95">
+                </div>
+              </div>
+              <div class="setting-group">
+                <div class="setting-field setting-check">
+                  <div class="kvot-info-line"><label for="referenceLine">Reference line</label><span class="kvot-info-slot" data-info-key="set:ref"></span></div>
+                  <input id="referenceLine" type="checkbox" checked>
+                </div>
+                <div class="setting-field">
+                  <div class="kvot-info-line"><label for="referencePct">Reference-line percentile</label><span class="kvot-info-slot" data-info-key="set:refPct"></span></div>
+                  <input id="referencePct" type="number" min="0.001" max="99.999" step="any" value="50">
+                </div>
+              </div>
+              <p class="setting-note">Significant digits apply to the results and the comparison, the unit only titles the chart’s x-axis, and the rest apply to the chart. Chart bounds set the x-axis range, which covers every distribution shown, and the shaded band and reference line must lie within it. The band, the reference line and the raw data can each be switched off, which is worth doing once several distributions overlap. The log₁₀(x) view plots log₁₀ x, where each step of 1 is a factor of ten, a lognormal is a symmetric bell and distributions of different size can be read against each other — untick it for a linear x-axis.</p>
+              <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
             </div>
-            <p class="setting-note">Significant digits apply to the results and the comparison, the unit only titles the chart’s x-axis, and the rest apply to the chart. Chart bounds set the x-axis range, which covers every distribution shown, and the shaded band and reference line must lie within it. The band, the reference line and the raw data can each be switched off, which is worth doing once several distributions overlap. The log₁₀(x) view plots log₁₀ x, where each step of 1 is a factor of ten, a lognormal is a symmetric bell and distributions of different size can be read against each other — untick it for a linear x-axis.</p>
-            <div id="chartSettingsWarning" class="chart-settings-warning" role="alert" aria-live="assertive"></div>
           </div>
-        </div>
-      </details>
+        </details>
+      </div>
 
       <!-- Comparison across distributions; hidden while there is only one -->
-      <details id="compare-details" open style="display:none;">
-        <summary class="eq-summary">Comparison<span class="kvot-info-slot" data-info-key="sec:compare"></span></summary>
-        <div class="section-body">
-          <div class="cmp-scroll"><table id="compare-table" class="cmp-table"></table></div>
-          <button type="button" class="cmp-csv" data-on-click="downloadComparison">Download as CSV</button>
-        </div>
-      </details>
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:compare"></span>
+        <details id="compare-details" open style="display:none;">
+          <summary class="eq-summary">Comparison</summary>
+          <div class="section-body">
+            <div class="cmp-scroll"><table id="compare-table" class="cmp-table"></table></div>
+            <button type="button" class="cmp-csv" data-on-click="downloadComparison">Download as CSV</button>
+          </div>
+        </details>
+      </div>
 
       <!-- Equations -->
-      <details id="equations-details">
-        <summary class="eq-summary">Equations &amp; formulas<span class="kvot-info-slot" data-info-key="sec:equations"></span></summary>
-        <div class="section-body">
-          <div class="eq-scroll">
-          <table class="eq-table">
-            <tr class="eq-section" id="eq-logspace"><td colspan="2">Log-space parameters</td></tr>
-            <tr><td>\(\mu =\)</td><td>\(\ln\mu_g = \ln\bigl(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2}\bigr)\)</td></tr>
-            <tr><td>\(\sigma =\)</td><td>\(\ln\sigma_g = \sqrt{\ln\bigl(1+\sigma_a^2/\mu_a^2\bigr)}\)</td></tr>
-            <tr class="eq-section" id="eq-central"><td colspan="2">Central tendency</td></tr>
-            <tr><td>\(\mu_g =\)</td><td>\(e^\mu\quad\) (geometric mean = median)</td></tr>
-            <tr><td>\(\mu_a =\)</td><td>\(e^{\mu+\sigma^2/2}\)</td></tr>
-            <tr><td>mode \(=\)</td><td>\(e^{\mu-\sigma^2}\)</td></tr>
-            <tr class="eq-section" id="eq-spread"><td colspan="2">Spread</td></tr>
-            <tr><td>\(\sigma_g =\)</td><td>\(e^\sigma\)</td></tr>
-            <tr><td>\(\sigma_a =\)</td><td>\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
-            <tr><td>\(\mathrm{CV} =\)</td><td>\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
-            <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (central 90% coverage)</td></tr>
-            <tr class="eq-section"><td colspan="2">Higher moments</td></tr>
-            <tr><td>skewness \(=\)</td><td>\(\mathrm{CV}^3+3\,\mathrm{CV}\)</td></tr>
-            <tr><td>excess kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
-            <tr><td>entropy \(=\)</td><td>\(\tfrac{1}{2}(1+\ln 2\pi\sigma^2)+\mu\)</td></tr>
-            <tr class="eq-section" id="eq-percentile"><td colspan="2">Percentile inversion</td></tr>
-            <tr><td>\(x_p =\)</td><td>\(\exp\bigl(\mu + \sigma\,\Phi^{-1}(p)\bigr)\)</td></tr>
-          </table>
+      <div class="kvot-info-sec">
+        <span class="kvot-info-slot" data-info-key="sec:equations"></span>
+        <details id="equations-details">
+          <summary class="eq-summary">Equations &amp; formulas</summary>
+          <div class="section-body">
+            <div class="eq-scroll">
+            <table class="eq-table">
+              <tr class="eq-section" id="eq-logspace"><td colspan="2">Log-space parameters</td></tr>
+              <tr><td>\(\mu =\)</td><td>\(\ln\mu_g = \ln\bigl(\mu_a^2/\sqrt{\mu_a^2+\sigma_a^2}\bigr)\)</td></tr>
+              <tr><td>\(\sigma =\)</td><td>\(\ln\sigma_g = \sqrt{\ln\bigl(1+\sigma_a^2/\mu_a^2\bigr)}\)</td></tr>
+              <tr class="eq-section" id="eq-central"><td colspan="2">Central tendency</td></tr>
+              <tr><td>\(\mu_g =\)</td><td>\(e^\mu\quad\) (geometric mean = median)</td></tr>
+              <tr><td>\(\mu_a =\)</td><td>\(e^{\mu+\sigma^2/2}\)</td></tr>
+              <tr><td>mode \(=\)</td><td>\(e^{\mu-\sigma^2}\)</td></tr>
+              <tr class="eq-section" id="eq-spread"><td colspan="2">Spread</td></tr>
+              <tr><td>\(\sigma_g =\)</td><td>\(e^\sigma\)</td></tr>
+              <tr><td>\(\sigma_a =\)</td><td>\(\mu_a\sqrt{e^{\sigma^2}-1}\)</td></tr>
+              <tr><td>\(\mathrm{CV} =\)</td><td>\(\sqrt{e^{\sigma^2}-1}\)</td></tr>
+              <tr><td>EF \(=\)</td><td>\(e^{1.645\,\sigma}\) (central 90% coverage)</td></tr>
+              <tr class="eq-section"><td colspan="2">Higher moments</td></tr>
+              <tr><td>skewness \(=\)</td><td>\(\mathrm{CV}^3+3\,\mathrm{CV}\)</td></tr>
+              <tr><td>excess kurtosis \(=\)</td><td>\(\mathrm{CV}^8+6\,\mathrm{CV}^6+15\,\mathrm{CV}^4+16\,\mathrm{CV}^2\)</td></tr>
+              <tr><td>entropy \(=\)</td><td>\(\tfrac{1}{2}(1+\ln 2\pi\sigma^2)+\mu\)</td></tr>
+              <tr class="eq-section" id="eq-percentile"><td colspan="2">Percentile inversion</td></tr>
+              <tr><td>\(x_p =\)</td><td>\(\exp\bigl(\mu + \sigma\,\Phi^{-1}(p)\bigr)\)</td></tr>
+            </table>
+            </div>
           </div>
-        </div>
-      </details>
+        </details>
+      </div>
 
       <!-- Template panels (hidden; cloned into metric panels on selection) -->
       <div id="tabs-mu" style="display:none;"><p class="tab-desc">\(\mu\) &#8712; (&#8722;&#8734;, +&#8734;) &mdash; mean of the natural logarithm</p><input class="arg" data-field="mu" type="number" step="any" inputmode="decimal" value="0" aria-label="Mean of the natural logarithm"></div>
@@ -548,7 +564,7 @@
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
   <script src="./resources/js/site.js?v=20260925"></script>
-  <script src="./resources/js/kvot-info.js?v=20260926"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
   <script src="./resources/js/logn-info.js?v=20260930"></script>
   <script>
     KVOT.renderHeader('Lognormal Conversions');

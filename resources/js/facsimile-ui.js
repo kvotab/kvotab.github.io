@@ -1834,7 +1834,8 @@
       const stateRows = [];
       for (let i = 0; i < src.n; i++) stateRows.push([src.t[i], ...spCols.map((col) => col[i])]);
       xlsx.writeData(stateRows, 'STATES', { header: ['TIME', ...r.species] });
-      await xlsx.save();
+      // save() only builds the file; handing it over is the page's to do.
+      downloadBlob(await xlsx.save(), `${fileStem()}.xlsx`);
     } catch (e) {
       reportFailure('downloadXlsx', e, { userMessage: 'The Excel file could not be written' });
     }

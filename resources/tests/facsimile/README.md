@@ -205,6 +205,11 @@ choosing it changes the rows, that the times in the table are the ones the
 model asked for and in order, and that the CSV button stops saying "all
 steps" while it is selected -- a button that named one thing and wrote
 another would be the kind of quiet wrongness nothing else here would catch.
+Download Excel is pressed and its file caught on the disk (downloads go to a
+temporary folder): the workbook has the SETTINGS, DATA and STATES sheets and a
+row for every solver step under the headings. Until 2026-10-04 the button
+built the workbook and never handed it over, so it did nothing at all, and
+nothing here pressed it.
 
 The lower end of a log time axis is checked there too. Left to the data it
 starts at the first stored point, a fraction of a second on this model, so
@@ -267,7 +272,13 @@ slot without a topic and no "Read more in Help" link without a heading to land
 on, that there are at least as many buttons as slots in the markup and one on
 every case setting (those rows are made after each compile, and so are their
 topics), and that the (i)s of the panel are in one line down its right-hand
-edge. Then a panel is opened, and closed the three ways: the same (i), its ×,
+edge. Then that nothing that is a control is inside a `<summary>`, by Chrome's
+own rule (a button, a link, a field, a label, anything with a tabindex):
+Chrome reports each one in the console as `An interactive element was found
+within a <summary> element`, and the five headings' (i)s were just that until
+they moved out beside their summaries (2026-10-04). Each of them still has to
+be centred on its heading's line and clear of its title. Then a panel is
+opened, and closed the three ways: the same (i), its ×,
 and Escape sent through the browser's own input. That Escape is safe here: it
 is the page's own keydown handler that closes the panel, not a dialog's close
 request, which is what hangs headless Chrome over a `<dialog>`. A topic that
