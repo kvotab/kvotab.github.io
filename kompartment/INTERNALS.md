@@ -6005,9 +6005,19 @@ written into the stylesheet, since the header wraps on a narrow window.
 
 **Where the (i)s are.** A row's is after its control, in a third grid column
 (`.field.has-info`, built by `infoRow` in `renderSidebar`), so every (i) down the
-panel is on one right-hand edge; a section heading's is the last thing in its
+panel is on one right-hand edge; a section heading's is drawn at the end of its
 summary (`section({info})` in `parts.js`), pushed right in the flex heading of
-`#sb-top` unless a count has already taken the push. The tree's is beside its
+`#sb-top` unless a count has already taken the push. Drawn there, not put
+there: a button inside a `<summary>` is a control inside a control, which
+keyboards and screen readers do not all reach, and Chrome reports each one in
+the console (`An interactive element was found within a <summary> element`).
+So `framed` puts the (i) in a bar before the `<details>`, in a frame holding the
+two, and the summary keeps an empty room where it stood (`toolsRoom`), which a
+ResizeObserver keeps as big as the bar while the bar is drawn over it; the
+panel takes `frameOf(section)`. The Information card's buttons go the same way
+(`section({ tools: true })`, `toolsOf`), with a hidden copy of the first button
+in the room to give it the baseline the title lines up with, and so does
+Advanced settings' (i). The tree's is beside its
 search box, the Information view's is handed in through `hooks.info`, and a
 dialog's is `openModal({ info })`, beside the close button. Their topics are in
 `src/ui/panelinfo.js` (the sections and the tree, which says what is above it

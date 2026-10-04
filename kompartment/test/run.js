@@ -25247,7 +25247,7 @@ test('a hyphenated property reaches the element as an attribute', async () => {
 	// one learned the rule -- so every accessible name in the left panel, the
 	// panel this fix was for, was still a plain field on the element.
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	assert(/import \{ section as part, el \} from '\.\/parts\.js';/.test(app),
+	assert(/import \{ section as part, el(, \w+)* \} from '\.\/parts\.js';/.test(app),
 		'the shell does not take el from parts.js');
 	assert(!/^const el = /m.test(app), 'the shell still has a copy of el');
 	assert(/n\.setAttribute\(k, v === true \? '' : String\(v\)\)/.test(parts),
@@ -38141,14 +38141,27 @@ test('the left panel’s sections, the tree, the Information view and every row 
 		'the (i) is not after the control');
 	assert(/\.field\.has-info \{ grid-template-columns: minmax\(0, var\(--sim-name\)\) minmax\(0, 1fr\) 17px; \}/.test(css), 'no column for the (i)');
 	// A heading is a flex row in #sb-top: the (i) is pushed right, or follows
-	// the count that was.
-	assert(/\.panel-section > summary > \.info-btn \{ margin-left: auto; align-self: center; \}\n\.panel-section:not\(\[open\]\) > summary > \.panel-section-badge \+ \.info-btn \{ margin-left: 6px; \}/.test(css),
+	// the count that was -- its room in the heading is, the (i) being drawn
+	// over it.
+	assert(/\.panel-section > summary > \.panel-tools-room \{ margin-left: auto; align-self: center; \}\n\.panel-section:not\(\[open\]\) > summary > \.panel-section-badge \+ \.panel-tools-room \{ margin-left: 6px; \}/.test(css),
 		'a section’s (i) is not on the right-hand edge');
+	// And not inside the <summary>, where a button is a control inside a
+	// control and Chrome reports it: the summary keeps a room for it, and the
+	// (i) -- or the Information card's buttons -- is in a bar before the
+	// <details>, in a frame the panel takes instead of the section.
+	assert(/info \|\| tools \? toolsRoom\(\) : null\)\);\n\tif \(info \|\| tools\) framed\(box, info\);/.test(parts),
+		'a section’s (i) is in its summary again');
+	assert(/sb\.append\(frameOf\(renderModelGroup\(raw\)\)\);/.test(app) && /sb\.append\(frameOf\(group\)\);/.test(app),
+		'the left panel takes a section rather than its frame, and loses the (i)');
+	assert(/el\('summary', \{\}, el\('span', \{\}, 'Advanced settings'\), toolsRoom\(\)\),/.test(app)
+		&& /group\.append\(framed\(fold, info\('advanced'\)\)\);/.test(app), 'Advanced settings has its (i) in its summary again');
+	assert(/pane\.append\(frameOf\(box\)\);\n\t\tbar = toolsOf\(box\);/.test(info) && !/bar = box\.querySelector\('summary'\)/.test(info),
+		'the Information card’s buttons are in its summary again');
 	assert(!/const head = \(/.test(app), 'the (i) before the name is back');
 	// The Model and Simulation sections, the tree and the Information view.
 	assert(/section\('model', 'Model', undefined, '', null,\n\t+infoButton\('panel:model', \(\) => panelTopic\('model'\)\)\);/.test(app), 'Model has no (i)');
 	assert(/'', null, infoButton\('panel:simulation', \(\) => panelTopic\('simulation'\)\)\);/.test(app), 'Simulation has no (i)');
-	assert(/export function section\(\{\n\tid = '', title, badge = '', badgeTitle = '', open = true, onToggle = null, info = null,\n\}\)/.test(parts),
+	assert(/export function section\(\{\n\tid = '', title, badge = '', badgeTitle = '', open = true, onToggle = null, info = null, tools = false,\n\}\)/.test(parts),
 		'a section cannot take an (i)');
 	assert(/el\('div', \{ className: 'search-row' \}, input,\n\t+infoButton\('panel:tree', \(\) => panelTopic\('tree', \{\n\t+systems: /.test(app),
 		'the tree has no (i) beside its search');
@@ -38306,8 +38319,10 @@ test('Information pops out into a window of its own and back, and its arrows sit
 	// Every section's (i) is pushed right by an auto margin, and the arrows
 	// are too; two auto margins in one row share the free space, so the
 	// arrows sat halfway along until the (i) after them gave its margin up,
-	// by a rule that outranks `.panel-section > summary > .info-btn`.
-	assert(/^\.panel-section > summary > \.info-nav \+ \.info-btn \{ margin-left: 4px;/m.test(css),
+	// by a rule that outranked `.panel-section > summary > .info-btn`. They are
+	// all in the bar beside the title bar's summary now (`framed` in
+	// ../src/ui/parts.js), where the (i) keeps its 4px after the arrows.
+	assert(/^\.panel-tools > \.info-nav \+ \.info-btn \{ margin-left: 4px;/m.test(css),
 		'the (i) after the arrows keeps its auto margin, and the arrows float away from it');
 	assert(!/^\.info-nav \+ \.info-btn \{/m.test(css), 'the weaker rule is back, and loses to the auto margin');
 	// Out by a box with an arrow leaving it, back by the same box with the

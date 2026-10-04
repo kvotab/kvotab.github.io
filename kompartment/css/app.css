@@ -505,7 +505,8 @@ main > #workspace { grid-column: 3; }
    boundary when the settings scroll rather than sliding up with them -- and
    with the section's 8px padding and 10px margin still under it the line sat
    26px below Simulation where Model's sits 8px below its own. */
-#sb-top > .panel-section:last-child {
+#sb-top > .panel-section:last-child,
+#sb-top > .panel-frame:last-child > .panel-section {
 	margin-bottom: 0;
 	padding-bottom: 0;
 }
@@ -552,7 +553,23 @@ main > #workspace { grid-column: 3; }
 	padding-bottom: 8px;
 }
 
-.panel-section:last-child { border-bottom: none; }
+/* The last in its panel; a framed section (see below) is in its frame's place. */
+:not(.panel-frame) > .panel-section:last-child,
+.panel-frame:last-child > .panel-section { border-bottom: none; }
+
+/* A heading's controls -- a section's (i), the Information card's buttons --
+   are not in its <summary>: a button inside one is a control inside a
+   control, which keyboards and screen readers do not all reach, and Chrome
+   reports each one. They go in a bar before the <details>, in a frame
+   holding the two, drawn over the room the summary keeps where they stood,
+   as big as the bar (`framed` in ../src/ui/parts.js). The room takes the
+   controls' place in the summary's rules below; the bar lays them out as
+   the summary did. */
+.panel-frame { position: relative; }
+.panel-tools { position: absolute; z-index: 1; display: flex; align-items: baseline; gap: 6px; }
+.panel-tools[hidden] { display: none; }
+.panel-tools-room { flex: none; }
+.panel-tools-strut { flex: none; visibility: hidden; border: 1px solid transparent; }
 
 .panel-section > summary {
 	display: flex;
@@ -630,8 +647,8 @@ main > #workspace { grid-column: 3; }
    -- in a closed section only: an open one hides its count, which is still
    the (i)'s neighbour in the markup, and the (i) came to rest beside the
    heading. In a heading on the grid, it is the fourth column's. */
-.panel-section > summary > .info-btn { margin-left: auto; align-self: center; }
-.panel-section:not([open]) > summary > .panel-section-badge + .info-btn { margin-left: 6px; }
+.panel-section > summary > .panel-tools-room { margin-left: auto; align-self: center; }
+.panel-section:not([open]) > summary > .panel-section-badge + .panel-tools-room { margin-left: 6px; }
 #sidebar > .panel-section > summary > .info-btn {
 	grid-column: 4;
 	justify-self: end;
@@ -6041,25 +6058,31 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
    the spacing it wears everywhere else. It is the bar and nothing more: the
    body is its sibling, so that the body can be the flex item that takes the
    rest of the pane and scrolls in it. */
-.rail-info > .panel-section {
+.rail-info > .panel-frame { flex: 0 0 auto; }
+
+.rail-info > .panel-frame > .panel-section {
 	margin-bottom: 0;
 	border-bottom: none;
 	padding-bottom: 0;
-	flex: 0 0 auto;
 }
 
-.rail-info > .panel-section > summary {
+.rail-info > .panel-frame > .panel-section > summary {
 	margin-bottom: 0;
 	padding: 5px 9px;
 	background: var(--surface-0);
 	border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
 }
 
-.rail-info > .panel-section:not([open]) > summary {
+.rail-info > .panel-frame > .panel-section:not([open]) > summary {
 	border-radius: calc(var(--radius) - 1px);
 }
 
-.rail-info > .panel-section > summary > .panel-section-title { color: var(--text-secondary); }
+.rail-info > .panel-frame > .panel-section > summary > .panel-section-title { color: var(--text-secondary); }
+
+/* The card's room lines up with the title by the baseline of the first
+   button's text, as the buttons did: a hidden copy of that button inside it
+   gives it the baseline (./info.js). */
+.rail-info > .panel-frame > .panel-section > summary > .panel-tools-room { align-self: baseline; display: flex; align-items: baseline; }
 
 .info-body {
 	display: grid;
@@ -6088,7 +6111,7 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
    .info-btn`. Two auto margins in one row share the free space, so the arrows
    came to rest halfway along: 42px short of the (i) with nothing selected, and
    23px further right once Edit… came in beside them. */
-.panel-section > summary > .info-nav + .info-btn { margin-left: 4px; align-self: center; }
+.panel-tools > .info-nav + .info-btn { margin-left: 4px; align-self: center; }
 
 /* Out into a window of its own, at the end of the title bar after the (i),
    and drawn as the (i) is: the same 17-pixel box, no border, the muted
@@ -8890,7 +8913,7 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
    rather than laid out, because a summary that is made a flex row loses the
    disclosure triangle the browser draws for it. */
 .sim-opts > summary { position: relative; padding-right: 20px; }
-.sim-opts > summary .info-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+.sim-opts > summary .panel-tools-room { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
 .sim-opts[open] > summary { margin-bottom: 2px; }
 .sim-solver-opts { display: flex; flex-direction: column; gap: 2px; }
 /* Between the three switches every solver honours and the chosen solver's

@@ -37,7 +37,7 @@ import { GraphEditor } from './graph.js';
 import {
 	renderInspector,
 } from './inspector.js';
-import { section as part, el } from './parts.js';
+import { section as part, el, frameOf, framed, toolsRoom } from './parts.js';
 import { blockIcon, sampleMark, popIcon } from './icons.js';
 import { openMenu, closeMenu, menuIsOpen } from './menu.js';
 import { openModal, refreshModal, closeAllModals, modalIsOpen } from './modal.js';
@@ -143,7 +143,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-03';
+const BUILD = '2026-10-04';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -6620,7 +6620,7 @@ function renderSidebar() {
 	const caret = sbCaret();
 	sb.replaceChildren();
 
-	sb.append(renderModelGroup(raw));
+	sb.append(frameOf(renderModelGroup(raw)));
 
 	const sim = raw.simulation ?? {};
 	// The two facts worth seeing without opening it: how long the run is, and
@@ -7081,14 +7081,16 @@ function renderSidebar() {
 			// `Advanced settings`, as facsimile.html and rtm.html call theirs: the
 			// same settings go by the same names in all three.
 			const fold = el('details', { className: 'sim-opts', open: sectionOpen('solver-opts', false) },
-				el('summary', {}, el('span', {}, 'Advanced settings'), info('advanced')),
+				el('summary', {}, el('span', {}, 'Advanced settings'), toolsRoom()),
 				box);
 			fold.addEventListener('toggle', () => { state.sbSections['solver-opts'] = fold.open; });
-			group.append(fold);
+			// Its (i) beside the summary, drawn over the room kept for it there,
+			// rather than in it: see `framed` in ./parts.js.
+			group.append(framed(fold, info('advanced')));
 		}
 	}
 
-	sb.append(group);
+	sb.append(frameOf(group));
 
 	// No list of blocks below this. The panel used to carry every compartment,
 	// transfer, parameter and expression in the model with an editable value

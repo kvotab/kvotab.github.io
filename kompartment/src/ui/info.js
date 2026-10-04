@@ -29,7 +29,7 @@ import { DEFAULT_SIMULATION, hasDydt } from '../domain/project.js';
 import { SOLVER_INFO, solverLabel } from '../ode/solvers.js';
 import { symbolNodes } from './symbol.js';
 import { hasSymbol, symbolText } from '../domain/symbol.js';
-import { section as part } from './parts.js';
+import { section as part, frameOf, toolsOf, roomOf } from './parts.js';
 import { startValueLine, markStartValue, refreshStartValue } from './startvalue.js';
 import { el } from './parts.js';
 
@@ -127,6 +127,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// no fold to make, and the buttons go where the caller says.
 	const windowed = !!hooks.bar;
 	let bar = hooks.bar ?? null;
+	let room = null;
 	if (windowed) {
 		bar.replaceChildren();
 	} else {
@@ -143,10 +144,15 @@ export function renderInfo(host, project, selection, hooks = {}) {
 			// was closed when the view was built fills it: it used to come back
 			// empty, since the body is only written when the card is open.
 			onToggle: (on) => { open = on; renderInfo(pane, project, selection, hooks); },
+			// Its buttons go in a bar beside the title bar's <summary>, drawn
+			// over the room it keeps for them, not in it: see `framed` in
+			// ./parts.js.
+			tools: true,
 		});
 		pane.classList.toggle('is-closed', !open);
-		pane.append(box);
-		bar = box.querySelector('summary');
+		pane.append(frameOf(box));
+		bar = toolsOf(box);
+		room = roomOf(box);
 	}
 
 	// Back and forward live in the title bar, not in the body: they are the
@@ -212,6 +218,13 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		arrow('→', 'Forward again', hooks.canForward, hooks.onForward),
 	);
 	bar?.append(nav);
+	// The title lines up with these buttons by the baseline of their text,
+	// which the empty room the summary keeps for them does not have: a hidden
+	// copy of the first one gives it that baseline, so the title stays put.
+	if (room && nav.firstElementChild) {
+		const first = nav.firstElementChild;
+		room.append(el('span', { className: `${first.className} panel-tools-strut`, 'aria-hidden': 'true' }, first.textContent));
+	}
 	// What this view is, behind an (i) at the end of its title bar, where the
 	// other sections of the panel keep theirs. See ./infopanel.js. In a window
 	// the window has its own.
