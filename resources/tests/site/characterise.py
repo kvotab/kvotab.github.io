@@ -949,8 +949,9 @@ ${p('Styrelseledamot')}
 
         # The tool's own button: the page's header and footer put away in
         # place (the frame is not reloaded) and the room for them given back;
-        # in the full window the kvot mark and the site's light/dark switch in
-        # the tool's bar, the switch the page's; the choice kept; and back.
+        # in the full window the kvot mark, in place of the tool's own, and the
+        # site's light/dark switch in the tool's bar, the switch the page's;
+        # the choice kept; and back.
         ('kompartment.fullWindow', """(async () => {
           const f = document.getElementById('komp-frame'), d = f.contentDocument;
           const src = f.getAttribute('src');
@@ -963,6 +964,7 @@ ${p('Styrelseledamot')}
               header: shown(document, 'body > header'), footer: shown(document, 'body > footer'),
               appFillsWindow: Math.abs(app.top) < 2 && Math.abs(app.bottom - window.innerHeight) < 2,
               mark: shown(d, '#app > header .kvot-home'), themeSwitch: shown(d, '#app > header .kvot-theme'),
+              toolMark: shown(d, '#app > header .brand-mark'),
               pressed: d.querySelector('#app > header .kvot-full').getAttribute('aria-pressed'),
               kept: localStorage.getItem('kompartment.full')
             };

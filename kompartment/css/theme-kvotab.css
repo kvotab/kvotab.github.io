@@ -277,8 +277,8 @@
 /* The page's full window, from inside (../src/ui/sitechrome.js): a button at
    the end of the editor's bar and of the running app's. In the full window
    the page's header and footer are away, so the bar also carries what they
-   did: the kvot mark, first, to the site's home page, set off from the tool's
-   own mark by a line; and the site's light/dark switch, beside the button. */
+   did: the kvot mark, first, to the site's home page, set off by a line from
+   the title after it; and the site's light/dark switch, beside the button. */
 :root[data-chrome="kvotab"] .kvot-full,
 :root[data-chrome="kvotab"] .kvot-theme {
 	display: inline-flex;
@@ -300,3 +300,9 @@
 :root[data-chrome="kvotab"] .kvot-home:hover img { transform: scale(1.08); }
 :root[data-chrome="kvotab"]:not([data-chrome-full]) .kvot-home,
 :root[data-chrome="kvotab"]:not([data-chrome-full]) .kvot-theme { display: none; }
+
+/* And there the kvot mark takes the place of the tool's own: two marks side
+   by side in the corner read as one muddled picture. Which program this is,
+   the window's tab still says with the same icon, and the editor's bar then
+   starts as the running app's does, with the kvot mark and a title. */
+:root[data-chrome="kvotab"][data-chrome-full] .brand-mark { display: none; }

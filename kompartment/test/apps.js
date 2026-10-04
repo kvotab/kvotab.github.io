@@ -867,6 +867,8 @@ test('the site page’s full window puts its header and footer away in place, as
 	const css = readFileSync(new URL('../css/theme-kvotab.css', import.meta.url), 'utf8');
 	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) body \{/.test(css), 'the room is kept in the full window');
 	assert(/:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-home,\n:root\[data-chrome="kvotab"\]:not\(\[data-chrome-full\]\) \.kvot-theme \{ display: none; \}/.test(css), 'the mark and the switch show outside the full window');
+	// There the kvot mark takes the place of the tool's own rather than sitting beside it.
+	assert(/\n:root\[data-chrome="kvotab"\]\[data-chrome-full\] \.brand-mark \{ display: none; \}/.test(css), 'the tool’s mark beside the kvot mark in the full window');
 	// The home page in a new tab, as the footer's kvotab.se: the model lives in this page.
 	assert(/href: '\.\.\/index\.html', target: '_blank', rel: 'noopener'/.test(chrome), 'the mark navigates away from the model');
 	// Both bars: the editor's and the running app's.
