@@ -3101,8 +3101,8 @@ one it has to fight.
 
 #### What happened to the saturation band
 
-A compartment used to carry a `lower-saturation` and an `upper-saturation`
-band. They are gone, because only `ros23` could
+A compartment used to carry a lower and an upper saturation band. They are
+gone, because only `ros23` could
 honour them: `ndf` refused a model that set one and `dp45` would stall on
 it, so a band meant three different things depending on the solver — which is
 not a feature, it is a trap. What an imported band becomes is in
@@ -4066,10 +4066,9 @@ are decompressed, so a damaged result file in an assessment's `simulation/`
 folder no longer fails the import of the model beside it — and the reader
 stops at 256 MB of decompressed output for the whole archive, not per entry.
 
-A compartment's `<differential-equation>` — Ecolego's dy/dt column — comes
-across as its `dydt` term, at the block level and per index; see *An explicit
-dy/dt term*. Ecolego leaves the element out of an entry that has no term, and
-an empty one is read as none. It used to be dropped with a warning.
+A compartment's dy/dt column in Ecolego comes across as its `dydt` term, at
+the block level and per index; see *An explicit dy/dt term*. An entry with no
+term, or an empty one, arrives with none.
 
 **An imported model arrives knowing what it is.** It used to arrive with an
 empty description and a name of `model`, and a safety assessment of fifteen
@@ -4144,7 +4143,7 @@ the wrong answer.
 
 The importer has been run against every Ecolego file on this machine — 211 of
 them, 162 `.eco` projects and 49 `.eas` assessments. **136 import**; the other
-75 are the older Ecolego 4/5 `<sheet>` format and are refused with an
+75 are in the older format of Ecolego 4 and 5, and are refused with an
 explanation. Of the 136, **59 build and run** as they stand. See
 [INTERNALS.md](INTERNALS.md) for the full breakdown of what stops the rest.
 
@@ -4162,8 +4161,8 @@ and is told so when that turns the floor off: of the twelve real assessments
 tested against, eleven have it on and one has it off. See
 [Keeping a compartment non-negative](#keeping-a-compartment-non-negative).
 
-**A compartment's saturation band** — Ecolego's `lower-saturation` and
-`upper-saturation` — is mapped where it can be. A floor of zero with no
+**A compartment's saturation band** — Ecolego's lower and upper saturation
+— is mapped where it can be. A floor of zero with no
 ceiling says exactly what **cannot go negative** says, so it crosses silently;
 a negative floor is the file saying that compartment may go below zero, and
 crosses just as cleanly the other way. A real band — a positive floor, or a
@@ -4173,29 +4172,25 @@ give you a model that runs and is not the one in the file. Ecolego's own
 models express a cap as a rate term, a transfer whose rate falls to zero as the
 compartment fills, which is what this tool asks for too.
 
-**Enabled** is Ecolego's own switch: a block's `<enabled>false</enabled>`
-arrives as `"enabled": false`, in the model and out of the run. A sub-system
+**Enabled** is Ecolego's own switch: a block switched off there arrives as
+`"enabled": false`, in the model and out of the run. A sub-system
 switched off in the file arrives switched off as a whole, in
 `disabled_systems`, rather than as its blocks switched off one by one. See
 [Disabling a block](#disabling-a-block).
 
-**When results are saved.** Ecolego's three output modes, which its files carry
-in `<output-options>`, are three of the choices under *Time spacing*:
+**When results are saved.** Ecolego's three output modes are three of the
+choices under *Time spacing*:
 
-- *Produce specified output only* is **Several series…** — Ecolego's `TimeSeriesList`
+- *Produce specified output only* is **Several series…**, Ecolego's list of time series
 - *Produce no additional output*, Ecolego's default, is **The solver's own points**
 - *Produce additional output* is **Series and the solver's points**
 
-`EOutputMode` in Ecolego's `JavaSimulatorNextGeneration` is where they are
-decided. A logarithmic series from a start of zero begins at 1 in Ecolego, and
-here at a millionth of the end time. See
-[When results are saved](#when-results-are-saved).
+A logarithmic series from a start of zero begins at 1 in Ecolego, and here at
+a millionth of the end time. See [When results are saved](#when-results-are-saved).
 
-**The solver.** A project file names its solver by Ecolego's key, which its
-solver menu shows under a shorter name. Four arrive as themselves: NDF
-(`java-ode15s`) as ndf, BDF (`java-ode15s-BDF`) as ndf with **BDF formulas**
-on, Rosenbrock (`java-ode23s`) as ros23 and DOPRI45 (`java-ode45`) as dp45. The
-rest arrive as the nearest solver here — RADAU5 as ndf, TR-BDF2 and
+**The solver.** Four of Ecolego's solvers arrive as themselves: NDF as ndf,
+BDF as ndf with **BDF formulas** on, Rosenbrock as ros23 and DOPRI45 as dp45.
+The rest arrive as the nearest solver here — RADAU5 as ndf, TR-BDF2 and
 Trapezoidal as ros23, the explicit ones (BOSH23, Adams and the fixed-step rk1
 to rk5) as dp45 — and the import report says so. See [Solvers](#solvers).
 
@@ -4222,16 +4217,7 @@ this tool did, from a model that set it per index, which a run here now
 refuses rather than ignores.
 
 **Endpoints.** A project file carries the list of blocks whose results are
-kept:
-
-```xml
-<outputs>
-  <output id="NearField&#46;waste_domain_length"/>
-  ...
-</outputs>
-```
-
-Ecolego's run writes a series for those and for nothing else, which is why an
+kept. Ecolego's run writes a series for those and for nothing else, which is why an
 Ecolego result file of a three-thousand-block model holds two groups: somebody
 decided what was worth keeping. The list arrives as `simulation.endpoints`,
 which is what the endpoint trees open on, and decides nothing about the run
@@ -4273,8 +4259,8 @@ the result browser at kvotab.se reads both.
 - Ecolego keeps a **distribution** per entry too — a sorption coefficient has
   one per nuclide per material — and an imported model arrives with them, in
   the Distribution column of *Values per index*: model B carries 644.
-- Ecolego's probabilistic settings, `no-simulations`, `sampling` and `seed`,
-  arrive with the model — 1,000 realisations, Latin hypercube and a seed, in
+- Ecolego's probabilistic settings — the number of simulations, the sampling
+  and the seed — arrive with the model — 1,000 realisations, Latin hypercube and a seed, in
   every assessment model tested against. Reading them does not make **Run**
   probabilistic.
 
@@ -4374,9 +4360,8 @@ own way:
   begins far below it. An even grid is Ecolego's linear series, and a list of
   series goes as it is.
 - **The solver**: ndf, ros23 and dp45 go out as Ecolego's NDF, Rosenbrock and
-  DOPRI45 (`java-ode15s`, `java-ode23s` and `java-ode45` in the file) and come
-  back as themselves, and so does ndf with **BDF formulas** on, as Ecolego's
-  BDF (`java-ode15s-BDF`). The rest go out as the nearest Ecolego has —
+  DOPRI45 and come back as themselves, and so does ndf with **BDF formulas**
+  on, as Ecolego's BDF. The rest go out as the nearest Ecolego has —
   radau5 as RADAU5, trbdf2 as TR-BDF2 — and the report says which; read back
   here, those arrive as ndf or ros23.
 - **Equations** are written in Ecolego's spelling wherever this tool's
@@ -4867,9 +4852,9 @@ the chain, its other parts with it. A copy of the transport is a transport; a
 Begin copied on its own is a compartment.
 
 **Importing** an `.eco` project brings its transport sub-systems across with
-their parts — `transport-begin`, `transport-end`, `transport-number`,
-`transport-element-counter` and `transport-operation`, an operation with one
-`<argument>` read at a point and one with two over a stretch. None of the 87
+their parts — Begin and End, the number, the element counter and the
+operations, an operation with one argument read at a point and one with two
+over a stretch. None of the 87
 real projects here has one, so this was verified against real files and
 against chains drawn by hand rather than against a file: see INTERNALS.md.
 
