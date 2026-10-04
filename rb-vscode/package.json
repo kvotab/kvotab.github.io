@@ -2,7 +2,7 @@
   "name": "hdf5-browser",
   "displayName": "HDF5 Browser",
   "description": "Browse HDF5 (.h5) files in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "kvotab",
   "icon": "icon.png",
   "license": "MIT",

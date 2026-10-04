@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.7
+
+* From the site: the Excel exports of a chart and of a dataset are written as
+  asked. Every cell's format was one style late (the header plain, the cells
+  after it bold), no number format reached its cell, and Excel had to repair
+  the file; the header is now bold, the numbers in their formats, and the
+  file opens as it is.
+* From the site: the normal and lognormal distributions of a parameter, the
+  values the information panel draws of them and the curves laid over a
+  chart, are exact in their far tails. The error function they rest on had
+  its complement about three times too large beyond four and gave no number
+  past 9.2; the normal's probabilities and percentiles are now taken from
+  the complement, which keeps the lower tail's digits.
+
 ## 0.1.6
 
 * From the site: a chart's *Python* button, among its controls, gives the
