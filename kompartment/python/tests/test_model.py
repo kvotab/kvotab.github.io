@@ -326,6 +326,11 @@ class Building(unittest.TestCase):
         self.assertTrue(m.view.show_parameters)
         with self.assertRaises(kp.EditError):
             m.view.connection_label = 'bold'
+        self.assertEqual((m.view.chart_time_scale, m.view.chart_value_scale), ('log', 'log'))
+        m.view.set(chart_time_scale='linear', chart_value_scale='linear')
+        self.assertEqual(m.raw['view']['chart_value_scale'], 'linear')
+        with self.assertRaises(kp.EditError):
+            m.view.chart_time_scale = 'loglog'
         s = m.add_shape('sticky', 10, 20, text='Look here')
         self.assertEqual((s.fill, s.text_font, s.text), ('amber', 'scribble', 'Look here'))
         with self.assertRaises(kp.EditError):

@@ -1,0 +1,45 @@
+{
+  "name": "Van der Pol oscillator, stiff (μ = 1000)",
+  "description": "Van der Pol's oscillator with μ = 1000, the standard stiff test problem. x creeps from 2 down towards 1 for most of each half-cycle and then jumps to −2 within a few milliseconds. The jumps come at about 807, 1614 and 2421 s, a period close to (3 − 2 ln 2)·μ ≈ 1614 s. During each jump y = dx/dt reaches ±1333 (4μ/3), and it is back near zero long before the next saved point, so on this chart y looks flat. Set the time spacing to \"The solver's own points\" to see the spikes, and how many steps the solver spends in them.\n\nLong slow stretches and very fast transitions: that is stiffness. The NDF solver takes 1884 steps over the 3000 s. dp45 gets there too, but takes 1.7 million steps, about 900 times as many, because an explicit method's step is held down by stability, not accuracy, on the slow stretches as much as in the jumps.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 3000,
+    "output_points": 1501,
+    "spacing": "linear",
+    "solver": "ndf",
+    "rtol": 1e-06,
+    "abstol": 1e-09,
+    "non_negative": false,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "mu",
+      "value": 1000
+    }
+  ],
+  "compartments": [
+    {
+      "name": "x",
+      "initial": "2",
+      "unit": "",
+      "dydt": "y",
+      "non_negative": false
+    },
+    {
+      "name": "y",
+      "initial": "0",
+      "unit": "",
+      "dydt": "mu*(1 - x^2)*y - x",
+      "non_negative": false
+    }
+  ],
+  "transfers": [],
+  "expressions": [],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "name": "A mass on a spring",
+  "description": "A mass on a spring, x'' = −ω²·x − 2ζω·x', written as two compartments, the position x and the velocity v, whose dy/dt terms read each other. Both swing through zero, so \"cannot go negative\" is off on each. With no damping (zeta = 0) the mass swings between x = ±1 once a second for ever, and its energy (v² + ω²x²)/2 never changes. Exact is the closed form, which holds for any damping ratio below 1.\n\nTwenty periods are long enough for a solver's phase error to show. At the same relative tolerance of 1e-8, dp45 ends 1.2e-7 from Exact after 1682 steps, and the seventh-order vern7 ends 1.6e-9 away after 562. The NDF solver, made for stiff decay rather than for oscillation, ends 6e-6 away and has lost 1.2e-5 of the energy: its damping is numerical, not physical.\n\nTry: zeta = 0.1 for a damped oscillator, then switch solvers and compare x with Exact.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 20,
+    "output_points": 2001,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "non_negative": false,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "period",
+      "value": 1,
+      "unit": "second"
+    },
+    {
+      "name": "zeta",
+      "value": 0
+    },
+    {
+      "name": "x0",
+      "value": 1,
+      "unit": "m"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "x",
+      "initial": "x0",
+      "unit": "m",
+      "dydt": "v",
+      "non_negative": false
+    },
+    {
+      "name": "v",
+      "initial": "0",
+      "unit": "m/second",
+      "dydt": "-omega^2*x - 2*zeta*omega*v",
+      "non_negative": false
+    }
+  ],
+  "transfers": [],
+  "expressions": [
+    {
+      "name": "omega",
+      "equation": "2*pi/period",
+      "unit": "1/second"
+    },
+    {
+      "name": "omega_d",
+      "equation": "omega*sqrt(1 - zeta^2)",
+      "unit": "1/second"
+    },
+    {
+      "name": "Exact",
+      "equation": "x0*exp(-zeta*omega*time())*(cos(omega_d*time()) + zeta*omega/omega_d*sin(omega_d*time()))",
+      "unit": "m"
+    },
+    {
+      "name": "Energy",
+      "equation": "(v^2 + omega^2*x^2)/2",
+      "unit": "m^2/second^2"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

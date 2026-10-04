@@ -1768,7 +1768,7 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 
 		if (type === 'compartment' || role === 'begin' || role === 'end') {
 			readableTolerances(entries, original, report);
-			project.compartments.push(trimEmpty({
+			const compartment = trimEmpty({
 				name, system, ...dimSpec, unit, comment, ...rolePatch,
 				handle_decay: childBool(el, 'handle-decay', true),
 				initial: pickDefault(entries, 'initial') ?? '0',
@@ -1776,7 +1776,12 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 				dydt: pickDefault(entries, 'dydt'),
 				non_negative: readNonNegative(entries, original, report),
 				entries: keepIndexed(entries, ['initial', 'abstol', 'dydt']),
-			}));
+			});
+			// An empty <unit> is a compartment that has none, as this tool's
+			// own export writes one. No <unit> at all is the inventory in Bq an
+			// Ecolego file means by leaving it out, and stays that.
+			if (unit === '' && child(el, 'unit')) compartment.unit = '';
+			project.compartments.push(compartment);
 		} else if (role === 'counter') {
 			project.expressions.push(trimEmpty({
 				name, system, ...dimSpec, unit: '', comment, transport: 'counter', equation: '1',

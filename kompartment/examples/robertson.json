@@ -1,0 +1,91 @@
+{
+  "name": "Robertson’s stiff chemical kinetics",
+  "description": "Robertson's three reactions, the classic stiff test problem ROBER: A → B at 0.04 per second, B + B → C + B at 3·10⁷, and B + C → A + C at 10⁴. Each reaction is a transfer whose rate reads the concentrations, so the diagram is the reaction scheme and the three compartments always add up to 1 (the Total expression). The intermediate B never exceeds 3.65·10⁻⁵, which it reaches after 4.6 ms; B_x_1e4 is B times 10⁴, the way it is usually plotted beside A and C.\n\nThe run covers seventeen decades of time, from a microsecond to 10¹¹ s, with twenty saved times a decade, and it ends within 10⁻⁷ of the published reference solution at t = 40 and at t = 10¹¹. The rate constants differ by nearly nine orders of magnitude, which is stiffness at its plainest: the NDF solver takes 1760 steps, while dp45 stalls before t = 3 and Tsit5 runs out of its ten million steps before t = 5000. The tolerances are tight (rtol 1e-8, abstol 1e-14) because B, and late in the run A, are numbers a looser absolute tolerance cannot see.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 100000000000.0,
+    "output_points": 341,
+    "spacing": "series",
+    "output_times": [
+      {
+        "kind": "log",
+        "points": 341,
+        "from": 1e-06,
+        "to": null
+      }
+    ],
+    "solver": "ndf",
+    "rtol": 1e-08,
+    "abstol": 1e-14,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "k1",
+      "value": 0.04,
+      "unit": "1/second"
+    },
+    {
+      "name": "k2",
+      "value": 30000000.0,
+      "unit": "1/second"
+    },
+    {
+      "name": "k3",
+      "value": 10000.0,
+      "unit": "1/second"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "A",
+      "initial": "1",
+      "unit": ""
+    },
+    {
+      "name": "B",
+      "initial": "0",
+      "unit": ""
+    },
+    {
+      "name": "C",
+      "initial": "0",
+      "unit": ""
+    }
+  ],
+  "transfers": [
+    {
+      "name": "R1",
+      "from": "A",
+      "to": "B",
+      "rate": "k1"
+    },
+    {
+      "name": "R2",
+      "from": "B",
+      "to": "C",
+      "rate": "k2*B"
+    },
+    {
+      "name": "R3",
+      "from": "B",
+      "to": "A",
+      "rate": "k3*C"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "B_x_1e4",
+      "equation": "1e4*B"
+    },
+    {
+      "name": "Total",
+      "equation": "A + B + C"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "connection_label": "rate"
+  }
+}

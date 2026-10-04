@@ -1,0 +1,138 @@
+{
+  "name": "A thermostat switching a heater",
+  "description": "A room losing heat to 5 °C outside, with a time constant of two hours, and a heater that warms it at 10 °C an hour, switched by a thermostat with a dead band: on when the room falls through 19 °C, off when it rises through 21 °C. Between switches the room follows Newton's law of cooling. At each switch the right-hand side jumps, and the solver has to stop exactly there rather than step across it.\n\nToo_cold and Too_warm are the two triggers. Each takes a snapshot of the time it fires (On_since, Off_since), and the heater is on while On_since is the later of the two: a memory of which way the room last crossed, made of two snapshots.\n\nThe switching times are known in closed form. Warming from 15 to 21 °C takes τ·ln(10/4) = 1.83 h; after that each cycle is τ·ln(16/14) = 0.27 h with the heater off and τ·ln(6/4) = 0.81 h with it on, 42 switches in the day. The run lands on every one of them to within half a millisecond.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 24,
+    "output_points": 961,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "time_unit": "hour"
+  },
+  "parameters": [
+    {
+      "name": "T_out",
+      "value": 5,
+      "unit": "degC"
+    },
+    {
+      "name": "tau",
+      "value": 2,
+      "unit": "hour"
+    },
+    {
+      "name": "Heating",
+      "value": 10,
+      "unit": "degC/hour"
+    },
+    {
+      "name": "T_low",
+      "value": 19,
+      "unit": "degC"
+    },
+    {
+      "name": "T_high",
+      "value": 21,
+      "unit": "degC"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Room",
+      "initial": "15",
+      "unit": "degC",
+      "dydt": "-(Room - T_out)/tau + Heating*Heater"
+    }
+  ],
+  "transfers": [],
+  "expressions": [
+    {
+      "name": "Heater",
+      "equation": "if(On_since >= Off_since, 1, 0)"
+    }
+  ],
+  "triggers": [
+    {
+      "name": "Too_cold",
+      "first": "Room",
+      "second": "T_low",
+      "direction": "falling"
+    },
+    {
+      "name": "Too_warm",
+      "first": "Room",
+      "second": "T_high",
+      "direction": "rising"
+    }
+  ],
+  "snapshots": [
+    {
+      "name": "On_since",
+      "target": "time()",
+      "initial": "0",
+      "trigger": "Too_cold",
+      "unit": "hour"
+    },
+    {
+      "name": "Off_since",
+      "target": "time()",
+      "initial": "-1",
+      "trigger": "Too_warm",
+      "unit": "hour"
+    }
+  ],
+  "layout": {
+    "T_out": {
+      "x": 100,
+      "y": 60
+    },
+    "tau": {
+      "x": 100,
+      "y": 170
+    },
+    "Room": {
+      "x": 330,
+      "y": 110
+    },
+    "Heating": {
+      "x": 590,
+      "y": 50
+    },
+    "Heater": {
+      "x": 580,
+      "y": 160
+    },
+    "T_low": {
+      "x": 60,
+      "y": 300
+    },
+    "Too_cold": {
+      "x": 253,
+      "y": 290
+    },
+    "Too_warm": {
+      "x": 453,
+      "y": 290
+    },
+    "T_high": {
+      "x": 650,
+      "y": 300
+    },
+    "On_since": {
+      "x": 250,
+      "y": 420
+    },
+    "Off_since": {
+      "x": 450,
+      "y": 420
+    }
+  },
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

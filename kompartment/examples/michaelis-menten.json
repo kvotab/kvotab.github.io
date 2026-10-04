@@ -1,0 +1,113 @@
+{
+  "name": "Michaelis–Menten enzyme kinetics",
+  "description": "An enzyme E binds its substrate S into a complex C, at rate kf·E·S. The complex either falls apart again (kr·C) or turns the substrate into product P (kcat·C). The compartments follow the substrate, free, bound and made into product, so Binding, Unbinding and Catalysis are transfers between them and S + C + P stays at S0; the free enzyme is the expression E = E0 − C.\n\nWith a hundred times more substrate than enzyme, C fills within half a second and then stays in a quasi-steady state. From then on the rate of product formation follows the Michaelis–Menten law Vmax·S/(Km + S), with Km = (kr + kcat)/kf = 1.5 µM and Vmax = kcat·E0 = 0.05 µM/s: Rate and MM_rate agree to within about 1 % from the first second to the fifth minute. Half the substrate is gone after 119 s. The fast start and the slow tail make the problem mildly stiff, which is why it runs on the NDF solver and is drawn on a logarithmic time axis.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 600,
+    "output_points": 301,
+    "spacing": "log",
+    "solver": "ndf",
+    "rtol": 1e-08,
+    "abstol": 1e-12,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "S0",
+      "value": 10,
+      "unit": "uM"
+    },
+    {
+      "name": "E0",
+      "value": 0.1,
+      "unit": "uM"
+    },
+    {
+      "name": "kf",
+      "value": 1,
+      "unit": "1/(uM*second)"
+    },
+    {
+      "name": "kr",
+      "value": 1,
+      "unit": "1/second"
+    },
+    {
+      "name": "kcat",
+      "value": 0.5,
+      "unit": "1/second"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "S",
+      "initial": "S0",
+      "unit": "uM"
+    },
+    {
+      "name": "C",
+      "initial": "0",
+      "unit": "uM"
+    },
+    {
+      "name": "P",
+      "initial": "0",
+      "unit": "uM"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Binding",
+      "from": "S",
+      "to": "C",
+      "rate": "kf*E",
+      "unit": "1/second"
+    },
+    {
+      "name": "Unbinding",
+      "from": "C",
+      "to": "S",
+      "rate": "kr",
+      "unit": "1/second"
+    },
+    {
+      "name": "Catalysis",
+      "from": "C",
+      "to": "P",
+      "rate": "kcat",
+      "unit": "1/second"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "E",
+      "equation": "E0 - C",
+      "unit": "uM"
+    },
+    {
+      "name": "Km",
+      "equation": "(kr + kcat)/kf",
+      "unit": "uM"
+    },
+    {
+      "name": "Vmax",
+      "equation": "kcat*E0",
+      "unit": "uM/second"
+    },
+    {
+      "name": "Rate",
+      "equation": "kcat*C",
+      "unit": "uM/second"
+    },
+    {
+      "name": "MM_rate",
+      "equation": "Vmax*S/(Km + S)",
+      "unit": "uM/second"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "connection_label": "rate"
+  }
+}

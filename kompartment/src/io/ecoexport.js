@@ -2363,13 +2363,20 @@ function dimAttrs(ctx, dims, intersection = false) {
 }
 
 /** The id, GUID, place, switch, unit and comment every block carries. */
-function writeCommon(w, ctx, block, q) {
+function writeCommon(w, ctx, block, q, collection = null) {
 	w.text('id', q);
 	w.cdata('guid', guidFor(ctx.projectName, `block:${q}`));
 	if (block.system) w.text('sub-system', block.system);
 	w.text('enabled', block.enabled === false ? 'false' : 'true');
 	const unit = String(block.unit ?? '').trim();
 	if (unit) w.text('unit', unit);
+	// A compartment whose unit is empty -- said so, not left out, which is Bq
+	// -- is written with an empty one. Leaving the element out is what an
+	// Ecolego file does for an inventory in its materials' unit, and it reads
+	// back as Bq, so a model of plain numbers came back as becquerels. None of
+	// the 3,768 compartments in the Ecolego projects here has an empty one, so
+	// it says this and nothing else.
+	else if (collection === 'compartments' && typeof block.unit === 'string') w.text('unit', '');
 	const comment = String(block.comment ?? '').trim();
 	if (comment) w.cdata('comment', comment);
 }
@@ -2395,7 +2402,7 @@ function writeComponent(w, ctx, block, collection) {
 			: role === 'operation' ? 'transport-operation' : ECO_TYPE[collection];
 	const dims = collection === 'functions' ? [] : (Array.isArray(block.index_lists) ? block.index_lists : []);
 	w.open('component', [['name', block.name], ['type', type], ...dimAttrs(ctx, dims)]);
-	writeCommon(w, ctx, block, q);
+	writeCommon(w, ctx, block, q, collection);
 	// What a run has a result for: not a function or a table read at a value,
 	// which answer an argument, nor the parts of a transport that count.
 	const answers = collection === 'functions' || role === 'counter' || role === 'operation'

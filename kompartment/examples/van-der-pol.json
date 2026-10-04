@@ -1,0 +1,45 @@
+{
+  "name": "Van der Pol oscillator",
+  "description": "Van der Pol's oscillator, x'' − μ(1 − x²)·x' + x = 0, as two compartments: x, and y = dx/dt. The damping is negative for small swings and positive for large ones, so every start except the origin winds onto the same closed orbit, a limit cycle of amplitude 2.009 and period 6.663. At μ = 1 the problem is not stiff, and dp45 crosses the twenty seconds in 185 steps. Both states go negative, so \"cannot go negative\" is off on each.\n\nTry: start x at 0.1 instead of 2 and watch the swing grow onto the same cycle. Raise mu and the cycle sharpens into slow drifts and sudden jumps; the next example is this model at μ = 1000, the standard stiff test problem.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 20,
+    "output_points": 401,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-06,
+    "abstol": 1e-09,
+    "non_negative": false,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "mu",
+      "value": 1
+    }
+  ],
+  "compartments": [
+    {
+      "name": "x",
+      "initial": "2",
+      "unit": "",
+      "dydt": "y",
+      "non_negative": false
+    },
+    {
+      "name": "y",
+      "initial": "0",
+      "unit": "",
+      "dydt": "mu*(1 - x^2)*y - x",
+      "non_negative": false
+    }
+  ],
+  "transfers": [],
+  "expressions": [],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

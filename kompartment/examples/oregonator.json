@@ -1,0 +1,56 @@
+{
+  "name": "Oregonator: a stiff chemical oscillator",
+  "description": "The Oregonator, Field and Noyes's three-variable model of the Belousov–Zhabotinsky reaction, in the scaled form of the stiff test problem OREGO: y1 is bromous acid, y2 bromide and y3 the cerium catalyst, and each is a compartment with its dy/dt term from that problem. The concentrations swing across five decades, y1 from 1 up to 1.2·10⁵ and back in every cycle, so the value axis is logarithmic. At t = 360 the run is within 4·10⁻⁵ of the problem's reference solution (1.000815, 1228.18, 132.055).\n\nThe parameters span seven orders of magnitude and the problem is stiff throughout: the NDF solver crosses the 360 seconds in 1654 steps, dp45 in 3.4 million.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 360,
+    "output_points": 721,
+    "spacing": "linear",
+    "solver": "ndf",
+    "rtol": 1e-06,
+    "abstol": 1e-08,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "s",
+      "value": 77.27
+    },
+    {
+      "name": "q",
+      "value": 8.375e-06
+    },
+    {
+      "name": "w",
+      "value": 0.161
+    }
+  ],
+  "compartments": [
+    {
+      "name": "y1",
+      "initial": "1",
+      "unit": "",
+      "dydt": "s*(y2 + y1*(1 - q*y1 - y2))"
+    },
+    {
+      "name": "y2",
+      "initial": "2",
+      "unit": "",
+      "dydt": "(y3 - (1 + y1)*y2)/s"
+    },
+    {
+      "name": "y3",
+      "initial": "3",
+      "unit": "",
+      "dydt": "w*(y1 - y3)"
+    }
+  ],
+  "transfers": [],
+  "expressions": [],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "log"
+  }
+}

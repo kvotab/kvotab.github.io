@@ -1,0 +1,121 @@
+{
+  "name": "Bouncing ball",
+  "description": "A ball thrown straight up from the floor at 20 m/s, falling back under gravity and bouncing with 0.9 of the speed it landed with: the classic test of how a solver handles events. Height is the one compartment. Bounce is a trigger that fires when Height falls through zero, so the solver stops exactly there and starts again. Each bounce takes two snapshots, its time (T_bounce) and the speed the ball leaves the floor with (V_up), and between bounces the ball's Velocity is V_up − g·(t − T_bounce).\n\nThe landing speed is read off the flight time: a flight from the floor and back takes 2V/g, so the ball lands at g times half its time in the air. That keeps V_up from reading its own value, which a snapshot may not do. The bounces come where the closed form (2·v0/g)·(1 − eⁿ)/(1 − e) puts them: 4.08, 7.75 and 11.05 s, and so on, twelve in the thirty seconds, with the energy falling to e² = 0.81 of itself at each.\n\nTry: run it to 45 s. The bounces pile up towards (2·v0/g)/(1 − e) = 40.8 s, where infinitely many of them would happen in a finite time (Zeno behaviour). After about a hundred, the flights are too short to resolve and the ball falls through the floor. That is a property of the model, which needs a rule for coming to rest, not a fault in the solver.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 30,
+    "output_points": 601,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "non_negative": false,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "g",
+      "value": 9.81,
+      "unit": "m/second^2"
+    },
+    {
+      "name": "v0",
+      "value": 20,
+      "unit": "m/second"
+    },
+    {
+      "name": "restitution",
+      "value": 0.9
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Height",
+      "initial": "0",
+      "unit": "m",
+      "dydt": "Velocity",
+      "non_negative": false
+    }
+  ],
+  "transfers": [],
+  "expressions": [
+    {
+      "name": "Velocity",
+      "equation": "V_up - g*(time() - T_bounce)",
+      "unit": "m/second"
+    },
+    {
+      "name": "Energy",
+      "equation": "g*Height + Velocity^2/2",
+      "unit": "m^2/second^2"
+    }
+  ],
+  "triggers": [
+    {
+      "name": "Bounce",
+      "first": "Height",
+      "second": "0",
+      "direction": "falling"
+    }
+  ],
+  "snapshots": [
+    {
+      "name": "T_bounce",
+      "target": "time()",
+      "initial": "0",
+      "trigger": "Bounce",
+      "unit": "second"
+    },
+    {
+      "name": "V_up",
+      "target": "restitution*g*(time() - T_bounce)/2",
+      "initial": "v0",
+      "trigger": "Bounce",
+      "unit": "m/second"
+    }
+  ],
+  "layout": {
+    "g": {
+      "x": 628,
+      "y": 40
+    },
+    "Energy": {
+      "x": 100,
+      "y": 150
+    },
+    "Height": {
+      "x": 360,
+      "y": 150
+    },
+    "Velocity": {
+      "x": 620,
+      "y": 150
+    },
+    "Bounce": {
+      "x": 363,
+      "y": 290
+    },
+    "v0": {
+      "x": 880,
+      "y": 320
+    },
+    "T_bounce": {
+      "x": 360,
+      "y": 420
+    },
+    "V_up": {
+      "x": 620,
+      "y": 420
+    },
+    "restitution": {
+      "x": 880,
+      "y": 430
+    }
+  },
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

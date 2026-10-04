@@ -1,0 +1,53 @@
+{
+  "name": "Exponential decay",
+  "description": "The linear test equation dy/dt = −k·y with y(0) = y0, whose solution y0·e^(−k·t) is known exactly. It is the equation solvers are designed and analysed on (Dahlquist's test equation), and here it is the smallest compartment model there is: one compartment emptied by a first-order transfer out of the model. Exact is the closed form, worked out at every saved time, so the solver's error can be read straight off the Table: with dp45 at a relative tolerance of 1e-6, y and Exact agree to within 3e-6 after ten time constants. That global error is a little larger than the tolerance, which bounds the error of each step, not of the whole run.\n\nThe value axis is logarithmic, so the decay is a straight line.\n\nTry: set k to 1e6. The answer is gone within a few tens of microseconds, yet dp45 still needs three million steps to cross the ten seconds, because an explicit method's step must stay below about 3.3/k to be stable, however accurate a longer one would be. The NDF solver, built for stiff problems, needs 248 steps. That gap is what stiffness means.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 10,
+    "output_points": 201,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-06,
+    "abstol": 1e-12,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "k",
+      "value": 1,
+      "unit": "1/second"
+    },
+    {
+      "name": "y0",
+      "value": 1
+    }
+  ],
+  "compartments": [
+    {
+      "name": "y",
+      "initial": "y0",
+      "unit": ""
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Decay",
+      "from": "y",
+      "to": null,
+      "rate": "k"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "Exact",
+      "equation": "y0*exp(-k*time())"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "connection_label": "rate",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "log"
+  }
+}

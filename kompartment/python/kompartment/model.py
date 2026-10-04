@@ -124,7 +124,11 @@ DEFAULT_VIEW: Dict[str, Any] = {
     'show_reductions': True, 'show_functions': True, 'show_warning_list': True,
     'show_recorders': True, 'show_influences': False, 'show_sinks': True, 'show_sources': True,
     'show_help': False, 'show_grid': True, 'snap_to_grid': True, 'connection_label': 'name',
+    # How the application's Chart tab draws its axes: 'log' or 'linear'.
+    'chart_time_scale': 'log', 'chart_value_scale': 'log',
 }
+#: The two ways the chart can draw an axis.
+CHART_SCALES = ('log', 'linear')
 
 
 def _blank(name: str) -> Dict[str, Any]:
@@ -273,11 +277,13 @@ class _BlockList(dict):
 
 
 class View:
-    """What the diagram shows: the model's ``view`` settings, defaults filled in.
+    """What the diagram and the chart show: the model's ``view`` settings,
+    defaults filled in.
 
     Every setting is an attribute -- ``show_parameters``, ``show_influences``
     (``'none'``, ``'all'`` or ``'selected'``), ``connection_label`` (``'name'``,
-    ``'rate'`` or ``'none'``) and the rest of :data:`DEFAULT_VIEW`.
+    ``'rate'`` or ``'none'``), ``chart_time_scale`` and ``chart_value_scale``
+    (``'log'`` or ``'linear'``) and the rest of :data:`DEFAULT_VIEW`.
     """
 
     def __init__(self, model: 'Model') -> None:
@@ -301,6 +307,10 @@ class View:
         inf = settings.get('show_influences')
         if inf is not None and not isinstance(inf, bool) and inf not in INFLUENCE_MODES:
             raise EditError(f"'{inf}' is not a way of showing influences ({', '.join(INFLUENCE_MODES)})")
+        for key in ('chart_time_scale', 'chart_value_scale'):
+            scale = settings.get(key)
+            if scale is not None and scale not in CHART_SCALES:
+                raise EditError(f"'{scale}' is not a chart scale ({', '.join(CHART_SCALES)})")
         merged = dict(DEFAULT_VIEW)
         merged.update(self._model._raw.get('view') or {})
         merged.update(settings)

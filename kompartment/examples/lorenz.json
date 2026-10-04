@@ -1,0 +1,60 @@
+{
+  "name": "Lorenz attractor",
+  "description": "Lorenz's 1963 model of convection, dx/dt = σ(y − x), dy/dt = x(ρ − z) − y and dz/dt = xy − βz, with his σ = 10, ρ = 28 and β = 8/3: the system that made chaos famous. The solution never settles and never repeats. x swings irregularly between −18 and 20 as the state circles one lobe of the butterfly-shaped attractor and then the other, while z rises and falls between about 1 and 48. x and y go negative, so \"cannot go negative\" is off on all three.\n\nChaos means that any difference grows about tenfold every two and a half seconds, a solver's own errors included. Run the model with dp45, vern7 and the NDF solver at the same tight tolerance (1e-10): they agree to four figures at t = 20, have parted by t = 28, and by the end are unrelated, with x(50) at 6.32, 4.99 and −0.81. Each is as good an answer as the others to a question whose answer cannot be known that far ahead.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 50,
+    "output_points": 5001,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-10,
+    "abstol": 1e-12,
+    "non_negative": false,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "sigma",
+      "value": 10
+    },
+    {
+      "name": "rho",
+      "value": 28
+    },
+    {
+      "name": "beta",
+      "value": 2.6666666666666665
+    }
+  ],
+  "compartments": [
+    {
+      "name": "x",
+      "initial": "1",
+      "unit": "",
+      "dydt": "sigma*(y - x)",
+      "non_negative": false
+    },
+    {
+      "name": "y",
+      "initial": "1",
+      "unit": "",
+      "dydt": "x*(rho - z) - y",
+      "non_negative": false
+    },
+    {
+      "name": "z",
+      "initial": "1",
+      "unit": "",
+      "dydt": "x*y - beta*z",
+      "non_negative": false
+    }
+  ],
+  "transfers": [],
+  "expressions": [],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

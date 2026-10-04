@@ -540,10 +540,14 @@ a parameter is the reason to zoom in the first place.
 
 **The chart's own menu.** Right-click the chart for what to do with it:
 the two scales, the zoom, a picture of it, and the numbers as CSV. The scales
-were two permanent checkboxes above the chart — two controls in the way of it
-for a choice almost nobody changes, since log-log is how an
-activity-versus-time result is read. They are ticks on the menu now, and the
-Build tab keeps its settings the same way.
+are two ticks, **log time** and **log value**, and they are **saved with the
+model**, the way what the diagram shows is: log-log is how an
+activity-versus-time result is read, and what a model that says nothing is
+drawn in, while an oscillation, a population cycle or anything that goes
+negative wants straight axes, and a model keeps them once they are set. A
+change of scale is a step that Undo takes back, and it runs nothing. In the
+file they are `chart_time_scale` and `chart_value_scale` under `view`, each
+`log` or `linear`.
 
 **Saving the chart as a picture.** **Save as picture ▸ SVG · PNG · JPEG**, on
 that menu. Both routes *draw the chart again* rather than copy the pixels on
@@ -891,7 +895,7 @@ Eight views over one model, all editing the same object:
 | **Build** | The graph editor. Right-click for everything it can do — the empty-canvas menu adds blocks where you clicked and holds the view settings; a block's menu connects and deletes it. Drag from a compartment's right edge onto another to connect them; double-click anything to open its settings; right-click a connection for **Straighten**; drag to pan, Del to remove. The wheel zooms about wherever the pointer is — a mouse notch by about 7%, a trackpad smoothly, since the two report their scrolling in different units and the difference has to be read off `deltaMode` rather than taken at face value. Anywhere in the tab counts, not only over the canvas itself: there is a frame around it — the panel's padding, the breadcrumb above, the help line below — where a wheel doing nothing would read as a zoom that only works over blocks. Nothing in that tab scrolls, so there is nothing else a wheel there could mean, and a pointer outside the canvas zooms about the nearest point of it. Drag a sub-system onto another to move it in, contents and all. Shift-click, or shift-drag a box over them, to select several blocks — and sub-systems, which are nodes here like any other — at once; they then move together, drop into a sub-system together, and are deleted together, a selected sub-system taking everything inside it after a question. Ctrl/Cmd-A takes everything on the diagram. **Cut** (⌘X) and **Copy** (⌘C) are on every block's menu and on a selection's, and both wait for **Paste** (⌘V), which is on the canvas menu, on a sub-system, and on the block tree's rows — so a copy can be pasted into a different sub-system from the one it was taken from, or into a different model, and a cut moves the blocks there instead. **Copy format** (⌥⌘C) and **Paste format** (⌥⌘V) sit beside them, for how a block looks rather than what it is: a block's colour and shape, or a connection's colour, weight and line style, taken from one block and put on the selection — one block or several — as far as each can take it, in one step to undo. A colour the block has not set is copied as not set, so the blocks it lands on go back to their kinds' own colours, which follow the theme. A name already used where the copy lands gets a number, and **the connections come along**: a transfer is the arrow between two compartments, so it is copied when both of them are, and left behind when only one is. Every reference *inside* the copy follows the copy — a pasted expression reads the pasted parameter — and every reference *out* of it stays where it pointed. **A sub-system copies as a sub-system**: its own menu has Cut and Copy, and what they carry is its contents — every block in it at every depth, the sub-systems nested in it (empty ones included), and the arrows between them. Several of them, or sub-systems and blocks together, copy as one thing, and the connection rule is read across the whole of it: the arrow between two selected sub-systems comes along, and so does the one from a compartment on the canvas into a sub-system that is coming too. It pastes as a child of wherever you aim it, keeping every name it had, since what it lands in did not exist a moment ago; only its own name gets a number. What moves is the node on the parent's canvas — everything inside is drawn on the sub-system's own canvas and lands looking exactly as it did — and a paste onto a canvas the copy did not come from goes to a clear spot rather than on top of whatever was already there. An end that hangs outside the *view* is marked, and there are three different things it can be. A flow that crosses the model's own boundary gets a dashed cloud — the stock-and-flow convention for what lies beyond it — at whichever end is loose: past the arrowhead where the flow leaves, behind the start where a source term comes in, so the arrow always points the way the material moves. The exception is a source term that carries the **radionuclide dimension**, which wears the standard sign instead, a black trefoil on yellow: the cloud says where the material comes from and the sign says what it is. (The two are alternatives rather than one drawn on the other — a cloud is a wide, flat shape, and a trefoil inside one is a smudge at any size either of them can reasonably be.) **Show ▸ inflow icons** and **▸ outflow icons** turn each direction off separately, both on by default: a model of this kind has an outflow on nearly every compartment and two or three source terms, so the reason to hide the first — the same mark over and over — is not a reason to lose the few that say where the inventory enters. A cloud takes the colour its line was given, so a line styled on the **Appearance** rows is that colour to both its ends; the radiation sign does not, since it is recognised by its colours. And a flow whose far end is a real block in another sub-system gets a **pipe** instead: it has not left the model, it has gone *there*. Each of them is picked up and put down like a block: click to select the connection, drag to place the mark where you want it, right-click for **Straighten** to send it back to where it started. A pipe's place belongs to its canvas: dragging it inside a sub-system leaves the same line on the canvas above as it was, and bending that line leaves the pipe where it is. A pipe carries the name of the block at its far end and where that block lives (`Buffer · in NearField`, `Lake · top level`), points along the flow, and has the boundary it crosses drawn as a bar on the side facing the block on screen; double-click it to go there, with that block selected. **A flux that crosses the model's own boundary is drawn where its block is, and nowhere else**: a source term into a compartment inside `NearField` is on the `NearField` canvas, not on the top level as well pointing at the sub-system node. Such a connection has one end that means anything, so there is one canvas it belongs on — unlike a transfer between two real blocks, which still appears on each canvas that can say something about it. The grid is where they are gathered in one place instead. **Show ▸ Transfer labels** chooses what is written along each line — its `name`, its `rate`, or `none` — and sits beside **▸ Influences** — none, all, or those of the blocks selected — the other thing drawn between blocks rather than as one. **Canvas ▸ Show grid** turns the lattice behind the canvas off, **▸ Snap to the grid** turns off landing on it — holding Alt during a drag does the opposite of whatever that setting says, for one placement without changing it — and **▸ Show help** turns off the line under the diagram, which costs the diagram the room. **Add shape…** and **Save as picture ▸** are the last section: the shapes drawn behind the model, and the diagram written out as SVG, PNG or JPEG. |
 | **Matrix** | The transfer grid, laid out the way a Jacobian is drawn: **the blocks are on the diagonal and the flows between them are off it**. A cell is what leaves the name on the diagonal along its row and arrives at the name down its column — so the diagonal is a staircase of names and the grid needs no header band, in either direction. Each filled cell carries the elbow that traces its route: above the diagonal it turns down, below it turns up, which is also how a feedback loop shows itself at a glance. **Sub-systems fold**: see below. Everything in it that stands for a block behaves like one: a click selects it and a double-click opens its settings, on the diagonal and off it alike. Click an empty cell to add a transfer; a pair may hold several and their fluxes add. A block on the diagonal, and a transfer off it, wears the colour it was given on the diagram, with its label picked from that colour rather than from the theme — a model of any size is read by its colours as much as by its names, and two views showing it in different colours made this one a separate thing to learn. A far-field pathway sits on the diagonal like any other block. **The world outside the model gets a row and a column of its own**, at the end and outside the hierarchy — its row is what comes in, its column what leaves — and only when something actually crosses that boundary, since an empty pair in every closed model is furniture. It is the one view that puts every source term and every outflow together, the diagram having drawn each of them beside its own block. Built when this tab is opened rather than on every edit, and a selection that moves within one model moves the highlight rather than rebuilding the grid: it is (compartments + paths + 1) squared. **Every cell is the same square**, so the grid reads as a pattern — the shape a Jacobian is drawn in — rather than as a table whose columns are as wide as their longest rate; what does not fit a square is on its tooltip. A transfer is a tile like the blocks on the diagonal, with its rate over its name; two share a square between them, and only a third makes the square scroll. Another transfer between the same pair is added with the round **+** that appears in the corner of the square when the pointer is over it. The **zoom** above the grid — −, the percentage (back to 100%), +, and **Fit** for the whole grid in view — or Ctrl/⌘ and the wheel, or a pinch, scales it about the pointer, and the level is remembered in this browser. |
 | **Index lists** | The model's dimensions. One pane lists them, the other is the one you are editing: its name, what it is defined from, its indices, and — for the radionuclide list — half-lives and decay chains. Everything about a list is made and unmade here. |
-| **Chart** | Results over time, log-log by default. A search box, kind chips and one selector per index list narrow the line picker above it, which matters as soon as a model is two-dimensional — `landscape.json` has 63 lines to choose eight from. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to show everything. Right-click it for the two scales, the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. |
+| **Chart** | Results over time, log-log unless the model says otherwise. A search box, kind chips and one selector per index list narrow the line picker above it, which matters as soon as a model is two-dimensional — `landscape.json` has 63 lines to choose eight from. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to show everything. Right-click it for the two scales, the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. |
 | **Table** | The same numbers, for reading and copying. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the HDF5 Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
 | **JSON** | The project file itself. |
 | **Generated code** | Two views of what the builder made. *Derivative code* is the function compiled from the equations — in the three passes it runs as: what reads neither the clock nor the state, worked out once when the model is built; what reads only the clock, once per instant; and the rest, on every call. *Jacobian* is the matrix of its partial derivatives, drawn as its sparsity pattern and checked against finite differences — see [Looking at the Jacobian](#looking-at-the-jacobian). |
@@ -2983,6 +2987,10 @@ under the initial inventory and counts what it reads among the compartment's
 *Uses*; renaming a block rewrites it; the analytic Jacobian carries it, so the
 stiff solvers see `-k*C` as the diagonal entry it is.
 
+`examples/lotka-volterra.json` is the predator–prey pair written as two
+compartments, and the oscillators among the ODE test problems are written the
+same way.
+
 Two things it is not for. A flux between two compartments is still a transfer:
 a term takes from nowhere and gives to nowhere, so mass written into one
 compartment's term does not leave another's. And a term is not the place for a
@@ -4320,6 +4328,10 @@ file.
 **What is written in another form**, because Ecolego says the same thing its
 own way:
 
+- A compartment whose unit is **empty** — a population, a test problem's
+  state, any plain number — is written with an empty unit, and reads back with
+  none. A compartment with no unit at all, which is how Ecolego writes an
+  inventory in its materials' unit, is read as Bq.
 - An **inflow** is a transfer from a *source*, and an open end of a transfer
   runs into a *sink*: those are Ecolego's model boundary. Read back here, an
   inflow comes back as a transfer from outside.
@@ -4463,12 +4475,31 @@ within the tolerance it was solved to, since the solver steps through the same
 equations assembled another way. The same files have been opened and run in
 Ecolego 6.5 itself, by its own reader, validator and simulator: each opens
 without an error and gives the numbers a run here gives, to the tolerance the
-two were solved to — solved tighter, they agree more closely. Real assessment
+two were solved to — solved tighter, they agree more closely — except where
+the next paragraph says otherwise. Real assessment
 models of several hundred compartments open there without an error, ready to
 run. The rules under *Equations*, *Initial values*, *The scenario list* and
 *Endpoints* above were each found that way, from a file the importer here read
 back perfectly and Ecolego refused, or ran to a different answer. The author
 goes out as the project's author and comes back as the model's.
+
+**Where the two differ.** Three things found by running the ODE test problems
+there:
+
+- **Snapshots that read one another.** When a trigger fires, every snapshot it
+  drives is taken here from the state just before it, all together; Ecolego
+  takes them one after another, each seeing the ones already taken. A snapshot
+  whose target reads another snapshot of the same trigger is therefore given a
+  different value there. `examples/bouncing-ball.json`, whose rebound speed
+  reads the time of the last bounce, bounces once in Ecolego and then falls
+  through the floor.
+- **States that go negative.** **Cannot go negative** goes out as Ecolego's
+  saturation, and a compartment that may go negative as one with no lower
+  limit. With the switch on, Ecolego's solvers stalled on van der Pol's
+  oscillator although no compartment is held at zero; with it off they run it
+  and agree. It is off in the examples whose states go negative.
+- **Chaos.** `examples/lorenz.json` agrees until the two runs part, as runs
+  here with two different solvers do.
 
 ## Copying blocks between two windows
 
@@ -5384,6 +5415,9 @@ The matrix is no longer constant, though — a mean divides by a time that grows
 — so it is refreshed rather than factorised once.
 
 `examples/recorders.json` is a release pulse through a lake with all five on it.
+`examples/bouncing-ball.json` and `examples/thermostat.json` use triggers and
+snapshots for the other thing they are good for: a velocity that jumps at a
+bounce, and a heater that switches, each at the instant its crossing is found.
 
 ## Far-field pathways (FARFCOMP)
 
@@ -7450,6 +7484,7 @@ Blocks:
 | `scenario` | Which scenario is live, when the model has a scenario list. |
 | `decay_unit` | What a radionuclide inventory is measured in: `Bq` (the default) or `mol`. It decides the ingrowth coefficient — see above — and nothing else. |
 | `layout` | Diagram geometry per block. Ignored by the solver. |
+| `view` | What the diagram shows (`show_parameters`, `show_influences`, `connection_label` and the rest of the **Show** menu) and how the chart draws its axes (`chart_time_scale`, `chart_value_scale`: `log` or `linear`). Ignored by the solver. |
 | `systems` | The sub-systems the model is organised into, as dotted paths. A block's `system` says which one holds it. |
 | `transports` | Which of those sub-systems are transports — chains of N compartments drawn as two. The parts inside carry `transport`: `begin` or `end` on a compartment, `number`, `counter` or `operation` on an expression. See *Transports*. |
 | `app` | An app laid out on the model: `title`, `description`, `theme`, `run` (`change` or `button`), `open` (`editor` or `app`), `edit_button`, `realisations` and `spread_when` (`button` or `change`) for its spread, and `pages`, each a `name` and its `components` — a `type`, an `id`, a place on the grid (`x`, `y`, `w`, `h` in cells), and the settings of its type: `target` for an input, `series` for a result, `components` for a panel, `tabs` (each a `name` and its `components`) for a set of tabs, and `src` for a picture, as a `data:image/…;base64,` address. Ignored by the solver. See [Apps on a model](#apps-on-a-model). |
@@ -7651,6 +7686,28 @@ through Node. Its README has the whole of it.
 | `examples/recorders.json` | All five blocks that remember: a peak dose, the year the limit was crossed, a mean from that year on, and the dose a century earlier |
 | `examples/scenarios.json` | The same model under three climates, one live at a time |
 | `examples/farfield.json` | A FARFCOMP far-field pathway: a vault leaking into a fracture, 20 × 20 cells of rock per nuclide, and a well at the other end |
+| `examples/waste-packages.json` | 4,500 canisters failing on a Weibull, an instant-release fraction and a dissolving fuel matrix, with an earthquake as a Poisson event and a glaciation at a fixed time |
+
+The picker's second group, **ODE test problems**, holds the problems solvers
+are tested on, from the numerical literature. Each says in its description
+what it tests and what to try, and the test suite holds each to its closed
+form or to its published reference solution.
+
+| File | What it shows |
+|---|---|
+| `examples/exponential-decay.json` | The linear test equation dy/dt = −k·y as one compartment and a transfer out of the model, beside its closed form; k = 1e6 shows what stiffness is |
+| `examples/harmonic-oscillator.json` | A mass on a spring as two dy/dt terms that read each other, with its closed form and its energy: twenty periods of phase error, solver by solver |
+| `examples/van-der-pol.json` | Van der Pol's oscillator at μ = 1, winding onto its limit cycle |
+| `examples/van-der-pol-stiff.json` | The same at μ = 1000, the standard stiff test: slow drifts and jumps of a few milliseconds, 1,884 steps of the NDF solver against 1.7 million of dp45 |
+| `examples/lotka-volterra.json` | Predator and prey, with the quantity their cycles conserve as an expression whose drift measures the solver's error |
+| `examples/sir-epidemic.json` | Kermack and McKendrick's epidemic as two transfers whose rates read the compartments |
+| `examples/michaelis-menten.json` | Enzyme kinetics as transfers of the substrate, beside the Michaelis–Menten law its quasi-steady state follows |
+| `examples/brusselator.json` | An autocatalytic reaction as a source and three transfers, running round a limit cycle |
+| `examples/oregonator.json` | The Belousov–Zhabotinsky reaction (OREGO): stiff, across five decades, on a logarithmic value axis |
+| `examples/robertson.json` | Robertson's kinetics (ROBER) over seventeen decades of time, the three compartments adding up to 1 |
+| `examples/lorenz.json` | The Lorenz attractor, where three solvers agree to t = 20 and part by t = 28 |
+| `examples/bouncing-ball.json` | A trigger and two snapshots carrying a velocity that jumps at each bounce, and the Zeno point the bounces pile up towards |
+| `examples/thermostat.json` | A heater switched on and off with a dead band: two triggers, two snapshots and a right-hand side that jumps |
 
 The picker in the header lists them, and it names **where the model in front of
 you came from**: one of these, the file that was opened or dropped, or a blank

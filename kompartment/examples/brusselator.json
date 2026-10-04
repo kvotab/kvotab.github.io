@@ -1,0 +1,98 @@
+{
+  "name": "Brusselator chemical oscillator",
+  "description": "Prigogine and Lefever's model of an autocatalytic reaction, the Brusselator. A feeds X; X turns into Y at rate B·X; two X and a Y make three X, at rate X²·Y; and X leaves at rate X. With A and B held at 1 and 3, each of those steps is a source or a transfer on the diagram, and together they make dX/dt = A + X²Y − (B + 1)X and dY/dt = BX − X²Y.\n\nThe steady state (A, B/A) = (1, 3) is unstable whenever B > 1 + A², so instead of settling the concentrations run round a limit cycle, X spiking every 7.15 seconds.\n\nTry: B = 1.5. Below the threshold the oscillations die away, into the steady state (1, 1.5).",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 20,
+    "output_points": 401,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "time_unit": "second"
+  },
+  "parameters": [
+    {
+      "name": "A",
+      "value": 1
+    },
+    {
+      "name": "B",
+      "value": 3
+    }
+  ],
+  "compartments": [
+    {
+      "name": "X",
+      "initial": "1.5",
+      "unit": ""
+    },
+    {
+      "name": "Y",
+      "initial": "3",
+      "unit": ""
+    }
+  ],
+  "inflows": [
+    {
+      "name": "Feed",
+      "to": "X",
+      "rate": "A",
+      "unit": "1/second"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Conversion",
+      "from": "X",
+      "to": "Y",
+      "rate": "B"
+    },
+    {
+      "name": "Autocatalysis",
+      "from": "Y",
+      "to": "X",
+      "rate": "X^2"
+    },
+    {
+      "name": "Removal",
+      "from": "X",
+      "to": null,
+      "rate": "1"
+    }
+  ],
+  "expressions": [],
+  "layout": {
+    "X": {
+      "x": 300,
+      "y": 150
+    },
+    "Y": {
+      "x": 640,
+      "y": 150
+    },
+    "edge:Feed": {
+      "x": 120,
+      "y": 177
+    },
+    "edge:Removal": {
+      "x": 368,
+      "y": 300
+    },
+    "A": {
+      "x": 90,
+      "y": 300
+    },
+    "B": {
+      "x": 648,
+      "y": 300
+    }
+  },
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "connection_label": "rate",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

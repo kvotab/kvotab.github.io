@@ -7,7 +7,7 @@
  *   node test/run.js
  */
 
-import { parse, ParseError } from '../src/parser/parser.js';
+import { parse, ParseError, collectReferences } from '../src/parser/parser.js';
 import { percentile as percentileOf, operatedList } from '../src/domain/reduce.js';
 import { emit, buildFunction, FUNCTION_TABLE } from '../src/parser/compile.js';
 import { erf, erfc, FUNCTIONS } from '../src/parser/functions.js';
@@ -16227,12 +16227,33 @@ test('every bundled example gets a Jacobian that matches', async () => {
 		}
 		const { worst, jacobian } = jacobianAgrees(model);
 		assert(worst < 1, `${f}: off by ${worst.toFixed(2)}x the difference's own noise`);
-		// Every example's rates are constants, so df/dy is too -- except the
-		// ones whose rates follow a lookup table, which is what those are for,
-		// and the ones with a block that remembers: a min/max switches between
-		// its target and the extreme so far, and a running mean divides by a
-		// time that grows.
-		const moving = (model.lookups ?? []).length > 0
+		// A rate or a dy/dt term that reads a compartment -- directly, or
+		// through an expression that does -- moves with the state: every
+		// nonlinear test problem, and the oscillators, whose terms read each
+		// other. Worked out here from the file, not asked of the builder.
+		const reads = (text) => (String(text ?? '').trim()
+			? collectReferences(parse(String(text))) : new Set());
+		const follows = new Set((model.compartments ?? []).map((c) => c.name));
+		for (let grew = true; grew;) {
+			grew = false;
+			for (const e of model.expressions ?? []) {
+				if (!follows.has(e.name) && [...reads(e.equation)].some((n) => follows.has(n))) {
+					follows.add(e.name);
+					grew = true;
+				}
+			}
+		}
+		const stateRates = [
+			...(model.transfers ?? []).map((t) => t.rate),
+			...(model.inflows ?? []).map((t) => t.rate),
+			...(model.compartments ?? []).map((c) => c.dydt),
+		].some((rate) => [...reads(rate)].some((n) => follows.has(n)));
+		// The rest of the examples' rates are constants, so df/dy is too --
+		// except the ones whose rates follow a lookup table, which is what those
+		// are for, and the ones with a block that remembers: a min/max switches
+		// between its target and the extreme so far, and a running mean divides
+		// by a time that grows.
+		const moving = stateRates || (model.lookups ?? []).length > 0
 			|| ['min_maxes', 'running_means', 'snapshots', 'delays']
 				.some((k) => (model[k] ?? []).length > 0)
 			// ...and waste packages whose failure hazard reads the clock: a
@@ -17816,6 +17837,202 @@ test('the bundled scenario example answers differently under each one', async ()
 	assert(new Set(values).size === 3, `three scenarios gave ${new Set(values).size} answers`);
 	// Wetter washes more through, so the dose is higher; drier, lower.
 	assert(values[1] > values[0] && values[0] > values[2], values.join(' '));
+});
+
+test('the bundled ODE test problems give their known answers', async () => {
+	// Each against a closed form or a published reference. They are worked
+	// examples of what the solvers are tested on, and one that drifted from
+	// its own answer would be teaching the wrong thing; the descriptions quote
+	// these numbers.
+	const { readFileSync } = await import('node:fs');
+	const solve = (file, edit = () => {}) => {
+		const raw = JSON.parse(readFileSync(new URL(`../examples/${file}`, import.meta.url), 'utf8'));
+		edit(raw);
+		const r = run(new Project(raw));
+		const of = (label) => {
+			const o = r.outputs().find((x) => x.label === label);
+			assert(o, `${file}: no output ${label}`);
+			return r.series(o);
+		};
+		const at = (label, time) => of(label)[r.t.findIndex((x) => x === time)];
+		return { r, t: r.t, of, at, last: r.t.length - 1 };
+	};
+	const worst = (xs, f) => xs.reduce((w, x, i) => Math.max(w, f(x, i)), 0);
+	/** Times x falls through zero, between two rows, by linear interpolation. */
+	const fallsThroughZero = (t, x) => {
+		const out = [];
+		for (let i = 1; i < x.length; i++) {
+			if (x[i - 1] > 0 && x[i] <= 0) out.push(t[i - 1] + (t[i] - t[i - 1]) * x[i - 1] / (x[i - 1] - x[i]));
+		}
+		return out;
+	};
+
+	// y' = -k y: the solver's relative error stays within a few rtol.
+	{
+		const { of } = solve('exponential-decay.json');
+		const y = of('y');
+		const exact = of('Exact');
+		const err = worst(y, (v, i) => Math.abs(v / exact[i] - 1));
+		assert(err < 1e-5 && err > 0, `exponential decay: relative error ${err}`);
+	}
+	// x'' = -omega^2 x: the closed form, and the energy it keeps.
+	{
+		const { of } = solve('harmonic-oscillator.json');
+		const x = of('x');
+		const exact = of('Exact');
+		assert(worst(x, (v, i) => Math.abs(v - exact[i])) < 1e-6, 'the spring left its closed form');
+		const e0 = 2 * Math.PI ** 2;
+		assert(worst(of('Energy'), (v) => Math.abs(v / e0 - 1)) < 1e-6, 'the spring lost energy');
+	}
+	// Van der Pol at mu = 1 settles on its limit cycle: amplitude 2.00862 and
+	// period 6.66329, both known to many more figures.
+	{
+		const { t, of } = solve('van-der-pol.json');
+		const x = of('x');
+		const falls = fallsThroughZero(t, x);
+		assert(falls.length >= 3, `van der Pol: ${falls.length} crossings`);
+		close(falls[2] - falls[1], 6.663286859, 2e-4, 'van der Pol period');
+		close(Math.max(...x.filter((v, i) => t[i] > 10)), 2.008619860, 1e-3, 'van der Pol amplitude');
+	}
+	// At mu = 1000 the period is Dorodnitsyn's (3 - 2 ln 2) mu + 3 a mu^(-1/3)
+	// - (2/3) ln(mu)/mu, a = 2.338107 the first zero of Ai(-x): 1614.40. The
+	// jumps are found between rows two seconds apart.
+	{
+		const { t, of } = solve('van-der-pol-stiff.json');
+		const falls = fallsThroughZero(t, of('x'));
+		assert(falls.length === 2, `stiff van der Pol: ${falls.length} falls`);
+		const mu = 1000;
+		const period = (3 - 2 * Math.log(2)) * mu + 3 * 2.338107 * mu ** (-1 / 3) - (2 / 3) * Math.log(mu) / mu;
+		assert(Math.abs(falls[1] - falls[0] - period) < 2.5, `stiff van der Pol period ${falls[1] - falls[0]}, wanted ${period}`);
+	}
+	// Lotka-Volterra keeps delta x - gamma ln x + beta y - alpha ln y, which
+	// is 2 where both start at 1.
+	{
+		const { of } = solve('lotka-volterra.json');
+		assert(worst(of('Invariant'), (v) => Math.abs(v / 2 - 1)) < 1e-6, 'the invariant drifted');
+	}
+	// Robertson's kinetics against the reference solution of the ROBER test
+	// problem at t = 40 and at t = 1e11, conserving A + B + C.
+	{
+		const { at, of, last, t } = solve('robertson.json', (m) => {
+			m.simulation.output_times.push({ kind: 'times', times: [40] });
+		});
+		close(at('A', 40), 0.7158270687, 1e-7, 'Robertson A(40)');
+		close(at('B', 40), 9.185534765e-6, 1e-7, 'Robertson B(40)');
+		close(at('C', 40), 0.2841637457, 1e-7, 'Robertson C(40)');
+		close(of('A')[last], 2.083340149701255e-8, 1e-6, 'Robertson A(1e11)');
+		close(of('B')[last], 8.333360770334713e-14, 1e-6, 'Robertson B(1e11)');
+		close(of('C')[last], 0.9999999791665050, 1e-12, 'Robertson C(1e11)');
+		assert(t[last] === 1e11, String(t[last]));
+		assert(worst(of('Total'), (v) => Math.abs(v - 1)) < 1e-12, 'A + B + C is not 1');
+	}
+	// The Oregonator against the reference solution of the OREGO problem at
+	// t = 360.
+	{
+		const { of, last } = solve('oregonator.json');
+		close(of('y1')[last], 1.000814870318523, 1e-6, 'Oregonator y1(360)');
+		close(of('y2')[last], 1228.178521549917, 1e-4, 'Oregonator y2(360)');
+		close(of('y3')[last], 132.0554942846706, 1e-4, 'Oregonator y3(360)');
+	}
+	// SIR: the epidemic peaks where S = N/R0, at N - (N/R0)(1 + ln(R0 S0/N)),
+	// and the population is conserved. The rows are half a day apart.
+	{
+		const { of } = solve('sir-epidemic.json');
+		const [S, I, R] = [of('S'), of('I'), of('R')];
+		const n = 1000;
+		const r0 = 0.3 / 0.1;
+		const peak = n - (n / r0) * (1 + Math.log((r0 * 999) / n));
+		assert(Math.abs(Math.max(...I) - peak) < 0.15, `SIR peak ${Math.max(...I)}, wanted ${peak}`);
+		assert(worst(S, (v, i) => Math.abs(v + I[i] + R[i] - n)) < 1e-9 * n, 'people appeared or vanished');
+	}
+	// Michaelis-Menten: substrate is bound, released or made into product,
+	// never lost.
+	{
+		const { of } = solve('michaelis-menten.json');
+		const [S, C, P] = [of('S'), of('C'), of('P')];
+		assert(worst(S, (v, i) => Math.abs(v + C[i] + P[i] - 10)) < 1e-9, 'substrate was lost');
+	}
+	// The bouncing ball: it lands at (2 v0/g)(1 - e^n)/(1 - e) and leaves at
+	// v0 e^n, its energy falling by e^2 at each bounce -- twelve in 30 s.
+	{
+		const { r, of, last } = solve('bouncing-ball.json');
+		const [g, v0, e, n] = [9.81, 20, 0.9, 12];
+		assert(r.stats.events === n, `${r.stats.events} bounces`);
+		close(of('T_bounce')[last], ((2 * v0) / g) * ((1 - e ** n) / (1 - e)), 1e-7, 'twelfth bounce');
+		close(of('V_up')[last], v0 * e ** n, 1e-7, 'speed off the twelfth bounce');
+		close(of('Energy')[last], (v0 ** 2 / 2) * e ** (2 * n), 1e-6, 'energy left');
+		assert(Math.min(...of('Height')) > -1e-9, 'the ball went through the floor');
+	}
+	// The thermostat: warming from 15 to 21 takes tau ln(10/4), and then each
+	// cycle is tau ln(16/14) off and tau ln(6/4) on -- 42 switches in a day.
+	{
+		const { r, of, last, t } = solve('thermostat.json');
+		const tau = 2;
+		const warm = tau * Math.log(10 / 4);
+		const off = tau * Math.log(16 / 14);
+		const cycle = off + tau * Math.log(6 / 4);
+		assert(r.stats.events === 42, `${r.stats.events} switches`);
+		close(of('Off_since')[last], warm + 20 * cycle, 1e-7, 'last switch off');
+		close(of('On_since')[last], warm + off + 20 * cycle, 1e-7, 'last switch on');
+		const room = of('Room').filter((v, i) => t[i] > warm);
+		assert(Math.min(...room) > 19 - 1e-6 && Math.max(...room) < 21 + 1e-6,
+			`the room left 19 to 21: ${Math.min(...room)} to ${Math.max(...room)}`);
+	}
+});
+
+test('no bundled example warns about its units', async () => {
+	// The strip shows these as soon as a model opens, and an example that
+	// opens on a warning about itself is teaching the reader to ignore them.
+	// `second2` read as a unit of its own, not as s^2, was the case found.
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const dir = new URL('../examples/', import.meta.url);
+	for (const f of readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+		const raw = JSON.parse(readFileSync(new URL(f, dir), 'utf8'));
+		const found = ed.allUnitProblems(raw);
+		assert(!found.length, `${f}: ${found.map((p) => `${p.name}: ${p.message}`).join('; ')}`);
+	}
+});
+
+test('the chart draws its axes the way the model says, and saves a change with it', async () => {
+	// A model that says nothing is drawn log-log, as every model was before
+	// it could say; anything but 'linear' is log.
+	assert(ed.view({}).chart_time_scale === 'log' && ed.view({}).chart_value_scale === 'log');
+	assert(JSON.stringify(ed.chartScales({})) === '{"xLog":true,"yLog":true}');
+	assert(JSON.stringify(ed.chartScales(null)) === '{"xLog":true,"yLog":true}', 'no model at all');
+	const straight = { view: { chart_time_scale: 'linear', chart_value_scale: 'linear' } };
+	assert(JSON.stringify(ed.chartScales(straight)) === '{"xLog":false,"yLog":false}');
+	assert(ed.chartScales({ view: { chart_value_scale: 'wobbly' } }).yLog === true);
+	const m = {};
+	ed.setView(m, { chart_time_scale: 'linear' });
+	assert(m.view.chart_time_scale === 'linear' && m.view.chart_value_scale === 'log', JSON.stringify(m.view));
+	let refused = false;
+	try { ed.setView(m, { chart_value_scale: 'loglog' }); } catch (e) { refused = e instanceof ed.EditError; }
+	assert(refused, 'a scale that is not one was taken');
+
+	// The page reads them from the model, writes the menu's toggles into it
+	// as an undoable step that runs nothing, and redraws when a step back or
+	// forward changes them.
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(!/state\.[xy]Log/.test(app), 'the scales are still page state');
+	assert(/const scales = ed\.chartScales\(state\.raw\);/.test(app) && /chart\.setScales\(scales\);/.test(app),
+		'the chart is not drawn at the model’s scales');
+	const menu = /function chartMenu\(ev\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/ed\.setView\(state\.raw, \{ \[key\]:/.test(menu)
+		&& /modelChanged\(\{ layoutOnly: true, label: 'Change the chart’s scales' \}\)/.test(menu),
+	'the scale menu does not write to the model');
+	const travel = /function timeTravel\(back\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/JSON\.stringify\(ed\.chartScales\(state\.raw\)\) !== scalesWere\) renderChart\(\);/.test(travel),
+		'undoing a change of scale leaves the chart as it was');
+
+	// And no example with a state that may go negative opens on a log value
+	// axis, which cannot draw it.
+	const dir = new URL('../examples/', import.meta.url);
+	for (const f of readdirSync(dir).filter((x) => x.endsWith('.json'))) {
+		const raw = JSON.parse(readFileSync(new URL(f, dir), 'utf8'));
+		if (!(raw.compartments ?? []).some((c) => c.non_negative === false)) continue;
+		assert(!ed.chartScales(raw).yLog, `${f} goes negative and is drawn on a log value axis`);
+	}
 });
 
 test('a scenario dimension is left out of the reduction’s count', () => {
@@ -21810,6 +22027,32 @@ await (async () => {
 			}
 			sameText(got, want, name);
 		}
+	});
+
+	test('a compartment with no unit keeps none through an .eco, and one with no <unit> is still Bq', () => {
+		// An Ecolego file leaves <unit> out of a compartment whose inventory is
+		// in its materials' unit, which this tool reads as Bq. A compartment
+		// of plain numbers -- a population, a test problem's state -- has no
+		// unit and says so with an empty element, and comes back with none.
+		const model = {
+			name: 'Units',
+			simulation: { start_time: 0, end_time: 1, output_points: 3, spacing: 'linear', rtol: 1e-6, abstol: 1e-9 },
+			compartments: [
+				{ name: 'Plain', initial: '1', unit: '' },
+				{ name: 'Default', initial: '1' },
+				{ name: 'Mass', initial: '1', unit: 'kg' },
+			],
+		};
+		const { xml } = eco.exportModelXML(model);
+		const plain = /<component name="Plain"[\s\S]*?<\/component>/.exec(xml)?.[0] ?? '';
+		assert(/<unit><\/unit>/.test(plain), plain.slice(0, 300));
+		// Read as the page opens it: a compartment with no unit at all is Bq.
+		const unitOf = (text, name) => new Project(importModelXML(text).project)
+			.compartments.find((c) => c.name === name)?.unit;
+		assert(unitOf(xml, 'Plain') === '', `came back as '${unitOf(xml, 'Plain')}'`);
+		assert(unitOf(xml, 'Default') === 'Bq' && unitOf(xml, 'Mass') === 'kg', 'the others moved');
+		// The same file with the element left out, as Ecolego writes one.
+		assert(unitOf(xml.replace('<unit></unit>', ''), 'Plain') === 'Bq', 'a missing <unit> is no longer Bq');
 	});
 
 	test('a re-imported model runs to the same results as the model it came from', async () => {

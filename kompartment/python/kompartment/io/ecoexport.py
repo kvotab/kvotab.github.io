@@ -2358,7 +2358,8 @@ def _dim_attrs(ctx: _Context, dims: Sequence[Any], intersection: bool = False) -
     return [('dimension', str(len(dims))), ('index-lists', ids)]
 
 
-def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str) -> None:
+def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str,
+                  collection: Optional[str] = None) -> None:
     w.text('id', q)
     w.cdata('guid', guid_for(ctx.project_name, f'block:{q}'))
     if _truthy(block.get('system')):
@@ -2367,6 +2368,11 @@ def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str) -
     unit = _trim(_or(block.get('unit', _UNDEF), ''))
     if unit:
         w.text('unit', unit)
+    elif collection == 'compartments' and isinstance(block.get('unit'), str):
+        # A compartment whose unit is empty -- said so, not left out, which is
+        # Bq -- is written with an empty one: no <unit> at all reads back as
+        # the inventory in Bq an Ecolego file means by it.
+        w.text('unit', '')
     comment = _trim(_or(block.get('comment', _UNDEF), ''))
     if comment:
         w.cdata('comment', comment)
@@ -2393,7 +2399,7 @@ def _write_component(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], collec
              'operation': 'transport-operation'}.get(role or '', ECO_TYPE[collection])
     dims = [] if collection == 'functions' else _list(block.get('index_lists'))
     w.open('component', [('name', block.get('name')), ('type', type_), *_dim_attrs(ctx, dims)])
-    _write_common(w, ctx, block, q)
+    _write_common(w, ctx, block, q, collection)
     # What a run has a result for: not a function or a table read at a value,
     # which answer an argument, nor the parts of a transport that count.
     answers = (collection == 'functions' or role in ('counter', 'operation')

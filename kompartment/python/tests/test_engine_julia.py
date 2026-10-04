@@ -1928,7 +1928,21 @@ STEP_SHARE = {
     # may take the other: 1305 against 915 when written (and 928 against
     # 1301 before 2026-09-25's changes to FBDF).
     'recorders': 0.45,
+    # Past CHAOTIC's horizon the two runs follow different trajectories, and
+    # the steps they take there are counted all the same: up to 2.7 % apart
+    # (KenCarp4, 24 229 against 24 895), measured 2026-10-04.
+    'lorenz': 0.06,
 }
+
+# Where a chaotic example's rows stop being comparable. On Lorenz the two runs
+# part by the last bit of a pow -- with V8's put back, Vern7 and Tsit5 are the
+# application's to the last bit over all fifty seconds -- and the attractor
+# amplifies that tenfold every two and a half seconds: within 0.05 rtol of
+# each other to t = 10 on every method, 10 rtol apart from t = 14 (the
+# matrix-free FBDF) to t = 25, and then two equally good runs along different
+# trajectories, which no bound on rows can tell from a wrong one. Measured
+# 2026-10-04; the rows are held to the usual bounds up to here.
+CHAOTIC = {'lorenz': 10.0}
 
 # The methods that came with the default algorithm, where one needs more than
 # its example's share, measured 2026-10-03 (Python 3.12, numpy 2.3, scipy
@@ -1938,6 +1952,14 @@ NEW_STEP_SHARE = {
     # threshold, and a last bit moves which: 403 steps against 447 (397 of
     # Vern7's and 4 of Rodas5P's against 322 and 121).
     ('decay-chain', 'auto_julia'): 0.2,
+    # Robertson's kinetics, measured 2026-10-04. The matrix-free FBDF rejects
+    # 3961 of its 10 729 steps, each on an estimate a last bit moves: 11 211
+    # here, and the application's 10 729 to the step with V8's pow put back.
+    ('robertson', 'fbdf_krylov'): 0.08,
+    # This tool's switch hands Robertson to the NDF, whose arithmetic here is
+    # 5e-13 from the application's (test_bundled_examples_through_the_runner):
+    # 2637 steps against 2548, and still 2577 with V8's pow put back.
+    ('robertson', 'auto'): 0.06,
 }
 
 # The rows of a run that took other steps than the application's are held to
@@ -1950,6 +1972,14 @@ ROW_BOUND = {
     # thirty runs here and eight there all land between 7e-7 and 4e-6.
     ('recorders', 'vern7'): 500,
     ('recorders', 'auto_julia'): 500,
+    # The two relaxation oscillators handed to the NDF, whose arithmetic here
+    # is 5e-13 from the application's: a difference that small still moves
+    # the instant a jump is crossed, and a row taken on the jump reads it
+    # (2026-10-04). The Oregonator's rows are 1710 rtol apart, and 370 with
+    # V8's pow put back; van der Pol's at mu = 1000 are 2040 apart, and 4.4
+    # with V8's pow.
+    ('oregonator', 'auto'): 3000,
+    ('van-der-pol-stiff', 'auto'): 4000,
 }
 
 # farfield (1266 states) only with the quick methods: the application's
@@ -1958,8 +1988,12 @@ ROW_BOUND = {
 # 200 000 evaluations of f in GMRES, half a minute there and most of one here.
 FARFIELD = ('rodas5p', 'kencarp4', 'rosenbrock23', 'auto')
 
-# Stiff from the first steps, where an explicit method needs over a million.
-STIFF_EXAMPLES = ('biosphere', 'farfield')
+# Stiff from the first steps, where an explicit method needs over a million --
+# or, on the three stiff test problems, never gets there: Tsit5 hits its ten
+# million steps on Robertson's kinetics a thousandth of the way through, and
+# Dormand-Prince needs 1.7 and 3.4 million on van der Pol at mu = 1000 and on
+# the Oregonator.
+STIFF_EXAMPLES = ('biosphere', 'farfield', 'robertson', 'van-der-pol-stiff', 'oregonator')
 
 
 def example_solvers(name: str) -> Tuple[str, ...]:
@@ -2047,6 +2081,9 @@ class Examples(unittest.TestCase):
                         rows_theirs = [i for i, t in enumerate(js['t']) if t in common]
                     else:
                         rows_mine = rows_theirs = list(range(len(js['t'])))
+                    if name in CHAOTIC:
+                        rows_mine = [i for i in rows_mine if mine_t[i] <= CHAOTIC[name]]
+                        rows_theirs = [i for i in rows_theirs if js['t'][i] <= CHAOTIC[name]]
                     for o, mine, theirs in zip(outs, res.series_many(outs), js['columns']):
                         if o['kind'] != 'compartment':
                             continue

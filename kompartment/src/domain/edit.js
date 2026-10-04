@@ -8690,7 +8690,18 @@ const DEFAULT_VIEW = {
 	show_grid: true,
 	snap_to_grid: true,
 	connection_label: 'name',
+	// How the Chart tab draws its two axes, 'log' or 'linear'. Log-log is what
+	// an inventory over a million years is read in, and what a model that says
+	// nothing gets; an oscillation, a population cycle or anything that goes
+	// negative wants straight axes, and is drawn wrongly on any other. Kept
+	// with the model for the same reason the rest of this is: how its results
+	// are read is a fact about the model, not about the page it was opened in.
+	chart_time_scale: 'log',
+	chart_value_scale: 'log',
 };
+
+/** The two ways the chart can draw an axis. */
+export const CHART_SCALES = ['log', 'linear'];
 
 /**
  * What the diagram shows. Presentation state, kept in the project so it
@@ -8716,8 +8727,24 @@ export function setView(project, patch) {
 			+ `(${INFLUENCE_MODES.join(', ')})`,
 		);
 	}
+	for (const key of ['chart_time_scale', 'chart_value_scale']) {
+		if (patch[key] != null && !CHART_SCALES.includes(patch[key])) {
+			throw new EditError(`'${patch[key]}' is not a chart scale (${CHART_SCALES.join(', ')})`);
+		}
+	}
 	project.view = { ...view(project), ...patch };
 	return project.view;
+}
+
+/**
+ * Whether the chart draws each axis logarithmically, as the model says.
+ *
+ * Anything but 'linear' is log, so a file that says nothing -- or something
+ * this does not know -- is drawn the way every model was before it could say.
+ */
+export function chartScales(project) {
+	const v = view(project ?? {});
+	return { xLog: v.chart_time_scale !== 'linear', yLog: v.chart_value_scale !== 'linear' };
 }
 
 /**

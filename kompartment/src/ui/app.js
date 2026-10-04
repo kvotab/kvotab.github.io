@@ -156,6 +156,25 @@ const EXAMPLES = [
 	{ file: 'scenarios.json', title: 'Three climate scenarios' },
 	{ file: 'farfield.json', title: 'Fractured rock: a far-field path' },
 	{ file: 'waste-packages.json', title: 'Canisters failing: a source term with barriers' },
+	// The problems solvers are tested on, from the numerical literature: the
+	// linear test equation, oscillators stiff and not, populations, enzyme and
+	// stiff chemical kinetics, chaos, and two right-hand sides that jump. Each
+	// says in its description what it tests and what to try.
+	...[
+		['exponential-decay.json', 'Exponential decay'],
+		['harmonic-oscillator.json', 'A mass on a spring'],
+		['van-der-pol.json', 'Van der Pol oscillator'],
+		['van-der-pol-stiff.json', 'Van der Pol oscillator, stiff (μ = 1000)'],
+		['lotka-volterra.json', 'Lotka–Volterra predator and prey'],
+		['sir-epidemic.json', 'SIR epidemic'],
+		['michaelis-menten.json', 'Michaelis–Menten enzyme kinetics'],
+		['brusselator.json', 'Brusselator chemical oscillator'],
+		['oregonator.json', 'Oregonator: a stiff chemical oscillator'],
+		['robertson.json', 'Robertson’s stiff chemical kinetics'],
+		['lorenz.json', 'Lorenz attractor'],
+		['bouncing-ball.json', 'Bouncing ball'],
+		['thermostat.json', 'A thermostat switching a heater'],
+	].map(([file, title]) => ({ file, title, group: 'ODE test problems' })),
 ];
 
 /**
@@ -165,8 +184,7 @@ const EXAMPLES = [
  * transfer and a rate, which is a model somebody else wrote: whatever you meant
  * to build, the first thing to do with it was delete it, and renaming `A` and
  * `B` into what you actually wanted is slower than adding two boxes. The
- * examples in the picker beside the button are where a worked model belongs,
- * and there are nine of them.
+ * examples in the picker beside the button are where a worked model belongs.
  *
  * The settings stay, because they are not a model -- a run has to start
  * somewhere and end somewhere, and 0 to 1000 years on a log grid is the shape
@@ -295,8 +313,6 @@ const state = {
 	// inspector shows; several can be moved or deleted together.
 	picked: [],
 	selected: [],
-	xLog: true,
-	yLog: true,
 	running: false,
 	runId: 0,
 	// The selected scenario's own run is in flight. `running` covers the
@@ -3157,6 +3173,9 @@ function timeTravel(back) {
 	// nothing against the one arriving.
 	clearPendingCut();
 	const had = new Set(ed.allBlocks(state.raw).map(ed.qualifiedName));
+	// The chart's scales are the model's, so a step can be a change to them --
+	// one that changes no number and so redraws nothing unless asked.
+	const scalesWere = JSON.stringify(ed.chartScales(state.raw));
 	// When the file was made and last saved are facts about the file, not
 	// edits: stepping back through the model leaves them as they are.
 	state.raw = ed.keepStamps(step.raw, state.raw);
@@ -3195,6 +3214,7 @@ function timeTravel(back) {
 	state.dirty = true;
 	if (!step.layoutOnly) state.rev += 1;
 	republish({ layoutOnly: step.layoutOnly });
+	if (state.results && JSON.stringify(ed.chartScales(state.raw)) !== scalesWere) renderChart();
 	flash(`${back ? 'Undid' : 'Redid'}: ${step.label}`);
 }
 
@@ -8730,7 +8750,8 @@ function renderChart() {
 	// saying now that a constant can be charted: a rate of zero is an ordinary
 	// thing for a model to carry, and its line is not missing, just unplottable
 	// on this axis.
-	if (state.yLog) {
+	const scales = ed.chartScales(state.raw);
+	if (scales.yLog) {
 		const anyPositive = (v) => {
 			for (let i = 0; i < v.length; i++) if (v[i] > 0) return true;
 			return false;
@@ -8751,7 +8772,7 @@ function renderChart() {
 	renderRunKind();
 	$('#unitwarn').hidden = !notes.length;
 	$('#unitwarn').textContent = notes.join(' ');
-	chart.setScales({ xLog: state.xLog, yLog: state.yLog });
+	chart.setScales(scales);
 	chart.setData(r.t, drawnSeries, {
 		xLabel: `Time (${state.raw.simulation?.time_unit ?? 'year'})`, yLabel,
 	});
@@ -10412,16 +10433,20 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 function chartMenu(ev) {
 	ev.preventDefault();
 	const has = !!state.results && state.selected.length > 0;
-	const scale = (key, label, hint) => ({
+	// Saved with the model, like what the diagram shows: an oscillation is
+	// read on straight axes every time it is opened, not only until the page
+	// is reloaded. See `chart_time_scale` in ../domain/edit.js.
+	const scale = (key, axis, label, hint) => ({
 		label,
 		hint,
-		checked: () => !!state[key],
+		checked: () => ed.chartScales(state.raw)[axis],
 		keepOpen: true,
 		title: `Logarithmic ${label.replace('log ', '')} axis. Off draws it `
 			+ `linearly, which suits a result that spans one decade rather `
-			+ `than five.`,
+			+ `than five, and one that goes negative. Saved with the model.`,
 		onPick: () => {
-			state[key] = !state[key];
+			ed.setView(state.raw, { [key]: ed.chartScales(state.raw)[axis] ? 'linear' : 'log' });
+			modelChanged({ layoutOnly: true, label: 'Change the chart’s scales' });
 			if (state.results) renderChart();
 		},
 	});
@@ -10430,8 +10455,8 @@ function chartMenu(ev) {
 		y: ev.clientY,
 		title: 'chart',
 		items: [
-			scale('xLog', 'log time', 'x'),
-			scale('yLog', 'log value', 'y'),
+			scale('chart_time_scale', 'xLog', 'log time', 'x'),
+			scale('chart_value_scale', 'yLog', 'log value', 'y'),
 			{ separator: true },
 			{
 				label: 'Save as picture',
@@ -12570,12 +12595,16 @@ export function boot() {
 	});
 
 	const sel = $('#example');
-	// The examples in a group of their own, so the entry that names a model
+	// The examples in groups of their own, so the entry that names a model
 	// from somewhere else reads as apart from them rather than as one more
 	// example of ours. See noteModelSource.
-	const examples = el('optgroup', { label: 'Examples' });
-	for (const ex of EXAMPLES) examples.append(el('option', { value: ex.file }, ex.title));
-	sel.append(examples);
+	const groups = new Map();
+	for (const ex of EXAMPLES) {
+		const label = ex.group ?? 'Examples';
+		if (!groups.has(label)) groups.set(label, el('optgroup', { label }));
+		groups.get(label).append(el('option', { value: ex.file }, ex.title));
+	}
+	sel.append(...groups.values());
 	sel.addEventListener('change', () => loadExample(sel.value).catch((e) => {
 		// Nothing was replaced, so the picker goes back to naming what is
 		// still loaded instead of the example that never arrived.

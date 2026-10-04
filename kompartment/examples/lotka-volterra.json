@@ -1,0 +1,63 @@
+{
+  "name": "Lotka–Volterra predator and prey",
+  "description": "The predator–prey equations of Lotka and Volterra: prey x breed at rate α and are eaten at β·x·y; predators y breed by eating, at δ·x·y, and die at rate γ. Each population's growth is its compartment's dy/dt term, and each reads the other compartment. With α = 1.5, β = 1, γ = 3 and δ = 1, and both populations starting at 1, they cycle round the equilibrium (γ/δ, α/β) = (3, 1.5) every 3.32 years, the predators' peaks trailing the prey's by about half a year.\n\nThe cycles neither grow nor fade, because δx − γ·ln x + βy − α·ln y is conserved along every orbit. That is the Invariant expression, which stays within 1e-7 of 2 over the twenty years here. How far it drifts is a direct measure of a solver's error: at the tolerance set here (1e-8) dp45 holds it to 1.4e-7 in 461 steps, while the second-order ros23 needs 6541 steps and drifts by 7e-6. Loosen the tolerance to 1e-4 and the invariant wanders by a few parts in a thousand.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 20,
+    "output_points": 401,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-10,
+    "time_unit": "year"
+  },
+  "parameters": [
+    {
+      "name": "alpha",
+      "value": 1.5,
+      "unit": "1/year"
+    },
+    {
+      "name": "beta",
+      "value": 1,
+      "unit": "1/year"
+    },
+    {
+      "name": "gamma",
+      "value": 3,
+      "unit": "1/year"
+    },
+    {
+      "name": "delta",
+      "value": 1,
+      "unit": "1/year"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "Prey",
+      "initial": "1",
+      "unit": "",
+      "dydt": "alpha*Prey - beta*Prey*Predator"
+    },
+    {
+      "name": "Predator",
+      "initial": "1",
+      "unit": "",
+      "dydt": "delta*Prey*Predator - gamma*Predator"
+    }
+  ],
+  "transfers": [],
+  "expressions": [
+    {
+      "name": "Invariant",
+      "equation": "delta*Prey - gamma*log(Prey) + beta*Predator - alpha*log(Predator)"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}

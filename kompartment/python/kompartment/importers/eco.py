@@ -1667,7 +1667,12 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
             }
             block['non_negative'] = _read_non_negative(entries, original, report)
             block['entries'] = _keep_indexed(entries, ['initial', 'abstol', 'dydt'])
-            project['compartments'].append(_trim_empty(block))
+            compartment = _trim_empty(block)
+            # An empty <unit> is a compartment that has none, as the export
+            # writes one; no <unit> at all is the Bq an Ecolego file means.
+            if unit == '' and child(el, 'unit') is not None:
+                compartment['unit'] = ''
+            project['compartments'].append(compartment)
         elif role == 'counter':
             project['expressions'].append(_trim_empty({
                 'name': name, 'system': system, **dim_spec, 'unit': '', 'comment': comment,

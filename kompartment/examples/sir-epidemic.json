@@ -1,0 +1,86 @@
+{
+  "name": "SIR epidemic",
+  "description": "Kermack and McKendrick's epidemic model: susceptible people S are infected at rate β·S·I/N, and the infected I recover at rate γ, into R, where they stay. Infection and Recovery are ordinary transfers whose rates read the compartments, so the diagram is the model and S + I + R stays at N = 1000. With β = 0.3 and γ = 0.1 a day, the basic reproduction number R0 = β/γ is 3. One case starts it; the epidemic peaks around day 38 with 301 people infected at once, exactly when S has fallen to N/R0 and R_eff passes through 1; and by day 160 about 94 % of the population has had it.\n\nTry: lower beta to 0.15 (R0 = 1.5) and watch the peak flatten and come later. Below R0 = 1 the infection dies out.",
+  "simulation": {
+    "start_time": 0,
+    "end_time": 160,
+    "output_points": 321,
+    "spacing": "linear",
+    "solver": "dp45",
+    "rtol": 1e-08,
+    "abstol": 1e-08,
+    "time_unit": "day"
+  },
+  "parameters": [
+    {
+      "name": "N",
+      "value": 1000,
+      "unit": "person"
+    },
+    {
+      "name": "I0",
+      "value": 1,
+      "unit": "person"
+    },
+    {
+      "name": "beta",
+      "value": 0.3,
+      "unit": "1/day"
+    },
+    {
+      "name": "gamma",
+      "value": 0.1,
+      "unit": "1/day"
+    }
+  ],
+  "compartments": [
+    {
+      "name": "S",
+      "initial": "N - I0",
+      "unit": "person"
+    },
+    {
+      "name": "I",
+      "initial": "I0",
+      "unit": "person"
+    },
+    {
+      "name": "R",
+      "initial": "0",
+      "unit": "person"
+    }
+  ],
+  "transfers": [
+    {
+      "name": "Infection",
+      "from": "S",
+      "to": "I",
+      "rate": "beta*I/N",
+      "unit": "1/day"
+    },
+    {
+      "name": "Recovery",
+      "from": "I",
+      "to": "R",
+      "rate": "gamma",
+      "unit": "1/day"
+    }
+  ],
+  "expressions": [
+    {
+      "name": "R0",
+      "equation": "beta/gamma"
+    },
+    {
+      "name": "R_eff",
+      "equation": "R0*S/N"
+    }
+  ],
+  "view": {
+    "show_parameters": true,
+    "show_influences": "all",
+    "connection_label": "rate",
+    "chart_time_scale": "linear",
+    "chart_value_scale": "linear"
+  }
+}
