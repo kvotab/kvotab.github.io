@@ -2,7 +2,8 @@
 """dose_coefficients.html in a real browser: does the page do the thing.
 
 test-engine.mjs proves the arithmetic. This proves the wiring: that the page
-loads without a script error, that the catalogue of each system fills the
+loads without a script error, that its tab icon decodes and keeps to the kvot
+mark's tones, that the catalogue of each system fills the
 nuclide list, that every (i) opens its panel and closes it, that a
 calculation in each system puts the coefficients in the table, that every
 tab draws (charts, the model diagram, the decay chain), that a link with the
@@ -154,6 +155,27 @@ async def main():
         check('the ICRP 103 catalogue loads', loaded)
         n103 = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")
         check('it lists the 900-odd nuclides of 91 elements', (n103 or 0) >= 880)
+
+        # The tab icon: the ICRP's letters in the kvot mark's language (scripts/gen-dose-icon.py), the SVG first with a
+        # PNG for what will not take one and a touch icon. Each must decode as a picture (an SVG whose comment holds
+        # "--" is not XML, and the browser silently drops it), and the drawing keeps to the mark's three tones.
+        icon = await p.ev("""(async () => {
+          const links = Object.fromEntries([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+            .map((l) => [l.rel, [l.getAttribute('href'), l.type || '']]));
+          const load = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok([i.naturalWidth, i.naturalHeight]); i.onerror = () => ok(null); i.src = src; });
+          const svg = await (await fetch(links.icon[0], { cache: 'no-store' })).text();
+          const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+          return { links, svg: await load(links.icon[0]), png: await load(links['alternate icon'][0]), touch: await load(links['apple-touch-icon'][0]),
+            xml: !doc.querySelector('parsererror'), title: doc.querySelector('svg > title')?.textContent,
+            fills: [...new Set([...svg.matchAll(/fill="(#[0-9a-f]{6})"/gi)].map((m) => m[1].toLowerCase()))].sort(),
+            gradient: /<(linear|radial)Gradient/.test(svg) };
+        })()""", wait=True)
+        check('the tab icon: the SVG first, a 32-pixel PNG for what will not take one, and a touch icon; each decodes',
+              (icon['links'], icon['svg'] is not None, icon['png'], icon['touch'], icon['xml']),
+              ({'icon': ['./resources/images/dose-icon.svg', 'image/svg+xml'], 'alternate icon': ['./resources/images/dose-icon-32.png', 'image/png'],
+                'apple-touch-icon': ['./resources/images/dose-icon-180.png', '']}, True, [32, 32], [180, 180], True))
+        check('... drawn in the kvot mark’s three tones only, without gradients, and named for the page',
+              (icon['fills'], icon['gradient'], icon['title']), (['#344126', '#bb6c5d', '#f3b87b'], False, 'Dose Coefficients'))
 
         # Every (i) opens a panel with a title and closes again.
         keys = await p.ev("[...document.querySelectorAll('.kvot-info-slot')].map(s => s.dataset.infoKey)")
