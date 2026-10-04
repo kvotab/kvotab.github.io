@@ -622,6 +622,65 @@ function makeElementIcon(color) {
 }
 
 // ── Cytoscape setup ──────────────────────────────────────────────────────────
+var SVG_DATA = "data:image/svg+xml;charset=utf-8,";
+var EMPTY_IMAGE = SVG_DATA + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+var NUCLIDE_SIZE = 80;
+
+/*
+  A nuclide's circle is drawn from two pictures: the fill (index 0) and the
+  label (index 1). They used to be one picture holding the level, so every new
+  level was a new image, and cytoscape draws a circle whose image has not
+  decoded yet without it — no fill and no text for a frame. Moving the pointer
+  along the chart changes every level many times a second, which made the whole
+  chain blink. Now neither picture depends on the level: the fill is one
+  picture per theme that the level slides up and down, the label one per
+  nuclide and theme, so each is decoded once.
+
+  The fill picture is as wide as the circle and a tenth taller, a box whose
+  top edge carries the hairline; its top sits at the level and the circle
+  clips the rest. The viewBox starts one unit above the box so that the upper
+  half of the hairline is not cut off.
+*/
+var LEVEL_IMAGES = {};
+function levelImage() {
+    var key = cyLevelFill() + ' ' + cyLevelStroke();
+    if (!LEVEL_IMAGES[key]) {
+        LEVEL_IMAGES[key] = SVG_DATA + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="110" viewBox="0 -1 100 110">' +
+            '<rect x="-1" y="0" width="102" height="111" fill="' + cyLevelFill() + '" stroke="' +
+            cyLevelStroke() + '" stroke-width=".5"/></svg>');
+    }
+    return LEVEL_IMAGES[key];
+}
+
+/* Where the fill picture's top goes, from the circle's top: one unit of the
+   picture (a hundredth of the circle) above the level line. */
+function levelImageTop(element) {
+    var level = Math.min(1, Math.max(0, Number(element.data('level')) || 0));
+    return NUCLIDE_SIZE * (1 - level) - NUCLIDE_SIZE / 100;
+}
+
+var LABEL_IMAGES = {};
+function labelImage(element) {
+    var txtCol = cyNodeTextColor();
+    var key = [element.data('A'), element.data('state'), element.data('Element'),
+               element.data('Z'), element.data('Halflife'), txtCol].join('|');
+    if (!LABEL_IMAGES[key]) {
+        LABEL_IMAGES[key] = SVG_DATA + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="10em" height="10em">' +
+            '<foreignObject x="0" y="1em" width="10em" height="10em">' +
+            '<body xmlns="http://www.w3.org/1999/xhtml">' +
+            '<table style="border-spacing:0px;padding:0px;font-family:helvetica neue,helvetica,liberation sans,arial,sans-serif;margin-left:auto; margin-right: auto;color:' + txtCol + ';">' +
+            '<tr><td valign="bottom" align="right" style="font-size:1.4em;">' + element.data('A') + "" + element.data('state') + '</td>' +
+            '<td rowspan="2" style="font-size:4em;text-align:left;"><b>' + element.data('Element') + '</b></td></tr>' +
+            '<tr><td valign="top" align="right" style="font-size:1.4em;">' + element.data('Z') + '</td></tr>' +
+            '<tr><td colspan="2" style="font-size:1.5em;text-align:center;">' + element.data('Halflife') + '</td></tr></table>' +
+            '</body>' +
+            '</foreignObject></svg>');
+    }
+    return LABEL_IMAGES[key];
+}
+
 var CY = cytoscape({
     container: document.getElementById("cy"),
     elements: [],
@@ -629,40 +688,29 @@ var CY = cytoscape({
         selector: "node",
         style: {
             "background-image": function (element) {
-                if (element.data("Z") === 0) {
-                    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
-                } else {
-                    var txtCol = cyNodeTextColor();
-                    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10em" height="10em">';
-                    if (element.data("level") > 0) {
-                        var level = 10 - element.data("level") * 10;
-                        svg = svg + '<rect x="0em" y="' + level + 'em" width="10em" height="10em" stroke="' + cyLevelStroke() + '" fill="' + cyLevelFill() + '" stroke-width=".05em" />';
-                    }
-                    svg = svg + '<foreignObject x="0" y="1em" width="10em" height="10em">' +
-                        '<body xmlns="http://www.w3.org/1999/xhtml">' +
-                        '<table style="border-spacing:0px;padding:0px;font-family:helvetica neue,helvetica,liberation sans,arial,sans-serif;margin-left:auto; margin-right: auto;color:' + txtCol + ';">' +
-                        '<tr><td valign="bottom" align="right" style="font-size:1.4em;">' + element.data('A') + "" + element.data('state') + '</td>' +
-                        '<td rowspan="2" style="font-size:4em;text-align:left;"><b>' + element.data('Element') + '</b></td></tr>' +
-                        '<tr><td valign="top" align="right" style="font-size:1.4em;">' + element.data('Z') + '</td></tr>' +
-                        '<tr><td colspan="2" style="font-size:1.5em;text-align:center;">' + element.data('Halflife') + '</td></tr></table>' +
-                        '</body>' +
-                        '</foreignObject>';
-                    svg = svg + '</svg>';
-                    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-                }
+                if (element.data("Z") === 0) return EMPTY_IMAGE;
+                return [levelImage(), labelImage(element)];
             },
+            "background-image-opacity": function (element) {
+                return [element.data("level") > 0 ? 1 : 0, 1];
+            },
+            "background-position-y": function (element) {
+                return [levelImageTop(element) + "px", "50%"];
+            },
+            "background-width": "100% auto",
+            "background-height": "110% auto",
             "overlay-opacity": 0,
-            "background-fit": "cover cover",
+            "background-fit": "none cover",
             "background-color": function(element) { return element.data('Z') === 0 ? cyTextBgColor() : cyNodeBgColor(); },
             "border-color": function(element) { return element.data('Z') === 0 ? cyTextBgColor() : cyEdgeColor(); },
             "border-width": function (element) {
                 if (element.data("Z") === 0) { return 0; } else { return 2; }
             },
             height: function (element) {
-                if (element.data("Z") === 0) { return 10; } else { return 80; }
+                if (element.data("Z") === 0) { return 10; } else { return NUCLIDE_SIZE; }
             },
             width: function (element) {
-                if (element.data("Z") === 0) { return 10; } else { return 80; }
+                if (element.data("Z") === 0) { return 10; } else { return NUCLIDE_SIZE; }
             },
         }
     }, {
@@ -737,21 +785,28 @@ window.addEventListener('resize', relaxZoomFloor);
 
 function styleBorder(rn, onoff) {
     var node = CY.getElementById(rn);
-    // SF nodes stay invisible — never restyle them
-    if (node.data('Z') === 0) return;
+    // SF nodes stay invisible — never restyle them; an id left from a chain since
+    // replaced has no node at all
+    if (node.empty() || node.data('Z') === 0) return;
+    // One call, so the node is restyled once rather than once per property
     if (onoff) {
         var linesCY = ['solid','dashed','dotted','double'];
-        node.style('border-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
-        node.style('border-style', linesCY[LINES.indexOf(node.data().dash)]);
-        node.style('border-width', 2);
-        node.style('background-color', "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")");
-        node.style('background-opacity','0.2');
+        var color = "rgb("+node.data().color[0]+","+node[0].data().color[1]+","+node[0].data().color[2]+")";
+        node.style({
+            'border-color': color,
+            'border-style': linesCY[LINES.indexOf(node.data().dash)],
+            'border-width': 2,
+            'background-color': color,
+            'background-opacity': 0.2
+        });
     } else {
-        node.style('border-color', cyEdgeColor());
-        node.style('border-style', 'solid');
-        node.style('border-width', 1);
-        node.style('background-color', cyNodeBgColor());
-        node.style('background-opacity','1');
+        node.style({
+            'border-color': cyEdgeColor(),
+            'border-style': 'solid',
+            'border-width': 1,
+            'background-color': cyNodeBgColor(),
+            'background-opacity': 1
+        });
     }
 }
 
@@ -1240,30 +1295,92 @@ function updateLevel(state, rns, y) {
             totact = totact + ic*multfac;
             y[i] = ic*multfac;
         }
-        for (var i = 0; i < n; i++) {
-            var node = CY.getElementById(rns[i]);
-            if (totact == 0) {
-                node.data().level = 0;
-            } else {
-                node.data().level = y[i]/totact;
-            }
-        }
     } else {
         var totact = 0;
         for (var i = 0; i < rns.length; i++) {
             totact = totact + y[i];
         }
-        for (var i = 0; i < rns.length; i++) {
-            var node = CY.getElementById(rns[i]);
-            if (totact == 0) {
-                node.data().level = 0;
-            } else {
-                node.data().level = y[i]/totact;
-            }
-        }
     }
-    CY.nodes().select();
-    CY.nodes().unselect();
+    var targets = {};
+    for (var i = 0; i < rns.length; i++) {
+        var share = totact > 0 ? y[i] / totact : 0;
+        // Round-off below zero, or a point Plotly gave no value, is an empty circle
+        targets[rns[i]] = share > 0 ? Math.min(share, 1) : 0;
+    }
+    showLevels(targets);
+}
+
+/*
+  The levels glide to where they are sent rather than jump. Plotly reports the
+  pointer at most every 50 ms, so levels set as they arrive move in visible
+  steps. Here each frame closes part of the gap, as an exponential with time
+  constant LEVEL_EASE_MS: a step is 95 % done after 150 ms. With reduced
+  motion asked for they jump.
+*/
+var LEVEL_EASE_MS = 50;
+var LEVEL_CLOSE = 1e-3;   // a thousandth of the circle: well under a pixel
+var REDUCED_MOTION = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+var levelTargets = {};
+var levelFrame = 0;
+var levelFrameTime = 0;
+
+function showLevels(targets) {
+    for (var id in targets) levelTargets[id] = targets[id];
+    if (!levelFrame) levelFrame = requestAnimationFrame(stepLevels);
+}
+
+function stepLevels(now) {
+    levelFrame = 0;
+    var dt = levelFrameTime ? Math.max(0, now - levelFrameTime) : 1000 / 60;
+    var gain = REDUCED_MOTION && REDUCED_MOTION.matches ? 1 : 1 - Math.exp(-dt / LEVEL_EASE_MS);
+    var moving = false;
+    // One restyle and one redraw for the whole chain
+    CY.batch(function () {
+        CY.nodes().forEach(function (node) {
+            var target = levelTargets[node.id()];
+            if (target === undefined) return;
+            var shown = Number(node.data('level')) || 0;
+            if (shown === target) return;
+            var next = shown + (target - shown) * gain;
+            if (Math.abs(target - next) < LEVEL_CLOSE) next = target; else moving = true;
+            node.data('level', next);
+        });
+    });
+    levelFrameTime = moving ? now : 0;
+    if (moving) levelFrame = requestAnimationFrame(stepLevels);
+}
+
+/* A chain drawn afresh starts from its own levels, not from where the last
+   chain's were heading. */
+CY.on('add', 'node', function (event) { delete levelTargets[event.target.id()]; });
+
+/*
+  What the chart's pointer is on. Plotly answers each step of the pointer with
+  an unhover for the points it leaves and a hover for the ones it reaches,
+  back to back, and acting on both relit every circle twice a step. They only
+  record what they want here; a microtask, run before any other event, applies
+  the difference once.
+*/
+var chartPointer = null;   // { ids, y } waiting to be applied
+var chartLit = [];         // the nuclides the chart's pointer has lit
+
+function pointChart(ids, y) {
+    var queued = chartPointer !== null;
+    chartPointer = { ids: ids, y: y };
+    if (!queued) Promise.resolve().then(applyChartPointer);
+}
+
+function applyChartPointer() {
+    var p = chartPointer;
+    chartPointer = null;
+    var was = {}, now = {};
+    chartLit.forEach(function (id) { was[id] = true; });
+    p.ids.forEach(function (id) { now[id] = true; });
+    chartLit.forEach(function (id) { if (!now[id]) styleBorder(id, false); });
+    p.ids.forEach(function (id) { if (!was[id]) styleBorder(id, true); });
+    chartLit = p.ids;
+    // A single curve under the pointer says nothing about shares: show the start
+    if (p.y) updateLevel("level", p.ids, p.y); else updateLevel("IC");
 }
 
 function updateLevelICrunAndUpdateChart() {
@@ -1909,12 +2026,9 @@ setTimeout(function () {
     CHARTDIALOG[0].on('plotly_hover', function (data) {
         var rn = data.points.map(function (d) { return d.data.name; });
         var y = data.points.map(function (d) { return d.y; });
-        for (var i = 0; i < rn.length; i++) { styleBorder(rn[i], true); }
-        if (rn.length > 1) { updateLevel("level", rn, y); } else { updateLevel("IC"); }
-    }).on('plotly_unhover', function (data) {
-        var rn = data.points.map(function (d) { return d.data.name; });
-        for (var i = 0; i < rn.length; i++) { styleBorder(rn[i], false); }
-        if (rn.length > 1) { updateLevel("IC"); }
+        pointChart(rn, rn.length > 1 ? y : null);
+    }).on('plotly_unhover', function () {
+        pointChart([], null);
     });
 }
 </script>

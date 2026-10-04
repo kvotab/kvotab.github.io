@@ -390,6 +390,46 @@ Finally, the window takes focus itself on opening. jQuery UI gives focus to the
 first tabbable element inside, which is the quantity menu — a menu nobody asked
 to open, in front of the chart they did.
 
+## test-chrome-rdc-levels.py
+
+rdc.html's circles filling from the chart without the chain blinking.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-rdc-levels.py
+
+With the chart set to compare data on hover, the pointer's place on the time
+axis fills each nuclide's circle with its share of the chain at that time. The
+fill and the label were one SVG picture, built again for every level, and
+cytoscape draws a circle whose picture has not decoded yet without it: no fill
+and no text for that frame. Sweeping the pointer along the chart changed every
+level many times a second, so about every second frame of every circle was
+blank — 1030 of 2127 draws in one sweep of U-238's chain. Each sweep also left
+cytoscape holding about a thousand more pictures, and on a CPU slowed four
+times the frames came 133 ms apart.
+
+The fill is now one picture per theme, slid up and down by
+`background-position-y`, and the label one picture per nuclide and theme, so
+nothing has to decode while the pointer moves. The test sweeps the real chart
+after pressing its real "Compare data on hover" button, counts the draws of a
+circle whose pictures were not decoded at that moment (none allowed) and the
+pictures cytoscape holds (the sweep may not add any).
+
+Plotly answers each step of the pointer with an unhover for the points it
+leaves and a hover for the ones it reaches, back to back, and both used to
+restyle every circle's border: 2180 restyles in that sweep. The page now
+applies the difference once, in a microtask, and the test allows at most one
+round of lighting for the whole sweep.
+
+The levels glide to the point under the pointer (time constant 50 ms) instead
+of stepping at Plotly's 20 reports a second, and jump when reduced motion is
+asked for; both are checked. So is where they land: at rest, each circle holds
+its curve's share of the points Plotly reports, leaving the chart brings back
+the shares at the start, and the closest mode lights one nuclide at a time
+without touching the levels. Last, with each circle's label hidden, a column of
+pixels through it must turn to the fill colour where the level puts the edge,
+within 1.5 px, in both themes. The new pictures were also compared with the old
+single picture, pixel for pixel, at six levels in both themes: identical. There
+are 33 checks.
+
 ## test-chrome-sl-idle.py
 
 Whether the SL boards stop calling the network when nobody is looking.
