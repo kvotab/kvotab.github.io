@@ -8709,7 +8709,9 @@ export const CHART_SCALES = ['log', 'linear'];
  * equivalent in views.xml.
  */
 export function view(project) {
-	return { ...DEFAULT_VIEW, ...(project.view ?? {}) };
+	// No model at all is the defaults: the page asks before its first model has
+	// arrived when it has an error to show.
+	return { ...DEFAULT_VIEW, ...(project?.view ?? {}) };
 }
 
 export function setView(project, patch) {

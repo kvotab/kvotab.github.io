@@ -37,6 +37,13 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         **http.server.SimpleHTTPRequestHandler.extensions_map,
         **EXTRA_TYPES,
     }
+    # Keep-alive. The page and its worker load some 270 modules, and under the
+    # stdlib's HTTP/1.0 each was a connection of its own -- enough of them at
+    # once that some were never accepted, a module failed to load with
+    # ERR_CONNECTION_TIMED_OUT, and the worker reported only that it had
+    # failed. Every response here carries a Content-Length, which is what
+    # HTTP/1.1 needs to reuse a connection.
+    protocol_version = "HTTP/1.1"
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, must-revalidate")
@@ -61,6 +68,10 @@ class Server(socketserver.ThreadingTCPServer):
     # Restarting the server should not fail because the port is in TIME_WAIT.
     allow_reuse_address = True
     daemon_threads = True
+    # The connections waiting to be accepted. The stdlib's 5 is overrun by a
+    # browser opening a page's modules in parallel, and on macOS a connection
+    # past the backlog is dropped without a word and times out.
+    request_queue_size = 128
 
 
 def main():

@@ -727,6 +727,11 @@ let runWanted = false;
 // ... and whether that remembered run was asked for by hand (Run, Cmd-Enter),
 // which is honoured when it comes round even with auto-run switched off.
 let runWantedManual = false;
+// Run pressed before there was a model to run: the example an address names is
+// fetched while the page is already up, and a quick hand found the button in
+// that time -- `new Project(null)` threw, and so did the error it reported.
+// Owed, and paid by `setModel` when the model lands.
+let runOnArrival = false;
 /**
  * The same for the app: a control moved while a run was going, so a run at
  * the controls' values is owed when that one ends. See `runApp`.
@@ -1109,7 +1114,13 @@ function ensureWorker() {
 	worker.onerror = (e) => {
 		stopScenarios();
 		setRunning(false);
-		showError({ name: 'WorkerError', message: e.message ?? 'The simulation worker failed.' });
+		// No message is what a worker that could not load says: one of its
+		// files did not arrive. The next Run starts a new one (see below).
+		showError({
+			name: 'WorkerError',
+			message: e.message ?? 'The simulation worker could not start: a file it needs did not '
+				+ 'load. Press Run to try again.',
+		});
 		// A worker that has failed is not one to post the next run to: left
 		// installed, every Run after a module that would not link went into
 		// the void and the interface sat lit with nothing coming. Replaced
@@ -1208,6 +1219,12 @@ function runSimulation(opts = {}) {
 	if (state.running) {
 		runWanted = true;
 		if (opts.manual) runWantedManual = true;
+		return;
+	}
+	// No model yet: the one the address names is still on its way. A run asked
+	// for by hand is owed; the auto-run timer's has nothing to wait for.
+	if (!state.raw) {
+		if (opts.manual) runOnArrival = true;
 		return;
 	}
 	// Asked for by hand, with one of the sample's pictures up: the reader has
@@ -11877,8 +11894,11 @@ function setModel(raw, source) {
 	// whatever `auto-run` was set to, which on a model of ten thousand states
 	// is half a minute of a page that cannot be stopped doing something
 	// nobody asked it for. With the switch off the chart says there are no
-	// results yet and offers the button.
-	if (state.autoRun) runSimulation();
+	// results yet and offers the button -- unless it was pressed while this
+	// model was on its way, which is a run asked for.
+	const asked = runOnArrival;
+	runOnArrival = false;
+	if (state.autoRun || asked) runSimulation(asked ? { manual: true } : {});
 	else renderStaleness();
 	// A model opened while an app was running on its own -- a file dropped on
 	// it -- is the app to show now, if it has one; if not, the editor is back,

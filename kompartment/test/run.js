@@ -9953,10 +9953,18 @@ test('auto-run starts off', async () => {
 	assert(box, 'no auto-run checkbox');
 	assert(!/\bchecked\b/.test(box), 'the box is ticked and the state is not');
 
-	// And nothing runs behind the switch's back when a model is opened.
+	// And nothing runs behind the switch's back when a model is opened -- only
+	// a Run pressed while it was on its way, which is a run asked for.
 	const set = /function setModel\(([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
-	assert(/if \(state\.autoRun\) runSimulation\(\);/.test(set),
+	assert(/const asked = runOnArrival;\n\trunOnArrival = false;\n\tif \(state\.autoRun \|\| asked\) runSimulation\(asked \? \{ manual: true \} : \{\}\);/.test(set),
 		'opening a model runs it whatever the switch says');
+	// That owed run is only ever set by a Run asked for by hand with no model yet.
+	const runFn = /function runSimulation\(opts = \{\}\) \{([\s\S]*?)\n\tlet project;/.exec(app)?.[1] ?? '';
+	assert(/if \(!state\.raw\) \{\n\t\tif \(opts\.manual\) runOnArrival = true;\n\t\treturn;\n\t\}/.test(runFn),
+		'a run asked for before the model arrived is lost or crashes');
+	assert((app.match(/runOnArrival = true/g) ?? []).length === 1, 'something else owes a run on arrival');
+	// The error the page shows before its first model must not itself throw.
+	assert(JSON.stringify(ed.view(null)) === JSON.stringify(ed.view({})), 'no model at all is not the defaults');
 });
 
 test('Stop switches auto-run off', async () => {
@@ -30472,6 +30480,21 @@ test('a one-step solver that crawls while its step grows is not stopped, and a s
 			assert(!/variableOrder|rosenbrock23/.test(text), text);
 		}
 	}
+});
+
+test('the development server keeps its connections, and a backlog a page fits in', async () => {
+	// The page and its worker load some 270 modules. Served over HTTP/1.0 with
+	// the stdlib's backlog of 5, each module was a connection of its own and
+	// some were never accepted: about one load in fifteen, a module failed with
+	// ERR_CONNECTION_TIMED_OUT and the worker could not start. None in 80 since.
+	const { readFileSync } = await import('node:fs');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	assert(/\n {4}protocol_version = "HTTP\/1\.1"\n/.test(serve), 'the server closes every connection after one file');
+	assert(/\n {4}request_queue_size = 128\n/.test(serve), 'the server keeps the stdlib backlog of 5');
+	assert(/class Server\(socketserver\.ThreadingTCPServer\)/.test(serve), 'one thread serves every connection');
+	// And a worker that could not load says so rather than only that it failed.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/a file it needs did not '\n\t\t\t\t\+ 'load\. Press Run to try again\.'/.test(app), 'the worker’s load failure says nothing useful');
 });
 
 // =========================================================================
