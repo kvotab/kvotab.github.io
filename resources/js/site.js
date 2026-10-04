@@ -46,6 +46,11 @@ const KVOT = (() => {
       desc: 'Convert between lognormal parameterisations — μ and σ, geometric mean and GSD, percentiles — with the equations shown.',
     },
     {
+      href: './distributions.html',
+      label: 'Probability Distributions',
+      desc: 'Define and compare probability distributions — 38 parametric families in several parameterisations each, empirical distributions from data, truncation — with their statistics, seeded samples (random, Latin hypercube, Sobol, Halton), fits to data by maximum likelihood or moments ranked by AIC and goodness of fit, and calculations from tail probabilities to Monte Carlo sums.',
+    },
+    {
       href: './proj.html',
       label: 'Swedish Coordinate Conversions',
       desc: 'Convert between WGS 84, SWEREF 99 and RT 90, one point at a time or in bulk from a pasted list.',

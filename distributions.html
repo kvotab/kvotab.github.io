@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Probability Distributions — kvot ab</title>
+  <meta name="description" content="Define, draw and compare probability distributions in the browser: 38 parametric families in several parameterisations each, empirical distributions from data, truncation, summary statistics, fits by maximum likelihood and the method of moments ranked by AIC, BIC and goodness-of-fit tests, and calculations from probabilities to Monte Carlo sums.">
+  <link rel="canonical" href="https://kvotab.se/distributions.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Probability Distributions — kvot ab">
+  <meta property="og:description" content="Parametric and empirical probability distributions side by side: densities, statistics, fits to data ranked by AIC and goodness of fit, and calculations.">
+  <meta property="og:url" content="https://kvotab.se/distributions.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
+  <link rel="stylesheet" href="./resources/css/distributions.css?v=20261004">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="ds" id="dsRoot">
+      <!-- ===================== the column on the left ===================== -->
+      <aside class="ds-side" id="dsSide">
+        <div class="ds-side-scroll">
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:dists"></span>
+            <details class="ds-sec" open>
+              <summary><span class="ds-sec-title">Distributions</span><span class="ds-count" id="dsCount"></span></summary>
+              <ul class="ds-list" id="dsList" aria-label="Distributions"></ul>
+              <div class="ds-list-actions">
+                <button type="button" class="ds-btn small" id="dsAdd" data-on-click="ds:add">+ Add</button>
+                <button type="button" class="ds-btn small secondary" id="dsDuplicate" data-on-click="ds:duplicate">Duplicate</button>
+              </div>
+            </details>
+          </div>
+
+          <div class="kvot-info-sec">
+            <span class="kvot-info-slot" data-info-key="sec:editor"></span>
+            <details class="ds-sec" open id="dsEditorSec">
+              <summary><span class="ds-sec-title" id="dsEditorTitle">Distribution</span></summary>
+              <div id="dsEditor"></div>
+            </details>
+          </div>
+
+        </div>
+        <div class="ds-side-foot">
+          <div class="ds-status" id="dsStatus" role="status" aria-live="polite"></div>
+        </div>
+      </aside>
+      <div class="ds-resize" id="dsResize" role="separator" aria-orientation="vertical" aria-label="Resize the column of distributions" tabindex="0"></div>
+
+      <!-- ===================== the work area ===================== -->
+      <main class="ds-main">
+        <nav class="ds-tabs" role="tablist" aria-label="Views">
+          <button type="button" role="tab" class="active" data-tab="chart" data-on-click="ds:tab">Chart</button>
+          <button type="button" role="tab" data-tab="stats" data-on-click="ds:tab">Statistics</button>
+          <button type="button" role="tab" data-tab="sample" data-on-click="ds:tab">Sample</button>
+          <button type="button" role="tab" data-tab="fit" data-on-click="ds:tab">Fit to data</button>
+          <button type="button" role="tab" data-tab="calc" data-on-click="ds:tab">Calculate</button>
+          <button type="button" role="tab" data-tab="help" data-on-click="ds:tab">Help</button>
+        </nav>
+
+        <!-- ---- Chart ---- -->
+        <section class="ds-pane" id="pane-chart" role="tabpanel">
+          <div class="ds-toolbar">
+            <label>Chart <select id="dsTop" data-on-change="ds:chartSetting">
+              <option value="pdf" selected>Density / probability</option>
+              <option value="cdf">Cumulative probability</option>
+              <option value="sf">Exceedance probability</option>
+              <option value="quantile">Quantile function</option>
+              <option value="hazard">Hazard rate</option>
+            </select></label>
+            <label>and below <select id="dsBottom" data-on-change="ds:chartSetting">
+              <option value="none">nothing</option>
+              <option value="pdf">Density / probability</option>
+              <option value="cdf" selected>Cumulative probability</option>
+              <option value="sf">Exceedance probability</option>
+              <option value="quantile">Quantile function</option>
+              <option value="hazard">Hazard rate</option>
+            </select></label>
+            <label><input type="checkbox" id="dsLogX" data-on-change="ds:chartSetting"> log x</label>
+            <label><input type="checkbox" id="dsLogY" data-on-change="ds:chartSetting"> log y</label>
+            <label><input type="checkbox" id="dsShowData" checked data-on-change="ds:chartSetting"> data</label>
+            <label><input type="checkbox" id="dsShowSamples" data-on-change="ds:chartSetting"> samples</label>
+            <span class="ds-spacer"></span>
+            <span class="kvot-info-slot" data-info-key="tab:chart"></span>
+          </div>
+          <div class="ds-toolbar">
+            <label>x from percentile <input type="text" inputmode="decimal" class="num" id="dsPmin" value="0.1" data-on-input="ds:chartSetting" aria-label="Lowest percentile shown"></label>
+            <label>to <input type="text" inputmode="decimal" class="num" id="dsPmax" value="99.9" data-on-input="ds:chartSetting" aria-label="Highest percentile shown"></label>
+            <label>or values <input type="text" inputmode="decimal" class="num" id="dsXmin" placeholder="auto" data-on-input="ds:chartSetting" aria-label="Lowest x shown"></label>
+            <label>to <input type="text" inputmode="decimal" class="num" id="dsXmax" placeholder="auto" data-on-input="ds:chartSetting" aria-label="Highest x shown"></label>
+            <label>bins <select id="dsBins" data-on-change="ds:chartSetting" aria-label="How the histograms are binned"></select></label>
+            <input type="text" inputmode="decimal" class="num" id="dsBinsValue" data-on-input="ds:chartSetting" aria-label="Number of bins" hidden>
+            <span class="ds-spacer"></span>
+            <button type="button" class="ds-btn small secondary" data-on-click="ds:curvesCsv">Save the curves as CSV</button>
+            <span class="kvot-info-slot" data-info-key="set:range"></span>
+          </div>
+          <p class="ds-empty" id="dsChartEmpty" hidden>Nothing to draw: every distribution is hidden or has an error.</p>
+          <div class="ds-plot" id="dsPlotTop"></div>
+          <div class="ds-plot small" id="dsPlotBottom"></div>
+          <p class="ds-chart-note" id="dsChartNote"></p>
+          <div class="ds-strip" id="dsStrip"></div>
+        </section>
+
+        <!-- ---- Statistics ---- -->
+        <section class="ds-pane" id="pane-stats" role="tabpanel" hidden>
+          <div class="ds-toolbar">
+            <label>Significant digits <select id="dsDigits" data-on-change="ds:statsSetting">
+              <option>3</option><option>4</option><option selected>5</option><option>6</option><option>8</option><option>10</option><option>15</option>
+            </select></label>
+            <label>Percentiles <input type="text" id="dsPercentiles" class="num" style="width: 17em" value="1, 5, 10, 25, 50, 75, 90, 95, 99" data-on-input="ds:statsSetting" aria-label="Percentiles to list, in per cent"></label>
+            <span class="ds-spacer"></span>
+            <button type="button" class="ds-btn small secondary" data-on-click="ds:statsCsv">Save as CSV</button>
+            <span class="kvot-info-slot" data-info-key="tab:stats"></span>
+          </div>
+          <div class="ds-table-wrap"><table class="ds-table" id="dsStatsTable"></table></div>
+        </section>
+
+        <!-- ---- Sample ---- -->
+        <section class="ds-pane" id="pane-sample" role="tabpanel" hidden>
+          <div class="ds-toolbar">
+            <label>Draws of each <input type="text" inputmode="numeric" class="num" id="dsSampleN" value="1000" data-on-input="ds:sampleSetting" aria-label="Draws of each distribution"></label>
+            <label>Scheme <select id="dsSampleScheme" data-on-change="ds:sampleSetting" aria-label="Sampling scheme"></select></label>
+            <label>Seed <input type="text" inputmode="numeric" class="num" id="dsSampleSeed" value="1" data-on-input="ds:sampleSetting" aria-label="Seed"></label>
+            <button type="button" class="ds-btn small" id="dsSampleDraw" data-on-click="ds:sampleDraw">Draw</button>
+            <button type="button" class="ds-btn small secondary" id="dsSampleStop" data-on-click="ds:sampleStop" hidden>Stop</button>
+            <label class="ds-check"><input type="checkbox" id="dsSampleShow" data-on-change="ds:sampleShow"> show in the chart</label>
+            <span class="ds-spacer"></span>
+            <span class="kvot-info-slot" data-info-key="tab:sample"></span>
+          </div>
+          <div class="ds-toolbar ds-sample-which-bar">
+            <span class="ds-sample-label">Distributions</span>
+            <span class="ds-sample-which" id="dsSampleWhich"></span>
+            <span class="ds-sample-allnone"><button type="button" class="ds-link" data-on-click="ds:sampleAll">all</button>
+              <button type="button" class="ds-link" data-on-click="ds:sampleNone">none</button></span>
+          </div>
+          <p class="ds-msg note" id="dsSampleNote" hidden></p>
+          <div class="ds-progress" id="dsSampleProgress" hidden><div></div></div>
+          <p class="ds-hint" id="dsSampleState" role="status" aria-live="polite"></p>
+          <div class="ds-table-wrap"><table class="ds-table ds-sample-table" id="dsSampleTable"></table></div>
+          <div class="ds-toolbar">
+            <button type="button" class="ds-btn small secondary" id="dsSampleCsv" data-on-click="ds:sampleCsv" disabled>Save as CSV</button>
+            <button type="button" class="ds-btn small secondary" id="dsSampleExcel" data-on-click="ds:sampleExcel" disabled>Save as Excel</button>
+            <button type="button" class="ds-btn small secondary" id="dsSampleCopy" data-on-click="ds:sampleCopy" disabled>Copy</button>
+            <span class="ds-spacer"></span>
+            <label>Fit the draws of <select id="dsSampleFitWhich" aria-label="Distribution whose draws are fitted"></select></label>
+            <button type="button" class="ds-btn small secondary" id="dsSampleFit" data-on-click="ds:sampleToFit" disabled>Fit these</button>
+            <span class="kvot-info-slot" data-info-key="sample:out"></span>
+          </div>
+          <h3 class="ds-sample-head">The first draws</h3>
+          <div class="ds-table-wrap"><table class="ds-table" id="dsSamplePreview"></table></div>
+        </section>
+
+        <!-- ---- Fit to data ---- -->
+        <section class="ds-pane" id="pane-fit" role="tabpanel" hidden>
+          <div class="ds-fit-top">
+            <div class="ds-card">
+              <div class="ds-card-head">Data<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="fit:data"></span></div>
+              <div class="ds-drop" id="dsFitDrop">
+                <textarea id="dsFitText" spellcheck="false" placeholder="Paste or type numbers, separated by spaces, commas, semicolons or new lines, or drop a CSV or text file here" aria-label="Data to fit" data-on-input="ds:fitData"></textarea>
+              </div>
+              <div class="ds-inline" style="margin-top: 6px">
+                <button type="button" class="ds-btn small secondary" data-on-click="ds:fitOpen">Open a file…</button>
+                <input type="file" id="dsFitFile" accept=".csv,.txt,.tsv,.dat,text/plain,text/csv" hidden data-on-change="ds:fitFile">
+                <label class="ds-check"><input type="checkbox" id="dsFitComma" data-on-change="ds:fitData"> decimal comma (1,5)</label>
+                <label id="dsFitColumnWrap" hidden>Column <select id="dsFitColumn" data-on-change="ds:fitData"></select></label>
+                <button type="button" class="ds-btn small secondary" data-on-click="ds:fitClear">Clear</button>
+              </div>
+              <p class="ds-hint" id="dsFitParse"></p>
+              <div class="ds-summary" id="dsFitSummary"></div>
+            </div>
+            <div class="ds-card">
+              <div class="ds-card-head">Fit<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="fit:settings"></span></div>
+              <div class="ds-fit-settings">
+                <div class="ds-inline"><span>Families</span>
+                  <span class="ds-seg" role="radiogroup" aria-label="Kind of family">
+                    <label><input type="radio" name="dsFitKind" value="auto" checked data-on-change="ds:fitSetting"><span>by the data</span></label>
+                    <label><input type="radio" name="dsFitKind" value="continuous" data-on-change="ds:fitSetting"><span>continuous</span></label>
+                    <label><input type="radio" name="dsFitKind" value="discrete" data-on-change="ds:fitSetting"><span>discrete</span></label>
+                  </span>
+                </div>
+                <div class="ds-inline"><span>Method</span>
+                  <label class="ds-check"><input type="checkbox" id="dsFitMle" checked data-on-change="ds:fitSetting"> maximum likelihood</label>
+                  <label class="ds-check"><input type="checkbox" id="dsFitMom" data-on-change="ds:fitSetting"> method of moments</label>
+                </div>
+                <div class="ds-inline"><span>Rank by</span>
+                  <select id="dsFitCriterion" data-on-change="ds:fitRank"></select>
+                </div>
+                <div class="ds-inline" id="dsFitTrialsRow"><span>Binomial trials n</span>
+                  <input type="text" inputmode="numeric" id="dsFitTrials" class="ds-input num" style="width: 8em" placeholder="estimate" data-on-input="ds:fitSetting" aria-label="Number of trials for the binomial and beta-binomial">
+                </div>
+                <details id="dsFitFamiliesBox">
+                  <summary class="ds-label" style="cursor: pointer">Which families <span class="ds-count" id="dsFitFamiliesCount"></span></summary>
+                  <div class="ds-inline" style="margin-top: 4px">
+                    <button type="button" class="ds-btn small secondary" data-on-click="ds:fitAllFamilies">All</button>
+                    <button type="button" class="ds-btn small secondary" data-on-click="ds:fitNoFamilies">None</button>
+                  </div>
+                  <div class="ds-families" id="dsFitFamilies"></div>
+                </details>
+                <div class="ds-inline">
+                  <button type="button" class="ds-btn" id="dsFitRun" data-on-click="ds:fitRun">Fit and rank</button>
+                  <button type="button" class="ds-btn secondary" id="dsFitStop" data-on-click="ds:fitStop" hidden>Stop</button>
+                  <span id="dsFitState" class="ds-hint" role="status" aria-live="polite"></span>
+                </div>
+                <div class="ds-progress" id="dsFitProgress" hidden><div></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="dsFitResults" hidden>
+            <div class="ds-results-head">
+              <h3>The fits, best first</h3>
+              <span class="ds-spacer"></span>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitAddBest">Add the best to the distributions</button>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitCsv">Save as CSV</button>
+              <span class="kvot-info-slot" data-info-key="fit:results"></span>
+            </div>
+            <div class="ds-table-wrap"><table class="ds-table" id="dsFitTable"></table></div>
+            <div class="ds-results-head">
+              <h3>The fits against the data</h3>
+              <span class="ds-seg" role="radiogroup" aria-label="Diagnostic plot">
+                <label><input type="radio" name="dsFitPlot" value="pdf" checked data-on-change="ds:fitPlot"><span>Density</span></label>
+                <label><input type="radio" name="dsFitPlot" value="cdf" data-on-change="ds:fitPlot"><span>Cumulative</span></label>
+                <label><input type="radio" name="dsFitPlot" value="pp" data-on-change="ds:fitPlot"><span>P–P</span></label>
+                <label><input type="radio" name="dsFitPlot" value="qq" data-on-change="ds:fitPlot"><span>Q–Q</span></label>
+              </span>
+              <label class="ds-check"><input type="checkbox" id="dsFitPlotLogX" data-on-change="ds:fitPlot"> log x</label>
+              <span class="ds-inline" id="dsFitBinsWrap"><label>bins <select id="dsFitBins" data-on-change="ds:fitPlot" aria-label="How the histogram is binned"></select></label>
+                <input type="text" inputmode="decimal" class="num" id="dsFitBinsValue" data-on-input="ds:fitPlot" aria-label="Number of bins" hidden></span>
+              <span class="ds-spacer"></span>
+              <span class="kvot-info-slot" data-info-key="fit:plot"></span>
+            </div>
+            <div class="ds-plot" id="dsFitPlot"></div>
+            <div class="ds-results-head">
+              <h3>Or no family</h3>
+              <span class="ds-hint">the data as a distribution of their own:</span>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitEmpirical" data-method="interpolated">Interpolated</button>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitEmpirical" data-method="kde">Kernel density</button>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitEmpirical" data-method="histogram">Histogram</button>
+              <button type="button" class="ds-btn small secondary" data-on-click="ds:fitEmpirical" data-method="ecdf">Empirical CDF</button>
+              <span class="ds-spacer"></span>
+              <span class="kvot-info-slot" data-info-key="fit:empirical"></span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---- Calculate ---- -->
+        <section class="ds-pane" id="pane-calc" role="tabpanel" hidden>
+          <div class="ds-calc">
+            <div class="ds-card" id="dsCalcProb">
+              <div class="ds-card-head">Probabilities<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="calc:prob"></span></div>
+              <div class="ds-inline">x <input type="text" inputmode="decimal" class="num" id="dsCalcX" value="" data-on-input="ds:calc" aria-label="x">
+                between a <input type="text" inputmode="decimal" class="num" id="dsCalcA" value="" data-on-input="ds:calc" aria-label="a">
+                and b <input type="text" inputmode="decimal" class="num" id="dsCalcB" value="" data-on-input="ds:calc" aria-label="b"></div>
+              <label class="ds-check"><input type="checkbox" id="dsCalcShade" data-on-change="ds:calc"> shade a to b under the selected distribution in the chart</label>
+              <div class="ds-table-wrap"><table class="ds-table" id="dsCalcProbTable"></table></div>
+            </div>
+            <div class="ds-card" id="dsCalcQuant">
+              <div class="ds-card-head">Percentiles and intervals<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="calc:quant"></span></div>
+              <div class="ds-inline">percentiles <input type="text" class="num wide" id="dsCalcPcts" value="0.1, 2.5, 50, 97.5, 99.9" data-on-input="ds:calc" aria-label="Percentiles"></div>
+              <div class="ds-inline">interval holding <input type="text" inputmode="decimal" class="num" id="dsCalcCover" value="95" data-on-input="ds:calc" aria-label="Coverage in per cent"> %</div>
+              <div class="ds-table-wrap"><table class="ds-table" id="dsCalcQuantTable"></table></div>
+            </div>
+            <div class="ds-card" id="dsCalcTail">
+              <div class="ds-card-head">Tails and expectations<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="calc:tail"></span></div>
+              <div class="ds-inline">threshold t <input type="text" inputmode="decimal" class="num" id="dsCalcT" value="" data-on-input="ds:calc" aria-label="Threshold">
+                level <input type="text" inputmode="decimal" class="num" id="dsCalcLevel" value="95" data-on-input="ds:calc" aria-label="Level in per cent"> %</div>
+              <div class="ds-table-wrap"><table class="ds-table" id="dsCalcTailTable"></table></div>
+            </div>
+            <div class="ds-card" id="dsCalcCompare">
+              <div class="ds-card-head">Two distributions<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="calc:compare"></span></div>
+              <div class="ds-inline">X <select id="dsCalcCX" data-on-change="ds:calc" aria-label="X"></select> Y <select id="dsCalcCY" data-on-change="ds:calc" aria-label="Y"></select></div>
+              <div class="ds-table-wrap"><table class="ds-table" id="dsCalcCompareTable"></table></div>
+            </div>
+            <div class="ds-card" id="dsCalcMc">
+              <div class="ds-card-head">Monte Carlo of an expression<span class="ds-spacer"></span><span class="kvot-info-slot" data-info-key="calc:mc"></span></div>
+              <p class="ds-card-sub">Draws the distributions an expression names, by their letters, and makes the results a distribution of their own, which stays up to date with them.</p>
+              <div class="ds-inline">expression <input type="text" class="num wide" id="dsCalcMcExpr" value="" placeholder="e.g. A * B + 2" spellcheck="false" aria-label="Expression"></div>
+              <div class="ds-inline">draws <input type="text" inputmode="numeric" class="num" id="dsCalcMcN" value="10000" aria-label="Number of draws">
+                seed <input type="text" inputmode="numeric" class="num" id="dsCalcMcSeed" value="1" aria-label="Seed"></div>
+              <div class="ds-inline">scheme <select id="dsCalcMcScheme" aria-label="Sampling scheme"></select></div>
+              <div class="ds-inline"><button type="button" class="ds-btn small" data-on-click="ds:mcAdd">Add as a distribution</button></div>
+              <p class="ds-msg error" id="dsCalcMcMsg" hidden></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---- Help ---- -->
+        <section class="ds-pane ds-help" id="pane-help" role="tabpanel" hidden>
+          <h2>Probability distributions</h2>
+          <p>This page defines probability distributions, draws them together, lists their summary statistics,
+            samples them, fits them to data and calculates with them. Everything is computed in the browser; nothing you enter
+            leaves it. The distributions, the data and the settings are kept in this browser's storage, so they are
+            there on your next visit; <a href="#" data-on-click="ds:reset">start again</a> clears them.</p>
+          <ul class="ds-toc" id="dsHelpToc">
+            <li><a href="#help-dists" data-on-click="ds:helpLink">The distributions</a></li>
+            <li><a href="#help-params" data-on-click="ds:helpLink">Parameterisations</a></li>
+            <li><a href="#help-known" data-on-click="ds:helpLink">Known values</a></li>
+            <li><a href="#help-shift" data-on-click="ds:helpLink">Shift</a></li>
+            <li><a href="#help-trunc" data-on-click="ds:helpLink">Truncation</a></li>
+            <li><a href="#help-empirical" data-on-click="ds:helpLink">Empirical distributions</a></li>
+            <li><a href="#help-tables" data-on-click="ds:helpLink">Tables</a></li>
+            <li><a href="#help-mc" data-on-click="ds:helpLink">Monte Carlo</a></li>
+            <li><a href="#help-chart" data-on-click="ds:helpLink">The chart</a></li>
+            <li><a href="#help-stats" data-on-click="ds:helpLink">Statistics</a></li>
+            <li><a href="#help-sample" data-on-click="ds:helpLink">Samples</a></li>
+            <li><a href="#help-fit" data-on-click="ds:helpLink">Fitting to data</a></li>
+            <li><a href="#help-criteria" data-on-click="ds:helpLink">Ranking the fits</a></li>
+            <li><a href="#help-calc" data-on-click="ds:helpLink">Calculations</a></li>
+            <li><a href="#help-families" data-on-click="ds:helpLink">The families</a></li>
+            <li><a href="#help-numerics" data-on-click="ds:helpLink">How the numbers are computed</a></li>
+            <li><a href="#help-refs" data-on-click="ds:helpLink">References</a></li>
+          </ul>
+
+          <h3 id="help-dists">The distributions</h3>
+          <p>The list on the left holds up to 16 distributions. Each has a letter (A, B, …), a colour and a name
+            you can change. Click a distribution to edit it below the list; its coloured dot shows or hides it in
+            the charts, and × removes it. <b>Duplicate</b> copies the selected distribution, which is the quick way
+            to see what a change of one parameter does. The colours are a palette checked for colour-blind readers;
+            the ninth to sixteenth distributions repeat the eight colours with dashed lines.</p>
+          <p>A distribution is one of four kinds, chosen in the family list:</p>
+          <ul>
+            <li>a <b>parametric family</b>: 30 continuous ones (normal, lognormal, gamma, Weibull, beta, triangular,
+              the extreme-value families and more) and 8 discrete ones (binomial, Poisson, negative binomial and
+              more), listed under <a href="#help-families" data-on-click="ds:helpLink">The families</a>;</li>
+            <li>an <b>empirical</b> distribution made from data, with no family assumed;</li>
+            <li>a <b>table</b> typed in: cumulative probabilities, or the probability of each value;</li>
+            <li>a <b>Monte Carlo</b> result: an expression of other distributions, drawn many times.</li>
+          </ul>
+          <p>Changing the family of a distribution keeps what can be kept: the new family starts at the same mean
+            and standard deviation when it can have them, and at its own default otherwise.</p>
+
+          <h3 id="help-params">Parameterisations</h3>
+          <p>Most families can be given in more than one way. A lognormal, for example, by μ and σ of ln X, by the
+            mean and SD of log₁₀ X, by its geometric mean and geometric SD, by its arithmetic mean and SD or mean
+            and CV, by its median and error factor (the 95th percentile over the median) or by a central interval
+            and the probability it holds. Choosing another parameterisation converts the distribution as it is, so
+            nothing moves until a number is changed. Every parameterisation converts exactly, both ways: a
+            round trip returns the numbers it started from.</p>
+          <p>A field turns red when its number is not allowed (a negative SD, a probability above 1), and a message
+            under the fields says why when the numbers together are impossible (a lognormal whose mean is below
+            its median, a triangle whose mode lies outside its ends).</p>
+
+          <h3 id="help-known">Known values</h3>
+          <p>Every continuous family can also be given by <b>known values</b>: as many properties of the
+            distribution as the family has free parameters. A property is the mean, median, mode, standard
+            deviation, variance, coefficient of variation, a percentile, the geometric mean or the geometric SD,
+            in any combination: a gamma with a median of 4 and a 95th percentile of 20, a triangular distribution
+            through three percentiles, a Weibull with a given mean and CV. The page searches for the parameters
+            (Nelder–Mead from several starting points, then Newton's method) until every value is met to about
+            twelve significant figures. When no member of the family has the values, the distribution is not
+            drawn until they are possible, and the message names the nearest member and the values it has: a
+            lognormal cannot have a mean below its median, nor an exponential a CV other than 1.</p>
+          <p>Parameters that a family keeps fixed while solving, such as the ends of a beta or the λ of a PERT,
+            stay at the values the distribution had.</p>
+
+          <h3 id="help-shift">Shift</h3>
+          <p>Any distribution can be shifted: X + s, every value moved along x by s. The mean, the median, the mode
+            and every percentile move by s; the standard deviation, the skewness, the kurtosis and the entropy stay
+            as they are, and the geometric mean and SD are worked out again. A distribution on whole numbers takes a
+            whole-number shift, so that it stays on whole numbers. The shift comes before a truncation, whose bounds
+            are values of the shifted distribution, and known values describe the shifted distribution: a gamma
+            shifted by 100 with a mean of 105 and an SD of 3 is a gamma of mean 5 and SD 3, moved. A change of family
+            keeps the shift, and the mean and SD. A fit has no shift.</p>
+
+          <h3 id="help-trunc">Truncation</h3>
+          <p>Any distribution can be truncated to an interval: X conditioned on lower ≤ X ≤ upper, with the
+            density raised so that it again integrates to one. Either bound can be left empty. The probability the
+            interval held before truncation is shown under the bounds. For a discrete distribution the bounds are
+            included, and for one on whole numbers they are rounded inwards: a lower bound of 2.5 starts at 3.</p>
+          <p>The bounds can be given as values or as <b>percentiles</b> of the distribution before truncation: 5 and
+            95 keep the middle 90 % of a continuous distribution, and a percentile of 0 or 100 is no bound. The value a
+            percentile cuts at is shown under the bounds; for a discrete distribution it is the smallest value whose
+            cumulative probability reaches the percentile, and that value is kept. Switching between values and
+            percentiles keeps the bounds where they are.</p>
+          <p>A truncated distribution has every statistic recomputed numerically. Truncating a heavy tail gives
+            moments that did not exist before: a Cauchy truncated to [−5, 5] has a variance.</p>
+
+          <h3 id="help-empirical">Empirical distributions</h3>
+          <p>An empirical distribution is made from data without choosing a family, in one of four ways:</p>
+          <ul>
+            <li><b>Interpolated</b>: the cumulative curve through the sorted values, rising by 1/(n − 1) from each
+              to the next. Its percentiles are the usual sample percentiles (type 7, the default of R, NumPy and
+              Excel's PERCENTILE.INC), and its density is constant between neighbouring values. It never goes below
+              the smallest value or above the largest.</li>
+            <li><b>Kernel density</b>: a normal curve of width h (the bandwidth) on every value. Silverman's rule,
+              h = 0.9 min(SD, IQR/1.34) n<sup>−1/5</sup>, or Scott's, h = 1.06 SD n<sup>−1/5</sup>, or a width you
+              give. <i>In ln x</i> puts the kernels on the logarithms, for positive, skewed data: the result has no
+              probability below zero. Above 2,000 values the kernels are placed on 4,096 bins, which changes
+              nothing visible while the bandwidth spans several bins; the moments are always exact.</li>
+            <li><b>Histogram</b>: equal-width bins from the smallest value to the largest, by Sturges'
+              (1 + log₂ n bins), Freedman–Diaconis' (width 2 IQR n<sup>−1/3</sup>), Scott's (width 3.49 SD
+              n<sup>−1/3</sup>) or the square-root rule, or a count you give; the probability of a bin is spread
+              evenly over it.</li>
+            <li><b>Empirical CDF</b>: probability 1/n on each value, the sample itself as a discrete
+              distribution.</li>
+          </ul>
+          <p>The quickest way to make one is the <b>Or no family</b> row of the Fit tab, which takes the data
+            entered there. The data can also be pasted into the distribution itself.</p>
+
+          <h3 id="help-tables">Tables</h3>
+          <p>A <b>cumulative table</b> is a list of values with their cumulative probabilities, one pair per line
+            ("x F"), straight lines between them: the way an expert's percentiles are often written down. F must
+            start at 0, end at 1 and never decrease. A <b>probability table</b> lists values with their
+            probabilities ("x p"), a discrete distribution; probabilities that do not add up to one are scaled so
+            that they do, and the page says so.</p>
+
+          <h3 id="help-mc">Monte Carlo of an expression</h3>
+          <p>The Monte Carlo kind draws the distributions an expression names, by their letters, and evaluates the
+            expression draw by draw: <code>A * B</code>, <code>exp(A) / (1 + B^2)</code>, <code>max(A, B, C)</code>.
+            The expression may use numbers, the letters, <code>+ − * / ^</code> (or <code>**</code>), parentheses,
+            <code>pi</code>, <code>e</code> and the functions exp, ln (or log), log10, sqrt, abs, floor, ceil, pow,
+            min and max. The distributions are drawn independently of each other, each from its own stream of a
+            seeded generator (xoshiro128**), so a seed gives the same result every time, and by one of the
+            sampling schemes of the <a href="#help-sample" data-on-click="ds:helpLink">Sample tab</a>: simple
+            random, Latin hypercube (each letter's draws one from each of n equally probable strata, in random
+            order), centred Latin hypercube, or the Sobol or Halton sequence, in which the letters are the
+            dimensions, so that their draws together fill the space of their probabilities evenly and the
+            result's mean and percentiles settle much faster than with random draws. A simple random or Latin
+            hypercube draw of a letter is the Sample tab's draw of it with the same seed. Draws whose result is
+            not a finite number are left out and counted.</p>
+          <p>The result is an empirical distribution of the draws, made the way you choose (kernel density by
+            default), and it is recomputed whenever a distribution it uses changes. An expression may use another
+            Monte Carlo result, but not itself, directly or through others.</p>
+
+          <h3 id="help-chart">The chart</h3>
+          <p>The chart draws every visible distribution together, one chart above and, if chosen, a second below
+            it: the density (or, for a discrete distribution, the probability of each value), the cumulative
+            probability F(x) = P(X ≤ x), the exceedance probability 1 − F(x), the quantile function, or the hazard
+            rate f(x)/(1 − F(x)). Two charts rather than one with two vertical scales, because two scales on one
+            plot suggest a relation between the curves that is not there.</p>
+          <p>A discrete distribution is drawn as stems on the same axis as the densities. Its probabilities and a
+            density are comparable when the values are one apart, as counts are.</p>
+          <p>With <b>log x</b> the density is drawn per decade, x f(x) ln 10, so that the area under each curve on
+            the logarithmic axis is still its probability and a lognormal is a symmetric bell. <b>Log y</b> is the
+            way to read tails, in the exceedance chart above all.</p>
+          <p>The x-axis covers the 0.1st to the 99.9th percentile of every visible distribution unless other
+            percentiles or values are given. <b>Data</b> draws the data a distribution carries (a fitted
+            distribution carries its data) as a histogram behind its density and as steps beside its cumulative
+            curve; <b>samples</b> draws the draws of the Sample tab the same way, with dotted outlines. Pointing at
+            the chart shows the value of every curve at that x; clicking a name in the legend
+            hides or shows that distribution, as its dot in the list does. <b>bins</b> sets the histograms: a
+            rule (Freedman–Diaconis, the default, Scott, Sturges, square root or Rice), a number of bins, or a bin
+            width, in decades on a logarithmic x-axis, with the edges at multiples of the width so that histograms
+            side by side share them; the Fit tab's density plot has a <b>bins</b> of its own. Under the chart are
+            the mean, SD, median, mode and 5th and 95th percentiles of every distribution it shows, the selected
+            one in bold, and with <b>samples</b> ticked those of each one's draws below it. <b>Save the curves as
+            CSV</b> writes the values drawn.</p>
+
+          <h3 id="help-stats">Statistics</h3>
+          <p>The Statistics tab lists every distribution side by side: its parameters, support, mean, median,
+            mode, standard deviation, variance, coefficient of variation, skewness, excess kurtosis (zero for a
+            normal), entropy (differential entropy, in nats, for a continuous distribution), geometric mean and
+            geometric SD (for a distribution on positive values), interquartile range, median absolute deviation
+            and the percentiles you list. A distribution carrying data also gets its sample size, log-likelihood
+            and Kolmogorov–Smirnov D against its data.</p>
+          <p>A moment that does not exist is shown as <b>∞</b> when one tail makes it infinite and the moments below
+            it are finite (a Pareto with α = 3 has an infinite skewness), and as <b>undefined</b> when both tails do,
+            or when a lower moment is already infinite (a Cauchy has no mean; a Pareto with α = 1 has an infinite
+            mean and so no variance). A distribution of a single value has no skewness or kurtosis. Closed forms are
+            used where a family has them; otherwise, and always after truncation, the moments, entropy and logarithmic moments are
+            integrals over the quantile function, computed numerically.</p>
+
+          <h3 id="help-sample">Samples</h3>
+          <p>The Sample tab draws n values of each distribution you choose. Every draw is an inverse transform: a
+            number u between 0 and 1 becomes the value at probability u, read from the upper tail when u is above
+            one half, so that the tail keeps its digits. The scheme decides the u's:</p>
+          <ul>
+            <li><b>Simple random</b>: independent draws from the generator (xoshiro128**), as a Monte Carlo
+              simulation takes them. The mean of n draws is off the distribution's by about SD/√n.</li>
+            <li><b>Latin hypercube</b>: the probabilities cut into n equal strata, one draw at a random place in
+              each, in random order (McKay, Beckman and Conover 1979). Every part of the distribution is drawn from in
+              proportion, the tails included.</li>
+            <li><b>Latin hypercube, centred</b>: the same at the middle of each stratum, so that the draws are the
+              quantiles at (i − ½)/n, in random order.</li>
+            <li><b>Sobol sequence</b>: Sobol's low-discrepancy sequence (1967) with the direction numbers of Joe and
+              Kuo (2008), scrambled by a random lower triangular matrix and a random digital shift (Matoušek 1998),
+              which keep its structure: when n is a power of two, each of n equal strata of probability holds one
+              draw of every distribution.</li>
+            <li><b>Halton sequence</b>: the radical inverse of 0, 1, 2, … in a prime base for each distribution
+              (Halton 1960), the digits at each position permuted at random.</li>
+          </ul>
+          <p>Each distribution draws from a stream of its own, made from the seed and its letter, so its draws do
+            not change when another distribution is added, changed or left out, and a seed always gives the same
+            draws. A simple random or Latin hypercube sample is exactly what a Monte Carlo expression with the same
+            seed draws from that distribution. In the two sequences the letter is also the dimension, A the first
+            and P the sixteenth, so that the samples of several distributions together fill the space of their
+            probabilities evenly. No correlation is imposed between distributions.</p>
+          <p>The table sets each statistic of the draws (the mean, the SD with n − 1, the ends and the percentiles,
+            type 7) over the distribution's own, and gives Kolmogorov–Smirnov's D between the draws' cumulative curve
+            and the distribution's, with its p-value. A Latin hypercube or low-discrepancy sample is more even than
+            random draws are, so its D is smaller and its p-value close to 1. With <b>show in the chart</b> (the same
+            setting as the chart's <b>samples</b> box) the draws appear in the chart, with dotted outlines: a
+            histogram behind each density, steps beside each cumulative curve, points along each quantile function.
+            They can be saved as CSV or as Excel, copied for a spreadsheet, or handed to the Fit tab.</p>
+          <p>Up to 200,000 draws in all are taken by themselves whenever a distribution or a setting changes, while
+            the tab is open or the chart shows them; above that, <b>Draw</b> takes them (up to 1,000,000 of each
+            distribution and 4,000,000 in all). They are not stored with the page: the seed brings them back.</p>
+
+          <h3 id="help-fit">Fitting to data</h3>
+          <p>Paste data into the Fit tab, open a CSV or text file, or drop one on the box. Numbers may be separated
+            by spaces, tabs, commas, semicolons or new lines; with <b>decimal comma</b> a comma is part of a number
+            and only the other separators count. A file with several columns, or pasted columns, offers a choice of
+            column; text that is not a number is skipped and counted.</p>
+          <p><b>Families</b> chooses continuous or discrete families; <i>by the data</i> picks discrete when every
+            value is a whole number of zero or more, and continuous otherwise. A continuous and a discrete fit cannot
+            be ranked against each other: one's likelihood is a density, the other's a probability.</p>
+          <h4 id="help-fit-methods">Maximum likelihood and the method of moments</h4>
+          <p><b>Maximum likelihood</b> finds the parameters under which the data are the most probable. Closed
+            forms where they exist (normal, lognormal, exponential, Pareto, inverse Gaussian and others), Newton's
+            method on the likelihood equations of the gamma and the beta, Brent's method on the one equation left
+            for the Weibull and the Gumbel once the other parameter is written in terms of it, and Nelder–Mead
+            elsewhere; the triangles have a mode that is always one of the values, and are searched
+            over the values for the mode and over the ends. Where SciPy fits the same family, the page reaches at
+            least SciPy's maximum (its tests check it). A fit that is regular gets standard errors from the curvature
+            of the log-likelihood at its maximum.</p>
+          <p>The <b>method of moments</b> gives the member whose mean and variance (and skewness, for three
+            parameters; the kurtosis for the Student t, which is symmetric) are the sample's. It is the method that matches what is known from a mean and an SD
+            alone, and it is often worse in the tails. It matches the moments of the values themselves, not of
+            their logarithms, so on a log shape it differs from maximum likelihood. A family that cannot be as
+            skewed as the sample gets the nearest member, and a note says so.</p>
+          <p>Some parameters are fixed, not fitted: the beta's ends at 0 and 1, the PERT's λ at 4, the
+            generalized Pareto's threshold at 0, and for the binomial and beta-binomial the number of trials when
+            you give it. Without a number of trials the binomial's n is estimated by profile likelihood.</p>
+          <h4 id="help-criteria">Ranking the fits</h4>
+          <p>Every fit is scored on the data and the table is sorted by the criterion you choose:</p>
+          <ul>
+            <li><b>AIC</b> = 2k − 2 ln L, where L is the likelihood and k the number of parameters fitted; <b>AICc</b>
+              adds 2k(k + 1)/(n − k − 1), the correction for a small sample; <b>BIC</b> = k ln n − 2 ln L charges
+              more for parameters. Smaller is better. The table shows each fit's difference from the best (Δ) and
+              its Akaike weight, exp(−Δ/2) normalised over the fits of the same method: roughly, the probability
+              that the fit is the best of those tried.</li>
+            <li><b>K–S D</b>, the Kolmogorov–Smirnov statistic: the largest vertical gap between the empirical and
+              the fitted cumulative curves.</li>
+            <li><b>A²</b>, Anderson–Darling: the squared gaps weighted towards the tails, where a limit is usually
+              read.</li>
+            <li><b>W²</b>, Cramér–von Mises: the squared gaps, unweighted.</li>
+            <li><b>χ² p</b>, for a discrete fit: Pearson's chi-square over cells with an expected count of at least
+              five, with its degrees of freedom reduced by the parameters fitted. A small p says the fit is
+              poor.</li>
+          </ul>
+          <p>The p-values next to D and A² are those for a distribution chosen before the data were seen. For a
+            distribution fitted to the same data they are too large, often much too large (Lilliefors), so they
+            rank and do not test. A fit whose support ends at the extremes of the data (the uniforms and the Pareto
+            by maximum likelihood) puts those values at probability 0 or 1, where A² is infinite; its tests are then
+            taken on the values strictly inside.</p>
+          <p><b>Add</b> puts a fit into the list of distributions, carrying the data with it. The P–P and Q–Q plots
+            show the fits against the data: on the diagonal is a perfect fit, and a curve away from it at the ends
+            is a tail the fit gets wrong.</p>
+
+          <h3 id="help-calc">Calculations</h3>
+          <ul>
+            <li><b>Probabilities</b>: P(X ≤ x), P(X &gt; x), P(a &lt; X ≤ b), the density (or probability) at x and
+              the hazard rate at x, for every distribution.</li>
+            <li><b>Percentiles and intervals</b>: the values at the percentiles you list, the central interval
+              holding a given probability (equal tails), and the shortest interval holding it, which differs from
+              the central one for a skewed distribution.</li>
+            <li><b>Tails and expectations</b>: given a threshold t, the conditional means E[X | X &gt; t] and
+              E[X | X ≤ t] and the expected excess E[(X − t)⁺]; given a level, the value at risk (the percentile)
+              and the mean beyond it (expected shortfall, or tail value at risk).</li>
+            <li><b>Two distributions</b>: the probability that X exceeds Y when they are independent, the overlap of
+              their densities, the largest gap between their cumulative curves (K–S), the Wasserstein distance (the
+              area between their quantile functions), the Hellinger distance and the Kullback–Leibler divergence
+              each way.</li>
+            <li><b>Monte Carlo of an expression</b>: see above.</li>
+          </ul>
+          <p>Samples of the distributions have a tab of their own: see <a href="#help-sample" data-on-click="ds:helpLink">Samples</a>.</p>
+
+          <h3 id="help-families">The families</h3>
+          <p>Each family below with its parameters, its density (or probability) and cumulative distribution, its
+            mean and variance, and the same distribution in SciPy (scipy.stats), for checking a number in Python.
+            Γ is the gamma function, B the beta function, Φ the standard normal CDF, P and Q the regularized
+            incomplete gamma functions and I the regularized incomplete beta function.</p>
+          <div id="dsHelpFamilies"></div>
+
+          <h3 id="help-numerics">How the numbers are computed</h3>
+          <p>The special functions are written for this page: Cody's rational approximations for erf and erfc,
+            Wichura's algorithm AS 241 for the normal quantile (with one Halley step), Stirling's series for log Γ,
+            Loader's saddle-point form for binomial and Poisson probabilities, which stays accurate for millions of
+            trials, and continued fractions for the incomplete gamma and beta functions, with their inverses by
+            safeguarded Halley iteration. Each of a pair of complementary probabilities is computed directly where
+            it is small, so that tail probabilities of 10⁻¹⁰⁰ keep their precision, and every quantile function has
+            an upper-tail form for the same reason.</p>
+          <p>Where a family has no closed form, the moments, entropy and logarithmic moments are integrals over the
+            quantile function by tanh-sinh quadrature, split where the density has a corner, and quantiles are
+            found by Brent's method. The page is tested against SciPy for every family at ordinary and awkward
+            parameters, in both tails, and where SciPy itself loses precision (some far tails, binomials of
+            millions of trials, the GEV near ξ = 0) against mpmath at 40 digits: densities, probabilities and
+            quantiles agree to about ten significant figures.</p>
+
+          <h3 id="help-refs">References</h3>
+          <div class="ds-table-wrap"><table class="ds-ref"><tbody>
+            <tr><td>Cody 1969</td><td>Rational Chebyshev approximations for the error function. Mathematics of Computation 23, 631–637.</td></tr>
+            <tr><td>Wichura 1988</td><td>Algorithm AS 241: the percentage points of the normal distribution. Applied Statistics 37, 477–484.</td></tr>
+            <tr><td>Loader 2000</td><td>Fast and accurate computation of binomial probabilities. Technical note, Bell Laboratories.</td></tr>
+            <tr><td>DLMF</td><td>NIST Digital Library of Mathematical Functions, chapters 5 (gamma), 7 (error functions) and 8 (incomplete gamma and beta).</td></tr>
+            <tr><td>Johnson, Kotz and Balakrishnan 1994–95</td><td>Continuous Univariate Distributions, volumes 1 and 2. Wiley.</td></tr>
+            <tr><td>Johnson, Kemp and Kotz 2005</td><td>Univariate Discrete Distributions, 3rd ed. Wiley.</td></tr>
+            <tr><td>Coles 2001</td><td>An Introduction to Statistical Modeling of Extreme Values. Springer.</td></tr>
+            <tr><td>Akaike 1974</td><td>A new look at the statistical model identification. IEEE Transactions on Automatic Control 19, 716–723.</td></tr>
+            <tr><td>Burnham and Anderson 2002</td><td>Model Selection and Multimodel Inference, 2nd ed. Springer.</td></tr>
+            <tr><td>Stephens 1974</td><td>EDF statistics for goodness of fit and some comparisons. Journal of the American Statistical Association 69, 730–737.</td></tr>
+            <tr><td>Marsaglia and Marsaglia 2004</td><td>Evaluating the Anderson–Darling distribution. Journal of Statistical Software 9(2).</td></tr>
+            <tr><td>Silverman 1986</td><td>Density Estimation for Statistics and Data Analysis. Chapman and Hall.</td></tr>
+            <tr><td>Hyndman and Fan 1996</td><td>Sample quantiles in statistical packages. The American Statistician 50, 361–365.</td></tr>
+            <tr><td>McKay, Beckman and Conover 1979</td><td>A comparison of three methods for selecting values of input variables in the analysis of output from a computer code. Technometrics 21, 239–245.</td></tr>
+            <tr><td>Sobol 1967</td><td>On the distribution of points in a cube and the approximate evaluation of integrals. USSR Computational Mathematics and Mathematical Physics 7(4), 86–112.</td></tr>
+            <tr><td>Bratley and Fox 1988</td><td>Algorithm 659: implementing Sobol's quasirandom sequence generator. ACM Transactions on Mathematical Software 14, 88–100.</td></tr>
+            <tr><td>Joe and Kuo 2008</td><td>Constructing Sobol sequences with better two-dimensional projections. SIAM Journal on Scientific Computing 30, 2635–2654.</td></tr>
+            <tr><td>Matoušek 1998</td><td>On the L2-discrepancy for anchored boxes. Journal of Complexity 14, 527–556.</td></tr>
+            <tr><td>Halton 1960</td><td>On the efficiency of certain quasi-random sequences of points in evaluating multi-dimensional integrals. Numerische Mathematik 2, 84–90.</td></tr>
+            <tr><td>Blackman and Vigna 2021</td><td>Scrambled linear pseudorandom number generators. ACM Transactions on Mathematical Software 47(4).</td></tr>
+            <tr><td>Takahasi and Mori 1974</td><td>Double exponential formulas for numerical integration. Publications of RIMS 9, 721–741.</td></tr>
+          </tbody></table></div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <footer></footer>
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20260925"></script>
+  <script>
+    KVOT.renderHeader('Probability Distributions');
+    KVOT.renderNav('distributions.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      distributions/ui.js       this page: the list, the editor, the tabs
+      distributions/*.js        the distributions, the fits and the calculations (see their headers)
+      kvot-info                 the (i) next to each setting and its panel
+  -->
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script type="module" src="./resources/js/distributions/ui.js?v=20261004"></script>
+</body>
+</html>

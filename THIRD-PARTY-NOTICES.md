@@ -21,7 +21,8 @@ others. Each item keeps its own licence.
 | [SALib](https://github.com/SALib/SALib) (methods ported to JavaScript: PAWN, discrepancy, the radial design, Morris's optimal trajectories, bootstrap intervals, interaction effects; and from there to Python) | MIT | `kompartment/src/domain/salib.LICENSE`, `kompartment/python/kompartment/stats/salib.LICENSE` |
 | Coordinate conversions by Arnold Andreasson (`gausskruger.js`, `lat_lon_conv.js`, `latlong.js`, `map.js`) | MIT | headers in the files |
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
-| CALERF (`resources/js/erf.f`, `erf.js`; the coefficients of its first interval also in `kompartment/src/parser/functions.js` and `kompartment/python/kompartment/stats/_normal.py`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
+| CALERF (`resources/js/erf.f`, `erf.js`; its coefficients also in `resources/js/distributions/special.js`, and those of its first interval in `kompartment/src/parser/functions.js` and `kompartment/python/kompartment/stats/_normal.py`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
+| Sobol direction numbers of Joe and Kuo (the first 16 dimensions of `new-joe-kuo-6.21201`, in `resources/js/distributions/sampling.js`) | BSD-style (Frances Y. Kuo and Stephen Joe, 2008) | `resources/js/distributions/sobol.LICENSE` |
 | Rawengulk Sans | SIL Open Font License 1.1 | `vendors/font/SIL Open Font License.txt` |
 
 ## Libraries loaded from public CDNs
@@ -51,6 +52,15 @@ browser from their publishers and are not redistributed here.
   through WORKERFS in a worker, and loads HDF5 compression plugins by filter
   id as it does. `resources/js/rb-lazy.js` and `rb-lazy-worker.js` are written
   independently; no code is copied from them.
+- **Published numerical methods** behind `distributions.html`
+  (`resources/js/distributions/`): the normal quantile uses the coefficients
+  of Algorithm AS 241 (M. J. Wichura, *Applied Statistics* 37, 1988), the
+  binomial and Poisson probabilities Loader's saddle-point method (C. Loader,
+  2000), the incomplete gamma function for very large shapes Temme's uniform
+  asymptotic expansion (N. M. Temme, 1979), and the random numbers
+  xoshiro128** (D. Blackman and S. Vigna, 2021); each is cited in the file
+  that uses it. The code is written for this site; none is copied from an
+  implementation.
 
 ## Data
 
