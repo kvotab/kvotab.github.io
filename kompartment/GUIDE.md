@@ -2237,9 +2237,11 @@ model the size of the whole one — switching materials off shortens what the
 code loops over, not the code — and all of a page's workers share one budget
 of memory in the browser: past it, the whole tab closes, not only the run. So
 a split uses no more workers than the model's size leaves room for, and no
-more than half of what the browser says the machine has, and never more than
-eight. On the largest imported assessment that is four workers where the
-browser reports 8 GB, and the run log says when memory was what decided.
+more than half of what the browser says the machine has, and the run log says
+when memory was what decided. It never uses more than four: past that, the
+workers slow each other down more than they share out, since their solves
+share the machine's memory and caches, and a large model's split on eight
+workers can take longer than its whole solve.
 
 **The parts agree with a whole solve to within the tolerance, not to the last
 digit.** Each part takes the steps its own states need rather than the steps

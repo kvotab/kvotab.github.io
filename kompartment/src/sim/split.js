@@ -127,8 +127,19 @@ export const HEAP_PER_CODE_CHAR = 35;
 /** Memory outside the heap per character of generated code: the compilers'. */
 export const MEMORY_PER_CODE_CHAR = 100;
 
-/** However many cores and however much memory: past this, the builds cost more than the parts save. */
-export const MOST_PART_WORKERS = 8;
+/**
+ * However many cores and however much memory: past this, workers slow each
+ * other down more than they share out. The parts' sparse solves are bound by
+ * the machine's memory system rather than its cores, and every worker carries
+ * its own copy of the generated code. On a ten-core Apple M1 Max, one part of a
+ * made-up model of 16 independent chains (28,800 states, 0.16 million
+ * characters of code) took 1.2x as long when four processes solved it at once
+ * and 1.7x when eight did; a large imported assessment's part, with thirty
+ * times the code, took several times as long on eight, and its split ran
+ * slower on eight workers in Chrome than its whole solve did, where four were
+ * quickest. Nothing measured gained more than a tenth from eight over four.
+ */
+export const MOST_PART_WORKERS = 4;
 
 /**
  * How many workers a split may start without running the tab, or the machine,
@@ -138,7 +149,8 @@ export const MOST_PART_WORKERS = 8;
  * the page's copies of the model and the coordinator's whole build, which
  * carries the Jacobian -- and the rest of `TAB_HEAP_BYTES` is shared out. The
  * machine's memory, where the browser says (`navigator.deviceMemory`, in GB,
- * which Chromium rounds and caps at 8), is given half to the workers.
+ * which Chromium rounds down to a power of two: 8 at most in older versions,
+ * 32 from a 64 GB Mac in Chrome 154), is given half to the workers.
  *
  * @param {object} p
  * @param {number} p.modelChars  the length of the model's text, as the workers receive it
@@ -349,6 +361,38 @@ export function splitJobs(system) {
 /** A job's share of a whole derivative call, from its share of the states. */
 export function jobCost(states, total) {
 	return SHARED_WORK + (1 - SHARED_WORK) * (total > 0 ? states / total : 1);
+}
+
+/**
+ * What one core would have taken to solve the whole model, from a split's
+ * bins: each one's states, steps and solve. Kept for deciding the next run,
+ * as the whole solve the split is weighed against.
+ *
+ * Two estimates, each of which errs high in a way of its own; the smaller is
+ * taken.
+ *
+ * - The slowest bin stretched to the whole by its share of a derivative call
+ *   (`jobCost`). That takes a bin's cost per step to follow its states, and a
+ *   bin of nuclides that decay into each other, whose Jacobian is the denser,
+ *   costs more per state than one of nuclides that do not: stretched, it
+ *   overstates the whole.
+ * - Every bin's cost per step summed, the work each repeats every step counted
+ *   once (`SHARED_WORK`), over as many steps as the most any bin took. That
+ *   weighs each bin as it was measured. It errs high where a worker repeats
+ *   more than `SHARED_WORK` of the whole's work each step -- a small model --
+ *   and low in its steps, since the whole takes at least the steps its most
+ *   demanding part takes, and usually more.
+ *
+ * @param {Array<{states: number, nsteps: number|null, solveMs: number|null}>} jobs
+ * @param {number} total  the whole model's states
+ * @returns {number}
+ */
+export function wholeSolveMs(jobs, total) {
+	const stretched = Math.max(...jobs.map((j) => (j.solveMs ?? 0) / jobCost(j.states, total)));
+	if (!jobs.every((j) => Number.isFinite(j.nsteps) && j.nsteps > 0)) return stretched;
+	const perStep = jobs.reduce((sum, j) => sum + (j.solveMs ?? 0) / j.nsteps, 0);
+	const summed = (perStep / (SHARED_WORK * jobs.length + 1 - SHARED_WORK)) * Math.max(...jobs.map((j) => j.nsteps));
+	return Math.min(stretched, summed);
 }
 
 /**

@@ -37758,10 +37758,15 @@ test('a split starts no more workers than the page’s memory can hold, and buil
 	const { readFileSync } = await import('node:fs');
 	// The largest imported assessment: 23.8 million characters of model and
 	// 7.7 million of generated code. The tab has room for six of its workers,
-	// and a machine that says it has 8 GB for three.
+	// more than the ceiling of four; a machine that says it has 8 GB, for
+	// three; and the tab, for three of a model with half again the code.
 	const big = { modelChars: 23.8e6, codeChars: 7.7e6 };
-	assert(split.partWorkerCap(big).workers === 6, JSON.stringify(split.partWorkerCap(big)));
+	assert(split.MOST_PART_WORKERS === 4, `${split.MOST_PART_WORKERS} workers at most`);
+	assert(split.partWorkerCap(big).workers === 4, JSON.stringify(split.partWorkerCap(big)));
+	assert(Math.floor(split.TAB_HEAP_BYTES / split.partWorkerCap(big).heapEach) - 3 === 6, JSON.stringify(split.partWorkerCap(big)));
 	assert(split.partWorkerCap({ ...big, deviceMemory: 8 }).workers === 3, JSON.stringify(split.partWorkerCap({ ...big, deviceMemory: 8 })));
+	const bigger = { modelChars: 23.8e6, codeChars: 1.2e7 };
+	assert(split.partWorkerCap(bigger).workers === 3, JSON.stringify(split.partWorkerCap(bigger)));
 	// A model a quarter the size of the page's budget has no room for a worker at all.
 	assert(split.partWorkerCap({ modelChars: 1e6, codeChars: 3e7 }).workers === 1, 'a worker the tab has no room for');
 	// An ordinary one is held to the ceiling whatever the machine has.
@@ -37812,6 +37817,36 @@ test('a split starts no more workers than the page’s memory can hold, and buil
 	assert(/const \{ jobs: work, owner \} = binJobs\(plan\);/.test(worker) && /\} finally \{\n\t+workers\[b\]\.close\(\);/.test(worker),
 		'a worker per bin, closed when it is done');
 	assert(/msg\.text = null;/.test(worker) && /partSystem\.source = null;/.test(worker), 'a part keeps what it has read');
+	// The ceiling holds the cores a split is planned on, before the memory has
+	// its say: a split held to four by it is not one the memory held down.
+	assert(/return Math\.min\(MOST_PART_WORKERS, msg\.workers \? /.test(worker), 'the part workers are not held to the ceiling');
+});
+
+test('the whole solve a split is weighed against is the smaller of two estimates from its bins', async () => {
+	const { SHARED_WORK, jobCost, wholeSolveMs } = await import('../src/sim/split.js');
+	const { readFileSync } = await import('node:fs');
+	const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.abs(b);
+	// Bins that cost what their states say: the two agree.
+	const even = [{ states: 50, nsteps: 1000, solveMs: 1000 }, { states: 50, nsteps: 1000, solveMs: 1000 }];
+	assert(near(wholeSolveMs(even, 100), 1000 / jobCost(50, 100)), String(wholeSolveMs(even, 100)));
+	// A small bin that costs the most per state -- nuclides that decay into
+	// each other -- stretched by its states overstates the whole; its cost per
+	// step summed with the other's, over the most steps either took, does not.
+	const uneven = [{ states: 10, nsteps: 1000, solveMs: 900 }, { states: 90, nsteps: 800, solveMs: 300 }];
+	const summed = ((900 / 1000 + 300 / 800) / (2 * SHARED_WORK + 1 - SHARED_WORK)) * 1000;
+	assert(summed < 900 / jobCost(10, 100), `${summed} against ${900 / jobCost(10, 100)}`);
+	assert(near(wholeSolveMs(uneven, 100), summed), String(wholeSolveMs(uneven, 100)));
+	// A small bin that took a tenth of the steps and repeats more than the
+	// shared work at each: summed over the most steps it would overstate the
+	// whole, and the stretched is the smaller.
+	const apart = [{ states: 10, nsteps: 100, solveMs: 100 }, { states: 90, nsteps: 1000, solveMs: 1000 }];
+	assert(near(wholeSolveMs(apart, 100), 1000 / jobCost(90, 100)), String(wholeSolveMs(apart, 100)));
+	// A bin that did not say how many steps it took: the stretched alone.
+	const unsaid = [{ states: 10, nsteps: null, solveMs: 900 }, { states: 90, nsteps: 800, solveMs: 300 }];
+	assert(wholeSolveMs(unsaid, 100) === 900 / jobCost(10, 100), String(wholeSolveMs(unsaid, 100)));
+	// The worker keeps it for the next run's decision.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/wholeMs: wholeSolveMs\(jobs, n\),/.test(worker), 'the worker does not weigh the split against this');
 });
 
 test('opening a file says how far it has got: the import is taken a step at a time', async () => {

@@ -45,7 +45,8 @@ import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
 import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
 import {
-	planSplit, partModel, assembleParts, stateKeys, jobCost, buildPart, binJobs, partWorkerCap, codeChars,
+	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
+	MOST_PART_WORKERS,
 } from '../sim/split.js';
 
 let cancelled = false;
@@ -265,13 +266,15 @@ const splitMemory = new Map();
 /**
  * How many cores a run may use for its parts: the page's share for it where
  * it says -- several scenarios running at once divide the machine between
- * them -- otherwise every core but one, which this worker keeps.
+ * them -- otherwise every core but one, which this worker keeps; and never
+ * more than `MOST_PART_WORKERS`, past which part workers slow each other down
+ * more than they share out (see ../sim/split.js).
  */
 function splitWorkers(msg) {
 	if (msg.workers === 1) return 1;
 	const machine = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
 	const n = Number.isInteger(msg.cores) && msg.cores >= 1 ? msg.cores : Math.max(1, machine - 1);
-	return msg.workers ? Math.min(n, msg.workers) : n;
+	return Math.min(MOST_PART_WORKERS, msg.workers ? Math.min(n, msg.workers) : n);
 }
 
 /**
@@ -380,10 +383,9 @@ async function runSplit(args) {
 		solution: { t, y: rows, stats },
 		wallMs,
 		jobs,
-		// What one core would have taken for the whole model, as the slowest
-		// part stretched to the whole: each part's solve over its share of a
-		// derivative call. Kept for deciding the next run.
-		wholeMs: Math.max(...jobs.map((jb) => (jb.solveMs ?? 0) / jobCost(jb.states, n))),
+		// What one core would have taken for the whole model, worked out from
+		// the bins (`wholeSolveMs`). Kept for deciding the next run.
+		wholeMs: wholeSolveMs(jobs, n),
 	};
 }
 

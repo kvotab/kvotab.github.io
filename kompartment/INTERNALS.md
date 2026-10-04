@@ -4416,10 +4416,26 @@ started 19 workers and lost the tab 16 s in, and nine needed 10 GB. Brave never
 split that model at all, because it reports four cores. `partWorkerCap` works
 out how many fit -- the heap's 3 GB less three workers' worth for the page and
 the coordinator, half of `navigator.deviceMemory` for the rest, and no more than
-eight -- from the model's text and the whole build's code, once a split is on
+four -- from the model's text and the whole build's code, once a split is on
 the cards, and `planSplit` plans on no more (`memoryCap`) and says so. A part's
 worker drops the text once parsed and the parse once built, and the
 coordinator drops its copy once every worker has one.
+
+**And past four workers, they slow each other down.** The parts' sparse solves
+are bound by the machine's memory system rather than its cores, and every
+worker carries its own copy of the generated code. On a ten-core Apple M1 Max,
+one part of a made-up model of 16 independent chains (28,800 states, 0.16
+million characters of code) took 1.2× as long when four Node processes solved
+it at once and 1.7× when eight did, and a large imported assessment's part,
+with thirty times the code, took several times as long on eight -- in separate
+processes as in the workers of one Chrome tab, so it is the machine and not
+the browser. That
+assessment's split ran slower on eight workers in Chrome than its whole solve,
+and quickest on four; nothing measured gained more than a tenth from eight over
+four (the made-up model's split, 1.6 s against 1.8 s). So `MOST_PART_WORKERS`
+is four. The memory seldom holds the count lower on a desktop now: Chrome 154
+reports `navigator.deviceMemory` as 32 on a 64 GB Mac, where older versions
+capped it at 8.
 
 **Auto** predicts with the measured shape of the cost: a share pays `0.12 +
 0.88 × its share of the states` of a whole derivative call -- the shared work
@@ -4431,20 +4447,34 @@ assessments it has been measured on it needed markedly fewer, so splits ran
 well ahead of the prediction. The thresholds reflect that: from 2,000 states and
 a 1.6× promise before a model has been timed, 1.2× and a 1.5 s solve after, and
 once a model has been split what the split measured decides (`splitMemory` in
-the worker, per layout signature). The parts agree with a whole solve to
-within the tolerance, not to the last digit, so the setting is in the
+the worker, per layout signature): its wall time against a whole solve worked
+out from its bins (`wholeSolveMs`), the smaller of two estimates. One is the
+slowest bin stretched by its share of a derivative call, which a bin of
+nuclides that decay into each other -- a denser Jacobian, more per state --
+inflates; the other is every bin's cost per step summed, the shared work
+counted once, over the most steps any bin took. The parts agree with a whole
+solve to within the tolerance, not to the last digit, so the setting is in the
 integration fingerprint.
 
-**The Python engine splits a job at a time**, and keeps its own cost model
-for it (`python/kompartment/engine/split.py`). Its processes have no shared
-heap to run out of, and its builds do shrink with the part -- on a made-up
-model of twelve chains, 10,080 states, one job built in 0.18 of the whole's
-time and half of them in 0.46, which is `0.1 + 0.9 × share` near enough -- so
-building each job on its own costs little more than a share per core, and it
-keeps what that design was for: a job's run is the same whichever others share
-its process, and the worker count changes no number. Its plans are the
-application's in everything but the weighing; `PlanParity` compares them so,
-and holds the weighing to the engine's own formula.
+**The Python engine packs and builds bins as the application does**
+(`python/kompartment/engine/split.py`), one per core, since its processes have
+no shared heap to run out of. It once built each job on its own: on a made-up
+model of twelve independent chains, 10,080 states, one job built in 0.18 of
+the whole's time and half of them in 0.46, and a job's run was the same
+whichever others shared its process. But on an assessment whose equations and
+transports come along into every part, a part costs nearly a whole build
+whatever it holds, and a model of a few dozen parts spent most of its run
+building them. It keeps a cost model of its own, and weighs what a split
+measured differently: the whole model's solve is estimated both as the
+application does, the slowest bin stretched by its share of the states, and
+from every bin's cost per step and the most steps any bin took, and the smaller
+is taken -- a bin of nuclides that decay into each other costs more per state
+than one of nuclides that do not, and stretched, it overstates the whole. And
+since its series are worked out on the whole model's system, which no part
+solved, a compiled split compiles the whole model in a process of its own
+beside the parts, where the application's JavaScript needs nothing compiled.
+Its plans are the application's in everything but the weighing; `PlanParity`
+compares them so, and holds the weighing to the engine's own formula.
 
 ## A global switch over the floor
 
