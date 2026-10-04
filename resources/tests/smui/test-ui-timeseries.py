@@ -107,7 +107,7 @@ window.__tsg = {
       const row = t.parentElement && t.parentElement.classList.contains('sm-ob-row') ? t.parentElement : null;
       const n = row ? row.nextElementSibling : t.nextElementSibling;
       return { caption: (t.querySelector('caption') || {}).textContent || '', rows: t._rt ? t._rt.rows : [], keys: t._rt ? t._rt.columns.map((c) => c.key) : [],
-        code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null };
+        code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null };
     });
   },
 };

@@ -92,7 +92,7 @@ window.__mx = {
   idle: async () => { let calm = 0; for (let i = 0; i < 4800 && calm < 12; i++) { await new Promise(r => setTimeout(r, 25)); calm = SM.app.reports.some(x => x.body.classList.contains('is-running')) ? 0 : calm + 1; } },
   num: (s) => Number(String(s).replace('−', '-').replace('<', '').replace('*', '')),
   // every graph of a report with its code block right after it (the chart tests' rule)
-  graphsWithCode: (rep) => [...(rep || __mx.rep()).body.querySelectorAll('.sm-plot')].map(p => { const n = p.nextElementSibling; return !!(n && n.matches('details.sm-code, .sm-code')); }),
+  graphsWithCode: (rep) => [...(rep || __mx.rep()).body.querySelectorAll('.sm-plot')].map(p => { const n = p.nextElementSibling; return !!(n && n.matches('details.sm-code, .sm-code, .sm-code-box')); }),
 };
 '''
 

@@ -88,7 +88,7 @@ window.__axc = {
     for (const k of Object.keys(fl)) if (/^[xy]axis\d*$/.test(k)) axes[k] = { type: fl[k].type, range: fl[k].range.slice(), ticks: (fl[k]._vals || []).map((t) => t.x) };
     const n = p.box.nextElementSibling;
     return { axes, shapes: (fl.shapes || []).map((q) => ({ type: q.type, xref: q.xref, yref: q.yref, x0: q.x0, x1: q.x1, y0: q.y0, y1: q.y1, color: q.type === 'line' ? q.line.color : q.fillcolor })),
-      labels: (fl.annotations || []).map((a) => a.text), code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null };
+      labels: (fl.annotations || []).map((a) => a.text), code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null };
   },
   // the report saved in a project and opened again: its graph's state there
   async reopened(rep, title) {

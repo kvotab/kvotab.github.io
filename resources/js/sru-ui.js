@@ -369,15 +369,20 @@ const KVOT_SRU_UI = (() => {
 
       const om = S.beskrivning(block.namn);
       const ifyllda = egnaVarden(block);
+      // Ta bort står inte i summary utan bredvid den, i en ruta före
+      // <details> (kvot-summary-tools.js): en knapp i en <summary> når inte
+      // alla tangentbord och skärmläsare, och Chrome varnar för varje.
+      // Summary behåller platsen där knappen stod, så att raden ser ut som förut.
+      const tabort = egna.includes(block.namn) && !flera ? '' :
+        `<button type="button" class="ar-btn sru-ta-bort" data-on-click="sru:ta-bort"
+               data-block="${block.id}">Ta bort</button>`;
 
-      return `<details class="sru-blankett"${schema || ifyllda ? ' open' : ''}>
+      const blankett = `<details class="sru-blankett"${schema || ifyllda ? ' open' : ''}>
         <summary><b>${kvotEscapeHtml(block.namn)}</b>${om
             ? `<span class="sru-titel">${kvotEscapeHtml(om.titel)}</span>` : ''}${flera
             ? `<span class="sru-nummer">block ${blockMed(block.namn).indexOf(block) + 1}`
               + ` av ${blockMed(block.namn).length}</span>` : ''}
-          ${egna.includes(block.namn) && !flera ? '' :
-            `<button type="button" class="ar-btn sru-ta-bort" data-on-click="sru:ta-bort"
-               data-block="${block.id}">Ta bort</button>`}
+          ${tabort ? '<span class="kvot-summary-room sru-ta-bort-plats" aria-hidden="true"></span>' : ''}
           <div class="ar-note-inline sru-om">${om ? kvotEscapeHtml(om.om) + ' — ' : ''}
             ${kvotEscapeHtml(def.skv)} · ${def.falt.length} fältkoder ·
             ${ifyllda} ifyll${ifyllda === 1 ? 'd' : 'da'}${ifyllda
@@ -389,7 +394,11 @@ const KVOT_SRU_UI = (() => {
           <tbody>${rader}</tbody>
         </table></div>
       </details>`;
+      return tabort
+        ? `<div class="kvot-summary-box"><span class="kvot-summary-tools">${tabort}</span>${blankett}</div>`
+        : blankett;
     }).join('');
+    if (typeof KvotSummaryTools !== 'undefined') KvotSummaryTools.mount(box);
 
     ritaValjaren();
   }

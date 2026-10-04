@@ -65,7 +65,10 @@
     .sru-nummer { font-size:.7rem;font-weight:600;letter-spacing:.04em;padding:1px 7px;
                   border-radius:20px;border:1px solid var(--color-kvot-bright);
                   color:var(--color-kvot-accent);margin-right:8px; }
-    .ar-btn.sru-ta-bort { float:right;padding:2px 10px;font-size:.75rem;font-weight:500; }
+    /* Ta bort står i en ruta bredvid summary (kvot-summary-tools.js); platsen den
+       lämnar i raden flyter höger, som knappen gjorde. */
+    .ar-btn.sru-ta-bort { padding:2px 10px;font-size:.75rem;font-weight:500; }
+    .sru-ta-bort-plats { float:right; }
 
     .ar-btn { padding:7px 16px;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600;font-family:inherit;
               color:var(--text-secondary);background:var(--bg-surface);border:1px solid var(--border-color);
@@ -457,7 +460,8 @@
 <script src="./resources/js/arsred-export.js?v=20260916"></script>
 <script src="./resources/js/sru-data.js?v=20260916"></script>
 <script src="./resources/js/sru.js?v=20260916"></script>
-<script src="./resources/js/sru-ui.js?v=20260916"></script>
+<script src="./resources/js/kvot-summary-tools.js?v=20261004"></script>
+<script src="./resources/js/sru-ui.js?v=20261004"></script>
 <script>
   KVOT.renderHeader('Inkomstdeklaration');
   KVOT.renderNav('inkomstdeklaration.html');

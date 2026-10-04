@@ -584,7 +584,7 @@ CODES = '''
   if (!head) return [];
   // the outline's own code blocks first (its tables'), then those beside its graphs (not a sub-outline's)
   const body = head.parentElement.querySelector(':scope > .sm-ob-body');
-  const own = [...body.querySelectorAll(':scope > details.sm-code code')];
+  const own = [...body.querySelectorAll(':scope > .sm-code-box > details.sm-code code')];
   const nested = [...body.querySelectorAll('details.sm-code code')].filter(c => c.closest('.sm-ob') === head.parentElement && !own.includes(c));
   return [...own, ...nested].map(c => c.textContent);
 })

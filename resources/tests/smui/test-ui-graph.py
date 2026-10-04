@@ -258,7 +258,7 @@ window.__gbq = async (rep) => {
   if (!p.drawn) { p.box.scrollIntoView({ block: 'center' }); await p.draw(); }
   const fig = gb.figure();
   const next = p.box.nextElementSibling;
-  const code = next && next.matches('details.sm-code') ? next.querySelector('code').textContent : null;
+  const code = next && next.matches('details.sm-code, .sm-code-box') ? next.querySelector('code').textContent : null;
   const skip = new Set((fig.links || []).filter((l) => l.overlay != null).map((l) => l.overlay));
   const arr = (v) => (v == null ? null : Array.isArray(v) ? v : [v]);
   const traces = p.traces.map((t, i) => ({ i, type: t.type || 'scatter', mode: t.mode || null, x: t.x ?? null, y: t.y ?? null, z: t.z ?? null, base: t.base ?? null, width: t.width ?? null,
@@ -908,7 +908,7 @@ window.__oq = async (rep) => {
     const ternary = L.ternary ? ['aaxis', 'baxis', 'caxis'].map((a) => L.ternary[a].title.text) : null;
     const tiles = [...gd.querySelectorAll('g.slice')].map((g) => g.__data__).filter(Boolean)
       .map((d) => ({ id: d.data && d.data.data ? d.data.data.id : null, x0: d.x0, x1: d.x1, y0: d.y0, y1: d.y1 }));
-    return { title: p.opts.title, code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null, tr, axes, scene, ternary, tiles, area: L._size ? [L._size.w, L._size.h] : null,
+    return { title: p.opts.title, code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null, tr, axes, scene, ternary, tiles, area: L._size ? [L._size.w, L._size.h] : null,
       size: [p.width, p.height], w: p.ownWidth, h: p.height, legend: (gd.data || []).filter((t) => t.showlegend !== false && t.name).map((t) => t.name),
       legendTitle: L.legend && L.legend.title ? L.legend.title.text : null, showlegend: !!L.showlegend, annotations: (L.annotations || []).map((a) => a.text) };
   });
@@ -2240,7 +2240,7 @@ window.__ax = {
   item(label, level) { const ms = [...document.querySelectorAll('.sm-menu')]; const m = level == null ? ms[ms.length - 1] : ms[level]; const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.replace(/^✓/, '') === label); if (b) b.click(); return !!b; },
   hover(label, level = 0) { const m = [...document.querySelectorAll('.sm-menu')][level]; const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.replace(/^✓/, '') === label); if (b) b.dispatchEvent(new MouseEvent('mouseenter')); return !!b; },
   axis(p, name = 'yaxis') { const A = p.box._fullLayout && p.box._fullLayout[name]; return A ? { type: A.type, range: A.range.slice(), ticks: (A._vals || []).map((v) => v.x), text: (A._vals || []).map((v) => v.text) } : null; },
-  code(p) { const n = p.box.nextElementSibling; return n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null; },
+  code(p) { const n = p.box.nextElementSibling; return n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null; },
   // until the report has run again after a change to its table (Graph Builder follows it, 250 ms later) and is idle
   async calm(rep) { await new Promise((r) => setTimeout(r, 450)); for (let i = 0; i < 400 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); const b = SM.platforms.get('graphbuilder').builder(rep); if (b) await b.idle(); await new Promise((r) => setTimeout(r, 100)); },
   // Graph Builder's graph as it is now (a change to the table makes a new one): an axis's drag box, or the plot's middle

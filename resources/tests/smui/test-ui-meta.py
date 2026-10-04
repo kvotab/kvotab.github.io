@@ -808,7 +808,7 @@ async def chart_code(page):
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
     sc = await page.ev('''(async () => { const rep = SM.app.reports.filter(r => r.platform.id === 'meta').pop(); const d = new Promise(res => rep.on('done', res)); rep.run(); await d;
-      const s = rep.body.querySelector('.sm-meta-scroll'); const c = s.querySelector(':scope > .sm-plot + details.sm-code');
+      const s = rep.body.querySelector('.sm-meta-scroll'); const c = s.querySelector(':scope > .sm-plot + .sm-code-box');
       s.scrollLeft = 200; await new Promise(r => setTimeout(r, 100));
       const sb = s.getBoundingClientRect(), cb = c ? c.getBoundingClientRect() : null;
       return { code: !!c, inView: cb ? cb.left >= sb.left - 1 && cb.right <= sb.right + 1 : false, wide: document.documentElement.scrollWidth <= innerWidth + 1, scrolled: s.scrollLeft > 0 }; })()''')

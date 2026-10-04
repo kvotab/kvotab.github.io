@@ -26,7 +26,7 @@
 .sm-meta-scroll > .sm-plot { flex: none; }
 /* the forest plot's matplotlib code, under it inside the scroller: it stays
    in view when the plot is scrolled sideways */
-.sm-meta-scroll > .sm-code { position: sticky; left: 0; }
+.sm-meta-scroll > .sm-code-box { position: sticky; left: 0; }
 
 /* a graph with its matplotlib code under it, as one item of a row */
 .sm-meta-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

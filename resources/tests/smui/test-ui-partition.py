@@ -342,7 +342,7 @@ window.__pm = {
       const circles = [...s.querySelectorAll('circle')].map((c) => { const [x, y] = pt(c, num(c, 'cx'), num(c, 'cy')); return { x, y, r: num(c, 'r') }; });
       const lines = [...s.querySelectorAll('line')].map((l) => { const [x1, y1] = pt(l, num(l, 'x1'), num(l, 'y1')); const [x2, y2] = pt(l, num(l, 'x2'), num(l, 'y2')); return [x1, y1, x2, y2]; });
       return { label: s.getAttribute('aria-label'), w: num(s, 'width'), h: num(s, 'height'), rects, texts, paths, circles, lines,
-        code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null };
+        code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null };
     });
   },
 };

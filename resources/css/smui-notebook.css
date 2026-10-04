@@ -173,8 +173,12 @@
 .sm-nb-plotly { width: 100%; max-width: 920px; min-height: 380px; }
 
 /* ---- a report's code block, edited and run in place ------------------------------------------ */
-.sm-code .sm-code-btns { display: inline-flex; gap: 6px; margin-left: 8px; vertical-align: middle; }
-.sm-code .sm-code-btns [hidden] { display: none; }
+/* Its buttons are in a bar before the <details> (kvot-summary-tools.js: a button inside a <summary>
+   is out of reach of some keyboards and screen readers, and Chrome reports each one), drawn over
+   the room the summary keeps where they were: the room is placed as they were, the bar looks as they did. */
+.sm-code .sm-code-room { display: inline-block; margin-left: 8px; vertical-align: middle; }
+.sm-code-box > .sm-code-btns { display: inline-flex; gap: 6px; }
+.sm-code-btns [hidden] { display: none; }
 .sm-code-edit { margin-top: 4px; max-width: 820px; }
 /* the editor in a report takes the size of the code as text, so that Edit changes nothing in the layout */
 .sm-code .sm-ed { font-size: 11.5px; line-height: 1.45; }

@@ -442,7 +442,14 @@
     const toNb = SM.notebook ? btn('Notebook', 'Send the code to a notebook, as a cell (the one used last, or a new one)', () => SM.notebook.collect(current, { title: title || 'a report', table })) : null;
     const pre = el('pre', null, el('code', { text }));
     const out = el('div', { class: 'sm-nb-out sm-code-out', 'aria-live': 'polite', hidden: true });
-    d.append(el('summary', null, 'Python code', el('span', { class: 'sm-code-btns' }, copy, edit, toNb)), pre, out);
+    // The buttons are not in the summary but in a bar before the <details>,
+    // drawn over the room the summary keeps for them (kvot-summary-tools.js):
+    // a button inside a <summary> is out of reach of some keyboards and
+    // screen readers, and Chrome reports each one. So what goes into the
+    // report is the box holding the two; the block itself is the <details>.
+    d.append(el('summary', null, 'Python code', el('span', { class: 'kvot-summary-room sm-code-room', 'aria-hidden': 'true' })), pre, out);
+    const frame = el('div', { class: 'kvot-summary-box sm-code-box' }, el('span', { class: 'kvot-summary-tools sm-code-btns' }, copy, edit, toNb), d);
+    if (typeof KvotSummaryTools !== 'undefined') KvotSummaryTools.mount(frame);
     // The report's code as given (base), and as shown: set() puts in another (the graph's
     // Axis Settings, smui-axis.js), which Reset then puts back; an edit under way stays.
     d._code = { base: text, get: () => text, set(t) { const edited = current !== text; text = t; if (!edited) current = t; if (!editor) pre.firstChild.textContent = current; } };
@@ -485,7 +492,7 @@
       if (edit) edit.hidden = true;
       requestAnimationFrame(() => editor && editor.focus());
     }
-    return d;
+    return frame;
   }
 
   const note = (text) => el('p', { class: 'sm-ob-note', text });
@@ -1686,7 +1693,8 @@
         const img = p ? await this.plotImage(p, 'svg') : null;
         copies[i].replaceChildren(img ? el('img', { src: img.data, alt: img.alt, width: img.w, height: img.h }) : el('em', { text: '(graph not drawn)' }));
       }
-      clone.querySelectorAll('button, .kvot-info-slot, [data-noexport], input, select, textarea').forEach((b) => b.remove());
+      // (a code block's buttons go with their bar, and the room its summary kept for them)
+      clone.querySelectorAll('button, .kvot-info-slot, .kvot-summary-tools, .kvot-summary-room, [data-noexport], input, select, textarea').forEach((b) => b.remove());
       // The Python goes along when the report shows it (the Python code button) or its block is open; a traceback always.
       if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error') && !d.open) d.remove(); });
       clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));

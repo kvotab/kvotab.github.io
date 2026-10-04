@@ -1388,7 +1388,8 @@ async def main():
     await page.ev(open_report_js('distribution', {'y': ['height (cm)']}))
     await asyncio.sleep(1)
     G = """(() => { const rep = SM.app.reports.at(-1), p = rep.plots[0], g = p.box.querySelector(':scope > .sm-plot-grip');
-      const b = g ? g.getBoundingClientRect() : null, pb = p.box.getBoundingClientRect(), blk = p.box.nextElementSibling;
+      const b = g ? g.getBoundingClientRect() : null, pb = p.box.getBoundingClientRect(), under = p.box.nextElementSibling,
+        blk = under && under.matches('.sm-code-box') ? under.querySelector(':scope > details.sm-code') : under;   // the code box's <details>
       const fig = (t) => { const m = /figsize=\\(([0-9.]+), ([0-9.]+)\\)/.exec(t || ''); return m ? [Number(m[1]), Number(m[2])] : null; };
       return { w: p.width, h: p.height, lw: p.box._fullLayout && p.box._fullLayout.width, lh: p.box._fullLayout && p.box._fullLayout.height, def: p.defaultSize,
         grip: g ? { x: b.x + b.width / 2, y: b.y + b.height / 2, label: g.getAttribute('aria-label') } : null, plot: [pb.x + pb.width / 2, pb.y + pb.height / 2],

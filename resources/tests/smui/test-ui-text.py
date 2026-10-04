@@ -1046,7 +1046,7 @@ OPEN_TX = r'''(async (roles, options, byName) => {
   const clouds = [...rep.body.querySelectorAll('svg.sm-tx-cloud')].map((svg) => {
     const box = svg.closest('.sm-tx-cloudbox'), n = box.nextElementSibling;
     return { viewBox: svg.getAttribute('viewBox').split(' ').map(Number), legend: !!box.querySelector('.sm-tx-legend'),
-      code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null,
+      code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null,
       words: [...svg.querySelectorAll('text.sm-tx-word')].map((w) => [w.lastChild.textContent, Number(w.getAttribute('x')), Number(w.getAttribute('y')), Number(w.getAttribute('font-size')), getComputedStyle(w).fill]) };
   });
   return { g, titles, clouds, undrawn: __gr.take(), errors: [...rep.body.querySelectorAll('.sm-ob-error')].map((e) => e.textContent) };

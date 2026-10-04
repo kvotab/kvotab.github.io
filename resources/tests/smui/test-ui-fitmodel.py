@@ -1851,7 +1851,7 @@ async def wp1_round(page):
       return { first: h.indexOf('Effect Summary') < h.indexOf('Response yield (g)') && h.indexOf('Effect Summary') >= 0, head: t ? [...t.querySelectorAll('th')].map(h => h.textContent) : null, rows: t ? t.querySelectorAll('tbody tr').length : 0 }; })()''')
     check('WP1: several responses: one Effect Summary at the top, a Response column', (r2['first'], 'Response' in (r2['head'] or [])), (True, True))
     check('  every response\'s effects (2 responses × 2 effects)', r2['rows'], 4)
-    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Effect Summary', rep); const d = ob.querySelector(':scope > .sm-ob-body > details.sm-code');
+    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Effect Summary', rep); const d = ob.querySelector(':scope > .sm-ob-body > .sm-code-box > details.sm-code');
       const t = rep.table; const res = await SM.engine.runCell('wp1', d._code.get(), { tables: [t], current: t, label: 'wp1', fresh: true });
       const out = res.outputs || []; const text = out.filter(o => o.type === 'stream').map(o => o.text).join('');
       const cells = [...ob.querySelectorAll('.sm-fm-esum tbody tr')].map(tr => [...tr.children].map(c => c.textContent));
@@ -1870,7 +1870,7 @@ async def wp1_round(page):
     check('  Maximum Likelihood: no Solution Path, standard errors and Wald tests', (r['path'], 'Std Error' in r['pe'], 'Wald ChiSquare' in r['pe']), (False, True, True))
     check('  Go keeps the fit: the Model Comparison has the launch\'s fit and the kept one', r['cmp'], ['Lasso with AICc Validation', 'Maximum Likelihood with AICc Validation'])
     check('  both fits have reports', sum(1 for h in r['heads2'] if h.startswith('Maximum Likelihood with AICc Validation')), 1)
-    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Model Comparison', rep); const d = ob.querySelector(':scope > .sm-ob-body > details.sm-code');
+    r2 = await page.ev('''(async () => { const rep = __fm.rep(); const ob = __fm.outline('Model Comparison', rep); const d = ob.querySelector(':scope > .sm-ob-body > .sm-code-box > details.sm-code');
       const t = rep.table; const res = await SM.engine.runCell('wp1', d._code.get(), { tables: [t], current: t, label: 'wp1', fresh: true });
       const out = res.outputs || []; const text = out.filter(o => o.type === 'stream').map(o => o.text).join('');
       return { errors: out.filter(o => o.type === 'error').map(o => o.ename + ': ' + o.evalue), both: /Model Launch: .*\\{'Training'/.test(text) && /Fit 2: .*\\{'Training'/.test(text) }; })()''', timeout=300)

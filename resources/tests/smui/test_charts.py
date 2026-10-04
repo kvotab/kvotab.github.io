@@ -296,7 +296,7 @@ window.__gr = {
       const t = (a) => (L[a] && L[a].title ? (typeof L[a].title === 'string' ? L[a].title : L[a].title.text) : null);
       const pick = (d) => { const o = {}; for (const k of ['type', 'name', 'mode', 'orientation', 'x', 'y', 'base', 'width', 'q1', 'median', 'q3', 'lowerfence', 'upperfence', 'xaxis', 'yaxis', 'text', 'fill', 'z', 'contours', 'showlegend', 'hoverinfo', 'stackgroup']) if (d[k] !== undefined) o[k] = d[k];
         o.color = d.line && d.line.color; o.dash = d.line && d.line.dash; o.shape = d.line && d.line.shape; o.mcolor = d.marker && d.marker.color; return o; };
-      return { label: p.getAttribute('aria-label'), code: n && n.matches('details.sm-code') ? n.querySelector('code').textContent : null,
+      return { label: p.getAttribute('aria-label'), code: n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null,
         traces: (p.data || []).map(pick), shapes: (L.shapes || []).map((s) => ({ x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, xref: s.xref, yref: s.yref, dash: s.line && s.line.dash })),
         titles: { x: t('xaxis'), y: t('yaxis'), x2: t('xaxis2'), y2: t('yaxis2') }, ticks: L.xaxis && L.xaxis.ticktext ? L.xaxis.ticktext : null,
         w: p._plot ? p._plot.ownWidth : null, h: p._plot ? p._plot.height : null };

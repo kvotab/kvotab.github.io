@@ -40,7 +40,7 @@ NB = 'SM.notebook.notebooks[SM.notebook.notebooks.length - 1]'
 
 # The editor of a report's code block: the computed styles of its two layers.
 LAYERS = r"""(async () => { const rep = SM.app.reports[0]; SM.app.showTab(SM.app.tabOf(rep)); const d = rep.codeBlocks().find(d => /print\(d\.mean/.test(d.textContent)); d.open = true;
-  if (!d.querySelector('textarea')) [...d.querySelectorAll('summary button')].find(b => b.textContent === 'Edit').click();
+  if (!d.querySelector('textarea')) [...d.parentElement.querySelectorAll('.sm-code-btns button')].find(b => b.textContent === 'Edit').click();
   await new Promise(r => setTimeout(r, 200));
   const hl = d.querySelector('.sm-ed-hl'), ta = d.querySelector('.sm-ed-ta'), a = getComputedStyle(hl), b = getComputedStyle(ta);
   const keys = ['fontSize', 'lineHeight', 'fontFamily', 'paddingLeft', 'paddingTop', 'letterSpacing', 'whiteSpace', 'borderLeftWidth', 'marginTop'];
@@ -201,7 +201,7 @@ async def main():
     await asyncio.sleep(0.3)
     geo = '''(() => { const d = SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)); const col = d.closest('.sm-ob-row').children; return [col[0].getBoundingClientRect().top, col[1].getBoundingClientRect().top].map(Math.round); })()'''
     top0 = await page.ev(geo)
-    xy = await page.ev('''(() => { const b = [...SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)).querySelectorAll('summary button')].find(b => b.textContent === 'Edit'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()''')
+    xy = await page.ev('''(() => { const b = [...SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)).parentElement.querySelectorAll('.sm-code-btns button')].find(b => b.textContent === 'Edit'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()''')
     await page.click(*xy)
     await asyncio.sleep(0.4)
     r = await page.ev('''(() => { const d = SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)); const ta = d.querySelector('textarea'); return { editing: !!ta, focused: document.activeElement === ta, same: ta && ta.value === d.querySelector('.sm-ed-hl').textContent.replace(/\\u200b/g, '').replace(/\\n?$/, '') ? true : ta && ta.value.split('\\n').length === d.querySelectorAll('.sm-ed-hl .ln').length }; })()''')
@@ -220,10 +220,10 @@ async def main():
     r['back'] = r['back'] == orig
     check("Reset puts the report's code back and clears the output", r, {'back': True, 'out': True})
     await page.ev('''(() => { const d = SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)); const ta = d.querySelector('textarea'); ta.value += '\\n# mine'; ta.dispatchEvent(new Event('input', { bubbles: true })); d.querySelector('.sm-code-bar').children[2].click(); })()''')
-    r = await page.ev('''(() => { const d = SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)); return { pre: d.querySelector(':scope > pre')?.textContent.endsWith('# mine'), editor: !!d.querySelector('textarea'), edit: [...d.querySelectorAll('summary button')].find(b => b.textContent === 'Edit').hidden }; })()''')
+    r = await page.ev('''(() => { const d = SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)); return { pre: d.querySelector(':scope > pre')?.textContent.endsWith('# mine'), editor: !!d.querySelector('textarea'), edit: [...d.parentElement.querySelectorAll('.sm-code-btns button')].find(b => b.textContent === 'Edit').hidden }; })()''')
     check('Close goes back to the code as text, as edited', r, {'pre': True, 'editor': False, 'edit': False})
     n0 = await page.ev(f'{NB}.cells.length')
-    await page.ev('''[...SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)).querySelectorAll('summary button')].find(b => b.textContent === 'Notebook').click()''')
+    await page.ev('''[...SM.app.reports[0].codeBlocks().find(d => /print\\(d\\.mean/.test(d.textContent)).parentElement.querySelectorAll('.sm-code-btns button')].find(b => b.textContent === 'Notebook').click()''')
     await asyncio.sleep(0.4)
     r = await page.ev(f'''(() => {{ const nb = SM.notebook.lastUsed; const cs = nb.cells; return {{ added: cs.length, last: cs[cs.length - 1].source.endsWith('# mine'), note: cs[cs.length - 2].type, shown: SM.app.activeTab.notebook === nb }}; }})()''')
     check('Notebook sends the block (as edited) to the notebook used last, with a line naming the report', (r['last'], r['note'], r['shown']), (True, 'markdown', True))

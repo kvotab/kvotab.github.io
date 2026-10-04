@@ -43,10 +43,10 @@
   <link rel="stylesheet" href="./resources/css/smui-quality.css?v=20261002a">
   <link rel="stylesheet" href="./resources/css/smui-doe.css?v=20261002a">
   <link rel="stylesheet" href="./resources/css/smui-calculators.css?v=20261002a">
-  <link rel="stylesheet" href="./resources/css/smui-graph.css?v=20261002a">
-  <link rel="stylesheet" href="./resources/css/smui-notebook.css?v=20261002a">
+  <link rel="stylesheet" href="./resources/css/smui-graph.css?v=20261004a">
+  <link rel="stylesheet" href="./resources/css/smui-notebook.css?v=20261004a">
   <link rel="stylesheet" href="./resources/css/smui-tables.css?v=20261002a">
-  <link rel="stylesheet" href="./resources/css/smui-meta.css?v=20261002a">
+  <link rel="stylesheet" href="./resources/css/smui-meta.css?v=20261004a">
   <link rel="stylesheet" href="./resources/css/smui-multits.css?v=20261002a">
   <link rel="stylesheet" href="./resources/css/smui-counts.css?v=20261002a">
   <link rel="stylesheet" href="./resources/css/smui-treatment.css?v=20261002a">
@@ -113,6 +113,7 @@
     (in the head) is async: the workbench starts without it, and a graph
     that was to be drawn before it came is drawn when it does:
       kvot-info     the (i) buttons and their panel (shared with the other tools)
+      kvot-summary-tools  buttons on a summary's line but not in it (a code block's Copy, Edit, Notebook)
       xlsxwrite     the Excel writer (needs JSZip, loaded above)
       smui-util     events, number formatting, DOM building, random numbers
       smui-touchdrag  drag and drop by touch, for phones
@@ -131,6 +132,7 @@
       smui-p-*      the platforms, one file (and one stylesheet) per menu area
   -->
   <script defer src="./resources/js/kvot-info.js?v=20260926"></script>
+  <script defer src="./resources/js/kvot-summary-tools.js?v=20261004"></script>
   <script defer src="./resources/js/xlsxwrite.js?v=20260902"></script>
   <script defer src="./resources/js/smui-util.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-touchdrag.js?v=20261002a"></script>
@@ -139,7 +141,7 @@
   <script defer src="./resources/js/smui-engine.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-ui.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-grid.js?v=20261002a"></script>
-  <script defer src="./resources/js/smui-report.js?v=20261002a"></script>
+  <script defer src="./resources/js/smui-report.js?v=20261004a"></script>
   <script defer src="./resources/js/smui-launch.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-panels.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-dock.js?v=20261002a"></script>
@@ -165,7 +167,7 @@
   <script defer src="./resources/js/smui-p-doe.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-p-calculators.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-p-graph.js?v=20261002a"></script>
-  <script defer src="./resources/js/smui-axis.js?v=20261002a"></script>
+  <script defer src="./resources/js/smui-axis.js?v=20261004a"></script>
   <script defer src="./resources/js/smui-p-tables.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-colprops.js?v=20261002a"></script>
   <script defer src="./resources/js/smui-scripts.js?v=20261002a"></script>

@@ -619,7 +619,10 @@
      Save Python Script follows. */
   function amend(p) {
     if (!p || p.opts.axes || !p.report) return;
-    const block = p.box.nextElementSibling;
+    // the <details> of the code box under the graph (the box holds the block's
+    // buttons beside its summary: kvot-summary-tools.js)
+    const under = p.box.nextElementSibling;
+    const block = under && under.matches && under.matches('.sm-code-box') ? under.querySelector(':scope > details.sm-code') : under;
     if (!block || !block.matches || !block.matches('details.sm-code') || !block._code) return;
     if (!keyOf(p)) return;
     // a graph's code (matplotlib, ending in plt.show()), not a result's

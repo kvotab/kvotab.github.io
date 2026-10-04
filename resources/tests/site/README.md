@@ -1014,3 +1014,30 @@ in General, in the unit row's small italics. The dataset export asks for
 `vcenter`, so its file was one Excel had to repair, and its header row was
 plain. `resources/tests/rb/test-excel.py` checks the chart export's Data sheet
 styles now.
+
+## test-chrome-summary-controls.py
+
+No control inside a `<summary>`, on any page.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-summary-controls.py
+
+Chrome reports every control inside a `<summary>` -- a button, a link, a
+field, a label, anything with a tabindex or contenteditable -- in the console:
+`An interactive element was found within a <summary> element. These elements
+won't consistently be accessible to people navigating by keyboard or using
+assistive technology.` The pages had put an (i), a Copy button, a Ta bort or a
+pair of arrows there (found 2026-10-04 on facsimile.html, then on ten more
+pages). They now sit in a bar beside the summary, drawn over a room the
+summary keeps for them, so the heading looks as it did: `kvot-info.js` places
+a section's (i), `kvot-summary-tools.js` other buttons (smui's code blocks,
+inkomstdeklaration's forms), and Kompartment has the same in its own
+`parts.js` (`framed`).
+
+Every page at the repository root is loaded, and the states that make such
+headings later are reached: two more forms in inkomstdeklaration.html, a
+report with Python code in smui.html (whose engine takes a while to load), a
+block chosen in Kompartment (inside kompartment.html's frame) and a second
+distribution in logn.html. Each page is checked twice: by Chrome's rule over
+the page and its same-origin frames, and by the issues Chrome raised itself
+(`Audits.issueAdded`, `InteractiveContentSummaryDescendant`), which the other
+tests' drivers do not listen for.
