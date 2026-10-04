@@ -22,12 +22,14 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the tab bar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.dose.full') === '1') document.documentElement.classList.add('dc-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261004o">
+  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261004p">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -146,16 +148,28 @@
 
       <!-- ===================== the work area ===================== -->
       <main class="dc-main">
-        <nav class="dc-tabs" role="tablist" aria-label="Results">
-          <button type="button" role="tab" class="active" data-tab="coef" data-on-click="dc:tab">Coefficients</button>
-          <button type="button" role="tab" data-tab="retention" data-on-click="dc:tab">Retention</button>
-          <button type="button" role="tab" data-tab="model" data-on-click="dc:tab">Model</button>
-          <button type="button" role="tab" data-tab="chain" data-on-click="dc:tab">Decay chain</button>
-          <button type="button" role="tab" data-tab="batch" data-on-click="dc:tab">Batch</button>
-          <button type="button" role="tab" data-tab="risk" data-on-click="dc:tab">Risk</button>
-          <button type="button" role="tab" data-tab="radon" data-on-click="dc:tab">Radon at home</button>
-          <button type="button" role="tab" data-tab="help" data-on-click="dc:tab">Help</button>
-        </nav>
+        <!-- In the full window (the button at the right end) the kvot mark goes to the home page
+             and the site's theme switch is beside the button (site.js keeps its icon and title). -->
+        <div class="dc-tabbar">
+          <a class="dc-homelink dc-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+          <nav class="dc-tabs" role="tablist" aria-label="Results">
+            <button type="button" role="tab" class="active" data-tab="coef" data-on-click="dc:tab">Coefficients</button>
+            <button type="button" role="tab" data-tab="retention" data-on-click="dc:tab">Retention</button>
+            <button type="button" role="tab" data-tab="model" data-on-click="dc:tab">Model</button>
+            <button type="button" role="tab" data-tab="chain" data-on-click="dc:tab">Decay chain</button>
+            <button type="button" role="tab" data-tab="batch" data-on-click="dc:tab">Batch</button>
+            <button type="button" role="tab" data-tab="risk" data-on-click="dc:tab">Risk</button>
+            <button type="button" role="tab" data-tab="radon" data-on-click="dc:tab">Radon at home</button>
+            <button type="button" role="tab" data-tab="help" data-on-click="dc:tab">Help</button>
+          </nav>
+          <span class="dc-tabend">
+            <button type="button" class="theme-toggle dc-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+            <button type="button" class="dc-fullbtn" id="dcFull" data-on-click="dc:full" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site’s header and footer">
+              <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="dc-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="dc-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+            </button>
+          </span>
+        </div>
 
         <section class="dc-pane" id="pane-coef" role="tabpanel">
           <p class="dc-empty" id="dcCoefEmpty">The committed effective and equivalent dose coefficients by age at intake appear here once calculated.</p>
@@ -330,7 +344,9 @@
             energy emitted in one place is absorbed in another), for intakes by ingestion and inhalation (and, in the
             ICRP 103 system, direct uptake to blood) at the six reference ages of the ICRP’s publications for members of
             the public: 3 months, 1, 5, 10 and 15 years, and adults. Choose the system, the radionuclide, the route and
-            the chemical form on the left.</p>
+            the chemical form on the left. The button at the right end of the tabs gives the page the whole window,
+            without the site’s header and footer; the kvot mark at the left of the tabs then goes to the home page, and
+            the switch beside the button changes between light and dark. The page remembers the choice.</p>
 
           <h3 id="help-systems">The two systems</h3>
           <p>The <b>ICRP 60 system</b> is the one of the ICRP’s 1990 Recommendations: the age-dependent models of
@@ -683,6 +699,6 @@
       kvot-info        the (i) next to each setting and its panel
   -->
   <script src="./resources/js/kvot-info.js?v=20261004"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261004r"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261004s"></script>
 </body>
 </html>

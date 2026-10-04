@@ -2025,6 +2025,24 @@ function topicsFor() {
   return out;
 }
 
+/* ---- the full window -------------------------------------------------------------------------- */
+/* The page without the site's header and footer (dose_coefficients.css :root.dc-full), by the
+   button at the right end of the tab bar; kept for the next visit, which the page's head puts in
+   it before the first paint. */
+const FULL = 'kvot.dose.full';
+function setFull(on) {
+  document.documentElement.classList.toggle('dc-full', !!on);
+  try { localStorage.setItem(FULL, on ? '1' : '0'); } catch { /* storage unavailable: for this visit only */ }
+  fullState();
+  resizePlots();
+}
+function fullState() {
+  const on = document.documentElement.classList.contains('dc-full');
+  const b = $('dcFull');
+  b.setAttribute('aria-pressed', String(on));
+  b.title = on ? 'Show the site’s header and footer again' : 'Full window: the page without the site’s header and footer';
+}
+
 /* ---- start ------------------------------------------------------------------------------------ */
 registerActions({
   'dc:systemChanged': async (e, el) => {
@@ -2043,6 +2061,7 @@ registerActions({
   'dc:run': () => run(),
   'dc:stop': () => { stopRank(RANK.run); },
   'dc:tab': (e, el) => showTab(el.dataset.tab),
+  'dc:full': () => setFull(!document.documentElement.classList.contains('dc-full')),
   'dc:redraw': () => { if (state.tab === 'coef') renderCoef(); else if (state.tab === 'retention') renderRetention(); else if (state.tab === 'model') renderModel(); else if (state.tab === 'chain') renderChain(); else if (state.tab === 'risk') renderRisk(); else if (state.tab === 'radon') renderRadon(); },
   'dc:radonKind': () => renderRadon(),
   'dc:radonParams': () => renderRadon(),
@@ -2091,6 +2110,7 @@ async function start() {
     for (const r of document.querySelectorAll('input[name="dcSystem"]')) r.checked = r.value === s.system;
   }
   if (s.side) $('dcRoot').style.setProperty('--dc-side-width', s.side);
+  fullState();
   if (s.nuclide) $('dcNuclide').value = s.nuclide;
   if (s.route) { const r = document.querySelector(`input[name="dcRoute"][value="${s.route}"]`); if (r) r.checked = true; }
   if (Array.isArray(s.ages)) for (const i of $('dcAges').querySelectorAll('input')) i.checked = s.ages.includes(Number(i.value));

@@ -6,8 +6,9 @@ loads without a script error, that the catalogue of each system fills the
 nuclide list, that every (i) opens its panel and closes it, that a
 calculation in each system puts the coefficients in the table, that every
 tab draws (charts, the model diagram, the decay chain), that a link with the
-choices in its hash calculates on load, and that a phone-width window does
-not scroll sideways.
+choices in its hash calculates on load, that a phone-width window does
+not scroll sideways, and that the full window (no site header or footer)
+comes and goes with its button and is kept for the next visit.
 
 Start a server and a browser on ports of your choice (check them first with
 lsof -nP -iTCP:<port> -sTCP:LISTEN; other sessions may use 8765 and 9222):
@@ -147,7 +148,7 @@ async def main():
         # Start from no saved settings: clear them on the page's own origin, then reload.
         await p.call('Page.navigate', {'url': URL})
         await p.until("document.readyState === 'complete'", 30)
-        await p.ev("try { localStorage.removeItem('kvot.dose') } catch (e) {}")
+        await p.ev("try { localStorage.removeItem('kvot.dose'); localStorage.removeItem('kvot.dose.full') } catch (e) {}")
         await p.call('Page.navigate', {'url': URL})
         loaded = await p.until("document.getElementById('dcNuclideCount') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
         check('the ICRP 103 catalogue loads', loaded)
@@ -873,6 +874,78 @@ async def main():
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.8)
         check('nor in the Model tab, with the body drawn', await p.ev("document.documentElement.scrollWidth <= window.innerWidth + 1 && !document.getElementById('dcBody').hidden"))
+
+        # The full window: the page without the site's header, menu and footer, by the button at the right end of
+        # the tab bar; there the kvot mark at the left of the bar goes to the home page and the site's theme switch
+        # is beside the button; the choice is kept, and the next visit is in the full window from the first paint.
+        await p.call('Emulation.setDeviceMetricsOverride', {'width': 1400, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+        await asyncio.sleep(0.5)
+        FULL = """(() => { const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; };
+          const c = document.querySelector('.content').getBoundingClientRect(), b = document.getElementById('dcFull');
+          return { on: document.documentElement.classList.contains('dc-full'), site: [shown('body > header'), shown('body > footer'), shown('body > .nav-toggle')],
+            top: Math.round(c.top), fills: Math.round(c.height) === innerHeight, mine: [shown('.dc-homelink'), shown('.dc-tabbar .theme-toggle')],
+            pressed: b.getAttribute('aria-pressed'), stored: localStorage.getItem('kvot.dose.full') }; })()"""
+        THEME = "[document.documentElement.dataset.theme, document.querySelector('.dc-tabbar .theme-toggle').textContent, localStorage.getItem('kvot-theme')]"
+        EARLY = """document.addEventListener('readystatechange', () => {
+          if (document.readyState !== 'interactive' || window.__early) return;
+          const h = document.querySelector('body > header');
+          window.__early = { full: document.documentElement.classList.contains('dc-full'), header: h ? getComputedStyle(h).display : null,
+            top: Math.round(document.querySelector('.content').getBoundingClientRect().top),
+            icon: [...document.querySelectorAll('#dcFull path')].map((x) => getComputedStyle(x).display) };
+        });"""
+
+        async def press(sel):
+            x, y = await p.ev(f"(() => {{ const e = document.querySelector({json.dumps(sel)}); e.scrollIntoView({{ block: 'nearest' }}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }})()")
+            for t in ('mouseMoved', 'mousePressed', 'mouseReleased'):
+                await p.call('Input.dispatchMouseEvent', {'type': t, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1})
+            await asyncio.sleep(0.3)
+
+        r = await p.ev(FULL)
+        check('the site’s header, menu and footer around the page, the full-window button not pressed',
+              (r['on'], r['site'], r['top'], r['mine'], r['pressed']), (False, [True, True, True], 43, [False, False], 'false'))
+        await press('#dcFull')
+        r = await p.ev(FULL)
+        check('the full-window button: no site header, menu or footer, the page fills the window, the choice kept',
+              (r['on'], r['site'], r['top'], r['fills'], r['pressed'], r['stored']), (True, [False, False, False], 0, True, 'true', '1'))
+        check('... the kvot mark at the left of the tab bar goes to the home page, the theme switch beside the button',
+              (r['mine'], await p.ev("""(() => { const a = document.querySelector('.dc-homelink'), img = a.querySelector('img');
+                const first = document.querySelector('.dc-tabs button').getBoundingClientRect(), end = document.querySelector('.dc-tabend'), bar = document.querySelector('.dc-tabbar');
+                return [a.getAttribute('href'), img.complete && img.naturalWidth > 0, img.alt, a.getBoundingClientRect().right <= first.left,
+                  end.firstElementChild.classList.contains('theme-toggle') && end.lastElementChild.id === 'dcFull', Math.abs(end.getBoundingClientRect().right - bar.getBoundingClientRect().right) <= 1]; })()""")),
+              ([True, True], ['./index.html', True, 'kvot ab: the home page', True, True, True]))
+        before = await p.ev(THEME)
+        await press('.dc-tabbar .theme-toggle')
+        mid = await p.ev(THEME)
+        await press('.dc-tabbar .theme-toggle')
+        end = await p.ev(THEME)
+        flip = {'light': 'dark', 'dark': 'light'}
+        check('its theme switch changes the theme and keeps it, as the footer’s does',
+              [mid[0] == flip.get(before[0]), mid[1] == ('☀️' if mid[0] == 'dark' else '🌙'), mid[2] == mid[0], end[0] == before[0], end[2] == end[0]], [True] * 5)
+        await press('.dc-tabs button[data-tab="chain"]')
+        check('the tabs work as before, and the bar’s buttons are not tabs',
+              await p.ev("""[!document.getElementById('pane-chain').hidden, [...document.querySelectorAll('.dc-tabbar button.active')].map((b) => b.dataset.tab),
+                document.querySelectorAll('[role=tablist] > :not([role=tab])').length]"""), [True, ['chain'], 0])
+        early = await p.call('Page.addScriptToEvaluateOnNewDocument', {'source': EARLY})
+        await p.call('Page.reload')
+        await p.until("document.getElementById('dcNuclideCount') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
+        await p.call('Page.removeScriptToEvaluateOnNewDocument', {'identifier': early['result']['identifier']})
+        check('the next visit is in the full window before the page’s script runs (no header shown while it loads)',
+              await p.ev('window.__early || null'), {'full': True, 'header': 'none', 'top': 0, 'icon': ['none', 'inline']})
+        r = await p.ev(FULL)
+        check('... its button pressed', (r['on'], r['pressed'], r['fills']), (True, 'true', True))
+        # A phone: the mark, the switch and the button stay in the bar's ends while the tabs scroll between them.
+        await p.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})
+        await asyncio.sleep(0.6)
+        check('phone: the full window’s bar keeps the mark at its left and the switch and button at its right, the tabs scrolling between',
+              await p.ev("""(() => { document.querySelector('.dc-tabbar').scrollIntoView(); const bar = document.querySelector('.dc-tabbar').getBoundingClientRect(),
+                tabs = document.querySelector('.dc-tabs'), t = tabs.getBoundingClientRect(), mark = document.querySelector('.dc-homelink').getBoundingClientRect(),
+                end = document.querySelector('.dc-tabend').getBoundingClientRect();
+                return [Math.round(bar.left), Math.round(bar.right) === innerWidth, mark.right <= t.left + 0.5, end.left >= t.right - 0.5, Math.abs(end.right - bar.right) <= 1,
+                  tabs.scrollWidth > tabs.clientWidth, document.documentElement.scrollWidth <= innerWidth + 1]; })()"""), [0, True, True, True, True, True, True])
+        await press('#dcFull')
+        r = await p.ev(FULL)
+        check('the button again: the site’s header, menu and footer back, the choice kept', (r['on'], r['site'], r['pressed'], r['stored']), (False, [True, True, True], 'false', '0'))
+        await p.ev("localStorage.removeItem('kvot.dose.full')")
 
         check('no script errors', p.errors, [])
     print(f'\n{checks - len(failures)} of {checks} checks passed')

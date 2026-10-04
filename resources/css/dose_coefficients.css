@@ -152,15 +152,27 @@
 
 /* ---- the work area ------------------------------------------------------ */
 .dc-main { display: flex; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; margin-left: -8px; padding-left: 8px; }
+/* The bar: the tabs scroll sideways when they do not fit; the buttons at its
+   end stay put. */
+.dc-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  margin-left: -8px;
+  padding-left: 8px;
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
 .dc-tabs {
   display: flex;
   gap: 2px;
-  margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only its padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
 .dc-tabs button {
   padding: 6px 12px;
@@ -176,6 +188,26 @@
 .dc-tabs button:hover { color: var(--text-primary); }
 .dc-tabs button.active { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); font-weight: 600; }
 .dc-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.dc-tabend { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px 8px 1px 2px; }
+.dc-tabend > button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
+.dc-tabend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.dc-tabend > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.dc-tabend > .theme-toggle { font-size: 14px; line-height: 1; }
+.dc-tabend > .theme-toggle:hover { transform: none; }
+.dc-homelink { flex: none; align-items: center; padding: 3px 2px 1px 6px; }
+.dc-homelink img { display: block; width: 20px; height: 20px; }
+
+/* The full window (the button at the right end of the tab bar): the page
+   without the site's header and footer. There the kvot mark at the left of
+   the bar goes to the home page and the site's theme switch is beside the
+   button; otherwise they are the header's and the footer's own. The page's
+   head sets the class before the first paint when it was left on. */
+:root.dc-full { --header-height: 0px; --footer-height: 0px; }
+:root.dc-full body > header, :root.dc-full body > footer, :root.dc-full body > .nav-toggle, :root.dc-full body > #menu { display: none; }
+.dc-tabbar .dc-fullonly { display: none; }
+:root.dc-full .dc-tabbar .dc-fullonly { display: inline-flex; }
+.dc-fullbtn .dc-full-in, :root.dc-full .dc-fullbtn .dc-full-out { display: none; }
+:root.dc-full .dc-fullbtn .dc-full-in { display: inline; }
 .dc-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 16px 24px; background: var(--bg-primary); }
 .dc-pane[hidden] { display: none; }
 .dc-empty { margin: 0; padding: 24px 4px 40px; color: var(--text-muted); font-size: 12px; }
@@ -411,7 +443,7 @@
   .dc-side-scroll { overflow: visible; }
   .dc-resize { display: none; }
   .dc-main { margin-left: 0; padding-left: 0; height: auto; min-height: 70vh; }
-  .dc-tabs { margin-left: 0; padding-left: 10px; }
+  .dc-tabbar { margin-left: 0; padding-left: 0; }
   .dc-pane { padding: 10px 10px 24px; }
   .plot { height: 340px; }
   .dc-body figcaption { max-width: none; }
