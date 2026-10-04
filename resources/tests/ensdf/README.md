@@ -74,7 +74,11 @@ Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py
 
-94 checks: the built-in release loads; the hover card sets its superscripts as
+108 checks: the built-in release loads; the tab icon (drawn by
+`scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
+180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
+64-unit square, named for the page and drawn in the kvot mark's three tones
+only; the hover card sets its superscripts as
 `<sup>` and draws no Unicode superscript character (Verdana has only ¹ ² ³, so
 "²³⁸" came out in two fonts); a nuclide is reached by address
 (`#60Co`), by search, by a click on the chart and by the arrow keys; every
@@ -91,7 +95,9 @@ with 234Th's daughters in it); the crowded 101Br
 chain, full of β-delayed neutron branches, has no label on another label or
 on a box; a box in the chain opens its member without moving the start of
 the chain; the chain settings are there in the chart view as well; the six
-panel tabs fit with no scroll bar of their own, also dragged to 330 px; the
+panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
+the panel's row of tabs ends at the same line as the main area's, whether
+the chain settings stand beside the view tabs or above them; the
 Levels, Radiation and Data
 sets tabs fill; the four downloads produce files; the Inventory tab draws
 the 238U chain over time with 1 Bq at its start and that box full, turns
@@ -118,9 +124,17 @@ opens a dialog with the right NNDC link (all three parts, with their mass
 numbers, for a release before 2022; a warning for one NNDC lists
 incomplete) while staying on the database in use, and its open button brings
 up the file picker; a zip made from the fixture
-opens in the worker, survives a reload and can be forgotten; the theme switch
-recolours the chart; the phone layout does not overflow; and no error
-reaches the console.
+opens in the worker, survives a reload and can be forgotten; the button at
+the end of the toolbar gives the page the whole window (no site header or
+footer, the chart and the panel taller, the kvot mark leading home and a
+theme switch that works in the toolbar), keeps it through a reload and puts
+the header and footer back; the theme switch recolours the chart; the phone
+layout does not overflow, in the full window either; and no error reaches the
+console.
 
 The test starts from a clean state (no remembered settings, no remembered
-databases) on its first page of the run, and clears the database it opens.
+databases, not in the full window) on its first page of the run, and clears
+the database it opens and the full window it remembers.
+A reload in the test is `Page.reload`, not `Page.navigate`: navigating to the
+same address, or one that differs only after the `#`, does not load the page
+again.

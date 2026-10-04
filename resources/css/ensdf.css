@@ -72,8 +72,9 @@
   font: 12px verdana, sans-serif;
 }
 .nz-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.nz-barright { flex: 1 1 200px; min-width: 0; display: flex; gap: 10px; align-items: center; }
 .nz-status {
-  flex: 1 1 200px;
+  flex: 1 1 auto;
   min-width: 0;
   color: var(--text-muted);
   font-size: 12px;
@@ -116,20 +117,45 @@
 .nz-icon:hover { border-color: var(--accent-line); }
 .nz-link { padding: 0; border: 0; background: none; color: var(--link-color); font: inherit; cursor: pointer; text-decoration: underline; }
 
+/* The full window (the button at the right end of the toolbar): the page
+   without the site's header and footer. There the kvot mark at the left of
+   the toolbar goes to the home page and the site's theme switch is beside
+   the button; otherwise they are the header's and the footer's own. The
+   page's head sets the class before the first paint when it was left on. */
+:root.nz-full { --header-height: 0px; --footer-height: 0px; }
+:root.nz-full body > header, :root.nz-full body > footer, :root.nz-full body > .nav-toggle, :root.nz-full body > #menu, :root.nz-full #kvotmap { display: none; }
+.nz-bar .nz-fullonly { display: none; }
+:root.nz-full .nz-bar .nz-fullonly { display: inline-flex; }
+.nz-homelink { flex: none; align-items: center; padding: 3px; border-radius: 6px; }
+.nz-homelink:hover { background: var(--bg-primary); }
+.nz-homelink:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.nz-homelink img { display: block; width: 22px; height: 22px; }
+.nz-barend { display: flex; flex: none; align-items: center; gap: 2px; }
+.nz-barend > button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--text-secondary); cursor: pointer; }
+.nz-barend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.nz-barend > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.nz-barend > .theme-toggle { font-size: 14px; line-height: 1; }
+.nz-barend > .theme-toggle:hover { transform: none; }
+/* the four corners point out, or in once the page has the whole window */
+.nz-fullbtn .nz-full-in, :root.nz-full .nz-fullbtn .nz-full-out { display: none; }
+:root.nz-full .nz-fullbtn .nz-full-in { display: inline; }
+
 /* ---- the body: main area, handle, panel ---------------------------------- */
 .nz-body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8px var(--nz-panel-width);
+  grid-template-columns: minmax(0, 1fr) 0 var(--nz-panel-width);
 }
 .nz-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Where the chain settings do not fit beside the tabs they go above them
+   (wrap-reverse), so that the tabs always stand on the view they open. */
 .nz-views {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: wrap-reverse;
   gap: 0 2px;
-  align-items: flex-end;
+  align-items: flex-start;
   padding: 6px 10px 0;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -174,6 +200,10 @@
   font-weight: 600;
   margin-bottom: -1px;
 }
+/* An open view tab has the colour of what lies under it: the chart's
+   background, or the chain view's bar. */
+.nz-views [data-view="chart"].active { background: var(--nz-chart-bg); }
+.nz-views [data-view="chain"].active { background: var(--bg-surface); }
 .nz-views [data-view]:focus-visible, .nz-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
 .nz-tabname { font-weight: 600; color: var(--text-primary); }
 /* Zoom and export sit on the chart itself, top right, as map controls do. */
@@ -200,7 +230,10 @@
 .nz-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-line); }
 .nz-canvas.panning { cursor: grabbing; }
 
-.nz-resize { cursor: col-resize; display: flex; justify-content: center; position: relative; z-index: 1; background: var(--bg-secondary); }
+/* The handle takes no room of its own, so the chart runs up to the panel:
+   it lies over the panel's edge, a few pixels to each side of it, and shows
+   its line only when pointed at, dragged or focused. */
+.nz-resize { cursor: col-resize; display: flex; justify-content: center; position: relative; z-index: 3; width: 9px; margin: 0 -5px 0 -4px; }
 .nz-resize::after { content: ''; width: 3px; border-radius: 2px; transition: background 0.15s; }
 .nz-resize:hover::after, .nz-resize.active::after, .nz-resize:focus-visible::after { background: var(--color-kvot-accent); }
 .nz-resize:focus-visible { outline: none; }
@@ -216,10 +249,15 @@
 /* The row scrolls sideways where the tabs do not fit, and so it must not
    scroll up and down: the line under the tabs is drawn inside the row, for
    the open tab to cover without reaching out of it by the pixel that gave
-   the row a scroll bar of its own. */
+   the row a scroll bar of its own. It is as tall as the main area's row of
+   tabs, which holds the chain settings too (ensdf-ui.js sets --nz-tabrow),
+   so that the lines under the two rows meet at one height. */
 .nz-tabs {
   flex: none;
+  box-sizing: border-box;
+  min-height: var(--nz-tabrow, 0px);
   display: flex;
+  align-items: flex-end;
   gap: 2px;
   padding: 6px 8px 0;
   box-shadow: inset 0 -1px 0 var(--border-color);
@@ -488,11 +526,15 @@ a.nz-nuc:hover { text-decoration: underline; }
   .nz-content { overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .nz { height: auto; min-height: 100%; }
   .nz-bar { gap: 6px 10px; padding: 6px 10px; }
+  /* the search has a line of its own, shared in the full window with the mark */
   .nz-search { flex: 1 1 100%; }
+  :root.nz-full .nz-search { flex-basis: calc(100% - 44px); }
   .nz-search input { flex: 1 1 auto; width: auto; }
-  .nz-status { flex-basis: 100%; text-align: left; }
+  .nz-barright { flex-basis: 100%; }
+  .nz-status { text-align: left; }
   .nz-body { display: flex; flex-direction: column; }
   .nz-main { height: 62vh; height: 62dvh; min-height: 320px; flex: none; }
+  .nz-tabs { min-height: 0; }   /* the panel is under the main area here, not beside it */
   .nz-resize { display: none; }
   .nz-panel { border-left: 0; border-top: 1px solid var(--border-color); }
   .nz-pane { overflow: visible; }

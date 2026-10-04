@@ -21,12 +21,19 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the toolbar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.ensdf.full') === '1') document.documentElement.classList.add('nz-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261001">
-  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261004">
+  <!-- The chart's own mark, in the kvot mark's language (see
+       ensdf-icon.svg). SVG first, since it stays sharp on a high-density
+       screen; the PNG is for anything that will not take one. -->
+  <link rel="icon" href="./resources/images/ensdf-icon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="./resources/images/ensdf-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="./resources/images/ensdf-icon-180.png">
 </head>
 <body>
   <header></header>
@@ -34,7 +41,10 @@
   <div class="content nz-content">
     <div class="nz" id="nz">
       <!-- ============================ toolbar ============================ -->
+      <!-- In the full window (the button at the right end) the kvot mark goes to the home page
+           and the site's theme switch is beside the button (site.js keeps its icon and title). -->
       <div class="nz-bar" role="toolbar" aria-label="Chart controls">
+        <a class="nz-homelink nz-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="22" height="22"></a>
         <div class="nz-search">
           <input id="nzSearch" type="search" placeholder="Nuclide: 60Co, U-238, Tc-99m…" autocomplete="off" spellcheck="false" aria-label="Find a nuclide" data-on-keydown="nz:searchKey">
           <button type="button" class="nz-btn" data-on-click="nz:search">Find</button>
@@ -57,7 +67,17 @@
         <button type="button" class="nz-btn secondary" data-on-click="nz:open" title="Open an ENSDF release zip, or ENSDF text files, from your computer. Nothing is uploaded.">Open ENSDF…</button>
         <button type="button" class="nz-btn secondary" id="nzForget" data-on-click="nz:forget" title="Stop keeping this opened database in the browser" hidden>Forget</button>
         <input type="file" id="nzFile" multiple hidden data-on-change="nz:fileChosen">
-        <span class="nz-status" id="nzStatus" role="status" aria-live="polite">Loading…</span>
+        <!-- the status and the buttons at the end wrap together, so the buttons stay at the right end -->
+        <div class="nz-barright">
+          <span class="nz-status" id="nzStatus" role="status" aria-live="polite">Loading…</span>
+          <span class="nz-barend">
+            <button type="button" class="theme-toggle nz-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+            <button type="button" class="nz-fullbtn" id="nzFull" data-on-click="nz:full" aria-pressed="false" aria-label="Full window" title="Full window: the chart without the site’s header and footer">
+              <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="nz-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="nz-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+            </button>
+          </span>
+        </div>
       </div>
 
       <div class="nz-body">
@@ -166,7 +186,7 @@
             <p class="nz-dim">To install a release on the site, run <code>node scripts/gen-ensdf.mjs ensdf_YYMMDD.zip</code>; it writes the data under <code>resources/data/ensdf/</code> and adds it to the menu. <code>node scripts/gen-ensdf-archive.mjs</code> brings the list of NNDC’s releases up to date.</p>
 
             <h3>Links, keys and files</h3>
-            <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV.</p>
+            <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV. The button at the right end of the toolbar gives the page the whole window, without the site’s header and footer; the kvot mark at the left of the toolbar then goes to the home page, and the switch beside the button changes between light and dark. The page remembers the choice.</p>
             <p class="nz-dim">Data: Evaluated Nuclear Structure Data File, National Nuclear Data Center, Brookhaven National Laboratory, on behalf of the Nuclear Structure and Decay Data network. The release in use is named in the menu above.</p>
           </section>
         </aside>
@@ -213,6 +233,6 @@
   <script src="./resources/js/ensdf-chart.js?v=20260922b"></script>
   <script src="./resources/js/ensdf-chain.js?v=20261001"></script>
   <script src="./resources/js/ensdf-inventory.js?v=20260923"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20261001"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20261004"></script>
 </body>
 </html>

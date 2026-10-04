@@ -98,6 +98,12 @@ class Page:
         await self.call('Page.navigate', {'url': url}, session=self.sid)
         await settle(self, "!!(window.ENSDFPage && ENSDFPage.state.idx && ENSDFPage.state.source)", True, tries=80)
 
+    async def reload(self):
+        # Page.navigate to the same address, or one that differs only after the #, does not load the page again
+        await self.ev("window.nzOldPage = true; 'ok'")
+        await self.call('Page.reload', {'ignoreCache': True}, session=self.sid)
+        await settle(self, "!window.nzOldPage && !!(window.ENSDFPage && ENSDFPage.state.idx && ENSDFPage.state.source)", True, tries=80)
+
 
 async def settle(page, expr, want, tries=40, pause=0.25):
     got = None
@@ -134,6 +140,7 @@ async def main():
           try { if (!sessionStorage.getItem('nz-test-started')) {
             sessionStorage.setItem('nz-test-started', '1');
             localStorage.removeItem('kvot-ensdf-v1'); localStorage.setItem('kvot-theme', 'light');
+            localStorage.removeItem('kvot.ensdf.full');
             indexedDB.deleteDatabase('kvot-ensdf');
           } } catch (e) {}"""}, session=page.sid)
 
@@ -151,6 +158,27 @@ async def main():
         check('the address selects a nuclide (#60Co)', info['sel'], {'z': 27, 'a': 60, 'k': 0})
         check('the panel names it', info['title'], '60Co')
         check('the chart is a canvas', info['canvas'])
+
+        # ---------------------------------------------------------- the tab icon
+        # scripts/gen-ensdf-icon.py draws it. An SVG whose comment holds "--" is
+        # not XML, and the browser drops it without a word, leaving the tab blank.
+        icon = json.loads(await page.ev("""(async () => {
+          const links = Object.fromEntries([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+            .map((l) => [l.rel, [l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']]));
+          const load = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok([i.naturalWidth, i.naturalHeight]); i.onerror = () => ok(null); i.src = src; });
+          const svg = await (await fetch(links.icon[0], { cache: 'no-store' })).text();
+          const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+          return JSON.stringify({ links, svg: await load(links.icon[0]), png: await load(links['alternate icon'][0]), touch: await load(links['apple-touch-icon'][0]),
+            xml: !doc.querySelector('parsererror'), title: doc.querySelector('svg > title')?.textContent, viewBox: doc.documentElement.getAttribute('viewBox'),
+            fills: [...new Set([...svg.matchAll(/fill="(#[0-9a-f]{6})"/gi)].map((m) => m[1].toLowerCase()))].sort(),
+            other: /<(linearGradient|radialGradient|path|rect|circle|image|text)\\b|stroke=/.test(svg) }); })()"""))
+        check('the tab icon: the SVG first, a 32-pixel PNG for what will not take one, and a touch icon', icon['links'], {
+              'icon': ['./resources/images/ensdf-icon.svg', 'image/svg+xml', ''],
+              'alternate icon': ['./resources/images/ensdf-icon-32.png', 'image/png', '32x32'],
+              'apple-touch-icon': ['./resources/images/ensdf-icon-180.png', '', '']})
+        check('... each decodes as a picture of its size', (icon['svg'] is not None, icon['png'], icon['touch']), (True, [32, 32], [180, 180]))
+        check('... the SVG is XML, in the 64-unit square, and named for the page', (icon['xml'], icon['viewBox'], icon['title']), (True, '0 0 64 64', 'Chart of Nuclides (ENSDF)'))
+        check('... drawn in the kvot mark’s three tones only: polygons, no strokes, no gradients', (icon['fills'], icon['other']), (['#344126', '#bb6c5d', '#f3b87b'], False))
 
         # ---------------------------------------------------------- search
         await page.ev("document.getElementById('nzSearch').value = 'Tc-99m'; document.getElementById('nzSearch').focus(); 'ok'")
@@ -294,6 +322,19 @@ async def main():
           await new Promise(r => setTimeout(r, 100)); out.push(fits());
           document.getElementById('nz').style.removeProperty('--nz-panel-width'); return JSON.stringify(out); })()"""))
         check('the panel tabs, six of them, fit with no scroll bar of their own, at full width and dragged to 330 px', tabs, [[True, True], [True, True]])
+        # The main area's tab row and the panel's end at one line, whether the chain
+        # settings stand beside the view tabs or, where they do not fit, above them.
+        lines = []
+        for w in (1280, 1600):
+            await page.call('Emulation.setDeviceMetricsOverride', {'width': w, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+            await asyncio.sleep(0.3)
+            lines.append(json.loads(await page.ev("""JSON.stringify((() => {
+              const r = (s) => document.querySelector(s).getBoundingClientRect();
+              return [r('.nz-views').bottom, r('.nz-tabs').bottom, r('.nz-views [data-view].active').bottom, r('.nz-tabs button.active').bottom,
+                r('.nz-chainopts').top < r('.nz-viewtabs').top - 8]; })())""")))
+        await page.call('Emulation.setDeviceMetricsOverride', {'width': 1280, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+        check('the tab rows of the main area and the panel end at one line, with the chain settings above the view tabs (1280 px) or beside them (1600 px)',
+              [[abs(r[0] - r[1]) < 0.5, abs(r[2] - r[3]) < 0.5, r[4]] for r in lines], [[True, True, True], [True, True, False]])
         for tab, probe in (('levels', "t => t.includes('286 levels') && document.querySelector('#nzPaneLevels [data-on-click=\"nz:levelsAll\"]')"),
                            ('radiation', "t => t.includes('1332.492') && t.includes('1173.228')"),
                            ('datasets', "t => t.includes('ADOPTED LEVELS, GAMMAS') && t.includes('60CO IT DECAY')")):
@@ -554,6 +595,48 @@ async def main():
         back = await settle(page, "ENSDFPage.state.source.key.startsWith('b:') && document.querySelectorAll('#nzDb option:not([value^=\"n:\"])').length === 1", True)
         check('forgetting it goes back to the built-in release', back, True)
 
+        # ---------------------------------------------------------- the full window
+        # The toolbar's last button takes the site's header and footer away and puts
+        # them back; in the full window the kvot mark leads home and the theme switch
+        # is in the toolbar. The choice is kept, and the page's head applies it again
+        # before the first paint.
+        FULL = """JSON.stringify((() => {
+          const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
+          const b = document.getElementById('nzFull'), home = document.querySelector('.nz-homelink');
+          return { full: document.documentElement.classList.contains('nz-full'), header: shown('body > header'), footer: shown('body > footer'),
+            home: shown('.nz-homelink'), href: home.getAttribute('href'), theme: shown('.nz-barend .theme-toggle'),
+            pressed: b.getAttribute('aria-pressed'), title: b.title, corners: shown('#nzFull .nz-full-in') ? 'in' : 'out',
+            last: b === [...document.querySelectorAll('.nz-bar button')].pop(),
+            content: [document.querySelector('.content').getBoundingClientRect().top, document.querySelector('.content').getBoundingClientRect().height, innerHeight],
+            body: document.querySelector('.nz-body').getBoundingClientRect().height, key: localStorage.getItem('kvot.ensdf.full') }; })())"""
+        before = json.loads(await page.ev(FULL))
+        check('the full-window button ends the toolbar; the header and footer are there, the mark and the toolbar’s theme switch are not',
+              (before['last'], before['full'], before['header'], before['footer'], before['home'], before['theme'], before['pressed'], before['corners']),
+              (True, False, True, True, False, False, 'false', 'out'))
+        await page.ev("document.getElementById('nzFull').click(); 'ok'")
+        await asyncio.sleep(0.4)
+        full = json.loads(await page.ev(FULL))
+        check('in the full window the header and footer are gone and the page has the whole height',
+              (full['full'], full['header'], full['footer'], full['content'][0], full['content'][1] == full['content'][2]), (True, False, False, 0, True))
+        check('... the chart and the panel grow into the room', full['body'] - before['body'], lambda d: d > 60)
+        check('... the kvot mark leads home and the theme switch is in the toolbar', (full['home'], full['href'], full['theme']), (True, './index.html', True))
+        check('... the button says it puts them back, its corners point in, and the choice is kept',
+              (full['pressed'], full['title'], full['corners'], full['key']), ('true', 'Show the site’s header and footer again', 'in', '1'))
+        themes = json.loads(await page.ev("""(async () => {
+          const t = () => document.documentElement.getAttribute('data-theme'), b = document.querySelector('.nz-barend .theme-toggle');
+          const out = [t()]; b.click(); await new Promise(r => setTimeout(r, 200)); out.push(t(), b.title);
+          b.click(); await new Promise(r => setTimeout(r, 200)); out.push(t()); return JSON.stringify(out); })()"""))
+        check('... where the theme switch changes the theme, and back', themes, ['light', 'dark', 'Switch to light mode', 'light'])
+        await page.reload()
+        again = json.loads(await page.ev(FULL))
+        check('after a reload the page opens in the full window, button and all', (again['full'], again['header'], again['pressed'], again['corners']), (True, False, 'true', 'in'))
+        await page.ev("document.getElementById('nzFull').click(); 'ok'")
+        await asyncio.sleep(0.4)
+        back = json.loads(await page.ev(FULL))
+        check('the button brings the header and footer back, and that is kept too', (back['full'], back['header'], back['footer'], back['pressed'], back['key']),
+              (False, True, True, 'false', '0'))
+        await page.ev("localStorage.removeItem('kvot.ensdf.full'); 'ok'")
+
         # ---------------------------------------------------------- theme and phone
         swatch = "getComputedStyle(document.querySelector('#nzLegend li[data-cls=\"-2\"] .nz-sw')).backgroundColor"
         light = await page.ev(swatch)
@@ -565,6 +648,16 @@ async def main():
         await page.goto(BASE + '#Cs-137', 390, 844)
         wide = json.loads(await page.ev("JSON.stringify({ sw: document.documentElement.scrollWidth, iw: innerWidth, right: Math.max(...[...document.querySelectorAll('.nz-bar > *:not([hidden]), .nz-main, .nz-panel')].map(e => e.getBoundingClientRect().right)) })"))
         check('on a phone nothing is wider than the screen', wide['sw'] <= wide['iw'] and wide['right'] <= wide['iw'] + 0.5, True)
+        await page.ev("localStorage.setItem('kvot.ensdf.full', '1'); 'ok'")
+        await page.reload()
+        wide = json.loads(await page.ev("""JSON.stringify((() => {
+          const r = (s) => document.querySelector(s).getBoundingClientRect();
+          return { sw: document.documentElement.scrollWidth, iw: innerWidth, full: document.documentElement.classList.contains('nz-full'),
+            right: Math.max(...[...document.querySelectorAll('.nz-bar > *:not([hidden]), .nz-barend > *, .nz-main, .nz-panel')].map(e => e.getBoundingClientRect().right)),
+            homeLine: Math.abs(r('.nz-homelink').top - r('.nz-search').top) < 8 }; })())"""))
+        await page.ev("localStorage.removeItem('kvot.ensdf.full'); 'ok'")
+        check('... nor in the full window, where the mark shares the search’s line', (wide['full'], wide['sw'] <= wide['iw'] and wide['right'] <= wide['iw'] + 0.5, wide['homeLine']),
+              (True, True, True))
 
         check('no error reached the console', page.errors, [])
         await page.call('Target.closeTarget', {'targetId': tid})

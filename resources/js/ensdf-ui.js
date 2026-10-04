@@ -1798,6 +1798,28 @@
   }
 
   /* ---------------------------------------------------------------------
+     The full window
+     --------------------------------------------------------------------- */
+  /* The page without the site's header and footer (ensdf.css :root.nz-full),
+     by the button at the right end of the toolbar; kept for the next visit,
+     which the page's head puts in it before the first paint. The chart and
+     the chain fit themselves to their new room: they watch their boxes. */
+  const FULL_KEY = 'kvot.ensdf.full';
+
+  function setFull(on) {
+    document.documentElement.classList.toggle('nz-full', !!on);
+    try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+    fullState();
+  }
+
+  function fullState() {
+    const on = document.documentElement.classList.contains('nz-full');
+    const b = $('nzFull');
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Show the site’s header and footer again' : 'Full window: the chart without the site’s header and footer';
+  }
+
+  /* ---------------------------------------------------------------------
      Start
      --------------------------------------------------------------------- */
   let chart = null;
@@ -1805,6 +1827,7 @@
   async function start() {
     const saved = loadState();
     applyPanelWidth();
+    fullState();
     $('nzColour').value = state.colour;
     renderChainControls();
     chart = KVOT_ENSDF_CHART.createChart($('nzChart'), {
@@ -1823,6 +1846,11 @@
     }).observe($('nzPaneInventory'));
     setupResize();
     setupDrop();
+    /* The panel's row of tabs stands as tall as the main area's, which holds
+       the chain settings too and puts them above its tabs where they do not
+       fit beside them: so the lines under the two rows meet (ensdf.css). */
+    const viewRow = document.querySelector('.nz-views');
+    new ResizeObserver(() => $('nzPanel').style.setProperty('--nz-tabrow', `${viewRow.getBoundingClientRect().height}px`)).observe(viewRow);
     /* Refit the chain when its container changes width. The scroll box is
        observed, not the drawing's own box, whose size follows the drawing
        and would set off a resize loop. */
@@ -1889,6 +1917,7 @@
       renderDbMenu();
       notifyUser('The opened database is no longer kept in this browser.');
     },
+    'nz:full': () => setFull(!document.documentElement.classList.contains('nz-full')),
     'nz:view': (ev, el) => setView(el.dataset.view),
     'nz:tab': (ev, el) => { state.tab = el.dataset.tab; renderPanel(); saveState(); },
     'nz:invValue': (ev, el) => {
