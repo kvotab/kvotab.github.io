@@ -13,10 +13,10 @@
  * **************************************************************
  *
  * ************************************** 
- * Hardware dependant constants were
- * calculated on Dell "Dimension 4100": - Pentium III 800 MHz running
- * Microsoft Windows 2000 
- * XMIN   = the smallest positive floating-point number.
+ * Machine-dependent constants: CALERF's own values for IEEE double
+ * precision, from the table in its header (resources/js/erf.f), which is
+ * what a JavaScript number is.
+ * XMIN   = the smallest positive normalised floating-point number.
  * XINF   = the largest positive finite floating-point number.
  * XNEG   = the largest negative argument acceptable to ERFCX;
  *          the negative of the solution to the equation
@@ -35,13 +35,12 @@
  *          of XINF and 1/[sqrt(pi)*XMIN].
  * **************************************
 */
-const XMIN = Number.MIN_VALUE;
-const XINF = Number.MAX_VALUE;
-const XNEG = -9.38241396824444;
-const XSMALL = 1.110223024625156663E-16;
-const XBIG = 9.194E0;
-const XHUGE = 1 / ( 2 * Math.sqrt( XSMALL ) );
-const XMAX = Math.min( XINF, 1 / ( Math.sqrt( Math.PI ) * XMIN ) );
+const XINF = 1.79E308;
+const XNEG = -26.628E0;
+const XSMALL = 1.11E-16;
+const XBIG = 26.543E0;
+const XHUGE = 6.71E7;
+const XMAX = 2.53E307;
 
 // ANY REAL ARGUMENT
 function erf( x ){
@@ -51,20 +50,20 @@ function erf( x ){
         return calerf( x, 0 );
     }
 }
-// ABS(X) .LT. XBIG
+// ANY REAL ARGUMENT: 0 from XBIG up, where erfc underflows, and 2 from -XBIG down
 function erfc( x ){
-     // Test for domain errors:
-	if ( Number.isNaN( x ) || Math.abs( x ) >= XBIG ) {
+	if ( Number.isNaN( x ) ) {
 		return Number.NaN;
 	} else {
 		return calerf( x, 1 );
 	}    
 }
-// XNEG .LT. X .LT. XMAX
+// ANY REAL ARGUMENT: Infinity below XNEG, where exp(x*x) overflows, and 0 from XMAX up
 function erfcx( x ){
-    // Test for domain errors:
-   if ( Number.isNaN( x ) || XNEG > x || x >= XMAX ) {
+   if ( Number.isNaN( x ) ) {
        return Number.NaN;
+   } else if ( x < XNEG ) {
+       return Number.POSITIVE_INFINITY;
    } else {
        return calerf( x, 2 );
    }
@@ -88,7 +87,7 @@ const ERF_D = [ 1.57449261107098347E01, 1.17693950891312499E02, 5.37181101862009
 const ERF_P = [ 3.05326634961232344E-1, 3.60344899949804439E-1, 1.25781726111229246E-1, 1.60837851487422766E-2, 6.58749161529837803E-4, 1.63153871373020978E-2 ];
 const ERF_Q = [ 2.56852019228982242E00, 1.87295284992346047E00, 5.27905102951428412E-1, 6.05183413124413191E-2, 2.33520497626869185E-3 ];
 
-const SQRTPI = Math.sqrt( Math.PI );
+const SQRPI = 5.6418958354775628695E-1;   // 1/sqrt(pi), CALERF's SQRPI
 const THRESH = 0.46875;
 
 
@@ -169,7 +168,7 @@ function calerf( X, jint ){
 	    }
 	    RESULT = ( XNUM + ERF_C[7] ) / ( XDEN + ERF_D[7] );
 	    if ( jint != 2 ) {
-	        YSQ = Math.round( Y * 16 ) / 16;
+	        YSQ = Math.trunc( Y * 16 ) / 16;   // AINT
 	        let del = ( Y - YSQ ) * ( Y + YSQ );
 	        RESULT = Math.exp( -YSQ * YSQ ) * Math.exp( -del ) * RESULT;
 	    }      
@@ -179,7 +178,7 @@ function calerf( X, jint ){
 	    if ( Y >= XBIG && ( jint != 2 || Y >= XMAX ) ) {
 	        ;
 	    } else if ( Y >= XBIG && Y >= XHUGE ) {
-	        RESULT = SQRTPI / Y;
+	        RESULT = SQRPI / Y;
 	    } else {
 	        YSQ = 1.0 / ( Y * Y );
 	        XNUM = ERF_P[5] * YSQ;
@@ -189,9 +188,9 @@ function calerf( X, jint ){
 	            XDEN = ( XDEN + ERF_Q[i] ) * YSQ;
 	        }
 	        RESULT = YSQ * ( XNUM + ERF_P[4] ) / ( XDEN + ERF_Q[4] );
-	        RESULT = ( SQRTPI - RESULT ) / Y;
+	        RESULT = ( SQRPI - RESULT ) / Y;
 	        if ( jint != 2 ) {
-	            YSQ = Math.round( Y * 16 ) / 16.0;
+	            YSQ = Math.trunc( Y * 16 ) / 16.0;   // AINT
 	            let del = ( Y - YSQ ) * ( Y + YSQ );
 	            RESULT = Math.exp( -YSQ * YSQ ) * Math.exp( -del ) * RESULT;
 	        }
@@ -212,7 +211,7 @@ function calerf( X, jint ){
 	        if ( X < XNEG ) {
 	            RESULT = XINF;
 	        } else {
-	            YSQ = Math.round( X * 16 ) / 16;
+	            YSQ = Math.trunc( X * 16 ) / 16;   // AINT
 	            let del = ( X - YSQ ) * ( X + YSQ );
 	            Y = Math.exp( YSQ * YSQ ) * Math.exp( del );
 	            RESULT = Y + Y - RESULT;
@@ -353,10 +352,11 @@ function erfcinv( z ) {
     }
 }
 
+// c[0] + c[1]*x + c[2]*x^2 + ..., by Horner's rule (Boost's evaluate_polynomial)
 function evaluate_polynomial( polynomial_coeff, x ){
-    let y = 0;
-    for ( let i = polynomial_coeff.length-1; i>-1; i-- ){
-        y = x * ( polynomial_coeff[i] + y ); 
+    let y = polynomial_coeff[polynomial_coeff.length - 1];
+    for ( let i = polynomial_coeff.length - 2; i > -1; i-- ){
+        y = y * x + polynomial_coeff[i];
     }
     return y;
 }
@@ -460,7 +460,7 @@ function erfinv( z ) {
   
 function erfinv_refine( z, nr_iter ) {
     const k = 0.8862269254527580136490837416706; // 0.5 * sqrt(pi)
-    y = erfinv( z );
+    let y = erfinv( z );
     while ( nr_iter-- > 0 ) {
         y -= k * ( erf( y ) - z) / Math.exp( -y * y );
     }

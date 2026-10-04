@@ -14,7 +14,8 @@
       ? a + Math.sqrt(2 * p) * (m - a)
       : b - (b - m) * Math.sqrt(2 * (1 - p));
   }
-  function invNorm(p, mean, std) { return mean + std * Math.SQRT2 * erfinv(2 * p - 1); }
+  // erfcinv(2p) rather than erfinv(2p - 1): 2p - 1 rounds away a small p's digits
+  function invNorm(p, mean, std) { return mean - std * Math.SQRT2 * erfcinv(2 * p); }
   function invExp(p, mean) { return -mean * Math.log(1 - p); }
   function invLogu(p, a, b) { return Math.exp(invUnif(p, Math.log(a), Math.log(b))); }
   function invLogt(p, a, b, m) { return Math.exp(invTriang(p, Math.log(a), Math.log(b), Math.log(m))); }
@@ -44,8 +45,9 @@
         return x <= m ? (x - a) ** 2 / ((m - a) * (b - a)) : 1 - (b - x) ** 2 / ((b - a) * (b - m));
       }
       case 'normal': case 'norm': {
+        // erfc rather than 1 + erf, which cancels in the lower tail
         const { mean, std } = args;
-        return 0.5 * (1 + erf((x - mean) / (std * Math.SQRT2)));
+        return 0.5 * erfc(-(x - mean) / (std * Math.SQRT2));
       }
       case 'exponential': case 'exp': {
         const { mean } = args; return x <= 0 ? 0 : 1 - Math.exp(-x / mean);
@@ -54,7 +56,7 @@
         const { a, b } = args; return x <= a ? 0 : x >= b ? 1 : (Math.log(x) - Math.log(a)) / (Math.log(b) - Math.log(a));
       }
       case 'lognormal': case 'logn': case 'lognorm': {
-        const { gm, gsd } = args; return 0.5 * (1 + erf((Math.log(x) - Math.log(gm)) / (Math.log(gsd) * Math.SQRT2)));
+        const { gm, gsd } = args; return 0.5 * erfc(-(Math.log(x) - Math.log(gm)) / (Math.log(gsd) * Math.SQRT2));
       }
       default: return null;
     }

@@ -13,7 +13,7 @@ ports too, and a server that fails to start looks like one that works):
 
     python3 resources/tests/logn/test-ui.py
 
-It exits 0 when every check passes (68 of them). With `LOGN_SHOTS=<folder>` it
+It exits 0 when every check passes (76 of them). With `LOGN_SHOTS=<folder>` it
 also saves a screenshot with a panel open in each of the four layouts it
 checks: light and dark, 1500 × 950 and 420 × 900.
 
@@ -63,3 +63,14 @@ The multi-distribution behaviour is tested in more depth by
 written into it; copy it and change them to run it beside another session),
 and `resources/tests/site/characterise.py` fingerprints the page with the
 rest of the site.
+
+## The error functions
+
+`test-erf.mjs` checks `resources/js/erf.js`, which logn.html and rb.html
+share, against mpmath's values at 40 digits: erf, erfc, erfcx, erfinv and
+erfcinv at points around each branch of Cody's CALERF and of the inverses,
+the limits where a double has no room (erfc 0 and 2, erfcx ∞ and 0, erfcinv
+±∞), NaN in and out, and erf + erfc = 1. It loads the file in strict mode, so
+an undeclared variable throws. It needs nothing but Node:
+
+    node resources/tests/logn/test-erf.mjs     # 64 checks, instant
