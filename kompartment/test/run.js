@@ -37414,6 +37414,19 @@ test('distributions are fitted by likelihood and by moments, and ranked by a tes
 	// A log shape asks for positive values, and says so.
 	const zero = Float64Array.from([0, 1, 2, 3, 4, 5]);
 	assert(/above zero/.test(fit.fitFamily('logt', zero, 'mle').why ?? ''), 'a log shape fitted to a zero');
+	// The double triangle's density jumps at its mode, so a side whose only
+	// realisations sit at the mode lets its end close in on them and the
+	// likelihood grow without bound: on a small sample, or on tied end values,
+	// that spike won. It is left out, and the fit stays a shape around the data.
+	for (const y of [[4.1, 4.6, 4.8, 5.1, 5.3, 6], [1, 1, 2, 3, 4], [1, 2, 3, 4, 4]]) {
+		const lo = y[0];
+		const hi = y[y.length - 1];
+		for (const family of ['dtriang', 'logdt']) {
+			const { min, max, mode } = fit.fitFamily(family, Float64Array.from(y), 'mle').spec.params;
+			assert(min < lo && max > hi && max - min < 4 * (hi - lo) && mode > lo && mode < hi,
+				`${family} on ${y.join(', ')}: a spike, min ${min}, mode ${mode}, max ${max}`);
+		}
+	}
 	// The p-values at their textbook points: K–S's 1.358/√n and A²'s 2.492
 	// are the 5% critical values.
 	const n = 1e6;

@@ -254,6 +254,10 @@ def _triangle_profile(z: Any, a: float, b: float, double: bool) -> Dict[str, Any
     the plain triangle, the two ends; for the double triangle, whose density
     jumps at the mode, also the mode a hair below each realisation
     (``below``). Returns ``{'ll', 'at', 'below'}``, ``at`` -1 and n for the ends.
+    A double-triangle candidate whose side holds only realisations at the
+    mode is a spike (that end closes in on the mode, the likelihood without
+    bound) and is left out: each side needs a realisation away from the mode,
+    or none.
 
     The application's loop, run over the whole sample at once: the running
     sums are sums in the same order, every term the same arithmetic, and the
@@ -275,6 +279,10 @@ def _triangle_profile(z: Any, a: float, b: float, double: bool) -> Dict[str, Any
         at_ll = base + left[1:] - p * (r + 1) * lu + right[1:] - p * (n - r - 1) * lv
         if double:
             below_ll = base + left[:-1] - p * r * lu + right[:-1] - p * (n - r) * lv
+            smaller = z[0] < z
+            larger = z[n - 1] > z
+            below_ll = np.where(larger & ((r == 0) | smaller), below_ll, -np.inf)
+            at_ll = np.where(smaller & ((r == n - 1) | larger), at_ll, -np.inf)
             cand = np.empty(2 * n, dtype=np.float64)
             cand[0::2] = below_ll
             cand[1::2] = at_ll

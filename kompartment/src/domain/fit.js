@@ -227,6 +227,13 @@ function spreadFor(scaled, cv2) {
  * be the mode a hair *below* a realisation, with that one on the right. Both
  * are candidates; `below` says it was the second. The plain triangle is
  * continuous at its mode and the two are the same.
+ *
+ * The same jump makes a side whose only realisations sit at the mode a
+ * spike: its end closes in on the mode and the likelihood grows without
+ * bound, on the smallest or largest realisation or on tied ones. Such a
+ * candidate is left out -- each side needs a realisation away from the
+ * mode, or none at all. The mode at z[r] has z[0..r] on its left; the mode a
+ * hair below z[r] has z[r..] on its right.
  */
 function triangleProfile(z, a, b, double) {
 	const n = z.length;
@@ -242,12 +249,15 @@ function triangleProfile(z, a, b, double) {
 		const u = (z[r] - a) / w;
 		const lu = Math.log(u);
 		const lv = Math.log1p(-u);
-		if (double) {
+		const smaller = z[0] < z[r];
+		const larger = z[n - 1] > z[r];
+		if (double && larger && (r === 0 || smaller)) {
 			const ll = base + left - p * r * lu + right - p * (n - r) * lv;
 			if (ll > best.ll) best = { ll, at: r, below: true };
 		}
 		left += lu;
 		right -= lv;
+		if (double && !(smaller && (r === n - 1 || larger))) continue;
 		const ll = base + left - p * (r + 1) * lu + right - p * (n - r - 1) * lv;
 		if (ll > best.ll) best = { ll, at: r, below: false };
 	}

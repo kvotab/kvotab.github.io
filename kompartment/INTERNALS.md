@@ -5411,7 +5411,12 @@ over the ends' log distance past the extremes, on the sample standardised to
 [0, 1]. The double triangle's density jumps at its mode, so its profile also
 tries the mode a hair *below* each realisation. Without that candidate its
 "maximum" was less likely than the true parameters on a quantile sample, which
-is what the test checks. Moments are the values' own, not their logarithms'. A
+is what the test checks. The same jump makes a side whose only realisations
+sit at the mode a spike: its end closes in on them and the likelihood grows
+without bound, which on a small sample or on tied end values beats every
+honest fit. Those candidates are left out -- each side needs a realisation
+away from the mode, or none -- and the test checks that too. Moments are the
+values' own, not their logarithms'. A
 log shape's are Z's moment generating function at kL, carried as
 E[e^(−kL(1−Z))] so a spread of hundreds of decades neither overflows nor
 underflows; the peak comes from the skewness by bisection and the spread from
