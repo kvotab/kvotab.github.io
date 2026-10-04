@@ -318,6 +318,16 @@ Download. Needs h5py, numpy and matplotlib. 149 checks.
 
     python3 test-python.py
 
+`test-icon.py` covers the tab icon, the HDF Group's H cut through its
+crossbar in the kvot mark's language, which `scripts/gen-rb-icon.py` draws. The
+page links the SVG first, a 32-pixel PNG for what will not take one, and a
+180-pixel touch icon; each must decode as a picture of its size. The SVG must
+be XML: a comment holding "--" is not, and the browser drops the icon without
+a word, leaving the tab blank. It is drawn in the mark's three tones only, as
+polygons, and named for the page.
+
+    python3 test-icon.py
+
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
 characterise.py only runs its walk when started as a script.

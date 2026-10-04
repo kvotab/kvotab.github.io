@@ -15,7 +15,13 @@
     frame-ancestors, which a meta tag cannot express at all.
   -->
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
-  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <!-- The page's own mark: the H of the HDF Group's mark, cut through its
+       crossbar, in the kvot mark's language (see rb-icon.svg). SVG first,
+       since it stays sharp on a high-density screen; the PNG is for anything
+       that will not take one. -->
+  <link rel="icon" href="./resources/images/rb-icon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="./resources/images/rb-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="./resources/images/rb-icon-180.png">
   <title>HDF5 Browser — kvot ab</title>
   <meta name="description" content="Browse HDF5 (.h5) files straight in your browser: explore the tree, inspect datasets, plot them and export to Excel.">
   <link rel="canonical" href="https://kvotab.se/rb.html">
