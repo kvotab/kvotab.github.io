@@ -179,6 +179,28 @@ async def click(page, selector):
                          user_gesture=True)
 
 
+async def press(page, selector):
+    """A click of the mouse in the middle of the element. It lands on whatever
+    is on top there, so a button that something covers is not pressed."""
+    x, y = await page.ev("(() => { const e = document.querySelector(" + json.dumps(selector) + ");"
+                         " e.scrollIntoView({ block: 'nearest', inline: 'nearest' });"
+                         " const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()")
+    for kind in ('mouseMoved', 'mousePressed', 'mouseReleased'):
+        await page.send('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1})
+    await asyncio.sleep(0.3)
+
+
+async def reload(page):
+    """Loads the page again and waits for it to start. Page.navigate to the
+    address the page is on would not: that is a navigation within the
+    document, and nothing runs again, the head's script included. The marker
+    tells the new page from the old one."""
+    await page.ev("window.facOldPage = true")
+    await page.send('Page.reload', {'ignoreCache': True})
+    return await settle(page, "!window.facOldPage && !!document.getElementById('facStatus')"
+                        " && document.getElementById('facStatus').textContent !== 'Loading…'", True)
+
+
 async def set_control(page, selector, value, event='change'):
     return await page.ev(f"""(() => {{
       const el = document.querySelector({json.dumps(selector)});
@@ -209,6 +231,13 @@ async def main():
                             {'width': 1600, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
             check('the page boots', await settle(
                 page, "document.getElementById('facStatus').textContent !== 'Loading…'", True), True)
+            # The full window is kept in the browser, and this profile keeps it
+            # from run to run: a run stopped in the middle of its full-window
+            # checks would leave the next one without the site's header and
+            # footer. Removed here, and again after those checks.
+            if await page.ev("localStorage.getItem('kvot.facsimile.full') !== null"):
+                await page.ev("localStorage.removeItem('kvot.facsimile.full')")
+                await reload(page)
 
             # Whatever a previous session left in localStorage -- including a
             # half-written draft, which the page restores rather than discard --
@@ -1562,6 +1591,133 @@ async def main():
             await click(page, '[data-tab="charts"]')
             if folded:
                 await click(page, '#facSolverMore')
+
+            # --- the full window ------------------------------------------------
+            # The button at the right end of the tab bar takes the site's
+            # header, menu and footer away and puts them back. In the full
+            # window the kvot mark at the left of the bar goes to the home page
+            # and the site's theme switch is beside the button. The choice is
+            # kept, and the page's head applies it on the next visit before
+            # anything is drawn. Pressed with the mouse, so a button that
+            # something covers fails.
+            full_state = """JSON.stringify((() => {
+              const shown = (s) => { const e = document.querySelector(s);
+                return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; };
+              const c = document.querySelector('.content').getBoundingClientRect(), b = document.getElementById('facFull');
+              return { on: document.documentElement.classList.contains('fac-full'),
+                site: [shown('body > header'), shown('body > footer'), shown('body > .nav-toggle')],
+                top: Math.round(c.top), fills: Math.round(c.height) === innerHeight,
+                mine: [shown('.fac-homelink'), shown('.fac-tabbar .theme-toggle')],
+                pressed: b.getAttribute('aria-pressed'), title: b.title,
+                corners: [...b.querySelectorAll('path')].map((p) => getComputedStyle(p).display),
+                pane: Math.round(document.getElementById('pane-charts').getBoundingClientRect().height),
+                stored: localStorage.getItem('kvot.facsimile.full') }; })())"""
+            theme_state = ("[document.documentElement.dataset.theme,"
+                           " document.querySelector('.fac-tabbar .theme-toggle').textContent,"
+                           " localStorage.getItem('kvot-theme')]")
+            before = json.loads(await page.ev(full_state))
+            check('the site’s header, menu and footer are round the page; the mark and the bar’s theme switch are not shown',
+                  (before['on'], before['site'], before['top'], before['mine'], before['pressed'], before['corners']),
+                  (False, [True, True, True], 43, [False, False], 'false', ['inline', 'none']))
+            check('the full-window button ends the tab bar, outside the tablist, which holds the six tabs',
+                  await page.ev("""(() => { const bar = document.querySelector('.fac-tabbar'), end = document.querySelector('.fac-tabend');
+                    return [document.getElementById('facFull') === [...bar.querySelectorAll('button')].pop(),
+                      Math.abs(end.getBoundingClientRect().right - bar.getBoundingClientRect().right) <= 1,
+                      [...document.querySelector('[role=tablist]').children].map((t) => t.dataset.tab).join(',')]; })()"""),
+                  [True, True, 'charts,table,model,jacobian,code,help'])
+            await press(page, '#facFull')
+            full = json.loads(await page.ev(full_state))
+            check('the button: no site header, menu or footer, and the page has the whole window',
+                  (full['on'], full['site'], full['top'], full['fills']), (True, [False, False, False], 0, True))
+            check('... the charts pane taking the height the header and footer had', full['pane'] - before['pane'], 74)
+            check('... the button saying it puts them back, its corners pointing in, the choice kept',
+                  (full['pressed'], full['title'], full['corners'], full['stored']),
+                  ('true', 'Show the site’s header and footer again', ['none', 'inline'], '1'))
+            check('... the kvot mark at the left of the bar going to the home page, the theme switch beside the button',
+                  (full['mine'], await page.ev("""(() => { const a = document.querySelector('.fac-homelink'), img = a.querySelector('img');
+                    const first = document.querySelector('.fac-tabs button').getBoundingClientRect(), end = document.querySelector('.fac-tabend');
+                    return [a.getAttribute('href'), img.complete && img.naturalWidth > 0, img.alt, a.getBoundingClientRect().right <= first.left,
+                      end.firstElementChild.classList.contains('theme-toggle') && end.lastElementChild.id === 'facFull']; })()""")),
+                  ([True, True], ['./index.html', True, 'kvot ab: the home page', True, True]))
+            first = await page.ev(theme_state)
+            await press(page, '.fac-tabbar .theme-toggle')
+            mid = await page.ev(theme_state)
+            await press(page, '.fac-tabbar .theme-toggle')
+            last = await page.ev(theme_state)
+            flip = {'light': 'dark', 'dark': 'light'}
+            check('its theme switch changes the theme and keeps it, as the footer’s does, and back',
+                  [mid[0] == flip.get(first[0]), mid[1] == ('☀️' if mid[0] == 'dark' else '🌙'), mid[2] == mid[0],
+                   last[0] == first[0], last[2] == last[0]], [True] * 5)
+            if first[2] is None:
+                await page.ev("localStorage.removeItem('kvot-theme')")
+            await press(page, '.fac-tabs [data-tab="table"]')
+            check('the tabs work as before', await page.ev(
+                "[!document.getElementById('pane-table').hidden,"
+                " [...document.querySelectorAll('.fac-tabbar button.active')].map((b) => b.dataset.tab)]"), [True, ['table']])
+            await press(page, '.fac-tabs [data-tab="charts"]')
+            # With no header or footer to keep clear of, an (i)'s panel has the
+            # whole height of the window.
+            await click(page, '[data-info="set:rtol"]')
+            check('an (i)’s panel has the whole height of the window', await page.ev(
+                "(() => { const p = document.querySelector('.info-panel').getBoundingClientRect();"
+                " return [Math.round(p.top), Math.round(p.bottom) === innerHeight]; })()"), [0, True])
+            await click(page, '[data-info="set:rtol"]')
+
+            # The next visit. A script given to the browser before the page
+            # loads records the page at the moment the parser reaches
+            # facsimile-ui.js: the parser lets the observer's callback run
+            # before it runs a script, so the page's own script has not run yet
+            # (the button is not marked pressed), and only the head's can have
+            # put the page in the full window.
+            early_probe = """new MutationObserver((records, observer) => {
+              if (window.facEarly || !document.querySelector('script[src*="facsimile-ui.js"]')) return;
+              const h = document.querySelector('body > header'), b = document.getElementById('facFull');
+              window.facEarly = { full: document.documentElement.classList.contains('fac-full'),
+                header: h ? getComputedStyle(h).display : null,
+                top: Math.round(document.querySelector('.content').getBoundingClientRect().top),
+                corners: [...b.querySelectorAll('path')].map((p) => getComputedStyle(p).display),
+                pressed: b.getAttribute('aria-pressed') };
+              observer.disconnect();
+            }).observe(document, { childList: true, subtree: true });"""
+            early = await page.send('Page.addScriptToEvaluateOnNewDocument', {'source': early_probe})
+            await reload(page)
+            await page.send('Page.removeScriptToEvaluateOnNewDocument', {'identifier': early['result']['identifier']})
+            check('the next visit is in the full window before the page’s script runs: no header while it loads',
+                  await page.ev('window.facEarly || null'),
+                  {'full': True, 'header': 'none', 'top': 0, 'corners': ['none', 'inline'], 'pressed': 'false'})
+            again = json.loads(await page.ev(full_state))
+            check('... and once it has run, its button is pressed', (again['on'], again['pressed'], again['fills']),
+                  (True, 'true', True))
+
+            # A phone: the mark, the switch and the button stay at the ends of
+            # the bar and the tabs scroll between them, the last one included.
+            await page.send('Emulation.setDeviceMetricsOverride',
+                            {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})
+            await asyncio.sleep(0.6)
+            check('phone: the mark at the left of the bar, the switch and the button at its right, the tabs scrolling between',
+                  await page.ev("""(() => { document.querySelector('.fac-tabbar').scrollIntoView();
+                    const bar = document.querySelector('.fac-tabbar').getBoundingClientRect(), tabs = document.querySelector('.fac-tabs'),
+                      t = tabs.getBoundingClientRect(), mark = document.querySelector('.fac-homelink').getBoundingClientRect(),
+                      end = document.querySelector('.fac-tabend').getBoundingClientRect();
+                    return [Math.round(bar.left), Math.round(bar.right) === innerWidth, mark.right <= t.left + 0.5,
+                      end.left >= t.right - 0.5, Math.abs(end.right - bar.right) <= 1, tabs.scrollWidth > tabs.clientWidth,
+                      document.documentElement.scrollWidth <= innerWidth + 1]; })()"""),
+                  [0, True, True, True, True, True, True])
+            await press(page, '.fac-tabs [data-tab="help"]')
+            check('... where the last tab can be scrolled to and pressed', await page.ev(
+                "(() => { const h = document.querySelector('.fac-tabs [data-tab=\"help\"]').getBoundingClientRect(),"
+                " t = document.querySelector('.fac-tabs').getBoundingClientRect();"
+                " return [!document.getElementById('pane-help').hidden, h.left >= t.left && h.right <= t.right]; })()"),
+                [True, True])
+            await press(page, '.fac-tabs [data-tab="charts"]')
+            await press(page, '#facFull')
+            back = json.loads(await page.ev(full_state))
+            check('the button again: the site’s header, menu and footer back, and that is kept too',
+                  (back['on'], back['site'], back['pressed'], back['stored']), (False, [True, True, True], 'false', '0'))
+            await page.ev("localStorage.removeItem('kvot.facsimile.full')")
+            await page.send('Emulation.setDeviceMetricsOverride',
+                            {'width': 1600, 'height': 1000, 'deviceScaleFactor': 1, 'mobile': False})
+            await asyncio.sleep(0.4)
 
             # --- colouring the model text ---------------------------------------
             # Last, and from a fresh load of the page, for two reasons: the

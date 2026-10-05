@@ -24,12 +24,14 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the tab bar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.facsimile.full') === '1') document.documentElement.classList.add('fac-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20261004">
+  <link rel="stylesheet" href="./resources/css/facsimile.css?v=20261004a">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -272,13 +274,26 @@
 
       <!-- ================= work area ================= -->
       <main class="fac-main">
-        <div class="fac-tabs" role="tablist">
-          <button type="button" class="active" data-tab="charts" data-on-click="fac:tab">Charts</button>
-          <button type="button" data-tab="table" data-on-click="fac:tab">Table</button>
-          <button type="button" data-tab="model" data-on-click="fac:tab">Model</button>
-          <button type="button" data-tab="jacobian" data-on-click="fac:tab">Jacobian</button>
-          <button type="button" data-tab="code" data-on-click="fac:tab">Code</button>
-          <button type="button" data-tab="help" data-on-click="fac:tab">Help</button>
+        <!-- In the full window (the button at the right end) the kvot mark goes to the home page
+             and the site's theme switch is beside the button (site.js keeps its icon and title).
+             The two buttons are outside the tablist, which holds only the tabs. -->
+        <div class="fac-tabbar">
+          <a class="fac-homelink fac-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+          <div class="fac-tabs" role="tablist">
+            <button type="button" class="active" data-tab="charts" data-on-click="fac:tab">Charts</button>
+            <button type="button" data-tab="table" data-on-click="fac:tab">Table</button>
+            <button type="button" data-tab="model" data-on-click="fac:tab">Model</button>
+            <button type="button" data-tab="jacobian" data-on-click="fac:tab">Jacobian</button>
+            <button type="button" data-tab="code" data-on-click="fac:tab">Code</button>
+            <button type="button" data-tab="help" data-on-click="fac:tab">Help</button>
+          </div>
+          <span class="fac-tabend">
+            <button type="button" class="theme-toggle fac-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+            <button type="button" class="fac-fullbtn" id="facFull" data-on-click="fac:full" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site’s header and footer">
+              <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="fac-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="fac-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+            </button>
+          </span>
         </div>
 
         <!-- charts -->
@@ -424,6 +439,7 @@
           <h3 id="help-about">What this page does</h3>
           <p>It integrates the gas-phase radiolysis and steel-corrosion model of an intact spent-fuel canister that was written in FACSIMILE for SKB (report TR-22-15) and later ported to Python. The reaction system, the constants and the case settings are a text file you can edit in the <em>Model</em> tab; the settings column shows the values from its <code>&lt;SETTINGS&gt;</code> section, and the <em>Scenario</em> list fills them with the cases of the study. Choosing one also says where that case is defined: cases 1–22 are Table 3-1 of <a href="https://www.skb.com/publication/2500612/TR-22-15.pdf" target="_blank" rel="noopener noreferrer">SKB TR-22-15</a>, with the section that presents its results; the rest are variants that come with the FACSIMILE model files rather than the report, and say so instead of borrowing a citation. The reference travels with the run into the HDF5 file and the spreadsheet.</p>
           <p>Everything runs in your browser. The text is compiled into JavaScript for the right-hand side and for its Jacobian, and the system of stiff ordinary differential equations is solved with a variable-order multistep method of orders 1–5 — the numerical differentiation formulas, or the plain backward differentiation formulas.</p>
+          <p>The button at the right end of the tabs gives the page the whole window, without the site’s header and footer; the kvot mark at the left of the tabs then goes to the home page, and the switch beside the button changes between light and dark. The page remembers the choice.</p>
 
           <h3 id="help-jacobian">The Jacobian</h3>
           <p>A stiff solver needs the matrix <code>df/dy</code> repeatedly. Instead of estimating it with finite differences (one evaluation of the whole model per species), it is derived from the equations when the text is compiled: every expression is emitted together with its derivative with respect to each species it depends on, so a rate constant that contains the third-body concentration <code>M</code> contributes to the columns of the six species in <code>M</code>, and a switch such as <code>ramp</code> contributes its true slope rather than the artefact a difference across its kink gives. Which entries can be non-zero is known before any number is computed, so the matrix is stored and factorised as a sparse matrix (compressed column storage, Gilbert–Peierls LU with a reverse Cuthill–McKee ordering). Whether the sparse factorisation is used is decided from its measured fill: for this model of 63 species the factor fills in to more than a third of the dense matrix, and a dense LU is then cheaper. The <em>Jacobian</em> tab shows the pattern, and <em>Check Jacobian</em> compares the analytic entries with finite differences.</p>
@@ -635,7 +651,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/facsimile-worker.js?v=20260923f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20261004a"></script>
 </body>
 </html>

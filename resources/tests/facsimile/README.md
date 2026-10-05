@@ -286,6 +286,27 @@ marks the choice in force has to follow its control while it is open, a case
 setting's topic has to be made from its line, and Read more has to land on
 its heading on the Help tab.
 
+The full window is checked after the (i)s, with the mouse rather than with
+`click()` from script, so that a button something covers would fail. The
+button at the right end of the tab bar has to take the site's header, menu
+and footer away, give the page the whole height of the window (the charts
+pane grows by the 74 px the two took), and put them back. In the full window
+the kvot mark at the left of the bar has to lead to the home page, the theme
+switch beside the button has to change the theme and keep it as the footer's
+does, the tabs have to work as before with the two buttons outside the
+tablist, and an (i)'s panel has to have the whole height of the window. On a
+phone the tabs scroll between the mark and the buttons, and the last of them
+can be scrolled to and pressed. The next visit has to be in the full window
+before `facsimile-ui.js` has run, which is what keeps the header from showing
+while the page loads: a script handed to the browser before the reload
+records the page when the parser reaches `facsimile-ui.js`, through a
+MutationObserver, whose callback the parser lets run before it runs a script.
+The button is not yet marked pressed then, which shows the page's own script
+had not run. The choice is kept in the browser's storage
+(`kvot.facsimile.full`), and the test profile keeps that from run to run, so
+the test removes it at the start and again after these checks: an interrupted
+run would otherwise leave the next one without the site's header.
+
 The settings are checked in both directions, because they are one thing seen
 twice: a value typed into the panel has to appear on its line in the model
 text, a value typed into the line has to appear in the panel, and choosing a

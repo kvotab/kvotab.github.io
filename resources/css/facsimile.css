@@ -3,8 +3,9 @@
 
    A settings column on the left, a tabbed work area on the right (charts,
    table, model text, Jacobian, generated code, help). Everything sits in the
-   site's .content box between the fixed header and footer; colours come from
-   the tokens in kvot.css so the page follows the theme toggle.
+   site's .content box between the fixed header and footer (or in the whole
+   window, in the full window); colours come from the tokens in kvot.css so
+   the page follows the theme toggle.
    ========================================================================== */
 
 .fac {
@@ -326,17 +327,35 @@
   margin-left: -8px;
   padding-left: 8px;
 }
-.fac-tabs {
+/*
+  The bar: the kvot mark (in the full window only), the tabs, and the buttons
+  at its end. The tabs scroll sideways where they do not fit, as on a phone,
+  and the buttons stay put. Because the row of tabs scrolls, it clips whatever
+  reaches out of it, so the line under the tabs is the bar's background rather
+  than a border, and the open tab covers it from inside the row.
+*/
+.fac-tabbar {
   display: flex;
-  gap: 2px;
+  align-items: stretch;
+  flex: 0 0 auto;
   /* The -8px is the width of the drag handle's grid column; the padding adds
      it back so the tabs themselves do not move. Both are undone below once the
      columns stack and there is no handle. */
   margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  flex: 0 0 auto;
+  padding-left: 8px;
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
+.fac-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only the padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
 .fac-tabs button {
   padding: 6px 12px;
@@ -354,8 +373,44 @@
   color: var(--text-primary);
   border-color: var(--border-color);
   font-weight: 600;
-  margin-bottom: -1px;
 }
+.fac-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.fac-tabend { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px 8px 1px 2px; }
+.fac-tabend > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fac-tabend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.fac-tabend > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.fac-tabend > .theme-toggle { font-size: 14px; line-height: 1; }
+.fac-tabend > .theme-toggle:hover { transform: none; }
+.fac-homelink { flex: none; align-items: center; padding: 3px 2px 1px 6px; }
+.fac-homelink img { display: block; width: 20px; height: 20px; }
+
+/*
+  The full window (the button at the right end of the tab bar): the page
+  without the site's header and footer. There the kvot mark at the left of the
+  bar goes to the home page and the site's theme switch is beside the button;
+  otherwise they are the header's and the footer's own. The page's head sets
+  the class before the first paint when it was left on, and the button's icon
+  follows the class, so it is right before facsimile-ui.js runs.
+*/
+:root.fac-full { --header-height: 0px; --footer-height: 0px; }
+:root.fac-full body > header, :root.fac-full body > footer, :root.fac-full body > .nav-toggle,
+:root.fac-full body > #menu, :root.fac-full #kvotmap { display: none; }
+.fac-tabbar .fac-fullonly { display: none; }
+:root.fac-full .fac-tabbar .fac-fullonly { display: inline-flex; }
+.fac-fullbtn .fac-full-in, :root.fac-full .fac-fullbtn .fac-full-out { display: none; }
+:root.fac-full .fac-fullbtn .fac-full-in { display: inline; }
 .fac-pane {
   flex: 1 1 auto;
   min-height: 0;
@@ -725,7 +780,7 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   .fac-resize { display: none; }
   /* ...and with no handle to reach under, nothing overhangs to its left. */
   .fac-main { margin-left: 0; padding-left: 0; }
-  .fac-tabs { margin-left: 0; padding-left: 10px; }
+  .fac-tabbar { margin-left: 0; padding-left: 0; }
   .fac-chart-grid { grid-template-columns: minmax(0, 1fr); }
 }
 

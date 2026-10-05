@@ -2013,6 +2013,31 @@
   }
 
   /* ---------------------------------------------------------------------
+     The full window
+     --------------------------------------------------------------------- */
+  /* The page without the site's header and footer (facsimile.css
+     :root.fac-full), by the button at the right end of the tab bar; kept for
+     the next visit, which the page's head puts in it before the first paint.
+     The key is apart from STORAGE_KEY's state so that the head can read it. */
+  const FULL_KEY = 'kvot.facsimile.full';
+
+  function setFull(on) {
+    document.documentElement.classList.toggle('fac-full', !!on);
+    try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+    fullState();
+    // Only the height changes, but a pane that gains or loses its scroll bar
+    // with it changes width too.
+    resizeCharts();
+  }
+
+  function fullState() {
+    const on = document.documentElement.classList.contains('fac-full');
+    const b = $('facFull');
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Show the site’s header and footer again' : 'Full window: the page without the site’s header and footer';
+  }
+
+  /* ---------------------------------------------------------------------
      Code tab, tabs, files
      --------------------------------------------------------------------- */
   function showCode() {
@@ -2823,6 +2848,7 @@
     'fac:saveFile': () => saveFile(),
     'fac:resetModel': () => resetModel(),
     'fac:tab': (ev, el) => showTab(el.dataset.tab),
+    'fac:full': () => setFull(!document.documentElement.classList.contains('fac-full')),
     'fac:redraw': () => drawCharts(),
     'fac:redrawCustom': () => drawCustom(),
     'fac:filterSeries': () => renderSeriesList(),
@@ -2873,6 +2899,7 @@
   writeSolverControls();
   presetOptions();
   initSideResize();
+  fullState();
   initSections();
   initSolverAdvanced();
   // The (i)s of the fixed rows now, and of the case settings once the model
