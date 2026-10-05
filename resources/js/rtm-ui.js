@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20260923f';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261005';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -26,7 +26,7 @@
     // taken (see stagnationTol in solverPayload).
     solver: {
       method: 'ndf', bdf: false, tend: '', rtol: '1e-6', atol: '1e-20', matrix: 'auto', norm: 'max',
-      maxOrder: 5, minOrder: 1, hmax: '0', jacobianMode: 'analytic', kappa: '1e-3',
+      maxOrder: 5, minOrder: 1, hmax: '0', h0: '0', normControl: false, jacobianMode: 'analytic', kappa: '1e-3',
       maxJacAge: '20', belowTolRun: '5', stagnationTol: '0.5',
       maxSteps: '500000', maxPoints: '4000', nonNegative: true, autoAtol: false, smoothEst: true,
     },
@@ -229,7 +229,7 @@
       return `The background worker does not have ${method}. That usually means the browser is `
         + 'holding an older copy of it; reload the page, with a hard reload if that does not do it.';
     }
-    if (/^julia_/.test(method) && typeof FacsimileOdeJulia === 'undefined') {
+    if ((/^julia_/.test(method) || method === 'auto') && typeof FacsimileOdeJulia === 'undefined') {
       return `${method} is not loaded on this page. Reload it, with a hard reload if that does `
         + 'not do it.';
     }
@@ -413,6 +413,7 @@
     const u = timeUnit();
     $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
     $('rtmHmaxUnit').textContent = `${u.name}s; 0: a tenth of the run for the NDF, no limit for the ports`;
+    $('rtmH0Unit').textContent = `${u.name}s; 0: chosen from the derivative at the start`;
     $('rtmTMinUnit').textContent = u.symbol;
     $('rtmGradTMinUnit').textContent = u.symbol;
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
@@ -456,6 +457,8 @@
       minOrder: Math.min(maxOrder, Math.round(num(s.minOrder, 'The minimum order must be 1 to 5',
         (x) => x >= 1 && x <= 5))),
       hmax: num(s.hmax || 0, `The maximum step must be a non-negative number of ${timeUnit().name}s`, (x) => x >= 0),
+      h0: num(s.h0 || 0, `The first step must be a non-negative number of ${timeUnit().name}s`, (x) => x >= 0),
+      normControl: !!s.normControl,
       jacobianMode: s.jacobianMode === 'numeric' ? 'numeric' : 'analytic',
       kappa: num(s.kappa, 'The Newton tolerance must be a number between 0 and 1', (x) => x > 0 && x < 1),
       maxJacAge: Math.round(num(s.maxJacAge, 'A Jacobian must be reused for at least one step', (x) => x >= 1)),
@@ -551,9 +554,27 @@
       ? ` A fixed species moved by ${reply.heldDrift.toExponential(1)} before being held, `
         + 'which is more than round-off: check the tolerances.'
       : '';
+    // The switching solvers say which of their methods took the steps; an
+    // explicit method, and FBDF by GMRES, factorise nothing.
+    const methods = methodSteps(st);
+    const matrix = !st.ndecomps ? 'no iteration matrix'
+      : st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU';
     setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
-      + `(${(st.nfailed || 0).toLocaleString()} rejected), ${reply.n.toLocaleString()} points kept, `
-      + `${st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU'}.${drift}`, drift ? 'warn' : 'ok');
+      + `(${(st.nfailed || 0).toLocaleString()} rejected)${methods ? `: ${methods}` : ''}, ${reply.n.toLocaleString()} points kept, `
+      + `${matrix}.${drift}`, drift ? 'warn' : 'ok');
+  }
+
+  /**
+   * The switching solvers' account of a run, in words: which of their
+   * methods took how many of the steps, and how often they changed between
+   * them -- "Vern7 11 steps, NDF 1874; 1 switch". facsimile.html and
+   * Kompartment say it the same way. Null for every other method.
+   */
+  function methodSteps(st) {
+    if (!st || !st.stepsBy) return null;
+    const parts = Object.entries(st.stepsBy).map(([name, k], i) => `${name} ${k.toLocaleString()}${i === 0 ? ` step${k === 1 ? '' : 's'}` : ''}`);
+    const sw = st.switches || 0;
+    return `${parts.join(', ')}; ${sw} switch${sw === 1 ? '' : 'es'}`;
   }
 
   function stop() {
@@ -1271,9 +1292,11 @@
     s.atol = $('rtmAtol').value.trim();
     s.matrix = $('rtmMatrix').value;
     s.norm = $('rtmNorm').value;
+    s.normControl = $('rtmNormControl').checked;
     s.maxOrder = parseInt($('rtmMaxOrder').value, 10) || 5;
     s.minOrder = parseInt($('rtmMinOrder').value, 10) || 1;
     s.hmax = $('rtmHmax').value.trim();
+    s.h0 = $('rtmH0').value.trim();
     s.jacobianMode = $('rtmJacobian').value;
     s.kappa = $('rtmKappa').value.trim();
     s.maxJacAge = $('rtmJacAge').value.trim();
@@ -1302,9 +1325,11 @@
     $('rtmAtol').value = s.atol;
     $('rtmMatrix').value = s.matrix;
     $('rtmNorm').value = s.norm;
+    $('rtmNormControl').checked = !!s.normControl;
     $('rtmMaxOrder').value = String(s.maxOrder ?? 5);
     $('rtmMinOrder').value = String(s.minOrder ?? 1);
     $('rtmHmax').value = s.hmax ?? '0';
+    $('rtmH0').value = s.h0 ?? '0';
     $('rtmJacobian').value = s.jacobianMode === 'numeric' ? 'numeric' : 'analytic';
     $('rtmKappa').value = s.kappa ?? '1e-3';
     $('rtmJacAge').value = s.maxJacAge ?? '20';
@@ -1318,18 +1343,26 @@
   }
 
   /**
-   * Which of the settings the built-in NDF reads -- facsimile.html's list,
-   * less the two that are properties of its own model language (per-species
-   * tolerances and reading negatives as zero), plus the stalled correction
-   * this page takes and facsimile leaves off.
+   * Which of the settings `method` reads: facsimile.html's declarations, beside
+   * the code that hands them over -- FacsimileODE.options for the solver core's
+   * own methods, FacsimileOdeJulia.options for the ported ones. The two that
+   * are properties of facsimile's model language, per-species tolerances and
+   * reading negatives as zero, have no row here and so are never shown.
    */
-  const BUILTIN_OPTIONS = ['bdf', 'rtol', 'atol', 'norm', 'maxOrder', 'hmax', 'matrix', 'jacobian',
-    'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'nonNegative'];
+  function optionsFor(method) {
+    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) return FacsimileOdeJulia.options(method) || [];
+    return FacsimileODE.options(method) || [];
+  }
 
-  /** Whether `method` has the BDF formulas switch: the NDF, and QNDF. */
+  /** Settings `method` reads, but not as the NDF does, with what it does instead. */
+  function notesFor(method) {
+    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) return FacsimileOdeJulia.notes(method) || {};
+    return FacsimileODE.notes(method) || {};
+  }
+
+  /** Whether `method` has the BDF formulas switch: the NDF, Auto through it, and QNDF. */
   function readsBdf(method) {
-    const julia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
-    return (julia ? FacsimileOdeJulia.options(method) : BUILTIN_OPTIONS).includes('bdf');
+    return optionsFor(method).includes('bdf');
   }
 
   /** What the reader should see a setting called, when told it is not used: facsimile's words. */
@@ -1338,9 +1371,11 @@
     rtol: 'the relative tolerance',
     atol: 'the absolute tolerance',
     norm: 'the error norm',
+    normControl: 'norm control',
     maxOrder: 'the maximum order',
     minOrder: 'the minimum order',
     hmax: 'the maximum step',
+    h0: 'the first step',
     matrix: 'the choice of iteration matrix',
     jacobian: 'the choice of Jacobian',
     kappa: 'the Newton tolerance',
@@ -1367,12 +1402,8 @@
    */
   function updateSolverOptions() {
     const method = $('rtmMethod').value;
-    let allowed = BUILTIN_OPTIONS;
-    let partial = {};
-    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) {
-      allowed = FacsimileOdeJulia.options(method);
-      partial = FacsimileOdeJulia.notes(method) || {};
-    }
+    const allowed = optionsFor(method);
+    const partial = notesFor(method);
     const set = new Set(allowed);
     const dropped = [];
     document.querySelectorAll('#sec-solver [data-solver-opt]').forEach((el) => {
@@ -1420,12 +1451,11 @@
    * lists updateSolverOptions hides the rows by, so the two cannot disagree.
    */
   function readers(key) {
-    const julia = typeof FacsimileOdeJulia !== 'undefined';
-    const ids = Array.from($('rtmMethod').options, (o) => o.value);
-    const reads = (id) => (id === 'ndf'
-      ? BUILTIN_OPTIONS.includes(key)
-      : julia && FacsimileOdeJulia.is(id) && FacsimileOdeJulia.options(id).includes(key));
-    const name = (id) => (id === 'ndf' ? 'NDF' : FacsimileOdeJulia.label(id));
+    const menu = Array.from($('rtmMethod').options);
+    const ids = menu.map((o) => o.value);
+    const reads = (id) => optionsFor(id).includes(key);
+    // The menu's own names, without where each came from.
+    const name = (id) => menu.find((o) => o.value === id).textContent.replace(/\s*\(.*$/, '').trim();
     const yes = ids.filter(reads).map(name);
     const no = ids.filter((id) => !reads(id)).map(name);
     if (!no.length) return 'every method';
@@ -1490,20 +1520,28 @@
       const cur = $('rtmMethod').value;
       return {
         kicker: 'Solver', title: 'Method',
-        lead: 'Which integrator solves the model. NDF is the page’s own and the right first choice. The other six are ported from DifferentialEquations.jl and run here in the page, on the same analytic Jacobian; nothing is downloaded.',
+        lead: 'Which integrator solves the model: the same methods Kompartment and the canister radiolysis page offer. NDF is the page’s own and the right first choice; Auto chooses for itself as the run goes. The Julia ports are ported from DifferentialEquations.jl and run here in the page, on the same analytic Jacobian; nothing is downloaded.',
         sections: [{
           choices: [
             ['NDF', 'The numerical differentiation formulas of Shampine and Reichelt, as in MATLAB’s ode15s: variable order 1 to 5, on the sparse Jacobian. With **BDF formulas** under Advanced settings it runs as the plain BDF.', cur === 'ndf'],
+            ['Auto', 'An explicit start (Tsit5, or Vern7 below a relative tolerance of 1e-5) at a tenth of the tolerances, watched every step for stiffness as DifferentialEquations.jl’s default watches it; once it is found, the NDF takes the rest of the run. A model that never turns stiff stays explicit, and costs less than on the NDF; one that does costs about what the NDF does.', cur === 'auto'],
+            ['Rosenbrock 2-3', 'Kompartment’s Rosenbrock (2,3): one Jacobian and one factorisation a step, no Newton iteration, second order, and steady through a discontinuity. Several times the NDF’s steps on the examples here.', cur === 'ros23'],
+            ['Dormand–Prince 4-5', 'Kompartment’s explicit (4,5) pair: no Jacobian, no matrix. Cheap on a smooth model that is not stiff; on a stiff one it says so and stops.', cur === 'dp45'],
+            ['DefaultODEAlgorithm', 'DifferentialEquations.jl’s default as it is: Tsit5 or Vern7 until the run turns stiff, then Rosenbrock23 up to 50 equations (Rodas5P below a relative tolerance of 1e-6), FBDF up to 500 and FBDF by GMRES above, and back again. For comparing with Julia: on a large column it is many times Auto’s time.', cur === 'julia_auto'],
             ['FBDF', 'Fixed-leading-coefficient BDF, variable order. It reuses one factorisation over many steps, which on a system of hundreds of equations is most of the cost: the one to try on a large column, and first when NDF will not get through.', cur === 'julia_fbdf'],
+            ['FBDF by GMRES', 'FBDF with its Newton iterations solved by GMRES instead of a factorised matrix: products J·v by differencing the model, nothing formed. What DifferentialEquations.jl’s default takes above 500 equations; where the Jacobian is known, as here, the factorising FBDF is usually the faster.', cur === 'julia_fbdf_krylov'],
             ['QNDF', 'The same formulas as NDF, with the same κ, written by other people: the most direct check of the built-in solver. With **BDF formulas** it is QBDF.', cur === 'julia_qndf'],
             ['KenCarp4', 'A fourth-order diagonally implicit Runge–Kutta method (ESDIRK), L-stable. A middle course, cheap at moderate tolerances.', cur === 'julia_kencarp4'],
             ['RadauIIA5', 'Fully implicit, fifth order, L-stable: the most accurate per step and the least troubled by stiffness, the one to believe when two others disagree. It factorises its complex half densely, which is slow past a few thousand equations.', cur === 'julia_radau5'],
             ['Rodas5P', 'A Rosenbrock method, fifth order, with no Newton iteration at all, so nothing to fail to converge. The one to try when a run will not get past something.', cur === 'julia_rodas5p'],
+            ['Rosenbrock23', 'The method of Rosenbrock 2-3, as DifferentialEquations.jl runs it: its step control, error norm and starting step.', cur === 'julia_rosenbrock23'],
             ['TRBDF2', 'Second order, L-stable, fast at loose tolerances on smooth problems. On sharp transients at a tight tolerance it can be far out and still report success.', cur === 'julia_trbdf2'],
+            ['Tsit5', 'Tsitouras’s explicit pair of order 5(4), SciML’s first choice for a non-stiff problem and where Auto starts. No Jacobian; on a stiff model its step is held to the edge of its stability, and it grinds.', cur === 'julia_tsit5'],
+            ['Vern7', 'Verner’s explicit pair of order 7(6), for tight tolerances on a non-stiff problem: fewer steps than Tsit5 below a relative tolerance of about 1e-6.', cur === 'julia_vern7'],
           ],
         }, {
           heading: 'Keep in mind',
-          text: 'The Julia ports keep a species non-negative by projecting each step back and nothing more, and do not read the stall tolerance. The canister radiolysis page’s Help describes them at more length.',
+          text: 'The Julia ports keep a species non-negative by projecting each step back and nothing more, and do not read the stall tolerance. An explicit method -- Dormand–Prince, Tsit5, Vern7 -- on a stiff model is a run of many steps that ends in a message; Auto finds that out for itself. The canister radiolysis page’s Help describes them at more length.',
         }],
         more: more('Choosing a solver', 'help-solver'),
       };
@@ -1598,14 +1636,37 @@
         lead: `The longest step the solver may take, in ${u.name}s. Set it where the model changes faster than its solution shows, and the solver steps over the change.`,
         facts: [
           ['Default', SOLVER_DEFAULTS.hmax],
-          ['0, for NDF', tend ? `a tenth of the run, ${fmtTime(tend / 10)}` : 'a tenth of the run'],
+          ['0, for NDF and the two one-step methods', tend ? `a tenth of the run, ${fmtTime(tend / 10)}` : 'a tenth of the run'],
           ['0, for the Julia ports', 'no limit but the run itself'],
+          ['0, for Auto', 'no limit while it is explicit, a tenth of what is left on the NDF'],
           ['Allowed', '0 or more'],
           ['Read by', readers('hmax')],
         ],
         sections: [{ text: `A limit costs steps wherever the solution is smooth, and every step counts against the step budget: a maximum of a millionth of the run needs a million steps, where the default budget is ${Number(SOLVER_DEFAULTS.maxSteps).toLocaleString('en')}.` }],
       };
     },
+
+    'set:h0': () => {
+      const u = timeUnit();
+      return {
+        kicker: 'Solver', title: 'First step',
+        lead: `The first step to try, in ${u.name}s. 0 lets the solver choose it from the derivative at the start, which is almost always better than a guess.`,
+        facts: [['Default', SOLVER_DEFAULTS.h0], ['Allowed', '0 or more'], ['Read by', readers('h0')]],
+        sections: [
+          { text: 'For a start the derivative there does not describe: a rate that is zero at the first instant and jumps a moment later, or a front about to reach a boundary. A first step that is too long is rejected and cut like any other, so a poor guess costs steps rather than accuracy.' },
+          { heading: 'Keep in mind', text: 'Auto hands it to its explicit start; once the run has turned stiff, the NDF chooses its own.' },
+        ],
+      };
+    },
+
+    'set:normControl': () => ({
+      kicker: 'Solver', title: 'Norm control',
+      lead: 'Judges the error of a step against the size of the whole solution rather than each species in each cell against its own: the 2-norm of the error over the larger of the 2-norms of the state before and after the step. MATLAB calls it NormControl.',
+      facts: [['Default', SOLVER_DEFAULTS.normControl ? 'on' : 'off'], ['Read by', readers('normControl')]],
+      sections: [
+        { text: 'With it on, the error norm above does not arise. Far looser on a model whose species differ by orders of magnitude, which a reaction network usually does: every trace species is judged against the largest one, and goes uncontrolled. It is off, and is there to match a result worked out that way.' },
+      ],
+    }),
 
     'set:matrix': () => {
       const cur = $('rtmMatrix').value;
@@ -1737,8 +1798,9 @@
       facts: [['Default', SOLVER_DEFAULTS.nonNegative ? 'on' : 'off'], ['Read by', readers('nonNegative')]],
       sections: [
         { list: [
-          'The NDF damps the derivative, so that a species at zero cannot be pushed further down; counts a violation in the error test; and projects an accepted step back to zero.',
-          'The Julia ports do the last of the three only.',
+          'The NDF and Rosenbrock 2-3 damp the derivative, so that a species at zero cannot be pushed further down; count a violation in the error test; and project an accepted step back to zero.',
+          'Dormand–Prince does the last two: an explicit method’s stages would straddle the kink a damped derivative makes.',
+          'The Julia ports do the last of the three only, and Auto does that while it is explicit and all three on the NDF.',
         ] },
         { heading: 'Keep in mind', text: 'Switch it off to see whether the model itself drives a species below zero. A negative value then points at the model, a reaction that consumes a species its rate law does not read for one, rather than at the solver.' },
       ],

@@ -70,14 +70,28 @@
               <div class="rtm-row">
                 <div class="kvot-info-line"><label for="rtmMethod">Method</label><span class="kvot-info-slot" data-info-key="set:method"></span></div>
                 <select id="rtmMethod" data-on-change="rtm:solverChanged">
-                  <!-- With its BDF formulas switch, the same integrator with every κ zero. -->
+                  <!--
+                    facsimile.html's menu, which is Kompartment's solvers by their
+                    method names. The first four are the shared solver core's: the
+                    NDF (with its BDF formulas switch, the same integrator with every
+                    κ zero), Auto (an explicit start handing the run to the NDF once
+                    it turns stiff), and the two one-step methods.
+                  -->
                   <option value="ndf">NDF</option>
+                  <option value="auto">Auto (explicit, then NDF)</option>
+                  <option value="ros23">Rosenbrock 2-3</option>
+                  <option value="dp45">Dormand–Prince 4-5</option>
+                  <option value="julia_auto">DefaultODEAlgorithm (Julia port)</option>
                   <option value="julia_fbdf">FBDF (Julia port)</option>
+                  <option value="julia_fbdf_krylov">FBDF by GMRES (Julia port)</option>
                   <option value="julia_qndf">QNDF (Julia port)</option>
                   <option value="julia_kencarp4">KenCarp4 (Julia port)</option>
                   <option value="julia_radau5">RadauIIA5 (Julia port)</option>
                   <option value="julia_rodas5p">Rodas5P (Julia port)</option>
+                  <option value="julia_rosenbrock23">Rosenbrock23 (Julia port)</option>
                   <option value="julia_trbdf2">TRBDF2 (Julia port)</option>
+                  <option value="julia_tsit5">Tsit5 (Julia port)</option>
+                  <option value="julia_vern7">Vern7 (Julia port)</option>
                 </select>
               </div>
               <div class="rtm-row">
@@ -103,6 +117,7 @@
                     <option value="rms">rms</option>
                   </select>
                 </div>
+                <div class="rtm-check-line" data-solver-opt="normControl"><label class="rtm-check"><input type="checkbox" id="rtmNormControl" data-on-change="rtm:solverChanged"> Norm control: judge the error against the whole solution</label><span class="kvot-info-slot" data-info-key="set:normControl"></span></div>
                 <div class="rtm-row" data-solver-opt="maxOrder">
                   <div class="kvot-info-line"><label for="rtmMaxOrder">Maximum order<span class="rtm-name">the variable-order methods: NDF, FBDF and QNDF</span></label><span class="kvot-info-slot" data-info-key="set:maxOrder"></span></div>
                   <select id="rtmMaxOrder" data-on-change="rtm:solverChanged">
@@ -118,6 +133,10 @@
                 <div class="rtm-row" data-solver-opt="hmax">
                   <div class="kvot-info-line"><label for="rtmHmax">Maximum step<span class="rtm-name" id="rtmHmaxUnit">seconds; 0: a tenth of the run for the NDF, no limit for the ports</span></label><span class="kvot-info-slot" data-info-key="set:hmax"></span></div>
                   <input id="rtmHmax" type="text" value="0" data-on-change="rtm:solverChanged">
+                </div>
+                <div class="rtm-row" data-solver-opt="h0">
+                  <div class="kvot-info-line"><label for="rtmH0">First step<span class="rtm-name" id="rtmH0Unit">seconds; 0: chosen from the derivative at the start</span></label><span class="kvot-info-slot" data-info-key="set:h0"></span></div>
+                  <input id="rtmH0" type="text" value="0" data-on-change="rtm:solverChanged">
                 </div>
                 <div class="rtm-row" data-solver-opt="matrix">
                   <div class="kvot-info-line"><label for="rtmMatrix">Iteration matrix<span class="rtm-name">auto: chosen by the measured fill</span></label><span class="kvot-info-slot" data-info-key="set:matrix"></span></div>
@@ -825,10 +844,26 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
 
           <h3 id="help-solver">Choosing a solver</h3>
           <p><em>NDF</em> is the default and is the right first choice. Its <em>BDF formulas</em>
-            switch, under Advanced settings, runs the same integrator with the κ terms off. The Julia ports are independent
-            implementations of other methods; <em>FBDF</em> is the one to try on a large transport
-            problem, and <em>RadauIIA5</em> when two others disagree. They are described on the
-            <a href="./facsimile.html">canister radiolysis</a> page, which shares them.</p>
+            switch, under Advanced settings, runs the same integrator with the κ terms off. The menu
+            is Kompartment's, under each method's own name, and the
+            <a href="./facsimile.html">canister radiolysis</a> page shares it.</p>
+          <p><em>Auto</em> starts on an explicit method — Tsit5, or Vern7 below a relative tolerance of
+            10<sup>−5</sup>, at a tenth of the tolerances — watches every step for stiffness as
+            DifferentialEquations.jl's default does, and hands the rest of the run to the NDF once it
+            finds it. A model that never turns stiff, A&nbsp;→&nbsp;B&nbsp;→&nbsp;C or the Brusselator,
+            stays explicit and costs less than on the NDF; a transport column turns stiff in its first
+            steps and costs what the NDF does. <em>Rosenbrock 2-3</em> and <em>Dormand–Prince 4-5</em> are
+            Kompartment's own one-step methods: the first forms its Jacobian and factorises it every step —
+            once a run, on a model whose Jacobian cannot change, such as a tracer column or a decay chain
+            — and the second is explicit, for a model that is not stiff. The Julia ports are independent
+            implementations of other methods: <em>FBDF</em> is the one to try on a large transport
+            problem, <em>RadauIIA5</em> when two others disagree, <em>DefaultODEAlgorithm</em> to compare
+            with Julia's own default, and <em>Tsit5</em> and <em>Vern7</em> for a model that is not stiff.</p>
+          <p>Two settings come from Kompartment too. <em>First step</em> sets the step the run starts
+            with, where the derivative at the start does not say what is about to happen; 0 lets the solver
+            choose. <em>Norm control</em>, the NDF's, judges the error against the size of the whole
+            solution rather than each species in each cell against its own, as MATLAB's NormControl does —
+            looser wherever the species differ by orders of magnitude, so it is off.</p>
           <p>Every one of them is available wherever the page is: a run normally happens on a
             background worker, and where there is no worker to be had — a page opened straight off
             the disk cannot start one — it happens on the page's own thread instead. The answer is
@@ -914,19 +949,19 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       kvot-info          the (i) beside a setting and the panel it opens
       rtm-ui             this page
   -->
-  <script src="./resources/js/facsimile-model.js?v=20260920"></script>
-  <script src="./resources/js/ode-core.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20260923f"></script>
+  <script src="./resources/js/facsimile-model.js?v=20261005"></script>
+  <script src="./resources/js/ode-core.js?v=20261005"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20261005"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
-  <script src="./resources/js/facsimile-ode-julia.js?v=20260923f"></script>
-  <script src="./resources/js/rtm-model.js?v=20260923a"></script>
+  <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
+  <script src="./resources/js/rtm-model.js?v=20261005"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20260923f"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261005"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261004"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261005"></script>
 </body>
 </html>

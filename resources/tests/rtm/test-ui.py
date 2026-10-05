@@ -779,6 +779,44 @@ async def main():
               b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true }));
             })()""")
 
+            # --- Kompartment's solvers: the menu, Auto, and the rows each reads -
+            check('Kompartment’s solvers are on the menu', await page.ev(
+                "[...document.getElementById('rtmMethod').options].map(o => o.value).join(',')"),
+                'ndf,auto,ros23,dp45,julia_auto,julia_fbdf,julia_fbdf_krylov,julia_qndf,julia_kencarp4,'
+                'julia_radau5,julia_rodas5p,julia_rosenbrock23,julia_trbdf2,julia_tsit5,julia_vern7')
+            shown = ("[...document.querySelectorAll('#sec-solver [data-solver-opt]')]"
+                     ".filter(el => !el.hidden).map(el => el.dataset.solverOpt).join(' ')")
+            for method, rows in (
+                    ('ndf', 'rtol atol bdf norm normControl maxOrder hmax h0 matrix jacobian belowTolRun '
+                            'maxSteps stagnationTol autoAtol nonNegative'),
+                    ('dp45', 'rtol atol hmax h0 maxSteps nonNegative'),
+                    ('ros23', 'rtol atol hmax h0 jacobian maxSteps nonNegative'),
+                    ('julia_tsit5', 'rtol atol norm hmax h0 belowTolRun maxSteps autoAtol nonNegative')):
+                await page.ev("""(() => {
+                  const m = document.getElementById('rtmMethod');
+                  m.value = '%s'; m.dispatchEvent(new Event('change', { bubbles: true }));
+                })()""" % method)
+                check(f'{method} shows the settings it reads', await page.ev(shown), rows)
+            # A -> B is not stiff: Auto stays explicit, and the status line says so.
+            await page.ev("""(() => {
+              const m = document.getElementById('rtmMethod');
+              m.value = 'auto'; m.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('Auto runs', isinstance(run, str) and run.startswith('Done'), True)
+            check('and says which method took the steps', isinstance(run, str)
+                  and bool(re.search(r'\): (Tsit5|Vern7) \d+ steps?; 0 switches', run)), True)
+            check('and that it formed no matrix', isinstance(run, str) and 'no iteration matrix' in run, True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(1.2)
+            au = await page.ev(
+                "(() => { const d = document.getElementById('rtmChartTime');"
+                " const y = d.data[0].y; return y[y.length - 1]; })()")
+            check(f'to the same answer ({au} against exp(-5))',
+                  isinstance(au, (int, float)) and abs(au - 0.006737947) < 1e-5, True)
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+
             # --- the progress bar, on a run long enough to see it --------------
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await page.ev("""(() => {

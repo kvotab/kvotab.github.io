@@ -72,8 +72,9 @@ function errorMessage(e) {
  */
 function facsimileSolvers() {
   // The NDF runs the plain BDFs with its BDF formulas switch, and QNDF runs
-  // QBDF the same way, so neither is an entry of its own.
-  const out = ['ndf'];
+  // QBDF the same way, so neither is an entry of its own. Rosenbrock 2-3 and
+  // Dormand-Prince 4-5 are the solver core's, beside the NDF.
+  const out = ['ndf', 'ros23', 'dp45'];
   if (typeof FacsimileOdeJulia !== 'undefined') out.push(...Object.keys(FacsimileOdeJulia.METHODS));
   return out;
 }
@@ -135,6 +136,7 @@ function handleFacsimileMessage(msg, post) {
         matrix: s.matrix || 'auto',
         jacobianMode: s.jacobianMode || 'analytic',
         norm: s.norm || 'max',
+        normControl: !!s.normControl,
         // Every κ zero: the NDF as the plain BDFs, QNDF as QBDF.
         bdf: !!s.bdf,
         maxOrder: s.maxOrder || 5,
@@ -147,7 +149,11 @@ function handleFacsimileMessage(msg, post) {
         autoAtol: !!s.autoAtol,
         smoothEst: s.smoothEst !== false,
         hmax: s.hmaxSeconds > 0 ? s.hmaxSeconds : undefined,
+        h0: s.h0Seconds > 0 ? s.h0Seconds : undefined,
         maxSteps: s.maxSteps || 2e6,
+        // What the one-step methods' messages say a switch the model does not
+        // declare should be, in this page's words.
+        hints: { switches: 'declare the switch as an event in <EVENTS>, so that the run is restarted there' },
         onProgress: (t, nsteps, npoints) => {
           const now = Date.now();
           if (now - lastReport < 120) return;

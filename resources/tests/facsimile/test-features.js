@@ -246,7 +246,9 @@ AA = A
   check('and without it as QNDF', qndf.stats.solver, 'QNDF');
   check('QBDF is not on the menu of its own any more', OdeJuliaPage.is('julia_qbdf'), false);
   check('and the switch is offered on QNDF only among the ports',
-    Object.keys(OdeJuliaPage.METHODS).filter((id) => OdeJuliaPage.options(id).includes('bdf')).join(), 'julia_qndf');
+    Object.keys(OdeJuliaPage.METHODS).filter((id) => /^julia_/.test(id) && OdeJuliaPage.options(id).includes('bdf')).join(), 'julia_qndf');
+  // Auto hands its stiff part to the NDF, which reads it.
+  check('and on Auto, through the NDF', OdeJuliaPage.options('auto').includes('bdf'), true);
 
   // Times past the end of the run are simply not reached.
   const short = FacsimileODE.runModel(model, { solver: 'ndf', tend: 4.5, rtol: 1e-8, atol: 1e-16 });
@@ -675,7 +677,7 @@ console.log('\n--- the Langmuir example ---');
 console.log('\n--- many events, and events at rest ---');
 {
   const OdeJuliaMany = require(path.join(jsDir, 'facsimile-ode-julia.js'));
-  const solvers = [['ndf', 'ndf'],
+  const solvers = [['ndf', 'ndf'], ['ros23', 'ros23'], ['dp45', 'dp45'],
     ...Object.keys(OdeJuliaMany.METHODS).map((id) => [id, OdeJuliaMany.solver(id)])];
 
   // sin(t) rises through 0.5 sixty-four times before t = 400. The driver used
@@ -736,6 +738,9 @@ C = , kf = 1.0e-4
 TOT - LIMIT, R = 0
 `;
   for (const [id, solver] of solvers) {
+    // Stiff (k = 1e3 over a run of 1e5): an explicit method would need tens
+    // of millions of steps, which is not what this is about.
+    if (['dp45', 'julia_tsit5', 'julia_vern7'].includes(id)) continue;
     const m = FacsimileModel.compile(feed);
     let res = null;
     try {
@@ -777,6 +782,221 @@ A - 0.9704455335485082, down, N = N + 1
     r = FacsimileODE.runModel(fall, { solver, tend: 10, rtol: 1e-8, atol: 1e-12 });
     check(`${id}: a crossing fires once, however close to it the run restarts`, r.events.length, 1);
   }
+}
+
+/* ======================================================================
+   11. Kompartment's solvers, and the clock worked out once an instant
+   ====================================================================== */
+console.log('\n--- Kompartment’s solvers, and the clock once an instant ---');
+{
+  const OJ = require(path.join(jsDir, 'facsimile-ode-julia.js'));
+  const YEAR = 365.25 * 86400;
+  const bits = (a, b) => a.length === b.length && Array.prototype.every.call(a, (v, i) => Object.is(v, b[i]));
+  const preset = FACSIMILE_PRESETS.find((p) => p.id === '13g');
+
+  // The clock pass is the same arithmetic in the same order, so the calls
+  // give the same bits whether the pass is fresh or remembered: one model is
+  // asked time by time (remembered within each instant), the other state by
+  // state (worked out afresh on every call).
+  const a = FacsimileModel.compile(FACSIMILE_DEFAULT_MODEL, { settings: preset.settings });
+  const b = FacsimileModel.compile(FACSIMILE_DEFAULT_MODEL, { settings: preset.settings });
+  const y0 = a.initialState(0);
+  b.initialState(0);
+  check('the canister model’s derivative has a clock pass', /The clock pass/.test(a.sources.rhs));
+  check('and so has its Jacobian', /The clock pass/.test(a.sources.jac));
+  const states = [y0, Float64Array.from(y0, (v, i) => (v > 0 ? v * 1.1 : 1e-12 * (1 + (i % 7))))];
+  const times = [0, 3600, 3.156e7, 3.156e9];
+  const fa = new Map(), fb = new Map(), ja = new Map(), jb = new Map();
+  for (const t of times) {
+    for (let s = 0; s < states.length; s++) {
+      fa.set(`${t}/${s}`, a.rhs(t, states[s], new Float64Array(a.nspecies)));
+      ja.set(`${t}/${s}`, a.jac(t, states[s], new Float64Array(a.nnz)));
+    }
+  }
+  for (let s = 0; s < states.length; s++) {
+    for (const t of times) {
+      fb.set(`${t}/${s}`, b.rhs(t, states[s], new Float64Array(b.nspecies)));
+      jb.set(`${t}/${s}`, b.jac(t, states[s], new Float64Array(b.nnz)));
+    }
+  }
+  check('the derivative is the same to the last bit, however the calls fall',
+    [...fa.keys()].every((k) => bits(fa.get(k), fb.get(k))));
+  check('and so is the Jacobian', [...ja.keys()].every((k) => bits(ja.get(k), jb.get(k))));
+
+  // A constant read by a clock-only term, changed by an event: the next call
+  // has to see it, which is what the model's invalidation is for.
+  const evText = `
+<SETTINGS>
+K = 0.5
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+KT = K*exp(-t/10)
+<REACTIONS>
+A = B, kf = KT
+<EVENTS>
+t - 3, K = 2
+`;
+  const ev = FacsimileModel.compile(evText);
+  const yv = ev.initialState(0);
+  const before = ev.rhs(5, yv, new Float64Array(2));
+  ev.applyEvent(0, 5, Float64Array.from(yv));
+  const after = ev.rhs(5, yv, new Float64Array(2));
+  const fresh = FacsimileModel.compile(evText, { settings: { K: 2 } });
+  fresh.initialState(0);
+  const want = fresh.rhs(5, yv, new Float64Array(2));
+  check('an event that changes a constant moves the clock pass with it', bits(after, want) && !bits(after, before));
+  // And through a whole run: the event at t = 3 quadruples the rate.
+  const evRun = FacsimileODE.runModel(FacsimileModel.compile(evText), { solver: 'ndf', tend: 6, rtol: 1e-10, atol: 1e-14 });
+  const exactA = Math.exp(-0.5 * 10 * (1 - Math.exp(-0.3)) - 2 * 10 * (Math.exp(-0.3) - Math.exp(-0.6)));
+  near('and the run after it follows the new constant', evRun.y[evRun.y.length - 1][0], exactA, 1e-7);
+
+  // Where the clock-read tables turn: the canister's temperature profile,
+  // read as interp(TPROF, t/YEAR_S).
+  const corners = a.tableCorners(0, 500 * YEAR, 1000);
+  const tprof = a.settings.find((x) => x.name === 'TPROF').value;
+  const table = a.tables.find((x) => x.name === tprof);
+  const expected = table.x.filter((x) => x * YEAR > 0 && x * YEAR < 500 * YEAR).length;
+  check('the temperature profile’s corners are where its points are', corners.length, expected);
+  check('in order', corners.every((t, i) => i === 0 || t > corners[i - 1]));
+  near('the first at the profile’s first point inside the run', corners[0], table.x.find((x) => x > 0) * YEAR, 1e-12);
+  check('none when there are more than allowed', a.tableCorners(0, 500 * YEAR, expected - 1), null);
+  check('and backwards for a run backwards', a.tableCorners(500 * YEAR, 0, 1000)[0], corners[corners.length - 1]);
+  // VPH2O is read through T, which is no straight line in t, and is left alone.
+  check('a table read through anything else is not followed', a.tableCorners(0, 1e-3 * YEAR, 1000).length, 0);
+
+  // Auto: explicit until the run turns stiff, then the NDF.
+  const run13 = (solver, o = {}) => FacsimileODE.runModel(
+    FacsimileModel.compile(FACSIMILE_DEFAULT_MODEL, { settings: preset.settings }),
+    { solver, tend: preset.settings.TEND * YEAR, rtol: 1e-5, atol: 1e-30, nonNegative: true, belowTolRun: 5, maxSteps: 2e6, ...o });
+  const auto13 = run13(OJ.solver('auto'));
+  check('Auto hands the canister model to the NDF', auto13.stats.stepsBy && auto13.stats.stepsBy.NDF > 1000);
+  check('after a few explicit steps', (auto13.stats.stepsBy.Tsit5 ?? auto13.stats.stepsBy.Vern7 ?? -1) >= 0
+    && (auto13.stats.stepsBy.Tsit5 ?? auto13.stats.stepsBy.Vern7) < 50);
+  check('and switches once', auto13.stats.switches, 1);
+  check('and says it was Auto', auto13.stats.solver, 'Auto');
+
+  const decayText = `
+<SETTINGS>
+K = 0.5
+<SPECIES>
+A B
+<INITIAL>
+A = 1
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = B, kf = K
+<TIMES>
+0 .. 10 lin 11
+`;
+  // At rtol 1e-6 the explicit start works at 1e-7, below the 1e-6 at which
+  // DifferentialEquations.jl's default takes Vern7 rather than Tsit5.
+  const smooth = FacsimileODE.runModel(FacsimileModel.compile(decayText), { solver: OJ.solver('auto'), tend: 10, rtol: 1e-6, atol: 1e-12 });
+  check('a model that never turns stiff stays explicit', Object.keys(smooth.stats.stepsBy).join(), 'Vern7');
+  const smoothLoose = FacsimileODE.runModel(FacsimileModel.compile(decayText), { solver: OJ.solver('auto'), tend: 10, rtol: 1e-4, atol: 1e-12 });
+  check('on Tsit5 at a looser tolerance', Object.keys(smoothLoose.stats.stepsBy).join(), 'Tsit5');
+  let worst = 0;
+  for (let i = 0; i < smooth.grid.t.length; i++) {
+    worst = Math.max(worst, Math.abs(smooth.grid.y[i][0] - Math.exp(-0.5 * smooth.grid.t[i])) / Math.exp(-0.5 * smooth.grid.t[i]));
+  }
+  // Read off Vern7's own interpolant: a cubic between its long steps was
+  // 1e-4 out on this exponential.
+  check('and is accurate on the grid, read off its own interpolant', worst < 1e-8);
+  for (const id of ['julia_tsit5', 'julia_vern7', 'dp45']) {
+    const r = FacsimileODE.runModel(FacsimileModel.compile(decayText), {
+      solver: id === 'dp45' ? 'dp45' : OJ.solver(id), tend: 10, rtol: 1e-6, atol: 1e-12 });
+    let w = 0;
+    for (let i = 0; i < r.grid.t.length; i++) w = Math.max(w, Math.abs(r.grid.y[i][0] - Math.exp(-0.5 * r.grid.t[i])) / Math.exp(-0.5 * r.grid.t[i]));
+    check(`${id} reads the grid off its own interpolant, every time once`, r.grid.t.length === 11 && w < 2e-6);
+  }
+
+  // A model with algebraic variables is the NDF's throughout, to the bit.
+  const lang = require('fs').readFileSync(path.join(__dirname, '..', '..', 'data', 'facsimile-langmuir.fac'), 'utf8');
+  const langOpts = { tend: 10 * YEAR, rtol: 1e-6, atol: 1e-20, nonNegative: true };
+  const langAuto = FacsimileODE.runModel(FacsimileModel.compile(lang), { ...langOpts, solver: OJ.solver('auto') });
+  const langNdf = FacsimileODE.runModel(FacsimileModel.compile(lang), { ...langOpts, solver: 'ndf' });
+  check('Auto runs a model with algebraic variables on the NDF', Object.keys(langAuto.stats.stepsBy).join(), 'NDF');
+  check('and gives the NDF’s run to the bit', langAuto.y.length === langNdf.y.length
+    && langAuto.y.every((y, i) => bits(y, langNdf.y[i])));
+  throws('Rosenbrock 2-3 refuses it, by name', () => FacsimileODE.runModel(FacsimileModel.compile(lang), { ...langOpts, solver: 'ros23' }),
+    'Rosenbrock 2-3 takes no mass matrix');
+
+  // Across an event, a run that has turned stiff stays on the NDF: one switch.
+  const stiffEvent = `
+<SETTINGS>
+R = 1
+<SPECIES>
+A B C
+<INITIAL>
+A = 0
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+= A, rf = R
+A = B, kf = 1.0e4
+B = C, kf = 1.0e-2
+<EVENTS>
+t - 50, R = 0
+`;
+  const carried = FacsimileODE.runModel(FacsimileModel.compile(stiffEvent), { solver: OJ.solver('auto'), tend: 100, rtol: 1e-6, atol: 1e-12, nonNegative: true });
+  check('a stiff run restarted at an event stays on the NDF', carried.stats.switches, 1);
+  check('and both segments are counted', carried.events.length === 1 && carried.stats.stepsBy.NDF > 0);
+  const ndfToo = FacsimileODE.runModel(FacsimileModel.compile(stiffEvent), { solver: 'ndf', tend: 100, rtol: 1e-6, atol: 1e-12, nonNegative: true });
+  near('and agrees with the NDF at its end', carried.y[carried.y.length - 1][2], ndfToo.y[ndfToo.y.length - 1][2], 1e-5);
+
+  // The two one-step methods, by name.
+  for (const id of ['ros23', 'dp45']) {
+    const r = FacsimileODE.runModel(FacsimileModel.compile(decayText), { solver: id, tend: 10, rtol: 1e-8, atol: 1e-14 });
+    // Rosenbrock 2-3 is second order: its global error is the larger.
+    near(`${id} follows exp(-t/2)`, r.y[r.y.length - 1][0], Math.exp(-5), id === 'ros23' ? 1e-4 : 1e-6);
+    check(`${id} says which it was`, r.stats.solver, FacsimileODE.LABELS[id]);
+  }
+
+  // The first step reaches every solver: the first stored point is at it.
+  // Small enough to pass the error test, which is what decides whether the
+  // step asked for is the step taken.
+  for (const [id, solver] of [['ndf', 'ndf'], ['ros23', 'ros23'], ['dp45', 'dp45'], ['julia_fbdf', OJ.solver('julia_fbdf')],
+    ['julia_rodas5p', OJ.solver('julia_rodas5p')], ['julia_tsit5', OJ.solver('julia_tsit5')], ['auto', OJ.solver('auto')]]) {
+    const r = FacsimileODE.runModel(FacsimileModel.compile(decayText), { solver, tend: 10, rtol: 1e-6, atol: 1e-12, h0: 1e-8 });
+    check(`${id}: the first step is the one asked for`, r.t[1], 1e-8);
+  }
+
+  // Norm control reaches the NDF: a species ten orders below the other is
+  // no longer controlled, and the run takes fewer steps.
+  const scales = FacsimileModel.compile(`
+<SPECIES>
+A B C D
+<INITIAL>
+A = 1
+C = 1.0e-10
+<EQUATIONS>
+Z = 0
+<REACTIONS>
+A = B, kf = 0.1
+C = D, kf = 30
+`);
+  const plain = FacsimileODE.runModel(scales, { solver: 'ndf', tend: 10, rtol: 1e-6, atol: 1e-30 });
+  const normed = FacsimileODE.runModel(scales, { solver: 'ndf', tend: 10, rtol: 1e-6, atol: 1e-30, normControl: true });
+  check('norm control reaches the NDF, and loosens it', normed.stats.nsteps < plain.stats.nsteps);
+
+  // A Jacobian that cannot change: formed once a segment by Rosenbrock 2-3.
+  const linear = FacsimileModel.compile(decayText, { clampNegative: false });
+  check('a linear model without the clamp has a constant Jacobian', linear.jacobianConstant, true);
+  check('the clamp makes it depend on the sign of the state', FacsimileModel.compile(decayText).jacobianConstant, false);
+  check('the canister model’s does not stand still', a.jacobianConstant, false);
+  const once = FacsimileODE.runModel(linear, { solver: 'ros23', tend: 10, rtol: 1e-8, atol: 1e-14 });
+  check('Rosenbrock 2-3 forms it once', once.stats.npds, 1);
+  near('and gets the same answer', once.y[once.y.length - 1][0], Math.exp(-5), 1e-4);
+  const every = FacsimileODE.runModel(FacsimileModel.compile(decayText, { clampNegative: false }),
+    { solver: 'ros23', tend: 10, rtol: 1e-8, atol: 1e-14, jacobianMode: 'numeric' });
+  check('a differenced one is never taken as constant', every.stats.npds > 1);
+
+  // An explicit method out of steps says the model looks stiff.
+  throws('Tsit5 out of steps on a stiff model says so', () => FacsimileODE.runModel(FacsimileModel.compile(stiffEvent),
+    { solver: OJ.solver('julia_tsit5'), tend: 100, rtol: 1e-6, atol: 1e-12, maxSteps: 2000 }), 'The model looks stiff');
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

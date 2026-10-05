@@ -2161,6 +2161,66 @@ C2O4-2 + UO2+2 => U_site, r = k*[C2O4-2]*[UO2+2], k = 1
   check('  without going negative', lowest >= -1e-20, `lowest concentration ${lowest.toExponential(2)}`);
 }
 
+/* ======================================================================
+   Kompartment's solvers, and the derivative that works out only the rates
+   ====================================================================== */
+console.log('\n--- Kompartment’s solvers here ---');
+{
+  const OJ = require(path.join(jsDir, 'facsimile-ode-julia.js'));
+  const { RTM_EXAMPLES } = require(path.join(jsDir, 'rtm-examples.js'));
+  const byId = (id) => RtmModel.compile(RTM_EXAMPLES.find((e) => e.id === id).text);
+
+  // The derivative no longer works out the rates' gradients, and the
+  // Jacobian no longer the rates: each must still be what the other's
+  // differences say.
+  const rob = byId('robertson');
+  const y = Float64Array.of(0.9, 3e-5, 0.1);
+  const v = RtmModel.verifyJacobian(rob, 0, y);
+  check('the Jacobian, worked out without the rates, agrees with differences of the derivative',
+    v.discrepancies.length === 0 && v.checked > 0, `${v.checked} entries, ${v.discrepancies.length} out`);
+
+  // Which models can say their Jacobian never moves: transport is linear, so
+  // only a rate law whose derivative reads a concentration moves it.
+  check('a tracer column has one Jacobian for the whole run', byId('tracer').jacobianConstant === true);
+  check('and so has the decay chain in the rock', byId('u238chain').jacobianConstant === true);
+  check('Robertson’s kinetics do not', rob.jacobianConstant === false);
+  check('nor does the built-in model', RtmModel.compile(RTM_DEFAULT_MODEL).jacobianConstant === false);
+
+  const tracer = () => byId('tracer');
+  const opts = { tend: tracer().settings.TEND, rtol: 1e-6, atol: 1e-20, nonNegative: true, stagnationTol: 0.5, maxPoints: 4000 };
+  const ndf = run(tracer(), opts);
+  // Rosenbrock 2-3 forms its Jacobian every step; told it cannot change, once.
+  const ros = run(tracer(), { ...opts, solver: 'ros23' });
+  check('Rosenbrock 2-3 forms the tracer’s Jacobian once', ros.stats.npds === 1, `${ros.stats.npds} Jacobians`);
+  // Compared on what is in the column, not on the far tail of the front.
+  const inColumn = (r) => last(r).reduce((a, b) => a + b, 0);
+  close('and agrees with the NDF on what is in the column', inColumn(ros), inColumn(ndf), 1e-5);
+  // Dormand-Prince on a column that is not stiff.
+  const dp = run(tracer(), { ...opts, solver: 'dp45' });
+  close('Dormand–Prince agrees with it too', inColumn(dp), inColumn(ndf), 1e-5);
+  // Auto: explicit until it turns stiff, then the NDF.
+  const auto = run(tracer(), { ...opts, solver: OJ.solver('auto') });
+  check('Auto hands the tracer column to the NDF', !!auto.stats.stepsBy && auto.stats.stepsBy.NDF > 0
+    && auto.stats.switches === 1, JSON.stringify(auto.stats.stepsBy));
+  close('and agrees with it', inColumn(auto), inColumn(ndf), 1e-6);
+  const ab = byId('ab');
+  const abAuto = run(ab, { tend: ab.settings.TEND, rtol: 1e-6, atol: 1e-12, solver: OJ.solver('auto') });
+  check('and leaves A → B → C explicit throughout', !('NDF' in abAuto.stats.stepsBy), JSON.stringify(abAuto.stats.stepsBy));
+  close('getting C right', last(abAuto)[2], 1 - Math.exp(-0.5 * 20) - (0.5 / 0.3) * (Math.exp(-0.2 * 20) - Math.exp(-0.5 * 20)), 1e-6);
+  // The rest, briefly: each runs and agrees on the A -> B -> C batch.
+  for (const id of ['julia_auto', 'julia_tsit5', 'julia_vern7', 'julia_rosenbrock23', 'julia_fbdf_krylov']) {
+    const r = run(byId('ab'), { tend: 20, rtol: 1e-8, atol: 1e-14, solver: OJ.solver(id) });
+    close(`${id} on A → B → C`, last(r)[2], 1 - Math.exp(-0.5 * 20) - (0.5 / 0.3) * (Math.exp(-0.2 * 20) - Math.exp(-0.5 * 20)),
+      id === 'julia_rosenbrock23' ? 1e-5 : 1e-6);
+  }
+  // The first step and norm control reach the NDF here as on the canister page.
+  const h0 = run(byId('ab'), { tend: 20, rtol: 1e-6, atol: 1e-12, h0: 1e-8 });
+  check('the first step is the one asked for', h0.t[1] === 1e-8, String(h0.t[1]));
+  const nc = run(byId('robertson'), { tend: 40, rtol: 1e-6, atol: 1e-20, normControl: true });
+  const plain = run(byId('robertson'), { tend: 40, rtol: 1e-6, atol: 1e-20 });
+  check('norm control loosens Robertson’s run', nc.stats.nsteps < plain.stats.nsteps, `${nc.stats.nsteps} against ${plain.stats.nsteps}`);
+}
+
 /* ====================================================================== */
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);
 if (failures.length) console.log(`failed: ${failures.join(', ')}`);

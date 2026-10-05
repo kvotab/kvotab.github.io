@@ -24,10 +24,20 @@ either way: seven nudges of rtol by 1e-10 relative gave the dense LU 4,718 to
 6,271 steps. Against a run at rtol 1e-9, the two LUs give the same errors, and
 `run.js --all` shows the same agreement with the references.
 
-The page also offers seven solvers ported from DifferentialEquations.jl. They
-are a package of their own, `resources/js/ode/julia/`, with its own tests under
-`resources/tests/ode/julia/`; what is checked here is only that they are on the
-menu and that one of them runs the model in the page.
+The page also offers Kompartment's other solvers: Auto, Rosenbrock 2-3 and
+Dormand-Prince 4-5 from the shared solver core, and eleven methods ported from
+DifferentialEquations.jl. The ported ones are a package of their own,
+`resources/js/ode/julia/`, with its own tests under `resources/tests/ode/julia/`;
+what is checked here is that every method is on the menu and in the worker,
+that each meets the events of `test-features.js`, that the settings shown are
+the ones each method reads, and that Auto and FBDF run the model in the page.
+`test-features.js` also checks what Auto does (the NDF from where the run
+turns stiff, explicit throughout where it never does, the NDF from the start
+for a model with algebraic variables, one switch across an event), that the
+first step and norm control reach the solvers, that the explicit methods read
+the output times off their own interpolants, and that the clock pass of the
+derivative and the Jacobian gives the same bits as working everything out on
+every call, an event that moves a constant included.
 
 ## The engine
 

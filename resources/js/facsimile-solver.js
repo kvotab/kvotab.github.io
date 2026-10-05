@@ -1,22 +1,25 @@
 /* ==========================================================================
    STIFF ODE/DAE SOLVER FOR facsimile.html AND rtm.html
 
-   The integrator and its linear algebra are the shared solver core,
+   The integrators and their linear algebra are the shared solver core,
    resources/js/ode/core/ and solvers/ (loaded as ode-core.js, the global
    OdeCore): the variable-order NDF/BDF for M·dy/dt = f(t, y) with M a
    diagonal of ones and zeros, its iteration matrix M - h*J factorised by
    whichever of a sparse LU that keeps its pivots, a searching Gilbert-Peierls
    LU and a dense LU the measured fill says is cheapest, differenced Jacobians
-   through the pattern, and event location. Kompartment runs the same
+   through the pattern, event location, and the one-step Rosenbrock 2-3 and
+   Dormand-Prince 4-5 with the driver they share. Kompartment runs the same
    modules.
 
    What is here is this page's side of it:
 
      ndf          the integrator in this page's calling convention, with this
                   page's settings: see below
+     oneStep      Rosenbrock 2-3 and Dormand-Prince 4-5 the same way
      runModel     a compiled model over [0, tend], restarted at each terminal
                   event after applying it, with the output grid and the
                   bounded store of points
+     options, notes   which of the pages' solver settings each of these reads
      consistentInitial, parseSpeciesTolerances, speciesAtol
 
    and, for the tests and the worker, the core's own pieces under the names
@@ -42,6 +45,55 @@
     SolverError, CSC, cscFromTriplets, SparseLU, DenseLU, RefactorLU,
     makeIterationMatrix, colourColumns, differenceJacobian, reverseCuthillMcKee, crossingTolerance,
   } = core;
+
+  /**
+   * Which of the pages' solver settings each of this file's methods reads.
+   *
+   * Declared here, beside the code that passes them on, because that is the
+   * only place the answer can be kept honest; the ported methods declare
+   * theirs in facsimile-ode-julia.js the same way. A page shows the rows a
+   * method reads and names the ones it does not. Keys a page has no row for
+   * (rtm.html has no per-species tolerance and no reading of negatives as
+   * zero) are simply not shown there.
+   *
+   *   ndf     the NDF, with its BDF formulas switch
+   *   ros23   Rosenbrock 2-3: no order to cap, no Newton iteration and so no
+   *           stall tolerance, its Jacobian formed every step, no LU to
+   *           choose (its fill decides), and a fixed norm of its own
+   *   dp45    Dormand-Prince 4-5: explicit, so no matrix and no Jacobian
+   */
+  const STEP_KEYS = ['hmax', 'h0', 'maxSteps'];
+  const OPTIONS = Object.freeze({
+    ndf: ['bdf', 'rtol', 'atol', 'atolSpecies', 'norm', 'normControl', 'maxOrder', ...STEP_KEYS, 'matrix',
+      'jacobian', 'belowTolRun', 'stagnationTol', 'autoAtol', 'clamp', 'nonNegative'],
+    ros23: ['rtol', 'atol', 'atolSpecies', ...STEP_KEYS, 'jacobian', 'clamp', 'nonNegative'],
+    dp45: ['rtol', 'atol', 'atolSpecies', ...STEP_KEYS, 'clamp', 'nonNegative'],
+  });
+
+  /** The settings `id` reads, or null if it is not one of this file's methods. */
+  const options = (id) => (OPTIONS[id] ? OPTIONS[id].slice() : null);
+
+  /**
+   * Settings a method reads, but not as the NDF does. Keeping species
+   * non-negative is three things in the NDF: the derivative damped so that a
+   * species at zero cannot be pushed below it, any violation folded into the
+   * error test, and the accepted step projected back. Rosenbrock 2-3 does all
+   * three; Dormand-Prince's stages would straddle the kink a damped derivative
+   * makes, so it does the last two.
+   */
+  const NOTES = Object.freeze({
+    ndf: {},
+    ros23: {},
+    dp45: {
+      nonNegative: 'by folding a violation into the error test and projecting each accepted step '
+        + 'back to zero, without the damped derivative of the NDF: an explicit method’s stages '
+        + 'would straddle the kink it makes',
+    },
+  });
+  const notes = (id) => (NOTES[id] ? { ...NOTES[id] } : null);
+
+  /** What the methods of this file are called, as the run reports them. */
+  const LABELS = Object.freeze({ ndf: 'NDF', ros23: 'Rosenbrock 2-3', dp45: 'Dormand–Prince 4-5' });
 
   /**
    * Earliest crossing in (tL, tR], or null, in this page's argument order:
@@ -77,8 +129,8 @@
    * @param {object} opts
    *   rtol, atol (number|array), maxOrder (1-5), bdf (bool), hmax, h0, maxSteps,
    *   nonNegative (bool[] or null), mass (diagonal: 1 differential, 0 algebraic),
-   *   suppressAlgebraic, norm ('max'|'rms'), scaling, minNewton, stagnationTol,
-   *   belowTolRun, autoAtol,
+   *   suppressAlgebraic, norm ('max'|'rms'), normControl, scaling, minNewton,
+   *   stagnationTol, belowTolRun, autoAtol,
    *   jacobian: {pattern, evaluate(t,y), groups} -- `evaluate` optional (differenced through the pattern),
    *   matrix: 'auto'|'refactor'|'sparse'|'dense',
    *   events: {n, direction:Int8Array, enabled?:Uint8Array, fun(t,y,out)} or null (all terminal),
@@ -111,6 +163,7 @@
       abstol: opts.atol,
       autoAbstol: !!opts.autoAtol,
       errorNorm: opts.norm || 'max',
+      normControl: !!opts.normControl,
       maxOrder: opts.maxOrder,
       bdf: !!opts.bdf,
       hmax: opts.hmax,
@@ -146,6 +199,93 @@
       series = { t: Float64Array.from(T), y: Y };
     }
     return { t: res.end.t, y: res.end.y, stopped: res.stopped, series, stats: res.stats };
+  }
+
+  /**
+   * What these pages add to the one-step methods' messages: the setting that
+   * holds a species at zero, by the name both panels give it.
+   */
+  const ONE_STEP_HINTS = Object.freeze({
+    floor: 'untick "Keep every species non-negative" under Advanced settings to see what the model really does',
+  });
+
+  /**
+   * Rosenbrock 2-3 or Dormand-Prince 4-5 of the shared core, in the shape
+   * runModel calls a solver in: one segment, from t0 to tfinal or to the first
+   * event, with the accepted steps handed to `onAccepted` and only the end
+   * handed back.
+   *
+   * Kompartment's own two, and the same files: the method is the core's, and
+   * so are its defaults -- a tenth of the run for the longest step, the first
+   * step from the derivative at the start, twenty failing steps at the floor
+   * in a row before it stops. What is this page's is the Jacobian: a pattern
+   * with no evaluator is differenced through it in groups of columns that
+   * share no row, rather than a column at a time.
+   *
+   * @param {'ros23'|'dp45'} id
+   */
+  function oneStep(id) {
+    const method = id === 'ros23' ? core.rosenbrockMethod : id === 'dp45' ? core.dormandPrinceMethod : null;
+    if (!method) throw new SolverError('solver', `'${id}' is not one of the one-step methods`, 0);
+    let groups = null;
+    const solve = function solveOneStep(f, t0, tfinal, y0, opts = {}) {
+      const Jopt = opts.jacobian || null;
+      let jacobian = null;
+      if (id === 'ros23' && Jopt && Jopt.pattern) {
+        if (!groups) groups = colourColumns(Jopt.pattern);
+        jacobian = {
+          pattern: Jopt.pattern,
+          evaluate: Jopt.evaluate || (() => null),
+          groups,
+          // A matrix that cannot change is formed once a segment rather than
+          // once a step, which a Rosenbrock method otherwise does by definition:
+          // Kompartment's `constant`, which turns n+1 evaluations a step into
+          // one. Handed apart from the Jacobian object, which the NDF reads,
+          // whose results it would move at round-off.
+          constant: !!opts.jacobianConstant,
+        };
+      }
+      // Dormand-Prince reads the output times off its own quartic, which on
+      // its long steps beats the cubic the driver would draw between them;
+      // Rosenbrock 2-3's own is a quadratic, and it leaves them to the driver.
+      let tspan = [t0, tfinal];
+      let onOutput;
+      if (id === 'dp45' && opts.gridTimes && opts.ownGrid && opts.ownGrid(true)) {
+        const dir = Math.sign(tfinal - t0);
+        const inside = Array.prototype.filter.call(opts.gridTimes, (tq) => dir * (tq - t0) > 0 && dir * (tfinal - tq) > 0);
+        tspan = [t0, ...inside, tfinal];
+        onOutput = (tq, at) => opts.onGrid(tq, at);
+      }
+      const res = core.integrate(method, f, tspan, y0, {
+        onOutput,
+        rtol: opts.rtol,
+        abstol: opts.atol,
+        hmax: opts.hmax,
+        h0: opts.h0,
+        maxSteps: opts.maxSteps,
+        nonNegative: opts.nonNegative || null,
+        events: opts.events || null,
+        jacobian,
+        onAccepted: opts.onAccepted,
+        onStep: opts.onStep ? (_fraction, nsteps, t) => opts.onStep(t, nsteps) : undefined,
+        hints: { ...ONE_STEP_HINTS, ...(opts.hints || {}) },
+      });
+      const s = res.stats;
+      const end = res.stopped || { t: res.t[res.t.length - 1], y: res.y[res.y.length - 1] };
+      return {
+        t: end.t,
+        y: end.y,
+        stopped: res.stopped,
+        stats: {
+          nsteps: s.nsteps, nfailed: s.nfailed, nfevals: s.nfevals, npds: s.npds || 0,
+          ndecomps: s.ndecomps || 0, nsolves: 0, nbelowtol: s.nbelowtol, negative: s.negative,
+          sparse: !!s.sparse, fill: s.fill ?? null, lu: s.sparse ? 'sparse' : (id === 'ros23' ? 'dense' : null),
+          solver: LABELS[id],
+        },
+      };
+    };
+    solve.label = LABELS[id];
+    return solve;
   }
 
   /* ======================================================================
@@ -346,8 +486,11 @@
    * event after applying it.
    *
    * @param {object} model   from FacsimileModel.compile
-   * @param {object} opts    solver ('ndf' or a function), bdf (the BDF formulas: every
-   *                         kappa zero, for the NDF and for QNDF), tend (s), rtol, atol,
+   * @param {object} opts    solver ('ndf', 'ros23', 'dp45' or a function), bdf (the BDF
+   *                         formulas: every kappa zero, for the NDF and for QNDF), tend (s),
+   *                         rtol, atol, h0 (the first step, s; at the start and at every
+   *                         restart), normControl (the NDF's), hints (for the one-step
+   *                         methods' messages),
    *                         atolSpecies ({NAME: value} overriding atol for those species),
    *                         nonNegative (bool), matrix, jacobianMode ('analytic'|'numeric'),
    *                         maxOrder, onProgress(t, nsteps), maxPoints (how many
@@ -363,19 +506,6 @@
     // solvers are run: facsimile-ode-julia.js wraps each one in this same
     // signature, reporting its steps the same way, so everything below is
     // unchanged whichever is chosen.
-    // A model with algebraic variables is a differential-algebraic system,
-    // and only the solver in this file knows what to do with the mass matrix.
-    // The ported ones would read a constraint residual as a rate of change
-    // and integrate it, which is not a slower answer but a wrong one, so they
-    // are refused rather than allowed to produce it.
-    if (model.nalgebraic && typeof opts.solver === 'function') {
-      throw new SolverError('solver',
-        `This model has ${model.nalgebraic} algebraic variable${model.nalgebraic === 1 ? '' : 's'} `
-        + `(${(model.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
-        + 'system. The ported solvers do not take a mass matrix and would integrate the '
-        + 'constraint residuals as if they were rates of change. Use NDF, with its BDF '
-        + 'formulas or without.', 0);
-    }
     let solver;
     if (typeof opts.solver === 'function') solver = opts.solver;
     // The plain BDFs are the NDF with every kappa zero: `bdf: true`, which is
@@ -383,6 +513,7 @@
     // script, a test -- that names it as the solver it was before the pages
     // made it a switch.
     else if (opts.solver == null || opts.solver === 'ndf' || opts.solver === 'bdf') solver = ndf;
+    else if (opts.solver === 'ros23' || opts.solver === 'dp45') solver = oneStep(opts.solver);
     else {
       // A name nothing here answers to -- a Julia port where the adapter did
       // not load, most likely. Refused rather than quietly served by the NDF,
@@ -390,6 +521,20 @@
       throw new SolverError('solver',
         `There is no solver called "${opts.solver}" here. The ported solvers are `
         + 'wired up in facsimile-ode-julia.js, which has to be loaded first.', 0);
+    }
+    // A model with algebraic variables is a differential-algebraic system,
+    // and only the NDF knows what to do with the mass matrix -- or a solver
+    // that hands such a model to it, as the switching one does. The others
+    // would read a constraint residual as a rate of change and integrate it,
+    // which is not a slower answer but a wrong one, so they are refused
+    // rather than allowed to produce it.
+    if (model.nalgebraic && solver !== ndf && !solver.takesMass) {
+      throw new SolverError('solver',
+        `This model has ${model.nalgebraic} algebraic variable${model.nalgebraic === 1 ? '' : 's'} `
+        + `(${(model.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
+        + `system. ${solver.label || 'This solver'} takes no mass matrix and would integrate the `
+        + 'constraint residuals as if they were rates of change. Use NDF, with its BDF '
+        + 'formulas or without.', 0);
     }
     const tend = opts.tend;
     if (!(tend > 0)) throw new SolverError('span', 'The simulated time must be positive', 0);
@@ -495,8 +640,26 @@
         gi++;
       }
     }
+    /*
+      A solver may read the output times off its own interpolant instead,
+      and says so for the part of a segment it does it for (`ownGrid`): an
+      explicit method of high order, whose steps on a smooth stretch are
+      long enough that the cubic between them is the larger error -- Vern7's
+      rows were 1e-4 out on a plain exponential at rtol 1e-6, its own steps
+      1e-8. It hands the rows over in order through `onGrid`, and the cubic
+      takes over again from its last accepted step when it stops.
+    */
+    let solverGrid = false;
+    const ownGrid = (on) => { solverGrid = !!on && !!wanted; return solverGrid; };
+    const onGrid = (tq, yq) => {
+      if (!solverGrid || gi >= wanted.length || wanted[gi] !== tq) return;
+      gridT.push(tq);
+      gridY.push(Float64Array.from(yq));
+      gi++;
+    };
     const fillGrid = (t1, y1) => {
       if (!wanted) return;
+      if (solverGrid) { prevT = t1; prevY.set(y1); return; }
       if (!(t1 > prevT)) { prevT = t1; prevY.set(y1); return; }
       if (gi < wanted.length && wanted[gi] <= t1) {
         const h = t1 - prevT;
@@ -533,6 +696,14 @@
 
     const eventLog = [];
     const total = { nsteps: 0, nfailed: 0, nfevals: 0, npds: 0, ndecomps: 0, nsolves: 0, nbelowtol: 0, negative: 0, repivots: 0, fallbacks: 0, segments: 0 };
+    // What a solver may carry from one segment of the run to the next, the run
+    // being restarted at every event: the switching solvers keep here whether
+    // they ended stiff, and go on from there. One object for the whole run.
+    const carry = {};
+    // The instants the model's clock-read tables turn at, for the switching
+    // solver's explicit methods to land on. See tableCorners in the models.
+    const tableCorners = typeof model.tableCorners === 'function'
+      ? (a, b, most) => model.tableCorners(a, b, most) : null;
     // One array for the whole run when the tolerance is allowed to follow the
     // solution, so that what a species has already reached is remembered
     // across the restart at each event.
@@ -561,6 +732,15 @@
         nonNegative, jacobian, matrix: opts.matrix || 'auto', events, tStart: seg === 0 ? undefined : t0,
         mass: model.mass, suppressAlgebraic: opts.suppressAlgebraic,
         maxSteps: opts.maxSteps,
+        // The first step, at the start and at every restart after an event,
+        // as Kompartment hands its solvers one; and the NDF's norm control.
+        h0: opts.h0, normControl: opts.normControl,
+        // A Jacobian that never changes, for the methods that would otherwise
+        // form it every step. Never for a differenced one: a difference taken
+        // once, where much of the state is zero, loses entries to rounding.
+        jacobianConstant: analytic && !!model.jacobianConstant,
+        gridTimes: wanted, onGrid, ownGrid,
+        carry, tableCorners, hints: opts.hints,
         // Named one by one rather than spread, so that a solver can only be
         // handed what this driver knows it means. The cost of that is that a
         // new option has to be added here as well as at both ends, and
@@ -577,10 +757,18 @@
         throw e;
       }
       for (const key of ['nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'nbelowtol', 'negative', 'repivots', 'fallbacks']) total[key] += res.stats[key] || 0;
+      // The switching solvers' account: the steps each of their methods took,
+      // and how often they changed between them, summed over the segments.
+      if (res.stats.stepsBy) {
+        total.stepsBy = total.stepsBy || {};
+        for (const [name, k] of Object.entries(res.stats.stepsBy)) total.stepsBy[name] = (total.stepsBy[name] || 0) + k;
+        total.switches = (total.switches || 0) + (res.stats.switches || 0);
+      }
       info = res.stats;
       // Where a segment ends is worth keeping whatever the thinning says: it
       // is the answer at the end of the run, or the state an event fired at.
       fillGrid(res.t, res.y);
+      solverGrid = false;
       if (T[T.length - 1] !== res.t) { T.push(res.t); Y.push(Float64Array.from(res.y)); }
       if (!res.stopped) break;
       // At most maxEvents of them. This loop used to end after 50 segments,
@@ -643,5 +831,5 @@
     };
   }
 
-  return { ndf, runModel, MAX_EVENTS, consistentInitial, parseSpeciesTolerances, speciesAtol, SolverError, CSC, cscFromTriplets, SparseLU, DenseLU, RefactorLU, makeIterationMatrix, colourColumns, differenceJacobian, reverseCuthillMcKee, firstCrossing, crossingTolerance };
+  return { ndf, oneStep, runModel, options, notes, LABELS, ONE_STEP_HINTS, MAX_EVENTS, consistentInitial, parseSpeciesTolerances, speciesAtol, SolverError, CSC, cscFromTriplets, SparseLU, DenseLU, RefactorLU, makeIterationMatrix, colourColumns, differenceJacobian, reverseCuthillMcKee, firstCrossing, crossingTolerance };
 });

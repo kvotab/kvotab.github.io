@@ -1755,9 +1755,22 @@
     }
 
     /* ---- generated code: the rates and their derivatives -------------- */
-    // One function, compiled once, run per cell. `y` is the whole state and
-    // `b` the first index of this cell, so no slicing or copying happens.
-    const body = [];
+    // Two functions, compiled once, run per cell: the rates, which the
+    // derivative reads, and their derivatives, which only the Jacobian does.
+    // They were one, and every evaluation of the derivative -- several a step
+    // -- worked out the whole gradient of every rate law in every cell to
+    // throw it away; Kompartment's derivative stopped working out what only
+    // the Jacobian or the results read for the same reason. `y` is the whole
+    // state and `b` the first index of this cell, so no slicing or copying
+    // happens.
+    const rateBody = [];
+    const derivBody = [];
+    // Whether the Jacobian can change during a run. Transport is linear, the
+    // parameters and capacities are fixed when the model compiles, and nothing
+    // here reads the clock: so it can only move through a rate law whose
+    // derivative reads a concentration. A model with none -- decay chains,
+    // first-order sorption, a tracer -- has one matrix for the whole run.
+    let jacobianMoves = false;
     const derivIndex = [];      // where each channel's derivatives start in D
     let nd = 0;
     channels.forEach((ch, j) => {
@@ -1770,11 +1783,14 @@
         if (params.index.has(id)) return `P[pb + ${params.index.get(id)}]`;
         throw new RtmError(`"${id}" is not known here.`, line);
       };
-      body.push(`  R[${j}] = ${emit(ch.ast, resolve, ch.line)};`);
+      rateBody.push(`  R[${j}] = ${emit(ch.ast, resolve, ch.line)};`);
       derivIndex.push(nd);
       for (const dep of ch.deps) {
         const d = derivative(ch.ast, dep.id, ch.line);
-        body.push(`  D[${nd}] = ${emit(d, resolve, ch.line)};`);
+        const code = emit(d, resolve, ch.line);
+        // A derivative that reads no concentration is a number for the run.
+        if (/\by\[/.test(code)) jacobianMoves = true;
+        derivBody.push(`  D[${nd}] = ${code};`);
         nd++;
       }
     });
@@ -1788,8 +1804,7 @@
       assignments, so a part needs nothing from another. The parts are called
       in the order of the lines.
     */
-    let rates;
-    try {
+    const compileRates = (body) => {
       const chunks = [[]];
       let size = 0;
       for (const line of body) {
@@ -1799,10 +1814,16 @@
       }
       // eslint-disable-next-line no-new-func
       const parts = chunks.map((c) => new Function('y', 'b', 'P', 'pb', 'R', 'D', c.join('\n')));
-      rates = parts.length === 1 ? parts[0]
+      return parts.length === 1 ? parts[0]
         // eslint-disable-next-line no-new-func
         : new Function('parts', `"use strict";\nreturn function (y, b, P, pb, R, D) {\n${
           parts.map((_, k) => `  parts[${k}](y, b, P, pb, R, D);`).join('\n')}\n};`)(parts);
+    };
+    let rates;
+    let derivs;
+    try {
+      rates = compileRates(rateBody);
+      derivs = compileRates(derivBody);
     } catch (e) {
       throw new RtmError(`The generated rate code did not compile: ${e.message}`);
     }
@@ -2217,6 +2238,43 @@
     for (let k = flowIn.length - 1; k >= 0; k--) if (fixedAt[flowIn[k].row]) flowIn.splice(k, 1);
     for (let k = boundary.length - 1; k >= 0; k--) if (fixedAt[boundary[k].row]) boundary.splice(k, 1);
     const flowSlot = flowIn.map((f) => slot(f.row, f.col));
+    /*
+      The same terms as flat typed arrays, row by row, for the derivative's
+      loop: an array of objects is a property load and a pointer chase per
+      term, and on a column of four thousand states this loop was half of
+      every evaluation of the derivative. The rows are walked in order and
+      each is summed in a register; within a row the terms keep the order
+      they were made in, and nothing else touches a row between its terms,
+      so the derivative is the same to the last bit.
+    */
+    const nflow = flowIn.length;
+    const byRow = Array.from(flowIn, (_, k) => k).sort((p, q) => flowIn[p].row - flowIn[q].row || p - q);
+    const flowCol = Int32Array.from(byRow, (k) => flowIn[k].col);
+    const flowValue = Float64Array.from(byRow, (k) => flowIn[k].value);
+    const flowAt = Int32Array.from(byRow, (k) => flowSlot[k]);
+    const rowsFlowing = [];
+    const flowStarts = [0];
+    for (let k = 0; k < nflow; k++) {
+      const row = flowIn[byRow[k]].row;
+      if (!rowsFlowing.length || rowsFlowing[rowsFlowing.length - 1] !== row) {
+        if (rowsFlowing.length) flowStarts.push(k);
+        rowsFlowing.push(row);
+      }
+    }
+    flowStarts.push(nflow);
+    const flowRows = Int32Array.from(rowsFlowing);
+    const flowStart = Int32Array.from(flowStarts);
+    const nbound = boundary.length;
+    const boundRow = Int32Array.from(boundary, (f) => f.row);
+    const boundValue = Float64Array.from(boundary, (f) => f.value);
+    const heldStates = [];
+    for (let k = 0; k < fixedAt.length; k++) if (fixedAt[k]) heldStates.push(k);
+    const heldList = Int32Array.from(heldStates);
+    // Each channel's products and coefficients, likewise.
+    const chanSpecies = channels.map((ch) => Int32Array.from(ch.net, (e) => e[0]));
+    const chanCoef = channels.map((ch) => Float64Array.from(ch.net, (e) => e[1]));
+    const chanWhole = Uint8Array.from(channels, (ch) => (ch.whole ? 1 : 0));
+    const nchan = channels.length;
 
     /* ---- the model ------------------------------------------------------ */
     const R = new Float64Array(channels.length);
@@ -2242,31 +2300,33 @@
 
     function rhs(t, y, out) {
       out.fill(0);
-      for (let i = 0; i < nc; i++) {
-        const b = i * ns;
-        rates(y, b, P, i * np, R, D);
-        const sc = reactScale[i];
-        for (let j = 0; j < channels.length; j++) {
-          const r = R[j];
-          if (r === 0) continue;
-          const ch = channels[j];
-          const net = ch.net;
-          for (let m = 0; m < net.length; m++) {
-            const p = net[m][0];
-            if (fixedAt[b + p]) continue;
-            out[b + p] += net[m][1] * r * (ch.whole ? massOf[b + p] : sc);
+      if (nchan) {
+        for (let i = 0; i < nc; i++) {
+          const b = i * ns;
+          rates(y, b, P, i * np, R, D);
+          const sc = reactScale[i];
+          for (let j = 0; j < nchan; j++) {
+            const r = R[j];
+            if (r === 0) continue;
+            const sp = chanSpecies[j];
+            const coef = chanCoef[j];
+            const whole = chanWhole[j];
+            for (let m = 0; m < sp.length; m++) {
+              const p = sp[m];
+              if (fixedAt[b + p]) continue;
+              out[b + p] += coef[m] * r * (whole ? massOf[b + p] : sc);
+            }
           }
         }
       }
-      for (let k = 0; k < flowIn.length; k++) {
-        const f = flowIn[k];
-        out[f.row] += f.value * y[f.col];
+      for (let q = 0; q < flowRows.length; q++) {
+        const row = flowRows[q];
+        let acc = out[row];
+        for (let k = flowStart[q], end = flowStart[q + 1]; k < end; k++) acc += flowValue[k] * y[flowCol[k]];
+        out[row] = acc;
       }
-      for (let k = 0; k < boundary.length; k++) out[boundary[k].row] += boundary[k].value;
-      for (let i = 0; i < nc; i++) {
-        const b = i * ns;
-        for (let s = 0; s < ns; s++) if (fixedAt[b + s]) out[b + s] = 0;
-      }
+      for (let k = 0; k < nbound; k++) out[boundRow[k]] += boundValue[k];
+      for (let k = 0; k < heldList.length; k++) out[heldList[k]] = 0;
       // M dC/dt = f, so every term on the right -- reaction, transport and
       // boundary alike -- is divided by the coefficient of that row.
       if (anyMass) for (let k = 0; k < n; k++) out[k] *= invMass[k];
@@ -2277,7 +2337,7 @@
       V.fill(0);
       for (let i = 0; i < nc; i++) {
         const b = i * ns;
-        rates(y, b, P, i * np, R, D);
+        derivs(y, b, P, i * np, R, D);
         const sc = reactScale[i];
         for (let j = 0; j < channels.length; j++) {
           const ch = channels[j];
@@ -2294,7 +2354,7 @@
           }
         }
       }
-      for (let k = 0; k < flowSlot.length; k++) V[flowSlot[k]] += flowIn[k].value;
+      for (let k = 0; k < nflow; k++) V[flowAt[k]] += flowValue[k];
       if (anyMass) for (let k = 0; k < nnz; k++) V[k] *= invMass[rowOfSlot[k]];
       return V;
     }
@@ -2373,6 +2433,8 @@
       initialState: () => Float64Array.from(initial),
       rhs,
       jac,
+      // The Jacobian is the same at every state and time: see jacobianMoves.
+      jacobianConstant: !jacobianMoves,
       nevents: 0,
       events: [],
       eventValues: () => {},

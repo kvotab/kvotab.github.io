@@ -17,7 +17,7 @@
   // an entry whose imports changed while its own URL did not is served from
   // cache with the old import list, and the symptom is a solver that the page
   // offers and the worker has never heard of.
-  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20260923f';
+  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20261005';
   const YEAR_S = 365.25 * 86400;
 
   const $ = (id) => document.getElementById(id);
@@ -31,7 +31,8 @@
     presetId: '13g',
     solver: {
       method: 'ndf', bdf: false, rtol: '1e-5', atol: '1e-30', atolSpecies: '', norm: 'max',
-      maxOrder: 5, minOrder: 1, hmaxYears: '0', matrix: 'auto', jacobianMode: 'analytic',
+      maxOrder: 5, minOrder: 1, hmaxYears: '0', h0Years: '0', normControl: false,
+      matrix: 'auto', jacobianMode: 'analytic',
       kappa: '1e-3', maxJacAge: '20', maxSteps: '2000000', belowTolRun: '5',
       // rtm.html's two, which this page now offers too: left off, and the
       // engine's own store size.
@@ -429,9 +430,11 @@
     s.atol = $('facAtol').value.trim();
     s.atolSpecies = $('facAtolSpecies').value;
     s.norm = $('facNorm').value;
+    s.normControl = $('facNormControl').checked;
     s.maxOrder = parseInt($('facMaxOrder').value, 10) || 5;
     s.minOrder = parseInt($('facMinOrder').value, 10) || 1;
     s.hmaxYears = $('facHmax').value.trim();
+    s.h0Years = $('facH0').value.trim();
     s.matrix = $('facMatrix').value;
     s.jacobianMode = $('facJacobian').value;
     s.kappa = $('facKappa').value.trim();
@@ -446,21 +449,25 @@
     s.nonNegative = $('facNonNeg').checked;
   }
   /**
-   * Which of the page's solver settings the built-in NDF reads.
-   *
-   * Not the ones added for the ported solvers: they have no minimum order,
-   * they decide for themselves how long to keep a Jacobian, their Newton
-   * iteration has its own convergence test rather than a κ, and their error
-   * estimate is not smoothed. Those four are genuinely not their settings,
-   * rather than settings they happen to ignore.
+   * Which of the page's solver settings `method` reads: declared beside the
+   * code that hands the settings over, FacsimileODE.options for the solver
+   * core's own methods and FacsimileOdeJulia.options for the ported ones,
+   * because that is the only place the answer stays honest.
    */
-  const BUILTIN_OPTIONS = ['bdf', 'rtol', 'atol', 'atolSpecies', 'norm', 'maxOrder', 'hmax', 'matrix',
-    'jacobian', 'belowTolRun', 'maxSteps', 'stagnationTol', 'autoAtol', 'clamp', 'nonNegative'];
+  function optionsFor(method) {
+    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) return FacsimileOdeJulia.options(method) || [];
+    return FacsimileODE.options(method) || [];
+  }
 
-  /** Whether `method` has the BDF formulas switch: the NDF, and QNDF. */
+  /** Settings `method` reads, but not as the NDF does, with what it does instead. */
+  function notesFor(method) {
+    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) return FacsimileOdeJulia.notes(method) || {};
+    return FacsimileODE.notes(method) || {};
+  }
+
+  /** Whether `method` has the BDF formulas switch: the NDF, Auto through it, and QNDF. */
   function readsBdf(method) {
-    const julia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
-    return (julia ? FacsimileOdeJulia.options(method) : BUILTIN_OPTIONS).includes('bdf');
+    return optionsFor(method).includes('bdf');
   }
 
   /** What the reader should see a setting called, when told it is not used. */
@@ -470,8 +477,10 @@
     atol: 'the absolute tolerance',
     atolSpecies: 'per-species absolute tolerances',
     norm: 'the error norm',
+    normControl: 'norm control',
     maxOrder: 'the maximum order',
     hmax: 'the maximum step',
+    h0: 'the first step',
     matrix: 'the choice of iteration matrix',
     jacobian: 'the choice of Jacobian',
     minOrder: 'the minimum order',
@@ -497,12 +506,8 @@
    */
   function updateSolverOptions() {
     const method = $('facMethod').value;
-    let allowed = BUILTIN_OPTIONS;
-    let partial = {};
-    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)) {
-      allowed = FacsimileOdeJulia.options(method);
-      partial = FacsimileOdeJulia.notes(method) || {};
-    }
+    const allowed = optionsFor(method);
+    const partial = notesFor(method);
     const set = new Set(allowed);
     const dropped = [];
     document.querySelectorAll('[data-solver-opt]').forEach((el) => {
@@ -576,9 +581,11 @@
     $('facAtol').value = s.atol;
     $('facAtolSpecies').value = s.atolSpecies || '';
     $('facNorm').value = s.norm;
+    $('facNormControl').checked = !!s.normControl;
     $('facMaxOrder').value = String(s.maxOrder);
     $('facMinOrder').value = String(s.minOrder ?? 1);
     $('facHmax').value = s.hmaxYears;
+    $('facH0').value = s.h0Years ?? '0';
     $('facMatrix').value = s.matrix;
     $('facJacobian').value = s.jacobianMode;
     $('facKappa').value = s.kappa ?? '1e-3';
@@ -1071,6 +1078,8 @@
     }
     const hmaxYears = Number(s.hmaxYears || 0);
     if (!(hmaxYears >= 0)) throw new Error('The maximum step must be a non-negative number of years');
+    const h0Years = Number(s.h0Years || 0);
+    if (!(h0Years >= 0)) throw new Error('The first step must be a non-negative number of years');
     const tendSetting = state.compiled && state.compiled.settings.find((x) => x.name === 'TEND');
     const tendYears = tendSetting ? Number(tendSetting.value) : 500;
     if (!(tendYears > 0)) throw new Error('TEND (the simulated time in years) must be positive');
@@ -1090,8 +1099,10 @@
     if (!(maxPoints >= 1000)) throw new Error('Points kept must be at least 1000');
     const minOrder = Math.min(s.minOrder, s.maxOrder);
     return {
-      method: s.method, bdf: !!s.bdf, rtol, atol, atolSpecies, norm: s.norm, maxOrder: s.maxOrder, minOrder,
-      hmaxSeconds: hmaxYears > 0 ? hmaxYears * YEAR_S : 0, matrix: s.matrix, jacobianMode: s.jacobianMode,
+      method: s.method, bdf: !!s.bdf, rtol, atol, atolSpecies, norm: s.norm, normControl: !!s.normControl,
+      maxOrder: s.maxOrder, minOrder,
+      hmaxSeconds: hmaxYears > 0 ? hmaxYears * YEAR_S : 0, h0Seconds: h0Years > 0 ? h0Years * YEAR_S : 0,
+      matrix: s.matrix, jacobianMode: s.jacobianMode,
       kappa, maxJacAge, maxSteps, belowTolRun, stagnationTol, maxPoints,
       autoAtol: s.autoAtol, smoothEst: s.smoothEst, nonNegative: s.nonNegative, tendYears,
     };
@@ -1136,31 +1147,33 @@
   /**
    * Whether this solver can be run here, and if not, why not.
    *
-   * The Julia ports need a worker: on this model they can run for minutes, and
-   * minutes on the main thread is a frozen tab with a Stop button nobody can
-   * click. The built-in NDF is quick enough to run inline when there is no worker.
+   * Every method but the NDF and Auto needs a worker: on this model they can
+   * run for minutes, and minutes on the main thread is a frozen tab with a
+   * Stop button nobody can click. The NDF is quick enough to run inline when
+   * there is no worker, and so is Auto, whose stiff part is the NDF's.
    */
   function methodRefusal(method) {
     // A model with algebraic variables is a differential-algebraic system.
-    // Only the built-in NDF takes a mass matrix; the ported solvers would
-    // integrate the constraint residuals as if they were rates of change,
-    // which is a wrong answer rather than a slow one. Said before the run
-    // rather than thrown part-way through it.
+    // Only the NDF takes a mass matrix, and Auto hands such a model to it; the
+    // others would integrate the constraint residuals as if they were rates
+    // of change, which is a wrong answer rather than a slow one. Said before
+    // the run rather than thrown part-way through it.
     const m = state.compiled;
-    if (m && m.nalgebraic && method !== 'ndf') {
+    if (m && m.nalgebraic && method !== 'ndf' && method !== 'auto') {
       return `This model has ${m.nalgebraic} algebraic variable${m.nalgebraic === 1 ? '' : 's'} `
         + `(${(m.algebraicNames || []).join(', ')}), which makes it a differential-algebraic `
-        + 'system. The ported solvers do not take a mass matrix. Use NDF, with its BDF '
-        + 'formulas or without.';
+        + `system. ${methodLabel()} takes no mass matrix. Use NDF, with its BDF `
+        + 'formulas or without, or Auto, which hands such a model to the NDF.';
     }
     ensureWorker();
     // Where the run would happen first, because that explains the refusal
     // usefully; the stale-copy message is the fallback for a worker that is
     // missing something for a reason the placement does not account for.
-    if (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method)
-      && workerKind !== 'worker') {
-      return `${FacsimileOdeJulia.label(method)} can run for minutes on this model, and `
-        + `there is nowhere to run it but the page itself. ${INLINE_NOTE} Use NDF.`;
+    const quick = method === 'ndf'
+      || (typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.quick(method));
+    if (!quick && workerKind !== 'worker') {
+      return `${methodLabel()} can run for minutes on this model, and `
+        + `there is nowhere to run it but the page itself. ${INLINE_NOTE} Use NDF or Auto.`;
     }
     if (worker && workerSolvers && !workerSolvers.includes(method)) {
       return `The background worker does not have ${method}. That usually means the browser `
@@ -1267,15 +1280,21 @@
     const kept = st.stride > 1
       ? ` <b>${st.points.toLocaleString()} points kept</b>, one in ${st.stride}`
       : ` ${st.points ? st.points.toLocaleString() : ''} points`;
+    const methods = methodSteps(st);
+    // An explicit method, and FBDF by GMRES, factorise nothing.
+    const matrix = !st.ndecomps
+      ? '.<br>Iteration matrix I − hJ: <b>none formed</b>'
+      : `.<br>Iteration matrix I − hJ: <b>${st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU'}</b>`
+        + (st.lu === 'refactor'
+          ? ` (${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} order; the pivots were chosen again ${st.repivots} time${st.repivots === 1 ? '' : 's'}${st.fallbacks ? `, and ${st.fallbacks} factorisation${st.fallbacks === 1 ? '' : 's'} went to the dense LU` : ''})`
+          : st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense${st.ordering ? `, ${st.ordering} ordering` : ''})` : '');
     return `<b>${st.solver}</b>: ${st.nsteps.toLocaleString()} steps (${st.nfailed.toLocaleString()} rejected),`
       + `${kept}, ${st.nfevals.toLocaleString()} evaluations of f, ${st.npds} Jacobians, ${st.ndecomps} LU factorisations, ${st.nsolves.toLocaleString()} solves`
       + (st.nbelowtol ? `, <b>${st.nbelowtol} step${st.nbelowtol === 1 ? '' : 's'} accepted below tolerance</b>` : '')
       + (st.restarts ? `, <b>rebuilt ${st.restarts} time${st.restarts === 1 ? '' : 's'}</b> where the step size stalled` : '')
       + (st.negative ? `, ${st.negative} projections onto zero` : '')
-      + `.<br>Iteration matrix I − hJ: <b>${st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU'}</b>`
-      + (st.lu === 'refactor'
-        ? ` (${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} order; the pivots were chosen again ${st.repivots} time${st.repivots === 1 ? '' : 's'}${st.fallbacks ? `, and ${st.fallbacks} factorisation${st.fallbacks === 1 ? '' : 's'} went to the dense LU` : ''})`
-        : st.fill != null ? ` (the sparse factor has ${st.fill} entries against ${st.n * st.n} dense, ${st.ordering} ordering)` : '')
+      + (methods ? `.<br>Methods: ${esc(methods)}` : '')
+      + matrix
       + `; Jacobian ${st.nnz} non-zeros of ${st.n}×${st.n}.`
       + (st.consistentStart && st.consistentStart.moved > 1e-12
         ? `<br>Algebraic start: the constraints were solved in ${st.consistentStart.iterations} iteration${
@@ -1285,6 +1304,19 @@
         ? `<br>Output grid: ${state.result.grid.n.toLocaleString()} of the ${
           (state.result.gridWanted || state.result.grid.n).toLocaleString()} times the model asks for.` : '')
       + (evs ? `<br>${evs}` : '');
+  }
+
+  /**
+   * The switching solvers' account of a run, in words: which of their
+   * methods took how many of the steps, and how often they changed between
+   * them -- "Tsit5 4 steps, NDF 4986; 1 switch". Kompartment's run log says it
+   * the same way. Null for every other method.
+   */
+  function methodSteps(st) {
+    if (!st || !st.stepsBy) return null;
+    const parts = Object.entries(st.stepsBy).map(([name, k], i) => `${name} ${k.toLocaleString()}${i === 0 ? ` step${k === 1 ? '' : 's'}` : ''}`);
+    const sw = st.switches || 0;
+    return `${parts.join(', ')}; ${sw} switch${sw === 1 ? '' : 'es'}`;
   }
 
   function stop() {
@@ -2212,7 +2244,7 @@
      it is called each time its panel opens, and again by KvotInfo.refresh()
      when a setting changes under an open panel. Which methods read a solver
      setting is worked out from the declarations updateSolverOptions uses
-     (BUILTIN_OPTIONS, FacsimileOdeJulia.options), so the panel and its (i)s
+     (optionsFor: FacsimileODE.options, FacsimileOdeJulia.options), so the panel and its (i)s
      cannot disagree about it. The case settings are the model's own, so
      their topics are made from the compiled lines (caseTopic) and registered
      again after every compile (setupInfo).
@@ -2224,7 +2256,7 @@
   function readers(key) {
     const menu = Array.from($('facMethod').options);
     const names = menu
-      .filter((o) => (isPort(o.value) ? FacsimileOdeJulia.options(o.value) || [] : BUILTIN_OPTIONS).includes(key))
+      .filter((o) => optionsFor(o.value).includes(key))
       .map((o) => o.textContent.replace(/\s*\(.*$/, '').trim());
     if (!names.length) return 'none';
     return names.length === menu.length ? 'every method' : listOf(names);
@@ -2232,12 +2264,20 @@
 
   /** What each method on the menu is, and what it costs on this model. */
   const METHOD_NOTES = {
-    ndf: 'This page’s own: the numerical differentiation formulas of Shampine and Reichelt, of orders 1 to 5. The one to use: a 500-year case takes a second or two. With BDF formulas ticked it runs the plain backward differentiation formulas. The only method that takes a model with algebraic variables.',
-    julia_fbdf: 'A multistep formula of variable order that reuses one matrix factorisation across many steps. About as quick as the NDF on this model, and an independent check that costs nothing.',
-    julia_qndf: 'The same numerical differentiation formulas as the NDF, written by other people: the most direct check there is on it. With BDF formulas ticked it runs as QBDF. About three times the steps of the NDF on this model.',
-    julia_kencarp4: 'A diagonally implicit Runge–Kutta method of order 4, cheap at moderate and loose tolerances. The dearest here that finishes: about ten times the steps of the NDF.',
+    ndf: 'This page’s own: the numerical differentiation formulas of Shampine and Reichelt, of orders 1 to 5. The one to use: a 500-year case takes under a second. With BDF formulas ticked it runs the plain backward differentiation formulas. With Auto, the only method that takes a model with algebraic variables.',
+    auto: 'Starts on an explicit method (Tsit5, or Vern7 below a relative tolerance of 1e-5) at a tenth of the tolerances, watches every step for stiffness as DifferentialEquations.jl’s default does, and hands the rest of the run to the NDF once it finds it. This model is stiff from the first second: a few explicit steps, then the NDF’s cost. A model that never turns stiff stays explicit throughout, and one with algebraic variables is the NDF’s from the start.',
+    ros23: 'The Rosenbrock (2,3) pair of Shampine and Reichelt, Kompartment’s: one Jacobian and one factorisation a step, no Newton iteration, second order. Steady through a discontinuity, and here far too slow: it runs out of two million steps about 140 years into a 500-year case.',
+    dp45: 'The explicit Dormand–Prince (4,5) pair, Kompartment’s: no Jacobian and no matrix. For a model that is not stiff; this one is, and it stops in its first nanosecond.',
+    julia_auto: 'DifferentialEquations.jl’s DefaultODEAlgorithm as it is: Tsit5 or Vern7 until the run turns stiff, then Rosenbrock23 up to 50 states (Rodas5P below a relative tolerance of 1e-6), FBDF up to 500 and FBDF by GMRES above, and back when the stiffness passes. For comparing with Julia; on this model it is FBDF’s cost.',
+    julia_fbdf_krylov: 'FBDF with its Newton iterations solved by GMRES instead of a factorised matrix: products J·v by differencing the model, nothing formed or stored. What DifferentialEquations.jl’s default takes above 500 states. On a model this stiff GMRES needs many iterations a step, and where the Jacobian is known, as here, the factorising FBDF is the faster.',
+    julia_rosenbrock23: 'The method of Rosenbrock 2-3 above, as DifferentialEquations.jl runs it: its step control, error norm and starting step. What its default takes when a small model turns stiff at an ordinary tolerance.',
+    julia_tsit5: 'Tsitouras’s explicit pair of order 5(4), SciML’s first choice for a non-stiff problem and where Auto starts. No Jacobian at all; on a stiff model its step is held to the edge of its stability, and on this one it runs out of steps in its first nanosecond.',
+    julia_vern7: 'Verner’s explicit pair of order 7(6), for tight tolerances on a non-stiff problem: where Auto starts below a relative tolerance of 1e-5. Stiff models defeat it as they do Tsit5.',
+    julia_fbdf: 'A multistep formula of variable order that reuses one matrix factorisation across many steps, SciML’s recommendation for large stiff systems. On this model about twenty times the NDF’s steps, and over a minute for a 500-year case.',
+    julia_qndf: 'The same numerical differentiation formulas as the NDF, written by other people: the most direct check there is on it. With BDF formulas ticked it runs as QBDF. The cheapest port on this model: about two and a half times the NDF’s steps, and ten seconds.',
+    julia_kencarp4: 'A diagonally implicit Runge–Kutta method of order 4, cheap at moderate and loose tolerances. About twice the steps of the NDF on this model, and more than twice as many rejected.',
     julia_radau5: 'Fully implicit, order 5 in three stages, and the least troubled by stiffness: the one to believe when two others disagree. It does not get through this model at an absolute tolerance of 1e-30.',
-    julia_rodas5p: 'A Rosenbrock method: one linear solve per stage and no Newton iteration, so nothing that can fail to converge. It does not get through this model at 1e-30; at 1e-20 it takes a few hundred steps.',
+    julia_rodas5p: 'A Rosenbrock method: one linear solve per stage and no Newton iteration, so nothing that can fail to converge. It does not get through this model: at an absolute tolerance of 1e-30 or of 1e-20 it uses up two million steps in the first fifteen years.',
     julia_trbdf2: 'Second order, L-stable and diagonally implicit: fast at loose tolerances. About five times the steps of the NDF on this model.',
   };
 
@@ -2312,14 +2352,14 @@
       const v = $('facMethod').value;
       return {
         kicker: 'Solver', title: 'Method',
-        lead: 'The integrator. Every one is a stiff solver handed the model’s analytic sparse Jacobian; they differ in their formulas, and on this model in what they cost. The Julia ports are methods of DifferentialEquations.jl, ported to JavaScript: nothing is downloaded, and they run in the page as the NDF does.',
-        facts: [['Default', 'NDF']],
+        lead: 'The integrator: the same methods Kompartment offers, under their own names. The first four are the solver core this page shares with Kompartment and rtm.html; the Julia ports are methods of DifferentialEquations.jl, ported to JavaScript. Nothing is downloaded, and they all run in the page.',
+        facts: [['Default', 'NDF'], ['Stiff, with the Jacobian', 'all but four'], ['Explicit', 'Dormand–Prince, Tsit5 and Vern7'], ['Switching', 'Auto and DefaultODEAlgorithm']],
         sections: [
           { choices: Array.from($('facMethod').options).map((o) => [o.textContent.trim(), METHOD_NOTES[o.value] || '', o.value === v]) },
           { heading: 'Keep in mind', list: [
-            'The Julia ports need a background worker. Where none can start, as in a copy of the page opened from a file, they are refused rather than run on the page, where a run of minutes is a frozen tab.',
-            'A model with an `<ALGEBRAIC>` section runs on the NDF only. The ports take no mass matrix and would integrate the constraint residuals as if they were rates of change.',
-            'The costs are for the 500-year case 13g at the page’s defaults, and say nothing about accuracy: every method that finishes agrees on the water left.',
+            'Every method but the NDF and Auto needs a background worker. Where none can start, as in a copy of the page opened from a file, they are refused rather than run on the page, where a run of minutes is a frozen tab.',
+            'A model with an `<ALGEBRAIC>` section runs on the NDF, or on Auto, which hands it to the NDF. The others take no mass matrix and would integrate the constraint residuals as if they were rates of change.',
+            'The costs are for the 500-year case 13g at the page’s defaults, and say nothing about accuracy: the water left is not converged at this tolerance, and scatters between methods.',
           ] },
         ],
         more: more('The Julia ports', 'help-julia'),
@@ -2332,7 +2372,7 @@
       sections: [
         { heading: 'How it is used', text: 'The error of each species is compared with `rtol·max(|y|, atol/rtol)`: a species above `atol/rtol` is judged against itself, one below it against the absolute tolerance.' },
         { heading: 'Choosing a scenario', text: 'sets it to the tolerance the Python port’s tests ran that case at.' },
-        { heading: 'Keep in mind', text: 'The water left after 500 years is not converged at 1e-5. On 13g it scatters between 36 and 66 g at tolerances from 1e-4 to 1e-6, not even monotonically, and settles at 65.94 g from 1e-7 down. If the number matters, tighten this to 1e-7 and check that it stops moving.' },
+        { heading: 'Keep in mind', text: 'The water left after 500 years is not converged at 1e-5. On 13g, with the NDF and the BDF, it scatters between 20 and 66 g at tolerances from 1e-4 to 1e-7, not even monotonically, and settles at 65.94 g from 1e-8 down. If the number matters, tighten this to 1e-8 and check that it stops moving.' },
       ],
       more: more('Read the table for cost, not for accuracy', 'help-converged'),
     },
@@ -2342,7 +2382,7 @@
       facts: [['Default', '1e-30 mol/cm³'], ['Allowed', '0 or more']],
       sections: [
         { text: 'The Python port used 1e-100 and below: purely relative control down to nothing, which is why it took minutes. 1e-30 leaves the species below it unresolved, which is where the physics stops mattering.' },
-        { heading: 'Keep in mind', text: 'A looser one makes every method cheaper here, and is worth trying before a method is given up on: Rodas5P, which does not get through this model at 1e-30, solves it in a few hundred steps at 1e-20. For a few species on their own, use the per-species tolerance under Advanced settings.' },
+        { heading: 'Keep in mind', text: 'A looser one makes most methods cheaper here, and is worth trying before a method is given up on: at 1e-20 the NDF takes about half its steps, and RadauIIA5, which does not finish at 1e-30, gets through in eleven minutes. For a few species on their own, use the per-species tolerance under Advanced settings.' },
       ],
       more: more('Solver settings: tolerances', 'help-tolerances'),
     },
@@ -2399,7 +2439,7 @@
       kicker: 'Solver', title: 'Maximum order',
       lead: 'The highest order the variable-order formulas may reach, from 1 to 5. Lower is steadier through a discontinuity and slower on a smooth stretch.',
       facts: [['Default', '5'], ['Read by', readers('maxOrder')]],
-      sections: [{ text: 'Only the multistep formulas have an order to cap. The one-step methods, Rodas5P, KenCarp4, TRBDF2 and RadauIIA5 (fixed at order 5 in three stages), do not show it.' }],
+      sections: [{ text: 'Only the multistep formulas have an order to cap. The one-step methods -- the Rosenbrocks, Dormand–Prince, Tsit5, Vern7, KenCarp4, TRBDF2 and RadauIIA5 (fixed at order 5 in three stages) -- do not show it. Auto hands it to the NDF once the run has turned stiff, and DefaultODEAlgorithm to FBDF.' }],
       more: more('Which settings apply', 'help-apply'),
     }),
     'set:minOrder': () => ({
@@ -2412,7 +2452,7 @@
     'set:hmax': {
       kicker: 'Solver', title: 'Maximum step',
       lead: 'The longest step the solver may take, in years.',
-      facts: [['Default', '0'], ['0, for the NDF', 'a tenth of the time it is integrating: the run, or what is left of it after an event'], ['0, for the Julia ports', 'no limit']],
+      facts: [['Default', '0'], ['0, for the NDF and the two one-step methods', 'a tenth of the time it is integrating: the run, or what is left of it after an event'], ['0, for the Julia ports', 'no limit'], ['0, for Auto', 'no limit while it is explicit, a tenth of what is left on the NDF']],
       sections: [
         { heading: 'When to set it', text: 'Where the model changes faster than its output can show and the solver steps over the change, and to catch an event whose trigger moves faster than the solution. A crossing is found from the sign of the trigger at the two ends of a step: an excursion that goes out and comes back inside one step is not seen at all, and one that is seen can be placed on an interpolant too coarse for it. On sin(t) against 0.9 the second crossing comes out at 3.01 where it belongs at 2.02. A cap makes the solver look more often.' },
         { heading: 'Keep in mind', text: 'A small cap makes a long run long: 1e-4 years over 500 years is five million steps.' },
@@ -2483,6 +2523,24 @@
       ],
       more: more('Solver settings: accept failing steps at the floor', 'help-floor'),
     }),
+    'set:h0': () => ({
+      kicker: 'Solver', title: 'First step',
+      lead: 'The first step to try, in years: at the start of the run, and again after every event, where the run is restarted. 0 lets the solver choose it from the derivative there, which is almost always better than a guess.',
+      facts: [['Default', '0: chosen by the solver'], ['Read by', readers('h0')]],
+      sections: [
+        { heading: 'When to set it', text: 'When the step the solver chooses to start with is far from what the start needs: a rate that is zero at the first instant and jumps a moment later, say. A first step that is too long is rejected and cut like any other, so a poor guess costs steps rather than accuracy.' },
+        { heading: 'Keep in mind', text: 'The same first step is tried after every event, which suits some restarts better than others. Auto hands it to its explicit start; once the run has turned stiff the NDF chooses its own.' },
+      ],
+    }),
+    'set:normControl': () => ({
+      kicker: 'Solver', title: 'Norm control',
+      lead: 'Judges the error of a step against the size of the whole solution rather than each species against its own: the 2-norm of the error over the larger of the 2-norms of the state before and after the step. MATLAB calls it NormControl.',
+      facts: [['Default', 'off'], ['Read by', readers('normControl')]],
+      sections: [
+        { text: 'With it on, the error norm above does not arise, and of the absolute tolerances only the first is read: the per-species ones do not enter.' },
+        { heading: 'Keep in mind', text: 'Far looser on a model whose species differ by orders of magnitude, which this one’s do by forty: every trace species is judged against water and nitrogen, and goes uncontrolled. It is off, and is there to match a result worked out that way.' },
+      ],
+    }),
     'set:maxSteps': () => ({
       kicker: 'Solver', title: 'Step budget',
       lead: 'How many steps the solver may take before it gives up, says so, and hands back what it had integrated.',
@@ -2537,8 +2595,10 @@
         facts: [['Default', 'on'], ['Read by', readers('nonNegative')]],
         sections: [
           { choices: [
-            ['NDF', 'All three: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. The Last run section counts the projections.', !port],
-            ['Julia ports', 'The projection only: each accepted step is put back onto zero.', port],
+            ['NDF and Rosenbrock 2-3', 'All three: the derivative of a species at or below zero may not take it lower, a step that leaves a species negative by more than the tolerance is rejected, and what is left below zero is projected back. The Last run section counts the projections.', ['ndf', 'ros23'].includes($('facMethod').value)],
+            ['Dormand–Prince 4-5', 'The last two: an explicit method’s stages would straddle the kink a held derivative makes.', $('facMethod').value === 'dp45'],
+            ['Auto', 'All three once the run is on the NDF; while it is explicit, the projection only.', $('facMethod').value === 'auto'],
+            ['Julia ports', 'The projection only: each accepted step is put back onto zero.', port && $('facMethod').value !== 'auto'],
           ] },
           { heading: 'Why it is on', text: 'With it every scenario of the study integrates in a second or two. A trace species that has drifted a little below zero is where the Newton iteration of a stiff solver comes to grief, because the derivative of the clamped rate law is zero on that side. The Python port ran without it and paid in tolerance and time.' },
           { heading: 'Keep in mind', text: 'An algebraic variable is never projected: its value is whatever satisfies its constraint.' },

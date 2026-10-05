@@ -5,8 +5,8 @@ that has the same shape in both places:
 
 ```
 ode/
-  core/       linear algebra and event location
-  solvers/    the integrators
+  core/       linear algebra, event location, the one-step methods' driver
+  solvers/    the integrators: the NDF, Dormand-Prince 4-5, Rosenbrock 2-3
   julia/      the solvers ported from DifferentialEquations.jl, a package of
     core/     their own: see julia/README.md
     solvers/
@@ -14,11 +14,18 @@ ode/
 
 Here in the site it is `resources/js/ode/`, and it is the source of truth. In
 Kompartment it is `kompartment/src/ode/`, where `core/`, `solvers/` and
-`julia/` hold byte copies of these files beside Kompartment's own: its
-one-step driver in `core/onestep.js`, its Dormand-Prince and Rosenbrock
-solvers in `solvers/`, and at the top the adapters that give each solver
-Kompartment's shape and the catalogue that names them. A module imports its
-neighbours by the same relative path in both trees.
+`julia/` hold byte copies of these files, and at the top the adapters that
+give each solver Kompartment's shape and the catalogue that names them. A
+module imports its neighbours by the same relative path in both trees.
+
+The three pages offer the same solvers, by the same method names: the NDF
+(with its BDF formulas switch), Auto, Rosenbrock 2-3 and Dormand-Prince 4-5
+from here, and the ported ones from `julia/` (DefaultODEAlgorithm, FBDF, FBDF
+by GMRES, QNDF, Rodas5P, Rosenbrock23, RadauIIA5, KenCarp4, TRBDF2, Tsit5,
+Vern7). Auto is an adapter's work rather than a module's: DefaultODEAlgorithm's
+explicit start with its stiff methods handed off, and the NDF from where the
+run turns stiff -- `julia-solvers.js` in Kompartment, `facsimile-ode-julia.js`
+for the two pages.
 
 The NDF of `solvers/ndf.js` is the variable-order NDF/BDF integrator (orders
 1–5, Shampine and Reichelt's numerical differentiation formulas, with the BDFs
@@ -70,7 +77,10 @@ Edit the modules here, then run the script. The core's own checks are
 | `core/refactor.js` | the sparse LU that keeps its pivots from one factorisation to the next |
 | `core/sparse.js` | CSC, the Gilbert-Peierls LU, reverse Cuthill-McKee, column colouring, differenced Jacobians, and `iterationMatrix`: which LU, decided by measured fill |
 | `core/events.js` | the earliest zero-crossing in a step, by safeguarded regula falsi on the interpolant |
-| `solvers/ndf.js` | the integrator |
+| `core/onestep.js` | the driver the one-step methods share: step control, the first step, events, output, the constraint, the stall guard |
+| `solvers/ndf.js` | the NDF/BDF integrator |
+| `solvers/dormand-prince.js` | the explicit Dormand-Prince (4,5) pair and its free quartic interpolant |
+| `solvers/rosenbrock23.js` | the Rosenbrock (2,3) pair of Shampine and Reichelt, sparse where the fill says it pays |
 
 The ported solvers keep their own linear algebra, in `julia/core/`:
 column-major storage, a complex LU for Radau's stages, and a sparse LU written
@@ -126,6 +136,61 @@ These are tunings, not different methods, and each was measured where it was
 set. Making them one set of values would change the answers of one page or
 another at round-off level, which is a decision about those pages, not about
 this code.
+
+## The one-step methods
+
+`integrate(method, f, tspan, y0, opts)` in `core/onestep.js` drives
+`dormandPrinceMethod` and `rosenbrockMethod` (`dormandPrince()` and
+`rosenbrock23()` are the two calls made ready). It reads `rtol`, `abstol`,
+`hmax` (a tenth of the span unless given), `hmin`, `h0`, `nonNegative`
+(per state, truthy), `maxSteps`, `maxConsecutiveMinStep` (20 steps at the
+floor in a row), `stallWindow`, `events`, `jacobian` (`{pattern, evaluate,
+groups, constant}`, Rosenbrock only), `onAccepted`, `onOutput`, `onStep` and
+`hints`, and returns a row per point of `tspan`.
+
+Its messages say what went wrong in the solver's terms; `hints` adds what the
+reader can do about it in a page's:
+
+| | Kompartment (`one-step.js`) | facsimile.html, rtm.html (`facsimile-solver.js`) |
+|---|---|---|
+| `floor` | turn "cannot go negative" off on the compartment | untick "Keep every species non-negative" |
+| `switches` | declare its switch times | facsimile.html: declare the switch as an event in `<EVENTS>`; rtm.html none |
+| `singular`, `singularDense` | about compartments and transfers | none |
+
+A single-file build puts every module of a package in one scope, so the names
+this file would share with the NDF's are its own: the error is `OneStepError`
+(also exported as `SolverError`, which is what Kompartment imports), and the
+stall guard's constants are `ONE_STEP_STALL_WINDOW` and `ONE_STEP_STALL_SPAN`.
+
+## Less work per call, in the pages' models
+
+The solvers here spend most of their time in a few calls made thousands of
+times, and Kompartment's ways of making those cheaper (INTERNALS, *Three
+passes, not one* and *Less work per call*) carry over to the two pages'
+compilers, with the same rule: the same arithmetic in the same order, so the
+same bits.
+
+- facsimile.html's derivative and Jacobian work out what reads only the
+  clock and the constants -- the temperature off its profile, the rate
+  constants that follow from it -- in a pass of their own, once for each
+  instant and each set of constants, rather than on every call; an event or
+  the making of the initial state says the constants have moved
+  (`splitByClock` in `facsimile-model.js`). A stiff step asks for the
+  derivative about three times at one instant.
+- rtm.html's derivative works out the rates and not their gradients, which
+  only the Jacobian reads, and the Jacobian the gradients and not the rates;
+  the transport terms are summed row by row from typed arrays, each row's
+  terms in the order they were made.
+- A Jacobian that cannot change -- rtm.html's on a model whose rate laws are
+  linear, facsimile.html's where nothing it reads moves -- is formed once a
+  segment by Rosenbrock 2-3, which otherwise forms it every step. The NDF is
+  not told: it re-forms its Jacobian only after a Newton failure anyway, and
+  telling it would move its runs at round-off.
+
+Checked by hashing every stored value of 249 runs -- six canister cases under
+seventeen settings, the Langmuir example, and rtm.html's twelve models under
+twelve -- before and after: all identical, leaving out the six that take more
+than ninety seconds.
 
 ## How the merge was checked
 

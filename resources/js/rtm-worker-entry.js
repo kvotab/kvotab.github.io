@@ -12,13 +12,13 @@
    heard of. The page asks the worker what it can run, to catch exactly that.
    ========================================================================== */
 importScripts(
-  './facsimile-model.js?v=20260920',
-  './ode-core.js?v=20260923e',
-  './facsimile-solver.js?v=20260923f',
+  './facsimile-model.js?v=20261005',
+  './ode-core.js?v=20261005',
+  './facsimile-solver.js?v=20261005',
   './ode-julia.js?v=20260923e',
-  './facsimile-ode-julia.js?v=20260923f',
-  './rtm-model.js?v=20260923a',
-  './rtm-worker.js?v=20260923f',
+  './facsimile-ode-julia.js?v=20261005',
+  './rtm-model.js?v=20261005',
+  './rtm-worker.js?v=20261005',
 );
 
 self.onmessage = (ev) => self.handleRtmMessage(

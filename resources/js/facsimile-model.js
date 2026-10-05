@@ -1031,6 +1031,126 @@
     return { parts, arrays: arrays.map(({ name, decl }) => ({ name, decl })), nscratch: slot.size, text };
   }
 
+  /*
+    The clock, once an instant
+    --------------------------
+    A stiff solver asks for the derivative over and over at one instant: each
+    Newton iteration of a step sits at the same t with a different state, and
+    the Jacobian is formed at a t the derivative has just been worked out at.
+    Most of what the canister model's derivative computes does not depend on
+    the state at all -- the temperature off its profile, the Gibbs energies,
+    every rate constant that follows from them, 97 exponentials and powers a
+    call -- and all of it was worked out again on every call. This is
+    Kompartment's "three passes, not one": the temporaries that read neither
+    the state nor anything that does are worked out in a pass of their own,
+    once for each instant and each set of constants, and the rest of the
+    function reads them from there.
+
+    The same arithmetic in the same order, so the results are the same to the
+    last bit. What it relies on is that nothing else moves those values: the
+    constants change only at an event and when the initial state is made, and
+    both of those say so (`invalidate`). A table never changes.
+  */
+
+  /**
+   * Splits a generated function into a clock pass and the rest: `null` when
+   * there is nothing worth caching, or a line it does not understand.
+   *
+   * @returns {{clock: object, main: object, nclock: number}|null} two programs
+   *   for layOut's caller: the clock pass writes the values the rest reads
+   *   into `out`, and the rest reads them from `extra`
+   */
+  const CLOCK_DECL = /^const ([A-Za-z_$][\w$]*) = (.*);$/;
+  const clockIds = (s) => (s.match(/\.?[A-Za-z_$][\w$]*/g) || []).filter((id) => id[0] !== '.');
+
+  /**
+   * Each temporary of a generated function by what it reads: 0 the constants
+   * alone, 1 the clock too, 2 the state. Null for a line that is not a
+   * temporary, or one that reads something unexpected.
+   */
+  function classify(lines) {
+    const cls = new Map();
+    const parsed = [];
+    for (const s of lines) {
+      const m = CLOCK_DECL.exec(s);
+      if (!m) return null;
+      let c = 0;
+      for (const id of clockIds(m[2])) {
+        if (id === 'y') { c = 2; break; }
+        if (id === 't') c = Math.max(c, 1);
+        else if (cls.has(id)) c = Math.max(c, cls.get(id));
+        else if (id === 'out' || id === 'extra' || id === 'W') return null;
+      }
+      cls.set(m[1], c);
+      parsed.push({ s, name: m[1], expr: m[2], c });
+    }
+    return { cls, parsed };
+  }
+
+  /**
+   * The most a set of body lines depends on: 0 when they read only the
+   * constants, 1 the clock, 2 the state -- or 2 when it cannot be told.
+   */
+  function bodyClass(lines, body) {
+    const known = classify(lines);
+    if (!known) return 2;
+    let c = 0;
+    for (const b of body) {
+      for (const id of clockIds(b)) {
+        if (id === 'y') return 2;
+        if (id === 't') c = Math.max(c, 1);
+        else if (known.cls.has(id)) c = Math.max(c, known.cls.get(id));
+      }
+    }
+    return c;
+  }
+
+  function splitByClock(lines, body) {
+    const ids = clockIds;
+    const known = classify(lines);
+    if (!known) return null;
+    const { cls, parsed } = known;
+    // The clock's values the rest reads, in the order they are made.
+    const wanted = new Set();
+    for (const p of parsed) if (p.c === 2) for (const id of ids(p.expr)) if (cls.get(id) < 2) wanted.add(id);
+    for (const b of body) for (const id of ids(b)) if (cls.has(id) && cls.get(id) < 2) wanted.add(id);
+    const clocked = parsed.filter((p) => p.c === 1).length;
+    if (!wanted.size || !clocked) return null;
+    const slot = new Map();
+    for (const p of parsed) if (wanted.has(p.name)) slot.set(p.name, slot.size);
+    const clock = layOut(parsed.filter((p) => p.c < 2).map((p) => p.s),
+      [...slot].map(([name, k]) => `out[${k}] = ${name};`));
+    const main = layOut(parsed.map((p) => {
+      if (p.c === 2) return p.s;
+      return slot.has(p.name) ? `const ${p.name} = extra[${slot.get(p.name)}];` : null;
+    }).filter(Boolean), body);
+    return { clock, main, nclock: slot.size };
+  }
+
+  /**
+   * The two halves splitByClock made, as one function of (t, y, P, H, out):
+   * the clock pass is run when t, the constants or their version have moved
+   * since it last was, and the rest is handed what it made.
+   */
+  function linkClocked(prog) {
+    const clock = linkParts(prog.clock);
+    const main = linkParts(prog.main);
+    const C = new Float64Array(prog.nclock);
+    let at = NaN;
+    let forP = null;
+    const fn = function (t, y, P, H, out) {
+      if (t !== at || P !== forP) {
+        clock(t, y, P, H, C);
+        at = t;
+        forP = P;
+      }
+      return main(t, y, P, H, out, C);
+    };
+    // The constants have changed: the next call works the clock out afresh.
+    fn.invalidate = () => { at = NaN; };
+    return fn;
+  }
+
   /** Compiles what layOut made into one function of PART_PARAMS. */
   function linkParts(prog) {
     if (prog.parts.length === 1) return new Function(...PART_PARAMS, prog.parts[0]);
@@ -1350,6 +1470,33 @@
       return { ...ev, ast, assigns };
     });
 
+    // --- the tables read at the clock -----------------------------------------
+    // Every interp(TABLE, x) in an equation, a rate law or a constraint, kept
+    // with its argument so that tableCorners can say where the table turns:
+    // where x passes one of its points. Only an argument that is a straight
+    // line in t -- t/YEAR_S, (t - T0)*K -- is followed; one read through
+    // anything else turns wherever that puts it, which is not known before
+    // the run.
+    const clockReads = [];
+    const findReads = (ast) => {
+      if (!ast) return;
+      switch (ast.type) {
+        case 'neg': findReads(ast.a); break;
+        case 'bin': findReads(ast.l); findReads(ast.r); break;
+        case 'call':
+          if (ast.name.toLowerCase() === 'interp' && ast.args.length === 2 && ast.args[0].type === 'id') {
+            const tab = resolveTable(ast.args[0].name, m.tables, (name) => stringValues.get(name), 0);
+            if (tab) clockReads.push({ tab, arg: ast.args[1] });
+          }
+          ast.args.forEach(findReads);
+          break;
+        default: break;
+      }
+    };
+    equations.forEach((e) => findReads(e.ast));
+    reactions.forEach((r) => Object.values(r.ast).forEach(findReads));
+    algebraic.forEach((a) => findReads(a.ast));
+
     // --- code generation ---------------------------------------------------
     const generated = generateCode({
       species, speciesIndex, nspecies, P, Pindex, Pmeta, tableList, tableIndex, stringValues,
@@ -1363,7 +1510,7 @@
     const sources = {};                 // what the Code tab shows: the code that runs
     for (const [name, prog] of Object.entries(generated.programs)) {
       try {
-        fns[name] = linkParts(prog);
+        fns[name] = prog.clock ? linkClocked(prog) : linkParts(prog);
       } catch (e) {
         throw new ModelError(`Internal error compiling ${name}: ${e.message}`);
       }
@@ -1371,6 +1518,9 @@
     }
 
     const observeNames = [...generated.observeNames];
+    // The constants have just been written: whatever the clock passes hold
+    // was worked out from the old ones.
+    const invalidateClock = () => { for (const fn of Object.values(fns)) if (fn.invalidate) fn.invalidate(); };
     const model = {
       text, species, nspecies, P: Float64Array.from(P), Pmeta, Pindex,
       tables: tableList, H, pattern, nnz: pattern.nnz,
@@ -1421,6 +1571,12 @@
       },
       tableNames: tableList.map((t) => t.name),
 
+      /**
+       * Whether the Jacobian is the same at every state and time while the
+       * constants stand -- they change only at an event, where the solver is
+       * restarted and forms it again anyway.
+       */
+      jacobianConstant: generated.jacobianConstant,
       /** dy/dt into out (Float64Array of length nspecies). */
       rhs(t, y, out) { return fns.rhs(t, y, this.P, this.H, out); },
       /** Values of the Jacobian pattern into V (Float64Array of length nnz). */
@@ -1435,16 +1591,94 @@
         const ev = events[k];
         ev.assigns.forEach((a) => { this.P[a.index] = evalAst(a.ast, (name) => (Pindex.has(name) ? this.P[Pindex.get(name)] : undefined), {}, ev.line); });
         fns.init(t, y0, this.P, this.H, null, false);
+        invalidateClock();
         return ev.assigns.map((a) => `${a.name} = ${this.P[a.index]}`);
       },
       /** Initial state; also fills the run constants in P. */
       initialState(t0 = 0) {
         const y = new Float64Array(nspecies);
         fns.init(t0, y, this.P, this.H, null, true);
+        invalidateClock();
         for (let i = 0; i < nspecies; i++) {
           if (!Number.isFinite(y[i])) throw new ModelError(`The initial value of ${species[i]} is not a number`);
         }
         return y;
+      },
+      /**
+       * The instants in (t0, t1) at which a table the model reads at the clock
+       * turns, sorted, those closer than a part in 1e9 merged; null when there
+       * are more than `most`. For the switching solver's explicit methods to
+       * land on (`auto`, facsimile-ode-julia.js): an explicit step across a
+       * corner is judged at its ends only. Worked out from the constants as
+       * they stand, since an event may move them.
+       */
+      tableCorners(t0, t1, most = Infinity) {
+        const Pnow = this.P;
+        const constant = (ast) => {
+          const refs = collectRefs(ast, new Set());
+          for (const name of refs) if (!Pindex.has(name)) return null;
+          if (hasCall(ast, 'state') || hasCall(ast, 'deriv')) return null;
+          try {
+            const v = evalAst(ast, (name) => (Pindex.has(name) ? Pnow[Pindex.get(name)] : undefined), m.tables, 0);
+            return Number.isFinite(v) ? v : null;
+          } catch (e) { return null; }
+        };
+        // {a, b} with the argument a*t + b, or null when it is not a line in t.
+        const line = (ast, depth) => {
+          if (depth > 64) return null;
+          switch (ast.type) {
+            case 'num': return { a: 0, b: ast.v };
+            case 'id': {
+              if (ast.name === 't') return { a: 1, b: 0 };
+              if (Pindex.has(ast.name)) return { a: 0, b: Pnow[Pindex.get(ast.name)] };
+              if (eqIndex.has(ast.name)) {
+                const e = equations[eqIndex.get(ast.name)];
+                return e.ast && eqDeps[eqIndex.get(ast.name)].size === 0 ? line(e.ast, depth + 1) : null;
+              }
+              return null;
+            }
+            case 'neg': { const r = line(ast.a, depth + 1); return r && { a: -r.a, b: -r.b }; }
+            case 'bin': {
+              const l = line(ast.l, depth + 1);
+              const r = l && line(ast.r, depth + 1);
+              if (!l || !r) return null;
+              switch (ast.op) {
+                case '+': return { a: l.a + r.a, b: l.b + r.b };
+                case '-': return { a: l.a - r.a, b: l.b - r.b };
+                case '*':
+                  if (l.a === 0) return { a: l.b * r.a, b: l.b * r.b };
+                  if (r.a === 0) return { a: l.a * r.b, b: l.b * r.b };
+                  return null;
+                case '/': return r.a === 0 && r.b !== 0 ? { a: l.a / r.b, b: l.b / r.b } : null;
+                default: return l.a === 0 && r.a === 0 ? { a: 0, b: constant(ast) } : null;
+              }
+            }
+            case 'call': {
+              const v = constant(ast);
+              return v === null ? null : { a: 0, b: v };
+            }
+            default: return null;
+          }
+        };
+        const lo = Math.min(t0, t1), hi = Math.max(t0, t1);
+        const found = [];
+        for (const read of clockReads) {
+          const ab = line(read.arg, 0);
+          if (!ab || !(ab.a !== 0) || !Number.isFinite(ab.a) || !Number.isFinite(ab.b)) continue;
+          for (const x of read.tab.x) {
+            const t = (x - ab.b) / ab.a;
+            if (t > lo && t < hi) found.push(t);
+          }
+        }
+        found.sort((p, q) => p - q);
+        const out = [];
+        for (const t of found) {
+          const prev = out[out.length - 1];
+          if (prev !== undefined && Math.abs(t - prev) <= 1e-9 * Math.max(Math.abs(t), Math.abs(prev))) continue;
+          out.push(t);
+        }
+        if (out.length > most) return null;
+        return t1 >= t0 ? out : out.reverse();
       },
       /** Numerical check of the analytic Jacobian at (t, y): returns the worst entries. */
       verifyJacobian(t, y) { return verifyJacobian(this, t, y); },
@@ -1680,7 +1914,23 @@
           }
         }
       });
-      programs[which] = layOut(em.lines, body);
+      // A Jacobian that reads neither the state nor the clock is one matrix
+      // for as long as the constants stand: a method that forms it every
+      // step (Rosenbrock 2-3) can form it once a segment instead.
+      if (which === 'jac') c.jacobianConstant = bodyClass(em.lines, body) === 0;
+      // The clock-only part in a pass of its own, once an instant: see
+      // splitByClock. A function it cannot split is laid out whole.
+      const split = splitByClock(em.lines, body);
+      programs[which] = split
+        ? { ...split, text: [
+          `// The clock pass: what reads neither the state nor anything that does,`,
+          `// worked out once for each instant and handed to the rest as extra[...].`,
+          split.clock.text,
+          '',
+          '// The rest, every call.',
+          split.main.text,
+        ].join('\n') }
+        : layOut(em.lines, body);
     }
 
     // ---- observe: equations, named reaction rates, then outputs --------------
@@ -1806,7 +2056,7 @@
       programs.init = { parts: [init], arrays: [], nscratch: 0, text: init };
     }
 
-    return { programs, observeNames: c.observeNames };
+    return { programs, observeNames: c.observeNames, jacobianConstant: !!c.jacobianConstant };
   }
 
   /* The emitter accepts a pre-emitted operand through a private node type. */

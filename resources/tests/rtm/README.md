@@ -204,6 +204,15 @@ page does not have.
 what is wrong, and chemical names (`e-`, `H+`, `C2O4-2`, `UO2+2`) surviving the
 parser, since those are what a chemist writes.
 
+**Kompartment's solvers.** The derivative works out only the rates and the
+Jacobian only their gradients, so the Jacobian is checked against differences
+of the derivative once more. Which models say their Jacobian never moves (a
+tracer column and the decay chain do, Robertson and the built-in model do not),
+and that Rosenbrock 2-3 then forms it once; Rosenbrock 2-3, Dormand-Prince and
+Auto against the NDF on the tracer column, Auto handing that to the NDF and
+leaving A → B → C explicit; the other new ports on A → B → C against its
+closed solution; and the first step and norm control reaching the NDF.
+
 ## A limitation the browser test found
 
 The first version of the speciation put every species into the Newton

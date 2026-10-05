@@ -175,7 +175,7 @@ async def main():
             menu = await s.ev("[...document.getElementById('facMethod').options]"
                               ".map(o => o.value)")
             said = await s.ev("""new Promise((ok) => {
-              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20260923f');
+              const w = new Worker('resources/js/facsimile-worker-entry.js?v=20261005');
               w.onmessage = (e) => { ok(e.data.solvers || []); w.terminate(); };
               w.onerror = () => ok(['<<the worker would not start>>']);
               w.postMessage({ type: 'capabilities', id: 1 });
@@ -194,6 +194,13 @@ async def main():
                   (await run_method(s, 'ndf')).startswith('Done'), True)
             said = await run_method(s, 'julia_fbdf')
             check('no worker: a Julia port is refused rather than freezing the page',
+                  isinstance(said, str) and 'no background worker' in said.lower(), True)
+            # Auto's stiff part is the NDF's, so it is as quick inline; the
+            # one-step methods are not, on this model.
+            check('no worker: Auto runs inline as the NDF does',
+                  (await run_method(s, 'auto')).startswith('Done'), True)
+            said = await run_method(s, 'ros23')
+            check('no worker: Rosenbrock 2-3 is refused like the ports',
                   isinstance(said, str) and 'no background worker' in said.lower(), True)
             # If any of the above had actually run inline, the page would have
             # stopped answering and every reply above would say so.

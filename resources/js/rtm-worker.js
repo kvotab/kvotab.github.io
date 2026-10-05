@@ -158,8 +158,9 @@ function rtmSummary(model) {
 /** Which solvers this worker can actually run; asked for as it starts. */
 function rtmSolvers() {
   // The NDF runs the plain BDFs with its BDF formulas switch, and QNDF runs
-  // QBDF the same way, so neither is an entry of its own.
-  const out = ['ndf'];
+  // QBDF the same way, so neither is an entry of its own. Rosenbrock 2-3 and
+  // Dormand-Prince 4-5 are the solver core's, beside the NDF.
+  const out = ['ndf', 'ros23', 'dp45'];
   if (typeof FacsimileOdeJulia !== 'undefined') out.push(...Object.keys(FacsimileOdeJulia.METHODS));
   return out;
 }
@@ -243,10 +244,12 @@ function handleRtmMessage(msg, post) {
       maxSteps: s.maxSteps,
       maxPoints: s.maxPoints || 4000,
       norm: s.norm,
+      normControl: !!s.normControl,
       // The rest of facsimile.html's settings, which this page now offers too.
       maxOrder: s.maxOrder || 5,
       minOrder: s.minOrder || 1,
       hmax: s.hmax > 0 ? s.hmax : undefined,
+      h0: s.h0 > 0 ? s.h0 : undefined,
       jacobianMode: s.jacobianMode || 'analytic',
       kappa: s.kappa,
       maxJacAge: s.maxJacAge,

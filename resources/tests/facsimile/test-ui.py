@@ -326,11 +326,26 @@ async def main():
             check('the series list is populated',
                   await page.ev("document.querySelectorAll('#facSeries input').length") > 50, True)
 
+            # Kompartment's solvers, under the same method names.
             check('every solver is offered', await page.ev(
                 "[...document.getElementById('facMethod').options].map(o => o.value).join(',')"),
-                'ndf,'
-                'julia_fbdf,julia_qndf,julia_kencarp4,'
-                'julia_radau5,julia_rodas5p,julia_trbdf2')
+                'ndf,auto,ros23,dp45,'
+                'julia_auto,julia_fbdf,julia_fbdf_krylov,julia_qndf,julia_kencarp4,'
+                'julia_radau5,julia_rodas5p,julia_rosenbrock23,julia_trbdf2,julia_tsit5,julia_vern7')
+            check('and the page knows every one of them', await page.ev(
+                "[...document.getElementById('facMethod').options].map(o => o.value)"
+                ".every((id) => ['ndf', 'ros23', 'dp45'].includes(id) || FacsimileOdeJulia.is(id))"), True)
+            # Auto: explicit until the model turns stiff, which this one is
+            # from the start, then the NDF; the footer says how many steps
+            # each took.
+            await set_control(page, '#facMethod', 'auto')
+            await click(page, '#facRun')
+            check('Auto runs in the page', await settle(
+                page, "document.getElementById('facStatus').textContent.slice(0, 4)",
+                'Done', tries=240), 'Done')
+            check('and the footer says which methods took the steps', await settle(
+                page, "/Methods: (Tsit5|Vern7) \\d+ steps?, NDF [\\d,]+; 1 switch/"
+                      ".test(document.getElementById('facStats').textContent)", True), True)
             # FBDF is the one that solves this model comfortably; the others
             # are covered by the package's own tests under
             # resources/tests/ode/julia/.
@@ -365,7 +380,7 @@ async def main():
             shown = ("[...document.querySelectorAll('[data-solver-opt]')]"
                      ".filter(el => getComputedStyle(el).display !== 'none')"
                      ".map(el => el.dataset.solverOpt).join(' ')")
-            builtin = ('rtol atol bdf atolSpecies norm maxOrder hmax matrix jacobian '
+            builtin = ('rtol atol bdf atolSpecies norm normControl maxOrder hmax h0 matrix jacobian '
                        'belowTolRun maxSteps stagnationTol autoAtol clamp nonNegative')
             check('the built-in NDF shows its own settings', await page.ev(shown), builtin)
             # The plain BDFs are the same integrator with every kappa zero: a
@@ -404,22 +419,22 @@ async def main():
             # so it is re-formed every step and has no age to set.
             check('a Rosenbrock method hides order, Newton and Jacobian age',
                   await page.ev(shown),
-                  'rtol atol atolSpecies norm hmax matrix jacobian belowTolRun maxSteps autoAtol clamp nonNegative')
+                  'rtol atol atolSpecies norm hmax h0 matrix jacobian belowTolRun maxSteps autoAtol clamp nonNegative')
             check('and says which, rather than just hiding them', await page.ev(
                 "document.getElementById('facSolverNote').textContent.split('.')[0]"),
-                'Rodas5P does not read the BDF switch, the maximum order, the minimum order, '
+                'Rodas5P does not read the BDF switch, norm control, the maximum order, the minimum order, '
                 'the Newton tolerance, how long a Jacobian is reused, the stall '
                 'tolerance and smoothing the error estimate, so they are not shown')
 
             await set_control(page, '#facMethod', 'julia_fbdf')
             check('a variable-order method shows both order limits and the Newton tolerance',
                   await page.ev(shown),
-                  'rtol atol atolSpecies norm maxOrder minOrder hmax matrix jacobian '
+                  'rtol atol atolSpecies norm maxOrder minOrder hmax h0 matrix jacobian '
                   'kappa maxJacAge belowTolRun maxSteps autoAtol clamp nonNegative')
 
             await set_control(page, '#facMethod', 'julia_trbdf2')
             check('an ESDIRK adds error smoothing', await page.ev(shown),
-                  'rtol atol atolSpecies norm hmax matrix jacobian kappa maxJacAge '
+                  'rtol atol atolSpecies norm hmax h0 matrix jacobian kappa maxJacAge '
                   'belowTolRun maxSteps autoAtol smoothEst clamp nonNegative')
 
             # Radau measures its error against Hairer's own transformed
@@ -429,7 +444,7 @@ async def main():
             await set_control(page, '#facMethod', 'julia_radau5')
             check('Radau hides the error norm and the order it does not read',
                   await page.ev(shown),
-                  'rtol atol atolSpecies hmax matrix jacobian kappa maxJacAge '
+                  'rtol atol atolSpecies hmax h0 matrix jacobian kappa maxJacAge '
                   'belowTolRun maxSteps autoAtol smoothEst clamp nonNegative')
             # Hiding is by an attribute the stylesheet has to honour: an author
             # `display` beats the browser's own [hidden] { display: none }, and
@@ -438,6 +453,22 @@ async def main():
             check('hidden really means hidden', await page.ev(
                 "getComputedStyle(document.querySelector('[data-solver-opt=\"norm\"]')).display"),
                 'none')
+            # The explicit methods form no matrix and read no Jacobian.
+            await set_control(page, '#facMethod', 'julia_tsit5')
+            check('an explicit method hides the matrix, the Jacobian and its age', await page.ev(shown),
+                  'rtol atol atolSpecies norm hmax h0 belowTolRun maxSteps autoAtol clamp nonNegative')
+            await set_control(page, '#facMethod', 'dp45')
+            check('and Dormand-Prince reads the steps and nothing of a matrix', await page.ev(shown),
+                  'rtol atol atolSpecies hmax h0 maxSteps clamp nonNegative')
+            check('and says how far it keeps species non-negative', await page.ev(
+                "document.getElementById('facSolverNote').textContent"
+                ".includes('without the damped derivative of the NDF')"), True)
+            await set_control(page, '#facMethod', 'ros23')
+            check('Rosenbrock 2-3 reads its Jacobian and the steps', await page.ev(shown),
+                  'rtol atol atolSpecies hmax h0 jacobian maxSteps clamp nonNegative')
+            # Auto reads what the NDF reads, the NDF being where it ends up.
+            await set_control(page, '#facMethod', 'auto')
+            check('Auto shows the NDF\u2019s settings', await page.ev(shown), builtin)
 
             # --- units, and where a scenario comes from -------------------------
             # The unit is shown apart from the name so the filter box above
