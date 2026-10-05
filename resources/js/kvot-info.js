@@ -186,8 +186,11 @@
 
   function place() {
     if (!state.panel) return;
-    const header = document.querySelector('body > header, header.site-header, header');
-    const footer = document.querySelector('body > footer, footer');
+    // A header or footer the page has hidden (its full window) has no box, and
+    // its all-zero bounds would leave the panel no height at all.
+    const shown = (el) => (el && el.getClientRects().length ? el : null);
+    const header = shown(document.querySelector('body > header, header.site-header, header'));
+    const footer = shown(document.querySelector('body > footer, footer'));
     const top = header ? header.getBoundingClientRect().bottom : 0;
     const foot = footer ? footer.getBoundingClientRect().top : window.innerHeight;
     state.panel.style.top = `${Math.max(0, Math.round(top))}px`;
