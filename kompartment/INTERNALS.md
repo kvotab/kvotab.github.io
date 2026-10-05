@@ -33,11 +33,12 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/sim/split.js` | Whether to solve those parts on several cores, and putting the parts back together |
 | `src/sim/localsens.js` | dy/dp for a chosen parameter, by forward sensitivities |
 | `src/sim/probabilistic.js` | Latin hypercube sampling and the statistics over realisations |
-| `src/ode/solvers/ndf.js` | The NDF/BDF formulas (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V). One of the five shared-core files: see *One solver core for three pages* |
+| `src/ode/solvers/ndf.js` | The NDF/BDF formulas (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V). One of the eight shared-core files: see *One solver core for three pages* |
 | `src/ode/variable-order.js` | The adapter that gives those formulas this project's solver shape |
-| `src/ode/solvers/rosenbrock23.js` | The modified Rosenbrock (2,3) pair (Shampine & Reichelt 1997, §4) |
-| `src/ode/solvers/dormand-prince.js` | The explicit (4,5) pair (Dormand & Prince 1980) |
-| `src/ode/core/onestep.js` | The driver the two one-step pairs share: step control, events, output, the constraint |
+| `src/ode/solvers/rosenbrock23.js` | The modified Rosenbrock (2,3) pair (Shampine & Reichelt 1997, §4) (shared core) |
+| `src/ode/solvers/dormand-prince.js` | The explicit (4,5) pair (Dormand & Prince 1980) (shared core) |
+| `src/ode/core/onestep.js` | The driver the two one-step pairs share: step control, events, output, the constraint (shared core) |
+| `src/ode/one-step.js` | The two one-step pairs in this tool's words: the hints their messages carry |
 | `src/ode/julia/`, `src/ode/julia-solvers.js` | Six stiff methods from SciML's DifferentialEquations.jl, vendored whole, and the adapter. See *The DifferentialEquations.jl solvers* |
 | `src/ode/scipy.js` | `scipy.integrate.solve_ivp` through Pyodide, as an independent check on the rest |
 | `src/ode/core/events.js` | Locating the instant an event function crosses zero (shared core) |
@@ -5751,11 +5752,12 @@ facsimile.html and rtm.html used to carry an NDF of their own, written from the
 same papers as this one and in the same shape, and the two had drifted: each
 page had tuned its copy on its own models, fixed its own faults, and grown
 settings the other lacked. They are now one. The integrator and its linear
-algebra live in the site at `resources/js/ode/`, and five files here are
+algebra live in the site at `resources/js/ode/`, and eight files here are
 copies of it, the same bytes:
 
     src/ode/core/linalg.js   src/ode/core/refactor.js   src/ode/core/sparse.js
-    src/ode/core/events.js   src/ode/solvers/ndf.js
+    src/ode/core/events.js   src/ode/core/onestep.js    src/ode/solvers/ndf.js
+    src/ode/solvers/dormand-prince.js                  src/ode/solvers/rosenbrock23.js
 
 Do not edit them here. Edit the modules in `resources/js/ode/` and run
 `node scripts/build-solvers.mjs` from the site's root, which rewrites these
@@ -5769,11 +5771,22 @@ the site have one layout: `core/` for the linear algebra and event location,
 `solvers/` for the integrators, and `julia/` with its own `core/` and
 `solvers/` for the ported package. So a shared module imports its neighbours by
 the same relative path in both, and a file is found at the same place in
-either. This tool's own files sit in the same folders -- its one-step driver in
-`core/onestep.js`, its Dormand-Prince and Rosenbrock solvers in `solvers/` --
-and the modules that give each family this tool's shape (`variable-order.js`,
-`julia-solvers.js`, `scipy.js`) and the catalogue that names them
-(`solvers.js`) at the top of `src/ode/`.
+either. The modules that give each family this tool's shape
+(`variable-order.js`, `one-step.js`, `julia-solvers.js`, `scipy.js`) and the
+catalogue that names them (`solvers.js`) sit at the top of `src/ode/`.
+
+**The one-step methods joined it later** (2026-10-05), when facsimile.html and
+rtm.html were given this tool's solvers: `ros23`, `dp45` and `auto` as well as
+the ported ones. The driver and the two pairs moved into the shared tree as
+they were; what had to change for a single-file build is the names it would
+share with the NDF's -- the error class is `OneStepError` (still exported as
+`SolverError`), the stall guard's constants carry `ONE_STEP_` -- and the
+advice in their messages. That was this tool's ("turn *cannot go negative* off
+on the compartment", "declare its switch times"), and is now `opts.hints`, the
+way `ndf` takes its own: `one-step.js` wraps both pairs with this tool's
+sentences, and the runner and the tests import them from there. Every
+bundled example under `ros23`, `dp45` and `ndf` gives the same hashes as
+before, and the same failure messages.
 
 **What differs between the pages is settings, not code.** The defaults of the
 shared `ndf` are this tool's, so `variable-order.js` passes only what the

@@ -40,7 +40,8 @@ const PACKAGES = [
 		src: 'resources/js/ode',
 		bundle: 'resources/js/ode-core.js',
 		global: 'OdeCore',
-		files: ['core/linalg.js', 'core/refactor.js', 'core/sparse.js', 'core/events.js', 'solvers/ndf.js'],
+		files: ['core/linalg.js', 'core/refactor.js', 'core/sparse.js', 'core/events.js', 'core/onestep.js',
+			'solvers/ndf.js', 'solvers/dormand-prince.js', 'solvers/rosenbrock23.js'],
 		exports: [
 			'EPS', 'zeros', 'identity', 'norm', 'LU', 'DenseLU', 'createMiter',
 			'RefactorLU', 'PIVOT_THRESHOLD', 'KEEP_THRESHOLD', 'OPS_BUDGET',
@@ -50,18 +51,20 @@ const PACKAGES = [
 			'DENSE_MAX_BYTES', 'DENSE_BELOW', 'DENSE_FILL',
 			'iterationMatrix', 'makeIterationMatrix', 'sparseIterationMatrix',
 			'crosses', 'anyCrossing', 'crossingTolerance', 'firstCrossing', 'locateCrossing',
+			'integrate', 'OneStepError', 'nonFiniteError', 'ONE_STEP_STALL_WINDOW', 'ONE_STEP_STALL_SPAN',
 			'ndf', 'SolverError', 'NdfFailure', 'MAX_ORDER',
+			'dormandPrince', 'dormandPrinceMethod', 'rosenbrock23', 'rosenbrockMethod',
 		],
-		// The same relative paths in Kompartment's src/ode/, whose core/ and
-		// solvers/ also hold Kompartment's own driver and solvers beside these.
-		// The five modules are the same bytes; index.js and the README stay here.
+		// The same relative paths in Kompartment's src/ode/. The eight modules
+		// are the same bytes; index.js and the README stay here.
 		copyTo: 'kompartment/src/ode',
 		copy: [],
 		describe: `ode/core and ode/solvers -- a single-file build
 
-   The stiff-solver core of facsimile.html, rtm.html and Kompartment: the
-   variable-order NDF/BDF integrator, the dense, sparse and kept-pivot LUs of
-   its iteration matrix and the choice between them, column colouring and
+   The solver core of facsimile.html, rtm.html and Kompartment: the
+   variable-order NDF/BDF integrator, the one-step Dormand-Prince 4-5 and
+   Rosenbrock 2-3 and their driver, the dense, sparse and kept-pivot LUs of
+   the iteration matrix and the choice between them, column colouring and
    differenced Jacobians, and event location. No dependencies.
 
      const { ndf } = OdeCore;

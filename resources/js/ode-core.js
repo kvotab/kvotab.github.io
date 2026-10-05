@@ -1,9 +1,10 @@
 /* ==========================================================================
    ode/core and ode/solvers -- a single-file build
 
-   The stiff-solver core of facsimile.html, rtm.html and Kompartment: the
-   variable-order NDF/BDF integrator, the dense, sparse and kept-pivot LUs of
-   its iteration matrix and the choice between them, column colouring and
+   The solver core of facsimile.html, rtm.html and Kompartment: the
+   variable-order NDF/BDF integrator, the one-step Dormand-Prince 4-5 and
+   Rosenbrock 2-3 and their driver, the dense, sparse and kept-pivot LUs of
+   the iteration matrix and the choice between them, column colouring and
    differenced Jacobians, and event location. No dependencies.
 
      const { ndf } = OdeCore;
@@ -2125,6 +2126,464 @@
   	return firstCrossing(at, t, vL, tnew, vR, events.direction, { tStart, enabled });
   }
 
+  /* ---------- core/onestep.js ---------- */
+  /**
+   * The driver the one-step methods share.
+   *
+   * An explicit Runge-Kutta pair and a Rosenbrock pair differ in how they take a
+   * step and in nothing else that matters to a caller: both produce a new state
+   * and an estimate of its error, both carry a dense output over the step, and
+   * both want the same things done around that -- a step size chosen from the
+   * estimate, an end landed on exactly, the discrete events located, the
+   * requested output times read off the interpolant, a state that may not go
+   * negative kept that way, and a run that has stopped advancing refused rather
+   * than continued. Those are here, once. A method supplies the step.
+   *
+   * WHAT A METHOD SUPPLIES. `method.setUp(ctx)` is called once and returns an
+   * object with:
+   *
+   *   start(t, y)                          the derivative at the start; returns
+   *                                        the evaluations spent
+   *   attempt(t, y, h, tnew, ynew, err)    one step of size h into `ynew`, its
+   *                                        error vector into `err`; returns
+   *                                        {fevals, scale}, with `scale` the
+   *                                        factor the weighted error is
+   *                                        multiplied by along with |h|
+   *   denseAt(tq, out)                     the state inside the step just tried
+   *   accept(tnew, ynew, reprojected)      the step was taken; returns fevals
+   *   restart(t, y)                        the start state was changed under it
+   *                                        (a state put onto its constraint);
+   *                                        returns fevals
+   *   stats()                              whatever else it counted
+   *
+   * and the method itself carries `id`, `order` (of the error estimate, which
+   * sets the exponent the step is controlled with), `defaultMaxSteps`, and two
+   * flags for the constraint: `holdsAtZero`, whether the derivative of a state
+   * on its bound is held at zero for it, and `snapsToConstraint`, whether a
+   * state within its tolerance of the bound and pushed past it is put onto it.
+   *
+   * THE CONSTRAINT. A state that may not go negative and would is treated two
+   * ways, both here. Its violation joins the error test -- a step that carries
+   * it below zero by more than its tolerance is rejected and cut like any other
+   * -- and what is left below zero after an accepted step, within tolerance by
+   * construction, is projected onto zero and counted. Whether the method also
+   * integrates the projected system, holding such a state's derivative at zero,
+   * is the method's to say: a Rosenbrock step from the bound does, an explicit
+   * pair does not, since its stages would straddle the kink and disagree by the
+   * whole jump.
+   *
+   * WHOSE WORDS. The messages say what went wrong in the solver's terms, and a
+   * page adds what its reader can do about it in its own: `opts.hints`, read by
+   * the methods' messages -- `floor`, how to turn off the setting that holds a
+   * state at zero; `switches`, how the model declares a switch; `singular` and
+   * `singularDense`, a sentence for a singular matrix. Without them the advice
+   * is the solver's alone.
+   *
+   * Shared by facsimile.html, rtm.html and Kompartment, beside the NDF. The
+   * source is resources/js/ode/ in the site; scripts/build-solvers.mjs copies it
+   * into kompartment/src/ode/ and builds resources/js/ode-core.js from it. See
+   * resources/js/ode/README.md. The names a single-file build would share with
+   * the NDF's are this file's own: its error is OneStepError (exported as
+   * SolverError too, the name Kompartment imports), and the stall guard's
+   * constants carry ONE_STEP_.
+   */
+
+
+
+  /**
+   * The stall guard: how many accepted steps to look back over, and how small a
+   * fraction of the run they may have covered before the solver is judged to be
+   * pinned rather than merely slow. Both signals have to hold: next to no
+   * ground covered over the window, and a step no larger than a window ago.
+   * Ground alone is not enough -- a stiff method at a tight tolerance crawls
+   * through the early decades of a long run and grows its step as it goes:
+   * Rosenbrock 2-3 on Robertson's kinetics to 1e11 covers two seconds in its
+   * first two thousand steps at 1e-8, and at 1e-10 grows its step by as little
+   * as 7% a window, and both runs finish. A pinned solver does not grow it,
+   * and nor does an explicit one held to its stability limit, the run this
+   * guard exists to stop early: Dormand-Prince on the same problem shrinks its
+   * step by 3% to 19% a window. The NDF asks for twice the step instead.
+   */
+  const ONE_STEP_STALL_WINDOW = 2000;
+  const ONE_STEP_STALL_SPAN = 1e-9;
+
+  /** Steps accepted at the floor in a row before the run is refused. */
+  const MAX_AT_FLOOR = 20;
+
+  /** Safety on the step the error estimate allows; the least and most it may change by. */
+  const STEP_SAFETY = 0.9;
+  const SHRINK_LEAST = 0.1;
+  const GROW_MOST = 5;
+
+  class OneStepError extends Error {
+  	constructor(message, t, index) {
+  		super(message);
+  		this.name = 'SolverError';
+  		this.t = t;
+  		this.index = index;
+  	}
+  }
+
+
+  /**
+   * The one report for a state or derivative that is not a number, so that the
+   * solvers say the same thing about the same fault. `index` is the state that
+   * was seen to go, when one is known.
+   */
+  function nonFiniteError(t, index) {
+  	const where = index == null ? '' : ` (state ${index})`;
+  	return new OneStepError(
+  		`The state or its derivative became non-finite at t=${t}${where}. Check for `
+  		+ `division by zero, a negative base raised to a fractional power, or an `
+  		+ `initial value that is not a number.`,
+  		t, index,
+  	);
+  }
+
+  /** The smallest step that moves the clock at `t`. */
+  function oneStepFloor(t) {
+  	return 16 * EPS * Math.abs(t);
+  }
+
+  /**
+   * The derivative of the projected system: where a constrained state is at or
+   * below zero and its equation would take it lower, it is held. `<= 0` so a
+   * state the projection has just put on zero is held there. The largest
+   * derivative held back per state since the last reset is kept for the
+   * driver, which judges a step's "held at zero" by it.
+   */
+  function heldDerivative(f, nonNegative) {
+  	const wrapped = (t, y, out) => {
+  		f(t, y, out);
+  		for (let i = 0; i < y.length; i++) {
+  			if (nonNegative[i] && y[i] <= 0 && out[i] < 0) {
+  				if (-out[i] > wrapped.push[i]) wrapped.push[i] = -out[i];
+  				out[i] = 0;
+  			}
+  		}
+  		return out;
+  	};
+  	wrapped.push = new Float64Array(nonNegative.length);
+  	return wrapped;
+  }
+
+  /**
+   * @param {object} method  see the file comment
+   * @param {(t: number, y: Float64Array, out: Float64Array) => Float64Array} f
+   * @param {ArrayLike<number>} tspan  the output times; first and last bound the run
+   * @param {Float64Array} y0
+   * @param {object} opts  rtol, abstol (number or per state), hmax, hmin, h0,
+   *   nonNegative (bool[]), maxSteps, events, jacobian, onAccepted(t, y),
+   *   onOutput(t, y) for every requested time as it is passed,
+   *   onStep(progress, nsteps, t) -> false to abort, hints (see above)
+   * @returns {{t: Float64Array, y: Float64Array[], stopped: object|null, stats: object}}
+   */
+  function integrate(method, f, tspan, y0, opts = {}) {
+  	const neq = y0.length;
+  	const npts = tspan.length;
+  	const t0 = tspan[0];
+  	const tEnd = tspan[npts - 1];
+  	const dir = Math.sign(tEnd - t0);
+  	if (dir === 0) throw new OneStepError('Simulation start and end time are equal', t0);
+  	const span = Math.abs(tEnd - t0);
+
+  	const rtol = opts.rtol ?? 1e-3;
+  	const atol = new Float64Array(neq);
+  	if (typeof opts.abstol === 'number' || opts.abstol == null) atol.fill(opts.abstol ?? 1e-6);
+  	else for (let i = 0; i < neq; i++) atol[i] = opts.abstol[i];
+  	// What the error test divides by, with |y|: the absolute tolerance in
+  	// units of the relative one.
+  	const threshold = new Float64Array(neq);
+  	for (let i = 0; i < neq; i++) threshold[i] = atol[i] / rtol;
+
+  	const nonNegative = opts.nonNegative ?? null;
+  	const maxSteps = opts.maxSteps ?? method.defaultMaxSteps ?? 1e6;
+  	const maxAtFloor = opts.maxConsecutiveMinStep ?? MAX_AT_FLOOR;
+  	const hmax = opts.hmax > 0 ? Math.min(opts.hmax, span) : 0.1 * span;
+  	const hminOpt = opts.hmin > 0 ? opts.hmin : 0;
+  	const stallWindow = opts.stallWindow ?? ONE_STEP_STALL_WINDOW;
+  	const stallSpan = ONE_STEP_STALL_SPAN * span;
+  	// What the page adds to the methods' messages, in its own terms.
+  	const hints = opts.hints ?? {};
+  	const exponent = 1 / (method.order + 1);
+
+  	const rhs = nonNegative && method.holdsAtZero ? heldDerivative(f, nonNegative) : f;
+  	const stepper = method.setUp({ neq, rhs, f, threshold, atol, rtol, opts, hints });
+
+  	// Output: one row per requested time.
+  	const tout = new Float64Array(npts);
+  	const yout = new Array(npts);
+  	let nout = 0;
+  	const record = (tv, yv) => { tout[nout] = tv; yout[nout] = Float64Array.from(yv); nout++; };
+
+  	let t = t0;
+  	const y = Float64Array.from(y0);
+  	const ynew = new Float64Array(neq);
+  	const errVec = new Float64Array(neq);
+  	const interp = new Float64Array(neq);
+  	record(t0, y);
+  	let nextOut = 1;
+
+  	let nsteps = 0, nfailed = 0, nfevals = 0, nbelowtol = 0, negative = 0;
+  	const held = nonNegative && method.holdsAtZero ? new Int32Array(neq) : null;
+
+  	// Discrete events: every one is terminal, so the step is cut back to the
+  	// crossing and the caller restarts from it.
+  	const events = opts.events ?? null;
+  	const vL = events ? new Float64Array(events.n) : null;
+  	const vR = events ? new Float64Array(events.n) : null;
+  	if (events) events.fun(t0, y, vL);
+  	let stopped = null;
+
+  	nfevals += stepper.start(t, y);
+
+  	/** |v| against the larger of the two states and the threshold, at its worst; NaN if any entry is. */
+  	const weighted = (v, ya, yb) => {
+  		let worst = 0;
+  		let at = 0;
+  		for (let i = 0; i < neq; i++) {
+  			const e = Math.abs(v[i]) / Math.max(Math.abs(ya[i]), Math.abs(yb[i]), threshold[i]);
+  			if (!(e >= 0) || !Number.isFinite(yb[i])) return { worst: NaN, at: i };
+  			if (e > worst) { worst = e; at = i; }
+  		}
+  		return { worst, at };
+  	};
+
+  	// --- the first step ----------------------------------------------------------
+  	// From the size of y' against y, and of y'' out of one explicit Euler
+  	// trial: a hundredth of the tolerance is asked of the local error a step
+  	// of the method's order would make.
+  	let stepSize;
+  	if (opts.h0 > 0) {
+  		stepSize = opts.h0;
+  	} else {
+  		const f0 = stepper.derivativeAtStart();
+  		const d0 = weighted(y, y, y).worst / rtol;
+  		const d1 = weighted(f0, y, y).worst / rtol;
+  		let guess = d0 < 1e-5 || d1 < 1e-5 ? 1e-6 : 0.01 * (d0 / d1);
+  		guess = Math.min(guess, hmax);
+  		const trial = new Float64Array(neq);
+  		const ftry = new Float64Array(neq);
+  		for (let i = 0; i < neq; i++) trial[i] = y[i] + dir * guess * f0[i];
+  		rhs(t0 + dir * guess, trial, ftry);
+  		nfevals++;
+  		for (let i = 0; i < neq; i++) ftry[i] -= f0[i];
+  		let d2 = weighted(ftry, y, y).worst / rtol / guess;
+  		if (!Number.isFinite(d2)) d2 = 100 * d1;
+  		const m = Math.max(d1, d2);
+  		const h1 = m <= 1e-15 ? Math.max(1e-6, guess * 1e-3) : (0.01 / m) ** exponent;
+  		stepSize = Math.min(100 * guess, h1);
+  	}
+  	stepSize = Math.min(hmax, Math.max(oneStepFloor(t0), hminOpt, stepSize));
+
+  	let atFloor = 0;
+  	let stallStep = 0;
+  	let stallT = t0;
+  	let stallH = 0;
+  	// What the floor did inside the window the guard is looking at: a step cut
+  	// because a constrained state went below zero, a state put onto the bound,
+  	// projected back onto it, or held there. A stall with none of those is not
+  	// the floor's doing, and its message says so rather than blaming it.
+  	let floorInWindow = 0;
+
+  	for (;;) {
+  		if (nsteps > maxSteps) {
+  			throw new OneStepError(method.stepBudgetMessage(maxSteps, t, hints), t);
+  		}
+
+  		const hmin = Math.max(oneStepFloor(t), hminOpt);
+  		stepSize = Math.min(hmax, Math.max(hmin, stepSize));
+  		let h = dir * stepSize;
+  		let last = false;
+  		if (1.1 * stepSize >= Math.abs(tEnd - t)) {
+  			h = tEnd - t;
+  			stepSize = Math.abs(h);
+  			last = true;
+  		}
+
+  		let err = 0;
+  		let worstAt = 0;
+  		let failedOnce = false;
+  		let restart = false;
+  		let tnew = t;
+  		for (;;) {
+  			tnew = last ? tEnd : t + h;
+  			h = tnew - t;
+  			const { fevals, scale } = stepper.attempt(t, y, h, tnew, ynew, errVec);
+  			nfevals += fevals;
+  			const w = weighted(errVec, y, ynew);
+  			err = w.worst * stepSize * scale;
+  			worstAt = w.at;
+
+  			// A stage that is not a number is a failed step, not a fatal one:
+  			// a stage can overshoot into the square root of a slightly negative
+  			// inventory, or past the instant a rate stops being defined, and a
+  			// shorter step lands inside the domain again. When even the
+  			// smallest step cannot be made to say a number, the run is refused.
+  			if (!Number.isFinite(err)) {
+  				nfailed++;
+  				if (stepSize <= hmin) throw nonFiniteError(t, worstAt);
+  				failedOnce = true;
+  				stepSize = Math.max(hmin, 0.1 * stepSize);
+  				h = dir * stepSize;
+  				last = false;
+  				continue;
+  			}
+
+  			// A constrained state below zero by more than its tolerance is an
+  			// error like any other, and the step that put it there is cut --
+  			// halved, since the estimate says nothing about where the crossing
+  			// lies.
+  			let forConstraint = false;
+  			if (nonNegative && err <= rtol) {
+  				let worst = 0;
+  				for (let i = 0; i < neq; i++) {
+  					if (nonNegative[i] && ynew[i] < 0) {
+  						const v = -ynew[i] / threshold[i];
+  						if (v > worst) { worst = v; worstAt = i; }
+  					}
+  				}
+  				if (worst > rtol) { err = worst; forConstraint = true; }
+  			}
+
+  			if (err <= rtol) { atFloor = 0; break; }
+
+  			nfailed++;
+  			if (forConstraint) floorInWindow++;
+  			// A state within its tolerance of the bound and pushed past it by
+  			// every step tried never reaches the bound by halving: each shorter
+  			// step lands it a little nearer, still positive, and the next tries
+  			// again. Put onto the bound instead, where the method that holds a
+  			// state there can hold it, and the step is retried from there. The
+  			// change is smaller than the error test could tell.
+  			if (forConstraint && method.snapsToConstraint) {
+  				let snapped = false;
+  				for (let i = 0; i < neq; i++) {
+  					if (nonNegative[i] && ynew[i] < 0 && y[i] > 0 && y[i] <= atol[i]) {
+  						y[i] = 0;
+  						snapped = true;
+  					}
+  				}
+  				if (snapped) {
+  					nfevals += stepper.restart(t, y);
+  					restart = true;
+  					break;
+  				}
+  			}
+  			const before = stepSize;
+  			if (forConstraint || failedOnce) stepSize = Math.max(hmin, 0.5 * stepSize);
+  			else stepSize = Math.max(hmin, stepSize * Math.max(SHRINK_LEAST, STEP_SAFETY * (rtol / err) ** exponent));
+  			failedOnce = true;
+  			if (stepSize <= hmin) {
+  				// Nothing shorter is possible: the step is taken as it is and
+  				// counted, and a run of them is refused.
+  				if (++atFloor >= maxAtFloor) {
+  					throw new OneStepError(method.floorMessage(t, hmin, worstAt, hints), t, worstAt);
+  				}
+  				stepSize = before;
+  				nbelowtol++;
+  				break;
+  			}
+  			h = dir * stepSize;
+  			last = false;
+  		}
+  		if (restart) continue;
+  		nsteps++;
+
+  		// What is left below zero is within tolerance -- the error test saw to
+  		// that -- and is projected onto the bound. Counted, because a
+  		// projection is a number the method did not compute.
+  		let reprojected = false;
+  		if (nonNegative) {
+  			for (let i = 0; i < neq; i++) {
+  				if (nonNegative[i] && ynew[i] < 0) { ynew[i] = 0; reprojected = true; negative++; floorInWindow++; }
+  				// Held through this step: the derivative held back would have
+  				// moved the state by more than its tolerance over the step. A
+  				// projection alone is not a hold.
+  				if (held && rhs.push[i] * stepSize > atol[i]) { held[i]++; floorInWindow++; }
+  			}
+  			if (held) rhs.push.fill(0);
+  		}
+
+  		if (nsteps - stallStep >= stallWindow) {
+  			const crawling = Math.abs(tnew - stallT) < stallSpan;
+  			const notGrowing = Math.abs(h) <= stallH;
+  			if (crawling && notGrowing) {
+  				throw new OneStepError(method.stallMessage(tnew, stallWindow, stallSpan, floorInWindow > 0, hints), tnew);
+  			}
+  			stallStep = nsteps;
+  			stallT = tnew;
+  			stallH = Math.abs(h);
+  			floorInWindow = 0;
+  		}
+
+  		const denseAt = (tq) => {
+  			stepper.denseAt(tq, interp);
+  			if (nonNegative) for (let i = 0; i < neq; i++) if (nonNegative[i] && interp[i] < 0) interp[i] = 0;
+  			return interp;
+  		};
+
+  		if (events) {
+  			// The event that stopped the previous segment is still sitting on
+  			// zero at `t0`; the locator is told so and steps past it.
+  			const hit = locateCrossing(events, t, vL, tnew, ynew, vR, denseAt, t0);
+  			if (hit) {
+  				tnew = hit.t;
+  				ynew.set(denseAt(tnew));
+  				vR.set(hit.values);
+  				stopped = { t: tnew, y: Float64Array.from(ynew), which: hit.which };
+  				last = true;
+  			}
+  			vL.set(vR);
+  		}
+
+  		while (nextOut < npts) {
+  			const tq = tspan[nextOut];
+  			if (dir * (tnew - tq) < 0) break;
+  			const at = tq === tnew ? ynew : denseAt(tq);
+  			record(tq, at);
+  			if (opts.onOutput) opts.onOutput(tq, at);
+  			nextOut++;
+  		}
+
+  		if (opts.onAccepted) opts.onAccepted(tnew, ynew);
+
+  		if (opts.onStep && (nsteps & 31) === 0) {
+  			if (opts.onStep(Math.abs(tnew - t0) / span, nsteps, tnew) === false) {
+  				throw new OneStepError('Simulation aborted', tnew);
+  			}
+  		}
+
+  		if (last) break;
+
+  		// The step is taken. Told to the method only now, after the output:
+  		// its dense output belongs to the step as it was taken, and what the
+  		// method rotates or re-evaluates for the next step must not reach it.
+  		nfevals += stepper.accept(tnew, ynew, reprojected);
+
+  		// The next step, from this one's error -- only when it went through
+  		// first time; a step that failed on the way has been cut already.
+  		if (!failedOnce) {
+  			const grow = err > 0 ? STEP_SAFETY * (rtol / err) ** exponent : GROW_MOST;
+  			stepSize *= Math.min(GROW_MOST, Math.max(SHRINK_LEAST, grow));
+  		}
+
+  		t = tnew;
+  		y.set(ynew);
+  	}
+
+  	return {
+  		t: tout.subarray(0, nout),
+  		y: yout.slice(0, nout),
+  		stopped,
+  		stats: {
+  			nsteps, nfailed, nfevals, nbelowtol, negative, held,
+  			solver: method.id,
+  			...stepper.stats(),
+  		},
+  	};
+  }
+
   /* ---------- solvers/ndf.js ---------- */
   /**
    * A variable-order, variable-step integrator for stiff systems, built on the
@@ -3518,5 +3977,507 @@
   	};
   }
 
-  return { EPS, zeros, identity, norm, LU, DenseLU, createMiter, RefactorLU, PIVOT_THRESHOLD, KEEP_THRESHOLD, OPS_BUDGET, CSC, cscTranspose, cscFromTriplets, cscToDense, cscMulVec, sparseMatVec, makeMiterBuilder, SparseLU, reverseCuthillMcKee, reverseCuthillMcKeeOrder, colourColumns, differenceIncrement, differenceJacobian, DENSE_MAX_BYTES, DENSE_BELOW, DENSE_FILL, iterationMatrix, makeIterationMatrix, sparseIterationMatrix, crosses, anyCrossing, crossingTolerance, firstCrossing, locateCrossing, ndf, SolverError, NdfFailure, MAX_ORDER };
+  /* ---------- solvers/dormand-prince.js ---------- */
+  /**
+   * The explicit Runge-Kutta (4,5) pair of Dormand and Prince.
+   *
+   * The tableau is from J. R. Dormand and P. J. Prince, "A family of embedded
+   * Runge-Kutta formulae", J. Comp. Appl. Math. 6(1) 19-26 (1980): seven
+   * stages, the last evaluated at the new point so that it is the first stage
+   * of the next step, and a fifth-order solution with a fourth-order error
+   * estimate. The dense output is the quartic interpolant that comes free with
+   * the pair, as tabulated by Hairer, Nørsett and Wanner, *Solving Ordinary
+   * Differential Equations I*, section II.6.
+   *
+   * Everything around the step -- step-size control, events, output, the
+   * constraint -- is the shared driver in ../core/onestep.js. Non-negativity here
+   * participates only in the error test: an explicit pair cannot hold a state
+   * on its bound, since its stages straddle the kink and disagree by the whole
+   * jump, so a constraint that binds is something this method reports rather
+   * than carries.
+   *
+   * Shared by facsimile.html, rtm.html and Kompartment; what each adds to the
+   * messages is its `hints` (see ../core/onestep.js).
+   */
+
+
+
+  /** Nodes c_2..c_7 of the tableau. */
+  const NODES = [1 / 5, 3 / 10, 4 / 5, 8 / 9, 1, 1];
+
+  /** Coefficients a_ij of stages 2..7 on the stages before them. */
+  const STAGE = [
+  	[1 / 5],
+  	[3 / 40, 9 / 40],
+  	[44 / 45, -56 / 15, 32 / 9],
+  	[19372 / 6561, -25360 / 2187, 64448 / 6561, -212 / 729],
+  	[9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656],
+  	[35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84],
+  ];
+
+  /** The difference between the fifth- and fourth-order solutions, per stage. */
+  const ERROR = [71 / 57600, 0, -71 / 16695, 71 / 1920, -17253 / 339200, 22 / 525, -1 / 40];
+
+  /** The free interpolant: per stage, the coefficients of s, s², s³ and s⁴. */
+  const DENSE = [
+  	[1, -183 / 64, 37 / 12, -145 / 128],
+  	[0, 0, 0, 0],
+  	[0, 1500 / 371, -1000 / 159, 1000 / 371],
+  	[0, -125 / 32, 125 / 12, -375 / 64],
+  	[0, 9477 / 3392, -729 / 106, 25515 / 6784],
+  	[0, -11 / 7, 11 / 3, -55 / 28],
+  	[0, 3 / 2, -4, 5 / 2],
+  ];
+
+  const dormandPrinceMethod = {
+  	id: 'dp45',
+  	order: 4,
+  	defaultMaxSteps: 1e7,
+  	holdsAtZero: false,
+  	snapsToConstraint: false,
+
+  	stepBudgetMessage: (maxSteps, t) => (
+  		`Exceeded ${maxSteps} steps at t=${t}; the system may be stiff `
+  		+ '-- try a stiff solver (NDF, or Rosenbrock 2-3).'
+  	),
+  	floorMessage: (t, hmin, worst) => (
+  		`Unable to meet integration tolerances at t=${t} without reducing the `
+  		+ `step below the smallest allowed (${hmin}). State ${worst} is the `
+  		+ 'worst offender; the system is probably stiff -- try a stiff '
+  		+ 'solver (NDF, or Rosenbrock 2-3).'
+  	),
+  	// `floor`: whether the non-negativity constraint acted in the steps that
+  	// crawled; `hints.floor`, how the page's reader turns it off.
+  	stallMessage: (t, window, spanCovered, floor, hints = {}) => (
+  		`The solver stopped making progress at t=${t}: ${window} steps `
+  		+ `advanced the clock by less than ${spanCovered}, and the step size is no longer growing. `
+  		+ (floor
+  			? 'A state is being held against zero, which this explicit method cannot carry: use '
+  				+ `the stiff NDF solver${hints.floor ? `, or ${hints.floor}` : ''}.`
+  			: 'The system is stiff -- try a stiff solver (NDF, or Rosenbrock 2-3).')
+  	),
+
+  	setUp({ neq, rhs }) {
+  		const k = new Array(7);
+  		for (let i = 0; i < 7; i++) k[i] = new Float64Array(neq);
+  		const stage = new Float64Array(neq);
+  		// The step the interpolant belongs to.
+  		let tFrom = 0;
+  		let hFrom = 0;
+  		let yFrom = null;
+
+  		const combine = (y, h, row, out) => {
+  			for (let i = 0; i < neq; i++) {
+  				let acc = 0;
+  				for (let j = 0; j < row.length; j++) if (row[j] !== 0) acc += row[j] * k[j][i];
+  				out[i] = y[i] + h * acc;
+  			}
+  			return out;
+  		};
+
+  		return {
+  			start(t, y) {
+  				rhs(t, y, k[0]);
+  				return 1;
+  			},
+  			derivativeAtStart() {
+  				return k[0];
+  			},
+  			attempt(t, y, h, tnew, ynew, err) {
+  				for (let s = 0; s < 5; s++) {
+  					rhs(t + h * NODES[s], combine(y, h, STAGE[s], stage), k[s + 1]);
+  				}
+  				combine(y, h, STAGE[5], ynew);
+  				rhs(tnew, ynew, k[6]);
+  				for (let i = 0; i < neq; i++) {
+  					let acc = 0;
+  					for (let j = 0; j < 7; j++) if (ERROR[j] !== 0) acc += ERROR[j] * k[j][i];
+  					err[i] = acc;
+  				}
+  				tFrom = t;
+  				hFrom = h;
+  				yFrom = y;
+  				return { fevals: 6, scale: 1 };
+  			},
+  			denseAt(tq, out) {
+  				const s = (tq - tFrom) / hFrom;
+  				const s2 = s * s;
+  				const s3 = s2 * s;
+  				const s4 = s3 * s;
+  				for (let i = 0; i < neq; i++) {
+  					let acc = 0;
+  					for (let j = 0; j < 7; j++) {
+  						const c = DENSE[j];
+  						const w = c[0] * s + c[1] * s2 + c[2] * s3 + c[3] * s4;
+  						if (w !== 0) acc += w * k[j][i];
+  					}
+  					out[i] = yFrom[i] + hFrom * acc;
+  				}
+  				return out;
+  			},
+  			accept(tnew, ynew, reprojected) {
+  				// The last stage is the first of the next step -- unless the
+  				// state it was evaluated at has since been projected.
+  				let spent = 0;
+  				if (reprojected) { rhs(tnew, ynew, k[6]); spent = 1; }
+  				k[0].set(k[6]);
+  				return spent;
+  			},
+  			restart() {
+  				return 0;
+  			},
+  			stats() {
+  				return {};
+  			},
+  		};
+  	},
+  };
+
+  /**
+   * @param {(t: number, y: Float64Array, out: Float64Array) => Float64Array} f
+   * @param {number[]|Float64Array} tspan  output grid; first and last bound the run
+   * @param {Float64Array} y0
+   * @param {object} opts  see ../core/onestep.js
+   * @returns {{ t: Float64Array, y: Float64Array[], stats: object }}
+   */
+  function dormandPrince(f, tspan, y0, opts = {}) {
+  	return integrate(dormandPrinceMethod, f, tspan, y0, opts);
+  }
+
+  /* ---------- solvers/rosenbrock23.js ---------- */
+  /**
+   * A Rosenbrock (2,3) pair, for stiff systems.
+   *
+   * The method is the linearly implicit W-method described by L. F. Shampine
+   * and M. W. Reichelt, "The MATLAB ODE Suite", SIAM J. Sci. Comput. 18(1) 1-22
+   * (1997), section 4: two stages, one Jacobian and one factorisation per step,
+   * and an embedded third-order estimate to judge the step by. With
+   * d = 1/(2 + √2) and W = I - h·d·J, the stages are
+   *
+   *     W k1 = f(t, y) + h·d·f_t
+   *     W k2 = f(t + h/2, y + h/2·k1) - k1               (then k2 += k1)
+   *     y_{n+1} = y + h·k2
+   *     W k3 = f(t + h, y_{n+1}) - (6 + √2)(k2 - f(t + h/2, ·)) - 2(k1 - f(t, y)) + h·d·f_t
+   *
+   * and the error estimate is (h/6)(k1 - 2k2 + k3). It is the solver that
+   * matters for a radionuclide chain whose half-lives span many orders of
+   * magnitude: an explicit method grinds its step to nothing on the fastest
+   * nuclide, and this one does not.
+   *
+   * The iteration matrix is factorised densely through ../core/linalg.js, or in
+   * CSC through ../core/sparse.js where a supplied pattern pays for it. Everything around
+   * the step -- step-size control, events, output, the constraint -- is the
+   * shared driver in ../core/onestep.js.
+   *
+   * The published pair has no non-negativity option. This one takes the
+   * option's meaning from the methods that have it: the derivative of a state
+   * on its bound may not carry it lower, a violation larger than the tolerance
+   * fails the error test and cuts the step, and what is left below zero after
+   * an accepted step is projected back and counted. A state held at zero keeps
+   * delivering whatever its outflows say, so an empty compartment drained at an
+   * absolute rate of one for ten years still hands ten units to its neighbour
+   * -- the projected system the option asks for. A constraint that takes hold
+   * *inside* a run is another matter: a one-step method's stages straddle the
+   * kink and disagree by the whole jump, so the step is cut and cut again, and
+   * the driver's stall guard is what ends that with an explanation.
+   *
+   * Shared by facsimile.html, rtm.html and Kompartment; what each adds to the
+   * messages is its `hints` (see ../core/onestep.js).
+   */
+
+
+
+
+  const D = 1 / (2 + Math.SQRT2);
+  const E32 = 6 + Math.SQRT2;
+  const ROOT_EPS = Math.sqrt(EPS);
+
+  /**
+   * df/dy by forward differences of the derivative the method integrates, one
+   * column per evaluation, or through a sparsity pattern and a colouring of its
+   * columns when one was supplied. The increment for a column is sqrt(eps)
+   * times the larger of the state and its error threshold, rounded to what the
+   * addition actually changed.
+   */
+  function differences(rhs, neq, threshold) {
+  	const ytry = new Float64Array(neq);
+  	const ftry = new Float64Array(neq);
+  	const delta = new Float64Array(neq);
+  	const increment = (y, j) => {
+  		let del = ROOT_EPS * Math.max(Math.abs(y[j]), threshold[j]);
+  		if (del === 0) del = ROOT_EPS;
+  		const moved = (y[j] + del) - y[j];
+  		return moved === 0 ? del : moved;
+  	};
+  	return {
+  		dense(t, y, fy, rows) {
+  			ytry.set(y);
+  			for (let j = 0; j < neq; j++) {
+  				const del = increment(y, j);
+  				ytry[j] = y[j] + del;
+  				rhs(t, ytry, ftry);
+  				ytry[j] = y[j];
+  				for (let i = 0; i < neq; i++) rows[i][j] = (ftry[i] - fy[i]) / del;
+  			}
+  			return neq;
+  		},
+  		sparse(t, y, fy, pattern, groups, out) {
+  			const { colPtr, rowIdx } = pattern;
+  			let spent = 0;
+  			const perturb = (cols) => {
+  				ytry.set(y);
+  				for (const j of cols) {
+  					delta[j] = increment(y, j);
+  					ytry[j] = y[j] + delta[j];
+  				}
+  				rhs(t, ytry, ftry);
+  				spent++;
+  				for (const j of cols) {
+  					for (let p = colPtr[j]; p < colPtr[j + 1]; p++) {
+  						out[p] = (ftry[rowIdx[p]] - fy[rowIdx[p]]) / delta[j];
+  					}
+  				}
+  			};
+  			if (groups) for (const g of groups) perturb(g);
+  			else for (let j = 0; j < neq; j++) perturb([j]);
+  			return spent;
+  		},
+  	};
+  }
+
+  const rosenbrockMethod = {
+  	id: 'ros23',
+  	order: 2,
+  	defaultMaxSteps: 1e6,
+  	holdsAtZero: true,
+  	snapsToConstraint: true,
+
+  	stepBudgetMessage: (maxSteps, t) => `Exceeded ${maxSteps} steps at t=${t}.`,
+  	floorMessage: (t, hmin) => (
+  		`Unable to meet integration tolerances at t=${t} without reducing `
+  		+ `the step below the smallest allowed (${hmin}).`
+  	),
+  	// `floor`: whether the non-negativity constraint acted in the steps that
+  	// crawled -- a step cut for a state below zero, a state put onto the bound
+  	// or held there. Without that, the floor is not what stopped it, and is not
+  	// named. `hints.floor` is how the page's reader turns the constraint off,
+  	// `hints.switches` how its model declares a switch.
+  	stallMessage: (t, window, spanCovered, floor, hints = {}) => (
+  		`The solver stopped making progress at t=${t}: ${window} steps `
+  		+ `advanced the clock by less than ${spanCovered}, and the step size is no longer growing. `
+  		+ (floor
+  			? 'A state is reaching zero while its equations push it below, and a constraint that '
+  				+ 'binds is not one a one-step method can carry: use the stiff NDF solver'
+  				+ `${hints.floor ? `, or ${hints.floor}` : ''}.`
+  			: 'A rate is changing faster than the step size can follow -- a switch the model does '
+  				+ 'not declare, or a tolerance tighter than this low-order method can keep up with: '
+  				+ `${hints.switches ? `${hints.switches}, ` : ''}loosen the tolerance, or use the stiff NDF solver.`)
+  	),
+
+  	/**
+  	 * `opts.jacobian` supplies df/dy instead of differencing it: a function
+  	 * (t, y, J) filling dense rows, or the object ../sim/jacobian.js builds,
+  	 * whose `constant` flag says the matrix never changes -- and since this
+  	 * method re-forms its Jacobian at every step, that flag turns n+1
+  	 * evaluations per step into one. An `evaluate` that answers null has no
+  	 * usable matrix at that point, and the step differences instead.
+  	 */
+  	setUp({ neq, rhs, threshold, opts, hints = {} }) {
+  		const supplied = opts.jacobian ?? null;
+  		const analytic = typeof supplied === 'function'
+  			? supplied
+  			: supplied?.evaluateDense
+  				? (t, y, J) => supplied.evaluateDense(t, y, J)
+  				: null;
+  		const constant = !!supplied?.constant;
+  		const pattern = supplied?.pattern ?? null;
+  		const groups = Array.isArray(supplied?.groups) ? supplied.groups : null;
+  		const diff = differences(rhs, neq, threshold);
+
+  		const J = new Array(neq);
+  		for (let i = 0; i < neq; i++) J[i] = new Float64Array(neq);
+  		let values = pattern ? new Float64Array(pattern.nnz) : null;
+  		const f0 = new Float64Array(neq);
+  		const f1 = new Float64Array(neq);
+  		const f2 = new Float64Array(neq);
+  		const ft = new Float64Array(neq);
+  		const tmp = new Float64Array(neq);
+  		let k1 = null;
+  		let k2 = null;
+  		let npds = 0;
+  		let ndecomps = 0;
+  		let spent = 0;
+  		let needJacobian = true;
+  		let dfdtAt = NaN; // the start time df/dt was last formed for
+  		// The step the interpolant belongs to.
+  		let tFrom = 0;
+  		let hFrom = 0;
+  		let yFrom = null;
+
+  		/** The pattern's values at (t, y): supplied, or differenced through it. */
+  		const sparseJacobian = (t, y) => {
+  			const got = supplied.evaluate(t, y);
+  			if (got) return got;
+  			spent += diff.sparse(t, y, f0, pattern, groups, values);
+  			return values;
+  		};
+  		/** Dense rows at (t, y): supplied, or differenced. */
+  		const denseJacobian = (t, y) => {
+  			if (analytic && analytic(t, y, J) !== null) return J;
+  			spent += diff.dense(t, y, f0, J);
+  			return J;
+  		};
+  		/** A pattern's values scattered into dense rows, for a factorisation the fill made dense. */
+  		const scatter = (vals) => {
+  			for (let i = 0; i < neq; i++) J[i].fill(0);
+  			for (let j = 0; j < neq; j++) {
+  				for (let p = pattern.colPtr[j]; p < pattern.colPtr[j + 1]; p++) J[pattern.rowIdx[p]][j] = vals[p];
+  			}
+  		};
+
+  		// The linear algebra: sparse where a pattern was given and the fill
+  		// says it pays, dense otherwise.
+  		let sparse = null;
+  		let dense = null;
+  		let lu = null;
+  		const solveWith = (h, t) => {
+  			if (sparse) {
+  				try {
+  					sparse.form(h * D, values);
+  				} catch (e) {
+  					throw new OneStepError(`${e.message} (at t=${t})`, t);
+  				}
+  				ndecomps++;
+  				return (b) => sparse.solve(b);
+  			}
+  			for (let i = 0; i < neq; i++) {
+  				const row = dense[i];
+  				const src = J[i];
+  				for (let j = 0; j < neq; j++) row[j] = -h * D * src[j];
+  				row[i] += 1;
+  			}
+  			lu.factorize(dense);
+  			if (lu.singular) {
+  				throw new OneStepError(
+  					`The iteration matrix is singular at t=${t}. `
+  					+ (hints.singularDense ?? 'A state may have nothing that moves it, or a rate may be non-finite.'), t,
+  				);
+  			}
+  			ndecomps++;
+  			return (b) => lu.solve(b);
+  		};
+
+  		return {
+  			start(t, y) {
+  				rhs(t, y, f0);
+  				if (pattern) {
+  					// One factorisation of each ordering decides whether the
+  					// pattern pays; a matrix this size is often better dense.
+  					values = sparseJacobian(t, y);
+  					npds++;
+  					needJacobian = false;
+  					sparse = sparseIterationMatrix(neq, pattern, values, { hint: hints.singular });
+  					if (!sparse) scatter(values);
+  				}
+  				if (!sparse) {
+  					dense = new Array(neq);
+  					for (let i = 0; i < neq; i++) dense[i] = new Float64Array(neq);
+  					lu = new LU(neq);
+  				}
+  				return 1;
+  			},
+  			derivativeAtStart() {
+  				return f0;
+  			},
+  			attempt(t, y, h, tnew, ynew, err) {
+  				const before = spent;
+  				// A constant Jacobian is formed once; anything else at the
+  				// start of every step, as the method requires.
+  				if (needJacobian && !(constant && npds > 0)) {
+  					if (sparse) values = sparseJacobian(t, y);
+  					else if (analytic || !pattern) denseJacobian(t, y);
+  					else scatter(sparseJacobian(t, y));
+  					npds++;
+  				}
+  				needJacobian = false;
+  				// df/dt by a one-sided difference, once per step: it depends on
+  				// where the step starts and not on how long it is.
+  				if (dfdtAt !== t) {
+  					const dt = Math.sign(h) * Math.min(ROOT_EPS * Math.max(Math.abs(t), Math.abs(t + h)), Math.abs(h));
+  					rhs(t + dt, y, f1);
+  					spent++;
+  					for (let i = 0; i < neq; i++) ft[i] = (f1[i] - f0[i]) / dt;
+  					dfdtAt = t;
+  				}
+  				const solve = solveWith(h, t);
+
+  				for (let i = 0; i < neq; i++) tmp[i] = f0[i] + h * D * ft[i];
+  				k1 = solve(tmp);
+  				for (let i = 0; i < neq; i++) tmp[i] = y[i] + 0.5 * h * k1[i];
+  				rhs(t + 0.5 * h, tmp, f1);
+  				for (let i = 0; i < neq; i++) tmp[i] = f1[i] - k1[i];
+  				k2 = solve(tmp);
+  				for (let i = 0; i < neq; i++) k2[i] += k1[i];
+  				for (let i = 0; i < neq; i++) ynew[i] = y[i] + h * k2[i];
+  				rhs(tnew, ynew, f2);
+  				for (let i = 0; i < neq; i++) {
+  					tmp[i] = f2[i] - E32 * (k2[i] - f1[i]) - 2 * (k1[i] - f0[i]) + h * D * ft[i];
+  				}
+  				const k3 = solve(tmp);
+  				spent += 2;
+  				for (let i = 0; i < neq; i++) err[i] = k1[i] - 2 * k2[i] + k3[i];
+  				tFrom = t;
+  				hFrom = h;
+  				yFrom = y;
+  				const fevals = spent - before;
+  				return { fevals, scale: 1 / 6 };
+  			},
+  			denseAt(tq, out) {
+  				// The quadratic through the two ends of the step with the
+  				// slope f(t, y) at its start: P(s) = y + s·h·f0 + s²·h·(k2 - f0).
+  				const s = (tq - tFrom) / hFrom;
+  				for (let i = 0; i < neq; i++) {
+  					out[i] = yFrom[i] + s * hFrom * f0[i] + s * s * hFrom * (k2[i] - f0[i]);
+  				}
+  				return out;
+  			},
+  			accept(tnew, ynew, reprojected) {
+  				// The next step starts from the state after the projection,
+  				// so the derivative it starts from has to be read there.
+  				let used = 0;
+  				if (reprojected) { rhs(tnew, ynew, f2); used = 1; }
+  				f0.set(f2);
+  				needJacobian = true;
+  				dfdtAt = NaN;
+  				return used;
+  			},
+  			restart(t, y) {
+  				rhs(t, y, f0);
+  				needJacobian = true;
+  				dfdtAt = NaN;
+  				return 1;
+  			},
+  			stats() {
+  				return {
+  					npds, ndecomps,
+  					sparse: !!sparse,
+  					fill: sparse ? sparse.fill : null,
+  				};
+  			},
+  		};
+  	},
+  };
+
+  /**
+   * @param {(t: number, y: Float64Array, out: Float64Array) => Float64Array} f
+   * @param {number[]|Float64Array} tspan  output grid; first and last bound the run
+   * @param {Float64Array} y0
+   * @param {object} opts  see ../core/onestep.js, plus `jacobian`
+   * @returns {{ t: Float64Array, y: Float64Array[], stats: object }}
+   */
+  function rosenbrock23(f, tspan, y0, opts = {}) {
+  	return integrate(rosenbrockMethod, f, tspan, y0, opts);
+  }
+
+  return { EPS, zeros, identity, norm, LU, DenseLU, createMiter, RefactorLU, PIVOT_THRESHOLD, KEEP_THRESHOLD, OPS_BUDGET, CSC, cscTranspose, cscFromTriplets, cscToDense, cscMulVec, sparseMatVec, makeMiterBuilder, SparseLU, reverseCuthillMcKee, reverseCuthillMcKeeOrder, colourColumns, differenceIncrement, differenceJacobian, DENSE_MAX_BYTES, DENSE_BELOW, DENSE_FILL, iterationMatrix, makeIterationMatrix, sparseIterationMatrix, crosses, anyCrossing, crossingTolerance, firstCrossing, locateCrossing, integrate, OneStepError, nonFiniteError, ONE_STEP_STALL_WINDOW, ONE_STEP_STALL_SPAN, ndf, SolverError, NdfFailure, MAX_ORDER, dormandPrince, dormandPrinceMethod, rosenbrock23, rosenbrockMethod };
 }));

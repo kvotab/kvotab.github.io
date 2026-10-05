@@ -16,8 +16,7 @@ import { julia } from '../ode/julia-solvers.js';
 import { audit as auditBudget } from '../domain/massbalance.js';
 import { cellNames, heldCells, usesCells } from '../domain/farfield.js';
 import { valueAt } from '../domain/project.js';
-import { dormandPrince, SolverError } from '../ode/solvers/dormand-prince.js';
-import { rosenbrock23 } from '../ode/solvers/rosenbrock23.js';
+import { dormandPrince, rosenbrock23, SolverError } from '../ode/one-step.js';
 import { variableOrder } from '../ode/variable-order.js';
 import {
 	SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions, addMethodSteps,

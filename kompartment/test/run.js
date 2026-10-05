@@ -12,8 +12,7 @@ import { percentile as percentileOf, operatedList } from '../src/domain/reduce.j
 import { emit, buildFunction, FUNCTION_TABLE } from '../src/parser/compile.js';
 import { erf, erfc, FUNCTIONS } from '../src/parser/functions.js';
 import { LU, norm } from '../src/ode/core/linalg.js';
-import { dormandPrince } from '../src/ode/solvers/dormand-prince.js';
-import { rosenbrock23 } from '../src/ode/solvers/rosenbrock23.js';
+import { dormandPrince, rosenbrock23 } from '../src/ode/one-step.js';
 import { variableOrder } from '../src/ode/variable-order.js';
 import { Project, ValidationError, hasDydt } from '../src/domain/project.js';
 import { IndexSpace, IndexError, COMPARTMENT_LIST } from '../src/domain/indexlists.js';
