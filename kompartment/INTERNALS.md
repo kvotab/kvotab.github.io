@@ -154,9 +154,8 @@ L, with their sizes given where they matter.
 
    **Where a file keeps it: nowhere, as a model-level property.** The unit is
    written onto *every nuclide* instead, and read back off any one of them. So
-   an `.eco` file carries the choice as
-   `<nuclide><unit>Bq</unit></nuclide>`, and that is what the importer reads.
-   Every nuclide in every corpus file here says `Bq`.
+   an `.eco` file carries the choice as each nuclide's own unit, and that is
+   what the importer reads. Every nuclide in every corpus file here says `Bq`.
 
    `bq2mole` and `mole2bq` are the conversion between the two and are exposed
    to equations under those names. They are exact inverses here. That is worth
@@ -309,7 +308,7 @@ model in the corpus has, and the largest single blocker in the corpus until it w
 `if` at a time.
 
 **The element dimension is derived rather than required.** Ecolego keeps an
-`ELEMENTS` list beside the materials because chemistry belongs to the element
+element list beside the materials because chemistry belongs to the element
 and not to the isotope; this tool builds one from the catalogue and leaves it
 out of the saved file, so the two cannot drift apart. A model that declares its
 own -- an imported one, or one that keeps organic and inorganic carbon apart --
@@ -320,8 +319,8 @@ to cover the list it groups: read from a block indexed by the materials, a
 parameter indexed by the elements has no cell to be read at a material no
 element stands for, and the build refuses the model rather than guessing --
 *"'Elements' does not cover every index of 'Materials'"*. Ecolego never meets
-this, because its `materialAdded` only ever adds a material through the
-Contaminants view and its index lists are read-only shadows; here the catalogue
+this, because it only ever adds a material through the Contaminants view and
+its index lists are read-only shadows; here the catalogue
 takes typed indices, so the gesture needs an answer of its own. The element of
 a name that is a nuclide's is its symbol, so stable C-12 joins C-14 under `C` --
 one element, and one sorption coefficient right for both. A name that is not a
@@ -346,7 +345,8 @@ it, sub-set or grouping. The rule a project file states is the plain one: no
 block may carry two index lists that come from the same root -- two sub-sets
 of the contaminant catalogue, say -- and none may be indexed by both the
 compartments and the transfers. This tool now applies both, in the editor and
-when a file is read, and `getAvailableIndexLists` is followed too: a
+when a file is read, and Ecolego's rule for which lists a block is offered is
+followed too: a
 compartment or a transfer is not offered the two lists made of the model's
 blocks at all, where the panel used to show them greyed.
 
@@ -357,7 +357,7 @@ model C holds one flow per *advective* transfer -- `Q`, indexed by
 transfer's rate reads `Q` with no index. The builder refused it: a transfer
 answered implicitly for `Transfers` itself and for nothing derived from it. Index-name resolution walks the available indices -- the current
 transfer's own, the current compartment's, the source and target -- and for
-each dimension asks `indexListToSearch.contains(availableIndex)`, then
+each dimension asks whether the list being searched contains that index, then
 
 ```
 for each dimension of the block being searched:
@@ -375,9 +375,8 @@ which it also needs: seventeen of its sub-systems are transports).
 
 ### The two material dimensions
 
-Ecolego has three material lists, not one, and the index-list model creates
-all three in its constructor, marks each with a `predefined-type` and maintains
-them from one flat list of materials:
+Ecolego has three material lists, not one: it makes all three together, marks
+each with the role it plays, and keeps them from one flat list of materials:
 
 | list | what it holds | how |
 |---|---|---|
@@ -385,8 +384,8 @@ them from one flat list of materials:
 | `Radionuclides` | the ones that have a half-life | a **sub-set** of it, one index per a radionuclide |
 | `Elements` | the element of each | a **mapping** onto it, one index per element |
 
-`materialAdded` is where they are kept in step: every material goes into the
-catalogue, and one that is a nuclide goes into the sub-set and brings its
+Ecolego keeps them in step as a material is added: every material goes into
+the catalogue, and one that is a nuclide goes into the sub-set and brings its
 element with it. All 87 readable projects here carry all three.
 
 This tool had **one** list doing both jobs, flagged `for_contaminants`, and that
@@ -424,7 +423,7 @@ writes `Radionuclides` **empty** while its material model holds ten nuclides
 with half-lives, and Ecolego runs it and decays them. So membership of the
 sub-set drives the editor -- where you add, what the half-life table lists --
 and never the engine, and the importer repopulates an empty list from the
-material model, which is what `materialAdded` would have done.
+material model, which is what Ecolego does when a material is added.
 
 **A sub-set of the radionuclides becomes a sub-set of the catalogue.** Making
 `Radionuclides` a sub-set makes a model's own selection of nuclides a sub-set of
@@ -445,19 +444,17 @@ holds, and the corpus is identical file for file.
 
 Ecolego holds a unit per material (a contaminant’s unit) and a compartment
 reads it off the material at the index rather than carrying one of its own:
-`Compartment.getUnit(indices)` looks each index up in the material model and
-returns that material's unit when it is auto-managing. `autoUnit` is `ON` for
-1,588 blocks in the corpus.
+with its unit auto-managed, a compartment's unit at an index is that index's
+material's. 1,588 blocks in the corpus have auto-management on.
 
 A radionuclide's unit is **not** stored. The contaminant catalogue keeps one decay unit
 for the whole model and holds every nuclide's own equal to it, so it follows
 `decay_unit` and cannot drift from the decay term it labels -- an inventory of a
 radionuclide is an activity or an amount and there is no third thing it could
 be. Only a material that is not a radionuclide carries one, and the importer
-reads `<unit>` off `<material>` elements only. That rule also disposes of the
-oldest file here, which
-writes a *half-life* unit in that field -- `<unit>d</unit>` on a Cs-134 whose
-inventory is Bq.
+reads a unit off those materials alone, never off a nuclide. That rule also
+disposes of the oldest file here, which writes a *half-life* unit in that
+field -- `d` on a Cs-134 whose inventory is Bq.
 
 Units are labels in this tool, never arithmetic, so per-material units are a
 labelling rule and nothing more:
@@ -515,12 +512,9 @@ Two container formats are accepted: a ZIP with `model.xml` at its root
 
 ### An empty list of times
 
-`<discrete-times>` holds a custom time series, and in every one of the eleven
-assessment models of one series it holds an empty one:
-
-```xml
-<discrete-times><time-series type="custom"><values>[]</values></time-series></discrete-times>
-```
+The list of discrete output times holds a custom time series, and in every one
+of the eleven assessment models of one series it holds an empty one, its values
+written as `[]`.
 
 Read as `[]` -> `''` -> `split` -> `['']` -> `Number('')` -> **0**, and
 `Number.isFinite(0)` is true, so each of those models arrived with a second
@@ -537,15 +531,7 @@ tokens before they are read as numbers rather than after.
 
 ### Endpoints
 
-`<simulation-settings>` carries the blocks Ecolego keeps results for:
-
-```xml
-<outputs>
-  <output id="NearField&#46;waste_domain_length"/>
-  ...
-</outputs>
-```
-
+A project's simulation settings list the blocks Ecolego keeps results for, and
 the run writes a result series for those and for nothing else. This
 tool keeps every series a run produces -- they are worked out from the states
 on request, so holding them costs nothing until they are asked for -- so the
@@ -554,9 +540,9 @@ answer to "which of these three thousand blocks did I want?", which is exactly
 what a probabilistic run should keep, so it is read into `simulation.endpoints`
 and the endpoint picker opens on it.
 
-Two things about the file are worth knowing. **The ids repeat**: Ecolego writes
-one `<output>` per index of an endpoint, so model B lists 746 of
-them for 102 blocks. A repeat is not a fault and is not counted as one. And
+Two things about the file are worth knowing. **The ids repeat**: Ecolego lists
+an endpoint once per index, so model B lists 746 of them for 102 blocks. A
+repeat is not a fault and is not counted as one. And
 **an id is a qualified name** here (`NearField.waste_domain_length`), which is
 what it is matched by first; `blockNameById` answers for the blocks this tool
 had to rename, and it is consulted second because it is older than the model --
@@ -565,32 +551,20 @@ is under a name the map no longer knows.
 
 ### What the file says about itself
 
-`<project-properties>` carries the author and the comment as
-`<property name="...">` elements, not as elements of their own:
+A project's properties carry the author and the comment as named properties,
+not as elements of their own. Read as an element of its own, which is what this
+did, the comment was never found and every imported model arrived with an empty
+description. `propertyText` — which the importer already used for the awkward
+properties elsewhere — is where it actually is.
 
-```xml
-<project-properties name="model">
-  <guid><![CDATA[7CE02604-BD80-11EB-ACD7-005056AE12AF]]></guid>
-  <modification-date>1621966224401</modification-date>
-  <property name="author" type="string"><![CDATA[a.modeller]]></property>
-  <property name="comment" type="string"><![CDATA[Created at Tue May 25 17:41:51 UTC 2021]]></property>
-</project-properties>
-```
+The name a project declares is `model` in **every** file in the corpus —
+Ecolego's default — so the file's own name is used instead when there is one;
+the declared name is kept when it is anything else, and when there is no file
+behind the XML. This was visible before it was understood: an exported HDF5
+file called a whole safety assessment `model`.
 
-Read as `<comment>`, which is what this did, the comment was never found and
-every imported model arrived with an empty description. `propertyText` — which
-the importer already used for the awkward properties elsewhere — is where it
-actually is.
-
-`name="model"` is Ecolego's default and is what **every** file in the corpus
-says, so the file's own name is used instead when there is one; the declared
-name is kept when it is anything else, and when there is no file behind the
-XML. This was visible before it was understood: an exported HDF5 file called a
-whole safety assessment `model`.
-
-`.version` at the archive root is a properties file —
-`version=6.5 track-changes=false ode-required=true nuclidedb-required=true` —
-and is the only thing in a project that says which Ecolego wrote it.
+`.version`, a properties file at the archive root, is the only thing in a
+project that says which version of Ecolego wrote it.
 
 All of it goes into the model's description, together with a count of what came
 across, what the model is indexed by and what a run of it does
@@ -609,7 +583,7 @@ only against synthetic fixtures. Current state:
 | `.eco` files found | 200 |
 | Ecolego 6 format — imported without error | **71** |
 | of those, validated and code-generated | **35** |
-| Ecolego 4/5 `<sheet>` format — refused with an explanation | 106 |
+| Ecolego 4/5 format — refused with an explanation | 106 |
 | other containers — not recognised | 23 |
 
 Why the 36 that import but do not yet build:
@@ -636,8 +610,8 @@ on a qualified name; none do. 66 of the 71 importable models use sub-systems —
 1325 of them across the corpus, nested up to five deep — so this was not an
 optional feature but the shape real models are written in.
 
-**`lookup-table` was the next biggest, and is supported.** It took the count that
-builds from 7 to 21. 3382 tables come across, in 28 files, carrying 238 469
+**Lookup tables were the next biggest, and are supported.** They took the count
+that builds from 7 to 21. 3382 tables come across, in 28 files, carrying 238 469
 points; 148 of them are argument-keyed. None is skipped.
 
 **Two-dimensional index references work too**, and no file now fails to
@@ -682,17 +656,18 @@ corpus and covered by a test:
 - **Index ids are scoped to their list, not global.** Two lists may each hold an index with id `H`. The file format resolves an entry's ids against the
   *block's own* index lists, positionally; a global id map silently attaches
   entries to the wrong dimension.
-- **`transfer` and `transfer-coefficient` have opposite donor defaults.** The file format creates a plain `transfer` with `TransferEntry(null, false)`
-  — an absolute flux — and the legacy `transfer-coefficient` with `true`.
-  Defaulting every transfer to multiply-by-donor silently multiplies fluxes by
-  their donor compartment.
+- **A transfer and a transfer coefficient have opposite donor defaults.** The
+  file format makes a plain transfer an absolute flux and the legacy transfer
+  coefficient a rate times its donor. Defaulting every transfer to
+  multiply-by-donor silently multiplies fluxes by their donor compartment.
 - **`source` and `sink` are components, not connections.** Transfers attach to
   them; they are Ecolego's model boundary, which this tool writes as a null
   endpoint. Treating them as unsupported blocks left transfers dangling.
 - **Names are not unique.** Two blocks in different sub-systems may share a
   name, so name mapping has to be keyed by block id.
-- **Hyphens are escaped** as `&#45;` inside attribute values, so `type` reads
-  `lookup&#45;table` — the XML parser must decode entities in attributes.
+- **Hyphens are escaped** as `&#45;` inside attribute values, so a block type
+  with a hyphen in its name arrives with an entity in its place — the XML
+  parser must decode entities in attributes.
 - **A transfer's dimension is not a choice.** It is the intersection of its two
   ends' index lists, kept in step as either end changes, and no file format in
   this family offers a picker for it. What makes the rule total is the check on
@@ -746,14 +721,13 @@ corpus and covered by a test:
   is what a corpus written by a program that refuses the shape should look
   like. The one model here that did was `examples/landscape.json`, which now
   carries the flag and a comment saying why.
-- **`index-lists=""` with `dimension="1"` is a dimension, not the lack of
-  one.** Ecolego has a fourth kind of index list this tool does not:
-  an intersection list, *"used by Transfers. When the Transfer is connecting
-  two Compartments, and these Compartments have different sets of indices, this
-  index list will make sure to contain only indices that are present in both"*.
-  It is built with `super("")`, so it has no name and no id, and `createIds`
-  writes it out as nothing at all. Read as written, that transfer is a scalar
-  between two compartments of 49 indices, and the build refuses it — *"'A' is
+- **A dimension with no index list named is a dimension, not the lack of
+  one.** Ecolego has a fourth kind of index list this tool does not: an
+  intersection list, which a transfer between two compartments with different
+  sets of indices uses to hold only the indices present in both. It has no
+  name and no id, so the file writes it as nothing at all. Read as written,
+  that transfer is a scalar between two compartments of 49 indices, and the
+  build refuses it — *"'A' is
   indexed by 'Contaminants', which 'flow' is not indexed by and cannot reach"*.
   94 transfers in three projects here are that shape. Since the intersection is
   by index **name**, a sub-set *is* the intersection of itself and its root,
@@ -769,10 +743,10 @@ corpus and covered by a test:
   block reference to anything walking the token stream, so renaming a block
   called `Cs` corrupted the nuclide name.
 - **A reduction's dimension count excludes the scenario list.** Ecolego counts
-  with `getDimensionForScenario`, so a block indexed by `Scenarios × A × B` and
-  reduced to `A` is reduced over `B`. Eight blocks in the corpus are shaped
+  a block's dimensions without it, so a block indexed by `Scenarios × A × B`
+  and reduced to `A` is reduced over `B`. Eight blocks in the corpus are shaped
   that way, and reading them without the exclusion reduces the scenarios. The
-  list is marked in the file by a `predefined-type` property of `SCENARIOS`.
+  file marks which list is the scenario list.
 - **A model keeps two nuclide lists, and indexes compartments by either.**
   `Contaminants` is the catalogue and `Radionuclides` the sub-set of it that
   decays; different models use different ones, and one uses both. Decay is
@@ -788,9 +762,9 @@ corpus and covered by a test:
   references in the corpus are written in an order a positional reading would
   get wrong.
 - **A lookup table's points are one array per entry**, written by
-  the array syntax — `[0.0, 10.0, ...]` — in two parallel elements,
-  `<lookup-table-time-points>` and `<lookup-table-values>`. The two are walked to the shorter of them, so a truncated
-  file loses the tail rather than the table.
+  the array syntax — `[0.0, 10.0, ...]` — in two parallel elements, one for
+  the points and one for the values. The two are walked to the shorter of
+  them, so a truncated file loses the tail rather than the table.
 
 Where a file's own writer and its reader disagree, the reader wins: block type
 names and their defaults are taken as the file spells them.
@@ -844,18 +818,18 @@ compartment whose name the sub-system also uses.
 
 ### Output times
 
-`<simulation-settings>` carries how Ecolego reports results, and this tool used
-to ignore all of it and default to 250 logarithmic points. It is read now:
+A project's simulation settings say how Ecolego reports results, and this tool
+used to ignore all of it and default to 250 logarithmic points. It is read now:
 
-- `<output-options>` chooses between the three `EOutputMode`s — the solver's
-  accepted steps (*Produce no additional output*, Ecolego's default), those
-  plus the specified times (*Produce additional output*), or the specified
-  times alone (*Produce specified output only*). Older files write the index
-  into the setting's allowed values, `0`/`1`/`2`, rather than the words; both
-  are read. `<batch-mode>` overrides the option, because
-  the output mode tests it first.
-- `<time-series-list>` and `<discrete-times>` hold the series: `geometric`,
-  `linear`, `linear-increment` and `custom`. The first two map straight onto
+- The output option chooses between Ecolego's three output modes — the
+  solver's accepted steps (*Produce no additional output*, Ecolego's default),
+  those plus the specified times (*Produce additional output*), or the
+  specified times alone (*Produce specified output only*). Older files write
+  the mode's place in the list, 0, 1 or 2, rather than its words; both are
+  read. Batch mode overrides the option, because the output mode tests it
+  first.
+- The list of time series and the discrete times hold the series: geometric,
+  linear, linear by increment and custom. The first two map straight onto
   this tool's own; an incrementing one says how far apart its points are rather
   than how many there are, and is converted, with a warning when the step does
   not divide the span evenly. The date-based variant is not read.
@@ -877,10 +851,9 @@ discrete times. None of that used to come across.
 ### Sub-system inputs and outputs
 
 Ecolego routes a value across a sub-system boundary through three blocks: a
-`model-output` lists blocks inside its sub-system that may be read from
-outside, a `model-input` lists blocks inside its own that may be fed from
-outside, and a `connector` between them carries `<model-connection
-source target/>` pairs naming one of each by GUID. They exist so that a
+model output lists blocks inside its sub-system that may be read from outside,
+a model input lists blocks inside its own that may be fed from outside, and a
+connector between them carries pairs naming one of each by GUID. They exist so that a
 sub-system can be lifted out as a black box, put in a library, and dropped into
 another project with its wiring left loose, ready to be connected.
 
@@ -959,22 +932,18 @@ tool's own importer, which is forgiving, and none of them opened in Ecolego.
 
 Ecolego 6.5.85's own reader, validator and simulator run headless under Java
 8 from its jars, driven by a few small classes kept outside this repository
-(Ecolego is not ours to ship). What they do, so they can be made again:
+(Ecolego is not ours to ship). What they do:
 
-- **Open** an `.eco` through `new EcolegoWorkspacePersistence(scratchFolder)`
-  after `Resources.setApplicationDir(scratchApp)` and
-  `EcolegoDefaults.install()`, then read `getDataModel().getValidationResult()`
-  (severity, text, key) and `getProjectProperties().canRun()`. **Never** the
-  default persistence or `Initializer.init`: setting the workspace home deletes
-  the workspace folder the user's preferences name. Run with an in-memory
-  `java.util.prefs.PreferencesFactory` so those preferences are not read or
-  written at all.
-- **Run** it: `Workspace.createWorkspace()`, the scratch persistence set on it
-  and the project opened through it (the simulation server finds the project
-  through the workspace), the LU set to `Dense` (the native KLU and UMFPACK do
-  not load on macOS), then `SimulationManager.run(project, scenarios, true)` in
-  scenario mode or `run(project, true)`; every context's `getOutputInfo()` and
-  `getData(info, i, 0)` gives the saved series. Ecolego's arrays are
+- **Open** an `.eco` in a scratch workspace of their own, with Ecolego's
+  defaults installed, and read its validation messages (severity, text, key)
+  and whether the project can run. **Never** in Ecolego's default workspace:
+  setting the workspace home deletes the workspace folder the user's
+  preferences name. Java's preferences are kept in memory, so those are not
+  read or written at all.
+- **Run** it through that workspace (the simulation server finds the project
+  through the workspace), on the dense linear solver (the native KLU and
+  UMFPACK do not load on macOS), in scenario mode when the model has
+  scenarios, and read every saved series. Ecolego's arrays are
   column-major -- the first index fastest -- and a transfer's output is its
   flux, rate times donor, where this tool's series is the rate. A model with
   nothing time-dependent has no time axis, and a sub-system's output has no
@@ -996,13 +965,13 @@ thousand-odd warnings are Ecolego's unit check on the models' own units.
 
 | What | Ecolego | The export |
 |---|---|---|
-| `<java-solver>` | one of the 14 keys of `SolverSettingPage.ALL_SOLVER_INFOS`, `java-ode15s` and the like; anything else is looked up, not found, and the null solver fails `SimulationSettingsValidator` with an NPE that `ZippedWorkspacePersistence.open` reports as a bare `IOException` | writes Ecolego's keys; the importer reads them (it never had: every real file opened on the default solver without a word) |
-| `<differential-equation>` | an empty one is an empty equation, refused | only where there is a term |
-| the scenario list | a built-in list is found by its **name** alone, `Scenarios`, and filled from `<scenario-model>`; a list called anything else is ordinary, and an unindexed reference to it cannot be resolved | goes out as `Scenarios`, its own name in a `kompartment-name` property, with a scenario per index and `run-scenarios-mode` on |
-| `<outputs>` | a run saves only the blocks listed; none listed, nothing at all | a model with no list goes out with every block a run has results for; read back, a list of every block is no list |
-| initial values | worked out before the run (`ESimulationStage.PRE_PROCESSING`, `canPreProcess`): parameters, tables read at a value, and expressions whose evaluation mode is *set* to BEFORE -- AUTO, the default, does not count; not the time, not an aggregate or an index operation | every expression an initial value reads, transitively, goes out BEFORE; one that cannot is named in the report |
-| the year | `EcoMath.YEAR_IN_SECONDS` = 31,556,952 s, 365.2425 days; a half-life in seconds is turned into the run's unit with it | half-lives in seconds of Ecolego's year for a model run in years, of this tool's in days or shorter (`ecoSecondsPerYear`), both ways |
-| a cyclic table read at a value | `LookupTableClassWriter`'s cyclic branch reads `_time`, never the argument | written unrepeated, every call wrapping its value onto the range with Ecolego's own `rem` -- Java's `%`, which is what `../domain/lookup.js` does |
+| the solver | named by one of its 14 keys; a key it does not know leaves the project with no solver, and opening it then fails with a bare input/output error that says nothing of why | writes Ecolego's keys; the importer reads them (it never had: every real file opened on the default solver without a word) |
+| the dy/dt term | an empty one is an empty equation, refused | only where there is a term |
+| the scenario list | a built-in list is found by its **name** alone, `Scenarios`, and filled from the project's scenarios; a list called anything else is ordinary, and an unindexed reference to it cannot be resolved | goes out as `Scenarios`, its own name kept in a property of the list, with a scenario per index and Ecolego's scenario mode on |
+| the endpoints | a run saves only the blocks listed; none listed, nothing at all | a model with no list goes out with every block a run has results for; read back, a list of every block is no list |
+| initial values | worked out before the run: parameters, tables read at a value, and expressions *set* to be evaluated before the run -- the automatic mode, the default, does not count; not the time, not an aggregate or an index operation | every expression an initial value reads, transitively, goes out set to be evaluated before the run; one that cannot is named in the report |
+| the year | 31,556,952 s, 365.2425 days; a half-life in seconds is turned into the run's unit with it | half-lives in seconds of Ecolego's year for a model run in years, of this tool's in days or shorter (`ecoSecondsPerYear`), both ways |
+| a cyclic table read at a value | read at the time, never at the argument | written unrepeated, every call wrapping its value onto the range with Ecolego's own `rem` -- Java's `%`, which is what `../domain/lookup.js` does |
 
 And the equation language, which is the importer's with less in it
 (`src/io/ecoequation.js`, whose header has the reasons): a unit on a number
@@ -1019,7 +988,7 @@ in the last bit, and `mod(1, 0.1)` is 0 here and 0.0999… there, a whole period
 at the instant a saw-tooth jumps. So both go out as that arithmetic, which
 Java does to the bit. The one mismatch left is cosmetic: Ecolego has no way to
 put a unit on a number, so a written-out `mole2bq` draws a unit warning there
-(the constants carry none); Ecolego keeps its own `mole2Bq` in `EcoMath` and
+(the constants carry none); Ecolego has the conversion in its own code but
 not in its equation language.
 
 `ecoequation.js` and `python/kompartment/io/ecoequation.py` are compared on 141
@@ -1054,21 +1023,21 @@ was truthy, and a coefficient to everything else; the Project now makes it
 
 ## Scenarios
 
-An Ecolego index list may be marked `predefined-type = SCENARIOS`. It is not an
-axis of the model: it is a set of alternative futures, and Ecolego runs one
-simulation per scenario.
+An Ecolego index list may be marked as the scenario list. It is not an axis of
+the model: it is a set of alternative futures, and Ecolego runs one simulation
+per scenario.
 
 **Three ways a file says which list that is, and this tool used to read one.**
-Of the 87 readable projects here, 26 carry a scenario list. one small vault model
-writes the marker as `SCENARIOS`; the older an older file writes `Scenarios`, and
+Of the 87 readable projects here, 26 carry a scenario list. One small vault
+model writes the marker in capitals and an older file in mixed case, and
 compared as written that one lost its scenario dimension *and* its element
 dimension -- the marker was there, spelled the other way. (The material
 dimension survived only because it has two fallbacks behind the marker: the
-sub-set shape, then the widest candidate.) The oldest files here,
-one carbon-14 model among them, write no `predefined-type` on any
-list at all, and then the name is the only thing left -- `Scenarios` and
-`Elements` are what Ecolego calls its own. So the type is read case-
-insensitively, and a list of that name claims the role when nothing else does.
+sub-set shape, then the widest candidate.) The oldest files here, one carbon-14
+model among them, mark no list at all, and then the name is the only thing
+left -- `Scenarios` and `Elements` are what Ecolego calls its own. So the
+marker is read case-insensitively, and a list of that name claims the role
+when nothing else does.
 A file that says which list it means is believed: a list *called* `Scenarios`
 beside one *marked* as the scenarios is an ordinary axis. With all three, every
 one of the 26 is read. Every scenario list that was previously missed is empty,
@@ -1133,8 +1102,8 @@ is per-scenario *settings* -- every scenario runs with the model's.
 
 ## Disabled blocks
 
-The enabled flag is written on every block in a project file as
-`<enabled>true|false</enabled>`, and a disabled block is drawn greyed. What it
+The enabled flag is written on every block in a project file, and a disabled
+block is drawn greyed. What it
 *means* is that the block is kept and takes no part in the run, and a model with a broken block in
 it runs as long as nothing that is enabled reads the broken one.
 
@@ -1198,11 +1167,10 @@ stale path in a file is refused rather than switching nothing off.
 ## Transport sub-systems
 
 A transport sub-system is how a model discretises transport through a
-homogeneous material without drawing every slice: two compartments,
-`TransportBegin` and `TransportEnd`, the transfers between them, a a
-`transport-number` N, a `transport-element-counter`, and any number of
-`transport-operation`s. The first four are made with the sub-system, under the
-names a project file gives them -- `Begin`, `End`, `N`, `i` -- and this tool's
+homogeneous material without drawing every slice: two compartments, Begin and
+End, the transfers between them, a number N, an element counter, and any
+number of transport operations. The first four are made with the sub-system,
+under the names a project file gives them -- `Begin`, `End`, `N`, `i` -- and this tool's
 **New transport here** does the same.
 
 The run-time semantics are in the generated transport code, which generates
@@ -1221,19 +1189,18 @@ otherwise:        Begin = 0, End = 1     -> the Begin equation
 Two static indices say which pair of neighbours is being assembled while the
 loop runs, which is what lets one equation stand for every slice.
 
-`writeGetStatesMethod` turns a reference to Begin into `getStateAt(pos +
-BEGIN)` and one to End into `getStateAt(pos + END)`, so the transfer equations
-drawn between the two read whichever pair is current; `getCurrentElement`
-answers `BEGIN + 1`, which is what the counter is; and
-`writeGetInitialConditionMethod` sets `BEGIN = i` and reads **Begin's**
-initial condition for every element -- End's is never read. With N = 1
+A reference to Begin reads the state at the current Begin position and one to
+End the state at the current End position, so the transfer equations drawn
+between the two read whichever pair is current; the counter answers the Begin
+position plus one; and every element starts from **Begin's** initial
+condition -- End's is never read. With N = 1
 (the single-compartment equation) there is one state, every
 transfer drawn into or out of either end applies to it, and
 The connections between them are dropped, End's value is the last cell, and
 the generated code produces the sum, the mean, the element at a
-fraction of the length (`(int)(arg0*n)`, or `n-1` for exactly 1) and the
-weighted sum over a stretch, with a `SolverException` for a position outside
-0..1.
+fraction of the length (the fraction times N, rounded down, or the last element
+for exactly 1) and the weighted sum over a stretch, and stops the run for a
+position outside 0..1.
 
 **How this tool does it.** The same chain, unrolled before the model is built
 rather than looped over inside it. `src/sim/transport.js` rewrites every
@@ -1532,8 +1499,8 @@ is the model, and a fallback is cheaper than a surprise.
 
 **N.** The cell count is fixed before the run
 when it is a literal or a reference to a non-probabilistic, non-scenario
-parameter, and otherwise evaluates it as the run starts
-(`noDiscretizationsForTransport`), which lets a Monte Carlo realisation have
+parameter, and otherwise evaluates it as the run starts, which lets a Monte
+Carlo realisation have
 its own N. This tool has no probabilistic runs, and lays the state vector out
 before anything is evaluated, so N is settled before the build by a small
 evaluator (`constantValue` in `src/domain/transport.js`) over numbers,
@@ -1562,7 +1529,7 @@ hidden and carry an `alias` that `implicitIndices` in the builder reads, so
 that for the `Transfers` list and the lists derived from it every copy *is*
 the drawn transfer -- index resolution holds the drawn transfer's index for
 every pair -- and `_source_`/`_target_` in its rate are Begin and End
-throughout, as `currentSourceCompartmentIndex` is. A slice in the middle of
+throughout, as they are in Ecolego. A slice in the middle of
 the chain answers for the `Compartments` list as Begin, whose initial
 condition it took; and the hidden slices and copies are left out of the two
 derived lists, which in Ecolego hold Begin and End and nothing between.
@@ -1576,9 +1543,9 @@ writer and has no second path.
 
 **Editing.** The sub-system is a path in `transports`; the parts carry
 `transport: 'begin' | 'end' | 'number' | 'counter' | 'operation'` on the
-compartment or expression they are, since `TransportBegin extends Compartment`
-and `TransportNumber extends Expression`, and everything that treats a
-compartment as a compartment goes on doing so. The rule for what may be moved where refuses to move a part out or a sub-system in:
+compartment or expression they are, since in Ecolego Begin is a compartment
+and N an expression, and everything that treats a compartment as a
+compartment goes on doing so. The rule for what may be moved where refuses to move a part out or a sub-system in:
 
 ```
 a Begin, an End, an N or a counter      -> may not be moved out
@@ -1592,11 +1559,11 @@ transport is not dissolved either.** Dissolving one would make its parts
 ordinary blocks -- a compartment with a misleading name, an expression that says
 1, and an operation that comes to nothing -- a model that builds and means
 something other than it did, with no line saying so. A transport is deleted
-whole or kept whole, which is the reading `isValidMove`
-already implies for its parts.
+whole or kept whole, which is the reading Ecolego's own rule for moving its
+parts already implies.
 
-`TransportSubSystem extends SubSystemBlock`, a block that is a sub-system, and
-this tool draws it as one: its own icon and colour in the tree and on the
+In Ecolego a transport is a block that is a sub-system, and this tool draws it
+as one: its own icon and colour in the tree and on the
 diagram, its own menu, and a connect handle. A line dropped on the node feeds
 its Begin and a line dragged from its handle leaves from its End
 (`transportEndpoint`, which `addTransfer`, `addSource` and `setConnectionEnd`
@@ -1707,10 +1674,10 @@ a compartment entry carries one more equation than the initial condition: a
 term added to the differential equation that is not defined through transfers
 or radionuclide decay.
 
-It is the `dy/dt` column of the compartment grid (the compartment settings:
-IC, DIFF_EQ, NON_NEGATIVE, ABS_TOL), the `<differential-equation>` element of
-an entry in `model.xml`, and this tool's `dydt` -- block-level default and
-per-entry override, like everything else a compartment entry holds. Three
+It is the dy/dt column of Ecolego's compartment grid, the differential
+equation of an entry in the project file, and this tool's `dydt` --
+block-level default and per-entry override, like everything else a
+compartment entry holds. Three
 things decide how it is read: **Where it goes.** The standard assembly builds
 the compartment's equation by putting the term's tokens first and appending
 the fluxes after it -- `+ transfer` for each inflow, `- transfer` for each
@@ -1733,12 +1700,9 @@ one-step cycle); `SELF_READING_FIELDS` in edit.js exempts this one field, and
 the builder's own cycle test is unaffected because the reference resolves to a
 state, not to the slot.
 
-**Its unit.** The unit rule special-cases it:
-
-> The unit for the differential equation property of the compartment do not
-> have the same unit as the compartment, (it has the unit of a transfer)
-
-and builds `targetUnit + "/" + timeUnit`. `UNIT_TARGET` gained a fourth rule,
+**Its unit.** Ecolego's unit rule special-cases it: the term has the unit of a
+transfer, the compartment's unit over the time unit, not the compartment's
+own. `UNIT_TARGET` gained a fourth rule,
 `rate`, which is the block's own unit over the simulation's time unit, and the
 start-value panel labels the term the same way.
 
@@ -1755,42 +1719,30 @@ The Jacobian generator treats the slot as it treats a source: its dependency
 set lands in the compartment's row, its tangent in the same row, and a term
 that follows the state or the clock makes the matrix non-constant.
 
-Measured: 242 real `.eco` files on this machine carry 3 non-empty
-`<differential-equation>` elements in 2 of them -- the two halves of a
-predator-prey pair in one indexed compartment, and one
-carbon balance (`Burial_C*area_RegoUp-RegoPeat_SOC*minRate_RegoPeat`). Every
-other entry in those files has the element empty or absent. It is read rather
+Measured: 242 real `.eco` files on this machine carry 3 non-empty dy/dt terms
+in 2 of them -- the two halves of a predator-prey pair in one indexed
+compartment, and one carbon balance
+(`Burial_C*area_RegoUp-RegoPeat_SOC*minRate_RegoPeat`). Every other entry in
+those files has the term empty or absent. It is read rather
 than dropped with a warning, which is what makes the Lotka-Volterra file run.
 
 ## User-defined functions
 
 Ecolego has two of these, and they are not the same thing.
 
-**The one in the file format.** `UserDefinedFunction` is metadata -- a name, a
-source type, a file name -- pointing at a source file in the archive:
+**The one in the file format** is metadata -- a name, a source type, a file
+name -- pointing at a source file in the archive: a class with one method,
+compiled from that source when a run starts and called from every call site.
+That cannot come across -- the browser has no way to run it, and a tool that
+ran code out of a project file would be a security hole rather than a feature.
+It is read for its *signature*: the block arrives with its name and its
+parameters, an empty body, and a line in the import report. Every such
+function in the 291 files here is empty, so nothing in the corpus exercises it.
 
-```
-a class with one method, `double function(double... params)`,
-compiled from a source file in the archive when a run starts
-```
-
-The generated code instantiates one per function and compiles every call site to
-`Model._function1.function(a, b)`. That cannot come across -- the browser has
-no way to run it, and a tool that ran code out of a project file would be a security
-hole rather than a feature. It is read for its *signature*: the block arrives
-with its name and its parameters (`<parameter-metadata>` under
-`<function-metadata>`), an empty body, and a line in the import report. All
-`<function-model>` elements in the 291 files here are empty, so nothing in the
-corpus exercises it.
-
-**The one real models use.** An `Expression` implements an argumented expression:
-
-> Interface for objects that can receive arguments, like functions
-
-and carries `<argument>` elements naming values its equation may use beside
-everything it can already see. It compiles to a method of `n` index dimensions
-and `d` arguments (`writeMethodOpen(methodName, n, d)`), and a call passes the
-caller's indices along with the arguments. one small test model has
+**The one real models use** is an expression with arguments: it names values
+its equation may use beside everything it can already see. It compiles to a
+method over the block's index dimensions and its arguments, and a call passes
+the caller's indices along with the arguments. One small test model has
 
 ```
 ADV(position, kd) = interpolationUseEndValues(
@@ -1839,43 +1791,41 @@ tool is recomputed from `(t, y)` whenever it is wanted — which is what lets th
 runner solve first and fill in the algebraic blocks afterwards — and none of
 these can be:
 
-| Block | What it is | Where it comes from |
-|---|---|---|
+| Block | What it is |
+|---|---|
 | min/max | the extreme its target has taken |
-| running mean | the mean of its target over the recorded time | `RunningMean`, and it `implements IStateBlock` |
+| running mean | the mean of its target over the recorded time |
 | snapshot | its target when an event last fired |
-| delay | its target as it was a given time ago | `Delay`, the scalar recorder |
-| discrete event | the instant one expression crosses another | `DiscreteEvent`, the event locator |
+| delay | its target as it was a given time ago |
+| discrete event | the instant one expression crosses another |
 
 Each keeps a history as the solver accepts steps and reads it back afterwards
-(`src/sim/history.js`), which is the usual arrangement:
-`acceptedFcn` calls each block's `store`, and each block's `calculate` reads
-the hold-below rule over what it stored whenever it is asked about a time at
-or before the last step. So the two-phase runner needed no change of shape,
+(`src/sim/history.js`), which is the usual arrangement: each block stores
+what it keeps as the solver accepts a step, and reads the hold-below rule over
+what it stored whenever it is asked about a time at or before the last step. So the two-phase runner needed no change of shape,
 only somewhere to put the memory.
 
 Four things had to be got right, and each is a decision the format makes
 explicitly rather than something to invent:
 
-- **A min/max stores its own value, not its target.** `writeMinMaxStoreMethod`
-  records `getName()(indices)` — the extreme so far — so the history reads back
-  as the block's own past. A delay is the exception, and stores what it is
+- **A min/max stores its own value, not its target.** Ecolego records the
+  block's own value — the extreme so far — so the history reads back as the
+  block's own past. A delay is the exception, and stores what it is
   watching, because its target's past is the whole point of it.
 - **A running mean is a state.** `dS/dt = target`, seeded at zero, and the
   block's value is `S` over the time it covers. Its integral goes in the state
   vector after the compartments, does not decay however it is indexed, and is
   not clamped non-negative — the mean of something negative is negative.
-- **Events are terminal.** Every one of them fills the array
-  with `true`, so the solver stops at the crossing, `performEvents` runs, and
-  the integration starts again. This tool does the same by running the solve in
+- **Events are terminal.** Every one of them stops the solver at the
+  crossing, the event's actions run, and the integration starts again. This tool does the same by running the solve in
   segments: each stops at the first crossing it locates and the next begins
   from the event. Restarting is not a cost worth avoiding — an event is a
   discontinuity, and a solver carrying its step size and difference table
   through one would be extrapolating a model that has changed.
 - **`first - second`, with a direction.** The generated code assembles
-  the event function from the two expressions and `getValue(Direction)` maps
-  the file's LEFT/RIGHT/BOTH onto -1/+1/0. So a `RIGHT` event on
-  `0 - V` fires when the volume falls to nothing, which is what model L
+  the event function from the two expressions, and the event's direction —
+  left, right or both — becomes -1, +1 or 0. So an event on `0 - V` going
+  right fires when the volume falls to nothing, which is what model L
   model's "lake disappearing" event says.
 
 **Event location** is the bracketing search in `src/ode/core/events.js`. All three
@@ -1923,7 +1873,7 @@ finite differences.
 
 In the corpus the two models of the L series carry all five — 14 min/max blocks, 14
 discrete events, 4 running means, 4 snapshots and a delay — and import whole.
-They also carried the `model-input` and `model-output` blocks that were the
+They also carried the model input and model output blocks that were the
 last thing stopping them; those are connected directly now (see *Sub-system
 inputs and outputs*), and all three model L files build: 16,244 states, no
 problems, 27 unit warnings. The analytic Jacobian declines on them — more than
@@ -2165,16 +2115,17 @@ them whole.
 
 ## Unit checking
 
-the unit rule works an equation out in units and compares it
-with the unit the block declares. The rules are read off that method and
-`resolveUnit` beside it, not invented:
+Ecolego's unit check works an equation out in units and compares it with the
+unit the block declares. The rules here are read off Ecolego's own, not
+invented:
 
 * `*` and `/` combine the units; `+` and `-` require them to agree, **except
   that a dimensionless side is absorbed** — which is why `1 - k*t` is not
   reported, and why the sum then takes the unit of the side that has one.
-* `^` needs a constant exponent. Ecolego raises the base to it through
-  `pow(n).root(d)`; this tool refuses a power it cannot name rather than
-  reporting the model wrong for something it cannot follow.
+* `^` needs a constant exponent. Ecolego raises the unit to a fraction n/d,
+  as the n-th power and then the d-th root; this tool refuses a power it
+  cannot name rather than reporting the model wrong for something it cannot
+  follow.
 * A comparison is dimensionless whatever it compares — though the two sides
   still have to be comparable.
 * `min`, `max` and `if` require their arguments to agree, with the same
@@ -2183,8 +2134,8 @@ with the unit the block declares. The rules are read off that method and
   checked against `<compartment>/<time>` — in this tool that is the transfer,
   whose unit is derived already — and a **delay time** against the time unit.
 
-Three differences, all deliberate. Ecolego makes it opt-in per block
-(`isUnitChecking`, off by default) with a severity preference; here it is
+Three differences, all deliberate. Ecolego makes it opt-in per block (off by
+default) with a severity preference; here it is
 always on, because the checker is silent unless it is sure — no unit, an
 unknown in the equation, or a power it cannot follow all produce no verdict
 rather than a guess. It never converts between units, since nothing in this
@@ -3596,7 +3547,7 @@ goes through the same gate, so the two cannot drift apart.
 
 **`__proto__` and its two relatives are refused outright** as a block, nuclide,
 index or list name, and every map keyed by a string out of a file is
-prototype-free — so `<time-unit>constructor</time-unit>` is an unrecognised
+prototype-free — so a time unit written as `constructor` is an unrecognised
 unit rather than `Object`. A block named `__proto__` otherwise merges its
 diagram coordinates into `Object.prototype`, and `layoutOf(project)` is the one
 way a position is written for the same reason.
@@ -3803,8 +3754,8 @@ A deterministic run never answers, because it is one long synchronous call,
 which is why terminating exists at all.
 
 **Not done.** The pool is sized per run and torn down after it; a long session
-pays the start-up each time. Ecolego's own `<max-n-processors>` setting is not
-read from the file; *Cores* sets the number by hand, and `?workers=` caps it.
+pays the start-up each time. Ecolego's own setting for the number of processors
+is not read from the file; *Cores* sets the number by hand, and `?workers=` caps it.
 
 ## Global sensitivity, from GlobalSensitivity.jl
 
@@ -4149,11 +4100,11 @@ for each batch:
     mark the batch complete
 ```
 
-There are two cuts, and the flag chooses between them. `independent` walks the
-dependency graph a walk in both directions and merges anything mutually dependent, giving
-batches that cannot see each other at all. With it off the walk is
-a backward walk, the batches are sorted, and `backwardsReferences` is set: a
-batch may read one solved before it, never one after. That second arrangement
+There are two cuts, and a switch chooses between them. The independent one
+walks the dependency graph in both directions and merges anything mutually
+dependent, giving batches that cannot see each other at all. The other walks
+backwards and sorts the batches: a batch may read one solved before it, never
+one after. That second arrangement
 is the downstream-only case, and the reading back is a recorder read, which
 is a linear interpolation with a moving cursor:
 
@@ -4163,8 +4114,8 @@ take the straight line:   v0 + (t - t0)/(t1 - t0) * (v1 - v0)
 ```
 
 Every batch therefore has its own solver times, which is why batch mode forces
-the output grid -- the run sets `outputOption = OutputOption.SpecifiedOutput`
-whenever it is on, and the validator says so out loud: in batch mode the
+the output grid -- the run switches to the specified times whenever it is on,
+and the validator says so out loud: in batch mode the
 output option has to be *produce specified output only*. The documentation
 names the rest of the price too -- batch simulation can cost accuracy.
 
@@ -4278,10 +4229,10 @@ answer to that is not to store the trajectory at all but to pull the upstream
 solve forward on demand, which the per-step `onAccepted` hook already makes
 possible.
 
-**What the corpus asks for.** All eleven assessments of one series and both L-series models
-files ship with `<batch-mode>true</batch-mode>`, and every one of them has
-`<batch-independent-only>false</batch-independent-only>`; only model L sets
-`<batch-decay-chains>true</batch-decay-chains>`. So the models do use this --
+**What the corpus asks for.** All eleven assessments of one series and both
+L-series models ship with batch mode on, and every one of them takes the
+second cut rather than the independent one; only model L merges decay chains.
+So the models do use this --
 in its downstream-with-interpolation form, on the machine Ecolego runs on,
 against a native UMFPACK solver.
 
@@ -4507,8 +4458,8 @@ test checks that on the model rather than on the result, since a rewrite is
 precisely what would not show up in a number.
 
 **It changes how one corpus model runs, and that is the point.** Reading
-`<saturation-enabled>` on import, eleven of the twelve real assessments have it
-true and model L has it false -- so Ecolego runs model L with
+Ecolego's *Enable saturation* on import, eleven of the twelve real assessments
+have it on and model L has it off -- so Ecolego runs model L with
 no floor at all, while this tool clamped it. That clamp is not a detail: it is
 what `ndf.js` bypasses the analytic Jacobian for, and the reason that model
 spent a day out of memory (see *Differencing a Jacobian that has a pattern*).
@@ -4597,30 +4548,22 @@ chart and written back as Ecolego spells them. Nothing samples them: a run here
 is still deterministic and still uses the value beside the distribution. What
 has changed is that a model no longer loses them by passing through.
 
-**The file says it twice, and only one of them is enough.**
+**The file says it twice, and only one of them is enough.** A parameter's
+distribution is written as an expression,
+`logt(min=7.0E-12,max=5.0E-11,mode=1.0E-11)`, and its kind is named again
+beside it, `logt`. The expression names the *family* and the kind names the
+*class*, and three parameterisations of the log-normal share one spelling:
 
-```xml
-<entry type="parameter" index="Construction&#95;concrete">
-  <value><![CDATA[1.0E-11]]></value>
-  <pdf function="logt">
-    <pdf-value><![CDATA[logt(min=7.0E-12,max=5.0E-11,mode=1.0E-11)]]></pdf-value>
-  </pdf>
-</entry>
-```
-
-The expression names the *family* and the attribute names the *class*, and
-three parameterisations of the log-normal share one spelling:
-
-| `function=` | expression | what the numbers are |
+| kind | expression | what the numbers are |
 |---|---|---|
 | `Logn4` | `logn(gm=, gsd=)` | geometric mean and geometric SD |
 | `logn` | `logn(mean=, sd=)` | arithmetic mean and SD |
 | `logn5` | `logn(p1=, x1=, p2=, x2=)` | two quantiles to fit through |
 
 Read off the expression alone a `Logn4` is taken for a `logn` and drawn with
-the wrong shape, so the attribute is the kind and the argument names are the
-fallback for a file that has none. Over the corpus the two agree in all 17,746
-distributions -- but they agree because the attribute is right, not because the
+the wrong shape, so the kind named beside it decides and the argument names
+are the fallback for a file that has none. Over the corpus the two agree in all 17,746
+distributions -- but they agree because the kind is right, not because the
 expression is sufficient.
 
 **Every density matches what a file means by it.** `Logt` is the one worth spelling out, since
@@ -5036,13 +4979,14 @@ What that costs is said before it is spent and refused past a gigabyte rather
 than attempted.
 
 **What the model says, and what it is not allowed to do.** Ecolego's
-`<probabilistic-settings>` carries `no-simulations`, `sampling` and `seed`, and
-all three corpus models that have them say 1000, Latin hypercube and a seed.
+probabilistic settings carry the number of simulations, the sampling and the
+seed, and all three corpus models that have them say 1000, Latin hypercube and
+a seed.
 Those are read. They deliberately do **not** make Run probabilistic: a file
 saying 1000 must not turn one press into a thousand integrations of a
 23,436-state model, so a probabilistic run is started from its own dialog and
-the file's numbers are that dialog's defaults. model L also
-names 427 `<selected-parameter>`s, and those are honoured -- 426 of its 626
+the file's numbers are that dialog's defaults. Model L also
+selects 427 parameters for sampling, and those are honoured -- 426 of its 626
 distributed values are sampled and the rest keep their numbers.
 
 **Not supported: correlated sampling.** An assessment often ties parameters
@@ -5660,7 +5604,7 @@ model will run.
 
 **An imported file's correlations are counted, not carried.** This tool
 correlates sampled parameters by Iman and Conover's permutation — see
-`src/domain/correlate.js` — but the `<correlation-matrix>` of an imported
+`src/domain/correlate.js` — but the correlation matrix of an imported
 project is not read into it. The importer counts the pairs and warns that a
 probabilistic run here will spread wider than the file's own would; setting the
 correlations up again in the model is what makes it agree.

@@ -102,11 +102,11 @@ setting, so the field that is wrong is the field that goes red — with the
 reason in its tooltip. What is checked: the time span (the end after the
 start), a non-negative start when the spacing is logarithmic, at least two
 output points, and **both tolerances strictly greater than zero**. That last
-one had no check anywhere: `rtol: 0` is a finite number, so the field accepted
-it, `Project` had no opinion, and the solver then asked for `(0 / err) ** p` as
-its step-size factor — which is zero, so it halved the step forever and failed
-thousands of steps later with a stall naming neither the setting nor the value.
-The engine refuses it now as well, so a hand-written file cannot slip one past.
+one matters more than it looks: `rtol: 0` is a finite number, but a solver
+asked to meet it works out a step-size factor of zero, halves its step for ever
+and fails thousands of steps later with a stall naming neither the setting nor
+the value. The engine refuses it as well, so a hand-written file cannot slip
+one past.
 A number out of range is *kept* in the field rather than reverted, marked, with
 the reason above: reverting a mistake silently is how it becomes a mystery.
 
@@ -553,11 +553,11 @@ file they are `chart_time_scale` and `chart_value_scale` under `view`, each
 that menu. Both routes *draw the chart again* rather than copy the pixels on
 screen: PNG and JPEG onto a canvas at twice the size, because a bitmap scaled
 up is a bitmap scaled up and a figure in a report is read at print resolution;
-SVG through a Canvas2D-shaped surface that writes SVG instead of pixels
-(`src/ui/svgcanvas.js`), so the lines stay lines and the figure can be zoomed,
-re-lettered or dropped into a document at whatever size the page wants.
+SVG through a Canvas2D-shaped surface that writes SVG instead of pixels, so
+the lines stay lines and the figure can be zoomed, re-lettered or dropped into
+a document at whatever size the page wants.
 
-It is the same drawing code either way — `TimeChart._paint` takes a context and
+It is the same drawing code either way: it is handed a surface to draw on and
 does not care which it is. A second routine that emitted SVG would be a second
 chart, and the two would disagree about a tick label or a dash pattern within a
 month.
@@ -2121,10 +2121,6 @@ of these settings, and their fold holds only that line. A Rosenbrock method is l
 iteration to give a tolerance to, and it re-forms its Jacobian every step by
 definition, so there is no age to set.
 
-Which solver reads what lives in `SOLVER_OPTIONS` in `src/ode/solvers.js`,
-beside the code that passes them on, because that is the only place the answer
-stays honest.
-
 ## Letting the tolerance follow the solution
 
 **Absolute tolerance follows the solution**, under Advanced settings, is a trade, and worth
@@ -2480,7 +2476,7 @@ of accuracy.
 Each solver has two names. The interface calls it by what it is *for*, since
 that is the choice a modeller is actually making; the project file and every
 error message use the method's own id, so a run can still be compared against
-desktop output. `src/ode/solvers.js` is the one place both are defined.
+desktop output.
 
 ```figure solver-choice
                     is it stiff?
@@ -2520,10 +2516,9 @@ The three marked ↓ need a download the first time they are used; the rest
 never touch the network. See [A second opinion: the SciPy
 solvers](#a-second-opinion-the-scipy-solvers).
 
-**Eleven of them come from [DifferentialEquations.jl][sciml]**, vendored whole in
-`src/ode/julia/` and adapted in `src/ode/julia-solvers.js`: its default
-algorithm, the three methods that came with it, and the stiff methods ported
-before. They matter for two reasons. Two are families this tool had nothing of
+**Eleven of them come from [DifferentialEquations.jl][sciml]**, vendored whole
+and adapted to this tool: its default algorithm, the three methods that came
+with it, and the stiff methods ported before. They matter for two reasons. Two are families this tool had nothing of
 — a Rosenbrock–Wanner method with no nonlinear iteration, and a fully implicit
 Runge–Kutta — so a model that will not converge under the BDF solvers now has
 somewhere to go. And unlike the SciPy solvers they are a second opinion that
@@ -2606,10 +2601,8 @@ DifferentialEquations.jl's does across a callback. Those rules cost here:
   non-stiff again: 123 switches on `waste-packages.json`, where `auto` makes one.
   DifferentialEquations.jl does the same on the same kind of model.
 
-The formulas live in `src/ode/solvers/ndf.js`, and `src/ode/variable-order.js` adapts
-them to the interface the other two use. Both stiff solvers are handed an
-analytic Jacobian — see below — which is what makes the larger models
-practical.
+Both stiff solvers are handed an analytic Jacobian — see below — which is what
+makes the larger models practical.
 
 Pick one under **Solver** in the left panel; hovering an option describes it.
 The default is the variable-order stiff solver, because compartment models with
@@ -2839,9 +2832,9 @@ this application, so it is escaped on the way out and only its structure is
 turned into tags: a blank line becomes a paragraph and a single newline a
 break. A model with nothing to say gets no attribute rather than an empty one.
 
-The writer is this tool's own — `src/io/hdf5.js` — because the alternative is a
-4.7 MB WebAssembly build of the HDF5 library fetched from a CDN, and this
-program is files in a folder. See [INTERNALS.md](INTERNALS.md) for what it does and
+The writer is this tool's own, because the alternative is a 4.7 MB WebAssembly
+build of the HDF5 library fetched from a CDN, and this program is files in a
+folder. See [INTERNALS.md](INTERNALS.md) for what it does and
 does not write.
 
 ## When results are saved
@@ -2862,8 +2855,6 @@ vertical line and nothing else.
 | **Several series…** | a list of series, combined: a geometric one for the run, an even one for its first year, and any times written out by hand |
 | **The solver's own points** | no grid at all — the result is reported at every step the solver took |
 | **Series and the solver's points** | both of those, merged |
-
-`src/domain/timeseries.js` makes the series.
 
 ### A list of series
 
@@ -2903,7 +2894,7 @@ time it can report.
 
 Edit them from **Saved times** in the panel, which says how many times the list
 comes to and opens an editor for the series. The preview at the bottom of that
-dialog is the *engine's* answer, from the same `combineSeries` a run uses: a
+dialog is the *engine's* answer, from the same code a run uses: a
 preview that agreed with the editor and disagreed with the run would be worse
 than none.
 
@@ -3156,8 +3147,8 @@ sparse matrix and the per-call overhead is spread across a longer vector.
 
 #### How the model gets into Python
 
-The derivative **stays in JavaScript**. `buildSystem` compiles a model's
-equations into a JavaScript function, and re-emitting them as Python would mean
+The derivative **stays in JavaScript**. A model's equations are compiled into a
+JavaScript function, and re-emitting them as Python would mean
 a second code generator to keep in step with the first — the surest way to make
 the "independent check" agree with the thing it is checking.
 
@@ -3173,26 +3164,26 @@ throwing, so a solver that did not check would quietly integrate zeros. It was
 observed happening on the smallest of the bundled models, so the buffers are
 re-acquired whenever that happens.
 
-The analytic Jacobian goes across too. It is already stored column-compressed
-(`colPtr`, `rowIdx`, `values`), which is precisely `scipy.sparse.csc_matrix`'s
-own layout, so it crosses with no conversion at all.
+The analytic Jacobian goes across too. It is already stored column-compressed,
+which is precisely `scipy.sparse.csc_matrix`'s own layout, so it crosses with
+no conversion at all.
 
 #### What they will not do
 
 `solve_ivp` has no callback for accepted steps, which this codebase needs for
 the blocks that remember and for progress and cancellation. Rather than
 reimplement SciPy's driver — and with it the chance of a bug SciPy does not
-have — each solver *class* is subclassed and its `_step_impl` wrapped, so
-SciPy's own `solve_ivp` runs its own numerics and this code is merely told when
-a step is accepted. Progress, cancellation and the min/max, running-mean and
+have — each solver *class* is subclassed and its step wrapped: SciPy's own
+`solve_ivp` runs its own numerics, and this code is merely told when a step is
+accepted. Progress, cancellation and the min/max, running-mean and
 delay blocks all work as they do under the built-in solvers.
 
 One thing is refused outright rather than quietly ignored:
 
-- **Triggers.** Every trigger is terminal, and they are located by the
-  bracketing search in `src/ode/core/events.js`, including the rule that a crossing at the instant a previous event
-  fired is not a new one. SciPy has event support and it works, but reproducing
-  *that* rule on top of it would risk a subtly different model rather than an
+- **Triggers.** Every trigger is terminal, and they are located by this tool's
+  own bracketing search, including the rule that a crossing at the instant a
+  previous event fired is not a new one. SciPy has event support and it works,
+  but reproducing *that* rule on top of it would risk a subtly different model rather than an
   independent check of this one. Use `ndf`, `ros23` or `dp45`.
 
 **Non-negativity** is honoured as far as it can be. The usual treatment splits the option in
@@ -3234,9 +3225,9 @@ model — the compartment underneath it agrees to 2.9e-8.
 
 #### Pinning
 
-`PYODIDE_VERSION` in `src/ode/scipy.js` is an exact version, never `latest`: an
-independent check that changed under a model without the model changing would be
-worse than no check at all. Bumping it is a deliberate act with a
+The Python runtime the SciPy solvers download is an exact version, never
+`latest`: an independent check that changed under a model without the model
+changing would be worse than no check at all. Bumping it is a deliberate act with a
 re-run of the comparison above behind it.
 
 #### Offline
@@ -3848,15 +3839,11 @@ half-life it was.
 
 **Browse ICRP 107…**, beside the box that adds an index by hand, opens the
 1,252 radionuclides of ICRP Publication 107 — every half-life, and every decay
-pair with its branching ratio. `src/domain/icrp107.js` is that database,
-extracted from the decay-chain page at
-[kvotab.se/rdc.html](https://kvotab.se/rdc.html), which publishes the ICRP 107
-tables, and it is the only radionuclide data in this tool. It replaced what
-`src/domain/nuclides.js` used to hold: fifty half-lives and twenty-four decay
-pairs typed by hand, whose own note said the table was a stand-in and that
-"any assessment work should import the real one". That table now
-lives in the test suite instead, where an independent hand-typed source is
-worth having — it is what the computed chains are checked against.
+pair with its branching ratio. The database is extracted from the decay-chain
+page at [kvotab.se/rdc.html](https://kvotab.se/rdc.html), which publishes the
+ICRP 107 tables, and it is the only radionuclide data in this tool. The test
+suite keeps fifty half-lives and twenty-four decay pairs typed by hand, as an
+independent source: it is what the computed chains are checked against.
 
 The dialog is arranged the way that page is — elements down the left, their
 radioisotopes beside them, each with the half-life as ICRP writes it (`3.1 m`,
@@ -3877,10 +3864,10 @@ daughter is U-234, and the branching that reaches it is the product of the
 ratios along the way — 0.9984 through Pa-234m, not 1 — while the other 0.0016
 ends up somewhere else. The rule is one sentence: *the effective branching from
 A to B is the total probability that a decay of A reaches B through nuclides
-that are not being modelled*, and `collapse` in `src/domain/decaydb.js` is that
-sentence memoised over the database's decay graph. A test computes the collapse
-at a one-year threshold and checks it against the chains that were typed by
-hand — all twenty-two agree, and it finds three the hand table missed: the small
+that are not being modelled*, and the collapse is that sentence, memoised over
+the database's decay graph. A test computes the collapse at a one-year
+threshold and checks it against the chains that were typed by hand — all
+twenty-two agree, and it finds three the hand table missed: the small
 α branch of Pu-241 straight to Np-237, and the fission losses on Cm-246 and
 Pu-241 that made their branching 0.9997 rather than 1.
 
@@ -3911,8 +3898,8 @@ can be read and cited, and replaces every decay pair out of those nuclides with
 the computed ones. Pairs out of nuclides the selection said nothing about are
 left alone.
 
-The half-lives are not always the ones in `nuclides.js`: 44 of that table's 50
-agree with ICRP 107 to within half a percent, and six differ because the
+The half-lives are not always the ones typed by hand: 44 of those 50 agree
+with ICRP 107 to within half a percent, and six differ because the
 evaluated data moved after 2008 — Se-79 by 10% (re-measured in 2010), Th-229 by
 7%, Ag-108m by 5%, Ca-41, Ni-63 and Cm-245 by less. A test names those six, so
 that a *new* disagreement is a failure rather than a shrug.
@@ -4313,8 +4300,8 @@ file.
   column filled in, so a value set for `Cs-137` on a block indexed by nuclide
   and object becomes one row per object, each holding every value that index
   actually has.
-- Distributions, in Ecolego's spelling — `logt(min=…,max=…,mode=…)`, the kind
-  in `function=` — sub-systems with their nesting and their switches, switched
+- Distributions, in Ecolego's spelling — `logt(min=…,max=…,mode=…)`, with the
+  kind named beside it — sub-systems with their nesting and their switches, switched
   off blocks, units, comments, the run's span, time unit, tolerances and
   endpoints, the probabilistic settings, and the **Cannot go negative** switch.
 
@@ -7091,8 +7078,8 @@ the flux is following the constant or the inventory, and a dose limit drawn
 beside a dose says whether the dose crosses it.
 
 They come last and are never what a chart opens on. A real model carries
-hundreds of them, so `pickDefaultSeries` reaches for the compartments first and
-falls back to parameters only when they are all a model has — which is the case
+hundreds of them, so the chart reaches for the compartments first and falls
+back to parameters only when they are all a model has — which is the case
 of a model still being built.
 
 A constant does not travel as a column. `Results.constantOf(output)` gives the
@@ -7499,8 +7486,7 @@ spelling. Nothing else is touched, because a model's own names are keys too —
 nuclide — and any of those may legitimately be camelCase. The rename matters
 rather than being cosmetic: an unknown key is ignored rather than reported, so
 a stale `multiplyByDonor: false` would quietly revert to the default `true`
-and turn an absolute flux into a rate coefficient. `src/domain/keys.js` is the
-list, and is the one place to add to if a key is ever renamed again.
+and turn an absolute flux into a rate coefficient.
 
 ### Units
 
@@ -7524,8 +7510,8 @@ same way. A donor unit that itself contains a `/` is bracketed —
 The inspector shows the result as a readout rather than a field, and it is
 re-derived after every edit that could change it — the flag, the endpoints, the
 donor's unit, the simulation's time unit — including a hand-edit in the JSON
-tab, which is rewritten on **Apply**. `src/domain/units.js` is the derivation;
-`Project` falls back to it for a file that never passed through the editor.
+tab, which is rewritten on **Apply**. A file that never passed through the
+editor is given the same units when it runs.
 
 Referencing a transfer by name yields its rate, so `TCOut*C3` is the flux
 through `TCOut` — a common idiom in assessment models. A transfer with an

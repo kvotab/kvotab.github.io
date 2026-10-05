@@ -39028,6 +39028,23 @@ test('Ecolego is compared with only where importing its files is described', asy
 	}
 });
 
+test('the Help cites no source file of its own and reads none of Ecolego’s', async () => {
+	// The Guide is about using the tool, so it names no file of the source and
+	// no function in it; How it works may, being the machinery. Neither reads
+	// Ecolego's source to the reader: no Java names, no keys of its files.
+	const { readFileSync } = await import('node:fs');
+	const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+	const guide = read('../GUIDE.md');
+	const cited = [...guide.matchAll(/`(?:src|python)\/[^`]+`|`[^`\s]*\.m?js`/g)].map((m) => m[0]);
+	assert(!cited.length, `the Guide cites source files: ${cited.join(', ')}`);
+	const ecolego = /EOutputMode|JavaSimulator|SolverSettingPage|WorkspacePersistence|SimulationManager|LookupTableClassWriter|java-ode15s|<java-solver>|<output-options>|<simulation-settings>|predefined-type|lower-saturation|transport-begin|```xml/;
+	for (const file of ['GUIDE.md', 'INTERNALS.md']) {
+		const lines = read(`../${file}`).split('\n');
+		const at = lines.findIndex((l) => ecolego.test(l));
+		assert(at < 0, `${file}:${at + 1} names Ecolego’s internals: ${lines[at]?.slice(0, 90)}`);
+	}
+});
+
 test('every function the shell hands out as a hook is one it defines', async () => {
 	// A hook named but not defined is a ReferenceError at boot, which nothing
 	// here runs: the editor simply did not start. It happened once -- a block
