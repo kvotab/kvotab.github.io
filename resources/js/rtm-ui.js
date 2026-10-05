@@ -2227,6 +2227,30 @@
   }
 
   /* ---------------------------------------------------------------------
+     The full window
+     --------------------------------------------------------------------- */
+  /* The page without the site's header and footer (rtm.css :root.rtm-full),
+     by the button at the right end of the tab bar; kept for the next visit,
+     which the page's head puts in it before the first paint. */
+  const FULL_KEY = 'kvot.rtm.full';
+
+  function setFull(on) {
+    document.documentElement.classList.toggle('rtm-full', !!on);
+    try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+    fullState();
+    // The charts follow the window and not their box, and a pane's scroll bar
+    // can come or go with its new height.
+    resize();
+  }
+
+  function fullState() {
+    const on = document.documentElement.classList.contains('rtm-full');
+    const b = $('rtmFull');
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Show the site\'s header and footer again' : 'Full window: the page without the site\'s header and footer';
+  }
+
+  /* ---------------------------------------------------------------------
      Actions
      --------------------------------------------------------------------- */
   registerActions({
@@ -2234,6 +2258,7 @@
     'rtm:stop': () => stop(),
     'rtm:verify': () => { verify(); },
     'rtm:tab': (ev, el) => showTab(el.dataset.tab),
+    'rtm:full': () => setFull(!document.documentElement.classList.contains('rtm-full')),
     'rtm:redraw': () => {
       state.cell = Number($('rtmCell').value) || 0;
       state.layer = Number($('rtmLayer').value) || 0;
@@ -2331,6 +2356,7 @@
   initSideResize();
   initSections();
   initDrop();
+  fullState();
   showAdvanced(!!state.sections[ADVANCED_KEY]);
   $('rtmGradScale').value = state.gradScale;
   $('rtmGradTMin').value = state.gradTMin;

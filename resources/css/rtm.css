@@ -227,14 +227,32 @@
   margin-left: -8px;
   padding-left: 8px;
 }
+/*
+  The bar: the kvot mark (in the full window), the tabs, and the two buttons at
+  its end. The tabs scroll sideways when they do not fit, and the buttons stay
+  put. The line under the tabs is the bar's background rather than a border:
+  the open tab stands on it and covers it, where the scrolling tabs would clip
+  a tab reaching down over a border.
+*/
+.rtm-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  margin-left: -8px;
+  padding-left: 8px;
+  background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
 .rtm-tabs {
   display: flex;
   gap: 2px;
-  margin-left: -8px;
-  padding: 6px 10px 0 18px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* a tab cut off where the buttons begin fades out (only its padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 14px);
+  mask-image: linear-gradient(to left, transparent, #000 14px);
 }
 .rtm-tabs button {
   padding: 6px 12px;
@@ -245,6 +263,7 @@
   color: var(--text-secondary);
   font: 12px verdana, sans-serif;
   cursor: pointer;
+  white-space: nowrap;
 }
 .rtm-tabs button:hover { color: var(--text-primary); }
 .rtm-tabs button.active {
@@ -252,8 +271,31 @@
   color: var(--text-primary);
   border-color: var(--border-color);
   font-weight: 600;
-  margin-bottom: -1px;
 }
+/* inside the row, which would clip a ring drawn outside the tab */
+.rtm-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.rtm-tabend { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px 8px 1px 2px; }
+.rtm-tabend > button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer; }
+.rtm-tabend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.rtm-tabend > button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.rtm-tabend > .theme-toggle { font-size: 14px; line-height: 1; }
+.rtm-tabend > .theme-toggle:hover { transform: none; }
+.rtm-homelink { flex: none; align-items: center; padding: 3px 2px 1px 6px; }
+.rtm-homelink img { display: block; width: 20px; height: 20px; }
+
+/*
+  The full window (the button at the right end of the tab bar): the page
+  without the site's header and footer. There the kvot mark at the left of the
+  bar goes to the home page and the site's theme switch is beside the button;
+  otherwise they are the header's and the footer's own. The page's head sets
+  the class before the first paint when it was left on.
+*/
+:root.rtm-full { --header-height: 0px; --footer-height: 0px; }
+:root.rtm-full body > header, :root.rtm-full body > footer, :root.rtm-full body > .nav-toggle, :root.rtm-full body > #menu { display: none; }
+.rtm-tabbar .rtm-fullonly { display: none; }
+:root.rtm-full .rtm-tabbar .rtm-fullonly { display: inline-flex; }
+.rtm-fullbtn .rtm-full-in, :root.rtm-full .rtm-fullbtn .rtm-full-out { display: none; }
+:root.rtm-full .rtm-fullbtn .rtm-full-in { display: inline; }
 .rtm-pane {
   flex: 1 1 auto;
   min-height: 0;
@@ -490,7 +532,7 @@
   /* A column to drag makes no sense once the columns are stacked. */
   .rtm-resize { display: none; }
   .rtm-main { margin-left: 0; padding-left: 0; }
-  .rtm-tabs { margin-left: 0; padding-left: 10px; }
+  .rtm-tabbar { margin-left: 0; padding-left: 0; }
 }
 
 /* ---- a file dragged over the page --------------------------------------- */

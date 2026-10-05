@@ -22,12 +22,14 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the tab bar's button): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.rtm.full') === '1') document.documentElement.classList.add('rtm-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20260926">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261004">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
 <body>
@@ -182,13 +184,26 @@
 
       <!-- ========================= the work area ======================== -->
       <main class="rtm-main">
-        <div class="rtm-tabs" role="tablist">
-          <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
-          <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
-          <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
-          <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
-          <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
-          <button type="button" data-tab="help" data-on-click="rtm:tab">Help</button>
+        <!-- In the full window (the button at the right end) the kvot mark goes to the home page
+             and the site's theme switch is beside the button (site.js keeps its icon and title).
+             The two buttons are outside the tablist, which holds only the tabs. -->
+        <div class="rtm-tabbar">
+          <a class="rtm-homelink rtm-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+          <div class="rtm-tabs" role="tablist">
+            <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
+            <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
+            <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
+            <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
+            <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
+            <button type="button" data-tab="help" data-on-click="rtm:tab">Help</button>
+          </div>
+          <span class="rtm-tabend">
+            <button type="button" class="theme-toggle rtm-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+            <button type="button" class="rtm-fullbtn" id="rtmFull" data-on-click="rtm:full" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site's header and footer">
+              <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="rtm-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="rtm-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+            </button>
+          </span>
         </div>
 
         <!-- ---- concentration against time ---- -->
@@ -319,6 +334,10 @@
             differentiates them into an analytic sparse Jacobian and integrates them with the same
             stiff solvers as the <a href="./facsimile.html">canister radiolysis</a> page. Nothing is
             uploaded: the whole thing runs here.</p>
+          <p>The button at the right end of the tabs gives the page the whole window, without the
+            site's header and footer; the kvot mark at the left of the tabs then goes to the home
+            page, and the switch beside the button changes between light and dark. The page
+            remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
           <p>Six sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
@@ -907,7 +926,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
-  <script src="./resources/js/rtm-ui.js?v=20260926"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261004"></script>
 </body>
 </html>

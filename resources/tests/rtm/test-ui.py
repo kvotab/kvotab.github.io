@@ -148,6 +148,17 @@ async def set_text(page, text):
     })()""" % json.dumps(text))
 
 
+async def press(page, sel):
+    """A click with the mouse at the middle of the element, so that whatever lies on top of it is what is hit."""
+    x, y = await page.ev("(() => { const e = document.querySelector(%s); e.scrollIntoView({ block: 'nearest' });"
+                         " const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()"
+                         % json.dumps(sel))
+    for kind in ('mouseMoved', 'mousePressed', 'mouseReleased'):
+        await page.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1},
+                        session=page.sid)
+    await asyncio.sleep(0.3)
+
+
 async def main():
     ver = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/version'))
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
@@ -167,6 +178,12 @@ async def main():
         await page.call('Page.addScriptToEvaluateOnNewDocument',
                         {'source': "try{localStorage.removeItem('kvot-rtm-v1')}catch(e){}"},
                         session=page.sid)
+        # Nor a full window left on by an interrupted run. rtm.html's head reads
+        # that before anything else, so it is cleared first, from a file of the
+        # same origin that runs no script.
+        await page.call('Page.navigate', {'url': f'http://127.0.0.1:{HTTP}/resources/css/rtm.css'}, session=page.sid)
+        await settle(page, 'document.readyState', 'complete', tries=40, pause=0.25)
+        await page.ev("localStorage.removeItem('kvot.rtm.full')")
         await page.call('Page.navigate', {'url': URL}, session=page.sid)
         try:
             await asyncio.sleep(5)
@@ -984,6 +1001,117 @@ async def main():
                          True, tries=40)
             check('  and it compiles, with the script\'s time span', await page.ev(
                 "document.getElementById('rtmFacts').textContent.includes('TEND 10.0 s')"), True)
+
+            # --- the full window ----------------------------------------------
+            # The page without the site's header, menu and footer, by the button
+            # at the right end of the tab bar. There the kvot mark at the left of
+            # the bar goes to the home page and the site's theme switch is beside
+            # the button. The choice is kept, and the next visit is in the full
+            # window from the page's head.
+            FULL = """(() => { const shown = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; };
+              const c = document.querySelector('.content').getBoundingClientRect(), b = document.getElementById('rtmFull');
+              return { on: document.documentElement.classList.contains('rtm-full'), site: [shown('body > header'), shown('body > footer'), shown('body > .nav-toggle')],
+                top: Math.round(c.top), fills: Math.round(c.height) === innerHeight, mine: [shown('.rtm-homelink'), shown('.rtm-tabbar .theme-toggle')],
+                pressed: b.getAttribute('aria-pressed'), stored: localStorage.getItem('kvot.rtm.full') }; })()"""
+            THEME = ("[document.documentElement.dataset.theme, document.querySelector('.rtm-tabbar .theme-toggle').textContent,"
+                     " localStorage.getItem('kvot-theme')]")
+            # The page as the parser inserts the <script> of rtm-ui.js. The
+            # scripts are classic, so by readyState 'interactive' rtm-ui.js has
+            # run; but the parser lets the observer's callback run before it
+            # runs a script, so here the page's own script has not run yet (the
+            # button is not marked pressed), and only the head's can have put
+            # the page in the full window.
+            EARLY = """new MutationObserver((records, observer) => {
+              if (window.__rtmEarly || !document.querySelector('script[src*="rtm-ui.js"]')) return;
+              const h = document.querySelector('body > header'), b = document.getElementById('rtmFull');
+              window.__rtmEarly = { full: document.documentElement.classList.contains('rtm-full'), header: h ? getComputedStyle(h).display : null,
+                top: Math.round(document.querySelector('.content').getBoundingClientRect().top),
+                icon: [...b.querySelectorAll('path')].map((x) => getComputedStyle(x).display), pressed: b.getAttribute('aria-pressed') };
+              observer.disconnect();
+            }).observe(document, { childList: true, subtree: true });"""
+            r = await page.ev(FULL)
+            check('the site\'s header, menu and footer around the page, the full-window button not pressed',
+                  (r['on'], r['site'], r['top'], r['mine'], r['pressed']), (False, [True, True, True], 43, [False, False], 'false'))
+            # The line under the tabs is the bar's background, which the open
+            # tab covers by reaching the bar's foot in its pane's colour.
+            check('the open tab stands on the line under the tabs, in the colour of its pane', await page.ev(
+                "(() => { const a = document.querySelector('.rtm-tabs button.active'), bar = document.querySelector('.rtm-tabbar');"
+                " return [Math.round(a.getBoundingClientRect().bottom) === Math.round(bar.getBoundingClientRect().bottom),"
+                " getComputedStyle(a).backgroundColor === getComputedStyle(document.querySelector('.rtm-pane:not([hidden])')).backgroundColor]; })()"),
+                [True, True])
+            await press(page, '#rtmFull')
+            r = await page.ev(FULL)
+            check('the full-window button: no site header, menu or footer, the page fills the window, the choice kept',
+                  (r['on'], r['site'], r['top'], r['fills'], r['pressed'], r['stored']), (True, [False, False, False], 0, True, 'true', '1'))
+            check('  the kvot mark at the left of the tab bar goes to the home page, the theme switch beside the button',
+                  (r['mine'], await page.ev("""(() => { const a = document.querySelector('.rtm-homelink'), img = a.querySelector('img');
+                    const first = document.querySelector('.rtm-tabs button').getBoundingClientRect(), end = document.querySelector('.rtm-tabend'), bar = document.querySelector('.rtm-tabbar');
+                    return [a.getAttribute('href'), img.complete && img.naturalWidth > 0, a.getBoundingClientRect().right <= first.left,
+                      end.firstElementChild.classList.contains('theme-toggle') && end.lastElementChild.id === 'rtmFull',
+                      Math.abs(end.getBoundingClientRect().right - bar.getBoundingClientRect().right) <= 1]; })()""")),
+                  ([True, True], ['./index.html', True, True, True, True]))
+            before = await page.ev(THEME)
+            await press(page, '.rtm-tabbar .theme-toggle')
+            mid = await page.ev(THEME)
+            await press(page, '.rtm-tabbar .theme-toggle')
+            end = await page.ev(THEME)
+            if before[2] is None:
+                await page.ev("localStorage.removeItem('kvot-theme')")
+            flip = {'light': 'dark', 'dark': 'light'}
+            check('  its theme switch changes the theme and keeps it, as the footer\'s does',
+                  [mid[0] == flip.get(before[0]), mid[1] == ('☀️' if mid[0] == 'dark' else '🌙'), mid[2] == mid[0],
+                   end[0] == before[0], end[2] == end[0]], [True] * 5)
+            await press(page, '.rtm-tabs button[data-tab="gradient"]')
+            check('  the tabs work as before, and the bar\'s two buttons are not among them', await page.ev(
+                "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
+                " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
+                " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
+                [True, ['gradient'], 'time profile gradient model jacobian help'])
+            await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
+            check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
+                "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"
+                " return [Math.round(p.top), Math.round(p.bottom) === innerHeight]; })()"), [0, True])
+            await page.ev("document.querySelector('#kvot-info-panel .info-panel-close').click()")
+            # Page.navigate to the same address does not load the page again: a
+            # real reload, told apart from the old page by a marker.
+            early = await page.call('Page.addScriptToEvaluateOnNewDocument', {'source': EARLY}, session=page.sid)
+            await page.ev('window.__rtmOld = true')
+            await page.call('Page.reload', {'ignoreCache': True}, session=page.sid)
+            await settle(page, "!window.__rtmOld && document.getElementById('rtmStatus').textContent.startsWith('Compiled')",
+                         True, tries=120, pause=0.25)
+            await page.call('Page.removeScriptToEvaluateOnNewDocument', {'identifier': early['result']['identifier']},
+                            session=page.sid)
+            check('the next visit is in the full window before the page\'s script runs: no header while it loads',
+                  await page.ev('window.__rtmEarly || null'),
+                  {'full': True, 'header': 'none', 'top': 0, 'icon': ['none', 'inline'], 'pressed': 'false'})
+            r = await page.ev(FULL)
+            check('  and once it has run, its button is pressed', (r['on'], r['pressed'], r['fills']), (True, 'true', True))
+            # A phone: the mark, the switch and the button stay at the ends of
+            # the bar while the tabs scroll between them.
+            await page.call('Emulation.setDeviceMetricsOverride',
+                            {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True}, session=page.sid)
+            await asyncio.sleep(0.6)
+            BAR = """(() => { document.querySelector('.rtm-tabbar').scrollIntoView(); const bar = document.querySelector('.rtm-tabbar').getBoundingClientRect(),
+              tabs = document.querySelector('.rtm-tabs'), t = tabs.getBoundingClientRect(), end = document.querySelector('.rtm-tabend').getBoundingClientRect(),
+              mark = document.querySelector('.rtm-homelink'), help = document.querySelector('.rtm-tabs button[data-tab="help"]');
+              const left = mark.getClientRects().length ? mark.getBoundingClientRect().right : bar.left;
+              const scrolls = tabs.scrollWidth > tabs.clientWidth;
+              tabs.scrollLeft = tabs.scrollWidth;
+              const reached = help.getBoundingClientRect().right <= tabs.getBoundingClientRect().right;
+              tabs.scrollLeft = 0;
+              return [Math.round(bar.left), Math.round(bar.right) === innerWidth, left <= t.left + 0.5, end.left >= t.right - 0.5,
+                Math.abs(end.right - bar.right) <= 1, scrolls, reached, document.documentElement.scrollWidth <= innerWidth + 1]; })()"""
+            check('phone: the full window\'s bar keeps the mark at its left and the switch and button at its right, '
+                  'the tabs scrolling between them to the last', await page.ev(BAR), [0, True, True, True, True, True, True, True])
+            await press(page, '#rtmFull')
+            r = await page.ev(FULL)
+            check('the button again: the site\'s header, menu and footer back, the choice kept',
+                  (r['on'], r['site'], r['pressed'], r['stored']), (False, [True, True, True], 'false', '0'))
+            check('  and on a phone the tabs scroll to the last of them there too, with no sideways scroll of the page',
+                  await page.ev(BAR), [0, True, True, True, True, True, True, True])
+            await page.ev("localStorage.removeItem('kvot.rtm.full')")
+            await page.call('Emulation.setDeviceMetricsOverride',
+                            {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
 
             check('no console errors throughout', page.errors[:3], [])
         finally:

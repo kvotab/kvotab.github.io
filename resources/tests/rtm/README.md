@@ -319,3 +319,26 @@ before its `<details>`, not in the summary, since Chrome reports any control
 inside a `<summary>` (`An interactive element was found within a <summary>
 element`): the test finds no slot (`audit().inSummary`) and no other control
 inside one, and each heading's (i) centred on its line, at its end.
+
+**The full window.** The button at the right end of the tab bar takes away the
+site's header, menu and footer, as on smui.html and dose_coefficients.html. The
+test presses it with the mouse, so a button covered by something else fails.
+It checks that the page then fills the window, that the kvot mark at the left
+of the bar leads home, and that the theme switch beside the button works as the
+footer's does. The tabs work as before, with the two buttons outside the
+tablist. An (i) panel runs from the top of the window to the bottom; before the
+fix in `kvot-info.js` it took its height from the hidden header and footer and
+had none. A reload is in the full window before `rtm-ui.js` runs. The test
+records the page as the parser inserts that script's element: the scripts are
+classic, so by readyState `interactive` it would already have run, and only the
+page's head can have set the full window. At phone width the tabs scroll
+between the mark and the buttons, in either mode, so the last of them can be
+reached. The line under the tabs is the bar's background, not a border, because
+the scrolling row would clip a tab reaching over a border. So the test also
+checks that the open tab reaches the bar's foot in its pane's colour.
+
+The choice is kept in the browser (`kvot.rtm.full`), and the test profile keeps
+it from run to run. rtm.html's head reads it before anything else, so the test
+clears it before the first load, from `rtm.css`, a file of the same origin that
+runs no script. It clears it again after its checks, so an interrupted run
+cannot leave the next one without the site's header.
