@@ -148,6 +148,10 @@ const d60 = await loadSystem('60', io);
   const c60 = catalog60(d60), c103 = catalog103(d103);
   check(`catalogue ICRP 60: ${c60.nuclides.length} nuclides of ICRP 72`, c60.nuclides.length > 700);
   check(`catalogue ICRP 103: ${c103.nuclides.length} nuclides of ${c103.elements.length} elements`, c103.elements.length >= 91);
+  // An element missing from catalog.js's ELEMENTS gets Z 0 and sorts before
+  // hydrogen (ICRP 72's Md-257 and Md-258 did).
+  const noZ = [...c60.nuclides, ...c103.nuclides].filter((n) => !n.Z).map((n) => n.name);
+  check('catalogues: every nuclide has its atomic number; ICRP 60 runs from H-3 to Md', !noZ.length && c60.nuclides[0].name === 'H-3' && /^Md-/.test(c60.nuclides.at(-1).name), noZ.join(', '));
   // FGR13ING.INP runs Pu-238 twice more at its head, once with an f1 file of
   // DCAL's library for workers (gen-dose-icrp60.mjs, keepCases).
   const twice = c60.nuclides.flatMap((n) => ['ingestion', 'inhalation'].flatMap((r) => n[r].filter((f, i, all) => all.findIndex((g) => g.key === f.key) < i).map((f) => `${n.name} ${r} ${f.key}`)));
