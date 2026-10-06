@@ -4,7 +4,8 @@
 test-parse.js proves the reading and the chains. This proves the wiring: the
 built-in release loads, a nuclide can be reached by address, by search, by
 clicking the chart and by the arrow keys, every colour mode draws its legend,
-the decay-chain chart draws with no label on top of a box, the options change
+the decay-chain chart draws with no label on top of a box, and draws as a
+series of circles (the way rdc.html draws chains) too, the options change
 the chain, the chain runs up to the parents as well, the Levels, Radiation and
 Data sets tabs fill, a user's ENSDF zip
 opens in the worker, is remembered across a reload and can be forgotten, the
@@ -28,7 +29,11 @@ import zipfile
 
 import websockets
 
-BASE = 'http://127.0.0.1:8765/ensdf.html'
+# The ports the README starts the server and Chrome on; another pair where a
+# second session is testing at the same time.
+HTTP_PORT = os.environ.get('SITE_HTTP_PORT', '8765')
+CDP_PORT = os.environ.get('SITE_CDP_PORT', '9222')
+BASE = f'http://127.0.0.1:{HTTP_PORT}/ensdf.html'
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixture', 'ensdf.003')
 
 failures = []
@@ -123,7 +128,7 @@ def fixture_zip_b64():
 
 
 async def main():
-    ver = json.loads(urllib.request.urlopen('http://127.0.0.1:9222/json/version').read())
+    ver = json.loads(urllib.request.urlopen(f'http://127.0.0.1:{CDP_PORT}/json/version').read())
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
         page = Page(bws)
         pump = asyncio.ensure_future(page.pump())
@@ -310,6 +315,120 @@ async def main():
         picked = json.loads(picked)
         check('a box in the chain opens that member in the panel', picked['sel'], {'z': 88, 'a': 226, 'k': 0})
         check('... and the chain keeps its start', picked['root'], {'z': 92, 'a': 238, 'k': 0})
+
+        # ---------------------------------------------------------- the series layout
+        # The chain drawn as Radionuclide Decay Chains (rdc.html) draws it: a circle
+        # for each state, alpha decay straight down, beta decay across, every arrow
+        # labelled with its mode over its share.
+        SERIES_LOOK = """(() => {
+          const svg = document.getElementById('nzChainSvg');
+          const disc = (k) => { const c = svg.querySelector(`.nz-node[data-key="${k}"] .nz-disc`); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')] : null; };
+          const discs = [...svg.querySelectorAll('.nz-disc')].map(c => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')]);
+          const labels = [...svg.querySelectorAll('.nz-edge-label')];
+          const rects = labels.map(g => { const r = g.querySelector('rect'); return [+r.getAttribute('x'), +r.getAttribute('y'), +r.getAttribute('width'), +r.getAttribute('height')]; });
+          const onDisc = rects.filter(r => discs.some(([cx, cy, cr]) => Math.hypot(Math.max(r[0], Math.min(cx, r[0] + r[2])) - cx, Math.max(r[1], Math.min(cy, r[1] + r[3])) - cy) < cr - 0.5)).length;
+          let pairs = 0;
+          rects.forEach((p, i) => rects.slice(i + 1).forEach(q => { if (Math.min(p[0] + p[2], q[0] + q[2]) - Math.max(p[0], q[0]) > 1 && Math.min(p[1] + p[3], q[1] + q[3]) - Math.max(p[1], q[1]) > 1) pairs++; }));
+          let apart = true;
+          discs.forEach((p, i) => discs.slice(i + 1).forEach(q => { if (Math.hypot(p[0] - q[0], p[1] - q[1]) < p[2] + q[2]) apart = false; }));
+          /* An arrow that passes over a circle not its own looks as if it ended there. */
+          let through = 0;
+          for (const p of svg.querySelectorAll('path[marker-end]')) {
+            const v = p.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+            const P = v.length === 6 ? [[v[0], v[1]], [v[2], v[3]], [v[4], v[5]]] : [[v[0], v[1]], [(v[0] + v[2]) / 2, (v[1] + v[3]) / 2], [v[2], v[3]]];
+            for (const [cx, cy, cr] of discs) {
+              for (let i = 0; i <= 60; i++) {
+                const t = i / 60, x = (1 - t) * (1 - t) * P[0][0] + 2 * (1 - t) * t * P[1][0] + t * t * P[2][0], y = (1 - t) * (1 - t) * P[0][1] + 2 * (1 - t) * t * P[1][1] + t * t * P[2][1];
+                if (Math.hypot(x - cx, y - cy) < cr - 3) { through++; break; }
+              }
+            }
+          }
+          const alpha = labels.find(g => g.querySelector('title').textContent.startsWith('alpha decay: 100 % of the decays of 238U'));
+          const mini = document.getElementById('nzChainMini');
+          return JSON.stringify({
+            members: ENSDFPage.state.chain.nodes.filter(n => n.kind !== 'fission').length, discs: discs.length,
+            boxes: svg.querySelectorAll('.nz-node > rect:not(.nz-level)').length,
+            arrows: svg.querySelectorAll('path[marker-end]').length, labels: labels.length,
+            u238: disc('92,238,0'), th234: disc('90,234,0'), pb214: disc('82,214,0'), bi214: disc('83,214,0'), pam: disc('91,234,1'), pa: disc('91,234,0'),
+            alpha: alpha ? [...alpha.querySelectorAll('text')].map(t => t.textContent) : null, onDisc, pairs, apart, through,
+            texts: [...svg.querySelectorAll('text')].map(t => t.textContent).join(' '),
+            aria: svg.getAttribute('aria-label'),
+            mini: mini ? [mini.querySelectorAll('.nz-disc').length, +mini.getAttribute('height')] : null,
+            /* The colours it stands on, and where it starts in the view. */
+            fills: [svg.querySelector(':scope > rect').getAttribute('fill'), svg.querySelector('.nz-disc').getAttribute('fill'), svg.querySelector('.nz-edge-label rect').getAttribute('fill')],
+            view: getComputedStyle(document.querySelector('.nz-chainview')).backgroundColor,
+            edge: [svg.getBoundingClientRect().left - document.querySelector('.nz-chain-scroll').getBoundingClientRect().left, svg.getBoundingClientRect().top - document.querySelector('.nz-chain-scroll').getBoundingClientRect().top],
+            card: mini ? [mini.querySelector(':scope > rect').getAttribute('fill'), getComputedStyle(mini.closest('.nz-card')).backgroundColor] : null,
+            saved: JSON.parse(localStorage.getItem('kvot-ensdf-v1')).chainOpt.style }); })()"""
+        await page.ev("""(async () => { ENSDFPage.select('U-238'); document.querySelector('[data-view=chain]').click();
+          await new Promise(r => setTimeout(r, 200));
+          const s = document.getElementById('nzChainStyle'); s.value = 'series'; s.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 300)); return 'ok'; })()""")
+        ser = json.loads(await page.ev(SERIES_LOOK))
+        check('the series layout draws every member of the 238U chain as a circle, and no boxes', (ser['discs'], ser['boxes']), (ser['members'], 0))
+        check('... alpha decay straight down: 234Th under 238U', (abs(ser['th234'][0] - ser['u238'][0]) < 0.5, ser['th234'][1] > ser['u238'][1]), (True, True))
+        check('... beta-minus a step to the right on the same row: 214Pb to 214Bi', (abs(ser['bi214'][1] - ser['pb214'][1]) < 0.5, round(ser['bi214'][0] - ser['pb214'][0], 1)), (True, 141.4))
+        check('... an isomer above the state it decays to: 234mPa over 234Pa', (abs(ser['pam'][0] - ser['pa'][0]) < 0.5, ser['pam'][1] < ser['pa'][1]), (True, True))
+        check('... every arrow labelled with its mode over its share (238U: α over 100 %)', (ser['labels'] == ser['arrows'], ser['alpha']), (True, ['α', '100 %']))
+        check('... no label on a circle or on another label, no circle on another, no arrow over a circle not its own',
+              (ser['onDisc'], ser['pairs'], ser['apart'], ser['through']), (0, 0, True, 0))
+        check('... no Unicode superscripts in its text', any(c in ser['texts'] for c in SUPERSCRIPTS), False)
+        check('... the drawing says how it is laid out', ser['aria'], 'Decay chain: alpha decay straight down, beta decay across')
+        check('... the panel’s small drawing follows, held to 360 px high', ser['mini'], lambda m: m is not None and m[0] == ser['discs'] and m[1] <= 360)
+        check('... the drawing, its circles and its labels are the colour of the view, and it starts at the view’s edges: no band between',
+              (ser['fills'], ser['edge']), ([ser['view']] * 3, [0, 0]))
+        check('... the small drawing is the colour of its card', ser['card'], lambda c: c is not None and c[0] == c[1])
+        check('... and the choice is kept', ser['saved'], 'series')
+        await page.ev("""(async () => { ENSDFPage.select('Br-101'); await new Promise(r => setTimeout(r, 300)); return 'ok'; })()""")
+        crowd = json.loads(await page.ev(SERIES_LOOK))
+        check('a crowded series (101Br, with beta-delayed neutrons): labels clear of each other and of the circles, no arrow over a circle',
+              (crowd['discs'] == crowd['members'], crowd['onDisc'], crowd['pairs'], crowd['through']), (True, 0, 0, 0))
+        act = json.loads(await page.ev("""(async () => {
+          window.__series = []; const click = HTMLAnchorElement.prototype.click;
+          HTMLAnchorElement.prototype.click = function () { if (this.download) fetch(this.href).then(r => r.text()).then(t => window.__series.push([this.download, t])); };
+          ENSDFPage.select('U-238'); await new Promise(r => setTimeout(r, 300));
+          const svg = document.getElementById('nzChainSvg');
+          const g = svg.querySelector('.nz-node[data-key="88,226,0"]');
+          g.dispatchEvent(new MouseEvent('mouseenter')); await new Promise(r => setTimeout(r, 50));
+          const out = { tip: document.getElementById('nzTip').hidden ? '' : document.getElementById('nzTip').textContent,
+            lit: [...svg.querySelectorAll('path[marker-end]')].filter(p => /Hi\\)$/.test(p.getAttribute('marker-end'))).length };
+          g.dispatchEvent(new MouseEvent('mouseleave'));
+          g.dispatchEvent(new MouseEvent('click', {bubbles: true})); await new Promise(r => setTimeout(r, 250));
+          out.sel = ENSDFPage.state.sel; out.root = ENSDFPage.state.root;
+          document.querySelector('[data-on-click="nz:chainSvg"]').click();
+          for (let i = 0; i < 40 && !window.__series.length; i++) await new Promise(r => setTimeout(r, 100));
+          HTMLAnchorElement.prototype.click = click;
+          out.file = window.__series.map(f => [f[0], f[1].includes('class="nz-disc"'), f[1].includes('class="nz-level"')]);
+          document.querySelector('[data-tab=inventory]').click(); await new Promise(r => setTimeout(r, 700));
+          const lvl = (k) => { const r = document.querySelector(`#nzChainSvg .nz-node[data-key="${k}"] .nz-level`); return r && r.getAttribute('visibility') === 'visible' ? +r.getAttribute('height') : 0; };
+          out.full = lvl('92,238,0'); out.other = lvl('90,230,0');
+          out.lead = document.querySelector('#nzPaneInventory .nz-inv-lead').textContent;
+          const tr = document.querySelector('#nzPaneInventory .nz-inv-table tr[data-key="86,222,0"]');
+          tr.dispatchEvent(new PointerEvent('pointerenter')); await new Promise(r => setTimeout(r, 50));
+          const ring = document.querySelector('#nzChainSvg .nz-hot-ring');
+          out.ring = ring ? [ring.tagName, ring.parentNode.dataset.key] : null;
+          tr.dispatchEvent(new PointerEvent('pointerleave'));
+          document.querySelector('[data-tab=nuclide]').click();
+          out.after = [...document.querySelectorAll('#nzChainSvg .nz-level')].filter(r => r.getAttribute('visibility') === 'visible').length;
+          return JSON.stringify(out); })()"""))
+        check('pointing at a circle shows its card and lights its arrows', (act['tip'].startswith('226Ra'), act['lit'] >= 2), (True, True))
+        check('... a click opens that member, and the chain keeps its start', (act['sel'], act['root']), ({'z': 88, 'a': 226, 'k': 0}, {'z': 92, 'a': 238, 'k': 0}))
+        check('the series saves as an SVG of circles', act['file'], [['decay-chain-238U.svg', True, True]])
+        check('the Inventory tab fills the start’s circle, alone, to the brim, and says circles', (act['full'], act['other'], 'a circle in the chain' in act['lead']), (80, 0, True))
+        check('... pointing at a row rings its circle, and leaving the tab empties them', (act['ring'], act['after']), (['circle', '86,222,0'], 0))
+        await page.reload()
+        again = json.loads(await page.ev("""(async () => { for (let i = 0; i < 40 && !document.querySelector('#nzChainSvg .nz-disc'); i++) await new Promise(r => setTimeout(r, 100));
+          return JSON.stringify({ menu: document.getElementById('nzChainStyle').value, discs: document.querySelectorAll('#nzChainSvg .nz-disc').length }); })()"""))
+        check('after a reload the chain is drawn as a series again', (again['menu'], again['discs'] > 0), ('series', True))
+        grid = json.loads(await page.ev("""(async () => { const s = document.getElementById('nzChainStyle'); s.value = 'grid'; s.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 300));
+          return JSON.stringify({ discs: document.querySelectorAll('#nzChainSvg .nz-disc').length, boxes: document.querySelectorAll('#nzChainSvg .nz-node > rect:not(.nz-level)').length,
+            aria: document.getElementById('nzChainSvg').getAttribute('aria-label'), saved: JSON.parse(localStorage.getItem('kvot-ensdf-v1')).chainOpt.style,
+            bg: document.querySelector('#nzChainSvg > rect').getAttribute('fill'),
+            inset: document.getElementById('nzChainSvg').getBoundingClientRect().left - document.querySelector('.nz-chain-scroll').getBoundingClientRect().left }); })()"""))
+        check('back on the grid: boxes again, no circles, and that is kept', (grid['discs'], grid['boxes'] > 0, grid['aria'], grid['saved']),
+              (0, True, 'Decay chain: atomic number across, mass number down', 'grid'))
+        check('... on the chart’s own background, inside the view’s padding, as before', (grid['bg'], grid['inset']), ('#fdfaf7', 12))
 
         # ---------------------------------------------------------- the tabs
         await page.ev("document.querySelector('[data-view=chart]').click(); ENSDFPage.select('Co-60'); 'ok'")

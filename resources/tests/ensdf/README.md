@@ -74,7 +74,12 @@ Chrome with `--remote-debugging-port=9222`), then
 
     python3 resources/tests/ensdf/test-ui.py
 
-108 checks: the built-in release loads; the tab icon (drawn by
+Where those ports are taken (another session testing at the same time), start
+the two on others and say which:
+
+    SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
+
+126 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -94,7 +99,19 @@ unlabelled arrow, 234Th → 234U is marked via 234mPa, and the view opens
 with 234Th's daughters in it); the crowded 101Br
 chain, full of β-delayed neutron branches, has no label on another label or
 on a box; a box in the chain opens its member without moving the start of
-the chain; the chain settings are there in the chart view as well; the six
+the chain; the series layout (the chain as Radionuclide Decay Chains draws it)
+draws every member of the 238U chain as a circle and no box, 234Th straight
+under 238U, 214Bi a step of 141.4 px to the right of 214Pb on its row, 234mPa
+over 234Pa, every arrow labelled with its mode over its share (α over 100 %),
+no label on a circle or another label, no circle on another and no arrow over
+a circle not its own -- in the 101Br chain too -- no Unicode superscripts, an
+`aria-label` that says how it is laid out, and the panel's small drawing
+following it, held to 360 px high; pointing at a circle shows its card and
+lights its arrows, a click opens that member and keeps the start, the SVG is
+of circles, the Inventory tab fills the start's circle to the brim (and says
+circles), a row rings its circle, leaving the tab empties them, and the
+layout is kept through a reload and back to the grid;
+the chain settings are there in the chart view as well; the six
 panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
 the panel's row of tabs ends at the same line as the main area's, whether
 the chain settings stand beside the view tabs or above them; the

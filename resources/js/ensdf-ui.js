@@ -51,7 +51,7 @@
     view: 'chart',
     tab: 'nuclide',
     colour: 'halflife',
-    chainOpt: { minBranch: 0, life: 'iso', overlay: true, dir: 'down' },   // dir: 'down' to the daughters, 'up' to the parents
+    chainOpt: { minBranch: 0, life: 'iso', overlay: true, dir: 'down', style: 'grid' },   // dir: 'down' to the daughters, 'up' to the parents; style: how the chain is drawn, 'grid' (Z across, A down) or 'series' (circles as rdc.html draws them)
     inv: { from: 0, end: 0, unit: 'y', qty: 'Bq', xLog: true, yLog: true, for: '', cursor: null },
     inventories: {},       // chain start key ('up:' first for the parents) -> {member key: [value, unit]}
     levelsAll: false,
@@ -83,6 +83,7 @@
         if (typeof s.chainOpt.life === 'string') state.chainOpt.life = s.chainOpt.life;
         if (typeof s.chainOpt.overlay === 'boolean') state.chainOpt.overlay = s.chainOpt.overlay;
         if (s.chainOpt.dir === 'up' || s.chainOpt.dir === 'down') state.chainOpt.dir = s.chainOpt.dir;
+        if (s.chainOpt.style === 'grid' || s.chainOpt.style === 'series') state.chainOpt.style = s.chainOpt.style;
       }
       if (['nuclide', 'levels', 'radiation', 'datasets', 'inventory', 'about'].includes(s.tab)) state.tab = s.tab;
       if (s.inv && typeof s.inv === 'object') {
@@ -643,15 +644,31 @@
   }
 
   /* The chain in small, in the panel: the whole drawing scaled to the panel's
-     width, so the reader sees its shape the moment a nuclide is chosen. */
+     width, so the reader sees its shape the moment a nuclide is chosen. A
+     series stands tall -- the 238U chain is twice as high as it is wide --
+     so it is held to MINI_SERIES_H and stands in the middle. */
+  const MINI_SERIES_H = 360;
   function drawMiniChain() {
     const svg = $('nzChainMini');
     if (!svg || !state.chain) return;
-    const size = CH.render(svg, state.chain, {});
+    const series = state.chainOpt.style === 'series';
+    const size = CH.render(svg, state.chain, { style: state.chainOpt.style, bg: series ? backdrop(svg.parentElement) : undefined });
     const room = svg.parentElement.clientWidth || 400;
-    const scale = Math.min(1, room / size.width);
+    const scale = Math.min(1, room / size.width, series ? MINI_SERIES_H / size.height : 1);
     svg.setAttribute('width', Math.round(size.width * scale));
     svg.setAttribute('height', Math.round(size.height * scale));
+    svg.dataset.style = state.chainOpt.style;
+  }
+
+  /* The colour a drawing stands on: the first background, going out from
+     it, that is not transparent. A series takes it for its own, so that it
+     has no edge -- in the chain view and on the Nuclide tab's card alike. */
+  function backdrop(el) {
+    for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
+      const c = getComputedStyle(e).backgroundColor;
+      if (c && c !== 'transparent' && !/^rgba\(.*,\s*0\)$/.test(c)) return c;
+    }
+    return '';
   }
 
   /** The detail file for the selected mass number, from cache or loaded. */
@@ -832,7 +849,13 @@
     }
     const svg = $('nzChainSvg');
     const sel = state.sel ? `${state.sel.z},${state.sel.a},${state.sel.k}` : '';
+    const series = state.chainOpt.style === 'series';
+    svg.setAttribute('aria-label', `${up ? 'Parents' : 'Decay chain'}: ${series ? 'alpha decay straight down, beta decay across' : 'atomic number across, mass number down'}`);
+    /* A series runs to the view's edges, on the view's own colour (ensdf.css). */
+    svg.parentElement.dataset.style = state.chainOpt.style;
     const size = CH.render(svg, ch, {
+      style: state.chainOpt.style,
+      bg: series ? backdrop(svg.parentElement) : undefined,
       selected: sel,
       onPick: (n) => { if (n.kind === 'state') select({ z: n.z, a: n.a, k: n.k }, { from: 'chain' }); },
       onHover: (n, ev) => {
@@ -880,8 +903,10 @@
   function fitChain(size, ch) {
     const svg = $('nzChainSvg');
     const box = document.querySelector('.nz-chain-scroll');
-    const cs = getComputedStyle(box);
-    const room = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2;
+    /* The room is the drawing's own box: inside the scroll box's padding,
+       or, for a series, out to its edges. */
+    const draw = svg.parentElement;
+    const room = draw.clientWidth - 2;
     if (!size || !(room > 0)) return;
     const scale = Math.max(0.7, Math.min(1.25, room / size.width));
     svg.setAttribute('width', Math.round(size.width * scale));
@@ -890,7 +915,6 @@
        its top right, the heaviest member -- with as much of where that decays
        to beside it as fits; going up, with the parents it comes from, which
        stand on both sides of it. */
-    const draw = svg.parentElement;
     const f = size.focus || size.root;
     if (size.root && size.width * scale > draw.clientWidth) {
       const right = (f.x + f.w) * scale + 24;
@@ -900,9 +924,9 @@
     /* Going up, the start stands at the foot of the drawing, so a chain
        taller than the view opens scrolled down to it and its parents; going
        down, it opens at the top, where the start is. Only for a chain that
-       is new -- another start, or the other way -- not each time a box in
-       it is clicked. */
-    const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}` : '';
+       is new -- another start, the other way or the other drawing -- not
+       each time a box in it is clicked. */
+    const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}|${state.chainOpt.style}` : '';
     if (size.root && ch && sig !== fittedFor) {
       fittedFor = sig;
       if (ch.up) {
@@ -932,6 +956,20 @@
     br.value = [...br.options].find((o) => +o.value === state.chainOpt.minBranch).value;
     $('nzOverlay').checked = state.chainOpt.overlay;
     $('nzChainDir').value = state.chainOpt.dir;
+    $('nzChainStyle').value = state.chainOpt.style;
+  }
+
+  /* How the chain is drawn, from the menu on the chain view's bar: on the
+     grid, Z across and A down, or as a series, the way Radionuclide Decay
+     Chains draws it. The chain itself does not change, nor the table; the
+     panel follows (its small drawing, the Inventory tab's words for it). */
+  function setChainStyle(style) {
+    if (style !== 'grid' && style !== 'series') return;
+    state.chainOpt.style = style;
+    $('nzChainStyle').value = style;
+    renderChainView();
+    renderPanel();
+    saveState();
   }
 
   /* Which way the chain runs, from the setting beside the view tabs or the
@@ -1352,15 +1390,17 @@
       </tr>`;
     }).join('');
     const rName = nameHtml(r.z, r.a, r.k, r.nuc);
+    /* What a member is drawn as: a box on the grid, a circle in the series. */
+    const shape = state.chainOpt.style === 'series' ? ['circle', 'circles'] : ['box', 'boxes'];
     pane.innerHTML = `
       <div class="nz-pane-head"><h3>${ch.up ? `Inventory of the parents of ${rName}` : `Inventory of the ${rName} chain`}</h3></div>
-      <p class="nz-dim nz-inv-lead">${ch.up ? `Give any of the parents an initial amount below, and follow how ${rName} and every member between grow in from it.` : 'Give any member an initial amount below, and follow each one over time.'} Point at a line, a box in the chain or a row to find a member in all three; the boxes fill to their share at the time under the cursor.</p>
+      <p class="nz-dim nz-inv-lead">${ch.up ? `Give any of the parents an initial amount below, and follow how ${rName} and every member between grow in from it.` : 'Give any member an initial amount below, and follow each one over time.'} Point at a line, a ${shape[0]} in the chain or a row to find a member in all three; the ${shape[1]} fill to their share at the time under the cursor.</p>
       <div class="nz-inv-bar">
         <label class="nz-field">${state.inv.xLog ? 'From' : 'Up to'}${state.inv.xLog ? ` <input type="text" inputmode="decimal" id="nzInvFrom" value="${esc(inputNum(state.inv.from > 0 ? state.inv.from : state.inv.end * 1e-6))}" data-on-change="nz:invFrom" aria-label="Start of the time span"> to` : ''} <input type="text" inputmode="decimal" id="nzInvEnd" value="${esc(inputNum(state.inv.end))}" data-on-change="nz:invEnd" aria-label="End of the time span"> <select id="nzInvUnit" data-on-change="nz:invUnit" aria-label="Unit of the time span">${unitOpts}</select></label>
         <label class="nz-field">Show <select id="nzInvQty" data-on-change="nz:invQty">${qOpts}</select></label>
       </div>
       <div class="nz-inv-tools">
-        <button type="button" class="nz-btn small" id="nzInvPlay" data-on-click="nz:invPlay" title="Move the cursor from the start to the end, filling the boxes as it goes">Run through</button>
+        <button type="button" class="nz-btn small" id="nzInvPlay" data-on-click="nz:invPlay" title="Move the cursor from the start to the end, filling the ${shape[1]} as it goes">Run through</button>
         ${axisBtn('x', state.inv.xLog)} ${axisBtn('y', state.inv.yLog)}
         <span class="nz-dialog-gap"></span>
         <button type="button" class="nz-btn secondary small" data-on-click="nz:invCsv" title="The values drawn, as a table">CSV</button>
@@ -1813,6 +1853,7 @@
     'nz:minLife': (ev, el) => { state.chainOpt.life = el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:overlay': (ev, el) => { state.chainOpt.overlay = el.checked; computeChain(); saveState(); },
     'nz:chainDir': (ev, el) => setChainDir(el.dataset.dir || el.value),
+    'nz:chainStyle': (ev, el) => setChainStyle(el.value),
     'nz:chainSvg': () => chainSvg(),
     'nz:chainPng': () => chainPng(),
     'nz:chainCsv': () => chainCsv(),

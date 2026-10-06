@@ -21,11 +21,14 @@
   --nz-chart-bg: #fdfaf7;
   --nz-magic: #c9bdb1;
   --nz-select: #bb6c5d;
+  /* What fills a circle of the series as a bucket (Inventory): rdc.html's yellow. */
+  --nz-bucket: #fff4a3;
 }
 [data-theme="dark"] {
   --nz-chart-bg: #1f1813;
   --nz-magic: #5a4d41;
   --nz-select: #f3b87b;
+  --nz-bucket: #5a4520;
 }
 
 .nz-content { overflow: hidden; }
@@ -502,10 +505,15 @@ a.nz-nuc:hover { text-decoration: underline; }
 }
 .nz-chain-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px; }
 .nz-chain-draw { overflow-x: auto; margin: 0 0 8px; }
+/* A series stands on the view's own colour and runs out to its edges, over
+   the scroll box's padding: no band between the edge and the drawing. */
+.nz-chain-draw[data-style="series"] { margin: -12px -12px 8px; }
 .nz-chain-draw svg { display: block; max-width: none; }
 .nz-chain-draw .nz-node { cursor: pointer; outline: none; }
 .nz-chain-draw .nz-node:hover rect:first-child, .nz-chain-draw .nz-node:focus-visible rect:first-child { filter: brightness(1.06); }
 .nz-chain-draw .nz-node:focus-visible rect:first-child { stroke: var(--accent-line); stroke-width: 2; }
+/* The series: a circle keeps its fill and lights its outline. */
+.nz-chain-draw .nz-node:hover .nz-disc, .nz-chain-draw .nz-node:focus-visible .nz-disc { stroke: var(--accent-line); stroke-width: 2.5; }
 .nz-chain-note ul { margin: 0 0 10px; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
 .nz-chain-tab { max-width: 900px; }
 .nz-chain-tab td { white-space: normal; }
@@ -562,6 +570,8 @@ a.nz-nuc:hover { text-decoration: underline; }
 /* ---- the chain in small, in the panel ----------------------------------- */
 .nz-chain-mini { margin: 2px 0 8px; overflow: hidden; border-radius: 6px; cursor: zoom-in; }
 .nz-chain-mini svg { display: block; max-width: 100%; height: auto; }
+/* A series is held to a height, and so narrower than the panel: in the middle. */
+.nz-chain-mini svg[data-style="series"] { margin: 0 auto; }
 .nz-chain-mini .nz-node, .nz-chain-mini .nz-edge-label { pointer-events: none; }
 .nz-chain-mini:hover { box-shadow: 0 0 0 2px var(--accent-line); }
 .nz .nz-asym sup, .nz .nz-asym sub { vertical-align: baseline; font-size: 1em; line-height: 1; }
