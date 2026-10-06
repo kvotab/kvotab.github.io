@@ -404,7 +404,7 @@
               gases.</li>
             <li><b>Dosimetry</b>: specific effective energies from the Cristy–Eckerman phantoms (newborn, 1, 5, 10 and
               15 years, adult), the ICRP 30 bone and walled-organ absorbed fractions, and the ICRP 66 absorbed fractions
-              of the airways, interpolated in age between the phantoms.</li>
+              of the airways, interpolated in age between the phantoms with the weights DCAL gives them.</li>
             <li><b>Effective dose</b>: the tissue weighting factors of Publication 60 with the remainder of
               Publication 72 (mass-weighted, with the splitting rule).</li>
           </ul>
@@ -492,7 +492,10 @@
             parent’s model leaves out takes its share of the parent’s rest of the body, where the member was formed,
             from the first member whose model carries it there and every member after it (from those before, of their
             own). After an inhalation of Type S material, a member with no f<sub>1</sub> of its own for Type S is
-            absorbed from the gut no more than the parent, as Publication 72’s coefficients show.</p>
+            absorbed from the gut no more than the parent, as Publication 72’s coefficients show (DCAL itself takes the
+            member’s own f<sub>1</sub>). A chain ends where DCAL ends it; Publication 72 ends a few earlier, before a
+            long-lived member (U-239 and U-240 before plutonium, Th-226 before Pb-210), so that its doses to the liver,
+            bone and gonads for those are lower than this page’s and DCAL’s, its effective doses up to 4 % lower.</p>
           <p>In the <b>ICRP 103 system</b> Publication 158 (section 2.5) gives the general rules: in the respiratory tract
             every member keeps the parent’s absorption parameters, but noble gases escape at 100 d<sup>−1</sup>; progeny
             formed in the alimentary tract are absorbed with their own reference f<sub>A</sub> (after an inhalation of
@@ -552,13 +555,18 @@
             compartment, with transfer rates interpolated linearly in age between the reference ages (the rates change as
             the child grows), and decay feeding each member’s progeny. The equivalent dose to each target region is the
             activity in each source region times its dose per transformation (SEE in the ICRP 60 system, S in the ICRP
-            103 system), integrated over the commitment period; the dose per transformation also changes with age:
-            between the reference phantoms linearly (ICRP 60), or by a monotone cubic spline (PCHIP) through the six
-            reference ages (ICRP 103), with in both a weighted interpolation in the first year that follows the growth
-            curves of Publication 89. Between two reference ages it is therefore one polynomial in age for every source
-            and target, and the integrator carries, for each group of compartments that share a source region, the
-            integral of their activity weighted by each of its basis functions (four for the cubic, in Bernstein form; two
-            for a straight line): the doses to all targets follow from these exactly, at the end of each stretch. The
+            103 system), integrated over the commitment period; the dose per transformation also changes with age.
+            In the ICRP 60 system it goes from one phantom to the next by the weights DCAL gives the older phantom, read off
+            DCAL’s own dose rates: t<sup>0.3 + 0.7 (1 − t)<sup>10</sup></sup> in the first year (t in years),
+            x<sup>0.5 + 0.5 (1 − x)<sup>5</sup></sup> between 1 and 5 years (x the fraction of the interval) and the age
+            itself from 5 years on; in a chain with independent kinetics the shares of a member’s activity in the rest of
+            the body that count in other tissues change linearly in age, as DCAL has them, so that the dose there is a
+            product of the two. In the ICRP 103 system it follows a monotone cubic spline (PCHIP) through the six reference
+            ages, with a weighted interpolation in the first year that follows the growth curves of Publication 89.
+            Between two reference ages it is therefore one polynomial in the weights for every source and target, and the
+            integrator carries, for each group of compartments that share a source region, the integral of their activity
+            weighted by each of its basis functions (four for the cubic, in Bernstein form, and for the products; two for
+            the others): the doses to all targets follow from these exactly, at the end of each stretch. The
             integrator is a variable-order backward differentiation method (NDF) with the exact sparse Jacobian,
             restarted wherever a rate table has a corner; it crosses the commitment period in one to two thousand steps
             however stiff the system (rates from 10<sup>−5</sup> to 4·10<sup>4</sup> d<sup>−1</sup>) and however long
@@ -597,8 +605,8 @@
               printed coefficients to two significant figures, so a perfect calculation agrees with them to within about ±2.5–5 %;
               the annex gives more digits.</p>
             <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>Committed effective dose</th><th>values</th><th>within 5 %</th><th>within 10 %</th><th>within 20 %</th></tr></thead><tbody>
-            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4506</td><td class="num">98.1 %</td><td class="num">99.5 %</td><td class="num">100.0 %</td></tr>
-            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9806</td><td class="num">96.9 %</td><td class="num">99.2 %</td><td class="num">99.8 %</td></tr>
+            <tr><td>ICRP 60, ingestion, against Publication 119 Table F.1</td><td class="num">4506</td><td class="num">98.5 %</td><td class="num">99.5 %</td><td class="num">100.0 %</td></tr>
+            <tr><td>ICRP 60, inhalation (Types F, M, S), against Table G.1</td><td class="num">9806</td><td class="num">98.0 %</td><td class="num">99.3 %</td><td class="num">99.9 %</td></tr>
             <tr><td>ICRP 103, ingestion, against Publication 158 and the Part 2 draft</td><td class="num">744</td><td class="num">99.7 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, inhalation, against Publication 158 and the Part 2 draft</td><td class="num">2214</td><td class="num">99.8 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
             <tr><td>ICRP 103, ingestion, against the Part 3 draft</td><td class="num">342</td><td class="num">100.0 %</td><td class="num">100.0 %</td><td class="num">100.0 %</td></tr>
@@ -619,18 +627,18 @@
             <tr><td>Nb-89 ingestion (f1 0.01)</td><td class="num">–</td><td class="num">1.01</td><td class="num">1.02</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">1.11</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
             <tr><td>Ho-161 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">1.12</td><td class="num">1.11</td><td class="num">1.03</td><td class="num">1.01</td><td class="num">0.98</td><td>the remainder split on a near-tie: ICRP 72 gives the small intestine and the colon the same dose to two figures, and splits at other ages than this page does</td></tr>
             <tr><td>Pu-246 ingestion (f1 0.0005)</td><td class="num">–</td><td class="num">0.85</td><td class="num">0.83</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>V-48 inhalation (Type F)</td><td class="num">0.90</td><td class="num">0.93</td><td class="num">0.92</td><td class="num">0.92</td><td class="num">0.90</td><td class="num">0.87</td><td>red marrow (two-thirds of ICRP 72’s) and gonads; not resolved</td></tr>
-            <tr><td>Nb-95 inhalation (Type F)</td><td class="num">0.91</td><td class="num">0.99</td><td class="num">0.99</td><td class="num">0.88</td><td class="num">0.89</td><td class="num">0.99</td><td>not resolved</td></tr>
+            <tr><td>V-48 inhalation (Type F)</td><td class="num">0.91</td><td class="num">0.93</td><td class="num">0.92</td><td class="num">0.92</td><td class="num">0.90</td><td class="num">0.87</td><td>red marrow (two-thirds of ICRP 72’s) and gonads; not resolved</td></tr>
+            <tr><td>Nb-95 inhalation (Type F)</td><td class="num">0.93</td><td class="num">0.99</td><td class="num">0.99</td><td class="num">0.88</td><td class="num">0.89</td><td class="num">0.99</td><td>not resolved</td></tr>
             <tr><td>Cs-125 inhalation (Type F)</td><td class="num">0.90</td><td class="num">0.90</td><td class="num">0.89</td><td class="num">0.89</td><td class="num">0.91</td><td class="num">0.88</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
             <tr><td>Cs-125 inhalation (Type M)</td><td class="num">0.88</td><td class="num">0.86</td><td class="num">0.87</td><td class="num">0.85</td><td class="num">0.85</td><td class="num">0.86</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
             <tr><td>Cs-125 inhalation (Type S)</td><td class="num">0.87</td><td class="num">0.89</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.86</td><td class="num">0.86</td><td>Xe-125 formed in the body leaves it under DCAL’s shared kinetics, so no I-125 grows in</td></tr>
-            <tr><td>Gd-149 inhalation (Type F)</td><td class="num">1.01</td><td class="num">0.98</td><td class="num">1.01</td><td class="num">1.20</td><td class="num">1.19</td><td class="num">1.01</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
-            <tr><td>Lu-171 inhalation (Type S)</td><td class="num">1.11</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">0.97</td><td class="num">0.99</td><td class="num">1.00</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
-            <tr><td>Au-198m inhalation (Type M)</td><td class="num">1.12</td><td class="num">1.13</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">0.97</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Gd-149 inhalation (Type F)</td><td class="num">1.02</td><td class="num">0.98</td><td class="num">1.01</td><td class="num">1.20</td><td class="num">1.19</td><td class="num">1.01</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Lu-171 inhalation (Type S)</td><td class="num">1.12</td><td class="num">1.01</td><td class="num">1.11</td><td class="num">0.97</td><td class="num">0.99</td><td class="num">1.00</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
+            <tr><td>Au-198m inhalation (Type M)</td><td class="num">1.13</td><td class="num">1.13</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">1.01</td><td class="num">0.97</td><td>the remainder split on a near-tie of ET and the highest weighted organ: split here, not in ICRP 72, at these ages</td></tr>
             <tr><td>At-207 inhalation (Type F)</td><td class="num">1.05</td><td class="num">1.04</td><td class="num">1.05</td><td class="num">1.05</td><td class="num">1.17</td><td class="num">1.18</td><td>ET a quarter higher here, which splits the remainder at 15 y and adult (5 % at the other ages); not resolved</td></tr>
-            <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.86</td><td class="num">0.85</td><td class="num">0.84</td><td class="num">0.86</td><td class="num">0.87</td><td class="num">0.91</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type F)</td><td class="num">0.88</td><td class="num">0.85</td><td class="num">0.84</td><td class="num">0.86</td><td class="num">0.87</td><td class="num">0.91</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
             <tr><td>Pu-246 inhalation (Type M)</td><td class="num">0.68</td><td class="num">0.67</td><td class="num">0.65</td><td class="num">0.61</td><td class="num">0.60</td><td class="num">0.61</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
-            <tr><td>Pu-246 inhalation (Type S)</td><td class="num">0.65</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">0.60</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
+            <tr><td>Pu-246 inhalation (Type S)</td><td class="num">0.66</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">0.60</td><td>ICRP 72 lets Pu-246 decay to Am-246 (39 min) instead of Am-246m (25 min), which its ICRP 38 file, DCAL and later data give and this page uses: with Am-246 the page comes within 4 % of ICRP 72 at every age and route</td></tr>
             </tbody></table></div><p>In the ICRP 103 system single radionuclides, and chains whose members are isotopes of one element or short-lived,
               agree within the rounding of the tables. These differ by more than 10 % at some age:</p>
             <div class="dc-table-wrap"><table class="dc-ref dc-ratios"><thead><tr><th rowspan="2">Intake</th><th rowspan="2">Against</th><th colspan="6" class="group">Ratio, this page / ICRP</th><th rowspan="2">Why</th></tr>

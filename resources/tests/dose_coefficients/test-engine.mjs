@@ -42,7 +42,7 @@ const { coefficients60, AGES_60 } = await import(path.join(JS, 'dose60.js'));
 const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
-const { firstYearWeight } = await import(path.join(JS, 'solve.js'));
+const { firstYearWeight, dcalWeight } = await import(path.join(JS, 'solve.js'));
 const { deposition103 } = await import(path.join(JS, 'model103.js'));
 const { buildChain } = await import(path.join(JS, 'chain.js'));
 const { catalog60, catalog103 } = await import(path.join(JS, 'catalog.js'));
@@ -135,6 +135,11 @@ const d103 = await loadSystem('103', io);
   const want = t ** (0.16 + 0.84 * (1 - t) ** 5);
   check('first-year weight at 100 d is the second branch of ICRP 158 eq. 2.16 (0.6528)', Math.abs(firstYearWeight(100) - want) < 1e-12 && Math.abs(want - 0.6528) < 1e-4, String(firstYearWeight(100)));
   check('first-year weight is 0 at birth and 1 at a year', firstYearWeight(0) === 0 && firstYearWeight(365) === 1);
+  // DCAL's weights of the older phantom, as read off EPACAL's dose rates
+  // (each rate rebuilt from DCAL's own activities and SEE files).
+  const epacal = [[200, 0, 0.8348], [260, 0, 0.9032], [330, 0, 0.9702], [465, 1, 0.1024], [730, 1, 0.4243], [1065, 1, 0.6828], [1365, 1, 0.8272]];
+  const offW = epacal.filter(([a, k, w]) => Math.abs(dcalWeight(a, k) - w) > 3e-4).map(([a, k, w]) => `${a} d: ${dcalWeight(a, k).toFixed(4)} not ${w}`);
+  check('ICRP 60: DCAL\'s weights of the older phantom, first year and 1-5 years, as EPACAL\'s dose rates have them', !offW.length && dcalWeight(365, 0) === 1 && dcalWeight(365, 1) === 0 && dcalWeight(1825, 1) === 1, offW.join('; '));
 }
 {
   const dep = deposition103(d103.deposition, 5, 1);
@@ -352,23 +357,24 @@ if (!SYSTEM || SYSTEM === '60') {
     }
     // Organ doses that hang on how a chain's Other is shared out (dose60.js
     // otherTargets) and on the f1 of Type S progeny (model60.js): within 10 %
-    // of ICRP 72 at every age.
+    // of ICRP 72 at every age (Ra-225 from 1 year: DCAL itself gives the
+    // 3-month-old's testes 1.18 times ICRP 72's, as this page does).
     const organs = [
       ['ingestion', 'U-232', null, ['Testes', 'Ovaries', 'Red marrow'], { Testes: 'Testes', Ovaries: 'Ovaries', 'Red marrow': 'Red Marrow' }],
       ['ingestion', 'Pb-210', null, ['Testes', 'Red marrow'], { Testes: 'Testes', 'Red marrow': 'Red Marrow' }],
-      ['ingestion', 'Ra-225', null, ['Testes', 'Spleen'], { Testes: 'Testes', Spleen: 'Spleen' }],
+      ['ingestion', 'Ra-225', null, ['Testes', 'Spleen'], { Testes: 'Testes', Spleen: 'Spleen' }, 365],
       ['ingestion', 'Th-232', null, ['Spleen'], { Spleen: 'Spleen' }],
       ['inhalation', 'Pb-212', 'S', ['Kidneys', 'Testes'], { Kidneys: 'Kidneys', Testes: 'Testes' }],
     ];
-    for (const [route, nuclide, type, keys, name72] of organs) {
+    for (const [route, nuclide, type, keys, name72, from = 0] of organs) {
       await d60.prepare(nuclide);
-      const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
+      const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60.filter((a) => a >= from));
       const off = [];
       for (const r of res) {
         const R = ref.find((x) => x.route === route && x.nuclide === nuclide && x.age === r.age && (!type || x.type === type));
         for (const k of keys) if (R && Math.abs(r.H[k] / R.H[name72[k]] - 1) > 0.1) off.push(`${k} ${r.age} d ${(r.H[k] / R.H[name72[k]]).toFixed(2)}`);
       }
-      check(`ICRP 60 ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within 10 % of ICRP 72 at every age`, !off.length, off.join('; '));
+      check(`ICRP 60 ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within 10 % of ICRP 72 at every age${from ? ' from 1 year' : ''}`, !off.length, off.join('; '));
     }
   }
 }

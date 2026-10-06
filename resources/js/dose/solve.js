@@ -13,15 +13,17 @@
       H_T = sum_c ∫ q_c(t) SEE_c(T; age(t)) dt      (x 86400, t in days)
 
   and SEE changes with age as the body grows. Between two reference ages it is
-  one polynomial in age for every source and target alike: linear (ICRP 60;
-  in the first year, in the weight of firstYearWeight), or the cubic of PCHIP
-  (ICRP 103 between the reference phantoms), which in Bernstein form is
+  one polynomial for every source and target alike: linear in a weight of age
+  (ICRP 60: DCAL's, dcalWeight, up to 5 years and the age itself after; ICRP
+  103 in the first year: firstYearWeight), or the cubic of PCHIP (ICRP 103
+  between the other reference phantoms), which in Bernstein form is
 
       SEE(u) = sum_j b_j B_j(u),   B_0 = (1-u)^3, B_1 = 3u(1-u)^2, B_2 = 3u^2(1-u), B_3 = u^3,
       b_0 = SEE_lo, b_1 = SEE_lo + h SEE'_lo / 3, b_2 = SEE_hi - h SEE'_hi / 3, b_3 = SEE_hi
 
   with u the fraction of the interval, h its length (a linear stretch is
-  1 - w and w on b_0 = SEE_lo and b_3 = SEE_hi). So
+  1 - w and w on b_0 = SEE_lo and b_3 = SEE_hi; ICRP 60 chains that share
+  their Other activity out take four, see `product`). So
 
       H_T = sum over stretches, sum_g sum_j b_j(g, T) ∫ B_j(u(t)) q_g(t) dt
 
@@ -74,9 +76,10 @@ function bracket(xs, x) {
 
   Just below 100 d, x = 0.6536 -- the factor DCAL's newborn mass file
   (REGMASS.A00) cites for its 3-month values -- and from 100 d the second
-  branch gives 0.6528; the weighting reproduces the ICRP 72 dose coefficients
-  for the 3-month-old, which a linear weight (0.274) overestimates by up to a
-  quarter.
+  branch gives 0.6528. The ICRP 103 system takes it as Publication 158 gives
+  it; the ICRP 60 system takes DCAL's own weights (dcalWeight), which keep
+  the first branch for the whole year. A linear weight (0.274 at 100 d)
+  overestimates the ICRP 72 coefficients of 3-month-olds by up to a quarter.
 */
 export function firstYearWeight(ageDays) {
   const t = ageDays / 365;
@@ -84,6 +87,23 @@ export function firstYearWeight(ageDays) {
   if (t >= 1) return 1;
   const e = t < 100 / 365 ? 0.3 + 0.7 * (1 - t) ** 10 : 0.16 + 0.84 * (1 - t) ** 5;
   return t ** e;
+}
+
+/*
+  The weights DCAL's EPACAL gives the older phantom's SEE, read off its own
+  dose rates (DCAL run in DOSBox-X, 2026-10-06: each rate rebuilt from its
+  activities and SEE files leaves one weight per time, the same for every
+  target): in the first year the first branch above for the whole year,
+  t^(0.3 + 0.7 (1 - t)^10); between 1 and 5 years, with x the fraction of
+  the interval, x^(0.5 + 0.5 (1 - x)^5); linear from 5 years on. Both
+  reproduce its weights within 0.001 at every time of its output grid.
+  With them the ICRP 60 system's 1-year-olds come within a per cent of DCAL
+  (210Pb by ingestion was 6 % higher with linear weights from 1 to 5 years).
+*/
+export function dcalWeight(ageDays, interval = ageDays < 365 ? 0 : 1) {
+  if (interval === 0) { const t = Math.min(1, Math.max(0, ageDays / 365)); return t ** (0.3 + 0.7 * (1 - t) ** 10); }
+  const x = Math.min(1, Math.max(0, (ageDays - 365) / 1460));
+  return x ** (0.5 + 0.5 * (1 - x) ** 5);
 }
 
 /**
@@ -114,7 +134,19 @@ export function integrate(sys, dose, opt) {
   const pa = dose.phantomAges;
   const icrp103 = dose.interp === 'icrp103';
   const firstYear = pa[0] === 0 && pa[1] === 365 && dose.firstYear !== false;
-  const M = icrp103 ? 4 : 2; // basis functions per group
+  // DCAL's weights (dcalWeight) in the first year and from 1 to 5 years.
+  const dcal = dose.weights === 'dcal' && firstYear && pa[2] === 1825;
+  /* With dose.cross (ICRP 60 chains with independent kinetics), a group's SEE
+     is a product: DCAL's ACTACAL counts a share of a member's Other activity
+     in other regions by fractions interpolated linearly in age, and EPACAL
+     multiplies those activities by SEE interpolated with its weights. Four
+     basis functions then, (1-x)(1-w), (1-x)w, x(1-w) and xw, with x the
+     linear fraction of the interval and w the SEE's weight; the coefficients
+     are the group's columns with the shares and the SEE each at one end
+     (cross: shares of the lower phantom with the SEE of the upper one, and
+     the reverse). */
+  const product = !icrp103 && !!dose.cross;
+  const M = icrp103 || product ? 4 : 2; // basis functions per group
 
   /* --- the rates, as a function of age ------------------------------------ */
   const tr = sys.transfers.map((x) => ({
@@ -142,7 +174,7 @@ export function integrate(sys, dose, opt) {
     let byU = byCols.get(by);
     if (!byU) byCols.set(by, byU = new Map());
     let g = byU.get(uOf[c]);
-    if (g === undefined) { g = dg.length; byU.set(uOf[c], g); dg.push({ cols, u: uOf[c], comps: [] }); }
+    if (g === undefined) { g = dg.length; byU.set(uOf[c], g); dg.push({ cols, cross: dose.cross ? dose.cross[c] : null, u: uOf[c], comps: [] }); }
     dg[g].comps.push(c);
   }
   const G = dg.length;
@@ -199,13 +231,15 @@ export function integrate(sys, dose, opt) {
   const setStretch = (ageMid) => {
     const [kp] = bracket(pa, ageMid);
     const mode = pa.length > 1 && kp === 0 && firstYear ? 'first'
+      : dcal && kp === 1 ? 'dcal'
       : icrp103 && kp > 0 && ageMid < pa[last] ? 'cubic' : 'linear';
     const h = pa.length > 1 ? pa[kp + 1] - pa[kp] : 0;
     Object.assign(stretch, { mode, kp, h });
     const hiP = pa.length > 1 ? kp + 1 : kp;
     coef.fill(0);
-    dg.forEach(({ cols }, g) => {
+    dg.forEach(({ cols, cross }, g) => {
       const lo = cols[kp], hi = cols[hiP];
+      const x = product && cross && hiP > kp ? cross[kp] : null;
       for (let T = 0; T < nT; T++) {
         const k = (g * nT + T) * M;
         coef[k] = lo[T];
@@ -213,6 +247,9 @@ export function integrate(sys, dose, opt) {
         if (mode === 'cubic') {
           coef[k + 1] = lo[T] + h * slopes[g][kp * nT + T] / 3;
           coef[k + 2] = hi[T] - h * slopes[g][hiP * nT + T] / 3;
+        } else if (product) {
+          coef[k + 1] = x ? x[0][T] : hi[T];
+          coef[k + 2] = x ? x[1][T] : lo[T];
         }
       }
     });
@@ -224,8 +261,15 @@ export function integrate(sys, dose, opt) {
       B[0] = v * v * v; B[1] = 3 * u * v * v; B[2] = 3 * u * u * v; B[3] = u * u * u;
       return;
     }
-    let w = stretch.mode === 'first' ? firstYearWeight(age) : stretch.h > 0 ? (age - pa[stretch.kp]) / stretch.h : 0;
+    let w = stretch.mode === 'first' ? (dcal ? dcalWeight(age, 0) : firstYearWeight(age))
+      : stretch.mode === 'dcal' ? dcalWeight(age, 1)
+      : stretch.h > 0 ? (age - pa[stretch.kp]) / stretch.h : 0;
     w = Math.min(1, Math.max(0, w));
+    if (product) {
+      const x = stretch.h > 0 ? Math.min(1, Math.max(0, (age - pa[stretch.kp]) / stretch.h)) : 0;
+      B[0] = (1 - x) * (1 - w); B[1] = (1 - x) * w; B[2] = x * (1 - w); B[3] = x * w;
+      return;
+    }
     B.fill(0);
     B[0] = 1 - w;
     B[M - 1] += w;

@@ -2120,7 +2120,7 @@ const TOPICS = {
     ],
     sections: [{ heading: 'How age enters', list: [
       'The models’ transfer rates change with age and are interpolated linearly between the reference ages, so a child’s model grows up during the commitment period.',
-      'The dose per transformation changes as the body grows: linearly between the phantoms (ICRP 60), or by a monotone cubic spline (ICRP 103); in the first year with a weighting that follows the growth curves of Publication 89.',
+      'The dose per transformation changes as the body grows: in the ICRP 60 system by the weights DCAL gives the phantoms (following growth up to 5 years, linear in age after); in the ICRP 103 system by a monotone cubic spline, in the first year with a weighting that follows the growth curves of Publication 89.',
       'The ages run in parallel, as many at a time as the device has cores to spare; fewer ages finish sooner.',
     ] }],
     more: { label: 'How the calculation is done', id: 'help-numerics' },

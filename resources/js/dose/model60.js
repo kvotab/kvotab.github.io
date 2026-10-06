@@ -182,12 +182,13 @@ export function assemble60(data, spec) {
   const override = spec.icrp72 !== false ? { AC: 'AC_I30', PA: 'PA_I30' } : {};
   /* Each member's systemic model and f1. After an inhalation of Type S
      material, a member with no Type S f1 file of its own is absorbed from the
-     gut no more than the parent is. ORNL/TM-2001/190 leaves this open;
-     ICRP 72's coefficients have it so: with it, 211Pb, 212Pb, 214Pb and 225Ra
-     Type S come within a few per cent of ICRP 72 in every organ, while the
-     own f1 of bismuth, thallium, francium and astatine (0.05 to 1, beside the
-     parent's 0.01) gives them two to three times its kidney doses and 1.4 to
-     2 times its doses to the other soft tissues. */
+     gut no more than the parent is. That is ICRP 72's, not DCAL's: DCAL (run
+     in DOSBox-X, 2026-10-06) reads each member's own file, BI.GF1 and TL.GF1
+     for 212Pb Type S, and gives two to three times ICRP 72's kidney doses and
+     1.1 to 1.3 times its testes, spleen and muscle doses, as this page did;
+     with the cap 211Pb, 212Pb, 214Pb and 225Ra Type S come within a few per
+     cent of ICRP 72 in every organ (the own f1 of bismuth, thallium,
+     francium and astatine is 0.05 to 1, the parent's 0.01). */
   const memberModels = chain.members.map((m, j) => {
     const el = elementOf(m.name);
     if (j === 0) return { bio: parentBio, f1: parentF1, own: true };

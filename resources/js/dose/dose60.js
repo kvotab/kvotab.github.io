@@ -5,8 +5,9 @@
 
   For each age at intake: assemble the compartment system (model60.js), give
   every compartment the SEE column of its source region for each reference
-  phantom (see60.js), integrate (solve.js) to age 70 for children and over 50
-  years for adults, and combine the target doses:
+  phantom (see60.js), integrate (solve.js, with DCAL's weights between the
+  phantoms) to age 70 for children and over 50 years for adults, and combine
+  the target doses:
 
     Lung    0.333 BB + 0.333 bb + 0.333 AI + 0.001 LN(TH), BB the mean of the
             basal and secretory cell doses           (ICRP 66; DCAL LUNGAS.DAT)
@@ -179,33 +180,47 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     const nT = TARGETS_60.length;
     const remRows = REM_KEYS.map((r) => TISSUES_60[r].map(([t, w]) => [T[t], w]));
     // One column per member and source region, shared by its compartments
-    // (solve.js integrates them as one group).
-    const colCache = new Map();
+    // (solve.js integrates them as one group): the SEE of the region at a
+    // phantom, for Other with the shares of a phantom (the same one, or with
+    // `pShare`, the other end of the interval: solve.js's cross columns).
+    const column = (c, p, pShare = p) => {
+      const col = new Float64Array(nT + 1 + REM_KEYS.length);
+      const m = seeOf[c.member][p];
+      if (c.region === 'Other') {
+        for (const [region, share] of otherSplit[c.member][pShare]) {
+          const k = regionsOf[c.member].indexOf(region);
+          for (let t = 0; t < nT; t++) col[t] += share * m[t][k];
+        }
+      } else {
+        const s = regionsOf[c.member].indexOf(c.region);
+        for (let t = 0; t < nT; t++) col[t] = m[t][s];
+      }
+      const mass = remainderMasses(PHANTOM_AGES_60[p]);
+      const tissue = remRows.map((row) => row.reduce((acc, [t, w]) => acc + w * col[t], 0));
+      const M = mass.reduce((a, b) => a + b, 0);
+      col[nT] = tissue.reduce((acc, h, i) => acc + mass[i] * h, 0) / M;
+      for (let k = 0; k < REM_KEYS.length; k++) {
+        col[nT + 1 + k] = tissue.reduce((acc, h, i) => (i === k ? acc : acc + mass[i] * h), 0) / (M - mass[k]);
+      }
+      return col;
+    };
+    const colCache = new Map(), crossCache = new Map();
     const columns = sys.comps.map((c) => {
       const key = `${c.member}|${c.region}`;
-      if (colCache.has(key)) return colCache.get(key);
-      const s = regionsOf[c.member].indexOf(c.region);
-      const cols = PHANTOM_AGES_60.map((pa, p) => {
-        const col = new Float64Array(nT + 1 + REM_KEYS.length);
-        const m = seeOf[c.member][p];
-        if (c.region === 'Other') {
-          for (const [region, share] of otherSplit[c.member][p]) {
-            const k = regionsOf[c.member].indexOf(region);
-            for (let t = 0; t < nT; t++) col[t] += share * m[t][k];
-          }
-        } else for (let t = 0; t < nT; t++) col[t] = m[t][s];
-        const mass = remainderMasses(pa);
-        const tissue = remRows.map((row) => row.reduce((acc, [t, w]) => acc + w * col[t], 0));
-        const M = mass.reduce((a, b) => a + b, 0);
-        col[nT] = tissue.reduce((acc, h, i) => acc + mass[i] * h, 0) / M;
-        for (let k = 0; k < REM_KEYS.length; k++) {
-          col[nT + 1 + k] = tissue.reduce((acc, h, i) => (i === k ? acc : acc + mass[i] * h), 0) / (M - mass[k]);
-        }
-        return col;
-      });
-      colCache.set(key, cols);
-      return cols;
+      if (!colCache.has(key)) colCache.set(key, PHANTOM_AGES_60.map((pa, p) => column(c, p)));
+      return colCache.get(key);
     });
+    /* DCAL shares a member's Other activity out by fractions interpolated
+       linearly in age (ACTACAL) and multiplies by SEE interpolated with its
+       weights (EPACAL): with shares, the Other groups take solve.js's cross
+       columns. Without, every group keeps two basis functions. */
+    const shared = otherSplit.some((ph) => ph.some((split) => split.length > 1));
+    const cross = shared ? sys.comps.map((c) => {
+      if (c.region !== 'Other') return null;
+      const key = `${c.member}|${c.region}`;
+      if (!crossCache.has(key)) crossCache.set(key, PHANTOM_AGES_60.slice(1).map((pa, p) => [column(c, p + 1, p), column(c, p, p + 1)]));
+      return crossCache.get(key);
+    }) : null;
     const groupKeys = [];
     const groups = [];
     sys.comps.forEach((c, i) => {
@@ -219,7 +234,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // effective dose is made of (effectivePieces60), put together below; a
     // group for each compartment (the Model tab's boxes).
     const pieces = opt.outputs ? effectivePieces60(nT) : null;
-    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + 1 + REM_KEYS.length, groups, interp: 'linear', functionals: pieces || undefined, byCompartment: !!opt.outputs },
+    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + 1 + REM_KEYS.length, groups, interp: 'linear', weights: 'dcal', cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
       { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
     const Ht = Object.fromEntries(TARGETS_60.map((t, i) => [t, res.H[i]]));
     const H = {};

@@ -369,3 +369,50 @@ rule for ending a chain is not the one the manual's words suggest); Ra-223
 and Ra-224 Type S (the tissues outside the lungs a quarter to a half of
 ICRP 72's); Th-226 by ingestion (testes 4–11 times ICRP 72's doses of
 10^-13 to 10^-11 Sv/Bq).
+
+### DCAL itself (2026-10-06)
+
+DCAL's computational modules (ACTACAL, SEECAL, EPACAL) are 32-bit DOS
+programs and run in DOSBox-X; its menu and batch driver are Windows programs
+and are not needed. `dcal-run.sh` answers ACTACAL's prompts for one case and
+runs the three; `dcal-compare.mjs` puts DCAL's committed doses beside the
+engine's (and ICRP 72's, with `local/icrp72.json`):
+
+```sh
+brew install dosbox-x
+export DCAL=~/Downloads/icrp-dc/ornl/x/DCAL01_setup/out/app     # your copy of DCAL
+resources/tests/dose_coefficients/dcal-run.sh /tmp/dcal1 U-232 g          # about a minute
+node resources/tests/dose_coefficients/dcal-compare.mjs /tmp/dcal1 U-232 ingestion
+resources/tests/dose_coefficients/dcal-run.sh /tmp/dcal2 Pb-212 h s       # another folder runs alongside
+```
+
+What DCAL itself showed, beyond the manual:
+
+- step 5 as the engine now does it: ACTACAL's log lists, member by member,
+  each region's fraction of the rest of the body and whose rest of the body
+  it is (`f_Oth`); its activity files hold the activities with those shares
+  taken out, the shares varying linearly in age;
+- the weight EPACAL gives the older phantom's SEE, the same for every
+  target: t^(0.3 + 0.7 (1 - t)^10) for the whole first year (t in years),
+  x^(0.5 + 0.5 (1 - x)^5) from 1 to 5 years (x the fraction of the
+  interval), linear from 5 years (`dcalWeight` in solve.js; every weight
+  read off its dose rates within 0.001). With the shares linear in age, the
+  dose from a member's Other is a product of the two (solve.js `cross`).
+  With linear weights from 1 to 5 years, Pb-210's 1-year-olds were 6 %
+  above DCAL in every organ; with the two-branch first-year weight of
+  Publication 158, U-232's 3-month-olds 3-5 %; without the product, U-232's
+  testes 7-8 % below DCAL's up to 10 years;
+- DCAL's own chain cut keeps Pu-239 after U-239, Pu-240 after U-240, and
+  Pb-210 and Po-210 after Th-226, as `chain.js` does; ICRP 72 does not, which
+  is why those intakes' liver, bone and gonad doses are well above ICRP 72's;
+- after a Type S inhalation DCAL reads each member's own f1 file (BI.GF1 and
+  TL.GF1 for Pb-212): ICRP 72's coefficients are of members absorbed no more
+  than the parent, which the engine follows (Ra-223 and Ra-224 Type S, whose
+  tissues outside the lungs have between a quarter and nine tenths of
+  ICRP 72's doses in DCAL and here alike, come out with kidneys 20-25 % below
+  DCAL's for it).
+
+This page against DCAL, every organ at every age: within 1-2 % for U-232,
+Pb-210, Ra-225, Th-226, Sr-90, Cs-137 and I-131 by ingestion, U-239 and
+U-240 Type M, Pu-239 Type M, Co-60 Type S. Where these differ from ICRP 72
+(Ra-225's testes at 3 months, 1.18; Cs-137's adult, 1.04) DCAL does too.
