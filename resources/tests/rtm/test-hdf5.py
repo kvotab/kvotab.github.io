@@ -150,8 +150,15 @@ def main():
             f.close()
 
         # --- dual porosity: more cells than a file should hold --------------
-        report, f = case('dual porosity', os.path.join(tmp, 'matrix.h5'),
-                         '--example', 'matrixtracer')
+        # The tracer example with forty layers behind each of its hundred
+        # cells: 4100 cells, over what one file should hold.
+        deep = os.path.join(tmp, 'deep.rtm')
+        with open(deep, 'w') as out:
+            out.write('<SETTINGS>\nMODE = transport\nCELLS = 100\nLENGTH = 20\nADVECTION = 1\n'
+                      'VELOCITY = 1\nLEFT = robin\nRIGHT = free\nMATRIX_CELLS = 40\n'
+                      'MATRIX_DEPTH = 60\nMATRIX_POROSITY = 0.0018\nWETTED_SURFACE = 500\n'
+                      'TEND = 120\n<SPECIES>\nX 0 D=0 left=1 Dm=1e-3\n<REACTIONS>\n')
+        report, f = case('dual porosity', os.path.join(tmp, 'matrix.h5'), '--text', deep)
         if f:
             common(report, f)
             check('the model has rock behind every cell', report['stride'] > 1)
@@ -164,6 +171,32 @@ def main():
                   f['/Grid/layer'].shape[0], report['cells'])
             check('and says how deep into the rock each one sits',
                   float(f['/Grid/depth'][:].max()) > 0)
+            f.close()
+
+        # --- a far-field path: cells past its end, and what crosses the ends --
+        report, f = case('far-field path', os.path.join(tmp, 'farfield.h5'),
+                         '--example', 'farfield', '--cell', 'right')
+        if f:
+            common(report, f)
+            check('the path has cells past its right-hand end', report['extra'] > 0)
+            check('/Ends holds both ends', sorted(f['/Ends'].keys()), ['left', 'right'])
+            check('and every species through each',
+                  all(len(f[f'/Ends/{e}'].keys()) == report['species'] for e in ('left', 'right')))
+            check('/Species is the end the page was showing',
+                  bool(np.array_equal(f['/Species/Tracer'][:], f['/Ends/right/Tracer'][:])))
+            check('and says so', attr(f['/Species/Tracer'], 'end'), 'right')
+            # A unit a year flows in, and a tracer that does not decay all
+            # comes out in the end: the release at a million years is that.
+            check('what flows in through the left end is the unit release',
+                  bool(np.allclose(f['/Ends/left/Tracer'][1:], 1.0, rtol=1e-12)))
+            check('and the tracer all comes out through the right end in the end',
+                  abs(float(f['/Ends/right/Tracer'][-1]) - 1.0) < 1e-4)
+            check('the radium hardly at all', 0 < float(f['/Ends/right/Ra226'][-1]) < 1e-4)
+            check('/Grid has a row for the cells past the end too', f['/Grid/x'].shape[0], report['cells'])
+            x = f['/Grid/x'][:][f['/Grid/layer'][:] == 0]
+            check('and they lie past LENGTH', bool(np.all(x[-report['extra']:] > 100)))
+            past = [k for k in f['/Cells'] if 'past the right-hand end' in str(attr(f[f'/Cells/{k}'], 'description'))]
+            check('their groups say where they are', len(past) > 0)
             f.close()
 
     print(f'\n{checks - len(failures)} of {checks} checks passed')

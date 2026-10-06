@@ -318,9 +318,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)    # Gy/s, falling over the alpha range
         text='''\
 # Dual porosity: water flows along a fracture, the rock beside it is stagnant.
 #
-# Every cell of the column gets MATRIX_CELLS stagnant cells behind it, reaching
-# MATRIX_DEPTH into the rock. The layers grow geometrically from the wall,
-# because the gradient is steepest there.
+# Every cell of the column has layers of rock behind it, reaching MATRIX_DEPTH
+# into the rock: twelve unless MATRIX_CELLS says otherwise. They grow
+# geometrically from the wall, because the gradient is steepest there, and the
+# first is worked out from the path -- here about 9 cm, thin enough for the
+# fastest change the outflow can still show. MATRIX_FIRST sets it instead.
 #
 # WETTED_SURFACE is the rock surface a cubic metre of flowing water touches;
 # APERTURE (2b) says the same thing as 2/aperture.
@@ -339,9 +341,7 @@ ADVECTION = 1
 VELOCITY = 1
 LEFT = robin
 RIGHT = free
-MATRIX_CELLS = 40
 MATRIX_DEPTH = 60      # m: deep enough to be infinite over this run
-MATRIX_FIRST = 1.0E-5  # m at the wall; 0 has it worked out
 MATRIX_POROSITY = 0.0018
 WETTED_SURFACE = 500   # m2 of wall per m3 of water
 TEND = 120
@@ -351,6 +351,130 @@ TIME_UNIT = second
 X  0.0  D=0  left=1.0  Dm=1.0E-3    # Dm: the effective diffusivity in the rock
 
 <REACTIONS>
+''',
+    ),
+    dict(
+        id='farfield', group='Dual porosity',
+        label='A far-field path, as Kompartment starts one',
+        about='Kompartment’s far-field path with its own defaults: a travel time of 100 years, '
+              'F = 10⁵ a/m, Péclet number 10, 20 cells, twelve matrix layers matched to diffusion '
+              'into 12.5 m of rock, and the rock going on past the release point. Pick “flux '
+              'through the right end” on Against time for the release.',
+        reference='The path is the one a new far-field block in Kompartment starts with, and this '
+                  'text gives the same transport matrix to round-off (resources/tests/rtm, '
+                  'section 9). FARF31 solves the same path exactly, in the Laplace domain.',
+        text='''\
+# A far-field path, said the way SKB describes one, with Kompartment's
+# defaults for a new far-field block.
+#
+# The path is a travel time and a flow-related transport resistance F, the
+# wetted surface times the travel time: aw = F/tw = 1000 m2 of wall per m3 of
+# water. The rock is MATRIX_DEPTH deep, its porosity and density given, and
+# each nuclide brings its De and Kd, which become its capacity in the rock,
+# eps + rho*Kd. Kdf= would add sorption on the fracture coating.
+#
+# The numerics are Kompartment's: 20 cells along the path, twelve matrix
+# layers matched to diffusion into the rock with the first worked out from
+# the path, and the rock going on past the release point -- RIGHT =
+# semi-infinite, with as many cells past the end as the dispersion needs.
+# "Flux through the right end" on the time chart is then the release FARF31
+# gives, here for a unit release a year into the path from t = 0.
+#
+# The tracer all comes through in the end, held back by the rock. Ra-226
+# sorbs and decays on the way, and of a steady unit release 2.2E-5 a year
+# arrives in the end on these 20 cells, where FARF31's exact answer is
+# 1.72E-5. The cells along the path decide that, not the layers: 40 give
+# 1.84E-5 and 80 give 1.75E-5, a fourth of the error per doubling.
+
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 100              # m; any length: TRAVEL_TIME sets the flow
+TRAVEL_TIME = 100         # a
+DIFFUSION = 1
+PECLET = 10
+LEFT = robin              # water arriving at left= per m3, one unit a year per m2
+RIGHT = semi-infinite
+MATRIX_DEPTH = 12.5       # m
+MATRIX_POROSITY = 0.0018
+MATRIX_DENSITY = 2700     # kg/m3
+TRANSPORT_RESISTANCE = 1E5  # a/m: F
+TEND = 1.0E6              # a
+TIME_UNIT = year
+
+<SPECIES>
+#           start   De (m2/a)  Kd (m3/kg)
+Tracer      0  left=1  De=1E-4
+Ra226       0  left=1  De=1E-4  Kd=4.5E-4
+
+<REACTIONS>
+Ra226 => , k = 4.3322E-4, on = inventory   # 1 600 a, of the whole inventory
+''',
+    ),
+    dict(
+        id='releasehistory', group='Dual porosity',
+        label='A release history through a far-field path',
+        about='What a near field lets out, year by year, read from a table at the clock and fed '
+              'into Kompartment\u2019s default far-field path: I-129, which the rock hardly holds, and '
+              'Cs-135, which it holds back beyond the million years of the run. Pick \u201cflux through the right end\u201d '
+              'on Against time for what comes out, and a cell for what the path holds.',
+        text='''\
+# A release history into a far-field path.
+#
+# The history is a <TABLE> read at the clock, t: one column per nuclide,
+# named in its first row, the times in the model's own unit. A source that
+# reads it is a reaction with nothing on the left. IN puts it into the first
+# cell, per m2 of the water's cross-section, so that "flux through the right
+# end" on the time chart is the release out of the path in the same units as
+# the release going in.
+#
+# The run is started again at every row of the history, so that no pulse in
+# it can be stepped over: the panel says how many corners there are. Beyond
+# its last row a table holds its last value, so a history that ends, ends in
+# zeros.
+#
+# The path is Kompartment's default far-field path, as in the example before.
+
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 100              # m; TRAVEL_TIME sets the flow
+TRAVEL_TIME = 100         # a
+DIFFUSION = 1
+PECLET = 10
+LEFT = robin
+RIGHT = semi-infinite
+MATRIX_DEPTH = 12.5       # m
+MATRIX_POROSITY = 0.0018
+MATRIX_DENSITY = 2700     # kg/m3
+TRANSPORT_RESISTANCE = 1E5  # a/m: F
+TEND = 1.0E6              # a
+TIME_UNIT = year
+
+<TABLE release>
+t         I129    Cs135   # mol a year per m2 of the water's cross-section
+0         0       0
+1000      0       0       # a canister fails at 1000 years:
+1100      1       0.5     # the gap inventory first,
+5000      0.4     0.4     # then the fuel dissolving
+2.0E4     0.1     0.2
+1.0E5     0.01    0.05
+1.0E6     0       0
+
+<SPECIES>
+#        start          De (m2/a)   Kd (m3/kg)
+I129     0  left=0  De=1E-4                  # does not sorb
+Cs135    0  left=0  De=1E-4      Kd=0.01
+
+<PARAMETERS>
+IN  all  0
+IN  0    1/w  fracture        # into the first cell's water
+
+<REACTIONS>
+=> I129,  r = IN*release(t, I129)
+=> Cs135, r = IN*release(t, Cs135)
+I129  => , k = 4.41E-8, on = inventory    # 1.57e7 a
+Cs135 => , k = 3.0E-7,  on = inventory    # 2.3e6 a
 ''',
     ),
     dict(
@@ -370,13 +494,20 @@ X  0.0  D=0  left=1.0  Dm=1.0E-3    # Dm: the effective diffusivity in the rock
 # time. TIME_UNIT = year tells the page so; it converts nothing.
 #
 # The flow path is the representative trajectory of SKB TR-19-06 Appendix B:
-# 2237 m travelled in 235.2 a, so v = 9.511 m/a, and a transport resistance
-# F = 80 090 a/m, which is the wall area per unit volume of water times the
-# travel time: aw = F/tw = 340.5 m2/m3.
+# 2237 m travelled in TRAVEL_TIME = 235.2 a, and a flow-related transport
+# resistance F = 80 090 a/m, which is the wall area per unit volume of water
+# times the travel time: aw = F/tw = 340.5 m2/m3.
 #
-# Rm is the rock's capacity for a nuclide, eps_m + rho*Kd, with eps_m = 0.0019
-# and rho = 2700 kg/m3. It is what holds the sorbing members of the chain back
-# by thousands of years.
+# Each nuclide's Kd becomes the rock's capacity for it, eps_m + rho*Kd with
+# MATRIX_POROSITY = 0.0019 and MATRIX_DENSITY = 2700 kg/m3. That is what holds
+# the sorbing members of the chain back by thousands of years.
+#
+# The rock goes on past the release point, RIGHT = semi-infinite, and the
+# layers are matched to diffusion into the rock, as in Kompartment's far-field
+# path. Twenty rather than its twelve: Po-210, half-life 0.38 a, sizes the
+# first layer by its own decay, at 5 micrometres, and twelve layers would
+# have to grow by 3.4 each to reach 4.5 m -- too coarse at depth for U-238,
+# whose releases came out 4 % off. Twenty grow by 2.0, and are 0.2 % off.
 #
 # DECAY IS on = inventory. A rate law is per unit pore water, and a cubic metre
 # of rock holds only eps_m of water -- right for chemistry, wrong for decay,
@@ -387,28 +518,27 @@ X  0.0  D=0  left=1.0  Dm=1.0E-3    # Dm: the effective diffusivity in the rock
 MODE = transport
 CELLS = 20
 LENGTH = 2237          # m
+TRAVEL_TIME = 235.2    # a: the flow is LENGTH over it
 DIFFUSION = 1
-ADVECTION = 1
-VELOCITY = 9.5110      # m/a: 2237 m in 235.2 a
-POROSITY = 1
 PECLET = 10
 LEFT = robin
-RIGHT = free
+RIGHT = semi-infinite
 MATRIX_CELLS = 20
 MATRIX_DEPTH = 4.5     # m
 MATRIX_POROSITY = 0.0019
-WETTED_SURFACE = 340.5 # m2/m3 = F / tw = 80090 / 235.2
+MATRIX_DENSITY = 2700  # kg/m3
+TRANSPORT_RESISTANCE = 80090   # a/m: F = aw*tw
 TEND = 1.0E6           # a
 TIME_UNIT = year
 
 <SPECIES>
-#          start  De (m2/a)   Rm = eps + rho*Kd
-U238   0  Dm=2.7E-7  Rm=0.5419    # Kd 2.0E-4 m3/kg
-U234   0  Dm=2.7E-7  Rm=0.5419    # Kd 2.0E-4
-Th230  0  Dm=2.7E-7  Rm=143.1     # Kd 5.3E-2
-Ra226  0  Dm=8.5E-7  Rm=1.2169    # Kd 4.5E-4
-Pb210  0  Dm=8.5E-7  Rm=67.5      # Kd 2.5E-2
-Po210  0  Dm=2.7E-7  Rm=67.5      # Kd 2.5E-2
+#          start  De (m2/a)   Kd (m3/kg)
+U238   0  De=2.7E-7  Kd=2.0E-4
+U234   0  De=2.7E-7  Kd=2.0E-4
+Th230  0  De=2.7E-7  Kd=5.3E-2
+Ra226  0  De=8.5E-7  Kd=4.5E-4
+Pb210  0  De=8.5E-7  Kd=2.5E-2
+Po210  0  De=2.7E-7  Kd=2.5E-2
 
 <PARAMETERS>
 # A unit release of U-238 into the first cell: 1 Bq/a over its water volume.

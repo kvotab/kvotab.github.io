@@ -538,6 +538,24 @@
     }
     const tend = opts.tend;
     if (!(tend > 0)) throw new SolverError('span', 'The simulated time must be positive', 0);
+    /*
+      The instants the model's inputs turn at, where the run is stopped and
+      started again: the corners of a table it reads at the clock, which the
+      model lists (`model.breaks`), and any the caller adds. A solver that
+      steps across a corner fits its polynomial through a kink, and one that
+      has grown its steps over a quiet stretch can step clean over a short
+      pulse in a source and never see it; started again at each corner it
+      sees every stretch whole. Kompartment does the same at its switch
+      times. A model without any is run exactly as it always was.
+    */
+    const breaks = (() => {
+      const own = typeof model.breaks === 'function' ? model.breaks(0, tend) : [];
+      const all = [...(own || []), ...(opts.breaks || [])].filter((b) => b > 0 && b < tend).sort((a, b) => a - b);
+      const out = [];
+      for (const b of all) if (!out.length || b - out[out.length - 1] > 1e-12 * Math.abs(b)) out.push(b);
+      return out;
+    })();
+    let nextBreak = 0;
     const y0 = model.initialState(0);
     // The constraints, before anything is integrated. See consistentInitial.
     let startInfo = null;
@@ -695,7 +713,7 @@
     };
 
     const eventLog = [];
-    const total = { nsteps: 0, nfailed: 0, nfevals: 0, npds: 0, ndecomps: 0, nsolves: 0, nbelowtol: 0, negative: 0, repivots: 0, fallbacks: 0, segments: 0 };
+    const total = { nsteps: 0, nfailed: 0, nfevals: 0, npds: 0, ndecomps: 0, nsolves: 0, nbelowtol: 0, negative: 0, repivots: 0, fallbacks: 0, segments: 0, breaks: 0 };
     // What a solver may carry from one segment of the run to the next, the run
     // being restarted at every event: the switching solvers keep here whether
     // they ended stiff, and go on from there. One object for the whole run.
@@ -725,10 +743,18 @@
     const maxEvents = opts.maxEvents ?? MAX_EVENTS;
     for (let seg = 0; ; seg++) {
       total.segments++;
+      // To the next corner, or to the end of the run.
+      while (nextBreak < breaks.length && breaks[nextBreak] <= t0) nextBreak++;
+      const segEnd = nextBreak < breaks.length ? breaks[nextBreak] : tend;
       let res;
       try {
-        res = solver(f, t0, tend, y, {
-        rtol: opts.rtol, atol: runAtol, maxOrder: opts.maxOrder, bdf: opts.solver === 'bdf' || !!opts.bdf, hmax: opts.hmax, norm: opts.norm, debug: opts.debug, scaling: opts.scaling, minNewton: opts.minNewton, stagnationTol: opts.stagnationTol,
+        res = solver(f, t0, segEnd, y, {
+        rtol: opts.rtol, atol: runAtol, maxOrder: opts.maxOrder, bdf: opts.solver === 'bdf' || !!opts.bdf,
+        // The longest step is the run's to set, not a segment's: a tenth of
+        // each stretch between corners would hold every one of them to ten
+        // steps at least, where nothing may be happening.
+        hmax: opts.hmax > 0 || !breaks.length ? opts.hmax : 0.1 * tend,
+        norm: opts.norm, debug: opts.debug, scaling: opts.scaling, minNewton: opts.minNewton, stagnationTol: opts.stagnationTol,
         nonNegative, jacobian, matrix: opts.matrix || 'auto', events, tStart: seg === 0 ? undefined : t0,
         mass: model.mass, suppressAlgebraic: opts.suppressAlgebraic,
         maxSteps: opts.maxSteps,
@@ -770,7 +796,16 @@
       fillGrid(res.t, res.y);
       solverGrid = false;
       if (T[T.length - 1] !== res.t) { T.push(res.t); Y.push(Float64Array.from(res.y)); }
-      if (!res.stopped) break;
+      if (!res.stopped) {
+        // A corner reached: started again from it, with nothing changed.
+        if (segEnd < tend) {
+          t0 = segEnd;
+          y = Float64Array.from(res.y);
+          total.breaks++;
+          continue;
+        }
+        break;
+      }
       // At most maxEvents of them. This loop used to end after 50 segments,
       // and a run that reached its fiftieth event came back as though it were
       // complete: no error, and a table and chart that ended at that event.

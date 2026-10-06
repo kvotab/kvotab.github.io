@@ -70,7 +70,9 @@ an earlier version of the check reported hundreds of them.
 nothing of each other. First, SKB's own implementation of the formulation in
 TR-19-06 (FARFCOMP), whose layer thicknesses, rates and release curves were
 dumped once into `farf-fixture.json` — the same dump the `kompartment` tool
-holds its far-field block to, from which this copy was taken. The layer
+holds its far-field block to, from which this copy was taken. Those cases say
+`MATRIX_GRID = reference`, FARFCOMP's own layers, which are no longer the
+page's default. The layer
 thicknesses come out bit for bit (the FARFCOMP root-find is reproduced step for
 step), every rate — advection, dispersion, wall exchange, layer to layer — to
 one part in 10¹⁴ in five cases, twenty layers from 4×10⁻⁸ m among them, and two
@@ -81,6 +83,30 @@ first order as the fracture is refined. Then a closed dual-porosity box
 conserving mass to 10⁻¹⁴ and settling to exactly the capacity share between
 water and rock; a first-order loss in the rock running at ε·k/R_m on the water
 and at k on the inventory; and the refusals and warnings.
+
+**A far-field path as Kompartment has it.** The page's defaults for a rock
+matrix are Kompartment's for a new far-field path: twelve layers matched to
+diffusion into the rock, the first worked out from the path, and the rock going
+on past the release point (`RIGHT = semi-infinite`, with the cells past it
+counted as Kompartment counts them). Checked without Kompartment: the defaults
+themselves; `TRAVEL_TIME`, `TRANSPORT_RESISTANCE`, `Kd=` and `Kdf=` read back
+as the velocity, the wetted surface and the capacities they stand for, and the
+refusals where two of them disagree; the extra cells inheriting what a line
+reaching the last cell gives, and not a source of the first; the flux through
+each end against the column's own balance — what the cells gain is what crosses
+the left end less what crosses the right, to 10⁻¹⁴, for six pairs of ends and a
+rock matrix; and the model's transfer function, (sI − J)⁻¹ at real s with the
+release read off it, against FARF31's exact one from TR 90-01: 2.4 % in ln T
+where T is above e⁻⁵, against 9 % for the old layers and a Danckwerts outlet;
+four times closer on 40 cells, which is the second order of the fracture's
+central scheme; and twelve matched layers no worse than twenty. Then, last
+because Kompartment's module is an ES module the test has to wait for, section
+9 reads `kompartment/src/domain/farfield.js` itself, on five paths among which
+its own far-field example: the matched layers bit for bit, the count of cells
+past the release point over twenty pairs of N and Pe, every entry of its
+transport matrix and of its chain's ingrowth seen through the capacities
+(A = C·J·C⁻¹, C = R in the fracture and a_w·R_m·d_j in layer j) to 5×10⁻¹⁶, and
+its release weights.
 
 Three things the block taught, kept as comments:
 
@@ -96,6 +122,23 @@ Three things the block taught, kept as comments:
   matrix (0.717 against 0.116), because it should remove the same share of the
   sorbed mass too. `on = inventory` is the difference, and the "sorbing" release
   case is what proves it: to 2×10⁻¹⁰ one way, 0.6 out the other.
+
+**Sources that follow the clock: a release history.** `t` in a rate law is the
+time, checked against the closed form of a loss that fades, k·exp(−t/τ)·[A]; a
+Jacobian that reads it is not called constant; a parameter may not be called
+`t`. A `<TABLE>` is read in a rate law at the clock -- `name(t)`, with a column
+by name or number when it has several, and `loglog` for a power law between
+rows -- and never at a concentration. The run is started again at every corner
+of such a table (`model.breaks`, handed to the driver), and the check that this
+matters is a pulse of ten years in five thousand: with the restarts it is
+integrated to the table's own integral, without them the NDF has grown its
+steps over the quiet stretch before it and steps clean over it -- the store
+comes out exactly zero. The corners follow the argument when it is a line in
+`t`, and there are none for one that is not. End to end, a release history
+that rises, holds and falls over twenty thousand years, through Kompartment's
+default far-field path, is put beside FARF31.html's convolution of the same
+history with the path's exact response: for Ra-226 the peak is 30 %, 7.3 % and
+1.8 % high on 20, 40 and 80 cells, the second order of the fracture's scheme.
 
 **What skbrtm's databases needed.** Reading skbrtm-main's examples called for
 six things the format lacked, and each is checked against a number worked out
@@ -139,11 +182,20 @@ published answer are held to it: Robertson (1966) at *t* = 0.4 against
 0.9851721, 3.3864e-5, 0.0147939, with *A* + *B* + *C* never leaving 1 by more
 than 8e-15; and the matrix-diffusion example against the `erfc` its own comment
 claims. The U-238 chain is checked on the thing that makes it a chain — deep in
-the rock, where nothing flows, each short-lived daughter sits at
-λ_parent/λ_daughter of its parent, to within 0.06 %, across capacities from
-R_m = 0.54 to 143. In the fracture it does not, because flow carries a nuclide
-away before its daughter catches up, and radium runs 2.4 times its equilibrium
-share there.
+the rock, where nothing flows, each short-lived daughter sits at its parent's
+activity, λ·R_m·C, to within 0.2 %, across capacities from R_m = 1.2 to 143,
+which puts the concentrations themselves a hundred times apart. In the fracture
+it does not, because flow carries a nuclide away before its daughter catches up.
+
+Until 2026-10-06 this check compared concentrations, λ_parent·C_parent with
+λ_daughter·C_daughter, and passed to 0.06 % — because `on = inventory` made a
+daughter of the parent's *concentration* times the daughter's own capacity, so
+a daughter that sorbs harder than its parent was born with more atoms than the
+parent lost (a stable daughter with R_m 100 gained 200 times what a parent with
+R_m 0.5 lost). Comparing the chain's ingrowth with Kompartment's, entry for
+entry, is what showed it. A daughter is now born of the parent's whole
+inventory and takes up its own share, as in Kompartment and FARF31, and a
+closed rock cell keeps its atoms to 10⁻¹⁶.
 
 That last check was first written the other way round — that decay written
 `on = water` would leave *more* Th-230 in the rock, since its own removal is
@@ -244,11 +296,17 @@ library, so the question is whether libhdf5 agrees that the result is a file.
 reply to `rtm-hdf5.js`, which is exactly what rtm.html sends the HDF5 Browser;
 `test-hdf5.py` opens the result with h5py.
 
-Three models, for the three shapes the tree can take: a batch, which is one
+Four models, for the shapes the tree can take: a batch, which is one
 cell and so has `/Species` and no `/Cells`; a column, where every cell is a
 group of series and `/Grid` says where each of them is; and a dual-porosity
 column with more cells than one file should hold datasets for, which is the
-case where the rock is deliberately left out and `matrix_written` says so.
+case where the rock is deliberately left out and `matrix_written` says so (a
+text of its own, forty layers behind a hundred cells: the examples no longer
+have that many). The far-field example, read at its right-hand end, has
+`/Ends` with both ends and every species, `/Species` holding the end the page
+showed, a unit release in at the left and all of a tracer out at the right in
+the end, and its cells past the release point in `/Cells` and `/Grid`, past
+`LENGTH` and saying so.
 
 The numbers are checked, not only the structure: A → B → C ends with the A
 spent and nearly all of it in C, and the dose-profile column ends with more in
@@ -266,7 +324,7 @@ The wiring rather than the mathematics: that the text compiles through the
 worker, that a transport run reaches both chart tabs, that ticking a species
 draws it and the chip removes it again, that *Check Jacobian* answers and finds
 nothing wrong, that switching to batch recompiles to one cell and the profile
-tab says so, that the Example picker offers all 11 in their groups and loading one brings
+tab says so, that the Example picker offers all 13 in their groups and loading one brings
 its text, its description and a run; that a model in years labels its axis,
 its panel and its boxes in years rather than seconds; that the Run button does
 not move when the status line below it changes size, which it used to do by
@@ -275,6 +333,11 @@ that a dual-porosity model compiles with the panel saying how deep and what
 enters, that the layer picker appears and the time chart follows it, that the
 profile can be drawn into the rock with the fracture at depth zero and falls
 inward, and that the gradient draws a rock layer along the fracture —
+that the far-field example's panel says its layers are matched, how thick the
+first came out and why, how many cells stand past its right-hand end and the
+travel time the flow makes, that it runs, that choosing *flux through the right
+end* draws the release with a unit release of a tracer all coming out in the
+end and no layer to pick, and that a cell again brings the layers back —
 that the boundary aliases reach the panel as the names they mean and that a
 third-type inlet leaves its first cell below the inlet concentration, that a
 `robin` face with no flow into it and a `free` face with nothing to carry
@@ -291,7 +354,7 @@ reporting a token it could not read or a time past the end of the run rather
 than dropping it silently — that a model typed from scratch runs and puts the
 right number on the chart, and
 that the syntax colouring lays a second copy of the text exactly over the box
-being typed in — the same characters, the same metrics, every one of the 11
+being typed in — the same characters, the same metrics, every one of the 13
 examples through the tokeniser unchanged, since a span too many or an escape
 too few puts the caret over the wrong letter — and that turning it off puts
 the copy away and is remembered; that the page can build the HDF5 file it

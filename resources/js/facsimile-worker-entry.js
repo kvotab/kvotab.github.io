@@ -21,7 +21,7 @@
 importScripts(
   './facsimile-model.js?v=20261005',
   './ode-core.js?v=20261005',
-  './facsimile-solver.js?v=20261005',
+  './facsimile-solver.js?v=20261006',
   './ode-julia.js?v=20260923e',
   './facsimile-ode-julia.js?v=20261005',
   './facsimile-worker.js?v=20261005',

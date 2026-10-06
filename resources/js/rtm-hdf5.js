@@ -10,7 +10,10 @@
      /Species/<NAME>          every species where the page was looking: the
                               batch, or the cell the Model tab had open
      /Cells/<cell>/<NAME>     the same, for every cell of the column and every
-                              layer of rock behind it (transport only)
+                              layer of rock behind it (transport only), and
+                              the cells past a semi-infinite right-hand end
+     /Ends/<end>/<NAME>       what crosses each end of the column, per m2 of
+                              the water's cross-section (transport only)
      /Grid/...                what each cell is: where its centre sits, how
                               deep into the rock it is, how wide it is
      /Settings/<NAME>         the settings the model compiled with
@@ -85,6 +88,21 @@
     return out;
   }
 
+  /**
+   * What crosses one end of the column, out of the flat state: the model's
+   * own sum over the states beside it, `terms` of [state, weight] and a
+   * `constant`, at every stored time.
+   */
+  function faceSeries(run, f) {
+    const out = new Float64Array(run.n);
+    for (let i = 0; i < run.n; i++) {
+      let v = f.constant;
+      for (const [idx, w] of f.terms) v += w * run.states[i * run.width + idx];
+      out[i] = v;
+    }
+    return out;
+  }
+
   /*
     How many series a file may hold before the rock behind the column is left
     out of it. A dual-porosity model is forty layers deep on every one of a
@@ -107,7 +125,8 @@
    * @param {object} [opts]
    * @param {object} [opts.solver]  the solver options the run used
    * @param {string} [opts.text]    the model text
-   * @param {number} [opts.cell]    the fracture cell the page is showing
+   * @param {number|string} [opts.cell]  the fracture cell the page is
+   *                           showing, or 'left' or 'right' for an end
    * @param {number} [opts.layer]   which layer of rock behind it, 0 for none
    * @param {string} [opts.title]   what to call the model
    * @param {Date}   [opts.now]
@@ -191,15 +210,23 @@
       curves, in the same order, under the name the species has. Every other
       cell is under /Cells below.
     */
-    const shown = Math.min(cells - 1, Math.max(0, cell) * stride + Math.min(layer, stride - 1));
-    const where = cells === 1 ? 'the batch'
-      : (layer > 0 ? `cell ${cell}, rock layer ${layer}` : `cell ${cell}`);
+    const end = (cell === 'left' || cell === 'right') && m.faces ? cell : null;
+    const shown = end ? 0 : Math.min(cells - 1, Math.max(0, cell) * stride + Math.min(layer, stride - 1));
+    const where = end ? `the flux through the ${end} end`
+      : cells === 1 ? 'the batch'
+        : (layer > 0 ? `cell ${cell}, rock layer ${layer}` : `cell ${cell}`);
     species.forEach((name, si) => {
-      put(root, ['Species', linkName(name)], dataset(columnSeries(run, ns, si, shown), F64, {
-        unit: 'concentration', name, time_dependent: true, index: [name],
-        description: `${name} in ${where}`, created_time: created,
-        cell: Number(cells === 1 ? 0 : cell), layer: Number(cells === 1 ? 0 : layer),
-      }));
+      put(root, ['Species', linkName(name)], end
+        ? dataset(faceSeries(run, m.faces[end][si]), F64, {
+          unit: `concentration·m/${unit}`, name, time_dependent: true, index: [name],
+          description: `${name}: ${where}, per m² of the water's cross-section`, created_time: created,
+          end,
+        })
+        : dataset(columnSeries(run, ns, si, shown), F64, {
+          unit: 'concentration', name, time_dependent: true, index: [name],
+          description: `${name} in ${where}`, created_time: created,
+          cell: Number(cells === 1 ? 0 : cell), layer: Number(cells === 1 ? 0 : layer),
+        }));
     });
     if (ns) {
       put(root, ['IndexLists', 'Species'], dataset(species.map(String), STR,
@@ -209,6 +236,30 @@
         IndexLists: ['Species'], time_dependent: true,
         description: `Every species in ${where}, the view the page had open`,
       });
+    }
+
+    /*
+      /Ends: what crosses each end of the column, every species, positive to
+      the right and per m2 of the water's cross-section. At an outlet that is
+      the release, which is what a far-field path is read for.
+    */
+    if (transport && m.faces) {
+      put(root, ['Ends'], group({
+        description: 'What crosses each end of the column, per m² of the water’s cross-section, '
+          + 'positive to the right',
+      }));
+      for (const side of ['left', 'right']) {
+        put(root, ['Ends', side], group({
+          description: `Every species through the ${side} end`,
+          IndexLists: ['Species'], time_dependent: true, end: side,
+        }));
+        species.forEach((name, si) => {
+          put(root, ['Ends', side, linkName(name)], dataset(faceSeries(run, m.faces[side][si]), F64, {
+            unit: `concentration·m/${unit}`, name, time_dependent: true, index: [name],
+            description: `${name} through the ${side} end`, created_time: created, end: side,
+          }));
+        });
+      }
     }
 
     /*
@@ -232,17 +283,19 @@
         const j = c % stride;
         if (j > 0 && !withMatrix) continue;
         const path = cellName(i, j);
+        // The cells past a semi-infinite end are the column going on.
+        const past = i >= fracture ? ', past the right-hand end' : '';
         put(root, ['Cells', path], group({
           description: j > 0
-            ? `Every species in layer ${j} of the rock behind cell ${i}`
-            : `Every species in cell ${i}`,
+            ? `Every species in layer ${j} of the rock behind cell ${i}${past}`
+            : `Every species in cell ${i}${past}`,
           IndexLists: ['Species'], time_dependent: true,
           cell: Number(i), layer: Number(j),
         }));
         species.forEach((name, si) => {
           put(root, ['Cells', path, linkName(name)], dataset(columnSeries(run, ns, si, c), F64, {
             unit: 'concentration', name, time_dependent: true, index: [name],
-            description: `${name} in ${j > 0 ? `layer ${j} of the rock behind cell ${i}` : `cell ${i}`}`,
+            description: `${name} in ${j > 0 ? `layer ${j} of the rock behind cell ${i}` : `cell ${i}`}${past}`,
             created_time: created, cell: Number(i), layer: Number(j),
           }));
         });
@@ -262,7 +315,7 @@
       const depth = new Float64Array(cells);
       const cellOf = new Float64Array(cells);
       const layerOf = new Float64Array(cells);
-      const centres = m.centres || [];
+      const centres = [...(m.centres || []), ...((m.extra && m.extra.centres) || [])];
       const layers = (m.matrix && m.matrix.depth) || [];
       for (let c = 0; c < cells; c++) {
         const i = Math.floor(c / stride);
@@ -282,7 +335,8 @@
         ['depth', depth, 'm', 'Depth into the rock to the centre of the layer, 0 in the water'],
         ['cell', cellOf, '', 'Which cell of the column'],
         ['layer', layerOf, '', 'Which layer of rock behind it, 0 for the water itself'],
-        ['width', Float64Array.from(m.width || []), 'm', 'How wide each cell of the column is'],
+        ['width', Float64Array.from([...(m.width || []), ...((m.extra && m.extra.width) || [])]), 'm',
+          'How wide each cell of the column is, those past a semi-infinite end after it'],
       ].filter(([, values]) => values.length);
       for (const [name, values, u, description] of columns) {
         put(root, ['Grid', name], dataset(values, F64, { name, unit: u, description }));

@@ -391,12 +391,14 @@
               <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither.</td></tr>
               <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
-              <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>) — see below.</td></tr>
+              <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>), and on the right <em>semi-infinite</em> — see below.</td></tr>
+              <tr><td><code>EXTRA_CELLS</code></td><td>With <code>RIGHT = semi-infinite</code>: how many cells stand for the column past its end. Worked out unless given.</td></tr>
+              <tr><td><code>TRAVEL_TIME</code></td><td>The time the water takes to cross the column, in the model's time unit, which is how a far-field path is described. It sets <code>VELOCITY</code> to <code>POROSITY</code>·<code>LENGTH</code>/<code>TRAVEL_TIME</code> and turns <code>ADVECTION</code> on.</td></tr>
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less the <em>v</em>·Δ<em>x</em>/2 the upwind scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
-              <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_POROSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code></td><td>A stagnant rock matrix beside the column; see <em>A rock matrix</em> below.</td></tr>
+              <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
             </tbody>
           </table>
 
@@ -408,7 +410,9 @@ UO2                      # no number: starts at zero, does not move</pre>
             there for ever, <code>D=</code> its diffusion coefficient in m²/s, and
             <code>left=</code> / <code>right=</code> the concentration at a Dirichlet face. A
             species with no <code>D</code> does not move, which is how a surface site or a mineral
-            is written.</p>
+            is written. With a rock matrix a species also takes <code>De=</code> (or
+            <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
+            <em>A rock matrix</em> below.</p>
           <p><code>fixed</code> is a statement about the equation, not a nudge: that species' row
             in the right-hand side and in the Jacobian is set to exactly zero, so nothing —
             reaction, diffusion, advection, a Dirichlet face, an equilibrium — can move it. It
@@ -504,6 +508,14 @@ A => B, r = k*c^(2/3)*(1 - [B]/cmax), k = 5e-13, c = [A], cmax = 1.8e-6</pre>
                   Danckwerts' outlet, and the companion of <code>robin</code> at the other end. It
                   asks for nothing to be known about what is beyond the face, which at an outlet
                   is the point.</td></tr>
+              <tr><td><code>semi-infinite</code><br><span class="rtm-muted">right only</span></td>
+                <td>The column goes on past its end, and the end is a plane inside it that the flow
+                  and the dispersion both cross: what leaves is the whole flux, and the
+                  concentration falls to zero only infinitely far downstream. The outlet of the
+                  analytical far-field models, FARF31's among them, and of Kompartment's far-field
+                  path. <code>EXTRA_CELLS</code> cells as wide as the last stand for the column
+                  beyond, the last of them closed by carrying the gradient on through it. It needs
+                  the flow to run to the right.</td></tr>
             </tbody>
           </table>
           <p>The difference between the first and third types is worth knowing, because it is a
@@ -521,49 +533,107 @@ A => B, r = k*c^(2/3)*(1 - [B]/cmax), k = 5e-13, c = [A], cmax = 1.8e-6</pre>
             outlet already lets the flow leave. They are separate words because they say different
             things and are wrong in different ways, and the page can only tell you which is wrong
             if it knows which you meant.</p>
+          <p>How many cells a semi-infinite end needs past it is a matter of how far upstream the
+            dispersion reaches. It dies away by <em>D</em>/(<em>D</em>&nbsp;+&nbsp;<em>u</em>Δ<em>x</em>)
+            per cell, which for a Peclet number and no <code>D</code> of a species' own is
+            (2<em>N</em>&nbsp;−&nbsp;Pe)/(2<em>N</em>&nbsp;+&nbsp;Pe), and unless
+            <code>EXTRA_CELLS</code> says otherwise they are the fewest that bring that under a
+            tenth: five for twenty cells at Pe 10, as Kompartment counts them, and none where the
+            grid's own dispersion is all there is. They are the column going on, so a line of
+            <code>&lt;PARAMETERS&gt;</code> or <code>&lt;INITIAL&gt;</code> that reaches the last cell
+            reaches them too, and a rock matrix is behind them as well. The charts leave them out.</p>
+          <p>A Danckwerts outlet, <code>free</code>, closes the column at its end instead, and lets
+            out 4<em>a</em>/(1&nbsp;+&nbsp;<em>a</em>)² of what the semi-infinite column does at a
+            frequency where <em>a</em>&nbsp;=&nbsp;√(1&nbsp;+&nbsp;4<em>t</em><sub>w</sub><em>g</em>/Pe).
+            Against FARF31's exact transfer function, the far-field path below is 2.4 % out where
+            most of a release is with a semi-infinite end, and 6.8 % with a free one. More cells
+            bring the first down by four per doubling, to 0.17 % on 160, and make the second worse,
+            9.9 % on 160: that column closes on Danckwerts' answer, which is not FARF31's.</p>
+          <p><em>What crosses an end.</em> On <em>Against time</em> the <em>Cell</em> picker ends
+            with <em>flux through the left end</em> and <em>through the right end</em>: what crosses
+            the plane at 0 or at <code>LENGTH</code>, per m² of the water's cross-section and
+            positive to the right, in concentration times metres per unit of time. At an outlet
+            that is the release — advection alone at a free end, advection and dispersion at a
+            semi-infinite one. It is worked out from the stored run with exactly the terms the
+            equations put through that face, so what the column gains is what crosses its left end
+            less what crosses its right, to round-off.</p>
 
           <h4>A rock matrix: dual porosity</h4>
           <p>Water flows along a fracture; the rock beside it is stagnant, porous, and open to
             diffusion. A species carried along the fracture leaks sideways into the rock's pore
             water, sorbs there, and comes back out long after the water that brought it has gone —
             which is what holds a radionuclide up in a geosphere by orders of magnitude more than the
-            water's own travel time. Set <code>MATRIX_CELLS</code> above zero and every cell of the
-            column gets a chain of that many stagnant cells behind it, reaching
-            <code>MATRIX_DEPTH</code> metres into the rock:</p>
+            water's own travel time. Say anything about the rock and every cell of the column gets a
+            chain of stagnant cells behind it, twelve unless <code>MATRIX_CELLS</code> says
+            otherwise (0 for none), reaching <code>MATRIX_DEPTH</code> metres into the rock. A
+            far-field path is written the way the SKB reports describe one, and here as
+            Kompartment's far-field block starts one:</p>
           <pre>&lt;SETTINGS&gt;
 MODE = transport
-CELLS = 20                # along the fracture
-LENGTH = 235              # m; with VELOCITY = 1 the length is the travel time in the time unit
-ADVECTION = 1
-VELOCITY = 1
-DIFFUSION = 1
+CELLS = 20                  # along the path
+LENGTH = 100                # m; any length: TRAVEL_TIME sets the flow
+TRAVEL_TIME = 100           # the water's travel time t_w, in the time unit
 PECLET = 10
-LEFT = robin              # water arriving at the stated concentration
-RIGHT = free
-MATRIX_CELLS = 20         # layers of rock behind each cell
-MATRIX_DEPTH = 4.5        # m into the rock
-MATRIX_FIRST = 1E-4       # m, the layer at the wall; 0 has it worked out
-MATRIX_POROSITY = 0.0019
-WETTED_SURFACE = 340      # m² of rock wall per m³ of flowing water; = F / t_w
+LEFT = robin                # water arriving at left= per m3
+RIGHT = semi-infinite       # the rock goes on past the release point
+MATRIX_DEPTH = 12.5         # m into the rock
+MATRIX_POROSITY = 0.0018
+MATRIX_DENSITY = 2700       # kg/m3, the default
+TRANSPORT_RESISTANCE = 1E5  # F = a_w t_w: 1000 m2 of wall per m3 of water here
+TIME_UNIT = year
 
 &lt;SPECIES&gt;
-Cs  0  left=1  R=1  Dm=8.5E-7  Rm=2.7    # Dm = De in the rock; Rm = eps_m + rho*Kd
+Cs  0  left=1  De=1E-4  Kd=0.01    # De in m2/a, Kd in m3/kg
 </pre>
-          <p>Every species has its <code>Dm=</code>, the effective diffusivity in the rock in m²/s,
-            and its <code>Rm=</code>, the rock's capacity for it: pore water plus sorbed,
-            <em>ε</em><sub>m</sub>&nbsp;+&nbsp;<em>ρ</em><sub>m</sub><em>K</em><sub>d</sub>, the
-            quantity the SKB reports call the capacity factor. With no <code>Rm</code> the species
-            gets the porosity alone, which is a species that does not sorb; with no <code>Dm</code>
-            it never enters the rock. Like <code>R</code>, <code>Rm</code> may name a parameter and
-            so vary from cell to cell.</p>
-          <p>The layers grow geometrically with depth from <code>MATRIX_FIRST</code>, because the
-            gradient is steepest at the wall and all but flat far in. Left at zero the first layer is
-            worked out so that the ratio between layers is <em>e</em>, which is the FARFCOMP rule,
-            reproduced step for step so that the thicknesses come out bit for bit the same as that
-            code's. The far face of the last layer is closed: the depth is a depth, not a boundary.
-            <code>WETTED_SURFACE</code> is the area of fracture wall a cubic metre of flowing water
-            touches; <code>APERTURE</code> (2<em>b</em>) says the same thing as 2/aperture. Only one
-            of the two is needed.</p>
+          <p>Each species has its <code>De=</code> (or <code>Dm=</code>, the same thing), the
+            effective diffusivity in the rock, and a capacity there: <code>Kd=</code>, the partition
+            coefficient, makes it
+            <em>ε</em><sub>m</sub>&nbsp;+&nbsp;<em>ρ</em><sub>m</sub><em>K</em><sub>d</sub> with
+            <code>MATRIX_POROSITY</code> and <code>MATRIX_DENSITY</code>, and <code>Rm=</code> gives
+            it outright and may name a parameter, so that it varies from cell to cell. With neither
+            the species has the porosity alone, which is one that does not sorb; with no
+            <code>De</code> it never enters the rock. <code>Kdf=</code> is sorption on the fracture
+            coating, which retards the species in the water by
+            <code>R</code>&nbsp;=&nbsp;1&nbsp;+&nbsp;<em>K</em><sub>d,f</sub><em>a</em><sub>w</sub>;
+            <code>R=</code> says it outright.</p>
+          <p>The flow-wetted surface <em>a</em><sub>w</sub>, the area of fracture wall a cubic metre
+            of flowing water touches, is given one of three ways: <code>WETTED_SURFACE</code> itself,
+            in m²/m³; <code>APERTURE</code> (2<em>b</em>) for a fracture of two walls, as
+            2/aperture; or <code>TRANSPORT_RESISTANCE</code>, the <em>F</em> of the SKB reports, as
+            <em>F</em>/<em>t</em><sub>w</sub>. Two of them given have to agree.
+            <code>TRAVEL_TIME</code> gives the flow as the water's travel time; without it
+            <em>t</em><sub>w</sub> is <code>LENGTH</code> over the pore-water speed. A unit release
+            into the path is a <code>robin</code> left end with <code>left</code> at one over the
+            pore-water speed, or a source <code>=&gt; X, k = S</code> with
+            <code>S 0 1/Δx fracture</code> in <code>&lt;PARAMETERS&gt;</code>; the release out is
+            what crosses the right end.</p>
+          <p><em>The layers</em> grow geometrically with depth, because the gradient is steepest at
+            the wall and all but flat far in, and <code>MATRIX_GRID</code> says how:</p>
+          <table class="rtm-table">
+            <tbody>
+              <tr><td><code>matched</code><br><span class="rtm-muted">the default</span></td>
+                <td>Kompartment's far-field layers. Each node sits where the layers' exchange with
+                  the fracture matches exact diffusion into the rock — spaced by the geometric mean
+                  of the two layers it joins rather than at their centres — and the first layer is
+                  worked out from the path: a tenth of the depth diffusion reaches at the fastest
+                  change that still gets through it (where the path's transfer function has fallen
+                  to <em>e</em><sup>−25</sup>), or at a species' own decay where that is faster.
+                  One grid for every species, so the shallowest decides. A species' decay is read
+                  off its first-order <code>on = inventory</code> reactions. With no flow and no
+                  decay to size it by, the first layer is the reference one.</td></tr>
+              <tr><td><code>reference</code></td>
+                <td>FARFCOMP's layers: a first layer that makes them grow by <em>e</em>, nodes at
+                  their centres, the thicknesses bit for bit those of SKB's own implementation. At
+                  a ratio of <em>e</em> nodes at the centres understate what the rock takes up by
+                  5.8 %.</td></tr>
+            </tbody>
+          </table>
+          <p><code>MATRIX_FIRST</code> sets the first layer instead, whichever the grid. The far
+            face of the last layer is closed: the depth is a depth, not a boundary. Layers that grow
+            by more than 2.5 are coarse at depth, and the page then says how many would keep the
+            growth to 2. On the U-238 chain among the examples, Po-210's half-life of 0.38 years
+            sizes the first layer at 5 µm: twelve layers to 4.5 m grow by 3.4 and put the releases
+            4 % out, twenty grow by 2.0 and are within 0.2 %.</p>
           <p><strong>Concentrations are per unit pore water everywhere, and so are the rate
             laws.</strong> A cubic metre of rock holds only <em>ε</em><sub>m</sub> of water, so a rate
             <em>r</em> per unit water changes the rock's inventory by <em>ε</em><sub>m</sub><em>r</em>,
@@ -572,8 +642,12 @@ Cs  0  left=1  R=1  Dm=8.5E-7  Rm=2.7    # Dm = De in the rock; Rm = eps_m + rho
             + diffusion. That is right for chemistry in the water and wrong for one thing:
             radioactive decay, which does not ask where an atom sits, sorbed or dissolved. Write such
             a rate with <code>on = inventory</code> and it removes the same share of everything in
-            the cell:</p>
+            the cell, and makes as much of what is on the right: a daughter born of a parent that
+            sorbs hard is born as many atoms as the parent lost, and then takes up its own share
+            between water and rock, as Kompartment and FARF31 have it. Such a reaction has one
+            species on the left, or none.</p>
           <pre>Cs => , k = 7.3E-10, on = inventory     # decay: of everything, sorbed included
+U234 => Th230, k = 2.8234E-6, on = inventory   # a chain: Th-230 from all of the U-234
 Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water is the default</pre>
           <p>Told it acts on the water alone, decay in a sorbing rock runs at
             <em>ε</em><sub>m</sub>/<em>R</em><sub>m</sub> of its real rate; on the reference case
@@ -585,32 +659,68 @@ Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water 
             which would otherwise also feed every layer of rock behind that cell. In a parameter's
             expression <code>j</code> is the layer (0 in the fracture) and <code>xm</code> the depth
             to its centre in metres.</p>
-          <p><em>From the SKB parameterisation.</em> A flow path there is a travel time
-            <em>t</em><sub>w</sub>, a transport resistance <em>F</em>, a Péclet number, a penetration
-            depth, and per species <em>D</em><sub>e</sub>, <em>K</em><sub>d</sub> and the rock's
-            porosity and density. Here that is <code>LENGTH = </code><em>t</em><sub>w</sub> with
-            <code>VELOCITY = 1</code> (so time is the model's unit, years if the rates are per year),
-            <code>WETTED_SURFACE = </code><em>F</em>/<em>t</em><sub>w</sub>,
-            <code>PECLET</code>, <code>MATRIX_DEPTH</code>, and per species
-            <code>Dm = </code><em>D</em><sub>e</sub>,
-            <code>Rm = </code><em>ε</em><sub>m</sub>&nbsp;+&nbsp;<em>ρ</em><sub>m</sub><em>K</em><sub>d,m</sub>,
-            and <code>R = 1 + </code><em>K</em><sub>d,f</sub>·<em>a</em><sub>w</sub> for sorption on
-            the fracture coating. A unit release into the first cell is a source
-            <code>=&gt; X, k = S</code> with <code>S 0 1/Δx fracture</code> in
-            <code>&lt;PARAMETERS&gt;</code>; the release out is <em>v</em> times the last cell's
-            concentration.</p>
-          <p><em>What was checked.</em> The layer thicknesses and every rate — advection, dispersion,
-            wall exchange, layer to layer — against SKB's own implementation of TR-19-06's
+          <p><em>How fine.</em> With matched layers, twelve do as well as twenty: what is left is
+            the cells along the path, and they converge on the exact answer at second order. On the
+            path above, Ra-226 (<code>De=1E-4 Kd=4.5E-4</code>, decaying with its half-life of 1600
+            years, as in the far-field example) arrives at 2.2×10<sup>−5</sup> of a steady release
+            on 20 cells, where FARF31's exact answer is 1.72×10<sup>−5</sup>; 40 cells give
+            1.84×10<sup>−5</sup> and 80 give 1.75×10<sup>−5</sup>. A strongly held-back nuclide
+            wants more cells than a tracer does.</p>
+          <p><em>What was checked.</em> Kompartment's far-field path, from its own code, on five
+            paths: its matched layers bit for bit, its count of cells past the release point, every
+            entry of its transport matrix and of its chain's ingrowth to one part in 10<sup>15</sup>,
+            and its release, read at the same plane with the same weights. The model's transfer
+            function against FARF31's exact one, from far below the path's own frequencies to where
+            it has fallen to <em>e</em><sup>−15</sup>. With <code>MATRIX_GRID = reference</code>, the
+            layer thicknesses and every rate against SKB's own implementation of TR-19-06's
             formulation, in five cases including twenty layers from 4×10⁻⁸ m, to one part in
-            10<sup>14</sup>; two of its release curves, one with sorption and decay, to
-            2×10<sup>-9</sup> and 2×10<sup>-10</sup> at a tolerance of 10<sup>-9</sup>; Neretnieks'
+            10<sup>14</sup>, and two of its release curves, one with sorption and decay, to
+            2×10<sup>-9</sup> and 2×10<sup>-10</sup> at a tolerance of 10<sup>-9</sup>. Neretnieks'
             closed solution for a fracture beside a deep matrix, converging at the upwind scheme's
-            first order as the fracture is refined; and a closed box that conserves mass to
-            10<sup>-14</sup> and shares it between water and rock exactly by capacity.</p>
+            first order as the fracture is refined; a closed box that conserves mass to
+            10<sup>-14</sup> and shares it between water and rock exactly by capacity; and a decay
+            chain that keeps its atoms in water and rock alike.</p>
           <p>On the charts, a <em>Layer</em> picker beside the cell chooses the fracture or a rock
             layer for the time chart and the gradient, and <em>Against distance</em> can be drawn
             across the fracture at one layer or into the rock at one cell, the fracture at depth
             zero.</p>
+
+          <h4 id="help-release">A release history</h4>
+          <p>A source that follows the clock is a reaction with nothing on the left whose rate reads
+            a table at the time, <code>t</code>: what a near field releases into a far-field path,
+            year by year, as another code worked it out or as a report tabulates it.</p>
+          <pre>&lt;TABLE release&gt;
+t           U238      U234          # the first row names the columns; t in years
+0           0         0
+1000        2.0E-3    1.5E-3
+1.0E4       1.1E-3    9.0E-4
+1.0E5       0         0
+
+&lt;PARAMETERS&gt;
+IN  all  0
+IN  0    1/w  fracture              # into the first cell: one per m2 of water's cross-section
+
+&lt;REACTIONS&gt;
+=> U238, r = IN*release(t, U238)
+=> U234, r = IN*release(t, U234)</pre>
+          <p><code>IN</code> turns a release per m² of the water's cross-section into one per m³
+            of the first cell's water; what crosses the right end, on <em>Against time</em>, is then
+            per m² too, and the two compare directly. The time is in the model's own unit, and a
+            table is held at its last row beyond it: end a history with zeros if it ends. The
+            argument may be any arithmetic on <code>t</code> and the line's constants —
+            <code>release(t - 1000)</code> to start it a thousand years late, or
+            <code>release(t/3.156e7)</code> to read a history in years in a model in seconds.</p>
+          <p>The run is started again at every corner of such a table — every row, moved and
+            scaled with the argument when that is a straight line in <code>t</code>. A stiff solver
+            that has grown its steps over a quiet stretch would otherwise step clean over a short
+            pulse and never see it: a release of ten years in five thousand comes out as nothing at
+            all without the restarts, and whole with them. Kompartment does the same at its switch
+            times. The panel says how many corners there are, and the status line how many the run
+            was started at; a history of a few hundred rows costs a few thousand steps.</p>
+          <p>Through Kompartment's default far-field path, a history that rises, holds and falls over
+            twenty thousand years comes out as FARF31 convolves it with the path's exact response, to
+            the accuracy of the cells along the path: for Ra-226, which the rock holds back by five
+            orders, the peak is 30&nbsp;% high on 20 cells, 7&nbsp;% on 40 and 1.8&nbsp;% on 80.</p>
 
           <h4>What may go in an expression</h4>
           <p>The same arithmetic in a rate law, a constant and a parameter:
@@ -643,8 +753,10 @@ Cs + X => Y, k = 1.2E-4                   # chemistry: in the water, on = water 
             steps over the corner rather than through it. A rate that switches hard is still worth
             avoiding where a smooth one will do.</p>
           <p>Which names are in scope depends on where the expression is. A rate law may use the
-            concentrations it writes in brackets, the constants named on its own line, and any
-            parameter; a constant on the reaction line wins if a parameter has the same name. A
+            concentrations it writes in brackets, the constants named on its own line, any
+            parameter, <code>t</code>, the time in the model's own unit, and a table read at that
+            time — see <em>A release history</em> below; a constant on the reaction line wins if a
+            parameter has the same name, and no parameter may be called <code>t</code>. A
             parameter, and a starting value in <code>&lt;INITIAL&gt;</code>, may use
             <code>x</code>, the cell centre in metres, <code>w</code>, the cell's width,
             <code>xl</code> and <code>xr</code>, its two faces, <code>i</code>, the cell index, the
@@ -693,14 +805,24 @@ POR   5    0.3</pre>
 
 &lt;PARAMETERS&gt;
 DOSE  all  dose_alpha(x)          # or interp(dose_alpha, x), as FACSIMILE writes it</pre>
-          <p>Two columns, <em>x</em> increasing and a value, used in a parameter or a starting value
-            as <code>name(x)</code> — at any argument, <code>name(x - 1e-6)</code> included. It is
-            interpolated linearly between rows and held at its end values beyond them.
-            <code>log</code> after the name interpolates the logarithm instead, which follows a
-            profile that dies away exponentially, a dose rate, far better between rows that are far
-            apart; its values then have to be above zero. A table cannot be read in a rate law: a
-            rate law is a function of the concentrations, a table of the place. Give it a parameter,
-            as above, and use that.</p>
+          <p><em>x</em> increasing and a value, used in a parameter or a starting value as
+            <code>name(x)</code> — at any argument, <code>name(x - 1e-6)</code> included — and in a
+            rate law as <code>name(t)</code>, read at the clock. It is interpolated linearly between
+            rows and held at its end values beyond them. After the name, <code>log</code>
+            interpolates the logarithm of the values instead, which follows a profile that dies away
+            exponentially, a dose rate, far better between rows that are far apart, and
+            <code>loglog</code> the logarithm of the values in the logarithm of <em>x</em>: a power
+            law between rows, which is how FARF31 reads a release history. Their values have to be
+            above zero, and <code>loglog</code>'s <em>x</em> as well; below the first <em>x</em> the
+            first value is held, so a time of zero reads the first row.</p>
+          <p>A table may have several columns of values. A first row whose first word starts with a
+            letter names them — <code>t&nbsp;&nbsp;U238&nbsp;&nbsp;U234</code> — and a column is
+            read by its name or its number from 1: <code>release(t, U238)</code>,
+            <code>release(t, 2)</code>. A table of one column needs neither. Pasting a release
+            history from another code's output is the reason: one table, a column per nuclide.</p>
+          <p>A rate law reads a table at the clock and never at a concentration: the table's slope
+            would then be part of the Jacobian. A table of place is read in a parameter, as above,
+            and the parameter used in the rate law.</p>
           <p>This is how a tabulated dose-rate profile goes in as it is, where skbrtm fits a
             function to it first — and a fit is only as good as where it was started: skbrtm's beta
             and gamma fits come out as straight lines, 30&nbsp;% low at the surface.</p>
@@ -780,7 +902,8 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             four each time the cells are doubled — second order, as it should be.</p>
 
           <h3 id="help-charts">Reading the charts</h3>
-          <p>The time chart draws the species ticked in the list above it, at one cell.
+          <p>The time chart draws the species ticked in the list above it, at one cell, or what
+            crosses one end of the column (see <em>The two ends of the column</em>).
             <em>Against distance</em> draws one species across all the cells, at several times.
             Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h, 30 d,
             500 y</code>, or bare numbers in the model's own unit — and leaving it empty spreads eight over the
@@ -818,8 +941,11 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             chosen. A column run also has <code>/Cells/cell_007/…</code> for every cell and
             <code>/Cells/cell_007_rock_03/…</code> for the rock behind it, so a species searched
             for by name in the browser comes back as one curve per cell. <code>/Grid</code> says
-            where each of those cells is, <code>/Settings</code> what the model was compiled with,
-            and <code>/Model/source</code> keeps the model text itself, a line per value. A
+            where each of those cells is, <code>/Ends/left/…</code> and <code>/Ends/right/…</code>
+            what crosses each end of the column, <code>/Settings</code> what the model was compiled
+            with, and <code>/Model/source</code> keeps the model text itself, a line per value. The
+            cells past a semi-infinite end are under <code>/Cells</code> too, after the column's
+            own, and say so. A
             dual-porosity model can have more cells than a file should hold datasets, and past
             four thousand of them the rock layers are left out — the root attribute
             <code>matrix_written</code> says so when that happens, and the water is always there.</p>
@@ -891,7 +1017,7 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
               <tr><td>Standard test cases</td><td><em>Robertson</em> (1966), the problem stiff solvers are measured against — three rate constants over nine orders, <em>A</em>&nbsp;+&nbsp;<em>B</em>&nbsp;+&nbsp;<em>C</em> exactly 1, and the published triple at <em>t</em>&nbsp;=&nbsp;0.4 reproduced to seven figures. The <em>Brusselator</em>, which never settles.</td></tr>
               <tr><td>Chemistry</td><td>Carbonate speciation: three coupled equilibria and the conserved totals found from the stoichiometry alone.</td></tr>
               <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
-              <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution, and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium to a tenth of a per cent; in the fracture the flow keeps it from doing so.</td></tr>
+              <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution; <strong>a far-field path</strong> as Kompartment starts one, its release read at the right-hand end; and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium, every member at its parent's activity, to 0.2 %; in the fracture the flow keeps it from doing so.</td></tr>
             </tbody>
           </table>
           <p>Every example is compiled and run by <code>resources/tests/rtm/test-model.js</code>,
@@ -951,17 +1077,17 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   -->
   <script src="./resources/js/facsimile-model.js?v=20261005"></script>
   <script src="./resources/js/ode-core.js?v=20261005"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20261005"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20261006"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261005"></script>
+  <script src="./resources/js/rtm-model.js?v=20261006a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20260921b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261005"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261006a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
-  <script src="./resources/js/rtm-hdf5.js?v=20260921a"></script>
+  <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261005"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261006a"></script>
 </body>
 </html>

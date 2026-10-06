@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261005';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261006a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -95,7 +95,7 @@
       if (typeof s.text === 'string' && s.text.trim()) state.text = s.text;
       if (s.solver && typeof s.solver === 'object') Object.assign(state.solver, s.solver);
       if (Array.isArray(s.picked)) state.picked = s.picked.filter((x) => typeof x === 'string');
-      if (Number.isFinite(s.cell)) state.cell = s.cell;
+      if (Number.isFinite(s.cell) || s.cell === 'left' || s.cell === 'right') state.cell = s.cell;
       if (Number.isFinite(s.layer)) state.layer = s.layer;
       if (Number.isFinite(s.profileLayer)) state.profileLayer = s.profileLayer;
       if (Number.isFinite(s.gradLayer)) state.gradLayer = s.gradLayer;
@@ -293,6 +293,22 @@
     return `${(s / ladder[pick][0]).toPrecision(3)} ${ladder[pick][1]}`;
   };
 
+  /** A number for a person: as written when it is short, to four figures when it is not. */
+  const fmtNumber = (v) => {
+    if (!Number.isFinite(v)) return String(v);
+    if (String(v).length <= 8) return String(v);
+    return Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6 ? String(Number(v.toPrecision(4))) : v.toExponential(3);
+  };
+
+  /** A thickness, in mm or µm where that reads better than metres. */
+  const fmtLength = (x) => {
+    const a = Math.abs(x);
+    if (a >= 1) return `${Number(x.toPrecision(3))} m`;
+    if (a >= 1e-3) return `${Number((x * 1e3).toPrecision(3))} mm`;
+    if (a >= 1e-6) return `${Number((x * 1e6).toPrecision(3))} µm`;
+    return `${x.toExponential(2)} m`;
+  };
+
   /*
     Times may be written with a unit, because a model whose TEND is in years is
     painful to talk to in seconds. The units are the ones fmtTime prints back,
@@ -392,16 +408,27 @@
       bits.push(`${m.fracture} cells over ${m.length != null ? m.length : s.LENGTH} m, ${shape}`
         + (g.surface > 0 ? `, surface layer ${g.surface} m` : ''));
       if (m.matrix) {
-        bits.push(`dual porosity: ${m.matrix.n} matrix layer${m.matrix.n === 1 ? '' : 's'} to `
-          + `${m.matrix.total} m behind each cell, porosity ${m.matrix.porosity}, `
-          + `${m.matrix.aw} m² of wall per m³ of water`
-          + (m.matrix.enters.length ? ` · ${m.matrix.enters.join(', ')} enter${m.matrix.enters.length === 1 ? 's' : ''} the rock` : ' · nothing enters the rock'));
+        const x = m.matrix;
+        // How the layers came out: the first, how they grow, and why the
+        // first is what it is -- the thing a reader most needs to see of a
+        // layout worked out for them.
+        const why = { matched: 'worked out from the path', e: 'FARFCOMP’s rule', given: 'MATRIX_FIRST' }[x.rule] || '';
+        bits.push(`dual porosity: ${x.n} matrix layer${x.n === 1 ? '' : 's'} to `
+          + `${x.total} m behind each cell, ${x.grid}: the first ${fmtLength(x.thickness[0])} (${why})`
+          + (x.n > 1 ? `, growing by ${x.ratio.toFixed(3)}` : '')
+          + `; porosity ${x.porosity}, ${fmtNumber(x.aw)} m² of wall per m³ of water`
+          + (x.enters.length ? ` · ${x.enters.join(', ')} enter${x.enters.length === 1 ? 's' : ''} the rock` : ' · nothing enters the rock'));
       }
       const moves = [];
       if (s.DIFFUSION) moves.push('diffusion');
-      if (s.ADVECTION && s.VELOCITY) moves.push(`advection at ${s.VELOCITY} m/s`);
+      if (s.ADVECTION && s.VELOCITY) {
+        moves.push(`advection at ${fmtNumber(s.VELOCITY)} m/${timeUnit().symbol}`
+          + (m.travelTime ? `, a travel time of ${fmtTime(m.travelTime)}` : ''));
+      }
+      if (s.PECLET > 0 && s.ADVECTION) moves.push(`Peclet number ${s.PECLET}`);
       bits.push(moves.length ? moves.join(' + ') : 'nothing moves');
-      bits.push(`${s.LEFT} | ${s.RIGHT} boundaries`);
+      bits.push(`${s.LEFT} | ${s.RIGHT} boundaries`
+        + (m.extra ? `, ${m.extra.n} cell${m.extra.n === 1 ? '' : 's'} past the right-hand end` : ''));
     }
     if (m.nequilibria) {
       bits.push(`${m.nequilibria} equilibri${m.nequilibria === 1 ? 'um' : 'a'}`
@@ -418,6 +445,12 @@
     $('rtmGradTMinUnit').textContent = u.symbol;
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
     if (m.tables && m.tables.length) bits.push(`${m.tables.length} table${m.tables.length === 1 ? '' : 's'}: ${m.tables.join(', ')}`);
+    // A release history, or anything else a rate law reads at the clock, and
+    // the corners the run is started again at so that none is stepped over.
+    if (m.clockTables && m.clockTables.length) {
+      bits.push(`read at the clock: ${m.clockTables.map((c) => c.name).join(', ')}`
+        + (m.breaks ? `, the run started again at ${m.breaks} corner${m.breaks === 1 ? '' : 's'} up to TEND` : ''));
+    }
     // A species held in some cells only; one held everywhere is in its line.
     for (const h of m.held || []) {
       const c = h.cells;
@@ -559,8 +592,11 @@
     const methods = methodSteps(st);
     const matrix = !st.ndecomps ? 'no iteration matrix'
       : st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU';
+    // Started again at the corners of a table read at the clock: said, since
+    // it is what a run with a release history spends its first steps on.
+    const restarts = st.breaks ? `, started again at ${st.breaks.toLocaleString()} table corner${st.breaks === 1 ? '' : 's'}` : '';
     setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
-      + `(${(st.nfailed || 0).toLocaleString()} rejected)${methods ? `: ${methods}` : ''}, ${reply.n.toLocaleString()} points kept, `
+      + `(${(st.nfailed || 0).toLocaleString()} rejected)${methods ? `: ${methods}` : ''}${restarts}, ${reply.n.toLocaleString()} points kept, `
       + `${matrix}.${drift}`, drift ? 'warn' : 'ok');
   }
 
@@ -738,15 +774,27 @@
     }).join('');
   }
 
+  /** Whether the time chart's place is an end of the column rather than a cell. */
+  const isFace = (c) => c === 'left' || c === 'right';
+
   function renderCells() {
     const sel = $('rtmCell');
     const m = state.compiled;
     const cells = m ? m.fracture : 1;
-    if (state.cell >= cells) state.cell = 0;
-    sel.innerHTML = Array.from({ length: cells }, (_, i) => {
+    // A column's two ends come after its cells: what crosses them, which at
+    // an outlet is the release.
+    const ends = !!(m && m.transport && m.faces);
+    if (isFace(state.cell) ? !ends : !(state.cell < cells)) state.cell = 0;
+    const opts = Array.from({ length: cells }, (_, i) => {
       const x = m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : '';
       return `<option value="${i}"${i === state.cell ? ' selected' : ''}>${i}${x}</option>`;
-    }).join('');
+    });
+    if (ends) {
+      for (const side of ['left', 'right']) {
+        opts.push(`<option value="${side}"${state.cell === side ? ' selected' : ''}>flux through the ${side} end</option>`);
+      }
+    }
+    sel.innerHTML = opts.join('');
     sel.parentElement.hidden = cells === 1;
     renderLayerPickers();
   }
@@ -771,7 +819,8 @@
     $('rtmLayer').innerHTML = layerOptions(state.layer);
     $('rtmProfileLayer').innerHTML = layerOptions(state.profileLayer);
     $('rtmGradLayer').innerHTML = layerOptions(state.gradLayer);
-    $('rtmLayerWrap').hidden = nm === 0;
+    // An end of the column has no rock behind it.
+    $('rtmLayerWrap').hidden = nm === 0 || isFace(state.cell);
     $('rtmGradLayerWrap').hidden = nm === 0;
     $('rtmProfileAxisWrap').hidden = nm === 0;
     $('rtmProfileAxis').value = state.profileAxis;
@@ -833,12 +882,27 @@
     };
   }
 
-  /** The value of one species in one cell at every stored time. */
+  /**
+   * The value of one species in one cell at every stored time -- or, at an
+   * end of the column, what crosses it: the model's own sum over the states
+   * beside that end, worked out at each stored point.
+   */
   function series(name, cell, layer = state.layer) {
     const r = state.result;
     const ns = r.model.nspecies;
     const si = r.model.species.indexOf(name);
     if (si < 0) return null;
+    if (isFace(cell)) {
+      const f = r.model.faces && r.model.faces[cell] ? r.model.faces[cell][si] : null;
+      if (!f) return null;
+      const flux = new Float64Array(r.n);
+      for (let i = 0; i < r.n; i++) {
+        let v = f.constant;
+        for (const [idx, w] of f.terms) v += w * r.states[i * r.width + idx];
+        flux[i] = v;
+      }
+      return flux;
+    }
     const stride = r.model.stride || 1;
     const col = (cell * stride + Math.min(layer, stride - 1)) * ns + si;
     const out = new Float64Array(r.n);
@@ -883,7 +947,9 @@
     layout.xaxis.type = logT ? 'log' : 'linear';
     layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
     layout.yaxis.type = logY ? 'log' : 'linear';
-    layout.yaxis.title = { text: 'concentration', font: { size: 11 } };
+    // An end's flux is per m2 of the water's cross-section, positive to the right.
+    layout.yaxis.title = { text: isFace(state.cell)
+      ? `flux through the ${state.cell} end (concentration · m/${timeUnit().symbol})` : 'concentration', font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
@@ -1085,13 +1151,18 @@
     const r = state.result;
     if (!r) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
     const names = state.picked.length ? state.picked : r.model.species;
-    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${n} @ cell ${state.cell}`)];
+    const face = isFace(state.cell);
+    // At a cell the layer shown, at an end what crosses it.
+    const where = face ? `through the ${state.cell} end`
+      : `@ cell ${state.cell}${state.layer > 0 && r.model.matrix ? ` rock ${state.layer}` : ''}`;
+    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${n} ${where}`)];
     const lines = [head.join(',')];
     const cols = names.map((n) => series(n, state.cell));
     for (let i = 0; i < r.n; i++) {
       lines.push([r.t[i], ...cols.map((c) => (c ? c[i] : ''))].join(','));
     }
-    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }), `rtm_cell${state.cell}.csv`);
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }),
+      face ? `rtm_${state.cell}_end.csv` : `rtm_cell${state.cell}.csv`);
   }
 
   function downloadBlob(blob, name) {
@@ -1487,11 +1558,12 @@
           list: [
             '`batch` or `transport`, and how many species and reactions: `MODE`, `<SPECIES>` and `<REACTIONS>`.',
             'For a column, the cells: how many, over what length and how laid out, from `CELLS`, `LENGTH` and `GRID` with its `GRID_RATIO` or `GRID_POWER`, and a first cell pinned by `SURFACE_LAYER`.',
-            'With a rock matrix, `dual porosity`: `MATRIX_CELLS` layers behind each cell to `MATRIX_DEPTH`, the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `Dm=` and so enter the rock.',
-            'What moves: `diffusion`, `advection` at the `VELOCITY`, or `nothing moves`.',
-            'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean.',
+            'With a rock matrix, `dual porosity`: how many layers behind each cell, `matched` or `reference`, to `MATRIX_DEPTH`; the first layer, why it is that thick and how fast the rest grow; the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `De=` and so enter the rock.',
+            'What moves: `diffusion`, `advection` at the `VELOCITY` with the travel time it makes, the Peclet number, or `nothing moves`.',
+            'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean, and how many cells stand for the column past a `semi-infinite` end.',
             'Equilibria and the totals they conserve, and whether `EQUILIBRATE` put the starting state on them.',
             'Parameters and tables by name, and a species held in some cells only.',
+            'The tables a rate law reads at the clock, `read at the clock`, and how many corners of theirs the run is started again at.',
             '`a mass matrix is in force`: a species has an `R=`, or a rock matrix gives it a capacity.',
             'The equations, species times cells with the rock layers counted; the non-zeros of the Jacobian; and `TEND`, in the model’s time unit.',
           ],
@@ -1814,12 +1886,12 @@
         lead: 'The species ticked in the list, at one cell, at every stored point of the run.',
         sections: [
           { heading: 'The toolbar', list: [
-            '**Cell**: which cell of the column, with its centre in metres from the left-hand face. A batch is one cell and has no picker.',
+            '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**clear**: unticks every species.',
-            '**CSV**: the species ticked, or all of them when none is, at the cell and layer shown, a row per stored point.',
+            '**CSV**: the species ticked, or all of them when none is, at the cell and layer shown or through the end shown, a row per stored point.',
             '**View in HDF5 Browser**: the whole run as an HDF5 file, opened in the HDF5 Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
             '**HDF5**: the same file, as a download.',
           ] },
@@ -1974,7 +2046,7 @@
   };
   /** Names that mean something where they take a value: `NAME = ...`. */
   const HL_ASSIGN = {
-    SPECIES: new Set(['d', 'dm', 'left', 'right', 'mass', 'r', 'rm']),
+    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
   };
@@ -2322,8 +2394,11 @@
     'rtm:tab': (ev, el) => showTab(el.dataset.tab),
     'rtm:full': () => setFull(!document.documentElement.classList.contains('rtm-full')),
     'rtm:redraw': () => {
-      state.cell = Number($('rtmCell').value) || 0;
+      const cell = $('rtmCell').value;
+      state.cell = isFace(cell) ? cell : (Number(cell) || 0);
       state.layer = Number($('rtmLayer').value) || 0;
+      // An end has no layer to pick.
+      $('rtmLayerWrap').hidden = !(state.compiled && state.compiled.matrix) || isFace(state.cell);
       saveState();
       drawTime();
     },

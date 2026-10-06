@@ -106,20 +106,35 @@ function rtmSummary(model) {
     species: model.speciesNames,
     nspecies: model.speciesNames.length,
     states: model.nspecies,
-    cells: model.cells,                  // every cell, matrix layers included
+    cells: model.cells,                  // every cell, matrix layers and extra cells included
     fracture: model.fracture,            // the cells along the column
     stride: model.stride,                // cells per fracture cell: 1 + matrix layers
+    // The cells past a semi-infinite right-hand end, after the column's own.
+    extra: model.extra ? {
+      n: model.extra.n,
+      centres: Array.from(model.extra.centres),
+      width: Array.from(model.extra.width),
+    } : null,
     // The rock matrix, when there is one: how many layers, how thick, and
-    // how deep their centres sit, in metres from the fracture wall.
+    // how deep their centres sit, in metres from the fracture wall; how they
+    // were laid out and how the first was chosen.
     matrix: model.matrix ? {
       n: model.matrix.n,
       thickness: Array.from(model.matrix.d),
       depth: Array.from(model.matrix.centre),
       total: model.matrix.depth,
       porosity: model.matrix.porosity,
+      density: model.matrix.density,
       aw: model.matrix.aw,
+      grid: model.matrix.grid,
+      rule: model.matrix.rule,
+      ratio: model.matrix.q,
       enters: model.speciesNames.filter((_, s) => model.enters[s]),
     } : null,
+    // The water's travel time, when the flow gives one.
+    travelTime: model.surface && model.surface.tw < Infinity ? model.surface.tw : null,
+    // What crosses each end, per species, as a sum over the stored states.
+    faces: model.faces,
     centres: Array.from(model.grid.centres),
     width: Array.from(model.grid.width),
     length: model.grid.L,
@@ -132,6 +147,9 @@ function rtmSummary(model) {
     fixed: model.fixed,
     held: model.held || [],
     tables: model.tables || [],
+    // The tables the rate laws read at the clock, and where the run restarts.
+    clockTables: model.clockTables || [],
+    breaks: typeof model.breaks === 'function' ? model.breaks(0, model.settings.TEND).length : 0,
     nreactions: model.nreactions,
     nchannels: model.nchannels,
     nequilibria: model.nequilibria,

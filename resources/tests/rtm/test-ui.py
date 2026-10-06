@@ -164,6 +164,10 @@ async def main():
     async with websockets.connect(ver['webSocketDebuggerUrl'], max_size=200 * 1024 * 1024) as bws:
         page = Page(bws)
         asyncio.create_task(page.pump())
+        # The HDF5 button below really downloads, and a headless Chrome saves
+        # into ~/Downloads: sixty megabytes a run, left behind. The check reads
+        # what the page says it wrote, so the file itself is refused.
+        await page.call('Browser.setDownloadBehavior', {'behavior': 'deny'})
         tid = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
         page.sid = (await page.call('Target.attachToTarget',
                                     {'targetId': tid, 'flatten': True}))['result']['sessionId']
@@ -194,8 +198,9 @@ async def main():
                 "document.getElementById('rtmFacts').textContent.startsWith('transport')"), True)
             check('the species picker is filled', await page.ev(
                 "document.querySelectorAll('#rtmSeries .rtm-item').length"), 36)
-            check('and there is a cell to choose', await page.ev(
-                "document.getElementById('rtmCell').options.length"), 20)
+            check('and there is a cell to choose, or an end of the column', await page.ev(
+                "[...document.getElementById('rtmCell').options].map((o) => o.value).slice(18).join(',')"),
+                '18,19,left,right')
 
             # --- the (i) beside each setting, section and tab toolbar ----------
             # kvot-info.js fills the slots of rtm.html from the topics in
@@ -406,7 +411,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '11:5')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '13:5')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -503,6 +508,74 @@ async def main():
             check('the gradient draws a rock layer along the fracture', await page.ev(
                 "(() => { const d = document.getElementById('rtmChartGradient').data[0];"
                 " return d.z.length + ':' + document.getElementById('rtmGradNote').textContent.includes('rock layer 2'); })()"), '5:true')
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+
+            # --- a far-field path as Kompartment starts one ------------------
+            # Its layers worked out, the rock going on past the release point,
+            # and the release read through the right-hand end.
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'farfield'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmFacts').textContent"
+                               ".includes('12 matrix layers to 12.5 m')", True, tries=40)
+            facts = await page.ev("document.getElementById('rtmFacts').textContent")
+            check('a far-field path has twelve matched layers, the first worked out from the path',
+                  isinstance(facts, str) and 'matched: the first 11.5 mm (worked out from the path)' in facts, True)
+            check('  and the panel says how many cells stand past the right-hand end',
+                  isinstance(facts, str) and 'robin | semi-infinite boundaries, 5 cells past the right-hand end' in facts, True)
+            check('  and the travel time the flow makes',
+                  isinstance(facts, str) and 'a travel time of 100 a' in facts, True)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('the far-field path runs', isinstance(run, str) and run.startswith('Done'), True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => {
+              const el = document.querySelector('#rtmSeries input[value="Tracer"]');
+              el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true }));
+              const s = document.getElementById('rtmCell');
+              s.value = 'right'; s.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            await asyncio.sleep(1.2)
+            check('choosing the right-hand end draws what crosses it', await page.ev(
+                "document.getElementById('rtmChartTime').layout.yaxis.title.text.startsWith('flux through the right end')"), True)
+            out = await page.ev("(() => { const t = document.getElementById('rtmChartTime').data.find((d) => d.name === 'Tracer');"
+                                " return t ? t.y[t.y.length - 1] : null; })()")
+            check(f'  and the tracer released at one a year all comes out in the end ({out})',
+                  isinstance(out, (int, float)) and abs(out - 1) < 1e-3, True)
+            check('  with no layer to pick at an end', await page.ev(
+                "document.getElementById('rtmLayerWrap').hidden"), True)
+            await page.ev("""(() => { const s = document.getElementById('rtmCell');
+              s.value = '19'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await asyncio.sleep(1.0)
+            check('back at a cell, the layers come back', await page.ev(
+                "!document.getElementById('rtmLayerWrap').hidden && document.getElementById('rtmChartTime')"
+                ".layout.yaxis.title.text === 'concentration'"), True)
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+
+            # --- a release history, read at the clock -------------------------
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'releasehistory'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('read at the clock')", True, tries=40)
+            check('a release history: the panel says what is read at the clock and how many corners it has', await page.ev(
+                "document.getElementById('rtmFacts').textContent.includes("
+                "'read at the clock: release, the run started again at 5 corners up to TEND')"), True)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('  it runs, and the status line says it was started again at them',
+                  isinstance(run, str) and run.startswith('Done') and 'started again at 5 table corners' in run, True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => {
+              for (const el of document.querySelectorAll('#rtmSeries input')) {
+                const want = el.value === 'I129';
+                if (el.checked !== want) { el.checked = want; el.dispatchEvent(new Event('change', { bubbles: true })); }
+              }
+              const s = document.getElementById('rtmCell');
+              s.value = 'right'; s.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            await asyncio.sleep(1.2)
+            top = await page.ev("(() => { const t = document.getElementById('rtmChartTime').data.find((d) => d.name === 'I129');"
+                                " return t ? Math.max(...t.y) : null; })()")
+            check(f'  and I-129 comes out through the right end at half the release at most ({top})',
+                  isinstance(top, (int, float)) and 0.4 < top < 0.6, True)
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
 
             # Back to the built-in model, which the checks below are about.

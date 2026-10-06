@@ -9,6 +9,7 @@
      node resources/tests/rtm/write-h5.js out.h5                 # the built-in model
      node resources/tests/rtm/write-h5.js out.h5 --example batch-first
      node resources/tests/rtm/write-h5.js out.h5 --text model.rtm --tend 100
+     node resources/tests/rtm/write-h5.js out.h5 --example farfield --cell right
 
    Prints one line of JSON about the run, for the caller to check against.
    ========================================================================== */
@@ -36,7 +37,8 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--example') opt.example = args[++i];
   else if (a === '--text') opt.textFile = args[++i];
   else if (a === '--tend') opt.tend = Number(args[++i]);
-  else if (a === '--cell') opt.cell = Number(args[++i]);
+  // A cell by number, or an end of the column: left or right.
+  else if (a === '--cell') { const c = args[++i]; opt.cell = c === 'left' || c === 'right' ? c : Number(c); }
   else if (a === '--layer') opt.layer = Number(args[++i]);
   else { console.error(`unknown argument ${a}`); process.exit(2); }
 }
@@ -75,6 +77,7 @@ console.log(JSON.stringify({
   cells: reply.model.cells,
   fracture: reply.model.fracture,
   stride: reply.model.stride,
+  extra: reply.model.extra ? reply.model.extra.n : 0,
   transport: reply.model.transport,
   tend: reply.t[reply.n - 1],
   timeUnit: reply.model.timeUnit,

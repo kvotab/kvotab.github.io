@@ -86,15 +86,19 @@
     VELOCITY: { def: 0, kind: 'number' },
     POROSITY: { def: 1, kind: 'number' },
     /*
-      The four kinds a face can be, under the names the transport literature
-      gives them. `cauchy` and `robin` are the same third-type condition and
+      The kinds a face can be, under the names the transport literature gives
+      them. `cauchy` and `robin` are the same third-type condition and
       `outflow` is `free` by another name; the aliases are folded in below so
-      that only two words reach the assembly.
+      that only the plain words reach the assembly. `semi-infinite` is an
+      outlet only: the column goes on past its right-hand end, as FARF31's
+      stream tube does, and EXTRA_CELLS of it stand for the rock beyond.
     */
     LEFT: { def: 'dirichlet', kind: 'word',
-      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow'] },
+      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite'] },
     RIGHT: { def: 'neumann', kind: 'word',
-      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow'] },
+      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite'] },
+    // How many cells past a semi-infinite right-hand end; worked out unless given.
+    EXTRA_CELLS: { def: 0, kind: 'int' },
     TEND: { def: 1, kind: 'number' },
     /*
       The unit every time in the model is written in. It converts NOTHING: the
@@ -112,26 +116,41 @@
     /*
       DUAL POROSITY: a rock matrix beside the column.
 
-      With MATRIX_CELLS above zero every cell of the column -- the fracture,
-      the flowing water -- has a chain of that many stagnant cells behind it,
-      reaching MATRIX_DEPTH into the rock, into which species diffuse and in
-      which they react and sorb. The layers grow geometrically with depth from
-      MATRIX_FIRST (worked out when left at zero), because the gradient is
-      steepest at the wall. WETTED_SURFACE is the rock surface in contact with
-      a unit volume of flowing water, m2/m3; APERTURE (2b) is the other way of
-      saying it, aw = 2/(2b) = 1/b. In the SKB parameterisation aw = F/t_w.
-      PECLET, when set, gives every mobile species the same longitudinal
-      dispersion v*L/Pe along the fracture, less the v*dz/2 the upwind scheme
-      already puts in.
+      Every cell of the column -- the fracture, the flowing water -- has a
+      chain of MATRIX_CELLS stagnant cells behind it, reaching MATRIX_DEPTH
+      into the rock, into which species diffuse and in which they react and
+      sorb. Twelve of them, as Kompartment's far-field path has, once the text
+      says anything about the rock; MATRIX_CELLS = 0 is none. The layers grow
+      geometrically with depth from MATRIX_FIRST (worked out when left at
+      zero), because the gradient is steepest at the wall, and MATRIX_GRID
+      says how: `matched`, Kompartment's layers, or `reference`, FARFCOMP's.
+      WETTED_SURFACE is the rock surface in contact with a unit volume of
+      flowing water, m2/m3; APERTURE (2b) and TRANSPORT_RESISTANCE (F) are the
+      other ways of saying it, aw = 2/(2b) and aw = F/t_w. MATRIX_DENSITY
+      turns a species' Kd into its capacity in the rock. PECLET, when set,
+      gives every mobile species the same longitudinal dispersion v*L/Pe along
+      the fracture, less the v*dz/2 the upwind scheme already puts in.
+      TRAVEL_TIME gives the flow as the time the water takes to cross the
+      column, which is how a far-field path is described.
     */
     MATRIX_CELLS: { def: 0, kind: 'number' },
     MATRIX_DEPTH: { def: 0, kind: 'number' },
     MATRIX_FIRST: { def: 0, kind: 'number' },
+    MATRIX_GRID: { def: 'matched', kind: 'word', of: ['matched', 'reference'] },
     MATRIX_POROSITY: { def: 0, kind: 'number' },
+    MATRIX_DENSITY: { def: 2700, kind: 'number' },
     WETTED_SURFACE: { def: 0, kind: 'number' },
     APERTURE: { def: 0, kind: 'number' },
+    TRANSPORT_RESISTANCE: { def: 0, kind: 'number' },
+    TRAVEL_TIME: { def: 0, kind: 'number' },
     PECLET: { def: 0, kind: 'number' },
   };
+
+  /** How many matrix layers a rock matrix has when the text does not say: Kompartment's far-field default. */
+  const DEFAULT_MATRIX_CELLS = 12;
+
+  /** The settings that describe a rock matrix: any of them, and there is one. */
+  const MATRIX_KEYS = ['MATRIX_DEPTH', 'MATRIX_FIRST', 'MATRIX_GRID', 'MATRIX_POROSITY', 'MATRIX_DENSITY'];
 
   /**
    * Split the text into its sections, dropping comments and blank lines but
@@ -175,17 +194,17 @@
         if (name === 'TABLE') {
           if (!args.length || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(args[0])) {
             throw new RtmError('<TABLE name> needs a name, for example <TABLE dose_alpha>, '
-              + 'and "log" after it to interpolate the logarithm of the values.', i + 1);
+              + 'and "log" or "loglog" after it to interpolate the logarithm of the values.', i + 1);
           }
           const how = (args[1] || 'linear').toLowerCase();
-          if (!['linear', 'log'].includes(how) || args.length > 2) {
-            throw new RtmError(`<TABLE ${args.join(' ')}>: after the name comes "log" or "linear", `
-              + 'or nothing.', i + 1);
+          if (!TABLE_MODES.includes(how) || args.length > 2) {
+            throw new RtmError(`<TABLE ${args.join(' ')}>: after the name comes "linear", "log" or `
+              + '"loglog", or nothing.', i + 1);
           }
           if (out.TABLES.some((t) => t.name === args[0])) {
             throw new RtmError(`There are two tables called ${args[0]}.`, i + 1);
           }
-          table = { name: args[0], log: how === 'log', rows: [], line: i + 1 };
+          table = { name: args[0], mode: how, rows: [], line: i + 1 };
           out.TABLES.push(table);
           current = 'TABLE';
           return;
@@ -307,7 +326,7 @@
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
-        mass: null, Dm: 0, Rm: null, line };
+        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -326,11 +345,17 @@
           if (key === 'rm') { entry.Rm = kv[2].trim(); continue; }
           const value = constValue(kv[2], line, kv[1]);
           if (key === 'd') entry.D = value;
-          else if (key === 'dm') entry.Dm = value;
+          // De is what the SKB reports call the matrix diffusivity, and
+          // Kompartment's far-field path: the same property as Dm.
+          else if (key === 'dm' || key === 'de') entry.Dm = value;
+          // The two sorption coefficients a far-field path is given, which
+          // become R and Rm once the wetted surface and the rock are known.
+          else if (key === 'kd') entry.Kd = value;
+          else if (key === 'kdf') entry.Kdf = value;
           else if (key === 'left') entry.left = value;
           else if (key === 'right') entry.right = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
-            + 'mass or R, and with a rock matrix Dm or Rm.', line);
+            + 'mass or R, and with a rock matrix Dm (or De), Rm, Kd or Kdf.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -340,6 +365,21 @@
           continue;
         }
         throw new RtmError(`"${part}" is not understood on a species line.`, line);
+      }
+      // Each pair says one thing two ways, and two answers to it cannot both stand.
+      if (entry.Kd !== null && entry.Rm !== null) {
+        throw new RtmError(`${name} has both Kd and Rm: Rm is the capacity Kd gives, `
+          + 'MATRIX_POROSITY + MATRIX_DENSITY*Kd. Give one of them.', line);
+      }
+      if (entry.Kdf !== null && entry.mass !== null) {
+        throw new RtmError(`${name} has both Kdf and R: R is the retardation Kdf gives, `
+          + '1 + Kdf*aw with aw the wetted surface. Give one of them.', line);
+      }
+      for (const [key, v] of [['Kd', entry.Kd], ['Kdf', entry.Kdf], ['Dm', entry.Dm]]) {
+        if (v !== null && v < 0) {
+          throw new RtmError(`${key} = ${v} for ${name}: a sorption coefficient or a diffusivity `
+            + 'is zero or more.', line);
+        }
       }
       seen.set(name, list.length);
       list.push(entry);
@@ -420,47 +460,142 @@
     return out;
   }
 
+  /** How a table may be interpolated: see readTables. */
+  const TABLE_MODES = ['linear', 'log', 'loglog'];
+
   /**
-   * <TABLE name> sections: two columns, x and a value, x increasing. A table
-   * is used in <PARAMETERS> or <INITIAL> as name(x), or interp(name, x) as
-   * FACSIMILE writes it, and is interpolated linearly between its rows and
-   * held at its end values beyond them. "log" after the name interpolates the
-   * logarithm instead, which follows a profile that dies away exponentially
-   * -- a dose rate -- far better between sparse rows; its values must be
-   * above zero.
+   * <TABLE name> sections: x and a value per row, x increasing -- or x and
+   * several values, a column each. A table is used in <PARAMETERS> or
+   * <INITIAL> as name(x), or interp(name, x) as FACSIMILE writes it, and in a
+   * rate law as name(t), read at the clock; a table of several columns says
+   * which, name(x, U238) or name(x, 2). It is interpolated linearly between
+   * its rows and held at its end values beyond them.
+   *
+   *   linear   the values, linearly in x: the default.
+   *   log      the logarithm of the values, linearly in x, which follows a
+   *            profile that dies away exponentially -- a dose rate -- far
+   *            better between sparse rows.
+   *   loglog   the logarithm of the values in the logarithm of x: a power law
+   *            between rows, which is how FARF31 reads a release history and
+   *            what follows one over decades of time from a few rows.
+   *
+   * The logarithm needs the values above zero, and loglog its x as well; below
+   * its first x it holds the first value, as every table does, so a time of
+   * zero is read as the first row. A first row whose first word starts with a
+   * letter names the columns -- "t  U238  U234" -- the first of them x's.
    */
   function readTables(tables) {
     const out = new Map();
     for (const t of tables) {
       const xs = [];
-      const ys = [];
-      for (const { text, line } of t.rows) {
+      let cols = null;
+      let names = null;
+      const logY = t.mode !== 'linear';
+      const logX = t.mode === 'loglog';
+      t.rows.forEach(({ text, line }, r) => {
         const parts = text.split(/[\s,;]+/).filter(Boolean);
-        if (parts.length !== 2) {
-          throw new RtmError(`"${text}" in <TABLE ${t.name}> is not two numbers, x and a value.`, line);
+        if (r === 0 && /^[A-Za-z_]/.test(parts[0])) {
+          if (parts.length < 2) {
+            throw new RtmError(`"${text}" in <TABLE ${t.name}> names the columns, and there have to be two `
+              + 'at least: x and a value.', line);
+          }
+          const bad = parts.slice(1).find((p) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(p));
+          if (bad) {
+            throw new RtmError(`"${bad}" in the first row of <TABLE ${t.name}> names a column, and a name is `
+              + 'letters, digits and _ , starting with a letter: it is read in an expression.', line);
+          }
+          names = parts.slice(1);
+          return;
         }
+        const width = names ? names.length + 1 : (cols ? cols.length + 1 : parts.length);
+        if (parts.length < 2 || parts.length !== width) {
+          throw new RtmError(`"${text}" in <TABLE ${t.name}> is not ${width < 2 ? 'two numbers, x and a value'
+            : `${width} numbers, x and ${width - 1} value${width === 2 ? '' : 's'}`}.`, line);
+        }
+        if (!cols) cols = Array.from({ length: width - 1 }, () => []);
         const x = constValue(parts[0], line, 'x');
-        const y = constValue(parts[1], line, `${t.name}(${parts[0]})`);
         if (xs.length && !(x > xs[xs.length - 1])) {
           throw new RtmError(`In <TABLE ${t.name}> x must increase from row to row; ${x} does not.`, line);
         }
-        if (t.log && !(y > 0)) {
-          throw new RtmError(`<TABLE ${t.name} log> interpolates the logarithm, so every value must be `
-            + `above zero; ${y} is not.`, line);
+        if (logX && !(x > 0)) {
+          throw new RtmError(`<TABLE ${t.name} loglog> interpolates in the logarithm of x, so every x must `
+            + `be above zero; ${x} is not. Below the first x the first value is held, so a time of `
+            + 'zero is read as the first row anyway.', line);
         }
-        xs.push(x);
-        ys.push(t.log ? Math.log(y) : y);
-      }
+        xs.push(logX ? Math.log(x) : x);
+        for (let c = 1; c < width; c++) {
+          const y = constValue(parts[c], line, `${t.name}(${parts[0]})`);
+          if (logY && !(y > 0)) {
+            throw new RtmError(`<TABLE ${t.name} ${t.mode}> interpolates the logarithm, so every value must `
+              + `be above zero; ${y} is not.`, line);
+          }
+          cols[c - 1].push(logY ? Math.log(y) : y);
+        }
+      });
       if (!xs.length) throw new RtmError(`<TABLE ${t.name}> has no rows.`, t.line);
-      out.set(t.name, { name: t.name, log: t.log, x: Float64Array.from(xs), y: Float64Array.from(ys) });
+      const x = Float64Array.from(xs);
+      // One view per column, in the shape the shared interpolation reads.
+      const views = cols.map((c) => ({ x, y: Float64Array.from(c) }));
+      out.set(t.name, {
+        name: t.name, mode: t.mode, log: logY, x, y: views[0].y, views, names, line: t.line,
+        // The x of every row, as written: where the table turns.
+        corners: logX ? Array.from(x, Math.exp) : Array.from(x),
+      });
     }
     return out;
   }
 
-  /** A table at one point: linear between rows, flat beyond them. */
-  function tableAt(tab, x) {
-    const v = FacsimileModel.interpTable(tab, x);
+  /** A table at one point, in one of its columns: linear between rows, flat beyond them. */
+  function tableAt(tab, x, col = 0) {
+    const at = tab.mode === 'loglog' ? (x > 0 ? Math.log(x) : -Infinity) : x;
+    const v = FacsimileModel.interpTable(tab.views[col], at);
     return tab.log ? Math.exp(v) : v;
+  }
+
+  /**
+   * Which column of `tab` a call reads: the only one, or the one its last
+   * argument names -- a column's name from the header, or its number from 1.
+   */
+  function tableColumn(tab, node, extra, line) {
+    const ncol = tab.views.length;
+    if (!extra) {
+      if (ncol > 1) {
+        throw new RtmError(`The table ${tab.name} has ${ncol} columns of values: say which, `
+          + `${tab.name}(x, ${tab.names ? tab.names[0] : 1})${tab.names ? ` or ${tab.name}(x, 1)` : ''}.`, line);
+      }
+      return 0;
+    }
+    if (extra.type === 'num' && Number.isInteger(extra.v) && extra.v >= 1 && extra.v <= ncol) return extra.v - 1;
+    if (extra.type === 'id' && tab.names && tab.names.includes(extra.name)) return tab.names.indexOf(extra.name);
+    throw new RtmError(`The table ${tab.name} has no column ${extra.type === 'id' ? `"${extra.name}"`
+      : (extra.type === 'num' ? extra.v : 'like that')}: its columns are `
+      + `${tab.names ? tab.names.join(', ') : `1 to ${ncol}`}${tab.names ? `, or 1 to ${ncol}` : ''}.`, line);
+  }
+
+  /**
+   * A table call, taken apart: name(x), name(x, column), interp(name, x) or
+   * interp(name, x, column). Null for anything else.
+   */
+  function tableCall(node, tables, line) {
+    if (node.type !== 'call') return null;
+    if (tables.has(node.name)) {
+      if (node.args.length < 1 || node.args.length > 2) {
+        throw new RtmError(`The table ${node.name} takes x, and a column when it has several: `
+          + `${node.name}(x) or ${node.name}(x, column).`, line);
+      }
+      const tab = tables.get(node.name);
+      return { tab, arg: node.args[0], col: tableColumn(tab, node, node.args[1], line) };
+    }
+    if (node.name.toLowerCase() === 'interp') {
+      const first = node.args[0];
+      if (!first || first.type !== 'id' || !tables.has(first.name) || node.args.length < 2 || node.args.length > 3) {
+        throw new RtmError('interp(name, x) needs the name of a <TABLE> and one more argument, and a '
+          + 'column after that when the table has several.', line);
+      }
+      const tab = tables.get(first.name);
+      return { tab, arg: node.args[1], col: tableColumn(tab, node, node.args[2], line) };
+    }
+    return null;
   }
 
   /**
@@ -474,23 +609,10 @@
     const walk = (node) => {
       if (!node || typeof node !== 'object') return node;
       if (node.type === 'call') {
-        let tab = null;
-        let arg = null;
-        if (tables.has(node.name)) {
-          if (node.args.length !== 1) throw new RtmError(`The table ${node.name} takes one argument: ${node.name}(x).`, line);
-          tab = tables.get(node.name);
-          [arg] = node.args;
-        } else if (node.name.toLowerCase() === 'interp') {
-          const first = node.args[0];
-          if (!first || first.type !== 'id' || !tables.has(first.name) || node.args.length !== 2) {
-            throw new RtmError('interp(name, x) needs the name of a <TABLE> and one more argument.', line);
-          }
-          tab = tables.get(first.name);
-          arg = node.args[1];
-        }
-        if (tab) {
+        const call = tableCall(node, tables, line);
+        if (call) {
           const id = `__table${calls.length}__`;
-          calls.push({ id, tab, arg: walk(arg) });
+          calls.push({ id, tab: call.tab, col: call.col, arg: walk(call.arg) });
           return { type: 'id', name: id };
         }
         return { ...node, args: node.args.map(walk) };
@@ -506,12 +628,40 @@
       lookup(base) {
         const self = (id) => {
           const call = calls.find((c) => c.id === id);
-          if (call) return tableAt(call.tab, FacsimileModel.evalAst(call.arg, self, {}, line));
+          if (call) return tableAt(call.tab, FacsimileModel.evalAst(call.arg, self, {}, line), call.col);
           return base(id);
         };
         return self;
       },
     };
+  }
+
+  /**
+   * The argument of a table read at the clock as a line in t, a*t + b, or
+   * null when it is not one -- for where the table turns in time. The tree
+   * has been folded, so a constant is a number by now.
+   */
+  function lineInTime(node) {
+    switch (node.type) {
+      case 'num': return { a: 0, b: node.v };
+      case 'id': return node.name === 't' ? { a: 1, b: 0 } : null;
+      case 'neg': {
+        const r = lineInTime(node.a);
+        return r && { a: -r.a, b: -r.b };
+      }
+      case 'bin': {
+        const l = lineInTime(node.l);
+        const r = l && lineInTime(node.r);
+        if (!l || !r) return null;
+        if (node.op === '+') return { a: l.a + r.a, b: l.b + r.b };
+        if (node.op === '-') return { a: l.a - r.a, b: l.b - r.b };
+        if (node.op === '*' && l.a === 0) return { a: l.b * r.a, b: l.b * r.b };
+        if (node.op === '*' && r.a === 0) return { a: l.a * r.b, b: l.b * r.b };
+        if (node.op === '/' && r.a === 0 && r.b !== 0) return { a: l.a / r.b, b: l.b / r.b };
+        return null;
+      }
+      default: return null;
+    }
   }
 
   /* ======================================================================
@@ -582,20 +732,8 @@
   function layerDepths(depth, nm, aw, first) {
     if (nm === 1) return Float64Array.of(depth);
     let d0 = first > 0 ? first : null;
-    if (d0 === null) {
-      const geo = (x) => {
-        let sum = 0;
-        for (let k = 1; k <= nm; k++) sum += x * Math.exp(k);
-        return sum - depth;
-      };
-      d0 = zeroin(geo, 1e-12 / Math.E, 2 / aw / Math.E) * Math.E;
-    }
-    if (d0 * nm > depth * (1 + 1e-12)) {
-      throw new RtmError(`${nm} matrix layers starting at ${d0} m cannot add up to MATRIX_DEPTH `
-        + `${depth} m: the layers grow with depth, so the first must be smaller than `
-        + `${depth / nm} m. Use a thinner MATRIX_FIRST, fewer layers, a greater depth, or leave `
-        + 'MATRIX_FIRST at zero to have it worked out.');
-    }
+    if (d0 === null) d0 = eRatioFirst(depth, nm, aw);
+    if (d0 * nm > depth * (1 + 1e-12)) throw tooThick(nm, d0, depth);
     const total = (q) => {
       let sum = 0;
       for (let j = 0; j < nm; j++) sum += d0 * q ** j;
@@ -610,17 +748,233 @@
   }
 
   /**
-   * The rock matrix, or null: how many layers, how thick, how deep their
-   * centres sit, and the two numbers that turn a layer into a rate -- the
-   * wetted surface per unit water volume and the matrix porosity.
+   * FARFCOMP's first layer: the one that makes nm layers growing by e reach
+   * the depth, bracketed between a micrometre and the fracture's own aperture
+   * 2/aw. The sum is linear in it, so there is one answer.
    */
-  function makeMatrix(settings, line) {
-    const nm = settings.MATRIX_CELLS;
-    if (!(nm > 0)) return null;
-    if (!Number.isInteger(nm)) throw new RtmError(`MATRIX_CELLS must be a whole number, not ${nm}.`);
+  function eRatioFirst(depth, nm, aw) {
+    const geo = (x) => {
+      let sum = 0;
+      for (let k = 1; k <= nm; k++) sum += x * Math.exp(k);
+      return sum - depth;
+    };
+    return zeroin(geo, 1e-12 / Math.E, 2 / aw / Math.E) * Math.E;
+  }
+
+  /** The refusal for a first layer the depth cannot hold. */
+  function tooThick(nm, d0, depth) {
+    return new RtmError(`${nm} matrix layers starting at ${d0} m cannot add up to MATRIX_DEPTH `
+      + `${depth} m: the layers grow with depth, so the first must be smaller than `
+      + `${depth / nm} m. Use a thinner MATRIX_FIRST, fewer layers, a greater depth, or leave `
+      + 'MATRIX_FIRST at zero to have it worked out.');
+  }
+
+  /*
+    THE MATCHED LAYERS: Kompartment's far-field layers, kept step for step
+    with kompartment/src/domain/farfield.js so that a path here and a path
+    there are laid out to the same doubles.
+
+    What the rock does to the fracture is a boundary flux: it takes up
+    Y(s)*c per unit wall area at frequency s, with
+
+        Y(s) = sqrt(De Rm s) * tanh(x0 * sqrt(Rm s / De)),
+
+    and that admittance is all the fracture ever sees of it. The layers are a
+    ladder of capacities Rm*d_j joined by conductances De/h_j, and how well its
+    admittance agrees with Y over the frequencies a release is made of is the
+    whole accuracy of the matrix. Nodes at the layers' centres -- FARFCOMP's,
+    h_j = (d_j-1 + d_j)/2 -- understate Y by a constant fraction on a
+    geometric grid: 0.4 % at a ratio of 1.3, 5.8 % at e, which is the ratio
+    FARFCOMP's automatic first layer gives. Nodes spaced by the geometric mean
+    of the two layers they join, h_j = sqrt(d_j-1 d_j), with the first at
+    d_0/(1 + sqrt q) from the wall, remove that bias outright (Ingerman,
+    Druskin and Knizhnerman's optimal grids, CPAM 53, 2000).
+
+    That leaves where the ladder starts: thin enough to resolve the fastest
+    frequency that still matters, which is the frequency at which the path's
+    transfer function has fallen to e^-ATTENUATION, and a tenth of the depth
+    diffusion reaches at it.
+  */
+  const ATTENUATION = 25;
+  const RESOLVE = 10;
+
+  /**
+   * The depth diffusion reaches into the rock at the fastest frequency the
+   * path lets through, for one species, in m: Kompartment's penetrationScale.
+   * With u = sqrt(s + lam) the fracture sees g = rf*u^2 + aw*sqrt(De Rm)*u,
+   * and the path's transfer function exp((Pe/2)(1 - sqrt(1 + 4 tw g/Pe))) is
+   * down to e^-A where tw*g = A(1 + A/Pe). A species that decays faster than
+   * that is resolved at its decay constant instead. Infinity for one that does
+   * not enter the rock, or a path with no time scale at all.
+   */
+  function penetrationScale({ de, rm, lam = 0, rf = 1 }, { aw, tw, pe }) {
+    if (!(de > 0) || !(rm > 0) || !(aw > 0) || !Number.isFinite(aw)) return Infinity;
+    if (!(tw > 0) || !(pe > 0)) return Infinity;
+    const G = (ATTENUATION * (1 + ATTENUATION / pe)) / tw;
+    const A = aw * Math.sqrt(de * rm);
+    // The positive root of rf*u^2 + A*u - G = 0, in the form that does not
+    // cancel when A dominates.
+    const u = (2 * G) / (A + Math.sqrt(A * A + 4 * rf * G));
+    const u2 = Math.max(u * u, Number.isFinite(lam) && lam > 0 ? lam : 0);
+    if (!(u2 > 0) || !Number.isFinite(u2)) return Infinity;
+    return Math.sqrt(de / rm / u2);
+  }
+
+  /**
+   * The matched layers: a geometric series from the first thickness d0 to
+   * exactly the depth, and the node spacings that make its exchange with the
+   * fracture match diffusion into the rock. The ratio comes from the same
+   * root-finder as the reference layers, over a sum built by repeated
+   * multiplication rather than by powers.
+   */
+  function matchedGrid(depth, nm, d0) {
+    if (d0 * nm > depth * (1 + 1e-12)) throw tooThick(nm, d0, depth);
+    const d = new Float64Array(nm);
+    const h = new Float64Array(nm);
+    let q = 1;
+    if (nm === 1 || d0 * nm >= depth * (1 - 1e-12)) {
+      // An even split: the series has nothing left to grow into.
+      d.fill(depth / nm);
+    } else {
+      const total = (r) => {
+        let s = 0;
+        let t = d0;
+        for (let j = 0; j < nm; j++) { s += t; t *= r; }
+        return s - depth;
+      };
+      let hi = 2;
+      while (total(hi) < 0 && hi < 1e300) hi *= 2;
+      q = zeroin(total, 1, hi);
+      d[0] = d0;
+      for (let j = 1; j < nm; j++) d[j] = d[j - 1] * q;
+    }
+    h[0] = d[0] / (1 + Math.sqrt(q));
+    for (let j = 1; j < nm; j++) h[j] = Math.sqrt(d[j - 1] * d[j]);
+    return { d, h, q };
+  }
+
+  /**
+   * The flow-wetted surface per unit volume of flowing water, aw in m2/m3,
+   * from whichever way the text gives it -- WETTED_SURFACE itself, 2/APERTURE
+   * for a fracture of two walls, or TRANSPORT_RESISTANCE/t_w -- or 0 when it
+   * gives none. Two of them given must agree. `tw` is the water's travel time
+   * along the column, which F is divided by: TRAVEL_TIME when given, else the
+   * length over the pore-water speed.
+   */
+  function wettedSurface(settings, grid) {
+    const u = settings.ADVECTION ? Math.abs(settings.VELOCITY) / (settings.POROSITY > 0 ? settings.POROSITY : 1) : 0;
+    const tw = settings.TRAVEL_TIME > 0 ? settings.TRAVEL_TIME : (u > 0 ? grid.L / u : Infinity);
+    const said = [];
+    if (settings.WETTED_SURFACE > 0) said.push(['WETTED_SURFACE', settings.WETTED_SURFACE]);
+    if (settings.APERTURE > 0) said.push(['APERTURE', 2 / settings.APERTURE]);
+    if (settings.TRANSPORT_RESISTANCE > 0) {
+      if (!(tw < Infinity)) {
+        throw new RtmError('TRANSPORT_RESISTANCE is F, the wetted surface times the travel time, and '
+          + 'needs a travel time to be divided by: give TRAVEL_TIME, or ADVECTION and a VELOCITY.');
+      }
+      said.push(['TRANSPORT_RESISTANCE', settings.TRANSPORT_RESISTANCE / tw]);
+    }
+    for (const key of ['WETTED_SURFACE', 'APERTURE', 'TRANSPORT_RESISTANCE']) {
+      if (settings[key] < 0) throw new RtmError(`${key} = ${settings[key]} must be above zero.`);
+    }
+    const aw = said.length ? said[0][1] : 0;
+    for (const [key, v] of said.slice(1)) {
+      if (Math.abs(v - aw) > 1e-9 * aw) {
+        throw new RtmError(`${said[0][0]} and ${key} disagree: the wetted surface is aw = 2/aperture `
+          + `= F/t_w, and they give ${aw} and ${v} m2/m3. Give one of them.`);
+      }
+    }
+    return { aw, tw };
+  }
+
+  /**
+   * TRAVEL_TIME gives the flow as the time the water takes to cross the
+   * column, t_w, which is how a far-field path is described: the pore-water
+   * speed is LENGTH/t_w, and VELOCITY, a Darcy flux, is that times the
+   * POROSITY. It turns ADVECTION on. A VELOCITY given as well has to say the
+   * same thing.
+   */
+  function flowFromTravelTime(settings, grid) {
+    const given = settings.given || new Set();
+    if (!given.has('TRAVEL_TIME')) return;
+    const tw = settings.TRAVEL_TIME;
+    if (!(tw > 0)) throw new RtmError(`TRAVEL_TIME = ${tw} must be above zero.`);
     if (settings.MODE !== 'transport') {
-      throw new RtmError('MATRIX_CELLS needs MODE = transport: a rock matrix sits beside a column, '
-        + 'and a batch has none.');
+      throw new RtmError('TRAVEL_TIME is the time the water takes to cross the column, and needs '
+        + 'MODE = transport.');
+    }
+    if (given.has('ADVECTION') && !settings.ADVECTION) {
+      throw new RtmError('TRAVEL_TIME says the water flows and ADVECTION = 0 says it does not. '
+        + 'Leave ADVECTION out: TRAVEL_TIME turns it on.');
+    }
+    const por = settings.POROSITY > 0 ? settings.POROSITY : 1;
+    const v = (por * grid.L) / tw;
+    if (given.has('VELOCITY')) {
+      if (!(Math.abs(settings.VELOCITY - v) <= 1e-9 * v)) {
+        throw new RtmError(`VELOCITY = ${settings.VELOCITY} and TRAVEL_TIME = ${tw} disagree: water `
+          + `crossing ${grid.L} m in ${tw} is a VELOCITY of POROSITY*LENGTH/TRAVEL_TIME = ${v}. `
+          + 'Give one of them.');
+      }
+    } else settings.VELOCITY = v;
+    settings.ADVECTION = 1;
+  }
+
+  /**
+   * Kd and Kdf, the two sorption coefficients a far-field path is given,
+   * turned into the capacities the equations are written with: Rm =
+   * MATRIX_POROSITY + MATRIX_DENSITY*Kd in the rock, and R = 1 + Kdf*aw in
+   * the fracture -- Kompartment's r_M and 1/f_df, worked out the same way so
+   * that they are the same doubles.
+   */
+  function sorptionCapacities(species, settings, matrix, aw, warnings) {
+    const unused = [];
+    for (const s of species) {
+      if (s.Kdf !== null) {
+        if (!(aw > 0)) {
+          throw new RtmError(`Kdf for ${s.name} is sorption per m2 of fracture wall, and needs the wall `
+            + 'area a unit volume of water touches: WETTED_SURFACE, APERTURE or '
+            + 'TRANSPORT_RESISTANCE.', s.line);
+        }
+        s.mass = String(1 + s.Kdf * aw);
+      }
+      if (!matrix && (s.Kd !== null || s.Rm !== null || s.Dm > 0)) unused.push(s.name);
+      else if (s.Kd !== null) s.Rm = String(matrix.porosity + matrix.density * s.Kd);
+    }
+    if (unused.length) {
+      const names = unused.length > 1
+        ? `${unused.slice(0, -1).join(', ')} and ${unused[unused.length - 1]}` : unused[0];
+      warnings.push(`There is no rock matrix, so what the species line${unused.length > 1 ? 's' : ''} `
+        + `of ${names} ${unused.length > 1 ? 'say' : 'says'} about the rock (Dm, Rm, Kd) is not used.`);
+    }
+  }
+
+  /**
+   * The rock matrix, or null: how many layers, how deep, and the numbers
+   * that turn a layer into a rate -- the wetted surface per unit water volume
+   * and the matrix porosity. The layers themselves are laid out by
+   * layOutMatrix, once what diffuses into them is known.
+   *
+   * A text that says anything about the rock has one, of twelve layers unless
+   * it says how many; MATRIX_CELLS = 0 has none.
+   */
+  function makeMatrix(settings, aw, warnings) {
+    const given = settings.given || new Set();
+    const described = MATRIX_KEYS.filter((k) => given.has(k));
+    let nm = settings.MATRIX_CELLS;
+    if (!given.has('MATRIX_CELLS') && described.length) nm = DEFAULT_MATRIX_CELLS;
+    if (!(nm > 0)) {
+      if (given.has('MATRIX_CELLS') && described.length) {
+        warnings.push(`MATRIX_CELLS = 0: there is no rock matrix, so ${described.join(', ')} `
+          + `${described.length === 1 ? 'is' : 'are'} not used.`);
+      }
+      return null;
+    }
+    if (!Number.isInteger(nm)) throw new RtmError(`MATRIX_CELLS must be a whole number, not ${nm}.`);
+    // What the model compiled with, said where the settings are read back.
+    settings.MATRIX_CELLS = nm;
+    if (settings.MODE !== 'transport') {
+      throw new RtmError('A rock matrix needs MODE = transport: it sits beside a column, and a batch '
+        + 'has none.');
     }
     if (!(settings.MATRIX_DEPTH > 0)) {
       throw new RtmError('A rock matrix needs MATRIX_DEPTH: how far into the rock, in metres, the '
@@ -631,23 +985,149 @@
         + 'which scales what the reactions do there and is the capacity Rm of a species that '
         + 'does not sorb.');
     }
-    let aw = settings.WETTED_SURFACE;
-    if (settings.APERTURE > 0) {
-      if (aw > 0 && Math.abs(aw - 2 / settings.APERTURE) > 1e-9 * aw) {
-        throw new RtmError('WETTED_SURFACE and APERTURE disagree: aw = 2/aperture. Give one of them.');
-      }
-      aw = 2 / settings.APERTURE;
+    if (!(settings.MATRIX_DENSITY >= 0)) {
+      throw new RtmError(`MATRIX_DENSITY = ${settings.MATRIX_DENSITY} must be zero or more.`);
+    }
+    if (!(settings.MATRIX_FIRST >= 0)) {
+      throw new RtmError(`MATRIX_FIRST = ${settings.MATRIX_FIRST} must be a thickness, or 0 to have `
+        + 'it worked out.');
     }
     if (!(aw > 0)) {
       throw new RtmError('A rock matrix needs the fracture surface a unit volume of water is in '
-        + 'contact with: WETTED_SURFACE in m2/m3, or APERTURE (2b) in m, from which it is '
-        + '2/aperture. In the SKB parameterisation it is F divided by the travel time.');
+        + 'contact with: WETTED_SURFACE in m2/m3, APERTURE (2b) in m, from which it is 2/aperture, '
+        + 'or TRANSPORT_RESISTANCE, the F of the SKB parameterisation, from which it is F divided '
+        + 'by the travel time.');
     }
-    const d = layerDepths(settings.MATRIX_DEPTH, nm, aw, settings.MATRIX_FIRST);
-    const centre = new Float64Array(nm);
+    return { n: nm, depth: settings.MATRIX_DEPTH, porosity: settings.MATRIX_POROSITY,
+      density: settings.MATRIX_DENSITY, aw, grid: settings.MATRIX_GRID,
+      given: settings.MATRIX_FIRST > 0 ? settings.MATRIX_FIRST : null,
+      d: null, h: null, centre: null, q: NaN, first: NaN, rule: null };
+  }
+
+  /**
+   * Lays out the matrix's layers, into `matrix` itself.
+   *
+   *   reference  FARFCOMP's: a first layer that makes the ratio e, or
+   *              MATRIX_FIRST, and nodes at the layers' centres. Exactly as
+   *              this page always had them.
+   *   matched    Kompartment's: MATRIX_FIRST, or the shallowest of every
+   *              species' penetrationScale over RESOLVE, never thicker than
+   *              an even split -- one grid for all of them, because a
+   *              daughter grows in cell by cell from its parent and the two
+   *              must share the cells -- with the nodes interlaced. Where
+   *              nothing gives a time scale (no flow and no decay, or
+   *              nothing entering the rock) the first layer is FARFCOMP's.
+   *
+   * `nucs` are the species that enter the rock, with what penetrationScale
+   * reads of them -- de, rm, lam, rf and their own Peclet number -- and `tw`
+   * the water's travel time.
+   */
+  function layOutMatrix(matrix, nucs, tw) {
+    const { n: nm, depth, aw } = matrix;
+    if (matrix.grid === 'reference') {
+      matrix.d = layerDepths(depth, nm, aw, matrix.given || 0);
+      matrix.h = null;
+      matrix.rule = matrix.given ? 'given' : 'e';
+    } else {
+      let d0 = matrix.given;
+      matrix.rule = 'given';
+      if (d0 === null) {
+        let L = Infinity;
+        for (const nuc of nucs) {
+          const l = penetrationScale(nuc, { aw, tw, pe: nuc.pe });
+          if (l < L) L = l;
+        }
+        const even = depth / nm;
+        if (L < Infinity) {
+          d0 = L / RESOLVE;
+          if (!(d0 < even)) d0 = even;
+          matrix.rule = 'matched';
+        } else {
+          d0 = nm === 1 ? depth : eRatioFirst(depth, nm, aw);
+          matrix.rule = 'e';
+        }
+      }
+      const g = matchedGrid(depth, nm, d0);
+      matrix.d = g.d;
+      matrix.h = g.h;
+    }
+    matrix.first = matrix.d[0];
+    matrix.q = nm > 1 ? matrix.d[1] / matrix.d[0] : 1;
+    matrix.centre = new Float64Array(nm);
     let x = 0;
-    for (let j = 0; j < nm; j++) { centre[j] = x + d[j] / 2; x += d[j]; }
-    return { n: nm, d, centre, depth: settings.MATRIX_DEPTH, porosity: settings.MATRIX_POROSITY, aw };
+    for (let j = 0; j < nm; j++) { matrix.centre[j] = x + matrix.d[j] / 2; x += matrix.d[j]; }
+    return matrix;
+  }
+
+  /**
+   * How many cells past a semi-infinite right-hand end stand for the column
+   * going on beyond it: EXTRA_CELLS when the text gives it, else
+   * Kompartment's count -- the fewest cells that bring rho^n under a tenth.
+   *
+   * What those cells are for is the one thing a finite grid cannot say: how
+   * the water beyond the end pushes back on it. That push is dispersion
+   * running upstream, and on this grid it dies away by
+   *
+   *     rho = D / (D + u*dz)
+   *
+   * per cell, D the dispersion a cell has and u*dz what advection carries
+   * past it -- which, for a Peclet number and no D of the species' own, is
+   * Kompartment's (2*N - Pe)/(2*N + Pe). The far end of the last cell is
+   * closed by linear extrapolation, itself a second-order guess at what lies
+   * beyond, and a tenth of its error is what is left. The most dispersive
+   * species decides, since the cells are shared.
+   */
+  function extraCellCount(settings, grid, species, mobile, peclet) {
+    const given = settings.given || new Set();
+    if (given.has('EXTRA_CELLS')) {
+      const nb = settings.EXTRA_CELLS;
+      if (!(nb >= 0) || !Number.isInteger(nb)) {
+        throw new RtmError(`EXTRA_CELLS = ${nb} must be a whole number, 0 or more.`);
+      }
+      return nb;
+    }
+    const u = Math.abs(settings.VELOCITY) / (settings.POROSITY > 0 ? settings.POROSITY : 1);
+    const w = grid.width[grid.n - 1];
+    let rho = 0;
+    species.forEach((s, si) => {
+      if (!mobile[si]) return;
+      const D = (settings.DIFFUSION ? s.D : 0)
+        + (peclet > 0 ? Math.max(0, (u * grid.L) / peclet - (u * w) / 2) : 0);
+      if (D > 0) rho = Math.max(rho, D / (D + u * w));
+    });
+    if (!(rho > 0)) return 0;
+    let k = 0;
+    let left = 1;
+    while (left > 0.1 && k < 10000) { left *= rho; k++; }
+    if (left > 0.1) {
+      throw new RtmError(`The dispersion reaches so far upstream that more than ${k} cells past the `
+        + 'right-hand end would be needed for RIGHT = semi-infinite: give EXTRA_CELLS, or check D '
+        + 'and PECLET against the VELOCITY.');
+    }
+    return k;
+  }
+
+  /**
+   * The column with its cells past a semi-infinite end, each as wide as the
+   * last cell of the column: centres, widths and faces run on past LENGTH.
+   * `n` stays the column's own count -- what a line of the text may name.
+   */
+  function withExtraCells(grid, nb) {
+    if (!nb) return grid;
+    const nf = grid.n;
+    const w = grid.width[nf - 1];
+    const centres = new Float64Array(nf + nb);
+    const width = new Float64Array(nf + nb);
+    const faces = new Float64Array(nf + nb + 1);
+    centres.set(grid.centres);
+    width.set(grid.width);
+    faces.set(grid.faces);
+    for (let k = 0; k < nb; k++) {
+      centres[nf + k] = grid.L + (k + 0.5) * w;
+      width[nf + k] = w;
+      faces[nf + k + 1] = grid.L + (k + 1) * w;
+    }
+    return { ...grid, centres, width, faces };
   }
 
   /**
@@ -709,6 +1189,10 @@
           + 'with "fracture" or "matrix" after it to confine it to one or the other.', line);
       }
       const [, name, where, src] = m;
+      if (name === 't') {
+        throw new RtmError('"t" is the time in a rate law, and cannot be a parameter too: give the '
+          + 'parameter another name.', line);
+      }
       let from;
       let to;
       if (/^all$/i.test(where)) { from = 0; to = cells - 1; } else {
@@ -734,12 +1218,15 @@
         values.push(new Float64Array(total));
       }
       const into = values[index.get(name)];
+      // The cells past a semi-infinite end are the column going on, so a line
+      // that reaches the last cell reaches them too.
+      const reach = to === cells - 1 ? Infinity : to;
       // A line names cells of the column; the value is worked out for each of
       // them and for every matrix layer behind it, with `j` the layer (0 in
       // the fracture) and `xm` the depth to the layer's centre in metres.
       for (let c = 0; c < total; c++) {
         const g = geom[c];
-        if (g.i < from || g.i > to) continue;
+        if (g.i < from || g.i > reach) continue;
         if (scope === 'fracture' && g.j > 0) continue;
         if (scope === 'matrix' && g.j === 0) continue;
         const own = index.get(name);
@@ -1589,31 +2076,83 @@
     const reactions = sections.REACTIONS.map(({ text: t, line }) => parseReaction(t, line));
 
     const grid = makeGrid(settings);
-    const matrix = makeMatrix(settings);
+    const warnings = [];
+    const transport = settings.MODE === 'transport';
+    flowFromTravelTime(settings, grid);
+    const surface = wettedSurface(settings, grid);
+    const matrix = makeMatrix(settings, surface.aw, warnings);
+    sorptionCapacities(species, settings, matrix, surface.aw, warnings);
+
+    /* ---- what moves ---------------------------------------------------- */
+    const peclet = transport && settings.ADVECTION && settings.PECLET > 0 ? settings.PECLET : 0;
+    const mobile = species.map((s) => (transport && !s.fixed
+      && ((settings.DIFFUSION && (s.D > 0 || peclet > 0))
+        || (settings.ADVECTION && settings.VELOCITY !== 0))));
+    // Which species cross into the rock: those with a matrix diffusivity.
+    const enters = species.map((s) => !!matrix && !s.fixed && s.Dm > 0);
+
     /*
-      THE CELLS. A plain column has grid.n of them. With a rock matrix each
-      of those -- a fracture cell, the flowing water -- is followed in the
-      state by the nm stagnant layers behind it, so cell (i, j) sits at
-      i*(1+nm) + j, j = 0 being the fracture. That keeps a fracture cell and
-      its own matrix chain contiguous, which is where nearly all the coupling
-      is, and it is the numbering SKB's FARFCOMP uses, so an inventory can be
-      compared position by position.
+      THE OUTLET. A semi-infinite right-hand end is the column going on past
+      LENGTH, as the analytical far-field models have it: what leaves is the
+      whole flux, advection and dispersion, across the plane at LENGTH, and
+      the concentration falls to zero only infinitely far downstream. A grid
+      cannot hold that, so it holds EXTRA_CELLS of it past the end and closes
+      the last by linear extrapolation -- Kompartment's outlet for a far-field
+      path, the one it gives a new path. It is where the water leaves, so the
+      flow must run to the right.
     */
     const nf = grid.n;
+    if (transport && settings.LEFT === 'semi-infinite') {
+      throw new RtmError('LEFT = semi-infinite: a semi-infinite end is an outlet, the column going on '
+        + 'past the point the water leaves, and is for the right-hand face. Use robin for water '
+        + 'arriving at the left.');
+    }
+    const semi = transport && settings.RIGHT === 'semi-infinite';
+    if (semi && !(settings.ADVECTION && settings.VELOCITY > 0)) {
+      throw new RtmError('RIGHT = semi-infinite is the column going on past the point the water '
+        + 'leaves: it needs ADVECTION and a VELOCITY to the right, above zero.');
+    }
+    if (!semi && (settings.given || new Set()).has('EXTRA_CELLS')) {
+      throw new RtmError('EXTRA_CELLS is how many cells stand for the column past a semi-infinite '
+        + 'right-hand end, and needs RIGHT = semi-infinite.');
+    }
+    const nb = semi ? extraCellCount(settings, grid, species, mobile, peclet) : 0;
+    if (semi) settings.EXTRA_CELLS = nb;
+    const ncol = nf + nb;
+    const last = ncol - 1;          // the column's last cell, past the end or not
+    const col = withExtraCells(grid, nb);
+    /*
+      THE CELLS. A plain column has grid.n of them, and a semi-infinite one
+      its extra cells after those. With a rock matrix each of them -- a
+      fracture cell, the flowing water -- is followed in the state by the nm
+      stagnant layers behind it, so cell (i, j) sits at i*(1+nm) + j, j = 0
+      being the fracture. That keeps a fracture cell and its own matrix chain
+      contiguous, which is where nearly all the coupling is, and it is the
+      numbering SKB's FARFCOMP uses, so an inventory can be compared position
+      by position.
+
+      The matched layers are sized by what diffuses into them, which the
+      parameters can say -- a capacity Rm that names one -- so the layers are
+      laid out once the species are read, and until then every layer is put
+      at the wall: what is read at that stage is read where the rock begins.
+    */
     const nm = matrix ? matrix.n : 0;
     const stride = 1 + nm;
     const cellOf = (i, j) => i * stride + j;
-    const geom = [];
-    for (let i = 0; i < nf; i++) {
-      geom.push({ i, j: 0, x: grid.centres[i], xm: 0 });
-      for (let j = 1; j <= nm; j++) geom.push({ i, j, x: grid.centres[i], xm: matrix.centre[j - 1] });
-    }
+    const placeCells = (centre) => {
+      const out = [];
+      for (let i = 0; i < ncol; i++) {
+        out.push({ i, j: 0, x: col.centres[i], xm: 0 });
+        for (let j = 1; j <= nm; j++) out.push({ i, j, x: col.centres[i], xm: centre ? centre[j - 1] : 0 });
+      }
+      return out;
+    };
+    let geom = placeCells(null);
     const tables = readTables(sections.TABLES);
-    const params = readParameters(sections.PARAMETERS, grid, geom, tables);
+    let params = readParameters(sections.PARAMETERS, col, geom, tables);
     const ns = species.length;
     const index = new Map(species.map((s, i) => [s.name, i]));
     const nameOf = species.map((s) => s.name);
-    const warnings = [];
     // Read now, applied at the end: a line may hold a species in some cells,
     // and the transport and the pattern below have to know which.
     const patches = readInitial(sections.INITIAL, index, nf);
@@ -1624,6 +2163,10 @@
       }
       return index.get(name);
     };
+
+    // The tables the rate laws read at the clock, one slot per distinct read
+    // (table, column, argument): see readAtTheClock below.
+    const clockReads = new Map();
 
     /* ---- the rate laws, as trees ------------------------------------- */
     // Each reaction becomes one or two "channels": a forward one, and a
@@ -1673,38 +2216,80 @@
           };
           ast = swap(ast);
         }
-        // A table is a function of place, read once per cell in <PARAMETERS>;
-        // a rate law is a function of the concentrations, and cannot use one.
-        (function noTables(node) {
-          if (!node || typeof node !== 'object') return;
-          if (node.type === 'call' && (tables.has(node.name) || node.name.toLowerCase() === 'interp')) {
-            throw new RtmError(`"${node.name}(...)" reads a table, which a rate law cannot: give it a `
-              + `parameter -- NAME all ${node.name}(x) in <PARAMETERS> -- and use NAME here.`, rx.line);
+        /*
+          A TABLE IN A RATE LAW is read at the clock: name(t), name(t - 1000),
+          name(t, U238) of a table of several columns -- a release history, a
+          dose rate that falls with time. Its argument may use t and the
+          line's constants and nothing else: a concentration would make the
+          table's slope part of the Jacobian, and a parameter would make it a
+          table of place, which <PARAMETERS> is for. Each such read is a slot
+          of TV, worked out once per evaluation at the time it is made for,
+          and differentiates to nothing.
+        */
+        ast = (function readAtTheClock(node) {
+          if (!node || typeof node !== 'object') return node;
+          const call = node.type === 'call' ? tableCall(node, tables, rx.line) : null;
+          if (call) {
+            const arg = fold(call.arg, rx.params);
+            for (const id of mentioned(arg)) {
+              if (id === 't') continue;
+              throw new RtmError(`"${node.name}(...)" in a rate law is read at a time: its argument may `
+                + `use t and the constants of the line, and ${names.has(id) ? `[${names.get(id)}] is a concentration`
+                  : `"${id}" is not one of them`}. A table of place is read in <PARAMETERS> -- NAME all `
+                + `${call.tab.name}(x) -- and NAME used here.`, rx.line);
+            }
+            const key = `${call.tab.name}#${call.col}#${JSON.stringify(arg)}`;
+            if (!clockReads.has(key)) clockReads.set(key, { k: clockReads.size, tab: call.tab, col: call.col, arg });
+            return { type: 'id', name: `__tv${clockReads.get(key).k}__` };
           }
-          [node.l, node.r, node.a, ...(node.args || [])].forEach(noTables);
+          if (node.type === 'call') return { ...node, args: node.args.map(readAtTheClock) };
+          if (node.type === 'bin') return { ...node, l: readAtTheClock(node.l), r: readAtTheClock(node.r) };
+          if (node.type === 'neg') return { ...node, a: readAtTheClock(node.a) };
+          return node;
         }(ast));
         // The constant parts worked out once, the line's own constants among them.
         ast = fold(ast, rx.params);
-        // Every identifier is either a masked species or a parameter of this line.
+        // Every identifier is a masked species, a constant of this line, a
+        // parameter, the clock t, or a table read at it.
         const deps = [];
         const seen = new Set();
         for (const id of mentioned(ast)) {
           if (names.has(id)) {
             const si = needSpecies(names.get(id), rx.line);
             if (!seen.has(id)) { seen.add(id); deps.push({ id, si }); }
-          } else if (!rx.params.has(id) && !params.index.has(id)) {
+          } else if (!rx.params.has(id) && !params.index.has(id) && id !== 't' && !/^__tv\d+__$/.test(id)) {
             throw new RtmError(`"${id}" in a rate law is not a parameter of this reaction, a `
-              + 'parameter in <PARAMETERS>, or a species in brackets. Write a concentration '
-              + 'as [name].', rx.line);
+              + 'parameter in <PARAMETERS>, the time t, or a species in brackets. Write a '
+              + 'concentration as [name].', rx.line);
           }
         }
         deps.sort((a, b) => a.si - b.si);
+        /*
+          ON = INVENTORY: a share of the whole of what the cell holds of the
+          species on the left -- decay -- so the reaction goes at the rate law
+          times that species' capacity, R or Rm, and every species it changes
+          changes by that much of its own inventory. A daughter born of a
+          parent that sorbs hard is born as many atoms as the parent lost, and
+          then takes up its own share between water and rock, as Kompartment
+          and FARF31 have it. One species on the left, or none: a source on
+          the inventory makes its rate of change of each concentration.
+        */
+        let capOf = -1;
+        if (rx.whole) {
+          const left = [...new Set(side.map(([, name]) => needSpecies(name, rx.line)))];
+          if (left.length > 1) {
+            throw new RtmError('on = inventory is a share of what a cell holds of one species -- '
+              + 'radioactive decay -- and this side of the reaction has more than one. Write it '
+              + 'on = water, the default.', rx.line);
+          }
+          if (left.length) [capOf] = left;
+        }
         return {
           ast,
           deps,
           params: rx.params,
           line: rx.line,
-          whole: !!rx.whole, net: net.map(([i, c]) => [i, c * sign]),
+          whole: !!rx.whole, capOf, net: net.map(([i, c]) => [i, c * sign]),
         };
       };
 
@@ -1781,16 +2366,22 @@
         // more local thing to have written, and the one being looked at.
         if (ch.params.has(id)) return numberLiteral(ch.params.get(id));
         if (params.index.has(id)) return `P[pb + ${params.index.get(id)}]`;
+        if (id === 't') return 't';
+        const tv = /^__tv(\d+)__$/.exec(id);
+        if (tv) return `TV[${tv[1]}]`;
         throw new RtmError(`"${id}" is not known here.`, line);
       };
       rateBody.push(`  R[${j}] = ${emit(ch.ast, resolve, ch.line)};`);
       derivIndex.push(nd);
+      ch.derivCode = [];
       for (const dep of ch.deps) {
         const d = derivative(ch.ast, dep.id, ch.line);
         const code = emit(d, resolve, ch.line);
-        // A derivative that reads no concentration is a number for the run.
-        if (/\by\[/.test(code)) jacobianMoves = true;
+        // A derivative that reads no concentration, and not the clock either,
+        // is a number for the run.
+        if (/\by\[|\bTV\[|\bt\b/.test(code)) jacobianMoves = true;
         derivBody.push(`  D[${nd}] = ${code};`);
+        ch.derivCode.push(code);
         nd++;
       }
     });
@@ -1813,11 +2404,11 @@
         size += line.length + 1;
       }
       // eslint-disable-next-line no-new-func
-      const parts = chunks.map((c) => new Function('y', 'b', 'P', 'pb', 'R', 'D', c.join('\n')));
+      const parts = chunks.map((c) => new Function('y', 'b', 'P', 'pb', 'R', 'D', 't', 'TV', c.join('\n')));
       return parts.length === 1 ? parts[0]
         // eslint-disable-next-line no-new-func
-        : new Function('parts', `"use strict";\nreturn function (y, b, P, pb, R, D) {\n${
-          parts.map((_, k) => `  parts[${k}](y, b, P, pb, R, D);`).join('\n')}\n};`)(parts);
+        : new Function('parts', `"use strict";\nreturn function (y, b, P, pb, R, D, t, TV) {\n${
+          parts.map((_, k) => `  parts[${k}](y, b, P, pb, R, D, t, TV);`).join('\n')}\n};`)(parts);
     };
     let rates;
     let derivs;
@@ -1828,15 +2419,93 @@
       throw new RtmError(`The generated rate code did not compile: ${e.message}`);
     }
 
+    /* ---- the rock's layers, and the cells for good ---------------------- */
+    if (matrix) {
+      layOutMatrix(matrix, rockSpecies(), surface.tw);
+      geom = placeCells(matrix.centre);
+      params = readParameters(sections.PARAMETERS, col, geom, tables);
+      /*
+        Layers that grow fast are coarse at depth, where a long-lived species
+        spends most of a long run. A short-lived member of a chain sizes the
+        first layer by its own decay, and twelve layers from a few micrometres
+        to metres of rock then grow by three or more: on the U-238 chain of
+        TR-19-06 (Po-210, 0.38 a, puts the first at 4.7 um) twelve grow by 3.4
+        and the releases are 4 % out, twenty grow by 2.0 and they are 0.2 %
+        out. Said, with the count that keeps the growth to 2.
+      */
+      if (matrix.grid === 'matched' && matrix.q > 2.5) {
+        const need = Math.ceil(Math.log2(matrix.depth / matrix.first + 1));
+        warnings.push(`The ${matrix.n} matrix layers grow by ${matrix.q.toFixed(2)} from ${matrix.first.toExponential(2)} m `
+          + `${matrix.rule === 'matched' ? '(the first sized by the fastest change the rock has to follow) ' : ''}`
+          + `to reach ${matrix.depth} m, which is coarse at depth: MATRIX_CELLS = ${need} would keep the growth to 2.`);
+      }
+    }
+
+    /*
+      What the matched layers are sized by, for each species that enters the
+      rock and each cell of the column: its De, its capacities in the rock
+      and in the fracture, its decay constant and its own Peclet number --
+      Kompartment's de, rm, rf, lam and pe. Read off the parameters as they
+      stand before the layers are laid out, which is at the wall.
+
+      The decay constant is what a first-order reaction on the whole
+      inventory -- on = inventory, radioactive decay -- takes of the species
+      per unit time, the largest anywhere. Chemistry on the water is left
+      out: a fast reversible pair is an exchange, not a loss, and sizing the
+      layers by its rate constant would make them absurdly thin.
+    */
+    function rockSpecies() {
+      const valueAt = (spec, c, fallback) => {
+        if (spec === null) return fallback;
+        const asNumber = Number(spec);
+        if (Number.isFinite(asNumber)) return asNumber;
+        if (params.index.has(spec)) return params.values[params.index.get(spec)][c];
+        return NaN;     // named nothing: the mass matrix below says so
+      };
+      const np0 = params.order.length;
+      const P0 = new Float64Array(Math.max(np0, 1));
+      const loads = [];
+      for (const ch of channels) {
+        if (!ch.whole || ch.deps.length !== 1) continue;
+        const dep = ch.deps[0];
+        const own = ch.net.find(([p]) => p === dep.si);
+        if (!own || !(own[1] < 0) || /\by\[|\bTV\[|\bt\b/.test(ch.derivCode[0])) continue;
+        // eslint-disable-next-line no-new-func
+        loads.push({ si: dep.si, c: -own[1], at: new Function('P', 'pb', `return ${ch.derivCode[0]};`) });
+      }
+      const lam = new Float64Array(ns);
+      for (let i = 0; i < nf; i++) {
+        for (const c of [cellOf(i, 0), cellOf(i, 1)]) {
+          for (let k = 0; k < np0; k++) P0[k] = params.values[k][c];
+          const here = new Float64Array(ns);
+          for (const l of loads) here[l.si] += l.c * l.at(P0, 0);
+          for (let s = 0; s < ns; s++) if (here[s] > lam[s]) lam[s] = here[s];
+        }
+      }
+      const uPore = settings.ADVECTION ? Math.abs(settings.VELOCITY) / (settings.POROSITY > 0 ? settings.POROSITY : 1) : 0;
+      // Each species' own Peclet number: the Peclet setting when it has no D
+      // of its own, which is Kompartment's path exactly. Without flow there
+      // is no travel time for one to be a share of.
+      const peOf = (s) => {
+        const Ds = settings.DIFFUSION ? species[s].D : 0;
+        if (!(uPore > 0)) return Infinity;
+        if (peclet > 0) return Ds > 0 ? (uPore * grid.L) / (Ds + (uPore * grid.L) / peclet) : peclet;
+        return Ds > 0 ? (uPore * grid.L) / Ds : Infinity;
+      };
+      const out = [];
+      for (let s = 0; s < ns; s++) {
+        if (!enters[s]) continue;
+        const pe = peOf(s);
+        for (let i = 0; i < nf; i++) {
+          out.push({ de: species[s].Dm, rm: valueAt(species[s].Rm, cellOf(i, 1), matrix.porosity),
+            rf: valueAt(species[s].mass, cellOf(i, 0), 1), lam: lam[s], pe });
+        }
+      }
+      return out;
+    }
+
     /* ---- the grid and what moves --------------------------------------- */
-    const nc = nf * stride;         // every cell, matrix layers included
-    const transport = settings.MODE === 'transport';
-    const peclet = transport && settings.ADVECTION && settings.PECLET > 0 ? settings.PECLET : 0;
-    const mobile = species.map((s) => (transport && !s.fixed
-      && ((settings.DIFFUSION && (s.D > 0 || peclet > 0))
-        || (settings.ADVECTION && settings.VELOCITY !== 0))));
-    // Which species cross into the rock: those with a matrix diffusivity.
-    const enters = species.map((s) => !!matrix && !s.fixed && s.Dm > 0);
+    const nc = ncol * stride;       // every cell, matrix layers and extra cells included
     if (transport && !mobile.some(Boolean)) {
       warnings.push('Transport is on but nothing moves: give a species D = ... , or set a VELOCITY.');
     }
@@ -1903,9 +2572,12 @@
     for (let c = 0; c < nc; c++) for (let s = 0; s < ns; s++) if (fixed[s]) fixedAt[c * ns + s] = 1;
     const patchCells = (p) => {
       const out = [];
-      for (let i = p.from; i <= p.to; i++) {
+      // A line that reaches the last cell reaches the cells past a
+      // semi-infinite end too: they are the column going on.
+      const to = p.to === nf - 1 ? last : p.to;
+      for (let i = p.from; i <= to; i++) {
         if (!p.matrix) { out.push(cellOf(i, 0)); continue; }
-        if (!matrix) throw new RtmError('"matrix" in <INITIAL> needs MATRIX_CELLS above zero.', p.line);
+        if (!matrix) throw new RtmError('"matrix" in <INITIAL> needs a rock matrix: MATRIX_DEPTH and the rest.', p.line);
         for (let j = 1; j <= nm; j++) out.push(cellOf(i, j));
       }
       return out;
@@ -1977,8 +2649,10 @@
     const reactScale = new Float64Array(nc).fill(1);
     if (matrix) for (let c = 0; c < nc; c++) if (geom[c].j > 0) reactScale[c] = matrix.porosity;
     // The capacity itself, for a rate that acts on the whole inventory: its
-    // term is multiplied by this so that the division by invMass at the end
-    // leaves it as a rate on the concentration, R dC/dt = -lambda*R*C.
+    // term is multiplied by the capacity of the species it is a share of, so
+    // that the division by invMass at the end leaves the parent's own rate
+    // on its concentration, R dC/dt = -lambda*R*C, and a daughter's gain the
+    // parent's inventory over its own capacity.
     const massOf = Float64Array.from(invMass, (v) => 1 / v);
 
     // Cell-major, like the state, so one base index serves both.
@@ -2012,7 +2686,7 @@
           // Along the fracture, to the neighbouring fracture cells.
           if (mobile[s]) {
             if (g.i > 0) touch(b + s, cellOf(g.i - 1, 0) * ns + s);
-            if (g.i < nf - 1) touch(b + s, cellOf(g.i + 1, 0) * ns + s);
+            if (g.i < ncol - 1) touch(b + s, cellOf(g.i + 1, 0) * ns + s);
           }
           // ...and into the first layer of rock behind it.
           if (enters[s]) touch(b + s, cellOf(g.i, 1) * ns + s);
@@ -2084,6 +2758,18 @@
                  known about what is beyond the face, which is the point of
                  it -- at an outlet there is nothing to know.
 
+      semi-      the column goes on past the face, and the face is a plane
+      infinite   inside it: the flow and the dispersion both cross it, into
+                 the extra cells beyond, which are the same column. The last
+                 of those is closed by linear extrapolation, which continues
+                 the gradient through its far face, so that the dispersion
+                 into it from upstream leaves it again and its own row has
+                 none: Kompartment's outlet 4, which is its OB 2 at the end of
+                 its extra cells. A Danckwerts outlet (free) instead lets out
+                 4a/(1+a)^2 of what the semi-infinite column does at a
+                 frequency where a = sqrt(1 + 4 tw g/Pe): about 3 % short at
+                 the peak of Kompartment's far-field example.
+
       As fluxes, `free` and `neumann` come to the same arithmetic: the
       advective outflow below is applied at every cell whatever the face is,
       so a Neumann outlet already lets the flow leave. They are kept apart
@@ -2113,19 +2799,23 @@
       }
     }
     // What the rock does, per species that enters it, kept so that a test can
-    // put it beside SKB's own numbers term for term.
+    // put it beside SKB's and Kompartment's own numbers term for term.
     const dual = matrix ? { aw: matrix.aw, porosity: matrix.porosity, d: Array.from(matrix.d),
+      h: matrix.h ? Array.from(matrix.h) : null, grid: matrix.grid,
       advF: null, dF: null, species: [] } : null;
+    // The dispersion of species s in column cell i: its own D, and with a
+    // Peclet number the hydrodynamic dispersion the cell is short of.
+    const v = transport && settings.ADVECTION ? settings.VELOCITY : 0;
+    const u = v / (settings.POROSITY > 0 ? settings.POROSITY : 1);
+    const dispersionAt = (s, i) => (settings.DIFFUSION ? species[s].D : 0)
+      + (peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (Math.abs(u) * col.width[i]) / 2) : 0);
     if (transport) {
-      const v = settings.ADVECTION ? settings.VELOCITY : 0;
-      const por = settings.POROSITY > 0 ? settings.POROSITY : 1;
-      const u = v / por;
       for (let s = 0; s < ns; s++) {
         if (!mobile[s]) continue;
         const Dspecies = settings.DIFFUSION ? species[s].D : 0;
-        for (let i = 0; i < nf; i++) {
+        for (let i = 0; i < ncol; i++) {
           const row = cellOf(i, 0) * ns + s;
-          const w = grid.width[i];
+          const w = col.width[i];
           /*
             The dispersion. A Peclet number gives every species the same
             hydrodynamic dispersion u*L/Pe along the fracture, on top of its
@@ -2138,26 +2828,32 @@
           const disp = peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (Math.abs(u) * w) / 2) : 0;
           const D = Dspecies + disp;
           if (dual && dual.advF === null && u !== 0) { dual.advF = Math.abs(u) / w; dual.dF = disp / (w * w); }
+          // The last cell past a semi-infinite end is closed by linear
+          // extrapolation: what disperses into it leaves through its far
+          // face, and its own row has no dispersion at all.
+          const closed = semi && i === last;
           // --- the face to the left ---
-          if (i > 0) {
-            const d = grid.centres[i] - grid.centres[i - 1];
+          if (closed) {
+            // nothing: see above
+          } else if (i > 0) {
+            const d = col.centres[i] - col.centres[i - 1];
             const g = D / (d * w);
             if (g) { flowIn.push({ row, col: cellOf(i - 1, 0) * ns + s, value: g }); flowIn.push({ row, col: row, value: -g }); }
           } else if (settings.LEFT === 'dirichlet') {
             // robin and free put no diffusive flux through the face at all:
             // the first prescribes the total flux, the second the gradient.
-            const d = grid.centres[0] - 0;
+            const d = col.centres[0] - 0;
             const g = D / (d * w);
             const cb = species[s].left == null ? species[s].initial : species[s].left;
             if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb }); }
           }
           // --- the face to the right ---
-          if (i < nf - 1) {
-            const d = grid.centres[i + 1] - grid.centres[i];
+          if (i < last) {
+            const d = col.centres[i + 1] - col.centres[i];
             const g = D / (d * w);
             if (g) { flowIn.push({ row, col: cellOf(i + 1, 0) * ns + s, value: g }); flowIn.push({ row, col: row, value: -g }); }
           } else if (settings.RIGHT === 'dirichlet') {
-            const d = grid.L - grid.centres[nf - 1];
+            const d = grid.L - col.centres[nf - 1];
             const g = D / (d * w);
             const cb = species[s].right == null ? species[s].initial : species[s].right;
             if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb }); }
@@ -2173,7 +2869,7 @@
               }
               flowIn.push({ row, col: row, value: -a });
             } else {
-              if (i < nf - 1) flowIn.push({ row, col: cellOf(i + 1, 0) * ns + s, value: -a });
+              if (i < last) flowIn.push({ row, col: cellOf(i + 1, 0) * ns + s, value: -a });
               else if (settings.RIGHT === 'dirichlet' || settings.RIGHT === 'robin') {
                 const cb = species[s].right == null ? species[s].initial : species[s].right;
                 boundary.push({ row, value: -a * cb });
@@ -2198,21 +2894,35 @@
         boundary. Every one of these rows is then divided by its cell's
         capacity -- R in the fracture, Rm in the rock -- by invMass, which is
         what turns these coefficients into SKB's rates term for term.
+
+        The matched layers are the same ladder with its nodes interlaced
+        rather than at the centres: De/h_0 from the wall to the first node,
+        De/h_j+1 between nodes j and j+1 -- Kompartment's rates, term for
+        term, in the same way.
       */
       if (matrix) {
         const d = matrix.d;
+        const h = matrix.h;
         const aw = matrix.aw;
         for (let s = 0; s < ns; s++) {
           if (!enters[s]) continue;
           const De = species[s].Dm;
-          const rates = { name: species[s].name, diffFM1: (aw * 2 * De) / d[0],
-            diffM1F: (2 * De) / (d[0] * d[0]), diffMMF: [], diffMMB: [] };
+          const rates = h
+            ? { name: species[s].name, diffFM1: (aw * De) / h[0], diffM1F: De / (d[0] * h[0]),
+              diffMMF: [], diffMMB: [] }
+            : { name: species[s].name, diffFM1: (aw * 2 * De) / d[0],
+              diffM1F: (2 * De) / (d[0] * d[0]), diffMMF: [], diffMMB: [] };
           for (let j = 0; j < nm - 1; j++) {
-            rates.diffMMF.push((2 * De) / (d[j] * (d[j] + d[j + 1])));
-            rates.diffMMB.push((2 * De) / (d[j + 1] * (d[j + 1] + d[j])));
+            if (h) {
+              rates.diffMMF.push(De / (d[j] * h[j + 1]));
+              rates.diffMMB.push(De / (d[j + 1] * h[j + 1]));
+            } else {
+              rates.diffMMF.push((2 * De) / (d[j] * (d[j] + d[j + 1])));
+              rates.diffMMB.push((2 * De) / (d[j + 1] * (d[j + 1] + d[j])));
+            }
           }
           dual.species.push(rates);
-          for (let i = 0; i < nf; i++) {
+          for (let i = 0; i < ncol; i++) {
             const frac = cellOf(i, 0) * ns + s;
             const m1 = cellOf(i, 1) * ns + s;
             flowIn.push({ row: frac, col: m1, value: rates.diffFM1 });
@@ -2231,6 +2941,58 @@
         }
       }
     }
+    /*
+      THE FLUX THROUGH EACH END, per species: what crosses the plane at x = 0
+      and the plane at x = LENGTH, positive to the right, per m2 of the
+      water's cross-section -- concentration times metres per unit of time.
+      At an outlet that is the release, which is what a far-field path is
+      read for; at a semi-infinite end it is advection and dispersion both,
+      across the plane between the column and its extra cells, and with no
+      extra cells across the far face of the last cell, the gradient carried
+      on through it as the closure does. Each is a sum over states plus a
+      constant (a face held at a concentration), so the page works it out
+      from the stored run. Exactly what the assembly above puts through those
+      faces, written out apart.
+    */
+    const faces = transport ? { left: [], right: [] } : null;
+    if (transport) {
+      const at = (i, s) => cellOf(i, 0) * ns + s;
+      const N = nf - 1;
+      for (let s = 0; s < ns; s++) {
+        const left = { terms: [], constant: 0 };
+        const right = { terms: [], constant: 0 };
+        faces.left.push(left);
+        faces.right.push(right);
+        if (!mobile[s]) continue;
+        const cbLeft = species[s].left == null ? species[s].initial : species[s].left;
+        const cbRight = species[s].right == null ? species[s].initial : species[s].right;
+        // The left face, x = 0.
+        if (v > 0) {
+          if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') left.constant += u * cbLeft;
+        } else if (v < 0) left.terms.push([at(0, s), u]);
+        if (settings.LEFT === 'dirichlet') {
+          const g = dispersionAt(s, 0) / col.centres[0];
+          if (g) { left.terms.push([at(0, s), -g]); left.constant += g * cbLeft; }
+        }
+        // The right face, x = LENGTH.
+        if (v > 0) right.terms.push([at(N, s), u]);
+        else if (v < 0 && (settings.RIGHT === 'dirichlet' || settings.RIGHT === 'robin')) right.constant += u * cbRight;
+        if (settings.RIGHT === 'dirichlet') {
+          const g = dispersionAt(s, N) / (grid.L - col.centres[N]);
+          if (g) { right.terms.push([at(N, s), g]); right.constant -= g * cbRight; }
+        } else if (semi) {
+          const D = dispersionAt(s, N);
+          if (nb > 0) {
+            const g = D / (col.centres[N + 1] - col.centres[N]);
+            if (g) right.terms.push([at(N, s), g], [at(N + 1, s), -g]);
+          } else {
+            const g = D / (col.centres[N] - col.centres[N - 1]);
+            if (g) right.terms.push([at(N - 1, s), g], [at(N, s), -g]);
+          }
+        }
+      }
+    }
+
     // Pre-resolved slots, so neither rhs nor jac searches the pattern per step.
     // A held state takes nothing from its neighbours or its faces: its row
     // is zero. It still gives -- the terms in its neighbours' rows stay --
@@ -2274,11 +3036,47 @@
     const chanSpecies = channels.map((ch) => Int32Array.from(ch.net, (e) => e[0]));
     const chanCoef = channels.map((ch) => Float64Array.from(ch.net, (e) => e[1]));
     const chanWhole = Uint8Array.from(channels, (ch) => (ch.whole ? 1 : 0));
+    // Whose capacity a rate on the inventory is a share of; -1 for each its own.
+    const chanCap = Int32Array.from(channels, (ch) => (ch.whole && ch.capOf >= 0 ? ch.capOf : -1));
     const nchan = channels.length;
 
     /* ---- the model ------------------------------------------------------ */
     const R = new Float64Array(channels.length);
     const D = new Float64Array(Math.max(nd, 1));
+
+    /*
+      THE TABLES READ AT THE CLOCK, worked out once per evaluation -- they are
+      the same in every cell -- into TV, which the rate code reads. Each
+      argument was folded when the rate law was, so all that is left of it is
+      t and arithmetic. Where the argument is a straight line in t the table
+      turns at known times, and those are where the run is started again
+      (`breaks`): a pulse in a release history cannot be stepped over.
+    */
+    const reads = [...clockReads.values()];
+    const ntv = reads.length;
+    const TV = new Float64Array(Math.max(ntv, 1));
+    const readArg = reads.map((rd) => {
+      const code = emit(rd.arg, (id) => {
+        if (id === 't') return 't';
+        throw new RtmError(`"${id}" cannot be read at the clock.`);
+      });
+      // eslint-disable-next-line no-new-func
+      return new Function('t', `return ${code};`);
+    });
+    let tvAt = NaN;
+    const atTheClock = (t) => {
+      if (t === tvAt) return;
+      for (let k = 0; k < ntv; k++) TV[k] = tableAt(reads[k].tab, readArg[k](t), reads[k].col);
+      tvAt = t;
+    };
+    // Where each read turns, in time: (x - b)/a for every row x of its table.
+    const turns = [];
+    for (const rd of reads) {
+      const ln = lineInTime(rd.arg);
+      if (!ln || !(ln.a !== 0) || !Number.isFinite(ln.a)) continue;
+      for (const x of rd.tab.corners) turns.push((x - ln.b) / ln.a);
+    }
+    turns.sort((a, b2) => a - b2);
 
     // The chemistry slots, resolved once. Three levels of small arrays rather
     // than a search per entry per step: on a hundred cells this is the
@@ -2300,10 +3098,11 @@
 
     function rhs(t, y, out) {
       out.fill(0);
+      if (ntv) atTheClock(t);
       if (nchan) {
         for (let i = 0; i < nc; i++) {
           const b = i * ns;
-          rates(y, b, P, i * np, R, D);
+          rates(y, b, P, i * np, R, D, t, TV);
           const sc = reactScale[i];
           for (let j = 0; j < nchan; j++) {
             const r = R[j];
@@ -2311,10 +3110,11 @@
             const sp = chanSpecies[j];
             const coef = chanCoef[j];
             const whole = chanWhole[j];
+            const cap = chanCap[j];
             for (let m = 0; m < sp.length; m++) {
               const p = sp[m];
               if (fixedAt[b + p]) continue;
-              out[b + p] += coef[m] * r * (whole ? massOf[b + p] : sc);
+              out[b + p] += coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
             }
           }
         }
@@ -2335,9 +3135,10 @@
 
     function jac(t, y, V) {
       V.fill(0);
+      if (ntv) atTheClock(t);
       for (let i = 0; i < nc; i++) {
         const b = i * ns;
-        derivs(y, b, P, i * np, R, D);
+        derivs(y, b, P, i * np, R, D, t, TV);
         const sc = reactScale[i];
         for (let j = 0; j < channels.length; j++) {
           const ch = channels[j];
@@ -2345,7 +3146,7 @@
           for (let m = 0; m < ch.net.length; m++) {
             const p = ch.net[m][0];
             if (fixedAt[b + p]) continue;
-            const c = ch.net[m][1] * (ch.whole ? massOf[b + p] : sc);
+            const c = ch.net[m][1] * (ch.whole ? massOf[b + (chanCap[j] >= 0 ? chanCap[j] : p)] : sc);
             for (let q = 0; q < ch.deps.length; q++) {
               const dv = D[d0 + q];
               if (dv === 0) continue;
@@ -2383,7 +3184,7 @@
         if (bound) {
           const g = geom[c];
           const lookup = bound.lookup((id) => {
-            const at = placeValue(id, grid, g);
+            const at = placeValue(id, col, g);
             if (at !== undefined) return at;
             if (params.index.has(id)) return params.values[params.index.get(id)][c];
             return undefined;
@@ -2435,6 +3236,22 @@
       jac,
       // The Jacobian is the same at every state and time: see jacobianMoves.
       jacobianConstant: !jacobianMoves,
+      /**
+       * The times in (t0, t1) at which a table a rate law reads at the clock
+       * turns, ascending, near-duplicates merged: where the run is started
+       * again. See runModel in facsimile-solver.js.
+       */
+      breaks(t0, t1) {
+        const out = [];
+        for (const x of turns) {
+          if (!(x > t0 && x < t1)) continue;
+          if (!out.length || x - out[out.length - 1] > 1e-12 * Math.abs(x)) out.push(x);
+        }
+        return out;
+      },
+      // The tables read at the clock, by name, and how many rows each has.
+      clockTables: [...new Set(reads.map((rd) => rd.tab.name))]
+        .map((name) => ({ name, rows: tables.get(name).corners.length })),
       nevents: 0,
       events: [],
       eventValues: () => {},
@@ -2447,10 +3264,22 @@
       timeUnit: TIME_UNITS[settings.TIME_UNIT],
       grid,
       transport,
-      cells: nc,               // every cell, matrix layers included
+      cells: nc,               // every cell, matrix layers and extra cells included
       fracture: nf,            // the cells along the column
-      matrix,                  // null, or { n, d, centre, depth, porosity, aw }
+      // The cells past a semi-infinite right-hand end, after the column's own
+      // in the state: how many, and where. Null for any other end.
+      extra: nb ? { n: nb, centres: col.centres.slice(nf), width: col.width.slice(nf) } : null,
+      // The flow-wetted surface and the travel time it was worked out with,
+      // when the text gives a surface; aw 0 when it gives none.
+      surface,
+      // null, or { n, d, h, centre, depth, porosity, density, aw, grid, q,
+      // first, rule }: h the node spacings of matched layers (null for the
+      // reference layers' centres), rule how the first layer was chosen.
+      matrix,
       stride,                  // cells per fracture cell, 1 + matrix layers
+      // The flux through each end, per species: { terms: [[state, weight]],
+      // constant }, so that sum(weight * y[state]) + constant is it.
+      faces,
       cellOf,
       geom,
       enters,

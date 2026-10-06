@@ -1103,7 +1103,10 @@ console.log('\n--- dual porosity ---');
 */
 const FARF = JSON.parse(require('fs').readFileSync(path.join(__dirname, 'farf-fixture.json'), 'utf8'));
 
-/** A FARFCOMP case as model text: years throughout, L = tw so that v = 1. */
+/**
+ * A FARFCOMP case as model text: years throughout, L = tw so that v = 1, and
+ * FARFCOMP's own layers, which are no longer the page's default.
+ */
 function farfText(c, extra = {}) {
   const S = c.settings || c;
   const tw = S.tw;
@@ -1124,6 +1127,7 @@ LEFT = robin
 RIGHT = free
 PECLET = ${S.pe}
 MATRIX_CELLS = ${S.n_m}
+MATRIX_GRID = reference
 MATRIX_DEPTH = ${S.pen_dep}
 MATRIX_FIRST = ${S.pen_dep_0 == null ? 0 : S.pen_dep_0}
 MATRIX_POROSITY = ${S.eps_m}
@@ -1370,6 +1374,42 @@ X => , k = ${k}, on = ${on}
   close('  while a loss of the inventory runs at k in the rock too', yi[1], Math.exp(-k * 2), 1e-9);
 }
 {
+  // Decay on the inventory makes the daughter of the parent's whole
+  // inventory, which then takes up its own share between water and rock: a
+  // parent that hardly sorbs and a daughter that sorbs hard, in a rock cell
+  // nothing leaves, keep their atoms, Rm_p*C_p + Rm_d*C_d, to round-off.
+  const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 2
+LENGTH = 1
+DIFFUSION = 0
+LEFT = neumann
+RIGHT = neumann
+MATRIX_CELLS = 1
+MATRIX_DEPTH = 1
+MATRIX_POROSITY = 0.01
+WETTED_SURFACE = 10
+TEND = 20
+<SPECIES>
+P 1 R=2 Rm=0.5
+D 0 R=7 Rm=100
+<REACTIONS>
+P => D, k = 0.1, on = inventory
+`);
+  const y = last(run(m, { tend: 20, rtol: 1e-12, atol: 1e-20 }));
+  const rock = m.cellOf(0, 1) * 2;
+  const frac = m.cellOf(0, 0) * 2;
+  close('a daughter is born of the parent’s whole inventory: atoms kept in the rock',
+    0.5 * y[rock] + 100 * y[rock + 1], 0.5, 1e-11);
+  close('  and in the fracture, with its own R there', 2 * y[frac] + 7 * y[frac + 1], 2, 1e-11);
+  let message = '(no error)';
+  try {
+    RtmModel.compile('<SETTINGS>\nMODE = batch\n<SPECIES>\nA 1\nB 1\nC 0\n<REACTIONS>\nA + B => C, k = 1, on = inventory\n');
+  } catch (e) { message = e.message; }
+  check('  and a share of the inventory of two species at once is refused', /more than one/.test(message), message.slice(0, 70));
+}
+{
   // What a matrix needs, what "matrix" and "fracture" address, and what is warned about.
   const base = (extra) => `
 <SETTINGS>
@@ -1454,6 +1494,394 @@ X 1 7.0 matrix
     yAt(1, 0) === 1 && Math.abs(yAt(1, 1) - 5 * 0.1 / 0.5) < 1e-14 && Math.abs(yAt(0, 1) - 1 * 0.1 / 0.5) < 1e-14,
     `fracture ${yAt(1, 0)}, rock ${yAt(1, 1)}, other rock ${yAt(0, 1)}`);
   check('  and states are named cell.layer', m.species[m.cellOf(1, 2) * 2] === 'X@1.2', m.species[m.cellOf(1, 2) * 2]);
+}
+
+/* ======================================================================
+   2d'. A far-field path as Kompartment's defaults have it
+   ====================================================================== */
+console.log('\n--- a far-field path as Kompartment has it ---');
+/*
+  Kompartment's far-field path starts with twelve matrix layers matched to
+  diffusion into the rock, and the rock going on past the release point. The
+  same here, read off Kompartment's own module further down (section 9); this
+  is what does not need it: the settings that describe a path the way SKB
+  does, the outlet, the flux through each end, and the transfer function
+  against FARF31's exact one.
+*/
+
+/** A path in Kompartment's terms as model text. */
+function pathText(p, o = {}) {
+  const nf = o.nf || p.nf || 20;
+  const L = o.length || p.tw;
+  return `
+<SETTINGS>
+MODE = transport
+CELLS = ${nf}
+LENGTH = ${L}
+TRAVEL_TIME = ${p.tw}
+PECLET = ${p.pe}
+LEFT = robin
+RIGHT = ${o.right || 'semi-infinite'}
+${o.nm ? `MATRIX_CELLS = ${o.nm}` : ''}
+${o.grid ? `MATRIX_GRID = ${o.grid}` : ''}
+MATRIX_DEPTH = ${p.penDep}
+MATRIX_POROSITY = ${p.eps}
+MATRIX_DENSITY = ${p.rho}
+TRANSPORT_RESISTANCE = ${p.f}
+TIME_UNIT = year
+
+<SPECIES>
+X 0 D=0 left=0 De=${p.de} Kd=${p.kd}${p.kdf ? ` Kdf=${p.kdf}` : ''}
+
+<PARAMETERS>
+S all 0
+S 0 ${nf / L} fracture        # one unit a year into the first cell, per m2 of water
+
+<REACTIONS>
+=> X, k = S
+${p.lam ? `X => , k = ${p.lam}, on = inventory` : ''}
+`;
+}
+
+/** Kompartment's default path: T_w 100 a, F 1e5 a/m, Pe 10, 12.5 m of rock. */
+const KDEF = { tw: 100, f: 1e5, pe: 10, penDep: 12.5, eps: 0.0018, rho: 2700, nf: 20, de: 1e-4, kd: 0 };
+
+/**
+ * x in A x = b, A dense and row-major, by partial pivoting. The transfer
+ * function below is (sI - J)^-1 at a real s, a few hundred states.
+ */
+function solveDense(A, b, n) {
+  const x = Float64Array.from(b);
+  for (let k = 0; k < n; k++) {
+    let p = k;
+    for (let i = k + 1; i < n; i++) if (Math.abs(A[i * n + k]) > Math.abs(A[p * n + k])) p = i;
+    if (p !== k) {
+      for (let j = 0; j < n; j++) { const t = A[k * n + j]; A[k * n + j] = A[p * n + j]; A[p * n + j] = t; }
+      const t = x[k]; x[k] = x[p]; x[p] = t;
+    }
+    for (let i = k + 1; i < n; i++) {
+      const f = A[i * n + k] / A[k * n + k];
+      if (f === 0) continue;
+      for (let j = k; j < n; j++) A[i * n + j] -= f * A[k * n + j];
+      x[i] -= f * x[k];
+    }
+  }
+  for (let k = n - 1; k >= 0; k--) {
+    let s = x[k];
+    for (let j = k + 1; j < n; j++) s -= A[k * n + j] * x[j];
+    x[k] = s / A[k * n + k];
+  }
+  return x;
+}
+
+/** The flux through one end at the state y, as the page works it out. */
+function faceFlux(m, side, si, y) {
+  const f = m.faces[side][si];
+  let out = f.constant;
+  for (const [idx, w] of f.terms) out += w * y[idx];
+  return out;
+}
+
+/**
+ * The model's transfer function at a real frequency s: the Laplace
+ * transform of what leaves through the right-hand end after a unit pulse into
+ * the first cell, w.(sI - J)^-1 b with b the source.
+ */
+function discreteTransfer(m, s) {
+  const n = m.nspecies;
+  const V = new Float64Array(m.nnz);
+  m.jac(0, new Float64Array(n), V);
+  const A = new Float64Array(n * n);
+  const { colPtr, rowIdx } = m.pattern;
+  for (let c = 0; c < n; c++) for (let k = colPtr[c]; k < colPtr[c + 1]; k++) A[rowIdx[k] * n + c] -= V[k];
+  for (let i = 0; i < n; i++) A[i * n + i] += s;
+  const b = new Float64Array(n);
+  m.rhs(0, new Float64Array(n), b);
+  return faceFlux(m, 'right', 0, solveDense(A, b, n));
+}
+
+/**
+ * FARF31's exact transfer function for one nuclide (TR 90-01; the clean page
+ * FARF31.html works it out the same way): flux in at the inlet to flux out at
+ * the end of a semi-infinite stream tube, a matrix of finite depth beside it.
+ */
+function farf31Transfer(p, s) {
+  const z = s + (p.lam || 0);
+  const aw = p.f / p.tw;
+  const Rm = p.eps + p.rho * p.kd;
+  const Rf = 1 + (p.kdf || 0) * aw;
+  const g = Rf * z + aw * Math.sqrt(p.de * Rm * z) * Math.tanh(p.penDep * Math.sqrt((Rm * z) / p.de));
+  return Math.exp((p.pe / 2) * (1 - Math.sqrt(1 + (4 * p.tw * g) / p.pe)));
+}
+{
+  // What a path needs to say, and what it is given when it does not.
+  const m = RtmModel.compile(pathText(KDEF));
+  check('a rock matrix that does not say how many layers has twelve, as Kompartment’s path',
+    m.matrix.n === 12 && m.settings.MATRIX_CELLS === 12, `${m.matrix.n}`);
+  check('  laid out matched to diffusion into the rock, the first worked out from the path',
+    m.matrix.grid === 'matched' && m.matrix.rule === 'matched' && m.matrix.h !== null, `${m.matrix.grid}, ${m.matrix.rule}`);
+  close('  TRANSPORT_RESISTANCE over TRAVEL_TIME is the wetted surface', m.matrix.aw, 1000, 1e-15);
+  check('  TRAVEL_TIME sets the flow: LENGTH over it, ADVECTION on',
+    m.settings.VELOCITY === 1 && m.settings.ADVECTION === 1, `v ${m.settings.VELOCITY}`);
+  check('  and the rock goes on past the end for five cells at 20 cells and Pe 10',
+    m.extra && m.extra.n === 5 && m.settings.EXTRA_CELLS === 5 && m.cells === 25 * 13, m.extra && `${m.extra.n}`);
+  check('  which are laid out past LENGTH, as wide as the last cell',
+    m.extra.centres[0] === 102.5 && m.extra.width.every((w) => w === 5), `${m.extra.centres[0]}`);
+  const none = RtmModel.compile(pathText(KDEF).replace('MATRIX_DEPTH', 'MATRIX_CELLS = 0\nMATRIX_DEPTH'));
+  check('MATRIX_CELLS = 0 is no rock at all, and what was said of it is called unused',
+    none.matrix === null && /MATRIX_CELLS = 0/.test(none.warnings.join(' ')) && /not used/.test(none.warnings.join(' ')),
+    none.warnings.join(' | ').slice(0, 90));
+  const ref = RtmModel.compile(pathText(KDEF, { grid: 'reference' }));
+  check('MATRIX_GRID = reference is FARFCOMP’s layers: ratio e, nodes at the centres',
+    ref.matrix.h === null && Math.abs(ref.matrix.q - Math.E) < 1e-12 && ref.matrix.rule === 'e', `${ref.matrix.q}`);
+  const given = RtmModel.compile(pathText(KDEF).replace('MATRIX_DEPTH', 'MATRIX_FIRST = 1e-3\nMATRIX_DEPTH'));
+  check('MATRIX_FIRST is the first layer whichever the grid', given.matrix.d[0] === 1e-3 && given.matrix.rule === 'given');
+  const still = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 3
+LENGTH = 1
+LEFT = neumann
+RIGHT = neumann
+MATRIX_DEPTH = 0.5
+MATRIX_POROSITY = 0.02
+WETTED_SURFACE = 200
+<SPECIES>
+X 1 D=1e-9 Dm=1e-10
+<REACTIONS>
+`);
+  check('  and with no flow and no decay to size it by, the first layer is FARFCOMP’s',
+    still.matrix.rule === 'e' && Math.abs(still.matrix.d[0] / ((0.5 * (Math.E - 1)) / (Math.exp(12) - 1)) - 1) < 1e-9,
+    `${still.matrix.d[0].toExponential(4)}`);
+}
+{
+  // The SKB parameterisation, said the way it is said there.
+  const base = (settings, sp = 'X 0 D=0 left=0 Dm=1e-4') => `
+<SETTINGS>
+MODE = transport
+CELLS = 4
+LENGTH = 8
+${settings}
+TEND = 1
+<SPECIES>
+${sp}
+<REACTIONS>
+`;
+  const refuse = (text) => { try { RtmModel.compile(text); } catch (e) { return e.message; } return '(no error)'; };
+  const por = RtmModel.compile(base('TRAVEL_TIME = 4\nPOROSITY = 0.5'));
+  check('TRAVEL_TIME with a porosity: the Darcy VELOCITY is POROSITY*LENGTH/TRAVEL_TIME', por.settings.VELOCITY === 1, `${por.settings.VELOCITY}`);
+  check('  a VELOCITY that says otherwise is refused', /disagree/.test(refuse(base('TRAVEL_TIME = 4\nVELOCITY = 3'))));
+  check('  and so is ADVECTION = 0', /ADVECTION/.test(refuse(base('TRAVEL_TIME = 4\nADVECTION = 0'))));
+  check('TRANSPORT_RESISTANCE with no flow to divide it by is refused',
+    /travel time/.test(refuse(base('MATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.01\nTRANSPORT_RESISTANCE = 1e4'))));
+  check('  and one that disagrees with WETTED_SURFACE',
+    /disagree/.test(refuse(base('TRAVEL_TIME = 4\nMATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.01\nTRANSPORT_RESISTANCE = 1e4\nWETTED_SURFACE = 100'))));
+  const agree = RtmModel.compile(base('TRAVEL_TIME = 4\nMATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.01\nTRANSPORT_RESISTANCE = 1e4\nAPERTURE = 0.0008'));
+  close('  one that agrees with APERTURE stands', agree.matrix.aw, 2500, 1e-15);
+  // Kd and Kdf become Rm and R: read back through the derivative of a lone layer.
+  const kd = RtmModel.compile(base('TRAVEL_TIME = 4\nMATRIX_CELLS = 1\nMATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.01\nMATRIX_DENSITY = 2000\nWETTED_SURFACE = 100',
+    'X 0 D=0 left=0 De=1e-4 Kd=0.002 Kdf=0.01'));
+  const y = new Float64Array(kd.nspecies);
+  const f = new Float64Array(kd.nspecies);
+  y[kd.cellOf(0, 0)] = 1;
+  kd.rhs(0, y, f);
+  // One layer a metre deep: the wall exchange 2*De/d = 2e-4 per m2, aw = 100
+  // of wall per m3 of water, into R = 1 + Kdf*aw beside the advection u/dz =
+  // 2/2 out of the cell, and into Rm = eps + rho*Kd in the rock.
+  close('Kd= is the capacity eps + rho*Kd in the rock', f[kd.cellOf(0, 1)], 2e-4 / (0.01 + 2000 * 0.002), 1e-14);
+  close('Kdf= is the retardation 1 + Kdf*aw in the fracture', f[kd.cellOf(0, 0)],
+    -(1 + 2e-4 * 100) / (1 + 0.01 * 100), 1e-14);
+  check('Kd beside Rm is refused', /both Kd and Rm/.test(refuse(base('MATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.01\nWETTED_SURFACE = 1', 'X 0 Dm=1 Kd=1 Rm=2'))));
+  check('  Kdf beside R', /both Kdf and R/.test(refuse(base('WETTED_SURFACE = 1', 'X 0 Kdf=1 R=2'))));
+  check('  Kdf with no wetted surface', /Kdf/.test(refuse(base('', 'X 0 Kdf=1'))));
+  check('  and a negative Kd', /zero or more/.test(refuse(base('', 'X 0 Kd=-1'))));
+  const lone = RtmModel.compile(base('', 'X 0 D=1e-9 Dm=1e-10 Kd=0.1'));
+  check('rock properties with no rock are called unused', /no rock matrix/.test(lone.warnings.join(' ')), lone.warnings.join(' | ').slice(0, 80));
+}
+{
+  // The semi-infinite end.
+  const text = (right, extra = '', sp = 'X 0 D=0 left=1') => `
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 100
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1
+PECLET = 10
+LEFT = robin
+RIGHT = ${right}
+${extra}
+TEND = 1
+<SPECIES>
+${sp}
+<REACTIONS>
+`;
+  const refuse = (t) => { try { RtmModel.compile(t); } catch (e) { return e.message; } return '(no error)'; };
+  check('LEFT = semi-infinite is refused: it is an outlet', /outlet/.test(refuse(text('free').replace('LEFT = robin', 'LEFT = semi-infinite'))));
+  check('  so is a semi-infinite end the water does not leave by', /VELOCITY/.test(refuse(text('semi-infinite').replace('VELOCITY = 1', 'VELOCITY = -1'))));
+  check('  and EXTRA_CELLS without one', /semi-infinite/.test(refuse(text('free', 'EXTRA_CELLS = 3'))));
+  const three = RtmModel.compile(text('semi-infinite', 'EXTRA_CELLS = 3'));
+  check('EXTRA_CELLS given is the count', three.extra.n === 3);
+  const zero = RtmModel.compile(text('semi-infinite', 'EXTRA_CELLS = 0'));
+  check('  and 0 closes the last cell itself by extrapolation', zero.extra === null && zero.cells === 20);
+  // Counted as Kompartment counts them: rho = (2N - Pe)/(2N + Pe) per cell,
+  // and none at all where the grid's own dispersion is all there is.
+  const counts = [10, 20, 25, 40, 50].map((pe) => {
+    const x = RtmModel.compile(text('semi-infinite').replace('PECLET = 10', `PECLET = ${pe}`)).extra;
+    return x ? x.n : 0;
+  });
+  check('  and worked out, the fewest cells with rho^n under a tenth: 5, 3, 2, 0, 0 at Pe 10, 20, 25, 40, 50 on 20 cells',
+    counts.join(',') === '5,3,2,0,0', counts.join(', '));
+  const dOnly = RtmModel.compile(text('semi-infinite', '', 'X 0 D=2.5 left=1').replace('PECLET = 10\n', ''));
+  check('  a species’ own D counts as dispersion: D/(D + u*dz) = 1/3 needs 3', dOnly.extra.n === 3, `${dOnly.extra.n}`);
+  // The column goes on: a line reaching the last cell reaches the extra cells,
+  // a source in the first does not.
+  const go = RtmModel.compile(`${text('semi-infinite', '', 'X 0 D=0 left=0 R=Q\nY 0')}
+<PARAMETERS>
+Q all 2
+Q 15-19 3
+S all 0
+S 0 1
+
+<INITIAL>
+Y 10-19 0.5
+Y 3 0.7
+`.replace('<REACTIONS>\n', '<REACTIONS>\n=> X, k = S\n'));
+  const y0 = go.initialState();
+  const f0 = new Float64Array(go.nspecies);
+  go.rhs(0, y0, f0);
+  check('the cells past the end start as the last cell does', y0[go.cellOf(22, 0) * 2 + 1] === 0.5 && y0[go.cellOf(3, 0) * 2 + 1] === 0.7,
+    `${y0[go.cellOf(22, 0) * 2 + 1]}`);
+  // With nothing in X yet, its derivative is the source over R: only cell 0.
+  check('  hold what a line reaching the last cell gives, and no source of the first',
+    f0[go.cellOf(0, 0) * 2] === 0.5 && f0[go.cellOf(21, 0) * 2] === 0, `${f0[go.cellOf(0, 0) * 2]}, ${f0[go.cellOf(21, 0) * 2]}`);
+  // X at 1 in cell 21 alone: cell 22 takes u/dz = 0.2 of it by advection and
+  // D/dz^2 = 7.5/25 = 0.3 by dispersion, divided by its R.
+  const one = new Float64Array(go.nspecies);
+  one[go.cellOf(21, 0) * 2] = 1;
+  go.rhs(0, one, f0);
+  close('  and R = 3 there, from "Q 15-19 3"', f0[go.cellOf(22, 0) * 2], (0.2 + 0.3) / 3, 1e-14);
+}
+{
+  /*
+    THE FLUX THROUGH EACH END against the column's own balance: what the
+    cells gain is what comes in at x = 0 less what leaves at x = LENGTH, at
+    any state whatever -- for every kind of end, both ways of flowing, and a
+    rock matrix behind the cells. Exact, so to round-off.
+  */
+  const kinds = [['robin', 'semi-infinite', 1], ['robin', 'free', 1], ['dirichlet', 'dirichlet', 1],
+    ['dirichlet', 'neumann', -1], ['neumann', 'robin', -1], ['robin', 'semi-infinite', 1, true]];
+  let worst = 0;
+  for (const [L, R, dir, rock] of kinds) {
+    const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 12
+LENGTH = 6
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = ${0.3 * dir}
+POROSITY = 0.6
+PECLET = 15
+LEFT = ${L}
+RIGHT = ${R}
+${rock ? 'MATRIX_DEPTH = 0.2\nMATRIX_POROSITY = 0.01\nWETTED_SURFACE = 50' : ''}
+<SPECIES>
+X 0.3 D=0.02 left=1.3 right=0.4 R=1.7${rock ? ' Dm=1e-3 Kd=1e-4' : ''}
+<REACTIONS>
+`);
+    const y = Float64Array.from({ length: m.nspecies }, (_, k) => 0.2 + ((k * 7919) % 101) / 101);
+    const f = new Float64Array(m.nspecies);
+    m.rhs(0, y, f);
+    const aw = rock ? 50 : 0;
+    const Rm = rock ? 0.01 + 2700 * 1e-4 : 0;
+    let held = 0;
+    for (let i = 0; i < m.fracture; i++) {
+      held += m.grid.width[i] * 1.7 * f[m.cellOf(i, 0)];
+      if (rock) for (let j = 1; j <= m.matrix.n; j++) held += m.grid.width[i] * aw * Rm * m.matrix.d[j - 1] * f[m.cellOf(i, j)];
+    }
+    const net = faceFlux(m, 'left', 0, y) - faceFlux(m, 'right', 0, y);
+    worst = Math.max(worst, Math.abs(held - net) / Math.max(Math.abs(net), 1e-300));
+  }
+  check('what the column gains is the flux in at x = 0 less the flux out at LENGTH, for every end',
+    worst < 1e-12, `worst ${worst.toExponential(2)} relative over ${kinds.length} pairs`);
+}
+{
+  /*
+    AGAINST FARF31. The model's own transfer function -- the transform of the
+    release after a unit pulse in -- beside the exact one FARF31 inverts, at
+    real frequencies from far below the path's own to where the exact one has
+    fallen to e^-15. Kompartment's path is the same matrix (section 9), so
+    this is how far its default is from FARF31 too.
+  */
+  const freqs = (p) => {
+    const out = [];
+    for (let s = 1e-9; farf31Transfer(p, s) > Math.exp(-15) && out.length < 200; s *= 1.6) out.push(s);
+    return out;
+  };
+  // How far ln T is off where T is above e^-5, which is the bulk of a release,
+  // and the worst over the whole range.
+  const misses = (p, o) => {
+    const m = RtmModel.compile(pathText(p, o));
+    let bulk = 0;
+    let all = 0;
+    for (const s of freqs(p)) {
+      const e = Math.abs(Math.log(discreteTransfer(m, s) / farf31Transfer(p, s)));
+      all = Math.max(all, e);
+      if (farf31Transfer(p, s) > Math.exp(-5)) bulk = Math.max(bulk, e);
+    }
+    return { bulk, all };
+  };
+  const ra = { tw: 235.2, f: 80090, pe: 10, penDep: 4.5, eps: 0.0019, rho: 2700, nf: 20, de: 8.5e-7, kd: 4.5e-4, lam: 4.3322e-4 };
+  const now = misses(KDEF, {});
+  const old = misses(KDEF, { right: 'free', grid: 'reference', nm: 20 });
+  const fine = misses(KDEF, { nf: 40 });
+  check('the default path’s transfer function is FARF31’s to 3 % in the bulk of a release',
+    now.bulk < 0.03, `|ln T| off by ${now.bulk.toExponential(2)} where T > e^-5, ${now.all.toExponential(2)} down to e^-15`);
+  check('  where the old layers and a Danckwerts outlet were 9 % out', old.bulk > 3 * now.bulk, `${old.bulk.toExponential(2)}`);
+  check('  and what is left is the 20 fracture cells, at second order: 40 cells are 4 times closer',
+    now.bulk / fine.bulk > 3.5, `${fine.bulk.toExponential(2)}`);
+  const raNow = misses(ra, {});
+  const raOld = misses(ra, { right: 'free', grid: 'reference', nm: 20 });
+  check('  the same for a sorbing nuclide that decays on the way (Ra-226 on the TR-19-06 path)',
+    raNow.bulk < 0.03 && raOld.bulk > 3 * raNow.bulk, `${raNow.bulk.toExponential(2)} against ${raOld.bulk.toExponential(2)}`);
+  const m20 = misses(KDEF, { nm: 20 });
+  check('  and twelve matched layers do as well as twenty', Math.abs(m20.bulk - now.bulk) < 1e-3 * now.bulk + 1e-6,
+    `${m20.bulk.toExponential(3)} against ${now.bulk.toExponential(3)}`);
+  const tracer = RtmModel.compile(pathText(KDEF));
+  close('  a tracer that does not decay all comes out: T(0) = 1', discreteTransfer(tracer, 0), 1, 1e-12);
+}
+{
+  // The analytic Jacobian of a whole path with a decay chain behind it, and
+  // a path that holds its decay constant -- the first layer sized by it.
+  const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 50
+TRAVEL_TIME = 50
+PECLET = 10
+LEFT = robin
+RIGHT = semi-infinite
+MATRIX_DEPTH = 12.5
+MATRIX_POROSITY = 0.0018
+TRANSPORT_RESISTANCE = 1e5
+TIME_UNIT = year
+<SPECIES>
+P 0 D=0 left=1 De=3.15e-5 Kd=0.0017
+Q 0 D=0 left=0 De=3.15e-5 Kd=0.05 Kdf=1e-4
+<REACTIONS>
+P => Q, k = 2.8234E-6, on = inventory
+Q => , k = 1.8289, on = inventory
+`);
+  const v = RtmModel.verifyJacobian(m, 0, Float64Array.from(m.initialState(), (_, k) => 1e-3 * (1 + (k % 7))));
+  check('the analytic Jacobian of a semi-infinite path with a chain agrees with a central difference',
+    v.discrepancies.length === 0, `${v.discrepancies.length} of ${v.checked} disagree, ${v.unresolvable} below the floor`);
+  // Q's decay, 1.83 a year, is faster than anything the path lets through, so
+  // the layers are sized by it: sqrt(De/(Rm*lam))/10.
+  const Rm = 0.0018 + 2700 * 0.05;
+  close('  and a short-lived member sizes the first layer by its decay', m.matrix.d[0], Math.sqrt(3.15e-5 / Rm / 1.8289) / 10, 1e-12);
 }
 
 /* ======================================================================
@@ -1798,19 +2226,164 @@ console.log('\n--- tables ---');
   for (const [label, table, params, re] of [
     ['x that does not increase', '<TABLE t>\n0 1\n0 2\n', 'P all t(x)', /must increase/],
     ['a log table with a zero in it', '<TABLE t log>\n0 1\n1 0\n', 'P all t(x)', /above zero/],
-    ['a row that is not two numbers', '<TABLE t>\n0 1 2\n', 'P all t(x)', /not two numbers/],
+    ['a row of one number', '<TABLE t>\n0\n', 'P all t(x)', /not two numbers/],
+    ['rows of different widths', '<TABLE t>\n0 1 2\n1 2\n', 'P all t(x, 1)', /not 3 numbers/],
+    ['a table of two columns read without saying which', '<TABLE t>\n0 1 2\n', 'P all t(x)', /say which/],
+    ['a column it has not got', '<TABLE t>\nx A B\n0 1 2\n', 'P all t(x, C)', /no column "C"/],
     ['a table with no name', '<TABLE>\n0 1\n', 'P all 1', /needs a name/],
   ]) {
     let m = '(no error)';
     try { withTable(table, params); } catch (err) { m = err.message; }
     check(`  refused: ${label}`, re.test(m), m.slice(0, 70));
   }
+  // A rate law reads a table at the clock, never at a concentration: the
+  // table's slope would be part of the Jacobian.
   let m = '(no error)';
   try {
-    RtmModel.compile(`<SETTINGS>\nMODE = batch\n\n<SPECIES>\nX 1\n\n${T}\n<REACTIONS>\nX => , r = t(1)*[X]\n`);
+    RtmModel.compile(`<SETTINGS>\nMODE = batch\n\n<SPECIES>\nX 1\n\n${T}\n<REACTIONS>\nX => , r = t([X])*[X]\n`);
   } catch (err) { m = err.message; }
-  check('  and a table read in a rate law is refused, with the way to do it instead',
-    /cannot.*<PARAMETERS>/.test(m), m.slice(0, 90));
+  check('  and a table read in a rate law at a concentration is refused, with the way to do it instead',
+    /read at a time/.test(m) && /<PARAMETERS>/.test(m), m.slice(0, 90));
+  const cols = withTable('<TABLE c>\nx  A  B\n0  1  10\n2  3  30\n', 'P all c(x, B) + c(x, 1)');
+  check('a table of several columns, named in its first row, is read by name or by number: B + A at the centres',
+    cols.f.every((v, i) => Math.abs(v - ([12.5, 17.5, 22.5, 27.5][i] + [1.25, 1.75, 2.25, 2.75][i])) < 1e-13), cols.f.join(', '));
+  const ll = withTable('<TABLE p loglog>\n1 1\n100 1e-4\n', 'P all p(x)', 40, 4);
+  // Cell centres 5, 15, 25, 35: a power law x^-2 between the two rows.
+  check('a loglog table is a power law between its rows: x^-2 at 5, 15, 25, 35',
+    ll.f.every((v, i) => Math.abs(v / [5, 15, 25, 35][i] ** -2 - 1) < 1e-12), ll.f.join(', '));
+}
+
+/* ======================================================================
+   Sources that follow the clock: a release history
+   ====================================================================== */
+console.log('\n--- sources that follow the clock ---');
+{
+  // t in a rate law is the clock: a loss that fades with time,
+  // dA/dt = -k exp(-t/tau) A, has A = exp(-k tau (1 - exp(-t/tau))).
+  const k = 0.5;
+  const tau = 3;
+  const T = 10;
+  const m = RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = ${T}\n\n<SPECIES>\nA 1\n\n<REACTIONS>\n`
+    + `A => , r = k*exp(-t/tau)*[A], k = ${k}, tau = ${tau}\n`);
+  close('t in a rate law is the clock: a loss that fades with time, against its closed form',
+    last(run(m, { tend: T }))[0], Math.exp(-k * tau * (1 - Math.exp(-T / tau))), 1e-8);
+  check('  and a Jacobian that follows the clock is not said to be constant', m.jacobianConstant === false);
+  let msg = '(no error)';
+  try {
+    RtmModel.compile('<SETTINGS>\nMODE = batch\n\n<SPECIES>\nA 1\n\n<PARAMETERS>\nt all 2\n\n<REACTIONS>\nA => , k = 1\n');
+  } catch (e) { msg = e.message; }
+  check('  and a parameter called t is refused: t is the time', /"t" is the time/.test(msg), msg.slice(0, 60));
+}
+{
+  /*
+    A PULSE IN A RELEASE HISTORY, ten years of it in five thousand, into a
+    store that decays. The run is started again at every corner of a table
+    read at the clock, so the pulse is integrated whole; without that the
+    solver's steps have grown long over the quiet stretch before it, and it
+    steps clean over the pulse and sees nothing at all.
+  */
+  const m = RtmModel.compile(`<SETTINGS>
+MODE = batch
+TEND = 5000
+TIME_UNIT = year
+
+<TABLE pulse>
+0       0
+999.99  0
+1000    1
+1010    1
+1010.01 0
+
+<SPECIES>
+X 0
+
+<REACTIONS>
+=> X, r = pulse(t)
+X => , k = 1e-3
+`);
+  check('the run is started again at each corner of a table read at the clock',
+    m.breaks(0, 5000).join(',') === '999.99,1000,1010,1010.01', m.breaks(0, 5000).join(','));
+  // The table's own integral: ten years at one, and the two ramps of a
+  // hundredth of a year, each worth half of that.
+  const exact = (lo, hi) => (Math.exp(-1e-3 * (5000 - hi)) - Math.exp(-1e-3 * (5000 - lo))) / 1e-3;
+  const want = exact(1000, 1010) + 0.5 * 0.01 * (Math.exp(-1e-3 * 4000) + Math.exp(-1e-3 * (5000 - 1010)));
+  const seen = last(run(m, { tend: 5000, rtol: 1e-9, atol: 1e-14 }))[0];
+  close('  so a pulse of ten years in five thousand is seen whole', seen, want, 1e-5);
+  const blind = Object.assign(Object.create(m), { breaks: undefined });
+  const missed = last(run(blind, { tend: 5000, rtol: 1e-9, atol: 1e-14 }))[0];
+  check('  where a run that is not started again steps over it and sees nothing',
+    missed < 1e-6 * want, `${missed.toExponential(2)} against ${want.toExponential(4)}`);
+  // Where a table turns follows its argument: a delay moves the corners, a
+  // factor scales them, and an argument that is not a line in t has none
+  // the run can know of.
+  const at = (arg) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1e4\n\n<TABLE p>\n0 0\n10 1\n20 0\n\n`
+    + `<SPECIES>\nX 0\n\n<REACTIONS>\n=> X, r = p(${arg})\n`).breaks(0, 1e4).join(',');
+  check('  the corners follow the argument: a delay, a factor, and none for one that is not a line in t',
+    at('t - 1000') === '1000,1010,1020' && at('2*t') === '5,10' && at('t/100') === '1000,2000'
+      && at('sqrt(t)') === '', `${at('t - 1000')} | ${at('2*t')} | ${at('t/100')} | ${at('sqrt(t)')}`);
+}
+{
+  /*
+    A RELEASE HISTORY THROUGH A FAR-FIELD PATH, against FARF31. The path is
+    Kompartment's default one; the nuclide Ra-226, which the rock holds back
+    by five orders; the history a rise, a plateau and a decline over twenty
+    thousand years. FARF31.html convolves the history with the path's exact
+    response (TR 90-01), and the model converges on that at second order as
+    the cells along the path are refined: the 20 cells of the default are
+    where its error is, as the transfer function above showed.
+  */
+  const Farf31Model = require(path.join(jsDir, 'farf31-model.js'));
+  const hist = [[0, 0], [500, 0], [600, 1], [2000, 1], [5000, 0.2], [20000, 0]];
+  const times = Array.from({ length: 41 }, (_, k) => 600 * (40000 / 600) ** (k / 40));
+  const ref = Farf31Model.run({
+    settings: { evalTimes: times, check: false },
+    params: { tw: 100, Pe: 10, aw: 1000, eps: 0.0018, x0: 12.5, rho: 2700 },
+    nuclides: [{ name: 'Ra', thalf: 1600, kd: 4.5e-4, de: 1e-4, source: true }],
+    series: { Ra: hist },
+  }).at.out[0];
+  const peakRef = Math.max(...ref);
+  const peakAt = (nf) => {
+    const m = RtmModel.compile(`<SETTINGS>
+MODE = transport
+CELLS = ${nf}
+LENGTH = 100
+TRAVEL_TIME = 100
+PECLET = 10
+LEFT = robin
+RIGHT = semi-infinite
+MATRIX_DEPTH = 12.5
+MATRIX_POROSITY = 0.0018
+TRANSPORT_RESISTANCE = 1E5
+TIME_UNIT = year
+
+<TABLE release>
+${hist.map(([t, v]) => `${t} ${v}`).join('\n')}
+
+<SPECIES>
+Ra 0 D=0 left=0 De=1e-4 Kd=4.5e-4
+
+<PARAMETERS>
+IN all 0
+IN 0 1/w fracture
+
+<REACTIONS>
+=> Ra, r = IN*release(t)
+Ra => , k = ${Math.LN2 / 1600}, on = inventory
+`);
+    const r = run(m, { tend: 40000, rtol: 1e-8, atol: 1e-20, maxPoints: 1e9 });
+    let k = 1;
+    let peak = 0;
+    for (const tw of times) {
+      while (k < r.t.length - 1 && r.t[k] < tw) k++;
+      const a = (tw - r.t[k - 1]) / (r.t[k] - r.t[k - 1]);
+      peak = Math.max(peak, faceFlux(m, 'right', 0, r.y[k - 1]) * (1 - a) + faceFlux(m, 'right', 0, r.y[k]) * a);
+    }
+    return Math.abs(peak / peakRef - 1);
+  };
+  const [e20, e40, e80] = [20, 40, 80].map(peakAt);
+  check('a release history through the default path converges on FARF31’s convolution of it at second order',
+    e40 < e20 / 3.5 && e80 < e40 / 3.5 && e80 < 0.025,
+    `peak off by ${(100 * e20).toFixed(1)} %, ${(100 * e40).toFixed(1)} %, ${(100 * e80).toFixed(2)} % on 20, 40, 80 cells`);
 }
 
 console.log('\n--- a species held in some cells only ---');
@@ -2032,30 +2605,34 @@ console.log('\n--- the examples ---');
     SECULAR EQUILIBRIUM, which is the check this example is worth.
 
     Deep in the rock nothing flows, so after a million years each short-lived
-    daughter must sit at the ratio its own decay sets: lambda_parent N_parent
-    = lambda_daughter N_daughter. That is a statement about the chain, the
-    sorption and the decay together, and it holds to a tenth of a per cent
-    for all three pairs -- with Rm from 0.54 to 143, so it is not the
-    capacities cancelling.
+    daughter must sit at the activity of its parent: lambda_parent N_parent =
+    lambda_daughter N_daughter, N the whole inventory, Rm*C. That is a
+    statement about the chain, the sorption and the decay together: with Rm
+    from 1.2 to 143 the concentrations themselves are a hundred times apart.
+    It only holds if a daughter is born of the parent's whole inventory and
+    then takes up its own share -- until 2026-10-06 a daughter here was born
+    of the parent's concentration times its own capacity, which made atoms,
+    and this check, written against that, compared the concentrations.
 
     In the FRACTURE it does not hold, and should not: flow carries a nuclide
-    away before its daughter catches up. Thorium is the slow one and radium
-    runs 2.4 times its equilibrium share there.
+    away before its daughter catches up.
   */
   const lam = { Th230: 9.1946e-6, Ra226: 4.3322e-4, Pb210: 3.1083e-2, Po210: 1.8289 };
+  const Rm = { Th230: 0.0019 + 2700 * 5.3e-2, Ra226: 0.0019 + 2700 * 4.5e-4, Pb210: 0.0019 + 2700 * 2.5e-2,
+    Po210: 0.0019 + 2700 * 2.5e-2 };
   const cellAt = (i, j, name) => yu[u.cellOf(i, j) * 6 + u.speciesNames.indexOf(name)];
   let offBy = 0;
   for (const [parent, daughter] of [['Pb210', 'Po210'], ['Ra226', 'Pb210'], ['Th230', 'Ra226']]) {
-    const want = lam[parent] / lam[daughter];
+    const want = (lam[parent] * Rm[parent]) / (lam[daughter] * Rm[daughter]);
     for (const cell of [0, u.fracture - 1]) {
       offBy = Math.max(offBy, Math.abs(cellAt(cell, u.matrix.n, daughter) / cellAt(cell, u.matrix.n, parent) / want - 1));
     }
   }
   check('  and deep in the rock the chain reaches secular equilibrium',
-    offBy < 5e-3, `worst ${(100 * offBy).toFixed(2)} % from lambda_parent/lambda_daughter`);
-  check('  while in the fracture the flow keeps it from doing so',
-    Math.abs(cellAt(0, 0, 'Ra226') / cellAt(0, 0, 'Th230') / (lam.Th230 / lam.Ra226) - 1) > 1,
-    `radium is ${(cellAt(0, 0, 'Ra226') / cellAt(0, 0, 'Th230') / (lam.Th230 / lam.Ra226)).toFixed(2)} times its equilibrium share`);
+    offBy < 5e-3, `worst ${(100 * offBy).toFixed(2)} % from the parent's activity`);
+  const share = cellAt(0, 0, 'Ra226') / cellAt(0, 0, 'Th230') / (lam.Th230 / lam.Ra226);
+  check('  while in the fracture the flow keeps it from doing so', Math.abs(share - 1) > 0.5,
+    `radium is ${share.toFixed(2)} times its equilibrium share`);
 }
 
 /* ======================================================================
@@ -2221,7 +2798,159 @@ console.log('\n--- Kompartment’s solvers here ---');
   check('norm control loosens Robertson’s run', nc.stats.nsteps < plain.stats.nsteps, `${nc.stats.nsteps} against ${plain.stats.nsteps}`);
 }
 
+/* ======================================================================
+   9. Kompartment's far-field path, from its own module
+   ====================================================================== */
+/*
+  The far-field path Kompartment builds, put beside the model text that says
+  the same path here: the layers, the cells past the release point, every
+  entry of the transport matrix and the release. Kompartment's module is an
+  ES module, so this part waits for it; it runs last for that reason alone.
+
+  Kompartment's states are what each cell holds, inventories, and these are
+  concentrations, so its matrix is this one seen through the capacities:
+  A[r][c] = cap_r/cap_c * J[r][c], with cap = R in the fracture and
+  aw*Rm*d_j in layer j, per unit volume of water. The release likewise: its
+  weights act on inventories, R*dz*c per m2 of the water's cross-section.
+*/
+async function kompartmentPath() {
+  console.log('\n--- Kompartment’s own far-field path ---');
+  const { pathToFileURL } = require('url');
+  const K = await import(pathToFileURL(path.join(__dirname, '..', '..', '..', 'kompartment', 'src', 'domain', 'farfield.js')).href);
+  const chain = (p) => `
+<SETTINGS>
+MODE = transport
+CELLS = ${p.nf}
+LENGTH = ${p.tw}
+TRAVEL_TIME = ${p.tw}
+PECLET = ${p.pe}
+LEFT = robin
+RIGHT = semi-infinite
+${p.nm === 12 ? '' : `MATRIX_CELLS = ${p.nm}`}
+MATRIX_DEPTH = ${p.penDep}
+${p.first ? `MATRIX_FIRST = ${p.first}` : ''}
+MATRIX_POROSITY = ${p.eps}
+MATRIX_DENSITY = ${p.rho}
+TRANSPORT_RESISTANCE = ${p.f}
+TIME_UNIT = year
+
+<SPECIES>
+${p.nucs.map((n, k) => `N${k} 0 D=0 left=0 De=${n.de} Kd=${n.kd}${n.kdf ? ` Kdf=${n.kdf}` : ''}`).join('\n')}
+
+<PARAMETERS>
+S all 0
+S 0 ${p.nf / p.tw} fracture
+
+<REACTIONS>
+=> N0, k = S
+${p.nucs.map((n, k) => (n.lam ? `N${k} => ${k + 1 < p.nucs.length ? `N${k + 1}` : ''}, k = ${n.lam}, on = inventory` : '')).join('\n')}
+`;
+  const year = (t) => Math.LN2 / t;
+  const cases = [
+    { name: 'the default path', tw: 100, f: 1e5, pe: 10, penDep: 12.5, eps: 0.0018, rho: 2700, nf: 20, nm: 12,
+      nucs: [{ de: 1e-4, kd: 0, lam: 0 }] },
+    // Kompartment's own example: the U-238 chain through 50 years of rock.
+    { name: 'its far-field example', tw: 50, f: 1e5, pe: 10, penDep: 12.5, eps: 0.0018, rho: 2700, nf: 20, nm: 20,
+      nucs: [{ de: 3.15e-5, kd: 0.0017, lam: year(4.468e9) }, { de: 3.15e-5, kd: 0.0017, lam: year(245500) },
+        { de: 3.15e-5, kd: 0.05, lam: year(75380) }] },
+    { name: 'a short-lived nuclide', tw: 100, f: 1e5, pe: 10, penDep: 12.5, eps: 0.0018, rho: 2700, nf: 20, nm: 12,
+      nucs: [{ de: 1e-4, kd: 0.01, lam: 1.83 }] },
+    { name: 'fracture sorption', tw: 30, f: 3e4, pe: 25, penDep: 4, eps: 0.003, rho: 2650, nf: 15, nm: 12,
+      nucs: [{ de: 5e-5, kd: 0.001, kdf: 0.002, lam: 0 }] },
+    { name: 'a first layer given', tw: 100, f: 1e5, pe: 10, penDep: 12.5, eps: 0.0018, rho: 2700, nf: 20, nm: 12, first: 1e-3,
+      nucs: [{ de: 1e-4, kd: 0, lam: 0 }] },
+  ];
+  let layersSame = true;
+  let countsSame = true;
+  let worstEntry = 0;
+  let entries = 0;
+  let strays = 0;
+  let worstRelease = 0;
+  for (const p of cases) {
+    const m = RtmModel.compile(chain(p));
+    const ns = p.nucs.length;
+    const aw = p.f / p.tw;
+    const nucs = p.nucs.map((n) => ({ de: n.de, rm: p.eps + p.rho * n.kd, lam: n.lam, rf: 1 + (n.kdf || 0) * aw }));
+    const g = K.pathGrid({ grid: 'matched', penDep: p.penDep, nm: p.nm, first: p.first || null, aw, tw: p.tw, pe: p.pe, nucs });
+    for (let j = 0; j < p.nm; j++) if (g.d[j] !== m.matrix.d[j] || g.h[j] !== m.matrix.h[j]) layersSame = false;
+    const block = { n_f: p.nf, n_m: p.nm, o_b: K.CONTINUES, n_b: '', pe: p.pe };
+    if ((m.extra ? m.extra.n : 0) !== K.extraCells(block)) countsSame = false;
+    const st = K.cellStructure(block);
+    const V = new Float64Array(m.nnz);
+    m.jac(0, new Float64Array(m.nspecies), V);
+    const J = new Map();
+    const { colPtr, rowIdx } = m.pattern;
+    for (let c = 0; c < m.nspecies; c++) for (let k = colPtr[c]; k < colPtr[c + 1]; k++) J.set(`${rowIdx[k]},${c}`, V[k]);
+    for (let s = 0; s < ns; s++) {
+      const n = p.nucs[s];
+      const c = K.coefficients({ nf: p.nf, nm: p.nm, tw: p.tw, f: p.f, surface: 'f', kd_f: n.kdf || 0, kd_m: n.kd,
+        de_m: n.de, eps_m: p.eps, rho_m: p.rho, pe: p.pe, pen_dep: p.penDep, pen_dep_0: p.first || null,
+        grid: 'matched', lam: n.lam }, g);
+      const vals = new Float64Array(st.nnz);
+      K.cellValues(block, c, vals);
+      // Kompartment's matrix, with the decay it adds to every cell beside it.
+      const A = new Map();
+      for (let e = 0; e < st.nnz; e++) {
+        const key = `${st.rows[e]},${st.cols[e]}`;
+        A.set(key, (A.get(key) || 0) + vals[e] - (st.rows[e] === st.cols[e] ? n.lam : 0));
+      }
+      const Rf = 1 + (n.kdf || 0) * aw;
+      const Rm = p.eps + p.rho * n.kd;
+      const cap = (cell) => { const j = cell % (p.nm + 1); return j === 0 ? Rf : aw * Rm * g.d[j - 1]; };
+      for (const [key, a] of A) {
+        const [r, cc] = key.split(',').map(Number);
+        const seen = (cap(r) / cap(cc)) * (J.get(`${r * ns + s},${cc * ns + s}`) || 0);
+        worstEntry = Math.max(worstEntry, Math.abs(seen - a) / Math.abs(a));
+        entries++;
+      }
+      // ...and nothing moving this nuclide here that Kompartment does not have.
+      for (const [key, v] of J) {
+        const [r, cc] = key.split(',').map(Number);
+        if (r % ns === s && cc % ns === s && v !== 0 && !A.has(`${(r - s) / ns},${(cc - s) / ns}`)) strays++;
+      }
+      // The chain: Kompartment adds lambda_p times the parent's inventory to
+      // the daughter's, in every cell; seen through the capacities that is
+      // this model's d(C_d)/d(C_p).
+      if (s > 0) {
+        const lp = p.nucs[s - 1].lam;
+        const Rp = 1 + (p.nucs[s - 1].kdf || 0) * aw;
+        const Rmp = p.eps + p.rho * p.nucs[s - 1].kd;
+        const capP = (cell) => { const j = cell % (p.nm + 1); return j === 0 ? Rp : aw * Rmp * g.d[j - 1]; };
+        const ncell = m.cells;
+        for (let cell = 0; cell < ncell; cell++) {
+          const seen = (cap(cell) / capP(cell)) * J.get(`${cell * ns + s},${cell * ns + s - 1}`);
+          worstEntry = Math.max(worstEntry, Math.abs(seen - lp) / lp);
+          entries++;
+        }
+      }
+      const cells = K.releaseCells(block);
+      const w = new Float64Array(cells.length);
+      K.releaseWeights(block, c, w);
+      const y = Float64Array.from({ length: m.nspecies }, (_, k) => 0.1 + ((k * 104729) % 997) / 997);
+      let theirs = 0;
+      cells.forEach((cell, q) => { theirs += w[q] * Rf * (p.tw / p.nf) * y[cell * ns + s]; });
+      worstRelease = Math.max(worstRelease, Math.abs(faceFlux(m, 'right', s, y) - theirs) / Math.abs(theirs));
+    }
+  }
+  check(`the matched layers are Kompartment’s, bit for bit, in ${cases.length} paths`, layersSame);
+  check('  and so are the cells past the release point', countsSame);
+  check('  and every entry of its transport matrix and its chain, through the capacities',
+    worstEntry < 1e-12 && strays === 0, `${entries} entries, worst ${worstEntry.toExponential(2)} relative, ${strays} not in Kompartment's`);
+  check('  and its release, read at the same plane with the same weights',
+    worstRelease < 1e-13, `worst ${worstRelease.toExponential(2)} relative`);
+  let sameCount = true;
+  for (const nf of [5, 10, 20, 40]) {
+    for (const pe of [2, 10, 25, 40, 100]) {
+      const m = RtmModel.compile(pathText({ ...KDEF, pe }, { nf }));
+      if ((m.extra ? m.extra.n : 0) !== K.autoExtraCells(nf, pe)) sameCount = false;
+    }
+  }
+  check('  and the count of them over 20 pairs of cells and Peclet numbers', sameCount);
+}
+
 /* ====================================================================== */
-console.log(`\n${checks - failures.length} of ${checks} checks passed`);
-if (failures.length) console.log(`failed: ${failures.join(', ')}`);
-process.exit(failures.length ? 1 : 0);
+kompartmentPath().catch((e) => check('Kompartment’s far-field module could be read', false, e.message)).then(() => {
+  console.log(`\n${checks - failures.length} of ${checks} checks passed`);
+  if (failures.length) console.log(`failed: ${failures.join(', ')}`);
+  process.exit(failures.length ? 1 : 0);
+});

@@ -17,7 +17,7 @@
   // an entry whose imports changed while its own URL did not is served from
   // cache with the old import list, and the symptom is a solver that the page
   // offers and the worker has never heard of.
-  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20261005';
+  const WORKER_URL = 'resources/js/facsimile-worker-entry.js?v=20261006';
   const YEAR_S = 365.25 * 86400;
 
   const $ = (id) => document.getElementById(id);
