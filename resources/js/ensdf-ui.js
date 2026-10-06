@@ -52,7 +52,7 @@
     tab: 'nuclide',
     colour: 'halflife',
     chainOpt: { minBranch: 0, life: 'iso', overlay: true, dir: 'down', style: 'grid' },   // dir: 'down' to the daughters, 'up' to the parents; style: how the chain is drawn, 'grid' (Z across, A down) or 'series' (circles as rdc.html draws them)
-    inv: { from: 0, end: 0, unit: 'y', qty: 'Bq', xLog: true, yLog: true, for: '', cursor: null },
+    inv: { from: 0, end: 0, unit: 'y', qty: 'Bq', sum: false, xLog: true, yLog: true, for: '', cursor: null },   // sum: an energy integrated over time
     inventories: {},       // chain start key ('up:' first for the parents) -> {member key: [value, unit]}
     levelsAll: false,
     radSort: 'energy',
@@ -67,7 +67,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         colour: state.colour, chainOpt: state.chainOpt, tab: state.tab, view: state.view, panelWidth: state.panelWidth,
         dbKey: state.dbKey, sel: state.sel, radSort: state.radSort,
-        inv: { from: state.inv.from, end: state.inv.end, unit: state.inv.unit, qty: state.inv.qty, xLog: state.inv.xLog, yLog: state.inv.yLog, for: state.inv.for },
+        inv: { from: state.inv.from, end: state.inv.end, unit: state.inv.unit, qty: state.inv.qty, sum: state.inv.sum, xLog: state.inv.xLog, yLog: state.inv.yLog, for: state.inv.for },
         inventories: Object.fromEntries(Object.entries(state.inventories).slice(-20)),
       }));
     } catch (e) { /* storage unavailable */ }
@@ -91,6 +91,7 @@
         if (s.inv.from > 0) state.inv.from = s.inv.from;
         if (['s', 'min', 'h', 'd', 'y'].includes(s.inv.unit)) state.inv.unit = s.inv.unit;
         if (typeof s.inv.qty === 'string') state.inv.qty = s.inv.qty;
+        if (typeof s.inv.sum === 'boolean') state.inv.sum = s.inv.sum;
         if (typeof s.inv.xLog === 'boolean') state.inv.xLog = s.inv.xLog;
         if (typeof s.inv.yLog === 'boolean') state.inv.yLog = s.inv.yLog;
         if (typeof s.inv.for === 'string') state.inv.for = s.inv.for;
@@ -1221,15 +1222,17 @@
   */
   const TIME_UNITS = [['s', 1], ['min', 60], ['h', 3600], ['d', 86400], ['y', C.YEAR_S]];
   const TIME_WORDS = { s: 'seconds', min: 'minutes', h: 'hours', d: 'days', y: 'years' };
+  /* e: which energy, for the quantities that are energies given off; sum:
+     the label and unit of that energy integrated over time. */
   const QUANTITIES = [
     { id: 'Bq', label: 'Activity (Bq)', unit: 'Bq' },
     { id: 'mol', label: 'Amount (mol)', unit: 'mol' },
     { id: 'g', label: 'Mass (g)', unit: 'g' },
-    { id: 'alpha', label: 'Alpha energy (MeV/s)', unit: 'MeV/s', e: 0 },
-    { id: 'electron', label: 'Electron energy, beta included (MeV/s)', unit: 'MeV/s', e: 1 },
-    { id: 'photon', label: 'Photon energy (MeV/s)', unit: 'MeV/s', e: 2 },
-    { id: 'total', label: 'Total emitted energy (MeV/s)', unit: 'MeV/s', e: 3 },
-    { id: 'W', label: 'Total emitted power (W)', unit: 'W', e: 3, scale: 1.602176634e-13 },
+    { id: 'alpha', label: 'Alpha energy (MeV/s)', unit: 'MeV/s', e: 0, sum: ['Alpha energy, integrated (MeV)', 'MeV'] },
+    { id: 'electron', label: 'Electron energy, beta included (MeV/s)', unit: 'MeV/s', e: 1, sum: ['Electron energy, beta included, integrated (MeV)', 'MeV'] },
+    { id: 'photon', label: 'Photon energy (MeV/s)', unit: 'MeV/s', e: 2, sum: ['Photon energy, integrated (MeV)', 'MeV'] },
+    { id: 'total', label: 'Total emitted energy (MeV/s)', unit: 'MeV/s', e: 3, sum: ['Total emitted energy, integrated (MeV)', 'MeV'] },
+    { id: 'W', label: 'Total emitted power (W)', unit: 'W', e: 3, scale: 1.602176634e-13, sum: ['Total emitted energy, integrated (J)', 'J'] },
   ];
   /* A number for an input: plain, or with an exponent when it is long. */
   const inputNum = (v) => (!(v > 0) ? '' : v >= 1e5 || v < 1e-3 ? v.toExponential().replace(/\.?0+e/, 'e').replace('e+', 'e') : String(+v.toPrecision(10)));
@@ -1256,7 +1259,11 @@
     return state.inventories[k];
   }
 
-  const invFileName = (ext) => `inventory-${state.chain.up ? 'parents-' : ''}${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}.${ext}`;
+  const invFileName = (ext) => `inventory-${state.chain.up ? 'parents-' : ''}${C.name(state.chain.root.z, state.chain.root.a, state.chain.root.k, state.chain.root.nuc).key}-${inv.q.id}${inv.q.summed ? '-integrated' : ''}.${ext}`;
+
+  /* The time the table and the boxes show when no cursor is set: the start,
+     or for an integrated energy, which is nothing at the start, the end. */
+  const invRestTime = () => state.inv.cursor ?? (inv && inv.q.summed ? inv.times.length - 1 : 0);
 
   /* Atoms in an amount given in Bq, mol or g. A mass takes the mass number for
      the molar mass, which is right to 0.1 % above A = 20. */
@@ -1315,8 +1322,10 @@
     const times = [0];
     if (state.inv.xLog) for (let i = 0; i < INV_POINTS; i++) times.push(from * Math.pow(end / from, i / (INV_POINTS - 1)));
     else for (let i = 1; i <= INV_POINTS; i++) times.push((end * i) / INV_POINTS);
-    const res = any ? C.decayAt(sys, n0, times) : null;
-    const q = QUANTITIES.find((x) => x.id === state.inv.qty) || QUANTITIES[0];
+    const q0 = QUANTITIES.find((x) => x.id === state.inv.qty) || QUANTITIES[0];
+    /* An energy integrated over time: each member's decays since t = 0 times what it gives off per decay. */
+    const q = q0.sum && state.inv.sum ? { ...q0, label: q0.sum[0], unit: q0.sum[1], summed: true } : q0;
+    const res = any ? C.decayAt(sys, n0, times, { decays: !!q.summed }) : null;
     const em = sys.members.map((nd) => (nd.kind === 'state' && nd.st && !nd.st.st ? C.chainEmission(state.idx, nd) : null));
     const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
     /* Every drawn member keeps its colour whatever is shown: its place in the chain. */
@@ -1335,7 +1344,7 @@
           if (q.id === 'Bq') v = A;
           else if (q.id === 'mol') v = N / C.AVOGADRO;
           else if (q.id === 'g') v = (N / C.AVOGADRO) * nd.a;
-          else v = A * per * (q.scale || 1);
+          else v = (q.summed ? res.D[t][i] : A) * per * (q.scale || 1);
           values[t] = v;
           if (v > peak) peak = v;
         }
@@ -1396,6 +1405,7 @@
       <div class="nz-inv-bar">
         <label class="nz-field">${state.inv.xLog ? 'From' : 'Up to'}${state.inv.xLog ? ` <input type="text" inputmode="decimal" id="nzInvFrom" value="${esc(inputNum(state.inv.from > 0 ? state.inv.from : state.inv.end * 1e-6))}" data-on-change="nz:invFrom" aria-label="Start of the time span"> to` : ''} <input type="text" inputmode="decimal" id="nzInvEnd" value="${esc(inputNum(state.inv.end))}" data-on-change="nz:invEnd" aria-label="End of the time span"> <select id="nzInvUnit" data-on-change="nz:invUnit" aria-label="Unit of the time span">${unitOpts}</select></label>
         <label class="nz-field">Show <select id="nzInvQty" data-on-change="nz:invQty">${qOpts}</select></label>
+        ${inv.q.sum ? `<label class="nz-check" title="The energy given off from the start up to each time, instead of the rate at that time"><input type="checkbox" id="nzInvSum" data-on-change="nz:invSum"${inv.q.summed ? ' checked' : ''}> integrated over time</label>` : ''}
       </div>
       <div class="nz-inv-tools">
         <button type="button" class="nz-btn small" id="nzInvPlay" data-on-click="nz:invPlay" title="Move the cursor from the start to the end, filling the ${shape[1]} as it goes">Run through</button>
@@ -1441,7 +1451,7 @@
       });
       if (state.inv.cursor !== null && state.inv.cursor < inv.times.length) invChart.setCursor(state.inv.cursor);
     }
-    invShowTime(state.inv.cursor ?? 0);
+    invShowTime(invRestTime());
   }
 
   /* The notes under the table: how the energies are got, what is carried, what is not known. */
@@ -1453,6 +1463,7 @@
       const list = carried.slice(0, 8).map((nd) => `${nameHtml(nd.z, nd.a, nd.k, nd.nuc)} (${nd.carried.slice(0, 5).map((c) => supHtml(C.plainName(c.z, c.a, c.k, state.idx.get(c.z, c.a)))).join(', ')}${nd.carried.length > 5 ? ', …' : ''})`);
       notes.push(`Members left out by the half-life setting decay as fast as they are made, in secular equilibrium with the member that feeds them: what they give off is counted with it — ${list.join('; ')}${carried.length > 8 ? '; …' : ''}. Their own activity is not drawn.`);
     }
+    if (inv.q.summed) notes.push('Integrated over time, each value is the energy given off from the start (t = 0) up to that time: each member’s decays are counted as the chain decays, by the same calculation, so the sum is exact and does not depend on the points drawn.');
     if (energy) {
       notes.push('Energy per decay is worked out from the ENSDF decay data sets: alpha particles with the recoil of the nucleus, the mean beta and positron energies, gamma rays, annihilation radiation, and the de-excitation energy the gamma rays do not carry (conversion electrons, with the X-rays and Auger electrons that follow them). X-rays and Auger electrons after electron capture, which ENSDF does not list, are estimated from the K-shell binding energy. Neutrinos and fission fragments are not counted.');
       const unknown = inv.sys.members.filter((nd, i) => decaysAway(nd) && inv.em[i] && !inv.em[i].known);
@@ -1481,7 +1492,7 @@
     const svg = $('nzChainSvg');
     if (!svg || !svg.firstChild) return;
     const on = state.tab === 'inventory' && inv && inv.root === invRootKey();
-    CH.setLevels(svg, on ? invLevels(t ?? state.inv.cursor ?? 0) : null);
+    CH.setLevels(svg, on ? invLevels(t ?? invRestTime()) : null);
     CH.setHot(svg, on ? invHotKey : null);
   }
 
@@ -1490,7 +1501,8 @@
     if (!inv) return;
     const pane = $('nzPaneInventory');
     const at = $('nzInvAt');
-    if (at) at.innerHTML = t ? `At ${supHtml(KVOT_ENSDF_INVENTORY.numText(inv.times[t] / inv.unit[1]))} ${esc(TIME_WORDS[inv.unit[0]])}:` : 'At the start:';
+    const when = `${supHtml(KVOT_ENSDF_INVENTORY.numText(inv.times[t] / inv.unit[1]))} ${esc(TIME_WORDS[inv.unit[0]])}`;
+    if (at) at.innerHTML = !t ? 'At the start:' : inv.q.summed ? `In the first ${when}:` : `At ${when}:`;
     for (const td of pane.querySelectorAll('.nz-inv-now')) {
       const x = inv.series.find((y) => y.key === td.dataset.key);
       td.innerHTML = x && inv.any ? supHtml(KVOT_ENSDF_INVENTORY.numText(x.values[t])) : '';
@@ -1514,7 +1526,7 @@
     const svg = $('nzChainSvg');
     if (svg && svg.firstChild) CH.setHot(svg, key);
     for (const tr of $('nzPaneInventory').querySelectorAll('.nz-inv-table tbody tr')) tr.classList.toggle('hot', tr.dataset.key === key);
-    invShowTime(t ?? state.inv.cursor ?? 0);
+    invShowTime(t ?? invRestTime());
   }
 
   function invPick(t) {
@@ -1716,13 +1728,19 @@
     });
     chart.setMode(state.colour);
     document.documentElement.addEventListener('kvot-theme-change', () => { renderLegend(); if (state.view === 'chain') renderChainView(); if (state.tab === 'inventory') renderInventory(); });
-    /* The inventory chart is drawn to the width of its pane. */
-    let invWidth = 0;
+    /* The inventory chart is drawn to the width of its pane, in the next
+       frame: its height follows its width, and a pane that changed size
+       inside the observer's own call would set off a resize loop. */
+    let invWidth = 0, invFit = 0;
     new ResizeObserver(() => {
-      const w = $('nzPaneInventory').clientWidth;
-      if (state.tab !== 'inventory' || !w || Math.abs(w - invWidth) < 8) return;
-      invWidth = w;
-      drawInvChart();
+      if (invFit) return;
+      invFit = requestAnimationFrame(() => {
+        invFit = 0;
+        const w = $('nzPaneInventory').clientWidth;
+        if (state.tab !== 'inventory' || !w || Math.abs(w - invWidth) < 8) return;
+        invWidth = w;
+        drawInvChart();
+      });
     }).observe($('nzPaneInventory'));
     setupResize();
     setupDrop();
@@ -1730,7 +1748,14 @@
        the chain settings too and puts them above its tabs where they do not
        fit beside them: so the lines under the two rows meet (ensdf.css). */
     const viewRow = document.querySelector('.nz-views');
-    new ResizeObserver(() => $('nzPanel').style.setProperty('--nz-tabrow', `${viewRow.getBoundingClientRect().height}px`)).observe(viewRow);
+    /* Set in the next frame: set inside the observer's own call, it would
+       change the size of the Inventory pane, which is observed as well, and
+       set off a resize loop. */
+    let tabRow = 0;
+    new ResizeObserver(() => {
+      if (tabRow) return;
+      tabRow = requestAnimationFrame(() => { tabRow = 0; $('nzPanel').style.setProperty('--nz-tabrow', `${viewRow.getBoundingClientRect().height}px`); });
+    }).observe(viewRow);
     /* Refit the chain when its container changes width. The scroll box is
        observed, not the drawing's own box, whose size follows the drawing
        and would set off a resize loop. */
@@ -1848,6 +1873,7 @@
       saveState();
     },
     'nz:invQty': (ev, el) => { state.inv.qty = el.value; renderInventory(); saveState(); },
+    'nz:invSum': (ev, el) => { state.inv.sum = el.checked; renderInventory(); saveState(); },
     'nz:invAxis': (ev, el) => {
       if (el.dataset.axis === 'x') { state.inv.xLog = !state.inv.xLog; state.inv.cursor = null; } else state.inv.yLog = !state.inv.yLog;
       renderInventory();

@@ -593,6 +593,44 @@ async def main():
         check('Run through takes the cursor from start to end', (row['cursor'], row['button']), (240, 'Run through'))
         check('the values save as CSV', row['csv'], ['inventory-238U-total.csv'])
         check('leaving the tab puts the boxes back', row['after'], 0)
+        # An energy integrated over time: 1 Bq of 210Po decays T½/ln 2 times
+        # in all, each time giving off its energy per decay.
+        integ = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const num = (t) => { const m = /^([\\d.]+)(?:×10(−?\\d+))?$/.exec(t.trim()); return m ? +m[1] * Math.pow(10, m[2] ? +m[2].replace('−', '-') : 0) : NaN; };
+          const setQ = async (v) => { const q = document.getElementById('nzInvQty'); q.value = v; q.dispatchEvent(new Event('change', {bubbles: true})); await sleep(300); };
+          const setSum = async (on) => { const b = document.getElementById('nzInvSum'); b.checked = on; b.dispatchEvent(new Event('change', {bubbles: true})); await sleep(300); };
+          const read = () => ({ box: document.getElementById('nzInvSum') ? document.getElementById('nzInvSum').checked : null,
+            at: document.getElementById('nzInvAt').textContent,
+            unit: document.querySelector('#nzPaneInventory .nz-inv-table thead th:last-child').textContent,
+            v: num(document.querySelector('#nzPaneInventory .nz-inv-now[data-key="84,210,0"]').textContent),
+            title: [...document.querySelectorAll('#nzInvChart svg > text')].map(t => t.textContent).find(t => t.includes('(') && !t.startsWith('Time')),
+            note: document.getElementById('nzInvNotes').textContent.includes('Integrated over time') });
+          ENSDFPage.select('Po-210'); document.querySelector('[data-tab=inventory]').click(); await sleep(500);
+          const out = {};
+          await setQ('Bq'); out.bq = read();
+          await setQ('total'); out.rate = read();
+          await setSum(true); out.total = read();
+          await setQ('W'); out.W = read();
+          document.querySelector('[data-on-click="nz:invCsv"]').click(); await sleep(300);
+          out.csv = window.__saved.filter(f => f[0].startsWith('inventory-210Po')).map(f => f[0]);
+          out.saved = JSON.parse(localStorage.getItem('kvot-ensdf-v1')).inv.sum;
+          await setQ('Bq'); out.bqAgain = read();
+          await setQ('total'); out.kept = read().box;
+          const st = ENSDFPage.state, C = KVOT_ENSDF_CORE, r = st.chain.root, e = C.chainEmission(st.idx, r).v;
+          const span = st.inv.end * { s: 1, min: 60, h: 3600, d: 86400, y: C.YEAR_S }[st.inv.unit];
+          out.expect = (r.st.ts / Math.LN2) * -Math.expm1(-Math.LN2 * span / r.st.ts) * (e[0] + e[1] + e[2]);
+          out.perDecay = e[0] + e[1] + e[2];
+          await setSum(false);
+          document.querySelector('[data-tab=nuclide]').click();
+          return JSON.stringify(out); })()"""))
+        check('an energy can be integrated over time: the box beside Show is there for the energies and the power, not for activity', (integ['bq']['box'], integ['rate']['box'], integ['bqAgain']['box']), (None, False, None))
+        check('... per second, 1 Bq of 210Po gives off its energy per decay at the start', (integ['rate']['at'], integ['rate']['unit'], abs(integ['rate']['v'] / integ['perDecay'] - 1) < 0.005), ('At the start:', 'MeV/s', True))
+        check('... integrated, the table shows the whole span: T½/ln 2 decays\' energy, in MeV', (integ['total']['at'], integ['total']['unit'], abs(integ['total']['v'] / integ['expect'] - 1) < 0.005, integ['total']['title'], integ['total']['note']),
+              ('In the first 104 days:', 'MeV', True, 'Total emitted energy, integrated (MeV)', True))
+        check('... the power integrated is that energy in joules, and saves as its own CSV', (integ['W']['unit'], abs(integ['W']['v'] / (integ['expect'] * 1.602176634e-13) - 1) < 0.005, integ['W']['title'], integ['csv']),
+              ('J', True, 'Total emitted energy, integrated (J)', ['inventory-210Po-W-integrated.csv']))
+        check('... and the choice is remembered, through activity and back', (integ['saved'], integ['kept']), (True, True))
 
         # ---------------------------------------------------------- parents
         par = json.loads(await page.ev("""(async () => {

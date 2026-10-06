@@ -1015,41 +1015,61 @@
    * for those that do not: members in equilibrium then have values of one
    * size, which is what CRAM's accuracy is measured against.
    *
+   * With opt.decays, also each member's decays from t = 0 up to each time:
+   * the time integral of its activity. Each member that decays gets a
+   * counter, a member of the system that collects its activity the way a
+   * stable member collects what reaches it, so the integral is as exact as
+   * the rest at any time -- not a sum over the times asked for. The counters
+   * come after every member and feed nothing, so the members come out the
+   * same, to the last bit, with them or without.
+   *
    * @param {Object} sys - decaySystem()
    * @param {ArrayLike<number>} n0 - atoms of each member at t = 0
    * @param {number[]} times - seconds
-   * @returns {{A: Float64Array[], N: Float64Array[]}} for each time, each
-   *   member's activity (Bq) and atoms
+   * @param {{decays?: boolean}} [opt]
+   * @returns {{A: Float64Array[], N: Float64Array[], D?: Float64Array[]}}
+   *   for each time, each member's activity (Bq) and atoms, and with
+   *   opt.decays its decays since t = 0 (0 for a member that does not decay)
    */
-  function decayAt(sys, n0, times) {
-    const { lambda, rows } = sys;
+  function decayAt(sys, n0, times, opt = {}) {
+    let { lambda, rows } = sys;
     const n = lambda.length;
-    const y0 = new Float64Array(n);
+    const counter = new Int32Array(n).fill(-1);
+    if (opt.decays) {
+      const more = [];
+      for (let i = 0; i < n; i++) if (lambda[i] > 0) { counter[i] = n + more.length; more.push([[i, 1]]); }
+      const l = new Float64Array(n + more.length);
+      l.set(lambda);
+      lambda = l;
+      rows = rows.concat(more);
+    }
+    const m = lambda.length;
+    const y0 = new Float64Array(m);
     for (let i = 0; i < n; i++) y0[i] = lambda[i] > 0 ? lambda[i] * n0[i] : n0[i];
-    const xr = new Float64Array(n), xi = new Float64Array(n);
-    const outA = [], outN = [];
+    const xr = new Float64Array(m), xi = new Float64Array(m);
+    const outA = [], outN = [], outD = [];
     for (const t of times) {
-      const y = new Float64Array(n);
+      const y = new Float64Array(m);
       if (!(t > 0)) y.set(y0);
       else {
-        for (let i = 0; i < n; i++) y[i] = CRAM_ALPHA0 * y0[i];
+        for (let i = 0; i < m; i++) y[i] = CRAM_ALPHA0 * y0[i];
         for (let k = 0; k < 8; k++) {
           const [tr, ti] = CRAM_THETA[k], [ar, ai] = CRAM_ALPHA[k];
           /* (M t - theta) x = y0, forward: M is lower triangular. */
-          for (let i = 0; i < n; i++) {
+          for (let i = 0; i < m; i++) {
             let sr = y0[i], si = 0;
             const li = lambda[i];
             for (const [j, f] of rows[i]) {
-              const m = (li > 0 ? li * f : f) * t;
-              sr -= m * xr[j];
-              si -= m * xi[j];
+              const mt = (li > 0 ? li * f : f) * t;
+              sr -= mt * xr[j];
+              si -= mt * xi[j];
             }
             const dr = -li * t - tr, di = -ti;
             const den = dr * dr + di * di;
             xr[i] = (sr * dr + si * di) / den;
             xi[i] = (si * dr - sr * di) / den;
           }
-          for (let i = 0; i < n; i++) y[i] += 2 * (ar * xr[i] - ai * xi[i]);
+          for (let i = 0; i < m; i++) y[i] += 2 * (ar * xr[i] - ai * xi[i]);
         }
       }
       const A = new Float64Array(n), N = new Float64Array(n);
@@ -1059,8 +1079,13 @@
       }
       outA.push(A);
       outN.push(N);
+      if (opt.decays) {
+        const D = new Float64Array(n);
+        for (let i = 0; i < n; i++) if (counter[i] >= 0 && y[counter[i]] > 0) D[i] = y[counter[i]];
+        outD.push(D);
+      }
     }
-    return { A: outA, N: outN };
+    return opt.decays ? { A: outA, N: outN, D: outD } : { A: outA, N: outN };
   }
 
   /**

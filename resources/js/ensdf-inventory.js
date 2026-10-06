@@ -201,7 +201,15 @@
       }
       el('rect', { x: m.l, y: m.t, width: pw, height: ph, fill: 'none', stroke: col.axis, 'stroke-width': 1 }, svg);
       richText(el('text', { x: m.l + pw / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 11, fill: col.axis }, svg), `Time (${d.tScale.unit})`, 11);
-      richText(el('text', { x: m.l, y: 13, 'font-size': 11, fill: col.axis }, svg), d.yTitle, 11);
+      /* The value axis's title starts over the plot, or at the left edge
+         where it is too long for that, and is squeezed only where it does
+         not fit even there. */
+      const yTitle = richText(el('text', { x: m.l, y: 13, 'font-size': 11, fill: col.axis }, svg), d.yTitle, 11);
+      const tl = yTitle.getComputedTextLength();
+      if (m.l + tl > W - 6) {
+        yTitle.setAttribute('x', 6);
+        if (tl > W - 12) { yTitle.setAttribute('textLength', W - 12); yTitle.setAttribute('lengthAdjust', 'spacingAndGlyphs'); }
+      }
 
       /* The lines, clipped to the plot. */
       const clipId = `nzInvClip${Math.random().toString(36).slice(2, 8)}`;

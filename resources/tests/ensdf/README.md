@@ -6,7 +6,7 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
 
     node resources/tests/ensdf/test-parse.js
 
-133 checks in four parts:
+139 checks in four parts:
 
 1. **Fields**, each against what the ENSDF manual says the record means:
    NUCIDs (including `NN` for the neutron and `Z - 100` above Z = 109),
@@ -57,7 +57,12 @@ Two suites. The first needs only Node; the second a server and headless Chrome.
    itself: Bateman's two-member chain (15.7214 Bq after 5 d, as rdc.html
    checks), equal half-lives (where Bateman's formula divides by zero),
    the 238U chain in secular equilibrium after 10 My, and no atom lost over
-   10^10 years.
+   10^10 years. And the decays since t = 0 that the energies integrated over
+   time are made of: N0 (1 − e^−λt) for one nuclide over 19 decades of λt,
+   Bateman's integral for the daughter, equal half-lives, the activities and
+   atoms of the 238U chain the same to the last bit with the counting or
+   without, 206Pb holding what its feeders' decays sent it, and every member
+   of the 238U chain against its activity integrated by Simpson's rule.
 
 With `--every-setting` the up-and-down comparison runs at all 55 settings the
 page offers (about 12 s; 795 290 pairs and 1 121 653 arrows for the 2026-09-01
@@ -79,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-133 checks: the built-in release loads; the tab icon (drawn by
+138 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -128,6 +133,10 @@ the 238U chain over time with 1 Bq at its start and that box full, turns
 a line rings its member in the chain and fills the boxes to that time, while
 pointing at a row picks out its line and box, while the table under the chart keeps its columns wherever the cursor is; Run through takes the cursor
 to the end, the values save as CSV, and leaving the tab puts the boxes back;
+the energies and the power can be integrated over time (a box beside Show
+that activity does not have), and 1 Bq of 210Po then gives off T½/ln 2
+decays' energy by the end of the span, which the table shows, in MeV, or in
+joules for the power, saved as a CSV of its own, and the choice is kept;
 the Nuclide tab lists the parents of 226Ra by mode, longest-lived first,
 each a link with its share, and says so when there are none (36Cl); with the
 chain set to parents the view tab says "Parents of 226Ra", the chart rings

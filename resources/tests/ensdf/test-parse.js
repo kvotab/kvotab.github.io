@@ -497,6 +497,35 @@ check('percent: 0.0037', C.pctText(0.0037), '0.0037 %');
   check('238U after 10 My: every member in secular equilibrium, its activity the parent\'s times its share', eqOk, true);
   check('... and after 10^10 y the atoms add up to what there was', ru.N[1].reduce((t, x) => t + x, 0) / 1e24, near(1, 1e-11));
   check('... 238U itself as 2^-(t/T½)', ru.N[1][0] / 1e24, near(Math.exp(-Math.LN2 * 1e10 * C.YEAR_S / u.root.st.ts), 1e-12));
+
+  /* The decays since t = 0, for the energies integrated over time: the
+     integral of each member's activity, counted along with the decay. */
+  const one = { nodes: [{ key: 'p', kind: 'state', st: { ts: day } }, { key: 's', kind: 'state', st: { st: 1 } }], edges: [{ from: { key: 'p' }, to: { key: 's' }, pct: 100 }] };
+  const lts = [];
+  for (let e = -15; e <= 4; e += 0.25) lts.push(Math.pow(10, e));
+  const r1 = C.decayAt(C.decaySystem(one), [1e20, 0], lts.map((x) => (x * day) / Math.LN2), { decays: true });
+  check('decays since t = 0 of one nuclide: N0 (1 - e^-λt), for λt from 1e-15 to 1e4', Math.max(...lts.map((x, i) => Math.abs(r1.D[i][0] / (-1e20 * Math.expm1(-x)) - 1))), (v) => v < 1e-12);
+  const l1 = Math.LN2 / (2 * day), l2 = Math.LN2 / (8 * day), t5 = 5 * day, p0 = (100 * 2 * day) / Math.LN2;
+  const d2 = C.decayAt(sys2, [p0, 0, 0], [t5], { decays: true }).D[0];
+  check('... the daughter\'s in the two-member chain as Bateman\'s integral', d2[1] / (p0 * (l2 * -Math.expm1(-l1 * t5) - l1 * -Math.expm1(-l2 * t5)) / (l2 - l1)), near(1, 1e-12));
+  check('... and with equal half-lives, N0 (1 - e^-λt (1 + λt))', C.decayAt(C.decaySystem(eq), [1 / l, 0], [3 * day], { decays: true }).D[0][1] * l, near(1 - Math.exp(-l * 3 * day) * (1 + l * 3 * day), 1e-12));
+  const tq = 1e10 * C.YEAR_S;
+  const rd = C.decayAt(su, n0, [1e7 * C.YEAR_S, tq], { decays: true });
+  check('... the activities and atoms of the 238U chain the same to the last bit with the counting or without', rd.A.every((A, k) => A.every((v, i) => Object.is(v, ru.A[k][i]))) && rd.N.every((N, k) => N.every((v, i) => Object.is(v, ru.N[k][i]))), true);
+  const end = su.members.findIndex((m) => m.key === '82,206,0');
+  check('... and 206Pb at 10^10 y holds what its feeders\' decays sent it', su.rows[end].reduce((s, [j, f]) => s + f * rd.D[1][j], 0) / rd.N[1][end], near(1, 1e-12));
+  /* Against the activity summed by Simpson's rule in ln t, member by member. */
+  const M = 6000, u0 = Math.log(1e-12), u1 = Math.log(tq), h = (u1 - u0) / M;
+  const us = Array.from({ length: M + 1 }, (_, q) => u0 + q * h);
+  const rq = C.decayAt(su, n0, us.map(Math.exp));
+  let worst = 0;
+  su.members.forEach((m, i) => {
+    if (!(su.lambda[i] > 0) || !(rd.D[1][i] > 1e-6 * rd.D[1][0])) return;
+    let s = 0;
+    for (let q = 0; q <= M; q++) s += (q === 0 || q === M ? 1 : q % 2 ? 4 : 2) * rq.A[q][i] * Math.exp(us[q]);
+    worst = Math.max(worst, Math.abs(((s * h) / 3) / rd.D[1][i] - 1));
+  });
+  check('... every member\'s decays in 10^10 y as its activity integrated by Simpson\'s rule (6000 steps in ln t), to 1e-9', worst, (v) => v < 1e-9);
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks pass`);
