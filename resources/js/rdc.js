@@ -34,30 +34,9 @@ $(function () {
             });
         }
     });
-    var rns = [];
-    var count = 0;
-    for (let i = 0; i < datatree.length; i++) {
-
-        for (let j = 0; j < datatree[i].children.length; j++) {
-            rns[count] = {
-                label: datatree[i].children[j].text,
-                category: datatree[i].text
-            };
-            count = count + 1;
-        }
-    }
-    // Add the elements
-    for (let i = 0; i < datatree.length; i++) {
-
-        rns[count] = {
-            label: datatree[i].text,
-            category: "Element"
-        };
-        count = count + 1;
-    }
     $("#search-input").catcomplete({
         delay: 0,
-        source: rns,
+        source: searchSource(typeof activeTree === 'function' ? activeTree() : datatree),
         select: function (event, ui) {
             $('#tree').jstree(true).show_all();
             $('#tree').jstree('search', ui.item.value);
@@ -65,6 +44,21 @@ $(function () {
     });
 
 });
+
+/* What the search field offers: every nuclide of the element list, under
+   its element, and then the elements. Built again when the list is. */
+function searchSource(tree) {
+    var rns = [];
+    for (let i = 0; i < tree.length; i++) {
+        for (let j = 0; j < tree[i].children.length; j++) {
+            rns.push({ label: tree[i].children[j].text, category: tree[i].text });
+        }
+    }
+    for (let i = 0; i < tree.length; i++) {
+        rns.push({ label: tree[i].text, category: "Element" });
+    }
+    return rns;
+}
 /* The size the chart dialog wants, and the most the window can give it. A
    phone is narrower than 510, and jQuery UI writes the width onto the element,
    so asking for more than there is puts the right-hand side out of reach. */
@@ -109,10 +103,11 @@ function fitChartDialogToScreen() {
 $(function () {
     const size = chartDialogSize();
     CHARTDIALOG.dialog({
+        /* Below the bar of decay data, which is below the header. */
         position: {
             my: "left top",
             at: "right bottom",
-            of: $('header')
+            of: $('#databar').length ? $('#databar') : $('header')
         },
         autoOpen: false,
         title: "Radionuclide decay chart",
@@ -163,6 +158,9 @@ function rotate(xy, degree) {
     };
 }
 function getPosition(node) {
+    /* A record that says where it goes: a chain from ENSDF, laid out by
+       rdc-ensdf.js. */
+    if (node.pos) return { x: node.pos.x, y: node.pos.y };
     var x = (xrn - (node.A - node.Z) * 100);
     var y = (yrn - node.Z * 100);
     if (node.state == "m") {
@@ -199,8 +197,14 @@ function getPosition(node) {
 function searchUnfocus(input) {
     input.value = "";
 }
-function getRn(rn) {
+/* The records of the chain on show, name -> record, when they come from an
+   ENSDF database (rdc-ensdf.js); null while the data are ICRP 107's. */
+var CHAIN_RECORDS = null;
+function icrpRn(rn) {
     return decaydata.find(obj => obj.name === rn);
+}
+function getRn(rn) {
+    return CHAIN_RECORDS ? CHAIN_RECORDS.get(rn) : icrpRn(rn);
 }
 
 

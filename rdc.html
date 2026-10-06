@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
     <link href="./vendors/css/jstree/style.min.css?v=20260911" rel="stylesheet" />
-    <link href="./resources/css/rdc.css?v=20260922b" rel="stylesheet" />
+    <link href="./resources/css/rdc.css?v=20261006" rel="stylesheet" />
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -31,6 +31,13 @@
     <script src="./vendors/js/jstree.min.js?v=20260911"></script>
     <script src="./resources/js/rndecaydata.js?v=20260911"></script>
     <script src="./resources/js/rndatatree.js?v=20260911"></script>
+    <!-- ENSDF, the other database: the reader and the chains of the Chart of
+         Nuclides (ensdf.html), where its releases come from, and the records
+         this page draws made from them. -->
+    <script src="./resources/js/ensdf-parse.js?v=20260923"></script>
+    <script src="./resources/js/ensdf-core.js?v=20261006"></script>
+    <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
+    <script src="./resources/js/rdc-ensdf.js?v=20261006"></script>
     <script src="./vendors/js/cytoscape.umd.js?v=20260911"></script>
     <script src="./resources/js/ode-core.js?v=20261005"></script>
     <script src="./resources/js/facsimile-solver.js?v=20261006"></script>
@@ -38,12 +45,12 @@
     <script src="./vendors/js/math.min.js?v=20260911"></script>
     <script src="./vendors/js/FileSaver.min.js?v=20260911"></script>
     <title>Radionuclide Decay Chains (ICRP Publication 107) — kvot ab</title>
-    <meta name="description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
+    <meta name="description" content="Interactive radionuclide decay chains from ICRP Publication 107 or any release of ENSDF, with nuclide data and activity-over-time plots.">
     <link rel="canonical" href="https://kvotab.se/rdc.html">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="kvot ab">
     <meta property="og:title" content="Radionuclide Decay Chains (ICRP Publication 107) — kvot ab">
-    <meta property="og:description" content="Interactive radionuclide decay chains from ICRP Publication 107, with nuclide data and activity-over-time plots.">
+    <meta property="og:description" content="Interactive radionuclide decay chains from ICRP Publication 107 or any release of ENSDF, with nuclide data and activity-over-time plots.">
     <meta property="og:url" content="https://kvotab.se/rdc.html">
     <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
     <meta name="twitter:card" content="summary">
@@ -156,6 +163,36 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 
 <div class="content">
 
+    <!-- The data the chains are drawn from: ICRP 107, built in, or a release
+         of ENSDF (ensdf-sources.js), with the chain settings only ENSDF
+         needs. Under the header, across the page. -->
+    <div class="rdc-databar" id="databar" role="group" aria-label="Decay data">
+      <label class="databar-label" for="dbSelect">Database</label>
+      <select id="dbSelect" class="databar-control databar-db" aria-label="Database" title="Where the decay chains come from"></select>
+      <button type="button" id="dbOpen" class="tree-tool databar-btn" title="Open an ENSDF release zip, or ENSDF text files, from your computer. Nothing is uploaded.">Open ENSDF&#8230;</button>
+      <button type="button" id="dbForget" class="tree-tool databar-btn" title="Stop keeping this opened database in the browser" hidden>Forget</button>
+      <span class="databar-chain" id="chainSettings" role="group" aria-label="Decay-chain settings" hidden>
+        <span class="databar-label" aria-hidden="true">Chain</span>
+        <select id="chainBranch" class="databar-control" aria-label="Smallest branch to show" title="Leave out branches smaller than this share of a nuclide's decays"></select>
+        <select id="chainLife" class="databar-control" aria-label="Shortest half-life to draw in the chain" title="A member of the chain, nuclide or isomer, that lives less than this is left out, and the arrows go straight on to where it decays. The nuclide the chain starts from stays, and so do stable ones"></select>
+      </span>
+      <span class="databar-status" id="dbStatus" role="status" aria-live="polite"></span>
+      <input type="file" id="dbFile" multiple hidden>
+    </div>
+    <div class="rdc-drop" aria-hidden="true">Drop ENSDF files to open them</div>
+
+    <!-- A release that is at NNDC but not here: where to download it, and
+         how to open it. -->
+    <dialog id="dbGet" class="ic-dialog db-get" aria-labelledby="dbGetTitle">
+      <h3 id="dbGetTitle" class="ic-dialog-title">A release from NNDC</h3>
+      <div class="db-get-body" id="dbGetBody"></div>
+      <div class="ic-dialog-footer">
+        <a class="db-get-all" href="https://www.nndc.bnl.gov/ensdfarchivals/" target="_blank" rel="noopener noreferrer">Every release at NNDC</a>
+        <button type="button" id="dbGetClose" class="ic-btn ic-btn-cancel">Close</button>
+        <button type="button" id="dbGetOpen" class="ic-btn ic-btn-ok">Open the downloaded file&#8230;</button>
+      </div>
+    </dialog>
+
     <!-- The Modal info view -->
     <dialog id="myModal" class="modal help-dialog" aria-labelledby="help-dialog-title">
         <div class="modal-content">
@@ -165,7 +202,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
             <br>
             <h3 id="help-dialog-title">Radionuclide Decay Chains</h3>
             <p>
-                This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking a radionuclide in the chart, or by tapping one on a touch screen.
+                This webpage serves as a comprehensive tool for generating illustrations depicting radionuclide decay chains as defined in the <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener noreferrer" title="ICRP, 2008.">ICRP 2008</a>-database, or in a release of the Evaluated Nuclear Structure Data File (ENSDF) chosen under <b>Database</b> above the chain. Additionally, it offers the functionality to compute and visualize the temporal progression of radionuclide decay and ingrowth based on user-defined initial conditions. Users can access radionuclide-specific settings by right-clicking a radionuclide in the chart, or by tapping one on a touch screen.
             </p><p>
                 The time evolution of radionuclide-specific characteristics can be displayed in a range of units including activity (measured in Becquerels, Bq), quantity (measured in moles), radiotoxicity upon ingestion (measured in Sieverts, Sv), external radiotoxicity (measured in Sv/(s m3)), and energy emission rate (measured in megaelectronvolts per second, MeV/s). Furthermore, users can view the total energy emission rate or analyze it separately according to alpha emissions, electron emissions (including beta emissions), or photon emissions.
             </p><p>
@@ -176,6 +213,10 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
                 The database contains compiled information for 922 radionuclides with half-lives surpassing 10 minutes, as well as 330 radionuclides with half-lives less than 10 minutes. Data pertaining to the 118 chemical elements within the periodic table are predominantly sourced from the <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="PubChem, 2023.">National Center for Biotechnology Information</a> as of 2023.
             <p>The descriptive data on the chemical elements (origin of the name, atomic weight, density, melting and boiling points) are adapted from Wikipedia\'s <em>List of chemical elements</em> and the element articles, available under the <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a> licence.</p>
             </p>
+            <h3>Another database: ENSDF</h3>
+            <p>The <b>Database</b> menu above the chain chooses the data the chains are drawn from. ICRP Publication 107 is built into the page. The other choices are releases of the <a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener noreferrer">Evaluated Nuclear Structure Data File</a> (ENSDF), the evaluated nuclear structure and decay data for every known nuclide, kept by the National Nuclear Data Center (NNDC) at Brookhaven: the releases installed on this site, those opened in this browser, and every release in the NNDC archive back to 2004. They are the releases the <a href="./ensdf.html">Chart of Nuclides</a> offers, and a release opened on either page is offered on both. NNDC’s server does not let other sites read its files, so a release from the archive is downloaded first and then opened with <b>Open ENSDF…</b>, or dropped on the page; it is read in your browser in a few seconds, and nothing is uploaded. <b>Forget</b> stops keeping an opened release in this browser.</p>
+            <p>With ENSDF, the element list holds every radioactive state the database gives a half-life for: the ground states and the isomers, named m, or m1, m2 … where a nuclide has several, as on the Chart of Nuclides. The decay modes and branching fractions are those of the adopted data sets, and which isomer of a daughter a branch feeds is worked out from the decay data sets. Two settings beside the menu choose what a chain holds: the smallest branch, and the shortest half-life. By default every branch is drawn, and the isomers that live less than a second are left out. A member that is left out decays as fast as it is made: the arrows go straight on to where it decays, an arrow that jumps over one says <i>via</i> it, and what it gives off is counted with the member that feeds it. On an arrow, ≤ marks a share the evaluators give only as a limit, ≥ one that may be more because part of the way has no percentage, ? a branch with no percentage at all, which carries nothing, and * a branch ENSDF does not give but the Q-values leave open. A member whose half-life the database does not give is shown with a ? and is held, not decayed.</p>
+            <p>The energies given off per decay come from the ENSDF decay data sets, as the Chart of Nuclides works them out; the X-rays and Auger electrons after electron capture, which ENSDF does not list, are estimated from the K-shell binding energy. The radiotoxicities use the ICRP 1995 and EPA 2019 coefficients whatever the database. A state takes those of the same nuclide in ICRP Publication 107, an isomer those of the ICRP 107 isomer with its half-life; a member with none counts as zero, as it does with ICRP 107.</p>
             <h3>Glossary</h3>
             <p><b>Activity</b><br>
             The activity of a radionuclide expresses the number of transformations over a certain time interval. Its unit is 1 Becquerel (Bq), which represents an activity equal to one conversion per second.</p>
@@ -221,6 +262,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
             <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%2072" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">ICRP, 1995</a>. <i>Age-dependent Doses to the Members of the Public from Intake of Radionuclides - Part 5 Compilation of Ingestion and Inhalation Coefficients</i>. ICRP Publication 72. Ann. ICRP 26 (1). <a href="https://journals.sagepub.com/doi/pdf/10.1177/ANIB_26_1" target="_blank" rel="noopener noreferrer" title="ICRP, 1995.">PDF</a><br>
             <a href="https://www.epa.gov/radiation/federal-guidance-report-no-15-external-exposure-radionuclides-air-water-and-soil" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">EPA, 2019</a>. <i>External Exposure to Radionuclides in Air, Water and Soil</i>. Federal Guidance Report No. 15. EPA-402-R-19-002, U.S. Environmental Protection Agency, Washington DC. <a href="https://www.epa.gov/sites/default/files/2019-08/documents/fgr_15_final_508_2019aug02.pdf" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">PDF</a><br>
             <a href="https://pubchem.ncbi.nlm.nih.gov/periodic-table/" target="_blank" rel="noopener noreferrer" title="EPA, 2019.">National Center for Biotechnology Information, 2023</a>. <i>Periodic Table of Elements</i>. Retrieved September 20, 2023 from https://pubchem.ncbi.nlm.nih.gov/periodic-table/ <br>
+            <a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener noreferrer" title="NNDC.">National Nuclear Data Center</a>. <i>Evaluated Nuclear Structure Data File</i> (ENSDF). Brookhaven National Laboratory, on behalf of the Nuclear Structure and Decay Data network. The release in use is named in the Database menu. <br>
         </div>
     </dialog>
 
@@ -357,7 +399,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260925"></script>
-<script src="./resources/js/rdc.js?v=20260911"></script>
+<script src="./resources/js/rdc.js?v=20261006"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
 KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>',
@@ -371,6 +413,417 @@ KVOT.renderFooter(extraFooterIcons);
 KVOT.initMap('kvotmap');
 function showUserError(message,error){var x=document.getElementById('rdc-status');x.textContent=message;x.hidden=false;if(error)console.error(message,error);}
 function clearUserError(){var x=document.getElementById('rdc-status');x.textContent='';x.hidden=true;}
+
+// ── Databases ────────────────────────────────────────────────────────────────
+/*
+  The chains come from one database at a time: ICRP Publication 107, built
+  into the page (rndecaydata.js), or a release of ENSDF. The ENSDF releases
+  are the ones the Chart of Nuclides offers, from ensdf-sources.js: those on
+  this site, those opened in this browser on either page, and NNDC's archive,
+  which has to be downloaded first. An ENSDF chain is made into records of
+  the ICRP 107 file's shape (rdc-ensdf.js), so what follows draws and decays
+  a chain from either in the same way: getRn() hands out the chain's records
+  while CHAIN_RECORDS holds them.
+
+  The choice is kept for the next visit, and so are the chain settings. A
+  database that has to be read again (one opened in this browser) leaves the
+  element list empty until it is: a list of ICRP 107 nuclides that turned
+  into another a few seconds later would be worse.
+*/
+var SRC = window.KVOT_ENSDF_SOURCES;
+var RE = window.KVOT_RDC_ENSDF;
+var ENSDF_CORE = window.KVOT_ENSDF_CORE;
+var ICRP_KEY = 'icrp';
+var ICRP_LABEL = 'ICRP Publication 107';
+var ICRP_LINK = 'https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107';
+var ENSDF_LINK = 'https://www.nndc.bnl.gov/ensdf/';
+var DB_STORE = 'kvot.rdc.db';
+var CHAIN_STORE = 'kvot.rdc.chain';
+
+/* The database in use: its menu key, its name, the ENSDF database
+   (rdc-ensdf.js) or null for ICRP 107, and its element list. */
+var DB = { key: ICRP_KEY, label: ICRP_LABEL, ensdf: null, tree: datatree };
+/* What the menu offers besides ICRP 107; ready once the releases on this
+   site and those kept in this browser are known. */
+var DBS = { releases: [], stored: [], archive: null, transient: null, ready: false };
+var dbWanted = storedDatabase();
+var dbLoading = dbWanted !== ICRP_KEY;
+var CHAIN_OPT = storedChainSettings();
+/* The last chain built from ENSDF: its settings and whether it was cut short. */
+var chainMade = null;
+/* A chain to draw again once the element list holds its start: its name,
+   its inventory and its time horizon. */
+var redrawKeep = null;
+var pendingKeep = null;
+
+/** The element list on show: nothing while another database is read. */
+function activeTree() { return dbLoading ? [] : DB.tree; }
+
+function storedDatabase() {
+    try {
+        var k = localStorage.getItem(DB_STORE);
+        return k && (k === ICRP_KEY || /^[bs]:./.test(k)) ? k : ICRP_KEY;
+    } catch (error) { return ICRP_KEY; }
+}
+
+function storedChainSettings() {
+    var out = { minBranch: '0', life: ENSDF_CORE ? ENSDF_CORE.DEFAULT_LIFE : 'iso' };
+    try {
+        var s = JSON.parse(localStorage.getItem(CHAIN_STORE) || 'null');
+        if (s && ENSDF_CORE) {
+            if (ENSDF_CORE.BRANCH_OPTIONS.some(function (o) { return o.value === s.minBranch; })) out.minBranch = s.minBranch;
+            if (ENSDF_CORE.LIFE_OPTIONS.some(function (o) { return o.id === s.life; })) out.life = s.life;
+        }
+    } catch (error) { /* storage unavailable or not ours: the defaults */ }
+    return out;
+}
+
+function storeSetting(key, value) {
+    try { localStorage.setItem(key, value); } catch (error) { /* for this visit only */ }
+}
+
+/* ICRP 107 again, as the page has it built in. */
+function icrpDatabase() {
+    return { key: ICRP_KEY, label: ICRP_LABEL, ensdf: null, tree: datatree };
+}
+
+/* A database from ensdf-sources.js, made ready for the page. */
+function ensdfDatabase(src) {
+    var db = RE.database(src.summary, decaydata);
+    return { key: src.key, label: src.label || db.label, ensdf: db, tree: RE.elementTree(db, datatree), src: src };
+}
+
+/*
+  What is on show, so that it can be drawn again from other data or other
+  settings: the nuclide the chain starts from, the inventory of each member
+  and the time horizon, or the element whose box is open.
+*/
+function chainKeep() {
+    var tree = $('#tree').jstree(true);
+    var sel = tree && tree.get_selected(true)[0];
+    if (!sel) return null;
+    if (!sel.type.endsWith('isotope')) return { element: sel.text };
+    var ic = {};
+    CY.nodes().forEach(function (n) { if (n.data('IC') > 0) ic[n.id()] = n.data('IC'); });
+    return { name: sel.text, ic: ic, time: [document.getElementById('timeinput').value, document.getElementById('timeunit').value] };
+}
+
+/*
+  Put a database in use: its element list, the search field's list, the
+  menu, the title and the status line. The nuclide on show stays, with its
+  inventory and time horizon, if the new database has it; U-238 otherwise.
+*/
+function useDatabase(next) {
+    var keep = dbLoading ? null : chainKeep();
+    /* The chain on show is the old database's: not a moment longer. */
+    closeNodeMenu();
+    CY.elements().remove();
+    DB = next;
+    dbLoading = false;
+    CHAIN_RECORDS = null;
+    chainMade = null;
+    if (next.key === ICRP_KEY || /^[bs]:/.test(next.key)) storeSetting(DB_STORE, next.key);
+    renderDbMenu();
+    renderDbTitle();
+    renderChainSettings();
+    renderDbStatus();
+    pendingKeep = keep || {};
+    var tree = $('#tree').jstree(true);
+    tree.settings.core.data = DB.tree;
+    tree.refresh(false, true);
+    try { $('#search-input').catcomplete('option', 'source', searchSource(DB.tree)); } catch (error) { ignoreFailure('rdc:searchSource', error); }
+}
+
+/* Once the element list holds the new database: what was on show, again. */
+function afterTreeRefresh() {
+    var keep = pendingKeep;
+    pendingKeep = null;
+    if (!keep) return;
+    var tree = $('#tree').jstree(true);
+    /* Written another way in the new database (an isomer that ICRP 107
+       calls n), the nuclide is shown afresh. */
+    var target = keep.name ? findExactTreeNode(tree, keep.name) : null;
+    if (target) {
+        if (target.text === keep.name) redrawKeep = keep;
+        selectExactTreeNode(target.text);
+    } else if (keep.element && findExactTreeNode(tree, keep.element)) {
+        selectExactTreeNode(keep.element);
+    } else if (!selectExactTreeNode('U-238')) {
+        showUserError('The default radionuclide U-238 could not be found in the element list.');
+    }
+}
+
+/* Each change of database in turn: one that takes a while to read (a
+   release kept in this browser) is dropped when another was asked for in
+   the meantime. */
+var dbAsked = 0;
+
+async function switchDatabase(key) {
+    if (!key || (key === DB.key && !dbLoading)) return;
+    if (key.indexOf('n:') === 0) {
+        /* Not to hand: say where to get it, and stay on the database in use. */
+        renderDbMenu();
+        showGet(key.slice(2));
+        return;
+    }
+    var asked = ++dbAsked;
+    try {
+        var next = null;
+        if (key === ICRP_KEY) {
+            next = icrpDatabase();
+        } else if (key.indexOf('b:') === 0) {
+            var rel = DBS.releases.find(function (r) { return 'b:' + r.id === key; });
+            if (!rel) throw new Error('that release is not on this site');
+            renderDbStatus('Loading ' + rel.label + '…');
+            next = ensdfDatabase(await SRC.builtinSource(rel));
+        } else if (key.indexOf('s:') === 0) {
+            var rec = (await SRC.IDB.list()).find(function (r) { return r.key === key.slice(2); });
+            if (!rec) throw new Error('that database is no longer kept in this browser');
+            next = await readFiles(rec.files, rec);
+        } else if (key.indexOf('o:') === 0 && DBS.transient && DBS.transient.key === key) {
+            next = ensdfDatabase(DBS.transient.src);
+        }
+        if (next && asked === dbAsked) useDatabase(next);
+    } catch (error) {
+        if (asked !== dbAsked) return;
+        reportFailure('rdc:switchDatabase', error, { userMessage: 'The database could not be opened.' });
+        /* With nothing on show yet, the data built into the page. */
+        if (dbLoading) useDatabase(icrpDatabase());
+        else { renderDbMenu(); renderDbStatus(); }
+    }
+}
+
+/* Files a visitor opened, or a database kept in this browser read again,
+   as a database for the page. Files just opened are kept in this browser
+   if it lets us, and offered by the menu from then on. */
+async function readFiles(files, rec) {
+    var names = files.map(function (f) { return f.name || 'file'; }).join(', ');
+    renderDbStatus('Reading ' + names + '…');
+    var res = await SRC.read(files, rec, function (p) { renderDbStatus('Reading ' + names + ': ' + p.done + ' of ' + p.total + ' files'); });
+    if (!rec) {
+        if (res.stored) DBS.stored = res.stored;
+        else {
+            DBS.stored = DBS.stored.filter(function (x) { return x.key !== res.key; });
+            DBS.transient = { key: res.src.key, label: res.src.label, src: res.src };
+        }
+    }
+    return ensdfDatabase(res.src);
+}
+
+async function openChosen(files) {
+    files = Array.from(files || []).filter(function (f) { return f && f.size; });
+    if (!files.length) return;
+    closeGet();
+    var total = files.reduce(function (t, f) { return t + f.size; }, 0);
+    var limit = kvotFileTooLarge({ name: files.length === 1 ? files[0].name : 'The selection', size: total }, 1024 * 1024 * 1024);
+    if (limit.tooLarge) { notifyUser(limit.reason); return; }
+    var asked = ++dbAsked;
+    try {
+        var t0 = performance.now();
+        var next = await readFiles(files, null);
+        renderDbMenu();
+        if (asked !== dbAsked) return;
+        useDatabase(next);
+        notifyUser(next.label + ': ' + next.ensdf.states.size.toLocaleString('en') + ' radioactive states read in ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s.', { tone: 'success' });
+    } catch (error) {
+        if (asked !== dbAsked) return;
+        reportFailure('rdc:open', error, { userMessage: 'The ENSDF file could not be read.' });
+        renderDbStatus();
+    }
+}
+
+async function forgetDatabase() {
+    if (DB.key.indexOf('s:') !== 0) return;
+    try { await SRC.IDB.remove(DB.key.slice(2)); DBS.stored = await SRC.IDB.list(); } catch (error) { reportFailure('rdc:forget', error); }
+    await switchDatabase(DBS.releases.length ? 'b:' + DBS.releases[0].id : ICRP_KEY);
+    renderDbMenu();
+    notifyUser('The opened database is no longer kept in this browser.');
+}
+
+function renderDbMenu() {
+    var sel = document.getElementById('dbSelect');
+    if (!sel) return;
+    var esc = kvotEscapeHtml;
+    var option = function (value, text) { return '<option value="' + esc(value) + '">' + esc(text) + '</option>'; };
+    var group = function (label, opts) { return opts.length ? '<optgroup label="' + esc(label) + '">' + opts.join('') + '</optgroup>' : ''; };
+    var here = DBS.releases.map(function (r) { return option('b:' + r.id, r.label + ' (on this site)'); });
+    var opened = DBS.stored.slice().sort(function (p, q) { return q.opened - p.opened; }).map(function (s) {
+        return option('s:' + s.key, s.label + ' (opened ' + new Date(s.opened).toISOString().slice(0, 10) + ')');
+    });
+    if (DBS.transient) opened.push(option(DBS.transient.key, DBS.transient.label + ' (opened)'));
+    /* The rest of NNDC's archive, less what is already to hand -- and so not
+       before what is to hand is known, or the release on this site would
+       stand among NNDC's for a moment. No longer than "(on this site)": a
+       menu is as wide as its widest entry. */
+    var have = {};
+    DBS.releases.concat(DBS.stored, DBS.transient ? [DBS.transient] : []).forEach(function (r) { have[r.label] = true; });
+    var nndc = ((DBS.ready && DBS.archive && DBS.archive.releases) || []).filter(function (r) { return !have[r.label]; }).map(function (r) {
+        return option('n:' + r.id, r.label + (r.missing ? ' (incomplete)' : r.files.length > 1 ? ' (' + r.files.length + ' parts)' : ''));
+    });
+    sel.innerHTML = group('Built into the page', [option(ICRP_KEY, ICRP_LABEL)]) + group('ENSDF on this site', here)
+        + group('ENSDF opened in this browser', opened) + group('ENSDF at NNDC: download, then open', nndc);
+    var want = dbLoading ? dbWanted : DB.key;
+    sel.value = Array.from(sel.options).some(function (o) { return o.value === want; }) ? want : DB.key;
+    document.getElementById('dbForget').hidden = !(!dbLoading && DB.key.indexOf('s:') === 0);
+}
+
+/* The header's small print and the window's title name the database. */
+function renderDbTitle() {
+    var link = document.querySelector('header .title a');
+    if (link) {
+        link.textContent = DB.label;
+        link.href = DB.ensdf ? ENSDF_LINK : ICRP_LINK;
+    }
+    document.title = 'Radionuclide Decay Chains (' + DB.label + ') — kvot ab';
+}
+
+/* The status line: what is being read, or the database in use and, for a
+   chain the drawing had to cut short, that it did. */
+function renderDbStatus(text) {
+    var el = document.getElementById('dbStatus');
+    if (!el) return;
+    /* Something being read: the one status a phone, short of room, shows. */
+    el.classList.toggle('busy', !!text || dbLoading);
+    if (!text) {
+        if (dbLoading) text = 'Loading…';
+        else if (!DB.ensdf) text = ICRP_LABEL + ' · ' + collectRadionuclideNames(datatree).length.toLocaleString('en') + ' radionuclides';
+        else text = DB.label + ' · ' + DB.ensdf.states.size.toLocaleString('en') + ' radioactive states';
+        if (DB.ensdf && chainMade && chainMade.truncated) text += ' · this chain is cut at ' + chainMade.records.size + ' members';
+    }
+    el.textContent = text;
+    el.title = text;
+}
+
+/* The chain settings, which only ENSDF has: ICRP 107's chains are as the
+   file gives them. */
+function renderChainSettings() {
+    var box = document.getElementById('chainSettings');
+    var branch = document.getElementById('chainBranch');
+    var life = document.getElementById('chainLife');
+    if (!box || !ENSDF_CORE) return;
+    if (!branch.options.length) {
+        branch.innerHTML = ENSDF_CORE.BRANCH_OPTIONS.map(function (o) { return '<option value="' + o.value + '">' + kvotEscapeHtml(o.text) + '</option>'; }).join('');
+        life.innerHTML = ENSDF_CORE.LIFE_OPTIONS.map(function (o) { return '<option value="' + o.id + '">' + kvotEscapeHtml(o.text) + '</option>'; }).join('');
+    }
+    branch.value = CHAIN_OPT.minBranch;
+    life.value = CHAIN_OPT.life;
+    box.hidden = !DB.ensdf;
+}
+
+function changeChainSettings() {
+    CHAIN_OPT.minBranch = document.getElementById('chainBranch').value;
+    CHAIN_OPT.life = document.getElementById('chainLife').value;
+    storeSetting(CHAIN_STORE, JSON.stringify(CHAIN_OPT));
+    var keep = chainKeep();
+    if (keep && keep.name) {
+        drawChain(keep.name, keep);
+        runAndUpdateChart();
+    }
+}
+
+/*
+  A release in NNDC's archive that is not to hand: which file or files to
+  download -- before 2022 a release came in parts by mass number -- and the
+  way to open them once they are here.
+*/
+function showGet(id) {
+    var a = DBS.archive;
+    var rel = a && a.releases.find(function (r) { return r.id === id; });
+    if (!rel) return;
+    var esc = kvotEscapeHtml;
+    var many = rel.files.length > 1;
+    var dash = function (range) { return range.replace('-', '–'); };
+    var link = function (f, i) {
+        return '<a href="' + esc(a.base + f) + '" target="_blank" rel="noopener noreferrer" download>' + esc(f.split('/').pop()) + '</a>'
+            + (rel.parts ? ' <span class="db-get-dim">A = ' + esc(dash(rel.parts[i])) + '</span>' : '');
+    };
+    var files = many ? '<ul>' + rel.files.map(function (f, i) { return '<li>' + link(f, i) + '</li>'; }).join('') + '</ul>' : link(rel.files[0], 0);
+    document.getElementById('dbGetTitle').textContent = rel.label + ' from NNDC';
+    document.getElementById('dbGetBody').innerHTML =
+        '<p>This release is not on this site. Download it from NNDC’s archive and open it here: the page reads it in your browser, in a few seconds, and uploads nothing. It cannot fetch the release for you, as NNDC’s server does not let other sites read its files.</p>'
+        + '<ol><li>Download ' + (many ? 'its ' + rel.files.length + ' parts, one for each range of mass numbers:' + files : files + '.') + '</li>'
+        + '<li>Choose <b>Open the downloaded ' + (many ? 'files' : 'file') + '…</b>' + (many ? ' and pick the parts together' : '') + ', or drop ' + (many ? 'them' : 'it') + ' on the page.</li></ol>'
+        + (rel.missing ? '<p class="db-get-warn">NNDC lists no part of this release for A = ' + esc(rel.missing.map(dash).join(', ')) + ', so it will have no nuclides there.</p>' : '')
+        + '<p class="db-get-dim">It is then kept in this browser, in the menu here and on the Chart of Nuclides, until you choose Forget.</p>';
+    document.getElementById('dbGetOpen').textContent = 'Open the downloaded ' + (many ? 'files' : 'file') + '…';
+    var dlg = document.getElementById('dbGet');
+    if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+}
+
+function closeGet() {
+    var dlg = document.getElementById('dbGet');
+    if (!dlg || !dlg.open) return;
+    if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+}
+
+/* ENSDF files dropped anywhere on the page open as a database. */
+function setupDatabaseDrop() {
+    var depth = 0;
+    var files = function (ev) { return ev.dataTransfer && Array.from(ev.dataTransfer.types || []).indexOf('Files') !== -1; };
+    document.body.addEventListener('dragenter', function (ev) { if (!files(ev)) return; depth++; document.body.classList.add('rdc-dropping'); ev.preventDefault(); });
+    document.body.addEventListener('dragover', function (ev) { if (files(ev)) ev.preventDefault(); });
+    document.body.addEventListener('dragleave', function () { depth = Math.max(0, depth - 1); if (!depth) document.body.classList.remove('rdc-dropping'); });
+    document.body.addEventListener('drop', function (ev) {
+        depth = 0;
+        document.body.classList.remove('rdc-dropping');
+        if (!ev.dataTransfer || !ev.dataTransfer.files.length) return;
+        ev.preventDefault();
+        openChosen(ev.dataTransfer.files);
+    });
+}
+
+/* The bar wraps on a narrow screen; what is laid out under it follows its
+   height, and the graph is told that its box has changed. */
+function watchDatabaseBar() {
+    var bar = document.getElementById('databar');
+    if (!bar || typeof ResizeObserver !== 'function') return;
+    var last = 0, frame = 0;
+    /* In the next frame, not in the observer's own: what moves then is not
+       measured again in the same round, which the browser reports as an
+       error ("ResizeObserver loop completed with undelivered notifications"). */
+    new ResizeObserver(function () {
+        if (frame) return;
+        frame = requestAnimationFrame(function () {
+            frame = 0;
+            var h = Math.ceil(bar.getBoundingClientRect().height);
+            if (!h || h === last) return;
+            last = h;
+            document.documentElement.style.setProperty('--rdc-bar-h', h + 'px');
+            if (typeof CY !== 'undefined' && CY) { CY.resize(); relaxZoomFloor(); }
+        });
+    }).observe(bar);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('dbSelect').addEventListener('change', function (ev) { switchDatabase(ev.target.value); });
+    document.getElementById('dbOpen').addEventListener('click', function () { document.getElementById('dbFile').click(); });
+    document.getElementById('dbFile').addEventListener('change', function (ev) { var f = Array.from(ev.target.files || []); ev.target.value = ''; openChosen(f); });
+    document.getElementById('dbForget').addEventListener('click', forgetDatabase);
+    document.getElementById('chainBranch').addEventListener('change', changeChainSettings);
+    document.getElementById('chainLife').addEventListener('change', changeChainSettings);
+    document.getElementById('dbGetClose').addEventListener('click', closeGet);
+    document.getElementById('dbGetOpen').addEventListener('click', function () { closeGet(); document.getElementById('dbFile').click(); });
+    document.getElementById('dbGet').addEventListener('click', function (ev) { if (ev.target === ev.currentTarget) closeGet(); });
+    setupDatabaseDrop();
+    watchDatabaseBar();
+    renderChainSettings();
+    renderDbMenu();
+    renderDbStatus();
+});
+
+/* The menu fills as what it lists arrives; the database wanted is read last. */
+async function startDatabases() {
+    if (!SRC || !RE) { if (dbLoading) useDatabase(icrpDatabase()); return; }
+    SRC.archive().then(function (archive) { DBS.archive = archive; renderDbMenu(); }, function () {});
+    try { DBS.releases = await SRC.releases(); } catch (error) { DBS.releases = []; }
+    try { DBS.stored = await SRC.IDB.list(); } catch (error) { DBS.stored = []; }
+    DBS.ready = true;
+    renderDbMenu();
+    if (!dbLoading) return;
+    var known = dbWanted.indexOf('b:') === 0 ? DBS.releases.some(function (r) { return 'b:' + r.id === dbWanted; })
+        : DBS.stored.some(function (s) { return 's:' + s.key === dbWanted; });
+    await switchDatabase(known ? dbWanted : ICRP_KEY);
+}
 
 // ── Sort toggle ──────────────────────────────────────────────────────────────
 var Asort = false;
@@ -464,12 +917,33 @@ function findExactTreeNode(tree, value) {
     if (!query) return null;
     var node = tree.get_node(query);
     if (node && node.id !== '#') return node;
-    var normalized = query.toLocaleLowerCase();
     var flatNodes = tree.get_json('#', { flat: true });
-    var exactMatch = flatNodes.find(function (candidate) {
-        return candidate.id !== '#' && String(candidate.text || '').trim().toLocaleLowerCase() === normalized;
-    });
-    return exactMatch ? tree.get_node(exactMatch.id) : null;
+    var byText = function (text) {
+        var normalized = String(text).toLocaleLowerCase();
+        var exactMatch = flatNodes.find(function (candidate) {
+            return candidate.id !== '#' && String(candidate.text || '').trim().toLocaleLowerCase() === normalized;
+        });
+        return exactMatch ? tree.get_node(exactMatch.id) : null;
+    };
+    return byText(query) || byText(nuclideName(query) || '') || null;
+}
+
+/*
+  The element list's name for a nuclide written another way: 238U, U238,
+  Co 60, 99mTc. With ENSDF a bare m means the longest-lived isomer, as on the
+  Chart of Nuclides: Am-242m is Am-242m1, the 141-year one. null where the
+  text names no nuclide.
+*/
+function nuclideName(text) {
+    var q = ENSDF_CORE && ENSDF_CORE.parseQuery(text);
+    if (!q || !q.a || !(q.z > 0)) return null;
+    if (DB.ensdf) {
+        var nuc = DB.ensdf.idx.get(q.z, q.a);
+        if (!nuc) return null;
+        var k = ENSDF_CORE.stateForLabel(nuc, q.iso);
+        return k < 0 ? null : RE.nameOf(q.z, q.a, k, nuc);
+    }
+    return ENSDF_CORE.ELEMENTS[q.z][0] + '-' + q.a + q.iso;
 }
 function selectExactTreeNode(value, options) {
     var tree = $('#tree').jstree(true);
@@ -913,7 +1387,8 @@ function positionNodeMenu(x, y) {
        stay in the band between them rather than merely inside the window. */
     var header = document.querySelector('header');
     var footer = document.querySelector('footer');
-    var topLimit = (header ? header.getBoundingClientRect().bottom : 0) + margin;
+    var bar = document.getElementById('databar');
+    var topLimit = Math.max(header ? header.getBoundingClientRect().bottom : 0, bar ? bar.getBoundingClientRect().bottom : 0) + margin;
     var bottomLimit = (footer ? footer.getBoundingClientRect().top : window.innerHeight) - margin;
 
     NODE_MENU.style.maxHeight = Math.max(120, bottomLimit - topLimit) + 'px';
@@ -1206,18 +1681,22 @@ function selectElement(Z) {
 // ── Decay graph ──────────────────────────────────────────────────────────────
 function decaygraph(ids, rnnode) {
     if (rnnode.hasOwnProperty('Progenies')) {
+        var fissions = 0;
         rnnode.Progenies.forEach(function (progeny) {
             var progname = progeny.name;
             if (!ids.includes(progname)) {
                 if (progname == "SF") {
                     progname = progname + Math.random();
                     var pos = getPosition(rnnode);
+                    /* Up and to the right, or where the record says. */
+                    var end = rnnode.fission && rnnode.fission[fissions] ? rnnode.fission[fissions] : { x: pos.x + 100, y: pos.y - 100 };
+                    fissions++;
                     CY.add({
                         data: {
                             id: progname, Halflife: "", Element: "", A: 0, Z: 0, state: 0, IC: 0,
                             level: 0, type: TYPE_SF, color: [255,255,255], dash: "dot",
                         },
-                        position: { x: pos.x + 100, y: pos.y - 100 }
+                        position: { x: end.x, y: end.y }
                     });
                 } else {
                     var prognode = getRn(progname);
@@ -1226,7 +1705,9 @@ function decaygraph(ids, rnnode) {
                     nodeIndex = nodeIndex + 1;
                     var color = COLORS[nodeIndex % COLORS.length];
                     var dash = LINES[Math.floor(nodeIndex / COLORS.length)];
-                    if (prognode.Halflife == "Stable") {
+                    /* What does not decay collects: a stable nuclide, and
+                       one whose half-life the database does not give. */
+                    if (prognode.Halflife == "Stable" || !(prognode.Halflife_y > 0)) {
                         type = TYPE_STABLE;
                         nodeIndex = nodeIndex - 1;
                         color = [0,0,0];
@@ -1247,11 +1728,29 @@ function decaygraph(ids, rnnode) {
             if (!(ids.includes(rnnode.name.concat(progname)))) {
                 ids[ids.length] = rnnode.name.concat(progname);
                 CY.add({
-                    data: { mode: progeny.mode, br: formatBR(progeny.br), source: rnnode.name, target: progname },
+                    data: { mode: progeny.mode, br: branchText(progeny), source: rnnode.name, target: progname },
                 });
             }
         });
     }
+}
+
+/*
+  The share on an arrow. ICRP 107's as it is. One from ENSDF says what is
+  known of it: ≤ (or <) a share the evaluators give as a limit, ≥ one that
+  may be more because part of the way has no percentage, ? none at all, * a
+  branch ENSDF does not give but the Q-values leave open, and on a line of
+  its own the members a jump over left-out ones passed through.
+*/
+var LIMIT_SIGN = { '<': '<', '>': '>', '<=': '≤', '>=': '≥', LT: '<', GT: '>', LE: '≤', GE: '≥' };
+function branchText(progeny) {
+    if (progeny.known === undefined) return formatBR(progeny.br);
+    var share = progeny.br > 0 ? formatBR(progeny.br) : '0%';
+    var text = !progeny.known ? '?' : (progeny.limit ? LIMIT_SIGN[progeny.limit] || '' : progeny.more ? '≥' : '') + share;
+    if (progeny.inferred) text += '*';
+    var via = progeny.via || [];
+    if (via.length) text += '\nvia ' + (via.length > 3 ? via[0] + ' … ' + via[via.length - 1] : via.join(', '));
+    return text;
 }
 
 function printCY() {
@@ -1267,11 +1766,9 @@ function printCY() {
 function updateLevel(state, rns, y) {
     if (state === "IC") {
         rns = CY.nodes().filter(function (node) {
-            if (node.data().Halflife == "Stable" || node.id().startsWith("SF")) {
-                return false;
-            } else {
-                return true;
-            }
+            /* The members that decay: not a stable one, one held for want
+               of a half-life, or fission. */
+            return node.data('type') === TYPE_NUCLIDE;
         }).map(function(x) { return x.id(); });
         var unit = document.getElementById("chartunit").value;
         var n = rns.length;
@@ -1428,7 +1925,8 @@ function validateRadionuclideData() {
         if (seen.has(name)) { errors.push('Duplicate radionuclide identifier: ' + name); return; }
         seen.add(name);
         var rn;
-        try { rn = getRn(name); } catch (error) { errors.push('Missing radionuclide data: ' + name); return; }
+        /* The file built into the page, whatever database is in use. */
+        try { rn = icrpRn(name); } catch (error) { errors.push('Missing radionuclide data: ' + name); return; }
         if (!rn) { errors.push('Missing radionuclide data: ' + name); return; }
         if (rn.Halflife !== 'Stable' && (!Number.isFinite(Number(rn.Halflife_y)) || Number(rn.Halflife_y) <= 0)) errors.push(name + ': invalid half-life');
         ['Alpha_energy','Electron_energy','Photon_energy'].forEach(function (field) {
@@ -1440,7 +1938,7 @@ function validateRadionuclideData() {
             if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) errors.push(name + ': invalid branching fraction for ' + branch.name);
             else total += fraction;
             if (branch.name !== 'SF') {
-                try { if (!getRn(branch.name)) errors.push(name + ': unknown daughter ' + branch.name); }
+                try { if (!icrpRn(branch.name)) errors.push(name + ': unknown daughter ' + branch.name); }
                 catch (error) { errors.push(name + ': unknown daughter ' + branch.name); }
             }
         });
@@ -1620,10 +2118,79 @@ var xrn;
 var yrn;
 var nodeIndex;
 
+/*
+  Draw the chain that starts from a nuclide of the element list. From ENSDF
+  its records are made first, by the chain settings; getRn() then hands them
+  out. Given what was on show (chainKeep()), the members keep their
+  inventories and the chart its time horizon: the same chain drawn again
+  from other data or settings. Otherwise the time horizon is a power of ten
+  past ten half-lives of the start.
+*/
+function drawChain(name, keep) {
+    CY.elements().remove();
+    if (DB.ensdf) {
+        chainMade = RE.chain(DB.ensdf, name, CHAIN_OPT);
+        CHAIN_RECORDS = chainMade ? chainMade.records : new Map();
+        renderDbStatus();
+        if (!chainMade) return;
+    } else {
+        CHAIN_RECORDS = null;
+        chainMade = null;
+    }
+    var ids = [name];
+    const rnnode = getRn(name);
+    if (!rnnode) return;
+    xrn = (rnnode.A - rnnode.Z) * 100;
+    yrn = rnnode.Z * 100;
+    var x = 0;
+    var y = 0;
+    if (rnnode.pos) {
+        x = rnnode.pos.x;
+        y = rnnode.pos.y;
+    } else if (rnnode.state == "m") {
+        y = -141.5;
+    } else if (rnnode.state == "n") {
+        y = 141.5;
+    }
+    nodeIndex = 0;
+    CY.add({
+        data: {
+            id: rnnode.name, Halflife: rnnode.Halflife, Element: rnnode.Element,
+            A: rnnode.A, Z: rnnode.Z, state: rnnode.state, IC: 0,
+            level: 0, type: TYPE_NUCLIDE,
+            color: COLORS[nodeIndex % COLORS.length],
+            dash: LINES[Math.floor(nodeIndex / COLORS.length)],
+            index: nodeIndex,
+        },
+        position: { x: x, y: y },
+    });
+
+    if (keep && keep.time) {
+        document.getElementById("timeinput").value = keep.time[0];
+        document.getElementById("timeunit").value = keep.time[1];
+    } else {
+        var defaultScale=chooseDefaultTimeScale(rnnode.Halflife_y);
+        var unit=defaultScale.unit, halflife=defaultScale.value;
+
+        var expvalue = 1 + Math.ceil(Math.log10(halflife));
+        document.getElementById("timeinput").value = "1e" + expvalue;
+        document.getElementById("timeunit").value = unit;
+    }
+    decaygraph(ids, rnnode);
+    if (keep && keep.ic) {
+        CY.nodes().forEach(function (n) {
+            var v = keep.ic[n.id()];
+            if (v > 0 && n.data('type') === TYPE_NUCLIDE) n.data('IC', v);
+        });
+        updateLevel('IC');
+    }
+    CY.ready(fitDecayGraph);
+}
+
 $('#tree').jstree({
     'core': {
         'multiple': false,
-        'data': datatree
+        'data': activeTree()
     },
     'types': {
         'Alkali_metal': { "icon": makeElementIcon("rgb(0,128,0)") },
@@ -1660,56 +2227,31 @@ $('#tree').jstree({
     $('#tree').jstree(true).show_all();
     $('#tree').jstree('search', "");
     var node = data.instance.get_node(data.selected[0]);
-    CY.elements().remove();
     var infodiv = document.getElementById("info");
+    /* Spent here too: only the selection it was meant for draws with it. */
+    var keep = redrawKeep && node && redrawKeep.name === node.text ? redrawKeep : null;
+    redrawKeep = null;
 
     if (node && node.type.endsWith('isotope')) {
         infodiv.classList.remove("show");
         /* Choosing a nuclide is a request to see its chain, which on a phone
            is behind the list that was just used to choose it. */
         if (chosenByUser && treeCoversGraph()) setTreeCollapsed(true, false);
-        var ids = [node.text];
-        const rnnode = getRn(node.text);
-        xrn = (rnnode.A - rnnode.Z) * 100;
-        yrn = rnnode.Z * 100;
-        var x = 0;
-        var y = 0;
-        if (rnnode.state == "m") {
-            y = -141.5;
-        } else if (rnnode.state == "n") {
-            y = 141.5;
-        }
-        nodeIndex = 0;
-        CY.add({
-            data: {
-                id: rnnode.name, Halflife: rnnode.Halflife, Element: rnnode.Element,
-                A: rnnode.A, Z: rnnode.Z, state: rnnode.state, IC: 0,
-                level: 0, type: TYPE_NUCLIDE,
-                color: COLORS[nodeIndex % COLORS.length],
-                dash: LINES[Math.floor(nodeIndex / COLORS.length)],
-                index: nodeIndex,
-            },
-            position: { x: x, y: y },
-        });
-
-        var defaultScale=chooseDefaultTimeScale(rnnode.Halflife_y);
-        var unit=defaultScale.unit, halflife=defaultScale.value;
-
-        var expvalue = 1 + Math.ceil(Math.log10(halflife));
-        document.getElementById("timeinput").value = "1e" + expvalue;
-        document.getElementById("timeunit").value = unit;
-        decaygraph(ids, rnnode);
-        CY.ready(fitDecayGraph);
+        drawChain(node.text, keep);
     }
-    else if (node) {
-        const a = node.a_attr;
-        renderElementInformation(infodiv, node, a);
-        const ELEMENT_TYPES = ['Alkali_metal','Alkaline_earth_metal','Transition_metal',
-            'Post__transition_metal','Metalloid','Reactive_nonmetal','Noble_gas',
-            'Lanthanide','Actinide','Unknown_properties'];
-        infodiv.classList.remove(...ELEMENT_TYPES);
-        infodiv.classList.add(node.type);
-        infodiv.classList.add("show");
+    else {
+        CY.elements().remove();
+        CHAIN_RECORDS = DB.ensdf ? new Map() : null;
+        if (node) {
+            const a = node.a_attr;
+            renderElementInformation(infodiv, node, a);
+            const ELEMENT_TYPES = ['Alkali_metal','Alkaline_earth_metal','Transition_metal',
+                'Post__transition_metal','Metalloid','Reactive_nonmetal','Noble_gas',
+                'Lanthanide','Actinide','Unknown_properties'];
+            infodiv.classList.remove(...ELEMENT_TYPES);
+            infodiv.classList.add(node.type);
+            infodiv.classList.add("show");
+        }
     }
     runAndUpdateChart();
 }).on('search.jstree', function (event, data) {
@@ -1717,8 +2259,11 @@ $('#tree').jstree({
     if (lastSearchResults.length === 0 && String(data.str || '').trim()) $('#tree').jstree(true).hide_all();
     else $('#tree').jstree(true).show_all();
 }).on('loaded.jstree', function () {
-    if (!selectExactTreeNode('U-238')) showUserError('The default radionuclide U-238 could not be found in the tree.');
-});
+    /* While another database is read the list is empty, and what it is to
+       show is chosen once it is not. */
+    if (!dbLoading && !selectExactTreeNode('U-238')) showUserError('The default radionuclide U-238 could not be found in the tree.');
+    startDatabases();
+}).on('refresh.jstree', afterTreeRefresh);
 
 // ── Chart ────────────────────────────────────────────────────────────────────
 function prepareDataForXAxis(traces, axisType) {
@@ -1739,7 +2284,8 @@ function csvEscape(value) {
 function formatCsvNumber(value) { return Number.isFinite(Number(value)) ? Number(value).toPrecision(12) : ''; }
 function buildChartCsv(traces, order, timeunit, yAxisTitle) {
     var rows = [];
-    rows.push(['RDC export']); rows.push(['Data source','ICRP Publication 107']);
+    rows.push(['RDC export']); rows.push(['Data source', DB.label]);
+    if (DB.ensdf && chainMade) rows.push(['Chain settings', chainMade.settings.branch.text, chainMade.settings.life.text]);
     rows.push(['Quantity',yAxisTitle]); rows.push(['Time unit',timeunit]);
     rows.push(['Initial inventories (Bq)'].concat(order.map(function(name){
         var node = CY.getElementById(name); return formatCsvNumber(node.data('IC'));
@@ -1805,11 +2351,9 @@ function drawEmptyChart() {
 function runAndUpdateChart() {
     clearUserError();
     var order = CY.nodes().filter(function (node) {
-        if (node.data().Halflife == "Stable" || node.id().startsWith("SF")) {
-            return false;
-        } else {
-            return true;
-        }
+        /* The members that decay: not a stable one, one held for want of
+           a half-life, or fission. */
+        return node.data('type') === TYPE_NUCLIDE;
     }).map(function(x) { return x.id(); });
     var n = order.length;
     var y0 = new Array(n);

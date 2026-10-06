@@ -281,9 +281,9 @@ input[type=number]::-webkit-inner-spin-button {
 }
 #cy {
   position: fixed;
-	top: 43px;
+	top: calc(var(--header-height) + var(--rdc-bar-h));
 	left: var(--rdc-tree-w);
-	height: calc(100vh - 74px);
+	height: calc(100vh - 74px - var(--rdc-bar-h));
 	width: calc(100vw - var(--rdc-tree-w));
 	z-index:2;
 	background-color: var(--bg-primary, #ffffff);
@@ -408,7 +408,7 @@ header {
 	--rdc-tree-w: 12em;
 }
 nav {
-	top:43px;
+	top: calc(var(--header-height) + var(--rdc-bar-h));
 	left:0px;
 	bottom: 32px;
 	position: fixed;
@@ -484,6 +484,141 @@ body.tree-collapsed nav {
 	display: none;
 }
 
+/* ==========================================================================
+   THE DECAY DATA
+   ========================================================================== */
+/*
+  The bar under the header says where the chains come from, and lets that be
+  changed: ICRP 107 or a release of ENSDF, and for ENSDF the chain settings.
+  It spans the page, the element list and the graph below it, and wraps on a
+  narrow screen; the page sets --rdc-bar-h to its height as it is laid out,
+  and the list, the graph and the boxes over them start below it.
+*/
+:root {
+	--rdc-bar-h: 43px;
+}
+.rdc-databar {
+	position: fixed;
+	top: var(--header-height);
+	left: 0;
+	right: 0;
+	/* Above the list, which covers the graph on a phone (5); below the
+	   element box (8) and the chart window. */
+	z-index: 6;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 8px;
+	box-sizing: border-box;
+	min-height: 43px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border-color);
+	background: var(--bg-primary, #ffffff);
+	color: var(--text-secondary);
+	font-size: .78rem;
+}
+.databar-label {
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+.databar-control {
+	box-sizing: border-box;
+	height: 30px;
+	max-width: 100%;
+	min-width: 0;
+	padding: 0 8px;
+	border: 1px solid var(--input-border);
+	border-radius: 7px;
+	background: var(--input-bg);
+	color: var(--input-text);
+	font: inherit;
+	font-size: .8rem;
+}
+.databar-control:focus-visible {
+	outline: 2px solid var(--color-kvot-bright);
+	outline-offset: 1px;
+}
+.databar-btn[hidden],
+.databar-chain[hidden] {
+	display: none;
+}
+.databar-chain {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	margin-left: 8px;
+}
+/* What is being read, or what is in use: at the far end while there is
+   room, and on a line of its own when there is not. */
+.databar-status {
+	flex: 1 1 12em;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-muted);
+	text-align: right;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ENSDF files dragged over the page: where they can go. */
+.rdc-drop {
+	display: none;
+}
+body.rdc-dropping .rdc-drop {
+	position: fixed;
+	inset: calc(var(--header-height) + var(--rdc-bar-h)) 0 var(--footer-height) 0;
+	z-index: 9;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 3px dashed var(--color-kvot-bright);
+	background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+	color: var(--text-primary);
+	font-size: 1.2rem;
+	pointer-events: none;
+}
+
+/* A release at NNDC, to download and open. */
+.db-get {
+	max-width: min(460px, calc(100vw - 24px));
+}
+.db-get-body {
+	padding: 14px 18px 4px;
+	font-size: .9rem;
+	line-height: 1.45;
+}
+.db-get-body p,
+.db-get-body ol {
+	margin: 0 0 10px;
+}
+.db-get-body ul {
+	margin: 6px 0 0;
+	padding-left: 1.2em;
+}
+.db-get-body a,
+.db-get-all {
+	color: var(--color-kvot-bright);
+	text-decoration: underline;
+}
+.db-get-all {
+	margin-right: auto;
+	align-self: center;
+	font-size: .85rem;
+}
+.db-get-dim {
+	color: var(--text-muted);
+	font-size: .85em;
+}
+.db-get-warn {
+	color: var(--color-kvot-accent);
+}
+
 /* The reopen control, shown only while the panel is away. */
 .tree-show {
 	display: none;
@@ -491,7 +626,7 @@ body.tree-collapsed nav {
 body.tree-collapsed .tree-show {
 	display: inline-flex;
 	position: fixed;
-	top: calc(var(--header-height) + 8px);
+	top: calc(var(--header-height) + var(--rdc-bar-h) + 8px);
 	left: 8px;
 	z-index: 6;
 	/* Over a drawing rather than a panel, so it needs an edge of its own to
@@ -729,7 +864,7 @@ th {
        allows" means exactly that. */
     box-sizing: border-box;
     border: 5px solid;
-    top: 68px;
+    top: calc(68px + var(--rdc-bar-h));
     /* Anchor the middle to the middle: the old calc() centred a 400px box
        while this one measures 530 with its border and padding. */
     left: 50%;
@@ -749,7 +884,7 @@ th {
      below the node menu (300) and the page header (10000). */
   z-index: 8;
   /* Clear of the footer as well as the top of the window. */
-  max-height: calc(100dvh - 68px - var(--footer-height) - 10px);
+  max-height: calc(100dvh - 68px - var(--rdc-bar-h) - var(--footer-height) - 10px);
 }
 #info.show {
   opacity:1;
@@ -1151,6 +1286,10 @@ th {
   header input {
     font-size: 16px;
   }
+  .databar-control {
+    height: 36px;
+    font-size: 16px;
+  }
 }
 
 /* ==========================================================================
@@ -1169,7 +1308,7 @@ th {
     38% of a phone was not enough for either of them.
   */
   nav {
-    top: var(--header-height);
+    top: calc(var(--header-height) + var(--rdc-bar-h));
     right: 0;
     bottom: var(--footer-height);
     width: auto;
@@ -1185,14 +1324,39 @@ th {
   body.tree-collapsed .tree-show svg {
     transform: rotate(90deg);
   }
+  /* The bar in two lines at most: the database and the button to open one,
+     then the two chain settings side by side. The menus say what they are,
+     so the words before them go, and the status is shown only while
+     something is read: the menu names the database in use. */
+  .rdc-databar .databar-label {
+    display: none;
+  }
+  .databar-db {
+    flex: 1 1 0;
+  }
+  .databar-chain {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    margin-left: 0;
+  }
+  .databar-chain .databar-control {
+    flex: 1 1 0;
+  }
+  .databar-status {
+    flex-basis: 100%;
+    text-align: left;
+  }
+  .databar-status:not(.busy) {
+    display: none;
+  }
   /* Always the full area: the list is laid over it, never beside it, so the
      graph is never asked to redraw itself into a strip. */
   #cy {
-    top: var(--header-height);
+    top: calc(var(--header-height) + var(--rdc-bar-h));
     left: 0;
     right: 0;
     width: auto;
-    height: calc(100dvh - var(--header-height) - var(--footer-height));
+    height: calc(100dvh - var(--header-height) - var(--rdc-bar-h) - var(--footer-height));
     transition: none;
   }
 

@@ -430,6 +430,44 @@ within 1.5 px, in both themes. The new pictures were also compared with the old
 single picture, pixel for pixel, at six levels in both themes: identical. There
 are 33 checks.
 
+## test-rdc-ensdf.js and test-chrome-rdc-ensdf.py
+
+rdc.html drawing its chains from a release of ENSDF instead of ICRP 107.
+
+    node resources/tests/site/test-rdc-ensdf.js
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-rdc-ensdf.py
+
+The page draws and decays a chain from records of one shape, the ICRP 107
+file's. `resources/js/rdc-ensdf.js` makes them from an ENSDF summary, by
+ensdf-core.js's `buildChain()`, the chains of the Chart of Nuclides. The Node
+test (26 checks) reads the release on the site: the names (m for a lone
+isomer, m1 and m2 where there are two, one name per state), the half-lives in
+the ICRP 107 file's words with nothing in them but numbers, units and one
+`<sup>`, the decay modes, the dose coefficients each state takes from ICRP 107
+by half-life (178Ta's 2.36 h ground state is ICRP 107's Ta-178m), and then
+every chain the element list can start, 4476 of them, at two settings: each
+member's arrows move the shares ensdf-core.js's decay system moves, every
+arrow ends at a member or in fission, the energies are `chainEmission()`'s,
+and no two circles touch. That last needed a layout of its own: rdc.html's
+45-degree grid puts each mass number 35 px below the last, and the
+beta-delayed neutrons of an ENSDF chain put members one or two mass numbers
+apart, so circles overlapped in 1862 of the 4476 chains. ENSDF chains get one
+row per mass number that holds a member instead, as ensdf-chain.js draws the
+series; ICRP 107's keep the grid.
+
+The browser test (58 checks) starts from a fresh profile: the Database menu
+and its groups, ICRP 107 as the page starts, the bar between the header and
+what is laid out under it; ENSDF 2026-09-01 with its element list, the U-238
+chain as ensdf-core.js builds it (234Th feeding 234mPa), no touching circles
+there or in Kr-101's; the chain settings, which keep the inventory and the time
+horizon (at T½ ≥ 1 y, 238U goes to 234U via 234Th and 234mPa); the page's own
+solver against CRAM in becquerels, alpha energy and moles; the CSV's source
+line; the search (238U, Am-242m for Am-242m1, co60); back to ICRP 107 with the
+inventory; the choice kept over a reload; Open ENSDF... with
+`../ensdf/fixture/ensdf.003`, kept in IndexedDB and in the menu, then Forget;
+a file dropped on the page; the dialog for a release at NNDC, in one part and
+in three; and a phone, where the bar takes two lines with its menus at 16 px.
+
 ## test-chrome-sl-idle.py
 
 Whether the SL boards stop calling the network when nobody is looking.
