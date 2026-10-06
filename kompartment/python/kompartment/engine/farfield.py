@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import numpy as np
 
 from ..jsonio import js_text
+from ..stats.pdf import _to_precision
 
 
 class FarfError(ValueError):
@@ -280,6 +281,44 @@ def _num_text(x: float) -> str:
     if float(x).is_integer() and abs(x) < 1e21:
         return str(int(x))
     return repr(float(x))
+
+
+#: How much matched layers may grow from one to the next before they are said to be coarse at
+#: depth (``COARSE_GROWTH``): a nuclide that decays fast sizes the first layer by its own decay,
+#: and the series then has to reach the depth in N_M layers.
+COARSE_GROWTH = 2.5
+
+
+def _thickness_text(x: float) -> str:
+    """A layer's thickness for a person, as the application writes it (``thicknessText``)."""
+    if x >= 1:
+        return f'{_to_precision(x, 3)} m'
+    if x >= 1e-3:
+        return f'{_to_precision(x * 1e3, 3)} mm'
+    return f'{_to_precision(x * 1e6, 3)} µm'
+
+
+def coarse_layers_warning(g: Optional[Dict[str, Any]], where: str = '') -> Optional[str]:
+    """What to say about matched layers that grow by more than ``COARSE_GROWTH``, or None
+    (``coarseLayersWarning``): the application's words, its arithmetic step for step -- the depth
+    added up layer by layer, the layers growing by 2 that would reach it counted by doubling."""
+    if not g or not (g.get('q', 0) > COARSE_GROWTH):
+        return None
+    d = [float(x) for x in g['d']]
+    if not d:
+        return None
+    depth = 0.0
+    for x in d:
+        depth += x
+    need = 1
+    step = d[0]
+    reach = d[0]
+    while reach < depth * (1 - 1e-12) and need < 10000:
+        step *= 2
+        reach += step
+        need += 1
+    return (f"the {len(d)} matrix layers{where} grow by {_to_precision(float(g['q']), 3)} from a first layer of "
+            f'{_thickness_text(d[0])}, which is coarse at depth: {need} layers would keep the growth to 2')
 
 
 def wetted_surface(s: Dict[str, Any]) -> float:
@@ -733,6 +772,12 @@ def cell_names(g: Dict[str, Any]) -> List[str]:
     return names
 
 
+def layer_key(space: Any, dims: Sequence[str], o: int) -> str:
+    """The name of one combination of a path's other dimensions, for holding its layers from
+    outside (``layerKey``): the index names joined by NUL, '' for a path with no other dimensions."""
+    return '\x00'.join(space.tuple_at(list(dims), o)) if dims else ''
+
+
 class FarfPath:
     """One far-field block at run time: its cells for every nuclide and every
     index of its other dimensions, the rates worked out from its setting slots,
@@ -741,8 +786,9 @@ class FarfPath:
     def __init__(self, structure: Dict[str, Any], base: int, nnuc: int, other_width: int,
                  dim_off: np.ndarray, single_off: np.ndarray, setting_base: Dict[str, int],
                  single: Sequence[str], release_base: int, keys: Optional[Sequence[str]] = None,
-                 grid: str = 'reference', surface: str = 'f') -> None:
+                 grid: str = 'reference', surface: str = 'f', block_name: Optional[str] = None) -> None:
         self.structure = effective_structure(structure)
+        self.block_name = block_name
         self.base = base
         self.nnuc = nnuc
         self.other_width = other_width
@@ -792,6 +838,8 @@ class FarfPath:
         self.lam = np.zeros(nnuc)
         self.layers: List[Optional[Dict[str, Any]]] = [None] * other_width
         self.laid_out = np.zeros(other_width, dtype=bool)
+        # Layers held from outside, per combination (``pin_layers``), or None.
+        self.pins: Optional[List[Optional[Dict[str, Any]]]] = None
 
     def set_decay(self, lam: Optional[np.ndarray]) -> None:
         """The decay constants the path's nuclides decay with, or None for none."""
@@ -806,6 +854,26 @@ class FarfPath:
         instant and held to its end (``FarfPath.restart``)."""
         self.laid_out[:] = False
         self.seen[:] = np.nan
+        # Layers held from outside are this run's before it starts: laid out already, so the first
+        # refresh works the rates out over them (``pin_layers``).
+        if not self.pins:
+            return
+        nm = self.structure['n_m']
+        for o in range(self.other_width):
+            g = self.pins[o] if o < len(self.pins) else None
+            if not g or len(g['d']) != nm or len(g['h']) != nm:
+                continue
+            self.layers[o] = {'kind': 'matched', 'd': np.array(g['d'], dtype=float),
+                              'h': np.array(g['h'], dtype=float), 'q': float(g['q'])}
+            self.laid_out[o] = True
+
+    def pin_layers(self, pins: Optional[Sequence[Optional[Dict[str, Any]]]]) -> None:
+        """Holds a combination's matched layers at those given, whatever its own nuclides would lay
+        out -- one ``{d, h, q}`` per combination, or None for one left to lay out its own -- or, given
+        None, lets every combination lay out its own again (``pinLayers``): a part of a split run is
+        given the whole model's, so that it solves the whole model's path."""
+        self.pins = list(pins) if self.grid == 'matched' and pins else None
+        self.restart()
 
     def _setting(self, X: np.ndarray, slot: int) -> Dict[str, Any]:
         g = self.structure
@@ -871,6 +939,23 @@ class FarfPath:
                 raise
             if fresh[o]:
                 self.laid_out[o] = True
+
+    def layer_warnings(self) -> List[Dict[str, Any]]:
+        """What the run has to say about this path's layers (``layerWarnings``): matched layers that
+        grow by more than ``COARSE_GROWTH``, ``{block, message}``, one per combination of the other
+        dimensions that has them, read off the layers this run laid out -- by itself, or handed
+        back by a compiled run."""
+        if self.grid != 'matched':
+            return []
+        out: List[Dict[str, Any]] = []
+        for o in range(self.other_width):
+            if not self.laid_out[o] or self.layers[o] is None:
+                continue
+            where = f' (index combination {o + 1} of {self.other_width})' if self.other_width > 1 else ''
+            message = coarse_layers_warning(self.layers[o], where)
+            if message:
+                out.append({'block': self.block_name, 'message': message})
+        return out
 
     def release(self, y: np.ndarray, X: np.ndarray) -> None:
         """The release out of the far end of every slot, into its slot of X:

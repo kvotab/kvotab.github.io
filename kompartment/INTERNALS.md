@@ -4343,6 +4343,23 @@ switching that isotope off in the Index lists tab did too, before any of this.
 `deriveElements` now keeps such an element, switched off, and its entries lie
 dormant like any other switched-off index's.
 
+**A far-field path's layers are the whole model's.** Matched layers are laid
+out from every nuclide on the path at once -- the shallowest penetration, the
+fastest decay -- and a job holds only its own materials, so a job left to lay
+them out itself solved another path: an I-129 tracer beside the far-field
+example's U-238 chain got a first layer of 12 mm where the whole model's is
+3.6 mm, and its release came back 3.4e-4 of the peak off the whole solve. The
+coordinator therefore lays the layers out from the build it planned on, at the
+start, as a run would (`wholeLayers`), and hands them to every job with its
+materials; a job's run holds them (`run(…, { layers })` → `system.pinLayers` →
+`FarfPath.pinLayers`, which `restart` keeps), so every job solves the whole
+model's path, and the split agrees with the whole solve to 8e-9 of the peak.
+Combinations of a path's other dimensions are matched by their index names
+(`layerKey`), not by position. Any run not handed layers lets go of those a
+reused system was given. The Python package does the same (`whole_layers`,
+`pin_layers`), and a compiled part takes the held layers into its work array as
+it takes any laid out.
+
 **Refused, whatever the setting**, where the partition cannot be trusted (a
 delay, a snapshot or an event, as above), where the output is the solver's own
 steps (every part's differ), for the SciPy solvers, for one core, and where

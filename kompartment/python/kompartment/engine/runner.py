@@ -128,7 +128,8 @@ def jumps_of(system: Any) -> List[Any]:
 
 def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float, float], Any]] = None,
         on_grid: bool = False, signal: Any = None, equations: Optional[Dict[str, Any]] = None,
-        workers: Optional[int] = None, compiled: Any = 'auto') -> 'Results':
+        workers: Optional[int] = None, compiled: Any = 'auto',
+        layers: Optional[Dict[str, Dict[str, Any]]] = None) -> 'Results':
     """Runs a project (a :class:`Project`, a model dict, or a :class:`kompartment.Model`).
 
     ``signal`` (an object with ``aborted``, a mapping, or a callable) stops the
@@ -166,6 +167,12 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                                   compiled=compiled)
     t0 = time.perf_counter()
     system = system if system is not None else build_system(project)
+    # Layers handed in are held instead of laid out: a part of a split run is
+    # given the whole model's (``split.whole_layers``). Any other run lays out
+    # its own, so a system handed from run to run lets go of the last one's.
+    pin = getattr(system, 'pin_layers', None)
+    if pin is not None:
+        pin(layers)
     # A far-field path lays its matched layers out at the first instant of a
     # run and holds them to the end of it: this is that instant, every run.
     restart = getattr(system, 'restart_paths', None)
@@ -393,6 +400,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             warned = [w for F in getattr(system, 'laplace', None) or [] for w in F.balance_warnings()]
             if warned:
                 solution['stats']['farfield'] = warned
+            # And a path on cells whose matched layers grow coarse at depth (``stats.layers``).
+            coarse = [w for F in getattr(system, 'FARF', None) or [] if hasattr(F, 'layer_warnings')
+                      for w in F.layer_warnings()]
+            if coarse:
+                solution['stats']['layers'] = coarse
         if jumps and solution.get('stats') is not None:
             solution['stats']['jumps'] = jumped[0]
         if steps is not None:

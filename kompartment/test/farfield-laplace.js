@@ -410,7 +410,9 @@ test('a response that misses its mass balance is said: by the response, the path
 	assert(lines.includes('semi-analytical far-field paths: 1 unit response missed its mass balance'), lines.join('\n'));
 	assert(lines.includes(`  Rock: ${said[0].message}`), lines.join('\n'));
 	const app = readFileSync(`${HERE}../src/ui/app.js`, 'utf8');
-	assert(/state\.runWarnings = Array\.isArray\(payload\.stats\?\.farfield\)/.test(app), 'the app does not take the run\'s warnings');
+	// The run's warnings, this path's and those about a path's layers alike.
+	assert(/state\.runWarnings = \[\s*\.\.\.\(Array\.isArray\(payload\.stats\?\.farfield\)/.test(app)
+		&& /\.\.\.\(Array\.isArray\(payload\.stats\?\.layers\)/.test(app), 'the app does not take the run\'s warnings');
 	assert(/for \(const w of state\.runWarnings\)/.test(app), 'the block is not marked');
 });
 

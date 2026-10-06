@@ -741,6 +741,53 @@ export function matchedGrid({ penDep, nm, first = null, aw, tw, pe, nucs = [] })
 }
 
 /**
+ * How much matched layers may grow from one to the next before they are said
+ * to be coarse at depth.
+ *
+ * A nuclide that decays fast sizes the first layer by its own decay
+ * (`penetrationScale`), and the series then has to reach the depth modelled
+ * from there in N_M layers. On the U-238 chain of TR-19-06, Po-210's half-life
+ * of 0.38 years puts the first at 4.7 µm, and twelve layers to 4.5 m grow by
+ * 3.4: coarse where a long-lived member spends most of a long run, and the
+ * releases came out 4 % off. Twenty layers grow by 2.0 and were 0.2 % off.
+ */
+export const COARSE_GROWTH = 2.5;
+
+/** A layer's thickness for a person: in m, mm or µm, whichever reads best. */
+function thicknessText(x) {
+	if (x >= 1) return `${x.toPrecision(3)} m`;
+	if (x >= 1e-3) return `${(x * 1e3).toPrecision(3)} mm`;
+	return `${(x * 1e6).toPrecision(3)} µm`;
+}
+
+/**
+ * What to say about matched layers that grow by more than `COARSE_GROWTH`,
+ * or null: how fast, from how thin, and how many layers growing by 2 from the
+ * same first one would reach the same depth -- counted by doubling, so that
+ * both engines count alike.
+ *
+ * @param {{d: Float64Array, q: number}} g  matched layers, as `matchedGrid` lays them out
+ * @param {string} [where]  which combination of the path's other dimensions, when it has several
+ * @returns {string|null}
+ */
+export function coarseLayersWarning(g, where = '') {
+	if (!g || !(g.q > COARSE_GROWTH) || !g.d?.length) return null;
+	const d = g.d;
+	let depth = 0;
+	for (let j = 0; j < d.length; j++) depth += d[j];
+	let need = 1;
+	let step = d[0];
+	let reach = d[0];
+	while (reach < depth * (1 - 1e-12) && need < 10000) {
+		step *= 2;
+		reach += step;
+		need++;
+	}
+	return `the ${d.length} matrix layers${where} grow by ${g.q.toPrecision(3)} from a first layer of `
+		+ `${thicknessText(d[0])}, which is coarse at depth: ${need} layers would keep the growth to 2`;
+}
+
+/**
  * The flow-wetted surface per unit volume of water, from whichever way the
  * path gives it: F/T_w, a_w itself, or 2/δ for an aperture δ.
  */

@@ -129,6 +129,14 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 			+ `${farfield.length === 1 ? '' : 's'} missed ${farfield.length === 1 ? 'its' : 'their'} mass balance`);
 		for (const w of farfield) out.push(`  ${w.block}: ${w.message}`);
 	}
+	// A far-field path on cells whose matched layers grow coarse at depth.
+	const layers = s.layers ?? [];
+	if (layers.length) {
+		out.push('');
+		out.push(`far-field matrix layers: ${layers.length} ${layers.length === 1 ? 'path grows' : 'paths grow'}`
+			+ ' coarse at depth');
+		for (const w of layers) out.push(`  ${w.block}: ${w.message}`);
+	}
 	if (payload?.massBalance) {
 		out.push('');
 		out.push(...describeAudit(payload.massBalance, { timeUnit: project?.simulation?.time_unit ?? '' }));

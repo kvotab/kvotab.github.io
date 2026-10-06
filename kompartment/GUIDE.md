@@ -2248,6 +2248,16 @@ digit.** Each part takes the steps its own states need rather than the steps
 the stiffest state anywhere needs, which is the point. The setting is part of
 what a run is of, so changing it solves again.
 
+**A far-field path keeps the whole model's layers.** A path's matched layers
+are sized by every nuclide on it at once, and a part holds only some of them:
+left to itself, a part with an independent tracer would lay out a first layer
+several times thicker than the whole model's, and solve another path. So the
+layers are laid out once, from the whole model at the start of the run, and
+every part holds those: the far-field example with I-129 beside its U-238
+chain agrees with its whole solve to a few parts in a billion of the peak,
+where a part left to lay out its own would put I-129 3 parts in ten thousand
+out.
+
 The status line says `split 4 parts on 4 cores` when a run was split, and its
 tooltip lists the parts with their steps and times; the run log says why a run
 was or was not split. A model is solved whole, whatever the setting, when:
@@ -5701,6 +5711,19 @@ did.
 
 The matched layers can take a first thickness of their own, like the reference
 ones; the node spacing is theirs either way.
+
+**When they grow coarse.** A nuclide that decays fast sizes the first layer by
+its own decay, and the layers then have to reach the depth modelled from there
+in as many layers as the path has. On the U-238 chain of TR-19-06, Po-210's
+half-life of 0.38 years puts the first layer at 4.7 µm, and twelve layers to
+4.5 m grow by 3.4 each: coarse at depth, where U-238 spends most of a long run,
+and the chain's releases came out 4% off. Twenty layers grow by 2.0, and were
+within 0.2%. Where a path's matched layers grow by more than 2.5 from one to the
+next, it is warned about on the block, in its settings and in the strip — *at
+the start of a run* as soon as the model has been built, and *after the last
+run* with the run, and in its log — with how many layers would keep the growth
+to 2. More layers is the cure, or a first thickness given outright. The
+reference layers grow by e as a rule, and are not warned about.
 
 ### Paths saved before these choices
 

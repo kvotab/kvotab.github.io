@@ -46,6 +46,7 @@ import { SolverError } from '../ode/solvers/dormand-prince.js';
 import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
 import {
 	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
+	wholeLayers,
 	MOST_PART_WORKERS,
 } from '../sim/split.js';
 
@@ -351,13 +352,16 @@ async function runSplit(args) {
 		self.postMessage({ type: 'progress', id, fraction, ...(Number.isFinite(at) ? { at } : {}) });
 	};
 	const started = Date.now();
+	// The far-field paths' layers as the whole model lays them out, for every
+	// part to hold: a part alone would size them by its own nuclides.
+	const layers = wholeLayers(system, whole);
 	const outcome = new Array(work.length);
 	const workers = work.map(() => partWorker());
 	try {
 		const going = work.map(async (job, b) => {
 			if (cancelled) throw STOPPED;
 			try {
-				outcome[b] = await workers[b].job({ id, text: modelText, materials: job.materials },
+				outcome[b] = await workers[b].job({ id, text: modelText, materials: job.materials, layers },
 					(fraction, at) => { progress[b] = { fraction, at: at ?? progress[b].at }; report(); });
 			} finally {
 				workers[b].close();
@@ -957,7 +961,11 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			fault = { name: e?.name ?? 'Error', message: e?.message ?? String(e), blockName: e?.blockName ?? null };
 		}
-		self.postMessage({ type: 'start-values', id: msg.id, ms: Date.now() - started, fault });
+		// A few lines, sent with the answer rather than asked for: what the
+		// far-field paths' layers would be warned about.
+		self.postMessage({
+			type: 'start-values', id: msg.id, ms: Date.now() - started, fault, layers: preview?.at?.layers ?? [],
+		});
 		return;
 	}
 
@@ -1994,6 +2002,8 @@ self.onmessage = async (ev) => {
 			const results = run(part, {
 				system: partSystem,
 				onGrid: true,
+				// The whole model's far-field layers, not this part's own.
+				layers: msg.layers ?? null,
 				signal: { get aborted() { return cancelled; } },
 				onProgress: (fraction, at) => {
 					const now = Date.now();

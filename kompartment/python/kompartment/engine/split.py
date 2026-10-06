@@ -89,6 +89,7 @@ from .partition import partition_of
 __all__ = ['SPLIT_MODES', 'SHARED_WORK', 'AUTO_STATES', 'AUTO_SOLVE_MS', 'AUTO_GAIN', 'AUTO_GAIN_UNTIMED',
            'START_MS', 'state_keys', 'state_materials', 'split_jobs', 'job_cost', 'pack_jobs', 'plan_split',
            'bin_jobs', 'part_model', 'place_states', 'assemble_parts', 'build_part', 'run_split', 'whole_solve_ms',
+           'whole_layers',
            'run_whole_or_split']
 
 #: The setting, as the application's Simulation section offers it.
@@ -631,6 +632,11 @@ def assemble_parts(plan: Dict[str, Any], outcomes: Sequence[Dict[str, Any]]) -> 
         if s.get('sparse') is not None:
             stats['sparse'] = s['sparse']
         add_method_steps(stats, s)
+        # What a part said about a far-field path's layers, once however many parts the path is in.
+        for w in s.get('layers') or []:
+            said = stats.setdefault('layers', [])
+            if not any(x.get('block') == w.get('block') and x.get('message') == w.get('message') for x in said):
+                said.append(w)
         # This engine's own: the run was compiled when every part was, and
         # the first part that was not says why.
         if 'compiled' in s:
@@ -729,9 +735,41 @@ def _remembered(system: Any, mem: Sequence[Any]) -> Dict[str, Any]:
     return out
 
 
-def _part_job(job: int, materials: Sequence[str]) -> Dict[str, Any]:
+def whole_layers(system: Any, project: Any) -> Optional[Dict[str, Dict[str, Any]]]:
+    """The far-field paths' matched layers as a run of the whole model lays them out at its first
+    instant, for a split run's parts to hold (``wholeLayers``): by path name, then by combination of
+    the path's other dimensions (``layer_key``), each ``{d, h, q}``; None for a model with no
+    matched layers. A part holds only its own materials, and left to itself would size a path's
+    layers by those alone -- another path than the whole model's."""
+    from .farfield import FarfPath, layer_key
+    paths = [p for p in system.builder.farf_layout
+             if isinstance(system.FARF[p.farf_index], FarfPath) and system.FARF[p.farf_index].grid == 'matched']
+    if not paths:
+        return None
+    t0 = float(project.simulation['start_time'])
+    y = system.initial_state()
+    system.prime_recorders(t0, y)
+    X = system.evaluate_algebraic(t0, y)
+    space = system.builder.space
+    out: Dict[str, Dict[str, Any]] = {}
+    for p in paths:
+        F = system.FARF[p.farf_index]
+        combos: Dict[str, Any] = {}
+        for o in range(p.farf.other_width):
+            try:
+                g = F._lay_out(X, o)
+            except Exception:  # left to the part, which says why when it runs
+                continue
+            combos[layer_key(space, p.farf.other_dims, o)] = {
+                'd': [float(v) for v in g['d']], 'h': [float(v) for v in g['h']], 'q': float(g['q'])}
+        out[p.name] = combos
+    return out
+
+
+def _part_job(job: int, materials: Sequence[str], layers: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """One job, in a worker process: build the part, run it on the grid, and
-    send back its states by name, its recorders' histories and its timing."""
+    send back its states by name, its recorders' histories and its timing.
+    ``layers`` are the whole model's far-field layers, which the part holds."""
     from .runner import run
     started = time.perf_counter()
     model = part_model(json.loads(_WORKER['text']), materials, copy_it=False)
@@ -749,7 +787,8 @@ def _part_job(job: int, materials: Sequence[str]) -> Dict[str, Any]:
 
     watched = heard is not None or stop is not None
     results = run(project, system=system, on_grid=True, on_progress=hear if watched else None,
-                  signal=stop.is_set if stop is not None else None, compiled=_WORKER.get('compiled', 'auto'))
+                  signal=stop.is_set if stop is not None else None, compiled=_WORKER.get('compiled', 'auto'),
+                  layers=layers)
     keys = state_keys(system.layout)
     if keys is None:
         raise RuntimeError('two states of this part share a name')
@@ -820,12 +859,15 @@ def run_split(project: Any, system: Any, plan: Dict[str, Any], *, workers: Optio
             stop.set()
         return SolverError('aborted', 'Simulation aborted', 0.0)
 
+    # The far-field paths' layers as the whole model lays them out, for every part to hold: a part
+    # alone would size them by its own nuclides.
+    layers = whole_layers(system, project)
     executor = cf.ProcessPoolExecutor(max_workers=count, mp_context=ctx, initializer=_start_part_worker,
                                       initargs=(json.dumps(project.to_json()), heard, stop, compiled))
     try:
         # A process is started as a job is handed in, while no process is free.
         with _one_thread_each(), _without_main():
-            futures = {executor.submit(_part_job, j, jobs[j]['materials']): j for j in order}
+            futures = {executor.submit(_part_job, j, jobs[j]['materials'], layers): j for j in order}
         pending = set(futures)
         while pending:
             if _aborted(signal):

@@ -1004,7 +1004,7 @@ class _Builder:
                                       single=[k for k in keys if k not in FARF_NUCLIDE_KEYS],
                                       release_base=rel.base, keys=keys,
                                       grid='matched' if p.block.get('grid') == 'matched' else 'reference',
-                                      surface=surface_of(p.block)))
+                                      surface=surface_of(p.block), block_name=p.name))
         self.MEM: List[Recorder] = []
         self.recorders: List[Entry] = []
         mean_state_by_name = {m.name: m for m in self.mean_states}

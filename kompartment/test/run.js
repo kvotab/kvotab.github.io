@@ -29171,6 +29171,163 @@ test('a path saved before the new outlet and layers keeps its own, and says so',
 	assert(block.n_m === 12 && back.n_m === 12, `${block.n_m} ${back.n_m}`);
 });
 
+test('matched layers that grow coarse at depth are said: after a run, in its log, before one, and from a split', async () => {
+	const farf = await import('../src/domain/farfield.js');
+	const { runLogLines } = await import('../src/domain/runlog.js');
+	const split = await import('../src/sim/split.js');
+	// The U-238 chain of TR-19-06 down to Po-210, on its representative path.
+	// Po-210's half-life of 0.38 years sizes the first layer by its decay, at
+	// under 5 µm, and twelve layers have to grow by 3.4 each to reach 4.5 m:
+	// the releases come out 4 % off. Twenty grow by 2.0.
+	const nucs = ['U-238', 'U-234', 'Th-230', 'Ra-226', 'Pb-210', 'Po-210'];
+	const kd = [2e-4, 2e-4, 5.3e-2, 4.5e-4, 2.5e-2, 2.5e-2];
+	const de = [2.7e-7, 2.7e-7, 2.7e-7, 8.5e-7, 8.5e-7, 2.7e-7];
+	const model = (nm, grid = 'matched', extra = []) => ({
+		name: 'chain',
+		simulation: {
+			start_time: 0, end_time: 1e4, output_points: 10, spacing: 'log',
+			solver: 'ndf', rtol: 1e-6, abstol: 1e-20, time_unit: 'year',
+		},
+		nuclides: [...nucs, ...extra],
+		half_lives: {
+			'U-238': 4.468e9, 'U-234': 245500, 'Th-230': 75386, 'Ra-226': 1600, 'Pb-210': 22.3, 'Po-210': 0.379,
+			...Object.fromEntries(extra.map((n) => [n, 1.57e7])),
+		},
+		chains: nucs.slice(1).map((n, i) => [nucs[i], n, 1]),
+		decay_unit: 'Bq',
+		compartments: [{ name: 'Out', initial: '0', index_lists: ['Radionuclides'] }],
+		inflows: [{ name: 'In', to: 'Rock', rate: '1', index_lists: ['Radionuclides'] }],
+		transfers: [{
+			name: 'Release', from: 'Rock', to: 'Out', rate: 'Rock', multiply_by_donor: false,
+			index_lists: ['Radionuclides'],
+		}],
+		farfields: [{
+			name: 'Rock', index_lists: ['Radionuclides'], tw: '235.2', f: '80090', kd_f: '0', kd_m: '0',
+			de_m: '1e-4', eps_m: '0.0019', rho_m: '2700', pe: '10', pen_dep: '4.5', pen_dep_0: '',
+			n_f: 20, n_m: nm, o_b: 4, n_b: '', grid,
+			entries: nucs.map((name, i) => ({ index: { Radionuclides: name }, kd_m: String(kd[i]), de_m: String(de[i]) })),
+		}],
+	});
+	const coarse = run(structuredClone(model(12)));
+	const said = coarse.stats.layers ?? [];
+	assert(said.length === 1 && said[0].block === 'Rock', JSON.stringify(said));
+	assert(/^the 12 matrix layers grow by 3\.\d\d from a first layer of 4\.\d\d µm, which is coarse at depth: 20 layers would keep the growth to 2$/
+		.test(said[0].message), said[0].message);
+	// The run log, under its own heading: not the semi-analytical paths' one.
+	const log = runLogLines({ project: model(12), payload: { stats: coarse.stats } });
+	assert(log.includes('far-field matrix layers: 1 path grows coarse at depth')
+		&& log.includes(`  Rock: ${said[0].message}`) && !log.some((l) => /semi-analytical/.test(l)), log.join('\n'));
+	// Before a run, from the build behind the values at the start: the same words.
+	const atStart = valuesAtStart(new Project(structuredClone(model(12)))).layers;
+	assert(atStart.length === 1 && atStart[0].block === 'Rock' && atStart[0].message === said[0].message,
+		JSON.stringify(atStart));
+	// Twenty layers grow by 2.0, and nothing is said, before or after.
+	const fine = run(structuredClone(model(20)));
+	assert(!fine.stats.layers?.length, JSON.stringify(fine.stats.layers));
+	assert(valuesAtStart(new Project(structuredClone(model(20)))).layers.length === 0, 'twenty layers were called coarse');
+	// The reference layers grow by e as a rule, kept for the models built on
+	// them: a choice, and not said.
+	assert(!run(structuredClone(model(12, 'reference'))).stats.layers?.length, 'the reference layers were called coarse');
+	// Split, the chain is one part and an independent nuclide another; the
+	// run says it once, as the whole run would.
+	const both = new Project(model(12, 'matched', ['I-129']));
+	const bothSystem = buildSystem(both);
+	const plan = split.planSplit(bothSystem, both, { mode: 'on', workers: 8, nest: true });
+	assert(plan.use && plan.jobs.length === 2, plan.why);
+	// Each part holds the whole model's layers, as a split run hands them out,
+	// so both say the same of them.
+	const layers = split.wholeLayers(bothSystem, both);
+	const pj = both.toJSON();
+	const outcomes = plan.jobs.map((job) => {
+		const r = run(new Project(split.partModel(pj, job.materials)), { onGrid: true, layers });
+		const np = r.system.layout.nstate;
+		const y = new Float64Array(r.t.length * np);
+		r.y.forEach((row, i) => y.set(row, i * np));
+		return { t: r.t, y, np, keys: split.stateKeys(r.system.layout), stats: r.stats, held: r.stats.held ?? null };
+	});
+	const whole = run(structuredClone(model(12, 'matched', ['I-129']))).stats.layers ?? [];
+	const merged = split.assembleParts(plan, outcomes).stats.layers ?? [];
+	assert(merged.length === 1 && whole.length === 1 && merged[0].message === whole[0].message,
+		`${JSON.stringify(merged)} against ${JSON.stringify(whole)}`);
+	// ...and a path in several parts that every part says the same of is said once.
+	const echoed = outcomes.map((o) => ({ ...o, stats: { ...o.stats, layers: merged } }));
+	assert(split.assembleParts(plan, echoed).stats.layers.length === 1, 'a warning was repeated per part');
+	// The rule itself: exactly 2.5 is not coarse, and a combination says which.
+	assert(farf.coarseLayersWarning({ d: Float64Array.of(1, 2.5, 6.25), q: 2.5 }) === null, 'a growth of 2.5 was called coarse');
+	assert(/^the 3 matrix layers \(index combination 2 of 3\) grow by 3\.00 from a first layer of 1\.00 mm/
+		.test(farf.coarseLayersWarning({ d: Float64Array.of(1e-3, 3e-3, 9e-3), q: 3 }, ' (index combination 2 of 3)')),
+	'the combination is not named');
+});
+
+test('a far-field path in several parts of a split run is solved on the whole model’s layers', async () => {
+	const split = await import('../src/sim/split.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const { readFileSync } = await import('node:fs');
+	// The far-field example with I-129 beside its U-238 chain: two parts, the
+	// chain and the tracer. Alone, the tracer's part would size the path's
+	// first layer by I-129 only, 12 mm where the whole model's is 3.6 mm, and
+	// solve another path.
+	const raw = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
+	raw.nuclides = [...raw.nuclides, 'I-129'];
+	raw.simulation = { ...raw.simulation, spacing: 'log' };
+	delete raw.simulation.output_times;
+	// One of its expressions reads U-238 by name, which a part without it refuses.
+	raw.expressions = [];
+	raw.compartments[0].entries = [...(raw.compartments[0].entries ?? []),
+		{ index: { Radionuclides: 'I-129' }, initial: '1e12' }];
+	raw.parameters.find((p) => p.name === 'Kd_matrix').entries.push({ index: { Radionuclides: 'I-129' }, value: 0 });
+	const project = new Project(structuredClone(raw));
+	const system = buildSystem(project);
+	const plan = split.planSplit(system, project, { mode: 'on', workers: 8, nest: true });
+	assert(plan.use && plan.jobs.length === 2, plan.why);
+	// The layers handed to the parts are the whole run's, to the bit.
+	const layers = split.wholeLayers(system, project);
+	const whole = run(structuredClone(raw));
+	const ran = whole.system.paths[0].layers[0];
+	const given = layers?.Rock?.[''];
+	assert(given && given.d.every((v, j) => v === ran.d[j]) && given.h.every((v, j) => v === ran.h[j]) && given.q === ran.q,
+		'the whole model’s layers are not the ones its run lays out');
+	const pj = project.toJSON();
+	const parts = (pins) => plan.jobs.map((job) => {
+		const r = run(new Project(split.partModel(pj, job.materials)), { onGrid: true, layers: pins });
+		const np = r.system.layout.nstate;
+		const y = new Float64Array(r.t.length * np);
+		r.y.forEach((row, i) => y.set(row, i * np));
+		return {
+			t: r.t, y, np, keys: split.stateKeys(r.system.layout), stats: r.stats, held: r.stats.held ?? null,
+			first: r.system.paths[0].layers[0].d[0],
+		};
+	});
+	const held = parts(layers);
+	assert(held.every((o) => o.first === given.d[0]), `a part laid out its own: ${held.map((o) => o.first)}`);
+	const { t, rows, stats } = split.assembleParts(plan, held);
+	const parted = new Results({ project, system, solution: { t, y: rows, stats }, timing: {} });
+	const outs = whole.outputs();
+	const a = whole.seriesMany(outs);
+	const b = parted.seriesMany(parted.outputs());
+	let worst = 0;
+	a.forEach((col, k) => {
+		const peak = Math.max(...Array.from(col, Math.abs)) || 1;
+		for (let i = 0; i < col.length; i++) worst = Math.max(worst, Math.abs(col[i] - b[k][i]) / peak);
+	});
+	assert(worst < 1e-6, `the parts differ from the whole by ${worst.toExponential(2)} of a peak`);
+	// Left to lay out its own, the tracer's part sizes them by I-129 alone.
+	assert(parts(null).some((o) => o.first > 3 * given.d[0]), 'a part alone laid out the whole model’s layers');
+	// And a system run again without layers lets go of those it was given.
+	const tracer = new Project(split.partModel(pj, ['I-129']));
+	const kept = buildSystem(tracer);
+	run(tracer, { system: kept, onGrid: true, layers });
+	assert(kept.paths[0].layers[0].d[0] === given.d[0], 'the layers given were not held');
+	run(tracer, { system: kept, onGrid: true });
+	assert(kept.paths[0].layers[0].d[0] > 3 * given.d[0], 'a system kept the layers it was once given');
+	// The page's split does the same: the coordinator lays the layers out from
+	// the build it planned on and hands them to every part, which runs on them.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	assert(/const layers = wholeLayers\(system, whole\);/.test(worker)
+		&& /materials: job\.materials, layers \}/.test(worker)
+		&& /layers: msg\.layers \?\? null,/.test(worker), 'the page’s parts are not handed the whole model’s layers');
+});
+
 test('a path’s Jacobian is exact over the matched layers and the rock going on, however its surface is given', () => {
 	const base = (extra = {}) => ({
 		name: 'jac2',

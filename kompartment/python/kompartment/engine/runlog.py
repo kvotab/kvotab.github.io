@@ -382,6 +382,14 @@ def run_log_lines(project: Any, payload: Any, replayed: Any = None, build: str =
                    f"{'its' if n == 1 else 'their'} mass balance")
         for w in farfield:
             out.append(f"  {_s(_get(w, 'block'))}: {_s(_get(w, 'message'))}")
+    # a far-field path on cells whose matched layers grow coarse at depth
+    layers = _nz(_get(_get(payload, 'stats'), 'layers'), [])
+    if len(layers):
+        n = len(layers)
+        out.append('')
+        out.append(f"far-field matrix layers: {n} {'path grows' if n == 1 else 'paths grow'} coarse at depth")
+        for w in layers:
+            out.append(f"  {_s(_get(w, 'block'))}: {_s(_get(w, 'message'))}")
     audit = _get(payload, 'massBalance')
     if _truthy(audit):
         out.append('')

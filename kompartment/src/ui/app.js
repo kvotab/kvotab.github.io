@@ -143,7 +143,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-05';
+const BUILD = '2026-10-06';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -564,9 +564,14 @@ const state = {
 	runProblem: null,
 	// What the last run warned about, block by block: a far-field path worked
 	// out semi-analytically whose unit response missed its mass balance (the
-	// run's `stats.farfield`). Warnings, not faults -- the run went on -- and
-	// replaced by the next run's.
+	// run's `stats.farfield`), or one on cells whose matched layers grow
+	// coarse at depth (`stats.layers`). Warnings, not faults -- the run went
+	// on -- and replaced by the next run's.
 	runWarnings: [],
+	// The same about the matched layers, before a run: what the build behind
+	// the values at the start lays out (see `layers` in ../sim/atstart.js).
+	// Replaced by every such build, as `buildProblem` is.
+	startWarnings: [],
 	// What the build behind the values at the start found, when it would not
 	// build: the same fault a run would stop on, found without one. See
 	// `noteBuildProblem`.
@@ -1741,7 +1746,10 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	};
 	// What this run warns about, in place of the last run's: see `runWarnings`.
 	const hadWarnings = state.runWarnings.length > 0;
-	state.runWarnings = Array.isArray(payload.stats?.farfield) ? payload.stats.farfield : [];
+	state.runWarnings = [
+		...(Array.isArray(payload.stats?.farfield) ? payload.stats.farfield : []),
+		...(Array.isArray(payload.stats?.layers) ? payload.stats.layers : []),
+	];
 	if (hadWarnings || state.runWarnings.length) remark();
 	// What the next edit will be compared against. Taken from the model this
 	// run was of, not the one on screen, for the same reason `rev` is.
@@ -3421,6 +3429,7 @@ async function computeStartValues() {
 	startCost = { model, ms: reply.ms, budget: START_BUDGET };
 	startValues = { model, rev, id, answers: reply.fault ? null : new Map(), at: null };
 	noteBuildProblem(reply.fault ? Object.assign(new Error(reply.fault.message), reply.fault) : null);
+	noteStartWarnings(reply.fault ? [] : reply.layers);
 	sayStartBudget();
 	return true;
 }
@@ -3458,6 +3467,7 @@ async function computeStartValuesHere(model, rev) {
 	startCost = { model, ms: Date.now() - started, budget: START_BUDGET_ON_PAGE };
 	startValues = { model, rev, id: 0, answers: null, at };
 	noteBuildProblem(fault);
+	noteStartWarnings(at?.layers);
 	sayStartBudget();
 	return true;
 }
@@ -3552,6 +3562,9 @@ function marksByName() {
 	}
 	for (const w of state.runWarnings) {
 		entries.push({ where: w.block, level: 'warning', message: `After the last run: ${w.message}` });
+	}
+	for (const w of startWarningsShown()) {
+		entries.push({ where: w.block, level: 'warning', message: `At the start of a run: ${w.message}` });
 	}
 	// And a fault found by building the model -- by the last run, or by the
 	// build behind the values at the start -- when it names a block. Those
@@ -3783,6 +3796,27 @@ function noteBuildProblem(e) {
 }
 
 /**
+ * What the same build found about the far-field paths' matched layers,
+ * kept as the build's fault is: replaced by every build, and forgotten with
+ * it where the model costs too much to build again after an edit.
+ */
+function noteStartWarnings(list) {
+	const next = Array.isArray(list) ? list : [];
+	const was = state.startWarnings;
+	if (was.length === next.length
+		&& was.every((w, i) => w.block === next[i].block && w.message === next[i].message)) return;
+	state.startWarnings = next;
+	remark();
+}
+
+/** The start's warnings that the last run has not already said in the same words. */
+function startWarningsShown() {
+	return state.startWarnings.filter(
+		(w) => !state.runWarnings.some((r) => r.block === w.block && r.message === w.message),
+	);
+}
+
+/**
  * Looked for again after an edit, once the typing stops -- or forgotten now,
  * for a model whose build costs too much to repeat on every edit, since what
  * it says is about the model before the edit and the run will say it again.
@@ -3790,6 +3824,7 @@ function noteBuildProblem(e) {
 function recheckBuild() {
 	if (startCost.model === state.raw && startCost.ms > startCost.budget) {
 		noteBuildProblem(null);
+		noteStartWarnings([]);
 		return;
 	}
 	scheduleStartValues();
@@ -3809,6 +3844,7 @@ function fillSettingsProblems() {
 			...(state.runProblem ? [state.runProblem] : []),
 			...(buildProblemShown() ? [state.buildProblem] : []),
 			...state.runWarnings.map((w) => ({ where: w.block, what: 'After the last run', message: w.message })),
+			...startWarningsShown().map((w) => ({ where: w.block, what: 'At the start of a run', message: w.message })),
 		].filter((p) => p.where === name);
 		box.replaceChildren(...mine.map((p) => el('p', { className: 'settings-problem' },
 			el('b', {}, p.kind === 'run' ? 'The last run failed here. ' : p.kind === 'build' ? 'This will not build. ' : `${p.what}: `),
@@ -3872,6 +3908,8 @@ function renderProblems() {
 			warning: true,
 		})), ...state.runWarnings.map((w) => ({
 			where: w.block, what: 'last run', message: w.message, warning: true,
+		})), ...startWarningsShown().map((w) => ({
+			where: w.block, what: 'at the start of a run', message: w.message, warning: true,
 		}))];
 	const rows = [...all, ...warnings];
 	box.replaceChildren();

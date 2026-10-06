@@ -25,6 +25,7 @@
 
 import { buildSystem } from './builder.js';
 import { describeEntry } from './runner.js';
+import { coarseLayersWarning } from '../domain/farfield.js';
 
 /** What a block's own value comes from, given the layout entry it lives in. */
 const SOURCE = { state: 'y', algebraic: 'X', parameter: 'P' };
@@ -183,9 +184,30 @@ export function valuesAtStart(project, { system = null } = {}) {
 	// when the model changes.
 	const asked = new Map();
 
+	/*
+	  What a run would say about a far-field path's matched layers, before one
+	  is run: laid out from these same values as a run lays them out at its
+	  first instant (`FarfPath._layOut`), and held to the rule the run reports
+	  by -- see `coarseLayersWarning`. A path whose settings cannot be laid out
+	  is left to the run, which says why.
+	*/
+	const layers = [];
+	for (const F of sys.paths ?? []) {
+		if (F.grid !== 'matched' || typeof F._layOut !== 'function') continue;
+		for (let o = 0; o < F.otherWidth; o++) {
+			let g;
+			try { g = F._layOut(X, o); } catch { continue; }
+			const where = F.otherWidth > 1 ? ` (index combination ${o + 1} of ${F.otherWidth})` : '';
+			const message = coarseLayersWarning(g, where);
+			if (message) layers.push({ block: F.blockName, message });
+		}
+	}
+
 	return {
 		t0,
 		size: own.size,
+		// What the far-field paths' layers would be warned about: `{block, message}`.
+		layers,
 		of(name) {
 			if (!asked.has(name)) asked.set(name, describe(name));
 			return asked.get(name);

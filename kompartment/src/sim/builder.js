@@ -48,7 +48,7 @@ import {
 } from '../domain/indexlists.js';
 import { buildJacobian, buildParamTangent, blocksRead, withWhatTheyRead } from './jacobian.js';
 import { userFunctions, FunctionError } from './functions.js';
-import { FarfPath } from './farfield.js';
+import { FarfPath, layerKey } from './farfield.js';
 import { LaplaceFarfPath } from './farfield-laplace.js';
 import { expandTransports, TransportError } from './transport.js';
 import {
@@ -818,6 +818,7 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			grid: p.block.grid === 'matched' ? 'matched' : 'reference',
 			surface: surfaceOf(p.block),
 			releaseBase: rel.base,
+			blockName: p.name,
 		}));
 	}
 
@@ -2832,6 +2833,24 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		 * `FarfPath.restart`.
 		 */
 		restartPaths: () => { for (const F of FARF) F.restart(); },
+		/**
+		 * Holds the far-field paths' matched layers at those given: by path
+		 * name, then by combination of the path's other dimensions (their
+		 * index names joined by NUL, '' for none), each `{d, h, q}` -- or lets
+		 * every path lay out its own again, for null. What a part of a split
+		 * run is given, so that it runs on the whole model's layers; see
+		 * `wholeLayers` in ./split.js.
+		 */
+		pinLayers: (layers) => {
+			for (const p of farfLayout) {
+				const F = FARF[p.farfIndex];
+				if (typeof F.pinLayers !== 'function') continue;
+				const mine = layers?.[p.name];
+				F.pinLayers(mine
+					? Array.from({ length: p.farf.otherWidth }, (_, o) => mine[layerKey(space, p.farf.otherDims, o)] ?? null)
+					: null);
+			}
+		},
 		useClockInterpolation,
 		tableCorners,
 		clockSlotCount: clockIdx.length,

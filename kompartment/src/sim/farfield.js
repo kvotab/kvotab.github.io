@@ -23,8 +23,19 @@
 import {
 	cellStructure, cellValues, coefficients, coefficientsTangent,
 	releaseCells, releaseWeights, FARF_EQUATION_KEYS,
-	effectiveStructure, matchedGrid, wettedSurface, rockSettingProblem, FarfError,
+	effectiveStructure, matchedGrid, wettedSurface, rockSettingProblem, FarfError, coarseLayersWarning,
 } from '../domain/farfield.js';
+
+/**
+ * The name of one combination of a path's other dimensions, for holding its
+ * layers from outside (`pinLayers`): the index names, joined by NUL, which no
+ * name contains -- '' for a path with no other dimensions. By name rather
+ * than by position, so that a part of a split run, which holds fewer of some
+ * list, still finds the whole model's combination.
+ */
+export function layerKey(space, dims, o) {
+	return dims.length ? space.tupleAt(dims, o).join('\u0000') : '';
+}
 
 export class FarfPath {
 	/**
@@ -51,6 +62,8 @@ export class FarfPath {
 	 *   layers are laid out
 	 * @param {string} [spec.surface] how the wetted surface is given
 	 * @param {number} spec.releaseBase algebraic base of the block's own value
+	 * @param {string} [spec.blockName] the block's qualified name, for what
+	 *   the run says about it
 	 */
 	constructor(spec) {
 		Object.assign(this, spec);
@@ -66,6 +79,7 @@ export class FarfPath {
 		this.nrel = this.relCells.length;
 		this.grid = spec.grid === 'matched' ? 'matched' : 'reference';
 		this.surface = spec.surface ?? 'f';
+		this.blockName = spec.blockName ?? null;
 
 		const slots = this.otherWidth * this.nnuc;
 		this.slots = slots;
@@ -115,6 +129,33 @@ export class FarfPath {
 	restart() {
 		this.laidOut.fill(0);
 		this.seen.fill(NaN);
+		// Layers held from outside are this run's layers before it starts:
+		// laid out already, so the first refresh works the rates out over
+		// them rather than laying out its own. See `pinLayers`.
+		if (!this.pins) return;
+		const nm = this.structure.n_m;
+		for (let o = 0; o < this.otherWidth; o++) {
+			const g = this.pins[o];
+			if (!g || g.d?.length !== nm || g.h?.length !== nm) continue;
+			this.layers[o] = { kind: 'matched', d: Float64Array.from(g.d), h: Float64Array.from(g.h), q: g.q };
+			this.laidOut[o] = 1;
+		}
+	}
+
+	/**
+	 * Holds a combination's matched layers at those given, whatever its own
+	 * nuclides would lay out -- one `{d, h, q}` per combination of the other
+	 * dimensions, or null for one left to lay out its own -- or, given null,
+	 * lets every combination lay out its own again.
+	 *
+	 * For a part of a split run, which holds only some of the path's nuclides:
+	 * left to itself it would size the first layer by those alone, and solve
+	 * another path than the whole model's. Given the whole model's layers
+	 * (`wholeLayers` in ./split.js), it solves the same one.
+	 */
+	pinLayers(pins) {
+		this.pins = this.grid === 'matched' && pins ? pins : null;
+		this.restart();
 	}
 
 	/**
@@ -224,6 +265,24 @@ export class FarfPath {
 			}
 			if (fresh) this.laidOut[o] = 1;
 		}
+	}
+
+	/**
+	 * What the run has to say about this path's layers: matched layers that
+	 * grow by more than `COARSE_GROWTH` from one to the next, `{block,
+	 * message}`, one per combination of the other dimensions that has them.
+	 * Read off the layers this run laid out, so it is the run's own account.
+	 */
+	layerWarnings() {
+		if (this.grid !== 'matched') return [];
+		const out = [];
+		for (let o = 0; o < this.otherWidth; o++) {
+			if (!this.laidOut[o] || !this.layers[o]) continue;
+			const where = this.otherWidth > 1 ? ` (index combination ${o + 1} of ${this.otherWidth})` : '';
+			const message = coarseLayersWarning(this.layers[o], where);
+			if (message) out.push({ block: this.blockName, message });
+		}
+		return out;
 	}
 
 	/** The release out of the path, into the block's own algebraic slot. */

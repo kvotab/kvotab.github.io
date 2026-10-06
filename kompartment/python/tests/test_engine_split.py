@@ -580,6 +580,41 @@ class SplitRuns(unittest.TestCase):
                          [['I-129'], ['Cl-36'], ['Tc-99'], ['Se-79']])
         self.assertLess(worst(two, four), AGREE)
 
+    def test_a_far_field_path_in_several_parts_is_solved_on_the_whole_models_layers(self) -> None:
+        """The far-field example with I-129 beside its U-238 chain: two parts, the chain and the
+        tracer. Alone, the tracer's part would size the path's matched layers by I-129 only -- a
+        first layer of 12 mm where the whole model's is 3.6 mm -- and solve another path; handed the
+        whole model's layers (``whole_layers``), every part solves the whole model's."""
+        model = example('farfield')
+        model['nuclides'] = model['nuclides'] + ['I-129']
+        model['simulation'] = {**model['simulation'], 'spacing': 'log'}
+        model['simulation'].pop('output_times', None)
+        # One of its expressions reads U-238 by name, which a part without it refuses.
+        model['expressions'] = []
+        model['compartments'][0].setdefault('entries', []).append(
+            {'index': {'Radionuclides': 'I-129'}, 'initial': '1e12'})
+        next(p for p in model['parameters'] if p['name'] == 'Kd_matrix')['entries'].append(
+            {'index': {'Radionuclides': 'I-129'}, 'value': 0})
+        whole = run(with_split(model, 'off'))
+        parted = run(with_split(model, 'on'), workers=2)
+        self.assertTrue(parted.stats['split']['used'], parted.stats['split']['why'])
+        self.assertEqual(len(parted.stats['split']['jobs']), 2)
+        self.assertLess(worst(whole, parted), 1e-6)
+        # The layers a split hands its parts are the ones the whole run lays out, to the bit.
+        project = with_split(model, 'on')
+        system = build_system(project)
+        given = S.whole_layers(system, project)['Rock']['']
+        ran = whole.system.FARF[0].layers[0]
+        self.assertEqual(given['d'], [float(v) for v in ran['d']])
+        self.assertEqual(given['h'], [float(v) for v in ran['h']])
+        self.assertEqual(given['q'], float(ran['q']))
+        # A part alone lays out its own; given them, it holds them; run again without, lets go.
+        tracer, kept, _ = S.build_part(S.part_model(project.to_json(), ['I-129']))
+        run(tracer, system=kept, on_grid=True, layers={'Rock': {'': given}})
+        self.assertEqual(float(kept.FARF[0].layers[0]['d'][0]), given['d'][0])
+        run(tracer, system=kept, on_grid=True)
+        self.assertGreater(float(kept.FARF[0].layers[0]['d'][0]), 3 * given['d'][0])
+
     def test_made_up_chains(self) -> None:
         model = chains(6, 5, 4)
         whole = run(with_split(model, 'off'))

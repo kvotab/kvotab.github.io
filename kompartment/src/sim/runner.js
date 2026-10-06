@@ -184,6 +184,11 @@ export function run(input, opts = {}) {
 	// rewrites `P` calls `system.evaluateInvariant()` before running, which is
 	// what ./probabilistic.js does. See *Three passes, not one* in INTERNALS.md.
 	const system = opts.system ?? buildSystem(project);
+	// Layers handed in are held instead of laid out: a part of a split run is
+	// given the whole model's (`wholeLayers` in ./split.js). Any other run lays
+	// out its own, so a system handed from one run to the next is let go of
+	// what the last one was given.
+	system.pinLayers?.(opts.layers ?? null);
 	// A far-field path lays its matched layers out at the first instant of a
 	// run and holds them to the end of it: this is that first instant, for
 	// every run, a realisation's included.
@@ -635,6 +640,11 @@ export function run(input, opts = {}) {
 		// ./farfield-laplace.js. It reaches the run log and the block.
 		const farfield = (system.paths ?? []).flatMap((F) => F.balanceWarnings?.() ?? []);
 		if (farfield.length && solution.stats) solution.stats.farfield = farfield;
+		// And a path on cells whose matched layers grow coarse at depth: see
+		// `coarseLayersWarning` in ../domain/farfield.js. The run went on; the
+		// log and the block say so.
+		const layers = (system.paths ?? []).flatMap((F) => F.layerWarnings?.() ?? []);
+		if (layers.length && solution.stats) solution.stats.layers = layers;
 		// Only the states are kept. Every other series -- an expression, a
 		// rate, a table read at the clock, a reduction, what a recorder holds
 		// -- is worked out from `(t, y)` when it is asked for, one algebraic

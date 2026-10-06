@@ -457,5 +457,57 @@ class Refresh(unittest.TestCase):
                 self.assertTrue(bits_equal(cf._js_pow(float(q), j), _js_pow(float(q), j)), (q, j))
 
 
+#: The U-238 chain of TR-19-06 down to Po-210 on its representative path, as the application's
+#: test of the same name has it ('matched layers that grow coarse at depth are said'): Po-210's
+#: half-life sizes the first layer by its decay, and twelve layers have to grow by 3.4 each.
+CHAIN = ['U-238', 'U-234', 'Th-230', 'Ra-226', 'Pb-210', 'Po-210']
+#: What the application says of it, word for word.
+COARSE = ('the 12 matrix layers grow by 3.39 from a first layer of 4.68 µm, which is coarse at depth: '
+          '20 layers would keep the growth to 2')
+
+
+def chain_path(nm: int, grid: str = 'matched') -> Project:
+    kd = [2e-4, 2e-4, 5.3e-2, 4.5e-4, 2.5e-2, 2.5e-2]
+    de = [2.7e-7, 2.7e-7, 2.7e-7, 8.5e-7, 8.5e-7, 2.7e-7]
+    return Project({
+        'name': 'chain',
+        'simulation': {'start_time': 0, 'end_time': 1e4, 'output_points': 10, 'spacing': 'log',
+                       'solver': 'ndf', 'rtol': 1e-6, 'abstol': 1e-20, 'time_unit': 'year'},
+        'nuclides': CHAIN,
+        'half_lives': {'U-238': 4.468e9, 'U-234': 245500, 'Th-230': 75386, 'Ra-226': 1600, 'Pb-210': 22.3,
+                       'Po-210': 0.379},
+        'chains': [[CHAIN[i], CHAIN[i + 1], 1] for i in range(len(CHAIN) - 1)],
+        'decay_unit': 'Bq',
+        'compartments': [{'name': 'Out', 'initial': '0', 'index_lists': ['Radionuclides']}],
+        'inflows': [{'name': 'In', 'to': 'Rock', 'rate': '1', 'index_lists': ['Radionuclides']}],
+        'transfers': [{'name': 'Release', 'from': 'Rock', 'to': 'Out', 'rate': 'Rock', 'multiply_by_donor': False,
+                       'index_lists': ['Radionuclides']}],
+        'farfields': [{'name': 'Rock', 'index_lists': ['Radionuclides'], 'tw': '235.2', 'f': '80090', 'kd_f': '0',
+                       'kd_m': '0', 'de_m': '1e-4', 'eps_m': '0.0019', 'rho_m': '2700', 'pe': '10', 'pen_dep': '4.5',
+                       'pen_dep_0': '', 'n_f': 20, 'n_m': nm, 'o_b': 4, 'n_b': '', 'grid': grid,
+                       'entries': [{'index': {'Radionuclides': n}, 'kd_m': str(kd[i]), 'de_m': str(de[i])}
+                                   for i, n in enumerate(CHAIN)]}],
+    })
+
+
+class CoarseLayers(unittest.TestCase):
+    """Matched layers that grow coarse at depth are said with the run (``stats.layers``), in the
+    application's words, on the Python path and the compiled one alike -- the compiled run hands
+    its layers back to the path, and they are read off there."""
+
+    def test_said_as_the_application_says_it(self) -> None:
+        from kompartment.engine.runlog import run_log_lines
+        for compiled in (False, True) if HAVE_NUMBA else (False,):
+            with self.subTest(compiled=compiled):
+                res = run(chain_path(12), compiled=compiled)
+                self.assertEqual(res.stats.get('layers'), [{'block': 'Rock', 'message': COARSE}])
+                lines = run_log_lines({'name': 'chain', 'simulation': {}}, {'stats': res.stats})
+                self.assertIn('far-field matrix layers: 1 path grows coarse at depth', lines)
+                self.assertIn(f'  Rock: {COARSE}', lines)
+                # Twenty grow by 2.0; the reference layers grow by e as a rule, and are a choice.
+                self.assertNotIn('layers', run(chain_path(20), compiled=compiled).stats)
+                self.assertNotIn('layers', run(chain_path(12, 'reference'), compiled=compiled).stats)
+
+
 if __name__ == '__main__':
     unittest.main()

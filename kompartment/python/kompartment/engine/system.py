@@ -265,6 +265,22 @@ class System:
         for F in self.FARF:
             F.restart()
 
+    def pin_layers(self, layers: Optional[Dict[str, Dict[str, Any]]]) -> None:
+        """Holds the far-field paths' matched layers at those given -- by path name, then by
+        combination of the path's other dimensions (``layer_key``), each ``{d, h, q}`` -- or lets
+        every path lay out its own again, for None (``pinLayers``). What a part of a split run is
+        given; see :func:`~kompartment.engine.split.whole_layers`."""
+        from .farfield import layer_key
+        space = self.builder.space
+        for p in self.builder.farf_layout:
+            F = self.FARF[p.farf_index]
+            pin = getattr(F, 'pin_layers', None)
+            if pin is None:
+                continue
+            mine = (layers or {}).get(p.name)
+            pin([mine.get(layer_key(space, p.farf.other_dims, o)) for o in range(p.farf.other_width)]
+                if mine else None)
+
     def evaluate_invariant(self, t: Optional[float] = None, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Works out the slots that never move (after a parameter has changed)."""
         self.refresh_tables()

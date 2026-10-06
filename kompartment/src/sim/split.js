@@ -41,6 +41,7 @@
  */
 
 import { partitionOf } from './partition.js';
+import { layerKey } from './farfield.js';
 import { UNINDEXED } from '../domain/massbalance.js';
 import { addMethodSteps } from '../ode/solvers.js';
 
@@ -619,6 +620,49 @@ export function placeStates(whole, keys, owner, job) {
  *   stats?: object, held?: ArrayLike<number>|null}>} outcomes
  * @returns {{t: Float64Array, rows: Float64Array[], stats: object}}
  */
+/**
+ * The far-field paths' matched layers as a run of the whole model lays them
+ * out at its first instant, for a split run's parts to hold (`pinLayers`):
+ * by path name, then by combination of the path's other dimensions
+ * (`layerKey`), each `{d, h, q}`. Null for a model with no matched layers.
+ *
+ * A path's matched layers are sized by every nuclide on it at once -- the
+ * shallowest penetration, or the fastest decay -- and a part holds only its
+ * own materials. Left to itself a part would lay out other layers than the
+ * whole model's (an independent tracer beside a sorbing chain, a first layer
+ * three times thicker) and solve another path. Laid out here from the whole
+ * model's settings at the start, as `FarfPath` lays them out when a run
+ * starts, and handed to every part, the parts solve the whole model's path.
+ *
+ * Evaluates the whole system at the start: the initial state, the recorders
+ * primed and the algebraic values once, as a run does before its first step.
+ * A path whose settings cannot be laid out there is left to each part, which
+ * says why when it runs.
+ */
+export function wholeLayers(system, project) {
+	const paths = (system?.layout?.farfields ?? [])
+		.filter((p) => typeof system.paths?.[p.farfIndex]?._layOut === 'function'
+			&& system.paths[p.farfIndex].grid === 'matched');
+	if (!paths.length) return null;
+	const t0 = Number(project?.simulation?.start_time ?? 0);
+	const y = system.initialState();
+	system.primeRecorders?.(t0, y);
+	const X = system.evaluateAlgebraic(t0, y);
+	const space = system.layout.indexSpace;
+	const out = {};
+	for (const p of paths) {
+		const F = system.paths[p.farfIndex];
+		const combos = {};
+		for (let o = 0; o < p.farf.otherWidth; o++) {
+			let g;
+			try { g = F._layOut(X, o); } catch { continue; }
+			combos[layerKey(space, p.farf.otherDims, o)] = { d: Array.from(g.d), h: Array.from(g.h), q: g.q };
+		}
+		out[p.name] = combos;
+	}
+	return out;
+}
+
 export function assembleParts({ keys, owner }, outcomes) {
 	const n = keys.length;
 	const whole = new Map(keys.map((k, i) => [k, i]));
@@ -647,6 +691,12 @@ export function assembleParts({ keys, owner }, outcomes) {
 		}
 		if (!stats.solver && o.stats?.solver) stats.solver = o.stats.solver;
 		if (o.stats?.sparse !== undefined) stats.sparse = o.stats.sparse;
+		// What a part said about a far-field path's layers, once however many
+		// parts the path is in.
+		for (const w of o.stats?.layers ?? []) {
+			stats.layers ??= [];
+			if (!stats.layers.some((x) => x.block === w.block && x.message === w.message)) stats.layers.push(w);
+		}
 		addMethodSteps(stats, o.stats);
 		if (o.held) {
 			const steps = Math.max(1, o.stats?.nsteps ?? 1);
