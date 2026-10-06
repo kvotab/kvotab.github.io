@@ -455,13 +455,17 @@ apart, so circles overlapped in 1862 of the 4476 chains. ENSDF chains get one
 row per mass number that holds a member instead, as ensdf-chain.js draws the
 series; ICRP 107's keep the grid.
 
-The browser test (58 checks) starts from a fresh profile: the Database menu
+The browser test (62 checks) starts from a fresh profile: the Database menu
 and its groups, ICRP 107 as the page starts, the bar between the header and
-what is laid out under it; ENSDF 2026-09-01 with its element list, the U-238
+what is laid out under it, and its time axis: rndecaydata.js gives half-lives
+in tropical years of 365.242196 days, so a span in days or minutes is turned
+into those, and one half-life of I-131 in days or of Pa-234m in minutes leaves
+half (in 365.25-day years it left 0.500007 Bq); ENSDF's half-lives go into the
+same years. Then ENSDF 2026-09-01 with its element list, the U-238
 chain as ensdf-core.js builds it (234Th feeding 234mPa), no touching circles
 there or in Kr-101's; the chain settings, which keep the inventory and the time
 horizon (at T½ ≥ 1 y, 238U goes to 234U via 234Th and 234mPa); the page's own
-solver against CRAM in becquerels, alpha energy and moles; the CSV's source
+solver against CRAM in becquerels, alpha energy and moles, to 1e-5; the CSV's source
 line; the search (238U, Am-242m for Am-242m1, co60); back to ICRP 107 with the
 inventory; the choice kept over a reload; Open ENSDF... with
 `../ensdf/fixture/ensdf.003`, kept in IndexedDB and in the menu, then Forget;

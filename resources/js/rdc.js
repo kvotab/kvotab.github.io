@@ -8,6 +8,19 @@ var TOTALACTIVITY = 0;
 var CHARTDIALOG = $("#chartdialog");
 var YAXISTYPE = 'linear';
 var XAXISTYPE = 'log';
+
+/* The year of the half-lives in rndecaydata.js (Halflife_y): the tropical
+   year of 365.242196 days -- I-131's 8.0207 d is 0.02195995 y there. Every
+   conversion between years and another unit uses it, the chart's time axis
+   and the amount in an activity alike, and rdc-ensdf.js puts ENSDF's
+   half-lives into the same years. */
+var YEAR_DAYS = 365.242196;
+var AVOGADRO = 6.02214076e23;
+
+/** Moles of a nuclide in one becquerel of it: T½ / ln 2 atoms. */
+function molesPerBq(rn) {
+    return 86400 * YEAR_DAYS * rn.Halflife_y / Math.log(2) / AVOGADRO;
+}
 $(function () {
     $.widget("custom.catcomplete", $.ui.autocomplete, {
         _create: function () {

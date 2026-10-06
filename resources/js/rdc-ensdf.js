@@ -44,10 +44,11 @@
 })(typeof self !== 'undefined' ? self : this, function (C) {
   'use strict';
 
-  /* The page's year. rndecaydata.js gives half-lives in Julian years and
-     the page turns days into years with 365.25, so a half-life from ENSDF,
-     in seconds, is put into the same years. */
-  const YEAR = 365.25 * 86400;
+  /* The page's year, in seconds: rndecaydata.js gives half-lives in
+     tropical years of 365.242196 days, and the page converts every other
+     unit with the same year (rdc.js's YEAR_DAYS), so a half-life from
+     ENSDF, in seconds, is put into those years. */
+  const YEAR = 365.242196 * 86400;
 
   /* A fifth of a decade: how close an ICRP 107 record's half-life must be
      to a state's for its dose coefficients to be taken as the state's. */

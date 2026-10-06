@@ -17,7 +17,9 @@ here, in a fresh profile:
     cluster decays, the inventory and the time horizon survive both, the
     settings are kept;
   - the decay: the page's own solver against ensdf-core.js's CRAM on the
-    same chain, in becquerels, in alpha energy and in moles;
+    same chain, in becquerels, in alpha energy and in moles, all in the
+    ICRP 107 file's years of 365.242196 days -- and, with ICRP 107, one
+    half-life given in days or minutes leaving half;
   - the dose coefficients and the energies the records carry, the CSV's
     source line, the search taking 238U and a bare m (Am-242m is the
     141-year Am-242m1);
@@ -86,6 +88,21 @@ VERSUS_CRAM = """(async (quantity) => {
     if (!(rel <= worst)) { worst = rel; at = name; }
   });
   return JSON.stringify({ compared, worst, at });
+})"""
+
+# A nuclide alone, 1 Bq, over a span of one half-life in a unit of the
+# page's: what is left, and where the axis ends.
+HALF = """(async (name, value, unit) => {
+  selectExactTreeNode(name, {userInitiated: true});
+  await new Promise(r => setTimeout(r, 500));
+  CY.getElementById(name).data('IC', 1);
+  document.getElementById('timeinput').value = String(value);
+  document.getElementById('timeunit').value = unit;
+  document.getElementById('chartunit').value = 'Bq';
+  updateLevel('IC'); runAndUpdateChart();
+  await new Promise(r => setTimeout(r, 500));
+  const tr = CHARTDIALOG[0].data.find(t => t.name === name);
+  return JSON.stringify({ x: tr.x[tr.x.length - 1], y: tr.y[tr.y.length - 1] });
 })"""
 
 STATE = """JSON.stringify({
@@ -211,6 +228,18 @@ async def main():
             nndc = groups.get('ENSDF at NNDC: download, then open', [])
             check(len(nndc) >= 100 and 'n:0403' in nndc and 'n:260901' not in nndc,
                   'NNDC\'s archive back to 2004, less the release on this site: %d entries' % len(nndc))
+            # The time axis: a span given in days or minutes is turned into
+            # the half-lives' own years, of 365.242196 days, so one half-life
+            # leaves half, to the solver's tolerance. In 365.25-day years it
+            # left 0.500007 Bq.
+            for name, value, unit in (('I-131', 8.0207, 'day'), ('Pa-234m', 1.17, 'minute'), ('Co-60', 5.2713, 'year')):
+                half = json.loads(await ev('(%s)(%s, %s, %s)' % (HALF, json.dumps(name), json.dumps(value), json.dumps(unit)), session))
+                check(half['x'] == value and abs(half['y'] / 0.5 - 1) < 2e-6,
+                      '%s after one half-life, %s %ss: half is left, got %r' % (name, value, unit, half))
+            check(await ev("KVOT_RDC_ENSDF.YEAR === YEAR_DAYS * 86400 && YEAR_DAYS === 365.242196", session),
+                  "ENSDF's half-lives go into the ICRP 107 file's years, the page's")
+            await ev("selectExactTreeNode('U-238', {userInitiated: true}); 1", session)
+            await settle("!CY.getElementById('Th-234').empty() && CY.getElementById('U-238').data('IC') === 0", session)
             boxes = json.loads(await ev("""JSON.stringify(['header', '#databar', '#cy', 'nav'].map(q => {
               const b = document.querySelector(q).getBoundingClientRect(); return [b.top, b.bottom]; }))""", session))
             check(abs(boxes[1][0] - boxes[0][1]) < 1 and abs(boxes[2][0] - boxes[1][1]) < 1.5 and abs(boxes[3][0] - boxes[1][1]) < 1.5,
@@ -297,7 +326,7 @@ async def main():
             await settle("!CY.getElementById('Pb-212').empty()", session)
 
             # ── The decay, against CRAM ──────────────────────────────────────
-            for quantity, tol in (('Bq', 1e-4), ('Alpha_energy', 1e-4), ('Mole', 1e-4)):
+            for quantity, tol in (('Bq', 1e-5), ('Alpha_energy', 1e-5), ('Mole', 1e-5)):
                 r = json.loads(await ev('(%s)(%s)' % (VERSUS_CRAM, json.dumps(quantity)), session))
                 check(r['compared'] >= 15 and r['worst'] < tol,
                       '%s after 10^6 y: the page against CRAM, worst %.2e at %s over %d members' % (quantity, r['worst'], r['at'], r['compared']))

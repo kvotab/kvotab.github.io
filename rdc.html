@@ -1465,8 +1465,7 @@ NODE_MENU.addEventListener('click', function (event) {
             node.data().IC = node.data().IC + 1;
             break;
         case 'inventory-add-mol':
-            node.data().IC = node.data().IC
-                + Math.log(2) / getRn(node.data().id).Halflife_y * 6.02214076E23 / (60 * 60 * 24 * 365.242196);
+            node.data().IC = node.data().IC + 1 / molesPerBq(getRn(node.data().id));
             break;
         case 'inventory-clear':
             node.data().IC = 0;
@@ -1784,7 +1783,7 @@ function updateLevel(state, rns, y) {
                 if (unit === "Total_energy") {
                     multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
                 } else if (unit === "Mole") {
-                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214076E23;
+                    multfac = molesPerBq(rnnode);
                 } else {
                     multfac = rnnode[unit];
                 }
@@ -1895,7 +1894,7 @@ let activeInventoryNode = null;
 let activeInventoryFactor = 0;
 function updateIC(node) {
  const rndata=getRn(node.id()); activeInventoryNode=node;
- activeInventoryFactor=60*60*24*365.242196*rndata.Halflife_y/Math.log(2)/6.02214076e23;
+ activeInventoryFactor=molesPerBq(rndata);
  icDialogTitle.textContent='Initial inventory: '+node.id(); icBqInput.value=node.data('IC');
  icMolInput.value=Number(icBqInput.value)*activeInventoryFactor; icDialog.showModal();
 }
@@ -1978,7 +1977,7 @@ function validateRadionuclideData() {
 }
 window.validateRadionuclideData = validateRadionuclideData;
 
-function chooseDefaultTimeScale(y){var c=[{unit:'year',factor:1},{unit:'day',factor:365.25},{unit:'hour',factor:365.25*24},{unit:'minute',factor:365.25*24*60},{unit:'second',factor:365.25*24*60*60}];for(var i=0;i<c.length;i++){var v=y*c[i].factor;if(v>1||i===c.length-1)return{unit:c[i].unit,value:v};}}
+function chooseDefaultTimeScale(y){var c=[{unit:'year',factor:1},{unit:'day',factor:YEAR_DAYS},{unit:'hour',factor:YEAR_DAYS*24},{unit:'minute',factor:YEAR_DAYS*24*60},{unit:'second',factor:YEAR_DAYS*24*60*60}];for(var i=0;i<c.length;i++){var v=y*c[i].factor;if(v>1||i===c.length-1)return{unit:c[i].unit,value:v};}}
 function runRdcScientificTests() {
     var failures = [];
     function close(name, actual, expected, tolerance) {
@@ -2005,11 +2004,11 @@ function runRdcScientificTests() {
     var transientParent = ln2 / 10, transientDaughter = ln2 / 20;
     var transientPeak = Math.log(transientDaughter / transientParent) / (transientDaughter - transientParent);
     close('transient-equilibrium peak time', transientPeak, 20, 1e-12);
-    var secondsPerYear = 60 * 60 * 24 * 365.242196, avogadro = 6.02214076e23;
-    var molFactor = secondsPerYear * 30 / ln2 / avogadro, activity = 12345;
+    var molFactor = molesPerBq({ Halflife_y: 30 }), activity = 12345;
     close('Bq/mol round trip', activity * molFactor / molFactor, activity, 1e-12);
-    equal('30-minute scale', chooseDefaultTimeScale(30 / (365.25 * 24 * 60)).unit, 'minute');
-    equal('30-second scale', chooseDefaultTimeScale(30 / (365.25 * 24 * 60 * 60)).unit, 'second');
+    close('a becquerel of a one-year nuclide is a year of seconds over ln 2 atoms', molesPerBq({ Halflife_y: 1 }) * AVOGADRO * ln2, 86400 * 365.242196, 1e-12);
+    equal('30-minute scale', chooseDefaultTimeScale(30 / (YEAR_DAYS * 24 * 60)).unit, 'minute');
+    equal('30-second scale', chooseDefaultTimeScale(30 / (YEAR_DAYS * 24 * 60 * 60)).unit, 'second');
     var logData = prepareDataForXAxis([{x:[0,1,2],y:[4,5,6]}], 'log');
     equal('log axis removes zero', logData[0].x.length, 2); equal('log axis preserves y alignment', logData[0].y[0], 5);
     if (typeof solveDecayChain === 'function') {
@@ -2414,7 +2413,7 @@ function runAndUpdateChart() {
             /* falls through */
             case "hour":   timescale /= 24;  // hours   → days
             /* falls through */
-            case "day":    timescale /= 365.25; // days  → years
+            case "day":    timescale /= YEAR_DAYS; // days  → years, the half-lives' years
             /* falls through */
             case "year":
         }
@@ -2451,7 +2450,7 @@ function runAndUpdateChart() {
                 if (unit === "Total_energy") {
                     multfac = rnnode["Alpha_energy"] + rnnode["Electron_energy"] + rnnode["Photon_energy"];
                 } else if (unit === "Mole") {
-                    multfac = 60*60*24*365.242196*rnnode.Halflife_y/Math.log(2)/6.02214076E23;
+                    multfac = molesPerBq(rnnode);
                 } else {
                     multfac = rnnode[unit];
                 }
