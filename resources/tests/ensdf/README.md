@@ -79,7 +79,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-126 checks: the built-in release loads; the tab icon (drawn by
+133 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -105,12 +105,18 @@ under 238U, 214Bi a step of 141.4 px to the right of 214Pb on its row, 234mPa
 over 234Pa, every arrow labelled with its mode over its share (α over 100 %),
 no label on a circle or another label, no circle on another and no arrow over
 a circle not its own -- in the 101Br chain too -- no Unicode superscripts, an
-`aria-label` that says how it is laid out, and the panel's small drawing
-following it, held to 360 px high; pointing at a circle shows its card and
+`aria-label` that says how it is laid out; pointing at a circle shows its card and
 lights its arrows, a click opens that member and keeps the start, the SVG is
 of circles, the Inventory tab fills the start's circle to the brim (and says
 circles), a row rings its circle, leaving the tab empties them, and the
-layout is kept through a reload and back to the grid;
+layout is kept through a reload and back to the grid, where the drawing stands
+on the chart's own background inside the view's padding while a series takes
+the view's colour and runs to its edges; the chain zooms in and out a quarter
+a step from the buttons on its bar, ⤢ shows all of it in the view, + − and 0
+do the same from the page, a pinch (the wheel with Ctrl) zooms about the
+pointer with the box under it staying put and the wheel alone does not zoom,
+the SVG and PNG come out at the drawing's own size however it is zoomed, a
+click on a box keeps the zoom and a new chain opens fitted to the width;
 the chain settings are there in the chart view as well; the six
 panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
 the panel's row of tabs ends at the same line as the main area's, whether
@@ -126,7 +132,8 @@ the Nuclide tab lists the parents of 226Ra by mode, longest-lived first,
 each a link with its share, and says so when there are none (36Cl); with the
 chain set to parents the view tab says "Parents of 226Ra", the chart rings
 230Th, 234U and 238U and draws an arrow into 226Ra from each direct parent,
-the card on the Nuclide tab follows and the setting is kept; the drawing has
+the setting is kept, and the Nuclide tab carries no chain card of its own;
+the drawing has
 230Th, 234U, 238U, 226Ac and 226Fr but not 226Th, no label on a box, opens on
 226Ra at its foot, and the table and the tooltips give each member's share
 of its decays that reaches 226Ra (226Ac 17 %); at 1 y 238U goes to 234U via
@@ -134,7 +141,8 @@ of its decays that reaches 226Ra (226Ac 17 %); at 1 y 238U goes to 234U via
 opens its member without moving the start; the parents save as
 parents-226Ra.svg, .png and .csv; their inventory starts empty, and 1 g of
 230Th grows 226Ra into equilibrium with it; a stable nuclide (206Pb) has
-parents, and the card turns the chain back down;
+parents, and the setting beside the view tabs turns the chain back down, to
+nothing after it;
 the database menu lists
 NNDC's archive back to 2004 less the release on the site, and choosing one
 opens a dialog with the right NNDC link (all three parts, with their mass

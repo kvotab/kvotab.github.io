@@ -1171,10 +1171,12 @@
     g.appendChild(ring);
   }
 
-  /** The drawing as a stand-alone SVG file. */
+  /** The drawing as a stand-alone SVG file, at its own size however it is zoomed on screen. */
   function svgFile(svg) {
     const copy = svg.cloneNode(true);
     copy.setAttribute('xmlns', NS);
+    const vb = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
+    if (vb.length === 4) { copy.setAttribute('width', vb[2]); copy.setAttribute('height', vb[3]); }
     copy.querySelectorAll('[tabindex],[role]').forEach((e) => { e.removeAttribute('tabindex'); e.removeAttribute('role'); });
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(copy);
   }

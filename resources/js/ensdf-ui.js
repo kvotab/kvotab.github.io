@@ -515,9 +515,6 @@
     if (st.qm) html.push(`<dt>Quadrupole moment</dt><dd>${esc(st.qm.replace(/\s*\(.*\)$/, ''))} b</dd>`);
     html.push('</dl>');
 
-    /* The chain in brief, with the way into the full drawing. */
-    if (state.chain && state.root && state.root.z === z && state.root.a === a && state.root.k === k) html.push(chainCard(st, nuc));
-
     if (nuc.s.length > 1) {
       html.push('<h3>States</h3><div class="nz-table-wrap"><table class="nz-table"><thead><tr><th class="text">State</th><th>E (keV)</th><th class="text">Jπ</th><th class="text">T½</th><th class="text">Decay</th></tr></thead><tbody>');
       nuc.s.forEach((s, i) => {
@@ -555,7 +552,6 @@
       </dl>`);
     }
     pane.innerHTML = html.join('');
-    drawMiniChain();
   }
 
   /*
@@ -593,76 +589,9 @@
      percentage. */
   const reachText = (n) => `${n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100)}${n.cumUnknown && n.cum ? ' or more' : ''}`;
 
-  /* The chain on show in brief, down to the daughters or up to the parents,
-     with the way to turn it round and into the full drawing. */
-  function chainCard(st, nuc) {
-    const ch = state.chain;
-    const { z, a, k } = ch.root;
-    const name = nameHtml(z, a, k, nuc);
-    const dir = ch.up ? 'up' : 'down';
-    const toggle = `<span class="nz-sort" role="group" aria-label="Which way the chain runs">${[['down', 'daughters'], ['up', 'parents']]
-      .map(([d, t]) => `<button type="button" class="${d === dir ? 'active' : ''}" aria-pressed="${d === dir}" data-on-click="nz:chainDir" data-dir="${d}">${t}</button>`).join('')}</span>`;
-    const head = `<div class="nz-card-head"><h3>${ch.up ? 'Parents' : 'Decay chain'}</h3>${toggle}</div>`;
-    const members = ch.nodes.filter((n) => n !== ch.root && n.kind !== 'fission');
-    const what = members.some((n) => n.k > 0) ? ['state', 'nuclides and states'] : ['nuclide', 'nuclides'];
-    const label = ch.up ? 'parents' : 'decay chain';
-    const mini = `<div class="nz-chain-mini" data-on-click="nz:showChain" title="Open the ${label}"><svg id="nzChainMini" role="img" aria-label="The ${label} in small; click to open it"></svg></div>`;
-    const buttons = `<button type="button" class="nz-btn" data-on-click="nz:showChain">Show the ${label}</button>
-        <button type="button" class="nz-btn secondary" data-on-click="nz:showInventory" title="Give the chain an initial inventory and follow it over time">Inventory over time</button>`;
-    let body;
-    if (!ch.up && st.st) {
-      body = `<p class="nz-dim">${name} is stable: no chain follows from it.</p>`;
-    } else if (ch.up && !members.length) {
-      body = `<p class="nz-dim">Nothing in this database decays to ${name}${state.chainOpt.minBranch ? ' by a branch as large as the chain settings keep' : ''}.</p>`;
-    } else if (!ch.up) {
-      const ends = ch.nodes.filter((n) => n.kind === 'fission' || n.kind === 'missing' || (n.st && (n.st.st || !(n.st.br || []).length)));
-      const endList = ends.sort((p, q) => q.cum - p.cum).slice(0, 6).map((n) => {
-        const end = n.kind === 'fission' ? 'fission' : n.kind === 'missing' ? `${nameHtml(n.z, n.a, 0, null)} (not in ENSDF)` : `${nucLink(n.z, n.a, n.k)}${n.st.st ? ' (stable)' : ' (decay unknown)'}`;
-        return `<li>${end} <span class="nz-dim">${supHtml(n.cumUnknown && !n.cum ? '?' : C.pctText(n.cum * 100))}${n.cumUnknown && n.cum ? ' or more' : ''}</span></li>`;
-      });
-      const count = members.length === 1 ? `1 ${what[0]} follows` : `${members.length} ${what[1]} follow`;
-      body = `${mini}
-        <p>${count} from ${name}${ch.truncated ? ' (cut off: the chain is too large to draw whole)' : ''}. Where it ends:</p>
-        <ul class="nz-ends">${endList.join('')}</ul>
-        ${buttons}`;
-    } else {
-      /* Going up, the longest-lived say where the start comes from in the
-         long run -- those that send it a real share of their decays: 232Th
-         reaches 206Pb, but only by a cluster decay of 224Ra, 4×10⁻⁹ %. */
-      const lived = members.filter((n) => n.st && n.st.ts > 0).sort((p, q) => q.st.ts - p.st.ts);
-      const real = lived.filter((n) => n.cum >= 0.01);
-      const longest = (real.length ? real : lived).slice(0, 6)
-        .map((n) => `<li>${nucLink(n.z, n.a, n.k)} <span class="nz-dim">${supHtml(C.halfLifeShort(n.st))} · ${supHtml(reachText(n))}</span></li>`);
-      const count = members.length === 1 ? `1 ${what[0]} decays` : `${members.length} ${what[1]} decay`;
-      const lead = real.length ? `The longest-lived of those that send it at least 1 % of their decays, with that share:` : `The longest-lived, with the share of their decays that comes to ${name}:`;
-      body = `${mini}
-        <p>${count} to ${name}, directly or through others${ch.truncated ? ' (cut off: there are too many to draw)' : ''}.${longest.length ? ` ${lead}` : ''}</p>
-        ${longest.length ? `<ul class="nz-ends">${longest.join('')}</ul>` : ''}
-        ${buttons}`;
-    }
-    return `<section class="nz-card">${head}${body}</section>`;
-  }
-
-  /* The chain in small, in the panel: the whole drawing scaled to the panel's
-     width, so the reader sees its shape the moment a nuclide is chosen. A
-     series stands tall -- the 238U chain is twice as high as it is wide --
-     so it is held to MINI_SERIES_H and stands in the middle. */
-  const MINI_SERIES_H = 360;
-  function drawMiniChain() {
-    const svg = $('nzChainMini');
-    if (!svg || !state.chain) return;
-    const series = state.chainOpt.style === 'series';
-    const size = CH.render(svg, state.chain, { style: state.chainOpt.style, bg: series ? backdrop(svg.parentElement) : undefined });
-    const room = svg.parentElement.clientWidth || 400;
-    const scale = Math.min(1, room / size.width, series ? MINI_SERIES_H / size.height : 1);
-    svg.setAttribute('width', Math.round(size.width * scale));
-    svg.setAttribute('height', Math.round(size.height * scale));
-    svg.dataset.style = state.chainOpt.style;
-  }
-
   /* The colour a drawing stands on: the first background, going out from
      it, that is not transparent. A series takes it for its own, so that it
-     has no edge -- in the chain view and on the Nuclide tab's card alike. */
+     has no edge in the chain view. */
   function backdrop(el) {
     for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
       const c = getComputedStyle(e).backgroundColor;
@@ -898,8 +827,13 @@
     renderChainTable(ch);
   }
 
-  /* The drawing shrinks to the width it has, down to 70 %; below that it scrolls. */
+  /* The drawing shrinks to the width it has, down to 70 %; below that it
+     scrolls -- unless the reader has zoomed it (zoomChain()), and then it
+     keeps that scale while the same chain is drawn again: a box clicked,
+     the theme switched, the window resized. Another start, the other way or
+     the other layout is fitted to the width again. */
   let fittedFor = '';
+  let chainScale = null;   // the scale zoomed to, or null while fitted to the width
   function fitChain(size, ch) {
     const svg = $('nzChainSvg');
     const box = document.querySelector('.nz-chain-scroll');
@@ -908,32 +842,95 @@
     const draw = svg.parentElement;
     const room = draw.clientWidth - 2;
     if (!size || !(room > 0)) return;
-    const scale = Math.max(0.7, Math.min(1.25, room / size.width));
+    const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}|${state.chainOpt.style}` : '';
+    const fresh = !!(size.root && ch && sig !== fittedFor);
+    if (fresh) chainScale = null;
+    const scale = chainScale || Math.max(0.7, Math.min(1.25, room / size.width));
     svg.setAttribute('width', Math.round(size.width * scale));
     svg.setAttribute('height', Math.round(size.height * scale));
-    /* A chain wider than the view opens scrolled to where it starts -- usually
-       its top right, the heaviest member -- with as much of where that decays
-       to beside it as fits; going up, with the parents it comes from, which
-       stand on both sides of it. */
+    /* Only for a chain that is new -- another start, the other way or the
+       other drawing -- not each time a box in it is clicked: a chain wider
+       than the view opens scrolled to where it starts -- usually its top
+       right, the heaviest member -- with as much of where that decays to
+       beside it as fits; going up, with the parents it comes from, which
+       stand on both sides of it. Going up, the start stands at the foot of
+       the drawing, so a chain taller than the view opens scrolled down to it
+       and its parents; going down, it opens at the top, where the start is. */
+    if (!fresh) return;
+    fittedFor = sig;
     const f = size.focus || size.root;
-    if (size.root && size.width * scale > draw.clientWidth) {
+    if (size.width * scale > draw.clientWidth) {
       const right = (f.x + f.w) * scale + 24;
-      const left = Math.max(0, ((ch && ch.up) ? f.x : size.root.x) * scale - 24);
+      const left = Math.max(0, (ch.up ? f.x : size.root.x) * scale - 24);
       draw.scrollLeft = Math.min(left, Math.max(0, right - draw.clientWidth));
     }
-    /* Going up, the start stands at the foot of the drawing, so a chain
-       taller than the view opens scrolled down to it and its parents; going
-       down, it opens at the top, where the start is. Only for a chain that
-       is new -- another start, the other way or the other drawing -- not
-       each time a box in it is clicked. */
-    const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}|${state.chainOpt.style}` : '';
-    if (size.root && ch && sig !== fittedFor) {
-      fittedFor = sig;
-      if (ch.up) {
-        const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-        box.scrollTop = Math.max(0, Math.min(top + f.y * scale - 12, top + (f.y + f.h) * scale + 24 - box.clientHeight));
-      } else box.scrollTop = 0;
+    if (ch.up) {
+      const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+      box.scrollTop = Math.max(0, Math.min(top + f.y * scale - 12, top + (f.y + f.h) * scale + 24 - box.clientHeight));
+    } else box.scrollTop = 0;
+  }
+
+  /* Zooming the chain, as the chart zooms: by the buttons on the chain's
+     bar, + and − and 0, or a pinch (the wheel with Ctrl, as browsers report
+     a pinch) about the pointer. A step is a quarter; the drawing goes from
+     a quarter of its size, or less where that is what shows all of it, to
+     four times. */
+  const CHAIN_ZOOM = 1.25;
+  const CHAIN_MAX = 4;
+
+  /* The scale at which the whole drawing is in view, at most the 125 % a
+     small chain is fitted to. */
+  function wholeChainScale() {
+    const svg = $('nzChainSvg');
+    const vb = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
+    if (vb.length !== 4) return 1;
+    const box = document.querySelector('.nz-chain-scroll');
+    const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    return Math.max(0.01, Math.min(1.25, (svg.parentElement.clientWidth - 2) / vb[2], (box.clientHeight - top - 2) / vb[3]));
+  }
+
+  function setChainScale(scale) {
+    const svg = $('nzChainSvg');
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    chainScale = scale;
+    svg.setAttribute('width', Math.round(vb[2] * scale));
+    svg.setAttribute('height', Math.round(vb[3] * scale));
+  }
+
+  /*
+    Zoom the drawing by `factor`, keeping the point under (x, y) -- client
+    coordinates; by default the middle of what is in view -- where it is.
+    The drawing scrolls across in its own box and down with the view, so
+    the two scroll positions are set apart.
+  */
+  function zoomChain(factor, x, y) {
+    const svg = $('nzChainSvg');
+    const vb = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
+    if (vb.length !== 4 || !svg.firstChild || state.view !== 'chain') return;
+    const box = document.querySelector('.nz-chain-scroll');
+    const draw = svg.parentElement;
+    const r = svg.getBoundingClientRect(), b = box.getBoundingClientRect(), d = draw.getBoundingClientRect();
+    const cur = r.width / vb[2];
+    if (!(cur > 0)) return;
+    if (x === undefined) {
+      x = (Math.max(r.left, d.left) + Math.min(r.right, d.right)) / 2;
+      y = (Math.max(r.top, b.top) + Math.min(r.bottom, b.bottom)) / 2;
     }
+    const u = (x - r.left) / cur, v = (y - r.top) / cur;
+    const top = r.top - b.top + box.scrollTop;
+    setChainScale(Math.max(Math.min(0.25, wholeChainScale()), Math.min(CHAIN_MAX, (chainScale || cur) * factor)));
+    const now = +svg.getAttribute('width') / vb[2];
+    draw.scrollLeft = u * now - (x - d.left);
+    box.scrollTop = top + v * now - (y - b.top);
+  }
+
+  /* The whole chain in view, from its top left. */
+  function showWholeChain() {
+    const svg = $('nzChainSvg');
+    if (!svg.firstChild || state.view !== 'chain') return;
+    setChainScale(wholeChainScale());
+    svg.parentElement.scrollLeft = 0;
+    document.querySelector('.nz-chain-scroll').scrollTop = 0;
   }
 
   /* How long a member must live to be drawn in a chain, and the smallest
@@ -962,7 +959,7 @@
   /* How the chain is drawn, from the menu on the chain view's bar: on the
      grid, Z across and A down, or as a series, the way Radionuclide Decay
      Chains draws it. The chain itself does not change, nor the table; the
-     panel follows (its small drawing, the Inventory tab's words for it). */
+     panel follows (the Inventory tab's words for it). */
   function setChainStyle(style) {
     if (style !== 'grid' && style !== 'series') return;
     state.chainOpt.style = style;
@@ -972,9 +969,8 @@
     saveState();
   }
 
-  /* Which way the chain runs, from the setting beside the view tabs or the
-     card on the Nuclide tab: the drawing, the chart, the table and the
-     inventory all follow. */
+  /* Which way the chain runs, from the setting beside the view tabs: the
+     drawing, the chart, the table and the inventory all follow. */
   function setChainDir(dir) {
     if (dir !== 'up' && dir !== 'down') return;
     state.chainOpt.dir = dir;
@@ -1190,7 +1186,9 @@
   function chainPng() {
     const svg = $('nzChainSvg');
     if (!state.chain || !svg.firstChild) return;
-    const w = +svg.getAttribute('width'), h = +svg.getAttribute('height');
+    /* The drawing's own size, however it is zoomed on screen (svgFile() writes the same). */
+    const vb = svg.getAttribute('viewBox').split(' ').map(Number);
+    const w = Math.ceil(vb[2]), h = Math.ceil(vb[3]);
     const img = new Image();
     const url = URL.createObjectURL(new Blob([CH.svgFile(svg)], { type: 'image/svg+xml' }));
     img.onload = () => {
@@ -1717,7 +1715,7 @@
       onHover: (n, x, y) => { if (n) showTip(chartTip(n), x, y); else hideTip(); },
     });
     chart.setMode(state.colour);
-    document.documentElement.addEventListener('kvot-theme-change', () => { renderLegend(); drawMiniChain(); if (state.view === 'chain') renderChainView(); if (state.tab === 'inventory') renderInventory(); });
+    document.documentElement.addEventListener('kvot-theme-change', () => { renderLegend(); if (state.view === 'chain') renderChainView(); if (state.tab === 'inventory') renderInventory(); });
     /* The inventory chart is drawn to the width of its pane. */
     let invWidth = 0;
     new ResizeObserver(() => {
@@ -1746,6 +1744,28 @@
         if (vb.length === 4) fitChain({ width: vb[2], height: vb[3] });
       });
     }).observe(document.querySelector('.nz-chain-scroll'));
+    /* + and − zoom the chain and 0 shows all of it, as on the chart, from
+       anywhere in the chain view or from nowhere in particular -- not from a
+       field, and not with Ctrl or Cmd, which zoom the page. */
+    document.addEventListener('keydown', (ev) => {
+      if (state.view !== 'chain' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const t = ev.target;
+      if (t !== document.body && !(t.closest && t.closest('.nz-chainview'))) return;
+      if (t.matches && t.matches('input, select, textarea, [contenteditable]')) return;
+      const k = ev.key;
+      if (k === '+' || k === '=') zoomChain(CHAIN_ZOOM);
+      else if (k === '-' || k === '_') zoomChain(1 / CHAIN_ZOOM);
+      else if (k === '0') showWholeChain();
+      else return;
+      ev.preventDefault();
+    });
+    /* A pinch zooms the drawing about the pointer; the wheel alone scrolls. */
+    $('nzChainSvg').parentElement.addEventListener('wheel', (ev) => {
+      if (!ev.ctrlKey) return;
+      ev.preventDefault();
+      const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+      zoomChain(Math.exp(-dy * 0.01), ev.clientX, ev.clientY);
+    }, { passive: false });
     setView(state.view);
     renderPanel();
 
@@ -1840,20 +1860,15 @@
     'nz:invPng': () => invPng(),
     'nz:go': (ev, el) => { ev.preventDefault(); select({ z: +el.dataset.z, a: +el.dataset.a, k: +el.dataset.k }, { from: state.view === 'chain' ? 'chain' : 'panel' }); },
     'nz:state': (ev, el) => { ev.preventDefault(); if (state.sel) select({ z: state.sel.z, a: state.sel.a, k: +el.dataset.k }, { from: 'panel' }); },
-    'nz:showChain': () => { if (state.sel) { state.root = { ...state.sel }; computeChain(); } setView('chain'); },
-    'nz:showInventory': () => {
-      if (state.sel) { state.root = { ...state.sel }; computeChain(); }
-      state.tab = 'inventory';
-      setView('chain');
-      renderPanel();
-      saveState();
-    },
     'nz:chainState': (ev, el) => { if (state.root) select({ z: state.root.z, a: state.root.a, k: +el.value }, { from: 'panel' }); },
     'nz:minBranch': (ev, el) => { state.chainOpt.minBranch = +el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:minLife': (ev, el) => { state.chainOpt.life = el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:overlay': (ev, el) => { state.chainOpt.overlay = el.checked; computeChain(); saveState(); },
-    'nz:chainDir': (ev, el) => setChainDir(el.dataset.dir || el.value),
+    'nz:chainDir': (ev, el) => setChainDir(el.value),
     'nz:chainStyle': (ev, el) => setChainStyle(el.value),
+    'nz:chainZoomIn': () => zoomChain(CHAIN_ZOOM),
+    'nz:chainZoomOut': () => zoomChain(1 / CHAIN_ZOOM),
+    'nz:chainWhole': () => showWholeChain(),
     'nz:chainSvg': () => chainSvg(),
     'nz:chainPng': () => chainPng(),
     'nz:chainCsv': () => chainCsv(),

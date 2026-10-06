@@ -5,7 +5,7 @@ test-parse.js proves the reading and the chains. This proves the wiring: the
 built-in release loads, a nuclide can be reached by address, by search, by
 clicking the chart and by the arrow keys, every colour mode draws its legend,
 the decay-chain chart draws with no label on top of a box, and draws as a
-series of circles (the way rdc.html draws chains) too, the options change
+series of circles (the way rdc.html draws chains) too, and zooms, the options change
 the chain, the chain runs up to the parents as well, the Levels, Radiation and
 Data sets tabs fill, a user's ENSDF zip
 opens in the worker, is remembered across a reload and can be forgotten, the
@@ -344,7 +344,6 @@ async def main():
             }
           }
           const alpha = labels.find(g => g.querySelector('title').textContent.startsWith('alpha decay: 100 % of the decays of 238U'));
-          const mini = document.getElementById('nzChainMini');
           return JSON.stringify({
             members: ENSDFPage.state.chain.nodes.filter(n => n.kind !== 'fission').length, discs: discs.length,
             boxes: svg.querySelectorAll('.nz-node > rect:not(.nz-level)').length,
@@ -353,12 +352,10 @@ async def main():
             alpha: alpha ? [...alpha.querySelectorAll('text')].map(t => t.textContent) : null, onDisc, pairs, apart, through,
             texts: [...svg.querySelectorAll('text')].map(t => t.textContent).join(' '),
             aria: svg.getAttribute('aria-label'),
-            mini: mini ? [mini.querySelectorAll('.nz-disc').length, +mini.getAttribute('height')] : null,
             /* The colours it stands on, and where it starts in the view. */
             fills: [svg.querySelector(':scope > rect').getAttribute('fill'), svg.querySelector('.nz-disc').getAttribute('fill'), svg.querySelector('.nz-edge-label rect').getAttribute('fill')],
             view: getComputedStyle(document.querySelector('.nz-chainview')).backgroundColor,
             edge: [svg.getBoundingClientRect().left - document.querySelector('.nz-chain-scroll').getBoundingClientRect().left, svg.getBoundingClientRect().top - document.querySelector('.nz-chain-scroll').getBoundingClientRect().top],
-            card: mini ? [mini.querySelector(':scope > rect').getAttribute('fill'), getComputedStyle(mini.closest('.nz-card')).backgroundColor] : null,
             saved: JSON.parse(localStorage.getItem('kvot-ensdf-v1')).chainOpt.style }); })()"""
         await page.ev("""(async () => { ENSDFPage.select('U-238'); document.querySelector('[data-view=chain]').click();
           await new Promise(r => setTimeout(r, 200));
@@ -374,10 +371,8 @@ async def main():
               (ser['onDisc'], ser['pairs'], ser['apart'], ser['through']), (0, 0, True, 0))
         check('... no Unicode superscripts in its text', any(c in ser['texts'] for c in SUPERSCRIPTS), False)
         check('... the drawing says how it is laid out', ser['aria'], 'Decay chain: alpha decay straight down, beta decay across')
-        check('... the panel’s small drawing follows, held to 360 px high', ser['mini'], lambda m: m is not None and m[0] == ser['discs'] and m[1] <= 360)
         check('... the drawing, its circles and its labels are the colour of the view, and it starts at the view’s edges: no band between',
               (ser['fills'], ser['edge']), ([ser['view']] * 3, [0, 0]))
-        check('... the small drawing is the colour of its card', ser['card'], lambda c: c is not None and c[0] == c[1])
         check('... and the choice is kept', ser['saved'], 'series')
         await page.ev("""(async () => { ENSDFPage.select('Br-101'); await new Promise(r => setTimeout(r, 300)); return 'ok'; })()""")
         crowd = json.loads(await page.ev(SERIES_LOOK))
@@ -429,6 +424,59 @@ async def main():
         check('back on the grid: boxes again, no circles, and that is kept', (grid['discs'], grid['boxes'] > 0, grid['aria'], grid['saved']),
               (0, True, 'Decay chain: atomic number across, mass number down', 'grid'))
         check('... on the chart’s own background, inside the view’s padding, as before', (grid['bg'], grid['inset']), ('#fdfaf7', 12))
+
+        # ---------------------------------------------------------- zooming the chain
+        # As on the chart: buttons, + − 0, and a pinch (the wheel with Ctrl) about
+        # the pointer; the wheel alone scrolls.
+        zoom = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          ENSDFPage.select('U-238'); await sleep(300);
+          const svg = document.getElementById('nzChainSvg'), box = document.querySelector('.nz-chain-scroll'), draw = svg.parentElement;
+          const vbw = () => +svg.getAttribute('viewBox').split(' ')[2];
+          const w = () => +svg.getAttribute('width');
+          const click = (a) => document.querySelector(`[data-on-click="${a}"]`).click();
+          const out = { fit: w() / vbw() };
+          let s = w(); click('nz:chainZoomIn'); out.in = w() / s;
+          s = w(); click('nz:chainZoomOut'); click('nz:chainZoomOut'); out.out = w() / s;
+          click('nz:chainWhole');
+          const r = svg.getBoundingClientRect(), b = box.getBoundingClientRect();
+          out.whole = [r.left >= b.left - 1, r.right <= b.right + 1, r.top >= b.top - 1, r.bottom <= b.bottom + 1];
+          if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+          const key = (k) => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+          s = w(); key('+'); out.plus = w() / s;
+          s = w(); key('-'); out.minus = w() / s;
+          click('nz:chainZoomIn'); click('nz:chainZoomIn'); key('0'); out.zero = Math.abs(w() - Math.round(r.width)) <= 1;
+          click('nz:chainZoomIn'); click('nz:chainZoomIn');
+          const g = svg.querySelector('.nz-node[data-key="88,226,0"] rect');
+          const c0 = g.getBoundingClientRect(), px = c0.left + c0.width / 2, py = c0.top + c0.height / 2;
+          draw.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, ctrlKey: true, clientX: px, clientY: py, bubbles: true, cancelable: true }));
+          const c1 = g.getBoundingClientRect();
+          out.pinch = [Math.round(c1.width / c0.width * 100) / 100, Math.abs(c1.left + c1.width / 2 - px) < 2, Math.abs(c1.top + c1.height / 2 - py) < 2];
+          s = w(); draw.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true })); out.plain = w() === s;
+          /* The files at the drawing's own size, whatever the zoom. */
+          window.__zoomed = []; const keep = HTMLAnchorElement.prototype.click;
+          HTMLAnchorElement.prototype.click = function () { if (this.download) fetch(this.href).then(x => x.blob()).then(bl => window.__zoomed.push([this.download, bl])); };
+          click('nz:chainSvg'); click('nz:chainPng');
+          for (let i = 0; i < 50 && window.__zoomed.length < 2; i++) await sleep(100);
+          HTMLAnchorElement.prototype.click = keep;
+          const files = Object.fromEntries(window.__zoomed.map(([n, bl]) => [n.split('.').pop(), bl]));
+          const doc = new DOMParser().parseFromString(await files.svg.text(), 'image/svg+xml').documentElement;
+          const bmp = await createImageBitmap(files.png);
+          out.files = [+doc.getAttribute('width') === vbw(), bmp.width === Math.ceil(vbw()) * 2];
+          const zoomed = w();
+          svg.querySelector('.nz-node[data-key="86,222,0"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(250);
+          out.kept = [w() === zoomed, ENSDFPage.state.root.a];
+          ENSDFPage.select('Th-232'); await sleep(300);
+          out.fresh = w() / vbw();
+          return JSON.stringify(out); })()"""))
+        check('the chain zooms in and out by a quarter a step, from the buttons on its bar', (round(zoom['in'], 2), round(zoom['out'], 2)), (1.25, 0.64))
+        check('... ⤢ shows the whole chain in the view', zoom['whole'], [True, True, True, True])
+        check('... + and − zoom and 0 shows the whole chain, from the page as on the chart', (round(zoom['plus'], 2), round(zoom['minus'], 2), zoom['zero']), (1.25, 0.8, True))
+        check('... a pinch (the wheel with Ctrl) zooms about the pointer, the box under it staying put; the wheel alone does not zoom',
+              (zoom['pinch'], zoom['plain']), ([1.49, True, True], True))
+        check('... the SVG and the PNG are at the drawing’s own size, however it is zoomed', zoom['files'], [True, True])
+        check('... a click on a box keeps the zoom and the start; a new chain opens fitted to the width again',
+              (zoom['kept'], 0.7 <= zoom['fresh'] <= 1.25), ([True, 238], True))
 
         # ---------------------------------------------------------- the tabs
         await page.ev("document.querySelector('[data-view=chart]').click(); ENSDFPage.select('Co-60'); 'ok'")
@@ -566,8 +614,7 @@ async def main():
           out.tab = document.querySelector('[data-view=chain]').textContent;
           out.cells = overlay ? [88226, 90230, 92234, 92238].map(id => overlay.cells.has(id)) : null;
           out.into = overlay ? overlay.arrows.filter(a => a.z1 === 88 && a.n1 === 138).map(a => `${a.z0},${a.n0}`).sort() : null;
-          out.card = document.querySelector('#nzPaneNuclide .nz-card h3').textContent;
-          out.pressed = document.querySelector('#nzPaneNuclide .nz-card [data-dir=up]').getAttribute('aria-pressed');
+          out.card = !!document.querySelector('#nzPaneNuclide .nz-card, #nzChainMini');
           out.saved = JSON.parse(localStorage.getItem('kvot-ensdf-v1')).chainOpt.dir;
           return JSON.stringify(out); })()"""))
         check('a nuclide nothing decays to says so (36Cl)', par['none'], 'none: nothing in this database decays to it')
@@ -577,7 +624,7 @@ async def main():
         check('the chain set to parents: the view tab says so', par['tab'], 'Parents of 226Ra')
         check('... the chart rings 226Ra, 230Th, 234U and 238U', par['cells'], [True, True, True, True])
         check('... and draws an arrow into 226Ra from each parent', par['into'], ['87,139', '89,137', '90,140'])
-        check('... the Nuclide tab\'s card follows, its parents button pressed, and the setting is kept', (par['card'], par['pressed'], par['saved']), ('Parents', 'true', 'up'))
+        check('... the setting is kept, and the Nuclide tab carries no chain card of its own', (par['saved'], par['card']), ('up', False))
         pv = json.loads(await page.ev("""(async () => {
           document.querySelector('[data-view=chain]').click(); await new Promise(r => setTimeout(r, 500));
           const svg = document.getElementById('nzChainSvg');
@@ -652,14 +699,14 @@ async def main():
         back = json.loads(await page.ev("""(async () => {
           document.querySelector('[data-tab=nuclide]').click();
           ENSDFPage.select('Pb-206'); await new Promise(r => setTimeout(r, 300));
-          const card = () => document.querySelector('#nzPaneNuclide .nz-card');
-          const out = { up: [card().querySelector('h3').textContent, card().textContent.includes('decay to 206Pb, directly or through others')] };
-          card().querySelector('[data-dir=down]').click(); await new Promise(r => setTimeout(r, 300));
-          out.down = [card().querySelector('h3').textContent, card().textContent.includes('206Pb is stable: no chain follows from it.'),
-            document.getElementById('nzChainDir').value, document.querySelector('[data-view=chain]').textContent];
+          const ch = () => ENSDFPage.state.chain, tab = () => document.querySelector('[data-view=chain]').textContent;
+          const out = { up: [tab(), ch().up, ch().nodes.length > 1] };
+          const s = document.getElementById('nzChainDir'); s.value = 'down'; s.dispatchEvent(new Event('change', {bubbles: true}));
+          await new Promise(r => setTimeout(r, 300));
+          out.down = [tab(), ch().up, ch().nodes.length, s.value, !!document.querySelector('#nzPaneNuclide .nz-card, #nzChainMini')];
           return JSON.stringify(out); })()"""))
-        check('a stable nuclide has parents (206Pb), and the card turns the chain back down', (back['up'], back['down']),
-              (['Parents', True], ['Decay chain', True, 'down', 'Decay chain 206Pb']))
+        check('a stable nuclide has parents (206Pb), and the setting beside the view tabs turns the chain back down, to nothing after it',
+              (back['up'], back['down']), (['Parents of 206Pb', True, True], ['Decay chain 206Pb', False, 1, 'down', False]))
 
         # ---------------------------------------------------------- the NNDC archive
         nn = json.loads(await page.ev("""(async () => {

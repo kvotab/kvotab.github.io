@@ -431,19 +431,6 @@
 .nz-missing { color: var(--text-muted); border-bottom: 1px dashed var(--text-muted); }
 a.nz-nuc, .nz-pane a { color: var(--link-color); }
 a.nz-nuc:hover { text-decoration: underline; }
-.nz-card {
-  margin: 12px 0 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-surface);
-}
-.nz-card h3 { margin-top: 0; }
-/* The card's title, and beside it which way the chain runs. */
-.nz-card-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; justify-content: space-between; margin: 0 0 6px; }
-.nz-card-head h3 { margin: 0; }
-.nz-card p { margin: 0 0 6px; }
-.nz-ends { margin: 0 0 8px; padding-left: 18px; }
 .nz-kv { border-collapse: collapse; font-size: 12px; }
 .nz-kv th { padding: 3px 12px 3px 0; text-align: left; font-weight: 600; white-space: nowrap; }
 .nz-kv td { padding: 3px 12px 3px 0; white-space: nowrap; }
@@ -504,6 +491,8 @@ a.nz-nuc:hover { text-decoration: underline; }
   background: var(--bg-surface);
 }
 .nz-chain-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px; }
+/* The chain's zoom buttons, together as on the chart. */
+.nz-zoom { display: inline-flex; gap: 4px; align-items: center; }
 .nz-chain-draw { overflow-x: auto; margin: 0 0 8px; }
 /* A series stands on the view's own colour and runs out to its edges, over
    the scroll box's padding: no band between the edge and the drawing. */
@@ -566,14 +555,6 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-sf { margin: 4px 0 12px; }
 .nz-sf > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
 .nz-sf[open] > summary { margin-bottom: 4px; }
-
-/* ---- the chain in small, in the panel ----------------------------------- */
-.nz-chain-mini { margin: 2px 0 8px; overflow: hidden; border-radius: 6px; cursor: zoom-in; }
-.nz-chain-mini svg { display: block; max-width: 100%; height: auto; }
-/* A series is held to a height, and so narrower than the panel: in the middle. */
-.nz-chain-mini svg[data-style="series"] { margin: 0 auto; }
-.nz-chain-mini .nz-node, .nz-chain-mini .nz-edge-label { pointer-events: none; }
-.nz-chain-mini:hover { box-shadow: 0 0 0 2px var(--accent-line); }
 .nz .nz-asym sup, .nz .nz-asym sub { vertical-align: baseline; font-size: 1em; line-height: 1; }
 
 /* The hover card lives outside .nz, so it needs its own superscripts. */
@@ -641,4 +622,3 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-inv-table td.nz-inv-now { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .nz-inv-table tr.hot td { background: var(--bg-secondary); }
 .nz-inv .nz-note li { margin-bottom: 4px; }
-.nz-card .nz-btn + .nz-btn { margin-left: 6px; }
