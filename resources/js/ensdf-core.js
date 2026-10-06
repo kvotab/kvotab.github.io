@@ -1093,9 +1093,40 @@
     return out;
   }
 
+  /* ---------------------------------------------------------------------
+     The chain settings a page offers
+     --------------------------------------------------------------------- */
+
+  /*
+    How long a member must live to be drawn in a chain, for buildChain()'s
+    minHalfLifeS (life) and minIsomerS (iso). The first two keep every
+    nuclide: every state, or all but the isomers under a second, which are
+    many and seldom matter (the default). The rest leave out every member,
+    nuclide or isomer, that lives less -- but never the one the chain starts
+    from.
+  */
+  const LIFE_OPTIONS = [
+    { id: 'all', text: 'all members', life: 0, iso: 0, span: '' },
+    { id: 'iso', text: 'all but isomers < 1 s', life: 0, iso: 1, span: '1 s' },
+    ...[[1e-3, '1 ms'], [1, '1 s'], [60, '1 min'], [3600, '1 h'], [86400, '1 d'],
+      [YEAR_S, '1 y'], [10 * YEAR_S, '10 y'], [100 * YEAR_S, '100 y'], [1000 * YEAR_S, '1000 y']]
+      .map(([v, span]) => ({ id: span.replace(' ', ''), text: `T½ ≥ ${span}`, life: v, iso: 0, span })),
+  ];
+  const DEFAULT_LIFE = 'iso';
+
+  /* The smallest branch to draw, a percentage of the parent's decays, for
+     buildChain()'s minBranch. The value is the option's, as written. */
+  const BRANCH_OPTIONS = [
+    { value: '0', text: 'all branches' },
+    { value: '1e-6', text: 'branches ≥ 1e-6 %' },
+    { value: '0.001', text: 'branches ≥ 0.001 %' },
+    { value: '0.1', text: 'branches ≥ 0.1 %' },
+    { value: '1', text: 'branches ≥ 1 %' },
+  ];
+
   return {
     ELEMENTS, index, name, plainName, sup, supRuns, asciiText, isomerLabel, parseQuery, stateForLabel, chainEmission, parentsOf,
-    decaySystem, decayAt, AVOGADRO,
+    decaySystem, decayAt, AVOGADRO, LIFE_OPTIONS, DEFAULT_LIFE, BRANCH_OPTIONS,
     expText, valueParts, uncertaintyText, halfLifeParts, halfLifeText, halfLifeAlt, halfLifeShort,
     modeText, modeMeaning, modeStated, pctText, sharePct, isLimit, primaryMode, modeFamily,
     HALF_LIFE_CLASSES, PALETTE, MODE_LEGEND, halfLifeClass, halfLifeColour, along, luminance, inkOn,

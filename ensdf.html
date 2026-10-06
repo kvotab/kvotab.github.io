@@ -95,13 +95,7 @@
                 <option value="down">daughters</option>
                 <option value="up">parents</option>
               </select>
-              <select id="nzMinBranch" data-on-change="nz:minBranch" aria-label="Smallest branch to show" title="Leave out branches smaller than this share of a nuclide's decays">
-                <option value="0">all branches</option>
-                <option value="1e-6">branches ≥ 1e-6 %</option>
-                <option value="0.001">branches ≥ 0.001 %</option>
-                <option value="0.1">branches ≥ 0.1 %</option>
-                <option value="1">branches ≥ 1 %</option>
-              </select>
+              <select id="nzMinBranch" data-on-change="nz:minBranch" aria-label="Smallest branch to show" title="Leave out branches smaller than this share of a nuclide's decays"></select>
               <select id="nzMinLife" data-on-change="nz:minLife" aria-label="Shortest half-life to draw in the chain" title="A member of the chain, nuclide or isomer, that lives less than this is left out, and the arrows go straight on to where it decays. The nuclide the chain starts from stays, and so do stable ones"></select>
               <label class="nz-check" title="Draw the chain over the chart of nuclides"><input type="checkbox" id="nzOverlay" data-on-change="nz:overlay" checked> on chart</label>
             </div>
@@ -225,14 +219,16 @@
       ensdf-core    names, formatting, colours and the decay chain
       ensdf-chart   the chart of nuclides (canvas)
       ensdf-chain   the decay-chain chart (SVG)
+      ensdf-sources the releases on the site, those opened, NNDC's archive
       ensdf-ui      this page
       The release on show is loaded by ensdf-ui from resources/data/ensdf/.
   -->
   <script src="./resources/js/ensdf-parse.js?v=20260923"></script>
-  <script src="./resources/js/ensdf-core.js?v=20261001"></script>
+  <script src="./resources/js/ensdf-core.js?v=20261006"></script>
   <script src="./resources/js/ensdf-chart.js?v=20260922b"></script>
   <script src="./resources/js/ensdf-chain.js?v=20261001"></script>
   <script src="./resources/js/ensdf-inventory.js?v=20260923"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20261004"></script>
+  <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20261006"></script>
 </body>
 </html>

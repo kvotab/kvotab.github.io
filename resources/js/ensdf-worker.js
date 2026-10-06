@@ -10,8 +10,9 @@
    The details stay here and go to the page one mass number at a time, as
    the page asks for them; only the summary crosses in one piece.
 
-   Version stamps: bump this file's own stamp in ensdf-ui.js whenever the
-   list below changes. A Worker does not inherit the page's cache-busting.
+   Version stamps: bump this file's own stamp in ensdf-sources.js whenever
+   the list below changes. A Worker does not inherit the page's
+   cache-busting.
    ========================================================================== */
 /* global KVOT_ENSDF_OPEN */
 importScripts('./ensdf-parse.js?v=20260923', './ensdf-open.js?v=20260923');

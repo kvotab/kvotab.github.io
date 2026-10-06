@@ -6,169 +6,34 @@
    ensdf-chain.js. This file keeps the state, loads and switches databases,
    and fills the panel.
 
-   Databases. The page starts on the newest release listed in
-   resources/data/ensdf/releases.js (built by scripts/gen-ensdf.mjs). A
+   Databases. The page starts on the newest release built into the site. A
    visitor can open another -- a release zip from the NNDC archive, or ENSDF
    text files -- which is read in a worker, never uploaded, and kept in this
-   browser (IndexedDB) so the database menu can switch back to it later.
-   NNDC's server sends no CORS header, so the page cannot fetch a release
-   from there by itself. The menu lists every release in NNDC's archive
-   anyway, from resources/data/ensdf/nndc.js (scripts/gen-ensdf-archive.mjs),
-   and choosing one that is not to hand says which file to download and
-   opens it once it is here.
+   browser so the database menu can switch back to it later. NNDC's server
+   sends no CORS header, so the page cannot fetch a release from there by
+   itself. The menu lists every release in NNDC's archive anyway, and
+   choosing one that is not to hand says which file to download and opens it
+   once it is here. Where each of those comes from is ensdf-sources.js,
+   which Radionuclide Decay Chains (rdc.html) uses as well.
 
-   Built-in data arrive as scripts calling KVOT_ENSDF_DATA(id, part, data),
-   not as JSON: a page opened from the file system may load a script but not
-   fetch a file.
-
-   One global besides that callback: ENSDFPage, a read-only window on the
-   state for the browser test. Everything else is inside the IIFE and reached
-   through the data-on-* actions registered at the bottom.
+   One global: ENSDFPage, a read-only window on the state for the browser
+   test. Everything else is inside the IIFE and reached through the
+   data-on-* actions registered at the bottom.
    ========================================================================== */
-/* global KVOT_ENSDF, KVOT_ENSDF_CORE, KVOT_ENSDF_CHART, KVOT_ENSDF_CHAIN, KVOT_ENSDF_OPEN, KVOT_ENSDF_INVENTORY, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell, kvotFileTooLarge */
+/* global KVOT_ENSDF, KVOT_ENSDF_CORE, KVOT_ENSDF_CHART, KVOT_ENSDF_CHAIN, KVOT_ENSDF_INVENTORY, KVOT_ENSDF_SOURCES, registerActions, reportFailure, notifyUser, kvotEscapeHtml, kvotCsvCell, kvotFileTooLarge */
 (function () {
   'use strict';
 
   const C = KVOT_ENSDF_CORE;
   const P = KVOT_ENSDF;
   const CH = KVOT_ENSDF_CHAIN;
+  const SRC = KVOT_ENSDF_SOURCES;
+  const IDB = SRC.IDB;
   const $ = (id) => document.getElementById(id);
   const esc = (s) => kvotEscapeHtml(s);
-  const DATA_DIR = './resources/data/ensdf/';
-  const WORKER_URL = './resources/js/ensdf-worker.js?v=20260923b';
   const STORAGE_KEY = 'kvot-ensdf-v1';
   const LEVEL_PAGE = 150;
   const LINE_PAGE = 80;
-
-  /* ---------------------------------------------------------------------
-     Built-in data, delivered by <script>
-     --------------------------------------------------------------------- */
-  const waiting = new Map();
-  window.KVOT_ENSDF_DATA = (id, part, payload) => {
-    const k = `${id}|${part}`;
-    const w = waiting.get(k);
-    if (w) { waiting.delete(k); w.resolve(payload); }
-  };
-
-  function loadScriptData(id, part, url) {
-    return new Promise((resolve, reject) => {
-      const k = `${id}|${part}`;
-      waiting.set(k, { resolve, reject });
-      const s = document.createElement('script');
-      s.src = url;
-      s.async = true;
-      s.onload = () => {
-        s.remove();
-        /* A script that loaded but never called back is not the data file. */
-        if (waiting.has(k)) { waiting.delete(k); reject(new Error(`${url} did not contain the expected data`)); }
-      };
-      s.onerror = () => { s.remove(); waiting.delete(k); reject(new Error(`could not load ${url}`)); };
-      document.head.appendChild(s);
-    });
-  }
-
-  /* ---------------------------------------------------------------------
-     Opened databases: worker, or the page itself where there is none
-     --------------------------------------------------------------------- */
-  let worker = null;
-  let workerFailed = false;
-  let msgId = 0;
-  const replies = new Map();
-
-  function getWorker() {
-    if (worker || workerFailed) return worker;
-    try {
-      worker = new Worker(WORKER_URL);
-      worker.onmessage = (ev) => {
-        const m = ev.data || {};
-        const r = replies.get(m.id);
-        if (!r) return;
-        if (m.type === 'progress') { if (r.progress) r.progress(m); return; }
-        replies.delete(m.id);
-        if (m.type === 'error') r.reject(new Error(m.message));
-        else r.resolve(m);
-      };
-      worker.onerror = (ev) => {
-        /* A worker that cannot start (file://) fails here; fall back. */
-        ev.preventDefault();
-        workerFailed = true;
-        worker = null;
-        for (const [id, r] of replies) { replies.delete(id); r.reject(Object.assign(new Error('worker unavailable'), { retry: true })); }
-      };
-    } catch (e) {
-      workerFailed = true;
-      worker = null;
-    }
-    return worker;
-  }
-
-  function ask(msg, progress) {
-    const w = getWorker();
-    if (!w) return Promise.reject(Object.assign(new Error('worker unavailable'), { retry: true }));
-    const id = ++msgId;
-    return new Promise((resolve, reject) => {
-      replies.set(id, { resolve, reject, progress });
-      w.postMessage({ ...msg, id });
-    });
-  }
-
-  /** Read files into a database, in the worker when there is one. */
-  async function openFiles(files, progress) {
-    try {
-      const m = await ask({ type: 'open', files }, progress);
-      return {
-        summary: m.summary,
-        detail: (a) => ask({ type: 'detail', a }).then((r) => r.detail),
-      };
-    } catch (e) {
-      if (!e.retry) throw e;
-      await ensureInlineReader();
-      const res = await KVOT_ENSDF_OPEN.readFiles(files, progress);
-      return { summary: res.summary, detail: (a) => Promise.resolve(res.details.get(a) || null) };
-    }
-  }
-
-  function ensureInlineReader() {
-    if (window.KVOT_ENSDF_OPEN) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = './resources/js/ensdf-open.js?v=20260923';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('could not load ensdf-open.js'));
-      document.head.appendChild(s);
-    });
-  }
-
-  /* ---------------------------------------------------------------------
-     Remembered databases (IndexedDB)
-     --------------------------------------------------------------------- */
-  const IDB = {
-    db: null,
-    open() {
-      if (this.db) return Promise.resolve(this.db);
-      return new Promise((resolve, reject) => {
-        let req;
-        try { req = indexedDB.open('kvot-ensdf', 1); } catch (e) { reject(e); return; }
-        req.onupgradeneeded = () => req.result.createObjectStore('files', { keyPath: 'key' });
-        req.onsuccess = () => { this.db = req.result; resolve(this.db); };
-        req.onerror = () => reject(req.error || new Error('IndexedDB unavailable'));
-      });
-    },
-    async tx(mode, fn) {
-      const db = await this.open();
-      return new Promise((resolve, reject) => {
-        const t = db.transaction('files', mode);
-        const store = t.objectStore('files');
-        const out = fn(store);
-        t.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
-        t.onerror = () => reject(t.error);
-        t.onabort = () => reject(t.error || new Error('aborted'));
-      });
-    },
-    list() { return this.tx('readonly', (s) => s.getAll()); },
-    put(rec) { return this.tx('readwrite', (s) => s.put(rec)); },
-    remove(key) { return this.tx('readwrite', (s) => s.delete(key)); },
-  };
 
   /* ---------------------------------------------------------------------
      State
@@ -264,13 +129,6 @@
   /* ---------------------------------------------------------------------
      Databases
      --------------------------------------------------------------------- */
-  function builtinSource(rel) {
-    return loadScriptData(rel.id, 'summary', `${DATA_DIR}${rel.id}/summary.js`).then((summary) => ({
-      key: `b:${rel.id}`, label: rel.label, kind: 'builtin', summary,
-      detail: (a) => loadScriptData(rel.id, `a${a}`, `${DATA_DIR}${rel.id}/a/${String(a).padStart(3, '0')}.js`).catch(() => null),
-    }));
-  }
-
   async function useSource(src) {
     state.source = src;
     state.idx = C.index(src.summary);
@@ -312,7 +170,7 @@
         const rel = state.releases.find((r) => `b:${r.id}` === key);
         if (!rel) throw new Error('that release is not on this site');
         status(`Loading ${rel.label}…`);
-        await useSource(await builtinSource(rel));
+        await useSource(await SRC.builtinSource(rel));
       } else if (key.startsWith('s:')) {
         const rec = (await IDB.list()).find((r) => r.key === key.slice(2));
         if (!rec) throw new Error('that database is no longer stored in this browser');
@@ -331,18 +189,12 @@
     const names = files.map((f) => f.name || 'file').join(', ');
     status(`Reading ${names}…`);
     const t0 = performance.now();
-    const res = await openFiles(files, (p) => status(`Reading ${names}: ${p.done} of ${p.total} files`));
-    const r = res.summary.release;
-    const key = rec ? rec.key : `${r.label}|${files.map((f) => `${f.name}:${f.size}`).join('|')}`;
-    const src = { key: `s:${key}`, label: rec ? rec.label : r.label, kind: 'opened', summary: res.summary, detail: res.detail };
+    /* Kept for next time, if the browser lets us. */
+    const { src, key, stored } = await SRC.read(files, rec, (p) => status(`Reading ${names}: ${p.done} of ${p.total} files`));
+    const r = src.summary.release;
     if (!rec) {
-      /* Remember it for next time, if the browser lets us. */
-      const size = files.reduce((t, f) => t + (f.size || 0), 0);
-      try {
-        await IDB.put({ key, label: r.label, names: files.map((f) => f.name), size, opened: Date.now(), files });
-        state.stored = await IDB.list();
-      } catch (e) {
-        src.key = `o:${key}`;
+      if (stored) state.stored = stored;
+      else {
         state.stored = state.stored.filter((x) => x.key !== key);
         state.transient = { key: src.key, label: r.label };
       }
@@ -1060,23 +912,12 @@
     }
   }
 
-  /*
-    How long a member must live to be drawn in a chain. The first two keep
-    every nuclide: every state, or all but the isomers under a second, which
-    are many and seldom matter (the default). The rest leave out every
-    member, nuclide or isomer, that lives less -- but never the one the chain
-    starts from.
-  */
-  const LIFE_OPTIONS = [
-    { id: 'all', text: 'all members', life: 0, iso: 0, span: '' },
-    { id: 'iso', text: 'all but isomers < 1 s', life: 0, iso: 1, span: '1 s' },
-    ...[[1e-3, '1 ms'], [1, '1 s'], [60, '1 min'], [3600, '1 h'], [86400, '1 d'],
-      [C.YEAR_S, '1 y'], [10 * C.YEAR_S, '10 y'], [100 * C.YEAR_S, '100 y'], [1000 * C.YEAR_S, '1000 y']]
-      .map(([v, span]) => ({ id: span.replace(' ', ''), text: `T½ ≥ ${span}`, life: v, iso: 0, span })),
-  ];
+  /* How long a member must live to be drawn in a chain, and the smallest
+     branch: the settings ensdf-core.js keeps for every page that draws one. */
+  const LIFE_OPTIONS = C.LIFE_OPTIONS;
 
   function lifeOption() {
-    return LIFE_OPTIONS.find((o) => o.id === state.chainOpt.life) || LIFE_OPTIONS[1];
+    return LIFE_OPTIONS.find((o) => o.id === state.chainOpt.life) || LIFE_OPTIONS.find((o) => o.id === C.DEFAULT_LIFE);
   }
 
   /* The chain settings sit beside the view tabs, and serve both views. */
@@ -1086,6 +927,7 @@
     state.chainOpt.life = lifeOption().id;
     life.value = state.chainOpt.life;
     const br = $('nzMinBranch');
+    if (!br.options.length) br.innerHTML = C.BRANCH_OPTIONS.map((o) => `<option value="${o.value}">${esc(o.text)}</option>`).join('');
     if (![...br.options].some((o) => +o.value === state.chainOpt.minBranch)) state.chainOpt.minBranch = 0;
     br.value = [...br.options].find((o) => +o.value === state.chainOpt.minBranch).value;
     $('nzOverlay').checked = state.chainOpt.overlay;
@@ -1870,9 +1712,9 @@
     /* The NNDC archive only adds to the menu, and may come after the rest;
        the menu is drawn again with it once the rest of it is known. */
     let menuReady = false;
-    loadScriptData('*', 'nndc', `${DATA_DIR}nndc.js`).then((archive) => { state.archive = archive; if (menuReady) renderDbMenu(); }, () => {});
+    SRC.archive().then((archive) => { state.archive = archive; if (menuReady) renderDbMenu(); }, () => {});
     try {
-      state.releases = await loadScriptData('*', 'releases', `${DATA_DIR}releases.js`);
+      state.releases = await SRC.releases();
     } catch (e) {
       state.releases = [];
     }
