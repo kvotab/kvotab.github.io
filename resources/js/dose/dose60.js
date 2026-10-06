@@ -83,28 +83,58 @@ function effectivePieces60(nT) {
 const BONE_V = ['C_Bone-V', 'T_Bone-V'];
 const isBone = (r) => /^[CT]_Bone-[SV]$/.test(r);
 
-/* Regions named in the chain but not in this member's own model, which its
-   Other activity is partly in. Bone surfaces have no mass and take none; if
-   the member names no bone region its Other holds the mineral bone, which the
-   chain's Other does not when any member names bone. */
-function reapportioned(m, common) {
-  const own = new Set(m.explicit);
+/*
+  "Other" in a chain with independent kinetics, as DCAL's ACTACAL has it
+  (ORNL/TM-2001/190, 9.3.1). The chain's source regions are those any member's
+  own model carries it into (step 1; model60.js explicitRegions) and the
+  chain's Other is the rest of the body tissues. A member's activity in the
+  Other of its own model -- which takes in every chain region that model does
+  not carry it into -- is then shared out, for the dose only, by mass:
+
+    - a region the parent's model names, to which this member's model does
+      not carry it: the region's share of the mass of this member's Other
+      (step 5b);
+    - a region the parent's model does not name: the members before the first
+      whose model names it, by their own Other's mass as above; from that
+      member on, every member, whether its own model names the region or not,
+      by the region's share of the mass of the parent's Other, where the
+      member was formed (step 5a).
+
+  What is left stays in the chain's Other. Step 5a brings the testes of 232U
+  from 0.85 to 1.0 of ICRP 72's doses and the red marrow of 210Pb from 0.95;
+  taking it to members whose own model names the region (the manual's "each
+  member C following B") does the same for the kidneys of 223Ra and the
+  spleen of 228Th and 232Th, 0.75-0.94 of ICRP 72's otherwise. Bone surfaces
+  have no mass; a member whose model names no bone region has the mineral
+  bone in its Other, which goes to the bone volumes when any member names
+  bone.
+*/
+function otherTargets(j, members, common) {
+  const own = new Set(members[j].explicit), parent = new Set(members[0].explicit);
   const out = [];
-  for (const r of common) if (!own.has(r) && !isBone(r)) out.push(r);
-  if (![...own].some(isBone) && [...common].some(isBone)) out.push(...BONE_V);
+  for (const r of common) {
+    if (isBone(r)) continue;
+    if (parent.has(r)) { if (!own.has(r)) out.push([r, 'own']); continue; }
+    const first = members.findIndex((m) => m.explicit.includes(r));
+    out.push([r, j >= first ? 'parent' : 'own']);
+  }
+  if (![...own].some(isBone) && [...common].some(isBone)) for (const r of BONE_V) out.push([r, 'own']);
   return out;
 }
 
-function otherShares(m, common, mS) {
-  const extra = reapportioned(m, common).filter((r) => mS[r] > 0);
-  if (!extra.length) return [['Other', 1]];
-  const own = new Set(m.explicit);
+/* The mass of the Other of a model naming these regions. */
+function robMass(explicit, mS) {
   let rob = mS.Body_Tis - (mS.Ht_Cont || 0);
-  for (const r of own) if (mS[r] && !isBone(r)) rob -= mS[r];
-  if ([...own].some(isBone)) rob -= mS['C_Bone-V'] + mS['T_Bone-V'];
-  const shares = extra.map((r) => [r, mS[r] / rob]);
-  const rest = 1 - shares.reduce((a, [, f]) => a + f, 0);
-  return [['Other', rest], ...shares];
+  for (const r of explicit) if (mS[r] && !isBone(r)) rob -= mS[r];
+  if (explicit.some(isBone)) rob -= mS['C_Bone-V'] + mS['T_Bone-V'];
+  return rob;
+}
+
+function otherShares(j, members, targets, mS) {
+  const rob = { own: robMass(members[j].explicit, mS), parent: robMass(members[0].explicit, mS) };
+  const shares = targets.filter(([r]) => mS[r] > 0).map(([r, of]) => [r, mS[r] / rob[of]]);
+  if (!shares.length) return [['Other', 1]];
+  return [['Other', 1 - shares.reduce((a, [, f]) => a + f, 0)], ...shares];
 }
 
 /** Interpolated remainder masses at an age, in the order of REMAINDER_60. */
@@ -129,16 +159,13 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     const sys = assemble60(data, { ...spec, intakeAge });
     // Source regions of each member, and its SEE matrices per phantom.
     /* "Other". With shared kinetics every member has the parent's model and
-       Other is the body tissues the parent's model does not name. With
-       independent kinetics, DCAL's ACTACAL (ORNL/TM-2001/190, 9.3.1) takes the
-       regions named in any member's model as the chain's explicit regions
-       (step 1) and Other as the rest; a member whose own model does not name
-       one of them has part of its own Other activity in it, by the region's
-       share of the mass of that member's Other (step 5b). */
+       Other is the body tissues the parent's model does not name; with
+       independent kinetics, see otherTargets. */
     const common = new Set(sys.members.flatMap((m) => (sys.spec.kinetics === 'S' ? sys.members[0].explicit : m.explicit)));
+    const targets = sys.members.map((m, j) => otherTargets(j, sys.members, common));
     const regionsOf = sys.members.map((m, j) => {
       const own = [...new Set(sys.comps.filter((c) => c.member === j).map((c) => c.region))];
-      const extra = own.includes('Other') ? reapportioned(m, common) : [];
+      const extra = own.includes('Other') ? targets[j].map(([r]) => r) : [];
       return [...new Set([...own, ...extra])];
     });
     const seeOf = sys.members.map((m, j) => {
@@ -147,7 +174,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       return phantoms.map((ph) => ph.see(em, A, regionsOf[j], common));
     });
     // Per member and phantom: how its Other activity divides among the regions.
-    const otherSplit = sys.members.map((m) => phantoms.map((ph) => otherShares(m, common, ph.masses.sources)));
+    const otherSplit = sys.members.map((m, j) => phantoms.map((ph) => otherShares(j, sys.members, targets[j], ph.masses.sources)));
     // Virtual targets: the remainder, normal and with each tissue split off.
     const nT = TARGETS_60.length;
     const remRows = REM_KEYS.map((r) => TISSUES_60[r].map(([t, w]) => [T[t], w]));

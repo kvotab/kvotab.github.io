@@ -312,3 +312,60 @@ with the lead chains' Plasma 2); mercury in "other organic forms and diet"
 follows the methyl mercury model, and mercury secreted into the gut is
 absorbed with fA 1. Still off by more than 10 %: Ra-228 (+3 to +17 %), and
 Ru-94 as RuO4 (about −10 %).
+
+## Chains in the ICRP 60 system, against DCAL's manual (2026-10-06)
+
+The ICRP 60 engine follows DCAL's user's guide (ORNL/TM-2001/190; its
+September 2006 revision is `man/DcalMan.pdf` of the DCAL distribution; the
+EPA's edition, dated August 2006, has the same section 9 and lacks the
+sections on special lung files and the JAERI decay data). Read again against
+its section 9.3.1, two things were done differently, and a third came from
+ICRP 72's own numbers:
+
+- a member's source regions are those its own model carries it into,
+  "other than by ingrowth" (step 1). DCAL's files for chain members (RAU,
+  PBU, BIU, POU, TLU, the radon, astatine and francium files, I-TE) give
+  compartments that a member only leaves, such as radium formed from
+  thorium in the testes; counted as the member's own, they kept its activity
+  in the rest of the body away from them;
+- step 5a: a region the parent's model does not name takes, from the first
+  member whose model names it on, the region's share of the mass of the
+  parent's rest of the body from every member's own, whether that member's
+  model names the region or not (the manual's "each member C following B"
+  read that way agrees with ICRP 72 in 201 of the 230 series where the two
+  readings differ);
+- after an inhalation of Type S material, a member with no Type S f1 file of
+  its own takes the lower of its f1 and the parent's: the manual is silent,
+  and with bismuth's 0.05 (or thallium's, francium's and astatine's 1)
+  Pb-211, Pb-212, Pb-214 and Ra-225 Type S had two to three times ICRP 72's
+  kidney doses; now every organ is within a few per cent.
+
+Only chains with independent kinetics change (`compare-engines.mjs`: of 544
+cases, Ra-224 and U-238 differ; the ICRP 103 cases and the ICRP 60 cases
+with shared kinetics are the same value for value). Their 1158 rows (60
+nuclides, ingestion and Types F, M, S, six ages) against ICRP 72's organ
+doses, share within 10 %:
+
+| | before | after |
+| --- | --- | --- |
+| committed effective dose (within 5 %) | 94.6 % | 96.3 % |
+| testes | 61.6 % | 91.2 % |
+| ovaries | 66.4 % | 93.7 % |
+| red marrow | 90.4 % | 93.7 % |
+| kidneys | 85.2 % | 94.5 % |
+| spleen | 69.3 % | 95.2 % |
+| all organs | 90.3 % | 95.0 % |
+
+U-232's gonads went from 0.27–0.40 of ICRP 72's to 0.93–1.07 (its e from
+0.87–0.89 to 0.98–1.01), Pb-210's from 0.03–0.08 to about 1.0, Ra-225's
+from 0.10–0.46. Every case against Publication 119 now: ingestion 4506
+values (Pu-238's repeated cases gone), 98.1 % within 5 %, 99.5 % within
+10 %; inhalation 9806 values, 96.9 % and 99.2 %; U-232 has left the Help's
+list of intakes more than 10 % off at two ages or more. Still off, for other reasons: U-240 Types F and M (testes
+and red marrow 1.2–2.7 times ICRP 72's), whose chain ICRP 72 ends at
+Np-240m (without Pu-240 they come within 3 %; `chain.js` keeps Pu-240,
+which carries 5 % of the energy of 100 years even unweighted, so DCAL's
+rule for ending a chain is not the one the manual's words suggest); Ra-223
+and Ra-224 Type S (the tissues outside the lungs a quarter to a half of
+ICRP 72's); Th-226 by ingestion (testes 4–11 times ICRP 72's doses of
+10^-13 to 10^-11 Sv/Bq).

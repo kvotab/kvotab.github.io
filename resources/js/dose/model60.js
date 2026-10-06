@@ -88,10 +88,27 @@ function siToBlood(f1) {
   return (f * SI_TRANSIT) / (1 - f);
 }
 
-export function f1Table(models, name) {
+/* The table of an f1 file, or with `cap` the lower of two files' values at
+   every age -- the transfer coefficients compared, as interpolated. */
+export function f1Table(models, name, cap = null) {
   const f = models.f1[name];
   if (!f) return null;
-  return { ages: f.ages.slice(), rates: f.f1.map(siToBlood), f1: f.f1.slice(), title: f.title };
+  const g = cap && cap !== name ? models.f1[cap] : null;
+  if (!g) return { ages: f.ages.slice(), rates: f.f1.map(siToBlood), f1: f.f1.slice(), title: f.title };
+  const ages = [...new Set([...f.ages, ...g.ages])].sort((a, b) => a - b);
+  const rates = ages.map((x) => Math.min(rateAt(f, x), rateAt(g, x)));
+  return { ages, rates, f1: rates.map((r) => r / (r + SI_TRANSIT)), title: `${f.title} (at most ${g.title})` };
+}
+
+/* An f1 file's transfer coefficient at an age: linear between its ages, held
+   beyond them. */
+function rateAt(f, age) {
+  const r = f.f1.map(siToBlood);
+  if (age <= f.ages[0]) return r[0];
+  for (let i = 1; i < f.ages.length; i++) {
+    if (age <= f.ages[i]) return r[i - 1] + (r[i] - r[i - 1]) * (age - f.ages[i - 1]) / (f.ages[i] - f.ages[i - 1]);
+  }
+  return r[r.length - 1];
 }
 
 /* Lead isotopes of the natural decay series: the chains ICRP 67 gave
@@ -163,15 +180,23 @@ export function assemble60(data, spec) {
   /* ICRP 72 took the actinium and protactinium models from ICRP 30 (see
      gen-dose-icrp60.mjs); DCAL's FGR-13 library has updated ones. */
   const override = spec.icrp72 !== false ? { AC: 'AC_I30', PA: 'PA_I30' } : {};
-  /* Each member's systemic model and f1. */
+  /* Each member's systemic model and f1. After an inhalation of Type S
+     material, a member with no Type S f1 file of its own is absorbed from the
+     gut no more than the parent is. ORNL/TM-2001/190 leaves this open;
+     ICRP 72's coefficients have it so: with it, 211Pb, 212Pb, 214Pb and 225Ra
+     Type S come within a few per cent of ICRP 72 in every organ, while the
+     own f1 of bismuth, thallium, francium and astatine (0.05 to 1, beside the
+     parent's 0.01) gives them two to three times its kidney doses and 1.4 to
+     2 times its doses to the other soft tissues. */
   const memberModels = chain.members.map((m, j) => {
     const el = elementOf(m.name);
     if (j === 0) return { bio: parentBio, f1: parentF1, own: true };
     if (kinetics === 'I') {
       const name = memberModelName(el, parentEl);
       if (models.systemic[name]) {
-        const f1 = f1FileName(models, el, route, name, inhaledType, null);
-        return { bio: name, f1: f1 || parentF1, own: true };
+        const f1 = f1FileName(models, el, route, name, inhaledType, null) || parentF1;
+        const cap = inhaledType === 'S' && !models.f1[`${el.toUpperCase()}$S`] ? parentF1 : null;
+        return { bio: name, f1, f1cap: cap, own: true };
       }
       notes.push(`${m.name}: no model ${name}.DEF for it as a member of the ${parentEl} chain; it takes the parent's model`);
     }
@@ -236,7 +261,7 @@ export function assemble60(data, spec) {
     }
     // GI tract.
     for (const [from, to, rates] of git.transfers) addTransfer(j, from, to, git.ages, rates, 'gi');
-    const f1 = f1Table(models, mm.f1);
+    const f1 = f1Table(models, mm.f1, mm.f1cap);
     if (f1) addTransfer(j, 'SI_Cont', 'Blood', f1.ages, f1.rates, 'f1');
     else notes.push(`${m.name}: no f1 file, no absorption from the small intestine`);
     // Systemic model.
@@ -287,7 +312,7 @@ export function assemble60(data, spec) {
 
   return {
     system: 'icrp60', spec: { ...spec, kinetics }, chain, notes,
-    members: chain.members.map((m, j) => ({ ...m, bio: memberModels[j].bio, f1: memberModels[j].f1, ownModel: memberModels[j].own, explicit: [...explicit[j]] })),
+    members: chain.members.map((m, j) => ({ ...m, bio: memberModels[j].bio, f1: memberModels[j].f1, f1cap: memberModels[j].f1cap || null, ownModel: memberModels[j].own, explicit: [...explicit[j]] })),
     comps, transfers, decays, init,
     lungModel: lungName, f1Parent: parentF1,
   };
@@ -338,15 +363,24 @@ export function nobleGasRule(member, parent, halfLifeDays) {
   return () => 0;
 }
 
+/* The source regions a systemic model names: those it carries the
+   radionuclide into by one of its transfers -- "a region is considered a
+   source region for a given radionuclide provided it receives that
+   radionuclide from one or more sources other than by ingrowth"
+   (ORNL/TM-2001/190, 9.3.1 step 1). DCAL's files for chain members also give
+   compartments that a member only leaves: in RAU, radium formed from thorium
+   in the testes, ovaries, kidneys and red marrow returns to blood. Those are
+   not its source regions but part of its Other, which matters for how its
+   Other activity is shared out (dose60.js): counted as its own, they left the
+   testes at a twentieth of ICRP 72's doses for 210Pb and at a third for 232U. */
 export function explicitRegions(sys) {
   const out = new Set();
-  for (const [from, to] of sys.transfers) {
-    for (const n of [from, to]) {
-      const r = regionOf(n);
-      if (!r || ['Blood', 'Other', 'Body_Tis', 'BT-Soft', 'Urine', 'Feces', 'Excreta'].includes(r)) continue;
-      if (CONTENTS.has(r) || LUNG_REGIONS.has(r)) continue;
-      out.add(r);
-    }
+  for (const [from, to, rates] of sys.transfers) {
+    if (rates.every((r) => r === 0)) continue;
+    const r = regionOf(to);
+    if (!r || r === regionOf(from) || ['Blood', 'Other', 'Body_Tis', 'BT-Soft', 'Urine', 'Feces', 'Excreta'].includes(r)) continue;
+    if (CONTENTS.has(r) || LUNG_REGIONS.has(r)) continue;
+    out.add(r);
   }
   return out;
 }

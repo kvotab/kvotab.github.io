@@ -39,7 +39,7 @@ const ONLY = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 
 
 const { loadSystem } = await import(path.join(JS, 'data.js'));
 const { coefficients60, AGES_60 } = await import(path.join(JS, 'dose60.js'));
-const { parentModelName, f1FileName, recipe60 } = await import(path.join(JS, 'model60.js'));
+const { parentModelName, f1FileName, recipe60, assemble60 } = await import(path.join(JS, 'model60.js'));
 const { coefficients103, AGES_103 } = await import(path.join(JS, 'dose103.js'));
 const { emissionWeights, sAllRows, pchipSlopes, pchipEval, spectrumLines, MEV } = await import(path.join(JS, 'see103.js'));
 const { firstYearWeight } = await import(path.join(JS, 'solve.js'));
@@ -243,6 +243,25 @@ if (!SYSTEM || SYSTEM === '103') {
   }
 }
 
+/* ---- Other in chains with independent kinetics (ICRP 60; ORNL/TM-2001/190, 9.3.1) ---------- */
+// A member's source regions are those its model carries it into: RAU gives
+// radium formed in thorium's testes, kidneys and red marrow a way back to
+// blood, which makes none of them radium's own (step 1).
+{
+  await d60.prepare('U-232');
+  const sys = assemble60(d60, { ...recipe60(d60.cases, 'ingestion', { nuclide: 'U-232', bio: null, f1file: null }), intakeAge: 9125 });
+  const of = (n) => sys.members.find((m) => m.name === n).explicit;
+  check('ICRP 60 U-232 chain: testes and red marrow are 228Th\'s source regions, not 224Ra\'s (RAU only lets radium leave them)',
+    of('Th-228').includes('Testes') && of('Th-228').includes('R_Marrow') && !of('Ra-224').includes('Testes') && !of('Ra-224').includes('R_Marrow') && !of('Ra-224').includes('Kidneys'),
+    `228Th ${of('Th-228').join(' ')} | 224Ra ${of('Ra-224').join(' ')}`);
+  // Type S: a member without a Type S f1 file of its own takes no more than the parent's.
+  await d60.prepare('Pb-212');
+  const s = assemble60(d60, { ...recipe60(d60.cases, 'inhalation', { nuclide: 'Pb-212', type: 'S' }), intakeAge: 9125 });
+  const bi = s.members.find((m) => m.name === 'Bi-212'), po = s.members.find((m) => m.name === 'Po-212');
+  check('ICRP 60 Pb-212 Type S: 212Bi absorbed from the gut at most as the parent (PB$S), 212Po by its own PO$S',
+    bi.f1 === 'BI' && bi.f1cap === 'PB$S' && po.f1 === 'PO$S' && !po.f1cap, `Bi ${bi.f1}/${bi.f1cap} Po ${po.f1}/${po.f1cap}`);
+}
+
 /* ---- the effective dose split by dose group (the Retention tab) ---------------------------- */
 // The shares of the dose groups add up to e at every output time; at the
 // end to the coefficient itself, radon's (a model per sex) included.
@@ -330,6 +349,26 @@ if (!SYSTEM || SYSTEM === '60') {
         const t = stats(ratios119);
         check(`ICRP 60 ${route} vs ICRP 119 (Table ${route === 'ingestion' ? 'F.1' : 'G.1'}): ${t.n} values, ${t.w5.toFixed(1)} % within 5 %, ${t.w10.toFixed(1)} % within 10 %`, t.n > 0 && t.w10 >= min, `want ${min} % within 10 %`);
       }
+    }
+    // Organ doses that hang on how a chain's Other is shared out (dose60.js
+    // otherTargets) and on the f1 of Type S progeny (model60.js): within 10 %
+    // of ICRP 72 at every age.
+    const organs = [
+      ['ingestion', 'U-232', null, ['Testes', 'Ovaries', 'Red marrow'], { Testes: 'Testes', Ovaries: 'Ovaries', 'Red marrow': 'Red Marrow' }],
+      ['ingestion', 'Pb-210', null, ['Testes', 'Red marrow'], { Testes: 'Testes', 'Red marrow': 'Red Marrow' }],
+      ['ingestion', 'Ra-225', null, ['Testes', 'Spleen'], { Testes: 'Testes', Spleen: 'Spleen' }],
+      ['ingestion', 'Th-232', null, ['Spleen'], { Spleen: 'Spleen' }],
+      ['inhalation', 'Pb-212', 'S', ['Kidneys', 'Testes'], { Kidneys: 'Kidneys', Testes: 'Testes' }],
+    ];
+    for (const [route, nuclide, type, keys, name72] of organs) {
+      await d60.prepare(nuclide);
+      const res = coefficients60(d60, recipe60(d60.cases, route, { nuclide, bio: null, f1file: null, type: type ?? undefined }), AGES_60);
+      const off = [];
+      for (const r of res) {
+        const R = ref.find((x) => x.route === route && x.nuclide === nuclide && x.age === r.age && (!type || x.type === type));
+        for (const k of keys) if (R && Math.abs(r.H[k] / R.H[name72[k]] - 1) > 0.1) off.push(`${k} ${r.age} d ${(r.H[k] / R.H[name72[k]]).toFixed(2)}`);
+      }
+      check(`ICRP 60 ${nuclide} ${route}${type ? ` Type ${type}` : ''}: ${keys.join(', ')} within 10 % of ICRP 72 at every age`, !off.length, off.join('; '));
     }
   }
 }
