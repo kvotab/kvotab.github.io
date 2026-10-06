@@ -7,9 +7,12 @@ mark's tones, that the catalogue of each system fills the
 nuclide list, that every (i) opens its panel and closes it, that a
 calculation in each system puts the coefficients in the table, that every
 tab draws (charts, the model diagram, the decay chain), that a link with the
-choices in its hash calculates on load, that a phone-width window does
-not scroll sideways, and that the full window (no site header or footer)
-comes and goes with its button and is kept for the next visit.
+choices in its hash calculates on load, that the decay data can be the
+system's own or ENSDF's (the release on the site, NNDC's archive, and a
+file opened: ensdf.137 of a release, DC_ENSDF_137, checked when it is
+there), that a phone-width window does not scroll sideways, and that the
+full window (no site header or footer) comes and goes with its button and
+is kept for the next visit.
 
 Start a server and a browser on ports of your choice (check them first with
 lsof -nP -iTCP:<port> -sTCP:LISTEN; other sessions may use 8765 and 9222):
@@ -752,6 +755,100 @@ async def main():
           if (!t) return null; const rows = [...t.tBodies[0].rows]; return { n: rows.length, ratio: parseFloat(rows[rows.length - 1].cells[5].textContent) }; })()""")
         check('the Risk tab applies the coefficients to I-131: six ages, tissue by tissue well under e × 5.7 % (thyroid)',
               bool(applied) and applied['n'] == 6 and 0.3 < applied['ratio'] < 0.8)
+
+        # Decay data: the system's own, or made on the site from a release of ENSDF. The choice reloads the list,
+        # marks the last result as not of it, goes with a result into its headline, its link and the Decay chain tab.
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
+        # (the Risk checks above reuse the name `adult`)
+        adult_e = "(() => { const rows = [...document.querySelectorAll('#dcETable tbody tr')]; const a = rows.find(r => r.cells[0].textContent.startsWith('Adult')); return a ? a.cells[1].textContent : null; })()"
+        i131 = await p.ev(adult_e)
+        await p.until("[...document.querySelectorAll('#dcDecay optgroup')].some((g) => /NNDC/.test(g.label))", 20)
+        opts = await p.ev("[[...document.getElementById('dcDecay').options].slice(0, 2).map((o) => [o.value, o.textContent]), [...document.querySelectorAll('#dcDecay optgroup')].map((g) => g.label)]")
+        check('the Decay data setting offers ICRP 107 (the system’s own), ENSDF 2026-09-01 on this site and NNDC’s archive',
+              (opts[0], opts[1][0], opts[1][-1]), ([['', 'ICRP 107, the system’s own'], ['ensdf:260901', 'ENSDF 2026-09-01']], 'ENSDF on this site', 'ENSDF at NNDC: download, then open'))
+        n107 = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")
+        await p.ev("(() => { const s = document.getElementById('dcDecay'); s.value = 'ensdf:260901'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        await p.until("parseInt(document.getElementById('dcNuclideCount').textContent) !== %d" % (n107 or 0), 60)
+        n_ens = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")
+        check(f'with ENSDF the ICRP 103 list grows by the states ICRP 107 lacks ({n107} → {n_ens})', (n_ens or 0) > (n107 or 0) + 40)
+        note = await p.ev("[document.getElementById('dcDecayNote').textContent, document.getElementById('dcCoefStale').textContent]")
+        check('... a note says where the decay data come from, and the I-131 result is marked as of other decay data',
+              bool(note) and 'ENSDF 2026-09-01' in note[0] and 'the decay data (now ENSDF 2026-09-01)' in note[1])
+        done = await calculate('I-131', 'ingestion', '')
+        ens = await p.ev(adult_e)
+        head = await p.ev("[...document.querySelectorAll('#dcHeadline .dc-tag')].map((t) => t.textContent)")
+        check(f'I-131 calculates with ENSDF: adult e {ens}, with ICRP 107 {i131}; the headline names the decay data',
+              (done, bool(ens) and bool(i131) and abs(float(ens) / float(i131) - 1) < 0.03, head), (True, True, ['ICRP 103', 'decay data ENSDF 2026-09-01']))
+        check('... its link carries the decay data', await p.ev("new URLSearchParams(location.hash.slice(1)).get('decay')"), 'ensdf:260901')
+        # A state that ENSDF 2026 names otherwise keeps the ICRP name; the Decay chain tab gives ENSDF's beside it.
+        await p.ev("""(() => { const i = document.getElementById('dcNuclide'); i.value = 'Ta-178m'; i.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"chain\"]').click()")
+        await p.until("/Ta-178m/.test(document.getElementById('dcChainHead').textContent) && document.querySelector('#dcChainTable tbody tr')", 30)
+        chain = await p.ev("""[document.querySelector('#dcChainTable tbody tr td').textContent, !document.getElementById('dcChainDecay').hidden,
+          document.getElementById('dcChainDecay').textContent]""")
+        check('Ta-178m keeps its ICRP name with ENSDF, which calls it Ta-178; the tab names the decay data',
+              bool(chain) and chain[0] == 'Ta-178m (Ta-178)' and chain[1] and 'ENSDF 2026-09-01' in chain[2])
+        await p.ev("""(() => { const i = document.getElementById('dcNuclide'); i.value = 'Bi-212m'; i.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+        bi = await p.ev("!!document.getElementById('dcForm').options.length && !document.getElementById('dcRun').disabled")
+        await p.ev("(() => { const s = document.getElementById('dcDecay'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        await p.until("parseInt(document.getElementById('dcNuclideCount').textContent) === %d" % (n107 or 0), 60)
+        gone = await p.ev("[document.getElementById('dcRun').disabled, document.getElementById('dcNuclideNote').textContent]")
+        check('Bi-212m, which only ENSDF has, can be calculated with it, and is not covered with ICRP 107',
+              (bi, bool(gone) and gone[0] and gone[1].startswith('Not covered')), (True, True))
+        await p.ev("""(() => { const s = document.getElementById('dcDecay'); s.value = 'ensdf:260901'; s.dispatchEvent(new Event('change', { bubbles: true }));
+          const r = document.querySelector('input[name="dcSystem"][value="60"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+        await p.until("/ICRP 60 system/.test(document.getElementById('dcStatus').textContent)", 60)
+        sixty = await p.ev("[[...document.getElementById('dcDecay').options].map((o) => o.textContent), document.getElementById('dcDecay').value, document.getElementById('dcStatus').textContent]")
+        check('in the ICRP 60 system the setting offers ICRP 38 and keeps ENSDF chosen',
+              bool(sixty) and sixty[0][:2] == ['ICRP 38, the system’s own', 'ENSDF 2026-09-01'] and sixty[1] == 'ensdf:260901' and 'ENSDF 2026-09-01' in sixty[2])
+        await p.ev("document.querySelector('[data-info-key=\"set:decay\"] button').click()")
+        panel = await p.ev("document.getElementById('kvot-info-panel').textContent")  # (innerText has the headings in capitals)
+        await p.ev("document.querySelector('[data-info-key=\"set:decay\"] button').click()")
+        check('its (i) says what is chosen and how ENSDF is read', bool(panel) and 'ENSDF 2026-09-01' in panel and 'How ENSDF becomes decay data here' in panel)
+        await p.call('Page.reload')
+        await p.until("document.getElementById('dcNuclideCount') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
+        check('the choice is kept for the next visit', await p.ev("document.getElementById('dcDecay').value"), 'ensdf:260901')
+        # A link names its decay data, and the Batch and Radon at home tabs have the choice of their own.
+        await p.call('Page.navigate', {'url': URL + '#system=103&decay=ensdf:260901&nuclide=Cs-137&route=ingestion&form=all'})
+        ok = await p.until("document.getElementById('dcHeadline').textContent.includes('Cs-137') && document.getElementById('dcHeadline').textContent.includes('ENSDF') && document.getElementById('dcStatus').classList.contains('ok')", 120)
+        check('a link with decay=ensdf:260901 calculates Cs-137 with ENSDF on load', ok)
+        cs_site = await p.ev(adult_e)
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"batch\"]').click()")
+        await asyncio.sleep(0.3)
+        check('the Batch tab has its own Decay data choice',
+              await p.ev("[...document.querySelectorAll('#dcBatchDecay option')].map((o) => o.value).slice(0, 2)"), ['', 'ensdf:260901'])
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
+        check('so has Radon at home', await p.ev("[...document.querySelectorAll('#dcRadonDecay option')].map((o) => o.value).slice(0, 2)"), ['', 'ensdf:260901'])
+        # A release of NNDC's archive says where to download it.
+        got = await p.ev("""(() => { const s = document.getElementById('dcDecay'); const o = [...s.options].find((x) => x.value.startsWith('nndc:'));
+          if (!o) return null; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true }));
+          const d = document.getElementById('dcGet'); return [d.open, d.querySelectorAll('#dcGetBody a[href^="https://www.nndc.bnl.gov/"]').length > 0, s.value]; })()""")
+        await p.ev("document.querySelector('#dcGet .dc-get-actions .dc-btn.secondary').click()")
+        check('an NNDC release opens a dialog with its download link and leaves the choice as it was; Close closes it',
+              (got, await p.ev("document.getElementById('dcGet').open")), ([True, True, 'ensdf:260901'], False))
+        # Opening ENSDF files: the decay data are made in the browser, offered, used, and forgotten again.
+        ens137 = os.environ.get('DC_ENSDF_137', os.path.expanduser('~/Downloads/icrp-dc/ensdf-dose/ensdf_260901/ensdf.137'))
+        if os.path.exists(ens137):
+            doc = await p.call('DOM.getDocument')
+            node = await p.call('DOM.querySelector', {'nodeId': doc['result']['root']['nodeId'], 'selector': '#dcDecayFile'})
+            await p.call('DOM.setFileInputFiles', {'files': [ens137], 'nodeId': node['result']['nodeId']})
+            made = await p.until("document.getElementById('dcDecay').value.startsWith('open:ensdf.137|') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 120)
+            got = await p.ev("""[parseInt(document.getElementById('dcNuclideCount').textContent), !document.getElementById('dcDecayForget').hidden,
+              [...document.querySelectorAll('#dcDecay optgroup')].find((g) => /opened/.test(g.label))?.textContent || '']""")
+            check(f'opening ensdf.137 makes its decay data in the browser and chooses them: {got}', made and got[0] < 20 and got[1] and 'ensdf.137 (opened' in got[2])
+            done = await calculate('Cs-137', 'ingestion', '')
+            opened_e = await p.ev(adult_e)
+            check(f'... Cs-137 calculates with them, as with the release on the site ({opened_e}, {cs_site})', done and opened_e == cs_site)
+            check('... and the release is kept where the ENSDF pages find it',
+                  await p.ev("KVOT_ENSDF_SOURCES.IDB.list().then((l) => l.some((r) => r.key.startsWith('ensdf.137|')))", wait=True), True)
+            await p.ev("document.getElementById('dcDecayForget').click()")
+            gone = await p.until("document.getElementById('dcDecay').value === '' && ![...document.getElementById('dcDecay').options].some((o) => o.value.startsWith('open:ensdf.137|'))", 60)
+            check('Forget takes it out of the menus and of the browser', gone and await p.ev("KVOT_ENSDF_SOURCES.IDB.list().then((l) => !l.some((r) => r.key.startsWith('ensdf.137|')))", wait=True))
+        else:
+            print(f'      (opening ENSDF files not checked: {ens137} is not here)')
+        # Back to the system's own decay data for the checks after these.
+        await p.ev("""(() => { const s = document.getElementById('dcDecay'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+        await p.until("!/ENSDF/.test(document.getElementById('dcStatus').textContent) && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
 
         # Radon at home: the inhalations run once in the worker, then the doses per exposure recombine at once.
         main = """(() => { const rows = [...document.querySelectorAll('#dcRadon .dc-radon-main tbody tr')]; if (!rows.length) return null;

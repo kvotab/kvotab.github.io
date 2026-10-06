@@ -12,6 +12,7 @@ import { drawBody, partsOf, PARTS } from './body.js';
 import { detriment103, detriment60, nominalDetriment, DOSE_LABEL, P103, P60 } from './risk.js';
 import { radonDoses, radonAssemble, radonJobText, KINDS as RADON_KINDS, MODE_LABEL, PAE_PER_BQ, EEC_J_PER_BQ, MJ_PER_WLM } from './radon.js';
 import { setupBatch } from './batch.js';
+import { listFolders, removeFolder, MAKE_VERSION } from './decay-store.js';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, attrs = {}, ...kids) => {
@@ -30,9 +31,217 @@ export const AGE_LABEL = { 100: '3 months', 365: '1 year', 1825: '5 years', 3650
 const SYSTEM_LABEL = { 60: 'ICRP 60 system (Publications 56–72)', 103: 'ICRP 103 system (Publication 158, Part 2 and 3 drafts)' };
 const STORE = 'kvot.dose';
 
+/* ---- decay data ---------------------------------------------------------- */
+/* Each system calculates with its own decay data (ICRP 38 in the ICRP 60
+   system, ICRP 107 in the ICRP 103 one), or with decay data made from a
+   release of ENSDF: one made on this site (resources/data/dose/ensdf/, by
+   scripts/gen-dose-ensdf.mjs), or one a visitor opens, made in this browser
+   (ensdf-make-worker.js) and kept in it (decay-store.js). A choice is '' for
+   the system's own, 'ensdf:' and a release's id, or 'open:' and the key
+   under which ensdf-sources.js keeps the files opened -- the same key on
+   the Chart of Nuclides and Radionuclide Decay Chains, which offer the
+   release too. NNDC's archive is offered as well ('nndc:' and an id): its
+   server lets no other site read its files, so choosing one says where to
+   download it. */
+const OWN_DECAY = { 60: 'ICRP 38', 103: 'ICRP 107' };
+const DECAY = { releases: [], opened: [], made: new Map(), archive: null, making: new Map() };
+const SRC = () => (typeof window !== 'undefined' && window.KVOT_ENSDF_SOURCES) || null;
+async function loadDecayReleases() {
+  try {
+    const r = await fetch(new URL('../../data/dose/ensdf/index.json', import.meta.url));
+    if (r.ok) DECAY.releases = (await r.json()).releases || [];
+  } catch { /* the system's own decay data only */ }
+  await refreshOpened();
+  // NNDC's archive, for the menus' last group, when it comes.
+  SRC()?.archive().then((a) => { DECAY.archive = a; refreshDecayMenus(); }, () => {});
+}
+/** The releases opened in this browser (on any of the ENSDF pages), and the decay data made of them here. */
+async function refreshOpened() {
+  const transient = DECAY.opened.filter((r) => r.transient);
+  try { DECAY.opened = SRC() ? await SRC().IDB.list() : []; } catch { DECAY.opened = []; }
+  for (const t of transient) if (!DECAY.opened.some((r) => r.key === t.key)) DECAY.opened.push(t);
+  try { DECAY.made = new Map((await listFolders()).map((f) => [f.key, f])); } catch { DECAY.made = new Map(); }
+}
+const decayRelease = (decay) => { const m = /^ensdf:(\w+)$/.exec(decay || ''); return m ? DECAY.releases.find((r) => r.id === m[1]) || null : null; };
+const openedOf = (decay) => { const m = /^open:([\s\S]+)$/.exec(decay || ''); return m ? DECAY.opened.find((r) => r.key === m[1]) || null : null; };
+/** The decay data of a choice in words: 'ICRP 107', 'ENSDF 2026-09-01'. */
+const decayLabel = (decay, system) => (!decay ? OWN_DECAY[system]
+  : decayRelease(decay)?.label || openedOf(decay)?.label || decay.replace(/^open:/, '').split('|')[0]);
+const decayValid = (decay) => !decay || !!decayRelease(decay) || !!openedOf(decay);
+const openedDate = (r) => new Date(r.opened || Date.now()).toISOString().slice(0, 10);
+/** A select's options: the system's own decay data, then the releases of ENSDF on this site, opened here, and at NNDC. */
+function decayOptions(system, current) {
+  const opt = (value, text) => h('option', { value, selected: value === (current || '') }, text);
+  const group = (label, opts) => (opts.length ? h('optgroup', { label }, ...opts) : null);
+  const opened = [...DECAY.opened].sort((p, q) => (q.opened || 0) - (p.opened || 0)).map((r) => opt(`open:${r.key}`, `${r.label} (opened ${openedDate(r)})`));
+  const have = new Set([...DECAY.releases, ...DECAY.opened].map((r) => r.label));
+  const nndc = (DECAY.archive?.releases || []).filter((r) => !have.has(r.label))
+    .map((r) => opt(`nndc:${r.id}`, `${r.label}${r.missing ? ' (incomplete)' : r.files.length > 1 ? ` (${r.files.length} parts)` : ''}`));
+  return [opt('', `${OWN_DECAY[system]}, the system’s own`),
+    group('ENSDF on this site', DECAY.releases.map((r) => opt(`ensdf:${r.id}`, r.label))),
+    group('ENSDF opened in this browser', opened),
+    group('ENSDF at NNDC: download, then open', nndc)].filter(Boolean);
+}
+/* The three menus (the settings', the Batch tab's, Radon at home's) after the releases at hand change. */
+function refreshDecayMenus() {
+  populateDecay();
+  populateRadonDecay();
+  batch?.refreshDecay();
+}
+
+/* Decay data made in this browser from a release opened: in a worker of
+   their own, once; kept for the next visit. */
+let makeWorker = null, makeSeq = 0;
+const makeJobs = new Map();
+function makeDecay(files, key) {
+  if (!makeWorker) {
+    makeWorker = new Worker(new URL('./ensdf-make-worker.js', import.meta.url), { type: 'module' });
+    makeWorker.onmessage = (ev) => {
+      const m = ev.data || {}, job = makeJobs.get(m.id);
+      if (!job) return;
+      if (m.type === 'progress') { job.progress(m); return; }
+      makeJobs.delete(m.id);
+      if (m.type === 'made') job.resolve(m); else job.reject(new Error(m.message || 'the decay data could not be made'));
+    };
+    makeWorker.onerror = (ev) => {
+      ev.preventDefault();
+      for (const [id, job] of makeJobs) { makeJobs.delete(id); job.reject(new Error(ev.message || 'the worker that makes decay data failed to start')); }
+      makeWorker = null;
+    };
+  }
+  const names = files.map((f) => f.name).join(', ');
+  const t0 = performance.now();
+  return new Promise((resolve, reject) => {
+    const id = ++makeSeq;
+    makeJobs.set(id, {
+      resolve: (m) => { progress(null); resolve({ ...m, s: (performance.now() - t0) / 1000 }); },
+      reject: (err) => { progress(null); reject(err); },
+      progress: (m) => {
+        const what = m.stage === 'reading' ? `reading ${m.done} of ${m.total} files`
+          : m.stage === 'sorting' ? `picking the decay data sets (${m.done} of ${m.total} files)` : 'computing the radiations';
+        status(`Making decay data from ${names}: ${what}…`);
+        progress(m.stage === 'reading' ? 0.45 * m.done / m.total : m.stage === 'sorting' ? 0.45 + 0.45 * m.done / m.total : 0.95);
+      },
+    });
+    makeWorker.postMessage({ id, type: 'make', files, key });
+  });
+}
+/** Make sure the decay data of a choice can be read by the calculation workers (made, and by this version). */
+function ensureDecay(decay) {
+  const rec = openedOf(decay);
+  if (!rec) return Promise.resolve();
+  const made = DECAY.made.get(rec.key);
+  if (made && made.version === MAKE_VERSION) return Promise.resolve();
+  if (!DECAY.making.has(rec.key)) {
+    DECAY.making.set(rec.key, makeDecay(rec.files, rec.key)
+      .then(async (m) => {
+        await refreshOpened();
+        status(`${rec.label}: decay data made in ${m.s.toFixed(0)} s, ${m.nuclides.toLocaleString('en')} radionuclides; kept in this browser.`, 'ok');
+      })
+      .finally(() => DECAY.making.delete(rec.key)));
+  }
+  return DECAY.making.get(rec.key);
+}
+
+/* Files a visitor opens: a release zip (or its parts) or ENSDF text. They are
+   kept where the ENSDF pages keep theirs, and their decay data are made. */
+async function openEnsdf(list) {
+  const files = [...(list || [])].filter((f) => f && f.size);
+  if (!files.length) return;
+  closeGet();
+  const total = files.reduce((t, f) => t + f.size, 0);
+  const limit = typeof kvotFileTooLarge === 'function' ? kvotFileTooLarge({ name: files.length === 1 ? files[0].name : 'The selection', size: total }, 1024 ** 3) : null;
+  if (limit?.tooLarge) { status(limit.reason, 'error'); return; }
+  let m;
+  try {
+    m = await makeDecay(files, null);
+  } catch (err) {
+    status(`Could not make decay data from ${files.map((f) => f.name).join(', ')}: ${err.message}`, 'error');
+    return;
+  }
+  const rec = { key: m.key, label: m.label, names: files.map((f) => f.name), size: total, opened: Date.now(), files };
+  try { await SRC()?.IDB.put(rec); } catch { rec.transient = true; }
+  if (!SRC()) rec.transient = true;
+  if (rec.transient) DECAY.opened.push(rec);
+  await refreshOpened();
+  status(`${m.label}: decay data made in ${m.s.toFixed(0)} s, ${m.nuclides.toLocaleString('en')} radionuclides${rec.transient ? '; this browser keeps no files for the page, so open it again next time' : '; kept in this browser, here and on the ENSDF pages'}.`, 'ok');
+  await chooseDecay(`open:${m.key}`);
+}
+/** The settings' decay data, chosen: made first where they must be, then the list of radionuclides. */
+async function chooseDecay(decay) {
+  state.decay = decayValid(decay) ? decay : '';
+  refreshDecayMenus();
+  markStale();
+  refreshInfo();
+  $('dcRun').disabled = true;
+  try {
+    await ensureDecay(state.decay);
+    await loadCatalog(state.system);
+  } catch (err) { status(`Could not load the decay data: ${err.message}`, 'error'); }
+  save();
+}
+/* Forget a release opened: here, on the ENSDF pages, and its decay data. */
+async function forgetDecay(decay) {
+  const rec = openedOf(decay);
+  if (!rec) return;
+  try { if (!rec.transient) await SRC()?.IDB.remove(rec.key); } catch { /* gone already */ }
+  try { await removeFolder(rec.key); } catch { /* none kept */ }
+  DECAY.opened = DECAY.opened.filter((r) => r.key !== rec.key);
+  await refreshOpened();
+  if (RADON.decay === decay) RADON.decay = '';
+  batch?.forgetDecay(decay);
+  if (state.decay === decay) await chooseDecay('');
+  else refreshDecayMenus();
+  status(`${rec.label} is no longer kept in this browser.`, 'ok');
+  save();
+}
+
+/* A release of NNDC's archive that is not to hand: where to download it, and
+   how to open it once it is here. */
+function showGet(id) {
+  const a = DECAY.archive, rel = a?.releases.find((r) => r.id === id);
+  if (!rel) return;
+  const many = rel.files.length > 1;
+  const dash = (range) => range.replace('-', '–');
+  const link = (f, i) => [h('a', { href: a.base + f, target: '_blank', rel: 'noopener noreferrer', download: '' }, f.split('/').pop()),
+    rel.parts ? h('span', { class: 'dc-get-dim' }, ` A = ${dash(rel.parts[i])}`) : null];
+  $('dcGetTitle').textContent = `${rel.label} from NNDC`;
+  $('dcGetBody').replaceChildren(
+    h('p', {}, 'This release is not on this site. Download it from NNDC’s archive and open it here: the page reads it in your browser and makes its decay data, in some ten seconds, and uploads nothing. It cannot fetch the release for you, as NNDC’s server does not let other sites read its files.'),
+    h('ol', {},
+      h('li', {}, many ? `Download its ${rel.files.length} parts, one for each range of mass numbers:` : 'Download ', many ? h('ul', {}, rel.files.map((f, i) => h('li', {}, ...link(f, i)))) : link(rel.files[0], 0)),
+      h('li', {}, 'Choose ', h('b', {}, `Open the downloaded ${many ? 'files' : 'file'}…`), many ? ' and pick the parts together' : '', `, or drop ${many ? 'them' : 'it'} on the page.`)),
+    rel.missing ? h('p', { class: 'dc-get-warn' }, `NNDC lists no part of this release for A = ${rel.missing.map(dash).join(', ')}, so it will have no nuclides there.`) : '',
+    h('p', { class: 'dc-get-dim' }, 'It is then kept in this browser, in the Decay data menus and on the Chart of Nuclides and Radionuclide Decay Chains, until you choose Forget.'));
+  $('dcGetOpen').textContent = `Open the downloaded ${many ? 'files' : 'file'}…`;
+  const dlg = $('dcGet');
+  if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+}
+function closeGet() {
+  const dlg = $('dcGet');
+  if (!dlg?.open) return;
+  if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+}
+/* ENSDF files dropped anywhere on the page are opened. */
+function setupEnsdfDrop() {
+  let depth = 0;
+  const files = (ev) => [...(ev.dataTransfer?.types || [])].includes('Files');
+  document.body.addEventListener('dragenter', (ev) => { if (!files(ev)) return; depth++; document.body.classList.add('dc-dropping'); ev.preventDefault(); });
+  document.body.addEventListener('dragover', (ev) => { if (files(ev)) ev.preventDefault(); });
+  document.body.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) document.body.classList.remove('dc-dropping'); });
+  document.body.addEventListener('drop', (ev) => {
+    depth = 0;
+    document.body.classList.remove('dc-dropping');
+    if (!ev.dataTransfer?.files.length) return;
+    ev.preventDefault();
+    openEnsdf(ev.dataTransfer.files);
+  });
+}
+
 let batch = null; // the Batch tab (batch.js), set up at the start
 const state = {
   system: '103',
+  decay: '',
   catalogs: {},
   entry: null,       // the catalogue entry of the chosen nuclide
   result: null,      // {system, spec, label, ages, out}
@@ -110,7 +319,7 @@ function load() { try { return JSON.parse(localStorage.getItem(STORE) || '{}'); 
 function save() {
   try {
     localStorage.setItem(STORE, JSON.stringify({
-      system: state.system, nuclide: $('dcNuclide').value.trim(), route: route(), form: $('dcForm').value,
+      system: state.system, decay: state.decay, radonDecay: RADON.decay, nuclide: $('dcNuclide').value.trim(), route: route(), form: $('dcForm').value,
       amad: $('dcAmad').value, ages: ages(), cutoff: $('dcCutoff').value, rtol: $('dcRtol').value, tab: state.tab,
       side: getComputedStyle($('dcRoot')).getPropertyValue('--dc-side-width').trim() || null,
       batch: batch?.settings() ?? load().batch ?? null,
@@ -163,25 +372,43 @@ function systemSettings() {
   if (row) row.hidden = state.system === '60';
 }
 
-/** The catalogue of a system, asked for once. */
-function catalogOf(system) {
-  return (state.catalogP ||= {})[system] ||= ask({ type: 'catalog', system }).then((c) => (state.catalogs[system] = c))
-    .catch((err) => { delete state.catalogP[system]; throw err; });
+/** The catalogue of a system with some decay data, asked for once. */
+const catKey = (system, decay = state.decay) => `${system}|${decay || ''}`;
+const currentCatalog = () => state.catalogs[catKey(state.system)];
+function catalogOf(system, decay = state.decay) {
+  const k = catKey(system, decay);
+  return (state.catalogP ||= {})[k] ||= ask({ type: 'catalog', system, decay }).then((c) => (state.catalogs[k] = c))
+    .catch((err) => { delete state.catalogP[k]; throw err; });
 }
 async function loadCatalog(system) {
   systemSettings();
-  if (!state.catalogs[system]) {
+  const k = catKey(system);
+  if (!state.catalogs[k]) {
     status('Loading the list of radionuclides…');
     await catalogOf(system);
   }
-  const cat = state.catalogs[system];
+  const cat = state.catalogs[k];
   hideSuggest();
   $('dcNuclideCount').textContent = `${cat.nuclides.length} nuclides`;
   refreshInfo();
-  status(system === '60'
+  const decay = state.decay ? ` Decay data: ${decayLabel(state.decay, system)}.` : '';
+  status((system === '60'
     ? 'The ICRP 60 system: the ICRP 72 cases, every nuclide and form DCAL calculated them for.'
-    : `The ICRP 103 system: ${cat.elements.length} elements of Publication 158 and the Part 2 and 3 drafts.`);
+    : `The ICRP 103 system: ${cat.elements.length} elements of Publication 158 and the Part 2 and 3 drafts.`) + decay);
   nuclideChanged();
+}
+
+/* The decay-data select of the settings, for the system chosen, and its note. */
+function populateDecay() {
+  if (!decayValid(state.decay)) state.decay = '';
+  $('dcDecay').replaceChildren(...decayOptions(state.system, state.decay));
+  $('dcDecay').value = state.decay;
+  const rel = decayRelease(state.decay), rec = openedOf(state.decay);
+  $('dcDecayForget').hidden = !rec;
+  $('dcDecayNote').textContent = rel
+    ? `Made on this site from the decay data sets of ${rel.label}, the way ICRP 107 was made from those of 2004; the ICRP’s own coefficients are of ${OWN_DECAY[state.system]}.`
+    : rec ? `Made in this browser from ${rec.names?.join(', ') || rec.label}, opened ${openedDate(rec)}, the way ICRP 107 was made from ENSDF in 2004; the ICRP’s own coefficients are of ${OWN_DECAY[state.system]}.`
+      : '';
 }
 
 /* The nuclide field's suggestions, drawn by the page under the field. (A
@@ -192,7 +419,7 @@ async function loadCatalog(system) {
 const SUGGEST_MAX = 60;
 const suggestKey = (s) => String(s).toLowerCase().replace(/[\s-]+/g, '');
 function suggestions(q) {
-  const cat = state.catalogs[state.system];
+  const cat = currentCatalog();
   const k = suggestKey(q);
   if (!cat) return [];
   if (!k) return cat.nuclides.slice(0, SUGGEST_MAX);
@@ -267,7 +494,7 @@ function setupSuggest() {
 }
 
 function findEntry() {
-  const cat = state.catalogs[state.system];
+  const cat = currentCatalog();
   if (!cat) return null;
   const v = $('dcNuclide').value.trim().replace(/\s+/g, '').replace(/^([a-z]{1,2})-?(\d+)([a-z]*)$/i, (_, s, a, m) => `${s[0].toUpperCase()}${s.slice(1).toLowerCase()}-${a}${m.toLowerCase()}`);
   return cat.nuclides.find((n) => n.name === v) || null;
@@ -279,7 +506,7 @@ function nuclideChanged() {
   const note = $('dcNuclideNote');
   if (!e) {
     note.textContent = $('dcNuclide').value.trim()
-      ? (state.system === '103' ? 'Not covered: the ICRP 103 system has models here only for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more.' : 'Not one of the nuclides of ICRP Publication 72.')
+      ? (state.system === '103' ? `Not covered: the ICRP 103 system has models here only for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more${state.decay ? ` in ${decayLabel(state.decay, '103')}` : ''}.` : `Not one of the nuclides of ICRP Publication 72${state.decay ? ` that ${decayLabel(state.decay, '60')} has` : ''}.`)
       : '';
     $('dcForm').replaceChildren();
     $('dcRun').disabled = true;
@@ -353,6 +580,7 @@ function changesSince(r) {
   const out = [];
   const s = currentSpec();
   if (r.system !== state.system) out.push(`the system (now ${state.system === '60' ? 'ICRP 60' : 'ICRP 103'})`);
+  if ((r.decay || '') !== state.decay) out.push(`the decay data (now ${decayLabel(state.decay, state.system)})`);
   if (!s) out.push('the radionuclide (none chosen now)');
   else {
     // The form, the aerosol and the cut-off only for the same nuclide by the same route.
@@ -375,7 +603,7 @@ function staleNote(r) {
   if (!changed.length) return null;
   return h('div', { class: 'dc-stale-note', role: 'status' },
     h('span', {}, h('b', {}, 'Not for the current settings. '),
-      `These are the results for ${r.entry.name} (${ROUTE_WORD[r.spec.route]}, ${r.system === '60' ? 'ICRP 60' : 'ICRP 103'}); `,
+      `These are the results for ${r.entry.name} (${ROUTE_WORD[r.spec.route]}, ${r.system === '60' ? 'ICRP 60' : 'ICRP 103'}${r.decay ? `, ${decayLabel(r.decay, r.system)}` : ''}); `,
       `since they were calculated, ${listText(changed)} ${changed.length === 1 ? 'has' : 'have'} changed.`),
     h('button', { type: 'button', class: 'dc-btn small', 'data-on-click': 'dc:run', disabled: state.running || !currentSpec() || !ages().length }, 'Calculate'));
 }
@@ -398,12 +626,13 @@ async function describeNow() {
     return;
   }
   const age = ages()[0] ?? 7300; // the intake differs with age: as a run's first age shows it
-  const key = choiceKey(system, spec);
+  const decay = state.decay;
+  const key = choiceKey(system, spec, decay);
   if (state.described?.key === key && state.described.age === age) { renderSize(); return; }
-  const d = { key, age, system, spec, entry: state.entry, form: currentForm(), info: null, error: null };
+  const d = { key, age, system, decay, spec, entry: state.entry, form: currentForm(), info: null, error: null };
   state.described = d;
   try {
-    d.info = await ask({ type: 'describe', system, spec, age }, null, RANK.show);
+    d.info = await ask({ type: 'describe', system, decay, spec, age }, null, RANK.show);
   } catch (err) {
     d.error = err.message;
   }
@@ -421,9 +650,9 @@ function refreshShown() {
    as described, else the last run. */
 function shownSystem() {
   const r = state.result, d = state.described;
-  const fromRun = r && { first: r.out[0], run: r, system: r.system, spec: r.spec, entry: r.entry, form: r.form, amad: r.amad, ages: r.ages };
+  const fromRun = r && { first: r.out[0], run: r, system: r.system, decay: r.decay, spec: r.spec, entry: r.entry, form: r.form, amad: r.amad, ages: r.ages };
   if (r && (!d || d.key === r.key)) return fromRun;
-  if (d?.info) return { first: d.info, run: null, system: d.system, spec: d.spec, entry: d.entry, form: d.form, amad: d.spec.amad, ages: [d.age] };
+  if (d?.info) return { first: d.info, run: null, system: d.system, decay: d.decay, spec: d.spec, entry: d.entry, form: d.form, amad: d.spec.amad, ages: [d.age] };
   return fromRun || null;
 }
 function paneHead(id, s) {
@@ -496,7 +725,7 @@ function currentSpec() {
   if (!$('dcAmadRow').hidden) spec.amad = Number($('dcAmad').value);
   return spec;
 }
-const choiceKey = (system, spec) => JSON.stringify([system, spec]);
+const choiceKey = (system, spec, decay = '') => JSON.stringify([system, spec, decay || '']);
 
 async function run() {
   const e = state.entry, f = currentForm();
@@ -504,7 +733,7 @@ async function run() {
   const as = ages();
   if (!as.length) { status('Tick at least one age at intake.', 'error'); return; }
   const spec = currentSpec();
-  const system = state.system;
+  const system = state.system, decay = state.decay;
   state.running = true;
   $('dcRun').disabled = true;
   $('dcStop').hidden = false;
@@ -516,16 +745,16 @@ async function run() {
     // result carries the chain and the models.
     const outputs = outputTimes(as), rtol = Number($('dcRtol').value);
     let done = 0;
-    const out = await Promise.all(as.map((age, k) => ask({ type: 'run', system, spec, ages: [age], outputs, rtol, withSystem: k === 0 }, null, RANK.run)
+    const out = await Promise.all(as.map((age, k) => ask({ type: 'run', system, decay, spec, ages: [age], outputs, rtol, withSystem: k === 0 }, null, RANK.run)
       .then(([o]) => {
         done++;
         status(`Calculating ${e.name}: ${done} of ${as.length} ages done…`);
         progress(done / as.length);
         return o;
       })));
-    state.result = { system, spec, form: f, entry: e, ages: as, rtol, out, amad: spec.amad, key: choiceKey(system, spec) };
+    state.result = { system, decay, spec, form: f, entry: e, ages: as, rtol, out, amad: spec.amad, key: choiceKey(system, spec, decay) };
     progress(null);
-    status(`${e.name}: done in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${SYSTEM_LABEL[system]}.`, 'ok');
+    status(`${e.name}: done in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${SYSTEM_LABEL[system]}${decay ? `, decay data ${decayLabel(decay, system)}` : ''}.`, 'ok');
     renderAll();
     writeHash();
     save();
@@ -561,7 +790,8 @@ function headlineText(r) {
 }
 function headline(r) {
   return h('div', { class: 'dc-headline' }, h('b', {}, r.entry.name), ` ${headlineText(r)}`,
-    h('span', { class: 'dc-tag' }, r.system === '60' ? 'ICRP 60' : 'ICRP 103'));
+    h('span', { class: 'dc-tag' }, r.system === '60' ? 'ICRP 60' : 'ICRP 103'),
+    r.decay ? h('span', { class: 'dc-tag', 'data-decay': r.decay }, `decay data ${decayLabel(r.decay, r.system)}`) : null);
 }
 
 function renderCoef() {
@@ -629,7 +859,7 @@ function csv() {
   if (!r) return;
   const cell = (v) => (typeof kvotCsvCell === 'function' ? kvotCsvCell(v) : String(v));
   const lines = [];
-  lines.push(['Nuclide', r.entry.name, 'Route', r.spec.route, 'Form', r.form.label, 'System', SYSTEM_LABEL[r.system]].map(cell).join(','));
+  lines.push(['Nuclide', r.entry.name, 'Route', r.spec.route, 'Form', r.form.label, 'System', SYSTEM_LABEL[r.system], 'Decay data', decayLabel(r.decay, r.system)].map(cell).join(','));
   lines.push(['Quantity', ...r.out.map((o) => AGE_LABEL[o.age])].map(cell).join(','));
   lines.push(['Committed effective dose (Sv/Bq)', ...r.out.map((o) => o.E.toPrecision(6))].map(cell).join(','));
   const names = r.system === '60' ? Object.keys(r.out[0].H) : Object.keys(r.out[0].H.avg);
@@ -1251,7 +1481,8 @@ function renderChain() {
     h('thead', {}, h('tr', {}, h('th', {}, 'Member'), h('th', {}, 'Half-life'), h('th', { class: 'text' }, 'Produced from'),
       h('th', {}, 'Alpha, MeV'), h('th', {}, 'Electron, MeV'), h('th', {}, 'Photon, MeV'), h('th', {}, 'Transformations per Bq'), h('th', { class: 'text' }, 'In the body'))),
     h('tbody', {}, members.map((m, j) => h('tr', {},
-      h('td', {}, m.name), h('td', {}, halfLife(m.T)),
+      h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps the ${s.system === '60' ? 'ICRP 38' : 'ICRP 107'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
+      h('td', {}, halfLife(m.T)),
       h('td', { class: 'text' }, parentsOf[j].map(([i, b]) => `${members[i].name} (${b < 0.9999 ? `${+(100 * b).toPrecision(3)} %` : '100 %'})`).join(', ') || '—'),
       ...(m.E || [null, null, null]).map((x) => h('td', {}, mev(x))),
       h('td', {}, r ? sci(perMember.get(m.name) || 0, 3) : '–'),
@@ -1260,6 +1491,14 @@ function renderChain() {
   $('dcChainNote').textContent = dropped.length
     ? `Left out by the cut-off: ${dropped.join(', ')}.`
     : 'The whole chain is followed.';
+  // How decay data made from ENSDF were read for these members, where it took a rule of the page's.
+  const decayNotes = members.filter((m) => m.decayNotes?.length);
+  $('dcChainDecay').hidden = !s.decay;
+  $('dcChainDecay').replaceChildren(...(s.decay ? [
+    h('p', {}, `Decay data: ${decayLabel(s.decay, s.system)}, made ${s.decay.startsWith('open:') ? 'in this browser' : 'on this site'} from the release’s decay data sets (Help: “Decay data”). `,
+      decayNotes.length ? 'Where a data set needed a rule of the page’s:' : 'None of these members needed a rule beyond reading their data sets.'),
+    decayNotes.length ? h('ul', {}, decayNotes.map((m) => h('li', {}, h('b', {}, m.name), ': ', m.decayNotes.join('; ')))) : null,
+  ].filter(Boolean) : []));
   if (!r) {
     $('dcUTable').replaceChildren(h('tbody', {}, h('tr', {}, h('td', { class: 'dim' }, 'Counted as the doses are calculated: press Calculate.'))));
     return;
@@ -1458,11 +1697,18 @@ function risk60(pop) {
 /* Effective dose per exposure to radon or thoron and their progeny in a home
    (radon.js, ICRP 103): the inhalations run once per gas in the worker; the
    aerosol, the equilibrium factor and the exposure only recombine them. */
-const RADON = { co: {}, running: null, progress: null, error: {} };
+const RADON = { co: {}, running: null, progress: null, error: {}, decay: '' };
 const radonKind = () => document.querySelector('input[name="dcRadonKind"]:checked')?.value || 'radon';
+// Results are kept per gas and decay data (the tab's own choice, ICRP 107 or a release of ENSDF).
+const radonKey = (kind) => `${kind}|${RADON.decay}`;
+function populateRadonDecay() {
+  if (!decayValid(RADON.decay)) RADON.decay = '';
+  $('dcRadonDecay').replaceChildren(...decayOptions('103', RADON.decay));
+  $('dcRadonDecay').value = RADON.decay;
+}
 const AGES_TAB = [100, 365, 1825, 3650, 5475, 7300];
 function radonDefaults(kind, force) {
-  const co = RADON.co[kind];
+  const co = RADON.co[radonKey(kind)];
   if (!co) return;
   const A = co.inputs.aerosol[kind];
   const set = (id, v) => { if (force || $(id).value === '') $(id).value = v ?? ''; };
@@ -1472,30 +1718,32 @@ function radonDefaults(kind, force) {
   // Radon: the upper reference level for homes (Publication 158 para 536);
   // thoron: an example EEC.
   set('dcRadonC', kind === 'radon' ? 300 : 1);
-  state.radonKindShown = kind;
+  state.radonKindShown = radonKey(kind);
 }
 async function ensureRadon(kind) {
   // After a failure, only the Try again button starts it again.
-  if (RADON.co[kind] || RADON.running || RADON.error[kind]) return;
-  RADON.running = kind;
+  const key = radonKey(kind), decay = RADON.decay;
+  if (RADON.co[key] || RADON.running || RADON.error[key]) return;
+  RADON.running = key;
+  try { await ensureDecay(decay); } catch (err) { RADON.running = null; RADON.error[key] = err.message; renderRadon(); return; }
   const name = kind === 'radon' ? 'radon' : 'thoron';
   status(`Calculating the doses per exposure to ${name} in a home…`);
   progress(0);
   try {
     // The plan from one worker, then its inhalations in the pool, in parallel.
-    const plan = await ask({ type: 'radon-plan', kind }, null, RANK.radon);
+    const plan = await ask({ type: 'radon-plan', kind, decay }, null, RANK.radon);
     let done = 0;
-    const values = await Promise.all(plan.jobs.map((job) => ask({ type: 'radon-job', job }, null, RANK.radon).then((v) => {
+    const values = await Promise.all(plan.jobs.map((job) => ask({ type: 'radon-job', job, decay }, null, RANK.radon).then((v) => {
       RADON.progress = { done: ++done, total: plan.jobs.length, text: radonJobText(job, plan.ages) };
       status(`${name[0].toUpperCase()}${name.slice(1)} at home: ${done} of ${plan.jobs.length} inhalations…`);
       progress(done / plan.jobs.length);
-      if (state.tab === 'radon' && !RADON.co[kind]) renderRadon();
+      if (state.tab === 'radon' && !RADON.co[key]) renderRadon();
       return v;
     })));
-    RADON.co[kind] = { ...radonAssemble(plan, values), inputs: plan.inputs };
-    status(`${name[0].toUpperCase()}${name.slice(1)} at home: done. ICRP 103 system (Publication 158, Section 32).`, 'ok');
+    RADON.co[key] = { ...radonAssemble(plan, values), inputs: plan.inputs, decay };
+    status(`${name[0].toUpperCase()}${name.slice(1)} at home: done. ICRP 103 system (Publication 158, Section 32), decay data ${decayLabel(decay, '103')}.`, 'ok');
   } catch (err) {
-    RADON.error[kind] = err.message;
+    RADON.error[key] = err.message;
     status(`Could not calculate ${name}: ${err.message}`, 'error');
   } finally {
     RADON.running = null;
@@ -1510,21 +1758,22 @@ function renderRadon() {
   $('dcRadonFLabel').hidden = !radon;
   $('dcRadonCLabel').replaceChildren(...supText(radon ? 'Radon concentration, Bq m⁻³' : 'Thoron progeny, EEC, Bq m⁻³'));
   const box = $('dcRadon');
-  const co = RADON.co[kind];
-  if (!co && RADON.error[kind]) {
-    box.replaceChildren(...radonContext(kind), h('p', { class: 'dc-muted' }, `The calculation failed: ${RADON.error[kind]}`),
+  const key = radonKey(kind);
+  const co = RADON.co[key];
+  if (!co && RADON.error[key]) {
+    box.replaceChildren(...radonContext(kind), h('p', { class: 'dc-muted' }, `The calculation failed: ${RADON.error[key]}`),
       h('button', { type: 'button', class: 'dc-btn secondary', 'data-on-click': 'dc:radonRetry' }, 'Try again'));
     return;
   }
   if (!co) {
-    const p = RADON.running === kind ? RADON.progress : null;
-    box.replaceChildren(...radonContext(kind), h('p', { class: 'dc-muted' }, RADON.running && RADON.running !== kind
-      ? 'Waiting for the other gas to finish…'
+    const p = RADON.running === key ? RADON.progress : null;
+    box.replaceChildren(...radonContext(kind), h('p', { class: 'dc-muted' }, RADON.running && RADON.running !== key
+      ? 'Waiting for the other calculation to finish…'
       : `Calculating the inhalations${p ? `: ${p.text} (${p.done} of ${p.total})` : '…'} This is done once, in parallel on the device’s cores: seconds on a desktop computer.`));
     ensureRadon(kind);
     return;
   }
-  if (state.radonKindShown !== kind) radonDefaults(kind, true);
+  if (state.radonKindShown !== key) radonDefaults(kind, true);
   const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
   const fp = Math.min(1, Math.max(0, num('dcRadonFp') ?? 0)), fpn = Math.min(1, Math.max(0, num('dcRadonFpn') ?? 0));
   const F = radon ? Math.min(1, Math.max(0.01, num('dcRadonF') ?? 0.4)) : null;
@@ -1573,6 +1822,9 @@ function radonContext(kind) {
     p(kind === 'radon'
       ? 'Radon (²²²Rn) seeps from the ground into houses. Breathing it, most of the dose comes not from the gas, which is mostly breathed out again, but from its short-lived progeny ²¹⁸Po, ²¹⁴Pb and ²¹⁴Bi (with ²¹⁴Po), which are metals: they stick to the aerosol in the air or stay as tiny unattached clusters, deposit in the airways, and irradiate the bronchial epithelium with alpha particles. Their dose is reckoned per exposure, the potential alpha energy concentration of the progeny (PAEC) times the time spent in it, in mJ h m⁻³; the working level month (WLM) is 3.54 mJ h m⁻³. A measured radon gas concentration gives the progeny’s equilibrium equivalent concentration (EEC) through the equilibrium factor F, typically 0.4 indoors.'
       : 'Thoron (²²⁰Rn) comes from building materials and soil; with a half-life of 56 s it hardly spreads from where it is released, so its gas concentration varies across a room and no reference equilibrium factor is used. The dose comes from its progeny ²¹²Pb (10.6 h) and ²¹²Bi, measured as their equilibrium equivalent concentration (EEC); 1 Bq m⁻³ of EEC is 7.56 × 10⁻⁵ mJ m⁻³ of potential alpha energy.'),
+    h('p', { class: 'dc-muted' }, RADON.decay
+      ? `Decay data: ${decayLabel(RADON.decay, '103')}, made on this site from ENSDF (Help: “Decay data”); Publication 158’s values are of ICRP 107.`
+      : 'Decay data: ICRP 107, as Publication 158’s values.'),
     p('The calculation follows Publication 158 (Section 32, Annex C) with the method of Publication 137 (Annex A): each progeny nuclide inhaled in each mode of the home aerosol — unattached (1 nm), nucleation (', kind === 'radon' ? '30' : '40', ' nm) and accumulation (200 nm), the attached modes growing in the humid airways — is calculated here as an inhalation with the deposition of Table C.1, the absorption of Table 32.1 and its element’s systemic model; the modes are combined per unit potential alpha energy with the progeny’s activity ratios, and weighted by the unattached fraction f_p and the nucleation share f_pn of Table 32.2, which you can change above.'),
   ];
 }
@@ -1703,6 +1955,7 @@ function writeHash() {
   const r = state.result;
   if (!r) return;
   const p = new URLSearchParams({ system: r.system, nuclide: r.entry.name, route: r.spec.route, form: r.form.key });
+  if (r.decay) p.set('decay', r.decay);
   if (r.amad) p.set('amad', String(r.amad));
   history.replaceState(null, '', `#${p}`);
 }
@@ -1710,7 +1963,7 @@ function readHash() {
   try {
     const p = new URLSearchParams(location.hash.slice(1));
     if (!p.get('nuclide')) return null;
-    return { system: p.get('system'), nuclide: p.get('nuclide'), route: p.get('route'), form: p.get('form'), amad: p.get('amad'), run: true };
+    return { system: p.get('system'), decay: p.get('decay') || '', nuclide: p.get('nuclide'), route: p.get('route'), form: p.get('form'), amad: p.get('amad'), run: true };
   } catch { return null; }
 }
 
@@ -1734,16 +1987,44 @@ const TOPICS = {
         'Tissue weighting factors: those of Publication 60 (twelve tissues and a remainder of ten, with its splitting rule), or of Publication 103 (fourteen tissues and a remainder of thirteen, on the average of the sexes).',
         'Phantoms: the Cristy–Eckerman stylised phantoms, one per age, or the voxel reference phantoms of Publications 110 and 143, male and female at each age.',
         'Respiratory tract: Publication 66, or its revision in Publication 130; alimentary tract: the ICRP 30 model, or the Human Alimentary Tract Model of Publication 100.',
-        'Systemic models and decay data: those of Publications 56–71 with Publication 38, or the revised models of Publication 158 and the OIR series with Publication 107.',
+        'Systemic models and decay data: those of Publications 56–71 with Publication 38, or the revised models of Publication 158 and the OIR series with Publication 107. The decay data can be ENSDF’s instead (the Decay data setting).',
       ] },
       { heading: 'Which to use', text: 'The ICRP 60 system is still the basis of the IAEA Basic Safety Standards and of many national regulations; the ICRP 103 system is the current one, the one new assessments move to. Switching keeps the last results on their tabs, marked as of the other system until you calculate again.' },
     ],
     more: { label: 'The two systems', id: 'help-systems' },
   }),
+  'set:decay': () => {
+    const cat = currentCatalog();
+    const own = state.system === '60'
+      ? 'Publication 38 (1983), as DCAL distributes it: the decay data the ICRP 60 system’s coefficients were calculated with.'
+      : 'Publication 107 (2008): the decay data of the ICRP 103 system, with which the ICRP calculates its coefficients.';
+    return {
+      kicker: 'Setting', title: 'Decay data',
+      lead: 'Where the half-lives, the daughters and the radiations of each nuclide come from: the energies and yields per decay from which the doses to the tissues are built. The models of the body do not change with them.',
+      facts: [['Chosen', decayLabel(state.decay, state.system)], ['Covered', cat ? `${cat.nuclides.length} radionuclides in the ${sysName()} system` : null]],
+      sections: [
+        { choices: [[OWN_DECAY[state.system], own, !state.decay],
+          ...DECAY.releases.map((r) => [r.label, 'Made on this site from the decay data sets of this release of the Evaluated Nuclear Structure Data File, the way Publication 107 was made from those of 2004.', state.decay === `ensdf:${r.id}`]),
+          ...DECAY.opened.map((r) => [`${r.label} (opened ${openedDate(r)})`, 'Opened in this browser and made here by the same program; kept until you choose Forget.', state.decay === `open:${r.key}`])] },
+        { heading: 'How ENSDF becomes decay data here', list: [
+          'Gamma rays, conversion electrons, alpha groups and beta and capture branches as each decay data set gives them, per decay as its normalisation says.',
+          'Beta spectra from Fermi theory, X-rays and Auger electrons from the vacancies that capture and conversion leave, spontaneous fission from the formulas of Publication 107.',
+          'Run on the data sets Publication 107 was made from, the same program reproduces its dose coefficients within 1 % for nearly every nuclide.',
+        ] },
+        { heading: 'Good to know', list: [
+          'Nuclides keep the names their system gives them; where ENSDF names a state otherwise, the page pairs them by half-life, and the Decay chain tab gives ENSDF’s name beside.',
+          'The ICRP’s published coefficients are of its own decay data; with ENSDF the results differ from them where the evaluations have changed since.',
+          'Open ENSDF… adds any release: a zip as NNDC publishes it, or ENSDF files, read and made into decay data in your browser in some ten seconds, nothing uploaded. It is kept in this browser, here and on the Chart of Nuclides, until Forget; the menus list NNDC’s archive with where to download each release.',
+          'The choice is kept for the next visit and goes into the link of a result. The Batch and Radon at home tabs have the same choice of their own.',
+        ] },
+      ],
+      more: { label: 'Decay data', id: 'help-decay' },
+    };
+  },
   'sec:nuclide': () => ({
     kicker: 'Section', title: 'Radionuclide',
     lead: 'The radionuclide taken into the body. Its radioactive progeny formed in the body are followed too and count towards its dose coefficient, which is per becquerel of the parent taken in.',
-    facts: [['Covered now', state.catalogs[state.system] ? `${state.catalogs[state.system].nuclides.length} radionuclides in the ${sysName()} system` : null]],
+    facts: [['Covered now', currentCatalog() ? `${currentCatalog().nuclides.length} radionuclides in the ${sysName()} system${state.decay ? ` with ${decayLabel(state.decay, state.system)}` : ''}` : null]],
     sections: [{ heading: 'Before you calculate', list: [
       'The foot of the settings sums up the model that Calculate will solve: the nuclides the decay chain cut-off keeps, the compartments, the transfers and the equations.',
       'The Model and Decay chain tabs show the chosen radionuclide’s models and chain at once, before any calculation.',
@@ -2047,12 +2328,22 @@ function fullState() {
 registerActions({
   'dc:systemChanged': async (e, el) => {
     state.system = el.value;
+    populateDecay();
     markStale();
     refreshInfo();
     $('dcRun').disabled = true;
     try { await loadCatalog(state.system); } catch (err) { status(`Could not load the data: ${err.message}`, 'error'); }
     save();
   },
+  'dc:decayChanged': (e, el) => {
+    if (el.value.startsWith('nndc:')) { const id = el.value.slice(5); el.value = state.decay; showGet(id); return; }
+    chooseDecay(el.value);
+  },
+  'dc:decayOpen': () => $('dcDecayFile').click(),
+  'dc:decayFile': (e, el) => { const f = [...(el.files || [])]; el.value = ''; openEnsdf(f); },
+  'dc:decayForget': () => forgetDecay(state.decay),
+  'dc:getClose': () => closeGet(),
+  'dc:getOpen': () => { closeGet(); $('dcDecayFile').click(); },
   'dc:nuclideChanged': () => { nuclideChanged(); save(); },
   'dc:nuclideTyped': () => { showSuggest(); if (findEntry()) nuclideChanged(); },
   'dc:routeChanged': () => { populateForms(); save(); },
@@ -2066,7 +2357,14 @@ registerActions({
   'dc:radonKind': () => renderRadon(),
   'dc:radonParams': () => renderRadon(),
   'dc:radonDefaults': () => { radonDefaults(radonKind(), true); renderRadon(); },
-  'dc:radonRetry': () => { delete RADON.error[radonKind()]; renderRadon(); },
+  'dc:radonRetry': () => { delete RADON.error[radonKey(radonKind())]; renderRadon(); },
+  'dc:radonDecay': async (e, el) => {
+    if (el.value.startsWith('nndc:')) { const id = el.value.slice(5); el.value = RADON.decay; showGet(id); return; }
+    RADON.decay = decayValid(el.value) ? el.value : '';
+    save();
+    try { await ensureDecay(RADON.decay); } catch (err) { status(`Could not make the decay data: ${err.message}`, 'error'); }
+    renderRadon();
+  },
   'dc:modelAge': (e, el) => { VIEW.age = Number(el.value); renderModel(); },
   'dc:modelView': () => {
     Object.assign(VIEW, { show: $('dcModelShow').value, dose: $('dcModelDose').value, from: $('dcModelFrom').value });
@@ -2087,11 +2385,15 @@ registerActions({
 
 /* Set the panel from a link's choices and calculate. */
 async function applyChoices(c, runIt) {
-  if ((c.system === '60' || c.system === '103') && c.system !== state.system) {
-    state.system = c.system;
-    for (const r of document.querySelectorAll('input[name="dcSystem"]')) r.checked = r.value === c.system;
+  const decay = decayValid(c.decay) ? c.decay || '' : '';
+  if (((c.system === '60' || c.system === '103') && c.system !== state.system) || decay !== state.decay) {
+    if (c.system === '60' || c.system === '103') state.system = c.system;
+    state.decay = decay;
+    for (const r of document.querySelectorAll('input[name="dcSystem"]')) r.checked = r.value === state.system;
+    populateDecay();
     state.result = null;
     renderAll();
+    await ensureDecay(state.decay);
     await loadCatalog(state.system);
   }
   if (c.nuclide) { $('dcNuclide').value = c.nuclide; nuclideChanged(); }
@@ -2109,6 +2411,14 @@ async function start() {
     state.system = s.system;
     for (const r of document.querySelectorAll('input[name="dcSystem"]')) r.checked = r.value === s.system;
   }
+  await loadDecayReleases();
+  // A link's decay data that this browser does not have (a release opened in another): not calculated with others.
+  const lost = fromHash?.decay && !decayValid(fromHash.decay) ? decayLabel(fromHash.decay, state.system) : null;
+  if (lost) fromHash.run = false;
+  state.decay = decayValid(s.decay) ? s.decay || '' : '';
+  populateDecay();
+  RADON.decay = decayValid(saved.radonDecay) ? saved.radonDecay || '' : '';
+  populateRadonDecay();
   if (s.side) $('dcRoot').style.setProperty('--dc-side-width', s.side);
   fullState();
   if (s.nuclide) $('dcNuclide').value = s.nuclide;
@@ -2133,7 +2443,7 @@ async function start() {
   batch = setupBatch({
     h, $, ask, stopRank, RANK, POOL_SIZE, sci, halfLife, AGE_LABEL,
     TISSUES: { 60: TISSUE_ORDER_60, 103: TISSUE_ORDER_103 }, SIZES: AMAD_SIZES,
-    catalog: catalogOf, system: () => state.system, saved: s.batch || {},
+    catalog: catalogOf, system: () => state.system, decay: () => state.decay, decayOptions, decayLabel, decayValid, ensureDecay, showGet, saved: s.batch || {},
     defaults: () => ({ cutoff: $('dcCutoff').value, rtol: $('dcRtol').value }),
     onSave: save,
     onProgress: (text) => { const b = document.querySelector('.dc-tabs button[data-tab="batch"]'); if (b) b.textContent = text ? `Batch · ${text}` : 'Batch'; },
@@ -2141,8 +2451,12 @@ async function start() {
   });
   showTab(['coef', 'retention', 'model', 'chain', 'batch', 'risk', 'radon', 'help'].includes(s.tab) ? s.tab : 'coef');
   if (!$('dcNuclide').value) $('dcNuclide').value = 'Cs-137';
+  setupEnsdfDrop();
+  $('dcGet').addEventListener('click', (ev) => { if (ev.target === ev.currentTarget) closeGet(); });
   try {
+    await ensureDecay(state.decay).catch((err) => { status(`Could not make the decay data: ${err.message}`, 'error'); state.decay = ''; populateDecay(); });
     await loadCatalog(state.system);
+    if (lost) status(`The link names decay data this browser does not have (${lost}); open that release here to calculate with it.`, 'error');
     if (s.form) populateForms(s.form);
     if (s.amad) { $('dcAmad').value = s.amad; }
     if (fromHash?.run && state.entry) run();

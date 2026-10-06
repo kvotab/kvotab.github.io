@@ -1,0 +1,1018 @@
+{
+ "N-16": [
+  "16N B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 9585 (0.00120 %) keV"
+ ],
+ "O-19": [
+  "19O B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1459. (0.00962 %), 3999. (0.000962 %), 4033. (0.000962 %), 4550. (0.000962 %) keV"
+ ],
+ "F-17": [
+  "17F B+ DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 870.756 (0.0344 %) keV"
+ ],
+ "Na-24": [
+  "24NA B- DECAY (14.956 H): NT 1 puts TI 0.0300 times RI (1 + alpha) NR: NT taken as 33.3"
+ ],
+ "S-37": [
+  "37S B- DECAY (5.05 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1726.9 (0.845 %) keV"
+ ],
+ "K-38": [
+  "38K EC DECAY (7.651 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 3810.224 (0.00999 %), 4565.5 (0.154 %), 5157.3 (0.0199 %), 5349.4 (0.0249 %), 5552.2 (0.0249 %) keV"
+ ],
+ "Sc-50": [
+  "50SC B- DECAY (102.5 S): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 4171.95 (0.351 %) keV"
+ ],
+ "Mn-52m": [
+  "52MN IT DECAY (21.1 M): NT 1 puts TI 0.0179 times RI (1 + alpha) NR: NT taken as 56.0"
+ ],
+ "Co-54m": [
+  "54CO EC DECAY (1.48 M): NT 1 puts TI 0.0514 times RI (1 + alpha) NR: NT taken as 19.5"
+ ],
+ "Ni-59": [
+  "59NI EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1099.256 (0.00341 %) keV"
+ ],
+ "Zn-71m": [
+  "IT <=0.05 %: an upper limit only, left out"
+ ],
+ "Ge-66": [
+  "66GE EC DECAY: the level at 162.44 keV sends out 4.66 times what enters it: the conversion of 53.39 keV (no multipolarity given) cut by 0"
+ ],
+ "As-77": [
+  "77AS B- DECAY (38.79 H): NT 0.0159 puts TI 0.283 times RI (1 + alpha) NR: NT taken as 0.0563"
+ ],
+ "Br-77": [
+  "77BR EC DECAY (57.04 H): NT 0.231 puts TI 0.118 times RI (1 + alpha) NR: NT taken as 1.96"
+ ],
+ "Br-78": [
+  "B- <=0.01 %: an upper limit only, left out",
+  "EC+B+ >=99.99 %: taken as 100 %, what the other branches leave",
+  "78BR B- DECAY (6.46 M):?: a mode the adopted levels do not give, with its own branch 0.0001"
+ ],
+ "Br-83": [
+  "83BR B- DECAY: 0.155 % of the branch unaccounted and the ground state (9/2+) out of the parent's (3/2-) reach: given to Kr-83m"
+ ],
+ "Kr-76": [
+  "76KR EC DECAY (14.79 H): the cascade of member isomers (Br-76m) taken out of 1 levels below them"
+ ],
+ "Rb-78": [
+  "78RB EC DECAY (17.66 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1977.8 (0.0502 %) keV"
+ ],
+ "Rb-78m": [
+  "78RB EC DECAY (5.74 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2007.31 (0.0164 %) keV"
+ ],
+ "Rb-82m": [
+  "IT <0.33 %: an upper limit only, left out"
+ ],
+ "Rb-83": [
+  "83RB EC DECAY: the cascade of member isomers (Kr-83m) taken out of 1 levels below them"
+ ],
+ "Rb-86m": [
+  "B- <0.3 %: an upper limit only, left out"
+ ],
+ "Rb-89": [
+  "89RB B- DECAY (15.32 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 3850 (0.133 %) keV"
+ ],
+ "Sr-93": [
+  "93SR B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2200 (1.38 %), 3200 (0.0925 %), 3300 (0.368 %), 3400 (0.925 %), 3500 (0.252 %), 3600 (0.0826 %), 3700 (0.0602 %), 3800 (0.0413 %) keV"
+ ],
+ "Y-83m": [
+  "83Y IT DECAY (2.85 M): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 1.000)"
+ ],
+ "Y-85": [
+  "85Y EC DECAY (2.68 H): the cascade of member isomers (Sr-85m) taken out of 1 levels below them"
+ ],
+ "Y-85m": [
+  "85Y EC DECAY (4.86 H): the cascade of member isomers (Sr-85m) taken out of 1 levels below them",
+  "IT <0.002 %: an upper limit only, left out"
+ ],
+ "Y-87": [
+  "87Y EC DECAY (79.8 H): 3.31 % of the branch unaccounted and the ground state (9/2+) out of the parent's (1/2-) reach: given to Sr-87m"
+ ],
+ "Y-91m": [
+  "B- <1.5 %: an upper limit only, left out"
+ ],
+ "Zr-84": [
+  "84ZR EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.5010"
+ ],
+ "Zr-96": [
+  "beta-minus 100 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Nb-88": [
+  "88NB EC DECAY (14.55 M): NT 1 puts TI 9.75 times RI (1 + alpha) NR: NT taken as 0.103"
+ ],
+ "Nb-98m": [
+  "IT <0.2 %: an upper limit only, left out"
+ ],
+ "Nb-99m": [
+  "IT <3.8 %: an upper limit only, left out",
+  "B- >96.2 %: taken as 100 %, what the other branches leave",
+  "99NB IT DECAY (2.5 M): a mode the adopted levels do not give, with its own branch 0.038"
+ ],
+ "Tc-91m": [
+  "IT <1 %: an upper limit only, left out"
+ ],
+ "Tc-94m": [
+  "IT <0.1 %: an upper limit only, left out"
+ ],
+ "Tc-96m": [
+  "96TC EC DECAY (51.5 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2219.44 (0.00569 %) keV"
+ ],
+ "Tc-101": [
+  "101TC B- DECAY (14.2 M): NT 1 puts TI 47.9 times RI (1 + alpha) NR: NT taken as 0.0209"
+ ],
+ "Tc-105": [
+  "105TC B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 340 (4.83 %), 500 (0.545 %), 660 (0.881 %), 1380 (0.815 %), 1420 (0.447 %), 1460 (0.289 %), 1500 (0.209 %), 1540 (0.159 %), 1580 (0.141 %), 1620 (0.160 %), 1660 (0.234 %), 1700 (0.446 %), 1740 (1.14 %), 1780 (3.31 %), 1860 (5.57 %), 1900 (2.43 %), 1940 (1.06 %), 1980 (0.778 %), 2020 (0.903 %), 2060 (1.33 %), 2100 (2.12 %), 2180 (3.27 %), 2220 (2.95 %), 2260 (2.65 %), 2340 (2.65 %), 2420 (2.30 %), 2460 (2.13 %), 2500 (2.04 %), 2540 (1.97 %), 2580 (1.83 %), 2620 (1.59 %), 2660 (1.36 %), 2700 (1.20 %), 2740 (1.19 %), 2780 (1.35 %), 2820 (1.63 %), 2860 (1.83 %), 2900 (1.68 %), 2940 (1.21 %), 2980 (0.411 %), 3060 (0.254 %), 3100 (0.185 %), 3140 (0.156 %), 3180 (0.141 %), 3220 (0.125 %), 3260 (0.102 %), 3300 (0.0265 %), 3340 (0.0553 %), 3380 (0.0379 %), 3420 (0.0253 %), 3460 (0.0164 %), 3500 (0.0107 %), 3540 (0.00717 %), 3580 (0.00537 %), 3620 (0.00471 %) keV"
+ ],
+ "Rh-99m": [
+  "IT <0.16 %: an upper limit only, left out",
+  "EC+B+ >99.84 %: taken as 100 %, what the other branches leave"
+ ],
+ "Pd-103": [
+  "103PD EC DECAY (16.991 D): the level at 93.038 keV sends out 3.12 times what enters it: the conversion of 53.29 keV (no multipolarity given) cut by 0"
+ ],
+ "Pd-111": [
+  "111PD B- DECAY (23.4 M): NT 1 puts TI 114 times RI (1 + alpha) NR: NT taken as 0.00876"
+ ],
+ "Pd-111m": [
+  "111PD B- DECAY (5.5 H): NT 1 puts TI 13.1 times RI (1 + alpha) NR: NT taken as 0.0766"
+ ],
+ "Ag-102": [
+  "102AG EC DECAY (12.9 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.9751"
+ ],
+ "Ag-104m": [
+  "IT <0.07 %: an upper limit only, left out",
+  "104AG IT DECAY: a mode the adopted levels do not give, with its own branch 0.07"
+ ],
+ "Ag-106": [
+  "B- <1 %: an upper limit only, left out",
+  "106AG B- DECAY (23.96 M): a mode the adopted levels do not give, with its own branch 0.01"
+ ],
+ "Ag-113m": [
+  "113AG IT DECAY: NT 1 puts TI 0.149 times RI (1 + alpha) NR: NT taken as 6.71"
+ ],
+ "Cd-104": [
+  "104CD EC DECAY: 0.925 % of the branch unaccounted and the ground state (5+) out of the parent's (0+) reach: given to Ag-104m"
+ ],
+ "In-110m": [
+  "110IN EC DECAY (69.1 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2481.606 (0.350 %), 2917.60 (0.244 %) keV"
+ ],
+ "In-115": [
+  "115IN B- DECAY (4.41E+14 Y): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.9919)"
+ ],
+ "Sn-110": [
+  "110SN EC DECAY: relative intensities only, scaled so that the levels' net outflows make up the branch (NR 1.000)"
+ ],
+ "Sn-128": [
+  "128SN B- DECAY (59.07 M): 9.99 % of the branch unaccounted and the ground state (8-) out of the parent's (0+) reach: given to Sb-128m"
+ ],
+ "Te-114": [
+  "114TE EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1184.4 (0.164 %) keV"
+ ],
+ "Te-115": [
+  "115TE EC DECAY (5.8 M): NT 1 puts TI 16.9 times RI (1 + alpha) NR: NT taken as 0.0591"
+ ],
+ "Te-115m": [
+  "115TE IT DECAY (6.7 M): a mode the adopted levels do not give, and no branch of its own: set aside"
+ ],
+ "Te-119m": [
+  "IT <0.008 %: an upper limit only, left out"
+ ],
+ "Xe-135m": [
+  "B- <0.6 %: an upper limit only, left out",
+  "IT >99.4 %: taken as 100 %, what the other branches leave",
+  "135XE B- DECAY (15.29 M): a mode the adopted levels do not give, with its own branch 0.003"
+ ],
+ "Xe-138": [
+  "138XE B- DECAY (14.14 M): the level at 403.72 keV sends out 3.56 times what enters it: the conversion of 68.3 keV (no multipolarity given) cut by 0.184"
+ ],
+ "Cs-127": [
+  "127CS B+ DECAY: the cascade of member isomers (Xe-127m) taken out of 1 levels below them"
+ ],
+ "Cs-139": [
+  "139CS B- DECAY (9.27 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 3200 (0.145 %) keV"
+ ],
+ "Ba-124": [
+  "124BA EC DECAY: the level at 1141.58 keV sends out 9.00 times what enters it: the conversion of 43.70, 803.4, 1141.6 keV (no multipolarity given) cut by 0"
+ ],
+ "Ba-129m": [
+  "129BA EC DECAY (2.135 H): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.3740)"
+ ],
+ "Ba-131": [
+  "131BA EC DECAY: the level at 775.25 keV sends out 4.25 times what enters it: the conversion of 117.69, 279.17 keV (no multipolarity given) cut by 0.000645"
+ ],
+ "Ce-131": [
+  "131CE EC DECAY (10.3 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1984"
+ ],
+ "Ce-145": [
+  "145CE B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1420 (0.269 %), 1700 (0.203 %), 1800 (0.182 %), 1900 (0.0745 %), 2000 (0.0424 %), 2100 (0.107 %), 2200 (0.290 %) keV"
+ ],
+ "Pr-135": [
+  "135PR EC DECAY (24 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1666"
+ ],
+ "Pr-142m": [
+  "IT 100 %: no decay data set, the adopted gamma rays of the level carried down the cascade"
+ ],
+ "Nd-141m": [
+  "141ND EC DECAY (62.0 S): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.3002)",
+  "141ND EC DECAY (62.0 S): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1452.2 (0.00158 %), 1521.0 (0.00751 %) keV",
+  "EC+B+ <0.05 %: an upper limit only, left out",
+  "IT >99.95 %: taken as 100 %, what the other branches leave",
+  "141ND EC DECAY (62.0 S): a mode the adopted levels do not give, with its own branch 0.00025"
+ ],
+ "Pm-146": [
+  "146PM EC DECAY: NR 1 with the gamma rays per 100 decays of the parent (the data set's balance gives 1.522 = NR / BR): divided by BR 0.657",
+  "146PM B- DECAY: NR 1 with the gamma rays per 100 decays of the parent (the data set's balance gives 2.890 = NR / BR): divided by BR 0.343"
+ ],
+ "Pm-151": [
+  "151PM B- DECAY (28.40 H): NT 0.225 puts TI 0.240 times RI (1 + alpha) NR: NT taken as 0.938"
+ ],
+ "Pm-153": [
+  "153PM B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 510 (0.326 %), 820 (0.0890 %), 1000 (0.138 %), 1100 (0.267 %), 1250 (0.534 %), 1430 (0.346 %), 1530 (0.0989 %) keV"
+ ],
+ "Sm-157": [
+  "157SM B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 850. (0.193 %), 1050 (1.54 %), 1150 (0.676 %), 1250 (0.965 %), 1550 (0.386 %), 1650 (0.579 %), 1750 (0.676 %), 1850 (1.16 %), 1950 (1.16 %), 2050 (0.483 %), 2150 (0.290 %), 2250 (0.386 %), 2350 (0.290 %), 2450 (0.193 %), 2550 (0.193 %) keV"
+ ],
+ "Eu-150m": [
+  "150EU B- DECAY (12.8 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 638.1 (0.0196 %) keV",
+  "IT <=5e-8 %: an upper limit only, left out"
+ ],
+ "Eu-156": [
+  "156EU B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1851.05 (0.0109 %), 1988.5 (0.00867 %), 2054.19 (0.0156 %), 2070.7 (0.00931 %) keV"
+ ],
+ "Gd-149": [
+  "alpha 0.000430 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Tb-149": [
+  "149TB A DECAY (4.118 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 329.5 (0.00501 %) keV"
+ ],
+ "Tb-150": [
+  "A <0.05 %: an upper limit only, left out",
+  "150TB A DECAY: a mode the adopted levels do not give, with its own branch 0.000007"
+ ],
+ "Tb-152": [
+  "A <7e-7 %: an upper limit only, left out"
+ ],
+ "Tb-154": [
+  "154TB EC DECAY (21.5 H): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.07137",
+  "154TB EC DECAY (21.5 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1182.1 (0.0439 %), 1263.64 (0.500 %), 2336.11 (0.0963 %), 2369.0 (0.0940 %) keV"
+ ],
+ "Tb-156n": [
+  "156TB EC DECAY (5.3 H): a mode the adopted levels do not give, and no branch of its own: set aside"
+ ],
+ "Tb-162": [
+  "162TB B- DECAY: beta to 2371.27 without end point"
+ ],
+ "Tb-165": [
+  "165TB B- DECAY (2.11 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.07236"
+ ],
+ "Dy-151": [
+  "151DY EC DECAY (17.9 M): the cascade of member isomers (Tb-151m) taken out of 2 levels below them"
+ ],
+ "Ho-153m": [
+  "153HO EC DECAY (9.3 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1854"
+ ],
+ "Ho-154m": [
+  "A <0.001 %: an upper limit only, left out",
+  "154HO A DECAY (3.10 M): a mode the adopted levels do not give, with its own branch 0.00001"
+ ],
+ "Ho-155": [
+  "155HO EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (16.7 %)"
+ ],
+ "Ho-156": [
+  "156HO EC DECAY (56 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Ho-158": [
+  "158HO EC DECAY (11.3 M+28 M): one data set for 2 parent states, all of it taken for the first (0.0 keV, 11.3 M)",
+  "158HO EC DECAY (11.3 M+28 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.03328"
+ ],
+ "Ho-158m": [
+  "EC+B+ <19 %: an upper limit only, left out",
+  "IT >81 %: taken as 100 %, what the other branches leave"
+ ],
+ "Ho-158n": [
+  "158HO EC DECAY (21.3 M): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.3597)",
+  "IT <=7 %: an upper limit only, left out",
+  "EC+B+ >=93 %: taken as 100 %, what the other branches leave"
+ ],
+ "Ho-160": [
+  "160HO EC DECAY (25.6 M+5.02 H): one data set for 2 parent states, all of it taken for the first (0 keV, 25.6 M)",
+  "160HO EC DECAY (25.6 M+5.02 H): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1608"
+ ],
+ "Ho-160m": [
+  "capture 23.8 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Ho-162": [
+  "162HO EC DECAY (15.0 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1061.00 (0.00710 %) keV"
+ ],
+ "Ho-162m": [
+  "162HO EC DECAY (67.0 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Ho-167": [
+  "167HO B- DECAY (2.98 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 441.9 (0.0369 %) keV"
+ ],
+ "Ho-168m": [
+  "B- <=0.5 %: an upper limit only, left out",
+  "IT >=99.5 %: taken as 100 %, what the other branches leave"
+ ],
+ "Er-156": [
+  "156ER EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 251.09 (0.719 %) keV"
+ ],
+ "Tm-161": [
+  "161TM EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Tm-162": [
+  "162TM EC DECAY (21.70 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (16.9 %)"
+ ],
+ "Yb-169": [
+  "169YB EC DECAY (32.016 D): the level at 832.42 keV sends out 53.0 times what enters it: the conversion of 50.63, 113.64, 464.7, 500.35, 693.46 keV (no multipolarity given) cut by 0",
+  "169YB EC DECAY (32.016 D): the level at 781.796 keV sends out 12.3 times what enters it: the conversion of 63.01, 306.83, 465.65, 642.873, 663.599, 773.386, 781.64 keV (no multipolarity given) cut by 0",
+  "169YB EC DECAY (32.016 D): the level at 367.65 keV sends out 7.10 times what enters it: the conversion of 51.51 keV (no multipolarity given) cut by 0.123"
+ ],
+ "Yb-178": [
+  "178YB B- DECAY: relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.08343)"
+ ],
+ "Lu-165": [
+  "165LU EC DECAY (10.74 M): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.1336)",
+  "165LU EC DECAY (10.74 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2800 (11.6 %), 3200 (2.90 %), 3600 (0.579 %) keV"
+ ],
+ "Lu-168": [
+  "168LU EC DECAY (5.5 M): relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.2431)"
+ ],
+ "Lu-168m": [
+  "IT <0.8 %: an upper limit only, left out",
+  "EC+B+ >99.6 %: taken as 100 %, what the other branches leave",
+  "168LU IT DECAY: a mode the adopted levels do not give, with its own branch 0.008"
+ ],
+ "Hf-167": [
+  "167HF EC DECAY (2.05 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.9082"
+ ],
+ "Hf-168": [
+  "168HF EC DECAY: the level at 794.64 keV sends out 93.2 times what enters it: the conversion of 14.40, 189.46, 210.07, 363.36, 401.21, 417.62, 424.26, 444.54 keV (no multipolarity given) cut by 0.00421",
+  "168HF EC DECAY: the level at 395.18 keV sends out 11.3 times what enters it: the conversion of 74.94, 91.58 keV (no multipolarity given) cut by 0",
+  "168HF EC DECAY: the level at 376.74 keV sends out 5.91 times what enters it: the conversion of 72.94 keV (no multipolarity given) cut by 0.101",
+  "168HF EC DECAY: the level at 350.11 keV sends out 16.8 times what enters it: the conversion of 46.31, 111.32, 131.81, 139.07 keV (no multipolarity given) cut by 0.0163",
+  "168HF EC DECAY: the level at 238.89 keV sends out 10.5 times what enters it: the conversion of 27.82, 35.9 keV (no multipolarity given) cut by 0.0890",
+  "168HF EC DECAY: 30.7 % of the branch unaccounted and the ground state (6(-)) out of the parent's (0+) reach: given to Lu-168m"
+ ],
+ "Hf-171": [
+  "171HF EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.05151"
+ ],
+ "Hf-172": [
+  "172HF EC DECAY (1.87 Y): 0.326 % of the branch unaccounted and the ground state (4-) out of the parent's (0+) reach: given to Lu-172m"
+ ],
+ "Hf-177m": [
+  "177HF IT DECAY (51.4 M): the level at 1315.4502 keV (1.09 S), reached by 100 % of the decays, carried on by its own decay data set"
+ ],
+ "Hf-182m": [
+  "182HF B- DECAY (61.5 M): the cascade of member isomers (Ta-182m) taken out of 3 levels below them"
+ ],
+ "Ta-171": [
+  "171TA EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.2359"
+ ],
+ "W-175": [
+  "175W EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (65.2 %)"
+ ],
+ "W-176": [
+  "176W EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.03547"
+ ],
+ "W-180": [
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "W-187": [
+  "187W B- DECAY: NT 1 puts TI 3.26 times RI (1 + alpha) NR: NT taken as 0.307"
+ ],
+ "W-189": [
+  "189W B- DECAY (11.6 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.8065"
+ ],
+ "Re-177": [
+  "177RE EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Re-179": [
+  "179RE EC DECAY: the level at 533.29 keV sends out 7.99 times what enters it: the conversion of 24.3 keV (no multipolarity given) cut by 0.0639"
+ ],
+ "Re-187": [
+  "A <0.0001 %: an upper limit only, left out"
+ ],
+ "Re-188": [
+  "188RE B- DECAY (17.005 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 965.72 (0.00175 %) keV"
+ ],
+ "Os-183": [
+  "183OS EC DECAY (13.0 H): NT 0.0916 puts TI 0.00629 times RI (1 + alpha) NR: NT taken as 14.6"
+ ],
+ "Os-196": [
+  "196OS B- DECAY (34.9 M): the level at 126.20 keV sends out 4.30 times what enters it: the conversion of 126.2 keV (no multipolarity given) cut by 0"
+ ],
+ "Ir-185": [
+  "185IR EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Ir-188": [
+  "188IR EC DECAY (41.5 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 940.8 (0.000174 %), 1704.3 (0.0102 %), 1765.6 (0.0282 %) keV"
+ ],
+ "Ir-190n": [
+  "190IR EC DECAY (3.087 H): the cascade of member isomers (Os-190m) taken out of 4 levels below them"
+ ],
+ "Ir-194m": [
+  "194IR B- DECAY (171 D): beta to 2423.4 without end point",
+  "194IR B- DECAY (171 D): beta to 2438.3 without end point"
+ ],
+ "Ir-195m": [
+  "195IR B- DECAY (3.67 H): the cascade of member isomers (Pt-195m) taken out of 4 levels below them"
+ ],
+ "Ir-196m": [
+  "IT <0.3 %: an upper limit only, left out"
+ ],
+ "Pt-185": [
+  "185PT EC DECAY: one data set for 2 parent states, all of it taken for the first (0.0 keV, 70.9 M)",
+  "185PT EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1918"
+ ],
+ "Pt-185m": [
+  "IT <2 %: an upper limit only, left out",
+  "185PT A DECAY: a mode the adopted levels do not give, with its own branch 0.00001",
+  "capture 99.0 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Pt-186": [
+  "186PT EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.02648"
+ ],
+ "Pt-200": [
+  "200PT B- DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none",
+  "200PT B- DECAY: the level at 103.65 keV sends out 3.97 times what enters it: the conversion of 27.48, 43.67, 103.60 keV (no multipolarity given) cut by 0.247",
+  "200PT B- DECAY: the level at 76.22 keV sends out 4.05 times what enters it: the conversion of 76.20 keV (no multipolarity given) cut by 0.202"
+ ],
+ "Pt-202": [
+  "beta-minus 100 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Au-189": [
+  "189AU EC DECAY (28.7 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.2061",
+  "A <0.00003 %: an upper limit only, left out"
+ ],
+ "Au-190": [
+  "A <0.000001 %: an upper limit only, left out"
+ ],
+ "Au-193m": [
+  "193AU EC DECAY (3.9 S): the cascade of member isomers (Pt-193m) taken out of 2 levels below them"
+ ],
+ "Au-200m": [
+  "200AU IT DECAY: the level at 59.98 keV sends out 53.7 times what enters it: the conversion of 60.08 keV (no multipolarity given) cut by 0"
+ ],
+ "Hg-190": [
+  "190HG EC DECAY (20.0 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (3.21 %)",
+  "A <3.4e-7 %: an upper limit only, left out"
+ ],
+ "Hg-191": [
+  "191HG EC DECAY (49 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.4056"
+ ],
+ "Hg-193": [
+  "193HG EC DECAY (3.80 H): the cascade of member isomers (Au-193m) taken out of 2 levels below them",
+  "193HG EC DECAY (3.80 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 539.00 (1.23 %) keV"
+ ],
+ "Hg-193m": [
+  "193HG EC DECAY (11.8 H): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.7051",
+  "193HG EC DECAY (11.8 H): the cascade of member isomers (Au-193m) taken out of 2 levels below them"
+ ],
+ "Hg-207": [
+  "207HG B- DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.08085"
+ ],
+ "Hg-208": [
+  "208HG B- DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.008962"
+ ],
+ "Tl-192m": [
+  "capture 100 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Tl-193": [
+  "193TL EC DECAY (21.6 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.2060"
+ ],
+ "Tl-194": [
+  "A <1e-7 %: an upper limit only, left out"
+ ],
+ "Tl-195": [
+  "195TL EC DECAY: the cascade of member isomers (Hg-195m) taken out of 2 levels below them"
+ ],
+ "Pb-195": [
+  "195PB EC DECAY (AP 15 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 3.482"
+ ],
+ "Pb-196": [
+  "A <=0.00003 %: an upper limit only, left out"
+ ],
+ "Pb-199m": [
+  "199PB EC DECAY (12.2 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1021"
+ ],
+ "Pb-201m": [
+  "IT 100 %: no decay data set, the adopted gamma rays of the level carried down the cascade"
+ ],
+ "Pb-202": [
+  "202PB A DECAY (52.5E+3 Y): a mode the adopted levels do not give, with its own branch 0.01"
+ ],
+ "Bi-197": [
+  "197BI EC DECAY (9.33 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.05988",
+  "197BI EC DECAY (9.33 M): the cascade of member isomers (Pb-197m) taken out of 1 levels below them",
+  "alpha 0.000100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Bi-198": [
+  "capture 100 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Bi-198m": [
+  "198BI EC DECAY (11.6 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.6539"
+ ],
+ "Bi-199": [
+  "199BI EC DECAY (27 M+24.70 M): one data set for 2 parent states, all of it taken for the first (0 keV, 27 M)",
+  "199BI EC DECAY (27 M+24.70 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.06861",
+  "199BI EC DECAY (27 M+24.70 M): 29.9 % of the branch unaccounted and the ground state (3/2-) out of the parent's (9/2-) reach: given to Pb-199m"
+ ],
+ "Bi-199m": [
+  "IT <=2 %: an upper limit only, left out",
+  "capture 99.0 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Bi-200": [
+  "200BI EC DECAY (36.4 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Bi-200m": [
+  "200BI EC DECAY (31 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.9527"
+ ],
+ "Bi-201m": [
+  "IT 11.0 %: no decay data set, the adopted gamma rays of the level carried down the cascade",
+  "capture 88.7 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Bi-204": [
+  "204BI EC DECAY: the cascade of member isomers (Pb-204m) taken out of 6 levels below them"
+ ],
+ "Bi-211": [
+  "211BI A DECAY: the level at 1348.1 keV (1.33 S), reached by 0.00189 % of the decays, carried on by its own decay data set"
+ ],
+ "Bi-212": [
+  "212BI A DECAY (60.55 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 759 (0.000359 %) keV"
+ ],
+ "Bi-212m": [
+  "212BI A DECAY (25.0 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 328.04 (5.07 %), 621 (0.473 %) keV"
+ ],
+ "Bi-212n": [
+  "212BI B- DECAY (7.0 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 2922 (25.0 %) keV",
+  "B- <25 %: an upper limit only, left out",
+  "IT >75 %: taken as 100 %, what the other branches leave",
+  "212BI B- DECAY (7.0 M): a mode the adopted levels do not give, with its own branch 0.25"
+ ],
+ "Bi-214": [
+  "214BI A DECAY (19.9 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 334 (0.000128 %) keV"
+ ],
+ "Bi-216": [
+  "216BI B- DECAY (128 S): the level at 1699.3 keV sends out 4.87 times what enters it: the conversion of 147.8 keV (no multipolarity given) cut by 0"
+ ],
+ "Po-200": [
+  "200PO EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1875"
+ ],
+ "Po-201": [
+  "201PO EC DECAY (15.50 M): NT 0.304 puts TI 9.07 times RI (1 + alpha) NR: NT taken as 0.0335"
+ ],
+ "Po-202": [
+  "202PO EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (27.4 %)"
+ ],
+ "Po-208": [
+  "208PO A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 899.166 (0.000240 %) keV"
+ ],
+ "Po-209": [
+  "209PO A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 585 (0.000149 %), 789 (0.000558 %) keV"
+ ],
+ "Po-212m": [
+  "IT 0.0700 %: no decay data set, the adopted gamma rays of the level carried down the cascade"
+ ],
+ "Po-215": [
+  "215PO A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 762 (0.000300 %) keV"
+ ],
+ "Po-217": [
+  "B- <5 %: an upper limit only, left out",
+  "A >95 %: taken as 100 %, what the other branches leave"
+ ],
+ "Po-218": [
+  "218PO A DECAY (3.097 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 837 (0.00110 %) keV"
+ ],
+ "Po-219": [
+  "alpha 28.2 %: no decay data set, one alpha group to the ground state from the Q value",
+  "beta-minus 71.8 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "At-206": [
+  "206AT A DECAY: relative intensities only, scaled so that the levels' net outflows make up the branch (NR 90.05)"
+ ],
+ "At-210": [
+  "210AT A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 282 (0.00157 %) keV"
+ ],
+ "At-216": [
+  "216AT A DECAY (0.30 MS): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 238.632 (0.493 %), 338 (0.493 %), 573 (0.0592 %) keV"
+ ],
+ "At-217": [
+  "217AT A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1050 (0.00200 %) keV",
+  "beta-minus 0.00700 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "At-218": [
+  "beta-minus 0.0500 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Rn-208": [
+  "208RN A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 684.341 (0.0291 %) keV",
+  "208RN EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none"
+ ],
+ "Rn-209": [
+  "209RN A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 386 (0.00406 %) keV"
+ ],
+ "Rn-210": [
+  "210RN A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 700.66 (0.00538 %) keV"
+ ],
+ "Rn-211": [
+  "211RN A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 392 (0.00385 %), 586 (0.00412 %), 685 (0.000714 %), 811 (0.000165 %) keV"
+ ],
+ "Rn-212": [
+  "212RN A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 686.53 (0.0500 %) keV"
+ ],
+ "Rn-222": [
+  "222RN A DECAY (3.8222 D): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 676 (0.000500 %) keV"
+ ],
+ "Rn-223": [
+  "223RN B- DECAY: the level at 242.45 keV sends out 5.94 times what enters it: the conversion of 53.3, 70.60, 229.60, 242.41 keV (no multipolarity given) cut by 0"
+ ],
+ "Rn-224": [
+  "224RN B- DECAY (107 M): relative intensities only, scaled by nothing in the data set: its gamma rays are left out, the branch taken to the ground state (NR 0.000)"
+ ],
+ "Fr-219": [
+  "219FR A DECAY (20 MS): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 364.0 (0.0270 %), 580 (0.0300 %) keV"
+ ],
+ "Fr-220": [
+  "220FR A DECAY: the level at 234.59 keV sends out 7.27 times what enters it: the conversion of 128.7 keV (no multipolarity given) cut by 0",
+  "220FR A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 317 (0.0100 %) keV"
+ ],
+ "Fr-221": [
+  "B- <0.1 %: an upper limit only, left out"
+ ],
+ "Ra-219m": [
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Ra-221": [
+  "221RA A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 295 (0.0494 %) keV"
+ ],
+ "Ra-223": [
+  "223RA A DECAY (11.4366 D): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 748 (0.00171 %), 773 (0.000604 %), 800 (0.000302 %), 830 (0.000201 %), 851 (0.000403 %), 861 (0.000634 %), 873 (0.000443 %) keV"
+ ],
+ "Ra-225": [
+  "225RA A DECAY: a mode the adopted levels do not give, with its own branch 0.00026"
+ ],
+ "Ac-223": [
+  "223AC A DECAY (2.10 M): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 325 (0.0488 %), 445 (0.00586 %), 650 (0.00977 %) keV",
+  "capture 1.00 %: no decay data set, allowed capture to the ground state from the Q value (no gamma rays)"
+ ],
+ "Ac-224": [
+  "224AC A DECAY: the level at 364.16 keV sends out 4.98 times what enters it: the conversion of 73.6, 186.8, 357.0 keV (no multipolarity given) cut by 0",
+  "224AC A DECAY: the level at 361.0 keV sends out 9.28 times what enters it: the conversion of 87.4 keV (no multipolarity given) cut by 0.0550",
+  "224AC A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 246.8 (0.0164 %), 257.0 (0.00274 %), 306.9 (0.0137 %), 380.1 (0.0237 %), 414.6 (0.00183 %), 442.2 (0.00548 %), 479.6 (0.00457 %), 579.9 (0.00548 %) keV"
+ ],
+ "Ac-225": [
+  "225AC A DECAY: the level at 410.3 keV sends out 3.37 times what enters it: the conversion of 137.6 keV (no multipolarity given) cut by 0",
+  "225AC A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 712 (0.00200 %) keV"
+ ],
+ "Ac-227": [
+  "227AC A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 371 (0.000134 %) keV"
+ ],
+ "Ac-228": [
+  "228AC B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1200.5 (0.00589 %) keV"
+ ],
+ "Th-225": [
+  "capture 10.0 %: no decay data set, allowed capture to the ground state from the Q value (no gamma rays)"
+ ],
+ "Th-227": [
+  "227TH A DECAY: the level at 442.35 keV sends out 5.69 times what enters it: the conversion of 99.6, 162.19, 267.86, 318.46 keV (no multipolarity given) cut by 0",
+  "227TH A DECAY: the level at 104.60 keV sends out 48.8 times what enters it: the conversion of 43.8, 75.01 keV (no multipolarity given) cut by 0.0177",
+  "227TH A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 568 (0.00120 %), 641 (0.000439 %), 685 (0.000658 %), 729 (0.000239 %) keV"
+ ],
+ "Th-229": [
+  "229TH A DECAY: the level at 604.51 keV sends out 1.20e+3 times what enters it: the conversion of 11.79, 276.85, 336.7, 361.0, 368.1, 379.4, 424.8, 454.76, 492.9, 503.6, 535.1, 561.8, 573.0, 579.2 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 592.79 keV sends out 4.37 times what enters it: the conversion of 114.75, 189.25, 320.8, 349.4, 523.5, 549.8, 592.5 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 416.77 keV sends out 16.0 times what enters it: the conversion of 89.09, 347.4 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 394.72 keV sends out 10.7 times what enters it: the conversion of 72.739, 101.58, 134.19, 174.05, 274.1, 282.6, 293.78 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 349.43 keV sends out 16.4 times what enters it: the conversion of 89.09, 317.8, 349.4 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 327.71 keV sends out 7.16 times what enters it: the conversion of 102.54, 216.0, 327.9 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 292.72 keV sends out 188 times what enters it: the conversion of 33.04, 65.91, 250.1, 267.4 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 272.15 keV sends out 497 times what enters it: the conversion of 28.68, 171.76 keV (no multipolarity given) cut by 0.00167",
+  "229TH A DECAY: the level at 248.63 keV sends out 24.0 times what enters it: the conversion of 68.8, 98.86, 137.0 keV (no multipolarity given) cut by 0.00503",
+  "229TH A DECAY: the level at 120.36 keV sends out 11.0 times what enters it: the conversion of 64.96, 89.09 keV (no multipolarity given) cut by 0",
+  "229TH A DECAY: the level at 101.72 keV sends out 4.18 times what enters it: the conversion of 101.58 keV (no multipolarity given) cut by 0"
+ ],
+ "Th-230": [
+  "SF <=4e-12 %: an upper limit only, left out"
+ ],
+ "Pa-227": [
+  "227PA EC DECAY (38.3 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.09210"
+ ],
+ "Pa-228": [
+  "228PA A DECAY (19.5 H): the level at 219.7 keV sends out 31.1 times what enters it: the conversion of 77.2, 86.3 keV (no multipolarity given) cut by 0",
+  "228PA A DECAY (19.5 H): the level at 159.3 keV sends out 26.2 times what enters it: the conversion of 66.3, 75.5 keV (no multipolarity given) cut by 0.0194",
+  "228PA A DECAY (19.5 H): the level at 146.6 keV sends out 44.9 times what enters it: the conversion of 62.5 keV (no multipolarity given) cut by 0.0124",
+  "228PA A DECAY (19.5 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 212 (0.0111 %), 300 (0.00555 %) keV",
+  "228PA EC DECAY: NT 0.0095 puts TI 38.6 times RI (1 + alpha) NR: NT taken as 0.000246",
+  "228PA EC DECAY: NR 0.0095 against 0.0807, 0.0886, 0.0924 from the feedings and the gamma-ray balance: scaled by 9.33",
+  "228PA EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 1539.0 (0.0275 %) keV"
+ ],
+ "Pa-229": [
+  "229PA A DECAY (1.50 D): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 221 (0.00298 %), 318 (0.000347 %), 327 (0.000496 %), 421 (0.000248 %) keV"
+ ],
+ "Pa-231": [
+  "SF <=3e-10 %: an upper limit only, left out"
+ ],
+ "Pa-232": [
+  "232PA EC DECAY: a mode the adopted levels do not give, with its own branch 0.003"
+ ],
+ "U-228": [
+  "EC <5 %: an upper limit only, left out",
+  "A >95 %: taken as 100 %, what the other branches leave"
+ ],
+ "U-230": [
+  "230U A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 351 (0.000540 %) keV"
+ ],
+ "U-231": [
+  "231U A DECAY (4.2 D): the level at 400.14 keV sends out 8.29 times what enters it: the conversion of 111.1 keV (no multipolarity given) cut by 0",
+  "231U A DECAY (4.2 D): the level at 76.23 keV sends out 116 times what enters it: the conversion of 51.85, 66.94 keV (no multipolarity given) cut by 0"
+ ],
+ "U-233": [
+  "SF <6e-11 %: an upper limit only, left out",
+  "28MG <1.3e-13 %: an upper limit only, left out"
+ ],
+ "U-235": [
+  "235U A DECAY (7.04E+8 Y): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 331 (0.227 %), 355 (0.0691 %), 562 (0.00691 %) keV"
+ ],
+ "U-235m": [
+  "IT 100 %: no decay data set, the adopted gamma rays of the level carried down the cascade"
+ ],
+ "U-237": [
+  "237U B- DECAY: NT 1 puts TI 0.0386 times RI (1 + alpha) NR: NT taken as 25.9"
+ ],
+ "U-239": [
+  "239U B- DECAY: the level at 563.87 keV sends out 3.93 times what enters it: the conversion of 111.0, 492.76, 532.86, 564.09 keV (no multipolarity given) cut by 0",
+  "239U B- DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 257.63 (0.00110 %), 347.33 (0.000726 %), 359.1 (0.000840 %) keV"
+ ],
+ "U-240": [
+  "240U B- DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (21.4 %)"
+ ],
+ "Np-231": [
+  "231NP EC DECAY (48.8 M): relative intensities only, scaled by nothing in the data set: its gamma rays are left out (NR 0.000)"
+ ],
+ "Np-232": [
+  "alpha 0.000200 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Np-233": [
+  "A <=0.0007 %: an upper limit only, left out",
+  "233NP A DECAY: a mode the adopted levels do not give, with its own branch 0.000007"
+ ],
+ "Np-237": [
+  "237NP A DECAY (2.144E+6 Y): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 218 (0.559 %), 283 (0.0834 %) keV",
+  "SF <=2e-10 %: an upper limit only, left out"
+ ],
+ "Np-242m": [
+  "242NP B- DECAY (5.5 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (0.303 %)"
+ ],
+ "Pu-233": [
+  "233PU EC DECAY (20.9 M): no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.2537"
+ ],
+ "Pu-241": [
+  "SF <2.4e-14 %: an upper limit only, left out"
+ ],
+ "Pu-246": [
+  "246PU B- DECAY: the level at 299.370+X keV sends out 49.5 times what enters it: the conversion of 66.60, 75.64, 255.54, 299.34 keV (no multipolarity given) cut by 0"
+ ],
+ "Pu-247": [
+  "beta-minus 100 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Am-235": [
+  "235AM EC DECAY: relative intensities only, scaled by nothing in the data set: its gamma rays are left out (NR 0.000)"
+ ],
+ "Am-240": [
+  "240AM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 241 (0.000165 %) keV"
+ ],
+ "Am-241": [
+  "241AM A DECAY: the level at 444.78 keV sends out 7.46 times what enters it: the conversion of 120.36 keV (no multipolarity given) cut by 0",
+  "241AM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 418.2 (0.000319 %) keV"
+ ],
+ "Am-242": [
+  "A <0.0001 %: an upper limit only, left out"
+ ],
+ "Am-242m": [
+  "242AM A DECAY (141 Y): the level at 389.2 keV sends out 6.78 times what enters it: the conversion of 170.50 keV (no multipolarity given) cut by 0",
+  "242AM A DECAY (141 Y): the level at 328.77 keV sends out 7.54 times what enters it: the conversion of 163.25 keV (no multipolarity given) cut by 0",
+  "242AM A DECAY (141 Y): the level at 300.79 keV sends out 6.40 times what enters it: the conversion of 84.9, 238.53 keV (no multipolarity given) cut by 0.129",
+  "242AM A DECAY (141 Y): the level at 300.726 keV sends out 6.68 times what enters it: the conversion of 67.93, 135.19, 139.05, 194.61 keV (no multipolarity given) cut by 0",
+  "242AM A DECAY (141 Y): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 334.8 (0.000133 %), 374.7 (0.000177 %), 470 (0.000133 %), 484 (0.00111 %) keV",
+  "SF <4.7e-9 %: an upper limit only, left out"
+ ],
+ "Am-243": [
+  "243AM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 267 (0.00550 %), 325 (0.00400 %), 347 (0.00160 %), 359 (0.00160 %), 411 (0.000340 %), 427 (0.000180 %) keV"
+ ],
+ "Am-244m": [
+  "capture 0.0364 %: no decay data set, allowed capture to the ground state from the Q value (no gamma rays)"
+ ],
+ "Am-245": [
+  "245AM B- DECAY: the level at 295.65 keV sends out 4.14 times what enters it: the conversion of 42.87 keV (no multipolarity given) cut by 0.00192"
+ ],
+ "Cm-238": [
+  "capture 96.2 %: no decay data set, allowed capture to the ground state from the Q value (no gamma rays)",
+  "fission 0.0480 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Cm-239": [
+  "239CM EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's what is left (45.2 %)",
+  "A <0.001 %: an upper limit only, left out"
+ ],
+ "Cm-240": [
+  "240CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 305.80 (0.0140 %) keV",
+  "EC <0.5 %: an upper limit only, left out",
+  "A >99.5 %: taken as 100 %, what the other branches leave"
+ ],
+ "Cm-241": [
+  "241CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 201.1 (0.118 %), 223.2 (0.00140 %), 302.5 (0.000700 %), 369.6 (0.000800 %), 402.2 (0.00220 %) keV"
+ ],
+ "Cm-243": [
+  "243CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 427 (0.0297 %), 434 (0.139 %), 451 (0.0594 %), 462 (0.0297 %), 481 (0.00990 %), 487 (0.0198 %), 499 (0.00693 %), 538 (0.00198 %), 543 (0.00594 %), 746 (0.00297 %), 756 (0.00297 %), 763 (0.000990 %), 813 (0.00149 %), 850 (0.000386 %) keV"
+ ],
+ "Cm-245": [
+  "245CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 260.5 (0.0697 %), 376 (0.00398 %), 384 (0.00498 %) keV"
+ ],
+ "Cm-247": [
+  "247CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 455 (4.70 %) keV"
+ ],
+ "Cm-248": [
+  "248CM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 307.6 (0.00916 %) keV"
+ ],
+ "Cm-250": [
+  "alpha 18.0 %: no decay data set, one alpha group to the ground state from the Q value",
+  "beta-minus 8.00 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Cm-252": [
+  "beta-minus 100 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Bk-243": [
+  "243BK A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 220 (0.0291 %), 260 (0.0103 %), 317 (0.00105 %), 370 (0.000300 %), 586 (0.00584 %) keV",
+  "243BK EC DECAY: relative intensities only, scaled by nothing in the data set: its gamma rays are left out, the branch taken to the ground state (NR 0.000)"
+ ],
+ "Bk-244": [
+  "244BK EC DECAY: no feeding intensities given, each level's from its gamma-ray balance, the ground state's none; relative intensities, NR 0.1838"
+ ],
+ "Bk-245": [
+  "245BK A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 239 (0.00624 %), 270 (0.00744 %), 319.8 (0.000660 %), 495 (0.00324 %), 504.449 (0.00168 %), 550.4 (0.00108 %) keV",
+  "245BK EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 361.4 (0.0619 %), 418.7 (0.154 %) keV"
+ ],
+ "Bk-247": [
+  "247BK A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 298 (7.06 %), 344 (1.51 %) keV"
+ ],
+ "Bk-253": [
+  "beta-minus 100 %: no decay data set, an allowed spectrum to the ground state from the Q value"
+ ],
+ "Cf-243": [
+  "243CF A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 242 (9.94 %) keV",
+  "capture 86.0 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Cf-249": [
+  "249CF A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 495.8 (0.0480 %), 585.4 (0.0220 %), 674.2 (0.00220 %) keV"
+ ],
+ "Cf-250": [
+  "250CF A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 293 (0.00699 %) keV"
+ ],
+ "Cf-256": [
+  "A <0.000001 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Es-248": [
+  "248ES A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 200 (0.0225 %) keV",
+  "capture 99.7 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Es-250": [
+  "A <3 %: an upper limit only, left out",
+  "EC >97 %: taken as 100 %, what the other branches leave"
+ ],
+ "Es-252": [
+  "252ES A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 212.6 (0.580 %), 262 (0.0546 %), 339 (0.0312 %), 424 (0.0780 %), 458 (0.0624 %), 483 (0.0312 %), 624 (0.0936 %), 657 (0.0390 %), 700 (0.0312 %) keV"
+ ],
+ "Es-253": [
+  "253ES A DECAY (20.47 D): the level at 769.15 keV sends out 3.80 times what enters it: the conversion of 227.1, 294.1, 340.2 keV (no multipolarity given) cut by 0.00251",
+  "253ES A DECAY (20.47 D): the level at 654.1 keV sends out 6.37 times what enters it: the conversion of 134.9 keV (no multipolarity given) cut by 0.00131",
+  "253ES A DECAY (20.47 D): the level at 624.30 keV sends out 3.96 times what enters it: the conversion of 203.1, 235.1, 624.3 keV (no multipolarity given) cut by 0",
+  "253ES A DECAY (20.47 D): the level at 473.66 keV sends out 5.35 times what enters it: the conversion of 100.5, 190.5 keV (no multipolarity given) cut by 0.00162"
+ ],
+ "Es-254": [
+  "254ES A DECAY (275.7 D): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 333 (0.0602 %), 341 (0.0201 %), 527 (0.0301 %) keV",
+  "SF <0.000003 %: an upper limit only, left out"
+ ],
+ "Es-254m": [
+  "254ES A DECAY (39.3 H): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 298 (0.00154 %), 316 (0.000512 %) keV",
+  "IT <3 %: an upper limit only, left out",
+  "SF <0.045 %: an upper limit only, left out"
+ ],
+ "Es-257": [
+  "257ES B- DECAY: relative intensities only, scaled by nothing in the data set: its gamma rays are left out, the branch taken to the ground state (NR 0.000)"
+ ],
+ "Fm-250": [
+  "EC <10 %: an upper limit only, left out",
+  "A >90 %: taken as 99.9931 %, what the other branches leave",
+  "fission 0.00690 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Fm-251": [
+  "251FM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 201.0 (0.00738 %), 595 (0.00794 %), 634 (0.00126 %) keV",
+  "251FM EC DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 263.0 (0.0164 %) keV"
+ ],
+ "Fm-252": [
+  "252FM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 285 (0.0230 %) keV"
+ ],
+ "Fm-253": [
+  "253FM A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 221.7 (0.108 %), 440 (0.289 %), 460 (0.313 %), 606 (0.0361 %) keV"
+ ],
+ "Fm-258": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Md-254": [
+  "capture 100 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Md-254m": [
+  "capture 100 %: no decay data set, allowed capture and positrons to the ground state from the Q value (no gamma rays)"
+ ],
+ "Md-255": [
+  "255MD A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 513 (0.350 %) keV"
+ ],
+ "Md-256": [
+  "256MD A DECAY: levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 436 (0.230 %), 476 (6.53 %), 542 (2.02 %) keV",
+  "SF <3 %: an upper limit only, left out"
+ ],
+ "Md-257": [
+  "SF <1 %: an upper limit only, left out"
+ ],
+ "Md-258": [
+  "258MD A DECAY (51.50 D): levels fed and let out by no gamma ray given, their energy taken as one gamma ray each to the ground state: 289.9 (6.66 %) keV"
+ ],
+ "Md-258m": [
+  "A <1.2 %: an upper limit only, left out",
+  "258MD B- DECAY (57.0 M):?: a mode the adopted levels do not give, with its own branch 0.3"
+ ],
+ "Md-259": [
+  "A <1.3 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Md-260": [
+  "A <=25 %: an upper limit only, left out",
+  "B- <=10 %: an upper limit only, left out",
+  "EC <=23 %: an upper limit only, left out",
+  "SF >=42 %: taken as 100 %, what the other branches leave",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "No-258": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "No-259": [
+  "259NO A DECAY: relative intensities only, scaled so that the levels' net outflows make up the branch (NR 0.04993)",
+  "SF <10 %: an upper limit only, left out"
+ ],
+ "Lr-261": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Lr-262": [
+  "fission 10.0 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Lr-264": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Lr-266": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Rf-263": [
+  "alpha 30.0 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Rf-267": [
+  "A <=33.3 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Db-266": [
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Db-267": [
+  "A <=25 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Db-268": [
+  "268DB A DECAY (16 H): a mode the adopted levels do not give, with its own branch 0.58",
+  "fission 42.0 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Db-270": [
+  "270DB A DECAY:TENTATIVE: a mode the adopted levels do not give, with its own branch 0.83",
+  "fission 17.0 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Bh-278": [
+  "A <=50 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Hs-278": [
+  "A <=50 %: an upper limit only, left out",
+  "fission 100 %: nu-bar and Watt parameters estimated (not in EDISTR04's table)"
+ ],
+ "Mt-282": [
+  "SF <=50 %: an upper limit only, left out",
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Ds-282": [
+  "SF <=50 %: an upper limit only, left out",
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Rg-286": [
+  "SF <=54 %: an upper limit only, left out",
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ],
+ "Cn-286": [
+  "SF <=50 %: an upper limit only, left out",
+  "alpha 100 %: no decay data set, one alpha group to the ground state from the Q value"
+ ]
+}

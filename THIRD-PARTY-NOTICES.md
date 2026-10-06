@@ -84,6 +84,25 @@ browser from their publishers and are not redistributed here.
     and K.F. Eckerman, used for non-profit purposes under their licence,
     whose two notices are distributed with the data
     (`resources/data/dose/icrp103/decay/LICENSE.TXT` and `LICENSE_DECDATA.TXT`).
+  - `atomic/`, `icc/` and `capture.json` are the tables with which
+    `resources/js/dose/ensdf-*.js` turns the decay data sets of ENSDF (below)
+    into the radiations the calculation reads. `atomic/` holds the atomic
+    relaxation data of ENDF/B-VIII.0 (EADL as D.E. Cullen's EPICS2017 gives
+    it: subshell binding energies and the probabilities of the radiative and
+    non-radiative transitions; D.A. Brown et al., Nuclear Data Sheets 148,
+    2018), converted by `scripts/gen-dose-atomic.mjs`. `icc/icc.json` holds
+    internal-conversion coefficients by shell for pure multipolarities,
+    fitted by `scripts/gen-dose-icc.mjs` to the coefficients that EDISTR04
+    printed for ICRP Publication 107 (the ARCHIVE folder of its supplementary
+    data: the theoretical values of Rösel et al., 1978, and of Band and
+    Trzhaskovskaya), Copyright © 2008 A. Endo and K.F. Eckerman, used for
+    non-profit purposes under the licence above, whose notice is distributed
+    with the table (`resources/data/dose/icc/LICENSE.TXT`). `capture.json`
+    holds the shell factors of electron capture, fitted by
+    `scripts/gen-dose-capture.mjs` to the K, L and M capture fractions of an
+    ENSDF release.
+  - `ensdf/` is decay data made by `scripts/gen-dose-ensdf.mjs` from the
+    ENSDF release the page names, with those tables.
   - `icrp103/saf/` holds the specific absorbed fractions and region masses of
     the supplementary data of ICRP Publications 133 and 155 (Annals of the
     ICRP 45(2), 2016, and 52(4), 2023, © ICRP), converted to binary form by
@@ -111,13 +130,16 @@ browser from their publishers and are not redistributed here.
     coefficients are not included; the tests compare with local copies of
     them and of the electronic annex of Publication 158 (ICRP InMoP
     Electronic Annex), which the page names as their source.
-- **Nuclear structure and decay data** (`resources/data/ensdf/`) are built from
+- **Nuclear structure and decay data** (`resources/data/ensdf/`, and the decay
+  data of `resources/data/dose/ensdf/` above) are built from
   the Evaluated Nuclear Structure Data File (ENSDF), maintained by the National
   Nuclear Data Center, Brookhaven National Laboratory, for the international
   Nuclear Structure and Decay Data network
-  (https://www.nndc.bnl.gov/ensdf/). The release is named on `ensdf.html`;
-  the data are read as published and not altered, except where the page says a
-  value is inferred. Element names are those of IUPAC. `nndc.js` there lists
+  (https://www.nndc.bnl.gov/ensdf/). The release is named on the pages that
+  use it. On `ensdf.html` the data are read as published and not altered,
+  except where the page says a value is inferred; `dose_coefficients.html`
+  derives from them the radiations its calculation reads, in the way its Help
+  describes. Element names are those of IUPAC. `nndc.js` there lists
   the releases in NNDC's archive (https://www.nndc.bnl.gov/ensdfarchivals/) by
   file name and link only; the files themselves are downloaded from NNDC by the
   visitor.

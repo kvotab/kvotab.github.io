@@ -95,6 +95,27 @@
 .dc-desc { display: block; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .dc-muted { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .dc-muted:empty { display: none; }
+/* Decay data: opening a release of ENSDF, NNDC's archive, files dropped on the page. */
+.dc-decay-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.dc-get { width: min(34rem, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 14px 18px; border: 1px solid var(--border-color); border-radius: 10px;
+  background: var(--bg-primary); color: var(--text-primary); font: 13px/1.5 verdana, sans-serif; }
+.dc-get::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dc-get-title { margin: 0 0 8px; font-size: 15px; }
+.dc-get-body p, .dc-get-body ol { margin: 0 0 8px; }
+.dc-get-body ol { padding-left: 20px; }
+.dc-get-body ul { margin: 4px 0; padding-left: 18px; }
+.dc-get-body a { color: var(--color-kvot-accent); overflow-wrap: anywhere; }
+.dc-get-dim { color: var(--text-muted); }
+.dc-get-warn { color: var(--text-primary); background: var(--bg-secondary); padding: 4px 8px; border-radius: 4px; }
+.dc-get-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-offset: -6px; }
+
+/* Decay data made from ENSDF: a member's name there, and what the making had to decide. */
+.dc-other-name { color: var(--text-muted); }
+.dc-chain-decay { margin: 10px 0 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.dc-chain-decay p { margin: 0 0 4px; }
+.dc-chain-decay ul { margin: 0; padding-left: 18px; }
+.dc-chain-decay li { margin: 2px 0; }
 .dc-radio { display: flex; gap: 7px; align-items: flex-start; margin: 0 0 7px; line-height: 1.4; cursor: pointer; font-size: 12px; }
 .dc-radio input { margin-top: 2px; }
 .dc-check { display: flex; gap: 6px; align-items: center; cursor: pointer; font-size: 12px; }
@@ -447,7 +468,7 @@
   .dc-pane { padding: 10px 10px 24px; }
   .plot { height: 340px; }
   .dc-body figcaption { max-width: none; }
-  .dc-radon-inputs input { font-size: 16px; } /* no zoom on iOS */
+  .dc-radon-inputs input, #dcRadonDecay { font-size: 16px; } /* no zoom on iOS */
   .dc-row input[type="text"], .dc-row select, .dc-row input#dcNuclide { font-size: 16px; } /* no zoom on iOS */
 }
 
@@ -531,7 +552,7 @@
   .dc-picker-lists { grid-template-columns: 1fr; }
   .dc-picker-moves { flex-direction: row; flex-wrap: wrap; }
   .dc-picker-col select { height: 30vh; min-height: 8rem; }
-  .dc-picker-filters input[type="search"], .dc-picker-filters select, .dc-picker-col select, .dc-batch-select select { font-size: 16px; } /* no zoom on iOS */
+  .dc-picker-filters input[type="search"], .dc-picker-filters select, .dc-picker-col select, .dc-batch-select select, #dcBatchDecay { font-size: 16px; } /* no zoom on iOS */
 }
 .dc-batch-table th.group { text-align: center; border-bottom: 1px solid var(--border-color); }
 @media (max-width: 760px) {

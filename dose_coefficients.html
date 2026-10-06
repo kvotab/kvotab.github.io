@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261004p">
+  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261006c">
   <!-- The page's own mark: the four letters of the ICRP's logotype in the kvot
        mark's language (see dose-icon.svg). SVG first, since it stays sharp on
        a high-density screen; the PNG is for anything that will not take one. -->
@@ -55,6 +55,16 @@
                 <span><b>ICRP 60</b> · Publications 56, 67, 69, 71 and 72, as compiled in Publication 119</span></label>
               <label class="dc-radio"><input type="radio" name="dcSystem" value="103" checked data-on-change="dc:systemChanged">
                 <span><b>ICRP 103</b> · Publication 158 (Part 1) and the consultation drafts of Parts 2 and 3</span></label>
+              <div class="dc-row">
+                <div class="kvot-info-line dc-label-line"><label for="dcDecay">Decay data</label><span class="kvot-info-slot" data-info-key="set:decay"></span></div>
+                <select id="dcDecay" data-on-change="dc:decayChanged"><option value="">ICRP 107, the system’s own</option></select>
+                <div class="dc-decay-tools">
+                  <button type="button" class="dc-btn secondary small" id="dcDecayOpen" data-on-click="dc:decayOpen" data-tip="Open an ENSDF release zip as NNDC publishes it, or ENSDF text files, from your computer: its decay data are made in your browser and kept there. Nothing is uploaded.">Open ENSDF…</button>
+                  <button type="button" class="dc-btn secondary small" id="dcDecayForget" data-on-click="dc:decayForget" data-tip="Stop keeping this release in the browser, here and on the ENSDF pages" hidden>Forget</button>
+                  <input type="file" id="dcDecayFile" multiple hidden aria-label="ENSDF files to open" data-on-change="dc:decayFile">
+                </div>
+                <p class="dc-muted" id="dcDecayNote"></p>
+              </div>
             </details>
           </div>
 
@@ -284,6 +294,7 @@
               <span class="kvot-info-slot" data-info-key="tab:chain"></span>
             </div>
             <div class="dc-table-wrap"><table class="dc-table" id="dcChainTable"></table></div>
+            <div class="dc-chain-decay" id="dcChainDecay" hidden></div>
             <h3 class="dc-h3">Nuclear transformations in source regions <span class="dc-unit">per Bq taken in, over the commitment period</span></h3>
             <div class="dc-table-wrap"><table class="dc-table" id="dcUTable"></table></div>
           </div>
@@ -326,6 +337,7 @@
               <label><input type="radio" name="dcRadonKind" value="radon" checked data-on-change="dc:radonKind"><span>Radon, <sup>222</sup>Rn</span></label>
               <label><input type="radio" name="dcRadonKind" value="thoron" data-on-change="dc:radonKind"><span>Thoron, <sup>220</sup>Rn</span></label>
             </div>
+            <label class="dc-radon-decay">Decay data <select id="dcRadonDecay" data-on-change="dc:radonDecay"><option value="">ICRP 107, the system’s own</option></select></label>
             <span class="dc-spacer"></span>
             <span class="kvot-info-slot" data-info-key="tab:radon"></span>
           </div>
@@ -339,6 +351,15 @@
           </div>
           <div id="dcRadon"></div>
         </section>
+
+        <dialog id="dcGet" class="dc-get" aria-labelledby="dcGetTitle">
+          <h3 id="dcGetTitle" class="dc-get-title">A release from NNDC</h3>
+          <div class="dc-get-body" id="dcGetBody"></div>
+          <div class="dc-get-actions">
+            <button type="button" class="dc-btn secondary" data-on-click="dc:getClose">Close</button>
+            <button type="button" class="dc-btn" id="dcGetOpen" data-on-click="dc:getOpen">Open the downloaded file…</button>
+          </div>
+        </dialog>
 
         <section class="dc-pane dc-help" id="pane-help" role="tabpanel" hidden>
           <h2>Dose coefficients for members of the public</h2>
@@ -405,12 +426,59 @@
               from the lungs enters blood by the way it got there: dissolved as vapour to Plasma 0, the rest as
               Hg<sup>2+</sup> to Plasma 1 (Part 3 draft paras 367–368).</li>
             <li><b>Dosimetry</b>: the specific absorbed fractions of Publications 133 and 155 for the twelve reference
-              individuals (newborn, 1, 5, 10 and 15 years, adult; male and female), with the radiations of Publication 107,
+              individuals (newborn, 1, 5, 10 and 15 years, adult; male and female), with the radiations of Publication 107
+              (or of the decay data chosen),
               interpolated in energy and in age as Publication 158 prescribes (PCHIP; a weighted linear interpolation
               in the first year).</li>
             <li><b>Effective dose</b>: the tissue weighting factors of Publication 103 applied to the average of the male
               and female equivalent doses, the remainder the arithmetic mean of its thirteen tissues.</li>
           </ul>
+          <h3 id="help-decay">Decay data</h3>
+          <p>A dose coefficient rests on decay data: each nuclide’s half-life, the daughters it decays to and the
+            radiations it emits per decay, the energies and yields of its alpha particles, beta spectra, gamma and X-rays,
+            conversion and Auger electrons. Each system has its own, and the ICRP’s coefficients are calculated with
+            them: Publication 38 (1983) in the ICRP 60 system, Publication 107 (2008) in the ICRP 103 system. The
+            <b>Decay data</b> setting, and the same choice on the Batch and Radon at home tabs, puts in their place decay
+            data made on this site from a release of ENSDF, the Evaluated Nuclear Structure Data File of the National
+            Nuclear Data Center (the release the Chart of Nuclides shows). The models of the body stay those of the
+            system.</p>
+          <p>Any other release can be added. <b>Open ENSDF…</b> reads a release zip as NNDC publishes it (or the parts of an
+            older one, or the ensdf.001 … ensdf.300 files out of one) from your computer, and the page makes its decay data
+            in your browser, in some ten seconds for a whole release on a desktop computer; nothing is uploaded. The release is then kept in this
+            browser, offered in the Decay data menus here and as a database on the Chart of Nuclides and Radionuclide Decay
+            Chains, until you choose <b>Forget</b>; a release opened on those pages is offered here too, and made the first
+            time it is chosen. The menus also list the releases of NNDC’s archive and say where to download each: NNDC’s
+            server does not let other sites read its files. Files can be dropped on the page as well.</p>
+          <p>Publication 107 was itself made from ENSDF: its authors ran the program EDISTR04 over the decay data sets of
+            2004 (JAERI 1347). The decay data here are made in the same way, by the same program whether on this site or
+            in your browser:</p>
+          <ul>
+            <li><b>From each decay data set</b>: the gamma rays, conversion electrons, alpha groups and beta and capture
+              branches, per decay as its normalisation record says. Where a data set gives no feeding of its levels, each
+              level’s feeding comes from the balance of its gamma rays.</li>
+            <li><b>Computed</b>: beta spectra and mean energies from Fermi theory with screening and the finite size of the
+              nucleus, as EDISTR04 computed them; the shares of positrons and capture from their rate functions where a
+              branch gives only its total; conversion coefficients by shell, the evaluators’ own where they give them and
+              otherwise the theory EDISTR04 used; X-rays and Auger electrons by following each vacancy through the atomic
+              relaxation data of EPICS2017; spontaneous fission from the formulas and parameters of Publication 107.</li>
+            <li><b>Checked</b>: run on the decay data sets Publication 107 was made from, the same program reproduces it.
+              Of 2676 dose coefficients (every ICRP 103 nuclide by each route, at six ages), 2582 agree within 0.1 % and
+              2658 within 1 % at every age.</li>
+            <li><b>Names</b>: a nuclide keeps the name its system gives it. ENSDF orders some states otherwise (its 2026
+              release calls the 2.36 h state of tantalum-178 the ground state, which Publication 107 calls Ta-178m), so the
+              states of each nuclide are paired by half-life, and the Decay chain tab gives ENSDF’s name beside where it
+              differs. ENSDF has nuclides the ICRP’s data lack; the ICRP 103 list grows by them.</li>
+            <li><b>The difference it makes</b>: with ENSDF 2026, nine in ten of the ICRP 103 coefficients stay within 5 % of
+              those with Publication 107 at every age. The large differences are evaluations made since 2004, such as the
+              alpha branch of Pu-232, the gamma-ray intensities of Yb-175 and Ta-177 and the capture of Lu-165 to high-lying
+              levels. Where a data set is incomplete or contradicts itself, the page follows rules of its own (an NR
+              that the data set’s own balance contradicts, levels fed but given no gamma ray, a mode given only as an
+              upper limit), and says so on the Decay chain tab.</li>
+            <li><b>Not followed</b>: double beta decay, whose half-lives are of 10<sup>18</sup> years and more; fission
+              neutrons count only for the 28 nuclides for which Publication 107 gives neutron absorbed fractions; an isomer
+              of less than a minute that decays by IT is part of the decay that makes it.</li>
+          </ul>
+
           <h3 id="help-progeny">Progeny</h3>
           <p>A radionuclide’s dose coefficient includes the dose from its radioactive progeny formed in the body after
             the intake. How the progeny move is where the two systems, and this page, need most care.</p>
@@ -644,6 +712,7 @@
             <tbody>
               <tr><th>ICRP 60 system</th><td>The biokinetic models, specific absorbed fractions (Cristy–Eckerman phantoms), absorbed fractions, ICRP 38 decay data and batch files of DCAL (Eckerman and Leggett, ORNL/TM-2001/190), distributed by Oak Ridge National Laboratory; read by <code>scripts/gen-dose-icrp60.mjs</code>.</td></tr>
               <tr><th>ICRP 103 decay data</th><td>ICRP Publication 107 (Endo and Eckerman): the data files of its <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener">supplementary data</a> on the ICRP’s site, with the index file as corrected in the corrigenda of Publication 107 (2021; only atomic masses changed, which the page does not use). Copyright © 2008 A. Endo and K.F. Eckerman, used for non-profit purposes under their licence, whose notices accompany the data (<code>LICENSE.TXT</code> and <code>LICENSE_DECDATA.TXT</code> in <code>resources/data/dose/icrp103/decay/</code>).</td></tr>
+              <tr><th>Decay data from ENSDF</th><td>Made by <code>scripts/gen-dose-ensdf.mjs</code> from the release of ENSDF named in the Decay data setting, kept by the National Nuclear Data Center for the Nuclear Structure and Decay Data network (<a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener">nndc.bnl.gov/ensdf</a>), into <code>resources/data/dose/ensdf/</code>; with the atomic relaxation data of ENDF/B-VIII.0 (EPICS2017; <code>resources/data/dose/atomic/</code>), conversion coefficients fitted to those EDISTR04 printed in the supplementary data of Publication 107 (<code>resources/data/dose/icc/</code>, under the licence of the ICRP-07 data files, whose notice goes with them) and capture fractions fitted to the release’s own (<code>capture.json</code>).</td></tr>
               <tr><th>Specific absorbed fractions</th><td>The supplementary data of ICRP Publications 133 and 155 (© ICRP), for the twelve reference individuals; Publication 155’s adult files revise Publication 133’s for electrons and alphas.</td></tr>
               <tr><th>Radon at home</th><td>Transcribed from Publication 158 (Tables 32.1, 32.2, 32.3, C.1 and the lung-air volumes of Table C.3; <code>resources/data/dose/icrp103/radon.json</code>) and Publication 137 (potential alpha energies, Table A.1; activity ratios of the progeny, paras A80–A81; <code>resources/js/dose/radon.js</code>), © ICRP. The ICRP’s own tables of doses per exposure are not part of this page; the tests compare with local copies.</td></tr>
               <tr><th>Risk coefficients</th><td>Transcribed from Publication 60 (Annex B Tables B-17 to B-20, Tables 3 and 4) and Publication 103 (Annex A Tables A.4.1, A.4.2 and A.4.5, Table 1), © ICRP: the nominal risks and the lethality, quality-of-life and life-lost factors the calculation uses, and the printed results it is compared with (<code>resources/js/dose/risk.js</code>).</td></tr>
@@ -704,6 +773,7 @@
       kvot-info        the (i) next to each setting and its panel
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261004s"></script>
+  <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261006d"></script>
 </body>
 </html>

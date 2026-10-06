@@ -11,19 +11,50 @@
 
   Decay data are per element; a calculation first loads the elements of the
   parent's whole chain, since the engines read emissions synchronously.
+
+  Other decay data can stand in for the system's own (`decayIO`, an io for a
+  folder as scripts/gen-dose-ensdf.mjs writes one from a release of ENSDF:
+  decay/index.json and decay/<El>.json). Their states take the system's
+  names by half-life (decay-names.js), so that the catalogue, the models and
+  the cases find them under the names they know.
 */
 import { SafPhantom } from './see103.js';
 import { buildChain } from './chain.js';
+import { pairNames } from './decay-names.js';
 
 const elementOf = (name) => /^([A-Z][a-z]?)-/.exec(name)[1];
 
-export async function loadSystem(system, io) {
+/**
+ * @param {string} system   '60' or '103'
+ * @param {object} io       reads paths under resources/data/dose/
+ * @param {object} [decayIO]  reads decay/index.json and decay/<El>.json of other decay data
+ */
+export async function loadSystem(system, io, decayIO = null) {
   const base = system === '60' ? 'icrp60' : 'icrp103';
   const decayIndex = await io.json(`${base}/decay/index.json`);
-  const index = decayIndex.nuclides;
+  let index = decayIndex.nuclides;
+  let readElement = (el) => io.json(`${base}/decay/${el}.json`);
+  let decaySource = { label: system === '60' ? 'ICRP 38' : 'ICRP 107', own: true };
+  if (decayIO) {
+    const other = await decayIO.json('decay/index.json');
+    const names = pairNames(index, other.nuclides);
+    index = names.nuclides;
+    readElement = async (el) => {
+      const raw = await decayIO.json(`decay/${el}.json`);
+      const out = {};
+      for (const [n, v] of Object.entries(raw)) out[names.pageOf(n)] = v;
+      return out;
+    };
+    // What the making of the decay data had to decide for each state (notes.json beside decay/).
+    const notes = await decayIO.json('notes.json').catch(() => ({}));
+    decaySource = {
+      label: other.label || other.source || 'other decay data', source: other.source || null, own: false, renamed: names.renamed, otherOf: names.otherOf,
+      notesOf: (name) => notes[names.otherOf(name) ?? name] || [],
+    };
+  }
   const decay = {};
   const data = {
-    system, index,
+    system, index, decaySource,
     emissions(name) {
       const el = decay[elementOf(name)];
       if (!el) throw new Error(`decay data of ${elementOf(name)} not loaded`);
@@ -33,7 +64,7 @@ export async function loadSystem(system, io) {
     async prepare(nuclide) {
       const chain = buildChain(index, nuclide, { cutoff: 0 });
       const els = [...new Set(chain.members.map((m) => elementOf(m.name)))];
-      await Promise.all(els.filter((el) => !decay[el]).map(async (el) => { decay[el] = await io.json(`${base}/decay/${el}.json`); }));
+      await Promise.all(els.filter((el) => !decay[el]).map(async (el) => { decay[el] = await readElement(el); }));
       if (system === '103') await loadNeutrons(chain.members.map((m) => m.name));
       return chain;
     },

@@ -10,7 +10,8 @@
     ICRP 103  every ICRP 107 nuclide with a half-life of at least 10 minutes
               (ICRP 158 section 1.4.1) of an element whose model is
               transcribed here, with the element's inhaled and ingested forms
-              and direct uptake to blood
+              and direct uptake to blood; with other decay data (data.js),
+              every state of theirs that has a decay mode they follow
 */
 import { parentModelName, f1FileName, f1Table } from './model60.js';
 
@@ -81,7 +82,7 @@ export function catalog103(data) {
   for (const [name, n] of Object.entries(index)) {
     const el = elementOf(name);
     const E = elements[el];
-    if (!E || !(n.T >= 10 / 1440)) continue;
+    if (!E || !(n.T >= 10 / 1440) || !n.m) continue;
     const forms = (list) => list.map((f) => ({ key: f.id, label: f.label, default: !!f.default }));
     out.push({
       name, Z: Z[el] || 0, t: n.t, T: n.T, m: n.m || '',

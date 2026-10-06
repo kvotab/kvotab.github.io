@@ -14,6 +14,11 @@
                        system a run would solve, without solving it
                    {id, type: 'radon-plan', kind: 'radon' | 'thoron'}  (radon.js, ICRP 103)
                    {id, type: 'radon-job', job}   one job of the plan: its e, Sv per Bq
+                   each of them with `decay`: the decay data to use, '' (or
+                   none) for the system's own, 'ensdf:YYMMDD' for a release of
+                   ENSDF built into the site (resources/data/dose/ensdf/),
+                   'open:' and a key for one made in this browser from a
+                   release a visitor opened (decay-store.js)
   worker -> main   {id, type: 'progress', done, total, text}
                    {id, type: 'result', result}
                    {id, type: 'error', message}
@@ -28,23 +33,37 @@ import { coefficients103, AGES_103, TISSUES_103, W_103, W_REMAINDER_103, REMAIND
 import { catalog60, catalog103 } from './catalog.js';
 import { batemanTransformations, buildChain } from './chain.js';
 import { radonPlan, radonJob } from './radon.js';
+import { storeIO } from './decay-store.js';
 
-const io = fetchIO(new URL('../../data/dose/', import.meta.url));
+const DATA = new URL('../../data/dose/', import.meta.url);
+const io = fetchIO(DATA);
 const systems = {};
-const system = (s) => (systems[s] ||= loadSystem(s, io));
+function decayIO(decay) {
+  if (!decay) return null;
+  const m = /^ensdf:(\d{6})$/.exec(decay);
+  if (m) return fetchIO(new URL(`ensdf/${m[1]}/`, DATA));
+  const o = /^open:([\s\S]+)$/.exec(decay);
+  if (o) return storeIO(o[1]);
+  throw new Error(`unknown decay data: ${decay}`);
+}
+const system = (s, decay = '') => {
+  const k = `${s}|${decay || ''}`;
+  return (systems[k] ||= loadSystem(s, io, decayIO(decay)).catch((err) => { delete systems[k]; throw err; }));
+};
 
 self.onmessage = async (ev) => {
   const msg = ev.data;
   const reply = (o) => self.postMessage({ id: msg.id, ...o });
   try {
     if (msg.type === 'catalog') {
-      const data = await system(msg.system);
-      reply({ type: 'result', result: msg.system === '60' ? catalog60(data) : catalog103(data) });
+      const data = await system(msg.system, msg.decay);
+      const cat = msg.system === '60' ? catalog60(data) : catalog103(data);
+      reply({ type: 'result', result: { ...cat, decay: { label: data.decaySource.label, own: data.decaySource.own } } });
       return;
     }
     if (msg.type === 'run') {
       reply({ type: 'progress', done: 0, total: 1, text: 'loading data' });
-      const data = await system(msg.system);
+      const data = await system(msg.system, msg.decay);
       await data.prepare(msg.spec.nuclide);
       const ages = msg.ages || (msg.system === '60' ? AGES_60 : AGES_103);
       const out = [];
@@ -63,18 +82,18 @@ self.onmessage = async (ev) => {
       return;
     }
     if (msg.type === 'describe') {
-      const data = await system(msg.system);
+      const data = await system(msg.system, msg.decay);
       await data.prepare(msg.spec.nuclide);
       reply({ type: 'result', result: describe(msg.system, data, msg.spec, msg.age ?? 7300) });
       return;
     }
     if (msg.type === 'radon-plan') {
-      const data = await system('103');
+      const data = await system('103', msg.decay);
       reply({ type: 'result', result: { ...radonPlan(data, msg.kind, AGES_103, buildChain), inputs: data.radon } });
       return;
     }
     if (msg.type === 'radon-job') {
-      const data = await system('103');
+      const data = await system('103', msg.decay);
       reply({ type: 'result', result: await radonJob(data, msg.job, coefficients103, AGES_103) });
       return;
     }
@@ -105,8 +124,11 @@ function summarise(sys, data, r, withSystem, ms) {
 
 /* The chain, the models and the intake of an assembled system. */
 function systemSummary(sys, data, S) {
+  // A member's name in the decay data used, where it is not the system's (decay-names.js).
+  const otherName = (n) => { const o = data.decaySource.otherOf?.(n); return o && o !== n ? o : null; };
   return {
-    members: S.members.map((m, j) => ({ name: m.name, T: m.T, lambda: m.lambda, E: S.chain.members[j]?.E || null, kind: m.kind || (m.ownModel === false ? 'shared' : m.ownModel ? 'own model' : null), model: m.model || m.bio || null, of: m.of ?? null })),
+    decay: data.decaySource.label,
+    members: S.members.map((m, j) => ({ name: m.name, T: m.T, lambda: m.lambda, E: S.chain.members[j]?.E || null, kind: m.kind || (m.ownModel === false ? 'shared' : m.ownModel ? 'own model' : null), model: m.model || m.bio || null, of: m.of ?? null, other: otherName(m.name), decayNotes: data.decaySource.notesOf?.(m.name) || [] })),
     branches: S.chain.branches,
     dropped: S.chain.dropped,
     models: sys === '60' ? models60(data, S) : models103(data, S),

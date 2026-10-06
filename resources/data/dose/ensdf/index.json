@@ -1,0 +1,10 @@
+{
+ "releases": [
+  {
+   "id": "260901",
+   "label": "ENSDF 2026-09-01",
+   "release": "260901",
+   "nuclides": 1376
+  }
+ ]
+}

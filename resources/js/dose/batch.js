@@ -44,7 +44,10 @@ const textOf = (list, v) => list.find(([k]) => k === v)?.[1].replace(/ \(.*\)$/,
 /**
  * @param {object} ctx  from ui.js: {h, $, ask, stopRank, RANK, POOL_SIZE, sci, halfLife, AGE_LABEL,
  *   TISSUES: {60, 103} (the tissue lists of the Coefficients tab), SIZES: {60, 103} (aerosol sizes),
- *   catalog(system), system() (the settings' system), defaults() ({cutoff, rtol} of the settings),
+ *   catalog(system, decay), system() (the settings' system), decay() (the settings' decay data),
+ *   decayOptions(system, decay), decayLabel(decay, system), decayValid(decay) (ui.js's decay-data choices),
+ *   ensureDecay(decay) (made where it must be), showGet(id) (a release of NNDC's archive: where to get it),
+ *   defaults() ({cutoff, rtol} of the settings),
  *   saved (the stored settings of the tab), onSave(), onProgress(text|null), visible()}
  */
 export function setupBatch(ctx) {
@@ -53,6 +56,7 @@ export function setupBatch(ctx) {
   const side = ctx.defaults();
   const B = {
     system: saved.system === '60' || saved.system === '103' ? saved.system : ctx.system(),
+    decay: typeof saved.decay === 'string' && ctx.decayValid(saved.decay) ? saved.decay : ctx.decay(),
     route: ROUTES.some(([r]) => r === saved.route) ? saved.route : 'ingestion',
     text: typeof saved.text === 'string' ? saved.text : 'Cs-137, Sr-90, I-131',
     forms: saved.forms === 'default' ? 'default' : 'all',
@@ -68,7 +72,7 @@ export function setupBatch(ctx) {
     parsed: null,
   };
   const settings = () => ({
-    system: B.system, route: B.route, text: B.text, forms: B.forms, sizes: [...B.sizes], ages: [...B.ages],
+    system: B.system, decay: B.decay, route: B.route, text: B.text, forms: B.forms, sizes: [...B.sizes], ages: [...B.ages],
     cutoff: B.cutoff, rtol: B.rtol, shown: [...B.shown], layout: B.layout, digits: B.digits,
   });
 
@@ -114,7 +118,8 @@ export function setupBatch(ctx) {
     return { ...p, ages, sizes, rows, none, jobs: rows.length * ages.length };
   }
   const cutoffNow = () => (B.system === '103' ? B.cutoff : '1e-4'); // the ICRP 60 system cuts chains as DCAL did
-  const planKey = (p) => JSON.stringify([B.system, B.route, B.forms, p.found.map((n) => n.name), p.sizes, p.ages, cutoffNow(), B.rtol]);
+  const planKey = (p) => JSON.stringify([B.system, B.decay, B.route, B.forms, p.found.map((n) => n.name), p.sizes, p.ages, cutoffNow(), B.rtol]);
+  const decayWords = (R) => (R.decay ? `, decay data ${ctx.decayLabel(R.decay, R.system)}` : '');
 
   /* ---- the columns ------------------------------------------------------------------ */
   function columns(system, shown) {
@@ -150,6 +155,8 @@ export function setupBatch(ctx) {
         h('fieldset', {}, h('legend', {}, 'System'),
           h('div', { class: 'dc-seg', role: 'radiogroup', 'aria-label': 'System' },
             radio('dcBatchSystem', '60', 'ICRP 60', B.system === '60'), radio('dcBatchSystem', '103', 'ICRP 103', B.system === '103'))),
+        h('fieldset', {}, h('legend', {}, 'Decay data'),
+          h('select', { id: 'dcBatchDecay', 'aria-label': 'Decay data' }, ...ctx.decayOptions(B.system, B.decay))),
         h('fieldset', {}, h('legend', {}, 'Route'),
           h('div', { class: 'dc-seg', role: 'radiogroup', 'aria-label': 'Route' },
             ...ROUTES.map(([r, l]) => radio('dcBatchRoute', r, l, B.route === r, { disabled: B.system === '60' && r === 'injection' })))),
@@ -224,6 +231,15 @@ export function setupBatch(ctx) {
       buildForm();
       buildShow();
     } else if (t.name === 'dcBatchRoute') { B.route = t.value; $('dcBatchSizes').hidden = B.route !== 'inhalation'; }
+    else if (t.id === 'dcBatchDecay') {
+      if (t.value.startsWith('nndc:')) { const id = t.value.slice(5); t.value = B.decay; ctx.showGet(id); return; }
+      B.decay = ctx.decayValid(t.value) ? t.value : '';
+      B.parsed = null;
+      ctx.onSave();
+      // A release opened in this browser is made first, where it must be.
+      ctx.ensureDecay(B.decay).then(refresh, (err) => { $('dcBatchParsed').textContent = `The decay data could not be made: ${err.message}`; });
+      return;
+    }
     else if (t.name === 'dcBatchForms') B.forms = t.value;
     else if (t.name === 'dcBatchSize') { if (t.checked) B.sizes.add(t.value); else B.sizes.delete(t.value); }
     else if (t.name === 'dcBatchAge') { const a = Number(t.value); if (t.checked) B.ages.add(a); else B.ages.delete(a); }
@@ -246,7 +262,7 @@ export function setupBatch(ctx) {
   }
   async function pick() {
     let cat;
-    try { cat = await ctx.catalog(B.system); } catch (err) { $('dcBatchParsed').textContent = `The list of radionuclides did not load: ${err.message}`; return; }
+    try { cat = await ctx.catalog(B.system, B.decay); } catch (err) { $('dcBatchParsed').textContent = `The list of radionuclides did not load: ${err.message}`; return; }
     const p = parse(B.text, cat);
     openPicker({
       h, halfLife, nuclides: cat.nuclides, system: B.system, route: B.route, chosen: p.found.map((n) => n.name), left: p.unknown,
@@ -263,7 +279,7 @@ export function setupBatch(ctx) {
   /** The parsed nuclides and the count of calculations, for the settings as they are. */
   async function refresh() {
     let cat;
-    try { cat = await ctx.catalog(B.system); } catch (err) { $('dcBatchParsed').textContent = `The list of radionuclides did not load: ${err.message}`; return; }
+    try { cat = await ctx.catalog(B.system, B.decay); } catch (err) { $('dcBatchParsed').textContent = `The list of radionuclides did not load: ${err.message}`; return; }
     if (!B.built) return;
     const p = plan(cat);
     B.parsed = p;
@@ -271,7 +287,7 @@ export function setupBatch(ctx) {
     const parts = [];
     if (names.length) parts.push(`${names.length} ${names.length === 1 ? 'radionuclide' : 'radionuclides'}: ${names.slice(0, 24).join(', ')}${names.length > 24 ? ` and ${names.length - 24} more` : ''}.`);
     for (const [el, k] of p.elements) parts.push(`${el}: all ${k} of its nuclides.`);
-    if (p.unknown.length) parts.push(`Not in the ICRP ${B.system} system: ${p.unknown.slice(0, 12).join(', ')}${p.unknown.length > 12 ? '…' : ''}.`);
+    if (p.unknown.length) parts.push(`Not in the ICRP ${B.system} system${B.decay ? ` with ${ctx.decayLabel(B.decay, B.system)}` : ''}: ${p.unknown.slice(0, 12).join(', ')}${p.unknown.length > 12 ? '…' : ''}.`);
     if (p.none.length) parts.push(`No ${B.route} in this system for ${p.none.join(', ')}.`);
     $('dcBatchParsed').textContent = parts.join(' ') || 'Type or paste the radionuclides, or choose them from the list.';
     const what = B.route === 'inhalation' ? 'radionuclide, form and aerosol size' : 'radionuclide and form';
@@ -296,11 +312,12 @@ export function setupBatch(ctx) {
   }
   async function run() {
     if (B.run?.running) return;
-    const cat = await ctx.catalog(B.system);
+    try { await ctx.ensureDecay(B.decay); } catch (err) { $('dcBatchParsed').textContent = `The decay data could not be made: ${err.message}`; return; }
+    const cat = await ctx.catalog(B.system, B.decay);
     const p = plan(cat);
     if (!p.jobs) { refresh(); return; }
     const R = {
-      system: B.system, route: B.route, forms: B.forms, ages: p.ages, sizes: p.sizes, rows: p.rows, nuclides: p.found.length,
+      system: B.system, decay: B.decay, route: B.route, forms: B.forms, ages: p.ages, sizes: p.sizes, rows: p.rows, nuclides: p.found.length,
       cutoff: Number(cutoffNow()), rtol: Number(B.rtol), cutoffText: textOf(CUTOFFS, cutoffNow()), rtolText: textOf(RTOLS, B.rtol), key: planKey(p),
       total: p.jobs, done: 0, failed: 0, when: new Date(), t0: performance.now(), ms: 0, running: true, stopped: false,
     };
@@ -313,7 +330,7 @@ export function setupBatch(ctx) {
     for (const row of R.rows) {
       const spec = { nuclide: row.nuclide.name, route: R.route, ...row.form.spec, cutoff: R.cutoff, ...(row.size != null ? { amad: Number(row.size) } : {}) };
       for (const age of R.ages) {
-        tasks.push(ask({ type: 'run', system: R.system, spec, ages: [age], rtol: R.rtol, withSystem: false, lean: true }, null, RANK.batch)
+        tasks.push(ask({ type: 'run', system: R.system, decay: R.decay, spec, ages: [age], rtol: R.rtol, withSystem: false, lean: true }, null, RANK.batch)
           .then(([o]) => { row.out[age] = o; R.done++; }, (err) => {
             if (err.message === 'stopped') return;
             row.error ||= err.message;
@@ -421,7 +438,7 @@ export function setupBatch(ctx) {
   function caption(R) {
     const forms = R.forms === 'all' ? 'all their forms' : 'the default form of each';
     const sizes = R.route === 'inhalation' ? `, ${R.sizes.map((s) => sizeLabel(R.system, s)).join(', ')}` : '';
-    return `ICRP ${R.system} system, ${R.route}: ${R.nuclides} ${R.nuclides === 1 ? 'radionuclide' : 'radionuclides'}, ${forms}${sizes}; `
+    return `ICRP ${R.system} system${decayWords(R)}, ${R.route}: ${R.nuclides} ${R.nuclides === 1 ? 'radionuclide' : 'radionuclides'}, ${forms}${sizes}; `
       + `${R.ages.length} ${R.ages.length === 1 ? 'age' : 'ages'} at intake; ${R.system === '103' ? `decay chain cut-off ${R.cutoffText}, ` : ''}tolerance ${R.rtolText}. Sv per Bq.`;
   }
   // The settings above, changed since the table was calculated.
@@ -439,7 +456,7 @@ export function setupBatch(ctx) {
     const lead = ['System', 'Route', ...header(R, B.layout)];
     const units = B.layout === 'ages' ? cols.flatMap((c) => R.ages.map((a) => `${c.label}, ${AGE_LABEL[a]} (Sv/Bq)`)) : cols.map((c) => `${c.label} (Sv/Bq)`);
     const rows = tableRows(R, cols, B.layout).map((r) => [
-      `ICRP ${R.system}`, R.route, r.nuclide.name, r.nuclide.T ? halfLife(r.nuclide.T) : '', r.form.label,
+      `ICRP ${R.system}${R.decay ? ` (decay data ${ctx.decayLabel(R.decay, R.system)})` : ''}`, R.route, r.nuclide.name, r.nuclide.T ? halfLife(r.nuclide.T) : '', r.form.label,
       ...(R.route === 'inhalation' ? [sizeLabel(R.system, r.size)] : []),
       ...(B.layout === 'rows' ? [AGE_LABEL[r.age]] : []),
       ...r.cells.map((v) => (v != null && Number.isFinite(v) ? v : null)),
@@ -447,7 +464,7 @@ export function setupBatch(ctx) {
     ]);
     return { head: [...lead, ...units, 'Note'], rows, lead };
   }
-  const fileName = (R, ext) => `dose-batch-icrp${R.system}-${R.route}.${ext}`;
+  const fileName = (R, ext) => `dose-batch-icrp${R.system}${R.decay ? `-${R.decay.replace(/\W+/g, '')}` : ''}-${R.route}.${ext}`;
   function download(blob, name) {
     const a = h('a', { href: URL.createObjectURL(blob), download: name });
     document.body.append(a);
@@ -502,6 +519,8 @@ export function setupBatch(ctx) {
       ['Calculated', `${R.when.toISOString().slice(0, 16).replace('T', ' ')} UTC, in a web browser, by https://kvotab.se/dose_coefficients.html`],
       ['System', R.system === '60' ? 'ICRP 60: the models of Publications 56–71 and the dosimetry of Publication 60, as DCAL holds them (the coefficients of Publication 72)'
         : 'ICRP 103: Publication 158 and the consultation drafts of its Parts 2 and 3, with the specific absorbed fractions of Publications 133 and 155'],
+      ['Decay data', R.decay ? `${ctx.decayLabel(R.decay, R.system)}, made on this site from the decay data sets of that release of ENSDF (the page's Help: Decay data)`
+        : `${ctx.decayLabel('', R.system)}, the system's own`],
       ['Route', R.route],
       ['Forms', R.forms === 'all' ? 'all forms of each radionuclide' : 'the default form of each radionuclide'],
       ...(R.route === 'inhalation' ? [['Aerosol sizes', R.sizes.map((s) => sizeLabel(R.system, s)).join(', ')]] : []),
@@ -527,6 +546,18 @@ export function setupBatch(ctx) {
       renderTable();
     },
     refresh() { if (B.built) refresh(); },
+    /** The releases at hand have changed: the menu again. */
+    refreshDecay() {
+      if (!ctx.decayValid(B.decay)) { B.decay = ''; B.parsed = null; }
+      if (B.built && $('dcBatchDecay')) { $('dcBatchDecay').replaceChildren(...ctx.decayOptions(B.system, B.decay)); $('dcBatchDecay').value = B.decay; }
+    },
+    /** A release forgotten: back to the system's own decay data if it was the tab's. */
+    forgetDecay(decay) {
+      if (B.decay !== decay) return;
+      B.decay = '';
+      B.parsed = null;
+      if (B.built) { $('dcBatchDecay').value = ''; refresh(); }
+    },
     saveCsv, saveExcel, run, stop,
     get running() { return !!B.run?.running; },
   };
