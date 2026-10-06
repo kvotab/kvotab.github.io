@@ -84,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-138 checks: the built-in release loads; the tab icon (drawn by
+140 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -116,12 +116,15 @@ of circles, the Inventory tab fills the start's circle to the brim (and says
 circles), a row rings its circle, leaving the tab empties them, and the
 layout is kept through a reload and back to the grid, where the drawing stands
 on the chart's own background inside the view's padding while a series takes
-the view's colour and runs to its edges; the chain zooms in and out a quarter
+the view's colour and runs to its edges; a chain opens with the whole of it
+in view, at the scale ⤢ gives, and stays whole as the view narrows; the chain
+zooms in and out a quarter
 a step from the buttons on its bar, ⤢ shows all of it in the view, + − and 0
 do the same from the page, a pinch (the wheel with Ctrl) zooms about the
 pointer with the box under it staying put and the wheel alone does not zoom,
 the SVG and PNG come out at the drawing's own size however it is zoomed, a
-click on a box keeps the zoom and a new chain opens fitted to the width;
+click on a box keeps the zoom, and so does a view that changes size, and a
+new chain opens whole again;
 the chain settings are there in the chart view as well; the six
 panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
 the panel's row of tabs ends at the same line as the main area's, whether
@@ -143,8 +146,9 @@ chain set to parents the view tab says "Parents of 226Ra", the chart rings
 230Th, 234U and 238U and draws an arrow into 226Ra from each direct parent,
 the setting is kept, and the Nuclide tab carries no chain card of its own;
 the drawing has
-230Th, 234U, 238U, 226Ac and 226Fr but not 226Th, no label on a box, opens on
-226Ra at its foot, and the table and the tooltips give each member's share
+230Th, 234U, 238U, 226Ac and 226Fr but not 226Th, no label on a box, opens
+with the whole of it in view and 226Ra in its lower half, and the table and
+the tooltips give each member's share
 of its decays that reaches 226Ra (226Ac 17 %); at 1 y 238U goes to 234U via
 234Th and 234mPa and the note names what was left out, nearest first; a box
 opens its member without moving the start; the parents save as

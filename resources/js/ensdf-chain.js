@@ -820,9 +820,8 @@
    * @param {string} [opt.selected] - node key to ring as the one the panel shows
    * @param {function(Object)} [opt.onPick] - a box was clicked
    * @param {function(Object|null, MouseEvent)} [opt.onHover]
-   * @returns {{width: number, height: number, root: Object|null, focus: Object|null}}
-   *   root is the box of the start, focus the box around it and its daughters
-   *   -- or, going up, its parents
+   * @returns {{width: number, height: number, root: Object|null}} root is
+   *   the box of the start
    */
   function render(svg, chain, opt = {}) {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -932,19 +931,8 @@
         if (opt.onHover) opt.onHover(null, ev);
       });
     }
-    /* The start and where its own decays go -- or, going up, the parents
-       it comes from: what the view should open on. */
     const rb = L.boxes.get(chain.root.key);
-    let focus = rb ? { ...rb } : null;
-    if (focus) {
-      for (const e of chain.up ? chain.root.in : chain.root.out) {
-        const b = L.boxes.get((chain.up ? e.from : e.to).key);
-        if (!b) continue;
-        const x0 = Math.min(focus.x, b.x), y0 = Math.min(focus.y, b.y);
-        focus = { x: x0, y: y0, w: Math.max(focus.x + focus.w, b.x + b.w) - x0, h: Math.max(focus.y + focus.h, b.y + b.h) - y0 };
-      }
-    }
-    return { width: L.width, height: L.height, root: rb ? { ...rb } : null, focus };
+    return { width: L.width, height: L.height, root: rb ? { ...rb } : null };
   }
 
   /* A state in the grid: a box in its half-life's colour, the name over the half-life. */

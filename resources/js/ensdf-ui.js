@@ -828,47 +828,29 @@
     renderChainTable(ch);
   }
 
-  /* The drawing shrinks to the width it has, down to 70 %; below that it
-     scrolls -- unless the reader has zoomed it (zoomChain()), and then it
-     keeps that scale while the same chain is drawn again: a box clicked,
-     the theme switched, the window resized. Another start, the other way or
-     the other layout is fitted to the width again. */
+  /* A chain opens with the whole of it in view, as ⤢ shows it, and stays
+     so as the view changes size -- until the reader zooms it (zoomChain()),
+     and then it keeps that scale while the same chain is drawn again: a box
+     clicked, the theme switched, the window resized. Another start, the
+     other way or the other layout opens whole again. */
   let fittedFor = '';
-  let chainScale = null;   // the scale zoomed to, or null while fitted to the width
+  let chainScale = null;   // the scale zoomed to, or null while the whole chain is in view
   function fitChain(size, ch) {
     const svg = $('nzChainSvg');
-    const box = document.querySelector('.nz-chain-scroll');
-    /* The room is the drawing's own box: inside the scroll box's padding,
-       or, for a series, out to its edges. */
     const draw = svg.parentElement;
-    const room = draw.clientWidth - 2;
-    if (!size || !(room > 0)) return;
+    if (!size || !(draw.clientWidth > 2)) return;
     const sig = ch ? `${ch.up ? 'up' : 'down'}|${ch.root.key}|${state.chainOpt.style}` : '';
     const fresh = !!(size.root && ch && sig !== fittedFor);
     if (fresh) chainScale = null;
-    const scale = chainScale || Math.max(0.7, Math.min(1.25, room / size.width));
+    const scale = chainScale || wholeChainScale(size);
     svg.setAttribute('width', Math.round(size.width * scale));
     svg.setAttribute('height', Math.round(size.height * scale));
-    /* Only for a chain that is new -- another start, the other way or the
-       other drawing -- not each time a box in it is clicked: a chain wider
-       than the view opens scrolled to where it starts -- usually its top
-       right, the heaviest member -- with as much of where that decays to
-       beside it as fits; going up, with the parents it comes from, which
-       stand on both sides of it. Going up, the start stands at the foot of
-       the drawing, so a chain taller than the view opens scrolled down to it
-       and its parents; going down, it opens at the top, where the start is. */
+    /* A chain that is new -- not each time a box in it is clicked -- opens
+       from its top left. */
     if (!fresh) return;
     fittedFor = sig;
-    const f = size.focus || size.root;
-    if (size.width * scale > draw.clientWidth) {
-      const right = (f.x + f.w) * scale + 24;
-      const left = Math.max(0, (ch.up ? f.x : size.root.x) * scale - 24);
-      draw.scrollLeft = Math.min(left, Math.max(0, right - draw.clientWidth));
-    }
-    if (ch.up) {
-      const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-      box.scrollTop = Math.max(0, Math.min(top + f.y * scale - 12, top + (f.y + f.h) * scale + 24 - box.clientHeight));
-    } else box.scrollTop = 0;
+    draw.scrollLeft = 0;
+    document.querySelector('.nz-chain-scroll').scrollTop = 0;
   }
 
   /* Zooming the chain, as the chart zooms: by the buttons on the chain's
@@ -879,15 +861,20 @@
   const CHAIN_ZOOM = 1.25;
   const CHAIN_MAX = 4;
 
-  /* The scale at which the whole drawing is in view, at most the 125 % a
-     small chain is fitted to. */
-  function wholeChainScale() {
+  /* The scale at which the whole drawing -- of `size`, or as drawn -- is in
+     view, at most 125 %, where a small chain would be larger. The room is
+     the drawing's own box across (inside the scroll box's padding, or, for a
+     series, out to its edges) and the view under its top down. */
+  function wholeChainScale(size) {
     const svg = $('nzChainSvg');
-    const vb = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
-    if (vb.length !== 4) return 1;
+    if (!size) {
+      const vb = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
+      if (vb.length !== 4) return 1;
+      size = { width: vb[2], height: vb[3] };
+    }
     const box = document.querySelector('.nz-chain-scroll');
     const top = svg.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-    return Math.max(0.01, Math.min(1.25, (svg.parentElement.clientWidth - 2) / vb[2], (box.clientHeight - top - 2) / vb[3]));
+    return Math.max(0.01, Math.min(1.25, (svg.parentElement.clientWidth - 2) / size.width, (box.clientHeight - top - 2) / size.height));
   }
 
   function setChainScale(scale) {
@@ -925,11 +912,13 @@
     box.scrollTop = top + v * now - (y - b.top);
   }
 
-  /* The whole chain in view, from its top left. */
+  /* The whole chain in view, from its top left, as it opened: it follows
+     the view's size again until the next zoom. */
   function showWholeChain() {
     const svg = $('nzChainSvg');
     if (!svg.firstChild || state.view !== 'chain') return;
     setChainScale(wholeChainScale());
+    chainScale = null;
     svg.parentElement.scrollLeft = 0;
     document.querySelector('.nz-chain-scroll').scrollTop = 0;
   }

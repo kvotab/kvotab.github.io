@@ -435,8 +435,12 @@ async def main():
           const vbw = () => +svg.getAttribute('viewBox').split(' ')[2];
           const w = () => +svg.getAttribute('width');
           const click = (a) => document.querySelector(`[data-on-click="${a}"]`).click();
-          const out = { fit: w() / vbw() };
-          let s = w(); click('nz:chainZoomIn'); out.in = w() / s;
+          /* The whole drawing in view: across in its own box, down in the view's. */
+          const inView = () => { const r = svg.getBoundingClientRect(), b = box.getBoundingClientRect(), d = draw.getBoundingClientRect();
+            return r.left >= d.left - 1 && r.right <= d.right + 1 && r.top >= b.top - 1 && r.bottom <= b.bottom + 1; };
+          const out = { opens: inView() };
+          let s = w(); click('nz:chainWhole'); out.asWhole = w() === s;
+          s = w(); click('nz:chainZoomIn'); out.in = w() / s;
           s = w(); click('nz:chainZoomOut'); click('nz:chainZoomOut'); out.out = w() / s;
           click('nz:chainWhole');
           const r = svg.getBoundingClientRect(), b = box.getBoundingClientRect();
@@ -467,16 +471,26 @@ async def main():
           svg.querySelector('.nz-node[data-key="86,222,0"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(250);
           out.kept = [w() === zoomed, ENSDFPage.state.root.a];
           ENSDFPage.select('Th-232'); await sleep(300);
-          out.fresh = w() / vbw();
+          out.fresh = inView(); s = w(); click('nz:chainWhole'); out.freshWhole = w() === s;
+          /* Not zoomed, it stays whole as the view narrows; zoomed, it keeps its scale. */
+          const nz = document.getElementById('nz');
+          s = w(); nz.style.setProperty('--nz-panel-width', '900px'); await sleep(300);
+          out.follows = [w() < s, inView()];
+          click('nz:chainZoomIn'); s = w(); nz.style.removeProperty('--nz-panel-width'); await sleep(300);
+          out.keeps = w() === s;
+          click('nz:chainWhole');
           return JSON.stringify(out); })()"""))
+        check('a chain opens with the whole of it in view, at the scale ⤢ gives', (zoom['opens'], zoom['asWhole']), (True, True))
         check('the chain zooms in and out by a quarter a step, from the buttons on its bar', (round(zoom['in'], 2), round(zoom['out'], 2)), (1.25, 0.64))
         check('... ⤢ shows the whole chain in the view', zoom['whole'], [True, True, True, True])
         check('... + and − zoom and 0 shows the whole chain, from the page as on the chart', (round(zoom['plus'], 2), round(zoom['minus'], 2), zoom['zero']), (1.25, 0.8, True))
         check('... a pinch (the wheel with Ctrl) zooms about the pointer, the box under it staying put; the wheel alone does not zoom',
               (zoom['pinch'], zoom['plain']), ([1.49, True, True], True))
         check('... the SVG and the PNG are at the drawing’s own size, however it is zoomed', zoom['files'], [True, True])
-        check('... a click on a box keeps the zoom and the start; a new chain opens fitted to the width again',
-              (zoom['kept'], 0.7 <= zoom['fresh'] <= 1.25), ([True, 238], True))
+        check('... a click on a box keeps the zoom and the start; a new chain opens whole again',
+              (zoom['kept'], zoom['fresh'], zoom['freshWhole']), ([True, 238], True, True))
+        check('... not zoomed, the chain stays whole as the view narrows; zoomed, it keeps its scale as the view widens',
+              (zoom['follows'], zoom['keeps']), ([True, True], True))
 
         # ---------------------------------------------------------- the tabs
         await page.ev("document.querySelector('[data-view=chart]').click(); ENSDFPage.select('Co-60'); 'ok'")
@@ -670,17 +684,18 @@ async def main():
           const boxes = nodes.map(g => g.querySelector('rect').getBoundingClientRect());
           const labels = [...svg.querySelectorAll('.nz-edge-label rect')].map(r => r.getBoundingClientRect());
           const hit = (p, q) => p.left < q.right - 1 && p.right > q.left + 1 && p.top < q.bottom - 1 && p.bottom > q.top + 1;
-          const view = document.querySelector('.nz-chain-scroll').getBoundingClientRect();
-          const ra = svg.querySelector('.nz-node[data-key="88,226,0"] rect').getBoundingClientRect();
+          const view = document.querySelector('.nz-chain-scroll').getBoundingClientRect(), across = svg.parentElement.getBoundingClientRect();
+          const ra = svg.querySelector('.nz-node[data-key="88,226,0"] rect').getBoundingClientRect(), all = svg.getBoundingClientRect();
           const cells = (z, a, k) => { const l = document.querySelector(`#nzChainTable a[data-z="${z}"][data-a="${a}"][data-k="${k}"]`); return l ? [...l.closest('tr').children].map(td => td.textContent) : null; };
           return JSON.stringify({ keys: nodes.map(g => g.dataset.key), covered: labels.filter(l => boxes.some(b => hit(l, b))).length,
-            raInView: ra.top >= view.top - 1 && ra.bottom <= view.bottom + 1,
+            raInView: ra.top >= view.top - 1 && ra.bottom <= view.bottom + 1 && ra.bottom > (all.top + all.bottom) / 2,
+            whole: all.left >= across.left - 1 && all.right <= across.right + 1 && all.top >= view.top - 1 && all.bottom <= view.bottom + 1,
             head: [...document.querySelectorAll('#nzChainTable th')].map(th => th.textContent), ac: cells(89, 226, 0), u: cells(92, 238, 0),
             title: svg.querySelector('.nz-node[data-key="92,238,0"] title').textContent,
             note: document.getElementById('nzChainNote').textContent }); })()"""))
         check('the parents of 226Ra are drawn: 230Th, 234U, 238U, 226Ac and 226Fr', all(k in pv['keys'] for k in ('90,230,0', '92,234,0', '92,238,0', '89,226,0', '87,226,0')), True)
         check('... but not 226Th, where 226Ac\'s other branch goes, which never reaches 226Ra', '90,226,0' in pv['keys'], False)
-        check('... no label on a box, and the view opens on 226Ra, at the foot of the drawing', (pv['covered'], pv['raInView']), (0, True))
+        check('... no label on a box, and the view opens with the whole drawing in it, 226Ra in its lower half', (pv['covered'], pv['whole'], pv['raInView']), (0, True, True))
         check('the table gives the share of each member\'s decays that reaches 226Ra', (pv['head'][2], pv['head'][3], pv['ac'][3], pv['u'][3]),
               ('Decays toward 226Ra by', 'Reaches 226Ra (% of its decays)', '17 %', '100 %'))
         check('... and so does a box\'s tooltip', pv['title'], lambda t: t.startswith('238U: T½ 4.468E9 y') and t.endswith('100 % of its decays reach 226Ra.'))
