@@ -154,6 +154,7 @@ export function assemble60(data, spec) {
   if (route === 'inhalation' && !lung) throw new Error(`no respiratory tract model ${lungName}`);
   const inhaledType = lung && /^ICRP66[FMS]$/.test(lungName) ? spec.type : null;
   const parentF1 = f1FileName(models, parentEl, route, parentBio, inhaledType, spec.f1file);
+  if (parentF1 && !models.f1[parentF1]) throw new Error(`no f1 file ${parentF1}.GF1`);
   // ICRP 72's actinium and protactinium are ICRP 30's, with ICRP 30's shared
   // kinetics for their progeny; DCAL's batch files run them independently
   // with FGR 13's updated models.

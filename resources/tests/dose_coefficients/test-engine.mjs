@@ -148,6 +148,17 @@ const d60 = await loadSystem('60', io);
   const c60 = catalog60(d60), c103 = catalog103(d103);
   check(`catalogue ICRP 60: ${c60.nuclides.length} nuclides of ICRP 72`, c60.nuclides.length > 700);
   check(`catalogue ICRP 103: ${c103.nuclides.length} nuclides of ${c103.elements.length} elements`, c103.elements.length >= 91);
+  // FGR13ING.INP runs Pu-238 twice more at its head, once with an f1 file of
+  // DCAL's library for workers (gen-dose-icrp60.mjs, keepCases).
+  const twice = c60.nuclides.flatMap((n) => ['ingestion', 'inhalation'].flatMap((r) => n[r].filter((f, i, all) => all.findIndex((g) => g.key === f.key) < i).map((f) => `${n.name} ${r} ${f.key}`)));
+  check('catalogue ICRP 60: no nuclide lists a form twice', !twice.length, twice.join(', '));
+  const lacking = ['ingestion', 'inhalation'].flatMap((r) => d60.cases[r].filter((c) => (c.bio && !d60.models.systemic[c.bio]) || (c.f1 && !d60.models.f1[c.f1]) || (c.lung && !d60.models.lung[c.lung])).map((c) => `${r} ${c.nuclide}`));
+  check('cases ICRP 60: every model, f1 and lung file a case names is in the library', !lacking.length, lacking.join(', '));
+  const pu = c60.nuclides.find((n) => n.name === 'Pu-238');
+  check('catalogue ICRP 60: Pu-238 by ingestion once, f1 5E-4 (ICRP 72; FGR 13 Table 2.2a)', pu.ingestion.length === 1 && pu.ingestion[0].f1 === 5e-4, pu.ingestion.map((f) => f.label).join(', '));
+  let threw = '';
+  try { coefficients60(d60, recipe60(d60.cases, 'ingestion', { nuclide: 'Pu-238', bio: null, f1file: 'PU_2' }), [7300]); } catch (e) { threw = e.message; }
+  check('ICRP 60: an f1 file not in the library is an error, not f1 = 0', /no f1 file PU_2\.GF1/.test(threw), threw);
   const th = buildChain(d103.index, 'Th-232', { cutoff: 0 });
   check('Th-232 chain (ICRP 107) runs through Ra-228, Ac-228, Th-228, Ra-224, Rn-220 to Pb-212', ['Ra-228', 'Ac-228', 'Th-228', 'Ra-224', 'Rn-220', 'Pb-212'].every((n) => th.members.some((m) => m.name === n)));
   const cs = buildChain(d103.index, 'Cs-137', { cutoff: 1e-4 });

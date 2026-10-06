@@ -399,6 +399,7 @@ function buildModels() {
     intakeAges: read(DAT, 'mis', 'IntakExp.AGE').split('\n').slice(2).map((s) => Number(s.trim())).filter((x) => x > 0),
   });
   console.log(`models: ${Object.keys(systemic).length} systemic models, ${Object.keys(f1).length} f1 files, ${Object.keys(lung).length} respiratory models, ${(bytes / 1e3).toFixed(0)} kB`);
+  return { systemic, f1, lung };
 }
 
 /* ==========================================================================
@@ -436,14 +437,32 @@ function readCases(file) {
   return out;
 }
 
-function buildCases() {
-  const ingestion = readCases('FGR13ING.INP');
-  const inhalation = readCases('FGR13INH.INP');
+/* Two Pu-238 lines at the head of FGR13ING.INP, after Be-10, are no cases of
+   FGR 13. One names Pu_2.GF1, the ICRP 68 f1 of 1E-4 for workers' intakes of
+   plutonium nitrates, which is in DCAL's library for workers (DAT/BIO/I68)
+   and not in the FGR-13 library the batch ran with (ini/DCALMENU.INI); the
+   other repeats the Pu-238 case among the actinides. FGR 13 (Table 2.2a) and
+   ICRP 72 give ingested Pu-238 once, with f1 5E-4. So a case naming a file
+   the library does not have is left out, and so is a case run again later. */
+function keepCases(file, cases, library) {
+  const same = (c) => [c.nuclide, c.last, c.kinetics, c.bio, c.f1, c.adultAge, c.type, c.amad, c.lung].join('|');
+  const last = new Map(cases.map((c, i) => [same(c), i]));
+  return cases.filter((c, i) => {
+    const missing = [[c.bio, library.systemic, 'DEF'], [c.f1, library.f1, 'GF1'], [c.lung, library.lung, 'LNG']]
+      .filter(([name, files]) => name && !files[name]).map(([name, , ext]) => `${name}.${ext}`);
+    const why = missing.length ? `no ${missing.join(', ')} in the library` : last.get(same(c)) !== i ? 'run again later' : null;
+    if (why) console.log(`${file}: ${c.nuclide} left out, ${why}`);
+    return !why;
+  });
+}
+
+function buildCases(library) {
+  const ingestion = keepCases('FGR13ING.INP', readCases('FGR13ING.INP'), library);
+  const inhalation = keepCases('FGR13INH.INP', readCases('FGR13INH.INP'), library);
   const bytes = write('cases.json', { source: 'DCAL batch input files of Federal Guidance Report 13 (wrk/fgr13/FGR13ING.INP, FGR13INH.INP)', ingestion, inhalation });
   console.log(`cases: ${ingestion.length} ingestion, ${inhalation.length} inhalation, ${(bytes / 1e3).toFixed(0)} kB`);
 }
 
 buildDecay();
 buildSaf();
-buildModels();
-buildCases();
+buildCases(buildModels());
