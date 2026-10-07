@@ -12,8 +12,13 @@
               transcribed here, with the element's inhaled and ingested forms
               and direct uptake to blood; with other decay data (data.js),
               every state of theirs that has a decay mode they follow
+
+  and in both, external exposure (external.js) for every radionuclide of the
+  decay data, in its geometries, which need no model of the body: a nuclide
+  without one has that route only.
 */
 import { parentModelName, f1FileName, f1Table } from './model60.js';
+import { externalForms } from './external.js';
 
 const elementOf = (name) => /^([A-Z][a-z]?)-/.exec(name)[1];
 const massOf = (name) => Number(/-(\d+)/.exec(name)[1]);
@@ -39,11 +44,14 @@ const GAS_60 = {
   IMETHYL: 'Methyl iodide', HGVAPOR: 'Mercury vapour',
 };
 
+const radioactive = (n) => !!(n && n.m && n.T > 0);
+
 export function catalog60(data) {
   const { cases, models, index } = data;
   const byName = new Map();
+  const external = externalForms('60');
   const entry = (name) => {
-    if (!byName.has(name)) byName.set(name, { name, Z: Z[elementOf(name)] || 0, t: index[name]?.t || null, T: index[name]?.T ?? null, m: index[name]?.m || '', ingestion: [], inhalation: [] });
+    if (!byName.has(name)) byName.set(name, { name, Z: Z[elementOf(name)] || 0, t: index[name]?.t || null, T: index[name]?.T ?? null, m: index[name]?.m || '', ingestion: [], inhalation: [], external });
     return byName.get(name);
   };
   for (const c of cases.ingestion) {
@@ -73,27 +81,32 @@ export function catalog60(data) {
     const label = `${what}${f1 != null ? `, f1 = ${fmt(f1)}` : ''}`;
     e.inhalation.push({ key: `${c.type}|${c.bio || ''}|${c.f1 || ''}|${c.lung || ''}`, label, spec: { type: c.type, bio: c.bio || null, f1file: c.f1 || null, lung: c.lung || null } });
   }
+  // Every other radionuclide of the decay data, for external exposure.
+  for (const [name, n] of Object.entries(index)) if (radioactive(n)) entry(name);
   return { system: '60', nuclides: [...byName.values()].sort(sortNuclides) };
 }
 
 export function catalog103(data) {
   const { elements, index } = data;
   const out = [];
+  const external = externalForms('103');
   for (const [name, n] of Object.entries(index)) {
+    if (!radioactive(n)) continue;
     const el = elementOf(name);
-    const E = elements[el];
-    if (!E || !(n.T >= 10 / 1440) || !n.m) continue;
+    // Intakes: a model of the element, and a half-life of 10 minutes or more.
+    const E = n.T >= 10 / 1440 ? elements[el] : null;
     const forms = (list) => list.map((f) => ({ key: f.id, label: f.label, default: !!f.default }));
     out.push({
       name, Z: Z[el] || 0, t: n.t, T: n.T, m: n.m || '',
-      ingestion: (E.ingestion || []).map((f) => ({ key: f.id, label: `${f.label} (adult fA ${fmt(f.fA[5])})`, spec: { form: f.id } })),
-      inhalation: [
+      ingestion: E ? (E.ingestion || []).map((f) => ({ key: f.id, label: `${f.label} (adult fA ${fmt(f.fA[5])})`, spec: { form: f.id } })) : [],
+      inhalation: E ? [
         ...forms(E.inhalation?.particulate || []).map((f) => ({ ...f, spec: { form: f.key }, aerosol: true })),
         ...forms(E.inhalation?.gases || []).map((f) => ({ ...f, spec: { form: f.key }, aerosol: false })),
-      ],
+      ] : [],
       // Direct uptake to blood, which the annex of Publication 158 gives too
       // (not for radon, whose model starts in the lungs or the stomach).
-      injection: el === 'Rn' ? [] : [{ key: 'blood', label: 'Into blood (injection; wounds and skin with rapid uptake)', spec: {} }],
+      injection: E && el !== 'Rn' ? [{ key: 'blood', label: 'Into blood (injection; wounds and skin with rapid uptake)', spec: {} }] : [],
+      external,
     });
   }
   return { system: '103', nuclides: out.sort(sortNuclides), elements: Object.keys(elements) };

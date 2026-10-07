@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <title>Dose Coefficients — kvot ab</title>
-  <meta name="description" content="Committed equivalent and effective dose coefficients for members of the public, by age at intake, for ingestion and inhalation of radionuclides, calculated in your browser with the ICRP's own models: the ICRP 60 system of Publications 56–72 (the values compiled in Publication 119) or the ICRP 103 system of Publication 158 and its Parts 2 and 3.">
+  <meta name="description" content="Committed equivalent and effective dose coefficients for members of the public, by age at intake, for ingestion and inhalation of radionuclides, calculated in your browser with the ICRP's own models: the ICRP 60 system of Publications 56–72 (the values compiled in Publication 119) or the ICRP 103 system of Publication 158 and its Parts 2 and 3; and dose rate coefficients for external exposure to radionuclides in air, water and soil, as Federal Guidance Reports 12 and 15 calculate them.">
   <link rel="canonical" href="https://kvotab.se/dose_coefficients.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261006c">
+  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261007">
   <!-- The page's own mark: the four letters of the ICRP's logotype in the kvot
        mark's language (see dose-icon.svg). SVG first, since it stays sharp on
        a high-density screen; the PNG is for anything that will not take one. -->
@@ -93,10 +93,11 @@
                   <label><input type="radio" name="dcRoute" value="ingestion" checked data-on-change="dc:routeChanged"><span>Ingestion</span></label>
                   <label><input type="radio" name="dcRoute" value="inhalation" data-on-change="dc:routeChanged"><span>Inhalation</span></label>
                   <label><input type="radio" name="dcRoute" value="injection" data-on-change="dc:routeChanged"><span>Injection</span></label>
+                  <label><input type="radio" name="dcRoute" value="external" data-on-change="dc:routeChanged"><span>External</span></label>
                 </div>
               </div>
               <div class="dc-row">
-                <div class="kvot-info-line dc-label-line"><label for="dcForm">Chemical or physical form</label><span class="kvot-info-slot" data-info-key="set:form"></span></div>
+                <div class="kvot-info-line dc-label-line"><label for="dcForm" id="dcFormLabel">Chemical or physical form</label><span class="kvot-info-slot" data-info-key="set:form"></span></div>
                 <select id="dcForm" data-on-change="dc:formChanged"></select>
                 <p class="dc-muted" id="dcFormNote"></p>
               </div>
@@ -110,9 +111,9 @@
           <div class="kvot-info-sec">
             <span class="kvot-info-slot" data-info-key="sec:ages"></span>
             <details class="dc-sec" open>
-              <summary><span class="dc-sec-title">Ages at intake</span></summary>
+              <summary><span class="dc-sec-title" id="dcAgesTitle">Ages at intake</span></summary>
               <div class="dc-ages" id="dcAges">
-                <label class="dc-check"><input type="checkbox" value="100" checked data-on-change="dc:settingChanged"><span>3 months</span></label>
+                <label class="dc-check"><input type="checkbox" value="100" checked data-on-change="dc:settingChanged"><span id="dcAgeFirst">3 months</span></label>
                 <label class="dc-check"><input type="checkbox" value="365" checked data-on-change="dc:settingChanged"><span>1 year</span></label>
                 <label class="dc-check"><input type="checkbox" value="1825" checked data-on-change="dc:settingChanged"><span>5 years</span></label>
                 <label class="dc-check"><input type="checkbox" value="3650" checked data-on-change="dc:settingChanged"><span>10 years</span></label>
@@ -122,7 +123,7 @@
             </details>
           </div>
 
-          <div class="kvot-info-sec">
+          <div class="kvot-info-sec" id="dcCalcSec">
             <span class="kvot-info-slot" data-info-key="sec:calc"></span>
             <details class="dc-sec">
               <summary><span class="dc-sec-title">Calculation</span></summary>
@@ -193,12 +194,19 @@
             <div class="dc-toolbar">
               <div class="dc-headline" id="dcHeadline"></div>
               <span class="dc-spacer"></span>
+              <label id="dcRateLabel" hidden data-tip="The dose rate per second, as the Federal Guidance Reports give it, per hour or per year">Rate per <select id="dcRate" data-on-change="dc:redraw"><option value="s" selected>second</option><option value="h">hour</option><option value="y">year</option></select></label>
               <label>Digits <select id="dcDigits" data-on-change="dc:redraw"><option value="2" selected>2, as ICRP</option><option value="3">3</option><option value="4">4</option></select></label>
               <button type="button" class="dc-btn secondary small" data-on-click="dc:csv">Save as CSV</button>
               <span class="kvot-info-slot" data-info-key="tab:coef"></span>
             </div>
             <div class="dc-table-wrap"><table class="dc-table" id="dcETable"></table></div>
-            <h3 class="dc-h3">Committed equivalent dose <span class="dc-unit">Sv per Bq</span></h3>
+            <h3 class="dc-h3" id="dcHHead">Committed equivalent dose <span class="dc-unit">Sv per Bq</span></h3>
+            <div class="dc-toolbar" id="dcProgenyBar" hidden>
+              <div class="dc-seg small" role="radiogroup" aria-label="Progeny">
+                <label><input type="radio" name="dcProgeny" value="alone" checked data-on-change="dc:redraw"><span>The nuclide alone</span></label>
+                <label><input type="radio" name="dcProgeny" value="with" data-on-change="dc:redraw"><span>With its progeny in equilibrium</span></label>
+              </div>
+            </div>
             <div class="dc-toolbar" id="dcSexBar">
               <div class="dc-seg small" role="radiogroup" aria-label="Sex">
                 <label><input type="radio" name="dcSex" value="avg" checked data-on-change="dc:redraw"><span>Average of the sexes</span></label>
@@ -370,7 +378,8 @@
             energy emitted in one place is absorbed in another), for intakes by ingestion and inhalation (and, in the
             ICRP 103 system, direct uptake to blood) at the six reference ages of the ICRP’s publications for members of
             the public: 3 months, 1, 5, 10 and 15 years, and adults. Choose the system, the radionuclide, the route and
-            the chemical form on the left. The button at the right end of the tabs gives the page the whole window,
+            the chemical form on the left. The route External gives instead the dose rate of a person in contaminated air,
+            water or soil, as the US Federal Guidance Reports 12 and 15 calculate it (see External exposure below). The button at the right end of the tabs gives the page the whole window,
             without the site’s header and footer; the kvot mark at the left of the tabs then goes to the home page, and
             the switch beside the button changes between light and dark. The page remembers the choice.</p>
 
@@ -720,6 +729,69 @@
             3 mSv per mJ h m<sup>−3</sup> for radon and 1 for thoron (paras 532–537), and an annual dose for a concentration and
             the hours spent at home.</p>
 
+          <h3 id="help-external">External exposure</h3>
+          <p>The route <b>External</b> gives dose rate coefficients for a person outside the activity: in a cloud of
+            contaminated air, in contaminated water, standing on contaminated ground or over contaminated soil. Nothing is
+            taken into the body. The coefficient is the equivalent dose rate to each tissue, and the effective dose rate, per
+            unit concentration around the body: Sv s<sup>−1</sup> per Bq m<sup>−3</sup> of air, water or soil, or per Bq
+            m<sup>−2</sup> of ground (per hour or per year if chosen), as the US Environmental Protection Agency’s Federal
+            Guidance Reports give them: Report 15 (2019, revised in July 2025) in the ICRP 103 system, Report 12 (1993) in the
+            ICRP 60 system. The page does not copy the reports’ table of each nuclide. It adds up each nuclide’s radiations
+            with the reports’ own doses per photon and per electron of a single energy, as the reports do, so that every
+            radionuclide of the decay data is covered (838 of Publication 38, 1252 of Publication 107, more with ENSDF), noble
+            gases and nuclides of seconds among them:</p>
+          <ul>
+            <li><b>Photons</b>: the reports’ monoenergetic coefficients. FGR 15 gives 29 tissues of the stylised phantoms of
+              Han et al. at six ages (newborn, 1, 5, 10 and 15 years, and the reference adult, which takes the adult phantom for
+              the male and the 15-year-old’s for the female) at 13 energies from 10 keV to 5 MeV; FGR 12 gives 25 organs of the
+              Cristy–Eckerman adult hermaphrodite at 12 energies. Each photon line of 10 keV or more counts at its yield, the
+              coefficient interpolated in the logarithms of energy and dose rate by a monotone cubic (PCHIP; the cubic of the
+              last interval above 5 MeV), FGR 15’s zeros taken as 10<sup>−100</sup> as its authors took them.</li>
+            <li><b>Bremsstrahlung</b>: beta particles slowing down in the medium (soil for the ground) give off photons whose
+              spectrum the reports’ Appendix C builds from the scaled spectra of Seltzer and Berger (its eq. C-2), here
+              interpolated by PCHIP in k/T and in ln T; their dose follows from the same monoenergetic coefficients. It is all a
+              pure beta emitter gives the tissues under the skin.</li>
+            <li><b>Electrons</b>: their dose to the skin, 70 µm deep, from FGR 12’s DOSFACTER curves (its Figs. II.24–II.26,
+              which FGR 15 uses too), over the beta spectrum, taken as a PCHIP of its tabulated values, and the conversion and
+              Auger electrons. From the ground they are counted at 1 m and must have 0.37 MeV to get there; FGR 15 starts them at
+              the surface, its photons 3 mm deep (0.5 g cm<sup>−2</sup>, for the ground’s roughness). FGR 12’s ground is a smooth
+              plane.</li>
+            <li><b>Effective dose</b>: in the ICRP 103 system, Publication 103’s tissue weighting factors on the hermaphrodite
+              phantoms, as FGR 15 applies them (gonads the mean of testes and ovaries, prostate/uterus the mean of the two, the
+              remainder the mean of its 13 tissues, the skin with its electrons). In the ICRP 60 system, Publication 60’s
+              weighting factors with the remainder of Publication 72, mass-weighted with the splitting rule, without the
+              extrathoracic airways, which FGR 12’s phantom does not have; and beside it the quantity FGR 12 tabulates, the
+              effective dose equivalent H<sub>E</sub> of ICRP 26 (gonads 0.25, breast 0.15, red marrow and lung 0.12, thyroid and
+              bone surface 0.03, the five highest of the other organs 0.06 each, the skin left out). FGR 12 gives the effective
+              dose of ICRP 60 too, for photons of single energies only (its Tables II.4–II.15): this weighting reproduces it
+              within 0.7 % at every energy and geometry.</li>
+            <li><b>Progeny</b>: the reports’ coefficients are of the nuclide alone, and so is the page’s first column. Beside it
+              is the nuclide with its progeny in equilibrium: each member that lives less long than the parent and is formed
+              only from members that do, at its activity per becquerel of the parent once the chain is in equilibrium — the
+              branching fraction in secular equilibrium, more where the parent’s half-life is not much longer (transient
+              equilibrium, λ<sub>i</sub>/(λ<sub>i</sub> − λ<sub>P</sub>) at each step: 1.15 Bq of La-140 per Bq of Ba-140).
+              The Decay chain tab lists these activities, each member’s own coefficient and its share, and how long the chain
+              takes to come within 1 % of equilibrium: 17 minutes for Cs-137 and Ba-137m, 1.6 million years for the whole
+              U-238 series. A member that lives as long as its parent or longer never comes into equilibrium with it (Am-241
+              from Pu-241, Pb-210 from Rn-222): its dose rate depends on how long the parent has been there, and its own
+              coefficient is the one to add.</li>
+            <li><b>Not included</b>, as in the reports: the neutrons of spontaneous fission; shielding by buildings, clothes or
+              the ground’s unevenness; the embryo and fetus.</li>
+          </ul>
+          <p>Checked against the reports’ own coefficients, read from local copies (none of their nuclide tables are part of
+            the page), with the system’s own decay data:</p>
+          <div class="dc-table-wrap"><table class="dc-ref"><thead><tr><th>External exposure</th><th>values</th><th>within 1 %</th><th>within 2 %</th><th>within 5 %</th></tr></thead><tbody>
+            <tr><td>ICRP 103 system, e, against FGR 15 (2025): 1252 nuclides, 7 geometries, 6 ages</td><td class="num">51576</td><td class="num">99.90 %</td><td class="num">99.95 %</td><td class="num">100.00 %</td></tr>
+            <tr><td>… the equivalent dose rates of its 29 tissues</td><td class="num">1495704</td><td class="num">99.89 %</td><td class="num">99.94 %</td><td class="num">99.97 %</td></tr>
+            <tr><td>ICRP 60 system, H<sub>E</sub>, against FGR 12: 825 nuclides, 7 geometries, the adult</td><td class="num">5628</td><td class="num">99.70 %</td><td class="num">99.88 %</td><td class="num">99.88 %</td></tr>
+            <tr><td>… the dose rates of its 25 organs</td><td class="num">140700</td><td class="num">99.65 %</td><td class="num">99.87 %</td><td class="num">99.87 %</td></tr>
+          </tbody></table></div>
+          <p>The few beyond 2 % are low-energy beta emitters whose dose rate hangs on the ends of the data: tritium, whose
+            18.6 keV beta particles give bremsstrahlung above 10 keV only from the top of their spectrum (up to 3 % in e, more in
+            single tissues on the ground), and in FGR 12 Sm-151, whose 77 keV beta particles reach the skin barely past the
+            electron curve’s threshold of 68 keV (FGR 12 gives it a third less). ICRP 38 names the isomers of Rh-102 and Ta-180
+            the other way round from later data; the comparison pairs them by half-life, as the page’s names do.</p>
+
           <h3 id="help-data">Data and where they come from</h3>
           <div class="dc-table-wrap"><table class="dc-ref">
             <tbody>
@@ -727,6 +799,7 @@
               <tr><th>ICRP 103 decay data</th><td>ICRP Publication 107 (Endo and Eckerman): the data files of its <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" target="_blank" rel="noopener">supplementary data</a> on the ICRP’s site, with the index file as corrected in the corrigenda of Publication 107 (2021; only atomic masses changed, which the page does not use). Copyright © 2008 A. Endo and K.F. Eckerman, used for non-profit purposes under their licence, whose notices accompany the data (<code>LICENSE.TXT</code> and <code>LICENSE_DECDATA.TXT</code> in <code>resources/data/dose/icrp103/decay/</code>).</td></tr>
               <tr><th>Decay data from ENSDF</th><td>Made by <code>scripts/gen-dose-ensdf.mjs</code> from the release of ENSDF named in the Decay data setting, kept by the National Nuclear Data Center for the Nuclear Structure and Decay Data network (<a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener">nndc.bnl.gov/ensdf</a>), into <code>resources/data/dose/ensdf/</code>; with the atomic relaxation data of ENDF/B-VIII.0 (EPICS2017; <code>resources/data/dose/atomic/</code>), conversion coefficients fitted to those EDISTR04 printed in the supplementary data of Publication 107 (<code>resources/data/dose/icc/</code>, under the licence of the ICRP-07 data files, whose notice goes with them) and capture fractions fitted to the release’s own (<code>capture.json</code>).</td></tr>
               <tr><th>Specific absorbed fractions</th><td>The supplementary data of ICRP Publications 133 and 155 (© ICRP), for the twelve reference individuals; Publication 155’s adult files revise Publication 133’s for electrons and alphas.</td></tr>
+              <tr><th>External exposure</th><td>The monoenergetic dose rate coefficients of Federal Guidance Report 15 (EPA-402-R-19-002, revised July 2025; the Mono_Coefficients of its data files, fgr15_data_2025_05_28.zip) and Federal Guidance Report 12 (EPA-402-R-93-081; Tables II.4–II.6 and II.12–II.15, as distributed with DCAL), with FGR 12’s electron skin doses (Figs. II.24–II.26) and bremsstrahlung spectra (Tables C.1–C.3), all from the US Environmental Protection Agency and Oak Ridge National Laboratory; read by <code>scripts/gen-dose-external.mjs</code> into <code>resources/data/dose/external/</code>. The reports’ tables of each nuclide are not part of this page; the tests compare with local copies.</td></tr>
               <tr><th>Radon at home</th><td>Transcribed from Publication 158 (Tables 32.1, 32.2, 32.3, C.1 and the lung-air volumes of Table C.3; <code>resources/data/dose/icrp103/radon.json</code>) and Publication 137 (potential alpha energies, Table A.1; activity ratios of the progeny, paras A80–A81; <code>resources/js/dose/radon.js</code>), © ICRP. The ICRP’s own tables of doses per exposure are not part of this page; the tests compare with local copies.</td></tr>
               <tr><th>Risk coefficients</th><td>Transcribed from Publication 60 (Annex B Tables B-17 to B-20, Tables 3 and 4) and Publication 103 (Annex A Tables A.4.1, A.4.2 and A.4.5, Table 1), © ICRP: the nominal risks and the lethality, quality-of-life and life-lost factors the calculation uses, and the printed results it is compared with (<code>resources/js/dose/risk.js</code>).</td></tr>
               <tr><th>ICRP 103 models</th><td>Transcribed from Publication 158 and the consultation drafts of Parts 2 and 3: absorption parameters, f<sub>A</sub> values and systemic transfer coefficients of each element, the deposition of Table A.1, the respiratory and alimentary tract models of Chapter 2; and from the progeny sections of Publications 134, 137, 141 and 151, the models of progeny formed in the body. The ICRP’s own dose coefficient tables are not part of this page; the tests compare with local copies.</td></tr>
@@ -740,8 +813,8 @@
               to blood is calculated in the ICRP 103 system (route Injection).</li>
             <li>Radon and thoron in workplaces, mines and caves (Publication 137), and actinon (<sup>219</sup>Rn); homes are on
               the Radon at home tab.</li>
-            <li>Argon, krypton and xenon, which the ICRP treats as external exposure to the gas around the body rather
-              than as intakes.</li>
+            <li>Argon, krypton and xenon as intakes: the ICRP treats them as external exposure to the gas around the body,
+              which the route External gives.</li>
           </ul>
 
           <h3 id="help-refs">References</h3>
@@ -759,6 +832,8 @@
               <tr><td>EIR Part 2</td><td>Dose coefficients for intakes of radionuclides by members of the public: Part 2. ICRP draft for consultation.</td></tr>
               <tr><td>EIR Part 3</td><td>Dose coefficients for intakes of radionuclides by members of the public: Part 3. ICRP draft for consultation.</td></tr>
               <tr><td>InMoP annex</td><td>ICRP InMoP Electronic Annex v.1.23.2.2, dataset v.1.2 (2025), accompanying the series on dose coefficients for intakes of radionuclides by members of the public; used here only to check the results.</td></tr>
+              <tr><td>FGR 12</td><td>Eckerman KF, Ryman JC. External exposure to radionuclides in air, water, and soil. Federal Guidance Report No. 12, EPA-402-R-93-081 (1993).</td></tr>
+              <tr><td>FGR 15</td><td>Bellamy MB, Dewji SA, Leggett RW et al. External exposure to radionuclides in air, water, and soil. Federal Guidance Report No. 15, EPA-402-R-19-002 (2019; revised July 2025), and ORNL/SPR-2025/3803, the review behind the revision.</td></tr>
               <tr><td>ORNL/TM-2001/190</td><td>Eckerman KF, Leggett RW et al. User’s guide to the DCAL system (2006).</td></tr>
               <tr><td>ORNL/TM-8381, ORNL/TM-12351</td><td>Cristy M, Eckerman KF. Specific absorbed fractions of energy at various ages from internal photon sources (1987); SEECAL (1993).</td></tr>
               <tr><td>Fritsch and Carlson 1980</td><td>Monotone piecewise cubic interpolation. SIAM J. Numer. Anal. 17, 238–246.</td></tr>
@@ -787,6 +862,6 @@
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261006d"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261007"></script>
 </body>
 </html>

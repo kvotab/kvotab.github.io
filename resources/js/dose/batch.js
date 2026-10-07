@@ -16,6 +16,11 @@
   changing it calculates nothing. The table saves as CSV or as an Excel
   workbook (xlsxwrite.js and JSZip, loaded when first needed).
 
+  External exposure (external.js) has geometries in place of forms, one
+  request for all the ages of a nuclide in a geometry, and dose rates per
+  unit concentration: of the nuclide alone, and with its progeny in
+  equilibrium as well if chosen.
+
   Everything that comes from data or from the field is put in the page as
   text nodes.
 */
@@ -27,7 +32,7 @@ const JSZIP = {
   src: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   integrity: 'sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG',
 };
-const ROUTES = [['ingestion', 'Ingestion'], ['inhalation', 'Inhalation'], ['injection', 'Injection']];
+const ROUTES = [['ingestion', 'Ingestion'], ['inhalation', 'Inhalation'], ['injection', 'Injection'], ['external', 'External']];
 // As the settings' Calculation section has them.
 const CUTOFFS = [['0', 'none: the whole chain'], ['1e-5', '0.001 %'], ['1e-4', '0.01 %'], ['1e-3', '0.1 %']];
 const RTOLS = [['1e-4', '1E-4 (faster)'], ['1e-6', '1E-6'], ['1e-8', '1E-8 (slower)']];
@@ -39,6 +44,17 @@ const QUANTITIES = [
   ['sexes', 'Male and female as well (ICRP 103 system)'],
 ];
 const DOSES = ['weighted', 'remainder', 'other']; // what "male and female as well" applies to
+// External exposure: the same doses, without the sexes (the reports' phantoms
+// are hermaphrodite), with the progeny in equilibrium, and FGR 12's HE.
+const QUANTITIES_EXT = [
+  ['e', 'Effective dose rate, e'],
+  ['weighted', 'Equivalent dose rates of the tissues weighted in e, and the remainder'],
+  ['remainder', 'Equivalent dose rates of the remainder’s tissues'],
+  ['other', 'Other equivalent dose rates'],
+  ['he', 'HE of ICRP 26, as Federal Guidance Report 12 gives it (ICRP 60 system)'],
+  ['progeny', 'With the progeny in equilibrium as well'],
+];
+const GEOMETRY_KEYS = ['air', 'water', 'surface', 'soil1', 'soil5', 'soil15', 'soilInf'];
 const textOf = (list, v) => list.find(([k]) => k === v)?.[1].replace(/ \(.*\)$/, '') || v;
 
 /**
@@ -61,6 +77,7 @@ export function setupBatch(ctx) {
     text: typeof saved.text === 'string' ? saved.text : 'Cs-137, Sr-90, I-131',
     forms: saved.forms === 'default' ? 'default' : 'all',
     sizes: new Set(Array.isArray(saved.sizes) ? saved.sizes.map(String) : ['1']),
+    geometries: new Set(Array.isArray(saved.geometries) ? saved.geometries.filter((g) => GEOMETRY_KEYS.includes(g)) : ['air', 'surface', 'soilInf']),
     ages: new Set(Array.isArray(saved.ages) ? saved.ages.map(Number).filter((a) => AGES.includes(a)) : AGES),
     cutoff: CUTOFFS.some(([v]) => v === saved.cutoff) ? saved.cutoff : CUTOFFS.some(([v]) => v === side.cutoff) ? side.cutoff : '1e-4',
     rtol: RTOLS.some(([v]) => v === saved.rtol) ? saved.rtol : RTOLS.some(([v]) => v === side.rtol) ? side.rtol : '1e-6',
@@ -72,7 +89,7 @@ export function setupBatch(ctx) {
     parsed: null,
   };
   const settings = () => ({
-    system: B.system, decay: B.decay, route: B.route, text: B.text, forms: B.forms, sizes: [...B.sizes], ages: [...B.ages],
+    system: B.system, decay: B.decay, route: B.route, text: B.text, forms: B.forms, sizes: [...B.sizes], geometries: [...B.geometries], ages: [...B.ages],
     cutoff: B.cutoff, rtol: B.rtol, shown: [...B.shown], layout: B.layout, digits: B.digits,
   });
 
@@ -103,26 +120,35 @@ export function setupBatch(ctx) {
 
   const aerosolOf = (system, route, f) => route === 'inhalation' && (system === '103' ? f.aerosol !== false : /^[FMS]\|/.test(f.key));
   /** The table's rows -- a nuclide in a form at an aerosol size -- and the ages, for the settings as they are. */
+  const isExternal = () => B.route === 'external';
+  // FGR 12, which the ICRP 60 system's external exposure follows, has the adult only.
+  const agesOf = () => AGES.filter((a) => B.ages.has(a) && !(isExternal() && B.system === '60' && a !== 7300));
   function plan(cat) {
     const p = parse(B.text, cat);
-    const ages = AGES.filter((a) => B.ages.has(a));
+    const ages = agesOf();
     const sizes = SIZES[B.system].map(([v]) => v).filter((v) => B.sizes.has(v));
     const rows = [], none = [];
     for (const n of p.found) {
       const forms = n[B.route] || [];
       if (!forms.length) { none.push(n.name); continue; }
+      if (isExternal()) {
+        for (const f of forms) if (B.geometries.has(f.key)) rows.push({ nuclide: n, form: f, size: null, out: {}, error: null });
+        continue;
+      }
       for (const f of B.forms === 'all' ? forms : [forms.find((x) => x.default) || forms[0]]) {
         for (const size of aerosolOf(B.system, B.route, f) ? sizes : [null]) rows.push({ nuclide: n, form: f, size, out: {}, error: null });
       }
     }
-    return { ...p, ages, sizes, rows, none, jobs: rows.length * ages.length };
+    // External exposure: one request for every age of a row.
+    return { ...p, ages, sizes, rows, none, jobs: rows.length * ages.length, requests: isExternal() ? rows.length : rows.length * ages.length };
   }
   const cutoffNow = () => (B.system === '103' ? B.cutoff : '1e-4'); // the ICRP 60 system cuts chains as DCAL did
-  const planKey = (p) => JSON.stringify([B.system, B.decay, B.route, B.forms, p.found.map((n) => n.name), p.sizes, p.ages, cutoffNow(), B.rtol]);
+  const planKey = (p) => JSON.stringify([B.system, B.decay, B.route, isExternal() ? [...B.geometries].sort() : B.forms, p.found.map((n) => n.name), p.sizes, p.ages, cutoffNow(), B.rtol]);
   const decayWords = (R) => (R.decay ? `, decay data ${ctx.decayLabel(R.decay, R.system)}` : '');
 
   /* ---- the columns ------------------------------------------------------------------ */
-  function columns(system, shown) {
+  function columns(system, shown, route) {
+    if (route === 'external') return columnsExternal(system, shown);
     const T = TISSUES[system];
     const cols = [];
     if (shown.has('e')) cols.push({ label: 'e', get: (o) => o.E });
@@ -139,6 +165,21 @@ export function setupBatch(ctx) {
         }
       } else cols.push({ label: `H ${n}`, get: (o) => o.H?.[n] });
     }
+    return cols;
+  }
+  // External exposure: each quantity of the nuclide alone, then with its progeny if chosen.
+  function columnsExternal(system, shown) {
+    const T = ctx.TISSUES_EXT[system];
+    const one = [];
+    if (shown.has('e')) one.push(['e', (x) => x.E]);
+    if (shown.has('he') && system === '60') one.push(['HE', (x) => x.HE]);
+    const names = [];
+    if (shown.has('weighted')) names.push(...T.weighted.map(([n]) => n), 'Remainder');
+    if (shown.has('remainder')) names.push(...T.remainder);
+    if (shown.has('other')) names.push(...T.other);
+    for (const n of names) one.push([`H ${n}`, (x) => x.H?.[n]]);
+    const cols = one.map(([label, f]) => ({ label, get: (o) => f(o) }));
+    if (shown.has('progeny')) cols.push(...one.map(([label, f]) => ({ label: `${label}, with progeny`, get: (o) => (o.progeny ? f(o.progeny) : undefined) })));
     return cols;
   }
   const sizeLabel = (system, size) => (size == null ? '–' : (SIZES[system].find(([v]) => v === size)?.[1] || `${size} µm`).replace(/ \(.*\)$/, ''));
@@ -160,7 +201,7 @@ export function setupBatch(ctx) {
         h('fieldset', {}, h('legend', {}, 'Route'),
           h('div', { class: 'dc-seg', role: 'radiogroup', 'aria-label': 'Route' },
             ...ROUTES.map(([r, l]) => radio('dcBatchRoute', r, l, B.route === r, { disabled: B.system === '60' && r === 'injection' })))),
-        h('fieldset', {}, h('legend', {}, 'Forms'),
+        h('fieldset', { id: 'dcBatchFormsSet', hidden: isExternal() }, h('legend', {}, 'Forms'),
           h('div', { class: 'dc-seg', role: 'radiogroup', 'aria-label': 'Forms' },
             radio('dcBatchForms', 'all', 'All forms of each', B.forms === 'all'), radio('dcBatchForms', 'default', 'The default form', B.forms === 'default')))),
       h('div', { class: 'dc-batch-nuclides' },
@@ -171,9 +212,12 @@ export function setupBatch(ctx) {
       h('p', { class: 'dc-muted dc-batch-parsed', id: 'dcBatchParsed', 'aria-live': 'polite' }),
       h('fieldset', { id: 'dcBatchSizes', hidden: B.route !== 'inhalation' }, h('legend', {}, 'Aerosol sizes (a gas or vapour has none)'),
         h('div', { class: 'dc-batch-checks' }, ...SIZES[B.system].map(([v, l]) => check('dcBatchSize', v, l, B.sizes.has(v))))),
-      h('fieldset', {}, h('legend', {}, 'Ages at intake'),
-        h('div', { class: 'dc-batch-checks' }, ...AGES.map((a) => check('dcBatchAge', String(a), AGE_LABEL[a], B.ages.has(a))))),
-      h('div', { class: 'dc-batch-row' },
+      h('fieldset', { id: 'dcBatchGeometries', hidden: !isExternal() }, h('legend', {}, 'Geometries'),
+        h('div', { class: 'dc-batch-checks' }, ...ctx.externalForms(B.system).map((f) => check('dcBatchGeometry', f.key, f.label, B.geometries.has(f.key))))),
+      h('fieldset', {}, h('legend', { id: 'dcBatchAgesLegend' }, isExternal() ? 'Ages' : 'Ages at intake'),
+        h('div', { class: 'dc-batch-checks' }, ...AGES.map((a) => check('dcBatchAge', String(a), isExternal() && a === 100 ? 'Newborn' : AGE_LABEL[a], B.ages.has(a),
+          { disabled: isExternal() && B.system === '60' && a !== 7300 })))),
+      h('div', { class: 'dc-batch-row', id: 'dcBatchCalc', hidden: isExternal() },
         B.system === '103'
           ? h('label', { class: 'dc-batch-select' }, h('span', { class: 'dc-batch-label' }, 'Decay chain cut-off'), choose('dcBatchCutoff', CUTOFFS, B.cutoff),
             h('span', { class: 'dc-muted' }, 'progeny carrying less of the energy emitted in 100 years are left out'))
@@ -204,13 +248,18 @@ export function setupBatch(ctx) {
   function buildShow() {
     const box = $('dcBatchShow');
     const doses = DOSES.some((k) => B.shown.has(k));
+    // The quantities of the route and system chosen above, so that they can be
+    // ticked before a batch runs; the table takes those of its own route.
+    const ext = B.route === 'external', system = B.system;
     box.replaceChildren(
       h('div', { class: 'dc-batch-show-head' }, h('b', {}, 'In the table'),
         h('span', { class: 'dc-muted' }, ' · nothing is calculated again when these change: every dose of every age is kept')),
-      h('div', { class: 'dc-batch-checks dc-batch-results', role: 'group', 'aria-label': 'Results, Sv per Bq' },
-        ...QUANTITIES.map(([k, l]) => (k === 'sexes'
-          ? (B.system === '60' ? null : check('dcBatchShown', k, l, B.shown.has(k), { disabled: !doses }))
-          : check('dcBatchShown', k, l, B.shown.has(k))))),
+      h('div', { class: 'dc-batch-checks dc-batch-results', role: 'group', 'aria-label': ext ? 'Results, dose rates per unit concentration' : 'Results, Sv per Bq' },
+        ...(ext
+          ? QUANTITIES_EXT.filter(([k]) => k !== 'he' || system === '60').map(([k, l]) => check('dcBatchShown', k, l, B.shown.has(k)))
+          : QUANTITIES.map(([k, l]) => (k === 'sexes'
+            ? (B.system === '60' ? null : check('dcBatchShown', k, l, B.shown.has(k), { disabled: !doses }))
+            : check('dcBatchShown', k, l, B.shown.has(k)))))),
       h('div', { class: 'dc-batch-view' },
         h('label', {}, 'Layout ', h('select', { id: 'dcBatchLayout' },
           h('option', { value: 'ages', selected: B.layout === 'ages' }, 'ages as columns'), h('option', { value: 'rows', selected: B.layout === 'rows' }, 'a row for each age'))),
@@ -230,7 +279,12 @@ export function setupBatch(ctx) {
       B.parsed = null;
       buildForm();
       buildShow();
-    } else if (t.name === 'dcBatchRoute') { B.route = t.value; $('dcBatchSizes').hidden = B.route !== 'inhalation'; }
+    } else if (t.name === 'dcBatchRoute') {
+      B.route = t.value;
+      B.parsed = null;
+      buildForm(); // the geometries, the ages and the forms follow the route
+      buildShow();
+    }
     else if (t.id === 'dcBatchDecay') {
       if (t.value.startsWith('nndc:')) { const id = t.value.slice(5); t.value = B.decay; ctx.showGet(id); return; }
       B.decay = ctx.decayValid(t.value) ? t.value : '';
@@ -242,6 +296,7 @@ export function setupBatch(ctx) {
     }
     else if (t.name === 'dcBatchForms') B.forms = t.value;
     else if (t.name === 'dcBatchSize') { if (t.checked) B.sizes.add(t.value); else B.sizes.delete(t.value); }
+    else if (t.name === 'dcBatchGeometry') { if (t.checked) B.geometries.add(t.value); else B.geometries.delete(t.value); }
     else if (t.name === 'dcBatchAge') { const a = Number(t.value); if (t.checked) B.ages.add(a); else B.ages.delete(a); }
     else if (t.id === 'dcBatchCutoff') B.cutoff = t.value;
     else if (t.id === 'dcBatchRtol') B.rtol = t.value;
@@ -290,12 +345,14 @@ export function setupBatch(ctx) {
     if (p.unknown.length) parts.push(`Not in the ICRP ${B.system} system${B.decay ? ` with ${ctx.decayLabel(B.decay, B.system)}` : ''}: ${p.unknown.slice(0, 12).join(', ')}${p.unknown.length > 12 ? '…' : ''}.`);
     if (p.none.length) parts.push(`No ${B.route} in this system for ${p.none.join(', ')}.`);
     $('dcBatchParsed').textContent = parts.join(' ') || 'Type or paste the radionuclides, or choose them from the list.';
-    const what = B.route === 'inhalation' ? 'radionuclide, form and aerosol size' : 'radionuclide and form';
+    const what = B.route === 'inhalation' ? 'radionuclide, form and aerosol size' : isExternal() ? 'radionuclide and geometry' : 'radionuclide and form';
     let count;
     if (!p.found.length) count = 'No radionuclide yet.';
-    else if (!p.ages.length) count = 'Tick at least one age at intake.';
-    else if (!p.rows.length) count = B.route === 'inhalation' && !p.sizes.length ? 'Tick at least one aerosol size.' : `Nothing to calculate by ${B.route}.`;
-    else {
+    else if (!p.ages.length) count = isExternal() ? (B.system === '60' ? 'Tick the adult: Federal Guidance Report 12 has no other age.' : 'Tick at least one age.') : 'Tick at least one age at intake.';
+    else if (!p.rows.length) count = B.route === 'inhalation' && !p.sizes.length ? 'Tick at least one aerosol size.' : isExternal() && !B.geometries.size ? 'Tick at least one geometry.' : `Nothing to calculate by ${B.route}.`;
+    else if (isExternal()) {
+      count = `${p.rows.length} ${p.rows.length === 1 ? 'combination' : 'combinations'} of ${what} × ${p.ages.length} ${p.ages.length === 1 ? 'age' : 'ages'} = ${p.jobs.toLocaleString('en')} ${p.jobs === 1 ? 'value' : 'values'} of each quantity, in ${p.requests.toLocaleString('en')} ${p.requests === 1 ? 'request' : 'requests'} of milliseconds each, ${ctx.POOL_SIZE} at a time.`;
+    } else {
       count = `${p.rows.length} ${p.rows.length === 1 ? 'combination' : 'combinations'} of ${what} × ${p.ages.length} ${p.ages.length === 1 ? 'age' : 'ages'} = ${p.jobs.toLocaleString('en')} ${p.jobs === 1 ? 'calculation' : 'calculations'}, ${ctx.POOL_SIZE} at a time.`
         + (p.jobs > 2000 ? ' That is many: it can be stopped at any time, and what is done stays in the table.' : '');
     }
@@ -318,6 +375,7 @@ export function setupBatch(ctx) {
     if (!p.jobs) { refresh(); return; }
     const R = {
       system: B.system, decay: B.decay, route: B.route, forms: B.forms, ages: p.ages, sizes: p.sizes, rows: p.rows, nuclides: p.found.length,
+      geometries: isExternal() ? GEOMETRY_KEYS.filter((g) => B.geometries.has(g)) : null,
       cutoff: Number(cutoffNow()), rtol: Number(B.rtol), cutoffText: textOf(CUTOFFS, cutoffNow()), rtolText: textOf(RTOLS, B.rtol), key: planKey(p),
       total: p.jobs, done: 0, failed: 0, when: new Date(), t0: performance.now(), ms: 0, running: true, stopped: false,
     };
@@ -328,6 +386,19 @@ export function setupBatch(ctx) {
     renderTable();
     const tasks = [];
     for (const row of R.rows) {
+      if (R.route === 'external') {
+        // Every age at once: milliseconds.
+        const spec = { nuclide: row.nuclide.name, route: 'external', ...row.form.spec };
+        tasks.push(ask({ type: 'run', system: R.system, decay: R.decay, spec, ages: R.ages, withSystem: false, lean: true }, null, RANK.batch)
+          .then((outs) => { outs.forEach((o, k) => { row.out[R.ages[k]] = o; }); R.done += R.ages.length; }, (err) => {
+            if (err.message === 'stopped') return;
+            row.error ||= err.message;
+            R.done += R.ages.length;
+            R.failed += R.ages.length;
+          })
+          .finally(progressSoon));
+        continue;
+      }
       const spec = { nuclide: row.nuclide.name, route: R.route, ...row.form.spec, cutoff: R.cutoff, ...(row.size != null ? { amad: Number(row.size) } : {}) };
       for (const age of R.ages) {
         tasks.push(ask({ type: 'run', system: R.system, decay: R.decay, spec, ages: [age], rtol: R.rtol, withSystem: false, lean: true }, null, RANK.batch)
@@ -379,7 +450,7 @@ export function setupBatch(ctx) {
       text = `${R.done.toLocaleString('en')} of ${R.total.toLocaleString('en')} calculations done${failed}`
         + (left != null && R.done < R.total ? ` · about ${duration(left)} left` : ' · starting');
     } else if (R.stopped) text = `Stopped after ${R.done.toLocaleString('en')} of ${R.total.toLocaleString('en')} calculations${failed}, in ${duration(R.ms)}: the table holds what was done.`;
-    else text = `${R.total.toLocaleString('en')} calculations${failed} in ${duration(R.ms)}.`;
+    else text = `${R.total.toLocaleString('en')} ${R.route === 'external' ? 'values' : 'calculations'}${failed} in ${duration(R.ms)}.`;
     $('dcBatchProgressText').textContent = text;
     ctx.onProgress(R.running ? `${Math.floor(100 * frac)} %` : null);
   }
@@ -397,17 +468,21 @@ export function setupBatch(ctx) {
     return out;
   }
   function header(R, layout) {
-    const lead = ['Nuclide', 'Half-life', 'Form'];
+    const ext = R.route === 'external';
+    const lead = ['Nuclide', 'Half-life', ext ? 'Geometry' : 'Form'];
     if (R.route === 'inhalation') lead.push('Aerosol');
-    if (layout === 'rows') lead.push('Age at intake');
+    if (ext) lead.push('Per');
+    if (layout === 'rows') lead.push(ext ? 'Age' : 'Age at intake');
     return lead;
   }
+  const perOf = (row) => (row.form.key === 'surface' ? 'Bq/m2' : 'Bq/m3');
+  const ageText = (R, a) => (R.route === 'external' && a === 100 ? 'Newborn' : AGE_LABEL[a]);
   function renderTable() {
     const R = B.run;
     const table = $('dcBatchTable');
     $('dcBatchTools').hidden = !R;
     if (!R) { table.replaceChildren(); $('dcBatchCaption').textContent = ''; return; }
-    const cols = columns(R.system, B.shown);
+    const cols = columns(R.system, B.shown, R.route);
     $('dcBatchCaption').textContent = caption(R);
     if (!cols.length) {
       table.replaceChildren(h('tbody', {}, h('tr', {}, h('td', { class: 'dim' }, 'Tick a result above to show it.'))));
@@ -420,13 +495,14 @@ export function setupBatch(ctx) {
     const pending = R.running && !R.stopped;
     const value = (v, row) => (v != null && Number.isFinite(v) ? sci(v, d) : row.error ? '–' : pending ? '…' : '–');
     const head = B.layout === 'ages'
-      ? [h('tr', {}, ...lead.map((l) => h('th', { rowspan: 2, class: l === 'Form' ? 'text' : null }, l)), ...cols.map((c) => h('th', { colspan: R.ages.length, class: 'group' }, c.label)), h('th', { rowspan: 2, class: 'text' }, 'Note')),
-        h('tr', {}, ...cols.flatMap(() => R.ages.map((a) => h('th', {}, AGE_LABEL[a]))))]
-      : [h('tr', {}, ...lead.map((l) => h('th', { class: l === 'Form' ? 'text' : null }, l)), ...cols.map((c) => h('th', {}, c.label)), h('th', { class: 'text' }, 'Note'))];
+      ? [h('tr', {}, ...lead.map((l) => h('th', { rowspan: 2, class: l === 'Form' || l === 'Geometry' ? 'text' : null }, l)), ...cols.map((c) => h('th', { colspan: R.ages.length, class: 'group' }, c.label)), h('th', { rowspan: 2, class: 'text' }, 'Note')),
+        h('tr', {}, ...cols.flatMap(() => R.ages.map((a) => h('th', {}, ageText(R, a)))))]
+      : [h('tr', {}, ...lead.map((l) => h('th', { class: l === 'Form' || l === 'Geometry' ? 'text' : null }, l)), ...cols.map((c) => h('th', {}, c.label)), h('th', { class: 'text' }, 'Note'))];
     const body = rows.slice(0, MAX_SHOWN).map((r) => h('tr', {},
       h('td', {}, r.nuclide.name), h('td', {}, r.nuclide.T ? halfLife(r.nuclide.T) : ''), h('td', { class: 'text' }, r.form.label),
       R.route === 'inhalation' ? h('td', {}, sizeLabel(R.system, r.size)) : null,
-      B.layout === 'rows' ? h('td', {}, AGE_LABEL[r.age]) : null,
+      R.route === 'external' ? h('td', {}, perOf(r.row)) : null,
+      B.layout === 'rows' ? h('td', {}, ageText(R, r.age)) : null,
       ...r.cells.map((v) => h('td', {}, value(v, r.row))),
       h('td', { class: 'text dim' }, r.row.error || '')));
     if (rows.length > MAX_SHOWN) {
@@ -436,6 +512,11 @@ export function setupBatch(ctx) {
     renderNotice();
   }
   function caption(R) {
+    if (R.route === 'external') {
+      const geos = ctx.externalForms(R.system).filter((f) => R.geometries.includes(f.key)).map((f) => f.label.replace(/ \(.*\)$/, '').toLowerCase());
+      return `ICRP ${R.system} system${decayWords(R)}, external exposure (${R.system === '60' ? 'Federal Guidance Report 12' : 'Federal Guidance Report 15'}): ${R.nuclides} ${R.nuclides === 1 ? 'radionuclide' : 'radionuclides'} in ${geos.join(', ')}; `
+        + `${R.ages.length} ${R.ages.length === 1 ? 'age' : 'ages'}. Sv/s per Bq/m³, per Bq/m² on the ground surface.`;
+    }
     const forms = R.forms === 'all' ? 'all their forms' : 'the default form of each';
     const sizes = R.route === 'inhalation' ? `, ${R.sizes.map((s) => sizeLabel(R.system, s)).join(', ')}` : '';
     return `ICRP ${R.system} system${decayWords(R)}, ${R.route}: ${R.nuclides} ${R.nuclides === 1 ? 'radionuclide' : 'radionuclides'}, ${forms}${sizes}; `
@@ -452,13 +533,15 @@ export function setupBatch(ctx) {
   /* ---- files ------------------------------------------------------------------------------ */
   // One header row and the values in full (six figures in CSV, as they are in Excel).
   function fileTable(R) {
-    const cols = columns(R.system, B.shown);
+    const cols = columns(R.system, B.shown, R.route);
     const lead = ['System', 'Route', ...header(R, B.layout)];
-    const units = B.layout === 'ages' ? cols.flatMap((c) => R.ages.map((a) => `${c.label}, ${AGE_LABEL[a]} (Sv/Bq)`)) : cols.map((c) => `${c.label} (Sv/Bq)`);
+    const u = R.route === 'external' ? 'Sv/s per Bq/m3, or Bq/m2' : 'Sv/Bq';
+    const units = B.layout === 'ages' ? cols.flatMap((c) => R.ages.map((a) => `${c.label}, ${ageText(R, a)} (${u})`)) : cols.map((c) => `${c.label} (${u})`);
     const rows = tableRows(R, cols, B.layout).map((r) => [
       `ICRP ${R.system}${R.decay ? ` (decay data ${ctx.decayLabel(R.decay, R.system)})` : ''}`, R.route, r.nuclide.name, r.nuclide.T ? halfLife(r.nuclide.T) : '', r.form.label,
       ...(R.route === 'inhalation' ? [sizeLabel(R.system, r.size)] : []),
-      ...(B.layout === 'rows' ? [AGE_LABEL[r.age]] : []),
+      ...(R.route === 'external' ? [perOf(r.row)] : []),
+      ...(B.layout === 'rows' ? [ageText(R, r.age)] : []),
       ...r.cells.map((v) => (v != null && Number.isFinite(v) ? v : null)),
       r.row.error || '',
     ]);
@@ -522,14 +605,23 @@ export function setupBatch(ctx) {
       ['Decay data', R.decay ? `${ctx.decayLabel(R.decay, R.system)}, made on this site from the decay data sets of that release of ENSDF (the page's Help: Decay data)`
         : `${ctx.decayLabel('', R.system)}, the system's own`],
       ['Route', R.route],
-      ['Forms', R.forms === 'all' ? 'all forms of each radionuclide' : 'the default form of each radionuclide'],
-      ...(R.route === 'inhalation' ? [['Aerosol sizes', R.sizes.map((s) => sizeLabel(R.system, s)).join(', ')]] : []),
-      ['Ages at intake', R.ages.map((a) => AGE_LABEL[a]).join(', ')],
-      ['Commitment period', '50 years for adults, to age 70 for children'],
-      R.system === '103' ? ['Decay chain cut-off', R.cutoffText] : ['Decay chains', 'as DCAL cut them for Publication 72'],
-      ['Relative tolerance', R.rtolText],
-      ['Calculations', `${R.done} of ${R.total}${R.failed ? `, ${R.failed} failed` : ''}${R.stopped ? ' (stopped)' : ''}`],
-      ['Unit', 'Sv per Bq taken in'],
+      ...(R.route === 'external' ? [
+        ['Geometries', ctx.externalForms(R.system).filter((f) => R.geometries.includes(f.key)).map((f) => f.label).join('; ')],
+        ['Method', `${R.system === '60' ? 'Federal Guidance Report 12 (1993)' : 'Federal Guidance Report 15 (revision of July 2025)'}: its monoenergetic coefficients for photons and its electron skin doses and bremsstrahlung, added up over each nuclide's radiations (the page's Help: External exposure)`],
+        ['Ages', R.ages.map((a) => ageText(R, a)).join(', ')],
+        ['Progeny', 'with the progeny: each member in equilibrium with the parent at its activity per Bq of the parent'],
+        ['Values', `${R.done} of ${R.total}${R.failed ? `, ${R.failed} failed` : ''}${R.stopped ? ' (stopped)' : ''}`],
+        ['Unit', 'Sv per s per Bq per m3 (per m2 on the ground surface)'],
+      ] : [
+        ['Forms', R.forms === 'all' ? 'all forms of each radionuclide' : 'the default form of each radionuclide'],
+        ...(R.route === 'inhalation' ? [['Aerosol sizes', R.sizes.map((s) => sizeLabel(R.system, s)).join(', ')]] : []),
+        ['Ages at intake', R.ages.map((a) => AGE_LABEL[a]).join(', ')],
+        ['Commitment period', '50 years for adults, to age 70 for children'],
+        R.system === '103' ? ['Decay chain cut-off', R.cutoffText] : ['Decay chains', 'as DCAL cut them for Publication 72'],
+        ['Relative tolerance', R.rtolText],
+        ['Calculations', `${R.done} of ${R.total}${R.failed ? `, ${R.failed} failed` : ''}${R.stopped ? ' (stopped)' : ''}`],
+        ['Unit', 'Sv per Bq taken in'],
+      ]),
     ];
     calc.forEach(([k, v], i) => { x.write(i, 0, k, bold, 'Settings'); x.write(i, 1, text(v), undefined, 'Settings'); });
     x.setColumn(0, 0, 22, undefined, {}, 'Settings');

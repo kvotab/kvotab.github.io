@@ -8,7 +8,10 @@
                    {id, type: 'run', system, spec, ages, outputs, rtol, withSystem, lean}
                        withSystem: whether the first age's result carries the
                        chain, the models and the intake (default true); lean:
-                       the doses only, without the transformations (batches)
+                       the doses only, without the transformations (batches);
+                       spec.route 'external' (spec.geometry): dose rate
+                       coefficients for external exposure (external.js),
+                       every age in one request
                    {id, type: 'describe', system, spec, age}
                        the chain, the models, the intake and the size of the
                        system a run would solve, without solving it
@@ -34,6 +37,7 @@ import { catalog60, catalog103 } from './catalog.js';
 import { batemanTransformations, buildChain } from './chain.js';
 import { radonPlan, radonJob } from './radon.js';
 import { storeIO } from './decay-store.js';
+import { External, externalRun, equilibrium, effective, PHANTOM_OF_AGE } from './external.js';
 
 const DATA = new URL('../../data/dose/', import.meta.url);
 const io = fetchIO(DATA);
@@ -50,6 +54,11 @@ const system = (s, decay = '') => {
   const k = `${s}|${decay || ''}`;
   return (systems[k] ||= loadSystem(s, io, decayIO(decay)).catch((err) => { delete systems[k]; throw err; }));
 };
+/* External exposure: the monoenergetic data of the system's report (FGR 12
+   or FGR 15), loaded once; what they give per geometry and age is kept. */
+const externals = {};
+const externalOf = (s) => (externals[s] ||= io.json(`external/fgr${s === '60' ? 12 : 15}.json`).then((d) => new External(d))
+  .catch((err) => { delete externals[s]; throw err; }));
 
 self.onmessage = async (ev) => {
   const msg = ev.data;
@@ -59,6 +68,16 @@ self.onmessage = async (ev) => {
       const data = await system(msg.system, msg.decay);
       const cat = msg.system === '60' ? catalog60(data) : catalog103(data);
       reply({ type: 'result', result: { ...cat, decay: { label: data.decaySource.label, own: data.decaySource.own } } });
+      return;
+    }
+    if (msg.type === 'run' && msg.spec.route === 'external') {
+      const data = await system(msg.system, msg.decay);
+      const chain = await data.prepare(msg.spec.nuclide);
+      const X = await externalOf(msg.system);
+      const out = externalRun(X, data, chain, msg.system, msg.spec.geometry, msg.ages || [7300]);
+      if (msg.withSystem !== false && out.length) Object.assign(out[0], externalSummary(msg.system, data, chain, X, msg.spec.geometry));
+      if (msg.lean) for (const o of out) delete o.members;
+      reply({ type: 'result', result: out });
       return;
     }
     if (msg.type === 'run') {
@@ -83,7 +102,12 @@ self.onmessage = async (ev) => {
     }
     if (msg.type === 'describe') {
       const data = await system(msg.system, msg.decay);
-      await data.prepare(msg.spec.nuclide);
+      const chain = await data.prepare(msg.spec.nuclide);
+      if (msg.spec.route === 'external') {
+        const X = await externalOf(msg.system);
+        reply({ type: 'result', result: externalSummary(msg.system, data, chain, X, msg.spec.geometry) });
+        return;
+      }
       reply({ type: 'result', result: describe(msg.system, data, msg.spec, msg.age ?? 7300) });
       return;
     }
@@ -187,6 +211,32 @@ function describe(sys, data, spec, age0) {
     cutoff: c, nuclides: buildChain(data.index, spec.nuclide, { cutoff: c, last: spec.last, horizonDays: 36525 }).members.length,
   }));
   return { ...systemSummary(sys, data, S), size, cutoffs, describedAge: age0 };
+}
+
+/* External exposure, for the Model and Decay chain tabs: the whole chain with
+   each member's activity in equilibrium with the parent (null where it never
+   is), its energies by kind, and the report's monoenergetic coefficients in
+   the geometry: e and the skin's dose per photon at each energy and age, and
+   the skin's per electron. */
+function externalSummary(sys, data, chain, X, geometry) {
+  const eq = equilibrium(chain);
+  const otherName = (n) => { const o = data.decaySource.otherOf?.(n); return o && o !== n ? o : null; };
+  const skin = X.tissues.indexOf('Skin');
+  const mono = X.ages.map((phantom) => {
+    const R = X.response(geometry, phantom);
+    const age = Number(Object.keys(PHANTOM_OF_AGE).find((a) => PHANTOM_OF_AGE[a] === phantom));
+    const points = X.data.energies.map((E) => {
+      const h = R.tissues.map((t) => t.photon.at(E));
+      return { E, e: effective(sys, X.tissues, h).E, skin: h[skin] };
+    });
+    return { age, phantom, points };
+  });
+  const curve = X.data.skin[{ air: 'air', water: 'water', surface: 'surface' }[geometry] || 'soil'];
+  return {
+    external: true, geometry, decay: data.decaySource.label,
+    chain: chain.members.map((m, j) => ({ name: m.name, T: m.T, lambda: m.lambda, E: data.index[m.name]?.E || null, ratio: eq.ratio[j], other: otherName(m.name), decayNotes: data.decaySource.notesOf?.(m.name) || [] })),
+    branches: chain.branches, days: eq.days, mono, electronSkin: { E: curve.E, h: curve.h },
+  };
 }
 
 /* The share of the energy the chain emits in 50 years (alpha weighted by 20)

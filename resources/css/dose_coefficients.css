@@ -498,6 +498,7 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 .dc-batch-form fieldset[hidden] { display: none; }
 .dc-batch-form legend, .dc-batch-label { margin: 0 0 4px; padding: 0; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 .dc-batch-row { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.dc-batch-row[hidden] { display: none; }
 .dc-batch-nuclides { display: flex; flex-direction: column; }
 .dc-batch-nuclides textarea { box-sizing: border-box; width: 100%; min-height: 3.4em; padding: 6px 8px; border: 1px solid var(--input-border); border-radius: 4px;
   background: var(--input-bg); color: var(--input-text); font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; resize: vertical; }

@@ -31,6 +31,15 @@ when they are missing.
               pdftotext from poppler): its Tables F.1 and G.1, the
               coefficients for ingestion and inhalation by members of the
               public. Writes local/icrp119.json.
+  --fgr15     fgr15_data_2025_05_28.zip from EPA's page of Federal Guidance
+              Report 15 (the 2025 revision): its Nuclide_Coefficients, the
+              equivalent dose rate of 29 tissues and e for 1252 nuclides in
+              seven geometries at six ages. Writes local/fgr15.json.
+  --fgr12     DCAL's DAT/EXT folder: the DFFUL files, Federal Guidance Report
+              12's dose rates of 25 organs, H_R and H_E for 825 nuclides in
+              seven geometries, with the ICRP 38 names that the page writes
+              otherwise (as scripts/gen-dose-icrp60.mjs's RENAME_38). Writes
+              local/fgr12.json.
 
 Any may be left out; what is given is written.
 """
@@ -50,6 +59,8 @@ DEFAULT_MDB = os.path.join(HOME, 'Downloads/icrp-dc/ornl/x/RadToolbox3_Setup/out
 DEFAULT_ELEMENTS = os.path.join(HOME, 'Downloads/icrp-dc/work103/elements')
 DEFAULT_INMOP = os.path.join(HOME, 'Downloads/ICRP/InMoP Electronic Annex 2025.08-3.25/InMoPdata')
 DEFAULT_119 = os.path.join(HOME, 'Downloads/ICRP/eckerman-et-al-2013-icrp-publication-119-compendium-of-dose-coefficients-based-on-icrp-publication-60.pdf')
+DEFAULT_FGR15 = os.path.join(HOME, 'Downloads/fgr/fgr15_data_2025_05_28.zip')
+DEFAULT_FGR12 = os.path.join(HOME, 'Downloads/icrp-dc/ornl/x/DCAL01_setup/out/app/DAT/EXT')
 
 AGES = {'Newborn': 100, '1 yr-old': 365, '5 yr-old': 1825, '10 yr-old': 3650, '15 yr-old': 5475, 'Adult': 7300}
 # The database's column names, as the tests name the tissues. Some of its
@@ -252,12 +263,93 @@ def icrp119(pdf):
             'inhalation': parse(section('Table G.1.', 'Table H.1'), 'G')}
 
 
+# FGR 15's files: the page's geometries and ages, and the files' names for them.
+FGR15_AGES = [('newborn', 'newborn', 'Newborn'), ('1', '01yr', '1-y-old'), ('5', '05yr', '5-y-old'), ('10', '10yr', '10-y-old'),
+              ('15', '15yr', '15-y-old'), ('adult', 'RefAdult', 'RefAdult')]
+FGR15_FILES = {
+    'air': lambda a: [f'Submersion/{a[1]}_Sub.DAT'], 'water': lambda a: [f'Immersion/{a[2]}_Imm.DAT'],
+    'surface': lambda a: [f'GRD_Surface/{a[1]}_GrdPl.DAT'],
+    # one of them writes Soil__01 for Soil_01
+    'soil1': lambda a: [f'GRD_Volume/{a[2]}_Soil_01.DAT', f'GRD_Volume/{a[2]}_Soil__01.DAT'],
+    'soil5': lambda a: [f'GRD_Volume/{a[2]}_Soil_05.DAT', f'GRD_Volume/{a[2]}_Soil__05.DAT'],
+    'soil15': lambda a: [f'GRD_Volume/{a[2]}_Soil_15.DAT', f'GRD_Volume/{a[2]}_Soil__15.DAT'],
+    'soilInf': lambda a: [f'GRD_Volume/{a[2]}_Soil_00.DAT'],
+}
+
+
+def fgr15(path):
+    import zipfile
+    z = zipfile.ZipFile(path)
+    names = set(z.namelist())
+    out = {}
+    for geo, files in FGR15_FILES.items():
+        out[geo] = {}
+        for a in FGR15_AGES:
+            name = next(f'Nuclide_Coefficients/{f}' for f in files(a) if f'Nuclide_Coefficients/{f}' in names)
+            lines = z.read(name).decode('latin-1').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+            head = next(i for i, l in enumerate(lines) if l.startswith('Nuclide '))
+            cols = lines[head].split()[1:]
+            rows = {}
+            for l in lines[head + 1:]:
+                t = l.split()
+                if len(t) == len(cols) + 1 and t[0][:1].isalpha() and '-' in t[0]:
+                    rows[t[0]] = [float(x) for x in t[1:]]
+            out[geo][a[0]] = {'columns': cols, 'rows': rows}
+    return out
+
+
+RENAME_38 = {
+    'Eu-150a': 'Eu-150m', 'Eu-150b': 'Eu-150', 'In-110a': 'In-110m', 'In-110b': 'In-110', 'Ir-186a': 'Ir-186', 'Ir-186b': 'Ir-186m',
+    'Ir-192m': 'Ir-192n', 'Nb-89a': 'Nb-89m', 'Nb-89b': 'Nb-89', 'Nb-98': 'Nb-98m', 'Np-236a': 'Np-236', 'Np-236b': 'Np-236m',
+    'Re-182a': 'Re-182m', 'Re-182b': 'Re-182', 'Sb-120a': 'Sb-120', 'Sb-120b': 'Sb-120m', 'Sb-128a': 'Sb-128m', 'Sb-128b': 'Sb-128',
+    'Ta-178a': 'Ta-178', 'Ta-178b': 'Ta-178m', 'Rh-102': 'Rh-102m', 'Rh-102m': 'Rh-102', 'Ta-180': 'Ta-180m', 'Ta-180m': 'Ta-180',
+    'Es-250': 'Es-250m',
+}
+FGR12_FILES = {'air': 'DFFUL.SUB', 'water': 'DFFUL.IMM', 'surface': 'DFFULSUR.GRD', 'soil1': 'DFFUL1.GRD', 'soil5': 'DFFUL5.GRD',
+               'soil15': 'DFFUL15.GRD', 'soilInf': 'DFFULINF.GRD'}
+
+
+FGR12_MONO = {'air': ('TABLEII4', 1), 'water': ('TABLEII5', 1), 'surface': ('TABLEII6', 1e-4), 'soil1': ('TABLII12', 1e-6),
+              'soil5': ('TABLII13', 1e-6), 'soil15': ('TABLII14', 1e-6), 'soilInf': ('TABLII15', 1e-6)}
+
+
+def fgr12_mono_e(folder):
+    """FGR 12's effective dose (ICRP 60) per photon at each energy, Gy s-1 per Bq m-3 (m-2): the E row of its tables."""
+    out = {}
+    for geo, (name, f) in FGR12_MONO.items():
+        with open(os.path.join(folder, name + '.DAT'), encoding='latin-1') as fh:
+            lines = fh.read().replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        row = next(l for l in lines if l[1:17].strip() == 'E')
+        out[geo] = [float(x) * f for x in row[17:].split()]
+    return out
+
+
+def fgr12(folder):
+    out = {}
+    for geo, name in FGR12_FILES.items():
+        with open(os.path.join(folder, name), encoding='latin-1') as f:
+            lines = f.read().replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        cols = lines[2].replace('H sub R', 'H_R').replace('H sub E', 'H_E').split()[1:]
+        rows = {}
+        for l in lines[3:]:
+            name7 = l[1:8].strip()
+            if not name7 or '-' not in name7:
+                continue
+            # Format(1X,A7,27E9.2); DFFULINF.GRD writes H-3's zero as 0.0oE+00.
+            vals = [float((l[i:i + 9].strip() or '0').replace('o', '0')) for i in range(8, 8 + 9 * len(cols), 9)]
+            rows[RENAME_38.get(name7, name7)] = vals
+        out[geo] = {'columns': cols, 'rows': rows}
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--mdb', default=DEFAULT_MDB)
     ap.add_argument('--elements', default=DEFAULT_ELEMENTS)
     ap.add_argument('--inmop', default=DEFAULT_INMOP)
     ap.add_argument('--icrp119', default=DEFAULT_119)
+    ap.add_argument('--fgr15', default=DEFAULT_FGR15)
+    ap.add_argument('--fgr12', default=DEFAULT_FGR12)
     a = ap.parse_args()
     os.makedirs(LOCAL, exist_ok=True)
     wrote = 0
@@ -298,6 +390,23 @@ def main():
         wrote += 1
     else:
         print(f'no {a.icrp119}: local/icrp119.json not written', file=sys.stderr)
+    if a.fgr15 and os.path.exists(a.fgr15):
+        data = fgr15(a.fgr15)
+        with open(os.path.join(LOCAL, 'fgr15.json'), 'w', encoding='utf-8') as f:
+            json.dump({'source': os.path.basename(a.fgr15), 'units': 'Sv s-1 per Bq m-3 (m-2 on the ground surface)', 'geometries': data}, f)
+        print(f'local/fgr15.json: {len(data["air"]["adult"]["rows"])} nuclides, {len(data)} geometries, 6 ages from {a.fgr15}')
+        wrote += 1
+    else:
+        print(f'no {a.fgr15}: local/fgr15.json not written', file=sys.stderr)
+    if a.fgr12 and os.path.isdir(a.fgr12):
+        data = fgr12(a.fgr12)
+        with open(os.path.join(LOCAL, 'fgr12.json'), 'w', encoding='utf-8') as f:
+            json.dump({'source': 'DCAL DAT/EXT DFFUL files', 'units': 'Sv s-1 per Bq m-3 (m-2 on the ground surface)', 'geometries': data,
+                       'monoE': fgr12_mono_e(a.fgr12)}, f)
+        print(f'local/fgr12.json: {len(data["air"]["rows"])} nuclides, {len(data)} geometries from {a.fgr12}')
+        wrote += 1
+    else:
+        print(f'no {a.fgr12}: local/fgr12.json not written', file=sys.stderr)
     return 0 if wrote else 1
 
 

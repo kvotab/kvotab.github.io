@@ -13,6 +13,7 @@ import { detriment103, detriment60, nominalDetriment, DOSE_LABEL, P103, P60 } fr
 import { radonDoses, radonAssemble, radonJobText, KINDS as RADON_KINDS, MODE_LABEL, PAE_PER_BQ, EEC_J_PER_BQ, MJ_PER_WLM } from './radon.js';
 import { setupBatch } from './batch.js';
 import { listFolders, removeFolder, MAKE_VERSION } from './decay-store.js';
+import { GEOMETRY, externalForms } from './external.js';
 
 const $ = (id) => document.getElementById(id);
 const h = (tag, attrs = {}, ...kids) => {
@@ -320,7 +321,7 @@ function save() {
   try {
     localStorage.setItem(STORE, JSON.stringify({
       system: state.system, decay: state.decay, radonDecay: RADON.decay, nuclide: $('dcNuclide').value.trim(), route: route(), form: $('dcForm').value,
-      amad: $('dcAmad').value, ages: ages(), cutoff: $('dcCutoff').value, rtol: $('dcRtol').value, tab: state.tab,
+      amad: $('dcAmad').value, ages: [...$('dcAges').querySelectorAll('input:checked')].map((i) => Number(i.value)), cutoff: $('dcCutoff').value, rtol: $('dcRtol').value, tab: state.tab,
       side: getComputedStyle($('dcRoot')).getPropertyValue('--dc-side-width').trim() || null,
       batch: batch?.settings() ?? load().batch ?? null,
       model: { show: VIEW.show, dose: VIEW.dose, from: VIEW.from },
@@ -328,7 +329,11 @@ function save() {
   } catch { /* storage unavailable */ }
 }
 const route = () => document.querySelector('input[name="dcRoute"]:checked')?.value || 'ingestion';
-const ages = () => [...$('dcAges').querySelectorAll('input:checked')].map((i) => Number(i.value));
+// The ages ticked that the route and system have (FGR 12: the adult only).
+const ages = () => [...$('dcAges').querySelectorAll('input:checked:not(:disabled)')].map((i) => Number(i.value));
+const external = (r) => r?.spec?.route === 'external';
+/* An age's label: external exposure's youngest phantom is the newborn's. */
+const ageLabel = (age, ext) => (ext && age === 100 ? 'Newborn' : AGE_LABEL[age]);
 const digits = () => Number($('dcDigits').value) || 2;
 const sexView = () => document.querySelector('input[name="dcSex"]:checked')?.value || 'avg';
 
@@ -370,6 +375,24 @@ export function halfLife(T) {
 function systemSettings() {
   const row = $('dcCutoff').closest('.dc-row');
   if (row) row.hidden = state.system === '60';
+  routeSettings();
+}
+/* Settings that follow the route: for external exposure the geometries in
+   place of the forms, the ages of the reports' phantoms (FGR 12 has the
+   adult's only), and nothing to set for the integration. */
+function routeSettings() {
+  const ext = route() === 'external';
+  $('dcFormLabel').textContent = ext ? 'Geometry' : 'Chemical or physical form';
+  $('dcAgesTitle').textContent = ext ? 'Ages' : 'Ages at intake';
+  $('dcAgeFirst').textContent = ext ? 'Newborn' : '3 months';
+  for (const i of $('dcAges').querySelectorAll('input')) {
+    const off = ext && state.system === '60' && i.value !== '7300';
+    i.disabled = off;
+    const label = i.closest('label');
+    if (off) label.setAttribute('data-tip', 'Federal Guidance Report 12, which the ICRP 60 system’s external exposure follows, gives the adult only');
+    else label.removeAttribute('data-tip');
+  }
+  $('dcCalcSec').hidden = ext;
 }
 
 /** The catalogue of a system with some decay data, asked for once. */
@@ -505,26 +528,28 @@ function nuclideChanged() {
   state.entry = e;
   const note = $('dcNuclideNote');
   if (!e) {
-    note.textContent = $('dcNuclide').value.trim()
-      ? (state.system === '103' ? `Not covered: the ICRP 103 system has models here only for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more${state.decay ? ` in ${decayLabel(state.decay, '103')}` : ''}.` : `Not one of the nuclides of ICRP Publication 72${state.decay ? ` that ${decayLabel(state.decay, '60')} has` : ''}.`)
-      : '';
+    note.textContent = $('dcNuclide').value.trim() ? `Not a radionuclide of ${decayLabel(state.decay, state.system)}, the decay data chosen.` : '';
     $('dcForm').replaceChildren();
     $('dcRun').disabled = true;
     describeSoon();
     return;
   }
-  note.textContent = `Half-life ${e.T ? halfLife(e.T) : e.t || '?'}.`;
+  const intakes = ['ingestion', 'inhalation', 'injection'].some((r) => e[r]?.length);
+  note.textContent = `Half-life ${e.T ? halfLife(e.T) : e.t || '?'}.${intakes ? '' : state.system === '103'
+    ? ' External exposure only: the ICRP 103 system has models of intakes for the elements of Publication 158 and the Part 2 and 3 drafts, and nuclides with half-lives of 10 minutes or more.'
+    : ' External exposure only: it is not one of the nuclides of ICRP Publication 72.'}`;
   // Routes this nuclide has.
   for (const r of document.querySelectorAll('input[name="dcRoute"]')) {
     r.disabled = !e[r.value]?.length;
     const label = r.closest('label');
-    if (r.disabled) label.setAttribute('data-tip', `Not available for ${e.name} in the ${state.system === '60' ? 'ICRP 60' : 'ICRP 103'} system`);
+    if (r.disabled) label.setAttribute('data-tip', `Not available for ${e.name} in the ${state.system === '60' ? 'ICRP 60' : 'ICRP 103'} system: it has no model of the body there`);
     else label.removeAttribute('data-tip');
   }
   if (!e[route()]?.length) {
-    const other = ['ingestion', 'inhalation', 'injection'].find((r) => e[r]?.length);
+    const other = ['ingestion', 'inhalation', 'injection', 'external'].find((r) => e[r]?.length);
     if (other) document.querySelector(`input[name="dcRoute"][value="${other}"]`).checked = true;
   }
+  routeSettings();
   populateForms();
 }
 
@@ -552,9 +577,25 @@ function formChanged() {
   populateAmad();
   $('dcFormNote').textContent = route() === 'inhalation' && f && !aerosol
     ? 'A gas or vapour: its deposition in the respiratory tract and its absorption are given for the form, so there is no aerosol size.'
-    : '';
+    : route() === 'external' && f ? GEOMETRY_NOTE[f.key]?.(state.system) || '' : '';
   describeSoon();
 }
+
+/* What each geometry of external exposure is, and per what its coefficients are. */
+const GEOMETRY_NOTE = {
+  air: () => 'Per Bq per m³ of air: a person standing on uncontaminated ground in a cloud of uniform concentration filling the half-space above it.',
+  water: () => 'Per Bq per m³ of water: a person surrounded by water of uniform concentration, as when swimming.',
+  surface: (sys) => (sys === '60'
+    ? 'Per Bq per m² of ground: a person standing on a smooth plane of uniform activity at the ground’s surface.'
+    : 'Per Bq per m² of ground: a person standing on it; the photons come from 3 mm deep (0.5 g/cm², for the ground’s roughness), the electrons from the surface.'),
+  soil1: () => 'Per Bq per m³ of soil (1.6 g/cm³), uniform from the surface to 1 cm deep.',
+  soil5: () => 'Per Bq per m³ of soil (1.6 g/cm³), uniform from the surface to 5 cm deep.',
+  soil15: () => 'Per Bq per m³ of soil (1.6 g/cm³), uniform from the surface to 15 cm deep.',
+  soilInf: () => 'Per Bq per m³ of soil (1.6 g/cm³), uniform from the surface down: deep enough that the deepest add nothing.',
+};
+// Units: PER_TEXT in text given to supText (the page's fonts have no
+// superscript minus); rateText where it stays plain, in tips and notes.
+const PER_TEXT = { m3: 'per Bq m⁻³', m2: 'per Bq m⁻²' };
 
 /* ---- the chosen system, before any run ---------------------------------------- */
 /* The chain, the models and the size of what Calculate would solve: a worker
@@ -574,7 +615,7 @@ function describeSoon() {
    compared with the next; until then it says which settings it is not of,
    and its numbers and charts are dimmed. */
 const formOf = (spec) => JSON.stringify(Object.keys(spec).filter((k) => !['nuclide', 'route', 'cutoff', 'amad'].includes(k)).sort().map((k) => [k, spec[k]]));
-const ROUTE_WORD = { ingestion: 'ingestion', inhalation: 'inhalation', injection: 'injection' };
+const ROUTE_WORD = { ingestion: 'ingestion', inhalation: 'inhalation', injection: 'injection', external: 'external exposure' };
 /** The settings changed since r was calculated, in words; none when it is of the current ones. */
 function changesSince(r) {
   const out = [];
@@ -587,13 +628,13 @@ function changesSince(r) {
     if (s.nuclide !== r.spec.nuclide) out.push(`the radionuclide (now ${s.nuclide})`);
     if (s.route !== r.spec.route) out.push(`the route (now ${ROUTE_WORD[s.route]})`);
     else if (r.system === state.system && s.nuclide === r.spec.nuclide) {
-      if (formOf(s) !== formOf(r.spec)) out.push(`the form (now ${currentForm()?.label || 'another'})`);
+      if (formOf(s) !== formOf(r.spec)) out.push(`${s.route === 'external' ? 'the geometry' : 'the form'} (now ${currentForm()?.label || 'another'})`);
       if ((s.amad ?? null) !== (r.spec.amad ?? null)) out.push(`the aerosol size${s.amad != null ? ` (now ${s.amad} µm)` : ''}`);
       if (state.system === '103' && s.cutoff !== r.spec.cutoff) out.push('the decay chain cut-off');
     }
   }
-  if (ages().join() !== r.ages.join()) out.push('the ages at intake');
-  if (Number($('dcRtol').value) !== r.rtol) out.push('the tolerance');
+  if (ages().join() !== r.ages.join()) out.push(external(r) ? 'the ages' : 'the ages at intake');
+  if (!external(r) && Number($('dcRtol').value) !== r.rtol) out.push('the tolerance');
   return out;
 }
 const listText = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
@@ -677,6 +718,7 @@ function renderSize() {
     $('dcSizeBody').replaceChildren();
     return;
   }
+  if (d.info.external) { renderSizeExternal(d); return; }
   const z = d.info.size, n = ages().length * z.perAge;
   $('dcSizeSum').textContent = `${count(z.nuclides, 'nuclide')} · ${count(z.compartments, 'compartment')} · ${count(z.equations, 'equation')}`;
   const dropped = d.info.dropped || [];
@@ -690,6 +732,33 @@ function renderSize() {
     ['Runs', n ? `${count(n, 'integration')}${z.perAge > 1 ? ', one for each age and sex: the model differs between the sexes' : ', one for each age at intake'}; over 50 years for adults and to age 70 for children; ${Math.min(n, POOL_SIZE)} at a time on this device` : 'none: no age at intake is ticked'],
   ];
   $('dcSizeBody').replaceChildren(h('dl', {}, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+}
+
+/* External exposure: what Calculate adds up -- the members in equilibrium
+   with the parent -- and from which report. */
+function renderSizeExternal(d) {
+  const chain = d.info.chain, inEq = chain.filter((m, j) => j > 0 && m.ratio > 0), out = chain.filter((m) => m.ratio == null);
+  $('dcSizeSum').textContent = `${count(1 + inEq.length, 'nuclide')} with the progeny in equilibrium · ${d.system === '60' ? 'FGR 12' : 'FGR 15'}`;
+  const rows = [
+    ['Nuclide', `${chain[0].name}: its own photons and electrons, as the report gives a coefficient`],
+    ['Progeny', inEq.length ? `${inEq.map((m) => `${m.name} ${sigText(m.ratio)}`).join(', ')} Bq per Bq of ${chain[0].name}, once in equilibrium${d.info.days > 0 ? ` (within 1 % after ${durationText(d.info.days)})` : ''}` : 'none in equilibrium with it'],
+    out.length ? ['Not in equilibrium', `${out.map((m) => m.name).join(', ')}: as long-lived as ${chain[0].name} or longer, or formed from one that is`] : null,
+    ['Data', d.system === '60' ? 'Federal Guidance Report 12: the adult hermaphrodite phantom, 12 photon energies, ICRP 38 decay data by default'
+      : 'Federal Guidance Report 15 (2025): the six phantoms of its reference persons, 13 photon energies, ICRP 107 decay data by default'],
+  ].filter(Boolean);
+  $('dcSizeBody').replaceChildren(h('dl', {}, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+}
+/* A ratio to four figures; a time in the unit that suits it. */
+const sigText = (x) => String(Number(x.toPrecision(4)));
+function durationText(days) {
+  const g2 = (x) => Number(x.toPrecision(2)).toLocaleString('en');
+  const y = days / 365.25;
+  if (days < 1 / 24) return `${g2(days * 1440)} minutes`;
+  if (days < 2) return `${g2(days * 24)} hours`;
+  if (days < 730) return `${g2(days)} days`;
+  if (y >= 1e9) return `${g2(y / 1e9)} billion years`;
+  if (y >= 1e6) return `${g2(y / 1e6)} million years`;
+  return `${g2(y)} years`;
 }
 
 const AMAD_SIZES = {
@@ -722,6 +791,7 @@ function currentSpec() {
   const e = state.entry, f = currentForm();
   if (!e || !f) return null;
   const spec = { nuclide: e.name, route: route(), ...f.spec, cutoff: Number($('dcCutoff').value) };
+  if (spec.route === 'external') delete spec.cutoff; // the whole chain, in equilibrium
   if (!$('dcAmadRow').hidden) spec.amad = Number($('dcAmad').value);
   return spec;
 }
@@ -742,19 +812,23 @@ async function run() {
   const t0 = performance.now();
   try {
     // One request per age, to as many workers as there are; the first age's
-    // result carries the chain and the models.
+    // result carries the chain and the models. External exposure takes
+    // milliseconds an age: one request.
     const outputs = outputTimes(as), rtol = Number($('dcRtol').value);
     let done = 0;
-    const out = await Promise.all(as.map((age, k) => ask({ type: 'run', system, decay, spec, ages: [age], outputs, rtol, withSystem: k === 0 }, null, RANK.run)
-      .then(([o]) => {
-        done++;
-        status(`Calculating ${e.name}: ${done} of ${as.length} ages done…`);
-        progress(done / as.length);
-        return o;
-      })));
+    const out = spec.route === 'external'
+      ? await ask({ type: 'run', system, decay, spec, ages: as }, null, RANK.run)
+      : await Promise.all(as.map((age, k) => ask({ type: 'run', system, decay, spec, ages: [age], outputs, rtol, withSystem: k === 0 }, null, RANK.run)
+        .then(([o]) => {
+          done++;
+          status(`Calculating ${e.name}: ${done} of ${as.length} ages done…`);
+          progress(done / as.length);
+          return o;
+        })));
     state.result = { system, decay, spec, form: f, entry: e, ages: as, rtol, out, amad: spec.amad, key: choiceKey(system, spec, decay) };
     progress(null);
-    status(`${e.name}: done in ${((performance.now() - t0) / 1000).toFixed(1)} s. ${SYSTEM_LABEL[system]}${decay ? `, decay data ${decayLabel(decay, system)}` : ''}.`, 'ok');
+    const ms = performance.now() - t0;
+    status(`${e.name}: done in ${ms < 100 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`}. ${SYSTEM_LABEL[system]}${spec.route === 'external' ? `, external exposure as ${system === '60' ? 'FGR 12' : 'FGR 15'}` : ''}${decay ? `, decay data ${decayLabel(decay, system)}` : ''}.`, 'ok');
     renderAll();
     writeHash();
     save();
@@ -783,7 +857,24 @@ const TISSUE_ORDER_60 = {
   other: ['Testes', 'Ovaries', 'Upper large intestine', 'Lower large intestine'],
 };
 
+/* External exposure's tissues: the reports' phantoms are hermaphrodite. FGR 15
+   has the ICRP 103 tissues but the eye lens and ureters, and the testes,
+   ovaries, prostate and uterus apart; FGR 12 the ICRP 60 ones but the
+   extrathoracic airways, and the gallbladder and the heart besides. */
+const TISSUE_ORDER_EXT = {
+  103: { ...TISSUE_ORDER_103, other: ['Testes', 'Ovaries', 'Prostate', 'Uterus'] },
+  60: { ...TISSUE_ORDER_60, remainder: TISSUE_ORDER_60.remainder.filter((t) => t !== 'ET'), other: [...TISSUE_ORDER_60.other, 'Gallbladder', 'Heart'] },
+};
+/* Dose rates per second (the reports'), hour or year. */
+const RATE = { s: [1, 's'], h: [3600, 'h'], y: [365.25 * 86400, 'y'] };
+const rateOf = () => RATE[$('dcRate').value] || RATE.s;
+const rateUnit = (per) => `Sv ${rateOf()[1]}⁻¹ ${PER_TEXT[per] || ''}`;
+const rateText = (per) => `Sv/${rateOf()[1]} per Bq/m${per === 'm2' ? '²' : '³'}`;
+const progenyView = () => document.querySelector('input[name="dcProgeny"]:checked')?.value || 'alone';
+const geometryLabel = (r) => r.form?.label || r.spec.geometry;
+
 function headlineText(r) {
+  if (external(r)) return `external exposure · ${geometryLabel(r)}`;
   const what = { ingestion: 'ingested', inhalation: 'inhaled', injection: 'taken into blood' }[r.spec.route];
   const amad = r.spec.route === 'inhalation' && r.amad ? `, ${r.amad} µm` : '';
   return `${what} · ${r.form.label}${amad}`;
@@ -800,6 +891,10 @@ function renderCoef() {
   $('dcCoef').hidden = !r;
   if (!r) return;
   $('dcHeadline').replaceWith(Object.assign(headline(r), { id: 'dcHeadline' }));
+  $('dcRateLabel').hidden = !external(r);
+  $('dcProgenyBar').hidden = !external(r);
+  if (external(r)) { renderCoefExternal(r); return; }
+  $('dcHHead').replaceChildren('Committed equivalent dose ', h('span', { class: 'dc-unit' }, 'Sv per Bq'));
   const d = digits();
   const out = r.out;
   // Effective dose by age.
@@ -854,9 +949,69 @@ function renderCoef() {
   $('dcNotes').replaceChildren(h('ul', {}, items));
 }
 
+/* External exposure: the effective dose rate at each age, of the nuclide alone
+   and with its progeny in equilibrium (and in the ICRP 60 system FGR 12's
+   H_E), what it comes from, and the tissues' equivalent dose rates. */
+function renderCoefExternal(r) {
+  const d = digits(), [f] = rateOf(), out = r.out, sixty = r.system === '60';
+  const unit = rateUnit(out[0].per);
+  const share = (x, tot) => (tot > 0 ? percent(100 * x / tot) : '–');
+  $('dcETable').replaceChildren(
+    h('thead', {}, h('tr', {}, h('th', {}, 'Age'), h('th', {}, ...supText(`e, ${unit}`)), h('th', {}, 'with its progeny'),
+      sixty ? h('th', { 'data-tip': 'The effective dose equivalent of ICRP 26, which Federal Guidance Report 12 tabulates' }, 'H', h('sub', {}, 'E'), ', as FGR 12') : null,
+      sixty ? h('th', {}, 'with its progeny') : null,
+      h('th', {}, 'Skin'), h('th', { class: 'text' }, 'e from photons · bremsstrahlung · electrons'))),
+    h('tbody', {}, out.map((o) => h('tr', {},
+      h('td', {}, ageLabel(o.age, true)),
+      h('td', { class: 'big' }, sci(o.E * f, d)),
+      h('td', {}, sci(o.progeny.E * f, d)),
+      sixty ? h('td', {}, sci(o.HE * f, d)) : null,
+      sixty ? h('td', {}, sci(o.progeny.HE * f, d)) : null,
+      h('td', {}, sci(o.H.Skin * f, d)),
+      h('td', { class: 'text dim' }, `${share(o.parts.photon.E, o.E)} · ${share(o.parts.brems.E, o.E)} · ${share(o.parts.electron.E, o.E)}`)))));
+  const order = TISSUE_ORDER_EXT[r.system];
+  const withP = progenyView() === 'with';
+  $('dcSexBar').hidden = true;
+  $('dcHHead').replaceChildren(`Equivalent dose rate${withP ? ', with the progeny in equilibrium' : ''} `, h('span', { class: 'dc-unit' }, ...supText(unit)));
+  const Hof = (o, name) => (withP ? o.progeny.H : o.H)[name];
+  const row = (name, w, cls) => h('tr', { class: cls }, h('td', {}, name, w != null ? h('span', { class: 'dc-w' }, `  wT ${w}`) : null),
+    out.map((o) => h('td', {}, sci(Hof(o, name) * f, d))));
+  const group = (text) => h('tr', { class: 'group' }, h('td', { colspan: out.length + 1 }, text));
+  $('dcHTable').replaceChildren(
+    h('thead', {}, h('tr', {}, h('th', {}, 'Tissue'), out.map((o) => h('th', {}, ageLabel(o.age, true))))),
+    h('tbody', {},
+      group(sixty ? 'Tissues with a weighting factor (ICRP 60)' : 'Tissues with a weighting factor (ICRP 103)'),
+      order.weighted.map(([n, w]) => row(n, w)),
+      group(sixty ? 'Remainder (wT 0.05: mass-weighted mean, or the splitting rule; no extrathoracic airways in the phantom)' : 'Remainder (wT 0.12: arithmetic mean of the 13 tissues)'),
+      order.remainder.map((n) => row(n)),
+      row('Remainder', sixty ? 0.05 : 0.12, 'sum'),
+      group('Other tissues'),
+      order.other.map((n) => row(n)),
+      h('tr', { class: 'sum' }, h('td', {}, 'Effective dose rate'), out.map((o) => h('td', {}, sci((withP ? o.progeny.E : o.E) * f, d))))));
+  // Notes: the method, the progeny, the units.
+  const first = out[0], chain = first.chain || [];
+  const inEq = (first.members || []).filter((m, j) => j > 0 && m.ratio > 0);
+  const notIn = (first.members || []).filter((m) => m.ratio == null).map((m) => m.name);
+  const items = [
+    h('li', {}, ...supText(`Dose rate coefficients for external exposure: the equivalent dose rate to each tissue, and the effective dose rate, per unit concentration in ${GEOMETRY_PLACE[r.spec.geometry]}, ${unit}. They are calculated here from the decay data as ${sixty ? 'Federal Guidance Report 12 (1993)' : 'Federal Guidance Report 15 (2025 revision)'} calculates them: each photon’s dose from the report’s monoenergetic coefficients, the bremsstrahlung of the beta particles slowing down in ${r.spec.geometry === 'air' ? 'air' : r.spec.geometry === 'water' ? 'water' : 'soil'}, and the electrons’ dose to the skin (Help: “External exposure”).`)),
+    h('li', {}, sixty
+      ? 'Effective dose rate: the tissue weighting factors of Publication 60 with the remainder of Publication 72, mass-weighted with its splitting rule, without the extrathoracic airways that FGR 12’s phantom does not have; gonads the higher of testes and ovaries, colon 0.57 upper + 0.43 lower large intestine, the skin (wT 0.01) with its electrons. HE: the effective dose equivalent of ICRP 26 that FGR 12 gives (gonads 0.25, breast 0.15, red marrow and lung 0.12, thyroid and bone surface 0.03, the five highest of the other organs 0.06 each, the skin left out).'
+      : 'Effective dose rate: the tissue weighting factors of Publication 103 on FGR 15’s hermaphrodite phantoms: gonads the mean of testes and ovaries, prostate/uterus the mean of the two, the remainder the mean of its 13 tissues, the skin (wT 0.01) with its electrons. The adult is FGR 15’s reference adult (the adult phantom for the male, the 15-year-old’s for the female).'),
+    h('li', {}, inEq.length
+      ? `With its progeny: ${inEq.map((m) => `${m.name} (${sigText(m.ratio)} Bq per Bq)`).join(', ')}, their activities once in equilibrium with ${r.entry.name}${first.days > 0 ? `, within 1 % after ${durationText(first.days)}` : ''}${notIn.length ? `; not ${notIn.join(', ')}, which never are` : ''}. The reports’ own coefficients are of the nuclide alone. The Decay chain tab has each member’s share.`
+      : `${r.entry.name} has no progeny in equilibrium with it${notIn.length ? ` (${notIn.join(', ')} ${notIn.length === 1 ? 'lives' : 'live'} as long or longer, or ${notIn.length === 1 ? 'is' : 'are'} formed from one that does)` : ''}: with its progeny is the nuclide alone.`),
+  ];
+  if (chain.length === 0 && !first.members) items.pop();
+  const splits = out.filter((o) => (withP ? o.progeny.split : o.split));
+  if (sixty && splits.length) items.push(h('li', {}, `The remainder is split at ${splits.map((o) => ageLabel(o.age, true).toLowerCase()).join(', ')}: ${(withP ? splits[0].progeny.split : splits[0].split)} takes half of its weight.`));
+  $('dcNotes').replaceChildren(h('ul', {}, items));
+}
+const GEOMETRY_PLACE = { air: 'the air', water: 'the water', surface: 'the ground’s surface', soil1: 'the top 1 cm of soil', soil5: 'the top 5 cm of soil', soil15: 'the top 15 cm of soil', soilInf: 'soil, to any depth' };
+
 function csv() {
   const r = state.result;
   if (!r) return;
+  if (external(r)) { csvExternal(r); return; }
   const cell = (v) => (typeof kvotCsvCell === 'function' ? kvotCsvCell(v) : String(v));
   const lines = [];
   lines.push(['Nuclide', r.entry.name, 'Route', r.spec.route, 'Form', r.form.label, 'System', SYSTEM_LABEL[r.system], 'Decay data', decayLabel(r.decay, r.system)].map(cell).join(','));
@@ -867,11 +1022,37 @@ function csv() {
     if (r.system === '60') lines.push([`H ${n} (Sv/Bq)`, ...r.out.map((o) => o.H[n].toPrecision(6))].map(cell).join(','));
     else for (const s of ['avg', 'M', 'F']) lines.push([`H ${n}${s === 'avg' ? '' : s === 'M' ? ' male' : ' female'} (Sv/Bq)`, ...r.out.map((o) => o.H[s][n].toPrecision(6))].map(cell).join(','));
   }
+  saveText(lines, `dose-${r.entry.name}-${r.spec.route}-${r.system}.csv`);
+}
+function saveText(lines, name) {
   const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
-  const a = h('a', { href: URL.createObjectURL(blob), download: `dose-${r.entry.name}-${r.spec.route}-${r.system}.csv` });
+  const a = h('a', { href: URL.createObjectURL(blob), download: name });
   document.body.append(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+/* External exposure: e and every tissue's dose rate at every age, alone and
+   with the progeny, in the unit the tab shows. */
+function csvExternal(r) {
+  const cell = (v) => (typeof kvotCsvCell === 'function' ? kvotCsvCell(v) : String(v));
+  const [f, per] = rateOf(), unit = `Sv/${per} per Bq/${r.out[0].per === 'm2' ? 'm2' : 'm3'}`;
+  const line = (xs) => xs.map(cell).join(',');
+  const lines = [
+    line(['Nuclide', r.entry.name, 'Route', 'external exposure', 'Geometry', geometryLabel(r), 'System', SYSTEM_LABEL[r.system], 'Decay data', decayLabel(r.decay, r.system), 'Unit', unit]),
+    line(['Quantity', ...r.out.map((o) => ageLabel(o.age, true))]),
+  ];
+  const num = (x) => (x * f).toPrecision(6);
+  lines.push(line([`Effective dose rate e (${unit})`, ...r.out.map((o) => num(o.E))]));
+  lines.push(line([`Effective dose rate e with the progeny in equilibrium (${unit})`, ...r.out.map((o) => num(o.progeny.E))]));
+  if (r.system === '60') {
+    lines.push(line([`Effective dose equivalent HE, ICRP 26 (${unit})`, ...r.out.map((o) => num(o.HE))]));
+    lines.push(line([`Effective dose equivalent HE with the progeny (${unit})`, ...r.out.map((o) => num(o.progeny.HE))]));
+  }
+  for (const n of Object.keys(r.out[0].H)) {
+    lines.push(line([`H ${n} (${unit})`, ...r.out.map((o) => num(o.H[n]))]));
+    lines.push(line([`H ${n} with the progeny (${unit})`, ...r.out.map((o) => num(o.progeny.H[n]))]));
+  }
+  saveText(lines, `dose-${r.entry.name}-external-${r.spec.geometry}-${r.system}.csv`);
 }
 
 /* ---- charts ----------------------------------------------------------------- */
@@ -967,9 +1148,13 @@ function logRange(traces, decades = 6) {
 const atAge = (age) => (age >= 7300 ? 'as an adult' : `at ${AGE_LABEL[age].toLowerCase()}`);
 function renderRetention() {
   const r = state.result;
-  $('dcRetEmpty').hidden = !!r;
-  $('dcRet').hidden = !r;
-  if (!r || typeof Plotly === 'undefined') return;
+  const ext = external(r);
+  $('dcRetEmpty').textContent = ext
+    ? 'External exposure takes nothing into the body: its coefficients are dose rates per unit concentration outside it, with no retention, excretion or commitment period. The Model tab shows the dose per photon and electron that they are made of.'
+    : 'Retention, excretion and how the dose builds up after the intake appear here once calculated.';
+  $('dcRetEmpty').hidden = !!r && !ext;
+  $('dcRet').hidden = !r || ext;
+  if (!r || ext || typeof Plotly === 'undefined') return;
   const sel = $('dcRetAge');
   const prev = sel.value;
   sel.replaceChildren(...r.out.map((o, k) => h('option', { value: k }, AGE_LABEL[o.age])));
@@ -1052,6 +1237,15 @@ function renderModel() {
   $('dcModel').hidden = !r;
   if (!r) return;
   paneHead('dcModelHead', r);
+  const ext = !!r.first?.external;
+  for (const id of ['dcModelMember', 'dcModelShow']) $(id).closest('label').hidden = ext;
+  $('dcModelAge').closest('label').firstChild.textContent = ext ? 'Age ' : 'Age at intake ';
+  $('dcModelDose').hidden ||= ext;
+  $('dcModelFrom').hidden ||= ext;
+  $('dcBuckets').hidden ||= ext;
+  $('dcTransfers').closest('.dc-table-wrap').hidden = ext;
+  $('dcTransfers').closest('.dc-table-wrap').previousElementSibling.hidden = ext;
+  if (ext) { renderModelExternal(r); return; }
   const first = r.first;
   const msel = $('dcModelMember');
   const prevM = msel.value;
@@ -1142,6 +1336,59 @@ function renderModel() {
     h('tbody', {}, model.transfers.map(([a, b, rates]) => h('tr', { 'data-t': transferKey(a, b) }, h('td', {}, a), h('td', { class: 'text' }, b), rates.map((x) => h('td', {}, fmtRate(x))))), onwardRows));
   renderIntakeModel(r, first);
   renderView();
+}
+
+/* External exposure: the report's model is its dose per photon emitted at
+   each energy (Monte Carlo in its phantoms) and per electron (to the skin):
+   drawn for the age chosen, with the nuclide's photon lines that give the
+   most after a calculation. */
+function renderModelExternal(r) {
+  const first = r.first, sixty = r.system === '60';
+  const asel = $('dcModelAge');
+  const have = first.mono.map((m) => m.age);
+  const chosen = have.includes(VIEW.age) ? VIEW.age : have[have.length - 1];
+  asel.replaceChildren(...have.map((a) => h('option', { value: a }, ageLabel(a, true))));
+  asel.value = String(chosen);
+  const mono = first.mono.find((m) => m.age === chosen);
+  const per = GEOMETRY[r.spec.geometry]?.per || 'm3';
+  const p = (...kids) => h('p', {}, ...kids.flatMap(supText));
+  $('dcModelText').replaceChildren(
+    p(h('b', {}, sixty ? 'Federal Guidance Report 12 (Eckerman and Ryman 1993)' : 'Federal Guidance Report 15 (Bellamy et al., revised 2025)'), ` · ${geometryLabel(r)}`),
+    p(sixty
+      ? 'Photons of 12 energies from 10 keV to 5 MeV, transported through the environment (discrete ordinates) and the Cristy–Eckerman adult hermaphrodite phantom (Monte Carlo, ALGAMP), give each organ’s dose rate per photon emitted.'
+      : 'Photons of 13 energies from 10 keV to 5 MeV, transported by Monte Carlo (MCNP6) through the environment and the stylised phantoms of Han et al. (newborn, 1, 5, 10 and 15 years, adult), give each of 29 tissues’ dose rate per photon emitted; the reference adult takes the adult phantom for the male and the 15-year-old’s for the female.'),
+    p('A nuclide’s coefficient adds up its photon lines of 10 keV or more, each at its yield, interpolated between those energies (a monotone cubic of the logarithms); the bremsstrahlung of its beta particles slowing down in the medium, folded with the same coefficients; and the dose its electrons give the skin, 70 µm deep, from the DOSFACTER calculations of FGR 12 (the lower curve). Electrons reach no other tissue.'),
+  );
+  // The chart: e and the skin's dose rate per photon, and the skin's per electron.
+  const diagram = $('dcDiagram');
+  $('dcBody').hidden = true;
+  diagram.hidden = false;
+  diagram.replaceChildren(h('div', { class: 'plot', id: 'dcPlotMono' }));
+  const t = plotTheme();
+  const x = mono.points.map((q) => q.E);
+  const traces = [
+    { x, y: mono.points.map((q) => q.e), name: 'e per photon', mode: 'lines+markers', line: { width: 3 } },
+    { x, y: mono.points.map((q) => q.skin), name: 'skin per photon', mode: 'lines+markers' },
+    { x: first.electronSkin.E, y: first.electronSkin.h, name: 'skin per electron', mode: 'lines', line: { dash: 'dot' } },
+  ];
+  const lines = r.run?.out.find((o) => o.age === chosen)?.lines || [];
+  if (lines.length) traces.push({ x: lines.map((l) => l[0]), y: lines.map((l) => l[2] / l[1]), name: `${r.entry.name} photon lines`, mode: 'markers', marker: { size: 9, symbol: 'diamond' } });
+  if (typeof Plotly !== 'undefined') {
+    const lay = layout(`Dose rate per particle emitted, ${ageLabel(chosen, true).toLowerCase()}`, `Sv s<sup>−1</sup> per Bq m<sup>${per === 'm2' ? '−2' : '−3'}</sup>, per particle`, 'Energy (MeV)');
+    lay.yaxis.range = logRange(traces, 8);
+    lay.hovermode = 'closest';
+    Plotly.react($('dcPlotMono'), traces, lay, { responsive: true, displaylogo: false });
+  }
+  // After a calculation: the lines that give the most of e.
+  const box = $('dcIntakeModel');
+  if (!lines.length) { box.replaceChildren(r.run ? h('p', { class: 'dc-muted' }, `${r.entry.name} emits no photons of 10 keV or more: its dose rate is its electrons’ and their bremsstrahlung.`) : h('p', { class: 'dc-muted' }, 'Calculate, and the photon lines that give the most appear here.')); return; }
+  const o = r.run.out.find((x2) => x2.age === chosen);
+  box.replaceChildren(
+    h('h3', { class: 'dc-h3' }, `The photon lines of ${r.entry.name} that give the most of e`, h('span', { class: 'dc-unit' }, `${ageLabel(chosen, true).toLowerCase()}, the nuclide alone`)),
+    h('div', { class: 'dc-table-wrap' }, h('table', { class: 'dc-table' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Energy, keV'), h('th', {}, 'Yield per decay'), h('th', {}, ...supText(`e, Sv s⁻¹ ${PER_TEXT[per]}`)), h('th', {}, 'Share of e'))),
+      h('tbody', {}, lines.map(([E, y, e]) => h('tr', {}, h('td', {}, (1000 * E).toFixed(E < 0.1 ? 2 : 1)), h('td', {}, sci(y, 3)), h('td', {}, sci(e, 3)), h('td', {}, percent(100 * e / o.E))))))),
+  );
 }
 
 /* Pointing at a box of the model, a part of the body or a line of the key
@@ -1455,6 +1702,10 @@ function renderChain() {
   $('dcChain').hidden = !s;
   if (!s) return;
   paneHead('dcChainHead', s);
+  const ext = !!s.first?.external;
+  $('dcUTable').closest('.dc-table-wrap').hidden = ext;
+  $('dcUTable').closest('.dc-table-wrap').previousElementSibling.hidden = ext;
+  if (ext) { renderChainExternal(s); return; }
   const r = s.run; // the numbers of transformations come with a run
   const note = staleNote(r);
   $('dcChainStale').replaceChildren(...(note ? [note] : []));
@@ -1467,6 +1718,7 @@ function renderChain() {
   const kindText = { parent: 'intake', independent: 'own model (independent kinetics)', spec: 'the model the parent element’s OIR section gives it', decay: 'decays where it is formed', mirror: 'shares the kinetics of the member it comes from', gas: 'noble gas', shared: 'parent’s model (shared kinetics)', 'own model': 'own model (independent kinetics)' };
   const sel = $('dcChainAge');
   sel.closest('label').hidden = !r;
+  sel.closest('label').firstChild.textContent = 'Transformations at age ';
   let o0 = null;
   if (r) {
     const prev = sel.value;
@@ -1512,6 +1764,57 @@ function renderChain() {
       rows.length > 80 ? h('tr', {}, h('td', { colspan: 4, class: 'dim' }, `and ${rows.length - 80} more, each under ${sci(rows[79].n, 2)}`)) : null));
 }
 
+/* External exposure: the whole chain, each member's activity per becquerel of
+   the parent once in equilibrium with it, and after a calculation each
+   member's own e and its share of e with the progeny. */
+function renderChainExternal(s) {
+  const r = s.run;
+  const note = staleNote(r);
+  $('dcChainStale').replaceChildren(...(note ? [note] : []));
+  $('dcChainStale').hidden = !note;
+  $('dcChain').classList.toggle('dc-stale', !!note);
+  const first = s.first, chain = first.chain;
+  const parentsOf = chain.map(() => []);
+  for (const b of first.branches) parentsOf[b.to].push([b.from, b.b]);
+  const sel = $('dcChainAge');
+  sel.closest('label').hidden = !r;
+  sel.closest('label').firstChild.textContent = 'Shares at age ';
+  let o = null;
+  if (r) {
+    const prev = sel.value;
+    sel.replaceChildren(...r.out.map((x, k) => h('option', { value: k }, ageLabel(x.age, true))));
+    sel.value = prev && prev < r.out.length ? prev : String(r.out.length - 1);
+    o = r.out[Number(sel.value)];
+  }
+  const d = digits(), [f] = rateOf();
+  const mev = (x) => (x > 0 ? (x >= 0.001 ? x.toFixed(4) : x.toExponential(2)) : '–');
+  const byName = new Map((o?.members || []).map((m) => [m.name, m]));
+  // Alpha particles give no external dose: the electron and photon energies only.
+  $('dcChainTable').replaceChildren(
+    h('thead', {}, h('tr', {}, h('th', {}, 'Member'), h('th', {}, 'Half-life'), h('th', { class: 'text' }, 'Produced from'),
+      h('th', {}, 'Electron, MeV'), h('th', {}, 'Photon, MeV'), h('th', { 'data-tip': 'Its activity per becquerel of the parent once in equilibrium with it' }, 'Bq per Bq'),
+      h('th', { 'data-tip': o ? `Its own effective dose rate, ${rateText(o.per)}` : null }, 'e alone'), h('th', { 'data-tip': 'Its part of the effective dose rate with the progeny' }, 'Share'))),
+    h('tbody', {}, chain.map((m, j) => {
+      const x = byName.get(m.name);
+      return h('tr', {},
+        h('td', {}, m.name, m.other ? h('span', { class: 'dc-other-name', 'data-tip': `${decayLabel(s.decay, s.system)} calls this state ${m.other}; the page keeps the ${s.system === '60' ? 'ICRP 38' : 'ICRP 107'} name (Help: “Decay data”)` }, ` (${m.other})`) : null),
+        h('td', {}, halfLife(m.T)),
+        h('td', { class: 'text' }, parentsOf[j].map(([i, b]) => `${chain[i].name} (${b < 0.9999 ? `${+(100 * b).toPrecision(3)} %` : '100 %'})`).join(', ') || '—'),
+        ...(m.E || [null, null, null]).slice(1).map((v) => h('td', {}, mev(v))),
+        h('td', { class: m.ratio == null ? 'dim' : '' }, j === 0 ? '1' : m.ratio == null ? 'never' : sigText(m.ratio)),
+        h('td', {}, x?.E != null ? sci(x.E * f, d) : '–'),
+        h('td', {}, x?.share && o.progeny.E > 0 ? percent(100 * x.share.E / o.progeny.E) : '–'));
+    })));
+  const notIn = chain.filter((m) => m.ratio == null).map((m) => m.name);
+  $('dcChainNote').textContent = `Bq per Bq: each member’s activity once in equilibrium with ${chain[0].name}, which a member shorter-lived than it and formed only from members that are reaches${first.days > 0 ? `, within 1 % after ${durationText(first.days)}` : ''}; ${notIn.length ? `never: ${notIn.join(', ')}` : 'the whole chain does'}.${o ? ` e alone in ${rateText(o.per)}; its share of e with the progeny.` : ''}`;
+  const decayNotes = chain.filter((m) => m.decayNotes?.length);
+  $('dcChainDecay').hidden = !s.decay;
+  $('dcChainDecay').replaceChildren(...(s.decay ? [
+    h('p', {}, `Decay data: ${decayLabel(s.decay, s.system)} (Help: “Decay data”). `, decayNotes.length ? 'Where a data set needed a rule of the page’s:' : 'None of these members needed a rule beyond reading their data sets.'),
+    decayNotes.length ? h('ul', {}, decayNotes.map((m) => h('li', {}, h('b', {}, m.name), ': ', m.decayNotes.join('; ')))) : null,
+  ].filter(Boolean) : []));
+}
+
 /* ---- the risk tab ------------------------------------------------------------------------ */
 /* The detriment-adjusted nominal risk coefficients of the selected system,
    calculated from the ICRP's inputs step by step (risk.js), beside the
@@ -1550,13 +1853,23 @@ function riskContext(sixty) {
 /* The coefficients applied to the calculated intake: e times the total, and tissue by tissue. */
 function riskApplied(pop) {
   const r = state.result;
-  const head = h('h3', { class: 'dc-h3' }, 'Applied to the calculated intake', riskUnit('nominal detriment per Bq taken in'));
+  const ext = external(r);
+  const per = ext ? `per s per Bq ${r.out[0].per === 'm2' ? 'm⁻²' : 'm⁻³'}` : 'per Bq taken in';
+  const head = h('h3', { class: 'dc-h3' }, ext ? 'Applied to the calculated exposure' : 'Applied to the calculated intake', riskUnit(`nominal detriment ${per}`));
   if (!r) return [head, h('p', { class: 'dc-muted' }, 'Calculate a dose coefficient, and its nominal detriment per becquerel appears here.')];
-  const n = nominalDetriment(r.system, pop, r.out);
+  // External exposure: its dose rates, of the nuclide alone or with its
+  // progeny as the Coefficients tab shows them; the hermaphrodite phantom's
+  // ovaries for the female gonads.
+  const withP = ext && progenyView() === 'with';
+  const outs = !ext ? r.out : r.out.map((o) => {
+    const H = withP ? o.progeny.H : o.H;
+    return { age: o.age, E: withP ? o.progeny.E : o.E, H: r.system === '60' ? H : { avg: H, F: { Gonads: H.Ovaries } } };
+  });
+  const n = nominalDetriment(r.system, pop, outs);
   const d = digits();
   const coef = `${(100 * n.coefficient).toFixed(1)} × 10⁻² Sv⁻¹`;
   const sixty = r.system === '60';
-  const sel = h('select', { id: 'dcRiskAge', 'data-on-change': 'dc:redraw' }, n.ages.map((a, k) => h('option', { value: k }, AGE_LABEL[a.age])));
+  const sel = h('select', { id: 'dcRiskAge', 'data-on-change': 'dc:redraw' }, n.ages.map((a, k) => h('option', { value: k }, ageLabel(a.age, ext))));
   const k = Math.min(Number(state.riskAge ?? n.ages.length - 1), n.ages.length - 1);
   sel.value = String(k);
   sel.addEventListener('change', () => { state.riskAge = sel.value; });
@@ -1566,16 +1879,18 @@ function riskApplied(pop) {
   return [
     head,
     ...(note ? [note] : []),
-    h('p', { class: 'dc-formula' }, ...supText(`${r.entry.name}, ${headlineText(r)}; coefficients for the ${pop === 'whole' ? 'whole population' : 'adult workers'} (the toggle above). Two ways: the committed effective dose e times the total coefficient, ${coef}; and tissue by tissue, each tissue’s detriment per sievert times its committed equivalent dose, which follows where the dose actually goes.`)),
+    h('p', { class: 'dc-formula' }, ...supText(ext
+      ? `${r.entry.name}, ${headlineText(r)}${withP ? ', with its progeny in equilibrium' : ', the nuclide alone'} (as the Coefficients tab shows it); coefficients for the ${pop === 'whole' ? 'whole population' : 'adult workers'} (the toggle above). Two ways: the effective dose rate e times the total coefficient, ${coef}; and tissue by tissue, each tissue’s detriment per sievert times its equivalent dose rate. Per second of exposure to a unit concentration.`
+      : `${r.entry.name}, ${headlineText(r)}; coefficients for the ${pop === 'whole' ? 'whole population' : 'adult workers'} (the toggle above). Two ways: the committed effective dose e times the total coefficient, ${coef}; and tissue by tissue, each tissue’s detriment per sievert times its committed equivalent dose, which follows where the dose actually goes.`)),
     h('div', { class: note ? 'dc-table-wrap dc-dim' : 'dc-table-wrap' }, h('table', { class: 'dc-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Age at intake'), h('th', {}, 'e, Sv per Bq'), h('th', {}, ...supText(`e × ${coef}`)), h('th', {}, 'Tissue by tissue'),
+      h('thead', {}, h('tr', {}, h('th', {}, ext ? 'Age' : 'Age at intake'), h('th', {}, ...supText(ext ? `e, Sv s⁻¹ ${PER_TEXT[r.out[0].per]}` : 'e, Sv per Bq')), h('th', {}, ...supText(`e × ${coef}`)), h('th', {}, 'Tissue by tissue'),
         h('th', {}, sixty ? 'of which hereditary' : 'of which heritable'), h('th', {}, 'Ratio'), h('th', {}, sixty ? 'Fatal cancers, Σ H F' : 'Cancer cases, Σ H R'))),
-      h('tbody', {}, n.ages.map((x) => h('tr', {}, h('td', {}, AGE_LABEL[x.age]), h('td', {}, sci(x.E, d)), h('td', {}, sci(x.fromE, d)), h('td', { class: 'big' }, sci(x.organ, d)),
+      h('tbody', {}, n.ages.map((x) => h('tr', {}, h('td', {}, ageLabel(x.age, ext)), h('td', {}, sci(x.E, d)), h('td', {}, sci(x.fromE, d)), h('td', { class: 'big' }, sci(x.organ, d)),
         h('td', {}, sci(x.heritable, d)), h('td', {}, x.fromE > 0 ? (x.organ / x.fromE).toFixed(2) : '–'), h('td', {}, sci(x.risk, d))))))),
-    h('h3', { class: 'dc-h3' }, 'Tissue by tissue at ', sel, riskUnit('per Bq taken in')),
+    h('h3', { class: 'dc-h3' }, 'Tissue by tissue at ', sel, riskUnit(per)),
     h('div', { class: note ? 'dc-table-wrap dc-dim' : 'dc-table-wrap' }, h('table', { class: 'dc-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, sixty ? 'Organ' : 'Tissue'), h('th', { class: 'text' }, 'Equivalent dose of'), h('th', {}, 'H, Sv per Bq'), h('th', {}, ...supText('Detriment, 10⁻² Sv⁻¹')),
-        h('th', {}, 'Detriment per Bq'), h('th', {}, 'Share'))),
+      h('thead', {}, h('tr', {}, h('th', {}, sixty ? 'Organ' : 'Tissue'), h('th', { class: 'text' }, ext ? 'Equivalent dose rate of' : 'Equivalent dose of'), h('th', {}, ...supText(ext ? `H, Sv s⁻¹ ${PER_TEXT[r.out[0].per]}` : 'H, Sv per Bq')), h('th', {}, ...supText('Detriment, 10⁻² Sv⁻¹')),
+        h('th', {}, ext ? 'Detriment rate' : 'Detriment per Bq'), h('th', {}, 'Share'))),
       h('tbody', {}, a.parts.map((t) => h('tr', {}, h('td', {}, t.tissue), h('td', { class: 'text dim' }, labels[t.tissue] || t.tissue.toLowerCase()), h('td', {}, sci(t.H, d)),
         h('td', {}, (100 * t.D).toFixed(3)), h('td', { class: 'big' }, sci(t.detriment, d)), h('td', {}, `${(100 * t.share).toFixed(1)} %`))),
         h('tr', { class: 'sum' }, h('td', {}, 'Total'), h('td', {}), h('td', {}), h('td', {}, (100 * a.parts.reduce((s, t) => s + t.D, 0)).toFixed(3)), h('td', {}, sci(a.organ, d)), h('td', {}, '100 %'))))),
@@ -1975,7 +2290,7 @@ const SYSTEM_CHOICES = [
   ['ICRP 60', 'The models of Publications 56–71 and the dosimetry of the 1990 Recommendations: the coefficients of Publication 72, compiled in Publication 119 and used in the IAEA Basic Safety Standards. Calculated as DCAL, the ICRP’s software for them, does.', '60'],
   ['ICRP 103', 'The 2007 Recommendations: Publication 158 (Part 1: hydrogen to radium) and the consultation drafts of Part 2 (lanthanides and actinides) and Part 3 (35 more elements, beryllium to francium), with the respiratory tract of Publication 130, the alimentary tract of Publication 100 and the reference phantoms of Publications 110 and 143.', '103'],
 ];
-const ROUTE_TEXT = { ingestion: 'ingestion', inhalation: 'inhalation', injection: 'injection (direct uptake to blood)' };
+const ROUTE_TEXT = { ingestion: 'ingestion', inhalation: 'inhalation', injection: 'injection (direct uptake to blood)', external: 'external exposure (dose rate per unit concentration)' };
 const sysName = () => (state.system === '60' ? 'ICRP 60' : 'ICRP 103');
 const TOPICS = {
   'sec:system': () => ({
@@ -2040,6 +2355,7 @@ const TOPICS = {
       { heading: 'What is covered', list: [
         'ICRP 60: the nuclides of Publication 72, with its decay data (Publication 38).',
         'ICRP 103: the nuclides of Publication 107 with half-lives of at least 10 minutes (Publication 158 section 1.4.1), of the elements whose models Publication 158 and the Part 2 and 3 drafts give. Shorter-lived ones are followed as progeny.',
+        'External exposure: every radionuclide of the decay data, in both systems (838 of Publication 38, 1252 of Publication 107), noble gases and short-lived ones too; a nuclide with no model of the body has that route only.',
       ] },
       { heading: 'Typing', list: [
         'cs137, Cs-137 and Cs 137 all mean Cs-137; a metastable state ends in m: Tc-99m, Am-242m.',
@@ -2051,32 +2367,52 @@ const TOPICS = {
   }),
   'sec:intake': {
     kicker: 'Section', title: 'Intake',
-    lead: 'How the radionuclide enters the body and in what chemical or physical form. Together they decide where it deposits or is absorbed, how fast it reaches blood, and so where the dose goes.',
-    sections: [{ heading: 'The three routes', list: [
+    lead: 'How the radionuclide enters the body and in what chemical or physical form. Together they decide where it deposits or is absorbed, how fast it reaches blood, and so where the dose goes. Or, for external exposure, where it is around the body.',
+    sections: [{ heading: 'The routes', list: [
       '**Ingestion**: swallowed; absorbed to blood from the small intestine with the form’s fraction fA (f1 in the ICRP 60 system), the rest passes through the gut.',
       '**Inhalation**: deposited in the respiratory tract according to the aerosol size; absorbed from there at the form’s dissolution rates, or carried up the airways and swallowed.',
       '**Injection** (ICRP 103 system only): straight into blood, as from a wound or through skin that absorbs it at once.',
+      '**External**: nothing taken in; the dose rate from the radionuclide in air, water or soil around the body, per unit concentration, as Federal Guidance Reports 12 (ICRP 60) and 15 (ICRP 103) give it.',
     ] }],
     more: { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
   },
   'set:route': () => ({
     kicker: 'Setting', title: 'Route',
-    lead: 'Ingestion (swallowed in food or water), inhalation (breathed in as an aerosol, a gas or a vapour), or injection: direct uptake to blood.',
+    lead: 'Ingestion (swallowed in food or water), inhalation (breathed in as an aerosol, a gas or a vapour), injection (direct uptake to blood), or external exposure to the radionuclide in the air, water or soil around the body.',
     facts: [['Chosen', ROUTE_TEXT[route()]]],
     sections: [
       { heading: 'The models behind them', list: [
         'Ingestion: the Human Alimentary Tract Model of Publication 100 (ICRP 103), or the ICRP 30 gastrointestinal model (ICRP 60).',
         'Inhalation: the respiratory tract model of Publication 130 (ICRP 103) or Publication 66 (ICRP 60); what is cleared from the lungs is swallowed, so an inhalation also gives a dose by way of the gut.',
         'Injection: the activity starts in the systemic model’s blood (for polonium, Plasma 2).',
+        'External: the dose per photon and per electron of Federal Guidance Report 15 (ICRP 103 system; the phantoms of six ages) or 12 (ICRP 60; the adult), added up over the nuclide’s radiations. The coefficient is a dose rate per Bq per m³ (per m² on the ground), not a dose per Bq taken in.',
       ] },
       { heading: 'Good to know', list: [
         'Injection is calculated in the ICRP 103 system only. The annex of Publication 158 gives it, for interpreting bioassay data; the ICRP 60 system’s publications give no coefficients for it for members of the public.',
+        'External exposure covers every radionuclide of the decay data; the reports give the nuclide alone, and the page adds its progeny in equilibrium beside it.',
         'A route for which the radionuclide has no form is greyed out; pointing at it says why.',
       ] },
     ],
-    more: { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
+    more: route() === 'external' ? { label: 'External exposure', id: 'help-external' } : { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
   }),
-  'set:form': () => ({
+  'set:form': () => (route() === 'external' ? {
+    kicker: 'Setting', title: 'Geometry',
+    lead: 'Where the radionuclide is around the person: the air, water or ground, and how deep in the soil. The coefficients are dose rates per unit concentration there.',
+    facts: [['Chosen', currentForm()?.label || null], ['Per', currentForm()?.key === 'surface' ? 'Bq per m² of ground' : currentForm() ? 'Bq per m³ of air, water or soil' : null]],
+    sections: [
+      { heading: 'The geometries', list: [
+        'Submersion in air: a semi-infinite cloud over uncontaminated ground (FGR 15 takes half the dose of an infinite cloud).',
+        'Immersion in water: an infinite volume of water around the body.',
+        state.system === '60' ? 'Ground surface: a smooth plane at the air–ground interface (FGR 12).' : 'Ground surface: the photons from 3 mm deep (0.5 g/cm²) for the ground’s roughness, the electrons from the surface (FGR 15).',
+        'Soil to 1, 5 or 15 cm, or infinitely deep: a uniform concentration from the surface down, soil of 1.6 g/cm³.',
+      ] },
+      { heading: 'Good to know', list: [
+        'The person stands on the ground, the dose to the skin taken at 1 m for electrons from the ground; nothing is shielded by buildings or clothes, as in the reports.',
+        'The electrons count for the skin only; bremsstrahlung from their slowing down reaches every tissue.',
+      ] },
+    ],
+    more: { label: 'External exposure', id: 'help-external' },
+  } : {
     kicker: 'Setting', title: 'Chemical or physical form',
     lead: 'The forms the publications list for the element by this route, each with its absorption. Where the form is unknown the publications recommend a default, marked “(default)”.',
     facts: [['Chosen', currentForm()?.label || null]],
@@ -2110,7 +2446,16 @@ const TOPICS = {
     ] }],
     more: { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
   }),
-  'sec:ages': () => ({
+  'sec:ages': () => (route() === 'external' ? {
+    kicker: 'Section', title: 'Ages',
+    lead: 'The ages of the reports’ phantoms: for the ICRP 103 system Federal Guidance Report 15’s newborn, 1, 5, 10 and 15 years and reference adult; for the ICRP 60 system Federal Guidance Report 12’s adult only.',
+    facts: [['Ticked', ages().map((a) => ageLabel(a, true)).join(', ') || 'none']],
+    sections: [{ heading: 'How age enters', list: [
+      'Each phantom has its own dose per photon: a smaller body shields its organs less, so a child’s dose rate is higher than an adult’s, most for low-energy photons.',
+      'The skin’s dose from electrons is the same at every age (FGR 15 Appendix C).',
+    ] }],
+    more: { label: 'External exposure', id: 'help-external' },
+  } : {
     kicker: 'Section', title: 'Ages at intake',
     lead: 'The six reference ages of the ICRP’s coefficients for members of the public. Each ticked age is a calculation of its own.',
     facts: [
@@ -2168,7 +2513,20 @@ const TOPICS = {
     sections: [{ heading: 'What it controls', text: 'Every compartment’s activity, and every integral of activity from which the doses are put together, is kept to this relative error at each step. Any of the three is far finer than the two significant figures of the ICRP’s tables: the models themselves are the uncertainty, not the arithmetic.' }],
     more: { label: 'How the calculation is done', id: 'help-numerics' },
   }),
-  'tab:coef': {
+  'tab:coef': () => (external(state.result) ? {
+    kicker: 'Tab', title: 'Coefficients',
+    lead: 'The effective dose rate per unit concentration, e, at each age: of the nuclide alone, as the Federal Guidance Reports give it, and with its progeny in equilibrium; and the equivalent dose rates of the tissues.',
+    sections: [
+      { heading: 'Reading the tables', list: [
+        'Sv per second (as the reports give them), per hour or per year, per Bq/m³ of air, water or soil, or per Bq/m² of ground.',
+        'e from photons · bremsstrahlung · electrons: the parts of the nuclide’s own e; the electrons count through the skin’s weight.',
+        'In the ICRP 60 system HE beside e: the effective dose equivalent of ICRP 26 that Federal Guidance Report 12 tabulates.',
+        'The switch above the tissues: the nuclide alone, or with its progeny in equilibrium.',
+      ] },
+      { heading: 'Saving', text: 'Save as CSV writes e, and every tissue’s dose rate, alone and with the progeny, at every age, in the unit chosen.' },
+    ],
+    more: { label: 'External exposure', id: 'help-external' },
+  } : {
     kicker: 'Tab', title: 'Coefficients',
     lead: 'The committed effective dose per becquerel taken in, e(τ), at each age at intake, and the committed equivalent doses to the tissues that make it up.',
     sections: [
@@ -2181,7 +2539,7 @@ const TOPICS = {
       { heading: 'Saving', text: 'Save as CSV writes the effective dose and every equivalent dose at every age, to six significant figures.' },
     ],
     more: { label: 'Checking it', id: 'help-checks' },
-  },
+  }),
   'tab:retention': {
     kicker: 'Tab', title: 'Retention',
     lead: 'How 1 Bq of the parent behaves after the intake, at one age at intake: where the activity is, how it leaves the body, and how the dose builds up. All per Bq of the parent taken in, with radioactive decay.',
@@ -2346,7 +2704,7 @@ registerActions({
   'dc:getOpen': () => { closeGet(); $('dcDecayFile').click(); },
   'dc:nuclideChanged': () => { nuclideChanged(); save(); },
   'dc:nuclideTyped': () => { showSuggest(); if (findEntry()) nuclideChanged(); },
-  'dc:routeChanged': () => { populateForms(); save(); },
+  'dc:routeChanged': () => { routeSettings(); populateForms(); save(); },
   'dc:formChanged': () => { formChanged(); save(); },
   'dc:settingChanged': () => { describeSoon(); save(); },
   'dc:run': () => run(),
@@ -2442,7 +2800,7 @@ async function start() {
   window.addEventListener('hashchange', () => { const h = readHash(); if (h) applyChoices(h, true); });
   batch = setupBatch({
     h, $, ask, stopRank, RANK, POOL_SIZE, sci, halfLife, AGE_LABEL,
-    TISSUES: { 60: TISSUE_ORDER_60, 103: TISSUE_ORDER_103 }, SIZES: AMAD_SIZES,
+    TISSUES: { 60: TISSUE_ORDER_60, 103: TISSUE_ORDER_103 }, TISSUES_EXT: TISSUE_ORDER_EXT, SIZES: AMAD_SIZES, externalForms,
     catalog: catalogOf, system: () => state.system, decay: () => state.decay, decayOptions, decayLabel, decayValid, ensureDecay, showGet, saved: s.batch || {},
     defaults: () => ({ cutoff: $('dcCutoff').value, rtol: $('dcRtol').value }),
     onSave: save,

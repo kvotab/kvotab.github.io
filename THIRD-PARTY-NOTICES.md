@@ -130,6 +130,15 @@ browser from their publishers and are not redistributed here.
     coefficients are not included; the tests compare with local copies of
     them and of the electronic annex of Publication 158 (ICRP InMoP
     Electronic Annex), which the page names as their source.
+  - `external/` holds the monoenergetic dose rate coefficients of the US
+    Environmental Protection Agency's Federal Guidance Reports No. 12
+    (EPA-402-R-93-081, 1993: Tables II.4–II.6 and II.12–II.15, and the
+    electron skin doses and bremsstrahlung spectra of its Figs. II.24–II.26
+    and Tables C.1–C.3, as distributed with DCAL by Oak Ridge National
+    Laboratory) and No. 15 (EPA-402-R-19-002, revised July 2025: the
+    monoenergetic coefficients of its data files), works of the US
+    Government, read by `scripts/gen-dose-external.mjs`. The reports' tables
+    of each nuclide are not included; the tests compare with local copies.
 - **Nuclear structure and decay data** (`resources/data/ensdf/`, and the decay
   data of `resources/data/dose/ensdf/` above) are built from
   the Evaluated Nuclear Structure Data File (ENSDF), maintained by the National

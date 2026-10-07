@@ -157,7 +157,7 @@ async def main():
         loaded = await p.until("document.getElementById('dcNuclideCount') && /nuclides/.test(document.getElementById('dcNuclideCount').textContent)", 60)
         check('the ICRP 103 catalogue loads', loaded)
         n103 = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")
-        check('it lists the 900-odd nuclides of 91 elements', (n103 or 0) >= 880)
+        check('it lists the 1252 radionuclides of ICRP 107: the 900-odd with models of intakes, and every one for external exposure', n103, 1252)
 
         # The tab icon: the ICRP's letters in the kvot mark's language (scripts/gen-dose-icon.py), the SVG first with a
         # PNG for what will not take one and a touch icon. Each must decode as a picture (an SVG whose comment holds
@@ -629,6 +629,53 @@ async def main():
             if tab == 'chain':
                 check('the chain lists Cs-137 and Ba-137m', await p.ev("[...document.querySelectorAll('#dcChainTable tbody tr td:first-child')].map(t => t.textContent).join(',')"), 'Cs-137,Ba-137m')
 
+        # External exposure (FGR 15 in the ICRP 103 system): geometries for forms, the newborn's phantom, the nuclide
+        # alone and with its progeny in equilibrium, and what each tab has to say about it.
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
+        done = await calculate('Cs-137', 'external', 'Ground surface')
+        check('ICRP 103 Cs-137 on the ground surface calculates (external exposure)', done and await p.ev("document.getElementById('dcStatus').classList.contains('ok')"))
+        got = await p.ev("""(() => ({ label: document.getElementById('dcFormLabel').textContent, ages: document.getElementById('dcAgesTitle').textContent,
+          calc: document.getElementById('dcCalcSec').hidden, head: document.getElementById('dcHeadline').textContent,
+          rows: [...document.querySelectorAll('#dcETable tbody tr')].map(r => [...r.cells].map(c => c.textContent)),
+          hhead: document.getElementById('dcHHead').textContent, bar: !document.getElementById('dcProgenyBar').hidden && document.getElementById('dcSexBar').hidden }))()""")
+        check('the side says Geometry and Ages, hides the integration settings; the headline names the geometry',
+              bool(got) and (got['label'], got['ages'], got['calc']) == ('Geometry', 'Ages', True) and 'external exposure · Ground surface (3 mm deep' in got['head'])
+        check('six ages from the newborn: adult e 3.0E-18 alone, 3.7E-16 Sv s⁻¹ per Bq m⁻² with Ba-137m (FGR 15: 3.01E-18 for Cs-137 alone)',
+              bool(got) and [r[0] for r in got['rows']] == ['Newborn', '1 year', '5 years', '10 years', '15 years', 'Adult'] and got['rows'][-1][1:3] == ['3.0E-18', '3.7E-16'])
+        check('the tissues are dose rates, with a switch between the nuclide alone and with its progeny instead of the sexes', bool(got) and got['bar'] and got['hhead'].startswith('Equivalent dose rate'))
+        await p.ev("(() => { const r = document.querySelector('input[name=\"dcProgeny\"][value=\"with\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        got = await p.ev("[document.getElementById('dcHHead').textContent, [...document.querySelectorAll('#dcHTable tbody tr')].find(r => r.cells[0].textContent.startsWith('Red marrow'))?.cells[6].textContent]")
+        check('with the progeny the tissues take Ba-137m’s photons: red marrow 3.6E-16 for the adult (1.2E-19 alone)', bool(got) and 'with the progeny in equilibrium' in got[0] and got[1] == '3.6E-16')
+        await p.ev("(() => { const r = document.querySelector('input[name=\"dcProgeny\"][value=\"alone\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        await p.ev("(() => { const s = document.getElementById('dcRate'); s.value = 'h'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        got = await p.ev("[document.querySelector('#dcETable thead th:nth-child(2)').textContent, [...document.querySelectorAll('#dcETable tbody tr')].pop().cells[1].textContent]")
+        check('per hour: the unit and the values follow (3.0E-18 × 3600 = 1.1E-14)', got, ['e, Sv h−1 per Bq m−2', '1.1E-14'])
+        await p.ev("(() => { const s = document.getElementById('dcRate'); s.value = 's'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"retention\"]').click()")
+        check('the Retention tab says external exposure has none', await p.ev("!document.getElementById('dcRetEmpty').hidden && document.getElementById('dcRet').hidden && /takes nothing into the body/.test(document.getElementById('dcRetEmpty').textContent)"))
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
+        await asyncio.sleep(0.5)
+        got = await p.ev("""(() => ({ traces: (document.getElementById('dcPlotMono')?.data || []).map(t => t.name), text: document.getElementById('dcModelText').textContent,
+          member: document.getElementById('dcModelMember').closest('label').hidden, transfers: document.getElementById('dcTransfers').closest('.dc-table-wrap').hidden,
+          lines: [...document.querySelectorAll('#dcIntakeModel tbody tr')].map(r => r.cells[0].textContent) }))()""")
+        check('the Model tab draws the dose per photon and per electron of FGR 15, with the nuclide’s photon lines, and lists them',
+              bool(got) and got['traces'][:3] == ['e per photon', 'skin per photon', 'skin per electron'] and 'Federal Guidance Report 15' in got['text']
+              and got['member'] and got['transfers'] and '32.21' in got['lines'])
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"chain\"]').click()")
+        await asyncio.sleep(0.3)
+        got = await p.ev("[...document.querySelectorAll('#dcChainTable tbody tr')].map(r => [r.cells[0].textContent, r.cells[5].textContent])")
+        check('the Decay chain tab gives Ba-137m at 0.944 Bq per Bq of Cs-137 in equilibrium', got, [['Cs-137', '1'], ['Ba-137m', '0.944']])
+        check('... and hides the transformations in source regions', await p.ev("document.getElementById('dcUTable').closest('.dc-table-wrap').hidden"))
+        await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
+        await p.ev("(() => { const s = document.getElementById('dcForm'); s.value = 'air'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        got = await p.ev(stale)
+        check('another geometry marks the result as not of the current settings', bool(got) and 'the geometry (now Submersion in air' in got[0])
+        done = await calculate('Kr-85', 'external', 'Submersion in air')
+        got = await p.ev("[[...document.querySelectorAll('input[name=\"dcRoute\"]')].map(r => r.value + (r.disabled ? ':off' : '')), document.getElementById('dcNuclideNote').textContent]")
+        check('Kr-85, which has no model of intakes, has the external route only, and says why',
+              bool(got) and got[0] == ['ingestion:off', 'inhalation:off', 'injection:off', 'external'] and 'External exposure only' in got[1])
+        check('... and calculates: adult e 2.4E-16 Sv s⁻¹ per Bq m⁻³ (FGR 15: 2.40E-16)', done and await adult(), '2.4E-16')
+
         # Injection, and progeny with the models of the OIR sections.
         done = await calculate('Pb-210', 'injection', '')
         check('ICRP 103 Pb-210 injection calculates', done and await p.ev("document.getElementById('dcStatus').classList.contains('ok')"))
@@ -718,6 +765,16 @@ async def main():
         await view('model')
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
 
+        # External exposure in the ICRP 60 system: FGR 12, the adult only, its H_E beside e.
+        done = await calculate('Co-60', 'external', 'Submersion in air')
+        got = await p.ev("""(() => ({ ages: [...document.querySelectorAll('#dcAges input')].filter(i => !i.disabled).map(i => i.value),
+          head: [...document.querySelectorAll('#dcETable thead th')].map(t => t.textContent),
+          rows: [...document.querySelectorAll('#dcETable tbody tr')].map(r => [...r.cells].map(c => c.textContent)),
+          surface: [...document.getElementById('dcForm').options].map(o => o.textContent).find(t => t.startsWith('Ground')) }))()""")
+        check('ICRP 60 Co-60 in air: the adult only, e 1.2E-13 and H_E 1.3E-13 Sv s⁻¹ per Bq m⁻³ (FGR 12: H_E 1.26E-13)',
+              done and bool(got) and got['ages'] == ['7300'] and got['rows'][0][0] == 'Adult' and got['rows'][0][1] == '1.2E-13' and got['rows'][0][3] == '1.3E-13' and 'HE, as FGR 12' in got['head'])
+        check('... its ground surface is FGR 12’s smooth plane', bool(got) and got['surface'] == 'Ground surface (a smooth plane)')
+
         # The Risk tab: the detriment-adjusted coefficients recalculated, beside the printed ones.
         cells = "[...document.querySelectorAll('#dcRisk .dc-risk-sum tbody tr')].map(r => [...r.cells].map(c => c.textContent))"
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"risk\"]').click()")
@@ -793,8 +850,8 @@ async def main():
         await p.ev("(() => { const s = document.getElementById('dcDecay'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
         await p.until("parseInt(document.getElementById('dcNuclideCount').textContent) === %d" % (n107 or 0), 60)
         gone = await p.ev("[document.getElementById('dcRun').disabled, document.getElementById('dcNuclideNote').textContent]")
-        check('Bi-212m, which only ENSDF has, can be calculated with it, and is not covered with ICRP 107',
-              (bi, bool(gone) and gone[0] and gone[1].startswith('Not covered')), (True, True))
+        check('Bi-212m, which only ENSDF has, can be calculated with it, and is not a radionuclide of ICRP 107',
+              (bi, bool(gone) and gone[0] and gone[1].startswith('Not a radionuclide of ICRP 107')), (True, True))
         await p.ev("""(() => { const s = document.getElementById('dcDecay'); s.value = 'ensdf:260901'; s.dispatchEvent(new Event('change', { bubbles: true }));
           const r = document.querySelector('input[name="dcSystem"][value="60"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()""")
         await p.until("/ICRP 60 system/.test(document.getElementById('dcStatus').textContent)", 60)
@@ -977,6 +1034,26 @@ async def main():
         stopped = await p.until("/^Stopped after/.test(document.getElementById('dcBatchProgressText').textContent)", 30)
         check('a running batch shows its progress (also on its tab) and Stop ends it, keeping what was done',
               running and stopped and await p.ev("document.getElementById('dcBatchStop').hidden && !document.getElementById('dcBatchRun').disabled && document.querySelector('.dc-tabs button[data-tab=\"batch\"]').textContent === 'Batch'"))
+
+        # The batch by external exposure: geometries for forms, every age of a nuclide in one request.
+        await p.ev("""(() => {
+          const r = document.querySelector('input[name="dcBatchRoute"][value="external"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true }));
+          for (const i of document.querySelectorAll('input[name="dcBatchGeometry"]')) if (i.checked !== (i.value === 'air')) i.click();
+          const t = document.getElementById('dcBatchText'); t.value = 'Cs-137 Kr-85 Rn-222'; t.dispatchEvent(new Event('input', { bubbles: true })); })()""")
+        counted = await p.until("/3 combinations of radionuclide and geometry × 6 ages = 18 values of each quantity, in 3 requests/.test(document.getElementById('dcBatchCount').textContent)", 20)
+        got = await p.ev("({ forms: document.getElementById('dcBatchFormsSet').hidden, calc: document.getElementById('dcBatchCalc').hidden, geos: !document.getElementById('dcBatchGeometries').hidden })")
+        check('the batch by external exposure: geometries in place of forms, no integration settings, a request per nuclide and geometry',
+              counted and got == {'forms': True, 'calc': True, 'geos': True})
+        await p.ev("""(() => { const i = document.querySelector('#dcBatchShow input[value="progeny"]'); if (i && !i.checked) i.click(); document.getElementById('dcBatchRun').click(); })()""")
+        done = await p.until("/^18 values in/.test(document.getElementById('dcBatchProgressText').textContent)", 60)
+        # The adult's column of a quantity: the 4 leading cells, then 6 ages per quantity (ages as columns).
+        got = await p.ev("""(() => { const t = document.getElementById('dcBatchTable'); const rows = [...t.tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent));
+          const head = [...t.tHead.rows[0].cells].map(c => c.textContent), col = (q) => 4 + 6 * (head.indexOf(q) - 4) + 5, cs = rows.find(r => r[0] === 'Cs-137');
+          return { head: head.slice(0, 4), per: cs?.[3], e: cs?.[col('e')], ep: cs?.[col('e, with progeny')], caption: document.getElementById('dcBatchCaption').textContent }; })()""")
+        check('it fills a row per nuclide: Cs-137 in air, adult e 9.4E-17 alone and 2.5E-14 with Ba-137m, per Bq/m3',
+              done and bool(got) and got['head'] == ['Nuclide', 'Half-life', 'Geometry', 'Per'] and (got['per'], got['e'], got['ep']) == ('Bq/m3', '9.4E-17', '2.5E-14')
+              and 'external exposure (Federal Guidance Report 15)' in got['caption'])
+        await p.ev("""(() => { const r = document.querySelector('input[name="dcBatchRoute"][value="ingestion"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()""")
 
         # Phone width: no sideways scroll.
         await p.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 2, 'mobile': True})

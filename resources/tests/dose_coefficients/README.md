@@ -3,10 +3,11 @@
 | File | What it proves | Needs |
 | --- | --- | --- |
 | `test-engine.mjs` | The engines in Node: decay data add up, beta spectra integrate to their mean energies, the S coefficients equal brute-force PCHIP, the Pu-239 alpha self-dose is 20·E/M, the first-year weight, deposition, catalogues, chains, the detriment-adjusted risk coefficients of Publications 60 and 103 recalculated (Tables B-20, 3, 4; A.4.1, 1) and applied to a uniform dose, radon and thoron in homes against Publication 158 (Tables 32.7, 32.8, C.7–C.9), pinned results; then the coefficients against the ICRP's own | `local/` for the comparisons |
-| `test-ui.py` | The page in headless Chrome: no script error, the tab icon (its SVG, PNG and touch icon decode; the kvot mark's three tones only), catalogues, every (i), a calculation in each system and an injection, every tab draws (the charts in either theme, with an opaque hover box and no white band at the pointer; the model with the body beside it, numbered alike and lit together; an arrow and its row of the transfer table lit together, and a box with its transfers in and out; after a run, Show fills the boxes as buckets of the activity in the body or of the effective dose (received or its rate, from the member or the whole chain) over time, with what is not drawn listed beside them and the drawing staying put as the time moves; the Risk tab's recalculated Tables 1 and 3 and the nominal detriment of a calculated intake; Radon at home for both gases, recombining at once when F changes), the nuclide field's own suggestions (under the field, keys, reopening), a disabled route that just looks disabled, progeny models of the OIR sections in the chain and model tabs, a link calculates on load, no sideways scroll on a phone, the full window (no site header or footer) by its button, kept for the next visit | a server and Chrome (below) |
+| `test-ui.py` | The page in headless Chrome: no script error, the tab icon (its SVG, PNG and touch icon decode; the kvot mark's three tones only), catalogues, every (i), a calculation in each system and an injection, every tab draws (the charts in either theme, with an opaque hover box and no white band at the pointer; the model with the body beside it, numbered alike and lit together; an arrow and its row of the transfer table lit together, and a box with its transfers in and out; after a run, Show fills the boxes as buckets of the activity in the body or of the effective dose (received or its rate, from the member or the whole chain) over time, with what is not drawn listed beside them and the drawing staying put as the time moves; the Risk tab's recalculated Tables 1 and 3 and the nominal detriment of a calculated intake; Radon at home for both gases, recombining at once when F changes), the nuclide field's own suggestions (under the field, keys, reopening), a disabled route that just looks disabled, progeny models of the OIR sections in the chain and model tabs, a link calculates on load, external exposure in both systems (the geometry and ages on the side, e alone and with the progeny, per second or hour, the Retention, Model and Decay chain tabs, a nuclide with no model of intakes, a batch), no sideways scroll on a phone, the full window (no site header or footer) by its button, kept for the next visit | a server and Chrome (below) |
+| `test-external.mjs` | External exposure (`external.js`): the FGR 12 and FGR 15 data complete, the photon interpolant through its points, the weights of e (and of FGR 12's H_E) adding up to one, a 1 MeV photon giving the table's column, nothing under 10 keV, electrons to the skin only, progeny in equilibrium (secular, transient, never), parts and shares adding up, ages and depths in order, ENSDF decay data within 5 %, pinned results; then every nuclide, geometry, age and tissue against the reports. About 15 s | `local/fgr15.json`, `local/fgr12.json` for the comparisons |
 | `test-buckets.mjs` | The page's worker in Node over one nuclide of every element and some long chains, each route, both systems: the places the worker sums each member's activity by add up to its whole-body activity, the effective dose by place adds up to e(t) and to the coefficient, and every place holding activity or dose is a box the Model tab draws or one it lists beside them (the airways, the mouth and oesophagus, where a progeny is formed outside its own model). `--quick`: a dozen cases, seconds; otherwise about five minutes | nothing |
 | `test-ensdf.mjs` | The ENSDF processor (`resources/js/dose/ensdf-*.js` with `beta-spectrum.js` and `atomic-relax.js`) on ICRP 107's own inputs, run as EDISTR04 ran it (`ensdf-icrp107.mjs`), against ICRP 107: every beta branch's shape and mean energy against EDISTR04's printout; alpha, recoil, annihilation, gamma, conversion-electron, X-ray and Auger energy per decay against ICRP-07.RAD; daughters and branching against the index. About 3 s | your copy of ICRP 107's supplementary data and `local/eadl1991` (below) |
-| `test-decay-data.mjs` | The decay data the page offers besides each system's own (`resources/data/dose/ensdf/`), read as the page reads them, in both systems: every name of the system's own data finds its state (but IT isomers under a minute), Ta-178's swapped names pair by half-life, every isomer a record decays to has a record, the catalogues lose nothing, and seven coefficients stay within 1–3 % of those with the system's own data. About 3 s | nothing |
+| `test-decay-data.mjs` | The decay data the page offers besides each system's own (`resources/data/dose/ensdf/`), read as the page reads them, in both systems: every name of the system's own data finds its state (but IT isomers under a minute), Ta-178's swapped names pair by half-life, every isomer a record decays to has a record, the catalogues lose nothing but those isomers, and seven coefficients stay within 1–3 % of those with the system's own data. About 3 s | nothing |
 | `compare-ensdf-dose.mjs` | Dose coefficients from processed decay data against those from the ICRP 107 data built in: by default the records the processor makes from ICRP 107's inputs; `--decay DIR` a folder `scripts/gen-dose-ensdf.mjs` made from an ENSDF release, read as the page reads it, its states taking the system's names by half-life (ENSDF 2026 calls ICRP 107's Ta-178m Ta-178, and so on); `--system 60 --base resources/data/dose/icrp103` the ICRP 60 engine on ICRP 107's data both sides. About four minutes on ten cores | as above |
 | `make-local-fixtures.py` | Writes the reference values into `local/` from your own copies | mdbtools, poppler (pdftotext); the files below |
 
@@ -38,13 +39,25 @@ They are the ICRP's and not ours to publish, so they live in `local/` (in
   comment describes (length-prefixed names, float32 values; the tissue order
   is the data viewer's own). Its licence asks that results obtained with it
   name it as their source: the page's Help does.
+- `local/fgr15.json`: the Nuclide_Coefficients of `fgr15_data_2025_05_28.zip`
+  from EPA's page of Federal Guidance Report 15 (the July 2025 revision):
+  28 tissues, skin and e of 1252 nuclides in seven geometries at six ages,
+  read from the zip itself. One file writes `Soil__01` for `Soil_01`.
+- `local/fgr12.json`: the DFFUL files of DCAL's `DAT/EXT` folder, FGR 12's
+  25 organs, H_R and H_E of 825 nuclides in seven geometries, the ICRP 38
+  names mapped to the page's (`Eu-150a` is Eu-150m, and Rh-102 and Ta-180
+  swap with their m states, as in `gen-dose-icrp60.mjs`); and the E row of
+  its monoenergetic tables. `DFFULINF.GRD` writes H-3's zero as `0.0oE+00`.
 
 ```sh
 python3 resources/tests/dose_coefficients/make-local-fixtures.py \
     --mdb ~/Downloads/icrp-dc/ornl/x/RadToolbox3_Setup/out/app/data/icrp72.mdb \
     --elements ~/Downloads/icrp-dc/work103/elements \
     --icrp119 ~/Downloads/ICRP/eckerman-et-al-2013-icrp-publication-119-compendium-of-dose-coefficients-based-on-icrp-publication-60.pdf \
-    --inmop "$HOME/Downloads/ICRP/InMoP Electronic Annex 2025.08-3.25/InMoPdata"
+    --inmop "$HOME/Downloads/ICRP/InMoP Electronic Annex 2025.08-3.25/InMoPdata" \
+    --fgr15 ~/Downloads/fgr/fgr15_data_2025_05_28.zip \
+    --fgr12 ~/Downloads/icrp-dc/ornl/x/DCAL01_setup/out/app/DAT/EXT
+node resources/tests/dose_coefficients/test-external.mjs        # 15 s
 node resources/tests/dose_coefficients/test-engine.mjs          # about eight minutes: checks and a sample
 node resources/tests/dose_coefficients/test-engine.mjs --all    # a few hours: every case of both systems
 ```
@@ -416,3 +429,41 @@ This page against DCAL, every organ at every age: within 1-2 % for U-232,
 Pb-210, Ra-225, Th-226, Sr-90, Cs-137 and I-131 by ingestion, U-239 and
 U-240 Type M, Pu-239 Type M, Co-60 Type S. Where these differ from ICRP 72
 (Ra-225's testes at 3 months, 1.18; Cs-137's adult, 1.04) DCAL does too.
+
+## External exposure (2026-10-07)
+
+`external.js` calculates the dose rate coefficients of the Federal Guidance
+Reports from their monoenergetic data (`scripts/gen-dose-external.mjs`:
+`node scripts/gen-dose-external.mjs <DCAL app folder> <FGR 15 data folder>`,
+the folder being the zip unzipped). Neither report spells out its numerics;
+these are what reproduce them, found against their nuclide tables (the
+first column is the share of FGR 15's 36840 tissue values, adult in air,
+within 1 % before the change):
+
+| Choice | Effect |
+| --- | --- |
+| photons ≥ 10 keV, PCHIP in ln h against ln E, end cubic beyond 5 MeV | photon-dominated nuclides within 0.5 %; linear PCHIP as good, straight lines 1 % high |
+| zeros (FGR 15's ground surface at 10 keV) as 1E-100 before the logarithm | Ge-71, Pt-193 and the like exactly; with 1E-60 off by 10^35 |
+| bremsstrahlung by eq. C-2, S' by PCHIP in k/T then in ln T | pure beta emitters +1.5 % with S' linear in k/T, +0.2 % linear in ln T; within 0.5 % with both PCHIP |
+| the beta spectrum as a PCHIP of its tabulated values, integrated finely | the ground surface's skin: Sn-121 0.65, W-185 0.85 with the spectrum's trapezoid; 1.00-1.02 with PCHIP |
+| skin curves log-log PCHIP, zero below the first energy; the air file per uCi (its title says mCi) | electron-dominated skin within 0.2 % |
+| a year of 365.25 days in the skin curves' mrem/yr | FGR 12 centred (medians 0.9997-1.0006); FGR 15 0.15 % above |
+| no bremsstrahlung from conversion electrons (Appendix C folds the beta spectrum only) | no difference that shows |
+
+FGR 15's effective dose is Table 3-1 on the hermaphrodite phantoms (checked
+on its own e column, within its 3 figures). FGR 12's H_E takes the higher
+gonad and the five highest of 17 remainder organs (its tables' H_E rows
+exactly). Its tables' E rows (ICRP 60, single energies) come out within
+0.7 % with the page's ICRP 60 weighting: colon 0.57 ULI + 0.43 LLI, the
+ICRP 72 remainder mass-weighted with the splitting rule, without ET.
+
+Against the reports (`test-external.mjs`): FGR 15 e 99.90 % of 51576 values
+within 1 %, its tissues 99.89 % of 1495704; FGR 12 H_E 99.70 % of 5628,
+organs 99.65 % of 140700. What is left: H-3 (bremsstrahlung above 10 keV
+from the top of an 18.6 keV spectrum: e up to 1.03, the colon on the ground
+0.8), Ru-106, Ni-63 and Zr-93 (low-energy betas, 1-3 %), and in FGR 12
+Sm-151 (H_E 1.3-1.5: FGR 12 gives its 77 keV betas a third less skin dose
+than its own curve folded with the ICRP 38 spectrum; with the trapezoid on
+the spectrum's grid it is worse). FGR 12 with the trapezoid instead of the
+PCHIP spectrum is as good overall (medians 1.0000) but not for Sm-151, so
+both reports are calculated the one way.

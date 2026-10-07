@@ -50,7 +50,8 @@ export function openPicker(o) {
       h('label', {}, h('span', {}, 'Half-life from'), select('dcPickFrom', LOWER, '0')),
       h('label', {}, h('span', {}, 'to'), select('dcPickTo', UPPER, 'Infinity')),
       h('label', {}, h('span', {}, 'Decay'), select('dcPickMode', MODES, '')),
-      h('label', { class: 'dc-check dc-picker-route' }, h('input', { type: 'checkbox', id: 'dcPickRoute', checked: true }), h('span', {}, `only those with forms for ${o.route}`))),
+      // External exposure: every radionuclide of the decay data has it.
+      h('label', { class: 'dc-check dc-picker-route', hidden: o.route === 'external' }, h('input', { type: 'checkbox', id: 'dcPickRoute', checked: true }), h('span', {}, `only those with forms for ${o.route}`))),
     h('div', { class: 'dc-picker-lists' },
       h('div', { class: 'dc-picker-col' },
         h('label', { for: 'dcPickLeft' }, 'Available ', h('span', { class: 'dc-muted', id: 'dcPickLeftN' })),

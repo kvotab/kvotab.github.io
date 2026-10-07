@@ -52,8 +52,9 @@ for (const rel of list) {
     check(`... Ta-178m by half-life: ${ta ? `${rel.label}'s ${ta[0]}` : 'not renamed'}`, !!ta && Math.abs(Math.log(other.index['Ta-178m'].T / own.index['Ta-178m'].T)) < 0.1);
     const cat = (d) => (sys === '103' ? catalog103(d) : catalog60(d));
     const a = new Set(cat(own).nuclides.map((n) => n.name)), b = new Set(cat(other).nuclides.map((n) => n.name));
-    const gone = [...a].filter((n) => !b.has(n));
-    check(`... the catalogue keeps all ${a.size} nuclides (${b.size} with ${rel.label})`, gone.length === 0, gone.join(', '));
+    // External exposure lists every radionuclide, so the catalogue has the isomers under a minute too.
+    const gone = [...a].filter((n) => !b.has(n) && !SHORT.test(n));
+    check(`... the catalogue keeps all ${a.size} nuclides but the isomers under a minute (${b.size} with ${rel.label})`, gone.length === 0, gone.join(', '));
     // A few coefficients: the adult's committed effective dose by ingestion, the default form.
     for (const [nuc, tol] of [['Cs-137', 0.01], ['I-131', 0.03], ['Sr-90', 0.01], ['Pb-212', 0.02], ['Ra-226', 0.03], ['Pu-239', 0.02], ['Am-241', 0.02]]) {
       const run = async (d) => {
