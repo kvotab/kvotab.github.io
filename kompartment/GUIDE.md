@@ -539,7 +539,8 @@ the window **survives a re-run**: watching one decade of one peak while changing
 a parameter is the reason to zoom in the first place.
 
 **The chart's own menu.** Right-click the chart for what to do with it:
-the two scales, the zoom, a picture of it, and the numbers as CSV. The scales
+the two scales, the zoom, a picture of it, a run to set beside it (see [Two
+runs side by side](#two-runs-side-by-side)), and the numbers as CSV. The scales
 are two ticks, **log time** and **log value**, and they are **saved with the
 model**, the way what the diagram shows is: log-log is how an
 activity-versus-time result is read, and what a model that says nothing is
@@ -2366,6 +2367,44 @@ be more than that. Past that allowance the writer stores the rest of the
 archive instead of compressing it, since stored data is not decompressed: the
 file is larger than it could have been, and it opens.
 
+## Two runs side by side
+
+**Run beside**, on the chart's right-click menu and on the table's, puts a
+second run next to the one on screen. Each selected series is drawn again in
+its own colour, dash-dotted, and the Table puts that run's column straight
+after this one's. The legend and the column heads say which run it is:
+`Soil (kept at 15:42)`, `Soil (model-v2.zip)`.
+
+- **Keep this run** keeps the run on screen. Change anything — a value, a
+  solver setting, the output times — run again, and the kept run stands beside
+  the new one. What can be kept is a current run of the model at its own
+  values: not one the model has moved on from, not one realisation of a
+  sample, and not a run at an app's controls.
+- **Open a run…** reads a file saved with **Save → Model with results** and
+  sets its run beside this one, without opening its model in place of this
+  one: a run from yesterday, or of another version of the model. An
+  assessment's stored runs join the same list; see [Importing Ecolego projects](#importing-ecolego-projects).
+- The menu lists every run kept or opened, and one is shown at a time.
+  **None** puts the comparison away, and **Forget this one** lets the run go.
+
+Series are matched by name, block and index. A block renamed or deleted since
+has no line beside it, and a run of another model shows what the two have in
+common. Where the two runs report at different times, the run beside is read
+onto this one's along a straight line between its own points, a time outside
+its span reads `--`, and the Table says so. A run in another time unit is not
+set beside at all, since the axis and the first column carry this model's
+unit, and the line above the chart says why. Before the model on screen has
+run, the run beside is what the Chart and the Table show, and the line above
+them names it.
+
+**Kept and opened runs stay when another model is opened**, so a run of one
+model can be compared with a run of the next, and go when the tab is closed.
+Each is held in a worker of its own with its model and its states, as a
+scenario run beside the selected one is, and works a series out the first time
+it is asked for; keeping a run costs the memory of one. Six can be held at
+once. To keep a run past the tab, save it with **Save → Model with results**
+before changing the model, and open it beside a later run.
+
 ## The tab remembers what you were working on
 
 Nothing here used to be written down anywhere. A model lived in the page and
@@ -4069,8 +4108,9 @@ page**:
 An assessment file reads exactly like a project, because it *is* one: the same
 `model.xml`, `views.xml` and `simulation.xml`, plus a `simulation/` folder of
 `.dta` result files and whatever raw data a lookup table was linked to. The
-model comes across; the stored results do not, since the point of this tool is
-to get that answer here rather than to read it.
+model comes across, and so does the run stored with it, as Ecolego's answer to
+set beside this tool's — see [The run an assessment
+carries](#the-run-an-assessment-carries).
 
 Anything else is named rather than guessed at: reading an unknown file as JSON
 gives a parse error that says nothing about what went wrong.
@@ -4078,9 +4118,10 @@ gives a parse error that says nothing about what went wrong.
 A file past 200 MB asks before it is read: the largest real project here is
 11 MB, and one twenty times that will take a while and may run the tab out of
 memory. The archive is read lazily — only the XML files the importer looks at
-are decompressed, so a damaged result file in an assessment's `simulation/`
-folder no longer fails the import of the model beside it — and the reader
-stops at 256 MB of decompressed output for the whole archive, not per entry.
+are decompressed, and a stored run's result file when that run is shown, so a
+damaged result file in an assessment's `simulation/` folder costs that run and
+not the model beside it — and the reader stops at 256 MB of decompressed
+output for the whole archive, not per entry.
 
 A compartment's dy/dt column in Ecolego comes across as its `dydt` term, at
 the block level and per index; see *An explicit dy/dt term*. An entry with no
@@ -4162,6 +4203,67 @@ them, 162 `.eco` projects and 49 `.eas` assessments. **136 import**; the other
 75 are in the older format of Ecolego 4 and 5, and are refused with an
 explanation. Of the 136, **59 build and run** as they stand. See
 [INTERNALS.md](INTERNALS.md) for the full breakdown of what stops the rest.
+
+### The run an assessment carries
+
+An `.eas` holds the run Ecolego made of its model, and that run comes in with
+the model: Ecolego's answer, to set beside this tool's rather than in place of
+it. Nothing in it is computed here, and it is not saved with the model.
+
+**Before the model has run here, the Chart and the Table show the stored run
+on its own.** The line above them names it and the file it came from. The
+picker, its filter and the tree's **Show in chart** work on it as on any run,
+so an assessment can be read before anything is integrated.
+
+**Once the model has run, the two stand side by side.** Each selected series
+that the stored run also has is drawn again in the same colour, dash-dotted,
+and marked *(Ecolego)* in the legend; the Table puts Ecolego's column straight
+after this tool's, headed *(Ecolego, unit)*. Series are matched block by block
+and index by index, renamed blocks included. The model came with Ecolego's
+output times, so the two runs usually report at the same times; where they do
+not, Ecolego's values are read onto this run's times along a straight line
+between its own points, and a time outside its span reads `--`. Ecolego's lines
+count towards the 32 a chart holds, and the chart says how many did not fit.
+
+An assessment's runs are listed under **Run beside** on the chart's
+right-click menu, with any kept or opened there (see [Two runs side by
+side](#two-runs-side-by-side)). One that keeps archived runs beside its current
+one lists them all, by name, and by date where the file keeps one. The run
+shown first is the current one, or else the newest, of those that saved
+something this model has: an assessment can keep runs of another model too,
+and a run with nothing here says so rather than being drawn empty. **None**
+puts the comparison away. Any other assessment's stored runs can be set beside
+the model on screen the same way, with **Open a run…**.
+
+What comes across, and what does not:
+
+- **Single runs only.** A probabilistic run's realisations are left out, and
+  the import report says how many such runs the file holds.
+- **What has something here to stand beside.** Ecolego saves what its output
+  settings asked for, which can include blocks of a type this tool does not
+  import and the totals of whole sub-systems. Those have no series here, and
+  the import report counts them.
+- **A transfer as its rate.** A transfer's series here is its rate. Ecolego 5
+  saves the rate as well; Ecolego 6 saves the flow of a transfer that
+  multiplies by the donor — the rate times what the compartment it leaves
+  holds — so the flow is divided by that amount, which the assessment saves
+  beside it. Where the compartment holds next to nothing — less than the run's
+  absolute tolerance, or a trillionth of its own peak — the quotient is noise,
+  and the point is left out: a gap in the line, `--` in the Table. A transfer
+  whose donor was not saved cannot be divided, and is counted with what was
+  left out. Its unit is written as this tool writes it — `1/year` where
+  Ecolego writes `year^-1` — so the two lines are one quantity on one axis.
+- **One time unit.** The stored run is shown, on its own or beside this
+  tool's, only while the model runs in the time unit the run was made in. A
+  model switched to another is shown without it, and the Chart and the Table
+  say why.
+- **A damaged result file** costs that run, and says so when it is shown; the
+  model imports as it would without it.
+
+Where the two runs disagree, look at the size of the amounts before anything
+else. A solver controls its error only above its absolute tolerance, so a
+compartment holding less than that can differ between the two runs by orders
+of magnitude without either being wrong.
 
 ### Ecolego's names and defaults, and what differs here
 

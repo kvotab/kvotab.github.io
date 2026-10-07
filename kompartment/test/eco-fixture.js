@@ -61,7 +61,8 @@ export async function makeZip(files) {
 
 	for (const f of files) {
 		const nameBytes = enc.encode(f.name);
-		const raw = enc.encode(f.text);
+		// A result file is bytes rather than text.
+		const raw = f.bytes ?? enc.encode(f.text);
 		const crc = crc32(raw);
 
 		let stored = raw;
@@ -640,3 +641,199 @@ export const GENERAL_VARIABLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
 		<java-solver>java&#45;ode45</java-solver>
 	</simulation-settings>
 </data-model>`;
+
+// ---------------------------------------------------------------------------
+// An assessment's stored runs (../src/io/ecoruns.js)
+
+/**
+ * A result file as Ecolego writes one: how many simulations and times, then a
+ * block per output -- its GUID's low half, its high half, how many bytes
+ * follow the 64-byte header -- and the numbers, all big-endian.
+ *
+ * @param {{simulations?: number, times: number, blocks: Array<{guid: string, values: number[]}>}} spec
+ */
+export function makeResultFile({ simulations = 1, times, blocks }) {
+	const size = 1024 + blocks.reduce((n, b) => n + 64 + b.values.length * 8, 0);
+	const bytes = new Uint8Array(size);
+	const view = new DataView(bytes.buffer);
+	view.setInt32(0, simulations, false);
+	view.setInt32(4, times, false);
+	let at = 1024;
+	for (const b of blocks) {
+		const hex = b.guid.replace(/-/g, '');
+		for (let i = 0; i < 8; i++) {
+			bytes[at + i] = parseInt(hex.slice(16 + 2 * i, 18 + 2 * i), 16);
+			bytes[at + 8 + i] = parseInt(hex.slice(2 * i, 2 + 2 * i), 16);
+		}
+		view.setBigInt64(at + 16, BigInt(b.values.length * 8), false);
+		at += 64;
+		b.values.forEach((v, i) => view.setFloat64(at + i * 8, v, false));
+		at += b.values.length * 8;
+	}
+	return bytes;
+}
+
+/**
+ * The model the stored runs below are of: two lists, a compartment on both
+ * draining into a second whose name has a space in it, the parameter that is
+ * the rate, and an expression.
+ */
+export const STORED_MODEL_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<data-model>
+	<project-properties name="Stored runs"/>
+	<index-list-model>
+		<index-list name="Nuclides"><id>Nuclides</id>
+			<index name="Cs&#45;137" enabled="true"><id>Cs&#45;137</id></index>
+			<index name="I&#45;129" enabled="true"><id>I&#45;129</id></index>
+			<index name="Sr&#45;90" enabled="true"><id>Sr&#45;90</id></index>
+		</index-list>
+		<index-list name="Objects"><id>Objects</id>
+			<index name="Lake" enabled="true"><id>Lake</id></index>
+			<index name="Mire" enabled="true"><id>Mire</id></index>
+		</index-list>
+	</index-list-model>
+	<block-model>
+		<component name="Soil" type="compartment" dimension="2" index-lists="Nuclides,Objects">
+			<id>Soil</id><unit>Bq</unit>
+			<entry type="compartment"><initial-condition><![CDATA[1000]]></initial-condition></entry>
+		</component>
+		<component name="Deep layer" type="compartment" dimension="2" index-lists="Nuclides,Objects">
+			<id>Deep layer</id><unit>Bq</unit>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<connection name="Down" type="transfer&#45;coefficient" source="Soil" target="Deep layer"
+		            dimension="2" index-lists="Nuclides,Objects">
+			<id>Down</id>
+			<entry type="transfer"><transfer-equation><![CDATA[k]]></transfer-equation></entry>
+		</connection>
+		<component name="k" type="parameter" dimension="0"><id>k</id><unit>1/year</unit>
+			<entry type="parameter"><value>0.1</value></entry>
+		</component>
+		<component name="Dose" type="expression" dimension="0"><id>Dose</id><unit>Sv</unit>
+			<entry type="expression"><equation><![CDATA[2*time]]></equation></entry>
+		</component>
+	</block-model>
+	<simulation-settings>
+		<start-time>0.0</start-time><end-time>10.0</end-time><time-unit>year</time-unit>
+		<java-solver>java&#45;ode45</java-solver>
+		<abs-error-tolerance>1.0E-6</abs-error-tolerance>
+	</simulation-settings>
+</data-model>`;
+
+/** What the stored runs hold, worked out from the names so a test can say what it expects. */
+export const STORED = {
+	times: [0, 1, 10],
+	nuclides: ['Cs-137', 'I-129', 'Sr-90'],
+	objects: ['Lake', 'Mire'],
+	soil: (n, o, ti) => (n === 2 && o === 1 && ti === 2 ? 1e-9 : 1000 + 100 * n + 10 * o + ti),
+	deep: (n, o, ti) => 5 + n + o + ti,
+	rate: 0.1,
+	dose: (ti) => [0, 2, 20][ti],
+};
+
+const guidOf = (k) => `8BAF1D9C-F29F-11E6-9877-${k.toString(16).toUpperCase().padStart(12, '0')}`;
+const xmlText = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/-/g, '&#45;');
+
+/**
+ * An assessment's files beside its model.xml: simulation.xml and the result
+ * files of the runs, written as Ecolego `version` 6 or 5 writes them. Ecolego
+ * 6: one file per run named by its GUID, the lists named once for the run, the
+ * first index fastest, and a transfer stored as its flux. Ecolego 5: one run,
+ * in results.dta, each output's own lists, the last index fastest, and a
+ * transfer stored as its rate. Version 6 carries three runs: an archived one
+ * dated later, the current one, and a probabilistic one -- and with
+ * `stranger`, a fourth, current and newest, that saved only an output the
+ * model does not have.
+ */
+export function storedRunFiles({ version = 6, stranger = false } = {}) {
+	const S = STORED;
+	const nt = S.times.length;
+	const dims2 = [S.nuclides, S.objects];
+	// Every cell of the two lists in the order the file stores them.
+	const cells = [];
+	if (version === 6) {
+		for (let o = 0; o < S.objects.length; o++) for (let n = 0; n < S.nuclides.length; n++) cells.push([n, o]);
+	} else {
+		for (let n = 0; n < S.nuclides.length; n++) for (let o = 0; o < S.objects.length; o++) cells.push([n, o]);
+	}
+	const series2 = (f) => {
+		const out = [];
+		for (let ti = 0; ti < nt; ti++) for (const [n, o] of cells) out.push(f(n, o, ti));
+		return out;
+	};
+	const outputs = [
+		// Spelt as the files spell it, which is not always as this tool does.
+		{ id: 'time', dims: [], td: true, unit: version === 6 ? 'year' : 'y', values: S.times },
+		{ id: 'Soil', dims: dims2, td: true, unit: 'Bq', values: series2(S.soil) },
+		{ id: 'Deep layer', dims: dims2, td: true, unit: 'Bq', values: series2(S.deep) },
+		{
+			id: 'Down', dims: dims2, td: true, unit: version === 6 ? 'Bq/year' : '1/year',
+			values: series2((n, o, ti) => (version === 6 ? S.rate * S.soil(n, o, ti) : S.rate)),
+		},
+		{ id: 'k', dims: [], td: false, unit: '1/year', values: [S.rate] },
+		{ id: 'Dose', dims: [], td: true, unit: 'Sv', values: S.times.map((t, ti) => S.dose(ti)) },
+		{ id: 'Gone', dims: [], td: true, unit: '', values: [1, 2, 3] },
+	].map((o, k) => ({ ...o, guid: guidOf(k + 1) }));
+	// What a run of some other model saved: the clock, and a block this one
+	// has never had.
+	const elsewhere = [
+		outputs[0],
+		{ id: 'Nowhere', dims: [], td: true, unit: 'Bq', values: S.times.map(() => 1), guid: guidOf(99) },
+	];
+	const listNames = (dims) => dims.map((d) => (d === S.nuclides ? 'Nuclides' : 'Objects'));
+	const outputXml = (o) => {
+		const lists = version === 6
+			? ` index-lists="${listNames(o.dims).join('&#44;')}"`
+			: '';
+		const own = version === 6 ? ''
+			: `<index-lists>${o.dims.map((d) => `<index-list>${d.map((i) => `<index>${xmlText(i)}</index>`).join('')}</index-list>`).join('')}</index-lists>`;
+		return `<output-info id="${xmlText(o.id)}" type="SIMULATION" guid="${xmlText(o.guid)}"${lists}>`
+			+ `<time-dependent>${o.td}</time-dependent>${own}`
+			+ `<output-units><output-unit indices=""><![CDATA[${o.unit}]]></output-unit></output-units></output-info>`;
+	};
+	const listsXml = '<index-lists>'
+		+ [['Nuclides', S.nuclides], ['Objects', S.objects]]
+			.map(([name, idx]) => `<index-list name="${name}">${idx.map((i) => `<index>${xmlText(i)}</index>`).join('')}</index-list>`)
+			.join('')
+		+ '</index-lists>';
+	const context = ({ guid, name, date, archived, type = 'DETERMINISTIC', saved = outputs }) => (version === 6
+		? `<simulation-context guid="${xmlText(guid)}"${archived ? ' archive="true"' : ''}><simulation-info>`
+			+ `<simulation-info-type>${type}</simulation-info-type><simulation-name>${xmlText(name)}</simulation-name>`
+			+ `<date>${date}</date><start-time>0&#46;0</start-time><end-time>10&#46;0</end-time>`
+			+ '<time-unit><![CDATA[Years]]></time-unit><abs-error-tolerance>1&#46;0E&#45;6</abs-error-tolerance>'
+			+ `</simulation-info>${listsXml}<simulation-outputs>${saved.map(outputXml).join('')}</simulation-outputs>`
+			+ '</simulation-context>'
+		: `<simulation-context><simulation-info><simulation-info-type>Deterministic</simulation-info-type>`
+			+ `<simulation-name></simulation-name></simulation-info>`
+			+ `<simulation-outputs>${outputs.map(outputXml).join('')}</simulation-outputs></simulation-context>`);
+	const file = (simulations = 1, saved = outputs) => makeResultFile({
+		simulations,
+		times: nt,
+		blocks: saved.map((o) => ({
+			guid: o.guid,
+			values: Array.from({ length: simulations }, () => o.values).flat(),
+		})),
+	});
+	const runs = version === 6
+		? [
+			{ guid: 'A0000000-0000-0000-0000-000000000001', name: 'Older', date: 2000, archived: true },
+			{ guid: 'A0000000-0000-0000-0000-000000000002', name: 'Now', date: 1000, archived: false },
+			{ guid: 'A0000000-0000-0000-0000-000000000003', name: 'Sampled', date: 3000, type: 'PROBABILISTIC', sims: 2 },
+			...(stranger
+				? [{ guid: 'A0000000-0000-0000-0000-000000000004', name: 'Elsewhere', date: 4000, archived: false, saved: elsewhere }]
+				: []),
+		]
+		: [{}];
+	const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><simulation-model>`
+		+ `${runs.map(context).join('')}</simulation-model>`;
+	return [
+		{ name: 'simulation.xml', text: xml },
+		...(version === 6
+			? [
+				...runs.map((r) => ({ name: `simulation/results/${r.guid}.dta`, bytes: file(r.sims ?? 1, r.saved) })),
+				// The empty file Ecolego 6 leaves beside them.
+				{ name: 'simulation/results/results.dta', bytes: new Uint8Array(1024) },
+			]
+			: [{ name: 'simulation\\results\\results.dta', bytes: file(1) }]),
+	];
+}

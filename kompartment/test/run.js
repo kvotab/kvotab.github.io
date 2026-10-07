@@ -62,7 +62,7 @@ import { unzip, entryText, ZipError } from '../src/io/zip.js';
 import { importModelXML, importEcoFile, ImportError } from '../src/io/eco.js';
 import {
 	makeZip, MODEL_XML, VIEWS_XML, REAL_SHAPES_XML, SHEET_XML, toUtf16BE, TRANSPORT_XML,
-	GENERAL_VARIABLE_XML,
+	GENERAL_VARIABLE_XML, STORED_MODEL_XML, STORED, storedRunFiles,
 } from './eco-fixture.js';
 import { expandTransports } from '../src/sim/transport.js';
 import {
@@ -11574,8 +11574,8 @@ test('the tree can put a block on the chart, beside or instead of what is there'
 	// The chart and the table draw the same choice of series, so one pair of
 	// items serves both and only the word changes.
 	assert(/state\.tab === 'chart' \|\| state\.tab === 'table'/.test(app)
-		&& /seriesView: \(\) => \(state\.results/.test(app),
-		'the items are offered on tabs with no series in view, or with no run');
+		&& /seriesView: \(\) => \(shownRun\(\)/.test(app),
+		'the items are offered on tabs with no series in view, or with no run to show');
 	const items = /_chartItems\(names\) \{([\s\S]*?)\n\t\}/.exec(graph)?.[1] ?? '';
 	assert(/const view = this\.hooks\.seriesView\?\.\(\);\n\t\tif \(!view\) return \[\];/.test(items),
 		'the diagram decides for itself whether there is a chart');
@@ -15205,6 +15205,171 @@ test('an imported general variable is an expression reading the block chosen for
 		+ '<component name="Unset"'));
 	assert(gone.report.warnings.some((w) => /'Gone' reads 'Measured', which is not in this model/.test(w)),
 		JSON.stringify(gone.report.warnings));
+});
+
+test('an assessment’s stored runs come in beside the model, as each Ecolego wrote them', async () => {
+	// An .eas carries the runs Ecolego made of its model, and they come in
+	// beside it, labelled as this tool labels its own series, for the Chart
+	// and the Table to put next to a run here. Two conventions of the result
+	// file follow which Ecolego wrote it, each measured on assessments of one
+	// model saved by both: which index runs fastest, and whether a transfer
+	// is kept as its flux or its rate.
+	const { readResultFile } = await import('../src/io/ecoruns.js');
+	const S = STORED;
+	for (const version of [6, 5]) {
+		const zip = await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML }, ...storedRunFiles({ version })]);
+		const { project, stored } = await importEcoFile(zip, { fileName: 'stored.eas' });
+		assert(stored, `Ecolego ${version}: no stored runs`);
+		if (version === 6) {
+			// Single runs only, and the current one first, though the archived
+			// one is dated later.
+			assert(stored.runs.length === 2 && stored.probabilistic === 1,
+				`${stored.runs.length} runs, ${stored.probabilistic} probabilistic`);
+			assert(stored.runs[stored.shown].name === 'Now' && !stored.runs[stored.shown].archived,
+				`shown first: ${stored.runs[stored.shown]?.name}`);
+		} else {
+			assert(stored.runs.length === 1 && stored.probabilistic === 0 && stored.shown === 0,
+				JSON.stringify({ runs: stored.runs.length, shown: stored.shown }));
+		}
+		const got = stored.runs[stored.shown].load();
+		assert(got === stored.runs[stored.shown].load(), 'read twice');
+		assert(JSON.stringify([...got.t]) === JSON.stringify(S.times) && got.timeUnit === 'year',
+			`${version}: times ${[...got.t]} in ${got.timeUnit}`);
+		// Every cell under its own names, whichever index the file ran fastest,
+		// and the block that was renamed under its new name.
+		S.nuclides.forEach((n, ni) => S.objects.forEach((o, oi) => {
+			const soil = got.series.get(`Soil [${n}, ${o}]`);
+			const deep = got.series.get(`Deep_layer [${n}, ${o}]`);
+			const down = got.series.get(`Down [${n}, ${o}]`);
+			assert(soil && deep && down, `${version}: no series at ${n}, ${o}`);
+			S.times.forEach((t, ti) => {
+				assert(soil.values[ti] === S.soil(ni, oi, ti) && deep.values[ti] === S.deep(ni, oi, ti),
+					`${version}: ${n}, ${o} at ${t}: ${soil.values[ti]}, ${deep.values[ti]}`);
+				// A transfer is its rate, whichever the file kept -- and where
+				// the donor held nothing the run resolved, it is not defined.
+				const want = version === 6 && S.soil(ni, oi, ti) <= 1e-6 ? NaN : S.rate;
+				assert(Number.isNaN(want) ? Number.isNaN(down.values[ti])
+					: Math.abs(down.values[ti] - want) <= 1e-15, `${version}: Down at ${n}, ${o}, ${t}: ${down.values[ti]}`);
+			});
+			// In a rate's unit too, not the flux's the file gave it.
+			assert(down.unit === '1/year', `${version}: Down in ${down.unit}`);
+		}));
+		assert(got.series.get('k').constant === S.rate, JSON.stringify(got.series.get('k')));
+		assert(JSON.stringify([...got.series.get('Dose').values]) === JSON.stringify(S.times.map((t, ti) => S.dose(ti))),
+			`${version}: Dose`);
+		// What the chart's picker filters on, as a run here says it.
+		const one = got.series.get('Soil [I-129, Mire]');
+		assert(one.kind === 'compartment' && one.block === 'Soil' && JSON.stringify(one.dims) === '["Nuclides","Objects"]'
+			&& JSON.stringify(one.index) === '["I-129","Mire"]', JSON.stringify(one));
+		// An output with no block here is counted, not kept.
+		assert(!got.series.has('Gone') && got.left.notInModel === 1, JSON.stringify(got.left));
+		// And every label is one a run of the imported model reports.
+		const ours = new Set(run(structuredClone(project)).outputs().map((o) => o.label));
+		const strays = [...got.series.keys()].filter((l) => !ours.has(l));
+		assert(!strays.length, `${version}: labels no run here reports: ${strays.join(', ')}`);
+	}
+	// A file that ends inside a block is refused rather than misread, and a
+	// project with no stored run brings none.
+	expectError(() => readResultFile(new Uint8Array(1030)), /ends inside a block header/, 'a cut file');
+	const plain = await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML }]);
+	assert(!(await importEcoFile(plain, { fileName: 'plain.eco' })).stored, 'a project with nothing stored');
+	// A run that saved nothing this model has is not the one shown first,
+	// current and newest though it is: an assessment can keep runs of
+	// another model.
+	const mixed = await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML }, ...storedRunFiles({ version: 6, stranger: true })]);
+	const { stored: kept } = await importEcoFile(mixed, { fileName: 'mixed.eas' });
+	const other = kept.runs.find((r) => r.name === 'Elsewhere');
+	assert(other?.matched === 0 && other.load().series.size === 0 && other.load().left.notInModel === 1,
+		JSON.stringify(other && { matched: other.matched, left: other.load().left }));
+	assert(kept.runs[kept.shown].name === 'Now' && kept.runs[kept.shown].matched > 0,
+		`shown first: ${kept.runs[kept.shown]?.name}`);
+});
+
+test('the Chart and the Table show a stored run, and beside a run here put it next to it', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	// It comes in with the file and goes with the model.
+	assert(/if \(stored\) acceptStoredRuns\(stored, file\.name\);/.test(app), 'opening a file drops the stored runs');
+	assert(/dropModelsBesideRuns\(\);/.test(/function setModel\(raw, source\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '')
+		&& /s\.runs = s\.runs\.filter\(\(run\) => !run\.withModel\);/.test(app), 'another model keeps the last one’s stored runs');
+	// Before a run here it is what the two views show, through the same picker.
+	assert(/function shownRun\(\) \{\n\tif \(state\.results\) return state\.results;\n\tconst view = storedView\(\);\n\treturn view && view\.outputs\.length && storedTimeFits\(view\) \? view : null;\n\}/.test(app), 'no stored view');
+	// In the model's time unit only: the axis and the first column say the
+	// model's, and a stored run in another would be read in the wrong one.
+	assert(/if \(!storedTimeFits\(view\)\) return \{ note: storedTimeNote\(view, 'put beside'\) \};/.test(app),
+		'a stored run in another time unit is put beside');
+	// And an edit of that unit draws it, or puts it away, before a run here --
+	// leaving the line that says there are no results, not an empty space.
+	const republish = /function republish\(opts = \{\}\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/restateStoredRun\(\);/.test(republish), 'an edit leaves the stored run as it was drawn');
+	assert(/if \(!r\) \{\n\t\tshell\.append\(pendingResults\(\)\);/.test(app), 'a chart with nothing to draw is left blank');
+	// A stored run with nothing this model has is said, not drawn as an empty
+	// model.
+	assert(/saved nothing this model has/.test(app), 'an empty stored run goes unexplained');
+	for (const fn of ['renderChart', 'drawTable', 'pickedOutputs', 'renderPicker']) {
+		const body = new RegExp(`function ${fn}\\(\\) \\{([\\s\\S]*?)\\n\\}`).exec(app)?.[1] ?? '';
+		assert(/shownRun\(\)/.test(body), `${fn} reads only a run here`);
+	}
+	// Opening either tab draws it, and the tree's chart items reach it.
+	assert(/if \(name === 'table' && shownRun\(\) && tableDirty\) \{/.test(app), 'the Table tab waits for a run here');
+	assert(/if \(name === 'chart' && shownRun\(\)\) chart\?\.draw\(\);/.test(app), 'the Chart tab waits for a run here');
+	assert(/function chartBlocks\(names, mode\) \{\n\tconst r = shownRun\(\);/.test(app), 'the tree charts only a run here');
+	assert(/seriesView: \(\) => \(shownRun\(\)/.test(app), 'the tree offers its chart items only after a run here');
+	// Beside one, a line in the output's colour and the last pattern, and a
+	// column after the output's own.
+	assert(/label: `\$\{r\.outputs\[i\]\.label\} \(\$\{stored\.tag\}\)`,[\s\S]{0,200}?slot: pos,\n\t+set: SERIES_DASHES\.length - 1,/.test(app),
+		'no line beside');
+	assert(/const stored = !byScenario && which === 'run' \? storedBeside\(r\) : null;/.test(app), 'no column beside');
+	// Which one, or none, from the chart's menu and the table's.
+	for (const menu of ['chartMenu', 'tableMenu']) {
+		const body = new RegExp(`function ${menu}\\(ev\\) \\{([\\s\\S]*?)\\n\\}`).exec(app)?.[1] ?? '';
+		assert(/\{ separator: true \},\n\t+besideItem\(\),/.test(body), `${menu} has no say in which`);
+	}
+});
+
+test('a run kept from the screen, or opened from a file, stands beside the next one', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	// Kept as Save → Model with results writes a run and opened as opening that
+	// file opens it, in a worker of its own: the page's worker keeps its
+	// states, so the next edit that does not move them is still only worked
+	// out again rather than solved.
+	const keep = /async function keepRun\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/const parts = await requestDataset\('model\.json'\);/.test(keep)
+		&& /readDataset\(new Map\(parts\.map\(\(part\) => \[part\.name, part\.bytes\]\)\)\)/.test(keep)
+		&& /startBeside\(run, project, data\);/.test(keep), 'a run is not kept the way a saved one opens');
+	assert(/const project = structuredClone\(state\.raw\);/.test(keep), 'the kept run shares the model being edited');
+	assert(/w\.postMessage\(\{ type: 'open-dataset', id: run\.runId, project, data \}\);/.test(app), 'no worker of its own');
+	// Only the run on screen, current, and of the model at its own values --
+	// and not without limit, each being a worker with its states.
+	const refusal = /function keepRefusal\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	for (const [rule, what] of [
+		[/resultsAreStale\(\)/, 'a run of an older model'], [/r\.replayed != null/, 'a realisation'],
+		[/r\.preview/, 'a run at other values'], [/heldBeside\(\) >= MOST_HELD/, 'without limit'],
+	]) assert(rule.test(refusal), `keeps ${what}`);
+	// Its series are asked of its own worker, as a scenario's are.
+	assert(/state\.stored\?\.runs\.some\(\(run\) => run\.r === r\)/.test(app), 'a run beside cannot be asked for its series');
+	// A file brings its run, or an assessment the runs it stored; a model with
+	// no run in it is said to have none.
+	const open = /async function openRunBeside\(file\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/read\.stored\?\.runs\.length/.test(open) && /startBeside\(run, project, read\.dataset\);/.test(open)
+		&& /holds a model and no run/.test(open), 'a file opened beside is not read for its run');
+
+	// What Keep reads back: the parts the worker writes, with no file between,
+	// give the run they were written from, bit for bit.
+	const D = await import('../src/io/dataset.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const raw = JSON.parse(readFileSync(new URL('../examples/four-compartment.json', import.meta.url), 'utf8'));
+	const made = run(new Project(raw));
+	const parts = D.datasetEntries({ project: raw, results: made, inner: 'model.json' });
+	const data = D.readDataset(new Map(parts.map((part) => [part.name, part.bytes])));
+	const back = D.restoreResults({ project: new Project(raw), system: buildSystem(new Project(raw)), data, Results });
+	const theirs = new Map(back.outputs().map((o) => [o.label, o]));
+	for (const o of made.outputs()) {
+		const a = made.series(o);
+		const b = back.series(theirs.get(o.label));
+		assert(a.length === b.length && a.every((v, i) => Object.is(v, b[i])), `${o.label} came back different`);
+	}
 });
 
 test('an imported model brings Ecolego’s three material lists as they are', async () => {
@@ -28491,7 +28656,7 @@ test('the views that cost the most are built when they are looked at', async () 
 		'the table is still built while hidden');
 	assert(/const TABLE_ROWS = \d+;/.test(app), 'nothing bounds the table');
 	assert(/state\.tableRows \?\? TABLE_ROWS/.test(app), 'the bound is not applied');
-	assert(/if \(name === 'table' && state\.results && tableDirty\)/.test(app),
+	assert(/if \(name === 'table' && shownRun\(\) && tableDirty\)/.test(app),
 		'nothing builds the table when its tab comes forward');
 
 	// The matrix: same bargain, plus a highlight that moves without a rebuild.
@@ -35668,9 +35833,11 @@ test('the Chart and the Table say what produced them, and the Chart has a second
 	// And a probabilistic run on a model that has never been run: it used to
 	// read `state.results.outputs` of null and throw, taking the bands, the
 	// statistics and the picker down with it.
-	assert(/if \(!state\.results\) \{\n\t\trenderChart\(\);/.test(app),
+	// (What there is may also be the run an Ecolego assessment brought with
+	// it, which the two views show before one here: see `shownRun`.)
+	assert(/const shown = shownRun\(\);\n(?:\t\/\/[^\n]*\n|\tif \(state\.stored\)[^\n]*\n)*\tif \(!shown\) \{\n\t\trenderChart\(\);/.test(app),
 		'renderResults still assumes there are results');
-	assert(/const outs = state\.results\?\.outputs \?\? \[\];/.test(app),
+	assert(/const outs = shownRun\(\)\?\.outputs \?\? \[\];/.test(app),
 		'pickDefaultSeries still assumes there are results');
 	// One deterministic run is started when there is none *or* when the one on
 	// screen is of an older model — a band belongs under its own line or under

@@ -939,9 +939,70 @@ Imported and run here, that model matches Ecolego's own run of the same file to
 the tolerance of Ecolego's run: the three general variables to within 2.1e-5
 of their peaks, the total dose to within 1.1e-6 of its peak.
 
+### An assessment's stored runs
+
+An `.eas` carries the runs Ecolego made of the model, and `src/io/ecoruns.js`
+reads them beside the model rather than into it: they are another program's
+answer, kept to be compared with, and are not saved with the model.
+
+`simulation.xml` describes each run -- single or probabilistic, its name and
+date, its time unit and absolute tolerance, and every output it saved with the
+index lists and the unit of each -- and each run's numbers are in a file of
+their own under `simulation/results/`, named by the run's identifier. Ecolego 5
+kept one run, in `results.dta`, under an entry name written with backslashes.
+A result file is a 1024-byte header holding two big-endian 32-bit integers --
+how many simulations, how many output times -- and then one block per output:
+a 64-byte header, which is the output's 128-bit identifier as two 64-bit halves,
+the low one first, and the byte count as a 64-bit integer, followed by that
+many bytes of big-endian doubles, simulation by simulation, time by time, cell
+by cell. An output that cannot change over a run is stored once per simulation
+rather than once per time, and the output times are themselves an output,
+called `time`. Nothing is decoded until a run is shown, and then only that
+run's file.
+
+Two conventions differ between the versions, both measured on one silo
+assessment saved by each:
+
+- **Which index runs fastest.** Ecolego 6 writes a block's cells with the first
+  of its index lists fastest, Ecolego 5 with the last. Read the other way, 203
+  of the model's 255 inventory cells landed under the wrong source. A run says
+  which version wrote it by carrying an identifier of its own, which only
+  Ecolego 6 gives it.
+- **What a transfer is.** Ecolego 5 stores a transfer's rate, which is what a
+  transfer's series is here; Ecolego 6 stores the flow of one that multiplies
+  by its donor, the rate times the donor's amount -- 33 of 33 such transfers in
+  the one file, 35 of 35 in the other. The flow is divided by the donor's
+  stored series at the same index. Where the donor holds less than the run's
+  absolute tolerance, or less than a trillionth of its own peak, the quotient
+  is the solver's rounding -- a backfill of 8e-10 Bq under a tolerance of 1 Bq
+  made a rate of 1e4 out of one of 1e-5, and one of 5e-125 Bq a rate of 6e121 --
+  and the point is left out as NaN. A transfer whose donor was not saved
+  cannot be divided, and is counted with what was left out.
+
+Series are labelled as this tool labels its own, through the importer's map
+from the file's identifiers to the names the blocks were given, so renamed
+blocks match. An output of a block type this tool does not import, of a
+sub-system, or of another model's block is counted, not kept. The units are
+the file's, with two exceptions: a transfer is given this model's unit for it,
+which says the same quantity another way (`year^-1` in the file, `1/year`
+here), and the run's time unit goes through the importer's own map of
+spellings (`y`, `Years`, `a`), since a stored run is drawn only while the model
+runs in the unit it was made in. How many of a run's outputs name a block of
+the model is counted from its description alone, without reading its numbers,
+and the run shown first is one with any -- an assessment can keep archived
+runs of another model -- then the current one, then the newest.
+
+Read against this tool's runs of the same model, the silo assessment saved by
+Ecolego 5 agrees at every one of 496 blocks to within 1.4e-4 of the block's
+peak, and the one saved by Ecolego 6 at 90 % of them to within 3e-5. Its one
+outlier is a concentration in a compartment holding less than the absolute
+tolerance, where neither solver controls its error. Probabilistic runs are
+counted and not read.
+
 ### Not mapped
 
-The other ~20 block types, presentation state and results. Scenarios and
+The other ~20 block types, presentation state, and the results of
+probabilistic runs (see *An assessment's stored runs* above). Scenarios and
 the probabilistic settings are read (see *Scenarios* below, and the Guide);
 sub-systems are read too, transports included -- see
 "Transport sub-systems" -- and the *external* flavour is read as an ordinary
@@ -3479,6 +3540,47 @@ that is half a minute of a page gone away every time a digit is typed -- paid
 by everyone who opens one, to save a click for the people editing a small
 model. With the run savable, the cost of *not* re-solving on every edit is a
 click on Run; the cost of doing so was never recoverable.
+
+## Runs beside
+
+The Chart and the Table can set a second run beside the one on screen:
+`state.stored` in `src/ui/app.js`, one list with one run shown at a time. Three
+kinds come into it -- an assessment's stored runs (see *An assessment's stored
+runs*), a run kept from the screen (`keepRun`), and a run saved with its model
+and opened from a file (`openRunBeside`) -- and everything that draws them is
+shared. `storedBeside` matches the outputs of the run on screen to the run
+beside's by label and reads the run beside onto this run's times along a
+straight line (`ontoAxis`, NaN outside its span), and the chart and the table
+ask it for a column through `column`, as they ask the run on screen.
+
+**A kept run is written out and opened again, not handed over.** The page's
+worker holds the run on screen, and the simplest way to keep it would be to
+give that worker to the kept run and start a fresh one for the next. That
+throws away the one thing the page's worker has that a fresh one has not: the
+states that let an edit which moves none of them be worked out again rather
+than solved. So Keep asks the page's worker for the run as Save → Model with
+results does (`requestDataset`), reads the parts back as opening that file
+would (`readDataset`), and opens them in a worker of its own with the message
+that restores a saved run (`open-dataset`), checked against the model as it
+was by the same layout signature. A run with no worker behind it -- one solved
+on the page -- is kept as it stands, since the next run makes new results
+rather than writing over these.
+
+A kept or opened run then behaves as a scenario run beside the selected one
+does. `done` gives the list of its outputs and none of their values; a column
+is asked of its own worker when it is drawn, since `resultsLive` names the run
+and `requestColumn` posts to `r.worker`; and a column on its way is the NaN
+placeholder, which the chart must not take for a series that is zero
+throughout -- `pendingCols` carries the run beside's placeholders too, read
+onto other times or not. Each holds its model and its states in memory, so at
+most six are held (`MOST_HELD`). They outlive the model they were made of, so a
+run of one model can be set beside a run of the next, while an assessment's
+stored runs go with the file that brought them (`dropModelsBesideRuns`).
+
+What can be kept is the run on screen while it is current (`keepRefusal`): not
+after an edit, when the pairing of this model and those states is the lie
+*Saving what a run kept* describes, which the layout signature cannot catch;
+not a replayed realisation; and not a run at an app's controls.
 
 ## Writing HDF5
 

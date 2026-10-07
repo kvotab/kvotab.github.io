@@ -29,6 +29,7 @@
  */
 
 import { unzip, ZipError } from './zip.js';
+import { readStoredRuns } from './ecoruns.js';
 import { STABLE, KINDS, SINGULAR, KIND_LABEL, stateCount } from '../domain/edit.js';
 import { FUNCTIONS, FUNCTION_ALIASES } from '../parser/functions.js';
 import {
@@ -257,7 +258,18 @@ export async function importEcoFile(data, meta = {}) {
 		);
 	}
 
-	return importModelXMLStepwise(modelXml, { ...meta, version: ecolegoVersion(entries) }, onStage);
+	const imported = await importModelXMLStepwise(modelXml, { ...meta, version: ecolegoVersion(entries) }, onStage);
+	// An assessment's runs, beside the model and not in it: they are the
+	// answer Ecolego got, kept to be compared with, and are read only when
+	// somebody asks for one. A file of results that will not read costs the
+	// model nothing. See ./ecoruns.js.
+	let stored = null;
+	try {
+		stored = readStoredRuns(entries, { ...imported, timeUnitOf: timeUnitFromEco });
+	} catch {
+		stored = null;
+	}
+	return stored ? { ...imported, stored } : imported;
 }
 
 /**
@@ -430,12 +442,16 @@ function* importSteps(text, meta) {
 	// connected and unreachable targets dropped on the way here.
 	project.description = describeModel(project, { ...provenance, ...meta });
 	// Who wrote it, as the file says -- beside the name and the description,
-	// where a model of this tool's own keeps it.
+	// where a model of this tool's own keeps it. And the name each of the
+	// file's ids became, for anything else in the archive that names blocks
+	// by them: an assessment's stored runs do (see ./ecoruns.js).
 	if (provenance.author) {
 		const { name, description, ...rest } = project;
-		return { project: { name, description, author: provenance.author, ...rest }, report };
+		return {
+			project: { name, description, author: provenance.author, ...rest }, report, blockIds: blockNameById,
+		};
 	}
-	return { project, report };
+	return { project, report, blockIds: blockNameById };
 }
 
 /**
@@ -2587,6 +2603,9 @@ const TIME_UNIT_FROM_ECO = lookup({
 	day: 'day', days: 'day', d: 'day',
 	year: 'year', years: 'year', y: 'year', a: 'year',
 });
+
+/** The same, for any spelling of one, or null for a unit this tool has no name for. */
+const timeUnitFromEco = (text) => TIME_UNIT_FROM_ECO[String(text ?? '').trim().toLowerCase()] ?? null;
 
 /**
  * Maps the solver an imported file names onto one this tool has.

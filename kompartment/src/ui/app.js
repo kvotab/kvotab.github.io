@@ -26,6 +26,7 @@ import {
 	filterGroups,
 	seriesStyle,
 	styleOf,
+	SERIES_DASHES,
 } from './chart.js';
 import { PICTURE_KINDS } from './picture.js';
 // The one rule CSV has, from the module both writers share. Statically, and
@@ -308,6 +309,11 @@ const state = {
 	raw: null,
 	project: null,
 	results: null,
+	// The runs beside this one -- an assessment's, kept from the screen, or
+	// opened from a file -- and which of them is shown: `{ runs, shown, drawn }`,
+	// or null, `drawn` saying whether the views hold it on its own. See
+	// `shownBeside` and `storedView`.
+	stored: null,
 	selection: null,
 	// Everything selected on the diagram. `selection` is the one of them the
 	// inspector shows; several can be moved or deleted together.
@@ -3152,6 +3158,9 @@ function republish(opts = {}) {
 		updateDirtyBadge();
 		return;
 	}
+	// Before a run here, Ecolego's stored run is shown only while the model
+	// counts time in the unit it was made in, which an edit can change.
+	restateStoredRun();
 	// A model with a broken equation is not handed to the solver, and there is
 	// no run coming -- so whatever is on the chart is now out of date and has
 	// to stop being shown. `renderResults` reads the same test.
@@ -3239,7 +3248,7 @@ function timeTravel(back) {
 	state.dirty = true;
 	if (!step.layoutOnly) state.rev += 1;
 	republish({ layoutOnly: step.layoutOnly });
-	if (state.results && JSON.stringify(ed.chartScales(state.raw)) !== scalesWere) renderChart();
+	if (shownRun() && JSON.stringify(ed.chartScales(state.raw)) !== scalesWere) renderChart();
 	flash(`${back ? 'Undid' : 'Redid'}: ${step.label}`);
 }
 
@@ -6140,7 +6149,7 @@ function blockMenu(name, ev) {
  * @param {'add'|'only'} mode  beside what is there, or instead of it
  */
 function chartBlocks(names, mode) {
-	const r = state.results;
+	const r = shownRun();
 	if (!r) { flash('Run the model first.', 'warn'); return; }
 	// The empty path is the model itself, and `isWithin(anything, '')` is true
 	// -- so an empty name here would quietly mean "every series in the model".
@@ -6155,9 +6164,14 @@ function chartBlocks(names, mode) {
 		if (want.has(block) || paths.some((p) => isWithin(block, p))) hits.push(i);
 	});
 	if (!hits.length) {
+		// Ecolego's stored run holds what was chosen to be saved, which is
+		// seldom every block.
+		const stored = r !== state.results;
 		flash(names.length === 1
-			? `${names[0]} has no series — a disabled block produces none.`
-			: 'None of these produced a series.', 'warn');
+			? (stored ? `${names[0]} is not among the series saved with the stored run.`
+				: `${names[0]} has no series — a disabled block produces none.`)
+			: (stored ? 'None of these is among the series saved with the stored run.'
+				: 'None of these produced a series.'), 'warn');
 		return;
 	}
 	const before = mode === 'add' ? state.selected : [];
@@ -7303,6 +7317,8 @@ function sendColumnAsk() {
 function resultsLive(r) {
 	if (r === state.results) return true;
 	for (const e of state.scenarioRuns.values()) if (e.r === r) return true;
+	// A run kept or opened beside, which answers from a worker of its own.
+	if (state.stored?.runs.some((run) => run.r === r)) return true;
 	return false;
 }
 
@@ -7362,8 +7378,167 @@ function ensureColumns(r, indices) {
 	});
 }
 
+/**
+ * The runs beside this one: one list, and one of them shown at a time.
+ *
+ * Three kinds, told apart by `source`. The runs an Ecolego assessment stored
+ * (`ecolego`, see ../io/ecoruns.js), read whole when one is shown. A run of
+ * this tool kept from the screen (`kept`, see `keepRun`). And one saved with
+ * its model and opened beside this one (`file`, see `openRunBeside`). The last
+ * two are live runs in a worker of their own, as a scenario beside the
+ * selected one is, and work their series out when they are asked for them.
+ *
+ * Beside a run here each is a second line, and a second column, for each
+ * output both have; before there is one, it is what the two views show,
+ * through the same picker -- so a model opened from an assessment has a chart
+ * before it has been run here.
+ */
+function shownBeside() {
+	const s = state.stored;
+	return s && s.shown >= 0 ? s.runs[s.shown] ?? null : null;
+}
+
+/**
+ * The run beside, in the shape the Chart and the Table read a run in.
+ *
+ * An assessment's has every column in hand, so `column` never has to ask a
+ * worker for one. A run of this tool is the results its worker sent, until it
+ * has sent them, and its columns are asked of that worker as the columns of
+ * the run on screen are asked of the page's.
+ */
+let storedViewCache = null;
+function storedView() {
+	const run = shownBeside();
+	if (!run) return null;
+	if (run.source !== 'ecolego') return run.r ?? null;
+	if (storedViewCache?.run === run) return storedViewCache.view;
+	let data;
+	try {
+		data = run.load();
+	} catch (e) {
+		flash(`${besideName(run, { start: true })} in ${run.file} could not be read: ${e.message}`, 'warn');
+		state.stored.shown = -1;
+		return null;
+	}
+	const outputs = [];
+	const columns = [];
+	// A transfer's unit as this model gives it, which says the same quantity
+	// its own way -- `1/year` where Ecolego writes `year^-1` -- so the two
+	// lines of one transfer are not called mixed units.
+	const blocks = ed.blockIndex(state.raw);
+	for (const [label, e] of data.series) {
+		const own = e.kind === 'transfer' ? blocks.get(e.block)?.block : null;
+		outputs.push({
+			kind: e.kind, block: e.block, nuclide: null, dims: e.dims, index: e.index,
+			label, unit: own?.unit || e.unit, constant: e.values ? null : e.constant,
+		});
+		columns.push(e.values ?? new Float64Array(data.t.length).fill(e.constant));
+	}
+	const view = { t: data.t, outputs, columns, stored: data, rev: state.rev };
+	storedViewCache = { run, view };
+	return view;
+}
+
+/**
+ * The run beside, by name, for the lines that say what is on screen -- at the
+ * start of a sentence with `start`.
+ */
+function besideName(run = shownBeside(), { start = false } = {}) {
+	if (!run) return '';
+	const said = run.source === 'ecolego'
+		? (run.name ? `Ecolego’s stored run “${run.name}”` : 'Ecolego’s stored run')
+		: run.source === 'kept' ? `the run ${run.name}` : `the run in ${run.file}`;
+	return start ? said[0].toUpperCase() + said.slice(1) : said;
+}
+
+/** What a line, or a column, of the run beside is marked with: `Soil (kept at 15:42)`. */
+function besideTag(run = shownBeside()) {
+	if (!run) return '';
+	return run.source === 'ecolego' ? 'Ecolego' : run.source === 'kept' ? run.name : run.file;
+}
+
+/** What the Chart and the Table show: the run here, or, before one, the run beside. */
+function shownRun() {
+	if (state.results) return state.results;
+	const view = storedView();
+	return view && view.outputs.length && storedTimeFits(view) ? view : null;
+}
+
+/**
+ * Whether the run beside counts time in the unit this model runs in. The
+ * Chart's axis and the Table's first column are labelled with the model's, so
+ * a run made in another -- the unit changed since -- is neither shown on its
+ * own nor put beside.
+ */
+function storedTimeFits(view) {
+	const then = view.stored.timeUnit;
+	return !then || then === (state.raw.simulation?.time_unit ?? 'year');
+}
+
+/** Why the run beside is not shown, where `storedTimeFits` says it cannot be. */
+function storedTimeNote(view, what) {
+	const word = (u) => (['second', 'minute', 'hour', 'day', 'year'].includes(u) ? `${u}s` : `‘${u}’`);
+	return `${besideName(shownBeside(), { start: true })} is in ${word(view.stored.timeUnit)} and this `
+		+ `model runs in ${word(state.raw.simulation?.time_unit ?? 'year')}, so it is not ${what}.`;
+}
+
+/**
+ * Lets go of the runs an assessment brought with the model being replaced:
+ * they belong to that file. The runs kept or opened beside stay, and so does
+ * the choice of one of them.
+ */
+function dropModelsBesideRuns() {
+	storedViewCache = null;
+	const s = state.stored;
+	if (!s) return;
+	const shown = shownBeside();
+	s.runs = s.runs.filter((run) => !run.withModel);
+	s.shown = shown ? s.runs.indexOf(shown) : -1;
+	s.drawn = false;
+	if (!s.runs.length) state.stored = null;
+}
+
+/**
+ * Before a run here, after an edit: draws the run beside, or puts it away,
+ * where the edit changed whether it can be shown -- a change of the model's
+ * time unit does -- and says which in the line above the views.
+ */
+function restateStoredRun() {
+	if (state.results || !state.stored) return;
+	if (!!shownRun() !== !!state.stored.drawn) {
+		clearResultsViews();
+		renderResults();
+	}
+	renderRunKind();
+}
+
+/**
+ * The run beside the run `r` here, for the Chart and the Table: where each of
+ * `r`'s outputs is in it, by label, and how to read a column of it onto `r`'s
+ * times -- the same times, often, and a straight line between its own points
+ * otherwise. Null with no run beside, or before a run here, when the run
+ * beside is what is shown rather than what is beside it; `{ note }` when the
+ * two cannot be put side by side.
+ */
+function storedBeside(r) {
+	const view = state.results && r === state.results ? storedView() : null;
+	if (!view) return null;
+	if (!storedTimeFits(view)) return { note: storedTimeNote(view, 'put beside') };
+	const at = new Map(view.outputs.map((o, k) => [o.label, k]));
+	return {
+		view,
+		at,
+		onto: ontoAxis(view.t, r.t),
+		sameTimes: sameTimes(view.t, r.t),
+		tag: besideTag(),
+		// Whether it has anything to stand beside: a run of another model may
+		// share no series with this one.
+		common: r.outputs.some((o) => at.has(o.label)),
+	};
+}
+
 function pickDefaultSeries() {
-	const outs = state.results?.outputs ?? [];
+	const outs = shownRun()?.outputs ?? [];
 	if (!outs.length) return;
 	const compartments = outs.map((o, i) => ({ o, i }))
 		.filter(({ o }) => o.kind === 'compartment');
@@ -7411,7 +7586,9 @@ function resultsAreStale() {
  * is always this model's.
  */
 function resultsShowable() {
-	if (!state.results) return false;
+	// Before a run here, Ecolego's stored run, where the file brought one: it
+	// is not this tool's answer and cannot go out of date with an edit.
+	if (!state.results) return !!shownRun();
 	if (!resultsAreStale()) return true;
 	return state.running || autoRunTimer !== null;
 }
@@ -7424,15 +7601,16 @@ function resultsShowable() {
  */
 function renderStaleness() {
 	const show = resultsShowable();
+	const shown = shownRun();
 	// A model that computes nothing has results that are perfectly current and
 	// have nothing in them. The chart stays hidden either way, and the note
 	// `renderChart` left in the shell is the one that explains it.
-	const nothing = !!state.results && !state.results.outputs.length;
+	const nothing = !!shown && !shown.outputs.length;
 	// The distribution mode puts a different picture in the same space, so the
 	// chart goes with it -- decided here, where every other reason to hide it
 	// is decided, rather than by `renderChart` reaching past this.
 	$('#chart').hidden = !show || nothing || showingSample();
-	$('#legend').hidden = !state.results || (!show && !!state.results) || nothing
+	$('#legend').hidden = !shown || (!show && !!shown) || nothing
 		|| showingSample();
 	const table = $('#panel-table table');
 	if (table) table.hidden = !show;
@@ -7550,8 +7728,23 @@ function renderRunKind() {
 	  button. A line above it repeating the bare fact is the fact twice, the
 	  first time without the one control that could act on it.
 	*/
-	if (!r) { /* the body speaks for this state */ }
-	else if (r.replayed != null) {
+	if (!r) {
+		// Unless there is a run beside -- an assessment's, or one kept or
+		// opened here -- which is then what the body holds, and a chart that
+		// is not this model's answer has to say whose it is.
+		const run = shownBeside();
+		const view = storedView();
+		const name = besideName(run, { start: true });
+		if (view && !view.outputs.length) {
+			words.push(`${name} saved nothing this model has`);
+		} else if (view && storedTimeFits(view)) {
+			words.push(run.source === 'ecolego' ? `${name}, from ${run.file}` : name,
+				`${view.outputs.length.toLocaleString()} series over ${view.t.length.toLocaleString()} times`,
+				'run the model to see the two together');
+		} else if (view) {
+			words.push(storedTimeNote(view, 'shown'));
+		}
+	} else if (r.replayed != null) {
 		words.push(`Realisation ${(Number(r.replayed.index ?? r.replayed) + 1).toLocaleString()}`,
 			'of the probabilistic run, integrated again on its own values');
 	} else if (prob) {
@@ -7577,6 +7770,8 @@ function renderRunKind() {
 				+ `${r.t.length.toLocaleString()} times`);
 		}
 	}
+	// And Ecolego's beside it, where the file brought one.
+	if (r && storedBeside(r)?.common) words.push(`with ${besideName()} beside it, dash-dotted`);
 	// A preview is not an ordinary run and must not read as one: the model on
 	// screen is not the model these numbers came from.
 	// What the results on screen were run at, from the results themselves:
@@ -7665,24 +7860,30 @@ function renderResults() {
 	// outputs` of null and throw, which took the rest of the handler with it:
 	// no bands, no statistics in the footer, and a chart still saying nothing
 	// had run. The deterministic run that fills this in is started by
-	// `acceptProbabilistic`; until it lands there is nothing to pick from.
-	if (!state.results) {
+	// `acceptProbabilistic`; until it lands there is nothing to pick from --
+	// unless the file brought Ecolego's, which is picked from in its place.
+	const shown = shownRun();
+	// Whether the views hold Ecolego's run on its own: see `restateStoredRun`.
+	if (state.stored) state.stored.drawn = !state.results && !!shown;
+	if (!shown) {
 		renderChart();
 		renderTable();
 		renderStaleness();
 		return;
 	}
-	// Keep the user's picks across runs where the labels still exist.
+	// Keep the user's picks across runs where the labels still exist -- and
+	// from Ecolego's stored run to the first run here, which reports the same
+	// outputs under the same names.
 	const labels = new Set(state.selected.map((i) => state.prevLabels?.[i]));
 	if (state.prevLabels) {
 		const remapped = [];
-		state.results.outputs.forEach((o, i) => {
+		shown.outputs.forEach((o, i) => {
 			if (labels.has(o.label) && remapped.length < MAX_SERIES) remapped.push(i);
 		});
 		state.selected = remapped.length ? remapped : [];
 	}
 	if (!state.selected.length) pickDefaultSeries();
-	state.prevLabels = state.results.outputs.map((o) => o.label);
+	state.prevLabels = shown.outputs.map((o) => o.label);
 	// A band over a quantity that does not vary with time is a flat line saying
 	// only that it is flat. Where *everything* selected is one of those -- three
 	// sampled parameters and an expression over them, which is what somebody
@@ -7716,7 +7917,7 @@ function renderResults() {
  * rather than two.
  */
 function pickedOutputs() {
-	const outs = state.results.outputs;
+	const outs = shownRun().outputs;
 	// The rule itself is in ./chart.js, where it can be tested without a
 	// browser -- see `filterOutputs` there for what it is and what it used to
 	// get wrong. *Probabilistic* is a constraint only while there is a sample
@@ -7755,7 +7956,7 @@ function renderPickFilter() {
 	for (const child of [...host.children]) if (child !== input) child.remove();
 	if (input.parentNode !== host) host.prepend(input);
 
-	const outs = state.results.outputs;
+	const outs = shownRun().outputs;
 	const f = state.pick;
 	if (input.value !== f.query) input.value = f.query;
 
@@ -7952,7 +8153,7 @@ function pickSearchBox() {
 		// With the list open, Escape is the list's to close.
 		if (e.key === 'Escape' && !completionIsOpen(input)) clearPickFilter();
 	});
-	attachCompletion(input, searchLook(() => state.results?.outputs ?? []));
+	attachCompletion(input, searchLook(() => shownRun()?.outputs ?? []));
 	pickSearch = input;
 	return input;
 }
@@ -8058,7 +8259,7 @@ function renderPicker() {
 	renderPickFilter();
 	const box = $('#picker');
 	box.replaceChildren();
-	const outs = state.results.outputs;
+	const outs = shownRun().outputs;
 	const all = pickedOutputs();
 	if (!outs.length) {
 		box.append(el('p', { className: 'hint' },
@@ -8559,7 +8760,7 @@ function renderChartMode() {
 }
 
 function renderChart() {
-	const r = state.results;
+	const r = shownRun();
 	const shell = $('.chart-shell');
 	shell.querySelector('.empty-model')?.remove();
 	shell.querySelector('.results-pending')?.remove();
@@ -8569,11 +8770,14 @@ function renderChart() {
 	// space instead, and not asking the chart to autoscale over no data at
 	// all, which would draw a pair of axes from NaN to NaN.
 	shell.querySelector('.hist-view')?.remove();
-	// Nothing integrated. `clearResultsViews` has already put the "no results
-	// yet" line in the shell; there is nothing here to draw over it, and
-	// reading `outputs` of null is what made a probabilistic run on a model
-	// that had never been run take the whole handler down with it.
+	// Nothing integrated -- or Ecolego's stored run put away before there is
+	// one: the "no results yet" line `clearResultsViews` puts in the shell
+	// goes back, since the lines above took it out with everything else.
+	// There is nothing here to draw over it, and reading `outputs` of null is
+	// what made a probabilistic run on a model that had never been run take
+	// the whole handler down with it.
 	if (!r) {
+		shell.append(pendingResults());
 		renderChartMode();
 		renderRunKind();
 		return;
@@ -8787,10 +8991,43 @@ function renderChart() {
 				perOutput: lines.length, max: MAX_SERIES,
 			}));
 	}
-	const pendingCols = new Set([r.pending, ...beside.map((e) => e.r.pending)]);
+	const notes = [];
+	// The run beside, where there is one: each selected output again, as that
+	// run worked it out, in the output's colour and the last of the patterns,
+	// read onto this run's times. Only beside a run here: before one, the run
+	// beside is what `r` is.
+	const stored = storedBeside(r);
+	const besidePending = new Set();
+	if (stored?.note) notes.push(stored.note);
+	if (stored?.view) {
+		const extra = [];
+		let left = 0;
+		state.selected.forEach((i, pos) => {
+			const k = stored.at.get(r.outputs[i]?.label);
+			if (k === undefined) return;
+			if (drawnSeries.length + extra.length >= MAX_SERIES) { left++; return; }
+			// A kept run's series is asked of its worker like any other, and is
+			// on its way until it answers.
+			const own = column(stored.view, k);
+			const values = stored.onto(own);
+			if (own === stored.view.pending) besidePending.add(values);
+			extra.push({
+				label: `${r.outputs[i].label} (${stored.tag})`,
+				values,
+				unit: stored.view.outputs[k].unit,
+				slot: pos,
+				set: SERIES_DASHES.length - 1,
+			});
+		});
+		drawnSeries = [...drawnSeries, ...extra];
+		if (left) {
+			notes.push(`${left} line${left === 1 ? '' : 's'} of ${besideName()} left out: a chart `
+				+ `holds ${MAX_SERIES}. Select fewer outputs.`);
+		}
+	}
+	const pendingCols = new Set([r.pending, ...beside.map((e) => e.r.pending), ...besidePending]);
 	const units = new Set(drawnSeries.map((s) => s.unit).filter(Boolean));
 	const yLabel = units.size === 1 ? [...units][0] : '';
-	const notes = [];
 	if (dropped) {
 		notes.push(`${dropped} scenario line${dropped === 1 ? '' : 's'} left out: a chart holds `
 			+ `${MAX_SERIES}. Select fewer outputs, or hide a scenario in the legend.`);
@@ -9254,7 +9491,7 @@ function renderTable() {
 function drawTable() {
 	tableDirty = false;
 	renderTableMode();
-	const r = state.results;
+	const r = shownRun();
 	// The panel's own body, not the panel: the line above it says what kind of
 	// run this is a table of, and that is written once rather than rebuilt with
 	// every cell.
@@ -9336,7 +9573,29 @@ function drawTable() {
 				title: mark === 'varied' ? 'Varied by the probabilistic run' : 'Kept by the probabilistic run',
 			} : {}, o.unit ? `${o.label} (${o.unit})` : o.label, mark ? sampleMark(mark) : null);
 		});
-	const shown = byScenario ? byScenario.map((c) => c.values()) : cols;
+	let shown = byScenario ? byScenario.map((c) => c.values()) : cols;
+	// The run beside, a column after each output it has, as the chart draws a
+	// line beside each. Beside this run's own numbers only, not a sample's: the
+	// run beside is one run, and so is this.
+	const stored = !byScenario && which === 'run' ? storedBeside(r) : null;
+	let besideStored = 0;
+	if (stored?.view) {
+		const withHeads = [];
+		const withCols = [];
+		outs.forEach((o, pos) => {
+			withHeads.push(heads[pos]);
+			withCols.push(shown[pos]);
+			const k = stored.at.get(o.label);
+			if (k === undefined) return;
+			const unit = stored.view.outputs[k].unit;
+			withHeads.push(el('th', { className: 'is-stored', title: `${besideName(shownBeside(), { start: true })}, for comparison` },
+				`${o.label} (${stored.tag}${unit ? `, ${unit}` : ''})`));
+			withCols.push(stored.onto(column(stored.view, k)));
+			besideStored++;
+		});
+		heads.splice(0, heads.length, ...withHeads);
+		shown = withCols;
+	}
 	table.append(el('thead', {}, el('tr', {},
 		el('th', {}, `Time (${state.raw.simulation?.time_unit ?? 'year'})`), ...heads)));
 	const body = el('tbody');
@@ -9353,6 +9612,12 @@ function drawTable() {
 		wrap.append(el('p', { className: 'hint table-hint' },
 			'The scenarios took their own solver steps, so theirs are read onto these times '
 			+ 'along a straight line between their own points.'));
+	}
+	if (stored?.note) wrap.append(el('p', { className: 'hint table-hint' }, stored.note));
+	if (besideStored && !stored.sameTimes) {
+		wrap.append(el('p', { className: 'hint table-hint' },
+			`${besideName(shownBeside(), { start: true })} has times of its own, so its columns are read onto these along `
+			+ 'a straight line between its points, and say -- outside them.'));
 	}
 	if (cols.some((c) => !c.length)) {
 		wrap.append(el('p', { className: 'hint table-hint' },
@@ -10487,7 +10752,7 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
  */
 function chartMenu(ev) {
 	ev.preventDefault();
-	const has = !!state.results && state.selected.length > 0;
+	const has = !!shownRun() && state.selected.length > 0;
 	// Saved with the model, like what the diagram shows: an oscillation is
 	// read on straight axes every time it is opened, not only until the page
 	// is reloaded. See `chart_time_scale` in ../domain/edit.js.
@@ -10502,7 +10767,7 @@ function chartMenu(ev) {
 		onPick: () => {
 			ed.setView(state.raw, { [key]: ed.chartScales(state.raw)[axis] ? 'linear' : 'log' });
 			modelChanged({ layoutOnly: true, label: 'Change the chart’s scales' });
-			if (state.results) renderChart();
+			if (shownRun()) renderChart();
 		},
 	});
 	openMenu({
@@ -10565,14 +10830,337 @@ function chartMenu(ev) {
 				onPick: () => chart?.resetZoom(),
 			},
 			{ separator: true },
+			besideItem(),
+			{ separator: true },
 			{
 				label: 'Export the numbers to CSV',
 				hint: `${state.selected.length} column${state.selected.length === 1 ? '' : 's'}`,
-				disabled: !has,
+				disabled: !has || !state.results,
+				title: has && !state.results
+					? 'Run the model first: the export is of this tool’s results' : '',
 				onPick: () => downloadCSV(state.selected.slice(), ''),
 			},
 		],
 	});
+}
+
+/**
+ * The run beside this one -- which, or none -- and the ways to bring one.
+ *
+ * One at a time, which keeps the chart to two lines per output. The list holds
+ * the runs an assessment stored, the runs kept from the screen and the runs
+ * opened from files, in the order they came.
+ */
+function besideItem() {
+	const runs = state.stored?.runs ?? [];
+	const fromEcolego = runs.filter((run) => run.source === 'ecolego').length;
+	const shown = shownBeside();
+	const why = keepRefusal();
+	return {
+		label: 'Run beside',
+		hint: runs.length && !shown ? 'none' : '',
+		title: 'Another run, drawn dash-dotted beside this one’s lines and set beside its '
+			+ 'numbers in the Table: one kept from the screen, one saved with its model, or '
+			+ 'one an assessment stored.',
+		items: [
+			...runs.map((run) => ({
+				label: besideLabel(run, fromEcolego),
+				// An archived run's name is the one Ecolego gave it, which does not
+				// say whose it is.
+				hint: run.source === 'ecolego'
+					? (Number.isFinite(run.date) ? new Date(run.date).toLocaleDateString() : run.name ? 'Ecolego' : '')
+					: (run.r ? '' : 'opening…'),
+				title: besideTitle(run),
+				checked: () => shownBeside() === run,
+				keepOpen: true,
+				onPick: () => showBeside(state.stored?.runs.indexOf(run) ?? -1),
+			})),
+			...(runs.length ? [
+				{ separator: true },
+				{ label: 'None', checked: () => !shownBeside(), keepOpen: true, onPick: () => showBeside(-1) },
+			] : []),
+			{ separator: true },
+			{
+				label: 'Keep this run',
+				disabled: !!why,
+				title: why || 'Keeps the run on screen to compare with: change the model, run it '
+					+ 'again, and the two are drawn together. Held in this tab until it is '
+					+ 'forgotten or the tab is closed.',
+				onPick: () => keepRun(),
+			},
+			{
+				label: 'Open a run…',
+				title: 'A model saved with its run — Save → Model with results — or an assessment, '
+					+ 'shown beside this one rather than opened in its place.',
+				onPick: () => pickFile(openRunBeside),
+			},
+			{
+				label: 'Forget this one',
+				disabled: !shown,
+				title: shown ? `Lets go of ${besideName(shown)}, and of the memory it holds.`
+					: 'No run is beside this one.',
+				onPick: () => forgetBeside(shown),
+			},
+		],
+	};
+}
+
+/** A run beside, as the menu lists it. */
+function besideLabel(run, fromEcolego) {
+	if (run.source === 'kept') return run.name[0].toUpperCase() + run.name.slice(1);
+	if (run.source === 'file') return run.file;
+	// Ecolego names the runs it archives, and leaves the current one unnamed.
+	if (run.name) return run.name;
+	return fromEcolego === 1 ? 'Ecolego’s stored run'
+		: run.archived ? 'An archived Ecolego run' : 'Ecolego’s current run';
+}
+
+/** What the menu says of a run beside when the pointer rests on it. */
+function besideTitle(run) {
+	if (run.source === 'kept') {
+		return `Kept from this page at ${new Date(run.date).toLocaleTimeString()}, of the model as it was then.`;
+	}
+	if (run.source === 'file') return `Saved with its model in ${run.file}.`;
+	return `${run.archived ? 'Archived in Ecolego' : 'Ecolego’s current run'}, in ${run.file}`
+		+ (run.matched ? '.' : ' — it saved nothing this model has.');
+}
+
+/** Shows run `k` of the list beside this one, or none. */
+function showBeside(k) {
+	const s = state.stored;
+	if (!s || s.shown === k) return;
+	s.shown = k;
+	storedViewCache = null;
+	// Before a run here, the run beside *is* what is shown, so another one, or
+	// none, is a different set of outputs to pick from.
+	if (!state.results) clearResultsViews();
+	renderResults();
+	renderRunKind();
+}
+
+/** Puts a run on the list beside this one, and shows it unless told not to. */
+function addBeside(run, { show = true } = {}) {
+	state.stored ??= { runs: [], shown: -1, drawn: false };
+	state.stored.runs.push(run);
+	if (show) showBeside(state.stored.runs.length - 1);
+}
+
+/**
+ * Lets go of a run beside: its worker, and the states the worker held. The
+ * runs an assessment stored are only forgotten until the file is opened again.
+ */
+function forgetBeside(run) {
+	const s = state.stored;
+	const k = s ? s.runs.indexOf(run) : -1;
+	if (k < 0) return;
+	const wasShown = s.shown === k;
+	s.runs.splice(k, 1);
+	if (s.shown > k) s.shown -= 1;
+	else if (wasShown) s.shown = -1;
+	try { run.worker?.terminate(); } catch { /* gone already */ }
+	run.worker = null;
+	if (storedViewCache?.run === run) storedViewCache = null;
+	if (!s.runs.length) state.stored = null;
+	if (!wasShown) return;
+	if (!state.results) clearResultsViews();
+	renderResults();
+	renderRunKind();
+}
+
+/**
+ * How many runs can be held beside at once. Each kept or opened run is a
+ * worker holding its model and its states, and the tab's memory is shared by
+ * all of them.
+ */
+const MOST_HELD = 6;
+
+/** How many runs beside hold a worker, and the states in it. */
+function heldBeside() {
+	return (state.stored?.runs ?? []).filter((run) => run.source !== 'ecolego').length;
+}
+
+/** Why the run on screen cannot be kept, or '' when it can. */
+function keepRefusal() {
+	const r = state.results;
+	if (!r) return 'Run the model first: what is kept is the run on screen.';
+	if (state.running) return 'Wait for the run to finish.';
+	if (resultsAreStale()) return 'The model has changed since this run: run it again, and keep that.';
+	if (r.replayed != null) return 'This is one realisation of the probabilistic run, not the model at its own values.';
+	if (r.preview) return 'This is a run at other values than the model holds.';
+	if (!r.local && r.detached) return 'The run’s worker was stopped, so the run is no longer held: run it again.';
+	if (heldBeside() >= MOST_HELD) {
+		return `${MOST_HELD} runs are held beside this one already, each with its states in memory: `
+			+ 'forget one first.';
+	}
+	return '';
+}
+
+/** A kept run's name: when it was kept, which is what tells two apart. */
+function keptName(when) {
+	const at = new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	const taken = new Set((state.stored?.runs ?? []).map((run) => run.name));
+	let name = `kept at ${at}`;
+	for (let k = 2; taken.has(name); k++) name = `kept at ${at} (${k})`;
+	return name;
+}
+
+/**
+ * Keeps the run on screen to compare the next ones with.
+ *
+ * Written out of the page's worker as Save → Model with results writes it, and
+ * opened in a worker of its own as opening that file would open it -- so the
+ * page's worker keeps its states, and the next edit that does not move them
+ * is still only worked out again rather than solved. A run with no worker
+ * behind it is kept as it is: a later run makes new results rather than
+ * writing over these.
+ */
+async function keepRun() {
+	const why = keepRefusal();
+	if (why) { flash(why, 'warn'); return; }
+	const r = state.results;
+	const when = Date.now();
+	const run = {
+		source: 'kept', name: keptName(when), date: when,
+		timeUnit: state.raw.simulation?.time_unit ?? 'year', r: null, worker: null, runId: 0,
+	};
+	if (r.local) {
+		run.r = { ...r, columns: [...r.columns], onColumns: [], stored: { timeUnit: run.timeUnit } };
+		addBeside(run);
+		besideReady(run);
+		return;
+	}
+	// The run's model, which is the model on screen while the run is current
+	// -- copied, since this one goes on being edited.
+	const project = structuredClone(state.raw);
+	addBeside(run);
+	let data;
+	try {
+		const parts = await requestDataset('model.json');
+		const { readDataset } = await import('../io/dataset.js');
+		data = readDataset(new Map(parts.map((part) => [part.name, part.bytes])));
+	} catch (e) {
+		failBeside(run, e.message ?? String(e));
+		return;
+	}
+	// Forgotten while it was being written out.
+	if (!state.stored?.runs.includes(run)) return;
+	startBeside(run, project, data);
+}
+
+/**
+ * Opens a run saved with its model beside this one, without opening the model
+ * in place of this one. An assessment brings the runs Ecolego stored of it.
+ */
+async function openRunBeside(file) {
+	let read;
+	try {
+		read = await readModelFile(file);
+	} catch (e) {
+		flash(`${file.name} could not be read: ${e.message ?? e}`, 'warn');
+		return;
+	}
+	if (read.stored?.runs.length) {
+		const from = state.stored?.runs.length ?? 0;
+		for (const run of read.stored.runs) addBeside({ ...run, source: 'ecolego', file: file.name }, { show: false });
+		showBeside(from + Math.max(0, read.stored.shown));
+		const n = read.stored.runs.length;
+		const left = read.stored.probabilistic;
+		flash(`${n === 1 ? 'The run' : `${n} runs`} Ecolego stored in ${file.name} `
+			+ `${n === 1 ? 'is' : 'are'} beside this one`
+			+ (left ? `; ${left} probabilistic run${left === 1 ? ' was' : 's were'} left out` : '')
+			+ '.', 'info');
+		return;
+	}
+	if (!read.dataset) {
+		flash(read.datasetProblem
+			? `The run in ${file.name} could not be read: ${read.datasetProblem}`
+			: `${file.name} holds a model and no run. Save one with Save → Model with results `
+				+ 'and open that, or keep the run on screen with Keep this run.', 'warn');
+		return;
+	}
+	if (!workerAvailable()) {
+		flash('A run opened beside this one needs the simulation worker, which this browser '
+			+ 'is not using.', 'warn');
+		return;
+	}
+	if (heldBeside() >= MOST_HELD) {
+		flash(`${MOST_HELD} runs are held beside this one already, each with its states in `
+			+ 'memory: forget one first.', 'warn');
+		return;
+	}
+	// Settled as opening the file would settle it (see `setModel`), which is
+	// what the run in it was checked against when it was saved.
+	const project = ed.migrateKeys(read.project);
+	ed.materialiseShorthand(project);
+	ed.syncDerivedUnits(project);
+	const run = {
+		source: 'file', name: file.name, file: file.name, date: null,
+		timeUnit: project.simulation?.time_unit ?? 'year', r: null, worker: null, runId: 0,
+	};
+	addBeside(run);
+	startBeside(run, project, read.dataset);
+}
+
+/**
+ * A run beside, put back in a worker of its own: built from its model and
+ * restored from its states, as opening a saved run restores it, so it answers
+ * for any of its series later as the run on screen does.
+ */
+let besideIds = 0;
+function startBeside(run, project, data) {
+	let w;
+	try {
+		w = new Worker(new URL('../worker/sim-worker.js', import.meta.url), { type: 'module' });
+	} catch (e) {
+		failBeside(run, e.message ?? String(e));
+		return;
+	}
+	run.worker = w;
+	run.runId = ++besideIds;
+	w.onmessage = (ev) => acceptBesideMessage(run, ev.data);
+	w.onerror = (e) => failBeside(run, e.message ?? 'its worker failed');
+	w.postMessage({ type: 'open-dataset', id: run.runId, project, data });
+}
+
+function acceptBesideMessage(run, m) {
+	// Forgotten since its worker was asked.
+	if (!state.stored?.runs.includes(run)) return;
+	if (m.type === 'columns') {
+		const r = run.r;
+		if (!r || m.id !== r.runId) return;
+		m.indices.forEach((i, k) => { r.columns[i] = m.columns[k]; });
+		if (shownBeside() === run) { renderChart(); renderTable(); }
+		return;
+	}
+	if (m.id !== run.runId) return;
+	if (m.type === 'done') {
+		run.r = {
+			...m.payload, columns: [], runId: run.runId, worker: run.worker,
+			stored: { timeUnit: run.timeUnit },
+		};
+		besideReady(run);
+		return;
+	}
+	if (m.type === 'error') failBeside(run, m.message ?? 'it could not be opened');
+}
+
+/** A run beside is in: said, and drawn if it is the one shown. */
+function besideReady(run) {
+	flash(run.source === 'kept'
+		? `Kept as “${run.name}”: change the model and run it again to see the two together.`
+		: `The run in ${run.file} is beside this one.`, 'info');
+	if (shownBeside() !== run) return;
+	storedViewCache = null;
+	if (!state.results) clearResultsViews();
+	renderResults();
+	renderRunKind();
+}
+
+/** A run beside that could not be kept or opened: said, and let go of. */
+function failBeside(run, why) {
+	forgetBeside(run);
+	flash(run.source === 'kept' ? `This run could not be kept: ${why}`
+		: `The run in ${run.file} could not be opened: ${why}`, 'warn');
 }
 
 async function saveChartPicture(kind) {
@@ -10646,6 +11234,9 @@ function tableMenu(ev) {
 					if (handoff) downloadHDF5(state.selected.slice(), '', handoff);
 				},
 			},
+			// The same choice the chart's menu has: the two draw the same runs.
+			{ separator: true },
+			besideItem(),
 		],
 	});
 }
@@ -11254,12 +11845,13 @@ async function openModelFile(file, { read = null } = {}) {
 	}
 	try {
 		if (!read) await showOpening('read', file.name);
-		const { project, report, dataset, datasetProblem } = read
+		const { project, report, dataset, datasetProblem, stored } = read
 			?? await readModelFile(file, { onStage: (stage) => showOpening(stage, file.name) });
 		await showOpening('setup', file.name);
 		setModel(project, { label: file.name });
 		openAsAppIfAsked();
 		if (report) showImportReport(report, file.name);
+		if (stored) acceptStoredRuns(stored, file.name);
 		if (datasetProblem) {
 			flash(`${file.name} carries a saved run that could not be read: `
 				+ `${datasetProblem} The model opened without it.`, 'warn');
@@ -11497,6 +12089,58 @@ function showImportReport(report, fileName) {
 
 	box.hidden = false;
 	selectTab('build');
+}
+
+/**
+ * The runs an Ecolego assessment brought with its model (see ../io/ecoruns.js).
+ *
+ * Kept beside the model rather than in it: they are the answer Ecolego got,
+ * for the Chart and the Table to show beside this tool's, and they go when
+ * another model is opened (see `dropModelsBesideRuns`). Said in the import
+ * report, with what was left out.
+ */
+function acceptStoredRuns(stored, fileName) {
+	state.stored ??= { runs: [], shown: -1, drawn: false };
+	const s = state.stored;
+	const from = s.runs.length;
+	for (const run of stored.runs) s.runs.push({ ...run, source: 'ecolego', file: fileName, withModel: true });
+	if (stored.shown >= 0) s.shown = from + stored.shown;
+	if (!s.runs.length) state.stored = null;
+	storedViewCache = null;
+	// Read now rather than when the chart first asks, so the report can say
+	// what is in it -- and so a file that will not read says so here.
+	const view = stored.shown >= 0 ? storedView() : null;
+	const n = stored.runs.length;
+	const said = [];
+	if (view && !view.outputs.length && stored.runs.every((run) => !run.matched)) {
+		said.push(`It carries ${n === 1 ? 'the run' : `${n} runs`} Ecolego made of it, but `
+			+ `${n === 1 ? 'it saved' : 'none of them saved'} anything this model has: only blocks `
+			+ 'this tool did not import, sub-systems, or the outputs of another model.');
+	} else if (view) {
+		const left = view.stored.left;
+		const out = left.notInModel + left.unreadable + left.noDonor;
+		said.push(`It carries ${n === 1 ? 'the run' : `${n} runs`} Ecolego made of it: `
+			+ `${besideName()}, ${view.outputs.length.toLocaleString()} series over `
+			+ `${view.t.length.toLocaleString()} times, is drawn beside this tool’s run on the `
+			+ 'Chart, dash-dotted, and set beside its numbers in the Table'
+			+ `${n > 1 ? ' — right-click the chart to show another' : ''}.`
+			+ (out ? ` ${out.toLocaleString()} of the outputs it saved ${out === 1 ? 'has' : 'have'} `
+				+ 'nothing here to stand beside: a block this tool did not import, a sub-system, or '
+				+ 'a transfer whose donor was not saved.' : ''));
+	}
+	if (stored.probabilistic) {
+		said.push(`${stored.probabilistic} probabilistic run${stored.probabilistic === 1 ? '' : 's'} `
+			+ `it also carries ${stored.probabilistic === 1 ? 'was' : 'were'} left out: only `
+			+ 'single runs are read.');
+	}
+	const box = $('#import-report');
+	if (box && said.length) {
+		box.append(el('p', { className: 'ir-counts' }, said.join(' ')));
+		box.hidden = false;
+	}
+	// Nothing run here yet: the stored run is what the two views show.
+	if (!state.results) renderResults();
+	renderRunKind();
 }
 
 /**
@@ -11824,6 +12468,10 @@ function setModel(raw, source) {
 	modelEditor.opened = false;
 	modelEditor.text = null;
 	state.results = null;
+	// The runs an assessment stored belong to the file they came in with, and
+	// the file that brought them sets them again after this. The ones kept or
+	// opened beside stay: they are what this model is to be compared with.
+	dropModelsBesideRuns();
 	// The app's controls stood where this session had put them on the model
 	// just closed; the one arriving starts at its own values, on its first
 	// page, with nothing selected in the designer.
@@ -12505,12 +13153,12 @@ function selectTab(name) {
 	applyPanes();
 	document.body.dataset.tab = name;
 	if (name === 'matrix') drawMatrix();
-	if (name === 'table' && state.results && tableDirty) {
+	if (name === 'table' && shownRun() && tableDirty) {
 		drawTable();
 		// The staleness notice lives inside the panel the line above rebuilt.
 		renderStaleness();
 	}
-	if (name === 'chart' && state.results) chart?.draw();
+	if (name === 'chart' && shownRun()) chart?.draw();
 	if (name === 'build') graph?.render();
 	if (name === 'code') { renderCode(); if (generated.view === 'jacobian') renderJacobian(); }
 	if (name === 'model') renderModelEditor();
@@ -12637,7 +13285,7 @@ export function boot() {
 		// same choice of series, so one action serves both and only the word
 		// changes. The diagram is on a different tab from either, so in
 		// practice these items are the tree's and the Information view's.
-		seriesView: () => (state.results
+		seriesView: () => (shownRun()
 			&& (state.tab === 'chart' || state.tab === 'table') ? state.tab : null),
 		onChart: (names, mode) => chartBlocks(names, mode),
 		onImport: () => pickFile(importFromFile),
