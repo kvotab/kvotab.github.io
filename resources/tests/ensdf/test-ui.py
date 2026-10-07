@@ -98,6 +98,15 @@ class Page:
         for typ in ('keyDown', 'keyUp'):
             await self.call('Input.dispatchKeyEvent', {'type': typ, 'key': key, 'code': key, 'windowsVirtualKeyCode': code}, session=self.sid)
 
+    async def type(self, text, pause=0.0):
+        # A key at a time, each carrying its character, as from a keyboard.
+        for ch in text:
+            code, vk = {'.': ('Period', 190), ',': ('Comma', 188)}.get(ch) or (('Digit' if ch.isdigit() else 'Key') + ch.upper(), ord(ch.upper()))
+            await self.call('Input.dispatchKeyEvent', {'type': 'keyDown', 'key': ch, 'code': code, 'windowsVirtualKeyCode': vk, 'text': ch}, session=self.sid)
+            await self.call('Input.dispatchKeyEvent', {'type': 'keyUp', 'key': ch, 'code': code, 'windowsVirtualKeyCode': vk}, session=self.sid)
+            if pause:
+                await asyncio.sleep(pause)
+
     async def goto(self, url, width=1280, height=900):
         await self.call('Emulation.setDeviceMetricsOverride', {'width': width, 'height': height, 'deviceScaleFactor': 1, 'mobile': width < 600}, session=self.sid)
         await self.call('Page.navigate', {'url': url}, session=self.sid)
@@ -665,6 +674,49 @@ async def main():
         check('... the power integrated is that energy in joules, and saves as its own CSV', (integ['W']['unit'], abs(integ['W']['v'] / (integ['expect'] * 1.602176634e-13) - 1) < 0.005, integ['W']['title'], integ['csv']),
               ('J', True, 'Total emitted energy, integrated (J)', ['inventory-210Po-W-integrated.csv']))
         check('... and the choice is remembered, through activity and back', (integ['saved'], integ['kept']), (True, True))
+        # An amount typed as a person types it, with pauses longer than the
+        # 250 ms after which the inventory is worked out again: the field
+        # keeps what was typed. (Drawn again, it showed "6." as 6 and
+        # "6.21E" as nothing, so 6.21E12 typed slowly became 12 Bq.)
+        await page.ev("""(async () => { ENSDFPage.select('Ca-41'); document.querySelector('[data-tab=inventory]').click();
+          await new Promise(r => setTimeout(r, 500));
+          window.nzField = document.querySelector('#nzPaneInventory input[data-key="20,41,0"]'); return 1; })()""")
+
+        async def amount(key, text, pause=0.0):
+            await page.ev(f"""(() => {{ const i = document.querySelector('#nzPaneInventory input[data-key="{key}"]'); i.focus(); i.select(); return 1; }})()""")
+            await page.type(text, pause)
+
+        async def field(key):
+            return json.loads(await page.ev(f"""JSON.stringify((() => {{
+              const i = document.querySelector('#nzPaneInventory input[data-key="{key}"]'), s = i.parentNode.querySelector('select'), a = document.activeElement;
+              return {{ text: i.value, same: i === window.nzField, bad: i.getAttribute('aria-invalid'), unit: s.value,
+                focus: a === i ? 'field' : a === s ? 'unit' : a.tagName, amount: ENSDFPage.state.inventories['20,41,0']['{key}'] || null }}; }})())"""))
+        ca, k = '20,41,0', '19,41,0'
+        await amount(ca, '6.21E12', 0.4)
+        await asyncio.sleep(0.5)
+        slow = await field(ca)
+        await amount(ca, '6,21e12', 0.4)
+        await asyncio.sleep(0.5)
+        comma = await field(ca)
+        await amount(ca, 'abc')
+        await page.key('Tab', 9)
+        await asyncio.sleep(0.5)
+        bad = await field(ca)
+        await amount(ca, '7')
+        await page.key('Tab', 9)
+        await asyncio.sleep(0.6)
+        tab = await field(ca)
+        await page.ev(f"""(() => {{ const s = document.querySelector('#nzPaneInventory select[data-key="{k}"]'); s.value = 'g'; s.dispatchEvent(new Event('change', {{bubbles: true}})); return 1; }})()""")
+        await asyncio.sleep(0.6)
+        await amount(k, '2')
+        await asyncio.sleep(0.6)
+        first = await field(k)
+        await page.ev("document.querySelector('[data-on-click=\"nz:invClear\"]').click(); document.querySelector('[data-tab=nuclide]').click(); 'ok'")
+        check('an amount typed slowly stays as typed, in the same field, which keeps the focus: 6.21E12 Bq of 41Ca', (slow['text'], slow['same'], slow['focus'], slow['amount']), ('6.21E12', True, 'field', [6.21e12, 'Bq']))
+        check('... and with a decimal comma', (comma['text'], comma['amount']), ('6,21e12', [6.21e12, 'Bq']))
+        check('... text that is no number is marked when left, and the amount stays', (bad['text'], bad['bad'], bad['amount']), ('abc', 'true', [6.21e12, 'Bq']))
+        check('... Tab from a field just typed in stays on the unit, the mark gone', (tab['focus'], tab['bad'], tab['amount']), ('unit', None, [7, 'Bq']))
+        check('... and a unit picked before the amount is kept for it', (first['unit'], first['amount']), ('g', [2, 'g']))
 
         # ---------------------------------------------------------- parents
         par = json.loads(await page.ev("""(async () => {

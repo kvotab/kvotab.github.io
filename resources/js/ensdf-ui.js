@@ -1244,6 +1244,13 @@
   ];
   /* A number for an input: plain, or with an exponent when it is long. */
   const inputNum = (v) => (!(v > 0) ? '' : v >= 1e5 || v < 1e-3 ? v.toExponential().replace(/\.?0+e/, 'e').replace('e+', 'e') : String(+v.toPrecision(10)));
+  /* A number typed into a field, or NaN: 6.21E12, 6,21e12 and 6 210 000 all
+     read, a comma being the decimal mark. Not a sign in front, nor hex, Infinity or 1e999. */
+  function readNum(text) {
+    const s = String(text).replace(/\s+/g, '').replace(',', '.').replace('−', '-');
+    const v = /^(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s) ? +s : NaN;
+    return Number.isFinite(v) ? v : NaN;
+  }
   const INV_POINTS = 240;
   let invChart = null;
   let inv = null;          // the last calculation: for the chart, the buckets, the table and the files
@@ -1400,7 +1407,7 @@
         <td class="nz-inv-swcell"><span class="nz-inv-sw" data-key="${n.key}"></span></td>
         <td class="text">${nucLink(n.z, n.a, n.k)}</td>
         <td class="text nz-dim">${supHtml(n.st.st ? 'stable' : C.halfLifeShort(n.st) || '?')}</td>
-        <td class="text nz-inv-in"><input type="number" min="0" step="any" inputmode="decimal" value="${e && e[0] ? esc(inputNum(e[0])) : ''}" placeholder="0" data-on-input="nz:invValue" data-key="${n.key}" aria-label="Initial amount of ${esc(plain)}"><select data-on-change="nz:invValueUnit" data-key="${n.key}" aria-label="Unit of the initial amount of ${esc(plain)}">${opts}</select></td>
+        <td class="text nz-inv-in"><input type="text" spellcheck="false" autocapitalize="off" value="${e && e[0] ? esc(inputNum(e[0])) : ''}" placeholder="0" data-on-input="nz:invValue" data-on-change="nz:invValueDone" data-key="${n.key}" aria-label="Initial amount of ${esc(plain)}"><select data-on-change="nz:invValueUnit" data-key="${n.key}" aria-label="Unit of the initial amount of ${esc(plain)}">${opts}</select></td>
         <td class="nz-inv-now" data-key="${n.key}"></td>
       </tr>`;
     }).join('');
@@ -1432,16 +1439,26 @@
       </table></div>
       <p><button type="button" class="nz-btn secondary small" data-on-click="nz:invClear">Clear every amount</button></p>
       <div id="nzInvNotes"></div>`;
-    for (const sw of pane.querySelectorAll('.nz-inv-sw')) {
-      const x = inv.series.find((y) => y.key === sw.dataset.key);
-      if (x && x.peak > 0) { sw.style.borderTopColor = x.color; sw.style.borderTopStyle = x.dash ? 'dashed' : 'solid'; } else sw.classList.add('none');
-    }
     for (const tr of pane.querySelectorAll('.nz-inv-table tbody tr')) {
       tr.addEventListener('pointerenter', () => invPointAt(tr.dataset.key));
       tr.addEventListener('pointerleave', () => invPointAt(null));
     }
-    $('nzInvNotes').innerHTML = invNotes();
     invChart = KVOT_ENSDF_INVENTORY.createInventoryChart($('nzInvChart'), { onHover: invHover, onPick: invPick });
+    invFill();
+  }
+
+  /* What the amounts change: the swatches, the notes, the chart and the
+     values. The fields are left as they are, so a recalculation while the
+     reader types leaves the text alone. */
+  function invFill() {
+    for (const sw of $('nzPaneInventory').querySelectorAll('.nz-inv-sw')) {
+      const x = inv.series.find((y) => y.key === sw.dataset.key);
+      const on = !!(x && x.peak > 0);
+      sw.classList.toggle('none', !on);
+      sw.style.borderTopColor = on ? x.color : '';
+      sw.style.borderTopStyle = on ? (x.dash ? 'dashed' : 'solid') : '';
+    }
+    $('nzInvNotes').innerHTML = invNotes();
     drawInvChart();
   }
 
@@ -1570,17 +1587,20 @@
     if (btn) btn.textContent = 'Run through';
   }
 
-  /* A recalculation shortly after the last keystroke, keeping the pane as it is. */
+  /* A recalculation shortly after the last keystroke. The table stays as it
+     is: drawn again, a field would show its amount as the page writes it
+     ("6." as 6, "6.21E1" as 62.1), and the next keystroke would go on from that. */
   let invTimer = 0;
   function invRecalc() {
     clearTimeout(invTimer);
     invTimer = setTimeout(() => {
-      const focus = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
-      renderInventory();
-      if (focus) {
-        const input = $('nzPaneInventory').querySelector(`input[data-key="${focus}"]`);
-        if (input) { input.focus(); const v = input.value; input.value = ''; input.value = v; }
-      }
+      invStop();
+      computeInventory();
+      if (inv && $('nzInvChart')) {
+        invFill();
+        /* Drawn again, the chart has lost the member the row and the chain still pick out. */
+        if (invHotKey) invPointAt(invHotKey);
+      } else renderInventory();
       saveState();
     }, 250);
   }
@@ -1856,20 +1876,36 @@
     'nz:view': (ev, el) => setView(el.dataset.view),
     'nz:tab': (ev, el) => { state.tab = el.dataset.tab; renderPanel(); saveState(); },
     'nz:invValue': (ev, el) => {
+      /* Text on its way to a number, as 6.21E is to 6.21E12, leaves the amount as it was. */
+      const text = el.value.trim();
+      const v = readNum(text);
+      if (text && !(v >= 0)) return;
+      el.removeAttribute('aria-invalid');
+      el.removeAttribute('title');
       const e = invEntries();
-      const v = el.value.trim();
       const unit = el.parentNode.querySelector('select').value;
-      if (v === '' || !(+v > 0)) delete e[el.dataset.key]; else e[el.dataset.key] = [+v, unit];
+      if (v > 0) e[el.dataset.key] = [v, unit]; else delete e[el.dataset.key];
       invRecalc();
+    },
+    'nz:invValueDone': (ev, el) => {
+      /* Left as no number: marked, and the amount in use stays. */
+      const text = el.value.trim();
+      if (!text || readNum(text) >= 0) return;
+      el.setAttribute('aria-invalid', 'true');
+      el.title = 'Not a number, so the amount was not changed. Write it as 6.21E12 or 6,21e12, for example.';
     },
     'nz:invValueUnit': (ev, el) => {
       const e = invEntries();
-      const input = el.parentNode.querySelector('input');
-      if (+input.value > 0) e[el.dataset.key] = [+input.value, el.value];
+      const k = el.dataset.key;
+      const v = readNum(el.parentNode.querySelector('input').value.trim());
+      /* A unit picked before the amount is typed waits for it: nothing to work out yet. */
+      if (v > 0) e[k] = [v, el.value];
+      else if (e[k]) e[k] = [e[k][0], el.value];
+      else return;
       invRecalc();
     },
-    'nz:invEnd': (ev, el) => { const v = +el.value.replace(',', '.'); if (v > 0) { state.inv.end = v; state.inv.cursor = null; } renderInventory(); saveState(); },
-    'nz:invFrom': (ev, el) => { const v = +el.value.replace(',', '.'); if (v > 0) { state.inv.from = v; state.inv.cursor = null; } renderInventory(); saveState(); },
+    'nz:invEnd': (ev, el) => { const v = readNum(el.value.trim()); if (v > 0) { state.inv.end = v; state.inv.cursor = null; } renderInventory(); saveState(); },
+    'nz:invFrom': (ev, el) => { const v = readNum(el.value.trim()); if (v > 0) { state.inv.from = v; state.inv.cursor = null; } renderInventory(); saveState(); },
     'nz:invUnit': (ev, el) => {
       /* The same span in the new unit. */
       const f0 = (TIME_UNITS.find((u) => u[0] === state.inv.unit) || TIME_UNITS[4])[1], f1 = (TIME_UNITS.find((u) => u[0] === el.value) || TIME_UNITS[4])[1];

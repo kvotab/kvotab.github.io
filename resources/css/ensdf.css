@@ -629,6 +629,7 @@ a.nz-nuc:hover { text-decoration: underline; }
 }
 .nz-inv-table td.nz-inv-in { white-space: nowrap; }
 .nz-inv-table td.nz-inv-in input { box-sizing: border-box; width: 5.2em; height: 22px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 4px; font: 11.5px verdana, sans-serif; }
+.nz-inv-table td.nz-inv-in input[aria-invalid="true"] { border-color: var(--color-kvot-accent); box-shadow: 0 0 0 1px var(--color-kvot-accent); }
 .nz-inv-table td.nz-inv-in select { height: 22px; font: 11px verdana, sans-serif; border: 1px solid var(--input-border); border-radius: 4px; }
 .nz-inv-table td.nz-inv-in select { margin-left: 3px; }
 .nz-inv-table td.nz-inv-now { white-space: nowrap; font-variant-numeric: tabular-nums; }

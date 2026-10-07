@@ -84,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-148 checks: the built-in release loads; the tab icon (drawn by
+153 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -143,6 +143,12 @@ the energies and the power can be integrated over time (a box beside Show
 that activity does not have), and 1 Bq of 210Po then gives off T½/ln 2
 decays' energy by the end of the span, which the table shows, in MeV, or in
 joules for the power, saved as a CSV of its own, and the choice is kept;
+an amount typed a key at a time, with pauses longer than the 250 ms after
+which the inventory is worked out again, stays as typed (6.21E12 Bq of
+41Ca, and with a decimal comma) in the same field, which keeps the focus;
+text that is no number is marked when the field is left, and the amount in
+use stays; Tab from a field just typed in stays on its unit, and a unit
+picked before the amount is kept for it;
 the Nuclide tab lists the parents of 226Ra by mode, longest-lived first,
 each a link with its share, and says so when there are none (36Cl); with the
 chain set to parents the view tab says "Parents of 226Ra", the chart rings
