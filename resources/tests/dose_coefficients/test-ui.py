@@ -75,12 +75,12 @@ HEADING_I_OFF = (
 BARS = """(() => { const rows = [...document.querySelectorAll('#dcHTable tbody tr')].filter((tr) => tr.cells.length > 2);
   const out = [];
   for (let k = 1; k < rows[0].cells.length; k++) {
-    const c = { terms: 0, parts: 0, rem: 0, gonads: 0, gonadParts: 0, widest: 0 };
+    const c = { terms: 0, parts: 0, rem: 0, gonads: 0, gonadParts: 0, off: 0 };
     for (const tr of rows) {
       const td = tr.cells[k], name = tr.cells[0].textContent.replace(/\\s+wT.*$/, '');
       if (!td || !td.dataset.share) continue;
       const v = +td.dataset.share;
-      c.widest = Math.max(c.widest, parseFloat(td.style.getPropertyValue('--share')));
+      c.off = Math.max(c.off, Math.abs(parseFloat(td.style.getPropertyValue('--share')) - 100 * v));
       if (td.classList.contains('part')) {
         if (/part of the remainder$/.test(td.dataset.tip)) c.parts += v;
         if (/part of the gonads$/.test(td.dataset.tip)) c.gonadParts += v;
@@ -97,13 +97,13 @@ BARS = """(() => { const rows = [...document.querySelectorAll('#dcHTable tbody t
 
 
 def bars_add_up(got, whole=1.0, gonads=False):
-    """Every age: the terms make `whole` of e, the remainder's tissues its part, the gonads' parts their term; the widest bar 100 %."""
+    """Every age: the terms make `whole` of e, the remainder's tissues its part, the gonads' parts their term; each bar as wide as its share."""
     if not got or not got['cols']:
         return False
     ok = all(abs(c['terms'] - whole) < 1e-6 and abs(c['parts'] - c['rem']) < 1e-6 for c in got['cols'])
     if gonads:
         ok = ok and all(abs(c['gonadParts'] - c['gonads']) < 1e-6 for c in got['cols'])
-    return ok and abs(max(c['widest'] for c in got['cols']) - 100) < 0.01
+    return ok and max(c['off'] for c in got['cols']) < 0.006
 
 
 def check(label, got, want=True):
@@ -371,7 +371,7 @@ async def main():
         none = await p.ev(BARS)
         await p.ev("(() => { const c = document.getElementById('dcShares'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
         got = await p.ev(BARS)
-        check('the bars of each tissue’s share of e come with their box: the terms add up to e at every age, the remainder’s tissues to its share, the longest fills its cell',
+        check('the bars of each tissue’s share of e come with their box: the terms add up to e at every age, the remainder’s tissues to its share, each bar its share of the cell’s width',
               bool(none) and none['n'] == 0 and bars_add_up(got) and got['n'] >= 6 * 28)
         halves = []
         for sex in ('M', 'F'):
@@ -718,6 +718,17 @@ async def main():
         got = await p.ev("[...document.querySelectorAll('#dcChainTable tbody tr')].map(r => [r.cells[0].textContent, r.cells[5].textContent])")
         check('the Decay chain tab gives Ba-137m at 0.944 Bq per Bq of Cs-137 in equilibrium', got, [['Cs-137', '1'], ['Ba-137m', '0.944']])
         check('... and hides the transformations in source regions', await p.ev("document.getElementById('dcUTable').closest('.dc-table-wrap').hidden"))
+        # With an external result, the (i) panels speak of external exposure: the geometry, the phantoms' ages, the dose
+        # rates, the report's dose per photon and the chain's activities in equilibrium.
+        panels = await p.ev("""(async () => { const out = {}; for (const k of ['set:form', 'sec:ages', 'tab:coef', 'tab:model', 'tab:chain', 'tab:retention', 'tab:batch', 'tab:risk']) {
+          const b = document.querySelector('[data-info-key="' + k + '"] button'); b.click(); await new Promise((r) => setTimeout(r, 60));
+          const panel = document.getElementById('kvot-info-panel'); out[k] = panel.innerText; b.click(); await new Promise((r) => setTimeout(r, 30)); }
+          return out; })()""", wait=True)
+        want = {'set:form': 'Geometry', 'sec:ages': 'Federal Guidance Report 15’s newborn', 'tab:coef': 'The effective dose rate per unit concentration',
+                'tab:model': 'the report’s own model', 'tab:chain': 'activity once in equilibrium with the parent', 'tab:retention': 'Nothing is taken into the body',
+                'tab:batch': 'Route External', 'tab:risk': 'for external exposure per second per unit concentration'}
+        missing = [k for k, w in want.items() if w not in (panels or {}).get(k, '')]
+        check('with an external result the (i) panels tell of external exposure: geometry, ages, dose rates, the report’s model, equilibrium, batch, risk', missing, [])
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"coef\"]').click()")
         await p.ev("(() => { const s = document.getElementById('dcForm'); s.value = 'air'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
         got = await p.ev(stale)

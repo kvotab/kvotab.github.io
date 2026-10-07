@@ -213,7 +213,7 @@
                 <label><input type="radio" name="dcSex" value="M" data-on-change="dc:redraw"><span>Male</span></label>
                 <label><input type="radio" name="dcSex" value="F" data-on-change="dc:redraw"><span>Female</span></label>
               </div>
-              <label class="dc-check dc-shares-check" data-tip="A bar in each cell, as long as the tissue’s share of the effective dose at that age: solid for the terms of e (the weighted tissues and the remainder), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon)"><input type="checkbox" id="dcShares" data-on-change="dc:shares"><span>Bars: each tissue’s share of e</span></label>
+              <label class="dc-check dc-shares-check" data-tip="A bar in each cell, as long as the tissue’s share of the effective dose at that age (the whole cell being all of e): solid for the terms of e (the weighted tissues and the remainder), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon)"><input type="checkbox" id="dcShares" data-on-change="dc:shares"><span>Bars: each tissue’s share of e</span></label>
             </div>
             <div class="dc-table-wrap"><table class="dc-table" id="dcHTable"></table></div>
             <div class="dc-notes" id="dcNotes"></div>
@@ -666,8 +666,11 @@
             buttons (the selected ones, or all that are shown), by double-clicking or with Enter. Each is calculated in all
             its chemical and physical forms for the route or in its default one, for inhalation at each aerosol size ticked
             (a gas or vapour has no aerosol size and is calculated once), at each age at intake ticked, with the tab’s
-            own decay chain cut-off (ICRP 103 system) and tolerance. The count above the button says how many
-            calculations that is. They run in the page’s workers, as many at a time as the device has cores to spare,
+            own decay chain cut-off (ICRP 103 system) and tolerance. By the route External each is calculated instead in
+            each geometry ticked, at each age (the adult only in the ICRP 60 system), all its ages in one request of a
+            few milliseconds; its table holds dose rates per Bq m<sup>−3</sup>, or per Bq m<sup>−2</sup> on the ground as
+            its Per column says, and if chosen FGR 12’s H<sub>E</sub> and every quantity with the progeny in equilibrium.
+            The count above the button says how many calculations that is. They run in the page’s workers, as many at a time as the device has cores to spare,
             after any single calculation started meanwhile; the bar shows how far the batch has come and about how long
             is left, and Stop ends it, keeping what is done. A calculation that fails is noted in its row and the batch
             goes on.</p>
@@ -697,7 +700,8 @@
             populations with life tables and age weights that the publications do not give, so the calculation starts from
             them; the tab shows for each tissue where its value comes from (the mix of excess relative and excess absolute
             risk models, or another study) and the tissue weighting factor its relative detriment led to.</p>
-          <p>Once a dose coefficient is calculated, the tab also gives its <b>nominal detriment per becquerel</b>, two ways:
+          <p>Once a dose coefficient is calculated, the tab also gives its <b>nominal detriment per becquerel</b> (for
+            external exposure, per second per unit concentration), two ways:
             the committed effective dose times the total coefficient (5.7 × 10<sup>−2</sup> Sv<sup>−1</sup>, or 7.3 in the
             ICRP 60 system), and tissue by tissue, each tissue’s detriment per sievert times its committed equivalent dose.
             They agree when the dose is spread through the body and part when it gathers in a few tissues (iodine in the
@@ -863,6 +867,6 @@
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261007b"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261007c"></script>
 </body>
 </html>

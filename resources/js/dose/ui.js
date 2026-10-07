@@ -923,14 +923,11 @@ function eSharesOf(r, o, view = 'avg', withProgeny = false) {
   }
   return out;
 }
-/* The tissue table's shares at each age, and the largest of them all: the
-   bars are drawn to one scale for the whole table, the largest filling its
-   cell, so that a share of a few per cent still shows. */
+/* The tissue table's shares at each age; a bar fills as much of its cell as
+   its tissue's share of e, the whole cell being all of e. */
 function tableShares(r, out, view, withProgeny) {
   if (!sharesOn()) return null;
-  const maps = out.map((o) => eSharesOf(r, o, view, withProgeny));
-  const max = Math.max(0, ...maps.flatMap((m) => [...m.values()].map((x) => x.v)));
-  return max > 0 ? { maps, max } : null;
+  return { maps: out.map((o) => eSharesOf(r, o, view, withProgeny)) };
 }
 /* A cell of the tissue table, with its bar when the switch is on. */
 function shareCell(td, shares, k, name) {
@@ -938,13 +935,13 @@ function shareCell(td, shares, k, name) {
   if (!share) return td;
   td.classList.add('dc-share');
   if (share.part) td.classList.add('part');
-  td.style.setProperty('--share', `${(100 * share.v / shares.max).toFixed(2)}%`);
+  td.style.setProperty('--share', `${Math.min(100, 100 * share.v).toFixed(2)}%`);
   td.dataset.share = share.v.toPrecision(8);
   td.setAttribute('data-tip', `${percent(100 * share.v)} of e${share.part ? `, a part of ${share.part}` : ''}`);
   return td;
 }
 const sharesOn = () => !!$('dcShares')?.checked;
-const sharesNote = (shares) => `Bars: each tissue’s share of e at that age, to one scale for the whole table, the longest ${percent(100 * shares.max)} of e (pointing at a cell gives its share); solid for the terms of e (the weighted tissues and the remainder, which add up to the whole), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon).`;
+const sharesNote = () => 'Bars: each tissue’s share of e at that age, the cell’s width being all of e (pointing at a cell gives its share); solid for the terms of e (the weighted tissues and the remainder, which add up to the whole), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon).';
 
 function renderCoef() {
   const r = state.result;
@@ -2352,15 +2349,15 @@ function readHash() {
    to choose, and where Help says more. A topic that is a function is read
    each time its panel opens, so that it can say what is chosen now. */
 const SYSTEM_CHOICES = [
-  ['ICRP 60', 'The models of Publications 56–71 and the dosimetry of the 1990 Recommendations: the coefficients of Publication 72, compiled in Publication 119 and used in the IAEA Basic Safety Standards. Calculated as DCAL, the ICRP’s software for them, does.', '60'],
-  ['ICRP 103', 'The 2007 Recommendations: Publication 158 (Part 1: hydrogen to radium) and the consultation drafts of Part 2 (lanthanides and actinides) and Part 3 (35 more elements, beryllium to francium), with the respiratory tract of Publication 130, the alimentary tract of Publication 100 and the reference phantoms of Publications 110 and 143.', '103'],
+  ['ICRP 60', 'The models of Publications 56–71 and the dosimetry of the 1990 Recommendations: the coefficients of Publication 72, compiled in Publication 119 and used in the IAEA Basic Safety Standards. Calculated as DCAL, the ICRP’s software for them, does. External exposure as Federal Guidance Report 12 calculates it.', '60'],
+  ['ICRP 103', 'The 2007 Recommendations: Publication 158 (Part 1: hydrogen to radium) and the consultation drafts of Part 2 (lanthanides and actinides) and Part 3 (35 more elements, beryllium to francium), with the respiratory tract of Publication 130, the alimentary tract of Publication 100 and the reference phantoms of Publications 110 and 143. External exposure as Federal Guidance Report 15 (2025) calculates it.', '103'],
 ];
 const ROUTE_TEXT = { ingestion: 'ingestion', inhalation: 'inhalation', injection: 'injection (direct uptake to blood)', external: 'external exposure (dose rate per unit concentration)' };
 const sysName = () => (state.system === '60' ? 'ICRP 60' : 'ICRP 103');
 const TOPICS = {
   'sec:system': () => ({
     kicker: 'Section', title: 'System',
-    lead: 'Which generation of the ICRP’s models and dosimetry to calculate with. The two give different numbers for the same intake, sometimes by a factor of several, so every result says which system it comes from.',
+    lead: 'Which generation of the ICRP’s models and dosimetry to calculate with. The two give different numbers for the same intake or exposure, sometimes by a factor of several, so every result says which system it comes from.',
     sections: [
       { choices: SYSTEM_CHOICES.map(([a, b, k]) => [a, b, state.system === k]) },
       { heading: 'What differs between them', list: [
@@ -2368,6 +2365,7 @@ const TOPICS = {
         'Phantoms: the Cristy–Eckerman stylised phantoms, one per age, or the voxel reference phantoms of Publications 110 and 143, male and female at each age.',
         'Respiratory tract: Publication 66, or its revision in Publication 130; alimentary tract: the ICRP 30 model, or the Human Alimentary Tract Model of Publication 100.',
         'Systemic models and decay data: those of Publications 56–71 with Publication 38, or the revised models of Publication 158 and the OIR series with Publication 107. The decay data can be ENSDF’s instead (the Decay data setting).',
+        'External exposure: Federal Guidance Report 12 (the adult hermaphrodite phantom; e with the weighting factors of Publication 60, and the report’s own effective dose equivalent beside it), or Federal Guidance Report 15 (hermaphrodite phantoms of six ages; e with those of Publication 103).',
       ] },
       { heading: 'Which to use', text: 'The ICRP 60 system is still the basis of the IAEA Basic Safety Standards and of many national regulations; the ICRP 103 system is the current one, the one new assessments move to. Switching keeps the last results on their tabs, marked as of the other system until you calculate again.' },
     ],
@@ -2380,7 +2378,7 @@ const TOPICS = {
       : 'Publication 107 (2008): the decay data of the ICRP 103 system, with which the ICRP calculates its coefficients.';
     return {
       kicker: 'Setting', title: 'Decay data',
-      lead: 'Where the half-lives, the daughters and the radiations of each nuclide come from: the energies and yields per decay from which the doses to the tissues are built. The models of the body do not change with them.',
+      lead: 'Where the half-lives, the daughters and the radiations of each nuclide come from: the energies and yields per decay from which the doses to the tissues are built, after an intake and in external exposure alike. The models of the body, and the reports’ dose per photon and per electron, do not change with them.',
       facts: [['Chosen', decayLabel(state.decay, state.system)], ['Covered', cat ? `${cat.nuclides.length} radionuclides in the ${sysName()} system` : null]],
       sections: [
         { choices: [[OWN_DECAY[state.system], own, !state.decay],
@@ -2393,7 +2391,7 @@ const TOPICS = {
         ] },
         { heading: 'Good to know', list: [
           'Nuclides keep the names their system gives them; where ENSDF names a state otherwise, the page pairs them by half-life, and the Decay chain tab gives ENSDF’s name beside.',
-          'The ICRP’s published coefficients are of its own decay data; with ENSDF the results differ from them where the evaluations have changed since.',
+          'The ICRP’s published coefficients are of its own decay data, and so are the Federal Guidance Reports’ (Publication 38 for FGR 12, Publication 107 for FGR 15); with ENSDF the results differ from them where the evaluations have changed since.',
           'Open ENSDF… adds any release: a zip as NNDC publishes it, or ENSDF files, read and made into decay data in your browser in some ten seconds, nothing uploaded. It is kept in this browser, here and on the Chart of Nuclides, until Forget; the menus list NNDC’s archive with where to download each release.',
           'The choice is kept for the next visit and goes into the link of a result. The Batch and Radon at home tabs have the same choice of their own.',
         ] },
@@ -2403,14 +2401,14 @@ const TOPICS = {
   },
   'sec:nuclide': () => ({
     kicker: 'Section', title: 'Radionuclide',
-    lead: 'The radionuclide taken into the body. Its radioactive progeny formed in the body are followed too and count towards its dose coefficient, which is per becquerel of the parent taken in.',
+    lead: 'The radionuclide taken into the body, or for external exposure the one in the air, water or soil around it. Taken in, its radioactive progeny formed in the body are followed too and count towards its dose coefficient, which is per becquerel of the parent taken in. Around the body, the coefficient is of the nuclide alone and, beside it, with its progeny in equilibrium, per unit concentration of the parent.',
     facts: [['Covered now', currentCatalog() ? `${currentCatalog().nuclides.length} radionuclides in the ${sysName()} system${state.decay ? ` with ${decayLabel(state.decay, state.system)}` : ''}` : null]],
     sections: [{ heading: 'Before you calculate', list: [
-      'The foot of the settings sums up the model that Calculate will solve: the nuclides the decay chain cut-off keeps, the compartments, the transfers and the equations.',
-      'The Model and Decay chain tabs show the chosen radionuclide’s models and chain at once, before any calculation.',
+      'The foot of the settings sums up the model that Calculate will solve: the nuclides the decay chain cut-off keeps, the compartments, the transfers and the equations; for external exposure, the progeny in equilibrium and the report.',
+      'The Model and Decay chain tabs show the chosen radionuclide’s models and chain at once, before any calculation; for external exposure, the report’s dose per photon and the chain’s activities in equilibrium.',
       'For many radionuclides at once, use the Batch tab.',
     ] }],
-    more: { label: 'Progeny', id: 'help-progeny' },
+    more: route() === 'external' ? { label: 'External exposure', id: 'help-external' } : { label: 'Progeny', id: 'help-progeny' },
   }),
   'set:nuclide': () => ({
     kicker: 'Setting', title: 'Nuclide',
@@ -2418,29 +2416,29 @@ const TOPICS = {
     facts: [['Chosen', state.entry ? `${state.entry.name}${state.entry.T ? `, half-life ${halfLife(state.entry.T)}` : ''}` : null]],
     sections: [
       { heading: 'What is covered', list: [
-        'ICRP 60: the nuclides of Publication 72, with its decay data (Publication 38).',
-        'ICRP 103: the nuclides of Publication 107 with half-lives of at least 10 minutes (Publication 158 section 1.4.1), of the elements whose models Publication 158 and the Part 2 and 3 drafts give. Shorter-lived ones are followed as progeny.',
+        'Intakes, ICRP 60: the nuclides of Publication 72, with its decay data (Publication 38).',
+        'Intakes, ICRP 103: the nuclides of Publication 107 with half-lives of at least 10 minutes (Publication 158 section 1.4.1), of the elements whose models Publication 158 and the Part 2 and 3 drafts give. Shorter-lived ones are followed as progeny.',
         'External exposure: every radionuclide of the decay data, in both systems (838 of Publication 38, 1252 of Publication 107), noble gases and short-lived ones too; a nuclide with no model of the body has that route only.',
       ] },
       { heading: 'Typing', list: [
         'cs137, Cs-137 and Cs 137 all mean Cs-137; a metastable state ends in m: Tc-99m, Am-242m.',
         'The arrow keys move through the suggestions, Enter takes one, Escape closes the list.',
-        'A name the system does not cover is said so under the field.',
+        'A name the decay data do not have is said so under the field, and a nuclide with external exposure only says why.',
       ] },
     ],
     more: { label: 'The two systems', id: 'help-systems' },
   }),
-  'sec:intake': {
+  'sec:intake': () => ({
     kicker: 'Section', title: 'Intake',
     lead: 'How the radionuclide enters the body and in what chemical or physical form. Together they decide where it deposits or is absorbed, how fast it reaches blood, and so where the dose goes. Or, for external exposure, where it is around the body.',
     sections: [{ heading: 'The routes', list: [
       '**Ingestion**: swallowed; absorbed to blood from the small intestine with the form’s fraction fA (f1 in the ICRP 60 system), the rest passes through the gut.',
       '**Inhalation**: deposited in the respiratory tract according to the aerosol size; absorbed from there at the form’s dissolution rates, or carried up the airways and swallowed.',
       '**Injection** (ICRP 103 system only): straight into blood, as from a wound or through skin that absorbs it at once.',
-      '**External**: nothing taken in; the dose rate from the radionuclide in air, water or soil around the body, per unit concentration, as Federal Guidance Reports 12 (ICRP 60) and 15 (ICRP 103) give it.',
+      '**External**: nothing taken in; the dose rate from the radionuclide in air, water or soil around the body, per unit concentration, as Federal Guidance Reports 12 (ICRP 60) and 15 (ICRP 103) give it. The form is then the geometry.',
     ] }],
-    more: { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
-  },
+    more: route() === 'external' ? { label: 'External exposure', id: 'help-external' } : { label: 'The ICRP 103 system as calculated here', id: 'help-103' },
+  }),
   'set:route': () => ({
     kicker: 'Setting', title: 'Route',
     lead: 'Ingestion (swallowed in food or water), inhalation (breathed in as an aerosol, a gas or a vapour), injection (direct uptake to blood), or external exposure to the radionuclide in the air, water or soil around the body.',
@@ -2513,11 +2511,12 @@ const TOPICS = {
   }),
   'sec:ages': () => (route() === 'external' ? {
     kicker: 'Section', title: 'Ages',
-    lead: 'The ages of the reports’ phantoms: for the ICRP 103 system Federal Guidance Report 15’s newborn, 1, 5, 10 and 15 years and reference adult; for the ICRP 60 system Federal Guidance Report 12’s adult only.',
+    lead: 'The ages of the reports’ phantoms: for the ICRP 103 system Federal Guidance Report 15’s newborn, 1, 5, 10 and 15 years and reference adult; for the ICRP 60 system Federal Guidance Report 12’s adult only, the other ages greyed out. Each ticked age is a column of the results.',
     facts: [['Ticked', ages().map((a) => ageLabel(a, true)).join(', ') || 'none']],
     sections: [{ heading: 'How age enters', list: [
       'Each phantom has its own dose per photon: a smaller body shields its organs less, so a child’s dose rate is higher than an adult’s, most for low-energy photons.',
       'The skin’s dose from electrons is the same at every age (FGR 15 Appendix C).',
+      'FGR 15’s reference adult takes the adult phantom for the male and the 15-year-old’s for the female.',
     ] }],
     more: { label: 'External exposure', id: 'help-external' },
   } : {
@@ -2543,7 +2542,8 @@ const TOPICS = {
       'No cut-off, to follow the whole chain as the publications do; or a coarser one, for a quicker look at a long chain.',
       'A looser tolerance (1E-4) for a quicker run, a tighter one (1E-8) to see that a result does not change.',
       'The foot of the settings shows what the cut-off keeps; the Decay chain tab lists what it leaves out.',
-    ] }],
+    ] },
+    { heading: 'External exposure', text: 'Nothing to integrate, and the whole chain taken as far as it is in equilibrium with the parent: the section is hidden while the route is External.' }],
     more: { label: 'How the calculation is done', id: 'help-numerics' },
   },
   'set:cutoff': () => {
@@ -2562,6 +2562,7 @@ const TOPICS = {
           'Each option in the list says how many nuclides it keeps of the chosen radionuclide’s chain.',
         ] },
         { heading: 'ICRP 60 system', text: 'Chains are cut as DCAL cut them for Publication 72: where its batch files say, else at 0.1 %.' },
+        { heading: 'External exposure', text: 'No cut-off: the nuclide alone, and with every member in equilibrium with it.' },
       ],
       more: { label: 'Progeny', id: 'help-progeny' },
     };
@@ -2586,8 +2587,10 @@ const TOPICS = {
         'Sv per second (as the reports give them), per hour or per year, per Bq/m³ of air, water or soil, or per Bq/m² of ground.',
         'e from photons · bremsstrahlung · electrons: the parts of the nuclide’s own e; the electrons count through the skin’s weight.',
         'In the ICRP 60 system HE beside e: the effective dose equivalent of ICRP 26 that Federal Guidance Report 12 tabulates.',
-        'The switch above the tissues: the nuclide alone, or with its progeny in equilibrium.',
-        'Bars (the box above the tissues): each tissue’s share of e, as a bar behind its number; solid for the weighted tissues and the remainder, which add up to e, light for their parts (the remainder’s tissues, the testes and ovaries of the gonads, the halves of the colon). Pointing at a cell gives its percentage.',
+        'The switch above the tissues: the nuclide alone, or with its progeny in equilibrium (each member at its activity per Bq of the parent, listed on the Decay chain tab).',
+        'Bars (the box above the tissues): each tissue’s share of e at that age, as a bar behind its number, the cell’s width being all of e. Solid for the terms of e, which add up to the whole: each weighted tissue (wT × its dose rate) and the remainder; light for their parts: the remainder’s tissues (equally in the ICRP 103 system, by mass or the splitting rule in the ICRP 60 system), the testes and ovaries of the gonads, the halves of the colon. Pointing at a cell gives its percentage.',
+        'Digits: two by default (the reports print three); three or four for comparing.',
+        'When a setting has changed since the calculation, a note says so and the numbers are dimmed until you calculate again.',
       ] },
       { heading: 'Saving', text: 'Save as CSV writes e, and every tissue’s dose rate, alone and with the progeny, at every age, in the unit chosen.' },
     ],
@@ -2625,10 +2628,23 @@ const TOPICS = {
         'Pointing at a chart lists the values at that time, largest first, with each part’s share of its total in brackets.',
         'Drag to zoom, double-click to zoom out; the camera above a chart saves it as a picture.',
       ] },
+      { heading: 'External exposure', text: 'Nothing is taken into the body, so there is nothing to retain or excrete and no commitment period: the coefficients are dose rates per unit concentration, and the dose of an exposure is the coefficient times the concentration integrated over the time exposed. The tab says so in place of its charts.' },
     ],
     more: { label: 'How the calculation is done', id: 'help-numerics' },
   },
-  'tab:model': {
+  'tab:model': () => (shownSystem()?.first?.external || (!shownSystem() && route() === 'external') ? {
+    kicker: 'Tab', title: 'Model',
+    lead: 'For external exposure, the report’s own model: the dose rate per photon emitted at each of its energies, from Monte Carlo in its phantoms, and per electron, to the skin, drawn against energy at the age chosen.',
+    sections: [
+      { heading: 'The chart', list: [
+        'e per photon and the skin’s dose per photon at the report’s energies (10 keV to 5 MeV), and the skin’s dose per electron from FGR 12’s DOSFACTER curves.',
+        'After a calculation, the nuclide’s photon lines on the e curve: a line’s dose is its yield times the curve at its energy.',
+        'Age: the phantom of the curves (FGR 15: newborn to adult; FGR 12: the adult).',
+      ] },
+      { heading: 'Below', text: 'After a calculation, the photon lines of the nuclide alone that give the most of e: energy, yield per decay, their e and its share. Bremsstrahlung and the electrons, which the lines do not show, make up the rest (the Coefficients tab gives their parts).' },
+    ],
+    more: { label: 'External exposure', id: 'help-external' },
+  } : {
     kicker: 'Tab', title: 'Model',
     lead: 'The systemic model of the parent and of each progeny as the calculation uses it, drawn and tabulated, with the respiratory and alimentary tract parameters of the chosen form; after a calculation, the activity and the dose in its boxes over time.',
     sections: [
@@ -2651,8 +2667,21 @@ const TOPICS = {
       { heading: 'Pointing', text: 'Pointing at an arrow lights its row of the transfer table and the boxes at its ends, and the other way round; pointing at a box lights the transfers into it (blue) and out of it (red); pointing at a box or an organ lights the others that stand for it.' },
     ],
     more: { label: 'Progeny', id: 'help-progeny' },
-  },
-  'tab:chain': {
+  }),
+  'tab:chain': () => (shownSystem()?.first?.external || (!shownSystem() && route() === 'external') ? {
+    kicker: 'Tab', title: 'Decay chain',
+    lead: 'For external exposure, the whole decay chain with each member’s activity once in equilibrium with the parent, which is how the coefficients with the progeny count them.',
+    sections: [
+      { heading: 'The columns', list: [
+        'Produced from: the members it comes from, with the branching fraction.',
+        'Electron and photon energy: the mean energy per transformation (Publication 107; Publication 38 in the ICRP 60 system); alpha particles give no external dose.',
+        'Bq per Bq: its activity per becquerel of the parent once in equilibrium with it — the branching fraction in secular equilibrium, more where the parent’s half-life is not much longer (transient equilibrium, λi/(λi − λP) at each step); “never” for a member as long-lived as the parent or longer, or formed from one.',
+        'After a calculation, e alone: the member’s own effective dose rate; Share: its part of e with the progeny, at the age chosen.',
+      ] },
+      { heading: 'Good to know', text: 'The note above the table says how long the chain takes to come within 1 % of equilibrium: minutes for Cs-137 and Ba-137m, 1.6 million years for the whole U-238 series. A member never in equilibrium has a dose rate that depends on how long the parent has been there; its own coefficient is the one to add.' },
+    ],
+    more: { label: 'External exposure', id: 'help-external' },
+  } : {
     kicker: 'Tab', title: 'Decay chain',
     lead: 'The members of the decay chain that are followed, how each behaves in the body, and the number of nuclear transformations in each source region over the commitment period.',
     sections: [
@@ -2665,7 +2694,7 @@ const TOPICS = {
       { heading: 'Below', text: 'The number of nuclear transformations in each source region, largest first: where the energy is released, which the doses follow from.' },
     ],
     more: { label: 'Progeny', id: 'help-progeny' },
-  },
+  }),
   'tab:batch': {
     kicker: 'Tab', title: 'Batch',
     lead: 'Many calculations in one go, for one system and one route, in one table.',
@@ -2673,6 +2702,7 @@ const TOPICS = {
       { heading: 'What to calculate', list: [
         'Radionuclides: typed or pasted (an element’s symbol stands for all its nuclides), or chosen from the list, which a search, an element, a half-life range and a decay mode narrow down.',
         'All forms of each, or only the default one; for inhalation the aerosol sizes (a gas or vapour has none); the ages at intake; the decay chain cut-off and the tolerance of the tab itself.',
+        'Route External: the geometries ticked in place of the forms, and the ages (FGR 12: the adult only); no cut-off or tolerance. Every age of a nuclide in a geometry is one request of milliseconds.',
         'The count above the button says how many calculations that is.',
       ] },
       { heading: 'Running', list: [
@@ -2681,6 +2711,7 @@ const TOPICS = {
       ] },
       { heading: 'The table', list: [
         'Under the bar: the effective dose, and the equivalent doses if ticked; ages as columns or a row for each age; the digits. Changing these calculates nothing again.',
+        'External exposure: dose rates per Bq/m³ (per Bq/m² on the ground, as the Per column says), with FGR 12’s HE in the ICRP 60 system and every quantity with the progeny in equilibrium as well, if ticked.',
         'Save as CSV (six significant figures) or as Excel (the full values, with a sheet of the settings).',
       ] },
     ],
@@ -2695,7 +2726,7 @@ const TOPICS = {
         'ICRP 60 (Annex B): detriment = F (l / l̄) (2 − k), with the mean life lost l̄ of 15 years, and severe hereditary effects.',
         'A printed value that differs from the calculated one by more than its rounding and 1 % is marked; pointing at it shows the calculated value.',
       ] },
-      { heading: 'Applied to the calculated intake', text: 'Its nominal detriment per becquerel, two ways: e times the total coefficient, and tissue by tissue from the equivalent doses. Nominal detriment is for radiological protection, not the risk of a person.' },
+      { heading: 'Applied to the calculated intake or exposure', text: 'Its nominal detriment per becquerel taken in, or for external exposure per second per unit concentration (of the nuclide alone or with its progeny, as the Coefficients tab shows it), two ways: e times the total coefficient, and tissue by tissue from the equivalent doses. Nominal detriment is for radiological protection, not the risk of a person.' },
     ],
     more: { label: 'Risk coefficients', id: 'help-risk' },
   },
