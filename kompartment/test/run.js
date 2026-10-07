@@ -62,6 +62,7 @@ import { unzip, entryText, ZipError } from '../src/io/zip.js';
 import { importModelXML, importEcoFile, ImportError } from '../src/io/eco.js';
 import {
 	makeZip, MODEL_XML, VIEWS_XML, REAL_SHAPES_XML, SHEET_XML, toUtf16BE, TRANSPORT_XML,
+	GENERAL_VARIABLE_XML,
 } from './eco-fixture.js';
 import { expandTransports } from '../src/sim/transport.js';
 import {
@@ -15089,6 +15090,63 @@ test('what a sub-system interface carries reaches the far side of the model', ()
 	close(end, 30, 1e-6, `the pool holds ${end}`);
 });
 
+test('an imported general variable is an expression reading the block chosen for it', () => {
+	// Ecolego's general variable stands in for one of a list of blocks: the
+	// pick is the entry's equation, the chosen block's id, and the simulator
+	// writes and stages the block as an expression. 208 of them in 68 files
+	// here; skipped, every equation that read one named nothing, and a model
+	// with such an equation would not build.
+	const { project, report } = importModelXML(GENERAL_VARIABLE_XML);
+	const by = new Map(project.expressions.map((e) => [ed.qualifiedName(e), e]));
+	assert(!report.skipped.length, JSON.stringify(report.skipped));
+	assert(by.get('Bio.Conc')?.equation === 'Bio.Conc_par', JSON.stringify(by.get('Bio.Conc')));
+	// The unit is the chosen block's, which is what Ecolego shows: the copy
+	// on the entry is out of date here, and does not win.
+	assert(by.get('Bio.Conc').unit === 'Bq/m^3', by.get('Bio.Conc').unit);
+	// With no copy at all the chosen block's is taken -- under its new name.
+	assert(by.get('Depth')?.equation === 'Deep_soil' && by.get('Depth').unit === 'm',
+		JSON.stringify(by.get('Depth')));
+	// Ecolego 6 names a block in its own sub-system bare.
+	assert(by.get('Bio.Picked')?.equation === 'Conc_calc', JSON.stringify(by.get('Bio.Picked')));
+	// The oldest spelling gives the pick by GUID.
+	assert(by.get('Old')?.equation === 'Bio.Conc_par', JSON.stringify(by.get('Old')));
+	// A pick of its own at one index is an equation at that index.
+	assert(JSON.stringify(by.get('Bio.Each')?.entries)
+		=== JSON.stringify([{ index: { Crops: 'Wheat' }, equation: 'Bio.Conc_par' }]),
+	JSON.stringify(by.get('Bio.Each')));
+	// Nothing picked reads 0, and is said: Ecolego will not run it.
+	assert(by.get('Unset')?.equation === '0', JSON.stringify(by.get('Unset')));
+	assert(report.warnings.some((w) => /^'Unset' is a general variable with no block chosen/.test(w)),
+		JSON.stringify(report.warnings));
+	// What each reads and what else it was offered, which is the choice this
+	// tool does not carry -- a block chosen at some index is not one passed over.
+	const said = report.warnings.find((w) => /^5 general variables/.test(w)) ?? '';
+	assert(said.includes("'Bio.Conc' reads 'Bio.Conc_par', chosen over 'Bio.Conc_calc';"), said);
+	assert(said.includes("'Old' reads 'Bio.Conc_par', chosen over 'Bio.Conc_calc';"), said);
+	assert(said.includes("'Bio.Each' reads 'Bio.Conc_calc' (and makes its own choice at 1 index)."), said);
+
+	// And it runs, the doses reading what was chosen.
+	const r = run(structuredClone(project));
+	const last = (label) => {
+		const o = r.outputs().find((x) => x.label === label);
+		assert(o, `no output '${label}'`);
+		return r.series(o).at(-1);
+	};
+	close(last('Bio.Dose [Grass]'), 10, 1e-12, 'twice the chosen value at Grass');
+	close(last('Bio.Dose [Wheat]'), 4, 1e-12, 'twice the chosen value at Wheat');
+	close(last('Bio.Each [Grass]'), 3, 1e-12, 'the block chosen for every index');
+	close(last('Bio.Each [Wheat]'), 2, 1e-12, 'and the one chosen at Wheat');
+
+	// A pick of a block that did not come across is said to be one.
+	const gone = importModelXML(GENERAL_VARIABLE_XML.replace('<component name="Unset"',
+		'<component name="Measured" type="time&#45;series"><id>Measured</id></component>'
+		+ '<component name="Gone" type="general&#45;variable"><id>Gone</id>'
+		+ '<entry type="expression"><equation><![CDATA[Measured]]></equation></entry></component>'
+		+ '<component name="Unset"'));
+	assert(gone.report.warnings.some((w) => /'Gone' reads 'Measured', which is not in this model/.test(w)),
+		JSON.stringify(gone.report.warnings));
+});
+
 test('an imported model brings Ecolego’s three material lists as they are', async () => {
 	// All 87 readable projects here carry `Materials`, `Radionuclides` and
 	// `Elements`: `EcolegoIndexListModel` creates them in its constructor and
@@ -21497,6 +21555,27 @@ test('transfer and transfer-coefficient have opposite donor defaults', () => {
 	assert(feed.multiply_by_donor === false, 'no donor to multiply by');
 });
 
+test('a transfer saved by Ecolego 5 brings the rate it wrote as an equation', () => {
+	// Ecolego 5 wrote a transfer's entries as `expression` entries holding the
+	// rate as `<equation>`, and Ecolego reads that as the transfer equation
+	// "for backwards compatibility": it never reads an entry's type. Taken at
+	// its word, every such rate arrived as 0 -- 61,074 of them in 85 of the
+	// files here -- and the models ran, and moved nothing.
+	const written = REAL_SHAPES_XML.replace(
+		/<entry type="transfer"><transfer-equation><!\[CDATA\[([^\]]*)\]\]><\/transfer-equation><\/entry>/g,
+		'<entry type="expression"><equation><![CDATA[$1]]></equation></entry>');
+	assert(written !== REAL_SHAPES_XML, 'the fixture no longer has Ecolego 6 transfer entries');
+	assert(JSON.stringify(importModelXML(written).project) === JSON.stringify(shapes.project),
+		'the same model, written the older way, is not the same import');
+	// A rate per index, the same way.
+	const perIndex = importModelXML(written.replace('<equation><![CDATA[k]]></equation></entry>',
+		'<equation><![CDATA[k]]></equation></entry>'
+		+ '<entry type="expression" index="Nb"><equation><![CDATA[2 * k]]></equation></entry>'));
+	const move = perIndex.project.transfers.find((t) => t.name === 'Move');
+	assert(move.rate === 'k' && JSON.stringify(move.entries)
+		=== JSON.stringify([{ index: { Elements: 'Nb' }, rate: '2 * k' }]), JSON.stringify(move));
+});
+
 test('blocks sharing a name in different sub-systems keep it', () => {
 	// Ecolego scopes names by sub-system and so does this tool now: the two
 	// Waters are different compartments and both stay `Water`. The importer
@@ -25187,6 +25266,35 @@ test('the element counter has a value only inside its transport', async () => {
 	assert(ed.transportRole(columnModel().expressions
 		.find((e) => ed.qualifiedName(e) === 'Col.Counter')) === 'counter',
 		'the counter is not marked as one, so nothing can leave it out');
+});
+
+test('two transports each read their own counter', () => {
+	// A block reads its chain's counter by its bare name, and every counter
+	// in the Ecolego files here has the same one, `i`. The check that keeps a
+	// counter inside its chain resolved every other block's names from inside
+	// the chain being built, so the second chain's own counter was taken for
+	// the first's: 63 of the files here were refused for it.
+	const m = columnModel();
+	const twin = (b) => ({
+		...structuredClone(b), system: 'Col2',
+		...(b.from ? { from: b.from.replace(/^Col\./, 'Col2.') } : {}),
+		...(b.to ? { to: b.to.replace(/^Col\./, 'Col2.') } : {}),
+	});
+	for (const kind of ['compartments', 'expressions', 'transfers']) {
+		m[kind].push(...m[kind].filter((b) => b.system === 'Col').map(twin));
+	}
+	m.inflows.push({ name: 'Feed2', to: 'Col2.Begin', rate: '0.5' });
+	m.transports.push('Col2');
+	const r = run(structuredClone(m));
+	for (const name of ['Begin', 'End']) {
+		const a = r.series(r.outputs().find((o) => o.block === `Col.${name}`)).at(-1);
+		const b = r.series(r.outputs().find((o) => o.block === `Col2.${name}`)).at(-1);
+		close(b, a, 1e-12, `Col2.${name} runs as Col.${name} does`);
+	}
+	// What the check is for still holds.
+	m.expressions.push({ name: 'Peek', system: 'Col2', equation: 'Col.Counter * 2' });
+	expectError(() => buildSystem(new Project(structuredClone(m))),
+		/'Col2.Peek' reads 'Col.Counter'.*only inside it/, 'a counter read from another chain');
 });
 
 test('a .eco transport sub-system is read with its parts', () => {

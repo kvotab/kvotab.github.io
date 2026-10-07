@@ -325,7 +325,9 @@ def _expand_one(project: Any, raw: Dict[str, Any], path: str, known: Set[str], t
                     found[0] = True
                 return None
 
-            _rewrite_refs(text, path, known, note, tokens)
+            # Resolved where the block that writes it sits: from inside this
+            # chain, a bare `i` in a second transport was this one's counter.
+            _rewrite_refs(text, block.get('system') or '', known, note, tokens)
             if found[0]:
                 return True
         return False

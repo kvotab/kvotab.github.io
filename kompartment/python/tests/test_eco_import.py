@@ -139,6 +139,15 @@ def with_saturation(value: Optional[str]) -> str:
                    f'<simulation-settings>\n\t\t<saturation-enabled>{value}</saturation-enabled>')
 
 
+def ecolego5_transfers(text: str) -> str:
+    """Every transfer entry written as Ecolego 5 wrote one: an ``expression``
+    entry with the rate as ``<equation>``."""
+    out = re.sub(r'<entry type="transfer"><transfer-equation><!\[CDATA\[([^\]]*)\]\]></transfer-equation></entry>',
+                 r'<entry type="expression"><equation><![CDATA[\1]]></equation></entry>', text)
+    assert out != text, 'no transfer entries to rewrite'
+    return out
+
+
 def settings(inner: str) -> str:
     return replace(fx('MODEL_XML'), '<simulation-type>DETERMINISTIC</simulation-type>',
                    f'<simulation-type>DETERMINISTIC</simulation-type>{inner}')
@@ -542,6 +551,12 @@ def run_js_cases() -> List[Case]:
         xml('fixture, named by a file', model, file_name='projects/Test import.eco'),
         xml('fixture, with a version', model, file_name='C:\\work\\x.eas', version='6.5'),
         xml('real shapes', fx('REAL_SHAPES_XML')),
+        # transfers as Ecolego 5 wrote them: expression entries, the rate an <equation>
+        xml('real shapes, Ecolego 5 transfers', replace(ecolego5_transfers(fx('REAL_SHAPES_XML')),
+                                                       '<equation><![CDATA[k]]></equation></entry>',
+                                                       '<equation><![CDATA[k]]></equation></entry>'
+                                                       '<entry type="expression" index="Nb">'
+                                                       '<equation><![CDATA[2 * k]]></equation></entry>')),
         xml('transport', fx('TRANSPORT_XML')),
         # an imported model brings its saturation switch with it
         xml('saturation false', with_saturation('false')),
@@ -584,6 +599,15 @@ def run_js_cases() -> List[Case]:
         xml('interface unwired', interface(wired=False)),
         xml('interface to nowhere', interface(target='G-NOWHERE')),
         xml('interface end to end', REACHES_XML),
+        # general variables: the block chosen, the oldest spelling, a pick at
+        # one index, nothing picked, and a pick that did not come across
+        xml('general variables', fx('GENERAL_VARIABLE_XML')),
+        xml('general variable of a block not imported', replace(
+            fx('GENERAL_VARIABLE_XML'), '<component name="Unset"',
+            '<component name="Measured" type="time&#45;series"><id>Measured</id></component>'
+            '<component name="Gone" type="general&#45;variable"><id>Gone</id>'
+            '<entry type="expression"><equation><![CDATA[Measured]]></equation></entry></component>'
+            '<component name="Unset"')),
         # Ecolego's three material lists
         xml('material lists marked', material_lists(True)),
         xml('material lists unmarked', material_lists(False)),
@@ -1151,6 +1175,29 @@ def made_up_cases() -> List[Case]:
         io_expr('e&#12a;x', 'E1', 'a &lt; b &amp;&amp; &#1114112; &#xD800; &constructor; &#X41; &nbsp;')
         + io_expr('\U0001F600z', 'E2', '1'))))
     out.append(xml('xml: an empty data model', '<data-model/>'))
+
+    # General variables: one fed by a sub-system interface, which then reads
+    # what feeds it; and the corners of the report -- a GUID that names
+    # nothing, a list with no ids and repeats, an equation that is more than a
+    # name, more read than the six listed, and more unchosen than the four.
+    out.append(xml('general variable fed by an interface', replace(
+        interface(), '<component name="taken" type="expression"',
+        '<component name="taken" type="general&#45;variable"')))
+
+    def gv(name: str, inner: str) -> str:
+        return f'<component name="{name}" type="general&#45;variable"><id>{name}</id>{inner}</component>'
+
+    offered = ''.join(f'<available-object id="{i}"/>' for i in ('P', 'X1', 'X2', 'X3', 'X4'))
+    out.append(xml('general variables, odd', io_model(
+        '<component name="P" type="parameter"><id>P</id><guid><![CDATA[G-P]]></guid><unit><![CDATA[Bq]]></unit>'
+        '<entry type="parameter"><value>1</value></entry></component>'
+        '<component name="S" type="select"><id>S</id><selected-object-guid guid="G-NONE"/>'
+        '<available-objects><available-object/><available-object id="P"/><available-object id=" P "/>'
+        '</available-objects></component>'
+        + gv('Twice', '<entry type="expression"><equation>2 * P</equation></entry>')
+        + ''.join(gv(f'G{k}', f'<available-objects>{offered}</available-objects>'
+                                '<entry type="expression"><equation>P</equation></entry>') for k in range(7))
+        + ''.join(gv(f'U{k}', '') for k in range(5)))))
     return out
 
 
@@ -1475,6 +1522,11 @@ class TheApplicationsOwnVariants(ParityCase):
         self.assertIn("'__proto__'", by['a nuclide called __proto__']['error']['message'])
         self.assertEqual(by['AUTO both ends']['project']['simulation']['output_times'][0]['from'], None)
         self.assertEqual(by['endpoints']['project']['simulation']['endpoints'], ['NearField.Lake', 'k_leach'])
+        chosen = {f"{e.get('system', '')}.{e['name']}".lstrip('.'): e
+                  for e in by['general variables']['project']['expressions']}
+        self.assertEqual((chosen['Bio.Conc']['equation'], chosen['Bio.Conc']['unit']), ('Bio.Conc_par', 'Bq/m^3'))
+        self.assertEqual(chosen['Old']['equation'], 'Bio.Conc_par')
+        self.assertEqual(by['general variables']['report']['skipped'], [])
 
 
 @needs_app

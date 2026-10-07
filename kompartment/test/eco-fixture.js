@@ -542,3 +542,101 @@ export const TRANSPORT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 		<abs-error-tolerance>1.0E-12</abs-error-tolerance>
 	</simulation-settings>
 </data-model>`;
+
+/**
+ * General variables as the real files carry them: a block that stands in for
+ * another, its pick written as the entry's equation -- the chosen block's id --
+ * and the blocks it may stand for listed by id. The chosen block's unit is
+ * copied onto the entry (Ecolego 5) or the block (Ecolego 6, which also names
+ * a block in its own sub-system by its bare name). Then the oldest spelling,
+ * `select`, which gives the pick and the list by GUID; a pick of its own at
+ * one index; and a general variable with nothing picked.
+ */
+export const GENERAL_VARIABLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<data-model>
+	<project-properties name="General variables"/>
+	<index-list-model>
+		<index-list name="Crops">
+			<id>Crops</id>
+			<index name="Grass" enabled="true"><id>Grass</id></index>
+			<index name="Wheat" enabled="true"><id>Wheat</id></index>
+		</index-list>
+	</index-list-model>
+	<hierarchy-model>
+		<sub-system-block name="Bio"><id>Bio</id></sub-system-block>
+	</hierarchy-model>
+	<block-model>
+		<component name="Conc&#95;par" type="parameter" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Conc&#95;par</id><sub-system>Bio</sub-system>
+			<unit><![CDATA[Bq/m^3]]></unit>
+			<guid><![CDATA[G-PAR]]></guid>
+			<entry type="parameter"><value><![CDATA[2.0]]></value></entry>
+			<entry type="parameter" index="Grass"><value><![CDATA[5.0]]></value></entry>
+		</component>
+		<component name="Conc&#95;calc" type="expression" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Conc&#95;calc</id><sub-system>Bio</sub-system>
+			<unit><![CDATA[Bq/m^3]]></unit>
+			<guid><![CDATA[G-CALC]]></guid>
+			<evaluation-mode>AUTO</evaluation-mode>
+			<entry type="expression"><equation><![CDATA[3]]></equation></entry>
+		</component>
+		<component name="Conc" type="general&#45;variable" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Conc</id><sub-system>Bio</sub-system>
+			<available-objects>
+				<available-object id="Bio&#46;Conc&#95;calc"/>
+				<available-object id="Bio&#46;Conc&#95;par"/>
+			</available-objects>
+			<entry type="expression">
+				<entry-unit><![CDATA[kg]]></entry-unit>
+				<equation><![CDATA[Bio.Conc_par]]></equation>
+			</entry>
+		</component>
+		<component name="Dose" type="expression" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Dose</id><sub-system>Bio</sub-system>
+			<evaluation-mode>AUTO</evaluation-mode>
+			<entry type="expression"><equation><![CDATA[Conc * 2]]></equation></entry>
+		</component>
+		<component name="Picked" type="general&#45;variable" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Picked</id><sub-system>Bio</sub-system>
+			<unit><![CDATA[Bq/m^3]]></unit>
+			<available-objects>
+				<available-object id="Bio&#46;Conc&#95;calc"/>
+			</available-objects>
+			<entry type="expression">
+				<entry-unit><![CDATA[Bq/m^3]]></entry-unit>
+				<equation><![CDATA[Conc_calc]]></equation>
+			</entry>
+		</component>
+		<component name="Deep soil" type="parameter" dimension="0">
+			<id>Deep soil</id><unit><![CDATA[m]]></unit>
+			<entry type="parameter"><value><![CDATA[4.0]]></value></entry>
+		</component>
+		<component name="Depth" type="general&#45;variable" dimension="0">
+			<id>Depth</id>
+			<available-objects><available-object id="Deep soil"/></available-objects>
+			<entry type="expression"><equation><![CDATA[Deep soil]]></equation></entry>
+		</component>
+		<component name="Old" type="select" dimension="1" index-lists="Crops">
+			<id>Old</id>
+			<selected-object-guid guid="G-PAR"/>
+			<available-object-guid guid="G-PAR"/>
+			<available-object-guid guid="G-CALC"/>
+		</component>
+		<component name="Each" type="general&#45;variable" dimension="1" index-lists="Crops">
+			<id>Bio&#46;Each</id><sub-system>Bio</sub-system>
+			<available-objects>
+				<available-object id="Bio&#46;Conc&#95;calc"/>
+				<available-object id="Bio&#46;Conc&#95;par"/>
+			</available-objects>
+			<entry type="expression"><equation><![CDATA[Bio.Conc_calc]]></equation></entry>
+			<entry type="expression" index="Wheat"><equation><![CDATA[Bio.Conc_par]]></equation></entry>
+		</component>
+		<component name="Unset" type="general&#45;variable" dimension="0">
+			<id>Unset</id>
+		</component>
+	</block-model>
+	<simulation-settings>
+		<start-time>0.0</start-time><end-time>1.0</end-time><time-unit>year</time-unit>
+		<java-solver>java&#45;ode45</java-solver>
+	</simulation-settings>
+</data-model>`;

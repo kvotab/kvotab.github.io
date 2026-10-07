@@ -434,6 +434,57 @@ class RunParity(unittest.TestCase):
                     worst = diff.max() / scale if diff.size and scale > 0 else 0.0
                     self.assertLess(worst, 10 * rtol, label)
 
+    def test_two_transports_each_read_their_own_counter(self) -> None:
+        # A block reads its chain's counter by its bare name, and every counter
+        # in the Ecolego files has the same one. The check that keeps a counter
+        # inside its chain once read the other chain's own as this one's. The
+        # soil column of the application's 'two transports each read their own
+        # counter', twice over.
+        def column(path: str) -> Dict[str, Any]:
+            return {
+                'compartments': [
+                    {'name': 'Begin', 'system': path, 'transport': 'begin', 'initial': 'if(Counter == 1, 10, 0)'},
+                    {'name': 'End', 'system': path, 'transport': 'end', 'initial': '999'},
+                ],
+                'expressions': [
+                    {'name': 'N', 'system': path, 'transport': 'number', 'equation': '3'},
+                    {'name': 'Counter', 'system': path, 'transport': 'counter'},
+                    {'name': 'Rate', 'system': path, 'equation': 'k * Counter'},
+                ],
+                'transfers': [
+                    {'name': 'Down', 'system': path, 'from': f'{path}.Begin', 'to': f'{path}.End', 'rate': 'Rate'},
+                    {'name': 'Up', 'system': path, 'from': f'{path}.End', 'to': f'{path}.Begin', 'rate': 'kb'},
+                    {'name': 'Out', 'system': path, 'from': f'{path}.End', 'to': 'Sink', 'rate': 'k'},
+                ],
+            }
+        a, b = column('Col'), column('Col2')
+        model: Dict[str, Any] = {
+            'simulation': {'start_time': 0, 'end_time': 30, 'output_points': 4, 'spacing': 'linear',
+                           'solver': 'dp45', 'rtol': 1e-10, 'abstol': 1e-14},
+            'parameters': [{'name': 'k', 'value': 0.2}, {'name': 'kb', 'value': 0.05}],
+            'transports': ['Col', 'Col2'],
+            'compartments': [*a['compartments'], *b['compartments'], {'name': 'Sink', 'initial': '0'}],
+            'expressions': [*a['expressions'], *b['expressions']],
+            'transfers': [*a['transfers'], *b['transfers']],
+            'inflows': [{'name': 'Feed', 'to': 'Col.Begin', 'rate': '0.5'},
+                        {'name': 'Feed2', 'to': 'Col2.Begin', 'rate': '0.5'}],
+        }
+        js = engine('run', model=model)
+        res = run(Project(copy.deepcopy(model)))
+        self.assertEqual(res.labels, js['labels'])
+        by = dict(zip(res.labels, res.series_many(res.outputs())))
+        for label, theirs in zip(js['labels'], js['columns']):
+            self.assertTrue(close(by[label], numbers(theirs), 1e-8), label)
+        for name in ('Begin', 'End'):
+            self.assertTrue(close(by[f'Col2.{name}'], by[f'Col.{name}'], 1e-12), name)
+        # What the check is for still holds, and is said as the application says it.
+        model['expressions'].append({'name': 'Peek', 'system': 'Col2', 'equation': 'Col.Counter * 2'})
+        theirs = engine('run', model=model)
+        with self.assertRaises(Exception) as caught:
+            run(Project(copy.deepcopy(model)))
+        self.assertIn("'Col2.Peek' reads 'Col.Counter'", str(caught.exception))
+        self.assertEqual(str(caught.exception), theirs.get('error'))
+
     def test_every_scenario_runs_as_the_application_runs_it(self) -> None:
         from kompartment.engine.atstart import run_scenarios
         model = example('scenarios')

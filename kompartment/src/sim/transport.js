@@ -273,6 +273,11 @@ function expandOne(project, raw, path, known, taken, off) {
 	const pairNames = () => new Set([
 		bq, eq, ...(cq ? [cq] : []), ...internalNames, ...dependentNames,
 	]);
+	// A name is resolved where the block that writes it sits. Resolved from
+	// inside this chain instead, a bare `i` in a second transport is this
+	// one's counter -- and every one of the 1,019 counters in the Ecolego
+	// files here is called `i` -- so a model with two transports was refused
+	// for reading its own counter.
 	const refsAny = (block, keys, names) => {
 		const texts = [];
 		for (const key of keys) {
@@ -281,7 +286,7 @@ function expandOne(project, raw, path, known, taken, off) {
 		}
 		return texts.some((text) => {
 			let found = false;
-			rewriteRefs(text, path, known, (q) => { if (names.has(q)) found = true; return null; });
+			rewriteRefs(text, systemOf(block), known, (q) => { if (names.has(q)) found = true; return null; });
 			return found;
 		});
 	};

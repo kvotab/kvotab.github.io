@@ -766,6 +766,13 @@ corpus and covered by a test:
   the array syntax — `[0.0, 10.0, ...]` — in two parallel elements, one for
   the points and one for the values. The two are walked to the shorter of
   them, so a truncated file loses the tail rather than the table.
+- **A transfer saved by Ecolego 5 keeps its rate where an expression keeps
+  its equation.** Ecolego decides what an entry carries from the block it
+  belongs to, never from the label on the entry, so for Ecolego that equation
+  is the transfer's rate, and `readEntries` reads it as one. 61,074 transfer
+  entries in 85 of the files here are written that way, the whole near field
+  of one base-case model among them; taken at their label, every one of those
+  rates is 0, and the model builds, runs and releases nothing.
 
 Where a file's own writer and its reader disagree, the reader wins: block type
 names and their defaults are taken as the file spells them.
@@ -898,6 +905,39 @@ An input connected to nothing is left exactly as the file has it: it is a
 socket, and an empty socket says nothing about the block behind it. Three of
 the 13 projects that carry an interface are in that state, with 11 interface
 objects between them; the other 10 carry 41 connections.
+
+### General variables
+
+A general variable stands in for one of a list of blocks. The modeller lists
+the blocks it may stand for and chooses one -- per index, if need be -- and the
+file records the choice as the general variable's equation: the chosen block's
+name and nothing else. Ecolego generates its code as it does an expression's
+and schedules it as an expression whose evaluation it manages itself, so what
+a general variable works out is exactly the block it names. Nor has it a unit
+of its own: Ecolego shows the chosen block's, and keeps a copy of it in the
+file.
+
+So `src/io/eco.js` makes each one an expression whose equation is that name.
+`settleGeneralVariables` then gives it the chosen block's unit, once every
+block is in -- after the renames and the sub-system wiring, so the block is
+found by the name the model ended up with, the way a run finds it; the copy in
+the file stands only where the chosen block has no unit. The list itself is a
+choice this tool has no block for. The blocks on it are in the model in their
+own right, so nothing numerical is lost, and the import report names, for each
+general variable, the block it reads and the ones it was chosen over: choosing
+another is writing its name into the equation. A general variable with nothing
+chosen, which Ecolego will not run, reads 0 and is named. The oldest files
+spell the block differently and give the choice and the list by identifier
+rather than by name; those are read too.
+
+68 of the files here carry 208 general variables between them, each choosing
+an expression or a parameter for every index at once, out of a list of one to
+eight. In one base-case model three of them carry the well water and the
+direct contamination of crops and pasture into the dose calculations; left out,
+every equation that reads one names nothing, and the model cannot be built.
+Imported and run here, that model matches Ecolego's own run of the same file to
+the tolerance of Ecolego's run: the three general variables to within 2.1e-5
+of their peaks, the total dose to within 1.1e-6 of its peak.
 
 ### Not mapped
 
@@ -1216,6 +1256,19 @@ other rewrite in this tool is done. The builder, the solvers, the Jacobian and
 the results then see a model with nothing unusual in it, and the hidden mark
 is all that keeps the middle of the chain out of the lists of results -- as
 Ecolego's anonymous states are.
+
+The counter has a value only inside its own chain, so a reference to it from
+anywhere else is refused rather than read as the 1 it is left at. Which
+counter a name means is settled where the block that writes it sits, as for
+every other reference: every chain's counter is called `i` -- all 1,019 of
+them in the Ecolego files here -- so a bare `i` in one chain is that chain's
+own counter, never the one of a neighbouring chain being unrolled.
+
+A chain of one has no pair, so a transfer drawn between its ends is no
+transfer; it is kept as an expression holding its rate, for anything that
+reads it by name. An expression has no ends, so a rate written with
+`_source_` or `_target_` cannot be kept that way, and a chain of one with such
+a transfer is refused. One silo model in the files here stops there.
 
 An operation read by name becomes an expression over the elements
 (`Begin + Begin_2 + End`, divided by N for a mean). One that is called --

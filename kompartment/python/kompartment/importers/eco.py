@@ -55,7 +55,7 @@ from ._eco_maps import (
     js_floor, js_identifier, js_len, js_object_order, js_round, js_string, js_trim, json_ready,
     operation_from_eco, round_significant, solver_name, to_exponential, to_number,
 )
-from ._xml import Node, XMLError, child, child_bool, child_number, child_text, children, find, parse_xml
+from ._xml import Node, XMLError, child, child_bool, child_number, child_text, children, find, parse_xml, walk
 
 __all__ = ['EcoImportError', 'ImportReport', 'ImportResult', 'import_eco_file', 'import_model_xml',
            'decode_xml_bytes']
@@ -100,7 +100,20 @@ SUPPORTED = frozenset([
     # The parts of a transport sub-system.
     'transport-begin', 'transport-end', 'transport-number',
     'transport-element-counter', 'transport-operation',
+    # A block that stands in for another. See GENERAL_VARIABLE.
+    'general-variable', 'select',
 ])
+
+#: Ecolego's general variable: a block that stands in for another. The modeller
+#: lists the blocks it may stand for and picks one, per index if need be, and
+#: the pick is written as the entry's equation, the chosen block's id and
+#: nothing more. Ecolego's simulator writes and stages it as an expression, so
+#: what it works out is exactly an expression that reads the chosen block,
+#: which is what it becomes here. The other blocks on the list are only
+#: offered; they are named in the report beside the one chosen. ``select`` is
+#: the block's older name, with the pick and the list given by GUID.
+#: ``GENERAL_VARIABLE`` in ``src/io/eco.js``.
+GENERAL_VARIABLE = frozenset(['general-variable', 'select'])
 
 #: The part each transport block type plays.
 TRANSPORT_ROLE = {
@@ -307,7 +320,7 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     index_ids = _read_index_lists(data_model, project, names, report, materials)
     _read_decay_chains(data_model, project, report)
     hierarchy = _read_hierarchy(data_model, project, names, report)
-    block_name_by_id, wiring, twins = _read_blocks(data_model, project, names, index_ids, report, hierarchy)
+    block_name_by_id, wiring, twins, generals = _read_blocks(data_model, project, names, index_ids, report, hierarchy)
     _read_simulation_settings(data_model, project, report)
 
     # Two rewrites, both textual and both necessary: Ecolego names may hold
@@ -321,6 +334,9 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     # directly. Last, so the references it writes are the names the model
     # ended up with.
     _connect_interfaces(project, wiring, block_name_by_id, report)
+    # After the two above, so what a general variable reads is the name the
+    # model ended up with.
+    _settle_general_variables(project, generals, block_name_by_id, report)
     _rewrite_endpoint_ids(project, block_name_by_id, report, twins)
 
     duplicated = names.duplicated()
@@ -716,6 +732,80 @@ def _drop_unreachable_targets(project: Dict[str, Any], report: 'ImportReport') -
             'they were left out of the total.')
         kept_aggregates.append(g)
     project['block_reductions'] = kept_aggregates
+
+
+#: A reference and nothing else: a name, or a path of names.
+_REFERENCE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*')
+
+
+def _settle_general_variables(project: Dict[str, Any], generals: List[Dict[str, Any]],
+                              block_name_by_id: Dict[str, str], report: 'ImportReport') -> None:
+    """Settles each general variable on the block it reads, and says what
+    became of them: Ecolego shows the chosen block's unit as the general
+    variable's, and the copy the file carries stood in until now.
+    ``settleGeneralVariables`` in ``src/io/eco.js``."""
+    if not generals:
+        return
+    blocks: Dict[str, Dict[str, Any]] = {}
+    for kind in ('parameters', 'compartments', 'expressions', 'transfers',
+                 'inflows', 'lookups', 'index_reductions', 'block_reductions',
+                 'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers'):
+        for b in project.get(kind) or []:
+            blocks[_qualified(b)] = b
+
+    def resolve(equation: Any, system: str) -> Optional[str]:
+        return resolve_reference(js_trim(js_string(_or(equation, ''))), system, blocks.__contains__)
+
+    read: List[str] = []
+    unchosen: List[str] = []
+    passed_over = False
+    for g in generals:
+        block = g['block']
+        qname = _qualified(block)
+        own = len(block.get('entries') or [])
+        if not g['picked'] and not own:
+            unchosen.append(f"'{qname}'")
+            continue
+        system = block.get('system') or ''
+        text = js_trim(js_string(_or(block.get('equation'), '')))
+        target = resolve(text, system)
+        unit = blocks[target].get('unit') if target is not None else None
+        if isinstance(unit, str) and unit != '':
+            block['unit'] = unit
+
+        line = f"'{qname}' reads '{text if target is None else target}'"
+        if target is None and _REFERENCE.fullmatch(text):
+            line += ', which is not in this model'
+        if own:
+            line += f" (and makes its own choice at {own} {'index' if own == 1 else 'indices'})"
+        chosen = {target, *(resolve(e.get('equation'), system) for e in block.get('entries') or [])}
+        others = [n for n in (block_name_by_id.get(i, i) for i in g['offered']) if n not in chosen]
+        if others:
+            shown = [f"'{n}'" for n in others[:3]]
+            if len(others) > 3:
+                shown.append(f'{len(others) - 3} more')
+            line += f', chosen over {_list_of(shown)}'
+            passed_over = True
+        read.append(line)
+    if read:
+        one = len(read) == 1
+        more = f'; and {len(read) - 6} more' if len(read) > 6 else ''
+        report.warn(
+            f"{len(read)} general variable{'' if one else 's'}, {'a block' if one else 'blocks'} that "
+            f"stand{'s' if one else ''} in for one of a list of others, arrived as "
+            f"{'an expression' if one else 'expressions'} reading the one chosen, which is what Ecolego "
+            f"works out for {'it' if one else 'them'}: {'; '.join(read[:6])}{more}. "
+            + ('The blocks passed over are in the model as they were; to choose one, write its '
+               'name in the equation.' if passed_over
+               else 'To choose another block, write its name in the equation.'))
+    if unchosen:
+        one = len(unchosen) == 1
+        shown = unchosen[:4]
+        if len(unchosen) > 4:
+            shown.append(f'{len(unchosen) - 4} more')
+        report.warn(
+            f"{_list_of(shown)} {'is a general variable' if one else 'are general variables'} with no block "
+            f"chosen, which Ecolego will not run; here {'it reads' if one else 'they read'} 0.")
 
 
 def _qualified(block: Dict[str, Any]) -> str:
@@ -1511,19 +1601,21 @@ def _read_decay_chains(data_model: Node, project: Dict[str, Any], report: Import
 
 def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, index_ids: Dict[str, Any],
                  report: ImportReport,
-                 hierarchy: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, str], Dict[str, Any], Dict[str, str]]:
+                 hierarchy: Optional[Dict[str, Any]] = None
+                 ) -> Tuple[Dict[str, str], Dict[str, Any], Dict[str, str], List[Dict[str, Any]]]:
     """``<block-model>``: every component and connection, as blocks of this
     tool's kinds or as entries in the report. ``readBlocks`` in
     ``src/io/eco.js``.
 
     Returns the map from block id to qualified name, which the rewrites use,
-    the sub-system wiring for :func:`_connect_interfaces`, and the transfers
-    made in two, by qualified name (see the transfers below).
+    the sub-system wiring for :func:`_connect_interfaces`, the transfers made
+    in two, by qualified name (see the transfers below), and the general
+    variables for :func:`_settle_general_variables`.
     """
     model = child(data_model, 'block-model')
     if model is None:
         report.warn('The file has no <block-model>; nothing to import.')
-        return {}, {'links': [], 'operations': {}, 'exposed': {}, 'id_by_guid': {}}, {}
+        return {}, {'links': [], 'operations': {}, 'exposed': {}, 'id_by_guid': {}}, {}, []
 
     elements = children(model, 'component') + children(model, 'connection')
 
@@ -1533,6 +1625,9 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
     # half, which goes where the first goes -- switched off with it, and kept
     # with it as an endpoint.
     twins: Dict[str, str] = {}
+    # The general variables, for :func:`_settle_general_variables` once every
+    # block is in: what each was chosen to read is only known then.
+    generals: List[Dict[str, Any]] = []
 
     block_name_by_id: Dict[str, str] = {}
     path_by_id = hierarchy['path_by_id'] if hierarchy is not None else {}
@@ -1646,6 +1741,36 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
         unit = child_text(el, 'unit') or ''
         comment = child_text(el, 'comment') or ''
         entries = _read_entries(el, dim_lists, report, original)
+
+        if type_ in GENERAL_VARIABLE:
+            # The pick is the entry's equation; the oldest spelling gives it,
+            # and the list, by GUID instead. A pick nobody made reads 0.
+            def by_guid(node: Optional[Node]) -> Optional[str]:
+                return None if node is None else id_by_guid.get(js_trim(node.attrs.get('guid', '')))
+
+            picked = _or(_pick_default(entries, 'equation'), by_guid(find(el, 'selected-object-guid')))
+            offered: List[str] = []
+            for node in walk(el):
+                if node.name == 'available-object':
+                    oid = js_trim(node.attrs['id']) if 'id' in node.attrs else None
+                elif node.name == 'available-object-guid':
+                    oid = by_guid(node)
+                else:
+                    oid = None
+                if oid and oid not in offered:
+                    offered.append(oid)
+            block = _trim_empty({
+                'name': name, 'system': system, **dim_spec,
+                # Ecolego shows the chosen block's unit as this one's and
+                # writes a copy of it, which stands until the block is found.
+                'unit': unit or _or(_pick_default(entries, 'unit'), ''),
+                'comment': comment,
+                'equation': _or(picked, '0'),
+                'entries': _keep_indexed(entries, ['equation']),
+            })
+            project['expressions'].append(block)
+            generals.append({'block': block, 'picked': picked is not None, 'offered': offered})
+            continue
 
         is_expression = type_ in ('expression', 'post-processing', 'constant', 'transport-number')
         role = TRANSPORT_ROLE.get(type_)
@@ -1936,7 +2061,7 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                 report.disable(qname)
 
     wiring['id_by_guid'] = id_by_guid
-    return block_name_by_id, wiring, twins
+    return block_name_by_id, wiring, twins, generals
 
 
 def _or(value: Any, fallback: Any) -> Any:
@@ -1993,8 +2118,14 @@ def _read_entries(el: Node, dim_lists: List[Dict[str, Any]], report: ImportRepor
                   block_label: str) -> List[Dict[str, Any]]:
     """A block's ``<entry>`` elements, each as ``{'index': {list: index},
     ...values}``. An entry whose index cannot be resolved against the block's
-    own lists is dropped rather than applied to the wrong cells."""
+    own lists is dropped rather than applied to the wrong cells.
+
+    A transfer's entries are read as a transfer's whatever their ``type``
+    says, which Ecolego never reads: Ecolego 5 wrote them as ``expression``
+    entries holding the rate as ``<equation>``. ``readEntries`` in
+    ``src/io/eco.js``."""
     out: List[Dict[str, Any]] = []
+    transfer = el.attrs.get('type') in ('transfer', 'transfer-coefficient')
     for entry_el in children(el, 'entry'):
         index: Dict[str, str] = {}
         ids = [s for s in (js_trim(p) for p in entry_el.attrs.get('index', '').split(',')) if s]
@@ -2015,7 +2146,7 @@ def _read_entries(el: Node, dim_lists: List[Dict[str, Any]], report: ImportRepor
                 'of its index lists contains; that entry was dropped.')
 
         rec: Dict[str, Any] = {'index': index}
-        type_ = entry_el.attrs.get('type')
+        type_ = 'transfer' if transfer else entry_el.attrs.get('type')
 
         if type_ == 'compartment':
             _assign_if(rec, 'initial', child_text(entry_el, 'initial-condition'))
@@ -2026,7 +2157,7 @@ def _read_entries(el: Node, dim_lists: List[Dict[str, Any]], report: ImportRepor
             # The extra term in the compartment's rate of change.
             _assign_if(rec, 'dydt', child_text(entry_el, 'differential-equation'))
         elif type_ == 'transfer':
-            _assign_if(rec, 'rate', child_text(entry_el, 'transfer-equation'))
+            _assign_if(rec, 'rate', _or(child_text(entry_el, 'transfer-equation'), child_text(entry_el, 'equation')))
             mult = child_text(entry_el, 'multiply-with-donor')
             if mult is not None and mult != '':
                 rec['multiply_by_donor'] = mult.lower() == 'true'

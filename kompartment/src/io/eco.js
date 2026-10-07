@@ -39,6 +39,7 @@ import {
 	childNumber,
 	childBool,
 	find,
+	walk,
 	XMLError,
 } from './xml.js';
 import { ecoSecondsPerYear } from '../domain/nuclides.js';
@@ -93,7 +94,30 @@ const SUPPORTED = new Set([
 	// ../domain/transport.js.
 	'transport-begin', 'transport-end', 'transport-number',
 	'transport-element-counter', 'transport-operation',
+	// A block that stands in for another. See GENERAL_VARIABLE.
+	'general-variable', 'select',
 ]);
+
+/**
+ * Ecolego's general variable: a block that stands in for another. The modeller
+ * lists the blocks it may stand for, picks one -- per index, if need be -- and
+ * the pick is written as the entry's equation, the chosen block's id and
+ * nothing more. The simulator writes the block with the expression writer
+ * (`ClassWriterFactory` maps `GeneralVariable` to `ExpressionClassWriter`)
+ * and stages it as it stages an auto-managed expression, so what it works out
+ * is exactly an expression that reads the chosen block. That is what it
+ * becomes here.
+ *
+ * What does not come across is the choice: the other blocks on the list are
+ * only offered, are in the model in their own right, and are named in the
+ * report beside the one chosen, so a modeller who wants another writes its
+ * name into the equation. `select` is the block's older name, which Ecolego
+ * still reads as one, with the pick and the list given by GUID.
+ *
+ * 208 of them in 68 of the files here, each choosing an expression or a
+ * parameter for every index at once, out of a list of one to eight.
+ */
+const GENERAL_VARIABLE = new Set(['general-variable', 'select']);
 
 /** The part each transport block type plays. */
 const TRANSPORT_ROLE = lookup({
@@ -364,7 +388,7 @@ function* importSteps(text, meta) {
 	const indexIds = readIndexLists(dataModel, project, names, report, materials);
 	readDecayChains(dataModel, project, report);
 	const hierarchy = readHierarchy(dataModel, project, names, report);
-	const { blockNameById, wiring, twins } = readBlocks(
+	const { blockNameById, wiring, twins, generals } = readBlocks(
 		dataModel, project, names, indexIds, report, hierarchy,
 	);
 	yield 'settings';
@@ -383,6 +407,9 @@ function* importSteps(text, meta) {
 	// directly. Last, so the references it writes are the names the model
 	// ended up with. See `connectInterfaces`.
 	connectInterfaces(project, wiring, blockNameById, report);
+	// After the two above, so what a general variable reads is the name the
+	// model ended up with.
+	settleGeneralVariables(project, generals, blockNameById, report);
 	rewriteEndpointIds(project, blockNameById, report, twins);
 
 	const duplicated = names.duplicated();
@@ -777,6 +804,80 @@ function dropUnreachableTargets(project, report) {
 		);
 		return true;
 	});
+}
+
+/**
+ * Settles each general variable on the block it reads, and says what became of
+ * them. See GENERAL_VARIABLE.
+ *
+ * A general variable has no unit of its own in Ecolego: it shows the chosen
+ * block's (`GeneralVariable.getUnit`). The copy the file carries stood in
+ * until now, when the block can be found by the name the model gave it --
+ * which is how a run will find it.
+ */
+function settleGeneralVariables(project, generals, blockNameById, report) {
+	if (!generals.length) return;
+	const blocks = new Map();
+	for (const kind of ['parameters', 'compartments', 'expressions', 'transfers',
+		'inflows', 'lookups', 'index_reductions', 'block_reductions',
+		'min_maxes', 'running_means', 'snapshots', 'delays', 'triggers']) {
+		for (const b of project[kind] ?? []) blocks.set(b.system ? `${b.system}.${b.name}` : b.name, b);
+	}
+	const read = [];
+	const unchosen = [];
+	let passedOver = false;
+	for (const { block, picked, offered } of generals) {
+		const qname = block.system ? `${block.system}.${block.name}` : block.name;
+		const own = (block.entries ?? []).length;
+		if (!picked && !own) {
+			unchosen.push(`'${qname}'`);
+			continue;
+		}
+		const resolve = (equation) => resolveReference(String(equation ?? '').trim(),
+			block.system ?? '', (n) => blocks.has(n));
+		const text = String(block.equation ?? '').trim();
+		const target = resolve(text);
+		const unit = target ? blocks.get(target).unit : null;
+		if (typeof unit === 'string' && unit !== '') block.unit = unit;
+
+		let line = `'${qname}' reads '${target ?? text}'`;
+		if (!target && /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(text)) {
+			line += ', which is not in this model';
+		}
+		if (own) line += ` (and makes its own choice at ${own} ${own === 1 ? 'index' : 'indices'})`;
+		const chosen = new Set([target, ...(block.entries ?? []).map((e) => resolve(e.equation))]);
+		const others = offered.map((id) => blockNameById.get(id) ?? id).filter((n) => !chosen.has(n));
+		if (others.length) {
+			const shown = others.slice(0, 3).map((n) => `'${n}'`);
+			if (others.length > 3) shown.push(`${others.length - 3} more`);
+			line += `, chosen over ${listOf(shown)}`;
+			passedOver = true;
+		}
+		read.push(line);
+	}
+	if (read.length) {
+		const one = read.length === 1;
+		report.warn(
+			`${read.length} general variable${one ? '' : 's'}, ${one ? 'a block' : 'blocks'} that `
+			+ `stand${one ? 's' : ''} in for one of a list of others, arrived as `
+			+ `${one ? 'an expression' : 'expressions'} reading the one chosen, which is what Ecolego `
+			+ `works out for ${one ? 'it' : 'them'}: ${read.slice(0, 6).join('; ')}`
+			+ `${read.length > 6 ? `; and ${read.length - 6} more` : ''}. `
+			+ (passedOver
+				? 'The blocks passed over are in the model as they were; to choose one, write its '
+					+ 'name in the equation.'
+				: 'To choose another block, write its name in the equation.'),
+		);
+	}
+	if (unchosen.length) {
+		const one = unchosen.length === 1;
+		const shown = unchosen.slice(0, 4);
+		if (unchosen.length > 4) shown.push(`${unchosen.length - 4} more`);
+		report.warn(
+			`${listOf(shown)} ${one ? 'is a general variable' : 'are general variables'} with no block `
+			+ `chosen, which Ecolego will not run; here ${one ? 'it reads' : 'they read'} 0.`,
+		);
+	}
 }
 
 // --- report ------------------------------------------------------------------
@@ -1598,6 +1699,7 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 			wiring: {
 				links: [], operations: new Map(), exposed: new Set(), idByGuid: new Map(),
 			},
+			generals: [],
 		};
 	}
 
@@ -1610,6 +1712,9 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	// half, which goes where the first goes -- switched off with it, and kept
 	// with it as an endpoint.
 	const twins = new Map();
+	// The general variables, for `settleGeneralVariables` once every block is
+	// in: what each was chosen to read is only known then.
+	const generals = [];
 
 	// Pass one: block id -> mapped name, so connections can resolve endpoints.
 	// Boundary components are recorded separately: a transfer touching one gets
@@ -1746,6 +1851,34 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 		const unit = childText(el, 'unit') ?? '';
 		const comment = childText(el, 'comment') ?? '';
 		const entries = readEntries(el, dimLists, report, original);
+
+		if (GENERAL_VARIABLE.has(type)) {
+			// The pick is the entry's equation; the oldest spelling gives it,
+			// and the list, by GUID instead. A pick nobody made reads 0, which
+			// `settleGeneralVariables` says, since Ecolego will not run it.
+			const byGuid = (node) => idByGuid.get((node.attrs.guid ?? '').trim());
+			const picked = pickDefault(entries, 'equation')
+				?? byGuid(find(el, 'selected-object-guid') ?? { attrs: {} });
+			const offered = [];
+			for (const node of walk(el)) {
+				const id = node.name === 'available-object' ? node.attrs.id?.trim()
+					: node.name === 'available-object-guid' ? byGuid(node) : null;
+				if (id && !offered.includes(id)) offered.push(id);
+			}
+			const block = trimEmpty({
+				name, system, ...dimSpec,
+				// Ecolego shows the chosen block's unit as this one's and writes
+				// a copy of it: on the block in Ecolego 6, on the entry before.
+				// The copy stands until the block itself is found.
+				unit: unit || (pickDefault(entries, 'unit') ?? ''),
+				comment,
+				equation: picked ?? '0',
+				entries: keepIndexed(entries, ['equation']),
+			});
+			project.expressions.push(block);
+			generals.push({ block, picked: picked != null, offered });
+			continue;
+		}
 
 		const isExpression = type === 'expression' || type === 'post-processing'
 			|| type === 'constant' || type === 'transport-number';
@@ -2079,7 +2212,7 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 	}
 
 	wiring.idByGuid = idByGuid;
-	return { blockNameById, wiring, twins };
+	return { blockNameById, wiring, twins, generals };
 }
 
 /**
@@ -2151,6 +2284,15 @@ function intersectionDims(el, original, dimsById, report) {
  */
 function readEntries(el, dimLists, report, blockLabel) {
 	const out = [];
+	// Ecolego fills the block's own kind of entry from whatever elements the
+	// file's entry holds, and never reads the entry's `type`. That matters for
+	// a transfer saved by Ecolego 5: its entries say `expression` and hold
+	// the rate as `<equation>`, which BlockXMLHandler takes as the transfer
+	// equation "for backwards compatibility". Read by the entry's own word,
+	// every such rate arrived as 0 -- 61,074 entries in 85 of the files here,
+	// the whole near field of one base-case model among them -- and the model
+	// ran, and released nothing.
+	const transfer = el.attrs.type === 'transfer' || el.attrs.type === 'transfer-coefficient';
 	for (const entryEl of children(el, 'entry')) {
 		// Prototype-free: keyed by list name, which comes out of the file.
 		const index = Object.create(null);
@@ -2178,7 +2320,7 @@ function readEntries(el, dimLists, report, blockLabel) {
 		});
 
 		const rec = { index };
-		const type = entryEl.attrs.type;
+		const type = transfer ? 'transfer' : entryEl.attrs.type;
 
 		if (type === 'compartment') {
 			assignIf(rec, 'initial', childText(entryEl, 'initial-condition'));
@@ -2196,7 +2338,7 @@ function readEntries(el, dimLists, report, blockLabel) {
 			// and absent from every other entry Ecolego writes.
 			assignIf(rec, 'dydt', childText(entryEl, 'differential-equation'));
 		} else if (type === 'transfer') {
-			assignIf(rec, 'rate', childText(entryEl, 'transfer-equation'));
+			assignIf(rec, 'rate', childText(entryEl, 'transfer-equation') ?? childText(entryEl, 'equation'));
 			const mult = childText(entryEl, 'multiply-with-donor');
 			if (mult != null && mult !== '') rec.multiply_by_donor = mult.toLowerCase() === 'true';
 			if (childText(entryEl, 'transfer-event')) {

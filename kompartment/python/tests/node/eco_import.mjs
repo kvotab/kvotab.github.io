@@ -61,6 +61,7 @@ async function answer(req) {
 				REAL_SHAPES_XML: fixture.REAL_SHAPES_XML,
 				SHEET_XML: fixture.SHEET_XML,
 				TRANSPORT_XML: fixture.TRANSPORT_XML,
+				GENERAL_VARIABLE_XML: fixture.GENERAL_VARIABLE_XML,
 			};
 		case 'xml':
 			return imported(() => eco.importModelXML(req.text, meta(req)));

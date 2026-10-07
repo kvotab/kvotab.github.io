@@ -4245,6 +4245,15 @@ the result browser at kvotab.se reads both.
   its blocks are read as belonging to the sub-system around it, which is what
   the file's own ids say. The rest of the hierarchy comes across as it is: 66
   of the 71 real models tested use sub-systems, up to five deep.
+- A *general variable* stands in for one of a list of blocks: the modeller
+  chooses which, per index if need be, and Ecolego works it out as an
+  expression that reads the block chosen. That is what it arrives as — an
+  expression whose equation is that block's name, in that block's unit. The
+  list is a choice this tool does not keep: the import report names the blocks
+  each general variable was chosen over, they stay in the model as they were,
+  and choosing another is writing its name into the equation. A general
+  variable with nothing chosen, which Ecolego will not run, reads 0 and is
+  named in the report.
 - Ecolego too keeps every transfer's dimension in step with both ends and
   offers no picker for it. A narrower flux — the same dimensions with one taken
   to a sub-set — is something Ecolego cannot express, and two ends that do not
