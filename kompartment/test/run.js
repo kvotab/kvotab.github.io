@@ -6579,7 +6579,9 @@ test('view flags default sensibly and can be set', () => {
 	const v = ed.view(m);
 	assert(v.show_expressions === true, 'expressions shown by default');
 	assert(v.show_parameters === false, 'parameters hidden by default');
-	assert(v.show_influences === false);
+	assert(v.show_influences === 'selected' && ed.influenceMode(m) === 'selected',
+		'influences are not those of the blocks selected by default');
+	assert(v.show_tooltips === false, 'blocks carry tooltips by default');
 
 	ed.setView(m, { show_parameters: true });
 	assert(ed.view(m).show_parameters === true);
@@ -11369,6 +11371,64 @@ test('the diagram\'s help line is a view flag like the rest', async () => {
 	assert(m.view.show_help === true, JSON.stringify(m.view));
 	assert(JSON.parse(JSON.stringify(m)).view.show_help === true, 'it did not survive a round-trip');
 	assert(ed.view(m).show_help === true, 'the flag is not read back');
+});
+
+test('the diagram says nothing about a block on hover unless asked to', async () => {
+	// A block, a connection's marks and an influence arrow carry a tooltip
+	// only with Canvas ▸ Show tooltips on, and that is off by default: on a
+	// diagram of any size the pointer is always resting on something. The
+	// handles keep theirs -- what a drag of them does -- and a problem its
+	// reason, on the `!` and on a line.
+	const { readFileSync } = await import('node:fs');
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	assert(ed.view({}).show_tooltips === false, 'on by default');
+	const m = {};
+	ed.setView(m, { show_tooltips: true });
+	assert(JSON.parse(JSON.stringify(m)).view.show_tooltips === true, 'it is not saved with the model');
+	const canvas = /label: 'Canvas',\n\t+items: \[([\s\S]*?)\n\t+\],/.exec(graph)?.[1] ?? '';
+	assert(canvas.indexOf("toggle('show_tooltips', 'Show tooltips'") > canvas.indexOf("toggle('show_help', 'Show help'"),
+		'Canvas has no tooltip switch beside the help line');
+
+	// Every tooltip on something drawn for the model goes through the switch:
+	// a sub-system or transport, a lookup table, a block shown as a symbol, an
+	// outflow, an inflow (either icon), a pipe, and every influence arrow.
+	for (const [what, re] of [
+		['a sub-system', /this\._tip\(g, \(n\.transport\n/],
+		['a lookup table', /this\._tip\(g, `\$\{n\.name\} -- \$\{summariseTable\(n\.block\)\}/],
+		['a symbol', /this\._tip\(g, `\$\{n\.name\} — shown as \$\{plain\}`\);/],
+		['an outflow', /this\._tip\(g, `\$\{conn\.name\}: leaves the model/],
+		['a pipe', /this\._tip\(g, `\$\{conn\.name\} \$\{inward \? 'comes from' : 'goes to'\}/],
+		['an influence', /const tips = !!this\.view\.show_tooltips;[\s\S]*?for \(const g of tips \? out : \[\]\) \{/],
+	]) assert(re.test(graph), `${what} has a tooltip of its own`);
+	assert((graph.match(/this\._tip\(g, says\);/g) ?? []).length === 2, 'an inflow icon has a tooltip of its own');
+	// ... and the handles and the problems do not.
+	assert(/const t = svg\('title'\);\n\t+t\.textContent = corner === 'se' \? 'Drag to resize/.test(graph),
+		'the resize grips lost their tooltip');
+	assert(/'Drag onto a compartment to connect from the chain\\u2019s End'/.test(graph)
+		&& /const title = svg\('title'\);\n\t+title\.textContent = n\.kind === 'farfield'/.test(graph),
+		'the connect handle lost its tooltip');
+	assert(/_problemBadge\(n, message, level = 'error'\) \{[\s\S]*?const title = svg\('title'\);/.test(graph)
+		&& /title = svg\('title', \{ class: 'gedge-problem' \}\);/.test(graph), 'a problem lost its reason');
+
+	// The switch itself, on a stub document -- synchronously, since
+	// `document` is global and other tests run beside this one.
+	const { GraphEditor } = await import('../src/ui/graph.js');
+	const previous = globalThis.document;
+	globalThis.document = {
+		createElementNS: (ns, tag) => ({ tag, textContent: '', setAttribute() {} }),
+	};
+	const parent = { kids: [], append(...c) { this.kids.push(...c); } };
+	let off;
+	let on;
+	try {
+		off = GraphEditor.prototype._tip.call({ view: ed.view({}) }, parent, 'Lake');
+		on = GraphEditor.prototype._tip.call({ view: ed.view(m) }, parent, 'Lake');
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+	assert(off === null && parent.kids.length === 1, 'a tooltip with them off');
+	assert(on?.tag === 'title' && on.textContent === 'Lake' && parent.kids[0] === on, 'no tooltip with them on');
 });
 
 test('a distribution that has never been set opens on the normal curve', async () => {
@@ -39244,9 +39304,16 @@ test('influences reach the blocks that read the model through settings, and show
 	const intoP = (n) => pl.filter((l) => l.to === n).map((l) => l.from).sort().join();
 	assert(intoP('T') === 'k,sol', intoP('T'));
 	assert(intoP('Flood') === 'A,B,share', intoP('Flood'));
-	// Three ways of showing them, and the switch they used to be.
+	// Three ways of showing them, and the switch they used to be. Its `false`
+	// was the default, written into a model with every other view flag the
+	// first time any was set, so it is no choice of none: that is 'none'.
 	const v = (x) => ed.influenceMode({ view: { show_influences: x } });
-	assert(v(true) === 'all' && v(false) === 'none' && v('selected') === 'selected' && v(undefined) === 'none' && v('nonsense') === 'none');
+	assert(v(true) === 'all' && v('none') === 'none' && v('all') === 'all' && v('selected') === 'selected');
+	assert(v(false) === 'selected' && v(undefined) === 'selected' && v('nonsense') === 'selected'
+		&& ed.influenceMode({}) === 'selected', 'a model that chose nothing does not get the default');
+	const touched = {};
+	ed.setView(touched, { show_grid: false });
+	assert(ed.influenceMode(touched) === 'selected', 'setting another flag chose none');
 	let threw = null;
 	try { ed.setView({}, { show_influences: 'some' }); } catch (e) { threw = e; }
 	assert(threw && /not a way of showing influences/.test(threw.message), threw?.message);

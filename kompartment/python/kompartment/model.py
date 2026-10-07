@@ -122,8 +122,9 @@ EDGE_PREFIX = 'edge:'
 DEFAULT_VIEW: Dict[str, Any] = {
     'show_expressions': True, 'show_parameters': False, 'show_lookups': True,
     'show_reductions': True, 'show_functions': True, 'show_warning_list': True,
-    'show_recorders': True, 'show_influences': False, 'show_sinks': True, 'show_sources': True,
-    'show_help': False, 'show_grid': True, 'snap_to_grid': True, 'connection_label': 'name',
+    'show_recorders': True, 'show_influences': 'selected', 'show_sinks': True, 'show_sources': True,
+    'show_help': False, 'show_tooltips': False, 'show_grid': True, 'snap_to_grid': True,
+    'connection_label': 'name',
     # How the application's Chart tab draws its axes: 'log' or 'linear'.
     'chart_time_scale': 'log', 'chart_value_scale': 'log',
 }

@@ -8665,7 +8665,10 @@ const DEFAULT_VIEW = {
 	// So are the blocks that remember: a peak dose is a result, and the event
 	// that drives one belongs beside it.
 	show_recorders: true,
-	show_influences: false,
+	// The arrows into and out of the blocks selected, and only those: every
+	// influence at once is a mesh on a model of any size, and none at all
+	// leaves the diagram silent about what a block reads. See `influenceMode`.
+	show_influences: 'selected',
 	// The cloud at the end of a flow that leaves the model. On a diagram with
 	// many outflows it is repetition, so it can be turned off.
 	show_sinks: true,
@@ -8679,8 +8682,16 @@ const DEFAULT_VIEW = {
 	// the canvas's height, and the canvas is what the tab is for. `Show > the
 	// help line under the diagram` in the empty-canvas menu brings it back,
 	// the Help tab has the same material at length, and every gesture it
-	// describes is also in a tooltip on the thing that performs it.
+	// describes is also in a tooltip on the handle that performs it.
 	show_help: false,
+	// What a block, a connection's marks or an influence arrow says about
+	// itself when the pointer rests on it. Off by default: on a diagram of any
+	// size the pointer is nearly always resting on something, and a box that
+	// follows it about is in the way more often than it is wanted. The
+	// handles keep theirs either way -- a grip, a connect handle, a line's
+	// ends and its bend say what dragging them does, and only to someone
+	// pointing at one -- and so does a problem, on its `!` or on its line.
+	show_tooltips: false,
 	// The lattice behind the diagram, and whether what is dragged lands on it.
 	// Both on, which is what this editor has always done -- the grid was drawn
 	// unconditionally and every move and resize was snapped. What is new is
@@ -8752,17 +8763,22 @@ export function chartScales(project) {
 /**
  * Which influences the diagram draws: none, all of them, or only those of the
  * blocks selected -- every arrow into or out of any of them, which on a model
- * of any size is the one set that can be read.
+ * of any size is the one set that can be read, and what a model that says
+ * nothing gets.
  *
  * `show_influences` was a switch, and a file written then says `true` or
- * `false`; those are all and none.
+ * `false`. True is all. False is not taken as a choice of none: it was the
+ * default, and `setView` writes every view flag into the model the first time
+ * any of them is set, so it is what a model says whether or not anybody chose
+ * it. Choosing none writes 'none'. So false, like anything unknown, is the
+ * default.
  */
 export const INFLUENCE_MODES = ['none', 'all', 'selected'];
 
 export function influenceMode(project) {
 	const v = view(project).show_influences;
 	if (v === true) return 'all';
-	return INFLUENCE_MODES.includes(v) ? v : 'none';
+	return INFLUENCE_MODES.includes(v) ? v : DEFAULT_VIEW.show_influences;
 }
 
 /**

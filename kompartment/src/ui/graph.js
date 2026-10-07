@@ -1153,6 +1153,20 @@ export class GraphEditor {
 		}
 	}
 
+	/**
+	 * A tooltip on something drawn for the model -- a block, a connection's
+	 * marks, an influence arrow -- when the view shows them, which by default
+	 * it does not (`show_tooltips`; see DEFAULT_VIEW in ../domain/edit.js).
+	 * The handles and the problem marks make their own, which every view has.
+	 */
+	_tip(parent, text) {
+		if (!this.view.show_tooltips) return null;
+		const title = svg('title');
+		title.textContent = text;
+		parent.append(title);
+		return title;
+	}
+
 	/** The `!` in the corner, with the reason on it. */
 	_problemBadge(n, message, level = 'error') {
 		const g = svg('g', {
@@ -1395,8 +1409,7 @@ export class GraphEditor {
 				d: `M 8 0 L 8 -7 L ${Math.min(n.w * 0.45, 56)} -7 `
 					+ `L ${Math.min(n.w * 0.45, 56) + 7} 0 Z`,
 			}));
-			const title = svg('title');
-			title.textContent = (n.transport
+			this._tip(g, (n.transport
 				? `Transport ${n.name} -- runs as a chain of ${this._chainLength(n.name)} `
 					+ `compartments from its Begin to its End; ${n.count} block`
 					+ `${n.count === 1 ? '' : 's'} inside. Double-click to open it. Drag the `
@@ -1404,8 +1417,7 @@ export class GraphEditor {
 				: `Sub-system ${n.name} -- ${n.count} block`
 					+ `${n.count === 1 ? '' : 's'} inside. Double-click to open it.`)
 				+ (ed.isSystemEnabled(this.project, n.name)
-					? '' : ' Disabled: nothing in it takes part in the run.');
-			g.append(title);
+					? '' : ' Disabled: nothing in it takes part in the run.'));
 		}
 
 		// A lookup table shows the shape of its own data: the name says which
@@ -1419,11 +1431,9 @@ export class GraphEditor {
 			const d = sparkPath(tablePoints(n.block), 10, 24, n.w - 20, n.h - 32,
 				n.block.interpolation ?? 'linear');
 			if (d) g.append(svg('path', { class: 'gnode-spark', d }));
-			const title = svg('title');
-			title.textContent = `${n.name} -- ${summariseTable(n.block)}; `
+			this._tip(g, `${n.name} -- ${summariseTable(n.block)}; `
 				+ `${INTERPOLATION_BLURB[n.block.interpolation ?? 'linear']}`
-				+ `${n.block.argument ? `, read at its argument ${n.block.argument}` : ''}`;
-			g.append(title);
+				+ `${n.block.argument ? `, read at its argument ${n.block.argument}` : ''}`);
 		}
 
 		// Labels are centred and clipped to the width the shape leaves free --
@@ -1448,9 +1458,7 @@ export class GraphEditor {
 		const fitted = fitText(plain, textW, 6.6);
 		if (n.block && hasSymbol(n.block) && fitted === plain) {
 			label.append(...symbolTspans(shown));
-			const title = svg('title');
-			title.textContent = `${n.name} — shown as ${plain}`;
-			g.append(title);
+			this._tip(g, `${n.name} — shown as ${plain}`);
 		} else {
 			label.textContent = fitted;
 		}
@@ -1770,9 +1778,7 @@ export class GraphEditor {
 				class: 'gsink-cloud', d,
 				transform: `translate(${cx - w / 2} ${cy - h / 2})`,
 			}));
-			const t = svg('title');
-			t.textContent = `${conn.name}: leaves the model — drag to move it`;
-			g.append(t);
+			this._tip(g, `${conn.name}: leaves the model — drag to move it`);
 			return tint(grab(g, { x: cx - w / 2 - 3, y: cy - h / 2 - 3, w: w + 6, h: h + 6 }));
 		}
 
@@ -1794,8 +1800,7 @@ export class GraphEditor {
 			&& ed.effectiveDims(this.project, conn).includes(material);
 		const dir = axis(at, geo.p1);
 		const g = svg('g', { class: `gsource${nuclear ? ' gsource-nuclear' : ''}` });
-		const title = svg('title');
-		title.textContent = (nuclear
+		const says = (nuclear
 			? `${conn.name}: radionuclide input from outside the model`
 			: `${conn.name}: input from outside the model`)
 			+ ' — drag to move it';
@@ -1813,7 +1818,7 @@ export class GraphEditor {
 				transform: `translate(${cx} ${cy})`,
 			}));
 			g.append(svg('circle', { class: 'gsource-core', cx, cy, r: core }));
-			g.append(title);
+			this._tip(g, says);
 			// Wider than the disc: the hit area is what makes a mark feel like
 			// a block rather than a decoration.
 			const pad = 4;
@@ -1829,7 +1834,7 @@ export class GraphEditor {
 			class: 'gsource-cloud', d,
 			transform: `translate(${cx - w / 2} ${cy - h / 2})`,
 		}));
-		g.append(title);
+		this._tip(g, says);
 		return tint(grab(g, { x: cx - w / 2 - 3, y: cy - h / 2 - 3, w: w + 6, h: h + 6 }));
 	}
 
@@ -1892,13 +1897,13 @@ export class GraphEditor {
 		under.textContent = sub;
 		g.append(under);
 
-		const title = svg('title');
-		const summary = found ? summarise(found.collection, found.block) : '';
-		title.textContent = `${conn.name} ${inward ? 'comes from' : 'goes to'} ${away}`
-			+ (found ? ` — ${found.kind.replace(/_/g, ' ')}` : ' — not in the model')
-			+ (summary ? `, ${summary}` : '')
-			+ '. Double-click to go there; drag to move this pipe.';
-		g.append(title);
+		if (this.view.show_tooltips) {
+			const summary = found ? summarise(found.collection, found.block) : '';
+			this._tip(g, `${conn.name} ${inward ? 'comes from' : 'goes to'} ${away}`
+				+ (found ? ` — ${found.kind.replace(/_/g, ' ')}` : ' — not in the model')
+				+ (summary ? `, ${summary}` : '')
+				+ '. Double-click to go there; drag to move this pipe.');
+		}
 		// In its own coordinates: the group is translated, and the hit area is
 		// a child of it.
 		return [g, { x: -3, y: -3, w: w + 6, h: h + 6 }];
@@ -2096,6 +2101,8 @@ export class GraphEditor {
 	 */
 	_influences(nodes) {
 		const out = [];
+		// Each arrow says what it stands for when the view has tooltips.
+		const tips = !!this.view.show_tooltips;
 
 		/**
 		 * Where an influence can start or end: a node, the midpoint of a
@@ -2171,20 +2178,20 @@ export class GraphEditor {
 				class: 'gedge-line', d: curve(p0, p1, true),
 				'marker-end': 'url(#arrow-dot)',
 			}));
-			const title = svg('title');
-			g.append(title);
 			// Filled in below: what this one line stands for is not known
 			// until every pair has been seen.
-			g._says = { title, entry: drawn.get(key) };
+			if (tips) g._says = drawn.get(key);
 			out.push(g);
 		}
 
 		// One arrow can be several dependencies -- three blocks inside a
 		// sub-system reading the same parameter -- and `Kd is used by
 		// NearField` says less than naming what actually reads it.
-		for (const g of out) {
-			const { title, entry } = g._says;
+		for (const g of tips ? out : []) {
+			const entry = g._says;
 			delete g._says;
+			const title = svg('title');
+			g.append(title);
 			const [[read, reader]] = entry.pairs;
 			title.textContent = entry.count === 1
 				? `${read} is used by ${reader}`
@@ -4481,9 +4488,9 @@ export class GraphEditor {
 			},
 			{
 				// What is about the canvas rather than about the model: the
-				// three settings that decide what it looks like and how a drag
-				// behaves on it, then four things it already does by wheel and
-				// drag. None of them is part of the model, which is why they
+				// four settings that decide what it looks like, what it says
+				// and how a drag behaves on it, then four things it already
+				// does by wheel and drag. None of them is part of the model, which is why they
 				// are not under *Show* with the blocks.
 				label: 'Canvas',
 				items: [
@@ -4508,6 +4515,11 @@ export class GraphEditor {
 						'The line under the diagram saying what the pointer can do '
 						+ 'here. It costs the diagram the room, so it is worth turning '
 						+ 'off once the gestures are familiar.'),
+					toggle('show_tooltips', 'Show tooltips',
+						'What a block, a connection’s marks or an influence arrow '
+						+ 'says about itself when the pointer rests on it. The handles '
+						+ 'say what dragging them does either way, and a problem '
+						+ 'always gives its reason.'),
 					{ separator: true },
 					{ label: 'Auto-layout', onPick: () => this.relayout() },
 					{ label: 'Fit to view', onPick: () => this.fit() },
