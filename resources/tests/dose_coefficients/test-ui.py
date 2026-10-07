@@ -70,6 +70,42 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 
+# The tissue table's bars of each tissue's share of e, per age column: the terms of e (solid) and their sum, the
+# remainder's tissues (light) and the remainder's own share, the gonads' parts and term, the widest bar.
+BARS = """(() => { const rows = [...document.querySelectorAll('#dcHTable tbody tr')].filter((tr) => tr.cells.length > 2);
+  const out = [];
+  for (let k = 1; k < rows[0].cells.length; k++) {
+    const c = { terms: 0, parts: 0, rem: 0, gonads: 0, gonadParts: 0, widest: 0 };
+    for (const tr of rows) {
+      const td = tr.cells[k], name = tr.cells[0].textContent.replace(/\\s+wT.*$/, '');
+      if (!td || !td.dataset.share) continue;
+      const v = +td.dataset.share;
+      c.widest = Math.max(c.widest, parseFloat(td.style.getPropertyValue('--share')));
+      if (td.classList.contains('part')) {
+        if (/part of the remainder$/.test(td.dataset.tip)) c.parts += v;
+        if (/part of the gonads$/.test(td.dataset.tip)) c.gonadParts += v;
+      } else {
+        c.terms += v;
+        if (name === 'Remainder') c.rem = v;
+        if (name === 'Gonads') c.gonads = v;
+      }
+    }
+    out.push(c);
+  }
+  return { n: document.querySelectorAll('#dcHTable td.dc-share').length, cols: out };
+})()"""
+
+
+def bars_add_up(got, whole=1.0, gonads=False):
+    """Every age: the terms make `whole` of e, the remainder's tissues its part, the gonads' parts their term; the widest bar 100 %."""
+    if not got or not got['cols']:
+        return False
+    ok = all(abs(c['terms'] - whole) < 1e-6 and abs(c['parts'] - c['rem']) < 1e-6 for c in got['cols'])
+    if gonads:
+        ok = ok and all(abs(c['gonadParts'] - c['gonads']) < 1e-6 for c in got['cols'])
+    return ok and abs(max(c['widest'] for c in got['cols']) - 100) < 0.01
+
+
 def check(label, got, want=True):
     global checks
     checks += 1
@@ -330,6 +366,21 @@ async def main():
         a = await adult()
         check('adult e(50) is 1.4E-08 within rounding (ICRP 158: 1.4E-08)', a in ('1.3E-08', '1.4E-08'))
         check('equivalent doses for the tissues', (await p.ev("document.querySelectorAll('#dcHTable tbody tr').length") or 0) >= 30)
+        # Bars of each tissue's share of e: none until the box is ticked; then the terms of e add up to it at every age and
+        # the remainder's tissues to the remainder; in the Male and Female views each sex's half, which make e together.
+        none = await p.ev(BARS)
+        await p.ev("(() => { const c = document.getElementById('dcShares'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        got = await p.ev(BARS)
+        check('the bars of each tissue’s share of e come with their box: the terms add up to e at every age, the remainder’s tissues to its share, the longest fills its cell',
+              bool(none) and none['n'] == 0 and bars_add_up(got) and got['n'] >= 6 * 28)
+        halves = []
+        for sex in ('M', 'F'):
+            await p.ev(f"(() => {{ const r = document.querySelector('input[name=\"dcSex\"][value=\"{sex}\"]'); r.checked = true; r.dispatchEvent(new Event('change', {{ bubbles: true }})); }})()")
+            halves.append(await p.ev(BARS))
+        await p.ev("(() => { const r = document.querySelector('input[name=\"dcSex\"][value=\"avg\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        check('... in the Male and Female views each bar is that sex’s half of its term: the two make e together',
+              all(halves) and all(abs(m['terms'] + f['terms'] - 1) < 1e-6 and 0.3 < m['terms'] < 0.7 for m, f in zip(halves[0]['cols'], halves[1]['cols'])))
+        check('... and the box is kept for the next visit', await p.ev("JSON.parse(localStorage.getItem('kvot.dose') || '{}').shares"), True)
         # A changed setting marks the results as not of the current settings, and dims them, until they are again.
         stale = "(() => { const n = document.getElementById('dcCoefStale'); return n.hidden ? null : [n.textContent, document.getElementById('dcCoef').classList.contains('dc-stale')]; })()"
         check('the results are of the current settings', await p.ev(stale), None)
@@ -646,6 +697,7 @@ async def main():
         await p.ev("(() => { const r = document.querySelector('input[name=\"dcProgeny\"][value=\"with\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
         got = await p.ev("[document.getElementById('dcHHead').textContent, [...document.querySelectorAll('#dcHTable tbody tr')].find(r => r.cells[0].textContent.startsWith('Red marrow'))?.cells[6].textContent]")
         check('with the progeny the tissues take Ba-137m’s photons: red marrow 3.6E-16 for the adult (1.2E-19 alone)', bool(got) and 'with the progeny in equilibrium' in got[0] and got[1] == '3.6E-16')
+        check('the bars of external exposure add up too, the testes and ovaries making the gonads’ term', bars_add_up(await p.ev(BARS), gonads=True))
         await p.ev("(() => { const r = document.querySelector('input[name=\"dcProgeny\"][value=\"alone\"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); })()")
         await p.ev("(() => { const s = document.getElementById('dcRate'); s.value = 'h'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
         got = await p.ev("[document.querySelector('#dcETable thead th:nth-child(2)').textContent, [...document.querySelectorAll('#dcETable tbody tr')].pop().cells[1].textContent]")
@@ -747,6 +799,8 @@ async def main():
         done = await calculate('Sr-90', 'inhalation', 'Type M')
         check('ICRP 60 Sr-90 Type M inhalation calculates', done and await p.ev("document.getElementById('dcStatus').classList.contains('ok')"))
         check('adult e(50) is 3.6E-08 (ICRP 72: 3.6E-08)', await adult(), '3.6E-08')
+        check('in the ICRP 60 system too the bars add up: the terms to e, the remainder’s tissues (by mass, as the child grows) to its share, the gonad taken to the gonads’ term',
+              bars_add_up(await p.ev(BARS), gonads=True))
         await p.ev("document.querySelector('.dc-tabs button[data-tab=\"model\"]').click()")
         await asyncio.sleep(0.6)
         await view('activity')

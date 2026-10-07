@@ -62,6 +62,15 @@ export const TISSUES_60 = {
   Thyroid: [['Thyroid', 1]], Uterus: [['Uterus', 1]],
 };
 const REM_KEYS = Object.keys(REMAINDER_60);
+const R = REM_KEYS.length;
+/* The virtual targets after the real ones: [0] the remainder; [1 + k] the
+   remainder without tissue k (the splitting rule); [1 + R + k] tissue k's
+   share of the remainder; [1 + 2R + kR + i] tissue i's share of the
+   remainder without tissue k. The remainder's masses change as a child grows,
+   so these shares, which add up to the remainder's dose whichever way it is
+   taken, have to be integrated: each tissue's part of e (the tissue table's
+   bars) follows from them. */
+const N_VIRTUAL = 1 + 2 * R + R * R;
 
 /*
   The effective dose as weights of the target rows of an integration (the
@@ -184,7 +193,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // phantom, for Other with the shares of a phantom (the same one, or with
     // `pShare`, the other end of the interval: solve.js's cross columns).
     const column = (c, p, pShare = p) => {
-      const col = new Float64Array(nT + 1 + REM_KEYS.length);
+      const col = new Float64Array(nT + N_VIRTUAL);
       const m = seeOf[c.member][p];
       if (c.region === 'Other') {
         for (const [region, share] of otherSplit[c.member][pShare]) {
@@ -199,8 +208,10 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       const tissue = remRows.map((row) => row.reduce((acc, [t, w]) => acc + w * col[t], 0));
       const M = mass.reduce((a, b) => a + b, 0);
       col[nT] = tissue.reduce((acc, h, i) => acc + mass[i] * h, 0) / M;
-      for (let k = 0; k < REM_KEYS.length; k++) {
+      for (let k = 0; k < R; k++) {
         col[nT + 1 + k] = tissue.reduce((acc, h, i) => (i === k ? acc : acc + mass[i] * h), 0) / (M - mass[k]);
+        col[nT + 1 + R + k] = mass[k] * tissue[k] / M;
+        for (let i = 0; i < R; i++) if (i !== k) col[nT + 1 + 2 * R + k * R + i] = mass[i] * tissue[i] / (M - mass[k]);
       }
       return col;
     };
@@ -234,7 +245,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     // effective dose is made of (effectivePieces60), put together below; a
     // group for each compartment (the Model tab's boxes).
     const pieces = opt.outputs ? effectivePieces60(nT) : null;
-    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + 1 + REM_KEYS.length, groups, interp: 'linear', weights: 'dcal', cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
+    const res = integrate(sys, { phantomAges: PHANTOM_AGES_60, columns, nTargets: nT + N_VIRTUAL, groups, interp: 'linear', weights: 'dcal', cross: cross || undefined, functionals: pieces || undefined, byCompartment: !!opt.outputs },
       { intakeAge, period, outputs: opt.outputs, rtol: opt.rtol });
     const Ht = Object.fromEntries(TARGETS_60.map((t, i) => [t, res.H[i]]));
     const H = {};
@@ -247,6 +258,10 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
     const split = H[REM_KEYS[kmax]] > named;
     const remainder = split ? 0.5 * H[REM_KEYS[kmax]] + 0.5 * res.H[nT + 1 + kmax] : res.H[nT];
     H.Remainder = remainder;
+    // Each remainder tissue's part of it: by its mass, or, split, half the
+    // remainder to the one and the rest by mass among the others.
+    const remainderShares = Object.fromEntries(REM_KEYS.map((r, i) => [r, !split ? res.H[nT + 1 + R + i]
+      : i === kmax ? 0.5 * H[r] : 0.5 * res.H[nT + 1 + 2 * R + kmax * R + i]]));
     let E = 0.05 * remainder;
     for (const [k, w] of Object.entries(W_60)) E += w * H[k];
     // The gonads' dose is the higher of the testes' and the ovaries' (as committed).
@@ -265,7 +280,7 @@ export function coefficients60(data, spec, ages = AGES_60, opt = {}) {
       for (const p of res.series) { p.parts = combine(p.parts); p.rates = combine(p.rates); }
     }
     return {
-      age: age0, intakeAge, E, H, Ht, split: split ? REM_KEYS[kmax] : null, gonads,
+      age: age0, intakeAge, E, H, Ht, split: split ? REM_KEYS[kmax] : null, gonads, remainderShares,
       doseGroups: opt.outputs ? res.doseGroups.map((g) => ({ ...g, name: sys.comps[g.comps[0]].name })) : null,
       transformations: groupKeys.map((k, g) => ({ member: sys.members[Number(k.split('|')[0])].name, region: k.split('|')[1], n: res.U[g] })),
       system: sys, stats: res.stats, series: opt.outputs ? res.series : null,

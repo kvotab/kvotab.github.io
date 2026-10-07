@@ -120,6 +120,9 @@ async function run(sys, nuc, geo, ages, data = D[sys]) {
   const [u] = await run('60', 'U-238', 'soil15', [7300]);
   const s60 = u.members.reduce((a, m) => a + (m.share?.E || 0), 0), h60 = u.members.reduce((a, m) => a + (m.share?.HE || 0), 0);
   check('U-238 in the ICRP 60 system: the shares add up to e and to H_E with the progeny, under the splitting rule', near(s60, u.progeny.E, 1e-12) && near(h60, u.progeny.HE, 1e-12));
+  const rem = (x) => Object.values(x.remainderShares).reduce((a, v) => a + v, 0) / x.H.Remainder;
+  check('... and the remainder tissues’ parts add up to the remainder, alone and with the progeny, in both systems',
+    [u, u.progeny, o, o.progeny].every((x) => near(rem(x), 1, 1e-12)));
   let threw = '';
   try { await run('60', 'Co-60', 'air', [100]); } catch (e) { threw = e.message; }
   check('the ICRP 60 system has the adult only', /adult only/.test(threw), threw);

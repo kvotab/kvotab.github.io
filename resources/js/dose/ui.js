@@ -324,7 +324,7 @@ function save() {
       amad: $('dcAmad').value, ages: [...$('dcAges').querySelectorAll('input:checked')].map((i) => Number(i.value)), cutoff: $('dcCutoff').value, rtol: $('dcRtol').value, tab: state.tab,
       side: getComputedStyle($('dcRoot')).getPropertyValue('--dc-side-width').trim() || null,
       batch: batch?.settings() ?? load().batch ?? null,
-      model: { show: VIEW.show, dose: VIEW.dose, from: VIEW.from },
+      model: { show: VIEW.show, dose: VIEW.dose, from: VIEW.from }, shares: sharesOn(),
     }));
   } catch { /* storage unavailable */ }
 }
@@ -885,6 +885,67 @@ function headline(r) {
     r.decay ? h('span', { class: 'dc-tag', 'data-decay': r.decay }, `decay data ${decayLabel(r.decay, r.system)}`) : null);
 }
 
+/* What each row of the tissue table adds to e, as a fraction of it: the
+   weighted tissues and the remainder are its terms (solid bars, adding up to
+   the whole); the remainder's tissues, and the testes and ovaries behind the
+   gonads, the two halves of the colon and the prostate and uterus, are parts
+   of a term (light bars). The remainder's tissues share it equally in the
+   ICRP 103 system, by mass in the ICRP 60 system (the engines' shares, which
+   follow the masses as a child grows and the splitting rule). In the ICRP 103
+   system's Male and Female views each bar is that sex's half of the term, as
+   e averages the sexes. Rows outside e (eye lens, ureters, gallbladder,
+   heart) and the gonad not taken in the ICRP 60 system get none. */
+function eSharesOf(r, o, view = 'avg', withProgeny = false) {
+  const out = new Map();
+  const ext = external(r), sixty = r.system === '60';
+  const src = ext && withProgeny ? o.progeny : o;
+  const E = src.E;
+  if (!(E > 0)) return out;
+  const order = ext ? TISSUE_ORDER_EXT[r.system] : sixty ? TISSUE_ORDER_60 : TISSUE_ORDER_103;
+  const byView = !ext && !sixty;
+  const H = byView ? o.H[view === 'avg' ? 'avg' : view] : src.H;
+  const half = byView && view !== 'avg' ? 0.5 : 1;
+  const set = (name, v, part = null) => { if (v > 0) out.set(name, { v: half * v / E, part }); };
+  for (const [n, w] of order.weighted) set(n, w * H[n]);
+  const wRem = sixty ? 0.05 : 0.12;
+  set('Remainder', wRem * H.Remainder);
+  for (const n of order.remainder) set(n, wRem * (sixty ? src.remainderShares?.[n] : H[n] / order.remainder.length), 'the remainder');
+  if (sixty) {
+    const g = src.gonads || (H.Testes >= H.Ovaries ? 'Testes' : 'Ovaries');
+    set(g, 0.20 * H[g], 'the gonads');
+    set('Upper large intestine', 0.12 * 0.57 * H['Upper large intestine'], 'the colon');
+    set('Lower large intestine', 0.12 * 0.43 * H['Lower large intestine'], 'the colon');
+  } else if (ext) {
+    set('Testes', 0.04 * H.Testes, 'the gonads');
+    set('Ovaries', 0.04 * H.Ovaries, 'the gonads');
+    set('Prostate', 0.06 / 13 * H.Prostate, 'the remainder (prostate/uterus)');
+    set('Uterus', 0.06 / 13 * H.Uterus, 'the remainder (prostate/uterus)');
+  }
+  return out;
+}
+/* The tissue table's shares at each age, and the largest of them all: the
+   bars are drawn to one scale for the whole table, the largest filling its
+   cell, so that a share of a few per cent still shows. */
+function tableShares(r, out, view, withProgeny) {
+  if (!sharesOn()) return null;
+  const maps = out.map((o) => eSharesOf(r, o, view, withProgeny));
+  const max = Math.max(0, ...maps.flatMap((m) => [...m.values()].map((x) => x.v)));
+  return max > 0 ? { maps, max } : null;
+}
+/* A cell of the tissue table, with its bar when the switch is on. */
+function shareCell(td, shares, k, name) {
+  const share = shares?.maps[k].get(name);
+  if (!share) return td;
+  td.classList.add('dc-share');
+  if (share.part) td.classList.add('part');
+  td.style.setProperty('--share', `${(100 * share.v / shares.max).toFixed(2)}%`);
+  td.dataset.share = share.v.toPrecision(8);
+  td.setAttribute('data-tip', `${percent(100 * share.v)} of e${share.part ? `, a part of ${share.part}` : ''}`);
+  return td;
+}
+const sharesOn = () => !!$('dcShares')?.checked;
+const sharesNote = (shares) => `Bars: each tissue’s share of e at that age, to one scale for the whole table, the longest ${percent(100 * shares.max)} of e (pointing at a cell gives its share); solid for the terms of e (the weighted tissues and the remainder, which add up to the whole), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon).`;
+
 function renderCoef() {
   const r = state.result;
   $('dcCoefEmpty').hidden = !!r;
@@ -914,8 +975,9 @@ function renderCoef() {
   const sex = sexView();
   $('dcSexBar').hidden = r.system !== '103';
   const Hof = (o, name) => (r.system === '60' ? o.H[name] : o.H[sex === 'avg' ? 'avg' : sex][name]);
+  const shares = tableShares(r, out, sex);
   const row = (name, w, cls) => h('tr', { class: cls }, h('td', {}, name, w != null ? h('span', { class: 'dc-w' }, `  wT ${w}`) : null),
-    out.map((o) => h('td', {}, sci(Hof(o, name), d))));
+    out.map((o, k) => shareCell(h('td', {}, sci(Hof(o, name), d)), shares, k, name)));
   const group = (text) => h('tr', { class: 'group' }, h('td', { colspan: out.length + 1 }, text));
   const ht = $('dcHTable');
   ht.replaceChildren(
@@ -946,6 +1008,7 @@ function renderCoef() {
   }
   if (r.system === '103') items.push(h('li', {}, 'Effective dose: the average of the male and female equivalent doses, weighted by the tissue weighting factors of Publication 103. “Gonads” are the testes for males and the ovaries for females, “Prostate/uterus” the prostate for males and the uterus for females.'));
   else items.push(h('li', {}, 'Effective dose: the tissue weighting factors of Publication 60; gonads the higher of testes and ovaries; colon 0.57 upper + 0.43 lower large intestine; oesophagus the thymus dose, as in ICRP 72.'));
+  if (shares) items.push(h('li', {}, `${sharesNote(shares)}${r.system === '103' && sex !== 'avg' ? ` In the ${sex === 'M' ? 'Male' : 'Female'} view each bar is that sex’s half of the term, as e averages the sexes.` : ''}${r.system === '60' ? ' The remainder’s tissues share it by their masses, which change as a child grows, or by the splitting rule.' : ''}`));
   $('dcNotes').replaceChildren(h('ul', {}, items));
 }
 
@@ -974,8 +1037,9 @@ function renderCoefExternal(r) {
   $('dcSexBar').hidden = true;
   $('dcHHead').replaceChildren(`Equivalent dose rate${withP ? ', with the progeny in equilibrium' : ''} `, h('span', { class: 'dc-unit' }, ...supText(unit)));
   const Hof = (o, name) => (withP ? o.progeny.H : o.H)[name];
+  const shares = tableShares(r, out, 'avg', withP);
   const row = (name, w, cls) => h('tr', { class: cls }, h('td', {}, name, w != null ? h('span', { class: 'dc-w' }, `  wT ${w}`) : null),
-    out.map((o) => h('td', {}, sci(Hof(o, name) * f, d))));
+    out.map((o, k) => shareCell(h('td', {}, sci(Hof(o, name) * f, d)), shares, k, name)));
   const group = (text) => h('tr', { class: 'group' }, h('td', { colspan: out.length + 1 }, text));
   $('dcHTable').replaceChildren(
     h('thead', {}, h('tr', {}, h('th', {}, 'Tissue'), out.map((o) => h('th', {}, ageLabel(o.age, true))))),
@@ -1004,6 +1068,7 @@ function renderCoefExternal(r) {
   if (chain.length === 0 && !first.members) items.pop();
   const splits = out.filter((o) => (withP ? o.progeny.split : o.split));
   if (sixty && splits.length) items.push(h('li', {}, `The remainder is split at ${splits.map((o) => ageLabel(o.age, true).toLowerCase()).join(', ')}: ${(withP ? splits[0].progeny.split : splits[0].split)} takes half of its weight.`));
+  if (shares) items.push(h('li', {}, `${sharesNote(shares)}${sixty ? ' The remainder’s tissues share it by their adult masses, or by the splitting rule.' : ' The remainder’s tissues share it equally; the prostate and the uterus each half of their row’s share.'}`));
   $('dcNotes').replaceChildren(h('ul', {}, items));
 }
 const GEOMETRY_PLACE = { air: 'the air', water: 'the water', surface: 'the ground’s surface', soil1: 'the top 1 cm of soil', soil5: 'the top 5 cm of soil', soil15: 'the top 15 cm of soil', soilInf: 'soil, to any depth' };
@@ -2522,6 +2587,7 @@ const TOPICS = {
         'e from photons · bremsstrahlung · electrons: the parts of the nuclide’s own e; the electrons count through the skin’s weight.',
         'In the ICRP 60 system HE beside e: the effective dose equivalent of ICRP 26 that Federal Guidance Report 12 tabulates.',
         'The switch above the tissues: the nuclide alone, or with its progeny in equilibrium.',
+        'Bars (the box above the tissues): each tissue’s share of e, as a bar behind its number; solid for the weighted tissues and the remainder, which add up to e, light for their parts (the remainder’s tissues, the testes and ovaries of the gonads, the halves of the colon). Pointing at a cell gives its percentage.',
       ] },
       { heading: 'Saving', text: 'Save as CSV writes e, and every tissue’s dose rate, alone and with the progeny, at every age, in the unit chosen.' },
     ],
@@ -2533,6 +2599,7 @@ const TOPICS = {
       { heading: 'Reading the tables', list: [
         'e(50) for adults is committed over 50 years; e(70) for children, up to age 70.',
         'The equivalent doses are of the tissues weighted in e, of the remainder’s tissues and of some others; in the ICRP 103 system the average of the sexes, or male or female (the switch above the table).',
+        'Bars (the box above the table): each tissue’s share of e at that age, as a bar behind its number, the cell’s width being all of e. Solid for the terms of e, which add up to the whole: each weighted tissue (wT × its dose) and the remainder; light for their parts: each remainder tissue (equally in the ICRP 103 system; by mass, or the splitting rule, in the ICRP 60 system), the gonad taken (ICRP 60) and the halves of the colon. Pointing at a cell gives its percentage.',
         'Digits: two, as the ICRP prints them; three or four for comparing. The models are not that precise.',
         'When a setting has changed since the calculation, a note says so and the numbers are dimmed until you calculate again.',
       ] },
@@ -2711,6 +2778,7 @@ registerActions({
   'dc:stop': () => { stopRank(RANK.run); },
   'dc:tab': (e, el) => showTab(el.dataset.tab),
   'dc:full': () => setFull(!document.documentElement.classList.contains('dc-full')),
+  'dc:shares': () => { renderCoef(); save(); },
   'dc:redraw': () => { if (state.tab === 'coef') renderCoef(); else if (state.tab === 'retention') renderRetention(); else if (state.tab === 'model') renderModel(); else if (state.tab === 'chain') renderChain(); else if (state.tab === 'risk') renderRisk(); else if (state.tab === 'radon') renderRadon(); },
   'dc:radonKind': () => renderRadon(),
   'dc:radonParams': () => renderRadon(),
@@ -2784,6 +2852,7 @@ async function start() {
   if (Array.isArray(s.ages)) for (const i of $('dcAges').querySelectorAll('input')) i.checked = s.ages.includes(Number(i.value));
   if (s.cutoff) $('dcCutoff').value = s.cutoff;
   if (s.rtol) $('dcRtol').value = s.rtol;
+  if (s.shares) $('dcShares').checked = true;
   if (['model', 'activity', 'dose'].includes(s.model?.show)) VIEW.show = s.model.show;
   if (['received', 'rate'].includes(s.model?.dose)) VIEW.dose = s.model.dose;
   if (['member', 'chain'].includes(s.model?.from)) VIEW.from = s.model.from;

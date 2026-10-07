@@ -123,6 +123,7 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 
 /* A segmented choice of two or three. */
 .dc-seg { display: inline-flex; border: 1px solid var(--input-border); border-radius: 6px; overflow: hidden; margin-top: 2px; }
+.dc-seg[hidden] { display: none; }
 .dc-seg label { position: relative; cursor: pointer; }
 /* The radio stays invisible when disabled too (kvot.css gives disabled radios opacity 0.55). */
 .dc-seg input[type="radio"], .dc-seg input[type="radio"]:disabled { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
@@ -262,6 +263,14 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 .dc-table tbody tr:nth-child(even) { background: var(--table-stripe); }
 .dc-table tbody tr:hover { background: var(--bg-surface); }
 .dc-table tr.sum td { font-weight: 700; }
+/* Each tissue's share of e as a bar behind its number (the Coefficients tab's
+   switch): --share is the part of the cell's width to fill, to one scale for
+   the table; solid for a term of e, light for a part of one. */
+.dc { --dc-share: color-mix(in srgb, var(--color-kvot-accent) 36%, transparent); --dc-share-part: color-mix(in srgb, var(--color-kvot-accent) 16%, transparent); }
+.dc-table td.dc-share { background-image: linear-gradient(var(--dc-share), var(--dc-share)); background-size: var(--share) 68%;
+  background-position: 0 50%; background-repeat: no-repeat; }
+.dc-table td.dc-share.part { background-image: linear-gradient(var(--dc-share-part), var(--dc-share-part)); }
+.dc-hbar { gap: 8px 20px; }
 .dc-table tr.group td { background: var(--bg-surface); font-weight: 600; font-family: verdana, sans-serif; color: var(--text-secondary); }
 .dc-table td.dim { color: var(--text-muted); }
 .dc-table td.big { font-size: 14px; font-weight: 700; color: var(--text-primary); }

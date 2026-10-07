@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261007">
+  <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261007b">
   <!-- The page's own mark: the four letters of the ICRP's logotype in the kvot
        mark's language (see dose-icon.svg). SVG first, since it stays sharp on
        a high-density screen; the PNG is for anything that will not take one. -->
@@ -201,18 +201,19 @@
             </div>
             <div class="dc-table-wrap"><table class="dc-table" id="dcETable"></table></div>
             <h3 class="dc-h3" id="dcHHead">Committed equivalent dose <span class="dc-unit">Sv per Bq</span></h3>
-            <div class="dc-toolbar" id="dcProgenyBar" hidden>
-              <div class="dc-seg small" role="radiogroup" aria-label="Progeny">
+            <!-- One row above the tissues: the sex (ICRP 103 intakes) or the progeny (external
+                 exposure), and the bars of each tissue's share of e. -->
+            <div class="dc-toolbar dc-hbar">
+              <div class="dc-seg small" id="dcProgenyBar" role="radiogroup" aria-label="Progeny" hidden>
                 <label><input type="radio" name="dcProgeny" value="alone" checked data-on-change="dc:redraw"><span>The nuclide alone</span></label>
                 <label><input type="radio" name="dcProgeny" value="with" data-on-change="dc:redraw"><span>With its progeny in equilibrium</span></label>
               </div>
-            </div>
-            <div class="dc-toolbar" id="dcSexBar">
-              <div class="dc-seg small" role="radiogroup" aria-label="Sex">
+              <div class="dc-seg small" id="dcSexBar" role="radiogroup" aria-label="Sex">
                 <label><input type="radio" name="dcSex" value="avg" checked data-on-change="dc:redraw"><span>Average of the sexes</span></label>
                 <label><input type="radio" name="dcSex" value="M" data-on-change="dc:redraw"><span>Male</span></label>
                 <label><input type="radio" name="dcSex" value="F" data-on-change="dc:redraw"><span>Female</span></label>
               </div>
+              <label class="dc-check dc-shares-check" data-tip="A bar in each cell, as long as the tissue’s share of the effective dose at that age: solid for the terms of e (the weighted tissues and the remainder), light for their parts (the remainder’s tissues; the testes and ovaries of the gonads; the halves of the colon)"><input type="checkbox" id="dcShares" data-on-change="dc:shares"><span>Bars: each tissue’s share of e</span></label>
             </div>
             <div class="dc-table-wrap"><table class="dc-table" id="dcHTable"></table></div>
             <div class="dc-notes" id="dcNotes"></div>
@@ -862,6 +863,6 @@
   -->
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script type="module" src="./resources/js/dose/ui.js?v=20261007"></script>
+  <script type="module" src="./resources/js/dose/ui.js?v=20261007b"></script>
 </body>
 </html>

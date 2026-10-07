@@ -310,7 +310,8 @@ const REMAINDER_26 = ['Adrenals', 'Brain', 'GB_Wall', 'Esophagus', 'St_Wall', 'S
  * @param {'60'|'103'} system
  * @param {string[]} names  the report's tissue names
  * @param {ArrayLike<number>} h  their values
- * @returns {{E: number, H: object, wE: Float64Array, HE?: number, wHE?: Float64Array, split?: string|null, gonads?: string}}
+ * @returns {{E: number, H: object, wE: Float64Array, remainderShares: object, HE?: number, wHE?: Float64Array, split?: string|null, gonads?: string}}
+ *   remainderShares: each remainder tissue's part of H.Remainder (they add up to it)
  */
 export function effective(system, names, h) {
   const at = Object.fromEntries(names.map((n, i) => [n, i]));
@@ -323,7 +324,8 @@ export function effective(system, names, h) {
     const give = (k, w) => { for (const p of OF_15[k]) wE[at[p]] += w / OF_15[k].length; };
     for (const [k, w] of Object.entries(W_15)) give(k, w);
     for (const k of REMAINDER_15) give(k, 0.12 / REMAINDER_15.length);
-    return { E: dot(wE), H, wE };
+    const remainderShares = Object.fromEntries(REMAINDER_15.map((k) => [k, H[k] / REMAINDER_15.length]));
+    return { E: dot(wE), H, wE, remainderShares };
   }
   for (const [k, parts] of Object.entries(OF_12)) H[k] = parts.reduce((a, [p, w]) => a + w * h[at[p]], 0);
   const gonads = H.Testes >= H.Ovaries ? 'Testes' : 'Ovaries';
@@ -346,7 +348,8 @@ export function effective(system, names, h) {
   const g26 = h[at.Testes] >= h[at.Ovaries] ? 'Testes' : 'Ovaries';
   for (const [p, w] of [[g26, 0.25], ['Breasts', 0.15], ['R_Marrow', 0.12], ['Lng_Tiss', 0.12], ['Thyroid', 0.03], ['Bone_Sur', 0.03]]) wHE[at[p]] += w;
   for (const p of [...REMAINDER_26].sort((a, b) => h[at[b]] - h[at[a]]).slice(0, 5)) wHE[at[p]] += 0.30 / 5;
-  return { E: dot(wE), H, wE, HE: dot(wHE), wHE, split, gonads };
+  const remainderShares = Object.fromEntries(rem.map((k) => [k, (wRem[k] || 0) * H[k]]));
+  return { E: dot(wE), H, wE, remainderShares, HE: dot(wHE), wHE, split, gonads };
 }
 
 /* ---- progeny in equilibrium ---------------------------------------------------- */
@@ -424,12 +427,12 @@ export function externalRun(X, data, chain, system, geometry, ages) {
     });
     return {
       age, phantom, external: true, geometry, per: own.per,
-      E: a.E, H: a.H, HE: a.HE, split: a.split ?? null, gonads: a.gonads ?? null,
+      E: a.E, H: a.H, HE: a.HE, split: a.split ?? null, gonads: a.gonads ?? null, remainderShares: a.remainderShares,
       parts: {
         photon: part(own.photon), brems: part(own.brems),
         electron: { E: a.wE[skin] * own.electron, HE: a.wHE ? 0 : undefined, skin: own.electron },
       },
-      progeny: { E: p.E, H: p.H, HE: p.HE, split: p.split ?? null, gonads: p.gonads ?? null },
+      progeny: { E: p.E, H: p.H, HE: p.HE, split: p.split ?? null, gonads: p.gonads ?? null, remainderShares: p.remainderShares },
       members, days: eq.days, lines,
       ms: (typeof performance !== 'undefined' ? performance : Date).now() - t0,
     };

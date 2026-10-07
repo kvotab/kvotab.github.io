@@ -291,6 +291,24 @@ if (!SYSTEM || SYSTEM === '103') {
   check(`the dose groups' shares add up to e (Ra-226, Rn-222 by sex, ICRP 60 Th-232): within ${worst.toExponential(1)}`, groups && worst < 1e-12);
 }
 
+/* ---- each remainder tissue's part of the remainder (ICRP 60; the tissue table's bars) ---------- */
+// They add up to the remainder's dose whichever way it is taken: by mass, the
+// masses changing as a child grows (Cs-137 at 3 months), or split (Si-31's
+// small intestine, Gd-149's ET at 3 months), the split tissue taking half.
+{
+  const out = [];
+  for (const [nuc, route, type] of [['Cs-137', 'ingestion'], ['Si-31', 'ingestion'], ['Gd-149', 'inhalation', 'F']]) {
+    await d60.prepare(nuc);
+    for (const r of coefficients60(d60, recipe60(d60.cases, route, { nuclide: nuc, bio: null, f1file: null, type, lung: null }), [100, 7300])) {
+      const sum = Object.values(r.remainderShares).reduce((a, v) => a + v, 0);
+      const half = !r.split || Math.abs(r.remainderShares[r.split] / (0.5 * r.H[r.split]) - 1) < 1e-12;
+      out.push([`${nuc} ${r.age} d${r.split ? ` (split ${r.split})` : ''}`, Math.abs(sum / r.H.Remainder - 1), half]);
+    }
+  }
+  check(`ICRP 60: the remainder tissues' parts add up to the remainder, by mass or split (${out.map(([k]) => k).join(', ')})`,
+    out.every(([, dev, half]) => dev < 1e-12 && half) && out.some(([k]) => k.includes('split')), out.map(([k, dev]) => `${k} ${dev.toExponential(1)}`).join('; '));
+}
+
 /* ---- against the ICRP's coefficients ---------------------------------------------------- */
 const SAMPLE60 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Th-232)$/;
 const SAMPLE103 = /^(H-3|Co-60|Sr-90|I-131|Cs-137|Ra-226|U-238|Pu-239|Am-241|Ce-144|Pb-210|Po-210|Na-22|K-40|Ti-44|Sn-113|Hg-203|At-210|Fr-223)$/;

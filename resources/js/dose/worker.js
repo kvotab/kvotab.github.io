@@ -140,7 +140,7 @@ function specFor60(data, spec) {
 function summarise(sys, data, r, withSystem, ms) {
   const S = r.system;
   const out = { age: r.age, intakeAge: r.intakeAge, E: r.E, H: r.H, ms, stats: r.stats, transformations: r.transformations, notes: S.notes || [] };
-  if (sys === '60') out.split = r.split;
+  if (sys === '60') Object.assign(out, { split: r.split, remainderShares: r.remainderShares });
   if (withSystem) Object.assign(out, systemSummary(sys, data, S));
   if (r.series) out.series = seriesSummary(sys, r);
   return out;
@@ -180,7 +180,8 @@ function describe(sys, data, spec, age0) {
     // The remainder, and the remainder with each of its tissues split off (dose60.js).
     regions = TARGETS_60.length;
     sexes = 0;
-    targets = regions + 1 + Object.keys(REMAINDER_60).length;
+    const nr = Object.keys(REMAINDER_60).length;
+    targets = regions + 1 + 2 * nr + nr * nr; // dose60.js's virtual targets
   } else {
     const adultAge = data.elements[spec.nuclide.split('-')[0]]?.adultAge || 7300;
     const split = sexSpecific103(data, spec);
