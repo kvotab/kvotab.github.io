@@ -21,6 +21,15 @@ var AVOGADRO = 6.02214076e23;
 function molesPerBq(rn) {
     return 86400 * YEAR_DAYS * rn.Halflife_y / Math.log(2) / AVOGADRO;
 }
+
+/* A number typed into a field, or NaN: 6.21E12, 6,21e12 and 6 210 000 all
+   read, a comma being the decimal mark, whatever language the browser is
+   in. Not a sign in front, nor hex, Infinity or 1e999. */
+function readNumber(text) {
+    var s = String(text).replace(/\s+/g, '').replace(',', '.').replace('−', '-');
+    var v = /^(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s) ? Number(s) : NaN;
+    return Number.isFinite(v) ? v : NaN;
+}
 $(function () {
     $.widget("custom.catcomplete", $.ui.autocomplete, {
         _create: function () {

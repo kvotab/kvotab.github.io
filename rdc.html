@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
     <link href="./vendors/css/jstree/style.min.css?v=20260911" rel="stylesheet" />
-    <link href="./resources/css/rdc.css?v=20261006" rel="stylesheet" />
+    <link href="./resources/css/rdc.css?v=20261007" rel="stylesheet" />
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -105,12 +105,6 @@
 #chartdialog .chart-time-row .chart-control{height:100%;border:0;border-radius:0;background:none;box-shadow:none}
 #chartdialog .chart-time-row .chart-control:hover,#chartdialog .chart-time-row .chart-control:focus{box-shadow:none}
 #chartdialog .chart-time-row #timeunit{border-left:1px solid var(--border-color);border-radius:0 7px 7px 0}
-/* The page forces number spinners visible; inside a joined control this one
-   reads as a third element, and stepping a horizon of 1e11 by one is not
-   what anybody wants from it. The value is typed. */
-#chartdialog #timeinput::-webkit-inner-spin-button,
-#chartdialog #timeinput::-webkit-outer-spin-button{-webkit-appearance:none;appearance:none;margin:0}
-#chartdialog #timeinput{-moz-appearance:textfield;appearance:textfield}
 #chartdialog .chart-badge{display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;height:34px;padding:0 11px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);color:var(--text-muted);font-size:10px;font-weight:650;letter-spacing:.02em;white-space:nowrap}
 #chartdialog .chart-badge span{width:7px;height:7px;border-radius:50%;background:var(--color-kvot-bright)}
 #chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(99,80,63,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(45,34,25,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(177,103,45,.12)}#chartdialog .modebar-btn path{fill:#655347!important}
@@ -320,7 +314,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
             <div class="chart-field chart-field-time">
             <label id="timelabel" for="timeinput" class="chart-label">Time horizon</label>
             <div class="chart-time-row">
-            <input id="timeinput" class="chart-control" type="number" min="0" value="100">
+            <input id="timeinput" class="chart-control" type="text" spellcheck="false" autocapitalize="off" value="100">
             <select name="timeunit" id="timeunit" class="chart-control" aria-label="Time unit">
                 <option value='second'>seconds</option>
                 <option value='minute'>minutes</option>
@@ -377,10 +371,10 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
       <h3 id="icdialog-title" class="ic-dialog-title">Initial inventory</h3>
       <div class="ic-dialog-body">
         <label class="ic-field">Activity<br>
-          <input type="number" min="0" id="ic-bq" name="ICBQ" value="0"> Bq
+          <input type="text" spellcheck="false" autocapitalize="off" id="ic-bq" name="ICBQ" value="0"> Bq
         </label>
         <label class="ic-field">Amount<br>
-          <input type="number" min="0" id="ic-mole" name="ICMOLE" value="0"> mol
+          <input type="text" spellcheck="false" autocapitalize="off" id="ic-mole" name="ICMOLE" value="0"> mol
         </label>
       </div>
       <div class="ic-dialog-footer">
@@ -399,7 +393,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260925"></script>
-<script src="./resources/js/rdc.js?v=20261006"></script>
+<script src="./resources/js/rdc.js?v=20261007"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
 KVOT.renderHeader('Radionuclide Decay Chains <a href="https://www.icrp.org/publication.asp?id=ICRP%20Publication%20107" style="font-size: 0.5em;">ICRP Publication 107</a>',
@@ -1892,22 +1886,32 @@ const icOkButton = document.getElementById('ic-ok');
 const icCancelButton = document.getElementById('ic-cancel');
 let activeInventoryNode = null;
 let activeInventoryFactor = 0;
+/* What a field of the dialog holds: a number, 0 when it is empty, or NaN
+   for text that is no number (yet: 6.21E on its way to 6.21E12). */
+function icValue(input){const t=input.value.trim();return t===''?0:readNumber(t);}
+/* A field marked as holding no number, or the mark taken off. */
+function icMark(input,bad){input.setCustomValidity(bad?'Enter a number of zero or more, such as 6.21E12 or 6,21e12.':'');if(bad)input.setAttribute('aria-invalid','true');else input.removeAttribute('aria-invalid');}
+/* A number put into a field, unmarked; nothing for one that is not finite. */
+function icShow(input,v){icMark(input,false);input.value=Number.isFinite(v)?v:'';}
 function updateIC(node) {
  const rndata=getRn(node.id()); activeInventoryNode=node;
  activeInventoryFactor=molesPerBq(rndata);
- icDialogTitle.textContent='Initial inventory: '+node.id(); icBqInput.value=node.data('IC');
- icMolInput.value=Number(icBqInput.value)*activeInventoryFactor; icDialog.showModal();
+ icDialogTitle.textContent='Initial inventory: '+node.id(); icShow(icBqInput,node.data('IC'));
+ icShow(icMolInput,node.data('IC')*activeInventoryFactor); icDialog.showModal();
 }
-icBqInput.addEventListener('input',function(){icMolInput.value=Number(icBqInput.value)*activeInventoryFactor;});
-icMolInput.addEventListener('input',function(){icBqInput.value=activeInventoryFactor>0?Number(icMolInput.value)/activeInventoryFactor:0;});
+/* Each field follows a number typed into the other; text that is no number (yet) leaves it as it was. */
+icBqInput.addEventListener('input',function(){const v=icValue(icBqInput);if(Number.isNaN(v))return;icMark(icBqInput,false);icShow(icMolInput,v*activeInventoryFactor);});
+icMolInput.addEventListener('input',function(){const v=icValue(icMolInput);if(Number.isNaN(v))return;icMark(icMolInput,false);icShow(icBqInput,activeInventoryFactor>0?v/activeInventoryFactor:0);});
+/* Left as no number, a field is marked, and OK keeps the dialog open over it. */
+[icBqInput,icMolInput].forEach(function(input){input.addEventListener('change',function(){if(Number.isNaN(icValue(input)))icMark(input,true);});});
 icOkButton.addEventListener('click',function(){
- if(!activeInventoryNode)return; const activity=Number(icBqInput.value);
- if(!Number.isFinite(activity)||activity<0){icBqInput.setCustomValidity('Enter a non-negative finite activity.');icBqInput.reportValidity();return;}
- icBqInput.setCustomValidity(''); activeInventoryNode.data('IC',activity);updateLevel('IC');runAndUpdateChart();icDialog.close();
+ if(!activeInventoryNode)return;
+ for(const input of [icBqInput,icMolInput])if(Number.isNaN(icValue(input))){icMark(input,true);input.reportValidity();return;}
+ activeInventoryNode.data('IC',icValue(icBqInput));updateLevel('IC');runAndUpdateChart();icDialog.close();
 });
 icCancelButton.addEventListener('click',function(){icDialog.close();});
 icDialog.addEventListener('click',function(e){if(e.target===icDialog)icDialog.close();});
-icDialog.addEventListener('close',function(){activeInventoryNode=null;activeInventoryFactor=0;icBqInput.setCustomValidity('');});
+icDialog.addEventListener('close',function(){activeInventoryNode=null;activeInventoryFactor=0;icMark(icBqInput,false);icMark(icMolInput,false);});
 
 function collectRadionuclideNames(nodes, names) {
     names = names || [];
@@ -2402,8 +2406,8 @@ function runAndUpdateChart() {
     var yaxistitle = "Activity (Bq)";
     var data = new Array(n);
     if (n > 0) {
-        var timeInputElement=document.getElementById("timeinput"),endtime=Number(timeInputElement.value);
-        if(!Number.isFinite(endtime)||endtime<=0){timeInputElement.setCustomValidity('Enter a positive finite time.');timeInputElement.reportValidity();showUserError('The chart time must be a positive finite number.');return;}
+        var timeInputElement=document.getElementById("timeinput"),endtime=readNumber(timeInputElement.value);
+        if(!Number.isFinite(endtime)||endtime<=0){timeInputElement.setCustomValidity('Enter a time greater than zero, such as 100 or 2,5e3.');timeInputElement.reportValidity();showUserError('The chart time must be a positive finite number.');return;}
         timeInputElement.setCustomValidity(''); timeunit=document.getElementById("timeunit").value;
         var timescale = 1;
         switch (timeunit) {

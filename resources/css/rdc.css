@@ -260,9 +260,6 @@
 
   .inputdiv and #rnsettings went with it. No page has used either.
 */
-input[type=number]::-webkit-inner-spin-button {
-    opacity: 1
-}
 #search-input{
 	background-color:rgba(255, 255, 255, 0.05);
 	border-color:var(--color-kvot-bright);
@@ -746,6 +743,10 @@ pre {
   outline: none;
   border-color: var(--color-kvot-bright);
   box-shadow: 0 0 0 3px rgba(243,184,123,.15);
+}
+.ic-field input[aria-invalid="true"] {
+  border-color: var(--color-kvot-accent);
+  box-shadow: 0 0 0 1px var(--color-kvot-accent);
 }
 .ic-dialog-footer {
   display: flex;

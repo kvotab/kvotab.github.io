@@ -472,6 +472,30 @@ inventory; the choice kept over a reload; Open ENSDF... with
 a file dropped on the page; the dialog for a release at NNDC, in one part and
 in three; and a phone, where the bar takes two lines with its menus at 16 px.
 
+## test-chrome-rdc-numbers.py
+
+Numbers typed into rdc.html: the initial inventory and the time horizon.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-rdc-numbers.py
+
+The Initial inventory dialog takes an activity in Bq or an amount in mol, each
+field following the other, and the chart takes a time horizon. All three were
+the browser's number fields, which read a comma by the browser's language: in
+an English-speaking Chrome "6,21E12" Bq was 6.21E14 Bq, "1,5" mol was 15 mol
+and "2,5e3" years was 25 000 years, with nothing said, and letters could not
+be typed, so OK took the empty field for no inventory at all. They are text
+fields now, read by rdc.js's `readNumber()`: a comma or a point for the decimal
+mark and an exponent with e or E, whatever the language.
+
+The test types with real key presses in the chain of Ca-41: 6,21E12 Bq and
+6.21E12 Bq are both 6.21E12 Bq, with the mol field following; 1,5 mol is
+1.5 mol, with the Bq field following; 6.21E, on its way to 6.21E12, leaves the
+other field as it was; text that is no number, and a negative number, are
+marked, OK keeps the dialog open over them and the inventory stays, and a
+number typed after takes the mark off; a time horizon of 2,5e3 years ends the
+chart at 2500 years, and one that is no number is refused and leaves the chart
+as it was. 18 checks; the page before the change fails 11 of them.
+
 ## test-chrome-sl-idle.py
 
 Whether the SL boards stop calling the network when nobody is looking.
