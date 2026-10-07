@@ -84,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-140 checks: the built-in release loads; the tab icon (drawn by
+148 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -124,7 +124,10 @@ do the same from the page, a pinch (the wheel with Ctrl) zooms about the
 pointer with the box under it staying put and the wheel alone does not zoom,
 the SVG and PNG come out at the drawing's own size however it is zoomed, a
 click on a box keeps the zoom, and so does a view that changes size, and a
-new chain opens whole again;
+new chain opens whole again; the zoom buttons, on the chain's bar and on the
+chart, draw − + ⤢ rather than set them in type, each drawing in the middle
+of its button and its lines in the middle of the drawing (the glyphs sat a
+pixel or more low, and ⤢ came from another font, smaller still);
 the chain settings are there in the chart view as well; the six
 panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
 the panel's row of tabs ends at the same line as the main area's, whether
@@ -152,7 +155,16 @@ the tooltips give each member's share
 of its decays that reaches 226Ra (226Ac 17 %); at 1 y 238U goes to 234U via
 234Th and 234mPa and the note names what was left out, nearest first; a box
 opens its member without moving the start; the parents save as
-parents-226Ra.svg, .png and .csv; their inventory starts empty, and 1 g of
+parents-226Ra.svg, .png and .csv; a member opened from the chain has a
+button on the Nuclide tab that the start has not, "End the chain here" going
+up (234U among the parents of 226Ra: the parents of 234U are drawn and the
+button goes) and "Start the chain here" going down (234U in the chain of
+238U), which stays when the view turns to the chart, where the chain of 238U
+is still drawn, and there moves the start: the chart draws the chain of
+234U, the view tab names it and the chain view starts from it; a stable
+member (206Pb) has no button going down and has one going up, and a member
+opened from the chain's table has it too; the inventory of the parents of
+226Ra starts empty, and 1 g of
 230Th grows 226Ra into equilibrium with it; a stable nuclide (206Pb) has
 parents, and the setting beside the view tabs turns the chain back down, to
 nothing after it;

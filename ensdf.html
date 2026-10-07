@@ -27,7 +27,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261006b">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261006c">
   <!-- The chart's own mark, in the kvot mark's language (see
        ensdf-icon.svg). SVG first, since it stays sharp on a high-density
        screen; the PNG is for anything that will not take one. -->
@@ -103,10 +103,11 @@
 
           <section class="nz-view" data-viewpane="chart" aria-label="Chart of nuclides">
             <div class="nz-chart" id="nzChart">
+              <!-- − + ⤢ are drawn, not set in type, here and on the chain's bar: see .nz-icon in ensdf.css -->
               <div class="nz-tools" id="nzChartTools" role="group" aria-label="Chart tools">
-                <button type="button" class="nz-icon" data-on-click="nz:zoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
-                <button type="button" class="nz-icon" data-on-click="nz:zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
-                <button type="button" class="nz-icon" data-on-click="nz:fit" title="Whole chart (0)" aria-label="Show the whole chart">⤢</button>
+                <button type="button" class="nz-icon" data-on-click="nz:zoomOut" title="Zoom out (−)" aria-label="Zoom out"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+                <button type="button" class="nz-icon" data-on-click="nz:zoomIn" title="Zoom in (+)" aria-label="Zoom in"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8M7 3v8"/></svg></button>
+                <button type="button" class="nz-icon" data-on-click="nz:fit" title="Whole chart (0)" aria-label="Show the whole chart"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 11 11 3M7.5 3H11v3.5M3 7.5V11h3.5"/></svg></button>
                 <button type="button" class="nz-btn secondary small" data-on-click="nz:chartPng" title="The chart as it is on screen, as a PNG image">PNG</button>
                 <button type="button" class="nz-btn secondary small" data-on-click="nz:chartCsv" title="Every ground state as a table: half-life, decay modes, Q-values">CSV</button>
               </div>
@@ -130,9 +131,9 @@
               <span class="nz-spacer"></span>
               <!-- Zoom, as on the chart: also + − 0, and a pinch about the pointer -->
               <span class="nz-zoom" role="group" aria-label="Zoom the decay chain">
-                <button type="button" class="nz-icon" data-on-click="nz:chainZoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
-                <button type="button" class="nz-icon" data-on-click="nz:chainZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
-                <button type="button" class="nz-icon" data-on-click="nz:chainWhole" title="The whole chain (0)" aria-label="Show the whole chain">⤢</button>
+                <button type="button" class="nz-icon" data-on-click="nz:chainZoomOut" title="Zoom out (−)" aria-label="Zoom out"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+                <button type="button" class="nz-icon" data-on-click="nz:chainZoomIn" title="Zoom in (+)" aria-label="Zoom in"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8M7 3v8"/></svg></button>
+                <button type="button" class="nz-icon" data-on-click="nz:chainWhole" title="The whole chain (0)" aria-label="Show the whole chain"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 11 11 3M7.5 3H11v3.5M3 7.5V11h3.5"/></svg></button>
               </span>
               <button type="button" class="nz-btn secondary small" data-on-click="nz:chainFrame" title="Show the chain on the chart of nuclides">On chart</button>
               <button type="button" class="nz-btn secondary small" data-on-click="nz:chainSvg">SVG</button>
@@ -180,6 +181,7 @@
             <p><b>The series.</b> The other layout, chosen in the <i>Layout</i> menu on the chain’s bar, draws the same chain the way <a href="./rdc.html">Radionuclide Decay Chains</a> draws its chains: a circle for each state, with the mass number over the atomic number before the symbol and the half-life below, α decay straight down, β⁻ a step to the right and electron capture a step to the left, so that a decay series runs down the page as a column with short steps across. Across is <i>Z</i> − <i>N</i>, and each row is one mass number, as on the grid. Every arrow is labelled with its decay mode over its share, an isomer stands above the state it decays to, and spontaneous fission is an arrow out to the side. Arrows bend round circles in their way as they do round boxes. The settings, the table and the notes are the same in both layouts; the SVG and PNG files and the buckets of the Inventory tab follow the layout chosen, and the page remembers it.</p>
             <p><b>Parents.</b> The chain can also run the other way. Set it to <i>parents</i>, beside the view tabs, and it gathers every nuclide and state whose decays come to the one chosen, directly or through others — its parents, their parents and so on — and draws them the same way and by the same settings, the chosen nuclide at the foot of the arrows. Only the branches that lead to it are drawn: <sup>226</sup>Ac comes to <sup>226</sup>Ra by its 17 % of electron capture, and its β⁻ branch to <sup>226</sup>Th, which never gets there, is left out. The share on an arrow is still of the decays of the nuclide it leaves; the table gives the share of each member’s decays that reaches the chosen one. The half-life setting works as it does going down, and a short-lived member that nothing drawn decays to is not drawn at all: with members under a year left out, <sup>226</sup>Ra has <sup>230</sup>Th, <sup>234</sup>U, <sup>238</sup>U (via <sup>234</sup>Th and <sup>234m</sup>Pa) and <sup>238</sup>Pu above it, and <sup>242</sup>Pu, <sup>246</sup>Cm and a few more above them. A stable nuclide has parents too. The Nuclide tab lists those that decay straight to the state on show, each with the share of its decays that lands there, as the file gives it.</p>
             <p class="nz-dim">Going up and going down agree: for every member above a nuclide, the share of its decays that reaches the nuclide is the nuclide’s share in that member’s own decay chain, and every arrow is the same arrow — checked for every pair in this release, at every setting.</p>
+            <p><b>Moving the start.</b> A click on a box in the chain, or on a member in the table, opens that member in the panel and leaves the chain as it is, so that the members of one chain can be looked through in turn; the chart, too, picks out the member and still draws the same chain. The Nuclide tab then offers <b>Start the chain here</b>, which draws the chain from that member instead, or, with the chain set to parents, <b>End the chain here</b>, which draws that member’s parents. A nuclide chosen on the chart, or found by the search, starts a chain of its own straight away.</p>
             <p><b>What the file does not say.</b> A few radioactive ground states have no decay mode in the adopted data set — in this release <sup>127</sup>Te and <sup>128</sup>La, whose percentage is given only in a comment — and a few give only a minor mode (<sup>251</sup>Fm lists its 1.8 % α but not the electron capture). For those the page adds the β⁻ or electron-capture branch the Q-values leave open, when only one of the two is, and marks it as inferred: a dashed arrow with a *. An excited state with no decay mode is taken to decay by γ emission.</p>
 
             <h3>Levels, radiation and data sets</h3>
@@ -243,6 +245,6 @@
   <script src="./resources/js/ensdf-chain.js?v=20261006c"></script>
   <script src="./resources/js/ensdf-inventory.js?v=20261006"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20261006e"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20261006f"></script>
 </body>
 </html>

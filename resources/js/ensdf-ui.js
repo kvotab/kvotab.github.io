@@ -468,6 +468,7 @@
       <div class="nz-title"><span class="nz-big">${nameHtml(z, a, k, nuc)}</span><span class="nz-long">${esc(nm.long)}</span></div>
       <div class="nz-zna">Z ${z} · N ${a - z} · A ${a}</div>
     </div>`);
+    html.push(chainHereHtml(z, a, k, st));
     const aq = nuc.aq || '';
     if (/OBSERVED/.test(aq)) {
       html.push('<p class="nz-inferred">Searched for and not observed: the adopted data set is marked “' + esc(aq.toLowerCase()) + '”, so the nuclide is not drawn on the chart.</p>');
@@ -553,6 +554,24 @@
       </dl>`);
     }
     pane.innerHTML = html.join('');
+  }
+
+  /*
+    A member opened from the chain -- a box, a row of its table -- leaves the
+    chain where it starts (going up, where it ends). This button moves the
+    start, or the end, to the member. It is not there for the start itself,
+    nor where the new chain would be the state alone: a stable one going
+    down, one that nothing decays to going up.
+  */
+  function chainHereHtml(z, a, k, st) {
+    const r = state.root;
+    if (!r || !st || (r.z === z && r.a === a && r.k === k)) return '';
+    const up = state.chainOpt.dir === 'up';
+    if (up ? !C.parentsOf(state.idx, z, a, k).length : !(st.br && st.br.length)) return '';
+    const here = C.plainName(z, a, k, state.idx.get(z, a));
+    const now = C.plainName(r.z, r.a, r.k, state.idx.get(r.z, r.a));
+    const title = up ? `The parents of ${here}, in place of those of ${now}` : `The decay chain from ${here}, in place of the one from ${now}`;
+    return `<div class="nz-chainhere"><button type="button" class="nz-btn secondary small" data-on-click="nz:chainHere" title="${esc(C.asciiText(title))}">${up ? 'End the chain here' : 'Start the chain here'}</button></div>`;
   }
 
   /*
@@ -1876,6 +1895,7 @@
     'nz:go': (ev, el) => { ev.preventDefault(); select({ z: +el.dataset.z, a: +el.dataset.a, k: +el.dataset.k }, { from: state.view === 'chain' ? 'chain' : 'panel' }); },
     'nz:state': (ev, el) => { ev.preventDefault(); if (state.sel) select({ z: state.sel.z, a: state.sel.a, k: +el.dataset.k }, { from: 'panel' }); },
     'nz:chainState': (ev, el) => { if (state.root) select({ z: state.root.z, a: state.root.a, k: +el.value }, { from: 'panel' }); },
+    'nz:chainHere': () => { if (state.sel) select(state.sel, { from: 'panel' }); },
     'nz:minBranch': (ev, el) => { state.chainOpt.minBranch = +el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:minLife': (ev, el) => { state.chainOpt.life = el.value; computeChain(); renderChainView(); renderPanel(); saveState(); },
     'nz:overlay': (ev, el) => { state.chainOpt.overlay = el.checked; computeChain(); saveState(); },

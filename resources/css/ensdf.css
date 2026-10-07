@@ -106,7 +106,16 @@
 .nz-btn.small { height: 24px; padding: 0 8px; font-size: 11px; }
 .nz-btn[hidden] { display: none; }
 .nz-btn:focus-visible, .nz-icon:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+/* The zoom buttons. Their − + ⤢ are drawn: set in type, each sat where its
+   font puts it, a pixel or more under the middle, and ⤢, which Verdana does
+   not have, smaller still in another font. Lines of 1.5 px, as the full
+   window's corners; on a screen of one pixel to the px, 2 px for the level
+   and upright lines, which only a whole number of pixels keeps sharp, and
+   1.75 px for the slanting ones, which look as heavy then. */
 .nz-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 26px;
   height: 24px;
   padding: 0;
@@ -114,9 +123,10 @@
   border-radius: 6px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font: 15px/1 verdana, sans-serif;
   cursor: pointer;
 }
+.nz-icon svg { display: block; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-resolution: 1dppx) { .nz-icon svg { stroke-width: 1.75; } .nz-icon svg.nz-rectilinear { stroke-width: 2; } }
 .nz-icon:hover { border-color: var(--accent-line); }
 .nz-link { padding: 0; border: 0; background: none; color: var(--link-color); font: inherit; cursor: pointer; text-decoration: underline; }
 
@@ -397,6 +407,8 @@
 .nz-big sup { font-size: 0.55em; vertical-align: 0.8em; margin-right: 1px; }
 .nz-long { color: var(--text-secondary); }
 .nz-zna { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+/* Start the chain here (End, going up): a member opened from the chain */
+.nz-chainhere { margin: 0 0 10px; }
 .nz-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
 .nz-states button {
   display: inline-flex;

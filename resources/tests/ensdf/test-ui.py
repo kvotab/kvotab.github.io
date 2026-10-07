@@ -491,6 +491,26 @@ async def main():
               (zoom['kept'], zoom['fresh'], zoom['freshWhole']), ([True, 238], True, True))
         check('... not zoomed, the chain stays whole as the view narrows; zoomed, it keeps its scale as the view widens',
               (zoom['follows'], zoom['keeps']), ([True, True], True))
+        # − + ⤢ set in type sat where the font put them, a pixel or more under the
+        # middle of the button, and ⤢ in another font, smaller still.
+        icons = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const out = [];
+          for (const v of ['chain', 'chart']) {
+            document.querySelector(`[data-view=${v}]`).click(); await sleep(150);
+            for (const b of document.querySelectorAll(`[data-viewpane=${v}] .nz-icon`)) {
+              const svg = b.querySelector('svg'), r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+              const bl = parseFloat(cs.borderLeftWidth), br = parseFloat(cs.borderRightWidth), bt = parseFloat(cs.borderTopWidth), bb = parseFloat(cs.borderBottomWidth);
+              const s = svg ? svg.getBoundingClientRect() : null, bx = svg ? svg.getBBox() : null;
+              out.push([b.dataset.onClick, b.textContent.trim(),
+                !!s && Math.abs((s.left + s.right) / 2 - (r.left + bl + r.right - br) / 2) <= 0.5 && Math.abs((s.top + s.bottom) / 2 - (r.top + bt + r.bottom - bb) / 2) <= 0.5,
+                !!bx && bx.x + bx.width / 2 === 7 && bx.y + bx.height / 2 === 7]);
+            }
+          }
+          document.querySelector('[data-view=chain]').click(); await sleep(150);
+          return JSON.stringify(out); })()"""))
+        check('the zoom buttons, on the chain’s bar and on the chart, draw − + ⤢ in their middle: no glyph, the drawing centred in the button and its lines in the drawing',
+              icons, [[a, '', True, True] for a in ('nz:chainZoomOut', 'nz:chainZoomIn', 'nz:chainWhole', 'nz:zoomOut', 'nz:zoomIn', 'nz:fit')])
 
         # ---------------------------------------------------------- the tabs
         await page.ev("document.querySelector('[data-view=chart]').click(); ENSDFPage.select('Co-60'); 'ok'")
@@ -726,6 +746,66 @@ async def main():
           return JSON.stringify(out); })()"""))
         check('a box among the parents opens that member, and the chain keeps its start', (up['sel'], up['root'], up['up']), ({'z': 92, 'a': 234, 'k': 0}, {'z': 88, 'a': 226, 'k': 0}, True))
         check('... and the parents save as SVG, PNG and CSV', (up['files'], all(s > 200 for s in up['sizes'])), (['parents-226Ra.csv', 'parents-226Ra.png', 'parents-226Ra.svg'], True))
+
+        # ---------------------------------------------------------- moving the start
+        # A member opened from the chain leaves the chain as it is, on the chart
+        # as well; the Nuclide tab's button makes the member the start of the
+        # chain, or, going up, its end. (Anchors are clicked by event: the block
+        # above replaced HTMLAnchorElement's click.)
+        here = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const S = () => ENSDFPage.state, key = (s) => s && [s.z, s.a, s.k].join(',');
+          const btn = () => document.querySelector('#nzPaneNuclide .nz-chainhere button');
+          const now = () => [key(S().sel), key(S().root), btn() ? btn().textContent : null];
+          const tab = () => document.querySelector('[data-view=chain]').textContent.trim();
+          const pick = async (k) => { document.querySelector(`#nzChainSvg .nz-node[data-key="${k}"]`).dispatchEvent(new MouseEvent('click', {bubbles: true})); await sleep(250); };
+          const dir = async (v) => { const s = document.getElementById('nzChainDir'); s.value = v; s.dispatchEvent(new Event('change', {bubbles: true})); await sleep(300); };
+          const view = async (v) => { document.querySelector(`[data-view=${v}]`).click(); await sleep(250); };
+          const press = async () => { btn().click(); await sleep(300); };
+          /* What the chart draws over itself. */
+          const chart = ENSDFPage.chart, setChain = chart.setChain;
+          chart.setChain = (o) => { window.__overlay = o; setChain(o); };
+          const drawn = (id) => !!(window.__overlay && window.__overlay.cells.has(id));
+          document.querySelector('[data-tab=nuclide]').click(); await sleep(100);
+          const out = {};
+          /* Going up: 234U, opened among the parents of 226Ra above. */
+          out.upMember = [...now(), btn() && btn().title];
+          await press();
+          out.upMoved = [...now(), S().chain.up, S().chain.root.key, tab()];
+          /* Going down from 238U: no button at the start, one on a member. */
+          ENSDFPage.select('U-238'); await dir('down');
+          out.start = now();
+          await pick('92,234,0');
+          out.member = [...now(), btn() && btn().title, tab()];
+          /* The chart picks the member out and still draws the chain of 238U. */
+          await view('chart');
+          out.chart = [...now(), drawn(92238), drawn(92234)];
+          await press();
+          out.chartMoved = [...now(), S().view, tab(), drawn(92238), drawn(92234), drawn(82206)];
+          await view('chain');
+          out.chainMoved = [S().chain.root.key, !!document.querySelector('#nzChainSvg .nz-node[data-key="92,234,0"]'), !!document.querySelector('#nzChainSvg .nz-node[data-key="92,238,0"]')];
+          /* A stable member has no chain to start; going up, it has parents. */
+          await pick('82,206,0');
+          out.stable = now();
+          await dir('up');
+          out.stableUp = now();
+          /* A member opened from the table, as from the drawing. */
+          document.querySelector('#nzChainTable a.nz-nuc[data-z="92"][data-a="238"]').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); await sleep(250);
+          out.row = now();
+          chart.setChain = setChain;
+          return JSON.stringify(out); })()"""))
+        check('a parent opened from the chain has “End the chain here” on the Nuclide tab',
+              here['upMember'], ['92,234,0', '88,226,0', 'End the chain here', 'The parents of 234U, in place of those of 226Ra'])
+        check('... which draws its parents, and then is gone', here['upMoved'], ['92,234,0', '92,234,0', None, True, '92,234,0', 'Parents of 234U'])
+        check('going down, the start of the chain has no such button, and a member has “Start the chain here”',
+              (here['start'], here['member']), (['92,238,0', '92,238,0', None], ['92,234,0', '92,238,0', 'Start the chain here', 'The decay chain from 234U, in place of the one from 238U', 'Decay chain 238U']))
+        check('... on the chart the member is picked out, the chain of 238U still drawn and the button still there',
+              here['chart'], ['92,234,0', '92,238,0', 'Start the chain here', True, True])
+        check('... where it moves the start: the chain of 234U drawn on the chart, in the view tab and in the chain view',
+              (here['chartMoved'], here['chainMoved']), (['92,234,0', '92,234,0', None, 'chart', 'Decay chain 234U', False, True, True], ['92,234,0', True, False]))
+        check('a stable member has no button going down (206Pb), and “End the chain here” going up',
+              (here['stable'], here['stableUp']), (['82,206,0', '92,234,0', None], ['82,206,0', '92,234,0', 'End the chain here']))
+        check('a member opened from the chain’s table has the button as well', here['row'], ['92,238,0', '92,234,0', 'End the chain here'])
         pi = json.loads(await page.ev("""(async () => {
           ENSDFPage.select('Ra-226'); document.querySelector('[data-tab=inventory]').click(); await new Promise(r => setTimeout(r, 500));
           const pane = document.getElementById('nzPaneInventory');
