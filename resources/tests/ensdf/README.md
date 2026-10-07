@@ -84,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-153 checks: the built-in release loads; the tab icon (drawn by
+161 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -148,7 +148,13 @@ which the inventory is worked out again, stays as typed (6.21E12 Bq of
 41Ca, and with a decimal comma) in the same field, which keeps the focus;
 text that is no number is marked when the field is left, and the amount in
 use stays; Tab from a field just typed in stays on its unit, and a unit
-picked before the amount is kept for it;
+picked before the amount is kept for it; every column of the table holds the
+widest thing it can show, measured to the fraction of a pixel (1.96×10⁻¹⁵ is
+70.4 px, and a column with 70 px inside cut it to "1.96×10⁻…"): every shape
+of number the values take, every half-life in the release as it lays out,
+wrapped before its unit, every name, and the amount field with its unit
+menu, in the panel as it opens and at 330 px, where the table scrolls; as it
+opens the table fits beside the pane's scroll bar;
 the Nuclide tab lists the parents of 226Ra by mode, longest-lived first,
 each a link with its share, and says so when there are none (36Cl); with the
 chain set to parents the view tab says "Parents of 226Ra", the chart rings
@@ -173,7 +179,13 @@ opened from the chain's table has it too; the inventory of the parents of
 226Ra starts empty, and 1 g of
 230Th grows 226Ra into equilibrium with it; a stable nuclide (206Pb) has
 parents, and the setting beside the view tabs turns the chain back down, to
-nothing after it;
+nothing after it; Back, the arrow beside the search: a link in the Inventory
+table starts a chain of its own and Back returns to the chain before with its
+inventory, named "Back to 238U"; in the chain view boxes keep the start, Back
+is named for the member before ("234Th, in the chain of 238U"), the browser's
+Back returns to it with the tab it was left with and Forward comes again;
+three arrow-key steps over the chart are one move, and so is an address typed
+in;
 the database menu lists
 NNDC's archive back to 2004 less the release on the site, and choosing one
 opens a dialog with the right NNDC link (all three parts, with their mass

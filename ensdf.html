@@ -27,7 +27,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261007">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261007b">
   <!-- The chart's own mark, in the kvot mark's language (see
        ensdf-icon.svg). SVG first, since it stays sharp on a high-density
        screen; the PNG is for anything that will not take one. -->
@@ -46,6 +46,8 @@
       <div class="nz-bar" role="toolbar" aria-label="Chart controls">
         <a class="nz-homelink nz-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="22" height="22"></a>
         <div class="nz-search">
+          <!-- Back to the place before, as the browser's own Back goes (remember() in ensdf-ui.js) -->
+          <button type="button" class="nz-icon nz-back" id="nzBack" data-on-click="nz:back" disabled aria-label="Back" title="Nothing to go back to yet"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M11.5 7h-9M6.5 3l-4 4 4 4"/></svg></button>
           <input id="nzSearch" type="search" placeholder="Nuclide: 60Co, U-238, Tc-99m…" autocomplete="off" spellcheck="false" aria-label="Find a nuclide" data-on-keydown="nz:searchKey">
           <button type="button" class="nz-btn" data-on-click="nz:search">Find</button>
         </div>
@@ -196,7 +198,7 @@
             <p class="nz-dim">To install a release on the site, run <code>node scripts/gen-ensdf.mjs ensdf_YYMMDD.zip</code>; it writes the data under <code>resources/data/ensdf/</code> and adds it to the menu. <code>node scripts/gen-ensdf-archive.mjs</code> brings the list of NNDC’s releases up to date.</p>
 
             <h3>Links, keys and files</h3>
-            <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. In the decay chain + and − zoom too and 0 shows the whole chain, as do the buttons on the chain’s bar, and a pinch, or the wheel with Ctrl held, zooms about the pointer. A chain opens with the whole of it in view, as ⤢ shows it, and stays whole as the window changes size; once you zoom, the zoom stays while you click about in the chain, and a new chain opens whole again. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV, the drawing at its own size however it is zoomed. The button at the right end of the toolbar gives the page the whole window, without the site’s header and footer; the kvot mark at the left of the toolbar then goes to the home page, and the switch beside the button changes between light and dark. The page remembers the choice.</p>
+            <p>The address follows the nuclide you are on — <code>ensdf.html#99mTc</code> — so a link opens the page there. The arrow beside the search, <b>Back</b>, returns to where you were before you followed a link, clicked the chart or the chain, or searched: the nuclide, the start of its chain and which way it runs, the view and the tab, as you left them. The browser’s own Back and Forward go the same way, and a run of arrow-key steps counts as one move. On the chart, arrow keys step between nuclides, + and − zoom and 0 shows the whole chart. In the decay chain + and − zoom too and 0 shows the whole chain, as do the buttons on the chain’s bar, and a pinch, or the wheel with Ctrl held, zooms about the pointer. A chain opens with the whole of it in view, as ⤢ shows it, and stays whole as the window changes size; once you zoom, the zoom stays while you click about in the chain, and a new chain opens whole again. <b>CSV</b> saves every ground state as a table, <b>PNG</b> the chart as it is on screen; the decay chain saves as SVG, PNG or CSV, the drawing at its own size however it is zoomed. The button at the right end of the toolbar gives the page the whole window, without the site’s header and footer; the kvot mark at the left of the toolbar then goes to the home page, and the switch beside the button changes between light and dark. The page remembers the choice.</p>
             <p class="nz-dim">Data: Evaluated Nuclear Structure Data File, National Nuclear Data Center, Brookhaven National Laboratory, on behalf of the Nuclear Structure and Decay Data network. The release in use is named in the menu above.</p>
           </section>
         </aside>
@@ -245,6 +247,6 @@
   <script src="./resources/js/ensdf-chain.js?v=20261006c"></script>
   <script src="./resources/js/ensdf-inventory.js?v=20261006"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20261007"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20261007b"></script>
 </body>
 </html>

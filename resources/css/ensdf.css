@@ -128,6 +128,11 @@
 .nz-icon svg { display: block; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 @media (max-resolution: 1dppx) { .nz-icon svg { stroke-width: 1.75; } .nz-icon svg.nz-rectilinear { stroke-width: 2; } }
 .nz-icon:hover { border-color: var(--accent-line); }
+.nz-icon:disabled { opacity: 0.45; cursor: default; }
+.nz-icon:disabled:hover { border-color: var(--border-color); }
+/* Back, an arrow as the browser's is: the toolbar has no room for a word
+   more in the full window at 1280 px. As tall as the search field beside it. */
+.nz-search .nz-back { flex: none; width: 30px; height: 28px; }
 .nz-link { padding: 0; border: 0; background: none; color: var(--link-color); font: inherit; cursor: pointer; text-decoration: underline; }
 
 /* The full window (the button at the right end of the toolbar): the page
@@ -553,6 +558,7 @@ a.nz-nuc:hover { text-decoration: underline; }
 }
 @media (pointer: coarse) {
   .nz-icon { width: 34px; height: 30px; }
+  .nz-search .nz-back { width: 36px; height: 28px; }
 }
 
 /* ---- the levels table: a level on one line, what leaves it on the next -- */
@@ -611,27 +617,35 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-inv-sw { display: inline-block; flex: none; width: 18px; height: 0; border-top: 3px solid transparent; vertical-align: middle; }
 .nz-inv-sw.none { border-top: 1px dotted var(--border-color); }
 /* Columns of fixed width: the values change as the cursor moves over the
-   chart, and a longer number must not push the other columns about. The
-   value column holds the longest one numText() writes, 1.23×10⁻¹⁵; the
-   member column takes what is left, and a narrow panel scrolls the table. */
-.nz-inv-table { table-layout: fixed; width: 100%; min-width: 370px; }
-.nz-inv-c-sw { width: 30px; }
-.nz-inv-c-life { width: 80px; }
-.nz-inv-c-in { width: 126px; }
-.nz-inv-c-now { width: 82px; }
+   chart, and a longer number must not push the other columns about. Each
+   column holds the widest thing it can show, in Verdana (a cell has 12 px
+   of padding): the value column the widest number numText() writes,
+   8.88×10⁻³⁰⁸ at 76 px (1.96×10⁻¹⁵ is 70.4 px); the half-life column the
+   widest part of a half-life, which wraps before its unit (≥3.8×10¹⁸ is
+   66 px); the amount column its field and unit menu, 106 px; the member
+   column, which takes what is left, a name like ²⁴²ᵐ¹Cm at 51 px. Together
+   they fit the panel as it opens, 396 px inside it with a scroll bar. A
+   number cut short is worse than a table that scrolls, so a panel too
+   narrow for them all scrolls it. */
+.nz-inv-table { table-layout: fixed; width: 100%; min-width: 388px; }
+.nz-inv-c-sw { width: 26px; }
+.nz-inv-c-life { width: 82px; }
+.nz-inv-c-in { width: 122px; }
+.nz-inv-c-now { width: 94px; }
 .nz-inv-table td.text, .nz-inv-table td.nz-inv-now { overflow: hidden; text-overflow: ellipsis; }
+.nz-inv-table td.nz-inv-life { white-space: normal; }
 .nz-inv-table th:first-child, .nz-inv-table td.nz-inv-swcell { padding-left: 5px; padding-right: 3px; }
-@container nzpanel (max-width: 400px) {
-  .nz-inv-table { min-width: 340px; }
-  .nz-inv-c-life { width: 74px; }
-  .nz-inv-c-in { width: 110px; }
-  .nz-inv-table td.nz-inv-in input { width: 4.3em; }
-}
 .nz-inv-table td.nz-inv-in { white-space: nowrap; }
 .nz-inv-table td.nz-inv-in input { box-sizing: border-box; width: 5.2em; height: 22px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 4px; font: 11.5px verdana, sans-serif; }
 .nz-inv-table td.nz-inv-in input[aria-invalid="true"] { border-color: var(--color-kvot-accent); box-shadow: 0 0 0 1px var(--color-kvot-accent); }
 .nz-inv-table td.nz-inv-in select { height: 22px; font: 11px verdana, sans-serif; border: 1px solid var(--input-border); border-radius: 4px; }
 .nz-inv-table td.nz-inv-in select { margin-left: 3px; }
+/* After the rules above, which it overrides: a field of 4.3em, and its menu, in 98 px. */
+@container nzpanel (max-width: 400px) {
+  .nz-inv-table { min-width: 376px; }
+  .nz-inv-c-in { width: 110px; }
+  .nz-inv-table td.nz-inv-in input { width: 4.3em; }
+}
 .nz-inv-table td.nz-inv-now { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .nz-inv-table tr.hot td { background: var(--bg-secondary); }
 .nz-inv .nz-note li { margin-bottom: 4px; }

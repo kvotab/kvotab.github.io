@@ -271,31 +271,108 @@
     return n ? C.name(sel.z, sel.a, sel.k, n).key : '';
   }
 
+  /* A state of a nuclide in this database, held to the states it has: null if it has none. */
+  function stateIn(s) {
+    const n = s && state.idx && state.idx.get(s.z, s.a);
+    return n ? { z: s.z, a: s.a, k: Math.max(0, Math.min(s.k || 0, Math.max(0, n.s.length - 1))) } : null;
+  }
+
   /**
    * @param {{z, a, k}} sel
-   * @param {{from?: string, keepView?: boolean, centre?: boolean}} [how]
+   * @param {{from?: string, keepView?: boolean, centre?: boolean, root?: {z, a, k}}} [how]
    *   from 'chain' keeps the chain where it starts; everything else moves
-   *   the start of the chain to the new selection.
+   *   the start of the chain to the new selection, or to `root`, a place in
+   *   the history's own. `from` also says whether the reader went somewhere
+   *   (see remember()).
    */
   function select(sel, how = {}) {
     if (!state.idx) return;
-    const n = state.idx.get(sel.z, sel.a);
-    if (!n) return;
-    const k = Math.max(0, Math.min(sel.k || 0, Math.max(0, n.s.length - 1)));
-    state.sel = { z: sel.z, a: sel.a, k };
-    if (how.from !== 'chain') state.root = { ...state.sel };
+    const s = stateIn(sel);
+    if (!s) return;
+    state.sel = s;
+    const root = stateIn(how.root);
+    if (root) state.root = root;
+    else if (how.from !== 'chain') state.root = { ...state.sel };
     state.levelsAll = false;
     state.radAll = false;
-    if (['search', 'hash', 'start'].includes(how.from)) chart.centreOn(sel.z, sel.a, 30);
-    chart.select(state.sel, how.centre !== false && how.from !== 'chart');
+    if (['search', 'hash', 'start', 'history'].includes(how.from)) chart.centreOn(sel.z, sel.a, 30);
+    chart.select(state.sel, how.centre !== false && how.from !== 'chart' && how.from !== 'keys');
     computeChain();
     renderPanel();
     renderChainView();
-    const h = '#' + hashFor(state.sel);
-    if (location.hash !== h) {
-      try { history.replaceState(null, '', h); } catch (e) { /* file:// in some browsers */ }
-    }
+    remember(how.from);
     saveState();
+  }
+
+  /* ---------------------------------------------------------------------
+     Back
+     --------------------------------------------------------------------- */
+  /*
+    Every place the reader goes to is an entry in the browser's history, so
+    that Back -- the toolbar's, or the browser's own -- returns to where they
+    were: the nuclide selected, the start of the chain and which way it
+    runs, the view and the tab. A click on the chart, on a box of the chain
+    or on a link, a search and a new start of the chain go somewhere; a run
+    of arrow-key steps over the chart is one place, the last; the tab, the
+    view and the chain's direction change the place the reader is at.
+  */
+  let histIndex = 0;       // this entry's number among the page's own entries: 0 is the first
+  let lastFrom = '';       // what made the place: arrow-key steps go on in their own
+  const GOES = ['chart', 'keys', 'chain', 'panel', 'search', 'test'];
+  const TABS = ['nuclide', 'levels', 'radiation', 'datasets', 'inventory', 'about'];
+
+  /* A place in words, for the Back button's title: "234Th, in the chain of 238U". */
+  function placeText(p) {
+    const nm = (s) => { const n = s && state.idx && state.idx.get(s.z, s.a); return n ? C.name(s.z, s.a, s.k, n).text : ''; };
+    const sel = nm(p.sel), root = nm(p.root);
+    if (!sel) return '';
+    if (!root || root === sel) return sel;
+    return `${sel}, in the ${p.dir === 'up' ? 'parents' : 'chain'} of ${root}`;
+  }
+
+  let lastPlace = null;    // the place last remembered, for an entry the browser made itself
+
+  function remember(from) {
+    if (!state.sel) return;
+    const cur = history.state && history.state.nz ? history.state : null;
+    const here = { nz: 1, sel: state.sel, root: state.root, dir: state.chainOpt.dir, view: state.view, tab: state.tab };
+    const same = cur && ['sel', 'root'].every((f) => cur[f] && here[f] && cur[f].z === here[f].z && cur[f].a === here[f].a && cur[f].k === here[f].k);
+    const go = !!cur && !same && GOES.includes(from) && !(from === 'keys' && lastFrom === 'keys');
+    const h = '#' + hashFor(state.sel);
+    try {
+      if (go) {
+        history.pushState({ ...here, i: histIndex + 1, back: placeText(cur) }, '', h);
+        histIndex += 1;
+      } else {
+        /* An address typed in, or a plain link followed, is an entry the browser made, with nothing in it yet. */
+        const back = cur ? cur.back : from === 'hash' && lastPlace ? placeText(lastPlace) : '';
+        history.replaceState({ ...here, i: histIndex, back }, '', h);
+      }
+    } catch (e) { /* file:// in some browsers */ }
+    lastFrom = from;
+    lastPlace = here;
+    renderBack();
+  }
+
+  /* A place from the history, as it was left. */
+  function goTo(p) {
+    if (!state.idx || !stateIn(p.sel)) return;
+    if ((p.dir === 'up' || p.dir === 'down') && p.dir !== state.chainOpt.dir) {
+      state.chainOpt.dir = p.dir;
+      $('nzChainDir').value = p.dir;
+    }
+    if (TABS.includes(p.tab)) state.tab = p.tab;
+    if ((p.view === 'chart' || p.view === 'chain') && p.view !== state.view) showView(p.view);
+    select(p.sel, { from: 'history', root: p.root });
+  }
+
+  function renderBack() {
+    const b = $('nzBack');
+    const p = history.state && history.state.nz ? history.state : null;
+    const on = !!p && histIndex > 0;
+    b.disabled = !on;
+    b.title = on ? `Back to ${p.back || 'the place before'}` : 'Nothing to go back to yet';
+    b.setAttribute('aria-label', on ? b.title : 'Back');
   }
 
   /* The database, start and settings the chain on show was built for: the
@@ -987,6 +1064,7 @@
     computeChain();
     renderChainView();
     renderPanel();
+    remember('dir');
     saveState();
   }
 
@@ -1044,6 +1122,14 @@
      Views, tabs and the legend
      --------------------------------------------------------------------- */
   function setView(view) {
+    showView(view);
+    renderChainView();
+    remember('view');
+    saveState();
+  }
+
+  /* A view's tab and pane, before it is drawn. */
+  function showView(view) {
     state.view = view;
     document.querySelectorAll('.nz-views [data-view]').forEach((b) => {
       const on = b.dataset.view === view;
@@ -1053,8 +1139,6 @@
     document.querySelectorAll('[data-viewpane]').forEach((p) => { p.hidden = p.dataset.viewpane !== view; });
     $('nzChartTools').hidden = view !== 'chart';
     if (view === 'chart') chart.resize();
-    renderChainView();
-    saveState();
   }
 
   function renderLegend() {
@@ -1406,7 +1490,7 @@
       return `<tr data-key="${n.key}" class="${n === ch.root ? 'current' : ''}">
         <td class="nz-inv-swcell"><span class="nz-inv-sw" data-key="${n.key}"></span></td>
         <td class="text">${nucLink(n.z, n.a, n.k)}</td>
-        <td class="text nz-dim">${supHtml(n.st.st ? 'stable' : C.halfLifeShort(n.st) || '?')}</td>
+        <td class="text nz-dim nz-inv-life">${supHtml(n.st.st ? 'stable' : C.halfLifeShort(n.st) || '?')}</td>
         <td class="text nz-inv-in"><input type="text" spellcheck="false" autocapitalize="off" value="${e && e[0] ? esc(inputNum(e[0])) : ''}" placeholder="0" data-on-input="nz:invValue" data-on-change="nz:invValueDone" data-key="${n.key}" aria-label="Initial amount of ${esc(plain)}"><select data-on-change="nz:invValueUnit" data-key="${n.key}" aria-label="Unit of the initial amount of ${esc(plain)}">${opts}</select></td>
         <td class="nz-inv-now" data-key="${n.key}"></td>
       </tr>`;
@@ -1751,7 +1835,7 @@
     $('nzColour').value = state.colour;
     renderChainControls();
     chart = KVOT_ENSDF_CHART.createChart($('nzChart'), {
-      onSelect: (s) => select(s, { from: 'chart', centre: s.via !== 'chart' }),
+      onSelect: (s) => select(s, { from: s.via === 'key' ? 'keys' : 'chart', centre: s.via !== 'chart' }),
       onHover: (n, x, y) => { if (n) showTip(chartTip(n), x, y); else hideTip(); },
     });
     chart.setMode(state.colour);
@@ -1843,12 +1927,27 @@
     }
     await switchDb(key);
     if (!state.source && state.releases.length) await switchDb(`b:${state.releases[0].id}`);
+    /* An entry of the page's own history (a reload, or Back from another
+       page to one of its places) is that place; otherwise the address, or
+       the nuclide selected when the page was last left. */
+    const kept = history.state && history.state.nz ? history.state : null;
+    if (kept) histIndex = kept.i || 0;
     const fromHash = decodeURIComponent(location.hash.slice(1));
     const pick = (fromHash && pickFromQuery(fromHash)) || (saved && saved.sel && state.idx && state.idx.get(saved.sel.z, saved.sel.a) ? saved.sel : null);
-    if (pick) select(pick, { from: 'start' });
+    if (kept && stateIn(kept.sel)) goTo(kept);
+    else if (pick) select(pick, { from: 'start' });
+    window.addEventListener('popstate', (ev) => {
+      const p = ev.state;
+      if (!p || !p.nz) return;   // an address typed in: the hashchange takes it
+      histIndex = p.i || 0;
+      goTo(p);
+    });
     window.addEventListener('hashchange', () => {
       const p = pickFromQuery(decodeURIComponent(location.hash.slice(1)));
-      if (p && (!state.sel || p.z !== state.sel.z || p.a !== state.sel.a || p.k !== state.sel.k)) select(p, { from: 'hash' });
+      if (!p || (state.sel && p.z === state.sel.z && p.a === state.sel.a && p.k === state.sel.k)) return;
+      /* The browser has made an entry for the new address. */
+      if (!(history.state && history.state.nz)) histIndex += 1;
+      select(p, { from: 'hash' });
     });
   }
 
@@ -1874,7 +1973,8 @@
     },
     'nz:full': () => setFull(!document.documentElement.classList.contains('nz-full')),
     'nz:view': (ev, el) => setView(el.dataset.view),
-    'nz:tab': (ev, el) => { state.tab = el.dataset.tab; renderPanel(); saveState(); },
+    'nz:tab': (ev, el) => { state.tab = el.dataset.tab; renderPanel(); remember('tab'); saveState(); },
+    'nz:back': () => { if (histIndex > 0) history.back(); },
     'nz:invValue': (ev, el) => {
       /* Text on its way to a number, as 6.21E is to 6.21E12, leaves the amount as it was. */
       const text = el.value.trim();

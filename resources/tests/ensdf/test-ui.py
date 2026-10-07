@@ -717,6 +717,48 @@ async def main():
         check('... text that is no number is marked when left, and the amount stays', (bad['text'], bad['bad'], bad['amount']), ('abc', 'true', [6.21e12, 'Bq']))
         check('... Tab from a field just typed in stays on the unit, the mark gone', (tab['focus'], tab['bad'], tab['amount']), ('unit', None, [7, 'Bq']))
         check('... and a unit picked before the amount is kept for it', (first['unit'], first['amount']), ('g', [2, 'g']))
+        # Every column holds the widest thing it can show, measured to the
+        # fraction of a pixel (1.96×10⁻¹⁵ is 70.4 px, and a column with 70 px
+        # inside cut it to "1.96×10⁻…"): every shape numText() writes, every
+        # half-life in the release as it lays out (wrapped before its unit),
+        # every name, the amount field with its unit menu; and the table fits
+        # the panel as it opens, with a scroll bar beside it.
+        fit_js = """(async (narrow) => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          document.querySelector('[data-tab=inventory]').click();
+          const h = document.getElementById('nzResize');
+          h.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+          if (narrow) for (let i = 0; i < 8; i++) h.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+          await sleep(300);
+          const C = KVOT_ENSDF_CORE, idx = ENSDFPage.state.idx;
+          const table = document.querySelector('#nzPaneInventory .nz-inv-table'), row = table.querySelector('tbody tr');
+          const [, tdName, tdLife, tdIn, tdNow] = row.children;
+          const room = (td) => { const cs = getComputedStyle(td); return td.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
+          /* How wide a cell's content lays out: its widest line, if it wraps. */
+          const width = (td, html) => { const keep = td.innerHTML; td.innerHTML = html; const rg = document.createRange(); rg.selectNodeContents(td); const rs = [...rg.getClientRects()]; td.innerHTML = keep; return Math.max(...rs.map((r) => r.right)) - Math.min(...rs.map((r) => r.left)); };
+          const sup = (s) => C.supRuns(s).map(r => r.sup ? '<sup>' + r.t + '</sup>' : r.t).join('');
+          const widest = (td, all) => Math.max(...all.map((s) => width(td, s)));
+          const nums = [];
+          for (const m of ['8.88', '1.96']) for (const e of ['5', '15', '100', '308']) nums.push(m + '×10' + C.sup(e), m + '×10' + C.sup('−' + e));
+          const lives = new Set(), names = new Set();
+          for (const n of idx.list) n.s.forEach((st, k) => {
+            lives.add(sup(st.st ? 'stable' : (C.halfLifeShort(st) || '?')));
+            const nm = C.name(n.z, n.a, k, n); names.add(nm.mass ? '<sup>' + nm.mass + '</sup>' + nm.sym : nm.sym);
+          });
+          const i = tdIn.querySelector('input'), s = tdIn.querySelector('select');
+          const wrap = table.parentElement, pane = document.getElementById('nzPaneInventory');
+          return JSON.stringify({
+            now: widest(tdNow, nums.map(sup)) <= room(tdNow), life: widest(tdLife, [...lives]) <= room(tdLife), name: widest(tdName, [...names]) <= room(tdName),
+            amount: s.getBoundingClientRect().right - i.getBoundingClientRect().left <= room(tdIn),
+            scrolls: wrap.scrollWidth > wrap.clientWidth, bar: pane.offsetWidth - pane.clientWidth > 0 });
+        })"""
+        wide = json.loads(await page.ev(f'({fit_js})(false)'))
+        narrow = json.loads(await page.ev(f'({fit_js})(true)'))
+        await page.ev("document.getElementById('nzResize').dispatchEvent(new MouseEvent('dblclick', {bubbles: true})); document.querySelector('[data-tab=nuclide]').click(); 'ok'")
+        check('every value, half-life, name and amount fits its column, in the panel as it opens and at 330 px',
+              ([wide[k] for k in ('now', 'life', 'name', 'amount')], [narrow[k] for k in ('now', 'life', 'name', 'amount')]), ([True] * 4, [True] * 4))
+        check('... and the table fits the panel as it opens, beside a scroll bar, scrolling only in a narrower one',
+              (wide['bar'], wide['scrolls'], narrow['scrolls']), (True, False, True))
 
         # ---------------------------------------------------------- parents
         par = json.loads(await page.ev("""(async () => {
@@ -892,6 +934,65 @@ async def main():
           return JSON.stringify(out); })()"""))
         check('a stable nuclide has parents (206Pb), and the setting beside the view tabs turns the chain back down, to nothing after it',
               (back['up'], back['down']), (['Parents of 206Pb', True, True], ['Decay chain 206Pb', False, 1, 'down', False]))
+
+        # ---------------------------------------------------------- back
+        # Every place gone to is an entry in the browser's history: Back,
+        # beside the search, and the browser's own return to the one before
+        # as it was left -- the nuclide, the start of its chain, the view and
+        # the tab. (Anchors are clicked by event, as above.)
+        bk = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const S = () => ENSDFPage.state, key = (s) => s && [s.z, s.a, s.k].join(',');
+          const b = document.getElementById('nzBack');
+          const now = () => [key(S().sel), key(S().root), S().view, S().tab, b.disabled ? null : b.title];
+          const click = (sel) => document.querySelector(sel).dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+          const out = {};
+          /* The chart and the Inventory tab of 238U: a member's link starts a chain of its own. */
+          document.querySelector('[data-view=chart]').click(); await sleep(200);
+          ENSDFPage.select('U-238'); document.querySelector('[data-tab=inventory]').click(); await sleep(400);
+          click('#nzPaneInventory a.nz-nuc[data-z="88"][data-a="226"]'); await sleep(400);
+          out.link = [...now(), location.hash];
+          b.click(); await sleep(500);
+          out.back = [...now(), location.hash, !!document.querySelector('#nzPaneInventory .nz-inv-table input[data-key="92,238,0"]')];
+          /* The chain view: boxes keep the start; the browser's Back and Forward. */
+          document.querySelector('[data-view=chain]').click(); await sleep(300);
+          click('#nzChainSvg .nz-node[data-key="90,234,0"]'); await sleep(300);
+          click('#nzChainSvg .nz-node[data-key="90,230,0"]'); await sleep(300);
+          document.querySelector('[data-tab=nuclide]').click(); await sleep(150);
+          out.boxes = now();
+          history.back(); await sleep(500);
+          out.browser = now();
+          history.forward(); await sleep(500);
+          out.forward = now();
+          document.querySelector('[data-view=chart]').click(); await sleep(300);
+          return JSON.stringify(out); })()"""))
+        check('a link in the Inventory table starts a chain of its own; Back is lit, named for where it goes',
+              bk['link'], ['88,226,0', '88,226,0', 'chart', 'inventory', 'Back to 238U', '#226Ra'])
+        check('... and Back returns to the chain of 238U, its inventory still there', bk['back'],
+              ['92,238,0', '92,238,0', 'chart', 'inventory', bk['back'][4], '#238U', True])
+        check('in the chain view, a box keeps the start, and Back is named for the member before',
+              bk['boxes'], ['90,230,0', '92,238,0', 'chain', 'nuclide', 'Back to 234Th, in the chain of 238U'])
+        check('... the browser’s Back returns to that member, with the tab it was left with, and Forward comes again',
+              (bk['browser'], bk['forward']), (['90,234,0', '92,238,0', 'chain', 'inventory', 'Back to 238U'], ['90,230,0', '92,238,0', 'chain', 'nuclide', 'Back to 234Th, in the chain of 238U']))
+        # A run of arrow-key steps over the chart is one move.
+        await page.ev("(async () => { ENSDFPage.select('U-238'); await new Promise(r => setTimeout(r, 300)); document.querySelector('#nzChart canvas').focus(); return 1; })()")
+        for _ in range(3):
+            await page.key('ArrowRight', 39)
+            await asyncio.sleep(0.25)
+        keys = json.loads(await page.ev("""(async () => {
+          const S = () => ENSDFPage.state, key = (s) => s && [s.z, s.a, s.k].join(',');
+          const out = { walked: key(S().sel), title: document.getElementById('nzBack').title };
+          document.getElementById('nzBack').click(); await new Promise(r => setTimeout(r, 500));
+          out.back = key(S().sel);
+          /* An address typed in is a move as well. */
+          location.hash = '#60Co'; await new Promise(r => setTimeout(r, 500));
+          out.typed = [key(S().sel), document.getElementById('nzBack').title];
+          document.getElementById('nzBack').click(); await new Promise(r => setTimeout(r, 500));
+          out.typedBack = key(S().sel);
+          return JSON.stringify(out); })()"""))
+        check('three arrow-key steps over the chart are one move: Back returns to where they began',
+              (keys['walked'] != '92,238,0', keys['title'], keys['back']), (True, 'Back to 238U', '92,238,0'))
+        check('... and an address typed in is one too', (keys['typed'], keys['typedBack']), (['27,60,0', 'Back to 238U'], '92,238,0'))
 
         # ---------------------------------------------------------- the NNDC archive
         nn = json.loads(await page.ev("""(async () => {
