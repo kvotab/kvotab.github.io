@@ -8760,6 +8760,178 @@ export function chartScales(project) {
 	return { xLog: v.chart_time_scale !== 'linear', yLog: v.chart_value_scale !== 'linear' };
 }
 
+/** A number in a saved view or preset, or null for one that is not. */
+const finiteOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * The prefixes an axis's unit can be given -- k shows Bq as kBq, its numbers a
+ * thousandth of what they are -- largest first. The same as the chart offers
+ * (./src/ui/prefix.js), which a test checks.
+ */
+export const CHART_PREFIXES = ['P', 'T', 'G', 'M', 'k', 'm', 'µ', 'n', 'p', 'f'];
+
+/** A prefix as a file says it, or '' for none: anything that is not one is none. */
+const prefixOrNone = (v) => (CHART_PREFIXES.includes(v) ? v : '');
+
+/**
+ * The prefixes the chart's two axes are lettered in, `{ x, y }`, each '' for
+ * none. In `view.chart_time_prefix` and `view.chart_value_prefix`, with the
+ * model, as the scales are -- and only while one is set, so a model that never
+ * had one is saved without them.
+ */
+export function chartPrefixes(project) {
+	const v = project?.view ?? {};
+	return { x: prefixOrNone(v.chart_time_prefix), y: prefixOrNone(v.chart_value_prefix) };
+}
+
+/** Sets either or both; returns whether anything changed. */
+export function setChartPrefixes(project, { x, y } = {}) {
+	const before = chartPrefixes(project);
+	const next = {
+		x: x === undefined ? before.x : prefixOrNone(x),
+		y: y === undefined ? before.y : prefixOrNone(y),
+	};
+	if (next.x === before.x && next.y === before.y) return false;
+	project.view = { ...(project.view ?? {}) };
+	for (const [key, value] of [['chart_time_prefix', next.x], ['chart_value_prefix', next.y]]) {
+		if (value) project.view[key] = value;
+		else delete project.view[key];
+	}
+	if (!Object.keys(project.view).length) delete project.view;
+	return true;
+}
+
+/**
+ * The axes saved by name: `{ name, x_scale, y_scale, x_prefix, y_prefix, x_min,
+ * x_max, y_min, y_max }`, each end a number or null for "the data's", in the
+ * model's own units whatever prefix the axes are lettered in. In `view.chart_presets`,
+ * with the model, since how a model's results are read -- the release between
+ * a hundred and a hundred thousand years -- is a fact about the model.
+ *
+ * Read defensively: a file may say anything, and an entry that is not a
+ * preset is left out rather than drawn as one.
+ */
+export function chartPresets(project) {
+	const list = project?.view?.chart_presets;
+	if (!Array.isArray(list)) return [];
+	const out = [];
+	for (const p of list) {
+		const name = typeof p?.name === 'string' ? p.name.trim() : '';
+		if (!name || out.some((q) => q.name === name)) continue;
+		out.push({
+			name,
+			x_scale: CHART_SCALES.includes(p.x_scale) ? p.x_scale : null,
+			y_scale: CHART_SCALES.includes(p.y_scale) ? p.y_scale : null,
+			// The prefixes the axes were lettered in, '' for none; null where the
+			// preset says nothing about them, and leaves them as they are.
+			x_prefix: typeof p.x_prefix === 'string' ? prefixOrNone(p.x_prefix) : null,
+			y_prefix: typeof p.y_prefix === 'string' ? prefixOrNone(p.y_prefix) : null,
+			x_min: finiteOrNull(p.x_min),
+			x_max: finiteOrNull(p.x_max),
+			y_min: finiteOrNull(p.y_min),
+			y_max: finiteOrNull(p.y_max),
+		});
+	}
+	return out;
+}
+
+/**
+ * Sets them. An empty list is taken out of the file rather than written as
+ * `[]`, so a model that never had a preset reads as one that never did.
+ * Returns whether anything changed.
+ */
+export function setChartPresets(project, list) {
+	const before = JSON.stringify(chartPresets(project));
+	const next = chartPresets({ view: { chart_presets: list } });
+	if (JSON.stringify(next) === before) return false;
+	project.view = { ...(project.view ?? {}) };
+	if (next.length) project.view.chart_presets = next;
+	else delete project.view.chart_presets;
+	// A view that held nothing else goes with it: a model that never had one
+	// should not come back from this with `"view": {}`.
+	if (!Object.keys(project.view).length) delete project.view;
+	return true;
+}
+
+/** How a saved view may lay its panels out. */
+export const CHART_LAYOUTS = ['panels', 'same'];
+
+/**
+ * The chart's saved views: what is charted and how, by name, so the release by
+ * nuclide is one pick rather than forty ticks. Each is
+ *
+ *   { name, layout, picks: [{ block, labels? }], split: { block: { lines,
+ *     others } }, total, peaks, in_view, largest, x_scale, y_scale,
+ *     x_prefix, y_prefix, x_min, x_max, y_min, y_max }
+ *
+ * where a pick with no `labels` is the whole block -- every series it has when
+ * the view is used, which a re-run with more nuclides may have added to -- and
+ * one with them is those series by name. In `view.chart_views`, with the model.
+ */
+export function chartViews(project) {
+	const list = project?.view?.chart_views;
+	if (!Array.isArray(list)) return [];
+	const out = [];
+	const strings = (a) => (Array.isArray(a) ? a.filter((s) => typeof s === 'string') : null);
+	for (const v of list) {
+		const name = typeof v?.name === 'string' ? v.name.trim() : '';
+		if (!name || out.some((q) => q.name === name)) continue;
+		const picks = [];
+		for (const p of Array.isArray(v.picks) ? v.picks : []) {
+			if (typeof p?.block !== 'string' || !p.block) continue;
+			const labels = strings(p.labels);
+			picks.push(labels ? { block: p.block, labels } : { block: p.block });
+		}
+		const split = {};
+		if (v.split && typeof v.split === 'object' && !Array.isArray(v.split)) {
+			for (const [block, c] of Object.entries(v.split)) {
+				if (!c || typeof c !== 'object') continue;
+				const others = {};
+				if (c.others && typeof c.others === 'object') {
+					for (const [list2, how] of Object.entries(c.others)) {
+						if (typeof how === 'string') others[list2] = how;
+					}
+				}
+				split[block] = {
+					...(typeof c.lines === 'string' ? { lines: c.lines } : {}),
+					...(Object.keys(others).length ? { others } : {}),
+				};
+			}
+		}
+		out.push({
+			name,
+			layout: CHART_LAYOUTS.includes(v.layout) ? v.layout : 'panels',
+			picks,
+			split,
+			total: v.total !== false,
+			peaks: v.peaks === true,
+			in_view: v.in_view !== false,
+			largest: Number.isInteger(v.largest) && v.largest > 0 ? v.largest : 0,
+			x_scale: CHART_SCALES.includes(v.x_scale) ? v.x_scale : null,
+			y_scale: CHART_SCALES.includes(v.y_scale) ? v.y_scale : null,
+			x_prefix: typeof v.x_prefix === 'string' ? prefixOrNone(v.x_prefix) : null,
+			y_prefix: typeof v.y_prefix === 'string' ? prefixOrNone(v.y_prefix) : null,
+			x_min: finiteOrNull(v.x_min),
+			x_max: finiteOrNull(v.x_max),
+			y_min: finiteOrNull(v.y_min),
+			y_max: finiteOrNull(v.y_max),
+		});
+	}
+	return out;
+}
+
+/** Sets them, as `setChartPresets` sets the presets. */
+export function setChartViews(project, list) {
+	const before = JSON.stringify(chartViews(project));
+	const next = chartViews({ view: { chart_views: list } });
+	if (JSON.stringify(next) === before) return false;
+	project.view = { ...(project.view ?? {}) };
+	if (next.length) project.view.chart_views = next;
+	else delete project.view.chart_views;
+	if (!Object.keys(project.view).length) delete project.view;
+	return true;
+}
+
 /**
  * Which influences the diagram draws: none, all of them, or only those of the
  * blocks selected -- every arrow into or out of any of them, which on a model

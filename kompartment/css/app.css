@@ -1759,6 +1759,318 @@ textarea.model-desc {
 
 .pick:disabled { opacity: 0.42; cursor: not-allowed; }
 
+/* --- panels ------------------------------------------------------------ */
+
+/* A chart per panel, stacked over one time axis. They share the height they
+   are given, down to a floor each; past that the stack scrolls rather than
+   squeezing a panel into a strip nobody can read. */
+.chart-stack {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	min-height: 240px;
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+.chart-stack > .chart-panel {
+	flex: 1 1 0;
+	min-height: 240px;
+}
+
+/* Out of the flow, so a canvas never decides how big its panel is: drawn at
+   the size it was a moment ago, it would push out a scrollbar, the panel would
+   shrink under it, and the scrollbar would stay. The panel's size is the
+   stack's to give; the canvas fills it. */
+.chart-stack > .chart-panel > .chart-canvas {
+	position: absolute;
+	left: 0;
+	top: 0;
+}
+
+.chart-stack:not([data-panels="1"]) > .chart-panel { min-height: 170px; }
+
+/* The patterns of the named lines (./src/ui/linestyles.js), scaled down to a
+   swatch as the sets above are. */
+.series-swatch[data-dash="dot"] {
+	border-radius: 0;
+	background: repeating-linear-gradient(90deg, var(--swatch) 0 2px, transparent 2px 4px);
+}
+.series-swatch[data-dash="dash"] {
+	border-radius: 0;
+	background: repeating-linear-gradient(90deg, var(--swatch) 0 5px, transparent 5px 8px);
+}
+.series-swatch[data-dash="longdash"] {
+	border-radius: 0;
+	background: repeating-linear-gradient(90deg, var(--swatch) 0 8px, transparent 8px 11px);
+}
+.series-swatch[data-dash="dashdot"] {
+	border-radius: 0;
+	background: repeating-linear-gradient(90deg,
+		var(--swatch) 0 5px, transparent 5px 7px, var(--swatch) 7px 9px, transparent 9px 11px);
+}
+.series-swatch[data-dash="longdashdot"] {
+	border-radius: 0;
+	background: repeating-linear-gradient(90deg,
+		var(--swatch) 0 8px, transparent 8px 10px, var(--swatch) 10px 12px, transparent 12px 14px);
+}
+.series-swatch[data-bold] { height: 4px; }
+
+/* --- what is picked ------------------------------------------------------ */
+
+/* A row of what is on the chart, and the ways to change it that are not the
+   tree, at its right. Wraps as a whole: the chips first, the tools after. */
+.pick-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+	padding: 6px 0;
+}
+
+.pick-bar[hidden] { display: none; }
+
+.pick-chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px 8px;
+	min-width: 0;
+	flex: 1 1 320px;
+}
+
+.pick-chip {
+	display: inline-flex;
+	align-items: stretch;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface-2);
+	overflow: hidden;
+	max-width: 100%;
+}
+
+.pick-chip > button {
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	font-size: 11.5px;
+	padding: 2px 8px;
+}
+
+.pick-chip-name {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--text-primary);
+}
+
+.pick-chip-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 32ch;
+}
+
+.pick-chip-count {
+	font-family: var(--mono);
+	font-size: 10px;
+	color: var(--text-muted);
+}
+
+.pick-chip-x {
+	color: var(--text-muted);
+	border-left: 1px solid var(--border) !important;
+	padding: 2px 7px !important;
+}
+
+.pick-chip > button:hover:not(:disabled) {
+	background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+/* How a block of two lists is drawn, beside its chip. */
+.pick-how {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+}
+
+.pick-how-word { color: var(--text-muted); font-size: 10.5px; }
+
+.pick-how select,
+.chart-settings select,
+.table-settings select {
+	font-size: 11px;
+	padding: 1px 4px;
+}
+
+.pick-tools {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.pick-tools > button { font-size: 11px; padding: 2px 9px; }
+
+.pick-find.is-on {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+/* Two or three choices that are one control: buttons joined into a strip. */
+.seg { display: inline-flex; }
+
+.seg-btn {
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 0;
+	background: transparent;
+	color: var(--text-secondary);
+}
+
+.seg-btn:first-child { border-top-left-radius: var(--radius); border-bottom-left-radius: var(--radius); }
+.seg-btn:last-child { border-top-right-radius: var(--radius); border-bottom-right-radius: var(--radius); }
+.seg-btn + .seg-btn { margin-left: -1px; }
+
+.seg-btn.is-on {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--accent-ink);
+	position: relative;
+}
+
+/* The old picker, folded under *Find lines…*. */
+.pick-drawer {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	margin: 2px 0 6px;
+	background: var(--surface-2);
+}
+
+.pick-drawer[hidden] { display: none; }
+
+/* --- the chart's settings ------------------------------------------------ */
+
+.chart-settings {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 16px;
+	padding: 2px 0 8px;
+	font-size: 11.5px;
+}
+
+.chart-settings[hidden] { display: none; }
+
+.cs-group {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px;
+}
+
+.cs-word {
+	font-size: 10.5px;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.cs-axis { font-family: var(--mono); font-size: 10.5px; color: var(--text-secondary); margin-left: 4px; }
+
+.axis-box {
+	width: 8.5ch;
+	font-family: var(--mono);
+	font-size: 11px;
+	padding: 1px 4px;
+}
+
+.axis-box::placeholder { color: var(--text-muted); opacity: 0.8; }
+
+.axis-box[aria-invalid="true"],
+.table-times[aria-invalid="true"] {
+	border-color: var(--danger);
+	box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 40%, transparent);
+}
+
+.axes-lock {
+	display: inline-flex;
+	align-items: center;
+	padding: 3px 6px;
+	color: var(--text-muted);
+}
+
+.axes-lock .lock-shackle { transition: transform 120ms ease; transform-origin: 16px 11px; }
+.axes-lock:not(.is-on) .lock-shackle { transform: translateX(3px) translateY(-1px) rotate(18deg); }
+
+.axes-lock.is-on {
+	color: var(--accent-ink);
+	background: var(--accent);
+	border-color: var(--accent);
+}
+
+.cs-tick {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--text-secondary);
+	font-size: 11.5px;
+}
+
+.cs-tick input[type="checkbox"] { margin: 0; }
+
+/* The legend's extras: a line's peak beside its name, and what it left out. */
+.legend-peak {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	color: var(--text-muted);
+	margin-left: 2px;
+}
+
+.legend-item.is-total { color: var(--text-primary); font-weight: 600; }
+
+.legend-note {
+	font-size: 10.5px;
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.legend-item[hidden], .legend-note[hidden] { display: none; }
+
+/* A legend of fifty nuclides is several rows, and the panels are what lose
+   the height: past a few rows it scrolls instead. */
+.chart-shell > .legend {
+	max-height: 7.2em;
+	overflow-y: auto;
+}
+
+/* --- the table's settings ------------------------------------------------ */
+
+.table-settings {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+}
+
+.table-settings[hidden] { display: none; }
+
+.table-settings > button { font-size: 11px; padding: 2px 9px; }
+
+.table-times {
+	width: 18ch;
+	font-family: var(--mono);
+	font-size: 11px;
+	padding: 1px 5px;
+}
+
+.table-peaks td.unit { text-align: left; color: var(--text-secondary); }
+
 /* --- table ------------------------------------------------------------- */
 
 table {
@@ -4737,6 +5049,109 @@ td > .matrix-add:not(.matrix-more) {
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
 	color: var(--text-secondary);
+}
+
+/* --- the tree beside a chart ---------------------------------------------- */
+
+/* The box that puts a row on the chart: empty, a bar for some of a block, the
+   accent with a tick for all of it -- and for one series that is on, the line
+   it is drawn with. */
+.ttick {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	padding: 0;
+	border: 1.5px solid var(--text-muted);
+	border-radius: 3px;
+	background: transparent;
+	font-size: 10px;
+	line-height: 1;
+	color: var(--accent-ink);
+}
+
+.ttick:hover:not(:disabled) { border-color: var(--accent); }
+
+.ttick.is-some::before {
+	content: '';
+	width: 6px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+.ttick.is-all {
+	background: var(--accent);
+	border-color: var(--accent);
+}
+
+.ttick.is-all:not(:has(.ttick-swatch))::before { content: '✓'; font-weight: 700; }
+
+/* One series on the chart: the box is its line, on the panel's ground. */
+.ttick.is-all:has(.ttick-swatch) {
+	background: var(--surface-1);
+	border-color: var(--border-strong);
+}
+
+.ttick-swatch { width: 10px; height: 3px; }
+
+/* Where a series of an opened block sits: the list it is an index of, small,
+   before the index's own name. */
+.trow-index .tindex-list {
+	flex: none;
+	font-family: var(--mono);
+	font-size: 9.5px;
+	color: var(--text-muted);
+	max-width: 9ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.trow-more { cursor: default; }
+
+/* The star of an endpoint: filled for one, an outline on the row being
+   pointed at for the rest -- a column of empty stars is noise. */
+.tstar {
+	flex: none;
+	padding: 0 2px;
+	border: 0;
+	background: transparent;
+	color: var(--text-muted);
+	font-size: 12px;
+	line-height: 1;
+	visibility: hidden;
+}
+
+.tstar.is-on { visibility: visible; color: var(--warn); }
+
+.trow:hover .tstar,
+.trow:focus-visible .tstar { visibility: visible; }
+
+.tstar:hover:not(:disabled) { color: var(--warn); }
+
+.tstar-glyph {
+	flex: none;
+	width: 14px;
+	text-align: center;
+	color: var(--warn);
+	font-size: 12px;
+}
+
+.trow-endpoints {
+	border-bottom: 1px solid var(--border);
+}
+
+/* A folded sub-system that holds something on the chart. */
+.tcharted {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	margin-left: 2px;
 }
 
 /* --- the icons: the diagram's shapes and colours, at 16px ---------------- */

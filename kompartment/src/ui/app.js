@@ -18,16 +18,26 @@
 import { Project, DEFAULT_SIMULATION } from '../domain/project.js';
 import * as ed from '../domain/edit.js';
 import {
-	TimeChart,
-	MAX_SERIES,
+	MOST_LINES,
 	DEFAULT_SERIES,
 	fmtValue,
 	filterOutputs,
 	filterGroups,
-	seriesStyle,
-	styleOf,
 	SERIES_DASHES,
+	lineLook,
+	paintSwatch,
 } from './chart.js';
+import { ChartStack } from './chartstack.js';
+import {
+	planChart, indexOrder, largestLines, peakOf, describeBlock,
+} from './chartplan.js';
+import { readNumber, readNumberList } from './readnum.js';
+import {
+	AXIS_PREFIXES, prefixExponent, shiftDecimal, unitWithPrefix, unitsWithPrefix,
+} from './prefix.js';
+import {
+	valuesAt, peakRow, cellValue, pivotChoices, pivotCells, toTSV,
+} from './tableviews.js';
 import { PICTURE_KINDS } from './picture.js';
 // The one rule CSV has, from the module both writers share. Statically, and
 // four lines: the runner it used to live in is loaded on demand -- only the
@@ -144,7 +154,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-07';
+const BUILD = '2026-10-08';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -414,6 +424,41 @@ const state = {
 	// of output, one set of allowed indices per index list, and the same
 	// Probabilistic chip the tree has.
 	pick: { query: '', kinds: new Set(), indices: new Map(), sample: false },
+	// How the Chart tab draws what is picked (see ./chartplan.js): a panel
+	// per block, or the blocks in one chart; for a block with more than one
+	// index list, which one the lines run over and what is done with the
+	// others; the total of each block; what the legend says; how many lines
+	// at most; and the window the axes were set to, if they were. Page state,
+	// like the rest of how a run is being read. A saved view keeps it with
+	// the model when that is wanted.
+	chartOpts: {
+		layout: 'panels',
+		split: new Map(),
+		total: true,
+		peaks: false,
+		inView: true,
+		largest: 0,
+		fixed: null,
+		// The old picker -- every series as a chip -- folded away under
+		// *Find lines…*, for the search across blocks it is still the
+		// quickest way to make.
+		find: false,
+		// The saved view and the axis preset last put on the chart, while
+		// nothing has moved it since.
+		view: null,
+		lastView: null,
+		preset: null,
+	},
+	// The Table's shape: a run over time, a row of numbers per series, or one
+	// index list down the side and another across. And the times the first
+	// two read the curves at, as typed: a box that is redrawn from the number
+	// it parsed loses the comma somebody is in the middle of typing.
+	tableLayout: 'time',
+	tableTimes: '',
+	pivot: { rows: null, cols: null, value: 'peak', at: '' },
+	// How each output on the chart is drawn, for the swatches beside it -- in
+	// the tree and on the chips -- that have to show the same line.
+	looks: new Map(),
 	// The file this model was last written to, and the revision it was written
 	// at. Together they are what makes Save mean *save* rather than *save a
 	// copy somewhere*: with a file in hand the button writes to it and says
@@ -693,6 +738,10 @@ const RAIL_MIN = { tree: 118, info: 96 };
 
 let worker = null;
 let chart = null;
+/** Whether the tree was last drawn as the chart's picker: see `selectTab`. */
+let treePicking = false;
+/** The run it was drawn as the picker of: its boxes hold that run's series. */
+let treeRun = null;
 let graph = null;
 let autoRunTimer = null;
 /**
@@ -5479,6 +5528,8 @@ function renderRail({ tree = true } = {}) {
 	// Skipped where the edit cannot have changed a block: the tree is a row
 	// per block and rebuilding it is the largest thing an edit does.
 	if (!tree) { applySearchToGraph(); return; }
+	treePicking = pickingInTree();
+	treeRun = treePicking ? shownRun() : null;
 	renderBlockTree($('#blocklist'), state.raw, state.selection, {
 		onSelect: setSelection,
 		marks: state.marks,
@@ -5496,6 +5547,10 @@ function renderRail({ tree = true } = {}) {
 		onPlaceMenu: (system, ev) => graph?.openPasteMenu(system, ev.clientX, ev.clientY),
 		onMoveTo: (names, system) => graph?.moveInto(names, system),
 		onDelete: () => graph?.deleteSelected(),
+		// Beside the Chart and the Table, the tree is where their series are
+		// picked: a box on every block, its indices under it, the endpoints
+		// first. See `pickHooks`.
+		pick: pickHooks(),
 	}, treeFilter(), state.tree);
 	applySearchToGraph();
 }
@@ -6179,11 +6234,9 @@ function chartBlocks(names, mode) {
 	// follow, so adding to a chart does not restyle the lines already on it.
 	const merged = [...before];
 	for (const i of hits) if (!merged.includes(i)) merged.push(i);
-	const room = merged.slice(0, MAX_SERIES);
+	const room = merged.slice(0, MOST_CHARTED);
 	state.selected = room;
-	renderPicker();
-	renderChart();
-	renderTable();
+	pickChanged();
 	const added = room.filter((i) => !before.includes(i)).length;
 	const over = merged.length - room.length;
 	const where = state.tab === 'table' ? 'table' : 'chart';
@@ -6191,7 +6244,7 @@ function chartBlocks(names, mode) {
 		+ (mode === 'add' && before.length ? `, ${room.length} in the ${where}` : '')
 		+ '.'
 		+ (over
-			? ` ${over} more would not fit: at most ${MAX_SERIES} are drawn.`
+			? ` ${over} more would not fit: at most ${MOST_CHARTED.toLocaleString()} can be picked.`
 			: ''), over ? 'warn' : 'info');
 }
 
@@ -7537,9 +7590,47 @@ function storedBeside(r) {
 	};
 }
 
+/**
+ * How many series can be picked at once: the chart draws each block's as one
+ * thing (see ./chartplan.js) and a panel holds a few hundred lines, so this is
+ * a bound on what a pick costs to fetch rather than on what can be told apart.
+ */
+const MOST_CHARTED = 2000;
+
+/**
+ * How many of the model's endpoints the chart opens on: the first few blocks
+ * of the list, which for most assessments is the whole of it.
+ */
+const DEFAULT_ENDPOINTS = 3;
+
 function pickDefaultSeries() {
 	const outs = shownRun()?.outputs ?? [];
 	if (!outs.length) return;
+	// The model's endpoints first, where it names any: the results it was set
+	// up to keep are what its chart is about. An assessment of forty thousand
+	// series that opened on its last compartment opened on nothing in
+	// particular, and the two blocks the assessment reports were somewhere in
+	// a list of all of them.
+	//
+	// The first few of them, though, and not every one: an assessment's list
+	// can name three hundred blocks over fifty nuclides, and a chart that
+	// opens on all of them opens on a dozen panels nobody asked for. The rest
+	// are a tick away at the top of the tree.
+	const eps = ed.endpoints(state.raw);
+	if (eps.length) {
+		const rank = new Map(eps.map((n, k) => [n, k]));
+		const mine = [];
+		outs.forEach((o, i) => {
+			const k = rank.get(o.block ?? o.label ?? '');
+			if (k !== undefined) mine.push({ i, k });
+		});
+		if (mine.length) {
+			mine.sort((a, b) => a.k - b.k || a.i - b.i);
+			const first = [...new Set(mine.map((m) => m.k))].slice(0, DEFAULT_ENDPOINTS);
+			state.selected = mine.filter((m) => first.includes(m.k)).slice(0, MOST_LINES).map((m) => m.i);
+			return;
+		}
+	}
 	const compartments = outs.map((o, i) => ({ o, i }))
 		.filter(({ o }) => o.kind === 'compartment');
 	let chosen;
@@ -7826,6 +7917,13 @@ function pendingResults() {
 function clearResultsViews() {
 	$('#pick-filter')?.replaceChildren();
 	$('#picker')?.replaceChildren();
+	// And the bars over the two views: what is picked, and how it is drawn,
+	// are about results that are no longer there.
+	for (const id of ['#pick-bar', '#table-pick-bar', '#chart-settings', '#table-settings']) {
+		const bar = $(id);
+		if (bar) { bar.replaceChildren(); bar.hidden = true; }
+	}
+	legendEntries = [];
 	const info = $('#pickinfo');
 	if (info) info.textContent = '';
 	const legend = $('#legend');
@@ -7874,13 +7972,19 @@ function renderResults() {
 	// Keep the user's picks across runs where the labels still exist -- and
 	// from Ecolego's stored run to the first run here, which reports the same
 	// outputs under the same names.
-	const labels = new Set(state.selected.map((i) => state.prevLabels?.[i]));
+	//
+	// In the order they were picked: that is the order of the panels and of
+	// the colours of lines picked one by one, and a re-run -- or a run set
+	// beside -- that put them in the order the run reports them moved every
+	// panel about.
 	if (state.prevLabels) {
+		const at = new Map(shown.outputs.map((o, i) => [o.label, i]));
 		const remapped = [];
-		shown.outputs.forEach((o, i) => {
-			if (labels.has(o.label) && remapped.length < MAX_SERIES) remapped.push(i);
-		});
-		state.selected = remapped.length ? remapped : [];
+		for (const old of state.selected) {
+			const i = at.get(state.prevLabels[old]);
+			if (i !== undefined && remapped.length < MOST_CHARTED) remapped.push(i);
+		}
+		state.selected = [...new Set(remapped)];
 	}
 	if (!state.selected.length) pickDefaultSeries();
 	state.prevLabels = shown.outputs.map((o) => o.label);
@@ -7901,6 +8005,11 @@ function renderResults() {
 	renderPicker();
 	renderChart();
 	renderTable();
+	// Results arriving on the Chart or the Table turn the tree into their
+	// picker, and results going leave it a tree. And a picker drawn for one
+	// run is wrong for the next: its boxes hold that run's series, and a run
+	// here after Ecolego's stored one reports them in another order.
+	if (pickingInTree() !== treePicking || (treePicking && treeRun !== shownRun())) renderRail();
 	// Last, because the table's panel is rebuilt wholesale and the notice
 	// lives inside it.
 	renderStaleness();
@@ -8086,20 +8195,16 @@ function renderPickFilter() {
 	const showAll = el('button', {
 		className: 'ghost', type: 'button',
 		disabled: !shown.length,
-		title: `Chart the first ${MAX_SERIES} of them`,
-	}, `Show these (${Math.min(shown.length, MAX_SERIES)})`);
+		title: `Chart the first ${MOST_LINES} of them`,
+	}, `Show these (${Math.min(shown.length, MOST_LINES)})`);
 	showAll.addEventListener('click', () => {
-		state.selected = shown.slice(0, MAX_SERIES).map(({ i }) => i);
-		renderPicker();
-		renderChart();
-		renderTable();
+		state.selected = shown.slice(0, MOST_LINES).map(({ i }) => i);
+		pickChanged();
 	});
 	const none = el('button', { className: 'ghost', type: 'button' }, 'Show none');
 	none.addEventListener('click', () => {
 		state.selected = [];
-		renderPicker();
-		renderChart();
-		renderTable();
+		pickChanged();
 	});
 	actions.append(showAll, none);
 	if (pickFiltering()) {
@@ -8256,10 +8361,21 @@ function installPickPopoverClosers() {
 const MAX_PICK_CHIPS = 300;
 
 function renderPicker() {
-	renderPickFilter();
 	const box = $('#picker');
-	box.replaceChildren();
 	const outs = shownRun().outputs;
+	// Folded away, the chips are not drawn: they are a filter over every series
+	// in the run, a third of a million on an assessment, and every tick in the
+	// tree comes through here.
+	if (!state.chartOpts.find) {
+		box.replaceChildren();
+		$('#pickinfo').textContent = state.selected.length >= MOST_CHARTED
+			? `${MOST_CHARTED.toLocaleString()} series picked (the most there can be)`
+			: `${state.selected.length.toLocaleString()} of ${outs.length.toLocaleString()} series picked`;
+		renderPickBars();
+		return;
+	}
+	renderPickFilter();
+	box.replaceChildren();
 	const all = pickedOutputs();
 	if (!outs.length) {
 		box.append(el('p', { className: 'hint' },
@@ -8268,43 +8384,45 @@ function renderPicker() {
 		box.append(el('p', { className: 'hint' }, 'No output matches the filter.'));
 	}
 	// A chart line always has its chip, wherever it falls in the list: it is
-	// the only way to switch it off again.
+	// one way to switch it off again.
+	const picked = new Set(state.selected);
 	const room = state.pickChips ?? MAX_PICK_CHIPS;
 	const shown = all.length <= room
 		? all
 		: [
 			...all.slice(0, room),
-			...all.slice(room).filter(({ i }) => state.selected.includes(i)),
+			...all.slice(room).filter(({ i }) => picked.has(i)),
 		];
 	// Which lines the sample holds, so a chip says before it is clicked whether
 	// it will draw a spread or a single curve.
 	const held = sampleHolds()?.labels ?? null;
 	shown.forEach(({ o, i }) => {
-		const pos = state.selected.indexOf(i);
-		const on = pos >= 0;
-		const full = !on && state.selected.length >= MAX_SERIES;
+		const on = state.selected.includes(i);
+		const full = !on && state.selected.length >= MOST_CHARTED;
 		const which = held?.get(o.label) ?? null;
 		const b = el('button', {
 			className: `pick${which ? ` has-sample is-${which}` : ''}`, type: 'button', disabled: full,
 			title: full
-				? `A chart shows at most ${MAX_SERIES} series; clear one first.`
+				? `At most ${MOST_CHARTED.toLocaleString()} series can be picked; clear some first.`
 				: `${o.label}${o.unit ? ` (${o.unit})` : ''}`
 					+ (which === 'varied' ? ' — varied by the probabilistic run'
 						: which ? ' — kept by the probabilistic run' : ''),
 		}, el('span', { className: 'series-swatch dot' }), o.label, which ? sampleMark(which) : null);
 		b.setAttribute('aria-pressed', String(on));
-		if (on) {
-			const { color, set } = seriesStyle(pos);
-			b.style.setProperty('--swatch', `var(--series-${color + 1})`);
-			b.querySelector('.dot').dataset.set = String(set);
+		b.dataset.out = String(i);
+		// The line it is drawn with, as the chart drew it: a block's lines
+		// wear their indices' colours, so a chip cannot work its colour out
+		// from where it is in the list.
+		const look = on ? state.looks.get(i) : null;
+		if (look) {
+			b.style.setProperty('--swatch', look.stroke);
+			paintSwatch(b.querySelector('.dot'), look);
 		}
 		b.addEventListener('click', () => {
 			const at = state.selected.indexOf(i);
 			if (at >= 0) state.selected.splice(at, 1);
-			else if (state.selected.length < MAX_SERIES) state.selected.push(i);
-			renderPicker();
-			renderChart();
-			renderTable();
+			else if (state.selected.length < MOST_CHARTED) state.selected.push(i);
+			pickChanged();
 		});
 		box.append(b);
 	});
@@ -8318,10 +8436,875 @@ function renderPicker() {
 		});
 		box.append(more);
 	}
-	const filtered = pickFiltering() ? `, ${all.length} of ${outs.length} listed` : '';
-	$('#pickinfo').textContent = state.selected.length >= MAX_SERIES
-		? `${MAX_SERIES} lines charted (the maximum)${filtered}`
-		: `${state.selected.length} of ${outs.length} charted${filtered}`;
+	const filtered = state.chartOpts.find && pickFiltering() ? `, ${all.length} of ${outs.length} listed` : '';
+	$('#pickinfo').textContent = state.selected.length >= MOST_CHARTED
+		? `${MOST_CHARTED.toLocaleString()} series picked (the most there can be)${filtered}`
+		: `${state.selected.length.toLocaleString()} of ${outs.length.toLocaleString()} series picked${filtered}`;
+	renderPickBars();
+}
+
+// --- what is picked, and how it is drawn ----------------------------------------
+
+/**
+ * Where each index stands in its list, for a run: the colour a line with no
+ * named one takes. Worked out once per run (see `indexOrder`).
+ */
+const orderCache = new WeakMap();
+function orderOf(r) {
+	let o = orderCache.get(r);
+	if (!o) orderCache.set(r, (o = indexOrder(r.outputs)));
+	return o;
+}
+
+/**
+ * Every block's series in a run: block -> `{ dims, items: [{ i, index }] }`,
+ * in the run's order. What the tree's boxes tick and its index rows list --
+ * once per run, since an assessment's run is a third of a million series and
+ * the tree asks about one block at a time.
+ */
+const blockSeriesCache = new WeakMap();
+function seriesByBlock(r) {
+	let m = blockSeriesCache.get(r);
+	if (m) return m;
+	m = new Map();
+	r.outputs.forEach((o, i) => {
+		const block = o.block ?? o.label;
+		let e = m.get(block);
+		if (!e) m.set(block, (e = { dims: o.dims ?? [], items: [] }));
+		e.items.push({ i, index: o.index ?? [] });
+	});
+	blockSeriesCache.set(r, m);
+	return m;
+}
+
+/** Whether the tree is where the chart's lines are picked: beside the Chart and the Table. */
+function pickingInTree() {
+	return (state.tab === 'chart' || state.tab === 'table') && !!shownRun();
+}
+
+/**
+ * After what is picked has changed, from anywhere: the chart, the table, the
+ * bars above them and the tree's boxes. What is on screen is no longer the
+ * saved view it may have been.
+ */
+function pickChanged() {
+	state.chartOpts.view = null;
+	renderPicker();
+	renderChart();
+	renderTable();
+	if (pickingInTree()) renderRail();
+}
+
+/**
+ * Puts these series on, or takes them off: off when every one of them is
+ * already on, on otherwise -- and with Alt, these and nothing else, the way a
+ * plain click in the HDF5 Browser shows one dataset.
+ */
+function toggleSeries(indices, ev = null) {
+	if (!shownRun() || !indices.length) return;
+	const on = new Set(state.selected);
+	let next;
+	if (ev?.altKey) next = [...new Set(indices)];
+	else if (indices.every((i) => on.has(i))) {
+		const off = new Set(indices);
+		next = state.selected.filter((i) => !off.has(i));
+	} else {
+		next = [...state.selected];
+		for (const i of indices) if (!on.has(i)) { on.add(i); next.push(i); }
+	}
+	if (next.length > MOST_CHARTED) {
+		flash(`At most ${MOST_CHARTED.toLocaleString()} series can be picked at once; `
+			+ `${(next.length - MOST_CHARTED).toLocaleString()} were left off.`, 'warn');
+		next = next.slice(0, MOST_CHARTED);
+	}
+	state.selected = next;
+	pickChanged();
+}
+
+/**
+ * Makes a block one of the model's endpoints, or takes it off the list -- the
+ * list the *Which endpoints to keep* dialog edits, so both say the same.
+ *
+ * Only this block's name is added or taken out: anything else the list holds
+ * -- an imported file's own entries, which may name parameters -- is left as
+ * the file had it. Saved with the model and undoable, and not a reason to run
+ * again, since which series a run keeps changes no number.
+ */
+function toggleEndpoint(name) {
+	const stored = Array.isArray(state.raw.simulation?.endpoints)
+		? state.raw.simulation.endpoints.map(String) : [];
+	const on = ed.endpoints(state.raw).includes(name);
+	const next = on ? stored.filter((n) => n !== name) : [...stored, name];
+	if (ed.setEndpoints(state.raw, next)) {
+		modelChanged({
+			layoutOnly: true,
+			label: on ? `Take ${name} off the endpoints` : `Make ${name} an endpoint`,
+		});
+	}
+}
+
+/**
+ * What the tree needs to be the chart's picker, or null where it is not: see
+ * `renderBlockTree` in ./tree.js.
+ */
+function pickHooks() {
+	if (!pickingInTree()) return null;
+	const r = shownRun();
+	const byBlock = seriesByBlock(r);
+	// The series a box stands for are numbered in this run. Should another be
+	// on screen by the time one is ticked, the box is about a run that is not
+	// there, so the tree is drawn again for the one that is and the tick is
+	// not taken.
+	const live = () => {
+		if (shownRun() === r) return true;
+		renderRail();
+		return false;
+	};
+	const on = new Set(state.selected);
+	const endpoints = ed.endpoints(state.raw).filter((n) => byBlock.has(n));
+	const isEndpoint = new Set(ed.endpoints(state.raw));
+	return {
+		chartedBlocks: new Set(state.selected.map((i) => r.outputs[i]?.block).filter(Boolean)),
+		seriesOf: (name) => byBlock.get(name) ?? null,
+		tickOf: (indices, single) => {
+			let n = 0;
+			for (const i of indices) if (on.has(i)) n += 1;
+			return {
+				state: n === 0 ? 'none' : n === indices.length ? 'all' : 'some',
+				single: single != null,
+				look: single != null && on.has(single) ? state.looks.get(single) ?? null : null,
+			};
+		},
+		toggle: (indices, ev) => { if (live()) toggleSeries(indices, ev); },
+		toggleBlocks: (names, ev) => {
+			if (live()) toggleSeries(names.flatMap((n) => (byBlock.get(n)?.items ?? []).map((it) => it.i)), ev);
+		},
+		endpoints,
+		isEndpoint: (name) => isEndpoint.has(name),
+		canStar: (b) => ed.canBeEndpoint(b.kind),
+		star: (name) => toggleEndpoint(name),
+	};
+}
+
+/**
+ * The tree's boxes, after the chart has drawn: a series that is on shows the
+ * line it was drawn with, and that is only known once it has been. Only the
+ * rows that show one are touched, rather than the tree drawn again.
+ */
+function refreshPickTicks() {
+	const paint = (box, holder) => {
+		const i = Number(holder?.dataset.out);
+		const look = Number.isInteger(i) ? state.looks.get(i) : null;
+		if (look) paintSwatch(box, look);
+	};
+	for (const box of document.querySelectorAll('#blocklist .ttick-swatch')) paint(box, box.closest('[data-out]'));
+	// The chips of series picked on their own, above the chart and the table,
+	// and the drawer's chips that are on.
+	for (const box of document.querySelectorAll('.pick-chip-name[data-out] .series-swatch')) {
+		paint(box, box.closest('[data-out]'));
+	}
+	for (const chip of document.querySelectorAll('#picker .pick[data-out][aria-pressed="true"]')) {
+		const look = state.looks.get(Number(chip.dataset.out));
+		if (!look) continue;
+		chip.style.setProperty('--swatch', look.stroke);
+		paintSwatch(chip.querySelector('.dot'), look);
+	}
+}
+
+/**
+ * Selects a block, which reveals it in the tree and shows it in the
+ * Information view: what clicking a block's chip above the chart does.
+ */
+function revealBlock(name) {
+	const found = ed.findBlock(state.raw, name);
+	if (!found) return;
+	setSelection({ kind: found.kind, name }, [name]);
+}
+
+/** How many blocks the bar above the chart names before it counts the rest. */
+const BAR_CHIPS = 14;
+
+/** The bars above the Chart and the Table, and the chart's settings. */
+function renderPickBars() {
+	renderPickBar($('#pick-bar'), 'chart');
+	renderPickBar($('#table-pick-bar'), 'table');
+	renderChartSettings();
+	renderTableSettings();
+}
+
+/**
+ * What is picked, said above the chart or the table: a chip per block, with
+ * how many of its series and a way to take it off, and for a block with more
+ * than one index list on the chart, how it is drawn. Then the ways to change
+ * it that are not the tree: *Find lines…* across blocks, the layout, the saved
+ * views, and clearing it.
+ */
+function renderPickBar(host, where) {
+	if (!host) return;
+	host.replaceChildren();
+	const r = shownRun();
+	host.hidden = !r;
+	if (!r) return;
+	const outs = r.outputs;
+	const groups = new Map();
+	for (const i of state.selected) {
+		const o = outs[i];
+		if (!o) continue;
+		const block = o.block ?? o.label;
+		if (!groups.has(block)) groups.set(block, []);
+		groups.get(block).push(i);
+	}
+	const all = seriesByBlock(r);
+	const chips = el('div', { className: 'pick-chips' });
+	if (!groups.size) {
+		chips.append(el('span', { className: 'hint' },
+			`Nothing is picked. Tick blocks in the tree on the left to ${where === 'chart' ? 'chart' : 'tabulate'} `
+			+ 'them, or use Find lines… to search the series.'));
+	}
+	let n = 0;
+	for (const [block, items] of groups) {
+		if (n++ >= BAR_CHIPS) {
+			chips.append(el('span', { className: 'hint' },
+				`and ${(groups.size - BAR_CHIPS).toLocaleString()} more blocks`));
+			break;
+		}
+		const total = all.get(block)?.items.length ?? items.length;
+		const one = items.length === 1;
+		const name = one ? outs[items[0]].label : block;
+		const go = el('button', {
+			type: 'button', className: 'pick-chip-name',
+			title: `${name} — click to find it in the tree`,
+		});
+		// A series picked on its own shows the line it is drawn with -- known
+		// once the chart has drawn it, which repaints this (`refreshPickTicks`).
+		if (one) {
+			go.dataset.out = String(items[0]);
+			const look = state.looks.get(items[0]);
+			const sw = el('span', { className: 'series-swatch' });
+			go.append(look ? paintSwatch(sw, look) : sw);
+		}
+		go.append(el('span', { className: 'pick-chip-label' }, name));
+		if (!one) {
+			go.append(el('span', { className: 'pick-chip-count' },
+				items.length === total ? total.toLocaleString() : `${items.length.toLocaleString()} of ${total.toLocaleString()}`));
+		}
+		go.addEventListener('click', () => revealBlock(block));
+		const x = el('button', {
+			type: 'button', className: 'pick-chip-x', 'aria-label': `Take ${name} off`, title: 'Take it off',
+		}, '×');
+		x.addEventListener('click', () => {
+			const drop = new Set(items);
+			state.selected = state.selected.filter((i) => !drop.has(i));
+			pickChanged();
+		});
+		chips.append(el('span', { className: 'pick-chip' }, go, x));
+		if (where === 'chart' && !one) {
+			const how = blockChoices(r, block, items);
+			if (how) chips.append(how);
+		}
+	}
+	host.append(chips);
+
+	const tools = el('div', { className: 'pick-tools' });
+	if (where === 'chart') tools.append(layoutToggle());
+	const find = el('button', {
+		type: 'button', className: `ghost pick-find${state.chartOpts.find ? ' is-on' : ''}`,
+		'aria-pressed': String(state.chartOpts.find),
+		title: 'Every series as a chip, with a search across blocks and a filter by index: '
+			+ 'the way to put “I-129 everywhere” on in one go.',
+	}, 'Find lines…');
+	find.addEventListener('click', () => {
+		state.chartOpts.find = !state.chartOpts.find;
+		placeDrawer();
+		// Drawn on the way open, since nothing draws it while it is folded.
+		renderPicker();
+		if (state.chartOpts.find) $('#pick-search')?.focus();
+	});
+	tools.append(find);
+	if (where === 'chart') tools.append(viewsButton());
+	if (state.selected.length) {
+		const clear = el('button', { type: 'button', className: 'ghost', title: 'Take everything off' }, 'Clear');
+		clear.addEventListener('click', () => { state.selected = []; pickChanged(); });
+		tools.append(clear);
+	}
+	tools.append(infoButton(`panel:${where}-pick`, () => panelTopic(where === 'chart' ? 'chart' : 'table')));
+	host.append(tools);
+}
+
+/**
+ * For a block with more than one index list, on the chart: which list its
+ * lines are, and for each of the others with more than one index picked, a
+ * panel per index, the sum over them, or one of them. See `describeBlock`.
+ */
+function blockChoices(r, block, items) {
+	const choice = state.chartOpts.split.get(block) ?? {};
+	const info = describeBlock(r.outputs, block, items, choice);
+	if (info.scalar || info.dims.length < 2) return null;
+	const box = el('span', { className: 'pick-how' });
+	const keep = (next) => {
+		state.chartOpts.split.set(block, next);
+		state.chartOpts.view = null;
+		renderChart();
+		renderPickBars();
+	};
+	const linesBy = el('select', { 'aria-label': `What the lines of ${block} are` },
+		...info.dims.map((d) => el('option', { value: d, selected: d === info.lines }, d)));
+	linesBy.addEventListener('change', () => keep({ ...choice, lines: linesBy.value }));
+	box.append(el('span', { className: 'pick-how-word' }, 'lines'), linesBy);
+	for (const x of info.others) {
+		if (x.values.length <= 1) continue;
+		// The indices' own names are values here too, so they go in with a mark
+		// that a list's name cannot have: an index called `sum` is an index.
+		const sel = el('select', { 'aria-label': `${x.list} of ${block}` },
+			el('option', { value: 'panel', selected: x.how === 'panel' }, 'a panel each'),
+			el('option', { value: 'sum', selected: x.how === 'sum' }, 'added up'),
+			...x.values.map((v) => el('option', { value: `=${v}`, selected: x.how === v }, String(v))));
+		sel.addEventListener('change', () => {
+			const how = sel.value.startsWith('=') ? sel.value.slice(1) : sel.value;
+			keep({ ...choice, others: { ...(choice.others ?? {}), [x.list]: how } });
+		});
+		box.append(el('span', { className: 'pick-how-word' }, x.list), sel);
+	}
+	return box;
+}
+
+/** Panels, or one chart: a panel per block, or every block in one chart per unit. */
+function layoutToggle() {
+	const box = el('span', { className: 'seg', role: 'group', 'aria-label': 'How the blocks are laid out' });
+	for (const [value, label, title] of [
+		['panels', 'Panels', 'A panel for each block, stacked over one time axis'],
+		['same', 'Same chart', 'Every block in one chart, a panel for each unit'],
+	]) {
+		const on = state.chartOpts.layout === value;
+		const b = el('button', { type: 'button', className: `seg-btn${on ? ' is-on' : ''}`, title }, label);
+		b.setAttribute('aria-pressed', String(on));
+		b.addEventListener('click', () => {
+			if (state.chartOpts.layout === value) return;
+			state.chartOpts.layout = value;
+			state.chartOpts.view = null;
+			renderChart();
+			renderPickBars();
+		});
+		box.append(b);
+	}
+	return box;
+}
+
+/**
+ * The drawer the old picker lives in, under whichever of the Chart and the
+ * Table is in front: one picker, moved, rather than two that could disagree.
+ */
+function placeDrawer() {
+	const drawer = $('#pick-drawer');
+	if (!drawer) return;
+	const slot = state.tab === 'table' ? $('#table-drawer-slot') : $('#chart-drawer-slot');
+	if (slot && drawer.parentNode !== slot) slot.append(drawer);
+	drawer.hidden = !state.chartOpts.find;
+}
+
+// --- the axes ---------------------------------------------------------------------
+
+/**
+ * Sets the axes to a window -- or, with null, gives them back to the data --
+ * on every panel. `preset` names the preset that did it, if one did.
+ */
+function setFixedAxes(win, preset = null) {
+	const clean = {};
+	for (const k of ['xMin', 'xMax', 'yMin', 'yMax']) {
+		const v = win?.[k];
+		if (typeof v === 'number' && Number.isFinite(v)) clean[k] = v;
+	}
+	state.chartOpts.fixed = Object.keys(clean).length ? clean : null;
+	state.chartOpts.preset = preset;
+	chart?.setFixed(state.chartOpts.fixed);
+	renderChartSettings();
+	filterLegend();
+}
+
+/** A scale for the chart, saved with the model as the chart's menu saves it. */
+function setChartScale(axis, log) {
+	const key = axis === 'x' ? 'chart_time_scale' : 'chart_value_scale';
+	const now = ed.chartScales(state.raw)[axis === 'x' ? 'xLog' : 'yLog'];
+	if (now === log) return;
+	ed.setView(state.raw, { [key]: log ? 'log' : 'linear' });
+	modelChanged({ layoutOnly: true, label: 'Change the chart’s scales' });
+	state.chartOpts.preset = null;
+	if (shownRun()) renderChart();
+	renderChartSettings();
+}
+
+/** The prefixes the axes are lettered in, as powers of ten: `{ x: 3, y: 0 }` for kyear. */
+function axisExponents() {
+	const p = ed.chartPrefixes(state.raw);
+	return { x: prefixExponent(p.x), y: prefixExponent(p.y) };
+}
+
+/**
+ * The prefix beside an axis's lin and log: P down to f, and none. k shows the
+ * values' Bq as kBq and their numbers divided by a thousand.
+ */
+function prefixPicker(axis, word) {
+	const now = ed.chartPrefixes(state.raw)[axis];
+	const sel = el('select', {
+		className: 'prefix-select',
+		'aria-label': `Prefix for the ${word.toLowerCase()} axis’s unit`,
+		title: axis === 'x'
+			? 'A prefix for the time axis’s unit: k shows years as kyear, the numbers divided by 1000'
+			: 'A prefix for the values’ unit: k shows Bq as kBq, the numbers divided by 1000; µ shows Sv as µSv',
+	});
+	const order = Object.keys(AXIS_PREFIXES);
+	const at = order.indexOf('k') + 1;
+	for (const p of [...order.slice(0, at), '', ...order.slice(at)]) {
+		sel.append(el('option', { value: p, selected: p === now }, p || '–'));
+	}
+	sel.addEventListener('change', () => setChartPrefix(axis, sel.value));
+	return sel;
+}
+
+/**
+ * A prefix for one axis, saved with the model as its scales are. The preset
+ * on screen stays on screen -- it is the same window over the same data --
+ * unless it says a prefix of its own for this axis, which this is not.
+ */
+function setChartPrefix(axis, prefix) {
+	if (!ed.setChartPrefixes(state.raw, { [axis]: prefix })) return;
+	modelChanged({ layoutOnly: true, label: 'Change the chart’s prefixes' });
+	const preset = ed.chartPresets(state.raw).find((p) => p.name === state.chartOpts.preset);
+	const own = preset?.[`${axis}_prefix`];
+	if (own != null && own !== ed.chartPrefixes(state.raw)[axis]) state.chartOpts.preset = null;
+	if (shownRun()) renderChart();
+	renderChartSettings();
+}
+
+/**
+ * A number short enough for an axis box: three figures, and an exponent
+ * written the way the axis writes one -- `1e5`, `2.05e12` -- from ten thousand
+ * up and below a hundredth.
+ */
+function axisNumber(v) {
+	if (!Number.isFinite(v)) return '';
+	if (v === 0) return '0';
+	const a = Math.abs(v);
+	if (a >= 1e4 || a < 1e-2) {
+		const [m, e] = v.toExponential(2).split('e');
+		return `${Number(m)}e${Number(e)}`;
+	}
+	return String(Number(v.toPrecision(3)));
+}
+
+/**
+ * The four boxes of the axes: what the reader set, and -- greyed, where they
+ * set nothing -- where the axes are now. A box being typed in is left alone:
+ * writing a number back into the box it is being typed into is how `6,2` loses
+ * its comma.
+ */
+function renderAxesBoxes() {
+	const host = $('#chart-settings');
+	if (!host || host.hidden) return;
+	const win = chart?.window();
+	const fixed = state.chartOpts.fixed ?? {};
+	// In the unit the axis is lettered in: with k on the values, a box says 2
+	// where the model's number is 2,000.
+	const exps = axisExponents();
+	for (const box of host.querySelectorAll('input.axis-box')) {
+		const k = box.dataset.bound;
+		const e = k[0] === 'x' ? exps.x : exps.y;
+		box.placeholder = win && Number.isFinite(win[k]) ? axisNumber(shiftDecimal(win[k], -e)) : 'auto';
+		if (document.activeElement === box) continue;
+		// A number set by hand is shown as it was set where it fits, so that
+		// leaving the box does not round what was typed into it.
+		const v = Number.isFinite(fixed[k]) ? shiftDecimal(fixed[k], -e) : null;
+		box.value = v != null ? (String(v).length <= 8 ? String(v) : axisNumber(v)) : '';
+		box.removeAttribute('aria-invalid');
+	}
+	// And the presets' box, which names the preset on screen, or says the
+	// axes were set by hand.
+	const preset = host.querySelector('.axes-preset');
+	if (preset && document.activeElement !== preset) preset.replaceWith(presetPicker());
+	const lock = host.querySelector('.axes-lock');
+	if (lock) {
+		const on = !!state.chartOpts.fixed;
+		lock.classList.toggle('is-on', on);
+		lock.setAttribute('aria-pressed', String(on));
+		lock.title = on ? 'The axes are set: click to give them back to the data'
+			: 'Keep the axes where they are now, whatever is charted next';
+	}
+}
+
+/**
+ * The chart's settings, on a line of their own under what is picked: the two
+ * scales, the axes' window as four boxes, presets of it, the lock, and what
+ * the legend and the lines are. Not with the distribution or the scatter up:
+ * those have their own.
+ */
+function renderChartSettings() {
+	const host = $('#chart-settings');
+	if (!host) return;
+	const r = shownRun();
+	host.hidden = !r || showingSample();
+	if (host.hidden) return;
+	// A box being typed in survives: everything else is drawn again.
+	if (host.contains(document.activeElement) && document.activeElement.matches('input.axis-box')) {
+		renderAxesBoxes();
+		return;
+	}
+	host.replaceChildren();
+	const scales = ed.chartScales(state.raw);
+	const scale = (axis, word, log) => {
+		const box = el('span', { className: 'seg', role: 'group', 'aria-label': `${word} axis` });
+		for (const [value, label] of [[false, 'lin'], [true, 'log']]) {
+			const on = log === value;
+			const b = el('button', {
+				type: 'button', className: `seg-btn${on ? ' is-on' : ''}`,
+				title: `${value ? 'Logarithmic' : 'Linear'} ${word.toLowerCase()} axis, saved with the model`,
+			}, label);
+			b.setAttribute('aria-pressed', String(on));
+			b.addEventListener('click', () => setChartScale(axis, value));
+			box.append(b);
+		}
+		return el('span', { className: 'cs-group' }, el('span', { className: 'cs-word' }, word), box,
+			prefixPicker(axis, word));
+	};
+	host.append(scale('x', 'Time', scales.xLog), scale('y', 'Values', scales.yLog));
+
+	// The window, as four boxes: empty is the data's.
+	const boxes = el('span', { className: 'cs-group cs-axes' }, el('span', { className: 'cs-word' }, 'Axes'));
+	const box = (k, label) => {
+		const input = el('input', {
+			type: 'text', className: 'axis-box', spellcheck: false, autocomplete: 'off',
+			'aria-label': label, title: `${label}. Empty is where the data put it; a comma is a decimal point.`,
+		});
+		input.dataset.bound = k;
+		input.addEventListener('change', () => {
+			const text = input.value.trim();
+			const v = text ? readNumber(text) : null;
+			if (text && v == null) {
+				input.setAttribute('aria-invalid', 'true');
+				flash(`“${text}” is not a number.`, 'warn');
+				return;
+			}
+			input.removeAttribute('aria-invalid');
+			const next = { ...(state.chartOpts.fixed ?? {}) };
+			// Typed in the unit the axis is lettered in, kept in the model's.
+			const e = k[0] === 'x' ? axisExponents().x : axisExponents().y;
+			if (v == null) delete next[k];
+			else next[k] = shiftDecimal(v, e);
+			setFixedAxes(next);
+		});
+		input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+		// Once it is left, the box shows the number as it was read.
+		input.addEventListener('blur', () => requestAnimationFrame(renderAxesBoxes));
+		return input;
+	};
+	boxes.append(
+		el('span', { className: 'cs-axis' }, 'x'), box('xMin', 'Time axis from'), '–', box('xMax', 'Time axis to'),
+		el('span', { className: 'cs-axis' }, 'y'), box('yMin', 'Value axis from'), '–', box('yMax', 'Value axis to'),
+	);
+	const lock = el('button', { type: 'button', className: 'ghost axes-lock', 'aria-label': 'Lock the axes' },
+		lockIcon());
+	lock.addEventListener('click', () => {
+		if (state.chartOpts.fixed) setFixedAxes(null);
+		else setFixedAxes(chart?.window() ?? null);
+	});
+	boxes.append(lock, presetPicker());
+	host.append(boxes);
+
+	// What the lines and the legend are.
+	const tick = (key, label, title) => {
+		const input = el('input', { type: 'checkbox', checked: !!state.chartOpts[key] });
+		input.addEventListener('change', () => {
+			state.chartOpts[key] = input.checked;
+			state.chartOpts.view = null;
+			renderChart();
+		});
+		return el('label', { className: 'cs-tick', title }, input, label);
+	};
+	const largest = el('select', { 'aria-label': 'How many lines a panel draws at most' },
+		...[0, 3, 5, 10, 20, 50].map((n) => el('option', { value: String(n), selected: state.chartOpts.largest === n },
+			n ? `the ${n} largest` : 'all')));
+	largest.addEventListener('change', () => {
+		state.chartOpts.largest = Number(largest.value) || 0;
+		state.chartOpts.view = null;
+		renderChart();
+	});
+	host.append(el('span', { className: 'cs-group' },
+		tick('total', 'Total', 'A black line for each block: every line of it added'),
+		tick('peaks', 'Peaks', 'Each line’s highest value, beside its name in the legend'),
+		tick('inView', 'In view', 'The legend names only the lines inside the window'),
+		el('label', { className: 'cs-tick' }, 'Lines', largest)));
+	renderAxesBoxes();
+}
+
+/** The lock on the axes: a padlock, drawn, so it follows the theme. */
+function lockIcon() {
+	const NS = 'http://www.w3.org/2000/svg';
+	const svg = document.createElementNS(NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '13');
+	svg.setAttribute('height', '13');
+	svg.setAttribute('aria-hidden', 'true');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '2.4');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
+	const body = document.createElementNS(NS, 'rect');
+	for (const [k, v] of [['x', '4'], ['y', '11'], ['width', '16'], ['height', '10'], ['rx', '2']]) body.setAttribute(k, v);
+	const shackle = document.createElementNS(NS, 'path');
+	shackle.setAttribute('d', 'M8 11V7a4 4 0 0 1 8 0v4');
+	shackle.setAttribute('class', 'lock-shackle');
+	svg.append(body, shackle);
+	return svg;
+}
+
+/**
+ * The presets: the axes saved by name with the model, and the way to save the
+ * ones on screen or let one go.
+ */
+function presetPicker() {
+	const presets = ed.chartPresets(state.raw);
+	const now = state.chartOpts.preset;
+	const sel = el('select', { className: 'axes-preset', 'aria-label': 'Axes saved by name' });
+	sel.append(el('option', { value: '', selected: !state.chartOpts.fixed && !now }, 'Auto range'));
+	if (state.chartOpts.fixed && !presets.some((p) => p.name === now)) {
+		sel.append(el('option', { value: '', selected: true, disabled: true }, 'Set by hand'));
+	}
+	for (const p of presets) {
+		sel.append(el('option', { value: `p:${p.name}`, selected: p.name === now }, p.name));
+	}
+	sel.append(el('option', { value: '', disabled: true }, '──────'));
+	sel.append(el('option', { value: 'save' }, 'Save these axes…'));
+	if (now && presets.some((p) => p.name === now)) {
+		sel.append(el('option', { value: 'delete' }, `Delete “${now}”`));
+	}
+	sel.addEventListener('change', () => {
+		const v = sel.value;
+		if (v === 'save') {
+			const name = window.prompt('A name for these axes', now ?? '')?.trim();
+			if (name) savePreset(name);
+			else renderChartSettings();
+			return;
+		}
+		if (v === 'delete') {
+			const list = presets.filter((p) => p.name !== now);
+			if (ed.setChartPresets(state.raw, list)) modelChanged({ layoutOnly: true, label: `Delete the axes “${now}”` });
+			state.chartOpts.preset = null;
+			renderChartSettings();
+			return;
+		}
+		if (!v) { setFixedAxes(null); return; }
+		const p = presets.find((q) => `p:${q.name}` === v);
+		if (p) applyPreset(p);
+	});
+	return sel;
+}
+
+/**
+ * Puts a saved set of axes on the chart -- a preset's, a view's: the scales
+ * and prefixes it says, saved with the model, one step to undo. Says whether
+ * the chart has to be drawn again for them.
+ */
+function applyAxesOf(p) {
+	const scales = ed.chartScales(state.raw);
+	const patch = {};
+	if (p.x_scale && (p.x_scale === 'log') !== scales.xLog) patch.chart_time_scale = p.x_scale;
+	if (p.y_scale && (p.y_scale === 'log') !== scales.yLog) patch.chart_value_scale = p.y_scale;
+	if (Object.keys(patch).length) ed.setView(state.raw, patch);
+	const prefixed = ed.setChartPrefixes(state.raw, {
+		x: p.x_prefix ?? undefined, y: p.y_prefix ?? undefined,
+	});
+	const changed = Object.keys(patch).length > 0 || prefixed;
+	if (changed) modelChanged({ layoutOnly: true, label: 'Change the chart’s axes' });
+	return changed;
+}
+
+/** Puts a preset on the chart: its scales and prefixes, saved with the model, and its window. */
+function applyPreset(p) {
+	const changed = applyAxesOf(p);
+	setFixedAxes({ xMin: p.x_min, xMax: p.x_max, yMin: p.y_min, yMax: p.y_max }, p.name);
+	if (changed && shownRun()) renderChart();
+}
+
+/**
+ * Saves the axes by name: the ends that were set, leaving the rest to the
+ * data as they are now -- "from a thousand years" keeps following the values --
+ * or, zoomed or with nothing set, the window on screen.
+ */
+function savePreset(name) {
+	const scales = ed.chartScales(state.raw);
+	const win = !chart?.isZoomed() && state.chartOpts.fixed
+		? state.chartOpts.fixed : (chart?.window() ?? {});
+	const prefixes = ed.chartPrefixes(state.raw);
+	const preset = {
+		name,
+		x_scale: scales.xLog ? 'log' : 'linear',
+		y_scale: scales.yLog ? 'log' : 'linear',
+		x_prefix: prefixes.x,
+		y_prefix: prefixes.y,
+		x_min: win.xMin ?? null, x_max: win.xMax ?? null,
+		y_min: win.yMin ?? null, y_max: win.yMax ?? null,
+	};
+	const list = [...ed.chartPresets(state.raw).filter((p) => p.name !== name), preset];
+	if (ed.setChartPresets(state.raw, list)) modelChanged({ layoutOnly: true, label: `Save the axes as “${name}”` });
+	setFixedAxes({ xMin: preset.x_min, xMax: preset.x_max, yMin: preset.y_min, yMax: preset.y_max }, name);
+}
+
+// --- saved views --------------------------------------------------------------------
+
+/**
+ * The views menu: each saved view, the way to save what is on screen as one,
+ * and -- for the view last put on the chart -- to save over it or let it go.
+ */
+function viewsButton() {
+	const views = ed.chartViews(state.raw);
+	const b = el('button', {
+		type: 'button', className: 'ghost pick-views', 'aria-haspopup': 'true',
+		title: 'What is charted and how, saved with the model by name',
+	}, state.chartOpts.view ? `View: ${state.chartOpts.view}` : 'Views', ' ▾');
+	b.addEventListener('click', () => {
+		const box = b.getBoundingClientRect();
+		const last = state.chartOpts.lastView;
+		const known = last && views.some((v) => v.name === last);
+		openMenu({
+			x: box.left,
+			y: box.bottom + 2,
+			title: 'saved views',
+			items: [
+				...views.map((v) => ({
+					label: v.name,
+					checked: () => state.chartOpts.view === v.name,
+					onPick: () => applyChartView(v),
+				})),
+				...(views.length ? [{ separator: true }] : []),
+				{
+					label: 'Save as a view…',
+					disabled: !state.selected.length,
+					title: 'What is picked, the layout, the axes and the legend, by a name, with the model',
+					onPick: () => {
+						const name = window.prompt('A name for this view', '')?.trim();
+						if (name) saveChartView(name);
+					},
+				},
+				...(known ? [
+					{
+						label: `Save over “${last}”`,
+						disabled: !state.selected.length,
+						onPick: () => saveChartView(last),
+					},
+					{
+						label: `Delete “${last}”`,
+						onPick: () => {
+							if (ed.setChartViews(state.raw, views.filter((v) => v.name !== last))) {
+								modelChanged({ layoutOnly: true, label: `Delete the chart view “${last}”` });
+							}
+							state.chartOpts.lastView = null;
+							if (state.chartOpts.view === last) state.chartOpts.view = null;
+							renderPickBars();
+						},
+					},
+				] : []),
+			],
+		});
+	});
+	return b;
+}
+
+/** What is on the chart, as a saved view called `name`. */
+function captureChartView(name) {
+	const r = shownRun();
+	const outs = r?.outputs ?? [];
+	const all = r ? seriesByBlock(r) : new Map();
+	const groups = new Map();
+	for (const i of state.selected) {
+		const o = outs[i];
+		if (!o) continue;
+		const block = o.block ?? o.label;
+		if (!groups.has(block)) groups.set(block, []);
+		groups.get(block).push(o.label);
+	}
+	const picks = [];
+	for (const [block, labels] of groups) {
+		// The whole block is the block, whatever it holds next time.
+		picks.push(labels.length === (all.get(block)?.items.length ?? -1) ? { block } : { block, labels });
+	}
+	const split = {};
+	for (const [block, c] of state.chartOpts.split) if (groups.has(block)) split[block] = c;
+	const scales = ed.chartScales(state.raw);
+	const prefixes = ed.chartPrefixes(state.raw);
+	const f = state.chartOpts.fixed ?? {};
+	return {
+		name,
+		layout: state.chartOpts.layout,
+		picks,
+		split,
+		total: state.chartOpts.total,
+		peaks: state.chartOpts.peaks,
+		in_view: state.chartOpts.inView,
+		largest: state.chartOpts.largest,
+		x_scale: scales.xLog ? 'log' : 'linear',
+		y_scale: scales.yLog ? 'log' : 'linear',
+		x_prefix: prefixes.x,
+		y_prefix: prefixes.y,
+		x_min: f.xMin ?? null, x_max: f.xMax ?? null, y_min: f.yMin ?? null, y_max: f.yMax ?? null,
+	};
+}
+
+/** Saves what is on the chart by name, over a view of that name if there is one. */
+function saveChartView(name) {
+	const views = ed.chartViews(state.raw);
+	const next = [...views.filter((v) => v.name !== name), captureChartView(name)];
+	if (ed.setChartViews(state.raw, next)) {
+		modelChanged({ layoutOnly: true, label: `Save the chart view “${name}”` });
+	}
+	state.chartOpts.view = name;
+	state.chartOpts.lastView = name;
+	renderPickBars();
+	flash(`Saved as the view “${name}”, with the model.`, 'info');
+}
+
+/**
+ * Puts a saved view on the chart. A whole block is every series it has in the
+ * run on screen; a series named that the run does not have is said, not
+ * silently missing.
+ */
+function applyChartView(v) {
+	const r = shownRun();
+	if (!r) { flash('Run the model first.', 'warn'); return; }
+	const all = seriesByBlock(r);
+	const byLabel = new Map(r.outputs.map((o, i) => [o.label, i]));
+	const next = [];
+	let missing = 0;
+	for (const p of v.picks) {
+		if (!p.labels) {
+			const items = all.get(p.block)?.items ?? [];
+			if (!items.length) missing += 1;
+			for (const it of items) next.push(it.i);
+			continue;
+		}
+		for (const label of p.labels) {
+			const i = byLabel.get(label);
+			if (i === undefined) missing += 1;
+			else next.push(i);
+		}
+	}
+	state.selected = [...new Set(next)].slice(0, MOST_CHARTED);
+	state.chartOpts.layout = v.layout;
+	state.chartOpts.split = new Map(Object.entries(v.split ?? {}));
+	state.chartOpts.total = v.total;
+	state.chartOpts.peaks = v.peaks;
+	state.chartOpts.inView = v.in_view;
+	state.chartOpts.largest = v.largest;
+	applyAxesOf(v);
+	state.chartOpts.fixed = null;
+	const win = { xMin: v.x_min, xMax: v.x_max, yMin: v.y_min, yMax: v.y_max };
+	pickChanged();
+	setFixedAxes(win);
+	state.chartOpts.view = v.name;
+	state.chartOpts.lastView = v.name;
+	renderPickBars();
+	if (missing) {
+		flash(`${missing} of what the view “${v.name}” names ${missing === 1 ? 'is' : 'are'} not in this run.`, 'warn');
+	}
 }
 
 /**
@@ -8872,10 +9855,14 @@ function renderChart() {
 	// The sample is on the model's grid; the run under it may be on the steps
 	// its solver took. See `ontoAxis`.
 	const onRun = prob ? ontoAxis(prob.t, r.t) : ((v) => v);
-	const series = state.selected.flatMap((i, pos) => {
-		const label = r.outputs[i].label;
-		const own = { label, values: column(r, i), unit: r.outputs[i].unit, slot: pos };
-		const k = probAt?.get(label);
+	/**
+	 * What one output draws: its line, or under a sample the lines chosen
+	 * through it with the spread behind them -- in `style`, the look the plan
+	 * gave the line it is (see ./chartplan.js).
+	 */
+	const outputSeries = (i, style, label) => {
+		const own = { label, values: column(r, i), unit: r.outputs[i].unit, style, output: i };
+		const k = probAt?.get(r.outputs[i].label);
 		if (k === undefined) return [own];
 		const band = bandOf(prob, k);
 		const q = prob.quantiles;
@@ -8952,89 +9939,162 @@ function renderChart() {
 				bands: spreadFor(line.key, first),
 			};
 		});
+	};
+	// A line that adds several outputs up -- a block's total, or a block added
+	// over one of its lists -- draws each kind of line asked for, added. Under
+	// a sample that is honest for the mean, which adds up to the mean of the
+	// sum, and is only the medians added for the median, which is not the
+	// median of anything; so neither carries a spread.
+	const valuesOfKind = (i, kind) => {
+		const k = probAt?.get(r.outputs[i].label);
+		if (k === undefined || kind === 'single') return column(r, i);
+		const band = bandOf(prob, k);
+		if (kind === 'mean') return onRun(band.mean);
+		const j = prob.quantiles.indexOf(0.5);
+		return j < 0 ? column(r, i) : onRun(band.q[j]);
+	};
+	const addedUp = (idx, kind) => {
+		const n = r.t.length;
+		const sum = new Float64Array(n);
+		for (const i of idx) {
+			const v = valuesOfKind(i, kind);
+			// One of them still on its way from the worker: so is the sum, and
+			// it is the placeholder everything else knows as waiting.
+			if (!v || v === r.pending || v.length < n) return pendingColumn(r);
+			for (let j = 0; j < n; j++) sum[j] += v[j];
+		}
+		return sum;
+	};
+	const sumSeries = (idx, style, label) => lines.map((line) => ({
+		label: many ? `${label} (${line.name})` : label,
+		values: addedUp(idx, line.key),
+		unit: r.outputs[idx[0]]?.unit,
+		style,
+		set: many ? line.set : undefined,
+	}));
+	// What is drawn, block by block: see ./chartplan.js.
+	const plan = planChart(r.outputs, state.selected, {
+		layout: state.chartOpts.layout,
+		split: state.chartOpts.split,
+		order: orderOf(r),
+		total: state.chartOpts.total,
 	});
-	// The scenarios run beside the selected one: every selected output again,
-	// once per scenario, matched by label -- a scenario is the same model and
-	// reports the same outputs -- and read onto this run's times, which they
-	// share unless the model reports the solver's own steps. See withScenarios
-	// in ./scenarios.js for how the lines share the colours.
+	const scales = ed.chartScales(state.raw);
+	const notes = [...plan.notes];
+	// One chart is one axis, and a reader comparing two lines on it should
+	// be told when they are not the same quantity.
+	for (const p of plan.panels) {
+		const units = p.units.filter(Boolean);
+		if (units.length > 1) {
+			notes.push(`Mixed units on one axis (${units.join(', ')}) — values are not comparable.`);
+		}
+	}
+	// The scenarios run beside the selected one: every line of one output
+	// again, once per scenario, matched by label -- a scenario is the same
+	// model and reports the same outputs -- and read onto this run's times,
+	// which they share unless the model reports the solver's own steps. See
+	// withScenarios in ./scenarios.js for how the lines share the colours.
 	const beside = chartScenarioRuns();
 	const runOrder = scenariosToRun(state.raw, state.scenarioChoice);
 	const activeName = ed.activeScenario(state.raw);
-	let dropped = 0;
-	let drawnSeries = series;
-	if (beside.length || (chartScenarioRuns({ hidden: false }).length
-		&& state.hiddenScenarios.has(activeName))) {
-		const others = beside.map((e) => {
-			const byLabel = new Map(e.r.outputs.map((o, j) => [o.label, j]));
-			const onto = ontoAxis(e.r.t, r.t);
-			return {
-				name: e.name,
-				at: Math.max(1, runOrder.indexOf(e.name)),
-				lines: state.selected.map((i, pos) => {
-					const j = byLabel.get(r.outputs[i].label);
-					if (j === undefined) return null;
-					const col = column(e.r, j);
-					return {
-						pos, label: r.outputs[i].label, unit: e.r.outputs[j].unit,
-						// Still on its way: left as the NaN it is rather than
-						// read onto another axis, which would make it a new
-						// array nothing recognises as waiting.
-						values: col === e.r.pending ? col : onto(col),
-					};
-				}).filter(Boolean),
-			};
-		});
-		({ series: drawnSeries, dropped } = withScenarios(
-			state.hiddenScenarios.has(activeName) ? [] : series, {
-				active: activeName, others, outputs: state.selected.length,
-				perOutput: lines.length, max: MAX_SERIES,
-			}));
-	}
-	const notes = [];
-	// The run beside, where there is one: each selected output again, as that
-	// run worked it out, in the output's colour and the last of the patterns,
-	// read onto this run's times. Only beside a run here: before one, the run
-	// beside is what `r` is.
+	const withBeside = beside.length > 0 || (chartScenarioRuns({ hidden: false }).length > 0
+		&& state.hiddenScenarios.has(activeName));
+	const scenarioCols = beside.map((e) => ({
+		name: e.name,
+		at: Math.max(1, runOrder.indexOf(e.name)),
+		byLabel: new Map(e.r.outputs.map((o, j) => [o.label, j])),
+		onto: ontoAxis(e.r.t, r.t),
+		r: e.r,
+	}));
+	// The run beside, where there is one: each line of one output again, as
+	// that run worked it out, in the line's colour and the last of the
+	// patterns, read onto this run's times. Only beside a run here: before
+	// one, the run beside is what `r` is.
 	const stored = storedBeside(r);
 	const besidePending = new Set();
 	if (stored?.note) notes.push(stored.note);
-	if (stored?.view) {
-		const extra = [];
-		let left = 0;
-		state.selected.forEach((i, pos) => {
-			const k = stored.at.get(r.outputs[i]?.label);
-			if (k === undefined) return;
-			if (drawnSeries.length + extra.length >= MAX_SERIES) { left++; return; }
-			// A kept run's series is asked of its worker like any other, and is
-			// on its way until it answers.
-			const own = column(stored.view, k);
-			const values = stored.onto(own);
-			if (own === stored.view.pending) besidePending.add(values);
-			extra.push({
-				label: `${r.outputs[i].label} (${stored.tag})`,
-				values,
-				unit: stored.view.outputs[k].unit,
-				slot: pos,
-				set: SERIES_DASHES.length - 1,
-			});
-		});
-		drawnSeries = [...drawnSeries, ...extra];
-		if (left) {
-			notes.push(`${left} line${left === 1 ? '' : 's'} of ${besideName()} left out: a chart `
-				+ `holds ${MAX_SERIES}. Select fewer outputs.`);
+	let dropped = 0;
+	let leftBeside = 0;
+	let leftSmall = 0;
+	const panels = [];
+	for (const panel of plan.panels) {
+		const built = panel.lines.map((line) => ({
+			line,
+			total: !!line.total,
+			series: line.sum
+				? sumSeries(line.outputs, line.style, line.label)
+				: outputSeries(line.outputs[0], line.style, line.label),
+		}));
+		// Only the largest, where that is what is asked: ranked by how high
+		// the line it draws goes, every total kept.
+		let kept = built;
+		if (state.chartOpts.largest > 0) {
+			const cut = largestLines(built, (b) => peakOf(b.series[0].values, scales.yLog),
+				state.chartOpts.largest);
+			kept = cut.kept;
+			leftSmall += cut.left;
 		}
+		let series = kept.flatMap((b) => b.series);
+		const singles = kept.filter((b) => !b.line.sum);
+		if (withBeside) {
+			const others = scenarioCols.map((e) => ({
+				name: e.name,
+				at: e.at,
+				lines: singles.map((b, pos) => {
+					const i = b.line.outputs[0];
+					const j = e.byLabel.get(r.outputs[i].label);
+					if (j === undefined) return null;
+					const col = column(e.r, j);
+					return {
+						pos, label: b.line.label, unit: e.r.outputs[j].unit, style: b.line.style,
+						// Still on its way: left as the NaN it is rather than
+						// read onto another axis, which would make it a new
+						// array nothing recognises as waiting.
+						values: col === e.r.pending ? col : e.onto(col),
+					};
+				}).filter(Boolean),
+			}));
+			let lost = 0;
+			({ series, dropped: lost } = withScenarios(
+				state.hiddenScenarios.has(activeName) ? [] : series, {
+					active: activeName, others, outputs: singles.length,
+					perOutput: lines.length, max: MOST_LINES,
+				}));
+			dropped += lost;
+		}
+		if (stored?.view) {
+			const extra = [];
+			singles.forEach((b, pos) => {
+				const i = b.line.outputs[0];
+				const k = stored.at.get(r.outputs[i]?.label);
+				if (k === undefined) return;
+				if (series.length + extra.length >= MOST_LINES) { leftBeside++; return; }
+				// A kept run's series is asked of its worker like any other, and is
+				// on its way until it answers.
+				const own = column(stored.view, k);
+				const values = stored.onto(own);
+				if (own === stored.view.pending) besidePending.add(values);
+				extra.push({
+					label: `${b.line.label} (${stored.tag})`,
+					values,
+					unit: stored.view.outputs[k].unit,
+					style: b.line.style,
+					slot: pos,
+					set: SERIES_DASHES.length - 1,
+				});
+			});
+			series = [...series, ...extra];
+		}
+		panels.push({ key: panel.key, title: panel.title, units: panel.units, series });
 	}
 	const pendingCols = new Set([r.pending, ...beside.map((e) => e.r.pending), ...besidePending]);
-	const units = new Set(drawnSeries.map((s) => s.unit).filter(Boolean));
-	const yLabel = units.size === 1 ? [...units][0] : '';
 	if (dropped) {
-		notes.push(`${dropped} scenario line${dropped === 1 ? '' : 's'} left out: a chart holds `
-			+ `${MAX_SERIES}. Select fewer outputs, or hide a scenario in the legend.`);
+		notes.push(`${dropped} scenario line${dropped === 1 ? '' : 's'} left out: a panel draws at most `
+			+ `${MOST_LINES}. Pick fewer, or hide a scenario in the legend.`);
 	}
-	if (units.size > 1) {
-		notes.push(`Mixed units on one axis (${[...units].join(', ')}) — `
-			+ 'values are not comparable.');
+	if (leftBeside) {
+		notes.push(`${leftBeside} line${leftBeside === 1 ? '' : 's'} of ${besideName()} left out: a panel `
+			+ `draws at most ${MOST_LINES}. Pick fewer.`);
 	}
 	// A log axis cannot place a value that is not positive, so the chart drops
 	// it -- and a series with nothing positive in it draws nothing at all,
@@ -9042,7 +10102,6 @@ function renderChart() {
 	// saying now that a constant can be charted: a rate of zero is an ordinary
 	// thing for a model to carry, and its line is not missing, just unplottable
 	// on this axis.
-	const scales = ed.chartScales(state.raw);
 	if (scales.yLog) {
 		const anyPositive = (v) => {
 			for (let i = 0; i < v.length; i++) if (v[i] > 0) return true;
@@ -9051,13 +10110,14 @@ function renderChart() {
 		// A series still on its way from the worker is NaN throughout, which
 		// is not the same as zero throughout; it gets its note, if it earns
 		// one, when it arrives.
-		const nothing = drawnSeries.filter((s) => !pendingCols.has(s.values) && !anyPositive(s.values));
+		const nothing = panels.flatMap((p) => p.series)
+			.filter((s) => !pendingCols.has(s.values) && !anyPositive(s.values));
 		if (nothing.length) {
 			notes.push(nothing.length === 1
 				? `${nothing[0].label} is zero or negative throughout, which a `
-					+ 'log axis cannot draw — untick log value to see it.'
+					+ 'log axis cannot draw — set Values to lin to see it.'
 				: `${nothing.length} of these are zero or negative throughout, `
-					+ 'which a log axis cannot draw — untick log value to see them.');
+					+ 'which a log axis cannot draw — set Values to lin to see them.');
 		}
 	}
 	renderChartMode();
@@ -9065,8 +10125,14 @@ function renderChart() {
 	$('#unitwarn').hidden = !notes.length;
 	$('#unitwarn').textContent = notes.join(' ');
 	chart.setScales(scales);
-	chart.setData(r.t, drawnSeries, {
-		xLabel: `Time (${state.raw.simulation?.time_unit ?? 'year'})`, yLabel,
+	// The prefixes the axes are lettered in: the numbers on them and in the
+	// readout, and the units in their titles. The chart works in the model's
+	// own numbers whatever they are.
+	const { x: ex, y: ey } = axisExponents();
+	chart.setPrefixes({ x: ex, y: ey });
+	for (const p of panels) p.yLabel = unitsWithPrefix(p.units, ey);
+	chart.setPanels(r.t, panels, {
+		xLabel: `Time (${unitWithPrefix(state.raw.simulation?.time_unit ?? 'year', ex)})`,
 	});
 	// Coming back from one of the other two pictures, the chart's container
 	// was `display: none` and had no size at all -- so the canvas was last
@@ -9076,10 +10142,64 @@ function renderChart() {
 	// paint again. One frame later the layout has settled and it can.
 	requestAnimationFrame(() => { if (!$('#chart').hidden) chart?.draw(); });
 
+	// How each output is drawn, for the swatches beside the chart -- the
+	// tree's boxes and the chips -- which have to show the line it is.
+	const colours = chart.colours();
+	state.looks = new Map();
+	if (colours) {
+		for (const p of panels) {
+			p.series.forEach((s, si) => {
+				if (s.output != null && !state.looks.has(s.output)) state.looks.set(s.output, lineLook(s, si, colours));
+			});
+		}
+	}
+	renderLegend(panels, { prob, left: leftSmall });
+	renderAxesBoxes();
+	refreshPickTicks();
+}
+
+/**
+ * The legend under the chart, as it was last drawn: one entry per line, with
+ * where the line is -- which panel, which series of it -- so that *In view*
+ * can put away the entries whose lines are outside the window without
+ * drawing the legend again.
+ */
+let legendEntries = [];
+
+/**
+ * The legend: a line drawn in several panels is one entry -- `I-129` in the
+ * lake and in the mire is the same line, cut twice -- with the totals first
+ * and the rest in order of how high they go, which is the order a reader of a
+ * chart of fifty nuclides asks about them in. *Peaks* puts each line's highest
+ * value beside it.
+ */
+function renderLegend(panels, { prob = null, left = 0 } = {}) {
 	const lg = $('#legend');
 	lg.replaceChildren();
+	const colours = chart.colours();
+	const yLog = ed.chartScales(state.raw).yLog;
+	const byKey = new Map();
+	for (const p of panels) {
+		p.series.forEach((s, si) => {
+			const look = colours ? lineLook(s, si, colours) : null;
+			const key = [s.label, look?.stroke, look?.dash.join(','), look?.width].join('\u0001');
+			let e = byKey.get(key);
+			if (!e) {
+				e = {
+					label: s.label, series: s, si, look, peak: -Infinity, where: [],
+					total: s.style?.kind === 'total',
+				};
+				byKey.set(key, e);
+			}
+			e.peak = Math.max(e.peak, peakOf(s.values, yLog));
+			e.where.push([p.key, si]);
+		});
+	}
+	const entries = [...byKey.values()]
+		.sort((a, b) => (Number(b.total) - Number(a.total)) || (b.peak - a.peak));
+	legendEntries = entries;
 	const toggles = scenarioToggles();
-	lg.hidden = drawnSeries.length < 2 && !prob?.screen && !toggles;
+	lg.hidden = entries.length < 2 && !prob?.screen && !toggles;
 	if (toggles) lg.append(toggles);
 	// What the bands are over, when it is not every realisation: a band drawn
 	// over the categories somebody chose to keep has to say so where the band
@@ -9089,15 +10209,47 @@ function renderChart() {
 			`${prob.screen.kept.toLocaleString()} of ${prob.iterations.toLocaleString()} realisations `
 			+ 'shown (categories)'));
 	}
-	drawnSeries.forEach((s, i) => {
-		const { color, set } = styleOf(s, i);
+	for (const e of entries) {
 		const swatch = el('span', { className: 'series-swatch legend-swatch' });
 		// Both channels, because past the eighth line the hue alone is
 		// ambiguous: the pattern is what tells the sets apart.
-		swatch.dataset.set = String(set);
-		swatch.style.setProperty('--swatch', `var(--series-${color + 1})`);
-		lg.append(el('span', { className: 'legend-item' }, swatch, s.label));
-	});
+		if (e.look) paintSwatch(swatch, e.look);
+		const item = el('span', { className: `legend-item${e.total ? ' is-total' : ''}` }, swatch, e.label);
+		if (state.chartOpts.peaks && Number.isFinite(e.peak)) {
+			item.append(el('span', { className: 'legend-peak', title: 'The highest value it reaches' },
+				fmtValue(shiftDecimal(e.peak, -axisExponents().y))));
+		}
+		e.node = item;
+		lg.append(item);
+	}
+	if (left) {
+		lg.append(el('span', { className: 'legend-note' },
+			`${left.toLocaleString()} smaller line${left === 1 ? '' : 's'} not drawn — `
+			+ `Largest is ${state.chartOpts.largest}`));
+	}
+	lg.append(el('span', { className: 'legend-note legend-out', hidden: true }));
+	filterLegend();
+}
+
+/**
+ * With *In view* on, the entries whose lines have nothing inside the window
+ * are put away and counted: zoomed in on one decade, the legend of a chart of
+ * fifty nuclides names the dozen that are there.
+ */
+function filterLegend() {
+	const seen = state.chartOpts.inView ? chart?.visibleSeries() : null;
+	let away = 0;
+	for (const e of legendEntries) {
+		const shown = !seen || e.where.some(([k, si]) => seen.get(k)?.has(si));
+		e.shown = shown;
+		if (e.node) e.node.hidden = !shown;
+		if (!shown) away += 1;
+	}
+	const out = $('#legend .legend-out');
+	if (out) {
+		out.hidden = !away;
+		out.textContent = `${away.toLocaleString()} more outside the window`;
+	}
 }
 
 /**
@@ -9509,8 +10661,8 @@ function drawTable() {
 	}
 	if (!state.selected.length) {
 		wrap.append(el('div', { className: 'empty' },
-			'Select one or more outputs to tabulate — the picker above the chart '
-			+ 'decides what appears here.'));
+			'Nothing is picked to tabulate. Tick blocks in the tree on the left — or open one '
+			+ 'and tick its indices — and their series are the columns here.'));
 		return;
 	}
 	const outs = state.selected.map((i) => r.outputs[i]);
@@ -9554,7 +10706,6 @@ function drawTable() {
 		return got ?? new Float64Array(0);
 	});
 	const times = which === 'run' ? r.t : (prob?.t ?? r.t);
-	const table = el('table');
 	// Which columns the sample holds, marked as the chart's chips and the
 	// tree mark them: whichever run the rows are of, these are the ones the
 	// other readings of the sample can show.
@@ -9564,15 +10715,14 @@ function drawTable() {
 	// numbers to compare are side by side.
 	const byScenario = which === 'run' && shownScenarioRuns({ hidden: false }).length
 		? scenarioColumns(state.selected) : null;
-	const heads = byScenario
-		? byScenario.map((c) => el('th', {}, c.unit ? `${c.label} (${c.unit})` : c.label))
-		: outs.map((o) => {
-			const mark = held?.get(o.label) ?? null;
-			return el('th', mark ? {
-				className: `has-sample is-${mark}`,
-				title: mark === 'varied' ? 'Varied by the probabilistic run' : 'Kept by the probabilistic run',
-			} : {}, o.unit ? `${o.label} (${o.unit})` : o.label, mark ? sampleMark(mark) : null);
-		});
+	// What each column is, as its head says it and as text for a copy: the
+	// output, or the output in one scenario, and its unit.
+	const meta = byScenario
+		? byScenario.map((c) => ({ label: c.label, unit: c.unit ?? '', text: c.unit ? `${c.label} (${c.unit})` : c.label }))
+		: outs.map((o) => ({
+			label: o.label, unit: o.unit ?? '', mark: held?.get(o.label) ?? null,
+			text: o.unit ? `${o.label} (${o.unit})` : o.label,
+		}));
 	let shown = byScenario ? byScenario.map((c) => c.values()) : cols;
 	// The run beside, a column after each output it has, as the chart draws a
 	// line beside each. Beside this run's own numbers only, not a sample's: the
@@ -9580,33 +10730,87 @@ function drawTable() {
 	const stored = !byScenario && which === 'run' ? storedBeside(r) : null;
 	let besideStored = 0;
 	if (stored?.view) {
-		const withHeads = [];
+		const withMeta = [];
 		const withCols = [];
 		outs.forEach((o, pos) => {
-			withHeads.push(heads[pos]);
+			withMeta.push(meta[pos]);
 			withCols.push(shown[pos]);
 			const k = stored.at.get(o.label);
 			if (k === undefined) return;
 			const unit = stored.view.outputs[k].unit;
-			withHeads.push(el('th', { className: 'is-stored', title: `${besideName(shownBeside(), { start: true })}, for comparison` },
-				`${o.label} (${stored.tag}${unit ? `, ${unit}` : ''})`));
+			withMeta.push({
+				label: `${o.label} (${stored.tag})`, unit: unit ?? '', stored: true,
+				text: `${o.label} (${stored.tag}${unit ? `, ${unit}` : ''})`,
+			});
 			withCols.push(stored.onto(column(stored.view, k)));
 			besideStored++;
 		});
-		heads.splice(0, heads.length, ...withHeads);
+		meta.splice(0, meta.length, ...withMeta);
 		shown = withCols;
 	}
+	// A table a column per series is a table of a few hundred columns at most
+	// before it is a wall: the rest are said, and the copy and the exports
+	// carry them all.
+	const allMeta = meta.slice();
+	const allShown = shown;
+	const wide = meta.length > TABLE_COLUMNS;
+	if (wide) {
+		meta.length = TABLE_COLUMNS;
+		shown = shown.slice(0, TABLE_COLUMNS);
+	}
+	const timeUnit = state.raw.simulation?.time_unit ?? 'year';
+	const layout = state.tableMode === 'time' || !prob ? state.tableLayout : 'time';
+	const chosen = readNumberList(state.tableTimes).values;
+	renderTableSettings();
+	if (layout === 'peaks') {
+		drawPeaksTable(wrap, allMeta, allShown, times, chosen, timeUnit);
+		return;
+	}
+	if (layout === 'pivot') {
+		drawPivotTable(wrap, r, cols, times, timeUnit);
+		return;
+	}
+	const table = el('table');
+	const heads = meta.map((m) => {
+		if (m.stored) {
+			return el('th', { className: 'is-stored', title: `${besideName(shownBeside(), { start: true })}, for comparison` }, m.text);
+		}
+		const mark = m.mark;
+		return el('th', mark ? {
+			className: `has-sample is-${mark}`,
+			title: mark === 'varied' ? 'Varied by the probabilistic run' : 'Kept by the probabilistic run',
+		} : {}, m.text, mark ? sampleMark(mark) : null);
+	});
 	table.append(el('thead', {}, el('tr', {},
-		el('th', {}, `Time (${state.raw.simulation?.time_unit ?? 'year'})`), ...heads)));
+		el('th', {}, `Time (${timeUnit})`), ...heads)));
+	// At the times asked for, where some were: each curve read there, as a
+	// derived value at a time reads one -- between its points, and held flat
+	// beyond the run.
+	const at = chosen.length ? chosen : null;
+	const atCols = at ? shown.map((c) => (c.length ? valuesAt(times, c, at) : [])) : null;
 	const body = el('tbody');
-	const rows = Math.min(times.length, state.tableRows ?? TABLE_ROWS);
+	const rows = at ? at.length : Math.min(times.length, state.tableRows ?? TABLE_ROWS);
 	for (let i = 0; i < rows; i++) {
+		const cells = at ? atCols : shown;
 		body.append(el('tr', {},
-			el('td', {}, fmtValue(times[i])),
-			...shown.map((c) => el('td', {}, i < c.length ? fmtValue(c[i]) : '—'))));
+			el('td', {}, fmtValue(at ? at[i] : times[i])),
+			...cells.map((c) => el('td', {}, i < c.length ? fmtValue(c[i]) : '—'))));
 	}
 	table.append(body);
 	wrap.append(table);
+	// Every column, not only the ones drawn, and every row.
+	tableSheet = () => {
+		const when = at ?? times;
+		const cells = at ? allShown.map((c) => (c.length ? valuesAt(times, c, at) : [])) : allShown;
+		const out = [[`Time (${timeUnit})`, ...allMeta.map((m) => m.text)]];
+		for (let i = 0; i < when.length; i++) out.push([when[i], ...cells.map((c) => (i < c.length ? c[i] : ''))]);
+		return out;
+	};
+	if (wide) {
+		wrap.append(el('p', { className: 'hint table-hint' },
+			`The first ${TABLE_COLUMNS} columns of ${(outs.length + besideStored).toLocaleString()}: pick fewer to `
+			+ 'see the rest here, or export them all with a right-click.'));
+	}
 	if (byScenario && byScenario.some((c) => c.r !== r) && shownScenarioRuns({ hidden: false })
 		.some((e) => !sameTimes(e.r.t, r.t))) {
 		wrap.append(el('p', { className: 'hint table-hint' },
@@ -9624,7 +10828,11 @@ function drawTable() {
 			'A dash is a series the run did not keep realisations of — see '
 			+ 'Choose blocks… in the Probabilistic dialog.'));
 	}
-	if (rows < times.length) {
+	if (at) {
+		wrap.append(el('p', { className: 'hint table-hint' },
+			`At ${at.length === 1 ? 'the time' : `the ${at.length} times`} asked for, read off each curve `
+			+ 'between its points. Empty the box for every output time.'));
+	} else if (rows < times.length) {
 		const left = times.length - rows;
 		const more = el('button', { className: 'ghost', type: 'button' },
 			`Show ${Math.min(left, TABLE_ROWS).toLocaleString()} more`);
@@ -9634,12 +10842,240 @@ function drawTable() {
 		});
 		wrap.append(el('p', { className: 'hint table-hint' },
 			`Showing the first ${rows.toLocaleString()} of `
-			+ `${times.length.toLocaleString()} times. Right-click the table to `
-			+ `export all of them as CSV. `, more));
+			+ `${times.length.toLocaleString()} times. Copy, or right-click the table to `
+			+ `export, takes all of them. `, more));
 	} else {
 		wrap.append(el('p', { className: 'hint table-hint' },
-			'Right-click the table to export it as CSV.'));
+			'Copy puts it on the clipboard for a spreadsheet; right-click it to export it as CSV.'));
 	}
+}
+
+/** How many columns the table draws before it says how many more there are. */
+const TABLE_COLUMNS = 400;
+
+/**
+ * What Copy writes, for the table on screen: rows of cells, the head first,
+ * every row of it -- not only the ones drawn. Set by whichever layout drew
+ * the table last; null where there is no table.
+ */
+let tableSheet = null;
+
+/**
+ * The peaks: a row per series, with its highest value, when it got there,
+ * what it adds up to over the run, and its value at each time asked for.
+ */
+function drawPeaksTable(wrap, meta, shown, times, chosen, timeUnit) {
+	const atHeads = chosen.map((t) => `At ${fmtValue(t)} ${timeUnit}`);
+	const headText = ['Series', 'Unit', 'Peak', `Time of peak (${timeUnit})`, `Integral (unit × ${timeUnit})`, ...atHeads];
+	const table = el('table', { className: 'table-peaks' });
+	table.append(el('thead', {}, el('tr', {}, ...headText.map((h) => el('th', {}, h)))));
+	const body = el('tbody');
+	const sheet = [headText];
+	meta.forEach((m, k) => {
+		const c = shown[k];
+		const row = c?.length ? peakRow(times, c, chosen) : null;
+		const cells = row ? [row.peak, row.at, row.total, ...row.values] : [NaN, NaN, NaN, ...chosen.map(() => NaN)];
+		body.append(el('tr', {},
+			el('td', {}, m.label),
+			el('td', { className: 'unit' }, m.unit),
+			...cells.map((v) => el('td', {}, fmtValue(v)))));
+		sheet.push([m.label, m.unit, ...cells]);
+	});
+	table.append(body);
+	wrap.append(table);
+	tableSheet = () => sheet;
+	wrap.append(el('p', { className: 'hint table-hint' },
+		'The integral is the curve added up over the run, by the trapezium rule between its points. '
+		+ (chosen.length ? '' : 'Type times in At times for a column of each curve’s value there.')));
+}
+
+/** The two sides of a pivot: what was asked for, where the picked series have it. */
+function pivotAxes(lists, blocks) {
+	const rows = lists.includes(state.pivot.rows) ? state.pivot.rows : (lists[0] ?? null);
+	let cols = state.pivot.cols === 'block'
+		|| (lists.includes(state.pivot.cols) && state.pivot.cols !== rows) ? state.pivot.cols : null;
+	if (!cols) cols = blocks.length > 1 ? 'block' : (lists.find((l) => l !== rows) ?? 'block');
+	return { rows, cols };
+}
+
+/** What a pivot's cells can be, as the box offers them. */
+const PIVOT_VALUES = [
+	['peak', 'the peak'],
+	['time_of_peak', 'the time of the peak'],
+	['integral', 'the integral'],
+	['at', 'the value at a time'],
+];
+
+/**
+ * The pivot: one index list down the side and another -- or the blocks --
+ * across the top, each cell one number of the series there. Series that
+ * differ in neither are added before the number is taken.
+ */
+function drawPivotTable(wrap, r, cols, times, timeUnit) {
+	const { lists, blocks } = pivotChoices(r.outputs, state.selected);
+	const { rows, cols: across } = pivotAxes(lists, blocks);
+	if (!rows) {
+		wrap.append(el('div', { className: 'empty' },
+			'A pivot puts an index list down the side, and none of the series picked is indexed by one. '
+			+ 'Pick a block over the nuclides, say.'));
+		tableSheet = null;
+		return;
+	}
+	const valuesOf = new Map(state.selected.map((i, k) => [i, cols[k]]));
+	const { rowKeys, colKeys, cells, summed, left, units } = pivotCells(r.outputs, state.selected, { rows, cols: across });
+	const kind = state.pivot.value;
+	const at = kind === 'at' ? (readNumber(state.pivot.at) ?? times[times.length - 1]) : NaN;
+	const n = times.length;
+	const valueOfCell = (key) => {
+		const idx = cells.get(key);
+		if (!idx?.length) return NaN;
+		const sum = new Float64Array(n);
+		for (const i of idx) {
+			const v = valuesOf.get(i);
+			if (!v || v.length < n) return NaN;
+			for (let j = 0; j < n; j++) sum[j] += v[j];
+		}
+		return cellValue(kind, times, sum, at);
+	};
+	const word = PIVOT_VALUES.find(([k]) => k === kind)?.[1] ?? 'the peak';
+	const colText = (c) => {
+		const unit = kind === 'time_of_peak' ? timeUnit : units.get(c);
+		return unit ? `${c} (${unit}${kind === 'integral' ? ` × ${timeUnit}` : ''})` : String(c);
+	};
+	const headText = [rows, ...colKeys.map(colText)];
+	const table = el('table', { className: 'table-pivot' });
+	table.append(el('thead', {}, el('tr', {}, ...headText.map((h) => el('th', {}, h)))));
+	const body = el('tbody');
+	const sheet = [headText];
+	for (const rk of rowKeys) {
+		const values = colKeys.map((ck) => valueOfCell(`${rk}\u0001${ck}`));
+		body.append(el('tr', {}, el('td', {}, rk), ...values.map((v) => el('td', {}, fmtValue(v)))));
+		sheet.push([rk, ...values]);
+	}
+	table.append(body);
+	wrap.append(table);
+	tableSheet = () => sheet;
+	const notes = [`Each cell is ${word}${kind === 'at' ? ` at ${fmtValue(at)} ${timeUnit}` : ''} of the series there.`];
+	if (summed.length) notes.push(`Series that differ only in ${summed.join(' and ')} are added up first.`);
+	if (left) {
+		notes.push(`${left === 1 ? 'One series picked is' : `${left.toLocaleString()} series picked are`} not indexed by `
+			+ `${rows}${across === 'block' ? '' : ` and ${across}`}, and ${left === 1 ? 'is' : 'are'} left out.`);
+	}
+	wrap.append(el('p', { className: 'hint table-hint' }, notes.join(' ')));
+}
+
+/**
+ * The Table's own settings, beside what produced it: how it is laid out, the
+ * times it is read at, and for a pivot its two sides and what a cell is --
+ * then Copy. A box being typed in is left as it is.
+ */
+function renderTableSettings() {
+	const host = $('#table-settings');
+	if (!host) return;
+	const r = shownRun();
+	host.hidden = !r || (state.tableMode !== 'time' && !!currentProb());
+	if (host.hidden) return;
+	if (host.contains(document.activeElement) && document.activeElement.matches('input')) return;
+	host.replaceChildren();
+	const redraw = () => { renderTable(); renderTableSettings(); };
+	const layout = el('select', { 'aria-label': 'How the table is laid out' },
+		...[['time', 'over time'], ['peaks', 'peaks'], ['pivot', 'pivot']]
+			.map(([v, label]) => el('option', { value: v, selected: state.tableLayout === v }, label)));
+	layout.addEventListener('change', () => { state.tableLayout = layout.value; redraw(); });
+	host.append(el('label', { className: 'cs-tick' }, 'Layout', layout));
+	if (state.tableLayout !== 'pivot') {
+		const times = el('input', {
+			type: 'text', className: 'table-times', value: state.tableTimes, spellcheck: false, autocomplete: 'off',
+			placeholder: state.tableLayout === 'time' ? 'every output time' : 'e.g. 1e3; 1e4; 1e5',
+			'aria-label': 'At these times',
+			title: 'Times to read each curve at, separated by semicolons or spaces: 1e3; 1e4; 1e5. '
+				+ 'A comma between digits is a decimal point.',
+		});
+		times.addEventListener('change', () => {
+			const { bad } = readNumberList(times.value);
+			state.tableTimes = times.value;
+			if (bad.length) {
+				times.setAttribute('aria-invalid', 'true');
+				flash(`Not a time: ${bad.map((b) => `“${b}”`).join(', ')}.`, 'warn');
+			} else times.removeAttribute('aria-invalid');
+			renderTable();
+		});
+		times.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') times.blur(); });
+		host.append(el('label', { className: 'cs-tick' }, 'At times', times));
+	} else {
+		const { lists, blocks } = pivotChoices(r.outputs, state.selected);
+		const { rows, cols } = pivotAxes(lists, blocks);
+		const side = (label, value, options, key) => {
+			const sel = el('select', { 'aria-label': label },
+				...options.map(([v, text]) => el('option', { value: v, selected: v === value }, text)));
+			sel.addEventListener('change', () => { state.pivot[key] = sel.value; redraw(); });
+			return el('label', { className: 'cs-tick' }, label, sel);
+		};
+		if (rows) {
+			host.append(side('Rows', rows, lists.map((l) => [l, l]), 'rows'));
+			host.append(side('Columns', cols, [...lists.filter((l) => l !== rows).map((l) => [l, l]), ['block', 'blocks']], 'cols'));
+		}
+		host.append(side('Cells', state.pivot.value, PIVOT_VALUES, 'value'));
+		if (state.pivot.value === 'at') {
+			const atBox = el('input', {
+				type: 'text', className: 'table-times', value: state.pivot.at, spellcheck: false,
+				placeholder: 'the end', 'aria-label': 'At which time',
+			});
+			atBox.addEventListener('change', () => {
+				const v = atBox.value.trim();
+				if (v && readNumber(v) == null) {
+					atBox.setAttribute('aria-invalid', 'true');
+					flash(`“${v}” is not a time.`, 'warn');
+					return;
+				}
+				state.pivot.at = v;
+				renderTable();
+			});
+			atBox.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') atBox.blur(); });
+			host.append(el('label', { className: 'cs-tick' }, 'at', atBox));
+		}
+	}
+	const copy = el('button', {
+		type: 'button', className: 'ghost',
+		title: 'The whole table, every row of it, as text a spreadsheet takes from the clipboard',
+	}, 'Copy');
+	copy.addEventListener('click', copyTable);
+	host.append(copy);
+}
+
+/**
+ * Puts the table on the clipboard, tab-separated, which is what a spreadsheet
+ * pastes into cells: every row of it, after asking the run for any column it
+ * has not worked out yet.
+ */
+async function copyTable() {
+	const r = shownRun();
+	if (!r) return;
+	try {
+		if (r === state.results) await ensureColumns(r, state.selected);
+	} catch { /* what is in hand is copied */ }
+	if (state.tab === 'table') drawTable();
+	const rows = tableSheet?.();
+	if (!rows?.length) { flash('There is no table to copy.', 'warn'); return; }
+	const text = toTSV(rows);
+	let done = false;
+	try {
+		await navigator.clipboard.writeText(text);
+		done = true;
+	} catch {
+		// No clipboard for a page without focus or permission: the old way,
+		// through a selection.
+		const box = el('textarea', { value: text, readOnly: true });
+		box.style.position = 'fixed';
+		box.style.opacity = '0';
+		document.body.append(box);
+		box.select();
+		try { done = document.execCommand('copy'); } catch { done = false; }
+		box.remove();
+	}
+	flash(done
+		? `Copied ${(rows.length - 1).toLocaleString()} rows — paste them into a spreadsheet.`
+		: 'The browser would not let the table be copied.', done ? 'info' : 'warn');
 }
 
 /**
@@ -9738,7 +11174,11 @@ function acceptJacobianCheck(m) {
  * neither can be the one somebody forgets.
  */
 function themeChanged() {
-	chart?.draw();
+	// Drawn again rather than repainted: a named line's colour is moved to
+	// stand off the ground it is drawn on, and the swatches beside the chart
+	// -- the legend, the tree's boxes, the chips -- carry that colour too.
+	if (shownRun() && state.selected.length) renderChart();
+	else chart?.draw();
 	// A chart on the app is a canvas too, and reads the palette when drawn.
 	if (state.appSession.mode === 'run') redrawAppRun();
 	else if (state.tab === 'app') renderAppDesignerView();
@@ -11168,6 +12608,9 @@ async function saveChartPicture(kind) {
 	try {
 		const { file, width, height } = await chart.savePicture(kind, {
 			name: ed.modelName(state.raw),
+			// The legend as the page shows it: what is in view, in its order.
+			legend: legendEntries.filter((e) => e.shown !== false)
+				.map((e) => ({ label: e.label, series: e.series, si: e.si })),
 		});
 		flash(`Saved ${file} — ${Math.round(width)}×${Math.round(height)}`
 			+ (kind === 'svg' ? '.' : ' at 2× for print.'), 'info');
@@ -12483,6 +13926,17 @@ function setModel(raw, source) {
 	resetDesigner();
 	state.selected = [];
 	state.prevLabels = null;
+	// How the last model's blocks were drawn, and the window its axes were
+	// set to, are about blocks and numbers this one may not have. How the
+	// chart is laid out and what the legend says are the reader's, and stay.
+	state.chartOpts.split = new Map();
+	state.chartOpts.fixed = null;
+	state.chartOpts.view = null;
+	state.chartOpts.lastView = null;
+	state.chartOpts.preset = null;
+	chart?.setFixed(null);
+	state.pivot.rows = null;
+	state.pivot.cols = null;
 	state.selection = null;
 	// The scenarios run beside the last model's, and their workers: a
 	// different model has its own scenarios, if any, and runs none of them
@@ -13159,6 +14613,16 @@ function selectTab(name) {
 		renderStaleness();
 	}
 	if (name === 'chart' && shownRun()) chart?.draw();
+	// The tree is the chart's picker beside the Chart and the Table, and a
+	// tree elsewhere: drawn again whenever that changes. The drawer of chips
+	// goes with whichever of the two is in front.
+	const picking = pickingInTree();
+	if (picking !== treePicking) {
+		treePicking = picking;
+		renderRail();
+	}
+	placeDrawer();
+	if (name === 'chart' || name === 'table') renderPickBars();
 	if (name === 'build') graph?.render();
 	if (name === 'code') { renderCode(); if (generated.view === 'jacobian') renderJacobian(); }
 	if (name === 'model') renderModelEditor();
@@ -13182,7 +14646,13 @@ export function boot() {
 	wireFlash();
 	wireRailSplit();
 	wirePaneSplits();
-	chart = new TimeChart($('#chart'));
+	chart = new ChartStack($('#chart'));
+	// A gesture moved the window: the axes' boxes say where it is now, and a
+	// legend of what is in view follows it.
+	chart.onWindow = () => {
+		renderAxesBoxes();
+		filterLegend();
+	};
 	graph = new GraphEditor($('#graph'), {
 		onChange: modelChanged,
 		// The diagram may select several blocks at once, so it says which as
@@ -13490,9 +14960,10 @@ export function boot() {
 	// auto-layout, fit, zoom -- live in the diagram's own right-click menu:
 	// see GraphEditor._canvasMenu.
 
-	// The chart's own settings are on its own menu, the way the diagram's are:
-	// two checkboxes above a chart are two checkboxes in the way of it the rest
-	// of the time, and a picture of the chart has nowhere else to be asked for.
+	// What is done *to* the chart -- a picture of it, the CSV, the zoom, the
+	// run beside -- is on its own menu, the way the diagram's is. How it is
+	// drawn is on the line above it (`renderChartSettings`), where it can be
+	// seen: the scales are on both.
 	$('#chart-shell').addEventListener('contextmenu', chartMenu);
 
 	for (const t of document.querySelectorAll('.tab')) {

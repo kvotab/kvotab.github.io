@@ -112,10 +112,14 @@ export function withScenarios(primary, { active, others, outputs, perOutput = 1,
 	// apart, so each gets a colour. A sample's median and mean are already
 	// told apart by their patterns, and keep them.
 	const byScenario = outputs === 1 && perOutput === 1;
+	// A line that wears its index's own look (a nuclide's colour) keeps it
+	// beside its scenarios and is told from them by its pattern -- unless the
+	// scenarios are the only thing to tell apart, when each takes a colour of
+	// its own and the look is put aside.
 	const series = primary.map((s) => ({
 		...s,
 		label: scenarioLabel(s.label, active),
-		...(byScenario ? { slot: 0, set: undefined } : {}),
+		...(byScenario ? { slot: 0, set: undefined, style: undefined } : {}),
 	}));
 	// The patterns the selected scenario's own lines use, so that a scenario
 	// beside it does not repeat one of them.
@@ -128,7 +132,7 @@ export function withScenarios(primary, { active, others, outputs, perOutput = 1,
 				label: scenarioLabel(line.label, o.name),
 				values: line.values,
 				unit: line.unit,
-				...(byScenario ? { slot: o.at } : { slot: line.pos, set: used + o.at - 1 }),
+				...(byScenario ? { slot: o.at } : { slot: line.pos, set: used + o.at - 1, style: line.style }),
 			});
 		}
 	}

@@ -14,7 +14,7 @@ const KICKER = 'Left panel';
 const TAB = 'Tab';
 
 /**
- * @param {'model'|'simulation'|'tree'|'information'|'indexlists'|'json'} key
+ * @param {'model'|'simulation'|'tree'|'information'|'indexlists'|'json'|'chart'|'table'} key
  * @param {object} [ctx]
  * @param {boolean} [ctx.systems]  the model has sub-systems
  * @param {boolean} [ctx.sample]   a probabilistic run stands
@@ -113,6 +113,9 @@ export function panelTopic(key, ctx = {}) {
 				list: [
 					'Click a block to select it, here and on the diagram; double-click to open its settings. '
 					+ 'Click a sub-system to show it on the diagram; its arrow opens it without going there.',
+					'Beside the Chart and the Table the tree is where their series are picked: a box on every '
+					+ 'block, its indices under it when it is opened, the model’s endpoints at the top and a '
+					+ 'star for making one. A sub-system then opens where it is rather than on the diagram.',
 					'Right-click a row for the block\u2019s menu: its settings, cut, copy and paste, moving '
 					+ 'it to another sub-system, and delete.',
 					'The keyboard walks it as a tree is walked: up and down, right to open or step in, left to '
@@ -221,6 +224,82 @@ export function panelTopic(key, ctx = {}) {
 					+ 'text in an editable box takes the browser seconds.',
 			}],
 			more: 'Editing it in the JSON tab',
+		};
+		case 'chart': return {
+			kicker: TAB,
+			title: 'What is charted',
+			lead: 'The series on the chart are picked in the tree on the left, a block at a time, and '
+				+ 'each block is drawn as one thing: a line per index, in that index’s own colour.',
+			sections: [{
+				heading: 'Picking',
+				list: [
+					'**The box** on a block in the tree puts all of its series on the chart, or takes them '
+					+ 'off; half filled, some of them are on. **Opening** a block lists its indices, each '
+					+ 'with a box of its own — a nuclide, or a nuclide in one landscape object.',
+					'**⌘-click** (Ctrl-click) a block in the tree to add it to the chart, or take it off. '
+					+ '**Alt-click** a box for that and nothing else. Selected blocks are ticked together.',
+					'**Endpoints**, at the top of the tree, are the blocks the model keeps as its results, '
+					+ 'and the chart opens on the first three of them. The **star** on any block adds it to '
+					+ 'them or takes it off.',
+					'**Find lines…** opens every series as a chip, with a search across blocks and a filter '
+					+ 'by index — the way to put one nuclide on from every block at once.',
+					'**The chips** above the chart say what is on it; click one to find its block in the '
+					+ 'tree, × to take it off.',
+				],
+			}, {
+				heading: 'How it is drawn',
+				list: [
+					'**Panels** draws a panel per block, over one time axis; **Same chart** draws the blocks '
+					+ 'in one chart, the second block’s lines thinner, and says so when their units differ.',
+					'A block over two lists — nuclides and landscape objects — says beside its chip which '
+					+ 'list its **lines** are, and for the other: **a panel each**, **added up**, or one '
+					+ 'index of it.',
+					'**Total** draws each block’s lines added up, in the text colour. Under a sample it adds '
+					+ 'the lines drawn, without a spread: the means add up to the mean of the sum, the '
+					+ 'medians to no median of anything.',
+				],
+			}, {
+				heading: 'The axes and the legend',
+				list: [
+					'**Time** and **Values** switch each axis between linear and logarithmic, saved with '
+					+ 'the model. The **prefix** beside each letters its unit: **k** shows Bq as kBq and the '
+					+ 'numbers divided by a thousand, **µ** shows Sv/year as µSv/year.',
+					'**Axes** sets where they run: empty is where the data put them. A comma is a decimal '
+					+ 'point. The **lock** keeps the axes where they are now, whatever is charted next; '
+					+ 'the box beside it saves them by name with the model.',
+					'**Peaks** puts each line’s highest value in the legend, **In view** names only the lines '
+					+ 'inside the window, and **Lines** draws only the largest few of a panel. The legend '
+					+ 'is in order of how high each line goes.',
+					'**Views** saves all of this by name with the model, and puts a saved one back.',
+				],
+			}],
+			more: 'Picking from the tree',
+		};
+		case 'table': return {
+			kicker: TAB,
+			title: 'What is tabulated',
+			lead: 'The series in the table are the ones on the chart, picked the same way: in the tree '
+				+ 'on the left, beside either tab.',
+			sections: [{
+				heading: 'Layouts',
+				choices: [
+					['over time', 'A row per output time and a column per series — or, with times typed '
+						+ 'in **At times**, a row for each of those, each curve read there.'],
+					['peaks', 'A row per series: its highest value, when it got there, the curve added up '
+						+ 'over the run, and its value at each time in **At times**.'],
+					['pivot', 'One index list down the side and another, or the blocks, across the top; '
+						+ 'each cell the peak, its time, the integral or the value at a time of the series '
+						+ 'there. Series that differ in neither are added up first.'],
+				],
+			}, {
+				heading: 'Taking it elsewhere',
+				list: [
+					'**Copy** puts every row of the table on the clipboard, tab-separated, which a '
+					+ 'spreadsheet pastes straight into cells.',
+					'Right-click the table to export it as CSV or HDF5, or to open it in the HDF5 Browser.',
+				],
+			}],
+			more: 'The table’s layouts',
 		};
 		default:
 			return null;

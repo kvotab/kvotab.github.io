@@ -456,8 +456,13 @@ time — one unit with Alt held, the same bargain a drag makes. The tab strip
 along the top answers to the arrow keys too: Left and Right move between Build,
 Chart, Table and the rest, Home and End go to the ends.
 
-**Choosing what to chart.** The picker above the chart lists every output, and
-a model of any size has more of them than one chart can hold. Narrow it with the
+**Choosing what to chart.** Beside the Chart and the Table the tree on the
+left is where their series are picked: a box on every block puts all of it on
+the chart, a block that is opened has a box for each of its indices, and the
+model's endpoints come first — see [Picking from the tree](#picking-from-the-tree).
+**Find lines…**, above the chart, opens the other way in: every series in the
+model as a chip, for a search across blocks. A model of any size has more of
+them than one chart can hold, so narrow the chips with the
 search box — the same rules as the block search, so `Water` matches anywhere
 and `*I-129*` is a pattern over the whole label — with the kind chips, and with
 one **selector per index list**, `Contaminants ▾`. **The box completes as you
@@ -473,19 +478,23 @@ results, as chips to switch on and off, with **All**, **None**, and a box to
 find one by once there are more than a dozen. It closes on Escape or a click
 elsewhere. Rows of chips in the open, one per list, do not scale: one model in
 the corpus carries sixteen lists, one of them 353 flow paths long, and the rows
-would run well below the fold before the picker or the chart was reached.
+would run well below the fold before the chips or the chart was reached.
 A sub-set shares its indices' names with the list it is cut from, so the two
 are one selector — `Radionuclides` folds into `Contaminants`, and a nuclide chosen
 there narrows a line indexed by either; the tooltip says which lists a selector
 stands for. A mapped list, whose indices are its own, keeps a selector of its
 own, and a list with one index in the results offers no choice and gets none.
-The picker below draws three hundred chips at a time and says how many more
-there are, with a button for them: a landscape model reports thousands of
+The chips are drawn three hundred at a time, with a line saying how many more
+there are and a button for them: a landscape model reports thousands of
 outputs, and the filter is how a line is found in a list that long. A line
 already on the chart keeps its chip wherever it falls in the list, since that
-chip is the way to switch it off again.
+chip is one way to switch it off again.
 
-**Thirty-two lines, in eight hues and four line styles.** The palette is the
+**Lines picked one by one: eight hues and four line styles.** A series picked
+on its own — a block with no index, or one index of a block — is drawn in one
+chart with the others picked that way, and its colour is its place there. (A
+block picked whole is drawn as a block, each line in its index's own colour:
+see [A block drawn as one thing](#a-block-drawn-as-one-thing).) The palette is the
 validated categorical set, which is eight colours — assigned in fixed order,
 because a filter that changes the series count must not repaint the survivors.
 Past the eighth the hues begin again, and what tells one set from the next is
@@ -496,17 +505,18 @@ Cycling a palette on its own is the one thing a categorical palette must not do
 — two lines the same colour are two lines you cannot tell apart — and the second
 channel is what makes the repeat legible instead of a collision. It is carried
 everywhere a series is shown and not only on the line: the label at the line's
-end, the legend, the crosshair readout and the chip in the picker all draw a
+end, the legend, the crosshair readout, the chips and the tree's boxes all draw a
 short line in that series' own colour and pattern. A dashed line is drawn with a
 butt cap rather than the round one the solid lines use, because a round cap adds
 half a line width at each end of every dash and closes the gaps of the tightest
 pattern.
 
-A chart *opens* on one set — eight solid lines — rather than on all thirty-two;
-the rest is there to be asked for. And the crosshair readout shows twelve rows
-while every line fits in twelve, then switches to the largest values at that
-time point and says how many it left out, because thirty-two rows is taller than
-most charts.
+A chart with nothing picked opens on the model's endpoints; a model with none
+opens on one set of its compartments — eight solid lines — rather than on all
+of them, and the rest is there to be asked for. And the crosshair readout shows
+twelve rows while every line fits in twelve, then switches to the largest values
+at that time point and says how many it left out, because a readout of fifty
+rows is taller than most charts.
 
 **Zooming and panning.** **Drag a rectangle** over the part you want —
 the conventional gesture, which is what a desktop chart does, and still the
@@ -541,7 +551,8 @@ a parameter is the reason to zoom in the first place.
 **The chart's own menu.** Right-click the chart for what to do with it:
 the two scales, the zoom, a picture of it, a run to set beside it (see [Two
 runs side by side](#two-runs-side-by-side)), and the numbers as CSV. The scales
-are two ticks, **log time** and **log value**, and they are **saved with the
+are two ticks, **log time** and **log value** — the same two as **Time** and
+**Values** on the line above the chart — and they are **saved with the
 model**, the way what the diagram shows is: log-log is how an
 activity-versus-time result is read, and what a model that says nothing is
 drawn in, while an oscillation, a population cycle or anything that goes
@@ -556,7 +567,9 @@ screen: PNG and JPEG onto a canvas at twice the size, because a bitmap scaled
 up is a bitmap scaled up and a figure in a report is read at print resolution;
 SVG through a Canvas2D-shaped surface that writes SVG instead of pixels, so
 the lines stay lines and the figure can be zoomed, re-lettered or dropped into
-a document at whatever size the page wants.
+a document at whatever size the page wants. A chart of several panels is one
+picture: the panels one under the other at their sizes on screen, and under them
+the legend as the page shows it.
 
 It is the same drawing code either way: it is handed a surface to draw on and
 does not care which it is. A second routine that emitted SVG would be a second
@@ -908,8 +921,8 @@ Eight views over one model, all editing the same object:
 | **Build** | The graph editor. Right-click for everything it can do — the empty-canvas menu adds blocks where you clicked and holds the view settings; a block's menu connects and deletes it. Drag from a compartment's right edge onto another to connect them; double-click anything to open its settings; right-click a connection for **Straighten**; drag to pan, Del to remove. The wheel zooms about wherever the pointer is — a mouse notch by about 7%, a trackpad smoothly, since the two report their scrolling in different units and the difference has to be read off `deltaMode` rather than taken at face value. Anywhere in the tab counts, not only over the canvas itself: there is a frame around it — the panel's padding, the breadcrumb above, the help line below — where a wheel doing nothing would read as a zoom that only works over blocks. Nothing in that tab scrolls, so there is nothing else a wheel there could mean, and a pointer outside the canvas zooms about the nearest point of it. Drag a sub-system onto another to move it in, contents and all. Shift-click, or shift-drag a box over them, to select several blocks — and sub-systems, which are nodes here like any other — at once; they then move together, drop into a sub-system together, and are deleted together, a selected sub-system taking everything inside it after a question. Ctrl/Cmd-A takes everything on the diagram. **Cut** (⌘X) and **Copy** (⌘C) are on every block's menu and on a selection's, and both wait for **Paste** (⌘V), which is on the canvas menu, on a sub-system, and on the block tree's rows — so a copy can be pasted into a different sub-system from the one it was taken from, or into a different model, and a cut moves the blocks there instead. **Copy format** (⌥⌘C) and **Paste format** (⌥⌘V) sit beside them, for how a block looks rather than what it is: a block's colour and shape, or a connection's colour, weight and line style, taken from one block and put on the selection — one block or several — as far as each can take it, in one step to undo. A colour the block has not set is copied as not set, so the blocks it lands on go back to their kinds' own colours, which follow the theme. A name already used where the copy lands gets a number, and **the connections come along**: a transfer is the arrow between two compartments, so it is copied when both of them are, and left behind when only one is. Every reference *inside* the copy follows the copy — a pasted expression reads the pasted parameter — and every reference *out* of it stays where it pointed. **A sub-system copies as a sub-system**: its own menu has Cut and Copy, and what they carry is its contents — every block in it at every depth, the sub-systems nested in it (empty ones included), and the arrows between them. Several of them, or sub-systems and blocks together, copy as one thing, and the connection rule is read across the whole of it: the arrow between two selected sub-systems comes along, and so does the one from a compartment on the canvas into a sub-system that is coming too. It pastes as a child of wherever you aim it, keeping every name it had, since what it lands in did not exist a moment ago; only its own name gets a number. What moves is the node on the parent's canvas — everything inside is drawn on the sub-system's own canvas and lands looking exactly as it did — and a paste onto a canvas the copy did not come from goes to a clear spot rather than on top of whatever was already there. An end that hangs outside the *view* is marked, and there are three different things it can be. A flow that crosses the model's own boundary gets a dashed cloud — the stock-and-flow convention for what lies beyond it — at whichever end is loose: past the arrowhead where the flow leaves, behind the start where a source term comes in, so the arrow always points the way the material moves. The exception is a source term that carries the **radionuclide dimension**, which wears the standard sign instead, a black trefoil on yellow: the cloud says where the material comes from and the sign says what it is. (The two are alternatives rather than one drawn on the other — a cloud is a wide, flat shape, and a trefoil inside one is a smudge at any size either of them can reasonably be.) **Show ▸ inflow icons** and **▸ outflow icons** turn each direction off separately, both on by default: a model of this kind has an outflow on nearly every compartment and two or three source terms, so the reason to hide the first — the same mark over and over — is not a reason to lose the few that say where the inventory enters. A cloud takes the colour its line was given, so a line styled on the **Appearance** rows is that colour to both its ends; the radiation sign does not, since it is recognised by its colours. And a flow whose far end is a real block in another sub-system gets a **pipe** instead: it has not left the model, it has gone *there*. Each of them is picked up and put down like a block: click to select the connection, drag to place the mark where you want it, right-click for **Straighten** to send it back to where it started. A pipe's place belongs to its canvas: dragging it inside a sub-system leaves the same line on the canvas above as it was, and bending that line leaves the pipe where it is. A pipe carries the name of the block at its far end and where that block lives (`Buffer · in NearField`, `Lake · top level`), points along the flow, and has the boundary it crosses drawn as a bar on the side facing the block on screen; double-click it to go there, with that block selected. **A flux that crosses the model's own boundary is drawn where its block is, and nowhere else**: a source term into a compartment inside `NearField` is on the `NearField` canvas, not on the top level as well pointing at the sub-system node. Such a connection has one end that means anything, so there is one canvas it belongs on — unlike a transfer between two real blocks, which still appears on each canvas that can say something about it. The grid is where they are gathered in one place instead. **Show ▸ Transfer labels** chooses what is written along each line — its `name`, its `rate`, or `none` — and sits beside **▸ Influences** — none, all, or those of the blocks selected, which is the default — the other thing drawn between blocks rather than as one. **Canvas ▸ Show grid** turns the lattice behind the canvas off, **▸ Snap to the grid** turns off landing on it — holding Alt during a drag does the opposite of whatever that setting says, for one placement without changing it — **▸ Show help** turns on the line under the diagram, which costs the diagram the room, and **▸ Show tooltips** turns on what a block, a connection's marks or an influence arrow says when the pointer rests on it; both are off by default. **Add shape…** and **Save as picture ▸** are the last section: the shapes drawn behind the model, and the diagram written out as SVG, PNG or JPEG. |
 | **Matrix** | The transfer grid, laid out the way a Jacobian is drawn: **the blocks are on the diagonal and the flows between them are off it**. A cell is what leaves the name on the diagonal along its row and arrives at the name down its column — so the diagonal is a staircase of names and the grid needs no header band, in either direction. Each filled cell carries the elbow that traces its route: above the diagonal it turns down, below it turns up, which is also how a feedback loop shows itself at a glance. **Sub-systems fold**: see below. Everything in it that stands for a block behaves like one: a click selects it and a double-click opens its settings, on the diagonal and off it alike. Click an empty cell to add a transfer; a pair may hold several and their fluxes add. A block on the diagonal, and a transfer off it, wears the colour it was given on the diagram, with its label picked from that colour rather than from the theme — a model of any size is read by its colours as much as by its names, and two views showing it in different colours made this one a separate thing to learn. A far-field pathway sits on the diagonal like any other block. **The world outside the model gets a row and a column of its own**, at the end and outside the hierarchy — its row is what comes in, its column what leaves — and only when something actually crosses that boundary, since an empty pair in every closed model is furniture. It is the one view that puts every source term and every outflow together, the diagram having drawn each of them beside its own block. Built when this tab is opened rather than on every edit, and a selection that moves within one model moves the highlight rather than rebuilding the grid: it is (compartments + paths + 1) squared. **Every cell is the same square**, so the grid reads as a pattern — the shape a Jacobian is drawn in — rather than as a table whose columns are as wide as their longest rate; what does not fit a square is on its tooltip. A transfer is a tile like the blocks on the diagonal, with its rate over its name; two share a square between them, and only a third makes the square scroll. Another transfer between the same pair is added with the round **+** that appears in the corner of the square when the pointer is over it. The **zoom** above the grid — −, the percentage (back to 100%), +, and **Fit** for the whole grid in view — or Ctrl/⌘ and the wheel, or a pinch, scales it about the pointer, and the level is remembered in this browser. |
 | **Index lists** | The model's dimensions. One pane lists them, the other is the one you are editing: its name, what it is defined from, its indices, and — for the radionuclide list — half-lives and decay chains. Everything about a list is made and unmade here. |
-| **Chart** | Results over time, log-log unless the model says otherwise. A search box, kind chips and one selector per index list narrow the line picker above it, which matters as soon as a model is two-dimensional — `landscape.json` has 63 lines to choose eight from. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to show everything. Right-click it for the two scales, the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. |
-| **Table** | The same numbers, for reading and copying. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the HDF5 Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
+| **Chart** | Results over time, log-log unless the model says otherwise. What is on it is picked in the tree on the left — a box on every block, a box for each index of a block that is opened, the model's endpoints first — and each block is drawn as one thing: a line per nuclide in that nuclide's own colour, with the block's total, in a panel of its own or with the others in one chart. A line above the chart holds the scales, the axes' window, saved axes and what the legend says, and **Views ▾** saves all of it by name; **Find lines…** searches every series across blocks. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to go back. Right-click it for the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. See [The chart and the table](#the-chart-and-the-table). |
+| **Table** | The same numbers, for reading and copying: picked the same way, beside this tab too, and laid out **over time** — at every output time or at the times you type — as **peaks**, a row of numbers per series, or as a **pivot**, nuclides down and objects or blocks across. **Copy** puts all of it on the clipboard for a spreadsheet. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the HDF5 Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
 | **JSON** | The project file itself. |
 | **Generated code** | Two views of what the builder made. *Derivative code* is the function compiled from the equations — in the three passes it runs as: what reads neither the clock nor the state, worked out once when the model is built; what reads only the clock, once per instant; and the rest, on every call. *Jacobian* is the matrix of its partial derivatives, drawn as its sparsity pattern and checked against finite differences — see [Looking at the Jacobian](#looking-at-the-jacobian). |
 | **Help** | This file, and `INTERNALS.md`, read here — with a table of contents down the side. Set apart from the others because it is not a view of the model. |
@@ -1098,8 +1111,8 @@ shows them and nothing else — and on the Table tab the same pair reads *Add to
 table* and *Show in table*, since the two views draw the same choice of series. A block is not a series — an indexed one is a line
 per index, so `Dose` on a four-nuclide model is four lines and all four go — and
 a sub-system stands for everything inside it at any depth. This is the way to
-reach one block you are looking at in the tree: the line picker above the chart
-lists every series in the model, which is the wrong instrument for that. The
+reach one block you are looking at in the tree, as the box on its row is (see
+[Picking from the tree](#picking-from-the-tree)). The
 two items are there only while one of those two tabs is in view, since on the
 Build tab there is neither to add to.
 
@@ -2367,6 +2380,179 @@ be more than that. Past that allowance the writer stores the rest of the
 archive instead of compressing it, since stored data is not decompressed: the
 file is larger than it could have been, and it opens.
 
+## The chart and the table
+
+What the Chart and the Table show is picked in the tree on the left, a block at
+a time, and a block is drawn as one thing: a line per index, in that index's own
+colour, with the block's total. The line above the chart says what is on it and
+holds how it is drawn.
+
+### Picking from the tree
+
+Beside the Chart and the Table, every block in the tree has a **box**. Ticking it
+puts all of the block's series on the chart, or takes them off; it is half
+filled when some of them are on. A block's arrow **opens** it into its indices —
+a row per index of its first list, each opening onto the next, `Water ▸ I-129 ▸
+Lake` — and every row has a box of its own, so one nuclide, or one nuclide in
+one landscape object, is a tick away. A row that is a single series shows, once
+it is on, the line it is drawn with.
+
+- **⌘-click** (Ctrl-click) a block to add it to the chart, or take it off, as
+  well as selecting it beside the others: the gesture the HDF5 Browser at
+  kvotab.se compares datasets with.
+- **Alt-click** a box for that block or index and nothing else.
+- With several blocks selected, ticking one of them ticks them all, so a handful
+  go on at once.
+- **Space** on a row ticks its box, as it does a checkbox; **Enter** still
+  selects.
+- A sub-system opens and closes where it is, rather than taking the page to the
+  diagram, and a folded one with something on the chart wears a dot.
+
+**The endpoints come first.** The tree opens with the model's endpoints at its
+top — the blocks it keeps as its results, by their full names (see [Choosing
+endpoints](#choosing-endpoints)) — and the chart opens on the first three of
+them. An assessment of forty thousand series opens on the release from the near
+field and from the geosphere, a panel each with every nuclide, rather than on
+whichever compartment happens to be last; one whose list names three hundred
+blocks opens on its first three, and the rest are a tick away. The **star** at the end of a block's row adds it
+to the endpoints or takes it off: it shows on the row the pointer is on, and
+stays on those that are. A star is an edit of the model — undoable, saved with
+it — and runs nothing. A model with no endpoints opens on its compartments.
+
+**Above the chart, a chip per block** says what is on it and how many of the
+block's series: `Outflow 54`, `Water 4 of 12`. Click the name to find the block
+in the tree, × to take it off; **Clear** takes everything off. A series picked
+on its own has a chip of its own, with its line.
+
+**Find lines…** opens the other way in: every series in the model as a chip,
+with a search across blocks, the kind chips and a filter per index list (see
+**Choosing what to chart** under [Your first model](#your-first-model)). It is
+the way to put one nuclide on from every block at once: `*I-129*`, then **Show
+these**. It is beside the Table as well.
+
+### A block drawn as one thing
+
+A block over the nuclides is drawn as **a line per nuclide, in that nuclide's own
+colour and pattern**: I-129 is the same blue on every chart, whatever else is
+drawn beside it, so a nuclide is read off a chart without going to the legend
+once it has been read there. The colours are the HDF5 Browser's, which also
+names the repositories, pathways and exposed groups a safety assessment
+reports, so a run opened there from here (right-click the Table) is drawn in the
+same colours. A colour that would hardly show on the chart's ground — white or
+cream on the light theme, navy or black on the dark — is made lighter or darker
+in the same hue, just far enough to stand off it. An index the table does not
+know takes the palette's colour at its place in its own list, which is the same
+on every chart.
+
+**Total** draws each block's lines added up, in the text colour and a little
+thicker, first in the legend. Under a sample (see [A probabilistic
+run](#a-probabilistic-run)) each line is the median or the mean of the
+realisations with the spread behind it in the line's colour, and a total adds
+the lines drawn without a spread of its own: the means of the realisations add up
+to the mean of the sum, while the medians add up to no median of anything.
+
+**A block over two lists** — `Water [Radionuclides × Object]` — says beside its
+chip which list its **lines** are, and for the other one of three things:
+
+- **a panel each** — a panel per object, the nuclides in each; the default for
+  up to six of them;
+- **added up** — one panel, each nuclide's line the sum over the objects;
+- **one** of its indices — `Lake` — and the rest left out; the default for a
+  longer list, where a panel each would be a stack of dozens.
+
+Choosing `Object` for the lines turns it round: a line per object, and a
+choice of nuclide.
+
+**How many.** A panel draws up to 300 lines and a chart is cut into at most 12
+panels; what does not fit is said under the chart. **Lines**, on the line above
+the chart, draws only the largest few of each panel — by how high each line
+goes — and keeps every total.
+
+### Panels, or one chart
+
+**Panels** draws a panel per block, stacked over one time axis that is lettered
+under the last of them. Zoom or pan one and the others follow in time, each
+keeping its own values: two blocks are often two quantities — a release in
+Bq/year and an inventory in Bq — and one axis for both would be right for
+neither. Past a few panels the stack scrolls rather than squeezing them flat.
+
+**Same chart** draws the blocks in one chart. A block after the first draws its
+lines thinner where they are the same nuclides, so the colours still say which
+nuclide and the width says which block, and its total is named after it:
+`Water total`. Blocks in different units share the one axis, which names every
+unit, and the line above the chart says the values are not comparable; a block
+is totalled only over lines of one unit. A block's own choice of **a panel
+each** still cuts it into panels.
+
+### The chart’s settings
+
+The line under the chips:
+
+- **Time** and **Values**, `lin` or `log` — the scales, saved with the model (and
+  on the chart's right-click menu) — each with a **prefix** for its unit beside
+  it, P down to f: **k** shows Bq as kBq and the numbers divided by a thousand,
+  **µ** shows Sv/year as µSv/year and the numbers times a million, and **k** on
+  the time axis shows years as kyear. A unit that has a prefix already takes
+  the two together (mSv with k is Sv); one that cannot take a letter — m3, a
+  rate in 1/year, a unit of its own — is written with the power of ten
+  instead, `10³ m3`. It is lettering only: the numbers are moved by their decimal
+  digits, the boxes for the axes read and show them in the prefixed unit, the
+  Table and the exports keep the model's own, and the prefixes are saved with
+  the model, with a preset and with a view.
+- **Axes**: four boxes, the time axis from and to and the value axis from and to.
+  Empty is where the data put it, and the box says, greyed, where that is now. A
+  comma is a decimal point: `1,5e-2`. A double-click on the chart goes back to the
+  axes as they were set.
+- **The lock** keeps the axes where they are on screen, whatever is charted
+  next — the way to flip between two blocks at one scale. Clicking it again gives
+  them back to the data.
+- **Presets**, the box beside the lock: *Save these axes…* keeps the ends that
+  were set, by name, with the model — leaving the others to follow the data — or,
+  zoomed or with nothing set, the window on screen. Picking one puts its scales
+  and its window back; **Auto range** lets go.
+- **Total**, **Peaks** — each line's highest value beside its name in the
+  legend — **In view** — the legend names only the lines with something inside
+  the window and counts the rest — and **Lines**.
+
+**The legend** has an entry per line, and a line drawn in several panels once:
+`I-129` in the lake and in the mire is the same line. The totals come first and
+then the lines by how high they go, which is the order a chart of fifty nuclides
+is asked about in. Past a few rows it scrolls.
+
+### Saved views
+
+**Views ▾** above the chart saves what is on it by name, with the model: the
+blocks and series picked, the layout, each block's choices, the axes and the
+settings. Picking a saved view puts all of it back. A block picked whole is
+saved as the block, so next time it is every series the block has, a nuclide
+added since included; a block picked in part is saved as its series by name,
+and one the run does not have is said. **Save over** and **Delete** act on the
+view last put on the chart. Saving one is an ordinary edit of the model,
+undoable, and runs nothing.
+
+### The table’s layouts
+
+The Table's columns are the series picked — in the tree, as for the chart, with
+the same chips above it — and **Layout** says what its rows are:
+
+- **over time** — a row per output time; or, with times typed in **At times**
+  (`1e3; 1e4; 1e5`), a row for each of those, each curve read there between its
+  points and held flat beyond the run, as a derived value at a time is;
+- **peaks** — a row per series: its unit, its highest value, the time it got
+  there, the curve added up over the run by the trapezium rule (in its unit times
+  the time unit), and its value at each time in **At times**;
+- **pivot** — an index list down the side and another, or the blocks, across the
+  top; each cell the peak, the time of the peak, the integral or the value at a
+  time of the series there. Series that differ only in a list on neither side
+  are added up before the number is taken: the peak of the sum, not the sum of
+  the peaks.
+
+Times are separated by semicolons or spaces, and a comma between two digits is
+a decimal point. **Copy** puts the whole table on the clipboard — every row and
+every column, not only the ones drawn — tab-separated, which a spreadsheet
+pastes straight into cells, and with every digit. A right-click still exports it
+as CSV or HDF5, or opens it in the HDF5 Browser.
+
 ## Two runs side by side
 
 **Run beside**, on the chart's right-click menu and on the table's, puts a
@@ -2795,9 +2981,13 @@ that is right for *looking* at a model and wrong for *saving* one. A run of
 model G has 831,314 series, which is 2.8 GB of HDF5 and more than
 a tab can build.
 
-So the endpoints are chosen from the blocks the run produces, in two places:
+So the endpoints are chosen from the blocks the run produces, in three places:
 **Choose…** beside *Keep only the endpoints* in Uncertainty → Probabilistic…,
-and **Save → Model with results**. Both are the same two trees as the rest of
+**Save → Model with results**, and the **star** on a block in the tree beside
+the Chart or the Table, which adds that one block to the list or takes it off.
+The list is also what the Chart opens on, and it heads the tree there (see
+[Picking from the tree](#picking-from-the-tree)). The first two are the dialog
+below. Both are the same two trees as the rest of
 Save… (see [Compressed model files](#compressed-model-files)), with *Not kept*
 on the left and *Endpoints* on the right. **The model's own endpoint list is what
 they open on** when the file came with one, so the common case is one click, and
@@ -4212,8 +4402,8 @@ it. Nothing in it is computed here, and it is not saved with the model.
 
 **Before the model has run here, the Chart and the Table show the stored run
 on its own.** The line above them names it and the file it came from. The
-picker, its filter and the tree's **Show in chart** work on it as on any run,
-so an assessment can be read before anything is integrated.
+tree's boxes, **Find lines…** and the tree's **Show in chart** work on it as on
+any run, so an assessment can be read before anything is integrated.
 
 **Once the model has run, the two stand side by side.** Each selected series
 that the stored run also has is drawn again in the same colour, dash-dotted,
@@ -4223,7 +4413,7 @@ and index by index, renamed blocks included. The model came with Ecolego's
 output times, so the two runs usually report at the same times; where they do
 not, Ecolego's values are read onto this run's times along a straight line
 between its own points, and a time outside its span reads `--`. Ecolego's lines
-count towards the 32 a chart holds, and the chart says how many did not fit.
+count towards the lines a panel holds, and the chart says how many did not fit.
 
 An assessment's runs are listed under **Run beside** on the chart's
 right-click menu, with any kept or opened there (see [Two runs side by
@@ -7225,9 +7415,9 @@ the flux is following the constant or the inventory, and a dose limit drawn
 beside a dose says whether the dose crosses it.
 
 They come last and are never what a chart opens on. A real model carries
-hundreds of them, so the chart reaches for the compartments first and falls
-back to parameters only when they are all a model has — which is the case
-of a model still being built.
+hundreds of them, so the chart reaches for the model's endpoints first, then for
+its compartments, and falls back to parameters only when they are all a model
+has — which is the case of a model still being built.
 
 A constant does not travel as a column. `Results.constantOf(output)` gives the
 one value behind it and the worker sends that instead, because a Kd indexed by
@@ -7610,7 +7800,7 @@ Blocks:
 | `scenario` | Which scenario is live, when the model has a scenario list. |
 | `decay_unit` | What a radionuclide inventory is measured in: `Bq` (the default) or `mol`. It decides the ingrowth coefficient — see above — and nothing else. |
 | `layout` | Diagram geometry per block. Ignored by the solver. |
-| `view` | What the diagram shows (`show_parameters`, `show_influences`, `connection_label` and the rest of the **Show** menu), the **Canvas** settings (`show_grid`, `snap_to_grid`, `show_help`, `show_tooltips`) and how the chart draws its axes (`chart_time_scale`, `chart_value_scale`: `log` or `linear`). Ignored by the solver. |
+| `view` | What the diagram shows (`show_parameters`, `show_influences`, `connection_label` and the rest of the **Show** menu), the **Canvas** settings (`show_grid`, `snap_to_grid`, `show_help`, `show_tooltips`) how the chart draws its axes (`chart_time_scale`, `chart_value_scale`: `log` or `linear`), and, where any were saved, the chart's axes by name (`chart_presets`) and its views by name (`chart_views`; see [Saved views](#saved-views)). Ignored by the solver. |
 | `systems` | The sub-systems the model is organised into, as dotted paths. A block's `system` says which one holds it. |
 | `transports` | Which of those sub-systems are transports — chains of N compartments drawn as two. The parts inside carry `transport`: `begin` or `end` on a compartment, `number`, `counter` or `operation` on an expression. See *Transports*. |
 | `app` | An app laid out on the model: `title`, `description`, `theme`, `run` (`change` or `button`), `open` (`editor` or `app`), `edit_button`, `realisations` and `spread_when` (`button` or `change`) for its spread, and `pages`, each a `name` and its `components` — a `type`, an `id`, a place on the grid (`x`, `y`, `w`, `h` in cells), and the settings of its type: `target` for an input, `series` for a result, `components` for a panel, `tabs` (each a `name` and its `components`) for a set of tabs, and `src` for a picture, as a `data:image/…;base64,` address. Ignored by the solver. See [Apps on a model](#apps-on-a-model). |

@@ -29,6 +29,7 @@ import { symbolNodes, symbolText } from './symbol.js';
 import { hasSymbol } from '../domain/symbol.js';
 import { summarise } from './summary.js';
 import { el } from './parts.js';
+import { paintSwatch } from './chart.js';
 
 /** The last block the tree scrolled to, so it only chases a *new* selection. */
 let lastRevealed = null;
@@ -57,6 +58,16 @@ const groupKey = (path, collection) => `${path} :: ${collection}`;
 const SEARCH_ROWS = 600;
 
 /**
+ * How many index rows one opened block or index lists before it says how many
+ * more there are. A list of flow paths can be several hundred long, and a row
+ * is an element.
+ */
+const INDEX_ROWS = 1000;
+
+/** The key the Endpoints section is opened and closed by. */
+const ENDPOINTS_KEY = 'ep:';
+
+/**
  * @param {HTMLElement} host
  * @param {object} project
  * @param {{kind: string, name: string}|null} selection
@@ -71,9 +82,15 @@ const SEARCH_ROWS = 600;
  *   Which nodes are expanded, and whether kinds are grouped. This lives in the
  *   caller's state and not in the project: it is a way of looking at a model,
  *   not a fact about one, and it has no business turning up in a diff.
+ *
+ * `hooks.pick`, on the Chart and the Table, makes the tree the place the
+ * series on them are picked from: a tick box on every block, a row per index
+ * under a block that is opened, a star for the endpoints and the endpoints
+ * themselves at the top. See `pickHooks` in ./app.js for what it carries.
  */
 export function renderBlockTree(host, project, selection, hooks = {}, filter = null, view = null) {
 	const state = view ?? { open: new Set(['']), group: false };
+	const pick = hooks.pick ?? null;
 	// `only` is the answer to a structured question, pinned over the list --
 	// see ../domain/queries.js. It filters like the rest, and it counts as
 	// filtering, so the tree opens onto what was found rather than leaving it
@@ -95,6 +112,12 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		for (const name of sampled.keys()) {
 			for (const s of scopeChain(parentOf(name))) if (s) holding.add(s);
 		}
+	}
+	// And beside a chart, the sub-systems that hold something on it, so a
+	// folded one says where the lines on the chart came from.
+	const charting = new Set();
+	for (const name of pick?.chartedBlocks ?? []) {
+		for (const s of scopeChain(parentOf(name))) if (s) charting.add(s);
 	}
 
 	// A block selected elsewhere -- clicked on the diagram, or landed on by
@@ -194,6 +217,9 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				tabIndex: -1,
 			});
 			node.dataset.key = spec.key;
+			// The series a row stands for, where it is one: the chart says how
+			// it drew it after the tree is drawn, and the box follows.
+			if (spec.out != null) node.dataset.out = String(spec.out);
 			node.setAttribute('aria-level', String(depth));
 			node.style.paddingLeft = `${4 + (depth - 1) * 13}px`;
 			// Drives the hairlines that show which container a row is in;
@@ -221,7 +247,14 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 			if (spec.symbol) {
 				label.append(' (', el('span', { className: 'tname-symbol' }, ...symbolNodes(spec.symbol)), ')');
 			}
-			node.append(twisty, blockIcon(spec.kind), label);
+			// Beside a chart, the box that puts the row on it: empty, half
+			// filled for some of a block, filled for all of it -- and for one
+			// series that is charted, the line it is drawn with.
+			if (spec.tick) node.append(twisty, tickBox(spec.tick));
+			else node.append(twisty);
+			if (spec.kind) node.append(blockIcon(spec.kind));
+			else if (spec.glyph) node.append(spec.glyph);
+			node.append(label);
 			// What the sample holds of it: the same glyph the chart's chips and
 			// the table's heads wear. A sub-system gets a dot for what is
 			// inside it.
@@ -243,8 +276,15 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 					'aria-label': mark.level === 'error' ? 'has a problem' : 'has a warning',
 				}, '!'));
 			}
+			if (spec.charted) {
+				node.append(el('span', {
+					className: 'tcharted', title: 'Holds blocks that are on the chart',
+					'aria-label': 'holds blocks on the chart',
+				}));
+			}
 			if (spec.sub) node.append(el('span', { className: 'tsub' }, spec.sub));
 			if (spec.count != null) node.append(el('span', { className: 'tcount' }, String(spec.count)));
+			if (spec.star) node.append(starButton(spec.star));
 			// The event is handed on: which block a click selects is one
 			// question, and whether it replaces, extends or toggles the
 			// selection is another, and only the modifiers answer the second.
@@ -280,8 +320,65 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				open: !!spec.open,
 				onOpen: spec.onOpen,
 				onPick: spec.onPick,
+				tick: spec.tick ?? null,
 			});
 			return node;
+		};
+
+		/**
+		 * The rows under a block that is opened beside a chart: one per index of
+		 * its first list, each opening onto the next list, down to one row per
+		 * series. Every row has its box, and a row that is not the last list
+		 * ticks every series under it.
+		 *
+		 * @param {object} b       the block's tree entry
+		 * @param {number} depth
+		 * @param {string} base    the key the rows are made under
+		 * @param {{dims: string[], items: Array<{i: number, index: string[]}>}} all
+		 * @param {number} level   which of the block's lists this row is of
+		 * @param {string[]} above the indices of the rows this is under
+		 * @param {Array} items    the series under those
+		 */
+		const addIndexRows = (b, depth, base, all, level, above, items) => {
+			const groups = new Map();
+			for (const it of items) {
+				const v = it.index?.[level];
+				if (!groups.has(v)) groups.set(v, []);
+				groups.get(v).push(it);
+			}
+			const last = level >= all.dims.length - 1;
+			let drawn = 0;
+			for (const [v, list] of groups) {
+				if (drawn >= INDEX_ROWS) {
+					tree.append(el('div', { className: 'trow trow-more', style: `padding-left: ${4 + (depth - 1) * 13}px` },
+						el('span', { className: 'hint' }, `${(groups.size - drawn).toLocaleString()} more ${all.dims[level]}`)));
+					break;
+				}
+				drawn += 1;
+				const key = `${base}\u0001${[...above, v].join('\u0001')}`;
+				const open = state.open.has(key);
+				const indices = list.map((it) => it.i);
+				const tick = pick.tickOf(indices, last ? indices[0] : null);
+				row(depth, {
+					key,
+					name: String(v),
+					expandable: !last,
+					open,
+					cls: 'trow-index',
+					count: last ? null : list.length,
+					tick: { ...tick, onTick: (ev) => pick.toggle(indices, ev) },
+					out: last ? indices[0] : null,
+					onOpen: (want) => { toggle(state, key, want); draw(); },
+					// A row with nothing under it is a series and nothing else, so
+					// clicking it is ticking it; one with rows under it opens.
+					onPick: (ev) => {
+						if (last) pick.toggle(indices, ev);
+						else { toggle(state, key, !open); draw(); }
+					},
+				}).title = `${b.name} [${[...above, v].join(', ')}${last ? '' : ', …'}] — `
+					+ `${all.dims[level]} ${v}`;
+				if (!last && open) addIndexRows(b, depth + 1, base, all, level + 1, [...above, v], list);
+			}
 		};
 
 		// Several blocks can be selected on the diagram at once; the tree marks
@@ -290,24 +387,65 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		// The blocks on screen in the order they are drawn, which is the order
 		// a shift-click means by "everything between".
 		const order = [];
-		const addBlock = (b, depth) => {
+		/**
+		 * Ticking a block's box: its series on or off the chart -- or, where the
+		 * block is one of several selected, every selected block's, together.
+		 * Selecting a few blocks and ticking one of them is how a handful go on
+		 * at once.
+		 */
+		const tickBlocks = (b, ev) => {
+			const names = picked.has(b.name) && pickedNames.length > 1 ? pickedNames : [b.name];
+			pick.toggleBlocks(names, ev);
+		};
+
+		const addBlock = (b, depth, { prefix = '', full = false } = {}) => {
 			if (!room()) { hidden += 1; return; }
 			const selected = picked.has(b.name);
 			const held = sampled?.get(b.name) ?? null;
-			order.push(b);
+			// The rows of the Endpoints section are the same blocks again, and
+			// "everything between" two rows means the tree below it.
+			if (!prefix) order.push(b);
+			const key = `${prefix}b:${b.name}`;
+			// Beside a chart: the block's series, whether they are on it, and
+			// a row per index under the block when it is opened.
+			const all = pick?.seriesOf(b.name) ?? null;
+			const many = !!all && all.items.length > 1;
+			const open = many && state.open.has(key);
 			const r = row(depth, {
-				key: `b:${b.name}`,
+				key,
 				markName: b.name,
 				kind: b.kind,
 				name: b.block.name,
 				symbol: hasSymbol(b.block) ? b.block.symbol : null,
+				...(full ? { name: b.name } : {}),
 				sub: summarise(b.collection, b.block),
 				sample: held,
 				cls: `trow-block${selected ? ' is-selected' : ''}`
 					+ `${ed.isEffectivelyEnabled(project, b.block) ? '' : ' is-disabled'}`
 					+ `${held ? ` has-sample is-${held}` : ''}`,
 				selectable: true,
-				onPick: (ev) => choose(b, ev, order, pickedNames, hooks),
+				...(all ? {
+					tick: {
+						...pick.tickOf(all.items.map((it) => it.i), all.items.length === 1 ? all.items[0].i : null),
+						onTick: (ev) => tickBlocks(b, ev),
+					},
+				} : {}),
+				...(pick?.canStar(b) ? {
+					star: { on: pick.isEndpoint(b.name), onStar: () => pick.star(b.name) },
+				} : {}),
+				out: all && all.items.length === 1 ? all.items[0].i : null,
+				expandable: many,
+				open,
+				...(many ? { onOpen: (want) => { toggle(state, key, want); draw(); } } : {}),
+				onPick: (ev) => {
+					// Beside a chart, the key that adds a row to the selection
+					// adds the block to the chart as well, or takes it off: the
+					// gesture the HDF5 Browser compares datasets with.
+					if (pick && all && (ev?.metaKey || ev?.ctrlKey) && !ev?.shiftKey) {
+						pick.toggle(all.items.map((it) => it.i), ev);
+					}
+					choose(b, ev, order, pickedNames, hooks);
+				},
 				onOpen2: () => hooks.onOpenSettings?.(b.name),
 				onMenu: (ev) => {
 					// Not part of the group: the menu is about this one, so
@@ -340,6 +478,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 			r.title = `${b.name} — ${(ed.roleLabel(project, b.block) ?? b.kind).replace(/_/g, ' ').toLowerCase()}`
 				+ (hasSymbol(b.block) ? `, shown as ${symbolText(b.block.symbol)}` : '')
 				+ (held ? `\n${SAMPLE_TITLE[held]}` : '');
+			if (open) addIndexRows(b, depth + 1, key, all, 0, [], all.items);
 		};
 
 		const addChildren = (node, depth) => {
@@ -394,6 +533,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				open,
 				selectable: !!node.path,
 				sample: node.path && holding.has(node.path) ? 'inside' : null,
+				charted: !!node.path && charting.has(node.path),
 				cls: `trow-system${node.path === current ? ' is-current' : ''}`
 					+ `${selected ? ' is-selected' : ''}`
 					+ `${node.path && !ed.isSystemEnabled(project, node.path) ? ' is-disabled' : ''}`,
@@ -413,6 +553,11 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 						choose({ name: node.path, kind: 'system' }, ev, order, pickedNames, hooks);
 						return;
 					}
+					// Beside a chart the tree is where its lines are picked
+					// from, and a sub-system is a folder in it: a click opens
+					// or closes it there instead of taking the page away to
+					// the diagram.
+					if (pick) { toggle(state, node.path, !open); draw(); return; }
 					state.open.add(node.path);
 					hooks.onOpenSystem?.(node.path);
 				},
@@ -453,6 +598,39 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 					+ 'Click to show it on the diagram, ⌘-click to select it.'
 				: `The top level — ${here}, ${node.deep} in the model.`;
 			if (open) addChildren(node, depth + 1);
+		}
+
+		// Beside a chart, the model's endpoints come first: the blocks it was
+		// set up to keep as its results, which is what an assessment's chart
+		// is about -- and in a tree of four thousand blocks, the forty that
+		// matter are otherwise wherever their sub-systems put them. Not while
+		// a search is on: the tree below is the answer to that.
+		if (pick && !filtering) {
+			const eps = [];
+			for (const name of pick.endpoints ?? []) {
+				const found = ed.findBlock(project, name);
+				if (found) {
+					eps.push({
+						kind: found.kind, collection: found.collection, name, label: found.block.name, block: found.block,
+					});
+				}
+			}
+			if (eps.length) {
+				const open = !state.endpointsClosed;
+				row(1, {
+					key: ENDPOINTS_KEY,
+					glyph: el('span', { className: 'tstar-glyph', 'aria-hidden': 'true' }, '★'),
+					name: 'Endpoints',
+					count: eps.length,
+					expandable: true,
+					open,
+					cls: 'trow-system trow-endpoints',
+					onOpen: (want) => { state.endpointsClosed = !want; draw(); },
+					onPick: () => { state.endpointsClosed = open; draw(); },
+				}).title = 'The blocks this model keeps as its results, by their full names. '
+					+ 'The star on any block adds it to them or takes it off.';
+				if (open) for (const b of eps) addBlock(b, 2, { prefix: 'e:', full: true });
+			}
 		}
 
 		// A model with no sub-systems has nothing to nest, so it gets neither
@@ -501,6 +679,57 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 function toggle(state, key, want) {
 	if (want) state.open.add(key);
 	else state.open.delete(key);
+}
+
+/**
+ * The box that puts a row on the chart. `tick` is `{ state, look, onTick }`:
+ * `all`, `some` or `none` of the row's series charted, and for a row that is
+ * one series on the chart, the look of its line, which the box then shows.
+ *
+ * Out of the tab order, like everything else inside a row: the row is what
+ * the keyboard is on, and Space on it ticks this.
+ */
+function tickBox(tick) {
+	const b = el('button', {
+		type: 'button',
+		className: `ttick is-${tick.state}`,
+		tabIndex: -1,
+		'aria-pressed': tick.state === 'some' ? 'mixed' : String(tick.state === 'all'),
+		'aria-label': tick.state === 'all' ? 'On the chart: take it off' : 'Put it on the chart',
+	});
+	// One series on the chart: its line, painted now if the chart has drawn it
+	// and once it has otherwise.
+	if (tick.single && tick.state === 'all') {
+		const sw = el('span', { className: 'series-swatch ttick-swatch' });
+		b.append(tick.look ? paintSwatch(sw, tick.look) : sw);
+	}
+	b.addEventListener('click', (ev) => {
+		ev.stopPropagation();
+		tick.onTick(ev);
+	});
+	// A double-click on the box is two ticks, not a request for the block's
+	// settings, which is what a double-click on its row is.
+	b.addEventListener('dblclick', (ev) => ev.stopPropagation());
+	return b;
+}
+
+/** The star on a block that is, or could be, one of the model's endpoints. */
+function starButton(star) {
+	const b = el('button', {
+		type: 'button',
+		className: `tstar${star.on ? ' is-on' : ''}`,
+		tabIndex: -1,
+		'aria-pressed': String(!!star.on),
+		'aria-label': star.on ? 'An endpoint: take it off the list' : 'Make it an endpoint',
+		title: star.on ? 'One of the model’s endpoints — click to take it off the list'
+			: 'Make it one of the model’s endpoints',
+	}, star.on ? '★' : '☆');
+	b.addEventListener('click', (ev) => {
+		ev.stopPropagation();
+		star.onStar();
+	});
+	b.addEventListener('dblclick', (ev) => ev.stopPropagation());
+	return b;
 }
 
 /**
@@ -720,8 +949,13 @@ function wireKeys(tree, rows, state, draw, hooks) {
 				}
 				break;
 			case 'Enter':
-			case ' ':
 				r.onPick(e);
+				break;
+			case ' ':
+				// Beside a chart, Space ticks the row's box, as it does a
+				// checkbox; Enter still selects.
+				if (r.tick) r.tick.onTick(e);
+				else r.onPick(e);
 				break;
 			case 'Delete':
 			case 'Backspace':

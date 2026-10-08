@@ -10,6 +10,8 @@ import { SvgCanvas } from './svgcanvas.js';
 import { wheelPixels } from './wheel.js';
 import { PICTURE_KINDS, fileName, saveBlob } from './picture.js';
 import { el } from './parts.js';
+import { dashOf, forSurface } from './linestyles.js';
+import { shiftDecimal } from './prefix.js';
 
 /**
  * Colour comes from the validated categorical palette in the page's CSS custom
@@ -86,6 +88,99 @@ export function styleOf(s, si) {
 	const n = SERIES_DASHES.length;
 	const set = ((s.set % n) + n) % n;
 	return { color: base.color, set, dash: SERIES_DASHES[set] };
+}
+
+/**
+ * How many lines one chart will draw at all.
+ *
+ * `MAX_SERIES` is how many lines can be told apart by their *place* on the
+ * chart, which is the most a chart of lines picked one by one can hold. A
+ * line that stands for a known index -- a nuclide, a pathway -- wears that
+ * index's own style instead (see ./linestyles.js and `lineLook`), so a block
+ * over fifty-four nuclides is fifty-four lines that can each be named. This
+ * is the ceiling on those: past it a chart is a texture rather than lines,
+ * and the canvas is asked to stroke more than a pointer move can wait for.
+ */
+export const MOST_LINES = 400;
+
+/**
+ * Everything about how one series is drawn: the colour of its stroke, its
+ * pattern, its width, and what its swatch says -- for the line, its label,
+ * the readout and the legend alike.
+ *
+ * A series carries one of three looks. With no `style` it is placed by its
+ * position, or by the `slot` and `set` it names (`styleOf`): every chart of
+ * lines picked one by one. A `style` says what it is instead --
+ *
+ *   { kind: 'named', color, dash, width? }  a known index's own colour and
+ *                                           pattern, from ./linestyles.js
+ *   { kind: 'palette', color, set }         an index's place in its own list,
+ *                                           which is the same on every chart
+ *   { kind: 'total' }                       a sum, in the text colour
+ *
+ * -- and `width` on it thins the line, which is how the second block of two
+ * drawn together is told from the first. A `set` on the series itself still
+ * changes the pattern, since that is how the mean beside a median, a scenario
+ * beside the run and the run beside are told from the line they are of.
+ *
+ * @param {object} s   the series
+ * @param {number} si  where it sits on the chart
+ * @param {object} c   the chart's colours (`_colors`)
+ * @returns {{stroke: string, dash: number[], width: number, set: number, dashName: string|null}}
+ *   `set` and `dashName` are for a swatch: the one names a pattern of
+ *   `SERIES_DASHES`, the other one of ./linestyles.js
+ */
+export function lineLook(s, si, c) {
+	const st = s?.style;
+	const base = styleOf(s, si);
+	let stroke = c.series[base.color];
+	let { dash, set } = base;
+	let dashName = null;
+	let width = 2;
+	if (st?.kind === 'named') {
+		stroke = forSurface(st.color, c.surface);
+		dashName = st.dash ?? 'solid';
+		dash = dashOf(dashName);
+		set = 0;
+		if (Number.isFinite(st.width)) width = st.width;
+	} else if (st?.kind === 'total') {
+		stroke = c.text;
+		dash = [];
+		set = 0;
+		width = 2.5;
+	} else if (st?.kind === 'palette') {
+		const n = c.series.length || 1;
+		stroke = c.series[((st.color % n) + n) % n];
+		set = ((st.set ?? 0) % SERIES_DASHES.length + SERIES_DASHES.length) % SERIES_DASHES.length;
+		dash = SERIES_DASHES[set];
+	}
+	// Another guise of a line -- the mean, a scenario, the run beside -- is
+	// told from it by its pattern, whatever look the line itself has.
+	if (st && Number.isInteger(s.set) && s.set > 0) {
+		set = s.set % SERIES_DASHES.length;
+		dash = SERIES_DASHES[set];
+		dashName = null;
+	}
+	if (st && Number.isFinite(st.thin)) width = Math.min(width, st.thin);
+	return { stroke, dash, width, set, dashName };
+}
+
+/**
+ * Puts a series' look on a swatch element: its colour, and its pattern by the
+ * name the stylesheet draws it under.
+ */
+export function paintSwatch(swatch, look) {
+	swatch.style.setProperty('--swatch', look.stroke);
+	if (look.dashName && look.dashName !== 'solid') {
+		swatch.dataset.dash = look.dashName;
+		delete swatch.dataset.set;
+	} else {
+		swatch.dataset.set = String(look.set ?? 0);
+		delete swatch.dataset.dash;
+	}
+	if (look.width >= 2.5) swatch.dataset.bold = '';
+	else delete swatch.dataset.bold;
+	return swatch;
 }
 
 /**
@@ -355,6 +450,38 @@ export class TimeChart {
 		 * chart is not showing everything.
 		 */
 		this.zoom = null;
+		/**
+		 * The window the axes were set to, where they were: any of `xMin`,
+		 * `xMax`, `yMin`, `yMax`, each fixing one end and leaving the others to
+		 * the data. It is where the chart goes back to -- a double-click, *Show
+		 * everything* -- rather than the whole of the data, since that is what
+		 * setting the axes means. A zoom is still a window inside it, or
+		 * outside it.
+		 */
+		this.fixed = null;
+		/** A name over the plot, for a chart that is one panel of several. */
+		this.title = '';
+		/**
+		 * The prefixes the axes are lettered in, as powers of ten: 3 shows a
+		 * value of 2,000 as 2 against kBq. Lettering only: the chart works in
+		 * the model's own numbers throughout -- its window, a zoom, the axes
+		 * set by hand -- and the axis titles carry the prefixed unit.
+		 */
+		this.xExp = 0;
+		this.yExp = 0;
+		/**
+		 * Whether the time axis is lettered. A stack of panels letters it
+		 * under the last one only: they share it, and saying it five times is
+		 * five times the room for the same numbers.
+		 */
+		this.axisX = true;
+		/**
+		 * Told the window every time a gesture or a setting moves it -- which
+		 * is how panels keep one time axis and how the axes' boxes follow.
+		 * Never called for a window set from outside (`setXWindow`), so two
+		 * charts telling each other cannot go round in a loop.
+		 */
+		this.onWindow = null;
 		this.drag = null;
 		/**
 		 * What a plain drag does: draw a zoom rectangle, or pan.
@@ -430,17 +557,102 @@ export class TimeChart {
 	 * @param {Float64Array} t
 	 * @param {Array<{label: string, values: Float64Array, unit?: string}>} series
 	 */
-	setData(t, series, { xLabel, yLabel } = {}) {
-		if (series.length > MAX_SERIES) {
-			throw new Error(
-				`A chart shows at most ${MAX_SERIES} series; ${series.length} were given.`,
-			);
+	setData(t, series, { xLabel, yLabel, title, axisX } = {}) {
+		// Lines placed by position can be told apart up to `MAX_SERIES`; a line
+		// with a style of its own says what it is by that, up to `MOST_LINES`.
+		const placed = series.filter((s) => !s?.style).length;
+		if (placed > MAX_SERIES || series.length > MOST_LINES) {
+			throw new Error(placed > MAX_SERIES
+				? `A chart shows at most ${MAX_SERIES} series; ${placed} were given.`
+				: `A chart draws at most ${MOST_LINES} lines; ${series.length} were given.`);
 		}
 		this.data = { t, series };
 		if (xLabel !== undefined) this.xLabel = xLabel;
 		if (yLabel !== undefined) this.yLabel = yLabel;
+		if (title !== undefined) this.title = title;
+		if (axisX !== undefined) this.axisX = !!axisX;
 		this.hover = null;
 		this.draw();
+	}
+
+	/**
+	 * Sets the axes to a window, or gives them back to the data: any of
+	 * `xMin`, `xMax`, `yMin`, `yMax`, with a missing one left to the data. A
+	 * bound a scale cannot show -- zero or less on a log axis -- is left to
+	 * the data too, and so is a pair the wrong way round.
+	 *
+	 * A zoom is let go of: setting the axes is saying where to look.
+	 */
+	setFixed(win) {
+		const pick = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+		const next = {};
+		for (const k of ['xMin', 'xMax', 'yMin', 'yMax']) {
+			const v = pick(win?.[k]);
+			if (v != null) next[k] = v;
+		}
+		this.fixed = Object.keys(next).length ? next : null;
+		this.zoom = null;
+		this.draw();
+	}
+
+	/**
+	 * The time window, from another chart that shares the axis: the values
+	 * keep whatever window they had. Not passed on (see `onWindow`).
+	 */
+	setXWindow(xMin, xMax) {
+		const home = this._home(this._extent());
+		const ok = Number.isFinite(xMin) && Number.isFinite(xMax) && xMax > xMin
+			&& (!this.xLog || xMin > 0);
+		if (!ok) return;
+		const sameX = Math.abs(xMin - home.xMin) <= Math.abs(home.xMin) * 1e-12
+			&& Math.abs(xMax - home.xMax) <= Math.abs(home.xMax) * 1e-12;
+		const y = this.zoom && Number.isFinite(this.zoom.yMin)
+			? { yMin: this.zoom.yMin, yMax: this.zoom.yMax } : { yMin: NaN, yMax: NaN };
+		this.zoom = sameX && !Number.isFinite(y.yMin) ? null : { xMin, xMax, ...y };
+		this.draw();
+	}
+
+	/** What is on screen: the window the axes run over. */
+	window() {
+		const r = this._range();
+		return { xMin: r.xMin, xMax: r.xMax, yMin: r.yMin, yMax: r.yMax };
+	}
+
+	/**
+	 * Which series have something inside the window: a point, or a stretch of
+	 * line crossing it. A legend of what is in view lists these.
+	 *
+	 * @returns {Set<number>} positions in the series list
+	 */
+	visibleSeries() {
+		const { t, series } = this.data;
+		const w = this._range();
+		const out = new Set();
+		const inX = (x) => (this.xLog ? x > 0 : Number.isFinite(x)) && x >= w.xMin && x <= w.xMax;
+		const okY = (y) => Number.isFinite(y) && (!this.yLog || y > 0);
+		for (let si = 0; si < series.length; si++) {
+			const v = series[si].values;
+			let prev = null;
+			for (let i = 0; i < t.length; i++) {
+				const y = v[i];
+				if (!okY(y) || !(this.xLog ? t[i] > 0 : Number.isFinite(t[i]))) { prev = null; continue; }
+				if (inX(t[i]) && y >= w.yMin && y <= w.yMax) { out.add(si); break; }
+				// A line can cross the window between two points that are both
+				// outside it: above it at one time and below it at the next.
+				if (prev && t[i] >= w.xMin && prev.x <= w.xMax
+					&& Math.min(prev.y, y) <= w.yMax && Math.max(prev.y, y) >= w.yMin) {
+					out.add(si);
+					break;
+				}
+				prev = { x: t[i], y };
+			}
+		}
+		return out;
+	}
+
+	/** Tells whoever listens where the window is now. */
+	_moved() {
+		this.onWindow?.(this.window());
 	}
 
 	/**
@@ -457,6 +669,13 @@ export class TimeChart {
 	setScales({ xLog, yLog }) {
 		if (xLog !== undefined) this.xLog = xLog;
 		if (yLog !== undefined) this.yLog = yLog;
+		this.draw();
+	}
+
+	/** The prefixes the axes are lettered in, as powers of ten: `{ x: 3 }` for k on time. */
+	setPrefixes({ x, y }) {
+		if (x !== undefined) this.xExp = Number(x) || 0;
+		if (y !== undefined) this.yExp = Number(y) || 0;
 		this.draw();
 	}
 
@@ -493,12 +712,40 @@ export class TimeChart {
 	 */
 	_range() {
 		const ext = this._extent();
+		const home = this._home(ext);
 		const z = this.zoom;
-		if (!z) return ext;
-		const overlaps = z.xMax > ext.xMin && z.xMin < ext.xMax
-			&& z.yMax > ext.yMin && z.yMin < ext.yMax;
-		if (!overlaps) { this.zoom = null; return ext; }
-		return z;
+		if (!z) return home;
+		// A zoom may fix one axis and leave the other where it was: a window
+		// set from another panel moves the time axis and nothing else.
+		const w = {
+			xMin: Number.isFinite(z.xMin) ? z.xMin : home.xMin,
+			xMax: Number.isFinite(z.xMax) ? z.xMax : home.xMax,
+			yMin: Number.isFinite(z.yMin) ? z.yMin : home.yMin,
+			yMax: Number.isFinite(z.yMax) ? z.yMax : home.yMax,
+		};
+		const overlaps = w.xMax > ext.xMin && w.xMin < ext.xMax
+			&& w.yMax > ext.yMin && w.yMin < ext.yMax;
+		if (!overlaps) { this.zoom = null; return home; }
+		return w;
+	}
+
+	/**
+	 * Where the axes run when nothing is zoomed: the data's own extent, with
+	 * each end the axes were set to (`fixed`) put in its place. An end a scale
+	 * cannot show, or one that would turn an axis round, is left to the data.
+	 */
+	_home(ext) {
+		const f = this.fixed;
+		if (!f) return ext;
+		const ok = (v, log) => Number.isFinite(v) && (!log || v > 0);
+		const w = { ...ext };
+		if (ok(f.xMin, this.xLog)) w.xMin = f.xMin;
+		if (ok(f.xMax, this.xLog)) w.xMax = f.xMax;
+		if (ok(f.yMin, this.yLog)) w.yMin = f.yMin;
+		if (ok(f.yMax, this.yLog)) w.yMax = f.yMax;
+		if (!(w.xMax > w.xMin)) { w.xMin = ext.xMin; w.xMax = ext.xMax; }
+		if (!(w.yMax > w.yMin)) { w.yMin = ext.yMin; w.yMax = ext.yMax; }
+		return w;
 	}
 
 	/** Whether the chart is showing less than everything. */
@@ -623,10 +870,21 @@ export class TimeChart {
 	_paint(ctx, w, h, { hover = true, legend = false, stash = true } = {}) {
 		const c = this._colors();
 		const { series } = this.data;
-		// Room on the right for direct labels when there are few series.
+		// Room on the right for direct labels when there are few series: as
+		// much as the longest of them needs, so a name is not cut to
+		// `Downstre…`, up to a third of the width -- past that the plot is
+		// what loses, and a label is cut after all.
 		const labelling = series.length > 0 && series.length <= DIRECT_LABELS_UP_TO;
+		let room = 96;
+		if (labelling) {
+			ctx.font = labelFont(c);
+			const longest = Math.max(0, ...series.map((s) => ctx.measureText(String(s.label ?? '')).width));
+			room = Math.max(96, Math.min(Math.ceil(longest) + 32, Math.floor(w / 3)));
+		}
+		const titled = !!this.title;
+		const lettered = this.axisX !== false;
 		const pad = {
-			l: 62, r: labelling ? 96 : 16, t: 14, b: 38,
+			l: 62, r: labelling ? room : 16, t: titled ? 26 : 14, b: lettered ? 38 : 12,
 		};
 		const plot = {
 			x: pad.l, y: pad.t,
@@ -709,10 +967,10 @@ export class TimeChart {
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'top';
 		let lastRight = -Infinity;
-		for (const tk of xTicks) {
+		for (const tk of lettered ? xTicks : []) {
 			const px = sx(tk);
 			if (px < plot.x - 1 || px > plot.x + plot.w + 1) continue;
-			const label = fmtTick(tk, this.xLog);
+			const label = fmtTick(shiftDecimal(tk, -(this.xExp || 0)), this.xLog);
 			const half = ctx.measureText(label).width / 2;
 			if (px - half < lastRight + 6) continue; // avoid collisions
 			lastRight = px + half;
@@ -726,14 +984,25 @@ export class TimeChart {
 			if (py < plot.y - 1 || py > plot.y + plot.h + 1) continue;
 			if (lastTop - py < 14 && lastTop !== Infinity) continue;
 			lastTop = py;
-			ctx.fillText(fmtTick(tk, this.yLog), plot.x - 8, py);
+			ctx.fillText(fmtTick(shiftDecimal(tk, -(this.yExp || 0)), this.yLog), plot.x - 8, py);
 		}
 
 		// --- axis titles ---
 		ctx.fillStyle = c.faint;
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'bottom';
-		ctx.fillText(this.xLabel, plot.x + plot.w / 2, h - 2);
+		if (lettered) ctx.fillText(this.xLabel, plot.x + plot.w / 2, h - 2);
+		// What the panel is of, over its top-left corner: the block, and the
+		// index the panel is cut at.
+		if (titled) {
+			ctx.save();
+			ctx.font = labelFont(c);
+			ctx.fillStyle = c.text;
+			ctx.textAlign = 'left';
+			ctx.textBaseline = 'middle';
+			ctx.fillText(truncate(ctx, this.title, plot.w), plot.x, plot.y - 13);
+			ctx.restore();
+		}
 		if (this.yLabel) {
 			ctx.save();
 			ctx.translate(11, plot.y + plot.h / 2);
@@ -762,8 +1031,7 @@ export class TimeChart {
 			const by = (y) => Math.min(plot.y + plot.h, Math.max(plot.y, sy(y)));
 			series.forEach((s, si) => {
 				if (!s.bands?.length) return;
-				const { color } = styleOf(s, si);
-				ctx.fillStyle = c.series[color];
+				ctx.fillStyle = lineLook(s, si, c).stroke;
 				for (const band of s.bands) {
 					ctx.globalAlpha = band.alpha ?? 0.16;
 					ctx.beginPath();
@@ -811,8 +1079,9 @@ export class TimeChart {
 		ctx.lineWidth = 2;
 		ctx.lineJoin = 'round';
 		series.forEach((s, si) => {
-			const { color, dash } = styleOf(s, si);
-			ctx.strokeStyle = c.series[color];
+			const { stroke, dash, width } = lineLook(s, si, c);
+			ctx.strokeStyle = stroke;
+			ctx.lineWidth = width;
 			ctx.setLineDash(dash);
 			// A round cap adds half a line width at each end of every dash,
 			// which closes the gaps of the tightest pattern and turns a dotted
@@ -863,6 +1132,7 @@ export class TimeChart {
 		// Left set, the crosshair and the labels below would inherit it.
 		ctx.setLineDash([]);
 		ctx.lineCap = 'round';
+		ctx.lineWidth = 2;
 
 		// --- direct labels for up to four series ---
 		if (labelling) {
@@ -894,11 +1164,11 @@ export class TimeChart {
 			// is what a zoomed chart produces every time, since every line
 			// leaving through the top of the window wants the same height.
 			for (const p of spreadLabels(wanted, plot, LABEL_GAP)) {
-				const { color, dash } = styleOf(series[p.si], p.si);
-				ctx.strokeStyle = c.series[color];
+				const { stroke, dash, width } = lineLook(series[p.si], p.si, c);
+				ctx.strokeStyle = stroke;
 				ctx.setLineDash(dash);
 				ctx.lineCap = dash.length ? 'butt' : 'round';
-				ctx.lineWidth = 2;
+				ctx.lineWidth = width;
 				ctx.beginPath();
 				ctx.moveTo(plot.x + plot.w + 4, p.y);
 				ctx.lineTo(plot.x + plot.w + 18, p.y);
@@ -953,11 +1223,11 @@ export class TimeChart {
 			const col = si % band.cols;
 			const x = LEGEND_PAD + col * band.col;
 			const y = h + LEGEND_PAD * 0.5 + row * LEGEND_ROW + LEGEND_ROW / 2;
-			const { color, dash } = styleOf(s, si);
-			ctx.strokeStyle = c.series[color];
+			const { stroke, dash, width } = lineLook(s, si, c);
+			ctx.strokeStyle = stroke;
 			ctx.setLineDash(dash);
 			ctx.lineCap = dash.length ? 'butt' : 'round';
-			ctx.lineWidth = 2;
+			ctx.lineWidth = width;
 			ctx.beginPath();
 			ctx.moveTo(x, y);
 			ctx.lineTo(x + 18, y);
@@ -1065,7 +1335,7 @@ export class TimeChart {
 			const py = this.sy(y);
 			ctx.beginPath();
 			ctx.arc(px, py, 4.5, 0, Math.PI * 2);
-			ctx.fillStyle = c.series[styleOf(series[si], si).color];
+			ctx.fillStyle = lineLook(series[si], si, c).stroke;
 			ctx.fill();
 			ctx.lineWidth = 2;
 			ctx.strokeStyle = c.surface;
@@ -1104,11 +1374,14 @@ export class TimeChart {
 		if (!ok(next.yMin, next.yMax, this.yLog)) return false;
 		// A window wider than the data is the data: there is nothing out
 		// there to see, and a chart of mostly empty axes reads as a chart of
-		// nothing.
+		// nothing. With the axes set to a window of their own, that is still
+		// a window to be in -- the whole of the data -- since going back means
+		// going back to the axes as they were set.
 		const wide = next.xMin <= ext.xMin && next.xMax >= ext.xMax
 			&& next.yMin <= ext.yMin && next.yMax >= ext.yMax;
-		this.zoom = wide ? null : next;
+		this.zoom = wide ? (this.fixed ? { ...ext } : null) : next;
 		this.draw();
+		this._moved();
 		return true;
 	}
 
@@ -1121,7 +1394,7 @@ export class TimeChart {
 	 */
 	zoomBy(factor, at = null) {
 		if (!this.plot || !this.ix) return;
-		const ext = this.zoom ?? this._extent();
+		const ext = this._range();
 		const k = 1 / Math.max(0.05, Math.min(20, factor));
 		const out = {};
 		for (const axis of ['x', 'y']) {
@@ -1155,11 +1428,12 @@ export class TimeChart {
 		});
 	}
 
-	/** Back to the whole of the data. */
+	/** Back to the whole of the data, or to the window the axes were set to. */
 	resetZoom() {
 		if (!this.zoom) return;
 		this.zoom = null;
 		this.draw();
+		this._moved();
 	}
 
 	/** Moves the window without changing its size. */
@@ -1169,7 +1443,7 @@ export class TimeChart {
 		// is not: refusing to pan an unzoomed chart made the gesture look
 		// broken rather than unnecessary, and moving a peak off the edge to
 		// see the shoulder of it is a reasonable thing to ask for.
-		const ext = this.zoom ?? this._extent();
+		const ext = this._range();
 		const out = {};
 		for (const [axis, d, span] of [
 			['x', -dx, this.plot.w],
@@ -1189,6 +1463,7 @@ export class TimeChart {
 			&& Number.isFinite(out.yMin) && out.yMax > out.yMin) {
 			this.zoom = out;
 			this.draw();
+			this._moved();
 		}
 	}
 
@@ -1344,17 +1619,15 @@ export class TimeChart {
 		// that used to need an escaper of its own.
 		const rows = shown.map(({ s, si }) => {
 			const v = s.values[i];
-			const { color, set } = styleOf(s, si);
-			const swatch = el('span', { className: 'series-swatch tt-swatch' });
-			swatch.dataset.set = set;
-			swatch.style.setProperty('--swatch', c.series[color]);
+			const swatch = paintSwatch(el('span', { className: 'series-swatch tt-swatch' }),
+				lineLook(s, si, c));
 			return el('div', { className: 'tt-row' },
 				swatch,
 				el('span', { className: 'tt-name' }, s.label),
-				el('span', { className: 'tt-val' }, fmtValue(v)));
+				el('span', { className: 'tt-val' }, fmtValue(shiftDecimal(v, -(this.yExp || 0)))));
 		});
 		this.tooltip.replaceChildren(
-			el('div', { className: 'tt-head' }, `${this.xLabel} = ${fmtValue(t[i])}`),
+			el('div', { className: 'tt-head' }, `${this.xLabel} = ${fmtValue(shiftDecimal(t[i], -(this.xExp || 0)))}`),
 			...rows,
 			...(hidden ? [el('div', { className: 'tt-more' }, `${hidden} more, smaller at this time`)] : []),
 		);

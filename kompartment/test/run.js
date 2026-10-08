@@ -11628,7 +11628,7 @@ test('the tree can put a block on the chart, beside or instead of what is there'
 	assert(/for \(const i of hits\) if \(!merged\.includes\(i\)\) merged\.push\(i\);/.test(fn),
 		'adding a block twice would draw it twice');
 	// A chart has room for so many lines, and says when it ran out.
-	assert(/merged\.slice\(0, MAX_SERIES\)/.test(fn), 'the chart has no limit');
+	assert(/merged\.slice\(0, MOST_CHARTED\)/.test(fn), 'the chart has no limit');
 	assert(/would not fit/.test(fn), 'lines are dropped in silence');
 });
 
@@ -15317,7 +15317,7 @@ test('the Chart and the Table show a stored run, and beside a run here put it ne
 	assert(/seriesView: \(\) => \(shownRun\(\)/.test(app), 'the tree offers its chart items only after a run here');
 	// Beside one, a line in the output's colour and the last pattern, and a
 	// column after the output's own.
-	assert(/label: `\$\{r\.outputs\[i\]\.label\} \(\$\{stored\.tag\}\)`,[\s\S]{0,200}?slot: pos,\n\t+set: SERIES_DASHES\.length - 1,/.test(app),
+	assert(/label: `\$\{b\.line\.label\} \(\$\{stored\.tag\}\)`,[\s\S]{0,200}?slot: pos,\n\t+set: SERIES_DASHES\.length - 1,/.test(app),
 		'no line beside');
 	assert(/const stored = !byScenario && which === 'run' \? storedBeside\(r\) : null;/.test(app), 'no column beside');
 	// Which one, or none, from the chart's menu and the table's.
@@ -36059,7 +36059,7 @@ test('the reader chooses what the band’s line is, and the table can list the r
 	// An interval is drawn about the line it belongs to, and the two lines do
 	// not share one: `sd/√n` is the error of a *mean*, and drawn about a median
 	// it would be an interval around a number it is not the spread of.
-	const build = /const series = state\.selected\.flatMap\(\(i, pos\) => \{([\s\S]*?)\n\t\}\);/.exec(app)?.[1] ?? '';
+	const build = /const outputSeries = \(i, style, label\) => \{([\s\S]*?)\n\t\};/.exec(app)?.[1] ?? '';
 	assert(build, 'the chart’s series builder moved');
 	assert(/lo\[j\] = mean\[j\] - half;/.test(build),
 		'the interval is not drawn about the mean it belongs to');
@@ -39655,6 +39655,12 @@ for (const [name, fn] of (await import('./farfield-laplace.js')).TESTS) test(nam
 // rename following into it -- in a file of their own too.
 section('apps on a model');
 for (const [name, fn] of (await import('./apps.js')).TESTS) test(name, fn);
+
+// Charting and tabulating -- what the Chart draws from what is picked, the
+// looks of named lines, panels, the Table's layouts and the saved views -- in
+// a file of their own as well.
+section('charting and tabulating');
+for (const [name, fn] of (await import('./charting.js')).TESTS) test(name, fn);
 
 // =========================================================================
 await Promise.all(pending);

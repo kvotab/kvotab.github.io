@@ -276,13 +276,30 @@
 								</span>
 								<span class="hint" id="pickinfo"></span>
 							</div>
-							<div class="pick-filter" id="pick-filter"></div>
-							<div class="picker" id="picker"></div>
+							<!-- What is picked, and how it is drawn: see
+							     `renderPickBar` and `renderChartSettings` in
+							     app.js. The series are picked in the tree on the
+							     left; these say what was picked and how it is
+							     laid out, and hold the axes. -->
+							<div class="pick-bar" id="pick-bar" hidden></div>
+							<div class="chart-settings" id="chart-settings" hidden></div>
+							<!-- Every series as a chip, folded away under
+							     *Find lines…*: the search across blocks. One
+							     drawer, moved to whichever of the Chart and the
+							     Table is in front (`placeDrawer`). -->
+							<div id="chart-drawer-slot">
+								<div class="pick-drawer" id="pick-drawer" hidden>
+									<div class="pick-filter" id="pick-filter"></div>
+									<div class="picker" id="picker"></div>
+								</div>
+							</div>
 							<p class="hint" id="unitwarn" hidden></p>
 						</div>
 						<div class="chart-shell" id="chart-shell"
 							title="Drag over the chart to zoom and shift-drag to pan (the middle button pans too), scroll to zoom about the pointer, double-click to show everything — right-click for the scales, the drag mode, and to save a picture">
-							<div id="chart" class="chart-root"></div>
+							<!-- A panel per block, stacked over one time axis:
+							     see ./src/ui/chartstack.js. -->
+							<div id="chart" class="chart-stack"></div>
 							<div class="legend" id="legend" hidden></div>
 						</div>
 					</div>
@@ -308,7 +325,13 @@
 								       aria-label="Which realisation">
 								<select id="table-at" aria-label="At which time" hidden></select>
 							</span>
+							<!-- How the table is laid out -- over time, the peaks,
+							     a pivot -- the times it is read at, and Copy. See
+							     `renderTableSettings`. -->
+							<span class="table-settings" id="table-settings" hidden></span>
 						</div>
+						<div class="pick-bar" id="table-pick-bar" hidden></div>
+						<div id="table-drawer-slot"></div>
 						<div id="table-body"></div>
 					</div>
 

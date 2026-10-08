@@ -86,6 +86,11 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/graph.js` | The diagram, in SVG |
 | `src/ui/matrix.js` | The transfer grid |
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
+| `src/ui/chartplan.js` | What the Chart draws from what is picked: each block's lines, its panels and its total |
+| `src/ui/chartstack.js` | Panels: a chart each over one time axis, and one picture of all of them |
+| `src/ui/linestyles.js` | The colour and pattern of a line that stands for a known index — the HDF5 Browser's table — and the lightness moved to stand off the chart |
+| `src/ui/tableviews.js`, `src/ui/readnum.js` | The Table's peaks and pivot, and numbers typed with a decimal comma |
+| `src/ui/prefix.js` | A prefix for an axis's unit — kBq, µSv/year, kyear — by the HDF5 Browser's rule |
 | `src/ui/tree.js`, `src/ui/icons.js` | The block tree, and the glyph beside each name |
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
 | `src/ui/indexlists.js` | Index lists, contaminants and decay data, in one panel |
@@ -3581,6 +3586,131 @@ What can be kept is the run on screen while it is current (`keepRefusal`): not
 after an edit, when the pairing of this model and those states is the lie
 *Saving what a run kept* describes, which the layout signature cannot catch;
 not a replayed realisation; and not a run at an app's controls.
+
+## Picking in the tree, and a block drawn as one thing
+
+An imported assessment's run has 331,364 series. As a list of chips that is
+not a way to find the two blocks the assessment is about, and a block over 54
+nuclides is 54 lines, more than lines told apart by their place can be. Three
+choices shape how the series are picked and drawn.
+
+**`state.selected` is the one truth.** It is a flat list of output
+indices, in the order they were picked. The tree's boxes, *Find lines…*, a saved
+view and the endpoints all write it, and everything that draws or writes what is
+picked — the scenarios beside, the run beside, the sample's bands, the exports,
+the Table — reads it. Blocks are what the list is *grouped into* when it is drawn,
+not a second list that could disagree with it. The cap on it is
+`MOST_CHARTED` (2,000), a bound on what a pick costs to fetch rather than on
+what can be told apart.
+
+**What is drawn is a plan.** `planChart` (./src/ui/chartplan.js) groups the
+picked series by block and decides, without reading a number:
+
+- which list a block's lines run over: the material's, where it has one and more
+  than one index of it is picked, otherwise the list with most picked
+  (`describeBlock`);
+- for each other list, a panel per index (up to `PANEL_EACH_UP_TO`, 6), the sum,
+  or one index — the reader's choice where there is one, `state.chartOpts.split`;
+- the panels: one per block and cut and unit, or under *Same chart* one per cut,
+  whatever the units — one chart is one axis, which names them all, and a block
+  is totalled only over lines of one unit;
+- a total per block with two or more lines;
+- the look of each line: a known index's own colour and pattern (`namedStyle`),
+  or the palette at the index's place in its list (`indexOrder`, worked out once
+  per run), so a nuclide is the same line on every chart. A series picked on its
+  own — a block with no index, or one index of a block — is a *loose* line and
+  takes its place on the shared chart, as lines picked one by one always have.
+
+The page then fetches the columns a line needs and adds them (`addedUp` in
+`renderChart`). A sum whose part is still on its way from the worker is the
+shared pending placeholder itself, which is how every other reader recognises
+"waiting". Under a sample a sum adds the drawn line of each part — mean to mean,
+median to median — and carries no band, since percentiles do not add.
+
+**A line says what it is with a `style`.** `lineLook` in ./src/ui/chart.js
+resolves `{ kind: 'named' | 'palette' | 'total' }` at paint time, and the
+legend, the readout, the end labels, the tree's boxes and the chips all paint
+their swatches from it (`paintSwatch`), so they cannot disagree. A series with
+no style is placed by its position — `MAX_SERIES` (32) bounds those — while
+styled ones go up to `MOST_LINES` (400) per panel. A `set` on a series
+still overrides the pattern, which is how the mean, a scenario and the run
+beside keep their meaning on a nuclide's colour. The named table is copied from
+the HDF5 Browser (`NAMED_LINE_STYLES` in resources/js/rb-chart-axes.js) and a
+test compares the two where that file is in reach. `forSurface` moves a colour's
+OKLab lightness by bisection until it stands off the chart's surface by 1.7:1
+on a light ground (the browser's own floor for its pathway colours) or 3:1 on a
+dark one; 32 of 123 colours move on the light theme, 26 on the dark. Because the
+look depends on the ground, a change of theme draws the chart again rather than
+repainting it.
+
+**Panels are charts.** `ChartStack` (./src/ui/chartstack.js) holds a
+`TimeChart` per panel and keeps a panel's chart while its key stays, so a re-run
+keeps each panel's zoom. A gesture in one panel reaches the others through
+`onWindow` → `setXWindow`, which moves their time window and leaves their values
+alone; `setXWindow` does not report back, so two panels cannot answer each other
+in a loop, and `zoomBy` from the menu zooms every panel with the hand-off
+quieted, since each would otherwise move the others' time axis a second time.
+The canvases are positioned absolutely inside their panels: drawn at the size a
+panel had a moment ago, a canvas in the flow would push out a scrollbar, the
+panel would shrink under it, and the scrollbar would stay. A picture of the stack paints every
+panel's `_paint` under a translation into one surface, and the page's legend
+under them.
+
+**The axes' window is a home, not a zoom.** `TimeChart.fixed` holds the ends the
+reader set; `_home` is the data's extent with those ends put in, and is where a
+double-click goes back to. A zoom may fix one axis and leave the other (`NaN` fields), which is what a
+window from another panel is.
+
+**What the chart opens on** is the first `DEFAULT_ENDPOINTS` (3) blocks of the
+endpoint list: an assessment's list can name hundreds over fifty nuclides. A
+selection carried to the next run (`renderResults`) keeps the order it was
+picked in, since that is the order of the panels.
+
+**Prefixes** are lettering. `TimeChart.xExp`/`yExp` are powers of ten that the
+tick labels and the readout are shifted by (`shiftDecimal`, which moves decimal
+digits rather than multiplying), and the titles carry `unitWithPrefix`'s unit;
+everything the chart computes — its window, a zoom, the axes set by hand —
+stays in the model's numbers, so nothing else needs to know of them. The rule for which
+units take a letter is the HDF5 Browser's, ported to ./src/ui/prefix.js and
+compared with it by a test. They are `view.chart_time_prefix` and
+`view.chart_value_prefix`, written only while set, and presets and views carry
+`x_prefix`/`y_prefix` (null for "says nothing").
+
+**The tree.** `pickHooks` hands `renderBlockTree` the run's series by block —
+`seriesByBlock`, a `WeakMap` per run, since an assessment's run is a third of a
+million outputs and the tree asks about one block at a time — and the ways to
+tick. Index rows are nested a list at a time and keyed under their block's key;
+the Endpoints section's rows are the same blocks under `e:` keys, so keyboard
+focus and the open state never confuse the two. A box holds series numbered in
+the run the tree was drawn for, so the tree is drawn again whenever another run
+is shown (`treeRun`), and a hook that finds a different run on screen draws it
+again rather than ticking a series of the wrong one: a run here numbers its
+series differently from an assessment's stored run. A swatch is known only once the
+chart has drawn, which is after the tree, so rows that are one series carry
+`data-out` and `refreshPickTicks` paints them afterwards — the chips' too. The
+star edits only the clicked name in `simulation.endpoints`, so whatever else an
+imported file's list holds, parameters included, stays as the file had it.
+
+**Saved views and presets** are `view.chart_views` and `view.chart_presets`,
+read through `chartViews` and `chartPresets` in ./src/domain/edit.js, which
+check every field of what a file says. They are written only when there are
+any, and a `view` left empty by deleting the last is removed, so a model that
+never had one saves without them. They are not in `DEFAULT_VIEW`; the Python
+package keeps view keys it does not know, so a model edited there keeps them.
+
+**The Table.** Each layout sets `tableSheet`, a function giving every row and
+every column of what it drew; *Copy* asks the run for any column not yet worked
+out (`ensureColumns`), draws again and writes that sheet as tab-separated text.
+A pivot cell adds its series' columns before taking the number, since the peak
+of a sum is what a reader of the cell means. Times are read by `readNumberList`:
+semicolons, spaces or a comma and a space separate, and one comma between two
+digits is a decimal point, as the axes' boxes read it (`readNumber`).
+
+**Tests.** run.js: the named table against the browser's, `forSurface`'s
+contrast on both themes, the plan's defaults and shapes, the totals and the
+loose lines, `largestLines`, the axes' home and partial windows, `visibleSeries`,
+the number readers, the peaks and pivot rules, the views' and presets' readers,
+and the wiring of the tree's hooks.
 
 ## Writing HDF5
 
