@@ -129,7 +129,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li><strong>Scale selectors</strong> — switch axes between linear and log scales, and give an axis's unit a prefix: <em>k</em> shows Bq as kBq, the values divided by 1000.</li>
       <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
       <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
-      <li><strong>Preset views</strong> — quickly zoom to common time ranges.</li>
+      <li><strong>Preset views</strong> — choose one in the list by the chart. The gear beside it opens the axis presets window: the chart's axes, to set by hand, and the saved presets, to use, edit, update or delete. Drag it aside by its title bar while you work on the chart.</li>
     </ul>
   </div>
 </div>

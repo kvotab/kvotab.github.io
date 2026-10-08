@@ -28,7 +28,7 @@ STEPS = [
     ('dom.inventory', """(() => ({
       controlIds: [...document.querySelectorAll('[id]')].map(e => e.id).sort(),
       inputs: [...document.querySelectorAll('input,select,button')].length,
-      dialogs: [...document.querySelectorAll('.url-dialog-overlay, .preset-overlay')].map(d => d.id).sort(),
+      dialogs: [...document.querySelectorAll('.url-dialog-overlay, .preset-panel')].map(d => d.id).sort(),
       treePlaceholder: document.getElementById('tree').textContent.trim().slice(0, 60),
       chartControlLabels: [...document.querySelectorAll('.chart-controls label')].map(l => l.textContent.trim().replace(/\\s+/g,' ')),
       hiddenAtStart: [...document.querySelectorAll('[style*="display: none"], [style*="display:none"]')].map(e => e.id || e.className).sort()
@@ -212,9 +212,10 @@ STEPS = [
       openUrlDialog();  out.urlOpen = state('urlDialog');
       out.urlInputValue = document.getElementById('urlInput').value;
       closeUrlDialog(); out.urlClosed = state('urlDialog');
-      openPresetManager(); out.presetOpen = state('presetManagerOverlay');
+      const panel = document.getElementById('presetPanel');
+      openPresetManager(); out.presetOpen = !panel.hidden;
       out.presetRows = document.querySelectorAll('#presetManagerList *').length > 0;
-      closePresetManager(); out.presetClosed = state('presetManagerOverlay');
+      closePresetManager(); out.presetClosed = panel.hidden;
       out.presetOptions = [...document.getElementById('presetSelect').options].map(o => o.value);
       return out;
     })()"""),

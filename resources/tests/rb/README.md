@@ -118,11 +118,12 @@ chart, after clicking log, on a chart drawn on log, and back again, and the
 rectangles must be redrawn for the new scale — left at t = 0 on a log axis they
 dragged autorange out to 1e-9. The overlay's tooltip used to convert its bounds
 once, at draw time, so after clicking log the whole chart named the first
-phase. Second, the preset manager: its Current view row edits the chart
-without saving anything and turns the dropdown to Custom, applying it
-unchanged leaves the selection alone, editing the *selected* preset keeps it
-selected and moves the chart, editing any other preset moves nothing, and
-closing the dialog re-applies nothing. Third, the toggles that redraw a chart
+phase. Second, the presets window's rules: the chart's axes at its top,
+changed and applied, move the chart without saving anything and turn the
+dropdown to Custom, applying nothing changed leaves the selection alone,
+editing the *selected* preset keeps it selected and moves the chart, editing
+any other preset moves nothing, and closing the window re-applies nothing.
+Third, the toggles that redraw a chart
 (Show Total, the background) keep its axes, and now keep the dropdown too:
 a preset, Custom or Auto range stays selected, where it used to turn to Auto
 range over a view that was still the preset's. A group's x lin/log with a
@@ -139,6 +140,32 @@ found when it finishes; it used to leave "release" deleted, and the next
 `characterise.py` then listed one preset fewer.
 
     python3 test-axes.py
+
+`test-presets.py` covers the presets window itself, which the gear opens:
+it floats over the page rather than blocking it, and moves by its title bar.
+The gear opens and closes it, and the focus returns to the gear when Escape
+closes it. It blocks nothing: the chart beside it takes the pointer, and a zoom
+shows in its fields at once, unless a field has been changed, which stays as
+typed until applied (Enter does it too) or reverted. A click on a preset's line
+uses it, with real mouse events, and the lines read 100 – 10⁵ rather than
+100000. Save as new preset selects what it saved, a name a preset has already
+replaces that preset only once the reader says so (never a second of one
+name; the page's own Auto range is refused), and Update asks first. A preset's
+form cancels on Escape without closing the window, saves on Enter, and refuses
+a name another preset has. The axes lock disables all of it that could move
+the axes, and says why; with no chart drawn it says so and offers no preset to
+use. A preset's name and numbers from a file stay text. It is dragged with real
+mouse events: it follows the pointer, stays in view and below the page's header
+when dragged into the corners, opens again where it was left, goes back to
+where it first opens on a double click on its bar, and moves by the arrow keys
+from its grip; until moved it keeps below the chart's controls when they wrap
+onto another line. Its table keeps each axis's fields on a line, and a preset's
+form opening near the bottom keeps the window in view. The pointer follows a
+drag on the window itself, not only through pointer capture, which Chrome
+sometimes does not grant: a press where the last drag ended, a moment later,
+got none, and the window stayed behind.
+
+    python3 test-presets.py
 
 `test-handoff.py` covers the in-memory handoff — another page opening a file
 here without it ever being saved to disk. It drives both transports (the
@@ -218,10 +245,10 @@ are in time and are named so under the pointer, Show Max's numbers are the
 axis's, and the preset selected stays selected. A chart drawn afterwards, and
 a band added later, are in the prefix; panels each take it in their own unit.
 Presets keep their limits in the file's units and may carry a prefix: saving
-one, choosing it, one without (which keeps the chart's), the manager's
-summaries, its edit form (another prefix moves the numbers typed to the same
-limits), the Current view editor, and an imported prefix that is not one of
-the page's. The axes lock disables the selects. The CSV holds the file's
+one, choosing it, one without (which keeps the chart's), the presets
+window's lines, its edit form (another prefix moves the numbers typed to the
+same limits), the chart's axes at its top, and an imported prefix that is not
+one of the page's. The axes lock disables the selects. The CSV holds the file's
 values, the Excel workbook the axis's under the prefixed unit with a note
 saying so, and the Python script divides its labels (test-python.py runs such
 scripts). Last, a click on the select is the select's: the label's own control
@@ -274,8 +301,8 @@ and `confirm()` before deleting one. In a frame sandboxed without
 `allow-modals` -- a VS Code webview, where rb-vscode/ runs this page -- both
 return at once and show nothing, so a preset could be neither saved nor
 deleted there. Driven with real key events: Enter saves, Escape and Cancel do
-not; the delete question opens over the preset manager, and the Escape that
-closes it must not close the manager too; a preset's name, which can come
+not; the delete question opens over the presets window, and the Escape that
+closes it must not close the window too; a preset's name, which can come
 from an imported file, is shown as text. test-axes.py, which deletes presets
 along the way, answers the question by replacing `rbAskConfirm`.
 

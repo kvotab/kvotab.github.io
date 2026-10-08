@@ -375,6 +375,7 @@ function toggleAxesLock() {
     _lockedAxesState = null;
   }
   _setAxesControlsDisabled(_axesLocked);
+  _presetPanelSync();   // nothing in the presets window may move locked axes
 }
 
 /** Enable or disable scale toggles and preset controls based on lock state. */
@@ -589,9 +590,14 @@ function unitWithPrefix(unit, e) {
  * @returns {string}
  */
 function axisTitle({ name, units }, e) {
-  const shown = units.length ? units.map(u => unitWithPrefix(u, e)).join(', ') : (e ? powerOfTen(e) : '');
+  const shown = unitsWithPrefix(units, e);
   if (!shown) return name;
   return name ? `${name} (${shown})` : shown;
+}
+
+/** An axis's units with its prefix, as its title has them: "kBq, kSv"; "10³" for none. */
+function unitsWithPrefix(units, e) {
+  return units.length ? units.map(u => unitWithPrefix(u, e)).join(', ') : (e ? powerOfTen(e) : '');
 }
 
 /** Values in units of 10^e of theirs: the same array when e is 0. */

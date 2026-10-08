@@ -44,7 +44,7 @@ registerActions({
   toggleAxesLock:      () => toggleAxesLock(),
   applySelectedPreset: () => applySelectedPreset(),
   saveCurrentAsPreset: () => saveCurrentAsPreset(),
-  openPresetManager:   () => openPresetManager(),
+  togglePresetManager: () => togglePresetManager(),
   closePresetManager:  () => closePresetManager(),
   importPresets:       () => importPresets(),
   exportPresets:       () => exportPresets(),

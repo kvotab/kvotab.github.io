@@ -18,9 +18,9 @@ This checks:
   adds later; several groups' panels each take it, in their own units;
   presets keep their limits in the file's units and may carry a prefix:
   saving one, choosing it, choosing one without (it keeps the chart's), the
-  manager's summaries, its edit form (another prefix moves the numbers typed
-  to the same limits), the Current view editor, and an imported preset whose
-  prefix is not one of the page's;
+  presets window's lines, its edit form (another prefix moves the numbers
+  typed to the same limits), the chart's axes at its top, and an imported
+  preset whose prefix is not one of the page's;
   the axes lock keeps the prefix and disables its select;
   the CSV holds the file's values, the Excel workbook the axis's, under the
   prefixed unit and with a note saying so, and the Python script divides its
@@ -184,7 +184,7 @@ HELPERS = r"""(() => {
     sel.dispatchEvent(new Event('change', { bubbles: true }));
     await __wait(1800);
   };
-  window.__row = (id) => [...document.querySelectorAll('#presetManagerList .preset-manager-row')]
+  window.__row = (id) => [...document.querySelectorAll('#presetManagerList .preset-row')]
     .find(r => r.dataset.presetId === id);
   window.__btn = (id, label) => [...__row(id).querySelectorAll('button')].find(b => b.textContent === label);
   window.__set = (fields) => { for (const [k, v] of Object.entries(fields)) document.getElementById('pe_' + k).value = v; };
@@ -200,6 +200,22 @@ HELPERS = r"""(() => {
     s.dispatchEvent(new Event('change'));
     return __form();
   };
+  // The chart's axes, at the top of the presets window: its fields as typed in.
+  window.__cv = (fields) => {
+    for (const [k, v] of Object.entries(fields)) {
+      const el = document.getElementById('cv_' + k);
+      el.value = v;
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    }
+  };
+  window.__cvForm = () => {
+    const v = (id) => (document.getElementById(id) || {}).value;
+    const t = (id) => (document.getElementById(id) || {}).textContent;
+    return { xPrefix: v('cv_xPrefix'), yPrefix: v('cv_yPrefix'), xMin: v('cv_xMin'), xMax: v('cv_xMax'),
+             yMin: v('cv_yMin'), yMax: v('cv_yMax'), xUnit: t('cv_xUnit'), yUnit: t('cv_yUnit'),
+             options: [...document.getElementById('cv_yPrefix').options].map(o => o.value) };
+  };
+  window.__cvPrefix = (axis, p) => { __cv({ [axis + 'Prefix']: p }); return __cvForm(); };
   window.__state = () => {
     const pd = document.getElementById('plotlyChart');
     const fl = pd._fullLayout;
@@ -221,8 +237,12 @@ HELPERS = r"""(() => {
       })),
       shapes: (pd.layout.shapes || []).map(s => [s.x0, s.x1]),
       notes: __notes.slice(),
-      rows: [...document.querySelectorAll('#presetManagerList .preset-manager-row')].map(r => ({
-        id: r.dataset.presetId, summary: r.querySelector('.preset-manager-summary').textContent }))
+      // Each preset's line: an axis each, its words and its prefix's pill.
+      rows: [...document.querySelectorAll('#presetManagerList .preset-row')].map(r => ({
+        id: r.dataset.presetId,
+        axes: [...r.querySelectorAll('.preset-axis')].map(c => [
+          (c.querySelector('b') ? c.querySelector('b').textContent : '') + (c.childNodes[1] ? c.childNodes[1].textContent : ''),
+          (c.querySelector('.preset-pfx') || {}).textContent || '']) }))
     };
   };
   // The workbook, caught instead of downloaded (as test-excel.py catches it).
@@ -455,24 +475,25 @@ async def main():
                   (s['selects'], s['axes']['xaxis']['range'], s['axes']['yaxis']['range']),
                   ({'x': 'k', 'y': 'm'}, [-1, 2], [7, 12]))
 
-            await page.ev('openPresetManager(); true')
+            await page.ev('openPresetManager(); __wait(300)')
             s = await st(page)
-            summary = {r['id']: r['summary'] for r in s['rows']}
-            check('the manager: a preset\'s summary in its prefix',
-                  ('X: linear, prefix k [auto]' in summary[milli['id']], 'Y: linear, prefix m [1500 – 2500]' in summary[milli['id']]),
-                  (True, True))
-            check('  SFR Release\'s as it was, without one', summary['release'], 'X: log [100 – 100000]   Y: log [10000 – 1000000000]')
-            check('  the Current view\'s in the prefixes on screen', summary['__current__'],
-                  'X: log, prefix k [0.1 – 100]   Y: log, prefix m [10000000 – 1000000000000]')
+            lines = {r['id']: r['axes'] for r in s['rows']}
+            check('the presets window: a preset\'s line in its prefix, in a pill',
+                  lines[milli['id']], [['X lin · auto', 'k'], ['Y lin · 1500 – 2500', 'm']])
+            check('  SFR Release\'s as it was, without one', lines['release'], [['X log · 100 – 10⁵', ''], ['Y log · 10⁴ – 10⁹', '']])
+            cv = await page.ev('__cvForm()')
+            check('  the chart\'s axes at its top in the prefixes on screen, and their units',
+                  (cv['xPrefix'], cv['xMin'], cv['xMax'], cv['xUnit'], cv['yPrefix'], cv['yMin'], cv['yMax'], cv['yUnit']),
+                  ('k', '0.1', '100', 'kyears', 'm', '10000000', '1000000000000', 'mBq/year'))
 
             await page.ev(f"__btn({json.dumps(milli['id'])}, 'Edit').click(); true")
             form = await page.ev('__form()')
             check('editing a preset: its prefix, and its limits in it', (form['yPrefix'], form['yMin'], form['yMax']), ('m', '1500', '2500'))
-            check('  offering "as is" and "none" before the prefixes', form['options'][:3], ['', 'none', 'P'])
+            check('  offering "keep" and "none" before the prefixes', form['options'][:3], ['', 'none', 'P'])
             form = await page.ev("__formPrefix('y', 'k')")
             check('  choosing k moves the numbers to the same limits in k', (form['yMin'], form['yMax']), ('0.0015', '0.0025'))
             form = await page.ev("__formPrefix('y', '')")
-            check('  and "as is" to the file\'s units', (form['yMin'], form['yMax']), ('1.5', '2.5'))
+            check('  and "keep" to the file\'s units', (form['yMin'], form['yMax']), ('1.5', '2.5'))
             await page.ev("__formPrefix('y', 'k'); pe_save.click(); __wait(500)")
             edited = await page.ev(f"loadPresets().find(p => p.id === {json.dumps(milli['id'])})")
             check('  saved: the same limits, now with k', (edited['yPrefix'], edited['yMin'], edited['yMax']), ('k', 1.5, 2.5))
@@ -480,18 +501,17 @@ async def main():
             check('  and the chart, on another preset, did not move',
                   (s['sel'], s['selects'], s['axes']['yaxis']['range']), ('release', {'x': 'k', 'y': 'm'}, [7, 12]))
 
-            await page.ev("__btn('__current__', 'Edit').click(); true")
-            form = await page.ev('__form()')
-            check('the Current view editor: the prefix on screen, no "as is"',
+            form = await page.ev('__cvForm()')
+            check('the chart\'s axes in the window: the prefix on screen, no "keep"',
                   (form['yPrefix'], form['options'][:2], form['yMin'], form['yMax']), ('m', ['none', 'P'], '10000000', '1000000000000'))
-            form = await page.ev("__formPrefix('y', 'k')")
-            check('  choosing k moves its numbers too', (form['yMin'], form['yMax']), ('10', '1000000'))
-            await page.ev('pe_save.click(); __wait(900)')
+            form = await page.ev("__cvPrefix('y', 'k')")
+            check('  choosing k moves its numbers too, and the unit with them', (form['yMin'], form['yMax'], form['yUnit']), ('10', '1000000', 'kBq/year'))
+            await page.ev('cv_apply.click(); __wait(900)')
             s = await st(page)
             check('  applying the prefix alone: the same stretch, 1e4 to 1e9 Bq/year as 10 to 1e6 kBq/year',
                   (s['selects']['y'], s['axes']['yaxis']['title'], s['axes']['yaxis']['range'], s['sel']),
                   ('k', 'Value (kBq/year)', [1, 6], '__custom__'))
-            await page.ev("__btn('__current__', 'Edit').click(); __formPrefix('y', 'M'); __set({ yMax: '100' }); pe_save.click(); __wait(900)")
+            await page.ev("__cvPrefix('y', 'M'); __cv({ yMax: '100' }); cv_apply.click(); __wait(900)")
             s = await st(page)
             check('  a prefix and a limit typed in it: 0.01 to 100 MBq/year',
                   (s['selects']['y'], s['axes']['yaxis']['range']), ('M', [-2, 2]))

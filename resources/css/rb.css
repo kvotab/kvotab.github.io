@@ -1394,214 +1394,407 @@
       box-shadow: 0 0 6px rgba(139, 111, 71, 0.5);
     }
 
-    /* ---------- Preset Manager Overlay / Dialog ---------- */
-    .preset-overlay {
+    /* ---------- The axis presets window (rb-chart-presets.js) ---------- */
+    /* It floats over the page, placed by the script; the questions it asks (z-index 9999) open above it. */
+    .preset-panel {
       position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.45);
+      left: 0;
+      top: 0;
       z-index: 9000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .preset-dialog {
-      background: var(--color-panel-bg);
-      border: 1px solid var(--color-panel-border);
-      border-radius: 8px;
-      width: 560px;   /* an axis's scale, prefix, min and max on one line */
-      max-width: 90vw;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-      overflow: hidden;
-    }
-    .preset-dialog-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--color-panel-border);
-    }
-    .preset-dialog-header h4 {
-      margin: 0;
-      font-size: 15px;
-      color: var(--color-text-primary);
-    }
-    .preset-close-btn {
-      background: none;
-      border: none;
-      font-size: 20px;
-      cursor: pointer;
-      color: var(--color-text-secondary);
-      line-height: 1;
-      padding: 0 4px;
-    }
-    .preset-close-btn:hover {
-      color: var(--color-text-primary);
-    }
-    .preset-manager-list {
-      padding: 8px 16px;
-      max-height: 400px;
-      overflow-y: auto;
-    }
-    .preset-manager-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 0;
-      border-bottom: 1px solid var(--color-hover-bg);
-    }
-    .preset-manager-row:last-child {
-      border-bottom: none;
-    }
-    .preset-manager-name-block {
-      flex: 1;
-      min-width: 0;
+      width: 560px;
+      max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
       display: flex;
       flex-direction: column;
-    }
-    .preset-manager-name {
-      font-size: 13px;
+      background: var(--color-panel-bg);
       color: var(--color-text-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 10px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.12);
+      font-size: 13px;
+      outline: none;
     }
-    .preset-manager-summary {
-      font-size: 11px;
-      color: var(--color-text-secondary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .preset-panel[hidden] {
+      display: none;
     }
-    /* The chart's own view, set apart from the saved presets below it */
-    .preset-manager-row.preset-manager-current {
-      border-bottom-color: var(--color-panel-border);
+    .preset-panel.is-moving {
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.34), 0 4px 12px rgba(0, 0, 0, 0.16);
+      user-select: none;
     }
-    /* Whichever row the preset dropdown is showing: a preset, or Custom */
-    .preset-manager-row.is-selected .preset-manager-name {
+    /* The title bar, which moves it */
+    .preset-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 8px 7px 10px;
+      background: var(--color-hover-bg);
+      border-bottom: 1px solid var(--color-panel-border);
+      border-radius: 10px 10px 0 0;
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+    }
+    .preset-panel.is-moving .preset-panel-header {
+      cursor: grabbing;
+    }
+    .preset-panel-header h4 {
+      flex: 1;
+      margin: 0;
+      font-size: 14px;
       font-weight: 600;
     }
-    .preset-manager-tag {
-      margin-left: 6px;
-      padding: 0 5px;
+    /* Its grip: six dots, and the keyboard's way to move it */
+    .preset-panel-grip {
+      width: 14px;
+      height: 18px;
+      padding: 0;
+      border: 0;
       border-radius: 3px;
-      font-size: 10px;
-      font-style: normal;
-      font-weight: 500;
-      background: var(--accent-fill);
+      background-color: transparent;
+      background-image: radial-gradient(circle, var(--color-text-muted) 1.4px, transparent 1.7px);
+      background-size: 6px 6px;
+      background-position: 1px 0;
+      cursor: inherit;
+    }
+    .preset-panel-grip:focus-visible {
+      outline: 2px solid var(--color-kvot-accent);
+      outline-offset: 2px;
+    }
+    .preset-panel-close {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      background: none;
+      color: var(--color-text-secondary);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .preset-panel-close:hover {
+      background: var(--color-panel-border);
+      color: var(--color-text-primary);
+    }
+    .preset-panel-fields {
+      min-width: 0;
+      margin: 0;
+      padding: 12px 14px 4px;
+      border: 0;
+      overflow-y: auto;
+    }
+    .preset-locked-note {
+      display: none;
+    }
+    .preset-panel.is-locked .preset-locked-note {
+      display: block;
+      float: none;
+      width: 100%;
+      box-sizing: border-box;
+      margin: 0 0 10px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: var(--color-hover-bg);
+      color: var(--color-text-secondary);
+      font-size: 12px;
+    }
+    .preset-now,
+    .preset-saved {
+      margin-bottom: 14px;
+    }
+    .preset-section-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .preset-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary);
+    }
+    .preset-hint {
+      font-size: 11px;
+      color: var(--color-text-muted);
+    }
+    /* What the chart's axes are: Auto range, a preset, a view of the reader's own, or being changed */
+    .preset-state {
+      margin-left: auto;
+      max-width: 60%;
+      padding: 1px 9px;
+      border-radius: 999px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--color-panel-border);
+      color: var(--color-text-primary);
+    }
+    .preset-state[hidden] {
+      display: none;
+    }
+    .preset-state[data-kind="preset"],
+    .preset-state[data-kind="auto"] {
+      background: var(--color-kvot-accent);
       color: #fff;
     }
-    .preset-manager-actions {
-      display: inline-flex;
-      gap: 4px;
-      flex-shrink: 0;
+    .preset-state[data-kind="changed"] {
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
     }
-    .preset-manager-actions button {
-      padding: 3px 8px;
+    .preset-state[data-kind="custom"] {
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--color-text-muted);
+      color: var(--color-text-secondary);
+    }
+    .preset-empty {
+      margin: 4px 0;
+      font-size: 12px;
+      color: var(--color-text-muted);
+    }
+
+    /* Both axes as a table: Scale, Prefix, Min, Max, and the unit */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 16px 86px 72px minmax(0, 1fr) minmax(0, 1fr) minmax(48px, auto);
+      gap: 6px 8px;
+      align-items: center;
+    }
+    .preset-grid-head {
       font-size: 11px;
-      border-radius: 3px;
+      color: var(--color-text-muted);
+    }
+    .preset-grid-axis {
+      font-weight: 700;
+      color: var(--color-text-secondary);
+    }
+    .preset-grid-unit {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+    .preset-grid select,
+    .preset-grid input,
+    .preset-edit-name input {
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      padding: 4px 6px;
       border: 1px solid var(--color-panel-border);
+      border-radius: 5px;
       background: var(--color-panel-bg);
       color: var(--color-text-primary);
-      cursor: pointer;
-      transition: background 0.15s;
+      font: inherit;
+      font-size: 12px;
     }
-    .preset-manager-actions button:hover {
+    .preset-grid input {
+      font-variant-numeric: tabular-nums;
+    }
+    .preset-grid input::placeholder {
+      color: var(--color-text-muted);
+    }
+    .preset-grid select:focus,
+    .preset-grid input:focus,
+    .preset-edit-name input:focus {
+      outline: none;
+      border-color: var(--color-kvot-accent);
+      box-shadow: 0 0 0 2px rgba(187, 108, 93, 0.22);
+    }
+    .preset-buttons {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .preset-spacer {
+      flex: 1;
+    }
+    .preset-btn {
+      padding: 5px 12px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 5px;
+      background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .preset-btn:hover:not(:disabled) {
       background: var(--color-hover-bg);
     }
-    .preset-manager-actions button:disabled {
-      opacity: 0.5;
+    .preset-btn.primary {
+      border-color: var(--color-kvot-bright);
+      background: var(--color-kvot-bright);
+      color: var(--color-kvot-background);
+      font-weight: 600;
+    }
+    .preset-btn.primary:hover:not(:disabled) {
+      background: #f5c690;
+    }
+    .preset-btn:disabled {
+      opacity: 0.45;
       cursor: default;
+    }
+
+    /* The saved presets: a row each, which uses it when clicked */
+    .preset-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .preset-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 7px;
+    }
+    .preset-row:hover,
+    .preset-row.is-editing {
+      background: var(--color-hover-bg);
+    }
+    .preset-row.is-selected {
+      background: var(--color-selected-bg);
+    }
+    .preset-use {
+      flex: 1;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 14px minmax(0, 1fr);
+      gap: 1px 9px;
+      align-items: center;
+      padding: 6px 8px;
+      border: 0;
+      border-radius: 7px;
+      background: none;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .preset-use:disabled {
+      cursor: default;
+    }
+    .preset-use:focus-visible {
+      outline: 2px solid var(--color-kvot-accent);
+      outline-offset: -2px;
+    }
+    .preset-radio {
+      box-sizing: border-box;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--color-text-muted);
+      border-radius: 50%;
+    }
+    .preset-row.is-selected .preset-radio {
+      border-color: var(--color-kvot-accent);
+      background: radial-gradient(circle, var(--color-kvot-accent) 2.5px, transparent 3px);
+    }
+    .preset-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 500;
+    }
+    .preset-row.is-selected .preset-name {
+      font-weight: 700;
+    }
+    .preset-axes {
+      grid-column: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 16px;
+      font-size: 11.5px;
+      color: var(--color-text-secondary);
+    }
+    .preset-axis b {
+      margin-right: 1px;
+      font-weight: 700;
+      color: var(--color-text-primary);
+    }
+    .preset-pfx {
+      margin-left: 5px;
+      padding: 0 6px;
+      border-radius: 999px;
+      box-shadow: inset 0 0 0 1px var(--color-text-muted);
+      color: var(--color-text-primary);
+      font-size: 10.5px;
+    }
+    .preset-actions {
+      display: flex;
+      flex-shrink: 0;
+      gap: 4px;
+      padding-right: 6px;
+    }
+    .preset-act {
+      padding: 3px 8px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 4px;
       background: var(--color-panel-bg);
+      color: var(--color-text-primary);
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
     }
-    .preset-manager-actions .preset-delete-btn {
+    .preset-act:hover:not(:disabled) {
+      border-color: var(--color-text-muted);
+      background: var(--color-hover-bg);
+    }
+    .preset-act:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+    .preset-act-delete {
       color: #c0392b;
-      border-color: #c0392b;
     }
-    .preset-manager-actions .preset-delete-btn:hover {
+    [data-theme="dark"] .preset-act-delete {
+      color: #f08a7a;
+    }
+    .preset-act-delete:hover:not(:disabled) {
+      border-color: #c0392b;
       background: #c0392b;
       color: #fff;
     }
-    /* Inline edit form inside preset manager */
-    .preset-edit-form {
-      padding: 10px 0;
-      border-bottom: 1px solid var(--color-hover-bg);
+    /* A preset's form, under its row */
+    .preset-edit {
+      margin: 2px 4px 8px 27px;
+      padding: 10px 12px;
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      background: var(--color-panel-bg);
     }
-    .preset-edit-row {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 6px;
-      flex-wrap: wrap;
-    }
-    .preset-edit-row label {
+    .preset-edit-name {
       display: flex;
       align-items: center;
-      gap: 4px;
-      font-size: 12px;
-      color: var(--color-text-primary);
-      white-space: nowrap;
-    }
-    .preset-edit-row input[type="text"] {
-      width: 80px;
-      padding: 3px 6px;
-      font-size: 12px;
-      border: 1px solid var(--color-panel-border);
-      border-radius: 3px;
-      background: var(--color-panel-bg);
-      color: var(--color-text-primary);
-    }
-    .preset-edit-row .preset-name-input {
-      width: 220px;
-    }
-    .preset-edit-row select {
-      padding: 3px 6px;
-      font-size: 12px;
-      border: 1px solid var(--color-panel-border);
-      border-radius: 3px;
-      background: var(--color-panel-bg);
-      color: var(--color-text-primary);
-    }
-    .preset-edit-btns {
-      display: flex;
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .preset-edit-btns button {
-      padding: 4px 12px;
-      font-size: 12px;
-      border-radius: 3px;
-      border: 1px solid var(--color-panel-border);
-      background: var(--color-panel-bg);
-      color: var(--color-text-primary);
-      cursor: pointer;
-    }
-    .preset-edit-btns button:hover {
-      background: var(--color-hover-bg);
-    }
-    .preset-edit-save {
-      background: var(--color-kvot-bright) !important;
-      color: var(--color-kvot-background) !important;
-      border-color: var(--color-kvot-bright) !important;
-    }
-
-    .preset-dialog-footer {
-      display: flex;
       gap: 8px;
-      padding: 12px 16px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
+    .preset-edit-name input {
+      flex: 1;
+      font-size: 13px;
+    }
+    .preset-help {
+      margin: 8px 0 0;
+      font-size: 11px;
+      color: var(--color-text-muted);
+    }
+    .preset-panel-footer {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 14px;
       border-top: 1px solid var(--color-panel-border);
     }
-    .preset-dialog-footer button {
-      padding: 6px 14px;
-      font-size: 12px;
-      border-radius: 4px;
-      border: 1px solid var(--color-panel-border);
-      background: var(--color-panel-bg);
-      color: var(--color-text-primary);
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .preset-dialog-footer button:hover {
-      background: var(--color-hover-bg);
+    /* The gear, while its window is open */
+    .preset-bar .preset-icon-btn.active {
+      box-shadow: inset 0 0 0 2px var(--color-kvot-accent);
     }
 
     /* ==========================================================================

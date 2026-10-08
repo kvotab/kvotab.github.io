@@ -1564,6 +1564,7 @@ function hideChart() {
   }
   const histControls = document.getElementById('histControls');
   if (histControls) histControls.style.display = 'none';
+  if (typeof _presetPanelSync === 'function') _presetPanelSync();   // no chart for the presets window to show
 }
 
 /**
@@ -2067,6 +2068,7 @@ function createPdfHistogram(data) {
   showChartLoading(container);
   Plotly.newPlot('plotlyChart', traces, layout, config).then(() => {
     hideChartLoading(container);
+    _presetPanelSync();   // a histogram's axes are not the presets window's
   });
 }
 

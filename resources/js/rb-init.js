@@ -915,22 +915,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Populate chart preset dropdown from localStorage / defaults
   populatePresetDropdown();
-
-  /* Close preset manager on overlay click or Escape. The other two dialogs
-     have both; this one had only the click, so a keyboard user could open it
-     and not get out the same way they got out of the others. */
-  const presetOverlay = document.getElementById('presetManagerOverlay');
-  if (presetOverlay) {
-    presetOverlay.addEventListener('click', (e) => {
-      if (e.target === presetOverlay) closePresetManager();
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && presetOverlay.style.display !== 'none') {
-        e.preventDefault();
-        closePresetManager();
-      }
-    });
-  }
+  // The presets window takes its own keys, Escape among them, when it opens
+  // (rb-chart-presets.js): it floats over the page and blocks nothing, so
+  // it answers only keys typed in it.
 });
 
 

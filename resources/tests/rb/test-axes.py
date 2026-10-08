@@ -12,13 +12,13 @@ at t = 0 dragged the log axis out to 1e-9. And the listener lives on the plot
 div, which the next chart reuses, so a chart WITHOUT an overlay answered with
 the last one's names.
 
-The preset manager (the gear). Its first row is the chart's current view:
-editing it moves the chart, saves nothing, and turns the dropdown to Custom;
-applying it unchanged leaves the selection alone. Editing the SELECTED preset
-keeps it selected and moves the chart with it; editing any other preset moves
-nothing. Closing the dialog only closes it -- it used to re-apply the selected
-preset, and since every edit had already reset the dropdown to Auto range, that
-threw a zoomed view away.
+The presets window (the gear). At its top are the chart's axes as they are
+now: changing them and applying moves the chart, saves nothing, and turns the
+dropdown to Custom; applying nothing changed leaves the selection alone.
+Editing the SELECTED preset keeps it selected and moves the chart with it;
+editing any other preset moves nothing. Closing the window only closes it --
+it used to re-apply the selected preset, and since every edit had already
+reset the dropdown to Auto range, that threw a zoomed view away.
 
 The toggles. Show Total, the background and the like redraw the chart with
 its axes as they were, and the dropdown used to go back to Auto range anyway,
@@ -109,10 +109,20 @@ HELPERS = r"""(() => {
   // Deleting a preset asks in the page (rbAskConfirm); test-ask.py drives that dialog itself.
   window.rbAskConfirm = async () => true;
   window.__wait = (ms) => new Promise(r => setTimeout(r, ms));
-  window.__row = (id) => [...document.querySelectorAll('#presetManagerList .preset-manager-row')]
+  window.__row = (id) => [...document.querySelectorAll('#presetManagerList .preset-row')]
     .find(r => r.dataset.presetId === id);
   window.__btn = (id, label) => [...__row(id).querySelectorAll('button')].find(b => b.textContent === label);
   window.__set = (fields) => { for (const [k, v] of Object.entries(fields)) document.getElementById('pe_' + k).value = v; };
+  // The chart's axes at the top of the presets window, typed in as a reader types.
+  window.__cv = (fields) => {
+    for (const [k, v] of Object.entries(fields)) {
+      const el = document.getElementById('cv_' + k);
+      el.value = v;
+      el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    }
+  };
+  window.__enter = (id) => document.getElementById(id).dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   window.__choose = (id) => {
     const sel = document.getElementById('presetSelect');
     sel.value = id;
@@ -153,15 +163,19 @@ HELPERS = r"""(() => {
       selText: document.getElementById('presetSelect').selectedOptions[0].textContent,
       x: axis(fl.xaxis), y: axis(fl.yaxis),
       yButton: getScaleValue('y'),
-      open: document.getElementById('presetManagerOverlay').style.display,
+      open: !document.getElementById('presetPanel').hidden,
       form: !!document.getElementById('presetEditForm'),
       notes: window.__notes.slice(),
       shapes: (pd.layout.shapes || []).map(s => [s.x0, s.x1]),
-      rows: [...document.querySelectorAll('#presetManagerList .preset-manager-row')].map(r => ({
+      cv: document.getElementById('cv_xMin') ? Object.fromEntries(['xScale', 'xMin', 'xMax', 'yScale', 'yMin', 'yMax']
+        .map(k => [k, document.getElementById('cv_' + k).value])) : null,
+      cvScales: document.getElementById('cv_xScale') ? [...cv_xScale.options].map(o => o.value) : null,
+      applyOff: document.getElementById('cv_apply') ? cv_apply.disabled : null,
+      chip: (document.getElementById('presetNowState') || {}).textContent || '',
+      rows: [...document.querySelectorAll('#presetManagerList .preset-row')].map(r => ({
         id: r.dataset.presetId,
-        tag: (r.querySelector('.preset-manager-tag') || {}).textContent || '',
         selected: r.classList.contains('is-selected'),
-        summary: r.querySelector('.preset-manager-summary').textContent
+        axes: [...r.querySelectorAll('.preset-axis')].map(c => c.textContent)
       }))
     };
   };
@@ -250,42 +264,42 @@ async def main():
             check('back to linear: the first rectangle starts at 0 again', s['shapes'][:1], [[0, 1000]])
             await phases_named(page, 'back to linear from a log drawing')
 
-            # --- the Current view row ----------------------------------------
-            await page.ev("openPresetManager(); true")
+            # --- the chart's axes, at the top of the window ------------------
+            await page.ev("openPresetManager(); __wait(300)")
             s = await st(page)
-            check('the manager opens on a Current view row', s['rows'][0]['id'], '__current__')
-            check('  summarising the axes on screen', s['rows'][0]['summary'].startswith('X: linear ['), True)
-            check('Auto range is marked as the selected one',
-                  [r['id'] for r in s['rows'] if r['selected']], ['default'])
+            check('the window opens on the chart\'s axes, as fields', (s['open'], s['cv'] is not None), (True, True))
+            check('  holding the limits on screen', (s['cv']['xScale'], s['cv']['xMin'], s['cv']['xMax']), ('linear', '0', '100000'))
+            check('  with no "keep" scale, since a chart always has one', s['cvScales'], ['linear', 'log'])
+            check('  and Apply waiting for a change', s['applyOff'], True)
+            check('Auto range is marked as the one in use',
+                  ([r['id'] for r in s['rows'] if r['selected']], s['chip']), (['default'], 'Auto range'))
 
-            await page.ev("__btn('__current__', 'Edit').click(); true")
-            form = await page.ev("""({ name: !!document.getElementById('pe_name'),
-                                       scales: [...pe_xScale.options].map(o => o.value),
-                                       xMin: pe_xMin.value, xMax: pe_xMax.value })""")
-            check('its form has no name field', form['name'], False)
-            check('  and no "auto" scale, since a view always has one', form['scales'], ['linear', 'log'])
-            check('  and starts from the limits on screen', (form['xMin'], form['xMax']), ('0', '100000'))
-            await page.ev("__set({ xMax: '50000' }); pe_save.click(); __wait(700)")
+            await page.ev("__cv({ xMax: '50000' }); __wait(100)")
+            check('a field changed: Apply is offered, and the window says so',
+                  ((await st(page))['applyOff'], (await st(page))['chip']), (False, 'Changed: Apply to use'))
+            await page.ev("cv_apply.click(); __wait(700)")
             s = await st(page)
-            check('editing it turns the dropdown to Custom', s['sel'], '__custom__')
+            check('applying it turns the dropdown to Custom', s['sel'], '__custom__')
             check('  moves the chart', (s['x']['range'], s['x']['auto']), ([0, 50000], False))
-            check('  leaves the axis that was not edited on auto range', s['y']['auto'], True)
-            check('  tags the row Custom', (s['rows'][0]['tag'].startswith('Custom'), s['rows'][0]['selected']), (True, True))
-            check('  and keeps the manager open with the form closed', (s['open'], s['form']), ('flex', False))
+            check('  leaves the axis that was not changed on auto range', s['y']['auto'], True)
+            check('  says Custom, with no preset in use',
+                  (s['chip'], [r['id'] for r in s['rows'] if r['selected']]), ('Custom view, not saved', []))
+            check('  and keeps the window open, its fields the chart\'s again',
+                  (s['open'], s['cv']['xMax'], s['applyOff']), (True, '50000', True))
 
             await page.ev("closePresetManager(); __wait(400)")
             s = await st(page)
             check('closing keeps Custom and the view it describes',
-                  (s['sel'], s['x']['range']), ('__custom__', [0, 50000]))
+                  (s['sel'], s['x']['range'], s['open']), ('__custom__', [0, 50000], False))
 
             # --- editing presets ---------------------------------------------
             await page.ev("__choose('dose')")
             dose = await st(page)
             check('choosing SFR Dose moves the chart', (dose['x']['type'], dose['x']['range']), ('log', [3, 5]))
-            await page.ev("openPresetManager(); __btn('__current__', 'Edit').click(); pe_save.click(); __wait(400)")
+            await page.ev("openPresetManager(); __enter('cv_xMin'); __wait(400)")
             s = await st(page)
-            check('applying the view unchanged leaves the preset selected',
-                  (s['sel'], s['x'], s['y']), ('dose', dose['x'], dose['y']))
+            check('Enter with nothing changed leaves the preset selected, and the chart as it was',
+                  (s['sel'], s['x'], s['y'], s['chip']), ('dose', dose['x'], dose['y'], 'Preset: SFR Dose'))
 
             await page.ev("__btn('dose', 'Edit').click(); __set({ xMax: '50000' }); pe_save.click(); __wait(800)")
             s = await st(page)
@@ -301,28 +315,31 @@ async def main():
             s = await st(page)
             check('editing a preset that is not selected changes the selection not at all', s['sel'], 'dose')
             check('  nor the chart', (s['x'], s['y']), (before['x'], before['y']))
-            check('  but is saved', 'X: log [10 – 100000]' in next(r for r in s['rows'] if r['id'] == 'release')['summary'], True)
+            check('  but is saved, and its line says so',
+                  next(r for r in s['rows'] if r['id'] == 'release')['axes'], ['X log · 10 – 10⁵', 'Y log · 10⁴ – 10⁹'])
 
             await page.ev("closePresetManager(); __wait(400)")
             s = await st(page)
             check('closing with a preset selected re-applies nothing', (s['sel'], s['x']), ('dose', before['x']))
 
             # --- the forms refuse what they used to store silently -----------
-            await page.ev("__notes.length = 0; openPresetManager(); __btn('__current__', 'Edit').click(); __set({ xMin: '' }); pe_save.click(); __wait(300)")
+            await page.ev("__notes.length = 0; openPresetManager(); __cv({ xMin: '' }); cv_apply.click(); __wait(300)")
             s = await st(page)
-            check('one limit missing is refused, and says so',
-                  (s['sel'], s['form'], any('both X limits' in n for n in s['notes'])), ('dose', True, True))
-            await page.ev("__notes.length = 0; __set({ xMin: '0', xMax: '100' }); pe_save.click(); __wait(300)")
+            check('one limit missing is refused, and says so, the fields as typed',
+                  (s['sel'], s['cv']['xMin'], any('both X limits' in n for n in s['notes'])), ('dose', '', True))
+            await page.ev("__notes.length = 0; __cv({ xMin: '0', xMax: '100' }); cv_apply.click(); __wait(300)")
             check('zero on a log axis is refused', any('above zero' in n for n in (await st(page))['notes']), True)
-            await page.ev("__notes.length = 0; __set({ xMin: 'abc' }); pe_save.click(); __wait(300)")
+            await page.ev("__notes.length = 0; __cv({ xMin: 'abc' }); cv_apply.click(); __wait(300)")
             check('a limit that is not a number is refused', any('not a number' in n for n in (await st(page))['notes']), True)
-            await page.ev("pe_cancel.click(); __notes.length = 0; __btn('release', 'Edit').click(); __set({ yMax: '' }); pe_save.click(); __wait(300)")
+            await page.ev("cv_revert.click(); __wait(200)")
+            check('Revert puts the chart\'s back', ((await st(page))['cv']['xMin'], (await st(page))['applyOff']), ('1000', True))
+            await page.ev("__notes.length = 0; __btn('release', 'Edit').click(); __set({ yMax: '' }); pe_save.click(); __wait(300)")
             check('the preset form refuses one limit missing too', any('both Y limits' in n for n in (await st(page))['notes']), True)
             await page.ev("pe_cancel.click(); true")
 
             # A scale change on its own keeps the limits, as the buttons do.
             y0 = (await st(page))['y']
-            await page.ev("__btn('__current__', 'Edit').click(); __set({ yScale: 'linear' }); pe_save.click(); __wait(800)")
+            await page.ev("__cv({ yScale: 'linear' }); cv_apply.click(); __wait(800)")
             s = await st(page)
             check('changing only the scale is still an edit: Custom', s['sel'], '__custom__')
             check('  the axis and its button both turn linear', (s['y']['type'], s['yButton']), ('linear', 'linear'))
@@ -331,26 +348,26 @@ async def main():
 
             await page.ev("__choose('release')")
             release = await st(page)
-            await page.ev("openPresetManager(); __btn('release', 'Delete').click(); __wait(400)")
+            await page.ev("__btn('release', 'Delete').click(); __wait(400)")
             s = await st(page)
             check('deleting the selected preset keeps its view, now as Custom',
                   (s['sel'], s['x']), ('__custom__', release['x']))
             await page.ev("closePresetManager(); true")
 
-            # --- the overlay and the Current view editor ---------------------
+            # --- the overlay and the chart's axes in the window --------------
             await page.ev("""(async () => {
               await __choose('default');
               document.querySelector('#xScaleToggle button[data-value=linear]').click();
               await __wait(1000);
-              openPresetManager(); __btn('__current__', 'Edit').click();
-              __set({ xScale: 'log' }); pe_save.click();
+              openPresetManager(); await __wait(300);
+              __cv({ xScale: 'log' }); cv_apply.click();
               await __wait(1200);
               closePresetManager();
             })()""")
             s = await st(page)
-            check('x to log from the editor re-clamps the overlay too',
+            check('x to log from the window re-clamps the overlay too',
                   (s['x']['type'], s['shapes'][0][0] > 0, s['x']['range'][0] >= 0), ('log', True, True))
-            await phases_named(page, 'x to log from the editor')
+            await phases_named(page, 'x to log from the window')
 
             # --- the chart's toggles keep the preset ----------------------------
             # A toggle redraws the chart with its axes as they were, so what

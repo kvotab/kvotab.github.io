@@ -8,9 +8,9 @@ one -- both return at once without showing anything, so a preset could be
 neither saved nor deleted there. The questions are dialogs in the page now:
 
   * Enter in the name field saves, Escape and Cancel save nothing;
-  * the delete question opens on top of the preset manager, and an Escape
-    that closes it must not close the manager as well (both listen on the
-    document; the question stops the key before the manager sees it);
+  * the delete question opens on top of the presets window, and an Escape
+    that closes it must not close the window as well (the question takes the
+    key on the document before anything else sees it);
   * a preset's name is shown as text, so one imported from a file cannot
     become markup in the question.
 
@@ -42,7 +42,9 @@ def check(label, got, want=True):
         failures.append(label)
 
 
-DATASET = '/biosphere/vault_A/mire/total/Ac-227'
+# A group that draws a time chart: its axes are what a preset saves. (Its
+# member Ac-227 draws a data preview's histogram, which has none to save.)
+GROUP = '/biosphere/vault_A/mire/total'
 
 STATE = """(() => {
   const ask = document.querySelector('.rb-ask');
@@ -53,7 +55,7 @@ STATE = """(() => {
     message: ask && ask.querySelector('p') ? ask.querySelector('p').textContent : null,
     focused: ask ? (document.activeElement.tagName + ':' + (document.activeElement.textContent || document.activeElement.className)) : null,
     markupInQuestion: ask ? ask.querySelectorAll('img, script, svg, a').length : 0,
-    manager: document.getElementById('presetManagerOverlay').style.display !== 'none',
+    manager: !document.getElementById('presetPanel').hidden,
     names: loadPresets().filter(p => !p.builtIn).map(p => p.name),
     selectedName: sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : null
   };
@@ -74,9 +76,10 @@ async def main():
         try:
             await page.ev("localStorage.removeItem('chartPresets'); populatePresetDropdown(); true")
             await load_samples(page, ['sample-a.h5'])
-            await page.ev("(async () => { selectDataset(%s); await new Promise(r => setTimeout(r, 2500)); })()"
-                          % json.dumps(DATASET))
-            check('a chart is drawn to save a view of', await page.ev("!!currentChartData"))
+            await page.ev("(async () => { await expandAndLoadPath('sample-a.h5', %s);"
+                          " findTreeItem(%s, { extra: '.group' }).click(); await new Promise(r => setTimeout(r, 4000)); })()"
+                          % (json.dumps(GROUP), json.dumps(GROUP)), timeout=120)
+            check('a time chart is drawn to save a view of', await page.ev("!!(currentChartData && currentChartData.axisUnits)"))
             base = (await page.ev(STATE))['names']   # the defaults that are not built in
 
             # --- saving: the name is asked for in the page --------------------
@@ -106,7 +109,7 @@ async def main():
             # --- deleting: the question sits on top of the manager -----------
             pid = await page.ev("loadPresets().find(p => p.name === 'Long term').id")
             delete = ("(() => { openPresetManager(); const row = [...document.querySelectorAll("
-                      "'#presetManagerList .preset-manager-row')].find(r => r.dataset.presetId === %s);"
+                      "'#presetManagerList .preset-row')].find(r => r.dataset.presetId === %s);"
                       " [...row.querySelectorAll('button')].find(b => b.textContent === 'Delete').click();"
                       " return true; })()" % json.dumps(pid))
             await page.ev(delete)
@@ -120,7 +123,7 @@ async def main():
             check('Escape answers no, and leaves the manager open',
                   (s['open'], s['manager'], s['names']), (False, True, base + ['Long term']))
 
-            await page.ev("document.querySelector('#presetManagerOverlay').style.display !== 'none' || openPresetManager(); true")
+            await page.ev("openPresetManager(); true")
             await page.ev(delete)
             await page.ev("document.querySelector('.rb-ask .url-btn-load').click(); new Promise(r => setTimeout(r, 300))")
             s = await page.ev(STATE)
