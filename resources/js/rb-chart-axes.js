@@ -280,6 +280,10 @@ function updateChartScales() {
       && selectedBackgroundOverlaySource
       && selectedBackgroundOverlaySource !== '__none__') {
     const savedAxis = captureAxisState();
+    // As the relayout below would have it: a view whose x scale has changed
+    // is no longer the preset's, while Auto range still is.
+    const sel = document.getElementById('presetSelect');
+    if (sel && sel.value !== 'default') _markCustomPreset();
     Promise.resolve().then(() => createRadionuclidesChart(selectedDatasetPath, savedAxis));
     return;
   }

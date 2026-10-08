@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Changing the chart's axes: a background overlay across lin/log, and the
-preset manager's Current view and selection rules.
+"""Changing the chart's axes: a background overlay across lin/log, the preset
+manager's Current view and selection rules, and the toggles that redraw a
+chart, which keep the preset.
 
 The overlay. Its segments used to be converted to axis units once, when the
 chart was drawn. Clicking "log" then compared the pointer's log10(x) with
@@ -18,6 +19,14 @@ keeps it selected and moves the chart with it; editing any other preset moves
 nothing. Closing the dialog only closes it -- it used to re-apply the selected
 preset, and since every edit had already reset the dropdown to Auto range, that
 threw a zoomed view away.
+
+The toggles. Show Total, the background and the like redraw the chart with
+its axes as they were, and the dropdown used to go back to Auto range anyway,
+over a view that was still the preset's or a zoom's. It keeps what it said
+now. A group's x lin/log with a background rebuilds the chart too, and that
+used to hand the new axis the old range as it was: a zoom on 2000 to 6000
+years became 10^2000 on log. The range now goes across as Plotly takes it
+across when nothing is rebuilt, and the dropdown turns Custom as it does then.
 
 The file with the overlay is built in the page with h5wasm, so nothing binary
 is committed for it. The pointer is driven with real CDP mouse events.
@@ -69,6 +78,19 @@ BUILD = """(async () => {
     }
     g.create_dataset({ name: '_phase', data: Float64Array.from([1000, 10000, 100000]), shape: [3], dtype: '<f8' })
       .create_attribute('Index', '["Submerged","Shore","Terrestrial"]');
+    // A radionuclide group, for the toggles that redraw one (Show Total), with
+    // a background of its own, for the x lin/log that rebuilds it.
+    const nuc = w.create_group('nuclides');
+    nuc.create_attribute('IndexLists', ['Radionuclides']);
+    nuc.create_attribute('time_dependent', 'TRUE');
+    nuc.create_attribute('unit', 'Bq');
+    for (const [name, f] of [['Cs-137', 1], ['I-129', 0.3]]) {
+      const d = nuc.create_dataset({ name, data: Float64Array.from(t, v => f * (v + 1)), shape: [n], dtype: '<f8' });
+      d.create_attribute('unit', 'Bq');
+      d.create_attribute('time_dependent', 'TRUE');
+    }
+    nuc.create_dataset({ name: '_phase', data: Float64Array.from([1000, 10000, 100000]), shape: [3], dtype: '<f8' })
+      .create_attribute('Index', '["Submerged","Shore","Terrestrial"]');
   } finally {
     w.close();
   }
@@ -96,6 +118,31 @@ HELPERS = r"""(() => {
     sel.value = id;
     sel.dispatchEvent(new Event('change', { bubbles: true }));   // delegated
     return __wait(700);
+  };
+  window.__group = async (path) => {
+    await expandAndLoadPath('overlay.h5', path);
+    findTreeItem(path, { extra: '.group' }).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await __wait(2000);
+  };
+  window.__tick = async (id, on) => {
+    const cb = document.getElementById(id);
+    if (!!cb.checked !== on) { cb.checked = on; cb.dispatchEvent(new Event('change', { bubbles: true })); }
+    await __wait(1500);
+  };
+  window.__background = async (on) => {
+    const sel = document.getElementById('backgroundSourceSelect');
+    sel.value = on ? [...sel.options].map(o => o.value).find(v => v.endsWith('_phase')) : '__none__';
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    await __wait(1800);
+  };
+  window.__scale = async (axis, value) => {
+    const b = document.querySelector(`#${axis}ScaleToggle button[data-value=${value}]`);
+    if (!b.classList.contains('active')) b.click();
+    await __wait(1500);
+  };
+  window.__zoomX = async (lo, hi) => {
+    await Plotly.relayout(document.getElementById('plotlyChart'), { 'xaxis.range': [lo, hi] });
+    await __wait(500);
   };
   window.__state = () => {
     const pd = document.getElementById('plotlyChart');
@@ -304,6 +351,67 @@ async def main():
             check('x to log from the editor re-clamps the overlay too',
                   (s['x']['type'], s['shapes'][0][0] > 0, s['x']['range'][0] >= 0), ('log', True, True))
             await phases_named(page, 'x to log from the editor')
+
+            # --- the chart's toggles keep the preset ----------------------------
+            # A toggle redraws the chart with its axes as they were, so what
+            # described them still does: a preset, Custom, Auto range. Each one
+            # used to put the dropdown back to Auto range, over a view that was
+            # still the preset's.
+            await page.ev("__choose('dose')")
+            dose = await st(page)
+            await page.ev('__background(false)')
+            s = await st(page)
+            check('a dataset\'s background off: the preset stays selected, over its view',
+                  (s['sel'], s['x'], s['y']), ('dose', dose['x'], dose['y']))
+            await page.ev('__background(true)')
+            s = await st(page)
+            check('  and on again', (s['sel'], s['x'], s['y']), ('dose', dose['x'], dose['y']))
+
+            await page.ev("__group('/nuclides')")
+            check('a group chosen: a new chart, on Auto range', (await st(page))['sel'], 'default')
+            await page.ev("__choose('dose')")
+            dose = await st(page)
+            for on in (False, True):
+                await page.ev(f"__tick('showTotal', {'true' if on else 'false'})")
+                s = await st(page)
+                check(f'Show Total {"on" if on else "off"}: the preset stays selected, over its view',
+                      (s['sel'], s['x'], s['y']), ('dose', dose['x'], dose['y']))
+            await page.ev("Plotly.relayout(document.getElementById('plotlyChart'), { 'yaxis.range': [0, 3] }).then(() => __wait(500))")
+            zoom = await st(page)
+            await page.ev("__tick('showTotal', false)")
+            s = await st(page)
+            check('a zoom by hand, then Show Total off: still Custom, still the zoom',
+                  (zoom['sel'], s['sel'], s['x'], s['y']), ('__custom__', '__custom__', zoom['x'], zoom['y']))
+            await page.ev("(async () => { await __choose('default'); await __tick('showTotal', true); })()")
+            s = await st(page)
+            check('Auto range, then Show Total on: still Auto range, over the decades of the data, 0.1 to 1e6',
+                  (s['sel'], s['y']['range']), ('default', [-1, 6]))
+
+            # The x scale of a group with a background rebuilds the chart, and
+            # its range used to go across as it was: a zoom on 2000 to 6000
+            # years became 10^2000. It goes now as the relayout takes it on any
+            # other chart, and so does the dropdown.
+            await page.ev("(async () => { await __background(true); await __scale('x', 'linear'); await __zoomX(2000, 6000); })()")
+            check('a group with a background, zoomed on 2000 to 6000 years: Custom', (await st(page))['sel'], '__custom__')
+            await page.ev("__scale('x', 'log')")
+            s = await st(page)
+            check('  x to log keeps those years, as the relayout does (log 2000 to log 6000), and Custom',
+                  ([round(v, 4) for v in s['x']['range']], s['sel']), ([3.301, 3.7782], '__custom__'))
+            await page.ev("(async () => { await __scale('x', 'linear'); await __zoomX(0, 6000); await __scale('x', 'log'); })()")
+            check('  a zoom from 0: its lower end a millionth of the upper on log, as Plotly makes it',
+                  [round(v, 4) for v in (await st(page))['x']['range']], [-2.2218, 3.7782])
+            await page.ev("__choose('dose')")
+            dose = await st(page)
+            await page.ev("__scale('x', 'linear')")
+            s = await st(page)
+            check('  a preset, then x to linear: its years on a linear axis, and Custom',
+                  ([round(v) for v in s['x']['range']], s['sel']), ([round(10 ** v) for v in dose['x']['range']], '__custom__'))
+            await page.ev("(async () => { await __choose('default'); await __scale('x', 'log'); })()")
+            check('  Auto range, then x to log: still Auto range', (await st(page))['sel'], 'default')
+            await phases_named(page, 'the group, x to log on Auto range')
+            # Back to the dataset and its overlay, for the next chart to replace.
+            await page.ev("""(async () => { await __background(false); selectDataset('/geosphere/near_field/flux');
+                await __wait(1500); await __background(true); })()""")
 
             # --- a chart without an overlay, in the same div ------------------
             await page.ev("(async () => { selectDataset('/geosphere/near_field/flux2', { ctrlKey: true, stopPropagation() {} }); await __wait(1800); })()")

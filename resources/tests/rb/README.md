@@ -122,7 +122,16 @@ phase. Second, the preset manager: its Current view row edits the chart
 without saving anything and turns the dropdown to Custom, applying it
 unchanged leaves the selection alone, editing the *selected* preset keeps it
 selected and moves the chart, editing any other preset moves nothing, and
-closing the dialog re-applies nothing. The file with the overlay is built in
+closing the dialog re-applies nothing. Third, the toggles that redraw a chart
+(Show Total, the background) keep its axes, and now keep the dropdown too:
+a preset, Custom or Auto range stays selected, where it used to turn to Auto
+range over a view that was still the preset's. A group's x lin/log with a
+background rebuilds its chart, and the range must go across as Plotly takes it
+across without a rebuild (log of each end, an end at zero a millionth of the
+other), with the dropdown turning Custom as it does then: the old range used to
+be applied as it was, so a zoom on 2000 to 6000 years became 10^2000 on log.
+A new chart chosen in the tree still starts on Auto range. The file with the
+overlay is built in
 the page with h5wasm, as `handoff-demo.html` does, so no data file is
 committed for it. The presets are kept in the browser profile, which every
 test here shares, and this test edits and deletes them. It puts back what it

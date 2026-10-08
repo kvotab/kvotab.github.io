@@ -1356,7 +1356,9 @@ function captureAxisState() {
     // A log y axis the snap has set is still on auto range, and a redraw
     // (Show Total, say) should fit what it then draws, not the old range.
     yAutorange: isAutoLogY(plotDiv) ? true : yaxis.autorange,
-    // The prefixes the ranges are in (changeAxisPrefix).
+    // The scales and the prefixes the ranges are in (changeAxisPrefix).
+    xType: xaxis.type,
+    yType: yaxis.type,
     exp: chartExponents()
   };
 }
@@ -1364,8 +1366,16 @@ function captureAxisState() {
 /**
  * Apply a previously captured axis state to a Plotly layout object.
  * Only overrides ranges when the user had manually zoomed/panned (autorange=false).
- * A range is moved into the prefix the new chart is drawn in, should that
- * have changed since it was captured.
+ *
+ * A range is put in the scale and the prefix the new chart is drawn in,
+ * should either have changed since it was captured. The x scale does when
+ * its lin/log rebuilds a group chart with a background (updateChartScales),
+ * and the range then moves as Plotly moves it when the scale changes without
+ * a rebuild: to log, the log of each end, an end at or below zero becoming a
+ * millionth of the other, and auto range when both are; to lin, ten to the
+ * power of each. It used to be applied as it was, so a zoom on 2000 to 6000
+ * years became an axis from 10^2000.
+ *
  * @param {Object} layout - Plotly layout to modify in-place
  * @param {Object} savedState - State from captureAxisState()
  */
@@ -1374,17 +1384,31 @@ function applyAxisState(layout, savedState) {
   const now = axisExponents();
   const was = savedState.exp || now;
   const inNow = (range, axis) => {
+    const type = layout[axis + 'axis'].type;
+    const typeWas = savedState[axis + 'Type'] || type;
+    let r = range.map(Number);
+    if (typeWas !== type) {
+      if (type === 'log') {
+        let [a, b] = r;
+        if (a <= 0 && b <= 0) return null;
+        if (a <= 0) a = b / 1e6;
+        else if (b <= 0) b = a / 1e6;
+        r = [Math.log10(a), Math.log10(b)];
+      } else {
+        r = r.map(v => Math.pow(10, v));
+      }
+    }
     const shift = was[axis] - now[axis];
-    if (!shift) return range;
-    return layout[axis + 'axis'].type === 'log' ? range.map(v => v + shift) : range.map(v => shiftDecimal(v, shift));
+    if (!shift) return r;
+    return type === 'log' ? r.map(v => v + shift) : r.map(v => shiftDecimal(v, shift));
   };
-  if (savedState.xRange && savedState.xAutorange === false) {
-    layout.xaxis.range = inNow(savedState.xRange, 'x');
-    layout.xaxis.autorange = false;
-  }
-  if (savedState.yRange && savedState.yAutorange === false) {
-    layout.yaxis.range = inNow(savedState.yRange, 'y');
-    layout.yaxis.autorange = false;
+  for (const axis of ['x', 'y']) {
+    const range = savedState[axis + 'Range'];
+    if (!range || savedState[axis + 'Autorange'] !== false) continue;
+    const r = inNow(range, axis);
+    if (!r) continue;   // nothing of it on a log axis: auto range
+    layout[axis + 'axis'].range = r;
+    layout[axis + 'axis'].autorange = false;
   }
 }
 

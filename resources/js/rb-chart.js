@@ -108,7 +108,9 @@ function backgroundSegmentsOnScale(segments, traces, xScale) {
 
 
 function createPlotlyChart(path, savedAxisState) {
-  if (!_axesLocked) resetPresetDropdown();
+  // A new chart starts on Auto range, unless the axes are locked. One a toggle
+  // redraws keeps its axes (savedAxisState), and the preset that describes them.
+  if (!_axesLocked && !savedAxisState) resetPresetDropdown();
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
   const plotDiv = getElement('plotlyChart');
@@ -1732,7 +1734,8 @@ async function collectRadionuclideGroup(path, enabledFiles, shared, { selectedIt
 }
 
 async function createRadionuclidesChart(path, savedAxisState) {
-  if (!_axesLocked) resetPresetDropdown();
+  // As createPlotlyChart: a toggle's redraw keeps the preset selected.
+  if (!_axesLocked && !savedAxisState) resetPresetDropdown();
   const plotDiv = getElement('plotlyChart');
   const chartContainer = getElement('plotlyChartContainer');
   showChartLoading(chartContainer);
