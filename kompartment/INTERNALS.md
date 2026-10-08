@@ -33,6 +33,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/sim/split.js` | Whether to solve those parts on several cores, and putting the parts back together |
 | `src/sim/localsens.js` | dy/dp for a chosen parameter, by forward sensitivities |
 | `src/sim/probabilistic.js` | Latin hypercube sampling and the statistics over realisations |
+| `src/sim/spread.js` | The percentiles and the mean a sample is summarised by, here and from a stored run |
 | `src/ode/solvers/ndf.js` | The NDF/BDF formulas (Shampine & Reichelt 1997; Hairer & Wanner 1996, ch. V). One of the eight shared-core files: see *One solver core for three pages* |
 | `src/ode/variable-order.js` | The adapter that gives those formulas this project's solver shape |
 | `src/ode/solvers/rosenbrock23.js` | The modified Rosenbrock (2,3) pair (Shampine & Reichelt 1997, §4) (shared core) |
@@ -1001,13 +1002,50 @@ Read against this tool's runs of the same model, the silo assessment saved by
 Ecolego 5 agrees at every one of 496 blocks to within 1.4e-4 of the block's
 peak, and the one saved by Ecolego 6 at 90 % of them to within 3e-5. Its one
 outlier is a concentration in a compartment holding less than the absolute
-tolerance, where neither solver controls its error. Probabilistic runs are
-counted and not read.
+tolerance, where neither solver controls its error.
+
+**A probabilistic run is the same file with a simulation per realisation** --
+`PROBABILISTIC` in Ecolego 6's description, `Probabilistic` in Ecolego 5's --
+and every convention above holds within each realisation; checked on
+assessments saved by both versions, where a realisation of a parameter sweep at
+the nominal values is bit for bit the single run of the same model, and where
+every sampled cell lies inside its own distribution's bounds only when the
+version's index order is followed. The count is the header's: the description
+says it nowhere (`simulation-info-n` is 0 even for a Latin hypercube run of a
+thousand). Ecolego 6 writes the output times into every realisation's row of
+`time`, Ecolego 5 only into the first, so the first row is read. What Ecolego
+saves beside the series is every parameter, as a value that cannot change over
+the run -- one per realisation, so the draws themselves -- and no statistic and
+no single run.
+
+It comes in as a sample here is drawn (`loadRun`, given the percentiles):
+every series read realisation by realisation into one realisation-major array,
+a transfer's flow divided by its donor within each realisation before anything
+else -- the median of a quotient is not the quotient of the medians -- and then
+each series summarised by `quantiles` and `meanOf` from `src/sim/spread.js`,
+the functions a sample here is summarised by, at the model's percentiles. A
+value that cannot change over the run is summarised over its one number per
+realisation and marked `flat`, as a varied parameter of a sample here is. The
+summary is cached against the percentiles, so **Bands…** reads the file again
+rather than keeping every realisation in memory beside the bands. A single run
+is shown before a probabilistic one, since a run here is one.
+
+Checked against the statistics Ecolego exported of the same runs -- the mean,
+median, 5th and 95th percentiles of a total dose over 101 times, from runs of a
+thousand realisations saved by each version: **the mean agrees to the last
+digit at every time**, which says every realisation was read whole and in
+order. The percentiles do not, by design: Ecolego's are the average of the two
+realisations either side of `q·n` (numpy's `hazen` reproduces all three
+exactly), where this tool's are the one realisation at `round(q·(n−1))`. The
+two are a realisation apart -- 0.9 % at the median, up to 18 % at the 5th
+percentile early on, where the dose spans many decades and neighbouring
+realisations are far apart -- which is less than either percentile is known to
+from a thousand draws. One definition is applied to both runs, so a band beside
+a band compares like with like.
 
 ### Not mapped
 
-The other ~20 block types, presentation state, and the results of
-probabilistic runs (see *An assessment's stored runs* above). Scenarios and
+The other ~20 block types, and presentation state. Scenarios and
 the probabilistic settings are read (see *Scenarios* below, and the Guide);
 sub-systems are read too, transports included -- see
 "Transport sub-systems" -- and the *external* flavour is read as an ordinary
@@ -3539,6 +3577,28 @@ changed since the run moves no layout, so a saved pair of "model as edited" and
 `saveFile('data')` refuses while `state.dirty`, which is the same test the dot
 on Run draws from, so the refusal is in words the reader has already seen.
 
+**And the sample, where there is one** (`results/sample/`, `sampleEntries` and
+`readSample`). A probabilistic run's realisations live in the worker that ran
+them, as `lastProb.result`, and the page asks for them apart from the run
+(`sample-entries`), since the run beside them may have been solved on the page.
+What is written is exactly what the worker holds -- the kept series in the
+precision they were held in, the draws, which realisations ran, and the outputs,
+plan and statistics as JSON -- and a varied parameter is not written as a
+series, being its draws with NaN where a realisation failed, which is how
+`sampleResult` puts it back. Opening sends it with the run in the same
+`open-dataset` message, handed over rather than copied (`readSample` reads into
+arrays of its own for that), and the worker holds it through `holdSample`, the
+function a finished run is held by: the categories applied, the bands worked out,
+and `probabilistic-done` under the run's id with `opened` set. So everything
+asked of a sample afterwards is asked of the same structure; the test runs a
+sample through the worker, writes it, reads it back and asks the same questions
+-- the bands, the matrix an export writes, a distribution, What drove it -- and
+gets the same answers bit for bit. A sample is written only of the model at its
+own values and only up to `MOST_SAMPLE_BYTES`, a gigabyte: the archive is put
+together in one piece, so a sample is held twice while it is saved. The ZIP
+writer refuses past 4 GB and past 65,535 entries rather than writing an end
+record whose 32-bit and 16-bit fields have wrapped.
+
 **Auto-run now starts off**, which is the other half of the same thought. It is
 the switch that makes a keystroke start a solve, and on an imported assessment
 that is half a minute of a page gone away every time a digit is typed -- paid
@@ -3557,6 +3617,22 @@ shared. `storedBeside` matches the outputs of the run on screen to the run
 beside's by label and reads the run beside onto this run's times along a
 straight line (`ontoAxis`, NaN outside its span), and the chart and the table
 ask it for a column through `column`, as they ask the run on screen.
+
+**A run beside can be probabilistic**, from all three: an assessment's
+probabilistic run (summarised by the reader, above), a run kept while a sample
+of it stands (`keepRun` takes the bands the page already holds -- `besideSample`
+of `state.prob` -- and no realisation), and a file saved with its sample (its
+worker restores the sample with `keep: false`, sends the bands and holds
+nothing). Each puts the same shape on the view as `prob` -- the bands by series
+on the sample's own grid, like `state.prob` -- so one path draws them. Before a
+run here the view is what is drawn, and `renderChart` takes its `prob` where
+there is no sample of the run here: its lines through its bands, less the
+model's own run where it has none (`own: false`, an assessment's). Beside a run
+here `besideLine` gives the line -- the median, or the mean where the chart's
+lines are means -- and its outermost band as two edges (`edge: true`), which
+`TimeChart` strokes thin in the line's pattern rather than filling: a second fill
+in the series' colour over this run's own band would be one spread on top of
+another with nothing to tell them apart. The Table takes the same line.
 
 **A kept run is written out and opened again, not handed over.** The page's
 worker holds the run on screen, and the simplest way to keep it would be to

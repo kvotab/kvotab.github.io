@@ -9052,13 +9052,163 @@ test('a saved run is described without a stray space, and every archive written 
 	}
 });
 
+test('a probabilistic run goes into Model with results and comes back as it was', async () => {
+	const { readFileSync } = await import('node:fs');
+	const D = await import('../src/io/dataset.js');
+	const { zip } = await import('../src/io/zip.js');
+	const same = (a, b) => a?.length === b?.length && Array.from(a).every((v, i) => Object.is(v, b[i]));
+
+	// The format, on a sample made to have every awkward thing in it: single
+	// precision, a varied parameter, and a realisation that failed.
+	const n = 4;
+	const times = 3;
+	const ran = Uint8Array.from([1, 1, 0, 1]);
+	const draws = [Float64Array.from([0.1, 0.2, 0.3, 0.4]), Float64Array.from([5, 6, 7, 8])];
+	const a = new Float32Array(n * times);
+	for (let i = 0; i < n; i++) {
+		for (let j = 0; j < times; j++) a[i * times + j] = ran[i] ? (i + 1) / 3 + j : NaN;
+	}
+	const k = Float64Array.from(draws[1]);
+	k[2] = NaN;
+	const result = {
+		t: Float64Array.from([0, 1, 10]),
+		outputs: [
+			{ label: 'A', block: 'A', kind: 'compartment', unit: 'Bq', dims: [], cache: new Float64Array(2) },
+			{ label: 'k', block: 'k', kind: 'parameter', unit: '1/year', source: 'P', offset: 4 },
+		],
+		values: [a, k],
+		plan: [
+			{ slot: 3, name: 'm', index: {}, spec: { kind: 'uniform', min: 0, max: 1 } },
+			{ slot: 4, name: 'k', index: {}, spec: { kind: 'normal', mean: 6, sd: 1 } },
+		],
+		samples: draws,
+		ran,
+		iterations: n,
+		precision: 'float32',
+		stats: { seed: 9, latin: true, failed: 1, trouble: ['realisation 3: it would not'], ms: 12 },
+		flat: Uint8Array.from([0, 1]),
+		drawnFrom: Int32Array.from([-1, 1]),
+	};
+	const entries = D.sampleEntries(result, { stamp: 'S' });
+	assert(entries.map((e) => e.name).join() === ['meta.json', 't.f64', 'series.f32', 'draws.f64', 'ran.u8']
+		.map((f) => `results/sample/${f}`).join(), entries.map((e) => e.name).join());
+	// Only the kept series is a series, in the precision it was held in; the
+	// varied parameter is its draws.
+	assert(entries[2].bytes.length === n * times * 4, `${entries[2].bytes.length} bytes of series`);
+	const meta = JSON.parse(new TextDecoder().decode(entries[0].bytes));
+	assert(!('cache' in meta.outputs[0]) && meta.outputs[1].offset === 4, JSON.stringify(meta.outputs));
+	// Every buffer new, so they can be handed over without taking the run's.
+	assert(entries.every((e) => ![a, k, ...draws, ran].some((x) => x.buffer === e.bytes.buffer)),
+		'an entry is a view of the arrays the run holds');
+
+	// Through a real archive and back, every number as it was -- NaN and all.
+	const archive = await zip([{ name: 'm.json', bytes: new TextEncoder().encode('{}') }, ...entries]);
+	const back = D.readSample(await unzip(archive));
+	assert(back && D.describeSampleMeta(back.meta) === '4 realisations of 1 series, 1 of them failed',
+		D.describeSampleMeta(back?.meta));
+	const r = D.sampleResult(back);
+	assert(r.values[0] instanceof Float32Array && same(r.values[0], a), 'the kept series came back different');
+	assert(r.values[1] instanceof Float64Array && same(r.values[1], k), 'the varied parameter is not its draws');
+	assert(same(r.samples[0], draws[0]) && same(r.samples[1], draws[1]) && same(r.ran, ran) && same(r.t, result.t),
+		'the draws, the realisations that ran or the times came back different');
+	assert(same(r.flat, result.flat) && same(r.drawnFrom, result.drawnFrom) && r.precision === 'float32'
+		&& r.iterations === n && r.stats.seed === 9 && r.plan[1].spec.kind === 'normal',
+		JSON.stringify({ precision: r.precision, stats: r.stats, plan: r.plan }));
+	// Read into arrays of its own, which is what lets them be handed over.
+	const buffers = D.sampleBuffers(back);
+	assert(buffers.length === 4 && new Set(buffers).size === 4 && !buffers.includes(archive.buffer),
+		'the sample is read as views of the file');
+
+	// A damaged sample is refused rather than misread -- and costs the run
+	// beside it nothing.
+	const raw = JSON.parse(readFileSync(new URL('../examples/four-compartment.json', import.meta.url), 'utf8'));
+	const runEntries = D.datasetEntries({ project: raw, results: run(new Project(structuredClone(raw))), inner: 'model.json' });
+	const opened = (list) => D.readDataset(new Map([...runEntries, ...list].map((e) => [e.name, e.bytes])));
+	const cut = entries.map((e) => (e.name.endsWith('series.f32') ? { ...e, bytes: e.bytes.subarray(8) } : e));
+	const hurt = opened(cut);
+	assert(hurt.flat.length && !hurt.sample && /4 numbers in its series|damaged/.test(hurt.sampleProblem ?? ''),
+		JSON.stringify(hurt.sampleProblem));
+	assert(/no draws\.f64/.test(opened(entries.filter((e) => !e.name.endsWith('draws.f64'))).sampleProblem ?? ''),
+		'a missing entry is not named');
+	const newer = entries.map((e) => (e.name.endsWith('meta.json')
+		? { ...e, bytes: new TextEncoder().encode(JSON.stringify({ ...meta, format: 99 })) } : e));
+	assert(/newer version/.test(opened(newer).sampleProblem ?? ''), 'a newer format is read as if it were this one');
+	assert(opened([]).sample === null && opened([]).sampleProblem === null, 'a file with no sample has one');
+
+	// And the whole road, through the worker: a run made, written out, read
+	// back, and asked the same questions -- the bands, the matrix an export
+	// writes, a distribution, What drove it -- with the same answers, to the
+	// last bit. The run and every question in one turn: see `alone`.
+	const model = JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8'));
+	const harness = await simWorker();
+	const got = await harness.alone(async (ask) => {
+		const made = await ask({ type: 'probabilistic', id: 71, project: structuredClone(model), iterations: 24, seed: 5 });
+		const done = made.find((m) => m.type === 'probabilistic-done');
+		if (!done) return { made };
+		const kept = done.payload.outputs.findIndex((o) => !o.varied);
+		const varied = done.payload.outputs.findIndex((o) => o.varied);
+		const first = async (msg) => (await ask(msg))[0];
+		const questions = async (id) => ({
+			all: await first({ type: 'prob-matrix', id, indices: [kept, varied], want: 'all' }),
+			summary: await first({ type: 'prob-summary', id, index: kept, at: 'max' }),
+			drove: await first({ type: 'sensitivity', id, index: kept, at: 'peak' }),
+		});
+		const before = await questions(71);
+		const saved = await first({ type: 'sample-entries', id: 71, stamp: 'S' });
+		const results = run(new Project(structuredClone(model)));
+		const file = await zip([
+			...D.datasetEntries({ project: model, results, inner: 'model.json' }),
+			...(saved.parts ?? []),
+		]);
+		const data = D.readDataset(await unzip(file));
+		const back = await ask({ type: 'open-dataset', id: 72, project: structuredClone(model), data });
+		const after = await questions(72);
+		// The sample just read is the one held now, and the one before it is not.
+		const gone = await first({ type: 'sample-entries', id: 71 });
+		// A run beside is drawn and not asked about: its bands, and nothing held.
+		const beside = await ask({
+			type: 'open-dataset', id: 73, project: structuredClone(model), data: D.readDataset(await unzip(file)), keep: false,
+		});
+		const notHeld = await first({ type: 'prob-matrix', id: 73, indices: [kept], want: 'all' });
+		const stillHeld = await first({ type: 'prob-matrix', id: 72, indices: [kept], want: 'all' });
+		return { made, done, kept, varied, before, saved, back, after, gone, beside, notHeld, stillHeld };
+	});
+	const { done } = got;
+	assert(done, JSON.stringify(got.made?.filter((m) => m.type === 'error')));
+	assert(got.saved.ok && got.saved.parts.some((e) => e.name === 'results/sample/series.f64'), JSON.stringify(got.saved.why));
+	// The run first, then its sample, under the one id.
+	assert(JSON.stringify(got.back.map((m) => m.type)) === '["loading","done","probabilistic-done"]',
+		JSON.stringify(got.back.map((m) => [m.type, m.message])));
+	const again = got.back[2];
+	assert(again.opened === true && again.id === 72, 'the opened sample does not say so');
+	const p = done.payload;
+	const q = again.payload;
+	assert(JSON.stringify([p.t, p.quantiles, p.outputs, p.iterations, p.stats, p.plan, p.precision, p.inputs].map((x) => Array.from(x ?? [])))
+		=== JSON.stringify([q.t, q.quantiles, q.outputs, q.iterations, q.stats, q.plan, q.precision, q.inputs].map((x) => Array.from(x ?? []))),
+	'what the page is told of it changed');
+	assert(JSON.stringify(p.stats) === JSON.stringify(q.stats) && JSON.stringify(p.outputs) === JSON.stringify(q.outputs),
+		JSON.stringify(q.stats));
+	p.bands.forEach((b, j) => {
+		const c = q.bands[j];
+		assert(b.q.every((y, i) => same(y, c.q[i])) && same(b.mean, c.mean) && same(b.sd.sd, c.sd.sd)
+			&& same(b.med.errLo, c.med.errLo) && same(b.med.bodyHi, c.med.bodyHi), `the band of ${p.outputs[j].label}`);
+	});
+	assert(got.before.all.matrices.every((m, j) => same(m, got.after.all.matrices[j])), 'the matrix an export writes');
+	assert(same(got.before.summary.column, got.after.summary.column), 'a distribution');
+	const drove = (m) => JSON.stringify({ ...m, id: 0 });
+	assert(drove(got.before.drove) === drove(got.after.drove), 'What drove it');
+	assert(got.gone.ok === false, 'a sample replaced is still answered for');
+	assert(got.beside.some((m) => m.type === 'probabilistic-done') && got.notHeld.gone === true
+		&& got.stillHeld.matrices?.length === 1, 'a run beside keeps its sample, or takes the one on screen');
+});
+
 test('the run that is saved is the run of the model that is saved', async () => {
 	const { readFileSync } = await import('node:fs');
 	const root = new URL('..', import.meta.url);
 	const app = readFileSync(new URL('src/ui/app.js', root), 'utf8');
 	const worker = readFileSync(new URL('src/worker/sim-worker.js', root), 'utf8');
 
-	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null(?:, sample = false)? \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	// The layout signature cannot catch a changed rate -- it moves nothing --
 	// so a model edited since its run would pair with results that are not
 	// its own. Refused on the page, where the same test already draws the dot
@@ -15221,10 +15371,12 @@ test('an assessment’s stored runs come in beside the model, as each Ecolego wr
 		const { project, stored } = await importEcoFile(zip, { fileName: 'stored.eas' });
 		assert(stored, `Ecolego ${version}: no stored runs`);
 		if (version === 6) {
-			// Single runs only, and the current one first, though the archived
-			// one is dated later.
-			assert(stored.runs.length === 2 && stored.probabilistic === 1,
-				`${stored.runs.length} runs, ${stored.probabilistic} probabilistic`);
+			// Every run, the probabilistic one too; and a single run first --
+			// the current one, though the archived one is dated later and the
+			// probabilistic one later still.
+			assert(stored.runs.length === 3 && stored.probabilistic === 1
+				&& stored.runs.filter((run) => run.probabilistic).map((run) => run.name).join() === 'Sampled',
+			`${stored.runs.length} runs, ${stored.probabilistic} probabilistic`);
 			assert(stored.runs[stored.shown].name === 'Now' && !stored.runs[stored.shown].archived,
 				`shown first: ${stored.runs[stored.shown]?.name}`);
 		} else {
@@ -15285,6 +15437,97 @@ test('an assessment’s stored runs come in beside the model, as each Ecolego wr
 		`shown first: ${kept.runs[kept.shown]?.name}`);
 });
 
+test('a probabilistic run Ecolego stored comes in as its median and its bands', async () => {
+	// Ecolego keeps a probabilistic run in the file a single run is kept in,
+	// one simulation per realisation, every convention of the single run
+	// holding within each. Here realisation s is the single run with every
+	// amount and the rate times s + 1, so each statistic is known exactly.
+	const { quantiles, meanOf } = await import('../src/sim/spread.js');
+	const S = STORED;
+	const sims = 5;
+	const at = [0.05, 0.25, 0.5, 0.75, 0.95];
+	// Realisation s of 1..5 times a value: the default percentiles of five
+	// are its 1st, 2nd, 3rd, 4th and 5th by rank, and its mean is the 3rd.
+	const factors = [1, 2, 3, 4, 5];
+	const sameish = (a, b) => (Number.isNaN(b) ? Number.isNaN(a) : Math.abs(a - b) <= 1e-15 * Math.abs(b));
+	for (const version of [6, 5]) {
+		const zip = await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML },
+			...storedRunFiles({ version, sims, sampledFive: version === 5 })]);
+		const { stored } = await importEcoFile(zip, { fileName: 'sampled.eas' });
+		const run = version === 6 ? stored.runs.find((r) => r.name === 'Sampled') : stored.runs[0];
+		assert(run?.probabilistic && stored.probabilistic === 1, `${version}: ${JSON.stringify(stored.runs.map((r) => r.name))}`);
+		const got = run.load();
+		assert(got.realisations === sims && JSON.stringify(got.percentiles) === JSON.stringify(at),
+			`${version}: ${got.realisations} realisations at ${got.percentiles}`);
+		// The times are the first realisation's row: Ecolego 5 writes nothing
+		// in the others.
+		assert(JSON.stringify([...got.t]) === JSON.stringify(S.times), `${version}: times ${[...got.t]}`);
+		S.nuclides.forEach((n, ni) => S.objects.forEach((o, oi) => {
+			// Every cell under its own names, whichever index the file ran
+			// fastest -- and the median as its line.
+			const soil = got.series.get(`Soil [${n}, ${o}]`);
+			const down = got.series.get(`Down [${n}, ${o}]`);
+			assert(soil?.band && down?.band, `${version}: no bands at ${n}, ${o}`);
+			S.times.forEach((t, ti) => {
+				const base = S.soil(ni, oi, ti);
+				assert(soil.values[ti] === base * 3 && at.every((q, j) => soil.band.q[j][ti] === base * factors[j])
+					&& sameish(soil.band.mean[ti], base * 3), `${version}: Soil at ${n}, ${o}, ${t}`);
+				// The rate, divided realisation by realisation before anything
+				// is summarised: its percentiles are the rate's own -- and where
+				// the donor held nothing the run resolved, in every realisation,
+				// it is not defined.
+				const want = (f) => (version === 6 && base * f <= 1e-6 ? NaN : S.rate * f);
+				assert(at.every((q, j) => sameish(down.band.q[j][ti], want(factors[j]))), `${version}: Down at ${n}, ${o}, ${t}: `
+					+ `${down.band.q.map((y) => y[ti])}`);
+			});
+			assert(down.unit === '1/year', `${version}: Down in ${down.unit}`);
+		}));
+		// What cannot change over the run is one number per realisation: its
+		// spread is flat, one value per percentile.
+		const k = got.series.get('k');
+		assert(k.constant === S.rate * 3 && k.band.flat && k.band.q.every((y, j) => y.length === 1 && y[0] === S.rate * factors[j]),
+			JSON.stringify({ constant: k.constant, q: k.band.q.map((y) => [...y]) }));
+		// And the statistics are the ones a sample here is drawn with.
+		const dose = got.series.get('Dose');
+		const rows = Float64Array.from({ length: sims * S.times.length }, (_, i) => S.dose(i % S.times.length) * (Math.floor(i / S.times.length) + 1));
+		const want = quantiles(rows, S.times.length, sims, at);
+		assert(want.every((b, j) => [...b.y].every((v, ti) => v === dose.band.q[j][ti]))
+			&& [...meanOf(rows, S.times.length, sims)].every((v, ti) => v === dose.band.mean[ti]), 'Dose');
+		// At other percentiles, worked out again -- and only then.
+		assert(run.load() === got, `${version}: read twice`);
+		const other = run.load({ percentiles: [0.1, 0.9] });
+		assert(other !== got && JSON.stringify(other.percentiles) === '[0.1,0.5,0.9]' && other.series.get('Dose').band.q.length === 3,
+			`${version}: ${other.percentiles}`);
+		assert(run.load({ percentiles: [0.9, 0.1] }) === other, `${version}: the same percentiles read again`);
+	}
+	// A single run is still read as one.
+	const plain = await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML }, ...storedRunFiles({ version: 6, sims })]);
+	const now = (await importEcoFile(plain, { fileName: 'p.eas' })).stored.runs.find((r) => r.name === 'Now');
+	const single = now.load();
+	assert(!now.probabilistic && !single.realisations && !single.series.get('Soil [I-129, Lake]').band
+		&& single.series.get('Soil [I-129, Lake]').values[1] === S.soil(1, 0, 1), 'a single run came in as a sample');
+
+	// On the page: before a run here it is drawn as a sample is -- its lines
+	// through its bands, and no single run of its own to offer -- and beside
+	// one as its median, or mean, dash-dotted between its band's two edges,
+	// which the chart draws as lines rather than a second fill. The Table
+	// sets its median beside the run's numbers.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const chart = readFileSync(new URL('../src/ui/chart.js', import.meta.url), 'utf8');
+	assert(/const prob = currentProb\(\) \?\? \(r !== state\.results \? r\.prob \?\? null : null\);/.test(app),
+		'a probabilistic run shown on its own is drawn without its bands');
+	assert(/own: false,/.test(/function storedView\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? ''), 'it offers a single run it has not got');
+	assert(/if \(prob\?\.own !== false\) return linesOn\(\);/.test(app), 'its lines include a run it has not got');
+	const draw = /function renderChart\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/const line = besideLine\(stored, r\.outputs\[i\]\.label, own\);/.test(draw) && /bands: line\.bands,/.test(draw),
+		'the chart draws a probabilistic run beside as its single values');
+	assert(/edge: true,/.test(/function besideLine\([\s\S]*?\n\}/.exec(app)?.[0] ?? ''), 'its band is filled over this run’s');
+	assert(/if \(band\.edge\) \{/.test(chart) && /trace\(ys\);/.test(chart), 'the chart has no way to draw a band as its edges');
+	const table = /function drawTable\([\s\S]*?\n\}/.exec(app)?.[0] ?? '';
+	assert(/besideLine\(stored, o\.label, column\(stored\.view, k\)\)/.test(table), 'the Table sets its single values beside');
+});
+
 test('the Chart and the Table show a stored run, and beside a run here put it next to it', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
@@ -15317,7 +15560,8 @@ test('the Chart and the Table show a stored run, and beside a run here put it ne
 	assert(/seriesView: \(\) => \(shownRun\(\)/.test(app), 'the tree offers its chart items only after a run here');
 	// Beside one, a line in the output's colour and the last pattern, and a
 	// column after the output's own.
-	assert(/label: `\$\{b\.line\.label\} \(\$\{stored\.tag\}\)`,[\s\S]{0,200}?slot: pos,\n\t+set: SERIES_DASHES\.length - 1,/.test(app),
+	// (Named for the line it is where the run beside is probabilistic.)
+	assert(/label: `\$\{b\.line\.label\} \(\$\{stored\.tag\}\$\{line\.stat \? `, \$\{line\.stat\}` : ''\}\)`,[\s\S]{0,200}?slot: pos,\n\t+set: SERIES_DASHES\.length - 1,/.test(app),
 		'no line beside');
 	assert(/const stored = !byScenario && which === 'run' \? storedBeside\(r\) : null;/.test(app), 'no column beside');
 	// Which one, or none, from the chart's menu and the table's.
@@ -15339,7 +15583,7 @@ test('a run kept from the screen, or opened from a file, stands beside the next 
 		&& /readDataset\(new Map\(parts\.map\(\(part\) => \[part\.name, part\.bytes\]\)\)\)/.test(keep)
 		&& /startBeside\(run, project, data\);/.test(keep), 'a run is not kept the way a saved one opens');
 	assert(/const project = structuredClone\(state\.raw\);/.test(keep), 'the kept run shares the model being edited');
-	assert(/w\.postMessage\(\{ type: 'open-dataset', id: run\.runId, project, data \}\);/.test(app), 'no worker of its own');
+	assert(/w\.postMessage\(\{ type: 'open-dataset', id: run\.runId, project, data, keep: false \},/.test(app), 'no worker of its own');
 	// Only the run on screen, current, and of the model at its own values --
 	// and not without limit, each being a worker with its states.
 	const refusal = /function keepRefusal\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
@@ -26649,7 +26893,7 @@ test('Save asks where the file goes, and says nothing when the answer is no', as
 	assert(/<button id="save"[\s\S]*?>Save…<\/button>/.test(html), 'the button does not say Save…');
 
 	const app = readFileSync(new URL('src/ui/app.js', root), 'utf8');
-	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	const save = /async function saveFile\(as = 'json'(?:, \{ prepared = null(?:, sample = false)? \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(save, 'saveFile is gone');
 	assert(/typeof window\.showSaveFilePicker === 'function'/.test(save),
 		'nothing opens the operating system’s save dialog');
@@ -35439,6 +35683,57 @@ test('the second skin is tokens only, and defines the same ones in both modes', 
 	assert(/theme-kvotab\.css/.test(html), 'the skin is not linked');
 });
 
+test('in the site page, menus and popups are placed above its footer, not under it', async () => {
+	const { readFileSync } = await import('node:fs');
+	const { visibleBox } = await import('../src/ui/parts.js');
+
+	// Framed in the site's page, the page's header and footer are drawn over
+	// the top and the bottom of the window, and the body's padding is their
+	// heights (css/theme-kvotab.css). What can be seen is the window less those.
+	const saved = { document: globalThis.document, window: globalThis.window, getComputedStyle: globalThis.getComputedStyle };
+	try {
+		globalThis.window = { innerWidth: 1400, innerHeight: 800 };
+		globalThis.document = { body: {} };
+		globalThis.getComputedStyle = () => ({ paddingTop: '43px', paddingBottom: '31px' });
+		const box = JSON.stringify(visibleBox());
+		assert(box === '{"top":43,"bottom":769,"left":0,"right":1400}', box);
+		// On its own, or in the page's full window, the whole window.
+		globalThis.getComputedStyle = () => ({ paddingTop: '0px', paddingBottom: '0px' });
+		const whole = JSON.stringify(visibleBox());
+		assert(whole === '{"top":0,"bottom":800,"left":0,"right":1400}', whole);
+	} finally {
+		for (const [k, v] of Object.entries(saved)) {
+			if (v === undefined) delete globalThis[k];
+			else globalThis[k] = v;
+		}
+	}
+
+	// And everything that places itself against the window places itself
+	// against that instead: a context menu opened near the bottom of the
+	// diagram opened under the page's footer, with its last rows out of reach.
+	const src = (f) => readFileSync(new URL(`../src/ui/${f}`, import.meta.url), 'utf8');
+	const body = (text, head) => {
+		const at = text.indexOf(head);
+		assert(at >= 0, `no ${head}`);
+		const end = text.indexOf('\n}\n', at);
+		return text.slice(at, end);
+	};
+	const menuPlace = body(src('menu.js'), 'function place(');
+	assert(/visibleBox\(\)/.test(menuPlace) && /box\.bottom/.test(menuPlace) && /box\.top/.test(menuPlace),
+		'a menu is not kept between the page\'s header and footer');
+	// Taller than the room: it scrolls inside itself rather than running past.
+	assert(/maxHeight/.test(menuPlace), 'a menu taller than the room is not capped');
+	assert(/visibleBox\(\)/.test(body(src('complete.js'), 'function place(')), 'the completion list does not');
+	assert(/visibleBox\(\)/.test(body(src('infopanel.js'), 'function place(')), 'the (i) panel does not');
+	assert(/visibleBox\(\)/.test(body(src('modal.js'), 'function within(')), 'a dragged window does not');
+	for (const f of ['menu.js', 'complete.js', 'modal.js']) {
+		assert(!/window\.innerHeight/.test(src(f)), `${f} measures against the whole window`);
+	}
+	const app = src('app.js');
+	assert(/visibleBox\(\)/.test(body(app, 'function expandButton(')), 'Expand fills the whole window');
+	assert(/visibleBox\(\)/.test(body(app, 'function popInfo(')), 'the Information window does not');
+});
+
 test('a copy reaches the other tabs, and the newer copy is the one that pastes', async () => {
 	const clip = await import('../src/ui/clipboard.js');
 
@@ -35815,7 +36110,7 @@ test('the Chart and the Table say what produced them, and the Chart has a second
 		'a run of nothing but parameters still opens as curves');
 	assert(/state\.probModeFor !== prob\.runId/.test(render),
 		'the picture is chosen again on every redraw, so choosing the other one does not stick');
-	const accept = /function acceptProbabilistic\(payload, runId\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	const accept = /function acceptProbabilistic\(payload, runId(?:, \{ opened = false \} = \{\})?\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	assert(/state\.hist = null;/.test(accept), 'the last run’s histograms survive the next run');
 	// A parameter says it outright -- the worker knows, because its value is
 	// its slot -- and anything else is read off its own curve.
@@ -35939,7 +36234,9 @@ test('a settings window stays where it is put, and can be moved and sized', asyn
 	const size = /function resizable[\s\S]*?\n\}/.exec(modal)?.[0] ?? '';
 	assert(/Math\.max\(320,/.test(size) && /Math\.max\(120,/.test(size),
 		'it can be sized down to nothing');
-	assert(/window\.innerWidth - r\.left/.test(size) && /window\.innerHeight - r\.top/.test(size),
+	// The bottom of what can be seen, which in the site's page is its footer's
+	// top: the grip dragged under the footer could not be picked up again.
+	assert(/window\.innerWidth - r\.left/.test(size) && /visibleBox\(\)\.bottom - r\.top/.test(size),
 		'it can be sized past the window, leaving no corner to pull back');
 	assert(/\.modal-grip \{/.test(css), 'the grip is invisible');
 	assert(/\.modal-head \{ cursor: grab; \}/.test(css), 'the header does not say it is a handle');

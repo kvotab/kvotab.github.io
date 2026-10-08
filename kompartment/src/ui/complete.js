@@ -27,7 +27,7 @@ import { blockIcon } from './icons.js';
 import { summarise } from './summary.js';
 import { symbolNodes } from './symbol.js';
 import { hasSymbol } from '../domain/symbol.js';
-import { el } from './parts.js';
+import { el, visibleBox } from './parts.js';
 
 /** How far the list may grow before it scrolls. */
 const MAX_HEIGHT = 280;
@@ -174,8 +174,11 @@ function place() {
 	// hits the cap, and a four-row list should not be placed as if it were
 	// twenty.
 	const h = Math.min(pop.offsetHeight || MAX_HEIGHT, MAX_HEIGHT + 60);
-	const below = window.innerHeight - r.bottom - 8;
-	if (below < h && r.top > below) pop.style.top = `${Math.max(8, r.top - h - 2)}px`;
+	// Against what can be seen of the window, which in the site's page stops
+	// above its footer (see `visibleBox`).
+	const box = visibleBox();
+	const below = box.bottom - r.bottom - 8;
+	if (below < h && r.top - box.top > below) pop.style.top = `${Math.max(box.top + 8, r.top - h - 2)}px`;
 	else pop.style.top = `${r.bottom + 2}px`;
 }
 

@@ -2380,6 +2380,30 @@ be more than that. Past that allowance the writer stores the rest of the
 archive instead of compressing it, since stored data is not decompressed: the
 file is larger than it could have been, and it opens.
 
+**And its probabilistic run.** Where a probabilistic run of the model stands,
+**Model with results** offers to take it too, and says what it would add to the
+file. Ticked, the archive holds the realisations themselves — every realisation
+of the series the run kept, the value every sampled input took, and which
+realisations integrated:
+
+```
+results/sample/meta.json    what it holds, the design, and the run's statistics
+results/sample/t.f64        the times every realisation is reported at
+results/sample/series.f64   the series it kept, one realisation after another
+results/sample/draws.f64    the value each sampled input took
+results/sample/ran.u8       which realisations integrated
+```
+
+and the file opens with its bands, its distributions, its categories and *What
+drove it* as the run left them, without a realisation being run again — the
+same numbers to the last digit, since they are written in the precision the run
+held them in (`series.f32` for a sample too large to be held in double). A
+varied parameter is not written as a series: its values are its draws. What can
+go in is a sample of the model in the file at its own values, so one made at an
+app's controls is not offered, and one past a gigabyte is not either: **Save →
+Realisations** writes that as HDF5. A sample that will not read back is said,
+and the run beside it opens without it.
+
 ## The chart and the table
 
 What the Chart and the Table show is picked in the tree on the left, a block at
@@ -2570,6 +2594,15 @@ after this one's. The legend and the column heads say which run it is:
   sets its run beside this one, without opening its model in place of this
   one: a run from yesterday, or of another version of the model. An
   assessment's stored runs join the same list; see [Importing Ecolego projects](#importing-ecolego-projects).
+- **A probabilistic run beside.** A run kept while a probabilistic run of it
+  stands keeps that run's bands with it, and a file saved with its
+  probabilistic run brings them: each series is then drawn as its median — or
+  its mean, where the chart's lines are means — dash-dotted between the two thin
+  lines of its outermost band, so two samples can be compared where they
+  differ, and the Table sets that median beside this run's numbers, headed
+  *(kept at 15:42, median)*. Before the model on screen has run, a
+  probabilistic run beside is drawn as a sample here is, its lines through its
+  bands.
 - The menu lists every run kept or opened, and one is shown at a time.
   **None** puts the comparison away, and **Forget this one** lets the run go.
 
@@ -4427,8 +4460,23 @@ the model on screen the same way, with **Open a run…**.
 
 What comes across, and what does not:
 
-- **Single runs only.** A probabilistic run's realisations are left out, and
-  the import report says how many such runs the file holds.
+- **A probabilistic run, as its median and its bands.** A probabilistic run
+  keeps every realisation, and comes in as this tool draws a sample: on its
+  own, its median through its percentile bands, at the percentiles **Analyse ▾
+  → Bands…** sets; beside a run here, its median dash-dotted between the two
+  thin lines of its outermost band, marked *(Ecolego, median)*, and its median
+  in the Table. Where the chart's lines are means, it is its mean. A transfer
+  saved as its flow is divided by its donor realisation by realisation before
+  anything is summarised — the median of a quotient is not the quotient of the
+  medians — and the parameters the run varied come in as their spread, flat
+  across the times. It is drawn and tabulated, not analysed: the histograms,
+  the categories and *What drove it* are for a sample run here. The menu marks
+  it *probabilistic*, and where an assessment keeps a single run as well, the
+  single run is shown first. Its mean is Ecolego's to the last digit; its
+  percentiles are this tool's — the realisation at that rank, where Ecolego's
+  own statistics average the two either side — so they can differ from
+  Ecolego's by the gap between neighbouring realisations, which is less than a
+  percentile of a thousand draws is known to.
 - **What has something here to stand beside.** Ecolego saves what its output
   settings asked for, which can include blocks of a type this tool does not
   import and the totals of whole sub-systems. Those have no series here, and
@@ -6938,6 +6986,13 @@ which of the two it held would be quietly unusable. Every file says — the mean
 and single-realisation files carry `realisation` and `n_iter` attributes, and
 the deterministic one carries neither. CSV always writes the deterministic
 values, and says so.
+
+**To close a sample and open it again** with everything it answers — the
+bands, the distributions, the categories, *What drove it* — save it with its
+model: **Save → Model with results** takes the realisations along, and opening
+that file brings them back without running them (see [Saving a run, and
+opening it again](#saving-a-run-and-opening-it-again)). The files above are
+for reading elsewhere; that one is for coming back to.
 
 The quick version: **Export table to HDF5** on the table's right-click menu
 for the curve, **Save → Realisations** for the sample, its mean or one run of it

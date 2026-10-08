@@ -13,7 +13,7 @@
  * know: a submenu's width depends on the longest block name in the model.
  */
 
-import { el } from './parts.js';
+import { el, visibleBox } from './parts.js';
 
 /** The menu currently open, if any. Only ever one. */
 let current = null;
@@ -336,22 +336,37 @@ function onPanelKey(ev, panel) {
 	}
 }
 
-/** Keeps a panel on screen, flipping rather than sliding where it can. */
+/**
+ * Keeps a panel on screen, flipping rather than sliding where it can.
+ *
+ * On the part of the window that can be seen (`visibleBox`): framed in the
+ * site's page, the page's footer covers the bottom of the window, and a menu
+ * opened near it used to be kept on the window and so open under the footer,
+ * with the rows it covered out of reach. A menu taller than the room there is
+ * scrolls inside itself rather than running past either edge.
+ */
 function place(panel, x, y, { preferLeftOf = null } = {}) {
 	const pad = 6;
+	const box = visibleBox();
 	panel.style.left = '0px';
 	panel.style.top = '0px';
-	const { width, height } = panel.getBoundingClientRect();
-	const maxX = window.innerWidth - pad;
-	const maxY = window.innerHeight - pad;
+	panel.style.maxHeight = '';
+	const room = Math.max(80, box.bottom - box.top - 2 * pad);
+	let { width, height } = panel.getBoundingClientRect();
+	if (height > room) {
+		panel.style.maxHeight = `${room}px`;
+		height = room;
+	}
+	const maxX = box.right - pad;
+	const maxY = box.bottom - pad;
 
 	let left = x;
 	if (left + width > maxX) {
 		left = preferLeftOf != null ? preferLeftOf - width : maxX - width;
 	}
 	let top = y;
-	if (top + height > maxY) top = Math.max(pad, maxY - height);
+	if (top + height > maxY) top = maxY - height;
 
-	panel.style.left = `${Math.max(pad, left)}px`;
-	panel.style.top = `${Math.max(pad, top)}px`;
+	panel.style.left = `${Math.max(box.left + pad, left)}px`;
+	panel.style.top = `${Math.max(box.top + pad, top)}px`;
 }

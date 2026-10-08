@@ -230,6 +230,11 @@
  * The two heights are the site's own variables where the site defines them,
  * with its current values as the fallback for a page that does not.
  *
+ * What is placed against the window rather than inside `#app` -- a menu, a
+ * completion list, a floating window, Expand -- reads the same two numbers
+ * back from this padding (`visibleBox` in ../src/ui/parts.js), or a menu
+ * opened near the bottom opens under the page's footer.
+ *
  * In the page's full window (`data-chrome-full`, see ../src/ui/sitechrome.js)
  * the header and the footer are put away, and the room kept for them goes.
  */

@@ -27,7 +27,9 @@
  * Ecolego 6 wrote, the last fastest in one Ecolego 5 wrote (see `loadRun`).
  * A value that cannot change over the run is stored once per simulation
  * rather than once per time. The output times are themselves an output,
- * called `time`.
+ * called `time` -- and in a probabilistic run Ecolego 6 writes them in every
+ * realisation's row while Ecolego 5 fills only the first, so the first row is
+ * the one read.
  *
  * ## What it becomes
  *
@@ -48,8 +50,18 @@
  * Ecolego 5 assessment hold the rate, and 35 of 35 in the Ecolego 6 one of the
  * same model the flux.)
  *
- * **Only single runs.** A probabilistic run keeps every realisation, and is
- * counted and left out.
+ * **A probabilistic run** is the same file with a simulation per realisation
+ * -- `PROBABILISTIC` in Ecolego 6, `Probabilistic` in Ecolego 5 -- and every
+ * convention above holds within each of them. It comes in as what this tool
+ * draws a sample as: each series' median, its percentiles and its mean at
+ * every time, worked out by the statistics a sample here is summarised by
+ * (../sim/spread.js) at the percentiles the model asks for. A transfer stored
+ * as its flux is divided by its donor realisation by realisation, before
+ * anything is summarised: the median of a ratio is not the ratio of the
+ * medians. The parameters it varied are saved as values that cannot change
+ * over the run, one per realisation, and come in as the same: their spread,
+ * flat across the times. Ecolego stores no statistic and no single run beside
+ * one.
  *
  * Nothing is decoded until a run is asked for: an assessment can hold a dozen
  * runs of a large model, and the archive inflates an entry only when it is
@@ -57,6 +69,7 @@
  */
 
 import { parseXML, child, children, childText, childNumber, XMLError } from './xml.js';
+import { quantiles, meanOf, percentilesFor } from '../sim/spread.js';
 
 const HEADER = 1024;
 const BLOCK_HEADER = 64;
@@ -126,9 +139,12 @@ const slashed = (name) => name.replace(/\\/g, '/');
  * @returns {{runs: Array<object>, probabilistic: number, shown: number}|null}
  *   null for an archive that keeps no run at all; each run has `name`, `date`,
  *   `archived`, `matched` (how many of the outputs it lists are blocks of the
- *   model) and `load()`, which decodes it (once) and returns
- *   `{t, timeUnit, series, left}`; `shown` is the one to show first (see
- *   `defaultRun`), or -1
+ *   model), `probabilistic` (a run of realisations rather than one) and
+ *   `load({percentiles})`, which decodes it (once for each list of
+ *   percentiles) and returns `{t, timeUnit, series, left}` -- with
+ *   `realisations` and `percentiles` for a probabilistic one, whose series
+ *   carry a `band`; `probabilistic` counts those, and `shown` is the one to
+ *   show first (see `defaultRun`), or -1
  */
 export function readStoredRuns(entries, { project, blockIds = new Map(), timeUnitOf = null }) {
 	let xmlName = null;
@@ -151,7 +167,6 @@ export function readStoredRuns(entries, { project, blockIds = new Map(), timeUni
 	if (!top) return null;
 
 	const runs = [];
-	let probabilistic = 0;
 	const known = blocksByName(project);
 	for (const ctx of children(top, 'simulation-context')) {
 		const info = child(ctx, 'simulation-info');
@@ -159,7 +174,8 @@ export function readStoredRuns(entries, { project, blockIds = new Map(), timeUni
 		const key = (ctx.attrs.guid ?? '').trim().toUpperCase() || 'RESULTS';
 		const entryName = files.get(key);
 		if (!entryName) continue;
-		if (kind && kind !== 'DETERMINISTIC') { probabilistic++; continue; }
+		// Anything but a single run is a set of realisations.
+		const sampled = !!kind && kind !== 'DETERMINISTIC';
 		let loaded = null;
 		// Counted off the list alone, so a run with nothing to stand beside
 		// is not the one shown first: an assessment can keep runs of another
@@ -172,18 +188,32 @@ export function readStoredRuns(entries, { project, blockIds = new Map(), timeUni
 			date: childNumber(info, 'date'),
 			archived: ctx.attrs.archive === 'true',
 			matched,
-			// Read once, and only when somebody asks for this run.
-			load: () => (loaded ??= loadRun(entries.get(entryName), ctx, info, project, blockIds, timeUnitOf)),
+			probabilistic: sampled,
+			// Read once, and only when somebody asks for this run -- and for a
+			// probabilistic one, again only if the percentiles it is to be
+			// summarised at have changed since.
+			load: ({ percentiles = null } = {}) => {
+				const at = sampled ? percentilesFor(percentiles ?? project?.simulation?.percentiles) : null;
+				const key = at ? at.join(',') : '';
+				if (loaded?.key !== key) {
+					loaded = {
+						key,
+						data: loadRun(entries.get(entryName), ctx, info, project, blockIds, timeUnitOf, at),
+					};
+				}
+				return loaded.data;
+			},
 		});
 	}
-	if (!runs.length && !probabilistic) return null;
-	const stored = { runs, probabilistic };
+	if (!runs.length) return null;
+	const stored = { runs, probabilistic: runs.filter((run) => run.probabilistic).length };
 	stored.shown = defaultRun(stored);
 	return stored;
 }
 
 /**
- * The run shown first: one with something to stand beside, the current one
+ * The run shown first: one with something to stand beside, a single run
+ * rather than a set of realisations -- a run here is one -- the current one
  * rather than an archived one, and the newest of those.
  */
 export function defaultRun(stored) {
@@ -193,6 +223,7 @@ export function defaultRun(stored) {
 		const ra = runs[a];
 		const rb = runs[b];
 		if ((ra.matched > 0) !== (rb.matched > 0)) return ra.matched > 0 ? -1 : 1;
+		if (!!ra.probabilistic !== !!rb.probabilistic) return ra.probabilistic ? 1 : -1;
 		if (ra.archived !== rb.archived) return ra.archived ? 1 : -1;
 		return (rb.date ?? -Infinity) - (ra.date ?? -Infinity) || b - a;
 	});
@@ -216,15 +247,26 @@ function blocksByName(project) {
 	return out;
 }
 
-function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
+/**
+ * One run, decoded: every series it saved that this model has.
+ *
+ * `percentiles` is null for a single run, and for a probabilistic one the
+ * percentiles to summarise its realisations at (see `percentilesFor`).
+ */
+function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf, percentiles = null) {
 	const file = readResultFile(bytes);
 	// Ecolego 6 names each run by a GUID; Ecolego 5 kept one, unnamed. Two of
 	// the file's conventions follow which it was -- see the two uses below,
 	// each measured on assessments of one model saved by both.
 	const six = !!(ctx.attrs.guid ?? '').trim();
-	if (file.simulations !== 1) {
-		throw new Error(`it holds ${file.simulations} simulations where a single run holds one`);
+	const sampled = !!percentiles;
+	// How many simulations: one in a single run, one per realisation in a
+	// probabilistic one -- which says how many nowhere else.
+	const S = file.simulations;
+	if (!sampled && S !== 1) {
+		throw new Error(`it holds ${S} simulations where a single run holds one`);
 	}
+	if (!(S >= 1)) throw new Error('it holds no realisations');
 	const nt = file.times;
 	// The lists every output of this run is indexed by, by name -- Ecolego 6
 	// writes them once for the run. Ecolego 5 writes each output's own.
@@ -236,6 +278,8 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 	const timeInfo = outputs.find((o) => o.attrs.id === 'time');
 	const timeBlock = timeInfo ? file.blocks.get((timeInfo.attrs.guid ?? '').trim().toUpperCase()) : null;
 	if (!timeBlock) throw new Error('it has no output times');
+	// The first row: Ecolego 5 writes the times only into the first
+	// realisation's, Ecolego 6 into every one.
 	const t = doublesOf(file, timeBlock).subarray(0, nt);
 
 	const known = blocksByName(project);
@@ -261,7 +305,8 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 		if (dims.some((d) => !d)) { left.unreadable++; continue; }
 		const cells = dims.reduce((n, d) => n * d.length, 1);
 		const timeDependent = childText(o, 'time-dependent') === 'true';
-		if (block.size !== cells * (timeDependent ? nt : 1) * 8) { left.unreadable++; continue; }
+		const per = timeDependent ? nt : 1;
+		if (block.size !== S * per * cells * 8) { left.unreadable++; continue; }
 		const values = doublesOf(file, block);
 		const unit = childText(child(o, 'output-units'), 'output-unit') ?? '';
 		// Which index runs fastest depends on which Ecolego wrote the file:
@@ -280,10 +325,12 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 				rest = Math.floor(rest / dims[j].length);
 			}
 			const label = names.length ? `${named} [${names.join(', ')}]` : named;
-			let v;
-			if (timeDependent) {
-				v = new Float64Array(nt);
-				for (let ti = 0; ti < nt; ti++) v[ti] = values[ti * cells + c];
+			// Realisation by realisation, each its times -- or its one value,
+			// for what cannot change over the run: `rows[s * per + ti]`. A
+			// single run is the one realisation.
+			const rows = new Float64Array(S * per);
+			for (let sim = 0; sim < S; sim++) {
+				for (let ti = 0; ti < per; ti++) rows[sim * per + ti] = values[(sim * per + ti) * cells + c];
 			}
 			// What a series of a run here says about itself, so the chart's
 			// picker can filter these as it filters those.
@@ -293,7 +340,7 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 				index: names.length ? names : null,
 				dims: own.length === names.length ? [...own] : [],
 			};
-			const entry = timeDependent ? { values: v, ...about } : { constant: values[c], ...about };
+			const entry = { rows, timeDependent, ...about };
 			series.set(label, entry);
 			const tr = found.kind === 'transfer' ? found.block : null;
 			if (six && tr && tr.from && tr.multiply_by_donor !== false && timeDependent) {
@@ -314,24 +361,60 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 	// tolerance of 1 Bq, made a rate of 1e4 out of one of 1e-5, and one of
 	// 5e-125 Bq a rate of 6e121. Left out there, as a log axis leaves out a
 	// zero.
+	//
+	// Realisation by realisation, each against its own donor's peak: the
+	// donor of one realisation is not the donor of another.
 	const floor = childNumber(info, 'abs-error-tolerance') ?? Number(project?.simulation?.abstol ?? 0);
 	for (const f of fluxes) {
 		const donor = series.get(f.donor);
-		const d = donor?.values ?? (donor && Number.isFinite(donor.constant)
-			? new Float64Array(nt).fill(donor.constant) : null);
-		if (!d) { series.delete(f.label); left.noDonor++; continue; }
-		let peak = 0;
-		for (let i = 0; i < nt; i++) if (Math.abs(d[i]) > peak) peak = Math.abs(d[i]);
-		const below = Math.max(peak * 1e-12, Number.isFinite(floor) ? floor : 0);
-		const rate = new Float64Array(nt);
-		for (let i = 0; i < nt; i++) {
-			const r = Math.abs(d[i]) > below ? f.entry.values[i] / d[i] : NaN;
-			rate[i] = Number.isFinite(r) ? r : NaN;
+		// A donor saved as a value that cannot change over the run is that
+		// value at every time; one that is no number anywhere is no donor.
+		if (!donor || (!donor.timeDependent && !donor.rows.some(Number.isFinite))) {
+			series.delete(f.label);
+			left.noDonor++;
+			continue;
 		}
-		f.entry.values = rate;
+		const rate = new Float64Array(S * nt);
+		const d = new Float64Array(nt);
+		for (let sim = 0; sim < S; sim++) {
+			if (donor.timeDependent) d.set(donor.rows.subarray(sim * nt, (sim + 1) * nt));
+			else d.fill(donor.rows[sim]);
+			let peak = 0;
+			for (let i = 0; i < nt; i++) if (Math.abs(d[i]) > peak) peak = Math.abs(d[i]);
+			const below = Math.max(peak * 1e-12, Number.isFinite(floor) ? floor : 0);
+			for (let i = 0; i < nt; i++) {
+				const r = Math.abs(d[i]) > below ? f.entry.rows[sim * nt + i] / d[i] : NaN;
+				rate[sim * nt + i] = Number.isFinite(r) ? r : NaN;
+			}
+		}
+		f.entry.rows = rate;
 		// And in a rate's unit, per unit time whatever it moves: the flux's
 		// was the donor's over time.
 		f.entry.unit = `1/${timeUnit ?? 'year'}`;
+	}
+
+	// What each series comes in as. A single run's values as they are. A
+	// probabilistic run's as a sample here is drawn: its percentiles and its
+	// mean at each time, and the median as its line -- one number each for
+	// what cannot change over the run, marked `flat` as a varied parameter of
+	// a sample here is.
+	const middle = sampled ? percentiles.indexOf(0.5) : -1;
+	for (const [label, e] of series) {
+		const { rows, timeDependent, ...about } = e;
+		if (!sampled) {
+			series.set(label, timeDependent ? { values: rows, ...about } : { constant: rows[0], ...about });
+			continue;
+		}
+		const per = timeDependent ? nt : 1;
+		const band = {
+			q: quantiles(rows, per, S, percentiles).map((b) => b.y),
+			mean: meanOf(rows, per, S),
+			...(timeDependent ? {} : { flat: true }),
+		};
+		const line = band.q[middle];
+		series.set(label, timeDependent
+			? { values: line, band, ...about }
+			: { constant: line[0], band, ...about });
 	}
 	return {
 		t,
@@ -340,5 +423,6 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf) {
 		end: childNumber(info, 'end-time'),
 		series,
 		left,
+		...(sampled ? { realisations: S, percentiles } : {}),
 	};
 }

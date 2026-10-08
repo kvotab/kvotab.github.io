@@ -12,7 +12,7 @@
  * dialog runs it again whenever it is told to.
  */
 
-import { el } from './parts.js';
+import { el, visibleBox } from './parts.js';
 import { infoButton, closeInfo } from './infopanel.js';
 
 /**
@@ -156,9 +156,12 @@ function within(x, y, dialog) {
 	// A strip of the header stays reachable at every edge, so a dialog cannot
 	// be dropped somewhere it can never be picked up again.
 	const edge = 60;
+	// Within what can be seen: in the site's page its header is over the top of
+	// the window, and a title bar dropped under it could never be picked up.
+	const box = visibleBox();
 	return {
-		x: Math.min(window.innerWidth - edge, Math.max(edge - r.width, x)),
-		y: Math.min(window.innerHeight - edge, Math.max(0, y)),
+		x: Math.min(box.right - edge, Math.max(edge - r.width, x)),
+		y: Math.min(box.bottom - edge, Math.max(box.top, y)),
 	};
 }
 
@@ -221,7 +224,7 @@ function resizable(dialog, grip, body) {
 		const move = (e) => {
 			const w = Math.max(320, Math.min(window.innerWidth - r.left - 8,
 				startW + (e.clientX - x0)));
-			const h = Math.max(120, Math.min(window.innerHeight - r.top - head - 8,
+			const h = Math.max(120, Math.min(visibleBox().bottom - r.top - head - 8,
 				startH + (e.clientY - y0)));
 			dialog.style.width = `${Math.round(w)}px`;
 			// A dialog somebody has sized by hand is sized by hand: the cap on

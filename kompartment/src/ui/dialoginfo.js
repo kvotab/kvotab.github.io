@@ -196,7 +196,8 @@ const TOPICS = {
 				+ 'exported as an `.eco` project, with what that project would hold and leave out listed '
 				+ 'below the format before anything is written. A name in the list goes to that block.',
 				'**Model with results** — the model and its run in one archive that opens again as it '
-				+ 'was; the chosen blocks become the model’s endpoints.',
+				+ 'was, with its probabilistic run where one stands and the box is ticked; the chosen '
+				+ 'blocks become the model’s endpoints.',
 				'**Results** — any of the series, as CSV or HDF5.',
 				'**Realisations** — a probabilistic run’s sample, its mean, or one realisation of it.',
 				'**Data** — the parameters and lookup tables, as a spreadsheet or HDF5.',

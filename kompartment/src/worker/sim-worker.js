@@ -29,6 +29,7 @@ import { buildSystem } from '../sim/builder.js';
 import { valuesAtStart } from '../sim/atstart.js';
 import { Project } from '../domain/project.js';
 import { runProbabilistic, runRealization, designFor, quantiles, meanOf, medianSpread, timeMajor } from '../sim/probabilistic.js';
+import { percentilesFor } from '../sim/spread.js';
 import { runPool, workersFor } from './prob-pool.js';
 import { ranked, overTime, regressionMeasures, firstOrderIndex } from '../domain/sensitivity.js';
 import { categoriesOf, classify, includeMask, statisticOf } from '../domain/categories.js';
@@ -43,7 +44,7 @@ import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
-import { layoutSignature, datasetEntries, restoreResults } from '../io/dataset.js';
+import { layoutSignature, datasetEntries, restoreResults, sampleEntries, sampleResult } from '../io/dataset.js';
 import {
 	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
 	wholeLayers,
@@ -451,25 +452,6 @@ function donePayload(results, outputs) {
 	};
 }
 
-/** The band a probabilistic result is drawn as, unless the model says otherwise. */
-const QUANTILES = [0.05, 0.25, 0.5, 0.75, 0.95];
-
-/**
- * The percentiles a run's bands are drawn at.
- *
- * The model's own list where it has one -- GoldSim keeps the percentile pairs
- * with the model, and so does this -- else the default. Always with the median,
- * because the line through the band is the median and a band with no line is
- * a cloud. Sorted and deduplicated, so a pair typed twice is one pair.
- */
-function percentilesFor(list) {
-	const want = new Set([0.5]);
-	for (const p of Array.isArray(list) ? list : QUANTILES) {
-		const v = Number(p);
-		if (Number.isFinite(v) && v > 0 && v < 1) want.add(v);
-	}
-	return [...want].sort((a, b) => a - b);
-}
 
 /**
  * The varied parameters, put back beside the series the run kept.
@@ -694,6 +676,43 @@ function kept(mask, iterations) {
 	let n = 0;
 	for (let i = 0; i < mask.length; i++) if (mask[i]) n++;
 	return n;
+}
+
+/**
+ * A sample, as the one this worker answers questions about, and what the page
+ * is told of it: the bands, not the matrix.
+ *
+ * The categories the model carries are applied at once, so a run lands already
+ * sorted; the mask they make is what every later question -- bands,
+ * sensitivity, summary -- is asked over. The same for a sample just run and
+ * one read back out of a file, which is what makes the two the same thing on
+ * the page. `keep` false describes it without holding it: a run beside wants
+ * the bands and nothing else.
+ */
+function holdSample(id, result, project, { keep = true } = {}) {
+	const percentiles = percentilesFor(project?.simulation?.percentiles);
+	const categories = categoriesOf(project);
+	const sorted = categories.length ? classify(categories, result) : null;
+	const mask = sorted ? includeMask(categories, sorted.member) : null;
+	if (keep) lastProb = { id, result, percentiles, categories, member: sorted?.member ?? null, mask };
+	return {
+		t: result.t,
+		quantiles: percentiles,
+		outputs: describeOutputs(result),
+		bands: bandsOf(result, percentiles, mask),
+		iterations: result.iterations,
+		// What the realisations are held in, for what saving them would cost.
+		precision: result.precision ?? 'double',
+		inputs: result.samples?.length ?? 0,
+		stats: result.stats,
+		plan: result.plan.map((e) => ({
+			name: e.name, index: e.index, kind: e.spec?.kind,
+		})),
+		screen: sorted ? {
+			counts: sorted.counts, missing: sorted.missing,
+			kept: kept(mask, result.iterations),
+		} : null,
+	};
 }
 
 /**
@@ -1092,33 +1111,10 @@ self.onmessage = async (ev) => {
 			// matrix stays here, and `prob-matrix` fetches what an export or
 			// a sensitivity needs out of it -- transposed, and narrowed to
 			// float32, so what crosses is the answer rather than the sample.
-			//
-			// The categories the model carries are applied at once, so a run
-			// lands already sorted; the mask they make is what every later
-			// question -- bands, sensitivity, summary -- is asked over.
-			const percentiles = percentilesFor(project?.simulation?.percentiles);
-			const categories = categoriesOf(project);
-			const sorted = categories.length ? classify(categories, result) : null;
-			const mask = sorted ? includeMask(categories, sorted.member) : null;
-			lastProb = { id, result, percentiles, categories, member: sorted?.member ?? null, mask };
 			self.postMessage({
 				type: 'probabilistic-done',
 				id,
-				payload: {
-					t: result.t,
-					quantiles: percentiles,
-					outputs: describeOutputs(result),
-					bands: bandsOf(result, percentiles, mask),
-					iterations: result.iterations,
-					stats: result.stats,
-					plan: result.plan.map((e) => ({
-						name: e.name, index: e.index, kind: e.spec.kind,
-					})),
-					screen: sorted ? {
-						counts: sorted.counts, missing: sorted.missing,
-						kept: kept(mask, result.iterations),
-					} : null,
-				},
+				payload: holdSample(id, result, project),
 			});
 		} catch (e) {
 			// A Stop is not a fault. `closePool` rejects the slices that are
@@ -1889,6 +1885,30 @@ self.onmessage = async (ev) => {
 		return;
 	}
 
+	// The probabilistic run as the entries of an archive, for Save → Model with
+	// results: the sample this worker holds, by its id, or a refusal rather
+	// than a file quietly missing what it was saved for. Asked apart from the
+	// run beside it, which may have been solved on the page.
+	if (msg.type === 'sample-entries') {
+		if (!lastProb || lastProb.id !== msg.id) {
+			self.postMessage({
+				type: 'sample-entries', id: msg.id, ok: false,
+				why: 'The probabilistic run is no longer held. Run it again, or save without it.',
+			});
+			return;
+		}
+		try {
+			// Copied out of the arrays the sample is held in, so they can be
+			// handed over and the sample stays here to be asked about.
+			const parts = sampleEntries(lastProb.result, { stamp: msg.stamp ?? null });
+			self.postMessage({ type: 'sample-entries', id: msg.id, ok: true, parts },
+				parts.map((e) => e.bytes.buffer));
+		} catch (e) {
+			self.postMessage({ type: 'sample-entries', id: msg.id, ok: false, why: e.message ?? String(e) });
+		}
+		return;
+	}
+
 	if (msg.type === 'open-dataset') {
 		cancelled = false;
 		const { id, project, data } = msg;
@@ -1912,6 +1932,22 @@ self.onmessage = async (ev) => {
 				// The account the archive carries of the run that made it.
 				log: Array.isArray(data.meta.log) ? data.meta.log : null,
 			});
+			// The probabilistic run the archive carries beside it, under the
+			// same id, after the run it is drawn over. Held, as one just run
+			// is held, so everything asked of a sample is answered of this
+			// one -- unless `keep` is false, for a run beside, which is only
+			// ever drawn.
+			// A sample that cannot be read back costs the run nothing: it is
+			// said, and the run stands.
+			if (data.sample) {
+				let payload = null;
+				try {
+					payload = holdSample(id, sampleResult(data.sample), project, { keep: msg.keep !== false });
+				} catch (e) {
+					self.postMessage({ type: 'sample-refused', id, message: e.message ?? String(e) });
+				}
+				if (payload) self.postMessage({ type: 'probabilistic-done', id, opened: true, payload });
+			}
 		} catch (e) {
 			self.postMessage({
 				type: 'error', id, name: e.name ?? 'Results',

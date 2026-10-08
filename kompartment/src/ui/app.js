@@ -48,7 +48,7 @@ import { GraphEditor } from './graph.js';
 import {
 	renderInspector,
 } from './inspector.js';
-import { section as part, el, frameOf, framed, toolsRoom } from './parts.js';
+import { section as part, el, frameOf, framed, toolsRoom, visibleBox, sizeText } from './parts.js';
 import { blockIcon, sampleMark, popIcon } from './icons.js';
 import { openMenu, closeMenu, menuIsOpen } from './menu.js';
 import { openModal, refreshModal, closeAllModals, modalIsOpen } from './modal.js';
@@ -83,7 +83,9 @@ import { exportReportNodes } from './ecoreport.js';
 import { openImportChooser } from './importchooser.js';
 import { openOptimiseDialog } from './optdialog.js';
 import { findBlock } from '../domain/blocks.js';
-import { describeDataset } from '../io/dataset.js';
+import {
+	describeDataset, describeSampleMeta, sampleBytes, sampleBuffers, MOST_SAMPLE_BYTES,
+} from '../io/dataset.js';
 import { blocksOf, indicesFor } from './endpoints.js';
 import {
 	writeDataWorkbook, readDataWorkbook, writeDataHDF5, readDataHDF5,
@@ -901,6 +903,34 @@ function linesOn() {
 	return on.length ? on : [CHART_LINES[0]];
 }
 
+/**
+ * The lines a sample is drawn as: `linesOn`, less the model's own run where
+ * the sample has none to offer -- a probabilistic run Ecolego stored is its
+ * realisations and nothing else (`own: false`).
+ */
+function sampleLines(prob) {
+	if (prob?.own !== false) return linesOn();
+	const on = linesOn().filter((l) => l.key !== 'single');
+	return on.length ? on : [CHART_LINES[0]];
+}
+
+/** The outermost band of a list of percentiles, as people say it -- `5–95%` -- or null. */
+function bandText(quantiles) {
+	const outer = bandPairs(quantiles ?? [])[0];
+	if (!outer) return null;
+	const pc = (p) => `${Math.round(p * 1000) / 10}`;
+	return `${pc(outer[0])}–${pc(outer[1])}%`;
+}
+
+/**
+ * Which line a probabilistic run beside is drawn as: the median, as this
+ * run's sample is drawn by default -- or the mean, where the chart's lines are
+ * means and not medians, so that the two runs are compared like for like.
+ */
+function besideStatistic() {
+	return !state.chartLines.median && state.chartLines.mean ? 'mean' : 'median';
+}
+
 function currentProb() {
 	if (!probIsCurrent(state.prob, state.results, state.rev, state.probRunning)) return null;
 	// And under a run at the same values: a sample of the model drawn under a
@@ -1113,6 +1143,7 @@ const OWN_ID_REPLIES = new Set(['optimise', 'optimise-progress', 'variables']);
 const PROB_REPLIES = new Set([
 	'prob-matrix', 'prob-bands', 'prob-categories', 'prob-summary', 'prob-hist',
 	'prob-points', 'sensitivity', 'tornado', 'tornado-table', 'gsa', 'gsa-table',
+	'sample-entries',
 ]);
 
 function ensureWorker() {
@@ -1148,7 +1179,12 @@ function ensureWorker() {
 		if (m.type === 'tornado-table') { acceptTornadoTable(m); return; }
 		if (m.type === 'gsa') { acceptGsa(m); return; }
 		if (m.type === 'gsa-table') { acceptGsaTable(m); return; }
-		if (m.type === 'probabilistic-done') { acceptProbabilistic(m.payload, m.id); return; }
+		if (m.type === 'probabilistic-done') { acceptProbabilistic(m.payload, m.id, { opened: !!m.opened }); return; }
+		if (m.type === 'sample-refused') {
+			flash(`The probabilistic run saved with this file could not be read back: ${m.message} `
+				+ 'The run beside it opened.', 'warn');
+			return;
+		}
 		if (m.type === 'prob-matrix') { acceptProbMatrix(m); return; }
 		if (m.type === 'variables') { acceptVariables(m); return; }
 		if (m.type === 'optimise-progress') { state.optOpen?.progress(m); return; }
@@ -1166,6 +1202,7 @@ function ensureWorker() {
 		if (m.type === 'local-sensitivity') { acceptLocalSensitivity(m); return; }
 		if (m.type === 'columns') { acceptColumns(m); return; }
 		if (m.type === 'dataset') { datasetWaiting?.(m); return; }
+		if (m.type === 'sample-entries') { sampleWaiting?.(m); return; }
 		// The selected scenario failing is the model failing: the scenarios
 		// beside it are the same model, and are stopped rather than left to
 		// fail one by one.
@@ -1257,6 +1294,72 @@ function requestDataset(inner) {
 
 /** Long enough for a landscape model's eighty megabytes, short enough to end. */
 const DATASET_WAIT = 120000;
+
+/** Whoever is waiting for the worker to hand over the sample as bytes, one at a time. */
+let sampleWaiting = null;
+
+/**
+ * The probabilistic run on screen as the entries of an archive's
+ * `results/sample/` -- see ../io/dataset.js. The realisations are in the
+ * worker that ran them, and come back copied out of the arrays it holds them
+ * in, so the sample stays there to be asked about.
+ *
+ * @returns {Promise<Array<{name: string, bytes: Uint8Array}>>}
+ */
+function requestSampleEntries(prob) {
+	if (!worker || !prob) {
+		return Promise.reject(new Error('The probabilistic run is no longer held — the worker '
+			+ 'was stopped or replaced. Run it again and save from that.'));
+	}
+	if (sampleWaiting) return Promise.reject(new Error('A save is already in progress.'));
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			sampleWaiting = null;
+			reject(new Error('The worker did not answer in time.'));
+		}, DATASET_WAIT);
+		sampleWaiting = (m) => {
+			// An answer about some other sample is not this one's.
+			if (m.id !== prob.runId) return;
+			clearTimeout(timer);
+			sampleWaiting = null;
+			if (m.ok) resolve(m.parts);
+			else reject(new Error(m.why ?? 'The probabilistic run could not be written out.'));
+		};
+		worker.postMessage({ type: 'sample-entries', id: prob.runId, stamp: new Date().toISOString() });
+	});
+}
+
+/**
+ * Whether the sample on screen can go into an archive with the run, and what
+ * it would come to: null with no sample, `{ ok: false, why }` where it cannot.
+ *
+ * Only a sample of the model at its own values: one of an app's controls is
+ * of a model the file does not hold. And only one that fits -- see
+ * `MOST_SAMPLE_BYTES`.
+ */
+function sampleSaveFacts(prob = currentProb()) {
+	if (!prob) return null;
+	const kept = (prob.outputs ?? []).filter((o) => !o.varied).length;
+	const bytes = sampleBytes({
+		kept,
+		times: prob.t?.length ?? 0,
+		iterations: prob.iterations ?? 0,
+		inputs: prob.inputs ?? prob.plan?.length ?? 0,
+		precision: prob.precision,
+	});
+	const facts = { ok: true, why: null, bytes, iterations: prob.iterations ?? 0, kept };
+	if (prob.app || prob.preview != null) {
+		return { ...facts, ok: false, why: 'It is a run at an app’s controls, not at the model’s own values.' };
+	}
+	if (bytes > MOST_SAMPLE_BYTES) {
+		return {
+			...facts, ok: false,
+			why: `At ${sizeText(bytes)} it is more than an archive written here can hold `
+				+ `(${sizeText(MOST_SAMPLE_BYTES)}). Save → Realisations writes it as HDF5.`,
+		};
+	}
+	return facts;
+}
 
 /**
  * Notes that the worker holding the results' states is gone, so no more
@@ -2059,8 +2162,8 @@ function acceptReuseRefused(m) {
 	});
 }
 
-/** The bands are in. */
-function acceptProbabilistic(payload, runId) {
+/** The bands are in -- of a run just made, or of one a file brought (`opened`). */
+function acceptProbabilistic(payload, runId, { opened = false } = {}) {
 	state.probRunning = false;
 	// Under its own run id, the way results carry theirs: the matrix stays in
 	// the worker and is fetched later, by which time another run may well have
@@ -2082,17 +2185,26 @@ function acceptProbabilistic(payload, runId) {
 	// follows this one, and there is nothing to look at yet.
 	state.probModeFor = null;
 	setRunning(false);
-	if (payload.stats?.correlationProblems?.length) {
-		flash(`Correlations ignored: ${payload.stats.correlationProblems[0]}`, 'warn');
-	} else if (payload.stats?.correlationAdjusted > 0.005) {
-		flash(`The correlations asked for are not all achievable together; the nearest set `
-			+ `that is was used (largest change ${payload.stats.correlationAdjusted.toFixed(2)}).`, 'warn');
-	}
 	const { stats } = payload;
-	flash(`${payload.iterations.toLocaleString()} realisations in `
-		+ `${(stats.ms / 1000).toFixed(1)} s`
-		+ (stats.workers > 1 ? ` over ${stats.workers} cores` : ' on one core')
-		+ `${stats.failed ? `, ${stats.failed} of them failed` : ''}.`, 'info');
+	if (opened) {
+		// What was said when it ran -- the correlations, the time it took -- was
+		// said then. What is worth saying now is that it came with the file.
+		const kept = payload.outputs.filter((o) => !o.varied).length;
+		flash(`With its probabilistic run: ${describeSampleMeta({
+			iterations: payload.iterations, kept, stats,
+		})}, as it was saved.`, 'info');
+	} else {
+		if (stats?.correlationProblems?.length) {
+			flash(`Correlations ignored: ${stats.correlationProblems[0]}`, 'warn');
+		} else if (stats?.correlationAdjusted > 0.005) {
+			flash(`The correlations asked for are not all achievable together; the nearest set `
+				+ `that is was used (largest change ${stats.correlationAdjusted.toFixed(2)}).`, 'warn');
+		}
+		flash(`${payload.iterations.toLocaleString()} realisations in `
+			+ `${(stats.ms / 1000).toFixed(1)} s`
+			+ (stats.workers > 1 ? ` over ${stats.workers} cores` : ' on one core')
+			+ `${stats.failed ? `, ${stats.failed} of them failed` : ''}.`, 'info');
+	}
 	renderResults();
 	// The panel too: *What drove it* appears only once there is a sample to
 	// read, and the panel is not otherwise rebuilt by a run. And the tree,
@@ -4454,8 +4566,14 @@ function expandButton() {
 				bodyHeight: body.style.height, bodyMax: body.style.maxHeight,
 			};
 			const head = Math.ceil(d.querySelector('.modal-head')?.getBoundingClientRect().height ?? 60);
-			Object.assign(d.style, { left: '16px', top: '16px', width: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 32px)' });
-			body.style.height = body.style.maxHeight = `calc(100vh - 34px - ${head}px)`;
+			// The window that can be seen: in the site's page its header and
+			// footer are over the top and the bottom, and Shrink is up there.
+			const seen = visibleBox();
+			const insets = seen.top + window.innerHeight - seen.bottom;
+			Object.assign(d.style, {
+				left: '16px', top: `${seen.top + 16}px`, width: 'calc(100vw - 32px)', maxHeight: `calc(100vh - ${insets + 32}px)`,
+			});
+			body.style.height = body.style.maxHeight = `calc(100vh - ${insets + 34}px - ${head}px)`;
 			d.classList.add('is-expanded');
 			b.textContent = 'Shrink';
 		} else {
@@ -5459,8 +5577,12 @@ function popInfo() {
 	// Where it was last, kept on the screen; the first time, beside the rail.
 	const saved = readInfoWindow();
 	const rail = $('#sidebar')?.getBoundingClientRect();
+	// On what can be seen of the window: in the site's page, its header and
+	// footer are over the top and the bottom of it.
+	const seen = visibleBox();
+	const tall = seen.bottom - seen.top;
 	const w = Math.round(Math.min(window.innerWidth - 16, Math.max(320, saved?.width ?? 400)));
-	const h = Math.round(Math.min(window.innerHeight - 120, Math.max(120, saved?.height ?? window.innerHeight * 0.6)));
+	const h = Math.round(Math.min(tall - 120, Math.max(120, saved?.height ?? tall * 0.6)));
 	handle.dialog.style.width = `${w}px`;
 	handle.dialog.style.maxHeight = 'none';
 	handle.body.style.height = `${h}px`;
@@ -5468,7 +5590,7 @@ function popInfo() {
 	const x = saved?.left ?? (rail ? rail.right + 16 : 40);
 	const y = saved?.top ?? (rail ? rail.top + 8 : 80);
 	handle.dialog.style.left = `${Math.round(Math.min(window.innerWidth - 80, Math.max(0, x)))}px`;
-	handle.dialog.style.top = `${Math.round(Math.min(window.innerHeight - 60, Math.max(0, y)))}px`;
+	handle.dialog.style.top = `${Math.round(Math.min(seen.bottom - 60, Math.max(seen.top, y)))}px`;
 	// Kept as it is left after every move and resize, so a reload finds it
 	// where it was even if it was never closed.
 	handle.dialog.addEventListener('pointerup', () => writeInfoWindow({ ...boxOf(handle), out: true }));
@@ -7464,10 +7586,14 @@ function storedView() {
 	const run = shownBeside();
 	if (!run) return null;
 	if (run.source !== 'ecolego') return run.r ?? null;
-	if (storedViewCache?.run === run) return storedViewCache.view;
+	// A probabilistic run is summarised at the model's percentiles, and again
+	// when they change (Analyse → Bands…).
+	const percentiles = state.raw.simulation?.percentiles ?? null;
+	const key = run.probabilistic ? JSON.stringify(percentiles) : '';
+	if (storedViewCache?.run === run && storedViewCache.key === key) return storedViewCache.view;
 	let data;
 	try {
-		data = run.load();
+		data = run.load({ percentiles });
 	} catch (e) {
 		flash(`${besideName(run, { start: true })} in ${run.file} could not be read: ${e.message}`, 'warn');
 		state.stored.shown = -1;
@@ -7479,6 +7605,10 @@ function storedView() {
 	// its own way -- `1/year` where Ecolego writes `year^-1` -- so the two
 	// lines of one transfer are not called mixed units.
 	const blocks = ed.blockIndex(state.raw);
+	// A probabilistic run's columns are its medians, and its bands are kept
+	// as a sample here keeps its own: by series, on the run's times.
+	const bands = [];
+	const banded = [];
 	for (const [label, e] of data.series) {
 		const own = e.kind === 'transfer' ? blocks.get(e.block)?.block : null;
 		outputs.push({
@@ -7486,9 +7616,24 @@ function storedView() {
 			label, unit: own?.unit || e.unit, constant: e.values ? null : e.constant,
 		});
 		columns.push(e.values ?? new Float64Array(data.t.length).fill(e.constant));
+		if (e.band) {
+			bands.push(e.band);
+			banded.push({ label });
+		}
 	}
-	const view = { t: data.t, outputs, columns, stored: data, rev: state.rev };
-	storedViewCache = { run, view };
+	const prob = data.realisations ? {
+		t: data.t,
+		quantiles: data.percentiles,
+		outputs: banded,
+		bands,
+		iterations: data.realisations,
+		stats: {},
+		// Ecolego stores the realisations and nothing else: no single run of
+		// the model's own values to draw through them.
+		own: false,
+	} : null;
+	const view = { t: data.t, outputs, columns, stored: data, rev: state.rev, prob };
+	storedViewCache = { run, key, view };
 	return view;
 }
 
@@ -7578,6 +7723,9 @@ function storedBeside(r) {
 	if (!view) return null;
 	if (!storedTimeFits(view)) return { note: storedTimeNote(view, 'put beside') };
 	const at = new Map(view.outputs.map((o, k) => [o.label, k]));
+	// A probabilistic run beside: its bands, by label, and how to read them
+	// onto this run's times -- they are on the sample's own grid.
+	const prob = view.prob ?? null;
 	return {
 		view,
 		at,
@@ -7587,6 +7735,49 @@ function storedBeside(r) {
 		// Whether it has anything to stand beside: a run of another model may
 		// share no series with this one.
 		common: r.outputs.some((o) => at.has(o.label)),
+		prob,
+		probAt: prob ? new Map(prob.outputs.map((o, k) => [o.label, k])) : null,
+		ontoProb: prob ? ontoAxis(prob.t, r.t) : null,
+	};
+}
+
+/**
+ * What the run beside draws, and tabulates, for one series: its own values --
+ * or, for a probabilistic run, the median through its realisations (the mean
+ * where the chart's lines are means; see `besideStatistic`), with the two
+ * edges of its outermost band. `stat` names which, null for its own values.
+ */
+function besideLine(stored, label, own) {
+	const k = stored?.probAt?.get(label);
+	if (k === undefined) return { values: stored ? stored.onto(own) : own, bands: null, stat: null };
+	const band = bandOf(stored.prob, k);
+	const q = stored.prob.quantiles;
+	const stat = besideStatistic();
+	const middle = q.indexOf(0.5);
+	const line = stat === 'mean' ? band.mean : middle >= 0 ? band.q[middle] : band.mean;
+	const outer = bandPairs(q)[0];
+	const bands = outer ? [{
+		lo: stored.ontoProb(band.q[q.indexOf(outer[0])]),
+		hi: stored.ontoProb(band.q[q.indexOf(outer[1])]),
+		edge: true,
+	}] : null;
+	return { values: stored.ontoProb(line), bands, stat };
+}
+
+/**
+ * A run beside's probabilistic run, from what its worker said of it: the
+ * bands by series, on the sample's grid, as the page holds its own sample's
+ * -- so the one function draws either.
+ */
+function besideSample(payload) {
+	return {
+		t: payload.t,
+		quantiles: payload.quantiles,
+		outputs: payload.outputs.filter((o) => !o.varied),
+		bands: payload.bands.filter((b, k) => !payload.outputs[k].varied),
+		iterations: payload.iterations,
+		stats: payload.stats ?? {},
+		own: true,
 	};
 }
 
@@ -7800,12 +7991,13 @@ function renderRunKind() {
 	};
 	// And which lines are through them. A list rather than a name, since any
 	// combination can be up.
-	const describeLines = () => {
-		const keys = linesOn().map((l) => l.key);
+	const describeLines = (sample = null) => {
+		const on = sample ? sampleLines(sample) : linesOn();
+		const keys = on.map((l) => l.key);
 		if (keys.length === 1 && keys[0] === 'single') {
 			return 'held — the line is this model’s own single run';
 		}
-		const names = linesOn().map((l) => (l.key === 'single' ? 'this model’s own run' : `the ${l.name}`));
+		const names = on.map((l) => (l.key === 'single' ? 'this model’s own run' : `the ${l.name}`));
 		const list = names.length === 1 ? names[0]
 			: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 		return `as ${list}${behind(keys)}`;
@@ -7830,8 +8022,13 @@ function renderRunKind() {
 			words.push(`${name} saved nothing this model has`);
 		} else if (view && storedTimeFits(view)) {
 			words.push(run.source === 'ecolego' ? `${name}, from ${run.file}` : name,
-				`${view.outputs.length.toLocaleString()} series over ${view.t.length.toLocaleString()} times`,
-				'run the model to see the two together');
+				`${view.outputs.length.toLocaleString()} series over ${view.t.length.toLocaleString()} times`);
+			// A probabilistic one is drawn as a sample is: its lines through
+			// its bands.
+			if (view.prob) {
+				words.push(`${view.prob.iterations.toLocaleString()} realisations, drawn ${describeLines(view.prob)}`);
+			}
+			words.push('run the model to see the two together');
 		} else if (view) {
 			words.push(storedTimeNote(view, 'shown'));
 		}
@@ -7862,7 +8059,16 @@ function renderRunKind() {
 		}
 	}
 	// And Ecolego's beside it, where the file brought one.
-	if (r && storedBeside(r)?.common) words.push(`with ${besideName()} beside it, dash-dotted`);
+	if (r && storedBeside(r)?.common) {
+		const beside = storedBeside(r);
+		// A probabilistic one is a line through a spread, and says which line.
+		const band = beside.prob ? bandText(beside.prob.quantiles) : null;
+		words.push(beside.prob
+			? `with ${besideName()} beside it — the ${besideStatistic()} of its `
+				+ `${beside.prob.iterations.toLocaleString()} realisations dash-dotted`
+				+ (band ? `, between the thin lines of its ${band} band` : '')
+			: `with ${besideName()} beside it, dash-dotted`);
+	}
 	// A preview is not an ordinary run and must not read as one: the model on
 	// screen is not the model these numbers came from.
 	// What the results on screen were run at, from the results themselves:
@@ -9838,7 +10044,9 @@ function renderChart() {
 	// the deterministic outputs by label, because the probabilistic run kept
 	// only the series it was asked for and the chart's selection is over all of
 	// them.
-	const prob = currentProb();
+	// Before a run here, the run beside is what is drawn, and a probabilistic
+	// one is drawn as a sample is: its lines through its bands.
+	const prob = currentProb() ?? (r !== state.results ? r.prob ?? null : null);
 	const probAt = prob
 		? new Map(prob.outputs.map((o, k) => [o.label, k]))
 		: null;
@@ -9850,7 +10058,7 @@ function renderChart() {
 	// colour is which series this is, the pattern is which line of it. On its
 	// own a line takes the style its position gives it, because there is then
 	// nothing for a pattern to distinguish.
-	const lines = prob ? linesOn() : [CHART_LINES[2]];
+	const lines = prob ? sampleLines(prob) : [CHART_LINES[2]];
 	const many = lines.length > 1;
 	// The sample is on the model's grid; the run under it may be on the steps
 	// its solver took. See `ontoAxis`.
@@ -10072,15 +10280,16 @@ function renderChart() {
 				// A kept run's series is asked of its worker like any other, and is
 				// on its way until it answers.
 				const own = column(stored.view, k);
-				const values = stored.onto(own);
-				if (own === stored.view.pending) besidePending.add(values);
+				const line = besideLine(stored, r.outputs[i].label, own);
+				if (own === stored.view.pending && !line.stat) besidePending.add(line.values);
 				extra.push({
-					label: `${b.line.label} (${stored.tag})`,
-					values,
+					label: `${b.line.label} (${stored.tag}${line.stat ? `, ${line.stat}` : ''})`,
+					values: line.values,
 					unit: stored.view.outputs[k].unit,
 					style: b.line.style,
 					slot: pos,
 					set: SERIES_DASHES.length - 1,
+					bands: line.bands,
 				});
 			});
 			series = [...series, ...extra];
@@ -10738,11 +10947,14 @@ function drawTable() {
 			const k = stored.at.get(o.label);
 			if (k === undefined) return;
 			const unit = stored.view.outputs[k].unit;
+			// A probabilistic run beside is its median here, as on the chart.
+			const line = besideLine(stored, o.label, column(stored.view, k));
+			const tag = `${stored.tag}${line.stat ? `, ${line.stat}` : ''}`;
 			withMeta.push({
-				label: `${o.label} (${stored.tag})`, unit: unit ?? '', stored: true,
-				text: `${o.label} (${stored.tag}${unit ? `, ${unit}` : ''})`,
+				label: `${o.label} (${tag})`, unit: unit ?? '', stored: true,
+				text: `${o.label} (${tag}${unit ? `, ${unit}` : ''})`,
 			});
-			withCols.push(stored.onto(column(stored.view, k)));
+			withCols.push(line.values);
 			besideStored++;
 		});
 		meta.splice(0, meta.length, ...withMeta);
@@ -11655,6 +11867,9 @@ function openSave() {
 			results: !!r && !r.detached,
 			sample: !!prob,
 			iterations: prob?.iterations ?? 0,
+			// Whether Model with results can carry the sample too, and what it
+			// would come to.
+			sampleSave: sampleSaveFacts(prob),
 			stale: !!r && state.dirty,
 			data: data.length > 0,
 			fileName: state.fileHandle?.name ?? null,
@@ -11680,7 +11895,10 @@ function openSave() {
 			reveal: revealByName,
 		},
 		onSave: (choice) => {
-			state.saveChoice = { kind: choice.kind, format: choice.format, holds: choice.holds, which: choice.which };
+			state.saveChoice = {
+				kind: choice.kind, format: choice.format, holds: choice.holds, which: choice.which,
+				sample: choice.withSample,
+			};
 			runSave({ ...choice, log });
 		},
 	});
@@ -11694,7 +11912,9 @@ function openSave() {
  * pop-up is allowed out of a user gesture and not out of a promise that
  * settles after one.
  */
-async function runSave({ kind, format, keys, open = false, holds = 'all', which = 1, log = null, prepared = null }) {
+async function runSave({
+	kind, format, keys, open = false, holds = 'all', which = 1, log = null, prepared = null, sample = false,
+}) {
 	const handoff = open ? openResultBrowser() : null;
 	if (open && !handoff) return;
 	const r = state.results;
@@ -11715,7 +11935,7 @@ async function runSave({ kind, format, keys, open = false, holds = 'all', which 
 			ed.setEndpoints(state.raw, keys);
 			modelChanged({ layoutOnly: true, hint: 'endpoints' });
 		}
-		await saveFile('data');
+		await saveFile('data', { sample });
 		return;
 	}
 	if (kind === 'results') {
@@ -11820,7 +12040,10 @@ async function chooseImport(file) {
 			holds.push({
 				key: 'results',
 				label: 'A saved run',
-				detail: dataset ? describeDataset(dataset.meta) : '',
+				detail: dataset
+					? describeDataset(dataset.meta)
+						+ (dataset.sample ? `; and its probabilistic run, ${describeSampleMeta(dataset.sample.meta)}` : '')
+					: '',
 				why: dataset ? null
 					: (datasetProblem
 						? `The run in it could not be read — ${datasetProblem}`
@@ -12308,8 +12531,10 @@ function besideItem() {
 				// An archived run's name is the one Ecolego gave it, which does not
 				// say whose it is.
 				hint: run.source === 'ecolego'
-					? (Number.isFinite(run.date) ? new Date(run.date).toLocaleDateString() : run.name ? 'Ecolego' : '')
-					: (run.r ? '' : 'opening…'),
+					? [run.probabilistic ? 'probabilistic' : '',
+						Number.isFinite(run.date) ? new Date(run.date).toLocaleDateString() : run.name ? 'Ecolego' : '']
+						.filter(Boolean).join(', ')
+					: (run.r ? (run.r.prob ? 'probabilistic' : '') : 'opening…'),
 				title: besideTitle(run),
 				checked: () => shownBeside() === run,
 				keepOpen: true,
@@ -12362,6 +12587,7 @@ function besideTitle(run) {
 	}
 	if (run.source === 'file') return `Saved with its model in ${run.file}.`;
 	return `${run.archived ? 'Archived in Ecolego' : 'Ecolego’s current run'}, in ${run.file}`
+		+ (run.probabilistic ? ' — a probabilistic run, drawn as its median and its band' : '')
 		+ (run.matched ? '.' : ' — it saved nothing this model has.');
 }
 
@@ -12459,12 +12685,19 @@ async function keepRun() {
 	if (why) { flash(why, 'warn'); return; }
 	const r = state.results;
 	const when = Date.now();
+	// Its probabilistic run too, where one stands of the model at its own
+	// values: as the bands this page already holds of it, which is all a run
+	// beside draws -- the realisations stay where they are.
+	const prob = currentProb();
 	const run = {
 		source: 'kept', name: keptName(when), date: when,
 		timeUnit: state.raw.simulation?.time_unit ?? 'year', r: null, worker: null, runId: 0,
+		sample: prob && !prob.app && prob.preview == null ? besideSample(prob) : null,
 	};
 	if (r.local) {
-		run.r = { ...r, columns: [...r.columns], onColumns: [], stored: { timeUnit: run.timeUnit } };
+		run.r = {
+			...r, columns: [...r.columns], onColumns: [], stored: { timeUnit: run.timeUnit }, prob: run.sample,
+		};
 		addBeside(run);
 		besideReady(run);
 		return;
@@ -12504,10 +12737,11 @@ async function openRunBeside(file) {
 		for (const run of read.stored.runs) addBeside({ ...run, source: 'ecolego', file: file.name }, { show: false });
 		showBeside(from + Math.max(0, read.stored.shown));
 		const n = read.stored.runs.length;
-		const left = read.stored.probabilistic;
+		const sampled = read.stored.probabilistic;
 		flash(`${n === 1 ? 'The run' : `${n} runs`} Ecolego stored in ${file.name} `
 			+ `${n === 1 ? 'is' : 'are'} beside this one`
-			+ (left ? `; ${left} probabilistic run${left === 1 ? ' was' : 's were'} left out` : '')
+			+ (sampled ? ` — ${sampled === n ? (n === 1 ? 'a probabilistic run' : 'all probabilistic')
+				: `${sampled} of them probabilistic`}, drawn as ${sampled === 1 ? 'its' : 'their'} median and band` : '')
 			+ '.', 'info');
 		return;
 	}
@@ -12559,7 +12793,10 @@ function startBeside(run, project, data) {
 	run.runId = ++besideIds;
 	w.onmessage = (ev) => acceptBesideMessage(run, ev.data);
 	w.onerror = (e) => failBeside(run, e.message ?? 'its worker failed');
-	w.postMessage({ type: 'open-dataset', id: run.runId, project, data });
+	// A probabilistic run in the file comes as its bands and nothing more
+	// (`keep: false`): a run beside is drawn, not asked about.
+	w.postMessage({ type: 'open-dataset', id: run.runId, project, data, keep: false },
+		sampleBuffers(data.sample));
 }
 
 function acceptBesideMessage(run, m) {
@@ -12577,8 +12814,22 @@ function acceptBesideMessage(run, m) {
 		run.r = {
 			...m.payload, columns: [], runId: run.runId, worker: run.worker,
 			stored: { timeUnit: run.timeUnit },
+			// A kept run's sample, as the bands it had when it was kept.
+			prob: run.sample ?? null,
 		};
 		besideReady(run);
+		return;
+	}
+	// Its probabilistic run, as the bands drawn beside this one's lines. After
+	// `done`, which it follows on the same worker.
+	if (m.type === 'probabilistic-done') {
+		if (!run.r) return;
+		run.r.prob = besideSample(m.payload);
+		if (shownBeside() === run) { storedViewCache = null; renderChart(); renderTable(); renderRunKind(); }
+		return;
+	}
+	if (m.type === 'sample-refused') {
+		flash(`The probabilistic run in ${run.file} could not be read back: ${m.message}`, 'warn');
 		return;
 	}
 	if (m.type === 'error') failBeside(run, m.message ?? 'it could not be opened');
@@ -12586,8 +12837,9 @@ function acceptBesideMessage(run, m) {
 
 /** A run beside is in: said, and drawn if it is the one shown. */
 function besideReady(run) {
+	const sample = run.sample ? `, with the bands of its ${run.sample.iterations.toLocaleString()} realisations` : '';
 	flash(run.source === 'kept'
-		? `Kept as “${run.name}”: change the model and run it again to see the two together.`
+		? `Kept as “${run.name}”${sample}: change the model and run it again to see the two together.`
 		: `The run in ${run.file} is beside this one.`, 'info');
 	if (shownBeside() !== run) return;
 	storedViewCache = null;
@@ -12775,12 +13027,13 @@ export async function modelFileFor(name, model = state.raw, { extra = null, prep
  * nonsense, so that one is measured against itself: what it holds, and how big
  * it is.
  */
-function savedSize(body, text, extra = null) {
+function savedSize(body, text, extra = null, sample = null) {
 	if (typeof body === 'string') return '';
 	const kB = Math.round(body.length / 1024).toLocaleString();
 	if (extra?.length) {
 		const raw = extra.reduce((n, e) => n + e.bytes.length, 0);
-		return ` — ${kB} kB, model and results, from `
+		const also = sample ? `, and ${sample.iterations.toLocaleString()} realisations` : '';
+		return ` — ${kB} kB, model and results${also}, from `
 			+ `${Math.round(raw / 1024).toLocaleString()} kB of numbers`;
 	}
 	const from = new TextEncoder().encode(text).length;
@@ -12788,7 +13041,7 @@ function savedSize(body, text, extra = null) {
 		+ `${(100 - (100 * body.length) / from).toFixed(0)}% smaller than the JSON`;
 }
 
-async function saveFile(as = 'json', { prepared = null } = {}) {
+async function saveFile(as = 'json', { prepared = null, sample = false } = {}) {
 	const base = slug(state.raw.name);
 	const name = as === 'zip' ? `${base}.zip`
 		: as === 'gz' ? `${base}.json.gz`
@@ -12802,6 +13055,7 @@ async function saveFile(as = 'json', { prepared = null } = {}) {
 	// finding that out *after* somebody has chosen a folder would be a save
 	// that asked and then failed.
 	let extra = null;
+	let withSample = null;
 	if (as === 'data') {
 		// The model in the archive has to be the model the run was made from,
 		// or the file is a pair of things that do not go together -- a chart of
@@ -12821,6 +13075,18 @@ async function saveFile(as = 'json', { prepared = null } = {}) {
 		}
 		try {
 			extra = await requestDataset(`${base}.json`);
+			// And the probabilistic run beside it, where it was asked for --
+			// and is still the run of this model, which an edit since the
+			// dialog was open would have ended.
+			if (sample) {
+				const prob = currentProb();
+				const facts = sampleSaveFacts(prob);
+				if (!facts?.ok) {
+					throw new Error(facts?.why ?? 'The probabilistic run is no longer the run of this model.');
+				}
+				extra.push(...await requestSampleEntries(prob));
+				withSample = facts;
+			}
 		} catch (e) {
 			showError({
 				name: 'Save with results', message: e.message,
@@ -12869,7 +13135,7 @@ async function saveFile(as = 'json', { prepared = null } = {}) {
 				// different file about the same model -- an archive, not the
 				// model -- so it is not the one Save writes to next time.
 				if (as !== 'data') noteSaved(handle);
-				flash(`Saved ${handle.name}${savedSize(file.body, text, extra)}.`, 'info');
+				flash(`Saved ${handle.name}${savedSize(file.body, text, extra, withSample)}.`, 'info');
 			} catch (e) {
 				showError({
 					name: 'Save', message: `Could not write the file: ${e.message}`,
@@ -12892,7 +13158,7 @@ async function saveFile(as = 'json', { prepared = null } = {}) {
 	// the model *has* been written out, and saying otherwise would leave the
 	// button claiming unsaved work on a browser that simply has no picker.
 	if (as !== 'data') noteSaved(null);
-	flash(`Saved ${file.name}${savedSize(file.body, text, extra)} to wherever this `
+	flash(`Saved ${file.name}${savedSize(file.body, text, extra, withSample)} to wherever this `
 		+ 'browser puts downloads — it has no "save as" dialog for a page to open.',
 	'info');
 }
@@ -13393,9 +13659,23 @@ function openDataset(data, fileName) {
 	// else's states under this model's name.
 	state.runKey = null;
 	state.reusing = false;
+	// The probabilistic run the file carries, under the same id and of the
+	// same model: taken now, as `startProbabilistic` takes it, so that an edit
+	// made before it lands cannot pass itself off as what it was drawn from.
+	if (data.sample) {
+		state.probRev = state.rev;
+		state.probPreview = null;
+		state.probApp = false;
+	}
+	if (data.sampleProblem) {
+		flash(`${fileName} carries a probabilistic run that could not be read: `
+			+ `${data.sampleProblem}. The run beside it opens without it.`, 'warn');
+	}
+	// The sample handed over rather than copied: it was read into arrays of its
+	// own for this, and it is the largest thing a file brings.
 	ensureWorker().postMessage({
 		type: 'open-dataset', id: state.runId, project: state.raw, data,
-	});
+	}, sampleBuffers(data.sample));
 }
 
 /**
@@ -13562,19 +13842,23 @@ function acceptStoredRuns(stored, fileName) {
 	} else if (view) {
 		const left = view.stored.left;
 		const out = left.notInModel + left.unreadable + left.noDonor;
+		// A probabilistic one is its realisations, drawn as a sample here is.
+		const prob = view.prob;
 		said.push(`It carries ${n === 1 ? 'the run' : `${n} runs`} Ecolego made of it: `
-			+ `${besideName()}, ${view.outputs.length.toLocaleString()} series over `
+			+ `${besideName()}, ${prob ? `${prob.iterations.toLocaleString()} realisations of ` : ''}`
+			+ `${view.outputs.length.toLocaleString()} series over `
 			+ `${view.t.length.toLocaleString()} times, is drawn beside this tool’s run on the `
-			+ 'Chart, dash-dotted, and set beside its numbers in the Table'
+			+ `Chart, dash-dotted${prob ? ' — its median, between the thin lines of its band —' : ','} `
+			+ `and set beside its numbers in the Table${prob ? ' as its median' : ''}`
 			+ `${n > 1 ? ' — right-click the chart to show another' : ''}.`
 			+ (out ? ` ${out.toLocaleString()} of the outputs it saved ${out === 1 ? 'has' : 'have'} `
 				+ 'nothing here to stand beside: a block this tool did not import, a sub-system, or '
 				+ 'a transfer whose donor was not saved.' : ''));
 	}
-	if (stored.probabilistic) {
-		said.push(`${stored.probabilistic} probabilistic run${stored.probabilistic === 1 ? '' : 's'} `
-			+ `it also carries ${stored.probabilistic === 1 ? 'was' : 'were'} left out: only `
-			+ 'single runs are read.');
+	const sampled = stored.runs.filter((run, k) => run.probabilistic && k !== stored.shown).length;
+	if (sampled && view) {
+		said.push(`${sampled === 1 ? 'Another is a probabilistic run' : `${sampled} others are probabilistic runs`}, `
+			+ `drawn as ${sampled === 1 ? 'its' : 'their'} median and band when shown.`);
 	}
 	const box = $('#import-report');
 	if (box && said.length) {

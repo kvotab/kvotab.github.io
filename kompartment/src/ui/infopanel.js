@@ -46,7 +46,7 @@
  * the dialog does.
  */
 
-import { el } from './parts.js';
+import { el, visibleBox } from './parts.js';
 
 /** What each key shows, as last handed over: the latest drawing of an (i) wins. */
 const topics = new Map();
@@ -331,9 +331,13 @@ function place() {
 		const room = window.innerWidth - r.right - 24;
 		const beside = room >= 300;
 		const head = dialog.querySelector('.modal-head')?.getBoundingClientRect();
-		const top = beside || !head ? 12 : Math.round(Math.min(head.bottom + 6, window.innerHeight * 0.4));
-		panel.style.top = `${Math.max(12, top)}px`;
-		panel.style.bottom = '12px';
+		// The backdrop is this page's, but in the site's page that page's own
+		// header and footer are drawn over the top and the bottom of it: the
+		// margin is kept inside what can be seen (`visibleBox`).
+		const box = visibleBox();
+		const top = beside || !head ? box.top + 12 : Math.round(Math.min(head.bottom + 6, window.innerHeight * 0.4));
+		panel.style.top = `${Math.max(box.top + 12, top)}px`;
+		panel.style.bottom = `${Math.round(window.innerHeight - box.bottom + 12)}px`;
 		panel.style.width = beside ? `${Math.round(Math.min(400, room))}px` : '';
 		return;
 	}

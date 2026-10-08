@@ -42,6 +42,10 @@ import { streamFor, uniforms, valueAtProbability, distributedSlots } from '../do
 import { correlationPairs, imanConover } from '../domain/correlate.js';
 import { buildDesign, cholesky } from '../domain/gsa.js';
 
+// The band of a sample and its mean, which a stored run of another tool's is
+// summarised by too: see ./spread.js.
+export { quantiles, meanOf } from './spread.js';
+
 /**
  * What one distributed slot is called, for the stream that draws it.
  *
@@ -697,18 +701,6 @@ export function runProbabilistic(input, opts = {}) {
 }
 
 /**
- * The band at each time: the quantiles asked for, across realisations.
- *
- * Sorted per time rather than interpolated between order statistics, which is
- * the definition anyone checking this by hand would use. Realisations that
- * failed are NaN and are left out, so a band is over what actually ran and the
- * count says how many that was. A `mask` -- 1 to use a realisation, 0 not to
- * -- leaves out the rest, which is how a band is drawn over the categories of
- * realisation a reader has chosen to keep.
- *
- * @returns {{q: number, y: Float64Array}[]} in the order asked for
- */
-/**
  * One series' realisations, the way a result file stores them.
  *
  * A run holds them one realisation at a time -- `values[i * times + j]` -- which
@@ -727,25 +719,6 @@ export function timeMajor(values, times, iterations, out = new Float32Array(time
 	for (let i = 0; i < iterations; i++) {
 		const from = i * times;
 		for (let j = 0; j < times; j++) out[j * iterations + i] = values[from + j];
-	}
-	return out;
-}
-
-export function quantiles(values, times, iterations, qs = [0.05, 0.5, 0.95], mask = null) {
-	const out = qs.map((q) => ({ q, y: new Float64Array(times) }));
-	const column = new Float64Array(iterations);
-	for (let j = 0; j < times; j++) {
-		let n = 0;
-		for (let i = 0; i < iterations; i++) {
-			if (mask && !mask[i]) continue;
-			const v = values[i * times + j];
-			if (Number.isFinite(v)) column[n++] = v;
-		}
-		const slice = column.subarray(0, n);
-		slice.sort();
-		for (let k = 0; k < qs.length; k++) {
-			out[k].y[j] = n ? slice[Math.min(n - 1, Math.max(0, Math.round(qs[k] * (n - 1))))] : NaN;
-		}
 	}
 	return out;
 }
@@ -804,20 +777,4 @@ export function medianSpread(values, times, iterations, z = 1.959964, mask = nul
 		bodyHi[j] = at(Math.round(0.841345 * (n - 1)));
 	}
 	return { errLo, errHi, bodyLo, bodyHi };
-}
-
-/** The mean at each time, over the realisations that ran. */
-export function meanOf(values, times, iterations, mask = null) {
-	const out = new Float64Array(times);
-	for (let j = 0; j < times; j++) {
-		let sum = 0;
-		let n = 0;
-		for (let i = 0; i < iterations; i++) {
-			if (mask && !mask[i]) continue;
-			const v = values[i * times + j];
-			if (Number.isFinite(v)) { sum += v; n++; }
-		}
-		out[j] = n ? sum / n : NaN;
-	}
-	return out;
 }

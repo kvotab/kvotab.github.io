@@ -555,6 +555,10 @@ async function deflateRaw(bytes) {
  * @returns {Promise<Uint8Array>}
  */
 export async function zip(entries, opts = {}) {
+	// The count is 16 bits in the end record, for the same reason.
+	if (entries.length > 0xffff) {
+		throw new ZipError(`${entries.length.toLocaleString()} entries need ZIP64, which this writer does not produce.`);
+	}
 	const when = dosTime(opts.modified ?? new Date(0));
 	const limit = opts.store ? -1 : opts.inflateLimit ?? MAX_ARCHIVE_INFLATED;
 	const local = [];
@@ -614,6 +618,13 @@ export async function zip(entries, opts = {}) {
 		local.push(lfh, data);
 		central.push(cdh);
 		offset += lfh.length + data.length;
+		// The end record says where the directory starts in 32 bits, and a
+		// number past them would be written as something else entirely: an
+		// archive that every reader opens at the wrong place.
+		if (offset > 0xffffffff) {
+			throw new ZipError('The archive would be larger than 4 GB, which needs ZIP64 '
+				+ 'and is more than this writer will produce.');
+		}
 	}
 
 	const cdSize = central.reduce((n, c) => n + c.length, 0);

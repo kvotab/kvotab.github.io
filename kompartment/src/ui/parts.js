@@ -40,6 +40,32 @@ export const el = (tag, props = {}, ...kids) => {
 };
 
 /**
+ * The part of the window this tool can be seen in, as `{ top, bottom, left,
+ * right }` in the window's pixels.
+ *
+ * On its own that is the whole window. Framed in the site's page it is not:
+ * the page's header and footer are drawn over the top and the bottom of the
+ * frame, and the body keeps their heights as its padding so that the tool
+ * fills what is left (see css/theme-kvotab.css). Anything that places itself
+ * against the window -- a menu, a completion list, a floating window -- has to
+ * place itself against this instead, or a menu opened near the bottom opens
+ * under the page's footer, where the rows it hides cannot be reached at all.
+ */
+export function visibleBox() {
+	const cs = document.body ? getComputedStyle(document.body) : null;
+	const top = Math.max(0, parseFloat(cs?.paddingTop) || 0);
+	const bottom = Math.max(0, parseFloat(cs?.paddingBottom) || 0);
+	return { top, bottom: window.innerHeight - bottom, left: 0, right: window.innerWidth };
+}
+
+/** A size as people say one: 640 kB, 29 MB, 1.2 GB -- never a handful of bytes. */
+export function sizeText(bytes) {
+	return bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB`
+		: bytes >= 1048576 ? `${Math.max(1, Math.round(bytes / 1048576))} MB`
+			: `${Math.max(1, Math.round(bytes / 1024))} kB`;
+}
+
+/**
  * Controls on a heading's line -- a section's (i), the Information card's
  * buttons -- that are not in its <summary>. A button inside one is a control
  * inside a control, which keyboards and screen readers do not all reach, and

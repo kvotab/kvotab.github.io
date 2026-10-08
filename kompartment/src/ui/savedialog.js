@@ -18,7 +18,7 @@
  * asks and almost never answers.
  */
 
-import { el } from './parts.js';
+import { el, sizeText } from './parts.js';
 import { openModal } from './modal.js';
 import { renderDualTree, dualTreeState } from './dualtree.js';
 import { canBeEndpoint } from '../domain/edit.js';
@@ -54,9 +54,9 @@ export const KINDS = [
 	{
 		key: 'archive',
 		label: 'Model with results',
-		blurb: 'The model and the run it produced, so it opens again without the solve. '
-			+ 'The blocks under Endpoints are the model’s endpoints — what a probabilistic '
-			+ 'run keeps — and they are saved with it.',
+		blurb: 'The model and the run it produced, so it opens again without the solve — '
+			+ 'and its probabilistic run, where there is one. The blocks under Endpoints are '
+			+ 'the model’s endpoints — what a probabilistic run keeps — and they are saved with it.',
 		// Only ZIP: a gzip holds one thing, and a run beside a model is two.
 		formats: [['data', 'ZIP', 'The model at the root, the run under results/']],
 		needs: 'fresh',
@@ -140,7 +140,9 @@ function refusal(kind, can) {
 
 /**
  * @param {object} opts
- * @param {object} opts.can        `{results, sample, iterations, stale, data, fileName}`
+ * @param {object} opts.can        `{results, sample, iterations, stale, data, fileName, sampleSave}`;
+ *   `sampleSave` is whether Model with results can carry the probabilistic run --
+ *   `{ok, why, bytes, iterations, kept}`, or null with none
  * @param {Array} opts.series      pickable result blocks
  * @param {Array} opts.data        pickable parameters and lookup tables
  * @param {string[]} opts.endpoints the model's endpoint list, under Endpoints to start with
@@ -150,10 +152,12 @@ function refusal(kind, can) {
  *   `preview()` resolves to `{report}` -- worked out once, when the format is first
  *   chosen -- and `reveal` is what a block's name in it does when clicked
  *   (see ./ecoreport.js)
- * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which}`;
+ * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which, sample, withSample}`;
  *   `open` is the HDF5 Browser rather than the disk, and is called from the
  *   click itself, so that the tab can be opened there; `holds` and `which` say
- *   which of a sample a Realisations file is of
+ *   which of a sample a Realisations file is of; `sample` is whether a Model
+ *   with results carries the probabilistic run, and `withSample` the box as it
+ *   was left, to be remembered
  */
 export function openSaveDialog({
 	can, series = [], data = [], endpoints = [], log = '', chosen = {}, eco = null, onSave,
@@ -170,6 +174,9 @@ export function openSaveDialog({
 	const iterations = Math.max(1, Math.round(Number(can.iterations) || 1));
 	let holds = HOLDS.some(([v]) => v === chosen.holds) ? chosen.holds : 'all';
 	let which = Math.min(iterations, Math.max(1, Math.round(Number(chosen.which)) || 1));
+	// Whether Model with results takes the probabilistic run with it: yes
+	// unless the reader said no last time.
+	let withSample = chosen.sample !== false;
 
 	// What an endpoint can be chosen from: every series but a parameter's
 	// (`canBeEndpoint`).
@@ -350,6 +357,24 @@ export function openSaveDialog({
 				able(!refusal(what, can) && !none());
 				note.textContent = noteText(none());
 			};
+			// The probabilistic run, beside the run: the sample itself, so the
+			// file opens with its bands, its distributions and What drove it.
+			if (what.key === 'archive' && can.sampleSave) {
+				const f = can.sampleSave;
+				const tick = el('input', {
+					type: 'checkbox', checked: f.ok && withSample, disabled: !f.ok,
+				});
+				tick.addEventListener('change', () => { withSample = tick.checked; });
+				const n = f.iterations.toLocaleString();
+				right.append(el('label', { className: 'save-sample' }, tick,
+					el('span', {}, `With the probabilistic run — ${n} realisation${f.iterations === 1 ? '' : 's'} `
+						+ `of ${f.kept.toLocaleString()} series, ${sizeText(f.bytes)}`)));
+				right.append(el('p', { className: 'hint' }, f.ok
+					? 'The realisations themselves, so the file opens with the bands, the distributions '
+						+ 'and What drove it, without running them again.'
+					: f.why));
+			}
+
 			if (what.picks) {
 				const box = el('div', { className: 'save-pick' });
 				renderDualTree(box, {
@@ -386,6 +411,8 @@ export function openSaveDialog({
 					open: toBrowser,
 					holds,
 					which,
+					sample: what.key === 'archive' && !!can.sampleSave?.ok && withSample,
+					withSample,
 					// The export the report was of, so the file is that one.
 					prepared: what.key === 'model' && format === 'eco' && ecoRun ? ecoRun : null,
 				});

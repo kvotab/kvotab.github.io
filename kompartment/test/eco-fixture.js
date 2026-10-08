@@ -744,8 +744,15 @@ const xmlText = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').re
  * dated later, the current one, and a probabilistic one -- and with
  * `stranger`, a fourth, current and newest, that saved only an output the
  * model does not have.
+ *
+ * The probabilistic run is `sims` realisations, realisation s being the single
+ * run with every amount times s + 1 and the rate times s + 1 too -- so a
+ * stored flux is `rate × amount` with both moving, and its rate is only got
+ * back by dividing realisation by realisation. Ecolego 5 writes it as its one
+ * run, `Probabilistic`, with the times in the first realisation's row only, as
+ * Ecolego 5 does (`sampledFive`).
  */
-export function storedRunFiles({ version = 6, stranger = false } = {}) {
+export function storedRunFiles({ version = 6, stranger = false, sims = 2, sampledFive = false } = {}) {
 	const S = STORED;
 	const nt = S.times.length;
 	const dims2 = [S.nuclides, S.objects];
@@ -761,17 +768,31 @@ export function storedRunFiles({ version = 6, stranger = false } = {}) {
 		for (let ti = 0; ti < nt; ti++) for (const [n, o] of cells) out.push(f(n, o, ti));
 		return out;
 	};
+	// Realisation `sim` of the run: the single run when it is 0 and there is
+	// one, scaled as the doc above says otherwise.
+	const rate = (sim) => S.rate * (sim + 1);
+	const soil = (sim) => (n, o, ti) => S.soil(n, o, ti) * (sim + 1);
 	const outputs = [
 		// Spelt as the files spell it, which is not always as this tool does.
-		{ id: 'time', dims: [], td: true, unit: version === 6 ? 'year' : 'y', values: S.times },
-		{ id: 'Soil', dims: dims2, td: true, unit: 'Bq', values: series2(S.soil) },
-		{ id: 'Deep layer', dims: dims2, td: true, unit: 'Bq', values: series2(S.deep) },
+		{
+			id: 'time', dims: [], td: true, unit: version === 6 ? 'year' : 'y', values: S.times,
+			at: (sim) => (version === 5 && sim > 0 ? S.times.map(() => 0) : S.times),
+		},
+		{ id: 'Soil', dims: dims2, td: true, unit: 'Bq', values: series2(S.soil), at: (sim) => series2(soil(sim)) },
+		{
+			id: 'Deep layer', dims: dims2, td: true, unit: 'Bq', values: series2(S.deep),
+			at: (sim) => series2((n, o, ti) => S.deep(n, o, ti) * (sim + 1)),
+		},
 		{
 			id: 'Down', dims: dims2, td: true, unit: version === 6 ? 'Bq/year' : '1/year',
 			values: series2((n, o, ti) => (version === 6 ? S.rate * S.soil(n, o, ti) : S.rate)),
+			at: (sim) => series2((n, o, ti) => (version === 6 ? rate(sim) * soil(sim)(n, o, ti) : rate(sim))),
 		},
-		{ id: 'k', dims: [], td: false, unit: '1/year', values: [S.rate] },
-		{ id: 'Dose', dims: [], td: true, unit: 'Sv', values: S.times.map((t, ti) => S.dose(ti)) },
+		{ id: 'k', dims: [], td: false, unit: '1/year', values: [S.rate], at: (sim) => [rate(sim)] },
+		{
+			id: 'Dose', dims: [], td: true, unit: 'Sv', values: S.times.map((t, ti) => S.dose(ti)),
+			at: (sim) => S.times.map((t, ti) => S.dose(ti) * (sim + 1)),
+		},
 		{ id: 'Gone', dims: [], td: true, unit: '', values: [1, 2, 3] },
 	].map((o, k) => ({ ...o, guid: guidOf(k + 1) }));
 	// What a run of some other model saved: the clock, and a block this one
@@ -803,22 +824,25 @@ export function storedRunFiles({ version = 6, stranger = false } = {}) {
 			+ '<time-unit><![CDATA[Years]]></time-unit><abs-error-tolerance>1&#46;0E&#45;6</abs-error-tolerance>'
 			+ `</simulation-info>${listsXml}<simulation-outputs>${saved.map(outputXml).join('')}</simulation-outputs>`
 			+ '</simulation-context>'
-		: `<simulation-context><simulation-info><simulation-info-type>Deterministic</simulation-info-type>`
-			+ `<simulation-name></simulation-name></simulation-info>`
+		: `<simulation-context><simulation-info><simulation-info-type>${sampledFive ? 'Probabilistic' : 'Deterministic'}`
+			+ `</simulation-info-type><simulation-name></simulation-name></simulation-info>`
 			+ `<simulation-outputs>${outputs.map(outputXml).join('')}</simulation-outputs></simulation-context>`);
+	// A single run is its values; a probabilistic one each realisation's after
+	// the one before.
 	const file = (simulations = 1, saved = outputs) => makeResultFile({
 		simulations,
 		times: nt,
 		blocks: saved.map((o) => ({
 			guid: o.guid,
-			values: Array.from({ length: simulations }, () => o.values).flat(),
+			values: simulations === 1 ? o.values
+				: Array.from({ length: simulations }, (_, sim) => (o.at ? o.at(sim) : o.values)).flat(),
 		})),
 	});
 	const runs = version === 6
 		? [
 			{ guid: 'A0000000-0000-0000-0000-000000000001', name: 'Older', date: 2000, archived: true },
 			{ guid: 'A0000000-0000-0000-0000-000000000002', name: 'Now', date: 1000, archived: false },
-			{ guid: 'A0000000-0000-0000-0000-000000000003', name: 'Sampled', date: 3000, type: 'PROBABILISTIC', sims: 2 },
+			{ guid: 'A0000000-0000-0000-0000-000000000003', name: 'Sampled', date: 3000, type: 'PROBABILISTIC', sims },
 			...(stranger
 				? [{ guid: 'A0000000-0000-0000-0000-000000000004', name: 'Elsewhere', date: 4000, archived: false, saved: elsewhere }]
 				: []),
@@ -834,6 +858,6 @@ export function storedRunFiles({ version = 6, stranger = false } = {}) {
 				// The empty file Ecolego 6 leaves beside them.
 				{ name: 'simulation/results/results.dta', bytes: new Uint8Array(1024) },
 			]
-			: [{ name: 'simulation\\results\\results.dta', bytes: file(1) }]),
+			: [{ name: 'simulation\\results\\results.dta', bytes: file(sampledFive ? sims : 1) }]),
 	];
 }

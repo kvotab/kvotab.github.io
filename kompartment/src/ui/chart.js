@@ -1012,6 +1012,44 @@ export class TimeChart {
 			ctx.restore();
 		}
 
+		// One curve over the chart's times as a path: clipped segment by
+		// segment against the plot rather than by a canvas clip -- a zoomed
+		// chart has lines running well outside the axes, and the surface a
+		// picture is drawn on has no `clip` -- while both of them can draw the
+		// piece that is inside. Cutting at the boundary rather than dropping
+		// the point keeps a line touching the edge it leaves through, which a
+		// chart zoomed to ten samples would otherwise show as a gap. Breaks
+		// across a value the scale cannot show. Returns the last point placed.
+		const trace = (ys) => {
+			const { t: tt } = this.data;
+			let prev = null;
+			let pen = null;
+			for (let i = 0; i < tt.length; i++) {
+				const x = tt[i], y = ys[i];
+				const okX = this.xLog ? x > 0 : Number.isFinite(x);
+				// A log axis cannot show zero or less; anything else outside
+				// the window is clipped rather than skipped.
+				const okY = Number.isFinite(y) && (this.yLog ? y > 0 : true);
+				if (!okX || !okY) { prev = null; pen = null; continue; }
+				const cur = { x: sx(x), y: sy(y) };
+				if (prev) {
+					const seg = clipSegment(prev, cur, plot);
+					if (seg) {
+						if (!pen || Math.abs(pen.x - seg.a.x) > 0.01
+							|| Math.abs(pen.y - seg.a.y) > 0.01) {
+							ctx.moveTo(seg.a.x, seg.a.y);
+						}
+						ctx.lineTo(seg.b.x, seg.b.y);
+						pen = seg.b;
+					} else {
+						pen = null;
+					}
+				}
+				prev = cur;
+			}
+			return prev;
+		};
+
 		// --- bands, under the lines --------------------------------------
 		// A probabilistic run is a spread, not a curve: the line is its median
 		// and the band is where the realisations were. Drawn first so every
@@ -1031,8 +1069,28 @@ export class TimeChart {
 			const by = (y) => Math.min(plot.y + plot.h, Math.max(plot.y, sy(y)));
 			series.forEach((s, si) => {
 				if (!s.bands?.length) return;
-				ctx.fillStyle = lineLook(s, si, c).stroke;
+				const look = lineLook(s, si, c);
+				ctx.fillStyle = look.stroke;
 				for (const band of s.bands) {
+					// A run beside draws its band as the band's two edges, thin and
+					// in its line's pattern: a second fill in the same colour over
+					// this run's own would be one spread on top of another with
+					// nothing to say which was which.
+					if (band.edge) {
+						ctx.save();
+						ctx.globalAlpha = band.alpha ?? 0.75;
+						ctx.strokeStyle = look.stroke;
+						ctx.lineWidth = 1;
+						ctx.setLineDash(look.dash);
+						ctx.lineCap = look.dash.length ? 'butt' : 'round';
+						for (const ys of [band.lo, band.hi]) {
+							ctx.beginPath();
+							trace(ys);
+							ctx.stroke();
+						}
+						ctx.restore();
+						continue;
+					}
 					ctx.globalAlpha = band.alpha ?? 0.16;
 					ctx.beginPath();
 					let open = false;
@@ -1088,38 +1146,7 @@ export class TimeChart {
 			// line back into a solid one.
 			ctx.lineCap = dash.length ? 'butt' : 'round';
 			ctx.beginPath();
-			// Clipped segment by segment against the plot rather than by a
-			// canvas clip: a zoomed chart has lines running well outside the
-			// axes, and the surface a picture is drawn on has no `clip` --
-			// while both of them can draw the piece that is inside. Cutting
-			// at the boundary rather than dropping the point keeps a line
-			// touching the edge it leaves through, which a chart zoomed to
-			// ten samples would otherwise show as a gap.
-			let prev = null;
-			let pen = null;
-			for (let i = 0; i < t.length; i++) {
-				const x = t[i], y = s.values[i];
-				const okX = this.xLog ? x > 0 : Number.isFinite(x);
-				// A log axis cannot show zero or less; anything else outside
-				// the window is clipped rather than skipped.
-				const okY = Number.isFinite(y) && (this.yLog ? y > 0 : true);
-				if (!okX || !okY) { prev = null; pen = null; continue; }
-				const cur = { x: sx(x), y: sy(y) };
-				if (prev) {
-					const seg = clipSegment(prev, cur, plot);
-					if (seg) {
-						if (!pen || Math.abs(pen.x - seg.a.x) > 0.01
-							|| Math.abs(pen.y - seg.a.y) > 0.01) {
-							ctx.moveTo(seg.a.x, seg.a.y);
-						}
-						ctx.lineTo(seg.b.x, seg.b.y);
-						pen = seg.b;
-					} else {
-						pen = null;
-					}
-				}
-				prev = cur;
-			}
+			const prev = trace(s.values);
 			// A single point is a line of no length, which a butt cap draws
 			// as nothing at all: give it a dot so a one-sample series is
 			// visible rather than absent.
