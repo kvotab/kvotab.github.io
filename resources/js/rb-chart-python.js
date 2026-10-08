@@ -263,7 +263,7 @@ const PY_RESERVED = new Set(('False None True and as assert async await break cl
   + 'globals hasattr hash help hex id input int isinstance issubclass iter len list locals map max min next object oct '
   + 'open ord pow print property range repr reversed round set setattr slice sorted str sum super tuple type vars zip '
   + 'np plt h5py functools path fig ax axes legend lines x y n values rows lower upper colour color label '
-  + 'read attribute strided realisations mean_over_realisations percentile sem_band sem_from column span finite_mean '
+  + 'factor read attribute strided realisations mean_over_realisations percentile sem_band sem_from column span finite_mean '
   + 'add_up gaps_as_zero total_realisations style band hatch axis plotly_labels plot_area show_legend phases '
   + 'FOLDER TEXT GRID MINOR_GRID PT SI CHART').split(/\s+/));
 
@@ -438,13 +438,15 @@ def hatch(ax, x, lower, upper, colour):
 SI = {-15: "f", -12: "p", -9: "n", -6: "µ", -3: "m", 3: "k", 6: "M", 9: "B", 12: "T"}
 
 
-def plotly_labels(fmt, exponent, log):
+def plotly_labels(fmt, exponent, log, factor=1):
     """Tick labels written as Plotly writes them: 20k, 1M and 10k in its B format, 0.2×10⁻⁵ and
-    10⁻¹¹ in power."""
+    10⁻¹¹ in power; of the values divided by factor, which is how an axis shows its unit with a
+    prefix (1000 for kBq over Bq)."""
     def number(v):
         return ("%g" % v).replace("-", "−")
 
     def label(v, _pos=None):
+        v = v / factor
         if v == 0:
             return "0"
         if log:
@@ -462,9 +464,10 @@ def plotly_labels(fmt, exponent, log):
         return number(v / 10.0 ** exponent) + SI.get(exponent, "e%d" % exponent)
     return label` },
   { name: 'axis', needs: ['plotly_labels'], code: String.raw`
-def axis(ax, which, scale, limits, title="", labels=True, fmt="B", exponent=0):
+def axis(ax, which, scale, limits, title="", labels=True, fmt="B", exponent=0, factor=1):
     """An axis as the page draws it: lin or log over limits, its ticks outside, the grid, and its
-    labels as Plotly writes them."""
+    labels as Plotly writes them. The values and the limits are the files'; an axis whose unit has
+    a prefix labels them divided by factor, 1000 for kBq."""
     getattr(ax, "set_%sscale" % which)(scale)
     getattr(ax, "set_%slim" % which)(*limits)
     part = ax.xaxis if which == "x" else ax.yaxis
@@ -475,7 +478,7 @@ def axis(ax, which, scale, limits, title="", labels=True, fmt="B", exponent=0):
         ax.grid(True, axis=which, which="minor", color=MINOR_GRID, linewidth=PT)
     else:
         part.set_minor_locator(AutoMinorLocator())
-    part.set_major_formatter(FuncFormatter(plotly_labels(fmt, exponent, scale == "log")))
+    part.set_major_formatter(FuncFormatter(plotly_labels(fmt, exponent, scale == "log", factor)))
     ax.grid(True, axis=which, which="major", color=GRID, linewidth=PT)
     ax.tick_params(axis=which, which="major", direction="out", length=5 * PT, width=PT, color=GRID,
                    labelcolor=TEXT, labelsize=9)
@@ -595,6 +598,10 @@ function pyChartScript(gd) {
   const model = xlChartModel(gd);
   if (!model) return null;
   const subject = xlChartSubject(model);
+  // The script draws the files' values, in their units; an axis with a prefix
+  // divides its labels instead (axis's factor). What is read from Plotly is
+  // in the axes' units, and is put back in the files'.
+  const exp = chartExponents();
 
   const used = new Set(['style', 'axis', 'plot_area', 'show_legend']);
   const use = (...names) => names.forEach(n => used.add(n));
@@ -805,8 +812,8 @@ function pyChartScript(gd) {
     const panel = Math.max(0, panelKeys.indexOf(`${ft.xaxis || 'x'}|${ft.yaxis || 'y'}`));
     const ax = axRef(panel);
     const py = ut._py || null;
-    const xs = Array.from(ut.x || ft.x || []);
-    const ys = Array.from(ut.y || ft.y || []);
+    const xs = Array.from(('_fileX' in ut ? ut._fileX : ut.x) || ft.x || []);
+    const ys = Array.from(('_fileY' in ut ? ut._fileY : ut.y) || ft.y || []);
     if (ut._isCIBand || ut._isSDOMBand) {
       const kind = ut._isSDOMHatch ? 'hatch' : (ut._isCIBand ? 'ci' : 'sem');
       const colour = pyColour(kind === 'hatch' ? (ft.line && ft.line.color) : ft.fillcolor);
@@ -893,7 +900,7 @@ function pyChartScript(gd) {
   const axisCall = (ax, which, a) => {
     const log = a.type === 'log';
     const r = (a.range || [0, 1]).map(Number);
-    const lim = log ? r.map(xlPow10) : r;
+    const lim = (log ? r.map(xlPow10) : r).map(v => shiftDecimal(v, exp[which]));
     const args = [ax, pyStr(which), pyStr(log ? 'log' : 'linear'), `(${pyNum(lim[0])}, ${pyNum(lim[1])})`];
     const title = xlPlainText(a.title && a.title.text);
     if (title) args.push(pyText(title));
@@ -902,6 +909,7 @@ function pyChartScript(gd) {
     if (fmt !== 'B') args.push(`fmt=${pyStr(fmt)}`);
     const e = Math.round(Number(a._tickexponent) || 0);
     if (!log && e) args.push(`exponent=${pyInt(e)}`);
+    if (exp[which]) args.push(`factor=1e${pyInt(exp[which])}`);
     return pyCall('axis', args);
   };
   const axesSetup = [];
@@ -914,7 +922,7 @@ function pyChartScript(gd) {
   });
   if (model.phases.length) {
     use('phases');
-    const rows = model.phases.map(p => `    (${pyStr(p.name)}, ${pyNum(p.x0)}, ${pyNum(p.x1)}, ${pyStr(`#${p.color.hex}${Math.round(p.color.alpha * 255).toString(16).padStart(2, '0').toUpperCase()}`)}),`);
+    const rows = model.phases.map(p => `    (${pyStr(p.name)}, ${pyNum(shiftDecimal(p.x0, exp.x))}, ${pyNum(shiftDecimal(p.x1, exp.x))}, ${pyStr(`#${p.color.hex}${Math.round(p.color.alpha * 255).toString(16).padStart(2, '0').toUpperCase()}`)}),`);
     const source = [...new Set(model.phases.map(p => p.source).filter(Boolean))];
     if (source.length) axesSetup.push(`BACKGROUND = ${source.length === 1 ? pyStr(source[0]) : `[${source.map(pyStr).join(', ')}]`}  # the dataset the page read the phases from`);
     axesSetup.push(`phases(${several ? 'axes' : '[ax]'}, [\n${rows.join('\n')}\n])`);

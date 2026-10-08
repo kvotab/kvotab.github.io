@@ -20,7 +20,11 @@
  * Export current chart data to a CSV file.
  * Creates a downloadable file with columns: Series, X, Y.
  * Each trace in the chart becomes a series in the CSV.
- * 
+ *
+ * The values are in the file's units, whatever prefix the axes show them
+ * with (changeAxisPrefix): a CSV says nothing of units, so it holds the
+ * numbers the file does.
+ *
  * @returns {void}
  */
 function downloadChartData() {
@@ -28,13 +32,15 @@ function downloadChartData() {
     notifyUser('There is no chart data to download yet.');
     return;
   }
-  
+
   let csv = 'Series,X,Y\n';
-  
+
   for (const trace of currentChartData.traces) {
     const name = trace._exportName || trace.name;
-    for (let i = 0; i < trace.x.length; i++) {
-      csv += `"${name}",${trace.x[i]},${trace.y[i]}\n`;
+    const x = '_fileX' in trace ? trace._fileX : trace.x;
+    const y = '_fileY' in trace ? trace._fileY : trace.y;
+    for (let i = 0; i < x.length; i++) {
+      csv += `"${name}",${x[i]},${y[i]}\n`;
     }
   }
   

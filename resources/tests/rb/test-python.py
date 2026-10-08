@@ -18,6 +18,13 @@ script drew is then compared with what the page drew:
   * that no line went into the script as its numbers: each is computed
     from the file, as the page computed it.
 
+An axis whose unit has a prefix (kBq) is drawn by the page in it, and by the
+script in the files' units with its labels divided (axis's factor). So the
+page's lines are compared as the files' values they were made from
+(_fileX, _fileY), its ranges and phases are moved back into the files'
+units, and the labels must be the page's as they are: on a log axis label
+for label, on a linear one each inside the range the page shows.
+
 The data: a file built in the page with h5wasm, so nothing binary is
 committed. It has what the chart builders tell apart: realisations (a
 probabilistic dataset, with n_iter for the SEM), a table of statistics
@@ -228,6 +235,14 @@ HELPERS = r"""(() => {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     await __wait(1500);
   };
+  // A prefix for an axis's unit, chosen as a reader chooses it.
+  window.__prefix = async (axis, p) => {
+    const s = document.getElementById(axis + 'PrefixSelect');
+    s.value = p;
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+    await _axisUnitsQueue;
+    await __wait(500);
+  };
   window.__bytes = (name) => {
     const b = new Uint8Array(loadedFileBuffers[name]);
     let s = '';
@@ -235,6 +250,8 @@ HELPERS = r"""(() => {
     return btoa(s);
   };
   // What the page drew: each visible trace in order, the legend, the panels' axes and the phases.
+  // A trace's numbers are the files' it was drawn from, as the script draws them; `exp` is
+  // the prefixes the axes show them in.
   window.__drawn = () => {
     const gd = document.getElementById('plotlyChart');
     const fl = gd._fullLayout;
@@ -249,7 +266,8 @@ HELPERS = r"""(() => {
       traces.push({
         index: ft.index, key,
         kind: ut._isSDOMHatch ? 'hatch' : ut._isCIBand ? 'ci' : ut._isSDOMBand ? 'sem' : 'line',
-        x: Array.from(ut.x || [], num), y: Array.from(ut.y || [], num),
+        x: Array.from(('_fileX' in ut ? ut._fileX : ut.x) || [], num),
+        y: Array.from(('_fileY' in ut ? ut._fileY : ut.y) || [], num),
         name: xlPlainText(ft.name),
         line: { colour: xlColor(ft.line && ft.line.color), alpha: xlColor(ft.line && ft.line.color).alpha,
                 width: Number(ft.line && ft.line.width) || 2, dash: (ft.line && ft.line.dash) || 'solid' },
@@ -267,7 +285,7 @@ HELPERS = r"""(() => {
     const phases = (fl.shapes || []).filter(s => s.name === BACKGROUND_SHAPE_NAME)
       .map(s => ({ x0: Number(s.x0), x1: Number(s.x1), colour: xlColor(s.fillcolor) }));
     const labels = axes.length > 1 ? (fl.annotations || []).map(a => xlPlainText(a.text)) : [];
-    return { traces, legend, axes, phases, labels };
+    return { traces, legend, axes, phases, labels, exp: chartExponents() };
   };
   window.__script = () => {
     const s = pyChartScript(document.getElementById('plotlyChart'));
@@ -395,6 +413,22 @@ def mpl_tick(text):
     return t.replace('{', '').replace('}', '').replace('−', '-')
 
 
+SI_OF = {'f': -15, 'p': -12, 'n': -9, 'µ': -6, 'm': -3, 'k': 3, 'M': 6, 'B': 9, 'T': 12}
+
+
+def tick_value(text):
+    """A matplotlib label as the number it stands for: 1500, 0.2×10^-5, 10^3, 20k."""
+    t = mpl_tick(text)
+    if '×10^' in t:
+        a, b = t.split('×10^')
+        return float(a) * 10 ** int(b)
+    if t.startswith('10^'):
+        return 10.0 ** int(t[3:])
+    if t and t[-1] in SI_OF:
+        return float(t[:-1]) * 10 ** SI_OF[t[-1]]
+    return float(t)
+
+
 def run_script(code, files, bytes_of, work):
     """Write the script and its files into a folder of their own, run it, and return what it drew."""
     folder = tempfile.mkdtemp(dir=work)
@@ -462,12 +496,15 @@ def compare(label, page, drawn, script):
         check(f'{label}: the SEM band\'s hatching the page\'s', bad[:3], [])
     check(f'{label}: the legend lists the page\'s lines, in the page\'s order',
           [e['label'].replace('\\$', '$') for e in drawn['legend']], page['legend'])
+    exp = page.get('exp') or {'x': 0, 'y': 0}
     bad = []
     for i, (pa, ma) in enumerate(zip(page['axes'], drawn['axes'])):
         for which in ('x', 'y'):
             p, m = pa[which], ma[which]
             log = p['type'] == 'log'
-            lim = [10 ** v for v in p['range']] if log else p['range']
+            k = exp[which]
+            # The script's limits are in the files' units: the page's range, out of its prefix.
+            lim = [10 ** (v + k) for v in p['range']] if log else [v * 10 ** k for v in p['range']]
             if m['scale'] != ('log' if log else 'linear'):
                 bad.append(f'{i}{which} scale {m["scale"]}')
             if not same(m['limits'], lim, 1e-9):
@@ -477,16 +514,25 @@ def compare(label, page, drawn, script):
             if bool(m['labels']) != p['labels']:
                 bad.append(f'{i}{which} labels shown {bool(m["labels"])} != {p["labels"]}')
             if log and p['labels']:
-                want = [plotly_tick(t['text']) for t in p['ticks'] if min(lim) <= 10 ** t['x'] * (1 + 1e-9) and 10 ** t['x'] <= max(lim) * (1 + 1e-9)]
+                want = [plotly_tick(t['text']) for t in p['ticks']
+                        if min(lim) <= 10 ** (t['x'] + k) * (1 + 1e-9) and 10 ** (t['x'] + k) <= max(lim) * (1 + 1e-9)]
                 got = [mpl_tick(t) for t in m['labels']]
                 if got != want:
                     bad.append(f'{i}{which} labels {got} != {want}')
+            if not log and k and p['labels']:
+                # The labels are the axis's numbers, divided: inside the range the page shows.
+                lo, hi = sorted(p['range'])
+                slack = 1e-9 * (hi - lo)
+                shown = [tick_value(t) for t in m['labels']]
+                if not shown or any(not lo - slack <= v <= hi + slack for v in shown):
+                    bad.append(f'{i}{which} labels {m["labels"]} not in {p["range"]}')
     check(f'{label}: the axes the page\'s: scale, range, title, labels', (len(drawn['axes']), bad[:4]), (len(page['axes']), []))
     if page['phases']:
         spans = [s for s in drawn['spans'] if s['ax'] == 0]
+        kx = 10 ** exp['x']
         check(f'{label}: the background\'s phases the page\'s',
               [(round(s['x0'], 6), round(s['x1'], 6), s['colour']) for s in spans],
-              [(round(p['x0'], 6), round(p['x1'], 6), hexa(p['colour'])) for p in page['phases']])
+              [(round(p['x0'] * kx, 6), round(p['x1'] * kx, 6), hexa(p['colour'])) for p in page['phases']])
     if page['labels']:
         check(f'{label}: each panel labelled as on the page', [t['text'] for t in drawn['texts']], page['labels'])
 
@@ -577,6 +623,26 @@ async def main():
                 await __tick('overlayGroups', false); await __pick('results.h5', '/nuc', { group: true });
                 await Plotly.relayout(document.getElementById('plotlyChart'), { 'xaxis.range': [2, 4], 'yaxis.range': [-3, 1] }); await __wait(1000); })()""",
                 bytes_of, work)
+
+            # --- an axis's unit with a prefix ------------------------------------------
+            def titled(x, y):
+                return lambda p, d, s: check('  its axes titled in the prefixes', (d['axes'][-1]['x']['title'], d['axes'][0]['y']['title']), (x, y))
+            await case(page, 'kyears and mBq/year, lin, a background', """(async () => {
+                await __scale('x', 'linear'); await __scale('y', 'linear'); await __prefix('x', 'k'); await __prefix('y', 'm');
+                await __pick('results.h5', '/geo/flux');
+                const s = document.getElementById('backgroundSourceSelect'); s.value = '/geo/_phase'; s.dispatchEvent(new Event('change', { bubbles: true })); await __wait(2000); })()""",
+                bytes_of, work, expect=titled('Time (kyears)', 'Value (mBq/year)'))
+            await case(page, 'kyears and mBq/year, log, a background', """(async () => { await __scale('x', 'log'); await __scale('y', 'log'); })()""",
+                bytes_of, work, expect=titled('Time (kyears)', 'Value (mBq/year)'))
+            await page.ev("(async () => { const s = document.getElementById('backgroundSourceSelect'); s.value = '__none__'; s.dispatchEvent(new Event('change', { bubbles: true })); await __wait(1500); })()")
+            await case(page, 'realisations in µmol/m3: the mean, CI, SEM and a realisation', """(async () => {
+                await __prefix('y', 'µ'); await __pick('results.h5', '/prob/conc'); await __tick('showCI', true); await __tick('showSDOM', true); await __iter(3); })()""",
+                bytes_of, work, expect=titled('Time (kyears)', 'Value (µmol/m3)'))
+            await page.ev("(async () => { await __iter(null); await __tick('showCI', false); await __tick('showSDOM', false); })()")
+            await case(page, 'two groups a panel each, in k of their units', """(async () => {
+                await __prefix('y', 'k'); await __pick('results.h5', '/nuc', { group: true }); await __pick('results.h5', '/dose', { group: true, ctrl: true }); })()""",
+                bytes_of, work, expect=lambda p, d, s: check('  each panel titled in its unit, with the prefix', [a['y']['title'] for a in d['axes']], ['kBq', 'kSv/year']))
+            await page.ev("(async () => { await __prefix('x', ''); await __prefix('y', ''); await __pick('results.h5', '/geo/flux'); })()", timeout=60)
 
             # --- a probabilistic /time -----------------------------------------------
             await case(page, 'a probabilistic /time: realisation 1', """(async () => {

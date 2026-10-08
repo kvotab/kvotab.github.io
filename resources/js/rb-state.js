@@ -126,7 +126,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
   <div class="welcome-section">
     <h4>Chart Controls</h4>
     <ul>
-      <li><strong>Scale selectors</strong> — switch axes between linear and log scales.</li>
+      <li><strong>Scale selectors</strong> — switch axes between linear and log scales, and give an axis's unit a prefix: <em>k</em> shows Bq as kBq, the values divided by 1000.</li>
       <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
       <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
       <li><strong>Preset views</strong> — quickly zoom to common time ranges.</li>

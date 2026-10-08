@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RB CHART - line styles, axis scale controls, axes lock
+   RB CHART - line styles, axis scale controls, axes lock, unit prefixes
    --------------------------------------------------------------------------
    Split out of rb-chart.js, which had grown past 3 600 lines. These are plain
    scripts sharing globals, not ES modules, so the load order in rb.html is the
@@ -375,8 +375,8 @@ function toggleAxesLock() {
 
 /** Enable or disable scale toggles and preset controls based on lock state. */
 function _setAxesControlsDisabled(disabled) {
-  // Scale toggle buttons
-  document.querySelectorAll('#xScaleToggle button, #yScaleToggle button').forEach(b => {
+  // Scale toggle buttons, and the unit prefix beside each
+  document.querySelectorAll('#xScaleToggle button, #yScaleToggle button, #xPrefixSelect, #yPrefixSelect').forEach(b => {
     b.disabled = disabled;
   });
   // Preset select and action buttons
@@ -394,10 +394,14 @@ function _setAxesControlsDisabled(disabled) {
 /**
  * Apply the locked axes state to a layout object.
  * Sets scale types, ranges and disables autorange when locked.
+ *
+ * The locked limits are in the file's units (_captureCurrentView), and the
+ * chart is drawn in the axes' prefixes, which the lock keeps as they were.
  */
 function _applyLockedAxes(layout) {
   if (!_axesLocked || !_lockedAxesState) return;
   const s = _lockedAxesState;
+  const exp = axisExponents();
 
   // Apply scale types and update UI toggles
   if (s.xScale) {
@@ -411,17 +415,318 @@ function _applyLockedAxes(layout) {
 
   // Apply X range
   if (s.xMin != null && s.xMax != null) {
+    const lo = shiftDecimal(s.xMin, -exp.x);
+    const hi = shiftDecimal(s.xMax, -exp.x);
     layout.xaxis.range = s.xScale === 'log'
-      ? [Math.log10(s.xMin), Math.log10(s.xMax)]
-      : [s.xMin, s.xMax];
+      ? [Math.log10(lo), Math.log10(hi)]
+      : [lo, hi];
     layout.xaxis.autorange = false;
   }
 
   // Apply Y range
   if (s.yMin != null && s.yMax != null) {
+    const lo = shiftDecimal(s.yMin, -exp.y);
+    const hi = shiftDecimal(s.yMax, -exp.y);
     layout.yaxis.range = s.yScale === 'log'
-      ? [Math.log10(s.yMin), Math.log10(s.yMax)]
-      : [s.yMin, s.yMax];
+      ? [Math.log10(lo), Math.log10(hi)]
+      : [lo, hi];
     layout.yaxis.autorange = false;
   }
+}
+
+/* ==========================================================================
+   UNIT PREFIXES — kBq on an axis, its values divided by 1000
+   ==========================================================================
+
+   Beside each axis's lin/log is a prefix for its unit: k shows Bq as kBq and
+   the values divided by 1000, µ shows Sv/year as µSv/year and the values
+   times a million. It is a setting of the page, as lin/log is: it applies to
+   the chart on screen at once (changeAxisPrefix) and to every time chart drawn
+   after it. A preset can carry one, and the axes lock keeps it.
+
+   What is drawn is in the prefixed unit: the traces' x and y, the background's
+   segments, the ranges. What the page keeps -- the files' values, the
+   realisations a band is computed from, a preset's or the lock's limits --
+   stays in the file's units, and is put in the axes' as it is handed to Plotly
+   (inAxisUnits, segmentsInAxisUnits). A trace drawn with a prefix keeps the
+   values it was given as _fileX and _fileY: a change of prefix redraws from
+   them, and the CSV export writes them.
+
+   Values are moved by their decimal digits, not multiplied: 1.1e-7 Bq is
+   1.1e-10 kBq, where 1.1e-7 / 1000 is 1.1000000000000001e-10 -- as one value
+   in six or so is, which an export would then write out.
+*/
+
+/** The prefixes an axis can be given, largest first, with the power of ten of each. */
+const AXIS_PREFIXES = Object.freeze({ P: 15, T: 12, G: 9, M: 6, k: 3, m: -3, 'µ': -6, n: -9, p: -12, f: -15 });
+
+/** A prefix by its power of ten, for a unit that has one already (mSv with k is Sv). */
+const PREFIX_OF_EXPONENT = Object.freeze({
+  18: 'E', 15: 'P', 12: 'T', 9: 'G', 6: 'M', 3: 'k', '-3': 'm', '-6': 'µ', '-9': 'n', '-12': 'p', '-15': 'f', '-18': 'a'
+});
+
+/** The prefixes recognised at the start of a unit: those above, and µ as Greek mu or as u. */
+const PREFIX_IN_UNIT = Object.freeze({
+  E: 18, P: 15, T: 12, G: 9, M: 6, k: 3, m: -3, 'µ': -6, 'μ': -6, u: -6, n: -9, p: -12, f: -15, a: -18
+});
+
+/*
+  The units a prefix is put in front of. Only those: a symbol that is not one
+  is written with a power of ten (10³ ppm), which is right whatever it is,
+  where a letter in front of it could make something else of it -- k before
+  pH would read as nanohenry once pH split into p and H. Hours and days are
+  left out, and kelvin, coulomb and the like, which take no prefix in use or
+  are mistaken for something that does not (C for °C).
+*/
+const PREFIXABLE_UNITS = new Set(['Bq', 'Ci', 'Sv', 'Gy', 'rem', 'rad', 'g', 't', 'mol', 'm', 's', 'L', 'l',
+  'Pa', 'bar', 'J', 'W', 'Wh', 'eV', 'V', 'Hz', 'a', 'yr', 'year', 'years']);
+
+function isPrefixableUnit(symbol) {
+  return PREFIXABLE_UNITS.has(symbol) || /^years?$/i.test(symbol);
+}
+
+/**
+ * v × 10^e, made by moving v's decimal digits e places: the double nearest the
+ * shifted decimal, as v's shortest spelling has it. Anything that is not a
+ * finite number is returned as it is: a null in a trace is a gap.
+ *
+ * @param {*} v
+ * @param {number} e
+ * @returns {*}
+ */
+function shiftDecimal(v, e) {
+  if (!e || typeof v !== 'number' || !Number.isFinite(v) || v === 0) return v;
+  const s = v.toExponential();
+  const at = s.indexOf('e');
+  return Number(`${s.slice(0, at)}e${Number(s.slice(at + 1)) + e}`);
+}
+
+/** The power of ten of a prefix: 3 for k; 0 for none, or for anything that is not one of AXIS_PREFIXES. */
+function prefixExponent(prefix) {
+  return typeof prefix === 'string' && Object.prototype.hasOwnProperty.call(AXIS_PREFIXES, prefix)
+    ? AXIS_PREFIXES[prefix] : 0;
+}
+
+/** The prefix of a power of ten in AXIS_PREFIXES: 'k' for 3, '' for 0. */
+function prefixOf(e) {
+  return Object.keys(AXIS_PREFIXES).find(p => AXIS_PREFIXES[p] === e) || '';
+}
+
+/** 10³, 10⁻⁶: a power of ten as text, for a title or a note. */
+function powerOfTen(e) {
+  return '10' + String(e).replace('-', '⁻').replace(/\d/g, d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]);
+}
+
+/** The prefix chosen beside an axis's lin/log ('x' or 'y'): '' for none. */
+function getAxisPrefix(axis) {
+  const select = document.getElementById(axis + 'PrefixSelect');
+  const value = select ? select.value : '';
+  return prefixExponent(value) ? value : '';
+}
+
+/** Choose a prefix beside an axis's lin/log; anything that is not one is none. */
+function setAxisPrefix(axis, prefix) {
+  const select = document.getElementById(axis + 'PrefixSelect');
+  if (select) select.value = prefixExponent(prefix) ? prefix : '';
+}
+
+/** The prefixes chosen, as powers of ten: what the next chart is drawn in. */
+function axisExponents() {
+  return { x: prefixExponent(getAxisPrefix('x')), y: prefixExponent(getAxisPrefix('y')) };
+}
+
+/** The powers of ten the chart on screen is drawn in: none for no chart, or one that is not a time chart. */
+function chartExponents() {
+  const units = currentChartData && currentChartData.axisUnits;
+  return units ? { x: units.exp.x, y: units.exp.y } : { x: 0, y: 0 };
+}
+
+/**
+ * A unit as an axis with a prefix of 10^e shows it: Bq as kBq, mSv/year as
+ * µSv/year (e = -3), years as kyears. Where a prefix cannot go in front, the
+ * power of ten is written before the unit instead: m3/year as 10³ m3/year,
+ * since km3 would be 10⁹ m3; a unit not in PREFIXABLE_UNITS; a prefix that
+ * would go past E or a; and no unit at all, which is 10³ alone.
+ *
+ * @param {*} unit - The file's unit, as its 'unit' attribute has it
+ * @param {number} e - The prefix's power of ten; 0 leaves the unit as it is
+ * @returns {string}
+ */
+function unitWithPrefix(unit, e) {
+  const text = unit === undefined || unit === null ? '' : String(unit);
+  if (!e) return text;
+  const u = text.trim();
+  const power = powerOfTen(e);
+  if (u === '' || /^[-–—−1]$/.test(u)) return power;   // none, or a dimensionless "-" or "1"
+  // The first symbol, and what follows it: an exponent there (m3, m^3, m²,
+  // m-1, m<sup>3</sup>) would raise the prefix with it.
+  const m = /^([A-Za-zµμ]+)([\s\S]*)$/.exec(u);
+  if (!m || /^(?:[\d^²³¹⁰-⁻]|\*\*|[-−]\d|<sup)/i.test(m[2])) return `${power} ${u}`;
+  const [, symbol, rest] = m;
+  if (isPrefixableUnit(symbol)) return PREFIX_OF_EXPONENT[e] ? PREFIX_OF_EXPONENT[e] + u : `${power} ${u}`;
+  // A unit with a prefix of its own: the two make one.
+  const inner = PREFIX_IN_UNIT[symbol[0]];
+  if (inner !== undefined && isPrefixableUnit(symbol.slice(1))) {
+    const both = inner + e;
+    if (both === 0) return symbol.slice(1) + rest;
+    if (PREFIX_OF_EXPONENT[both]) return PREFIX_OF_EXPONENT[both] + symbol.slice(1) + rest;
+  }
+  return `${power} ${u}`;
+}
+
+/**
+ * An axis title: its name and, in brackets, its units with the axis's prefix:
+ * "Value (kBq/year)", "Time (kyears)". A panel's title is its unit alone, or
+ * its group's name when it has none; with a prefix and no unit the bracket
+ * holds the power of ten, "Value (10³)".
+ *
+ * @param {{name: string, units: Array}} spec - What the axis shows
+ * @param {number} e - The axis's prefix, as a power of ten
+ * @returns {string}
+ */
+function axisTitle({ name, units }, e) {
+  const shown = units.length ? units.map(u => unitWithPrefix(u, e)).join(', ') : (e ? powerOfTen(e) : '');
+  if (!shown) return name;
+  return name ? `${name} (${shown})` : shown;
+}
+
+/** Values in units of 10^e of theirs: the same array when e is 0. */
+function valuesInUnit(values, e) {
+  if (!e || !values) return values;
+  return Array.from(values, v => shiftDecimal(v, -e));
+}
+
+/**
+ * Traces about to be drawn, put in the axes' units: each one's x and y in the
+ * prefixes `exp`, the values it was given kept as _fileX and _fileY. Traces
+ * drawn with no prefix, which have never had one, are left exactly as they are.
+ *
+ * @param {Object[]} traces - Modified in place
+ * @param {{x: number, y: number}} exp - The axes' prefixes, as powers of ten
+ * @returns {Object[]} the traces
+ */
+function inAxisUnits(traces, exp) {
+  for (const t of traces) {
+    if (!('_fileX' in t)) {
+      if (!exp.x && !exp.y) continue;
+      t._fileX = t.x;
+      t._fileY = t.y;
+    }
+    t.x = valuesInUnit(t._fileX, exp.x);
+    t.y = valuesInUnit(t._fileY, exp.y);
+  }
+  return traces;
+}
+
+/**
+ * Background segments put on an x axis in units of 10^e, each keeping where it
+ * is in the file's units as _fileX0 and _fileX1. The segments themselves when
+ * there is nothing to move.
+ *
+ * @param {Object[]} segments - {x0, x1, ...}
+ * @param {number} e
+ * @returns {Object[]}
+ */
+function segmentsInAxisUnits(segments, e) {
+  return (segments || []).map((s) => {
+    if (!('_fileX0' in s) && !e) return s;
+    const x0 = '_fileX0' in s ? s._fileX0 : s.x0;
+    const x1 = '_fileX1' in s ? s._fileX1 : s.x1;
+    return { ...s, x0: shiftDecimal(Number(x0), -e), x1: shiftDecimal(Number(x1), -e), _fileX0: x0, _fileX1: x1 };
+  });
+}
+
+/* One change of prefix at a time: each redraws from where the last one left it. */
+let _axisUnitsQueue = Promise.resolve();
+
+/**
+ * The prefix select beside an axis's lin/log. The chart on screen is redrawn
+ * in it at once, over the same stretch of data -- 1e4 to 1e9 Bq becomes 10 to
+ * 1e6 kBq -- and the charts drawn after it are drawn in it.
+ *
+ * The preset selected stays selected, since it is the same data, unless it
+ * gives this axis a prefix of its own and this is another: then the view is
+ * no longer the preset's, and the dropdown says Custom.
+ *
+ * @param {string} axis - 'x' or 'y'
+ * @returns {Promise}
+ */
+function changeAxisPrefix(axis) {
+  const which = axis === 'x' ? 'x' : 'y';
+  const selected = document.getElementById('presetSelect');
+  const preset = currentChartData && selected ? loadPresets().find(p => p.id === selected.value) : null;
+  const own = preset ? preset[which + 'Prefix'] : null;
+  if (own !== null && own !== undefined && own !== getAxisPrefix(which)) _markCustomPreset();
+  _axisUnitsQueue = _axisUnitsQueue
+    .then(() => redrawInAxisUnits(which, prefixExponent(getAxisPrefix(which))))
+    .catch(err => reportFailure('changeAxisPrefix', err, { userMessage: 'The axis could not be redrawn in that unit' }));
+  return _axisUnitsQueue;
+}
+
+/**
+ * Redraw the time chart on screen with `axis` in units of 10^e, in place: its
+ * traces from their values in the file's units, its title, its range over the
+ * same stretch of data (a log y axis on auto range stays on it), the background
+ * along a time axis, and Show Max's numbers. The preset selected stays so.
+ *
+ * @param {string} axis - 'x' or 'y'
+ * @param {number} e
+ * @returns {Promise}
+ */
+async function redrawInAxisUnits(axis, e) {
+  const plotDiv = document.getElementById('plotlyChart');
+  const units = currentChartData && currentChartData.axisUnits;
+  const fl = plotDiv && plotDiv._fullLayout;
+  if (!units || !fl || !Array.isArray(plotDiv.data)) return;
+  const from = units.exp[axis];
+  if (from === e) return;
+
+  const field = axis === 'x' ? '_fileX' : '_fileY';
+  const values = plotDiv.data.map((t) => {
+    if (!('_fileX' in t)) {
+      t._fileX = valuesInUnit(t.x, -units.exp.x);
+      t._fileY = valuesInUnit(t.y, -units.exp.y);
+    }
+    return valuesInUnit(t[field], e);
+  });
+
+  const update = {};
+  for (const [key, spec] of Object.entries(units.titles)) {
+    if (key[0] === axis && spec) update[`${key}.title.text`] = axisTitle(spec, e);
+  }
+  // A range set by hand, a preset or the snap is moved to where the same data
+  // is; one Plotly ranges itself follows the data on its own.
+  const shift = from - e;
+  const keys = Object.keys(fl).filter(k => k[0] === axis && /^[xy]axis\d*$/.test(k));
+  const autoLog = keys.filter(k => axis === 'y' && isAutoLogY(plotDiv, k));
+  for (const key of keys) {
+    const ax = fl[key];
+    if (ax.matches || ax.autorange || !Array.isArray(ax.range)) continue;
+    const log = ax.type === 'log';
+    update[`${key}.range`] = ax.range.map(v => (log ? Number(v) + shift : shiftDecimal(Number(v), shift)));
+    update[`${key}.autorange`] = false;
+  }
+  let segments = null;
+  if (axis === 'x' && chartHasBackgroundShapes(plotDiv) && Array.isArray(plotDiv.__bgSegments)) {
+    segments = segmentsInAxisUnits(plotDiv.__bgSegments, e);
+    update.shapes = backgroundRectShapes(segments, values.map(x => ({ x })), fl.xaxis.type);
+  }
+
+  _suppressPresetSync = true;
+  try {
+    await Plotly.update(plotDiv, { [axis]: values }, update);
+  } finally {
+    _suppressPresetSync = false;
+  }
+  units.exp[axis] = e;
+  for (const key of autoLog) {
+    plotDiv.__autoLogY = Object.assign({}, plotDiv.__autoLogY, { [key]: plotDiv.__autoLogY[key].map(v => v + shift) });
+  }
+  if (segments) setupBackgroundOverlayTooltip(plotDiv, segments);
+  // Show Max's numbers are in the axis's unit.
+  const showMax = document.getElementById('showMax');
+  const showMaxLabel = document.getElementById('showMaxLabel');
+  if (axis === 'y' && showMax && showMax.checked && showMaxLabel && showMaxLabel.style.display !== 'none') toggleShowMax();
+  refreshDynamicLegend();
+  await snapLogRangeToDecades(plotDiv);
 }

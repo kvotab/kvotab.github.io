@@ -307,6 +307,8 @@ function xlChartModel(gd) {
   const fl = gd._fullLayout;
   const fd = gd._fullData;
   if (!fl || !Array.isArray(fd)) return null;
+  // The values are in the axes' units, with the prefix the y axis has.
+  const yExp = chartExponents().y;
 
   const lines = [];
   const bands = [];
@@ -340,7 +342,7 @@ function xlChartModel(gd) {
       legend: ft.showlegend !== false && !ut._hiddenFromLegend,
       rank: isFinite(ft.legendrank) ? Number(ft.legendrank) : 1000,   // the legend's order (rb sorts it by peak)
       bandKey: ut._bandKey || null,
-      unit: ut._unit ? String(ut._unit) : '',
+      unit: ut._unit ? unitWithPrefix(String(ut._unit), yExp) : '',
       fileKey: ut._fileKey ? String(ut._fileKey) : '',
       probabilistic: !!ut._isProbabilistic,
       realizations: Number(ut._numRealizations) || null,
@@ -885,6 +887,13 @@ function xlChartSubject(model) {
     lines.push(`${files.length > 1 ? 'Files' : 'File'}: ${files.join(', ')}${mode !== 'separated' ? ` (${mode})` : ''}`);
   }
   lines.push(`Exported from the HDF5 Browser (kvotab.se) on ${new Date().toLocaleString('sv-SE').slice(0, 16)}`);
+  const exp = chartExponents();
+  for (const axis of ['x', 'y']) {
+    const e = exp[axis];
+    if (!e) continue;
+    lines.push(`The ${axis} axis has the prefix ${prefixOf(e)}: its values, here and in the chart, are the files' `
+      + `${e > 0 ? 'divided by' : 'times'} ${powerOfTen(Math.abs(e))}.`);
+  }
 
   const all = model.panels.flatMap(p => p.lines);
   const prob = all.filter(l => l.probabilistic);

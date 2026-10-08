@@ -40,6 +40,7 @@ registerActions({
   toggleBackgroundOverlay: () => toggleBackgroundOverlay(),
 
   /* ── Axes and presets ────────────────────────────────────────────────── */
+  changeAxisPrefix:    (event, el) => changeAxisPrefix(el.dataset.axis),
   toggleAxesLock:      () => toggleAxesLock(),
   applySelectedPreset: () => applySelectedPreset(),
   saveCurrentAsPreset: () => saveCurrentAsPreset(),

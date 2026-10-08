@@ -56,7 +56,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20260930b">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20261007">
 </head>
 <body>
   <div id="dropOverlay">
@@ -187,12 +187,23 @@
         <div id="plotlyChartContainer">
           <h3>Chart</h3>
           <div class="chart-controls">
+            <!--
+              Beside each lin/log, a prefix for the axis's unit: k shows Bq as
+              kBq and the values divided by 1000 (changeAxisPrefix in
+              rb-chart-axes.js). The label's own control stays the lin button;
+              a click on the select is the select's alone.
+            -->
             <label>
               X-axis:
               <div class="scale-toggle" id="xScaleToggle">
                 <button data-axis="x" data-value="linear" class="active">lin</button>
                 <button data-axis="x" data-value="log">log</button>
               </div>
+              <select id="xPrefixSelect" class="prefix-select" data-axis="x" data-on-change="changeAxisPrefix" aria-label="Prefix for the x axis's unit" title="A prefix for the x axis's unit: k shows years as kyears, the values divided by 1000">
+                <option value="P">P</option><option value="T">T</option><option value="G">G</option><option value="M">M</option><option value="k">k</option>
+                <option value="" selected>–</option>
+                <option value="m">m</option><option value="µ">µ</option><option value="n">n</option><option value="p">p</option><option value="f">f</option>
+              </select>
             </label>
             <label>
               Y-axis:
@@ -200,6 +211,11 @@
                 <button data-axis="y" data-value="linear" class="active">lin</button>
                 <button data-axis="y" data-value="log">log</button>
               </div>
+              <select id="yPrefixSelect" class="prefix-select" data-axis="y" data-on-change="changeAxisPrefix" aria-label="Prefix for the y axis's unit" title="A prefix for the y axis's unit: k shows Bq as kBq, the values divided by 1000; µ shows Sv as µSv, the values times a million">
+                <option value="P">P</option><option value="T">T</option><option value="G">G</option><option value="M">M</option><option value="k">k</option>
+                <option value="" selected>–</option>
+                <option value="m">m</option><option value="µ">µ</option><option value="n">n</option><option value="p">p</option><option value="f">f</option>
+              </select>
             </label>
             <label >
               <input type="checkbox" id="dynamicLegend" checked data-on-change="toggleDynamicLegend">
@@ -305,7 +321,7 @@
                 <div class="welcome-section">
                   <h4>Chart Controls</h4>
                   <ul>
-                    <li><strong>Scale selectors</strong> — switch axes between linear and log scales.</li>
+                    <li><strong>Scale selectors</strong> — switch axes between linear and log scales, and give an axis's unit a prefix: <em>k</em> shows Bq as kBq, the values divided by 1000.</li>
                     <li><strong>Show Total</strong> — for radionuclide groups, overlay a summed trace.</li>
                     <li><strong>Show Ratio</strong> — when two files are loaded, display max-value ratios per isotope.</li>
                     <li><strong>Show Max</strong> — append maximum trace value to each legend entry (disabled when Show Ratio is active).</li>
@@ -411,21 +427,21 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20260930"></script>
-  <script src="./resources/js/rb-utils.js?v=20260930"></script>
-  <script src="./resources/js/rb-actions.js?v=20260930b"></script>
+  <script src="./resources/js/rb-state.js?v=20261007"></script>
+  <script src="./resources/js/rb-utils.js?v=20261007"></script>
+  <script src="./resources/js/rb-actions.js?v=20261007"></script>
   <script src="./resources/js/rb-hdf5.js?v=20260928"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
   <script src="./resources/js/rb-file.js?v=20260926"></script>
   <script src="./resources/js/rb-tabs.js?v=20260921"></script>
   <script src="./resources/js/rb-tree.js?v=20260926"></script>
-  <script src="./resources/js/rb-chart-axes.js?v=20260928"></script>
-  <script src="./resources/js/rb-chart-presets.js?v=20260927"></script>
-  <script src="./resources/js/rb-chart-export.js?v=20260927"></script>
-  <script src="./resources/js/rb-chart-excel.js?v=20260930"></script>
-  <script src="./resources/js/rb-chart-python.js?v=20260930"></script>
-  <script src="./resources/js/rb-chart-toggles.js?v=20260930"></script>
-  <script src="./resources/js/rb-chart.js?v=20260930"></script>
+  <script src="./resources/js/rb-chart-axes.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-presets.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-export.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-excel.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-python.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-toggles.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart.js?v=20261007"></script>
   <script src="./resources/js/rb-legend.js?v=20260926"></script>
   <script src="./resources/js/rb-info.js?v=20260926"></script>
   <script src="./resources/js/rb-search.js?v=20260926"></script>

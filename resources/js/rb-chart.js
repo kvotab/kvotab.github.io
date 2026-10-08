@@ -401,6 +401,11 @@ function renderPlotlyChart(ctx) {
       setShowCIVisible(true);
     }
 
+    // In the units the axes show, with their prefixes; Show Max's too.
+    const exp = axisExponents();
+    inAxisUnits(traces, exp);
+    const segments = segmentsInAxisUnits(indexBackgroundSegments, exp.x);
+
     // Annotate legend with max values if "Show Max" is checked
     const showMaxCb = getElement('showMax');
     if (showMaxCb && showMaxCb.checked) {
@@ -409,24 +414,23 @@ function renderPlotlyChart(ctx) {
 
     const { xScale, yScale } = getChartScales();
 
-    let yAxisTitle = 'Value';
-    if (yAxisUnit) {
-      yAxisTitle = `Value (${yAxisUnit})`;
-    }
-
+    const titles = {
+      xaxis: { name: 'Time', units: timeUnit ? [timeUnit] : [] },
+      yaxis: { name: 'Value', units: yAxisUnit ? [yAxisUnit] : [] }
+    };
     const paths = [path];
     const layout = ChartService.createBaseLayout({
       title: path,
-      xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
-      yAxisTitle,
+      xAxisTitle: axisTitle(titles.xaxis, exp.x),
+      yAxisTitle: axisTitle(titles.yaxis, exp.y),
       xScale,
       yScale
     });
     layout.margin.r = 200; // Extra room for longer legend names
 
-    if (indexBackgroundSegments.length) {
+    if (segments.length) {
       layout.shapes = (layout.shapes || [])
-        .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
+        .concat(backgroundRectShapes(segments, traces, xScale));
     }
 
     applyAxisState(layout, savedAxisState);
@@ -445,7 +449,7 @@ function renderPlotlyChart(ctx) {
 
     const config = getPlotlyConfig('multi_dataset_chart');
 
-    currentChartData = { traces, layout, paths, _isProbTimeChart: hasProbTime };
+    currentChartData = { traces, layout, paths, _isProbTimeChart: hasProbTime, axisUnits: { exp, titles } };
     if (chartContainer) chartContainer.classList.add('visible');
     if (dynamicLegendEnabled) {
       assignLegendRanks(traces);
@@ -481,7 +485,7 @@ function renderPlotlyChart(ctx) {
       }
       populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
       setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
-      setupBackgroundOverlayTooltip(getElement('plotlyChart'), indexBackgroundSegments);
+      setupBackgroundOverlayTooltip(getElement('plotlyChart'), segments);
       hideChartLoading(chartContainer);
     });
   } else {
@@ -796,6 +800,10 @@ function createMultiDatasetChart(items) {
     setIterationSelectorVisible(_iterMax > 0);
     if (_iterMax > 0) setIterationSelectorMax(_iterMax);
 
+    // In the units the axes show, with their prefixes; Show Max's too.
+    const exp = axisExponents();
+    inAxisUnits(traces, exp);
+
     // Annotate legend with max values if "Show Max" is checked
     const showMaxCb = getElement('showMax');
     if (showMaxCb && showMaxCb.checked) {
@@ -803,28 +811,25 @@ function createMultiDatasetChart(items) {
     }
 
     const { xScale, yScale } = getChartScales();
-    
-    let yAxisTitle = 'Value';
-    if (yAxisUnits.size === 1) {
-      yAxisTitle = `Value (${Array.from(yAxisUnits)[0]})`;
-    } else if (yAxisUnits.size > 1) {
-      yAxisTitle = `Value (${Array.from(yAxisUnits).join(', ')})`;
-    }
-    
+
+    const titles = {
+      xaxis: { name: 'Time', units: timeUnit ? [timeUnit] : [] },
+      yaxis: { name: 'Value', units: Array.from(yAxisUnits) }
+    };
     const paths = normalizedItems.map(d => d.path);
     const layout = ChartService.createBaseLayout({
       title: `Comparing ${normalizedItems.length} dataset${normalizedItems.length > 1 ? 's' : ''}`,
-      xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
-      yAxisTitle,
+      xAxisTitle: axisTitle(titles.xaxis, exp.x),
+      yAxisTitle: axisTitle(titles.yaxis, exp.y),
       xScale,
       yScale
     });
     layout.margin.r = 200; // Extra room for longer legend names
     _applyLockedAxes(layout);
-    
+
     const config = getPlotlyConfig('multi_dataset_chart');
 
-    currentChartData = { traces, layout, paths };
+    currentChartData = { traces, layout, paths, axisUnits: { exp, titles } };
     const container = getElement('plotlyChartContainer');
     if (container) container.classList.add('visible');
     if (dynamicLegendEnabled) {
@@ -1841,8 +1846,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
     // otherwise it is a value, in whichever units they are in.
     const units = [...new Set(panels.map(groupUnitOf).filter(Boolean))];
     const names = new Set(panels.map(p => p.path.split('/').pop()));
-    const yAxisTitle = names.size > 1 || units.length > 1
-      ? `Value${units.length ? ` (${units.join(', ')})` : ''}` : null;
+    const yAxisSpec = names.size > 1 || units.length > 1 ? { name: 'Value', units } : null;
     renderRadionuclidesChart({
       traces, path: panels[0].path, enabledFiles: panels[0].files, chartContainer, savedAxisState,
       hasProbabilistic: shared.hasProbabilistic, hasProbTime: shared.hasProbTime,
@@ -1851,7 +1855,7 @@ async function createRadionuclidesChart(path, savedAxisState) {
       backgroundSourceValue: shared.backgroundSourceValue,
       indexBackgroundSegments: shared.indexBackgroundSegments,
       timeUnit, yAxisName: panels[0].path.split('/').pop(),
-      yAxisTitle,
+      yAxisSpec,
       wasCIChecked, wasSDOMChecked
     });
   } else {
@@ -1952,7 +1956,12 @@ function renderRadionuclidesChart(ctx) {
     if (_iterMax > 0) setIterationSelectorMax(_iterMax);
     populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
     setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
-    
+
+    // In the units the axes show, with their prefixes; Show Max's too.
+    const exp = axisExponents();
+    inAxisUnits(traces, exp);
+    const segments = segmentsInAxisUnits(indexBackgroundSegments, exp.x);
+
     // Annotate legend with max values if "Show Max" is checked and ratio is not active
     if (!showRatioChecked) {
       const showMaxCb = getElement('showMax');
@@ -1980,26 +1989,30 @@ function renderRadionuclidesChart(ctx) {
     }
     
     const { xScale, yScale } = getChartScales();
-    const yAxisTitle = ctx.yAxisTitle || (yAxisUnit ? `${yAxisName} (${yAxisUnit})` : yAxisName);
-    
+    const titles = {
+      xaxis: { name: 'Time', units: timeUnit ? [timeUnit] : [] },
+      yaxis: ctx.yAxisSpec || { name: yAxisName, units: yAxisUnit ? [yAxisUnit] : [] }
+    };
+
     const layout = ChartService.createBaseLayout({
       title: path,
-      xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
-      yAxisTitle,
+      xAxisTitle: axisTitle(titles.xaxis, exp.x),
+      yAxisTitle: axisTitle(titles.yaxis, exp.y),
       xScale,
       yScale
     });
 
-    if (indexBackgroundSegments.length) {
+    if (segments.length) {
       layout.shapes = (layout.shapes || [])
-        .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
+        .concat(backgroundRectShapes(segments, traces, xScale));
     }
-    
+
     // Preserve axis ranges when toggling controls (Show Total, Show Ratio)
     applyAxisState(layout, savedAxisState);
     _applyLockedAxes(layout);
-    
-    renderChart(traces, layout, path, afterRadionuclideRender(ctx));
+
+    renderChart(traces, layout, path, afterRadionuclideRender({ ...ctx, indexBackgroundSegments: segments }),
+      { exp, titles });
   } else {
     hideChartLoading(chartContainer);
     setupBackgroundOverlayTooltip(getElement('plotlyChart'), []);
@@ -2152,17 +2165,31 @@ function renderRadionuclidePanels(ctx) {
   populateBackgroundSelector(backgroundSourceOptions, backgroundSourceValue);
   setBackgroundSelectorVisible(backgroundSourceOptions.length > 1);
 
+  // In the units the axes show, with their prefixes.
+  const exp = axisExponents();
+  inAxisUnits(traces, exp);
+  const segments = segmentsInAxisUnits(indexBackgroundSegments, exp.x);
+
+  // Each panel's y axis is titled with its unit, or its group's name when it
+  // has none; the time axis's title is under the last panel (layoutPanels).
+  const bottomX = 'xaxis' + (drawn.length > 1 ? drawn.length : '');
+  const titles = { [bottomX]: { name: 'Time', units: timeUnit ? [timeUnit] : [] } };
+  drawn.forEach((d, i) => {
+    titles['yaxis' + (i ? i + 1 : '')] = units[i] ? { name: '', units: [units[i]] }
+      : { name: d.panel.path.split('/').pop(), units: [] };
+  });
+
   const { xScale, yScale } = getChartScales();
   const layout = ChartService.createBaseLayout({
     title: '',
-    xAxisTitle: timeUnit ? `Time (${timeUnit})` : 'Time',
+    xAxisTitle: axisTitle(titles[bottomX], exp.x),
     yAxisTitle: '',
     xScale,
     yScale
   });
-  if (indexBackgroundSegments.length) {
+  if (segments.length) {
     layout.shapes = (layout.shapes || [])
-      .concat(backgroundRectShapes(indexBackgroundSegments, traces, xScale));
+      .concat(backgroundRectShapes(segments, traces, xScale));
   }
   // The first panel's axes are the ones the controls read and set, and the
   // others are copied from them once the saved view and the lock are on.
@@ -2171,10 +2198,11 @@ function renderRadionuclidePanels(ctx) {
   layoutPanels(layout, drawn.map((d, i) => ({
     label: labels[i],
     unit: units[i],
-    title: units[i] || d.panel.path.split('/').pop()
+    title: axisTitle(titles['yaxis' + (i ? i + 1 : '')], exp.y)
   })));
 
-  renderChart(traces, layout, drawn[0].panel.path, afterRadionuclideRender(ctx));
+  renderChart(traces, layout, drawn[0].panel.path, afterRadionuclideRender({ ...ctx, indexBackgroundSegments: segments }),
+    { exp, titles });
 }
 
 /**

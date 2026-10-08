@@ -133,8 +133,8 @@ function applyPresetById(id) {
 
   const rangeOf = (lo, hi) => (lo != null && hi != null ? [lo, hi] : null);
   return _applyAxisSettings({
-    x: { scale: preset.xScale || null, range: rangeOf(preset.xMin, preset.xMax) },
-    y: { scale: preset.yScale || null, range: rangeOf(preset.yMin, preset.yMax) }
+    x: { scale: preset.xScale || null, prefix: preset.xPrefix, range: rangeOf(preset.xMin, preset.xMax) },
+    y: { scale: preset.yScale || null, prefix: preset.yPrefix, range: rangeOf(preset.yMin, preset.yMax) }
   });
 }
 
@@ -143,18 +143,29 @@ function applyPresetById(id) {
  *
  * `settings.x` and `settings.y` are each optional -- an axis left out is not
  * touched at all, which is how the editor changes only what the reader
- * changed. Within an axis, `scale` null keeps the current scale, and `range`
- * is [min, max] in data units, null for auto range, or undefined to keep the
- * limits as they are (Plotly carries them across a change of scale, the same
- * as the lin/log buttons).
+ * changed. Within an axis, `scale` null keeps the current scale; `prefix` is
+ * the unit's prefix, '' for none, or null or undefined to keep the one it
+ * has; and `range` is [min, max] in the file's units, null for auto range, or
+ * undefined to keep the limits as they are (Plotly carries them across a
+ * change of scale, the same as the lin/log buttons, and a change of prefix
+ * keeps the stretch of data shown).
  *
  * The limits are converted for the scale the axis ENDS UP on. This used to go
  * by the preset's own scale only, so a preset with scale "auto" and limits,
- * applied to a log axis, handed Plotly years as if they were exponents.
+ * applied to a log axis, handed Plotly years as if they were exponents. And
+ * they are put in the prefix it ends up with: a preset's 1e4 Bq is 10 kBq.
  *
  * @returns {Promise}
  */
-function _applyAxisSettings(settings) {
+async function _applyAxisSettings(settings) {
+  // A prefix first: it redraws the data, and the limits below are put in it.
+  for (const axis of ['x', 'y']) {
+    const s = settings[axis];
+    if (!s || s.prefix === undefined || s.prefix === null) continue;
+    setAxisPrefix(axis, s.prefix);
+    await changeAxisPrefix(axis);
+  }
+  const exp = chartExponents();
   const plotDiv = document.getElementById('plotlyChart');
   const fullLayout = plotDiv && plotDiv._fullLayout;
   const update = {};
@@ -162,8 +173,11 @@ function _applyAxisSettings(settings) {
     const s = settings[axis];
     if (!s) continue;
     const key = axis + 'axis';
-    if (s.scale) {
-      const typeChanges = !fullLayout || !fullLayout[key] || fullLayout[key].type !== s.scale;
+    // Plotly autoranges an axis that is given the type it has: only between
+    // lin and log does it carry the range across. So the type goes in when it
+    // changes or a range goes in with it, and not for a change of prefix alone.
+    const typeChanges = !fullLayout || !fullLayout[key] || fullLayout[key].type !== s.scale;
+    if (s.scale && (typeChanges || s.range !== undefined)) {
       setScaleValue(axis, s.scale);
       update[key + '.type'] = s.scale;
       if (s.scale === 'log') {
@@ -185,9 +199,10 @@ function _applyAxisSettings(settings) {
     if (s.range === undefined) continue;
     if (s.range) {
       const onScale = s.scale || getScaleValue(axis);
+      const [lo, hi] = s.range.map(v => shiftDecimal(v, -exp[axis]));
       update[key + '.range'] = onScale === 'log'
-        ? [Math.log10(s.range[0]), Math.log10(s.range[1])]
-        : [s.range[0], s.range[1]];
+        ? [Math.log10(lo), Math.log10(hi)]
+        : [lo, hi];
       update[key + '.autorange'] = false;
     } else {
       update[key + '.autorange'] = true;
@@ -199,7 +214,12 @@ function _applyAxisSettings(settings) {
   return Plotly.relayout('plotlyChart', forEveryPanel(plotDiv, update)).then(() => { _suppressPresetSync = false; refreshDynamicLegend(); return snapLogRangeToDecades(plotDiv); });
 }
 
-/** Capture the current chart view state as a preset object (without id/name). */
+/**
+ * Capture the current chart view state as a preset object (without id/name):
+ * its limits in the file's units, whatever prefix the axes are shown in, and
+ * the prefixes, null where there is none (a preset then keeps the one the
+ * chart has).
+ */
 function _captureCurrentView() {
   const plotDiv = document.getElementById('plotlyChart');
   if (!plotDiv || !plotDiv.layout) return null;
@@ -207,17 +227,18 @@ function _captureCurrentView() {
   const yaxis = plotDiv.layout.yaxis || {};
   const xScale = getScaleValue('x');
   const yScale = getScaleValue('y');
+  const exp = chartExponents();
 
   let xMin = null, xMax = null, yMin = null, yMax = null;
   if (xaxis.range && xaxis.autorange !== true) {
-    xMin = xScale === 'log' ? Math.pow(10, xaxis.range[0]) : xaxis.range[0];
-    xMax = xScale === 'log' ? Math.pow(10, xaxis.range[1]) : xaxis.range[1];
+    xMin = shiftDecimal(xScale === 'log' ? Math.pow(10, xaxis.range[0]) : xaxis.range[0], exp.x);
+    xMax = shiftDecimal(xScale === 'log' ? Math.pow(10, xaxis.range[1]) : xaxis.range[1], exp.x);
   }
   if (yaxis.range && yaxis.autorange !== true) {
-    yMin = yScale === 'log' ? Math.pow(10, yaxis.range[0]) : yaxis.range[0];
-    yMax = yScale === 'log' ? Math.pow(10, yaxis.range[1]) : yaxis.range[1];
+    yMin = shiftDecimal(yScale === 'log' ? Math.pow(10, yaxis.range[0]) : yaxis.range[0], exp.y);
+    yMax = shiftDecimal(yScale === 'log' ? Math.pow(10, yaxis.range[1]) : yaxis.range[1], exp.y);
   }
-  return { xScale, yScale, xMin, xMax, yMin, yMax };
+  return { xScale, yScale, xMin, xMax, yMin, yMax, xPrefix: prefixOf(exp.x) || null, yPrefix: prefixOf(exp.y) || null };
 }
 
 /** Save the current chart view as a new preset (asks for its name). */
@@ -282,16 +303,18 @@ function _selectedPresetId() {
 }
 
 /**
- * The chart's axes as the reader sees them, in data units: each axis's scale
- * and its visible limits, whether those were set or autoranged. The Current
- * view editor starts from these, so the numbers in it are the ones on screen.
+ * The chart's axes as the reader sees them, in the units on the axes: each
+ * axis's scale, its prefix ('' for none) and its visible limits, whether those
+ * were set or autoranged. The Current view editor starts from these, so the
+ * numbers in it are the ones on screen.
  *
- * @returns {Object|null} {xScale, xMin, xMax, yScale, yMin, yMax}
+ * @returns {Object|null} {xScale, xPrefix, xMin, xMax, yScale, yPrefix, yMin, yMax}
  */
 function _visibleAxisSettings() {
   const plotDiv = document.getElementById('plotlyChart');
   const fl = plotDiv && plotDiv._fullLayout;
   if (!fl || !fl.xaxis || !fl.yaxis) return null;
+  const exp = chartExponents();
   const out = {};
   for (const axis of ['x', 'y']) {
     const ax = fl[axis + 'axis'];
@@ -302,16 +325,50 @@ function _visibleAxisSettings() {
       ? Number((scale === 'log' ? Math.pow(10, v) : v).toPrecision(6))
       : null;
     out[axis + 'Scale'] = scale;
+    out[axis + 'Prefix'] = prefixOf(exp[axis]);
     out[axis + 'Min'] = toData(r[0]);
     out[axis + 'Max'] = toData(r[1]);
   }
   return out;
 }
 
-function _axisSummary(s) {
+/**
+ * A preset's limits in the units its prefix shows them in, which is how the
+ * manager lists and edits them: they are kept in the file's units, and a
+ * preset with no prefix of its own shows them so.
+ *
+ * @param {Object} p - A preset
+ * @returns {Object} a copy
+ */
+function _inPresetUnits(p) {
+  const shown = Object.assign({}, p);
+  for (const axis of ['x', 'y']) {
+    const e = prefixExponent(p[axis + 'Prefix']);
+    if (!e) continue;
+    for (const end of ['Min', 'Max']) {
+      const v = p[axis + end];
+      if (v != null && Number.isFinite(Number(v))) shown[axis + end] = shiftDecimal(Number(v), -e);
+    }
+  }
+  return shown;
+}
+
+/**
+ * One line for a set of axes: each one's scale, its prefix, and its limits in
+ * the units of that prefix. The prefix is left out when there is none to say:
+ * null keeps the chart's, and the chart's own '' is none.
+ *
+ * @param {Object} s - {xScale, xPrefix, xMin, xMax, ...}
+ * @param {boolean} [view] - The chart's own axes, where '' is simply no prefix
+ */
+function _axisSummary(s, view = false) {
   const fmtR = (lo, hi) => (lo != null && hi != null) ? lo + ' – ' + hi : 'auto';
-  return 'X: ' + (s.xScale || 'auto') + ' [' + fmtR(s.xMin, s.xMax) + ']   '
-    + 'Y: ' + (s.yScale || 'auto') + ' [' + fmtR(s.yMin, s.yMax) + ']';
+  const prefix = (p) => {
+    if (p === '' && !view) return ', no prefix';
+    return prefixExponent(p) ? ', prefix ' + p : '';
+  };
+  return 'X: ' + (s.xScale || 'auto') + prefix(s.xPrefix) + ' [' + fmtR(s.xMin, s.xMax) + ']   '
+    + 'Y: ' + (s.yScale || 'auto') + prefix(s.yPrefix) + ' [' + fmtR(s.yMin, s.yMax) + ']';
 }
 
 /** A manager row: name, one-line summary, and an optional tag after the name. */
@@ -363,7 +420,7 @@ function _renderPresetManagerList() {
   const view = currentChartData ? _visibleAxisSettings() : null;
   const currentRow = _presetManagerRow(
     _CURRENT_VIEW_ROW, 'Current view',
-    view ? _axisSummary(view) : 'No chart drawn yet',
+    view ? _axisSummary(view, true) : 'No chart drawn yet',
     selectedId === '__custom__' ? 'Custom ✱' : '');
   currentRow.classList.add('preset-manager-current');
   if (selectedId === '__custom__') currentRow.classList.add('is-selected');
@@ -379,7 +436,7 @@ function _renderPresetManagerList() {
   presets.forEach(p => {
     const isSelected = p.id === selectedId;
     const row = _presetManagerRow(p.id, p.name,
-      p.id === 'default' ? 'auto' : _axisSummary(p),
+      p.id === 'default' ? 'auto' : _axisSummary(_inPresetUnits(p)),
       isSelected ? 'selected' : '');
     if (isSelected) row.classList.add('is-selected');
     if (p.id === 'default') row.querySelector('.preset-manager-name').style.fontStyle = 'italic';
@@ -396,14 +453,46 @@ function _renderPresetManagerList() {
   });
 }
 
+/*
+  The edit form's prefix select: "as is" ('', a preset only: it keeps the
+  chart's), "none", or a prefix. The limits beside it are in its units, which
+  for "as is" and "none" are the file's: prefixExponent of the value either way.
+*/
+const _FORM_NO_PREFIX = 'none';
+
+/** What the form's prefix select stands for: null (as is), '' (none) or a prefix. */
+function _formPrefix(value) {
+  if (value === _FORM_NO_PREFIX) return '';
+  return prefixExponent(value) ? value : null;
+}
+
+/**
+ * Whether two limits typed in the form are the same number, each in the units
+ * of its prefix: 10 in k is 0.01 in M. Text that is not a number is the same
+ * only as itself.
+ */
+function _sameLimit(a, ea, b, eb) {
+  if (a === b && ea === eb) return true;
+  if (a.trim() === '' || b.trim() === '') return a.trim() === b.trim();
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
+  return shiftDecimal(na, ea) === shiftDecimal(nb, eb);
+}
+
 /**
  * Open the inline edit form under a manager row, filled from `v`.
  *
+ * Each axis has a prefix select, and its limits are in the units of the
+ * prefix chosen: choosing another moves the numbers typed to the same
+ * stretch of data in the new units, 10 (k) to 0.01 (M).
+ *
  * @param {string} rowId - the row's data-preset-id
- * @param {Object} v - {name?, xScale, xMin, xMax, yScale, yMin, yMax}
+ * @param {Object} v - {name?, xScale, xPrefix, xMin, xMax, yScale, yPrefix, yMin, yMax},
+ *   the limits in the units of the prefixes
  * @param {Object} opts - withName: show the name field; autoScale: offer
- *   "auto" as a scale (a preset can leave the scale alone, a view cannot);
- *   saveLabel: the confirm button's text
+ *   "auto" as a scale and "as is" as a prefix (a preset can leave either
+ *   alone, a view cannot); saveLabel: the confirm button's text
  * @returns {HTMLElement|null} the form, or null if the row is not there
  */
 function _openAxisForm(rowId, v, { withName, autoScale, saveLabel }) {
@@ -428,10 +517,20 @@ function _openAxisForm(rowId, v, { withName, autoScale, saveLabel }) {
       '<option value="linear"' + (value === 'linear' ? ' selected' : '') + '>linear</option>' +
       '<option value="log"' + (value === 'log' ? ' selected' : '') + '>log</option>' +
     '</select>';
+  // A stored prefix is compared, never written: a preset's could be anything.
+  const prefixSelect = (id, value) => {
+    const none = value === '' || (!autoScale && !prefixExponent(value));
+    return '<select id="' + id + '">' +
+      (autoScale ? '<option value=""' + (value == null || (!none && !prefixExponent(value)) ? ' selected' : '') + '>as is</option>' : '') +
+      '<option value="' + _FORM_NO_PREFIX + '"' + (none ? ' selected' : '') + '>none</option>' +
+      Object.keys(AXIS_PREFIXES).map(p => '<option value="' + p + '"' + (value === p ? ' selected' : '') + '>' + p + '</option>').join('') +
+    '</select>';
+  };
   const axisRow = (axis) => {
     const A = axis.toUpperCase();
     return '<div class="preset-edit-row">' +
       '<label>' + A + ' scale ' + scaleSelect('pe_' + axis + 'Scale', v[axis + 'Scale']) + '</label>' +
+      '<label title="The prefix to the axis\'s unit: k shows Bq as kBq. The limits are in its units.">' + A + ' prefix ' + prefixSelect('pe_' + axis + 'Prefix', v[axis + 'Prefix']) + '</label>' +
       '<label>' + A + ' min <input type="text" id="pe_' + axis + 'Min" value="' + fmtVal(v[axis + 'Min']) + '" placeholder="auto"></label>' +
       '<label>' + A + ' max <input type="text" id="pe_' + axis + 'Max" value="' + fmtVal(v[axis + 'Max']) + '" placeholder="auto"></label>' +
     '</div>';
@@ -454,6 +553,20 @@ function _openAxisForm(rowId, v, { withName, autoScale, saveLabel }) {
 
   targetRow.insertAdjacentElement('afterend', form);
   document.getElementById('pe_cancel').onclick = () => _cancelPresetEdit();
+  // Another prefix: the limits typed, in its units.
+  for (const axis of ['x', 'y']) {
+    const select = document.getElementById('pe_' + axis + 'Prefix');
+    let was = prefixExponent(select.value);
+    select.onchange = () => {
+      const now = prefixExponent(select.value);
+      for (const end of ['Min', 'Max']) {
+        const input = document.getElementById('pe_' + axis + end);
+        const n = input.value.trim() === '' ? NaN : Number(input.value);
+        if (Number.isFinite(n)) input.value = String(shiftDecimal(n, was - now));
+      }
+      was = now;
+    };
+  }
   return form;
 }
 
@@ -466,6 +579,7 @@ function _readAxisForm() {
   const out = {};
   for (const axis of ['x', 'y']) {
     out[axis + 'Scale'] = val('pe_' + axis + 'Scale');
+    out[axis + 'Prefix'] = val('pe_' + axis + 'Prefix');
     out[axis + 'Min'] = val('pe_' + axis + 'Min');
     out[axis + 'Max'] = val('pe_' + axis + 'Max');
   }
@@ -501,7 +615,7 @@ function _formRange(axis, minText, maxText, scale) {
 function _editPreset(id) {
   const p = loadPresets().find(x => x.id === id);
   if (!p) return;
-  if (!_openAxisForm(id, p, { withName: true, autoScale: true, saveLabel: 'Save' })) return;
+  if (!_openAxisForm(id, _inPresetUnits(p), { withName: true, autoScale: true, saveLabel: 'Save' })) return;
   document.getElementById('pe_save').onclick = () => _savePresetEdit(id);
 }
 
@@ -528,13 +642,15 @@ function _savePresetEdit(id) {
   const problem = [x, y].find(r => r.message);
   if (problem) { notifyUser(problem.message); return; }
 
-  p.name   = nameVal;
-  p.xScale = f.xScale || null;
-  p.yScale = f.yScale || null;
-  p.xMin   = x.range ? x.range[0] : null;
-  p.xMax   = x.range ? x.range[1] : null;
-  p.yMin   = y.range ? y.range[0] : null;
-  p.yMax   = y.range ? y.range[1] : null;
+  // Kept in the file's units: the form's are its prefix's.
+  const inFile = (r, prefix) => (r.range ? r.range.map(v => shiftDecimal(v, prefixExponent(prefix))) : [null, null]);
+  p.name    = nameVal;
+  p.xScale  = f.xScale || null;
+  p.yScale  = f.yScale || null;
+  p.xPrefix = _formPrefix(f.xPrefix);
+  p.yPrefix = _formPrefix(f.yPrefix);
+  [p.xMin, p.xMax] = inFile(x, f.xPrefix);
+  [p.yMin, p.yMax] = inFile(y, f.yPrefix);
 
   savePresetsToStorage(presets);
   populatePresetDropdown();
@@ -559,8 +675,9 @@ function _editCurrentView() {
  * Only an axis whose fields were changed is touched, and within it a scale
  * change on its own keeps the limits, as the lin/log buttons do -- the form
  * starts from the limits on screen, so leaving them alone must not pin an
- * autoranged axis to them. Applying with nothing changed leaves the
- * selection alone; any change makes it Custom.
+ * autoranged axis to them. A change of prefix on its own keeps them too:
+ * the numbers the form moved into its units are the same limits. Applying
+ * with nothing changed leaves the selection alone; any change makes it Custom.
  *
  * @param {Object} before - the form as it was opened, from _readAxisForm
  */
@@ -568,15 +685,19 @@ function _applyCurrentViewEdit(before) {
   const now = _readAxisForm();
   const settings = {};
   for (const axis of ['x', 'y']) {
+    const ePrev = prefixExponent(before[axis + 'Prefix']);
+    const eNow = prefixExponent(now[axis + 'Prefix']);
     const scaleChanged = now[axis + 'Scale'] !== before[axis + 'Scale'];
-    const rangeChanged = now[axis + 'Min'] !== before[axis + 'Min']
-      || now[axis + 'Max'] !== before[axis + 'Max'];
-    if (!scaleChanged && !rangeChanged) continue;
+    const prefixChanged = now[axis + 'Prefix'] !== before[axis + 'Prefix'];
+    const rangeChanged = !_sameLimit(before[axis + 'Min'], ePrev, now[axis + 'Min'], eNow)
+      || !_sameLimit(before[axis + 'Max'], ePrev, now[axis + 'Max'], eNow);
+    if (!scaleChanged && !prefixChanged && !rangeChanged) continue;
     const s = { scale: now[axis + 'Scale'] || null };
+    if (prefixChanged) s.prefix = _formPrefix(now[axis + 'Prefix']);
     if (rangeChanged) {
       const r = _formRange(axis, now[axis + 'Min'], now[axis + 'Max'], s.scale);
       if (r.message) { notifyUser(r.message); return; }
-      s.range = r.range;
+      s.range = r.range ? r.range.map(v => shiftDecimal(v, eNow)) : null;   // in the file's units
     }
     settings[axis] = s;
   }
@@ -884,6 +1005,11 @@ function importPresets() {
           }
           for (const key of ['xScale', 'yScale']) {
             if (preset[key] !== 'linear' && preset[key] !== 'log') preset[key] = null;
+          }
+          // A prefix is one of the page's, '' for none, or null to keep the chart's.
+          for (const key of ['xPrefix', 'yPrefix']) {
+            const p = preset[key] === 'μ' || preset[key] === 'u' ? 'µ' : preset[key];
+            preset[key] = p === '' || prefixExponent(p) ? p : null;
           }
           preset.id = String(preset.id).slice(0, 120);
           preset.name = String(preset.name).slice(0, 120);

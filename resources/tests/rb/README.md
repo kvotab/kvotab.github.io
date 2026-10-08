@@ -197,6 +197,29 @@ auto range from zero. The file is built in the page with h5wasm.
 
     python3 test-log-range.py
 
+`test-prefix.py` covers the prefix beside each axis's lin/log, which shows the
+axis's unit with it: k shows Bq as kBq and the values divided by 1000. The
+unit is written so that it still means what it says: mSv/year with k is
+Sv/year, but m3/year is 10³ m3/year, since km3 would be 10⁹ m3, and no unit is
+10³ alone. A change of prefix redraws the chart in place, its values the
+file's digits moved rather than multiplied (1.1e-7 / 1000 is
+1.1000000000000001e-10): a range set by hand shows the same stretch of data,
+a log axis on auto range stays on it, the background's phases stay where they
+are in time and are named so under the pointer, Show Max's numbers are the
+axis's, and the preset selected stays selected. A chart drawn afterwards, and
+a band added later, are in the prefix; panels each take it in their own unit.
+Presets keep their limits in the file's units and may carry a prefix: saving
+one, choosing it, one without (which keeps the chart's), the manager's
+summaries, its edit form (another prefix moves the numbers typed to the same
+limits), the Current view editor, and an imported prefix that is not one of
+the page's. The axes lock disables the selects. The CSV holds the file's
+values, the Excel workbook the axis's under the prefixed unit with a note
+saying so, and the Python script divides its labels (test-python.py runs such
+scripts). Last, a click on the select is the select's: the label's own control
+is still lin. The files are built in the page with h5wasm.
+
+    python3 test-prefix.py
+
 `test-groups.py` covers several groups selected together. Ctrl-click (Cmd on
 a Mac) on a group that draws a chart of its own adds it to the groups selected,
 and again takes it out. The groups are drawn as one chart with a panel each,
@@ -312,9 +335,12 @@ second file, and a probabilistic /time. Last, a file named and filled to break
 out of a string literal, a comment or the page (quotes, triple quotes, CR, LF,
 U+2028, a bidirectional override, `$…$`, `<img onerror>`): its script must
 parse with no INJECTED name anywhere in its syntax tree and no file text in a
-comment, and run; the page must not have run anything. Then the dialog:
+comment, and run; the page must not have run anything. With an axis's unit
+given a prefix (kyears, mBq/year), the page draws in it and the script draws
+the files' values with its labels divided, so its labels must be the page's
+and its limits the page's range in the files' units. Then the dialog:
 the button, the script shown as text in colour, a line a line, Copy and
-Download. Needs h5py, numpy and matplotlib. 149 checks.
+Download. Needs h5py, numpy and matplotlib. 189 checks.
 
     python3 test-python.py
 

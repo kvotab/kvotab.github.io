@@ -1355,24 +1355,35 @@ function captureAxisState() {
     xAutorange: xaxis.autorange,
     // A log y axis the snap has set is still on auto range, and a redraw
     // (Show Total, say) should fit what it then draws, not the old range.
-    yAutorange: isAutoLogY(plotDiv) ? true : yaxis.autorange
+    yAutorange: isAutoLogY(plotDiv) ? true : yaxis.autorange,
+    // The prefixes the ranges are in (changeAxisPrefix).
+    exp: chartExponents()
   };
 }
 
 /**
  * Apply a previously captured axis state to a Plotly layout object.
  * Only overrides ranges when the user had manually zoomed/panned (autorange=false).
+ * A range is moved into the prefix the new chart is drawn in, should that
+ * have changed since it was captured.
  * @param {Object} layout - Plotly layout to modify in-place
  * @param {Object} savedState - State from captureAxisState()
  */
 function applyAxisState(layout, savedState) {
   if (!savedState) return;
+  const now = axisExponents();
+  const was = savedState.exp || now;
+  const inNow = (range, axis) => {
+    const shift = was[axis] - now[axis];
+    if (!shift) return range;
+    return layout[axis + 'axis'].type === 'log' ? range.map(v => v + shift) : range.map(v => shiftDecimal(v, shift));
+  };
   if (savedState.xRange && savedState.xAutorange === false) {
-    layout.xaxis.range = savedState.xRange;
+    layout.xaxis.range = inNow(savedState.xRange, 'x');
     layout.xaxis.autorange = false;
   }
   if (savedState.yRange && savedState.yAutorange === false) {
-    layout.yaxis.range = savedState.yRange;
+    layout.yaxis.range = inNow(savedState.yRange, 'y');
     layout.yaxis.autorange = false;
   }
 }
@@ -1655,8 +1666,11 @@ function assignLegendRanks(traces) {
  * @param {Array} traces - Plotly trace data
  * @param {Object} layout - Plotly layout configuration
  * @param {string} path - Dataset path (for storing in currentChartData)
+ * @param {Function} [afterRender] - Called once Plotly has drawn it
+ * @param {Object} [axisUnits] - {exp, titles}: the prefixes the axes are drawn
+ *   in and what their titles are made of (see changeAxisPrefix)
  */
-function renderChart(traces, layout, path, afterRender) {
+function renderChart(traces, layout, path, afterRender, axisUnits) {
   const container = getElement('plotlyChartContainer');
   const config = getPlotlyConfig('chart');
   
@@ -1672,7 +1686,7 @@ function renderChart(traces, layout, path, afterRender) {
     assignLegendRanks(traces);
   }
 
-  currentChartData = { traces, layout, path };
+  currentChartData = { traces, layout, path, axisUnits };
   if (container) {
     container.classList.add('visible');
   }

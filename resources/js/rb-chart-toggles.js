@@ -345,7 +345,7 @@ async function toggleShowCI() {
       });
       
       if (ciTraces.length > 0) {
-        await Plotly.addTraces(plotDiv, ciTraces);
+        await Plotly.addTraces(plotDiv, inAxisUnits(ciTraces, chartExponents()));
       }
     }
     // A band can reach past a log axis on auto range, or leave it too tall.
@@ -492,7 +492,7 @@ async function toggleShowSDOM() {
       });
 
       if (sdomTraces.length > 0) {
-        await Plotly.addTraces(plotDiv, sdomTraces);
+        await Plotly.addTraces(plotDiv, inAxisUnits(sdomTraces, chartExponents()));
       }
     }
     await snapLogRangeToDecades(plotDiv);
@@ -548,16 +548,20 @@ function toggleShowIteration() {
           y.push(PDFSampler.toNumber(trace._probYFlat[t * trace._probMaxLen + iterIdx]));
         }
 
-        // Keep the trace object in sync so subsequent calls stay correct
+        // Keep the trace object in sync so subsequent calls stay correct:
+        // these are the file's values now, drawn in the axes' units.
         trace.x = x;
         trace.y = y;
+        delete trace._fileX;
+        delete trace._fileY;
+        inAxisUnits([trace], chartExponents());
         if (trace._py && trace._py.y) {
           trace._py = pyProbTimeRecipe({ fileKey: trace._py.y.file, path: trace._py.y.path,
             stride: trace._probMaxLen, k: iterIdx, n: iterLen });
         }
 
-        xUpdates.push(x);
-        yUpdates.push(y);
+        xUpdates.push(trace.x);
+        yUpdates.push(trace.y);
         indices.push(plotIdx);
       });
 
@@ -614,7 +618,7 @@ function toggleShowIteration() {
   });
 
   // A realisation can reach past a log axis on auto range.
-  Promise.resolve(iterTraces.length > 0 ? Plotly.addTraces(plotDiv, iterTraces) : null)
+  Promise.resolve(iterTraces.length > 0 ? Plotly.addTraces(plotDiv, inAxisUnits(iterTraces, chartExponents())) : null)
     .then(() => snapLogRangeToDecades(plotDiv));
 }
 
