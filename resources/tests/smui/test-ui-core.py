@@ -565,7 +565,7 @@ async def main():
     check('code in a closed outline: the outline opens and the code is seen', (await page.ev(f'{LAST}.codeBlocks()[0].closest(".sm-ob").classList.contains("is-closed")'), r['seen'] > 0), (False, True))
     await page.ev(f'SM.app.closeReport({LAST})')
     # (an empty Graph Maker: every graph of the Graph menu has its code now)
-    await page.ev(OPEN_ON_STUDENTS('graphbuilder', {}))
+    await page.ev(OPEN_ON_STUDENTS('graphmaker', {}))
     await asyncio.sleep(0.4)
     await click_on(f'{LAST}.codeBtn')
     r = await page.ev(CODE)
@@ -789,10 +789,10 @@ async def main():
     # the open outlines, tables and graphs
     r = await page.ev('''(async () => {
       const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise(res => rep.on('done', res));
-      const gb = rep.body.querySelector('.sm-gb')._gb;
-      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      const gm = rep.body.querySelector('.sm-gm')._gm;
+      await gm.add('y', 'weight (kg)'); await gm.add('x', 'height (cm)');
       await new Promise(res => setTimeout(res, 300));
       const save = rep.saveMenu().map(i => [i.label, !!i.disabled]);
       // the frame's print() is replaced when the page reaches for it, as the
@@ -812,7 +812,7 @@ async def main():
       const imgs = frameDoc ? [...frameDoc.images] : [];
       const out = { save, printed, hidden: frame.getBoundingClientRect().right <= 0,
         title: frameDoc && frameDoc.querySelector('h1').textContent, imgs: imgs.length, loaded: imgs.every(i => i.complete && i.naturalWidth > 0),
-        controls: frameDoc ? frameDoc.querySelectorAll('button, input, select, .sm-gb-zone, .sm-gb-palette, .sm-gb-left').length : -1,
+        controls: frameDoc ? frameDoc.querySelectorAll('button, input, select, .sm-gm-zone, .sm-gm-palette, .sm-gm-left').length : -1,
         page: frameDoc ? [...frameDoc.querySelectorAll('style')].some(s => s.textContent.includes('@page')) : false };
       await new Promise(res => setTimeout(res, 150));
       out.removed = !document.querySelector('.sm-print-frame');
@@ -984,10 +984,10 @@ async def main():
     # and the box around it does not scroll
     w = await page.ev('''(async () => {
       const t = SM.app.tables[0];
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise(res => rep.on('done', res));
-      const gb = rep.body.querySelector('.sm-gb')._gb;
-      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      const gm = rep.body.querySelector('.sm-gm')._gm;
+      await gm.add('y', 'weight (kg)'); await gm.add('x', 'height (cm)');
       SM.app.showTab(SM.app.tabOf(rep));
       await new Promise(res => setTimeout(res, 400));
       const p = rep.plots.find(p => p.drawn);
@@ -1023,10 +1023,10 @@ async def main():
     box = await page.ev('''(async () => {
       const t = SM.app.tables[0]; SM.app.showTab(SM.app.tabOf(t));
       window.__selCalls = 0; const orig = t.select; t.select = function (...a) { __selCalls++; return orig.apply(this, a); }; window.__unsel = () => { delete t.select; };
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise(res => rep.on('done', res));
-      const gb = rep.body.querySelector('.sm-gb')._gb;
-      await gb.add('y', 'weight (kg)'); await gb.add('x', 'height (cm)');
+      const gm = rep.body.querySelector('.sm-gm')._gm;
+      await gm.add('y', 'weight (kg)'); await gm.add('x', 'height (cm)');
       SM.app.showTab(SM.app.tabOf(rep));
       await new Promise(res => setTimeout(res, 600));
       const p = rep.plots.find(p => p.drawn);
@@ -1250,11 +1250,11 @@ async def main():
     check('phone: a column dragged into the formula goes in at its cursor', await page.ev("[...document.querySelectorAll('.sm-dialog')].pop().querySelector('textarea.smf-expr').value"), '2 * :water')
     await page.ev("[...[...document.querySelectorAll('.sm-dialog')].pop().querySelectorAll('.sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Cancel').click()")
     await asyncio.sleep(0.3)
-    await page.ev('''(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise(res => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); })()''')
+    await page.ev('''(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t); await new Promise(res => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); })()''')
     await asyncio.sleep(0.8)
-    src = await rect("(() => { const li = [...document.querySelectorAll('.sm-gb-collist li')].find(li => li.textContent.includes('yield (g)')); li.scrollIntoView({ block: 'center' }); return li; })()")
-    await drag_to(src, "document.querySelector('.sm-gb-z-y')", far_top=450)
-    check('phone: dragged onto Graph Maker\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gb-z-y').textContent.includes('yield (g)')"), True)
+    src = await rect("(() => { const li = [...document.querySelectorAll('.sm-gm-collist li')].find(li => li.textContent.includes('yield (g)')); li.scrollIntoView({ block: 'center' }); return li; })()")
+    await drag_to(src, "document.querySelector('.sm-gm-z-y')", far_top=450)
+    check('phone: dragged onto Graph Maker\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gm-z-y').textContent.includes('yield (g)')"), True)
     # a tap on Python code: the code is far below the screen, the report scrolls to it
     await page.ev(open_report_js('distribution', {'y': ['yield (g)']}))
     await asyncio.sleep(0.6)
@@ -1476,9 +1476,9 @@ async def main():
     g7 = await page.ev(G)
     check('a double-click on the grip: the report\'s size again', ([g6['w'] - g5['w'], g6['h'] - g5['h']], [g7['w'], g7['h']], g7['sizes']), ([60, 40], g7['def'], None))
     # Graph Maker: its grip sets its own Graph Size
-    r = await page.ev("""(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
-      await new Promise((res) => rep.on('done', res)); const gb = SM.platforms.get('graphbuilder').builder(rep);
-      await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
+    r = await page.ev("""(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res)); const gm = SM.platforms.get('graphmaker').builder(rep);
+      await gm.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
       SM.app.showTab(SM.app.tabOf(rep)); let p = null;
       for (let i = 0; i < 100 && !p; i++) { await new Promise((r) => setTimeout(r, 60)); p = rep.plots.find((x) => x.drawn && x.box.isConnected && x.box.querySelector('.sm-plot-grip')); }
       if (!p) return { error: 'no drawn Graph Maker graph with a grip' };
@@ -1487,8 +1487,8 @@ async def main():
     check('Graph Maker\'s graph has its grip', r.get('error') if isinstance(r, dict) else r, None)
     await drag(r, -80, 50)
     await asyncio.sleep(1.2)
-    gb = await page.ev("(async () => { const rep = SM.app.reports.at(-1); let p = null; for (let i = 0; i < 60; i++) { p = rep.plots.filter((x) => x.drawn && x.box.isConnected).at(-1); if (p && p.width !== %d) break; await new Promise((r) => setTimeout(r, 60)); } return { size: SM.platforms.get('graphbuilder').builder(rep).state().size || null, w: p ? p.width : null, h: p ? p.height : null, ghost: !!document.querySelector('.sm-plot-ghost'), stored: rep.spec.options.plotSizes || null }; })()" % r['w'])
-    check('Graph Maker\'s grip sets its own Graph Size (an outline follows the drag), which draws the graph again', (gb['size'], gb['w'], gb['h'], gb['ghost'], gb['stored']), ({'w': r['w'] - 80, 'h': r['h'] + 50}, r['w'] - 80, r['h'] + 50, False, None))
+    gm = await page.ev("(async () => { const rep = SM.app.reports.at(-1); let p = null; for (let i = 0; i < 60; i++) { p = rep.plots.filter((x) => x.drawn && x.box.isConnected).at(-1); if (p && p.width !== %d) break; await new Promise((r) => setTimeout(r, 60)); } return { size: SM.platforms.get('graphmaker').builder(rep).state().size || null, w: p ? p.width : null, h: p ? p.height : null, ghost: !!document.querySelector('.sm-plot-ghost'), stored: rep.spec.options.plotSizes || null }; })()" % r['w'])
+    check('Graph Maker\'s grip sets its own Graph Size (an outline follows the drag), which draws the graph again', (gm['size'], gm['w'], gm['h'], gm['ghost'], gm['stored']), ({'w': r['w'] - 80, 'h': r['h'] + 50}, r['w'] - 80, r['h'] + 50, False, None))
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(0.5)
     dk = await page.ev("(() => { const g = document.querySelector('.sm-plot-grip'); const cs = getComputedStyle(g); return [cs.color, cs.cursor]; })()")
@@ -1677,14 +1677,14 @@ async def progress_and_undo():
     c5 = await page.ev(REPS)
     check('... Redo closes it again; Close All Reports is one step, undone they all open', (c3, c4, json.loads(c5) == json.loads(c_before), len(json.loads(c5))), (0, {'n': 0, 'label': 'Close All Reports'}, True, 2))
     # Graph Maker: its own undo goes first in its report
-    r = await page.ev('''(async () => { const t = SM.app.tables[0]; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
-      await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); const gb = SM.platforms.get('graphbuilder').builder(rep);
-      await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
+    r = await page.ev('''(async () => { const t = SM.app.tables[0]; const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
+      await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); const gm = SM.platforms.get('graphmaker').builder(rep);
+      await gm.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
       await new Promise((r) => setTimeout(r, 300));
-      return { label: SM.app.menuItems('Edit').filter((i) => i && i.label)[0].label, x: (gb.state().zones.x || []).length }; })()''', timeout=600)
+      return { label: SM.app.menuItems('Edit').filter((i) => i && i.label)[0].label, x: (gm.state().zones.x || []).length }; })()''', timeout=600)
     await page.ev('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
     await key('z', CMD)
-    g1 = await page.ev('(() => { const rep = SM.app.reports.at(-1); const gb = SM.platforms.get("graphbuilder").builder(rep); return { x: (gb.state().zones.x || []).length, reports: SM.app.reports.length }; })()')
+    g1 = await page.ev('(() => { const rep = SM.app.reports.at(-1); const gm = SM.platforms.get("graphmaker").builder(rep); return { x: (gm.state().zones.x || []).length, reports: SM.app.reports.length }; })()')
     check('Graph Maker: ⌘Z takes back the builder\'s own change first', (r['label'], r['x'], g1), ('Undo Graph Maker Change', 1, {'x': 0, 'reports': 3}))
     check('progress and undo: no script errors', page.errors, [])
     await page.close()

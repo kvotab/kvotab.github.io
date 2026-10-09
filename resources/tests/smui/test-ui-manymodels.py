@@ -26,7 +26,7 @@ and the forms' (i) do theirs), and no script errors.
 Start a server on the repository root and headless Chrome (README.md) on
 SMUI_HTTP_PORT and SMUI_CDP_PORT, then
 
-    python3 resources/tests/smui/test-ui-screening.py
+    python3 resources/tests/smui/test-ui-manymodels.py
 
 With SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every
 check passes.
@@ -164,7 +164,7 @@ ENGINE = '''
   const name = (k) => { const id = (rep.spec.roles[k] || [])[0]; return id ? t.col(id).name : null; };
   const pay = { table: t.id, rows: null, y: name('y'), x: rep.spec.roles.x.map((id) => t.col(id).name), weight: name('weight'), freq: name('freq'), validation: name('validation'),
     portion: Number(o.portion || 0), seed: o.seed ? Number(o.seed) : o.seedDrawn, missing: o.missing === false ? 'drop' : 'informative', ...extra };
-  return await SM.engine.call(extra.fn || 'screening.fit', pay, t);
+  return await SM.engine.call(extra.fn || 'manymodels.fit', pay, t);
 })
 '''
 
@@ -318,7 +318,7 @@ MAKE_CHARTS = '''
 '''
 
 # Fit Model's Penalized Regression on the charts' table: its effects, one per X.
-OPEN_GENREG = '''
+OPEN_PENREG = '''
 (async (yname, xs, options) => {
   const t = SM.app.tables.find((q) => q.name === 'ScreenCharts');
   const effects = xs.map((n) => ({ cols: [t.col(n).id], names: [n], nest: [], nestNames: [], random: false }));
@@ -329,7 +329,7 @@ OPEN_GENREG = '''
 '''
 
 
-def screening_compare(lab, g, F):
+def manymodels_compare(lab, g, F):
     """The comparisons' graphs (ROC and lift curves and Actual by predicted are check_shared's)."""
     t = g['label']
     ax = F['axes'][0]
@@ -365,17 +365,17 @@ async def charts(page):
     ]
     total = 0
     for label, roles, opts in specs:
-        r = await page.ev(open_report_js('screening', roles, opts), timeout=900)
+        r = await page.ev(open_report_js('manymodels', roles, opts), timeout=900)
         check(f'charts: {label}: no errors', r['errors'], [])
-        n, _ = await UP.chart_blocks(page, check, label, tbl, last, screening_compare)
+        n, _ = await UP.chart_blocks(page, check, label, tbl, last, manymodels_compare)
         total += n
         await page.ev(f'SM.app.closeReport({last})')
     check('charts: the blocks ran and drew the page\'s graphs', total, 10 + 4 + 4 + 2)
     # Fit Model's Penalized Regression: the Actual by Predicted Plot (smui-predict.js), its block from the call's code
     for label, yname, options, sets in (
-            ('Penalized Regression, the lasso, a holdback', 'y', {'personality': 'genreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
-            ('Penalized Regression, Poisson (the log link), AICc', 'count', {'personality': 'genreg', 'dist': 'poisson', 'gr:method': 'lasso', 'gr:diag': True}, ['Training'])):
-        r = await page.ev(f'({OPEN_GENREG})({json.dumps(yname)}, {json.dumps(xs)}, {json.dumps(options)})', timeout=900)
+            ('Penalized Regression, the lasso, a holdback', 'y', {'personality': 'penreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
+            ('Penalized Regression, Poisson (the log link), AICc', 'count', {'personality': 'penreg', 'dist': 'poisson', 'gr:method': 'lasso', 'gr:diag': True}, ['Training'])):
+        r = await page.ev(f'({OPEN_PENREG})({json.dumps(yname)}, {json.dumps(xs)}, {json.dumps(options)})', timeout=900)
         check(f'charts: {label}: no errors', r['errors'], [])
         gs = [g for g in await page.ev(f'__pm.graphs({last})', timeout=600) if g['label'].startswith('Actual by predicted')]
         check(f'charts: {label}: the Actual by Predicted Plot, a graph per set, each with its block, ending in plt.show()',
@@ -397,7 +397,7 @@ async def main():
     page = await open_page(f'{BASE}/smui.html', height=1200)
     st = await wait_engine(page)
     check('engine ready', st, 'ready')
-    check('screening.py imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "screening").map(f => f.error)'), [])
+    check('manymodels.py imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "manymodels").map(f => f.error)'), [])
     check('no script errors at load', page.errors, [])
     check('scikit-learn is not loaded at the start', await page.ev("SM.engine.versions['scikit-learn'] || null"), None)
     menus = await page.ev('''(() => {
@@ -410,10 +410,10 @@ async def main():
 
     # ---- the launch dialog
     r = await page.ev('''(async () => {
-      SM.app.launch('screening');
+      SM.app.launch('manymodels');
       await new Promise(r => setTimeout(r, 250));
       const dlg = document.querySelector('.sm-launch-dialog');
-      const checks = () => [...dlg.querySelectorAll('.sm-scr-checks .sm-scr-check')].map(l => [l.textContent, l.querySelector('input').checked, l.classList.contains('is-off')]);
+      const checks = () => [...dlg.querySelectorAll('.sm-mm-checks .sm-mm-check')].map(l => [l.textContent, l.querySelector('input').checked, l.classList.contains('is-off')]);
       const items = [...dlg.querySelectorAll('.sm-pick-list li')];
       const pick = (name) => { items.forEach(li => li.classList.remove('is-selected')); items.find(x => x.textContent === name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
       const role = (label) => [...dlg.querySelectorAll('.sm-role')].find(r => r.querySelector('.sm-btn').textContent === label);
@@ -427,16 +427,16 @@ async def main():
       unrole('Y, Response', 'three'); pick('cls'); role('Y, Response').querySelector('.sm-btn').click();
       const nomi = checks();
       for (const x of ['x1', 'x2', 'x3', 'g', 'x5', 'x6', 'x7', 'x8', 'x9']) { pick(x); role('X, Factor').querySelector('.sm-btn').click(); }
-      const kf = dlg.querySelector('.sm-scr-opts input[type=checkbox]');
-      const [folds, reps] = [...dlg.querySelectorAll('.sm-scr-opts .sm-scr-input')];
+      const kf = dlg.querySelector('.sm-mm-opts input[type=checkbox]');
+      const [folds, reps] = [...dlg.querySelectorAll('.sm-mm-opts .sm-mm-input')];
       const foldsOff = folds.disabled;
       kf.checked = true; kf.dispatchEvent(new Event('change'));
       const foldsOn = !folds.disabled;
       pick('day'); role('Validation').querySelector('.sm-btn').click();
-      const kfOff = kf.disabled, hint = dlg.querySelector('.sm-scr-hint').textContent;
+      const kfOff = kf.disabled, hint = dlg.querySelector('.sm-mm-hint').textContent;
       unrole('Validation', 'day');
       kf.checked = false; kf.dispatchEvent(new Event('change'));
-      const boxes = [...dlg.querySelectorAll('.sm-scr-checks input')];
+      const boxes = [...dlg.querySelectorAll('.sm-mm-checks input')];
       const was = boxes.map(b => b.checked);
       boxes.forEach(b => { b.checked = false; });
       ok.click();
@@ -468,7 +468,7 @@ async def main():
     check('scikit-learn is loaded by the first call', await page.ev("SM.engine.versions['scikit-learn']"), '1.8.0')
     st = await page.ev(STATE)
     check('no errors in the report', st['errors'], [])
-    await shot(page, 'screening-01-report.png')
+    await shot(page, 'manymodels-01-report.png')
 
     # ---- the numbers against the engine
     eng_methods = r['options']['methods']
@@ -488,7 +488,7 @@ async def main():
     check('the Validation table: every measure of every method', (sorted(vt), list(next(iter(vt.values())))), (sorted(m['label'] for m in eng['methods']), ['Method', 'Entropy RSquare', 'Generalized RSquare', 'Mean -Log p', 'RASE', 'Mean Abs Dev', 'Misclassification Rate', 'AUC', 'N']))
     best = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Validation');
       const tbl = h.parentElement.querySelector('table.sm-rt'); const heads = [...tbl.querySelectorAll('thead th')].map(t => t.textContent);
-      const j = heads.indexOf('Entropy RSquare'); return [...tbl.querySelectorAll('tbody tr')].filter(tr => tr.cells[j].classList.contains('sm-scr-best')).map(tr => tr.cells[0].textContent); })()''')
+      const j = heads.indexOf('Entropy RSquare'); return [...tbl.querySelectorAll('tbody tr')].filter(tr => tr.cells[j].classList.contains('sm-mm-best')).map(tr => tr.cells[0].textContent); })()''')
     check('the best of a column is marked', best, [next(m['label'] for m in eng['methods'] if m['key'] == k) for k in eng['best']['Validation']['entropy_rsquare']])
 
     # ---- selecting, Select Dominant, Run Selected
@@ -499,11 +499,11 @@ async def main():
       rowsOf().find(x => x.cells[0].textContent === 'Decision Tree').click();
       await d;
       const sel1 = rep.spec.options.selected.slice();
-      const marked = rowsOf().filter(tr => tr.cells[0].classList.contains('sm-scr-sel')).map(tr => tr.cells[0].textContent);
-      const btn = () => [...rep.body.querySelectorAll('.sm-scr-actions button')].find(b => b.textContent === 'Run Selected');
+      const marked = rowsOf().filter(tr => tr.cells[0].classList.contains('sm-mm-sel')).map(tr => tr.cells[0].textContent);
+      const btn = () => [...rep.body.querySelectorAll('.sm-mm-actions button')].find(b => b.textContent === 'Run Selected');
       const treeOnly = btn().disabled;
       d = new Promise(res => rep.on('done', res));
-      [...rep.body.querySelectorAll('.sm-scr-actions button')].find(b => b.textContent === 'Select Dominant').click();
+      [...rep.body.querySelectorAll('.sm-mm-actions button')].find(b => b.textContent === 'Select Dominant').click();
       await d;
       return { sel1, marked, treeOnly, partition: !!SM.platforms.get('partition'), dominant: rep.spec.options.selected };
     })()''')
@@ -523,7 +523,7 @@ async def main():
     await page.ev(pick_js('*top*', ['Decision Threshold']))
     selected = await page.ev('SM.app.reports.at(-1).spec.options.selected')
     shown_keys = [k for k in eng['order'] if k in selected]
-    th = await page.ev(engine_js({'fn': 'screening.threshold', 'methods': shown_keys, 'kfold': 0, 'repeats': 1, 'plot': {'order': shown_keys}}))
+    th = await page.ev(engine_js({'fn': 'manymodels.threshold', 'methods': shown_keys, 'kfold': 0, 'repeats': 1, 'plot': {'order': shown_keys}}))
     # The validation set's measures of each method. The report's seed is drawn at its first run
     # (Random Seed is empty), so Select Dominant keeps one method or several, and the layout
     # follows: one method has one table with a row per set, several a table per set with a row
@@ -566,14 +566,14 @@ async def main():
     check('a new threshold from its field: the option and the tables', (r['cut'], r['captions']),
           (0.3, ['yes called when Prob[yes] ≥ 0.3'] if len(shown_keys) == 1 else ['Training: yes when its probability ≥ 0.3', 'Validation: yes when its probability ≥ 0.3']))
     await page.ev(pick_js('*top*', ['Profiler', 'Boosted Tree']))
-    pr = await page.ev(engine_js({'fn': 'screening.profile', 'method': 'boosted', 'kfold': 0, 'current': None}))
+    pr = await page.ev(engine_js({'fn': 'manymodels.profile', 'method': 'boosted', 'kfold': 0, 'current': None}))
     prof = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim().startsWith('Prediction Profiler'));
       return h ? { title: h.textContent.trim(), vals: [...h.parentElement.querySelectorAll('.sm-prof-val')].map(v => v.textContent), factors: [...h.parentElement.querySelectorAll('.sm-prof-fname')].map(v => v.textContent) } : null; })()''')
     check('Profiler ▸ Boosted Tree: the Prediction Profiler of that model, every factor', (prof['title'], prof['factors']), ('Prediction Profiler: Boosted Tree', X))
     check.near('... the prediction at the current values is the engine\'s', num(prof['vals'][1]), pr['responses'][1]['current']['pred'], tol=1e-5)
     st = await page.ev(STATE)
     check('the comparisons draw without errors', (st['errors'], [o for o in st['outlines'] if o in ('ROC Curve', 'Lift Curve', 'Decision Threshold')]), ([], ['ROC Curve', 'Lift Curve', 'Decision Threshold']))
-    await shot(page, 'screening-02-comparisons.png')
+    await shot(page, 'manymodels-02-comparisons.png')
 
     # ---- Save Columns of one method
     r = await page.ev('''(async () => {
@@ -583,11 +583,11 @@ async def main():
       const c = t.col('Prob[yes] Discriminant'), m = t.col('Most Likely cls Discriminant');
       return c && m ? { v: c.values.slice(0, 5), m: m.values.slice(0, 5), mt: m.modelingType } : null;
     })()''' % PICK, timeout=120)
-    sv = await page.ev(engine_js({'fn': 'screening.save', 'method': 'lda', 'kfold': 0}))
+    sv = await page.ev(engine_js({'fn': 'manymodels.save', 'method': 'lda', 'kfold': 0}))
     check('Save Columns ▸ Discriminant ▸ Save Predicteds: the probabilities and the most likely level', (r is not None and max(abs(a - b[1]) for a, b in zip(r['v'], sv['prob'][:5])) < 1e-12, r and r['m'] == sv['most_likely'][:5], r and r['mt']), (True, True, 'nominal'))
 
     # ---- a continuous Y, every row training: Fit Least Squares against least squares here
-    rep = await page.ev(open_report_js('screening', {'y': ['y'], 'x': ['x1', 'x2', 'x3', 'g']}, {'portion': 0, 'seed': '5', 'methods': ['tree', 'knn', 'linear', 'lasso'], 'abp': True}), timeout=600)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['y'], 'x': ['x1', 'x2', 'x3', 'g']}, {'portion': 0, 'seed': '5', 'methods': ['tree', 'knn', 'linear', 'lasso'], 'abp': True}), timeout=600)
     check('continuous Y, no holdback: Training only, no errors', ([o for o in rep['outlines'] if o in ('Training', 'Validation')], rep['errors']), (['Training'], []))
     r = await page.ev('''(() => {
       const t = SM.app.reports.at(-1).table; const y = t.col('y').values; const n = y.length;
@@ -629,7 +629,7 @@ async def main():
       [...h.parentElement.querySelectorAll('table.sm-rt tbody tr')].find(x => x.cells[0].textContent === 'Fit Least Squares').click();
       await d;
       const n0 = SM.app.reports.length;
-      [...rep.body.querySelectorAll('.sm-scr-actions button')].find(b => b.textContent === 'Run Selected').click();
+      [...rep.body.querySelectorAll('.sm-mm-actions button')].find(b => b.textContent === 'Run Selected').click();
       await new Promise(r => setTimeout(r, 200));
       const nr = SM.app.reports.at(-1);
       if (nr !== rep) await new Promise(res => { if (!nr.body.classList.contains('is-running') && nr.body.querySelector('.sm-ob')) res(); else nr.on('done', res); });
@@ -640,10 +640,10 @@ async def main():
       return out;
     })()''', timeout=300)
     check('Run Selected with Fit Least Squares: Fit Model, Standard Least Squares, the same Y and main effects', (r['opened'], r['platform'], r['personality'], r['y'], r['effects'], r['errors']), (1, 'fitmodel', 'standard', ['y'], ['x1', 'x2', 'x3', 'g'], 0))
-    await shot(page, 'screening-03-continuous.png')
+    await shot(page, 'manymodels-03-continuous.png')
 
     # ---- K-fold crossvalidation
-    rep = await page.ev(open_report_js('screening', {'y': ['three'], 'x': ['x1', 'x2', 'x3', 'g']}, {'portion': 0.2, 'seed': '9', 'methods': ['tree', 'knn', 'linear', 'nb'], 'kfold': True, 'folds': 3, 'repeats': 2}), timeout=600)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['three'], 'x': ['x1', 'x2', 'x3', 'g']}, {'portion': 0.2, 'seed': '9', 'methods': ['tree', 'knn', 'linear', 'nb'], 'kfold': True, 'folds': 3, 'repeats': 2}), timeout=600)
     check('K-fold: the Crossvalidation outline and its folds, no errors', ('Crossvalidation' in rep['outlines'], 'Crossvalidation Folds' in rep['outlines'], rep['errors']), (True, True, []))
     eng = await page.ev(engine_js({'methods': ['tree', 'knn', 'linear', 'nb'], 'kfold': 3, 'repeats': 2}), timeout=300)
     cv = rows_of(await page.ev(table_under_js('Crossvalidation', 0)))
@@ -664,7 +664,7 @@ async def main():
       const pick = (name) => { items.forEach(li => li.classList.remove('is-selected')); items.find(x => x.textContent === name).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
       const role = (label) => [...dlg.querySelectorAll('.sm-role')].find(r => r.querySelector('.sm-btn').textContent === label);
       pick('g'); role('Stratification Columns').querySelector('.sm-btn').click();
-      const hint = dlg.querySelector('.sm-scr-hint').textContent;
+      const hint = dlg.querySelector('.sm-mm-hint').textContent;
       const opts = Object.fromEntries([...dlg.querySelectorAll('.sm-launch-opts label')].map(l => [[...l.childNodes].find(x => x.nodeType === 3).textContent.trim(), l.querySelector('input, select')]));
       const defaults = [opts['Training Set'].value, opts['Validation Set'].value, opts['Test Set'].value, opts['Values'].value, opts['New Column Name'].value];
       opts['Random Seed'].value = '11';
@@ -684,7 +684,7 @@ async def main():
     ok = all(math.floor(p['n'] * q - 1e-9) <= p[k] <= math.ceil(p['n'] * q + 1e-9) for p in r['per'].values() for k, q in (('Training', 0.6), ('Validation', 0.2), ('Test', 0.2)))
     check('... within each level of g its share rounded down or up', ok, True)
     check('... the notes keep the method, the seed and the Python', all(s in r['notes'] for s in ('stratified by g', 'seed 11', 'def make_sets(', 'stratum_counts')), True)
-    vc = await page.ev('(async () => { const t = SM.app.current; return await SM.engine.call("screening.validation_column", { training: 0.6, validation: 0.2, test: 0.2, strata: ["g"], seed: "11" }, t); })()')
+    vc = await page.ev('(async () => { const t = SM.app.current; return await SM.engine.call("manymodels.validation_column", { training: 0.6, validation: 0.2, test: 0.2, strata: ["g"], seed: "11" }, t); })()')
     check('... the same assignment as the engine gives for that seed', await page.ev('SM.app.current.col("Validation").values'), vc['values'])
     r = await page.ev('''(async () => {
       SM.app.menuItems('Cols').find(i => i.label === 'Modeling Utilities').submenu().find(i => i.label === 'Make Validation Column…').action();
@@ -699,13 +699,13 @@ async def main():
       return { type: [c.dataType, c.modelingType], counts: [0, 1, 2].map(k => c.values.filter(v => v === k).length) };
     })()''', timeout=300)
     check('Cols > Modeling Utilities: the same command; numeric 0/1/2, random, 700 and 300 rows', (r['type'], r['counts']), (['numeric', 'nominal'], [700, 300, 0]))
-    rep = await page.ev(open_report_js('screening', {'y': ['y'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '3', 'methods': ['tree', 'linear', 'lasso']}), timeout=600)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['y'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '3', 'methods': ['tree', 'linear', 'lasso']}), timeout=600)
     eng = await page.ev(engine_js({'methods': ['tree', 'linear', 'lasso'], 'kfold': 0, 'repeats': 1}), timeout=300)
     check('Fit Many Models takes the made column: Training, Validation and Test outlines', ([o for o in rep['outlines'] if o in ('Training', 'Validation', 'Test')], eng['n']), (['Training', 'Validation', 'Test'], {'Training': 600, 'Validation': 200, 'Test': 200}))
     note = await page.ev('[...SM.app.reports.at(-1).body.querySelectorAll(".sm-ob-note")].map(e => e.textContent).find(t => /Validation column/.test(t)) || ""')
     check('... and says the sets come from it', 'Sets from the Validation column Validation: Training 600, Validation 200, Test 200 rows.' in note, True)
     script = await page.ev('SM.app.reports.at(-1).pythonScript()')
-    check('the Python script: the fitters, the measures, the round-trip CSV reading', all(t_ in script for t_ in ('def fit_tree(', 'def fit_genreg(', 'def measures(', 'float_precision="round_trip"', 'DecisionTreeRegressor')), True)
+    check('the Python script: the fitters, the measures, the round-trip CSV reading', all(t_ in script for t_ in ('def fit_tree(', 'def fit_penreg(', 'def measures(', 'float_precision="round_trip"', 'DecisionTreeRegressor')), True)
     r = await page.ev('''(async () => {
       const rep = SM.app.reports.at(-1);
       const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim().startsWith('Summary Across'));
@@ -717,12 +717,12 @@ async def main():
     check('Bootstrap of a Summary column: the screening again on resampled rows, a column per method', (r['name'], r['rows'], sorted(r['cols'][1:]), r['finite']),
           ('Bootstrap Results of Fit Many Models for y', 3, sorted(['Decision Tree', 'Fit Least Squares', 'Penalized Regression Lasso']), True))
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.at(-1)))')
-    await shot(page, 'screening-04-validation.png')
+    await shot(page, 'manymodels-04-validation.png')
 
     # ---- Make Validation Column's K Fold (the dialog) and Stratify by Group; Fit Many Models crossvalidates by the folds
     r = await page.ev('''(async () => {
       SM.app.showTable(SM.app.tables.find(t => t.name === 'Screen').id);
-      SM.screening.makeValidationColumn(SM.app);
+      SM.manymodels.makeValidationColumn(SM.app);
       await new Promise(r => setTimeout(r, 300));
       const dlg = [...document.querySelectorAll('.sm-launch-dialog')].pop();
       const items = [...dlg.querySelectorAll('.sm-pick-list li')];
@@ -741,7 +741,7 @@ async def main():
     check('Make Validation Column ▸ K Fold, stratified by cls: a numeric nominal column of the folds 1 to 5', (r['type'], r['order']), (['numeric', 'nominal'], [1, 2, 3, 4, 5]))
     check('... 200 rows in each fold, each fold\'s share of cls within a row of the others', (r['counts'], max(q[0] for q in r['per']) - min(q[0] for q in r['per']) <= 1), ([200] * 5, True))
     check('... its notes say the platforms crossvalidate by the folds', 'crossvalidate by them' in r['notes'], True)
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Fold']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn']}), timeout=900)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Fold']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn']}), timeout=900)
     eng_f = await page.ev(engine_js({'methods': ['tree', 'linear', 'knn'], 'kfold': 0, 'repeats': 1}), timeout=600)
     note = await page.ev('[...SM.app.reports.at(-1).body.querySelectorAll(".sm-ob-note")].map(e => e.textContent).find(t => /folds of the Validation column/.test(t)) || ""')
     check('Fit Many Models with the K Fold column: crossvalidated by its 5 folds, the Crossvalidation outline, compared on it', (rep['errors'], 'Crossvalidation' in rep['outlines'], eng_f['kfold'], eng_f['fold_column'], eng_f['compare'], bool(note)),
@@ -749,22 +749,22 @@ async def main():
     cvt = rows_of(await page.ev(table_under_js('Crossvalidation', 0)))
     check('... the Crossvalidation table holds the engine\'s means over the folds', max(abs(num(cvt[m['label']]['Generalized RSquare']) - m['measures']['Crossvalidation']['generalized_rsquare']) for m in eng_f['methods']) < 5.1e-5, True)
     r = await page.ev('''(async () => { const t = SM.app.tables.find(t => t.name === 'Screen');
-      const v = await SM.engine.call('screening.validation_column', { training: 0.6, validation: 0.2, test: 0.2, strata: ['cls'], groups: ['day'], seed: '3' }, t);
+      const v = await SM.engine.call('manymodels.validation_column', { training: 0.6, validation: 0.2, test: 0.2, strata: ['cls'], groups: ['day'], seed: '3' }, t);
       const day = t.col('day').values; const groups = {}; v.values.forEach((s, i) => { (groups[day[i]] = groups[day[i]] || new Set()).add(s); });
       return { method: v.method, whole: Object.values(groups).every(g => g.size === 1), counts: v.counts }; })()''')
     check('Make Validation Column, Stratify by Group (both kinds of column): every day whole in one set, the counts near 600, 200, 200', (r['method'].startswith('stratified by cls with the groups of day'), r['whole'], all(abs(a_ - b_) <= 8 for a_, b_ in zip(r['counts'], [600, 200, 200]))), (True, True, True))
 
     # ---- XGBoost, LightGBM and Ridge (their packages loaded on the way), the Two Way Interactions, the Ensemble of Selected
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'interactions': True, 'selected': ['xgboost', 'linear', 'ridge'], 'ensemble': True}), timeout=900)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'interactions': True, 'selected': ['xgboost', 'linear', 'ridge'], 'ensemble': True}), timeout=900)
     vers = await page.ev("({ xgb: SM.engine.versions.xgboost || null, lgb: SM.engine.versions.lightgbm || null })")
     check('XGBoost and LightGBM: their packages loaded the first time they are chosen (Pyodide\'s xgboost 2.1.4, lightgbm 4.6.0)', (rep['errors'], vers), ([], {'xgb': '2.1.4', 'lgb': '4.6.0'}))
-    eng_x = await page.ev(engine_js({'fn': 'screening.fit.xgb.lgbm', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
+    eng_x = await page.ev(engine_js({'fn': 'manymodels.fit.xgb.lgbm', 'methods': ['xgboost', 'lightgbm', 'ridge', 'linear', 'tree'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
     summ = rows_of(await page.ev(table_under_js('Summary Across the Models', 0)))
     check('... the Summary holds the engine\'s measures of the five methods', max(abs(num(summ[m['label']]['Validation Generalized RSquare']) - m['measures']['Validation']['generalized_rsquare']) for m in eng_x['methods']) < 5.1e-5, True)
     lin_info = next(m['info'] for m in eng_x['methods'] if m['key'] == 'linear')
     check('... Add Two Way Interactions reaches the linear methods (the products in Nominal Logistic\'s terms)', 'two-way interactions' in lin_info, True)
     ens = rows_of(await page.ev(table_under_js('Ensemble of Selected', 0)))
-    eng_e = await page.ev(engine_js({'fn': 'screening.ensemble.xgb', 'methods': ['xgboost', 'linear', 'ridge'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
+    eng_e = await page.ev(engine_js({'fn': 'manymodels.ensemble.xgb', 'methods': ['xgboost', 'linear', 'ridge'], 'kfold': 0, 'repeats': 1, 'interactions': True}), timeout=900)
     check('Ensemble of Selected: the average and the stacking of the selected methods, the engine\'s measures, and the methods beside them',
           (list(ens)[:2], max(abs(num(ens[q['method']]['Validation Generalized RSquare']) - q['measures']['Validation']['generalized_rsquare']) for q in eng_e['rows']) < 5.1e-5, len(ens)), (['Average of Selected', 'Stacked'], True, 5))
     wts = rows_of(await page.ev(table_under_js('Ensemble of Selected', 1)))
@@ -775,7 +775,7 @@ async def main():
     await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
 
     # ---- By, Redo, a project
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear', 'nb'], 'roc': True}), timeout=600)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear', 'nb'], 'roc': True}), timeout=600)
     check('By g: one screening per level', [o for o in rep['outlines'] if o.startswith('Fit Many Models for')], ['Fit Many Models for cls g=a', 'Fit Many Models for cls g=b', 'Fit Many Models for cls g=c'])
     r = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const tbls = [...rep.body.querySelectorAll('table.sm-rt')].filter(t => t.dataset.rtKey === 'summary');
       const combined = SM.report.combineRT(tbls, 'x'); return { n: tbls.length, groups: tbls.map(t => t.dataset.group), rows: combined.nrows }; })()''')
@@ -807,7 +807,7 @@ async def main():
 
     # ---- By: each group's Decision Threshold its own (JMP's By reports), under the keys Fit Many Models gives it (cut, cutLevel)
     tid3 = await page.ev("SM.app.tables.find((t) => t.name === 'Screen').col('three').id")
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True, 'groupMetrics': tid3}), timeout=600)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True, 'groupMetrics': tid3}), timeout=600)
     await page.ev('''(() => { const i = SM.app.reports.at(-1).body.querySelectorAll('input[aria-label="Probability threshold"]')[1]; i.focus(); i.select(); })()''')
     for ch in '0.3':
         await page.key(ch, text=ch)
@@ -830,7 +830,7 @@ async def main():
     # ---- Group Metrics… (red triangle) of the methods the Decision Threshold compares, the Summary's selection: each method's
     # rows are predict.groups' on its probabilities; typed thresholds (real keys) and equal false positive rates by the menu;
     # its code; each method's rate charts; Save Decision Column of one method
-    rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn'], 'selected': ['linear', 'knn']}), timeout=900)
+    rep = await page.ev(open_report_js('manymodels', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'validation': ['Validation']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn'], 'selected': ['linear', 'knn']}), timeout=900)
     await page.ev(pick_js('*top*', ['Group Metrics…'], False))
     r = await page.ev('''(async () => { const rep = SM.app.reports.at(-1); const t = rep.table;
       for (let i = 0; i < 50 && !document.querySelector('.sm-dialog'); i++) await new Promise(r => setTimeout(r, 100));
@@ -842,7 +842,7 @@ async def main():
     check('Group Metrics… (red triangle) by g: its outline, no Decision Threshold needed', (r['opt'], r['errors'], 'Group Metrics: g' in r['outlines'], 'Decision Threshold' in r['outlines']), (True, [], True, False))
     GM = '''(async (extra) => { const rep = SM.app.reports.at(-1); const t = rep.table;
       await new Promise(res => { if (!rep.body.classList.contains('is-running')) res(); else rep.on('done', res); });
-      const e = [...rep.cache.entries()].filter(([k]) => k.startsWith('screening.threshold')).pop(); const D = await e[1];
+      const e = [...rep.cache.entries()].filter(([k]) => k.startsWith('manymodels.threshold')).pop(); const D = await e[1];
       const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.querySelector('h2, h3, h4').textContent.trim() === 'Group Metrics: g');
       const rows = [...h.parentElement.querySelector('table.sm-rt').querySelectorAll('tr')].map(tr => [...tr.children].map(c => c.textContent.trim()));
       const eng = [];
@@ -886,7 +886,7 @@ async def main():
     check('... its code (under the charts) runs in the page and gives every method\'s rows, each method\'s thresholds solved in it', (len(codes), err, ok_c), (2, None, True))
     await page.ev(GRAPHS_JS)
     await page.ev(UP.PM_JS)
-    n_gm, _ = await UP.chart_blocks(page, check, 'Group Metrics of two methods, equal false positive rates', "SM.app.tables.find((t) => t.name === 'Screen')", 'SM.app.reports.at(-1)', screening_compare)
+    n_gm, _ = await UP.chart_blocks(page, check, 'Group Metrics of two methods, equal false positive rates', "SM.app.tables.find((t) => t.name === 'Screen')", 'SM.app.reports.at(-1)', manymodels_compare)
     check('... the false positive rates and the false negative rates of each method by group, each chart drawn from its code', n_gm, 2)
     sd = await page.ev(f'''(async () => {{ const rep = SM.app.reports.at(-1); const t = rep.table; const before = t.columns.length;
       await ({PICK})('Group Metrics: g', ['Save Decision Column', 'K Nearest Neighbors'], false, 0);
@@ -908,21 +908,21 @@ async def main():
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
-    helps = await page.ev('(() => { SM.app.showHelp("p-screening"); const row = document.getElementById("help-p-screening"); return row ? row.textContent : null; })()')
+    helps = await page.ev('(() => { SM.app.showHelp("p-manymodels"); const row = document.getElementById("help-p-manymodels"); return row ? row.textContent : null; })()')
     check('Help lists the platform with the scikit-learn it uses', bool(helps) and 'sklearn.ensemble' in helps and 'Fit Many Models' in helps, True)
-    topics = await page.ev('Object.keys(SM.platforms.get("screening").topics)')
-    check('its topics', sorted(topics), sorted(['p:screening', 'p:screening:summary', 'p:screening:sets', 'p:screening:cv', 'p:screening:methods', 'p:screening:curves', 'p:screening:abp', 'p:screening:threshold', 'p:screening:ensemble', 'cmd:makevalidation']))
+    topics = await page.ev('Object.keys(SM.platforms.get("manymodels").topics)')
+    check('its topics', sorted(topics), sorted(['p:manymodels', 'p:manymodels:summary', 'p:manymodels:sets', 'p:manymodels:cv', 'p:manymodels:methods', 'p:manymodels:curves', 'p:manymodels:abp', 'p:manymodels:threshold', 'p:manymodels:ensemble', 'cmd:makevalidation']))
 
     # ---- the (i) explains every input: the launch dialog and its methods, Make Validation Column, the Decision Threshold
-    d = await page.ev(info_js('dialog', "SM.app.launch('screening')", "dlg.querySelector('.sm-scr-launch')"))
+    d = await page.ev(info_js('dialog', "SM.app.launch('manymodels')", "dlg.querySelector('.sm-mm-launch')"))
     part = d.get('sections', {}).get('Method, K Fold Crossvalidation and the terms', [])
     check('Fit Many Models: the launch dialog\'s (i) explains every method box, the K-fold fields and the terms', (len(d.get('inputs', [])), len(part), unexplained(d, 'Method, K Fold Crossvalidation and the terms'), all(len(t) > 30 for _, t in part)), (20, 20, [], True))
-    await dialog_help(page, "SM.app.launch('screening')", 'screening', 'Fit Many Models')
-    mv = await page.ev(info_js('dialog', 'SM.screening.makeValidationColumn(SM.app);'))
+    await dialog_help(page, "SM.app.launch('manymodels')", 'manymodels', 'Fit Many Models')
+    mv = await page.ev(info_js('dialog', 'SM.manymodels.makeValidationColumn(SM.app);'))
     roles_mv, opts_mv = dict(mv.get('sections', {}).get('Roles', [])), dict(mv.get('sections', {}).get('Options', []))
     check('Make Validation Column: the (i) explains its three roles and nine options', (sorted(roles_mv), sorted(opts_mv), all(len(t) > 30 for t in [*roles_mv.values(), *opts_mv.values()]), mv.get('noTopic')),
           (sorted(['Stratification Columns', 'Grouping Columns', 'Cutpoint Column']), sorted(['Validation Column Type', 'Number of Folds', 'Training Set', 'Validation Set', 'Test Set', 'Balance the Training Set', 'Random Seed', 'Values', 'New Column Name']), True, []))
-    thr = 'SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold)'
+    thr = 'SM.app.reports.find(r => r.platform.id === "manymodels" && r.spec.options.threshold)'
     s = await page.ev(info_js('slot', f"[...{thr}.body.querySelectorAll('.sm-ob-head')].find(h => h.textContent.trim() === 'Decision Threshold')", f"{thr}.body.querySelector('.sm-pred-cut')"))
     check('the Decision Threshold\'s (i) explains its box, Apply, the dashed line, the slider and a click on a curve', ([c[0] for c in s['sections'].get('The controls', [])], len(s.get('inputs', [])), unexplained(s, 'The controls')),
           (['Probability threshold', 'Apply', 'The dashed line', 'The slider', 'A click on a curve'], 2, []))
@@ -932,30 +932,30 @@ async def main():
     check('the Summary\'s (i) explains its buttons', [c[0] for c in s['sections'].get('Selecting', [])], ['Click a line', 'Select Dominant', 'Run Selected', 'Clear Selection'])
 
     # ---- dark theme and phone width
-    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold)))')
+    await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.find(r => r.platform.id === "manymodels" && r.spec.options.threshold)))')
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(3)
-    st = await page.ev('''(() => { const rs = SM.app.reports.filter(r => r.platform.id === 'screening'); return { errors: rs.flatMap(r => [...r.body.querySelectorAll('.sm-ob-error')].map(e => e.textContent)) }; })()''')
+    st = await page.ev('''(() => { const rs = SM.app.reports.filter(r => r.platform.id === 'manymodels'); return { errors: rs.flatMap(r => [...r.body.querySelectorAll('.sm-ob-error')].map(e => e.textContent)) }; })()''')
     check('the dark theme redraws the reports without errors', st['errors'], [])
-    col = await page.ev('(() => { const rep = SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold); const p = rep.plots.find(p => /^ROC /.test(p.opts.title)); return p.traces.find(t => t.name && t.name.startsWith("Decision Tree")).line.color; })()')
+    col = await page.ev('(() => { const rep = SM.app.reports.find(r => r.platform.id === "manymodels" && r.spec.options.threshold); const p = rep.plots.find(p => /^ROC /.test(p.opts.title)); return p.traces.find(t => t.name && t.name.startsWith("Decision Tree")).line.color; })()')
     check('the curves take the dark theme\'s colours', col, '#6fa3d6')
-    await shot(page, 'screening-05-dark.png')
+    await shot(page, 'manymodels-05-dark.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
-    await page.ev('(async () => { const rep = SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold); const d = new Promise(res => rep.on("done", res)); rep.run(); await d; })()', timeout=300)
+    await page.ev('(async () => { const rep = SM.app.reports.find(r => r.platform.id === "manymodels" && r.spec.options.threshold); const d = new Promise(res => rep.on("done", res)); rep.run(); await d; })()', timeout=300)
     await asyncio.sleep(1.0)
     r = await page.ev('''(() => {
-      const rep = SM.app.reports.find(r => r.platform.id === "screening" && r.spec.options.threshold);
+      const rep = SM.app.reports.find(r => r.platform.id === "manymodels" && r.spec.options.threshold);
       const body = rep.body.getBoundingClientRect();
       // the profiler's small plots keep their width (fit: false) and scroll inside its own box
       const boxes = rep.plots.filter(p => p.drawn && p.opts.fit !== false).map(p => p.box.getBoundingClientRect().right);
       return { page: document.documentElement.scrollWidth <= innerWidth + 1, plots: boxes.every(x => x <= body.right + 1), n: boxes.length,
-               body: rep.body.scrollWidth <= rep.body.clientWidth + 1, scrollers: [...rep.body.querySelectorAll('.sm-scr-scroll, table.sm-rt')].some(s => s.scrollWidth > s.clientWidth + 1) };
+               body: rep.body.scrollWidth <= rep.body.clientWidth + 1, scrollers: [...rep.body.querySelectorAll('.sm-mm-scroll, table.sm-rt')].some(s => s.scrollWidth > s.clientWidth + 1) };
     })()''')
     check('no horizontal page scroll at phone width', r['page'], True)
     check('the graphs fit the phone\'s width', (r['plots'], r['n'] >= 1), (True, True))
     check('wide tables scroll inside their own boxes, not the whole report', (r['body'], r['scrollers']), (True, True))
-    await shot(page, 'screening-06-phone.png')
+    await shot(page, 'manymodels-06-phone.png')
     check('no script errors', page.errors, [])
     await page.close()
 

@@ -157,7 +157,7 @@ def _plot_code(title, c, alternative, alpha):
 
 def two_means(g1, g2, null=0.0, alternative='two-sided', variance='unequal', alpha=0.05, name='Two Means'):
     """The t test of two means from their summary statistics (scipy.stats.ttest_ind_from_stats)."""
-    from .fit_y_by_x import bonett_se, hedges_j, smd_rows
+    from .bivariate import bonett_se, hedges_j, smd_rows
     m1, s1, n1 = _f(g1.get('mean'), 'Mean 1'), _f(g1.get('sd'), 'Std Dev 1'), _f(g1.get('n'), 'N 1')
     m2, s2, n2 = _f(g2.get('mean'), 'Mean 2'), _f(g2.get('sd'), 'Std Dev 2'), _f(g2.get('n'), 'N 2')
     d0 = _f(null if null not in (None, '') else 0.0, 'Hypothesized Difference')

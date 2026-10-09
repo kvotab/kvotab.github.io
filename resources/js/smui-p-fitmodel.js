@@ -47,7 +47,7 @@
 
   const PERS = [['standard', 'Standard Least Squares'], ['stepwise', 'Stepwise'], ['glm', 'Generalized Linear Model'],
     ['gee', 'Generalized Estimating Equations'], ['nominal', 'Nominal Logistic'], ['ordinal', 'Ordinal Logistic'], ['mixed', 'Mixed Model'],
-    ['manova', 'MANOVA'], ['genreg', 'Penalized Regression'], ['iv', 'Instrumental Variables'], ['quantreg', 'Quantile Regression']];
+    ['manova', 'MANOVA'], ['penreg', 'Penalized Regression'], ['iv', 'Instrumental Variables'], ['quantreg', 'Quantile Regression']];
   const PERS_LABEL = Object.fromEntries(PERS);
   // Quantile Regression: statsmodels' covariances, kernels and bandwidths, the default quantile process
   const QR_COVS = [['robust', 'Robust (statsmodels)'], ['iid', 'IID'], ['powell', 'Powell sandwich']];
@@ -272,7 +272,7 @@
     const mkSel = (choices, value, label) => { const s = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s.value = value; return s; };
     const pers = mkSel(PERS, st.pers || 'standard', 'Personality');
     const emph = mkSel(EMPH, st.emphasis, 'Emphasis');
-    const dist = mkSel(st.pers === 'gee' ? GEE_DISTS : st.pers === 'genreg' ? GR_DISTS : DISTS, st.dist, 'Distribution');
+    const dist = mkSel(st.pers === 'gee' ? GEE_DISTS : st.pers === 'penreg' ? GR_DISTS : DISTS, st.dist, 'Distribution');
     const link = mkSel(LINKS, st.link || DEFAULT_LINK[st.dist], 'Link Function');
     const distr = mkSel([['logit', 'Logit'], ['probit', 'Probit']], st.distr, 'Link');
     const target = el('select', { 'aria-label': 'Target Level' });
@@ -310,12 +310,12 @@
       const p = pers.value;
       const y = yCols()[0];
       lEmph.hidden = p !== 'standard';
-      lDist.hidden = !(p === 'glm' || p === 'genreg' || p === 'gee');
-      const gd = p === 'genreg' ? GR_DISTS : p === 'gee' ? GEE_DISTS : DISTS;
+      lDist.hidden = !(p === 'glm' || p === 'penreg' || p === 'gee');
+      const gd = p === 'penreg' ? GR_DISTS : p === 'gee' ? GEE_DISTS : DISTS;
       if ([...dist.options].map((x) => x.value).join() !== gd.map((x) => x[0]).join()) { const v = dist.value; dist.replaceChildren(...gd.map(([v2, l]) => el('option', { value: v2, text: l }))); dist.value = gd.some((x) => x[0] === v) ? v : 'normal'; }
       lLink.hidden = !(p === 'glm' || p === 'gee');
       lDistr.hidden = p !== 'ordinal';
-      lTarget.hidden = !(y && y.isCategorical && ['nominal', 'glm', 'genreg', 'gee'].includes(p));
+      lTarget.hidden = !(y && y.isCategorical && ['nominal', 'glm', 'penreg', 'gee'].includes(p));
       const gee = p === 'gee';
       lCorr.hidden = lCov.hidden = lScale.hidden = !gee;
       scaleVal.hidden = scaleSel.value !== 'fixed';
@@ -357,7 +357,7 @@
       const out = [['Personality', 'How the model is fitted and reported. It follows the Y until you choose one: Standard Least Squares for a continuous Y, Nominal or Ordinal Logistic for a nominal or ordinal one. The (i) beside it describes each.']];
       if (on(lEmph)) out.push(['Emphasis', 'Which outlines open at first: Effect Leverage (the leverage plots and Effect Details, the default), Effect Screening (Sorted Parameter Estimates and the Prediction Profiler, Effect Details closed) or Minimal Report (the tables, without the plots). The red triangle turns each part on or off later.']);
       if (on(lDist)) {
-        out.push(['Distribution', p === 'genreg' ? 'Normal, Binomial (a proportion, or a two-level Y, which is always binomial) or Poisson (counts); Model Launch in the report changes it.'
+        out.push(['Distribution', p === 'penreg' ? 'Normal, Binomial (a proportion, or a two-level Y, which is always binomial) or Poisson (counts); Model Launch in the report changes it.'
           : `The distribution of the response: Normal; Binomial (a two-level Y or a proportion${p === 'glm' ? ', or events and trials as two Y columns' : ''}); Poisson for counts; Gamma and Inverse Gaussian for positive values; Negative Binomial for counts that vary more than a Poisson's (${p === 'gee' ? 'its α fixed below' : 'its α estimated, statsmodels\' NB2 model, with the log link and no Weight or Freq'})${p === 'gee' ? '; Tweedie, for values of 0 or more with exact zeros' : ''}.`]);
       }
       if (on(lAlpha)) out.push(['α', 'The negative binomial\'s dispersion, fixed: the variance is μ + αμ². Above 0, 1 by default; GEE does not estimate it.']);
@@ -466,8 +466,8 @@
     if (p === 'manova' && ys.length < 2) return 'MANOVA needs two or more Y columns.';
     if ((p === 'nominal' || p === 'ordinal') && ys.some((c) => !c.isCategorical)) return `${PERS_LABEL[p]} needs a nominal or ordinal Y.`;
     if (p === 'glm' && o.dist !== 'binomial' && ys.some((c) => c.isCategorical)) return 'A categorical Y takes the binomial distribution (or Nominal Logistic).';
-    if ((p === 'stepwise' || p === 'genreg') && !effects.some((e) => !e.random)) return `${PERS_LABEL[p]} needs model effects.`;
-    if ((p === 'stepwise' || p === 'genreg' || p === 'manova') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only.`;
+    if ((p === 'stepwise' || p === 'penreg') && !effects.some((e) => !e.random)) return `${PERS_LABEL[p]} needs model effects.`;
+    if ((p === 'stepwise' || p === 'penreg' || p === 'manova') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only.`;
     // (these fitted the fixed effects alone, leaving the random ones out without a word)
     if ((p === 'glm' || p === 'nominal' || p === 'ordinal') && effects.some((e) => e.random)) return `${PERS_LABEL[p]} takes fixed effects only: take the Random Effect attribute off, or fit random effects with Standard Least Squares or Mixed Model.`;
     const w = ((spec.roles.weight || []).length || (spec.roles.freq || []).length);
@@ -2259,13 +2259,13 @@
   const GR_VALID = [['aicc', 'AICc'], ['bic', 'BIC'], ['kfold', 'KFold'], ['holdback', 'Holdback'], ['loo', 'Leave-One-Out'], ['validation', 'Validation Column']];
   const GR_LINK = { Normal: 'Identity', Binomial: 'Logit', Poisson: 'Log' };
 
-  async function renderGenReg(ctx, M) {
+  async function renderPenReg(ctx, M) {
     const ys = ctx.roles('y');
-    await perResponse(ctx, ys, (y) => `Penalized Regression for ${y.name}`, (y, parent, st) => genregY(ctx, M, y, parent, st));
+    await perResponse(ctx, ys, (y) => `Penalized Regression for ${y.name}`, (y, parent, st) => penregY(ctx, M, y, parent, st));
   }
 
   /* The fit's settings from the report's options (scoped by the response), and the payload. */
-  function genregCfg(ctx, M, y) {
+  function penregCfg(ctx, M, y) {
     const sc = y.id;
     const o = (k, d) => ctx.opt(k, d, sc);
     const vcol = ctx.name('validation');
@@ -2283,34 +2283,34 @@
     return { cfg, valids, vcol, payload: { ...M.base, y: y.name, ...cfg } };
   }
 
-  async function genregY(ctx, M, y, parent, st) {
+  async function penregY(ctx, M, y, parent, st) {
     const P = pal();
     const sc = y.id;
     const o = (k, d) => ctx.opt(k, d, sc);
     const chooseKey = `gr:choose:${ctx.byLabel || ''}`;
-    const { cfg, valids, payload } = genregCfg(ctx, M, y);
+    const { cfg, valids, payload } = penregCfg(ctx, M, y);
     // the fits kept by Go (JMP's several fits of a response), each its own settings and chosen model; the Model Comparison
     // at the top compares them with the fit of the Model Launch
     const kept = (o('gr:fits', []) || []).filter((f) => f && f.cfg);
-    const cmp = kept.length ? ctx.outline('Model Comparison', { parent, key: 'grcompare', info: 'p:fitmodel:genreg' }) : null;
+    const cmp = kept.length ? ctx.outline('Model Comparison', { parent, key: 'grcompare', info: 'p:fitmodel:penreg' }) : null;
     // KFold and Leave-One-Out fit the path once per fold: say how far they are
     let res;
     const status = cfg.criterion === 'kfold' || cfg.criterion === 'loo' ? el('p', { class: 'sm-ob-note', role: 'status', text: `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}: fitting the path of every fold…` }) : null;
-    const off = status ? SM.engine.on('log', (ev) => { const k = /^smui:progress genreg (\d+) (\d+)/.exec((ev && ev.text) || ''); if (k) status.textContent = `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${k[1]} of ${k[2]} fits…`; }) : null;
+    const off = status ? SM.engine.on('log', (ev) => { const k = /^smui:progress penreg (\d+) (\d+)/.exec((ev && ev.text) || ''); if (k) status.textContent = `${cfg.criterion === 'loo' ? 'Leave-One-Out' : 'KFold'}${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${k[1]} of ${k[2]} fits…`; }) : null;
     if (status) (parent.body || parent.el || ctx.container).append(status);
-    try { res = await ctx.call('fitmodel.genreg', payload); } finally { if (off) off(); if (status) status.remove(); }
+    try { res = await ctx.call('fitmodel.penreg', payload); } finally { if (off) off(); if (status) status.remove(); }
     const m = res.model;
     st.menu = () => [
       ctx.check('Diagnostic Plots', 'gr:diag', sc, false, { disabled: m.distribution === 'Binomial' }),
-      ...(res.fit_report ? genregClassItems(ctx, res.fit_report, sc) : []),
+      ...(res.fit_report ? penregClassItems(ctx, res.fit_report, sc) : []),
       { label: 'Profilers', submenu: () => [ctx.check('Profiler', 'profiler', sc, false), ctx.check('Interaction Plots', 'interaction', sc, false)] },
-      { label: 'Save Columns', submenu: () => genregSaveItems(ctx, y, res, payload) },
+      { label: 'Save Columns', submenu: () => penregSaveItems(ctx, y, res, payload) },
       { separator: true },
-      ...genregModelItems(ctx, y, res),
+      ...penregModelItems(ctx, y, res),
       { label: 'Model Dialog', action: () => ctx.report.relaunch() },
     ];
     // Model Launch: every change refits (and shows the best model again); Go keeps the fit as it is, beside the next ones
-    const launch = ctx.outline('Model Launch', { parent, key: 'grlaunch', info: 'p:fitmodel:genreg' });
+    const launch = ctx.outline('Model Launch', { parent, key: 'grlaunch', info: 'p:fitmodel:penreg' });
     const reset = () => ctx.set(chooseKey, null, sc, { rerun: false });
     const field = (label, input) => el('label', { class: 'sm-fm-opt' }, el('span', { text: label }), input);
     const mkSel = (label, key, value, choices) => { const s2 = el('select', { 'aria-label': label }, ...choices.map(([v, l]) => el('option', { value: v, text: l }))); s2.value = value; s2.addEventListener('change', () => { reset(); ctx.set(key, s2.value, sc); }); return field(label, s2); };
@@ -2339,40 +2339,40 @@
       cfg.criterion === 'holdback' ? numIn('Holdback Proportion', 'gr:holdback', cfg.portion, (v) => v > 0 && v < 1) : null,
       resampled ? field('Random Seed', seed) : null, go),
     kept.length ? ctx.note(`Go keeps the fit as it is: ${kept.length} kept fit${kept.length > 1 ? 's' : ''} below, compared with this one in the Model Comparison.`) : null);
-    const cmpRows = [genregCompareRow(res, 'Model Launch')];
-    genregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key: '' });
+    const cmpRows = [penregCompareRow(res, 'Model Launch')];
+    penregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key: '' });
     for (const [i, f] of kept.entries()) {
       const pay = { ...M.base, y: y.name, ...f.cfg };
       const ck = `gr:choose:${i}:${ctx.byLabel || ''}`;
       if (ctx.opt(ck, undefined, sc) !== undefined) pay.choose = ctx.opt(ck, null, sc);
       let r2;
-      try { r2 = await ctx.call('fitmodel.genreg', pay); } catch (e) { parent.add(ctx.warn(`Kept fit ${i + 1}: ${e.message || e}`)); continue; }
+      try { r2 = await ctx.call('fitmodel.penreg', pay); } catch (e) { parent.add(ctx.warn(`Kept fit ${i + 1}: ${e.message || e}`)); continue; }
       const remove = () => { const L = kept.slice(); L.splice(i, 1); ctx.set('gr:fits', L, sc); };
-      genregFit(ctx, M, y, parent, r2, { P, sc, chooseKey: ck, payload: pay, key: `:${i}`, title: `${r2.model.title} (${i + 2})`, remove });
-      cmpRows.push(genregCompareRow(r2, `Fit ${i + 2}`));
+      penregFit(ctx, M, y, parent, r2, { P, sc, chooseKey: ck, payload: pay, key: `:${i}`, title: `${r2.model.title} (${i + 2})`, remove });
+      cmpRows.push(penregCompareRow(r2, `Fit ${i + 2}`));
     }
     if (cmp) {
       const sets = ['Training', 'Validation', 'Test'].filter((x) => cmpRows.some((r) => r[`grsq_${x}`] != null));
       cmp.add(ctx.rt({ columns: [{ key: 'fit', label: 'Fit', fmt: 'text' }, { key: 'model', label: 'Model', fmt: 'text' }, { key: 'nonzero', label: 'Nonzero Parameters', fmt: 'int' }, { key: 'aicc', label: 'AICc' }, { key: 'bic', label: 'BIC' },
         ...sets.flatMap((x) => [{ key: `grsq_${x}`, label: `${x} Generalized RSquare` }, { key: `rase_${x}`, label: `${x} RASE` }])], rows: cmpRows }, { key: 'grcompare', sortable: false }),
       ctx.note('Each fit\'s training AICc and BIC and each set\'s Generalized RSquare and RASE, from its Model Summary. The fit of the Model Launch follows the launch\'s settings; Go keeps a fit as it is. A kept fit\'s red triangle removes it.'),
-      ctx.code(genregCompareCode(ctx, cmpRows)));
+      ctx.code(penregCompareCode(ctx, cmpRows)));
     }
-    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'genreg', payload }], scope: sc });
-    if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'genreg', payload, scope: sc });
+    if (o('profiler', false)) await profiler(ctx, parent, { sources: [{ kind: 'penreg', payload }], scope: sc });
+    if (o('interaction', false)) await interactionPlots(ctx, parent, { kind: 'penreg', payload, scope: sc });
     tail(ctx, parent, res);
   }
 
   /* One fit's report: the Model Summary, the Solution Path (not for Maximum Likelihood), the estimates, the
      diagnostics and, binomial, the classification parts (SM.predict's: confusion, ROC, lift, Decision Threshold). */
-  function genregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key, title = null, remove = null }) {
+  function penregFit(ctx, M, y, parent, res, { P, sc, chooseKey, payload, key, title = null, remove = null }) {
     const m = res.model;
     const d = res.diag;
     const o = (k, dflt) => ctx.opt(k, dflt, sc);
     const menu = remove ? () => [
-      ...(res.fit_report ? genregClassItems(ctx, res.fit_report, `${sc}${key}`) : []),
-      { label: 'Save Columns', submenu: () => genregSaveItems(ctx, y, res, payload) },
-      ...genregModelItems(ctx, y, res),
+      ...(res.fit_report ? penregClassItems(ctx, res.fit_report, `${sc}${key}`) : []),
+      { label: 'Save Columns', submenu: () => penregSaveItems(ctx, y, res, payload) },
+      ...penregModelItems(ctx, y, res),
       { separator: true },
       { label: 'Remove Fit', action: remove },
     ] : null;
@@ -2383,7 +2383,7 @@
         [m.distribution === 'Binomial' ? 'Probability Model Link' : 'Mean Model Link', GR_LINK[m.distribution], 'text'], m.target ? ['Target level', m.target, 'text'] : null,
         m.validation_column ? ['Validation column', m.validation_column, 'text'] : null, m.seed != null ? ['Random Seed', String(m.seed), 'text'] : null]),
       ctx.rt(res.summary, { key: `grsummary${key}`, sortable: false })));
-    if (!m.mle) genregPath(ctx, fitOb, res, { P, sc, chooseKey, key });
+    if (!m.mle) penregPath(ctx, fitOb, res, { P, sc, chooseKey, key });
     ctx.outline('Parameter Estimates for Centered and Scaled Predictors', { parent: fitOb, key: `grscaled${key}` }).add(
       ctx.rt({ columns: [{ key: 'term', label: 'Term', fmt: 'text' }, { key: 'estimate', label: 'Estimate' }], rows: res.scaled }, { sortable: false, key: `grscaled${key}` }));
     // zeroed terms in grey (not a text column: Bootstrap finds the rows again by their text); Maximum Likelihood: standard errors and Wald tests
@@ -2405,21 +2405,21 @@
       if (ctx.opt('confusion', false, scope)) SM.predict.confusion(ctx, fitOb, fr, prefix);
       if (ctx.opt('roc', false, scope)) SM.predict.rocCurves(ctx, fitOb, fr, prefix, scope);
       if (ctx.opt('lift', false, scope)) SM.predict.liftCurves(ctx, fitOb, fr, prefix, scope);
-      SM.predict.decisionParts(ctx, fitOb, fr, scope, prefix, { save: { fn: 'fitmodel.save', payload: { ...payload, kind: 'genreg', where: ctx.where || [], alpha: ctx.alpha } }, yCol: y });
+      SM.predict.decisionParts(ctx, fitOb, fr, scope, prefix, { save: { fn: 'fitmodel.save', payload: { ...payload, kind: 'penreg', where: ctx.where || [], alpha: ctx.alpha } }, yCol: y });
     }
     return fitOb;
   }
 
-  const genregClassItems = (ctx, fr, scope) => [ctx.check('Confusion Matrix', 'confusion', scope, false), ctx.check('ROC Curve', 'roc', scope, false), ctx.check('Lift Curve', 'lift', scope, false),
+  const penregClassItems = (ctx, fr, scope) => [ctx.check('Confusion Matrix', 'confusion', scope, false), ctx.check('ROC Curve', 'roc', scope, false), ctx.check('Lift Curve', 'lift', scope, false),
     fr.threshold ? SM.predict.thresholdItem(ctx, scope) : null].filter(Boolean);
 
-  function genregSaveItems(ctx, y, res, payload) {
+  function penregSaveItems(ctx, y, res, payload) {
     const d = res.diag, m = res.model;
     const resampled = ['KFold', 'Holdback'].includes(m.validation);
     return [
-      saveFormulaItem(ctx, 'genreg', payload, 'Save Prediction Formula'),
-      { label: 'Predicted Values', action: saveAllRows(ctx, 'genreg', payload, [['predicted', `Pred ${y.name}`]]) },
-      { label: 'Residuals', action: saveAllRows(ctx, 'genreg', payload, [['residual', `Residual ${y.name}`]]) },
+      saveFormulaItem(ctx, 'penreg', payload, 'Save Prediction Formula'),
+      { label: 'Predicted Values', action: saveAllRows(ctx, 'penreg', payload, [['predicted', `Pred ${y.name}`]]) },
+      { label: 'Residuals', action: saveAllRows(ctx, 'penreg', payload, [['residual', `Residual ${y.name}`]]) },
       resampled ? { label: 'Validation Column', action: () => ctx.saveColumn('Validation', { rows: d.rows, values: d.set }, { notes: `0 training, 1 validation: the rows of ${m.title} in ${ctx.report.title}`, modelingType: 'nominal' }) } : null,
     ].filter(Boolean);
   }
@@ -2427,7 +2427,7 @@
   /* Make Model and Run Model with the effects whose terms are not all zero (the fit's active effects): Standard Least
      Squares for a normal response, Nominal Logistic for a two-level one, the Generalized Linear Model otherwise; and
      JMP's Relaunch with Active Effects (Penalized Regression again). */
-  function genregModelItems(ctx, y, res) {
+  function penregModelItems(ctx, y, res) {
     const fixed = (ctx.spec.effects || []).filter((e) => !e.random);
     const active = (res.active || []).map((i) => fixed[i]).filter(Boolean);
     const dist = { Normal: 'normal', Binomial: 'binomial', Poisson: 'poisson' }[res.model.distribution] || 'normal';
@@ -2438,11 +2438,11 @@
     return [
       { label: 'Make Model with Active Effects', action: () => (active.length ? open(spec(pers)) : none()) },
       { label: 'Run Model with Active Effects', action: () => (active.length ? SM.app.openReport(ctx.report.platform, spec(pers), ctx.table) : none()) },
-      { label: 'Relaunch with Active Effects', action: () => (active.length ? open(spec({ personality: 'genreg' })) : none()) },
+      { label: 'Relaunch with Active Effects', action: () => (active.length ? open(spec({ personality: 'penreg' })) : none()) },
     ];
   }
 
-  function genregCompareRow(res, fit) {
+  function penregCompareRow(res, fit) {
     const row = { fit, model: res.model.title, nonzero: res.model.nonzero, aicc: res.model.aicc, bic: res.model.bic };
     const by = Object.fromEntries(res.summary.rows.map((r) => [r.measure, r]));
     for (const x of ['Training', 'Validation', 'Test']) {
@@ -2454,7 +2454,7 @@
   }
 
   /* The code under the Model Comparison: each fit's own code, run in turn, and its Model Summary's measures. */
-  function genregCompareCode(ctx, rows) {
+  function penregCompareCode(ctx, rows) {
     const lit = (t) => JSON.stringify(t);
     return [SM.report.codeHead(ctx.table.name), '', 'fits = {',
       ...rows.map((r) => `    ${lit(`${r.fit}: ${r.model}`)}: ${lit(r.code)},`),
@@ -2468,7 +2468,7 @@
   /* The Solution Path: the estimates on the scaled predictors (left) and the validation curve (right)
      against the magnitude of the scaled estimates or the step; the red line is the model shown. Drag it
      (in either plot) or click a point to show another; Reset to the Best Model goes back. */
-  function genregPath(ctx, fitOb, res, { P, sc, chooseKey, key = '' }) {
+  function penregPath(ctx, fitOb, res, { P, sc, chooseKey, key = '' }) {
     const x = res.path.x;
     const at = (i) => x[Math.max(0, Math.min(x.length - 1, i))];
     const choose = (i) => { if (i !== res.chosen) ctx.set(chooseKey, i === res.best ? null : i, sc); };
@@ -2930,7 +2930,7 @@
       ],
       more: MORE,
     },
-    'p:fitmodel:genreg': {
+    'p:fitmodel:penreg': {
       kicker: 'Fit Model', title: 'Penalized Regression',
       lead: 'JMP Pro\'s penalized and stepwise fits of a normal, binomial or Poisson response, with a validation that picks the model on the path. The predictors are centred and scaled first, by the rows that train the model; the intercept is not penalized. The fits minimise the objective of statsmodels\' fit_regularized, solved as glmnet does (coordinate descent inside Newton steps).',
       sections: [
@@ -3206,7 +3206,7 @@
         case 'ordinal': return one ? `Ordinal Logistic Fit for ${one}` : 'Fit Ordinal Logistic';
         case 'mixed': return 'Fit Mixed';
         case 'manova': return 'Manova Fit';
-        case 'genreg': return one ? `Penalized Regression for ${one}` : 'Penalized Regression';
+        case 'penreg': return one ? `Penalized Regression for ${one}` : 'Penalized Regression';
         case 'iv': return one ? `Instrumental Variables Fit for ${one}` : 'Fit Instrumental Variables';
         case 'quantreg': return one ? `Quantile Regression Fit for ${one}` : 'Fit Quantile Regression';
         default: return one ? `Response ${one}` : 'Fit Group';
@@ -3218,7 +3218,7 @@
       const M = modelOf(ctx);
       const p = ctx.opt('personality', 'standard');
       const vc = ctx.name('validation');
-      if (vc && p !== 'genreg' && !VALIDATES.has(p)) ctx.top.add(ctx.note(`${vc} is in the Validation role, which ${PERS_LABEL[p] || p} does not use: this fit takes every row, whatever its set.`));
+      if (vc && p !== 'penreg' && !VALIDATES.has(p)) ctx.top.add(ctx.note(`${vc} is in the Validation role, which ${PERS_LABEL[p] || p} does not use: this fit takes every row, whatever its set.`));
       // the mixed models (Mixed Model; random effects in Standard Least Squares): smui-p-mixed.js
       if (SM.fitmodel.mixed && SM.fitmodel.mixed.claims(p, M)) return SM.fitmodel.mixed.render(ctx, M, p);
       if (p === 'stepwise') return renderStepwise(ctx, M);
@@ -3226,7 +3226,7 @@
       if (p === 'gee') return renderGEE(ctx, M);
       if (p === 'nominal' || p === 'ordinal') return renderLogistic(ctx, M, p === 'ordinal');
       if (p === 'manova') return renderManova(ctx, M);
-      if (p === 'genreg') return renderGenReg(ctx, M);
+      if (p === 'penreg') return renderPenReg(ctx, M);
       if (p === 'iv') return renderIV(ctx, M);
       if (p === 'quantreg') return renderQR(ctx, M);
       return renderStandard(ctx, M);

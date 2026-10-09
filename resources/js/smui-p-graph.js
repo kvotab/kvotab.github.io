@@ -515,7 +515,7 @@
 
   /* ---- the element icons of the palette ------------------------------------------------ */
   function icon(type) {
-    const s = (attrs, ...kids) => svg('svg', { viewBox: '0 0 24 18', width: 24, height: 18, 'aria-hidden': 'true', class: 'sm-gb-icon', ...attrs }, ...kids);
+    const s = (attrs, ...kids) => svg('svg', { viewBox: '0 0 24 18', width: 24, height: 18, 'aria-hidden': 'true', class: 'sm-gm-icon', ...attrs }, ...kids);
     const P = (d, extra = {}) => svg('path', { d, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...extra });
     const dot = (x, y, r = 1.6) => svg('circle', { cx: x, cy: y, r, fill: 'currentColor' });
     const rect = (x, y, w, h, extra = {}) => svg('rect', { x, y, width: w, height: h, fill: 'currentColor', ...extra });
@@ -541,7 +541,7 @@
   }
 
   /* ---- Graph Maker: the state ----------------------------------------------------------
-     spec.options.gb holds everything a redo or a saved project needs. A
+     spec.options.gm holds everything a redo or a saved project needs. A
      zone entry is { id, name }: the id within the session, the name when a
      project is opened again (the ids are new then). */
   /* axes: Axis Settings by the column on the axis ('x:<name>', or 'y:count'
@@ -2336,7 +2336,7 @@
   /* ---- Graph Maker: the builder -----------------------------------------------------------
      The report's top outline holds the builder: the columns on the left
      with the element properties under them, the element palette above the
-     graph, and the drop zones around it. A change updates spec.options.gb
+     graph, and the drop zones around it. A change updates spec.options.gm
      (without redoing the report) and redraws the graph alone; Redo and a
      saved project rebuild everything from the state. */
   const UI = new WeakMap();          // report -> what the view keeps between redos: filter, selection, undo
@@ -2356,7 +2356,7 @@
       this.ui = ui;
       // Edit > Undo and ctrl/⌘+Z in this report take back the builder's own last change first (smui-app.js)
       if (!ctx.headless) ctx.report.localUndo = { label: 'Graph Maker Change', can: () => ui.undo.length > 0, undo: () => this.undo() };
-      this.S = normalize(clone(ctx.opt('gb', null)), this.t);
+      this.S = normalize(clone(ctx.opt('gm', null)), this.t);
       this.seq = 0;
       this.busy = 0;
       this.plotBox = null;
@@ -2376,43 +2376,43 @@
 
     /* ---- the pieces ---- */
     build() {
-      const root = el('div', { class: 'sm-gb' });
+      const root = el('div', { class: 'sm-gm' });
       this.root = root;
-      root._gb = this.api();
+      root._gm = this.api();
       const btn = (text, fn, extra = {}) => { const b = el('button', { type: 'button', class: 'sm-btn small', text, ...extra }); b.addEventListener('click', fn); return b; };
       this.undoBtn = btn('Undo', () => this.undo(), { dataset: { gbkey: 'undo' } });
       this.doneBtn = btn('Done', () => this.update((S) => { S.done = !S.done; }), { dataset: { gbkey: 'done' }, 'aria-pressed': 'false' });
       const start = btn('Start Over', () => this.startOver(), { dataset: { gbkey: 'start' } });
-      this.bar = el('div', { class: 'sm-gb-bar', dataset: { noexport: '' } }, this.undoBtn, start, this.doneBtn,
-        el('span', { class: 'sm-gb-hint', text: 'Drag columns onto the zones, or select a column and click a zone; drag a column off the zones to take it out. Click an element to show it; shift-click to add it.' }), infoSlot('p:graphbuilder'));
+      this.bar = el('div', { class: 'sm-gm-bar', dataset: { noexport: '' } }, this.undoBtn, start, this.doneBtn,
+        el('span', { class: 'sm-gm-hint', text: 'Drag columns onto the zones, or select a column and click a zone; drag a column off the zones to take it out. Click an element to show it; shift-click to add it.' }), infoSlot('p:graphmaker'));
       // columns
-      this.filter = el('input', { type: 'search', class: 'sm-gb-filter', placeholder: 'Filter', 'aria-label': 'Filter columns' });
+      this.filter = el('input', { type: 'search', class: 'sm-gm-filter', placeholder: 'Filter', 'aria-label': 'Filter columns' });
       this.filter.value = this.ui.filter || '';
       this.filter.addEventListener('input', () => { this.ui.filter = this.filter.value; this.renderColumns(); });
       this.colCount = el('span', { class: 'sm-count' });
-      this.colList = el('ul', { class: 'sm-gb-collist', role: 'listbox', 'aria-label': 'Columns: drag one onto a zone, or select one and press Enter for the zones' });
+      this.colList = el('ul', { class: 'sm-gm-collist', role: 'listbox', 'aria-label': 'Columns: drag one onto a zone, or select one and press Enter for the zones' });
       this.wireColumns();
-      const cols = el('div', { class: 'sm-gb-cols' }, el('h4', null, 'Select Columns', el('span', { class: 'sm-grow' }), this.colCount), this.filter, this.colList);
-      this.propsBox = el('div', { class: 'sm-gb-props', 'aria-live': 'polite' });
-      const left = el('aside', { class: 'sm-gb-left', 'aria-label': 'Columns and element properties', dataset: { noexport: '' } }, cols, this.propsBox);
+      const cols = el('div', { class: 'sm-gm-cols' }, el('h4', null, 'Select Columns', el('span', { class: 'sm-grow' }), this.colCount), this.filter, this.colList);
+      this.propsBox = el('div', { class: 'sm-gm-props', 'aria-live': 'polite' });
+      const left = el('aside', { class: 'sm-gm-left', 'aria-label': 'Columns and element properties', dataset: { noexport: '' } }, cols, this.propsBox);
       // palette
-      this.palette = el('div', { class: 'sm-gb-palette', role: 'toolbar', 'aria-label': 'Elements: click to show one, shift-click to add or remove one', dataset: { noexport: '' } });
+      this.palette = el('div', { class: 'sm-gm-palette', role: 'toolbar', 'aria-label': 'Elements: click to show one, shift-click to add or remove one', dataset: { noexport: '' } });
       this.wirePalette();
       // zones around the graph
       this.zoneEls = {};
       for (const z of ZONES) {
-        const box = el('div', { class: `sm-gb-zone sm-gb-z-${z.key}${z.key === 'y' || z.key === 'groupY' ? ' is-vertical' : ''}`, role: 'button', tabindex: '0', dataset: { zone: z.key, gbkey: `zone:${z.key}`, noexport: '' } });
+        const box = el('div', { class: `sm-gm-zone sm-gm-z-${z.key}${z.key === 'y' || z.key === 'groupY' ? ' is-vertical' : ''}`, role: 'button', tabindex: '0', dataset: { zone: z.key, gbkey: `zone:${z.key}`, noexport: '' } });
         this.wireZone(box, z);
         this.zoneEls[z.key] = box;
       }
-      this.plotWrap = el('div', { class: 'sm-gb-plotwrap' });
+      this.plotWrap = el('div', { class: 'sm-gm-plotwrap' });
       const Z = this.zoneEls;
-      const side = el('div', { class: 'sm-gb-side' }, Z.wrap, Z.overlay, Z.color, Z.size, Z.freq, Z.shape);
-      this.frame = el('div', { class: 'sm-gb-frame' }, Z.groupX, Z.y, this.plotWrap, Z.groupY, side, Z.x);
-      this.status = el('div', { class: 'sm-gb-status' });
-      this.showCP = btn('Show Control Panel', () => this.update((S) => { S.done = false; }), { class: 'sm-linkbtn sm-gb-showcp', dataset: { gbkey: 'showcp' } });
-      const center = el('div', { class: 'sm-gb-center' }, this.palette, this.frame, this.status);
-      root.append(this.showCP, this.bar, el('div', { class: 'sm-gb-work' }, left, center));
+      const side = el('div', { class: 'sm-gm-side' }, Z.wrap, Z.overlay, Z.color, Z.size, Z.freq, Z.shape);
+      this.frame = el('div', { class: 'sm-gm-frame' }, Z.groupX, Z.y, this.plotWrap, Z.groupY, side, Z.x);
+      this.status = el('div', { class: 'sm-gm-status' });
+      this.showCP = btn('Show Control Panel', () => this.update((S) => { S.done = false; }), { class: 'sm-linkbtn sm-gm-showcp', dataset: { gbkey: 'showcp' } });
+      const center = el('div', { class: 'sm-gm-center' }, this.palette, this.frame, this.status);
+      root.append(this.showCP, this.bar, el('div', { class: 'sm-gm-work' }, left, center));
       // a column dragged out of a zone and let go anywhere else in the builder
       // (the column list, the graph, the palette) is taken out of its zone
       SM.launch.dropArea(root);
@@ -2430,7 +2430,7 @@
       this.renderProps();
       if (focusKey) { const f = this.root.querySelector(`[data-gbkey="${CSS.escape(focusKey)}"]`); if (f) f.focus({ preventScroll: true }); }
       // An open (i) of the builder follows its elements and their settings.
-      if (typeof KvotInfo !== 'undefined' && KvotInfo.current && /^p:graphbuilder/.test(KvotInfo.current() || '')) KvotInfo.refresh();
+      if (typeof KvotInfo !== 'undefined' && KvotInfo.current && /^p:graphmaker/.test(KvotInfo.current() || '')) KvotInfo.refresh();
     }
 
     renderColumns() {
@@ -2447,7 +2447,7 @@
         if (on) li.classList.add('is-selected');
         list.append(li);
       }
-      if (!cols.length) list.append(el('li', { class: 'sm-gb-none', text: 'No column matches.' }));
+      if (!cols.length) list.append(el('li', { class: 'sm-gm-none', text: 'No column matches.' }));
     }
 
     wireColumns() {
@@ -2544,16 +2544,16 @@
       for (const z of ZONES) {
         const box = this.zoneEls[z.key];
         const list = this.S.zones[z.key];
-        box.replaceChildren(el('span', { class: 'sm-gb-zlabel', text: z.label }));
+        box.replaceChildren(el('span', { class: 'sm-gm-zlabel', text: z.label }));
         box.classList.toggle('is-empty', !list.length);
         for (const ref of list) {
           const c = this.t.col(ref.id);
           if (!c) continue;
           // draggable: to another zone, onto a column there, along this zone, or off the zones (out)
-          box.append(el('button', { type: 'button', class: 'sm-gb-chip', draggable: 'true', 'aria-haspopup': 'menu', 'aria-label': `${c.name} in ${z.label}: options (Delete removes it)`, dataset: { col: c.id, gbkey: `chip:${z.key}:${c.id}` } },
+          box.append(el('button', { type: 'button', class: 'sm-gm-chip', draggable: 'true', 'aria-haspopup': 'menu', 'aria-label': `${c.name} in ${z.label}: options (Delete removes it)`, dataset: { col: c.id, gbkey: `chip:${z.key}:${c.id}` } },
             typeIcon(c.modelingType), el('span', { class: 'sm-colname', text: c.name })));
         }
-        if ((z.key === 'x' || z.key === 'y') && list.length > 1) box.append(el('span', { class: 'sm-gb-zmode', text: (z.key === 'x' ? this.S.xMode : this.S.yMode) === 'merge' ? 'merged' : 'side by side' }));
+        if ((z.key === 'x' || z.key === 'y') && list.length > 1) box.append(el('span', { class: 'sm-gm-zmode', text: (z.key === 'x' ? this.S.xMode : this.S.yMode) === 'merge' ? 'merged' : 'side by side' }));
         const names = list.map((r) => r.name).join(', ');
         box.setAttribute('aria-label', `${z.label} zone${names ? `: ${names}` : ', empty'}. Drop a column here, or press Enter to add one; the context menu key for more.`);
       }
@@ -2567,8 +2567,8 @@
         ev.preventDefault();
         ev.dataTransfer.dropEffect = 'copy';
         box.classList.add('is-drop');
-        const chip = ev.target.closest('.sm-gb-chip');
-        box.querySelectorAll('.sm-gb-chip.is-drop').forEach((c) => { if (c !== chip) c.classList.remove('is-drop'); });
+        const chip = ev.target.closest('.sm-gm-chip');
+        box.querySelectorAll('.sm-gm-chip.is-drop').forEach((c) => { if (c !== chip) c.classList.remove('is-drop'); });
         if (chip) chip.classList.add('is-drop');
       });
       box.addEventListener('dragleave', (ev) => { if (!box.contains(ev.relatedTarget)) { box.classList.remove('is-drop'); box.querySelectorAll('.is-drop').forEach((c) => c.classList.remove('is-drop')); } });
@@ -2581,7 +2581,7 @@
         ev.preventDefault();
         let ids = [];
         try { ids = JSON.parse(raw); } catch (e) { return; }
-        const chip = ev.target.closest('.sm-gb-chip');
+        const chip = ev.target.closest('.sm-gm-chip');
         this.addColumns(z.key, ids, { replaceId: chip ? chip.dataset.col : null });
       });
       // A column in a zone dragged again: onto another zone it moves there (a
@@ -2592,7 +2592,7 @@
       SM.launch.place(box, {
         label: z.label,
         dropClass: 'is-drop',
-        item: (n) => n.closest('.sm-gb-chip'),
+        item: (n) => n.closest('.sm-gm-chip'),
         key: (chip) => chip.dataset.col,
         take: (chip) => {
           const c = this.t.col(chip.dataset.col);
@@ -2607,7 +2607,7 @@
         },
       });
       const activate = (ev) => {
-        const chip = ev.target.closest('.sm-gb-chip');
+        const chip = ev.target.closest('.sm-gm-chip');
         if (this.ui.sel) {
           const id = this.ui.sel;
           this.ui.sel = null;
@@ -2621,14 +2621,14 @@
       };
       box.addEventListener('click', activate);
       box.addEventListener('keydown', (ev) => {
-        const chip = ev.target.closest('.sm-gb-chip');
+        const chip = ev.target.closest('.sm-gm-chip');
         if ((ev.key === 'Enter' || ev.key === ' ') && (ev.target === box || chip)) { ev.preventDefault(); activate(ev); }
         else if ((ev.key === 'Delete' || ev.key === 'Backspace') && chip) { ev.preventDefault(); this.removeColumn(z.key, chip.dataset.col); }
         else if (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey)) { ev.preventDefault(); SM.ui.menu(this.zoneMenu(z), box, { returnFocus: box }); }
       });
       box.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
-        const chip = ev.target.closest('.sm-gb-chip');
+        const chip = ev.target.closest('.sm-gm-chip');
         SM.ui.menu(chip ? this.chipMenu(z, this.t.col(chip.dataset.col)) : this.zoneMenu(z), { x: ev.clientX, y: ev.clientY });
       });
     }
@@ -2702,7 +2702,7 @@
         { head: `Levels of ${c.name}` },
         { label: 'Automatic', checked: !spec, action: () => put(null) },
         { label: 'Number of Levels…', action: async () => {
-          const v = await SM.ui.form({ title: `Number of Levels: ${c.name}`, info: 'p:graphbuilder',
+          const v = await SM.ui.form({ title: `Number of Levels: ${c.name}`, info: 'p:graphmaker',
             fields: [{ key: 'n', label: `Levels (${BIN_LEVELS[0]} to ${BIN_LEVELS[1]})`, type: 'number', value: n, help: 'How many bins the column is cut into: that many of about equal counts (fewer when values tie at a cut), or about that many of an equal round width.' }],
             validate: (x) => (x.n >= BIN_LEVELS[0] && x.n <= BIN_LEVELS[1] && Number.isInteger(x.n) ? null : `A whole number from ${BIN_LEVELS[0]} to ${BIN_LEVELS[1]}`) });
           if (v) put({ n: v.n, method: (spec && spec.method) || 'quantile' });
@@ -2787,18 +2787,18 @@
       for (const E of ELEMENTS) {
         const on = this.S.elements.some((e) => e.type === E.type);
         const why = xc || yc || sc ? elementRefuses(E.type, xc, yc, sc) : null;
-        const b = el('button', { type: 'button', class: 'sm-gb-el', 'aria-pressed': String(on), 'aria-disabled': why ? 'true' : null, 'aria-label': `${E.label}${why ? ` (${why})` : ''}`, title: why || `${E.label}: click to show it alone, shift-click to add or remove it`, dataset: { el: E.type, gbkey: `el:${E.type}` } },
-          icon(E.type), el('span', { class: 'sm-gb-elname', text: E.label }));
+        const b = el('button', { type: 'button', class: 'sm-gm-el', 'aria-pressed': String(on), 'aria-disabled': why ? 'true' : null, 'aria-label': `${E.label}${why ? ` (${why})` : ''}`, title: why || `${E.label}: click to show it alone, shift-click to add or remove it`, dataset: { el: E.type, gbkey: `el:${E.type}` } },
+          icon(E.type), el('span', { class: 'sm-gm-elname', text: E.label }));
         this.palette.append(b);
       }
     }
 
     wirePalette() {
-      const typeOf = (ev) => { const b = ev.target.closest('.sm-gb-el'); return b ? b.dataset.el : null; };
+      const typeOf = (ev) => { const b = ev.target.closest('.sm-gm-el'); return b ? b.dataset.el : null; };
       this.palette.addEventListener('click', (ev) => {
         const type = typeOf(ev);
         if (!type) return;
-        const b = ev.target.closest('.sm-gb-el');
+        const b = ev.target.closest('.sm-gm-el');
         if (b.getAttribute('aria-disabled') === 'true' && !this.S.elements.some((e) => e.type === type)) { SM.ui.toast(`${b.title}.`); return; }
         if (ev.shiftKey || ev.metaKey || ev.ctrlKey) this.toggleElement(type); else this.onlyElement(type);
       });
@@ -2829,13 +2829,13 @@
 
     renderProps() {
       const box = this.propsBox;
-      box.replaceChildren(el('h4', null, 'Properties', infoSlot('p:graphbuilder:props')));
+      box.replaceChildren(el('h4', null, 'Properties', infoSlot('p:graphmaker:props')));
       if (!this.S.elements.length) { box.append(el('p', { class: 'sm-ob-note', text: 'No element: choose one above the graph.' })); return; }
       this.S.elements.forEach((e, idx) => {
         const def = ELEMENT[e.type];
-        const rm = el('button', { type: 'button', class: 'sm-gb-rm', 'aria-label': `Remove ${def.label}`, title: `Remove ${def.label}`, text: '×', dataset: { gbkey: `rm:${e.type}` } });
+        const rm = el('button', { type: 'button', class: 'sm-gm-rm', 'aria-label': `Remove ${def.label}`, title: `Remove ${def.label}`, text: '×', dataset: { gbkey: `rm:${e.type}` } });
         rm.addEventListener('click', () => this.toggleElement(e.type));
-        const fs = el('fieldset', { class: 'sm-gb-prop', dataset: { el: e.type } }, el('legend', null, icon(e.type), el('span', { text: def.label }), rm));
+        const fs = el('fieldset', { class: 'sm-gm-prop', dataset: { el: e.type } }, el('legend', null, icon(e.type), el('span', { text: def.label }), rm));
         for (const p of def.props) if (!p.when || p.when(e)) fs.append(this.control(e, idx, p));
         box.append(fs);
       });
@@ -2856,28 +2856,28 @@
         input = el('select', { id, dataset: { gbkey: key } }, ...choices.map(([cv, l]) => el('option', { value: String(cv), text: l })));
         input.value = String(v ?? p.dflt);
         input.addEventListener('change', () => { const raw = input.value; const num = choices.find(([cv]) => String(cv) === raw); this.setProp(idx, p.key, num && typeof num[0] === 'number' ? Number(raw) : raw); });
-        return el('label', { class: 'sm-gb-field', for: id }, el('span', { text: p.label }), input);
+        return el('label', { class: 'sm-gm-field', for: id }, el('span', { text: p.label }), input);
       }
       if (p.type === 'check') {
         input = el('input', { type: 'checkbox', id, dataset: { gbkey: key } });
         input.checked = !!v;
         input.addEventListener('change', () => this.setProp(idx, p.key, input.checked));
-        return el('label', { class: 'sm-gb-field is-check', for: id }, input, el('span', { text: p.label }));
+        return el('label', { class: 'sm-gm-field is-check', for: id }, input, el('span', { text: p.label }));
       }
       if (p.type === 'log') {
         const lo = Math.log10(p.min), hi = Math.log10(p.max);
         input = el('input', { type: 'range', id, min: String(lo), max: String(hi), step: '0.05', dataset: { gbkey: key }, 'aria-valuetext': fmt(v) });
         input.value = String(Math.log10(v || p.dflt));
-        const out = el('output', { for: id, class: 'sm-gb-out', text: fmt(v ?? p.dflt, { sig: 3 }) });
-        const num = el('input', { type: 'text', inputmode: 'decimal', size: 7, class: 'sm-gb-num', 'aria-label': `${p.label} value`, dataset: { gbkey: `${key}:n` } });
+        const out = el('output', { for: id, class: 'sm-gm-out', text: fmt(v ?? p.dflt, { sig: 3 }) });
+        const num = el('input', { type: 'text', inputmode: 'decimal', size: 7, class: 'sm-gm-num', 'aria-label': `${p.label} value`, dataset: { gbkey: `${key}:n` } });
         num.value = String(v ?? p.dflt);
         input.addEventListener('input', () => { const val = +(10 ** Number(input.value)).toPrecision(3); out.textContent = fmt(val); num.value = String(val); input.setAttribute('aria-valuetext', fmt(val)); this.setProp(idx, p.key, val, { later: true }); });
         num.addEventListener('change', () => { const val = SM.table.toNumber(num.value.replace(',', '.')); if (val > 0) this.setProp(idx, p.key, clamp(val, p.min, p.max)); });
-        return el('div', { class: 'sm-gb-field is-log' }, el('label', { for: id, text: p.label }), el('div', { class: 'sm-gb-logrow' }, input, num));
+        return el('div', { class: 'sm-gm-field is-log' }, el('label', { for: id, text: p.label }), el('div', { class: 'sm-gm-logrow' }, input, num));
       }
       if (p.type === 'multi') {
         const cur = new Set(Array.isArray(v) ? v : p.dflt);
-        const group = el('div', { class: 'sm-gb-multi', role: 'group', 'aria-label': p.label });
+        const group = el('div', { class: 'sm-gm-multi', role: 'group', 'aria-label': p.label });
         for (const [cv, l] of p.choices) {
           const cid = SM.util.uid('gbm');
           const cb = el('input', { type: 'checkbox', id: cid, dataset: { gbkey: `${key}:${cv}` } });
@@ -2887,9 +2887,9 @@
             if (next.length > (p.max || 5)) { cb.checked = false; SM.ui.toast(`At most ${p.max || 5} statistics`); return; }
             this.setProp(idx, p.key, next.length ? next : [cv]);
           });
-          group.append(el('label', { class: 'sm-gb-field is-check', for: cid }, cb, el('span', { text: l })));
+          group.append(el('label', { class: 'sm-gm-field is-check', for: cid }, cb, el('span', { text: l })));
         }
-        return el('div', { class: 'sm-gb-field is-multi' }, el('span', { text: p.label }), group);
+        return el('div', { class: 'sm-gm-field is-multi' }, el('span', { text: p.label }), group);
       }
       input = el('input', { type: 'text', inputmode: 'decimal', id, size: 6, dataset: { gbkey: key } });
       input.value = v == null ? '' : String(v);
@@ -2901,7 +2901,7 @@
         if (!Number.isFinite(n)) { input.value = v == null ? '' : String(v); return; }
         this.setProp(idx, p.key, clamp(n, p.min ?? -Infinity, p.max ?? Infinity));
       });
-      return el('label', { class: 'sm-gb-field', for: id }, el('span', { text: p.label }), input);
+      return el('label', { class: 'sm-gm-field', for: id }, el('span', { text: p.label }), input);
     }
 
     /* ---- changes ---- */
@@ -2919,7 +2919,7 @@
       this.schedule();
     }
 
-    save() { this.ctx.set('gb', clone(this.S), null, { rerun: false }); }
+    save() { this.ctx.set('gm', clone(this.S), null, { rerun: false }); }
 
     undo() {
       if (this.dead) { const b = this.current(); if (b) b.undo(); return; }
@@ -3041,7 +3041,7 @@
         this.discard(this.plotBox);
         this.plotBox = null;
         const w = this.width(), h = this.height();
-        this.plotWrap.replaceChildren(el('div', { class: 'sm-gb-empty', style: { width: `${w}px`, height: `${Math.min(h, 360)}px` } },
+        this.plotWrap.replaceChildren(el('div', { class: 'sm-gm-empty', style: { width: `${w}px`, height: `${Math.min(h, 360)}px` } },
           el('p', { text: 'Drop columns here' }), el('p', { class: 'sm-ob-note', text: 'Drag a column from the list (or from the Columns panel) onto X or Y; by touch, hold it a moment first. Or select a column, then click a zone (the keyboard: Enter).' })));
         this.status.replaceChildren();
         return;
@@ -3302,7 +3302,7 @@
     return els.map((e) => ({ heading: `${prefix}${ELEMENT[e.type].label}`, text: ELEMENT[e.type].about, choices: propChoices(e) }));
   }
 
-  const GB_ZONES = [
+  const GM_ZONES = [
     ['X, Y', 'The axes, up to 4 columns on X and 6 on Y. With a continuous column on one axis and a categorical one on the other, the continuous one is the variable the elements summarize at each level. Several columns in a zone stand side by side, a panel each, or merge on one axis (right click the zone: Merge Columns); only continuous columns merge. The zone\'s menu also has Log Scale, for a continuous column that is not a date.'],
     ['Group X, Group Y', 'Small multiples: a column of panels (Group X) or a row of them (Group Y) for each level, sharing their axes. A continuous column with more than 10 distinct values is cut into five bins of about equal counts (at JMP\'s quantiles), labelled by their ranges; the column\'s Levels menu changes them.'],
     ['Wrap', 'A panel for each level, wrapped into a grid of about as many columns as rows. While Wrap has a column, Group X and Group Y wait.'],
@@ -3312,7 +3312,7 @@
     ['Freq', 'A numeric column of counts: a row counts that many times in every statistic, bin and fit; rows with a missing, zero or negative count are left out.'],
     ['Map Shape', 'A character column of region names or codes: countries by name (Plotly\'s matching knows many forms of a name) or by their ISO 3166 three-letter code, US states by name or postal code. The graph becomes a map with Map Shapes (and Points, with continuous X and Y as longitude and latitude). Right click the column for **Names of Regions**: Automatic (US states when most values are states, codes when most are three capital letters, else country names), or say which. A value that is not on the map is named in a note under the graph.'],
   ];
-  const GB_BUILDER = [
+  const GM_BUILDER = [
     ['Select Columns', 'The table\'s columns; Filter narrows the list by name. Drag a column onto a zone (from here or from the page\'s Columns panel), or click it and then click a zone. Double-click puts it where it fits: a continuous column on Y (then X), a categorical one on X (then Overlay, Group X, Group Y). Right click it, or press Enter, for the list of zones.'],
     ['A zone and its columns', 'Click an empty zone to pick a column for it from a list. Click a column in a zone for Remove, Move to and Replace with; drop another column on it to replace it. A column in a zone can be dragged too: onto another zone to move it there (a zone that does not take it, as Size a categorical column, refuses it; a zone of one column puts it in place of the one there), onto a column of another zone to take that one\'s place, along its own zone to change the order (the order of the panels, or of the merged columns), and anywhere else in the builder, such as the column list or the graph, to take it out; a label by the pointer says so. A drag cancelled with Escape changes nothing. Right click a zone (or use the context menu key) for Merge Columns or Side by Side, Log Scale, Add Column, Swap with and Remove All.'],
     ['Elements', 'The palette above the graph. Click an element to draw it alone; shift-click (or ctrl/⌘-click) to add it to the others or take it away; right click for the same as a menu. A dimmed element cannot draw the columns in the zones and says why. Until you pick one, the builder chooses as JMP does: Points and Smoother for two continuous columns, Bar for a categorical column alone, Points otherwise.'],
@@ -3326,7 +3326,7 @@
     ['New columns from the list', 'Right click a column in the list for Transform (Log, Square Root, Standardize, …), Distributional (Rank, Normal Quantile, …) and, for a date, Date Time (Year, Month, Day of Week, …): each makes a formula column in the table, right after the column (Undo takes it away); it is selected in the list, so a click on a zone (or a drag) puts it there.'],
     ['Right click the graph', 'Marker Size, Transparency and Background Map, as in the red triangle.'],
   ];
-  const GB_TRIANGLE = [
+  const GM_TRIANGLE = [
     ['Show Control Panel', 'Shows or hides the columns, the palette, the zones and the properties, as Done does.'],
     ['Title, Legend, X Axis Title, Y Axis Title', 'Show or hide those parts of the graph.'],
     ['Legend Position', 'Right (the default; under the graph when it is narrow), Bottom, or Inside the plot\'s top right corner.'],
@@ -3339,20 +3339,20 @@
     ['Axis Settings', 'The graph\'s axes, as a double-click on one gives them (below the report\'s items).'],
     ['Undo, Start Over', 'As the buttons above the builder.'],
   ];
-  const GB_LEAD = 'Drag columns onto the zones around the graph and choose elements from the palette; the graph redraws at once. Points, bars, boxes, bins, cells and slices are linked to their rows: click or drag to select, and the selection shows in every graph of the table.';
+  const GM_LEAD = 'Drag columns onto the zones around the graph and choose elements from the palette; the graph redraws at once. Points, bars, boxes, bins, cells and slices are linked to their rows: click or drag to select, and the selection shows in every graph of the table.';
 
   function gbTopic() {
     const b = shownBuilder();
     const inGraph = new Set(b ? b.S.elements.map((e) => e.type) : []);
     const props = propSections(b, 'Properties: ');
     return {
-      kicker: 'Graph', title: 'Graph Maker', lead: GB_LEAD,
+      kicker: 'Graph', title: 'Graph Maker', lead: GM_LEAD,
       sections: [
-        { heading: 'Zones', choices: GB_ZONES },
-        { heading: 'The builder', choices: GB_BUILDER },
+        { heading: 'Zones', choices: GM_ZONES },
+        { heading: 'The builder', choices: GM_BUILDER },
         { heading: 'Elements', text: b ? 'The elements in the graph are marked; their properties follow.' : 'What each element draws; the properties of every element follow.', choices: ELEMENTS.map((d) => [d.label, d.about, inGraph.has(d.type)]) },
         ...(props.length ? props : [{ heading: 'Properties', text: 'No element in the graph yet: click one in the palette above the graph, and its settings are explained here.' }]),
-        { heading: 'The red triangle', choices: GB_TRIANGLE },
+        { heading: 'The red triangle', choices: GM_TRIANGLE },
         { heading: 'Touch and keyboard', list: ['Select a column (tap it, or Space), then tap a zone: the column goes there. Tap a column in a zone for Remove, Move to and Replace with.', 'By touch, a column (in the list or in a zone) is dragged by holding it a moment and then moving it; it goes where a mouse would drop it.', 'On a column in the list, Enter opens the list of zones.', 'On a zone, Enter adds a column, the context menu key (or Shift+F10) opens its menu, Delete removes the focused column.'] },
         { heading: 'Differences from JMP', list: [
           'Smoother: the same penalised least squares as JMP\'s cubic spline (λ on standardized X), from scipy; JMP\'s option to scale λ by the count is not applied, and its other methods (P-Spline, Savitzky-Golay, moving averages) are not here. Local Kernel is statsmodels\' lowess.',
@@ -3367,7 +3367,7 @@
           'Marker Size is the points\' diameter in pixels (JMP\'s 0 to 6 give 2 to 16 pixels); Transparency applies to the points of every panel, not to one legend item.',
         ] },
       ],
-      more: { label: 'Graph Maker', id: 'help-p-graphbuilder' },
+      more: { label: 'Graph Maker', id: 'help-p-graphmaker' },
     };
   }
 
@@ -3378,19 +3378,19 @@
       kicker: 'Graph Maker', title: 'Properties',
       lead: 'The settings of each element in the graph, under its name; a change redraws the graph at once, and × beside the name takes the element away. Some settings come with another choice (an Error Interval with a Summary Statistic, Lambda with the Spline method); they are listed after the others.',
       sections: props.length ? props : [{ text: 'No element in the graph yet: click one in the palette above the graph (shift-click adds another), and its settings show in the Properties panel and here.' }],
-      more: { label: 'Graph Maker', id: 'help-p-graphbuilder' },
+      more: { label: 'Graph Maker', id: 'help-p-graphmaker' },
     };
   }
 
   SM.platforms.register({
-    id: 'graphbuilder', label: 'Graph Maker', menu: 'Graph', order: 10, launch: null, info: 'p:graphbuilder',
-    topics: { 'p:graphbuilder': gbTopic, 'p:graphbuilder:props': gbPropsTopic },
+    id: 'graphmaker', label: 'Graph Maker', menu: 'Graph', order: 10, launch: null, info: 'p:graphmaker',
+    topics: { 'p:graphmaker': gbTopic, 'p:graphmaker:props': gbPropsTopic },
     about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size, Freq and Map Shape zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie, Map Shapes), each with its properties. Continuous grouping columns in bins of your choosing (Levels, Save Transform Column), categorical axes ordered by a statistic (Order By), Axis Settings on every axis, Marker Size and Transparency, maps of countries and US states and points on a Background Map, and transform columns made from the column list. Every mark is linked to its rows; Done leaves the graph alone.',
     uses: ['plotly choropleth and scattergeo (Natural Earth boundaries from cdn.plot.ly)', 'scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
     title: () => 'Graph Maker',
     triangle(ctx) { const b = BUILDERS.get(ctx.report); return b && !b.dead ? b.menu() : []; },
     /* The builder of a report (its handle, as the tests use it). */
-    builder: (report) => { const b = BUILDERS.get(report); return b ? b.root._gb : null; },
+    builder: (report) => { const b = BUILDERS.get(report); return b ? b.root._gm : null; },
     async render(ctx) {
       if (!ctx.table) throw new Error('Graph Maker needs a table');
       // Graph Maker follows the table as it changes, as JMP's does.

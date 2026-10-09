@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Analyze > Bivariate Analysis and Specialized Modeling > Matched Pairs, the
-backend (resources/py/smui/fit_y_by_x.py), through the page's dispatch and
+backend (resources/py/smui/bivariate.py), through the page's dispatch and
 JSON round trip, checked against statsmodels and scipy called directly and
 against published values:
 
@@ -30,7 +30,7 @@ against published values:
     compute_esci, anova, bayesfactor_ttest, bayesfactor_pearson and
     pairwise_gameshowell when it is installed (GPL: a reference only).
 
-    python3 resources/tests/smui/test_fit_y_by_x.py
+    python3 resources/tests/smui/test_bivariate.py
 """
 import math
 import sys
@@ -45,8 +45,8 @@ from scipy.interpolate import make_smoothing_spline
 from backend import FAILED, Checks, call, table
 
 check = Checks()
-if 'fit_y_by_x' in FAILED:
-    print('fit_y_by_x did not import:', FAILED['fit_y_by_x'])
+if 'bivariate' in FAILED:
+    print('bivariate did not import:', FAILED['bivariate'])
     sys.exit(1)
 rng = np.random.default_rng(20260926)
 
@@ -59,13 +59,13 @@ def rows_of(r, key='rows'):
 x1 = np.arange(60.0, 71.0)
 y1 = np.arange(130.0, 141.0)
 tid = table({'x': x1, 'y': y1})
-r = call('fitybyx.fit_special', table=tid, y='y', x='x', intercept=0)
+r = call('bivariate.fit_special', table=tid, y='y', x='x', intercept=0)
 est = {e['term']: e for e in r['estimates']['rows']}
 check.near('NoInt1 B1 (certified)', est['x']['estimate'], 2.07438016528926, rel=1e-12)
 check.near('NoInt1 SD of B1', est['x']['se'], 0.165289256198347e-01, rel=1e-10)
 check.near('NoInt1 residual SD', r['summary']['rows'][1]['value'], 3.56753034006338, rel=1e-10)
 tid = table({'x': [4.0, 5.0, 6.0], 'y': [3.0, 4.0, 4.0]})
-r = call('fitybyx.fit_special', table=tid, y='y', x='x', intercept=0)
+r = call('bivariate.fit_special', table=tid, y='y', x='x', intercept=0)
 est = {e['term']: e for e in r['estimates']['rows']}
 check.near('NoInt2 B1 (certified)', est['x']['estimate'], 0.727272727272727, rel=1e-12)
 check.near('NoInt2 SD of B1', est['x']['se'], 0.420827318078432e-01, rel=1e-10)
@@ -76,7 +76,7 @@ xw = np.arange(0.0, 21.0)
 for name, coef in (('Wampler1', [1, 1, 1, 1, 1, 1]), ('Wampler2', [1, 0.1, 0.01, 0.001, 0.0001, 0.00001])):
     yw = sum(c * xw ** k for k, c in enumerate(coef))
     tid = table({'x': xw, 'y': yw})
-    r = call('fitybyx.fit_poly', table=tid, y='y', x='x', degree=5)
+    r = call('bivariate.fit_poly', table=tid, y='y', x='x', degree=5)
     # the page centres the powers: b0 + b1 x + b2 (x-m)^2 + ... ; expand to raw powers
     m = float(xw.mean())
     b = [t['estimate'] for t in r['terms']]
@@ -98,7 +98,7 @@ fb = rng.integers(1, 4, n).astype(float)
 gb = rng.choice(['F', 'M'], n).tolist()
 tid = table({'height': xb, 'weight': yb, 'w': wb, 'f': fb, 'sex': gb})
 ok = np.isfinite(xb)
-r = call('fitybyx.fit_poly', table=tid, y='weight', x='height', degree=1, want_rows=True)
+r = call('bivariate.fit_poly', table=tid, y='weight', x='height', degree=1, want_rows=True)
 lr = stats.linregress(xb[ok], yb[ok])
 est = {e['term']: e for e in r['estimates']['rows']}
 check.near('Fit Line slope = linregress', est['height']['estimate'], lr.slope)
@@ -125,12 +125,12 @@ check.near('pure error SS', lof['rows'][1]['ss'], pe)
 check('pure error DF', lof['rows'][1]['df'], float(ok.sum() - len(ux)))
 check.near('Max RSq', lof['max_rsq'], 1 - pe / float(ref.centered_tss))
 # weights: WLS
-rw = call('fitybyx.fit_poly', table=tid, y='weight', x='height', degree=1, weight='w')
+rw = call('bivariate.fit_poly', table=tid, y='weight', x='height', degree=1, weight='w')
 refw = sm.WLS(yb[ok], sm.add_constant(xb[ok]), weights=wb[ok]).fit()
 check.near('weighted slope = WLS', {e['term']: e for e in rw['estimates']['rows']}['height']['estimate'], float(refw.params[1]))
 check.near('weighted slope SE = WLS', {e['term']: e for e in rw['estimates']['rows']}['height']['se'], float(refw.bse[1]))
 # Freq: the same as repeating the rows
-rf = call('fitybyx.fit_poly', table=tid, y='weight', x='height', degree=2, freq='f')
+rf = call('bivariate.fit_poly', table=tid, y='weight', x='height', degree=2, freq='f')
 reps = fb[ok].astype(int)
 xe, ye = np.repeat(xb[ok], reps), np.repeat(yb[ok], reps)
 m = xb[ok].mean()   # models.build centres at the mean of the rows
@@ -143,19 +143,19 @@ check('Freq: observations', {s['stat']: s['value'] for s in rf['summary']['rows'
 check('code for the line', 'smf.ols' in r['code'], True)
 check('code with Freq sets df_resid', 'df_resid' in rf['code'], True)
 # a group's rows (Group By) and the where filter in the code
-rg = call('fitybyx.fit_poly', table=tid, y='weight', x='height', degree=1, rows=[i for i in range(n) if gb[i] == 'F'], where=[{'column': 'sex', 'value': 'F'}])
+rg = call('bivariate.fit_poly', table=tid, y='weight', x='height', degree=1, rows=[i for i in range(n) if gb[i] == 'F'], where=[{'column': 'sex', 'value': 'F'}])
 sel = ok & (np.array(gb) == 'F')
 check.near('a group\'s fit', {e['term']: e for e in rg['estimates']['rows']}['height']['estimate'], stats.linregress(xb[sel], yb[sel]).slope)
 check('the group in the code', 'df[df["sex"] == "F"]' in rg['code'], True)
 
 # Fit Mean
-r = call('fitybyx.fit_mean', table=tid, y='weight', x='height')
+r = call('bivariate.fit_mean', table=tid, y='weight', x='height')
 check.near('Fit Mean', r['mean'], float(yb[ok].mean()))
 check.near('Fit Mean Std Dev [RMSE]', r['sd'], float(yb[ok].std(ddof=1)))
 check.near('Fit Mean Std Error', r['se'], float(yb[ok].std(ddof=1) / math.sqrt(ok.sum())))
 
 # Summary Statistics
-r = call('fitybyx.bivariate', table=tid, y='weight', x='height')
+r = call('bivariate.bivariate', table=tid, y='weight', x='height')
 check.near('summary: correlation', r['r'], float(np.corrcoef(xb[ok], yb[ok])[0, 1]))
 check.near('summary: sd of X', r['sd_x'], float(np.std(xb[ok], ddof=1)))
 
@@ -163,7 +163,7 @@ check.near('summary: sd of X', r['sd_x'], float(np.std(xb[ok], ddof=1)))
 xs = rng.uniform(1, 20, 60)
 ys = 3 * xs ** 0.6 * np.exp(rng.normal(0, 0.1, 60))
 tid2 = table({'x': xs, 'y': ys})
-r = call('fitybyx.fit_special', table=tid2, y='y', x='x', ytr='log', xtr='log', want_rows=True)
+r = call('bivariate.fit_special', table=tid2, y='y', x='x', ytr='log', xtr='log', want_rows=True)
 refl = sm.OLS(np.log(ys), sm.add_constant(np.log(xs))).fit()
 check('Fit Special title', r['title'], 'Transformed Fit Log to Log')
 check.near('log-log slope', r['terms'][1]['estimate'], float(refl.params[1]))
@@ -171,22 +171,22 @@ check('log-log term name', r['terms'][1]['term'], 'Log(x)')
 pred = np.exp(refl.fittedvalues)
 check.near('fit measured on the original scale: SSE', r['original']['rows'][0]['value'], float(np.sum((ys - pred) ** 2)))
 check.near('curve back-transformed', r['curve']['fit'][0], float(np.exp(refl.params[0] + refl.params[1] * np.log(xs.min()))))
-r = call('fitybyx.fit_special', table=tid2, y='y', x='x', ytr='none', xtr='sqrt', slope=1.5)
+r = call('bivariate.fit_special', table=tid2, y='y', x='x', ytr='none', xtr='sqrt', slope=1.5)
 check.near('slope held: the intercept is the mean of y - b x', r['terms'][0]['estimate'], float(np.mean(ys - 1.5 * np.sqrt(xs))))
-r = call('fitybyx.fit_special', table=tid2, y='y', x='x', ytr='reciprocal', xtr='none')
+r = call('bivariate.fit_special', table=tid2, y='y', x='x', ytr='reciprocal', xtr='none')
 lo, hi = np.array(r['curve']['lo_fit']), np.array(r['curve']['hi_fit'])
 check('reciprocal: the confidence curves stay ordered', bool(np.all(lo <= np.array(r['curve']['fit']) + 1e-12) and np.all(np.array(r['curve']['fit']) <= hi + 1e-12)), True)
 # the square of X takes negative X (X is not transformed back); Y's square still needs y >= 0
 _xn = np.linspace(-3, 3, 25); _yn = 2 + 0.5 * _xn ** 2 + np.sin(7 * _xn) / 5
-r = call('fitybyx.fit_special', table=table({'x': _xn, 'y': _yn}), y='y', x='x', ytr='none', xtr='square')
+r = call('bivariate.fit_special', table=table({'x': _xn, 'y': _yn}), y='y', x='x', ytr='none', xtr='square')
 _ref = sm.OLS(_yn, sm.add_constant(_xn ** 2)).fit()
 check('Square of X: every row is used, negative X too', (r.get('notes') or []) == [] or not any('outside the domain' in n_ for n_ in r['notes']), True)
 check.near('... and the fit is least squares on X squared', r['terms'][1]['estimate'], float(_ref.params[1]), rel=1e-9)
-r = call('fitybyx.fit_special', table=table({'x': _xn, 'y': _yn - 3}), y='y', x='x', ytr='square', xtr='none')
+r = call('bivariate.fit_special', table=table({'x': _xn, 'y': _yn - 3}), y='y', x='x', ytr='square', xtr='none')
 check('Square of Y: rows with Y below zero are left out', any('outside the domain' in n_ for n_ in r.get('notes', [])), True)
 
 # Fit Spline: scipy on rows combined by X
-r = call('fitybyx.fit_spline', table=tid, y='weight', x='height', lam=1000, want_rows=True)
+r = call('bivariate.fit_spline', table=tid, y='weight', x='height', lam=1000, want_rows=True)
 ux, inv = np.unique(xb[ok], return_inverse=True)
 Wc = np.bincount(inv)
 yc = np.bincount(inv, weights=yb[ok]) / Wc
@@ -194,17 +194,17 @@ spl = make_smoothing_spline(ux, yc, w=Wc.astype(float), lam=1000.0)
 check.near('spline prediction = make_smoothing_spline', r['row_values']['predicted'][10], float(spl(xb[ok][10])))
 sse = float(np.sum((yb[ok] - spl(xb[ok])) ** 2))
 check.near('spline SSE', r['sse'], sse)
-r2 = call('fitybyx.fit_spline', table=tid, y='weight', x='height', lam=1e12)
+r2 = call('bivariate.fit_spline', table=tid, y='weight', x='height', lam=1e12)
 check.near('a stiff spline is the line', r2['rsquare'], lr.rvalue ** 2, rel=1e-4)
 
 # Kernel smoother = statsmodels lowess
 from statsmodels.nonparametric.smoothers_lowess import lowess
-r = call('fitybyx.fit_lowess', table=tid, y='weight', x='height', frac=0.5, it=2, want_rows=True)
+r = call('bivariate.fit_lowess', table=tid, y='weight', x='height', frac=0.5, it=2, want_rows=True)
 lw = lowess(yb[ok], xb[ok], frac=0.5, it=2, return_sorted=False)
 check.near('lowess fitted value', r['row_values']['predicted'][7], float(lw[7]))
 
 # Fit Each Value
-r = call('fitybyx.fit_each', table=tid, y='weight', x='height')
+r = call('bivariate.fit_each', table=tid, y='weight', x='height')
 check.near('Fit Each Value SS is the pure error', r['sse'], pe)
 check('Fit Each Value unique values', r['n_unique'], len(ux))
 
@@ -214,27 +214,27 @@ yr = 1 + 2 * xr + rng.standard_t(2, 80)
 yr[:4] += 40
 tid3 = table({'x': xr, 'y': yr})
 for method, norm in (('huber', sm.robust.norms.HuberT()), ('bisquare', sm.robust.norms.TukeyBiweight())):
-    r = call('fitybyx.fit_robust', table=tid3, y='y', x='x', method=method)
+    r = call('bivariate.fit_robust', table=tid3, y='y', x='x', method=method)
     ref = sm.RLM(yr, sm.add_constant(xr), M=norm).fit()
     check.near(f'robust ({method}) slope = RLM', r['terms'][1]['estimate'], float(ref.params[1]))
     check.near(f'robust ({method}) slope SE = RLM', r['estimates']['rows'][1]['se'], float(ref.bse[1]))
 engel = sm.datasets.engel.load_pandas().data
 tid4 = table({'income': engel['income'].tolist(), 'foodexp': engel['foodexp'].tolist()})
-r = call('fitybyx.fit_quantile', table=tid4, y='foodexp', x='income', tau=0.5)
+r = call('bivariate.fit_quantile', table=tid4, y='foodexp', x='income', tau=0.5)
 check.near('Engel median regression intercept (quantreg: 81.48225)', r['terms'][0]['estimate'], 81.48225, rel=1e-5)
 check.near('Engel median regression slope (quantreg: 0.5601806)', r['terms'][1]['estimate'], 0.5601806, rel=1e-5)
 ref = smf.quantreg('foodexp ~ income', engel).fit(q=0.5)
 check.near('Engel slope SE = QuantReg', r['estimates']['rows'][1]['se'], float(ref.bse.iloc[1]))
-r = call('fitybyx.fit_quantile', table=tid4, y='foodexp', x='income', tau=0.9)
+r = call('bivariate.fit_quantile', table=tid4, y='foodexp', x='income', tau=0.9)
 check.near('Engel 0.9 quantile slope = QuantReg', r['terms'][1]['estimate'], float(smf.quantreg('foodexp ~ income', engel).fit(q=0.9).params.iloc[1]))
 
 # Orthogonal fits: the eigenvector, the geometric mean slope, X on Y, the jackknife
 xo, yo = xb[ok], yb[ok]
 S = np.cov(xo, yo)
-r = call('fitybyx.fit_orthogonal', table=tid, y='weight', x='height', mode='equal')
+r = call('bivariate.fit_orthogonal', table=tid, y='weight', x='height', mode='equal')
 ev = np.linalg.eigh(S)[1][:, -1]
 check.near('equal variances: the major axis', r['slope'], float(ev[1] / ev[0]))
-r = call('fitybyx.fit_orthogonal', table=tid, y='weight', x='height', mode='univariate')
+r = call('bivariate.fit_orthogonal', table=tid, y='weight', x='height', mode='univariate')
 check.near('univariate variances: slope sy/sx', r['slope'], float(np.sign(S[0, 1]) * math.sqrt(S[1, 1] / S[0, 0])))
 check.near('univariate variances: the ratio', r['ratio'], float(S[1, 1] / S[0, 0]))
 jk = []
@@ -243,15 +243,15 @@ for i in range(len(xo)):
     jk.append(np.sign(Si[0, 1]) * math.sqrt(Si[1, 1] / Si[0, 0]))
 jk = np.array(jk)
 check.near('jackknife standard error of the slope', r['se_slope'], float(math.sqrt((len(jk) - 1) / len(jk) * np.sum((jk - jk.mean()) ** 2))))
-r = call('fitybyx.fit_orthogonal', table=tid, y='weight', x='height', mode='x_to_y')
+r = call('bivariate.fit_orthogonal', table=tid, y='weight', x='height', mode='x_to_y')
 check.near('Fit X to Y: slope syy/sxy', r['slope'], float(S[1, 1] / S[0, 1]))
-r = call('fitybyx.fit_orthogonal', table=tid, y='weight', x='height', mode='ratio', ratio=4.0)
+r = call('bivariate.fit_orthogonal', table=tid, y='weight', x='height', mode='ratio', ratio=4.0)
 d4 = 4.0
 b4 = (S[1, 1] - d4 * S[0, 0] + math.sqrt((S[1, 1] - d4 * S[0, 0]) ** 2 + 4 * d4 * S[0, 1] ** 2)) / (2 * S[0, 1])
 check.near('a given variance ratio (Deming)', r['slope'], b4)
 
 # Density ellipse and the correlation
-r = call('fitybyx.density_ellipse', table=tid, y='weight', x='height', levels=[0.9, 0.5])
+r = call('bivariate.density_ellipse', table=tid, y='weight', x='height', levels=[0.9, 0.5])
 pr = stats.pearsonr(xo, yo)
 check.near('correlation = pearsonr', r['r'], float(pr.statistic))
 check.near('Signif. Prob = pearsonr', r['p'], float(pr.pvalue))
@@ -259,7 +259,7 @@ check.near('Fisher z interval', r['lower'], float(pr.confidence_interval(0.95).l
 e = r['ellipses'][0]
 pt = np.array([e['x'][17], e['y'][17]]) - np.array([xo.mean(), yo.mean()])
 check.near('the ellipse holds P = 0.9', float(pt @ np.linalg.solve(S, pt)), float(stats.chi2.ppf(0.9, 2)))
-r = call('fitybyx.nonpar_density', table=tid, y='weight', x='height')
+r = call('bivariate.nonpar_density', table=tid, y='weight', x='height')
 check('nonpar density: a grid and five contours', (len(r['z']), len(r['z'][0]), len(r['levels'])), (64, 64, 5))
 check('contour levels rise with q', [l['value'] for l in r['levels']] == sorted(l['value'] for l in r['levels']), True)
 
@@ -274,7 +274,7 @@ fo = rng.integers(1, 3, len(g)).astype(float)
 tid = table({'y': yo, 'g': g.tolist(), 'blk': blk.tolist(), 'f': fo})
 dfo = pd.DataFrame({'y': yo, 'g': g, 'blk': blk})
 groups = [yo[g == l] for l in lv]
-r = call('fitybyx.oneway', table=tid, y='y', x='g')
+r = call('bivariate.oneway', table=tid, y='y', x='g')
 fo_ = stats.f_oneway(*groups)
 check.near('ANOVA F = f_oneway', r['anova']['rows'][0]['f'], float(fo_.statistic))
 check.near('ANOVA p = f_oneway', r['anova']['rows'][0]['p'], float(fo_.pvalue))
@@ -285,36 +285,36 @@ check.near('Means for Oneway Anova: pooled Std Error', r['levels'][1]['se_pooled
 check.near('Means and Std Deviations: std dev', r['levels'][2]['sd'], float(groups[2].std(ddof=1)))
 check.near('quantiles (n+1)p', r['levels'][0]['q25'], float(np.quantile(groups[0], 0.25, method='weibull')))
 a3 = sm.stats.anova_lm(smf.ols('y ~ C(g, Sum) + C(blk, Sum)', dfo).fit(), typ=3)
-rb = call('fitybyx.oneway', table=tid, y='y', x='g', block='blk')
+rb = call('bivariate.oneway', table=tid, y='y', x='g', block='blk')
 check.near('randomized block: X', rb['anova']['rows'][0]['ss'], float(a3.loc['C(g, Sum)', 'sum_sq']))
 check.near('randomized block: Block', rb['anova']['rows'][1]['p'], float(a3.loc['C(blk, Sum)', 'PR(>F)']))
 check('randomized block sources', [a['source'] for a in rb['anova']['rows']], ['g', 'blk', 'Error', 'C. Total'])
 refb = smf.ols('y ~ C(g, Sum) + C(blk, Sum)', dfo).fit()
 lsm = np.mean([refb.predict(pd.DataFrame({'g': ['B'], 'blk': [b]}))[0] for b in ['b1', 'b2', 'b3']])
 check.near('randomized block: least squares mean', rb['levels'][1]['lsmean'], float(lsm))
-rf = call('fitybyx.oneway', table=tid, y='y', x='g', freq='f')
+rf = call('bivariate.oneway', table=tid, y='y', x='g', freq='f')
 ye, ge = np.repeat(yo, fo.astype(int)), np.repeat(g, fo.astype(int))
 check.near('Freq in the ANOVA', rf['anova']['rows'][0]['f'], float(stats.f_oneway(*[ye[ge == l] for l in lv]).statistic))
 # two levels: pooled t and Welch
 t2 = table({'y': np.concatenate([groups[0], groups[1]]), 'g': ['A'] * nlev[0] + ['B'] * nlev[1]})
-r = call('fitybyx.oneway', table=t2, y='y', x='g')
+r = call('bivariate.oneway', table=t2, y='y', x='g')
 tt = stats.ttest_ind(groups[1], groups[0])
 check.near('pooled t (second level minus first)', r['pooled_t']['t'], float(tt.statistic))
-r = call('fitybyx.oneway_ttest', table=t2, y='y', x='g')
+r = call('bivariate.oneway_ttest', table=t2, y='y', x='g')
 tw = stats.ttest_ind(groups[1], groups[0], equal_var=False)
 check.near('t Test (unequal variances)', r['t'], float(tw.statistic))
 check.near('t Test df', r['df'], float(tw.df))
 check.near('t Test p', r['p'], float(tw.pvalue))
 
 # comparisons
-r = call('fitybyx.oneway_compare', table=tid, y='y', x='g', method='student')
+r = call('bivariate.oneway_compare', table=tid, y='y', x='g', method='student')
 check.near('Student\'s t quantile', r['quantile']['value'], float(stats.t.ppf(0.975, len(yo) - k)))
 p0 = [p for p in r['pairs'] if {p['i'], p['j']} == {0, 2}][0]
 se02 = math.sqrt(mse * (1 / nlev[0] + 1 / nlev[2]))
 check.near('Student\'s t: Std Err Dif', p0['se'], se02)
 check.near('Student\'s t: p-Value', p0['p'], float(2 * stats.t.sf(abs(groups[0].mean() - groups[2].mean()) / se02, len(yo) - k)))
 check('connecting letters for every level', sorted(l['index'] for l in r['letters']), [0, 1, 2, 3])
-r = call('fitybyx.oneway_compare', table=tid, y='y', x='g', method='tukey')
+r = call('bivariate.oneway_compare', table=tid, y='y', x='g', method='tukey')
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 tk = pairwise_tukeyhsd(yo, g)
 check.near('Tukey q* = studentized range / √2', r['quantile']['value'], float(stats.studentized_range.ppf(0.95, k, len(yo) - k) / math.sqrt(2)))
@@ -324,41 +324,41 @@ check.near('Tukey difference = pairwise_tukeyhsd', p13['diff'], abs(float(tk.mea
 check.near('Tukey Std Err Dif = √2 std_pairs', p13['se'], float(tk.std_pairs[m13] * math.sqrt(2)))
 check.near('Tukey p = studentized range', p13['p'], float(stats.studentized_range.sf(abs(tk.meandiffs[m13]) / tk.std_pairs[m13], k, len(yo) - k)))
 check.near('Tukey interval = pairwise_tukeyhsd (psturng q, 3 digits)', p13['upper'], float(np.max(np.abs(tk.confint[m13]))), rel=2e-3)
-r = call('fitybyx.oneway_compare', table=tid, y='y', x='g', method='dunnett', control='A')
+r = call('bivariate.oneway_compare', table=tid, y='y', x='g', method='dunnett', control='A')
 dn = stats.dunnett(groups[1], groups[2], groups[3], control=groups[0], rng=np.random.default_rng(20260926))
 pc = {p['i']: p for p in r['pairs']}
 check.near('Dunnett p = scipy', pc[2]['p'], float(dn.pvalue[1]), rel=1e-6)
 check.near('Dunnett interval = scipy', pc[3]['lower'], float(dn.confidence_interval(0.95).low[2]), rel=1e-6)
 check('Dunnett |d| between t and Bonferroni', stats.t.ppf(0.975, len(yo) - k) < r['quantile']['value'] < stats.t.ppf(1 - 0.05 / 6, len(yo) - k), True)
 # the letters algorithm on a textbook pattern: A=B, B=C, A≠C
-from smui.fit_y_by_x import _letters
+from smui.bivariate import _letters
 lets, ncol = _letters([0, 1, 2], [[False, False, True], [False, False, False], [True, False, False]])
 check('connecting letters A, A B, B', [lets[0], lets[1], lets[2]], ['A', 'A B', '  B'])
 
 # nonparametric tests
-r = call('fitybyx.oneway_nonpar', table=tid, y='y', x='g', test='wilcoxon')
+r = call('bivariate.oneway_nonpar', table=tid, y='y', x='g', test='wilcoxon')
 check.near('Kruskal-Wallis = scipy kruskal', r['chisq'], float(stats.kruskal(*groups).statistic))
-r2 = call('fitybyx.oneway_nonpar', table=t2, y='y', x='g', test='wilcoxon')
+r2 = call('bivariate.oneway_nonpar', table=t2, y='y', x='g', test='wilcoxon')
 check.near('2-sample Wilcoxon p = mannwhitneyu (continuity)', r2['two_sample']['p'], float(stats.mannwhitneyu(groups[0], groups[1], method='asymptotic').pvalue))
-r = call('fitybyx.oneway_nonpar', table=tid, y='y', x='g', test='median')
+r = call('bivariate.oneway_nonpar', table=tid, y='y', x='g', test='median')
 mt = stats.median_test(*groups, correction=False)
 check.near('median test = scipy × (N−1)/N', r['chisq'], float(mt.statistic) * (len(yo) - 1) / len(yo))
-r = call('fitybyx.oneway_nonpar', table=tid, y='y', x='g', test='vdw')
+r = call('bivariate.oneway_nonpar', table=tid, y='y', x='g', test='vdw')
 a = stats.norm.ppf(stats.rankdata(yo) / (len(yo) + 1))
 vw = (len(yo) - 1) * sum(len(a[g == l]) * (a[g == l].mean() - a.mean()) ** 2 for l in lv) / np.sum((a - a.mean()) ** 2)
 check.near('van der Waerden chi-square', r['chisq'], float(vw))
-r = call('fitybyx.oneway_ks', table=t2, y='y', x='g')
+r = call('bivariate.oneway_ks', table=t2, y='y', x='g')
 ks = stats.ks_2samp(groups[0], groups[1])
 check.near('Kolmogorov-Smirnov D', r['D'], float(ks.statistic))
 check.near('Kolmogorov-Smirnov p', r['p'], float(ks.pvalue))
 check.near('KSa = D √(n1 n2/n)', r['KSa'], float(ks.statistic) * math.sqrt(nlev[0] * nlev[1] / (nlev[0] + nlev[1])))
 
 # nonparametric comparisons
-r = call('fitybyx.oneway_nonpar_mc', table=tid, y='y', x='g', method='wilcoxon')
+r = call('bivariate.oneway_nonpar_mc', table=tid, y='y', x='g', method='wilcoxon')
 p = [q for q in r['pairs'] if (q['i'], q['j']) == (0, 1)][0]
 check.near('Wilcoxon each pair p = mannwhitneyu', p['p'], float(stats.mannwhitneyu(groups[0], groups[1], method='asymptotic').pvalue))
 check.near('Hodges-Lehmann = median of the differences', p['hl'], float(np.median(np.subtract.outer(groups[0], groups[1]))))
-r = call('fitybyx.oneway_nonpar_mc', table=tid, y='y', x='g', method='steel_dwass')
+r = call('bivariate.oneway_nonpar_mc', table=tid, y='y', x='g', method='steel_dwass')
 p = [q for q in r['pairs'] if (q['i'], q['j']) == (1, 3)][0]
 ab = np.concatenate([groups[1], groups[3]])
 rk = stats.rankdata(ab)
@@ -366,7 +366,7 @@ S_ = rk[:nlev[1]].sum()
 z_ = (S_ - nlev[1] * (len(ab) + 1) / 2) / math.sqrt(nlev[1] * nlev[3] * np.var(rk, ddof=1) / len(ab))
 check.near('Steel-Dwass Z', p['z'], float(z_))
 check.near('Steel-Dwass p = studentized range (df ∞)', p['p'], float(stats.studentized_range.sf(abs(z_) * math.sqrt(2), k, np.inf)))
-r = call('fitybyx.oneway_nonpar_mc', table=tid, y='y', x='g', method='dunn_all')
+r = call('bivariate.oneway_nonpar_mc', table=tid, y='y', x='g', method='dunn_all')
 rk = stats.rankdata(yo)
 N = len(yo)
 s2 = N * (N + 1) / 12
@@ -375,12 +375,12 @@ z02 = (rb_[0] - rb_[2]) / math.sqrt(s2 * (1 / nlev[0] + 1 / nlev[2]))
 p = [q for q in r['pairs'] if (q['i'], q['j']) == (0, 2)][0]
 check.near('Dunn Z (joint ranks)', p['z'], float(z02))
 check.near('Dunn p (Bonferroni over 6 pairs)', p['p'], float(min(1, 6 * 2 * stats.norm.sf(abs(z02)))))
-r = call('fitybyx.oneway_nonpar_mc', table=tid, y='y', x='g', method='steel_control', control='A')
+r = call('bivariate.oneway_nonpar_mc', table=tid, y='y', x='g', method='steel_control', control='A')
 check('Steel with control: three comparisons', len(r['pairs']), 3)
 check('Steel with control p-values are probabilities', all(0 <= q['p'] <= 1 for q in r['pairs']), True)
 
 # variances
-r = call('fitybyx.oneway_unequal_var', table=tid, y='y', x='g')
+r = call('bivariate.oneway_unequal_var', table=tid, y='y', x='g')
 tv = {t['test']: t for t in r['tests']}
 check.near('Levene = scipy levene(mean)', tv['Levene']['f'], float(stats.levene(*groups, center='mean').statistic))
 check.near('Brown-Forsythe = scipy levene(median)', tv['Brown-Forsythe']['p'], float(stats.levene(*groups, center='median').pvalue))
@@ -390,21 +390,21 @@ from statsmodels.stats.oneway import anova_oneway
 wr = anova_oneway(yo, g, use_var='unequal')
 check.near('Welch ANOVA F', r['welch']['f'], float(wr.statistic))
 check.near('Welch ANOVA df', r['welch']['dfd'], float(wr.df_denom))
-r2 = call('fitybyx.oneway_unequal_var', table=t2, y='y', x='g')
+r2 = call('bivariate.oneway_unequal_var', table=t2, y='y', x='g')
 check.near('Welch t² = F for two levels', r2['welch']['t'] ** 2, float(stats.ttest_ind(groups[0], groups[1], equal_var=False).statistic ** 2))
 
 # equivalence, power, ANOM, densities
 from statsmodels.stats.weightstats import ttost_ind
-r = call('fitybyx.oneway_equivalence', table=t2, y='y', x='g', delta=2.0)
+r = call('bivariate.oneway_equivalence', table=t2, y='y', x='g', delta=2.0)
 check.near('TOST p = ttost_ind', r['pairs'][0]['p'], float(ttost_ind(groups[1], groups[0], -2.0, 2.0, usevar='pooled')[0]))
 from statsmodels.stats.power import FTestAnovaPower
-r = call('fitybyx.oneway_power', table=tid, y='y', x='g', sigma=1.2, delta=0.8, nobs=[42, 80])
+r = call('bivariate.oneway_power', table=tid, y='y', x='g', sigma=1.2, delta=0.8, nobs=[42, 80])
 check.near('power = FTestAnovaPower', r['rows'][1]['power'], float(FTestAnovaPower().power(effect_size=0.8 / 1.2, nobs=80, alpha=0.05, k_groups=k)))
 lam = 80 * (0.8 / 1.2) ** 2
 check.near('power = noncentral F', r['rows'][1]['power'], float(stats.ncf.sf(stats.f.ppf(0.95, k - 1, 80 - k), k - 1, 80 - k, lam)), rel=1e-6)
 lsn = r['lsn']
 check.near('LSN: F reaches its critical value', lsn * 0.8 ** 2 / ((k - 1) * 1.2 ** 2), float(stats.f.ppf(0.95, k - 1, lsn - k)), rel=1e-6)
-r = call('fitybyx.oneway_anom', table=tid, y='y', x='g')
+r = call('bivariate.oneway_anom', table=tid, y='y', x='g')
 h = r['h']
 # the ANOM critical value by simulation of the multivariate t
 sim = np.random.default_rng(7)
@@ -416,14 +416,14 @@ T = (Z - gm[:, None]) / np.sqrt((nn.sum() - nn) / (nn.sum() * nn)) / np.sqrt(sim
 cover = float(np.mean(np.abs(T).max(1) <= h))
 check.near('ANOM h covers 95% (simulation)', cover, 0.95, abs_=0.003)
 check.near('ANOM upper decision limit', r['levels'][0]['udl'], float(yo.mean() + h * math.sqrt(mse) * math.sqrt((nn.sum() - nn[0]) / (nn.sum() * nn[0]))))
-r = call('fitybyx.oneway_densities', table=tid, y='y', x='g')
+r = call('bivariate.oneway_densities', table=tid, y='y', x='g')
 kd = stats.gaussian_kde(groups[1])
 check.near('densities = gaussian_kde', r['levels'][1]['density'][40], float(kd(r['x'][40])[0]))
 
 # ---- Oneway ▸ Compare Means ▸ With Best, Hsu MCB ------------------------------------------------------------
-from smui import fit_y_by_x as fyx_mod
-check.near('Hsu MCB quantile of one comparison = the one-sided t quantile', fyx_mod._mcb_quantile(1, 10, 0.05), float(stats.t.ppf(0.95, 10)), rel=1e-9)
-check.near('  two comparisons, infinite DF: Dunnett\'s one-sided 1.916 (equicorrelated ½, the bivariate normal)', fyx_mod._mcb_quantile(2, np.inf, 0.05),
+from smui import bivariate as biv_mod
+check.near('Hsu MCB quantile of one comparison = the one-sided t quantile', biv_mod._mcb_quantile(1, 10, 0.05), float(stats.t.ppf(0.95, 10)), rel=1e-9)
+check.near('  two comparisons, infinite DF: Dunnett\'s one-sided 1.916 (equicorrelated ½, the bivariate normal)', biv_mod._mcb_quantile(2, np.inf, 0.05),
            float(__import__('scipy').optimize.brentq(lambda c: stats.multivariate_normal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).cdf([c, c]) - 0.95, 1, 3)), abs_=2e-5)
 rng_m = np.random.default_rng(1)
 km, nm = 5, 8
@@ -433,7 +433,7 @@ mse_m = float(np.mean([s_.var(ddof=1) for s_ in smp_m]))
 se_m = math.sqrt(mse_m * 2 / nm)
 d_dun = float(np.median((np.array([s_.mean() - smp_m[0].mean() for s_ in smp_m[1:]]) - rd_.confidence_interval(0.95).low) / se_m))
 tm_ = table({'x': np.repeat([f'g{i}' for i in range(km)], nm).tolist(), 'y': np.concatenate(smp_m).tolist()})
-rm_ = call('fitybyx.oneway_compare', table=tm_, y='y', x='x', method='hsu', table_name='mcb')
+rm_ = call('bivariate.oneway_compare', table=tm_, y='y', x='x', method='hsu', table_name='mcb')
 check.near('  four comparisons, equal groups: scipy.stats.dunnett\'s one-sided quantile (simulated)', rm_['quantile']['value'], d_dun, abs_=2e-3)
 mm_ = np.array([s_.mean() for s_ in smp_m])
 ok_mcb = []
@@ -443,7 +443,7 @@ for r_ in rm_['mcb']:
     ok_mcb.append(abs(r_['lower'] - min(0, np.min(D_ - rm_['quantile']['value'] * se_m))) + abs(r_['upper'] - max(0, np.min(D_ + rm_['quantile']['value'] * se_m))))
 check.near('  the constrained intervals by Hsu\'s formula, [min(0, min(D - d se)), max(0, min(D + d se))]', max(ok_mcb), 0.0, abs_=1e-9)
 check('  upper limit 0 exactly when p < α (significantly below the best)', [(r_['upper'] == 0) == (r_['p'] < 0.05) for r_ in rm_['mcb']], [True] * km)
-rmn = call('fitybyx.oneway_compare', table=tm_, y='y', x='x', method='hsu_min')
+rmn = call('bivariate.oneway_compare', table=tm_, y='y', x='x', method='hsu_min')
 check('  against the smallest: the largest mean is the one found above it', [r_['index'] for r_ in rmn['mcb'] if r_['lower'] == 0], [int(np.argmax(mm_))])
 import contextlib as _cl, io as _io, os as _os, tempfile as _tf
 with _tf.TemporaryDirectory() as tmp_:
@@ -460,7 +460,7 @@ with _tf.TemporaryDirectory() as tmp_:
 check('  its code runs', err_m, None)
 if err_m is None:
     check.near('  and has the report\'s quantile', float(ns_m['dq']), rm_['quantile']['value'], rel=1e-9)
-po_ = call('fitybyx.oneway', table=tm_, y='y', x='x', plot={'points': True, 'circles': {'method': 'hsu', 'control': None}, 'labels': [f'g{i}' for i in range(km)], 'width': 500, 'height': 380})
+po_ = call('bivariate.oneway', table=tm_, y='y', x='x', plot={'points': True, 'circles': {'method': 'hsu', 'control': None}, 'labels': [f'g{i}' for i in range(km)], 'width': 500, 'height': 380})
 check('  the comparison circles of Hsu MCB have code', 'mcb_quantile' in (po_.get('plot_code') or ''), True)
 
 # ---- Logistic ------------------------------------------------------------------------------
@@ -470,7 +470,7 @@ eta = -1.4 + 0.035 * dose
 resp = np.where(rng.uniform(size=n) < 1 / (1 + np.exp(-eta)), 'yes', 'no')
 wl = rng.integers(1, 4, n).astype(float)
 tid = table({'dose': dose, 'response': resp.tolist(), 'f': wl}, levels={'response': ['no', 'yes']})
-r = call('fitybyx.logistic', table=tid, y='response', x='dose')
+r = call('bivariate.logistic', table=tid, y='response', x='dose')
 yb_ = (resp == 'no').astype(float)   # JMP: the log odds of the first level
 ref = sm.Logit(yb_, sm.add_constant(dose)).fit(disp=0)
 est = {e['term']: e for e in r['estimates']}
@@ -490,16 +490,16 @@ pno = ref.predict(sm.add_constant(dose))
 auc_no = stats.mannwhitneyu(pno[~pos], pno[pos]).statistic / (pos.sum() * (~pos).sum())
 check.near('ROC AUC = Mann-Whitney U / (n1 n0)', roc['auc'], float(auc_no))
 check('the curve has a cumulative probability per boundary', len(r['curve']['cum']), 1)
-r2 = call('fitybyx.logistic', table=tid, y='response', x='dose', target='yes')
+r2 = call('bivariate.logistic', table=tid, y='response', x='dose', target='yes')
 check.near('target level yes: the slope changes sign', {e['term']: e for e in r2['estimates']}['dose']['estimate'], -float(ref.params[1]))
-ri = call('fitybyx.logistic_inverse', table=tid, y='response', x='dose', probs=[0.5, 0.25])
+ri = call('bivariate.logistic_inverse', table=tid, y='response', x='dose', probs=[0.5, 0.25])
 xp = ri['rows'][0]['x']
 check.near('inverse prediction: P(first level) = 0.5 there', float(ref.predict(np.array([[1.0, xp]]))[0]), 0.5)
 check('Fieller limits bracket the estimate', ri['rows'][1]['lower'] < ri['rows'][1]['x'] < ri['rows'][1]['upper'], True)
-rs = call('fitybyx.logistic_rows', table=tid, y='response', x='dose')
+rs = call('bivariate.logistic_rows', table=tid, y='response', x='dose')
 check.near('saved probability', rs['probs'][0][5], float(pno[5]))
 # Freq: GLM with frequency weights is the Logit of the repeated rows
-rf = call('fitybyx.logistic', table=tid, y='response', x='dose', freq='f')
+rf = call('bivariate.logistic', table=tid, y='response', x='dose', freq='f')
 refe = sm.Logit(np.repeat(yb_, wl.astype(int)), sm.add_constant(np.repeat(dose, wl.astype(int)))).fit(disp=0)
 check.near('Freq: the slope of the repeated rows', {e['term']: e for e in rf['estimates']}['dose']['estimate'], float(refe.params[1]))
 check.near('Freq: its SE', {e['term']: e for e in rf['estimates']}['dose']['se'], float(refe.bse[1]))
@@ -507,7 +507,7 @@ check.near('Freq: the LR chi-square', rf['whole'][0]['chisq'], float(refe.llr), 
 # nominal: MNLogit, the last level the reference
 cat3 = np.where(dose > 30, rng.choice(['a', 'b', 'c'], n, p=[0.2, 0.3, 0.5]), rng.choice(['a', 'b', 'c'], n, p=[0.5, 0.3, 0.2]))
 tid5 = table({'dose': dose, 'k': cat3.tolist()})
-r = call('fitybyx.logistic', table=tid5, y='k', x='dose')
+r = call('bivariate.logistic', table=tid5, y='k', x='dose')
 codes = pd.Categorical(cat3, categories=['c', 'a', 'b']).codes
 refm = sm.MNLogit(codes, sm.add_constant(dose)).fit(disp=0)
 ea = [e for e in r['estimates'] if e['group'] == 0 and e['term'] == 'dose'][0]
@@ -521,7 +521,7 @@ lat = 0.04 * dose + rng.logistic(size=n)
 ordv = np.digitize(lat, [0.5, 1.5, 2.8])
 names = np.array(['none', 'mild', 'moderate', 'severe'])[ordv]
 tid6 = table({'dose': dose, 'sev': names.tolist()}, types={'sev': 'ordinal'}, levels={'sev': ['none', 'mild', 'moderate', 'severe']})
-r = call('fitybyx.logistic', table=tid6, y='sev', x='dose')
+r = call('bivariate.logistic', table=tid6, y='sev', x='dose')
 om = OrderedModel(pd.Series(pd.Categorical(names, categories=['none', 'mild', 'moderate', 'severe'], ordered=True)), dose[:, None], distr='logit')
 ro = om.fit(method='bfgs', disp=0, maxiter=500)
 th = om.transform_threshold_params(ro.params)[1:-1]
@@ -548,7 +548,7 @@ for label_, tid_, yname_, yv_, sat_, dfit_ in [
         ('binary', tid, 'response', resp, lambda: sm.Logit(yb_, dummies).fit(disp=0).llf, 1),
         ('nominal', tid5, 'k', cat3, lambda: sm.MNLogit(codes, np.column_stack([np.ones(n), dummies[:, 1:]])).fit(disp=0, maxiter=200).llf, 2),
         ('ordinal', tid6, 'sev', names, None, 1)]:
-    rr_ = call('fitybyx.logistic', table=tid_, y=yname_, x='dose')
+    rr_ = call('bivariate.logistic', table=tid_, y=yname_, x='dose')
     lf_ = rr_['lack_of_fit']
     check(f'Lack of Fit ({label_}): a table over the five doses', lf_ is not None and lf_['patterns'] == 5, True)
     if lf_ is None:
@@ -565,24 +565,24 @@ for label_, tid_, yname_, yv_, sat_, dfit_ in [
     chi_ = 2 * (ll_sat + rr_['whole'][1]['nll'])
     check.near(f'  ChiSquare and Prob>ChiSq ({label_})', abs(lr_['Lack Of Fit']['chisq'] - chi_) + abs(lr_['Lack Of Fit']['p'] - stats.chi2.sf(chi_, 4 * (kk - 1) - dfit_)),
                0.0, abs_=1e-9)
-lq_ = call('fitybyx.logistic', table=tid, y='response', x='dose', freq='f')['lack_of_fit']['rows']
+lq_ = call('bivariate.logistic', table=tid, y='response', x='dose', freq='f')['lack_of_fit']['rows']
 rep_ = np.repeat(np.arange(n), wl.astype(int))
-lr2_ = call('fitybyx.logistic', table=table({'dose': dose[rep_], 'response': resp[rep_].tolist()}, levels={'response': ['no', 'yes']}),
+lr2_ = call('bivariate.logistic', table=table({'dose': dose[rep_], 'response': resp[rep_].tolist()}, levels={'response': ['no', 'yes']}),
             y='response', x='dose')['lack_of_fit']['rows']
 check.near('Lack of Fit with Freq = that of the rows repeated', max(abs(a_['nll'] - b_['nll']) for a_, b_ in zip(lq_, lr2_)), 0.0, abs_=1e-8)
 # Unstable estimates (JMP's mark): none in the fits above; separation by X marks them
 check('no Unstable estimate in the binary, nominal and ordinal fits of the dose data',
-      [call('fitybyx.logistic', table=t_, y=y_, x='dose')['unstable'] for t_, y_ in ((tid, 'response'), (tid5, 'k'), (tid6, 'sev'))], [False, False, False])
+      [call('bivariate.logistic', table=t_, y=y_, x='dose')['unstable'] for t_, y_ in ((tid, 'response'), (tid5, 'k'), (tid6, 'sev'))], [False, False, False])
 rng_s = np.random.default_rng(7)
 xs_ = rng_s.normal(size=120)
 for lab_, yv_, ty_, lv_ in [('binary', np.where(xs_ > 0.2, 'yes', 'no'), {}, {}),
                             ('nominal', np.where(xs_ > 0.5, 'r', rng_s.choice(['p', 'q'], 120)), {}, {}),
                             ('ordinal', np.array(['lo', 'mid', 'hi'])[np.digitize(xs_, [-0.3, 0.6])], {'y': 'ordinal'}, {'y': ['lo', 'mid', 'hi']})]:
-    ru_ = call('fitybyx.logistic', table=table({'x': xs_.tolist(), 'y': yv_.tolist()}, types=ty_, levels=lv_), y='y', x='x')
+    ru_ = call('bivariate.logistic', table=table({'x': xs_.tolist(), 'y': yv_.tolist()}, types=ty_, levels=lv_), y='y', x='x')
     check(f'separated by X ({lab_}): every estimate Unstable, with a note', (all(e_['unstable'] == 'Unstable' for e_ in ru_['estimates']), ru_['notes'][0].startswith('Unstable')), (True, True))
 rng_u = np.random.default_rng(41)   # its own generator: the data of the sections below stay as they were
 tidu = table({'x': rng_u.normal(size=40), 'y': rng_u.choice(['a', 'b'], 40).tolist()})
-check('no X value repeated: no Lack of Fit table', call('fitybyx.logistic', table=tidu, y='y', x='x')['lack_of_fit'], None)
+check('no X value repeated: no Lack of Fit table', call('bivariate.logistic', table=tidu, y='y', x='x')['lack_of_fit'], None)
 
 # ---- Contingency ---------------------------------------------------------------------------
 n = 300
@@ -590,7 +590,7 @@ tx = rng.choice(['placebo', 'low', 'high'], n)
 ty = np.where(tx == 'high', rng.choice(['none', 'some', 'good'], n, p=[0.2, 0.3, 0.5]), rng.choice(['none', 'some', 'good'], n, p=[0.4, 0.35, 0.25]))
 tid = table({'trt': tx.tolist(), 'out': ty.tolist()}, types={'trt': 'ordinal', 'out': 'ordinal'},
             levels={'trt': ['placebo', 'low', 'high'], 'out': ['none', 'some', 'good']})
-r = call('fitybyx.contingency', table=tid, y='out', x='trt')
+r = call('bivariate.contingency', table=tid, y='out', x='trt')
 ct = pd.crosstab(pd.Categorical(tx, ['placebo', 'low', 'high']), pd.Categorical(ty, ['none', 'some', 'good'])).to_numpy()
 check('counts: X levels as rows', np.array(r['counts']).astype(int).tolist(), ct.tolist())
 pe = stats.chi2_contingency(ct, correction=False)
@@ -601,7 +601,7 @@ check.near('-LogLike is G²/2', r['loglike']['nll'], float(g2.statistic) / 2)
 Hy = -np.sum(ct.sum(0) * np.log(ct.sum(0) / n))
 check.near('RSquare (U)', r['rsquare_u'], float(g2.statistic / 2 / Hy))
 # measures of association
-r = call('fitybyx.contingency_measures', table=tid, y='out', x='trt')
+r = call('bivariate.contingency_measures', table=tid, y='out', x='trt')
 ms = {m['measure']: m for m in r['measures']}
 xi = pd.Categorical(tx, ['placebo', 'low', 'high']).codes
 yi = pd.Categorical(ty, ['none', 'some', 'good']).codes
@@ -624,7 +624,7 @@ lamcr = (ct.max(1).sum() - ct.sum(0).max()) / (n - ct.sum(0).max())
 check.near('lambda C|R', ms['Lambda Asymmetric C|R']['value'], float(lamcr))
 check.near('Cramér\'s V = scipy', [o for o in r['other'] if o['measure'] == 'Cramér\'s V'][0]['value'], float(stats.contingency.association(ct, method='cramer')))
 # the ASEs are delta-method standard errors: check each formula against the numeric delta method
-from smui import fit_y_by_x as F
+from smui import bivariate as F
 
 
 def measure_fn(name):
@@ -646,7 +646,7 @@ check.near('lambda C|R of the tie-free table', ml['Lambda Asymmetric C|R']['valu
 t2x = rng.choice(['a', 'b', 'c'], 150)
 t2y = np.where(rng.uniform(size=150) < 0.6, t2x, rng.choice(['a', 'b', 'c'], 150))
 tid7 = table({'r1': t2x.tolist(), 'r2': t2y.tolist()})
-r = call('fitybyx.contingency_agreement', table=tid7, y='r2', x='r1')
+r = call('bivariate.contingency_agreement', table=tid7, y='r2', x='r1')
 from statsmodels.stats.inter_rater import cohens_kappa
 from statsmodels.stats.contingency_tables import SquareTable, StratifiedTable, Table, Table2x2, mcnemar
 sq = pd.crosstab(t2x, t2y).to_numpy()
@@ -655,19 +655,19 @@ check.near('kappa = cohens_kappa', r['kappa'], float(kr.kappa))
 check.near('kappa Std Err', r['se'], float(kr.std_kappa))
 check.near('Bowker = SquareTable.symmetry', r['bowker']['chisq'], float(SquareTable(sq, shift_zeros=False).symmetry().statistic))
 tid8 = table({'r1': ['a'] * 35 + ['b'] * 15, 'r2': ['a'] * 20 + ['b'] * 15 + ['a'] * 5 + ['b'] * 10})
-check.near('kappa of [[20, 15], [5, 10]] is 0.2', call('fitybyx.contingency_agreement', table=tid8, y='r2', x='r1')['kappa'], 0.2)
+check.near('kappa of [[20, 15], [5, 10]] is 0.2', call('bivariate.contingency_agreement', table=tid8, y='r2', x='r1')['kappa'], 0.2)
 # 2x2: relative risk, odds ratio, McNemar, Fisher
 x2 = rng.choice(['drug', 'placebo'], 120)
 y2 = np.where(x2 == 'drug', rng.choice(['yes', 'no'], 120, p=[0.6, 0.4]), rng.choice(['yes', 'no'], 120, p=[0.35, 0.65]))
 tid9 = table({'t': x2.tolist(), 'r': y2.tolist()}, levels={'t': ['drug', 'placebo'], 'r': ['yes', 'no']})
 t22 = pd.crosstab(pd.Categorical(x2, ['drug', 'placebo']), pd.Categorical(y2, ['yes', 'no'])).to_numpy()
-r = call('fitybyx.contingency_2x2', table=tid9, y='r', x='t')
+r = call('bivariate.contingency_2x2', table=tid9, y='r', x='t')
 tt = Table2x2(t22, shift_zeros=False)
 check.near('relative risk = Table2x2', r['risks'][0]['rr'], float(tt.riskratio))
 check.near('relative risk lower limit', r['risks'][0]['lower'], float(tt.riskratio_confint()[0]))
 check.near('odds ratio = Table2x2', r['odds']['or'], float(tt.oddsratio))
 check.near('McNemar = statsmodels', r['mcnemar']['chisq'], float(mcnemar(t22, exact=False, correction=False).statistic))
-rc = call('fitybyx.contingency', table=tid9, y='r', x='t')
+rc = call('bivariate.contingency', table=tid9, y='r', x='t')
 check.near('Fisher 2-Tail = scipy', rc['fisher']['two'], float(stats.fisher_exact(t22).pvalue))
 check.near('Fisher Left = scipy less', rc['fisher']['left'], float(stats.fisher_exact(t22, alternative='less').pvalue))
 # CMH: the Chinese smoking tables (Agresti)
@@ -681,7 +681,7 @@ for city, row in cs.iterrows():
         ys_.append(yl)
         fs_.append(float(v))
 tid10 = table({'city': cities, 'smoking': xs_, 'lung': ys_, 'n': fs_}, levels={'smoking': ['smoker', 'nonsmoker'], 'lung': ['cancer', 'healthy']})
-r = call('fitybyx.contingency_cmh', table=tid10, y='lung', x='smoking', strata='city', freq='n')
+r = call('bivariate.contingency_cmh', table=tid10, y='lung', x='smoking', strata='city', freq='n')
 check.near('Mantel-Haenszel odds ratio (Agresti: 2.174)', r['or_mh'], 2.174, rel=5e-4)
 check.near('CMH chi-square (280.14)', r['cmh']['chisq'], 280.14, rel=5e-5)
 check.near('Breslow-Day (5.20)', r['breslow_day']['chisq'], 5.20, rel=2e-3)
@@ -689,8 +689,8 @@ check('eight strata', r['strata'], 8)
 # Cochran-Armitage
 tid11 = table({'d': np.repeat(['0', '10', '20', '40'], 50).tolist(), 'r': np.where(rng.uniform(size=200) < np.repeat([0.2, 0.3, 0.4, 0.55], 50), 'yes', 'no').tolist()},
               types={'d': 'ordinal'}, levels={'d': ['0', '10', '20', '40']})
-r = call('fitybyx.contingency_trend', table=tid11, y='r', x='d')
-ct4 = np.array(call('fitybyx.contingency', table=tid11, y='r', x='d')['counts'])
+r = call('bivariate.contingency_trend', table=tid11, y='r', x='d')
+ct4 = np.array(call('bivariate.contingency', table=tid11, y='r', x='d')['counts'])
 res = Table(ct4, shift_zeros=False).test_ordinal_association()
 check.near('trend: statsmodels z', r['z_perm'], float(res.zscore))
 sc = np.arange(4.0)
@@ -700,7 +700,7 @@ Tn = np.sum(ct4[:, 1] * (sc - np.sum(nj * sc) / nj.sum()))
 zca = Tn / math.sqrt(p1 * (1 - p1) * np.sum(nj * (sc - np.sum(nj * sc) / nj.sum()) ** 2))
 check.near('trend: the Cochran-Armitage Z (binomial variance)', r['z'], float(zca))
 # Analysis of Means for Proportions: h covers 1 − α of the largest standardised deviation (simulated)
-r = call('fitybyx.contingency_anomp', table=tid11, y='r', x='d')
+r = call('bivariate.contingency_anomp', table=tid11, y='r', x='d')
 ni = ct4.sum(1)
 pb = ct4[:, 0].sum() / ct4.sum()
 sim = np.random.default_rng(11)
@@ -711,7 +711,7 @@ check.near('ANOM for proportions: h covers 95% (simulation)', float(np.mean(np.a
 check.near('ANOM for proportions: a decision limit', r['levels'][2]['udl'], float(pb + r['h'] * math.sqrt(pb * (1 - pb) * (ni.sum() - ni[2]) / (ni.sum() * ni[2]))))
 check('ANOM for proportions: the first level\'s proportions', [round(l['p'], 12) for l in r['levels']], [round(v, 12) for v in (ct4[:, 0] / ni).tolist()])
 # correspondence analysis
-r = call('fitybyx.contingency_ca', table=tid, y='out', x='trt')
+r = call('bivariate.contingency_ca', table=tid, y='out', x='trt')
 check.near('correspondence analysis: N × inertia = Pearson chi-square', r['chisq'], float(pe.statistic))
 check.near('portions add to one', sum(d['portion'] for d in r['details']), 1.0)
 
@@ -745,7 +745,7 @@ from statsmodels.stats.nonparametric import rank_compare_2indep  # noqa: E402
 sc_lv = [-2, -1, 0, 1, 2]
 new_n, act_n = [24, 37, 21, 19, 6], [11, 51, 22, 21, 7]
 tmh = table({'score': sc_lv * 2, 'trt': ['new'] * 5 + ['active'] * 5, 'n': [float(v) for v in new_n + act_n]}, levels={'trt': ['new', 'active']})
-r = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n')
+r = call('bivariate.oneway_brunner', table=tmh, y='score', x='trt', freq='n')
 bm = r['pairs'][0]
 check('Brunner-Munzel: the later level against the earlier (active vs new)', (bm['i'], bm['j'], bm['n1'], bm['n2']), (1, 0, 112, 107))
 check.near('Brunner-Munzel statistic (lawstat 1.1757561456582)', bm['stat'], 1.1757561456582, rel=1e-11)
@@ -765,12 +765,12 @@ check.near('Prob>t = test_prob_superior(larger)', bm['p_greater'], float(refbm.t
 xs1 = [1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 1, 1]
 ys1 = [3, 3, 4, 3, 1, 2, 3, 1, 1, 5, 4]
 tbm = table({'v': xs1 + ys1, 'g': ['a'] * len(xs1) + ['b'] * len(ys1)})
-r2 = call('fitybyx.oneway_brunner', table=tbm, y='v', x='g')
+r2 = call('bivariate.oneway_brunner', table=tbm, y='v', x='g')
 check.near('lawstat example: statistic 3.1374674823029505', r2['pairs'][0]['stat'], 3.1374674823029505, rel=1e-13)
 check.near('lawstat example: p 0.0057862086661515377', r2['pairs'][0]['p'], 0.0057862086661515377, rel=1e-12)
 check.near('lawstat example: one-sided p 0.0028931043330757342', r2['pairs'][0]['p_greater'], 0.0028931043330757342, rel=1e-12)
 # several levels: every pair against statsmodels, Holm over the pairs
-r4 = call('fitybyx.oneway_brunner', table=table({'y': yo, 'g': g.tolist()}), y='y', x='g')
+r4 = call('bivariate.oneway_brunner', table=table({'y': yo, 'g': g.tolist()}), y='y', x='g')
 p31 = [p_ for p_ in r4['pairs'] if (p_['i'], p_['j']) == (3, 1)][0]
 ref31 = rank_compare_2indep(groups[3], groups[1])
 check.near('a pair of four levels = rank_compare_2indep', p31['prob'], float(ref31.prob1))
@@ -779,15 +779,15 @@ check('six pairs of four levels', len(r4['pairs']), 6)
 check.near('Holm-adjusted p (statsmodels multipletests)', p31['p_holm'], float(multipletests([q['p'] for q in r4['pairs']], method='holm')[1][[(q['i'], q['j']) for q in r4['pairs']].index((3, 1))]))
 # the equivalence test: two one-sided tests; at the (1 - 2 alpha) limits the p-value is alpha
 lo90, hi90 = refbm.conf_int(alpha=0.1)
-r5 = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
+r5 = call('bivariate.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
 tt = refbm.tost_prob_superior(0.4, 0.6)
 check.near('TOST p = tost_prob_superior', r5['tost']['pairs'][0]['p'], float(tt.pvalue))
 check.near('TOST lower t = its larger test', r5['tost']['pairs'][0]['t_lower'], float(tt.results_larger.statistic))
 check.near('the 90% interval shown', r5['tost']['pairs'][0]['upper'], float(hi90))
-r6 = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': float(lo90), 'upp': float(hi90) * 1.05})
+r6 = call('bivariate.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': float(lo90), 'upp': float(hi90) * 1.05})
 check.near('TOST at the lower 90% limit: p = 0.05', r6['tost']['pairs'][0]['p'], 0.05, rel=1e-9)
-check('bounds outside [0, 1] are refused', 'error' in call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', tost={'low': 0.6, 'upp': 0.4}), True)
-rsep = call('fitybyx.oneway_brunner', table=table({'v': [1.0, 2, 3, 7, 8, 9], 'g': ['a', 'a', 'a', 'b', 'b', 'b']}), y='v', x='g')
+check('bounds outside [0, 1] are refused', 'error' in call('bivariate.oneway_brunner', table=tmh, y='score', x='trt', tost={'low': 0.6, 'upp': 0.4}), True)
+rsep = call('bivariate.oneway_brunner', table=table({'v': [1.0, 2, 3, 7, 8, 9], 'g': ['a', 'a', 'a', 'b', 'b', 'b']}), y='v', x='g')
 check('no overlap: P = 1, no test, a note', (rsep['pairs'][0]['prob'], rsep['pairs'][0]['p'], len(rsep['notes']) > 0, 'warnings' in rsep), (1.0, None, True, False))
 
 # ---- Oneway ▸ Compare Rates: Poisson counts with an exposure ------------------------------------
@@ -797,12 +797,12 @@ from statsmodels.stats import rates as smr  # noqa: E402
 tgu = table({'events': [20.0, 25, 15, 10, 12, 8], 'arm': ['A'] * 3 + ['B'] * 3, 'py': [17000.0, 20000.0, 14477.5, 18000.0, 20000.0, 16308.7]})
 gu = {'wald': 0.000356, 'score': 0.000316, 'score-log': 0.000200, 'wald-log': 0.000420, 'sqrt': 0.000285}
 for meth, pv in gu.items():
-    rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
+    rr = call('bivariate.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
     check.near(f'Gu et al. example 1, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=5e-6)
 for meth, pv in (('exact-cond', 0.000428), ('cond-midp', 0.000310), ('etest-score', 0.000298), ('etest-wald', 0.000298)):
-    rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
+    rr = call('bivariate.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method=meth, ci_method='score', control='B')
     check.near(f'Gu et al. example 1, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=5e-5)
-rr = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
+rr = call('bivariate.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
 check.near('exact conditional two-sided p (R exactci 0.000675182658686321)', rr['pairs'][0]['p'], 0.000675182658686321, rel=1e-12)
 check.near('the rate ratio (R: 2.10999757175465)', rr['pairs'][0]['estimate'], 2.10999757175465, rel=1e-12)
 pl, pu = stats.beta.ppf(0.025, 60, 31), stats.beta.ppf(0.975, 61, 30)
@@ -812,14 +812,14 @@ lvr = {l['level']: l for l in rr['levels']}
 check('level totals', (lvr['A']['count'], lvr['A']['exposure'], lvr['B']['count']), (60.0, 51477.5, 30.0))
 lo_, hi_ = smr.confint_poisson(60, 51477.5, method='exact-c')
 check.near('a level\'s exact (Garwood) interval = confint_poisson', lvr['A']['lower'], float(lo_))
-rs = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='score', ci_method='score', control='B')
+rs = call('bivariate.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='score', ci_method='score', control='B')
 ci_s = smr.confint_poisson_2indep(60, 51477.5, 30, 54308.7, method='score', compare='ratio')
 check.near('score interval = confint_poisson_2indep', rs['pairs'][0]['lower'], float(ci_s[0]), rel=1e-9)
 check.near('score test at the interval\'s limit: p = 0.05', float(smr.test_poisson_2indep(60, 51477.5, 30, 54308.7, value=rs['pairs'][0]['upper'], method='score').pvalue), 0.05, rel=1e-6)
 # Ng, Gu and Tang (2007): the difference of rates, 41 in 28010 against 15 in 19017, one-sided
 tng = table({'k': [41.0, 15.0], 'grp': ['one', 'two'], 'e': [28010.0, 19017.0]})
 for meth, (st_, pv) in (('wald', (2.2047, 0.0137)), ('score', (2.0818, 0.0187)), ('etest-wald', (2.2047, 0.0184)), ('etest-score', (2.0818, 0.0179))):
-    rr = call('fitybyx.oneway_rates', table=tng, y='k', x='grp', exposure='e', compare='diff', method=meth, ci_method='score', control='two')
+    rr = call('bivariate.oneway_rates', table=tng, y='k', x='grp', exposure='e', compare='diff', method=meth, ci_method='score', control='two')
     check.near(f'Ng et al. difference, {meth}: statistic {st_}', rr['pairs'][0]['stat'], st_, abs_=6e-4)
     check.near(f'Ng et al. difference, {meth}: one-sided p {pv}', rr['pairs'][0]['p_greater'], pv, abs_=7e-4)
 # every level: the Poisson GLM's likelihood ratio = its closed form from the totals
@@ -829,7 +829,7 @@ ek = rng_r.uniform(0.5, 3, 90)
 yk = rng_r.poisson(np.array([1.0, 1.4, 2.2])[np.repeat([0, 1, 2], 30)] * ek).astype(float)
 fk = rng_r.integers(1, 3, 90).astype(float)
 tk = table({'y': yk, 'g': gk.tolist(), 'e': ek, 'f': fk})
-rk = call('fitybyx.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
+rk = call('bivariate.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
 Ck = np.array([np.sum((yk * fk)[gk == v]) for v in 'abc'])
 Ek = np.array([np.sum((ek * fk)[gk == v]) for v in 'abc'])
 lr_closed = 2 * np.sum(Ck * np.log(Ck / (Ek * Ck.sum() / Ek.sum())))
@@ -841,7 +841,7 @@ t21 = smr.test_poisson_2indep(Ck[2], Ek[2], Ck[1], Ek[1], method='score')
 check.near('Freq counts units: a pair\'s score test on the totals', [p_ for p_ in rk['pairs'] if (p_['i'], p_['j']) == (2, 1)][0]['p'], float(t21.pvalue))
 # a level without events: the score interval by root finding, the LR from the totals
 tz = table({'events': [0.0, 0, 0, 2, 1, 2], 'arm': ['A'] * 3 + ['B'] * 3})
-rz = call('fitybyx.oneway_rates', table=tz, y='events', x='arm')
+rz = call('bivariate.oneway_rates', table=tz, y='events', x='arm')
 pz = rz['pairs'][0]
 check('zero events: the ratio is infinite, the upper limit too', (pz['estimate'], pz['upper']), ('Infinity', 'Infinity'))
 with np.errstate(divide='ignore'):   # statsmodels divides by the zero rate on the way
@@ -850,15 +850,15 @@ check.near('zero events: at the lower limit the score test gives p = 0.05', p_at
 check.near('zero events: the lower limit in closed form, count₁·(units₂/units₁)/z²', pz['lower'], 5 / stats.norm.ppf(0.975) ** 2, rel=1e-8)
 check('zero events: the LR test from the totals, with a note', (rz['lr']['source'], any('no events' in t for t in rz['notes'])), ('totals', True))
 check('zero events: no warnings reach the report', 'warnings' in rz, False)
-check('counts only', 'error' in call('fitybyx.oneway_rates', table=table({'y': [0.5, 1, 2], 'g': ['a', 'b', 'a']}), y='y', x='g'), True)
-check('a method for the other comparison is refused', 'error' in call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', compare='diff', method='exact-cond'), True)
+check('counts only', 'error' in call('bivariate.oneway_rates', table=table({'y': [0.5, 1, 2], 'g': ['a', 'b', 'a']}), y='y', x='g'), True)
+check('a method for the other comparison is refused', 'error' in call('bivariate.oneway_rates', table=tgu, y='events', x='arm', compare='diff', method='exact-cond'), True)
 
 # ---- Contingency ▸ Two Sample Test for Proportions ------------------------------------------------
 from statsmodels.stats.proportion import confint_proportions_2indep, test_proportions_2indep  # noqa: E402
 # JMP's documented example (Car Poll: married 95 of 138 women, 101 of 165 men): the adjusted Wald
 # difference 0.0763, interval [-0.03175, 0.181621], p = 0.1686
 tcar = table({'sex': ['Female', 'Female', 'Male', 'Male'], 'marital': ['Married', 'Single', 'Married', 'Single'], 'n': [95.0, 43, 101, 64]})
-r = call('fitybyx.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
+r = call('bivariate.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
 ac = [m for m in r['methods'] if m['key'] == 'agresti-caffo'][0]
 check.near('JMP example: the difference 0.0763', r['estimate'], 0.0763, abs_=5e-5)
 check.near('JMP example: lower limit -0.03175', ac['lower'], -0.03175, abs_=5e-6)
@@ -867,7 +867,7 @@ check.near('JMP example: adjusted Wald p 0.1686', ac['p'], 0.1686, abs_=5e-5)
 check('the description', r['description'], 'P(Married|Female) − P(Married|Male)')
 # R PropCIs and Fagerland et al. (2015) for 7 of 34 against 1 of 34
 t734 = table({'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['yes'] * 1 + ['no'] * 33}, levels={'r': ['yes', 'no']})
-r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g')
+r = call('bivariate.contingency_twoprop', table=t734, y='r', x='g')
 M = {m['method']: m for m in r['methods']}
 check.near('PropCIs wald2ci(adjust="AC"): 0.01161167', M['Agresti-Caffo (adjusted Wald, as JMP)']['lower'], 0.01161167, abs_=6e-7)
 check.near('PropCIs wald2ci(adjust="AC"): 0.32172166', M['Agresti-Caffo (adjusted Wald, as JMP)']['upper'], 0.32172166, abs_=6e-7)
@@ -878,14 +878,14 @@ ref_mn = confint_proportions_2indep(7, 34, 1, 34, method='score', compare='diff'
 check.near('Miettinen-Nurminen = confint_proportions_2indep(score)', M['Miettinen-Nurminen (score)']['lower'], float(ref_mn[0]))
 check.near('its test = test_proportions_2indep(score)', M['Miettinen-Nurminen (score)']['p'], float(test_proportions_2indep(7, 34, 1, 34, method='score', compare='diff').pvalue))
 check.near('score test at the score limit: p = 0.05', float(test_proportions_2indep(7, 34, 1, 34, value=M['Miettinen-Nurminen (score)']['upper'], method='score', compare='diff').pvalue), 0.05, rel=1e-6)
-r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare='ratio')
+r = call('bivariate.contingency_twoprop', table=t734, y='r', x='g', compare='ratio')
 M = {m['method']: m for m in r['methods']}
 check.near('PropCIs riskscoreci (Koopman): 1.220853', M['Koopman (score)']['lower'], 1.220853, abs_=6e-7)
 check.near('PropCIs riskscoreci (Koopman): 42.575718', M['Koopman (score)']['upper'], 42.575718, abs_=6e-6)
 check.near('Fagerland: Katz log 0.91 to 54', M['Katz (log)']['upper'], 54, rel=0.01)
 check.near('Fagerland: adjusted log 0.92 to 27', M['Adjusted log (0.5 added)']['upper'], 27, rel=0.01)
 check.near('the relative risk 7', r['estimate'], 7.0)
-r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare='odds-ratio')
+r = call('bivariate.contingency_twoprop', table=t734, y='r', x='g', compare='odds-ratio')
 M = {m['method']: m for m in r['methods']}
 check.near('PropCIs orscoreci: 1.246309', M['Miettinen-Nurminen (score)']['lower'], 1.246309, rel=5e-4)
 check.near('PropCIs orscoreci: 56.486130', M['Miettinen-Nurminen (score)']['upper'], 56.486130, rel=5e-4)
@@ -893,10 +893,10 @@ check.near('Fagerland: Woolf logit 0.99 to 74', M['Woolf (logit)']['upper'], 74,
 check.near('Fagerland: Gart adjusted logit 0.98 to 38', M['Gart (adjusted logit, 0.5 added)']['upper'], 38, rel=0.01)
 check.near('Fagerland: independence-smoothed logit 0.99 to 60', M['Independence-smoothed logit']['upper'], 60, rel=0.01)
 check.near('the odds ratio (7/27)/(1/33)', r['estimate'], (7 / 27) / (1 / 33))
-r = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', response='no')
+r = call('bivariate.contingency_twoprop', table=t734, y='r', x='g', response='no')
 check.near('Response Level no: the difference of the other level', r['estimate'], 27 / 34 - 33 / 34)
 t0 = table({'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['no'] * 34}, levels={'r': ['yes', 'no']})
-r = call('fitybyx.contingency_twoprop', table=t0, y='r', x='g', compare='odds-ratio')
+r = call('bivariate.contingency_twoprop', table=t0, y='r', x='g', compare='odds-ratio')
 M = {m['method']: m for m in r['methods']}
 check('a zero cell: Woolf is not defined, Gart is', (M['Woolf (logit)']['lower'], M['Woolf (logit)'].get('note'), M['Gart (adjusted logit, 0.5 added)']['lower'] is not None), (None, 'not defined with a zero count', True))
 check('a zero cell: no warnings reach the report', 'warnings' in r, False)
@@ -914,7 +914,7 @@ def strata_table(tabs):
 # statsmodels' TestStratified2: DescTools BreslowDayTest(correct=FALSE) 1.8438, p 0.7645; TRUE 1.8436, p 0.7645;
 # mantelhaen.test: 11.8852 (with the continuity correction), p 0.0005658, odds ratio 3.5912 (1.781135 to 7.240633)
 ts2 = strata_table([[[20, 14], [10, 24]], [[15, 12], [3, 15]], [[3, 2], [3, 2]], [[12, 3], [7, 5]], [[1, 0], [3, 2]]])
-r = call('fitybyx.contingency_cmh', table=ts2, y='y', x='x', strata='s', freq='f')
+r = call('bivariate.contingency_cmh', table=ts2, y='y', x='x', strata='s', freq='f')
 check.near('Breslow-Day (DescTools 1.8438)', r['breslow_day']['chisq'], 1.8438, abs_=1e-4)
 check.near('Breslow-Day p (0.7645)', r['breslow_day']['p'], 0.7645, abs_=1e-4)
 check.near('Breslow-Day-Tarone (DescTools 1.8436)', r['breslow_day_tarone']['chisq'], 1.8436, abs_=1e-4)
@@ -926,7 +926,7 @@ check('a stratum with a zero cell has no odds ratio of its own', [s_['or'] is No
 check.near('a stratum\'s odds ratio (20·24)/(14·10)', r['by_stratum'][0]['or'], 20 * 24 / (14 * 10))
 # TestStratified3 (the Berkeley admissions tables): DescTools 18.83297, p 0.002064786, Tarone the same
 ts3 = strata_table([[[313, 512], [19, 89]], [[207, 353], [8, 17]], [[205, 120], [391, 202]], [[278, 139], [244, 131]], [[138, 53], [299, 94]], [[351, 22], [317, 24]]])
-r = call('fitybyx.contingency_cmh', table=ts3, y='y', x='x', strata='s', freq='f')
+r = call('bivariate.contingency_cmh', table=ts3, y='y', x='x', strata='s', freq='f')
 check.near('Breslow-Day, six strata (DescTools 18.83297)', r['breslow_day']['chisq'], 18.83297, rel=1e-6)
 check.near('its p (0.002064786)', r['breslow_day']['p'], 0.002064786, rel=1e-5)
 check.near('Breslow-Day-Tarone (18.83297)', r['breslow_day_tarone']['chisq'], 18.83297, rel=1e-4)
@@ -936,7 +936,7 @@ from statsmodels.stats.contingency_tables import StratifiedTable as _ST  # noqa:
 check.near('the pooled relative risk = StratifiedTable.riskratio_pooled', r['rr_mh'], float(_ST([np.array(t_) for t_ in [[[313, 512], [19, 89]], [[207, 353], [8, 17]], [[205, 120], [391, 202]], [[278, 139], [244, 131]], [[138, 53], [299, 94]], [[351, 22], [317, 24]]]]).riskratio_pooled))
 # TestStratified1: mantelhaen.test 3.9286 (corrected), p 0.04747, odds ratio 7 (1.026713 to 47.725133)
 ts1 = strata_table([[[0, 0], [6, 5]], [[3, 0], [3, 6]], [[6, 2], [0, 4]], [[5, 6], [1, 0]], [[2, 5], [0, 0]]])
-r = call('fitybyx.contingency_cmh', table=ts1, y='y', x='x', strata='s', freq='f')
+r = call('bivariate.contingency_cmh', table=ts1, y='y', x='x', strata='s', freq='f')
 check('strata without both levels of X and Y are left out', r['strata'], 3)
 check.near('the other strata give R\'s mantelhaen.test: 3.9286 (corrected)', r['cmh_cc']['chisq'], 3.9286, abs_=1e-4)
 check.near('its p (0.04747)', r['cmh_cc']['p'], 0.04747, abs_=1e-5)
@@ -1028,23 +1028,23 @@ def code_runs(label, columns, results):
 cols = {'height': xb, 'weight': yb, 'w': wb, 'f': fb, 'sex': gb}
 tidc = table(cols)
 code_runs('Bivariate', cols, [(fn, call(fn, table=tidc, y='weight', x='height', **kw)) for fn, kw in [
-    ('fitybyx.fit_poly', {'degree': 2}), ('fitybyx.fit_poly', {'degree': 1, 'weight': 'w', 'freq': 'f'}), ('fitybyx.fit_mean', {}),
-    ('fitybyx.fit_special', {'ytr': 'log', 'xtr': 'sqrt'}), ('fitybyx.fit_special', {'intercept': 0}), ('fitybyx.fit_spline', {'lam': 10}),
-    ('fitybyx.fit_lowess', {'frac': 0.5}), ('fitybyx.fit_each', {}), ('fitybyx.fit_robust', {}), ('fitybyx.fit_orthogonal', {}),
-    ('fitybyx.density_ellipse', {'levels': [0.9]}), ('fitybyx.nonpar_density', {}), ('fitybyx.fit_quantile', {'tau': 0.5}), ('fitybyx.bivariate', {})]])
+    ('bivariate.fit_poly', {'degree': 2}), ('bivariate.fit_poly', {'degree': 1, 'weight': 'w', 'freq': 'f'}), ('bivariate.fit_mean', {}),
+    ('bivariate.fit_special', {'ytr': 'log', 'xtr': 'sqrt'}), ('bivariate.fit_special', {'intercept': 0}), ('bivariate.fit_spline', {'lam': 10}),
+    ('bivariate.fit_lowess', {'frac': 0.5}), ('bivariate.fit_each', {}), ('bivariate.fit_robust', {}), ('bivariate.fit_orthogonal', {}),
+    ('bivariate.density_ellipse', {'levels': [0.9]}), ('bivariate.nonpar_density', {}), ('bivariate.fit_quantile', {'tau': 0.5}), ('bivariate.bivariate', {})]])
 cols = {'y': yo, 'g': g.tolist(), 'blk': blk.tolist(), 'f': fo}
 tidc = table(cols)
 code_runs('Oneway', cols, [(f'{fn} {kw}', call(fn, table=tidc, y='y', x='g', **kw)) for fn, kw in [
-    ('fitybyx.oneway', {}), ('fitybyx.oneway', {'block': 'blk'}), ('fitybyx.oneway_compare', {'method': 'student'}), ('fitybyx.oneway_compare', {'method': 'tukey'}),
-    ('fitybyx.oneway_compare', {'method': 'dunnett', 'control': 'A'}), ('fitybyx.oneway_nonpar', {'test': 'wilcoxon'}), ('fitybyx.oneway_nonpar', {'test': 'median'}),
-    ('fitybyx.oneway_nonpar', {'test': 'vdw'}), ('fitybyx.oneway_nonpar_mc', {'method': 'dunn_all'}), ('fitybyx.oneway_unequal_var', {}),
-    ('fitybyx.oneway_equivalence', {'delta': 1}), ('fitybyx.oneway_power', {}), ('fitybyx.oneway_anom', {}), ('fitybyx.oneway_densities', {})]])
+    ('bivariate.oneway', {}), ('bivariate.oneway', {'block': 'blk'}), ('bivariate.oneway_compare', {'method': 'student'}), ('bivariate.oneway_compare', {'method': 'tukey'}),
+    ('bivariate.oneway_compare', {'method': 'dunnett', 'control': 'A'}), ('bivariate.oneway_nonpar', {'test': 'wilcoxon'}), ('bivariate.oneway_nonpar', {'test': 'median'}),
+    ('bivariate.oneway_nonpar', {'test': 'vdw'}), ('bivariate.oneway_nonpar_mc', {'method': 'dunn_all'}), ('bivariate.oneway_unequal_var', {}),
+    ('bivariate.oneway_equivalence', {'delta': 1}), ('bivariate.oneway_power', {}), ('bivariate.oneway_anom', {}), ('bivariate.oneway_densities', {})]])
 cols2 = {'y': np.concatenate([groups[0], groups[1]]), 'g': ['A'] * nlev[0] + ['B'] * nlev[1]}
 tidc = table(cols2)
-code_runs('Oneway, two levels', cols2, [(fn, call(fn, table=tidc, y='y', x='g')) for fn in ('fitybyx.oneway_ttest', 'fitybyx.oneway_ks')])
+code_runs('Oneway, two levels', cols2, [(fn, call(fn, table=tidc, y='y', x='g')) for fn in ('bivariate.oneway_ttest', 'bivariate.oneway_ks')])
 cols = {'dose': dose, 'response': resp.tolist(), 'f': wl, 'k': cat3.tolist(), 'sev': names.tolist()}
 tidc = table(cols, types={'sev': 'ordinal'}, levels={'response': ['no', 'yes'], 'sev': ['none', 'mild', 'moderate', 'severe']})
-code_runs('Logistic', cols, [(f'{y_} {kw}', call('fitybyx.logistic', table=tidc, y=y_, x='dose', **kw)) for y_, kw in [('response', {}), ('response', {'freq': 'f'}), ('k', {}), ('sev', {})]])
+code_runs('Logistic', cols, [(f'{y_} {kw}', call('bivariate.logistic', table=tidc, y=y_, x='dose', **kw)) for y_, kw in [('response', {}), ('response', {'freq': 'f'}), ('k', {}), ('sev', {})]])
 # the code under Lack of Fit prints the report's numbers
 with tempfile.TemporaryDirectory() as tmp_:
     pd.DataFrame(cols).to_csv(os.path.join(tmp_, 'data.csv'), index=False)
@@ -1052,7 +1052,7 @@ with tempfile.TemporaryDirectory() as tmp_:
     os.chdir(tmp_)
     try:
         for y_, kw in [('response', {}), ('response', {'freq': 'f'}), ('k', {}), ('k', {'freq': 'f'}), ('sev', {})]:
-            lf_ = call('fitybyx.logistic', table=tidc, y=y_, x='dose', **kw)['lack_of_fit']
+            lf_ = call('bivariate.logistic', table=tidc, y=y_, x='dose', **kw)['lack_of_fit']
             ns_, err_ = {}, None
             try:
                 with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
@@ -1069,15 +1069,15 @@ with tempfile.TemporaryDirectory() as tmp_:
         os.chdir(here_)
 cols = {'trt': tx.tolist(), 'out': ty.tolist()}
 tidc = table(cols, types={'trt': 'ordinal', 'out': 'ordinal'}, levels={'trt': ['placebo', 'low', 'high'], 'out': ['none', 'some', 'good']})
-code_runs('Contingency', cols, [(fn, call(fn, table=tidc, y='out', x='trt')) for fn in ('fitybyx.contingency', 'fitybyx.contingency_measures', 'fitybyx.contingency_ca')])
-check('agreement of columns without a level in common', 'error' in call('fitybyx.contingency_agreement', table=tidc, y='out', x='trt'), True)
-code_runs('Agreement', {'r1': t2x.tolist(), 'r2': t2y.tolist()}, [('fitybyx.contingency_agreement', call('fitybyx.contingency_agreement', table=tid7, y='r2', x='r1'))])
+code_runs('Contingency', cols, [(fn, call(fn, table=tidc, y='out', x='trt')) for fn in ('bivariate.contingency', 'bivariate.contingency_measures', 'bivariate.contingency_ca')])
+check('agreement of columns without a level in common', 'error' in call('bivariate.contingency_agreement', table=tidc, y='out', x='trt'), True)
+code_runs('Agreement', {'r1': t2x.tolist(), 'r2': t2y.tolist()}, [('bivariate.contingency_agreement', call('bivariate.contingency_agreement', table=tid7, y='r2', x='r1'))])
 cols = {'t': x2.tolist(), 'r': y2.tolist()}
 tidc = table(cols, levels={'t': ['drug', 'placebo'], 'r': ['yes', 'no']})
-code_runs('2x2', cols, [(fn, call(fn, table=tidc, y='r', x='t')) for fn in ('fitybyx.contingency', 'fitybyx.contingency_2x2', 'fitybyx.contingency_trend', 'fitybyx.contingency_anomp')])
+code_runs('2x2', cols, [(fn, call(fn, table=tidc, y='r', x='t')) for fn in ('bivariate.contingency', 'bivariate.contingency_2x2', 'bivariate.contingency_trend', 'bivariate.contingency_anomp')])
 cols = {'city': cities, 'smoking': xs_, 'lung': ys_, 'n': fs_}
 tidc = table(cols, levels={'smoking': ['smoker', 'nonsmoker'], 'lung': ['cancer', 'healthy']})
-code_runs('CMH', cols, [('fitybyx.contingency_cmh', call('fitybyx.contingency_cmh', table=tidc, y='lung', x='smoking', strata='city', freq='n'))])
+code_runs('CMH', cols, [('bivariate.contingency_cmh', call('bivariate.contingency_cmh', table=tidc, y='lung', x='smoking', strata='city', freq='n'))])
 cols = {'before': before, 'after': after, 'grp': grp}
 tidc = table(cols)
 code_runs('Matched Pairs', cols, [('matchedpairs.analyze', call('matchedpairs.analyze', table=tidc, y1='before', y2='after', group='grp'))])
@@ -1105,38 +1105,38 @@ def code_ns(columns, code, label):
 
 # the code under the new results gives the report's numbers
 cols = {'score': sc_lv * 2, 'trt': ['new'] * 5 + ['active'] * 5, 'n': new_n + act_n}
-res_ = call('fitybyx.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
+res_ = call('bivariate.oneway_brunner', table=tmh, y='score', x='trt', freq='n', tost={'low': 0.4, 'upp': 0.6})
 ns = code_ns(cols, res_['code'], 'Brunner-Munzel with Freq')
 if 'r' in ns:
     check.near('its code: the probability of superiority', float(ns['r'].prob1), res_['pairs'][0]['prob'])
     check.near('its code: the Brunner-Munzel p', float(ns['r'].pvalue), res_['pairs'][0]['p'])
 cols = {'y': yk, 'g': gk.tolist(), 'e': ek, 'f': fk}
-res_ = call('fitybyx.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
+res_ = call('bivariate.oneway_rates', table=tk, y='y', x='g', exposure='e', freq='f')
 ns = code_ns(cols, res_['code'], 'Compare Rates with exposure and Freq')
 if 'full' in ns:
     check.near('its code: the likelihood ratio of the GLMs', float(2 * (ns['full'].llf - ns['null'].llf)), res_['lr']['chisq'], rel=1e-7)
     check.near('its code: the first pair\'s score test', float(smr.test_poisson_2indep(ns['c1'], ns['e1'], ns['c2'], ns['e2'], method='score').pvalue), res_['pairs'][0]['p'])
     check.near('its code: the dispersion', float(ns['full'].pearson_chi2 / ns['full'].df_resid), res_['lr']['dispersion'], rel=1e-7)
 cols = {'events': [20.0, 25, 15, 10, 12, 8], 'arm': ['A'] * 3 + ['B'] * 3, 'py': [17000.0, 20000.0, 14477.5, 18000.0, 20000.0, 16308.7]}
-res_ = call('fitybyx.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
+res_ = call('bivariate.oneway_rates', table=tgu, y='events', x='arm', exposure='py', method='exact-cond', ci_method='exact-cond', control='B')
 ns = code_ns(cols, res_['code'], 'Compare Rates, exact conditional')
 if 'pl' in ns:
     check.near('its code: the exact conditional interval', float(ns['pl'] / (1 - ns['pl']) * ns['e2'] / ns['e1']), res_['pairs'][0]['lower'])
 cols = {'g': ['a'] * 34 + ['b'] * 34, 'r': ['yes'] * 7 + ['no'] * 27 + ['yes'] * 1 + ['no'] * 33}
 for cmp_ in ('diff', 'ratio', 'odds-ratio'):
-    res_ = call('fitybyx.contingency_twoprop', table=t734, y='r', x='g', compare=cmp_)
+    res_ = call('bivariate.contingency_twoprop', table=t734, y='r', x='g', compare=cmp_)
     ns = code_ns(cols, res_['code'], f'Two Sample Test for Proportions ({cmp_})')
     if 'count1' in ns:
         check('its code: the counts', [float(ns[k]) for k in ('count1', 'nobs1', 'count2', 'nobs2')], [res_['count1'], res_['nobs1'], res_['count2'], res_['nobs2']])
         m_ = res_['methods'][-1]
         check.near('its code: the last method\'s interval', float(confint_proportions_2indep(ns['count1'], ns['nobs1'], ns['count2'], ns['nobs2'], method=m_['key'], compare=cmp_, correction=m_['correction'])[1]), m_['upper'])
 cols = {'sex': ['Female', 'Female', 'Male', 'Male'], 'marital': ['Married', 'Single', 'Married', 'Single'], 'n': [95, 43, 101, 64]}
-res_ = call('fitybyx.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
+res_ = call('bivariate.contingency_twoprop', table=tcar, y='marital', x='sex', freq='n')
 ns = code_ns(cols, res_['code'], 'Two Sample Test for Proportions with Freq')
 if 'count1' in ns:
     check('its code: the counts with Freq', [float(ns[k]) for k in ('count1', 'nobs1', 'count2', 'nobs2')], [95.0, 138.0, 101.0, 165.0])
 for label_, tbl_, tabs_ in (('Breslow-Day (DescTools)', ts2, [[[20, 14], [10, 24]], [[15, 12], [3, 15]], [[3, 2], [3, 2]], [[12, 3], [7, 5]], [[1, 0], [3, 2]]]),):
-    res_ = call('fitybyx.contingency_cmh', table=tbl_, y='y', x='x', strata='s', freq='f')
+    res_ = call('bivariate.contingency_cmh', table=tbl_, y='y', x='x', strata='s', freq='f')
     s_, x_, y_, f_ = [], [], [], []
     for k_, tb in enumerate(tabs_):
         for i_ in range(2):
@@ -1146,7 +1146,7 @@ for label_, tbl_, tabs_ in (('Breslow-Day (DescTools)', ts2, [[[20, 14], [10, 24
     if 'st' in ns:
         check.near('its code: Breslow-Day', float(ns['st'].test_equal_odds().statistic), res_['breslow_day']['chisq'])
         check.near('its code: the pooled odds ratio', float(ns['st'].oddsratio_pooled), res_['or_mh'])
-res_ = call('fitybyx.contingency_cmh', table=tid10, y='lung', x='smoking', strata='city', freq='n')
+res_ = call('bivariate.contingency_cmh', table=tid10, y='lung', x='smoking', strata='city', freq='n')
 ns = code_ns({'city': cities, 'smoking': xs_, 'lung': ys_, 'n': fs_}, res_['code'], 'CMH of the Chinese smoking tables, Freq')
 if 'st' in ns:
     check.near('its code: the Mantel-Haenszel odds ratio with Freq', float(ns['st'].oddsratio_pooled), res_['or_mh'])
@@ -1232,7 +1232,7 @@ tes = table({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + [
              'f': f_es, 'w': es_rng.uniform(0.5, 2, 56), 'blk': (['p', 'q', 'r'] * 19)[:56]})
 two_rows = list(range(41))
 # ---- Cohen's d and Hedges' g of the pooled t test
-r_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows)
+r_ = call('bivariate.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows)
 e_ = es_rows(r_)
 sp_ = np.sqrt((17 * a_.var(ddof=1) + 22 * b_.var(ddof=1)) / 39)
 d_ = (b_.mean() - a_.mean()) / sp_
@@ -1267,30 +1267,30 @@ print(f'   (coverage of the exact interval of d: {cov / 1500:.3f})')
 g1_ = exact_sample(es_rng, 19.1, 3.19, 50)
 g2_ = exact_sample(es_rng, 20.9, 3.85, 50)
 tb_ = table({'y': np.concatenate([g1_, g2_]), 'g': ['a'] * 50 + ['b'] * 50})
-e_ = es_rows(call('fitybyx.ttest_effect', table=tb_, y='y', x='g', kind='welch'))
+e_ = es_rows(call('bivariate.ttest_effect', table=tb_, y='y', x='g', kind='welch'))
 check.near("Bonett's example: d* = 0.5091 (statpsych)", e_["Cohen's d*"]['estimate'], 0.5091, abs_=5e-5)
 check.near("Bonett's example: its SE 0.20539", e_["Cohen's d*"]['se'], 0.20539, abs_=5e-6)
 check.near("Bonett's example: lower limit 0.1066", e_["Cohen's d*"]['lower'], 0.1066, abs_=5e-5)
 check.near("Bonett's example: upper limit 0.9117", e_["Cohen's d*"]['upper'], 0.9117, abs_=5e-5)
 check.near("Bonett's example: the bias-adjusted estimate 0.5052", e_["Hedges' g*"]['estimate'], 0.5052, abs_=5e-5)
-e_ = es_rows(call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='welch', rows=two_rows))
+e_ = es_rows(call('bivariate.ttest_effect', table=tes, y='y', x='g', kind='welch', rows=two_rows))
 s_ = np.sqrt((a_.var(ddof=1) + b_.var(ddof=1)) / 2)
 dd_ = (b_.mean() - a_.mean()) / s_
 se_ = np.sqrt(dd_ ** 2 * (a_.var(ddof=1) ** 2 / 17 + b_.var(ddof=1) ** 2 / 22) / (8 * s_ ** 4) + (a_.var(ddof=1) / 17 + b_.var(ddof=1) / 22) / s_ ** 2)
 check.near('d* = difference/√((s₁² + s₂²)/2)', e_["Cohen's d*"]['estimate'], float(dd_), rel=1e-12)
 check.near("d*'s interval: Bonett's SE written out", e_["Cohen's d*"]['upper'], float(dd_ + stats.norm.ppf(0.975) * se_), rel=1e-12)
 # ---- Freq counts rows; Weight is not used
-e_f = es_rows(call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, freq='f'))
+e_f = es_rows(call('bivariate.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, freq='f'))
 ya_ = np.repeat(a_, f_es[:18].astype(int))
 yb_ = np.repeat(b_, f_es[18:41].astype(int))
 d_rep = (yb_.mean() - ya_.mean()) / np.sqrt(((len(ya_) - 1) * ya_.var(ddof=1) + (len(yb_) - 1) * yb_.var(ddof=1)) / (len(ya_) + len(yb_) - 2))
 check.near("Freq: Cohen's d = the same rows repeated", e_f["Cohen's d"]['estimate'], float(d_rep), rel=1e-12)
-rw_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, weight='w')
+rw_ = call('bivariate.ttest_effect', table=tes, y='y', x='g', kind='pooled', rows=two_rows, weight='w')
 check('Weight: noted, not used', (any('Weight' in t for t in rw_['notes']), es_rows(rw_)["Cohen's d"]['estimate'] == es_rows(r_)["Cohen's d"]['estimate']), (True, True))
-check('three levels: no two-sample effect size', 'error' in call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind='pooled'), True)
+check('three levels: no two-sample effect size', 'error' in call('bivariate.ttest_effect', table=tes, y='y', x='g', kind='pooled'), True)
 
 # ---- η², ε², ω² of the one-way ANOVA
-r_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g')
+r_ = call('bivariate.oneway_effect', table=tes, y='y', x='g')
 e_ = es_rows(r_)
 dfa_ = pd.DataFrame({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15})
 aov_ = sm.stats.anova_lm(smf.ols('y ~ C(g)', dfa_).fit(), typ=1)
@@ -1309,8 +1309,8 @@ check.near('the exact interval: upper', e_['η² (eta²)']['upper'], lamU / (lam
 check('the three estimates share the interval of the population proportion', len({(x['lower'], x['upper']) for x in r_['table']['rows']}), 1)
 # small F: the lower limit is 0 when p > α/2
 tn_ = table({'y': es_rng.normal(0, 1, 30), 'g': ['a', 'b', 'c'] * 10})
-en_ = es_rows(call('fitybyx.oneway_effect', table=tn_, y='y', x='g'))
-fo_n = call('fitybyx.oneway', table=tn_, y='y', x='g')['anova']['rows'][0]['p']
+en_ = es_rows(call('bivariate.oneway_effect', table=tn_, y='y', x='g'))
+fo_n = call('bivariate.oneway', table=tn_, y='y', x='g')['anova']['rows'][0]['p']
 check('no effect: the lower limit is 0 exactly when the F test\'s p is above α/2', (en_['η² (eta²)']['lower'] == 0) == (fo_n > 0.025), True)
 # coverage of the exact interval of the population η²: balanced groups of 8, fixed means
 mus_ = np.array([0.0, 0.5, 1.0])
@@ -1325,7 +1325,7 @@ check('the interval of η² covers the population value 93-97% of the time (1000
 print(f'   (coverage of the exact interval of η²: {cov / 1000:.3f})')
 # a block: partial forms, against anova_lm
 dfb_ = pd.DataFrame({'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15, 'blk': (['p', 'q', 'r'] * 19)[:56]})
-rb_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', block='blk')
+rb_ = call('bivariate.oneway_effect', table=tes, y='y', x='g', block='blk')
 eb_ = es_rows(rb_)
 ab_ = sm.stats.anova_lm(smf.ols('y ~ C(g) + C(blk)', dfb_).fit(), typ=2)
 ssx_, sse2_, dfe_ = float(ab_.loc['C(g)', 'sum_sq']), float(ab_.loc['Residual', 'sum_sq']), float(ab_.loc['Residual', 'df'])
@@ -1335,17 +1335,17 @@ Fb_ = (ssx_ / 2) / (sse2_ / dfe_)
 lb_ = ncf_bisect(Fb_, 2, dfe_, 0.025)
 check.near('with a Block: the upper limit λ/(λ + df₁ + df₂ + 1)', eb_['Partial η² (eta²)']['upper'], lb_ / (lb_ + 2 + dfe_ + 1), rel=1e-8)
 # Freq: repeated rows
-rf_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', freq='f')
+rf_ = call('bivariate.oneway_effect', table=tes, y='y', x='g', freq='f')
 fv_all = f_es.astype(int)
 yrep = np.repeat(np.concatenate([a_, b_, c_]), fv_all)
 grep_ = np.repeat(['A'] * 18 + ['B'] * 23 + ['C'] * 15, fv_all)
-rr_ = call('fitybyx.oneway_effect', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g')
+rr_ = call('bivariate.oneway_effect', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g')
 check('Freq = the same rows repeated (η², its interval)', [round(x, 10) for x in (es_rows(rf_)['η² (eta²)']['estimate'], es_rows(rf_)['η² (eta²)']['upper'])],
       [round(x, 10) for x in (es_rows(rr_)['η² (eta²)']['estimate'], es_rows(rr_)['η² (eta²)']['upper'])])
 
 # ---- the JZS Bayes factors
 check.near('JZS BF10 for the sleep data (t = −4.062128, 9 DF): 17.25888, BayesFactor\'s ttestBF', float(np.exp(F.jzs(-4.062127683382037, 10, 9)[0])), 17.25888, rel=3e-7)
-r_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
+r_ = call('bivariate.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
 t_ = float(stats.ttest_ind(b_, a_).statistic)
 ne_ = 18 * 23 / 41
 bf_ = bf_rows(r_)
@@ -1357,11 +1357,11 @@ check.near('BF+0 = 2 × the noncentral t integral over δ > 0', bf_[1], 2 * jzs_
 check.near('BF−0 = 2 × the integral over δ < 0', bf_[2], 2 * jzs_nct(t_, ne_, 39, np.sqrt(2) / 2, -np.inf, 0) / den_, rel=1e-7)
 check.near('BF+0 + BF−0 = 2 BF10', bf_[1] + bf_[2], 2 * bf_[0], rel=1e-10)
 check.near('BF01 = 1/BF10', r_['table']['rows'][0]['bf01'], 1 / bf_[0], rel=1e-12)
-r1_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows, r=1.0)
+r1_ = call('bivariate.oneway_bf', table=tes, y='y', x='g', rows=two_rows, r=1.0)
 check.near('prior scale r = 1: the noncentral t integral with r = 1', bf_rows(r1_)[0], jzs_nct(t_, ne_, 39, 1.0) / den_, rel=1e-7)
 if pg is not None:
     check.near('prior scale r = 1: pingouin with r = 1', bf_rows(r1_)[0], float(pg.bayesfactor_ttest(t_, 18, 23, r=1.0)), rel=1e-8)
-check('three levels: no two-sample Bayes factor', 'error' in call('fitybyx.oneway_bf', table=tes, y='y', x='g'), True)
+check('three levels: no two-sample Bayes factor', 'error' in call('bivariate.oneway_bf', table=tes, y='y', x='g'), True)
 # a huge t stays finite in logs
 big_ = F.jzs(40.0, 5000, 9998)
 check('a huge t: log BF10 finite, the directions certain', (bool(np.isfinite(big_[0]) and big_[0] > 700), round(big_[1], 12), big_[2] < 1e-300), (True, 1.0, True))
@@ -1371,7 +1371,7 @@ xr_ = es_rng.normal(0, 1, 40)
 yr_ = 0.35 * xr_ + es_rng.normal(0, 1, 40)
 fr2_ = es_rng.integers(1, 4, 40).astype(float)
 tr_ = table({'x': xr_, 'y': yr_, 'f': fr2_, 'w': es_rng.uniform(0.5, 2, 40)})
-r_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x')
+r_ = call('bivariate.bivariate_bf', table=tr_, y='y', x='x')
 rr0 = float(stats.pearsonr(xr_, yr_).statistic)
 bf_ = bf_rows(r_)
 
@@ -1398,7 +1398,7 @@ def hyp3f2(a1, a2, a3, b1, b2, z):
 
 
 for kap_ in (1.0, 0.5, 2.0):
-    rk_ = bf_rows(call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', kappa=kap_))
+    rk_ = bf_rows(call('bivariate.bivariate_bf', table=tr_, y='y', x='x', kappa=kap_))
     Cc = (2 ** ((3 * kap_ - 2) / kap_) * kap_ * rr0 / (2 + 39 * kap_) * np.exp(2 * (special.gammaln(20) - special.gammaln(19.5)) - special.betaln(1 / kap_, 1 / kap_))
           * hyp3f2(1, 20, 20, 1.5, (2 + kap_ * 41) / (2 * kap_), rr0 ** 2))
     check.near(f'κ = {kap_:g}: BF10 = the closed form', rk_[0], ly_closed(rr0, 40, kap_), rel=1e-9)
@@ -1406,15 +1406,15 @@ for kap_ in (1.0, 0.5, 2.0):
         check.near(f'κ = {kap_:g}: BF10 = pingouin', rk_[0], float(pg.bayesfactor_pearson(rr0, 40, kappa=kap_)), rel=1e-9)
     check.near(f'κ = {kap_:g}: BF+0 = BF10 + C, Ly et al.\'s ₃F₂ term summed here', rk_[1], rk_[0] + Cc, rel=1e-9)
     check.near(f'κ = {kap_:g}: BF−0 = BF10 − C', rk_[2], rk_[0] - Cc, rel=1e-8)
-rf_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', freq='f')
+rf_ = call('bivariate.bivariate_bf', table=tr_, y='y', x='x', freq='f')
 xrep, yrep2 = np.repeat(xr_, fr2_.astype(int)), np.repeat(yr_, fr2_.astype(int))
-rrep_ = call('fitybyx.bivariate_bf', table=table({'x': xrep, 'y': yrep2}), y='y', x='x')
+rrep_ = call('bivariate.bivariate_bf', table=table({'x': xrep, 'y': yrep2}), y='y', x='x')
 check.near('Freq: the Bayes factor of the rows repeated', bf_rows(rf_)[0], bf_rows(rrep_)[0], rel=1e-12)
-check('Weight is noted and not used', (any('Weight' in t for t in call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', weight='w')['notes']),), (True,))
-check('a line: the Bayes factor is infinite, an error', 'error' in call('fitybyx.bivariate_bf', table=table({'x': [1.0, 2, 3, 4], 'y': [2.0, 4, 6, 8]}), y='y', x='x'), True)
+check('Weight is noted and not used', (any('Weight' in t for t in call('bivariate.bivariate_bf', table=tr_, y='y', x='x', weight='w')['notes']),), (True,))
+check('a line: the Bayes factor is infinite, an error', 'error' in call('bivariate.bivariate_bf', table=table({'x': [1.0, 2, 3, 4], 'y': [2.0, 4, 6, 8]}), y='y', x='x'), True)
 
 # ---- Games-Howell: the formulas written out, and pingouin.pairwise_gameshowell
-r_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell')
+r_ = call('bivariate.oneway_compare', table=tes, y='y', x='g', method='gameshowell')
 lv_ = r_['levels']
 gv_ = dict(zip(['A', 'B', 'C'], [a_, b_, c_]))
 for p_ in r_['pairs']:
@@ -1439,10 +1439,10 @@ if pg is not None:
         check.near(f'Games-Howell {lab_}: p = pingouin', p_['p'], float(row_['pval']), rel=1e-9)
 check('Games-Howell: letters agree with the p-values', all((p['p'] < 0.05) == (not set(next(l['letters'] for l in r_['letters'] if l['index'] == p['i']).split()) & set(next(l['letters'] for l in r_['letters'] if l['index'] == p['j']).split())) for p in r_['pairs']), True)
 check('Games-Howell: no single quantile (each pair has its own)', r_['quantile']['value'], None)
-rgf_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
-rgr_ = call('fitybyx.oneway_compare', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g', method='gameshowell')
+rgf_ = call('bivariate.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
+rgr_ = call('bivariate.oneway_compare', table=table({'y': yrep, 'g': grep_.tolist()}), y='y', x='g', method='gameshowell')
 check('Games-Howell with Freq = the same rows repeated', [round(p['p'], 12) for p in rgf_['pairs']], [round(p['p'], 12) for p in rgr_['pairs']])
-check('Games-Howell needs two values per level', 'error' in call('fitybyx.oneway_compare', table=table({'y': [1.0, 2, 3, 4, 5], 'g': ['a', 'a', 'b', 'b', 'c']}), y='y', x='g', method='gameshowell'), True)
+check('Games-Howell needs two values per level', 'error' in call('bivariate.oneway_compare', table=table({'y': [1.0, 2, 3, 4, 5], 'g': ['a', 'a', 'b', 'b', 'c']}), y='y', x='g', method='gameshowell'), True)
 
 # ---- Matched Pairs: d_z, g_z, d_av and the paired Bayes factor
 y1_ = es_rng.normal(50, 8, 25)
@@ -1491,19 +1491,19 @@ check('paired: the higher one-sided Bayes factor is for δ < 0 there', bs_['tabl
 
 # ---- the code under the new results, on a CSV export
 cols_es = {'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15, 'f': fv_all.astype(float), 'blk': (['p', 'q', 'r'] * 19)[:56]}
-res_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g')
+res_ = call('bivariate.oneway_effect', table=tes, y='y', x='g')
 ns = code_ns(cols_es, res_['code'], 'the ANOVA effect sizes')
 if 'lo' in ns:
     check.near('its code: the lower limit of η²', float(ns['lo'] / (ns['lo'] + ns['N'])), es_rows(res_)['η² (eta²)']['lower'], rel=1e-7, abs_=1e-12)
     check.near('its code: the upper limit of η²', float(ns['hi'] / (ns['hi'] + ns['N'])), es_rows(res_)['η² (eta²)']['upper'], rel=1e-7)
-res_ = call('fitybyx.oneway_effect', table=tes, y='y', x='g', freq='f', block='blk')
+res_ = call('bivariate.oneway_effect', table=tes, y='y', x='g', freq='f', block='blk')
 ns = code_ns(cols_es, res_['code'], 'the ANOVA effect sizes with Freq and a Block')
 if 'ss_x' in ns:
     check.near('its code with Freq and a Block: partial η²', float(ns['ss_x'] / (ns['ss_x'] + ns['ss_e'])), es_rows(res_)['Partial η² (eta²)']['estimate'], rel=1e-9)
 # the whole table, as the page exports it: the code leaves out the rows the report does not use (C's)
 cols_two = {'y': np.concatenate([a_, b_, c_]), 'g': ['A'] * 18 + ['B'] * 23 + ['C'] * 15}
 for kind_ in ('pooled', 'welch'):
-    res_ = call('fitybyx.ttest_effect', table=tes, y='y', x='g', kind=kind_, rows=two_rows)
+    res_ = call('bivariate.ttest_effect', table=tes, y='y', x='g', kind=kind_, rows=two_rows)
     ns = code_ns(cols_two, res_['code'], f'the {kind_} effect size')
     if 'd_' in ns:
         check.near(f'its code ({kind_}): d', float(ns['d_']), res_['table']['rows'][0]['estimate'], rel=1e-12)
@@ -1511,17 +1511,17 @@ for kind_ in ('pooled', 'welch'):
             check.near('its code (pooled): the exact upper limit', float(ns['hi']), res_['table']['rows'][0]['upper'], rel=1e-8)
         else:
             check.near('its code (welch): Bonett\'s SE', float(ns['se']), res_['table']['rows'][0]['se'], rel=1e-12)
-res_ = call('fitybyx.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
+res_ = call('bivariate.oneway_bf', table=tes, y='y', x='g', rows=two_rows)
 ns = code_ns(cols_two, res_['code'], 'the two-sample Bayes factor')
 if 'bf' in ns:
     check.near('its code: BF10', float(ns['bf']), res_['table']['rows'][0]['bf10'], rel=1e-7)
     check.near('its code: BF+0', float(2 * ns['bf'] * ns['p']), res_['table']['rows'][1]['bf10'], rel=1e-7)
-res_ = call('fitybyx.bivariate_bf', table=tr_, y='y', x='x', freq='f')
+res_ = call('bivariate.bivariate_bf', table=tr_, y='y', x='x', freq='f')
 ns = code_ns({'x': xr_, 'y': yr_, 'f': fr2_}, res_['code'], 'the Bayes factor of the correlation')
 if 'bf_rho' in ns:
     check.near('its code: BF10 of r', float(ns['bf_rho'](ns['r'], ns['n'], 1.0)), res_['table']['rows'][0]['bf10'], rel=1e-7)
     check.near('its code: BF+0 of r', float(ns['bf_rho'](ns['r'], ns['n'], 1.0, 0, 1)), res_['table']['rows'][1]['bf10'], rel=1e-7)
-res_ = call('fitybyx.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
+res_ = call('bivariate.oneway_compare', table=tes, y='y', x='g', method='gameshowell', freq='f')
 ns = code_ns(cols_es, res_['code'], 'Games-Howell with Freq')
 if 'df_' in ns:
     check('its code runs every pair (the last pair\'s DF is a pair\'s)', any(abs(p['df'] - float(ns['df_'])) < 1e-9 for p in res_['pairs']), True)
@@ -1610,9 +1610,9 @@ for tag, kw in (('Matched Pairs graphs, a group', {'y1': 'before', 'y2': 'after'
         check(f'{tag}: the dates turned back into milliseconds', r_['plot_code'].count('pd.to_datetime(df["start"])') == 1 and r_['plot_code'].count('pd.to_datetime(df["end"])') == 1, True)
 
 # ---- errors and row lists ---------------------------------------------------------------------
-check('Y and X the same column', 'error' in call('fitybyx.fit_poly', table=tid, y='before', x='before'), True)
-check('one level: no t test', 'error' in call('fitybyx.oneway_ttest', table=tid, y='before', x='grp', rows=[i for i in range(n) if grp[i] == 'x']), True)
-check('rows=None is every row', call('fitybyx.fit_mean', table=tid, y='before', x='after', rows=None)['n'], float(okm.sum()))
+check('Y and X the same column', 'error' in call('bivariate.fit_poly', table=tid, y='before', x='before'), True)
+check('one level: no t test', 'error' in call('bivariate.oneway_ttest', table=tid, y='before', x='grp', rows=[i for i in range(n) if grp[i] == 'x']), True)
+check('rows=None is every row', call('bivariate.fit_mean', table=tid, y='before', x='after', rows=None)['n'], float(okm.sum()))
 
 # ---- Save Predicteds for every row, and Save Formula ----------------------------------------------------------
 # As JMP, a saved prediction covers every row of the group whose X has a value, rows the fit leaves out too (rows
@@ -1641,7 +1641,7 @@ for (const f of inp.formulas) {
 process.stdout.write(JSON.stringify(out));
 '''
 NODE = shutil.which('node')
-_fdrv = os.path.join(tempfile.mkdtemp(prefix='smui-fyx-'), 'eval.js')
+_fdrv = os.path.join(tempfile.mkdtemp(prefix='smui-biv-'), 'eval.js')
 with open(_fdrv, 'w') as _f:
     _f.write(_FJS)
 _JS = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'js'))
@@ -1683,7 +1683,7 @@ for fn_, kw_, label_ in (('fit_poly', dict(degree=1), 'Fit Line'), ('fit_poly', 
                          ('fit_each', {}, 'Fit Each Value')):
     for where_ in ([], [{'column': 'g', 'value': 'v'}]):
         rr = rows_f if not where_ else [r for r in rows_f if gf_[r] == 'v']
-        r_ = call(f'fitybyx.{fn_}', table=tid_f, y='y', x='x', rows=rr, where=where_, want_rows=True, **kw_)
+        r_ = call(f'bivariate.{fn_}', table=tid_f, y='y', x='x', rows=rr, where=where_, want_rows=True, **kw_)
         a_ = r_['all_rows']
         tag = f'{label_}{" (a group)" if where_ else ""}'
         grp = [r for r in range(n_f) if (not where_ or gf_[r] == 'v')]
@@ -1721,7 +1721,7 @@ for fn_, kw_, label_ in (('fit_poly', dict(degree=1), 'Fit Line'), ('fit_poly', 
         elif fn_ in ('fit_poly', 'fit_mean', 'fit_special', 'fit_robust', 'fit_quantile'):
             check(f'{tag}: a formula', False, True)
 # a Group By's levels joined into one formula column, as the page joins them
-parts_ = [call('fitybyx.fit_poly', table=tid_f, y='y', x='x', rows=[r for r in rows_f if gf_[r] == lv_], where=[{'column': 'g', 'value': lv_}], want_rows=True, degree=1)
+parts_ = [call('bivariate.fit_poly', table=tid_f, y='y', x='x', rows=[r for r in rows_f if gf_[r] == lv_], where=[{'column': 'g', 'value': lv_}], want_rows=True, degree=1)
           for lv_ in ('u', 'v')]
 joined = 'If(' + ', '.join(f"{p_['formula']['cond']}, {p_['formula']['expr']}" for p_ in parts_) + ', .)'
 fj_ = formula_cols(cols_f, [{'name': 'F', 'expr': joined}])['F']
@@ -1731,11 +1731,11 @@ for p_ in parts_:
 # the logistic fits: Save Probability Formula, JMP's columns, every row with an X
 for kw_, names_ in ((dict(y='yb'), ['Lin[hi]', 'Prob[hi]', 'Prob[lo]', 'Most Likely yb']), (dict(y='yb', target='lo'), ['Lin[lo]', 'Prob[hi]', 'Prob[lo]', 'Most Likely yb']),
                     (dict(y='yn'), ['Lin[p]', 'Lin[q]', 'Prob[p]', 'Prob[q]', 'Prob[r]', 'Most Likely yn']), (dict(y='yo'), ['Linear', 'Cum[a]', 'Cum[b]', 'Prob[a]', 'Prob[b]', 'Prob[c]', 'Most Likely yo'])):
-    r_ = call('fitybyx.logistic_rows', table=tid_f, x='x', rows=rows_f, **kw_)
+    r_ = call('bivariate.logistic_rows', table=tid_f, x='x', rows=rows_f, **kw_)
     tag = f'logistic {kw_}'
     check(f'{tag}: every row with an X, rows left out too', r_['rows'], with_x)
     P_ = np.array(r_['probs'], dtype=float).T
-    lg_ = call('fitybyx.logistic', table=tid_f, x='x', rows=rows_f, **kw_)
+    lg_ = call('bivariate.logistic', table=tid_f, x='x', rows=rows_f, **kw_)
     check(f'{tag}: JMP\'s formula columns', [f['name'] for f in r_['formulas']], names_)
     if NODE:
         got_ = formula_cols(cols_f, r_['formulas'])

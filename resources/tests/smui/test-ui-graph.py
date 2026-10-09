@@ -123,7 +123,7 @@ async def drag(page, src, dst):
         await page.call('Input.dispatchDragEvent', {'type': kind, 'x': x1, 'y': y1, 'data': data}, session=page.sid)
     await page.mouse('mouseReleased', x1, y1)
     await page.call('Input.setInterceptDrags', {'enabled': False}, session=page.sid)
-    await page.ev('window._gb && _gb.idle()')
+    await page.ev('window._gm && _gm.idle()')
     return 'dropped'
 
 
@@ -133,7 +133,7 @@ async def click_on(page, selector, modifiers=0):
         return False
     await page.click(xy[0], xy[1], modifiers)
     await asyncio.sleep(0.05)
-    await page.ev('window._gb && _gb.idle()')
+    await page.ev('window._gm && _gm.idle()')
     return True
 
 
@@ -141,10 +141,10 @@ async def click_on(page, selector, modifiers=0):
 HELPERS = '''
 window.gbSet = async (zones, els, props, extra) => {
   const t = _rep.table;
-  await _gb.update(S => { for (const k of Object.keys(S.zones)) S.zones[k] = []; for (const [k, names] of Object.entries(zones)) S.zones[k] = names.map(n => ({ id: t.col(n).id, name: n })); S.auto = !els; if (els) S.elements = []; Object.assign(S, extra || {}); });
-  if (els) await _gb.elements(els);
-  for (const [type, kv] of Object.entries(props || {})) for (const [k, v] of Object.entries(kv)) await _gb.prop(type, k, v);
-  return _gb.plot();
+  await _gm.update(S => { for (const k of Object.keys(S.zones)) S.zones[k] = []; for (const [k, names] of Object.entries(zones)) S.zones[k] = names.map(n => ({ id: t.col(n).id, name: n })); S.auto = !els; if (els) S.elements = []; Object.assign(S, extra || {}); });
+  if (els) await _gm.elements(els);
+  for (const [type, kv] of Object.entries(props || {})) for (const [k, v] of Object.entries(kv)) await _gm.prop(type, k, v);
+  return _gm.plot();
 };
 window.clickTrace = (p, curveNumber, pointNumber, extra) => p.box.emit('plotly_click', { points: [{ curveNumber, pointNumber, ...(extra || {}) }], event: {} });
 window.rowsWhere = (t, fn) => [...Array(t.nrows).keys()].filter(fn);
@@ -152,10 +152,10 @@ window.jmpQ = (vals, p) => { const s = vals.slice().sort((a, b) => a - b), n = s
 window.meanOf = (v) => v.reduce((a, b) => a + b, 0) / v.length;
 window.settle = () => new Promise(r => setTimeout(r, 120));
 // The report's builder as it is now: a Redo (or Automatic Recalc) makes a new one.
-Object.defineProperty(window, '_gb', { configurable: true, get: () => SM.platforms.get('graphbuilder').builder(window._rep) });
+Object.defineProperty(window, '_gm', { configurable: true, get: () => SM.platforms.get('graphmaker').builder(window._rep) });
 window.drawn = async (p) => { for (let i = 0; i < 150 && !p.drawn; i++) await new Promise(r => setTimeout(r, 20)); return p; };
 window.lastPlot = async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; await drawn(rep.plots[0]); return [rep, rep.plots[0]]; };
-window.rerun = async (fn) => { const done = new Promise(res => _rep.on('done', res)); await fn(); await done; await settle(); await _gb.idle(); };
+window.rerun = async (fn) => { const done = new Promise(res => _rep.on('done', res)); await fn(); await done; await settle(); await _gm.idle(); };
 // The (i) panel as it reads: its title, its section headings and the choices under each ([name, text, current]).
 window.infoRead = () => {
   const p = document.querySelector('.info-panel'); if (!p) return null;
@@ -249,14 +249,14 @@ FD_IRREGULAR = '''(() => {
 # The Graph Maker report's graph as the page drew it: its traces (the overlays that show
 # the selected share marked), annotations and shapes, axis titles and ticks, size, the plan,
 # and the code block right under it.
-GB_JS = r'''
+GM_JS = r'''
 window.__gbq = async (rep) => {
   rep = rep || window._rep;
-  const gb = rep.body.querySelector('.sm-gb')._gb;
-  await gb.idle(); await new Promise((r) => setTimeout(r, 150));
-  const p = gb.plot(); if (!p) return null;
+  const gm = rep.body.querySelector('.sm-gm')._gm;
+  await gm.idle(); await new Promise((r) => setTimeout(r, 150));
+  const p = gm.plot(); if (!p) return null;
   if (!p.drawn) { p.box.scrollIntoView({ block: 'center' }); await p.draw(); }
-  const fig = gb.figure();
+  const fig = gm.figure();
   const next = p.box.nextElementSibling;
   const code = next && next.matches('details.sm-code, .sm-code-box') ? next.querySelector('code').textContent : null;
   const skip = new Set((fig.links || []).filter((l) => l.overlay != null).map((l) => l.overlay));
@@ -294,12 +294,12 @@ CODE_TABLE = r'''(() => {
     { name: 'g', dataType: 'character', values: c.g, valueOrder: ['lo', 'mid', 'hi'] }, { name: 'h', dataType: 'character', values: c.h },
     { name: 'a', values: c.a, modelingType: 'ordinal' }, { name: 'f', values: c.f }, { name: 'wf', values: c.wf }, { name: 'd', values: c.d, format: { kind: 'date' } }, { name: 'z', values: c.z }] });
   SM.app.addTable(t);
-  const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+  const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
   window._crep = rep;
   return new Promise((res) => rep.on('done', () => res(t.nrows)));
 })()'''
 
-GB_CODE_CASES = [   # [what, zones, elements, properties, (the builder's state)]: every element and zone, dates, a log axis, the legend at the bottom
+GM_CODE_CASES = [   # [what, zones, elements, properties, (the builder's state)]: every element and zone, dates, a log axis, the legend at the bottom
     ["points and smoother", {"x": ["x"], "y": ["y"]}, ["points", "smoother"], {}],
     ["overlay, lowess, the band", {"x": ["x"], "y": ["y"], "overlay": ["h"]}, ["points", "smoother"], {"smoother": {"method": "lowess", "width": 0.5, "robust": 2}}],
     ["spline confidence", {"x": ["x"], "y": ["y"]}, ["points", "smoother"], {"smoother": {"conf": True, "lambda": 0.3}}],
@@ -423,7 +423,7 @@ def to_days(v, date):
     return [None if q is None else q / DAY for q in v]
 
 
-class GB:
+class GM:
     """One Graph Maker graph and the figure its code drew."""
 
     def __init__(self, G, R):
@@ -471,12 +471,12 @@ def line_match(g, t, lines, rel_tol=False):
     return min((max(f([p[0] for p in ln], wx), f([p[1] for p in ln], wy)) for ln in lines), default=float('inf'))
 
 
-def check_gb(check, tag, G, R, err):
+def check_gm(check, tag, G, R, err):
     """Everything the code's figure must share with the page's graph."""
     check(f'{tag}: the code runs in the page', err, None)
     if not R or not R.get('figures'):
         return None
-    g = GB(G, R)
+    g = GM(G, R)
     F, plan = g.F, g.plan
     check(f'{tag}: one figure, the graph\'s size', (len(R['figures']), F['size']), (1, [G['w'] / 100, G['h'] / 100]))
     pies = [t for t in G['traces'] if t.get('type') == 'pie']
@@ -1328,20 +1328,20 @@ async def main():
       return { top: items.map(i => i.label || (i.separator ? "—" : "")), legacy: leg ? (typeof leg.submenu === "function" ? leg.submenu() : leg.submenu).map(i => i.label) : null }; })()''')
     check('the Graph menu in JMP\'s order, statsmodels\' Functional Data Plot among them', [m for m in menu['top'] if m != '—'], ['Graph Maker', 'Scatterplot Matrix…', 'Scatterplot 3D…', 'Contour Plot…', 'Bubble Plot…', 'Parallel Plot…', 'Cell Plot…', 'Ternary Plot…', 'Treemap…', 'Functional Data Plot…', 'Surface Plot…', 'Legacy'])
     check('Graph > Legacy', menu['legacy'], ['Chart…', 'Overlay Plot…'])
-    help_rows = await page.ev('["graphbuilder","scattermatrix","scatter3d","contour","surface","bubble","parallel","cellplot","ternary","treemap","functional","chart","overlay"].filter(id => !document.getElementById("help-p-" + id))')
+    help_rows = await page.ev('["graphmaker","scattermatrix","scatter3d","contour","surface","bubble","parallel","cellplot","ternary","treemap","functional","chart","overlay"].filter(id => !document.getElementById("help-p-" + id))')
     check('every Graph platform has its row in Help', help_rows, [])
 
     # ---- Graph Maker: no launch dialog, the builder in the report
     r = await page.ev('''(async () => {
-      SM.app.launch('graphbuilder');
+      SM.app.launch('graphmaker');
       const rep = SM.app.reports[SM.app.reports.length - 1];
       await new Promise(res => rep.on('done', res));
       window._rep = rep;
       return { dialog: !!document.querySelector('.sm-launch-dialog'), title: rep.title, active: SM.app.activeTab.report === rep,
-        cols: [...rep.body.querySelectorAll('.sm-gb-collist li .sm-colname')].map(e => e.textContent),
-        zones: [...rep.body.querySelectorAll('.sm-gb-zone .sm-gb-zlabel')].map(e => e.textContent),
-        palette: [...rep.body.querySelectorAll('.sm-gb-el .sm-gb-elname')].map(e => e.textContent),
-        empty: !!rep.body.querySelector('.sm-gb-empty'), auto: rep.spec.autoRecalc };
+        cols: [...rep.body.querySelectorAll('.sm-gm-collist li .sm-colname')].map(e => e.textContent),
+        zones: [...rep.body.querySelectorAll('.sm-gm-zone .sm-gm-zlabel')].map(e => e.textContent),
+        palette: [...rep.body.querySelectorAll('.sm-gm-el .sm-gm-elname')].map(e => e.textContent),
+        empty: !!rep.body.querySelector('.sm-gm-empty'), auto: rep.spec.autoRecalc };
     })()''')
     await page.ev(HELPERS)
     check('Graph Maker opens without a launch dialog', (r['dialog'], r['title'], r['active']), (False, 'Graph Maker', True))
@@ -1353,9 +1353,9 @@ async def main():
     await shot(page, 'g01-empty.png')
 
     # ---- real drag and drop: from the page's Columns panel and from the builder's list
-    d1 = await drag(page, '.sm-collist li[data-id]:nth-child(5) .sm-colname', '.sm-gb-z-y')
-    d2 = await drag(page, '.sm-gb-collist li[data-id]:nth-child(4)', '.sm-gb-z-x')
-    r = await page.ev('''(() => { const S = _gb.state(); const p = _gb.plot(); return { y: S.zones.y.map(z => z.name), x: S.zones.x.map(z => z.name), els: S.elements.map(e => e.type),
+    d1 = await drag(page, '.sm-collist li[data-id]:nth-child(5) .sm-colname', '.sm-gm-z-y')
+    d2 = await drag(page, '.sm-gm-collist li[data-id]:nth-child(4)', '.sm-gm-z-x')
+    r = await page.ev('''(() => { const S = _gm.state(); const p = _gm.plot(); return { y: S.zones.y.map(z => z.name), x: S.zones.x.map(z => z.name), els: S.elements.map(e => e.type),
       types: p.traces.map(t => t.type + ':' + t.mode), n: p.rows[0] ? p.rows[0].length : 0, grid: p.traces[1] ? p.traces[1].x.length : 0, code: _rep.pythonScript() }; })()''')
     check('drag from the Columns panel onto Y', (d1, r['y']), ('dropped', ['weight (kg)']))
     check('drag from the builder\'s list onto X', (d2, r['x']), ('dropped', ['height (cm)']))
@@ -1366,25 +1366,25 @@ async def main():
     await shot(page, 'g02-scatter.png')
 
     # ---- click-to-add (touch, keyboard): select a column, then a zone
-    await click_on(page, '.sm-gb-collist li[data-id]:nth-child(3)')
-    picked = await page.ev('_rep.body.querySelector(".sm-gb").classList.contains("has-pick")')
-    await click_on(page, '.sm-gb-z-overlay')
-    r = await page.ev('''(() => { const p = _gb.plot(); return { ov: _gb.state().zones.overlay.map(z => z.name), legend: p.traces.filter(t => t.showlegend).map(t => t.name), curves: p.traces.filter(t => t.mode === 'lines').length }; })()''')
+    await click_on(page, '.sm-gm-collist li[data-id]:nth-child(3)')
+    picked = await page.ev('_rep.body.querySelector(".sm-gm").classList.contains("has-pick")')
+    await click_on(page, '.sm-gm-z-overlay')
+    r = await page.ev('''(() => { const p = _gm.plot(); return { ov: _gm.state().zones.overlay.map(z => z.name), legend: p.traces.filter(t => t.showlegend).map(t => t.name), curves: p.traces.filter(t => t.mode === 'lines').length }; })()''')
     check('a picked column shows the zones as targets', picked, True)
     check('click a column, then Overlay', r['ov'], ['sex'])
     check('the legend has the levels', r['legend'], ['F', 'M'])
     check('a smoother for each level', r['curves'], 2)
     # the keyboard: Enter on a column lists the zones
     r = await page.ev('''(async () => {
-      const li = [..._rep.body.querySelectorAll('.sm-gb-collist li[data-id]')].find(l => l.textContent === 'age');
+      const li = [..._rep.body.querySelectorAll('.sm-gm-collist li[data-id]')].find(l => l.textContent === 'age');
       li.focus(); li.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await settle();
       const items = [...document.querySelectorAll('.sm-menu button')].map(b => b.textContent);
       const gx = [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent === 'Group X');
       gx.click();
-      await settle(); await _gb.idle();
-      const p = _gb.plot(); const L = p.userLayout;
-      return { items, gx: _gb.state().zones.groupX.map(z => z.name), panels: Object.keys(L).filter(k => /^xaxis\\d*$/.test(k)).length, matches: Object.keys(L).filter(k => /^xaxis\\d+$/.test(k)).map(k => L[k].matches).filter(Boolean).length };
+      await settle(); await _gm.idle();
+      const p = _gm.plot(); const L = p.userLayout;
+      return { items, gx: _gm.state().zones.groupX.map(z => z.name), panels: Object.keys(L).filter(k => /^xaxis\\d*$/.test(k)).length, matches: Object.keys(L).filter(k => /^xaxis\\d+$/.test(k)).map(k => L[k].matches).filter(Boolean).length };
     })()''')
     check('Enter on a column lists the zones', [i for i in r['items'] if i in ('X', 'Y', 'Group X', 'Freq')], ['X', 'Y', 'Group X', 'Freq'])
     check('age in Group X', r['gx'], ['age'])
@@ -1392,10 +1392,10 @@ async def main():
     await shot(page, 'g03-groupx.png')
     # a column's menu in its zone: Remove
     r = await page.ev('''(async () => {
-      const chip = _rep.body.querySelector('.sm-gb-z-groupX .sm-gb-chip'); chip.click(); await settle();
+      const chip = _rep.body.querySelector('.sm-gm-z-groupX .sm-gm-chip'); chip.click(); await settle();
       [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent === 'Remove').click();
-      await settle(); await _gb.idle();
-      return _gb.state().zones.groupX.length;
+      await settle(); await _gm.idle();
+      return _gm.state().zones.groupX.length;
     })()''')
     check('Remove from a zone\'s column menu', r, 0)
 
@@ -1403,12 +1403,12 @@ async def main():
     r = await page.ev('''(async () => {
       const t = _rep.table;
       await gbSet({ x: ['sex'], y: ['weight (kg)'] });
-      const auto = _gb.state().elements.map(e => e.type);
-      _rep.body.querySelector('.sm-gb-el[data-el="bar"]').click(); await _gb.idle();
-      const p = _gb.plot();
+      const auto = _gm.state().elements.map(e => e.type);
+      _rep.body.querySelector('.sm-gm-el[data-el="bar"]').click(); await _gm.idle();
+      const p = _gm.plot();
       const sex = t.col('sex'), w = t.col('weight (kg)');
       const want = ['F', 'M'].map(s => meanOf(rowsWhere(t, r => sex.values[r] === s).map(r => w.values[r])));
-      return { auto, els: _gb.state().elements.map(e => e.type), heights: p.traces[0].y, want, x: p.traces[0].x };
+      return { auto, els: _gm.state().elements.map(e => e.type), heights: p.traces[0].y, want, x: p.traces[0].x };
     })()''')
     check('categorical X and continuous Y: Points', r['auto'], ['points'])
     check('the palette shows Bar alone', r['els'], ['bar'])
@@ -1416,9 +1416,9 @@ async def main():
     check.near('the mean of each level, M', r['heights'][1], r['want'][1], 1e-9)
     r = await page.ev('''(async () => {
       const t = _rep.table;
-      const sel = _rep.body.querySelector('.sm-gb-prop[data-el="bar"] select[data-gbkey="prop:bar:summary"]');
-      sel.value = 'n'; sel.dispatchEvent(new Event('change', { bubbles: true })); await _gb.idle();
-      const p = _gb.plot();
+      const sel = _rep.body.querySelector('.sm-gm-prop[data-el="bar"] select[data-gbkey="prop:bar:summary"]');
+      sel.value = 'n'; sel.dispatchEvent(new Event('change', { bubbles: true })); await _gm.idle();
+      const p = _gm.plot();
       const sex = t.col('sex');
       const counts = ['F', 'M'].map(s => rowsWhere(t, r => sex.values[r] === s).length);
       clickTrace(p, 0, 1);
@@ -1434,15 +1434,15 @@ async def main():
     check('a click on a bar selects its rows', r['selOk'], True)
     check('selected rows show as the selected share of each bar', r['ov'], [r['f8'], 8 - r['f8']])
     r = await page.ev('''(async () => {
-      await _gb.prop('bar', 'summary', 'mean'); await _gb.prop('bar', 'interval', 'ci');
-      const p = _gb.plot(); const e = p.traces[0].error_y;
+      await _gm.prop('bar', 'summary', 'mean'); await _gm.prop('bar', 'interval', 'ci');
+      const p = _gm.plot(); const e = p.traces[0].error_y;
       return { has: !!e && e.array.length === 2 && e.array.every(v => v > 0), code: _rep.pythonScript().includes('stats.t.interval') };
     })()''')
     check('Error Interval: the confidence interval of the mean (from Python)', (r['has'], r['code']), (True, True))
     # shift-click adds an element
-    await click_on(page, '.sm-gb-el[data-el="points"]', modifiers=8)
-    r = await page.ev('''(() => { const p = _gb.plot(); const pts = p.traces.find(t => t.mode === 'markers' && Array.isArray(p.rows[p.traces.indexOf(t)]));
-      return { els: _gb.state().elements.map(e => e.type), jitter: pts ? pts.x.every(v => Math.abs(v - Math.round(v)) <= 0.41) : null }; })()''')
+    await click_on(page, '.sm-gm-el[data-el="points"]', modifiers=8)
+    r = await page.ev('''(() => { const p = _gm.plot(); const pts = p.traces.find(t => t.mode === 'markers' && Array.isArray(p.rows[p.traces.indexOf(t)]));
+      return { els: _gm.state().elements.map(e => e.type), jitter: pts ? pts.x.every(v => Math.abs(v - Math.round(v)) <= 0.41) : null }; })()''')
     check('shift-click adds Points to Bar', r['els'], ['bar', 'points'])
     check('points jittered within their level', r['jitter'], True)
     # Packed jitter: side by side at each level, none on another (measured on the drawn axes)
@@ -1458,7 +1458,7 @@ async def main():
         pairs++; const d = Math.hypot(px[i] - px[j], py[i] - py[j]); closest = Math.min(closest, d); if (d < 0.9 * tr.marker.size) overlaps++;
       }
       const offs = tr.x.map(v => v - Math.round(v));
-      return { overlaps, pairs, closest, size: tr.marker.size, within: offs.every(o => Math.abs(o) <= 0.41), centred: Math.abs(offs.reduce((a, b) => a + b, 0) / offs.length) < 0.05, n: p.rows[ti].length, jitter: _gb.state().elements[0].jitter };
+      return { overlaps, pairs, closest, size: tr.marker.size, within: offs.every(o => Math.abs(o) <= 0.41), centred: Math.abs(offs.reduce((a, b) => a + b, 0) / offs.length) < 0.05, n: p.rows[ti].length, jitter: _gm.state().elements[0].jitter };
     })()''')
     check('Packed jitter: no two points of a level overlap on the drawn graph', (r['jitter'], r['overlaps'], r['pairs'] > 300), ('packed', 0, True))
     check('... they stay within their level, around its middle', (r['within'], r['centred']), (True, True))
@@ -1467,7 +1467,7 @@ async def main():
     r = await page.ev('''(async () => {
       const t = _rep.table;
       await gbSet({ x: ['sex'], y: ['height (cm)'] }, ['box']);
-      const p = _gb.plot(); const b = p.traces[0];
+      const p = _gm.plot(); const b = p.traces[0];
       const sex = t.col('sex'), h = t.col('height (cm)');
       const v = rowsWhere(t, r => sex.values[r] === 'F').map(r => h.values[r]);
       clickTrace(p, 0, 0, { x: 0, y: 150 });
@@ -1500,7 +1500,7 @@ async def main():
       const hl = p.box.data[bi].selectedpoints;
       t.select([]);
       return { nVio: vio.length, widths, nBeans: beans.reduce((a, [, i]) => a + p.rows[i].length, 0), means, gotMeans: meanTr.y.filter((v, k) => k % 3 === 0), medians, gotMed: medTr.y,
-        overall, want: meanOf(h.values), sel, wantSel: [want], hl, notes: _gb.notes().join(' '), code: _rep.pythonScript() };
+        overall, want: meanOf(h.values), sel, wantSel: [want], hl, notes: _gm.notes().join(' '), code: _rep.pythonScript() };
     })()''')
     check('bean: a violin for each age', r['nVio'], 6)
     check('bean: every violin drawn to one width (statsmodels\' beanplot)', all(abs(w - 0.4) < 1e-9 for w in r['widths']), True)
@@ -1517,7 +1517,7 @@ async def main():
       const sides = vio.map(tr => { const pos = Math.round(tr.x.reduce((a, b) => a + b, 0) / tr.x.length); const lo = Math.min(...tr.x), hi = Math.max(...tr.x); return [tr.legendgroup, lo >= pos - 1e-9 ? 'right' : hi <= pos + 1e-9 ? 'left' : 'both']; });
       const legend = p.traces.filter(tr => tr.showlegend).map(tr => tr.name);
       const q = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['bean']);
-      const refused = _gb.notes().some(n => n.startsWith('Bean needs')), why = _rep.body.querySelector('.sm-gb-el[data-el="bean"]').getAttribute('aria-disabled');
+      const refused = _gm.notes().some(n => n.startsWith('Bean needs')), why = _rep.body.querySelector('.sm-gm-el[data-el="bean"]').getAttribute('aria-disabled');
       const horiz = await gbSet({ x: ['weight (kg)'], y: ['sex'] }, ['bean'], { bean: { beans: 'jitter' } });
       const hb = horiz.traces.find((tr, i) => Array.isArray(horiz.rows[i]));
       return { sides, legend, refused, why, n: q.traces.length,
@@ -1591,12 +1591,12 @@ async def main():
       const t = _rep.table;
       const c = t.addColumn({ name: 'count', dataType: 'numeric', values: Array.from({ length: t.nrows }, (_, i) => 1 + (i % 3)) });
       await settle();
-      const listed = [..._rep.body.querySelectorAll('.sm-gb-collist li .sm-colname')].map(e => e.textContent).includes('count');
+      const listed = [..._rep.body.querySelectorAll('.sm-gm-collist li .sm-colname')].map(e => e.textContent).includes('count');
       const p = await gbSet({ x: ['sex'], freq: ['count'] }, ['bar']);
       const sex = t.col('sex');
       const want = ['F', 'M'].map(s => rowsWhere(t, r => sex.values[r] === s).reduce((a, r) => a + c.values[r], 0));
       await rerun(() => t.removeColumn(c.id));
-      return { got: p.traces[0].y, want, freq: _gb.state().zones.freq.length, listed };
+      return { got: p.traces[0].y, want, freq: _gm.state().zones.freq.length, listed };
     })()''')
     check('a new column shows in the builder\'s list at once', r['listed'], True)
     check('Freq: N is the sum of the counts', r['got'], r['want'])
@@ -1627,13 +1627,13 @@ async def main():
     # ---- Undo, Done, Redo, a saved project, an edited title
     r = await page.ev('''(async () => {
       await gbSet({ x: ['sex'], y: ['height (cm)'] }, ['box']);
-      await _gb.add('overlay', 'age');
-      const before = _gb.state().zones.overlay.length;
-      _rep.body.querySelector('[data-gbkey="undo"]').click(); await _gb.idle();
-      const after = _gb.state().zones.overlay.length;
-      _rep.body.querySelector('[data-gbkey="done"]').click(); await _gb.idle();
-      const hidden = _rep.body.querySelector('.sm-gb-left').offsetParent === null && _rep.body.querySelector('.sm-gb-palette').offsetParent === null;
-      const plotShown = _gb.plot().box.offsetParent !== null;
+      await _gm.add('overlay', 'age');
+      const before = _gm.state().zones.overlay.length;
+      _rep.body.querySelector('[data-gbkey="undo"]').click(); await _gm.idle();
+      const after = _gm.state().zones.overlay.length;
+      _rep.body.querySelector('[data-gbkey="done"]').click(); await _gm.idle();
+      const hidden = _rep.body.querySelector('.sm-gm-left').offsetParent === null && _rep.body.querySelector('.sm-gm-palette').offsetParent === null;
+      const plotShown = _gm.plot().box.offsetParent !== null;
       return { before, after, hidden, plotShown };
     })()''')
     check('Undo steps back', (r['before'], r['after']), (1, 0))
@@ -1641,12 +1641,12 @@ async def main():
     await shot(page, 'g04-done.png')
     r = await page.ev('''(async () => {
       const top = _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu'); top.click(); await settle();
-      [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent === 'Show Control Panel').click(); await settle(); await _gb.idle();
-      const back = _rep.body.querySelector('.sm-gb-left').offsetParent !== null;
-      _gb.plot().box.emit('plotly_relayout', { 'title.text': 'Heights by sex' });
+      [...document.querySelectorAll('.sm-menu button')].find(b => b.textContent === 'Show Control Panel').click(); await settle(); await _gm.idle();
+      const back = _rep.body.querySelector('.sm-gm-left').offsetParent !== null;
+      _gm.plot().box.emit('plotly_relayout', { 'title.text': 'Heights by sex' });
       await rerun(() => _rep.run());
-      const p = _gb.plot();
-      return { back, title: p.userLayout.title.text, els: _gb.state().elements.map(e => e.type), zones: _gb.state().zones.x.map(z => z.name) };
+      const p = _gm.plot();
+      return { back, title: p.userLayout.title.text, els: _gm.state().elements.map(e => e.type), zones: _gm.state().zones.x.map(z => z.name) };
     })()''')
     check('Show Control Panel brings it back', r['back'], True)
     check('Redo keeps the state and the edited title', (r['title'], r['els'], r['zones']), ('Heights by sex', ['box'], ['sex']))
@@ -1657,11 +1657,11 @@ async def main():
       SM.app.loadProject(JSON.parse(JSON.stringify(proj)));
       const rep = SM.app.reports[SM.app.reports.length - 1];
       SM.app.showTab(SM.app.tabOf(rep));
-      await new Promise(res => { if (rep.body.querySelector('.sm-gb')) res(); else rep.on('done', res); });
-      const gb = rep.body.querySelector('.sm-gb')._gb; await gb.idle();
-      const S = gb.state();
+      await new Promise(res => { if (rep.body.querySelector('.sm-gm')) res(); else rep.on('done', res); });
+      const gm = rep.body.querySelector('.sm-gm')._gm; await gm.idle();
+      const S = gm.state();
       const ok = S.zones.x.every(z => rep.table.col(z.id) && rep.table.col(z.id).name === z.name) && rep.table !== t;
-      const out = { n: SM.app.reports.length - n0, x: S.zones.x.map(z => z.name), y: S.zones.y.map(z => z.name), ok, traces: gb.plot() ? gb.plot().traces.length : 0 };
+      const out = { n: SM.app.reports.length - n0, x: S.zones.x.map(z => z.name), y: S.zones.y.map(z => z.name), ok, traces: gm.plot() ? gm.plot().traces.length : 0 };
       SM.app.closeReport(rep); SM.app.closeTable(rep.table);
       SM.app.showTab(SM.app.tabOf(_rep));
       return out;
@@ -1673,13 +1673,13 @@ async def main():
     r = await page.ev('''(async () => {
       KvotInfo.close();
       await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['points', 'smoother']);
-      const main = await infoClick(_rep.body.querySelector('.sm-gb-bar'));
-      const props = await infoClick(_rep.body.querySelector('.sm-gb-props h4'));
+      const main = await infoClick(_rep.body.querySelector('.sm-gm-bar'));
+      const props = await infoClick(_rep.body.querySelector('.sm-gm-props h4'));
       // the controls the Properties panel shows, element by element
-      const shown = [..._rep.body.querySelectorAll('.sm-gb-prop')].map(fs => [fs.querySelector('legend').textContent.replace('×', '').trim(),
-        [...fs.querySelectorAll(':scope > .sm-gb-field')].map(f => (f.querySelector(':scope > span') || f.querySelector(':scope > label')).textContent)]);
+      const shown = [..._rep.body.querySelectorAll('.sm-gm-prop')].map(fs => [fs.querySelector('legend').textContent.replace('×', '').trim(),
+        [...fs.querySelectorAll(':scope > .sm-gm-field')].map(f => (f.querySelector(':scope > span') || f.querySelector(':scope > label')).textContent)]);
       // a change while the (i) is open: the Local Kernel's settings come first
-      await _gb.prop('smoother', 'method', 'lowess');
+      await _gm.prop('smoother', 'method', 'lowess');
       const after = infoRead();
       KvotInfo.close();
       return { main, props, shown, after, audit: KvotInfo.audit().noTopic };
@@ -1696,12 +1696,12 @@ async def main():
     check('an open (i) follows a change: Local Kernel\'s settings first', [c[0] for c in r['after']['choices']['Smoother']][:3], ['Method', 'Local Width', 'Local Robustness'])
     check('(i) audit with the builder: every slot has a topic', r['audit'], [])
     r = await page.ev('''(async () => {
-      await _gb.elements(['points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie']);
-      const all = SM.info.get('p:graphbuilder:props');
+      await _gm.elements(['points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie']);
+      const all = SM.info.get('p:graphmaker:props');
       const bad = [];
       for (const s of all.sections) { if (!s.text) bad.push(s.heading + ': what it draws'); for (const [n, d] of s.choices) if (!d || /undefined|null/.test(d) || d.length < 30) bad.push(s.heading + ' / ' + n); }
       SM.app.showTab(SM.app.tabOf(_rep.table));
-      const away = SM.info.get('p:graphbuilder');
+      const away = SM.info.get('p:graphmaker');
       SM.app.showTab(SM.app.tabOf(_rep));
       const dlg = await menuDialog(_rep, 'Graph Size…');
       const form = await infoClick(dlg.querySelector('.sm-dialog-head'));
@@ -1722,15 +1722,15 @@ async def main():
       for (let i = 0; i < n; i++) { const a = R.normal(); x.push(a); y.push(0.6 * a + Math.sin(2 * a) + R.normal(0, 0.7)); g.push('abcd'[i % 4]); }
       const t = new SM.Table({ name: 'Big', columns: [{ name: 'x', values: x }, { name: 'y', values: y }, { name: 'g', dataType: 'character', values: g }] });
       SM.app.addTable(t);
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise(res => rep.on('done', res));
-      const gb = rep.body.querySelector('.sm-gb')._gb;
+      const gm = rep.body.querySelector('.sm-gm')._gm;
       const T = {};
-      let t0 = performance.now(); await gb.add('y', 'y'); await gb.add('x', 'x'); T.scatter = performance.now() - t0;
-      t0 = performance.now(); await gb.add('overlay', 'g'); T.overlay = performance.now() - t0;
-      t0 = performance.now(); await gb.elements(['points', 'contour']); T.contour = performance.now() - t0;
+      let t0 = performance.now(); await gm.add('y', 'y'); await gm.add('x', 'x'); T.scatter = performance.now() - t0;
+      t0 = performance.now(); await gm.add('overlay', 'g'); T.overlay = performance.now() - t0;
+      t0 = performance.now(); await gm.elements(['points', 'contour']); T.contour = performance.now() - t0;
       t0 = performance.now(); t.select([...Array(4000).keys()]); await new Promise(r => setTimeout(r, 0)); T.select = performance.now() - t0;
-      const pts = gb.plot().rows.filter(Boolean).reduce((a, r) => a + r.length, 0);
+      const pts = gm.plot().rows.filter(Boolean).reduce((a, r) => a + r.length, 0);
       SM.app.closeReport(rep); SM.app.closeTable(t);
       SM.app.showTab(SM.app.tabOf(_rep));
       return { T, pts };
@@ -2099,11 +2099,11 @@ async def main():
     await page.ev("SM.app.showTab(SM.app.tabOf(_rep))")
 
     # ---- the Python under each graph draws that graph: each block run in the page's Python, its figure against the Plotly graph
-    for js in (GRAPHS_JS, GB_JS, OTHERS_JS, OPTS_JS):
+    for js in (GRAPHS_JS, GM_JS, OTHERS_JS, OPTS_JS):
         await page.ev(js)
     check('the seeded table for the code of the graphs', await page.ev(CODE_TABLE), 150)
-    await page.ev('window._rep0 = window._rep; window._rep = window._crep;')   # gbSet and _gb work on _rep
-    for what, zones, els, props, *state in GB_CODE_CASES:
+    await page.ev('window._rep0 = window._rep; window._rep = window._crep;')   # gbSet and _gm work on _rep
+    for what, zones, els, props, *state in GM_CODE_CASES:
         tag = f"Graph Maker's code ({what})"
         state = dict(state[0]) if state else {}
         excluded = state.pop('excluded', None)   # rows the report leaves out, for this graph
@@ -2120,14 +2120,14 @@ async def main():
             continue
         out = await page.ev(f'__gr.run({json.dumps(page_probe_more(code, ["inner"]))}, _crep.table)', timeout=300)
         R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
-        check_gb(check, tag, G, R, err)
+        check_gm(check, tag, G, R, err)
     # Packed jitter packs up to 20000 points in a panel; with more the page (and its code) jitters them at random
     n = await page.ev('''(async () => {
       const R = SM.util.rng('many packed'); const n = 20001, lv = [], y = [];
       for (let i = 0; i < n; i++) { lv.push(i % 3 ? 'b' : 'a'); y.push(R.normal(0, 1)); }
       const t = new SM.Table({ name: 'Many packed', columns: [{ name: 'lv', dataType: 'character', values: lv }, { name: 'y', values: y }] });
       SM.app.addTable(t);
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise((res) => rep.on('done', res));
       window._rep = rep;
       await gbSet({ x: ['lv'], y: ['y'] }, ['points'], { points: { jitter: 'packed' } });
@@ -2195,16 +2195,16 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
     await asyncio.sleep(1.2)
-    r = await page.ev('''(async () => { await _gb.idle(); await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], overlay: ['sex'] }, ['points', 'fit']);
-      const bg = getComputedStyle(_rep.body.querySelector('.sm-gb-zone')).backgroundColor; return { bg, font: _gb.plot().box.layout && _gb.plot().box.layout.font.color }; })()''')
+    r = await page.ev('''(async () => { await _gm.idle(); await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], overlay: ['sex'] }, ['points', 'fit']);
+      const bg = getComputedStyle(_rep.body.querySelector('.sm-gm-zone')).backgroundColor; return { bg, font: _gm.plot().box.layout && _gm.plot().box.layout.font.color }; })()''')
     check('dark theme: the graph takes the theme\'s text colour', r['font'] not in (None, '#352921'), True)
     await shot(page, 'g08-dark.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)
     r = await page.ev('''(async () => { await rerun(() => _rep.run());
       const w = document.documentElement.scrollWidth <= innerWidth + 1;
-      const cols = getComputedStyle(_rep.body.querySelector('.sm-gb-work')).gridTemplateColumns.split(' ').length;
-      return { w, cols, plotW: _gb.plot() ? _gb.plot().width : 0 }; })()''')
+      const cols = getComputedStyle(_rep.body.querySelector('.sm-gm-work')).gridTemplateColumns.split(' ').length;
+      return { w, cols, plotW: _gm.plot() ? _gm.plot().width : 0 }; })()''')
     check('phone width: no horizontal page scroll', r['w'], True)
     check('phone width: the builder stacks its parts in one column', r['cols'], 1)
     await shot(page, 'g09-phone.png')
@@ -2242,9 +2242,9 @@ window.__ax = {
   axis(p, name = 'yaxis') { const A = p.box._fullLayout && p.box._fullLayout[name]; return A ? { type: A.type, range: A.range.slice(), ticks: (A._vals || []).map((v) => v.x), text: (A._vals || []).map((v) => v.text) } : null; },
   code(p) { const n = p.box.nextElementSibling; return n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null; },
   // until the report has run again after a change to its table (Graph Maker follows it, 250 ms later) and is idle
-  async calm(rep) { await new Promise((r) => setTimeout(r, 450)); for (let i = 0; i < 400 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); const b = SM.platforms.get('graphbuilder').builder(rep); if (b) await b.idle(); await new Promise((r) => setTimeout(r, 100)); },
+  async calm(rep) { await new Promise((r) => setTimeout(r, 450)); for (let i = 0; i < 400 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); const b = SM.platforms.get('graphmaker').builder(rep); if (b) await b.idle(); await new Promise((r) => setTimeout(r, 100)); },
   // Graph Maker's graph as it is now (a change to the table makes a new one): an axis's drag box, or the plot's middle
-  async gbAt(which) { await __ax.calm(_rep); const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p; return which ? __ax.at(p, which) : __ax.inPlot(p); },
+  async gbAt(which) { await __ax.calm(_rep); const p = _gm.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p; return which ? __ax.at(p, which) : __ax.inPlot(p); },
   async redrawn(rep) { for (let i = 0; i < 200 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); await new Promise((r) => setTimeout(r, 120)); const p = rep.plots[0]; if (p && !p.drawn) { p.box.scrollIntoView({ block: 'center' }); await drawn(p); } return p; },
 };
 """
@@ -2319,7 +2319,7 @@ async def wp6(page):
     await page.ev(WP6_JS)
     # ---- Axis Settings on any report's graph: Bivariate Analysis's bivariate plot, by real double-clicks and right-clicks
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Students')))")
-    res = await page.ev(open_report_js('fitybyx', {'y': ['weight (kg)'], 'x': ['height (cm)']}))
+    res = await page.ev(open_report_js('bivariate', {'y': ['weight (kg)'], 'x': ['height (cm)']}))
     check('Axis Settings: a Bivariate Analysis report to try them on', res['errors'], [])
     await page.ev('(async () => { window._fr = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(_fr)); window._fp = _fr.plots[0]; _fp.box.scrollIntoView({ block: "center" }); await drawn(_fp); await settle(); })()')
     before = await page.ev('__ax.axis(_fp)')
@@ -2416,7 +2416,7 @@ async def wp6(page):
       if (got) __ax.item(got[1], 1); await settle(); const d = __ax.dialog(); const t = d ? d.querySelector('h2').textContent : null; if (d) __ax.button(d, 'Cancel'); SM.ui.closeMenus(); await settle(); return { got, t }; })()""")
     check('Axis Settings in the red triangle: the graph\'s axes by name, for the keyboard and a phone', (r['got'], r['t']), (['X Axis: height (cm)…', 'Y Axis: weight (kg)…'], 'Y Axis Settings'))
     # By groups: the same graph of every group takes them
-    res = await page.ev(open_report_js('fitybyx', {'y': ['weight (kg)'], 'x': ['height (cm)'], 'by': ['sex']}))
+    res = await page.ev(open_report_js('bivariate', {'y': ['weight (kg)'], 'x': ['height (cm)'], 'by': ['sex']}))
     r = await page.ev(r"""(async () => { const rep = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(rep)); await __ax.redrawn(rep);
       const p = rep.plots[0]; p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle();
       const done = new Promise((res) => rep.on('done', res)); SM.axis.put(p, 'yaxis', { min: 20, max: 100 }); await done;
@@ -2427,7 +2427,7 @@ async def wp6(page):
     # ---- Graph Maker: Axis Settings go with the column on the axis, on every panel, in its code
     r = await page.ev(r"""(async () => {
       const t = SM.app.tables.find((x) => x.name === 'Students');
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       await new Promise((res) => rep.on('done', res));
       window._rep6 = rep; window._rep0b = window._rep; window._rep = rep; SM.app.showTab(SM.app.tabOf(rep));
       const p = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], groupX: ['sex'] }, ['points']);
@@ -2439,11 +2439,11 @@ async def wp6(page):
     r = await page.ev(r"""(async () => { const d = __ax.dialog(); if (!d) return null;
       __ax.set(d, 'min', '30'); __ax.set(d, 'max', '90'); __ax.set(d, 'inc', '15'); d.querySelector('[data-ax="addref"]').click();
       const R = d.querySelector('.sm-ax-ref'); __ax.set(R, 'ref', '60'); __ax.set(R, 'refto', '70'); __ax.set(R, 'reflabel', 'band');
-      __ax.button(d, 'OK'); await _gb.idle(); await settle();
-      const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); window._gp = p;
+      __ax.button(d, 'OK'); await _gm.idle(); await settle();
+      const p = _gm.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); window._gp = p;
       let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
       const fl = p.box._fullLayout;
-      return { axes: _gb.state().axes, A: [__ax.axis(p, 'yaxis'), __ax.axis(p, 'yaxis2')].map((a) => [a.range, a.ticks]), rects: fl.shapes.filter((q) => q.type === 'rect').map((q) => [q.yref, q.y0, q.y1]), code, spec: _rep.spec.options.axisSettings || null }; })()""")
+      return { axes: _gm.state().axes, A: [__ax.axis(p, 'yaxis'), __ax.axis(p, 'yaxis2')].map((a) => [a.range, a.ticks]), rects: fl.shapes.filter((q) => q.type === 'rect').map((q) => [q.yref, q.y0, q.y1]), code, spec: _rep.spec.options.axisSettings || null }; })()""")
     check('Graph Maker: the window\'s settings kept by the column on the axis, in the builder\'s state', (r or {}).get('axes'), {'y:weight (kg)': {'min': 30, 'max': 90, 'inc': 15, 'refs': [{'value': 60, 'to': 70, 'label': 'band', 'color': 'gray', 'dash': 'solid'}]}})
     check('Graph Maker: every panel\'s Y from 30 to 90, a tick every 15, the band on each', (r['A'], sorted(r['rects'])), ([[[30, 90], [30, 45, 60, 75, 90]]] * 2, [['y', 60, 70], ['y2', 60, 70]]))
     check('... not in the report\'s own axis settings (the builder keeps them)', r['spec'], None)
@@ -2452,40 +2452,40 @@ async def wp6(page):
     AX = [A for A in (R['figures'][0]['axes'] if R else []) if not A['colorbar']]
     check('... and its code (graph.code) draws them on every panel', (err, [(A['ylim'], A['yticks']) for A in AX]), (None, [([30.0, 90.0], [30.0, 45.0, 60.0, 75.0, 90.0])] * 2))
     r = await page.ev(r"""(async () => { const t = _rep.table;
-      await _gb.update((S) => { S.zones.y = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.x = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
-      const a = __ax.axis(await drawn(_gb.plot()), 'yaxis').range;
-      await _gb.update((S) => { S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
-      const b = __ax.axis(await drawn(_gb.plot()), 'yaxis').range; return { a, b }; })()""")
+      await _gm.update((S) => { S.zones.y = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.x = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
+      const a = __ax.axis(await drawn(_gm.plot()), 'yaxis').range;
+      await _gm.update((S) => { S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
+      const b = __ax.axis(await drawn(_gm.plot()), 'yaxis').range; return { a, b }; })()""")
     check('Graph Maker: another column on Y has its own axis; the first one back, its settings too', (r['a'] != [30, 90], r['b']), (True, [30, 90]))
-    r = await page.ev(r"""(async () => { await _gb.update((S) => { S.log = { y: true }; }); const p = await drawn(_gb.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+    r = await page.ev(r"""(async () => { await _gm.update((S) => { S.log = { y: true }; }); const p = await drawn(_gm.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
       SM.axis.open(p, 'yaxis'); await settle(); const d = __ax.dialog(); const was = d.querySelector('[data-ax="scale"]').value;
-      __ax.set(d, 'scale', 'linear'); __ax.button(d, 'OK'); await _gb.idle(); await settle();
-      return { was, log: _gb.state().log, axes: _gb.state().axes['y:weight (kg)'], type: __ax.axis(await drawn(_gb.plot()), 'yaxis').type }; })()""")
+      __ax.set(d, 'scale', 'linear'); __ax.button(d, 'OK'); await _gm.idle(); await settle();
+      return { was, log: _gm.state().log, axes: _gm.state().axes['y:weight (kg)'], type: __ax.axis(await drawn(_gm.plot()), 'yaxis').type }; })()""")
     check('Graph Maker: the zone\'s Log Scale and the window\'s Scale are one switch', (r['was'], r['log'], 'log' in (r['axes'] or {}), r['type']), ('log', {'y': False}, False, 'linear'))
 
     # ---- Levels of a continuous grouping column: bins as Make Binning Column cuts them; Save Transform Column
     wv = await page.ev("SM.app.tables.find((x) => x.name === 'Students').col('weight (kg)').values.filter(Number.isFinite)")
     r = await page.ev(r"""(async () => { const p = await gbSet({ x: ['age'], y: ['height (cm)'], groupX: ['weight (kg)'] }, ['points']);
-      return { labels: _gb.figure().plan.gx.labels, panels: Object.keys(_gb.plot().userLayout).filter((k) => /^xaxis/.test(k)).length }; })()""")
+      return { labels: _gm.figure().plan.gx.labels, panels: Object.keys(_gm.plot().userLayout).filter((k) => /^xaxis/.test(k)).length }; })()""")
     c5, lo_, hi_ = bin_cuts(wv, 5)
     check('Levels, automatic: five bins of about equal counts at JMP\'s quantiles, labelled by their ranges', (r['labels'], r['panels']), (bin_labels(c5, lo_, hi_), len(c5) + 1))
-    xy = await page.ev(r"""(() => { const c = _rep.body.querySelector('.sm-gb-z-groupX .sm-gb-chip'); c.scrollIntoView({ block: 'center' }); const b = c.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
+    xy = await page.ev(r"""(() => { const c = _rep.body.querySelector('.sm-gm-z-groupX .sm-gm-chip'); c.scrollIntoView({ block: 'center' }); const b = c.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
     await rclick(page, *xy)
     r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Levels'); await settle(); const sub = __ax.menus()[1];
       __ax.item('Number of Levels…', 1); await settle(); const d = [...document.querySelectorAll('.sm-dialog')].pop();
-      d.querySelector('input').value = '3'; [...d.querySelectorAll('.sm-dialog-foot button')].find((b) => b.textContent === 'OK').click(); await _gb.idle(); await settle();
-      return { top, sub, labels: _gb.figure().plan.gx.labels, bins: _gb.state().bins }; })()""")
+      d.querySelector('input').value = '3'; [...d.querySelectorAll('.sm-dialog-foot button')].find((b) => b.textContent === 'OK').click(); await _gm.idle(); await settle();
+      return { top, sub, labels: _gm.figure().plan.gx.labels, bins: _gm.state().bins }; })()""")
     c3, lo_, hi_ = bin_cuts(wv, 3)
     check('Levels: a continuous column in a grouping zone has JMP\'s Levels in its menu', (r['top'][-1] if r['top'] else None, r['sub']), ('Levels', ['✓Automatic', 'Number of Levels…', 'Equal Counts (Quantiles)', 'Equal Width', 'Save Transform Column']))
     check('Levels: Number of Levels 3, three bins of about equal counts', (r['bins'], r['labels']), ({'weight (kg)': {'n': 3, 'method': 'quantile'}}, bin_labels(c3, lo_, hi_)))
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { __ax.hover('Levels'); await settle(); __ax.item('Equal Width', 1); await _gb.idle(); await settle(); return { labels: _gb.figure().plan.gx.labels, bins: _gb.state().bins }; })()""")
+    r = await page.ev(r"""(async () => { __ax.hover('Levels'); await settle(); __ax.item('Equal Width', 1); await _gm.idle(); await settle(); return { labels: _gm.figure().plan.gx.labels, bins: _gm.state().bins }; })()""")
     cw, lo_, hi_ = bin_cuts(wv, 3, 'width')
     check('Levels: Equal Width, bins of one round width', (r['bins'], r['labels']), ({'weight (kg)': {'n': 3, 'method': 'width'}}, bin_labels(cw, lo_, hi_)))
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { const t = _rep.table; const n0 = t.columns.length; __ax.hover('Levels'); await settle(); __ax.item('Save Transform Column', 1); await settle(); await _gb.idle();
+    r = await page.ev(r"""(async () => { const t = _rep.table; const n0 = t.columns.length; __ax.hover('Levels'); await settle(); __ax.item('Save Transform Column', 1); await settle(); await _gm.idle();
       const c = t.columns[t.columns.length - 1];
-      const sel = (_rep.body.querySelector('.sm-gb-collist li.is-selected') || {}).textContent || null;
+      const sel = (_rep.body.querySelector('.sm-gm-collist li.is-selected') || {}).textContent || null;
       await __ax.calm(_rep);
       return { n: t.columns.length - n0, name: c.name, type: c.modelingType, formula: !!c.formula, order: c.valueOrder, values: c.values, w: t.col('weight (kg)').values, sel }; })()""")
     labs = bin_labels(cw, lo_, hi_)
@@ -2501,9 +2501,9 @@ async def wp6(page):
     xy = await page.ev('__ax.gbAt("ew")')
     await rclick(page, *xy)
     r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Order By'); await settle(); const sub = __ax.menus()[1];
-      __ax.item('height (cm), Descending', 1); await _gb.idle(); await settle(); const p = await drawn(_gb.plot()); window._gp = p;
+      __ax.item('height (cm), Descending', 1); await _gm.idle(); await settle(); const p = await drawn(_gm.plot()); window._gp = p;
       let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
-      return { top, sub, ticks: p.userLayout.xaxis.ticktext, order: _gb.state().order, code }; })()""")
+      return { top, sub, ticks: p.userLayout.xaxis.ticktext, order: _gm.state().order, code }; })()""")
     check('Order By: a right-click on a categorical axis has JMP\'s Order By and Order Statistic', r['top'], ['Order By', 'Order Statistic'])
     check('... by the graph\'s numeric column, by the count, by another column, or back', r['sub'], ['height (cm), Ascending', 'height (cm), Descending', 'Count, Ascending', 'Count, Descending', 'Other Column', '✓Original Order'])
     want = [str(a) for a in sorted(ages, key=lambda a: (-mean_h[a], ages.index(a)))]
@@ -2513,26 +2513,26 @@ async def wp6(page):
     check('... and the code sorts them so from the data', (err, [t for t in (R['figures'][0]['axes'][0]['xticklabels'] if R else []) if t]), (None, want))
     xy = await page.ev('__ax.gbAt("ew")')
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { __ax.hover('Order Statistic'); await settle(); __ax.item('Median', 1); await _gb.idle(); await settle(); return (await drawn(_gb.plot())).userLayout.xaxis.ticktext; })()""")
+    r = await page.ev(r"""(async () => { __ax.hover('Order Statistic'); await settle(); __ax.item('Median', 1); await _gm.idle(); await settle(); return (await drawn(_gm.plot())).userLayout.xaxis.ticktext; })()""")
     med_h = {a: jmp_q(sorted(h for a_, h in zip(*hv) if a_ == a), 0.5) for a in ages}
     check('Order Statistic Median: the ages by their median height (JMP\'s quantile), descending', r, [str(a) for a in sorted(ages, key=lambda a: (-med_h[a], ages.index(a)))])
     xy = await page.ev('__ax.gbAt("ew")')
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { __ax.hover('Order By'); await settle(); __ax.item('Original Order', 1); await _gb.idle(); await settle(); return [(await drawn(_gb.plot())).userLayout.xaxis.ticktext, _gb.state().order]; })()""")
+    r = await page.ev(r"""(async () => { __ax.hover('Order By'); await settle(); __ax.item('Original Order', 1); await _gm.idle(); await settle(); return [(await drawn(_gm.plot())).userLayout.xaxis.ticktext, _gm.state().order]; })()""")
     check('Order By: Original Order puts back the table\'s', r, [[str(a) for a in ages], {}])
 
     # ---- Marker Size and Transparency: the red triangle, a right-click in the graph, the code, a project
     r = await page.ev(r"""(async () => { const p = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'] }, ['points']); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
       _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Marker Size'); await settle(); const sizes = __ax.menus()[1];
-      __ax.item('3, Large', 1); await _gb.idle(); await settle(); const q = await drawn(_gb.plot()); q.box.scrollIntoView({ block: 'center' }); await settle(); window._gp = q;
+      __ax.item('3, Large', 1); await _gm.idle(); await settle(); const q = await drawn(_gm.plot()); q.box.scrollIntoView({ block: 'center' }); await settle(); window._gp = q;
       return { sizes, size: q.traces.find((t) => t.mode === 'markers').marker.size }; })()""")
     check('Marker Size in the red triangle: JMP\'s sizes 0 to 6', r['sizes'], ['✓Automatic', '0, Dot', '1, Small', '2, Medium', '3, Large', '4, XL', '5, XXL', '6, XXXL', 'Other…'])
     check('Marker Size 3, Large: the points 7 pixels across', r['size'], 7)
     xy = await page.ev('__ax.gbAt(null)')
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { const m = __ax.menus()[0]; __ax.hover('Transparency'); await settle(); __ax.item('0.4', 1); await _gb.idle(); await settle(); const q = await drawn(_gb.plot());
+    r = await page.ev(r"""(async () => { const m = __ax.menus()[0]; __ax.hover('Transparency'); await settle(); __ax.item('0.4', 1); await _gm.idle(); await settle(); const q = await drawn(_gm.plot());
       let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(q); if (!code) await settle(); }
-      return { m, op: q.traces.find((t) => t.mode === 'markers').marker.opacity, marker: _gb.state().marker, code }; })()""")
+      return { m, op: q.traces.find((t) => t.mode === 'markers').marker.opacity, marker: _gm.state().marker, code }; })()""")
     check('A right-click in the graph: Marker Size, Transparency, Background Map', r['m'], ['Marker Size', 'Transparency', 'Background Map'])
     check('Transparency 0.4: the points at opacity 0.4', (r['op'], r['marker']), (0.4, {'size': 7, 'alpha': 0.4}))
     out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
@@ -2542,28 +2542,28 @@ async def wp6(page):
 
     # ---- transform columns from the builder's list (WP5's transform menu), then onto a zone
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
-    xy = await page.ev(r"""(() => { const li = [..._rep.body.querySelectorAll('.sm-gb-collist li')].find((l) => l.textContent === 'weight (kg)'); li.scrollIntoView({ block: 'center' }); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; })()""")
+    xy = await page.ev(r"""(() => { const li = [..._rep.body.querySelectorAll('.sm-gm-collist li')].find((l) => l.textContent === 'weight (kg)'); li.scrollIntoView({ block: 'center' }); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; })()""")
     await rclick(page, *xy)
-    r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Transform'); await settle(); const sub = __ax.menus()[1]; __ax.item('Log', 1); await settle(); await _gb.idle();
-      const li = _rep.body.querySelector('.sm-gb-collist li.is-selected'); return { top, sub, sel: li ? li.textContent : null }; })()""")
+    r = await page.ev(r"""(async () => { const top = __ax.menus()[0]; __ax.hover('Transform'); await settle(); const sub = __ax.menus()[1]; __ax.item('Log', 1); await settle(); await _gm.idle();
+      const li = _rep.body.querySelector('.sm-gm-collist li.is-selected'); return { top, sub, sel: li ? li.textContent : null }; })()""")
     await page.ev('__ax.calm(_rep)')
     check('The column list\'s menu: the zones, then Transform, Distributional and Date Time', r['top'], ['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape', 'Transform', 'Distributional', 'Date Time'])
     check('... Transform ▸ Log makes a formula column, selected in the list', r['sel'], 'Log[weight (kg)]')
-    xy = await page.ev(r"""(() => { const z = _rep.body.querySelector('.sm-gb-z-color'); z.scrollIntoView({ block: 'center' }); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
+    xy = await page.ev(r"""(() => { const z = _rep.body.querySelector('.sm-gm-z-color'); z.scrollIntoView({ block: 'center' }); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()""")
     await page.click(*xy)
-    await page.ev('_gb.idle()')
-    r = await page.ev(r"""(async () => { await _gb.idle(); const t = _rep.table; const c = t.col('Log[weight (kg)]'); const w = t.col('weight (kg)');
-      return { color: _gb.state().zones.color.map((z) => z.name), ok: c.values.every((v, i) => (Number.isFinite(w.values[i]) ? Math.abs(v - Math.log(w.values[i])) < 1e-12 : !Number.isFinite(v))), f: !!c.formula }; })()""")
+    await page.ev('_gm.idle()')
+    r = await page.ev(r"""(async () => { await _gm.idle(); const t = _rep.table; const c = t.col('Log[weight (kg)]'); const w = t.col('weight (kg)');
+      return { color: _gm.state().zones.color.map((z) => z.name), ok: c.values.every((v, i) => (Number.isFinite(w.values[i]) ? Math.abs(v - Math.log(w.values[i])) < 1e-12 : !Number.isFinite(v))), f: !!c.formula }; })()""")
     check('... and a click on a zone puts it there (Color); its values the logs of the column', (r['color'], r['ok'], r['f']), (['Log[weight (kg)]'], True, True))
-    r = await page.ev(r"""(async () => { await __ax.calm(_rep); await _gb.update((S) => { S.order = { age: { by: 'height (cm)', stat: 'median', desc: false } }; S.map = 'usa'; });
-      const want = _gb.state(); const t = _rep.table;
+    r = await page.ev(r"""(async () => { await __ax.calm(_rep); await _gm.update((S) => { S.order = { age: { by: 'height (cm)', stat: 'median', desc: false } }; S.map = 'usa'; });
+      const want = _gm.state(); const t = _rep.table;
       const proj = { format: 'smui-project', version: 1, tables: [{ id: t.id, ...t.toJSON() }], reports: [_rep.toJSON()] };
       SM.app.loadProject(JSON.parse(JSON.stringify(proj)));
       const rep = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(rep));
-      await new Promise((res) => { if (rep.body.querySelector('.sm-gb')) res(); else rep.on('done', res); });
-      const gb = rep.body.querySelector('.sm-gb')._gb; await gb.idle(); const got = gb.state();
+      await new Promise((res) => { if (rep.body.querySelector('.sm-gm')) res(); else rep.on('done', res); });
+      const gm = rep.body.querySelector('.sm-gm')._gm; await gm.idle(); const got = gm.state();
       SM.app.closeReport(rep); SM.app.closeTable(rep.table); SM.app.showTab(SM.app.tabOf(_rep));
-      await _gb.update((S) => { S.order = {}; S.map = null; });
+      await _gm.update((S) => { S.order = {}; S.map = null; });
       const pick = (S) => JSON.stringify({ axes: S.axes, bins: S.bins, order: S.order, marker: S.marker, map: S.map, shapeMode: S.shapeMode });
       return [pick(got), pick(want)]; })()""")
     check('a saved project keeps Graph Maker\'s axis settings, levels, orders, markers and map', r[0], r[1])
@@ -2578,25 +2578,25 @@ async def wp6(page):
       const t = new SM.Table({ name: 'Map test', source: 'simulated', columns: [{ name: 'iso', dataType: 'character', values: c.iso }, { name: 'name', dataType: 'character', values: c.name }, { name: 'state', dataType: 'character', values: c.state },
         { name: 'v', values: c.v }, { name: 'lon', values: c.lon }, { name: 'lat', values: c.lat }] });
       SM.app.addTable(t);
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
       window._rep = rep;
       return new Promise((res) => rep.on('done', () => res(t.nrows)));
     })()"""
     check('the seeded table of regions for the maps', await page.ev(MAP_TABLE), 120)
     for col, zone in (('iso', 'shape'), ('v', 'color')):
-        xy = await page.ev(f"""(() => {{ const li = [..._rep.body.querySelectorAll('.sm-gb-collist li')].find((l) => l.textContent === {json.dumps(col)}); li.scrollIntoView({{ block: 'center' }}); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; }})()""")
+        xy = await page.ev(f"""(() => {{ const li = [..._rep.body.querySelectorAll('.sm-gm-collist li')].find((l) => l.textContent === {json.dumps(col)}); li.scrollIntoView({{ block: 'center' }}); const b = li.getBoundingClientRect(); return [b.x + 30, b.y + b.height / 2]; }})()""")
         await page.click(*xy)
-        xy = await page.ev(f"""(() => {{ const z = _rep.body.querySelector('.sm-gb-z-{zone}'); z.scrollIntoView({{ block: 'center' }}); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; }})()""")
+        xy = await page.ev(f"""(() => {{ const z = _rep.body.querySelector('.sm-gm-z-{zone}'); z.scrollIntoView({{ block: 'center' }}); const b = z.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; }})()""")
         await page.click(*xy)
         await page.ev('__ax.calm(_rep)')
     tv = await page.ev("(() => { const t = SM.app.tables.find((x) => x.name === 'Map test'); return Object.fromEntries(t.columns.map((c) => [c.name, c.values])); })()")
-    MAP_Q = r"""(async () => { await __ax.calm(_rep); const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
+    MAP_Q = r"""(async () => { await __ax.calm(_rep); const p = _gm.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p);
       let code = null; for (let i = 0; i < 120 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
-      const fig = _gb.figure(), fl = p.box._fullLayout;
+      const fig = _gm.figure(), fl = p.box._fullLayout;
       const ci = p.traces.findIndex((t) => t.type === 'choropleth');
       const ch = ci >= 0 ? p.traces[ci] : null;
       const pts = p.traces.filter((t) => t.type === 'scattergeo' && t.lon && t.lon[0] != null);
-      return { els: _gb.state().elements.map((e) => e.type), ci, locs: ch ? ch.locations : null, z: ch ? ch.z : null, mode: ch ? ch.locationmode : null, notes: fig.notes, ids: fig.plan.map && fig.plan.map.shape ? fig.plan.map.shape.ids : null,
+      return { els: _gm.state().elements.map((e) => e.type), ci, locs: ch ? ch.locations : null, z: ch ? ch.z : null, mode: ch ? ch.locationmode : null, notes: fig.notes, ids: fig.plan.map && fig.plan.map.shape ? fig.plan.map.shape.ids : null,
         geo: fl.geo ? { proj: fl.geo.projection.type, scope: fl.geo.scope } : null, pts: pts.map((t) => [t.lon, t.lat]), code }; })()"""
     MAP_PROBE = r"""
 import json as _json
@@ -2641,7 +2641,7 @@ print("SMUI-MAP " + _json.dumps(_out))
         check.near('... and fills each region with the page\'s value', max(abs(got['value'][k] - mean_v[k]) for k in isos) if set(got['value']) == set(isos) else 1.0, 0.0, tol=1e-9)
         check('... drawn over the land and borders, with a colour bar', (len(got['axes'][0]['polys']), got['axes'][0]['polys'][-1]['n'] >= len(isos), len(got['axes'][0]['lines']), got['colorbars']), (2, True, 1, ['Mean(v)']))
     # linking: a click on a region selects its rows; rows selected elsewhere outline their regions
-    r = await page.ev(r"""(async () => { const p = _gb.plot(); const ci = p.traces.findIndex((t) => t.type === 'choropleth'); const k = p.traces[ci].locations.indexOf('FRA');
+    r = await page.ev(r"""(async () => { const p = _gm.plot(); const ci = p.traces.findIndex((t) => t.type === 'choropleth'); const k = p.traces[ci].locations.indexOf('FRA');
       clickTrace(p, ci, k); await settle();
       const t = _rep.table; const sel = rowsWhere(t, (i) => t.state[i] & 1);
       t.select(rowsWhere(t, (i) => t.col('iso').values[i] === 'DEU')); await settle();
@@ -2650,13 +2650,13 @@ print("SMUI-MAP " + _json.dumps(_out))
     check('Map Shapes linked: a click on France selects its rows', r['sel'], [i for i, v in enumerate(tv['iso']) if v == 'FRA'])
     check('... and Germany\'s rows selected outline Germany', [round(v, 3) for v in r['w']], [2.4 if k == r['dk'] else 0.6 for k in range(len(isos))])
     # by name (one not on the map), and US states by name, counted
-    r = await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { S.zones.shape = [{ id: t.col('name').id, name: 'name' }]; }); return null; })()""")
+    r = await page.ev(r"""(async () => { const t = _rep.table; await _gm.update((S) => { S.zones.shape = [{ id: t.col('name').id, name: 'name' }]; }); return null; })()""")
     r = await page.ev(MAP_Q, timeout=300)
     check('Map Shapes by country name: Plotly\'s matching; a name not on the map named in a note, left off it', (r['mode'], sorted(r['ids'].items()), [n for n in r['notes'] if 'Atlantis' in n] != []),
           ('country names', sorted(zip(['Sweden', 'Norway', 'Finland', 'Denmark', 'Germany', 'France', 'Spain', 'Italy', 'Poland'], isos[:9])), True))
     got, err = await map_code(r['code'])
     check('... its code fills the nine countries found, as the page', (err, sorted((got or {}).get('value', {}))), (None, sorted(isos[:9])))
-    await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { S.zones.shape = [{ id: t.col('state').id, name: 'state' }]; S.zones.color = []; }); })()""")
+    await page.ev(r"""(async () => { const t = _rep.table; await _gm.update((S) => { S.zones.shape = [{ id: t.col('state').id, name: 'state' }]; S.zones.color = []; }); })()""")
     r = await page.ev(MAP_Q, timeout=300)
     states = list(dict.fromkeys(tv['state']))
     codes = {'California': 'CA', 'Texas': 'TX', 'New York': 'NY', 'Florida': 'FL', 'Washington': 'WA', 'Ohio': 'OH', 'Georgia': 'GA', 'Colorado': 'CO'}
@@ -2665,19 +2665,19 @@ print("SMUI-MAP " + _json.dumps(_out))
     got, err = await map_code(r['code'])
     check('... its code counts them the same, from the US file', (err, (got or {}).get('value')), (None, {codes[q]: float(tv['state'].count(q)) for q in states}))
     # points on a Background Map, linked point by point
-    r = await page.ev(r"""(async () => { const t = _rep.table; await _gb.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('lon').id, name: 'lon' }]; S.zones.y = [{ id: t.col('lat').id, name: 'lat' }]; S.auto = true; });
-      await __ax.calm(_rep); _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Background Map'); await settle(); const sub = __ax.menus()[1]; __ax.item('World', 1); await _gb.idle(); return sub; })()""")
+    r = await page.ev(r"""(async () => { const t = _rep.table; await _gm.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('lon').id, name: 'lon' }]; S.zones.y = [{ id: t.col('lat').id, name: 'lat' }]; S.auto = true; });
+      await __ax.calm(_rep); _rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head .sm-ob-menu').click(); await settle(); __ax.hover('Background Map'); await settle(); const sub = __ax.menus()[1]; __ax.item('World', 1); await _gm.idle(); return sub; })()""")
     check('Background Map in the red triangle: None, World, US States', r, ['✓None', 'World', 'US States'])
     r = await page.ev(MAP_Q, timeout=300)
     check('Points on a Background Map: Points alone, each row at its longitude and latitude, on a map', (r['els'], r['pts'], r['geo']), (['points'], [[tv['lon'], tv['lat']]], {'proj': 'natural earth', 'scope': 'world'}))
     got, err = await map_code(r['code'])
     check('... its code draws every point at its longitude and latitude over the land and borders', (err, sorted(tuple(q) for q in (got or {'axes': [{'points': [[]]}]})['axes'][0]['points'][0]), len((got or {'axes': [{'lines': []}]})['axes'][0]['lines'])),
           (None, sorted(zip(tv['lon'], tv['lat'])), 1))
-    r = await page.ev(r"""(async () => { const p = _gb.plot(); const i = p.traces.findIndex((t) => t.type === 'scattergeo' && t.lon && t.lon[0] != null);
+    r = await page.ev(r"""(async () => { const p = _gm.plot(); const i = p.traces.findIndex((t) => t.type === 'scattergeo' && t.lon && t.lon[0] != null);
       clickTrace(p, i, 7); await settle(); const t = _rep.table; const sel = rowsWhere(t, (k) => t.state[k] & 1);
       t.setState([3], 'hidden', true); await settle(); const lon = p.box.data[i].lon.slice(0, 5); t.setState([3], 'hidden', false); t.select([]); await settle(); return { sel, lon }; })()""")
     check('... a click on a point selects its row; a hidden row is not drawn', (r['sel'], r['lon'][3], r['lon'][2] is not None), ([7], None, True))
-    await page.ev(r"""(async () => { await _gb.update((S) => { S.map = null; }); })()""")
+    await page.ev(r"""(async () => { await _gm.update((S) => { S.map = null; }); })()""")
 
     # ---- a date on X stays a date axis when the page restyles a graph's traces (a Line's selection rings on drawing and
     # on a selection): Plotly guessed the axis type again from the milliseconds and made it a number axis
@@ -2686,10 +2686,10 @@ print("SMUI-MAP " + _json.dumps(_out))
       for (let i = 0; i < n; i++) { d.push(Date.UTC(2021, 0, 4) + (i % 8) * 7 * 86400000); y.push((i % 5) + (i % 8)); }
       const t = new SM.Table({ name: 'Dated line', columns: [{ name: 'd', values: d, format: { kind: 'date' } }, { name: 'y', values: y }] });
       SM.app.addTable(t);
-      const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
-      const gb = () => SM.platforms.get('graphbuilder').builder(rep);
-      await gb().update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('y').id, name: 'y' }]; S.auto = false; S.elements = [{ type: 'line' }]; });
-      const p = await drawn(gb().plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+      const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
+      const gm = () => SM.platforms.get('graphmaker').builder(rep);
+      await gm().update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('y').id, name: 'y' }]; S.auto = false; S.elements = [{ type: 'line' }]; });
+      const p = await drawn(gm().plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
       const drawnType = p.box._fullLayout.xaxis.type;
       t.select([0, 8, 16]); await settle(); await settle();
       const selType = p.box._fullLayout.xaxis.type, ticks = p.box._fullLayout.xaxis._vals.map((v) => v.text);
@@ -2726,8 +2726,8 @@ print("SMUI-MAP " + _json.dumps(_out))
       return { light: svg.includes('rgb(176, 65, 62)'), dark: svg.includes('rgb(240, 138, 128)') }; })()""")
     check('... and on paper (Save Report as HTML or Word, Print), the light theme\'s red', (r['light'], r['dark']), (True, False))
     r = await page.ev(r"""(async () => { const t = SM.app.tables.find((x) => x.name === 'Map test'); SM.app.showTab(SM.app.tabOf(_rep)); await __ax.calm(_rep);
-      await _gb.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.shape = [{ id: t.col('iso').id, name: 'iso' }]; S.auto = true; }); await __ax.calm(_rep);
-      const p = await drawn(_gb.plot()); return { land: p.box._fullLayout.geo.landcolor, grid: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() }; })()""")
+      await _gm.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.shape = [{ id: t.col('iso').id, name: 'iso' }]; S.auto = true; }); await __ax.calm(_rep);
+      const p = await drawn(_gm.plot()); return { land: p.box._fullLayout.geo.landcolor, grid: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() }; })()""")
     g_ = r['grid'].lstrip('#')
     g_ = ''.join(q * 2 for q in g_) if len(g_) == 3 else g_
     check('dark theme: the map\'s land is the dark theme\'s border colour, faint', r['land'].replace(' ', ''), f'rgba({int(g_[0:2], 16)},{int(g_[2:4], 16)},{int(g_[4:6], 16)},0.35)')
@@ -2759,9 +2759,9 @@ async def stockholm_dates(page):
           const DAY = 86400000, d0 = Date.UTC(2021, 2, 20), d = [], v = [];
           for (let i = 0; i < 17; i++) { d.push(d0 + i * DAY); v.push(i % 4); }
           const t = new SM.Table({ name: 'DST dates', columns: [{ name: 'd', values: d, format: { kind: 'date' } }, { name: 'v', values: v }] }); SM.app.addTable(t);
-          const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
+          const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t); await new Promise((res) => rep.on('done', res));
           window._rep = rep;
-          await _gb.update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('v').id, name: 'v' }]; S.auto = false; S.elements = [{ type: 'points' }]; });
+          await _gm.update((S) => { S.zones.x = [{ id: t.col('d').id, name: 'd' }]; S.zones.y = [{ id: t.col('v').id, name: 'v' }]; S.auto = false; S.elements = [{ type: 'points' }]; });
           return [new Date(Date.UTC(2021, 2, 20)).getTimezoneOffset(), new Date(Date.UTC(2021, 3, 1)).getTimezoneOffset()]; })()""")
         check('Stockholm: the browser\'s offset from UTC changes within the dates (CET, then CEST)', r, [-60, -120])
         xy = await page.ev('__ax.gbAt("ew")')
@@ -2772,15 +2772,15 @@ async def stockholm_dates(page):
           const R = d.querySelectorAll('.sm-ax-ref');
           __ax.set(R[0], 'ref', '2021-03-28'); __ax.set(R[0], 'reflabel', 'DST'); __ax.set(R[0], 'refcolor', 'red');
           __ax.set(R[1], 'ref', '2021-03-26'); __ax.set(R[1], 'refto', '2021-03-27'); __ax.set(R[1], 'refcolor', 'blue');
-          __ax.button(d, 'OK'); await _gb.idle(); await settle();
-          const p = await drawn(_gb.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
+          __ax.button(d, 'OK'); await _gm.idle(); await settle();
+          const p = await drawn(_gm.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
           let code = null; for (let i = 0; i < 120 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
           const fl = p.box._fullLayout, xa = fl.xaxis;
           const line = fl.shapes.find((q) => q.type === 'line'), rect = fl.shapes.find((q) => q.type === 'rect');
           const path = [...p.box.querySelectorAll('.shapelayer path')].map((q) => q.getAttribute('d')).find((q) => /^M[\d.]+,[\d.]+L[\d.]+,[\d.]+$/.test(q));
           const label = fl.annotations.find((a) => a.text === 'DST');
           return { title, range: xa.range.map((q) => xa.r2l(q)), ticks: xa._vals.map((q) => q.x), line: xa.r2l(line.x0), rect: [xa.r2l(rect.x0), xa.r2l(rect.x1)], label: label ? xa.r2l(label.x) : null,
-            linePx: path ? Number(/^M([\d.]+),/.exec(path)[1]) : null, pointPx: xa._offset + xa.c2p(Date.UTC(2021, 2, 28)), state: _gb.state().axes['x:d'], code }; })()""")
+            linePx: path ? Number(/^M([\d.]+),/.exec(path)[1]) : null, pointPx: xa._offset + xa.c2p(Date.UTC(2021, 2, 28)), state: _gm.state().axes['x:d'], code }; })()""")
         check('Stockholm: a double-click on the date axis opens its window, the dates typed as dates', (r or {}).get('title'), 'X Axis Settings')
         check('Stockholm: kept as the page keeps dates, UTC milliseconds', (r['state']['min'], r['state']['max'], [q['value'] for q in r['state']['refs']]), (day(2021, 3, 25), day(2021, 4, 1), [day(2021, 3, 28), day(2021, 3, 26)]))
         check('Stockholm: the graph\'s date axis from 2021-03-25 to 2021-04-01 exactly (not an hour on)', r['range'], [day(2021, 3, 25), day(2021, 4, 1)])

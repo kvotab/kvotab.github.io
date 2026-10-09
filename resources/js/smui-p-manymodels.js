@@ -18,7 +18,7 @@
      Decision Threshold          two levels: the counts and rates at a cut
      Prediction Profiler         of one method
 
-   The numbers are resources/py/smui/screening.py's (scikit-learn, and
+   The numbers are resources/py/smui/manymodels.py's (scikit-learn, and
    predictive.py's measures). Make Validation Column (Analyze > Predictive
    Modeling and Cols > Modeling Utilities) adds a Validation column.
    ========================================================================== */
@@ -27,7 +27,7 @@
   const SM = root.SM;
   const { el, fmt } = SM.util;
   const T = (v) => SM.report.plotlyText(v);
-  const MORE = { label: 'Fit Many Models', id: 'help-p-screening' };
+  const MORE = { label: 'Fit Many Models', id: 'help-p-manymodels' };
   const CV = 'Crossvalidation';
 
   const METHODS = [['tree', 'Decision Tree'], ['forest', 'Decision Forest'], ['boosted', 'Boosted Tree'], ['xgboost', 'XGBoost'], ['lightgbm', 'LightGBM'],
@@ -40,24 +40,24 @@
   // the linear methods, which the Two Way Interactions and Quadratic options change
   const TERMED = new Set(['linear', 'lasso', 'enet', 'ridge', 'lda']);
   /* The engine's function for the methods in the report: a variant that loads XGBoost's or LightGBM's package too
-     when one of them is chosen (screening.py, TAGS). */
+     when one of them is chosen (manymodels.py, TAGS). */
   const tagOf = (methods) => { const need = ['xgboost', 'lightgbm'].filter((k) => (methods || []).includes(k)); return need.length === 2 ? 'xgb.lgbm' : need[0] === 'xgboost' ? 'xgb' : need[0] === 'lightgbm' ? 'lgbm' : ''; };
-  const fnFor = (name, methods) => { const t = tagOf(methods); return t ? `screening.${name}.${t}` : `screening.${name}`; };
-  const profileFn = (methods) => { const t = tagOf(methods); return t ? `screening.${t}.profile` : 'screening.profile'; };
+  const fnFor = (name, methods) => { const t = tagOf(methods); return t ? `manymodels.${name}.${t}` : `manymodels.${name}`; };
+  const profileFn = (methods) => { const t = tagOf(methods); return t ? `manymodels.${t}.profile` : 'manymodels.profile'; };
   // the method's own platform, for Run Selected (present only when it is registered)
   const PLATFORM = { tree: 'partition', forest: 'forest', boosted: 'boosted', knn: 'knn', nb: 'naivebayes', neural: 'neural', svm: 'svm',
     lda: 'discriminant', linear: 'fitmodel', lasso: 'fitmodel', enet: 'fitmodel', stepwise: 'fitmodel' };
   const MEASURE_LABEL = { rsquare: 'RSquare', rase: 'RASE', mad: 'Mean Abs Dev', neg_loglik: '-LogLikelihood', sse: 'SSE', n: 'N', me: 'Mean Error', mape: 'MAPE', mpe: 'MPE', medae: 'Median Abs Error',
     entropy_rsquare: 'Entropy RSquare', generalized_rsquare: 'Generalized RSquare', mean_neg_log_p: 'Mean -Log p', misclassification: 'Misclassification Rate', auc: 'AUC' };
 
-  /* A colour per method, the same in every graph; lighter tints in the dark theme (screening.py's COLORS are the light ones). */
+  /* A colour per method, the same in every graph; lighter tints in the dark theme (manymodels.py's COLORS are the light ones). */
   const LIGHT = { tree: '#2f6690', forest: '#c46a12', boosted: '#3a7d44', knn: '#b0413e', nb: '#6c5b7b', neural: '#1a8a78', svm: '#8f7600', lda: '#8c564b', linear: '#b8428f',
     lasso: '#666666', enet: '#107f8f', stepwise: '#7b5bb5', xgboost: '#4f6d2a', lightgbm: '#9c3d5e', ridge: '#3d5a80' };
   const DARK = { tree: '#6fa3d6', forest: '#f0a050', boosted: '#6fbf73', knn: '#e87c73', nb: '#b39ddb', neural: '#4fd1b8', svm: '#e0c040', lda: '#c9a084', linear: '#f08fc8',
     lasso: '#b8b8b8', enet: '#5fd4e8', stepwise: '#a58ae6', xgboost: '#a8d46f', lightgbm: '#ef8fb0', ridge: '#94b8e8' };
   const colorOf = (key) => (SM.util.themeColors().dark ? DARK : LIGHT)[key] || '#888888';
   const W = (w) => Math.max(240, Math.min(w, (root.innerWidth || 1200) - 110));
-  const wide = (node) => el('div', { class: 'sm-scr-scroll' }, node);
+  const wide = (node) => el('div', { class: 'sm-mm-scroll' }, node);
   /* A legend of every method: beside the graph, or under it on a narrow screen (where one beside it would leave
      no room for the curves); the graph's width and height with it. */
   function legendFor(n) {
@@ -96,10 +96,10 @@
     const pay = { ...spec, methods: methodsOf(ctx, yc), repeats: kf.repeats };
     let note = null, off = null;
     if (!ctx.headless) {
-      note = el('p', { class: 'sm-ob-note sm-scr-progress', role: 'status', text: `Fit Many Models: fitting ${pay.methods.length} methods…` });
+      note = el('p', { class: 'sm-ob-note sm-mm-progress', role: 'status', text: `Fit Many Models: fitting ${pay.methods.length} methods…` });
       ctx.container.append(note);
       off = SM.engine.on('progress', (p) => {
-        if (!p || p.what !== 'screening') return;
+        if (!p || p.what !== 'manymodels') return;
         const text = `Fit Many Models${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${p.done} of ${p.total} fits…`;
         note.textContent = text;
         ctx.report.noteEl.textContent = text;
@@ -110,7 +110,7 @@
     const plot = { roc: ctx.opt('rocLevel', null), lift: ctx.opt('liftLevel', null), abp: ctx.opt('abpSet', null) };
     try { r = await ctx.call(fnFor('fit', pay.methods), { ...pay, plot }); } finally { if (off) off(); if (note) note.remove(); }
     const S = { r, spec, pay, yc, xs, binary: r.kind === 'categorical' && r.levels.length === 2 };
-    ctx.scr = S;
+    ctx.mm = S;
     ctx.container.append(ctx.note(setsNote(ctx, S)));
     summaryOutline(ctx, S);
     if (ctx.opt('ensemble', false)) await ensembleOutline(ctx, S);
@@ -167,9 +167,9 @@
       const i = c.key.indexOf('|');
       if (i > 0) {
         const set = c.key.slice(0, i), k = c.key.slice(i + 1);
-        if (k !== 'n' && ((S.r.best[set] || {})[k] || []).includes(row.key)) cls.push('sm-scr-best');
+        if (k !== 'n' && ((S.r.best[set] || {})[k] || []).includes(row.key)) cls.push('sm-mm-best');
       }
-      if (sel.includes(row.key)) cls.push('sm-scr-sel');
+      if (sel.includes(row.key)) cls.push('sm-mm-sel');
       return cls.join(' ');
     };
   }
@@ -177,7 +177,7 @@
   function summaryOutline(ctx, S) {
     const { r } = S;
     const sel = selectedOf(ctx, S);
-    const ob = ctx.outline('Summary Across the Models', { key: 'summary', info: 'p:screening:summary', menu: () => selectionItems(ctx, S) });
+    const ob = ctx.outline('Summary Across the Models', { key: 'summary', info: 'p:manymodels:summary', menu: () => selectionItems(ctx, S) });
     const all = r.measure_columns.map((c) => c.key).filter((k) => k !== 'set' && (k !== 'auc' || S.binary));
     const cols = [{ key: 'method', label: 'Method', fmt: 'text' }];
     for (const set of r.shown_sets) cols.push(...measureCols(r, set, all, (k) => !r.summary.includes(k)));
@@ -185,7 +185,7 @@
     const toggle = (row) => { const cur = selectedOf(ctx, S); ctx.set('selected', cur.includes(row.key) ? cur.filter((k) => k !== row.key) : [...cur, row.key]); };
     ob.add(wide(ctx.rt({ columns: cols, rows }, { key: 'summary', onRow: (row) => { if (r.methods.find((m) => m.key === row.key).measures) toggle(row); }, cellClass: bestClass(S, sel) })));
     const btn = (label, action, disabled = false) => { const b = el('button', { type: 'button', class: 'sm-btn small', text: label, 'data-noexport': '' }); b.disabled = disabled; b.addEventListener('click', action); return b; };
-    ob.add(el('div', { class: 'sm-scr-actions', 'data-noexport': '' },
+    ob.add(el('div', { class: 'sm-mm-actions', 'data-noexport': '' },
       btn('Select Dominant', () => ctx.set('selected', r.dominant.slice())),
       btn('Run Selected', () => runSelected(ctx, S), !sel.some((k) => runnable(ctx, S, k))),
       btn('Clear Selection', () => ctx.set('selected', []), !sel.length)));
@@ -213,7 +213,7 @@
   async function ensembleOutline(ctx, S) {
     const { r } = S;
     const sel = selectedOf(ctx, S);
-    const ob = ctx.outline('Ensemble of Selected', { key: 'ensemble', info: 'p:screening:ensemble', menu: () => [{ label: 'Remove', action: () => ctx.set('ensemble', false) }] });
+    const ob = ctx.outline('Ensemble of Selected', { key: 'ensemble', info: 'p:manymodels:ensemble', menu: () => [{ label: 'Remove', action: () => ctx.set('ensemble', false) }] });
     if (sel.length < 2) { ob.add(ctx.note('Select two or more methods in the Summary (click their lines, or Select Dominant): their average and their stacking are shown here.')); return; }
     const keys = r.order.filter((k) => sel.includes(k));
     let e;
@@ -239,7 +239,7 @@
     const keys = r.measure_columns.map((c) => c.key).filter((k) => k !== 'set' && (k !== 'auc' || S.binary));
     const optional = new Set(r.measure_columns.filter((c) => c.hidden).map((c) => c.key));   // Mean Error, MAPE, MPE, Median Abs Error: right click, Columns
     for (const set of r.sets) {
-      const ob = ctx.outline(set, { key: `set:${set}`, info: 'p:screening:sets', closed: set === 'Training' && r.sets.length > 1 });
+      const ob = ctx.outline(set, { key: `set:${set}`, info: 'p:manymodels:sets', closed: set === 'Training' && r.sets.length > 1 });
       const cols = [{ key: 'method', label: 'Method', fmt: 'text' }, ...keys.map((k) => ({ key: `${set}|${k}`, label: MEASURE_LABEL[k] || k, digits: k === 'n' ? null : 4, hidden: optional.has(k) }))];
       const rows = r.order.map((key) => rowOf(r.methods.find((m) => m.key === key), [set], keys)).filter((x) => r.methods.find((m) => m.key === x.key).measures);
       ob.add(wide(ctx.rt({ columns: cols, rows }, { key: `set:${set}`, cellClass: bestClass(S, sel) })));
@@ -251,7 +251,7 @@
     const { r } = S;
     const keys = r.measure_columns.map((c) => c.key).filter((k) => k !== 'set' && k !== 'n' && (k !== 'auc' || S.binary));
     const ok = r.order.map((k) => r.methods.find((m) => m.key === k)).filter((m) => m.cv);
-    const ob = ctx.outline(CV, { key: 'cv', info: 'p:screening:cv' });
+    const ob = ctx.outline(CV, { key: 'cv', info: 'p:manymodels:cv' });
     const cols = [{ key: 'method', label: 'Method', fmt: 'text' }];
     const optional = new Set(r.measure_columns.filter((c) => c.hidden).map((c) => c.key));
     for (const k of keys) cols.push({ key: `m|${k}`, label: MEASURE_LABEL[k], digits: 4, hidden: optional.has(k) }, { key: `s|${k}`, label: `Std Dev ${MEASURE_LABEL[k]}`, digits: 4, hidden: true });
@@ -259,8 +259,8 @@
     const sel = selectedOf(ctx, S);
     ob.add(wide(ctx.rt({ columns: cols, rows }, { key: 'cv', cellClass: (row, c) => {
       const cls = [];
-      if (c.key.startsWith('m|') && ((r.best[CV] || {})[c.key.slice(2)] || []).includes(row.key)) cls.push('sm-scr-best');
-      if (sel.includes(row.key)) cls.push('sm-scr-sel');
+      if (c.key.startsWith('m|') && ((r.best[CV] || {})[c.key.slice(2)] || []).includes(row.key)) cls.push('sm-mm-best');
+      if (sel.includes(row.key)) cls.push('sm-mm-sel');
       return cls.join(' ');
     } })), ctx.note(`The mean over the ${r.kfold * r.repeats} held-out folds of each measure (right click, Columns, for their standard deviations). A fold is measured by a model that never saw it, not even to choose its size or penalty.`));
     const fo = ctx.outline('Crossvalidation Folds', { parent: ob, key: 'cvfolds', closed: true });
@@ -272,7 +272,7 @@
   /* ---- Method Details ------------------------------------------------------------------------ */
   function detailsOutline(ctx, S) {
     const { r } = S;
-    const ob = ctx.outline('Method Details', { key: 'details', info: 'p:screening:methods', closed: true, menu: () => [{ label: 'Remove', action: () => ctx.set('details', false) }] });
+    const ob = ctx.outline('Method Details', { key: 'details', info: 'p:manymodels:methods', closed: true, menu: () => [{ label: 'Remove', action: () => ctx.set('details', false) }] });
     const rows = r.methods.map((m) => ({ method: m.label, info: m.error ? `not fitted: ${m.error}` : m.info, uses: m.uses, seconds: m.seconds ?? null }));
     ob.add(wide(ctx.rt({ columns: [{ key: 'method', label: 'Method', fmt: 'text' }, { key: 'info', label: 'Settings', fmt: 'text' }, { key: 'uses', label: 'scikit-learn', fmt: 'text', hidden: true }, { key: 'seconds', label: 'Seconds', digits: 2, hidden: true }], rows }, { key: 'details', sortable: false })),
       ctx.note('What each method chose: the size of the tree, the number of trees or layers, K, the penalty, the factors. Tuning uses the validation rows when there are any, else each method\'s own rule (see the (i)). The Python below fits every method as the report does, from a CSV export of the table.'),
@@ -294,7 +294,7 @@
     const optLevel = roc ? 'rocLevel' : 'liftLevel';
     const lv = levelIndex(ctx, S, optLevel);
     const level = r.levels[lv];
-    const ob = ctx.outline(roc ? 'ROC Curve' : 'Lift Curve', { key: kind, info: 'p:screening:curves', menu: () => [
+    const ob = ctx.outline(roc ? 'ROC Curve' : 'Lift Curve', { key: kind, info: 'p:manymodels:curves', menu: () => [
       { label: 'Level', submenu: () => r.levels.map((l, i) => ({ label: l, checked: i === lv, action: () => ctx.set(optLevel, i) })) },
       { label: 'Remove', action: () => ctx.set(kind, false) },
     ] });
@@ -335,7 +335,7 @@
     const res = r.residuals;
     let set = ctx.opt('abpSet', r.compare);
     if (!r.shown_sets.includes(set)) set = r.compare;
-    const ob = ctx.outline('Actual by Predicted', { key: 'abp', info: 'p:screening:abp', menu: () => [
+    const ob = ctx.outline('Actual by Predicted', { key: 'abp', info: 'p:manymodels:abp', menu: () => [
       { label: 'Set', submenu: () => r.shown_sets.map((s) => ({ label: s, checked: s === set, action: () => ctx.set('abpSet', s) })) },
       { label: 'Remove', action: () => ctx.set('abp', false) },
     ] });
@@ -371,7 +371,7 @@
     const shared = { keys: { cut: 'cut', level: 'cutLevel' }, yCol: S.yc, colorOf: (m) => colorOf(m.key), pyColorOf: (m) => LIGHT[m.key] || '#888888',
       probName: (label, m) => `Prob[${label}] ${m.label}`, save: { fn: (m) => fnFor('save', [m.key]), payload: (m) => ({ ...S.spec, method: m.key }) } };
     if (ctx.opt('threshold', false)) {
-      const ob = SM.predict.threshold(ctx, null, t, { ...shared, info: 'p:screening:threshold' });
+      const ob = SM.predict.threshold(ctx, null, t, { ...shared, info: 'p:manymodels:threshold' });
       if (ob) {
         ob.add(ctx.note(which));
         if (t.errors && t.errors.length) ob.add(ctx.warn(`Not fitted: ${t.errors.map((e) => `${e.label} (${e.error})`).join('; ')}.`));
@@ -407,9 +407,9 @@
     const { yc, xs, spec } = S;
     if (p.id === 'fitmodel') {
       const effects = xs.map((c) => ({ cols: [c.id], names: [c.name], nest: [], nestNames: [], random: false }));
-      const pers = key === 'stepwise' ? 'stepwise' : (key === 'lasso' || key === 'enet') ? 'genreg' : !yc.isCategorical ? 'standard' : (yc.modelingType === 'ordinal' ? 'ordinal' : 'nominal');
+      const pers = key === 'stepwise' ? 'stepwise' : (key === 'lasso' || key === 'enet') ? 'penreg' : !yc.isCategorical ? 'standard' : (yc.modelingType === 'ordinal' ? 'ordinal' : 'nominal');
       const options = { personality: pers };
-      if (pers === 'genreg') Object.assign(options, { dist: yc.isCategorical ? 'binomial' : 'normal', 'gr:method': key === 'enet' ? 'enet' : 'lasso' });
+      if (pers === 'penreg') Object.assign(options, { dist: yc.isCategorical ? 'binomial' : 'normal', 'gr:method': key === 'enet' ? 'enet' : 'lasso' });
       return { roles: { y: [yc.id], weight: ids('weight'), freq: ids('freq'), by: ids('by') }, effects, options };
     }
     if (p.id === 'discriminant') return { roles: { y: xs.filter((c) => !c.isCategorical).map((c) => c.id), x: [yc.id], weight: ids('weight'), freq: ids('freq'), by: ids('by') }, options: {} };
@@ -436,7 +436,7 @@
      THE TOP RED TRIANGLE
      ====================================================================== */
   function topMenu(ctx) {
-    const S = ctx.scr;
+    const S = ctx.mm;
     if (!S) return [];
     const { r } = S;
     const ok = r.order.filter((k) => r.methods.find((m) => m.key === k).measures);
@@ -491,25 +491,25 @@
       const i = el('input', { type: 'checkbox', value: key });
       i.checked = want.has(key);
       const span = el('span', { text: label });
-      return { key, i, span, lab: el('label', { class: 'sm-scr-check' }, i, span) };
+      return { key, i, span, lab: el('label', { class: 'sm-mm-check' }, i, span) };
     });
     const kf = el('input', { type: 'checkbox' });
     kf.checked = !!o.kfold;
-    const num = (v, aria) => { const i = el('input', { type: 'text', inputmode: 'numeric', size: 3, class: 'sm-scr-input', 'aria-label': aria }); i.value = String(v); return i; };
+    const num = (v, aria) => { const i = el('input', { type: 'text', inputmode: 'numeric', size: 3, class: 'sm-mm-input', 'aria-label': aria }); i.value = String(v); return i; };
     const folds = num(o.folds ?? 5, 'Folds'), reps = num(o.repeats ?? 1, 'Repeated K Fold');
-    const hint = el('p', { class: 'sm-scr-hint' });
+    const hint = el('p', { class: 'sm-mm-hint' });
     const inter = el('input', { type: 'checkbox' }), quad = el('input', { type: 'checkbox' });
     inter.checked = !!o.interactions;
     quad.checked = !!o.quadratic;
-    const box = el('div', { class: 'sm-scr-launch' },
-      el('h4', { text: 'Method' }), el('div', { class: 'sm-scr-checks' }, ...checks.map((c) => c.lab)),
-      el('div', { class: 'sm-scr-opts' },
-        el('label', { class: 'sm-scr-check' }, kf, el('span', { text: 'K Fold Crossvalidation' })),
-        el('label', { class: 'sm-scr-opt' }, el('span', { text: 'Folds' }), folds),
-        el('label', { class: 'sm-scr-opt' }, el('span', { text: 'Repeated K Fold' }), reps)),
-      el('div', { class: 'sm-scr-opts' },
-        el('label', { class: 'sm-scr-check' }, inter, el('span', { text: 'Add Two Way Interactions' })),
-        el('label', { class: 'sm-scr-check' }, quad, el('span', { text: 'Add Quadratics' }))),
+    const box = el('div', { class: 'sm-mm-launch' },
+      el('h4', { text: 'Method' }), el('div', { class: 'sm-mm-checks' }, ...checks.map((c) => c.lab)),
+      el('div', { class: 'sm-mm-opts' },
+        el('label', { class: 'sm-mm-check' }, kf, el('span', { text: 'K Fold Crossvalidation' })),
+        el('label', { class: 'sm-mm-opt' }, el('span', { text: 'Folds' }), folds),
+        el('label', { class: 'sm-mm-opt' }, el('span', { text: 'Repeated K Fold' }), reps)),
+      el('div', { class: 'sm-mm-opts' },
+        el('label', { class: 'sm-mm-check' }, inter, el('span', { text: 'Add Two Way Interactions' })),
+        el('label', { class: 'sm-mm-check' }, quad, el('span', { text: 'Add Quadratics' }))),
       hint);
     const update = (state) => {
       const id = ((state && state.y) || [])[0];
@@ -573,7 +573,7 @@
     const t = app.requireTable();
     if (!t) return;
     const platform = {
-      id: 'screening-validation', label: 'Make Validation Column', info: 'cmd:makevalidation',
+      id: 'manymodels-validation', label: 'Make Validation Column', info: 'cmd:makevalidation',
       launch: {
         lead: 'A new column that puts every row of the table in the training, validation or test set, or in one of K folds, for the Validation role of the predictive platforms. With no columns cast, the rows are assigned at random.',
         roles: [
@@ -604,7 +604,7 @@
           { key: 'name', label: 'New Column Name', type: 'text', value: 'Validation', size: 12, help: 'The name of the new column (Validation by default).' },
         ],
         extra: (api) => {
-          const hint = el('p', { class: 'sm-scr-hint' });
+          const hint = el('p', { class: 'sm-mm-hint' });
           const upd = (st) => {
             const k = ['strata', 'groups', 'time'].filter((x) => ((st && st[x]) || []).length);
             hint.textContent = k.includes('time') && k.length > 1 ? 'A cutpoint column goes alone: no stratification or grouping columns with it.'
@@ -645,7 +645,7 @@
     const o = s.options;
     const kf = o.type === 'kfold';
     if (SM.engine.state !== 'ready') SM.ui.toast('Waiting for the Python engine to load…');
-    const r = await SM.engine.call('screening.validation_column', {
+    const r = await SM.engine.call('manymodels.validation_column', {
       training: o.training ?? 0, validation: o.validation ?? 0, test: o.test ?? 0, strata: names('strata'), groups: names('groups'), time: names('time')[0] || null,
       seed: String(o.seed || '').trim() || null, values: o.values, name: String(o.name).trim(), kfold: kf ? o.folds : 0, balance: !!o.balance,
     }, t);
@@ -665,17 +665,17 @@
      TOPICS: the (i) panels
      ====================================================================== */
   const TOPICS = {
-    'p:screening': {
+    'p:manymodels': {
       kicker: 'Analyze > Predictive Modeling', title: 'Fit Many Models',
       lead: 'Fits many kinds of predictive model to one response, with the same rows, the same training, validation and test sets and the same seed, and puts their measures of fit side by side, as JMP Pro\'s Model Screening does. The models are scikit-learn\'s (and a few written here); the measures are those every predictive platform here reports.',
       sections: [
-        { heading: 'Roles', choices: [['Y, Response', 'One column: continuous, or nominal or ordinal for a classification.'], ['X, Factor', 'The predictors; a categorical factor becomes a 0/1 column per level.'], ['Weight, Freq', 'Case weights and row counts, in every method that takes them (K Nearest Neighbors weights its neighbours).'], ['Validation', 'A column of Training/Validation/Test (or 0, 1, 2): its sets win over the portion and K-fold.'], ['By', 'A screening per level.']] },
+        { heading: 'Roles', choices: [['Y, Response', 'One column: continuous, or nominal or ordinal for a classification.'], ['X, Factor', 'The predictors; a categorical factor becomes a 0/1 column per level.'], ['Weight, Freq', 'Case weights and row counts, in every method that takes them (K Nearest Neighbors weights its neighbours).'], ['Validation', 'A column of Training/Validation/Test (or 0, 1, 2): its sets win over the portion and K-fold.'], ['By', 'A report per level.']] },
         { heading: 'Validation', text: 'Which rows judge the methods: a Validation column\'s sets when there is one (its training rows fit, its validation rows tune and compare, its test rows only measure); else K Fold Crossvalidation when it is ticked; else the Validation Portion (0.2 here), a random share of the rows held back.' },
         { heading: 'The methods', text: 'Decision Tree, Decision Forest, Boosted Tree, K Nearest Neighbors, Naive Bayes and Discriminant (categorical Y), Neural, Support Vector Machines, Fit Least Squares or Nominal / Ordinal Logistic, Penalized Regression Lasso and Elastic Net, and Fit Stepwise (off by default). Method Details (i) says how each is fitted and where it differs from JMP.' },
       ],
       more: MORE,
     },
-    'p:screening:summary': {
+    'p:manymodels:summary': {
       kicker: 'Fit Many Models', title: 'Summary Across the Models',
       lead: 'A line per method: RSquare and RASE (continuous Y), or Generalized RSquare, Entropy RSquare, the Misclassification Rate and for two levels the AUC, for each set. The methods are ranked by the first of them, RSquare or Generalized RSquare as JMP ranks them, on the validation rows (the crossvalidated ones with K-fold, the training ones with neither); bold marks the best of each column.',
       sections: [
@@ -685,19 +685,19 @@
       ],
       more: MORE,
     },
-    'p:screening:ensemble': {
+    'p:manymodels:ensemble': {
       kicker: 'Fit Many Models', title: 'Ensemble of Selected',
       lead: 'Beyond JMP: two combinations of the methods selected in the Summary. Average of Selected is the mean of their predictions (or probabilities); Stacked is their weighted mean, the weights (0 or more, adding to 1: a convex combination, a super learner) fitted to the methods\' out-of-fold predictions of the training rows: the report\'s K folds when it crossvalidates (the first repeat), else 5 folds from the seed. The weights are found by SLSQP: the smallest squared error, or the largest log-likelihood of a categorical response. Each set\'s measures are those of the methods fitted to all the training rows, combined.',
       more: MORE,
     },
-    'p:screening:sets': { kicker: 'Fit Many Models', title: 'Training, Validation and Test', lead: 'Every Measure of Fit of every method for the rows of one set (see Measures of Fit). Training measures flatter flexible methods: compare them on validation or test rows.', more: MORE },
-    'p:screening:cv': {
+    'p:manymodels:sets': { kicker: 'Fit Many Models', title: 'Training, Validation and Test', lead: 'Every Measure of Fit of every method for the rows of one set (see Measures of Fit). Training measures flatter flexible methods: compare them on validation or test rows.', more: MORE },
+    'p:manymodels:cv': {
       kicker: 'Fit Many Models', title: 'K-fold Crossvalidation',
       lead: 'The training rows are split at random (from the seed) into K folds of nearly equal size. Each method is fitted K times, each time to all folds but one, and measured on the fold left out; the table gives the mean over the folds (and their standard deviation). Repeated K Fold does it again with new folds.',
       sections: [{ heading: 'Honest folds', text: 'Inside a fold a method tunes itself without the held-out rows: the tree by crossvalidation within the other folds, K Nearest Neighbors by leave-one-out, Neural by a holdback, Penalized Regression by AICc, Stepwise by BIC. The Training measures are of the methods fitted once to every row.' }],
       more: MORE,
     },
-    'p:screening:methods': {
+    'p:manymodels:methods': {
       kicker: 'Fit Many Models', title: 'How each method is fitted',
       lead: 'Each method as JMP\'s platform fits it by default, as far as scikit-learn allows. Tuning uses the validation rows when there are any; otherwise the rule named. Categorical factors are 0/1 columns (one level left out for the linear methods), missing values informative when that option is on.',
       sections: [{ choices: [
@@ -719,9 +719,9 @@
       ] }],
       more: MORE,
     },
-    'p:screening:curves': { kicker: 'Fit Many Models', title: 'ROC and Lift Curves', lead: 'Every method\'s curve for one level on one graph per set, so that the methods can be compared where it matters: the ROC curve (the share of the level\'s rows caught against the share of the others as the cut on its probability falls; the AUC in the legend and the table) and the lift (how much more common the level is among the rows it scores highest). Level (red triangle) picks the level.', more: MORE },
-    'p:screening:abp': { kicker: 'Fit Many Models', title: 'Actual by Predicted', lead: 'A small graph per method of the actual response against the prediction, for one set; the points are the rows (drag to select them). A good model keeps them near the dotted line on the validation rows, not only on the training rows.', more: MORE },
-    'p:screening:threshold': {
+    'p:manymodels:curves': { kicker: 'Fit Many Models', title: 'ROC and Lift Curves', lead: 'Every method\'s curve for one level on one graph per set, so that the methods can be compared where it matters: the ROC curve (the share of the level\'s rows caught against the share of the others as the cut on its probability falls; the AUC in the legend and the table) and the lift (how much more common the level is among the rows it scores highest). Level (red triangle) picks the level.', more: MORE },
+    'p:manymodels:abp': { kicker: 'Fit Many Models', title: 'Actual by Predicted', lead: 'A small graph per method of the actual response against the prediction, for one set; the points are the rows (drag to select them). A good model keeps them near the dotted line on the validation rows, not only on the training rows.', more: MORE },
+    'p:manymodels:threshold': {
       kicker: 'Fit Many Models', title: 'Decision Threshold',
       lead: 'For a response with two levels, the methods selected in the Summary (every method when none is): a row is called the target level when its predicted probability of it is at least the threshold. The fitted probabilities of each method by the actual level on the rows that compare the methods (validation, crossvalidated or training), a table per set with each method\'s measures and counts at the threshold, and one measure of every method against the threshold (Curve Metric in the red triangle), as JMP Pro\'s Decision Threshold of Model Screening.',
       sections: [
@@ -755,7 +755,7 @@
      THE PLATFORM AND THE COMMAND
      ====================================================================== */
   SM.platforms.register({
-    id: 'screening', label: 'Fit Many Models', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:screening', topics: TOPICS,
+    id: 'manymodels', label: 'Fit Many Models', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:manymodels', topics: TOPICS,
     about: 'Decision Tree, Decision Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Penalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold and Group Metrics (a fairness audit) of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
     uses: ['xgboost.XGBClassifier, XGBRegressor (loaded when chosen)', 'lightgbm.LGBMClassifier, LGBMRegressor (loaded when chosen)', 'scipy.optimize.minimize (SLSQP: the stacking weights)', 'sklearn.tree.DecisionTreeClassifier, DecisionTreeRegressor', 'sklearn.ensemble.RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor', 'sklearn.neighbors.NearestNeighbors', 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'sklearn.neural_network.MLPClassifier, MLPRegressor', 'sklearn.svm.SVC, SVR, l1_min_c', 'sklearn.linear_model.LinearRegression, LogisticRegression, enet_path', 'scipy.optimize.minimize (the cumulative logit, Platt\'s sigmoid)', 'scipy.linalg.pinvh (the discriminant)'],
     launch: {
@@ -783,5 +783,5 @@
   SM.commands.register({ menu: 'Analyze/Predictive Modeling', label: 'Make Validation Column…', order: 190, enabled: hasTable, action: makeValidationColumn, about: 'A column that puts every row in training, validation or test: random, stratified, grouped or by a time cutpoint, exact to the proportions', uses: ['numpy.random.default_rng'] });
   SM.commands.register({ menu: 'Cols/Modeling Utilities', label: 'Make Validation Column…', order: 10, enabled: hasTable, action: makeValidationColumn, about: 'The same as Analyze > Predictive Modeling > Make Validation Column' });
 
-  SM.screening = Object.freeze({ METHODS, PLATFORM, makeValidationColumn, runMakeValidation, specFor });
+  SM.manymodels = Object.freeze({ METHODS, PLATFORM, makeValidationColumn, runMakeValidation, specFor });
 }(typeof self !== 'undefined' ? self : this));

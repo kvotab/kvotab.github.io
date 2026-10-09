@@ -5626,19 +5626,19 @@ ALPHA_KEYS = ('setalphalevel', 'setαlevel', 'alphalevel', 'αlevel')
 
 # JSL platform launches -> the page's platform ids (None: JMP has it, the page has not)
 PLATFORMS = {
-    'distribution': 'distribution', 'bivariate': 'fitybyx', 'oneway': 'fitybyx', 'contingency': 'fitybyx', 'logistic': 'fitybyx',
-    'fitybyx': 'fitybyx', 'matchedpairs': 'matchedpairs', 'fitmodel': 'fitmodel', 'multivariate': 'multivariate',
+    'distribution': 'distribution', 'bivariate': 'bivariate', 'oneway': 'bivariate', 'contingency': 'bivariate', 'logistic': 'bivariate',
+    'fitybyx': 'bivariate', 'matchedpairs': 'matchedpairs', 'fitmodel': 'fitmodel', 'multivariate': 'multivariate',
     'principalcomponents': 'pca', 'factoranalysis': 'factor', 'discriminant': 'discriminant', 'hierarchicalcluster': 'hcluster',
     'kmeanscluster': 'kmeans', 'kmeans': 'kmeans', 'partition': 'partition', 'bootstrapforest': 'forest', 'boostedtree': 'boosted',
     'neural': 'neural', 'timeseries': 'timeseries', 'controlchartbuilder': 'controlchart', 'controlchart': 'controlchart',
     'survival': 'survival', 'lifedistribution': 'lifedist', 'fitparametricsurvival': 'parametric', 'fitproportionalhazards': 'phreg',
-    'graphbuilder': 'graphbuilder', 'tabulate': 'tabulate', 'overlayplot': 'overlay', 'scatterplotmatrix': 'scattermatrix',
+    'graphbuilder': 'graphmaker', 'tabulate': 'tabulate', 'overlayplot': 'overlay', 'scatterplotmatrix': 'scattermatrix',
     'chart': 'chart', 'paretoplot': 'pareto', 'variabilitychart': 'variability', 'variabilityattributegaugechart': 'variability',
     'bubbleplot': 'bubble', 'cellplot': 'cellplot', 'treemap': 'treemap', 'parallelplot': 'parallel', 'ternaryplot': 'ternary',
     'scatterplot3d': 'scatter3d', 'processcapability': 'capability', 'fitcurve': 'fitcurve', 'nonlinear': 'nonlinear',
-    'responsescreening': 'respscreen', 'exploreoutliers': 'outliers', 'exploremissingvalues': 'missing',
+    'responsescreening': 'manytests', 'exploreoutliers': 'outliers', 'exploremissingvalues': 'missing',
     'multidimensionalscaling': 'mds', 'multiplecorrespondenceanalysis': 'mca', 'normalmixtures': 'mixtures',
-    'knearestneighbors': 'knn', 'naivebayes': 'naivebayes', 'supportvectormachines': 'svm', 'modelscreening': 'screening',
+    'knearestneighbors': 'knn', 'naivebayes': 'naivebayes', 'supportvectormachines': 'svm', 'modelscreening': 'manymodels',
     'partialleastsquares': 'pls', 'gaussianprocess': 'gaussproc', 'textexplorer': 'text', 'columnsviewer': 'colviewer',
     'contourplot': 'contour', 'surfaceplot': 'surface', 'multivariateembedding': 'embedding',
     # JMP's platforms the page does not have
@@ -5654,19 +5654,19 @@ PLATFORMS = {
 
 # the page's roles of each platform
 PAGE_ROLES = {
-    'distribution': ['y', 'weight', 'freq', 'by'], 'fitybyx': ['y', 'x', 'block', 'weight', 'freq', 'by'], 'matchedpairs': ['y', 'x', 'by'],
+    'distribution': ['y', 'weight', 'freq', 'by'], 'bivariate': ['y', 'x', 'block', 'weight', 'freq', 'by'], 'matchedpairs': ['y', 'x', 'by'],
     'fitmodel': ['y', 'weight', 'freq', 'validation', 'endog', 'instruments', 'offset', 'subject', 'time', 'subgroup', 'by'],
     'multivariate': ['y', 'weight', 'freq', 'by'], 'pca': ['y', 'weight', 'freq', 'by'], 'factor': ['y', 'weight', 'freq', 'by'],
     'discriminant': ['y', 'x', 'weight', 'freq', 'by'], 'hcluster': ['y', 'label', 'by'], 'kmeans': ['y', 'weight', 'freq', 'by'],
     'partition': ['y', 'x', 'weight', 'freq', 'validation', 'by'], 'forest': ['y', 'x', 'weight', 'freq', 'validation', 'by'],
     'boosted': ['y', 'x', 'weight', 'freq', 'validation', 'by'], 'neural': ['y', 'x', 'weight', 'freq', 'validation', 'by'],
     'knn': ['y', 'x', 'weight', 'freq', 'validation', 'by'], 'naivebayes': ['y', 'x', 'weight', 'freq', 'validation', 'by'],
-    'svm': ['y', 'x', 'weight', 'freq', 'validation', 'by'], 'screening': ['y', 'x', 'weight', 'freq', 'validation', 'by'],
+    'svm': ['y', 'x', 'weight', 'freq', 'validation', 'by'], 'manymodels': ['y', 'x', 'weight', 'freq', 'validation', 'by'],
     'timeseries': ['y', 'inputs', 'time', 'by'], 'controlchart': ['y', 'subgroup', 'phase', 'ntrials', 'by'],
     'capability': ['y', 'subgroup', 'by'], 'pareto': ['y', 'x', 'freq', 'by'], 'variability': ['y', 'x', 'part', 'standard', 'by'],
     'survival': ['y', 'censor', 'group', 'freq', 'by'], 'lifedist': ['y', 'censor', 'freq', 'by'],
     'parametric': ['y', 'censor', 'x', 'freq', 'by'], 'phreg': ['y', 'censor', 'x', 'freq', 'by'],
-    'fitcurve': ['y', 'x', 'group', 'weight', 'by'], 'nonlinear': ['y', 'weight', 'by'], 'respscreen': ['y', 'x', 'weight', 'freq', 'by'],
+    'fitcurve': ['y', 'x', 'group', 'weight', 'by'], 'nonlinear': ['y', 'weight', 'by'], 'manytests': ['y', 'x', 'weight', 'freq', 'by'],
     'outliers': ['y', 'label', 'by'], 'missing': ['y', 'by'], 'mds': ['y', 'label', 'by'], 'mca': ['y', 'freq', 'by'],
     'mixtures': ['y', 'freq', 'by'], 'overlay': ['y', 'x', 'group', 'by'], 'scattermatrix': ['y', 'x', 'group', 'by'],
     'chart': ['y', 'x', 'by'], 'bubble': ['y', 'x', 'id', 'time', 'size', 'color', 'freq', 'by'], 'cellplot': ['y', 'x', 'by'],
@@ -5716,7 +5716,7 @@ FYX_BV_BOOL = {'histogramborders': 'hist', 'summarystatistics': 'summary', 'show
 CT_CELLS = {'count': 'count', 'total%': 'total', 'col%': 'col', 'row%': 'row', 'expected': 'expected', 'deviation': 'deviation', 'cellchisquare': 'cellchi'}
 
 FM_PERSONALITY = {'standardleastsquares': 'standard', 'stepwise': 'stepwise', 'generalizedlinearmodel': 'glm', 'nominallogistic': 'nominal',
-                  'ordinallogistic': 'ordinal', 'mixedmodel': 'mixed', 'manova': 'manova', 'generalizedregression': 'genreg'}
+                  'ordinallogistic': 'ordinal', 'mixedmodel': 'mixed', 'manova': 'manova', 'generalizedregression': 'penreg'}
 FM_DIST = {'normal': 'normal', 'binomial': 'binomial', 'poisson': 'poisson', 'gamma': 'gamma', 'inversegaussian': 'invgauss', 'negativebinomial': 'negbin'}
 FM_LINK = {'identity': 'identity', 'logit': 'logit', 'probit': 'probit', 'log': 'log', 'reciprocal': 'reciprocal', 'comploglog': 'cloglog'}
 FM_RUN = {'summaryoffit': 'summaryOfFit', 'analysisofvariance': 'anova', 'parameterestimates': 'estimates', 'lackoffit': 'lackOfFit',
@@ -5743,12 +5743,12 @@ SPLOM = {'densityellipses': 'spEllipses', 'shadedellipses': 'spShaded', 'showcor
 PCA_BOOL = {'eigenvalues': 'eigen', 'eigenvectors': 'eigvec', 'bartletttest': 'bartlett', 'loadingmatrix': 'loadmat',
             'formattedloadingmatrix': 'fmtload', 'summaryplots': 'summary', 'biplot': 'biplot', 'screeplot': 'scree', 'scoreplot': 'score',
             'loadingplot': 'loadplot', 'scoreellipses': 'ellipse', 'correlations': 'corrmat', 'covariancematrix': 'covmat'}
-GB_ELEMENTS = {'points': 'points', 'smoother': 'smoother', 'lineoffit': 'fit', 'ellipse': 'ellipse', 'contour': 'contour', 'line': 'line',
+GM_ELEMENTS = {'points': 'points', 'smoother': 'smoother', 'lineoffit': 'fit', 'ellipse': 'ellipse', 'contour': 'contour', 'line': 'line',
                'bar': 'bar', 'area': 'area', 'boxplot': 'box', 'histogram': 'histogram', 'heatmap': 'heatmap', 'mosaic': 'mosaic',
                'captionbox': 'caption', 'pie': 'pie', 'bean': 'bean'}
-GB_ZONES = {'x': 'x', 'y': 'y', 'groupx': 'groupX', 'groupy': 'groupY', 'wrap': 'wrap', 'overlay': 'overlay', 'color': 'color',
+GM_ZONES = {'x': 'x', 'y': 'y', 'groupx': 'groupX', 'groupy': 'groupY', 'wrap': 'wrap', 'overlay': 'overlay', 'color': 'color',
             'size': 'size', 'freq': 'freq'}
-GB_STATS = {'n': 'n', 'mean': 'mean', 'median': 'median', 'sum': 'sum', 'min': 'min', 'max': 'max', 'range': 'range', 'stddev': 'sd',
+GM_STATS = {'n': 'n', 'mean': 'mean', 'median': 'median', 'sum': 'sum', 'min': 'min', 'max': 'max', 'range': 'range', 'stddev': 'sd',
             'stderr': 'se', 'variance': 'var', '%oftotal': 'pct', 'firstquartile': 'q1', 'thirdquartile': 'q3'}
 
 
@@ -6085,9 +6085,9 @@ class _Platforms(_Tables):
         return True
 
     # ---- Fit Y by X --------------------------------------------------------------------------------------
-    def map_fitybyx(self, step, fr, roles_raw, opts, whole, node):
+    def map_bivariate(self, step, fr, roles_raw, opts, whole, node):
         kind = node.key if node.key in ('bivariate', 'oneway', 'contingency', 'logistic') else None
-        self.put_roles(step, 'fitybyx', roles_raw)
+        self.put_roles(step, 'bivariate', roles_raw)
         ys, xs = step['roles'].get('y', []), step['roles'].get('x', [])
         if not ys or not xs:
             raise Unconvertible(f'{node.value}: a launch without Y and X', whole)
@@ -6112,7 +6112,7 @@ class _Platforms(_Tables):
                 sc = f'{y}~{x}'
                 use = kind or pk
                 for a in opts:
-                    if not self.fyx_option(o, sc, use, a, fr, names):
+                    if not self.biv_option(o, sc, use, a, fr, names):
                         if a not in left:
                             left.append(a)
         step['kind'] = kind or (next(iter(page_kinds.values())) if len(set(page_kinds.values())) == 1 else 'mixed')
@@ -6139,7 +6139,7 @@ class _Platforms(_Tables):
                 if v:
                     fit['alpha'] = v
 
-    def fyx_option(self, o, sc, kind, a, fr, names):
+    def biv_option(self, o, sc, kind, a, fr, names):
         if a.kind not in ('call', 'name'):
             return False
         k = a.key
@@ -6572,7 +6572,7 @@ class _Platforms(_Tables):
         if k in ALPHA_KEYS:
             o['alpha'] = self.num_arg(a, 0, 0.05)
             return True
-        if pid in ('partition', 'forest', 'boosted', 'neural', 'knn', 'naivebayes', 'svm', 'screening'):
+        if pid in ('partition', 'forest', 'boosted', 'neural', 'knn', 'naivebayes', 'svm', 'manymodels'):
             if k == 'validationportion':
                 o['portion'] = self.num_arg(a, 0, 0)
                 return True
@@ -6671,38 +6671,38 @@ class _Platforms(_Tables):
             v = jsl.name_key(self.str_arg(a) or '')
             o['format'] = 'lower' if 'lower' in v else ('upper' if 'upper' in v else 'square')
             return True
-        if pid == 'graphbuilder':
-            return self.graph_builder(o, a, fr, step, whole)
+        if pid == 'graphmaker':
+            return self.graph_maker(o, a, fr, step, whole)
         if pid == 'controlchart':
             return self.control_chart(o, a, fr, step, whole)
         if pid == 'chart':
             return self.chart_option(o, a, fr, step)
         return False
 
-    def graph_builder(self, o, a, fr, step, whole):
-        gb = o.setdefault('gb', {'v': 1, 'zones': {}, 'elements': [], 'auto': True})
+    def graph_maker(self, o, a, fr, step, whole):
+        gm = o.setdefault('gm', {'v': 1, 'zones': {}, 'elements': [], 'auto': True})
         k = a.key
         if k == 'variables':
             for z in a.args:
-                if z.kind != 'call' or z.key not in GB_ZONES:
+                if z.kind != 'call' or z.key not in GM_ZONES:
                     self.note(whole.line, 'info', f'Graph Builder: {excerpt(self.p.source(z), 30)} is not carried over.', once=('gbz', z.line))
                     continue
                 names = self.role_names(fr, [x for x in z.args if not x.kind == 'call'], whole)
-                gb['zones'].setdefault(GB_ZONES[z.key], []).extend({'id': n, 'name': n} for n in names)
+                gm['zones'].setdefault(GM_ZONES[z.key], []).extend({'id': n, 'name': n} for n in names)
             return True
         if k == 'elements':
             for el_ in a.args:
-                if el_.kind not in ('call', 'name') or el_.key not in GB_ELEMENTS:
+                if el_.kind not in ('call', 'name') or el_.key not in GM_ELEMENTS:
                     self.note(whole.line, 'info', f'Graph Builder: the element {excerpt(self.p.source(el_), 30)} is not in the page.', once=('gbe', el_.line))
                     continue
-                e = {'type': GB_ELEMENTS[el_.key]}
+                e = {'type': GM_ELEMENTS[el_.key]}
                 for s in el_.args if el_.kind == 'call' else []:
                     if s.kind == 'call' and s.key == 'summarystatistic':
                         v = jsl.name_key(self.str_arg(s) or '')
-                        if v in GB_STATS:
-                            e['summary'] = GB_STATS[v]
-                gb['elements'].append(e)
-                gb['auto'] = False
+                        if v in GM_STATS:
+                            e['summary'] = GM_STATS[v]
+                gm['elements'].append(e)
+                gm['auto'] = False
             return True
         if k in ('showcontrolpanel', 'size', 'legendposition', 'fitto window', 'fittowindow', 'includemissingcategories'):
             return True
@@ -6766,7 +6766,7 @@ class _Platforms(_Tables):
         if pid == 'distribution':
             ys = step['roles'].get('y', [])
             done = self.dist_option(o, ys[0] if len(ys) == 1 else None, m, fr, step)
-        elif pid == 'fitybyx':
+        elif pid == 'bivariate':
             names = o.setdefault('__colNames', {})
             done = True
             for y in step['roles'].get('y', []):
@@ -6774,7 +6774,7 @@ class _Platforms(_Tables):
                     if y != x:
                         use = step.get('kind') if step.get('kind') in ('bivariate', 'oneway', 'contingency', 'logistic') else None
                         use = use or ('bivariate' if self.mt_of(fr, y) == 'continuous' and self.mt_of(fr, x) == 'continuous' else 'oneway')
-                        done = self.fyx_option(o, f'{y}~{x}', use, m, fr, names) and done
+                        done = self.biv_option(o, f'{y}~{x}', use, m, fr, names) and done
         elif pid == 'multivariate':
             before = dict(o)
             self.map_multivariate({'roles': {}, 'options': o, 'line': step['line']}, fr, {}, [m], node, m)

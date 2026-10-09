@@ -642,8 +642,8 @@ async def chart_code(page):
          {'splom': ('lower', ['u', 'v', 'a'], {'points_only': True})}),
         ('K Means (3 clusters, scaled, Weight)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v'], weight: ['w'] }, { k: 3, 'k3|pcp': true, 'k3|splom': true })",
          {'splom': ('lower', ['u', 'v'], {'points_only': True})}),
-        ('Test Many Responses (every graph)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb', 'q3'], x: ['c', 'grp', 'd', 'q3'] }, { lwR2: true })", {}),
-        ('Test Many Responses (Freq)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'yb'], x: ['c', 'q1'], freq: ['f'] }, { lwR2: true })", {}),
+        ('Test Many Responses (every graph)', "(t) => __mvg.open('MV charts', 'manytests', { y: ['a', 'b', 'grp', 'yb', 'q3'], x: ['c', 'grp', 'd', 'q3'] }, { lwR2: true })", {}),
+        ('Test Many Responses (Freq)', "(t) => __mvg.open('MV charts', 'manytests', { y: ['a', 'yb'], x: ['c', 'q1'], freq: ['f'] }, { lwR2: true })", {}),
         ('Explore Outliers', "(t) => __mvg.open('MV charts', 'outliers', { y: ['a', 'c', 'd'] }, { mro: true, knn: true, knnK: 5, qro: true })", {}),
         ('Multiple Correspondence Analysis (c3 by c2, the rows)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1', 'q2', 'q3'] }, { rowplot: true, dx: 2, dy: 1 })", {}),
         ('Multiple Correspondence Analysis (Freq)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1'], freq: ['f'] }, { rowplot: true })", {}),
@@ -829,7 +829,7 @@ async def stats_code(page):
         check('K Means\' code: each fit\'s cluster sizes (Weight summed)', [[shown(v, t) for v, t in zip(got['counts'][str(k)], r['sizes'][i])] for i, k in enumerate((2, 3, 4))],
               [[True] * k for k in (2, 3, 4)])
     # ---- Test Many Responses (Weight and Freq): the PValues table
-    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb'], x: ['c', 'q1', 'd'], weight: ['w'], freq: ['f'] }, {});
+    r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'manytests', { y: ['a', 'b', 'grp', 'yb'], x: ['c', 'q1', 'd'], weight: ['w'], freq: ['f'] }, {});
       const out = { code: __mvs.code(rep, 'print(res.sort_values("FDR_LogWorth"'), table: __mvs.table(rep, 'PValues'), errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
     check('Test Many Responses\' code: Weight and Freq as frequency weights, without errors', (bool(r['code']) and 'frequency weights: Weight times Freq' in r['code'], r['errors']), (True, []))
     got, err = await run_stats(page, r['code'], '[{"y": a, "x": b, "p": None if p_ != p_ else p_, "fdr": None if q_ != q_ else q_, "lw": None if l_ != l_ else l_, "e": None if e_ != e_ else e_, "n": c_} for a, b, p_, q_, l_, e_, c_ in zip(res["Y"], res["X"], res["PValue"], res["FDR_PValue"], res["FDR_LogWorth"], res["Effect_Size"], res["Count"])]', tbl)
@@ -1093,7 +1093,7 @@ async def wp8_features(page):
     check('... the excluded rows are scored, their probabilities summing to 1', (r['excl'], round(r['sum'], 12)), ([True, True], 1.0))
 
     # ---- Test Many Responses: Fit Model with each Y's X's below the cut, by a real click
-    r = await page.ev(open_report_js('respscreen', {'y': ['a', 'b'], 'x': ['c', 'd', 'e', 'grp']}, {'fmOpen': True, 'fmCut': 0.25}), timeout=240)
+    r = await page.ev(open_report_js('manytests', {'y': ['a', 'b'], 'x': ['c', 'd', 'e', 'grp']}, {'fmOpen': True, 'fmCut': 0.25}), timeout=240)
     check('Test Many Responses: the Fit Model with the Screened X\'s outline', (r['errors'], "Fit Model with the Screened X's" in r['outlines']), ([], True))
     pv = await page.ev(table_under_js('PValues'))
     scr = await page.ev(table_under_js("Fit Model with the Screened X's"))
@@ -1211,7 +1211,7 @@ async def main():
     check('engine ready', st, 'ready')
     failed = await page.ev('SM.engine.failed.filter(f => f.module === "multivariate").map(f => f.error)')
     check('the multivariate module imports in Pyodide', failed, [])
-    names = await page.ev('SM.engine.names.filter(n => /^(multivariate|pca|factor|discriminant|hcluster|kmeans|respscreen|outliers|mca|mds)\\./.test(n)).length')
+    names = await page.ev('SM.engine.names.filter(n => /^(multivariate|pca|factor|discriminant|hcluster|kmeans|manytests|outliers|mca|mds)\\./.test(n)).length')
     check('the 28 backend names are there', names, 28)   # (22, and the saves of 2026-09-29: pca.save, factor.save, kmeans.save, hcluster.save, discriminant.save, discriminant.probs)
     check('no script errors at load', page.errors, [])
     menus = await page.ev('''(() => {
@@ -1435,13 +1435,13 @@ async def main():
     check('K Means: a click on the biplot selects the row', r[0], [r[1]])
 
     # ---- Test Many Responses --------------------------------------------------------------------------------
-    r = await page.ev(open_report_js('respscreen', {'y': ['a', 'b', 'c', 'grp'], 'x': ['d', 'e', 'grp']}, {'lwR2': True}), timeout=240)
+    r = await page.ev(open_report_js('manytests', {'y': ['a', 'b', 'c', 'grp'], 'x': ['d', 'e', 'grp']}, {'lwR2': True}), timeout=240)
     check('Test Many Responses: no errors', r['errors'], [])
     pv = await page.ev(table_under_js('PValues'))
     check('Test Many Responses: 11 pairs (grp is not tested against itself)', len(pv) - 1, 11)
     lw = [float(x[6].replace('−', '-')) for x in pv[1:]]
     check('Test Many Responses: sorted by FDR LogWorth', lw == sorted(lw, reverse=True), True)
-    has = await page.ev('!!SM.platforms.get("fitybyx")')
+    has = await page.ev('!!SM.platforms.get("bivariate")')
     r = await page.ev(f'''(async () => {{
       const n = SM.app.reports.length; const rep = {LAST};
       const ob = [...rep.content.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent === 'PValues');
@@ -1451,7 +1451,7 @@ async def main():
       return {{ opened: SM.app.reports.length - n, platform: top.platform.id, y: top.spec.roles && top.spec.roles.y && SM.app.current.col(top.spec.roles.y[0]).name }};
     }})()''')
     if has:
-        check('Test Many Responses: a line opens Bivariate Analysis for its pair', (r['opened'], r['platform'], r['y']), (1, 'fitybyx', pv[1][0]))
+        check('Test Many Responses: a line opens Bivariate Analysis for its pair', (r['opened'], r['platform'], r['y']), (1, 'bivariate', pv[1][0]))
         await page.ev(f'SM.app.closeReport({LAST})')
     else:
         check('Test Many Responses: without Bivariate Analysis a line opens nothing', r['opened'], 0)
@@ -1568,12 +1568,12 @@ async def main():
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) in the reports has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
-    helprows = await page.ev('["multivariate", "pca", "factor", "discriminant", "hcluster", "kmeans", "respscreen", "outliers", "mca", "mds"].filter(id => !document.getElementById("help-p-" + id))')
+    helprows = await page.ev('["multivariate", "pca", "factor", "discriminant", "hcluster", "kmeans", "manytests", "outliers", "mca", "mds"].filter(id => !document.getElementById("help-p-" + id))')
     check('the Help tab lists the ten platforms', helprows, [])
 
     # ---- help for every input: the launch dialogs, the forms, the controls in the reports ---------------------------
     await page.ev(HELP_JS)
-    mine = ['multivariate', 'pca', 'factor', 'discriminant', 'hcluster', 'kmeans', 'respscreen', 'outliers', 'mca', 'mds']
+    mine = ['multivariate', 'pca', 'factor', 'discriminant', 'hcluster', 'kmeans', 'manytests', 'outliers', 'mca', 'mds']
     r = await page.ev(f'''{json.dumps(mine)}.flatMap((id) => {{ const L = SM.platforms.get(id).launch;
       return [...L.roles, ...(L.options || [])].filter((f) => !f.help).map((f) => `${{id}}: ${{f.label}}`); }})''')
     check('every role and option of the ten platforms has its help', r, [])
@@ -1581,7 +1581,7 @@ async def main():
         check_launch(await page.ev(f'__hlp.launch({json.dumps(pid)})'), pid)
     specs = [('pca', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fmtload': True}), ('factor', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fits': [{'method': 'ml', 'prior': 'smc', 'k': 2, 'rotation': 'varimax', 'kaiser': True}]}),
              ('discriminant', {'y': ['a', 'b', 'c', 'd', 'e'], 'x': ['grp']}, {'stepwise': True}), ('hcluster', {'y': ['u', 'v']}, {}), ('kmeans', {'y': ['u', 'v']}, {}),
-             ('respscreen', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'rfo': True, 'mro': True, 'knn': True}),
+             ('manytests', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'rfo': True, 'mro': True, 'knn': True}),
              ('mca', {'y': ['grp', 'q1', 'q2']}, {}), ('multivariate', {'y': ['a', 'c', 'e']}, {})]
     for pid, roles, opts in specs:
         r = await page.ev(open_report_js(pid, roles, opts), timeout=240)
@@ -1591,7 +1591,7 @@ async def main():
              ('discriminant', 'Discriminant Analysis', ['Discriminant Method', 'Regularized, Compromise Method…'], 'Regularization Parameters', None),
              ('discriminant', 'Discriminant Analysis', ['Score Options', 'Select Uncertain Rows…'], 'Select Uncertain Rows', None),
              ('discriminant', 'Discriminant Analysis', ['Specify Priors', 'Other…'], 'Specify Priors (a field per group)', ['Each group']),
-             ('hcluster', 'Hierarchical Clustering', ['Number of Clusters…'], 'Number of Clusters', None), ('respscreen', 'Test Many Responses', ['Max Logworth…'], 'Max Logworth', None),
+             ('hcluster', 'Hierarchical Clustering', ['Number of Clusters…'], 'Number of Clusters', None), ('manytests', 'Test Many Responses', ['Max Logworth…'], 'Max Logworth', None),
              ('multivariate', 'Multivariate', ['Set α Level', 'Other…'], 'Set α Level', None)]
     for pid, title_, path, name, expect in forms:
         check_form(await page.ev(f'__hlp.form(window.__rep_{pid}, {json.dumps(title_)}, {json.dumps(path)})'), name, expect=expect)
@@ -1619,7 +1619,7 @@ async def main():
     by_specs = [('multivariate', {'y': ['a', 'c', 'e']}, {'mahal': True, 'alpha:raw': True, 'dcor': True, 'icc': True, 'kendallw': True}), ('pca', {'y': ['a', 'c', 'e']}, {}),
                 ('factor', {'y': ['a', 'b', 'c', 'd', 'e']}, {'fits': [{'method': 'ml', 'prior': 'smc', 'k': 1, 'rotation': 'none'}]}),
                 ('discriminant', {'y': ['a', 'c'], 'x': ['grp']}, {}), ('hcluster', {'y': ['u', 'v']}, {}), ('kmeans', {'y': ['u', 'v']}, {'k': 3}),
-                ('respscreen', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'mro': True}),
+                ('manytests', {'y': ['a', 'b'], 'x': ['c', 'grp']}, {}), ('outliers', {'y': ['a', 'c']}, {'qro': True, 'mro': True}),
                 ('mca', {'y': ['grp', 'q1']}, {}), ('mds', {'y': ['a', 'c']}, {})]
     for pid, roles, opts in by_specs:
         r = await page.ev(open_report_js(pid, {**roles, 'by': ['f']}, opts), timeout=240)

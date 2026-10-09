@@ -218,7 +218,7 @@ def uplift_compare(lab, g, F):
         check(f'{lab}: a bar per column, in the page\'s order', [x for x in ax['yticklabels'] if x], bar['y'])
         check.near(f'{lab}: the portions', maxdiff([b['w'] for b in ax['bars']], [v if v is not None else 0.0 for v in bar['x']]), 0, 1e-12)
     elif t.startswith('Probabilities') or 'threshold' in t.lower() or t.startswith('Fitted') or t.startswith('Metric'):
-        pass   # the Decision Threshold's graphs: smui-predict.js's (test-ui-screening.py checks them)
+        pass   # the Decision Threshold's graphs: smui-predict.js's (test-ui-manymodels.py checks them)
     else:
         check(f'{lab}: a graph this test knows', t, None)
 

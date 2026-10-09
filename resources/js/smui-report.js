@@ -42,7 +42,7 @@
   // What Edit > Undo leaves alone in a report's spec: what changes without a
   // run and is no analysis (a graph's size, the code shown), and Graph
   // Maker's state, which its own Undo takes back.
-  const UNDO_SKIP = ['plotSizes', 'showCode', 'gb'];
+  const UNDO_SKIP = ['plotSizes', 'showCode', 'gm'];
   function specKey(spec) {
     const options = { ...((spec && spec.options) || {}) };
     for (const k of UNDO_SKIP) delete options[k];

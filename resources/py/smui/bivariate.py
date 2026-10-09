@@ -678,7 +678,7 @@ def _bf_table(rows):
 
 # ---- Bivariate ----------------------------------------------------------------
 
-@api('fitybyx.bivariate')
+@api('bivariate.bivariate')
 def bivariate(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Summary Statistics of a scatterplot: the means, standard deviations,
     correlation and covariance of X and Y."""
@@ -704,7 +704,7 @@ def bivariate(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=
     return out
 
 
-@api('fitybyx.bivariate_bf')
+@api('bivariate.bivariate_bf')
 def bivariate_bf(table, y, x, kappa=1.0, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Bayes Factor of the Pearson correlation (Ly, Verhagen and Wagenmakers
     2016): ρ ~ stretched beta(1/κ, 1/κ) on (−1, 1) under the alternative
@@ -750,7 +750,7 @@ def _poly_labels(d, x):
     return lab
 
 
-@api('fitybyx.fit_poly')
+@api('bivariate.fit_poly')
 def fit_poly(table, y, x, degree=1, rows=None, weight=None, freq=None, alpha=0.05, want_rows=False, where=None, table_name='data'):
     """Fit Line (degree 1) and Fit Polynomial (2 to 6): least squares on X
     and centred powers of X, JMP's Summary of Fit, Lack Of Fit, Analysis of
@@ -835,7 +835,7 @@ def _row_values(res, rows, yv, exog, wf, alpha):
     return out
 
 
-@api('fitybyx.fit_mean')
+@api('bivariate.fit_mean')
 def fit_mean(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, want_rows=False, where=None, table_name='data'):
     """Fit Mean: the mean of Y as a horizontal line."""
     xy = _xy(table, y, x, rows, weight, freq)
@@ -948,7 +948,7 @@ def _special_plot(y, x, ytr, xtr, degree, intercept, slope, weight, freq, alpha)
     return {'imports': [], 'fit': p, 'pred': pred}
 
 
-@api('fitybyx.fit_special')
+@api('bivariate.fit_special')
 def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, slope=None, rows=None, weight=None, freq=None, alpha=0.05,
                 want_rows=False, where=None, table_name='data'):
     """Fit Special: transform Y and X (log, square root, square,
@@ -1091,7 +1091,7 @@ def fit_special(table, y, x, ytr='none', xtr='none', degree=1, intercept=None, s
     return out
 
 
-@api('fitybyx.fit_spline')
+@api('bivariate.fit_spline')
 def fit_spline(table, y, x, lam=None, standardize=False, rows=None, weight=None, freq=None, want_rows=False, alpha=0.05, where=None, table_name='data'):
     """Fit Spline: the cubic smoothing spline that minimises
     sum w (y - f(x))^2 + lambda * integral f''(x)^2 dx
@@ -1148,7 +1148,7 @@ def fit_spline(table, y, x, lam=None, standardize=False, rows=None, weight=None,
     return out
 
 
-@api('fitybyx.fit_lowess')
+@api('bivariate.fit_lowess')
 def fit_lowess(table, y, x, frac=2 / 3, it=0, rows=None, weight=None, freq=None, want_rows=False, alpha=0.05, where=None, table_name='data'):
     """Kernel Smoother as statsmodels' LOWESS: at each point a line fitted
     by tricube weights to the nearest fraction `frac` of the points, `it`
@@ -1202,7 +1202,7 @@ def fit_lowess(table, y, x, frac=2 / 3, it=0, rows=None, weight=None, freq=None,
     return out
 
 
-@api('fitybyx.fit_each')
+@api('bivariate.fit_each')
 def fit_each(table, y, x, rows=None, weight=None, freq=None, want_rows=False, alpha=0.05, where=None, table_name='data'):
     """Fit Each Value: the mean of Y at each distinct X, whose error is the
     pure error of the lack-of-fit test."""
@@ -1237,7 +1237,7 @@ def fit_each(table, y, x, rows=None, weight=None, freq=None, want_rows=False, al
     return out
 
 
-@api('fitybyx.fit_robust')
+@api('bivariate.fit_robust')
 def fit_robust(table, y, x, method='huber', rows=None, weight=None, freq=None, alpha=0.05, want_rows=False, where=None, table_name='data'):
     """Robust ▸ Fit Robust: an M-estimated line (statsmodels RLM) with
     Huber's or Tukey's bisquare norm; the scale is the MAD, re-estimated
@@ -1290,7 +1290,7 @@ def _deming(sxx, syy, sxy, delta):
     return b
 
 
-@api('fitybyx.fit_orthogonal')
+@api('bivariate.fit_orthogonal')
 def fit_orthogonal(table, y, x, mode='univariate', ratio=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Fit Orthogonal: the line that minimises the distances to the points
     measured with the error variance ratio delta = var(Y error)/var(X
@@ -1359,7 +1359,7 @@ def fit_orthogonal(table, y, x, mode='univariate', ratio=None, rows=None, weight
     return out
 
 
-@api('fitybyx.density_ellipse')
+@api('bivariate.density_ellipse')
 def density_ellipse(table, y, x, levels=(0.95,), rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Density Ellipse: contours of the bivariate normal with the sample
     means and covariance that hold probability P; the correlation with its
@@ -1415,7 +1415,7 @@ def density_ellipse(table, y, x, levels=(0.95,), rows=None, weight=None, freq=No
     return out
 
 
-@api('fitybyx.nonpar_density')
+@api('bivariate.nonpar_density')
 def nonpar_density(table, y, x, rows=None, weight=None, freq=None, grid=64, quantiles=(0.1, 0.25, 0.5, 0.75, 0.9), max_points=3000, alpha=0.05, where=None, table_name='data'):
     """Nonpar Density: a Gaussian kernel density of the standardised points
     (scipy.stats.gaussian_kde, Scott's bandwidth) with contours at the
@@ -1469,7 +1469,7 @@ def nonpar_density(table, y, x, rows=None, weight=None, freq=None, grid=64, quan
     return out
 
 
-@api('fitybyx.fit_quantile')
+@api('bivariate.fit_quantile')
 def fit_quantile(table, y, x, tau=0.5, rows=None, weight=None, freq=None, alpha=0.05, want_rows=False, where=None, table_name='data'):
     """Fit Quantile: the line of the tau-quantile of Y given X (statsmodels
     QuantReg; standard errors by its default kernel sandwich)."""
@@ -1749,7 +1749,7 @@ def _oneway_plot(G, out, plot, table, rows, where, table_name, alpha):
     return '\n'.join(c)
 
 
-@api('fitybyx.oneway')
+@api('bivariate.oneway')
 def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.05, plot=None, where=None, table_name='data'):
     """Oneway: the levels' counts, means, standard deviations and
     quantiles; the one-way ANOVA (with a Block: the randomized block
@@ -1848,7 +1848,7 @@ def oneway(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.0
     return out
 
 
-@api('fitybyx.oneway_ttest')
+@api('bivariate.oneway_ttest')
 def oneway_ttest(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """t Test: two levels, the second minus the first, without assuming
     equal variances (Welch-Satterthwaite degrees of freedom)."""
@@ -1885,7 +1885,7 @@ def _two_levels(G):
     return a, b, fa, fb
 
 
-@api('fitybyx.oneway_effect')
+@api('bivariate.oneway_effect')
 def oneway_effect(table, y, x, rows=None, weight=None, freq=None, block=None, alpha=0.05, where=None, table_name='data'):
     """Effect Size of the one-way ANOVA: η² = SS_X/SS_total, ε² = (SS_X −
     df_X MS_E)/SS_total (Kelley 1935) and ω² = (SS_X − df_X MS_E)/(SS_total +
@@ -1946,7 +1946,7 @@ def oneway_effect(table, y, x, rows=None, weight=None, freq=None, block=None, al
     return out
 
 
-@api('fitybyx.ttest_effect')
+@api('bivariate.ttest_effect')
 def ttest_effect(table, y, x, kind='pooled', rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Effect Size of a two-level t test, the second level minus the first.
     pooled: Cohen's d = difference/s_pooled with the exact interval from the
@@ -2012,7 +2012,7 @@ def ttest_effect(table, y, x, kind='pooled', rows=None, weight=None, freq=None, 
     return out
 
 
-@api('fitybyx.oneway_bf')
+@api('bivariate.oneway_bf')
 def oneway_bf(table, y, x, r=JZS_R, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Bayes Factor of the two-sample t test (Rouder et al. 2009): the
     pooled t of the second level minus the first, a Cauchy(0, r) prior on δ
@@ -2084,7 +2084,7 @@ def _letters(order, sig):
     return out, len(cols)
 
 
-@api('fitybyx.oneway_compare')
+@api('bivariate.oneway_compare')
 def oneway_compare(table, y, x, method='student', control=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Compare Means: Each Pair, Student's t (pooled error, no
     adjustment); All Pairs, Tukey HSD (Tukey-Kramer: pairwise_tukeyhsd for
@@ -2369,7 +2369,7 @@ def _scores(y, kind):
     return stats.norm.ppf(r / (N + 1))
 
 
-@api('fitybyx.oneway_nonpar')
+@api('bivariate.oneway_nonpar')
 def oneway_nonpar(table, y, x, test='wilcoxon', rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Nonparametric ▸ Wilcoxon / Kruskal-Wallis, Median and van der
     Waerden tests as linear rank tests (the form SAS and JMP use): each
@@ -2425,7 +2425,7 @@ def oneway_nonpar(table, y, x, test='wilcoxon', rows=None, weight=None, freq=Non
     return out
 
 
-@api('fitybyx.oneway_ks')
+@api('bivariate.oneway_ks')
 def oneway_ks(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Kolmogorov-Smirnov Two-Sample Test (scipy.stats.ks_2samp): D =
     max |F1 - F2| and the one-sided D+ = max(F1 - F2), D- = max(F2 - F1),
@@ -2492,7 +2492,7 @@ def _hodges_lehmann(a, b, alpha):
     return est, float(d[k - 1]), float(d[len(d) - k])
 
 
-@api('fitybyx.oneway_nonpar_mc')
+@api('bivariate.oneway_nonpar_mc')
 def oneway_nonpar_mc(table, y, x, method='wilcoxon', control=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Nonparametric Multiple Comparisons: Wilcoxon Each Pair (no
     adjustment), Steel-Dwass All Pairs (p from the studentized range with
@@ -2572,7 +2572,7 @@ def oneway_nonpar_mc(table, y, x, method='wilcoxon', control=None, rows=None, we
     return out
 
 
-@api('fitybyx.oneway_unequal_var')
+@api('bivariate.oneway_unequal_var')
 def oneway_unequal_var(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Unequal Variances: O'Brien[.5], Brown-Forsythe, Levene and Bartlett
     (scipy), the two-sided F test for two levels, and Welch's ANOVA
@@ -2622,7 +2622,7 @@ def oneway_unequal_var(table, y, x, rows=None, weight=None, freq=None, alpha=0.0
     return out
 
 
-@api('fitybyx.oneway_equivalence')
+@api('bivariate.oneway_equivalence')
 def oneway_equivalence(table, y, x, delta=1.0, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Equivalence Test ▸ Means: for every pair, two one-sided t tests that
     the difference lies within ±delta (statsmodels ttost_ind, the pair's
@@ -2657,7 +2657,7 @@ def oneway_equivalence(table, y, x, delta=1.0, rows=None, weight=None, freq=None
     return out
 
 
-@api('fitybyx.oneway_power')
+@api('bivariate.oneway_power')
 def oneway_power(table, y, x, alpha=0.05, sigma=None, delta=None, nobs=None, rows=None, weight=None, freq=None, where=None, table_name='data'):
     """Power: the power of the one-way F test (statsmodels
     FTestAnovaPower, effect size f = delta/sigma, noncentrality N f²) for
@@ -2738,7 +2738,7 @@ def _anom_h(n, alpha, df=None):
     return float(brentq(f, lo, hi, xtol=1e-5))
 
 
-@api('fitybyx.oneway_anom')
+@api('bivariate.oneway_anom')
 def oneway_anom(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, labels=None, where=None, table_name='data'):
     """Analysis of Means: each level's mean against decision limits around
     the grand mean, mean ± h s sqrt((N - n_i)/(N n_i)), with the exact
@@ -2813,7 +2813,7 @@ def _anom_plot(x, levels, names, table, rows, where, table_name, alpha, frame, s
     return '\n'.join(c)
 
 
-@api('fitybyx.oneway_densities')
+@api('bivariate.oneway_densities')
 def oneway_densities(table, y, x, rows=None, weight=None, freq=None, grid=160, alpha=0.05, mode='compare', labels=None, where=None, table_name='data'):
     """Densities: a Gaussian kernel density of Y in each level (scipy
     gaussian_kde, Scott's bandwidth) on a common grid, and the levels'
@@ -2865,7 +2865,7 @@ def _repeat_code(freq, frame='d'):
     return f'{frame} = {frame}.loc[{frame}.index.repeat({frame}[{J(freq)}].round().astype(int))]   # Freq: each row counted that many times'
 
 
-@api('fitybyx.oneway_brunner')
+@api('bivariate.oneway_brunner')
 def oneway_brunner(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, tost=None, where=None, table_name='data'):
     """Nonparametric ▸ Brunner-Munzel: for each pair of levels (a later
     level against an earlier one) the probability of superiority p =
@@ -3019,7 +3019,7 @@ def _rate_test(c1, e1, c2, e2, method, ci_method, compare, alpha):
     return row, notes
 
 
-@api('fitybyx.oneway_rates')
+@api('bivariate.oneway_rates')
 def oneway_rates(table, y, x, exposure=None, compare='ratio', method='score', ci_method='score', control=None, rows=None,
                  weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Compare Rates: Y counts events, each row a unit observed for its
@@ -3327,7 +3327,7 @@ def _lift(score, pos, w):
     return {'portion': portion[keep], 'lift': lift[keep]}
 
 
-@api('fitybyx.logistic')
+@api('bivariate.logistic')
 def logistic(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, target=None, where=None, table_name='data'):
     """Logistic: the Whole Model Test (likelihood ratio chi-square, the
     -LogLikelihoods, RSquare (U), AICc, BIC), Fit Details, Parameter
@@ -3544,7 +3544,7 @@ def _logistic_plots(fit, table, y, x, rows, weight, freq, where, table_name):
     return {'plot_code': '\n'.join(lp), 'roc_code': '\n'.join(roc), 'lift_code': '\n'.join(lift)}
 
 
-@api('fitybyx.logistic_rows')
+@api('bivariate.logistic_rows')
 def logistic_rows(table, y, x, rows=None, weight=None, freq=None, target=None, alpha=0.05, where=None, table_name='data'):
     """Save Probability Formula: each level's probability and the most likely
     level of every row of the group whose X has a value (the rows the fit
@@ -3570,7 +3570,7 @@ def logistic_rows(table, y, x, rows=None, weight=None, freq=None, target=None, a
             'names': [f'Prob[{lab}]' for lab in labels], 'prob': P}
 
 
-@api('fitybyx.logistic_inverse')
+@api('bivariate.logistic_inverse')
 def logistic_inverse(table, y, x, probs=(0.5,), rows=None, weight=None, freq=None, alpha=0.05, target=None, where=None, table_name='data'):
     """Inverse Prediction (binary response): the X at which the probability
     of the target level is p, with Fieller's confidence limits."""
@@ -3669,7 +3669,7 @@ def _ct_code(table_name, where, y, x, weight, freq, imports=(), table=None, rows
     return c
 
 
-@api('fitybyx.contingency')
+@api('bivariate.contingency')
 def contingency(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Contingency: the table of counts (X levels as rows, Y levels as
     columns) with expected counts, deviations and cell chi-squares; Tests:
@@ -3837,7 +3837,7 @@ def _delta_se(fn, n, h=1e-6):
     return math.sqrt(max(0.0, v / N))
 
 
-@api('fitybyx.contingency_measures')
+@api('bivariate.contingency_measures')
 def contingency_measures(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Measures of Association: gamma, Kendall's tau-b, Stuart's tau-c,
     Somers' D, lambda, uncertainty coefficients (SAS/JMP formulas, numpy),
@@ -3868,7 +3868,7 @@ def contingency_measures(table, y, x, rows=None, weight=None, freq=None, alpha=0
     return out
 
 
-@api('fitybyx.contingency_agreement')
+@api('bivariate.contingency_agreement')
 def contingency_agreement(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Agreement Statistic: Cohen's kappa (statsmodels cohens_kappa) of the
     square table over the levels of both columns, and Bowker's test of
@@ -3908,7 +3908,7 @@ def contingency_agreement(table, y, x, rows=None, weight=None, freq=None, alpha=
     return out
 
 
-@api('fitybyx.contingency_2x2')
+@api('bivariate.contingency_2x2')
 def contingency_2x2(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Relative Risk, Odds Ratio and Risk Difference of a 2x2 table
     (statsmodels Table2x2 and confint_proportions_2indep), and McNemar's
@@ -3952,7 +3952,7 @@ TWOPROP_METHODS = {
 }
 
 
-@api('fitybyx.contingency_twoprop')
+@api('bivariate.contingency_twoprop')
 def contingency_twoprop(table, y, x, compare='diff', response=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Two Sample Test for Proportions: the proportion of one Y level
     (response, default the first) in the first X level against the second,
@@ -4030,7 +4030,7 @@ def contingency_twoprop(table, y, x, compare='diff', response=None, rows=None, w
     return out
 
 
-@api('fitybyx.contingency_cmh')
+@api('bivariate.contingency_cmh')
 def contingency_cmh(table, y, x, strata, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Cochran Mantel Haenszel: a 2x2 table (X by Y) in each level of the
     grouping column, their pooled Mantel-Haenszel odds ratio, the CMH test
@@ -4112,7 +4112,7 @@ def contingency_cmh(table, y, x, strata, rows=None, weight=None, freq=None, alph
     return out
 
 
-@api('fitybyx.contingency_trend')
+@api('bivariate.contingency_trend')
 def contingency_trend(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Cochran Armitage Trend Test: a two-level variable against the
     ordered levels of the other (scores 0, 1, 2, ...), statsmodels'
@@ -4136,7 +4136,7 @@ def contingency_trend(table, y, x, rows=None, weight=None, freq=None, alpha=0.05
     return out
 
 
-@api('fitybyx.contingency_anomp')
+@api('bivariate.contingency_anomp')
 def contingency_anomp(table, y, x, event=None, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Analysis of Means for Proportions: the proportion of one response
     level in each X level against decision limits around the overall
@@ -4175,7 +4175,7 @@ def contingency_anomp(table, y, x, event=None, rows=None, weight=None, freq=None
     return {'levels': lv, 'event': j, 'y_levels': yl, 'pbar': pbar, 'h': h, 'alpha': alpha, 'code': '\n'.join(c), 'plot_code': plot}
 
 
-@api('fitybyx.contingency_ca')
+@api('bivariate.contingency_ca')
 def contingency_ca(table, y, x, rows=None, weight=None, freq=None, alpha=0.05, where=None, table_name='data'):
     """Correspondence Analysis: the singular value decomposition of the
     standardised residuals (P - r c')/sqrt(r c'), the principal inertias

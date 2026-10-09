@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Analyze > Predictive Modeling > Fit Many Models and Make Validation Column
-(resources/py/smui/screening.py).
+(resources/py/smui/manymodels.py).
 
 Each fitter against scikit-learn (or statsmodels) called directly with the
 same settings: the best-first tree after s splits against sklearn's tree
@@ -20,7 +20,7 @@ Python shown under the report and in the column's notes, run on a CSV
 export. It pins the scikit-learn 1.8 warning worked around, and the pandas
 float parser that makes the code read with float_precision='round_trip'.
 
-    python3 resources/tests/smui/test_screening.py
+    python3 resources/tests/smui/test_manymodels.py
 """
 import contextlib
 import io
@@ -38,8 +38,8 @@ import pandas as pd
 from backend import FAILED, Checks, call, table
 
 check = Checks()
-check('screening.py imports', 'screening' in FAILED, False)
-from smui import predictive as pv, registry, screening as S  # noqa: E402
+check('manymodels.py imports', 'manymodels' in FAILED, False)
+from smui import predictive as pv, registry, manymodels as S  # noqa: E402
 
 try:
     import sklearn
@@ -386,7 +386,7 @@ with warnings.catch_warnings():
 check.near('Ordinal Logistic: = statsmodels OrderedModel (cumulative logit)', mx(pred(Pt.X), om.predict(Pt.X[:, cl])), 0.0, abs_=1e-4)
 
 # ---- Penalized Regression
-pred, info = S.fit_genreg(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED)
+pred, info = S.fit_penreg(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED)
 cl = S.linear_columns(Fv)
 Av = Pv.X[:, cl]
 cz, sz = S.weighted_scaler(Av[trv])
@@ -398,7 +398,7 @@ jv = int(np.argmin(((Pv.target[tv][:, None] - fits[tv]) ** 2).sum(0)))
 check.near('Penalized Regression Lasso: the lasso path\'s penalty with the smallest validation SSE', mx(pred(Pv.X), fits[:, jv]), 0.0, abs_=1e-10)
 la = Lasso(alpha=lams[jv], fit_intercept=False, tol=1e-10, max_iter=100000).fit(Zt, Pv.target[trv] - ym)
 check.near('... = sklearn Lasso fitted alone at that penalty', mx(pred(Pv.X), ym + ((Av - cz) / sz) @ la.coef_), 0.0, abs_=1e-6)
-pred, info = S.fit_genreg(Pn.X, Pn.target, None, trn, None, 0, Fn, SEED)
+pred, info = S.fit_penreg(Pn.X, Pn.target, None, trn, None, 0, Fn, SEED)
 An = Pn.X[:, cl]
 cz, sz = S.weighted_scaler(An)
 ym = Pn.target.mean()
@@ -410,12 +410,12 @@ for j in range(len(lams)):
     k = np.count_nonzero(coefs[:, j]) + 2
     aicc.append(N * math.log(2 * math.pi * sse / N) + N + 2 * k + 2 * k * (k + 1) / (N - k - 1))
 check.near('... without validation rows: the smallest AICc (−2 log L + 2k + 2k(k+1)/(N − k − 1), k nonzero + intercept + σ)', mx(pred(Pn.X), ym + ((An - cz) / sz) @ coefs[:, int(np.argmin(aicc))]), 0.0, abs_=1e-10)
-pred, info = S.fit_genreg(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED, l1_ratio=0.9)
+pred, info = S.fit_penreg(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED, l1_ratio=0.9)
 cz, sz = S.weighted_scaler(Av[trv])
 lams, coefs, _ = enet_path((Av[trv] - cz) / sz, Pv.target[trv] - Pv.target[trv].mean(), l1_ratio=0.9, n_alphas=100, eps=1e-3, tol=1e-8, max_iter=10000)
 fits = Pv.target[trv].mean() + ((Av - cz) / sz) @ coefs
 check.near('... Elastic Net: the path with l1_ratio 0.9, chosen the same way', mx(pred(Pv.X), fits[:, int(np.argmin(((Pv.target[tv][:, None] - fits[tv]) ** 2).sum(0)))]), 0.0, abs_=1e-10)
-pred, info = S.fit_genreg(Pb.X, Pb.target, None, Pb.train(), Pb.mask(1), Lb, Fb, SEED)
+pred, info = S.fit_penreg(Pb.X, Pb.target, None, Pb.train(), Pb.mask(1), Lb, Fb, SEED)
 cl = S.linear_columns(Fb)
 Ab = Pb.X[:, cl]
 tb, vb = Pb.train(), Pb.mask(1)
@@ -449,7 +449,7 @@ check.near('... its predictions are that OLS fit\'s', mx(pred(Pn.X), steps[jb][2
 Pf, _, Ff = prep('y', freq='f')
 Pr = pv.prepare(table({k: [v[i] for i in np.repeat(np.arange(n), fq.astype(int))] for k, v in cols.items()}, types=TYPES, levels=LEVELS), 'y', X4)
 allf, allr = Pf.train(), Pr.train()
-for key, fn, kw in (('Fit Least Squares', S.fit_linear, {}), ('Penalized Regression Lasso', S.fit_genreg, {}), ('Fit Stepwise', S.fit_stepwise, {})):
+for key, fn, kw in (('Fit Least Squares', S.fit_linear, {}), ('Penalized Regression Lasso', S.fit_penreg, {}), ('Fit Stepwise', S.fit_stepwise, {})):
     a, _ = fn(Pf.X, Pf.target, Pf.w, allf, None, 0, Ff, SEED, **kw)
     b, _ = fn(Pr.X, Pr.target, None, allr, None, 0, Ff, SEED, **kw)
     check.near(f'{key}: a Freq column = its rows repeated', mx(a(Pf.X), b(Pf.X)), 0.0, abs_=1e-7)
@@ -495,7 +495,7 @@ def quiet(fn, *a, **kw):
 
 
 def fit(**kw):
-    return quiet(call, 'screening.fit', table=T, **kw)
+    return quiet(call, 'manymodels.fit', table=T, **kw)
 
 
 r, out = fit(y='y', x=['x1m', 'x2', 'x3', 'gm'], validation='v', weight='w', seed=SEED, methods=ALL)
@@ -514,7 +514,7 @@ vals = {m['key']: m['measures'][comp]['rsquare'] for m in r['methods']}
 check('compared on the validation rows, ranked by validation RSquare', (comp, r['order']), ('Validation', sorted(vals, key=lambda k: -vals[k])))
 check('the best of each column is marked', r['best']['Test']['rase'], [min(r['methods'], key=lambda m: m['measures']['Test']['rase'])['key']])
 check('with RSquare and RASE of one set the dominant method is the best one', r['dominant'], [r['order'][0]])
-prog = [ln.split() for ln in out.splitlines() if ln.startswith('smui:progress screening')]
+prog = [ln.split() for ln in out.splitlines() if ln.startswith('smui:progress manymodels')]
 check('progress lines count the fits up to the total', (prog[-1][2] == prog[-1][3], int(prog[-1][3])), (True, len(r['methods'])))
 check('actual by predicted: every method\'s predictions of every row', (len(r['residuals']['rows']), sorted(r['residuals']['predicted'])), (len(Pr_.index), sorted(m['key'] for m in r['methods'])))
 
@@ -607,7 +607,7 @@ check('... the report\'s Fit Least Squares is that model, the tree is untouched 
       ('the main effects and two-way interactions and squares, 17 terms and an intercept', True))
 
 # ---- Ensemble of Selected: the average and the stacking weights ---------------------------------------------------------
-en, _ = quiet(call, 'screening.ensemble', table=T, y='y', x=X4, validation='v', weight='w', seed=SEED, methods=['linear', 'tree', 'knn'])
+en, _ = quiet(call, 'manymodels.ensemble', table=T, y='y', x=X4, validation='v', weight='w', seed=SEED, methods=['linear', 'tree', 'knn'])
 ms_ = {k: S._model(T, None, S._spec({'y': 'y', 'x': X4, 'validation': 'v', 'weight': 'w', 'seed': SEED, 'kfold': 0}), k)['predict'](Pc_.X) for k in ['linear', 'tree', 'knn']}
 avg_ = np.mean([ms_[k] for k in ['tree', 'knn', 'linear'] if k in ms_], axis=0)
 check.near('Average of Selected: the measures of the mean of the methods\' predictions', en['rows'][0]['measures']['Validation']['rsquare'], next(q for q in pv.measures(Pc_, avg_) if q['set'] == 'Validation')['rsquare'], rel=1e-12)
@@ -628,7 +628,7 @@ check('stack_weights, probabilities: the convex combination of the largest log-l
 # a method that cannot fit these rows says so; the others still fit
 bad = {'y2': ['no'] * 30 + ['yes'] * 10 + ['no'] * 10, 'x': list(rng.normal(size=50)), 'v': ['Training'] * 30 + ['Validation'] * 20}
 Tb = table(bad, types={'y2': 'nominal', 'v': 'nominal'})
-rb, _ = quiet(call, 'screening.fit', table=Tb, y='y2', x=['x'], validation='v', seed=1, methods=['tree', 'svm', 'linear'])
+rb, _ = quiet(call, 'manymodels.fit', table=Tb, y='y2', x=['x'], validation='v', seed=1, methods=['tree', 'svm', 'linear'])
 errs = {m['key']: m.get('error') for m in rb['methods']}
 check('a training set with one level: SVC and the logit fail with their messages, the tree still fits', (errs['tree'] is None, 'ValueError' in (errs['svm'] or ''), 'ValueError' in (errs['linear'] or '')), (True, True, True))
 check('... and the failed ones are ranked last', rb['order'][-2:], ['svm', 'linear'])
@@ -638,7 +638,7 @@ small = {k: v[:150] for k, v in cols.items()}
 Ts = table(small, types=TYPES, levels=LEVELS)
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    rk = call('screening.fit', table=Ts, y='cls', x=X4, portion=0.3, seed=SEED, methods=['tree', 'knn', 'linear', 'nb'], kfold=3, repeats=2)
+    rk = call('manymodels.fit', table=Ts, y='cls', x=X4, portion=0.3, seed=SEED, methods=['tree', 'knn', 'linear', 'nb'], kfold=3, repeats=2)
 check('K-fold: the Validation Portion is left out, and said so', (rk['sets'], rk['kfold'], rk['repeats'], any('Validation Portion is not used' in t for t in rk['notes'])), (['Training'], 3, 2, True))
 Pks = pv.prepare(Ts, 'cls', X4)
 worst, nf = 0.0, 0
@@ -654,9 +654,9 @@ for m in rk['methods']:
 check.near('the Crossvalidation means and SDs are those of the folds refitted here, each tuned without its fold', worst, 0.0, abs_=1e-10)
 check('six folds in all, each fold listed', (nf, len(rk['methods'][0]['cv']['folds'])), (6, 6))
 check('the curves of the out-of-fold predictions are the Crossvalidation set', sorted({c_['set'] for c_ in rk['roc']['tree']}), ['Crossvalidation', 'Training'])
-prog = [ln.split() for ln in buf.getvalue().splitlines() if ln.startswith('smui:progress screening')]
+prog = [ln.split() for ln in buf.getvalue().splitlines() if ln.startswith('smui:progress manymodels')]
 check('progress: 4 methods fitted once and 6 times more', (int(prog[-1][2]), int(prog[-1][3])), (28, 28))
-rk2, _ = quiet(call, 'screening.fit', table=Ts, y='cls', x=X4, validation='v', seed=SEED, methods=['tree'], kfold=5)
+rk2, _ = quiet(call, 'manymodels.fit', table=Ts, y='cls', x=X4, validation='v', seed=SEED, methods=['tree'], kfold=5)
 check('K-fold with a Validation column: its sets win, and the report says so', (rk2['kfold'], any('K-fold crossvalidation is not used' in t for t in rk2['notes'])), (0, True))
 
 # warnings of a fit come back with the method's name
@@ -670,19 +670,19 @@ check('a method\'s warning is shown with its name, first line only', [str(x.mess
 base = dict(y='three', x=X4, validation='v', seed=SEED)
 Pp = pv.prepare(T, 'three', X4, validation='v')
 M, _ = quiet(S._model, T, None, S._spec({**base, 'kfold': 0}), 'lda')
-rp, _ = quiet(call, 'screening.profile', table=T, method='lda', current={'x1': 0.5, 'g': 'b'}, grid=9, **base)
+rp, _ = quiet(call, 'manymodels.profile', table=T, method='lda', current={'x1': 0.5, 'g': 'b'}, grid=9, **base)
 check('Prediction Profiler of a method: one probability per level, summing to 1', ([q['name'] for q in rp['responses']], bool(np.allclose(np.sum([q['traces'][0]['pred'] for q in rp['responses']], axis=0), 1))), (['Prob[lo]', 'Prob[mid]', 'Prob[hi]'], True))
 cur = {f_['name']: f_['current'] for f_ in rp['factors']}
 check.near('... the current prediction is the method\'s', rp['responses'][2]['current']['pred'], float(M['predict'](Pp.encode_settings([cur]))[0, 2]), rel=1e-12)
-check('... and the profiler has its maximize and importance functions', ('screening.maximize' in registry.names(), 'screening.importance' in registry.names()), (True, True))
-sv, _ = quiet(call, 'screening.save', table=T, method='knn', **base)
+check('... and the profiler has its maximize and importance functions', ('manymodels.maximize' in registry.names(), 'manymodels.importance' in registry.names()), (True, True))
+sv, _ = quiet(call, 'manymodels.save', table=T, method='knn', **base)
 Mk, _ = quiet(S._model, T, None, S._spec({**base, 'kfold': 0}), 'knn')
 Xall, rows_all = Pp.all_rows()
 check('Save Columns: every row of the table, with the method in the names', (len(sv['rows']), sv['names'][0], sv['most_name']), (n, 'Prob[lo] K Nearest Neighbors', 'Most Likely three K Nearest Neighbors'))
 check.near('... the probabilities are the method\'s for every row', mx(sv['prob'], Mk['predict'](Xall)), 0.0, abs_=1e-12)
-svc_, _ = quiet(call, 'screening.save', table=T, method='linear', y='y', x=X4, validation='v', seed=SEED)
+svc_, _ = quiet(call, 'manymodels.save', table=T, method='linear', y='y', x=X4, validation='v', seed=SEED)
 check('... continuous: the prediction and its name', svc_['name'], 'Predicted y Fit Least Squares')
-th, _ = quiet(call, 'screening.threshold', table=T, y='cls', x=X4, validation='v', seed=SEED, methods=['tree', 'linear'], plot={'order': ['linear', 'tree']})
+th, _ = quiet(call, 'manymodels.threshold', table=T, y='cls', x=X4, validation='v', seed=SEED, methods=['tree', 'linear'], plot={'order': ['linear', 'tree']})
 Pc2 = pv.prepare(T, 'cls', X4, validation='v')
 Ml, _ = quiet(S._model, T, None, S._spec({'y': 'cls', 'x': X4, 'validation': 'v', 'seed': SEED, 'kfold': 0}), 'linear')
 pl = Ml['predict'](Pc2.X)[:, 1]
@@ -699,11 +699,11 @@ cvl = pv.cut_table(np.asarray(th['models'][0]['p'])[vm], Pc2.target[vm] == 1)
 lv = pv.rates_at(*pv.counts_at(cvl, 0.4))
 check('Decision Threshold: the counts at 0.4 from the rows\' probabilities (as the page computes them), by hand', (lv['tp'], lv['fp'], lv['fn'], lv['tn']), (tp, fp, fn_, tn))
 check.near('... sensitivity, specificity, precision and F1', mx([lv['sensitivity'], lv['specificity'], lv['precision'], lv['f1']], [tp / (tp + fn_), tn / (tn + fp), tp / (tp + fp), 2 * tp / (2 * tp + fp + fn_)]), 0.0, abs_=1e-12)
-th3, _ = quiet(call, 'screening.threshold', table=Ts, y='cls', x=X4, kfold=3, repeats=2, seed=SEED, methods=['knn', 'linear'])
+th3, _ = quiet(call, 'manymodels.threshold', table=Ts, y='cls', x=X4, kfold=3, repeats=2, seed=SEED, methods=['knn', 'linear'])
 cvk, _ = quiet(S._crossvalidated, Ts, None, S._spec({'y': 'cls', 'x': X4, 'seed': SEED, 'kfold': 3}), 'knn', 2)
 check('Decision Threshold with K Fold: a Crossvalidation set of every row, each predicted by the model fitted without its fold (the first repeat)', (th3['sets'], mx(th3['models'][0]['p_cv'], cvk['oof'][:, 1]) <= 1e-12), (['Training', 'Crossvalidation'], True))
 try:
-    call('screening.threshold', table=T, y='three', x=X4, seed=SEED)
+    call('manymodels.threshold', table=T, y='three', x=X4, seed=SEED)
     check('Decision Threshold is for two levels', 'no error', 'error')
 except ValueError as e:
     check('Decision Threshold is for two levels', 'two levels' in str(e), True)
@@ -763,10 +763,10 @@ sets = S.make_sets(400, [0.6, 0.2, 0.2], 3, time=tm)
 okt = np.isfinite(tm)
 check('... cutpoint: the sets never go back in time, rows at one time together, no set without a time', (bool(np.all(np.diff(sets[okt][np.argsort(tm[okt], kind='stable')]) >= 0)), all(len(set(sets[tm == q].tolist())) == 1 for q in np.unique(tm[okt])), sets[[3, 50]].tolist()), (True, True, [-1, -1]))
 
-vc = call('screening.validation_column', table=T, training=0.6, validation=0.25, test=0.15, strata=['g'], seed=42)
+vc = call('manymodels.validation_column', table=T, training=0.6, validation=0.25, test=0.15, strata=['g'], seed=42)
 check('validation_column: Training/Validation/Test for every row, the counts the unstratified split\'s', (len(vc['values']), vc['counts'], set(vc['values'])), (n, S.split_counts(n, [0.6, 0.25, 0.15]).tolist(), {'Training', 'Validation', 'Test'}))
 check('... the notes say how and with which seed', all(t_ in vc['notes'] for t_ in ('stratified by g', 'seed 42', f'{vc["counts"][0]} training')), True)
-vn = call('screening.validation_column', table=T, training=0.5, validation=0.5, test=0, values='numeric', seed=None)
+vn = call('manymodels.validation_column', table=T, training=0.5, validation=0.5, test=0, values='numeric', seed=None)
 check('... numeric 0/1/2, a seed drawn when none is given', (set(vn['values']), isinstance(vn['seed'], int)), ({0, 1}, True))
 Tv = table({**cols, 'Validation': vc['values'], 'Vnum': [float(v) for v in vn['values']]}, types={**TYPES, 'Validation': 'nominal', 'Vnum': 'nominal'}, levels={**LEVELS, 'Validation': ['Training', 'Validation', 'Test']})
 Pa = pv.prepare(Tv, 'y', ['x1'], validation='Validation')
@@ -775,7 +775,7 @@ check('predictive.prepare takes the made column, text or numeric: its sets are t
 for kw, label in (({'strata': ['g', 'cls']}, 'stratified by two columns'), ({'groups': ['nom3']}, 'grouped'), ({'time': 'x1'}, 'cutpoint'), ({}, 'random'),
                   ({'kfold': 6, 'strata': ['cls']}, 'K Fold, stratified'), ({'strata': ['cls'], 'groups': ['nom3']}, 'Stratify by Group'), ({'strata': ['cls'], 'balance': True}, 'the training set balanced'),
                   ({'kfold': 4, 'strata': ['g'], 'groups': ['nom3']}, 'K Fold, stratified by group')):
-    vv = call('screening.validation_column', table=T, training=0.6, validation=0.2, test=0.2, seed=7, **kw)
+    vv = call('manymodels.validation_column', table=T, training=0.6, validation=0.2, test=0.2, seed=7, **kw)
     with tempfile.TemporaryDirectory() as tmp:
         pd.DataFrame(cols).to_csv(os.path.join(tmp, 'data.csv'), index=False)
         code = vv['code'] + '\nprint(json.dumps([None if v is None or v != v else v for v in df["Validation"].tolist()]))'
@@ -808,7 +808,7 @@ trc = [int(np.sum((lab2 == j) & (bal == 0))) for j in range(3)]
 check('Balance the Training Set: every stratum the same count of training rows, that of the smallest', (len(set(trc)), trc[0]), (1, min(int(np.sum((lab2 == j) & (unb == 0))) for j in range(3))))
 check('... validation and test as the stratified split\'s, the rows cut from training with no set', (bool(np.array_equal(bal[unb != 0], unb[unb != 0])), bool(np.all(bal[(unb == 0) & (bal != 0)] == -1)), int(np.sum(bal == -1))),
       (True, True, int(np.sum(unb == 0)) - 3 * trc[0]))
-vk = call('screening.validation_column', table=T, kfold=5, strata=['g'], seed=21)
+vk = call('manymodels.validation_column', table=T, kfold=5, strata=['g'], seed=21)
 check('validation_column, K Fold: the folds 1 to 5, stratified, the counts equal', (sorted(set(vk['values'])), vk['counts'], vk['kfold']), ([1, 2, 3, 4, 5], S.split_counts(n, [1.0] * 5).tolist(), 5))
 Tk = table({**cols, 'Fold': [float(v) for v in vk['values']]}, types={**TYPES, 'Fold': 'nominal'}, levels=LEVELS)
 Pk5 = pv.prepare(Tk, 'y', ['x1', 'x2'], validation='Fold')
@@ -826,7 +826,7 @@ check.near('... its pooled RSquare is sklearn\'s r2_score of those predictions',
 check.near('... and each fold\'s RASE is the held-out fold\'s', cvr['folds'][2]['rase'], float(np.sqrt(np.mean((Pk5.target[Pk5.folds == 2] - oof_[Pk5.folds == 2]) ** 2))), rel=1e-12)
 Tt = table({**cols, 'FoldT': [f'fold {v}' for v in vk['values']]}, types={**TYPES, 'FoldT': 'nominal'}, levels=LEVELS)
 check('... a character column of more than three values is read as folds too', pv.prepare(Tt, 'y', ['x1'], validation='FoldT').k, 5)
-rk, _ = quiet(call, 'screening.fit', table=Tk, y='y', x=X4, validation='Fold', seed=SEED, methods=['linear', 'knn'])
+rk, _ = quiet(call, 'manymodels.fit', table=Tk, y='y', x=X4, validation='Fold', seed=SEED, methods=['linear', 'knn'])
 lin_cv = next(m for m in rk['methods'] if m['key'] == 'linear')
 want_r2 = np.mean([metrics.r2_score(Pk5.target[Pk5.folds == j], _LR().fit(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds != j], Pk5.target[Pk5.folds != j]).predict(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds == j])) for j in range(5)])
 check('Fit Many Models crossvalidates by the column\'s folds: 5 folds, the fold column named, Crossvalidation the set compared', (rk['kfold'], rk['fold_column'], rk['compare'], len(lin_cv['cv']['folds'])), (5, 'Fold', 'Crossvalidation', 5))
@@ -835,7 +835,7 @@ for kw, what in (({'strata': ['g'], 'time': 'x1'}, 'a cutpoint column with strat
                  ({'kfold': 3}, 'K Fold of three folds (read as sets)'), ({'kfold': 5, 'time': 'x1'}, 'K Fold by a cutpoint'), ({'balance': True}, 'Balance without stratification columns'),
                  ({'balance': True, 'strata': ['g'], 'groups': ['nom3']}, 'Balance with grouping columns')):
     try:
-        call('screening.validation_column', table=T, seed=1, **{'training': 0.6, 'validation': 0.2, 'test': 0.2, **kw})
+        call('manymodels.validation_column', table=T, seed=1, **{'training': 0.6, 'validation': 0.2, 'test': 0.2, **kw})
         check(f'validation_column refuses {what}', 'no error', 'error')
     except ValueError:
         check(f'validation_column refuses {what}', True, True)
@@ -861,7 +861,7 @@ for label, kw, data in (
         ('ordinal, a holdback, a frequency', dict(table=T, y='three', x=X4, portion=0.3, freq='f'), cols),
         ('two levels, 3-fold crossvalidation repeated twice', dict(table=Ts, y='cls', x=X4, kfold=3, repeats=2), small),
         ('continuous, a K Fold Validation column', dict(table=Tk, y='y', x=X4, validation='Fold'), {**cols, 'Fold': [float(v) for v in vk['values']]})):
-    rr, _ = quiet(call, 'screening.fit', seed=SEED, methods=ALL, table_name='data', **kw)
+    rr, _ = quiet(call, 'manymodels.fit', seed=SEED, methods=ALL, table_name='data', **kw)
     got = run_code(rr['code'], data)
     if got is None:
         check(f'the code runs: {label}', False, True)
@@ -882,7 +882,7 @@ for label, kw, data in (
 # the Ensemble of Selected's code: the report's stacking weights, and the measures of its average and stacking
 for label, kw, data in (('continuous, a Validation column, a weight', dict(table=T, y='y', x=X4, validation='v', weight='w', methods=['linear', 'tree', 'knn']), cols),
                         ('two levels, 3-fold crossvalidation', dict(table=Ts, y='cls', x=X4, kfold=3, methods=['linear', 'knn', 'nb']), small)):
-    en2, _ = quiet(call, 'screening.ensemble', seed=SEED, table_name='data', **kw)
+    en2, _ = quiet(call, 'manymodels.ensemble', seed=SEED, table_name='data', **kw)
     got_e = run_code(en2['code'], data)
     if got_e is None:
         check(f'Ensemble of Selected, {label}: its code runs', False, True)
@@ -898,7 +898,7 @@ for label, kw, data in (('continuous, a Validation column, a weight', dict(table
 from test_charts import find_line  # noqa: E402
 from test_predictive import SEP, run_graph, scatter_pts, subset_in_order  # noqa: E402
 
-GTMP = tempfile.mkdtemp(prefix='smui-screening-charts-')
+GTMP = tempfile.mkdtemp(prefix='smui-manymodels-charts-')
 graphs = 0
 
 
@@ -920,7 +920,7 @@ for label, tid, kw, th_kw in (
         ('continuous, a Validation column, the test rows shown', T, dict(y='y', x=X4, validation='v', methods=['tree', 'knn', 'linear', 'lasso'], plot={'abp': 'Test'}), None),
         ('continuous, 3-fold crossvalidation, the out-of-fold predictions shown', Ts, dict(y='y', x=X4, kfold=3, methods=['tree', 'linear'], plot={'abp': 'Crossvalidation'}), None)):
     lab = f'graphs: {label}'
-    rr, _ = quiet(call, 'screening.fit', table=tid, seed=SEED, table_name='data', **kw)
+    rr, _ = quiet(call, 'manymodels.fit', table=tid, seed=SEED, table_name='data', **kw)
     pl = rr['plots']
     head = pl['head_code']
     lab_of = {m['key']: m['label'] for m in rr['methods']}
@@ -953,9 +953,9 @@ for label, tid, kw, th_kw in (
                       (F['legend'], find_line(ax, [0, 1], [0, 1] if kind == 'roc' else [1, 1]) is not None, ax['xlabel'], ax['title'], F['size']),
                       (names if last else [], True, '1 - Specificity' if kind == 'roc' else 'Portion', f'{"ROC" if kind == "roc" else "Lift"} {st} {level}', [5.6 if last else 3.6, 3.3]))
         if th_kw:
-            # the Decision Threshold's code is written in the page (smui-predict.js; test-ui-screening.py runs it): its head here fits every
+            # the Decision Threshold's code is written in the page (smui-predict.js; test-ui-manymodels.py runs it): its head here fits every
             # method as the report does, fitted[label] (and oof[label] with K Fold) the probabilities the page draws
-            th, _ = quiet(call, 'screening.threshold', table=tid, seed=SEED, table_name='data', **{k_: v_ for k_, v_ in kw.items() if k_ != 'plot'}, plot={'order': rr['order']})
+            th, _ = quiet(call, 'manymodels.threshold', table=tid, seed=SEED, table_name='data', **{k_: v_ for k_, v_ in kw.items() if k_ != 'plot'}, plot={'order': rr['order']})
             from test_predictive import run_names  # noqa: E402
             got, err = run_names(th['plots']['head_code'], tid, GTMP, ['fitted', 'oof', 'y', 'sets', 'w'])
             check(f'{lab}: Decision Threshold: its head runs', err, None)

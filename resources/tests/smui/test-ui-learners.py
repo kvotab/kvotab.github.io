@@ -380,7 +380,7 @@ async def form_help(page, opener, fields, name):
 
 def decision_compare(check, lab, g, F):
     """The graphs of the shared Decision Threshold, lift and group parts (smui-predict.js), against their code's
-    figure: False when the graph is not one of them. Used by test-ui-screening.py too."""
+    figure: False when the graph is not one of them. Used by test-ui-manymodels.py too."""
     t = g['label'] or ''
     ax = F['axes'][0]
     if t.startswith('Fitted probabilities'):

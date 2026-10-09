@@ -1,0 +1,81 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > BIVARIATE ANALYSIS, MATCHED PAIRS (smui-p-bivariate.js)
+   Colours are kvot.css's tokens, so both themes work. Class prefix: sm-biv-.
+   ========================================================================== */
+
+/* the fitted equation under a fit's title */
+.sm-biv-eq {
+  margin: 2px 0 6px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* a fit's outline carries its line's colour beside the title, as a legend */
+.sm-biv-fit > .sm-ob-head h3::before,
+.sm-biv-fit > .sm-ob-head h4::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  margin: 0 7px 0 1px;
+  vertical-align: middle;
+  border-radius: 1px;
+  background: var(--fit-color, var(--text-muted));
+}
+
+/* connecting letters line up in columns */
+.sm-biv-letters td:nth-child(2) {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: var(--text-primary);
+}
+
+/* the contingency table: numbers stacked in each cell */
+.sm-biv-scroll { max-width: 100%; overflow-x: auto; }
+.sm-biv-ct th, .sm-biv-ct td { vertical-align: top; }
+.sm-biv-ct tbody th { background: var(--sm-head-bg); font-weight: 600; text-align: left; border-bottom: 1px solid color-mix(in oklab, var(--border-color) 75%, transparent); padding: 2px 9px; white-space: nowrap; }
+.sm-biv-ct .sm-biv-stack { display: flex; flex-direction: column; gap: 0; line-height: 1.35; }
+.sm-biv-ct .sm-biv-corner .sm-biv-stack { font-weight: 400; font-size: 11px; color: var(--text-secondary); }
+.sm-biv-ct td.sm-biv-margin, .sm-biv-ct tr.sm-biv-margin td { color: var(--text-secondary); }
+.sm-biv-ct tr.sm-biv-margin td, .sm-biv-ct tr.sm-biv-margin th { border-top: 1px solid var(--border-color); }
+
+.sm-biv-warnnote { color: var(--text-primary); }
+
+/* several analyses: one under the other, or in rows (Arrange in Rows) */
+.sm-biv-group { display: flex; flex-direction: column; gap: 4px; }
+.sm-biv-group.is-rows { flex-direction: row; flex-wrap: wrap; gap: 6px 26px; align-items: flex-start; }
+.sm-biv-group.is-rows > .sm-ob { flex: 0 1 calc(100% / var(--per-row, 2) - 26px); min-width: 280px; }
+
+/* the launch dialog: which analysis each pair of modeling types gets */
+.sm-biv-map {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 11.5px;
+  max-width: 420px;
+}
+.sm-biv-map-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+.sm-biv-map-cell strong { font-weight: 600; color: var(--text-primary); }
+.sm-biv-map-cell span { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }
+.sm-biv-map-head { align-self: center; padding-right: 6px; color: var(--text-secondary); white-space: nowrap; }
+.sm-biv-map-foot { text-align: center; color: var(--text-secondary); }
+
+@media (max-width: 760px) {
+  .sm-biv-group.is-rows > .sm-ob { flex-basis: 100%; }
+  .sm-biv-map { max-width: 100%; }
+}
+
+/* A graph with its Python code under it, as one item of a row of graphs: the
+   code opens below the graph and the row makes room for it. */
+.sm-biv-plotcode { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; }

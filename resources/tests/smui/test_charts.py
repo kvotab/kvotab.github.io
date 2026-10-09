@@ -9,7 +9,7 @@ proportions, the axis labels and titles against the page's.
 
 The graphs whose numbers the page works out (the histogram's bins, the
 jittered points, the scatterplot with its fits) have their code written in
-the page: test-ui-distribution.py, test-ui-fitybyx.py and test-ui-fitmodel.py
+the page: test-ui-distribution.py, test-ui-bivariate.py and test-ui-fitmodel.py
 run those snippets in the page's own Python and compare the figures with the
 page's Plotly graphs, with PROBE and the helpers here.
 
@@ -425,7 +425,7 @@ def main():
         check(f'{label}: one figure', len(figs or []), 1)
         return figs[0] if figs else {'axes': [{'lines': [], 'bars': [], 'scatter': [], 'polys': [], 'patches': [], 'texts': [], 'segments': [], 'legend': [], 'title': '', 'xlabel': '', 'ylabel': '', 'xticklabels': [], 'yticklabels': []}], 'suptitle': ''}
 
-    for section in (distribution_checks, fit_y_by_x_checks, fit_model_checks):
+    for section in (distribution_checks, bivariate_checks, fit_model_checks):
         section(check, run, np, pd, stats, call, table, data)
     return check.done()
 
@@ -527,7 +527,7 @@ def distribution_checks(check, run, np, pd, stats, call, table, data):
 
 # ---- Bivariate Analysis ------------------------------------------------------------------
 
-def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
+def bivariate_checks(check, run, np, pd, stats, call, table, data):
     import warnings
     import statsmodels.api as sm
     import statsmodels.formula.api as smf
@@ -576,7 +576,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
             payload = dict(args)
             if fn not in ('fit_orthogonal', 'density_ellipse', 'nonpar_density'):
                 payload['want_rows'] = True
-            r = call(f'fitybyx.{fn}', table=tid, y='y', x='x', weight=weight, freq=freq, **payload)
+            r = call(f'bivariate.{fn}', table=tid, y='y', x='x', weight=weight, freq=freq, **payload)
             p = r.get('plot') or {'imports': [], 'fit': [], 'pred': []}
             ns = {'np': np, 'pd': pd, 'sm': sm, 'smf': smf, 's': pair(weight, freq)}
             try:
@@ -612,7 +612,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
     for weight, freq, block, circ in ((None, None, None, {'method': 'tukey'}), ('w', 'f', None, {'method': 'student'}), (None, 'f', None, {'method': 'dunnett', 'control': 'mid'}), (None, None, 'blk', None)):
         tag = f'Oneway ({", ".join(v for v in (weight, freq) if v) or "unweighted"}{", block" if block else ""}{", circles " + circ["method"] if circ else ""})'
         plot = {**everything, 'circles': circ}
-        r = call('fitybyx.oneway', table=tid, y='y', x='grp', weight=weight, freq=freq, block=block, plot=plot, table_name='data')
+        r = call('bivariate.oneway', table=tid, y='y', x='grp', weight=weight, freq=freq, block=block, plot=plot, table_name='data')
         F = run(tag, r['plot_code'], tid)
         ax = F['axes'][0]
         L = r['levels']
@@ -647,7 +647,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
         check(f'{tag}: the connected means', find_line(ax, list(range(k)), [l['mean'] for l in L], rel=1e-12) is not None, True)
         check(f'{tag}: the title and the size', (F['suptitle'] if circ else ax['title'], F['size']), ('y by grp', [6.0, 3.8]))
         if circ:
-            cmp = call('fitybyx.oneway_compare', table=tid, y='y', x='grp', weight=weight, freq=freq, method=circ['method'], control=circ.get('control'))
+            cmp = call('bivariate.oneway_compare', table=tid, y='y', x='grp', weight=weight, freq=freq, method=circ['method'], control=circ.get('control'))
             cx = F['axes'][1]
             ells = [p for p in cx['patches'] if p['type'] == 'ellipse']
             want_r = [cmp['quantile']['value'] * math.sqrt(cmp['mse'] / cmp['n'][i]) for i in range(k)]
@@ -657,7 +657,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
 
     # ---- Analysis of Means, Densities
     for weight, freq in ((None, None), (None, 'f')):
-        r = call('fitybyx.oneway_anom', table=tid, y='y', x='grp', weight=weight, freq=freq, labels=labels)
+        r = call('bivariate.oneway_anom', table=tid, y='y', x='grp', weight=weight, freq=freq, labels=labels)
         tag = f'ANOM{" (Freq)" if freq else ""}'
         F = run(tag, r['plot_code'], tid)
         ax = F['axes'][0]
@@ -669,7 +669,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
         check(f'{tag}: the grand mean', find_line(ax, None, [r['grand_mean']] * 2, rel=1e-12) is not None, True)
         check(f'{tag}: the levels, the title', ([t for t in ax['xticklabels'] if t], ax['ylabel'], ax['title']), (labels, 'Mean', 'Analysis of Means'))
     for mode in ('compare', 'composition', 'proportion'):
-        r = call('fitybyx.oneway_densities', table=tid, y='y', x='grp', freq='f', mode=mode, labels=labels)
+        r = call('bivariate.oneway_densities', table=tid, y='y', x='grp', freq='f', mode=mode, labels=labels)
         F = run(f'Densities ({mode})', r['plot_code'], tid)
         ax = F['axes'][0]
         Ls = [l for l in r['levels'] if l['density']]
@@ -688,7 +688,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
 
     # ---- Logistic: the logistic plot, ROC and lift
     for yname, weight, freq in (('resp', None, None), ('resp', 'w', 'f'), ('grp', None, 'f'), ('lvl', None, None)):
-        r = call('fitybyx.logistic', table=tid, y=yname, x='x', weight=weight, freq=freq)
+        r = call('bivariate.logistic', table=tid, y=yname, x='x', weight=weight, freq=freq)
         tag = f'logistic {yname} ({r["kind"]}{", weighted" if weight or freq else ""})'
         F = run(f'{tag} plot', r['plot_code'], tid)
         ax = F['axes'][0]
@@ -736,7 +736,7 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
     # ---- Contingency: the mosaic, ANOM for proportions, correspondence analysis
     for weight, freq in ((None, None), ('w', 'f')):
         tag = f'mosaic{" (Weight and Freq)" if weight else ""}'
-        r = call('fitybyx.contingency', table=tid, y='grp', x='blk', weight=weight, freq=freq)
+        r = call('bivariate.contingency', table=tid, y='grp', x='blk', weight=weight, freq=freq)
         F = run(tag, r['plot_code'], tid)
         ax = F['axes'][0]
         cnt = np.asarray(r['counts'], float)
@@ -752,14 +752,14 @@ def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
         check.near(f'{tag}: the column on the right: Y\'s overall shares', md([b['h'] for b in bars[R * C:]], cnt.sum(0) / N), 0.0, abs_=1e-12)
         check(f'{tag}: the levels, the legend, the titles', ([t for t in ax['xticklabels'] if t], ax['legend'], ax['xlabel'], ax['ylabel'], ax['title']),
               (['b1', 'b2', 'b3', 'all'], ['hi', 'mid', 'lo'], 'blk', 'grp', 'grp by blk mosaic'))
-    r = call('fitybyx.contingency_anomp', table=tid, y='resp', x='grp', freq='f')
+    r = call('bivariate.contingency_anomp', table=tid, y='resp', x='grp', freq='f')
     F = run('ANOM for proportions', r['plot_code'], tid)
     ax = F['axes'][0]
     segs = [s for c in ax['segments'] for s in c['segs']]
     check.near('ANOM for proportions: the decision limits', md(sorted(s[0][1] for s in segs), sorted([l['ldl'] for l in r['levels']] + [l['udl'] for l in r['levels']])), 0.0, abs_=1e-7)
     check.near('ANOM for proportions: the proportions', md([q[1] for q in ax['scatter'][0]['xy']], [l['p'] for l in r['levels']]), 0.0, abs_=1e-12)
     check('ANOM for proportions: the titles', (ax['xlabel'], ax['ylabel'], ax['title']), ('grp', 'Proportion of yes', 'Analysis of Means for Proportions'))
-    r = call('fitybyx.contingency_ca', table=tid, y='grp', x='lvl', weight='w')
+    r = call('bivariate.contingency_ca', table=tid, y='grp', x='lvl', weight='w')
     F = run('correspondence analysis', r['plot_code'], tid)
     ax = F['axes'][0]
     got_rows, got_cols = ax['scatter'][0]['xy'], ax['scatter'][1]['xy']
@@ -1007,10 +1007,10 @@ def fit_model_checks(check, run, np, pd, stats, call, table, data):
     wg = rng.uniform(0.5, 2, n).round(2)
     wg[[2, 7]] = 0   # rows the fit leaves out (a zero weight)
     tidr = table({**{f'z{i}': Xg[:, i] for i in range(4)}, 'yg': yg, 'wg': wg}, tid='charts8')
-    for label, kw in (('GenReg lasso, AICc', {'method': 'lasso'}), ('GenReg elastic net, KFold', {'method': 'enet', 'criterion': 'kfold', 'folds': 4, 'seed': 5}),
-                      ('GenReg forward, BIC', {'method': 'forward', 'criterion': 'bic'}), ('GenReg lasso, holdback', {'method': 'lasso', 'criterion': 'holdback', 'portion': 0.3, 'seed': 9}),
-                      ('GenReg lasso, holdback, Weight with zeros', {'method': 'lasso', 'criterion': 'holdback', 'portion': 0.3, 'seed': 9, 'weight': 'wg'})):
-        r = call('fitmodel.genreg', table=tidr, y='yg', effects=[[f'z{i}'] for i in range(4)], n_grid=20, table_name='data', **kw)
+    for label, kw in (('PenReg lasso, AICc', {'method': 'lasso'}), ('PenReg elastic net, KFold', {'method': 'enet', 'criterion': 'kfold', 'folds': 4, 'seed': 5}),
+                      ('PenReg forward, BIC', {'method': 'forward', 'criterion': 'bic'}), ('PenReg lasso, holdback', {'method': 'lasso', 'criterion': 'holdback', 'portion': 0.3, 'seed': 9}),
+                      ('PenReg lasso, holdback, Weight with zeros', {'method': 'lasso', 'criterion': 'holdback', 'portion': 0.3, 'seed': 9, 'weight': 'wg'})):
+        r = call('fitmodel.penreg', table=tidr, y='yg', effects=[[f'z{i}'] for i in range(4)], n_grid=20, table_name='data', **kw)
         p = r['path']
         F = run(f'{label}: solution path', r['plot_code']['path'], tidr)
         ax = F['axes'][0]
@@ -1068,8 +1068,8 @@ def fit_model_checks(check, run, np, pd, stats, call, table, data):
             ('Logistic (ordinal)', 'logistic', tidl, 1e-5, {'y': 'yo', 'effects': [['x1'], ['g']]}),
             ('Mixed', 'mixed', tidm, 1e-6, {'y': 'ym', 'effects': [{'names': ['x1']}, {'names': ['g']}, {'names': ['subj'], 'random': True}]}),
             ('GEE (exchangeable)', 'gee', tidm, 1e-7, {'y': 'ym', 'effects': [['x1'], ['g']], 'subject': 'subj', 'corr': 'exchangeable'}),
-            ('GenReg lasso', 'genreg', tid, 1e-5, {'y': 'y', 'effects': [['x1'], ['x2'], ['g'], ['h']], 'n_grid': 20}),
-            ('GenReg forward, holdback', 'genreg', tid, 1e-5, {'y': 'y', 'effects': [['x1'], ['g'], ['h']], 'method': 'forward', 'criterion': 'holdback', 'portion': 0.3, 'seed': 4})):
+            ('PenReg lasso', 'penreg', tid, 1e-5, {'y': 'y', 'effects': [['x1'], ['x2'], ['g'], ['h']], 'n_grid': 20}),
+            ('PenReg forward, holdback', 'penreg', tid, 1e-5, {'y': 'y', 'effects': [['x1'], ['g'], ['h']], 'method': 'forward', 'criterion': 'holdback', 'portion': 0.3, 'seed': 4})):
         r = call('fitmodel.interaction', table=tbl, kind=kind, table_name='data', **kw)
         k = len(r['factors'])
         F = run(f'interaction plots, {label}', r['plot_code'], tbl)

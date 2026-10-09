@@ -434,7 +434,7 @@ km2 = call('kmeans.fit', table=tk, columns=['k1', 'k2'], k_min=2, k_max=5, stand
 check('seeded: the same result twice', km2['fits'][1]['labels'] == f3['labels'], True)
 
 # ---- Test Many Responses -----------------------------------------------------------------------------------------
-rs = call('respscreen.fit', table=tid, y=['a', 'b', 'g'], x=['c', 'g', 'd'])
+rs = call('manytests.fit', table=tid, y=['a', 'b', 'g'], x=['c', 'g', 'd'])
 res = {(x['y'], x['x']): x for x in rs['results']}
 d_ = pd.DataFrame(Xm, columns=cols).assign(g=grp)
 cc_rows = d_[['a', 'g']].dropna()
@@ -454,7 +454,7 @@ iq = np.subtract(*np.quantile(cc_rows['a'], [0.75, 0.25]))
 check.near('effect size = sqrt(model mean square) / (IQR/1.349)', res[('a', 'g')]['effect'], math.sqrt(fit.ess / 2) / (iq / 1.3489795))
 bin_y = (Xm[:, 0] > 0).astype(float)
 tb = table({'yb': np.where(bin_y > 0, 'yes', 'no').tolist(), 'xc': Xm[:, 2]})
-rb_ = call('respscreen.fit', table=tb, y=['yb'], x=['xc'])
+rb_ = call('manytests.fit', table=tb, y=['yb'], x=['xc'])
 lb = sm.Logit(bin_y, sm.add_constant(Xm[:, 2])).fit(disp=0)
 check.near('binary Y: logistic LR p (statsmodels Logit)', rb_['results'][0]['p'], float(lb.llr_pvalue), rel=1e-7)
 
@@ -567,7 +567,7 @@ snippets = [
     ('main', 'multivariate.outliers', o), ('main', 'multivariate.reliability', rel),
     ('main', 'pca.fit', pc), ('main', 'pca.fit covariances', pcv), ('main', 'pca.fit unscaled', pcu),
     ('main', 'factor.eigen', call('factor.eigen', table=tid, columns=cols)), ('main', 'factor.fit ml', fa), ('main', 'factor.fit pa', fap), ('main', 'factor.fit varimax', fav),
-    ('disc', 'discriminant.fit', dr), ('main', 'hcluster.fit', hw), ('km', 'kmeans.fit', km), ('main', 'respscreen.fit', rs),
+    ('disc', 'discriminant.fit', dr), ('main', 'hcluster.fit', hw), ('km', 'kmeans.fit', km), ('main', 'manytests.fit', rs),
     ('mro', 'outliers.multivariate', mo), ('mro', 'outliers.knn', ko), ('mca', 'mca.fit', mc), ('main', 'mds.fit', md), ('dm', 'mds.fit matrix', mm_),
     ('main', 'multivariate.distance', dc), ('main', 'multivariate.distance freq', call('multivariate.distance', table=tid, columns=['a', 'c'], freq='w')),
 ]
@@ -1207,7 +1207,7 @@ for label, kw in (('2 to 4 clusters, in their units', {'k_min': 2, 'k_max': 4, '
 
 # ---- Test Many Responses ------------------------------------------------------------------------------------------------------------
 for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight, rows left out)', {'weight': 'w', 'rows': all_rows})):
-    rs_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
+    rs_ = call('manytests.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
     R_ = rs_['results']
     good = [x_ for x_ in R_ if x_['p'] is not None]
     F = figure(f'FDR PValue Plot{label}', rs_['fdr_code'], tq)
@@ -1359,7 +1359,7 @@ check('... the joins are the report\'s', np.asarray(ns['Z'])[:, :2].astype(int).
 r_ = call('kmeans.fit', table=tq, columns=['u', 'v'], k_min=3, **G)
 ns = ns_of(r_, 'k-means of a By group')
 check('... on the group\'s rows', len(ns.get('X', [])), len(r_['rows']))
-r_ = call('respscreen.fit', table=tq, y=['a', 'q1'], x=['c', 'q2'], **G)
+r_ = call('manytests.fit', table=tq, y=['a', 'q1'], x=['c', 'q2'], **G)
 ns = ns_of(r_, 'test many responses of a By group')
 check.near('... the p-values are the report\'s', gap(ns['res']['PValue'] if 'res' in ns else [], [x_['p'] for x_ in r_['results']]), 0.0, abs_=1e-12)
 for fn_, extra in (('outliers.quantile', {}), ('outliers.robust', {})):
@@ -1466,8 +1466,8 @@ for label, kw in (('2 to 5 clusters, in their units', {'columns': ['u', 'v', 'a'
 # Test Many Responses: every test with Weight and Freq as the report uses them
 for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight)', {'weight': 'w'}), (' (Weight and Freq, rows excluded)', {'weight': 'w', 'freq': 'f', 'rows': all_rows}),
                   (' (a By group)', {'rows': grp_rows, 'where': where_hi})):
-    r_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
-    tag = f'respscreen.fit\'s code{label}'
+    r_ = call('manytests.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
+    tag = f'manytests.fit\'s code{label}'
     ns = run_code(tag, r_['code'], tq)
     if not ns:
         continue

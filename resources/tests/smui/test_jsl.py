@@ -664,7 +664,7 @@ check('the where is a boolean over the frame', int(eval(s['where'], {'dt': STUDE
 r, s = one_step('biv = Bivariate( Y( :weight ), X( :height ), Fit Line( {Confid Curves Fit( 1 ), Report( 0 )} ), Fit Polynomial( 3 ), Fit Spline( 0.5, Standardized ), Density Ellipse( 0.9 ),'
                 ' Fit Mean, Kernel Smoother( 1, 1, 0.5 ), Fit Orthogonal( Equal Variances ), Nonpar Density, Histogram Borders( 1 ), Group By( :sex ) ); biv << Fit Robust;')
 fits = s['options']['weight~height|fits']
-check('Bivariate: the page\'s Bivariate Analysis, options scoped by the pair', (s['platform'], s['kind'], s['roles']), ('fitybyx', 'bivariate', {'y': ['weight'], 'x': ['height']}))
+check('Bivariate: the page\'s Bivariate Analysis, options scoped by the pair', (s['platform'], s['kind'], s['roles']), ('bivariate', 'bivariate', {'y': ['weight'], 'x': ['height']}))
 check('Bivariate: the fits in order', [f['kind'] for f in fits], ['line', 'poly', 'spline', 'ellipse', 'mean', 'lowess', 'orth', 'kde', 'robust'])
 check('a fit\'s own options', (fits[0].get('cfit'), fits[0].get('report'), fits[1]['degree'], fits[2]['lam'], fits[2]['standardize'], fits[3]['p'], fits[6]['mode']),
       (True, False, 3, 0.5, True, 0.9, 'equal'))
@@ -760,12 +760,12 @@ for src, pid, roles, opts in [
     r, s = one_step(src)
     check(f'{src.split("(")[0]}: the page\'s {pid}, roles and options', (s and s['platform'], s and s['roles'], s and s['options']), (pid, roles, opts))
 r, s = one_step('Graph Builder( Size( 500, 400 ), Show Control Panel( 0 ), Variables( X( :height ), Y( :weight ), Group X( :sex ), Color( :age ) ), Elements( Points( X, Y, Legend( 1 ) ), Smoother( X, Y ), Bar( X, Y, Summary Statistic( "Mean" ) ) ) );')
-gb = s['options']['gb']
-check('Graph Builder: the zones', {k: [z['name'] for z in v] for k, v in gb['zones'].items()}, {'x': ['height'], 'y': ['weight'], 'groupX': ['sex'], 'color': ['age']})
-check('Graph Builder: the elements and a summary statistic', (gb['elements'], gb['auto']), ([{'type': 'points'}, {'type': 'smoother'}, {'type': 'bar', 'summary': 'mean'}], False))
+gm = s['options']['gm']
+check('Graph Builder: the zones', {k: [z['name'] for z in v] for k, v in gm['zones'].items()}, {'x': ['height'], 'y': ['weight'], 'groupX': ['sex'], 'color': ['age']})
+check('Graph Builder: the elements and a summary statistic', (gm['elements'], gm['auto']), ([{'type': 'points'}, {'type': 'smoother'}, {'type': 'bar', 'summary': 'mean'}], False))
 
 r = conv('dt = Current Data Table(); dt << Distribution( Y( :height ) ); o = dt << Bivariate( Y( :weight ), X( :height ) ) << Fit Line; Oneway( Y( :height ), X( :sex ) );')
-check('launches sent to a table, assigned, chained, and plain: steps in order', [(x['id'], x['platform'], x['line']) for x in r['steps']], [('p1', 'distribution', 1), ('p2', 'fitybyx', 1), ('p3', 'fitybyx', 1)])
+check('launches sent to a table, assigned, chained, and plain: steps in order', [(x['id'], x['platform'], x['line']) for x in r['steps']], [('p1', 'distribution', 1), ('p2', 'bivariate', 1), ('p3', 'bivariate', 1)])
 check('a message chained on a launch', r['steps'][1]['options']['weight~height|fits'], [{'id': 'f1', 'kind': 'line'}])
 check('one marker per step, in order', [ln for ln in r['python'].splitlines() if ln.startswith('# <<smui:')], ['# <<smui:p1>>', '# <<smui:p2>>', '# <<smui:p3>>'])
 r = conv('dt = Current Data Table(); cols = {"height", "weight"}; For( i = 1, i <= 2, i++, Distribution( Y( Column( cols[i] ) ) ) ); Distribution( Y( Eval( cols ) ) );')

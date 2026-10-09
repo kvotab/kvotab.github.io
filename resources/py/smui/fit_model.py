@@ -28,7 +28,7 @@ The personalities and the names the page calls:
                         between- and within-subject tests, Mauchly's sphericity
                         test, the Greenhouse-Geisser and Huynh-Feldt adjusted
                         univariate within tests
-  fitmodel.genreg       Penalized Regression: lasso, elastic net, ridge, their
+  fitmodel.penreg       Penalized Regression: lasso, elastic net, ridge, their
                         adaptive forms, forward selection; AICc, BIC, KFold,
                         holdback, leave-one-out or a Validation column
   fitmodel.gee          Generalized Estimating Equations (statsmodels' GEE):
@@ -2102,8 +2102,8 @@ def _model(kind, tid, rows, spec):
         return _logit_model(tid, rows, spec)
     if kind == 'mixed':
         return _mixed_model(tid, rows, spec)
-    if kind == 'genreg':
-        return _genreg_model(tid, rows, spec)
+    if kind == 'penreg':
+        return _penreg_model(tid, rows, spec)
     if kind == 'gee':
         return _gee_model(tid, rows, spec)
     if kind == 'iv':
@@ -2123,8 +2123,8 @@ def _predict(m, settings, alpha):
         return _logit_predict(m, settings, alpha)
     if kind == 'mixed':
         return _mixed_predict(m, settings, alpha)
-    if kind == 'genreg':
-        return _genreg_predict(m, settings, alpha)
+    if kind == 'penreg':
+        return _penreg_predict(m, settings, alpha)
     if kind == 'gee':
         return _gee_predict(m, settings, alpha)
     if kind == 'iv':
@@ -2278,7 +2278,7 @@ def _save_linear(m, where, b, name):
     return idx, cols, [{'name': name, 'expr': models.formula_where(tid, where, models.formula_linear(d, di, b, tid))}]
 
 
-def _save_genreg(m, where, alpha):
+def _save_penreg(m, where, alpha):
     d, tid, spec = m['d'], m['tid'], m['spec']
     di = m['X'].design_info
     idx, X, _ = models.new_rows(d, di, tid, where)
@@ -2346,8 +2346,8 @@ def save(table, kind='ls', rows=None, where=None, alpha=0.05, table_name='data',
         idx, cols, F = _save_linear(m, where, m['res'].params.to_numpy(float), f'Pred Formula {spec["y"][0]}')
     elif k == 'qr':
         idx, cols, F = _save_linear(m, where, m['res'].params.to_numpy(float), f'Pred Formula {spec["y"][0]} Quantile {_fmt_num(m["tau"])}')
-    elif k == 'genreg':
-        idx, cols, F = _save_genreg(m, where, alpha)
+    elif k == 'penreg':
+        idx, cols, F = _save_penreg(m, where, alpha)
         if m['info'].get('levels'):   # binomial of a two-level Y: the Prob[] columns the Decision Threshold's formula reads
             p_ = np.asarray(cols['predicted'], dtype=float)
             return {'rows': [int(i) for i in idx], 'columns': cols, 'formulas': F, 'n_fit': int(len(m['d'].df)),
@@ -2522,7 +2522,7 @@ def _interaction_code(m, table, rows, table_name, facs, response):
     elif kind == 'gee':
         base = _gee_fit_code(m, table, table_name, rows)
         di, pred = 'X.design_info', ['    return fam.link.inverse(L @ np.asarray(fit.params))   # the marginal mean']
-    elif kind == 'genreg':
+    elif kind == 'penreg':
         R = m['path']
         base = _gr_code(m, table, table_name, rows).split('\n')
         base = base[:next(i for i, ln in enumerate(base) if ln.startswith('e = '))]
@@ -5168,7 +5168,7 @@ def _gr_normal_path(Z, y, w, M, lams, a1, pf):
 def _gr_progress(done, total, K):
     """A progress line for the page when the fits are many (Leave-One-Out)."""
     if K >= 50 and (done == total or done % max(1, total // 10) == 0):
-        print(f'smui:progress genreg {done} {total}', flush=True)
+        print(f'smui:progress penreg {done} {total}', flush=True)
 
 
 def _gr_glm_path(Z, y, w, M, dist, lams, a1, pf, tol=1e-9, maxit=100):
@@ -5492,11 +5492,11 @@ def _gr_train(S, rows, coef, dist, lam=None, a1=1.0, pf=None, nterms=None):
     return {'ll': ll, 'df': df, 'aicc': aicc, 'bic': -2 * ll + k * math.log(N), 'N': N, 'nonzero': int(len(act))}
 
 
-def _genreg_path(tid, rows, spec):
+def _penreg_path(tid, rows, spec):
     """The path of a fit and the validation that picks a model on it
     (remembered: choosing another model on the path does not refit)."""
     O = _gr_opts(spec)
-    key = _key('genreg-path', tid, rows, O)
+    key = _key('penreg-path', tid, rows, O)
     R = models.recall(key)
     if R is not None:
         return R
@@ -5575,14 +5575,14 @@ def _genreg_path(tid, rows, spec):
     return R
 
 
-def _genreg_model(tid, rows, spec):
+def _penreg_model(tid, rows, spec):
     """The model chosen on the path (the best, or the one the page chose),
     in the form the profilers take."""
-    key = _key('genreg', tid, rows, spec)
+    key = _key('penreg', tid, rows, spec)
     m = models.recall(key)
     if m is not None:
         return m
-    R = _genreg_path(tid, rows, spec)
+    R = _penreg_path(tid, rows, spec)
     S = R['S']
     d, names, cols, ic, live = S['d'], S['names'], S['cols'], S['ic'], S['live']
     L = len(R['coefs'])
@@ -5599,14 +5599,14 @@ def _genreg_model(tid, rows, spec):
         if t in names:
             bjmp[ic] -= mean * borig[names.index(t)]
     sets = np.where(R['train'], 0, np.where(R['valid'], 1, np.where(S['sets'] == 2, 2, -1)))
-    m = {'kind': 'genreg', 'd': d, 'X': S['X'], 'names': names, 'path': R, 'best': R['best'], 'chosen': chosen, 'b': borig, 'b_jmp': bjmp,
+    m = {'kind': 'penreg', 'd': d, 'X': S['X'], 'names': names, 'path': R, 'best': R['best'], 'chosen': chosen, 'b': borig, 'b_jmp': bjmp,
          'scaled': c, 'mu': mu_, 'sd': sd_, 'cols': cols, 'dist': S['dist'], 'info': S['info'], 'y': S['y'], 'w': S['w'],
          'sets': sets, 'coder': Coder(d, S['X'].design_info), 'key': key, 'spec': spec, 'tid': tid}
     models.remember(key, m)
     return m
 
 
-def _genreg_predict(m, settings, alpha):
+def _penreg_predict(m, settings, alpha):
     L = m['coder'].rows(settings)
     eta = L @ m['b']
     pred = _gr_mu(m['dist'], eta)
@@ -5848,7 +5848,7 @@ def _gr_code(m, table, table_name, rows):
     return '\n'.join(lines)
 
 
-def _genreg_plots(m, table, rows, table_name, out):
+def _penreg_plots(m, table, rows, table_name, out):
     """The Solution Path of a Penalized Regression as code: the estimates on
     the scaled predictors along the path (or the steps) and the curve that
     picks the model, with the model shown (red) and the best (dotted). The
@@ -5895,14 +5895,14 @@ def _genreg_plots(m, table, rows, table_name, out):
     return codes
 
 
-@api('fitmodel.genreg')
-def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, dist='normal', method='lasso', enet_alpha=0.9,
+@api('fitmodel.penreg')
+def penreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept=False, dist='normal', method='lasso', enet_alpha=0.9,
            criterion='aicc', n_grid=40, choose=None, target=None, adaptive=False, validation=None, portion=None, folds=None, seed=None,
            center=True, table_name='data'):
     spec = _spec(y=y, effects=effects, weight=weight, freq=freq, dist=dist, method=method, enet_alpha=enet_alpha, criterion=criterion,
                  n_grid=n_grid, choose=choose, target=target, adaptive=adaptive, validation=validation, portion=portion, folds=folds, seed=seed,
                  center=center)
-    m = _genreg_model(table, rows, spec)
+    m = _penreg_model(table, rows, spec)
     R = m['path']
     S, O = R['S'], R['O']
     d, names = m['d'], m['names']
@@ -6035,7 +6035,7 @@ def genreg(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
             '   # the same fit on the original predictors: its standard errors\nprint(fo.params, fo.bse)'
     if S['dist'] == 'binomial' and S['info'].get('levels'):
         out['fit_report'] = _gr_fit_report(m, code, crit, bool(O['validation']) and not fcol)
-    out['plot_code'] = _genreg_plots(m, table, rows, table_name, out)
+    out['plot_code'] = _penreg_plots(m, table, rows, table_name, out)
     return out
 
 

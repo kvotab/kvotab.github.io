@@ -12,7 +12,7 @@
 
    Each pair has its red triangle; each fit of a Bivariate has its own.
    The options are stored per pair (scope y~x), so Redo, By and projects
-   keep them. The numbers are resources/py/smui/fit_y_by_x.py's.
+   keep them. The numbers are resources/py/smui/bivariate.py's.
 
    Matched Pairs compares two paired responses: the Tukey mean-difference
    plot, the paired t test, Wilcoxon signed rank and the sign test; binary
@@ -90,7 +90,7 @@
   }
 
   // A graph with its code block under it, as one item of a row.
-  const withCode = (graph, code) => (code ? el('div', { class: 'sm-fyx-plotcode' }, graph, code) : graph);
+  const withCode = (graph, code) => (code ? el('div', { class: 'sm-biv-plotcode' }, graph, code) : graph);
 
   function pairsOf(spec, table) {
     if (!table) return [];
@@ -207,7 +207,7 @@
      the noncentral t or F where it exists. Bayes Factor outlines: BF10 and
      BF01 for the two-sided and each one-sided alternative. */
   async function effectOutline(ctx, parent, key, fn, payload, note, remove) {
-    const ob = ctx.outline('Effect Size', { parent, key, info: 'p:fitybyx:effect', menu: remove ? () => [{ label: 'Remove', action: remove }] : null });
+    const ob = ctx.outline('Effect Size', { parent, key, info: 'p:bivariate:effect', menu: remove ? () => [{ label: 'Remove', action: remove }] : null });
     const { res: r, error } = await safeCall(ctx, fn, payload);
     if (error) { ob.add(problem(ctx, error)); return ob; }
     ob.add(ctx.rt(r.table, { sortable: false }), note ? ctx.note(note(r)) : null, notesOf(ctx, r.notes), ctx.code(r.code));
@@ -215,7 +215,7 @@
   }
 
   async function bayesOutline(ctx, parent, key, fn, payload, facts, note, menu) {
-    const ob = ctx.outline('Bayes Factor', { parent, key, info: 'p:fitybyx:bayes', menu });
+    const ob = ctx.outline('Bayes Factor', { parent, key, info: 'p:bivariate:bayes', menu });
     const { res: r, error } = await safeCall(ctx, fn, payload);
     if (error) { ob.add(problem(ctx, error)); return ob; }
     ob.add(ctx.row(ctx.rt(r.table, { sortable: false }), ctx.kv(facts(r))), ctx.note(note(r)), notesOf(ctx, r.notes), ctx.code(r.code));
@@ -229,7 +229,7 @@
   async function priorDialog(ctx, sc, key, title) {
     const cur = ctx.opt(key, null, sc) || { r: JZS_R };
     const v = await SM.ui.form({
-      title, info: 'p:fitybyx:bayes',
+      title, info: 'p:bivariate:bayes',
       lead: 'Under the alternative the standardized effect δ has a Cauchy prior centred at 0; its scale r is the effect size that is as likely to be exceeded as not. √2/2 ≈ 0.707 is the default of Rouder et al. (2009) and JASP; 1 is the original JZS prior, 0.5 expects smaller effects.',
       fields: [{ key: 'r', label: 'Scale r of the Cauchy prior on δ', type: 'number', value: cur.r,
         help: 'Half of the Cauchy(0, r) prior on the standardized effect δ lies within ±r. √2/2 ≈ 0.707 by default; take a smaller r when only small effects are plausible, a larger one when large effects are expected. A larger r favours the null hypothesis more when the observed effect is small. Positive.' }],
@@ -242,7 +242,7 @@
   async function kappaDialog(ctx, sc) {
     const cur = ctx.opt('corrBf', null, sc) || { kappa: 1 };
     const v = await SM.ui.form({
-      title: 'Bayes Factor for the Correlation', info: 'p:fitybyx:bayes',
+      title: 'Bayes Factor for the Correlation', info: 'p:bivariate:bayes',
       lead: 'Under the alternative the correlation ρ has a beta(1/κ, 1/κ) prior stretched to (−1, 1): κ = 1 is uniform (the default of Ly, Verhagen and Wagenmakers 2016 and JASP); a smaller κ expects correlations nearer 0.',
       fields: [{ key: 'kappa', label: 'Width κ of the prior on ρ', type: 'number', value: cur.kappa,
         help: 'The prior on ρ under the alternative is beta(1/κ, 1/κ) stretched to (−1, 1): κ = 1, the default, is uniform; a smaller κ puts more of it near ρ = 0, a larger one more near ±1. Positive.' }],
@@ -255,9 +255,9 @@
      BIVARIATE
      ====================================================================== */
   const FIT_FN = {
-    mean: 'fitybyx.fit_mean', line: 'fitybyx.fit_poly', poly: 'fitybyx.fit_poly', special: 'fitybyx.fit_special', spline: 'fitybyx.fit_spline',
-    lowess: 'fitybyx.fit_lowess', each: 'fitybyx.fit_each', robust: 'fitybyx.fit_robust', orth: 'fitybyx.fit_orthogonal',
-    ellipse: 'fitybyx.density_ellipse', kde: 'fitybyx.nonpar_density', quantile: 'fitybyx.fit_quantile',
+    mean: 'bivariate.fit_mean', line: 'bivariate.fit_poly', poly: 'bivariate.fit_poly', special: 'bivariate.fit_special', spline: 'bivariate.fit_spline',
+    lowess: 'bivariate.fit_lowess', each: 'bivariate.fit_each', robust: 'bivariate.fit_robust', orth: 'bivariate.fit_orthogonal',
+    ellipse: 'bivariate.density_ellipse', kde: 'bivariate.nonpar_density', quantile: 'bivariate.fit_quantile',
   };
   const HAS_CI = new Set(['line', 'poly', 'special']);
   const HAS_ROWS = new Set(['mean', 'line', 'poly', 'special', 'spline', 'lowess', 'each', 'robust', 'quantile']);
@@ -479,14 +479,14 @@
     if (!o('points', true) && !fits.length) host.add(ctx.note('Show Points is off and there are no fits: choose a fit from the red triangle.'));
     if (o('summary', false)) {
       const ob = ctx.outline('Summary Statistics', { parent: host, key: `sum:${sc}` });
-      const { res, error } = await safeCall(ctx, 'fitybyx.bivariate', base);
+      const { res, error } = await safeCall(ctx, 'bivariate.bivariate', base);
       if (error) ob.add(problem(ctx, error));
       else ob.add(ctx.kv([[`Mean of ${x.name}`, res.mean_x], [`Mean of ${y.name}`, res.mean_y], [`Std Dev of ${x.name}`, res.sd_x], [`Std Dev of ${y.name}`, res.sd_y],
         ['Correlation', res.r], ['Covariance', res.cov], ['N', res.n]]), ctx.code(res.code));
     }
     const cbf = o('corrBf', null);
     if (cbf) {
-      await bayesOutline(ctx, host, `cbf:${sc}`, 'fitybyx.bivariate_bf', { ...base, kappa: cbf.kappa },
+      await bayesOutline(ctx, host, `cbf:${sc}`, 'bivariate.bivariate_bf', { ...base, kappa: cbf.kappa },
         (r) => [['Correlation r', r.r], ['N', r.n], ['Prior width κ', r.kappa]],
         (r) => `Whether ${y.name} and ${x.name} are correlated: the exact likelihood of ρ given r = ${fmt(r.r)} from ${fmt(r.n)} pairs, against a beta(1/κ, 1/κ) prior on ρ stretched to (−1, 1)${r.kappa === 1 ? ', uniform' : ''} (Ly, Verhagen and Wagenmakers 2016); a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
         () => [{ label: 'Change Prior…', action: () => kappaDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('corrBf', null, sc) }]);
@@ -499,9 +499,9 @@
     const { f, g, res, error } = item;
     const fi = ctx.opt('fits', [], sc).findIndex((z) => z.id === f.id);
     const title = `${fitTitle(f, res)}${g.label ? ` ${g.label}` : ''}`;
-    const ob = ctx.outline(title, { parent: host, key: `fit:${sc}:${f.id}:${g.label || ''}`, closed: f.report === false, menu: () => fitMenu(ctx, sc, f, groups, res, y, x, g), info: fi === 0 && !g.label ? 'p:fitybyx:fits' : null });
+    const ob = ctx.outline(title, { parent: host, key: `fit:${sc}:${f.id}:${g.label || ''}`, closed: f.report === false, menu: () => fitMenu(ctx, sc, f, groups, res, y, x, g), info: fi === 0 && !g.label ? 'p:bivariate:fits' : null });
     ob.head.style.setProperty('--fit-color', g.color || FIT_COLORS[fi % FIT_COLORS.length]);
-    ob.el.classList.add('sm-fyx-fit');
+    ob.el.classList.add('sm-biv-fit');
     if (error) { ob.add(problem(ctx, error)); return; }
     const lv = `${fmt(100 * (1 - (f.alpha || ctx.alpha)))}%`;
     const sub = (t, key, closed = false, info = null) => ctx.outline(t, { parent: ob, key: `${key}:${sc}:${f.id}:${g.label || ''}`, closed, info });
@@ -510,7 +510,7 @@
         ob.add(ctx.kv([['Mean', res.mean], ['Std Dev [RMSE]', res.sd], ['Std Error', res.se], ['SSE', res.sse]]));
         break;
       case 'line': case 'poly': case 'special': {
-        ob.add(el('p', { class: 'sm-fyx-eq', text: equation(res.ylab || y.name, res.terms) }));
+        ob.add(el('p', { class: 'sm-biv-eq', text: equation(res.ylab || y.name, res.terms) }));
         if (res.summary) sub('Summary of Fit', 'sof').add(kvOf(ctx, res.summary));
         if (res.lack_of_fit) sub('Lack Of Fit', 'lof', true).add(rtFixed(ctx, res.lack_of_fit), ctx.kv([['Max RSq', res.lack_of_fit.max_rsq]]));
         if (res.anova) sub('Analysis of Variance', 'anova').add(rtFixed(ctx, res.anova));
@@ -530,12 +530,12 @@
         ob.add(ctx.kv([['Number of Observations', res.n], ['Number of Unique Values', res.n_unique, 'int'], ['Degrees of Freedom', res.df], ['Sum of Squares', res.sse], ['Mean Square', res.ms], ['R-Square', res.rsquare]]));
         break;
       case 'robust':
-        ob.add(el('p', { class: 'sm-fyx-eq', text: equation(y.name, res.terms) }), rtFixed(ctx, res.estimates, { caption: 'Parameter Estimates' }),
+        ob.add(el('p', { class: 'sm-biv-eq', text: equation(y.name, res.terms) }), rtFixed(ctx, res.estimates, { caption: 'Parameter Estimates' }),
           ctx.kv([['M-estimator', res.norm, 'text'], ['Scale (MAD)', res.scale], ['Iterations', res.iterations, 'int'], ['N', res.n]]),
           ctx.note('statsmodels RLM: the standard errors are its H1 sandwich and the tests use the normal distribution.'));
         break;
       case 'quantile':
-        ob.add(el('p', { class: 'sm-fyx-eq', text: equation(`Q${fmt(100 * res.tau)}[${y.name}]`, res.terms) }), rtFixed(ctx, res.estimates, { caption: 'Parameter Estimates' }),
+        ob.add(el('p', { class: 'sm-biv-eq', text: equation(`Q${fmt(100 * res.tau)}[${y.name}]`, res.terms) }), rtFixed(ctx, res.estimates, { caption: 'Parameter Estimates' }),
           ctx.kv([['Pseudo RSquare (Koenker-Machado)', res.prsquared], ['N', res.n]]));
         break;
       case 'orth':
@@ -761,9 +761,9 @@
     // the comparisons first: the graph's code draws the last one's circles
     const cmp = [];
     for (const c of o('compare', [])) {
-      const one = await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: c.method, control: c.control ?? null });
+      const one = await safeCall(ctx, 'bivariate.oneway_compare', { ...base, method: c.method, control: c.control ?? null });
       // With Best, Hsu MCB: the comparisons with the largest and with the smallest of the others, as JMP reports both
-      if (c.method === 'hsu' && one.res) one.min = (await safeCall(ctx, 'fitybyx.oneway_compare', { ...base, method: 'hsu_min' })).res || null;
+      if (c.method === 'hsu' && one.res) one.min = (await safeCall(ctx, 'bivariate.oneway_compare', { ...base, method: 'hsu_min' })).res || null;
       cmp.push({ c, ...one });
     }
     // comparison circles for the last comparison chosen
@@ -774,7 +774,7 @@
       meanLines: o('meanLines', o('meansd', false)), errorBars: o('errorBars', o('meansd', false)), sdLines: o('sdLines', o('meansd', false)), ciLines: o('ciLines', false),
       grandMean: o('grandMean', false), connect: o('connect', false), circles: circ ? { method: circ.c.method, control: circ.c.control ?? null } : null,
       labels: ctx.table.levels(x).map((v) => lvText(x, v)), width, height: 380 };
-    const res = await ctx.call('fitybyx.oneway', { ...base, block: block ? block.name : null, plot });
+    const res = await ctx.call('bivariate.oneway', { ...base, block: block ? block.name : null, plot });
     if (res.error) { host.add(ctx.warn(`${y.name} by ${x.name}: ${res.error}`)); return; }
     const levels = res.levels;
     const k = levels.length;
@@ -858,12 +858,12 @@
     }
     if (o('ttest', false)) {
       const ob = ctx.outline('t Test', { parent: host, key: `tt:${sc}` });
-      const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_ttest', base);
+      const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_ttest', base);
       if (error) ob.add(problem(ctx, error));
       else {
-        ob.add(el('p', { class: 'sm-fyx-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming unequal variances'), tTestTable(ctx, r), notesOf(ctx, r.notes), ctx.code(r.code));
+        ob.add(el('p', { class: 'sm-biv-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming unequal variances'), tTestTable(ctx, r), notesOf(ctx, r.notes), ctx.code(r.code));
         if (o('effect', false)) {
-          await effectOutline(ctx, ob, `tte:${sc}`, 'fitybyx.ttest_effect', { ...base, kind: 'welch' },
+          await effectOutline(ctx, ob, `tte:${sc}`, 'bivariate.ttest_effect', { ...base, kind: 'welch' },
             (e) => `${names[1]} minus ${names[0]} over √((s₁² + s₂²)/2) = ${fmt(e.standardizer)}, the unweighted standardizer for unequal variances (Cohen 1988): d* and Hedges' g* = J·d* with J = ${fmt(e.j)}. The interval is Bonett's (2008), d* ± z·SE; no exact interval exists when the variances differ. Right click for the standard errors.`,
             () => ctx.set('effect', false, sc));
         }
@@ -872,14 +872,14 @@
     const bf = o('bf', null);
     if (bf && (k !== 2 || block)) host.add(ctx.note(`Bayes Factor: ${block ? 'the two-sample t test takes no Block' : 'the two-sample t test needs exactly two levels'}; it is not shown.`));
     else if (bf) {
-      await bayesOutline(ctx, host, `bf:${sc}`, 'fitybyx.oneway_bf', { ...base, r: bf.r },
+      await bayesOutline(ctx, host, `bf:${sc}`, 'bivariate.oneway_bf', { ...base, r: bf.r },
         (r) => [['t (pooled)', r.t], ['DF', r.df], [`N ${names[0]}`, r.n1], [`N ${names[1]}`, r.n2], ['Prior scale r', r.r]],
         (r) => `The JZS Bayes factor of the two-sample t test (Rouder et al. 2009): the pooled t of ${names[1]} minus ${names[0]}, equal variances, against a Cauchy(0, ${fmt(r.r)}) prior on δ = (μ₂ − μ₁)/σ under the alternative; a one-sided alternative keeps the prior's half on its side, doubled. ${BF_NOTE}`,
         () => [{ label: 'Change Prior…', action: () => priorDialog(ctx, sc, 'bf', 'Bayes Factor: two-sample t test') }, { label: 'Remove', action: () => ctx.set('bf', null, sc) }]);
     }
     if (o('anom', false)) await owAnom(ctx, host, sc, base, names, x);
     if (cmp.length) {
-      const mc = ctx.outline('Means Comparisons', { parent: host, key: `mc:${sc}`, info: 'p:fitybyx:compare' });
+      const mc = ctx.outline('Means Comparisons', { parent: host, key: `mc:${sc}`, info: 'p:bivariate:compare' });
       for (const c of cmp) compareReport(ctx, mc, sc, c, names);
     }
     for (const t of o('np', [])) await nonparReport(ctx, host, sc, base, t, names);
@@ -902,22 +902,22 @@
   }
 
   async function owAnova(ctx, host, sc, res, names, block, y, x, base) {
-    const ob = ctx.outline('Oneway Anova', { parent: host, key: `anova:${sc}`, info: 'p:fitybyx:anova' });
+    const ob = ctx.outline('Oneway Anova', { parent: host, key: `anova:${sc}`, info: 'p:bivariate:anova' });
     if (res.error_anova) { ob.add(ctx.warn(res.error_anova)); return; }
     const effect = ctx.opt('effect', false, sc);
     const off = () => ctx.set('effect', false, sc);
     ctx.outline('Summary of Fit', { parent: ob, key: `sof:${sc}` }).add(kvOf(ctx, res.summary));
     if (res.pooled_t) {
       const t = ctx.outline('t Test', { parent: ob, key: `ptt:${sc}` });
-      t.add(el('p', { class: 'sm-fyx-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming equal variances'), tTestTable(ctx, res.pooled_t));
+      t.add(el('p', { class: 'sm-biv-eq', text: `${names[1]}-${names[0]}` }), ctx.note('Assuming equal variances'), tTestTable(ctx, res.pooled_t));
       if (effect) {
-        await effectOutline(ctx, t, `ptte:${sc}`, 'fitybyx.ttest_effect', { ...base, kind: 'pooled' },
+        await effectOutline(ctx, t, `ptte:${sc}`, 'bivariate.ttest_effect', { ...base, kind: 'pooled' },
           (e) => `${names[1]} minus ${names[0]} over the pooled standard deviation ${fmt(e.standardizer)}: Cohen's d, and Hedges' g = J·d with J = ${fmt(e.j)} (Hedges 1981). The interval of d is exact: the noncentral t distributions whose noncentrality λ puts the pooled t at their upper and lower α/2 points give δ = λ√(1/n₁ + 1/n₂) (Steiger and Fouladi 1997); g's is J times it.`, off);
       }
     }
     ctx.outline('Analysis of Variance', { parent: ob, key: `aov:${sc}` }).add(rtFixed(ctx, res.anova));
     if (effect) {
-      await effectOutline(ctx, ob, `aove:${sc}`, 'fitybyx.oneway_effect', { ...base, block: block ? block.name : null },
+      await effectOutline(ctx, ob, `aove:${sc}`, 'bivariate.oneway_effect', { ...base, block: block ? block.name : null },
         (e) => `${e.partial ? 'Partial η², ε² and ω²: the Block\'s sum of squares left out of the denominators. ' : ''}η² = SS(${x.name})/SS(total) overstates the population value; ε² (Kelley 1935) and ω² (Hays 1963) take the error mean square off, and are less biased. The interval is the exact one of the population proportion of variance, λ/(λ + df₁ + df₂ + 1) (N${e.partial ? ' in a one-way layout' : ''}) for the noncentral F whose λ puts F = ${fmt(e.F)} on (${fmt(e.df_num)}, ${fmt(e.df_den)}) DF at its upper and lower α/2 points (Steiger 2004): the same for the three estimates, which estimate the same proportion. The lower limit is 0 when the F test's p-value is above α/2.`, off);
     }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
@@ -942,7 +942,7 @@
   /* With Best, Hsu MCB: each mean against the largest of the others and against the smallest (Hsu's multiple
      comparisons with the best), the threshold matrices and the constrained intervals with their p-values. */
   function mcbReport(ctx, parent, sc, c, names) {
-    const ob = ctx.outline(METHOD_TITLE.hsu, { parent, key: `cmp:${sc}:hsu`, info: 'p:fitybyx:compare', menu: () => [{ label: 'Remove', action: () => ctx.set('compare', ctx.opt('compare', [], sc).filter((z) => z.method !== 'hsu'), sc) }] });
+    const ob = ctx.outline(METHOD_TITLE.hsu, { parent, key: `cmp:${sc}:hsu`, info: 'p:bivariate:compare', menu: () => [{ label: 'Remove', action: () => ctx.set('compare', ctx.opt('compare', [], sc).filter((z) => z.method !== 'hsu'), sc) }] });
     if (c.error) { ob.add(problem(ctx, c.error)); return; }
     const r = c.res;
     ob.add(ctx.rt({ columns: [{ key: 'q', label: 'd' }, { key: 'a', label: 'Alpha' }], rows: [{ q: r.quantile.value, a: r.alpha }] }, { sortable: false, caption: 'Confidence Quantile' }));
@@ -989,7 +989,7 @@
     if (r.letters) {
       const cl = ctx.outline('Connecting Letters Report', { parent: ob, key: `cl:${sc}:${c.c.method}` });
       const t = ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'letters', label: '', fmt: 'text' }, { key: 'mean', label: 'Mean' }], rows: r.letters.map((l) => ({ lv: names[l.index], letters: l.letters, mean: l.mean })) }, { sortable: false });
-      t.classList.add('sm-fyx-letters');
+      t.classList.add('sm-biv-letters');
       cl.add(t, ctx.note('Levels not connected by the same letter are significantly different.'));
     }
     const od = ctx.outline(r.control != null ? 'Comparisons with a control' : 'Ordered Differences Report', { parent: ob, key: `od:${sc}:${c.c.method}` });
@@ -1003,16 +1003,16 @@
 
   async function nonparReport(ctx, host, sc, base, t, names) {
     const rm = { label: 'Remove', action: () => ctx.set('np', ctx.opt('np', [], sc).filter((z) => z !== t), sc) };
-    const ob = ctx.outline(NP_TITLE[t], { parent: host, key: `np:${sc}:${t}`, menu: () => [rm], info: 'p:fitybyx:nonpar' });
+    const ob = ctx.outline(NP_TITLE[t], { parent: host, key: `np:${sc}:${t}`, menu: () => [rm], info: 'p:bivariate:nonpar' });
     if (t === 'ks') {
-      const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_ks', base);
+      const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_ks', base);
       if (error) { ob.add(problem(ctx, error)); return; }
       ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'edf', label: 'EDF at Maximum' }, { key: 'dev', label: 'Deviation from Mean at Maximum' }], rows: r.levels.map((l) => ({ ...l, lv: names[l.index] })) }, { sortable: false }),
         ctx.kv([['KS', r.KS], ['KSa', r.KSa], ['D=max|F1-F2|', r.D], ['Prob > D', r.p, 'p'], ['D+ = max(F1-F2)', r.D_plus], ['Prob > D+', r.p_plus, 'p'], ['D- = max(F2-F1)', r.D_minus], ['Prob > D-', r.p_minus, 'p']]),
         r.method ? ctx.note(`scipy.stats.ks_2samp, the ${r.method} p-values.`) : null, notesOf(ctx, r.notes), ctx.code(r.code));
       return;
     }
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_nonpar', { ...base, test: t });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_nonpar', { ...base, test: t });
     if (error) { ob.add(problem(ctx, error)); return; }
     ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'score_sum', label: 'Score Sum' }, { key: 'expected', label: 'Expected Score' }, { key: 'score_mean', label: 'Score Mean' }, { key: 'std0', label: '(Mean-Mean0)/Std0' }],
       rows: r.levels.map((l) => ({ ...l, lv: names[l.index] })) }, { sortable: false }));
@@ -1033,7 +1033,7 @@
   async function npmcReport(ctx, host, sc, base, m, names) {
     const rm = { label: 'Remove', action: () => ctx.set('npmc', ctx.opt('npmc', [], sc).filter((z) => z.method !== m.method), sc) };
     const ob = ctx.outline(NPMC_TITLE[m.method], { parent: host, key: `npmc:${sc}:${m.method}`, menu: () => [rm] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_nonpar_mc', { ...base, method: m.method, control: m.control ?? null });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_nonpar_mc', { ...base, method: m.method, control: m.control ?? null });
     if (error) { ob.add(problem(ctx, error)); return; }
     if (r.quantile) ob.add(ctx.kv([['q*', r.quantile], ['Alpha', r.alpha]]));
     const hl = r.pairs.some((p) => p.hl != null);
@@ -1044,8 +1044,8 @@
   }
 
   async function unequalReport(ctx, host, sc, base, names) {
-    const ob = ctx.outline('Tests that the Variances are Equal', { parent: host, key: `uv:${sc}`, info: 'p:fitybyx:variances' });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_unequal_var', base);
+    const ob = ctx.outline('Tests that the Variances are Equal', { parent: host, key: `uv:${sc}`, info: 'p:bivariate:variances' });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_unequal_var', base);
     if (error) { ob.add(problem(ctx, error)); return; }
     ob.add(ctx.rt({ columns: [{ key: 'lv', label: 'Level', fmt: 'text' }, { key: 'count', label: 'Count', fmt: 'int' }, { key: 'sd', label: 'Std Dev' }, { key: 'mad_mean', label: 'MeanAbsDif to Mean' }, { key: 'mad_median', label: 'MeanAbsDif to Median' }], rows: r.levels.map((l) => ({ ...l, lv: names[l.index] })) }, { sortable: false }),
       ctx.rt({ columns: [{ key: 'test', label: 'Test', fmt: 'text' }, { key: 'f', label: 'F Ratio' }, { key: 'dfn', label: 'DFNum' }, { key: 'dfd', label: 'DFDen' }, { key: 'p', label: 'p-Value', fmt: 'p' }], rows: r.tests }, { sortable: false }));
@@ -1057,7 +1057,7 @@
 
   async function equivReport(ctx, host, sc, base, eq, names) {
     const ob = ctx.outline('Equivalence Test', { parent: host, key: `eq:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('equiv', null, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_equivalence', { ...base, delta: eq.delta });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_equivalence', { ...base, delta: eq.delta });
     if (error) { ob.add(problem(ctx, error)); return; }
     ob.add(ctx.kv([['Difference considered practically zero', r.delta], ['Alpha', r.alpha]]),
       ctx.rt({ columns: [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: '- Level', fmt: 'text' }, { key: 'diff', label: 'Difference' }, { key: 'lower', label: `Lower ${fmt(100 * (1 - 2 * r.alpha))}% CL` }, { key: 'upper', label: `Upper ${fmt(100 * (1 - 2 * r.alpha))}% CL` },
@@ -1069,10 +1069,10 @@
   /* ---- Brunner-Munzel: the probability of superiority (statsmodels
      rank_compare_2indep; not in JMP) ------------------------------------ */
   async function brunnerReport(ctx, host, sc, base, names) {
-    const ob = ctx.outline('Brunner-Munzel Test (Probability of Superiority)', { parent: host, key: `bm:${sc}`, info: 'p:fitybyx:brunner', menu: () => [
+    const ob = ctx.outline('Brunner-Munzel Test (Probability of Superiority)', { parent: host, key: `bm:${sc}`, info: 'p:bivariate:brunner', menu: () => [
       { label: 'Equivalence Test…', checked: !!ctx.opt('bmTost', null, sc), action: () => brunnerTostDialog(ctx, sc) },
       { separator: true }, { label: 'Remove', action: () => ctx.set('bm', false, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_brunner', base);
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_brunner', base);
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     const cols = [{ key: 'a', label: 'Level', fmt: 'text' }, { key: 'b', label: 'vs Level', fmt: 'text' },
@@ -1087,9 +1087,9 @@
   }
 
   async function brunnerTostReport(ctx, host, sc, base, tost, names) {
-    const ob = ctx.outline('Equivalence Test (Probability of Superiority)', { parent: host, key: `bmtost:${sc}`, info: 'p:fitybyx:brunner', menu: () => [
+    const ob = ctx.outline('Equivalence Test (Probability of Superiority)', { parent: host, key: `bmtost:${sc}`, info: 'p:bivariate:brunner', menu: () => [
       { label: 'Change Bounds…', action: () => brunnerTostDialog(ctx, sc) }, { label: 'Remove', action: () => ctx.set('bmTost', null, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_brunner', { ...base, tost: { low: tost.low, upp: tost.upp } });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_brunner', { ...base, tost: { low: tost.low, upp: tost.upp } });
     if (error) { ob.add(problem(ctx, error)); return; }
     const t = r.tost;
     const lv2 = `${fmt(100 * (1 - 2 * r.alpha))}%`;
@@ -1105,7 +1105,7 @@
   async function brunnerTostDialog(ctx, sc) {
     const cur = ctx.opt('bmTost', null, sc) || { low: 0.4, upp: 0.6 };
     const v = await SM.ui.form({
-      title: 'Equivalence Test: Probability of Superiority', info: 'p:fitybyx:brunner',
+      title: 'Equivalence Test: Probability of Superiority', info: 'p:bivariate:brunner',
       lead: 'Two levels are stochastically equivalent when P(Y₁ > Y₂) + ½P(Y₁ = Y₂) lies between the bounds; ½ is no difference.',
       fields: [
         { key: 'low', label: 'Lower bound', type: 'number', value: cur.low,
@@ -1146,7 +1146,7 @@
     const tag = (m) => (m[2] === 'both' ? m[1] : `${m[1]} (${m[2] === 'ratio' ? 'ratio' : 'difference'} only)`);
     const ctlIndex = cur.control == null ? '' : String(levels.findIndex((l) => keyOf(l) === keyOf(cur.control)));
     const v = await SM.ui.form({
-      title: `Compare Rates: ${y.name} by ${x.name}`, info: 'p:fitybyx:rates',
+      title: `Compare Rates: ${y.name} by ${x.name}`, info: 'p:bivariate:rates',
       lead: `${y.name} counts events; each row is one unit, observed for its exposure (time, person-years, area). Each level's rate is its total count over its total exposure.`,
       fields: [
         { key: 'exposure', label: 'Exposure', type: 'select', value: cur.exposure || '', choices: [['', '(none: every row is one unit)'], ...nums.map((c) => [c.id, c.name])],
@@ -1172,11 +1172,11 @@
   }
 
   async function ratesReport(ctx, host, sc, base, spec, y, x) {
-    const ob = ctx.outline('Compare Rates', { parent: host, key: `rates:${sc}`, info: 'p:fitybyx:rates', menu: () => [
+    const ob = ctx.outline('Compare Rates', { parent: host, key: `rates:${sc}`, info: 'p:bivariate:rates', menu: () => [
       { label: 'Change…', action: () => ratesDialog(ctx, sc, y, x) }, { label: 'Remove', action: () => ctx.set('rates', null, sc) }] });
     const ex = spec.exposure ? ctx.col(spec.exposure) : null;
     if (spec.exposure && !ex) { ob.add(ctx.warn('The exposure column is no longer in the table.')); return; }
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_rates', { ...base, exposure: ex ? ex.name : null, compare: spec.compare || 'ratio', method: spec.method || 'score', ci_method: spec.ci || 'score', control: spec.control ?? null });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_rates', { ...base, exposure: ex ? ex.name : null, compare: spec.compare || 'ratio', method: spec.method || 'score', ci_method: spec.ci || 'score', control: spec.control ?? null });
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     const nm = (i) => lvText(x, r.level_values[i]);
@@ -1202,7 +1202,7 @@
 
   async function powerReport(ctx, host, sc, base, pw) {
     const ob = ctx.outline('Power Details', { parent: host, key: `pw:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('power', null, sc) }, { label: 'Change…', action: () => powerDialog(ctx, sc, pw) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_power', { ...base, alpha: pw.alpha ?? ctx.alpha, sigma: pw.sigma ?? null, delta: pw.delta ?? null, nobs: pw.nobs && pw.nobs.length ? pw.nobs : null });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_power', { ...base, alpha: pw.alpha ?? ctx.alpha, sigma: pw.sigma ?? null, delta: pw.delta ?? null, nobs: pw.nobs && pw.nobs.length ? pw.nobs : null });
     if (error) { ob.add(problem(ctx, error)); return; }
     ob.add(ctx.rt({ columns: [{ key: 'alpha', label: 'Alpha' }, { key: 'sigma', label: 'Sigma' }, { key: 'delta', label: 'Delta' }, { key: 'n', label: 'Number' }, { key: 'power', label: 'Power' }], rows: r.rows }, { sortable: false }),
       ctx.kv([['Least Significant Number (LSN)', r.lsn], ['Least Significant Value (LSV)', r.lsv], ['Number for power 0.8', r.n80]]),
@@ -1226,7 +1226,7 @@
 
   async function owAnom(ctx, host, sc, base, names, x) {
     const ob = ctx.outline('Analysis of Means', { parent: host, key: `anom:${sc}` });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_anom', { ...base, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_anom', { ...base, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
     if (error) { ob.add(problem(ctx, error)); return; }
     const L = r.levels;
     const xs = L.map((_, i) => i);
@@ -1316,7 +1316,7 @@
     const ob = ctx.outline('Densities', { parent: host, key: `dens:${sc}`, menu: () => [
       ...[['compare', 'Compare Densities'], ['composition', 'Composition of Densities'], ['proportion', 'Proportion of Densities']].map(([k, l]) => ({ label: l, checked: mode === k, action: () => ctx.set('densities', k, sc) })),
       { separator: true }, { label: 'Remove', action: () => ctx.set('densities', null, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.oneway_densities', { ...base, mode, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.oneway_densities', { ...base, mode, labels: ctx.table.levels(x).map((v) => lvText(x, v)) });
     if (error) { ob.add(problem(ctx, error)); return; }
     const L = r.levels.filter((l) => l.density);
     const traces = [];
@@ -1475,7 +1475,7 @@
   async function logistic(ctx, y, x, host, sc) {
     const o = (k, d) => ctx.opt(k, d, sc);
     const base = basePayload(ctx, y, x);
-    const { res, error } = await safeCall(ctx, 'fitybyx.logistic', { ...base, target: o('target', null) });
+    const { res, error } = await safeCall(ctx, 'bivariate.logistic', { ...base, target: o('target', null) });
     if (error) { host.add(problem(ctx, error)); return; }
     const k = res.k;
     const names = res.levels.map((l) => lvText(y, l));
@@ -1509,12 +1509,12 @@
       host.add(ctx.plot(traces, { xaxis: { title: { text: x.name } }, yaxis: { title: { text: y.name }, range: [0, 1] }, annotations: ann, margin: { l: 60, r: 80, t: 10, b: 44 } }, { width: availWidth(ctx, 560), height: 380, title: `${y.name} by ${x.name} logistic plot` }),
         ctx.code(res.plot_code));
     }
-    const wm = ctx.outline('Whole Model Test', { parent: host, key: `wm:${sc}`, info: 'p:fitybyx:logistic' });
+    const wm = ctx.outline('Whole Model Test', { parent: host, key: `wm:${sc}`, info: 'p:bivariate:logistic' });
     wm.add(ctx.rt({ columns: [{ key: 'model', label: 'Model', fmt: 'text' }, { key: 'nll', label: '-LogLikelihood' }, { key: 'df', label: 'DF' }, { key: 'chisq', label: 'ChiSquare' }, { key: 'p', label: 'Prob>ChiSq', fmt: 'p' }], rows: res.whole }, { sortable: false }),
       ctx.kv([['RSquare (U)', res.rsquare_u], ['AICc', res.aicc], ['BIC', res.bic], ['Observations (or Sum Wgts)', res.n]]));
     // Lack of Fit (JMP's, when X values repeat): the fitted curve against each distinct X's own shares of the levels
     if (res.lack_of_fit && o('lof', true)) {
-      ctx.outline('Lack Of Fit', { parent: host, key: `lof:${sc}`, closed: true, info: 'p:fitybyx:logistic' }).add(ctx.rt(res.lack_of_fit, { sortable: false }),
+      ctx.outline('Lack Of Fit', { parent: host, key: `lof:${sc}`, closed: true, info: 'p:bivariate:logistic' }).add(ctx.rt(res.lack_of_fit, { sortable: false }),
         ctx.note(`The saturated model gives each of the ${res.lack_of_fit.patterns} distinct values of ${x.name} its own shares of the levels. ChiSquare is twice the difference of the −LogLikelihoods; a small p-value says the logistic curve misses how the probabilities change with ${x.name}.`),
         ctx.code(res.lack_of_fit.code));
     }
@@ -1541,14 +1541,14 @@
     const inv = o('inverse', null);
     if (inv && res.kind === 'binary') {
       const ob = ctx.outline('Inverse Prediction', { parent: host, key: `ip:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('inverse', null, sc) }] });
-      const { res: r, error: e2 } = await safeCall(ctx, 'fitybyx.logistic_inverse', { ...base, probs: inv, target: o('target', null) });
+      const { res: r, error: e2 } = await safeCall(ctx, 'bivariate.logistic_inverse', { ...base, probs: inv, target: o('target', null) });
       if (e2) ob.add(problem(ctx, e2));
       else ob.add(ctx.rt({ columns: [{ key: 'p', label: 'Probability' }, { key: 'x', label: `Predicted ${x.name}` }, { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }], rows: r.rows }, { sortable: false }),
         ctx.note(`The ${x.name} at which P(${names[r.target]}) is the given probability; Fieller's confidence limits (missing where the slope is not significantly different from zero).`), ctx.code(r.code));
     }
     if (o('roc', false)) {
       // the ROC Table of two levels (SM.fitmodel.rocTable: JMP's, a line per cut, from the Decision Threshold's data)
-      const ob = ctx.outline('ROC Curve', { parent: host, key: `roc:${sc}`, info: 'p:fitybyx:logistic', menu: res.threshold ? () => [ctx.check('ROC Table', 'rocTable', sc, false)] : null });
+      const ob = ctx.outline('ROC Curve', { parent: host, key: `roc:${sc}`, info: 'p:bivariate:logistic', menu: res.threshold ? () => [ctx.check('ROC Table', 'rocTable', sc, false)] : null });
       const traces = res.roc.map((r) => ({ type: 'scatter', mode: 'lines', x: r.fpr, y: r.tpr, line: { color: PALETTE[r.level % PALETTE.length], width: 1.8, shape: 'linear' }, name: `${names[r.level]} (AUC ${r.auc.toFixed(4)})` }));
       traces.push({ type: 'scatter', mode: 'lines', x: [0, 1], y: [0, 1], line: { color: GREY, width: 1, dash: 'dot' }, hoverinfo: 'skip', showlegend: false });
       ob.add(ctx.row(withCode(ctx.plot(traces, { xaxis: { title: { text: '1-Specificity (False Positive Rate)' }, range: [0, 1] }, yaxis: { title: { text: 'Sensitivity (True Positive Rate)' }, range: [0, 1] }, showlegend: true, legend: { orientation: 'h', y: -0.28 } }, { width: availWidth(ctx, 360), height: 360, title: 'ROC Curve', select: false }), ctx.code(res.roc_code)),
@@ -1572,7 +1572,7 @@
     // Decision Threshold (two levels; SM.predict's report): each row's fitted probability of the target level against a
     // threshold; Save Threshold Formula saves the Prob[] columns first when they are not in the table
     if (res.threshold && o('threshold', false)) {
-      SM.predict.threshold(ctx, host, res.threshold, { scope: sc, prefix: `${sc}:`, yCol: y, save: { fn: 'fitybyx.logistic_rows', payload: { ...base, target: o('target', null) } } });
+      SM.predict.threshold(ctx, host, res.threshold, { scope: sc, prefix: `${sc}:`, yCol: y, save: { fn: 'bivariate.logistic_rows', payload: { ...base, target: o('target', null) } } });
     }
   }
 
@@ -1594,7 +1594,7 @@
       { separator: true },
       // live formula columns, JMP's: Lin[level] (ordinal: Linear and Cum[level]), Prob[level], Most Likely
       { label: 'Save Probability Formula', action: async () => {
-        const r = await ctx.call('fitybyx.logistic_rows', { ...basePayload(ctx, y, x), target: ctx.opt('target', null, sc) });
+        const r = await ctx.call('bivariate.logistic_rows', { ...basePayload(ctx, y, x), target: ctx.opt('target', null, sc) });
         if (r.error) { SM.ui.toast(r.error, { error: true }); return; }
         SM.fitmodel.saveFormulas(ctx, r.formulas);
       } },
@@ -1666,23 +1666,23 @@
       expected: (i, j) => fmt(E[i][j], { sig: 6 }), deviation: (i, j) => fmt(n[i][j] - E[i][j], { sig: 6 }), cellchi: (i, j) => fmt(res.cellchi[i][j], { sig: 5 }),
     };
     const shown = CELLS.filter(([k]) => cells.includes(k));
-    const stack = (arr) => el('div', { class: 'sm-fyx-stack' }, ...arr.map((t) => el('div', { text: t })));
-    const head = el('tr', null, el('th', { class: 'sm-l sm-fyx-corner', scope: 'col' }, stack(shown.map(([, l]) => l))), ...res.y_levels.map((v) => el('th', { scope: 'col', text: lvText(y, v) })), el('th', { scope: 'col', text: 'Total' }));
+    const stack = (arr) => el('div', { class: 'sm-biv-stack' }, ...arr.map((t) => el('div', { text: t })));
+    const head = el('tr', null, el('th', { class: 'sm-l sm-biv-corner', scope: 'col' }, stack(shown.map(([, l]) => l))), ...res.y_levels.map((v) => el('th', { scope: 'col', text: lvText(y, v) })), el('th', { scope: 'col', text: 'Total' }));
     const body = el('tbody');
     for (let i = 0; i < R; i++) {
       body.append(el('tr', null, el('th', { class: 'sm-l', scope: 'row', text: lvText(x, res.x_levels[i]) }),
         ...res.y_levels.map((_, j) => el('td', null, stack(shown.map(([k]) => val[k](i, j))))),
-        el('td', { class: 'sm-fyx-margin' }, stack([fmt(rowT[i]), lvPct(100 * rowT[i] / N)]))));
+        el('td', { class: 'sm-biv-margin' }, stack([fmt(rowT[i]), lvPct(100 * rowT[i] / N)]))));
     }
-    body.append(el('tr', { class: 'sm-fyx-margin' }, el('th', { class: 'sm-l', scope: 'row', text: 'Total' }), ...colT.map((c) => el('td', null, stack([fmt(c), lvPct(100 * c / N)]))), el('td', null, stack([fmt(N), '']))));
+    body.append(el('tr', { class: 'sm-biv-margin' }, el('th', { class: 'sm-l', scope: 'row', text: 'Total' }), ...colT.map((c) => el('td', null, stack([fmt(c), lvPct(100 * c / N)]))), el('td', null, stack([fmt(N), '']))));
     const cap = el('caption', { text: `${x.name} by ${y.name}` });
-    return el('div', { class: 'sm-fyx-scroll' }, el('table', { class: 'sm-rt sm-fyx-ct' }, cap, el('thead', null, head), body));
+    return el('div', { class: 'sm-biv-scroll' }, el('table', { class: 'sm-rt sm-biv-ct' }, cap, el('thead', null, head), body));
   }
 
   async function contingency(ctx, y, x, host, sc) {
     const o = (k, d) => ctx.opt(k, d, sc);
     const base = basePayload(ctx, y, x);
-    const { res, error } = await safeCall(ctx, 'fitybyx.contingency', base);
+    const { res, error } = await safeCall(ctx, 'bivariate.contingency', base);
     if (error) { host.add(problem(ctx, error)); return; }
     const R = res.x_levels.length, C = res.y_levels.length;
     const P = pointsOf(ctx, y, x);
@@ -1697,7 +1697,7 @@
       ob.add(crossTable(ctx, res, y, x, cells));
     }
     if (o('tests', true)) {
-      const ob = ctx.outline('Tests', { parent: host, key: `tests:${sc}`, info: 'p:fitybyx:contingency' });
+      const ob = ctx.outline('Tests', { parent: host, key: `tests:${sc}`, info: 'p:bivariate:contingency' });
       if (!res.tests) ob.add(ctx.warn('The tests need two levels of each variable.'));
       else {
         ob.add(ctx.rt({ columns: [{ key: 'n', label: 'N' }, { key: 'df', label: 'DF', fmt: 'int' }, { key: 'nll', label: '-LogLike' }, { key: 'rsq', label: 'RSquare (U)' }], rows: [res.loglike] }, { sortable: false }),
@@ -1711,7 +1711,7 @@
               { t: '2-Tail', p: res.fisher.two, h: `Prob(${lvText(y, res.y_levels[0])}) is different across ${x.name}` }] }, { sortable: false }));
           } else fe.add(ctx.kv([['Two-sided Prob', res.fisher.two, 'p']]), ctx.note('scipy\'s exact test of independence of the r×c table given its margins.'));
         }
-        ob.add(notesOf(ctx, res.notes).map((node) => { node.classList.add('sm-fyx-warnnote'); return node; }), ctx.code(res.code));
+        ob.add(notesOf(ctx, res.notes).map((node) => { node.classList.add('sm-biv-warnnote'); return node; }), ctx.code(res.code));
       }
     }
     if (o('anomp', false)) await anomProportions(ctx, host, sc, base, y, x);
@@ -1721,7 +1721,7 @@
     const need22 = (label) => (R === 2 && C === 2 ? null : ctx.warn(`${label} needs a 2×2 table.`));
     if (o('rr', false) || o('or', false) || o('rd', false)) {
       const bad = need22('Relative Risk, Odds Ratio and Risk Difference');
-      const { res: r, error: e2 } = bad ? { res: null } : await safeCall(ctx, 'fitybyx.contingency_2x2', base);
+      const { res: r, error: e2 } = bad ? { res: null } : await safeCall(ctx, 'bivariate.contingency_2x2', base);
       const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
       const yx = (j) => `P(${lvText(y, res.y_levels[j])}|${lvText(x, res.x_levels[0])})/P(${lvText(y, res.y_levels[j])}|${lvText(x, res.x_levels[1])})`;
       if (o('rr', false)) {
@@ -1745,8 +1745,8 @@
     }
     if (o('twoProp', false)) await twoPropReport(ctx, host, sc, base, res, y, x);
     if (o('measures', false)) {
-      const ob = ctx.outline('Measures of Association', { parent: host, key: `ma:${sc}`, info: 'p:fitybyx:measures' });
-      const { res: r, error: e2 } = await safeCall(ctx, 'fitybyx.contingency_measures', base);
+      const ob = ctx.outline('Measures of Association', { parent: host, key: `ma:${sc}`, info: 'p:bivariate:measures' });
+      const { res: r, error: e2 } = await safeCall(ctx, 'bivariate.contingency_measures', base);
       if (e2) ob.add(problem(ctx, e2));
       else {
         const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
@@ -1756,7 +1756,7 @@
     }
     if (o('trend', false)) {
       const ob = ctx.outline('Cochran Armitage Trend Test', { parent: host, key: `trend:${sc}` });
-      const { res: r, error: e2 } = await safeCall(ctx, 'fitybyx.contingency_trend', base);
+      const { res: r, error: e2 } = await safeCall(ctx, 'bivariate.contingency_trend', base);
       if (e2) ob.add(problem(ctx, e2));
       else ob.add(ctx.rt({ columns: [{ key: 'w', label: '', fmt: 'text' }, { key: 'z', label: 'Z' }, { key: 'p2', label: 'Prob>|Z|', fmt: 'p' }, { key: 'pg', label: 'Prob>Z', fmt: 'p' }, { key: 'pl', label: 'Prob<Z', fmt: 'p' }], rows: [
         { w: 'Cochran-Armitage (binomial variance)', z: r.z, p2: r.p_two, pg: r.p_greater, pl: r.p_less },
@@ -1766,7 +1766,7 @@
 
   async function anomProportions(ctx, host, sc, base, y, x) {
     const ob = ctx.outline('Analysis of Means for Proportions', { parent: host, key: `anomp:${sc}`, menu: () => [{ label: 'Remove', action: () => ctx.set('anomp', false, sc) }] });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_anomp', { ...base, event: ctx.opt('target', null, sc) });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.contingency_anomp', { ...base, event: ctx.opt('target', null, sc) });
     if (error) { ob.add(problem(ctx, error)); return; }
     const L = r.levels;
     const xs = L.map((_, i) => i);
@@ -1788,7 +1788,7 @@
 
   async function caReport(ctx, host, sc, base, y, x) {
     const ob = ctx.outline('Correspondence Analysis', { parent: host, key: `ca:${sc}` });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_ca', base);
+    const { res: r, error } = await safeCall(ctx, 'bivariate.contingency_ca', base);
     if (error) { ob.add(problem(ctx, error)); return; }
     const two = r.details.length > 1;
     const pts = [
@@ -1805,9 +1805,9 @@
   }
 
   async function cmhReport(ctx, host, sc, base, strata) {
-    const ob = ctx.outline('Cochran Mantel Haenszel', { parent: host, key: `cmh:${sc}`, info: 'p:fitybyx:strata', menu: () => [{ label: 'Remove', action: () => ctx.set('cmh', null, sc) }] });
+    const ob = ctx.outline('Cochran Mantel Haenszel', { parent: host, key: `cmh:${sc}`, info: 'p:bivariate:strata', menu: () => [{ label: 'Remove', action: () => ctx.set('cmh', null, sc) }] });
     if (!strata) { ob.add(ctx.warn('The grouping column is no longer in the table.')); return; }
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_cmh', { ...base, strata: strata.name });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.contingency_cmh', { ...base, strata: strata.name });
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     ob.add(ctx.note(`Grouped by ${strata.name}: ${r.strata} strata with both levels of each variable.`),
@@ -1834,13 +1834,13 @@
     const cmp = ctx.opt('twoPropCompare', 'diff', sc);
     const lv0 = ctx.opt('twoPropLevel', null, sc);
     const yl = res.y_levels, xl = res.x_levels;
-    const ob = ctx.outline('Two Sample Test for Proportions', { parent: host, key: `tp:${sc}`, info: 'p:fitybyx:twoprop', menu: () => [
+    const ob = ctx.outline('Two Sample Test for Proportions', { parent: host, key: `tp:${sc}`, info: 'p:bivariate:twoprop', menu: () => [
       ...TWOPROP.map(([k, l]) => ({ label: l, checked: cmp === k, action: () => ctx.set('twoPropCompare', k, sc) })),
       { separator: true },
       { label: 'Response Level', submenu: () => yl.map((v, j) => ({ label: lvText(y, v), checked: lv0 == null ? j === 0 : keyOf(lv0) === keyOf(v), action: () => ctx.set('twoPropLevel', j === 0 ? null : v, sc) })) },
       { label: 'Remove', action: () => ctx.set('twoProp', false, sc) }] });
     if (yl.length !== 2 || xl.length !== 2) { ob.add(ctx.warn('The Two Sample Test for Proportions needs a 2×2 table.')); return; }
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_twoprop', { ...base, compare: cmp, response: lv0 });
+    const { res: r, error } = await safeCall(ctx, 'bivariate.contingency_twoprop', { ...base, compare: cmp, response: lv0 });
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     const yt = lvText(y, yl[r.response]), x1 = lvText(x, xl[0]), x2 = lvText(x, xl[1]);
@@ -1865,7 +1865,7 @@
 
   async function agreeReport(ctx, host, sc, base) {
     const ob = ctx.outline('Agreement Statistic', { parent: host, key: `agree:${sc}` });
-    const { res: r, error } = await safeCall(ctx, 'fitybyx.contingency_agreement', base);
+    const { res: r, error } = await safeCall(ctx, 'bivariate.contingency_agreement', base);
     if (error) { ob.add(problem(ctx, error)); return; }
     const lvl = `${fmt(100 * (1 - ctx.alpha))}%`;
     ob.add(ctx.rt({ columns: [{ key: 'kappa', label: 'Kappa' }, { key: 'se', label: 'Std Err' }, { key: 'lower', label: `Lower ${lvl}` }, { key: 'upper', label: `Upper ${lvl}` }, { key: 'p_greater', label: 'Prob>Z', fmt: 'p' }, { key: 'p_two', label: 'Prob>|Z|', fmt: 'p' }], rows: [r] }, { sortable: false }));
@@ -1971,7 +1971,7 @@
   }
 
   const TOPICS = {
-    'p:fitybyx': {
+    'p:bivariate': {
       kicker: 'Analyze', title: 'Bivariate Analysis',
       lead: 'Each Y against each X. The modeling types choose the analysis: continuous by continuous is a Bivariate fit, continuous by categorical a Oneway analysis, categorical by continuous a Logistic fit, categorical by categorical a Contingency analysis.',
       sections: [
@@ -1981,9 +1981,9 @@
         { heading: 'Weight and Freq', text: 'The least-squares fits use both, with the residual degrees of freedom counted from Freq. Where statsmodels or scipy takes no weights (rank tests, robust, quantile and LOWESS fits, MNLogit, OrderedModel) whole-number frequencies are counted by repeating rows and Weight is not used; the report says so.' },
         { heading: 'Linking', text: 'Points, bars and mosaic cells select their rows; selected rows are highlighted in every graph.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:fits': {
+    'p:bivariate:fits': {
       kicker: 'Bivariate', title: 'Fits on a scatterplot',
       lead: 'Each fit adds its curve to the scatterplot and its report below it, with a red triangle of its own.',
       sections: [
@@ -1995,15 +1995,15 @@
         { heading: 'The fit\'s red triangle', text: 'Confidence curves for the fitted mean and for individuals, shaded or as lines; Save Predicteds, Residuals and Studentized Residuals; Save Formula; Plot Residuals; Remove Fit.' },
         { heading: 'Saved columns', text: 'Save Predicteds gives every row whose X has a value its prediction, also the rows the fit left out (excluded, a missing Y); residuals only where Y has one. Save Formula (Fit Mean, Line, Polynomial, Special, Robust, Quantile) saves the fit as a live formula column in the table\'s formula language, the polynomial\'s centred powers and Fit Special\'s transformations written out, so that it recomputes when X changes.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:anova': {
+    'p:bivariate:anova': {
       kicker: 'Oneway', title: 'Means/Anova',
       lead: 'The one-way analysis of variance: whether the means of the levels differ, with the pooled error. The mean diamonds show each mean and its confidence interval; their overlap marks, at mean ± half-width/√2, overlap for means that do not differ significantly (roughly, for equal sizes).',
       sections: [{ heading: 'With a Block', text: 'The block is an additive effect (a randomized block ANOVA); the tests are Type III and the means are least squares means, the block averaged.' }, { heading: 'Two levels', text: 'The pooled t test of the second level minus the first; t Test from the red triangle does it without assuming equal variances.' }],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:compare': {
+    'p:bivariate:compare': {
       kicker: 'Oneway', title: 'Compare Means',
       lead: 'Which pairs of means differ. Student\'s t does each pair at level α; Tukey-Kramer HSD holds α over all pairs; Hsu\'s MCB compares each level with the best of the others; Dunnett\'s compares each level with a control.',
       sections: [
@@ -2012,9 +2012,9 @@
         { heading: 'With Best, Hsu MCB', text: 'Each mean against the best of the others (Hsu\'s multiple comparisons with the best): against the largest of the others, and against the smallest. d is the one-sided Dunnett quantile of k − 1 comparisons (correlations ½, exact for equal group sizes). A level whose interval for its mean less the largest of the others has upper limit 0 is significantly below the best and cannot be the largest; the threshold matrix shows it as a negative value in its row. The comparison circles use d.' },
         { heading: 'Games-Howell', text: 'All pairs without assuming equal variances (Games and Howell 1976): each difference over its own standard error √(s²ᵢ/nᵢ + s²ⱼ/nⱼ), with the Welch-Satterthwaite degrees of freedom of the pair, and p-values and intervals from the studentized range of k levels on those degrees of freedom. Use it where Unequal Variances rejects equal variances and Tukey\'s pooled error would mislead. Each pair has its own q*, so there are no comparison circles. Not in JMP; Weight is not used.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:effect': {
+    'p:bivariate:effect': {
       kicker: 'Bivariate Analysis, Matched Pairs', title: 'Effect Size',
       lead: 'How large the difference is, in standard deviations or as a share of the variance, with a confidence interval: from the red triangle (Effect Size), for Means/Anova, the t tests and Matched Pairs. Not in JMP.',
       sections: [
@@ -2024,9 +2024,9 @@
         { heading: 'The intervals', text: 'Exact where an exact interval exists: d and d_z from the noncentral t, whose noncentrality λ is found where the observed t is the upper and the lower α/2 point (Steiger and Fouladi 1997; Cumming and Finch 2001); η², ε² and ω² from the noncentral F in the same way, λ/(λ + df₁ + df₂ + 1) being the population proportion of variance that all three estimate (Smithson 2003; Steiger 2004). g\'s interval is J times d\'s. d*, g* and d_av have no exact interval: theirs are Bonett\'s (2008), estimate ± z·SE, which do not assume equal variances. Steiger (2004) suggests a 90% interval for η², which matches the one-sided F test at α = 0.05: set α to 0.1.' },
         { heading: 'Weight and Freq', text: 'Freq counts rows. The t tests\' effect sizes, like the t tests, do not use Weight; η², ε² and ω² use the weighted sums of squares of the Analysis of Variance.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:bayes': {
+    'p:bivariate:bayes': {
       kicker: 'Bivariate Analysis, Matched Pairs', title: 'Bayes Factor',
       lead: 'How much more likely the data are under the alternative than under the null hypothesis (BF10), or the other way round (BF01 = 1/BF10), for a prior on the effect under the alternative. BF10 above 1 favours the alternative, below 1 the null; unlike a p-value it can show evidence for no effect. Not in JMP.',
       sections: [
@@ -2035,17 +2035,17 @@
         { heading: 'One-sided', text: 'δ > 0 (or ρ > 0) keeps the half of the prior on that side, doubled: BF+0 = 2·BF10·P(δ > 0 | data) (Morey and Wagenmakers 2014), the posterior probability from the noncentral t (or the correlation\'s) likelihood.' },
         { heading: 'Reading them', text: 'The numbers are shown as they are, without verbal labels. They depend on the prior: a wider prior (larger r or κ) expects larger effects and favours the null more when the effect is small. Right click a table for log₁₀ BF10, which is easier to read when BF10 is very large or small.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:nonpar': {
+    'p:bivariate:nonpar': {
       kicker: 'Oneway', title: 'Nonparametric tests',
       lead: 'Rank tests of whether the levels come from the same distribution: Wilcoxon (Kruskal-Wallis), the median test and van der Waerden\'s normal scores, as linear rank tests; Kolmogorov-Smirnov for two levels.',
       sections: [{ heading: 'Forms', text: 'The chi-square is (N−1)Σ nᵢ(meanᵢ − mean)²/Σ(a − mean)² of the scores a, which for Wilcoxon scores is Kruskal-Wallis\' H with ties corrected, and for median scores (N−1)/N times the Pearson chi-square of scipy\'s median_test. The two-sample Z of the Wilcoxon test has a continuity correction of 0.5.' },
         { heading: 'Multiple comparisons', text: 'Wilcoxon each pair (no adjustment), Steel-Dwass (all pairs, studentized range), Steel with a control, and Dunn\'s joint-rank comparisons with Bonferroni adjustment (statsmodels multipletests).' },
         { heading: 'Brunner-Munzel', text: 'The probability that a value of one level exceeds one of another, with its interval and a test that does not assume equal distributions; see its own (i).' }],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:brunner': {
+    'p:bivariate:brunner': {
       kicker: 'Oneway', title: 'Brunner-Munzel and the probability of superiority',
       lead: 'P = P(Y₁ > Y₂) + ½P(Y₁ = Y₂): the chance that a random value of one level exceeds a random value of the other, ties counted half. It is the Mann-Whitney U over n₁n₂, estimated from the ranks, and ½ means neither level tends to be larger.',
       sections: [
@@ -2054,9 +2054,9 @@
         { heading: 'Equivalence Test', text: 'Two one-sided tests that P lies between two bounds, such as 0.4 and 0.6 (statsmodels tost_prob_superior): the levels are stochastically equivalent when both reject.' },
         { heading: 'Not in JMP', text: 'JMP\'s closest are the Wilcoxon test, whose null hypothesis is identical distributions, and the Hodges-Lehmann estimate of a shift.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:rates': {
+    'p:bivariate:rates': {
       kicker: 'Oneway', title: 'Compare Rates',
       lead: 'Y counts events (whole numbers of zero or more), each row a unit observed for its Exposure: time, person-years, area. A level\'s rate is its total count over its total exposure; without an exposure every row is one unit.',
       sections: [
@@ -2065,18 +2065,18 @@
         { heading: 'Every level together', text: 'The likelihood-ratio test of a Poisson GLM with the log exposure as offset: a rate for each level against one for all. Its Pearson χ²/DF well above 1 means overdispersion: the counts vary more than a Poisson allows and every test here is too optimistic; Count Regression fits a negative binomial.' },
         { heading: 'Not in JMP', text: 'JMP compares counts with a Poisson Generalized Linear Model in Fit Model; it has no exact, score or E-test comparison of two rates.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:twoprop': {
+    'p:bivariate:twoprop': {
       kicker: 'Contingency', title: 'Two Sample Test for Proportions',
       lead: 'The proportion of one response level in the first X level against the second: their difference, their ratio (the relative risk) or their odds ratio, with a confidence interval and a test that they are equal. The Response Level item chooses the response level.',
       sections: [
         { heading: 'The methods', choices: [['Wald', 'estimate ± z·SE: poor with small counts or proportions near 0 or 1'], ['Agresti-Caffo (adjusted Wald)', 'one success and one failure added to each group: JMP\'s interval and test'], ['Newcombe (hybrid score)', 'from the two Wilson intervals; an interval only'], ['Miettinen-Nurminen (score)', 'inverts the score test, with the n/(n − 1) factor; recommended by Fagerland, Lydersen and Laake (2015)'], ['Katz, Woolf', 'log and logit Wald intervals; not defined with a zero cell'], ['Adjusted log, Gart', '0.5 added to the counts'], ['Koopman (score)', 'the score interval of the ratio'], ['Independence-smoothed logit', 'the counts shrunk toward independence']] },
         { heading: 'Differences from JMP', text: 'JMP reports only the adjusted Wald difference, with its one- and two-sided tests (the first table here). The ratio and odds ratio, and the other methods, are statsmodels\' confint_proportions_2indep and test_proportions_2indep.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:strata': {
+    'p:bivariate:strata': {
       kicker: 'Contingency', title: 'Cochran Mantel Haenszel and Breslow-Day',
       lead: 'A 2×2 table of X by Y in each level of a grouping column (the strata). The Mantel-Haenszel estimate pools the strata\'s odds ratios; its test asks whether the common odds ratio is 1, the association within strata.',
       sections: [
@@ -2084,14 +2084,14 @@
         { heading: 'The rest', text: 'The Mantel-Haenszel test with and without the continuity correction (R\'s mantelhaen.test uses it), the pooled odds ratio with its Robins-Breslow-Greenland interval, the pooled relative risk, and each stratum\'s own odds ratio.' },
         { heading: 'Not in JMP', text: 'JMP\'s Cochran Mantel Haenszel report gives the general-association statistics of SAS\'s PROC FREQ (correlation of scores, row and column scores, general association), not the Breslow-Day test; statsmodels does not compute those.' },
       ],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:variances': {
+    'p:bivariate:variances': {
       kicker: 'Oneway', title: 'Unequal Variances',
       lead: 'Tests that the levels have the same variance: O\'Brien\'s, Brown-Forsythe (absolute deviations from the median), Levene (from the mean) and Bartlett\'s (sensitive to non-normality), and for two levels the F test. Welch\'s ANOVA then tests the means without assuming equal variances.',
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:logistic': {
+    'p:bivariate:logistic': {
       kicker: 'Logistic', title: 'Logistic fits',
       lead: 'The probability of each level of Y as a function of X. Two levels: the log odds of the first level (the target) are a line in X (statsmodels Logit, or GLM with frequency weights). More levels: nominal, the log odds of each level against the last (MNLogit); ordinal, cumulative logits with one slope (OrderedModel).',
       sections: [{ heading: 'The plot', text: 'The curves are the cumulative probabilities; each point sits at a random height within the band of its level at its X, so the density of points follows the probabilities.' },
@@ -2100,24 +2100,24 @@
         { heading: 'Two levels', text: 'ROC Curve ▸ ROC Table: a line per cut on the target level\'s probability, the best starred. Decision Threshold: each row\'s probability of the target level against a threshold you drag or type, the counts and measures there, a Profit Matrix and Save Threshold Formula (see its own (i)).' },
         { heading: 'Save Probability Formula', text: 'Live formula columns for every row whose X has a value: Lin[level] (the log odds; ordinal: Linear and Cum[level]), Prob[level] and Most Likely.' },
         { heading: 'Unstable estimates', text: 'When X separates the levels (beyond some value every row has the same level), the likelihood keeps rising as the estimates grow and the fit stops somewhere on the way; the report marks them Unstable, as JMP does, and their standard errors and tests mean little.' }],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:contingency': {
+    'p:bivariate:contingency': {
       kicker: 'Contingency', title: 'Contingency tests',
       lead: 'Whether Y depends on X: the likelihood ratio (G²) and Pearson chi-squares of the table (scipy chi2_contingency), and Fisher\'s exact test for small tables. -LogLike is half of G², RSquare (U) its share of the entropy of Y.',
       sections: [{ heading: 'Warnings', text: 'With many expected counts below 5 the chi-square p-values are approximate; Fisher\'s exact test does not have that problem.' }],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:measures': {
+    'p:bivariate:measures': {
       kicker: 'Contingency', title: 'Measures of Association',
       lead: 'Gamma, Kendall\'s tau-b, Stuart\'s tau-c and Somers\' D measure an ordered association; lambda and the uncertainty coefficients the reduction in the error of predicting one variable from the other; Cramér\'s V a general association.',
       sections: [{ heading: 'The numbers', text: 'Computed from the table by the formulas of SAS PROC FREQ, which JMP follows, with their asymptotic standard errors; tau-b, tau-c and Somers\' D agree with scipy\'s kendalltau and somersd, Cramér\'s V is scipy\'s.' }],
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
-    'p:fitybyx:weights': {
+    'p:bivariate:weights': {
       kicker: 'Bivariate Analysis', title: 'Weight and Freq',
       lead: 'Freq counts a row that many times; Weight weights it. Least squares uses both, with the degrees of freedom from Freq. Tests whose statsmodels or scipy function takes no weights count whole-number frequencies by repeating rows and do not use Weight; the report says so.',
-      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-bivariate' },
     },
     'p:matchedpairs': {
       kicker: 'Specialized Modeling', title: 'Matched Pairs',
@@ -2142,15 +2142,15 @@
   };
 
   function launchMap() {
-    const cell = (label, yt, xt) => el('div', { class: 'sm-fyx-map-cell' }, el('strong', { text: label }), el('span', null, SM.util.typeIcon(yt), ' by ', SM.util.typeIcon(xt)));
-    return el('div', { class: 'sm-fyx-map', role: 'note', 'aria-label': 'The analysis for each pair of modeling types' },
-      el('div', { class: 'sm-fyx-map-head' }, 'Y continuous'), cell('Bivariate', 'continuous', 'continuous'), cell('Oneway', 'continuous', 'nominal'),
-      el('div', { class: 'sm-fyx-map-head' }, 'Y categorical'), cell('Logistic', 'nominal', 'continuous'), cell('Contingency', 'nominal', 'nominal'),
-      el('div'), el('div', { class: 'sm-fyx-map-foot', text: 'X continuous' }), el('div', { class: 'sm-fyx-map-foot', text: 'X categorical' }));
+    const cell = (label, yt, xt) => el('div', { class: 'sm-biv-map-cell' }, el('strong', { text: label }), el('span', null, SM.util.typeIcon(yt), ' by ', SM.util.typeIcon(xt)));
+    return el('div', { class: 'sm-biv-map', role: 'note', 'aria-label': 'The analysis for each pair of modeling types' },
+      el('div', { class: 'sm-biv-map-head' }, 'Y continuous'), cell('Bivariate', 'continuous', 'continuous'), cell('Oneway', 'continuous', 'nominal'),
+      el('div', { class: 'sm-biv-map-head' }, 'Y categorical'), cell('Logistic', 'nominal', 'continuous'), cell('Contingency', 'nominal', 'nominal'),
+      el('div'), el('div', { class: 'sm-biv-map-foot', text: 'X continuous' }), el('div', { class: 'sm-biv-map-foot', text: 'X categorical' }));
   }
 
   SM.platforms.register({
-    id: 'fitybyx', label: 'Bivariate Analysis', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
+    id: 'bivariate', label: 'Bivariate Analysis', menu: 'Analyze', order: 20, info: 'p:bivariate', topics: TOPICS,
     about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s, Hsu\'s MCB and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, Lack of Fit, ROC and lift curves, the Decision Threshold, inverse prediction, saved probability formulas) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), the Breslow-Day test of equal odds ratios across strata, effect sizes with intervals (Cohen\'s d and Hedges\' g, exact from the noncentral t; d* for unequal variances; η², ε² and ω², exact from the noncentral F), JZS Bayes factors of the two-sample t test and Bayes factors of the correlation (two- and one-sided), and Games-Howell comparisons for unequal variances.',
     uses: ['statsmodels OLS, WLS, RLM, QuantReg (fits); lowess', 'statsmodels.stats.multicomp.pairwise_tukeyhsd; weightstats (CompareMeans, ttost_ind)', 'statsmodels.stats.oneway.anova_oneway; power.FTestAnovaPower; multitest.multipletests',
       'statsmodels.stats.nonparametric.rank_compare_2indep (Brunner-Munzel, tost_prob_superior)', 'statsmodels.stats.rates (test_poisson_2indep, confint_poisson_2indep, confint_poisson); GLM Poisson',
@@ -2167,9 +2167,9 @@
           help: 'The factors. Every Y is paired with every X (a column is never paired with itself); the modeling types of the pair choose the analysis, as the map shows.' },
         { key: 'block', label: 'Block', max: 1, types: ['ordinal', 'nominal'], hint: 'optional (Oneway)',
           help: 'Oneway only: a column of blocks (batches, days, subjects). Means/Anova then fits it as an additive effect, a randomized block ANOVA with Type III tests and least squares means, and the rows without a block are left out of the plot, the quantiles, the means and the ANOVA. The comparisons, the rank tests and the other tests do not use it.' },
-        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights',
+        { key: 'weight', label: 'Weight', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:bivariate:weights',
           help: 'A weight per row: the least-squares fits, the ANOVA and its means (and Student\'s t comparisons), the logistic likelihood and the counts of a contingency table are weighted. A test whose statsmodels or scipy function takes no weights (the t tests, the rank tests, Tukey\'s, Games-Howell\'s and Dunnett\'s comparisons; robust, quantile and LOWESS fits) does not use it, and the report says so. Rows with a missing, zero or negative weight are left out.' },
-        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:fitybyx:weights',
+        { key: 'freq', label: 'Freq', max: 1, numeric: true, types: ['continuous'], hint: 'optional numeric', info: 'p:bivariate:weights',
           help: 'A count per row: the row stands for that many observations, and the degrees of freedom count them. Where a function takes no weights the rows are repeated, so Freq must then hold whole numbers.' },
         { key: 'by', label: 'By', hint: 'optional',
           help: 'A separate analysis for each level of the By column (with several columns, each combination of their levels), with the same options. Rows with a missing By value are left out.' },
@@ -2202,7 +2202,7 @@
         return;
       }
       const per = ctx.opt('perRow', 0);
-      const wrap = el('div', { class: `sm-fyx-group${per > 0 ? ' is-rows' : ''}` });
+      const wrap = el('div', { class: `sm-biv-group${per > 0 ? ' is-rows' : ''}` });
       if (per > 0) wrap.style.setProperty('--per-row', String(per));
       ctx.container.append(wrap);
       for (const [y, x] of pairs) {
@@ -2395,5 +2395,5 @@
     },
   });
 
-  SM.fitybyx = Object.freeze({ kindOf, pairTitle, probsAt, pairsOf });
+  SM.bivariate = Object.freeze({ kindOf, pairTitle, probsAt, pairsOf });
 }(typeof self !== 'undefined' ? self : this));

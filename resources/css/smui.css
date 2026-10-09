@@ -736,7 +736,7 @@
 /* no text selection or callout on a held item: [draggable] of any value,
    as the attribute is "false" while a finger holds it (an iPhone selected
    the text when the rule asked for "true", and the drag never started) */
-.sm [draggable], .sm-dialog [draggable], .sm-pick-list, .sm-role-list, .sm-gb-collist, .smf-list, .smt-cols, .sm-collist { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.sm [draggable], .sm-dialog [draggable], .sm-pick-list, .sm-role-list, .sm-gm-collist, .smf-list, .smt-cols, .sm-collist { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .sm-touch-ready { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
 .sm-touch-dragging { opacity: 0.55; }
 /* the dragged item under the finger: above everything (a phone's dialog is

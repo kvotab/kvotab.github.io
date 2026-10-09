@@ -1,0 +1,48 @@
+/* ==========================================================================
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > FIT MANY MODELS (smui-p-manymodels.js)
+   The launch dialog's part (the methods, K-fold crossvalidation), the best
+   and the selected methods in the report tables, the buttons under the
+   Summary and the threshold field. Colours are kvot.css's tokens, so both
+   themes read. Class prefix sm-mm-.
+   ========================================================================== */
+
+/* ---- the launch dialog: the methods and the crossvalidation ----------------- */
+.sm-mm-launch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-color); font-size: 12px; }
+.sm-mm-launch h4 { margin: 0 0 6px; }
+.sm-mm-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; margin: 0 0 10px; }
+.sm-mm-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); cursor: pointer; }
+.sm-mm-check input { margin: 0; accent-color: var(--color-kvot-accent); cursor: pointer; }
+.sm-mm-check input:disabled { cursor: default; }
+.sm-mm-check.is-off { color: var(--text-muted); }
+.sm-mm-check.is-off span { text-decoration: line-through; text-decoration-color: var(--text-muted); }
+.sm-mm-opts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.sm-mm-opt { display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
+.sm-mm-opt > span { color: var(--text-secondary); }
+.sm-mm-hint { margin: 7px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; max-width: 640px; }
+.sm-mm-input {
+  padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; width: 4.5em;
+  background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.sm-mm-input:disabled { color: var(--text-muted); }
+.sm-mm-input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
+
+/* ---- report tables: the best of each column, the selected methods ------------- */
+.sm-rt td.sm-mm-best { font-weight: 700; color: var(--accent-text); }
+.sm-rt td.sm-mm-sel { background: color-mix(in srgb, var(--accent-line) 16%, transparent); }
+.sm-rt tr:has(td.sm-mm-sel) td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+
+/* ---- the buttons under the Summary, the progress line ------------------------- */
+.sm-mm-actions { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 2px 0 8px; }
+.sm-mm-progress { font-style: italic; }
+
+/* ---- Decision Threshold: the threshold field ---------------------------------- */
+.sm-mm-cut { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 2px 0 8px; font-size: 12px; }
+.sm-mm-cut label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+
+/* ---- a wide table scrolls by itself on a narrow screen ------------------------ */
+.sm-mm-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.sm-mm-scroll > table.sm-rt { margin-bottom: 8px; }
+
+@media (max-width: 560px) {
+  .sm-mm-checks { grid-template-columns: minmax(0, 1fr); }
+}

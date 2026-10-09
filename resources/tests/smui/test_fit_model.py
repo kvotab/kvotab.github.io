@@ -663,7 +663,7 @@ check.near('mixed x + g + x*g: the Intercept at x = 0', mme['Intercept']['estima
 # (the report's default, Kenward-Roger, adjusts the standard errors; Satterthwaite's are MixedLM's model-based ones: test_mixed.py)
 mms_ = {r_['term']: r_ for r_ in call('fitmodel.mixed', table=t24, y='y', effects=Ea + [{'names': ['s'], 'random': True}], mixed={'ddfm': 'sat'})['estimates']}
 check.near('mixed x + g + x*g: its standard error (Satterthwaite: the model-based one)', mms_['Intercept']['se'], float(rmj.bse_fe[0]), rel=1e-3)
-gr_ = call('fitmodel.genreg', table=t20, y='y', effects=Ea, method='lasso', n_grid=25)
+gr_ = call('fitmodel.penreg', table=t20, y='y', effects=Ea, method='lasso', n_grid=25)
 bj = np.array([e_['estimate'] for e_ in gr_['estimates']])   # Intercept, x, g[a], g[b], (x-m)*g[a], (x-m)*g[b], as XJ
 check.near('Penalized Regression x + g + x*g: JMP\'s estimates give the report\'s predictions', maxdiff(gr_['diag']['predicted'], XJ @ bj), 0.0, abs_=1e-8)
 swa = call('fitmodel.stepwise', table=t20, y='y', effects=Ea, action='enter_all')
@@ -984,12 +984,12 @@ Xr = rng.normal(size=(nr, 6))
 yg = 1 + Xr @ np.array([2.0, -1.5, 0, 0, 0.8, 0]) + rng.normal(size=nr)
 t19 = table({**{f'x{i}': Xr[:, i].tolist() for i in range(6)}, 'y': yg.tolist()})
 Eg = [[f'x{i}'] for i in range(6)]
-gr = call('fitmodel.genreg', table=t19, y='y', effects=Eg, method='ridge', n_grid=20)
+gr = call('fitmodel.penreg', table=t19, y='y', effects=Eg, method='ridge', n_grid=20)
 Z = (Xr - Xr.mean(0)) / Xr.std(0)
 lam = gr['model']['lambda']
 bz = np.linalg.solve(Z.T @ Z / nr + lam * np.eye(6), Z.T @ (yg - yg.mean()) / nr)
 check.near('ridge: the closed-form solution on the scaled predictors', float(np.max(np.abs(arr([s['estimate'] for s in gr['scaled'][1:]]) - bz))), 0.0, abs_=2e-4)
-gl = call('fitmodel.genreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30)
+gl = call('fitmodel.penreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30)
 check('lasso: the path starts with every term out', gl['path']['nonzero'][0], 0)
 check('lasso: the chosen model minimises AICc', gl['chosen'], int(np.nanargmin(arr(gl['path']['aicc']))))
 zero = {e['term']: e['zero'] for e in gl['estimates']}
@@ -1000,7 +1000,7 @@ rr = sm.OLS(yg, Zc).fit_regularized(method='elastic_net', alpha=np.r_[0, np.full
 check.near('lasso estimates = statsmodels fit_regularized', float(np.max(np.abs(arr([s['estimate'] for s in gl['scaled']]) - rr.params))), 0.0, abs_=1e-4)
 orig = {e['term']: e['estimate'] for e in gl['estimates']}
 check.near('original-scale estimate = scaled / sd', orig['x0'], float(rr.params[1] / Xr[:, 0].std()), rel=1e-3)
-gc = call('fitmodel.genreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30, choose=5)
+gc = call('fitmodel.penreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30, choose=5)
 check('a chosen step', gc['chosen'], 5)
 
 # ---- the Python under each result runs on the table exported as CSV, and computes what the report shows -------------
@@ -1063,7 +1063,7 @@ if not err:
 mv1 = call('fitmodel.manova', table=t18, y=['y1', 'y2', 'y3'], effects=[['fertilizer'], ['water'], ['fertilizer', 'water']], table_name='mv')
 ns, err = run_code(mv1['code'], pd.DataFrame({'y1': Y2[:, 0], 'y2': Y2[:, 1], 'y3': Y2[:, 2], 'fertilizer': fert, 'water': water}), 'mv')
 check('MANOVA code runs', err, None)
-gr1 = call('fitmodel.genreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30, table_name='gr')
+gr1 = call('fitmodel.penreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30, table_name='gr')
 ns, err = run_code(gr1['code'], pd.DataFrame({**{f'x{i}': Xr[:, i] for i in range(6)}, 'y': yg}), 'gr')
 check('Penalized Regression code runs', err, None)
 if not err:
@@ -2062,7 +2062,7 @@ X6 = [f'x{i}' for i in range(6)]
 
 
 def gr(**kw):
-    return call('fitmodel.genreg', table=tg, effects=kw.pop('effects', Eg6), **kw)
+    return call('fitmodel.penreg', table=tg, effects=kw.pop('effects', Eg6), **kw)
 
 
 def gr_scaled(rows_mask, weights=None):
@@ -2116,14 +2116,14 @@ fold = np.empty(ng, dtype=int)
 fold[np.random.default_rng(123).permutation(ng)] = np.arange(ng) % 5
 fk = rk['model']['fold'] - 1
 check('KFold: the final model\'s Validation set is one fold, drawn from the seed', rk['diag']['set'], (fold == fk).astype(int).tolist())
-check('KFold with a Validation column is refused', 'Validation column' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, validation='v') or ''), True)
-check('Validation Column needs a column in the role', 'Validation role' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation') or ''), True)
-check('a Validation column holds 0, 1 and 2 (predictive.prepare\'s message)', 'holds 0 (training)' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='w') or ''), True)
-check('the Validation column cannot be a model effect', 'cannot also' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='x0') or ''), True)
-check('KFold needs a seed', 'seed' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold') or ''), True)
-check('KFold needs 2 to n folds', 'folds' in (err_of('fitmodel.genreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, folds=1) or ''), True)
+check('KFold with a Validation column is refused', 'Validation column' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, validation='v') or ''), True)
+check('Validation Column needs a column in the role', 'Validation role' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='validation') or ''), True)
+check('a Validation column holds 0, 1 and 2 (predictive.prepare\'s message)', 'holds 0 (training)' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='w') or ''), True)
+check('the Validation column cannot be a model effect', 'cannot also' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='validation', validation='x0') or ''), True)
+check('KFold needs a seed', 'seed' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='kfold') or ''), True)
+check('KFold needs 2 to n folds', 'folds' in (err_of('fitmodel.penreg', table=tg, y='y', effects=Eg6, criterion='kfold', seed=1, folds=1) or ''), True)
 t_big = table({'x': gr_rng.normal(size=320).tolist(), 'y': gr_rng.normal(size=320).tolist()})
-check('Leave-One-Out is refused beyond its rows (Forward Selection: 300)', 'KFold' in (err_of('fitmodel.genreg', table=t_big, y='y', effects=[['x']], method='forward', criterion='loo') or ''), True)
+check('Leave-One-Out is refused beyond its rows (Forward Selection: 300)', 'KFold' in (err_of('fitmodel.penreg', table=t_big, y='y', effects=[['x']], method='forward', criterion='loo') or ''), True)
 
 # ---- the fits against scikit-learn and statsmodels called directly -------------------------------------------------------
 r1 = gr(y='y', method='lasso')
@@ -2170,7 +2170,7 @@ check.near('Adaptive Lasso (binomial): the initial fit is the logistic MLE', r8b
 Xs_ = gr_rng.normal(size=(8, 10))
 ys_ = Xs_[:, 0] + gr_rng.normal(size=8)
 ts_ = table({**{f's{i}': Xs_[:, i].tolist() for i in range(10)}, 'y': ys_.tolist()})
-ra_ = call('fitmodel.genreg', table=ts_, y='y', effects=[[f's{i}'] for i in range(10)], method='lasso', adaptive=True)
+ra_ = call('fitmodel.penreg', table=ts_, y='y', effects=[[f's{i}'] for i in range(10)], method='lasso', adaptive=True)
 Zs_ = (Xs_ - Xs_.mean(0)) / Xs_.std(0)
 b_rdg = np.linalg.solve(Zs_.T @ Zs_ / 8 + 0.01 * np.eye(10), Zs_.T @ (ys_ - ys_.mean()) / 8)
 check('Adaptive with more terms than rows: the initial fit is ridge (λ = 0.01), and the notes say so', any('ridge estimate' in n_ for n_ in ra_['notes']), True)
@@ -2208,7 +2208,7 @@ lh = np.array(rhb['path']['alpha'])
 share_h = float(yb01[trh].mean())
 lr0 = LogisticRegression(l1_ratio=0.5, C=1 / (lh[0] * trh.sum()), solver='saga', tol=1e-14, max_iter=10 ** 6, random_state=0).fit(Zh[trh], yb01[trh])
 logit_h = math.log(share_h / (1 - share_h))
-p_h = fit_model._genreg_path(tg, None, fit_model._spec(y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9))
+p_h = fit_model._penreg_path(tg, None, fit_model._spec(y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9))
 check('scikit-learn pinned: saga where every term is out stops with the intercept short of logit(share) (the report\'s is it)',
       (bool(np.all(lr0.coef_ == 0)), abs(float(lr0.intercept_[0]) - logit_h) > 1e-4, abs(float(p_h['coefs'][0, 0]) - logit_h) < 1e-10), (True, True, True))
 cur_h = [skm.log_loss(yb01[vah], np.full(int(vah.sum()), share_h), labels=[0, 1])]
@@ -2308,8 +2308,8 @@ xc_ = xa_ + xb_ + 0.4 * fx.normal(size=150)
 yp_ = xa_ + xb_ + 0.3 * fx.normal(size=150)
 tp_ = table({'xa': xa_.tolist(), 'xb': xb_.tolist(), 'xc': xc_.tolist(), 'xd': fx.normal(size=150).tolist(), 'y': yp_.tolist()})
 Ep_ = [['xa'], ['xb'], ['xc'], ['xd']]
-rfp = call('fitmodel.genreg', table=tp_, y='y', effects=Ep_, method='forward')
-rpp = call('fitmodel.genreg', table=tp_, y='y', effects=Ep_, method='pruned')
+rfp = call('fitmodel.penreg', table=tp_, y='y', effects=Ep_, method='forward')
+rpp = call('fitmodel.penreg', table=tp_, y='y', effects=Ep_, method='pruned')
 steps_f = [tuple(int(j) for j in np.flatnonzero(c_)) for c_ in path_coefs(rfp).T]
 steps_p = [tuple(int(j) for j in np.flatnonzero(c_)) for c_ in path_coefs(rpp).T]
 check('Forward Selection enters xc first, then keeps it', (steps_f[1], all(2 in s_ for s_ in steps_f[1:])), ((2,), True))
@@ -2350,17 +2350,17 @@ check('predicted probabilities stay inside (0, 1)', bool(np.all((pb_ > 0) & (pb_
 rc_ = gr(y='y', criterion='kfold', folds=5, seed=123, choose=5)
 check('a chosen point: the model at that penalty, of the same fold', (rc_['chosen'], rc_['best'], rc_['model']['fold']), (5, rk['best'], rk['model']['fold']))
 check.near('... its estimates are the path\'s there', maxdiff(scaled_est(rc_)[1:], path_coefs(rk)[:, 5]), 0.0, abs_=1e-12)
-p1_ = fit_model._genreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123))
-p2_ = fit_model._genreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123, choose=5))
+p1_ = fit_model._penreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123))
+p2_ = fit_model._penreg_path(tg, None, fit_model._spec(y='y', effects=Eg6, criterion='kfold', folds=5, seed=123, choose=5))
 check('choosing a point does not refit the path', p1_ is p2_, True)
-pf_ = call('fitmodel.profile', table=tg, kind='genreg', y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9,
+pf_ = call('fitmodel.profile', table=tg, kind='penreg', y='yb', effects=Eg6, method='enet', enet_alpha=0.5, criterion='holdback', portion=0.3, seed=9,
            current={f'x{i}': float(Xg[7, i]) for i in range(6)})
 check.near('the profiler predicts the chosen model (a row\'s Prob[yes])', pf_['responses'][0]['current']['pred'], rhb['diag']['predicted'][7], abs_=1e-12)
 check('... named as the level', pf_['responses'][0]['name'], 'Prob[yes]')
 t0_ = __import__('time').time()
 Xt_ = gr_rng.normal(size=(5000, 10))
 tt_ = table({**{f'z{i}': Xt_[:, i].tolist() for i in range(10)}, 'yb': np.where(Xt_[:, 0] - Xt_[:, 1] + gr_rng.logistic(size=5000) > 0, 'a', 'b').tolist()})
-call('fitmodel.genreg', table=tt_, y='yb', effects=[[f'z{i}'] for i in range(10)], criterion='kfold', seed=1)
+call('fitmodel.penreg', table=tt_, y='yb', effects=[[f'z{i}'] for i in range(10)], criterion='kfold', seed=1)
 check('5000 rows, 10 terms, binomial lasso with KFold: a few seconds at most', __import__('time').time() - t0_ < 6, True)
 
 # ---- the Python under the report, on the table exported as CSV --------------------------------------------------------
@@ -2416,7 +2416,7 @@ fold_g = np.random.default_rng(31).integers(1, 6, ng).astype(float)
 gdf_k = gdf.assign(fold=fold_g)
 tgk = table({c: [None if isinstance(v_, float) and np.isnan(v_) else v_ for v_ in gdf_k[c].tolist()] for c in gdf_k.columns},
             types={'yb': 'nominal', 'vt': 'nominal'}, levels={'yb': ['yes', 'no']})
-rk_ = call('fitmodel.genreg', table=tgk, y='y', effects=Eg6, criterion='validation', validation='fold', table_name='grk')
+rk_ = call('fitmodel.penreg', table=tgk, y='y', effects=Eg6, criterion='validation', validation='fold', table_name='grk')
 check('K-fold Validation column: KFold by its 5 values', (rk_['model']['validation'], rk_['model']['folds']), ('KFold (fold)', 5))
 fk_ = rk_['model']['fold']
 held_ = np.asarray(rk_['diag']['set']) == 1
@@ -2428,7 +2428,7 @@ if not err:
     check.near('  its fit has the report\'s scaled estimates', maxdiff(scaled_est(rk_), np.asarray(ns['fit'].params)), 0.0, abs_=1e-4)
 # the folds by hand: Maximum Likelihood by KFold of the column is least squares on the other folds, and its curve (one point) the mean
 # of each held-out fold's -LogLikelihood per row, the variance each fit's SSE/N
-rkm = call('fitmodel.genreg', table=tgk, y='y', effects=Eg6, method='mle', criterion='validation', validation='fold')
+rkm = call('fitmodel.penreg', table=tgk, y='y', effects=Eg6, method='mle', criterion='validation', validation='fold')
 per_ = []
 for fv_ in sorted(set(fold_g)):
     tr_, ho_ = fold_g != fv_, fold_g == fv_
@@ -2443,7 +2443,7 @@ fr_ = rbh['fit_report']
 pr_ = np.asarray(rbh['diag']['predicted'])
 sets_ = np.asarray(rbh['diag']['set'])
 act_ = np.where(yb01 == 1, 0, 1)   # the level: 0 the target (yes)
-check('binomial GenReg: a classification report by set, the target first', (fr_['sets'], fr_['levels'], fr_['threshold']['target']), (['Training', 'Validation'], ['yes', 'no'], 0))
+check('binomial PenReg: a classification report by set, the target first', (fr_['sets'], fr_['levels'], fr_['threshold']['target']), (['Training', 'Validation'], ['yes', 'no'], 0))
 for k_, sname in enumerate(['Training', 'Validation']):
     m_ = sets_ == k_
     pred_lv = np.where(pr_[m_] >= 0.5, 0, 1)
@@ -2459,7 +2459,7 @@ ns, err = run_code(fr_['plots']['head_code'], gdf, 'data')
 check('  the code of its parts makes the rows\' levels, sets and probabilities', err, None)
 if not err:
     check.near('  and they are the report\'s', maxdiff(ns['fitted'][:, 0], pr_) + float(np.max(np.abs(ns['y'] - act_))) + float(np.max(np.abs(ns['sets'] - sets_))), 0.0, abs_=1e-6)
-svb = call('fitmodel.save', table=tg, kind='genreg', y=['yb'], effects=Eg6, criterion='holdback', portion=0.3, seed=9)
+svb = call('fitmodel.save', table=tg, kind='penreg', y=['yb'], effects=Eg6, criterion='holdback', portion=0.3, seed=9)
 check('  its Save gives the Prob[] columns the threshold\'s formula reads', (svb['names'], bool(np.allclose(np.asarray(svb['prob']).sum(axis=1), 1))), (['Prob[yes]', 'Prob[no]'], True))
 # the active effects: those with a nonzero term (Make Model, Run Model, Relaunch with Active Effects)
 ract = gr(y='y', criterion='bic')
@@ -3101,12 +3101,12 @@ sv = sv_('qr', y='y', tau=0.3)
 rq_ = smf.quantreg(f'y ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', fr_s.loc[fit_s]).fit(q=0.3, max_iter=5000)
 check.near('Quantile Regression: every row\'s predicted quantile = statsmodels\' predict', maxdiff(sv['columns']['predicted'], rq_.predict(fr_s.loc[want_s])), 0.0, abs_=1e-5)
 check('Quantile Regression: the formula\'s name has the quantile', sv['formulas'][0]['name'], 'Pred Formula y Quantile 0.3')
-sv = sv_('genreg', y='y', method='lasso', criterion='aicc')
-grr = call('fitmodel.genreg', table=tid_s, rows=rows_s, y='y', effects=E_s, method='lasso', criterion='aicc')
+sv = sv_('penreg', y='y', method='lasso', criterion='aicc')
+grr = call('fitmodel.penreg', table=tid_s, rows=rows_s, y='y', effects=E_s, method='lasso', criterion='aicc')
 check.near('Penalized Regression: the rows of the fit keep the report\'s prediction', maxdiff([sv['columns']['predicted'][sv['rows'].index(r)] for r in grr['diag']['rows']], grr['diag']['predicted']), 0.0, abs_=1e-9)
 if NODE:
     for kind_, kw_, nm_ in (('gee', dict(y='y', subject='s', corr='exchangeable'), 'Pred Formula y'), ('qr', dict(y='y', tau=0.3), 'Pred Formula y Quantile 0.3'),
-                            ('genreg', dict(y='y', method='lasso', criterion='aicc'), 'Pred Formula y')):
+                            ('penreg', dict(y='y', method='lasso', criterion='aicc'), 'Pred Formula y')):
         sv = sv_(kind_, **kw_)
         check.near(f'{kind_}: the prediction formula gives the saved predictions', maxdiff(saved_formulas(cols_s, sv['formulas'])[nm_][sv['rows']], sv['columns']['predicted']), 0.0, abs_=1e-9)
 else:

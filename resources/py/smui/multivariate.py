@@ -4030,8 +4030,8 @@ def _screen_pair(yv, xv, ycat, xcat, w):
     return r
 
 
-@api('respscreen.fit')
-def respscreen_fit(table, y, x, rows=None, weight=None, freq=None, max_logworth=1000, alpha=0.05, where=None, table_name='data'):
+@api('manytests.fit')
+def manytests_fit(table, y, x, rows=None, weight=None, freq=None, max_logworth=1000, alpha=0.05, where=None, table_name='data'):
     """Every Y against every X as Bivariate Analysis would test it: ANOVA or
     regression F for a continuous Y, the likelihood-ratio chi-square of the
     contingency table or of the logistic fit for a categorical one; the

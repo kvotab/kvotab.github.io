@@ -50,18 +50,18 @@ LAYERS = r"""(async () => { const rep = SM.app.reports[0]; SM.app.showTab(SM.app
 # Graph Maker's smoother and a Bivariate graph on the Business cycle table's date column, their code run.
 DATES = r"""(async () => {
   const t = SM.app.openExample('cycles');
-  const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
-  await new Promise(res => { if (rep.body.querySelector('.sm-gb')) res(); else rep.on('done', res); });
-  let gb = rep.body.querySelector('.sm-gb')._gb; await gb.idle();
-  await gb.update(S => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('output').id, name: 'output' }]; S.zones.y = [{ id: t.col('quarter').id, name: 'quarter' }]; S.auto = false; S.elements = []; });
-  await gb.elements(['points', 'smoother']);
-  await gb.idle(); await new Promise(r => setTimeout(r, 300));
-  gb = rep.body.querySelector('.sm-gb')._gb;
+  const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
+  await new Promise(res => { if (rep.body.querySelector('.sm-gm')) res(); else rep.on('done', res); });
+  let gm = rep.body.querySelector('.sm-gm')._gm; await gm.idle();
+  await gm.update(S => { for (const k of Object.keys(S.zones)) S.zones[k] = []; S.zones.x = [{ id: t.col('output').id, name: 'output' }]; S.zones.y = [{ id: t.col('quarter').id, name: 'quarter' }]; S.auto = false; S.elements = []; });
+  await gm.elements(['points', 'smoother']);
+  await gm.idle(); await new Promise(r => setTimeout(r, 300));
+  gm = rep.body.querySelector('.sm-gm')._gm;
   const code = rep.pyCode.find(c => /make_smoothing_spline/.test(c)) || '';
-  const trace = gb.plot().traces.find(tr => tr.mode === 'lines');
+  const trace = gm.plot().traces.find(tr => tr.mode === 'lines');
   const res = await SM.notebook.exec('dates', code + '\nfirst = float(spline((grid[0] - m) / s))\nfirst', { label: 'code', fresh: true });
   const got = res.outputs.find(o => o.type === 'result');
-  const bv = SM.app.openReport(SM.platforms.get('fitybyx'), { roles: { y: [t.col('output').id], x: [t.col('quarter').id] }, options: {} }, t);
+  const bv = SM.app.openReport(SM.platforms.get('bivariate'), { roles: { y: [t.col('output').id], x: [t.col('quarter').id] }, options: {} }, t);
   await new Promise(res => bv.on('done', res));
   const graphCode = bv.codeBlocks().map(d => d.querySelector('code') ? d.querySelector('code').textContent : '').find(c => /plt\.show\(\)/.test(c)) || '';
   const res2 = await SM.notebook.exec('dates2', graphCode, { label: 'code', fresh: true });

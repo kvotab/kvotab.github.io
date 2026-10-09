@@ -58,7 +58,7 @@ LABEL = dict(METHODS)
 CATEGORICAL_ONLY = {'nb', 'lda'}
 # off at first: Fit Stepwise (as JMP), and the methods beyond JMP's default list (XGBoost and LightGBM load a package of their own)
 DEFAULT = [k for k, _ in METHODS if k not in ('stepwise', 'xgboost', 'lightgbm', 'ridge')]
-# the Pyodide packages a method needs beyond scikit-learn: loaded only when it is chosen (screening.fit.<tags>)
+# the Pyodide packages a method needs beyond scikit-learn: loaded only when it is chosen (manymodels.fit.<tags>)
 PACKAGES = {'xgboost': 'xgboost', 'lightgbm': 'lightgbm'}
 # the methods the Two Way Interactions and Quadratic options change (the linear ones)
 TERMED = {'linear', 'lasso', 'enet', 'ridge', 'lda'}
@@ -581,7 +581,7 @@ def fit_linear(X, y, w, train, tune, n_levels, factors, seed, ordinal=False, ter
     return (lambda Xn: full_proba(m.predict_proba((expand(Xn) - center) / scale), m.classes_, n_levels)), {'text': f'multinomial logit on {what}, {A.shape[1]} terms'}
 
 
-def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_lambda=100, terms=None):
+def fit_penreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_lambda=100, terms=None):
     """Penalized Regression: the lasso (l1_ratio 1) or elastic net penalty path on the centred and scaled
     main effects; the penalty with the best validation measure, or with no validation rows the smallest AICc. A
     normal response by coordinate descent (enet_path), a categorical one by logistic regression (saga, 30 penalties
@@ -840,7 +840,7 @@ def fit_lightgbm(X, y, w, train, tune, n_levels, factors, seed, rounds=100, leav
 
 
 FITTERS = {'tree': fit_tree, 'forest': fit_forest, 'boosted': fit_boosted, 'xgboost': fit_xgboost, 'lightgbm': fit_lightgbm, 'knn': fit_knn, 'nb': fit_nb,
-           'neural': fit_neural, 'svm': fit_svm, 'lda': fit_lda, 'linear': fit_linear, 'lasso': fit_genreg, 'enet': fit_genreg, 'ridge': fit_ridge,
+           'neural': fit_neural, 'svm': fit_svm, 'lda': fit_lda, 'linear': fit_linear, 'lasso': fit_penreg, 'enet': fit_penreg, 'ridge': fit_ridge,
            'stepwise': fit_stepwise}
 EXTRA = {'enet': {'l1_ratio': 0.9}}
 # the helpers each fitter's shown code needs, beyond the common ones
@@ -963,7 +963,7 @@ def _P(table, rows, s):
     def build():
         portion = 0.0 if _kfold(s) else s['portion']
         return pv.prepare(table, s['y'], s['x'], rows, s['weight'], s['freq'], s['validation'], portion, s['seed'], s['missing'])
-    return pv.cached('screening-data', table, rows, s, build, keep=64)
+    return pv.cached('manymodels-data', table, rows, s, build, keep=64)
 
 
 def factors_of(P):
@@ -1031,7 +1031,7 @@ def _model(table, rows, s, key):
         tune = P.mask(1) if P.has(1) else None
         (predict, info), caught = _caught(_call_fitter, key, P, P.train(), tune, s['seed'], s)
         return {'predict': predict, 'info': info, 'seconds': time.perf_counter() - t0, 'warnings': caught}
-    return pv.cached('screening-model', table, rows, {**s, 'method': key}, build, keep=64)
+    return pv.cached('manymodels-model', table, rows, {**s, 'method': key}, build, keep=64)
 
 
 def _crossvalidated(table, rows, s, key, repeats):
@@ -1058,7 +1058,7 @@ def _crossvalidated(table, rows, s, key, repeats):
                 oof[held] = f[held]
             _tick()
         return {'folds': folds, 'oof': oof, 'warnings': caught}
-    return pv.cached('screening-cv', table, rows, {**s, 'method': key, 'repeats': repeats}, build, keep=64)
+    return pv.cached('manymodels-cv', table, rows, {**s, 'method': key, 'repeats': repeats}, build, keep=64)
 
 
 _PROGRESS = {'done': 0, 'total': 0}
@@ -1066,7 +1066,7 @@ _PROGRESS = {'done': 0, 'total': 0}
 
 def _tick():
     _PROGRESS['done'] += 1
-    print(f'smui:progress screening {_PROGRESS["done"]} {_PROGRESS["total"]}', flush=True)
+    print(f'smui:progress manymodels {_PROGRESS["done"]} {_PROGRESS["total"]}', flush=True)
 
 
 def _methods(methods, P):
@@ -1105,7 +1105,7 @@ def dominant(rows, keys):
     return out
 
 
-@api('screening.fit', packages=pv.SK)
+@api('manymodels.fit', packages=pv.SK)
 def fit(table, y, x, rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None, missing='informative',
         methods=None, kfold=0, repeats=1, plot=None, interactions=False, quadratic=False, table_name='data'):
     """Every chosen method on the same rows and sets: the Measures of Fit per method and set, the crossvalidated
@@ -1245,9 +1245,9 @@ def _code(P, table_name, rows, keys, s, K, repeats):
     return '\n'.join(L)
 
 
-# ---- the graphs' code (smui-p-screening.js puts each under its graph) -----------------------------
+# ---- the graphs' code (smui-p-manymodels.js puts each under its graph) -----------------------------
 
-# each method's colour (smui-p-screening.js LIGHT, by the methods' order)
+# each method's colour (smui-p-manymodels.js LIGHT, by the methods' order)
 COLORS = {'tree': '#2f6690', 'forest': '#c46a12', 'boosted': '#3a7d44', 'knn': '#b0413e', 'nb': '#6c5b7b', 'neural': '#1a8a78', 'svm': '#8f7600',
           'lda': '#8c564b', 'linear': '#b8428f', 'lasso': '#666666', 'enet': '#107f8f', 'stepwise': '#7b5bb5', 'xgboost': '#4f6d2a',
           'lightgbm': '#9c3d5e', 'ridge': '#3d5a80'}
@@ -1393,10 +1393,10 @@ def _profile_build(table, rows=None, method=None, **kw):
     return pv.predictor(P, None, predict=fn, proba=fn)
 
 
-expose('screening', _profile_build, packages=pv.SK)
+expose('manymodels', _profile_build, packages=pv.SK)
 
 
-@api('screening.save', packages=pv.SK)
+@api('manymodels.save', packages=pv.SK)
 def save(table, method, rows=None, **kw):
     """Save Columns of one method: the prediction (and residual), or every level's probability and the most likely
     level, for every row of the table whose factors the model can take."""
@@ -1413,7 +1413,7 @@ def save(table, method, rows=None, **kw):
     return out
 
 
-@api('screening.threshold', packages=pv.SK)
+@api('manymodels.threshold', packages=pv.SK)
 def threshold(table, rows=None, methods=None, repeats=1, plot=None, table_name='data', **kw):
     """Decision Threshold for a response with two levels (predictive.threshold, drawn by SM.predict.threshold):
     each method's probabilities of every row, in the order of plot['order'] (the Summary's), with the K Fold
@@ -1614,7 +1614,7 @@ def _codes(table, names):
     return codes
 
 
-@api('screening.validation_column')
+@api('manymodels.validation_column')
 def validation_column(table, training=0.6, validation=0.2, test=0.2, strata=None, groups=None, time=None, seed=None, values='text',
                       name='Validation', kfold=0, balance=False, table_name='data'):
     """Make Validation Column: every row of the table gets a set (see make_sets): training, validation and test in
@@ -1744,13 +1744,13 @@ def _ensemble_parts(table, rows, s, keys, repeats):
                     o[held] = np.asarray(predict(P.X), dtype=float)[held]
                 out[k] = o
             return out
-        got = pv.cached('screening-stack', table, rows, {**s, 'methods': list(keys)}, build, keep=32)
+        got = pv.cached('manymodels-stack', table, rows, {**s, 'methods': list(keys)}, build, keep=32)
         oof = {k: got[k] for k in keys}
         how = '5-fold crossvalidation within the training rows (the folds from the seed)'
     return P, K, fitted, oof, how
 
 
-@api('screening.ensemble', packages=pv.SK)
+@api('manymodels.ensemble', packages=pv.SK)
 def ensemble(table, rows=None, methods=None, repeats=1, table_name='data', **kw):
     """Ensemble of Selected: the average of the selected methods' predictions (or probabilities), and their stacking
     (stack_weights on the out-of-fold predictions of the training rows), with the Measures of Fit of each set."""
@@ -1809,8 +1809,8 @@ def _ensemble_code(P, table_name, rows, keys, s, K):
 # ---- the methods that need a package of their own ---------------------------------------------------------
 # XGBoost and LightGBM are Pyodide packages loaded only when chosen: the worker loads what a function's name
 # registers (registry.packages_for), so every entry point of the platform has a variant per package set,
-# screening.<name>.<tags> with the tags of the packages the methods need (xgb, lgbm, or xgb.lgbm), which the page
-# calls when such a method is in the report (smui-p-screening.js, fnFor).
+# manymodels.<name>.<tags> with the tags of the packages the methods need (xgb, lgbm, or xgb.lgbm), which the page
+# calls when such a method is in the report (smui-p-manymodels.js, fnFor).
 TAGS = {('xgboost',): 'xgb', ('lightgbm',): 'lgbm', ('xgboost', 'lightgbm'): 'xgb.lgbm'}
 
 
@@ -1822,5 +1822,5 @@ def tag_of(methods):
 
 for _need, _tag in TAGS.items():
     for _name, _fn in (('fit', fit), ('save', save), ('threshold', threshold), ('ensemble', ensemble)):
-        api(f'screening.{_name}.{_tag}', packages=pv.SK + _need)(_fn)
-    expose(f'screening.{_tag}', _profile_build, packages=pv.SK + _need)
+        api(f'manymodels.{_name}.{_tag}', packages=pv.SK + _need)(_fn)
+    expose(f'manymodels.{_tag}', _profile_build, packages=pv.SK + _need)

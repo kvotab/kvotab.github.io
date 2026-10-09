@@ -302,7 +302,7 @@ def effect(table, column, rows=None, mu=0.0, weight=None, freq=None, alpha=0.05,
     interval from the noncentral t of the t test (δ = λ/√n; Steiger and
     Fouladi 1997), and Hedges' g = J(n − 1)·d (Hedges 1981). With Weight or
     Freq, n is the sum of the weights, as in the t test."""
-    from .fit_y_by_x import NCP_T_CODE, _es_table, smd_rows
+    from .bivariate import NCP_T_CODE, _es_table, smd_rows
     x, w, _ = _values(table, column, rows, weight, freq)
     if len(x) < 2:
         return {'error': 'fewer than two values'}
@@ -330,7 +330,7 @@ def bayes_t(table, column, rows=None, mu=0.0, r=None, weight=None, freq=None, ta
     """Bayes Factor of Test Mean (Rouder et al. 2009): the t of the mean
     against μ₀, a Cauchy(0, r) prior on δ = (μ − μ₀)/σ under the
     alternative (r = √2/2 by default); two-sided and one-sided."""
-    from .fit_y_by_x import JZS_CODE, JZS_R, _bf_table, jzs_rows
+    from .bivariate import JZS_CODE, JZS_R, _bf_table, jzs_rows
     r = JZS_R if r is None else r
     if not r > 0:
         return {'error': 'the scale of the Cauchy prior must be positive'}
@@ -370,7 +370,7 @@ def bayes_binom(table, column, rows=None, probs=None, a=1.0, b=1.0, weight=None,
     b)/(B(a, b) p₀^k (1 − p₀)^(n−k)); one-sided, the prior cut at p₀:
     BF±0 = BF10·P(p ≷ p₀ | data)/P(p ≷ p₀)."""
     from scipy.special import betaln
-    from .fit_y_by_x import _bf_row, _bf_table
+    from .bivariate import _bf_row, _bf_table
     if not (a and a > 0 and b and b > 0):
         return {'error': 'the beta prior needs positive a and b'}
     res = categorical(table, column, rows, weight, freq)

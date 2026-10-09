@@ -200,15 +200,15 @@ window.__hx = {
   async graph(zones, ms) {
     const t = this.t;
     SM.app.showTab(SM.app.tabOf(t));
-    const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
+    const rep = SM.app.openReport(SM.platforms.get('graphmaker'), { roles: {}, options: {} }, t);
     await this.finish(rep, ms);
-    const gb = SM.platforms.get('graphbuilder').builder(rep);
+    const gm = SM.platforms.get('graphmaker').builder(rep);
     // the builder draws in place (no new run of the report): its update and idle are the wait
-    await gb.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; for (const [k, names] of Object.entries(zones)) S.zones[k] = names.map((nm) => ({ id: t.col(nm).id, name: t.col(nm).name })); S.auto = true; });
-    if (gb.idle) await Promise.race([gb.idle(), this.sleep(ms)]);
+    await gm.update((S) => { for (const k of Object.keys(S.zones)) S.zones[k] = []; for (const [k, names] of Object.entries(zones)) S.zones[k] = names.map((nm) => ({ id: t.col(nm).id, name: t.col(nm).name })); S.auto = true; });
+    if (gm.idle) await Promise.race([gm.idle(), this.sleep(ms)]);
     await this.sleep(300);
-    const r = SM.app.reports.find((x) => x.platform.id === 'graphbuilder') || rep;
-    const out = { id: 'graphbuilder', variant: JSON.stringify(zones), errors: this.errors(r), ...this.code(r) };
+    const r = SM.app.reports.find((x) => x.platform.id === 'graphmaker') || rep;
+    const out = { id: 'graphmaker', variant: JSON.stringify(zones), errors: this.errors(r), ...this.code(r) };
     try { SM.app.closeReport(r); } catch (e) { /* closed already */ }
     return out;
   },
@@ -260,7 +260,7 @@ async def main():
     check('... and every column name', [n for n in made['cols'] if any(ch in n for ch in '\n\r  \x85')], [])
 
     ids = await page.ev('SM.platforms.all().map((p) => p.id)')
-    skip = {'bootstrap', 'pyscript', 'colviewer', 'power', 'calculators', 'graphbuilder', 'tabulate'}
+    skip = {'bootstrap', 'pyscript', 'colviewer', 'power', 'calculators', 'graphmaker', 'tabulate'}
     runs = [(i, v) for i in ids if i not in skip for v in ('a', 'b') if not only or i in only]
     results = []
     t0 = time.time()
@@ -276,9 +276,9 @@ async def main():
 
     for pid, variant in runs:
         results.append(await ev(f'__hx.run({json.dumps(pid)}, {json.dumps(variant)}, 240000)', pid, variant, 300))
-    if not only or 'graphbuilder' in only:
+    if not only or 'graphmaker' in only:
         for z in GRAPHS:
-            results.append(await ev(f'__hx.graph({json.dumps(z)}, 60000)', 'graphbuilder', json.dumps(z), 150))
+            results.append(await ev(f'__hx.graph({json.dumps(z)}, 60000)', 'graphmaker', json.dumps(z), 150))
     if not only or 'tabulate' in only:
         results.append(await ev('__hx.tabulate(60000)', 'tabulate', 'g by h', 150))
 

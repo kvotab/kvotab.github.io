@@ -451,7 +451,7 @@ async def main():
     await asyncio.sleep(0.3)
     s = await state(page)
     check('... and chosen for a report of continuous columns: the search stays and says when it is there', (s['open'], 'when Y is categorical' in s['status']), (True, True))
-    r = await page.ev('SM.search.query("fit line").filter(x => x.platform === "fitybyx").map(x => [x.where.join(" ▸ "), x.when])[0]')
+    r = await page.ev('SM.search.query("fit line").filter(x => x.platform === "bivariate").map(x => [x.where.join(" ▸ "), x.when])[0]')
     check('Bivariate Analysis\'s Fit Line: when Y and X are continuous', r, ['Analyze ▸ Bivariate Analysis… ▸ Fit Line', 'when Y is continuous and X continuous'])
     await close_search(page)
 

@@ -89,17 +89,17 @@ window.D = {
   pick(names) { const items = [...D.dlg().querySelectorAll('.sm-pick-list li')]; names.forEach((n, i) => { const li = items.find((x) => x.textContent === n); if (!li) throw new Error('no column ' + n); li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, metaKey: i > 0 })); if (!i) li.dispatchEvent(new MouseEvent('click', { bubbles: true })); }); },
   button(label, root) { const b = [...(root || D.dlg()).querySelectorAll('button')].find((x) => x.textContent === label); if (!b) throw new Error('no button ' + label); b.click(); },
   cast(names, label) { D.pick(names); D.button(label, D.dlg().querySelector('.sm-roles')); },
-  item: (root, name) => [...root.querySelectorAll('li, .sm-gb-chip, .smt-chip')].find((e) => e.textContent.replace('×', '').trim() === name) || null,
+  item: (root, name) => [...root.querySelectorAll('li, .sm-gm-chip, .smt-chip')].find((e) => e.textContent.replace('×', '').trim() === name) || null,
   // the point at (dx, dy) of an element's box, the element scrolled into view
   at(e, dx = 0.5, dy = 0.5) { if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return [r.x + r.width * dx, r.y + r.height * dy]; },
   moving: () => !!SM.launch.moving({ dataTransfer: { types: [SM.launch.PLACE] } }),
   marks() {
-    const name = (e) => (e.matches('li, .sm-gb-chip, .smt-chip') ? e.textContent.replace('×', '').trim() : e.dataset.zone ? `zone:${e.dataset.zone}` : e.getAttribute('aria-label') || e.className);
+    const name = (e) => (e.matches('li, .sm-gm-chip, .smt-chip') ? e.textContent.replace('×', '').trim() : e.dataset.zone ? `zone:${e.dataset.zone}` : e.getAttribute('aria-label') || e.className);
     const of = (sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).map(name);   // (a role the dialog hides is not on show)
     const b = document.querySelector('.sm-dropcue');
     const d = D.dlg(), m = d && d.querySelector('.sm-launch-msg');
     return { badge: b && !b.hidden ? b.textContent : null, touchBadge: !!(b && !b.hidden && b.classList.contains('is-touch')), removeRoot: document.documentElement.classList.contains('sm-drop-remove'),
-      dragged: of('.sm-dragged'), removing: of('.sm-removing'), place: of('.sm-role-list.drop, .sm-gb-zone.is-drop, .smt-zone.drop'),
+      dragged: of('.sm-dragged'), removing: of('.sm-removing'), place: of('.sm-role-list.drop, .sm-gm-zone.is-drop, .smt-zone.drop'),
       before: of('.sm-drop-before'), after: of('.sm-drop-after'), replace: of('.sm-drop-replace'), refusing: of('.sm-refusing'),
       msg: m ? m.textContent : null, moving: D.moving(), taken: D.over.taken, drops: D.drops };
   },
@@ -373,7 +373,7 @@ async def multiple_imputation(page):
 # and the points: how many there are and how many lie within the Y range
 # their panel is drawn with (a panel drawn at a range beside its data is
 # empty).
-GB_LOOK = r'''(async () => { await _gb.idle(); const p = _gb.plot(); const L = p.userLayout;
+GM_LOOK = r'''(async () => { await _gm.idle(); const p = _gm.plot(); const L = p.userLayout;
   const ax = (re) => Object.keys(L).filter((k) => re.test(k)).sort();
   const FL = p.box._fullLayout; let points = 0, inside = 0;
   for (const tr of p.box.data) {
@@ -381,76 +381,76 @@ GB_LOOK = r'''(async () => { await _gb.idle(); const p = _gb.plot(); const L = p
     const ya = FL[!tr.yaxis || tr.yaxis === 'y' ? 'yaxis' : `yaxis${tr.yaxis.slice(1)}`], lo = Math.min(...ya.range), hi = Math.max(...ya.range);
     for (const v of tr.y || []) if (Number.isFinite(v)) { points++; if (v >= lo && v <= hi) inside++; }
   }
-  return { zones: Object.fromEntries(Object.entries(_gb.state().zones).filter(([k, v]) => v.length).map(([k, v]) => [k, v.map((r) => r.name)])),
+  return { zones: Object.fromEntries(Object.entries(_gm.state().zones).filter(([k, v]) => v.length).map(([k, v]) => [k, v.map((r) => r.name)])),
     title: L.title && L.title.text ? L.title.text.replace(/&amp;/g, '&') : null, ytitles: ax(/^yaxis\d*$/).map((k) => L[k].title && L[k].title.text).filter(Boolean),
     xaxes: ax(/^xaxis\d*$/).length, legend: p.traces.filter((tr) => tr.showlegend).map((tr) => tr.name), panels: (L.annotations || []).map((a) => a.text).filter((s) => !/[<]/.test(s)),
     points, inside }; })()'''
 
 
-async def graph_builder(page):
+async def graph_maker(page):
     await page.ev('''(async () => { const t = SM.app.tables.find((x) => x.name === 'Students'); SM.app.showTab(SM.app.tabOf(t));
-      SM.app.launch('graphbuilder'); const rep = D.last(); await D.done(rep); window._rep = rep;
-      Object.defineProperty(window, '_gb', { configurable: true, get: () => SM.platforms.get('graphbuilder').builder(window._rep) });
+      SM.app.launch('graphmaker'); const rep = D.last(); await D.done(rep); window._rep = rep;
+      Object.defineProperty(window, '_gm', { configurable: true, get: () => SM.platforms.get('graphmaker').builder(window._rep) });
       const ref = (n) => ({ id: t.col(n).id, name: n });
-      await _gb.update((S) => { S.zones.x = [ref('age')]; S.zones.y = [ref('height (cm)'), ref('weight (kg)')]; S.zones.overlay = [ref('sex')]; });
+      await _gm.update((S) => { S.zones.x = [ref('age')]; S.zones.y = [ref('height (cm)'), ref('weight (kg)')]; S.zones.overlay = [ref('sex')]; });
       return 1; })()''')
-    zone = lambda k: f"_rep.body.querySelector('.sm-gb-z-{k}')"
+    zone = lambda k: f"_rep.body.querySelector('.sm-gm-z-{k}')"
     chip = lambda k, n: f"D.item({zone(k)}, {json.dumps(n)})"
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('Graph Maker: the graph to drag in', (g['zones'], g['title'], g['legend']),
           ({'x': ['age'], 'y': ['height (cm)', 'weight (kg)'], 'overlay': ['sex']}, 'height (cm) & weight (kg) vs. age', ['F', 'M']))
 
     # reordered within Y: weight (kg) dropped on height (cm) takes its position, and the panels follow
-    began, mid = await drag(page, f"D.at({chip('y', 'weight (kg)')})", f"D.at({chip('y', 'height (cm)')})", 'D.marks()', 'd07-gb-reorder.png')
+    began, mid = await drag(page, f"D.at({chip('y', 'weight (kg)')})", f"D.at({chip('y', 'height (cm)')})", 'D.marks()', 'd07-gm-reorder.png')
     check('a column dragged along Y: it would land before height (cm), Y takes it', (began, mid['before'], mid['place'], mid['dragged']), (True, ['height (cm)'], ['zone:y'], ['weight (kg)']))
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('dropped: Y reordered, the top panel weight (kg)', (g['zones']['y'], g['ytitles'], g['title']), (['weight (kg)', 'height (cm)'], ['weight (kg)', 'height (cm)'], 'weight (kg) & height (cm) vs. age'))
 
     # moved from Overlay to Group X: one step of Undo; the legend goes, a column of panels for each level comes
-    began, mid = await drag(page, f"D.at({chip('overlay', 'sex')})", f"D.at({zone('groupX')})", 'D.marks()', 'd08-gb-move.png')
+    began, mid = await drag(page, f"D.at({chip('overlay', 'sex')})", f"D.at({zone('groupX')})", 'D.marks()', 'd08-gm-move.png')
     check('a column dragged from Overlay over Group X: Group X takes it', (mid['place'], mid['taken'], mid['badge']), (['zone:groupX'], True, None))
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('dropped: sex moved from Overlay to Group X', (g['zones'].get('overlay'), g['zones'].get('groupX')), (None, ['sex']))
     check('... the graph drawn again: no legend, a column of panels for F and for M', (g['legend'], g['xaxes'], g['panels'][:2]), ([], 4, ['F', 'M']))
     check('... every row a point in its panel, within the Y range the panel is drawn with', (g['points'], g['inside']), (120, 120))
-    await page.ev('_gb.undo()')
-    g = await page.ev(GB_LOOK)
+    await page.ev('_gm.undo()')
+    g = await page.ev(GM_LOOK)
     check('... and one Undo puts it back in Overlay', (g['zones'].get('overlay'), g['zones'].get('groupX'), g['legend']), (['sex'], None, ['F', 'M']))
     await drag(page, f"D.at({chip('overlay', 'sex')})", f"D.at({zone('groupX')})")
 
     # refused: Size takes a continuous column, Freq a numeric one
-    began, mid = await drag(page, f"D.at({chip('groupX', 'sex')})", f"D.at({zone('size')})", 'D.marks()', 'd09-gb-refused.png')
+    began, mid = await drag(page, f"D.at({chip('groupX', 'sex')})", f"D.at({zone('size')})", 'D.marks()', 'd09-gm-refused.png')
     check('a nominal column over Size: no drop shown, Size and Freq dimmed', (mid['place'], mid['taken'], sorted(mid['refusing'])), ([], False, ['zone:freq', 'zone:size']))
-    check('let go over Size: nothing changes', (await page.ev(GB_LOOK))['zones'], {'x': ['age'], 'y': ['weight (kg)', 'height (cm)'], 'groupX': ['sex']})
+    check('let go over Size: nothing changes', (await page.ev(GM_LOOK))['zones'], {'x': ['age'], 'y': ['weight (kg)', 'height (cm)'], 'groupX': ['sex']})
 
     # onto a column of another zone: it takes its place
-    began, mid = await drag(page, f"D.at({chip('groupX', 'sex')})", f"D.at({chip('x', 'age')})", 'D.marks()', 'd10-gb-replace.png')
+    began, mid = await drag(page, f"D.at({chip('groupX', 'sex')})", f"D.at({chip('x', 'age')})", 'D.marks()', 'd10-gm-replace.png')
     check('over age in X: age marked as the one it replaces', (mid['replace'], mid['place']), (['age'], ['zone:x']))
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('dropped on age: sex on X instead of age, out of Group X', (g['zones'], g['title'], g['xaxes']), ({'x': ['sex'], 'y': ['weight (kg)', 'height (cm)']}, 'weight (kg) & height (cm) vs. sex', 2))
 
     # taken out: dropped on the builder's column list, then on the graph
-    began, mid = await drag(page, f"D.at({chip('y', 'height (cm)')})", "D.at(_rep.body.querySelector('.sm-gb-collist'), 0.5, 0.7)", 'D.marks()', 'd11-gb-remove-label.png')
+    began, mid = await drag(page, f"D.at({chip('y', 'height (cm)')})", "D.at(_rep.body.querySelector('.sm-gm-collist'), 0.5, 0.7)", 'D.marks()', 'd11-gm-remove-label.png')
     check('a column over the builder\'s column list: the remove label, the chip struck through', (mid['badge'], mid['removing'], mid['taken']), ('×Remove height (cm) from Y', ['height (cm)'], True))
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('dropped there: height (cm) out of Y, one panel left', (g['zones'], g['ytitles']), ({'x': ['sex'], 'y': ['weight (kg)']}, ['weight (kg)']))
-    began, mid = await drag(page, f"D.at({chip('x', 'sex')})", "D.at(_rep.body.querySelector('.sm-gb-plotwrap .js-plotly-plot'), 0.5, 0.4)", 'D.marks()')
+    began, mid = await drag(page, f"D.at({chip('x', 'sex')})", "D.at(_rep.body.querySelector('.sm-gm-plotwrap .js-plotly-plot'), 0.5, 0.4)", 'D.marks()')
     check('a column over the graph: the remove label', mid['badge'], '×Remove sex from X')
-    g = await page.ev(GB_LOOK)
+    g = await page.ev(GM_LOOK)
     check('dropped on the graph: sex out of X, weight (kg) alone', (g['zones'], g['title']), ({'y': ['weight (kg)']}, 'weight (kg)'))
 
     # cancelled, and let go outside the builder: nothing changes
     d = Drag(page)
     await d.start(await page.ev(f"D.at({chip('y', 'weight (kg)')})"))
-    await d.over(await page.ev("D.at(_rep.body.querySelector('.sm-gb-collist'), 0.5, 0.7)"))
+    await d.over(await page.ev("D.at(_rep.body.querySelector('.sm-gm-collist'), 0.5, 0.7)"))
     before = await page.ev('D.marks()')
     await d.cancel()
     after = await page.ev('D.marks()')
-    check('a cancelled drag of a zone\'s column: the label was up, then no drop, nothing moved', (before['badge'], after['badge'], after['moving'], (await page.ev(GB_LOOK))['zones']),
+    check('a cancelled drag of a zone\'s column: the label was up, then no drop, nothing moved', (before['badge'], after['badge'], after['moving'], (await page.ev(GM_LOOK))['zones']),
           ('×Remove weight (kg) from Y', None, False, {'y': ['weight (kg)']}))
     began, mid = await drag(page, f"D.at({chip('y', 'weight (kg)')})", "D.at(_rep.body.querySelector('.sm-ob.level-0 > .sm-ob-head'), 0.5, 0.5)", 'D.marks()')
     check('over the report outside the builder: no drop taken, no label', (mid['taken'], mid['badge']), (False, None))
-    check('let go there: nothing changes', (await page.ev(GB_LOOK))['zones'], {'y': ['weight (kg)']})
+    check('let go there: nothing changes', (await page.ev(GM_LOOK))['zones'], {'y': ['weight (kg)']})
 
 
 # ---- Tabulate's zones, on Students ------------------------------------------------------------------------
@@ -562,7 +562,7 @@ async def help_texts(page):
         'Fit Model\'s Construct Model Effects (i)': await say('p:fitmodel:effects'),
         'Multiple Imputation\'s launch (i)': await say('launch:mi'),
         'Multiple Imputation\'s Analysis Model (i)': await say('p:mi:model'),
-        'Graph Maker\'s (i)': await say('p:graphbuilder'),
+        'Graph Maker\'s (i)': await say('p:graphmaker'),
         'Tabulate\'s (i)': await say('p:tabulate'),
     }
     for what, text in words.items():
@@ -640,12 +640,12 @@ async def touch(page):
 
     # Graph Maker: a column held in X and moved to Overlay (the report scrolls to it)
     await page.ev('''(async () => { const t = SM.app.tables.find((x) => x.name === 'Students'); SM.app.showTab(SM.app.tabOf(t));
-      SM.app.launch('graphbuilder'); const rep = D.last(); await D.done(rep); window._rep = rep; const ref = (n) => ({ id: t.col(n).id, name: n });
-      await _gb.update((S) => { S.zones.x = [ref('age')]; S.zones.y = [ref('height (cm)')]; }); return 1; })()''')
-    await page.ev("_rep.body.querySelector('.sm-gb-z-x').scrollIntoView({ block: 'center' })")
+      SM.app.launch('graphmaker'); const rep = D.last(); await D.done(rep); window._rep = rep; const ref = (n) => ({ id: t.col(n).id, name: n });
+      await _gm.update((S) => { S.zones.x = [ref('age')]; S.zones.y = [ref('height (cm)')]; }); return 1; })()''')
+    await page.ev("_rep.body.querySelector('.sm-gm-z-x').scrollIntoView({ block: 'center' })")
     await asyncio.sleep(0.3)
-    mid = await hold_and_move(f"({AT})(D.item(_rep.body.querySelector('.sm-gb-z-x'), 'age'))", f"({AT})(_rep.body.querySelector('.sm-gb-z-overlay'))", 'D.marks()', far_top=560, name='d19-phone-gb.png')
-    g = await page.ev(GB_LOOK)
+    mid = await hold_and_move(f"({AT})(D.item(_rep.body.querySelector('.sm-gm-z-x'), 'age'))", f"({AT})(_rep.body.querySelector('.sm-gm-z-overlay'))", 'D.marks()', far_top=560, name='d19-phone-gm.png')
+    g = await page.ev(GM_LOOK)
     check('phone: a Graph Maker column held in X and moved over Overlay: Overlay takes it', (mid['place'], mid['taken']), (['zone:overlay'], True))
     check('phone: let go there: moved, and the graph drawn again with a legend for each age', (g['zones'], g['legend']), ({'y': ['height (cm)'], 'overlay': ['age']}, ['12', '13', '14', '15', '16', '17']))
 
@@ -669,7 +669,7 @@ async def main():
     await launch_dialog(page)
     await fit_model(page)
     await multiple_imputation(page)
-    await graph_builder(page)
+    await graph_maker(page)
     await tabulate(page)
     await help_texts(page)
     check('no script errors', page.errors, [])
@@ -679,7 +679,7 @@ async def main():
     st = await wait_engine(page)
     check('phone: engine ready', st, 'ready')
     await page.ev(HELPERS)
-    await page.ev("Object.defineProperty(window, '_gb', { configurable: true, get: () => SM.platforms.get('graphbuilder').builder(window._rep) })")
+    await page.ev("Object.defineProperty(window, '_gm', { configurable: true, get: () => SM.platforms.get('graphmaker').builder(window._rep) })")
     await touch(page)
     check('phone: no script errors', page.errors, [])
     await page.close()

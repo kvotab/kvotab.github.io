@@ -985,7 +985,7 @@ async def wp5(page):
       pre.submenu(SM.app).find((i) => i.label === 'X').action();
       g.colSel.clear(); g.refresh(); SM.app.panels.renderColumns();
       const flags = [...document.querySelectorAll('.sm-collist .smc-role')].map((x) => x.textContent);
-      SM.app.launch('fitybyx');
+      SM.app.launch('bivariate');
       await T.sleep(80);
       const d = T.dlg();
       const roles = Object.fromEntries([...d.querySelectorAll('.sm-role')].map((row) => [row.querySelector('.sm-btn').textContent, [...row.querySelectorAll('.sm-role-list li')].map((li) => li.textContent)]));

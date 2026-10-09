@@ -416,7 +416,7 @@
       if (!later) return graph;
       // the block of a fit that came without its code, once its call's result is found
       const box = withCode(graph, el('span', { hidden: true }));
-      later.then((res) => { const code = res && genregCode(res, set, k); if (code) box.lastChild.replaceWith(ctx.code(code)); else box.lastChild.remove(); });
+      later.then((res) => { const code = res && penregCode(res, set, k); if (code) box.lastChild.replaceWith(ctx.code(code)); else box.lastChild.remove(); });
       return box;
     });
     ob.add(ctx.row(...plots));
@@ -426,7 +426,7 @@
   /* A fit of another platform that comes without its graphs' code: Fit
      Model's Penalized Regression hands over its rows, actual and
      predicted values (smui-p-fitmodel.js). Its block is made from the code
-     of the call those arrays came from (fitmodel.genreg), found in the
+     of the call those arrays came from (fitmodel.penreg), found in the
      report's cache by the very arrays; that code fits the chosen model and
      ends its fit with e, every row's linear predictor. The call has
      returned already, so the block is in place when the report is done. */
@@ -434,7 +434,7 @@
     const want = fit.residuals && fit.residuals.predicted;
     const cache = ctx.report && ctx.report.cache;
     if (!want || !cache || typeof cache.entries !== 'function') return null;
-    const calls = [...cache.entries()].filter(([k]) => String(k).startsWith('fitmodel.genreg\u0001')).map(([, p]) => Promise.resolve(p).catch(() => null));
+    const calls = [...cache.entries()].filter(([k]) => String(k).startsWith('fitmodel.penreg\u0001')).map(([, p]) => Promise.resolve(p).catch(() => null));
     if (!calls.length) return null;
     return Promise.all(calls).then((rs) => rs.find((x) => x && x.diag && x.diag.predicted === want) || null);
   }
@@ -443,7 +443,7 @@
      up to e (the linear predictor of the chosen model), then the prediction
      (the mean: e, or exp(e) for the Poisson's log link) against the actual
      values of the set's rows (train, valid and sets as that code names them). */
-  function genregCode(res, set, k) {
+  function penregCode(res, set, k) {
     const lines = String(res.code || '').split('\n');
     const read = lines.findIndex((l) => /^df = pd\.read_csv\(/.test(l));
     const at = lines.findIndex((l) => /^e = /.test(l));
