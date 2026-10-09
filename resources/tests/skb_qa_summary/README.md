@@ -1,0 +1,62 @@
+# SKB QC Summary tests
+
+`test-ui.py` drives `skb_qa_summary.html` in headless Chrome over CDP and
+checks how workbooks get in: dropped or chosen one by one, or as whole
+folders. Every row records the folder its workbook came from.
+
+    python3 -m http.server 8765          # from the repository root
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless=new --remote-debugging-port=9222 --no-first-run \
+      --user-data-dir=<a fresh directory> about:blank
+    python3 resources/tests/skb_qa_summary/test-ui.py
+
+`QC_HTTP_PORT` and `QC_CDP_PORT` choose other ports. The suite takes a few
+seconds and exits 0 when every check passes. It needs `openpyxl` and
+`websockets`.
+
+## The fixture
+
+Nothing is checked in. The suite builds its workbooks in a temporary folder
+with openpyxl, plus one `.xls` that it writes with the page's own SheetJS
+(openpyxl cannot write BIFF), and removes the folder afterwards. The tree
+holds, on purpose:
+
+- two workbooks called `params.xlsx` in two folders. They must count as two
+  files, and the parameter they share must be flagged as "in 2 files";
+- a `.xlsm`, an `.xls` and a sheet still headed QA rather than QC;
+- a sheet whose header is in row 3. Reading only the first row of each sheet
+  cannot see that header, so this sheet must be read in full, and its Excel
+  rows must come out as 4 and 5, not 2 and 3;
+- a data sheet before the QC sheet, so the sheet indices of the quick first
+  read and the full read must agree;
+- what a real folder holds besides workbooks: an Excel `~$` owner file, a
+  macOS `._` copy, a hidden folder with a valid QC workbook in it, and a text
+  file. None of them may be read;
+- a workbook cut short (a plain text file will not do here: SheetJS reads text
+  as a one-cell sheet), a folder with no workbook, and twelve small workbooks
+  for stopping a read part-way.
+
+## How the browser is driven
+
+- **Folder drop**: `Input.dispatchDragEvent` with a directory path in
+  `data.files`. The page gets a trusted drop whose item has a real
+  `FileSystemDirectoryEntry`, and walks it as it would a folder from Finder.
+- **Folder picker**: `DOM.setFileInputFiles` with a directory path on the
+  `webkitdirectory` input. Every file arrives with its `webkitRelativePath`.
+- **Waiting for a read**: every read replaces the page's `queue` promise. The
+  suite keeps the old one, waits until it has been replaced (which proves the
+  read was queued), then awaits `queue` until it stops changing. Polling for
+  "nothing is being read" can return before the drop has been handled at all.
+- **Stop and Clear all part-way**: a `MutationObserver` on the status line
+  clicks the button as soon as "Reading 3 of 12" appears. The observer runs
+  before the page reads the next workbook, so the result is the same on every
+  run: three workbooks are kept on Stop, none on Clear all.
+- **Which chooser opened**: with `Page.setInterceptFileChooserDialog`, the
+  `Page.fileChooserOpened` event names the input by `backendNodeId`. Both
+  inputs sit inside the drop zone, so the click a button passes to its input
+  also reaches the zone. Taking that click once made "Choose a folder" open
+  the file chooser instead. The suite clicks and presses Enter on each button
+  and checks which input opened.
+- **An item with no entry** (a mail attachment, say) is a synthetic drop of a
+  `File` made in the page. Chrome gives such an item no `webkitGetAsEntry()`,
+  so this reaches the branch that takes it as a file on its own.
