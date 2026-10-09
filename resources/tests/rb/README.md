@@ -110,6 +110,14 @@ mouse events, not dispatched DOM events: the thing under test is what the
 browser does with hover when the element beneath the pointer is replaced, which
 a synthetic `MouseEvent` would not reproduce.
 
+The tooltip also shows the root's `Information`, which a file writes as markup,
+and so it is untrusted: it goes through `kvotSanitizeHtml` like any other
+markup from a file. The test opens a file whose `Information` holds a
+`<meta http-equiv="refresh">`, a `<link rel="stylesheet">`, a `javascript:`
+link with a tab inside the scheme and one inside an SVG, and hovers its tab:
+the page must stay where it is, load no stylesheet, and keep only the text and
+the formatting.
+
     python3 test-tabs.py
 
 `test-axes.py` covers changing the chart's axes. First, a background overlay

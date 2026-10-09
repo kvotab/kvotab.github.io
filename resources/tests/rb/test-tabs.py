@@ -65,6 +65,44 @@ SETUP = """(() => {
   return document.querySelectorAll('.file-tab').length;
 })()"""
 
+# A file whose root Information -- markup the file writes, shown in its tab's
+# tooltip -- tries everything the allowlist in kvot-safe.js is there to stop.
+# Built with h5wasm, since the tooltip reads the root of a real file.
+HOSTILE_INFO = (
+    '<meta http-equiv="refresh" content="0;url=./404.html?moved-by-a-tooltip">'
+    '<link rel="stylesheet" href="./resources/css/kvot.css?loaded-by-a-tooltip">'
+    '<a href="java&#x09;script:window.__ran=1">a link</a>'
+    '<svg><a xlink:href="javascript:window.__ran=2"><text y="20">svg</text></a></svg>'
+    '<p>Base case, <b>2026</b></p>')
+
+HOSTILE = """(async (info) => {
+  await waitForH5Wasm();
+  for (const k of Object.keys(fileStates)) { delete fileStates[k]; delete loadedFiles[k]; }
+  fileOrder = [];
+  const f = new h5wasm.File('/hostile-info.h5', 'w');
+  f.create_attribute('Information', info);
+  f.create_dataset({ name: 'x', data: new Float64Array([1, 2]) });
+  f.close();
+  const bytes = h5wasm.FS.readFile('/hostile-info.h5');
+  h5wasm.FS.unlink('/hostile-info.h5');
+  await ingestHdf5Buffer('hostile.h5', bytes.slice().buffer);
+  updateTabs(true);
+  return fileOrder.slice();
+})(%s)"""
+
+AFTER_HOVER = """(() => {
+  const t = document.getElementById('fileTabTooltip');
+  const info = t && t.querySelector('.file-tab-tooltip-info');
+  return {
+    href: location.pathname,
+    shown: t ? t.style.display : 'absent',
+    info: info ? info.innerHTML : null,
+    sheets: [...document.querySelectorAll('link[rel=stylesheet]')].filter(l => /loaded-by-a-tooltip/.test(l.href)).length,
+    foreign: t ? [...t.querySelectorAll('meta, link, svg, base, style, form')].map(e => e.localName) : [],
+    ran: typeof window.__ran
+  };
+})()"""
+
 TIP = ("(() => { const t = document.getElementById('fileTabTooltip');"
        " return t ? t.style.display : 'absent'; })()")
 
@@ -140,6 +178,22 @@ async def main():
             check('closing the only tab leaves no tooltip behind', await page.ev(TIP), 'none')
             check('  and no tabs', await page.ev(
                 "document.querySelectorAll('.file-tab').length"), 0)
+
+            # --- what a file says about itself --------------------------------
+            check('a file whose Information is hostile is open',
+                  await page.ev(HOSTILE % json.dumps(HOSTILE_INFO)), ['hostile.h5'])
+            tab = await page.ev(BOX % (json.dumps('hostile.h5'), 't'))
+            await move(page, tab[0] + 40, tab[1] + 300)
+            await move(page, tab[0], tab[1])
+            await asyncio.sleep(1.5)
+            after = await page.ev(AFTER_HOVER)
+            check('  hovering its tab shows the tooltip, and the page stays where it is',
+                  (after['shown'], after['href']), ('block', '/rb.html'))
+            check('  no stylesheet of the file\'s is loaded', after['sheets'], 0)
+            check('  nothing the allowlist leaves out reaches the page', after['foreign'], [])
+            check('  a link keeps its text and loses its javascript: address; formatting stays',
+                  after['info'], '<a>a link</a><p>Base case, <b>2026</b></p>')
+            check('  and nothing ran', after['ran'], 'undefined')
 
             check('no console errors throughout', page.logs[:3], [])
         finally:

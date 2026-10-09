@@ -67,28 +67,33 @@ function ensureFileTabTooltip() {
 }
 
 /**
- * Very small sanitizer for HTML shown in tooltips.
- * Removes script/style tags and inline event handlers.
+ * Fill the tab tooltip: the file's name, and its root's Information, which a
+ * file writes as markup, through kvotSanitizeHtml -- the page's one sanitiser
+ * for markup from a file (kvot-safe.js), whose fragment is appended, never
+ * parsed again.
  *
- * @param {string} html
- * @returns {string}
+ * It had a denylist of its own, which handed back a string for innerHTML: the
+ * Information of a hostile file sent the page to another address the moment
+ * its tab was hovered (<meta http-equiv="refresh">), loaded a stylesheet of
+ * its choosing, and kept javascript: links, by a tab inside the scheme or an
+ * SVG's xlink:href.
+ *
+ * @param {HTMLElement} tooltip
+ * @param {string} fileName
+ * @param {string} infoHtml - The root's Information as the file has it, or ''
  */
-function sanitizeTooltipHtml(html) {
-  if (!html) return '';
-  const container = document.createElement('div');
-  container.innerHTML = String(html);
-  container.querySelectorAll('script, style').forEach(n => n.remove());
-  container.querySelectorAll('*').forEach(node => {
-    for (const attr of Array.from(node.attributes || [])) {
-      const attrName = (attr.name || '').toLowerCase();
-      const attrVal = String(attr.value || '').trim().toLowerCase();
-      if (attrName.startsWith('on')) node.removeAttribute(attr.name);
-      if ((attrName === 'href' || attrName === 'src') && attrVal.startsWith('javascript:')) {
-        node.removeAttribute(attr.name);
-      }
-    }
-  });
-  return container.innerHTML;
+function fillFileTabTooltip(tooltip, fileName, infoHtml) {
+  tooltip.textContent = '';
+  const title = document.createElement('div');
+  title.className = 'file-tab-tooltip-title';
+  title.textContent = fileName || '';
+  tooltip.appendChild(title);
+  if (infoHtml) {
+    const info = document.createElement('div');
+    info.className = 'file-tab-tooltip-info';
+    info.appendChild(kvotSanitizeHtml(infoHtml));
+    tooltip.appendChild(info);
+  }
 }
 
 /**
@@ -148,15 +153,13 @@ function updateTabs(forceRefresh) {
   // and a removed element cannot report that the pointer has left it.
   hideFileTabTooltip();
   const previousTreeFile = currentTreeFile;
-  const tooltipHtmlByFile = {};
+  const infoHtmlByFile = {};
 
   // Drop stale handles before any root/attribute reads.
   fileOrder = fileOrder.filter(key => !!getFileOrNull(key));
 
   for (const key of fileOrder) {
-    const infoHtml = getRootInformationHtml(loadedFiles[key]);
-    const safeInfoHtml = sanitizeTooltipHtml(infoHtml);
-    tooltipHtmlByFile[key] = `<div class="file-tab-tooltip-title">${escapeHtml(key)}</div>${safeInfoHtml ? `<div class="file-tab-tooltip-info">${safeInfoHtml}</div>` : ''}`;
+    infoHtmlByFile[key] = getRootInformationHtml(loadedFiles[key]);
   }
   
   // Render tabs (no inline event handlers — listeners attached below)
@@ -179,7 +182,7 @@ function updateTabs(forceRefresh) {
     tab.addEventListener('mouseenter', (evt) => {
       if (!shouldFileTabTooltipShow(evt)) return;
       const tooltip = ensureFileTabTooltip();
-      tooltip.innerHTML = tooltipHtmlByFile[fileName] || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
+      fillFileTabTooltip(tooltip, fileName, infoHtmlByFile[fileName]);
       tooltip.style.display = 'block';
       positionFileTabTooltip(tooltip, evt);
     });
@@ -189,8 +192,7 @@ function updateTabs(forceRefresh) {
       // tab it belongs to is already entered, so no mouseenter is coming.
       if (tooltip.style.display === 'none') {
         if (!shouldFileTabTooltipShow(evt)) return;
-        tooltip.innerHTML = tooltipHtmlByFile[fileName]
-          || `<div class="file-tab-tooltip-title">${escapeHtml(fileName || '')}</div>`;
+        fillFileTabTooltip(tooltip, fileName, infoHtmlByFile[fileName]);
         tooltip.style.display = 'block';
       }
       positionFileTabTooltip(tooltip, evt);
