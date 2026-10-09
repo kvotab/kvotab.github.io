@@ -903,6 +903,24 @@ window.__wp8 = {
   },
   // an element's centre on the screen, scrolled into view (for a real mouse click)
   at(e) { if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return r.width || r.height ? [r.left + r.width / 2, r.top + r.height / 2] : null; },   // null when hidden (no click at 0, 0)
+  // the same, once the element has stood still for four looks 80 ms apart: a report still drawing moves what
+  // lies under a point, and a click there lands on something else (a PValues line instead of a button)
+  async atStable(get) {
+    let prev = null, still = 0;
+    for (let i = 0; i < 60; i++) {
+      const e = get();
+      if (!e) return null;
+      if (i === 0) e.scrollIntoView({ block: 'center' });
+      await this.sleep(80);
+      const r = e.getBoundingClientRect();
+      if (!r.width && !r.height) return null;
+      const pos = [r.left + r.width / 2, r.top + r.height / 2];
+      still = prev && Math.abs(prev[0] - pos[0]) < 0.5 && Math.abs(prev[1] - pos[1]) < 0.5 ? still + 1 : 0;
+      if (still >= 3) return pos;
+      prev = pos;
+    }
+    return prev;
+  },
   ob(rep, title) { return [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head h2, :scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent === title) || null; },
   btn(root, text) { return root ? [...root.querySelectorAll('button')].find((b) => b.textContent === text) : null; },
 };
@@ -910,8 +928,9 @@ window.__wp8 = {
 
 
 async def real_click(page, js_el):
-    """A mouse click (Input.dispatchMouseEvent) at the centre of the element js_el finds; its place, or None."""
-    pos = await page.ev(f'__wp8.at({js_el})')
+    """A mouse click (Input.dispatchMouseEvent) at the centre of the element js_el finds, once it stands
+    still; its place, or None."""
+    pos = await page.ev(f'__wp8.atStable(() => ({js_el}))')
     if pos:
         await page.click(pos[0], pos[1])
         await asyncio.sleep(0.25)
@@ -1109,8 +1128,18 @@ async def wp8_features(page):
     got = {row[0]: sorted(row[2].split(', ')) if row[2] != '(none)' else [] for row in scr[1:]}
     check('... each Y\'s X\'s with p < 0.25, as the PValues table has them', got, {y_: sorted(xs) for y_, xs in want.items()} | {y_: [] for y_ in ('a', 'b') if y_ not in want})
     n0 = await page.ev('SM.app.reports.length')
+    n_fm = sum(1 for xs in want.values() if xs)   # a Fit Model for each Y with an X below the cut
     await real_click(page, f'__wp8.btn(__wp8.ob({LAST}, "Fit Model with the Screened X\'s"), "Fit Model")')
-    await asyncio.sleep(5.0)
+    # wait for the reports themselves, each run to its end (two minutes at most), not for a fixed time
+    await page.ev(f'''(async () => {{
+      const settled = (rp) => !rp.body.classList.contains('is-running') && !!(rp.content || rp.body).querySelector('.sm-ob');
+      for (let i = 0; i < 600; i++) {{
+        const reps = SM.app.reports.slice({n0});
+        if (reps.length >= {n_fm} && reps.every(settled)) return true;
+        await new Promise((res) => setTimeout(res, 200));
+      }}
+      return false;
+    }})()''', timeout=150)
     r = await page.ev(f'''(async () => {{
       const reps = SM.app.reports.slice({n0});
       const out = reps.map((rp) => ({{ platform: rp.platform.id, y: rp.table.col(rp.spec.roles.y[0]).name, effects: (rp.spec.effects || []).map((e) => e.names[0]).sort() }}));
