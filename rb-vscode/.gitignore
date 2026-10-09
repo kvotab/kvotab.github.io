@@ -1,7 +1,9 @@
-# Built by build.mjs from the site's files; never edited by hand.
+# Built by build.mjs from the site's files; never edited by hand. LICENSE is
+# the repository's own, copied here: anchored, so the texts in licenses/
+# that are called LICENSE too are committed.
 media/
 node/
-LICENSE
+/LICENSE
 # Downloads build.mjs checks against its pins.
 .cache/
 # npm and the packaged extension; the released one (release.mjs) is committed,
