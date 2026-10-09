@@ -84,7 +84,7 @@ the two on others and say which:
 
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
-161 checks: the built-in release loads; the tab icon (drawn by
+165 checks: the built-in release loads; the tab icon (drawn by
 `scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
@@ -128,7 +128,12 @@ new chain opens whole again; the zoom buttons, on the chain's bar and on the
 chart, draw − + ⤢ rather than set them in type, each drawing in the middle
 of its button and its lines in the middle of the drawing (the glyphs sat a
 pixel or more low, and ⤢ came from another font, smaller still);
-the chain settings are there in the chart view as well; the six
+the chain settings are there in both views, while Colour by and the Chain
+box are on the chart's own toolbar and so only in the chart view; the box
+takes the chain off the chart and draws it again, and On chart, on the
+chain's bar, ticks it when it is off; the toolbar is one line
+where the chart has room, its two parts one over the other where it has
+not, inside the chart either way; the six
 panel tabs fit with no scroll bar of their own, also dragged to 330 px, and
 the panel's row of tabs ends at the same line as the main area's, whether
 the chain settings stand beside the view tabs or above them; the
@@ -197,8 +202,9 @@ the end of the toolbar gives the page the whole window (no site header or
 footer, the chart and the panel taller, the kvot mark leading home and a
 theme switch that works in the toolbar), keeps it through a reload and puts
 the header and footer back; the theme switch recolours the chart; the phone
-layout does not overflow, in the full window either; and no error reaches the
-console.
+layout does not overflow, in the full window either, and on a phone's screen
+the legend stays under the chart's toolbar instead of covering it; and no
+error reaches the console.
 
 The test starts from a clean state (no remembered settings, no remembered
 databases, not in the full window) on its first page of the run, and clears

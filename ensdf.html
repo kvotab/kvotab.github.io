@@ -27,7 +27,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261007b">
+  <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261009">
   <!-- The chart's own mark, in the kvot mark's language (see
        ensdf-icon.svg). SVG first, since it stays sharp on a high-density
        screen; the PNG is for anything that will not take one. -->
@@ -51,18 +51,6 @@
           <input id="nzSearch" type="search" placeholder="Nuclide: 60Co, U-238, Tc-99m…" autocomplete="off" spellcheck="false" aria-label="Find a nuclide" data-on-keydown="nz:searchKey">
           <button type="button" class="nz-btn" data-on-click="nz:search">Find</button>
         </div>
-        <label class="nz-field">Colour by
-          <select id="nzColour" data-on-change="nz:colour">
-            <option value="halflife">Half-life</option>
-            <option value="mode">Decay mode</option>
-            <option value="qb">Q(β⁻)</option>
-            <option value="qa">Q(α)</option>
-            <option value="sn">S(n)</option>
-            <option value="sp">S(p)</option>
-            <option value="e2">E(2⁺₁), even-even</option>
-            <option value="year">Evaluation date</option>
-          </select>
-        </label>
         <label class="nz-field">Database
           <select id="nzDb" data-on-change="nz:db"></select>
         </label>
@@ -90,7 +78,8 @@
               <button type="button" role="tab" class="active" aria-selected="true" data-view="chart" data-on-click="nz:view">Chart of nuclides</button>
               <button type="button" role="tab" aria-selected="false" data-view="chain" data-on-click="nz:view"><span id="nzChainTabLabel">Decay chain</span> <span id="nzChainTabName" class="nz-tabname"></span></button>
             </div>
-            <!-- The decay chain's settings serve both views: the chart draws the same chain. -->
+            <!-- The decay chain's settings serve both views: the chart draws the same chain.
+                 Whether it draws it at all is on the chart's own toolbar. -->
             <div class="nz-chainopts" role="group" aria-label="Decay-chain settings, for both views">
               <span class="nz-chainopts-head">Chain</span>
               <select id="nzChainDir" data-on-change="nz:chainDir" aria-label="Which way the chain runs" title="Down to what the nuclide decays to, or up to its parents: every nuclide that decays to it, directly or through others">
@@ -99,21 +88,44 @@
               </select>
               <select id="nzMinBranch" data-on-change="nz:minBranch" aria-label="Smallest branch to show" title="Leave out branches smaller than this share of a nuclide's decays"></select>
               <select id="nzMinLife" data-on-change="nz:minLife" aria-label="Shortest half-life to draw in the chain" title="A member of the chain, nuclide or isomer, that lives less than this is left out, and the arrows go straight on to where it decays. The nuclide the chain starts from stays, and so do stable ones"></select>
-              <label class="nz-check" title="Draw the chain over the chart of nuclides"><input type="checkbox" id="nzOverlay" data-on-change="nz:overlay" checked> on chart</label>
             </div>
           </div>
 
           <section class="nz-view" data-viewpane="chart" aria-label="Chart of nuclides">
             <div class="nz-chart" id="nzChart">
-              <!-- − + ⤢ are drawn, not set in type, here and on the chain's bar: see .nz-icon in ensdf.css -->
-              <div class="nz-tools" id="nzChartTools" role="group" aria-label="Chart tools">
-                <button type="button" class="nz-icon" data-on-click="nz:zoomOut" title="Zoom out (−)" aria-label="Zoom out"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
-                <button type="button" class="nz-icon" data-on-click="nz:zoomIn" title="Zoom in (+)" aria-label="Zoom in"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8M7 3v8"/></svg></button>
-                <button type="button" class="nz-icon" data-on-click="nz:fit" title="Whole chart (0)" aria-label="Show the whole chart"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 11 11 3M7.5 3H11v3.5M3 7.5V11h3.5"/></svg></button>
-                <button type="button" class="nz-btn secondary small" data-on-click="nz:chartPng" title="The chart as it is on screen, as a PNG image">PNG</button>
-                <button type="button" class="nz-btn secondary small" data-on-click="nz:chartCsv" title="Every ground state as a table: half-life, decay modes, Q-values">CSV</button>
+              <!-- Down the chart's right side: its toolbar at the top, the legend at the foot.
+                   The toolbar holds the chart's own settings, which no other view uses: what the
+                   colours show, and whether the chain is drawn over it. Then zoom and export.
+                   − + ⤢ are drawn, not set in type, here and on the chain's bar: see .nz-icon in ensdf.css -->
+              <div class="nz-chart-side">
+                <div class="nz-tools" id="nzChartTools" role="group" aria-label="Chart tools">
+                  <span class="nz-tools-part nz-tools-set">
+                    <label class="nz-field">Colour by
+                      <select id="nzColour" data-on-change="nz:colour">
+                        <option value="halflife">Half-life</option>
+                        <option value="mode">Decay mode</option>
+                        <option value="qb">Q(β⁻)</option>
+                        <option value="qa">Q(α)</option>
+                        <option value="sn">S(n)</option>
+                        <option value="sp">S(p)</option>
+                        <option value="e2">E(2⁺₁), even-even</option>
+                        <option value="year">Evaluation date</option>
+                      </select>
+                    </label>
+                    <label class="nz-check" title="Draw the decay chain over the chart, by the chain settings beside the view tabs"><input type="checkbox" id="nzOverlay" data-on-change="nz:overlay" checked> Chain</label>
+                  </span>
+                  <span class="nz-tools-part">
+                    <span class="nz-zoom" role="group" aria-label="Zoom the chart">
+                      <button type="button" class="nz-icon" data-on-click="nz:zoomOut" title="Zoom out (−)" aria-label="Zoom out"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8"/></svg></button>
+                      <button type="button" class="nz-icon" data-on-click="nz:zoomIn" title="Zoom in (+)" aria-label="Zoom in"><svg class="nz-rectilinear" viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 7h8M7 3v8"/></svg></button>
+                      <button type="button" class="nz-icon" data-on-click="nz:fit" title="Whole chart (0)" aria-label="Show the whole chart"><svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true"><path d="M3 11 11 3M7.5 3H11v3.5M3 7.5V11h3.5"/></svg></button>
+                    </span>
+                    <button type="button" class="nz-btn secondary small" data-on-click="nz:chartPng" title="The chart as it is on screen, as a PNG image">PNG</button>
+                    <button type="button" class="nz-btn secondary small" data-on-click="nz:chartCsv" title="Every ground state as a table: half-life, decay modes, Q-values">CSV</button>
+                  </span>
+                </div>
+                <div class="nz-legend" id="nzLegend" aria-label="Legend"></div>
               </div>
-              <div class="nz-legend" id="nzLegend" aria-label="Legend"></div>
               <div class="nz-drop" aria-hidden="true">Drop ENSDF files to open them</div>
             </div>
           </section>
@@ -172,14 +184,14 @@
             <p>The Evaluated Nuclear Structure Data File is the evaluated, recommended nuclear structure and decay data for every known nuclide, kept by the <a href="https://www.nndc.bnl.gov/ensdf/" target="_blank" rel="noopener noreferrer">National Nuclear Data Center</a> at Brookhaven for the international Nuclear Structure and Decay Data network. It is published as one text file per mass number, in the fixed 80-column format of the <a href="https://www.nndc.bnl.gov/ensdf/ensdf-manual.pdf" target="_blank" rel="noopener noreferrer">ENSDF manual</a>. This page reads those files as they are — the release on this site was built from the NNDC distribution by the same reader that runs when you open a file — and draws every nuclide with an adopted data set by its neutron number <i>N</i> and proton number <i>Z</i>.</p>
 
             <h3>What the chart shows</h3>
-            <p>Each cell is a nuclide’s ground state, or, strictly, its lowest known level. The colour is its half-life by default; the menu above also colours by the main decay mode, the Q-values and separation energies of the adopted data set, the energy of the first 2<sup>+</sup> level of the even-even nuclides, and the date the adopted data set was entered. Stable nuclides are drawn darkest on the light theme and lightest on the dark one. The double lines trace the magic numbers 2, 8, 20, 28, 50, 82 and 126. A notch in a cell’s top right corner means the nuclide has isomers. Hover over a cell for its half-life and decay modes, and point at a legend entry to pick out one class.</p>
+            <p>Each cell is a nuclide’s ground state, or, strictly, its lowest known level. The colour is its half-life by default; <i>Colour by</i>, on the chart’s toolbar, also colours by the main decay mode, the Q-values and separation energies of the adopted data set, the energy of the first 2<sup>+</sup> level of the even-even nuclides, and the date the adopted data set was entered. Stable nuclides are drawn darkest on the light theme and lightest on the dark one. The double lines trace the magic numbers 2, 8, 20, 28, 50, 82 and 126. A notch in a cell’s top right corner means the nuclide has isomers. Hover over a cell for its half-life and decay modes, and point at a legend entry to pick out one class.</p>
             <p>The <b>states</b> of a nuclide are its ground state and the levels the evaluators flag as metastable (the MS field), together with any excited level that lives at least 1 µs. The second rule is needed: in this release the 3.19 h isomer of <sup>90</sup>Y and the 258 s isomer of <sup>90</sup>Rb carry no flag, and both decay by β⁻ as well as by IT. Isomers are named m, m1, m2 … after the evaluators’ flags.</p>
 
             <h3>The decay chain</h3>
             <p>The decay modes of each state come from the adopted data set: <code>%B-=100</code>, <code>%EC+%B+=56.3 20</code>, <code>%A&lt;1E-4</code>. Following the ENSDF convention, a β-delayed mode such as <code>%B-N</code> is part of <code>%B-</code>, so the branch that ends at the plain β⁻ daughter is what is left after the delayed ones are taken out.</p>
             <p>Where a branch lands in the daughter is worked out from the decay data sets. The cascade in the data set is followed from the levels the decay feeds — the direct β, ε or α feeding of each level, then down through the γ rays leaving it in proportion to their total transition intensities — until it reaches the ground state or an isomer. That is how <sup>234</sup>Th is seen to feed <sup>234m</sup>Pa (99.85 %), <sup>99</sup>Mo to feed <sup>99m</sup>Tc (87.6 %) and <sup>137</sup>Cs <sup>137m</sup>Ba (94.7 %). Which level of a decay data set is which isomer is decided by the evaluators’ own cross-references (XREF), not by energy alone: <sup>212</sup>Pb feeds a picosecond level of <sup>212</sup>Bi at 238.6 keV that lies within a keV of the 25-minute isomer. An isomer with no IT data set decays through the γ cascade of the adopted level scheme.</p>
             <p>Checked against the ICRP Publication 107 decay data of <a href="./rdc.html">Radionuclide Decay Chains</a>: of 1508 nuclides, 1470 give the same daughters and branching fractions to within 2 % (absolute) or 10 % (relative), with isomers shorter than a minute passed through as ICRP does. The rest differ because the evaluations have moved on since 2008 — <sup>50</sup>V, <sup>93</sup>Zr, <sup>232</sup>Pu — or because ICRP treats a very long-lived nuclide such as <sup>209</sup>Bi or <sup>130</sup>Te as stable.</p>
-            <p>On the grid, the first of the two layouts, the chain is drawn with <i>Z</i> across and the mass number <i>A</i> down: α decay steps down a row and two columns to the left, β⁻ one column to the right, electron capture one to the left, and an isomer stands above the ground state it decays to. The share on each arrow is of the decays of the nuclide it leaves; the table gives the share of the first nuclide’s decays that passes through each member. The settings beside the view tabs serve both views, since the chart draws the same chain: the smallest branch to draw, the shortest half-life to draw, and whether to draw the chain over the chart. By default every nuclide is drawn and only isomers living less than a second are left out; with a half-life from 1 ms up to 1000 years, every member that lives less — nuclide or isomer, but never the one the chain starts from — is left out, and the chain goes straight on to where it decays, each share the product of the branches on the way. An arrow that jumps over left-out members is marked “via” them: with members under a year left out, <sup>238</sup>U goes to <sup>234</sup>U via <sup>234</sup>Th and <sup>234m</sup>Pa, <sup>226</sup>Ra to <sup>210</sup>Pb via <sup>222</sup>Rn … <sup>214</sup>Po, and <sup>210</sup>Pb to <sup>206</sup>Pb via <sup>210</sup>Bi and <sup>210</sup>Po. What goes through an isomer’s IT stays in the nuclide and joins the plain arrow: with members under an hour left out, <sup>137</sup>Cs goes to <sup>137</sup>Ba by one arrow of 100 %, 94.7 % of it through <sup>137m</sup>Ba. The note under the drawing lists what was left out. Where arrows would cross a box or run on top of each other, they bend; where labels have no room, the gap between the rows widens.</p>
+            <p>On the grid, the first of the two layouts, the chain is drawn with <i>Z</i> across and the mass number <i>A</i> down: α decay steps down a row and two columns to the left, β⁻ one column to the right, electron capture one to the left, and an isomer stands above the ground state it decays to. The share on each arrow is of the decays of the nuclide it leaves; the table gives the share of the first nuclide’s decays that passes through each member. The settings beside the view tabs serve both views, since the chart draws the same chain: the smallest branch to draw and the shortest half-life to draw. The <i>Chain</i> box on the chart’s toolbar draws the chain over the chart, or leaves it off; <i>On chart</i>, on the chain’s bar, shows the chain on the chart, and ticks the box if it is off. By default every nuclide is drawn and only isomers living less than a second are left out; with a half-life from 1 ms up to 1000 years, every member that lives less — nuclide or isomer, but never the one the chain starts from — is left out, and the chain goes straight on to where it decays, each share the product of the branches on the way. An arrow that jumps over left-out members is marked “via” them: with members under a year left out, <sup>238</sup>U goes to <sup>234</sup>U via <sup>234</sup>Th and <sup>234m</sup>Pa, <sup>226</sup>Ra to <sup>210</sup>Pb via <sup>222</sup>Rn … <sup>214</sup>Po, and <sup>210</sup>Pb to <sup>206</sup>Pb via <sup>210</sup>Bi and <sup>210</sup>Po. What goes through an isomer’s IT stays in the nuclide and joins the plain arrow: with members under an hour left out, <sup>137</sup>Cs goes to <sup>137</sup>Ba by one arrow of 100 %, 94.7 % of it through <sup>137m</sup>Ba. The note under the drawing lists what was left out. Where arrows would cross a box or run on top of each other, they bend; where labels have no room, the gap between the rows widens.</p>
             <p><b>The series.</b> The other layout, chosen in the <i>Layout</i> menu on the chain’s bar, draws the same chain the way <a href="./rdc.html">Radionuclide Decay Chains</a> draws its chains: a circle for each state, with the mass number over the atomic number before the symbol and the half-life below, α decay straight down, β⁻ a step to the right and electron capture a step to the left, so that a decay series runs down the page as a column with short steps across. Across is <i>Z</i> − <i>N</i>, and each row is one mass number, as on the grid. Every arrow is labelled with its decay mode over its share, an isomer stands above the state it decays to, and spontaneous fission is an arrow out to the side. Arrows bend round circles in their way as they do round boxes. The settings, the table and the notes are the same in both layouts; the SVG and PNG files and the buckets of the Inventory tab follow the layout chosen, and the page remembers it.</p>
             <p><b>Parents.</b> The chain can also run the other way. Set it to <i>parents</i>, beside the view tabs, and it gathers every nuclide and state whose decays come to the one chosen, directly or through others — its parents, their parents and so on — and draws them the same way and by the same settings, the chosen nuclide at the foot of the arrows. Only the branches that lead to it are drawn: <sup>226</sup>Ac comes to <sup>226</sup>Ra by its 17 % of electron capture, and its β⁻ branch to <sup>226</sup>Th, which never gets there, is left out. The share on an arrow is still of the decays of the nuclide it leaves; the table gives the share of each member’s decays that reaches the chosen one. The half-life setting works as it does going down, and a short-lived member that nothing drawn decays to is not drawn at all: with members under a year left out, <sup>226</sup>Ra has <sup>230</sup>Th, <sup>234</sup>U, <sup>238</sup>U (via <sup>234</sup>Th and <sup>234m</sup>Pa) and <sup>238</sup>Pu above it, and <sup>242</sup>Pu, <sup>246</sup>Cm and a few more above them. A stable nuclide has parents too. The Nuclide tab lists those that decay straight to the state on show, each with the share of its decays that lands there, as the file gives it.</p>
             <p class="nz-dim">Going up and going down agree: for every member above a nuclide, the share of its decays that reaches the nuclide is the nuclide’s share in that member’s own decay chain, and every arrow is the same arrow — checked for every pair in this release, at every setting.</p>
@@ -247,6 +259,6 @@
   <script src="./resources/js/ensdf-chain.js?v=20261006c"></script>
   <script src="./resources/js/ensdf-inventory.js?v=20261006"></script>
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
-  <script src="./resources/js/ensdf-ui.js?v=20261007b"></script>
+  <script src="./resources/js/ensdf-ui.js?v=20261009"></script>
 </body>
 </html>

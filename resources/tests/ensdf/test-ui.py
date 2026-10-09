@@ -523,9 +523,64 @@ async def main():
 
         # ---------------------------------------------------------- the tabs
         await page.ev("document.querySelector('[data-view=chart]').click(); ENSDFPage.select('Co-60'); 'ok'")
-        shared = json.loads(await page.ev("JSON.stringify(['nzMinBranch', 'nzMinLife', 'nzOverlay'].map(id => {"
-                                          " const r = document.getElementById(id).getBoundingClientRect(); return r.width > 0 && r.height > 0; }))"))
-        check('the chain settings are there in the chart view too', shared, [True, True, True])
+        # The chain settings serve both views, so they stand beside the view tabs; what the
+        # colours show and whether the chain is drawn over the chart serve the chart alone,
+        # so they are on its toolbar and go with it.
+        places = json.loads(await page.ev("""(async () => {
+          const shown = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          const ids = ['nzChainDir', 'nzMinBranch', 'nzMinLife', 'nzColour', 'nzOverlay'];
+          const chart = ids.map(shown);
+          const onTools = ['nzColour', 'nzOverlay'].map(id => !!document.getElementById(id).closest('#nzChartTools'));
+          document.querySelector('[data-view=chain]').click(); await new Promise(r => setTimeout(r, 150));
+          const chain = ids.map(shown);
+          document.querySelector('[data-view=chart]').click(); await new Promise(r => setTimeout(r, 150));
+          return JSON.stringify({ chart, chain, onTools }); })()"""))
+        check('the chain settings are there in both views; Colour by and the Chain box are on the chart’s toolbar, and only in the chart view',
+              (places['chart'], places['chain'], places['onTools']), ([True] * 5, [True, True, True, False, False], [True, True]))
+        overlay = json.loads(await page.ev("""(async () => {
+          const ch = ENSDFPage.chart, set = ch.setChain, got = [];
+          ch.setChain = function (o) { got.push(!!(o && o.cells.size)); return set.call(this, o); };
+          const box = document.getElementById('nzOverlay');
+          try {
+            box.click(); await new Promise(r => setTimeout(r, 100));
+            box.click(); await new Promise(r => setTimeout(r, 100));
+          } finally { ch.setChain = set; }
+          return JSON.stringify({ got, checked: box.checked, kept: ENSDFPage.state.chainOpt.overlay }); })()"""))
+        check('the Chain box takes the chain off the chart and draws it again', (overlay['got'], overlay['checked'], overlay['kept']), ([False, True], True, True))
+        # The box is not to be seen from the chain view, so On chart, on the chain's bar,
+        # must not open the chart with no chain on it.
+        framed = json.loads(await page.ev("""(async () => {
+          const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const ch = ENSDFPage.chart, set = ch.setChain, box = document.getElementById('nzOverlay'), got = [];
+          box.click(); await sleep(100);
+          const off = [box.checked, ENSDFPage.state.chainOpt.overlay];
+          document.querySelector('[data-view=chain]').click(); await sleep(300);
+          ch.setChain = function (o) { got.push(!!(o && o.cells.size)); return set.call(this, o); };
+          try { document.querySelector('[data-on-click="nz:chainFrame"]').click(); await sleep(300); }
+          finally { ch.setChain = set; }
+          const out = JSON.stringify({ off, view: ENSDFPage.state.view, on: [box.checked, ENSDFPage.state.chainOpt.overlay],
+            drawn: got.length > 0 && got[got.length - 1] });
+          /* Ticked again whatever the button did: the checks after this one draw on the chart. */
+          if (!box.checked) { box.click(); await sleep(100); }
+          return out; })()"""))
+        check('On chart, on the chain’s bar, ticks the Chain box when it is off: the chart opens with the chain drawn',
+              (framed['off'], framed['view'], framed['on'], framed['drawn']), ([False, False], 'chart', [True, True], True))
+        # The toolbar on one line where the chart has room for it; where it has not, its
+        # two parts one over the other, the box no wider than they need; inside the chart.
+        bars = []
+        for w in (1280, 900):
+            await page.call('Emulation.setDeviceMetricsOverride', {'width': w, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+            await asyncio.sleep(0.3)
+            bars.append(json.loads(await page.ev("""JSON.stringify((() => {
+              const r = (e) => e.getBoundingClientRect();
+              const t = r(document.getElementById('nzChartTools')), c = r(document.getElementById('nzChart'));
+              const parts = [...document.querySelectorAll('#nzChartTools > .nz-tools-part')].map(r);
+              const lines = new Set(parts.map(p => Math.round(p.top))).size;
+              return [parts.length, lines, lines === 1 || t.width <= Math.max(...parts.map(p => p.width)) + 24,
+                t.left >= c.left && t.right <= c.right && t.top >= c.top]; })())""")))
+        await page.call('Emulation.setDeviceMetricsOverride', {'width': 1280, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+        check('the chart’s toolbar is one line at 1280 px; in a 900 px window its two parts stand one over the other, the box no wider than they need, inside the chart',
+              bars, [[2, 1, True, True], [2, 2, True, True]])
         tabs = json.loads(await page.ev("""(async () => { const t = document.querySelector('.nz-tabs');
           const fits = () => [t.scrollWidth <= t.clientWidth, t.scrollHeight <= t.clientHeight];
           const out = [fits()]; document.getElementById('nz').style.setProperty('--nz-panel-width', '330px');
@@ -535,7 +590,7 @@ async def main():
         # The main area's tab row and the panel's end at one line, whether the chain
         # settings stand beside the view tabs or, where they do not fit, above them.
         lines = []
-        for w in (1280, 1600):
+        for w in (1100, 1600):
             await page.call('Emulation.setDeviceMetricsOverride', {'width': w, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
             await asyncio.sleep(0.3)
             lines.append(json.loads(await page.ev("""JSON.stringify((() => {
@@ -543,7 +598,7 @@ async def main():
               return [r('.nz-views').bottom, r('.nz-tabs').bottom, r('.nz-views [data-view].active').bottom, r('.nz-tabs button.active').bottom,
                 r('.nz-chainopts').top < r('.nz-viewtabs').top - 8]; })())""")))
         await page.call('Emulation.setDeviceMetricsOverride', {'width': 1280, 'height': 900, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
-        check('the tab rows of the main area and the panel end at one line, with the chain settings above the view tabs (1280 px) or beside them (1600 px)',
+        check('the tab rows of the main area and the panel end at one line, with the chain settings above the view tabs (1100 px) or beside them (1600 px)',
               [[abs(r[0] - r[1]) < 0.5, abs(r[2] - r[3]) < 0.5, r[4]] for r in lines], [[True, True, True], [True, True, False]])
         for tab, probe in (('levels', "t => t.includes('286 levels') && document.querySelector('#nzPaneLevels [data-on-click=\"nz:levelsAll\"]')"),
                            ('radiation', "t => t.includes('1332.492') && t.includes('1173.228')"),
@@ -1100,6 +1155,18 @@ async def main():
         await page.goto(BASE + '#Cs-137', 390, 844)
         wide = json.loads(await page.ev("JSON.stringify({ sw: document.documentElement.scrollWidth, iw: innerWidth, right: Math.max(...[...document.querySelectorAll('.nz-bar > *:not([hidden]), .nz-main, .nz-panel')].map(e => e.getBoundingClientRect().right)) })"))
         check('on a phone nothing is wider than the screen', wide['sw'] <= wide['iw'] and wide['right'] <= wide['iw'] + 0.5, True)
+        # Where the chart is short, the legend gives way to the chart's toolbar (Colour by is
+        # there) and scrolls, rather than run up over it: the screens a phone leaves a page.
+        side = []
+        for w, h in ((390, 664), (375, 548), (360, 560)):
+            await page.call('Emulation.setDeviceMetricsOverride', {'width': w, 'height': h, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+            await asyncio.sleep(0.3)
+            side.append(json.loads(await page.ev("""JSON.stringify((() => {
+              const r = (id) => document.getElementById(id).getBoundingClientRect();
+              const t = r('nzChartTools'), l = r('nzLegend'), c = r('nzChart');
+              return [l.top >= t.bottom, t.left >= c.left && t.right <= c.right, l.bottom <= c.bottom]; })())""")))
+        await page.call('Emulation.setDeviceMetricsOverride', {'width': 390, 'height': 844, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
+        check('on a phone the legend stays under the chart’s toolbar, and both inside the chart (390 × 664, 375 × 548, 360 × 560)', side, [[True, True, True]] * 3)
         await page.ev("localStorage.setItem('kvot.ensdf.full', '1'); 'ok'")
         await page.reload()
         wide = json.loads(await page.ev("""JSON.stringify((() => {

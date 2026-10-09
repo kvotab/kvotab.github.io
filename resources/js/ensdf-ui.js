@@ -1027,7 +1027,8 @@
     return LIFE_OPTIONS.find((o) => o.id === state.chainOpt.life) || LIFE_OPTIONS.find((o) => o.id === C.DEFAULT_LIFE);
   }
 
-  /* The chain settings sit beside the view tabs, and serve both views. */
+  /* The chain settings sit beside the view tabs, and serve both views;
+     whether the chart draws the chain is on the chart's own toolbar. */
   function renderChainControls() {
     const life = $('nzMinLife');
     if (!life.options.length) life.innerHTML = LIFE_OPTIONS.map((o) => `<option value="${o.id}">${esc(o.text)}</option>`).join('');
@@ -2043,7 +2044,13 @@
     'nz:chainSvg': () => chainSvg(),
     'nz:chainPng': () => chainPng(),
     'nz:chainCsv': () => chainCsv(),
-    'nz:chainFrame': () => { if (!state.chain) return; setView('chart'); chart.frame([...new Set(state.chain.nodes.filter((n) => n.kind !== 'fission').map((n) => n.z * 1000 + n.a))]); },
+    'nz:chainFrame': () => {
+      if (!state.chain) return;
+      /* The chain on the chart: with the chart's Chain box off there would be none to see, so it is ticked. */
+      if (!state.chainOpt.overlay) { state.chainOpt.overlay = true; $('nzOverlay').checked = true; computeChain(); }
+      setView('chart');
+      chart.frame([...new Set(state.chain.nodes.filter((n) => n.kind !== 'fission').map((n) => n.z * 1000 + n.a))]);
+    },
     'nz:zoomIn': () => chart.zoom(1.5),
     'nz:zoomOut': () => chart.zoom(1 / 1.5),
     'nz:fit': () => chart.fit(),
