@@ -21,9 +21,9 @@ const KVOT = (() => {
 
   const ALL_PROJECTS = [
     {
-      href: './rdc.html',
-      label: 'Radionuclide Decay Chains',
-      desc: 'Explore the ICRP Publication 107 decay data as an interactive chain graph, and plot activity over time.',
+      href: './rb.html',
+      label: 'HDF5 Browser',
+      desc: 'Open .h5 files straight in the browser — walk the tree, inspect datasets, plot them and export to Excel.',
     },
     {
       href: './ensdf.html',
@@ -31,29 +31,24 @@ const KVOT = (() => {
       desc: 'Every nuclide in the Evaluated Nuclear Structure Data File by N and Z, coloured by half-life or decay mode, with its states, Q-values, levels and radiation, and the whole decay chain of any radionuclide.',
     },
     {
-      href: './dose_coefficients.html',
-      label: 'Dose Coefficients',
-      desc: 'Committed effective and equivalent dose coefficients for members of the public, by age at intake, for ingestion and inhalation, calculated with the ICRP’s own models in the ICRP 60 system (Publication 72) or the ICRP 103 system (Publication 158): retention, excretion and the models themselves.',
-    },
-    {
-      href: './rb.html',
-      label: 'HDF5 Browser',
-      desc: 'Open .h5 files straight in the browser — walk the tree, inspect datasets, plot them and export to Excel.',
-    },
-    {
-      href: './logn.html',
-      label: 'Lognormal Conversions',
-      desc: 'Convert between lognormal parameterisations — μ and σ, geometric mean and GSD, percentiles — with the equations shown.',
-    },
-    {
       href: './distributions.html',
       label: 'Probability Distributions',
       desc: 'Define and compare probability distributions — 38 parametric families in several parameterisations each, empirical distributions from data, truncation — with their statistics, seeded samples (random, Latin hypercube, Sobol, Halton), fits to data by maximum likelihood or moments ranked by AIC and goodness of fit, and calculations from tail probabilities to Monte Carlo sums.',
     },
     {
-      href: './proj.html',
-      label: 'Swedish Coordinate Conversions',
-      desc: 'Convert between WGS 84, SWEREF 99 and RT 90, one point at a time or in bulk from a pasted list.',
+      href: './kompartment.html',
+      label: 'Kompartment',
+      desc: 'Build compartment models in the browser — blocks and fluxes drawn on a canvas, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.',
+    },
+    {
+      href: './smui.html',
+      label: 'User Interface for statsmodels',
+      desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Fit Y by X, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Builder, with linked graphs and the Python behind every result.',
+    },
+    {
+      href: './rtm.html',
+      label: 'Reactive Transport',
+      desc: 'Specify and solve reactive transport models: reactions written the usual way, a batch reactor or a column with diffusion and advection, and an analytic sparse Jacobian built from your own reaction set.',
     },
     {
       href: './skbref.html',
@@ -71,24 +66,14 @@ const KVOT = (() => {
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
     {
-      href: './kompartment.html',
-      label: 'Kompartment',
-      desc: 'Build compartment models in the browser — blocks and fluxes drawn on a canvas, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.',
+      href: './dose_coefficients.html',
+      label: 'Dose Coefficients',
+      desc: 'Committed effective and equivalent dose coefficients for members of the public, by age at intake, for ingestion and inhalation, calculated with the ICRP’s own models in the ICRP 60 system (Publication 72) or the ICRP 103 system (Publication 158): retention, excretion and the models themselves.',
     },
     {
-      href: './facsimile.html',
-      label: 'Canister Radiolysis',
-      desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',
-    },
-    {
-      href: './rtm.html',
-      label: 'Reactive Transport',
-      desc: 'Specify and solve reactive transport models: reactions written the usual way, a batch reactor or a column with diffusion and advection, and an analytic sparse Jacobian built from your own reaction set.',
-    },
-    {
-      href: './erosion_corrosion.html',
-      label: 'Erosion and Corrosion',
-      desc: 'SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 layout, from hydro data you drop in: rejection criteria, time to advection, sulphide-driven failure times and the key outputs of the PSAR workbook.',
+      href: './proj.html',
+      label: 'Swedish Coordinate Conversions',
+      desc: 'Convert between WGS 84, SWEREF 99 and RT 90, one point at a time or in bulk from a pasted list.',
     },
     {
       href: './FARF31.html',
@@ -96,14 +81,29 @@ const KVOT = (() => {
       desc: 'SKB’s far-field model FARF31: radionuclides along a stream tube with dispersion, matrix diffusion and sorption, and decay chains of any length, solved in the Laplace domain from the release you give; FARF31’s own input and output files read and written.',
     },
     {
+      href: './facsimile.html',
+      label: 'Canister Radiolysis',
+      desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',
+    },
+    {
+      href: './erosion_corrosion.html',
+      label: 'Erosion and Corrosion',
+      desc: 'SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 layout, from hydro data you drop in: rejection criteria, time to advection, sulphide-driven failure times and the key outputs of the PSAR workbook.',
+    },
+    {
       href: './SimpleFunctions.html',
       label: 'Simple Functions',
       desc: 'Radionuclide solubility limits by SKB’s Simple Functions: the SR-Site and PSAR calculation for 20 elements in the water of a failed canister, Monte Carlo over groundwater compositions and equilibrium constants, with controlling solids, speciation and sensitivities.',
     },
     {
-      href: './smui.html',
-      label: 'User Interface for statsmodels',
-      desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Fit Y by X, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Builder, with linked graphs and the Python behind every result.',
+      href: './rdc.html',
+      label: 'Radionuclide Decay Chains',
+      desc: 'Explore the ICRP Publication 107 decay data as an interactive chain graph, and plot activity over time.',
+    },
+    {
+      href: './logn.html',
+      label: 'Lognormal Conversions',
+      desc: 'Convert between lognormal parameterisations — μ and σ, geometric mean and GSD, percentiles — with the equations shown.',
     },
     {
       href: './arsredovisning.html',
