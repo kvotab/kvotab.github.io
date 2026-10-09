@@ -902,7 +902,7 @@ window.__wp8 = {
     return it;
   },
   // an element's centre on the screen, scrolled into view (for a real mouse click)
-  at(e) { if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; },
+  at(e) { if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect(); return r.width || r.height ? [r.left + r.width / 2, r.top + r.height / 2] : null; },   // null when hidden (no click at 0, 0)
   ob(rep, title) { return [...rep.body.querySelectorAll('.sm-ob')].find((o) => o.querySelector(':scope > .sm-ob-head h2, :scope > .sm-ob-head h3, :scope > .sm-ob-head h4')?.textContent === title) || null; },
   btn(root, text) { return root ? [...root.querySelectorAll('button')].find((b) => b.textContent === text) : null; },
 };
@@ -1145,6 +1145,8 @@ async def wp8_features(page):
         check('... Edit > Undo takes it back', (r['codes'], r['value']), (None, 9999))
     else:
         check('Add to Missing Value Codes needs the Missing Value Codes column property', has_codes, True)
+    # Undo brings the table's tab to the front; the clicks below are in the report
+    await page.ev(f'SM.app.showTab(SM.app.tabOf({LAST}))')
     await page.ev(f'{LAST}.run()')
     await wait_done(page)
     row_c = row_a.replace('=== "a"', '=== "c"')
