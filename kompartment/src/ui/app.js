@@ -104,7 +104,7 @@ import { outputsOf } from '../sim/runner.js';
 import { samplingPlan, slotName, groupOf } from '../sim/probabilistic.js';
 import { renderMatrix, markSelection } from './matrix.js';
 import { UndoStack } from './undo.js';
-import { renderBlockTree, treeTools, draggedNames } from './tree.js';
+import { renderBlockTree, treeTools, resetFolds, draggedNames } from './tree.js';
 // An app on the model: the page of controls and results the App designer
 // lays out, and the same page running on its own. See ../domain/apps.js.
 import * as apps from '../domain/apps.js';
@@ -156,7 +156,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-08';
+const BUILD = '2026-10-09';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -415,8 +415,9 @@ const state = {
 	// The block tree: which sub-systems are open, and whether the blocks of
 	// each are filed under a heading per kind. The top level starts open, so
 	// a model that has just been opened shows its sub-systems and not a wall
-	// of blocks.
-	tree: { open: new Set(['']), group: false },
+	// of blocks. `endpoints` is the star beside Collapse: beside the Chart
+	// and the Table, only the endpoints and the sub-systems they are in.
+	tree: { open: new Set(['']), group: false, endpoints: false },
 	// Which sub-systems are unfolded on the transfer grid. Closed by default:
 	// the point of folding one is the overview, and a model with two hundred
 	// sub-systems opened flat is the thing this replaces. The view's, never
@@ -5714,7 +5715,8 @@ function addTabs() {
 	const row = el('div', { className: 'tree-tabs' });
 	// Expand all and Collapse at the left, where the row has room: between
 	// this row and the tree they parted the tabs from the edge they stand on.
-	const tools = treeTools(state.raw, state.tree, () => renderRail(), treeFilter());
+	// Beside the Chart and the Table, the star that shows only the endpoints.
+	const tools = treeTools(state.raw, state.tree, () => renderRail(), treeFilter(), pickingInTree());
 	if (tools) row.append(tools);
 	row.append(el('span', { className: 'tree-tabs-what' }, 'Add'));
 	for (const spec of QUICK_ADD) {
@@ -5877,12 +5879,16 @@ function renderSearch() {
 		infoButton('panel:tree', () => panelTopic('tree', {
 			systems: ed.systems(state.raw).length > 0,
 			sample: !!sampleHolds(),
+			picking: pickingInTree(),
 		}))));
 
-	// One line: what the filter is set to, and how much it leaves.
+	// One line: what the filter is set to, and how much it leaves -- of the
+	// endpoints alone while the star beside Collapse has the tree show only
+	// those, so the count is of the rows below.
 	const total = ed.allBlocks(state.raw).length;
 	const filter = treeFilter();
-	const shown = ed.searchBlocks(state.raw, filter).length;
+	const starred = pickingInTree() && state.tree.endpoints ? new Set(ed.endpoints(state.raw)) : null;
+	const shown = ed.searchBlocks(state.raw, filter).filter((b) => !starred || starred.has(b.name)).length;
 	const chosen = state.search.kinds.size;
 	const filtering = !!state.search.query.trim() || chosen > 0 || !!filter.only;
 	const held = sampleHolds();
@@ -8768,7 +8774,7 @@ function pickHooks() {
 	};
 	const on = new Set(state.selected);
 	const endpoints = ed.endpoints(state.raw).filter((n) => byBlock.has(n));
-	const isEndpoint = new Set(ed.endpoints(state.raw));
+	const starred = new Set(ed.endpoints(state.raw));
 	return {
 		chartedBlocks: new Set(state.selected.map((i) => r.outputs[i]?.block).filter(Boolean)),
 		seriesOf: (name) => byBlock.get(name) ?? null,
@@ -8786,7 +8792,10 @@ function pickHooks() {
 			if (live()) toggleSeries(names.flatMap((n) => (byBlock.get(n)?.items ?? []).map((it) => it.i)), ev);
 		},
 		endpoints,
-		isEndpoint: (name) => isEndpoint.has(name),
+		// Every block whose star is filled, run or no run: what the star
+		// beside Collapse narrows the tree to.
+		starred,
+		isEndpoint: (name) => starred.has(name),
 		canStar: (b) => ed.canBeEndpoint(b.kind),
 		star: (name) => toggleEndpoint(name),
 	};
@@ -14276,7 +14285,7 @@ function setModel(raw, source) {
 	state.trail = { seen: [], at: -1, moving: false };
 	// The tree opens at the top level again: which sub-systems were open is a
 	// fact about the model that has just been closed.
-	state.tree.open = new Set(['']);
+	resetFolds(state.tree);
 	ed.syncDerivedUnits(state.raw);
 	ed.autoLayout(state.raw);
 	// After both, so that the first thing on the stack is the model as it is

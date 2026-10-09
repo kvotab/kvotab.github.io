@@ -3766,6 +3766,12 @@ chart has drawn, which is after the tree, so rows that are one series carry
 `data-out` and `refreshPickTicks` paints them afterwards — the chips' too. The
 star edits only the clicked name in `simulation.endpoints`, so whatever else an
 imported file's list holds, parameters included, stays as the file had it.
+The star beside Collapse (`view.endpoints`, page state like `group`) narrows
+`blockTree` to `pick.starred` as a pinned answer narrows it, but is not a
+search: nothing is forced open, so Collapse still works. Its folds are kept
+apart from the whole tree's (`foldsFor`: `open` is always the folds on screen,
+`away` the other's), and each time it is turned on it opens onto every
+endpoint (`openOnto`); a model just opened resets both (`resetFolds`).
 
 **Saved views and presets** are `view.chart_views` and `view.chart_presets`,
 read through `chartViews` and `chartPresets` in ./src/domain/edit.js, which

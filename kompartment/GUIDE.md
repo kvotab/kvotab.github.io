@@ -1068,7 +1068,9 @@ step into it, left to close it or step back out. **Group by type** — beside
 **All kinds** above the tree, since the two are a pair, one saying what is in
 the list and the other how it is arranged — files each sub-system's blocks
 under a heading per kind, which is worth having when one holds hundreds;
-**Expand all** and **Collapse**, over the tree itself, do what they say.
+**Expand all** and **Collapse**, over the tree itself, do what they say. Beside
+the Chart and the Table a **☆** follows them, which shows only the endpoints
+(see [Picking from the tree](#picking-from-the-tree)).
 
 **The three Add tabs**, on the top edge of the tree at its right, add a
 compartment, an expression or a parameter to whichever sub-system the diagram is
@@ -2442,6 +2444,13 @@ blocks opens on its first three, and the rest are a tick away. The **star** at t
 to the endpoints or takes it off: it shows on the row the pointer is on, and
 stays on those that are. A star is an edit of the model — undoable, saved with
 it — and runs nothing. A model with no endpoints opens on its compartments.
+
+**Only the endpoints.** The **☆** over the tree, beside **Collapse**, narrows it
+to the endpoints: filled, the tree holds nothing but the blocks whose star is
+filled and the sub-systems they are in, opened down to every one of them, and
+the list at its top goes, since it would be every row twice. **Expand all**,
+**Collapse** and the arrows fold it as usual, and the search narrows it further.
+Pressed again, the star brings every block back, folded as it was.
 
 **Above the chart, a chip per block** says what is on it and how many of the
 block's series: `Outflow 54`, `Water 4 of 12`. Click the name to find the block

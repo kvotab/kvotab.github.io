@@ -4909,6 +4909,22 @@ td > .matrix-add:not(.matrix-more) {
 	font-family: var(--sans);
 }
 
+/* The star beside Collapse, beside a chart: an outline while the tree shows
+   every block, filled in the colour of a block's own filled star while it
+   shows only those. A size up from the words beside it, as a glyph needs to
+   read as one, and stretched to the row so the three buttons are one height
+   whatever the glyph's own line comes to. */
+.tree-star {
+	align-self: stretch;
+	padding: 0 5px;
+	font-size: 12px;
+	line-height: 1;
+	color: var(--text-muted);
+}
+
+.tree-star.is-on,
+.tree-star:hover:not(:disabled) { color: var(--warn); }
+
 
 .tree {
 	border: 1px solid var(--border);

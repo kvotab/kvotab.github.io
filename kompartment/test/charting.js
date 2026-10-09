@@ -30,6 +30,7 @@ import {
 	AXIS_PREFIXES, unitWithPrefix, unitsWithPrefix, shiftDecimal, prefixExponent, powerOfTen,
 } from '../src/ui/prefix.js';
 import { SvgCanvas } from '../src/ui/svgcanvas.js';
+import { renderBlockTree, treeTools, resetFolds } from '../src/ui/tree.js';
 
 /** [name, fn] for the suite. */
 export const TESTS = [];
@@ -509,7 +510,7 @@ test('beside the Chart and the Table, the tree is the chart’s picker, and the 
 	assert(/if \(ev\?\.altKey\) next = \[\.\.\.new Set\(indices\)\];/.test(app), 'Alt-click is not "only this"');
 	// The endpoints: at the top of the tree, the chart opens on them, and the
 	// star edits only the name it is on.
-	assert(/if \(pick && !filtering\) \{[\s\S]*?for \(const name of pick\.endpoints \?\? \[\]\)/.test(tree), 'no Endpoints section');
+	assert(/if \(pick && !filtering && !narrowed\) \{[\s\S]*?for \(const name of pick\.endpoints \?\? \[\]\)/.test(tree), 'no Endpoints section');
 	const def = /function pickDefaultSeries\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	assert(def.indexOf('ed.endpoints(state.raw)') >= 0 && def.indexOf('ed.endpoints(state.raw)') < def.indexOf("o.kind === 'compartment'"),
 		'the chart does not open on the endpoints first');
@@ -534,6 +535,236 @@ test('beside the Chart and the Table, the tree is the chart’s picker, and the 
 	}
 	assert(/infoButton\(`panel:\$\{where\}-pick`, \(\) => panelTopic\(where === 'chart' \? 'chart' : 'table'\)\)/.test(app),
 		'the bars have no (i)');
+});
+
+/**
+ * Just enough of a document for the tree and the buttons over it to be drawn
+ * in Node: elements that hold their children, attributes, classes and
+ * listeners, and find each other by one class.
+ */
+function stubDocument() {
+	class Stub {
+		constructor(tag) {
+			this.tagName = String(tag).toUpperCase();
+			this.nodeType = 1;
+			this.children = [];
+			this.parentNode = null;
+			this.attributes = {};
+			this.dataset = {};
+			this.style = { setProperty() {} };
+			this.className = '';
+			this.listeners = {};
+			const classes = () => this.className.split(/\s+/).filter(Boolean);
+			this.classList = {
+				contains: (c) => classes().includes(c),
+				add: (...c) => { this.className = [...new Set([...classes(), ...c])].join(' '); },
+				remove: (...c) => { this.className = classes().filter((x) => !c.includes(x)).join(' '); },
+			};
+		}
+
+		setAttribute(k, v) { this.attributes[k] = String(v); }
+
+		getAttribute(k) { return this.attributes[k] ?? null; }
+
+		removeAttribute(k) { delete this.attributes[k]; }
+
+		append(...kids) {
+			for (const k of kids) {
+				const n = typeof k === 'string' ? { nodeType: 3, text: k } : k;
+				n.parentNode = this;
+				this.children.push(n);
+			}
+		}
+
+		replaceChildren(...kids) {
+			this.children = [];
+			this.append(...kids);
+		}
+
+		addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
+
+		/** What a click on it does, with the event's own methods stubbed. */
+		fire(type, ev = {}) {
+			for (const fn of this.listeners[type] ?? []) fn({ preventDefault() {}, stopPropagation() {}, target: this, ...ev });
+		}
+
+		contains(n) {
+			for (let x = n; x; x = x.parentNode) if (x === this) return true;
+			return false;
+		}
+
+		querySelectorAll(sel) {
+			const c = sel.replace(/^\./, '');
+			const all = (n) => n.children.filter((k) => k.nodeType === 1).flatMap((k) => [k, ...all(k)]);
+			return all(this).filter((n) => n.classList.contains(c));
+		}
+
+		querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+
+		get textContent() { return this.children.map((k) => (k.nodeType === 3 ? k.text : k.textContent)).join(''); }
+
+		set textContent(t) { this.children = [{ nodeType: 3, text: String(t) }]; }
+
+		focus() {}
+
+		scrollIntoView() {}
+	}
+	return {
+		createElement: (tag) => new Stub(tag),
+		createElementNS: (ns, tag) => new Stub(tag),
+		createTextNode: (t) => ({ nodeType: 3, text: String(t) }),
+		activeElement: null,
+	};
+}
+
+test('the star beside Collapse shows only the endpoints, in their sub-systems, with folds of their own', () => {
+	// Two endpoints, one three deep and one at the top; a parameter the list
+	// names, which is no endpoint; a block beside one, another sub-system, and
+	// an empty one.
+	const model = {
+		name: 'Star',
+		systems: ['Empty'],
+		simulation: { endpoints: ['Near.Inner.Deep', 'Out', 'Near.k'] },
+		parameters: [{ name: 'k', system: 'Near', value: 1 }],
+		compartments: [
+			{ name: 'Water', system: 'Near', initial: '0' },
+			{ name: 'Deep', system: 'Near.Inner', initial: '0' },
+			{ name: 'Rock', system: 'Far', initial: '0' },
+			{ name: 'Out', initial: '0' },
+		],
+	};
+	const hooksFor = (m) => {
+		const starred = new Set(ed.endpoints(m));
+		return {
+			endpoints: [...starred],
+			starred,
+			isEndpoint: (n) => starred.has(n),
+			canStar: (b) => ed.canBeEndpoint(b.kind),
+			star: () => {},
+			seriesOf: () => null,
+			chartedBlocks: new Set(),
+		};
+	};
+	const pick = hooksFor(model);
+	assert(json([...pick.starred]) === json(['Near.Inner.Deep', 'Out']), json([...pick.starred]));
+
+	// Everything from here to the restore is synchronous: `document` is
+	// global, and the suite's tests run beside one another.
+	const previous = globalThis.document;
+	globalThis.document = stubDocument();
+	try {
+		const host = document.createElement('div');
+		const view = { open: new Set(['']), group: false, endpoints: false };
+		let project = model;
+		let filter = null;
+		let hooks = { pick };
+		const draw = () => renderBlockTree(host, project, null, hooks, filter, view);
+		const keys = () => (host.querySelector('.tree')?.children ?? []).map((n) => n.dataset?.key);
+		const hint = () => host.querySelector('.hint')?.textContent ?? '';
+		const tools = () => treeTools(project, view, draw, filter, !!hooks.pick);
+		const button = (label) => tools().children.find((b) => b.textContent === label);
+		const whole = ['ep:', 'e:b:Near.Inner.Deep', 'e:b:Out', '', 'Empty', 'Far', 'b:Far.Rock', 'Near', 'b:Out'];
+		const narrowed = ['', 'Near', 'Near.Inner', 'b:Near.Inner.Deep', 'b:Out'];
+
+		// The whole tree, as it is beside a chart: the endpoints on top, and
+		// one sub-system opened by hand.
+		draw();
+		view.open.add('Far');
+		draw();
+		assert(json(keys()) === json(whole), json(keys()));
+		// The star follows Collapse, empty while it is off.
+		const bar = tools();
+		assert(json(bar.children.map((b) => b.textContent)) === json(['Expand all', 'Collapse', '☆']),
+			json(bar.children.map((b) => b.textContent)));
+		assert(bar.children[2].getAttribute('aria-pressed') === 'false' && !bar.children[2].classList.contains('is-on'),
+			'the star is on before it is pressed');
+
+		// Pressed: the endpoints and the sub-systems they are in, opened down
+		// to each -- no other block, no sub-system holding none, and no list on
+		// top that would be every row twice.
+		button('☆').fire('click');
+		assert(view.endpoints === true, 'the star did not turn on');
+		assert(json(keys()) === json(narrowed), json(keys()));
+		const on = button('★');
+		assert(on && on.getAttribute('aria-pressed') === 'true' && on.classList.contains('is-on'), 'the star is not filled');
+
+		// Not a search: Collapse and Expand all fold it as they fold the whole tree.
+		button('Collapse').fire('click');
+		assert(json(keys()) === json(['']), json(keys()));
+		button('Expand all').fire('click');
+		assert(json(keys()) === json(narrowed), json(keys()));
+		button('Collapse').fire('click');
+
+		// A tab where the tree is not the picker shows the whole tree, folded
+		// as it was left; back beside the chart, the narrowed one as it was left.
+		hooks = {};
+		draw();
+		assert(json(keys()) === json(['', 'Empty', 'Far', 'b:Far.Rock', 'Near', 'b:Out']), json(keys()));
+		assert(tools().children.every((b) => !b.classList.contains('tree-star')), 'a star away from the chart');
+		hooks = { pick };
+		draw();
+		assert(json(keys()) === json(['']), json(keys()));
+
+		// Off: every block, folded as it was before the star was pressed.
+		button('★').fire('click');
+		assert(view.endpoints === false && json(keys()) === json(whole), json(keys()));
+		// On again, it opens onto every endpoint rather than onto the folds it
+		// was left with.
+		button('☆').fire('click');
+		assert(json(keys()) === json(narrowed), json(keys()));
+
+		// The search narrows it further, and a pinned answer too.
+		filter = { query: 'Deep' };
+		draw();
+		assert(json(keys()) === json(['', 'Near', 'Near.Inner', 'b:Near.Inner.Deep']), json(keys()));
+		filter = { query: 'Water' };
+		draw();
+		assert(hint() === 'No endpoint matches the search above.', hint());
+		filter = { only: ['Out', 'Near.Water'] };
+		draw();
+		assert(json(keys()) === json(['b:Out']), json(keys()));
+		filter = null;
+
+		// Grouped by type, the kind headings over the endpoints open too.
+		view.group = true;
+		button('★').fire('click');
+		button('☆').fire('click');
+		assert(json(keys()) === json(['', 'Near', 'Near.Inner', 'Near.Inner :: compartments', 'b:Near.Inner.Deep',
+			' :: compartments', 'b:Out']), json(keys()));
+		view.group = false;
+
+		// A model just opened: back to the top level, and narrowed it opens
+		// onto the new model's endpoints.
+		resetFolds(view);
+		draw();
+		assert(json(keys()) === json(narrowed), json(keys()));
+
+		// A model with no endpoints says where the stars to fill are.
+		project = { name: 'None', compartments: [{ name: 'A', system: 'S', initial: '0' }] };
+		hooks = { pick: hooksFor(project) };
+		draw();
+		assert(hint().startsWith('No block is an endpoint. Turn off the ★ above'), hint());
+
+		// With no sub-systems there is nothing to expand, and the star is
+		// the row's only button -- beside a chart, and nowhere else.
+		project = { name: 'Flat', simulation: { endpoints: ['A'] }, compartments: [{ name: 'A', initial: '0' }, { name: 'B', initial: '0' }] };
+		hooks = { pick: hooksFor(project) };
+		assert(json(tools().children.map((b) => b.textContent)) === json(['★']), json(tools().children.map((b) => b.textContent)));
+		draw();
+		assert(json(keys()) === json(['b:A']), json(keys()));
+		hooks = {};
+		assert(tools() === null, 'buttons over a flat tree away from the chart');
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+	// The page hands the tree what a star is on, and the count above it is
+	// of the rows below.
+	const app = src('../src/ui/app.js');
+	assert(/starred,\n\t\tisEndpoint: \(name\) => starred\.has\(name\),/.test(app), 'the tree is not told the endpoints');
+	assert(/const starred = pickingInTree\(\) && state\.tree\.endpoints \? new Set\(ed\.endpoints\(state\.raw\)\) : null;/.test(app),
+		'the count is not of what the tree shows');
+	assert(/resetFolds\(state\.tree\);/.test(app), 'a model just opened keeps the last one’s folds');
 });
 
 // --- one chart, prefixes, and the tree beside a run that changes ----------------

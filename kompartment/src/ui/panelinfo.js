@@ -106,6 +106,9 @@ export function panelTopic(key, ctx = {}) {
 					+ 'diagram is showing and selected, so its settings are a double-click away.',
 					...(ctx.systems ? ['**Expand all** and **Collapse** open or close every sub-system at '
 						+ 'once.'] : []),
+					...(ctx.picking ? ['**☆**, beside the Chart and the Table, shows only the endpoints and '
+						+ 'the sub-systems they are in, and is filled while it does. Pressed again, it shows '
+						+ 'every block.'] : []),
 					'Drag rows onto a sub-system to move them into it.',
 				],
 			}, {
@@ -240,7 +243,8 @@ export function panelTopic(key, ctx = {}) {
 					+ '**Alt-click** a box for that and nothing else. Selected blocks are ticked together.',
 					'**Endpoints**, at the top of the tree, are the blocks the model keeps as its results, '
 					+ 'and the chart opens on the first three of them. The **star** on any block adds it to '
-					+ 'them or takes it off.',
+					+ 'them or takes it off, and the **☆** over the tree shows only them, in the sub-systems '
+					+ 'they are in.',
 					'**Find lines…** opens every series as a chip, with a search across blocks and a filter '
 					+ 'by index — the way to put one nuclide on from every block at once.',
 					'**The chips** above the chart say what is on it; click one to find its block in the '

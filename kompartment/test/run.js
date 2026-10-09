@@ -39205,10 +39205,10 @@ test('the tree’s Expand all and Collapse sit beside the Add tabs, which stay o
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const tree = readFileSync(new URL('../src/ui/tree.js', import.meta.url), 'utf8');
-	assert(/const tools = treeTools\(state\.raw, state\.tree, \(\) => renderRail\(\), treeFilter\(\)\);\n\tif \(tools\) row\.append\(tools\);/.test(app),
+	assert(/const tools = treeTools\(state\.raw, state\.tree, \(\) => renderRail\(\), treeFilter\(\), pickingInTree\(\)\);\n\tif \(tools\) row\.append\(tools\);/.test(app),
 		'the buttons are not in the row of tabs');
 	assert(!/host\.append\(bar\)/.test(tree), 'the tree still draws a row of its own between the tabs and the box');
-	assert(/export function treeTools\(project, state, redraw, filter = null\)/.test(tree), 'no treeTools');
+	assert(/export function treeTools\(project, state, redraw, filter = null, picking = false\)/.test(tree), 'no treeTools');
 });
 
 test('every (i) outside the Simulation section has something to say, and its link lands on a Guide heading', async () => {
@@ -39236,7 +39236,7 @@ test('every (i) outside the Simulation section has something to say, and its lin
 		}
 	};
 	for (const key of ['model', 'simulation', 'tree', 'information', 'indexlists', 'json']) {
-		for (const ctx of [{}, { systems: true, sample: true }]) check(`panel:${key}`, panelTopic(key, ctx));
+		for (const ctx of [{}, { systems: true, sample: true, picking: true }]) check(`panel:${key}`, panelTopic(key, ctx));
 	}
 	// The tree's says what is above it only when it is there.
 	const bare = JSON.stringify(panelTopic('tree', {}));

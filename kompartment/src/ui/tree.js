@@ -78,10 +78,11 @@ const ENDPOINTS_KEY = 'ep:';
  *          onDelete?: () => void,
  *          currentSystem?: string, picked?: string[]}} hooks
  * @param {{query?: string, kinds?: Set<string>, only?: string[]}|null} filter
- * @param {{open: Set<string>, group: boolean}} view
- *   Which nodes are expanded, and whether kinds are grouped. This lives in the
- *   caller's state and not in the project: it is a way of looking at a model,
- *   not a fact about one, and it has no business turning up in a diff.
+ * @param {{open: Set<string>, group: boolean, endpoints?: boolean}} view
+ *   Which nodes are expanded, whether kinds are grouped, and whether the star
+ *   beside Collapse is on. This lives in the caller's state and not in the
+ *   project: it is a way of looking at a model, not a fact about one, and it
+ *   has no business turning up in a diff.
  *
  * `hooks.pick`, on the Chart and the Table, makes the tree the place the
  * series on them are picked from: a tick box on every block, a row per index
@@ -91,6 +92,13 @@ const ENDPOINTS_KEY = 'ep:';
 export function renderBlockTree(host, project, selection, hooks = {}, filter = null, view = null) {
 	const state = view ?? { open: new Set(['']), group: false };
 	const pick = hooks.pick ?? null;
+	// Beside a chart, with the star beside Collapse on, the tree is the
+	// endpoints and nothing else: the blocks whose own star is filled, under
+	// the sub-systems they are in. Not a search -- the sub-systems fold as
+	// they always do, and Collapse beside the star still works -- so it has
+	// folds of its own (`foldsFor`).
+	const narrowed = pick && state.endpoints ? pick.starred : null;
+	foldsFor(state, narrowed, project);
 	// `only` is the answer to a structured question, pinned over the list --
 	// see ../domain/queries.js. It filters like the rest, and it counts as
 	// filtering, so the tree opens onto what was found rather than leaving it
@@ -142,7 +150,11 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		const scrolled = host.querySelector('.tree')?.scrollTop ?? 0;
 		host.replaceChildren();
 
-		const root = ed.blockTree(project, filter ?? {}, { group: state.group });
+		// Narrowed, as a pinned answer narrows: on top of whatever the search
+		// leaves, and pruning the sub-systems that hold none of it.
+		const root = ed.blockTree(project, narrowed
+			? { ...filter, only: (filter?.only ?? [...narrowed]).filter((n) => narrowed.has(n)) }
+			: filter ?? {}, { group: state.group });
 		// Expand all and Collapse are not drawn here: they sit in the row of
 		// Add tabs above the tree (`treeTools`), because anything put between
 		// that row and this box parts the tabs from the edge they stand on.
@@ -156,9 +168,16 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 			const empty = el('div', {
 				className: 'tree is-empty', role: 'tree',
 				'aria-label': 'The blocks of the model, by sub-system',
-			}, el('p', { className: 'hint' }, filtering
-				? 'No block matches the search above.'
-				: 'The model is empty. Add a compartment to start.'));
+			}, el('p', { className: 'hint' }, narrowed
+				// Narrowed to nothing, the stars to fill are on the rows the
+				// star above is hiding, so it says where they are.
+				? (filtering
+					? 'No endpoint matches the search above.'
+					: 'No block is an endpoint. Turn off the ★ above to see every block, and star '
+						+ 'the ones to keep.')
+				: filtering
+					? 'No block matches the search above.'
+					: 'The model is empty. Add a compartment to start.'));
 			// And it is still a place: right-clicking it offers what can be put
 			// here, which is exactly what somebody looking at an empty model
 			// wants.
@@ -604,8 +623,10 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 		// set up to keep as its results, which is what an assessment's chart
 		// is about -- and in a tree of four thousand blocks, the forty that
 		// matter are otherwise wherever their sub-systems put them. Not while
-		// a search is on: the tree below is the answer to that.
-		if (pick && !filtering) {
+		// a search is on: the tree below is the answer to that. Nor with the
+		// star beside Collapse on, when the tree below is the endpoints
+		// themselves, and this would be every row of it twice.
+		if (pick && !filtering && !narrowed) {
 			const eps = [];
 			for (const name of pick.endpoints ?? []) {
 				const found = ed.findBlock(project, name);
@@ -679,6 +700,56 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 function toggle(state, key, want) {
 	if (want) state.open.add(key);
 	else state.open.delete(key);
+}
+
+/**
+ * The whole tree and the tree narrowed to the endpoints keep their folds
+ * apart. `state.open` is always the folds of the one on screen, so nothing
+ * that opens or closes a row needs to know which that is, and `state.away`
+ * holds the other's until it is back.
+ *
+ * Narrowed afresh, it opens onto every endpoint: the star is pressed to see
+ * them, not a column of folded sub-systems. Turned off, or left for a tab
+ * where the tree is not the chart's picker, the whole tree comes back folded
+ * as it was -- the endpoints' sub-systems are not left open all over it.
+ *
+ * @param {object} state  the tree's view
+ * @param {Set<string>|null} narrowed  the endpoints, while it is narrowed
+ * @param {object} project
+ */
+function foldsFor(state, narrowed, project) {
+	if (!!state.narrowed === !!narrowed) return;
+	const back = state.away ?? null;
+	state.away = state.open;
+	state.open = back ?? (narrowed ? openOnto(project, narrowed) : new Set(['']));
+	state.narrowed = !!narrowed;
+}
+
+/**
+ * Every fold back to the top level, for a model just opened: which
+ * sub-systems were open is a fact about the one just closed. Narrowed to the
+ * endpoints, the tree opens onto the new model's the next time it is shown.
+ */
+export function resetFolds(state) {
+	state.open = new Set(['']);
+	state.away = null;
+	state.narrowed = false;
+}
+
+/**
+ * Folds that show every one of these blocks: the sub-systems down to each,
+ * and the heading of its kind for when the blocks are grouped by type.
+ */
+function openOnto(project, names) {
+	const open = new Set(['']);
+	for (const name of names) {
+		const found = ed.findBlock(project, name);
+		if (!found) continue;
+		const system = parentOf(name);
+		for (const s of scopeChain(system)) open.add(s);
+		open.add(groupKey(system, found.collection));
+	}
+	return open;
 }
 
 /**
@@ -867,19 +938,29 @@ function wireDrop(node, spec) {
  * own between the tabs and the tree, which lifted the tabs off the edge they
  * are drawn to stand on as soon as a model had a sub-system.
  *
+ * Beside a chart a star follows them, which shows only the endpoints
+ * (`endpointsToggle`) -- in a model with no sub-systems as well, where it is
+ * the only one of the three.
+ *
  * @param {object} project
- * @param {{open: Set<string>, group: boolean}} state  the tree's view, as
- *   `renderBlockTree` is handed it
+ * @param {{open: Set<string>, group: boolean, endpoints?: boolean}} state
+ *   the tree's view, as `renderBlockTree` is handed it
  * @param {() => void} redraw  draws the tree again
  * @param {object|null} [filter]  the tree's filter, for the group headings
  *   Expand all opens when the tree is grouped by kind
- * @returns {HTMLElement|null} null when there is nothing to expand
+ * @param {boolean} [picking]  whether the tree is the chart's picker, which
+ *   is where its rows have stars
+ * @returns {HTMLElement|null} null when there is nothing to expand or narrow
  */
-export function treeTools(project, state, redraw, filter = null) {
+export function treeTools(project, state, redraw, filter = null, picking = false) {
 	const paths = ed.systems(project);
-	// Nothing to expand: no buttons.
-	if (!paths.length) return null;
+	// Nothing to expand and nothing to narrow: no buttons.
+	if (!paths.length && !picking) return null;
 	const bar = el('span', { className: 'tree-tools' });
+	if (picking && !paths.length) {
+		bar.append(endpointsToggle(state, redraw));
+		return bar;
+	}
 	const all = el('button', {
 		className: 'ghost tree-btn', type: 'button',
 		title: 'Open every sub-system',
@@ -902,7 +983,40 @@ export function treeTools(project, state, redraw, filter = null) {
 	}, 'Collapse');
 	none.addEventListener('click', () => { state.open = new Set(); redraw(); });
 	bar.append(all, none);
+	if (picking) bar.append(endpointsToggle(state, redraw));
 	return bar;
+}
+
+/**
+ * The star beside Collapse: filled, the tree shows only the endpoints -- the
+ * blocks whose own star is filled -- and the sub-systems they are in; empty,
+ * every block. The same two glyphs a block's star is drawn with, so the one
+ * over the tree reads as "the filled ones".
+ *
+ * A way of looking, like Group by type, so it stays as it was left across
+ * tabs and models, and changes nothing in the model.
+ */
+function endpointsToggle(state, redraw) {
+	const on = !!state.endpoints;
+	const b = el('button', {
+		className: `ghost tree-btn tree-star${on ? ' is-on' : ''}`, type: 'button',
+		'aria-pressed': String(on),
+		'aria-label': 'Only the endpoints',
+		title: on
+			? 'Showing only the endpoints and the sub-systems they are in — click to show every block'
+			: 'Show only the endpoints and the sub-systems they are in',
+	}, on ? '★' : '☆');
+	// The search rebuilds this row on every redraw, and gives the keyboard
+	// back to whatever carries one of these.
+	b.dataset.chip = 'endpoints';
+	b.addEventListener('click', () => {
+		state.endpoints = !on;
+		// Every time it is turned on it opens onto every endpoint, rather
+		// than onto however its own folds were last left.
+		if (!on) state.away = null;
+		redraw();
+	});
+	return b;
 }
 
 /**
