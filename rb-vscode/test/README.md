@@ -76,9 +76,12 @@ presets); Add Files; the preset dialog; the header
 the right, measured in px); VS Code's theme, and the light/dark toggle, kept in
 `hdf5Browser.theme` and followed by every view; Open Together, same-named
 files from two folders, a file rewritten on disk; the channel refusing
-what the page was not given; and, last, the files rebuilt under the running
-extension (as a .vsix of the same version installed over it does), after
-which a new view must say to reload the window. 42 checks.
+what the page was not given; Ecolego assessments (read whole, the runs asked
+for in the page, through Add Files and Open Together, the same runs opened
+again when the file is rewritten, a run saved as HDF5); and, last, the files
+rebuilt under the running extension (as a .vsix of the same version installed
+over it does), after which a new view must say to reload the window. 49
+checks.
 
     python3 rb-vscode/test/test-vscode.py
 

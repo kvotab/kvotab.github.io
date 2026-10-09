@@ -2,8 +2,10 @@
    HDF5 BROWSER FOR VISUAL STUDIO CODE
 
    rb.html -- kvotab.se's HDF5 Browser -- as an editor for .h5, .hdf5 and
-   .he5 files. The page runs in a webview as it runs on the site, from the
-   same scripts, which build.mjs copies in; this is everything around it:
+   .he5 files, and for Ecolego assessments (.eas), whose runs the page opens
+   as files of their own (resources/js/rb-eas.js). The page runs in a webview
+   as it runs on the site, from the same scripts, which build.mjs copies in;
+   this is everything around it:
 
    * the editor: one webview per file opened, kept alive while its tab is
      hidden (the page holds the file, the tree and the chart);
@@ -43,7 +45,11 @@ const WHOLE_MAX_BYTES = 1024 * 1024 * 1024;
 const HEAD_BYTES = 1024 * 1024 + 8;
 /** A file being written is reread once it has been left alone this long. */
 const RELOAD_QUIET_MS = 1500;
-const HDF5_NAME = /\.(h5|hdf5|he5)$/i;
+/** What the browser opens: HDF5 files, and Ecolego assessments. */
+const OPENABLE_NAME = /\.(h5|hdf5|he5|eas)$/i;
+/** An assessment is read whole: the page writes its runs out as HDF5 in memory. */
+const ASSESSMENT_NAME = /\.eas$/i;
+const OPENABLE_TEXT = 'HDF5 files (.h5, .hdf5, .he5) and Ecolego assessments (.eas)';
 const READER_COMMANDS = new Set(['open', 'group', 'values', 'close']);
 /** A browser hidden this recently by a file opened into its group is still the one showing there. */
 const SHOWN_RECENTLY_MS = 2000;
@@ -192,7 +198,7 @@ function safeFileName(name) {
 
 function saveFilters(name) {
   const ext = path.extname(name).slice(1).toLowerCase();
-  const known = { csv: 'CSV', xlsx: 'Excel workbook', png: 'PNG image', json: 'JSON', py: 'Python script' };
+  const known = { csv: 'CSV', xlsx: 'Excel workbook', png: 'PNG image', json: 'JSON', py: 'Python script', h5: 'HDF5 file' };
   return known[ext] ? { [known[ext]]: [ext] } : undefined;
 }
 
@@ -280,7 +286,9 @@ class View {
   readLazily(uri, size) {
     // The reader reads with Node, so it can reach a file on this machine's
     // disk (in a remote window, the remote one's); anything else is read whole.
-    if (uri.scheme !== 'file') return false;
+    // So is an assessment, which is no HDF5 file until the page has written
+    // its runs out as ones.
+    if (uri.scheme !== 'file' || ASSESSMENT_NAME.test(uri.path)) return false;
     const setting = vscode.workspace.getConfiguration('hdf5Browser').get('readLazily', 'auto');
     if (setting === 'always') return true;
     if (setting === 'never') return false;
@@ -295,7 +303,8 @@ class View {
     }
     if (size > WHOLE_MAX_BYTES) {
       throw new Error(`${file.name} is ${formatBytes(size)}; more than ${formatBytes(WHOLE_MAX_BYTES)} is not read whole.`
-        + (file.uri.scheme === 'file' ? ' Set "HDF5 Browser: Read Lazily" to auto or always to open it.' : ''));
+        + (file.uri.scheme === 'file' && !ASSESSMENT_NAME.test(file.uri.path)
+          ? ' Set "HDF5 Browser: Read Lazily" to auto or always to open it.' : ''));
     }
     const bytes = compact(await vscode.workspace.fs.readFile(file.uri));
     return { token: file.token, name: file.name, size, mode: 'whole', bytes };
@@ -452,9 +461,14 @@ class View {
       canSelectFiles: true,
       canSelectFolders: false,
       defaultUri: this.defaultFolder(),
-      filters: { 'HDF5 files': ['h5', 'hdf5', 'he5'], 'All files': ['*'] },
+      filters: {
+        'HDF5 files and Ecolego assessments': ['h5', 'hdf5', 'he5', 'eas'],
+        'HDF5 files': ['h5', 'hdf5', 'he5'],
+        'Ecolego assessments': ['eas'],
+        'All files': ['*']
+      },
       openLabel: 'Add',
-      title: 'Add HDF5 files'
+      title: 'Add files'
     });
     if (uris && uris.length) this.add(uris, 'added');
   }
@@ -463,8 +477,8 @@ class View {
    * Files dropped on the page as addresses: dragged from VS Code's Explorer
    * with Shift held, the only way such a drag reaches a webview. Files dragged
    * from the Finder arrive as files and the page reads them itself. What is
-   * added is what Add Files could add; only HDF5 names are taken, since the
-   * addresses come from the page.
+   * added is what Add Files could add; only the names it offers are taken,
+   * since the addresses come from the page.
    */
   dropped({ uris }) {
     const list = [];
@@ -475,11 +489,11 @@ class View {
       } catch (_) {
         continue;
       }
-      if (HDF5_NAME.test(uri.path)) list.push(uri);
+      if (OPENABLE_NAME.test(uri.path)) list.push(uri);
     }
     this.provider.event({ type: 'dropped', files: list.map(u => u.fsPath || u.toString()) });
     if (list.length) this.add(list, 'added');
-    else this.post({ type: 'notice', text: 'Only .h5, .hdf5 and .he5 files can be added.' });
+    else this.post({ type: 'notice', text: `Only ${OPENABLE_TEXT} can be added.` });
   }
 
   status(m) {
@@ -705,10 +719,10 @@ class Hdf5BrowserProvider {
 
   /** The Explorer's selection, in one view: the first file's, with the rest added. */
   async openTogether(uri, uris) {
-    const chosen = (Array.isArray(uris) && uris.length ? uris : [uri]).filter(u => u && HDF5_NAME.test(u.path));
+    const chosen = (Array.isArray(uris) && uris.length ? uris : [uri]).filter(u => u && OPENABLE_NAME.test(u.path));
     const list = chosen.filter((u, i) => chosen.findIndex(v => v.toString() === u.toString()) === i);
     if (!list.length) {
-      vscode.window.showWarningMessage('Select one or more .h5, .hdf5 or .he5 files.');
+      vscode.window.showWarningMessage(`Select one or more ${OPENABLE_TEXT}.`);
       return;
     }
     const [first, ...rest] = list;

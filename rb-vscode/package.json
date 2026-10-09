@@ -1,7 +1,7 @@
 {
   "name": "hdf5-browser",
   "displayName": "HDF5 Browser",
-  "description": "Browse HDF5 (.h5) files in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
+  "description": "Browse HDF5 (.h5) files and Ecolego assessments (.eas) in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
   "version": "0.1.8",
   "publisher": "kvotab",
   "icon": "icon.png",
@@ -25,7 +25,8 @@
     "h5",
     "hdf",
     "viewer",
-    "plot"
+    "plot",
+    "ecolego"
   ],
   "main": "./extension.js",
   "activationEvents": [
@@ -51,7 +52,7 @@
         "displayName": "HDF5 Browser",
         "selector": [
           {
-            "filenamePattern": "*.{h5,hdf5,he5}"
+            "filenamePattern": "*.{h5,hdf5,he5,eas}"
           }
         ],
         "priority": "default"
@@ -78,7 +79,7 @@
       "explorer/context": [
         {
           "command": "kvotab.hdf5Browser.openTogether",
-          "when": "!explorerResourceIsFolder && resourceExtname =~ /^\\.(h5|hdf5|he5)$/i",
+          "when": "!explorerResourceIsFolder && resourceExtname =~ /^\\.(h5|hdf5|he5|eas)$/i",
           "group": "navigation@20"
         }
       ],

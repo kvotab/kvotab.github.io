@@ -16,6 +16,10 @@ the site. This covers what is the extension's own:
     and the preset name, asked in the page since prompt() shows nothing here;
   * Open Together with two files of the same name, and a file rewritten on
     disk being read again;
+  * an Ecolego assessment (.eas): read whole whatever readLazily says, opened
+    as a file for each run, the runs asked for in the page, taken by Add Files
+    and Open Together, rewritten on disk opening the same runs again without
+    asking, and a run saved as the HDF5 file it was opened as;
   * the channel: the page cannot reach a file by a token it was not given.
 
 A big file is made with h5py when it is installed (a hole, so it costs no
@@ -41,6 +45,9 @@ sys.path.insert(0, HERE)
 from vscode_driver import VSCode  # noqa: E402
 
 FIXTURES = os.path.join(HERE, '..', '..', 'resources', 'tests', 'rb', 'fixtures')
+# The site's writers of Ecolego assessments (resources/tests/rb/eas_fixtures.py).
+sys.path.insert(0, os.path.join(HERE, '..', '..', 'resources', 'tests', 'rb'))
+from eas_fixtures import TIMES, expected, old_e5, runs_e6  # noqa: E402
 GROUP = '/biosphere/vault_A/mire/total'
 
 # Where the header's parts stand, in px: every tab-like thing on its bottom line.
@@ -334,6 +341,65 @@ async def main():
             page = None
         else:
             print('skip  the big file: h5py is not installed')
+
+        # --- an Ecolego assessment: a file for each run it keeps --------------
+        one = os.path.join(work, 'old-e5.eas')
+        two = os.path.join(work, 'runs-e6.eas')
+        with open(one, 'wb') as fh:
+            fh.write(old_e5())
+        with open(two, 'wb') as fh:
+            fh.write(runs_e6())
+        vs.command('setting', section='hdf5Browser', key='readLazily', value='always')
+        m = vs.mark()
+        vs.command('open', paths=[one], own=True)
+        st = await opened(vs, m, 'old-e5.eas to open')
+        check('an Ecolego assessment opens, read whole even with readLazily always',
+              st['opened'], [{'name': 'old-e5.eas', 'mode': 'whole'}])
+        page = await vs.page_for('old-e5.eas')
+        r = await page.ev("""(() => { const f = loadedFiles['old-e5.eas'];
+            return { files: fileOrder.slice(), source: f.get('/').attrs.source.value,
+                     cell: Array.from(f.get('/Bio/Dose_Crops/Roots/I-129').value) }; })()""")
+        check('  as an HDF5 file of its one run, each cell where Ecolego 5 put it', r,
+              {'files': ['old-e5.eas'], 'source': 'Ecolego 5.0', 'cell': expected(3, [3, 2], [1, 1], TIMES)})
+        vs.command('setting', section='hdf5Browser', key='readLazily', value='auto')
+
+        vs.command('nextPick', paths=[two])
+        m = vs.mark()
+        await page.ev("document.querySelector('.add-file-btn').click(); true")
+        check('Add Files takes an assessment too, and one of two runs asks which in the page',
+              await wait_for(page, "!!document.querySelector('.rb-ask')", True, 60), True)
+        await page.ev("""(() => { document.querySelector('.rb-ask .rb-ask-all input').click();
+            document.querySelectorAll('.rb-ask .sample-data-item input')[2].click();
+            document.querySelector('.rb-ask .url-btn-load').click(); return true; })()""")
+        await opened(vs, m, 'runs-e6.eas to open')
+        check('  the run picked is a file tab beside the first', await page.ev("fileOrder.slice()"),
+              ['old-e5.eas', 'runs-e6.eas · Base case'])
+
+        m = vs.mark()
+        with open(two, 'wb') as fh:
+            fh.write(runs_e6())
+        vs.wait_event(lambda e: e['type'] == 'status' and e.get('why') == 'changed', 60, 'the rewritten assessment', since=m)
+        await asyncio.sleep(0.5)
+        check('rewritten on disk, it opens the same run again, without asking',
+              await page.ev("({ asked: !!document.querySelector('.rb-ask'), files: fileOrder.slice() })"),
+              {'asked': False, 'files': ['old-e5.eas', 'runs-e6.eas · Base case']})
+
+        m = vs.mark()
+        await page.ev("saveOpenedRun('runs-e6.eas · Base case'); true")
+        saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the run to be saved as HDF5', since=m)
+        with open(saved['path'], 'rb') as fh:
+            head = fh.read(8)
+        size = await page.ev("loadedFileBuffers['runs-e6.eas · Base case'].byteLength")
+        check('a run is saved as the HDF5 file it was opened as',
+              (os.path.basename(saved['path']), head, os.path.getsize(saved['path']) == size),
+              ('runs-e6 - Base case.h5', b'\x89HDF\r\n\x1a\n', True))
+
+        m = vs.mark()
+        vs.command('together', paths=[one, fixture('sample-a.h5')])
+        st = await opened(vs, m, 'sample-a.h5 to be added beside the assessment')
+        check('Open Together takes an assessment as its first file', [f['name'] for f in st['opened']], ['sample-a.h5'])
+        await page.close()
+        page = None
 
         # --- nothing blocked, nothing logged ------------------------------------
         # The empty file's refusal is the one error the pages should have reported.

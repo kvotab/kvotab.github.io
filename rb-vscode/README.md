@@ -1,8 +1,8 @@
 # HDF5 Browser for Visual Studio Code
 
 The [HDF5 Browser](https://kvotab.se/rb.html) from kvotab.se, as an editor for
-`.h5`, `.hdf5` and `.he5` files. Open a file from the Explorer and it opens in
-an editor tab: the file's tree, each dataset's attributes and values, and the
+`.h5`, `.hdf5` and `.he5` files, and for Ecolego assessments (`.eas`). Open a
+file from the Explorer and it opens in an editor tab: the file's tree, each dataset's attributes and values, and the
 charts, with every feature the page has on the web — radionuclide groups with
 their total, several groups a panel each or in one chart, confidence bands and
 iterations, log axes and presets, intersect and union of several files,
@@ -53,6 +53,10 @@ Marketplace, and does not reach this one; the setting does.
 * **Open a file**: double-click it in the Explorer. If another extension also
   opens HDF5 files, VS Code asks which to use; *Open With…* on a file, or the
   `workbench.editorAssociations` setting, chooses.
+* **An Ecolego assessment** (`.eas`) opens as a file for each run it keeps,
+  written as an HDF5 result file in memory: the tree, the charts and the
+  exports work on it as on any other. When it keeps several runs, a list
+  asks which to open. Rewritten on disk, it opens the same runs again.
 * **Compare files**: select them in the Explorer, right-click, *Open Together
   in HDF5 Browser*. They open in one tab, where the ∩ and ∪ buttons combine
   their trees. *Add Files* in the tab adds more.
@@ -91,7 +95,8 @@ itself, with the same HDF5 library (h5wasm) running in VS Code's extension
 host, because a webview cannot read a file a piece at a time. In a remote
 window (SSH, WSL, containers) the extension is meant to run where the file is,
 so that only what is looked at crosses to your machine; that has not been
-tested yet.
+tested yet. An Ecolego assessment is always read whole, up to 1 GB: its runs
+become HDF5 files only once the page has written them out.
 
 | Setting | |
 |---|---|

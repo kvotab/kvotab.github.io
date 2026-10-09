@@ -4,8 +4,10 @@
    Files come from the extension instead of the page's file input:
 
    * one read whole (under 256 MB, or as the hdf5Browser.readLazily setting
-     says) arrives as bytes and goes in through ingestHdf5Buffer, the entry
-     point the file picker and the handoff use;
+     says, and an Ecolego assessment always) arrives as bytes and goes in
+     through ingestFileBuffer, the entry point the file picker and the
+     handoff use: an assessment as a file for each run it keeps, and, read
+     again after a change on disk, as the runs that were open;
    * one read lazily arrives as a token, and goes in through registerLazyFile
      with a reader that asks the extension, whose worker thread answers as
      rb-lazy-worker.js answers in the page.
@@ -32,14 +34,15 @@
       : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
 
-  async function openOne(f) {
+  async function openOne(f, why) {
     if (f.mode === 'lazy') {
       const check = validateHdf5Buffer(bufferOf(f.head));
       if (!check.ok) throw new Error(`${f.name}: ${check.reason}`);
       const call = (cmd, args) => host.lazy(f.token, cmd, args);
       await registerLazyFile(f.name, await call('open', {}), call, 'vscode:open');
     } else {
-      await ingestHdf5Buffer(f.name, bufferOf(f.bytes), 'vscode:open');
+      await ingestFileBuffer(f.name, bufferOf(f.bytes), 'vscode:open',
+                             why === 'changed' ? { reopen: openRunsOf(f.name) } : {});
     }
   }
 
@@ -54,7 +57,7 @@
         const f = files[i];
         updateFileLoadTicker(i, files.length, why === 'changed' ? `${f.name} changed on disk` : f.name);
         try {
-          await openOne(f);
+          await openOne(f, why);
           opened.push({ name: f.name, mode: f.mode });
         } catch (err) {
           failed.push({ name: f.name, message: String(err && err.message || err) });
