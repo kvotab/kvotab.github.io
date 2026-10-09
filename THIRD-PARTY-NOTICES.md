@@ -15,6 +15,7 @@ others. Each item keeps its own licence.
 | [jsTree](https://www.jstree.com/) | MIT | header in `vendors/js/jstree.min.js`; theme in `vendors/css/jstree/` |
 | [math.js](https://mathjs.org/) | Apache-2.0 | `vendors/js/LICENSE-math.js.txt` |
 | [SheetJS Community Edition](https://sheetjs.com/) (`xlsx`) 0.20.3 | Apache-2.0 | `vendors/js/LICENSE-xlsx.txt`; header in `vendors/js/xlsx-0.20.3.full.min.js` |
+| [smol-toml](https://github.com/squirrelchat/smol-toml) 1.9.0 | BSD-3-Clause | `vendors/js/smol-toml-1.9.0/LICENSE`; headers in its files |
 | [FileSaver.js](https://github.com/eligrey/FileSaver.js) | MIT | `vendors/js/FileSaver.min.js` |
 | [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript, and from there to Python) | MIT | `resources/js/ode/julia/LICENSE`, `kompartment/src/ode/julia/LICENSE`, `kompartment/python/kompartment/engine/solvers/julia/LICENSE` |
 | [Krylov.jl](https://github.com/JuliaSmoothOptimizers/Krylov.jl) (its GMRES, ported to JavaScript and Python) | MPL-2.0 | headers in `resources/js/ode/julia/core/krylov.js` (and its copies in `kompartment/src/ode/julia/core/` and `resources/js/ode-julia.js`), `kompartment/python/kompartment/engine/solvers/julia/krylov.py` |

@@ -20,6 +20,9 @@ and real directory entries. Checked:
   entry (a mail attachment, say);
 - "Choose a folder", clicked or by Enter, opens the folder chooser and
   nothing else;
+- calculation cases from TOML files: a config folder alone, then with its
+  Excel folder; each case's input set, data files, workbooks and QC; the case
+  filter; a description that carries markup and a script; broken TOML;
 - the SheetJS loaded is the vendored copy, 0.20.2 or later;
 - no sideways scroll at 1280 px or on a 375 px phone, whose fields are 16 px
   (smaller ones make iOS zoom), and the summary cards read in the dark theme.
@@ -124,6 +127,40 @@ def build_tree(base, xls_bytes):
         + [(f25, 'params.xlsx', 'Params', r, 'p3', 'revC', 'In review', '') for r in (3, 4)]
     )
     return expected
+
+
+CC_HEAD = ['ID', 'QC reviewer', 'QC comment', 'QC status']
+# A description with markup the page keeps (<b>) and markup that must never run.
+HOSTILE_INFO = 'The <b style="color:red;">base</b> case <script>window.__pwned = 1</script><img src=x onerror="window.__pwned = 2">'
+
+
+def build_config(base):
+    """A configuration of three calculation cases in SFR/config, and the workbooks of its data files in SFR/excel."""
+    config = os.path.join(base, 'SFR', 'config')
+    os.makedirs(config, exist_ok=True)
+    files = {
+        'link.toml': "info = 'linked files'\n[base]\n    files = ['alpha', 'beta', 'gamma']\n"
+                     "[variant]\n    init_file = 'base'\n    skip = ['beta']\n    add = ['delta']\n",
+        'data.toml': "[alpha]\n    path = 'base_case'\n[beta]\n    path = 'base_case'\n    sheet_names = 'nearfield'\n"
+                     "[gamma]\n    path = 'other'\n    raw_path = 'HYDRO'\n    flows = ['Inflow', 'Outflow']\n[delta]\n    path = 'other'\n",
+        'CC001.toml': f"info = '{HOSTILE_INFO}'\nrepositories = 'all'\nparameter_files = 'base.h5'\n"
+                      "[nearfield]\nendpoints = 'full'\n[biosphere]\nendpoints = 'full'\n",
+        'CC002.toml': 'info = """\nThe variant case,\nover two lines.\n"""\nrepositories = [\'Silo\', \'1BTF\']\n'
+                      "parameter_files = 'variant.h5'\nbase_cc = 'CC001'\nn_iter = 100\n[farfield]\nsource_cc = 'CC001'\n"
+                      "[solver]\nt_eval = [" + ', '.join(str(t) for t in range(0, 1001, 10)) + "]\n",
+        'CC003.toml': "info = 'a case on an old parameter file'\nparameter_files = 'Legacy.h5'\n",
+        'broken.toml': 'this is = = not toml\n',
+    }
+    for name, text in files.items():
+        with open(os.path.join(config, name), 'w', encoding='utf-8') as f:
+            f.write(text)
+    excel = os.path.join(base, 'SFR', 'excel')
+    book(os.path.join(excel, 'base_case', 'alpha.xlsx'), {'Params': [CC_HEAD, ['a1', 'revA', '', 'OK-FSAR'], ['a2', 'revB', '', 'Preliminary']]})
+    # data.toml takes only the sheet 'nearfield' of beta: b9, on another sheet, is in no case.
+    book(os.path.join(excel, 'base_case', 'beta.xlsx'), {'nearfield': [CC_HEAD, ['b1', 'revA', '', 'OK-PSAR']],
+                                                         'extra': [CC_HEAD, ['b9', 'revC', '', 'Preliminary']]})
+    book(os.path.join(excel, 'other', 'delta.xlsx'), {'Params': [CC_HEAD, ['d1', 'revA', '', 'OK-PSAR']]})
+    return config, excel
 
 
 class Page:
@@ -313,7 +350,7 @@ async def main():
               'a workbook that cannot be read is named in an error status, the others still read', st)
         await page.drop([os.path.join(base, 'Tom')])
         st = await page.ev(STATUS)
-        check(st['error'] and st['text'] == 'No Excel workbook (.xlsx, .xlsm, .xlsb or .xls) among what was added, only 1 other file(s).',
+        check(st['error'] and st['text'] == 'No workbook (.xlsx, .xlsm, .xlsb, .xls) and no TOML file among what was added, only 1 other file(s).',
               'a folder without a workbook says so', st['text'])
 
         # 7. Stop, and 8. Clear all, while the third of twelve workbooks is read.
@@ -384,7 +421,61 @@ async def main():
         got = await page.ev("rows.filter(r => r.id === 'p9').map(r => [r.folder, r.path])")
         check(entry is None and got == [['', 'bilaga.xlsx']], 'a dropped item with no entry is read as a file on its own', [entry, got])
 
-        # 13. No sideways scroll, at a desktop width and on a phone (where fields under 16px make iOS zoom).
+        # 13. Calculation cases: the config folder alone, then its Excel folder.
+        config, excel = build_config(base)
+        await page.ev("$('reset-btn').click()")
+        await page.drop([config])
+        st = await page.ev(STATUS)
+        check(st['text'].startswith('6 TOML file(s) read: 3 calculation case(s), link.toml, data.toml.') and st['error']
+              and any(f.startswith('config/broken.toml: could not be read as TOML') for f in st['files']),
+              'a config folder is read, and a broken TOML file is named', st)
+        shown = await page.ev("[!$('cases').hidden, $('workspace').classList.contains('no-rows'), getComputedStyle($('qc-part')).display,"
+                              " [...document.querySelectorAll('#cases-body .case-name')].map(b => b.textContent)]")
+        check(shown == [True, True, 'none', ['CC001', 'CC002', 'CC003']], 'TOML files alone show the cases, and no QC part', shown)
+        info = await page.ev("(() => { const el = document.querySelector('#cases-body [data-info=\"0\"]');"
+                             " return [el.textContent, !!el.querySelector('b'), !!el.querySelector('img, script'), String(window.__pwned)]; })()")
+        check(info == ['The base case ', True, False, 'undefined'], 'a description keeps <b> and runs nothing', info)
+        checks_text = await page.ev("$('cases-checks').textContent")
+        check('config/broken.toml could not be read' in checks_text and 'Legacy.h5 is not built by link.toml' in checks_text
+              and 'workbook(s) in data.toml were not among those read' not in checks_text,
+              'the checks name the broken file and the unbuilt parameter file, and no workbook before any is read', checks_text)
+        cells = await page.ev("[...document.querySelectorAll('#cases-body tr[data-case]')].map(tr => [...tr.children].slice(2, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim()))")
+        check(cells[0][0] == 'base.h5 → base 3 data file(s)' and cells[0][1] == 'workbooks not read'
+              and cells[2][0].startswith('Legacy.h5 not built by link.toml') and cells[2][1] == '—',
+              'a case\'s input and, before the workbooks, no QC', cells)
+
+        await page.drop([excel])
+        cells = await page.ev("[...document.querySelectorAll('#cases-body tr[data-case]')].map(tr => [...tr.children].slice(2, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim()))")
+        check(cells[0] == ['base.h5 → base 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 approved Show rows']
+              and cells[1] == ['variant.h5 → variant 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 approved Show rows'],
+              'with its Excel folder, each case finds its workbooks and counts its QC', cells)
+        await page.ev("(() => { const s = $('case-filter'); [...s.options].forEach(o => o.selected = o.textContent === 'CC001'); s.dispatchEvent(new Event('change')); })()")
+        ids = await page.ev("filtered().map(r => r.id).sort()")
+        check(ids == ['a1', 'a2', 'b1'], 'the case filter keeps the rows of its data files, and only the sheets data.toml names', ids)
+        await page.ev("document.querySelector('#cases-body tr[data-case=\"1\"] [data-show]').click()")
+        ids = await page.ev("[filtered().map(r => r.id).sort(), [...$('case-filter').selectedOptions].map(o => o.textContent)]")
+        check(ids == [['a1', 'a2', 'd1'], ['CC002']], 'Show rows sets the case filter to that case', ids)
+        await page.ev("document.querySelector('#cases-body tr[data-case=\"1\"] .case-name').click()")
+        detail = await page.ev("(() => { const d = document.querySelector('tr.case-detail'); return [d.innerText.includes('base_cc: CC001'),"
+                               " d.innerText.includes('[farfield] source_cc: CC001'), d.innerText.includes('101 values, 0 … 1000'),"
+                               " [...d.querySelectorAll('ol.steps li')].map(li => li.textContent)]; })()")
+        check(detail == [True, True, True, ['base: 3 data file(s) listed', 'variant: from base, without beta, with delta']],
+              'a case opens with the cases it takes results from, its settings and how its input set is built', detail)
+        await page.ev("document.querySelector('tr.case-detail [data-goto]').click()")
+        opened = await page.ev("[...document.querySelectorAll('.case-name[aria-expanded=true]')].map(b => b.textContent)")
+        check(opened == ['CC001', 'CC002'], 'a case named in another opens from it', opened)
+        sets = await page.ev("[...document.querySelectorAll('#sets-body tr')].map(tr => [...tr.children].slice(0, 4).map(td => td.textContent))")
+        check(sets == [['base', '3 listed', '3', 'CC001'], ['variant', 'base, without beta, with delta', '3', 'CC002']], 'the input sets, with the cases using them', sets)
+        gamma = await page.ev("[...document.querySelectorAll('#data-files-body tr')].map(tr => [...tr.children].map(td => td.textContent)).find(r => r[0] === 'gamma')")
+        check(gamma[1] == 'none: raw data only' and gamma[3] == 'HYDRO' and gamma[4] == 'flows Inflow, Outflow', 'a data file from raw data says so', gamma)
+        await page.drop([config])
+        again = await page.ev("[document.querySelectorAll('#cases-body tr[data-case]').length, $('status-text').textContent]")
+        check(again[0] == 3 and '6 had been read before' in again[1], 'a config folder read again replaces its cases', again)
+        await page.ev("$('reset-btn').click()")
+        check(await page.ev("$('cases').hidden && !$('case-filter').options.length"), 'Clear all clears the cases too')
+        await page.drop([root])
+
+        # 14. No sideways scroll, at a desktop width and on a phone (where fields under 16px make iOS zoom).
         wide = "[document.documentElement.scrollWidth, document.documentElement.clientWidth]"
         check((lambda w: w[0] <= w[1])(await page.ev(wide)), 'no sideways scroll at 1280 px', await page.ev(wide))
         await page.send('Emulation.setDeviceMetricsOverride', {'width': 375, 'height': 548, 'deviceScaleFactor': 2, 'mobile': True})
@@ -398,7 +489,7 @@ async def main():
         phone = await page.ev(wide + ".concat(['id-search', 'folder-filter'].map(id => parseFloat(getComputedStyle($(id)).fontSize)))")
         check(phone[0] <= phone[1] == 375 and min(phone[2:]) >= 16, 'no sideways scroll on a 375 px phone, and its fields are 16 px', phone)
 
-        # 14. In the dark theme every summary card's number stands out from its card (4.5:1 or more).
+        # 15. In the dark theme every summary card's number stands out from its card (4.5:1 or more).
         contrast = await page.ev(
             "(() => { document.documentElement.setAttribute('data-theme', 'dark');"
             " const c = document.createElement('canvas').getContext('2d', {willReadFrequently: true});"

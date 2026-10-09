@@ -14,6 +14,41 @@ folders. Every row records the folder its workbook came from.
 seconds and exits 0 when every check passes. It needs `openpyxl` and
 `websockets`.
 
+`test-config.mjs` checks, in Node, the rules that tie a calculation case to its
+workbooks (`resources/js/skb-qa-config.mjs`). It parses small TOML texts with
+the page's own copy of smol-toml:
+
+    node resources/tests/skb_qa_summary/test-config.mjs
+
+## Calculation cases
+
+TOML files are read beside the workbooks. `link.toml` and `data.toml` are
+special, and every other TOML file is a calculation case. The rules are those
+the calculation-case code applies when it builds the parameter files:
+
+- a case's `parameter_files`, and a domain's own, are `<set>.h5`, built by
+  the input set `<set>` of `link.toml`;
+- a set lists its data files under `files`, or takes those of `init_file`
+  without its `skip` and with its `add`. A `_det` name is the deterministic
+  copy of a data file;
+- a data file's workbook is `<path>/<name>.xlsx` under the Excel folder, and
+  `sheet_names` keeps only those sheets. With a `raw_path` it also has raw
+  data, which may stand in for the workbook: its workbook is looked for all
+  the same, and only one without raw data lacks it when none is found.
+
+`test-config.mjs` checks these rules on their own: chains, loops, skips of
+names a set does not have, which copy of a workbook is taken, and the checks
+the page lists. A set or data file called `constructor` must stay a name.
+`test-ui.py` writes a configuration of three cases, with a broken TOML file
+beside them. It drops the config folder alone, then its Excel folder, and
+checks each case's input, the QC counted from its workbooks, the case filter
+(only the sheets `data.toml` names) and the case details. One case's
+description carries `<b>`, a `<script>` and an `<img onerror>`: the bold must
+show, and nothing may run.
+
+Real configurations are client data, never part of this repository. To try
+one, drop its config and excel folders on the page.
+
 ## The fixture
 
 Nothing is checked in. The suite builds its workbooks in a temporary folder

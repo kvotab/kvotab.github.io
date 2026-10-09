@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SKB QC Summary — kvot ab</title>
-  <meta name="description" content="Summarise QC review status across Excel workbooks, or every workbook in a folder, with filters, statistics and CSV export. Everything is processed locally in the browser.">
+  <meta name="description" content="Summarise QC review status across Excel workbooks, or every workbook in a folder, with filters, statistics and CSV export, and trace calculation cases (TOML) to the workbooks their data come from. Everything is processed locally in the browser.">
   <link rel="canonical" href="https://kvotab.se/skb_qa_summary.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
   <meta property="og:title" content="SKB QC Summary — kvot ab">
-  <meta property="og:description" content="Summarise QC review status across Excel workbooks, or every workbook in a folder, with filters, statistics and CSV export. Everything is processed locally in the browser.">
+  <meta property="og:description" content="Summarise QC review status across Excel workbooks, or every workbook in a folder, with filters, statistics and CSV export, and trace calculation cases (TOML) to the workbooks their data come from. Everything is processed locally in the browser.">
   <meta property="og:url" content="https://kvotab.se/skb_qa_summary.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
@@ -40,11 +40,13 @@
     .field{display:flex;flex-direction:column;gap:5px}.field label{font-size:.75rem;font-weight:750;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.04em}.field select,.field input{width:100%;min-height:39px;padding:8px 9px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-primary);color:var(--text-primary)}.field select[multiple]{height:105px}.filter-tools{display:flex;justify-content:flex-end;margin-top:1px}.clear-filter{padding:0;border:0;background:transparent;color:var(--color-kvot-bright);font-size:.72rem;font-weight:700;cursor:pointer}.clear-filter:hover{text-decoration:underline}.hint{font-size:.7rem;color:var(--text-muted)}
     .summary{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}.card{padding:14px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);text-align:center}.card.ok{border-color:var(--ok);background:color-mix(in srgb,var(--ok) 9%,var(--bg-secondary))}.card.warn{border-color:#e3b76e;background:color-mix(in srgb,var(--warn) 9%,var(--bg-secondary))}.card-label{font-size:.7rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted)}.card-value{font:750 1.55rem ui-monospace,SFMono-Regular,Menlo,monospace}
     .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.panel{border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden}.panel h2{margin:0;padding:12px 15px;border-bottom:1px solid var(--border-color);font-size:.9rem}.panel-body{padding:12px 15px;overflow:auto}
-    .table-wrap{overflow:auto;max-height:620px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary)}table{width:100%;border-collapse:collapse;font-size:.84rem}th{position:sticky;top:0;z-index:2;padding:9px 10px;border-bottom:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-muted);font-size:.7rem;text-align:left;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}td{padding:9px 10px;border-bottom:1px solid var(--border-color);vertical-align:top}tr:hover td{background:color-mix(in srgb,var(--color-kvot-bright) 10%,var(--bg-secondary))}.comment{min-width:310px;max-width:520px;white-space:pre-wrap;overflow-wrap:anywhere}td.path{min-width:110px;max-width:260px;overflow-wrap:anywhere}.no-folder{color:var(--text-muted)}.no-folders .folder{display:none}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--bg-surface);white-space:nowrap}.empty{padding:24px;color:var(--text-muted);text-align:center;font-style:italic}.bar-row{display:grid;grid-template-columns:minmax(110px,1fr) 3fr 52px;gap:8px;align-items:center;margin:7px 0}#conflict-bars .bar-row,#move-bars .bar-row{grid-template-columns:minmax(190px,1.6fr) 2fr 52px}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar-track{height:9px;border-radius:99px;background:var(--bg-surface);overflow:hidden}.bar{height:100%;background:var(--color-kvot-bright);border-radius:inherit}.bar-count{text-align:right;font-family:ui-monospace,monospace}.status-overview{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:center}.donut{--ok-share:0;width:138px;aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--ok) 0 calc(var(--ok-share)*1%),#d84a43 calc(var(--ok-share)*1%) 100%);position:relative;display:grid;place-items:center;margin:auto}.donut:after{content:'';position:absolute;inset:25px;border-radius:50%;background:var(--bg-secondary)}.donut-center{position:relative;z-index:1;text-align:center}.donut-value{display:block;font:800 1.35rem ui-monospace,monospace;color:var(--ok)}.donut-label{display:block;font-size:.7rem;color:var(--text-muted);font-weight:700}.legend{display:flex;gap:12px;flex-wrap:wrap;margin:9px 0 2px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{width:10px;height:10px;border-radius:50%}.swatch.ok{background:var(--ok)}.swatch.preliminary{background:#d84a43}.status-note{font-size:.75rem;color:var(--text-muted)}.card-sub{margin-top:3px;font-size:.7rem;color:var(--text-muted)}.field label.switch{display:flex;align-items:center;gap:8px;margin:0;font-size:.8rem;font-weight:500;color:var(--text-secondary);text-transform:none;letter-spacing:0;cursor:pointer}.field label.switch input{width:auto;min-width:0;min-height:0;height:auto;flex:0 0 auto;margin:0;padding:0;border:0;border-radius:0;background:none;accent-color:var(--color-kvot-bright)}.field label.switch:has(input:disabled){opacity:.5;cursor:default}.matrix{width:100%;border-collapse:collapse;font-size:.78rem}.matrix th,.matrix td{padding:5px 7px;border-bottom:1px solid var(--border-color);text-align:right;white-space:nowrap}.matrix th{position:static;background:none;color:var(--text-muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.04em}.matrix th:first-child,.matrix td:first-child{text-align:left}.matrix tbody tr:hover td{background:var(--bg-surface)}.matrix td.cell{cursor:pointer}.matrix td.cell:hover{background:var(--color-kvot-bright);color:var(--on-bright)}.matrix td.zero{color:var(--text-muted);opacity:.45}.matrix .share{width:78px}.matrix .share-track{height:7px;border-radius:99px;background:var(--bg-surface);overflow:hidden}.matrix .share-bar{height:100%;background:var(--ok);border-radius:inherit}.flag-list{margin:8px 0 0;max-height:250px;overflow:auto}.flag-item{display:flex;gap:8px;justify-content:space-between;padding:4px 6px;border-bottom:1px solid var(--border-color);font-size:.78rem;cursor:pointer}.flag-item:hover{background:var(--bg-surface)}.flag-id{font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flag-why{color:var(--text-muted);white-space:nowrap}.table-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:9px;font-size:.78rem;color:var(--text-muted)}.table-foot-actions{display:flex;gap:8px}.move-in{color:var(--ok);font-weight:700}.move-out{color:#d84a43;font-weight:700}
+    .table-wrap{overflow:auto;max-height:620px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary)}table{width:100%;border-collapse:collapse;font-size:.84rem}th{position:sticky;top:0;z-index:2;padding:9px 10px;border-bottom:1px solid var(--border-color);background:var(--bg-surface);color:var(--text-muted);font-size:.7rem;text-align:left;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}td{padding:9px 10px;border-bottom:1px solid var(--border-color);vertical-align:top}tr:hover td{background:color-mix(in srgb,var(--color-kvot-bright) 10%,var(--bg-secondary))}.comment{min-width:310px;max-width:520px;white-space:pre-wrap;overflow-wrap:anywhere}td.path{min-width:110px;max-width:260px;overflow-wrap:anywhere}.no-folder{color:var(--text-muted)}.no-folders .folder,.no-cases .case,.no-rows #qc-part,.no-rows .rows-only{display:none}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--bg-surface);white-space:nowrap}.empty{padding:24px;color:var(--text-muted);text-align:center;font-style:italic}.bar-row{display:grid;grid-template-columns:minmax(110px,1fr) 3fr 52px;gap:8px;align-items:center;margin:7px 0}#conflict-bars .bar-row,#move-bars .bar-row{grid-template-columns:minmax(190px,1.6fr) 2fr 52px}.bar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar-track{height:9px;border-radius:99px;background:var(--bg-surface);overflow:hidden}.bar{height:100%;background:var(--color-kvot-bright);border-radius:inherit}.bar-count{text-align:right;font-family:ui-monospace,monospace}.status-overview{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:center}.donut{--ok-share:0;width:138px;aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--ok) 0 calc(var(--ok-share)*1%),#d84a43 calc(var(--ok-share)*1%) 100%);position:relative;display:grid;place-items:center;margin:auto}.donut:after{content:'';position:absolute;inset:25px;border-radius:50%;background:var(--bg-secondary)}.donut-center{position:relative;z-index:1;text-align:center}.donut-value{display:block;font:800 1.35rem ui-monospace,monospace;color:var(--ok)}.donut-label{display:block;font-size:.7rem;color:var(--text-muted);font-weight:700}.legend{display:flex;gap:12px;flex-wrap:wrap;margin:9px 0 2px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{width:10px;height:10px;border-radius:50%}.swatch.ok{background:var(--ok)}.swatch.preliminary{background:#d84a43}.status-note{font-size:.75rem;color:var(--text-muted)}.card-sub{margin-top:3px;font-size:.7rem;color:var(--text-muted)}.field label.switch{display:flex;align-items:center;gap:8px;margin:0;font-size:.8rem;font-weight:500;color:var(--text-secondary);text-transform:none;letter-spacing:0;cursor:pointer}.field label.switch input{width:auto;min-width:0;min-height:0;height:auto;flex:0 0 auto;margin:0;padding:0;border:0;border-radius:0;background:none;accent-color:var(--color-kvot-bright)}.field label.switch:has(input:disabled){opacity:.5;cursor:default}.matrix{width:100%;border-collapse:collapse;font-size:.78rem}.matrix th,.matrix td{padding:5px 7px;border-bottom:1px solid var(--border-color);text-align:right;white-space:nowrap}.matrix th{position:static;background:none;color:var(--text-muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.04em}.matrix th:first-child,.matrix td:first-child{text-align:left}.matrix tbody tr:hover td{background:var(--bg-surface)}.matrix td.cell{cursor:pointer}.matrix td.cell:hover{background:var(--color-kvot-bright);color:var(--on-bright)}.matrix td.zero{color:var(--text-muted);opacity:.45}.matrix .share{width:78px}.matrix .share-track{height:7px;border-radius:99px;background:var(--bg-surface);overflow:hidden}.matrix .share-bar{height:100%;background:var(--ok);border-radius:inherit}.flag-list{margin:8px 0 0;max-height:250px;overflow:auto}.flag-item{display:flex;gap:8px;justify-content:space-between;padding:4px 6px;border-bottom:1px solid var(--border-color);font-size:.78rem;cursor:pointer}.flag-item:hover{background:var(--bg-surface)}.flag-id{font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flag-why{color:var(--text-muted);white-space:nowrap}.table-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:9px;font-size:.78rem;color:var(--text-muted)}.table-foot-actions{display:flex;gap:8px}.move-in{color:var(--ok);font-weight:700}.move-out{color:#d84a43;font-weight:700}
     /*footer{padding:21px;text-align:center;background:var(--footer-bg);color:#cfdae1;font-size:.78rem}*/
+    .cases{margin-bottom:22px}.cases-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 10px}.cases-head h2{margin:0;font-size:1.05rem}.cases-wrap{max-height:560px;margin-bottom:12px}.cases-table td{font-size:.8rem}.case-name{padding:0;border:0;background:none;color:var(--color-kvot-bright);font:700 .84rem ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;white-space:nowrap}.case-name:hover{text-decoration:underline}.case-name[aria-expanded=true]::after{content:' ▾'}.case-folder{display:block;color:var(--text-muted);font-size:.68rem;font-weight:400;white-space:nowrap}.case-info{min-width:220px;max-width:330px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.case-info p{margin:0}.pf+.pf{margin-top:3px}.pf .mono,.config-more .mono,.case-detail .mono{overflow-wrap:anywhere}.pf .set{color:var(--text-muted);white-space:nowrap}.input-data{margin-top:5px;color:var(--text-secondary)}.cases-table td:nth-child(3){min-width:190px;max-width:290px}.cases-table td:nth-child(4){min-width:140px}.cases-table td:nth-child(5){min-width:110px}.cases-table td:nth-child(6){max-width:250px}.config-more td{max-width:300px;font-size:.8rem}.chip{display:inline-block;margin:0 4px 3px 0;padding:1px 7px;border-radius:999px;background:var(--bg-surface);white-space:nowrap}.chip.warn{background:color-mix(in srgb,var(--warn) 18%,var(--bg-secondary))}.chip.bad{background:color-mix(in srgb,#d84a43 22%,var(--bg-secondary))}.section-line{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)}.muted{color:var(--text-muted)}.tally{min-width:150px}.tally .share-track{height:7px;margin:3px 0;border-radius:99px;background:var(--bg-surface);overflow:hidden}.tally .share-bar{height:100%;background:var(--ok)}.link-btn{padding:0;border:0;background:none;color:var(--color-kvot-bright);font-size:.74rem;font-weight:700;cursor:pointer}.link-btn:hover{text-decoration:underline}
+    .case-detail>td{padding:14px 16px;background:var(--bg-surface)}.case-detail:hover>td{background:var(--bg-surface)}.case-detail h3{margin:12px 0 6px;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}.case-detail h3:first-child{margin-top:0}.detail-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:18px}.kv{width:auto;font-size:.78rem}.kv th,.kv td{position:static;padding:3px 8px;border-bottom:1px solid var(--border-color);background:none;text-transform:none;letter-spacing:0;font-size:.78rem;white-space:normal;vertical-align:top}.kv th{color:var(--text-muted);font-weight:650;text-align:left}.kv tr:hover td{background:none}.steps{margin:4px 0 8px;padding-left:18px}.steps li{margin:2px 0}.cases-checks{margin-bottom:12px}.cases-checks details{padding:10px 14px;border:1px solid var(--border-color);border-radius:9px;background:var(--bg-secondary)}.cases-checks.attention details{border-color:#e3b76e}.cases-checks summary{cursor:pointer;font-weight:650;font-size:.84rem}.cases-checks ul{margin:8px 0 0;padding-left:18px;max-height:260px;overflow:auto;font-size:.8rem}.cases-checks li{margin:3px 0}.lvl{font-weight:700}.lvl.error{color:#d84a43}.lvl.warning{color:var(--warn)}.lvl.info{color:var(--text-muted)}.config-more{margin-bottom:10px}.config-more>summary{cursor:pointer;font-weight:650;font-size:.86rem;padding:6px 0}.config-more .table-wrap{max-height:420px}
     /* iOS zooms the page into a field under 16px when it is tapped, and leaves it zoomed. */
     @media(pointer:coarse){.field select,.field input{font-size:16px}}
-    @media(max-width:900px){.filters{grid-template-columns:1fr 1fr}.summary{grid-template-columns:1fr 1fr}.grid-2{grid-template-columns:1fr}.privacy{display:none}}@media(max-width:520px){#app{padding:0 12px}.filters{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.toolbar{align-items:flex-start;flex-direction:column}}
+    @media(max-width:900px){.detail-grid{grid-template-columns:1fr}.filters{grid-template-columns:1fr 1fr}.summary{grid-template-columns:1fr 1fr}.grid-2{grid-template-columns:1fr}.privacy{display:none}}@media(max-width:520px){.case-info{min-width:150px}#app{padding:0 12px}.filters{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr}.toolbar{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
 <body>
@@ -52,17 +54,26 @@
 <div class="content">
 <main><div id="app">
   <p class="privacy">Processed locally in your browser — no file is uploaded, even when the browser's folder dialog speaks of uploading.</p>
-  <section id="dropzone" role="button" tabindex="0" aria-label="Add Excel files or folders">
-    <input type="file" id="file-input" accept=".xlsx,.xlsm,.xlsb,.xls" multiple>
+  <section id="dropzone" role="button" tabindex="0" aria-label="Add Excel files, TOML files or folders">
+    <input type="file" id="file-input" accept=".xlsx,.xlsm,.xlsb,.xls,.toml" multiple>
     <input type="file" id="folder-input" webkitdirectory multiple>
-    <div class="dz-icon">📊</div><div class="dz-label">Drop Excel files or folders here</div>
-    <div class="dz-sub">or click to choose files — .xlsx, .xlsm, .xlsb and .xls. A folder is read with all its subfolders, and each row shows the folder its workbook is in.</div>
+    <div class="dz-icon">📊</div><div class="dz-label">Drop Excel files, TOML files or folders here</div>
+    <div class="dz-sub">or click to choose files — workbooks (.xlsx, .xlsm, .xlsb, .xls), and calculation cases (.toml) with the link.toml and data.toml that tie them to the workbooks. A folder is read with all its subfolders, and each row shows the folder its workbook is in.</div>
     <div class="dz-actions"><button class="btn primary" id="choose-btn" type="button">Choose files</button><button class="btn primary" id="folder-btn" type="button">Choose a folder</button></div>
   </section>
   <div id="status" role="status"><span id="status-text"></span><button type="button" class="btn" id="stop-btn" hidden>Stop</button><details id="status-files" hidden><summary>Show them</summary><ul></ul></details></div>
   <section id="workspace">
-    <div class="toolbar"><div id="file-info" class="file-info"></div><div class="actions"><button class="btn" id="snapshot-save-btn" title="Save the current parameter statuses to a file, to compare against later">Save snapshot</button><button class="btn" id="snapshot-load-btn" title="Load a snapshot saved earlier and show what has moved since">Compare snapshot</button><input type="file" id="snapshot-input" accept=".json" hidden><button class="btn" id="export-btn">Export filtered CSV</button><button class="btn danger" id="reset-btn">Clear all</button></div></div>
+    <div class="toolbar"><div id="file-info" class="file-info"></div><div class="actions"><button class="btn rows-only" id="snapshot-save-btn" title="Save the current parameter statuses to a file, to compare against later">Save snapshot</button><button class="btn rows-only" id="snapshot-load-btn" title="Load a snapshot saved earlier and show what has moved since">Compare snapshot</button><input type="file" id="snapshot-input" accept=".json" hidden><button class="btn rows-only" id="export-btn">Export filtered CSV</button><button class="btn danger" id="reset-btn">Clear all</button></div></div>
+    <section id="cases" class="cases" hidden>
+      <div class="cases-head"><h2>Calculation cases</h2><span id="cases-info" class="file-info"></span></div>
+      <div id="cases-checks" class="cases-checks"></div>
+      <div class="table-wrap cases-wrap"><table class="cases-table"><thead><tr><th>Case</th><th>Description</th><th>Input</th><th>QC of its data</th><th>Repositories</th><th>Settings</th></tr></thead><tbody id="cases-body"></tbody></table></div>
+      <details class="config-more" id="sets-more"><summary>Input sets (link.toml)</summary><div class="table-wrap"><table><thead><tr><th>Input set</th><th>Built from</th><th>Data files</th><th>Used by</th><th>QC of its data</th></tr></thead><tbody id="sets-body"></tbody></table></div></details>
+      <details class="config-more" id="data-more"><summary>Data files (data.toml)</summary><div class="table-wrap"><table><thead><tr><th>Data file</th><th>Workbook</th><th>Sheets</th><th>Raw data</th><th>Other settings</th><th>Input sets</th><th>QC</th></tr></thead><tbody id="data-files-body"></tbody></table></div></details>
+    </section>
+    <div id="qc-part">
     <div class="filters">
+      <div class="field case"><label for="case-filter">Calculation cases</label><select id="case-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="case-filter">Clear selection</button></div><span class="hint">The rows of the data files a case uses.</span></div>
       <div class="field folder"><label for="folder-filter">Folders</label><select id="folder-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="folder-filter">Clear selection</button></div><span class="hint">A folder brings its subfolders with it.</span></div>
       <div class="field"><label for="file-filter">Files</label><select id="file-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="file-filter">Clear selection</button></div><span class="hint">Ctrl/Cmd-click for several. No selection means all.</span></div>
       <div class="field"><label for="sheet-filter">Sheets</label><select id="sheet-filter" multiple></select><div class="filter-tools"><button type="button" class="clear-filter" data-clear="sheet-filter">Clear selection</button></div><span class="hint">Sheets carrying ID and the three QC columns.</span></div>
@@ -79,6 +90,7 @@
     </div>
     <div class="grid-2"><section class="panel"><h2>Share approved</h2><div class="panel-body"><div class="status-overview"><div id="status-donut" class="donut"><div class="donut-center"><span id="ok-percent" class="donut-value">0%</span><span class="donut-label">Approved</span></div></div><div><div id="status-stats"></div><div class="legend"><span class="legend-item"><i class="swatch ok"></i>Approved (OK-PSAR, OK-UPSAR, OK-FSAR)</span><span class="legend-item"><i class="swatch preliminary"></i>Not yet approved</span></div><div id="status-note" class="status-note"></div></div></div></div></section><section class="panel"><h2>By QC reviewer</h2><div class="panel-body"><div id="reviewer-matrix"></div><div class="status-note">Parameters, not rows. A parameter shared by two reviewers is counted under both. Click a cell to filter to it.</div></div></section></div><div class="grid-2"><section class="panel"><h2>Needing attention</h2><div class="panel-body" id="conflict-body"></div></section><section class="panel"><h2>Movement since snapshot</h2><div class="panel-body" id="snapshot-body"></div></section></div>
     <div class="table-wrap"><table><thead><tr><th class="folder">Folder</th><th>File</th><th>Sheet</th><th>Excel row</th><th>ID</th><th>QC reviewer</th><th>QC status</th><th>QC comment</th></tr></thead><tbody id="data-body"></tbody></table><div id="empty" class="empty" hidden>No data point matches the filters.</div></div><div class="table-foot"><span id="table-count"></span><span class="table-foot-actions"><button type="button" class="btn" id="more-btn" hidden>Show more</button><button type="button" class="btn" id="all-btn" hidden>Show all</button></span></div>
+    </div>
   </section>
 </div></main></div>
 
@@ -154,6 +166,19 @@ const PAGE_SIZE=500;
 const WORKBOOK=/\.(xlsx|xlsm|xlsb|xls)$/i;
 const passedOver=name=>name.startsWith('~$')||name.startsWith('.');
 const MAX_DEPTH=32;
+/*
+  TOML files describe calculation cases, and link.toml and data.toml among
+  them tie each case to the workbooks its data come from. The rules are in
+  resources/js/skb-qa-config.mjs; the files are read with smol-toml. Both are
+  loaded the first time a TOML file arrives, so a page that only ever reads
+  workbooks never fetches them.
+*/
+const TOML=/\.toml$/i;
+let tomlFiles=[], cases=null, lib=null, libLoading=null;
+function loadConfigLib(){
+  return libLoading??=Promise.all([import('./vendors/js/smol-toml-1.9.0/index.js'),import('./resources/js/skb-qa-config.mjs?v=20261009')])
+    .then(([toml,model])=>lib={toml,model},e=>{libLoading=null;throw e});
+}
 
 /* A file is known by its path, its folder and its name together, so two
    workbooks of one name in two folders are two files. */
@@ -204,30 +229,34 @@ function addOptions(id,values,order){
   file's name but not where it lies. A folder, chosen or dropped, gives every
   file in it its path from that folder down, and that is the Folder column.
 */
-const workbook=(file,path)=>({file,name:file.name,folder:folderOf(path),path});
+const item=(file,path)=>({file,name:file.name,folder:folderOf(path),path});
+/* The list a file of this name goes in: workbooks, TOML files, or none. */
+const listFor=(name,list,tomls)=>WORKBOOK.test(name)?list:TOML.test(name)?tomls:null;
 function chosenFiles(files){
-  const list=[]; let others=0;
+  const list=[], tomls=[]; let others=0;
   for(const file of files){
     const path=file.webkitRelativePath||file.name;
     /* The folder chosen is read even when it is hidden; what is hidden inside it is not. */
     if(path.split('/').slice(1).some(passedOver)||passedOver(file.name)) continue;
-    if(WORKBOOK.test(file.name)) list.push(workbook(file,path)); else others++;
+    const into=listFor(file.name,list,tomls);
+    if(into) into.push(item(file,path)); else others++;
   }
-  return {list,others,failed:[]};
+  return {list,tomls,others,failed:[]};
 }
 /* A drop's items are taken out while the drop event lasts: the browser takes
    them back once it has been handled. An item's entry is what holds a folder;
    one with none, such as a mail attachment, is taken as the file it is. */
 const dropItems=dt=>dt.items?[...dt.items].filter(it=>it.kind==='file').map(it=>({entry:it.webkitGetAsEntry?.()??null,file:it.getAsFile()})):[...dt.files].map(file=>({entry:null,file}));
 async function droppedFiles(items,job){
-  const list=[], failed=[]; let others=0;
+  const list=[], tomls=[], failed=[]; let others=0;
   const walk=async(entry,depth)=>{
     if(job.stopped||job.cleared) return;
     const path=entry.fullPath.replace(/^\//,'');
     if(entry.isFile){
       if(passedOver(entry.name)) return;
-      if(!WORKBOOK.test(entry.name)){others++;return}
-      try{list.push(workbook(await new Promise((res,rej)=>entry.file(res,rej)),path))}
+      const into=listFor(entry.name,list,tomls);
+      if(!into){others++;return}
+      try{into.push(item(await new Promise((res,rej)=>entry.file(res,rej)),path))}
       catch(e){failed.push({path,why:`could not be opened: ${e.message}`,error:true})}
     }else if(entry.isDirectory&&!(depth&&passedOver(entry.name))){
       if(depth>=MAX_DEPTH){failed.push({path,why:`not looked into, ${MAX_DEPTH} folders down`,error:true});return}
@@ -241,9 +270,9 @@ async function droppedFiles(items,job){
   };
   for(const {entry,file} of items){
     if(entry) await walk(entry,0);
-    else if(file&&!passedOver(file.name)){if(WORKBOOK.test(file.name)) list.push(workbook(file,file.name)); else others++}
+    else if(file&&!passedOver(file.name)){const into=listFor(file.name,list,tomls); if(into) into.push(item(file,file.name)); else others++}
   }
-  return {list,others,failed};
+  return {list,tomls,others,failed};
 }
 
 /*
@@ -304,13 +333,27 @@ function enqueue(gather){
     finally{jobs.delete(job); $('stop-btn').hidden=!jobs.size; if(!jobs.size) $('status').removeAttribute('aria-busy')}
   });
 }
-async function loadFiles({list,others,failed},job){
+async function loadFiles({list,tomls=[],others,failed},job){
   const books=list.sort((a,b)=>comparePaths(a.path,b.path));
-  if(!books.length){
-    if(!job.stopped&&!job.cleared) showStatus(`No Excel workbook (.xlsx, .xlsm, .xlsb or .xls) among what was added${others?`, only ${others} other file(s)`:''}.`,true,failed);
+  if(!books.length&&!tomls.length){
+    if(!job.stopped&&!job.cleared) showStatus(`No workbook (.xlsx, .xlsm, .xlsb, .xls) and no TOML file among what was added${others?`, only ${others} other file(s)`:''}.`,true,failed);
     return;
   }
-  const newRows=[], newSheets=[], read=[], noData=[...failed];
+  const newRows=[], newSheets=[], read=[], readTomls=[], noData=[...failed];
+  /* TOML files first: they are small, and say what the workbooks are for. */
+  if(tomls.length){
+    showStatus(`Reading ${tomls.length} TOML file(s)…`);
+    try{await loadConfigLib()}
+    catch(e){for(const t of tomls) noData.push({path:t.path,why:`not read: the TOML reader could not be loaded (${e.message})`,error:true})}
+    for(const t of lib?tomls.sort((a,b)=>comparePaths(a.path,b.path)):[]){
+      if(job.stopped||job.cleared) break;
+      let data=null, error=null;
+      try{data=lib.toml.parse(await t.file.text())}
+      catch(e){error=String(e.message||e).split('\n')[0]+(e.line?` (line ${e.line}, column ${e.column})`:'')}
+      readTomls.push({path:t.path,folder:t.folder,name:t.name,data,error});
+      if(error) noData.push({path:t.path,why:`could not be read as TOML: ${error}`,error:true});
+    }
+  }
   for(const [n,book] of books.entries()){
     if(job.stopped||job.cleared) break;
     showStatus(`Reading ${n+1} of ${books.length}: ${book.path}`);
@@ -328,31 +371,259 @@ async function loadFiles({list,others,failed},job){
   if(job.cleared) return;
   /* A file read again replaces what it gave before, so a folder dropped a
      second time shows its workbooks as they are now, not twice over. */
-  const again=new Set(read);
-  const replaced=loadedFiles.filter(p=>again.has(p)).length;
+  const again=new Set(read), againToml=new Set(readTomls.map(t=>t.path));
+  const replaced=loadedFiles.filter(p=>again.has(p)).length+tomlFiles.filter(t=>againToml.has(t.path)).length;
   rows=rows.filter(r=>!again.has(r.path)).concat(newRows);
   validSheets=validSheets.filter(k=>!again.has(k.split('|||')[0])).concat(newSheets);
   loadedFiles=loadedFiles.filter(p=>!again.has(p)).concat(read);
-  refreshOptions(); $('workspace').classList.add('show'); render();
-  const folders=new Set(books.filter(b=>again.has(b.path)&&b.folder).map(b=>b.folder)).size;
-  const message=[(job.stopped?`Stopped after ${read.length} of ${books.length} workbook(s)`:`${read.length} workbook(s) read`)
-    +(folders?` from ${folders} folder(s)`:'')+`, ${newRows.length.toLocaleString('en-GB')} data point(s) added.`];
+  tomlFiles=tomlFiles.filter(t=>!againToml.has(t.path)).concat(readTomls);
+  rebuildCases(); refreshOptions(); $('workspace').classList.add('show'); render(); renderCases();
+  const message=[];
+  if(books.length){
+    const folders=new Set(books.filter(b=>again.has(b.path)&&b.folder).map(b=>b.folder)).size;
+    message.push((job.stopped?`Stopped after ${read.length} of ${books.length} workbook(s)`:`${read.length} workbook(s) read`)
+      +(folders?` from ${folders} folder(s)`:'')+`, ${newRows.length.toLocaleString('en-GB')} data point(s) added.`);
+  }
+  if(readTomls.length){
+    const kinds=readTomls.filter(t=>!t.error).map(t=>t.name.toLowerCase());
+    const named=['link.toml','data.toml'].filter(n=>kinds.includes(n));
+    const caseCount=kinds.filter(n=>!named.includes(n)).length;
+    message.push(`${readTomls.length} TOML file(s) read: ${[`${caseCount} calculation case(s)`,...named].join(', ')}.`);
+  }
   if(replaced) message.push(`${replaced} had been read before, and what they gave then is replaced.`);
   if(noData.length) message.push(`${noData.length} gave no data.`);
-  showStatus(message.join(' '),noData.some(f=>f.error)||!rows.length,noData);
+  showStatus(message.join(' '),noData.some(f=>f.error)||(!rows.length&&!tomlFiles.length),noData);
 }
 function refreshOptions(){
   /* Each folder holding a workbook, and every folder above it, so a branch can
      be chosen whole. Indented by depth, the list reads as the tree it is. */
   const folders=new Map();
-  for(const r of rows) for(let f=r.folder;f&&!folders.has(f);f=folderOf(f)) folders.set(f,'\u2003'.repeat(f.split('/').length-1)+nameOf(f));
+  for(const r of rows) for(let f=r.folder;f&&!folders.has(f);f=folderOf(f)) folders.set(f,' '.repeat(f.split('/').length-1)+nameOf(f));
+  addOptions('case-filter',new Map((cases?.list||[]).map(c=>[c.key,c.label])));
   addOptions('folder-filter',folders);
   addOptions('file-filter',new Map(rows.map(r=>[r.path,withFolder(r.path,r.file)])));
   addOptions('sheet-filter',new Map(validSheets.map(k=>{const [path,sheet]=k.split('|||');return [`${path} › ${sheet}`,withFolder(path,`${nameOf(path)} › ${sheet}`)]})));
   addOptions('reviewer-filter',new Set(rows.map(r=>display(r.reviewer))));
   addOptions('status-filter',new Set(rows.map(r=>statusLabel(r.status))),STATUS_ORDER);
   const folderCount=new Set(loadedFiles.map(folderOf).filter(Boolean)).size;
-  $('file-info').textContent=`${new Set(loadedFiles).size} file(s)${folderCount?`, ${folderCount} folder(s)`:''}, ${new Set(validSheets).size} matching sheet(s), ${rows.length} data point(s) in total`;
+  $('file-info').textContent=`${new Set(loadedFiles).size} file(s)${folderCount?`, ${folderCount} folder(s)`:''}, ${new Set(validSheets).size} matching sheet(s), ${rows.length} data point(s) in total`
+    +(tomlFiles.length?`; ${tomlFiles.length} TOML file(s)`:'');
+}
+
+/*
+  The calculation cases, each with the workbooks and sheets its data files
+  are read from: the QC rows of a case, an input set or a data file are the
+  rows of those sheets. Rebuilt whenever TOML files or workbooks arrive or
+  go, since either changes which workbook a data file finds.
+*/
+function rebuildCases(){
+  if(!lib||!tomlFiles.length){cases=null;return}
+  const M=lib.model;
+  const configs=M.buildConfigs(tomlFiles);
+  const loaded=[...new Set(loadedFiles)];
+  const sheetsOf=new Map(), bySheet=new Map();
+  for(const key of validSheets){const i=key.indexOf('|||'), path=key.slice(0,i); if(!sheetsOf.has(path)) sheetsOf.set(path,[]); sheetsOf.get(path).push(key.slice(i+3))}
+  for(const r of rows){const key=`${r.path}|||${r.sheet}`; if(!bySheet.has(key)) bySheet.set(key,[]); bySheet.get(key).push(r)}
+  const resolved=new Map();
+  /* A data file as read here: the workbook found for it, and the sheets of
+     that workbook it takes (all, unless data.toml names them). */
+  const resolveSource=(config,src)=>{
+    const id=`${config.folder}\u0000${src.name}`;
+    if(resolved.has(id)) return resolved.get(id);
+    const wb=M.findWorkbook(src.workbook,loaded,config.folder);
+    const wanted=src.sheets&&src.sheets.map(n=>n.toLowerCase());
+    const sheets=wb.path?(sheetsOf.get(wb.path)||[]).filter(sheet=>!wanted||wanted.includes(sheet.toLowerCase())):[];
+    const out={...src,found:wb.path,others:wb.others,keys:sheets.map(sheet=>`${wb.path}|||${sheet}`)};
+    resolved.set(id,out);
+    return out;
+  };
+  const many=configs.length>1, list=[];
+  for(const config of configs){
+    for(const c of config.cases){
+      const inputs=M.caseInputs(config,c);
+      const data=inputs.data.map(src=>resolveSource(config,src));
+      list.push({key:c.path,name:c.name,label:many&&config.folder?`${c.name} (${config.folder})`:c.name,config,file:c,inputs,data,keys:[...new Set(data.flatMap(d=>d.keys))]});
+    }
+  }
+  cases={model:M,configs,list,bySheet,resolveSource,checks:configs.map(config=>[config,M.configChecks(config,loaded.length?loaded:null)])};
+}
+/* The QC state of the parameters in these sheets, counted as the cards count it. */
+function tally(keys){
+  const data=[];
+  for(const key of keys) for(const r of cases.bySheet.get(key)||[]) data.push(r);
+  const index=parameterIndex(data);
+  let approved=0, flagged=0;
+  for(const e of index.values()){if(e.approved) approved++; if(e.flagged) flagged++}
+  return {params:index.size,approved,flagged};
+}
+function tallyText(keys){
+  if(!keys.length) return '<span class="muted">no QC rows</span>';
+  const t=tally(keys);
+  return `${t.approved} of ${t.params} approved`+(t.flagged?` · ${t.flagged} needing attention`:'');
+}
+function tallyCell(keys,show){
+  if(!loadedFiles.length) return '<span class="muted" title="Add the Excel folder to see the QC state of these data">workbooks not read</span>';
+  if(!keys.length) return '<span class="muted">no QC rows</span>';
+  const t=tally(keys), share=t.params?100*t.approved/t.params:0;
+  return `<div class="tally"><div>${t.approved} of ${t.params} approved</div><div class="share-track"><div class="share-bar" style="width:${share}%"></div></div>`
+    +(t.flagged?`<div>${t.flagged} needing attention</div>`:'')
+    +(show!=null?`<button type="button" class="link-btn" data-show="${show}">Show rows</button>`:'')+'</div>';
+}
+const isTableValue=v=>v!=null&&typeof v==='object'&&!Array.isArray(v)&&!(v instanceof Date);
+/* What a case says about itself, as the table shows it: the top-level values
+   as chips, and each section on a line of its own. */
+const CASE_OWN=new Set(['info','repositories','radionuclides','parameter_files']);
+function settingsCell(toml){
+  const M=cases.model, chips=[], lines=[];
+  for(const [key,value] of Object.entries(toml)){
+    if(CASE_OWN.has(key)) continue;
+    if(isTableValue(value)){
+      const inner=Object.entries(value).filter(([k])=>k!=='parameter_files');
+      lines.push(`<div class="section-line" title="${esc(inner.map(([k,v])=>`${k} = ${M.shortValue(v)}`).join('\n'))}"><b>${esc(key)}</b> ${esc(inner.map(([,v])=>M.shortValue(v)).join(' · '))}</div>`);
+    }else chips.push(`<span class="chip">${esc(key)} ${esc(M.shortValue(value))}</span>`);
+  }
+  return chips.join('')+lines.join('')||'<span class="muted">—</span>';
+}
+function listLine(label,value){
+  const all=cases.model.asList(value).map(String);
+  const text=!all.length?'—':all.length===1?all[0]:`${all.length}: ${all.slice(0,3).join(', ')}${all.length>3?', …':''}`;
+  return `<div title="${esc(all.join(', '))}"><span class="muted">${label}</span> ${esc(text)}</div>`;
+}
+const noSet=file=>`link.toml has no set called ${file.replace(/\.h5$/i,'')}`;
+function parameterFilesCell(c){
+  if(!c.inputs.files.length) return '<span class="chip warn">none</span>';
+  return c.inputs.files.map(pf=>`<div class="pf"><span class="mono">${pf.domain?`[${esc(pf.domain)}] `:''}${esc(pf.file)}</span> `
+    +(pf.set?`<span class="set">→ ${esc(pf.set)}</span>${pf.errors.length?` <span class="chip bad" title="${esc(pf.errors.join('\n'))}">does not resolve</span>`:''}`
+      :`<span class="chip warn" title="${esc(noSet(pf.file))}">not built by link.toml</span>`)+'</div>').join('');
+}
+/* A data file's workbook was read, or it has raw data to stand in for it, or it lacks it. */
+const lacksWorkbook=d=>d.entry&&!d.found&&!d.raw;
+function dataFilesCell(c){
+  if(!c.data.length) return '';
+  const undefinedCount=c.data.filter(d=>!d.entry).length;
+  let text=`${c.data.length} data file(s)`;
+  if(loadedFiles.length){
+    const read=c.data.filter(d=>d.found).length, rawOnly=c.data.filter(d=>d.entry&&!d.found&&d.raw).length, missing=c.data.filter(lacksWorkbook).length;
+    text+=`, ${read} workbook(s) read`+(rawOnly?`, ${rawOnly} from raw data only`:'')+(missing?`, <span class="lvl warning">${missing} workbook(s) not read</span>`:'');
+  }
+  return `<div class="input-data">${text}`+(undefinedCount?` <span class="chip bad">${undefinedCount} not in data.toml</span>`:'')+'</div>';
+}
+function workbookCell(d){
+  if(!d.entry) return '<span class="chip bad">not in data.toml</span>';
+  if(d.found) return `<span class="mono">${esc(d.found)}</span>`+(d.others.length?` <span class="chip warn" title="${esc(d.others.join('\n'))}">${d.others.length} more found</span>`:'');
+  if(!loadedFiles.length) return `<span class="mono muted">${esc(d.workbook)}</span>`;
+  return d.raw?'<span class="muted">none: raw data only</span>':`<span class="mono">${esc(d.workbook)}</span> <span class="chip warn">not read</span>`;
+}
+function caseRow(c,i){
+  const t=c.file.toml;
+  return `<tr data-case="${i}"><td><button type="button" class="case-name" aria-expanded="false" data-i="${i}">${esc(c.name)}</button>`
+    +(cases.configs.length>1&&c.config.folder?`<span class="case-folder">${esc(c.config.folder)}</span>`:'')+'</td>'
+    +`<td><div class="case-info" data-info="${i}"></div></td><td>${parameterFilesCell(c)}${dataFilesCell(c)}</td>`
+    +`<td>${c.data.length?tallyCell(c.keys,c.keys.length?i:null):'<span class="muted" title="None of its parameter files can be traced to data files">—</span>'}</td><td>${listLine('Repositories',t.repositories)}${listLine('Nuclides',t.radionuclides)}</td><td>${settingsCell(t)}</td></tr>`;
+}
+/* The whole of a case, opened under its row: what it says, where its
+   parameter files come from, and its data files one by one. */
+function caseDetail(c,i){
+  const t=c.file.toml, M=cases.model;
+  const settings=Object.entries(t).filter(([k])=>k!=='info').map(([k,v])=>isTableValue(v)
+    ?Object.entries(v).map(([kk,vv])=>`<tr><th>[${esc(k)}] ${esc(kk)}</th><td>${esc(M.shortValue(vv))}</td></tr>`).join('')
+    :`<tr><th>${esc(k)}</th><td>${esc(M.shortValue(v))}</td></tr>`).join('');
+  const chains=c.inputs.files.map(pf=>{
+    const head=`<span class="mono">${esc(pf.file)}</span>${pf.domain?` (for ${esc(pf.domain)})`:''}`;
+    if(!pf.set) return `<p>${head}: <span class="chip warn">${esc(noSet(pf.file))}</span></p>`;
+    const steps=pf.steps.map(st=>`<li><b>${esc(st.set)}</b>: ${st.base?`from ${esc(st.base)}`:`${st.files.length} data file(s) listed`}`
+      +(st.skip.length?`, without ${esc(st.skip.join(', '))}`:'')+(st.add.length?`, with ${esc(st.add.join(', '))}`:'')+'</li>').join('');
+    return `<p>${head} is the input set <b>${esc(pf.set)}</b>, of ${pf.sources.length} data file(s):</p><ol class="steps">${steps}</ol>`
+      +(pf.errors.length?`<p class="lvl error">${esc(pf.errors.join('; '))}</p>`:'');
+  }).join('');
+  const link=(name,j)=>j>=0?`<button type="button" class="link-btn" data-goto="${j}">${esc(name)}</button>`:`${esc(name)} <span class="chip warn">not read</span>`;
+  const refs=M.caseReferences(t).map(r=>`${r.domain?`[${esc(r.domain)}] `:''}${esc(r.key)}: ${link(r.name,cases.list.findIndex(x=>x.config===c.config&&x.name===r.name))}`).join(' · ');
+  const users=cases.list.map((x,j)=>[x,j]).filter(([x])=>x.config===c.config&&x!==c&&M.caseReferences(x.file.toml).some(r=>r.name===c.name)).map(([x,j])=>link(x.name,j)).join(', ');
+  const data=c.data.map(d=>`<tr><td class="mono">${esc(d.source)}</td><td>${workbookCell(d)}</td><td>${d.sheets?esc(d.sheets.join(', ')):'<span class="muted">all</span>'}</td>`
+    +`<td>${d.raw?`<span class="mono">${esc(d.raw)}</span>`:'<span class="muted">—</span>'}</td><td>${d.found?tallyText(d.keys):'<span class="muted">—</span>'}</td></tr>`).join('');
+  return `<tr class="case-detail" data-detail="${i}"><td colspan="6"><div class="detail-grid"><div><h3>Description</h3><div class="case-info-full" data-full="${i}"></div>`
+    +(refs?`<h3>Takes results from</h3><p>${refs}</p>`:'')+(users?`<h3>Its results are taken by</h3><p>${users}</p>`:'')
+    +`</div><div><h3>Settings in ${esc(c.file.path)}</h3><table class="kv"><tbody>${settings}</tbody></table></div></div>`
+    +`<h3>Input</h3>${chains||'<p class="muted">No parameter file.</p>'}`
+    +(data?`<table class="kv"><thead><tr><th>Data file</th><th>Workbook</th><th>Sheets</th><th>Raw data</th><th>QC</th></tr></thead><tbody>${data}</tbody></table>`:'')
+    +(c.keys.length?`<p><button type="button" class="btn" data-show="${i}">Show the QC rows of ${esc(c.name)}</button></p>`:'')+'</td></tr>';
+}
+function renderChecks(){
+  const items=cases.checks.flatMap(([config,list])=>list.map(x=>({...x,folder:config.folder})));
+  const box=$('cases-checks'), count=level=>items.filter(x=>x.level===level).length;
+  box.classList.toggle('attention',count('error')+count('warning')>0);
+  if(!items.length){box.innerHTML='<p class="muted">Nothing in the configuration to look at.</p>';return}
+  const parts=[['error','error(s)'],['warning','warning(s)'],['info','note(s)']].filter(([l])=>count(l)).map(([l,w])=>`${count(l)} ${w}`);
+  box.innerHTML=`<details><summary>${items.length} thing(s) in the configuration to look at: ${parts.join(', ')}</summary><ul>`
+    +items.map(x=>`<li><span class="lvl ${x.level}">${x.level}</span> ${esc(x.text)}${x.cases.length?` <span class="muted">(${esc(x.cases.join(', '))})</span>`:''}${cases.configs.length>1?` <span class="muted">[${esc(x.folder||'files added on their own')}]</span>`:''}</li>`).join('')+'</ul></details>';
+}
+function renderSets(){
+  const M=cases.model, out=[];
+  for(const config of cases.configs){
+    if(!config.link||config.link.borrowed) continue;
+    const users=new Map();
+    for(const c of cases.list) if(c.config.link?.path===config.link.path) for(const pf of c.inputs.files) if(pf.set){if(!users.has(pf.set)) users.set(pf.set,new Set()); users.get(pf.set).add(c.name)}
+    for(const set of Object.keys(config.link.defs)){
+      const r=M.setSources(config.link.defs,set), own=r.steps[r.steps.length-1];
+      const built=own&&own.base?`${esc(own.base)}${own.skip.length?`, without ${esc(own.skip.join(', '))}`:''}${own.add.length?`, with ${esc(own.add.join(', '))}`:''}`:`${own?own.files.length:0} listed`;
+      const keys=[...new Set(r.sources.flatMap(src=>cases.resolveSource(config,M.dataSource(config.data?.defs,src)).keys))];
+      const used=[...(users.get(set)||[])];
+      out.push(`<tr><td class="mono">${esc(set)}</td><td>${built}${r.errors.length?` <span class="chip bad" title="${esc(r.errors.join('\n'))}">does not resolve</span>`:''}</td>`
+        +`<td title="${esc(r.sources.join(', '))}">${r.sources.length}</td><td>${used.length?esc(used.join(', ')):'<span class="muted">no case</span>'}</td><td>${loadedFiles.length?tallyText(keys):'<span class="muted">—</span>'}</td></tr>`);
+    }
+  }
+  $('sets-body').innerHTML=out.join('')||'<tr><td colspan="5" class="muted">No link.toml was read.</td></tr>';
+}
+function renderDataFiles(){
+  const M=cases.model, out=[], own=new Set(['path','sheet_names','raw_path','file_name']);
+  for(const config of cases.configs){
+    if(!config.data||config.data.borrowed) continue;
+    const inSets=new Map();
+    if(config.link) for(const set of Object.keys(config.link.defs)) for(const src of M.setSources(config.link.defs,set).sources){
+      const name=M.dataName(src,config.data.defs); if(!inSets.has(name)) inSets.set(name,new Set()); inSets.get(name).add(set);
+    }
+    for(const name of Object.keys(config.data.defs)){
+      const d=cases.resolveSource(config,M.dataSource(config.data.defs,name));
+      const other=Object.entries(d.entry).filter(([k])=>!own.has(k)).map(([k,v])=>`${k} ${M.shortValue(v)}`);
+      const sets=[...(inSets.get(name)||[])];
+      out.push(`<tr><td class="mono">${esc(name)}</td><td>${workbookCell(d)}</td><td>${d.sheets?esc(d.sheets.join(', ')):'<span class="muted">all</span>'}</td>`
+        +`<td>${d.raw?`<span class="mono">${esc(d.raw)}</span>`:'<span class="muted">—</span>'}</td><td>${other.length?esc(other.join(' · ')):'<span class="muted">—</span>'}</td>`
+        +`<td title="${esc(sets.join(', '))}">${sets.length?esc(sets.length>3?`${sets.slice(0,3).join(', ')}, … (${sets.length})`:sets.join(', ')):'<span class="muted">none</span>'}</td>`
+        +`<td>${d.found?tallyText(d.keys):'<span class="muted">—</span>'}</td></tr>`);
+    }
+  }
+  $('data-files-body').innerHTML=out.join('')||'<tr><td colspan="7" class="muted">No data.toml was read.</td></tr>';
+}
+function renderCases(){
+  $('cases').hidden=!cases;
+  $('workspace').classList.toggle('no-cases',!cases?.list.length);
+  if(!cases) return;
+  const ownCount=kind=>cases.configs.reduce((n,c)=>n+(c[kind]&&!c[kind].borrowed?Object.keys(c[kind].defs).length:0),0);
+  const where=cases.configs.length>1?`, in ${cases.configs.length} folders`:cases.configs[0]?.folder?` — ${cases.configs[0].folder}`:'';
+  $('cases-info').textContent=`${cases.list.length} calculation case(s), ${ownCount('link')} input set(s), ${ownCount('data')} data file(s)${where}`;
+  renderChecks();
+  const body=$('cases-body');
+  body.innerHTML=cases.list.map(caseRow).join('')||'<tr><td colspan="6" class="muted">No calculation case was read; link.toml and data.toml alone are below.</td></tr>';
+  /* A description may carry markup (<b>, <i>): it is shown through the site's
+     sanitiser, which keeps such tags and drops everything that could run. */
+  cases.list.forEach((c,i)=>body.querySelector(`[data-info="${i}"]`)?.append(kvotSanitizeHtml(String(c.file.toml.info??''))));
+  renderSets(); renderDataFiles();
+}
+function toggleCase(i,open){
+  const tr=$('cases-body').querySelector(`tr[data-case="${i}"]`);
+  if(!tr) return;
+  const button=tr.querySelector('.case-name'), next=tr.nextElementSibling, isOpen=next?.classList.contains('case-detail');
+  if(isOpen){if(open!==true){next.remove(); button.setAttribute('aria-expanded','false')} return}
+  tr.insertAdjacentHTML('afterend',caseDetail(cases.list[i],i));
+  tr.nextElementSibling.querySelector(`[data-full="${i}"]`).append(kvotSanitizeHtml(String(cases.list[i].file.toml.info??'')));
+  button.setAttribute('aria-expanded','true');
+}
+/* A case's rows are those of its data files' sheets: the case filter keeps
+   them, and the rest of the page follows the filter as it always does. */
+function showCaseRows(i){
+  [...$('case-filter').options].forEach(o=>o.selected=o.value===cases.list[i].key);
+  rerender();
+  $('qc-part').scrollIntoView({block:'start'});
 }
 /*
   The column filters pick rows; the two parameter switches then keep or drop a
@@ -362,10 +633,12 @@ function refreshOptions(){
   row that disagreed.
 */
 function filtered(){
-  const ds=selected('folder-filter'), fs=selected('file-filter'), ss=selected('sheet-filter'), rs=selected('reviewer-filter'), qs=selected('status-filter'), q=normalize($('id-search').value);
+  const cs=selected('case-filter'), ds=selected('folder-filter'), fs=selected('file-filter'), ss=selected('sheet-filter'), rs=selected('reviewer-filter'), qs=selected('status-filter'), q=normalize($('id-search').value);
   /* A folder chosen takes in its subfolders: the row's own folder or one above it. */
   const inFolders=r=>{for(let f=r.folder;f;f=folderOf(f)) if(ds.has(f)) return true; return false};
-  const out=rows.filter(r=>(!ds.size||inFolders(r))&&(!fs.size||fs.has(r.path))&&(!ss.size||ss.has(`${r.path} › ${r.sheet}`))&&(!rs.size||rs.has(display(r.reviewer)))&&(!qs.size||qs.has(statusLabel(r.status)))&&(!q||normalize(r.id).includes(q)));
+  /* A case chosen keeps the sheets its data files are read from. */
+  const inCases=cs.size&&cases?new Set(cases.list.filter(c=>cs.has(c.key)).flatMap(c=>c.keys)):null;
+  const out=rows.filter(r=>(!inCases||inCases.has(`${r.path}|||${r.sheet}`))&&(!ds.size||inFolders(r))&&(!fs.size||fs.has(r.path))&&(!ss.size||ss.has(`${r.path} › ${r.sheet}`))&&(!rs.size||rs.has(display(r.reviewer)))&&(!qs.size||qs.has(statusLabel(r.status)))&&(!q||normalize(r.id).includes(q)));
   const wantFlagged=$('flagged-only').checked, wantChanged=$('changed-only').checked&&snapshot;
   if(!wantFlagged&&!wantChanged) return out;
   const whole=parameterIndex(rows);
@@ -606,8 +879,10 @@ function render(){
   renderConflicts(index);
   renderSnapshot(index);
 
-  /* The Folder column, and its filter, only once some workbook came with its folder. */
+  /* The Folder column, and its filter, only once some workbook came with its folder;
+     the QC part only once a workbook was read, as TOML files alone have no rows. */
   $('workspace').classList.toggle('no-folders',!rows.some(r=>r.folder));
+  $('workspace').classList.toggle('no-rows',!loadedFiles.length);
   /* Only the window is built. filtered() itself costs 2 ms; the second was
      all in the HTML for rows nobody had scrolled to. */
   const shown=Math.min(tableLimit,data.length);
@@ -628,7 +903,7 @@ function render(){
 */
 function csvCell(v){return kvotCsvCell(v)}
 function exportCsv(){const data=filtered(),head=['Folder','File','Sheet','Excel row','ID','QC reviewer','QC status','QC comment'];const body=data.map(r=>[r.folder,r.file,r.sheet,r.row,r.id,r.reviewer,statusLabel(r.status),r.comment]);const csv='\ufeff'+[head,...body].map(a=>a.map(csvCell).join(';')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='skb_qc_filtered.csv';a.click();URL.revokeObjectURL(url)}
-function reset(){for(const job of jobs) job.cleared=true;rows=[];validSheets=[];loadedFiles=[];snapshot=null;tableLimit=PAGE_SIZE;$('file-input').value='';$('folder-input').value='';$('snapshot-input').value='';$('workspace').className='';$('id-search').value='';$('flagged-only').checked=false;$('changed-only').checked=false;$('changed-only').disabled=true;hideStatus();['folder-filter','file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).innerHTML='')}
+function reset(){for(const job of jobs) job.cleared=true;rows=[];validSheets=[];loadedFiles=[];tomlFiles=[];cases=null;$('cases').hidden=true;snapshot=null;tableLimit=PAGE_SIZE;$('file-input').value='';$('folder-input').value='';$('snapshot-input').value='';$('workspace').className='';$('id-search').value='';$('flagged-only').checked=false;$('changed-only').checked=false;$('changed-only').disabled=true;hideStatus();['case-filter','folder-filter','file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).innerHTML='')}
 const dz=$('dropzone'),fi=$('file-input'),di=$('folder-input');
 /* A click or Enter on one of the zone's buttons is that button's own, and so is
    the click a button passes on to its input inside the zone; the zone takes
@@ -656,7 +931,15 @@ document.addEventListener('drop',e=>{
 });
 /* Any change to what is being shown starts the window again at the top. */
 function rerender(){tableLimit=PAGE_SIZE;render()}
-['folder-filter','file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).addEventListener('change',rerender));
+['case-filter','folder-filter','file-filter','sheet-filter','reviewer-filter','status-filter'].forEach(id=>$(id).addEventListener('change',rerender));
+/* A case opens under its row; a case named in another opens where it is; Show rows filters the QC rows to it. */
+$('cases').addEventListener('click',e=>{
+  const button=e.target.closest('button');
+  if(!button||!cases) return;
+  if(button.classList.contains('case-name')) toggleCase(+button.dataset.i);
+  else if(button.dataset.goto!=null){toggleCase(+button.dataset.goto,true); $('cases-body').querySelector(`tr[data-case="${button.dataset.goto}"]`)?.scrollIntoView({block:'nearest'})}
+  else if(button.dataset.show!=null) showCaseRows(+button.dataset.show);
+});
 ['flagged-only','changed-only'].forEach(id=>$(id).addEventListener('change',rerender));
 document.querySelectorAll('.clear-filter').forEach(button=>button.addEventListener('click',()=>{[...$(button.dataset.clear).options].forEach(option=>option.selected=false);rerender()}));
 $('id-search').addEventListener('input',rerender);
