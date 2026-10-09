@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.8
+
+* The extension's icon is the HDF5 Browser's own, the one rb.html shows in
+  its tab: the HDF Group's H, its crossbar cut through as their mark's is,
+  in the kvot mark's three tones.
+* From the site: an axis's unit can take a prefix, chosen beside its lin/log:
+  *k* shows Bq as kBq, the values divided by 1000. A preset can carry one of
+  its own. The Excel export writes the chart's values in the axis's units;
+  CSV and the Python script keep the file's.
+* From the site: the gear opens the axis presets in a window of its own,
+  beside the chart and moved by its title bar: the chart's axes on top, to
+  set by hand, and the saved presets below, each used with a click, edited,
+  updated or deleted.
+* From the site: Show Total, Same chart, Show Ratio and an iteration keep the
+  preset that is selected, and a zoom carried from a linear time axis to a
+  log one stays the stretch of time it was.
+* From the site: a file's *Information*, shown when the pointer is over its
+  tab, goes through the same sanitiser as the rest of a file's markup. A
+  crafted file's could send the page elsewhere or load a stylesheet.
+
 ## 0.1.7
 
 * From the site: the Excel exports of a chart and of a dataset are written as

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Emit rb.html's icon: resources/images/rb-icon.svg, and from it
-rb-icon-32.png (the fallback) and rb-icon-180.png (the touch icon).
+rb-icon-32.png (the fallback), rb-icon-180.png (the touch icon) and
+rb-vscode/icon.png, the VS Code extension's icon, which VS Code wants as a
+PNG of at least 128 px.
 
-    python3 scripts/gen-rb-icon.py            # the SVG and both PNGs
+    python3 scripts/gen-rb-icon.py            # the SVG and the three PNGs
     python3 scripts/gen-rb-icon.py --svg-only
 
 The drawing is the H of the HDF Group's mark, its crossbar cut through the
@@ -42,6 +44,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'resources/images/rb-icon.svg'
 PNG32 = ROOT / 'resources/images/rb-icon-32.png'
 PNG180 = ROOT / 'resources/images/rb-icon-180.png'
+VSCODE = ROOT / 'rb-vscode/icon.png'   # the extension's, on no plate, as the 32 px one
+VSCODE_SIZE = 256                      # a multiple of 32, so the upright edges stay on pixels
 CHROME = os.environ.get('CHROME', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 
 # The inputs, in units of the 64-unit square as they show on screen.
@@ -357,11 +361,14 @@ def main():
     rasterise(f'<!doctype html><body style="margin:0;background:{TOUCH_PLATE}">'
               f'<img src="{src}" width="{TOUCH_DRAWN}" height="{TOUCH_DRAWN}" '
               f'style="display:block;margin:{pad}px">', PNG180, 180, 180)
-    for png, size in ((PNG32, 32), (PNG180, 180)):
+    rasterise('<!doctype html><body style="margin:0;background:transparent">'
+              f'<img src="{src}" width="{VSCODE_SIZE}" height="{VSCODE_SIZE}" style="display:block">',
+              VSCODE, VSCODE_SIZE, VSCODE_SIZE)
+    for png, size in ((PNG32, 32), (PNG180, 180), (VSCODE, VSCODE_SIZE)):
         bad = looks_drawn(png, size)
         if bad:
             sys.exit(bad)
-    print(f'wrote {PNG32.relative_to(ROOT)} and {PNG180.relative_to(ROOT)}')
+    print(f'wrote {PNG32.relative_to(ROOT)}, {PNG180.relative_to(ROOT)} and {VSCODE.relative_to(ROOT)}')
 
 
 if __name__ == '__main__':
