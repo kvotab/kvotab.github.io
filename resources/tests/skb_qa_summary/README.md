@@ -60,3 +60,15 @@ holds, on purpose:
 - **An item with no entry** (a mail attachment, say) is a synthetic drop of a
   `File` made in the page. Chrome gives such an item no `webkitGetAsEntry()`,
   so this reaches the branch that takes it as a file on its own.
+- **SheetJS**: the page loads its own copy from `vendors/js/`. The suite
+  checks that the loaded `XLSX.version` is the one in the file name, and that
+  it is 0.20.2 or later. Versions before 0.19.3 have a prototype-pollution
+  flaw (CVE-2023-30533) and versions before 0.20.2 a slow-regex flaw
+  (CVE-2024-22363), both triggered by crafted files. Reading whole folders
+  makes such a file more likely to reach the page.
+- **Layout**: the page's width is compared with the window's at 1280 px, and
+  on a 375 × 548 phone with touch emulated, where the filter fields must be
+  16 px (iOS zooms into smaller ones and stays zoomed). In the dark theme,
+  each summary card's number must contrast 4.5:1 or more with its card.
+  Colours are read back through a canvas, because a `color-mix()` background
+  computes to `color(srgb …)`, not `rgb()`.

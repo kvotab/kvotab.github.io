@@ -14,6 +14,7 @@ others. Each item keeps its own licence.
 | [cytoscape-svg](https://github.com/kinimesi/cytoscape-svg) | MIT | `vendors/js/cytoscape-svg.js` |
 | [jsTree](https://www.jstree.com/) | MIT | header in `vendors/js/jstree.min.js`; theme in `vendors/css/jstree/` |
 | [math.js](https://mathjs.org/) | Apache-2.0 | `vendors/js/LICENSE-math.js.txt` |
+| [SheetJS Community Edition](https://sheetjs.com/) (`xlsx`) 0.20.3 | Apache-2.0 | `vendors/js/LICENSE-xlsx.txt`; header in `vendors/js/xlsx-0.20.3.full.min.js` |
 | [FileSaver.js](https://github.com/eligrey/FileSaver.js) | MIT | `vendors/js/FileSaver.min.js` |
 | [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) (ported to JavaScript, and from there to Python) | MIT | `resources/js/ode/julia/LICENSE`, `kompartment/src/ode/julia/LICENSE`, `kompartment/python/kompartment/engine/solvers/julia/LICENSE` |
 | [Krylov.jl](https://github.com/JuliaSmoothOptimizers/Krylov.jl) (its GMRES, ported to JavaScript and Python) | MPL-2.0 | headers in `resources/js/ode/julia/core/krylov.js` (and its copies in `kompartment/src/ode/julia/core/` and `resources/js/ode-julia.js`), `kompartment/python/kompartment/engine/solvers/julia/krylov.py` |
@@ -28,14 +29,14 @@ others. Each item keeps its own licence.
 ## Libraries loaded from public CDNs
 
 jQuery and jQuery UI (MIT), MathJax (Apache-2.0), Leaflet (BSD-2-Clause),
-SheetJS `xlsx` (Apache-2.0), SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip
-(MIT/GPLv3 dual), pdf.js (Apache-2.0), sql.js (MIT, with SQLite, public
-domain), h5wasm-plugins (ISC; the compression libraries it is built from keep
-their own licences) only when an HDF5 file in `rb.html` needs one of its
-decompressors, and — only when a model in Kompartment
-asks for a SciPy solver — Pyodide (MPL-2.0) with the CPython (PSF), NumPy and
-SciPy (BSD-3-Clause) builds it carries. They are fetched by the visitor's
-browser from their publishers and are not redistributed here.
+SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip (MIT/GPLv3 dual), pdf.js
+(Apache-2.0), sql.js (MIT, with SQLite, public domain), h5wasm-plugins (ISC;
+the compression libraries it is built from keep their own licences) only when
+an HDF5 file in `rb.html` needs one of its decompressors, and — only when a
+model in Kompartment asks for a SciPy solver — Pyodide (MPL-2.0) with the
+CPython (PSF), NumPy and SciPy (BSD-3-Clause) builds it carries. They are
+fetched by the visitor's browser from their publishers and are not
+redistributed here.
 
 ## Work followed, not copied
 

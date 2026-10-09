@@ -19,7 +19,10 @@ and real directory entries. Checked:
 - a drop outside the drop zone is taken, and so is a dropped item with no
   entry (a mail attachment, say);
 - "Choose a folder", clicked or by Enter, opens the folder chooser and
-  nothing else.
+  nothing else;
+- the SheetJS loaded is the vendored copy, 0.20.2 or later;
+- no sideways scroll at 1280 px or on a 375 px phone, whose fields are 16 px
+  (smaller ones make iOS zoom), and the summary cards read in the dark theme.
 
 Serve the repository root and start headless Chrome, by default on ports 8765
 and 9222 (QC_HTTP_PORT and QC_CDP_PORT choose others):
@@ -223,6 +226,12 @@ async def main():
                 break
             await asyncio.sleep(0.05)
 
+        # The SheetJS the page loads is its own copy, and not one with the two published vulnerabilities.
+        ver = await page.ev('XLSX.version')
+        src = await page.ev("[...document.scripts].map(e => e.getAttribute('src') || '').find(x => /xlsx/.test(x)) || ''")
+        check(f'vendors/js/xlsx-{ver}.full.min.js' in src and tuple(int(x) for x in ver.split('.')) >= (0, 20, 2),
+              'SheetJS is the vendored copy, 0.20.2 or later (CVE-2023-30533, CVE-2024-22363)', [ver, src])
+
         # An .xls (BIFF8) workbook, written by the page's own SheetJS.
         xls = base64.b64decode(await page.ev(
             "(() => { const wb = XLSX.utils.book_new();"
@@ -374,6 +383,30 @@ async def main():
             " document.body.dispatchEvent(new DragEvent('drop', {dataTransfer: dt, bubbles: true, cancelable: true})); })()"))
         got = await page.ev("rows.filter(r => r.id === 'p9').map(r => [r.folder, r.path])")
         check(entry is None and got == [['', 'bilaga.xlsx']], 'a dropped item with no entry is read as a file on its own', [entry, got])
+
+        # 13. No sideways scroll, at a desktop width and on a phone (where fields under 16px make iOS zoom).
+        wide = "[document.documentElement.scrollWidth, document.documentElement.clientWidth]"
+        check((lambda w: w[0] <= w[1])(await page.ev(wide)), 'no sideways scroll at 1280 px', await page.ev(wide))
+        await page.send('Emulation.setDeviceMetricsOverride', {'width': 375, 'height': 548, 'deviceScaleFactor': 2, 'mobile': True})
+        await page.send('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 5})
+        await page.send('Page.reload', {'ignoreCache': True})
+        for _ in range(200):
+            if await page.ev("typeof XLSX !== 'undefined' && typeof queue !== 'undefined' && document.readyState === 'complete'"):
+                break
+            await asyncio.sleep(0.05)
+        await page.drop([root])
+        phone = await page.ev(wide + ".concat(['id-search', 'folder-filter'].map(id => parseFloat(getComputedStyle($(id)).fontSize)))")
+        check(phone[0] <= phone[1] == 375 and min(phone[2:]) >= 16, 'no sideways scroll on a 375 px phone, and its fields are 16 px', phone)
+
+        # 14. In the dark theme every summary card's number stands out from its card (4.5:1 or more).
+        contrast = await page.ev(
+            "(() => { document.documentElement.setAttribute('data-theme', 'dark');"
+            " const c = document.createElement('canvas').getContext('2d', {willReadFrequently: true});"
+            " const rgb = s => { c.clearRect(0, 0, 1, 1); c.fillStyle = '#000'; c.fillStyle = s; c.fillRect(0, 0, 1, 1); return [...c.getImageData(0, 0, 1, 1).data].slice(0, 3); };"
+            " const lum = a => a.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);"
+            " return [...document.querySelectorAll('.card')].map(card => { const [x, y] = [lum(rgb(getComputedStyle(card.querySelector('.card-value')).color)),"
+            " lum(rgb(getComputedStyle(card).backgroundColor))].sort((p, q) => q - p); return Math.round((x + 0.05) / (y + 0.05) * 10) / 10; }); })()")
+        check(len(contrast) == 5 and min(contrast) >= 4.5, 'in the dark theme every summary card reads (contrast 4.5:1 or more)', contrast)
 
         check(not page.errors, 'no exception or console error', page.errors)
     finally:
