@@ -891,7 +891,7 @@
   }
 
   /* Transform columns from a column list (a launch dialog's, Graph
-     Builder's): the Transform, Distributional and Date Time items for
+     Maker's): the Transform, Distributional and Date Time items for
      column of table. Each makes a real formula column after the column (in
      the table, with Undo) and calls onMade(newColumn) (for Lag Multiple, once
      per column), so the list can show it and cast it into a role. */
@@ -2105,7 +2105,7 @@
 
   /* ---- File > Import Multiple Files --------------------------------------------------------------------------------- */
   /* Many files into one table: as text, a row per file with its name and
-     its text (for Text Explorer), or as data, the files' tables stacked with
+     its text (for Text Analysis), or as data, the files' tables stacked with
      a column of the file each row came from. Files, or a folder's. */
   function importMultipleCommand(app) {
     let files = [];
@@ -2135,7 +2135,7 @@
     as.addEventListener('change', () => { sizes.cb.disabled = dates.cb.disabled = as.value !== 'text'; if (as.value === 'stack' && filterIn.value.trim() === '*.txt; *.csv; *.md') filterIn.value = '*.csv; *.tsv; *.txt; *.xlsx'; show(); });
     show();
     const body = el('div', { class: 'smt-form' },
-      el('p', { class: 'sm-dialog-lead', text: 'Many files into one table: a row per file, its name and its whole text (for Text Explorer), or the rows of their tables one after another. Choose the files, or a folder (with its subfolders).' }),
+      el('p', { class: 'sm-dialog-lead', text: 'Many files into one table: a row per file, its name and its whole text (for Text Analysis), or the rows of their tables one after another. Choose the files, or a folder (with its subfolders).' }),
       el('div', { class: 'sm-inline' }, b1, b2, pickFiles, pickFolder), listNote,
       field('File name filter', filterIn, 'patterns separated by ; with * for any characters; * takes every file'),
       field('Import as', as), el('div', { class: 'sm-inline' }, sizes.el, dates.el), field('Output table name', nameIn), msg);
@@ -2251,7 +2251,7 @@
     'cmd:indicator': { kicker: 'Cols > Utilities', title: 'Make Indicator Columns', lead: 'For a nominal or ordinal column, a 0/1 column per level: 1 where the row has the level, 0 elsewhere, missing where the column is missing. As formula columns, they follow the column.' },
     'cmd:binning': { kicker: 'Cols > Utilities', title: 'Make Binning Column', lead: 'Cut a numeric column into bins: of equal width (rounded widths, or the width you give), of equal counts (quantiles, JMP\'s definition) or at your cut points. The new column is ordinal, labelled by the ranges, in their order; as a formula column it follows the column.' },
     'cmd:standardize': { kicker: 'Cols > Utilities', title: 'Standardize', lead: 'For each selected numeric column a formula column Col Standardize(:x): (x − mean)/standard deviation over all rows.' },
-    'file:importmultiple': { kicker: 'File', title: 'Import Multiple Files', lead: 'Many files into one table, as JMP\'s Import Multiple Files: as text, a row per file with its name and its whole text (a Text column for Analyze > Text Explorer), or as data, the tables of the files one after another with a File Name column.', sections: [
+    'file:importmultiple': { kicker: 'File', title: 'Import Multiple Files', lead: 'Many files into one table, as JMP\'s Import Multiple Files: as text, a row per file with its name and its whole text (a Text column for Analyze > Text Analysis), or as data, the tables of the files one after another with a File Name column.', sections: [
       { heading: 'Fields', choices: [
         ['Choose Files…, Choose a Folder…', 'The files: several at once, or every file of a folder and its subfolders (then a Path column holds where each is). Files dropped on the dialog are taken too.'],
         ['File name filter', 'Which of the chosen files are read: patterns separated by semicolons, * for any characters and ? for one (*.txt; *.csv; *.md at the start, *.csv; *.tsv; *.txt; *.xlsx when importing as data). * takes every file.'],

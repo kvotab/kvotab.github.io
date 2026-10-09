@@ -33,7 +33,7 @@
 
   const SYMBOLS = ['circle', 'square', 'diamond', 'triangle-up', 'triangle-down', 'cross', 'x', 'star', 'hexagon', 'pentagon', 'circle-open', 'square-open'];
   // The points' colour. #2f6690 is 2.3:1 on the dark theme's panels, so the
-  // dark theme takes the lighter blue Graph Builder uses there (5.2:1).
+  // dark theme takes the lighter blue Graph Maker uses there (5.2:1).
   const LIGHT_BASE = '#2f6690', DARK_BASE = '#6fa3d6';
   const baseColor = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? DARK_BASE : LIGHT_BASE);
   const BAR = '#8fa9c2';
@@ -41,7 +41,7 @@
 
   // What Edit > Undo leaves alone in a report's spec: what changes without a
   // run and is no analysis (a graph's size, the code shown), and Graph
-  // Builder's state, which its own Undo takes back.
+  // Maker's state, which its own Undo takes back.
   const UNDO_SKIP = ['plotSizes', 'showCode', 'gb'];
   function specKey(spec) {
     const options = { ...((spec && spec.options) || {}) };
@@ -360,7 +360,7 @@
      util.one_line and SM.util.oneLine keep the comments that write values on
      one line where they are written; this is the net under them. The values
      are indexed by the text before their first line break, so a table of
-     long texts (Text Explorer's) costs a lookup per line of the code. */
+     long texts (Text Analysis's) costs a lookup per line of the code. */
   const BREAK = /[\r\n\0]/g;
   const KEY = 12;
   const breakIndexes = new WeakMap();
@@ -580,7 +580,7 @@
      options.plotSizes, by the graph's key (SM.axis.keyOf: the outlines it is
      in, its title, its place), so a redraw, Redo, the same graph of every By
      group and a saved project keep it. A graph whose platform keeps its own
-     size (Graph Builder's Graph Size) passes opts.sizer = { set(w, h),
+     size (Graph Maker's Graph Size) passes opts.sizer = { set(w, h),
      reset() }; one of a grid of small graphs (a profiler's cells, fit:
      false) or with resize: false has no grip. */
   const MIN_W = 240, MIN_H = 140, MAX_H = 2400;
@@ -616,7 +616,7 @@
     }
     return 0;
   }
-  // (a graph whose platform keeps its size, Graph Builder, is measured by its own parent)
+  // (a graph whose platform keeps its size, Graph Maker, is measured by its own parent)
   const roomOfPlot = (p) => (p.opts.sizer ? roomFor(p.box) : roomAround(p.box));
 
   let webgl = null;
@@ -634,7 +634,7 @@
       this.table = opts.table || (report && report.table) || null;
       this.opts = opts;
       // rowColors: false for a graph coloured by a column of its own (Graph
-      // Builder's Color zone), where the rows' colours would fight it.
+      // Maker's Color zone), where the rows' colours would fight it.
       this.rowColors = opts.rowColors !== false;
       this.width = opts.width || 420;
       this.ownWidth = this.width;
@@ -768,7 +768,7 @@
        140 to 2400 px tall. keep: stored with the report (at the end of a
        drag, not at each step of it). */
     setSize(w, h, { keep = true } = {}) {
-      // (a platform that keeps the size itself, Graph Builder, bounds it itself)
+      // (a platform that keeps the size itself, Graph Maker, bounds it itself)
       const room = !this.opts.sizer && this.box.isConnected ? roomAround(this.box) : 0;
       w = Math.round(Math.max(MIN_W, room ? Math.min(w, room) : w));
       h = Math.round(Math.min(MAX_H, Math.max(MIN_H, h)));

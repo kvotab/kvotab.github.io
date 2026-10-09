@@ -1,7 +1,7 @@
 """What the predictive-modeling platforms share.
 
-Partition, Bootstrap Forest, Boosted Tree, Neural, K Nearest Neighbors,
-Naive Bayes, Support Vector Machines, Gaussian Process and Model Screening
+Partition, Decision Forest, Boosted Tree, Neural, K Nearest Neighbors,
+Naive Bayes, Support Vector Machines, Gaussian Process and Fit Many Models
 learn from some rows and are judged on others, as JMP's platforms are:
 
   a Validation column   0 or "Training": the rows a model learns from;
@@ -380,7 +380,7 @@ def validation_codes(table, validation, raw):
 def fold_masks(P):
     """K-fold crossvalidation by a K-fold Validation column (P.folds): [(fit rows, held-out rows), ...], one
     pair of boolean masks over P's rows per fold, in the folds' order. [] without folds. The helper the
-    platforms that crossvalidate (Partition, Neural, Generalized Regression, Model Screening, K Nearest
+    platforms that crossvalidate (Partition, Neural, Penalized Regression, Fit Many Models, K Nearest
     Neighbors, Support Vector Machines, Naive Bayes) use when a Validation column gives the folds."""
     if P.folds is None:
         return []
@@ -986,7 +986,7 @@ def group_metrics(table, group, at, actual, prob=None, sets=None, w=None, cut=0.
                 solved so that its false positive rate is nearest the reference group's at the common threshold;
       adjust    {'a', 'b'}: the probabilities rescaled to a true event rate, p a / (p a + (1 - p) b);
       head      the code of the model (as predictive.threshold's), for the code of the result;
-      models    several models audited alike in place of prob (Model Screening's selected methods): [{'label',
+      models    several models audited alike in place of prob (Fit Many Models' selected methods): [{'label',
                 'prob', 'prob_cv', 'expr', 'expr_cv'}], each one's probabilities of the target level (prob_cv: out of
                 fold, a Crossvalidation set of every row) and the head's names of its n x 2 probabilities
                 (fitted["label"], oof["label"]). The groups, the set and the reference group are the same for all;
@@ -1116,7 +1116,7 @@ def group_lines(group, names, labels, thr, sname, target, adjust, equal, ref, cu
 
 
 def group_lines_many(group, names, labels, start, sname, target, adjust, equal, ref, models):
-    """The code of Group Metrics of several models (Model Screening's methods), after the head that names each one's
+    """The code of Group Metrics of several models (Fit Many Models' methods), after the head that names each one's
     probabilities: every model audited alike, a row per model and group."""
     cv = sname == 'Crossvalidation'
     exprs = ', '.join(f'{json.dumps(q.get("label"))}: {q.get("expr_cv" if cv else "expr") or ("oof" if cv else "fitted")}' for q in models)
@@ -1165,7 +1165,7 @@ def threshold(y, prob, levels, sets=None, w=None, rows=None, head=None, select=(
               (None: every row counts once), as P.code() and the platforms' graph heads do; None: no code
       select  lines after the head that pick this response's y and fitted (Neural's several responses)
       code    {key: Python expression of the model's n x 2 probabilities} when the head names them otherwise
-      cv      {key: n x 2 out-of-fold probabilities}: a 'Crossvalidation' set of every row (Model Screening's K Fold);
+      cv      {key: n x 2 out-of-fold probabilities}: a 'Crossvalidation' set of every row (Fit Many Models' K Fold);
               code then names them too, as {key: (fitted expression, crossvalidated expression)}
       values  the two levels as the table holds them (numbers for a numeric column), for Save Threshold Formula;
               None: levels

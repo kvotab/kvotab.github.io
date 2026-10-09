@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""smui.html in a real browser: Analyze > Predictive Modeling > Model
-Screening, and Make Validation Column.
+"""smui.html in a real browser: Analyze > Predictive Modeling > Fit Many
+Models, and Make Validation Column.
 
 The platform and the command sit in Analyze > Predictive Modeling (the
 command in Cols > Modeling Utilities too), and scikit-learn loads on the
@@ -16,7 +16,7 @@ every red triangle opens; ROC and lift curves, Decision Threshold (the
 engine's counts, a new threshold), Actual by Predicted (linked both ways),
 the Prediction Profiler and Save Columns of one method work; K-fold gives
 the Crossvalidation tables; Make Validation Column makes a stratified
-column exact to the proportions, which Model Screening then takes (a Test
+column exact to the proportions, which Fit Many Models then takes (a Test
 outline); By (each group's Decision Threshold its own), Redo, a project
 round trip, the dark theme, phone width, the
 (i) topics and Help (the launch dialog's (i) gives every role, option and
@@ -317,7 +317,7 @@ MAKE_CHARTS = '''
 })
 '''
 
-# Fit Model's Generalized Regression on the charts' table: its effects, one per X.
+# Fit Model's Penalized Regression on the charts' table: its effects, one per X.
 OPEN_GENREG = '''
 (async (yname, xs, options) => {
   const t = SM.app.tables.find((q) => q.name === 'ScreenCharts');
@@ -345,8 +345,8 @@ def screening_compare(lab, g, F):
 
 
 async def charts(page):
-    """Every comparison's graph of Model Screening: its block under it, run in the page (every method fitted
-    again), its figure the graph's; and Fit Model's Generalized Regression's Actual by Predicted Plot, whose
+    """Every comparison's graph of Fit Many Models: its block under it, run in the page (every method fitted
+    again), its figure the graph's; and Fit Model's Penalized Regression's Actual by Predicted Plot, whose
     block smui-predict.js makes from the code of its call."""
     await page.ev(GRAPHS_JS)
     await page.ev(UP.PM_JS)
@@ -371,10 +371,10 @@ async def charts(page):
         total += n
         await page.ev(f'SM.app.closeReport({last})')
     check('charts: the blocks ran and drew the page\'s graphs', total, 10 + 4 + 4 + 2)
-    # Fit Model's Generalized Regression: the Actual by Predicted Plot (smui-predict.js), its block from the call's code
+    # Fit Model's Penalized Regression: the Actual by Predicted Plot (smui-predict.js), its block from the call's code
     for label, yname, options, sets in (
-            ('Generalized Regression, the lasso, a holdback', 'y', {'personality': 'genreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
-            ('Generalized Regression, Poisson (the log link), AICc', 'count', {'personality': 'genreg', 'dist': 'poisson', 'gr:method': 'lasso', 'gr:diag': True}, ['Training'])):
+            ('Penalized Regression, the lasso, a holdback', 'y', {'personality': 'genreg', 'dist': 'normal', 'gr:method': 'lasso', 'gr:crit': 'holdback', 'gr:holdback': 0.3, 'gr:diag': True, 'seed': '4'}, ['Training', 'Validation']),
+            ('Penalized Regression, Poisson (the log link), AICc', 'count', {'personality': 'genreg', 'dist': 'poisson', 'gr:method': 'lasso', 'gr:diag': True}, ['Training'])):
         r = await page.ev(f'({OPEN_GENREG})({json.dumps(yname)}, {json.dumps(xs)}, {json.dumps(options)})', timeout=900)
         check(f'charts: {label}: no errors', r['errors'], [])
         gs = [g for g in await page.ev(f'__pm.graphs({last})', timeout=600) if g['label'].startswith('Actual by predicted')]
@@ -404,7 +404,7 @@ async def main():
       const sub = (menu, label) => { const it = SM.app.menuItems(menu).find(i => i.label === label); return it ? (typeof it.submenu === 'function' ? it.submenu() : it.submenu).filter(i => !i.separator).map(i => i.label) : []; };
       return { pm: sub('Analyze', 'Predictive Modeling'), mu: sub('Cols', 'Modeling Utilities') };
     })()''')
-    check('Analyze > Predictive Modeling lists Model Screening and Make Validation Column', ('Model Screening…' in menus['pm'], 'Make Validation Column…' in menus['pm']), (True, True))
+    check('Analyze > Predictive Modeling lists Fit Many Models and Make Validation Column', ('Fit Many Models…' in menus['pm'], 'Make Validation Column…' in menus['pm']), (True, True))
     check('Cols > Modeling Utilities lists Make Validation Column', 'Make Validation Column…' in menus['mu'], True)
     check('the table', await page.ev(f'({MAKE})(1000)'), 1000)
 
@@ -451,9 +451,9 @@ async def main():
                outlines: [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent) };
     })()''', timeout=900)
     labels = [c[0] for c in r['start']]
-    check('the launch dialog lists JMP\'s methods, XGBoost, LightGBM and Ridge among them', labels, ['Decision Tree', 'Bootstrap Forest', 'Boosted Tree', 'XGBoost', 'LightGBM', 'K Nearest Neighbors', 'Naive Bayes', 'Neural', 'Support Vector Machines', 'Discriminant', 'Fit Least Squares',
-                                                        'Generalized Regression Lasso', 'Generalized Regression Elastic Net', 'Generalized Regression Ridge', 'Fit Stepwise'])
-    check('... every one ticked but Fit Stepwise and the ones beyond JMP\'s defaults (XGBoost and LightGBM load a package)', [c[0] for c in r['start'] if not c[1]], ['XGBoost', 'LightGBM', 'Generalized Regression Ridge', 'Fit Stepwise'])
+    check('the launch dialog lists JMP\'s methods, XGBoost, LightGBM and Ridge among them', labels, ['Decision Tree', 'Decision Forest', 'Boosted Tree', 'XGBoost', 'LightGBM', 'K Nearest Neighbors', 'Naive Bayes', 'Neural', 'Support Vector Machines', 'Discriminant', 'Fit Least Squares',
+                                                        'Penalized Regression Lasso', 'Penalized Regression Elastic Net', 'Penalized Regression Ridge', 'Fit Stepwise'])
+    check('... every one ticked but Fit Stepwise and the ones beyond JMP\'s defaults (XGBoost and LightGBM load a package)', [c[0] for c in r['start'] if not c[1]], ['XGBoost', 'LightGBM', 'Penalized Regression Ridge', 'Fit Stepwise'])
     check('a continuous Y strikes out Naive Bayes and Discriminant', [c[0] for c in r['cont'] if c[2]], ['Naive Bayes', 'Discriminant'])
     check('the linear method is named by the Y: Ordinal Logistic, Logistic Regression', (r['ord'][10][0], r['nomi'][10][0], [c[0] for c in r['nomi'] if c[2]]), ('Ordinal Logistic', 'Logistic Regression', []))
     # day has 250 values: neither sets nor folds (4 to 50), and the hint says so before the engine refuses it
@@ -462,7 +462,7 @@ async def main():
     check('no method ticked: an error', 'choose at least one' in r['none'], True)
     check('the options: Validation Portion 0.2, Informative Missing, Random Seed empty', r['opts'], [['Validation Portion', '0.2'], ['Informative Missing', True], ['Random Seed', '']])
     check('the options reach the report', (r['options']['methods'], r['options']['kfold'], r['options']['portion']), ([k for k in ('tree', 'forest', 'boosted', 'knn', 'nb', 'neural', 'svm', 'lda', 'linear', 'lasso', 'enet')], False, 0.2))
-    check('the report\'s outlines', r['outlines'], ['Model Screening for cls', 'Summary Across the Models', 'Training', 'Validation', 'Method Details'])
+    check('the report\'s outlines', r['outlines'], ['Fit Many Models for cls', 'Summary Across the Models', 'Training', 'Validation', 'Method Details'])
     print(f'      (1000 rows, 9 factors, 11 methods, scikit-learn loaded on the way: {r["seconds"]:.1f} s)')
     check('the first report, scikit-learn loaded on the way, in under a minute', r['seconds'] < 60, True)
     check('scikit-learn is loaded by the first call', await page.ev("SM.engine.versions['scikit-learn']"), '1.8.0')
@@ -701,7 +701,7 @@ async def main():
     check('Cols > Modeling Utilities: the same command; numeric 0/1/2, random, 700 and 300 rows', (r['type'], r['counts']), (['numeric', 'nominal'], [700, 300, 0]))
     rep = await page.ev(open_report_js('screening', {'y': ['y'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Validation']}, {'seed': '3', 'methods': ['tree', 'linear', 'lasso']}), timeout=600)
     eng = await page.ev(engine_js({'methods': ['tree', 'linear', 'lasso'], 'kfold': 0, 'repeats': 1}), timeout=300)
-    check('Model Screening takes the made column: Training, Validation and Test outlines', ([o for o in rep['outlines'] if o in ('Training', 'Validation', 'Test')], eng['n']), (['Training', 'Validation', 'Test'], {'Training': 600, 'Validation': 200, 'Test': 200}))
+    check('Fit Many Models takes the made column: Training, Validation and Test outlines', ([o for o in rep['outlines'] if o in ('Training', 'Validation', 'Test')], eng['n']), (['Training', 'Validation', 'Test'], {'Training': 600, 'Validation': 200, 'Test': 200}))
     note = await page.ev('[...SM.app.reports.at(-1).body.querySelectorAll(".sm-ob-note")].map(e => e.textContent).find(t => /Validation column/.test(t)) || ""')
     check('... and says the sets come from it', 'Sets from the Validation column Validation: Training 600, Validation 200, Test 200 rows.' in note, True)
     script = await page.ev('SM.app.reports.at(-1).pythonScript()')
@@ -715,11 +715,11 @@ async def main():
       return { name: t.name, rows: t.nrows, cols: t.columns.map(c => c.name), finite: t.columns.slice(1).every(c => c.values.every(Number.isFinite)) };
     })()''', timeout=900)
     check('Bootstrap of a Summary column: the screening again on resampled rows, a column per method', (r['name'], r['rows'], sorted(r['cols'][1:]), r['finite']),
-          ('Bootstrap Results of Model Screening for y', 3, sorted(['Decision Tree', 'Fit Least Squares', 'Generalized Regression Lasso']), True))
+          ('Bootstrap Results of Fit Many Models for y', 3, sorted(['Decision Tree', 'Fit Least Squares', 'Penalized Regression Lasso']), True))
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.reports.at(-1)))')
     await shot(page, 'screening-04-validation.png')
 
-    # ---- Make Validation Column's K Fold (the dialog) and Stratify by Group; Model Screening crossvalidates by the folds
+    # ---- Make Validation Column's K Fold (the dialog) and Stratify by Group; Fit Many Models crossvalidates by the folds
     r = await page.ev('''(async () => {
       SM.app.showTable(SM.app.tables.find(t => t.name === 'Screen').id);
       SM.screening.makeValidationColumn(SM.app);
@@ -744,7 +744,7 @@ async def main():
     rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3', 'g'], 'validation': ['Fold']}, {'seed': '4', 'methods': ['tree', 'linear', 'knn']}), timeout=900)
     eng_f = await page.ev(engine_js({'methods': ['tree', 'linear', 'knn'], 'kfold': 0, 'repeats': 1}), timeout=600)
     note = await page.ev('[...SM.app.reports.at(-1).body.querySelectorAll(".sm-ob-note")].map(e => e.textContent).find(t => /folds of the Validation column/.test(t)) || ""')
-    check('Model Screening with the K Fold column: crossvalidated by its 5 folds, the Crossvalidation outline, compared on it', (rep['errors'], 'Crossvalidation' in rep['outlines'], eng_f['kfold'], eng_f['fold_column'], eng_f['compare'], bool(note)),
+    check('Fit Many Models with the K Fold column: crossvalidated by its 5 folds, the Crossvalidation outline, compared on it', (rep['errors'], 'Crossvalidation' in rep['outlines'], eng_f['kfold'], eng_f['fold_column'], eng_f['compare'], bool(note)),
           ([], True, 5, 'Fold', 'Crossvalidation', True))
     cvt = rows_of(await page.ev(table_under_js('Crossvalidation', 0)))
     check('... the Crossvalidation table holds the engine\'s means over the folds', max(abs(num(cvt[m['label']]['Generalized RSquare']) - m['measures']['Crossvalidation']['generalized_rsquare']) for m in eng_f['methods']) < 5.1e-5, True)
@@ -776,7 +776,7 @@ async def main():
 
     # ---- By, Redo, a project
     rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear', 'nb'], 'roc': True}), timeout=600)
-    check('By g: one screening per level', [o for o in rep['outlines'] if o.startswith('Model Screening for')], ['Model Screening for cls g=a', 'Model Screening for cls g=b', 'Model Screening for cls g=c'])
+    check('By g: one screening per level', [o for o in rep['outlines'] if o.startswith('Fit Many Models for')], ['Fit Many Models for cls g=a', 'Fit Many Models for cls g=b', 'Fit Many Models for cls g=c'])
     r = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const tbls = [...rep.body.querySelectorAll('table.sm-rt')].filter(t => t.dataset.rtKey === 'summary');
       const combined = SM.report.combineRT(tbls, 'x'); return { n: tbls.length, groups: tbls.map(t => t.dataset.group), rows: combined.nrows }; })()''')
     check('... their Summaries combine into one table', (r['n'], r['groups'], r['rows']), (3, ['g=a', 'g=b', 'g=c'], 9))
@@ -805,7 +805,7 @@ async def main():
     check('a project: its own table, the By column found again', (r['newTable'], r['by']), (True, ['g']))
     check('... the options kept, the same Summary, no errors', (r['opts'], r['same'], r['heads'], r['errors']), ([True, 'linear', ['tree', 'linear', 'nb']], True, 6, 0))
 
-    # ---- By: each group's Decision Threshold its own (JMP's By reports), under the keys Model Screening gives it (cut, cutLevel)
+    # ---- By: each group's Decision Threshold its own (JMP's By reports), under the keys Fit Many Models gives it (cut, cutLevel)
     tid3 = await page.ev("SM.app.tables.find((t) => t.name === 'Screen').col('three').id")
     rep = await page.ev(open_report_js('screening', {'y': ['cls'], 'x': ['x1', 'x2', 'x3'], 'by': ['g']}, {'seed': '4', 'methods': ['tree', 'linear'], 'threshold': True, 'groupMetrics': tid3}), timeout=600)
     await page.ev('''(() => { const i = SM.app.reports.at(-1).body.querySelectorAll('input[aria-label="Probability threshold"]')[1]; i.focus(); i.select(); })()''')
@@ -909,15 +909,15 @@ async def main():
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
     helps = await page.ev('(() => { SM.app.showHelp("p-screening"); const row = document.getElementById("help-p-screening"); return row ? row.textContent : null; })()')
-    check('Help lists the platform with the scikit-learn it uses', bool(helps) and 'sklearn.ensemble' in helps and 'Model Screening' in helps, True)
+    check('Help lists the platform with the scikit-learn it uses', bool(helps) and 'sklearn.ensemble' in helps and 'Fit Many Models' in helps, True)
     topics = await page.ev('Object.keys(SM.platforms.get("screening").topics)')
     check('its topics', sorted(topics), sorted(['p:screening', 'p:screening:summary', 'p:screening:sets', 'p:screening:cv', 'p:screening:methods', 'p:screening:curves', 'p:screening:abp', 'p:screening:threshold', 'p:screening:ensemble', 'cmd:makevalidation']))
 
     # ---- the (i) explains every input: the launch dialog and its methods, Make Validation Column, the Decision Threshold
     d = await page.ev(info_js('dialog', "SM.app.launch('screening')", "dlg.querySelector('.sm-scr-launch')"))
     part = d.get('sections', {}).get('Method, K Fold Crossvalidation and the terms', [])
-    check('Model Screening: the launch dialog\'s (i) explains every method box, the K-fold fields and the terms', (len(d.get('inputs', [])), len(part), unexplained(d, 'Method, K Fold Crossvalidation and the terms'), all(len(t) > 30 for _, t in part)), (20, 20, [], True))
-    await dialog_help(page, "SM.app.launch('screening')", 'screening', 'Model Screening')
+    check('Fit Many Models: the launch dialog\'s (i) explains every method box, the K-fold fields and the terms', (len(d.get('inputs', [])), len(part), unexplained(d, 'Method, K Fold Crossvalidation and the terms'), all(len(t) > 30 for _, t in part)), (20, 20, [], True))
+    await dialog_help(page, "SM.app.launch('screening')", 'screening', 'Fit Many Models')
     mv = await page.ev(info_js('dialog', 'SM.screening.makeValidationColumn(SM.app);'))
     roles_mv, opts_mv = dict(mv.get('sections', {}).get('Roles', [])), dict(mv.get('sections', {}).get('Options', []))
     check('Make Validation Column: the (i) explains its three roles and nine options', (sorted(roles_mv), sorted(opts_mv), all(len(t) > 30 for t in [*roles_mv.values(), *opts_mv.values()]), mv.get('noTopic')),

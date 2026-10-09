@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The matplotlib code under the graphs of Distribution, Fit Y by X and Fit
+"""The matplotlib code under the graphs of Distribution, Bivariate Analysis and Fit
 Model: every snippet the backend writes is run on a CSV export of its table
 (as the notebook runs it, with matplotlib's Agg backend here), and the figure
 it draws is checked against the report's numbers: bar heights against the
@@ -525,7 +525,7 @@ def distribution_checks(check, run, np, pd, stats, call, table, data):
         check.near(f'fit {dist}: the density is the report\'s curve', float(np.max(np.abs(np.asarray(ns.get('f', [np.inf]), float) - np.asarray(want, float))) / max(want)), 0.0, abs_=tol)
 
 
-# ---- Fit Y by X ------------------------------------------------------------------
+# ---- Bivariate Analysis ------------------------------------------------------------------
 
 def fit_y_by_x_checks(check, run, np, pd, stats, call, table, data):
     import warnings
@@ -1001,7 +1001,7 @@ def fit_model_checks(check, run, np, pd, stats, call, table, data):
         got = [t_['s'] for t_ in ax['texts']]
         check(f'{label}: working correlation: the matrix of the subject the report shows', got, [f'{v:.2f}'.replace('-', '−') for row in M['values'] for v in row])
         check(f'{label}: working correlation: its labels', [t_ for t_ in ax['xticklabels'] if t_], M['labels'])
-    # ---- Generalized Regression: the solution path and its curve
+    # ---- Penalized Regression: the solution path and its curve
     Xg = rng.normal(0, 1, (n, 4)).round(3)
     yg = 1 + Xg @ np.array([1.0, 0.5, 0, -0.8]) + rng.normal(0, 1, n)
     wg = rng.uniform(0.5, 2, n).round(2)

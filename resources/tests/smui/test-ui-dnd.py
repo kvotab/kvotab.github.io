@@ -3,7 +3,7 @@
 dropped on.
 
 A column that has been dropped on a place (a launch dialog's role, Fit
-Model's and Multiple Imputation's model effects, a Graph Builder zone, a
+Model's and Multiple Imputation's model effects, a Graph Maker zone, a
 Tabulate zone) can be dragged again, with the mouse as a user drags it
 (Chrome's drag interception hands the page's own drag data over) and by
 touch (held, then moved). Checked, with what the page shows while the drag
@@ -30,7 +30,7 @@ dimmed, and a label by the pointer where a drop takes it out) and after it:
     order;
   - Multiple Imputation: its effects reordered, one taken out, a main
     effect moved onto a role; the pooled model is the one the list shows;
-  - Graph Builder: a column moved from one zone to another (one step of
+  - Graph Maker: a column moved from one zone to another (one step of
     Undo), refused by a zone that does not take it, reordered within a
     zone, put in place of a column of another zone, taken out by a drop on
     the column list and on the graph, a cancelled drag, one let go outside
@@ -46,7 +46,7 @@ dimmed, and a label by the pointer where a drop takes it out) and after it:
   - on a phone (touch emulation): a column held and moved from one role to
     another, one taken out (the dragged item under the finger struck
     through, with the label above it), a touch cancelled mid-drag that
-    leaves it, a Graph Builder column moved to another zone and a Tabulate
+    leaves it, a Graph Maker column moved to another zone and a Tabulate
     column moved to another zone.
 
 Start a server on the repository root and headless Chrome (the recipe is in
@@ -367,7 +367,7 @@ async def multiple_imputation(page):
     check('... without an error', r['errors'], [])
 
 
-# ---- Graph Builder's zones, on Students ---------------------------------------------------------------------
+# ---- Graph Maker's zones, on Students ---------------------------------------------------------------------
 # The graph as it is drawn: the zones (the columns in each), the title, the
 # Y axes' titles top to bottom, the X axes, the legend, the panels' labels,
 # and the points: how many there are and how many lie within the Y range
@@ -397,7 +397,7 @@ async def graph_builder(page):
     zone = lambda k: f"_rep.body.querySelector('.sm-gb-z-{k}')"
     chip = lambda k, n: f"D.item({zone(k)}, {json.dumps(n)})"
     g = await page.ev(GB_LOOK)
-    check('Graph Builder: the graph to drag in', (g['zones'], g['title'], g['legend']),
+    check('Graph Maker: the graph to drag in', (g['zones'], g['title'], g['legend']),
           ({'x': ['age'], 'y': ['height (cm)', 'weight (kg)'], 'overlay': ['sex']}, 'height (cm) & weight (kg) vs. age', ['F', 'M']))
 
     # reordered within Y: weight (kg) dropped on height (cm) takes its position, and the panels follow
@@ -562,7 +562,7 @@ async def help_texts(page):
         'Fit Model\'s Construct Model Effects (i)': await say('p:fitmodel:effects'),
         'Multiple Imputation\'s launch (i)': await say('launch:mi'),
         'Multiple Imputation\'s Analysis Model (i)': await say('p:mi:model'),
-        'Graph Builder\'s (i)': await say('p:graphbuilder'),
+        'Graph Maker\'s (i)': await say('p:graphbuilder'),
         'Tabulate\'s (i)': await say('p:tabulate'),
     }
     for what, text in words.items():
@@ -638,7 +638,7 @@ async def touch(page):
     await page.ev("D.dlg().querySelector('.sm-dialog-x').click()")
     await asyncio.sleep(0.3)
 
-    # Graph Builder: a column held in X and moved to Overlay (the report scrolls to it)
+    # Graph Maker: a column held in X and moved to Overlay (the report scrolls to it)
     await page.ev('''(async () => { const t = SM.app.tables.find((x) => x.name === 'Students'); SM.app.showTab(SM.app.tabOf(t));
       SM.app.launch('graphbuilder'); const rep = D.last(); await D.done(rep); window._rep = rep; const ref = (n) => ({ id: t.col(n).id, name: n });
       await _gb.update((S) => { S.zones.x = [ref('age')]; S.zones.y = [ref('height (cm)')]; }); return 1; })()''')
@@ -646,7 +646,7 @@ async def touch(page):
     await asyncio.sleep(0.3)
     mid = await hold_and_move(f"({AT})(D.item(_rep.body.querySelector('.sm-gb-z-x'), 'age'))", f"({AT})(_rep.body.querySelector('.sm-gb-z-overlay'))", 'D.marks()', far_top=560, name='d19-phone-gb.png')
     g = await page.ev(GB_LOOK)
-    check('phone: a Graph Builder column held in X and moved over Overlay: Overlay takes it', (mid['place'], mid['taken']), (['zone:overlay'], True))
+    check('phone: a Graph Maker column held in X and moved over Overlay: Overlay takes it', (mid['place'], mid['taken']), (['zone:overlay'], True))
     check('phone: let go there: moved, and the graph drawn again with a legend for each age', (g['zones'], g['legend']), ({'y': ['height (cm)'], 'overlay': ['age']}, ['12', '13', '14', '15', '16', '17']))
 
     # Tabulate: a column held in the rows and moved to the columns

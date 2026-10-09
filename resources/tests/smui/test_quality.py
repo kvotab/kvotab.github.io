@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Analyze > Quality and Process's backend (resources/py/smui/quality.py):
-Control Chart Builder, Process Capability, Pareto Plot and the Variability /
+Control Chart, Process Capability, Pareto Plot and the Variability /
 Attribute Gauge Chart.
 
 Checked against: the printed factors for control charts (Montgomery,

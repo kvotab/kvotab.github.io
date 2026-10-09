@@ -1,7 +1,7 @@
 /* ==========================================================================
    SMUI.HTML: ANALYZE > QUALITY AND PROCESS
 
-   Control Chart Builder   XBar & R, XBar & S, Individual & Moving Range,
+   Control Chart   XBar & R, XBar & S, Individual & Moving Range,
                            Run, P, NP, C, U, EWMA and CUSUM charts; phases,
                            the Western Electric / Nelson tests, limit
                            summaries, a short capability analysis, saved
@@ -227,7 +227,7 @@
   }
 
   /* ==================================================================================
-     Control Chart Builder
+     Control Chart
      ================================================================================== */
   const CHARTS = [
     ['auto', 'Automatic'], ['xbar_r', 'XBar & R'], ['xbar_s', 'XBar & S'], ['ir', 'Individual & Moving Range'], ['lj', 'Levey Jennings'],
@@ -368,7 +368,7 @@
     return ctx.rt(res.limits, { sortable: false, caption: null });
   }
 
-  /* Capability tables, shared by the Control Chart Builder and Process
+  /* Capability tables, shared by the Control Chart and Process
      Capability. */
   function capabilityParts(ctx, cap, ppm) {
     const lv = fmt(100 * (1 - ctx.alpha));
@@ -678,12 +678,12 @@
   }
 
   SM.platforms.register({
-    id: 'controlchart', label: 'Control Chart Builder', menu: 'Analyze/Quality and Process', order: 10, info: 'p:controlchart',
+    id: 'controlchart', label: 'Control Chart', menu: 'Analyze/Quality and Process', order: 10, info: 'p:controlchart',
     about: 'Shewhart control charts for variables (XBar & R, XBar & S, Individual & Moving Range, Levey Jennings, Run) and attributes (P, NP, C, U), EWMA and tabular CUSUM charts, with phases, the Western Electric / Nelson tests and JMP\'s Alarm Report (the samples out of control and the alarm rate of each chart), limit summaries, a capability analysis from the spec limits, and saved limits.',
     uses: ['numpy, scipy (the constants d2, d3, c4 by quadrature)', 'statsmodels.sandbox.stats.runs.runstest_1samp', 'scipy.stats.norm'],
     topics: {
       'p:controlchart': {
-        kicker: 'Analyze > Quality and Process', title: 'Control Chart Builder',
+        kicker: 'Analyze > Quality and Process', title: 'Control Chart',
         lead: 'A control chart plots a statistic of each subgroup in time order with its center line and control limits, k sigma (3 unless set) either side. Points outside the limits, or patterns inside them, say the process has changed.',
         sections: [
           { heading: 'Roles', choices: [['Y, Process', 'The measurements (or counts, for attribute charts). One chart per column.'], ['Subgroup', 'The subgroup (sample) each row belongs to; without it every row is a point, or consecutive rows form subgroups of a given size.'], ['Phase', 'Separate limits for each phase (before and after a change).'], ['n Trials', 'P, NP and U charts: the number inspected; without it every row is one unit.'], ['By', 'A report for each level.']] },
@@ -691,16 +691,16 @@
           { heading: 'Tests', text: 'Tests 1–8 of Western Electric and Nelson: beyond the limits, runs on one side, trends, oscillation, and points in the zones A, B and C (thirds of the distance to the limits). A failing point is red with its test number; the Tests outline lists them.' },
           { heading: 'Show Alarm Report', text: 'JMP\'s Alarm Report, from the red triangle: for each chart, numbered from the top, the samples out of control (failing a chosen test) and the alarm rate, their share of the chart\'s samples; the tests each chart runs; and the samples out of control with the tests they fail.' },
         ],
-        more: { label: 'Control Chart Builder', id: 'help-p-controlchart' },
+        more: { label: 'Control Chart', id: 'help-p-controlchart' },
       },
       'cc:alarm': {
-        kicker: 'Control Chart Builder', title: 'Alarm Report',
+        kicker: 'Control Chart', title: 'Alarm Report',
         lead: 'Which samples are out of control, chart by chart. A sample is out of control when it fails at least one of the tests its chart runs; the Alarm Rate (JMP\'s Proportion Out of Control) is the number of such samples over the chart\'s samples with a value. The charts are numbered by their Position from the top of the report: a process\'s XBar chart and its R chart are two.',
         sections: [
           { heading: 'The tables', choices: [['Alarms', 'Each chart: its samples, those out of control, the alarm rate and how many fail each chosen test (beyond JMP\'s table).'], ['Enabled Tests', 'The tests each chart runs, with what they look for.'], ['Samples Out of Control', 'Each sample out of control, its value and the tests it fails; click a line to select its rows.']] },
           { heading: 'Differences from JMP', text: 'Excluded rows are not in the charts, so they are never counted; JMP counts excluded samples only with Test Excluded Subgroups and Show Excluded Region, which are not here. The Samples column, the counts by test and the list of samples are beyond JMP\'s report.' },
         ],
-        more: { label: 'Control Chart Builder', id: 'help-p-controlchart' },
+        more: { label: 'Control Chart', id: 'help-p-controlchart' },
       },
       'p:capability': {
         kicker: 'Analyze > Quality and Process', title: 'Process Capability',
@@ -740,7 +740,7 @@
         return null;
       },
     },
-    title: () => 'Control Chart Builder',
+    title: () => 'Control Chart',
     triangle: controlTriangle,
     render: controlRender,
   });

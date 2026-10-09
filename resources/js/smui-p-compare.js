@@ -10,8 +10,8 @@
    report their notes say they were saved from ("from Partition for y"):
 
      Prob[no], Prob[yes]            from Partition for cls  -> Partition
-     Prob[no] 2, Prob[yes] 2        from Bootstrap Forest   -> Bootstrap Forest
-     Prob[yes] Discriminant         from Model Screening    -> Discriminant
+     Prob[no] 2, Prob[yes] 2        from Decision Forest   -> Decision Forest
+     Prob[yes] Discriminant         from Fit Many Models    -> Discriminant
      LR_Prob[0], LR_Prob[1]                                 -> LR
 
    The report:
@@ -19,7 +19,7 @@
      Predictors               each model, its columns and the report that made them
      Measures of Fit          every measure of every model in every group of the
                               Group column (the validation column), the best of
-                              each marked as Model Screening marks it
+                              each marked as Fit Many Models marks it
      ROC, Lift, Cum Gains     every model on one graph per group, for one level
      AUC Comparison           DeLong's comparison of the areas under the curves
      Confusion Matrix         each model's
@@ -570,7 +570,7 @@
      ====================================================================== */
   SM.platforms.register({
     id: 'compare', label: 'Model Comparison', menu: 'Analyze/Predictive Modeling', order: 80, info: 'p:compare', topics: TOPICS,
-    about: 'JMP Pro\'s Model Comparison: the predictions that models saved to the table (predicted values, or each model\'s probability columns grouped by their names and the reports they came from, or its predicted levels) compared on the same rows: the Measures of Fit of every model in every group of the validation column with the best of each marked (RSquare, RASE, AAE, MSE, MAPE and the correlation; Entropy and Generalized RSquare, Mean -Log p, RASE, Mean Abs Dev, the misclassification rate and the AUC), ROC, precision-recall, lift and cumulative gains curves of every model overlaid, DeLong\'s AUC Comparison, confusion matrices, the Decision Threshold of two levels, actual by predicted and residual by row, and Model Averaging, whose mean of the models is one more model and can be saved as formula columns.',
+    about: 'The predictions that models saved to the table (predicted values, or each model\'s probability columns grouped by their names and the reports they came from, or its predicted levels) compared on the same rows: the Measures of Fit of every model in every group of the validation column with the best of each marked (RSquare, RASE, AAE, MSE, MAPE and the correlation; Entropy and Generalized RSquare, Mean -Log p, RASE, Mean Abs Dev, the misclassification rate and the AUC), ROC, precision-recall, lift and cumulative gains curves of every model overlaid, DeLong\'s AUC Comparison, confusion matrices, the Decision Threshold of two levels, actual by predicted and residual by row, and Model Averaging, whose mean of the models is one more model and can be saved as formula columns.',
     uses: ['numpy', 'scipy.stats (chi2, norm)', 'the predictive platforms\' measures (predictive.py)'],
     launch: {
       lead: 'Choose the response and the columns of the models\' saved predictions; cast the validation column as Group to compare the models on the rows they did not learn from.',

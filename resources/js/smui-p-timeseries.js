@@ -2446,7 +2446,7 @@
     },
     'p:timeseries:sma': {
       kicker: 'Time Series', title: 'Simple Moving Average',
-      lead: 'JMP\'s Simple Moving Average: the mean of w consecutive values. No Centering puts the window at the value and the w − 1 before it; Centered around the value (an even width one value more before than after); Centered and Double Smoothed, for an even width, the mean of the two nearly centered windows, the 2 × w average of classical decomposition. As a forecast the average trails, whatever the centering: every forecast is the mean of the last w values.',
+      lead: 'The simple moving average: the mean of w consecutive values. No Centering puts the window at the value and the w − 1 before it; Centered around the value (an even width one value more before than after); Centered and Double Smoothed, for an even width, the mean of the two nearly centered windows, the 2 × w average of classical decomposition. As a forecast the average trails, whatever the centering: every forecast is the mean of the last w values.',
       sections: [
         { heading: 'The report', text: 'The smoothed series over the data (Smoothed Series in its red triangle), the forecasts, the one-step-ahead predictions (the mean of the w values before each) and their residuals, which give MAPE and MAE in Model Comparison. The interval is ±z times the one-step errors\' standard deviation at every horizon, right when the level stays where it is. Save Moving Average writes the smoothed series to the table.' },
         { heading: 'Save Prediction Formula', text: 'The one-step-ahead prediction as a live column: the mean of `Lag(:y, 1)` to `Lag(:y, w)`, missing where one of them is. The rows must be the series\' time points one after another, as for the benchmarks.' },

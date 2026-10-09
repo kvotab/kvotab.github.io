@@ -54,9 +54,9 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
   function stepSpec(step, t) {
     const raw = { roles: step.roles || {}, options: { ...(step.options || {}) }, ...(step.extra || {}) };
     if (step.filter) raw.filter = step.filter;
-    delete raw.options.__colNames;               // Fit Y by X records its columns itself
+    delete raw.options.__colNames;               // Bivariate Analysis records its columns itself
     const spec = t ? SM.specs.remap(raw, t, Object.fromEntries(t.columns.map((c) => [c.name, c.name]))) : raw;
-    // entries that carry a column's id and its name (Graph Builder's zones): the name back
+    // entries that carry a column's id and its name (Graph Maker's zones): the name back
     const names = (v) => {
       if (Array.isArray(v)) v.forEach(names);
       else if (v && typeof v === 'object') {
@@ -321,7 +321,7 @@ New Window( "Notes", Text Box( "A window of JMP's own: not converted" ) );
       kicker: 'Python', title: 'JSL to Python',
       lead: 'A JSL script (JMP\'s scripting language) in, a Python script out: pandas and numpy for the language and the work on data tables, and for each analysis this page\'s own Python for it, run on the open table.',
       sections: [
-        { heading: 'What converts', list: ['Variables, arithmetic, strings, lists, associative arrays and matrices; If, For, While, For Each, Match, Try; functions. JSL counts from 1 and Python from 0: the subscripts are turned.', 'Data tables: Open, New Table, New Column with values or a formula (made vectorised: If becomes np.where, Col Mean a group transform), row selections, Subset, Sort, Summary, Stack, Split, Join, Concatenate, Save.', 'The analyses this page has (Distribution, Fit Y by X, Fit Model, Multivariate, Principal Components and others): each becomes the code its report shows, run here on the table the script names, so the numbers match the report. Open the Reports Here opens them as reports.'] },
+        { heading: 'What converts', list: ['Variables, arithmetic, strings, lists, associative arrays and matrices; If, For, While, For Each, Match, Try; functions. JSL counts from 1 and Python from 0: the subscripts are turned.', 'Data tables: Open, New Table, New Column with values or a formula (made vectorised: If becomes np.where, Col Mean a group transform), row selections, Subset, Sort, Summary, Stack, Split, Join, Concatenate, Save.', 'The analyses this page has (Distribution, Bivariate Analysis, Fit Model, Multivariate, Principal Components and others): each becomes the code its report shows, run here on the table the script names, so the numbers match the report. Open the Reports Here opens them as reports.'] },
         { heading: 'What does not', list: ['Windows, dialogs and display boxes (New Window, Outline Box, Button Box), report objects and SendToReport, Eval and Parse of text, Include: JMP\'s own; each is a note and a comment where it was.', 'An analysis on a table that is not open here, or on columns the table lacks (made by the script before that line): open the table, or add the columns, and convert again.'] },
         { heading: 'Line numbers', text: 'Each note names its line in the JSL; a click on it shows the line. Comments in the Python name the JSL lines they came from.' },
       ],

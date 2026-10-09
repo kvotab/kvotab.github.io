@@ -1,7 +1,7 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > TEXT EXPLORER
+   SMUI.HTML: ANALYZE > TEXT ANALYSIS
 
-   JMP's Text Explorer for one or more character columns, with
+   Text Analysis, after JMP's Text Explorer, for one or more character columns, with
    scikit-learn's text features (resources/py/smui/text.py):
 
      Summary Counts           terms, cases (documents), tokens, tokens per
@@ -35,7 +35,7 @@
   const SM = root.SM;
   const { el, svg, fmt } = SM.util;
   const T = (v) => SM.report.plotlyText(v);
-  const MORE = { label: 'Text Explorer', id: 'help-p-text' };
+  const MORE = { label: 'Text Analysis', id: 'help-p-text' };
   const DOT = '·';
 
   const STEMMING = [['none', 'No Stemming'], ['combine', 'Stem for Combining'], ['all', 'Stem All Terms']];
@@ -203,7 +203,7 @@
     const cols = ctx.roles('text');
     if (!cols.length) { ctx.container.append(ctx.warn('Choose a text column.')); return; }
     for (const col of cols) {
-      const holder = cols.length === 1 ? null : ctx.outline(`Text Explorer for ${col.name}`, { key: `col:${col.id}`, info: 'p:text', menu: () => columnMenu(ctx, col) });
+      const holder = cols.length === 1 ? null : ctx.outline(`Text Analysis for ${col.name}`, { key: `col:${col.id}`, info: 'p:text', menu: () => columnMenu(ctx, col) });
       await explorer(ctx, col, holder);
     }
   }
@@ -212,7 +212,7 @@
     const sc = col.id;
     const o = (k, d) => ctx.opt(k, d, sc);
     const box = holder ? holder.body : ctx.container;
-    if (col.dataType !== 'character') { box.append(ctx.warn(`${col.name} is numeric: Text Explorer reads character columns (right click the column to change its data type).`)); return; }
+    if (col.dataType !== 'character') { box.append(ctx.warn(`${col.name} is numeric: Text Analysis reads character columns (right click the column to change its data type).`)); return; }
     const args = parseArgs(ctx, col);
     const res = await ctx.call('text.explore', args);
     if (res.error) { box.append(ctx.warn(`${col.name}: ${res.error}`)); return; }
@@ -1597,7 +1597,7 @@
      ====================================================================== */
   const TOPICS = {
     'p:text': {
-      kicker: 'Analyze', title: 'Text Explorer',
+      kicker: 'Analyze', title: 'Text Analysis',
       lead: 'The words of a column of text: each text is split into tokens, the tokens that are not stop words become terms (stemmed and recoded as you choose), and the terms are counted, listed, drawn as a word cloud, reduced by a singular value decomposition into latent dimensions and topics, clustered, related to a response and scored for sentiment. The counting is scikit-learn\'s CountVectorizer; its English stop words; the SVD TruncatedSVD or PCA; the stemmer Snowball\'s English (Porter2) algorithm, as JMP\'s, or Porter\'s of 1980, both written here.',
       sections: [
         { heading: 'Roles', choices: [['Text Columns', 'One or more character columns; each gets an analysis of its own.'], ['ID', 'Optional: the rows that share an ID are one document (a case), their texts together.'], ['By', 'A separate analysis for each level.']] },
@@ -1608,17 +1608,17 @@
       more: MORE,
     },
     'p:text:regex': {
-      kicker: 'Text Explorer', title: 'Customize Regex',
+      kicker: 'Text Analysis', title: 'Customize Regex',
       lead: 'Your own regular expression (Python\'s re syntax) instead of the built-in patterns: every match in the lowercase text is a token. For example [a-z]+ takes letters only, and \\S+ everything between spaces. JMP opens a Regex Editor instead; the pattern here is typed in the launch dialog.',
       more: MORE,
     },
     'p:text:summary': {
-      kicker: 'Text Explorer', title: 'Summary Counts',
+      kicker: 'Text Analysis', title: 'Summary Counts',
       lead: 'Number of Terms: the distinct terms. Number of Cases: the documents (rows, or IDs), empty ones too. Total Tokens: the terms counted every time they occur. Tokens per Case: Total Tokens over Number of Cases. Portion Non-empty: the share of cases with at least one term (right click, Columns, shows their number).',
       more: MORE,
     },
     'p:text:lists': {
-      kicker: 'Text Explorer', title: 'Term and Phrase Lists',
+      kicker: 'Text Analysis', title: 'Term and Phrase Lists',
       lead: 'Every term with its count (the number of times it occurs; the Cases column, from the right-click Columns menu, counts the documents that hold it), and the phrases: runs of two to Maximum Words per Phrase tokens that occur at least twice and neither begin nor end with a stop word. Most frequent first; click a heading to sort.',
       sections: [
         { heading: 'Count Bars', text: 'The bar right of each term\'s count is as long as the count against the largest: the most frequent term\'s bar is full, a term half as frequent has half a bar. Sorting the list keeps each bar with its term. Right click a heading of the list, Columns, to hide the bars; Copy Table and Make into Data Table leave them out.' },
@@ -1630,18 +1630,18 @@
       more: MORE,
     },
     'p:text:cloud': {
-      kicker: 'Text Explorer', title: 'Word Cloud',
+      kicker: 'Text Analysis', title: 'Word Cloud',
       lead: 'The most frequent terms, each sized by its count (the font size grows with the square root of the count, so that a word\'s area follows its count). The layouts are JMP\'s: Ordered (the default) sets them in lines from the most frequent, Alphabetical in lines alphabetically, and Centered puts the largest in the middle and each next word on a spiral where it overlaps none. Click a word to select its rows.',
       sections: [{ heading: 'Coloring', choices: [['Uniform', 'The text colour.'], ['Arbitrary Grays, Arbitrary Colors', 'Colours that mean nothing, to tell neighbouring words apart.'], ['By Column', 'The mean of a numeric column (a rating) over the rows that hold each word: blue below the column\'s mean, red above.']] }],
       more: MORE,
     },
     'p:text:stems': {
-      kicker: 'Text Explorer', title: 'Stem Report',
+      kicker: 'Text Analysis', title: 'Stem Report',
       lead: 'Each stemmed term and the words it stands for, with their counts. The stems are Snowball\'s English stemmer (Porter2, JMP\'s): suffixes taken off in steps within the regions R1 and R2 of the word, with its exceptional forms (sky, news, dying → die); or, with Stemmer: Porter (1980), Porter\'s algorithm as published. A word of one or two letters, or with characters other than a to z, is not stemmed.',
       more: MORE,
     },
     'p:text:manage': {
-      kicker: 'Text Explorer', title: 'Stop Words, Recodes and Phrases',
+      kicker: 'Text Analysis', title: 'Stop Words, Recodes and Phrases',
       lead: 'The lists you add to, kept with the report (and its project): stop words to leave out, recodes that count one word as another, and phrases counted as one term. scikit-learn\'s 318 English stop words are always left out; JMP\'s own list differs.',
       sections: [
         { heading: 'The order, as in JMP', text: 'Each text is made lowercase and cut into tokens; the tokens are recoded (in one pass: a recode of a recoded word does not follow on), and those of the Minimum to the Maximum Characters per Word are kept; the added phrases are joined; the stop words are left out; the rest is stemmed. So a recode reaches the stemmer: parcel -> package counts parcel as package, and parcels as packages, which then stem together. A recode of a stemmed term (return· -> refund) recodes each word of that stem (return, returned, returns…), and the new word is stemmed with the others (refund·). A recode of an added phrase applies to the joined phrase.' },
@@ -1650,7 +1650,7 @@
       more: MORE,
     },
     'p:text:lsa': {
-      kicker: 'Text Explorer', title: 'Latent Semantic Analysis',
+      kicker: 'Text Analysis', title: 'Latent Semantic Analysis',
       lead: 'The document term matrix (a row per document, a column per term seen Minimum Term Frequency times or more, the Maximum Number of Terms most frequent) is weighted and reduced by a truncated singular value decomposition, X ≈ U S Vᵀ: documents that use the same terms lie together, and so do terms used in the same documents.',
       sections: [
         { heading: 'Weighting (as JMP documents it)', choices: [['Binary', '1 when the term is in the document, else 0.'], ['Ternary', '2 when it is there more than once, 1 once, 0 not.'], ['Frequency', 'Its count.'], ['Log Freq', 'log10(1 + count).'], ['TF IDF', 'count × log10(documents / documents with the term), the default: the term frequency times the inverse document frequency, with the base-10 logarithm JMP\'s help gives.']] },
@@ -1663,7 +1663,7 @@
       more: MORE,
     },
     'p:text:topics': {
-      kicker: 'Text Explorer', title: 'Topic Analysis',
+      kicker: 'Text Analysis', title: 'Topic Analysis',
       lead: 'Topics as JMP makes them: the first k term coordinates of the SVD (V S) rotated by varimax (Kaiser 1958, with Kaiser\'s normalization, R\'s algorithm), so that each topic has a few terms with large loadings. The loadings are V S R/√(n − 1) (with centering, the covariances of the terms with the topics); the scores √(n − 1) U R, so that scores times loadings give the SVD\'s rank-k fit.',
       sections: [
         { heading: 'Other methods (scikit-learn)', choices: [['Non-negative Matrix Factorization', 'NMF: the weighted matrix as documents × topics times topics × terms, all non-negative (init nndsvda).'], ['Latent Dirichlet Allocation', 'LDA: a probability model of the counts; each topic a distribution over the terms, each document a mix of topics.']] },
@@ -1674,12 +1674,12 @@
       more: MORE,
     },
     'p:text:dtm': {
-      kicker: 'Text Explorer', title: 'Save Document Term Matrix',
+      kicker: 'Text Analysis', title: 'Save Document Term Matrix',
       lead: 'A new column for each term (the terms chosen in the Term List, or the most frequent), named by the term: its weighted count in each row\'s document (every row of an ID gets its document\'s value). Binary gives 0/1 indicator columns for modeling. Save Stacked DTM for Association makes a new table instead, a row for each document and term it holds, for Association Analysis (Item: Term, ID: the document).',
       more: MORE,
     },
     'p:text:lca': {
-      kicker: 'Text Explorer', title: 'Latent Class Analysis',
+      kicker: 'Text Analysis', title: 'Latent Class Analysis',
       lead: 'Clusters the documents by which terms they hold: a mixture of classes in which a document of class c holds term t with probability p(t, c), each term independently (a Bernoulli mixture of the binary document term matrix), fitted by EM from five random starts drawn from the report\'s seed (the best kept). Each probability has a weak Beta prior (0.01 of a document either way), so none is 0 or 1. BIC = −2 log L + (k − 1 + k × terms) log n: the smaller, the better, to compare numbers of clusters.',
       sections: [
         { heading: 'The report', choices: [['Cluster Mixture Probabilities', 'Each cluster\'s share of the documents; click one to select its documents\' rows.'], ['Term Probabilities by Cluster', 'p(t, c) for each term, with the cluster where it occurs most (Most Characteristic) and where a document that holds it most likely belongs (Most Probable).'], ['Top Terms by Cluster', 'The ten terms of highest score 100 · mean(p) · log10(p(t, c) / mean(p)), as JMP scores them.'], ['MDS Plot', 'The clusters mapped by classical scaling of the symmetric Kullback–Leibler distances between their term distributions.'], ['Cluster Probabilities by Row', 'Each document\'s probability of each cluster and its most likely one (Display Options).']] },
@@ -1689,18 +1689,18 @@
       more: MORE,
     },
     'p:text:cluster': {
-      kicker: 'Text Explorer', title: 'Cluster Terms and Cluster Documents',
+      kicker: 'Text Analysis', title: 'Cluster Terms and Cluster Documents',
       lead: 'Ward\'s hierarchical clustering (scipy\'s linkage, each join at the increase in the within-cluster sum of squares, as JMP\'s Hierarchical Cluster reports it) of the terms\' coordinates V S, or the documents\' U S, on all the singular vectors of the SVD. The tree is cut where the joining distance jumps most (2 to 10 clusters), or into the number you set; the clusters colour the SVD plots. Cluster Documents takes at most 4000 documents here.',
       sections: [{ heading: 'Choosing and saving', choices: [['− and +', 'One cluster fewer or more.'], ['A cluster below the dendrogram', 'Selects the rows that hold its terms, or its documents\' rows (shift adds).'], ['A join', 'Selects the rows under it.'], ['Save Term Clusters', 'A new table: each term, its count, its cases and its cluster.'], ['Save Document Clusters', 'A column: each row its document\'s cluster.']] }],
       more: MORE,
     },
     'p:text:spm': {
-      kicker: 'Text Explorer', title: 'SVD Scatterplot Matrix',
+      kicker: 'Text Analysis', title: 'SVD Scatterplot Matrix',
       lead: 'The first few singular vectors in pairs, as JMP arranges them: below the diagonal (shaded orange) the documents, Doc Vec j across and Doc Vec i up; above it (shaded blue) the terms, the pair shifted by one (Term Vec j + 1 across, Term Vec i up), so that more than the first two dimensions can be seen. Click or drag in a panel to select rows.',
       more: MORE,
     },
     'p:text:termsel': {
-      kicker: 'Text Explorer', title: 'Term Selection',
+      kicker: 'Text Analysis', title: 'Term Selection',
       lead: 'Which terms explain a response, as JMP Pro\'s Term Selection finds them with Generalized Regression: an elastic net (the lasso\'s share 0.99) of the response on the document term matrix, each term scaled by its standard deviation, along 150 penalties from the one that keeps no term down to 1/10 000 of it; the fit with the smallest AICc is kept, and with early stopping the path ends once ten penalties in a row fail to improve it (not before four terms are in). A nominal response is a logistic model of its target level against the rest (glmnet\'s Newton steps, each a weighted scikit-learn ElasticNet); a continuous or ordinal numeric one a normal model (ElasticNet).',
       sections: [
         { heading: 'The report', choices: [['Term Scores', 'The kept terms, largest coefficient first, with their LogWorth (−log10 of a Wald p-value, the standard error from the penalized likelihood\'s Hessian on the kept terms; optimistic, as it ignores the selection) and their count.'], ['Term coefficients', 'The 30 largest coefficients in size, positive in blue and negative in red.'], ['Document Scores', 'Each document\'s positive and negative contributions and prediction; Save Document Scores saves them.']] },
@@ -1709,7 +1709,7 @@
       more: MORE,
     },
     'p:text:sentiment': {
-      kicker: 'Text Explorer', title: 'Sentiment Analysis',
+      kicker: 'Text Analysis', title: 'Sentiment Analysis',
       lead: 'Scores each document by VADER (Hutto and Gilbert 2014), the vaderSentiment package (MIT), fetched from PyPI the first time it is used: its lexicon and rules are not part of this site. Each word of its lexicon adds its valence (−4 to 4); a negation before it (not, never, n\'t) reverses and weakens it, an intensifier (very, slightly) raises or lowers it, as do capitals and exclamation marks, and the clause after "but" counts more. The compound score scales the sum to −1 to 1; positive from 0.05, negative from −0.05. English only.',
       sections: [{ heading: 'The report', choices: [['Summary', 'The positive, neutral and negative documents, their counts and mean compound scores; click a class to select its rows.'], ['The histogram', 'The documents\' compound scores in bins of 0.1; click a bar to select its rows.'], ['Sentiment, Negation and Intensifier Terms', 'The words of each kind the texts hold, with their counts; click one to select its rows.'], ['Document Scores', 'Each document\'s positive, neutral and negative shares and compound score; Save Document Scores saves them.']] }],
       more: MORE,
@@ -1720,7 +1720,7 @@
      THE PLATFORM
      ====================================================================== */
   SM.platforms.register({
-    id: 'text', label: 'Text Explorer', menu: 'Analyze', order: 40, info: 'p:text', topics: TOPICS,
+    id: 'text', label: 'Text Analysis', menu: 'Analyze', order: 40, info: 'p:text', topics: TOPICS,
     about: 'The words of a column of text, as JMP\'s Text Explorer counts them: tokenizing by built-in patterns, basic words or your own regular expression; scikit-learn\'s English stop words; Snowball\'s English (Porter2) stemmer, as JMP\'s, or Porter\'s (for combining or for all terms); Summary Counts, the Term and Phrase Lists (a bar of each term\'s count; linked to the rows, with Select Contains, Select Contained and Containing Phrases), a word cloud, stop words, recodes and phrases of your own, Show Text; latent class analysis (a Bernoulli mixture of the binary document term matrix by EM, with its term probabilities, top terms, an MDS map of the clusters and saved clusters); latent semantic analysis (the SVD of the document term matrix with JMP\'s weightings, Centered and Scaled by default, documents and terms linked to the rows, a scatterplot matrix, the terms and documents clustered by Ward\'s method); topic analysis by varimax-rotated SVD, NMF or LDA; term selection (an elastic net of a response on the terms, chosen by AICc); sentiment analysis by VADER; and the document term matrix (also stacked, for Association Analysis), singular vectors and topic scores saved.',
     uses: ['sklearn.feature_extraction.text (CountVectorizer, ENGLISH_STOP_WORDS)', 'sklearn.decomposition (TruncatedSVD, PCA, NMF, LatentDirichletAllocation)', 'sklearn.linear_model.ElasticNet (Term Selection)', 'scipy.sparse', 'scipy.cluster.hierarchy.linkage (Ward)', 'vaderSentiment (MIT, from PyPI when used)', 'the Snowball and Porter stemmers, the latent class EM and the varimax rotation, written here'],
     launch: {
@@ -1732,7 +1732,7 @@
     },
     title: (spec, table) => {
       const names = ((spec.roles && spec.roles.text) || []).map((id) => (table && table.col(id) ? table.col(id).name : null)).filter(Boolean);
-      return names.length === 1 ? `Text Explorer for ${names[0]}` : 'Text Explorer';
+      return names.length === 1 ? `Text Analysis for ${names[0]}` : 'Text Analysis';
     },
     triangle: (ctx) => { const cols = ctx.roles('text'); return cols.length === 1 ? columnMenu(ctx, cols[0]) : []; },
     render,
@@ -1770,7 +1770,7 @@
 
   SM.io.addExample('service-comments', {
     label: 'Service comments (1,000 rows): delivery, quality, service, price, app',
-    about: 'Simulated: 1,000 short comments on an online shop, each about one theme (60%) or two of five: delivery (fast, late, parcel, courier, tracking), product quality (damaged, broken, sturdy, returned, refund), customer service (helpful, rude, waited on hold, support agent), price (value for money, expensive, discount) and the app and website (crashing at checkout, slow, log in). Each theme is praised or criticised half the time (the app 40% praised); the rating (1 to 5) is 3, plus 1.1 for each praise and less 1.3 for each complaint, plus noise. customer: about one comment in four comes from a customer who wrote before (an ID for Text Explorer); channel (web, app, phone) is at random. For Text Explorer (Analyze).',
+    about: 'Simulated: 1,000 short comments on an online shop, each about one theme (60%) or two of five: delivery (fast, late, parcel, courier, tracking), product quality (damaged, broken, sturdy, returned, refund), customer service (helpful, rude, waited on hold, support agent), price (value for money, expensive, discount) and the app and website (crashing at checkout, slow, log in). Each theme is praised or criticised half the time (the app 40% praised); the rating (1 to 5) is 3, plus 1.1 for each praise and less 1.3 for each complaint, plus noise. customer: about one comment in four comes from a customer who wrote before (an ID for Text Analysis); channel (web, app, phone) is at random. For Text Analysis (Analyze).',
     make() {
       const r = SM.util.rng('text-service-comments');
       const fill = (s) => s.replace(/\{([^}]*)\}/g, (_, alts) => r.pick(alts.split('|')));

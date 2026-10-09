@@ -5,11 +5,11 @@ The magnifier at the right end of the menu bar, Help > Search… and ⌘K /
 ctrl+K open the search, by real clicks and real keys (⌘K in a text field
 too; ctrl+K on a Mac there is the field's own; another dialog in front keeps
 its keys); every platform's red triangle is read with no error (the crawl's
-counts); "word cloud" finds Analyze ▸ Text Explorer… ▸ Display Options ▸
+counts); "word cloud" finds Analyze ▸ Text Analysis… ▸ Display Options ▸
 Show Word Cloud first, "cloud" and "clouds" find it, the words found marked;
-Enter with no Text Explorer report open opens its launch dialog, and after
+Enter with no Text Analysis report open opens its launch dialog, and after
 OK the report draws its word cloud (a cancelled launch does nothing); with
-a Text Explorer report in front the same result turns the cloud on there
+a Text Analysis report in front the same result turns the cloud on there
 directly, and shows ✓ on once it is; an open report's own red-triangle item
 (the Word Cloud's Layout) by a real click; menu commands (Make Binning
 Column…, Stack…) run, a greyed-out one says why and does nothing; a
@@ -182,7 +182,7 @@ def pick_js(title, path):
     return f'({PICK})({json.dumps(title)}, {json.dumps(path)})'
 
 
-# The word cloud of the report in front, and the Text Explorer column's options.
+# The word cloud of the report in front, and the Text Analysis column's options.
 CLOUD = r'''(() => { const rep = SM.app.activeTab && SM.app.activeTab.report; if (!rep || rep.platform.id !== 'text') return null;
   const id = rep.spec.roles.text[0];
   const ws = [...rep.body.querySelectorAll('svg.sm-tx-cloud text.sm-tx-word')].map(w => ({ t: w.lastChild.textContent, x: Number(w.getAttribute('x')), y: Number(w.getAttribute('y')) }));
@@ -323,23 +323,23 @@ async def main():
     # ---- "word cloud" ----------------------------------------------------------------------------------
     s = await search(page, 'word cloud')
     i, o = find(s, lambda o: o['kind'] == 'triangle')
-    check('"word cloud": the first red-triangle result is Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud', where(o) if o else None, 'Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud')
+    check('"word cloud": the first red-triangle result is Analyze ▸ Text Analysis… ▸ Display Options ▸ Show Word Cloud', where(o) if o else None, 'Analyze ▸ Text Analysis… ▸ Display Options ▸ Show Word Cloud')
     check('... and it is the first result of all, marked as the one Enter chooses', (i, s['opts'][0]['selected'], s['active'] == s['opts'][0]['id']), (0, 'true', True))
-    check('... badged as Text Explorer\'s red triangle, the words found marked', (o['badge'], o['marks']), ('Red triangle · Text Explorer', ['Word', 'Cloud']))
-    check('... it says what Enter does here (no Text Explorer report open)', 'Enter opens Text Explorer… first' in o['under'], True)
+    check('... badged as Text Analysis\'s red triangle, the words found marked', (o['badge'], o['marks']), ('Red triangle · Text Analysis', ['Word', 'Cloud']))
+    check('... it says what Enter does here (no Text Analysis report open)', 'Enter opens Text Analysis… first' in o['under'], True)
     check('... help comes after the commands', [x['kind'] for x in s['opts']].index('help') > i, True)
     for q in ('cloud', 'clouds', 'CLOUD', 'word clou'):
         r = await page.ev(f'SM.search.query({json.dumps(q)}).filter(x => x.kind === "triangle").map(x => x.where.join(" ▸ "))')
-        check(f'"{q}" finds it among the red-triangle items, first', r[:1], ['Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud'])
-    r = await page.ev('[SM.search.query("text explorer…")[0], SM.search.query("text explorer")[0]].map(x => x.where.join(" ▸ "))')
-    check('with or without "…": "text explorer…" and "text explorer" find Analyze ▸ Text Explorer… first', r, ['Analyze ▸ Text Explorer…', 'Analyze ▸ Text Explorer…'])
+        check(f'"{q}" finds it among the red-triangle items, first', r[:1], ['Analyze ▸ Text Analysis… ▸ Display Options ▸ Show Word Cloud'])
+    r = await page.ev('[SM.search.query("text analysis…")[0], SM.search.query("text analysis")[0]].map(x => x.where.join(" ▸ "))')
+    check('with or without "…": "text analysis…" and "text analysis" find Analyze ▸ Text Analysis… first', r, ['Analyze ▸ Text Analysis…', 'Analyze ▸ Text Analysis…'])
     await shot(page, 'search-01-word-cloud.png')
 
-    # Enter: Text Explorer's launch dialog; Cancel does nothing
+    # Enter: Text Analysis's launch dialog; Cancel does nothing
     await page.key('Enter', code='Enter')
     ok = await wait_for(page, "!!document.querySelector('.sm-launch-dialog')", 15)
     n_rep = await page.ev('SM.app.reports.length')
-    check('Enter with no Text Explorer report open: its launch dialog, the search gone', (bool(ok), (await state(page))['open'], await page.ev("document.querySelector('.sm-launch-dialog .sm-dialog-head h2').textContent")), (True, False, 'Text Explorer'))
+    check('Enter with no Text Analysis report open: its launch dialog, the search gone', (bool(ok), (await state(page))['open'], await page.ev("document.querySelector('.sm-launch-dialog .sm-dialog-head h2').textContent")), (True, False, 'Text Analysis'))
     await click(page, "[...document.querySelectorAll('.sm-launch-dialog .sm-actions .sm-btn')].find(b => b.textContent === 'Cancel')")
     await asyncio.sleep(1.0)
     check('... a cancelled launch does nothing (no report, nothing applied later)', (await page.ev('SM.app.reports.length'), await page.ev("!!document.querySelector('.sm-dialog')")), (n_rep, False))
@@ -354,8 +354,8 @@ async def main():
     c = await wait_for(page, f'(() => {{ const c = {CLOUD}; return c && c.cloud ? c : null; }})()', 60)
     toast = await page.ev(TOAST)
     check('after OK the report has its word cloud: Show Word Cloud applied', (c or {}).get('cloud'), True)
-    check('... the column\'s option on, in the one new report', ((c or {}).get('on'), (c or {}).get('reports'), (c or {}).get('title')), (True, n_rep + 1, 'Text Explorer for comment'))
-    check('... and a message says what was applied', toast, 'Turned on Show Word Cloud (Display Options) in Text Explorer for comment')
+    check('... the column\'s option on, in the one new report', ((c or {}).get('on'), (c or {}).get('reports'), (c or {}).get('title')), (True, n_rep + 1, 'Text Analysis for comment'))
+    check('... and a message says what was applied', toast, 'Turned on Show Word Cloud (Display Options) in Text Analysis for comment')
     await shot(page, 'search-02-launched-cloud.png')
 
     # with the report in front: the same result turns the cloud on there, directly
@@ -364,16 +364,16 @@ async def main():
     check('(the cloud turned off by the red triangle)', (c['cloud'], c['on']), (False, False))
     s = await search(page, 'word cloud', how='keys')
     i, o = find(s, lambda o: o['kind'] == 'triangle')
-    check('with a Text Explorer report in front: the result says it applies there, now off', (where(o), o['state'], 'Enter applies to Text Explorer for comment' in o['under']), ('Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud', 'off', True))
+    check('with a Text Analysis report in front: the result says it applies there, now off', (where(o), o['state'], 'Enter applies to Text Analysis for comment' in o['under']), ('Analyze ▸ Text Analysis… ▸ Display Options ▸ Show Word Cloud', 'off', True))
     check('... still the first result (Edit ▸ Undo Show Word Cloud, which names it, comes later)', (i, any(where(x) == 'Edit ▸ Undo Show Word Cloud' for x in s['opts'][1:])), (0, True))
-    check('... and the report\'s own copy of the item is not listed twice', [where(x) for x in s['opts'] if x['label'] == 'Show Word Cloud'], ['Analyze ▸ Text Explorer… ▸ Display Options ▸ Show Word Cloud'])
+    check('... and the report\'s own copy of the item is not listed twice', [where(x) for x in s['opts'] if x['label'] == 'Show Word Cloud'], ['Analyze ▸ Text Analysis… ▸ Display Options ▸ Show Word Cloud'])
     await page.key('Enter', code='Enter')
     await asyncio.sleep(0.5)
     check('Enter: no launch dialog, no new report', (await page.ev("!!document.querySelector('.sm-launch-dialog')"), await page.ev('SM.app.reports.length')), (False, n_rep + 1))
     await until_drawn(page, 60)
     c = await wait_for(page, f'(() => {{ const c = {CLOUD}; return c && c.cloud ? c : null; }})()', 30)
     check('... the cloud is on again, in the same report', ((c or {}).get('cloud'), (c or {}).get('on')), (True, True))
-    check('... said so', await page.ev(TOAST), 'Turned on Show Word Cloud (Display Options) in Text Explorer for comment')
+    check('... said so', await page.ev(TOAST), 'Turned on Show Word Cloud (Display Options) in Text Analysis for comment')
     s = await search(page, 'word cloud')
     check('now the result shows ✓ on', find(s, lambda o: o['kind'] == 'triangle')[1]['state'], '✓ on')
     await close_search(page)
@@ -382,7 +382,7 @@ async def main():
     s = await search(page, 'alphabetical')
     i, o = find(s, lambda o: o['kind'] == 'live' and o['label'] == 'Alphabetical')
     check('an open report\'s own red-triangle item: Report in front, its outlines in the path', (o or {}).get('badge'), 'Report in front')
-    check('... Text Explorer for comment ▸ Word Cloud ▸ Layout ▸ Alphabetical', where(o) if o else None, 'Text Explorer for comment ▸ Word Cloud ▸ Layout ▸ Alphabetical')
+    check('... Text Analysis for comment ▸ Word Cloud ▸ Layout ▸ Alphabetical', where(o) if o else None, 'Text Analysis for comment ▸ Word Cloud ▸ Layout ▸ Alphabetical')
     await click_option(page, i)
     await until_drawn(page, 60)
     await asyncio.sleep(0.3)
@@ -452,7 +452,7 @@ async def main():
     s = await state(page)
     check('... and chosen for a report of continuous columns: the search stays and says when it is there', (s['open'], 'when Y is categorical' in s['status']), (True, True))
     r = await page.ev('SM.search.query("fit line").filter(x => x.platform === "fitybyx").map(x => [x.where.join(" ▸ "), x.when])[0]')
-    check('Fit Y by X\'s Fit Line: when Y and X are continuous', r, ['Analyze ▸ Fit Y by X… ▸ Fit Line', 'when Y is continuous and X continuous'])
+    check('Bivariate Analysis\'s Fit Line: when Y and X are continuous', r, ['Analyze ▸ Bivariate Analysis… ▸ Fit Line', 'when Y is continuous and X continuous'])
     await close_search(page)
 
     # ---- help ------------------------------------------------------------------------------------------------

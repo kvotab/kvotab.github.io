@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze > Predictive Modeling > Bootstrap Forest and Boosted Tree's
+"""Analyze > Predictive Modeling > Decision Forest and Boosted Tree's
 backend (resources/py/smui/ensemble.py), through registry.dispatch as the
 page calls it, checked against scikit-learn called directly (without a
 nominal X the forest is RandomForestRegressor/Classifier and the boosted
@@ -112,7 +112,7 @@ check('scikit-learn is not imported at module level (the page starts without it)
 
 # ---- settings: JMP's names and defaults --------------------------------------------------------------------
 sf = E.settings_of('forest', {}, 13)
-check('Bootstrap Forest defaults: 100 trees, rate 1, splits 10 to 2000, minimum size 5, Early Stopping on',
+check('Decision Forest defaults: 100 trees, rate 1, splits 10 to 2000, minimum size 5, Early Stopping on',
       (sf['trees'], sf['rate'], sf['minSplits'], sf['maxSplits'], sf['minSize'], sf['early'], sf['multi']), (100, 1.0, 10, 2000, 5, True, False))
 check('Number of Terms Sampled per Split: 13 terms -> 10 (JMP 17\'s documented example)', sf['terms'], 10)
 check('the default is p - floor(p/4) (6 -> 5, the JMP Community\'s new default; floor(p/4) was the old one)', [E.default_terms(p) for p in (1, 2, 3, 4, 6, 7, 13, 40)], [1, 2, 3, 3, 5, 6, 10, 30])
@@ -889,7 +889,7 @@ for label, kw in [
         check(f'{label}: Cumulative Validation: the {c["kept"]} kept, marked on the {on["set"].lower()} curve and by the dashed line',
               (len(mark) == 1 and mark[0]['x'] == [float(c['kept'])] and math.isclose(mark[0]['y'][0], on['stats'][stat][c['kept'] - 1], rel_tol=1e-9), any(q['ls'] == '--' and q['x'][:2] == [c['kept'], c['kept']] for q in ax['lines'])), (True, True))
         check(f'{label}: Cumulative Validation: the titles', (ax['xlabel'], ax['ylabel'], ax['title']),
-              (f'Number of {"Trees" if kw["kind"] == "forest" else "Layers"}', E.STAT_LABELS[stat], f'Cumulative Validation of {"Bootstrap Forest" if kw["kind"] == "forest" else "Boosted Tree"}'))
+              (f'Number of {"Trees" if kw["kind"] == "forest" else "Layers"}', E.STAT_LABELS[stat], f'Cumulative Validation of {"Decision Forest" if kw["kind"] == "forest" else "Boosted Tree"}'))
     graphs += check_contrib_native(check, label, res['contributions'], head, T, GTMP)
     graphs += check_shared_native(check, label, res['fit'], T, GTMP)
     pm, _ = quiet(call, 'ensemble.permutation', table=T, x=xs, seed=SEED, repeats=2, table_name='data', **{k: v for k, v in kw.items() if k != 'plot'})

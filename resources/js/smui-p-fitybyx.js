@@ -1,7 +1,7 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > FIT Y BY X, SPECIALIZED MODELING > MATCHED PAIRS
+   SMUI.HTML: ANALYZE > BIVARIATE ANALYSIS, SPECIALIZED MODELING > MATCHED PAIRS
 
-   Fit Y by X looks at each Y against each X; the modeling types choose the
+   Bivariate Analysis looks at each Y against each X; the modeling types choose the
    analysis, as in JMP:
 
      Y continuous,  X continuous    Bivariate    scatterplot and fits
@@ -1972,7 +1972,7 @@
 
   const TOPICS = {
     'p:fitybyx': {
-      kicker: 'Analyze', title: 'Fit Y by X',
+      kicker: 'Analyze', title: 'Bivariate Analysis',
       lead: 'Each Y against each X. The modeling types choose the analysis: continuous by continuous is a Bivariate fit, continuous by categorical a Oneway analysis, categorical by continuous a Logistic fit, categorical by categorical a Contingency analysis.',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One or more responses.'], ['X, Factor', 'One or more factors; every Y is paired with every X.'], ['Block', 'Oneway only: an ordinal or nominal column whose levels are blocks (a randomized block ANOVA).'], ['Weight', 'Weighted least squares; weights the logistic likelihood.'], ['Freq', 'A count per row: the row stands for that many observations.'], ['By', 'A separate analysis for each level.']] },
@@ -1981,7 +1981,7 @@
         { heading: 'Weight and Freq', text: 'The least-squares fits use both, with the residual degrees of freedom counted from Freq. Where statsmodels or scipy takes no weights (rank tests, robust, quantile and LOWESS fits, MNLogit, OrderedModel) whole-number frequencies are counted by repeating rows and Weight is not used; the report says so.' },
         { heading: 'Linking', text: 'Points, bars and mosaic cells select their rows; selected rows are highlighted in every graph.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:fits': {
       kicker: 'Bivariate', title: 'Fits on a scatterplot',
@@ -1995,13 +1995,13 @@
         { heading: 'The fit\'s red triangle', text: 'Confidence curves for the fitted mean and for individuals, shaded or as lines; Save Predicteds, Residuals and Studentized Residuals; Save Formula; Plot Residuals; Remove Fit.' },
         { heading: 'Saved columns', text: 'Save Predicteds gives every row whose X has a value its prediction, also the rows the fit left out (excluded, a missing Y); residuals only where Y has one. Save Formula (Fit Mean, Line, Polynomial, Special, Robust, Quantile) saves the fit as a live formula column in the table\'s formula language, the polynomial\'s centred powers and Fit Special\'s transformations written out, so that it recomputes when X changes.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:anova': {
       kicker: 'Oneway', title: 'Means/Anova',
       lead: 'The one-way analysis of variance: whether the means of the levels differ, with the pooled error. The mean diamonds show each mean and its confidence interval; their overlap marks, at mean ± half-width/√2, overlap for means that do not differ significantly (roughly, for equal sizes).',
       sections: [{ heading: 'With a Block', text: 'The block is an additive effect (a randomized block ANOVA); the tests are Type III and the means are least squares means, the block averaged.' }, { heading: 'Two levels', text: 'The pooled t test of the second level minus the first; t Test from the red triangle does it without assuming equal variances.' }],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:compare': {
       kicker: 'Oneway', title: 'Compare Means',
@@ -2012,10 +2012,10 @@
         { heading: 'With Best, Hsu MCB', text: 'Each mean against the best of the others (Hsu\'s multiple comparisons with the best): against the largest of the others, and against the smallest. d is the one-sided Dunnett quantile of k − 1 comparisons (correlations ½, exact for equal group sizes). A level whose interval for its mean less the largest of the others has upper limit 0 is significantly below the best and cannot be the largest; the threshold matrix shows it as a negative value in its row. The comparison circles use d.' },
         { heading: 'Games-Howell', text: 'All pairs without assuming equal variances (Games and Howell 1976): each difference over its own standard error √(s²ᵢ/nᵢ + s²ⱼ/nⱼ), with the Welch-Satterthwaite degrees of freedom of the pair, and p-values and intervals from the studentized range of k levels on those degrees of freedom. Use it where Unequal Variances rejects equal variances and Tukey\'s pooled error would mislead. Each pair has its own q*, so there are no comparison circles. Not in JMP; Weight is not used.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:effect': {
-      kicker: 'Fit Y by X, Matched Pairs', title: 'Effect Size',
+      kicker: 'Bivariate Analysis, Matched Pairs', title: 'Effect Size',
       lead: 'How large the difference is, in standard deviations or as a share of the variance, with a confidence interval: from the red triangle (Effect Size), for Means/Anova, the t tests and Matched Pairs. Not in JMP.',
       sections: [
         { heading: 'Two levels', choices: [['Cohen\'s d', 'the difference of the means (second level minus first) over the pooled standard deviation, beside the pooled t test'], ['Hedges\' g', 'J·d with Hedges\' (1981) exact J = Γ(ν/2)/(√(ν/2)Γ((ν−1)/2)), ν = n₁ + n₂ − 2: unbiased for δ under normality'], ['d* and g*', 'beside the unequal-variance t test: the difference over √((s₁² + s₂²)/2), Cohen\'s (1988) standardizer when the variances differ, which does not depend on the group sizes']] },
@@ -2024,10 +2024,10 @@
         { heading: 'The intervals', text: 'Exact where an exact interval exists: d and d_z from the noncentral t, whose noncentrality λ is found where the observed t is the upper and the lower α/2 point (Steiger and Fouladi 1997; Cumming and Finch 2001); η², ε² and ω² from the noncentral F in the same way, λ/(λ + df₁ + df₂ + 1) being the population proportion of variance that all three estimate (Smithson 2003; Steiger 2004). g\'s interval is J times d\'s. d*, g* and d_av have no exact interval: theirs are Bonett\'s (2008), estimate ± z·SE, which do not assume equal variances. Steiger (2004) suggests a 90% interval for η², which matches the one-sided F test at α = 0.05: set α to 0.1.' },
         { heading: 'Weight and Freq', text: 'Freq counts rows. The t tests\' effect sizes, like the t tests, do not use Weight; η², ε² and ω² use the weighted sums of squares of the Analysis of Variance.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:bayes': {
-      kicker: 'Fit Y by X, Matched Pairs', title: 'Bayes Factor',
+      kicker: 'Bivariate Analysis, Matched Pairs', title: 'Bayes Factor',
       lead: 'How much more likely the data are under the alternative than under the null hypothesis (BF10), or the other way round (BF01 = 1/BF10), for a prior on the effect under the alternative. BF10 above 1 favours the alternative, below 1 the null; unlike a p-value it can show evidence for no effect. Not in JMP.',
       sections: [
         { heading: 'The t tests', text: 'JZS Bayes factors (Rouder et al. 2009): under the alternative the standardized effect δ has a Cauchy(0, r) prior (r = √2/2 by default, adjustable), the variance Jeffreys\' prior. Two samples: the pooled t, equal variances, with n = n₁n₂/(n₁ + n₂); paired: the differences as one sample. BF10 = ∫ p(t | δ) p(δ) dδ / p(t | δ = 0), computed as Rouder et al.\'s integral over g on a log scale.' },
@@ -2035,7 +2035,7 @@
         { heading: 'One-sided', text: 'δ > 0 (or ρ > 0) keeps the half of the prior on that side, doubled: BF+0 = 2·BF10·P(δ > 0 | data) (Morey and Wagenmakers 2014), the posterior probability from the noncentral t (or the correlation\'s) likelihood.' },
         { heading: 'Reading them', text: 'The numbers are shown as they are, without verbal labels. They depend on the prior: a wider prior (larger r or κ) expects larger effects and favours the null more when the effect is small. Right click a table for log₁₀ BF10, which is easier to read when BF10 is very large or small.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:nonpar': {
       kicker: 'Oneway', title: 'Nonparametric tests',
@@ -2043,7 +2043,7 @@
       sections: [{ heading: 'Forms', text: 'The chi-square is (N−1)Σ nᵢ(meanᵢ − mean)²/Σ(a − mean)² of the scores a, which for Wilcoxon scores is Kruskal-Wallis\' H with ties corrected, and for median scores (N−1)/N times the Pearson chi-square of scipy\'s median_test. The two-sample Z of the Wilcoxon test has a continuity correction of 0.5.' },
         { heading: 'Multiple comparisons', text: 'Wilcoxon each pair (no adjustment), Steel-Dwass (all pairs, studentized range), Steel with a control, and Dunn\'s joint-rank comparisons with Bonferroni adjustment (statsmodels multipletests).' },
         { heading: 'Brunner-Munzel', text: 'The probability that a value of one level exceeds one of another, with its interval and a test that does not assume equal distributions; see its own (i).' }],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:brunner': {
       kicker: 'Oneway', title: 'Brunner-Munzel and the probability of superiority',
@@ -2054,7 +2054,7 @@
         { heading: 'Equivalence Test', text: 'Two one-sided tests that P lies between two bounds, such as 0.4 and 0.6 (statsmodels tost_prob_superior): the levels are stochastically equivalent when both reject.' },
         { heading: 'Not in JMP', text: 'JMP\'s closest are the Wilcoxon test, whose null hypothesis is identical distributions, and the Hodges-Lehmann estimate of a shift.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:rates': {
       kicker: 'Oneway', title: 'Compare Rates',
@@ -2065,7 +2065,7 @@
         { heading: 'Every level together', text: 'The likelihood-ratio test of a Poisson GLM with the log exposure as offset: a rate for each level against one for all. Its Pearson χ²/DF well above 1 means overdispersion: the counts vary more than a Poisson allows and every test here is too optimistic; Count Regression fits a negative binomial.' },
         { heading: 'Not in JMP', text: 'JMP compares counts with a Poisson Generalized Linear Model in Fit Model; it has no exact, score or E-test comparison of two rates.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:twoprop': {
       kicker: 'Contingency', title: 'Two Sample Test for Proportions',
@@ -2074,7 +2074,7 @@
         { heading: 'The methods', choices: [['Wald', 'estimate ± z·SE: poor with small counts or proportions near 0 or 1'], ['Agresti-Caffo (adjusted Wald)', 'one success and one failure added to each group: JMP\'s interval and test'], ['Newcombe (hybrid score)', 'from the two Wilson intervals; an interval only'], ['Miettinen-Nurminen (score)', 'inverts the score test, with the n/(n − 1) factor; recommended by Fagerland, Lydersen and Laake (2015)'], ['Katz, Woolf', 'log and logit Wald intervals; not defined with a zero cell'], ['Adjusted log, Gart', '0.5 added to the counts'], ['Koopman (score)', 'the score interval of the ratio'], ['Independence-smoothed logit', 'the counts shrunk toward independence']] },
         { heading: 'Differences from JMP', text: 'JMP reports only the adjusted Wald difference, with its one- and two-sided tests (the first table here). The ratio and odds ratio, and the other methods, are statsmodels\' confint_proportions_2indep and test_proportions_2indep.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:strata': {
       kicker: 'Contingency', title: 'Cochran Mantel Haenszel and Breslow-Day',
@@ -2084,12 +2084,12 @@
         { heading: 'The rest', text: 'The Mantel-Haenszel test with and without the continuity correction (R\'s mantelhaen.test uses it), the pooled odds ratio with its Robins-Breslow-Greenland interval, the pooled relative risk, and each stratum\'s own odds ratio.' },
         { heading: 'Not in JMP', text: 'JMP\'s Cochran Mantel Haenszel report gives the general-association statistics of SAS\'s PROC FREQ (correlation of scores, row and column scores, general association), not the Breslow-Day test; statsmodels does not compute those.' },
       ],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:variances': {
       kicker: 'Oneway', title: 'Unequal Variances',
       lead: 'Tests that the levels have the same variance: O\'Brien\'s, Brown-Forsythe (absolute deviations from the median), Levene (from the mean) and Bartlett\'s (sensitive to non-normality), and for two levels the F test. Welch\'s ANOVA then tests the means without assuming equal variances.',
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:logistic': {
       kicker: 'Logistic', title: 'Logistic fits',
@@ -2100,24 +2100,24 @@
         { heading: 'Two levels', text: 'ROC Curve ▸ ROC Table: a line per cut on the target level\'s probability, the best starred. Decision Threshold: each row\'s probability of the target level against a threshold you drag or type, the counts and measures there, a Profit Matrix and Save Threshold Formula (see its own (i)).' },
         { heading: 'Save Probability Formula', text: 'Live formula columns for every row whose X has a value: Lin[level] (the log odds; ordinal: Linear and Cum[level]), Prob[level] and Most Likely.' },
         { heading: 'Unstable estimates', text: 'When X separates the levels (beyond some value every row has the same level), the likelihood keeps rising as the estimates grow and the fit stops somewhere on the way; the report marks them Unstable, as JMP does, and their standard errors and tests mean little.' }],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:contingency': {
       kicker: 'Contingency', title: 'Contingency tests',
       lead: 'Whether Y depends on X: the likelihood ratio (G²) and Pearson chi-squares of the table (scipy chi2_contingency), and Fisher\'s exact test for small tables. -LogLike is half of G², RSquare (U) its share of the entropy of Y.',
       sections: [{ heading: 'Warnings', text: 'With many expected counts below 5 the chi-square p-values are approximate; Fisher\'s exact test does not have that problem.' }],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:measures': {
       kicker: 'Contingency', title: 'Measures of Association',
       lead: 'Gamma, Kendall\'s tau-b, Stuart\'s tau-c and Somers\' D measure an ordered association; lambda and the uncertainty coefficients the reduction in the error of predicting one variable from the other; Cramér\'s V a general association.',
       sections: [{ heading: 'The numbers', text: 'Computed from the table by the formulas of SAS PROC FREQ, which JMP follows, with their asymptotic standard errors; tau-b, tau-c and Somers\' D agree with scipy\'s kendalltau and somersd, Cramér\'s V is scipy\'s.' }],
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:fitybyx:weights': {
-      kicker: 'Fit Y by X', title: 'Weight and Freq',
+      kicker: 'Bivariate Analysis', title: 'Weight and Freq',
       lead: 'Freq counts a row that many times; Weight weights it. Least squares uses both, with the degrees of freedom from Freq. Tests whose statsmodels or scipy function takes no weights count whole-number frequencies by repeating rows and do not use Weight; the report says so.',
-      more: { label: 'Fit Y by X', id: 'help-p-fitybyx' },
+      more: { label: 'Bivariate Analysis', id: 'help-p-fitybyx' },
     },
     'p:matchedpairs': {
       kicker: 'Specialized Modeling', title: 'Matched Pairs',
@@ -2150,7 +2150,7 @@
   }
 
   SM.platforms.register({
-    id: 'fitybyx', label: 'Fit Y by X', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
+    id: 'fitybyx', label: 'Bivariate Analysis', menu: 'Analyze', order: 20, info: 'p:fitybyx', topics: TOPICS,
     about: 'Each Y against each X, the analysis chosen by their modeling types: Bivariate (scatterplot with line, polynomial, special, spline, smoother, robust, orthogonal and quantile fits, density ellipses), Oneway (ANOVA, t tests, Student\'s, Tukey\'s, Hsu\'s MCB and Dunnett\'s comparisons, rank tests and their comparisons, unequal variances, equivalence, power, ANOM, blocks), Logistic (binary, nominal and ordinal, odds ratios, Lack of Fit, ROC and lift curves, the Decision Threshold, inverse prediction, saved probability formulas) and Contingency (mosaic plot, crosstab, chi-square and exact tests, measures of association, kappa, relative risk, Cochran-Mantel-Haenszel, trend test, correspondence analysis). Beyond JMP: the Brunner-Munzel test of the probability of superiority and its equivalence test, the comparison of Poisson rates (with an exposure) by score, exact, Wald and E-tests with a Poisson GLM test of every level, statsmodels\' methods for two proportions (difference, relative risk, odds ratio), the Breslow-Day test of equal odds ratios across strata, effect sizes with intervals (Cohen\'s d and Hedges\' g, exact from the noncentral t; d* for unequal variances; η², ε² and ω², exact from the noncentral F), JZS Bayes factors of the two-sample t test and Bayes factors of the correlation (two- and one-sided), and Games-Howell comparisons for unequal variances.',
     uses: ['statsmodels OLS, WLS, RLM, QuantReg (fits); lowess', 'statsmodels.stats.multicomp.pairwise_tukeyhsd; weightstats (CompareMeans, ttost_ind)', 'statsmodels.stats.oneway.anova_oneway; power.FTestAnovaPower; multitest.multipletests',
       'statsmodels.stats.nonparametric.rank_compare_2indep (Brunner-Munzel, tost_prob_superior)', 'statsmodels.stats.rates (test_poisson_2indep, confint_poisson_2indep, confint_poisson); GLM Poisson',
@@ -2185,7 +2185,7 @@
     title(spec, table) {
       const pairs = pairsOf(spec, table);
       if (pairs.length === 1) return pairTitle(kindOf(pairs[0][0], pairs[0][1]), pairs[0][0], pairs[0][1]);
-      return 'Fit Y by X';
+      return 'Bivariate Analysis';
     },
     triangle(ctx) {
       const pairs = pairsOf(ctx.spec, ctx.table);

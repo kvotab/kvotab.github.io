@@ -1,4 +1,4 @@
-"""Analyze > Text Explorer: the backend.
+"""Analyze > Text Analysis: the backend.
 
 The words of a character column counted as JMP's Text Explorer counts
 them, with scikit-learn's text features:
@@ -426,7 +426,7 @@ class SnowballStemmer:
 
     def stem(self, word):
         """The stem of a lowercase word (a word with letters other than
-        a-z is stemmed too; Text Explorer gives it only words of a-z)."""
+        a-z is stemmed too; Text Analysis gives it only words of a-z)."""
         s = self.memo.get(word)
         if s is None:
             s = self.memo[word] = self._stem(word)
@@ -887,7 +887,7 @@ READ_DEFAULTS = {'language': 'english', 'max_words': 4, 'max_phrases': 5000, 'mi
 def _config(language='english', max_words=4, max_phrases=5000, min_chars=1, max_chars=50, stemming='none',
             tokenizing='regex', regex=None, stop_add=(), recodes=None, phrases=(), stemmer='snowball'):
     if str(language or 'english').lower() != 'english':
-        raise ValueError('Text Explorer reads English here (its stop words and its stemmer are English)')
+        raise ValueError('Text Analysis reads English here (its stop words and its stemmer are English)')
     cfg = {
         'max_words': _int(max_words, 'Maximum Words per Phrase', 1, MAX_PHRASE_WORDS),
         'max_phrases': _int(max_phrases, 'Maximum Number of Phrases', 0, 100000),
@@ -938,7 +938,7 @@ def _documents(table, column, rows, id_col):
     one, or with an ID column the rows that share an ID."""
     m = data.meta(table, column)
     if m.get('dataType') == 'numeric':
-        raise ValueError(f'{column} is numeric: Text Explorer reads character columns')
+        raise ValueError(f'{column} is numeric: Text Analysis reads character columns')
     idx = np.arange(data.TABLES[table]['n']) if rows is None else np.asarray(rows, dtype=int)
     raw = data.raw(table, column, idx)
     texts = [v if isinstance(v, str) else '' for v in raw]

@@ -433,7 +433,7 @@ check('clusters numbered by size', f3['counts'] == sorted(f3['counts'], reverse=
 km2 = call('kmeans.fit', table=tk, columns=['k1', 'k2'], k_min=2, k_max=5, standardize=False)
 check('seeded: the same result twice', km2['fits'][1]['labels'] == f3['labels'], True)
 
-# ---- Response Screening -----------------------------------------------------------------------------------------
+# ---- Test Many Responses -----------------------------------------------------------------------------------------
 rs = call('respscreen.fit', table=tid, y=['a', 'b', 'g'], x=['c', 'g', 'd'])
 res = {(x['y'], x['x']): x for x in rs['results']}
 d_ = pd.DataFrame(Xm, columns=cols).assign(g=grp)
@@ -1205,7 +1205,7 @@ for label, kw in (('2 to 4 clusters, in their units', {'k_min': 2, 'k_max': 4, '
         check(f'{tag}: a line for each row, in its cluster\'s set', [len(s_['segs']) for s_ in ax['segments']], [int((lab_ == c_).sum()) for c_ in range(f_['k'])])
         check(f'{tag}: the columns on the axis', [t_ for t_ in ax['xticklabels'] if t_], ['u', 'v', 'a'])
 
-# ---- Response Screening ------------------------------------------------------------------------------------------------------------
+# ---- Test Many Responses ------------------------------------------------------------------------------------------------------------
 for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight, rows left out)', {'weight': 'w', 'rows': all_rows})):
     rs_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)
     R_ = rs_['results']
@@ -1360,7 +1360,7 @@ r_ = call('kmeans.fit', table=tq, columns=['u', 'v'], k_min=3, **G)
 ns = ns_of(r_, 'k-means of a By group')
 check('... on the group\'s rows', len(ns.get('X', [])), len(r_['rows']))
 r_ = call('respscreen.fit', table=tq, y=['a', 'q1'], x=['c', 'q2'], **G)
-ns = ns_of(r_, 'response screening of a By group')
+ns = ns_of(r_, 'test many responses of a By group')
 check.near('... the p-values are the report\'s', gap(ns['res']['PValue'] if 'res' in ns else [], [x_['p'] for x_ in r_['results']]), 0.0, abs_=1e-12)
 for fn_, extra in (('outliers.quantile', {}), ('outliers.robust', {})):
     r_ = call(fn_, table=tq, columns=['a', 'c'], **G, **extra)
@@ -1380,7 +1380,7 @@ ns = ns_of(r_, 'multidimensional scaling of a By group')
 check.near('... the eigenvalues are the report\'s', gap(np.asarray(ns.get('ev', []))[:len(r_['eigenvalues'])], r_['eigenvalues']), 0.0, abs_=1e-9)
 
 
-# ---- the statistics' code of Discriminant, K Means, Response Screening, Factor Analysis and Hierarchical Cluster -----------
+# ---- the statistics' code of Discriminant, K Means, Test Many Responses, Factor Analysis and Hierarchical Cluster -----------
 # Each result's code, run on the whole table's CSV, gives the report's numbers:
 # the report's method, priors, weights and order of the categories; its own
 # seeded k-means with the restarts; the tests with Weight and Freq; the
@@ -1463,7 +1463,7 @@ for label, kw in (('2 to 5 clusters, in their units', {'columns': ['u', 'v', 'a'
     means_ = [(w_[lab_ == c_, None] * X0_[lab_ == c_]).sum(0) / w_[lab_ == c_].sum() for c_ in range(kk_)]
     check.near(tag + ': the last fit\'s Cluster Means', gap(means_, r_['fits'][-1]['means']), 0.0, abs_=1e-9)
 
-# Response Screening: every test with Weight and Freq as the report uses them
+# Test Many Responses: every test with Weight and Freq as the report uses them
 for label, kw in (('', {}), (' (Freq)', {'freq': 'f'}), (' (Weight)', {'weight': 'w'}), (' (Weight and Freq, rows excluded)', {'weight': 'w', 'freq': 'f', 'rows': all_rows}),
                   (' (a By group)', {'rows': grp_rows, 'where': where_hi})):
     r_ = call('respscreen.fit', table=tq, y=['a', 'b', 'q1', 'yb', 'q3'], x=['c', 'q1', 'd', 'q3'], **kw)

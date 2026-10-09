@@ -1,8 +1,8 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > MODEL SCREENING,
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > FIT MANY MODELS,
    AND MAKE VALIDATION COLUMN
 
-   Model Screening (JMP Pro's) fits many kinds of predictive model to one
+   Fit Many Models (after JMP Pro's Model Screening) fits many kinds of predictive model to one
    response with the same rows, holdback and seed, and compares them:
 
      Summary Across the Models   the chosen measures of every method for
@@ -27,12 +27,12 @@
   const SM = root.SM;
   const { el, fmt } = SM.util;
   const T = (v) => SM.report.plotlyText(v);
-  const MORE = { label: 'Model Screening', id: 'help-p-screening' };
+  const MORE = { label: 'Fit Many Models', id: 'help-p-screening' };
   const CV = 'Crossvalidation';
 
-  const METHODS = [['tree', 'Decision Tree'], ['forest', 'Bootstrap Forest'], ['boosted', 'Boosted Tree'], ['xgboost', 'XGBoost'], ['lightgbm', 'LightGBM'],
+  const METHODS = [['tree', 'Decision Tree'], ['forest', 'Decision Forest'], ['boosted', 'Boosted Tree'], ['xgboost', 'XGBoost'], ['lightgbm', 'LightGBM'],
     ['knn', 'K Nearest Neighbors'], ['nb', 'Naive Bayes'], ['neural', 'Neural'], ['svm', 'Support Vector Machines'], ['lda', 'Discriminant'], ['linear', 'Fit Least Squares'],
-    ['lasso', 'Generalized Regression Lasso'], ['enet', 'Generalized Regression Elastic Net'], ['ridge', 'Generalized Regression Ridge'], ['stepwise', 'Fit Stepwise']];
+    ['lasso', 'Penalized Regression Lasso'], ['enet', 'Penalized Regression Elastic Net'], ['ridge', 'Penalized Regression Ridge'], ['stepwise', 'Fit Stepwise']];
   const KEYS = METHODS.map((m) => m[0]);
   const CAT_ONLY = new Set(['nb', 'lda']);
   // off at first: Fit Stepwise (as JMP) and the methods beyond JMP's default list (XGBoost and LightGBM load a package when chosen)
@@ -96,11 +96,11 @@
     const pay = { ...spec, methods: methodsOf(ctx, yc), repeats: kf.repeats };
     let note = null, off = null;
     if (!ctx.headless) {
-      note = el('p', { class: 'sm-ob-note sm-scr-progress', role: 'status', text: `Model Screening: fitting ${pay.methods.length} methods…` });
+      note = el('p', { class: 'sm-ob-note sm-scr-progress', role: 'status', text: `Fit Many Models: fitting ${pay.methods.length} methods…` });
       ctx.container.append(note);
       off = SM.engine.on('progress', (p) => {
         if (!p || p.what !== 'screening') return;
-        const text = `Model Screening${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${p.done} of ${p.total} fits…`;
+        const text = `Fit Many Models${ctx.byLabel ? ` (${ctx.byLabel})` : ''}: ${p.done} of ${p.total} fits…`;
         note.textContent = text;
         ctx.report.noteEl.textContent = text;
       });
@@ -479,7 +479,7 @@
     ['K Fold Crossvalidation', 'Measures every method on rows it did not see without a Validation column: the rows split at random, from the seed, into folds; each method is fitted once per fold to the others (tuning itself within them) and measured on the fold left out, and Crossvalidation gives the means. The Validation Portion is then not used; with a Validation column it cannot be ticked, as the column\'s sets win. A Validation column of more than three values (Make Validation Column, K Fold) holds the folds itself: the methods are crossvalidated by them.'],
     ['Folds', 'With K Fold Crossvalidation: the number of folds, from 2 to 20 (5).'],
     ['Repeated K Fold', 'With K Fold Crossvalidation: how many times it is done with new random folds, from 1 to 10 (1); the measures are the means over every held-out fold.'],
-    ['Add Two Way Interactions', 'The linear methods (Fit Least Squares or Logistic, Discriminant, and Generalized Regression\'s Lasso, Elastic Net and Ridge) get every product of two factors too, a continuous factor centred at its training mean first, as JMP\'s Model Screening option. Fit Stepwise keeps the main effects.'],
+    ['Add Two Way Interactions', 'The linear methods (Fit Least Squares or Logistic, Discriminant, and Penalized Regression\'s Lasso, Elastic Net and Ridge) get every product of two factors too, a continuous factor centred at its training mean first, as JMP\'s Model Screening option. Fit Stepwise keeps the main effects.'],
     ['Add Quadratics', 'The linear methods get the square of each continuous factor too, centred at its training mean first, as JMP\'s option.'],
   ];
 
@@ -525,7 +525,7 @@
       kf.disabled = hasV;
       folds.disabled = reps.disabled = hasV || !kf.checked;
       hint.textContent = kind === 'folds' ? 'The Validation column holds folds (more than three values): every method is crossvalidated by them.'
-        : kind === 'bad' ? `The Validation column holds neither sets (0, 1 and 2, or Training, Validation and Test) nor folds (4 to ${SM.predict.MAX_FOLDS} values, whole numbers in a numeric column): Model Screening refuses it.`
+        : kind === 'bad' ? `The Validation column holds neither sets (0, 1 and 2, or Training, Validation and Test) nor folds (4 to ${SM.predict.MAX_FOLDS} values, whole numbers in a numeric column): Fit Many Models refuses it.`
         : hasV ? 'The Validation column gives the sets; K-fold crossvalidation is not used with one.'
         : kf.checked ? 'Each method is fitted once to every row and once per fold to the others; the Validation Portion is not used.'
           : cat === false ? 'Naive Bayes and Discriminant are for a categorical Y.' : 'Without a Validation column or K-fold crossvalidation, the Validation Portion holds rows back.';
@@ -666,43 +666,43 @@
      ====================================================================== */
   const TOPICS = {
     'p:screening': {
-      kicker: 'Analyze > Predictive Modeling', title: 'Model Screening',
+      kicker: 'Analyze > Predictive Modeling', title: 'Fit Many Models',
       lead: 'Fits many kinds of predictive model to one response, with the same rows, the same training, validation and test sets and the same seed, and puts their measures of fit side by side, as JMP Pro\'s Model Screening does. The models are scikit-learn\'s (and a few written here); the measures are those every predictive platform here reports.',
       sections: [
         { heading: 'Roles', choices: [['Y, Response', 'One column: continuous, or nominal or ordinal for a classification.'], ['X, Factor', 'The predictors; a categorical factor becomes a 0/1 column per level.'], ['Weight, Freq', 'Case weights and row counts, in every method that takes them (K Nearest Neighbors weights its neighbours).'], ['Validation', 'A column of Training/Validation/Test (or 0, 1, 2): its sets win over the portion and K-fold.'], ['By', 'A screening per level.']] },
         { heading: 'Validation', text: 'Which rows judge the methods: a Validation column\'s sets when there is one (its training rows fit, its validation rows tune and compare, its test rows only measure); else K Fold Crossvalidation when it is ticked; else the Validation Portion (0.2 here), a random share of the rows held back.' },
-        { heading: 'The methods', text: 'Decision Tree, Bootstrap Forest, Boosted Tree, K Nearest Neighbors, Naive Bayes and Discriminant (categorical Y), Neural, Support Vector Machines, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression Lasso and Elastic Net, and Fit Stepwise (off by default). Method Details (i) says how each is fitted and where it differs from JMP.' },
+        { heading: 'The methods', text: 'Decision Tree, Decision Forest, Boosted Tree, K Nearest Neighbors, Naive Bayes and Discriminant (categorical Y), Neural, Support Vector Machines, Fit Least Squares or Nominal / Ordinal Logistic, Penalized Regression Lasso and Elastic Net, and Fit Stepwise (off by default). Method Details (i) says how each is fitted and where it differs from JMP.' },
       ],
       more: MORE,
     },
     'p:screening:summary': {
-      kicker: 'Model Screening', title: 'Summary Across the Models',
+      kicker: 'Fit Many Models', title: 'Summary Across the Models',
       lead: 'A line per method: RSquare and RASE (continuous Y), or Generalized RSquare, Entropy RSquare, the Misclassification Rate and for two levels the AUC, for each set. The methods are ranked by the first of them, RSquare or Generalized RSquare as JMP ranks them, on the validation rows (the crossvalidated ones with K-fold, the training ones with neither); bold marks the best of each column.',
       sections: [
-        { heading: 'Selecting', choices: [['Click a line', 'Selects the method (or takes it out again).'], ['Select Dominant', 'Selects the methods that no other method matches or beats on every measure shown while beating on one.'], ['Run Selected', 'Opens each selected method\'s own platform (Partition, Bootstrap Forest, Neural, …, Fit Model for the linear ones) with the same Y, X, Weight, Freq, Validation and By, the same Validation Portion and seed; a method whose platform is not here is left out.'], ['Clear Selection', 'Takes every method out of the selection.']] },
+        { heading: 'Selecting', choices: [['Click a line', 'Selects the method (or takes it out again).'], ['Select Dominant', 'Selects the methods that no other method matches or beats on every measure shown while beating on one.'], ['Run Selected', 'Opens each selected method\'s own platform (Partition, Decision Forest, Neural, …, Fit Model for the linear ones) with the same Y, X, Weight, Freq, Validation and By, the same Validation Portion and seed; a method whose platform is not here is left out.'], ['Clear Selection', 'Takes every method out of the selection.']] },
         { heading: 'More measures', text: 'Right click the table, Columns: Mean -Log p, Mean Abs Dev, -LogLikelihood, SSE and N of each set, and for a continuous Y the Mean Error, MAPE, MPE and Median Abs Error.' },
         { heading: 'Ensemble of Selected', text: 'In the red triangle: the average of the selected methods and their stacking, beside them (see its (i)). Not in JMP.' },
       ],
       more: MORE,
     },
     'p:screening:ensemble': {
-      kicker: 'Model Screening', title: 'Ensemble of Selected',
+      kicker: 'Fit Many Models', title: 'Ensemble of Selected',
       lead: 'Beyond JMP: two combinations of the methods selected in the Summary. Average of Selected is the mean of their predictions (or probabilities); Stacked is their weighted mean, the weights (0 or more, adding to 1: a convex combination, a super learner) fitted to the methods\' out-of-fold predictions of the training rows: the report\'s K folds when it crossvalidates (the first repeat), else 5 folds from the seed. The weights are found by SLSQP: the smallest squared error, or the largest log-likelihood of a categorical response. Each set\'s measures are those of the methods fitted to all the training rows, combined.',
       more: MORE,
     },
-    'p:screening:sets': { kicker: 'Model Screening', title: 'Training, Validation and Test', lead: 'Every Measure of Fit of every method for the rows of one set (see Measures of Fit). Training measures flatter flexible methods: compare them on validation or test rows.', more: MORE },
+    'p:screening:sets': { kicker: 'Fit Many Models', title: 'Training, Validation and Test', lead: 'Every Measure of Fit of every method for the rows of one set (see Measures of Fit). Training measures flatter flexible methods: compare them on validation or test rows.', more: MORE },
     'p:screening:cv': {
-      kicker: 'Model Screening', title: 'K-fold Crossvalidation',
+      kicker: 'Fit Many Models', title: 'K-fold Crossvalidation',
       lead: 'The training rows are split at random (from the seed) into K folds of nearly equal size. Each method is fitted K times, each time to all folds but one, and measured on the fold left out; the table gives the mean over the folds (and their standard deviation). Repeated K Fold does it again with new folds.',
-      sections: [{ heading: 'Honest folds', text: 'Inside a fold a method tunes itself without the held-out rows: the tree by crossvalidation within the other folds, K Nearest Neighbors by leave-one-out, Neural by a holdback, Generalized Regression by AICc, Stepwise by BIC. The Training measures are of the methods fitted once to every row.' }],
+      sections: [{ heading: 'Honest folds', text: 'Inside a fold a method tunes itself without the held-out rows: the tree by crossvalidation within the other folds, K Nearest Neighbors by leave-one-out, Neural by a holdback, Penalized Regression by AICc, Stepwise by BIC. The Training measures are of the methods fitted once to every row.' }],
       more: MORE,
     },
     'p:screening:methods': {
-      kicker: 'Model Screening', title: 'How each method is fitted',
+      kicker: 'Fit Many Models', title: 'How each method is fitted',
       lead: 'Each method as JMP\'s platform fits it by default, as far as scikit-learn allows. Tuning uses the validation rows when there are any; otherwise the rule named. Categorical factors are 0/1 columns (one level left out for the linear methods), missing values informative when that option is on.',
       sections: [{ choices: [
         ['Decision Tree', 'Splits made best first (squared error; entropy for a categorical Y), no leaf under 5 rows, up to 64 leaves; the number of splits by the validation rows or 5-fold crossvalidation. JMP splits by LogWorth; its leaf rates carry a prior, as here (one row spread as the training shares).'],
-        ['Bootstrap Forest', '100 trees on bootstrap samples, a third of the columns tried at each split (the square root of their number for a categorical Y), leaves of 5 rows or more; with validation rows the best of 10, 20, …, 100 trees. JMP\'s default number of terms sampled may differ.'],
+        ['Decision Forest', '100 trees on bootstrap samples, a third of the columns tried at each split (the square root of their number for a categorical Y), leaves of 5 rows or more; with validation rows the best of 10, 20, …, 100 trees. JMP\'s default number of terms sampled may differ.'],
         ['Boosted Tree', '50 layers of trees with 3 splits, learning rate 0.1, leaves of 5 or more; with validation rows the number of layers with the best validation measure. JMP\'s overfit penalty is not here.'],
         ['XGBoost', 'The xgboost package\'s XGBClassifier or XGBRegressor with its defaults (100 rounds, depth 6, learning rate 0.3), the Weight x Freq as sample weights, the report\'s seed; with validation rows the number of rounds with the best validation measure. The package is loaded the first time the method is chosen. JMP Pro runs XGBoost from an add-in, with its own defaults.'],
         ['LightGBM', 'The lightgbm package\'s LGBMClassifier or LGBMRegressor with its defaults (100 rounds, 31 leaves, 20 rows in a leaf, learning rate 0.1), deterministic, the report\'s seed; with validation rows the number of rounds with the best validation measure. Loaded the first time it is chosen. Not in JMP.'],
@@ -712,17 +712,17 @@
         ['Support Vector Machines', 'RBF kernel, cost 1, gamma 1/(number of columns), standardized columns; probabilities from Platt\'s sigmoid fitted to the training decision values (scikit-learn\'s own fits it on crossvalidated ones, five times slower).'],
         ['Discriminant', 'Linear: one covariance matrix pooled within the levels (n - levels degrees of freedom), priors the training shares.'],
         ['Fit Least Squares, Logistic', 'The main effects by least squares; a nominal Y by multinomial logistic regression, an ordinal one by the cumulative logit, both by maximum likelihood.'],
-        ['Generalized Regression', 'The lasso and the elastic net (alpha 0.9, as Fit Model here) on centred and scaled columns, the penalty by the validation rows or the smallest AICc; JMP\'s adaptive versions are not here.'],
-        ['Generalized Regression Ridge', 'A squared penalty on the centred and scaled columns, along the ridge path from the singular value decomposition; the penalty by the validation rows or the smallest AICc (the degrees of freedom the trace of the hat matrix); a categorical Y by logistic regression (lbfgs), the penalty by the validation rows or 5-fold crossvalidation. Off by default.'],
+        ['Penalized Regression', 'The lasso and the elastic net (alpha 0.9, as Fit Model here) on centred and scaled columns, the penalty by the validation rows or the smallest AICc; JMP\'s adaptive versions are not here.'],
+        ['Penalized Regression Ridge', 'A squared penalty on the centred and scaled columns, along the ridge path from the singular value decomposition; the penalty by the validation rows or the smallest AICc (the degrees of freedom the trace of the hat matrix); a categorical Y by logistic regression (lbfgs), the penalty by the validation rows or 5-fold crossvalidation. Off by default.'],
         ['Two Way Interactions, Quadratics', 'The launch options: the linear methods (Fit Least Squares or Logistic, Discriminant, Lasso, Elastic Net, Ridge) get every product of two factors\' columns and each continuous factor\'s square, a continuous column centred at its training mean first. Fit Stepwise keeps the main effects.'],
         ['Fit Stepwise', 'Forward selection of whole factors, the step with the smallest BIC or the best validation measure.'],
       ] }],
       more: MORE,
     },
-    'p:screening:curves': { kicker: 'Model Screening', title: 'ROC and Lift Curves', lead: 'Every method\'s curve for one level on one graph per set, so that the methods can be compared where it matters: the ROC curve (the share of the level\'s rows caught against the share of the others as the cut on its probability falls; the AUC in the legend and the table) and the lift (how much more common the level is among the rows it scores highest). Level (red triangle) picks the level.', more: MORE },
-    'p:screening:abp': { kicker: 'Model Screening', title: 'Actual by Predicted', lead: 'A small graph per method of the actual response against the prediction, for one set; the points are the rows (drag to select them). A good model keeps them near the dotted line on the validation rows, not only on the training rows.', more: MORE },
+    'p:screening:curves': { kicker: 'Fit Many Models', title: 'ROC and Lift Curves', lead: 'Every method\'s curve for one level on one graph per set, so that the methods can be compared where it matters: the ROC curve (the share of the level\'s rows caught against the share of the others as the cut on its probability falls; the AUC in the legend and the table) and the lift (how much more common the level is among the rows it scores highest). Level (red triangle) picks the level.', more: MORE },
+    'p:screening:abp': { kicker: 'Fit Many Models', title: 'Actual by Predicted', lead: 'A small graph per method of the actual response against the prediction, for one set; the points are the rows (drag to select them). A good model keeps them near the dotted line on the validation rows, not only on the training rows.', more: MORE },
     'p:screening:threshold': {
-      kicker: 'Model Screening', title: 'Decision Threshold',
+      kicker: 'Fit Many Models', title: 'Decision Threshold',
       lead: 'For a response with two levels, the methods selected in the Summary (every method when none is): a row is called the target level when its predicted probability of it is at least the threshold. The fitted probabilities of each method by the actual level on the rows that compare the methods (validation, crossvalidated or training), a table per set with each method\'s measures and counts at the threshold, and one measure of every method against the threshold (Curve Metric in the red triangle), as JMP Pro\'s Decision Threshold of Model Screening.',
       sections: [
         { heading: 'The controls', choices: [
@@ -743,7 +743,7 @@
       lead: 'Adds a column that puts every row in the training, validation or test set, or in one of K folds, which the predictive platforms take in their Validation role. The proportions are rounded to whole rows by largest remainders (each set gets the floor of its share, the rows left over go to the largest fractions), so the counts are exact, not random; which rows go where is random, from the seed.',
       sections: [
         { heading: 'Methods', choices: [['Random', 'No columns cast: the rows in random order, the first ones training, then validation, then test.'], ['Stratified', 'Stratification Columns: the proportions within every combination of their levels (a missing value is a level), each stratum\'s counts rounded down or up so that the totals are still the random method\'s.'], ['Grouped', 'Grouping Columns: every row of a group in the same set; the groups in random order, each to the set its middle row falls in, so the shares of rows are close to the proportions.'], ['Stratify by Group', 'Both kinds of column: every group whole in one set, the groups (largest first, ties in random order) each to the set where it brings the counts of every stratum nearest their shares, so that each set has its share of every level as near as whole groups allow.'], ['Cutpoint', 'A time column: no randomness, the earliest rows train, the next validate, the latest test; rows with the same time stay together, rows without one get no set.']] },
-        { heading: 'K Fold', text: 'Validation Column Type K Fold: the rows in Number of Folds folds (4 to 50) of equal size, numbered 1 to K, by any method but the cutpoint (stratified: every stratum split evenly across the folds; grouped: every group in one fold). A Validation column of more than three values is read as folds: every row trains, and Model Screening, K Nearest Neighbors, Support Vector Machines and Naive Bayes crossvalidate by them.' },
+        { heading: 'K Fold', text: 'Validation Column Type K Fold: the rows in Number of Folds folds (4 to 50) of equal size, numbered 1 to K, by any method but the cutpoint (stratified: every stratum split evenly across the folds; grouped: every group in one fold). A Validation column of more than three values is read as folds: every row trains, and Fit Many Models, K Nearest Neighbors, Support Vector Machines and Naive Bayes crossvalidate by them.' },
         { heading: 'Balance the Training Set', text: 'With Stratification Columns: after the stratified split, each stratum\'s training rows are cut down at random to those of the smallest stratum, so the training set has every level equally, while validation and test keep the table\'s shares; the rows cut get no set. Beyond JMP (an undersampling of the frequent levels, as the oversampling of a rare one).' },
         { heading: 'The column', text: 'Training, Validation, Test (text, in that order) or 0, 1, 2 (numeric), or the fold numbers 1 to K, nominal. JMP makes a numeric column with value labels. The column\'s notes keep the method, the seed, the counts and the Python (numpy) that makes the same column from a CSV export.' },
         { heading: 'Differences from JMP', text: 'JMP gives a row with a missing stratification, grouping or cutpoint value no set; here a missing value is a level (a group) of its own for stratification and grouping, and only the cutpoint leaves such a row out. Balance the Training Set is this page\'s.' },
@@ -755,8 +755,8 @@
      THE PLATFORM AND THE COMMAND
      ====================================================================== */
   SM.platforms.register({
-    id: 'screening', label: 'Model Screening', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:screening', topics: TOPICS,
-    about: 'JMP Pro\'s Model Screening: Decision Tree, Bootstrap Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Generalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold and Group Metrics (a fairness audit) of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
+    id: 'screening', label: 'Fit Many Models', menu: 'Analyze/Predictive Modeling', order: 90, info: 'p:screening', topics: TOPICS,
+    about: 'Decision Tree, Decision Forest, Boosted Tree, XGBoost, K Nearest Neighbors, Naive Bayes, Neural, Support Vector Machines, Discriminant, Fit Least Squares or Nominal / Ordinal Logistic, Penalized Regression (lasso, elastic net and ridge) and Fit Stepwise fitted to the same rows, sets and seed, with a holdback, a Validation column (of sets, or of K folds) or repeated K-fold crossvalidation, the linear methods with two-way interactions and quadratics on request; the Summary Across the Models ranked by Generalized RSquare (RSquare) with the best of each measure marked, Select Dominant and Run Selected, the training, validation and test tables, ROC and lift curves and actual by predicted of every method, the Decision Threshold and Group Metrics (a fairness audit) of the selected methods (two levels), the Prediction Profiler and Save Columns of any method, and the Python that fits them all. Beyond JMP: LightGBM, and the Ensemble of Selected (their average and their stacking).',
     uses: ['xgboost.XGBClassifier, XGBRegressor (loaded when chosen)', 'lightgbm.LGBMClassifier, LGBMRegressor (loaded when chosen)', 'scipy.optimize.minimize (SLSQP: the stacking weights)', 'sklearn.tree.DecisionTreeClassifier, DecisionTreeRegressor', 'sklearn.ensemble.RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor', 'sklearn.neighbors.NearestNeighbors', 'sklearn.naive_bayes.GaussianNB, CategoricalNB', 'sklearn.neural_network.MLPClassifier, MLPRegressor', 'sklearn.svm.SVC, SVR, l1_min_c', 'sklearn.linear_model.LinearRegression, LogisticRegression, enet_path', 'scipy.optimize.minimize (the cumulative logit, Platt\'s sigmoid)', 'scipy.linalg.pinvh (the discriminant)'],
     launch: {
       lead: 'Choose one Y and the X factors, and the methods to compare. Each method is fitted to the same training rows and measured on the same validation and test rows.',
@@ -773,7 +773,7 @@
     },
     title: (spec, table) => {
       const c = table && (spec.roles.y || [])[0] ? table.col(spec.roles.y[0]) : null;
-      return c ? `Model Screening for ${c.name}` : 'Model Screening';
+      return c ? `Fit Many Models for ${c.name}` : 'Fit Many Models';
     },
     triangle: topMenu,
     render,

@@ -1,13 +1,13 @@
 /* ==========================================================================
    SMUI.HTML: GRAPH (smui-p-graph.js)
-   Graph Builder's columns, element palette, drop zones and properties; the
+   Graph Maker's columns, element palette, drop zones and properties; the
    axis pickers of Scatterplot 3D; the Functional Data Plot's launch part;
    the Axis Settings window of every graph (smui-axis.js). Colours are
    kvot.css's tokens, so both themes work; at phone width the builder
    stacks its parts.
    ========================================================================== */
 
-/* ---- Graph Builder ---------------------------------------------------------- */
+/* ---- Graph Maker ---------------------------------------------------------- */
 .sm-gb { container: gb / inline-size; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .sm-gb-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .sm-gb-hint { flex: 1 1 260px; font-size: 11.5px; color: var(--text-muted); }

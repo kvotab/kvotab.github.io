@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > BOOTSTRAP FOREST, BOOSTED TREE
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > DECISION FOREST, BOOSTED TREE
    (smui-p-ensemble.js). The launch dialog's Specification panel, the fit
    shown in Model Validation-Set Summaries, the tree views and wide tables.
    Colours are kvot.css's tokens, so both themes read. Class prefix sm-ens-.

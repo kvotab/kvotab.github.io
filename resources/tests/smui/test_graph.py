@@ -10,7 +10,7 @@ gridded surfaces of Contour Plot and Surface Plot, Bean's violins
 fboxplot's order, regions and outliers, hdrboxplot's outliers, modal curve
 and bands, compared with statsmodels' own figures where matplotlib is
 installed (hdrboxplot's multiprocessing Pool made a plain map). The
-Python under each graph (graph.code: Graph Builder's elements and zones,
+Python under each graph (graph.code: Graph Maker's elements and zones,
 and the other Graph platforms) is run on a CSV export of the table with
 matplotlib, and its figure must show the report's numbers.
 
@@ -599,7 +599,7 @@ one = call('graph.bean', table=tid, y='y', rows=[0, 1, 2], codes=[0, 1, 1], k=2)
 check('bean: one value, the marks without a violin', ('error' in one[0], one[0]['n'], one[0]['mean'] == y[0]), (True, 1.0, True))
 
 # ---- the Python under each graph: graph.code ------------------------------------------------------
-# The page sends graph.code a plan of the graph it drew (Graph Builder's elements and zones
+# The page sends graph.code a plan of the graph it drew (Graph Maker's elements and zones
 # as it resolved them, or another platform's settings), and the code that comes back draws
 # that graph with matplotlib from the table's CSV export. Here the code runs on a CSV
 # written as the page exports it (dates as text), with matplotlib's Agg backend, and its
@@ -724,7 +724,7 @@ def gc_groups(tid_, c, rows_, spec=None):
 
 def gb_plan(tid_, elements, x=(), y=(), gx=None, gy=None, wrap=None, overlay=None, color=None, size=None, freq=None,
             y_mode='side', w=640, h=420, log=None, where=None, bins=None, axes=None, order=None, marker=None, map_=None):
-    """Graph Builder's plan of a graph, as the page's Env.plan makes it for these zones and elements."""
+    """Graph Maker's plan of a graph, as the page's Env.plan makes it for these zones and elements."""
     n = _data.TABLES[tid_]['n']
     r0 = np.arange(n)
     if freq:
@@ -1310,7 +1310,7 @@ srt = pdf.sort_values('x', kind='stable')
 check('Overlay Plot: each Y joined in the order of X, pop on the right axis', [(L_['label'], L_['y'] == srt[L_['label']].tolist()) for A_ in AX for L_ in A_['lines']], [('z', True), ('pop', True)])
 
 
-# ---- Graph Builder's Levels, Axis Settings, Order By, Marker Size and Transparency, and maps ----------------------
+# ---- Graph Maker's Levels, Axis Settings, Order By, Marker Size and Transparency, and maps ----------------------
 # Levels: a continuous grouping column in bins as Make Binning Column cuts them (a bin holds its lower cut); the rows of
 # each bin found here with searchsorted on the cuts worked out from their definitions (JMP's quantile, the round width)
 for zone_, spec_ in (('overlay', None), ('overlay', {'n': 3, 'method': 'quantile'}), ('overlay', {'n': 4, 'method': 'width'})):

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""smui.html in a real browser: Analyze > Predictive Modeling > Bootstrap
+"""smui.html in a real browser: Analyze > Predictive Modeling > Decision
 Forest and Boosted Tree.
 
 The simulated Subscribers example opens from the URL and File > Examples;
-Analyze > Predictive Modeling lists Bootstrap Forest before Boosted Tree;
+Analyze > Predictive Modeling lists Decision Forest before Boosted Tree;
 the page starts without scikit-learn and the first fit loads it; the launch
 dialog has JMP's roles and its Specification panel with JMP's defaults (the
 number of terms follows the X columns cast); the report's outlines are
@@ -303,7 +303,7 @@ def ensemble_compare(lab, g, F):
 
 
 async def charts(page):
-    """Every graph of Bootstrap Forest's and Boosted Tree's reports, categorical and continuous: its block
+    """Every graph of Decision Forest's and Boosted Tree's reports, categorical and continuous: its block
     under it, run in the page, its figure the graph's (the model refitted in the block with the seed)."""
     await page.ev(GRAPHS_JS)
     await page.ev(UP.PM_JS)
@@ -314,8 +314,8 @@ async def charts(page):
     cat = {'y': ['churned'], 'x': XS, 'validation': ['Validation']}
     cont = {'y': ['satisfaction'], 'x': XS}
     specs = [
-        ('forest', 'Bootstrap Forest, churned, a Validation column', cat, {'settings': {'trees': 30}, 'roc': True, 'lift': True, 'permutation': True, 'permRepeats': 2, 'seed': '5'}),
-        ('forest', 'Bootstrap Forest, satisfaction, a validation portion, RASE', cont, {'settings': {'trees': 30}, 'abp': True, 'permutation': True, 'permRepeats': 2, 'cumStat': 'rase', 'portion': 0.3, 'seed': '9'}),
+        ('forest', 'Decision Forest, churned, a Validation column', cat, {'settings': {'trees': 30}, 'roc': True, 'lift': True, 'permutation': True, 'permRepeats': 2, 'seed': '5'}),
+        ('forest', 'Decision Forest, satisfaction, a validation portion, RASE', cont, {'settings': {'trees': 30}, 'abp': True, 'permutation': True, 'permRepeats': 2, 'cumStat': 'rase', 'portion': 0.3, 'seed': '9'}),
         ('boosted', 'Boosted Tree, churned, a Validation column', cat, {'settings': {'layers': 25}, 'roc': True, 'lift': True, 'seed': '5'}),
         ('boosted', 'Boosted Tree, satisfaction, every row trains', cont, {'settings': {'layers': 20, 'rowRate': 0.8}, 'abp': True, 'permutation': True, 'permRepeats': 2, 'seed': '3'}),
     ]
@@ -362,7 +362,7 @@ async def main():
     check('it is simulated and its notes give the truth', ex['about'].startswith('Simulated') and 'logistic' in ex['about'], True)
     check('it is in File > Examples', ex['inFile'], True)
     check('data use has missing values (for Informative Missing)', ex['missing'] > 50, True)
-    check('Analyze > Predictive Modeling lists Bootstrap Forest before Boosted Tree', 'Bootstrap Forest…' in ex['items'] and 'Boosted Tree…' in ex['items'] and ex['items'].index('Bootstrap Forest…') < ex['items'].index('Boosted Tree…'), True)
+    check('Analyze > Predictive Modeling lists Decision Forest before Boosted Tree', 'Decision Forest…' in ex['items'] and 'Boosted Tree…' in ex['items'] and ex['items'].index('Decision Forest…') < ex['items'].index('Boosted Tree…'), True)
 
     # ---- the launch dialog
     r = await page.ev('''(async (xs) => {
@@ -407,7 +407,7 @@ async def main():
     check('without a validation column it says early stopping needs one; with one it does not', (bool(r['hint']), r['hint2']), (True, ''))
     check('a bad setting is refused in the dialog', 'Number of Trees in the Forest' in r['bad'], True)
     check('the settings reach the report', (r['options']['settings']['trees'], r['options']['settings']['early'], r['options']['settings']['stop']), (60, True, 'oob'))
-    check('the report\'s title and JMP\'s outlines', (r['title'], r['outlines']), ('Bootstrap Forest for satisfaction', ['Bootstrap Forest for satisfaction', 'Specifications', 'Overall Statistics', 'Cumulative Validation', 'Cumulative Details', 'Per-Tree Summaries', 'Column Contributions']))
+    check('the report\'s title and JMP\'s outlines', (r['title'], r['outlines']), ('Decision Forest for satisfaction', ['Decision Forest for satisfaction', 'Specifications', 'Overall Statistics', 'Cumulative Validation', 'Cumulative Details', 'Per-Tree Summaries', 'Column Contributions']))
     st = await page.ev(STATE)
     check('no errors in the report', (st['errors'], st['warnings']), ([], []))
     check('the first fit loaded scikit-learn 1.8.0', await page.ev("SM.engine.versions['scikit-learn'] || null"), '1.8.0')
@@ -581,7 +581,7 @@ async def main():
     })()''' % json.dumps(XS), timeout=900)
     forest_lines = [s for s in r['seen'] if s[0] == 'forest']
     check('a long fit sends progress: forest lines up to 300 of 300', (len(forest_lines) >= 5, forest_lines[-1] if forest_lines else None), (True, ['forest', 300, 300]))
-    check('... shown in the report while it runs', bool(r['note']) and 'Bootstrap Forest' in r['note'], True)
+    check('... shown in the report while it runs', bool(r['note']) and 'Decision Forest' in r['note'], True)
     check('a categorical forest: the Confusion Matrix inside Overall Statistics', 'Confusion Matrix' in r['outlines'], True)
     # categorical: probabilities never 0, ROC and lift, Save Predicteds
     await page.ev(pick_js('*top*', ['ROC Curve']))
@@ -773,14 +773,14 @@ async def main():
 
     # ---- the (i) explains every input: the launch dialogs and their Specification, the form, Tree Views
     await page.ev('SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === "Subscribers")))')
-    for pid, label, heading in (('forest', 'Bootstrap Forest', 'Bootstrap Forest Specification'), ('boosted', 'Boosted Tree', 'Gradient-Boosted Trees Specification')):
+    for pid, label, heading in (('forest', 'Decision Forest', 'Decision Forest Specification'), ('boosted', 'Boosted Tree', 'Gradient-Boosted Trees Specification')):
         d = await page.ev(info_js('dialog', f"SM.app.launch('{pid}')", "dlg.querySelector('.sm-ens-spec')"))
         spec = d.get('sections', {}).get(heading, [])
         check(f'{label}: the launch dialog\'s (i) explains every field of its Specification', (len(d.get('inputs', [])), len(spec), unexplained(d, heading), all(len(t) > 40 for _, t in spec)), (10, 10, [], True))
         await dialog_help(page, f"SM.app.launch('{pid}')", pid, label)
     forest = 'SM.app.reports.find(r => r.platform.id === "forest")'
     boosted = 'SM.app.reports.at(-1)'
-    for rep_js, label in ((forest, 'Bootstrap Forest'), (boosted, 'Boosted Tree')):
+    for rep_js, label in ((forest, 'Decision Forest'), (boosted, 'Boosted Tree')):
         f = await form_help(page, f"await clickPath({rep_js}, '*top*', ['Specifications…']);", [], f'{label} Specifications…')
         fields = (f.get('sections') or {}).get('Fields', [])
         check('... its ten fields, each with what it is for (the Specification\'s texts)', (len(fields), all(len(t) > 40 for _, t in fields)), (10, True))

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > BOOTSTRAP FOREST, BOOSTED TREE
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > DECISION FOREST, BOOSTED TREE
 
    JMP Pro's two tree ensembles on scikit-learn's decision trees (the backend
    is resources/py/smui/ensemble.py): a split on a nominal X takes two groups
@@ -33,7 +33,7 @@
   const W = (w) => Math.max(260, Math.min(w, (root.innerWidth || 1200) - 110));
 
   const KIND = {
-    forest: { id: 'forest', label: 'Bootstrap Forest', what: 'trees', one: 'Tree', many: 'Trees', info: 'p:forest', more: { label: 'Bootstrap Forest', id: 'help-p-forest' } },
+    forest: { id: 'forest', label: 'Decision Forest', what: 'trees', one: 'Tree', many: 'Trees', info: 'p:forest', more: { label: 'Decision Forest', id: 'help-p-forest' } },
     boosted: { id: 'boosted', label: 'Boosted Tree', what: 'layers', one: 'Layer', many: 'Layers', info: 'p:boosted', more: { label: 'Boosted Tree', id: 'help-p-boosted' } },
   };
   const STAT_LABEL = { rsquare: 'RSquare', rase: 'RASE', mad: 'Mean Abs Dev', entropy_rsquare: 'Entropy RSquare', mean_neg_log_p: 'Mean -Log p', misclassification: 'Misclassification Rate' };
@@ -134,7 +134,7 @@
           : el('label', { class: 'sm-ens-field' }, el('span', { text: f.label }), input));
       }
       const hint = el('p', { class: 'sm-ens-hint' });
-      const box = el('div', { class: 'sm-ens-spec' }, el('h4', { text: kind === 'boosted' ? 'Gradient-Boosted Trees Specification' : 'Bootstrap Forest Specification' }), head,
+      const box = el('div', { class: 'sm-ens-spec' }, el('h4', { text: kind === 'boosted' ? 'Gradient-Boosted Trees Specification' : 'Decision Forest Specification' }), head,
         el('div', { class: 'sm-ens-panels' }, ...panels.values()), hint);
       const read = () => {
         const out = {};
@@ -165,7 +165,7 @@
       update(api.state);
       return {
         el: box,
-        helpHeading: kind === 'boosted' ? 'Gradient-Boosted Trees Specification' : 'Bootstrap Forest Specification',
+        helpHeading: kind === 'boosted' ? 'Gradient-Boosted Trees Specification' : 'Decision Forest Specification',
         help: FIELDS[kind].map((f) => [f.label, f.help]),
         read: () => ({ options: { settings: read() } }),
         recall: (saved) => {
@@ -507,7 +507,7 @@
   const SCORE = { heading: 'Score Rows', text: 'Save Columns ▸ Score Rows… predicts rows the model did not see, with the model as the report fitted it (the engine keeps it): this table\'s rows added since, or another open table with the same X columns. JMP\'s Save Prediction Formula writes every tree into a formula; here that would run to thousands of nested conditions.' };
   const TOPICS = {
     'p:forest': {
-      kicker: 'Analyze > Predictive Modeling', title: 'Bootstrap Forest',
+      kicker: 'Analyze > Predictive Modeling', title: 'Decision Forest',
       lead: 'The average of many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split (scikit-learn\'s decision trees, the samples and seeds drawn as its RandomForestRegressor and RandomForestClassifier draw them). A split on a nominal X takes two groups of its levels, each tree is then cut back as JMP describes its trees stopping, and a categorical response\'s probabilities are JMP\'s.',
       sections: [ROLES, LEVELS,
         { heading: 'Each tree', text: 'scikit-learn grows the tree best first up to Maximum Splits per Tree, with at least Minimum Size Split rows on each side of a split. JMP says its trees split until a stopping criterion stops improving and are then pruned back one split; here the criterion is the tree\'s out-of-bag loss: past Minimum Splits per Tree a split stays while it lowers the loss of the rows the tree did not see, and the first that does not is taken back. Tree Size ▸ Grow to Maximum Splits keeps scikit-learn\'s trees whole.' },
@@ -526,38 +526,38 @@
       more: KIND.boosted.more,
     },
     'p:ensemble:spec': {
-      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Specifications',
+      kicker: 'Decision Forest, Boosted Tree', title: 'Specifications',
       lead: 'The settings of the fit, with JMP\'s defaults, and what came of them: the rows of each set, the Number of Trees Kept (or Layers Kept) after early stopping, a forest\'s Bootstrap Samples (the rows drawn for each tree), and whether Early Stopping was on. Change Specifications… (red triangle) fits again.',
       sections: [
-        { heading: 'Bootstrap Forest', choices: FIELDS.forest.map((f) => [f.label, f.help]) },
+        { heading: 'Decision Forest', choices: FIELDS.forest.map((f) => [f.label, f.help]) },
         { heading: 'Boosted Tree', choices: FIELDS.boosted.map((f) => [f.label, f.help]) },
         { heading: 'Random Seed', text: 'The bootstrap samples, the columns tried and the row sampling follow the report\'s seed (scikit-learn\'s random_state), so a redraw, a project and the Python code give the same model.' },
       ],
     },
     'p:ensemble:summaries': {
-      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Model Validation-Set Summaries',
+      kicker: 'Decision Forest, Boosted Tree', title: 'Model Validation-Set Summaries',
       lead: 'Every fit of Multiple Fits with its validation set\'s statistics (a forest without validation rows: the out-of-bag statistics). The report shows the fit with the largest RSquare, or Entropy RSquare for a categorical response; a click on another line shows that one.',
       sections: [{ choices: [['A click on a line', 'Shows that fit in the report below it (its Specifications, statistics, curves and contributions); the line shown is marked. Specifications… or a new launch goes back to the best one.']] }],
     },
     'p:ensemble:cumulative': {
-      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Cumulative Validation',
+      kicker: 'Decision Forest, Boosted Tree', title: 'Cumulative Validation',
       lead: 'A statistic of each set after 1, 2, … trees or layers: the forest of the first k trees, or the first k layers. The dashed line marks the number kept. Statistic (red triangle) picks RSquare or RASE, or for a categorical response Entropy RSquare, Mean -Log p, RASE, Mean Abs Dev or the Misclassification Rate. Cumulative Details below the plot gives the values; Save Cumulative Details makes them a table.',
       sections: [{ heading: 'Out of Bag', text: 'For a forest, each training row predicted by the first k trees that did not see it.' }],
     },
     'p:ensemble:pertree': {
-      kicker: 'Bootstrap Forest', title: 'Per-Tree Summaries',
+      kicker: 'Decision Forest', title: 'Per-Tree Summaries',
       lead: 'Each kept tree: its splits, and its losses on its in-bag rows (the bootstrap sample, each row as often as drawn) and out-of-bag rows (the training rows it did not see).',
       sections: [{ choices: [['Splits', 'the splits of the tree kept'], ['Rank', 'of OOB Loss/N, smallest first'], ['OOB Loss', 'the out-of-bag loss (squared error, or -log p) before the last split was taken back'], ['RSquare', 'the tree\'s in-bag RSquare'], ['IB SSE, IB SSE/N', 'the in-bag sum of squared errors, and over the bootstrap sample\'s size'], ['OOB N, OOB SSE, OOB SSE/N', 'the out-of-bag rows and the kept tree\'s squared errors on them']] }],
     },
-    'p:ensemble:contrib': { kicker: 'Bootstrap Forest, Boosted Tree', title: 'Column Contributions', lead: 'For each X column: how many splits use it over all the trees or layers, and the SS (continuous) or G² (categorical) those splits take away: the parent\'s minus its two children\'s, the SS a node\'s sum of squares about its mean and G² twice its entropy (natural log) from the counts. Portion is the column\'s share of the total.' },
+    'p:ensemble:contrib': { kicker: 'Decision Forest, Boosted Tree', title: 'Column Contributions', lead: 'For each X column: how many splits use it over all the trees or layers, and the SS (continuous) or G² (categorical) those splits take away: the parent\'s minus its two children\'s, the SS a node\'s sum of squares about its mean and G² twice its entropy (natural log) from the counts. Portion is the column\'s share of the total.' },
     'p:ensemble:score': {
-      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Score Rows',
+      kicker: 'Decision Forest, Boosted Tree', title: 'Score Rows',
       lead: 'The forest or boosted tree as this report fitted it (the engine keeps it while the page is open) on rows it did not see: this table\'s rows added since the report fitted, or every row of another open table with the same X columns, found by name. The predictions go into that table: into its prediction columns for the rows that have none yet, or as new columns (Predicted, or Prob[] of each level and Most Likely). The model is not fitted again. After the engine starts again the model is fitted again from this table as it is now, and the page says so.',
       sections: [{ heading: 'Why', text: 'JMP\'s Save Prediction Formula writes all the trees into one formula column; a forest of 100 trees would be a formula of thousands of nested conditions, so here the model itself scores the rows.' },
         { heading: 'Levels the model never saw', text: 'A level of a categorical X that the training rows did not have is read as a missing value, and goes where each tree sends missing values.' }],
     },
     'p:ensemble:trees': {
-      kicker: 'Bootstrap Forest, Boosted Tree', title: 'Tree Views',
+      kicker: 'Decision Forest, Boosted Tree', title: 'Tree Views',
       lead: 'One tree of the forest (as it was cut back) or one layer of the boosted tree, a line per node: the split that leads to it and, with estimates, its training rows (weighted, in bag) and its mean or JMP probabilities; a layer\'s estimate is what it adds to the prediction.',
       sections: [
         { heading: 'The controls', choices: [
@@ -578,8 +578,8 @@
      THE PLATFORMS
      ====================================================================== */
   const ABOUT = {
-    forest: 'JMP Pro\'s Bootstrap Forest: many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split, averaged; a split on a nominal X takes two groups of its levels, as JMP\'s do; each tree cut back by its out-of-bag loss past Minimum Splits per Tree, as JMP describes its trees stopping, and a categorical response\'s probabilities JMP\'s (never 0). Early stopping on the validation rows, Multiple Fits over the number of terms; Model Validation-Set Summaries, Specifications, Overall Statistics with Individual Trees and an out-of-bag estimate, Cumulative Validation with its details, Per-Tree Summaries, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, tree views, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
-    boosted: 'JMP Pro\'s Boosted Tree: a sum of small trees, each fitted to the residuals of the ones before and scaled by the learning rate, for a continuous or categorical response; a split on a nominal X takes two groups of its levels, as JMP\'s do. Early stopping at the first layer that does not improve the validation statistic, Multiple Fits over splits per tree and learning rate, row and column sampling; Model Validation-Set Summaries, Specifications, Overall Statistics, Cumulative Validation with its details, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, the layers\' trees, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
+    forest: 'Many decision trees, each grown on a bootstrap sample of the training rows with a random set of the X columns tried at each split, averaged; a split on a nominal X takes two groups of its levels, as JMP\'s do; each tree cut back by its out-of-bag loss past Minimum Splits per Tree, as JMP describes its trees stopping, and a categorical response\'s probabilities JMP\'s (never 0). Early stopping on the validation rows, Multiple Fits over the number of terms; Model Validation-Set Summaries, Specifications, Overall Statistics with Individual Trees and an out-of-bag estimate, Cumulative Validation with its details, Per-Tree Summaries, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, tree views, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
+    boosted: 'A sum of small trees, each fitted to the residuals of the ones before and scaled by the learning rate, for a continuous or categorical response; a split on a nominal X takes two groups of its levels, as JMP\'s do. Early stopping at the first layer that does not improve the validation statistic, Multiple Fits over splits per tree and learning rate, row and column sampling; Model Validation-Set Summaries, Specifications, Overall Statistics, Cumulative Validation with its details, Column Contributions, and from the red triangle permutation importance, actual by predicted, ROC and lift curves, the Decision Threshold, the layers\' trees, the Prediction Profiler, Save Columns and Score Rows (the model as fitted, on new rows or another table).',
   };
   const USES = {
     forest: ['sklearn.tree.DecisionTreeRegressor, DecisionTreeClassifier (their missing-value splits; apply, decision_path, compute_node_depths), drawn as sklearn.ensemble.RandomForestRegressor draws its trees', 'numpy'],
@@ -618,7 +618,7 @@
   /* ---- the example: simulated subscribers, the truth in its notes --------------------------------------- */
   SM.io.addExample('subscribers', {
     label: 'Subscribers (1500 rows): churn and satisfaction',
-    about: 'Simulated: 1500 subscribers with tenure (months), monthly charge, contract, support calls, age, region and data use (missing for 9%, more often for those who leave). Churned (Yes/No) is logistic in -1.0 + 2.0 [month-to-month] - 0.06 tenure + 0.04 (charge - 65) + 0.7 max(calls - 2, 0) + 1.5 [tenure < 12 and charge > 85] - 0.015 (age - 45) + 1.2 [data use missing]. Satisfaction (0-100) is 60 + 12 tanh((tenure - 24)/15) - 5 min(calls, 5) - 0.1 (charge - 65) + 6 [two year] + 4 sin(age/8) plus normal noise (SD 6). Region changes nothing. Validation: 60% Training, 20% Validation, 20% Test, at random. For Bootstrap Forest and Boosted Tree (Analyze > Predictive Modeling).',
+    about: 'Simulated: 1500 subscribers with tenure (months), monthly charge, contract, support calls, age, region and data use (missing for 9%, more often for those who leave). Churned (Yes/No) is logistic in -1.0 + 2.0 [month-to-month] - 0.06 tenure + 0.04 (charge - 65) + 0.7 max(calls - 2, 0) + 1.5 [tenure < 12 and charge > 85] - 0.015 (age - 45) + 1.2 [data use missing]. Satisfaction (0-100) is 60 + 12 tanh((tenure - 24)/15) - 5 min(calls, 5) - 0.1 (charge - 65) + 6 [two year] + 4 sin(age/8) plus normal noise (SD 6). Region changes nothing. Validation: 60% Training, 20% Validation, 20% Test, at random. For Decision Forest and Boosted Tree (Analyze > Predictive Modeling).',
     make() {
       const r = SM.util.rng('ensemble-subscribers');
       const n = 1500;

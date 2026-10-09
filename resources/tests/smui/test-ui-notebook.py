@@ -47,7 +47,7 @@ LAYERS = r"""(async () => { const rep = SM.app.reports[0]; SM.app.showTab(SM.app
   return { diff: keys.filter(k => a[k] !== b[k]).map(k => `${k}: ${a[k]} / ${b[k]}`), numbers: getComputedStyle(hl.querySelector('.ln'), '::before').content !== 'none',
     same: Math.abs(hl.getBoundingClientRect().height - ta.getBoundingClientRect().height) < 1 }; })()"""
 
-# Graph Builder's smoother and a Bivariate graph on the Business cycle table's date column, their code run.
+# Graph Maker's smoother and a Bivariate graph on the Business cycle table's date column, their code run.
 DATES = r"""(async () => {
   const t = SM.app.openExample('cycles');
   const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
@@ -277,9 +277,9 @@ async def main():
     check("a report's code in the editor: the coloured layer and the text under the cursor alike, the line numbers shown", r, {'diff': [], 'numbers': True, 'same': True})
 
     # ---- a date column: text in the CSV, the page's number in the code (user report
-    # 2026-09-28: Graph Builder's smoother code on the Business cycle table failed on its quarter)
+    # 2026-09-28: Graph Maker's smoother code on the Business cycle table failed on its quarter)
     r = await page.ev(DATES, timeout=400)
-    check("a date column: Graph Builder's smoother code turns it back into the page's number and runs", (r['conv'], r['errors']), (True, []))
+    check("a date column: Graph Maker's smoother code turns it back into the page's number and runs", (r['conv'], r['errors']), (True, []))
     check("... and gives the page's curve", r['first'] is not None and r['page'] is not None and abs(r['first'] - r['page']) <= 1e-9 * abs(r['page']), True)
     check("... a Bivariate graph's code (put together in the page) on a date X runs and draws", (r['conv2'], r['errors2'], r['fig2']), (True, [], True))
     check('no script errors', page.errors, [])

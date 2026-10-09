@@ -7,15 +7,15 @@ with one missing value, a three-level group, a frequency. Every platform
 opens with its options on and without an error; the numbers shown agree
 with numbers computed here in the page (correlations, eigenvalues, counts);
 graphs link to the table both ways; saved columns land in the table; row
-colours follow the clusters; By gives one report per level; Response
-Screening opens Fit Y by X when that platform is loaded; the distance
+colours follow the clusters; By gives one report per level; Test Many
+Responses opens Bivariate Analysis when that platform is loaded; the distance
 correlations agree with the doubly centred distances computed in the page;
 Item Reliability's intraclass correlations and Kendall's W agree with an ANOVA
 and ranks computed in the page, and Bootstrap reruns them; every graph's
 matplotlib code (a block right under it) runs in the page's Python and draws
 that graph (with By and excluded rows, the code keeps the group's rows and
 leaves out the excluded ones); the statistics code of Discriminant, K Means,
-Response Screening, Factor Analysis and Hierarchical Cluster gives the numbers
+Test Many Responses, Factor Analysis and Hierarchical Cluster gives the numbers
 their reports show, the clusters those of Save Clusters; the dark theme and
 phone width draw.
 
@@ -642,8 +642,8 @@ async def chart_code(page):
          {'splom': ('lower', ['u', 'v', 'a'], {'points_only': True})}),
         ('K Means (3 clusters, scaled, Weight)', "(t) => __mvg.open('MV charts', 'kmeans', { y: ['u', 'v'], weight: ['w'] }, { k: 3, 'k3|pcp': true, 'k3|splom': true })",
          {'splom': ('lower', ['u', 'v'], {'points_only': True})}),
-        ('Response Screening (every graph)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb', 'q3'], x: ['c', 'grp', 'd', 'q3'] }, { lwR2: true })", {}),
-        ('Response Screening (Freq)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'yb'], x: ['c', 'q1'], freq: ['f'] }, { lwR2: true })", {}),
+        ('Test Many Responses (every graph)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb', 'q3'], x: ['c', 'grp', 'd', 'q3'] }, { lwR2: true })", {}),
+        ('Test Many Responses (Freq)', "(t) => __mvg.open('MV charts', 'respscreen', { y: ['a', 'yb'], x: ['c', 'q1'], freq: ['f'] }, { lwR2: true })", {}),
         ('Explore Outliers', "(t) => __mvg.open('MV charts', 'outliers', { y: ['a', 'c', 'd'] }, { mro: true, knn: true, knnK: 5, qro: true })", {}),
         ('Multiple Correspondence Analysis (c3 by c2, the rows)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1', 'q2', 'q3'] }, { rowplot: true, dx: 2, dy: 1 })", {}),
         ('Multiple Correspondence Analysis (Freq)', "(t) => __mvg.open('MV charts', 'mca', { y: ['grp', 'q1'], freq: ['f'] }, { rowplot: true })", {}),
@@ -738,7 +738,7 @@ async def chart_code(page):
 
 
 # ---- the statistics' code of five reports, run in the page ---------------------------------------------------------
-# Discriminant, K Means, Response Screening, Factor Analysis and Hierarchical
+# Discriminant, K Means, Test Many Responses, Factor Analysis and Hierarchical
 # Cluster: each report's own code (its Save Python Script part) runs in the
 # page's Python on the table's CSV, and gives the numbers the report shows (to
 # the digits it shows them), its clusters those of Save Clusters.
@@ -828,12 +828,12 @@ async def stats_code(page):
         check('K Means\' code: the Cluster Comparison as the report shows it (CCC, pseudo F, RSquare, within SS)', ok, True)
         check('K Means\' code: each fit\'s cluster sizes (Weight summed)', [[shown(v, t) for v, t in zip(got['counts'][str(k)], r['sizes'][i])] for i, k in enumerate((2, 3, 4))],
               [[True] * k for k in (2, 3, 4)])
-    # ---- Response Screening (Weight and Freq): the PValues table
+    # ---- Test Many Responses (Weight and Freq): the PValues table
     r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'respscreen', { y: ['a', 'b', 'grp', 'yb'], x: ['c', 'q1', 'd'], weight: ['w'], freq: ['f'] }, {});
       const out = { code: __mvs.code(rep, 'print(res.sort_values("FDR_LogWorth"'), table: __mvs.table(rep, 'PValues'), errors: __mvg.errors(rep) }; SM.app.closeReport(rep); return out; })()''')
-    check('Response Screening\'s code: Weight and Freq as frequency weights, without errors', (bool(r['code']) and 'frequency weights: Weight times Freq' in r['code'], r['errors']), (True, []))
+    check('Test Many Responses\' code: Weight and Freq as frequency weights, without errors', (bool(r['code']) and 'frequency weights: Weight times Freq' in r['code'], r['errors']), (True, []))
     got, err = await run_stats(page, r['code'], '[{"y": a, "x": b, "p": None if p_ != p_ else p_, "fdr": None if q_ != q_ else q_, "lw": None if l_ != l_ else l_, "e": None if e_ != e_ else e_, "n": c_} for a, b, p_, q_, l_, e_, c_ in zip(res["Y"], res["X"], res["PValue"], res["FDR_PValue"], res["FDR_LogWorth"], res["Effect_Size"], res["Count"])]', tbl)
-    check('Response Screening\'s code runs in the page', err, None)
+    check('Test Many Responses\' code runs in the page', err, None)
     if got:
         head, rows = r['table'][0], r['table'][1:]
         col = {h: i for i, h in enumerate(head)}
@@ -842,7 +842,7 @@ async def stats_code(page):
             (tr[col['Y']], tr[col['X']]) in by and shown(by[(tr[col['Y']], tr[col['X']])]['p'], tr[col['PValue']], 4) and shown(by[(tr[col['Y']], tr[col['X']])]['fdr'], tr[col['FDR PValue']], 4)
             and shown(by[(tr[col['Y']], tr[col['X']])]['lw'], tr[col['FDR LogWorth']], 4) and shown(by[(tr[col['Y']], tr[col['X']])]['e'], tr[col['Effect Size']], 4)
             and shown(by[(tr[col['Y']], tr[col['X']])]['n'], tr[col['Count']]) for tr in rows)
-        check('Response Screening\'s code: every test as the PValues table shows it (p, FDR p, FDR LogWorth, effect size, count)', ok, True)
+        check('Test Many Responses\' code: every test as the PValues table shows it (p, FDR p, FDR LogWorth, effect size, count)', ok, True)
     # ---- Factor Analysis (ML, promax with Kaiser's normalization, Freq): the communalities and the rotated loadings
     r = await page.ev('''(async () => { const rep = await __mvg.open('MV charts', 'factor', { y: ['a', 'b', 'c', 'd', 'e'], freq: ['f'] }, { fits: [{ method: 'ml', prior: 'smc', k: 2, rotation: 'promax', kaiser: true }] });
       const out = { code: __mvs.code(rep, "coef = np.asarray(res.factor_score_params(method=\\"regression\\"))   # Thurstone's regression scores (Save Rotated Components)"),
@@ -1092,9 +1092,9 @@ async def wp8_features(page):
     check('Discriminant Save Formulas: SqDist, Prob and Pred as formula columns (JMP\'s)', (r['names'], r['formulas']), (['SqDist[no]', 'SqDist[yes]', 'Prob[no]', 'Prob[yes]', 'Pred two'], True))
     check('... the excluded rows are scored, their probabilities summing to 1', (r['excl'], round(r['sum'], 12)), ([True, True], 1.0))
 
-    # ---- Response Screening: Fit Model with each Y's X's below the cut, by a real click
+    # ---- Test Many Responses: Fit Model with each Y's X's below the cut, by a real click
     r = await page.ev(open_report_js('respscreen', {'y': ['a', 'b'], 'x': ['c', 'd', 'e', 'grp']}, {'fmOpen': True, 'fmCut': 0.25}), timeout=240)
-    check('Response Screening: the Fit Model with the Screened X\'s outline', (r['errors'], "Fit Model with the Screened X's" in r['outlines']), ([], True))
+    check('Test Many Responses: the Fit Model with the Screened X\'s outline', (r['errors'], "Fit Model with the Screened X's" in r['outlines']), ([], True))
     pv = await page.ev(table_under_js('PValues'))
     scr = await page.ev(table_under_js("Fit Model with the Screened X's"))
     hdr = pv[0]
@@ -1219,7 +1219,7 @@ async def main():
     mine = ('Multivariate…', 'Principal Components…', 'Discriminant…', 'Multiple Correspondence Analysis…', 'Factor Analysis…', 'Multidimensional Scaling…')
     check('Multivariate Methods menu', [x for x in menus['mv'] if x in mine], list(mine))
     check('Clustering menu', [x for x in menus['cl'] if x in ('Hierarchical Cluster…', 'K Means Cluster…')], ['Hierarchical Cluster…', 'K Means Cluster…'])
-    check('Screening menu', [x for x in menus['sc'] if x in ('Response Screening…', 'Explore Outliers…')], ['Response Screening…', 'Explore Outliers…'])
+    check('Screening menu', [x for x in menus['sc'] if x in ('Test Many Responses…', 'Explore Outliers…')], ['Test Many Responses…', 'Explore Outliers…'])
     check('the example table', await page.ev(MAKE), 150)
 
     # ---- Multivariate: every option ------------------------------------------------------
@@ -1432,13 +1432,13 @@ async def main():
     }})()''')
     check('K Means: a click on the biplot selects the row', r[0], [r[1]])
 
-    # ---- Response Screening --------------------------------------------------------------------------------
+    # ---- Test Many Responses --------------------------------------------------------------------------------
     r = await page.ev(open_report_js('respscreen', {'y': ['a', 'b', 'c', 'grp'], 'x': ['d', 'e', 'grp']}, {'lwR2': True}), timeout=240)
-    check('Response Screening: no errors', r['errors'], [])
+    check('Test Many Responses: no errors', r['errors'], [])
     pv = await page.ev(table_under_js('PValues'))
-    check('Response Screening: 11 pairs (grp is not tested against itself)', len(pv) - 1, 11)
+    check('Test Many Responses: 11 pairs (grp is not tested against itself)', len(pv) - 1, 11)
     lw = [float(x[6].replace('−', '-')) for x in pv[1:]]
-    check('Response Screening: sorted by FDR LogWorth', lw == sorted(lw, reverse=True), True)
+    check('Test Many Responses: sorted by FDR LogWorth', lw == sorted(lw, reverse=True), True)
     has = await page.ev('!!SM.platforms.get("fitybyx")')
     r = await page.ev(f'''(async () => {{
       const n = SM.app.reports.length; const rep = {LAST};
@@ -1449,10 +1449,10 @@ async def main():
       return {{ opened: SM.app.reports.length - n, platform: top.platform.id, y: top.spec.roles && top.spec.roles.y && SM.app.current.col(top.spec.roles.y[0]).name }};
     }})()''')
     if has:
-        check('Response Screening: a line opens Fit Y by X for its pair', (r['opened'], r['platform'], r['y']), (1, 'fitybyx', pv[1][0]))
+        check('Test Many Responses: a line opens Bivariate Analysis for its pair', (r['opened'], r['platform'], r['y']), (1, 'fitybyx', pv[1][0]))
         await page.ev(f'SM.app.closeReport({LAST})')
     else:
-        check('Response Screening: without Fit Y by X a line opens nothing', r['opened'], 0)
+        check('Test Many Responses: without Bivariate Analysis a line opens nothing', r['opened'], 0)
 
     # ---- Explore Outliers ---------------------------------------------------------------------------------------
     await page.ev('(() => { const t = SM.app.current; t.setCell(20, "a", 9999, { silent: true }); t.setCell(30, "c", -40); })()')
@@ -1589,7 +1589,7 @@ async def main():
              ('discriminant', 'Discriminant Analysis', ['Discriminant Method', 'Regularized, Compromise Method…'], 'Regularization Parameters', None),
              ('discriminant', 'Discriminant Analysis', ['Score Options', 'Select Uncertain Rows…'], 'Select Uncertain Rows', None),
              ('discriminant', 'Discriminant Analysis', ['Specify Priors', 'Other…'], 'Specify Priors (a field per group)', ['Each group']),
-             ('hcluster', 'Hierarchical Clustering', ['Number of Clusters…'], 'Number of Clusters', None), ('respscreen', 'Response Screening', ['Max Logworth…'], 'Max Logworth', None),
+             ('hcluster', 'Hierarchical Clustering', ['Number of Clusters…'], 'Number of Clusters', None), ('respscreen', 'Test Many Responses', ['Max Logworth…'], 'Max Logworth', None),
              ('multivariate', 'Multivariate', ['Set α Level', 'Other…'], 'Set α Level', None)]
     for pid, title_, path, name, expect in forms:
         check_form(await page.ev(f'__hlp.form(window.__rep_{pid}, {json.dumps(title_)}, {json.dumps(path)})'), name, expect=expect)

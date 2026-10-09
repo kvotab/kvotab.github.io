@@ -1,6 +1,6 @@
 """Graph: the statistics behind the Graph menu.
 
-Graph Builder's elements (Smoother, Line of Fit, Ellipse, Contour, the
+Graph Maker's elements (Smoother, Line of Fit, Ellipse, Contour, the
 summary statistics behind Bar, Line, Area, Points, Box Plot and Caption Box,
 the kernel densities of Histogram and Violin, Mosaic's chi-square, Bean's
 violins), the ellipses, fit lines and densities of Scatterplot Matrix, the
@@ -268,7 +268,7 @@ def _lowess(xs, ys, ws, frac, it, n_grid):
 @api('graph.smoother')
 def smoother(table, x, y, rows=None, codes=None, k=None, method='spline', lam=0.05, frac=2 / 3, it=3, conf=False,
              alpha=0.05, freq=None, n_grid=120, by=None, table_name='data'):
-    """Graph Builder's Smoother in each group. method 'spline': a cubic
+    """Graph Maker's Smoother in each group. method 'spline': a cubic
     smoothing spline on standardized X (JMP's; lambda 0.05 by default), with
     an optional bootstrap Confidence of Fit; 'lowess': statsmodels' lowess
     with span frac and it robustifying iterations (JMP's Local Kernel)."""
@@ -353,7 +353,7 @@ def _polyfit(xs, ys, ws, degree, robust, alpha, n_grid):
 @api('graph.fit')
 def fit(table, x, y, rows=None, codes=None, k=None, degree=1, robust=False, alpha=0.05, freq=None, n_grid=100,
         by=None, table_name='data'):
-    """Graph Builder's Line of Fit in each group: a polynomial of degree 1
+    """Graph Maker's Line of Fit in each group: a polynomial of degree 1
     to 3 by least squares (statsmodels OLS), with the confidence band of the
     fit and of individual predictions, R-square, RMSE and the F test; or a
     robust fit with Cauchy weights (statsmodels RLM)."""
@@ -608,7 +608,7 @@ def _violin(ys, ws, bw, cutoff, cutoff_val):
 
 @api('graph.bean')
 def bean(table, y, rows=None, codes=None, k=None, bw=1.0, cutoff=False, cutoff_val=1.5, freq=None, by=None, table_name='data'):
-    """Graph Builder's Bean: statsmodels' beanplot of y in each group (the
+    """Graph Maker's Bean: statsmodels' beanplot of y in each group (the
     violin, the mean line and the median mark; the page draws a line per
     observation), and the n of each group, from which the page takes the
     overall mean line of Kampstra's bean plot. A group with fewer than two
@@ -1529,7 +1529,7 @@ class _Cell:
 
 
 class _GB:
-    """Graph Builder's graph (and the legacy Chart's, which Graph Builder's
+    """Graph Maker's graph (and the legacy Chart's, which Graph Maker's
     elements draw) as matplotlib code, from the page's plan of it."""
 
     ELEMENTS = ('map', 'points', 'smoother', 'fit', 'ellipse', 'contour', 'line', 'bar', 'area', 'box', 'bean', 'histogram', 'heatmap', 'mosaic', 'caption', 'pie')
@@ -4168,7 +4168,7 @@ _WRITERS = {'builder': lambda table, plan, rows, name: _GB(table, plan, rows, na
 def plot_code(kind, plan, table=None, rows=None, table_name='data'):
     """The Python that draws a graph of the Graph menu with matplotlib from a
     CSV export of the table, as the page draws it: kind names the graph
-    (builder: Graph Builder's, and the legacy Chart's), plan says what the
+    (builder: Graph Maker's, and the legacy Chart's), plan says what the
     page drew. It computes from the rows what the page and graph.py
     computed, and ends in plt.show()."""
     if kind not in _WRITERS:

@@ -2,7 +2,7 @@
 """smui.html in a real browser: Analyze > Quality and Process and
 the DOE menu.
 
-Control Chart Builder from its launch dialog on the Process example: the
+Control Chart from its launch dialog on the Process example: the
 limits against numbers computed in the page (X̿ ± 3R̄/(d₂√n), d₂ by
 quadrature here), a click on a subgroup's point selects its five rows and a
 table selection rings the subgroup, the tests, phases, By, Save Limits, and
@@ -208,7 +208,7 @@ async def main():
     check('every (i) has a topic', audit.get('noTopic'), [])
     check('every Help link has a target', audit.get('brokenMore'), [])
     menu = await page.ev('(() => { const q = SM.app.menuItems("Analyze").find(i => i.label === "Quality and Process"); return q ? q.submenu().map(i => i.label || "—") : null; })()')
-    check('Analyze > Quality and Process', [m for m in menu if m != '—'][:4], ['Control Chart Builder…', 'Process Capability…', 'Variability / Attribute Gauge Chart…', 'Pareto Plot…'])
+    check('Analyze > Quality and Process', [m for m in menu if m != '—'][:4], ['Control Chart…', 'Process Capability…', 'Variability / Attribute Gauge Chart…', 'Pareto Plot…'])
     doe = await page.ev('SM.app.menuItems("DOE").filter(i => i.submenu).map(i => [i.label, i.submenu().map(s => s.label).filter(Boolean)])')
     # (each submenu's first items: other platforms may add theirs after them, as Test Calculators did on 2026-09-29)
     want_doe = [['Classical', ['Screening Design…', 'Full Factorial Design…', 'Response Surface Design…']], ['Special Purpose', ['Space Filling Design…']],
@@ -217,10 +217,10 @@ async def main():
     help_rows = await page.ev('["controlchart", "capability", "pareto", "variability", "evaldesign", "power"].filter(id => !document.getElementById("help-p-" + id))')
     check('a Help row for every platform', help_rows, [])
 
-    # ---- Control Chart Builder from its launch dialog
+    # ---- Control Chart from its launch dialog
     r = await page.ev(launch_js('controlchart', [['Y, Process', ['diameter (mm)']], ['Subgroup', ['subgroup']]]))
-    check('control chart: dialog closes, report opens', (r['open'], r['title']), (False, 'Control Chart Builder'))
-    check('control chart outlines', r['outlines'][:3], ['Control Chart Builder', 'XBar & R chart of diameter (mm)', 'Limit Summaries'])
+    check('control chart: dialog closes, report opens', (r['open'], r['title']), (False, 'Control Chart'))
+    check('control chart outlines', r['outlines'][:3], ['Control Chart', 'XBar & R chart of diameter (mm)', 'Limit Summaries'])
     check('Process Capability Analysis from the column\'s Spec Limits property', 'Process Capability Analysis of diameter (mm)' in r['outlines'], True)
     check('no errors in the report', r['errors'], [])
     lim = await page.ev(table_under_js('Limit Summaries'))
@@ -347,7 +347,7 @@ async def main():
     check('Save Limits in New Table', (r['n'], r['cols'], r['keys'][:3]), (1, ['_LimitsKey', 'phase', 'diameter (mm)'], ['_Mean', '_LCL', '_UCL']))
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Process')))")
     r = await page.ev(open_report_js('controlchart', {'y': ['diameter (mm)'], 'subgroup': ['subgroup'], 'by': ['operator']}, {'chart': 'xbar_r'}))
-    check('By: one chart per operator', [o for o in r['outlines'] if o.startswith('Control Chart Builder')], ['Control Chart Builder operator=Ann', 'Control Chart Builder operator=Bo', 'Control Chart Builder operator=Cy'])
+    check('By: one chart per operator', [o for o in r['outlines'] if o.startswith('Control Chart')], ['Control Chart operator=Ann', 'Control Chart operator=Bo', 'Control Chart operator=Cy'])
     check('By: no errors (a subgroup of one is left out of R)', r['errors'], [])
     for chart in ('xbar_s', 'ir', 'lj', 'run', 'ewma', 'cusum'):
         r = await page.ev(open_report_js('controlchart', {'y': ['diameter (mm)'], 'subgroup': ['subgroup']}, {'chart': chart}))
@@ -610,7 +610,7 @@ async def main():
       window.__par = await open((t) => t.name === 'Defects', 'pareto', { y: ['cause'] });
       window.__var = await open((t) => t.name === 'Gauge', 'variability', { y: ['Y'], x: ['Operator', 'Part'] });
       window.__ev = await open((t) => t.name.startsWith('Full Factorial'), 'evaldesign', { x: ['Temp', 'Time', 'X3'] }); })()''', timeout=300)
-    cc = 'Control Chart Builder'
+    cc = 'Control Chart'
     forms = [('__cc', cc, ['K Sigma…'], 'K Sigma'), ('__cc', cc, ['Specify Stats…'], 'Specify Stats'), ('__cc', cc, ['Moving Range Span…'], 'Moving Range Span'),
              ('__cc', cc, ['Tests', 'Customize Tests…'], 'Customize Tests'), ('__cc', cc, ['Spec Limits…'], 'the chart\'s Spec Limits'),
              ('__ir', cc, ['Subgroup Size…'], 'Subgroup Size'), ('__ew', cc, ['EWMA Parameters…'], 'EWMA Parameters'), ('__cu', cc, ['CUSUM Parameters…'], 'CUSUM Parameters'),

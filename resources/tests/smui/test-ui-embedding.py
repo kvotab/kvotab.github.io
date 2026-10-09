@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smui.html in a real browser: Analyze > Multivariate Methods > Multivariate
+"""smui.html in a real browser: Analyze > Multivariate Methods > t-SNE
 Embedding.
 
 The simulated Cell profiles example opens from the URL and File > Examples,
@@ -296,7 +296,7 @@ async def main():
     check('?example=cellprofiles opens the simulated cells', (ex['name'], ex['rows'], ex['cols']), ('Cell profiles', 900, ['donor', 'type (true)'] + M))
     check('it is simulated, of five types', (ex['about'].startswith('Simulated'), ex['types']), (True, [f'type {i}' for i in range(1, 6)]))
     check('it is in File > Examples', ex['inFile'], True)
-    check('Analyze > Multivariate Methods lists Multivariate Embedding after Multidimensional Scaling', 'Multivariate Embedding…' in ex['items'] and ex['items'].index('Multivariate Embedding…') > ex['items'].index('Multidimensional Scaling…'), True)
+    check('Analyze > Multivariate Methods lists t-SNE Embedding after Multidimensional Scaling', 't-SNE Embedding…' in ex['items'] and ex['items'].index('t-SNE Embedding…') > ex['items'].index('Multidimensional Scaling…'), True)
 
     # ---- the launch dialog, and the run with its progress
     r = await page.ev('''(async (M) => {
@@ -332,7 +332,7 @@ async def main():
     check('the method: t-SNE alone (UMAP needs numba)', r['methods'], ['t-SNE'])
     check('one column is not enough', 'at least 2' in r['needTwo'], True)
     check('the defaults reach the report', (r['options']['perplexity'], r['options']['iterations'], r['options']['learningRate'], r['options']['init'], r['options']['standardize'], r['options']['dimension']), (30, 1000, 'auto', 'pca', True, '2'))
-    check('the report\'s outlines', r['outlines'], ['Multivariate Embedding', 't-SNE', 'Fit Details'])
+    check('the report\'s outlines', r['outlines'], ['t-SNE Embedding', 't-SNE', 'Fit Details'])
     check('the first fit loaded scikit-learn 1.8.0', r['sk'], '1.8.0')
     prog = [s for s in r['seen'] if s[0] == 'tsne']
     check('progress events: the start and every 50 iterations to 1000', [s[1] for s in prog], [0] + list(range(50, 1001, 50)))
@@ -424,7 +424,7 @@ async def main():
       return { have: !!a && !!b, same: p.rows[0].every((r, k) => a.values[r] === p.traces[0].x[k] && b.values[r] === p.traces[0].y[k]), notes: a ? a.notes : '' };
     })()''' % PICK)
     check('Save Embedding: t-SNE 1 and t-SNE 2, the map\'s coordinates', (r['have'], r['same']), (True, True))
-    check('... with a note of how they were made', 'perplexity 30' in r['notes'] and 'Multivariate Embedding' in r['notes'], True)
+    check('... with a note of how they were made', 'perplexity 30' in r['notes'] and 't-SNE Embedding' in r['notes'], True)
 
     # ---- the perplexity from the red triangle; Redo keeps it
     await page.ev(pick_form_js('*top*', ['Perplexity…'], '10'), timeout=600)
@@ -492,7 +492,7 @@ async def main():
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Many").id)')
     rep = await page.ev(open_report_js('embedding', {'y': ['v0', 'v1', 'v2', 'v3']}, {'iterations': 250}), timeout=300)
     st = await page.ev(STATE)
-    check('3500 rows: the report asks first, with the time it takes, and fits nothing yet', (rep['outlines'], any('3,500 rows: t-SNE takes about' in w or '3500 rows: t-SNE takes about' in w for w in st['warnings'])), (['Multivariate Embedding', 't-SNE'], True))
+    check('3500 rows: the report asks first, with the time it takes, and fits nothing yet', (rep['outlines'], any('3,500 rows: t-SNE takes about' in w or '3500 rows: t-SNE takes about' in w for w in st['warnings'])), (['t-SNE Embedding', 't-SNE'], True))
     r = await page.ev('''(async () => {
       const rep = SM.app.reports[SM.app.reports.length - 1];
       const b = [...rep.body.querySelectorAll('.sm-emb-ask button')][0];
@@ -502,7 +502,7 @@ async def main():
       await done;
       return { text, run: rep.spec.options.runLarge, outlines: [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent) };
     })()''', timeout=900)
-    check('... and runs when told (the answer kept with the report)', (r['text'], r['run'], r['outlines']), ('Run t-SNE on 3,500 rows' if '3,500' in r['text'] else 'Run t-SNE on 3500 rows', True, ['Multivariate Embedding', 't-SNE', 'Fit Details']))
+    check('... and runs when told (the answer kept with the report)', (r['text'], r['run'], r['outlines']), ('Run t-SNE on 3,500 rows' if '3,500' in r['text'] else 'Run t-SNE on 3500 rows', True, ['t-SNE Embedding', 't-SNE', 'Fit Details']))
     check('... all 3500 rows mapped', (await details(page))['Rows'].replace(',', ''), '3500')
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Too many").id)')
     rep = await page.ev(open_report_js('embedding', {'y': ['w0', 'w1']}, {}), timeout=300)
@@ -528,8 +528,8 @@ async def main():
     check('... every resample mapped (a KL divergence each; the row with the missing value drawn 0, 1 or more times)', (all(isinstance(v, (int, float)) and v > 0 for v in r['kl']), r['rows'][0], all(894 <= v <= 900 for v in r['rows'][1:])), (True, 899, True))
     check('... and the reruns change nothing in the report or the table', (r['options'], r['ncol'], r['plots']), (True, True, True))
     rep = await page.ev(open_report_js('embedding', {'y': M, 'by': ['donor']}, {'iterations': 300}), timeout=900)
-    heads = [o for o in rep['outlines'] if o.startswith('Multivariate Embedding')]
-    check('By donor: one map per donor', heads, ['Multivariate Embedding donor=A', 'Multivariate Embedding donor=B'])
+    heads = [o for o in rep['outlines'] if o.startswith('t-SNE Embedding')]
+    check('By donor: one map per donor', heads, ['t-SNE Embedding donor=A', 't-SNE Embedding donor=B'])
     r = await page.ev('''(() => { const rep = SM.app.reports[SM.app.reports.length - 1]; const t = rep.table; const don = t.col('donor').values; const m3 = t.col('m03').values;
       return { maps: rep.plots.filter(p => /^t-SNE map/.test(p.opts.title)).map(p => p.rows[0].length), a: don.filter((v, i) => v === 'A' && Number.isFinite(m3[i])).length, b: don.filter((v, i) => v === 'B' && Number.isFinite(m3[i])).length }; })()''')
     check('each donor\'s map holds its own rows', r['maps'], [r['a'], r['b']])
@@ -572,7 +572,7 @@ async def main():
 
     # ---- the (i) explains every input: the launch dialog, the red triangle's forms, the Run button
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Cell profiles").id)')
-    await dialog_help(page, "SM.app.launch('embedding')", 'embedding', 'Multivariate Embedding')
+    await dialog_help(page, "SM.app.launch('embedding')", 'embedding', 't-SNE Embedding')
     first = 'SM.app.reports.filter(r => r.platform.id === "embedding")[0]'
     for item, field in (('Perplexity…', 'Perplexity (about the number of neighbours of each row)'), ('Iterations…', 'Iterations (at least 250)'),
                         ('Learning Rate…', 'Learning rate (a positive number, or auto)'), ('Random Seed…', "Seed (empty: the report's own)")):

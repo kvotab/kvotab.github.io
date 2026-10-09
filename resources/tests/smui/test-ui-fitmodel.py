@@ -32,7 +32,7 @@ recursive estimates against the Parameter Estimates, the CUSUM's crossing of
 the example's break, a CUSUM point and a rolling window selecting their rows,
 Order by, Rolling Window), in both themes and at phone width.
 
-Generalized Regression (JMP Pro's): the launch dialog's Validation role (its
+Penalized Regression: the launch dialog's Validation role (its
 Validation Column; another personality says it ignores it), the Model
 Launch's Estimation and Validation Methods, the Model Summary's sets against
 the table's Validation column, KFold's folds and the seed kept by Redo, the
@@ -363,7 +363,7 @@ async def main():
          ['Whole Model Test', 'Goodness Of Fit Statistic', 'Effect Tests', 'Parameter Estimates', 'Studentized Deviance Residual by Predicted']),
         ('Nominal Logistic', 'response', E(['dose (mg)'], ['age'], ['sex']), {'personality': 'nominal'},
          ['Whole Model Test', 'Fit Details', 'Parameter Estimates', 'Effect Likelihood Ratio Tests']),
-        ('Generalized Regression', 'months', E(['dose (mg)'], ['age'], ['sex'], ['treatment'], ['adverse events']), {'personality': 'genreg'},
+        ('Penalized Regression', 'months', E(['dose (mg)'], ['age'], ['sex'], ['treatment'], ['adverse events']), {'personality': 'genreg'},
          ['Model Launch', 'Lasso with AICc Validation', 'Solution Path']),
         ('Stepwise', 'months', E(['dose (mg)'], ['age'], ['sex'], ['treatment']), {'personality': 'stepwise'},
          ['Stepwise Regression Control', 'Current Estimates', 'Step History']),
@@ -692,7 +692,7 @@ async def main():
     await shot(page, 'fm-09-gee-phone.png')
     # ==== Instrumental Variables, Quantile Regression, Recursive and Rolling Regression, on the schooling example ====
     await schooling(page)
-    # ==== Generalized Regression: the validation methods, the adaptive methods, forward selection ====
+    # ==== Penalized Regression: the validation methods, the adaptive methods, forward selection ====
     await genreg(page)
     # ==== MANOVA's Repeated Measures; the Effect Tests' effect sizes ====
     await repeated(page)
@@ -1021,7 +1021,7 @@ async def schooling(page):
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
 
 
-# A table for Generalized Regression: y (normal), yb (two levels), a Validation column as numbers (v) and as names (vt).
+# A table for Penalized Regression: y (normal), yb (two levels), a Validation column as numbers (v) and as names (vt).
 GR_TABLE = """((n) => { const r = SM.util.rng('genreg-ui'); const cols = [];
   const X = []; for (let j = 0; j < 6; j++) X.push(Array.from({ length: n }, () => +r.normal(0, 1).toFixed(4)));
   const eta = X[0].map((v, i) => 1.5 * v - 1.0 * X[1][i] + 0.6 * X[4][i]);
@@ -1044,7 +1044,7 @@ def gr_set(**kw):
 
 
 async def genreg(page):
-    """Generalized Regression (JMP Pro's): the Validation role, the Model
+    """Penalized Regression: the Validation role, the Model
     Launch's methods, the Model Summary per set, the Solution Path's draggable
     line, Save Columns, the profiler, By, Redo, a project, both themes."""
     num = lambda s: float(str(s).replace('−', '-').replace('<', '').replace('*', ''))  # noqa: E731
@@ -1054,7 +1054,7 @@ async def genreg(page):
     await page.ev(HELPERS)
     sk0 = await page.ev("!!(SM.engine.versions && SM.engine.versions['scikit-learn'])")
 
-    # ---- the launch dialog: the Validation role; Generalized Regression takes it as its Validation Column
+    # ---- the launch dialog: the Validation role; Penalized Regression takes it as its Validation Column
     r = await page.ev('''(async () => {
       SM.app.launch('fitmodel'); await new Promise(r => setTimeout(r, 300));
       const d = __fm.dlg(); const out = {};
@@ -1071,7 +1071,7 @@ async def genreg(page):
       return { ...out, st: __fm.state(rep), vm: vm.value, choices: [...vm.options].map(o => o.textContent), sum: __fm.table('Model Summary', 1),
         counts: [0, 1, 2].map(k => v.filter(x => x === k).length), roles: rep.spec.roles.validation.map(id => t.col(id).name) }; })()''')
     check('Fit Model\'s launch has a Validation role', r['role'], True)
-    check('Generalized Regression takes it: Validation Column', (r['st']['title'], r['vm'], r['roles']), ('Generalized Regression for y', 'validation', ['v']))
+    check('Penalized Regression takes it: Validation Column', (r['st']['title'], r['vm'], r['roles']), ('Penalized Regression for y', 'validation', ['v']))
     check('... with a Validation column the methods are AICc, BIC, Validation Column', r['choices'], ['AICc', 'BIC', 'Validation Column'])
     for o in ['Model Launch', 'Lasso with Validation Column', 'Model Summary', 'Solution Path', 'Parameter Estimates for Centered and Scaled Predictors', 'Parameter Estimates for Original Predictors']:
         check(f'GenReg outline {o}', o in r['st']['outlines'], True)
@@ -1211,7 +1211,7 @@ async def genreg(page):
     ms = await page.ev('performance.now()') - t0
     check('2000 rows, binomial lasso with KFold: a few seconds', (r['errors'], ms < 15000), ([], True))
     print(f'      GenReg binomial KFold, 2000 rows: {ms / 1000:.1f} s (with the table and the default AICc report)')
-    check('Generalized Regression needs no scikit-learn (no extra download)', (sk0, await page.ev("!!(SM.engine.versions && SM.engine.versions['scikit-learn'])")), (False, False))
+    check('Penalized Regression needs no scikit-learn (no extra download)', (sk0, await page.ev("!!(SM.engine.versions && SM.engine.versions['scikit-learn'])")), (False, False))
 
     # ---- Diagnostic Plots (normal), linked; By; a project
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'GenReg test' && t.nrows === 400)))")
@@ -1228,8 +1228,8 @@ async def genreg(page):
     check('... a click on a point selects its row, a Validation row', (r['sel'], r['set']), ([r['want']], 'Validation'))
     r = await page.ev(open_js('y', E6, {'personality': 'genreg'}, {'by': ['sex']}))
     r = await page.ev(gr_set(gr_crit='kfold', gr_method='enet'))
-    check('GenReg with By: one report per level, no errors', ([o for o in r['outlines'] if o.startswith('Generalized Regression for')], r['errors']),
-          (['Generalized Regression for y sex=F', 'Generalized Regression for y sex=M'], []))
+    check('GenReg with By: one report per level, no errors', ([o for o in r['outlines'] if o.startswith('Penalized Regression for')], r['errors']),
+          (['Penalized Regression for y sex=F', 'Penalized Regression for y sex=M'], []))
     r = await page.ev(open_js('yb', E6, {'personality': 'genreg'}, {'validation': ['v']}))
     r = await page.ev(gr_set(gr_method='lasso', gr_adaptive=True, gr_crit='bic'))
     r = await page.ev('''(async () => { const t = SM.app.current; const before = __fm.table('Model Summary', 1);
@@ -1240,7 +1240,7 @@ async def genreg(page):
         v: rep.spec.roles.validation.map(id => rep.table.col(id).name), other: rep.table !== t };
       SM.app.showTab(SM.app.tabOf(t)); return out; })()''')
     check('a GenReg project reopens with its Validation column and options', (r['title'], r['errors'], 'Adaptive Lasso with BIC Validation' in r['outlines'], r['v'], r['other']),
-          ('Generalized Regression for yb', [], True, ['v'], True))
+          ('Penalized Regression for yb', [], True, ['v'], True))
     check('... and the same Model Summary', r['same'], True)
     audit = json.loads(await page.ev('JSON.stringify(KvotInfo.audit())'))
     check('every (i) of the GenReg reports has a topic', audit.get('noTopic'), [])
@@ -1534,7 +1534,7 @@ async def help_inputs(page):
     and its Construct Model Effects part (as the personality shows its
     fields), the red-triangle forms' fields, and the controls inside the
     reports (Effect Summary, Stepwise, Regression Diagnostics, Recursive and
-    Rolling Regression, the profilers, MANOVA, Generalized Regression and
+    Rolling Regression, the profilers, MANOVA, Penalized Regression and
     Quantile Regression's Model Launch)."""
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
     await page.ev("KVOT.setTheme ? KVOT.setTheme('light') : document.documentElement.setAttribute('data-theme', 'light')")
@@ -1635,11 +1635,11 @@ async def help_inputs(page):
     check('Response Specification\'s (i): its controls', r['spec'], ['Choose Response', 'Y Name', 'Univariate Tests Also'])
     check('the Repeated Measures form lists its fields; Cancel keeps the response', (r['form'], r['back']), (['Y Name', 'Univariate Tests Also'], 'identity'))
 
-    # ---- Generalized Regression's and Quantile Regression's Model Launch
+    # ---- Penalized Regression's and Quantile Regression's Model Launch
     r = await page.ev(open_js('weight (kg)', E(['height (cm)'], ['sex'], ['age']), {'personality': 'genreg'}))
-    check('a Generalized Regression report', r['errors'] if isinstance(r, dict) else r, [])
+    check('a Penalized Regression report', r['errors'] if isinstance(r, dict) else r, [])
     r = await page.ev('''(async () => ({ launch: __help.names(await __help.outline('Model Launch'), 'Model Launch'), path: __help.names(await __help.outline('Solution Path'), 'Choosing a model') }))()''')
-    check('Generalized Regression\'s Model Launch (i): every control', r['launch'], ['Distribution', 'Estimation Method', 'Adaptive', 'Validation Method', 'Elastic Net Alpha', 'Number of Folds', 'Holdback Proportion', 'Random Seed', 'Go'])
+    check('Penalized Regression\'s Model Launch (i): every control', r['launch'], ['Distribution', 'Estimation Method', 'Adaptive', 'Validation Method', 'Elastic Net Alpha', 'Number of Folds', 'Holdback Proportion', 'Random Seed', 'Go'])
     check('the Solution Path\'s (i): how to choose a model', r['path'], ['The red line', 'A point', 'The dotted line', 'Reset to the Best Model'])
     r = await page.ev(open_js('weight (kg)', E(['height (cm)']), {'personality': 'quantreg', 'qrTau': 0.5}))
     check('a Quantile Regression report', r['errors'] if isinstance(r, dict) else r, [])
@@ -1726,7 +1726,7 @@ async def wp1_round(page):
     held-out rows in the plot, Stepwise's Minimum BIC default and a nominal Y, the logistic Lack of Fit, Lift Curve,
     Decision Threshold and ROC Table, Center Polynomials, Std Beta and Design Std Error, Expanded and Indicator
     Parameterization Estimates, Inverse Prediction, a singular design's marks and Singularity Details, LSMeans Test
-    Slices, Unstable logistic estimates, Generalized Regression's Maximum Likelihood, Go and the Model Comparison, the
+    Slices, Unstable logistic estimates, Penalized Regression's Maximum Likelihood, Go and the Model Comparison, the
     Effect Summary of several responses; a project keeps the options; the dark theme at phone width."""
     await page.ev("SM.app.openExample('plants')")
     await page.ev(WP1)
@@ -1857,9 +1857,9 @@ async def wp1_round(page):
       const cells = [...ob.querySelectorAll('.sm-fm-esum tbody tr')].map(tr => [...tr.children].map(c => c.textContent));
       return { errors: out.filter(o => o.type === 'error').map(o => o.ename + ': ' + o.evalue), lines: text.trim().split('\\n').length, fdr0: cells.length }; })()''', timeout=300)
     check('  its code runs in the page\'s Python and prints a line per test', (r2['errors'], r2['lines'] >= 4), ([], True))
-    # ---- Generalized Regression: Maximum Likelihood, Go and the Model Comparison
+    # ---- Penalized Regression: Maximum Likelihood, Go and the Model Comparison
     r = await page.ev(open_js('yield (g)', E(['fertilizer'], ['water'], ['light (h)']), {'personality': 'genreg'}))
-    check('WP1: Generalized Regression opens', r['errors'], [])
+    check('WP1: Penalized Regression opens', r['errors'], [])
     r = await page.ev('''(async () => { const rep = __fm.rep(); const yid = rep.table.col('yield (g)').id;
       await __w1.setopt(rep, { [`${yid}|gr:method`]: 'mle' });
       const heads = __fm.state(rep).outlines; const pe = __fm.table('Parameter Estimates for Original Predictors', 0, rep);

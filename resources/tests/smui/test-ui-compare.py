@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """smui.html in a real browser: Analyze > Predictive Modeling > Model Comparison.
 
-The platform sits in Analyze > Predictive Modeling before Model Screening;
+The platform sits in Analyze > Predictive Modeling before Fit Many Models;
 its launch dialog, driven by real mouse clicks, lists the models the cast
 columns make (probability columns grouped by their names and the reports
-their notes name: this page's Prob[level], Model Screening's Prob[yes]
+their notes name: this page's Prob[level], Fit Many Models' Prob[yes]
 Discriminant, a prefix LR_, JMP's Prob(cls==yes), a column of predicted
 levels) and finds the saved predictions of Y when Y, Predictors is empty;
 the Measures of Fit hold the engine's numbers (and a misclassification rate
@@ -88,9 +88,9 @@ MAKE = r'''
   add('Predicted y 2', P.tree, 'from Partition for y');
   add('Prob[no]', P.pa.map((p) => 1 - p), 'from Nominal Logistic Fit for cls');
   add('Prob[yes]', P.pa, 'from Nominal Logistic Fit for cls');
-  add('Prob[no] 2', P.pb.map((p) => 1 - p), 'from Bootstrap Forest for cls');
-  add('Prob[yes] 2', P.pb, 'from Bootstrap Forest for cls');
-  add('Prob[yes] Discriminant', P.pd, 'from Model Screening for cls');
+  add('Prob[no] 2', P.pb.map((p) => 1 - p), 'from Decision Forest for cls');
+  add('Prob[yes] 2', P.pb, 'from Decision Forest for cls');
+  add('Prob[yes] Discriminant', P.pd, 'from Fit Many Models for cls');
   add('LR_Prob[no]', P.plr.map((p) => 1 - p), '');
   add('LR_Prob[yes]', P.plr, '');
   add('Prob(cls==yes)', P.pj, '');   // JMP's own name, from a JMP table: no notes
@@ -341,7 +341,7 @@ async def main():
     check('compare.py imports in Pyodide', await page.ev('SM.engine.failed.filter(f => f.module === "compare").map(f => f.error)'), [])
     check('no script errors at load', page.errors, [])
     pm = await page.ev('''(() => { const it = SM.app.menuItems('Analyze').find(i => i.label === 'Predictive Modeling'); const s = (typeof it.submenu === 'function' ? it.submenu() : it.submenu).filter(i => !i.separator).map(i => i.label); return s; })()''')
-    check('Analyze > Predictive Modeling: Model Comparison… right before Model Screening…', ('Model Comparison…' in pm, pm.index('Model Comparison…') + 1 == pm.index('Model Screening…') if 'Model Comparison…' in pm and 'Model Screening…' in pm else False), (True, True))
+    check('Analyze > Predictive Modeling: Model Comparison… right before Fit Many Models…', ('Model Comparison…' in pm, pm.index('Model Comparison…') + 1 == pm.index('Fit Many Models…') if 'Model Comparison…' in pm and 'Fit Many Models…' in pm else False), (True, True))
     check('the table', await page.ev(f'({MAKE})(900)'), 900)
 
     # ---- the launch dialog, by real clicks
@@ -362,11 +362,11 @@ async def main():
     await cast(['cls'], 'Y, Response')
     found = await page.ev(models_now)
     check('Y cast, Y, Predictors empty: the saved predictions found, grouped into models', found,
-          ['Nominal Logistic Fit Prob[no], Prob[yes]', 'Bootstrap Forest Prob[no] 2, Prob[yes] 2', 'Discriminant Prob[yes] Discriminant', 'LR LR_Prob[no], LR_Prob[yes]',
+          ['Nominal Logistic Fit Prob[no], Prob[yes]', 'Decision Forest Prob[no] 2, Prob[yes] 2', 'Discriminant Prob[yes] Discriminant', 'LR LR_Prob[no], LR_Prob[yes]',
            'Prob(cls==yes) Prob(cls==yes)', 'Most Likely cls Most Likely cls'])
     await cast(['Prob[no]', 'Prob[yes]', 'Prob[no] 2', 'Prob[yes] 2', 'Prob[yes] Discriminant', 'LR_Prob[no]', 'LR_Prob[yes]'], 'Y, Predictors')
     check('columns cast in Y, Predictors: the models they make (by names and notes)', await page.ev(models_now),
-          ['Nominal Logistic Fit Prob[no], Prob[yes]', 'Bootstrap Forest Prob[no] 2, Prob[yes] 2', 'Discriminant Prob[yes] Discriminant', 'LR LR_Prob[no], LR_Prob[yes]'])
+          ['Nominal Logistic Fit Prob[no], Prob[yes]', 'Decision Forest Prob[no] 2, Prob[yes] 2', 'Discriminant Prob[yes] Discriminant', 'LR LR_Prob[no], LR_Prob[yes]'])
     hint = await page.ev(f"{dlg}.querySelector('.sm-mc-hint').textContent")
     check('... the dialog offers no validation column the table lacks', 'as Group to measure' in hint, False)
     await cast(['V'], 'Group')
@@ -402,7 +402,7 @@ async def main():
       const t = SM.app.current; const v = t.col('V').values, f = t.col('f').values, y = t.col('cls').values, p = t.col('Prob[yes] 2').values;
       let bad = 0, tot = 0; for (let i = 0; i < t.nrows; i++) if (v[i] === 'Validation') { tot += f[i]; if ((p[i] > 0.5 ? 'yes' : 'no') !== y[i]) bad += f[i]; }
       return bad / tot; })()''')
-    check.near('Bootstrap Forest\'s validation misclassification rate = computed here from the table (rows by Freq)', num(tbl[('Validation', 'Bootstrap Forest')]['Misclassification Rate']), round(mine, 4), 1e-9)
+    check.near('Decision Forest\'s validation misclassification rate = computed here from the table (rows by Freq)', num(tbl[('Validation', 'Decision Forest')]['Misclassification Rate']), round(mine, 4), 1e-9)
     bold = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Measures of Fit for cls');
       const tb = h.parentElement.querySelector('table.sm-rt'); const heads = [...tb.querySelectorAll('thead th')].map(t => t.textContent);
       const j = heads.indexOf('AUC'); return [...tb.querySelectorAll('tbody tr')].filter(tr => tr.cells[j].classList.contains('sm-mc-best')).map(tr => [tr.cells[0].textContent, tr.cells[1].textContent]); })()''')
@@ -410,7 +410,7 @@ async def main():
     check('the best AUC of each group is bold', sorted(bold), sorted(want))
     fw = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const tb = [...rep.body.querySelectorAll('table.sm-rt')].find(t => t.querySelector('td.sm-mc-best'));
       const td = tb.querySelector('td.sm-mc-best'); const cs = getComputedStyle(td); return [cs.fontWeight, td.textContent]; })()''')
-    check('... bold as Model Screening marks it', int(fw[0]) >= 700, True)
+    check('... bold as Fit Many Models marks it', int(fw[0]) >= 700, True)
 
     # ---- the red triangles and every comparison
     top = await page.ev('''(() => { const rep = SM.app.reports.at(-1); const h = rep.body.querySelector('.sm-ob-head h2').parentElement; h.querySelector('.sm-ob-menu').click();
@@ -424,13 +424,13 @@ async def main():
     check('each comparison shows, with no error', ([o for o in items if o in st['outlines']], st['errors']), (list(items), []))
     roc = await page.ev(f'{REP}.plots.filter(p => /^ROC /.test(p.opts.title)).map(p => ({{ title: p.opts.title, names: p.traces.map(t => t.name).filter(Boolean), colors: p.traces.map(t => t.line && t.line.color).filter(Boolean) }}))')
     check('ROC Curve: a graph per group, a curve per model, the level yes', [p_['title'] for p_ in roc], ['ROC Training yes', 'ROC Validation yes', 'ROC Test yes'])
-    check('... the models in their colours', [n_.split(' (')[0] for n_ in roc[1]['names']], ['Nominal Logistic Fit', 'Bootstrap Forest', 'Discriminant', 'LR'])
+    check('... the models in their colours', [n_.split(' (')[0] for n_ in roc[1]['names']], ['Nominal Logistic Fit', 'Decision Forest', 'Discriminant', 'LR'])
     check('... each curve its model\'s colour, the same in every graph', [p_['colors'][:4] for p_ in roc], [LIGHT[:4]] * 3)
     auc = rows_of(await page.ev(table_under_js('ROC Curve', 0)), 1)
     want = {m['label']: next(c['auc'] for c in eng['roc'][m['key']] if c['set'] == 'Validation' and c['level'] == 'yes') for m in eng['models']}
     check('... the AUC table is the engine\'s', max(abs(num(auc[(k,)]['Validation AUC']) - v) for k, v in want.items()) < 5.1e-5, True)
     ac = await page.ev(table_under_js('AUC Comparison', 0))
-    check('AUC Comparison: each model\'s AUC, its standard error and interval', (ac[0], [r_[0] for r_ in ac[1:]]), (['Predictor', 'AUC', 'Std Error', 'Lower 95%', 'Upper 95%'], ['Nominal Logistic Fit', 'Bootstrap Forest', 'Discriminant', 'LR']))
+    check('AUC Comparison: each model\'s AUC, its standard error and interval', (ac[0], [r_[0] for r_ in ac[1:]]), (['Predictor', 'AUC', 'Std Error', 'Lower 95%', 'Upper 95%'], ['Nominal Logistic Fit', 'Decision Forest', 'Discriminant', 'LR']))
     e = next(a for a in eng['auc'] if a['group'] == 'Training')['levels'][1]
     check.near('... the engine\'s (DeLong) standard error', num(ac[1][2]), round(e['each'][0]['se'], 4), 1e-9)
     pairs = await page.ev(table_under_js('AUC Comparison', 1))
@@ -440,11 +440,11 @@ async def main():
     check('Level (red triangle) ▸ no: the curves of the other level', roc, ['ROC Training no', 'ROC Validation no', 'ROC Test no'])
     await page.ev(pick_js('ROC Curve', ['Level', 'yes']))
     cm = await page.ev(f'''(() => {{ const rep = {REP}; const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Confusion Matrix'); return [...h.parentElement.querySelectorAll(':scope > .sm-ob-body > .sm-ob > .sm-ob-head h4, :scope > .sm-ob-body > .sm-ob > .sm-ob-head h3')].map(x => x.textContent); }})()''')
-    check('Confusion Matrix: one per model', cm, ['Nominal Logistic Fit', 'Bootstrap Forest', 'Discriminant', 'LR'])
+    check('Confusion Matrix: one per model', cm, ['Nominal Logistic Fit', 'Decision Forest', 'Discriminant', 'LR'])
     th = await page.ev(f'''(() => {{ const rep = {REP}; const h = [...rep.body.querySelectorAll('.sm-ob-head')].find(x => x.textContent.trim() === 'Decision Threshold');
       const b = h.parentElement; return {{ input: !!b.querySelector('input[aria-label="Probability threshold"]'), text: b.textContent.slice(0, 4000) }}; }})()''')
     check('Decision Threshold: WP3\'s report, its threshold field', th['input'], True)
-    check('... every model with probabilities in it', all(m_ in th['text'] for m_ in ('Nominal Logistic Fit', 'Bootstrap Forest', 'Discriminant', 'LR')), True)
+    check('... every model with probabilities in it', all(m_ in th['text'] for m_ in ('Nominal Logistic Fit', 'Decision Forest', 'Discriminant', 'LR')), True)
     tr = await page.ev(TRIANGLES)
     check('every red triangle opens, with its submenus', (tr['errors'], tr['triangles'] >= 7, tr['items'] > tr['triangles'], tr['subs'] > 0), ([], True, True, True))
     await shot(page, 'compare-02-comparisons.png')

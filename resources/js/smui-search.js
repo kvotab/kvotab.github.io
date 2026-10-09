@@ -119,7 +119,7 @@
      it must have (and X and Y always), different columns for different
      roles. A role that takes both kinds gets a continuous column in one
      reading and a categorical one in another, for the first two such roles
-     (Fit Y by X: Bivariate, Oneway, Logistic and Contingency; a
+     (Bivariate Analysis: Bivariate, Oneway, Logistic and Contingency; a
      Distribution column's continuous and its categorical red triangle). */
   const filled = (p) => ((p.launch && p.launch.roles) || []).filter((r) => (r.min || 0) >= 1 || ['x', 'y'].includes(r.key));
   const either = (r) => r.key !== 'text' && (!r.types || (r.types.includes('continuous') && (r.types.includes('nominal') || r.types.includes('ordinal'))));

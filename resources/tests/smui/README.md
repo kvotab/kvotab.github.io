@@ -30,7 +30,7 @@ with the page's own formula engine need `node` (skipped without it):
 | `test_io.py` | 11 | a Stata file written by pandas (its value labels as the coded column's Value Labels), statsmodels.datasets |
 | `test_jmp.py` | 53 | JMPReader.jl's own test tables and the values its runtests.jl expects (the tables are not ours: `fetch-jmp-fixtures.py` puts them in `local/jmp/`, git-ignored; skipped without them); the table scripts JMP 18.2 wrote in them, a copy with its script block rewritten in place, a damaged block |
 | `test_fit_y_by_x.py` | 746 | NIST NoInt1/2, Wampler1/2, Koenker's Engel, China smoking CMH, R lawstat and exactci, JMP's Car Poll example, DescTools, Conover; effect sizes against noncentrality searches and Bonett's published examples, JZS Bayes factors against BayesFactor's published value and Ly et al.'s closed forms, Games–Howell, pingouin; Save Formula and Save Probability Formula through the formula engine, the logistic Lack of Fit against the saturated model, Hsu's MCB (the one-sided Dunnett quantile against published values and scipy's dunnett), the Unstable test |
-| `test_fit_model.py` | 1288 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Generalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω²; the saved formulas of every personality through the formula engine; the Validation column's sets and Crossvalidation; Stepwise by BIC and for a categorical Y; the logistic Lack of Fit against the saturated model; Std Beta against standardized fits; the indicator parameterization; singular designs; GenReg's Maximum Likelihood against GLM; Inverse Prediction by Fieller; Test Slices against f_test; FDR over several responses |
+| `test_fit_model.py` | 1288 | NIST Longley, Wampler; Greene's Spector logit; random-effects formulas; statsmodels' GEE epil example, R gee, Stata robust/cluster/HAC, R lmtest; Stata ivreg2/ivendog (Griliches), Stata qreg (Engel), R strucchange; Penalized Regression against scikit-learn's lasso_path, ElasticNet, LogisticRegression, PoissonRegressor and LassoCV folds; repeated measures against statsmodels AnovaRM and MANOVA, Hotelling's T², JMP's documented Dogs sphericity test and pingouin; partial η² and ω²; the saved formulas of every personality through the formula engine; the Validation column's sets and Crossvalidation; Stepwise by BIC and for a categorical Y; the logistic Lack of Fit against the saturated model; Std Beta against standardized fits; the indicator parameterization; singular designs; GenReg's Maximum Likelihood against GLM; Inverse Prediction by Fieller; Test Slices against f_test; FDR over several responses |
 | `test_mixed.py` | 296 | Fit Model's mixed models: REML with unbounded variance components against the expected mean squares of balanced designs (negative estimates too), the exact split-plot F tests (Kenward–Roger gives them), a dense reference from the published formulas (the REML likelihood, the observed information, Kenward and Roger's covariance and df, Satterthwaite's df, the BLUPs and their prediction errors) for unbalanced, crossed, nested, random-coefficient and every repeated structure, statsmodels' MixedLM where the model is the same, a spatial range at infinity, the code on a CSV |
 | `test_multivariate.py` | 1876 | statsmodels/scipy, brute force, SAS's iris CCC, the bivariate-normal distance correlation; intraclass correlations against Shrout and Fleiss's published coefficients, McGraw–Wong and pingouin; Kendall's W against scipy's Friedman; the saved formulas (scores, clusters, distances, discriminant probabilities) evaluated by the page's formula engine (needs node); scikit-learn's silhouettes, scipy's distances, Gower by brute force, Huber's robust scale, Discriminant's validation sets |
 | `test_timeseries.py` | 2092 | MacKinnon critical values, Hyndman et al. variances, sunspots AR fits, Durbin–Koopman Nile, KFAS, Hamilton 1989, Stata mswitch, Zivot–Andrews 1992, PSS 2001, statsmodels' ARDL example; Forecast on Holdback (each model by statsmodels on the training values), the Naive, Seasonal Naive and Drift benchmarks (the forecast package's rwf errors), the moving average three ways, Custom constraints, Box-Cox, multiplicative trends, the runs test (and runstest_1samp's correction slip), rolling-origin cross-validation, Time Series Forecast's candidates by ETSModel; each model's one-step predictions at missing values against statsmodels' own |
@@ -66,7 +66,7 @@ with the page's own formula engine need `node` (skipped without it):
 | `test_calculators.py` | 198 | Test Calculators: scipy's t tests on samples with the calculator's summaries, the effect sizes and proportion intervals by their closed forms (Wald, Agresti–Caffo, Newcombe, Katz, Woolf), Holm and Benjamini–Hochberg against multipletests, the graph's tails, the code |
 | `test_mi.py` | 327 | MICE.fit and MI.fit directly, Rubin's rules and Barnard–Rubin by formula, a Monte Carlo |
 | `test_copula.py` | 864 | statsmodels directly, closed forms and numerical integrals, simulated truth, the shown code on a CSV |
-| `test_charts.py` | 1405 | every graph's matplotlib code (Distribution, Fit Y by X, Fit Model) run with Agg on the exported CSV, its figure against the report's numbers: points, lines, bands, bars, boxes, texts and titles |
+| `test_charts.py` | 1405 | every graph's matplotlib code (Distribution, Bivariate Analysis, Fit Model) run with Agg on the exported CSV, its figure against the report's numbers: points, lines, bands, bars, boxes, texts and titles |
 | `test_notebook.py` | 41 | the notebook's Python: outputs in the order made (streams joined, the last value, a trailing `;`), rich displays (pandas HTML, a statsmodels summary, Plotly dicts, `display()`), figures at `plt.show()` and at the end (SVG; PNG at twice the size for many points), tracebacks from the cell, namespaces, `reset()`, top-level await, `table()`, `table_names()` and `new_table()` |
 | `test_jsl.py` | 439 | JSL to Python: the JSL Syntax Reference's rules (precedence, names, escapes, dates, matrices, scopes, error recovery); every translation compiled, read as Python 3.10, and run on a CSV of a small table of our own against numpy and plain Python; the page's platform specs; 400 damaged scripts; a hostile script (a carriage return in a comment, line breaks in a table's name) whose text stays comments |
 | `test-formula.js` | 390 | the parser, missing values, every function, no escape to JS |
@@ -232,7 +232,7 @@ def anova(table, y, x, rows=None, alpha=0.05, table_name='data'):
 
 ```js
 SM.platforms.register({
-  id: 'oneway', label: 'Fit Y by X', menu: 'Analyze', order: 20,
+  id: 'oneway', label: 'Bivariate Analysis', menu: 'Analyze', order: 20,
   info: 'p:fitybyx', topics: { 'p:fitybyx': { title, lead, sections } },
   about: 'one paragraph for the Help tab', uses: ['statsmodels.stats.multicomp.pairwise_tukeyhsd'],
   launch: { lead, roles: [{ key: 'y', label: 'Y, Response', min: 1, hint: 'required' }, ...], options: [...] },
@@ -279,7 +279,7 @@ it builds outlines into the report:
   own classes (a minimum marked, a colour-map cell). A column
   `{ key, label, bar: 'count' }` draws a bar of the `count` column's
   values of zero or more in each row, its length the value against the
-  largest in the table (Text Explorer's Count Bars): its heading is empty,
+  largest in the table (Text Analysis's Count Bars): its heading is empty,
   `label` names it in Columns, and it is no data (`tbl._rt`, Copy Table,
   Make into Data Table and Sort by Column leave it out; Bootstrap on it
   takes the column it draws); Save Report as HTML, Print and Save Report
@@ -326,7 +326,7 @@ it builds outlines into the report:
 - Axis Settings (smui-axis.js) come with every `ctx.plot`: `{ key }` names
   a graph when its title and place do not, `axisCode(name)` gives a
   graph's code the lines for an axis, `axes` lets a platform keep the
-  settings itself (Graph Builder), `plotMenu()` adds to the plot's
+  settings itself (Graph Maker), `plotMenu()` adds to the plot's
   right-click menu, and `axisSettings: false` turns them off.
   `axisAlso(name)` gives the axes of other subplots that share one (the
   box plot under Distribution's histogram): a reference line crosses them
@@ -341,7 +341,7 @@ it builds outlines into the report:
   `spec.options.plotSizes` by the graph's key (`SM.axis.keyOf`), the
   graph's code draws its figure in the same proportions (its one
   `figsize`, `SM.axis.sizedCode`), and a platform that keeps its own size
-  (Graph Builder's Graph Size) passes `sizer: { set(w, h), reset() }`,
+  (Graph Maker's Graph Size) passes `sizer: { set(w, h), reset() }`,
   which the grip calls when it is let go. The room a graph fits into is
   measured past a parent that only hugs it (a box of a graph and its code),
   so a graph made narrower by a narrow window grows back.
@@ -383,13 +383,13 @@ it builds outlines into the report:
   may carry `help` (or `hint`, which is also shown under the field). The
   dialog's (i) then shows the platform's topic followed by Roles, Options
   and the extra part's fields, or a form's Fields. Controls inside a report
-  (a Model Launch panel, Graph Builder's properties) are explained in their
+  (a Model Launch panel, Graph Maker's properties) are explained in their
   outline's (i) topic, with a `choices` section; a topic may be a function
   (`SM.info.get(key)` gives a registered topic). Text may use `code` and
   **bold**, nothing else.
 - Documents: Save Report as HTML, Save Report as Word and Print… take the
   report's open outlines. Buttons, inputs, selects, (i) slots and anything
-  marked `data-noexport` (a Model Launch panel, Graph Builder's zones) are
+  marked `data-noexport` (a Model Launch panel, Graph Maker's zones) are
   left out; a graph becomes an image drawn in the light theme; an inline
   SVG diagram gets its computed paint written in (`SM.report.paintedSvg`,
   the dark theme's colours mapped to the light ones), without elements of
@@ -424,7 +424,7 @@ it builds outlines into the report:
   there as they do on a role. Dialogs close only by their buttons, the × and
   Escape: a click beside one makes it flash.
 - A list or zone whose items can be dragged out again (the role lists,
-  those effects lists, Graph Builder's and Tabulate's zones) is also a
+  those effects lists, Graph Maker's and Tabulate's zones) is also a
   `SM.launch.place(el, cfg)`, inside a `SM.launch.dropArea(scope)` (the
   dialog or the builder): an item dragged onto another place of the scope
   moves there by that place's rules (`refuses` says why not), onto an item
@@ -500,7 +500,7 @@ inside its body; the worker loads the package before the first such call
 - Everything random takes the report's seed (`random_state`), so a redraw
   and the shown code give the same model; `n_jobs` stays 1 (one thread).
 - Decision Threshold for any platform's two-level probabilities (Fit Model
-  and Fit Y by X logistic, Discriminant, Model Comparison, Uplift): Python
+  and Bivariate Analysis logistic, Discriminant, Model Comparison, Uplift): Python
   `r['threshold'] = predictive.threshold(y, prob, levels, sets, w, rows,
   head=...)`, and the page `SM.predict.threshold(ctx, parent, r.threshold,
   { scope, prefix, probName, save, yCol, title })` with
@@ -546,7 +546,7 @@ its place, its rows by their text columns.
   Edit > Undo takes back a report's changes: a run that starts from another
   spec than the last run's is a step (named by the menu item chosen since),
   put back with `Report.restoreSpec` and run again. A platform that keeps
-  state in the spec without a run (Graph Builder's `gb`; a graph's size,
+  state in the spec without a run (Graph Maker's `gb`; a graph's size,
   the code shown) is left out of it (`UNDO_SKIP` in smui-report.js); one
   with its own undo sets `report.localUndo = { label, can(), undo() }`,
   which Edit > Undo and ctrl/⌘+Z use first while its report is in front.
@@ -558,7 +558,7 @@ its place, its rows by their text columns.
 `test-ui-bootstrap.py` (22): the right-click item, the dialog, progress and Stop, samples against the backend on the same rows, a two-column table with BCa, a By group, the report left untouched, a project, dark theme, phone width.
 
 
-`test-ui-notebook.py` (49): Python > New Notebook; code typed with real keys runs on Shift+Enter (the table is the CSV file the reports' code reads) and Ctrl+Enter; `smui.table()` with the modeling types as dtypes, a date column as datetimes, a table opened later there as a file too; `smui.new_table()` into the page; a report's code run in a cell gives the report's mean; figures as SVG and, with many points, PNG; an HTML output sanitised (no script, image or javascript: link); tracebacks; Run All stops at an error; Markdown text cells (only http(s) links); top-level await; `%matplotlib`, `%time` and `%pip`; Restart; .ipynb and .py both ways, an .ipynb from elsewhere opened without running and sanitised; a project with its notebooks; a report's code block edited, run with Shift+Enter (its output under it, the report's layout kept), Reset and Close; Notebook and Save > Open Script in Notebook; the editor's keys (Enter's indent, Tab and Shift+Tab, Ctrl+/, Backspace in an indent, Undo), its colours; closing a notebook with changes; the editor in a report's code block, its two layers alike (a selection on the text); a date column in Graph Builder's smoother and a Bivariate graph, their code run and the page's curve; dark theme and phone width.
+`test-ui-notebook.py` (49): Python > New Notebook; code typed with real keys runs on Shift+Enter (the table is the CSV file the reports' code reads) and Ctrl+Enter; `smui.table()` with the modeling types as dtypes, a date column as datetimes, a table opened later there as a file too; `smui.new_table()` into the page; a report's code run in a cell gives the report's mean; figures as SVG and, with many points, PNG; an HTML output sanitised (no script, image or javascript: link); tracebacks; Run All stops at an error; Markdown text cells (only http(s) links); top-level await; `%matplotlib`, `%time` and `%pip`; Restart; .ipynb and .py both ways, an .ipynb from elsewhere opened without running and sanitised; a project with its notebooks; a report's code block edited, run with Shift+Enter (its output under it, the report's layout kept), Reset and Close; Notebook and Save > Open Script in Notebook; the editor's keys (Enter's indent, Tab and Shift+Tab, Ctrl+/, Backspace in an indent, Undo), its colours; closing a notebook with changes; the editor in a report's code block, its two layers alike (a selection on the text); a date column in Graph Maker's smoother and a Bivariate graph, their code run and the page's curve; dark theme and phone width.
 
 `test-ui-jsl.py` (24): Python > JSL to Python; the page's own sample converts (the table read as the reports' code reads it, a formula column as pandas, each analysis as its report's code on the script's table, the imports once at the top); what did not convert as a comment and a note with its line, a click on which shows the line; Open in Notebook runs clean, graphs too, and gives the report's mean; Open the Reports Here opens the four analyses with their options (Fit Line, Means/Anova, t Test); a table that is not open, a column the script makes, a syntax error (the lines after it still convert), a Where() and its mean; a dropped .jsl file; Ctrl+Enter; phone width.
 
@@ -566,9 +566,9 @@ JSL to Python: `jsl.convert` returns the script with a marker line where each an
 
 `test-ui-dock.py` (75): the work area's tab groups (smui-dock.js). One group at the start and the Help text on a hidden shelf; the box and the bar that show where a dragged tab would go (each edge of a group, its own middle refused, a place on a strip), and a tab's drag does not mark the places that take columns; tabs dragged with the mouse (Chrome's drag interception): to an edge (a new group there, the room shared, the moved report still scrolled where it was), to the bottom of another group (a split the other way), onto another strip (the group left empty goes, and the split left with one part), along a strip (the order), onto its own group's middle (nothing); a click in a group makes it the one in use; the arrow keys stay in a strip and ctrl+shift+arrow moves a tab; the context menu's Split (off, and why, for a lone tab), Move to Group and Join All Groups; the bar between two parts (dragged, held at 150 px, a double click, ArrowDown, its role); new tabs and Help open in the group in use, new tabs before Help; the Help text back on its shelf when closed; closing tabs and the groups they leave; a hidden view whose group moved keeps its scroll position; a text field under a dropped tab takes nothing; the page's print shows the group in use; a project saves its layout and opens in it again (an older file without one as before); at phone width the groups stack, no new ones are made, and a tab held by touch moves between them.
 
-`test-ui-dnd.py` (123): a column dragged out of the place it was dropped on, with the mouse (Chrome's drag interception) and by touch; what the page shows during the drag (the item dimmed, the place that takes it, the item it would replace or the side it lands on, the places that refuse it dimmed, the Remove label by the pointer) and after it. A launch dialog (Distribution): moved between roles, reordered both ways, put in place of another role's column, refused by a role that does not take its modeling type (and the dialog says why), taken out on the column list and on the lead, left alone by a cancelled drag and by one let go beside the dialog, a list drag still as before, a role's button taking a column from another role or from the list; the report has the roles the drags made. Fit Model's effects (reordered, one taken out, a crossing refused by every role, a column from a role and back) and the Effect Tests in the new order; Multiple Imputation's effects and its pooled model; Graph Builder (between zones in one Undo step, a refusing zone, reordered, replaced, taken out on the list and on the graph, cancelled, let go outside; every point of two Y columns with Group X inside its panel); Tabulate (columns to rows, reordered and nested, the analysis columns reordered, replaced, taken out; the table computed again); the (i) texts; a phone (touch emulation): the carried item, the label, a touch cancel.
+`test-ui-dnd.py` (123): a column dragged out of the place it was dropped on, with the mouse (Chrome's drag interception) and by touch; what the page shows during the drag (the item dimmed, the place that takes it, the item it would replace or the side it lands on, the places that refuse it dimmed, the Remove label by the pointer) and after it. A launch dialog (Distribution): moved between roles, reordered both ways, put in place of another role's column, refused by a role that does not take its modeling type (and the dialog says why), taken out on the column list and on the lead, left alone by a cancelled drag and by one let go beside the dialog, a list drag still as before, a role's button taking a column from another role or from the list; the report has the roles the drags made. Fit Model's effects (reordered, one taken out, a crossing refused by every role, a column from a role and back) and the Effect Tests in the new order; Multiple Imputation's effects and its pooled model; Graph Maker (between zones in one Undo step, a refusing zone, reordered, replaced, taken out on the list and on the graph, cancelled, let go outside; every point of two Y columns with Group X inside its panel); Tabulate (columns to rows, reordered and nested, the analysis columns reordered, replaced, taken out; the table computed again); the (i) texts; a phone (touch emulation): the carried item, the label, a touch cancel.
 
-`test-ui-hostile.py`: a table whose levels, value labels, texts, table name and a column name carry a line of Python behind a line break (`\n`, `\r`), a closing quote, braces, triple quotes or a trailing backslash; every platform run on it twice (the roles filled from its columns: once with By, once with a nominal response and the optional roles; the options a platform needs before it fits, such as Neural's model and Explore Outliers' methods), a few Graph Builder and Tabulate layouts; every code block and every report's script parsed with Python's `ast`: each parses, and no `INJECTED_*` name is code. Then `SM.report.unbroken` by itself: a value with a line break written as it is into a comment goes on one line, an escaped literal and plain code are left alone, and 20,000 long texts cost milliseconds. `python3 test-ui-hostile.py fitmodel text` runs only those platforms.
+`test-ui-hostile.py`: a table whose levels, value labels, texts, table name and a column name carry a line of Python behind a line break (`\n`, `\r`), a closing quote, braces, triple quotes or a trailing backslash; every platform run on it twice (the roles filled from its columns: once with By, once with a nominal response and the optional roles; the options a platform needs before it fits, such as Neural's model and Explore Outliers' methods), a few Graph Maker and Tabulate layouts; every code block and every report's script parsed with Python's `ast`: each parses, and no `INJECTED_*` name is code. Then `SM.report.unbroken` by itself: a value with a line break written as it is into a comment goes on one line, an escaped literal and plain code are left alone, and 20,000 long texts cost milliseconds. `python3 test-ui-hostile.py fitmodel text` runs only those platforms.
 
 `test-ui-scripts.py`: table scripts; a DOE split plot's Model script opens Fit Model with its random effect, by a real click; Save Script to Data Table and the script run back (the same outlines, a closed one, the numbers), replaced by name; Rename and Delete by a real right click, Undo and Redo; a column renamed inside the scripts; missing columns; projects and Save Table; a hostile table JSON; names kept on one line (a CSV header, a JSON table name, a pasted line break); a JMP table's JSL scripts (JMPReader.jl's compact_UInt8.jmp with its script block rewritten in place, from `local/jmp/`): listed with their JSL mark, an analysis run into its report by a real click, an Open() of a file into JSL to Python, Show JSL, Save Table, a hostile JSL script, a column rename; dark theme and phone width.
 
@@ -591,16 +591,16 @@ with JSZip (its parts, headings, tables, PNG pictures, the code only when
 shown or its block open), the page's own print (emulated print media: the site, menus and
 buttons left out, a graph wider than the paper scaled to fit); documents in
 the light theme from the dark one, an SVG diagram with its paint; a box
-selection in Graph Builder whose edges are then moved (real mouse events)
+selection in Graph Maker whose edges are then moved (real mouse events)
 selects once each time, and a selection made elsewhere takes the kept box
 away; clicks, ctrl/⌘ and shift sweeps in a role list and a filter's levels; a click
 beside a dialog leaves it open; on a phone (touch emulation) the dialog and
 the (i) panel as the whole screen, a swipe that scrolls and a touch drag
-onto a role, the model effects, the formula and a Graph Builder zone;
+onto a role, the model effects, the formula and a Graph Maker zone;
 the dark theme and phone width; a graph's size (its corner grip dragged
 with the mouse, and its code's figsize in proportion; the grip's arrow
 keys; Redo; Size… and Default Size from a real right-click; a narrower
-window and back; a project; a double-click; Graph Builder's own Graph
+window and back; a project; a double-click; Graph Maker's own Graph
 Size, an outline following the drag; the dark theme); the full window (no site header, menu or
 footer; the kvot mark to the home page and the theme switch in the menu
 bar; kept for the next visit from before the workbench is made; at phone

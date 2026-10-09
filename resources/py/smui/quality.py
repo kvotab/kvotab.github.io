@@ -1,4 +1,4 @@
-"""Analyze > Quality and Process: Control Chart Builder, Process Capability,
+"""Analyze > Quality and Process: Control Chart, Process Capability,
 Pareto Plot and Variability / Attribute Gauge Chart.
 
 Control limits are Shewhart's. The constants of the range and of the
@@ -343,7 +343,7 @@ def _with_imports(lines, table_name, extra=()):
 
 
 # ---------------------------------------------------------------------------
-# Control Chart Builder
+# Control Chart
 # ---------------------------------------------------------------------------
 
 CHART_LABEL = {

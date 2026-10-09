@@ -190,7 +190,7 @@ cols = {'cls': list(cls), 'Prob[no]': 1 - pa, 'Prob[yes]': pa, 'Prob[yes] 2': pb
         'V': list(vtxt), 'Vn': vnum, 'f': freq, 'x': x}
 tid = table(cols, types={'Vn': 'nominal'}, levels={'V': ['Training', 'Validation', 'Test']}, tid='cat')
 PA = M('a', 'Logistic', 'prob', [{'name': 'Prob[no]', 'level': 0}, {'name': 'Prob[yes]', 'level': 1}], 'Nominal Logistic Fit')
-PB = M('b', 'Forest', 'prob', [{'name': 'Prob[yes] 2', 'level': 1}], 'Bootstrap Forest')
+PB = M('b', 'Forest', 'prob', [{'name': 'Prob[yes] 2', 'level': 1}], 'Decision Forest')
 PC = M('c', 'Tree', 'prob', [{'name': 'Prob[no] 3', 'level': 0}, {'name': 'Prob[yes] 3', 'level': 1}], 'Partition')
 PL = M('l', 'Most', 'level', [{'name': 'Most'}])
 r = call('compare.fit', table=tid, y='cls', models=[PA, PB, PC, PL], group='V', freq='f', average=True, table_name='cat', plot={'level': 1})

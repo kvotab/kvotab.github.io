@@ -1,9 +1,9 @@
 /* ==========================================================================
    SMUI.HTML: WHAT THE PREDICTIVE PLATFORMS SHARE
 
-   Partition, Bootstrap Forest, Boosted Tree, Neural, K Nearest Neighbors,
-   Naive Bayes, Support Vector Machines, Gaussian Process and Model
-   Screening share their launch roles and options and parts of their
+   Partition, Decision Forest, Boosted Tree, Neural, K Nearest Neighbors,
+   Naive Bayes, Support Vector Machines, Gaussian Process and Fit Many
+   Models share their launch roles and options and parts of their
    reports. The backend side is resources/py/smui/predictive.py
    (prepare(), report(), saved(), threshold()).
 
@@ -19,12 +19,12 @@
      ...SM.predict.classificationItems(ctx, r.fit, scope)   // red-triangle items
      ...SM.predict.saveItems(ctx, 'partition.save', base, r.fit)
 
-   A platform that draws confusion, ROC and lift itself (Bootstrap Forest)
+   A platform that draws confusion, ROC and lift itself (Decision Forest)
    calls SM.predict.decisionParts(ctx, parent, fit, scope, prefix, opts)
    after them for the Decision Threshold and Group Metrics.
 
    DECISION THRESHOLD, for any platform with probabilities of two levels
-   (Fit Model's and Fit Y by X's logistic fits, Discriminant, Generalized
+   (Fit Model's and Bivariate Analysis's logistic fits, Discriminant, Penalized
    Regression, Model Comparison, Uplift):
 
      Python: r['threshold'] = predictive.threshold(y, prob, levels, sets, w, rows, head=code_head_lines)
@@ -50,9 +50,9 @@
    GROUP METRICS of the same data: SM.predict.groupMetrics(ctx, parent, D,
    opts), shown with the option 'groupMetrics' (the column's id, set by
    SM.predict.groupMetricsItem(ctx, scope) in a red triangle); of named
-   models (Model Screening's methods) a line per model and group.
+   models (Fit Many Models' methods) a line per model and group.
    SCORE ROWS, for a platform without a Save Prediction Formula (K Nearest
-   Neighbors, Support Vector Machines, Bootstrap Forest, Boosted Tree):
+   Neighbors, Support Vector Machines, Decision Forest, Boosted Tree):
      SM.predict.scoreRows(ctx, { fn: 'knn.score', payload: { ...base, keep }, fit, yName, info })
    the dialog, the engine's scores of the rows of an open table by the
    model it kept, and those written to that table.
@@ -222,7 +222,7 @@
   const thresholdItem = (ctx, scope = null) => ctx.check('Decision Threshold', 'threshold', scope, false);
 
   /* Group Metrics… in a red triangle: the column the metrics are grouped by (SM.predict.groupMetricsItem(ctx, scope)
-     for a platform that draws Group Metrics itself, as Model Screening). */
+     for a platform that draws Group Metrics itself, as Fit Many Models). */
   function groupItem(ctx, data, scope = null) {
     const cur = ctx.opt('groupMetrics', null, scope);
     return { label: 'Group Metrics…', checked: !!cur, action: () => (cur ? ctx.set('groupMetrics', null, scope) : pickGroup(ctx, scope)) };
@@ -424,7 +424,7 @@
   }
 
   /* A fit of another platform that comes without its graphs' code: Fit
-     Model's Generalized Regression hands over its rows, actual and
+     Model's Penalized Regression hands over its rows, actual and
      predicted values (smui-p-fitmodel.js). Its block is made from the code
      of the call those arrays came from (fitmodel.genreg), found in the
      report's cache by the very arrays; that code fits the chosen model and
@@ -439,7 +439,7 @@
     return Promise.all(calls).then((rs) => rs.find((x) => x && x.diag && x.diag.predicted === want) || null);
   }
 
-  /* Generalized Regression's Actual by Predicted Plot as code: its own code
+  /* Penalized Regression's Actual by Predicted Plot as code: its own code
      up to e (the linear predictor of the chosen model), then the prediction
      (the mean: e, or exp(e) for the Poisson's log link) against the actual
      values of the set's rows (train, valid and sets as that code names them). */
@@ -908,8 +908,8 @@
     ['fnr', 'False Negative Rate'], ['precision', 'Precision'], ['tpr', 'True Positive Rate'], ['cut', 'Threshold']];
   const GM_LABEL = Object.fromEntries(GM_COLS);
 
-  /* Group Metrics of a Decision Threshold's data D: of its one model, or, when its models are named (Model
-     Screening's methods, several or one), of each alike, a row per method and group. opts: scope, prefix, keys
+  /* Group Metrics of a Decision Threshold's data D: of its one model, or, when its models are named (Fit Many
+     Models' methods, several or one), of each alike, a row per method and group. opts: scope, prefix, keys
      (the Decision Threshold's option keys: cut, level, rate), save and probName (Save Decision Column, as the
      Decision Threshold's), colorOf and pyColorOf (each model's colour in the page and in the code). */
   async function groupMetrics(ctx, parent, D, opts = {}) {
@@ -1126,7 +1126,7 @@
   /* ======================================================================
      SCORE ROWS: the model as the report fitted it, on rows it did not see
      ====================================================================== */
-  /* For the platforms without a Save Prediction Formula (K Nearest Neighbors, Support Vector Machines, Bootstrap
+  /* For the platforms without a Save Prediction Formula (K Nearest Neighbors, Support Vector Machines, Decision
      Forest, Boosted Tree): the engine keeps the report's model (under the key its fit got), and this scores the
      rows of an open table with it: the report's own rows added since (those without a prediction yet), or every
      row of another table with the same columns. The predictions go to that table as columns.
@@ -1406,6 +1406,6 @@
       ],
     },
     'p:predict:profit': { kicker: 'Predictive modeling', title: 'Profit', lead: 'The Y column\'s Profit Matrix (Cols > Column Properties > Profit Matrix, or Profit Matrix… in the Decision Threshold) gives the profit of each decision for each actual level. Average Profit is per row, by Weight × Freq, at the threshold; Best Threshold the probability of the set with the most; Threshold from the Matrix, (M[o,o] − M[o,t]) / ((M[t,t] − M[t,o]) + (M[o,o] − M[o,t])) for the target t and the other level o, where calling t starts to pay if the probabilities are right; Most Profitable Decisions each row decided by its largest expected profit, Σ p(level) M[level, decision] (Undecided too). The Profit Curve is the average profit against the portion of rows called the target level, highest probability first.' },
-    'p:predict:groups': { kicker: 'Predictive modeling', title: 'Group Metrics', lead: 'A fairness audit of a two-level classifier: the measures of each group of a column (that need not be a factor), and their differences and ratios to a reference group. In Model Screening, each method the Decision Threshold compares, alike: a line per method and group, and a bar per method in the charts. Beyond JMP.' },
+    'p:predict:groups': { kicker: 'Predictive modeling', title: 'Group Metrics', lead: 'A fairness audit of a two-level classifier: the measures of each group of a column (that need not be a factor), and their differences and ratios to a reference group. In Fit Many Models, each method the Decision Threshold compares, alike: a line per method and group, and a bar per method in the charts. Beyond JMP.' },
   });
 }(typeof self !== 'undefined' ? self : this));

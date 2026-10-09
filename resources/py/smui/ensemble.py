@@ -1,8 +1,8 @@
-"""Analyze > Predictive Modeling > Bootstrap Forest and Boosted Tree.
+"""Analyze > Predictive Modeling > Decision Forest and Boosted Tree.
 
 JMP Pro's two tree ensembles, their trees scikit-learn's decision trees:
 
-  Bootstrap Forest   each tree a DecisionTreeRegressor / Classifier on a
+  Decision Forest   each tree a DecisionTreeRegressor / Classifier on a
                      bootstrap sample of the training rows, a random set of
                      the X columns tried at each split, the samples and
                      seeds drawn as scikit-learn's RandomForestRegressor
@@ -586,7 +586,7 @@ def forest_target(yt, ycol, classes):
 
 
 def grow_forest(P, st, terms, seed, prog):
-    """A Bootstrap Forest: its trees grown one at a time, each on a
+    """A Decision Forest: its trees grown one at a time, each on a
     bootstrap sample drawn as scikit-learn's RandomForestRegressor draws it
     (a seed per tree from the report's seed: the first k trees do not
     depend on how many are grown), its nominal columns read in the order of
@@ -939,7 +939,7 @@ def _model_args(table, rows, y, x, kind, weight, freq, validation, portion, seed
 @api('ensemble.fit', packages=SK)
 def fit(table, y, x, kind='forest', rows=None, weight=None, freq=None, validation=None, portion=0.0, seed=None,
         missing='informative', settings=None, shown=None, plot=None, table_name='data', keep=None):
-    """Everything the Bootstrap Forest or Boosted Tree report shows. plot:
+    """Everything the Decision Forest or Boosted Tree report shows. plot:
     the page's choices for the graphs' code ({'stat': the statistic
     Cumulative Validation shows}); keep: the page's key for the report (its
     id and By group), under which the fit shown is kept for Score Rows."""
@@ -1337,7 +1337,7 @@ def _cumulative_tail(P, F, stat):
           f'ax.axvline(KEPT, color="{predictive.MUTED}", linewidth=1.2, linestyle="--")',
           'ax.set_xlim(0.5, len(cum) + 0.5)',
           f'ax.set_xlabel("Number of {what}")', f'ax.set_ylabel("{STAT_LABELS[stat]}")',
-          f'ax.set_title({json.dumps("Cumulative Validation of " + ("Bootstrap Forest" if forest else "Boosted Tree"))})',
+          f'ax.set_title({json.dumps("Cumulative Validation of " + ("Decision Forest" if forest else "Boosted Tree"))})',
           'fig.legend(loc="outside upper left", ncols=4, frameon=False, fontsize=8)',
           'plt.show()']
     return '\n'.join(L)

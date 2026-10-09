@@ -1,4 +1,4 @@
-"""Analyze > Multivariate Methods > Multivariate Embedding.
+"""Analyze > Multivariate Methods > t-SNE Embedding.
 
 t-SNE (scikit-learn's TSNE, the Barnes-Hut method) of continuous columns:
 every row a point in two or three dimensions, placed near the rows it is

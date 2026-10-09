@@ -324,7 +324,7 @@
       lead: 'Text shown in place of a value: 1 shown as Male, 2 as Female. The value is what is stored, compared, sorted and sent to the engine; the label is how the grid and the reports write it.',
       sections: [
         { heading: 'The editor', choices: [['Value', 'The stored value, as typed in the grid (a number for a numeric column).'], ['Label', 'The text shown for it; a row without a label is left out.'], ['Add', 'A new row.'], ['Add Levels', 'A row for each distinct value that has no label yet.'], ['Clear', 'Every row taken away: no labels.'], ['×', 'Takes that row away.']] },
-        { heading: 'Where they show', text: 'In the grid (the value itself when you edit the cell, and in the cell\'s tooltip), and wherever the page writes a level: the levels of Distribution, Fit Y by X, Graph Builder\'s legends and axes, Tabulate, filters, By group titles and the like. The engine gets the values, so a level chosen in a dialog still matches; a level a report writes in Python (a model\'s term name, sex[1]) shows the value.' },
+        { heading: 'Where they show', text: 'In the grid (the value itself when you edit the cell, and in the cell\'s tooltip), and wherever the page writes a level: the levels of Distribution, Bivariate Analysis, Graph Maker\'s legends and axes, Tabulate, filters, By group titles and the like. The engine gets the values, so a level chosen in a dialog still matches; a level a report writes in Python (a model\'s term name, sex[1]) shows the value.' },
         { heading: 'Files', text: 'Save Table and projects keep them; CSV and Excel keep the values. A Stata file\'s value labels come in as this property, the column keeping its codes.' },
       ],
     },

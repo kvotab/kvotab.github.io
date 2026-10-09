@@ -397,7 +397,7 @@ def check_shared(check, lab, g, F):
             got = list(zip(ln['x'], ln['y'])) if ln else []
             ok.append(bool(ln) and subset_in_order(curve_pts(t), got) and (ln['color'] or '')[:7] == (t.get('color') or PALETTE[i % len(PALETTE)]))
         check(f'{lab}: every curve (the page\'s points on it), named and coloured as the page\'s', (len(curves) > 0, ok), (True, [True] * len(curves)))
-        # the legend in the axes, or beside them (Model Screening's, on the last graph of a row only)
+        # the legend in the axes, or beside them (Fit Many Models', on the last graph of a row only)
         check(f'{lab}: the legend', ax['legend'] or F['legend'], [t['name'] for t in curves] if g.get('showlegend') is not False else [])
         check(f'{lab}: the dotted reference', find_line(ax, [0, 1], [0, 1] if roc else [1, 1]) is not None, True)
         check_titles(check, lab, g, F)

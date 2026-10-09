@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """smui.html in a real browser: the Graph menu.
 
-Graph Builder opens without a launch dialog; columns reach its zones by a
+Graph Maker opens without a launch dialog; columns reach its zones by a
 real drag and drop (from the page's Columns panel and from the builder's own
 list), by click-to-add and from the keyboard; elements come from the palette
 and their properties change the graph at once; bars, boxes, cells, slices and
@@ -17,7 +17,7 @@ definition, fboxplot's regions and outliers, curves linked by curve, Select
 Outliers, Save Columns, the HDR boxplot and its score plot, the rainbow
 plot, stacked and interpolated curves, By, the example). Then the Python
 under every graph (graph.code): each block, run in the page's own Python,
-draws the graph above it (Graph Builder's elements and zones, and every
+draws the graph above it (Graph Maker's elements and zones, and every
 other Graph platform), checked against the Plotly graph. The dark theme and
 phone width at the end.
 
@@ -246,7 +246,7 @@ FD_IRREGULAR = '''(() => {
 # Plotly graph above it: its points, curves, bands, bars, boxes, violins, cells, slices and
 # tiles, their colours, the axis titles, the levels' order, the legend.
 
-# The Graph Builder report's graph as the page drew it: its traces (the overlays that show
+# The Graph Maker report's graph as the page drew it: its traces (the overlays that show
 # the selected share marked), annotations and shapes, axis titles and ticks, size, the plan,
 # and the code block right under it.
 GB_JS = r'''
@@ -277,7 +277,7 @@ window.__gbq = async (rep) => {
 };
 '''
 
-# A seeded table for the code of Graph Builder's graphs: continuous X and Y with a missing
+# A seeded table for the code of Graph Maker's graphs: continuous X and Y with a missing
 # value each, a grouping column in its own level order, a two-level one with a missing value,
 # an ordinal, whole and fractional counts, a date, a third continuous column.
 CODE_TABLE = r'''(() => {
@@ -424,7 +424,7 @@ def to_days(v, date):
 
 
 class GB:
-    """One Graph Builder graph and the figure its code drew."""
+    """One Graph Maker graph and the figure its code drew."""
 
     def __init__(self, G, R):
         self.G, self.R = G, R
@@ -1326,12 +1326,12 @@ async def main():
     check('every Help link has a target', audit.get('brokenMore'), [])
     menu = await page.ev('''(() => { const items = SM.app.menuItems("Graph"); const leg = items.find(i => i.label === "Legacy");
       return { top: items.map(i => i.label || (i.separator ? "—" : "")), legacy: leg ? (typeof leg.submenu === "function" ? leg.submenu() : leg.submenu).map(i => i.label) : null }; })()''')
-    check('the Graph menu in JMP\'s order, statsmodels\' Functional Data Plot among them', [m for m in menu['top'] if m != '—'], ['Graph Builder', 'Scatterplot Matrix…', 'Scatterplot 3D…', 'Contour Plot…', 'Bubble Plot…', 'Parallel Plot…', 'Cell Plot…', 'Ternary Plot…', 'Treemap…', 'Functional Data Plot…', 'Surface Plot…', 'Legacy'])
+    check('the Graph menu in JMP\'s order, statsmodels\' Functional Data Plot among them', [m for m in menu['top'] if m != '—'], ['Graph Maker', 'Scatterplot Matrix…', 'Scatterplot 3D…', 'Contour Plot…', 'Bubble Plot…', 'Parallel Plot…', 'Cell Plot…', 'Ternary Plot…', 'Treemap…', 'Functional Data Plot…', 'Surface Plot…', 'Legacy'])
     check('Graph > Legacy', menu['legacy'], ['Chart…', 'Overlay Plot…'])
     help_rows = await page.ev('["graphbuilder","scattermatrix","scatter3d","contour","surface","bubble","parallel","cellplot","ternary","treemap","functional","chart","overlay"].filter(id => !document.getElementById("help-p-" + id))')
     check('every Graph platform has its row in Help', help_rows, [])
 
-    # ---- Graph Builder: no launch dialog, the builder in the report
+    # ---- Graph Maker: no launch dialog, the builder in the report
     r = await page.ev('''(async () => {
       SM.app.launch('graphbuilder');
       const rep = SM.app.reports[SM.app.reports.length - 1];
@@ -1344,12 +1344,12 @@ async def main():
         empty: !!rep.body.querySelector('.sm-gb-empty'), auto: rep.spec.autoRecalc };
     })()''')
     await page.ev(HELPERS)
-    check('Graph Builder opens without a launch dialog', (r['dialog'], r['title'], r['active']), (False, 'Graph Builder', True))
+    check('Graph Maker opens without a launch dialog', (r['dialog'], r['title'], r['active']), (False, 'Graph Maker', True))
     check('its column list', r['cols'], ['id', 'age', 'sex', 'height (cm)', 'weight (kg)'])
     check('the drop zones, Map Shape among them', sorted(r['zones']), sorted(['X', 'Y', 'Group X', 'Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape']))
     check('the element palette, with statsmodels\' Bean, and Map Shapes', r['palette'], ['Points', 'Smoother', 'Line of Fit', 'Ellipse', 'Contour', 'Line', 'Bar', 'Area', 'Box Plot', 'Bean', 'Histogram', 'Heatmap', 'Mosaic', 'Caption Box', 'Pie', 'Map Shapes'])
     check('an empty graph asks for columns', r['empty'], True)
-    check('Graph Builder follows the table (Automatic Recalc)', r['auto'], True)
+    check('Graph Maker follows the table (Automatic Recalc)', r['auto'], True)
     await shot(page, 'g01-empty.png')
 
     # ---- real drag and drop: from the page's Columns panel and from the builder's list
@@ -1684,7 +1684,7 @@ async def main():
       KvotInfo.close();
       return { main, props, shown, after, audit: KvotInfo.audit().noTopic };
     })()''')
-    check('Graph Builder\'s (i): zones, builder, elements, the properties of the elements in the graph, red triangle', [h for h in r['main']['heads'] if h in ('Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle')], ['Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle'])
+    check('Graph Maker\'s (i): zones, builder, elements, the properties of the elements in the graph, red triangle', [h for h in r['main']['heads'] if h in ('Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle')], ['Zones', 'The builder', 'Elements', 'Properties: Points', 'Properties: Smoother', 'The red triangle'])
     check('... every zone explained', [c[0] for c in r['main']['choices']['Zones']], ['X, Y', 'Group X, Group Y', 'Wrap', 'Overlay', 'Color', 'Size', 'Freq', 'Map Shape'])
     check('... the elements in the graph marked', [c[0] for c in r['main']['choices']['Elements'] if c[2]], ['Points', 'Smoother'])
     check('... the builder\'s buttons', [c[0] for c in r['main']['choices']['The builder'] if c[0] in ('Undo', 'Start Over', 'Done')], ['Undo', 'Start Over', 'Done'])
@@ -2104,7 +2104,7 @@ async def main():
     check('the seeded table for the code of the graphs', await page.ev(CODE_TABLE), 150)
     await page.ev('window._rep0 = window._rep; window._rep = window._crep;')   # gbSet and _gb work on _rep
     for what, zones, els, props, *state in GB_CODE_CASES:
-        tag = f"Graph Builder's code ({what})"
+        tag = f"Graph Maker's code ({what})"
         state = dict(state[0]) if state else {}
         excluded = state.pop('excluded', None)   # rows the report leaves out, for this graph
         if excluded:   # (the report runs again on the included rows)
@@ -2145,12 +2145,12 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
     out = await page.ev(f'__gr.run({json.dumps(probe)}, _rep.table)', timeout=300)
     text = ''.join(o.get('text', '') for o in (out.get('outputs') or []) if o.get('type') == 'stream') if isinstance(out, dict) else ''
     got = next((json.loads(q[len('SMUI-POINTS '):]) for q in text.split('\n') if q.startswith('SMUI-POINTS ')), None)
-    check(f"Graph Builder's code: Packed jitter of {n} points, one panel: at random as the page (it packs up to 20000), every point where the page draws it",
+    check(f"Graph Maker's code: Packed jitter of {n} points, one panel: at random as the page (it packs up to 20000), every point where the page draws it",
           (got or {}).get('n') == n and (got or {}).get('gap') is not None and got['gap'] < 1e-9, True)
     await page.ev('(() => { const big = _rep; window._rep = window._crep; SM.app.closeReport(big); SM.app.closeTable(big.table); })()')
     r = await page.ev('''(() => { const s = _crep.pythonScript(), b = _crep.codeBlocks();
       return { blocks: b.length, n: _crep.pyCode.length, same: _crep.pyCode[0] === b[0].querySelector('code').textContent, has: s.includes(_crep.pyCode[0]), prints: /\\bprint\\(/.test(s) }; })()''')
-    check("Graph Builder's Save Python Script: the code under the graph, and no block that prints numbers", r, {'blocks': 1, 'n': 1, 'same': True, 'has': True, 'prints': False})
+    check("Graph Maker's Save Python Script: the code under the graph, and no block that prints numbers", r, {'blocks': 1, 'n': 1, 'same': True, 'has': True, 'prints': False})
     await page.ev('window._rep = window._rep0; SM.app.showTab(SM.app.tabOf(_rep));')
     # the other platforms, on the seeded table of coordinates, IDs and times, then on the curves
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Graph data')))")
@@ -2191,7 +2191,7 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
 
     await wp6(page)
 
-    # ---- dark theme and phone width, with Graph Builder
+    # ---- dark theme and phone width, with Graph Maker
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await page.ev('SM.app.showTab(SM.app.tabOf(_rep))')
     await asyncio.sleep(1.2)
@@ -2241,9 +2241,9 @@ window.__ax = {
   hover(label, level = 0) { const m = [...document.querySelectorAll('.sm-menu')][level]; const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.replace(/^✓/, '') === label); if (b) b.dispatchEvent(new MouseEvent('mouseenter')); return !!b; },
   axis(p, name = 'yaxis') { const A = p.box._fullLayout && p.box._fullLayout[name]; return A ? { type: A.type, range: A.range.slice(), ticks: (A._vals || []).map((v) => v.x), text: (A._vals || []).map((v) => v.text) } : null; },
   code(p) { const n = p.box.nextElementSibling; return n && n.matches('details.sm-code, .sm-code-box') ? n.querySelector('code').textContent : null; },
-  // until the report has run again after a change to its table (Graph Builder follows it, 250 ms later) and is idle
+  // until the report has run again after a change to its table (Graph Maker follows it, 250 ms later) and is idle
   async calm(rep) { await new Promise((r) => setTimeout(r, 450)); for (let i = 0; i < 400 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); const b = SM.platforms.get('graphbuilder').builder(rep); if (b) await b.idle(); await new Promise((r) => setTimeout(r, 100)); },
-  // Graph Builder's graph as it is now (a change to the table makes a new one): an axis's drag box, or the plot's middle
+  // Graph Maker's graph as it is now (a change to the table makes a new one): an axis's drag box, or the plot's middle
   async gbAt(which) { await __ax.calm(_rep); const p = _gb.plot(); p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p; return which ? __ax.at(p, which) : __ax.inPlot(p); },
   async redrawn(rep) { for (let i = 0; i < 200 && rep.body.classList.contains('is-running'); i++) await new Promise((r) => setTimeout(r, 25)); await new Promise((r) => setTimeout(r, 120)); const p = rep.plots[0]; if (p && !p.drawn) { p.box.scrollIntoView({ block: 'center' }); await drawn(p); } return p; },
 };
@@ -2317,10 +2317,10 @@ def bin_labels(cuts, lo, hi):
 
 async def wp6(page):
     await page.ev(WP6_JS)
-    # ---- Axis Settings on any report's graph: Fit Y by X's bivariate plot, by real double-clicks and right-clicks
+    # ---- Axis Settings on any report's graph: Bivariate Analysis's bivariate plot, by real double-clicks and right-clicks
     await page.ev("SM.app.showTab(SM.app.tabOf(SM.app.tables.find(t => t.name === 'Students')))")
     res = await page.ev(open_report_js('fitybyx', {'y': ['weight (kg)'], 'x': ['height (cm)']}))
-    check('Axis Settings: a Fit Y by X report to try them on', res['errors'], [])
+    check('Axis Settings: a Bivariate Analysis report to try them on', res['errors'], [])
     await page.ev('(async () => { window._fr = SM.app.reports[SM.app.reports.length - 1]; SM.app.showTab(SM.app.tabOf(_fr)); window._fp = _fr.plots[0]; _fp.box.scrollIntoView({ block: "center" }); await drawn(_fp); await settle(); })()')
     before = await page.ev('__ax.axis(_fp)')
     xy = await page.ev('__ax.at(_fp, "ns")')
@@ -2424,7 +2424,7 @@ async def wp6(page):
       const out = rep.plots.map((q) => __ax.axis(q).range); SM.app.closeReport(rep); SM.app.showTab(SM.app.tabOf(_fr)); return out; })()""")
     check('Axis Settings with By: every group\'s graph from 20 to 100', r, [[20, 100], [20, 100]])
 
-    # ---- Graph Builder: Axis Settings go with the column on the axis, on every panel, in its code
+    # ---- Graph Maker: Axis Settings go with the column on the axis, on every panel, in its code
     r = await page.ev(r"""(async () => {
       const t = SM.app.tables.find((x) => x.name === 'Students');
       const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
@@ -2433,7 +2433,7 @@ async def wp6(page):
       const p = await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], groupX: ['sex'] }, ['points']);
       p.box.scrollIntoView({ block: 'center' }); await drawn(p); await settle(); window._gp = p;
       return Object.keys(p.box._fullLayout).filter((k) => /^yaxis/.test(k)); })()""")
-    check('Graph Builder with Group X: a Y axis for each panel', r, ['yaxis', 'yaxis2'])
+    check('Graph Maker with Group X: a Y axis for each panel', r, ['yaxis', 'yaxis2'])
     xy = await page.ev('__ax.gbAt("ns")')
     await dbl(page, *xy)
     r = await page.ev(r"""(async () => { const d = __ax.dialog(); if (!d) return null;
@@ -2444,8 +2444,8 @@ async def wp6(page):
       let code = null; for (let i = 0; i < 80 && !code; i++) { code = __ax.code(p); if (!code) await settle(); }
       const fl = p.box._fullLayout;
       return { axes: _gb.state().axes, A: [__ax.axis(p, 'yaxis'), __ax.axis(p, 'yaxis2')].map((a) => [a.range, a.ticks]), rects: fl.shapes.filter((q) => q.type === 'rect').map((q) => [q.yref, q.y0, q.y1]), code, spec: _rep.spec.options.axisSettings || null }; })()""")
-    check('Graph Builder: the window\'s settings kept by the column on the axis, in the builder\'s state', (r or {}).get('axes'), {'y:weight (kg)': {'min': 30, 'max': 90, 'inc': 15, 'refs': [{'value': 60, 'to': 70, 'label': 'band', 'color': 'gray', 'dash': 'solid'}]}})
-    check('Graph Builder: every panel\'s Y from 30 to 90, a tick every 15, the band on each', (r['A'], sorted(r['rects'])), ([[[30, 90], [30, 45, 60, 75, 90]]] * 2, [['y', 60, 70], ['y2', 60, 70]]))
+    check('Graph Maker: the window\'s settings kept by the column on the axis, in the builder\'s state', (r or {}).get('axes'), {'y:weight (kg)': {'min': 30, 'max': 90, 'inc': 15, 'refs': [{'value': 60, 'to': 70, 'label': 'band', 'color': 'gray', 'dash': 'solid'}]}})
+    check('Graph Maker: every panel\'s Y from 30 to 90, a tick every 15, the band on each', (r['A'], sorted(r['rects'])), ([[[30, 90], [30, 45, 60, 75, 90]]] * 2, [['y', 60, 70], ['y2', 60, 70]]))
     check('... not in the report\'s own axis settings (the builder keeps them)', r['spec'], None)
     out = await page.ev(f'__gr.run({json.dumps(page_probe_more(r["code"] or "", []))}, _rep.table)', timeout=300)
     R, err = more_from_outputs(out.get('outputs') if isinstance(out, dict) else None)
@@ -2456,12 +2456,12 @@ async def wp6(page):
       const a = __ax.axis(await drawn(_gb.plot()), 'yaxis').range;
       await _gb.update((S) => { S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
       const b = __ax.axis(await drawn(_gb.plot()), 'yaxis').range; return { a, b }; })()""")
-    check('Graph Builder: another column on Y has its own axis; the first one back, its settings too', (r['a'] != [30, 90], r['b']), (True, [30, 90]))
+    check('Graph Maker: another column on Y has its own axis; the first one back, its settings too', (r['a'] != [30, 90], r['b']), (True, [30, 90]))
     r = await page.ev(r"""(async () => { await _gb.update((S) => { S.log = { y: true }; }); const p = await drawn(_gb.plot()); p.box.scrollIntoView({ block: 'center' }); await settle();
       SM.axis.open(p, 'yaxis'); await settle(); const d = __ax.dialog(); const was = d.querySelector('[data-ax="scale"]').value;
       __ax.set(d, 'scale', 'linear'); __ax.button(d, 'OK'); await _gb.idle(); await settle();
       return { was, log: _gb.state().log, axes: _gb.state().axes['y:weight (kg)'], type: __ax.axis(await drawn(_gb.plot()), 'yaxis').type }; })()""")
-    check('Graph Builder: the zone\'s Log Scale and the window\'s Scale are one switch', (r['was'], r['log'], 'log' in (r['axes'] or {}), r['type']), ('log', {'y': False}, False, 'linear'))
+    check('Graph Maker: the zone\'s Log Scale and the window\'s Scale are one switch', (r['was'], r['log'], 'log' in (r['axes'] or {}), r['type']), ('log', {'y': False}, False, 'linear'))
 
     # ---- Levels of a continuous grouping column: bins as Make Binning Column cuts them; Save Transform Column
     wv = await page.ev("SM.app.tables.find((x) => x.name === 'Students').col('weight (kg)').values.filter(Number.isFinite)")
@@ -2566,7 +2566,7 @@ async def wp6(page):
       await _gb.update((S) => { S.order = {}; S.map = null; });
       const pick = (S) => JSON.stringify({ axes: S.axes, bins: S.bins, order: S.order, marker: S.marker, map: S.map, shapeMode: S.shapeMode });
       return [pick(got), pick(want)]; })()""")
-    check('a saved project keeps Graph Builder\'s axis settings, levels, orders, markers and map', r[0], r[1])
+    check('a saved project keeps Graph Maker\'s axis settings, levels, orders, markers and map', r[0], r[1])
 
     # ---- maps: Map Shapes of countries (ISO codes, names) and US states, points on a Background Map; linked; their code
     MAP_TABLE = r"""(() => {
@@ -2632,7 +2632,7 @@ print("SMUI-MAP " + _json.dumps(_out))
     r = await page.ev(MAP_Q, timeout=300)
     isos = list(dict.fromkeys(tv['iso']))
     mean_v = {k: sum(v for i_, v in zip(tv['iso'], tv['v']) if i_ == k and isinstance(v, (int, float)) and math.isfinite(v)) / sum(1 for i_, v in zip(tv['iso'], tv['v']) if i_ == k and isinstance(v, (int, float)) and math.isfinite(v)) for k in isos}
-    check('Map Shape (by clicks): Graph Builder draws Map Shapes, a region for each ISO code', (r['els'], r['mode'], r['locs']), (['map'], 'ISO-3', isos))
+    check('Map Shape (by clicks): Graph Maker draws Map Shapes, a region for each ISO code', (r['els'], r['mode'], r['locs']), (['map'], 'ISO-3', isos))
     check.near('Map Shapes: each region the mean of v over its rows (a missing v left out)', max(abs(a - mean_v[k]) for a, k in zip(r['z'], isos)), 0.0, tol=1e-12)
     check('... on Plotly\'s natural earth map, every code matched to its country', (r['geo'], r['ids'], [n for n in r['notes'] if 'Map Shapes' in n]), ({'proj': 'natural earth', 'scope': 'world'}, {k: k for k in isos}, []))
     got, err = await map_code(r['code'])
@@ -2695,7 +2695,7 @@ print("SMUI-MAP " + _json.dumps(_out))
       const selType = p.box._fullLayout.xaxis.type, ticks = p.box._fullLayout.xaxis._vals.map((v) => v.text);
       t.select([]); SM.app.closeReport(rep); SM.app.closeTable(t);
       return { drawnType, selType, datey: ticks.every((x) => /[A-Z][a-z]{2}|20\d\d/.test(x)) }; })()""")
-    check('Graph Builder: a Line over a date X is on a date axis, after drawing and after a selection', (r['drawnType'], r['selType'], r['datey']), ('date', 'date', True))
+    check('Graph Maker: a Line over a date X is on a date axis, after drawing and after a selection', (r['drawnType'], r['selType'], r['datey']), ('date', 'date', True))
 
     # ---- Axis Settings on a date axis in a browser that is not on UTC, over a daylight-saving change
     await stockholm_dates(page)

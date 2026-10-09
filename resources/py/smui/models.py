@@ -1,4 +1,4 @@
-"""Linear models as JMP reports them, shared by Fit Y by X and Fit Model.
+"""Linear models as JMP reports them, shared by Bivariate Analysis and Fit Model.
 
 A model is given as JMP's effects: a list of effects, each a list of column
 names; a name twice in one effect is a power, two names a crossing:

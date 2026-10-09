@@ -10,7 +10,7 @@ statistics alone, without the rows.
                    against a hypothesized difference; the interval of the
                    difference; Cohen's d and Hedges' g (the pooled test's,
                    with the exact interval from the noncentral t) or d* and
-                   g* (Welch's, Bonett's interval), as Fit Y by X's Effect
+                   g* (Welch's, Bonett's interval), as Bivariate Analysis's Effect
                    Size computes them
   Two Proportions  from the counts and sizes: statsmodels
                    test_proportions_2indep and confint_proportions_2indep,
@@ -195,7 +195,7 @@ def two_means(g1, g2, null=0.0, alternative='two-sided', variance='unequal', alp
     qm = [float(stats.t.ppf(1 - alpha / 2, n - 1)) for n in (n1, n2)]
     out['summary'] = [{'group': names[i], 'mean': m, 'sd': s, 'n': n, 'se': s / math.sqrt(n), 'lower': m - qm[i] * s / math.sqrt(n), 'upper': m + qm[i] * s / math.sqrt(n)}
                       for i, (m, s, n) in enumerate(((m1, s1, n1), (m2, s2, n2)))]
-    # effect sizes, as Fit Y by X's Effect Size (the observed difference)
+    # effect sizes, as Bivariate Analysis's Effect Size (the observed difference)
     if equal:
         if sp > 0:
             k = math.sqrt(1 / n1 + 1 / n2)
@@ -234,7 +234,7 @@ def _means_code(m1, s1, n1, m2, s2, n2, d0, alternative, equal, alpha, names):
          '    se, df_ = np.sqrt(v1 + v2), (v1 + v2) ** 2 / (v1 ** 2 / (n1 - 1) + v2 ** 2 / (n2 - 1))   # Welch-Satterthwaite',
          'q = stats.t.ppf(1 - alpha / 2, df_)',
          'print("Difference", diff, "Std Err Dif", se, "DF", df_, "Lower CL", diff - q * se, "Upper CL", diff + q * se)',
-         '# effect size (Fit Y by X\'s): the observed difference standardized',
+         '# effect size (Bivariate Analysis\'s): the observed difference standardized',
          'J = np.exp(special.gammaln((n1 + n2 - 2) / 2) - 0.5 * np.log((n1 + n2 - 2) / 2) - special.gammaln((n1 + n2 - 3) / 2))   # Hedges\' exact correction']
     if equal:
         L += ['def ncp(t, df, q):   # the noncentrality at which t is the q quantile of the noncentral t',

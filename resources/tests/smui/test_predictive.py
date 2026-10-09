@@ -558,7 +558,7 @@ def main():
         got_g, err_g = run_names(gc['code'], T, tmp_, ['rows'])
     check('Group Metrics\' code runs on the CSV and gives the report\'s rows', (err_g, err_g is None and all(all(close(a_[k_], b_[k_]) for k_ in ('n', 'base_rate', 'selection_rate', 'accuracy', 'auc', 'fpr', 'fnr', 'precision', 'cut')) for a_, b_ in zip(got_g['rows'], gc['rows']))), (None, True))
 
-    # ---- Group Metrics of several models at once (Model Screening's selected methods): each one the single call's
+    # ---- Group Metrics of several models at once (Fit Many Models' selected methods): each one the single call's
     pp2 = np.clip(0.2 + 0.55 * yy + 0.3 * rng.normal(size=n), 0.001, 0.999)
     for eq_, kw_ in (('none', {}), ('typed', {'cuts': {'b': 0.3, 'c': 0.6}}), ('fpr', {'reference': 'a'})):
         base_ = dict(table=Tg, group='g', at=at_.tolist(), actual=yy.tolist(), sets=sets_.tolist(), w=list(w), cut=0.45, equal=eq_, **kw_)

@@ -25,7 +25,7 @@ bar, kept for the next visit from before the workbench is made); a report
 table's bar column; a long run's progress in the report's bar (what Python
 is doing, the time, waiting behind another report, Stop) and in the
 engine's status; Edit > Undo and Redo of report changes and Close Report,
-with real keys, across tables and reports, and Graph Builder's own first.
+with real keys, across tables and reports, and Graph Maker's own first.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 ../rb/README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT (defaults 8791, 9291),
@@ -564,7 +564,7 @@ async def main():
     r = await page.ev(CODE)
     check('code in a closed outline: the outline opens and the code is seen', (await page.ev(f'{LAST}.codeBlocks()[0].closest(".sm-ob").classList.contains("is-closed")'), r['seen'] > 0), (False, True))
     await page.ev(f'SM.app.closeReport({LAST})')
-    # (an empty Graph Builder: every graph of the Graph menu has its code now)
+    # (an empty Graph Maker: every graph of the Graph menu has its code now)
     await page.ev(OPEN_ON_STUDENTS('graphbuilder', {}))
     await asyncio.sleep(0.4)
     await click_on(f'{LAST}.codeBtn')
@@ -784,7 +784,7 @@ async def main():
     check('its fields are explained under their short names', (r['rate'], r['seed']), (True, True))
 
     # ---- Save ▾ > Print… prints the report as a document (as Save Report
-    # as HTML writes it), from a hidden frame: Graph Builder's chart without
+    # as HTML writes it), from a hidden frame: Graph Maker's chart without
     # its drop zones and palette; and Save Report as Word writes a .docx of
     # the open outlines, tables and graphs
     r = await page.ev('''(async () => {
@@ -881,7 +881,7 @@ async def main():
     n = sum(1 for x in r['opened']['paras'] if x['style'] == 'SmCode')
     check('... or that block was opened by its heading (and only that one)', 0 < n < sum(1 for x in r['coded']['paras'] if x['style'] == 'SmCode'), True)
 
-    # ---- a report table's bar column ({ bar: key }, Text Explorer's count
+    # ---- a report table's bar column ({ bar: key }, Text Analysis's count
     # bars): a bar for each value of zero or more against the largest, the
     # rows past maxRows too; none for zero, a negative, a missing value or
     # NaN; a number given as text counts; cellClass marks its cells; sorting
@@ -1151,7 +1151,7 @@ async def main():
     # site's header), the (i) panel too, and a column is dragged by touch:
     # held a moment, then moved (a swipe at once still scrolls). Onto a role,
     # Fit Model's model effects (the dialog scrolls to them), the formula
-    # and Graph Builder's Y zone (the report scrolls to it).
+    # and Graph Maker's Y zone (the report scrolls to it).
     page = await open_page(f'{BASE}/smui.html?example=plants', width=400, height=820)
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 820, 'deviceScaleFactor': 2, 'mobile': True}, session=page.sid)
     await page.call('Emulation.setTouchEmulationEnabled', {'enabled': True, 'maxTouchPoints': 1}, session=page.sid)
@@ -1254,7 +1254,7 @@ async def main():
     await asyncio.sleep(0.8)
     src = await rect("(() => { const li = [...document.querySelectorAll('.sm-gb-collist li')].find(li => li.textContent.includes('yield (g)')); li.scrollIntoView({ block: 'center' }); return li; })()")
     await drag_to(src, "document.querySelector('.sm-gb-z-y')", far_top=450)
-    check('phone: dragged onto Graph Builder\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gb-z-y').textContent.includes('yield (g)')"), True)
+    check('phone: dragged onto Graph Maker\'s Y zone, the report scrolling to it', await page.ev("document.querySelector('.sm-gb-z-y').textContent.includes('yield (g)')"), True)
     # a tap on Python code: the code is far below the screen, the report scrolls to it
     await page.ev(open_report_js('distribution', {'y': ['yield (g)']}))
     await asyncio.sleep(0.6)
@@ -1382,7 +1382,7 @@ async def main():
 
     # ---- a graph's size: the grip in its corner (a real drag, the arrow keys, a double-click), Size… and
     # Default Size in its right-click menu; kept with the report (Redo, a project), the code's figsize in
-    # proportion, a narrower window and back, the HTML document without the grip, Graph Builder's own size
+    # proportion, a narrower window and back, the HTML document without the grip, Graph Maker's own size
     page = await open_page(f'{BASE}/smui.html?example=students')
     await wait_engine(page)
     await page.ev(open_report_js('distribution', {'y': ['height (cm)']}))
@@ -1475,20 +1475,20 @@ async def main():
     await asyncio.sleep(0.4)
     g7 = await page.ev(G)
     check('a double-click on the grip: the report\'s size again', ([g6['w'] - g5['w'], g6['h'] - g5['h']], [g7['w'], g7['h']], g7['sizes']), ([60, 40], g7['def'], None))
-    # Graph Builder: its grip sets its own Graph Size
+    # Graph Maker: its grip sets its own Graph Size
     r = await page.ev("""(async () => { const t = SM.app.current; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
       await new Promise((res) => rep.on('done', res)); const gb = SM.platforms.get('graphbuilder').builder(rep);
       await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; S.zones.y = [{ id: t.col('weight (kg)').id, name: 'weight (kg)' }]; });
       SM.app.showTab(SM.app.tabOf(rep)); let p = null;
       for (let i = 0; i < 100 && !p; i++) { await new Promise((r) => setTimeout(r, 60)); p = rep.plots.find((x) => x.drawn && x.box.isConnected && x.box.querySelector('.sm-plot-grip')); }
-      if (!p) return { error: 'no drawn Graph Builder graph with a grip' };
+      if (!p) return { error: 'no drawn Graph Maker graph with a grip' };
       const g = p.box.querySelector('.sm-plot-grip'); g.scrollIntoView({ block: 'nearest' }); const b = g.getBoundingClientRect();
       return { x: b.x + b.width / 2, y: b.y + b.height / 2, w: p.width, h: p.height }; })()""")
-    check('Graph Builder\'s graph has its grip', r.get('error') if isinstance(r, dict) else r, None)
+    check('Graph Maker\'s graph has its grip', r.get('error') if isinstance(r, dict) else r, None)
     await drag(r, -80, 50)
     await asyncio.sleep(1.2)
     gb = await page.ev("(async () => { const rep = SM.app.reports.at(-1); let p = null; for (let i = 0; i < 60; i++) { p = rep.plots.filter((x) => x.drawn && x.box.isConnected).at(-1); if (p && p.width !== %d) break; await new Promise((r) => setTimeout(r, 60)); } return { size: SM.platforms.get('graphbuilder').builder(rep).state().size || null, w: p ? p.width : null, h: p ? p.height : null, ghost: !!document.querySelector('.sm-plot-ghost'), stored: rep.spec.options.plotSizes || null }; })()" % r['w'])
-    check('Graph Builder\'s grip sets its own Graph Size (an outline follows the drag), which draws the graph again', (gb['size'], gb['w'], gb['h'], gb['ghost'], gb['stored']), ({'w': r['w'] - 80, 'h': r['h'] + 50}, r['w'] - 80, r['h'] + 50, False, None))
+    check('Graph Maker\'s grip sets its own Graph Size (an outline follows the drag), which draws the graph again', (gb['size'], gb['w'], gb['h'], gb['ghost'], gb['stored']), ({'w': r['w'] - 80, 'h': r['h'] + 50}, r['w'] - 80, r['h'] + 50, False, None))
     await page.ev("KVOT.setTheme ? KVOT.setTheme('dark') : document.documentElement.setAttribute('data-theme', 'dark')")
     await asyncio.sleep(0.5)
     dk = await page.ev("(() => { const g = document.querySelector('.sm-plot-grip'); const cs = getComputedStyle(g); return [cs.color, cs.cursor]; })()")
@@ -1508,7 +1508,7 @@ async def main():
 # named by the item; not in a text field or under a dialog; Close Report and
 # Close All Reports open again; the newest step first, across a table and a
 # report, its tab to the front; a theme change or a plain Redo is no step;
-# Graph Builder's own undo goes first in its report.
+# Graph Maker's own undo goes first in its report.
 GAMMA = r'''
 (async (n) => {
   let s = 12345; const u = () => (s = (s * 16807) % 2147483647) / 2147483647;
@@ -1676,7 +1676,7 @@ async def progress_and_undo():
     await key('z', CMD)
     c5 = await page.ev(REPS)
     check('... Redo closes it again; Close All Reports is one step, undone they all open', (c3, c4, json.loads(c5) == json.loads(c_before), len(json.loads(c5))), (0, {'n': 0, 'label': 'Close All Reports'}, True, 2))
-    # Graph Builder: its own undo goes first in its report
+    # Graph Maker: its own undo goes first in its report
     r = await page.ev('''(async () => { const t = SM.app.tables[0]; const rep = SM.app.openReport(SM.platforms.get('graphbuilder'), { roles: {}, options: {} }, t);
       await new Promise((res) => rep.on('done', res)); SM.app.showTab(SM.app.tabOf(rep)); const gb = SM.platforms.get('graphbuilder').builder(rep);
       await gb.update((S) => { S.zones.x = [{ id: t.col('height (cm)').id, name: 'height (cm)' }]; });
@@ -1685,7 +1685,7 @@ async def progress_and_undo():
     await page.ev('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
     await key('z', CMD)
     g1 = await page.ev('(() => { const rep = SM.app.reports.at(-1); const gb = SM.platforms.get("graphbuilder").builder(rep); return { x: (gb.state().zones.x || []).length, reports: SM.app.reports.length }; })()')
-    check('Graph Builder: ⌘Z takes back the builder\'s own change first', (r['label'], r['x'], g1), ('Undo Graph Builder Change', 1, {'x': 0, 'reports': 3}))
+    check('Graph Maker: ⌘Z takes back the builder\'s own change first', (r['label'], r['x'], g1), ('Undo Graph Maker Change', 1, {'x': 0, 'reports': 3}))
     check('progress and undo: no script errors', page.errors, [])
     await page.close()
 

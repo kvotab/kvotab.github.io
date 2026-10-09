@@ -21,7 +21,7 @@ Analyze > Clustering
   K Means Cluster       seeded k-means++ with restarts, the cubic clustering
                         criterion of Sarle (1983)
 Analyze > Screening
-  Response Screening    every Y against every X, Benjamini-Hochberg FDR
+  Test Many Responses    every Y against every X, Benjamini-Hochberg FDR
   Explore Outliers      quantile range, robust fit (Huber, Cauchy, quartile),
                         robust Mahalanobis (FAST-MCD), k nearest neighbours
 
@@ -3933,7 +3933,7 @@ def _km_codes(head, cols, weight, freq, standardize, seed, restarts, max_iter, k
     return out
 
 
-# ---- Response Screening -----------------------------------------------------------------------------
+# ---- Test Many Responses -----------------------------------------------------------------------------
 
 def _robust_sd(y):
     q1, q3 = np.quantile(y, [0.25, 0.75])
@@ -3945,7 +3945,7 @@ def _robust_sd(y):
 
 
 def _screen_pair(yv, xv, ycat, xcat, w):
-    """One test of the Response Screening table. yv, xv numpy arrays (codes
+    """One test of the Test Many Responses table. yv, xv numpy arrays (codes
     for categorical), w frequency weights or None."""
     import statsmodels.api as sm
     n = len(yv)
@@ -4032,7 +4032,7 @@ def _screen_pair(yv, xv, ycat, xcat, w):
 
 @api('respscreen.fit')
 def respscreen_fit(table, y, x, rows=None, weight=None, freq=None, max_logworth=1000, alpha=0.05, where=None, table_name='data'):
-    """Every Y against every X as Fit Y by X would test it: ANOVA or
+    """Every Y against every X as Bivariate Analysis would test it: ANOVA or
     regression F for a continuous Y, the likelihood-ratio chi-square of the
     contingency table or of the logistic fit for a categorical one; the
     p-values adjusted to control the false discovery rate (statsmodels'
@@ -4102,7 +4102,7 @@ SCREEN_DEF = [
     '',
     '',
     'def screen(y, x, ycat, xcat, w):',
-    '    """One test of y by x as Fit Y by X makes it: (p, effect size, R², statistic, DF, test), None where there is none.',
+    '    """One test of y by x as Bivariate Analysis makes it: (p, effect size, R², statistic, DF, test), None where there is none.',
     '    w: frequency weights (Weight times Freq), or None."""',
     '    n = len(y)',
     '    if n < 3 or np.ptp(y) == 0 or np.ptp(x) == 0:',
@@ -4198,7 +4198,7 @@ def _rs_fit_lines(ys, xs, weight, freq, levels, char, alpha, cap):
 
 
 def _rs_stats_code(head, ys, xs, weight, freq, levels, char, alpha, cap):
-    """The code of Response Screening's PValues table: every test as the
+    """The code of Test Many Responses' PValues table: every test as the
     report makes it (Weight and Freq as frequency weights), sorted by FDR
     LogWorth."""
     L = [head(RS_IMPORTS), *_rs_fit_lines(ys, xs, weight, freq, levels, char, alpha, cap),
@@ -4212,7 +4212,7 @@ def _rs_stats_code(head, ys, xs, weight, freq, levels, char, alpha, cap):
 
 
 def _rs_codes(head, ys, xs, weight, freq, levels, char, alpha, cap):
-    """The code of Response Screening's three graphs: every test made as the
+    """The code of Test Many Responses' three graphs: every test made as the
     report makes it, the FDR p-values, LogWorths and rank fractions."""
     imp = RS_IMPORTS
     fit = _rs_fit_lines(ys, xs, weight, freq, levels, char, alpha, cap)

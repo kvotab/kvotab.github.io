@@ -3,7 +3,7 @@
    The launch dialog's Construct Model Effects part (with the options of
    Generalized Estimating Equations), the Effect Summary's LogWorth bars,
    the Prediction Profiler's grid of plots, the controls of Stepwise,
-   Generalized Regression (its Model Launch), the contour profiler, the Regression
+   Penalized Regression (its Model Launch), the contour profiler, the Regression
    Diagnostics, Recursive and Rolling Regression and Quantile Regression's
    Model Launch, the weak first stages of Instrumental Variables. Colours
    are kvot.css's tokens (and the core's), so both themes read.
@@ -19,7 +19,7 @@
   padding: 2px 5px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12px; min-width: 0;
 }
 .sm-fm-opt input.sm-fm-num { width: 4.4em; text-align: right; }
-/* Generalized Regression's Model Launch: the random seed of KFold and Holdback */
+/* Penalized Regression's Model Launch: the random seed of KFold and Holdback */
 .sm-fm-opt input.sm-fm-seed { width: 7.5em; text-align: right; }
 /* ... and its zeroed terms */
 .sm-rt td.sm-fm-zeroed { color: var(--text-muted); }

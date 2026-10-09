@@ -5,7 +5,7 @@
    scatterplot matrix, outlier distances, item reliability), Principal
    Components, Discriminant, Multiple Correspondence Analysis, Factor
    Analysis, Multidimensional Scaling. Clustering: Hierarchical Cluster,
-   K Means Cluster. Screening: Response Screening, Explore Outliers. The
+   K Means Cluster. Screening: Test Many Responses, Explore Outliers. The
    numbers are resources/py/smui/multivariate.py's (statsmodels, scipy,
    numpy); this file draws them the way JMP does. Graphs whose points are
    rows carry `rows`, so they link to the table.
@@ -2216,12 +2216,12 @@
   });
 
   /* ======================================================================
-     RESPONSE SCREENING
+     TEST MANY RESPONSES
      ====================================================================== */
   function openFitYbyX(ctx, r) {
     const P = SM.platforms.get('fitybyx');
     const y = ctx.table.col(r.y), x = ctx.table.col(r.x);
-    if (!P) { SM.ui.toast('Fit Y by X is not loaded on this page'); return; }
+    if (!P) { SM.ui.toast('Bivariate Analysis is not loaded on this page'); return; }
     if (!y || !x) return;
     SM.app.openReport(P, { roles: { y: [y.id], x: [x.id] }, options: {} }, ctx.table);
   }
@@ -2252,7 +2252,7 @@
         { type: 'scatter', mode: 'lines', x: [0, 1], y: [a, a], line: { color: '#2f6ec7', width: 1.2 }, hoverinfo: 'skip', name: `α = ${a}` },
         { type: 'scatter', mode: 'lines', x: Array.from({ length: 51 }, (_, q) => Math.max(1e-3, q / 50)), y: Array.from({ length: 51 }, (_, q) => a * Math.max(1e-3, q / 50)), line: { color: RED, width: 1.2, dash: 'dot' }, hoverinfo: 'skip', name: 'FDR threshold for p' },
       ], { showlegend: true, legend: { orientation: 'h', y: -0.25 }, xaxis: { title: { text: 'Rank Fraction' }, range: [0, 1.02] }, yaxis: { title: { text: 'PValue' }, type: 'log', exponentformat: 'power' } }, { width: fitW(520), height: 340, title: 'FDR PValue Plot', select: false, onDraw: click }), ctx.code(res.fdr_code),
-      ctx.note('The p-values (red) and the FDR-adjusted p-values (blue) in order of significance. A test is significant at the false discovery rate α where its FDR p-value is below the blue line, or equally where its p-value is below the dotted red line. Click a point for its Fit Y by X.'));
+      ctx.note('The p-values (red) and the FDR-adjusted p-values (blue) in order of significance. A test is significant at the false discovery rate α where its FDR p-value is below the blue line, or equally where its p-value is below the dotted red line. Click a point for its Bivariate Analysis.'));
     }
     if (o('lwEffect', true)) {
       ctx.outline('FDR LogWorth by Effect Size', { key: 'lweffect' }).add(ctx.plot([{
@@ -2260,7 +2260,7 @@
         marker: { size: 7, color: idx.map((i) => (all[i].fdr_p < a ? RED : SM.util.themeColors().muted)) },
       }], { xaxis: { title: { text: 'Effect Size' }, rangemode: 'tozero' }, yaxis: { title: { text: 'FDR LogWorth' }, rangemode: 'tozero' }, shapes: [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 2, y1: 2, line: { color: RED, width: 1, dash: 'dot' } }] },
       { width: fitW(500), height: 320, title: 'FDR LogWorth by Effect Size', select: false, onDraw: click }), ctx.code(res.effect_code),
-      ctx.note('FDR LogWorth −log10(FDR p) against the effect size: √(model mean square)/robust σ for a continuous Y (σ from the IQR/1.349 unless the IQR is too small), √(χ²/DF) for a categorical one. The dotted line is FDR p = 0.01. Click a point for its Fit Y by X.'));
+      ctx.note('FDR LogWorth −log10(FDR p) against the effect size: √(model mean square)/robust σ for a continuous Y (σ from the IQR/1.349 unless the IQR is too small), √(χ²/DF) for a categorical one. The dotted line is FDR p = 0.01. Click a point for its Bivariate Analysis.'));
     }
     if (o('lwR2', false)) {
       const cy = idx.filter((i) => all[i].r2 != null);
@@ -2272,7 +2272,7 @@
       columns: [{ key: 'y', label: 'Y', fmt: 'text' }, { key: 'x', label: 'X', fmt: 'text' }, { key: 'count', label: 'Count' }, { key: 'p', label: 'PValue', fmt: 'p' }, { key: 'logworth', label: 'LogWorth', digits: 4 }, { key: 'fdr_p', label: 'FDR PValue', fmt: 'p' },
         { key: 'fdr_logworth', label: 'FDR LogWorth', digits: 4 }, { key: 'effect', label: 'Effect Size', digits: 4 }, { key: 'rank_fraction', label: 'Rank Fraction', digits: 4 }, { key: 'r2', label: 'RSquare', digits: 4 }, { key: 'test', label: 'Test', fmt: 'text' }, { key: 'stat', label: 'Statistic', digits: 5, hidden: true }, { key: 'df', label: 'DF', hidden: true }],
       rows,
-    }, { name: 'Response Screening PValues', maxRows: 1000, onRow: (r) => openFitYbyX(ctx, r) }), ctx.note('Sorted by FDR LogWorth. Continuous Y: the F test of Fit Y by X (Oneway ANOVA or the regression); categorical Y: the likelihood-ratio χ² of the contingency table or of the logistic fit. FDR p-values by Benjamini and Hochberg (statsmodels multipletests). Click a line to open its Fit Y by X; right click to make a data table.'),
+    }, { name: 'Test Many Responses PValues', maxRows: 1000, onRow: (r) => openFitYbyX(ctx, r) }), ctx.note('Sorted by FDR LogWorth. Continuous Y: the F test of Bivariate Analysis (Oneway ANOVA or the regression); categorical Y: the likelihood-ratio χ² of the contingency table or of the logistic fit. FDR p-values by Benjamini and Hochberg (statsmodels multipletests). Click a line to open its Bivariate Analysis; right click to make a data table.'),
     ctx.code(res.code));
     screenedModel(ctx, all, res.code);
   }
@@ -2328,33 +2328,33 @@
   }
 
   SM.platforms.register({
-    id: 'respscreen', label: 'Response Screening', menu: 'Analyze/Screening', order: 10, info: 'p:respscreen',
-    about: 'Tests every Y against every X as Fit Y by X would (ANOVA or regression F for a continuous Y, the likelihood-ratio χ² of a contingency table or a logistic fit for a categorical one), with false discovery rate p-values, LogWorths, effect sizes and R²; the FDR PValue plot, FDR LogWorth by effect size, and a table whose lines open Fit Y by X; beyond JMP, Fit Model with each Y\'s X\'s below a p-value cut (bivariate screening).',
+    id: 'respscreen', label: 'Test Many Responses', menu: 'Analyze/Screening', order: 10, info: 'p:respscreen',
+    about: 'Tests every Y against every X as Bivariate Analysis would (ANOVA or regression F for a continuous Y, the likelihood-ratio χ² of a contingency table or a logistic fit for a categorical one), with false discovery rate p-values, LogWorths, effect sizes and R²; the FDR PValue plot, FDR LogWorth by effect size, and a table whose lines open Bivariate Analysis; beyond JMP, Fit Model with each Y\'s X\'s below a p-value cut (bivariate screening).',
     uses: ['scipy.stats: f_oneway, linregress, chi2_contingency', 'statsmodels: Logit, MNLogit, GLM (frequency weights), WLS', 'statsmodels.stats.multitest.multipletests (fdr_bh)'],
     topics: {
       'p:respscreen': {
-        kicker: 'Analyze > Screening', title: 'Response Screening',
+        kicker: 'Analyze > Screening', title: 'Test Many Responses',
         lead: 'Many tests at once: each Y against each X. With many tests some small p-values appear by chance, so the p-values are also adjusted to control the false discovery rate (the expected share of false positives among the tests called significant).',
         sections: [
           { heading: 'The tests', choices: [['Continuous Y, categorical X', 'Oneway analysis of variance F.'], ['Continuous Y, continuous X', 'Simple linear regression F.'], ['Categorical Y, categorical X', 'Likelihood-ratio χ² of the contingency table.'], ['Categorical Y, continuous X', 'Likelihood-ratio χ² of the (multinomial) logistic regression.']] },
           { heading: 'LogWorth', text: '−log10(p): 2 is p = 0.01, 3 is p = 0.001. FDR LogWorth is the same for the FDR p-value (Benjamini-Hochberg).' },
           { heading: 'Differences from JMP', text: 'The robust, Cauchy, Poisson and negative binomial fits, the Grouping and Subgroup roles, the practical-significance and equivalence tests and the means-differences reports are not here. Weight and Freq act as frequency weights.' },
         ],
-        more: { label: 'Response Screening', id: 'help-p-respscreen' },
+        more: { label: 'Test Many Responses', id: 'help-p-respscreen' },
       },
       'rs:model': {
-        kicker: 'Response Screening', title: 'Fit Model with the Screened X\'s',
+        kicker: 'Test Many Responses', title: 'Fit Model with the Screened X\'s',
         lead: 'The bivariate screening of a model\'s candidates: for each Y, the X\'s whose p-value against it is below the cut, and a Fit Model report with them as main effects (Standard Least Squares for a continuous Y, Nominal or Ordinal Logistic for a categorical one), the report\'s Weight, Freq and By kept. A loose cut such as 0.25 (Hosmer and Lemeshow) keeps variables that matter only together with others; the model then shows which to keep. Not in JMP.',
         sections: [{ heading: 'In the report', choices: [
           ['p-value below', 'The cut, above 0 and at most 1: an X whose p-value is below it goes into the model. 0.25 by default.'],
           ['by', 'PValue, the default: each test\'s own p-value; FDR PValue: the false-discovery-rate p-value, a stricter cut when there are many tests.'],
           ['Fit Model', 'Opens a Fit Model report for each Y with an X below the cut.']] }],
-        more: { label: 'Response Screening', id: 'help-p-respscreen' },
+        more: { label: 'Test Many Responses', id: 'help-p-respscreen' },
       },
-      'rs:fdr': { kicker: 'Response Screening', title: 'FDR PValue Plot', lead: 'The tests sorted by significance (rank fraction 1/m … 1). Red: the p-values; blue: the FDR p-values. Blue points under the solid line are significant at the false discovery rate α; equivalently red points under the dotted line α × rank fraction.', more: { label: 'Response Screening', id: 'help-p-respscreen' } },
+      'rs:fdr': { kicker: 'Test Many Responses', title: 'FDR PValue Plot', lead: 'The tests sorted by significance (rank fraction 1/m … 1). Red: the p-values; blue: the FDR p-values. Blue points under the solid line are significant at the false discovery rate α; equivalently red points under the dotted line α × rank fraction.', more: { label: 'Test Many Responses', id: 'help-p-respscreen' } },
     },
     launch: {
-      lead: 'Choose many responses and factors: every pair is tested. A line of the report opens that pair in Fit Y by X.',
+      lead: 'Choose many responses and factors: every pair is tested. A line of the report opens that pair in Bivariate Analysis.',
       roles: [
         { key: 'y', label: 'Y, Response', min: 1, hint: 'required: one or more',
           help: 'The responses, of any modeling type: each is tested against each X, a continuous Y by an F test, an ordinal or nominal one by a likelihood-ratio χ².' },
@@ -2367,7 +2367,7 @@
         { key: 'by', label: 'By', hint: 'optional', help: BY_HELP },
       ],
     },
-    title: () => 'Response Screening',
+    title: () => 'Test Many Responses',
     triangle(ctx) {
       return [
         ctx.check('FDR PValue Plot', 'fdrPlot', null, true), ctx.check('FDR LogWorth by Effect Size', 'lwEffect', null, true), ctx.check('FDR LogWorth by RSquare', 'lwR2', null, false),

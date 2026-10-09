@@ -2,7 +2,7 @@
    SMUI.HTML: DRAG AND DROP BY TOUCH
 
    The page's drags (columns from a launch dialog's list onto a role or the
-   model effects, Graph Builder's and Tabulate's columns onto their zones,
+   model effects, Graph Maker's and Tabulate's columns onto their zones,
    the formula editor's columns into the formula, the Columns panel's
    order) are HTML drag and drop, which a phone does not start from a
    finger: the finger scrolls the page instead. Here a touch that is held

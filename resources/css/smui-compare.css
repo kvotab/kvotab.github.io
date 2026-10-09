@@ -1,7 +1,7 @@
 /* ==========================================================================
    SMUI.HTML: ANALYZE > PREDICTIVE MODELING > MODEL COMPARISON (smui-p-compare.js)
    The launch dialog's list of the models the columns make, the best value
-   of each measure (marked as Model Screening marks it), the AUC
+   of each measure (marked as Fit Many Models marks it), the AUC
    Comparison's tables. Colours are kvot.css's tokens, so both themes read.
    Class prefix sm-mc-.
    ========================================================================== */

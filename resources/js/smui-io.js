@@ -236,7 +236,7 @@
 
   /* ---- File > Import Multiple Files: a row per file ------------------------
      The files' names (their paths inside a folder that was picked) and
-     their text, for Text Explorer; with sizes and dates when asked. A file
+     their text, for Text Analysis; with sizes and dates when asked. A file
      whose text has NUL characters is not text and is left out, and one
      larger than MAX_TEXT_FILE is cut there (the notes say which). */
   const MAX_TEXT_FILE = 8 * 1024 * 1024;
@@ -271,7 +271,7 @@
     const anyFolder = paths.some((p, i) => p !== names[i]);
     const columns = [{ name: 'File Name', dataType: 'character', values: names }];
     if (anyFolder) columns.push({ name: 'Path', dataType: 'character', values: paths });
-    columns.push({ name: 'Text', dataType: 'character', values: texts, notes: 'the text of each file, for Analyze > Text Explorer' });
+    columns.push({ name: 'Text', dataType: 'character', values: texts, notes: 'the text of each file, for Analyze > Text Analysis' });
     if (sizes) columns.push({ name: 'Size (bytes)', dataType: 'numeric', values: size });
     if (dates) columns.push({ name: 'Date Modified', dataType: 'numeric', format: { kind: 'datetime' }, values: date });
     const t = new SM.Table({ name, columns, source: `File > Import Multiple Files: ${names.length} file${names.length === 1 ? '' : 's'}` });
@@ -323,7 +323,7 @@
   const EXAMPLES = {
     students: {
       label: 'Students (60 rows): age, sex, height, weight',
-      about: 'Simulated: height grows with age and differs by sex; weight follows height. For Distribution, Fit Y by X and Fit Model.',
+      about: 'Simulated: height grows with age and differs by sex; weight follows height. For Distribution, Bivariate Analysis and Fit Model.',
       make() {
         const r = rng('students');
         const n = 60, age = [], sex = [], height = [], weight = [], id = [];

@@ -20,7 +20,7 @@
    A graph whose platform keeps its own axis settings passes opts.axes =
    { get(name), set(name, settings), own(name) -> { log, reversed } (the
    axis without settings), menu(name, info) -> more items } (Graph
-   Builder, by the columns on its axes): the settings are then the
+   Maker, by the columns on its axes): the settings are then the
    platform's to store, to draw and to write into its code; this module
    gives it the window, the menu and the drawing helpers (patch,
    refShapes).
@@ -685,12 +685,12 @@
             ['Reference Lines', 'A line across the graph at a value, with an optional label, colour (Gray, Red, Blue, Green, Orange) and style (Solid, Dashed, Dotted). Fill in **To** as well for a shaded range between the two values. × removes a line.'],
             ['Defaults', 'Takes this axis\'s settings away: the axis is drawn as the report draws it.'],
           ] },
-          { heading: 'Kept', text: 'The settings belong to the graph in the report: a redraw, Redo and a saved project keep them, and with By they apply to the same graph of every group. Graph Builder keeps them with the column on the axis.' },
+          { heading: 'Kept', text: 'The settings belong to the graph in the report: a redraw, Redo and a saved project keep them, and with By they apply to the same graph of every group. Graph Maker keeps them with the column on the axis.' },
           { heading: 'The graph\'s size', text: 'Drag the grip in a graph\'s lower right corner to make it larger or smaller, or right-click the graph for Size…; see Graph Size.' },
           { heading: 'Differences from JMP', list: [
             'The log scale has no base of its own: the increment gives the ratio between ticks.',
             'The number format, minor ticks, grid lines, tick label orientation and the Power and probability scales are not here.',
-            'A categorical axis has no Axis Settings; in Graph Builder, right-click it for Order By.',
+            'A categorical axis has no Axis Settings; in Graph Maker, right-click it for Order By.',
             'With By, a graph\'s settings apply to the same graph of every group, where in JMP each group\'s report has its own.',
           ] },
         ],
@@ -702,7 +702,7 @@
         sections: [
           { heading: 'Fields', choices: [['Width', 'At least 240 pixels, and no wider than the report has room for: in a narrower window the graph gets narrower, and it comes back to your width when there is room again.'], ['Height', '140 to 2400 pixels.']] },
           { heading: 'Back to the report\'s size', text: 'A double-click on the grip, or Default Size in the graph\'s right-click menu.' },
-          { heading: 'Kept', text: 'The size belongs to the graph in the report: a redraw, Redo and a saved project keep it, and with By it applies to the same graph of every group. The graph\'s Python code draws its figure in the same proportions (its figsize), and Save Report as HTML or Word and Print use the size. Graph Builder keeps its own Graph Size, which its grip sets.' },
+          { heading: 'Kept', text: 'The size belongs to the graph in the report: a redraw, Redo and a saved project keep it, and with By it applies to the same graph of every group. The graph\'s Python code draws its figure in the same proportions (its figsize), and Save Report as HTML or Word and Print use the size. Graph Maker keeps its own Graph Size, which its grip sets.' },
         ],
         more: { label: 'Reports', id: 'help-reports' },
       },

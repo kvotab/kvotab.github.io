@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > MODEL SCREENING (smui-p-screening.js)
+   SMUI.HTML: ANALYZE > PREDICTIVE MODELING > FIT MANY MODELS (smui-p-screening.js)
    The launch dialog's part (the methods, K-fold crossvalidation), the best
    and the selected methods in the report tables, the buttons under the
    Summary and the threshold field. Colours are kvot.css's tokens, so both

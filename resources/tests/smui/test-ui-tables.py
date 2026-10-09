@@ -997,7 +997,7 @@ async def wp5(page):
     """, 'Preselect Role')
     if r:
         check('Preselect Role Y and X: the Columns panel marks them', r['flags'], ['Y', 'X'])
-        check('Fit Y by X opens with them in their roles', (r['roles'].get('Y, Response'), r['roles'].get('X, Factor')), (['score'], ['grp']))
+        check('Bivariate Analysis opens with them in their roles', (r['roles'].get('Y, Response'), r['roles'].get('X, Factor')), (['score'], ['grp']))
         check('the roles are kept with the table', (r['keep'], r['J']), (['Y', 'X'], [['score', 'Y'], ['grp', 'X']]))
 
     # ---- Cols > New Column: several columns at once, in one Undo step; a launch dialog's (i) on its right click and Keep dialog open ------

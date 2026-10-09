@@ -52,7 +52,7 @@
 
   /* ---- Places: a column dragged out of where it was dropped -----------------
      A place takes columns dropped on it: a launch dialog's role list, Fit
-     Model's and Multiple Imputation's model effects, Graph Builder's and
+     Model's and Multiple Imputation's model effects, Graph Maker's and
      Tabulate's zones. Its items can be dragged again, within the dialog or
      builder the place belongs to (its scope, marked by dropArea()):
 

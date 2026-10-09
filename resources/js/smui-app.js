@@ -122,7 +122,7 @@
        before the change, put back and run again), and so is closing a
        report (it opens again, run again). One history for the tables and
        the reports, the newest step first; an undo brings its tab to the
-       front. Graph Builder keeps its own (_localUndo). */
+       front. Graph Maker keeps its own (_localUndo). */
     _push(entry) {
       this.undoStack.push(entry);
       if (this.undoStack.length > 30) this.undoStack.shift();
@@ -194,7 +194,7 @@
       SM.ui.toast(`${from === this.undoStack ? 'Undid' : 'Redid'}: ${e.label}`);
     }
 
-    // the front report's own undo (Graph Builder's), which goes first there
+    // the front report's own undo (Graph Maker's), which goes first there
     _localUndo() { const r = this.activeTab && this.activeTab.report; const u = r && r.localUndo; return u && u.can() ? u : null; }
     undo() {
       const l = this._localUndo();

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze > Fit Y by X and Specialized Modeling > Matched Pairs, the
+"""Analyze > Bivariate Analysis and Specialized Modeling > Matched Pairs, the
 backend (resources/py/smui/fit_y_by_x.py), through the page's dispatch and
 JSON round trip, checked against statsmodels and scipy called directly and
 against published values:

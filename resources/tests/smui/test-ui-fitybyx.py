@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smui.html in a real browser: Analyze > Fit Y by X and
+"""smui.html in a real browser: Analyze > Bivariate Analysis and
 Specialized Modeling > Matched Pairs.
 
 The platforms load and are in the menus; the launch dialog casts columns
@@ -241,7 +241,7 @@ async def main():
     await page.ev(HELPERS)
     await page.ev("SM.app.openExample('plants'); SM.app.openExample('clinical'); SM.app.showTab(SM.app.tabOf(SM.app.tables[0]))")
     menu = await page.ev('SM.app.menuItems("Analyze").map(i => i.label || (i.separator ? "—" : ""))')
-    check('Analyze lists Fit Y by X after Distribution', menu[:2], ['Distribution…', 'Fit Y by X…'])
+    check('Analyze lists Bivariate Analysis after Distribution', menu[:2], ['Distribution…', 'Bivariate Analysis…'])
     sub = await page.ev('(() => { const it = SM.app.menuItems("Analyze").find(i => i.label === "Specialized Modeling"); if (!it) return null; const s = typeof it.submenu === "function" ? it.submenu() : it.submenu; return s.map(i => i.label); })()')
     check('Specialized Modeling lists Matched Pairs', 'Matched Pairs…' in (sub or []), True)
 
@@ -671,7 +671,7 @@ async def main():
     # ---- several pairs, exclusion and Redo
     r = await page.ev('''(async () => { const rep = await __fyx.open('Students', 'fitybyx', { y: ['height (cm)', 'sex'], x: ['age', 'weight (kg)'] }, {});
       return { title: rep.title, pairs: __fyx.heads(rep).filter(h => / By /.test(h)), errors: __fyx.errors(rep) }; })()''')
-    check('several pairs: Fit Y by X', r['title'], 'Fit Y by X')
+    check('several pairs: Bivariate Analysis', r['title'], 'Bivariate Analysis')
     check('every Y with every X, the analysis by type', r['pairs'], ['Oneway Analysis of height (cm) By age', 'Bivariate Fit of height (cm) By weight (kg)', 'Contingency Analysis of sex By age', 'Logistic Fit of sex By weight (kg)'])
     check('several pairs: no errors', r['errors'], [])
     r = await page.ev('''(async () => { const rep = await __fyx.open('Students', 'fitybyx', { y: ['weight (kg)'], x: ['height (cm)'] }, {});
@@ -863,9 +863,9 @@ async def main():
     await page.ev(HELP_JS)
     r = await page.ev('''['fitybyx', 'matchedpairs'].flatMap((id) => { const L = SM.platforms.get(id).launch;
       return [...L.roles, ...(L.options || [])].filter((f) => !f.help).map((f) => `${id}: ${f.label}`); })''')
-    check('every role and option of Fit Y by X and Matched Pairs has its help', r, [])
+    check('every role and option of Bivariate Analysis and Matched Pairs has its help', r, [])
     await page.ev("SM.app.showTab(SM.app.tabOf(__fyx.table('Students')))")
-    check_launch(await page.ev("__hlp.launch('fitybyx')"), 'Fit Y by X')
+    check_launch(await page.ev("__hlp.launch('fitybyx')"), 'Bivariate Analysis')
     check_launch(await page.ev("__hlp.launch('matchedpairs')"), 'Matched Pairs')
     await page.ev('''(async () => { const t = __fyx.table('Students'); const sc = t.col('weight (kg)').id + '~' + t.col('height (cm)').id;
       const o = {}; o[sc + '|fits'] = [{ id: 'f1', kind: 'spline', lam: 1 }, { id: 'f2', kind: 'quantile', tau: 0.5 }];
@@ -882,7 +882,7 @@ async def main():
              ('__biv', biv, ['Fit Quantile', 'Other…'], 'Fit Quantile Other', None), ('__biv', biv, ['Group By…'], 'Group By', None),
              ('__biv', biv, ['Bayes Factor for the Correlation…'], 'the correlation\'s Bayes factor', 'Bayes Factor'),
              ('__biv', 'Smoothing Spline Fit, lambda=1', ['Change Lambda…'], 'Change Lambda', None), ('__biv', 'Quantile Fit, τ=0.5', ['Change Quantile…'], 'Change Quantile', None),
-             ('__many', 'Fit Y by X', ['Arrange in Rows…'], 'Arrange in Rows', None), ('__mp', 'Matched Pairs', ['Bayes Factor…'], 'the paired Bayes factor', 'Bayes Factor'),
+             ('__many', 'Bivariate Analysis', ['Arrange in Rows…'], 'Arrange in Rows', None), ('__mp', 'Matched Pairs', ['Bayes Factor…'], 'the paired Bayes factor', 'Bayes Factor'),
              ('__ow', ow, ['Compare Rates…'], 'Compare Rates', 'Compare Rates'), ('__ow', ow, ['Power…'], 'Power Details', None),
              ('__ow', ow, ['Equivalence Test', 'Means…'], 'Equivalence Test of means', None), ('__ow', ow, ['Equivalence Test', 'Probability of Superiority…'], 'Equivalence Test of the probability of superiority', 'Brunner-Munzel and the probability of superiority'),
              ('__ow', ow, ['Compare Means', 'With Control, Dunnett\'s…'], 'Dunnett\'s control level', None), ('__ow', ow, ['Set α Level', 'Other…'], 'Set α Level', None),

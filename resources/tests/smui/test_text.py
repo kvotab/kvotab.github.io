@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze > Text Explorer's backend (resources/py/smui/text.py), checked
+"""Analyze > Text Analysis's backend (resources/py/smui/text.py), checked
 against Porter's (1980) paper (every example of every step, the measure m,
 the consonants, the two worked examples), the Snowball English (Porter2)
 definition's own cases and the snowballstemmer package on some 235,000
@@ -297,7 +297,7 @@ check('but a term\'s rows are the rows whose own text holds it', ri['term_rows']
 tmiss = table({'t': ['red apple', 'green apple', 'red pear', 'blue'], 'id': [1, None, 1, 2]})
 rm = call('text.explore', table=tmiss, column='t', id_col='id')
 check('numeric IDs; rows with no ID are left out, and said so', (rm['summary']['cases'], rm['doc_labels'], rm['notes']), (2, ['1', '2'], ['1 rows with no id are left out.']))
-check('a numeric text column: an error', call('text.explore', table=tid, column='num')['error'], 'num is numeric: Text Explorer reads character columns')
+check('a numeric text column: an error', call('text.explore', table=tid, column='num')['error'], 'num is numeric: Text Analysis reads character columns')
 check('only English', 'English' in call('text.explore', table=tid, column='comment', language='german')['error'], True)
 check('bad settings: errors that name them', ['Maximum Words per Phrase' in call('text.explore', table=tid, column='comment', max_words=0)['error'],
       'Maximum Characters per Word' in call('text.explore', table=tid, column='comment', min_chars=5, max_chars=2)['error'],

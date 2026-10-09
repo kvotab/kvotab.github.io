@@ -43,7 +43,7 @@ const KVOT = (() => {
     {
       href: './smui.html',
       label: 'User Interface for statsmodels',
-      desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Fit Y by X, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Builder, with linked graphs and the Python behind every result.',
+      desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Bivariate Analysis, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Maker, with linked graphs and the Python behind every result.',
     },
     {
       href: './rtm.html',

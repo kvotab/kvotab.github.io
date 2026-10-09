@@ -1,11 +1,11 @@
-"""Analyze > Predictive Modeling > Model Screening, and Make Validation Column.
+"""Analyze > Predictive Modeling > Fit Many Models, and Make Validation Column.
 
-Model Screening fits many kinds of predictive model to one response, with
+Fit Many Models fits many kinds of predictive model to one response, with
 the same rows, the same holdback and the same seed, and puts their Measures
 of Fit side by side, as JMP Pro's platform does:
 
   Decision Tree             best-first splits (DecisionTreeClassifier/Regressor)
-  Bootstrap Forest          RandomForestClassifier/Regressor
+  Decision Forest          RandomForestClassifier/Regressor
   Boosted Tree              GradientBoostingClassifier/Regressor
   K Nearest Neighbors       NearestNeighbors on standardized columns
   Naive Bayes               GaussianNB with CategoricalNB (categorical Y)
@@ -13,7 +13,7 @@ of Fit side by side, as JMP Pro's platform does:
   Support Vector Machines   SVC (with Platt's sigmoid) or SVR, RBF kernel
   Discriminant              linear discriminant analysis (categorical Y)
   Fit Least Squares, or Nominal / Ordinal Logistic
-  Generalized Regression    the lasso and elastic net paths
+  Penalized Regression    the lasso and elastic net paths
   Fit Stepwise              forward selection by BIC
 
 Each fitter is a plain function of the predictor matrix that
@@ -50,10 +50,10 @@ SETS = pv.SETS
 CV = 'Crossvalidation'
 
 # key, label, and for categorical responses only
-METHODS = [('tree', 'Decision Tree'), ('forest', 'Bootstrap Forest'), ('boosted', 'Boosted Tree'), ('xgboost', 'XGBoost'), ('lightgbm', 'LightGBM'),
+METHODS = [('tree', 'Decision Tree'), ('forest', 'Decision Forest'), ('boosted', 'Boosted Tree'), ('xgboost', 'XGBoost'), ('lightgbm', 'LightGBM'),
            ('knn', 'K Nearest Neighbors'), ('nb', 'Naive Bayes'), ('neural', 'Neural'), ('svm', 'Support Vector Machines'), ('lda', 'Discriminant'),
-           ('linear', 'Fit Least Squares'), ('lasso', 'Generalized Regression Lasso'), ('enet', 'Generalized Regression Elastic Net'),
-           ('ridge', 'Generalized Regression Ridge'), ('stepwise', 'Fit Stepwise')]
+           ('linear', 'Fit Least Squares'), ('lasso', 'Penalized Regression Lasso'), ('enet', 'Penalized Regression Elastic Net'),
+           ('ridge', 'Penalized Regression Ridge'), ('stepwise', 'Fit Stepwise')]
 LABEL = dict(METHODS)
 CATEGORICAL_ONLY = {'nb', 'lda'}
 # off at first: Fit Stepwise (as JMP), and the methods beyond JMP's default list (XGBoost and LightGBM load a package of their own)
@@ -325,7 +325,7 @@ def fit_tree(X, y, w, train, tune, n_levels, factors, seed, max_leaves=64, min_l
 
 
 def fit_forest(X, y, w, train, tune, n_levels, factors, seed, trees=100, min_leaf=5):
-    """Bootstrap Forest: trees on bootstrap samples of the training rows, each split from a random subset of the
+    """Decision Forest: trees on bootstrap samples of the training rows, each split from a random subset of the
     columns (a third of them, or the square root of their number for a categorical Y), no leaf under min_leaf
     rows; the forest averages the trees (a leaf's rates carry a prior of one row). With validation rows, the
     number of trees (10, 20, ..., trees) with the best validation measure."""
@@ -582,7 +582,7 @@ def fit_linear(X, y, w, train, tune, n_levels, factors, seed, ordinal=False, ter
 
 
 def fit_genreg(X, y, w, train, tune, n_levels, factors, seed, l1_ratio=1.0, n_lambda=100, terms=None):
-    """Generalized Regression: the lasso (l1_ratio 1) or elastic net penalty path on the centred and scaled
+    """Penalized Regression: the lasso (l1_ratio 1) or elastic net penalty path on the centred and scaled
     main effects; the penalty with the best validation measure, or with no validation rows the smallest AICc. A
     normal response by coordinate descent (enet_path), a categorical one by logistic regression (saga, 30 penalties
     from the one that zeroes every coefficient). terms: the Two Way Interactions and Quadratic options."""
@@ -698,7 +698,7 @@ def fit_stepwise(X, y, w, train, tune, n_levels, factors, seed, ordinal=False):
 
 
 def fit_ridge(X, y, w, train, tune, n_levels, factors, seed, n_lambda=60, folds=5, terms=None):
-    """Generalized Regression Ridge: a squared penalty on the centred and scaled main effects (and the terms of the Two
+    """Penalized Regression Ridge: a squared penalty on the centred and scaled main effects (and the terms of the Two
     Way Interactions and Quadratic options), which shrinks every estimate and zeroes none. A normal response along
     the ridge path worked out from the singular value decomposition, the penalty with the best validation measure
     or with no validation rows the smallest AICc (its degrees of freedom the trace of the hat matrix); a

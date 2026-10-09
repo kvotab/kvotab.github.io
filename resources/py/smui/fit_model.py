@@ -28,7 +28,7 @@ The personalities and the names the page calls:
                         between- and within-subject tests, Mauchly's sphericity
                         test, the Greenhouse-Geisser and Huynh-Feldt adjusted
                         univariate within tests
-  fitmodel.genreg       Generalized Regression: lasso, elastic net, ridge, their
+  fitmodel.genreg       Penalized Regression: lasso, elastic net, ridge, their
                         adaptive forms, forward selection; AICc, BIC, KFold,
                         holdback, leave-one-out or a Validation column
   fitmodel.gee          Generalized Estimating Equations (statsmodels' GEE):
@@ -594,7 +594,7 @@ def _valid_sets(tid, ys, effs, rows, spec):
     if not xcols:
         raise ValueError('a Validation column needs model effects: with none there is nothing to validate')
     P = predictive.prepare(tid, ys[0], xcols, rows, spec['weight'], spec['freq'], validation=vcol, missing='drop')
-    kfold = int(getattr(P, 'k', 0) or 0)   # more than three values: K folds (Generalized Regression's KFold), no hold-out here
+    kfold = int(getattr(P, 'k', 0) or 0)   # more than three values: K folds (Penalized Regression's KFold), no hold-out here
     return {'column': vcol, 'P': P, 'train': [int(r) for r in P.index[P.sets == 0]], 'kfold': kfold,
             'numeric': data.meta(tid, vcol).get('dataType') == 'numeric'}
 
@@ -668,7 +668,7 @@ def _kfold_note(d):
     kf = getattr(d, 'kfold', None)
     if not kf:
         return []
-    return [f'{kf[0]} has {kf[1]} values: K folds, which Generalized Regression\'s KFold validation uses (as JMP\'s). This fit takes every '
+    return [f'{kf[0]} has {kf[1]} values: K folds, which Penalized Regression\'s KFold validation uses (as JMP\'s). This fit takes every '
             'row; a Validation column of 0, 1 and 2 (or Training, Validation and Test) holds rows out.']
 
 
@@ -4981,7 +4981,7 @@ def manova(table, y, effects=(), rows=None, weight=None, freq=None, no_intercept
 
 
 # ---------------------------------------------------------------------------
-# Generalized Regression
+# Penalized Regression
 # ---------------------------------------------------------------------------
 # JMP Pro's Generalized Regression of a normal, binomial or Poisson response.
 # Estimation Method: Lasso, Elastic Net, Ridge, Adaptive Lasso and Adaptive
@@ -5019,7 +5019,7 @@ _GR_LOO = {'normal': 1000, 'other': 300}   # rows Leave-One-Out takes (penalized
 
 
 def _gr_opts(spec):
-    """What defines a Generalized Regression path (everything but the model
+    """What defines a Penalized Regression path (everything but the model
     chosen on it), as a plain dict: the key of the path's cache."""
     method = spec.get('method') if spec.get('method') in _GR_METHOD else 'lasso'
     crit = spec.get('criterion') if spec.get('criterion') in _GR_VALID else 'aicc'
@@ -5142,7 +5142,7 @@ def _gr_cd(G, c, B, l1, l2, tol=1e-10, maxsweep=20000):
         elif big < tol:
             full, js = True, range(p)
     import warnings
-    warnings.warn('Generalized Regression: coordinate descent stopped before it converged (highly correlated terms?)')
+    warnings.warn('Penalized Regression: coordinate descent stopped before it converged (highly correlated terms?)')
     return B
 
 
@@ -5221,7 +5221,7 @@ def _gr_glm_path(Z, y, w, M, dist, lams, a1, pf, tol=1e-9, maxit=100):
                 break
         else:
             import warnings
-            warnings.warn('Generalized Regression: the Newton steps of a penalized fit stopped before they converged')
+            warnings.warn('Penalized Regression: the Newton steps of a penalized fit stopped before they converged')
         out0[:, l], outB[:, l] = b0, B
         _gr_progress(l + 1, len(lams), K)
     return out0, outB
@@ -5356,7 +5356,7 @@ def _gr_setup(tid, rows, O):
     if isinstance(yv.dtype, pd.CategoricalDtype):
         lv = [c for c in yv.cat.categories if (yv == c).any()]
         if len(lv) != 2:
-            raise ValueError(f'{ys[0]} is categorical: Generalized Regression here takes a continuous Y or a two-level one (binomial)')
+            raise ValueError(f'{ys[0]} is categorical: Penalized Regression here takes a continuous Y or a two-level one (binomial)')
         dist = 'binomial'
         t = _level_index(lv, O['target']) if O['target'] is not None else 0
         info['levels'] = [lv[t], lv[1 - t]]
@@ -5849,7 +5849,7 @@ def _gr_code(m, table, table_name, rows):
 
 
 def _genreg_plots(m, table, rows, table_name, out):
-    """The Solution Path of a Generalized Regression as code: the estimates on
+    """The Solution Path of a Penalized Regression as code: the estimates on
     the scaled predictors along the path (or the steps) and the curve that
     picks the model, with the model shown (red) and the best (dotted). The
     path is refitted as the report's code refits it (statsmodels'

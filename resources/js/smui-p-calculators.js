@@ -336,13 +336,13 @@
           ['Alpha', 'The significance level of every test and 1 − the confidence of every interval (0.05). Set α Level in the red triangle does the same.'],
           ['A test\'s red triangle', 'Rename…, Duplicate, Move Up and Down, Reset the Inputs, Sample Size and Power…, Remove.'],
           ['Multiple Tests', 'With two tests or more: their p-values adjusted together, so that testing several metrics does not find differences by chance.']] },
-        { heading: 'Differences from JMP', text: 'JMP\'s calculators are separate scripts, one test each; here one report holds several tests and adjusts their p-values together. The proportions offer every method of statsmodels; the default is the score test without the n/(n − 1) factor, which at a difference of 0 is the pooled z test of JMP\'s calculator. The effect sizes are those of Fit Y by X\'s t test.' },
+        { heading: 'Differences from JMP', text: 'JMP\'s calculators are separate scripts, one test each; here one report holds several tests and adjusts their p-values together. The proportions offer every method of statsmodels; the default is the score test without the n/(n − 1) factor, which at a difference of 0 is the pooled z test of JMP\'s calculator. The effect sizes are those of Bivariate Analysis\'s t test.' },
       ],
       more: MORE,
     },
     'p:calc:means': {
       kicker: 'Test Calculators', title: 'Hypothesis Test for Two Means',
-      lead: 'The t test of the difference of two means from each group\'s mean, standard deviation and size (scipy.stats.ttest_ind_from_stats): t = (mean₁ − mean₂ − d₀) / SE, with the interval of the difference, as Fit Y by X\'s t test reports it from the rows.',
+      lead: 'The t test of the difference of two means from each group\'s mean, standard deviation and size (scipy.stats.ttest_ind_from_stats): t = (mean₁ − mean₂ − d₀) / SE, with the interval of the difference, as Bivariate Analysis\'s t test reports it from the rows.',
       sections: [
         { heading: 'The fields', choices: [
           ['Name', 'Each group\'s name, which the results use (B − A). Group 1 and Group 2 by default.'],
@@ -370,7 +370,7 @@
           ['Compare', 'Difference p₁ − p₂ (the default), Ratio p₁/p₂ or Odds Ratio.'],
           ['Hypothesized Value', 'The difference (0 when empty), or the ratio or odds ratio (1 when empty), under the null hypothesis.'],
           ['Alternative', 'Two-sided, Greater (the difference or ratio above the hypothesized value) or Less. The report gives all three p-values; the chosen one is shaded and goes to Multiple Tests.'],
-          ['Test Method', 'Score (the default): Farrington-Manning\'s score test, the pooled z test at a difference of 0, as JMP\'s calculator; Miettinen-Nurminen: the score test with the n/(n − 1) factor; Agresti-Caffo: the adjusted Wald test of Fit Y by X\'s Two Sample Test for Proportions; Wald; for a ratio Katz\'s log and the adjusted log, for an odds ratio Woolf\'s logit, Gart\'s adjusted logit and the independence-smoothed logit.']] },
+          ['Test Method', 'Score (the default): Farrington-Manning\'s score test, the pooled z test at a difference of 0, as JMP\'s calculator; Miettinen-Nurminen: the score test with the n/(n − 1) factor; Agresti-Caffo: the adjusted Wald test of Bivariate Analysis\'s Two Sample Test for Proportions; Wald; for a ratio Katz\'s log and the adjusted log, for an odds ratio Woolf\'s logit, Gart\'s adjusted logit and the independence-smoothed logit.']] },
         { heading: 'The results', choices: [
           ['Each group', 'Its proportion with Wilson\'s interval.'],
           ['The test', 'The estimate, the chosen method\'s interval and its z test: the two-sided and both one-sided p-values.'],

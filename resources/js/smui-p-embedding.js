@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SMUI.HTML: ANALYZE > MULTIVARIATE METHODS > MULTIVARIATE EMBEDDING
+   SMUI.HTML: ANALYZE > MULTIVARIATE METHODS > T-SNE EMBEDDING
 
    t-SNE of continuous columns (scikit-learn's TSNE, the Barnes-Hut method):
    every row a point in two or three dimensions, placed near the rows it is
@@ -23,7 +23,7 @@
   const SM = root.SM;
   const { el, fmt, PALETTE } = SM.util;
   const T = (v) => SM.report.plotlyText(v);
-  const MORE = { label: 'Multivariate Embedding', id: 'help-p-embedding' };
+  const MORE = { label: 't-SNE Embedding', id: 'help-p-embedding' };
   const ASK_ROWS = 3000;
   const MAX_ROWS = 10000;
   const SYM3D = ['circle', 'square', 'diamond', 'cross', 'x', 'circle-open', 'square-open', 'diamond-open'];
@@ -428,7 +428,7 @@
      ====================================================================== */
   const TOPICS = {
     'p:embedding': {
-      kicker: 'Analyze > Multivariate Methods', title: 'Multivariate Embedding',
+      kicker: 'Analyze > Multivariate Methods', title: 't-SNE Embedding',
       lead: 'A map of the rows in two or three dimensions that keeps their neighbours: t-SNE (scikit-learn\'s TSNE) gives each row a Gaussian neighbourhood over all the columns, with a width set so that every row has the same perplexity (about how many neighbours it has), and places the rows so that Student t neighbourhoods in the map match them, by gradient descent on the Kullback-Leibler divergence.',
       sections: [
         { heading: 'Roles', choices: [['Y, Columns', 'Two or more continuous columns; rows with a missing value are left out, a column with one value too.'], ['Color', 'Optional: a column whose levels (or values, blue to red) colour the points. Without it the points take the rows\' colours.'], ['By', 'A separate map for each level.']] },
@@ -442,7 +442,7 @@
       more: MORE,
     },
     'emb:map': {
-      kicker: 'Multivariate Embedding', title: 't-SNE map',
+      kicker: 't-SNE Embedding', title: 't-SNE map',
       lead: 'Each point is a row. Drag over points (or click one in 3-D) to select rows in the table and every other graph; rows selected elsewhere are highlighted here. Color By (red triangle) colours the points by a column; Save Embedding writes the coordinates as columns t-SNE 1, t-SNE 2 (and t-SNE 3).',
       sections: [{ heading: 'The red triangle', choices: [
         ['Color By', 'Row Colors (the rows\' own colours), or a column of the table: its levels in the palette\'s colours, or a continuous one from blue (low) to red (high).'],
@@ -451,9 +451,9 @@
       ] }],
       more: MORE,
     },
-    'emb:details': { kicker: 'Multivariate Embedding', title: 'Fit Details', lead: 'The final Kullback-Leibler divergence KL(P‖Q) of the map (scikit-learn\'s kl_divergence_), the iterations run, and the perplexity, learning rate and early exaggeration used. The perplexity is 2 to the entropy of each row\'s neighbourhood, about the number of its neighbours: small values show local structure, large ones more of the global.', more: MORE },
+    'emb:details': { kicker: 't-SNE Embedding', title: 'Fit Details', lead: 'The final Kullback-Leibler divergence KL(P‖Q) of the map (scikit-learn\'s kl_divergence_), the iterations run, and the perplexity, learning rate and early exaggeration used. The perplexity is 2 to the entropy of each row\'s neighbourhood, about the number of its neighbours: small values show local structure, large ones more of the global.', more: MORE },
     'emb:large': {
-      kicker: 'Multivariate Embedding', title: 'Many rows',
+      kicker: 't-SNE Embedding', title: 'Many rows',
       lead: 't-SNE\'s time grows faster than the number of rows: in the browser about 20 s for 2000 rows and 90 s for 5000. Above 3000 rows the report shows the estimate and runs when asked; the answer is kept with the report. More than 10 000 rows are refused: a Local Data Filter or a subset makes them fewer.',
       sections: [{ choices: [['Run t-SNE on … rows', 'Runs the map on all these rows now, with its progress shown here; the page stays usable meanwhile. The answer is kept with the report, so Redo and a project run it again without asking.']] }],
       more: MORE,
@@ -464,7 +464,7 @@
      THE PLATFORM
      ====================================================================== */
   SM.platforms.register({
-    id: 'embedding', label: 'Multivariate Embedding', menu: 'Analyze/Multivariate Methods', order: 55, info: 'p:embedding', topics: TOPICS,
+    id: 'embedding', label: 't-SNE Embedding', menu: 'Analyze/Multivariate Methods', order: 55, info: 'p:embedding', topics: TOPICS,
     about: 't-SNE maps of the rows in two or three dimensions over continuous columns (standardized by default): points linked to the rows, coloured by a column or by the rows\' colours, the final Kullback-Leibler divergence, and the coordinates saved as columns. Progress shows while it runs; above 3000 rows it asks first. UMAP is not available (it needs numba).',
     uses: ['sklearn.manifold.TSNE (Barnes-Hut)'],
     launch: {
@@ -481,7 +481,7 @@
         return null;
       },
     },
-    title: () => 'Multivariate Embedding',
+    title: () => 't-SNE Embedding',
     triangle: topMenu,
     render,
   });
@@ -489,7 +489,7 @@
   /* ---- the example: cell profiles, simulated ------------------------------------------------ */
   SM.io.addExample('cellprofiles', {
     label: 'Cell profiles (900 rows): 12 markers, 5 types',
-    about: 'Simulated: 900 cells from two donors, each measured on 12 markers (m01 to m12). They are of five types, in the shares 0.3, 0.25, 0.2, 0.15 and 0.1, each with its own mean profile (normal, standard deviation 2.5 per marker) and noise of standard deviation 1; type 4\'s profile is type 3\'s moved a little (so the two lie side by side), and type 2 spreads along a line (a continuum, drawn uniformly over ±2.5 along a random direction). Donor (A or B) is assigned at random and changes nothing. Type (true) holds each cell\'s type. For Multivariate Embedding (Analyze > Multivariate Methods): the map should show the five types, 3 and 4 next to each other, 2 drawn out.',
+    about: 'Simulated: 900 cells from two donors, each measured on 12 markers (m01 to m12). They are of five types, in the shares 0.3, 0.25, 0.2, 0.15 and 0.1, each with its own mean profile (normal, standard deviation 2.5 per marker) and noise of standard deviation 1; type 4\'s profile is type 3\'s moved a little (so the two lie side by side), and type 2 spreads along a line (a continuum, drawn uniformly over ±2.5 along a random direction). Donor (A or B) is assigned at random and changes nothing. Type (true) holds each cell\'s type. For t-SNE Embedding (Analyze > Multivariate Methods): the map should show the five types, 3 and 4 next to each other, 2 drawn out.',
     make() {
       const r = SM.util.rng('embedding-cell-profiles');
       const p = 12, n = 900;

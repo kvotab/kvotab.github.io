@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smui.html in a real browser: Analyze > Text Explorer.
+"""smui.html in a real browser: Analyze > Text Analysis.
 
 The simulated service-comments example opens from the URL and File >
 Examples, and the platform sits in Analyze right after Tabulate; the launch
@@ -544,7 +544,7 @@ async def main():
     check('the comment column is character', ex['types'][-1], 'character nominal')
     check('it is simulated, and its notes give the five themes', ex['about'].startswith('Simulated') and all(w in ex['about'] for w in ('delivery', 'quality', 'customer service', 'price', 'app')), True)
     check('it is in File > Examples', ex['inFile'], True)
-    check('Analyze lists Text Explorer right after Tabulate', ex['an'].index('Text Explorer…') == ex['an'].index('Tabulate') + 1 if 'Tabulate' in ex['an'] else ex['an'].index('Text Explorer…') == ex['an'].index('Tabulate…') + 1, True)
+    check('Analyze lists Text Analysis right after Tabulate', ex['an'].index('Text Analysis…') == ex['an'].index('Tabulate') + 1 if 'Tabulate' in ex['an'] else ex['an'].index('Text Analysis…') == ex['an'].index('Tabulate…') + 1, True)
 
     # ---- the launch dialog
     r = await page.ev('''(async () => {
@@ -584,7 +584,7 @@ async def main():
     check('a numeric column is refused', 'character columns; rating is numeric' in r['numeric'], True)
     check('Customize Regex shows its pattern box', (r['hiddenBefore'], r['hiddenAfter']), (True, False))
     check('an empty custom regex is refused', 'Customize Regex: give a regular expression' in r['emptyRegex'], True)
-    check('the report and its outlines', (r['title'], r['outlines']), ('Text Explorer for comment', ['Text Explorer for comment', 'Summary Counts', 'Term and Phrase Lists']))
+    check('the report and its outlines', (r['title'], r['outlines']), ('Text Analysis for comment', ['Text Analysis for comment', 'Summary Counts', 'Term and Phrase Lists']))
     check('the launch options reach the report', (r['options'].get('maxWords'), r['options'].get('stemming'), r['options'].get('customRegex')), (4, 'none', False))
     check('the first call loads scikit-learn', await page.ev("SM.engine.versions['scikit-learn'] || null"), '1.8.0')
     st = await page.ev(STATE)
@@ -874,7 +874,7 @@ async def main():
     # ---- By: one explorer per channel; an ID: one case per customer
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
     rep = await page.ev(open_report_js('text', {'text': ['comment'], 'by': ['channel']}, {}), timeout=600)
-    check('By channel: one analysis per channel', [o for o in rep['outlines'] if o.startswith('Text Explorer for')], ['Text Explorer for comment channel=app', 'Text Explorer for comment channel=phone', 'Text Explorer for comment channel=web'])
+    check('By channel: one analysis per channel', [o for o in rep['outlines'] if o.startswith('Text Analysis for')], ['Text Analysis for comment channel=app', 'Text Analysis for comment channel=phone', 'Text Analysis for comment channel=web'])
     r = await page.ev('''(() => {
       const rep = SM.app.reports[SM.app.reports.length - 1];
       const tbls = [...rep.body.querySelectorAll('table.sm-rt')].filter(t => t.dataset.rtKey === 'summary');
@@ -966,8 +966,8 @@ async def main():
     # ---- the (i) explains every input: the launch dialog and Customize Regex, the forms of the red triangles
     await page.ev('SM.app.showTable(SM.app.tables.find(t => t.name === "Service comments").id)')
     d = await page.ev(info_js('dialog', "SM.app.launch('text')", "dlg.querySelector('.sm-tx-launch')"))
-    check('Text Explorer: the launch dialog\'s (i) explains Customize Regex and its pattern', ([c[0] for c in d.get('sections', {}).get('Customize Regex', [])], len(d.get('inputs', [])), unexplained(d, 'Customize Regex')), (['Customize Regex', 'Regular expression'], 2, []))
-    await dialog_help(page, "SM.app.launch('text')", 'text', 'Text Explorer')
+    check('Text Analysis: the launch dialog\'s (i) explains Customize Regex and its pattern', ([c[0] for c in d.get('sections', {}).get('Customize Regex', [])], len(d.get('inputs', [])), unexplained(d, 'Customize Regex')), (['Customize Regex', 'Regular expression'], 2, []))
+    await dialog_help(page, "SM.app.launch('text')", 'text', 'Text Analysis')
     big = 'SM.app.reports.at(-1)'
     for path, fields in ((['Latent Semantic Analysis, SVD…'], ['Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting', 'Number of Singular Vectors', 'Centering and Scaling']),
                          (['Topic Analysis, Rotated SVD…'], ['Number of Topics', 'Method', 'Maximum Number of Terms', 'Minimum Term Frequency', 'Weighting (LDA takes the counts)', 'Centering and Scaling (rotated SVD)']),
@@ -1424,7 +1424,7 @@ async def new_analyses(page):
       await new Promise(res => rep.on('done', res));
       const heads = [...rep.body.querySelectorAll('.sm-ob-head h2, .sm-ob-head h3, .sm-ob-head h4')].map(h => h.textContent);
       const mix = [...rep.body.querySelectorAll('table.sm-rt')].filter((x) => x.dataset.rtKey === 'lcamix').map((x) => x._rt.rows.reduce((a, r) => a + r.n, 0));
-      const out = {{ groups: heads.filter(h => /^Text Explorer for comment channel=/.test(h)).length, lca: heads.filter(h => h === 'Latent Class Analysis for 3 Clusters').length,
+      const out = {{ groups: heads.filter(h => /^Text Analysis for comment channel=/.test(h)).length, lca: heads.filter(h => h === 'Latent Class Analysis for 3 Clusters').length,
                     ts: heads.filter(h => h === 'Term Selection').length, se: heads.filter(h => h === 'Sentiment Analysis').length, spm: heads.filter(h => h === 'SVD Scatterplots of Document and Term Spaces').length,
                     mix, want: ['app', 'phone', 'web'].map(v => t.col('channel').values.filter(x => x === v).length), errors: [...rep.body.querySelectorAll('.sm-ob-error, .sm-ob-warn')].map(e => e.textContent.slice(0, 200)) }};
       SM.app.closeReport(rep);

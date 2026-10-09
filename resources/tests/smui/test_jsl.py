@@ -664,7 +664,7 @@ check('the where is a boolean over the frame', int(eval(s['where'], {'dt': STUDE
 r, s = one_step('biv = Bivariate( Y( :weight ), X( :height ), Fit Line( {Confid Curves Fit( 1 ), Report( 0 )} ), Fit Polynomial( 3 ), Fit Spline( 0.5, Standardized ), Density Ellipse( 0.9 ),'
                 ' Fit Mean, Kernel Smoother( 1, 1, 0.5 ), Fit Orthogonal( Equal Variances ), Nonpar Density, Histogram Borders( 1 ), Group By( :sex ) ); biv << Fit Robust;')
 fits = s['options']['weight~height|fits']
-check('Bivariate: the page\'s Fit Y by X, options scoped by the pair', (s['platform'], s['kind'], s['roles']), ('fitybyx', 'bivariate', {'y': ['weight'], 'x': ['height']}))
+check('Bivariate: the page\'s Bivariate Analysis, options scoped by the pair', (s['platform'], s['kind'], s['roles']), ('fitybyx', 'bivariate', {'y': ['weight'], 'x': ['height']}))
 check('Bivariate: the fits in order', [f['kind'] for f in fits], ['line', 'poly', 'spline', 'ellipse', 'mean', 'lowess', 'orth', 'kde', 'robust'])
 check('a fit\'s own options', (fits[0].get('cfit'), fits[0].get('report'), fits[1]['degree'], fits[2]['lam'], fits[2]['standardize'], fits[3]['p'], fits[6]['mode']),
       (True, False, 3, 0.5, True, 0.9, 'equal'))

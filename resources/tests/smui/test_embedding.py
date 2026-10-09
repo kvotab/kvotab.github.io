@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze > Multivariate Methods > Multivariate Embedding's backend
+"""Analyze > Multivariate Methods > t-SNE Embedding's backend
 (resources/py/smui/embedding.py), checked against scikit-learn's TSNE called
 directly with the same settings (the map, the final KL divergence, the
 iterations and the learning rate; standardized and raw columns, two and

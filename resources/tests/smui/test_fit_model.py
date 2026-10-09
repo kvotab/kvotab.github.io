@@ -28,7 +28,7 @@ and estimates, as statsmodels' tests record them), recursive_olsresiduals,
 least squares on the first rows and on each window by brute force, RollingOLS
 and RollingWLS, Brown, Durbin and Evans's constants, and a simulated break.
 
-Generalized Regression is checked against scikit-learn called directly (the
+Penalized Regression is checked against scikit-learn called directly (the
 lasso and elastic net paths, LogisticRegression and PoissonRegressor at the
 same penalty, Lasso on the columns times |b| for the adaptive lasso, LassoCV's
 folds, log_loss), statsmodels' fit_regularized and score_test, the validation
@@ -665,7 +665,7 @@ mms_ = {r_['term']: r_ for r_ in call('fitmodel.mixed', table=t24, y='y', effect
 check.near('mixed x + g + x*g: its standard error (Satterthwaite: the model-based one)', mms_['Intercept']['se'], float(rmj.bse_fe[0]), rel=1e-3)
 gr_ = call('fitmodel.genreg', table=t20, y='y', effects=Ea, method='lasso', n_grid=25)
 bj = np.array([e_['estimate'] for e_ in gr_['estimates']])   # Intercept, x, g[a], g[b], (x-m)*g[a], (x-m)*g[b], as XJ
-check.near('Generalized Regression x + g + x*g: JMP\'s estimates give the report\'s predictions', maxdiff(gr_['diag']['predicted'], XJ @ bj), 0.0, abs_=1e-8)
+check.near('Penalized Regression x + g + x*g: JMP\'s estimates give the report\'s predictions', maxdiff(gr_['diag']['predicted'], XJ @ bj), 0.0, abs_=1e-8)
 swa = call('fitmodel.stepwise', table=t20, y='y', effects=Ea, action='enter_all')
 check.near('stepwise x + g + x*g: the Intercept at x = 0', swa['intercept'], float(refj.params[0]), rel=1e-9)
 
@@ -978,7 +978,7 @@ uni = {u_['y']: {r_['source']: r_ for r_ in u_['rows']} for u_ in mv['univariate
 r_y2 = smf.ols('y2 ~ C(f, Sum) * C(w, Sum)', dmv).fit()
 check.near('univariate test of fertilizer on y2', uni['y2']['fertilizer']['f'], float(sm.stats.anova_lm(r_y2, typ=3).loc['C(f, Sum)', 'F']), rel=1e-9)
 
-# ---- Generalized Regression -----------------------------------------------------------------------------------
+# ---- Penalized Regression -----------------------------------------------------------------------------------
 nr = 120
 Xr = rng.normal(size=(nr, 6))
 yg = 1 + Xr @ np.array([2.0, -1.5, 0, 0, 0.8, 0]) + rng.normal(size=nr)
@@ -1065,7 +1065,7 @@ ns, err = run_code(mv1['code'], pd.DataFrame({'y1': Y2[:, 0], 'y2': Y2[:, 1], 'y
 check('MANOVA code runs', err, None)
 gr1 = call('fitmodel.genreg', table=t19, y='y', effects=Eg, method='lasso', n_grid=30, table_name='gr')
 ns, err = run_code(gr1['code'], pd.DataFrame({**{f'x{i}': Xr[:, i] for i in range(6)}, 'y': yg}), 'gr')
-check('Generalized Regression code runs', err, None)
+check('Penalized Regression code runs', err, None)
 if not err:
     check.near('its fit has the report\'s scaled estimate of x0', float(ns['fit'].params[1]), {e_['term']: e_['estimate'] for e_ in gr1['scaled']}['x0'], abs_=1e-3)
 
@@ -2030,7 +2030,7 @@ check('recursive fits refuse Freq', 'Freq' in (err_of('fitmodel.recursive', tabl
 
 
 # ======================================================================================================================
-# Generalized Regression: JMP Pro's validation methods, the adaptive methods, forward selection
+# Penalized Regression: JMP Pro's validation methods, the adaptive methods, forward selection
 # ======================================================================================================================
 import warnings
 
@@ -2375,7 +2375,7 @@ for label, kw in [('KFold lasso (normal)', dict(y='y', criterion='kfold', folds=
                   ('Leave-One-Out ridge on 40 rows', dict(y='y', method='ridge', criterion='loo', rows=list(range(40))))]:
     rr_ = gr(table_name='grcsv', **kw)
     ns, err = run_code(rr_['code'], gdf, 'grcsv')
-    check(f'Generalized Regression code runs: {label}', err, None)
+    check(f'Penalized Regression code runs: {label}', err, None)
     if err:
         print(rr_['code'])
         continue
@@ -3087,7 +3087,7 @@ for label_, kw_, ref_ in (('binary', dict(y='yb', target='yes'), 'binary'), ('mu
         check(f'{label_} logistic: Most Likely is the saved most likely level', [ml_[r] for r in want_s], sv['columns']['most_likely'])
         check(f'{label_} logistic: JMP\'s columns', [f['name'] for f in F_], {'binary': ['Lin[yes]', 'Prob[no]', 'Prob[yes]', 'Most Likely yb'],
               'mn': ['Lin[p]', 'Lin[q]', 'Prob[p]', 'Prob[q]', 'Prob[r]', 'Most Likely yn'], 'ord': ['Linear', 'Cum[lo]', 'Cum[mid]', 'Prob[lo]', 'Prob[mid]', 'Prob[hi]', 'Most Likely yo']}[ref_])
-# GEE, Instrumental Variables, Quantile Regression, Generalized Regression: every row's prediction and the formula
+# GEE, Instrumental Variables, Quantile Regression, Penalized Regression: every row's prediction and the formula
 sv = sv_('gee', y='y', subject='s', corr='exchangeable')
 rg_ = sm.GEE.from_formula(f'y ~ C(g, Sum) + I(x - {mx_!r}) + C(g, Sum):I(x - {mx_!r})', groups='s', data=fr_s.loc[fit_s], cov_struct=sm.cov_struct.Exchangeable()).fit()
 check.near('GEE: every row\'s marginal mean = statsmodels\' predict', maxdiff(sv['columns']['predicted'], rg_.predict(fr_s.loc[want_s])), 0.0, abs_=1e-6)
@@ -3103,7 +3103,7 @@ check.near('Quantile Regression: every row\'s predicted quantile = statsmodels\'
 check('Quantile Regression: the formula\'s name has the quantile', sv['formulas'][0]['name'], 'Pred Formula y Quantile 0.3')
 sv = sv_('genreg', y='y', method='lasso', criterion='aicc')
 grr = call('fitmodel.genreg', table=tid_s, rows=rows_s, y='y', effects=E_s, method='lasso', criterion='aicc')
-check.near('Generalized Regression: the rows of the fit keep the report\'s prediction', maxdiff([sv['columns']['predicted'][sv['rows'].index(r)] for r in grr['diag']['rows']], grr['diag']['predicted']), 0.0, abs_=1e-9)
+check.near('Penalized Regression: the rows of the fit keep the report\'s prediction', maxdiff([sv['columns']['predicted'][sv['rows'].index(r)] for r in grr['diag']['rows']], grr['diag']['predicted']), 0.0, abs_=1e-9)
 if NODE:
     for kind_, kw_, nm_ in (('gee', dict(y='y', subject='s', corr='exchangeable'), 'Pred Formula y'), ('qr', dict(y='y', tau=0.3), 'Pred Formula y Quantile 0.3'),
                             ('genreg', dict(y='y', method='lasso', criterion='aicc'), 'Pred Formula y')):
@@ -3204,7 +3204,7 @@ rvn = call('fitmodel.logistic', table=tid_v, y='yn', effects=E_v, validation='v'
 check('multinomial Crossvalidation: Entropy RSquare of each set, no AUC', [m_['auc'] if 'auc' in m_ else None for m_ in rvn['crossvalidation']['measures']], [None, None, None])
 ns, err = run_code(rvn['crossvalidation']['code'], fr_v, 'data')
 check('multinomial Crossvalidation: its code runs', err, None)
-# a column of more than three values holds K folds (Generalized Regression's KFold): these fits take every row and say so
+# a column of more than three values holds K folds (Penalized Regression's KFold): these fits take every row and say so
 tid_k = table(dict(cols_v, v=[float(i % 5) for i in range(n_v)]))
 rk_ = call('fitmodel.ls', table=tid_k, y='y', effects=E_v, validation='v')
 check('K folds in the Validation column: no hold-out, every row fits, a note says so', ('crossvalidation' in rk_, rk_['n_rows'], any('K folds' in n_ for n_ in rk_['notes'])), (False, n_v, True))

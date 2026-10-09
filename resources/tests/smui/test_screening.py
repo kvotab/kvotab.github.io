@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze > Predictive Modeling > Model Screening and Make Validation Column
+"""Analyze > Predictive Modeling > Fit Many Models and Make Validation Column
 (resources/py/smui/screening.py).
 
 Each fitter against scikit-learn (or statsmodels) called directly with the
@@ -242,10 +242,10 @@ if info['splits'] > 0:
 pt = pred(Pt.X)
 check('... never exactly 0 or 1', bool(np.all((pt > 0) & (pt < 1))), True)
 
-# ---- Bootstrap Forest
+# ---- Decision Forest
 pred, info = S.fit_forest(Pn.X, Pn.target, None, trn, None, 0, Fn, SEED)
 rf = RandomForestRegressor(n_estimators=100, max_features=max(1, round(Pn.X.shape[1] / 3)), min_samples_leaf=5, random_state=SEED, n_jobs=1).fit(Pn.X, Pn.target)
-check.near('Bootstrap Forest: = RandomForestRegressor(100 trees, a third of the columns, 5 rows a leaf)', mx(pred(Pn.X), rf.predict(Pn.X)), 0.0, abs_=1e-12)
+check.near('Decision Forest: = RandomForestRegressor(100 trees, a third of the columns, 5 rows a leaf)', mx(pred(Pn.X), rf.predict(Pn.X)), 0.0, abs_=1e-12)
 pred, info = S.fit_forest(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED)
 rf = RandomForestRegressor(n_estimators=100, max_features=max(1, round(Pv.X.shape[1] / 3)), min_samples_leaf=5, random_state=SEED, n_jobs=1).fit(Pv.X[trv], Pv.target[trv])
 per = np.array([t.predict(Pv.X.astype(np.float32)) for t in rf.estimators_])
@@ -385,7 +385,7 @@ with warnings.catch_warnings():
     om = OrderedModel(Pt.target[Pt.train()], Pt.X[Pt.train()][:, cl], distr='logit').fit(method='bfgs', disp=False, maxiter=5000, gtol=1e-10)
 check.near('Ordinal Logistic: = statsmodels OrderedModel (cumulative logit)', mx(pred(Pt.X), om.predict(Pt.X[:, cl])), 0.0, abs_=1e-4)
 
-# ---- Generalized Regression
+# ---- Penalized Regression
 pred, info = S.fit_genreg(Pv.X, Pv.target, None, trv, tv, 0, Fv, SEED)
 cl = S.linear_columns(Fv)
 Av = Pv.X[:, cl]
@@ -395,7 +395,7 @@ ym = Pv.target[trv].mean()
 lams, coefs, _ = enet_path(Zt, Pv.target[trv] - ym, l1_ratio=1.0, n_alphas=100, eps=1e-3, tol=1e-8, max_iter=10000)
 fits = ym + ((Av - cz) / sz) @ coefs
 jv = int(np.argmin(((Pv.target[tv][:, None] - fits[tv]) ** 2).sum(0)))
-check.near('Generalized Regression Lasso: the lasso path\'s penalty with the smallest validation SSE', mx(pred(Pv.X), fits[:, jv]), 0.0, abs_=1e-10)
+check.near('Penalized Regression Lasso: the lasso path\'s penalty with the smallest validation SSE', mx(pred(Pv.X), fits[:, jv]), 0.0, abs_=1e-10)
 la = Lasso(alpha=lams[jv], fit_intercept=False, tol=1e-10, max_iter=100000).fit(Zt, Pv.target[trv] - ym)
 check.near('... = sklearn Lasso fitted alone at that penalty', mx(pred(Pv.X), ym + ((Av - cz) / sz) @ la.coef_), 0.0, abs_=1e-6)
 pred, info = S.fit_genreg(Pn.X, Pn.target, None, trn, None, 0, Fn, SEED)
@@ -449,7 +449,7 @@ check.near('... its predictions are that OLS fit\'s', mx(pred(Pn.X), steps[jb][2
 Pf, _, Ff = prep('y', freq='f')
 Pr = pv.prepare(table({k: [v[i] for i in np.repeat(np.arange(n), fq.astype(int))] for k, v in cols.items()}, types=TYPES, levels=LEVELS), 'y', X4)
 allf, allr = Pf.train(), Pr.train()
-for key, fn, kw in (('Fit Least Squares', S.fit_linear, {}), ('Generalized Regression Lasso', S.fit_genreg, {}), ('Fit Stepwise', S.fit_stepwise, {})):
+for key, fn, kw in (('Fit Least Squares', S.fit_linear, {}), ('Penalized Regression Lasso', S.fit_genreg, {}), ('Fit Stepwise', S.fit_stepwise, {})):
     a, _ = fn(Pf.X, Pf.target, Pf.w, allf, None, 0, Ff, SEED, **kw)
     b, _ = fn(Pr.X, Pr.target, None, allr, None, 0, Ff, SEED, **kw)
     check.near(f'{key}: a Freq column = its rows repeated', mx(a(Pf.X), b(Pf.X)), 0.0, abs_=1e-7)
@@ -829,7 +829,7 @@ check('... a character column of more than three values is read as folds too', p
 rk, _ = quiet(call, 'screening.fit', table=Tk, y='y', x=X4, validation='Fold', seed=SEED, methods=['linear', 'knn'])
 lin_cv = next(m for m in rk['methods'] if m['key'] == 'linear')
 want_r2 = np.mean([metrics.r2_score(Pk5.target[Pk5.folds == j], _LR().fit(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds != j], Pk5.target[Pk5.folds != j]).predict(pv.prepare(Tk, 'y', X4, validation='Fold').X[Pk5.folds == j])) for j in range(5)])
-check('Model Screening crossvalidates by the column\'s folds: 5 folds, the fold column named, Crossvalidation the set compared', (rk['kfold'], rk['fold_column'], rk['compare'], len(lin_cv['cv']['folds'])), (5, 'Fold', 'Crossvalidation', 5))
+check('Fit Many Models crossvalidates by the column\'s folds: 5 folds, the fold column named, Crossvalidation the set compared', (rk['kfold'], rk['fold_column'], rk['compare'], len(lin_cv['cv']['folds'])), (5, 'Fold', 'Crossvalidation', 5))
 check.near('... Fit Least Squares\' crossvalidated RSquare is the mean of its folds\' by sklearn', lin_cv['measures']['Crossvalidation']['rsquare'], float(want_r2), rel=1e-9)
 for kw, what in (({'strata': ['g'], 'time': 'x1'}, 'a cutpoint column with stratification'), ({'training': 0}, 'no training share'), ({'time': 'g'}, 'a character cutpoint column'),
                  ({'kfold': 3}, 'K Fold of three folds (read as sets)'), ({'kfold': 5, 'time': 'x1'}, 'K Fold by a cutpoint'), ({'balance': True}, 'Balance without stratification columns'),

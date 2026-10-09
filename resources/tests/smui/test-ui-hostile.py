@@ -10,7 +10,7 @@ carry a line of Python behind a line break (\\n, \\r), a closing quote (" or
 '), braces or a trailing backslash. It runs every platform on it: the
 roles filled from the table's columns, once with By where the platform has
 it and once with a nominal response and the optional roles filled, and a
-few Graph Builder and Tabulate layouts. Then Python's own parser reads
+few Graph Maker and Tabulate layouts. Then Python's own parser reads
 every code block of every report and every report's whole script:
 
   - every block parses (a quote or backslash left unescaped breaks it);

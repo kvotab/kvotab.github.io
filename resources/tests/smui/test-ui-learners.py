@@ -438,7 +438,7 @@ def decision_compare(check, lab, g, F):
         UP.check_titles(check, lab, g, F)
         return True
     if t.startswith('False positive rates by') or t.startswith('False negative rates by'):
-        # Model Screening's Group Metrics: a bar per method in each group (the methods' bars one after another)
+        # Fit Many Models' Group Metrics: a bar per method in each group (the methods' bars one after another)
         bars = [tr for tr in g['traces'] if tr.get('type') == 'bar']
         want = [v for tr in bars for v in tr['y']]
         got = [q['h'] for q in ax['bars']]
@@ -1096,7 +1096,7 @@ async def decisions(page):
     await page.ev('SM.app.closeReport(SM.app.reports.at(-1))')
 
     # (12c) what a Validation column holds (SM.predict.validationKind, as predictive.validation_codes reads it), and the
-    # launch hints that follow it: Bootstrap Forest's and Boosted Tree's say that K folds turn Early Stopping off
+    # launch hints that follow it: Decision Forest's and Boosted Tree's say that K folds turn Early Stopping off
     HINT = '''(async (kind) => {
       const n = 60; const c = { y: [], x1: [], F: [], S: [], B: [] };
       for (let i = 0; i < n; i++) { c.y.push(i % 3 ? 'a' : 'b'); c.x1.push(i * 0.1); c.F.push(1 + (i % 5)); c.S.push(['Training', 'Validation', 'Test'][i % 3]); c.B.push(i % 7 === 0 ? 2.5 : i % 2); }
@@ -1126,7 +1126,7 @@ async def decisions(page):
     hb = await page.ev(f'({HINT})("boosted")')
     check('decisions: SM.predict.validationKind: 1 to 5 folds, Training/Validation/Test sets, a numeric column neither (2.5 among 0 and 1), a character one of two values neither',
           hf['kinds'], ['folds', 'sets', 'bad', 'bad'])
-    check('... Bootstrap Forest\'s and Boosted Tree\'s launch hints: nothing with a column of sets; with a K-fold column, Early Stopping off (every row trains)',
+    check('... Decision Forest\'s and Boosted Tree\'s launch hints: nothing with a column of sets; with a K-fold column, Early Stopping off (every row trains)',
           (hf['sets'], 'K folds' in hf['folds'] and 'Early Stopping is off' in hf['folds'] and 'out-of-bag' in hf['folds'], hb['sets'], 'K folds' in hb['folds'] and 'Early Stopping is off' in hb['folds'] and 'one fit' in hb['folds']),
           ('', True, '', True))
     await page.ev(f'SM.app.showTab(SM.app.tabOf({tbl}))')

@@ -1,6 +1,6 @@
-"""Fit Y by X and Matched Pairs.
+"""Bivariate Analysis and Matched Pairs.
 
-Fit Y by X studies one response against one factor; their modeling types
+Bivariate Analysis studies one response against one factor; their modeling types
 choose the analysis, as JMP does:
 
     Y continuous,  X continuous   Bivariate     line, polynomial, special,

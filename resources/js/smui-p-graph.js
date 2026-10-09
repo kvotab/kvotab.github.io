@@ -1,7 +1,7 @@
 /* ==========================================================================
    SMUI.HTML: GRAPH
 
-   Graph Builder (a report that is its own launch: columns dropped on zones,
+   Graph Maker (a report that is its own launch: columns dropped on zones,
    elements picked from a palette, among them statsmodels' Bean), Scatterplot
    Matrix, Scatterplot 3D, Contour Plot, Surface Plot, Bubble Plot, Parallel
    Plot, Cell Plot, Ternary Plot, Treemap, the Functional Data Plot
@@ -284,7 +284,7 @@
     return [head, ...parts.filter(Boolean).map((c) => `${esc(c.name)}: ${isMissing(c.values[r]) ? '.' : esc(cellText(c, c.values[r]))}`)].join('<br>');
   }
 
-  /* ---- Marker Size and Transparency (Graph Builder and the Graph menu's point plots) ---- */
+  /* ---- Marker Size and Transparency (Graph Maker and the Graph menu's point plots) ---- */
   /* JMP's Marker Size, 0 (Dot) to 6 (XXXL), as the markers' diameters in
      pixels, and its Transparency: the markers' opacity, 1 opaque to 0
      invisible. null: the graph's own (automatic). */
@@ -323,7 +323,7 @@
   const markerOpt = (ctx) => ctx.opt('marker', null) || {};
   const markerMenu = (ctx, only = null) => markerItems(markerOpt(ctx), (patch) => ctx.set('marker', { ...markerOpt(ctx), ...patch })).filter((it) => !only || it.label === only);
 
-  /* ---- Graph Builder: zones and elements ------------------------------------------------- */
+  /* ---- Graph Maker: zones and elements ------------------------------------------------- */
   const ZONES = [
     { key: 'x', label: 'X', max: 4, place: 'x' },
     { key: 'y', label: 'Y', max: 6, place: 'y' },
@@ -363,7 +363,7 @@
 
   /* needs: which X/Y combinations an element draws. z: its drawing order,
      low first (areas and bars under points and lines). about and each
-     property's help are what Graph Builder's (i) says; shows says when a
+     property's help are what Graph Maker's (i) says; shows says when a
      property that comes and goes is there. */
   const ELEMENTS = [
     { type: 'points', label: 'Points', z: 60, needs: 'any', about: 'A marker for each row, jittered across a categorical axis; with a Summary Statistic, one marker for each level (or value) of the other axis. Takes any columns on X or Y.', props: [
@@ -540,7 +540,7 @@
     }
   }
 
-  /* ---- Graph Builder: the state ----------------------------------------------------------
+  /* ---- Graph Maker: the state ----------------------------------------------------------
      spec.options.gb holds everything a redo or a saved project needs. A
      zone entry is { id, name }: the id within the session, the name when a
      project is opened again (the ids are new then). */
@@ -681,7 +681,7 @@
     return { col: G.col.name, values: G.values.slice(0, k), labels: G.labels.slice(0, k), bins: G.binned ? { cuts: G.cuts, method: G.method, n: G.n } : null };
   }
 
-  /* ---- Graph Builder: the figure ------------------------------------------------------------ */
+  /* ---- Graph Maker: the figure ------------------------------------------------------------ */
   const ORDER_OF = (type) => ELEMENT[type].z;
 
   async function buildFigure(B) {
@@ -1256,7 +1256,7 @@
       fig.layout = L;
       fig.width = w;
       fig.height = h;
-      fig.title = title || 'Graph Builder';
+      fig.title = title || 'Graph Maker';
     }
 
     /* What the page drew, as graph.code takes it to write the Python that
@@ -2333,7 +2333,7 @@
     E.note(`Bean: statsmodels' beanplot. Each violin is a Gaussian kernel density (scipy's gaussian_kde, Scott's rule${(e.bw || 1) !== 1 ? ` times ${fmt(e.bw)}` : ''}) drawn to one width, from the smallest value to the largest${e.cutoff ? '' : ' and 1.5 standard deviations past them'}; a line for each row, the mean as the long line and the median as the cross${e.overall !== false ? '. The dotted line is the overall mean, as Kampstra\'s bean plot draws it (statsmodels\' beanplot does not)' : ''}.`);
   };
 
-  /* ---- Graph Builder: the builder -----------------------------------------------------------
+  /* ---- Graph Maker: the builder -----------------------------------------------------------
      The report's top outline holds the builder: the columns on the left
      with the element properties under them, the element palette above the
      graph, and the drop zones around it. A change updates spec.options.gb
@@ -2355,7 +2355,7 @@
       if (!ui) { ui = { filter: '', sel: null, undo: [] }; UI.set(ctx.report, ui); }
       this.ui = ui;
       // Edit > Undo and ctrl/⌘+Z in this report take back the builder's own last change first (smui-app.js)
-      if (!ctx.headless) ctx.report.localUndo = { label: 'Graph Builder Change', can: () => ui.undo.length > 0, undo: () => this.undo() };
+      if (!ctx.headless) ctx.report.localUndo = { label: 'Graph Maker Change', can: () => ui.undo.length > 0, undo: () => this.undo() };
       this.S = normalize(clone(ctx.opt('gb', null)), this.t);
       this.seq = 0;
       this.busy = 0;
@@ -3279,7 +3279,7 @@
     }
   }
 
-  /* ---- Graph Builder: what its (i) says -------------------------------------------------------
+  /* ---- Graph Maker: what its (i) says -------------------------------------------------------
      Both topics are functions: they explain the properties of the elements in
      the graph on show (the report of the active tab) as its Properties panel
      shows them, those shown now first and then those that come with another
@@ -3346,7 +3346,7 @@
     const inGraph = new Set(b ? b.S.elements.map((e) => e.type) : []);
     const props = propSections(b, 'Properties: ');
     return {
-      kicker: 'Graph', title: 'Graph Builder', lead: GB_LEAD,
+      kicker: 'Graph', title: 'Graph Maker', lead: GB_LEAD,
       sections: [
         { heading: 'Zones', choices: GB_ZONES },
         { heading: 'The builder', choices: GB_BUILDER },
@@ -3367,7 +3367,7 @@
           'Marker Size is the points\' diameter in pixels (JMP\'s 0 to 6 give 2 to 16 pixels); Transparency applies to the points of every panel, not to one legend item.',
         ] },
       ],
-      more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
+      more: { label: 'Graph Maker', id: 'help-p-graphbuilder' },
     };
   }
 
@@ -3375,25 +3375,25 @@
     const b = shownBuilder();
     const props = b ? propSections(b, '') : [];
     return {
-      kicker: 'Graph Builder', title: 'Properties',
+      kicker: 'Graph Maker', title: 'Properties',
       lead: 'The settings of each element in the graph, under its name; a change redraws the graph at once, and × beside the name takes the element away. Some settings come with another choice (an Error Interval with a Summary Statistic, Lambda with the Spline method); they are listed after the others.',
       sections: props.length ? props : [{ text: 'No element in the graph yet: click one in the palette above the graph (shift-click adds another), and its settings show in the Properties panel and here.' }],
-      more: { label: 'Graph Builder', id: 'help-p-graphbuilder' },
+      more: { label: 'Graph Maker', id: 'help-p-graphbuilder' },
     };
   }
 
   SM.platforms.register({
-    id: 'graphbuilder', label: 'Graph Builder', menu: 'Graph', order: 10, launch: null, info: 'p:graphbuilder',
+    id: 'graphbuilder', label: 'Graph Maker', menu: 'Graph', order: 10, launch: null, info: 'p:graphbuilder',
     topics: { 'p:graphbuilder': gbTopic, 'p:graphbuilder:props': gbPropsTopic },
     about: 'Drag-and-drop graphs: columns onto the X, Y, Group X, Group Y, Wrap, Overlay, Color, Size, Freq and Map Shape zones, elements from a palette (Points, Smoother, Line of Fit, Ellipse, Contour, Line, Bar, Area, Box Plot, Bean, Histogram, Heatmap, Mosaic, Caption Box, Pie, Map Shapes), each with its properties. Continuous grouping columns in bins of your choosing (Levels, Save Transform Column), categorical axes ordered by a statistic (Order By), Axis Settings on every axis, Marker Size and Transparency, maps of countries and US states and points on a Background Map, and transform columns made from the column list. Every mark is linked to its rows; Done leaves the graph alone.',
     uses: ['plotly choropleth and scattergeo (Natural Earth boundaries from cdn.plot.ly)', 'scipy.interpolate.make_smoothing_spline', 'statsmodels.nonparametric.smoothers_lowess.lowess', 'statsmodels.regression.linear_model.OLS', 'statsmodels.robust.robust_linear_model.RLM', 'scipy.stats.gaussian_kde', 'statsmodels.graphics.boxplots (beanplot\'s violins)', 'scipy.stats.chi2, chi2_contingency', 'numpy.quantile (weibull)'],
-    title: () => 'Graph Builder',
+    title: () => 'Graph Maker',
     triangle(ctx) { const b = BUILDERS.get(ctx.report); return b && !b.dead ? b.menu() : []; },
     /* The builder of a report (its handle, as the tests use it). */
     builder: (report) => { const b = BUILDERS.get(report); return b ? b.root._gb : null; },
     async render(ctx) {
-      if (!ctx.table) throw new Error('Graph Builder needs a table');
-      // Graph Builder follows the table as it changes, as JMP's does.
+      if (!ctx.table) throw new Error('Graph Maker needs a table');
+      // Graph Maker follows the table as it changes, as JMP's does.
       if (ctx.spec.autoRecalc === undefined) ctx.spec.autoRecalc = true;
       const b = new Builder(ctx);
       BUILDERS.set(ctx.report, b);
@@ -4873,7 +4873,7 @@
   });
 
   /* ---- Legacy: Chart and Overlay Plot -------------------------------------------------------------------------- */
-  /* A figure from Graph Builder's engine with a fixed state: Chart draws its
+  /* A figure from Graph Maker's engine with a fixed state: Chart draws its
      bars, lines, points and pies with the builder's elements. */
   async function staticFigure(ctx, S, { width = 560, height = 380 } = {}) {
     const B = { ctx, S: normalize(S, ctx.table), width: () => width, height: () => height };
@@ -4890,7 +4890,7 @@
         lead: 'A statistic of the Y columns (or the count of rows) for each level of the categories, as bars, lines, points, needles or a pie. A second category column splits each level into side-by-side bars.',
         sections: [{ heading: 'The red triangle', choices: [
           ['Chart Type', 'Bar, Line, Point, Needle or Pie chart.'],
-          ['Statistic', 'N, % of Total, Mean, Sum, Min, Max, Std Dev, Std Err, Median or Range, computed as Graph Builder computes them.'],
+          ['Statistic', 'N, % of Total, Mean, Sum, Min, Max, Std Dev, Std Err, Median or Range, computed as Graph Maker computes them.'],
           ['Error Interval', 'Range, Standard Error, Standard Deviation, the 95% Confidence Interval of the mean or the Interquartile Range, on each bar or point; the first three go with the Mean.'],
           ['Horizontal', 'The categories down the side.'],
           ['Overlay', 'All the Y columns in one chart; otherwise a chart each.'],
@@ -4952,7 +4952,7 @@
         if (fig.empty) { host.append(ctx.note('Nothing to chart.')); continue; }
         const box = ctx.plot(fig.traces, fig.layout, { width: fig.width, height: fig.height, title: `${ELEMENT[element.type].label} chart` });
         link(box, fig.links);
-        // the Python that draws the chart, right under it (Graph Builder's code, from the chart's plan)
+        // the Python that draws the chart, right under it (Graph Maker's code, from the chart's plan)
         const code = fig.plan ? await graphCode(ctx, 'builder', fig.plan) : null;
         host.append(...[box, code, ...fig.notes.map((n) => ctx.note(n))].filter(Boolean));
       }
