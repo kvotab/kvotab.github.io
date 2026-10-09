@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.9
+
+* An Ecolego assessment (`.eas`) opens in the browser, as on the site: a
+  file for each run it keeps, written as an HDF5 result file in memory, so
+  the tree, the charts, comparing two runs and the exports work on it. Of
+  several runs, a list in the page asks which to open. It opens from the
+  Explorer, through Add Files, Open Together and a drop, and is always read
+  whole (up to 1 GB). Rewritten on disk, it opens the same runs again.
+* A run of an assessment can be saved, from the Python dialog, as the HDF5
+  file the script reads.
+
 ## 0.1.8
 
 * The extension's icon is the HDF5 Browser's own, the one rb.html shows in
