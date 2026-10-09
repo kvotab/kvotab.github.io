@@ -408,8 +408,9 @@ time and realisation, so one read from the wrong place is a different number.
 It drives the run chooser, reads the files back through the page's h5wasm,
 draws a group of nuclides and a probabilistic run, checks the Python export
 names the run as the HDF5 file it is saved as, opens one by address under a
-name that is not `.eas`, and refuses an assessment without results, a cut-off
-archive and one that unpacks to more than it says.
+name that is not `.eas`, reads one again as VS Code does when it is rewritten
+on disk (the runs that were open, without asking), and refuses an assessment
+without results, a cut-off archive and one that unpacks to more than it says.
 
     python3 test-eas.py
 
@@ -428,7 +429,8 @@ now builds a small file with h5wasm instead, which is what a page that produces
 HDF5 data would really do, and the test uses that same builder. Neither needs
 anything from `resources/data`. `test-axes.py` builds its overlay file the
 same way, and `test-constants.py` its three files. `test-eas.py` writes its
-Ecolego assessments in Python, into a temporary folder.
+Ecolego assessments in Python, into a temporary folder, with `eas_fixtures.py`,
+which the VS Code extension's `test-vscode.py` uses too.
 
 The one exception is `fixtures/lzf.h5` (26 KB, made-up values), which h5wasm
 cannot write: writing LZF needs the very plugin `test-lazy.py` checks is

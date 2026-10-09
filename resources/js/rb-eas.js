@@ -82,11 +82,13 @@ function isEcolegoAssessment(fileName, buffer) {
  * @param {string} fileName - Display name
  * @param {ArrayBuffer} buffer - The file's bytes
  * @param {string} [context] - Label for failure reporting
+ * @param {{reopen?: string[]}} [options] - For an assessment: see
+ *   ingestEcolegoAssessment
  * @returns {Promise<string[]>} The names registered; none when the reader
  *   chose no run
  */
-async function ingestFileBuffer(fileName, buffer, context = 'ingestFileBuffer') {
-  if (isEcolegoAssessment(fileName, buffer)) return ingestEcolegoAssessment(fileName, buffer, context);
+async function ingestFileBuffer(fileName, buffer, context = 'ingestFileBuffer', options = {}) {
+  if (isEcolegoAssessment(fileName, buffer)) return ingestEcolegoAssessment(fileName, buffer, context, options);
   return [await ingestHdf5Buffer(fileName, buffer, context)];
 }
 
@@ -794,12 +796,19 @@ async function easWriteHdf5(tree, onProgress) {
  *
  * A run that cannot be read is reported and the others still open.
  *
+ * An assessment read again -- in VS Code, one rewritten on disk -- opens the
+ * runs that were open (`reopen`, see openRunsOf) without asking, as a file
+ * rewritten on disk is read again without asking; only when none of them is
+ * in it any more is the reader asked.
+ *
  * @param {string} fileName - The assessment's display name
  * @param {ArrayBuffer} buffer - Its bytes
  * @param {string} [context] - Label for failure reporting
+ * @param {{reopen?: string[]}} [options] - The labels of the runs to open
+ *   again, if it was open before
  * @returns {Promise<string[]>} The names the runs were registered under
  */
-async function ingestEcolegoAssessment(fileName, buffer, context = 'ingestEcolegoAssessment') {
+async function ingestEcolegoAssessment(fileName, buffer, context = 'ingestEcolegoAssessment', { reopen = null } = {}) {
   if (!buffer || typeof buffer.byteLength !== 'number' || buffer.byteLength === 0) {
     throw new Error(`${fileName} is empty.`);
   }
@@ -813,7 +822,10 @@ async function ingestEcolegoAssessment(fileName, buffer, context = 'ingestEcoleg
   const { runs } = assessment;
 
   let picked = runs.map((_, i) => i);
-  if (runs.length > 1) {
+  const again = Array.isArray(reopen) ? runs.map((run, i) => (reopen.includes(run.label) ? i : -1)).filter(i => i >= 0) : [];
+  if (again.length) {
+    picked = again;
+  } else if (runs.length > 1) {
     setFileLoadProgress(null, `${fileName} — which runs to open?`);
     picked = await rbAskChoices({
       title: `Runs in ${fileName}`,
@@ -866,6 +878,21 @@ async function ingestEcolegoAssessment(fileName, buffer, context = 'ingestEcoleg
     }
   }
   return opened;
+}
+
+/**
+ * The runs of an assessment that are open now, by their labels: what an
+ * assessment read again opens without asking (ingestEcolegoAssessment).
+ *
+ * @param {string} fileName - The assessment's display name
+ * @returns {string[]}
+ */
+function openRunsOf(fileName) {
+  const out = [];
+  for (const [fileKey, opened] of easOpenedRuns) {
+    if (opened.assessment === fileName && loadedFiles[fileKey] && !out.includes(opened.run)) out.push(opened.run);
+  }
+  return out;
 }
 
 /* ── the run as a file elsewhere ─────────────────────────────────────── */
