@@ -116,6 +116,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li><kbd>Ctrl</kbd>-click groups that draw a chart of their own to draw them together, <strong>a panel each</strong>, or in one chart with <strong>Same chart</strong>.</li>
       <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
       <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
+      <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
       <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
       <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
       <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>

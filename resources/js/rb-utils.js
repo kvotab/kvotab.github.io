@@ -458,13 +458,27 @@ function rbAskConfirm(opts) {
 }
 
 /**
- * The dialog behind rbAskText and rbAskConfirm, in the URL dialog's styles.
- * Everything in it is set as text, so a name taken from a file cannot become
- * markup here. Escape, Cancel and a click outside all mean no.
+ * Ask which of several things to take, a tick box each, with one more above
+ * them that ticks or clears them all.
  *
- * @returns {Promise<string|true|null>}
+ * @param {{title: string, message?: string, okLabel?: string, allLabel?: string,
+ *   choices: Array<{label: string, detail?: string, checked?: boolean}>}} opts
+ * @returns {Promise<number[]|null>} The positions ticked, in order, or null if
+ *   the reader cancelled. OK is disabled while nothing is ticked.
  */
-function rbAsk({ title, message = '', label = '', value = '', okLabel = 'OK', input = false }) {
+function rbAskChoices(opts) {
+  return rbAsk(Object.assign({}, opts, { input: false }));
+}
+
+/**
+ * The dialog behind rbAskText, rbAskConfirm and rbAskChoices, in the URL
+ * dialog's styles. Everything in it is set as text, so a name taken from a
+ * file cannot become markup here. Escape, Cancel and a click outside all mean no.
+ *
+ * @returns {Promise<string|true|number[]|null>}
+ */
+function rbAsk({ title, message = '', label = '', value = '', okLabel = 'OK', input = false,
+                 choices = null, allLabel = 'All' }) {
   return new Promise((resolve) => {
     const before = document.activeElement;
 
@@ -492,6 +506,36 @@ function rbAsk({ title, message = '', label = '', value = '', okLabel = 'OK', in
       field.placeholder = label;
       field.setAttribute('aria-label', label || title);
       dialog.appendChild(field);
+    }
+    let boxes = null;
+    let all = null;
+    if (Array.isArray(choices)) {
+      // The sample-data dialog's list, a row per choice.
+      const list = document.createElement('div');
+      list.className = 'sample-data-list rb-ask-choices';
+      const row = (text, detail, checked) => {
+        const item = document.createElement('label');
+        item.className = 'sample-data-item';
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!checked;
+        const words = document.createElement('span');
+        words.className = 'rb-ask-choice';
+        words.textContent = text;
+        if (detail) {
+          const small = document.createElement('span');
+          small.className = 'rb-ask-detail';
+          small.textContent = detail;
+          words.appendChild(small);
+        }
+        item.append(box, words);
+        list.appendChild(item);
+        return box;
+      };
+      all = row(allLabel, '', false);
+      all.closest('.sample-data-item').classList.add('rb-ask-all');
+      boxes = choices.map(c => row(String(c.label ?? ''), c.detail ? String(c.detail) : '', c.checked));
+      dialog.appendChild(list);
     }
     const buttons = document.createElement('div');
     buttons.className = 'url-dialog-buttons';
@@ -531,7 +575,23 @@ function rbAsk({ title, message = '', label = '', value = '', okLabel = 'OK', in
       }
     };
     cancel.addEventListener('click', () => finish(null));
-    ok.addEventListener('click', () => finish(field ? field.value : true));
+    const picked = () => (boxes ? boxes.map((b, i) => (b.checked ? i : -1)).filter(i => i >= 0) : null);
+    if (boxes) {
+      // The box above the rest says whether all are ticked, and sets them all.
+      const sync = () => {
+        const n = picked().length;
+        all.checked = n === boxes.length;
+        all.indeterminate = n > 0 && n < boxes.length;
+        ok.disabled = n === 0;
+      };
+      all.addEventListener('change', () => {
+        boxes.forEach(b => { b.checked = all.checked; });
+        sync();
+      });
+      boxes.forEach(b => b.addEventListener('change', sync));
+      sync();
+    }
+    ok.addEventListener('click', () => finish(boxes ? picked() : field ? field.value : true));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(null); });
     document.addEventListener('keydown', onKey, true);
 
@@ -1229,8 +1289,8 @@ function getDatasetAttributeSDOM(dataset, timeData, nIter) {
  * @returns {string} Compact diff string
  */
 function filenameDiff(firstName, secondName) {
-  // Strip .h5/.hdf5/.he5 extension for comparison
-  const stripExt = s => s.replace(/\.(h5|hdf5|he5)$/i, '');
+  // Strip .h5/.hdf5/.he5 extension for comparison, and an assessment's .eas
+  const stripExt = s => s.replace(/\.(h5|hdf5|he5|eas)$/i, '');
   const a = stripExt(firstName);
   const b = stripExt(secondName);
   

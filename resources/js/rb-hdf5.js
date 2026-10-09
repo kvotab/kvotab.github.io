@@ -259,6 +259,14 @@ function constantValuesOf(dataset, nIter = null) {
 }
 
 /**
+ * The index lists whose members a group draws together, as one chart. An
+ * Ecolego run opened from an assessment puts the members of these lists at
+ * the leaves for the same reason (rb-eas.js).
+ */
+const RB_CHART_INDEX_LISTS = ['Radionuclides', 'Materials', 'Contaminants', 'Repositories',
+  'Pathways', 'Exposed groups', 'exposed_groups', 'NHB'];
+
+/**
  * Check if a group contains data suitable for special time-chart plotting.
  * A qualifying group must have:
  * - IndexLists attribute containing 'Radionuclides', 'Materials', 'Contaminants',
@@ -279,8 +287,7 @@ function checkGroupForRadionuclides(file, path) {
       return false;
     }
     
-    const chartIndexNames = ['Radionuclides', 'Materials', 'Contaminants', 'Repositories',
-      'Pathways', 'Exposed groups', 'exposed_groups', 'NHB'];
+    const chartIndexNames = RB_CHART_INDEX_LISTS;
     let hasRadionuclidesIndex = false;
     let isTimeDependentGroup = false;
     

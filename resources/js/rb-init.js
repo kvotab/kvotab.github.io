@@ -834,7 +834,7 @@ async function loadSelectedSampleData() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${fileName}`);
       const buffer = await resp.arrayBuffer();
 
-      await ingestHdf5Buffer(fileName, buffer, 'loadSelectedSampleData');
+      await ingestFileBuffer(fileName, buffer, 'loadSelectedSampleData');
     }
 
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('loadSelectedSampleData', _); }
@@ -941,7 +941,9 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
       const file = files[i];
       updateFileLoadTicker(i, files.length, file.name);
       try {
-        if (wantsLazyFile(file)) {
+        // An Ecolego assessment is read whole: its runs are written out as
+        // HDF5 in memory (rb-eas.js), which a worker reading from disk cannot do.
+        if (!isEcolegoAssessment(file.name, null) && wantsLazyFile(file)) {
           // Read from disk as it is looked at, in a worker, whatever its
           // size: see rb-lazy.js. The limit below is for reading it whole.
           await ingestHdf5Lazy(file, 'fileInput:load');
@@ -957,7 +959,7 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
         if (size.tooLarge) throw new Error(size.reason);
 
         const buffer = await file.arrayBuffer();
-        await ingestHdf5Buffer(file.name, buffer, 'fileInput:load');
+        await ingestFileBuffer(file.name, buffer, 'fileInput:load');
       } catch (err) {
         /*
           Report and carry on to the next file. This used to raise a modal,

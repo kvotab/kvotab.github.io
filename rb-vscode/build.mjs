@@ -60,6 +60,9 @@ const EXTRA = [
 /* The welcome panel's first step names the URL button; here it names the Explorer. */
 const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>';
 const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in HDF5 Browser</em>.</li>';
+/* The tip that an Ecolego assessment opens too: not here, where Add Files and
+   the Explorer hand over HDF5 files only, so the tip goes. */
+const WELCOME_EAS = '<li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>';
 
 const CDN = /^https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|cdn\.plot\.ly)\//;
 
@@ -246,6 +249,7 @@ async function main() {
   page = once(page, '<div id="kvotmap"></div>', '', 'the site map element');
   page = once(page, '<footer></footer>', '', 'the footer element');
   page = once(page, WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb.html');
+  page = once(page, WELCOME_EAS, '', 'the welcome panel\'s tip on Ecolego assessments in rb.html');
   page = once(page, '</body>', '  <script src="{{MEDIA}}/rb-vscode/late.js"></script>\n</body>', 'the end of the body');
 
   if (/<script(?![^>]*\ssrc=)[^>]*>/i.test(page)) fail('an inline script is left in the page');
@@ -261,7 +265,8 @@ async function main() {
   for (const rel of [...copied]) {
     let bytes = read(rel);
     if (rel === 'resources/js/rb-state.js') {
-      bytes = Buffer.from(once(bytes.toString('utf8'), WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb-state.js'));
+      bytes = Buffer.from(once(once(bytes.toString('utf8'), WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb-state.js'),
+        WELCOME_EAS, '', 'the welcome panel\'s tip on Ecolego assessments in rb-state.js'));
     }
     write(path.join(MEDIA, rel), bytes);
     if (rel.endsWith('.js')) sources[rel] = bytes.toString('utf8');

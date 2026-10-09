@@ -398,6 +398,21 @@ polygons, and named for the page.
 
     python3 test-icon.py
 
+`test-eas.py` covers Ecolego assessments (`rb-eas.js`): an `.eas` opens as a
+file for each run it keeps, an HDF5 file the page writes in memory in the shape
+it reads results in. The assessments are written by the test itself, as
+Ecolego 6 and Ecolego 5 wrote them -- a GUID-named result file per run or one
+`results.dta`, the index lists named by the run or only by `model.xml`, the
+first index fastest or the last -- and every value written encodes its cell,
+time and realisation, so one read from the wrong place is a different number.
+It drives the run chooser, reads the files back through the page's h5wasm,
+draws a group of nuclides and a probabilistic run, checks the Python export
+names the run as the HDF5 file it is saved as, opens one by address under a
+name that is not `.eas`, and refuses an assessment without results, a cut-off
+archive and one that unpacks to more than it says.
+
+    python3 test-eas.py
+
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
 characterise.py only runs its walk when started as a script.
@@ -412,7 +427,8 @@ refused it, and the check that waits for `rb-opened` waited for ever. The demo
 now builds a small file with h5wasm instead, which is what a page that produces
 HDF5 data would really do, and the test uses that same builder. Neither needs
 anything from `resources/data`. `test-axes.py` builds its overlay file the
-same way, and `test-constants.py` its three files.
+same way, and `test-constants.py` its three files. `test-eas.py` writes its
+Ecolego assessments in Python, into a temporary folder.
 
 The one exception is `fixtures/lzf.h5` (26 KB, made-up values), which h5wasm
 cannot write: writing LZF needs the very plugin `test-lazy.py` checks is

@@ -211,7 +211,7 @@ function isHandoffOriginAllowed(origin) {
  * Make a sender-supplied name safe to use as a file key.
  * Names are escaped before they reach the DOM, so this is about keeping keys
  * sane rather than about injection: no path separators, no control characters,
- * bounded length, and an HDF5 extension.
+ * bounded length, and an HDF5 extension -- or an Ecolego assessment's.
  *
  * @param {*} name
  * @param {number} [index] - Position in a multi-file handoff, for the fallback name
@@ -226,7 +226,7 @@ function sanitizeHandoffName(name, index = 0) {
     clean = index > 0 ? `handoff-${index + 1}.h5` : 'handoff.h5';
   }
   if (clean.length > 120) clean = clean.slice(0, 120);
-  if (!/\.(h5|hdf5|he5)$/i.test(clean)) clean += '.h5';
+  if (!/\.(h5|hdf5|he5|eas)$/i.test(clean)) clean += '.h5';
   return clean;
 }
 
@@ -303,8 +303,7 @@ async function receiveHandoffMessage(event) {
       }
 
       phase(i, `Opening ${fileName} (${kvotFormatBytes(buffer.byteLength)})…`);
-      await ingestHdf5Buffer(fileName, buffer, 'receiveHandoffMessage');
-      loaded.push(fileName);
+      loaded.push(...await ingestFileBuffer(fileName, buffer, 'receiveHandoffMessage'));
     }
 
     try { await ensureTreeWorkerReady(5000); } catch (_) { ignoreFailure('receiveHandoffMessage', _); }

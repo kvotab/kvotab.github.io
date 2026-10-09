@@ -46,6 +46,7 @@ PROBES = {
     'rb-hdf5':           'checkDatasetExistsInFile',
     'rb-lazy':           'wantsLazyFile',
     'rb-file':           'getEnabledFiles',
+    'rb-eas':            'isEcolegoAssessment',
     'rb-tabs':           'hideFileTabTooltip',
     'rb-tree':           'toggleGroupExpansion',
     'rb-chart-axes':     'getNamedColor',

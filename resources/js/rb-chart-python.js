@@ -615,11 +615,15 @@ function pyChartScript(gd) {
   const plots = [];                // the chart section, a statement each
   let literal = 0;
 
-  // The files first, so that their times have the plain names.
+  // The files first, so that their times have the plain names. Each is
+  // held by the name the page knows it by and written by the name it has on
+  // disk (outName): a run opened from an Ecolego assessment is the HDF5 file
+  // it is saved as (rb-eas.js).
   const fileOf = (file) => {
     if (!files.includes(file)) files.push(file);
     return file;
   };
+  const outName = (file) => pythonFileName(fileOf(file));
   for (const ft of fd) {
     const py = gd.data[ft.index] && gd.data[ft.index]._py;
     const walk = (node) => {
@@ -633,11 +637,11 @@ function pyChartScript(gd) {
     const key = `${file}\n${path}`;
     if (!reads.has(key)) {
       const name = path === '/time'
-        ? pyName(files.length > 1 ? `time_${file.replace(/\.[^.]+$/, '')}` : 'time', taken, 'time')
+        ? pyName(files.length > 1 ? `time_${outName(file).replace(/\.[^.]+$/, '')}` : 'time', taken, 'time')
         : pyName(String(path).split('/').filter(Boolean).pop() || 'values', taken, 'series');
       reads.set(key, name);
       use('read');
-      data.push(`${name} = read(${pyStr(fileOf(file))}, ${pyStr(path)})`);
+      data.push(`${name} = read(${pyStr(outName(file))}, ${pyStr(path)})`);
     }
     return reads.get(key);
   };
@@ -656,7 +660,7 @@ function pyChartScript(gd) {
         return { e: `column(${read(s.file, s.path)}, ${pyInt(s.n)}, ${pyInt(s.index)}, ${pyInt(s.count)}, ${pyStr(s.layout === 'col' ? 'col' : 'row')})`, n: s.n };
       case 'attr':
         use('attribute');
-        return { e: `attribute(${pyStr(fileOf(s.file))}, ${pyStr(s.path)}, ${pyStr(s.name)}, ${pyInt(s.n)})`, n: null };
+        return { e: `attribute(${pyStr(outName(s.file))}, ${pyStr(s.path)}, ${pyStr(s.name)}, ${pyInt(s.n)})`, n: null };
       case 'strided':
         use('strided');
         return { e: `strided(${read(s.file, s.path)}, ${pyInt(s.stride)}, ${pyInt(s.k)}, ${pyInt(s.n)})`, n: s.n };
@@ -943,7 +947,7 @@ function pyChartScript(gd) {
     ...imports,
     '',
     `CHART = ${pyStr(subject.title)}`,
-    `FILES = [${files.map(pyStr).join(', ')}]`,
+    `FILES = [${files.map(f => pyStr(outName(f))).join(', ')}]`,
     'FOLDER = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()',
     'TEXT, GRID, MINOR_GRID = "#2D2416", "#E5DDD5", "#F0EBE5"  # the page\'s light theme',
     'PT = 0.75  # points in a px: widths and lengths are the page\'s, in px',
@@ -969,7 +973,7 @@ function pyChartScript(gd) {
     '# fig.savefig("chart.png", dpi=150, bbox_inches="tight")  # or save it',
     ''
   ];
-  return { code: out.join('\n'), fileName: xlFileName(subject).replace(/\.xlsx$/, '.py'), files, literal };
+  return { code: out.join('\n'), fileName: xlFileName(subject).replace(/\.xlsx$/, '.py'), files: files.map(outName), literal };
 }
 
 /* ── the dialog ───────────────────────────────────────────────────────── */
@@ -1068,6 +1072,19 @@ function openPythonDialog() {
     : '. Run it with numpy and matplotlib installed.');
   if (script.literal) {
     add(` ${script.literal === 1 ? 'One line is' : `${script.literal} lines are`} written as ${script.literal === 1 ? 'its' : 'their'} numbers: the page could not say how it read ${script.literal === 1 ? 'it' : 'them'} from the file.`);
+  }
+  // A run opened from an Ecolego assessment is a file only in this page until
+  // it is saved, and the script reads it as the HDF5 file it is saved as.
+  for (const run of openedRunsNamed(script.files)) {
+    add(' ');
+    add(run.name, true);
+    add(` is a run of ${run.assessment} that this page opened: save it with the script. `);
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'url-btn url-btn-cancel python-save-run';
+    save.textContent = `Save ${run.name}`;
+    save.addEventListener('click', () => saveOpenedRun(run.fileKey));
+    note.appendChild(save);
   }
   document.getElementById('pythonCopied').textContent = '';
   dialog.style.display = '';

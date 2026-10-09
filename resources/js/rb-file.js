@@ -338,7 +338,7 @@ async function ingestHdf5Buffer(fileName, buffer, context = 'ingestHdf5Buffer') 
  * blob: and data: URLs carry no meaningful name, so they get a generated one.
  *
  * @param {URL} parsed
- * @returns {string} A name ending in .h5 / .hdf5 / .he5
+ * @returns {string} A name ending in .h5 / .hdf5 / .he5, or an Ecolego assessment's .eas
  */
 function hdf5FileNameFromUrl(parsed) {
   const parts = (parsed.pathname || '').split('/').filter(Boolean);
@@ -346,7 +346,7 @@ function hdf5FileNameFromUrl(parsed) {
   if (parsed.protocol === 'blob:' || parsed.protocol === 'data:' || !name) {
     name = 'handoff.h5';
   }
-  if (!/\.(h5|hdf5|he5)$/i.test(name)) name += '.h5';
+  if (!/\.(h5|hdf5|he5|eas)$/i.test(name)) name += '.h5';
   return name;
 }
 
@@ -395,13 +395,14 @@ async function readResponseWithProgress(response, onProgress) {
 }
 
 /**
- * Fetch an HDF5 file over http(s) or from a blob: URL and mount it.
- * Does not refresh the tree.
+ * Fetch an HDF5 file, or an Ecolego assessment, over http(s) or from a blob:
+ * URL and mount it. Does not refresh the tree.
  *
  * @param {string} url
  * @param {string} [context] - Label for failure reporting
  * @param {function(number, number|null): void} [onProgress] - (bytesRead, bytesTotal|null)
- * @returns {Promise<string>} The display name the file was registered under
+ * @returns {Promise<string>} The display name the file was registered under:
+ *   for an assessment, its runs' names; empty when the reader chose none
  */
 async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress, headers = null) {
   let parsed;
@@ -422,5 +423,5 @@ async function ingestHdf5FromUrl(url, context = 'ingestHdf5FromUrl', onProgress,
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
   const buffer = await readResponseWithProgress(response, onProgress);
-  return ingestHdf5Buffer(fileName, buffer, context);
+  return (await ingestFileBuffer(fileName, buffer, context)).join(', ');
 }
