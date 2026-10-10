@@ -372,6 +372,8 @@ using PrecompileTools: @setup_workload, @compile_workload
             summary(res)
         end
         to_json(m)
+        # A run solved in its parts side by side (two, one per nuclide), and its log.
+        run_log(run(m; split="on", threads=2))
         # A probabilistic run of a few realisations, and what it says.
         prob = run_probabilistic(m, 4; seed=1, threads=1)
         bands(prob)

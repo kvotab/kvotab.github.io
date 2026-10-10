@@ -125,6 +125,45 @@ automatic choice here, as `auto_julia` is: an explicit method while the run
 is not stiff and a stiff one once it is. (The application and the Python
 package switch between methods of their own under that name.)
 
+## Solving in parts
+
+A model whose radionuclides fall into groups with no path between them --
+decay chains that never reach each other -- can be solved in those parts side
+by side, each at the steps its own states need, as the application and the
+Python package do it (`simulation.split`: `auto`, the default, `on` or `off`):
+
+```julia
+res = run(m; split="on")                 # one bin of parts per thread Julia has
+res = run(m; split="on", threads=4)      # in four bins at most
+res.stats["split"]                       # what was done, and why
+```
+
+The parts are tasks on Julia's threads (start Julia with `--threads=auto`),
+not processes: a split starts in milliseconds and nothing is copied back. The
+whole model is built first -- its Jacobian says where the parts are, and every
+series is worked out on it afterwards -- then each bin of parts is built with
+every other material switched off, solved on the output grid, and its states
+filed back by name; the far-field paths keep the whole model's layers, and a
+min/max or running mean comes back from the part it reads. A bin's run is the
+Python package's run of the same bin to the bit, and a split run agrees with
+the whole run to the tolerance.
+
+`auto` splits when it expects that to be clearly quicker: a large model of
+many parts before it has been timed, and afterwards by what a whole solve
+took and what a split of it measured. A part's build costs here about as much
+as the whole model's, whatever it holds, and builds side by side slow each
+other down, so auto also weighs how many bins to pack the parts into, up to
+one per thread. What it learns is kept by the model's layout in
+`split-memory-julia.json`, in the package's scratch space in the Julia depot
+(`KOMPARTMENT_CACHE` puts it elsewhere, `KOMPARTMENT_SPLIT_MEMORY=0` keeps
+nothing).
+
+A model is not split where that would be wrong or cannot work: a delay, a
+snapshot or an event, which reach across parts without showing in the
+Jacobian; a far-field path worked out semi-analytically; results at the
+solver's own steps; a min/max of something read from more than one part; a
+model with no materials to divide by, or one part; one thread.
+
 ## Saving results
 
 ```julia
@@ -228,6 +267,14 @@ Python package's compiled code cached, the Julia package precompiled):
 | Every series to HDF5 | 0.7 s | 13.6 s |
 | Biosphere example, 1,000 realisations, one thread / process | 3.0 s | 5.1 s |
 | The same on eight | 0.6 s | 1.9 s |
+| The timing model split into its 16 chains, four threads / processes | 0.78 s | 5.1 s |
+| The same on eight | 0.61 s | 5.4 s |
+
+The split rows are the Python package's timing test and this package's, with
+`KOMPARTMENT_SPLIT_TIMING=1` (`python/tests/test_engine_split.py`,
+`test/engine/split.jl`): each run from the model to its results -- the whole
+model's build, the parts' builds and solves, the states filed back -- with
+every part taking the same steps in both.
 
 The bundled examples build in tens of milliseconds and solve in milliseconds.
 Julia compiles the package's own code once, when it is precompiled; a model's
@@ -266,8 +313,6 @@ end
 
 ## What the Python package has and this does not
 
-- **Solving in parts** (`simulation.split`): a model is always solved whole
-  here, which on this engine is quicker than the Python package's split.
 - **Solvers**: SciPy's; `auto` is DifferentialEquations.jl's automatic choice
   here rather than the application's own switching solver.
 - **Probabilistic analysis**: the global sensitivity designs (`gsa=`), the
@@ -291,6 +336,7 @@ The engine is checked against the Python package's, with fixtures the
 | A model opened and written: normalisation, units, stamps | `tools/model_fixtures.py DIR`, `KOMPARTMENT_MODEL_FIXTURES=DIR/text julia --project=. test/model/normalise.jl` |
 | Transports and unit literals: expansion, derivative, runs | `tools/model_fixtures.py DIR` (and `engine_fixtures.py`, `run_fixtures.py` on its models), `KOMPARTMENT_TRANSPORT_FIXTURES=DIR julia --project=. test/engine/transport.jl` |
 | Editing: the model's file after every edit, and every refusal | `tools/edit_fixtures.py DIR`, `KOMPARTMENT_EDIT_FIXTURES=DIR julia --project=. test/model/edit.jl` |
+| Solving in parts: the partition, every plan and refusal, split runs to the bit | `tools/split_fixtures.py DIR`, `KOMPARTMENT_SPLIT_FIXTURES=DIR julia --project=. --threads=4 test/engine/split.jl` |
 | Probabilistic runs: every draw, every realisation, the analysis, the result files | `tools/prob_fixtures.py DIR`, `KOMPARTMENT_PROB_FIXTURES=DIR julia --project=. --threads=auto test/engine/probabilistic.jl` |
 | The Ecolego importer | `tools/eco_fixtures.py DIR`, `KOMPARTMENT_ECO_FIXTURES=DIR julia --project=. test/importers/test_eco.jl` |
 | The HDF5 files, byte for byte | `tools/hdf5_fixtures.py DIR`, `KOMPARTMENT_H5_FIXTURES=DIR julia --project=. test/io/test_hdf5.jl` |

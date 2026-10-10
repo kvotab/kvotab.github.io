@@ -29,6 +29,7 @@ using Dates
 using OrderedCollections: OrderedDict
 import FunctionWrappers
 import FunctionWrappers: FunctionWrapper
+import SHA
 
 # --- utilities -------------------------------------------------------------------
 include("util/jsnum.jl")
@@ -75,6 +76,7 @@ include("engine/switchtimes.jl")
 include("engine/derived.jl")
 include("engine/massbalance.jl")
 include("engine/runner.jl")
+include("engine/split.jl")
 
 # --- many runs: probabilistic runs and what they say -----------------------------------
 include("stats/normal.jl")

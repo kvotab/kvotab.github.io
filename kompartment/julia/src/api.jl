@@ -124,12 +124,16 @@ The model built into equations and compiled: `dydt(sys, t, y)`,
 build(m::Model; settings...) = build_system(project(m; settings...))
 
 """
-    run(m::Model; on_progress=nothing, settings...) -> Results
+    run(m::Model; on_progress=nothing, threads=nothing, settings...) -> Results
 
 Runs a model with its own simulation settings, or with some replaced for this
-run: `run(m; end_time=1e5, solver="ros23")`.
+run: `run(m; end_time=1e5, solver="ros23")`. A model whose `split` setting
+says so (`run(m; split="on")`) is solved in its independent parts side by
+side, one bin of them per thread -- `threads` of them, every thread Julia has
+by default -- and `res.stats["split"]` says what was done.
 """
-Base.run(m::Model; on_progress=nothing, settings...) = run_project(project(m; settings...); on_progress)
+Base.run(m::Model; on_progress=nothing, threads=nothing, settings...) =
+    run_project(project(m; settings...); on_progress, threads)
 
 """Runs a model file: `run_file("biosphere.json")`."""
 run_file(path::AbstractString; kw...) = run(load(path); kw...)
@@ -179,11 +183,13 @@ function run_scenarios(m::Model, scenarios=nothing; threads::Integer=1, settings
     names = scenarios === nothing ? collect(String, Project(raw).scenarios) : String[String(s) for s in scenarios]
     isempty(names) && throw(ArgumentError("This model has no scenarios: an index list marked as the scenario list, " *
                                           "with indices."))
-    # A Project copies what it is given: the model need not be copied for each.
+    # A Project copies what it is given: the model need not be copied for each. Runs side by
+    # side are not split again.
+    side_by_side = threads > 1 && length(names) > 1
     function one(name)
         r = copy(raw)
         r["scenario"] = name
-        return run_project(Project(r))
+        return run_project(Project(r); nest=!side_by_side)
     end
     done = Vector{Results}(undef, length(names))
     if threads <= 1 || length(names) == 1

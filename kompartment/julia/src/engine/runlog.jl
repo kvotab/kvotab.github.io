@@ -200,7 +200,22 @@ function run_log_lines(res::Results; project=nothing, build::AbstractString="", 
         end
     end
     split = get(s, "split", nothing)
-    if split isa AbstractDict && get(split, "used", false) !== true
+    if split isa AbstractDict && js_truthy(get(split, "used", nothing))
+        jobs = something(get(split, "jobs", nothing), Any[])
+        push!(out, "  split: $(js_text(something(get(split, "parts", nothing), length(jobs)))) independent parts on " *
+                   "$(js_text(get(split, "workers", nothing))) cores ($(js_text(get(split, "mode", nothing)))) — " *
+                   "$(js_text(get(split, "why", nothing)))")
+        # One line per thread: the parts it was given, solved together.
+        for job in jobs
+            materials = join((js_text(m) for m in something(get(job, "materials", nothing), Any[])), ", ")
+            push!(out, "    $materials: $(js_text(get(job, "states", nothing))) states, " *
+                       "$(js_text(something(get(job, "nsteps", nothing), "?"))) steps, " *
+                       "compile $(js_to_fixed(something(get(job, "buildMs", nothing), 0), 1)) ms, " *
+                       "solve $(js_to_fixed(something(get(job, "solveMs", nothing), 0), 0)) ms")
+        end
+        gain = get(split, "gain", nothing)
+        js_truthy(gain) && push!(out, "    about $(js_to_fixed(gain, 1))× a whole solve, by this machine's estimate")
+    elseif split isa AbstractDict
         push!(out, "  not split ($(js_text(get(split, "mode", nothing)))): $(js_text(get(split, "why", nothing)))")
     end
     push!(out, "  output points: $(length(res.t))")

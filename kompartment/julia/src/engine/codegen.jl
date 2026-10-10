@@ -361,7 +361,9 @@ function pass_definitions!(w::CodeWriter, name::Symbol, stmts::Vector{Stmt})
     return defs
 end
 
-const _MODEL_COUNTER = Ref(0)
+#: Numbers the models compiled in this process; builds on several threads at once (a split
+#: run's parts) each take a number of their own.
+const _MODEL_COUNTER = Threads.Atomic{Int}(0)
 
 """
     compile_passes(w, passes) -> Dict{Symbol,PassFunction}
@@ -371,12 +373,12 @@ a `PassFunction`, which the solvers call without being compiled again for
 every model.
 """
 function compile_passes(w::CodeWriter, passes::Vector{Pair{Symbol,Vector{Stmt}}})
-    _MODEL_COUNTER[] += 1
+    number = Threads.atomic_add!(_MODEL_COUNTER, 1) + 1
     # While the package itself is being precompiled no new module may be made,
     # so the workload's model is defined in this one, under names of its own.
     precompiling = ccall(:jl_generating_output, Cint, ()) == 1
-    mod = precompiling ? _G : Module(Symbol("KompartmentModel", _MODEL_COUNTER[]))
-    prefix = precompiling ? "_precompiled_model$(_MODEL_COUNTER[])_" : ""
+    mod = precompiling ? _G : Module(Symbol("KompartmentModel", number))
+    prefix = precompiling ? "_precompiled_model$(number)_" : ""
     named(name) = Symbol(prefix, name)
     defs = Any[]
     for (name, stmts) in passes

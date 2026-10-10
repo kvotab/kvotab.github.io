@@ -8,6 +8,10 @@
 
 using Test
 
+# What auto learns of the runs here is not kept for later processes, and nothing kept from
+# earlier ones decides whether a run here is split.
+ENV["KOMPARTMENT_SPLIT_MEMORY"] = "0"
+
 # Each file in a module of its own: several define the same helpers.
 const FILES = [
     "util/basics.jl",
@@ -18,6 +22,7 @@ const FILES = [
     "engine/transport.jl",
     "engine/probabilistic.jl",
     "engine/scenarios.jl",
+    "engine/split.jl",
     "engine/atstart.jl",
     "engine/runlog.jl",
     "model/normalise.jl",

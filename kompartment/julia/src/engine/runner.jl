@@ -148,14 +148,27 @@ function _unavailable_solver(id)
 end
 
 """
-    run_project(project; system=nothing, on_progress=nothing, on_grid=false) -> Results
+    run_project(project; system=nothing, on_progress=nothing, on_grid=false, threads=nothing, layers=nothing) -> Results
 
 Runs a project, built here unless `system` is given. `on_progress(fraction, t)`
 is called as the run goes; returning `false` from it stops the run.
+
+A run that builds its own system is solved in its independent parts on
+several threads when `simulation.split` says so and the plan agrees (see
+`run_whole_or_split`); `threads` caps the bins (every thread Julia has by
+default), and `stats["split"]` says what was done. `layers` are far-field
+layers to hold instead of laying them out, as a split run's parts are given
+the whole model's (`whole_layers`).
 """
-function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false)
+function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false,
+                     threads=nothing, nest::Bool=true, layers=nothing)
+    system === nothing && return run_whole_or_split(project; on_progress, on_grid, threads, nest)
     t0 = time()
-    sys = system === nothing ? build_system(project) : system
+    sys = system
+    # Layers handed in are held instead of laid out: a part of a split run is given the whole
+    # model's. Any other run lays out its own, so a system handed from run to run lets go of
+    # the last one's.
+    pin_layers!(sys, layers)
     # A far-field path lays its matched layers out at the first instant of a
     # run and holds them to the end of it: this is that instant, every run.
     for F in sys.data.FARF
@@ -289,12 +302,6 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     warned = farfield_warnings(sys)
     isempty(warned.farfield) || (solution.stats["farfield"] = warned.farfield)
     isempty(warned.layers) || (solution.stats["layers"] = warned.layers)
-    # A model that asks to be solved in parts is solved whole here, and says so as the
-    # Python package's account of a split does.
-    if get(sim, "split", nothing) == "on"
-        solution.stats["split"] = Dict{String,Any}("used" => false, "mode" => "on",
-                                                   "why" => "the Julia engine solves the whole model as one system")
-    end
     now = time()
     return Results(project, sys, solution.t, solution.y, solution.stats,
                    Dict("build_ms" => build_ms, "solve_ms" => 1000 * (now - solve_start), "total_ms" => 1000 * (now - t0)))
