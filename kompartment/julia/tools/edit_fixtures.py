@@ -1314,11 +1314,26 @@ def case_model_from_dict():
     return c
 
 
+def case_no_chains():
+    """A model that states an empty list of decay pairs: no decay chains at all,
+    as the application reads `chains: []` -- not the default ones."""
+    c = Case('no-chains', data={'name': 'No chains', 'nuclides': ['Sr-90', 'Y-90', 'Cs-137'], 'chains': [],
+                                'compartments': [{'name': 'Soil', 'initial': '1'}]})
+    c.mget('decay_chains').mget('has_own_chains')
+    c.m('add_decay_pair', 'Sr-90', 'Y-90').mget('decay_chains')
+    c.m('remove_decay_pair', 'Sr-90', 'Y-90').mget('decay_chains').mget('has_own_chains')
+    c.m('add_nuclides', ['Ba-137m']).mget('decay_chains')
+    c.m('reset_decay_chains').mget('decay_chains').mget('has_own_chains')
+    c.m('set_decay_chains', []).mget('decay_chains').mget('has_own_chains')
+    c.m('state_count').m('check')
+    return c
+
+
 MADE_UP = [case_building, case_names_refused, case_per_index, case_two_dimensions, case_distributions,
            case_lookups, case_every_kind, case_farfield, case_waste_and_events, case_decay, case_scenarios,
            case_index_lists, case_systems, case_shadowing, case_connections, case_availability, case_reductions,
            case_functions, case_raw_access, case_review, case_view_shapes_derived, case_simulation, case_check,
-           case_apps, case_put_values, case_model_from_dict]
+           case_apps, case_put_values, case_model_from_dict, case_no_chains]
 
 
 def case_elements():

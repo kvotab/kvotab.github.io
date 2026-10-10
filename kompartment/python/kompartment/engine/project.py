@@ -605,7 +605,10 @@ class Project:
                 raise ValidationError(f"The half-life of '{nuc}' must be a number of years greater than zero, or "
                                       f"'stable' -- '{v}' is neither.", nuc)
             self.half_lives[nuc] = years
-        self.chains_override = [list(c) for c in raw['chains']] if raw.get('chains') else None
+        # A list stated -- an empty one too, which means no decay chains --
+        # replaces the default pairs, as the application reads it.
+        chains = raw.get('chains')
+        self.chains_override = [list(c) for c in chains] if _decay.chains_stated(chains) else None
         self._raw = raw
         for pair in self.chains_override or []:
             parent = pair[0] if len(pair) > 0 else None
@@ -634,7 +637,8 @@ class Project:
         self.material_list_name = materials.name if materials else None
         nuc = self.index_space.nuclide_list()
         self.nuclide_list_name = nuc.name if nuc else self.material_list_name
-        self.chains = self.chains_override or [list(p) for p in _decay.default_chains(self.material_names)]
+        self.chains = (self.chains_override if self.chains_override is not None
+                       else [list(p) for p in _decay.default_chains(self.material_names)])
         if raw.get('scenario') is not None and self.index_space.set_scenario(raw['scenario']) is None:
             sc = self.index_space.scenarios()
             self.index_space.set_scenario(sc[0] if sc else None)
@@ -701,7 +705,7 @@ class Project:
             'name': self.name, 'description': self.description, 'simulation': self.simulation,
             'nuclides': self.nuclides, 'half_lives': self.half_lives_override, 'decay_unit': self.decay_unit,
         }
-        if self.chains_override:
+        if self.chains_override is not None:
             out['chains'] = self.chains_override
         out['index_lists'] = [l for l in self.index_lists if l['name'] not in self._derived_lists]
         if self.scenario:
@@ -1055,7 +1059,8 @@ class Project:
 
     def decay_model_for(self, list_name: Optional[str]) -> Dict[str, Any]:
         names = self.index_space.index_names(list_name) if list_name and self.index_space.has(list_name) else []
-        chains = self.chains_override or [list(p) for p in _decay.default_chains(names, self.decay_ceiling)]
+        chains = (self.chains_override if self.chains_override is not None
+                  else [list(p) for p in _decay.default_chains(names, self.decay_ceiling)])
         return build_decay_model(names, self.simulation['time_unit'], self.half_lives, self.decay_unit, chains)
 
     # --- validation -------------------------------------------------------------------

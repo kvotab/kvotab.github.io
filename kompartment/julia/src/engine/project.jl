@@ -606,7 +606,8 @@ function Project(raw0::AbstractDict)
                                   "'$(js_text(v))' is neither.", nuc))
         p.half_lives[nuc] = years
     end
-    p.chains_override = js_truthy(get(raw, "chains", nothing)) ? Any[collect(Any, c) for c in raw["chains"]] : nothing
+    # A list stated -- an empty one too, which means no decay chains -- replaces the default pairs.
+    p.chains_override = chains_stated(get(raw, "chains", nothing)) ? Any[collect(Any, c) for c in raw["chains"]] : nothing
     p.raw = raw
     for pair in something(p.chains_override, Any[])
         parent = length(pair) > 0 ? pair[1] : nothing

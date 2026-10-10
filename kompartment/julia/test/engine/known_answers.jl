@@ -72,4 +72,18 @@ const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
             @test all(x .=== z)
         end
     end
+
+    @testset "an empty chain list means no decay chains, as the application reads it" begin
+        raw = K.parse_json("""{"name": "No chains", "nuclides": ["Sr-90", "Y-90"], "chains": [],
+            "simulation": {"end_time": 100, "output_points": 5}, "compartments": [{"name": "Soil", "initial": "1"}]}""")
+        m = K.Model(raw)
+        @test K.project(m).chains == Any[]
+        @test haskey(K.project_to_json(K.project(m)), "chains")
+        @test isempty(K.decay_chains(m)) && K.has_own_chains(m)
+        @test run(m)["Soil [Y-90]"][end] == 0.0
+        K.add_decay_pair!(m, "Sr-90", "Y-90")
+        @test K.decay_chains(m) == Tuple[("Sr-90", "Y-90", 1)]
+        delete!(raw, "chains")
+        @test run(K.Model(raw))["Soil [Y-90]"][end] > 0.0
+    end
 end

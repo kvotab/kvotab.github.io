@@ -30,6 +30,22 @@ class OpeningAFile(unittest.TestCase):
                 self.assertEqual(differences(py, js), [])
                 self.assertEqual(dumps(py), dumps(js))
 
+    def test_an_empty_chain_list_opens_and_is_extended_as_the_application_s(self):
+        # `chains: []` is a list the model states -- no decay pairs at all --
+        # where an absent one leaves the default pairs in force. A first pair
+        # added to it is the only one: nothing is filled in from the default.
+        raw = {'name': 'No chains', 'nuclides': ['Sr-90', 'Y-90'], 'chains': [],
+               'compartments': [{'name': 'Soil', 'initial': '1'}]}
+        m = kp.Model(raw)
+        js = app('normalise', model=raw)['model']
+        self.assertEqual(dumps(m.raw), dumps(js))
+        self.assertEqual(m.decay_chains, [])
+        self.assertTrue(m.has_own_chains)
+        m.add_decay_pair('Sr-90', 'Y-90')
+        js = app('edit', model=raw, ops=[['addDecayPair', 'Sr-90', 'Y-90', 1]])['model']
+        self.assertEqual(dumps(m.raw), dumps(js))
+        self.assertEqual(m.decay_chains, [('Sr-90', 'Y-90', 1)])
+
     def test_older_spellings_open_the_same(self):
         raw = {
             'name': 'Old', 'nuclides': ['Cs-137', 'Sr-90'],

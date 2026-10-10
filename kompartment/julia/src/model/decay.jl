@@ -94,3 +94,11 @@ function default_chains(nuclides; ceiling::Real=Inf, min_branching::Real=1e-9)
     sort!(pairs; by=p -> (locale_key(p[1]), -p[3]))  # stable, as the application's sort is
     return pairs
 end
+
+"""
+Whether a model states its own decay pairs, as the application reads
+`chains`: any list does, an empty one included -- a model with no decay
+chains at all -- and nothing JavaScript reads as false (absent, null, false,
+0, an empty text), which leaves the default pairs in force.
+"""
+chains_stated(chains) = js_truthy(chains)

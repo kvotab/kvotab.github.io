@@ -337,7 +337,7 @@ function project_to_json(p::Project)
     every(key) = Any[get(p.blocks, key, JDict[])..., get(p.switched_off, key, JDict[])...]
     out = JDict("name" => p.name, "description" => p.description, "simulation" => p.simulation,
                 "nuclides" => p.nuclides, "half_lives" => p.half_lives_override, "decay_unit" => p.decay_unit)
-    (p.chains_override !== nothing && !isempty(p.chains_override)) && (out["chains"] = p.chains_override)
+    p.chains_override !== nothing && (out["chains"] = p.chains_override)
     out["index_lists"] = Any[l for l in p.index_lists if !(l["name"] in p.derived_lists)]
     py_truthy(p.scenario) && (out["scenario"] = p.scenario)
     for key in ("parameters", "compartments", "expressions", "transfers", "inflows")

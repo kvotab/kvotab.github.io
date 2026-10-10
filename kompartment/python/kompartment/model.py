@@ -1889,17 +1889,17 @@ class Model:
         model's own when it states them, otherwise the ones ICRP 107 gives the
         materials it carries (:func:`kompartment.decay.default_chains`)."""
         own = self._raw.get('chains')
-        if own:
+        if _decay.chains_stated(own):
             return [(p[0], p[1], p[2] if len(p) > 2 else 1) for p in own]
         return _decay.default_chains(self.materials)
 
     @property
     def has_own_chains(self) -> bool:
         """Whether the model states its decay pairs rather than following its nuclides."""
-        return bool(self._raw.get('chains'))
+        return _decay.chains_stated(self._raw.get('chains'))
 
     def _own_chains(self) -> List[List[Any]]:
-        if not self._raw.get('chains'):
+        if not _decay.chains_stated(self._raw.get('chains')):
             self._raw['chains'] = [list(p) for p in self.decay_chains]
         return self._raw['chains']
 

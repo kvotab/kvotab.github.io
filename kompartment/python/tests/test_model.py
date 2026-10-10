@@ -240,6 +240,18 @@ class Building(unittest.TestCase):
         path = m['Rock']
         self.assertEqual((path.o_b, path.n_b, path.grid, path.surface), (1, 0, 'reference', 'f'))
 
+    def test_an_empty_chain_list_means_no_decay_chains(self):
+        raw = {'name': 'No chains', 'nuclides': ['Sr-90', 'Y-90'], 'chains': [],
+               'simulation': {'end_time': 100, 'output_points': 5},
+               'compartments': [{'name': 'Soil', 'initial': '1'}]}
+        m = kp.Model(raw)
+        self.assertEqual(m.decay_chains, [])
+        self.assertTrue(m.has_own_chains)
+        self.assertEqual(json.loads(m.to_json())['chains'], [])
+        self.assertEqual(m.run()['Soil [Y-90]'][-1], 0.0)  # no ingrowth
+        m.reset_decay_chains()
+        self.assertGreater(m.run()['Soil [Y-90]'][-1], 0.0)
+
     def test_decay(self):
         m = kp.Model.new()
         m.add_nuclides(['U-238', 'U-234', 'Th-230'])

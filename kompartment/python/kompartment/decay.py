@@ -22,7 +22,7 @@ import math
 import re
 from functools import lru_cache
 from importlib import resources
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 Pair = Tuple[str, str, float]
 
@@ -107,6 +107,20 @@ def _distribution(name: str, keep: set, memo: Dict[str, Dict[str, float]],
         for target, share in _distribution(daughter, keep, memo, ceiling).items():
             out[target] = out.get(target, 0.0) + branching * share
     return out
+
+
+def chains_stated(chains: Any) -> bool:
+    """Whether a model states its own decay pairs, as the application reads
+    ``chains``: any list does, an empty one included -- a model with no decay
+    chains at all -- and nothing JavaScript reads as false (absent, null,
+    false, 0, an empty text), which leaves the default pairs in force."""
+    if chains is None or chains is False:
+        return False
+    if isinstance(chains, (int, float)) and not isinstance(chains, bool):
+        return chains == chains and chains != 0
+    if isinstance(chains, str):
+        return chains != ''
+    return True
 
 
 def _locale_key(name: str) -> Tuple[str, str]:

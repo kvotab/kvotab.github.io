@@ -949,15 +949,15 @@ carries (`default_chains`).
 """
 function decay_chains(m::Model)
     own = get(m.raw, "chains", nothing)
-    py_truthy(own) && return Tuple[(p[1], p[2], length(p) > 2 ? p[3] : 1) for p in own]
+    chains_stated(own) && return Tuple[(p[1], p[2], length(p) > 2 ? p[3] : 1) for p in own]
     return Tuple[p for p in default_chains(materials(m))]
 end
 
 """Whether the model states its decay pairs rather than following its nuclides."""
-has_own_chains(m::Model) = py_truthy(get(m.raw, "chains", nothing))
+has_own_chains(m::Model) = chains_stated(get(m.raw, "chains", nothing))
 
 function _ed_own_chains!(m::Model)
-    if !py_truthy(get(m.raw, "chains", nothing))
+    if !chains_stated(get(m.raw, "chains", nothing))
         m.raw["chains"] = Any[Any[p...] for p in decay_chains(m)]
     end
     return m.raw["chains"]

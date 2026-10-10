@@ -94,6 +94,23 @@ class ProjectParity(unittest.TestCase):
                     self.assertEqual(mine[key], js[key], key)
                 self.assertTrue(close(p.time_grid(), numbers(js['timeGrid']), 1e-15))
 
+    def test_an_empty_chain_list_means_no_decay_chains_as_in_the_application(self) -> None:
+        # `chains: []` states that there are no decay pairs; an absent list
+        # would leave the default ones (Pu-241 -> Am-241 -> Np-237 ...) in force.
+        model = example('decay-chain')
+        model['chains'] = []
+        js = engine('project', model=model)['project']
+        p = Project(model)
+        self.assertEqual(p.chains, [])
+        self.assertEqual(fix(p.chains), js['chains'])
+        self.assertEqual(fix(p.decay_model()), js['decayModel'])
+        self.assertEqual(p.to_json()['chains'], [])
+        s = build_system(p, jacobian=False)
+        y = np.linspace(1.0, 2.0, s.nstate)
+        q = engine('dydt', model=model, points=[{'t': s.start_time, 'y': y.tolist()}])['points'][0]
+        self.assertTrue(close(s.dydt(s.start_time, y), numbers(q['dydt']), 1e-12))
+        self.assertNotEqual(fix(p.decay_model()), fix(Project(example('decay-chain')).decay_model()))
+
 
 @needs_app
 class BuildParity(unittest.TestCase):
