@@ -188,6 +188,7 @@ mutable struct System
     compile_ms::Float64
     build_ms::Float64
     sampled_times::Vector{Vector{Float64}}   # per disruption: the occurrences drawn for this run
+    run_settings::Any             # what a run reads from the blocks, kept (`run_tolerances`)
 end
 
 Base.show(io::IO, s::System) = print(io, "System(", repr(s.project.name), ": ", s.nstate, " states, ", s.nalg,
@@ -234,7 +235,7 @@ function build_system(project::Project; jacobian::Bool=true)
                  Any[F for F in b.FARF if farfield_is_laplace(F)],
                  Int[e.slot + 1 for e in b.event_slots], b.event_direction, b.event_handlers,
                  nothing, 1000 * (compiled - build_done), 1000 * (build_done - t0),
-                 [Float64[] for _ in b.disruption_layout])
+                 [Float64[] for _ in b.disruption_layout], nothing)
     sys.lo_x = zeros(length(sys.clock_idx))
     sys.hi_x = zeros(length(sys.clock_idx))
     setup_assembler!(sys)
@@ -1068,7 +1069,7 @@ function clone_system(sys::System)
                _clone_assembler(sys.assembler), sys.invariant_version, sys.slot_class, sys.clock_idx, copy(sys.lo_x),
                copy(sys.hi_x), sys.min_change, sys.origin, NaN, NaN, NaN, sys.jumps, sys.remembering, sys.recorders,
                Any[F for F in data.FARF if farfield_is_laplace(F)], sys.event_slots, sys.event_direction,
-               sys.event_handlers, nothing, 0.0, 0.0, [copy(v) for v in sys.sampled_times])
+               sys.event_handlers, nothing, 0.0, 0.0, [copy(v) for v in sys.sampled_times], sys.run_settings)
     c.jacobian = clone_jacobian(sys.jacobian, c)
     return c
 end

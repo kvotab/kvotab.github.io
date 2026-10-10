@@ -24,6 +24,7 @@ const FILES = [
     "engine/scenarios.jl",
     "engine/split.jl",
     "engine/fast.jl",
+    "engine/speed.jl",
     "engine/atstart.jl",
     "engine/runlog.jl",
     "model/normalise.jl",

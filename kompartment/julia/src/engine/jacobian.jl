@@ -760,6 +760,7 @@ mutable struct Analytic
     direct::Vector{DirectTerm}
     chain::Vector{ChainTerm}
     constant::Bool
+    state_free::Bool                       # df/dy moves with the clock at most: the model is linear
     G::Vector{Float64}
     work::Vector{Float64}                  # the tape's values: every node of every element
     leafwork::Vector{Float64}              # the leaves' values of every element
@@ -812,10 +813,11 @@ function Analytic(sys::System, pattern::Pattern, full::Bool)
     end
     an = Analytic(sys, pattern, n, keep, g_rows, g_row_of, g_cols, g_ptr, g_ptr[end] - 1,
                   Tangent(sys.data.TAB, Float64[], 0, 0), pat_key[order], order, budget_rows, Any[],
-                  DirectTerm[], ChainTerm[], false, zeros(g_ptr[end] - 1), Float64[], Float64[])
+                  DirectTerm[], ChainTerm[], false, false, zeros(g_ptr[end] - 1), Float64[], Float64[])
     _plan_statements!(an)
     _plan_assembly!(an)
     an.constant = _is_constant(an)
+    an.state_free = an.constant || _is_constant(an; clock=false)
     return an
 end
 
@@ -919,75 +921,81 @@ function _gradients!(an::Analytic, y::Vector{Float64}, X::Vector{Float64}, t::Fl
     for plan in an.plans
         if plan isa SpecialPlan
             _special_gradient!(an, plan, G, y, X, t)
-            continue
-        end
-        plan = plan::StatementPlan
-        W = plan.width
-        nl = length(plan.leaves)
-        tp = plan.tape
-        m = length(tp.kind)
-        length(an.work) < m * W && resize!(an.work, m * W)
-        length(an.leafwork) < nl * W && resize!(an.leafwork, nl * W)
-        NV = reshape(view(an.work, 1:m*W), m, W)
-        VALS = reshape(view(an.leafwork, 1:nl*W), nl, W)
-        for i in 1:W
-            for (p, l) in enumerate(plan.leaves)
-                VALS[p, i] = _leaf_value(l, i, y, X, P, t)
-            end
-            _tape_values!(view(NV, :, i), tp, view(VALS, :, i), tables)
-        end
-        base = nothing
-        if plan.multiply
-            factor = Vector{Float64}(undef, W)
-            for i in 1:W
-                factor[i] = NV[m, i]
-            end
-            for (i, lo, hi) in plan.own
-                f_i = factor[i]
-                for q in lo:hi-1
-                    G[q] *= f_i
-                end
-            end
-            # The rate as it stood before the availability multiplied it in.
-            base = [factor[i] != 0 ? X[plan.outs[i]+1] / factor[i] : 0.0 for i in 1:W]
-        end
-        d = Vector{Float64}(undef, W)
-        for (p, dst) in plan.y_terms
-            live = true
-            for i in 1:W
-                di = _tape_tangent(tp, p, view(NV, :, i), view(VALS, :, i), tables)
-                if di === nothing
-                    live = false
-                    break
-                end
-                d[i] = di
-            end
-            live || continue
-            base !== nothing && (d .= d .* base)
-            for i in 1:W
-                G[dst[i]] += d[i]
-            end
-        end
-        for (p, elem, src, dst) in plan.x_terms
-            live = true
-            for i in 1:W
-                di = _tape_tangent(tp, p, view(NV, :, i), view(VALS, :, i), tables)
-                if di === nothing
-                    live = false
-                    break
-                end
-                d[i] = di
-            end
-            live || continue
-            base !== nothing && (d .= d .* base)
-            # np.add.at(G, dst, d[elem] * G[src]): every product formed first, then added in order.
-            prods = [d[elem[q]] * G[src[q]] for q in eachindex(elem)]
-            for q in eachindex(dst)
-                G[dst[q]] += prods[q]
-            end
+        else
+            _statement_gradient!(an, plan::StatementPlan, G, y, X, P, t, tables)
         end
     end
     return G
+end
+
+"""One statement's part of the gradients (a function of its own, so that the plan's type is known)."""
+function _statement_gradient!(an::Analytic, plan::StatementPlan, G::Vector{Float64}, y::Vector{Float64},
+                              X::Vector{Float64}, P::Vector{Float64}, t::Float64, tables::Vector{LookupTable})
+    W = plan.width
+    nl = length(plan.leaves)
+    tp = plan.tape
+    m = length(tp.kind)
+    length(an.work) < m * W && resize!(an.work, m * W)
+    length(an.leafwork) < nl * W && resize!(an.leafwork, nl * W)
+    NV = reshape(view(an.work, 1:m*W), m, W)
+    VALS = reshape(view(an.leafwork, 1:nl*W), nl, W)
+    for i in 1:W
+        for (p, l) in enumerate(plan.leaves)
+            VALS[p, i] = _leaf_value(l, i, y, X, P, t)
+        end
+        _tape_values!(view(NV, :, i), tp, view(VALS, :, i), tables)
+    end
+    base = nothing
+    if plan.multiply
+        factor = Vector{Float64}(undef, W)
+        for i in 1:W
+            factor[i] = NV[m, i]
+        end
+        for (i, lo, hi) in plan.own
+            f_i = factor[i]
+            for q in lo:hi-1
+                G[q] *= f_i
+            end
+        end
+        # The rate as it stood before the availability multiplied it in.
+        base = [factor[i] != 0 ? X[plan.outs[i]+1] / factor[i] : 0.0 for i in 1:W]
+    end
+    d = Vector{Float64}(undef, W)
+    for (p, dst) in plan.y_terms
+        live = true
+        for i in 1:W
+            di = _tape_tangent(tp, p, view(NV, :, i), view(VALS, :, i), tables)
+            if di === nothing
+                live = false
+                break
+            end
+            d[i] = di
+        end
+        live || continue
+        base !== nothing && (d .= d .* base)
+        for i in 1:W
+            G[dst[i]] += d[i]
+        end
+    end
+    for (p, elem, src, dst) in plan.x_terms
+        live = true
+        for i in 1:W
+            di = _tape_tangent(tp, p, view(NV, :, i), view(VALS, :, i), tables)
+            if di === nothing
+                live = false
+                break
+            end
+            d[i] = di
+        end
+        live || continue
+        base !== nothing && (d .= d .* base)
+        # np.add.at(G, dst, d[elem] * G[src]): every product formed first, then added in order.
+        prods = [d[elem[q]] * G[src[q]] for q in eachindex(elem)]
+        for q in eachindex(dst)
+            G[dst[q]] += prods[q]
+        end
+    end
+    return nothing
 end
 
 function _special_gradient!(an::Analytic, plan::SpecialPlan, G, y, X, t)
@@ -1121,12 +1129,13 @@ function _plan_assembly!(an::Analytic)
     end
 end
 
-"""True when df/dy moves with neither the clock nor the state (`isConstant`)."""
-function _is_constant(an::Analytic)
+"""True when df/dy moves with neither the clock nor the state (`isConstant`); with `clock=false`,
+when it does not move with the state (the model is linear, its coefficients perhaps moving in time)."""
+function _is_constant(an::Analytic; clock::Bool=true)
     b = an.sys.builder
     any(r -> r[:mem] >= 0, b.recorders) && return false
     any(p -> p[:farf].laplace, b.farf_layout) && return false
-    moves(a) = a.name in b.on_state || a.name in b.on_clock
+    moves(a) = a.name in b.on_state || (clock && a.name in b.on_clock)
     paths = Set{String}(p.name for p in b.farf_layout if !p[:farf].laplace)
     for W in b.waste_layout
         W[:release_slot].name in b.on_clock || push!(paths, W[:q])
@@ -1208,28 +1217,31 @@ function analytic_evaluate!(J::Vector{Float64}, an::Analytic, t::Float64, y::Vec
         end
     end
     for c in an.chain
-        coef = _chain_coef(c, sys, y, X)
-        @inbounds for q in eachindex(c.dst)
-            J[c.dst[q]] += coef[c.elem[q]] * G[c.src[q]]
-        end
+        _chain_add!(J, c, G, sys, y, X)
     end
     all(isfinite, J) || return false
     return true
 end
 
-function _chain_coef(c::ChainTerm, sys::System, y, X)
-    w = c.width
+"""A chain term into `J`: each element's coefficient times the gradient it scales."""
+function _chain_add!(J::Vector{Float64}, c::ChainTerm, G::Vector{Float64}, sys::System, y, X)
+    dst, elem, src = c.dst, c.elem, c.src
+    @inbounds for q in eachindex(dst)
+        J[dst[q]] += _chain_coef(c, elem[q], sys, y, X) * G[src[q]]
+    end
+end
+
+"""A chain term's coefficient for element `i`."""
+@inline function _chain_coef(c::ChainTerm, i::Int, sys::System, y, X)
     k = c.kind
-    k === :signdonor && return [c.idx[i] > 0 ? c.sign[i] * y[c.idx[i]] : c.sign[i] * 1.0 for i in 1:w]
-    k === :ones && return ones(w)
-    k === :negone && return -ones(w)
-    k === :negy && return [-y[c.idx[i]] for i in 1:w]
-    k === :y && return [y[c.idx[i]] for i in 1:w]
-    k === :negxsy && return [-(X[c.s1] * y[c.idx[i]]) for i in 1:w]
-    k === :negxly && return [-(X[c.s1] * y[c.idx[i]]) for i in 1:w]
-    k === :xsy && return [X[c.s1] * y[c.idx[i]] for i in 1:w]
-    k === :xly && return [X[c.s1] * y[c.idx[i]] for i in 1:w]
-    k === :recording && return [sys.data.MEM[c.idx[i]].recording ? 1.0 : 0.0 for i in 1:w]
+    k === :signdonor && return c.idx[i] > 0 ? c.sign[i] * y[c.idx[i]] : c.sign[i] * 1.0
+    k === :ones && return 1.0
+    k === :negone && return -1.0
+    k === :negy && return -y[c.idx[i]]
+    k === :y && return y[c.idx[i]]
+    (k === :negxsy || k === :negxly) && return -(X[c.s1] * y[c.idx[i]])
+    (k === :xsy || k === :xly) && return X[c.s1] * y[c.idx[i]]
+    k === :recording && return sys.data.MEM[c.idx[i]].recording ? 1.0 : 0.0
     error("chain coefficient $k")
 end
 
@@ -1295,7 +1307,7 @@ function jacobian_spec(sys::System, numeric::Bool=false)
     end
     an = j.analytic
     ev = JacobianEvaluate((vals, t, y) -> analytic_evaluate!(vals, an, t, y))
-    return JacobianSpec(j.pattern, j.groups, ev, j.constant)
+    return JacobianSpec(j.pattern, j.groups, ev, j.constant, an.state_free)
 end
 
 """The Jacobian of a cloned system: the plans shared, the work space and the system its own."""
@@ -1305,7 +1317,7 @@ function clone_jacobian(j, sys::System)
     an === nothing && return j
     an2 = Analytic(sys, an.pattern, an.n, an.keep, an.g_rows, an.g_row_of, an.g_cols, an.g_ptr, an.g_nnz,
                    Tangent(sys.data.TAB, Float64[], 0, 0), an.pat_sorted, an.pat_order, an.budget_rows, an.plans,
-                   an.direct, an.chain, an.constant, zeros(length(an.G)), Float64[], Float64[])
+                   an.direct, an.chain, an.constant, an.state_free, zeros(length(an.G)), Float64[], Float64[])
     return JacobianInfo(j.available, j.reason, j.pattern, j.groups, j.constant, an2, j.nnz, j.colours, j.density,
                         j.budget_rows)
 end

@@ -57,6 +57,33 @@ const StepProgress = FunctionWrapper{Bool,Tuple{Float64,Int}}
 """A runner's `on_step(fraction, n, t)` (Python's opts['on_step']): false aborts."""
 const RunProgress = FunctionWrapper{Bool,Tuple{Float64,Int,Float64}}
 
+"""
+Rows for a solver's output (`opts["rows"]`), handed out in turn and used again from
+the first by the next run (`reset_rows!`): a thread of a probabilistic run keeps
+one, its realisations' series read out before the next starts, so that a large
+model's rows -- hundreds of megabytes a realisation -- are not made anew each time.
+"""
+mutable struct RowPool
+    rows::Vector{Vector{Float64}}
+    next::Int
+end
+RowPool() = RowPool(Vector{Float64}[], 1)
+reset_rows!(pool::RowPool) = (pool.next = 1; pool)
+
+"""The next row of `pool`, holding a copy of `y`."""
+function take_row!(pool::RowPool, y::Vector{Float64})
+    k = pool.next
+    pool.next = k + 1
+    if k > length(pool.rows)
+        push!(pool.rows, copy(y))
+    elseif length(pool.rows[k]) == length(y)
+        copyto!(pool.rows[k], y)
+    else
+        pool.rows[k] = copy(y)
+    end
+    return pool.rows[k]
+end
+
 include("pyfmt.jl")
 include("pattern.jl")
 include("kernels.jl")

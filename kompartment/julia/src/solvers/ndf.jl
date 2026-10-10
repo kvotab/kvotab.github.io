@@ -44,11 +44,14 @@ struct JacobianSpec
     groups::Union{Nothing,Vector{Vector{Int}}}
     evaluate::Union{Nothing,JacobianEvaluate}
     constant::Bool
+    state_free::Bool      # the values do not move with the state (they may with the clock)
 end
+JacobianSpec(pattern, groups, evaluate, constant::Bool) = JacobianSpec(pattern, groups, evaluate, constant, constant)
 
-JacobianSpec(; pattern=nothing, groups=nothing, evaluate=nothing, constant::Bool=false) =
+JacobianSpec(; pattern=nothing, groups=nothing, evaluate=nothing, constant::Bool=false,
+             state_free::Bool=constant) =
     JacobianSpec(pattern, groups, evaluate === nothing || evaluate isa JacobianEvaluate ? evaluate :
-                                  JacobianEvaluate(evaluate), constant)
+                                  JacobianEvaluate(evaluate), constant, state_free)
 
 """What a solve produced: a row per output time reached (copies), where it
 ended, where an event stopped it (`which`: 1-based events), and its
@@ -213,6 +216,7 @@ mutable struct _NDFState
     groups::Vector{Vector{Int}}
     evaluate::Union{Nothing,JacobianEvaluate}
     constant::Bool
+    state_free::Bool
     J::Vector{Float64}
     fresh::Bool
     dwork::DifferenceWork
@@ -695,7 +699,7 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
              t_start::Union{Nothing,Real}=nothing, hints::Union{Nothing,Dict{String,String}}=nothing,
              on_accepted::Union{Nothing,StepCallback}=nothing, on_output::Union{Nothing,StepCallback}=nothing,
              on_step::Union{Nothing,StepProgress}=nothing, auto_abstol::Bool=false, ends_only::Bool=false,
-             mass::Union{Nothing,AbstractVector{<:Real}}=nothing)::Solution
+             mass::Union{Nothing,AbstractVector{<:Real}}=nothing, rows::Union{Nothing,RowPool}=nothing)::Solution
     neq = length(y0)
     atol_in = if auto_abstol && abstol isa Vector{Float64} && length(abstol) == neq
         abstol                      # raised in place, as the caller's array is in Python
@@ -715,7 +719,7 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
                       jacobian, matrix === nothing || isempty(matrix) ? "auto" : String(matrix), floor_run,
                       floor_newton_run, Float64(stagnation_tol), Int(min_newton), Int(stall_window), events,
                       t_start === nothing ? NaN : Float64(t_start), hints, on_accepted, on_output, on_step,
-                      auto_abstol, ends_only, mass_v)
+                      auto_abstol, ends_only, mass_v, rows)
 end
 
 # Not specialised on which of its optional arguments a run has: one compiled solver, in the
@@ -731,7 +735,8 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     @nospecialize(on_accepted::Union{Nothing,StepCallback}),
                     @nospecialize(on_output::Union{Nothing,StepCallback}),
                     @nospecialize(on_step::Union{Nothing,StepProgress}),
-                    auto_abstol::Bool, ends_only::Bool, @nospecialize(mass::Union{Nothing,Vector{Float64}}))::Solution
+                    auto_abstol::Bool, ends_only::Bool, @nospecialize(mass::Union{Nothing,Vector{Float64}}),
+                    @nospecialize(rows::Union{Nothing,RowPool}))::Solution
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]
@@ -760,6 +765,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
     pattern = jacobian === nothing ? nothing : jacobian.pattern
     evaluate = jacobian === nothing ? nothing : jacobian.evaluate
     constant = jacobian === nothing ? false : jacobian.constant
+    state_free = jacobian === nothing ? false : jacobian.state_free
     groups = jacobian === nothing ? nothing : jacobian.groups
     if pattern !== nothing && groups === nothing
         groups = colour_columns(pattern)
@@ -773,7 +779,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                   algebraic, leading, error_const, max_order, direction,
                   constrained, projected, zeros(UInt8, neq), zeros(length(constrained)), false,
                   zeros(UInt8, neq), zeros(UInt8, neq),
-                  pattern, groups_v, evaluate, constant, zeros(Jlen), false,
+                  pattern, groups_v, evaluate, constant, state_free, zeros(Jlen), false,
                   DifferenceWork(pattern, groups, neq), IterationMatrix(0, nothing, Float64[]),
                   D, zeros(neq), zeros(max_order + 1, max_order + 1), zeros(max_order + 1, max_order + 1),
                   zeros(max_order + 1),
@@ -792,7 +798,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
             yout[2] = copy(yv)
         else
             push!(tout, tv)
-            push!(yout, copy(yv))
+            push!(yout, rows === nothing ? copy(yv) : take_row!(rows, yv))
         end
         nothing
     end
@@ -966,12 +972,14 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     end
                     dnorm = _ndf_take_correction!(s)
                     if size <= roundoff || size <= _NDF_CONVERGED_FLOOR * rtol
-                        # On a linear model (a constant, exact Jacobian) a second correction down at
-                        # round-off is the rate measured: ode15s keeps none, and so has every next step
-                        # iterate twice where once solves it. (Not on a nonlinear one, where the next
-                        # step's rate can be larger: it drifted an oscillator from the reference.)
-                        if it >= 2 && s.constant && !parity()
-                            rho = _pymax(size / prev, _NDF_EXACT_RATE_FLOOR)
+                        # On a linear model a second correction down at round-off is the rate
+                        # measured: ode15s keeps none, and so has every next step iterate twice where
+                        # once solves it -- with a constant Jacobian, exact, at the floor of an exact
+                        # one; with one that moves with the clock, at the usual floor. (Not on a
+                        # nonlinear model, where the next step's rate can be larger: it drifted an
+                        # oscillator from the reference.)
+                        if it >= 2 && s.state_free && !parity()
+                            rho = _pymax(size / prev, s.constant ? _NDF_EXACT_RATE_FLOOR : _NDF_RATE_FLOOR)
                         end
                         break
                     end

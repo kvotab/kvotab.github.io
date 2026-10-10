@@ -417,6 +417,52 @@ function interpolate_args(args::AbstractVector{Float64}, interpolation::String)
     return table_at(LookupTable(pairs, interpolation), key)
 end
 
+"""
+`interpolate_args` as the generated code calls it, the arguments a tuple and the rule
+`:linear` or `:extrapolate`: points that come in order of x, every x finite (the table
+would hold them as given), are read where they stand, by `table_at`'s arithmetic, with
+nothing made; any others are made into a table first.
+"""
+function interpolate_args(args::NTuple{N,Float64}, interpolation::Symbol) where {N}
+    n = (N - 1) >> 1                          # the points
+    whole() = interpolate_args(Float64[args...], String(interpolation))
+    (N - 1 >= 2 && iseven(N - 1)) || return whole()
+    (interpolation === :linear || interpolation === :extrapolate) || return whole()
+    @inbounds for k in 1:n
+        x = args[2k]
+        (isfinite(x) && (k == 1 || args[2k-2] <= x)) || return whole()
+    end
+    @inbounds begin
+        v = args[1]
+        n == 1 && return args[3]
+        out = interpolation === :extrapolate
+        v <= args[2] && return out ? _between_points(args, v, 0) : args[3]
+        v >= args[2n] && return out ? _between_points(args, v, n - 2) : args[2n+1]
+        # `_segment`: bisect_right(x, v) - 1, clamped to [0, n - 2]; not a number reads segment 0.
+        v != v && return _between_points(args, v, 0)
+        lo, hi = 0, n
+        while lo < hi
+            mid = (lo + hi) >>> 1
+            if v < args[2mid+2]
+                hi = mid
+            else
+                lo = mid + 1
+            end
+        end
+        return _between_points(args, v, min(max(lo - 1, 0), n - 2))
+    end
+end
+
+"""`_between` on the points of an argument tuple: segment `i` from 0, point `k` at `args[2k]`, `args[2k+1]`."""
+@inline function _between_points(args::NTuple{N,Float64}, v::Float64, i::Int) where {N}
+    @inbounds begin
+        x1, y1, x2, y2 = args[2i+2], args[2i+3], args[2i+4], args[2i+5]
+        dx = x2 - x1
+        dx == 0 && return y2
+        return y1 + ((v - x1) / dx) * (y2 - y1)
+    end
+end
+
 function interpolate_slope(args::AbstractVector{Float64}, interpolation::String)
     key = args[1]
     rest = args[2:end]

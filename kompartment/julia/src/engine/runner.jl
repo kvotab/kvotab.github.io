@@ -64,6 +64,25 @@ function absolute_tolerance(project::Project, sys::System)
     return asked ? per_state : fallback
 end
 
+"""
+The absolute tolerance per state and the states that cannot go negative, as
+`absolute_tolerance` and `non_negative_states` give them: worked out once for a
+system and the project it runs, since they read the blocks' settings, which a
+run does not change (a probabilistic run's realisations, on a large model, read
+them tens of milliseconds apiece).
+"""
+function run_tolerances(project::Project, sys::System)
+    sim = project.simulation
+    key = (get(sim, "abstol", nothing), get(sim, "non_negative", nothing))
+    kept = sys.run_settings
+    if !(kept isa Tuple && kept[1] === project && isequal(kept[2], key))
+        kept = (project, key, absolute_tolerance(project, sys), non_negative_states(project, sys))
+        sys.run_settings = kept
+    end
+    abstol = kept[3]
+    return (abstol isa Vector ? copy(abstol) : abstol), copy(kept[4])
+end
+
 function non_negative_states(project::Project, sys::System)
     out = falses(sys.nstate)
     project.simulation["non_negative"] === false && return out
@@ -158,10 +177,13 @@ several threads when `simulation.split` says so and the plan agrees (see
 `run_whole_or_split`); `threads` caps the bins (every thread Julia has by
 default), and `stats["split"]` says what was done. `layers` are far-field
 layers to hold instead of laying them out, as a split run's parts are given
-the whole model's (`whole_layers`).
+the whole model's (`whole_layers`). `rows` (a `RowPool`) is where the solver
+records its output, used again by the next run given it: the caller reads a
+run's series before it starts another.
 """
 function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false,
-                     threads=nothing, nest::Bool=true, layers=nothing, solver::Union{Nothing,String}=nothing)
+                     threads=nothing, nest::Bool=true, layers=nothing, solver::Union{Nothing,String}=nothing,
+                     rows::Union{Nothing,RowPool}=nothing)
     system === nothing && return run_whole_or_split(project; on_progress, on_grid, threads, nest)
     t0 = time()
     sys = system
@@ -179,8 +201,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     y0 = initial_state(sys)
     check_initial_state(sys, y0)
     nstate = sys.nstate
-    non_negative = non_negative_states(project, sys)
-    abstol = absolute_tolerance(project, sys)
+    abstol, non_negative = run_tolerances(project, sys)
     steps = (project.solver_points && !on_grid) ? StepCollector(Float64[], Vector{Float64}[], 1, 0, -Inf) : nothing
     span = (steps !== nothing && project.output_mode == "solver") ? [grid[1], grid[end]] : grid
     solve_start = time()
@@ -236,6 +257,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
                                                       EventFunction((out, t, y) -> (event_values!(out, sys, t, y); nothing)),
                                                       sys.event_direction) : nothing,
         "carry" => Dict{String,Any}(),
+        "rows" => rows === nothing ? nothing : reset_rows!(rows),
         "on_step" => on_progress === nothing ? nothing : (fraction, n, at) -> begin
             r = on_progress(fraction, at)
             r !== false
@@ -284,7 +306,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     catch e
         if e isa SolverError && solver_id != asked && e.kind != "aborted"
             # The quicker solver could not finish: the model's own runs it instead.
-            res = run_project(project; system=sys, on_progress, on_grid, threads, nest, layers, solver=asked)
+            res = run_project(project; system=sys, on_progress, on_grid, threads, nest, layers, solver=asked, rows)
             res.stats["tried"] = solver_id
             return res
         end

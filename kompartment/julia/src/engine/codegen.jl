@@ -224,10 +224,11 @@ function tree_expr!(w::CodeWriter, li::Dict{Int,Symbol}, lf::Dict{Int,Symbol}, b
         if key == "percentile"
             return Expr(:call, _g(:kf_percentile), args[1], Expr(:vect, args[2:end]...))
         end
+        # (a tuple: nothing is made for a call)
         key == "interpolationUseEndValues" &&
-            return Expr(:call, _g(:interpolate_args), Expr(:vect, args...), "linear")
+            return Expr(:call, _g(:interpolate_args), Expr(:tuple, args...), QuoteNode(:linear))
         key == "interpolationExtrapolation" &&
-            return Expr(:call, _g(:interpolate_args), Expr(:vect, args...), "extrapolate")
+            return Expr(:call, _g(:interpolate_args), Expr(:tuple, args...), QuoteNode(:extrapolate))
         key == "transport_point" && return Expr(:call, _g(:kf_transport_point), Expr(:vect, args...))
         key == "transport_sum" && return Expr(:call, _g(:kf_transport_range), Expr(:vect, args...), false)
         key == "transport_mean" && return Expr(:call, _g(:kf_transport_range), Expr(:vect, args...), true)
@@ -365,25 +366,63 @@ end
 #: run's parts) each take a number of their own.
 const _MODEL_COUNTER = Threads.Atomic{Int}(0)
 
+#: The passes compiled in this process, by their definitions: a model built again -- another
+#: run of it, each probabilistic run, a split run's parts that are alike -- takes the code
+#: compiled the first time instead of compiling it again. The definitions are compared whole,
+#: so code is shared only where it is the same; what differs from build to build (the index
+#: and number vectors) is read through the passes' last argument. The oldest go first.
+const _COMPILED = Dict{UInt,Vector{Pair{Vector{Any},Dict{Symbol,PassFunction}}}}()
+const _COMPILED_ORDER = UInt[]
+const _COMPILED_LOCK = ReentrantLock()
+const _COMPILED_MOST = 32
+
+function _compiled_lookup(defs::Vector{Any}, key::UInt)
+    lock(_COMPILED_LOCK) do
+        for (d, fns) in get(_COMPILED, key, ())
+            isequal(d, defs) && return fns
+        end
+        return nothing
+    end
+end
+
+function _compiled_store!(defs::Vector{Any}, key::UInt, fns::Dict{Symbol,PassFunction})
+    lock(_COMPILED_LOCK) do
+        same = get!(_COMPILED, key) do
+            push!(_COMPILED_ORDER, key)
+            Pair{Vector{Any},Dict{Symbol,PassFunction}}[]
+        end
+        any(p -> isequal(p.first, defs), same) || push!(same, defs => fns)
+        while length(_COMPILED_ORDER) > _COMPILED_MOST
+            delete!(_COMPILED, popfirst!(_COMPILED_ORDER))
+        end
+    end
+    return fns
+end
+
 """
     compile_passes(w, passes) -> Dict{Symbol,PassFunction}
 
 Evaluates the passes' definitions in a module of their own and wraps each in
 a `PassFunction`, which the solvers call without being compiled again for
-every model.
+every model -- nor for a model built again (`_COMPILED`).
 """
 function compile_passes(w::CodeWriter, passes::Vector{Pair{Symbol,Vector{Stmt}}})
     number = Threads.atomic_add!(_MODEL_COUNTER, 1) + 1
     # While the package itself is being precompiled no new module may be made,
     # so the workload's model is defined in this one, under names of its own.
     precompiling = ccall(:jl_generating_output, Cint, ()) == 1
-    mod = precompiling ? _G : Module(Symbol("KompartmentModel", number))
     prefix = precompiling ? "_precompiled_model$(number)_" : ""
     named(name) = Symbol(prefix, name)
     defs = Any[]
     for (name, stmts) in passes
         append!(defs, pass_definitions!(w, named(name), stmts))
     end
+    key = hash(defs)
+    if !precompiling
+        fns = _compiled_lookup(defs, key)
+        fns === nothing || return fns, defs
+    end
+    mod = precompiling ? _G : Module(Symbol("KompartmentModel", number))
     for d in defs
         Core.eval(mod, d)
     end
@@ -392,5 +431,6 @@ function compile_passes(w::CodeWriter, passes::Vector{Pair{Symbol,Vector{Stmt}}}
         f = Base.invokelatest(getfield, mod, named(name))
         out[name] = Base.invokelatest(PassFunction, f)
     end
+    precompiling || _compiled_store!(defs, key, out)
     return out, defs
 end

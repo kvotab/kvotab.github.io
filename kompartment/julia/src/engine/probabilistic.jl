@@ -371,27 +371,139 @@ function _pb_keep_name(o::AbstractDict)
     return (l === nothing || l == "") ? "" : l
 end
 
-"""One realisation's kept series, onto the sample's grid, into row `row` of each matrix."""
-function _pb_take!(values::Vector{Matrix{T}}, res::Results, kept::Vector{JDict}, row::Int,
-                   grid::Vector{Float64}) where {T}
+"""Where each kept series is read from: a state or a sum of states, an algebraic slot or a sum
+of them, a parameter (indices from 1), or a derived series (by position in `kept`)."""
+struct _PBTake
+    y_one::Vector{Tuple{Int,Int}}
+    y_sum::Vector{Tuple{Int,Vector{Int}}}
+    x_one::Vector{Tuple{Int,Int}}
+    x_sum::Vector{Tuple{Int,Vector{Int}}}
+    p_one::Vector{Tuple{Int,Int}}
+    derived::Vector{Int}
+    staged::Vector{Int}          # the states' and the algebraic slots' series, by position
+end
+
+function _PBTake(kept::Vector{JDict})
+    take = _PBTake(Tuple{Int,Int}[], Tuple{Int,Vector{Int}}[], Tuple{Int,Int}[], Tuple{Int,Vector{Int}}[],
+                   Tuple{Int,Int}[], Int[], Int[])
+    for (w, o) in enumerate(kept)
+        source = o["source"]
+        if source == "P"
+            push!(take.p_one, (w, o["offset"] + 1))
+        elseif source == "D"
+            push!(take.derived, w)
+        else
+            if haskey(o, "offsets")
+                push!(source == "y" ? take.y_sum : take.x_sum, (w, Int[off + 1 for off in o["offsets"]]))
+            else
+                push!(source == "y" ? take.y_one : take.x_one, (w, o["offset"] + 1))
+            end
+            push!(take.staged, w)
+        end
+    end
+    return take
+end
+
+"""The room `_pb_take!` works a realisation out in: a kept series per row, a time per column."""
+_pb_take_buffer(kept::Vector{JDict}, grid::Vector{Float64}) = Matrix{Float64}(undef, length(kept), length(grid))
+
+"""
+One realisation's kept series, onto the sample's grid, into column `col` of each
+matrix: each output time's state read once for every series that reads it, and
+the algebraic slots worked out once per time -- the numbers `series_many` gives.
+They are gathered a time at a time in `buf` (`_pb_take_buffer`) and written out a
+series at a time: the matrices are large and alike, so the same time of every
+series would fall in the same few cache lines' sets and push each other out.
+"""
+function _pb_take!(values::Vector{Matrix{T}}, res::Results, kept::Vector{JDict}, take::_PBTake, col::Int,
+                   grid::Vector{Float64}, buf::Matrix{Float64}) where {T}
     # `values` hold a realisation per column while the run goes (times by realisations), so a
     # realisation's series is one contiguous write; `_pb_run` turns them round at the end.
     times = length(grid)
-    t = res.t
-    rows = length(t) == times ? nothing : Int[min(searchsortedfirst(t, g), length(t)) for g in grid]
-    cols = series_many(res, kept)
-    for (w, c) in enumerate(cols)
+    # Reported at times besides the grid's: the series worked out whole, every row, and read at
+    # the grid's.
+    length(res.t) == times || return _pb_take_rows!(values, res, kept, col, grid)
+    sys = res.system
+    P = sys.P
+    for (w, s) in take.p_one
         M = values[w]
-        if rows === nothing
-            @inbounds for j in 1:times
-                M[j, row] = c[j]
+        v = P[s]
+        @inbounds for j in 1:times
+            M[j, col] = v
+        end
+    end
+    if !isempty(take.y_one) || !isempty(take.y_sum)
+        @inbounds for j in 1:times
+            y = res.y[j]
+            for (w, s) in take.y_one
+                buf[w, j] = y[s]
             end
-        else
-            @inbounds for j in 1:times
-                M[j, row] = c[rows[j]]
+            for (w, ss) in take.y_sum
+                acc = 0.0
+                for s in ss
+                    acc += y[s]
+                end
+                buf[w, j] = acc
             end
         end
     end
+    if !isempty(take.x_one) || !isempty(take.x_sum)
+        # As `algebraic_rows`: the passes at each time, with the run's histories.
+        keep = run_state(sys)
+        restore_run_state!(sys, res.run_state)
+        X = sys.X
+        try
+            @inbounds for j in 1:times
+                t, y = res.t[j], res.y[j]
+                at_instant!(sys, t, y)
+                sys.step(t, y, X, P, sys.data)
+                for (w, s) in take.x_one
+                    buf[w, j] = X[s]
+                end
+                for (w, ss) in take.x_sum
+                    acc = 0.0
+                    for s in ss
+                        acc += X[s]
+                    end
+                    buf[w, j] = acc
+                end
+            end
+        finally
+            restore_run_state!(sys, keep)
+            sys.clock_at = NaN
+        end
+    end
+    for w in take.staged
+        M = values[w]
+        @inbounds for j in 1:times
+            M[j, col] = buf[w, j]
+        end
+    end
+    if !isempty(take.derived)
+        for (w, c) in zip(take.derived, series_many(res, kept[take.derived]))
+            M = values[w]
+            @inbounds for j in 1:times
+                M[j, col] = c[j]
+            end
+        end
+    end
+    return nothing
+end
+
+"""`_pb_take!` for a run reported at times besides the grid's: every series over every row,
+read at the first row at or after each grid time."""
+function _pb_take_rows!(values::Vector{Matrix{T}}, res::Results, kept::Vector{JDict}, col::Int,
+                        grid::Vector{Float64}) where {T}
+    times = length(grid)
+    t = res.t
+    rows = Int[min(searchsortedfirst(t, g), length(t)) for g in grid]
+    for (w, c) in enumerate(series_many(res, kept))
+        M = values[w]
+        @inbounds for j in 1:times
+            M[j, col] = c[rows[j]]
+        end
+    end
+    return nothing
 end
 
 """
@@ -509,12 +621,13 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     kept = outs[wanted]
     T = precision == "float32" ? Float32 : Float64
     values = [Matrix{T}(undef, times, span) for _ in wanted]
-    _pb_take!(values, first_run, kept, 1, grid)
+    take = _PBTake(kept)
+    _pb_take!(values, first_run, kept, take, 1, grid, _pb_take_buffer(kept, grid))
     first_run = nothing
     on_progress === nothing || on_progress(1, span)
     ran = ones(UInt8, span)
-    ntasks, failures = _pb_parallel!(values, ran, project, sys, design, eff, frm, to, kept, outs, label_index, grid,
-                                     on_progress, threads)
+    ntasks, failures = _pb_parallel!(values, ran, project, sys, design, eff, frm, to, kept, take, outs, label_index,
+                                     grid, on_progress, threads)
     # A realisation per row, as the results hold them: each turned round in turn, so no more
     # than one series is held twice.
     for w in eachindex(values)
@@ -556,7 +669,7 @@ one. Returns how many threads ran and the failures, by realisation.
 """
 function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::Project, sys::System,
                        design::SampleDesign, eff::Matrix{Float64}, frm::Int, to::Int, kept::Vector{JDict},
-                       outs::Vector{JDict}, label_index, grid::Vector{Float64}, on_progress,
+                       take::_PBTake, outs::Vector{JDict}, label_index, grid::Vector{Float64}, on_progress,
                        threads::Integer) where {T}
     failures = Tuple{Int,String}[]
     rest = to - frm - 1
@@ -572,6 +685,8 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
         push!(systems, _pb_clone(sys))
     end
     function work(s::System)
+        buf = _pb_take_buffer(kept, grid)
+        pool = RowPool()
         while !stop[]
             i = Threads.atomic_add!(next, 1)
             i >= to && break
@@ -579,10 +694,10 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
             _pb_apply!(s, design, eff, row, i)
             message = nothing
             try
-                r = run_project(project; system=s, on_grid=true)
+                r = run_project(project; system=s, on_grid=true, rows=pool)
                 r.outputs_cache = outs
                 r.label_index = label_index
-                _pb_take!(values, r, kept, row, grid)
+                _pb_take!(values, r, kept, take, row, grid, buf)
             catch e
                 e isa InterruptException && rethrow()
                 message = sprint(showerror, e)

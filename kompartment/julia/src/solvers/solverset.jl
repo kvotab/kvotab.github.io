@@ -43,8 +43,9 @@ Python engine's `solverset.variable_order`. `opts` keys as Python's:
 "norm_control", "matrix", "below_tol_run", "stagnation_tol", "jacobian"
 (a JacobianSpec), "events" (EventFunctions), "on_accepted" and "on_output"
 (called `(t, y)`), "on_step" (called `(fraction, n, t)` every 64 derivative
-evaluations; false aborts), "auto_abstol", "ends_only"; "carry" and the
-rest are read by other solvers and ignored here.
+evaluations; false aborts), "auto_abstol", "ends_only", "rows" (a `RowPool`
+the output is recorded into); "carry" and the rest are read by other solvers
+and ignored here.
 """
 function variable_order(f::RHSFunction, tspan_in::AbstractVector{<:Real}, y0::AbstractVector{<:Real},
                         opts::AbstractDict)::Solution
@@ -110,7 +111,8 @@ function variable_order(f::RHSFunction, tspan_in::AbstractVector{<:Real}, y0::Ab
             stagnation_tol=(stagnation !== nothing && stagnation > 0) ? Float64(stagnation) : 0.0,
             error_norm=_truthy(error_norm) ? String(error_norm) : "max",
             matrix=_truthy(matrix) ? String(matrix) : "auto",
-            below_tol_run=below === nothing ? nothing : Float64(below))
+            below_tol_run=below === nothing ? nothing : Float64(below),
+            rows=_opt(opts, "rows"))
     catch e
         e isa SolverError || rethrow()
         failure = variable_order_failure(e, t0)
