@@ -21,6 +21,8 @@ module SplitTests
 using Test
 using Kompartment
 const K = Kompartment
+# Checked against the Python package's own results, to the bit: the engine in parity mode.
+K.set_parity!(true)
 
 const FIXTURES = get(ENV, "KOMPARTMENT_SPLIT_FIXTURES", "")
 # What auto learns from these runs is kept in this process only, and nothing kept from runs

@@ -161,7 +161,7 @@ layers to hold instead of laying them out, as a split run's parts are given
 the whole model's (`whole_layers`).
 """
 function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false,
-                     threads=nothing, nest::Bool=true, layers=nothing)
+                     threads=nothing, nest::Bool=true, layers=nothing, solver::Union{Nothing,String}=nothing)
     system === nothing && return run_whole_or_split(project; on_progress, on_grid, threads, nest)
     t0 = time()
     sys = system
@@ -199,9 +199,11 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
                        Dict("build_ms" => build_ms, "solve_ms" => 1000 * (time() - solve_start)))
     end
     sim = project.simulation
-    solver_id = something(get(sim, "solver", nothing), "ndf")
-    solver = get(SOLVERS, solver_id, nothing)
-    solver === nothing && throw(ArgumentError(_unavailable_solver(solver_id)))
+    asked = String(something(get(sim, "solver", nothing), "ndf"))
+    # The quickest solver for what the model asks, unless the policy says to keep to its own.
+    solver_id = solver === nothing ? quicker_solver(asked) : solver
+    solve_fn = get(SOLVERS, solver_id, nothing)
+    solve_fn === nothing && throw(ArgumentError(_unavailable_solver(solver_id)))
     prime_recorders!(sys, grid[1], y0)
     stored = (t, y) -> (store_step!(sys, t, y); nothing)
     on_accepted = if steps !== nothing && has_store_step(sys)
@@ -267,9 +269,9 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
         use_clock_interpolation!(sys, min_change, grid2[1])
         start_segment!(sys, grid2[1], start)
         if has_events(sys)
-            return solve_with_events(sys, f, solver, grid2, start, opts)
+            return solve_with_events(sys, f, solve_fn, grid2, start, opts)
         end
-        return solver(f, grid2, start, opts)
+        return solve_fn(f, grid2, start, opts)
     end
     local solution
     try
@@ -280,6 +282,12 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
             solution = project.output_mode == "both" ? merge_steps(solution, steps) : from_steps(steps, solution)
         end
     catch e
+        if e isa SolverError && solver_id != asked && e.kind != "aborted"
+            # The quicker solver could not finish: the model's own runs it instead.
+            res = run_project(project; system=sys, on_progress, on_grid, threads, nest, layers, solver=asked)
+            res.stats["tried"] = solver_id
+            return res
+        end
         if e isa SolverError
             hints = String[]
             said = occursin("cannot go negative", e.message)
@@ -298,6 +306,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
         rethrow()
     end
     solution.stats["compiled"] = true
+    solver_id == asked || (solution.stats["asked"] = asked)
     # What a far-field path has to say about the run (``stats.farfield``, ``stats.layers``).
     warned = farfield_warnings(sys)
     isempty(warned.farfield) || (solution.stats["farfield"] = warned.farfield)

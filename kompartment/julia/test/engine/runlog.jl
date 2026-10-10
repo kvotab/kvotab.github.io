@@ -5,6 +5,8 @@ module RunLogTests
 using Test
 using Kompartment
 const K = Kompartment
+# Checked against the Python package's own results, to the bit: the engine in parity mode.
+K.set_parity!(true)
 
 # What Node prints for x.toFixed(0), x.toFixed(2), x.toExponential(1) and x.toExponential(3).
 const JS = [(1.005, "1", "1.00", "1.0e+0", "1.005e+0"), (2.5, "3", "2.50", "2.5e+0", "2.500e+0"),

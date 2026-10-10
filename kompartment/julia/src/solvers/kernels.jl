@@ -276,3 +276,127 @@ function _seq_sum_squares(v::Vector{Float64})::Float64
     end
     return s
 end
+
+# --- Julia's own dense LU, the default ------------------------------------------------------------
+#
+# Where the engine need not reproduce the Python package's arithmetic (`parity()` off), a dense
+# iteration matrix is held in Julia's own column-major layout and factorised and solved column by
+# column: each inner loop is a contiguous update of one column by another, which the compiler
+# turns into vector instructions with fused multiply-adds, where the application's row sums are a
+# chain of dependent additions. The pivots are LAPACK's (the largest in the column).
+
+"""Mass - a*J from a pattern's values, in `A` as it is (`A[i, j]` = W[i, j]); the rows `held` marks
+are rows of the identity. 0, or `-_LU_NONFINITE` with the first column and value that is not a number."""
+function _fast_form_pattern!(A::Matrix{Float64}, a::Float64, colptr::Vector{Int}, rowval::Vector{Int},
+                             values::Vector{Float64}, held::Vector{UInt8}, mass::Vector{Float64},
+                             fail::Vector{Float64})::Int
+    n = size(A, 1)
+    fill!(A, 0.0)
+    @inbounds for j in 1:n
+        for p in colptr[j]:colptr[j+1]-1
+            i = rowval[p]
+            held[i] != 0 && continue
+            v = -a * values[p]
+            if !isfinite(v)
+                fail[1] = j - 1
+                fail[2] = v
+                return -_LU_NONFINITE
+            end
+            A[i, j] = v
+        end
+    end
+    @inbounds for i in 1:n
+        A[i, i] += mass[i]
+    end
+    return 0
+end
+
+"""Mass - a*J from a dense Jacobian held by columns (`J[i + (j-1)*n]`), as `_fast_form_pattern!`."""
+function _fast_form_dense!(A::Matrix{Float64}, a::Float64, J::Vector{Float64}, held::Vector{UInt8},
+                           mass::Vector{Float64}, fail::Vector{Float64})::Int
+    n = size(A, 1)
+    @inbounds for j in 1:n
+        off = (j - 1) * n
+        for i in 1:n
+            v = held[i] != 0 ? 0.0 : -a * J[off+i]
+            if !isfinite(v)
+                fail[1] = j - 1
+                fail[2] = v
+                return -_LU_NONFINITE
+            end
+            A[i, j] = v
+        end
+    end
+    @inbounds for i in 1:n
+        A[i, i] += mass[i]
+    end
+    return 0
+end
+
+"""LU with partial pivoting of `A` in place: L below the diagonal (unit), U on and above it, and
+`piv[k]` the row swapped with row k at step k. On failure `fail` holds the column (from zero) and
+|pivot|, as `_app_factor!` does."""
+function _fast_factor!(A::Matrix{Float64}, piv::Vector{Int}, fail::Vector{Float64})::Int
+    n = size(A, 1)
+    @inbounds for k in 1:n
+        p = k
+        largest = abs(A[k, k])
+        for i in k+1:n
+            v = abs(A[i, k])
+            if v > largest
+                largest = v
+                p = i
+            end
+        end
+        if !(largest > 0) || !isfinite(largest)
+            fail[1] = k - 1
+            fail[2] = largest
+            return largest != 0 ? _LU_NONFINITE : _LU_SINGULAR
+        end
+        piv[k] = p
+        if p != k
+            for j in 1:n
+                A[k, j], A[p, j] = A[p, j], A[k, j]
+            end
+        end
+        r = 1 / A[k, k]
+        @simd for i in k+1:n
+            A[i, k] *= r
+        end
+        for j in k+1:n
+            akj = A[k, j]
+            akj == 0 && continue
+            @simd for i in k+1:n
+                A[i, j] = muladd(-A[i, k], akj, A[i, j])
+            end
+        end
+    end
+    return _LU_OK
+end
+
+"""`x = W \\ x` for the factors `_fast_factor!` left in `A`."""
+function _fast_solve!(x::Vector{Float64}, A::Matrix{Float64}, piv::Vector{Int})
+    n = size(A, 1)
+    @inbounds for k in 1:n
+        p = piv[k]
+        if p != k
+            x[k], x[p] = x[p], x[k]
+        end
+    end
+    @inbounds for j in 1:n-1
+        xj = x[j]
+        xj == 0 && continue
+        @simd for i in j+1:n
+            x[i] = muladd(-A[i, j], xj, x[i])
+        end
+    end
+    @inbounds for j in n:-1:1
+        xj = x[j] / A[j, j]
+        x[j] = xj
+        xj == 0 && continue
+        @simd for i in 1:j-1
+            x[i] = muladd(-A[i, j], xj, x[i])
+        end
+    end
+    return x
+end

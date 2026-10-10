@@ -19,6 +19,10 @@ const _NDF_NEWTON_MAX = 4
 const _NDF_NEWTON_TOL = 0.3
 const _NDF_RATE_LIMIT = 0.9
 const _NDF_RATE_FLOOR = 0.02
+#: The floor on the Newton rate where the Jacobian is exact and constant (a linear model) and parity
+#: is off: one iteration then solves the step's equations to round-off, and the rate measured is
+#: round-off too, so a step stops after one iteration where ode15s's floor of 0.02 would ask for two.
+const _NDF_EXACT_RATE_FLOOR = 1e-6
 const _NDF_CONVERGED_FLOOR = 1e-3
 const _NDF_SAFETY = 0.8
 const _NDF_SAFETY_LOWER = 0.75
@@ -616,7 +620,9 @@ function _ndf_form_w!(s::_NDFState)
     s.ndecomps += 1
     s.hW = s.h
     s.kW = s.k
-    s.rate = -1.0
+    # A new matrix converges at a rate of its own -- except an exact one (a constant Jacobian,
+    # no rows held), whose rate is round-off whatever the step.
+    (s.constant && !any_held && !parity()) || (s.rate = -1.0)
     return nothing
 end
 
@@ -960,6 +966,13 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     end
                     dnorm = _ndf_take_correction!(s)
                     if size <= roundoff || size <= _NDF_CONVERGED_FLOOR * rtol
+                        # On a linear model (a constant, exact Jacobian) a second correction down at
+                        # round-off is the rate measured: ode15s keeps none, and so has every next step
+                        # iterate twice where once solves it. (Not on a nonlinear one, where the next
+                        # step's rate can be larger: it drifted an oscillator from the reference.)
+                        if it >= 2 && s.constant && !parity()
+                            rho = _pymax(size / prev, _NDF_EXACT_RATE_FLOOR)
+                        end
                         break
                     end
                     if it == 1
@@ -978,7 +991,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                         outcome = 2
                         break
                     end
-                    rho = _pymax(ratio, _NDF_RATE_FLOOR)
+                    rho = _pymax(ratio, (s.constant && !parity()) ? _NDF_EXACT_RATE_FLOOR : _NDF_RATE_FLOOR)
                     remaining = (rho / (1 - rho)) * size
                     if remaining <= _NDF_NEWTON_TOL * rtol && it >= min_newton
                         break

@@ -23,6 +23,7 @@ const FILES = [
     "engine/probabilistic.jl",
     "engine/scenarios.jl",
     "engine/split.jl",
+    "engine/fast.jl",
     "engine/atstart.jl",
     "engine/runlog.jl",
     "model/normalise.jl",
@@ -33,8 +34,13 @@ const FILES = [
     "importers/test_eco.jl",
 ]
 
+using Kompartment
+
 @testset "Kompartment" begin
     for f in FILES
+        # Every file in the engine's default, fast mode unless it asks for parity itself (those
+        # checked against the Python package's own results).
+        Kompartment.set_parity!(false)
         m = Module(Symbol(replace(f, r"[/.]" => "_")))
         Core.eval(m, :(include(x) = Base.include($m, x)))
         Base.include(m, joinpath(@__DIR__, f))

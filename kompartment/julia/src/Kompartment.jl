@@ -18,7 +18,9 @@ The equations are compiled to native code: each pass of a model (the
 values that never change, those that follow the clock, those that read the
 state) becomes a Julia function, and the derivative is assembled as one
 sparse product in the application's order. The solvers are ports of the
-application's own, so a run takes the steps the application takes.
+application's own. By default the engine takes Julia's quickest way to an
+answer within a run's tolerance; with parity on (`set_parity!`) a run takes
+the Python package's steps and gives its numbers to the last bit.
 """
 module Kompartment
 
@@ -35,6 +37,7 @@ import SHA
 include("util/jsnum.jl")
 include("util/zip.jl")
 include("util/jsonio.jl")
+include("util/parity.jl")
 include("lang/jsmath.jl")
 include("lang/tokenize.jl")
 include("lang/functions.jl")
@@ -110,6 +113,11 @@ include("engine/probabilistic.jl")
 include("engine/analysis.jl")
 
 include("precompile.jl")
+
+function __init__()
+    _PARITY[] = _parity_from_env()
+    _SOLVER_POLICY[] = _solver_policy_from_env()
+end
 
 # Opening, running and saving. `load` and `select` are left unexported (FileIO and DataFrames export
 # the same names): `Kompartment.load(path)`, and `outputs(res, block)` to pick series.

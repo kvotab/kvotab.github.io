@@ -1,14 +1,15 @@
 # Kompartment for Julia
 
 Open a Kompartment model -- or an Ecolego project or assessment -- in Julia,
-edit it, build it into equations, run it with the application's own solvers
-and save what it produced, as the table or as the HDF5 result file the
-assessment tools read. The package is a port of the Python package, and a run
-here is that package's run to the last bit on every bundled example: the same
-model loaded the same way, the same equations in the same order, the same
-steps. What Julia adds is speed: the equations are compiled to native code,
-probabilistic runs share the threads, and the whole path from file to result
-file is several times quicker than Python's.
+edit it, build it into equations, run it and save what it produced, as the
+table or as the HDF5 result file the assessment tools read. The package is a
+port of the Python package, made as fast as Julia can make it: the equations
+are compiled to native code, the linear algebra is Julia's own, a model is
+solved by the quickest of the solvers here, and probabilistic runs share the
+threads. A run agrees with the Python package's to its tolerance; with parity
+on (`Kompartment.set_parity!(true)`, or `KOMPARTMENT_PARITY=1`) it is that
+package's run to the last bit on every bundled example -- the same equations
+in the same order, the same steps -- which is how the two are checked.
 
 ```julia
 using Kompartment
@@ -125,6 +126,27 @@ automatic choice here, as `auto_julia` is: an explicit method while the run
 is not stiff and a stiff one once it is. (The application and the Python
 package switch between methods of their own under that name.)
 
+### Fast by default, or the Python package to the bit
+
+By default the engine takes Julia's quickest way to an answer within a run's
+tolerance:
+
+- A model that asks for the Rosenbrock 2-3 (`ros23`) is solved by the NDF,
+  which finished the bundled examples 3 to 24 times sooner, and closer to a
+  tightly solved reference. Should the NDF not finish a run, the model's own
+  solver runs it; `res.stats["solver"]`, `res.stats["asked"]` and the run log
+  say which ran.
+- A model whose Jacobian is constant -- a linear one -- takes one Newton
+  iteration a step where ode15s's rule takes two.
+- A dense iteration matrix is factorised and solved by Julia's own LU, with
+  vector instructions and fused multiply-adds.
+
+`Kompartment.set_solver_policy!(:model)` (or `KOMPARTMENT_SOLVERS=model`)
+keeps every model to its own solver. With parity on --
+`Kompartment.set_parity!(true)`, or `KOMPARTMENT_PARITY=1` -- the engine does
+exactly what the Python package does. Switch before building: a system takes
+the setting when it is built, and a run when it starts.
+
 ## Solving in parts
 
 A model whose radionuclides fall into groups with no path between them --
@@ -144,9 +166,9 @@ whole model is built first -- its Jacobian says where the parts are, and every
 series is worked out on it afterwards -- then each bin of parts is built with
 every other material switched off, solved on the output grid, and its states
 filed back by name; the far-field paths keep the whole model's layers, and a
-min/max or running mean comes back from the part it reads. A bin's run is the
-Python package's run of the same bin to the bit, and a split run agrees with
-the whole run to the tolerance.
+min/max or running mean comes back from the part it reads. With parity on, a
+bin's run is the Python package's run of the same bin to the bit; a split run
+agrees with the whole run to the tolerance.
 
 `auto` splits when it expects that to be clearly quicker: a large model of
 many parts before it has been timed, and afterwards by what a whole solve
@@ -350,12 +372,17 @@ The engine is checked against the Python package's, with fixtures the
 
 Each tool runs on the Python package (`PYTHONPATH=../python`). `julia
 --project=. test/runtests.jl` runs every test file, each parity test where its
-variable is set and the rest of it regardless.
+variable is set and the rest of it regardless. These tests switch parity on.
 
-Every bundled example runs to the same bits as the Python package. A model
-large enough for the sparse solver (above 200 states) parts at round-off:
-the factorisations are KLU's here and SuperLU's in Python, so the runs agree to
-the tolerance, as two machines do.
+With parity on, every bundled example runs to the same bits as the Python
+package. A model large enough for the sparse solver (above 200 states) parts
+at round-off: the factorisations are KLU's here and SuperLU's in Python, so the
+runs agree to the tolerance, as two machines do.
+
+The default, fast mode is held to parity mode's accuracy instead
+(`test/engine/fast.jl`): every bundled example is solved to a far tighter
+tolerance, and its fast run must come within three times parity mode's error
+of that, or ten times the run's own tolerance.
 
 Some things needed care to come out the same. The model's arithmetic calls
 the C library, as numpy does, rather than Julia's own `exp`, `log` and `^`,

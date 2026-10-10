@@ -184,6 +184,11 @@ function run_log_lines(res::Results; project=nothing, build::AbstractString="", 
                    "$(js_text(something(get(s, "nfevals", nothing), "?")))")
         methods = describe_method_steps(s)
         methods === nothing || push!(out, "  methods: $methods")
+        asked = get(s, "asked", nothing)
+        asked === nothing || push!(out, "  solver run: $(js_text(get(s, "solver", nothing))), the quicker for the " *
+                                        "$(js_text(asked)) the model asks for")
+        tried = get(s, "tried", nothing)
+        tried === nothing || push!(out, "  solver run: the model's own, after $(js_text(tried)) could not finish")
         js_truthy(get(s, "nbelowtol", nothing)) && push!(out, "  steps taken below tolerance: $(js_text(s["nbelowtol"]))")
         haskey(s, "events") && s["events"] !== nothing &&
             push!(out, "  events: $(js_text(s["events"])), restarts: $(js_text(something(get(s, "restarts", nothing), 0)))")

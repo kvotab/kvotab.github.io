@@ -19,6 +19,8 @@ if !@isdefined(K)
     using Kompartment
     const K = Kompartment
 end
+# Checked against the Python package's own results, to the bit: the engine in parity mode.
+K.set_parity!(true)
 
 const PROB_FIXTURES = get(ENV, "KOMPARTMENT_PROB_FIXTURES", "")
 

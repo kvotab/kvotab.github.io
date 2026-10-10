@@ -11,6 +11,8 @@ module FarfieldTests
 using Test
 using Kompartment
 const K = Kompartment
+# Checked against the Python package's own results, to the bit: the engine in parity mode.
+K.set_parity!(true)
 
 const DIR = get(ENV, "KOMPARTMENT_FARFIELD_FIXTURES", "")
 const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")

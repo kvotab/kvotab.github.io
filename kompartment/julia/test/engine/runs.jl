@@ -14,6 +14,8 @@ module RunTests
 using Test
 using Kompartment
 const K = Kompartment
+# Checked against the Python package's own results, to the bit: the engine in parity mode.
+K.set_parity!(true)
 
 const FIXTURES = get(ENV, "KOMPARTMENT_RUN_FIXTURES", "")
 const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")

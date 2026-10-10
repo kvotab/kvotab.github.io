@@ -23,6 +23,7 @@ const _MAT_NONE = 0
 const _MAT_KERNEL = 1
 const _MAT_LAPACK = 2
 const _MAT_KLU = 3
+const _MAT_FAST = 4            # Julia's own dense LU (kernels.jl), where parity is off
 
 """What the matrix refuses to be made or factorised with (Python's RuntimeError)."""
 struct MatrixError <: Exception
@@ -236,10 +237,17 @@ function _mat_form!(W::IterationMatrix, a::Float64, J::Vector{Float64},
     mass = W.mass
     if W.kernels && !W.sparse
         h = held === nothing ? W.no_held : held
-        status = W.pattern === nothing ?
-                 _app_form_factor_dense!(a, J, h, W.mass_diag, W.lut, W.piv, W.fail) :
-                 _app_form_factor_pattern!(a, W.pattern.colptr, W.pattern.rowval, J, h, W.mass_diag, W.lut, W.piv,
-                                           W.fail)
+        exact = parity()
+        status = if exact
+            W.pattern === nothing ?
+                _app_form_factor_dense!(a, J, h, W.mass_diag, W.lut, W.piv, W.fail) :
+                _app_form_factor_pattern!(a, W.pattern.colptr, W.pattern.rowval, J, h, W.mass_diag, W.lut, W.piv,
+                                          W.fail)
+        else
+            formed = W.pattern === nothing ? _fast_form_dense!(W.lut, a, J, h, W.mass_diag, W.fail) :
+                     _fast_form_pattern!(W.lut, a, W.pattern.colptr, W.pattern.rowval, J, h, W.mass_diag, W.fail)
+            formed != 0 ? formed : _fast_factor!(W.lut, W.piv, W.fail)
+        end
         if status != 0
             col = Int(W.fail[1])
             value = W.fail[2]
@@ -248,7 +256,7 @@ function _mat_form!(W::IterationMatrix, a::Float64, J::Vector{Float64},
             end
             return _singular_message(mass, col, get(W.hints, "singular", nothing))
         end
-        W.lu = _MAT_KERNEL
+        W.lu = exact ? _MAT_KERNEL : _MAT_FAST
         return nothing
     end
     if W.pattern === nothing
@@ -378,7 +386,10 @@ end
 """`x = W \\ b` for the latest factorisation (`x`, `b` distinct)."""
 function _mat_solve!(W::IterationMatrix, x::Vector{Float64}, b::Vector{Float64})
     lu = W.lu
-    if lu == _MAT_KERNEL
+    if lu == _MAT_FAST
+        copyto!(x, b)
+        return _fast_solve!(x, W.lut, W.piv)
+    elseif lu == _MAT_KERNEL
         return _app_solve!(x, W.lut, W.piv, b)
     elseif lu == _MAT_KLU
         copyto!(x, b)
@@ -393,7 +404,9 @@ end
 """`x = W \\ x` for the latest factorisation."""
 function _mat_solve_inplace!(W::IterationMatrix, x::Vector{Float64})
     lu = W.lu
-    if lu == _MAT_KERNEL
+    if lu == _MAT_FAST
+        return _fast_solve!(x, W.lut, W.piv)
+    elseif lu == _MAT_KERNEL
         b = W.work
         copyto!(b, x)
         return _app_solve!(x, W.lut, W.piv, b)

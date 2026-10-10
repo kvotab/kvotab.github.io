@@ -7,5 +7,8 @@ import FunctionWrappers
 import FunctionWrappers: FunctionWrapper
 const _SRC = normpath(joinpath(@__DIR__, "..", "..", "src"))
 include(joinpath(_SRC, "lang", "jsmath.jl"))
+include(joinpath(_SRC, "util", "parity.jl"))
 include(joinpath(_SRC, "solvers", "solvers.jl"))
+# Checked against the Python package's solvers step by step: parity on.
+_PARITY[] = true
 end
