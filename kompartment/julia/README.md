@@ -137,7 +137,11 @@ tolerance:
   solver runs it; `res.stats["solver"]`, `res.stats["asked"]` and the run log
   say which ran.
 - A model whose Jacobian is constant -- a linear one -- takes one Newton
-  iteration a step where ode15s's rule takes two.
+  iteration a step where ode15s's rule takes two (and one whose Jacobian
+  moves with the clock alone keeps the rate it measured).
+- The derivative's terms are merged into one entry per state and column read,
+  each worked out from the values it reads with fused multiply-adds, so a call
+  is one sparse product over far fewer entries than there are terms.
 - A dense iteration matrix is factorised and solved by Julia's own LU, with
   vector instructions and fused multiply-adds.
 
@@ -256,8 +260,10 @@ The design is drawn whole before any realisation runs, from the named streams
 the application draws from -- Latin hypercube or random, correlations put in
 by Iman-Conover -- so the values drawn are the application's and the Python
 package's to the bit, and the answer does not depend on how many threads
-share the work. The model is built once; each thread runs its share on a copy
-of the built system that shares the compiled code. `seed` and `latin` are the
+share the work. The model is built once -- built again, it takes the code
+compiled the first time -- and every realisation, the first with the rest,
+runs on the threads, each on a copy of the built system that shares the
+compiled code, its kept series read straight into the results. `seed` and `latin` are the
 sampling's (1 and Latin hypercube by default; the model's own are
 `simulation(m)["seed"]` and `simulation(m)["sampling"]`). `keep` names the
 blocks or series kept, every endpoint by default; `threads`, `range` (a slice
@@ -273,9 +279,10 @@ peaks) and `:max` (each realisation's own peak).
 A model is built into Julia functions -- the values that never change, those
 that follow the clock, those that read the state -- compiled once and called
 through function wrappers, so the solvers themselves are compiled once for
-every model. The derivative is assembled as one sparse product in the
-application's order, and the Jacobian is the model's own, derived from its
-equations. The sparse solves use KLU.
+every model. The derivative is one sparse product -- over the merged entries
+by default, term by term in the application's order with parity on -- and
+the Jacobian is the model's own, derived from its equations. The sparse
+solves use KLU.
 
 The Python package's timing model -- 16 decay chains of 12 made-up nuclides
 through 150 compartments, 28,800 states (`tools/bench.jl`) -- and the bundled
@@ -285,23 +292,27 @@ Python package's compiled code cached, the Julia package precompiled):
 | | Julia | Python (compiled) |
 |---|---|---|
 | Build (and compile) | 0.11 s | 0.51 s |
-| Solve, whole model | 2.3 s | 6.0 s |
+| Solve, whole model | 1.3 s | 6.0 s |
 | Every series to HDF5 | 0.7 s | 13.6 s |
-| Biosphere example, 1,000 realisations, one thread / process | 3.0 s | 5.1 s |
-| The same on eight | 0.6 s | 1.9 s |
+| Biosphere example, 1,000 realisations, one thread / process | 0.52 s | 5.1 s |
+| The same on eight | 0.11 s | 1.9 s |
 | The timing model split into its 16 chains, four threads / processes | 0.78 s | 5.1 s |
 | The same on eight | 0.61 s | 5.4 s |
 
-The split rows are the Python package's timing test and this package's, with
-`KOMPARTMENT_SPLIT_TIMING=1` (`python/tests/test_engine_split.py`,
-`test/engine/split.jl`): each run from the model to its results -- the whole
-model's build, the parts' builds and solves, the states filed back -- with
-every part taking the same steps in both.
+The Julia rows above the split rows are the engine's default, fast mode; a
+model built again takes the code compiled for it the first time (compiling
+the timing model's took 0.07 s). The split rows are the Python package's
+timing test and this package's, with `KOMPARTMENT_SPLIT_TIMING=1`
+(`python/tests/test_engine_split.py`, `test/engine/split.jl`): each run from
+the model to its results -- the whole model's build, the parts' builds and
+solves, the states filed back -- with every part taking the same steps in
+both (parity mode).
 
 The bundled examples build in tens of milliseconds and solve in milliseconds.
 Julia compiles the package's own code once, when it is precompiled; a model's
-generated code is compiled when the model is built, a fraction of a second
-even for a large assessment. Each solver is compiled once for every model,
+generated code is compiled when the model is first built, a fraction of a
+second even for a large assessment, and taken again whenever the same model
+is built again in the process. Each solver is compiled once for every model,
 whatever a run's settings, recorders, events or progress callback, so a fresh
 process does not compile it again: there `using Kompartment` takes about half
 a second, and a bundled example's first result, opened from its file and
