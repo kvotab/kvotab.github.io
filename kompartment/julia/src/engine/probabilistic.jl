@@ -535,10 +535,10 @@ are `simulation(m)["seed"]` and `simulation(m)["sampling"] == "latin"`.
 The model is built once. `threads` threads share the realisations (at most
 `Threads.nthreads()`; start Julia with `--threads`), each on a copy of the
 built system of its own; the design is drawn whole first, so the answer does
-not depend on how many. The first realisation runs before the others, and a
-failure there fails the run, since it says which series there are; a later
-one that fails is recorded -- its row NaN, `ran` 0, `stats["failed"]` counted
-and the first five in `stats["trouble"]` -- and the run goes on.
+not depend on how many. A failure in the first realisation fails the run (the
+others stop); any other that fails is recorded -- its row NaN, `ran` 0,
+`stats["failed"]` counted and the first five in `stats["trouble"]` -- and the
+run goes on.
 
 `on_progress(done, total)` is called after every realisation, from whichever
 thread finished it, one call at a time and `done` rising; `progress=true`
@@ -601,10 +601,13 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     samples = design.values[:, frm+1:to]
     eff = _pb_effective(design, frm, to)
 
-    _pb_apply!(sys, design, eff, 1, frm)
-    first_run = run_project(project; system=sys, on_grid=true)
-    outs = outputs(first_run)
-    label_index = _by_label(first_run)
+    # Which series there are is the built system's to say, so every realisation -- the first
+    # with the rest -- runs on the threads.
+    outs = outputs_of(sys, project)
+    label_index = Dict{Any,JDict}()
+    for o in outs
+        haskey(label_index, o["label"]) || (label_index[o["label"]] = o)
+    end
     keep_fn = _pb_keep_fn(keep)
     wanted = Int[k for (k, o) in enumerate(outs) if can_be_endpoint(get(o, "kind", nothing)) &&
                                                      (keep_fn === nothing || keep_fn(_pb_keep_name(o), o))]
@@ -632,9 +635,6 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     T = precision == "float32" ? Float32 : Float64
     values = [Matrix{T}(undef, times, span) for _ in wanted]
     take = _PBTake(kept)
-    _pb_take!(values, first_run, kept, take, 1, grid, _pb_take_buffer(kept, grid))
-    first_run = nothing
-    on_progress === nothing || on_progress(1, span)
     ran = ones(UInt8, span)
     ntasks, failures = _pb_parallel!(values, ran, project, sys, design, eff, frm, to, kept, take, outs, label_index,
                                      grid, on_progress, threads)
@@ -682,14 +682,14 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
                        take::_PBTake, outs::Vector{JDict}, label_index, grid::Vector{Float64}, on_progress,
                        threads::Integer) where {T}
     failures = Tuple{Int,String}[]
-    rest = to - frm - 1
-    rest <= 0 && return (0, failures)
     span = to - frm
-    ntasks = clamp(min(Int(threads), Threads.nthreads()), 1, rest)
-    next = Threads.Atomic{Int}(frm + 1)
+    span <= 0 && return (0, failures)
+    ntasks = clamp(min(Int(threads), Threads.nthreads()), 1, span)
+    next = Threads.Atomic{Int}(frm)
     stop = Threads.Atomic{Bool}(false)
+    first_failure = Ref{Any}(nothing)
     progress_lock = ReentrantLock()
-    done = Ref(1)
+    done = Ref(0)
     systems = System[sys]
     for _ in 2:ntasks
         push!(systems, _pb_clone(sys))
@@ -710,6 +710,12 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
                 _pb_take!(values, r, kept, take, row, grid, buf)
             catch e
                 e isa InterruptException && rethrow()
+                if i == frm
+                    # A failure in the first realisation fails the run, and the others stop.
+                    first_failure[] = e
+                    stop[] = true
+                    break
+                end
                 message = sprint(showerror, e)
             end
             if message !== nothing
@@ -746,6 +752,7 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
     for e in errors
         e === nothing || throw(e)
     end
+    first_failure[] === nothing || throw(first_failure[])
     sort!(failures; by=first)
     return (ntasks, failures)
 end

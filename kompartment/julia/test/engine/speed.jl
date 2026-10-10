@@ -149,6 +149,26 @@ end
     K.set_parity!(false)
 end
 
+@testset "every realisation on the threads, the first with the rest" begin
+    # geoTransit handed out from a list, realisation by realisation: an absurd rate breaks one.
+    function with_list(values)
+        d = K.read_model_file(joinpath(EXAMPLES, "biosphere.json"))
+        for p in d["parameters"]
+            p["name"] == "geoTransit" &&
+                (p["pdf"] = K.JDict("kind" => "pg", "values" => Any[values...], "inorder" => true, "pos" => 0))
+        end
+        return Model(d)
+    end
+    # A failure in the first realisation fails the run, as it did when the first ran alone.
+    @test_throws K.SolverError run_probabilistic(with_list([1e308, 2e-4, 2e-4, 2e-4]), 4; seed=1, threads=2)
+    # Any other is recorded, and the run goes on, telling its progress once per realisation.
+    told = Int[]
+    prob = run_probabilistic(with_list([2e-4, 1e308, 2e-4, 2e-4]), 4; seed=1, threads=2,
+                             on_progress=(done, total) -> push!(told, done))
+    @test prob.stats["failed"] == 1 && prob.ran == UInt8[1, 0, 1, 1] && told == 1:4
+    @test all(isnan, prob[K.labels(prob)[end]][2, :])
+end
+
 @testset "the run's settings worked out once per system" begin
     m = example("biosphere")
     p = K.project(m)
