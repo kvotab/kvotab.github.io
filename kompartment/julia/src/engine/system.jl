@@ -14,6 +14,37 @@
 # in that order -- each product rounded on its own, never fused -- so the
 # derivative is the application's to the last bit.
 
+"""
+The derivative's matrix with its terms merged, where the engine need not sum
+them in the application's order (parity off): one entry per state and column
+read, `vals`, worked out from its sources -- the slots it reads, with their
+signs, `src_*`; the constant terms' sum, `konst`; the products of two slots and
+the far-field paths' values, added from the terms' own values, `extra_*` -- and
+the constant column per row, `b`, from the affine terms. A call is then one
+product over these entries, a third of the terms on a large assessment.
+"""
+mutable struct MergedMatrix
+    rowptr::Vector{Int32}
+    cols::Vector{Int32}
+    vals::Vector{Float64}
+    src_ptr::Vector{Int32}       # per entry: its sources' range in src_slot and src_sign
+    src_slot::Vector{Int32}
+    src_sign::Vector{Float64}
+    konst::Vector{Float64}
+    extra_pos::Vector{Int32}     # a product or far-field term: its place among the terms
+    extra_dest::Vector{Int32}    # and its entry
+    fast::Vector{Int32}          # the entries with a source that moves with the state
+    extra_fast::Vector{Int32}    # the extra terms of those
+    aff_rows::Vector{Int32}      # the rows with affine terms, and those terms' places
+    aff_ptr::Vector{Int32}
+    aff_pos::Vector{Int32}
+    aff_src::Vector{Int32}       # linear sources that land in the constant column: their places among
+                                 # lin_xsign (written into the terms with the affine ones)
+    b::Vector{Float64}
+    row_chunks::Vector{UnitRange{Int}}
+    gather_chunks::Vector{UnitRange{Int}}
+end
+
 """Where the derivative's terms come from, and how each row is summed."""
 mutable struct Assembler
     n::Int
@@ -48,6 +79,8 @@ mutable struct Assembler
     row_chunks::Vector{UnitRange{Int}}
     lin_chunks::Vector{UnitRange{Int}}
     lin_fast_chunks::Vector{UnitRange{Int}}
+    # Parity off: the terms merged, and the product taken over the merged entries.
+    merged::Union{Nothing,MergedMatrix}
 end
 
 #: The entries from which a derivative's matrix is shared out between threads. Waking the
@@ -90,14 +123,28 @@ same to the bit however many there are.
 function set_threads!(A::Assembler, threads::Integer)
     k = Int(threads)
     if k <= 1 || length(A.data) < THREADED_ENTRIES
-        empty!(A.row_chunks)
-        empty!(A.lin_chunks)
-        empty!(A.lin_fast_chunks)
+        A.row_chunks = UnitRange{Int}[]
+        A.lin_chunks = UnitRange{Int}[]
+        A.lin_fast_chunks = UnitRange{Int}[]
+        if A.merged !== nothing
+            A.merged.row_chunks = UnitRange{Int}[]
+            A.merged.gather_chunks = UnitRange{Int}[]
+        end
         return A
     end
     A.row_chunks = _row_chunks(A.rowptr, A.n, k)
     A.lin_chunks = _range_chunks(1:A.lin_fast_from-1, k)
     A.lin_fast_chunks = _range_chunks(A.lin_fast_from:length(A.lin_xsign_pos), k)
+    M = A.merged
+    if M !== nothing
+        if length(M.vals) >= THREADED_ENTRIES
+            M.row_chunks = _row_chunks(M.rowptr, A.n, k)
+            M.gather_chunks = _range_chunks(1:length(M.vals), k)
+        else
+            M.row_chunks = UnitRange{Int}[]
+            M.gather_chunks = UnitRange{Int}[]
+        end
+    end
     return A
 end
 
@@ -300,7 +347,7 @@ function Assembler(b::Builder)
                   Int32[], Int32[], Float64[], 1, Int[], Int[], Int[], Float64[], Int[], Float64[], false,
                   Tuple{Int,Vector{Int}}[],
                   Int[], Int[], Float64[], Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[],
-                  0, -1, NaN, false, m == 0, UnitRange{Int}[], UnitRange{Int}[], UnitRange{Int}[])
+                  0, -1, NaN, false, m == 0, UnitRange{Int}[], UnitRange{Int}[], UnitRange{Int}[], nothing)
     for (kind, d, ids) in lin
         p = pos[ids]
         if kind === :xsign
@@ -343,7 +390,103 @@ function Assembler(b::Builder)
         A.lin_xsign_sign = A.lin_xsign_sign[o]
     end
     A.lin_fast_from = count(!, fast) + 1
+    parity() || (A.merged = merge_terms(A, b))
     return A
+end
+
+"""The terms merged into one entry per state and column (`MergedMatrix`), with where each
+entry's value comes from."""
+function merge_terms(A::Assembler, b::Builder)
+    n = A.n
+    m = length(A.data)
+    cls = b.slot_class
+    # The entry each linear term adds into: terms are in row order, so a row's entries are
+    # found together, each column's first term in the row making its entry.
+    term_entry = zeros(Int32, m)
+    rowptr = ones(Int32, n + 1)
+    cols = Int32[]
+    seen_row = zeros(Int32, n)
+    seen_entry = zeros(Int32, n)
+    aff_rows = Int32[]
+    aff_ptr = Int32[1]
+    aff_pos = Int32[]
+    for i in 1:n
+        affine = false
+        for k in Int(A.rowptr[i]):Int(A.rowptr[i+1])-1
+            c = Int(A.cols[k])
+            if c > n
+                push!(aff_pos, k)
+                affine = true
+                continue
+            end
+            if seen_row[c] == i
+                term_entry[k] = seen_entry[c]
+            else
+                push!(cols, c)
+                j = Int32(length(cols))
+                seen_row[c] = i
+                seen_entry[c] = j
+                term_entry[k] = j
+            end
+        end
+        rowptr[i+1] = Int32(length(cols) + 1)
+        if affine
+            push!(aff_rows, i)
+            push!(aff_ptr, Int32(length(aff_pos) + 1))
+        end
+    end
+    nm = length(cols)
+    # Each entry's sources, grouped by entry. A linear source whose term lands in the constant
+    # column (entry 0) is the constant column's: its value goes into the terms, and from them into b.
+    count_src = zeros(Int32, nm + 1)
+    aff_src = Int32[]
+    for (q, k) in enumerate(A.lin_xsign_pos)
+        j = term_entry[k]
+        j == 0 ? push!(aff_src, q) : (count_src[j+1] += 1)
+    end
+    src_ptr = Int32.(cumsum(vcat(1, count_src[2:end])))
+    next = copy(src_ptr)
+    src_slot = Vector{Int32}(undef, src_ptr[end] - 1)
+    src_sign = Vector{Float64}(undef, src_ptr[end] - 1)
+    fast_entry = falses(nm)
+    for q in eachindex(A.lin_xsign_pos)
+        j = term_entry[A.lin_xsign_pos[q]]
+        j == 0 && continue
+        src_slot[next[j]] = A.lin_xsign_slot[q]
+        src_sign[next[j]] = A.lin_xsign_sign[q]
+        next[j] += 1
+        cls[A.lin_xsign_slot[q]] == 2 && (fast_entry[j] = true)
+    end
+    konst = zeros(nm)
+    for q in eachindex(A.lin_const_pos)
+        k = A.lin_const_pos[q]
+        j = term_entry[k]
+        # A constant in the constant column is a term written once.
+        j == 0 ? (A.data[k] = A.lin_const_val[q]) : (konst[j] += A.lin_const_val[q])
+    end
+    extra_pos = Int32[]
+    extra_dest = Int32[]
+    extra_moves = Bool[]
+    for q in eachindex(A.lin_xx_pos)
+        k = A.lin_xx_pos[q]
+        term_entry[k] == 0 && continue          # written into the terms, summed into b
+        push!(extra_pos, k)
+        push!(extra_dest, term_entry[k])
+        push!(extra_moves, max(cls[A.lin_xx_a[q]], cls[A.lin_xx_b[q]]) == 2)
+    end
+    for (_, positions) in A.lin_farf, k in positions
+        term_entry[k] == 0 && continue
+        push!(extra_pos, k)
+        push!(extra_dest, term_entry[k])
+        push!(extra_moves, A.moves == 2)
+    end
+    for (e, moves) in enumerate(extra_moves)
+        moves && (fast_entry[extra_dest[e]] = true)
+    end
+    fast = Int32[j for j in 1:nm if fast_entry[j]]
+    extra_fast = Int32[e for e in eachindex(extra_dest) if fast_entry[extra_dest[e]]]
+    return MergedMatrix(rowptr, cols, zeros(nm), src_ptr, src_slot, src_sign, konst, extra_pos, extra_dest, fast,
+                        extra_fast, aff_rows, aff_ptr, aff_pos, aff_src, zeros(n), UnitRange{Int}[], UnitRange{Int}[])
 end
 
 setup_assembler!(sys::System) = (sys.assembler.keyed = false; nothing)
@@ -418,6 +561,91 @@ function _set_affine!(A::Assembler, sys::System, y::Vector{Float64}, X::Vector{F
     end
 end
 
+# --- the merged matrix (parity off) ---------------------------------------------------------------
+
+"""The product and far-field terms' values, into the terms (`data`), for the merged entries to add."""
+function _set_extras!(A::Assembler, sys::System, X::Vector{Float64})
+    data = A.data
+    @inbounds for i in eachindex(A.lin_xx_pos)
+        data[A.lin_xx_pos[i]] = X[A.lin_xx_a[i]] * X[A.lin_xx_b[i]] * A.lin_xx_sign[i]
+    end
+    for (k, p) in A.lin_farf
+        F = sys.data.FARF[k+1]
+        farfield_refresh!(F, X)
+        vals = farfield_values(F)
+        @inbounds for i in eachindex(p)
+            data[p[i]] = vals[i]
+        end
+    end
+end
+
+"""The merged entries `js` from their sources: the constant part, then each slot read."""
+function _gather!(M::MergedMatrix, X::Vector{Float64}, js)
+    vals, ptr, slot, sgn, konst = M.vals, M.src_ptr, M.src_slot, M.src_sign, M.konst
+    @inbounds for j in js
+        acc = konst[j]
+        for q in Int(ptr[j]):Int(ptr[j+1])-1
+            acc = muladd(X[slot[q]], sgn[q], acc)
+        end
+        vals[j] = acc
+    end
+end
+
+"""Brings the merged entries up to date: every one when the invariants or the clock have moved
+since, otherwise those that move with the state."""
+function refresh_merged!(A::Assembler, M::MergedMatrix, sys::System, X::Vector{Float64})
+    data = A.data
+    if A.keyed && A.key_version == sys.invariant_version && (A.moves == 0 || A.key_clock === sys.clock_at)
+        A.moves == 2 || return
+        # (the product and far-field terms written whole: some may be in the constant column)
+        (isempty(A.lin_xx_pos) && isempty(A.lin_farf)) || _set_extras!(A, sys, X)
+        _gather!(M, X, M.fast)
+        @inbounds for e in M.extra_fast
+            M.vals[M.extra_dest[e]] += data[M.extra_pos[e]]
+        end
+        return
+    end
+    (isempty(A.lin_xx_pos) && isempty(A.lin_farf)) || _set_extras!(A, sys, X)
+    if isempty(M.gather_chunks)
+        _gather!(M, X, 1:length(M.vals))
+    else
+        chunks = M.gather_chunks
+        Threads.@threads :dynamic for c in eachindex(chunks)
+            _gather!(M, X, chunks[c])
+        end
+    end
+    @inbounds for e in eachindex(M.extra_pos)
+        M.vals[M.extra_dest[e]] += data[M.extra_pos[e]]
+    end
+    A.key_version = sys.invariant_version
+    A.key_clock = sys.clock_at
+    A.keyed = true
+end
+
+"""The constant column, row by row, from the affine terms' values."""
+function _merged_affine!(M::MergedMatrix, data::Vector{Float64})
+    b = M.b
+    @inbounds for (q, i) in enumerate(M.aff_rows)
+        acc = 0.0
+        for p in Int(M.aff_ptr[q]):Int(M.aff_ptr[q+1])-1
+            acc += data[M.aff_pos[p]]
+        end
+        b[i] = acc
+    end
+end
+
+function _merged_rows!(dy::Vector{Float64}, M::MergedMatrix, y::Vector{Float64}, rows::UnitRange{Int})
+    rowptr, cols, vals, b = M.rowptr, M.cols, M.vals, M.b
+    @inbounds for i in rows
+        acc = b[i]
+        for jj in Int(rowptr[i]):Int(rowptr[i+1])-1
+            acc = muladd(vals[jj], y[cols[jj]], acc)
+        end
+        dy[i] = acc
+    end
+    return dy
+end
+
 """Brings the linear coefficients up to date, if they can have moved: every one when the
 invariants or the clock have moved since they were written, otherwise only those that move
 with the state."""
@@ -437,6 +665,27 @@ function assemble!(dy::Vector{Float64}, A::Assembler, sys::System, y::Vector{Flo
     n = A.n
     if A.empty
         fill!(dy, 0.0)
+        return dy
+    end
+    M = A.merged
+    if M !== nothing
+        refresh_merged!(A, M, sys, X)
+        _set_affine!(A, sys, y, X)
+        if !isempty(M.aff_src)
+            data = A.data
+            @inbounds for q in M.aff_src
+                data[A.lin_xsign_pos[q]] = X[A.lin_xsign_slot[q]] * A.lin_xsign_sign[q]
+            end
+        end
+        _merged_affine!(M, A.data)
+        if isempty(M.row_chunks)
+            _merged_rows!(dy, M, y, 1:n)
+        else
+            chunks = M.row_chunks
+            Threads.@threads :dynamic for c in eachindex(chunks)
+                _merged_rows!(dy, M, y, chunks[c])
+            end
+        end
         return dy
     end
     refresh_linear!(A, sys, X)
@@ -771,9 +1020,32 @@ end
 
 copy_table(t::LookupTable) = LookupTable(t.x, copy(t.y), t.n, t.first, t.last, t.span, t.interpolation, t.cyclic, t.wraps)
 
+"""A new instance with every field the same object as `x`'s."""
+function _shallow_copy(x::T) where {T}
+    y = ccall(:jl_new_struct_uninit, Any, (Any,), T)::T
+    for i in 1:fieldcount(T)
+        isdefined(x, i) && setfield!(y, i, getfield(x, i))
+    end
+    return y
+end
+
+"""A copy for another thread: the layout shared (read only, and in the caches once), the values
+its own."""
 function _clone_assembler(A::Assembler)
-    B = deepcopy(A)
+    B = _shallow_copy(A)
+    B.data = copy(A.data)
     B.keyed = false
+    B.row_chunks = UnitRange{Int}[]
+    B.lin_chunks = UnitRange{Int}[]
+    B.lin_fast_chunks = UnitRange{Int}[]
+    if A.merged !== nothing
+        M = _shallow_copy(A.merged)
+        M.vals = copy(A.merged.vals)
+        M.b = copy(A.merged.b)
+        M.row_chunks = UnitRange{Int}[]
+        M.gather_chunks = UnitRange{Int}[]
+        B.merged = M
+    end
     # A clone is one of several solved side by side: each on one thread.
     set_threads!(B, 1)
     return B

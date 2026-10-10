@@ -699,15 +699,31 @@ function series_many(res::Results, outs)
         end
     end
     isempty(live) && return cols
+    # The states' series, row by row: each output time's state read once for every series
+    # that reads it (a sum over states taken in the order its offsets list them).
+    single = Tuple{Int,Int}[]
+    summed = Tuple{Int,Vector{Int}}[]
     for k in live
         o = outs[k]
         o["source"] == "y" || continue
         if haskey(o, "offsets")
-            cols[k] .= _sequential_sum([[res.y[i][off+1] for i in 1:n] for off in o["offsets"]], n)
+            push!(summed, (k, Int[off + 1 for off in o["offsets"]]))
         else
-            off = o["offset"] + 1
-            for i in 1:n
-                cols[k][i] = res.y[i][off]
+            push!(single, (k, o["offset"] + 1))
+        end
+    end
+    if !isempty(single) || !isempty(summed)
+        @inbounds for i in 1:n
+            row = res.y[i]
+            for (k, off) in single
+                cols[k][i] = row[off]
+            end
+            for (k, offs) in summed
+                acc = 0.0
+                for off in offs
+                    acc += row[off]
+                end
+                cols[k][i] = acc
             end
         end
     end

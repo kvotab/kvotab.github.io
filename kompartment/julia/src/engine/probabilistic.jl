@@ -374,6 +374,8 @@ end
 """One realisation's kept series, onto the sample's grid, into row `row` of each matrix."""
 function _pb_take!(values::Vector{Matrix{T}}, res::Results, kept::Vector{JDict}, row::Int,
                    grid::Vector{Float64}) where {T}
+    # `values` hold a realisation per column while the run goes (times by realisations), so a
+    # realisation's series is one contiguous write; `_pb_run` turns them round at the end.
     times = length(grid)
     t = res.t
     rows = length(t) == times ? nothing : Int[min(searchsortedfirst(t, g), length(t)) for g in grid]
@@ -382,11 +384,11 @@ function _pb_take!(values::Vector{Matrix{T}}, res::Results, kept::Vector{JDict},
         M = values[w]
         if rows === nothing
             @inbounds for j in 1:times
-                M[row, j] = c[j]
+                M[j, row] = c[j]
             end
         else
             @inbounds for j in 1:times
-                M[row, j] = c[rows[j]]
+                M[j, row] = c[rows[j]]
             end
         end
     end
@@ -506,13 +508,18 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     end
     kept = outs[wanted]
     T = precision == "float32" ? Float32 : Float64
-    values = [Matrix{T}(undef, span, times) for _ in wanted]
+    values = [Matrix{T}(undef, times, span) for _ in wanted]
     _pb_take!(values, first_run, kept, 1, grid)
     first_run = nothing
     on_progress === nothing || on_progress(1, span)
     ran = ones(UInt8, span)
     ntasks, failures = _pb_parallel!(values, ran, project, sys, design, eff, frm, to, kept, outs, label_index, grid,
                                      on_progress, threads)
+    # A realisation per row, as the results hold them: each turned round in turn, so no more
+    # than one series is held twice.
+    for w in eachindex(values)
+        values[w] = permutedims(values[w])
+    end
     stats = OrderedDict{String,Any}("failed" => length(failures),
                                     "trouble" => String["realisation $(i + 1): $msg" for (i, msg) in failures[1:min(5, end)]],
                                     "ms" => 1000 * (time() - started))
@@ -583,7 +590,7 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
             if message !== nothing
                 ran[row] = 0x00
                 for M in values
-                    M[row, :] .= T(NaN)
+                    M[:, row] .= T(NaN)
                 end
             end
             lock(progress_lock) do
