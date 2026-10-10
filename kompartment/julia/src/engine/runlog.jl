@@ -182,6 +182,8 @@ function run_log_lines(res::Results; project=nothing, build::AbstractString="", 
         push!(out, "  steps: $(js_text(something(get(s, "nsteps", nothing), "?"))), rejected: " *
                    "$(js_text(something(get(s, "nfailed", nothing), 0))), f evaluations: " *
                    "$(js_text(something(get(s, "nfevals", nothing), "?")))")
+        methods = describe_method_steps(s)
+        methods === nothing || push!(out, "  methods: $methods")
         js_truthy(get(s, "nbelowtol", nothing)) && push!(out, "  steps taken below tolerance: $(js_text(s["nbelowtol"]))")
         haskey(s, "events") && s["events"] !== nothing &&
             push!(out, "  events: $(js_text(s["events"])), restarts: $(js_text(something(get(s, "restarts", nothing), 0)))")
@@ -231,6 +233,21 @@ function run_log_lines(res::Results; project=nothing, build::AbstractString="", 
         append!(out, describe_audit(audit, get(sim, "time_unit", "")))
     end
     return out
+end
+
+"""
+A switching solver's account in words, `Tsit5 12 steps, Rosenbrock23 300; 3
+switches`, or `nothing` for any other solver (`describeMethodSteps`).
+"""
+function describe_method_steps(stats::AbstractDict)
+    by = something(get(stats, "steps_by", nothing), get(stats, "stepsBy", nothing), Some(nothing))
+    by isa AbstractDict || return nothing
+    parts = String[]
+    for (i, (name, n)) in enumerate(by)
+        push!(parts, "$name $(js_text(n))" * (i == 1 ? " step$(n == 1 ? "" : "s")" : ""))
+    end
+    sw = something(get(stats, "switches", nothing), 0)
+    return "$(join(parts, ", ")); $(js_text(sw)) switch$(sw == 1 ? "" : "es")"
 end
 
 """The log of a probabilistic run or a tornado, as lines (`probabilisticLogLines`)."""

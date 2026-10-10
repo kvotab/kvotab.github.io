@@ -120,7 +120,10 @@ application took from DifferentialEquations.jl -- `fbdf`, `qndf`, `rodas5p`,
 `radau5`, `kencarp4`, `trbdf2`, `rosenbrock23`, `tsit5`, `vern7`,
 `auto_julia` and `fbdf_krylov` -- are solved by OrdinaryDiffEq itself, handed
 the model's analytic Jacobian on its sparsity pattern; such a run agrees with
-`ndf` to the tolerance, not to the bit.
+`ndf` to the tolerance, not to the bit. `auto` is DifferentialEquations.jl's
+automatic choice here, as `auto_julia` is: an explicit method while the run
+is not stiff and a stiff one once it is. (The application and the Python
+package switch between methods of their own under that name.)
 
 ## Saving results
 
@@ -265,8 +268,8 @@ end
 
 - **Solving in parts** (`simulation.split`): a model is always solved whole
   here, which on this engine is quicker than the Python package's split.
-- **Solvers**: the application's switching `auto` (use `ndf`, which it hands
-  a stiff run to, or `auto_julia` with OrdinaryDiffEq) and SciPy's.
+- **Solvers**: SciPy's; `auto` is DifferentialEquations.jl's automatic choice
+  here rather than the application's own switching solver.
 - **Probabilistic analysis**: the global sensitivity designs (`gsa=`), the
   distribution-free measures of *What drove it* (`family="distribution"`) and
   screening realisations by categories.

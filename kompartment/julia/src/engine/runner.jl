@@ -127,8 +127,10 @@ function add_method_steps!(into::Dict{String,Any}, frm::Dict{String,Any})
 end
 
 #: The ids solved by DifferentialEquations.jl here, once `using OrdinaryDiffEq` has loaded the extension.
-const DIFFEQ_SOLVER_IDS = ("fbdf", "qndf", "rodas5p", "radau5", "kencarp4", "trbdf2", "rosenbrock23", "tsit5", "vern7",
-                           "auto_julia", "fbdf_krylov")
+#: `auto` among them: here it is DifferentialEquations.jl's own automatic choice (as `auto_julia`),
+#: where the application and the Python package switch between methods of their own.
+const DIFFEQ_SOLVER_IDS = ("auto", "fbdf", "qndf", "rodas5p", "radau5", "kencarp4", "trbdf2", "rosenbrock23", "tsit5",
+                           "vern7", "auto_julia", "fbdf_krylov")
 
 """Why a model's solver cannot run here, and what to do instead."""
 function _unavailable_solver(id)
@@ -136,11 +138,10 @@ function _unavailable_solver(id)
     if id in DIFFEQ_SOLVER_IDS
         extra = id == "radau5" ? " (and `using OrdinaryDiffEqFIRK`, which holds RadauIIA5)" :
                 id == "fbdf_krylov" ? " (and `using LinearSolve`)" : ""
-        return "'$id' is solved by DifferentialEquations.jl here: `using OrdinaryDiffEq` first$extra. Or run it with " *
-               "one of this package's own solvers: $here."
+        what = id == "auto" ? "DifferentialEquations.jl's automatic choice of method" : "DifferentialEquations.jl"
+        return "'$id' is solved by $what here: `using OrdinaryDiffEq` first$extra. Or run it with one of this " *
+               "package's own solvers: $here."
     end
-    id == "auto" && return "'auto', the application's switching solver, is not in the Julia engine. It hands a stiff " *
-                           "run to 'ndf': run(m; solver=\"ndf\"), or 'auto_julia' with `using OrdinaryDiffEq`."
     startswith(string(id), "scipy_") && return "'$id' is SciPy's, which only the Python package runs. Here: $here, " *
                                                "or DifferentialEquations.jl's methods with `using OrdinaryDiffEq`."
     return "Unknown solver '$id'. Available here: $here; with `using OrdinaryDiffEq`, also $(join(DIFFEQ_SOLVER_IDS, ", "))."
@@ -828,6 +829,9 @@ function Base.summary(res::Results)
     parts = String[string(something(get(st, "solver", nothing), "no solver"))]
     get(st, "nsteps", nothing) !== nothing && push!(parts, "$(st["nsteps"]) steps")
     js_truthy(get(st, "nfailed", 0)) && push!(parts, "$(st["nfailed"]) failed")
+    # The switching solver: which of its methods took the steps, and how often it changed between them.
+    methods = describe_method_steps(st)
+    methods === nothing || push!(parts, "methods: $methods")
     push!(parts, "$(length(res.t)) output times")
     haskey(res.timing, "total_ms") && push!(parts, @sprintf("%.2f s", res.timing["total_ms"] / 1000))
     held = held_at_zero(res)

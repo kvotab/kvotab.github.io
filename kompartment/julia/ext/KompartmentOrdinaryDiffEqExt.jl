@@ -21,6 +21,7 @@ using SparseArrays
 using LinearAlgebra
 
 import Kompartment: Solution, SolverError, JacobianSpec, EventFunctions, RHSFunction
+using Kompartment: OrderedDict
 
 
 const SciMLBase = parentmodule(OrdinaryDiffEq.DiscreteCallback)
@@ -51,7 +52,9 @@ function algorithm(id::String)
     id == "tsit5" && return method_named(:Tsit5, "OrdinaryDiffEqTsit5")()
     id == "vern7" && return method_named(:Vern7, "OrdinaryDiffEqVerner")()
     id == "radau5" && return method_named(:RadauIIA5, "OrdinaryDiffEqFIRK")(autodiff=fd)
-    id == "auto_julia" && return method_named(:DefaultODEAlgorithm, "OrdinaryDiffEqDefault")(autodiff=fd)
+    # The automatic choice: an explicit method while the run is not stiff, a stiff one once it is.
+    (id == "auto" || id == "auto_julia") &&
+        return method_named(:DefaultODEAlgorithm, "OrdinaryDiffEqDefault")(autodiff=fd)
     if id == "fbdf_krylov"
         LS = _linear_solve()
         LS === nothing && throw(SolverError("unavailable", "FBDF by GMRES needs LinearSolve's KrylovJL_GMRES: " *
@@ -88,6 +91,22 @@ mutable struct Record
     stopped::Any
     events::Any
     ev_values::Vector{Float64}
+    # A method that switches (the automatic choice): the accepted steps each of its
+    # methods took, in the order they first took one, and how often it changed.
+    steps_by::OrderedDict{String,Int}
+    current::Int
+    switches::Int
+end
+
+"""Counts an accepted step against the method that took it, where the algorithm switches between methods."""
+function count_method!(r::Record, integ)
+    cache = integ.cache
+    (hasproperty(cache, :current) && hasproperty(integ.alg, :algs)) || return
+    k = Int(cache.current)
+    name = string(nameof(typeof(integ.alg.algs[k])))
+    r.steps_by[name] = get(r.steps_by, name, 0) + 1
+    r.current != 0 && k != r.current && (r.switches += 1)
+    r.current = k
 end
 
 """The rows due up to `t` (read off the interpolant), then the step itself, told to the recorders."""
@@ -162,7 +181,7 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
     non_negative = nn === nothing ? Int[] : Int[i for (i, v) in enumerate(nn) if v === true]
     events = _opt(opts, "events")
     rec = Record(tspan, 2, [t0], [copy(y0)], t0, _opt(opts, "on_output"), _opt(opts, "on_accepted"), non_negative, 0,
-                 nothing, events, events === nothing ? Float64[] : zeros(events.n))
+                 nothing, events, events === nothing ? Float64[] : zeros(events.n), OrderedDict{String,Int}(), 0, 0)
     if _opt(opts, "ends_only") !== nothing
         rec.tspan = [t0, tf]
     end
@@ -187,6 +206,7 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
             end
         end
         SciMLBase.u_modified!(integ, moved)
+        count_method!(rec, integ)
         t = Float64(integ.t)
         if events !== nothing
             hit = Kompartment._ev_locate_crossing(events, Float64(integ.tprev), vl, t, integ.u, vr,
@@ -231,20 +251,25 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
     h0 = _opt(opts, "h0")
     h0 !== nothing && h0 > 0 && (kw[:dt] = Float64(h0))
     alg = algorithm(id)
+    label = id in ("auto", "auto_julia") ? "DefaultODEAlgorithm" : string(nameof(typeof(alg)))
     integ = init(prob, alg; kw...)
     solve!(integ)
     rc = integ.sol.retcode
     ok = rc == ReturnCode.Success || (rc == ReturnCode.Terminated && rec.stopped !== nothing)
     if !ok
         t = Float64(integ.t)
-        throw(SolverError(string(rc), "$(nameof(typeof(alg))) stopped at t=$t: $(rc). Tighter tolerances or another " *
+        throw(SolverError(string(rc), "$label stopped at t=$t: $(rc). Tighter tolerances or another " *
                                       "method may get further.", t))
     end
     s = integ.stats
     stats = Dict{String,Any}("nsteps" => Int(s.naccept), "nfailed" => Int(s.nreject), "nfevals" => nfe[],
                              "npds" => Int(s.njacs), "ndecomps" => Int(s.nw), "nsolves" => Int(s.nsolve),
                              "negative" => rec.negative, "points" => length(rec.t),
-                             "solver" => string(nameof(typeof(alg))))
+                             "solver" => label)
+    if !isempty(rec.steps_by)
+        stats["steps_by"] = rec.steps_by
+        stats["switches"] = rec.switches
+    end
     return Solution(rec.t, rec.y, Float64(integ.t), copy(integ.u),
                     rec.stopped === nothing ? nothing : (t=rec.stopped.t, y=rec.stopped.y, which=rec.stopped.which),
                     stats)
