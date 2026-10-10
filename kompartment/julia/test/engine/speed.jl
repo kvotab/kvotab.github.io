@@ -1,8 +1,9 @@
 # What makes runs quicker without changing a number: the passes compiled for a
-# model kept for the next build of it; a probabilistic run's series read straight
-# into its matrices, its rows used again from realisation to realisation; an
-# interpolation's points read where they stand; the run's settings worked out
-# once per system. Each against the way it replaced, to the bit, in both modes.
+# model kept for the next build of it; a probabilistic run's draws read from each
+# distribution worked out once, its series read straight into its matrices, its
+# rows used again from realisation to realisation; an interpolation's points read
+# where they stand; the run's settings worked out once per system. Each against
+# the way it replaced, to the bit, in both modes.
 
 module SpeedTests
 
@@ -62,6 +63,44 @@ end
     for args in ([1.0], [1.0, 2.0], [1.0, 2.0, 3.0, 4.0])
         @test_throws K.LookupError K.interpolate_args(Tuple(args), :linear)
     end
+end
+
+@testset "a distribution's draws, its reading worked out once" begin
+    d = Draws(11)
+    nums = [0.0, 1.0, 2.5, 10.0, 1e-6, 3e3, -1.0, 0.5, 0.9, 0.1, 100.0]
+    kinds = collect(keys(K.PDF_KIND_PARAMS))
+    same = 0
+    total = 0
+    for _ in 1:20_000
+        kind = pick(d, kinds)
+        params = K.JDict()
+        for key in K.PDF_KIND_PARAMS[kind]
+            params[key] = unit(d) < 0.02 ? pick(d, [nothing, "2", "x"]) : pick(d, nums)
+        end
+        if kind in ("triang", "dtriang", "logt", "logdt") && unit(d) < 0.7
+            lo, mo, hi = sort([pick(d, nums), pick(d, nums), pick(d, nums)])
+            params["min"], params["mode"], params["max"] = lo, mo, hi
+        end
+        spec = K.JDict("kind" => kind, "params" => params)
+        if kind == "pg"
+            spec["values"] = unit(d) < 0.9 ? [pick(d, nums) for _ in 1:1+Int(next!(d) >> 40)%5] : nothing
+            unit(d) < 0.5 && (spec["inorder"] = false)
+            unit(d) < 0.3 && (spec["pos"] = pick(d, [0, 2, "1"]))
+        end
+        unit(d) < 0.2 && (spec["trmin"] = pick(d, nums))
+        unit(d) < 0.2 && (spec["trmax"] = pick(d, nums))
+        unit(d) < 0.1 && (spec["pmin"] = pick(d, [0.1, 0.5, 0.0]))
+        unit(d) < 0.1 && (spec["pmax"] = pick(d, [0.9, 0.5, 1.0]))
+        unit(d) < 0.01 && (spec = pick(d, [nothing, K.JDict(), K.JDict("kind" => "nope")]))
+        drawer = K.ValueDrawer(spec)
+        for _ in 1:4
+            u = pick(d, [unit(d), 0.0, 1.0, 0.5, 1e-300, 1 - 1e-15])
+            at = Int(next!(d) >> 50)
+            total += 1
+            same += isequal(K.draw_value(drawer, u, at), K.value_at_probability(spec, u, at))
+        end
+    end
+    @test same == total
 end
 
 @testset "a realisation's series read straight into the matrices" begin

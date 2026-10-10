@@ -170,6 +170,110 @@ function value_at_probability(spec, u, at::Integer=0)
 end
 
 """
+What `value_at_probability` reads from a distribution that is the same for every
+draw -- whether it can be drawn from, the probabilities and values its truncation
+cuts at, the numbers its quantile takes from the parameters (their logarithms
+too) -- so that a design's thousands of draws do only the arithmetic that
+depends on the uniform, in the same order: the same numbers (`draw_value`). A
+list, or a distribution that is not filled in, is left to `value_at_probability`.
+"""
+struct ValueDrawer
+    kind::Symbol            # :none (not drawn), :list, or the shape: :unif, :triang, ... :logn
+    spec::Any
+    lo::Float64             # the probabilities the truncation reads between, and their span
+    span::Float64
+    reversed::Bool
+    trmin::Float64          # NaN where there is none
+    trmax::Float64
+    a::Float64              # the shape's numbers (see `draw_value`)
+    b::Float64
+    c::Float64
+    d::Float64
+    e::Float64
+    f::Float64
+end
+
+function ValueDrawer(spec)
+    plain(kind) = ValueDrawer(kind, spec, 0.0, 1.0, false, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN)
+    (!_pd_truthy(spec) || _pd_meta(_pd_prop(spec, "kind")) === nothing || !pdf_complete(spec)) && return plain(:none)
+    kind = spec["kind"]
+    kind == "pg" && return plain(:list)
+    cuts = probability_cuts(spec)
+    bound(key) = (v = _pd_prop(spec, key); _pd_nullish(v) ? NaN : _pd_to_number(v))
+    p = _pd_params_of(spec)
+    a = b = c = d = e = f = NaN
+    shape = :other
+    if kind == "unif"
+        shape = :unif
+        a = _pd_param(p, "min")
+        b = _pd_param(p, "max") - a
+    elseif kind == "triang" || kind == "dtriang"
+        shape = kind == "triang" ? :triang : :dtriang
+        a = _pd_param(p, "min")
+        b = _pd_param(p, "max")
+        c = _pd_param(p, "mode")
+        d = b - a
+        e = c - a
+        f = b - c
+    elseif kind == "logu"
+        shape = :logu
+        a = js_log(_pd_param(p, "min"))
+        b = js_log(_pd_param(p, "max")) - a
+    elseif kind == "logt" || kind == "logdt"
+        shape = kind == "logt" ? :logt : :logdt
+        a = js_log(_pd_param(p, "min"))
+        b = js_log(_pd_param(p, "max"))
+        c = js_log(_pd_param(p, "mode"))
+        d = b - a
+        e = c - a
+        f = b - c
+    elseif kind == "norm"
+        shape = :norm
+        a = _pd_param(p, "mean")
+        b = _pd_param(p, "sd")
+    elseif kind == "Logn4" || kind == "logn" || kind == "logn5"
+        ls = _pd_log_space(spec)
+        shape = ls === nothing ? :other : :logn
+        ls === nothing || ((a, b) = (ls[1], ls[2]))
+    end
+    return ValueDrawer(shape, spec, cuts.lo, cuts.hi - cuts.lo, cuts.reversed, bound("trmin"), bound("trmax"),
+                       a, b, c, d, e, f)
+end
+
+"""`value_at_probability(spec, u, at)` for the `ValueDrawer` of `spec`: the same number."""
+function draw_value(dr::ValueDrawer, u::Float64, at::Integer=0)
+    k = dr.kind
+    k === :none && return NaN
+    k === :list && return value_at_probability(dr.spec, u, at)
+    q = _pd_jmin(1 - 1e-12, _pd_jmax(1e-12, dr.lo + u * dr.span))
+    # `pdf_quantile` at q, each shape's arithmetic as it is there
+    a, b, c, d, e, f = dr.a, dr.b, dr.c, dr.d, dr.e, dr.f
+    v = if k === :unif
+        a + q * b
+    elseif k === :triang
+        q <= e / d ? a + _pd_sqrt((q * d) * e) : b - _pd_sqrt(((1 - q) * d) * f)
+    elseif k === :dtriang
+        q <= 0.5 ? a + _pd_sqrt(2 * q) * e : b - f * _pd_sqrt(2 * (1 - q))
+    elseif k === :logu
+        js_exp(a + q * b)
+    elseif k === :logt
+        js_exp(q <= e / d ? a + _pd_sqrt((q * d) * e) : b - _pd_sqrt(((1 - q) * d) * f))
+    elseif k === :logdt
+        js_exp(q <= 0.5 ? a + _pd_sqrt(2 * q) * e : b - f * _pd_sqrt(2 * (1 - q)))
+    elseif k === :norm
+        a + b * _pd_probit_or_zero(q)
+    elseif k === :logn
+        js_exp(a + b * _pd_probit_or_zero(q))
+    else
+        NaN
+    end
+    dr.reversed && return v
+    (!isnan(dr.trmin) && v < dr.trmin) && return dr.trmin
+    (!isnan(dr.trmax) && v > dr.trmax) && return dr.trmax
+    return v
+end
+
+"""
     distributed_slots(sys::System) -> Vector{JDict}
 
 Every distributed value in a built model and where it lives in `P`: the

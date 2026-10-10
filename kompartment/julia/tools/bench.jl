@@ -9,7 +9,9 @@
 # python/tests/test_engine_split.py): 16 decay chains of 12 made-up nuclides
 # through 150 compartments in a line, 28,800 states, none reaching another.
 # Each is run twice in this process and the second run is reported, so the
-# times are without Julia's compilation of the package's own code.
+# times are without Julia's compilation of the package's own code; the second
+# build takes the model's code compiled by the first, whose compiling is
+# reported apart.
 
 using Kompartment
 using Printf
@@ -58,14 +60,14 @@ function once(m::Model)
     save(res, path)
     t3 = time()
     rm(path; force=true)
-    return (build=t1 - t0, solve=t2 - t1, write=t3 - t2, res=res, states=sys.nstate)
+    return (build=t1 - t0, solve=t2 - t1, write=t3 - t2, res=res, states=sys.nstate, compile=sys.compile_ms / 1000)
 end
 
 function report(label::AbstractString, m::Model)
-    once(m)
+    first = once(m)
     r = once(m)
-    @printf("%-34s %7d states  build %6.3f s  solve %7.3f s  write %6.3f s  %s\n", label, r.states, r.build,
-            r.solve, r.write, summary(r.res))
+    @printf("%-34s %7d states  compile %6.3f s  build %6.3f s  solve %7.3f s  write %6.3f s  %s\n", label, r.states,
+            first.compile, r.build, r.solve, r.write, summary(r.res))
 end
 
 println("Julia $(VERSION), $(Threads.nthreads()) thread$(Threads.nthreads() == 1 ? "" : "s")")

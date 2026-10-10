@@ -208,9 +208,10 @@ function design_for(project::Project, sys::System; seed=1, iterations=nothing, l
     corr = iman_conover(draws, usable, names, seed)
     values = Matrix{Float64}(undef, length(plan), n)
     for k in eachindex(plan)
-        spec = plan[k]["spec"]
-        for i in 1:n
-            values[k, i] = varies[k] ? value_at_probability(spec, draws[k][i], i - 1) : best[k]
+        if varies[k]
+            _pb_draw!(values, k, ValueDrawer(plan[k]["spec"]), draws[k])
+        else
+            values[k, :] .= best[k]
         end
     end
     groups = OrderedDict{String,Vector{String}}()
@@ -223,6 +224,15 @@ function design_for(project::Project, sys::System; seed=1, iterations=nothing, l
                                     "correlationProblems" => problems,
                                     "groups" => [OrderedDict{String,Any}("name" => g, "members" => m) for (g, m) in groups])
     return SampleDesign(plan, names, best, varies, n, values, seed, stats)
+end
+
+"""Input `k`'s value in every realisation, from its uniforms (`value_at_probability`, the reading
+of its distribution worked out once)."""
+function _pb_draw!(values::Matrix{Float64}, k::Int, drawer::ValueDrawer, u::Vector{Float64})
+    @inbounds for i in eachindex(u)
+        values[k, i] = draw_value(drawer, u[i], i - 1)
+    end
+    return values
 end
 
 """
