@@ -106,9 +106,11 @@ end
 """The model with simulation settings replaced for one run, as a Project."""
 function project(m::Model; settings...)
     isempty(settings) && return Project(m.raw)
-    raw = deepcopy(m.raw)
+    # A Project copies what it is given: only what this run replaces is copied here.
+    raw = copy(m.raw)
     sim = get(raw, "simulation", nothing)
-    sim isa AbstractDict || (sim = JDict(); raw["simulation"] = sim)
+    sim = sim isa AbstractDict ? copy(sim) : JDict()
+    raw["simulation"] = sim
     for (k, v) in settings
         sim[String(k)] = v
     end

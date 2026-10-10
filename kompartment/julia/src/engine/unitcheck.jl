@@ -437,9 +437,10 @@ function _has_unit_literal(node::ENode)
         elseif n isa EUnary
             push!(stack, n.operand)
         elseif n isa EBinary
-            push!(stack, n.left, n.right)
+# One child at a time: pushed together, every pair of node kinds is compiled anew.
+            push!(stack, n.left); push!(stack, n.right)
         elseif n isa ECond
-            push!(stack, n.test, n.then, n.otherwise)
+            push!(stack, n.test); push!(stack, n.then); push!(stack, n.otherwise)
         end
     end
     return false

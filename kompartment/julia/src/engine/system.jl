@@ -17,13 +17,20 @@
 """Where the derivative's terms come from, and how each row is summed."""
 mutable struct Assembler
     n::Int
-    rowptr::Vector{Int}          # CSR over n rows, 1-based
-    cols::Vector{Int}            # 1-based; n+1 is the column of the constant one
+    # The matrix's indices, and the largest of its sources', as 32-bit integers: on a large
+    # assessment, half the memory in them to stream through on every call.
+    rowptr::Vector{Int32}        # CSR over n rows, 1-based
+    cols::Vector{Int32}          # 1-based; n+1 is the column of the constant one
     data::Vector{Float64}
-    # The linear coefficients' sources (rebuilt when the slots they read can have moved).
-    lin_xsign_pos::Vector{Int}; lin_xsign_slot::Vector{Int}; lin_xsign_sign::Vector{Float64}
+    # The linear coefficients' sources, rebuilt when the slots they read can have moved: those
+    # that read a slot moving with the state from `lin_fast_from` on (on every call, in a
+    # model that has them), the others before it (when the clock or the invariants move).
+    lin_xsign_pos::Vector{Int32}; lin_xsign_slot::Vector{Int32}; lin_xsign_sign::Vector{Float64}
+    lin_fast_from::Int
     lin_xx_pos::Vector{Int}; lin_xx_a::Vector{Int}; lin_xx_b::Vector{Int}; lin_xx_sign::Vector{Float64}
+    # The constant coefficients: written once.
     lin_const_pos::Vector{Int}; lin_const_val::Vector{Float64}
+    consts_written::Bool
     lin_farf::Vector{Tuple{Int,Vector{Int}}}          # (path, positions)
     # The affine terms, written on every call.
     aff_xsign_pos::Vector{Int}; aff_xsign_slot::Vector{Int}; aff_xsign_sign::Vector{Float64}
@@ -36,19 +43,31 @@ mutable struct Assembler
     keyed::Bool
     empty::Bool
     # Shared out between threads, a large matrix: its rows in chunks of about
-    # equal entries, and its linear coefficients in equal chunks. Empty: on one.
+    # equal entries, and its linear coefficients in equal chunks (the slow ones and
+    # those that move with the state apart). Empty: on one.
     row_chunks::Vector{UnitRange{Int}}
     lin_chunks::Vector{UnitRange{Int}}
+    lin_fast_chunks::Vector{UnitRange{Int}}
 end
 
-#: The entries from which a derivative's matrix is shared out between threads.
-const THREADED_ENTRIES = 100_000
+#: The entries from which a derivative's matrix is shared out between threads. Waking the
+#: threads costs tens of microseconds a call: measured on made-up chains, a matrix of 110,000
+#: entries solved a fifth slower on eight threads than on one, one of 300,000 broke even, and
+#: a large assessment's gained a tenth.
+const THREADED_ENTRIES = 250_000
 
 """`k` ranges over `1:n` of about equal size."""
 _even_chunks(n::Int, k::Int) = UnitRange{Int}[(1+div((j-1)*n, k)):div(j*n, k) for j in 1:k if div(j*n, k) >= 1+div((j-1)*n, k)]
 
+#: The fewest coefficients shared out between threads: fewer are written on one.
+const THREADED_COEFFICIENTS = 25_000
+
+"""`r` in `k` ranges of about equal size, or none for a range too short to share."""
+_range_chunks(r::UnitRange{Int}, k::Int) =
+    length(r) < THREADED_COEFFICIENTS ? UnitRange{Int}[] : UnitRange{Int}[(first(r)-1) .+ c for c in _even_chunks(length(r), k)]
+
 """The rows in `k` ranges of about equal entries."""
-function _row_chunks(rowptr::Vector{Int}, n::Int, k::Int)
+function _row_chunks(rowptr::AbstractVector{<:Integer}, n::Int, k::Int)
     m = rowptr[end] - 1
     out = UnitRange{Int}[]
     lo = 1
@@ -73,10 +92,12 @@ function set_threads!(A::Assembler, threads::Integer)
     if k <= 1 || length(A.data) < THREADED_ENTRIES
         empty!(A.row_chunks)
         empty!(A.lin_chunks)
+        empty!(A.lin_fast_chunks)
         return A
     end
     A.row_chunks = _row_chunks(A.rowptr, A.n, k)
-    A.lin_chunks = _even_chunks(length(A.lin_xsign_pos), k)
+    A.lin_chunks = _range_chunks(1:A.lin_fast_from-1, k)
+    A.lin_fast_chunks = _range_chunks(A.lin_fast_from:length(A.lin_xsign_pos), k)
     return A
 end
 
@@ -274,10 +295,12 @@ function Assembler(b::Builder)
     for i in 1:n
         rowptr[i+1] = rowptr[i] + counts[i]
     end
-    A = Assembler(n, rowptr, cols[order] .+ 1, zeros(m),
-                  Int[], Int[], Float64[], Int[], Int[], Int[], Float64[], Int[], Float64[], Tuple{Int,Vector{Int}}[],
+    m < typemax(Int32) || throw(BuildError("The derivative has $m terms, more than this engine can index.", nothing))
+    A = Assembler(n, Int32.(rowptr), Int32.(cols[order] .+ 1), zeros(m),
+                  Int32[], Int32[], Float64[], 1, Int[], Int[], Int[], Float64[], Int[], Float64[], false,
+                  Tuple{Int,Vector{Int}}[],
                   Int[], Int[], Float64[], Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[],
-                  0, -1, NaN, false, m == 0, UnitRange{Int}[], UnitRange{Int}[])
+                  0, -1, NaN, false, m == 0, UnitRange{Int}[], UnitRange{Int}[], UnitRange{Int}[])
     for (kind, d, ids) in lin
         p = pos[ids]
         if kind === :xsign
@@ -310,33 +333,61 @@ function Assembler(b::Builder)
     slots = unique(coef_slots)
     classes = isempty(slots) ? UInt8[] : b.slot_class[slots.+1]
     A.moves = any(==(2), classes) ? 2 : (any(==(1), classes) ? 1 : 0)
+    # The coefficients read from a slot that moves with the state last, in their order: only
+    # they are written again on a call that finds the clock where it was.
+    fast = Bool[b.slot_class[s] == 2 for s in A.lin_xsign_slot]
+    if any(fast)
+        o = [findall(!, fast); findall(fast)]
+        A.lin_xsign_pos = A.lin_xsign_pos[o]
+        A.lin_xsign_slot = A.lin_xsign_slot[o]
+        A.lin_xsign_sign = A.lin_xsign_sign[o]
+    end
+    A.lin_fast_from = count(!, fast) + 1
     return A
 end
 
 setup_assembler!(sys::System) = (sys.assembler.keyed = false; nothing)
 
-function _set_xsign!(data::Vector{Float64}, pos::Vector{Int}, slot::Vector{Int}, sign::Vector{Float64},
+function _set_xsign!(data::Vector{Float64}, pos::Vector{Int32}, slot::Vector{Int32}, sign::Vector{Float64},
                      X::Vector{Float64}, range::UnitRange{Int})
     @inbounds for i in range
         data[pos[i]] = X[slot[i]] * sign[i]
     end
 end
 
-function _set_linear!(A::Assembler, sys::System, X::Vector{Float64})
-    data = A.data
-    if isempty(A.lin_chunks)
-        _set_xsign!(data, A.lin_xsign_pos, A.lin_xsign_slot, A.lin_xsign_sign, X, 1:length(A.lin_xsign_pos))
+"""The coefficients read from slots, over `range` of them: on the threads `chunks` share them out to, or on one."""
+function _set_xsign_part!(A::Assembler, X::Vector{Float64}, range::UnitRange{Int}, chunks::Vector{UnitRange{Int}})
+    isempty(range) && return
+    if isempty(chunks)
+        _set_xsign!(A.data, A.lin_xsign_pos, A.lin_xsign_slot, A.lin_xsign_sign, X, range)
     else
-        chunks = A.lin_chunks
         Threads.@threads :dynamic for k in eachindex(chunks)
-            _set_xsign!(data, A.lin_xsign_pos, A.lin_xsign_slot, A.lin_xsign_sign, X, chunks[k])
+            _set_xsign!(A.data, A.lin_xsign_pos, A.lin_xsign_slot, A.lin_xsign_sign, X, chunks[k])
         end
     end
+end
+
+"""Every linear coefficient: the constants (once), those that never move or follow the clock,
+and those that move with the state."""
+function _set_linear!(A::Assembler, sys::System, X::Vector{Float64})
+    if !A.consts_written
+        data = A.data
+        @inbounds for i in eachindex(A.lin_const_pos)
+            data[A.lin_const_pos[i]] = A.lin_const_val[i]
+        end
+        A.consts_written = true
+    end
+    _set_xsign_part!(A, X, 1:A.lin_fast_from-1, A.lin_chunks)
+    _set_fast!(A, sys, X)
+end
+
+"""The linear coefficients that can move with the state: those read from slots that move with
+it, the products of two slots, and the far-field paths'."""
+function _set_fast!(A::Assembler, sys::System, X::Vector{Float64})
+    data = A.data
+    _set_xsign_part!(A, X, A.lin_fast_from:length(A.lin_xsign_pos), A.lin_fast_chunks)
     @inbounds for i in eachindex(A.lin_xx_pos)
         data[A.lin_xx_pos[i]] = X[A.lin_xx_a[i]] * X[A.lin_xx_b[i]] * A.lin_xx_sign[i]
-    end
-    @inbounds for i in eachindex(A.lin_const_pos)
-        data[A.lin_const_pos[i]] = A.lin_const_val[i]
     end
     for (k, p) in A.lin_farf
         F = sys.data.FARF[k+1]
@@ -367,17 +418,18 @@ function _set_affine!(A::Assembler, sys::System, y::Vector{Float64}, X::Vector{F
     end
 end
 
-"""Brings the linear coefficients up to date, if they can have moved."""
+"""Brings the linear coefficients up to date, if they can have moved: every one when the
+invariants or the clock have moved since they were written, otherwise only those that move
+with the state."""
 function refresh_linear!(A::Assembler, sys::System, X::Vector{Float64})
-    if A.moves == 0
-        A.keyed && A.key_version == sys.invariant_version && return
-    elseif A.moves == 1
-        A.keyed && A.key_version == sys.invariant_version && A.key_clock === sys.clock_at && return
+    if A.keyed && A.key_version == sys.invariant_version && (A.moves == 0 || A.key_clock === sys.clock_at)
+        A.moves == 2 && _set_fast!(A, sys, X)
+        return
     end
     _set_linear!(A, sys, X)
     A.key_version = sys.invariant_version
     A.key_clock = sys.clock_at
-    A.keyed = A.moves < 2
+    A.keyed = true
 end
 
 """The derivative's rows summed: each product rounded, then added in order."""
@@ -400,12 +452,12 @@ function assemble!(dy::Vector{Float64}, A::Assembler, sys::System, y::Vector{Flo
     return dy
 end
 
-function _assemble_rows!(dy::Vector{Float64}, rowptr::Vector{Int}, cols::Vector{Int}, data::Vector{Float64},
+function _assemble_rows!(dy::Vector{Float64}, rowptr::Vector{Int32}, cols::Vector{Int32}, data::Vector{Float64},
                          y::Vector{Float64}, n::Int, rows::UnitRange{Int})
     @inbounds for i in rows
         acc = 0.0
-        for jj in rowptr[i]:rowptr[i+1]-1
-            c = cols[jj]
+        for jj in Int(rowptr[i]):Int(rowptr[i+1])-1
+            c = Int(cols[jj])
             acc += data[jj] * (c <= n ? y[c] : 1.0)
         end
         dy[i] = acc

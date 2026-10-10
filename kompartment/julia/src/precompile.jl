@@ -8,17 +8,75 @@ using PrecompileTools: @setup_workload, @compile_workload
 @setup_workload begin
     text = """
     {"name": "Precompile", "nuclides": ["Cs-137", "Sr-90"],
-     "simulation": {"start_time": 0, "end_time": 1000, "output_points": 20, "rtol": 1e-6, "abstol": 1e-12},
+     "simulation": {"start_time": 0, "end_time": 1000, "output_points": 20, "rtol": 1e-6, "abstol": 1e-12,
+                    "switch_times": ["T_switch"]},
      "parameters": [{"name": "k", "value": 0.05, "index_lists": [],
                      "pdf": {"kind": "logt", "params": {"min": 0.01, "max": 0.1, "mode": 0.05}}},
                     {"name": "q", "value": 1.0, "index_lists": [],
-                     "pdf": {"kind": "norm", "params": {"mean": 1.0, "sd": 0.1}, "trmin": 0}}],
+                     "pdf": {"kind": "norm", "params": {"mean": 1.0, "sd": 0.1}, "trmin": 0}},
+                    {"name": "T_half", "value": 125, "index_lists": []}],
      "lookups": [{"name": "Q", "points": [[0, 1], [500, 2], [1000, 1]], "index_lists": []}],
-     "compartments": [{"name": "Soil", "initial": "1e10"}, {"name": "Well"}],
-     "expressions": [{"name": "Conc", "equation": "Well / 2", "unit": "Bq/m3"}],
+     "compartments": [{"name": "Soil", "initial": "1e10 * q"}, {"name": "Well"}],
+     "expressions": [{"name": "Conc", "equation": "Well / 2", "unit": "Bq/m3"},
+                     {"name": "T_switch", "equation": "2 * T_half", "index_lists": []}],
      "transfers": [{"name": "Soil_Well", "from": "Soil", "to": "Well", "rate": "k * Q"},
                    {"name": "Well_out", "from": "Well", "rate": "0.1 * min(1, Well / (1 + Well))"}],
      "min_maxes": [{"name": "Peak", "target": "Conc", "operation": "max"}]}
+    """
+    # A far-field path on matched layers (the bundled far-field example, smaller).
+    farfield = """
+    {"name": "Precompile far field", "simulation": {"start_time": 0, "end_time": 100000, "output_points": 20,
+    "spacing": "log", "solver": "ndf", "rtol": 1e-06, "abstol": 1e-12, "time_unit": "year"}, "nuclides": ["U-238",
+    "U-234", "Th-230"], "decay_unit": "Bq", "parameters": [{"name": "leach_rate", "value": 0.0001, "unit":
+    "1/year"}, {"name": "well_flow", "value": 1000, "unit": "m3/year"}, {"name": "well_volume", "value": 1,
+    "unit": "m3"}, {"name": "Kd_matrix", "value": 0.001, "unit": "m3/kg", "index_lists": ["Radionuclides"],
+    "entries": [{"index": {"Radionuclides": "U-238"}, "value": 0.0017}, {"index": {"Radionuclides": "U-234"},
+    "value": 0.0017}, {"index": {"Radionuclides": "Th-230"}, "value": 0.05}]}, {"name": "De_matrix", "value":
+    3.15e-05, "unit": "m2/year"}], "compartments": [{"name": "Vault", "initial": "1e12", "unit": "Bq",
+    "index_lists": ["Radionuclides"], "entries": [{"index": {"Radionuclides": "U-234"}, "initial": "0"}, {"index":
+    {"Radionuclides": "Th-230"}, "initial": "0"}]}, {"name": "Well", "initial": "0", "unit": "Bq", "index_lists":
+    ["Radionuclides"]}], "farfields": [{"name": "Rock", "index_lists": ["Radionuclides"], "tw": "50", "surface":
+    "f", "f": "1e5", "kd_f": "0", "kd_m": "Kd_matrix", "de_m": "De_matrix", "eps_m": "0.0018", "rho_m": "2700",
+    "pe": "10", "pen_dep": "12.5", "pen_dep_0": "", "n_f": 6, "n_m": 6, "o_b": 4, "n_b": "", "grid": "matched",
+    "handle_decay": true, "report_cells": false, "unit": "Bq/year"}], "transfers": [{"name": "Leach", "from":
+    "Vault", "to": "Rock", "rate": "leach_rate", "multiply_by_donor": true, "unit": "1/year"}, {"name": "Release",
+    "from": "Rock", "to": "Well", "rate": "Rock", "multiply_by_donor": false, "unit": "Bq/year", "index_lists":
+    ["Radionuclides"]}, {"name": "Drawn_off", "from": "Well", "to": null, "rate": "well_flow / well_volume",
+    "multiply_by_donor": true, "unit": "1/year"}], "expressions": [{"name": "Well_concentration", "equation":
+    "Rock / well_flow", "unit": "Bq/m3", "index_lists": ["Radionuclides"]}, {"name": "Total_concentration",
+    "equation": "Well_concentration[U-238] + Well_concentration[U-234] + Well_concentration[Th-230]", "unit":
+    "Bq/m3", "index_lists": []}], "inflows": []}
+    """
+    # Waste packages that fail, an event drawn at random and one at a time, an action of each
+    # kind (the bundled waste-packages example).
+    waste = """
+    {"name": "Precompile waste packages", "simulation": {"start_time": 0, "end_time": 1000000, "output_points":
+    20, "spacing": "log", "solver": "ndf", "rtol": 1e-06, "abstol": 0.001, "time_unit": "year", "mass_balance":
+    false}, "nuclides": ["Cs-137", "Ni-59", "Cl-36", "Se-79"], "decay_unit": "Bq", "index_lists": [{"name":
+    "Radionuclides", "indices": [{"name": "Cs-137"}, {"name": "Ni-59"}, {"name": "Cl-36"}, {"name": "Se-79"}],
+    "for_contaminants": true}], "parameters": [{"name": "t_first_failure", "value": 1000, "unit": "year",
+    "index_lists": []}, {"name": "canister_life", "value": 50000, "unit": "year", "index_lists": []}, {"name":
+    "matrix_rate", "value": 1e-07, "unit": "1/year", "index_lists": []}, {"name": "flush_rate", "value": 0.001,
+    "unit": "1/year", "index_lists": []}, {"name": "geo_rate", "value": 0.0002, "unit": "1/year", "index_lists":
+    []}, {"name": "quake_rate", "value": 2e-05, "unit": "1/year", "index_lists": []}, {"name": "t_glacial",
+    "value": 100000, "unit": "year", "index_lists": []}], "waste_packages": [{"name": "Canisters", "index_lists":
+    ["Radionuclides"], "packages": 4500, "inventory": "1e14", "irf": "0.005", "degradation_rate": "matrix_rate",
+    "failure": "weibull", "fail_start": "t_first_failure", "fail_scale": "canister_life", "fail_shape": "2",
+    "handle_decay": true, "unit": "Bq/year", "entries": [{"index": {"Radionuclides": "Cs-137"}, "inventory":
+    "5e16", "irf": "0.03"}, {"index": {"Radionuclides": "Ni-59"}, "inventory": "2e13"}, {"index":
+    {"Radionuclides": "Cl-36"}, "inventory": "4e12", "irf": "0.08"}]}], "compartments": [{"name": "NearField",
+    "index_lists": ["Radionuclides"], "initial": "0", "unit": "Bq"}, {"name": "Geosphere", "index_lists":
+    ["Radionuclides"], "initial": "0", "unit": "Bq"}, {"name": "Biosphere", "index_lists": ["Radionuclides"],
+    "initial": "0", "unit": "Bq"}], "transfers": [{"name": "Release", "from": "Canisters", "to": "NearField",
+    "rate": "Canisters", "multiply_by_donor": false, "unit": "Bq/year", "index_lists": ["Radionuclides"]},
+    {"name": "Flush", "from": "NearField", "to": "Geosphere", "rate": "flush_rate", "unit": "1/year",
+    "index_lists": ["Radionuclides"]}, {"name": "Transit", "from": "Geosphere", "to": "Biosphere", "rate":
+    "geo_rate", "unit": "1/year", "index_lists": ["Radionuclides"]}, {"name": "Loss", "from": "Biosphere", "to":
+    null, "rate": "1e-2", "unit": "1/year", "index_lists": ["Radionuclides"]}], "expressions": [], "inflows": [],
+    "events": [{"name": "Quake", "timing": "poisson", "rate": "quake_rate", "from": "", "until": "", "sampled":
+    true, "unit": "", "actions": [{"kind": "fail", "block": "Canisters", "fraction": "0.05"}], "index_lists": []},
+    {"name": "Glaciation", "timing": "at", "at": "t_glacial", "sampled": true, "unit": "", "actions": [{"kind":
+    "move", "from": "Biosphere", "to": null, "fraction": "0.8"}], "index_lists": []}]}
     """
     # An Ecolego model.xml, made up: two nuclides that decay one into the
     # other, a root list, a sub-set and a mapped list, per-index entries, a
@@ -372,6 +430,11 @@ using PrecompileTools: @setup_workload, @compile_workload
             summary(res)
         end
         to_json(m)
+        # A far-field path, and waste packages with their events, each run and its series read.
+        for t in (farfield, waste)
+            r = run(from_json(t))
+            series_many(r, outputs(r))
+        end
         # A run solved in its parts side by side (two, one per nuclide), and its log.
         run_log(run(m; split="on", threads=2))
         # A probabilistic run of a few realisations, and what it says.
@@ -389,6 +452,19 @@ using PrecompileTools: @setup_workload, @compile_workload
             save(res, joinpath(dir, "all.h5"))
             save(res, joinpath(dir, "soil.h5"); blocks=["Soil"], time_origin=100)
             save(res, joinpath(dir, "soil.csv"); outputs=outputs(res, "Soil"))
+            # Every kind of file opened by its path, as a script opens one: the model's own,
+            # a bare model.xml, and an Ecolego project and assessment (a zipped folder).
+            json = joinpath(dir, "precompile.json")
+            write(json, text)
+            run(load(json); split="off")
+            xml = joinpath(dir, "model.xml")
+            write(xml, eco)
+            load(xml)
+            for ext in (".eco", ".eas")
+                path = joinpath(dir, "precompile" * ext)
+                write(path, write_zip(["Precompile/model.xml" => eco, ".version" => "version=6.5 track-changes=false"]))
+                run(load(path))
+            end
         end
     end
 end

@@ -279,10 +279,17 @@ every part taking the same steps in both.
 The bundled examples build in tens of milliseconds and solve in milliseconds.
 Julia compiles the package's own code once, when it is precompiled; a model's
 generated code is compiled when the model is built, a fraction of a second
-even for a large assessment.
+even for a large assessment. Each solver is compiled once for every model,
+whatever a run's settings, recorders, events or progress callback, so a fresh
+process does not compile it again: there `using Kompartment` takes about half
+a second, and a bundled example's first result, opened from its file and
+saved as HDF5, about a third of a second more -- most of it compiling the
+model's own equations.
 
 Started with several threads, a large model's derivative is shared out between
-them, row by row; the sums are the same, so the run is the same to the bit.
+them, row by row; the sums are the same, so the run is the same to the bit. It
+is shared from 250,000 terms: below that, waking the threads costs more than
+they save.
 
 ## A script from the file to the result file
 

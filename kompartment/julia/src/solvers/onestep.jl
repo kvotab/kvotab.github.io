@@ -482,11 +482,13 @@ function _os_integrate(method::Symbol, f::RHSFunction, tspan_in::AbstractVector{
                    _run_progress(_opt(opts, "on_step")))
 end
 
+# Not specialised on which of its optional arguments a run has (see `_ndf_solve`).
 function _os_run(st::S, rhs::_OSRhs, tspan::Vector{Float64}, y0::Vector{Float64}, rtol::Float64,
-                 atol::Vector{Float64}, threshold::Vector{Float64}, mask::Union{Nothing,Vector{Bool}},
+                 atol::Vector{Float64}, threshold::Vector{Float64}, @nospecialize(mask::Union{Nothing,Vector{Bool}}),
                  max_steps::Float64, hmax::Float64, hmin_opt::Float64, stall_window::Int, h0::Float64,
-                 events::Union{Nothing,EventFunctions}, on_output::Union{Nothing,StepCallback},
-                 on_accepted::Union{Nothing,StepCallback}, on_step::Union{Nothing,RunProgress})::Solution where {S}
+                 @nospecialize(events::Union{Nothing,EventFunctions}), @nospecialize(on_output::Union{Nothing,StepCallback}),
+                 @nospecialize(on_accepted::Union{Nothing,StepCallback}),
+                 @nospecialize(on_step::Union{Nothing,RunProgress}))::Solution where {S}
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]

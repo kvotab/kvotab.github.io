@@ -240,9 +240,10 @@ function _self_refs(ast::ENode, a::Entry, alg_by_name::Dict{String,Entry})
         elseif node isa EUnary
             push!(stack, node.operand)
         elseif node isa EBinary
-            push!(stack, node.left, node.right)
+# One child at a time: pushed together, every pair of node kinds is compiled anew.
+            push!(stack, node.left); push!(stack, node.right)
         elseif node isa ECond
-            push!(stack, node.test, node.then, node.otherwise)
+            push!(stack, node.test); push!(stack, node.then); push!(stack, node.otherwise)
         elseif node isa ECall
             append!(stack, node.args)
         end
@@ -349,9 +350,9 @@ function _reads_time(node::ENode)
         elseif n isa EUnary
             push!(stack, n.operand)
         elseif n isa EBinary
-            push!(stack, n.left, n.right)
+            push!(stack, n.left); push!(stack, n.right)
         elseif n isa ECond
-            push!(stack, n.test, n.then, n.otherwise)
+            push!(stack, n.test); push!(stack, n.then); push!(stack, n.otherwise)
         end
     end
     return false

@@ -712,15 +712,20 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
                       auto_abstol, ends_only, mass_v)
 end
 
+# Not specialised on which of its optional arguments a run has: one compiled solver, in the
+# package image, serves every model, where each mix of them would otherwise be compiled anew
+# in every process that met it (a third of a second each).
 function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64}, rtol::Float64,
                     atol::Vector{Float64}, non_negative::Vector{Int}, max_order::Int, bdf::Bool, hmax_in::Float64,
                     h0::Float64, max_steps::Float64, error_norm::String, norm_control::Bool,
-                    jacobian::Union{Nothing,JacobianSpec}, matrix::String, floor_run::Int, floor_newton_run::Int,
-                    stagnation_tol::Float64, min_newton::Int, stall_window::Int,
-                    events::Union{Nothing,EventFunctions}, t_start_in::Float64,
-                    hints::Union{Nothing,Dict{String,String}}, on_accepted::Union{Nothing,StepCallback},
-                    on_output::Union{Nothing,StepCallback}, on_step::Union{Nothing,StepProgress},
-                    auto_abstol::Bool, ends_only::Bool, mass::Union{Nothing,Vector{Float64}})::Solution
+                    @nospecialize(jacobian::Union{Nothing,JacobianSpec}), matrix::String, floor_run::Int,
+                    floor_newton_run::Int, stagnation_tol::Float64, min_newton::Int, stall_window::Int,
+                    @nospecialize(events::Union{Nothing,EventFunctions}), t_start_in::Float64,
+                    @nospecialize(hints::Union{Nothing,Dict{String,String}}),
+                    @nospecialize(on_accepted::Union{Nothing,StepCallback}),
+                    @nospecialize(on_output::Union{Nothing,StepCallback}),
+                    @nospecialize(on_step::Union{Nothing,StepProgress}),
+                    auto_abstol::Bool, ends_only::Bool, @nospecialize(mass::Union{Nothing,Vector{Float64}}))::Solution
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]

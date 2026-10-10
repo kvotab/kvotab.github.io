@@ -303,7 +303,8 @@ function _eco_qualified(block::AbstractDict)
 end
 
 # `obj` without its empty strings, missing values and empty lists.
-function _eco_trim_empty(pairs)
+# Not specialised on the pairs' types: each kind of block hands over a tuple of its own shape.
+function _eco_trim_empty(@nospecialize(pairs))
     out = JDict()
     for (k, v) in pairs
         (v === nothing || (v isa AbstractString && isempty(v)) || (v isa AbstractVector && isempty(v))) && continue
@@ -1258,8 +1259,9 @@ end
 
 # What the model is, in up to five lines, for its description: where it came
 # from, what is in it, what it is indexed by and what a run of it does; the
-# author's own comment leads when there is one. `describeModel`.
-function _eco_describe_model(project::JDict, facts)
+# author's own comment leads when there is one. `describeModel`. Run once per import,
+# and not specialised on which facts the file gave (each mix would be compiled anew).
+function _eco_describe_model(project::JDict, @nospecialize(facts))
     author = facts.author
     comment = facts.comment
     modified = facts.modified
