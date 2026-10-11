@@ -494,7 +494,8 @@ def _index_lists_of(project: Any) -> List[Any]:
     if project is None:
         return []
     lists = getattr(project, 'index_lists', None)
-    if isinstance(lists, list) and not isinstance(project, Mapping):  # an engine Project
+    # An engine Project's lists, as dictionaries (a Model's views of its lists are read from its file instead).
+    if isinstance(lists, list) and not isinstance(project, Mapping) and all(isinstance(l, Mapping) for l in lists):
         return lists
     raw = _project_dict(project)
     from ..indexlists import derive_block_lists, derive_elements

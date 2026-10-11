@@ -47,6 +47,7 @@ import numpy as np
 
 from helpers import EXAMPLES, NODE, SRC, differences, example, needs_app
 
+from kompartment import Model
 from kompartment import datatable as dtab
 from kompartment.engine import runlog
 from kompartment.engine.atstart import run_scenarios
@@ -287,6 +288,27 @@ class ResultFileLookup(unittest.TestCase):
         for missing in ('D', {'label': 'D'}, {'label': float('nan')}):
             with self.subTest(missing=missing), self.assertRaises(KeyError):
                 resultfile._which_of(outs + [odd], [missing])
+
+
+class RealisationsFileProject(unittest.TestCase):
+    def test_a_model_as_the_project_writes_what_its_file_writes(self) -> None:
+        """A :class:`kompartment.Model` as the realisations file's project
+        writes the file its dictionary writes, every index list in it. The
+        lists a Model holds are views of its own, not the dictionaries an
+        engine ``Project`` holds: taken for those, they wrote no list at all."""
+        m = Model.load(EXAMPLES / 'biosphere.json')
+        prob = run_probabilistic(Project(m.raw), iterations=2, seed=1)
+
+        def tree(project: Any) -> Any:
+            return resultfile.probabilistic_tree(prob, 'all', project=project, now=dt.datetime(*NOW))
+
+        def index_lists(project: Any) -> List[Dict[str, Any]]:
+            return [e for e in dump_tree(tree(project)) if e['path'].startswith('/IndexLists/')]
+
+        engine = index_lists(Project(m.raw))
+        self.assertTrue(engine)
+        self.assertEqual(index_lists(m), engine)
+        self.assertEqual(hdf5.write_hdf5(tree(m)), hdf5.write_hdf5(tree(m.raw)))
 
 
 @needs_app
