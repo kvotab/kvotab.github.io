@@ -259,7 +259,7 @@
       this.panels = new SM.panels.Panels(this.side, this);
       this._wireHandle();
 
-      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt,.jmp,.ipynb,.py,.jsl', multiple: true, hidden: true });
+      this.fileInput = el('input', { type: 'file', accept: '.csv,.tsv,.txt,.dat,.tab,.xlsx,.xlsm,.json,.dta,.sas7bdat,.xpt,.jmp,.h5,.hdf5,.he5,.hdf,.nc,.nc4,.mat,.ipynb,.py,.jsl', multiple: true, hidden: true });
       this.fileInput.addEventListener('change', () => { const f = [...this.fileInput.files]; this.fileInput.value = ''; this.openFiles(f); });
       h.append(this.fileInput);
       this._wireDrop();
@@ -498,6 +498,14 @@
           // a notebook, or a JSL script to convert
           if (/\.(ipynb|py)$/i.test(f.name) && SM.notebook) { await SM.notebook.openFile(this, f); continue; }
           if (/\.jsl$/i.test(f.name) && SM.jsl) { await SM.jsl.openFile(this, f); continue; }
+          // HDF5, told by its first bytes whatever the name (netCDF-4 and
+          // MATLAB v7.3 files are HDF5 too): the Open HDF5 dialog
+          if (SM.hdf5) {
+            const kind = await SM.hdf5.sniff(f);
+            if (kind === 'hdf5') { await SM.hdf5.open(this, f); continue; }
+            if (kind && SM.hdf5.NOT_HDF5[kind]) throw new Error(SM.hdf5.NOT_HDF5[kind]);
+            if (SM.hdf5.isHdf5Name(f.name)) throw new Error('not an HDF5 file: it does not start with the HDF5 signature');
+          }
           if (/\.(dta|sas7bdat|xpt|jmp)$/i.test(f.name)) {
             SM.ui.toast(`Reading ${f.name} in the Python engine…`);
             const r = await SM.engine.callBytes('datasets.read_file', { name: f.name }, await f.arrayBuffer());
@@ -1186,7 +1194,7 @@
         el('h2', { text: 'Statistics in the browser, with statsmodels' }),
         el('p', { text: 'Open a table, choose an analysis from the Analyze or Graph menu, cast columns into roles, and read the report. Each report is live: select points and the rows light up everywhere; exclude rows and redo; open the red triangles for more. Under every result is the Python that computes it: edit it and run it where it is, or take it to a notebook (Python > New Notebook), where the open tables are at hand. Python > JSL to Python turns a JMP script into Python.' }),
         el('div', { class: 'sm-homebtns' }, openBtn, dsBtn, newBtn, nbBtn, jslBtn),
-        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt), JMP (.jmp) and this page\'s JSON tables open by drop or by File > Open, and so do notebooks (.ipynb, .py) and JSL scripts (.jsl). Nothing is uploaded: the data stay in this browser.' }),
+        el('p', { class: 'sm-ob-note', text: 'CSV, tab-separated text, Excel (.xlsx), Stata (.dta), SAS (.sas7bdat, .xpt), JMP (.jmp), HDF5 (.h5, .hdf5; netCDF-4 .nc and MATLAB v7.3 .mat too) and this page\'s JSON tables open by drop or by File > Open, and so do notebooks (.ipynb, .py) and JSL scripts (.jsl). Nothing is uploaded: the data stay in this browser.' }),
         el('h3', { text: 'Examples (simulated for this page)' }));
       const exBox = el('div', { class: 'sm-examples' });
       for (const [k, v] of Object.entries(SM.io.EXAMPLES)) {

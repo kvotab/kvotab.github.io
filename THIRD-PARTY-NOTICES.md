@@ -33,7 +33,7 @@ jQuery and jQuery UI (MIT), MathJax (Apache-2.0), Leaflet (BSD-2-Clause),
 SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip (MIT/GPLv3 dual), pdf.js
 (Apache-2.0), sql.js (MIT, with SQLite, public domain), h5wasm-plugins (ISC;
 the compression libraries it is built from keep their own licences) only when
-an HDF5 file in `rb.html` needs one of its decompressors, and — only when a
+an HDF5 file in `rb.html` or `smui.html` needs one of its decompressors, and — only when a
 model in Kompartment asks for a SciPy solver — Pyodide (MPL-2.0) with the
 CPython (PSF), NumPy and SciPy (BSD-3-Clause) builds it carries. They are
 fetched by the visitor's browser from their publishers and are not
@@ -52,8 +52,9 @@ redistributed here.
 - **myHDF5 and H5Web** by the ESRF (https://github.com/silx-kit/h5web, MIT):
   `rb.html` reads a large local file the way H5Web's h5wasm provider does,
   through WORKERFS in a worker, and loads HDF5 compression plugins by filter
-  id as it does. `resources/js/rb-lazy.js` and `rb-lazy-worker.js` are written
-  independently; no code is copied from them.
+  id as it does; `smui.html` opens its HDF5 files the same way.
+  `resources/js/rb-lazy.js`, `rb-lazy-worker.js` and `smui-hdf5-worker.js` are
+  written independently; no code is copied from them.
 - **Published numerical methods** behind `distributions.html`
   (`resources/js/distributions/`): the normal quantile uses the coefficients
   of Algorithm AS 241 (M. J. Wichura, *Applied Statistics* 37, 1988), the

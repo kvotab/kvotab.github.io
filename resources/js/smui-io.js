@@ -2,9 +2,11 @@
    SMUI.HTML: FILES IN AND OUT, AND THE EXAMPLE TABLES
 
    In:  CSV, TSV and other delimited text (the separator and a decimal comma
-        are detected), Excel .xlsx (the first sheet, or one chosen), this
-        page's own .smui.json (columns, types, row states), and text pasted
-        from a spreadsheet.
+        are detected; UTF-8, or UTF-16 with its byte order mark), Excel
+        .xlsx (the first sheet, or one chosen), this page's own .smui.json
+        (columns, types, row states), and text pasted from a spreadsheet. A
+        file that is not text is refused rather than read as text.
+        (HDF5 is smui-hdf5.js's; Stata, SAS and JMP files the engine's.)
    Out: CSV, Excel .xlsx and .smui.json.
 
    Every column's data type is read off its values: numeric when every
@@ -229,9 +231,23 @@
       if (!sheets.length) throw new Error('the workbook has no data');
       return sheets.map((s) => s.table);
     }
-    const text = await file.text();
+    const text = textOf(new Uint8Array(await file.arrayBuffer()));
     if (/\.json$/.test(lower)) return [SM.Table.fromJSON(JSON.parse(text))];
     return [tableFromText(text, name.replace(/\.(csv|tsv|txt|dat|tab)$/i, ''))];
+  }
+
+  /* A file's text: UTF-16 by its byte order mark (Excel's Unicode Text),
+     else UTF-8. Binary data -- NUL characters in text -- is refused: read
+     as text it made a table of noise. */
+  function textOf(u8) {
+    let text;
+    if (u8[0] === 0xff && u8[1] === 0xfe) text = new TextDecoder('utf-16le').decode(u8.subarray(2));
+    else if (u8[0] === 0xfe && u8[1] === 0xff) text = new TextDecoder('utf-16be').decode(u8.subarray(2));
+    else text = new TextDecoder('utf-8').decode(u8);
+    if (text.slice(0, 65536).includes('\u0000')) {
+      throw new Error('not a text file, nor one of the formats this page reads (delimited text, Excel .xlsx, Stata, SAS, JMP, HDF5 and this page\'s JSON)');
+    }
+    return text;
   }
 
   /* ---- File > Import Multiple Files: a row per file ------------------------
@@ -459,7 +475,7 @@
   }
 
   SM.io = Object.freeze({
-    detectDelimiter, parseRows, columnsFromRows, tableFromText, readXlsx, readFile, toCsv, toXlsxBlob, formatDate, parseDate,
+    detectDelimiter, parseRows, columnsFromRows, tableFromText, readXlsx, readFile, textOf, toCsv, toXlsxBlob, formatDate, parseDate,
     cellText, EXAMPLES, example, addExample, filesTable, globMatcher,
   });
 }(typeof self !== 'undefined' ? self : this));

@@ -1,0 +1,76 @@
+/* ==========================================================================
+   SMUI.HTML: THE OPEN HDF5 DIALOG (smui-hdf5.js)
+   The file's groups and datasets as a tree of tick boxes, what each would
+   become beside its name, and below it the tables Open makes.
+   ========================================================================== */
+:root { --sm-h5-folder: #b9791c; }
+:root[data-theme="dark"] { --sm-h5-folder: #f0b75f; }
+.sm-h5-dialog { width: min(820px, 100%); }
+.sm-h5 { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.sm-h5 .sm-dialog-lead { margin-bottom: 2px; }
+.sm-h5-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sm-h5-find {
+  flex: 1 1 200px; min-width: 0; padding: 4px 8px;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background: var(--bg-primary); color: var(--text-primary); font: inherit;
+}
+.sm-h5-find:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 0; }
+
+.sm-h5-tree {
+  max-height: min(48vh, 440px); min-height: 90px; overflow: auto;
+  border: 1px solid var(--border-color); border-radius: 5px;
+  background: var(--bg-primary); padding: 4px 0;
+}
+.sm-h5-row {
+  display: flex; align-items: center; gap: 5px; min-height: 24px;
+  padding: 1px 8px 1px calc(6px + var(--d, 0) * 18px);
+  line-height: 1.35;
+}
+.sm-h5-row:hover { background: var(--sm-sel-bg); }
+.sm-h5-row.is-off .sm-h5-name { color: var(--text-muted); font-weight: 400; }
+.sm-h5-row.is-meta .sm-h5-name { font-style: italic; }
+.sm-h5-tog {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: 0; background: none;
+  color: var(--text-secondary); cursor: pointer;
+}
+span.sm-h5-tog { cursor: default; }
+.sm-h5-tog:disabled { cursor: default; opacity: 0.6; }
+.sm-h5-row input[type="checkbox"] { flex: none; margin: 0; }
+.sm-h5-ico { flex: none; color: var(--text-secondary); }
+.sm-h5-ico.is-group { color: var(--sm-h5-folder); }
+.sm-h5-ico.is-data { color: var(--sm-cont); }
+.sm-h5-ico.is-pandas { color: var(--sm-ord); }
+.sm-h5-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sm-h5-desc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11.5px; }
+.sm-h5-flip {
+  flex: none; padding: 0 6px; height: 20px; line-height: 18px;
+  border: 1px solid var(--border-color); border-radius: 4px;
+  background: var(--bg-surface); color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.sm-h5-flip:hover { border-color: var(--color-kvot-accent); }
+.sm-h5-flip[aria-pressed="true"] { background: var(--sm-sel-bg); border-color: var(--color-kvot-accent); }
+.sm-h5-empty { margin: 8px 12px; color: var(--text-muted); }
+
+.sm-h5-together { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.sm-h5-together input { margin: 0; }
+.sm-h5-summary { font-size: 12px; line-height: 1.45; min-height: 2.6em; }
+.sm-h5-summary p { margin: 0 0 3px; }
+.sm-h5-opens { color: var(--text-secondary); }
+.sm-h5-none { color: var(--text-muted); }
+.sm-h5-tables { margin: 0; padding-left: 18px; max-height: 7.5em; overflow-y: auto; }
+.sm-h5-tables li { overflow-wrap: anywhere; }
+.sm-h5-warn { color: var(--sm-nom); }
+
+.sm-h5-busy { display: flex; flex-direction: column; gap: 8px; }
+.sm-h5-busytext { margin: 0; overflow-wrap: anywhere; }
+.sm-h5-busybar { width: 100%; }
+
+/* phones: the description under the name (⇄ stays on the name's line), so both can be read */
+@media (max-width: 760px) {
+  .sm-h5-tree { max-height: none; flex: 1 1 auto; }
+  .sm-h5-row { flex-wrap: wrap; row-gap: 0; padding-top: 3px; padding-bottom: 3px; }
+  .sm-h5-flip { order: 1; margin-left: auto; }
+  .sm-h5-desc { order: 2; flex-basis: 100%; padding-left: 44px; white-space: normal; }
+  .sm-h5-name { white-space: normal; overflow-wrap: anywhere; }
+}
