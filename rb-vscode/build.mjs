@@ -18,7 +18,8 @@
        toolbar alone (no logo, no page name, no navigation, footer or map) with
        a light/dark toggle; the theme one is dropped, because early.js themes;
      * the URL and Sample Data buttons go, and so does the welcome text that
-       names them;
+       names them; the tip on the tree's menu says it saves (there is no
+       User Interface for statsmodels here to send to);
      * the workers the page starts are bundled as source, which is how
        webview/early.js starts them.
 
@@ -60,6 +61,11 @@ const EXTRA = [
 /* The welcome panel's first step names the URL button; here it names the Explorer. */
 const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>';
 const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in HDF5 Browser</em>.</li>';
+
+/* The tree's menu sends the selection to the User Interface for statsmodels on the
+   site (rb-smui.js); here, where there is none, it only saves. */
+const WELCOME_TREE = '<li>Right-click in the tree to send the selection to the <strong>User Interface for statsmodels</strong> for statistics, or to save it as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>';
+const WELCOME_TREE_VSCODE = '<li>Right-click in the tree to <strong>save the selection</strong> as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>';
 
 const CDN = /^https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|cdn\.plot\.ly)\//;
 
@@ -246,6 +252,7 @@ async function main() {
   page = once(page, '<div id="kvotmap"></div>', '', 'the site map element');
   page = once(page, '<footer></footer>', '', 'the footer element');
   page = once(page, WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb.html');
+  page = once(page, WELCOME_TREE, WELCOME_TREE_VSCODE, 'the welcome panel\'s tip on the tree\'s menu in rb.html');
   page = once(page, '</body>', '  <script src="{{MEDIA}}/rb-vscode/late.js"></script>\n</body>', 'the end of the body');
 
   if (/<script(?![^>]*\ssrc=)[^>]*>/i.test(page)) fail('an inline script is left in the page');
@@ -261,7 +268,9 @@ async function main() {
   for (const rel of [...copied]) {
     let bytes = read(rel);
     if (rel === 'resources/js/rb-state.js') {
-      bytes = Buffer.from(once(bytes.toString('utf8'), WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb-state.js'));
+      let text = once(bytes.toString('utf8'), WELCOME_LOAD, WELCOME_LOAD_VSCODE, 'the welcome panel\'s first step in rb-state.js');
+      text = once(text, WELCOME_TREE, WELCOME_TREE_VSCODE, 'the welcome panel\'s tip on the tree\'s menu in rb-state.js');
+      bytes = Buffer.from(text);
     }
     write(path.join(MEDIA, rel), bytes);
     if (rel.endsWith('.js')) sources[rel] = bytes.toString('utf8');

@@ -12,8 +12,10 @@ the site. This covers what is the extension's own:
   * the header: the file toolbar alone, every tab standing on its line, Add
     Files and the light/dark toggle at the right; the toggle's choice kept in
     hdf5Browser.theme, followed by every view, and undone by toggling back;
-  * what needs VS Code's dialogs: Save (CSV, Excel, presets) and Add Files;
-    and the preset name, asked in the page since prompt() shows nothing here;
+  * what needs VS Code's dialogs: Save (CSV, Excel, presets, the tree's
+    selection as HDF5, the only thing its right-click menu offers here) and
+    Add Files; and the preset name, asked in the page since prompt() shows
+    nothing here;
   * Open Together with two files of the same name, and a file rewritten on
     disk being read again;
   * an Ecolego assessment (.eas): read whole whatever readLazily says, opened
@@ -181,6 +183,43 @@ async def main():
         saved = vs.wait_event(lambda e: e['type'] == 'saved', 30, 'the presets to be saved', since=m)
         with open(saved['path']) as fh:
             check('  and the presets, as JSON', isinstance(json.load(fh), list))
+
+        # --- the tree's menu: Save as HDF5 only (no smui here to send to) ---
+        menu = await page.ev("""(() => {
+          const row = findTreeItem(%s, { extra: '.group' });
+          const r = row.getBoundingClientRect();
+          row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 30, clientY: r.top + r.height / 2 }));
+          const m = document.querySelector('.rb-tree-menu');
+          return m ? [...m.querySelectorAll('button.rb-tree-menu-item')].map(b => b.textContent) : null;
+        })()""" % json.dumps(GROUP))
+        check("the tree's right-click menu only saves (there is no User Interface for statsmodels to send to)", menu, ['Save as HDF5…'])
+        m = vs.mark()
+        await page.ev("""(async () => {
+          [...document.querySelectorAll('button.rb-tree-menu-item')].find(b => b.textContent === 'Save as HDF5…').click();
+          await new Promise(r => setTimeout(r, 500));
+          // (values drawn from distributions are asked for first: the 1,000 the histogram draws)
+          const ok = document.querySelector('.rb-sample-ask .url-btn-load');
+          if (ok) ok.click();
+          return true;
+        })()""")
+        saved = vs.wait_event(lambda e: e['type'] == 'saved', 60, 'the selection to be saved as HDF5', since=m)
+        with open(saved['path'], 'rb') as fh:
+            head = fh.read(8)
+        check('  and saves the selection through VS Code, as an HDF5 file named after the group',
+              (os.path.basename(saved['path']), head), ('sample-a total.h5', b'\x89HDF\r\n\x1a\n'))
+        try:
+            import h5py
+            import numpy
+        except ImportError:
+            h5py = None
+            print('skip  what the saved selection holds: h5py is not installed')
+        if h5py:
+            with h5py.File(saved['path'], 'r') as f, h5py.File(fixture('sample-a.h5'), 'r') as src:
+                members = sorted(k for k in src[GROUP] if isinstance(src[GROUP][k], h5py.Dataset))
+                got = sorted(k for k in f[GROUP] if isinstance(f[GROUP][k], h5py.Dataset))
+                scales = {f[GROUP][k].dims[0][0].name for k in got if len(f[GROUP][k].dims[0])}
+                same = all(numpy.array_equal(f[GROUP][k][()], src[GROUP][k][()], equal_nan=True) for k in got)
+            check('  holding the group\'s series as they are, on /time', (got, scales, same), (members, {'/time'}, True))
 
         # --- the preset name is asked in the page ---------------------------
         await page.ev("saveCurrentAsPreset(); true")

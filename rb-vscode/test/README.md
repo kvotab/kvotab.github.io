@@ -71,7 +71,8 @@ README names differ (`load.two.files/lazy` and the two `memfs` counts).
 
 Opening whole and lazily, past 2 GiB, compressed both ways, empty, dropped
 into the page; Save through VS Code (CSV, Excel, the Python button's script,
-presets); Add Files; the preset dialog; the header
+presets, the tree's selection as HDF5, which is all the tree's menu
+offers here); Add Files; the preset dialog; the header
 (no logo or name, every tab standing on its line, Add Files and the toggle at
 the right, measured in px); VS Code's theme, and the light/dark toggle, kept in
 `hdf5Browser.theme` and followed by every view; Open Together, same-named
@@ -80,7 +81,7 @@ what the page was not given; Ecolego assessments (read whole, the runs asked
 for in the page, through Add Files and Open Together, the same runs opened
 again when the file is rewritten, a run saved as HDF5); and, last, the files
 rebuilt under the running extension (as a .vsix of the same version installed
-over it does), after which a new view must say to reload the window. 49
+over it does), after which a new view must say to reload the window. 52
 checks.
 
     python3 rb-vscode/test/test-vscode.py
