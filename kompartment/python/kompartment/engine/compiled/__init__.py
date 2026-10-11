@@ -31,10 +31,11 @@ under a lock (:func:`guard_numba_cache`).
 import contextlib
 import hashlib
 import os
+import re
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Iterator, List
+from typing import Any, Iterator, List, Optional
 
 
 def cache_root() -> Path:
@@ -176,6 +177,55 @@ def cache_lock(directory: str, shared: bool) -> Iterator[None]:
             held.discard(directory)
     finally:
         os.close(fd)
+
+
+#: The oldest numba whose compiled loops this package runs. A model's error
+#: inside compiled code -- a transport position below zero, a lookup with no
+#: x value -- reaches the solver's loop through a first-class function call,
+#: and numba 0.60 drops it there: it prints "Exception ignored" and the loop
+#: goes on with whatever the call left, so a run that should have stopped at
+#: the error ran on to its end. 0.62 and 0.68 hand it on; 0.61 was not tried.
+#: The compiled model's own functions, called from Python, hand their errors
+#: on whatever the version, so with an older numba a solver's loop stays in
+#: Python, on the compiled model where the solver has a Python loop to run it
+#: on (see ``run.prepare``).
+LOOP_NUMBA = (0, 62)
+
+
+def loop_refusal(version: Optional[str] = None) -> Optional[str]:
+    """Why the installed numba (or ``version``) cannot run the compiled
+    loops, or None when it can -- or when there is no numba, which the
+    runner says in its own words."""
+    if version is None:
+        try:
+            import numba
+        except ImportError:
+            return None
+        version = str(getattr(numba, '__version__', '0'))
+    parts = [int(x) for x in re.findall(r'\d+', version)[:2]] + [0, 0]
+    if (parts[0], parts[1]) >= LOOP_NUMBA:
+        return None
+    return (f'numba {version} drops an error a model raises inside a compiled loop, and the run would '
+            f'go on past it, so the loop stays in Python (numba {LOOP_NUMBA[0]}.{LOOP_NUMBA[1]} or later '
+            'compiles it)')
+
+
+#: The solvers whose compiled form is their compiled loop alone (``run.CompiledRun``):
+#: under a numba that runs no compiled loop they keep to the Python path.
+LOOP_SOLVERS = ('ndf', 'ros23', 'dp45')
+
+
+def compiles(solver_id: str) -> bool:
+    """Whether a run of ``solver_id`` asked to compile takes the compiled path
+    with the numba this Python has: not without numba, and not for
+    :data:`LOOP_SOLVERS` under a numba :func:`loop_refusal` refuses (the
+    Julia-derived methods keep the compiled model there, and SciPy's always
+    run their own loop on it). A model the compiler declines is another
+    matter, found when it is built."""
+    import importlib.util
+    if importlib.util.find_spec('numba') is None:
+        return False
+    return not (solver_id in LOOP_SOLVERS and loop_refusal() is not None)
 
 
 class NotCompiled(Exception):

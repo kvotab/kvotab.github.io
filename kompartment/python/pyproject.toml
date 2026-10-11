@@ -24,8 +24,8 @@ classifiers = [
 
 [project.optional-dependencies]
 run = ["numpy>=1.22", "scipy>=1.8"]
-fast = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57"]
-all = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57", "pandas>=1.4"]
+fast = ["numpy>=1.22", "scipy>=1.8", "numba>=0.62"]
+all = ["numpy>=1.22", "scipy>=1.8", "numba>=0.62", "pandas>=1.4"]
 
 [tool.setuptools.packages.find]
 include = ["kompartment", "kompartment.*"]

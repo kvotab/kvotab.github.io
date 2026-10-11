@@ -1097,12 +1097,13 @@ def remember(key: str, entry: Dict[str, Any]) -> None:
         pass
 
 
-def _compiled_on(compiled: Any) -> bool:
-    """Whether a run asked to be compiled ``compiled`` will be."""
+def _compiled_on(compiled: Any, solver_id: str) -> bool:
+    """Whether a run of ``solver_id`` asked to be compiled ``compiled`` will
+    be (see :func:`~kompartment.engine.compiled.compiles`)."""
     if compiled is False or compiled is None:
         return False
-    import importlib.util
-    return importlib.util.find_spec('numba') is not None
+    from .compiled import compiles
+    return compiles(solver_id)
 
 
 def _ran_as(results: Any, compiling: bool) -> bool:
@@ -1155,7 +1156,7 @@ def run_whole_or_split(project: Any, *, on_progress: Optional[Callable[[float, f
     t0 = time.perf_counter()
     system = build_system(project)
     build_ms = (time.perf_counter() - t0) * 1000
-    compiling = _compiled_on(compiled)
+    compiling = _compiled_on(compiled, project.simulation.get('solver') or 'ndf')
     key = memory_key(layout_signature(system), compiling)
     known = recall(key)
     cores = int(workers) if workers is not None else (os.cpu_count() or 1)

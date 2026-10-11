@@ -35,11 +35,11 @@ from ..jacobian import colour_columns, difference_jacobian
 from ..solvers import SolverError
 from ..solvers.matrix import APP_LU_MAX, DENSE_BELOW, IterationMatrix, non_finite_message, singular_message
 from . import solvers as cs
-from . import FAIL_PYTHON, CompiledFailure, NotCompiled, python_error
+from . import FAIL_PYTHON, LOOP_SOLVERS, CompiledFailure, NotCompiled, loop_refusal, python_error
 from .model import Callback, CompiledModel, HistoryFull, compile_model
 
 #: The solvers with a compiled loop.
-COMPILED_SOLVERS = ('ndf', 'ros23', 'dp45')
+COMPILED_SOLVERS = LOOP_SOLVERS
 SINGULAR_HINT = 'A compartment with no way in and no way out will do this.'
 
 
@@ -80,12 +80,19 @@ def prepare(system: Any, solver_id: str, opts: Dict[str, Any], *, min_change: fl
     :class:`NotCompiled` saying why the run keeps to the Python path."""
     if equations:
         raise NotCompiled('the run integrates a system of equations of its own')
-    cm = compiled_model(system)
     from ..solvers.julia.adapter import ALGORITHMS
+    # A numba that drops a model's errors inside a compiled loop runs none:
+    # the Julia-derived methods keep their Python loop, on the compiled model,
+    # and the three with no Python loop to take that way keep to the Python
+    # path (see LOOP_NUMBA).
+    refusal = loop_refusal()
+    if refusal is not None and solver_id in COMPILED_SOLVERS and solver_id not in ALGORITHMS:
+        raise NotCompiled(refusal)
+    cm = compiled_model(system)
     why = None
     if solver_id in ALGORITHMS:
         from .julia_run import JuliaRun, why_python
-        why = why_python(solver_id, opts)
+        why = refusal or why_python(solver_id, opts)
         if why is None:
             return JuliaRun(system, cm, solver_id, opts, solver_points)
     if solver_id not in COMPILED_SOLVERS:

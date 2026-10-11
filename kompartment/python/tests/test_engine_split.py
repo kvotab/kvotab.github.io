@@ -48,7 +48,10 @@ from kompartment.engine.solvers import SolverError
 
 try:
     import numba  # noqa: F401
-    HAVE_NUMBA = True
+    from kompartment.engine.compiled import loop_refusal
+    # A numba that drops a model's errors inside a compiled loop runs none
+    # (LOOP_NUMBA): its runs are the Python path's.
+    HAVE_NUMBA = loop_refusal() is None
 except Exception:  # noqa: BLE001 - optional
     HAVE_NUMBA = False
 

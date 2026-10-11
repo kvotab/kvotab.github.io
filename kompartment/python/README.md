@@ -22,6 +22,7 @@ m.save('two-boxes.json')
 Reading, editing and writing need Python 3.9 or later and nothing else.
 Running a model needs numpy and SciPy; numba, when installed, compiles the
 model and the solver's loop, which makes a small model tens of times quicker.
+The loop needs numba 0.62 or later: see *Speed*.
 Node.js is only needed for `Model.validate()`, which runs the application's
 own checks on a model.
 
@@ -504,6 +505,15 @@ ends. A compiled run takes the same steps as the Python path to the last bit:
 the same states, statistics, recorders and failures. So it is the default
 (`compiled='auto'`); `m.run(compiled=False)` keeps to Python, and
 `compiled=True` insists, which only a Python without numba refuses.
+
+The solver's loop needs numba 0.62 or later. An error a model raises inside
+compiled code -- a transport position below zero, a lookup with no x value --
+reaches the loop through a first-class function call, and numba 0.60 drops
+it there: it prints "Exception ignored" and the run goes on past it. With an
+older numba the Julia-derived methods and the switching solvers keep their
+Python loop on the compiled model, whose functions hand their errors on, and
+the NDF, Rosenbrock (2,3) and Dormand-Prince keep to the Python path
+(`compiled=True` refuses them); `res.stats` says so.
 
 ```python
 res = m.run()

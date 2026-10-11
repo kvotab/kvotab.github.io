@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import unittest
 from typing import Any, Callable, Dict, Optional, Tuple
+from unittest import mock
 
 import numpy as np
 
@@ -27,11 +28,17 @@ from kompartment.engine.solvers import SolverError
 
 try:
     import numba  # noqa: F401
-    HAVE_NUMBA = True
+    from kompartment.engine.compiled import loop_refusal
+    NUMBA_THERE = True
+    # A numba that drops a model's errors inside a compiled loop runs none
+    # (LOOP_NUMBA), and what these tests ask of a compiled run is then the
+    # Python path's: they need one that runs them. OlderNumba below is what
+    # an older one does.
+    HAVE_NUMBA = loop_refusal() is None
 except Exception:  # noqa: BLE001 - optional
-    HAVE_NUMBA = False
+    NUMBA_THERE = HAVE_NUMBA = False
 
-needs_numba = unittest.skipUnless(HAVE_NUMBA, 'the compiled path needs numba')
+needs_numba = unittest.skipUnless(HAVE_NUMBA, 'the compiled path needs numba 0.62 or later')
 
 STATS = ('nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'nbelowtol', 'negative', 'points', 'events',
          'restarts', 'jumps')
@@ -522,6 +529,60 @@ class Behaviour(unittest.TestCase):
         self.assertEqual(len(a.data['values']), len(b.data['values']))
         for va, vb in zip(a.data['values'], b.data['values']):
             self.assertTrue(np.array_equal(va, vb))
+
+
+@unittest.skipUnless(NUMBA_THERE, 'needs numba')
+class OlderNumba(unittest.TestCase):
+    """numba 0.60 drops an error a model raises inside a compiled loop -- it
+    prints "Exception ignored" and the loop goes on -- so kencarp4, trbdf2
+    and fbdf ran past a transport position below zero to the end of the
+    run, and rodas5p, qndf and radau5 stopped later than the Python path. A
+    numba older than LOOP_NUMBA runs no compiled loop: a Julia-derived
+    method keeps its Python loop on the compiled model, whose functions,
+    called from Python, hand their errors on whatever the version, and the
+    three solvers with no such loop keep to the Python path. Said, either
+    way, as a run says why it did not compile."""
+
+    def test_the_version_is_read(self) -> None:
+        self.assertRegex(loop_refusal('0.60.0'),
+                         r'^numba 0\.60\.0 drops an error a model raises inside a compiled loop')
+        self.assertRegex(loop_refusal('0.61.2'), r'numba 0\.62 or later compiles it')
+        for version in ('0.62.0', '0.62.0rc1', '0.68.0', '1.0'):
+            self.assertIsNone(loop_refusal(version), version)
+
+    def test_an_older_numba_keeps_the_loops_in_python(self) -> None:
+        from kompartment.engine.compiled import NotCompiled
+        refusal = loop_refusal('0.60.0')
+        bad = 'transport_point(1, 2, 3, time/5 - 0.2)'
+        good = 'transport_point(1, 2, 3, time/50 + 0.2)'
+
+        def said(project: Any, compiled: Any) -> str:
+            try:
+                run(project, compiled=compiled)
+            except Exception as e:  # noqa: BLE001 - the error is what is compared
+                return f'{type(e).__name__}: {e}'
+            return 'no error'
+
+        with mock.patch('kompartment.engine.compiled.run.loop_refusal', return_value=refusal):
+            for solver in ('ndf', 'ros23', 'dp45', 'kencarp4', 'trbdf2', 'fbdf', 'rodas5p', 'auto'):
+                with self.subTest(solver=solver):
+                    stops = failing(bad, solver=solver).project()
+                    self.assertEqual(said(stops, 'auto'), said(stops, False))
+                    self.assertNotEqual(said(stops, False), 'no error')
+                    project = failing(good, solver=solver).project()
+                    a = run(project, compiled=False)
+                    b = run(project, compiled='auto')
+                    self.assertTrue(np.array_equal(np.asarray(a.y), np.asarray(b.y)))
+                    if solver in ('ndf', 'ros23', 'dp45'):
+                        self.assertIs(b.stats['compiled'], False)
+                        self.assertEqual(b.stats['compiled_why'], refusal)
+                        with self.assertRaises(NotCompiled) as ctx:
+                            run(project, compiled=True)
+                        self.assertEqual(str(ctx.exception), refusal)
+                    else:
+                        self.assertIs(b.stats['compiled'], True)
+                        self.assertIs(b.stats['compiled_loop'], False)
+                        self.assertTrue(b.stats['compiled_loop_why'].endswith(refusal), b.stats['compiled_loop_why'])
 
 
 class Scipy(unittest.TestCase):
