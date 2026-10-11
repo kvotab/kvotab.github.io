@@ -42,12 +42,15 @@ const WASTE_DEFAULTS = JDict(
     "failure" => "never", "packages" => 1, "inventory" => "0", "irf" => "0", "degradation_rate" => "0",
     "fail_at" => "", "fail_from" => "", "fail_to" => "", "fail_start" => "0", "fail_rate" => "", "fail_scale" => "",
     "fail_shape" => "1", "handle_decay" => true)
-const TIMINGS = ("at", "poisson")
+const TIMINGS = ("at", "poisson", "trigger")
 const ACTIONS = ("fail", "move")
-const DIS_EQUATION_KEYS = ("at", "rate", "from", "until")
-const DIS_DEFAULTS = JDict("timing" => "at", "at" => "", "rate" => "", "from" => "", "until" => "", "sampled" => true,
-                           "actions" => Any[])
-const TIMING_KEYS = Dict("at" => ["at"], "poisson" => ["rate", "from", "until"])
+# `trigger` is an equation in the sense a snapshot's is: its one token names the
+# trigger that sets the event off (`DIS_EQUATION_KEYS` in disruption.js).
+const DIS_EQUATION_KEYS = ("at", "rate", "from", "until", "trigger")
+const DIS_DEFAULTS = JDict("timing" => "at", "at" => "", "rate" => "", "from" => "", "until" => "", "trigger" => "",
+                           "sampled" => true, "actions" => Any[])
+# What each timing reads as a value; a trigger is read as a name, by the builder.
+const TIMING_KEYS = Dict("at" => ["at"], "poisson" => ["rate", "from", "until"], "trigger" => String[])
 const TRANSPORT_ROLES = Dict("compartment" => ("begin", "end"), "expression" => ("number", "counter", "operation"))
 
 const INTERPOLATION_FROM_ECO = Dict(
@@ -1312,6 +1315,10 @@ function disruption_problems(p::Project)
         end
         if timing == "poisson" && isempty(strip(js_str(something(get(b, "rate", nothing), ""))))
             push!(out, (name=name, field="rate", message="A random event needs its rate: occurrences per unit time."))
+        end
+        # Whether the name is a trigger is the build's to say, as for a snapshot's.
+        if timing == "trigger" && isempty(strip(js_str(something(get(b, "trigger", nothing), ""))))
+            push!(out, (name=name, field="trigger", message="An event set off by a trigger needs the trigger: name one."))
         end
         function num(text)
             t = strip(js_str(something(text, "")))

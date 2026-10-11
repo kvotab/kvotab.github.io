@@ -13,7 +13,7 @@ const _CHECK_EQUATION_FIELDS = Dict{String,Tuple{Vararg{String}}}(
     "farfield" => ("tw", "f", "aw", "aperture", "kd_f", "kd_m", "de_m", "eps_m", "rho_m", "pe", "pen_dep", "pen_dep_0"),
     "waste_package" => ("inventory", "irf", "degradation_rate", "fail_at", "fail_from", "fail_to", "fail_start",
                         "fail_rate", "fail_scale", "fail_shape"),
-    "event" => ("at", "rate", "from", "until"))
+    "event" => ("at", "rate", "from", "until", "trigger"))
 const _CHECK_TRIGGER_FIELDS = Dict{String,Tuple{Vararg{String}}}(
     "min_max" => ("reset_trigger", "start_trigger", "stop_trigger"),
     "running_mean" => ("reset_trigger", "start_trigger", "stop_trigger"), "snapshot" => ("trigger",))
@@ -212,6 +212,13 @@ function check_model(m::Model)
                 push!(out, "$q: '$(_py_str(get(b, "failure", nothing)))' is not a way of failing")
             if kind == "event"
                 get(b, "timing", "at") in TIMINGS || push!(out, "$q: '$(_py_str(get(b, "timing", nothing)))' is not a timing")
+                # What sets it off is a trigger, named whole or at one index.
+                trig = String(strip(_py_str(something(get(b, "trigger", nothing), ""))))
+                if get(b, "timing", nothing) == "trigger" && !isempty(trig)
+                    t = resolve_reference(String(strip(split(trig, '['; limit=2)[1])), system, known)
+                    (t === nothing || _ed_kind_of(m, t) != "trigger") &&
+                        push!(out, "$q: its trigger '$trig' is not a trigger")
+                end
                 for a in _py_iter(get(b, "actions", nothing))
                     for end_ in ("block", "from", "to")
                         v = a isa AbstractDict ? get(a, end_, nothing) : nothing

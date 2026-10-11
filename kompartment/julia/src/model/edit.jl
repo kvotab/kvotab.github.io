@@ -1728,16 +1728,17 @@ function add_waste_package!(m::Model, name_=nothing; name=name_, failure="never"
 end
 
 """
-    add_event!(m, name=nothing; timing="at", at="", rate="", start="", until="", sampled=true, system="",
-               comment=nothing, position=nothing) -> Event
+    add_event!(m, name=nothing; timing="at", at="", rate="", start="", until="", trigger="", sampled=true,
+               system="", comment=nothing, position=nothing) -> Event
 
-Adds a disruptive event: once `at` a time (`timing="at"`), or at random at
+Adds a disruptive event: once `at` a time (`timing="at"`), at random at
 `rate` per unit time between `start` and `until` (`timing="poisson"`; blank
-is the run's start and end). Give it actions with `add_fail_action!` and
+is the run's start and end), or every time the trigger named `trigger` fires
+(`timing="trigger"`). Give it actions with `add_fail_action!` and
 `add_move_action!`.
 """
 function add_event!(m::Model, name_=nothing; name=name_, timing="at", at="", rate="", start="", until="",
-                    sampled=true, system="", comment=nothing, position=nothing)
+                    trigger="", sampled=true, system="", comment=nothing, position=nothing)
     n = _ed_name_for(m, "event", name, system)
     raw = JDict("name" => n)
     for (k, v) in jcopy(DIS_DEFAULTS)
@@ -1752,6 +1753,7 @@ function add_event!(m::Model, name_=nothing; name=name_, timing="at", at="", rat
     draft.rate = rate
     draft.start = start
     draft.until = until
+    draft.trigger = trigger
     draft.sampled = sampled
     return _ed_append!(m, "events", raw, system, position)
 end

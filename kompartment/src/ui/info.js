@@ -588,7 +588,8 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		const timing = ed.timingOf(block);
 		host.append(line('Happens', ed.TIMING_LABEL[timing]
 			+ (block.sampled === false && timing === 'poisson' ? ' — expected-value form in every realisation' : '')));
-		for (const key of ed.TIMING_KEYS[timing]) {
+		// The trigger is a name rather than a value, and is shown as one: a link.
+		for (const key of timing === 'trigger' ? ['trigger'] : ed.TIMING_KEYS[timing]) {
 			const v = String(block[key] ?? '').trim();
 			if (!v) continue;
 			host.append(el('div', { className: 'info-equation' },

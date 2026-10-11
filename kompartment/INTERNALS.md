@@ -1067,6 +1067,36 @@ realisations are far apart -- which is less than either percentile is known to
 from a thousand draws. One definition is applied to both runs, so a band beside
 a band compares like with like.
 
+### Discrete transfers
+
+A transfer in Ecolego may be given a discrete event, which makes it a
+*discrete transfer*: it is left out of the derivative altogether, and each time
+the event fires it moves, in one jump, its equation times the donor (or the
+equation itself, where it does not multiply by the donor). Every transfer set
+off by one firing takes its share of the state as it was before any of them
+moved. Ecolego's discrete events are its triggers, so each such transfer comes
+across as an *Event* set off by the trigger its event names, with a move of
+the share from the donor to the receiver (an outflow to the boundary has no
+receiver here and moves out). Left out, with the reason in the import report:
+a transfer that moves an amount rather than a share of its donor, one whose
+share or event differs between its indices, an indexed event named as a whole,
+and ends not indexed as the transfer is. And said where the two semantics part:
+here the events of one crossing act in turn, so a transfer that takes from a
+compartment another one set off by the same event has just moved out of comes
+with a warning naming both.
+
+Exported, an Event set off by a trigger whose actions are all moves goes back
+as discrete transfers -- one per move, numbered when there are several -- with
+the trigger as the event; one whose moves take from where another of its own
+moves has been is left out and said, since Ecolego would take every share
+from the state before. Checked in Ecolego itself: the export fixture's
+discrete transfers run there to within 2e-9 of a run here.
+
+A block's comment comes across with its line breaks. Ecolego 6 keeps it as a
+named property of the block and Ecolego 5 as an element of its own; both are
+read, the property first, and the export writes the property, which Ecolego
+reads with the line breaks it had (it reads the other too, joining its lines).
+
 ### Not mapped
 
 The other ~20 block types, and presentation state. Scenarios and
@@ -2863,6 +2893,27 @@ and a move's two rows are `PAT(·, A)` plus the lambda's and share's columns
 with jvp `lambda·(share·v_A + dshare·A)`. `isConstant` treats a windowed rate
 as clock-dependent and a rate over the whole run as constant, and adds the
 lambda and share slots to the rate blocks it inspects.
+
+**Set off by a trigger** (`timing: 'trigger'`, 2026-10-11). The event names a
+trigger, and acts each time it fires: a crossing found by the solver, at a time
+nobody knows before the run. The builder resolves the name to trigger slots
+(`firedBy`) -- a trigger indexed and named whole fires the event at any of its
+indices, one named at an index only there, and a block that is not a trigger is
+refused -- and emits no `#lambda`: the event has no rate and no window, and
+adds no corner. `events.fire(which, t, y)`, the call that tells the recorders
+their trigger fired, also applies every event the crossing sets off -- each
+once, however many of its trigger's indices fired together -- in model order,
+to a copy of the state, and returns it with the number of jumps;
+`solveWithEvents` keeps the row at the crossing as the state before (the corner
+convention), starts the next segment from the state after, and adds the jumps
+to `stats.jumps`. Each action acts on what the one before it left, and events
+at one instant act in turn -- so two moves out of one compartment at one
+crossing are not the same as two moves taken from the state before either (see
+*Discrete transfers* under the import). The count is still a state, one more at
+each firing. Local sensitivity refuses such a model: the jump falls at a time
+the state decides, and the derivative of a jump's time is not carried. The
+Python engine and the Julia port do the same (`System.jumps_at_crossing`,
+`jumps_at_crossing`).
 
 Against closed forms (`test/run.js`): a fail share of 0.1 at 10⁻³ a year over
 2,000 years leaves `e^{−0.2}` of the inventory intact and a count of 2.000, to

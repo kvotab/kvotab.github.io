@@ -405,8 +405,9 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                       for w in F.layer_warnings()]
             if coarse:
                 solution['stats']['layers'] = coarse
+        # The corners' jumps, added to those the triggers set off.
         if jumps and solution.get('stats') is not None:
-            solution['stats']['jumps'] = jumped[0]
+            solution['stats']['jumps'] = solution['stats'].get('jumps', 0) + jumped[0]
         if steps is not None:
             solution = merge_steps(solution, steps) if project.output_mode == 'both' else from_steps(steps, solution)
     except SolverError as e:
@@ -552,7 +553,9 @@ def solve_across_breaks(solve: Callable[[np.ndarray, np.ndarray], Dict[str, Any]
                 stats['sparse'] = s['sparse']
             if s.get('fill') is not None:
                 stats['fill'] = s['fill']
-            for key in ('npds', 'ndecomps', 'negative', 'events'):
+            # `jumps` here are the events a trigger set off inside the segment;
+            # the corners' own are added by `run`.
+            for key in ('npds', 'ndecomps', 'negative', 'events', 'jumps'):
                 if s.get(key) is not None:
                     stats[key] = stats.get(key, 0) + s[key]
             if s.get('held') is not None:
@@ -617,6 +620,18 @@ def solve_with_events(system: Any, f: Callable[..., np.ndarray], solver: Callabl
         t = stopped['t']
         y = stopped['y']
         fire(stopped['which'], t, y)
+        # An event a trigger sets off moves the state, and the next segment
+        # starts from what it leaves. The row *at* the crossing is the state
+        # before, as a timed event's corner is: the segment ends on it here, so
+        # the next segment's first row, the state after, is the seam dropped.
+        crossing = getattr(system, 'jumps_at_crossing', None)
+        acted = crossing(stopped['which'], y) if crossing is not None else None
+        if acted is not None:
+            if not times or times[-1] != t:
+                times.append(float(t))
+                rows.append(np.array(y, dtype=float))
+            y = acted[0]
+            stats['jumps'] = stats.get('jumps', 0) + acted[1]
         store(t, y)
         stats['events'] += len(stopped['which'])
         stats['restarts'] += 1

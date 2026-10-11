@@ -665,4 +665,44 @@ export const SPELLING = {
 	],
 };
 
-export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING };
+/**
+ * Events a trigger sets off. One that moves shares of compartments goes out as
+ * Ecolego's discrete transfer -- under its own name, or one per share it moves,
+ * a share moved out of the model into a sink, a trigger named at one index as
+ * it is -- and the rest stay here, each with its reason: one whose shares are
+ * taken in turn from where the one before moved, one set off by an indexed
+ * trigger named whole, one that fails packages, and one at a time.
+ */
+export const DISCRETE = {
+	name: 'Discrete',
+	nuclides: ['Cs-137', 'I-129'],
+	index_lists: [{ name: 'RN', for_contaminants: true, indices: [{ name: 'Cs-137', enabled: true }, { name: 'I-129', enabled: true }] }],
+	simulation: { start_time: 0, end_time: 40, output_points: 9, spacing: 'linear', solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year' },
+	systems: ['Basin'],
+	compartments: [
+		{ name: 'Lake', system: 'Basin', index_lists: ['RN'], initial: '1000', handle_decay: false },
+		{ name: 'Soil', index_lists: ['RN'], initial: '0', handle_decay: false },
+		{ name: 'Deep', index_lists: ['RN'], initial: '0', handle_decay: false },
+	],
+	transfers: [{ name: 'Outflow', system: 'Basin', from: 'Basin.Lake', to: null, index_lists: ['RN'], rate: '0.1' }],
+	expressions: [{ name: 'V', system: 'Basin', index_lists: [], equation: 'max(20 - time, 0)' }],
+	triggers: [
+		{ name: 'Gone', system: 'Basin', index_lists: [], first: '0', second: 'V', direction: 'rising' },
+		{ name: 'Low', index_lists: ['RN'], first: 'Basin.Lake', second: '500', direction: 'falling' },
+	],
+	waste_packages: [{ name: 'Canisters', index_lists: ['RN'], packages: 10, inventory: '1e6', irf: '0.01', degradation_rate: '1e-3', failure: 'never' }],
+	events: [
+		{ name: 'Dried', system: 'Basin', timing: 'trigger', trigger: 'Gone', comment: 'The lake empties into the soil.',
+			actions: [{ kind: 'move', from: 'Basin.Lake', to: 'Soil', fraction: '1.0' }] },
+		{ name: 'Split', timing: 'trigger', trigger: 'Low[I-129]',
+			actions: [{ kind: 'move', from: 'Soil', to: 'Deep', fraction: '0.5' }, { kind: 'move', from: 'Basin.Lake', to: null, fraction: '0.25' }] },
+		{ name: 'Chain', timing: 'trigger', trigger: 'Low[Cs-137]',
+			actions: [{ kind: 'move', from: 'Deep', to: 'Soil', fraction: '0.5' }, { kind: 'move', from: 'Soil', to: null, fraction: '0.5' }] },
+		{ name: 'Any', timing: 'trigger', trigger: 'Low', actions: [{ kind: 'move', from: 'Soil', to: null, fraction: '0.1' }] },
+		{ name: 'Breach', timing: 'trigger', trigger: 'Basin.Gone', actions: [{ kind: 'fail', block: 'Canisters', fraction: '0.5' }] },
+		{ name: 'Flood', timing: 'at', at: '30', actions: [{ kind: 'move', from: 'Soil', to: null, fraction: '0.5' }] },
+	],
+	parameters: [], inflows: [],
+};
+
+export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING, DISCRETE };

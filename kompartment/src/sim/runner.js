@@ -570,8 +570,9 @@ export function run(input, opts = {}) {
 			? solveAcrossBreaks(solveSpan, span, y0, breaks, jumpAt)
 			: solveSpan(span, y0);
 		// How many times the state was jumped: package failures at a time and
-		// disruptive events, for the status line and the log.
-		if (jumps.length && solution.stats) solution.stats.jumps = jumped;
+		// disruptive events, for the status line and the log -- the corners'
+		// added to those the triggers set off, which the segments counted.
+		if (jumps.length && solution.stats) solution.stats.jumps = (solution.stats.jumps ?? 0) + jumped;
 		// What was collected, rather than the two ends the solver was asked
 		// for. Thinned if it took a great many steps: 20,000 points across 32
 		// series is a chart that redraws slowly on every hover, and the shape
@@ -801,7 +802,9 @@ function solveAcrossBreaks(solve, grid, y0, breaks, jumpAt = null) {
 			if (!stats.solver && seg.stats.solver) stats.solver = seg.stats.solver;
 			if (seg.stats.sparse !== undefined) stats.sparse = seg.stats.sparse;
 			if (seg.stats.fill !== undefined) stats.fill = seg.stats.fill;
-			for (const k of ['npds', 'ndecomps', 'negative', 'events']) {
+			// `jumps` here are the events a trigger set off inside the
+			// segment; the corners' own are added by `run`.
+			for (const k of ['npds', 'ndecomps', 'negative', 'events', 'jumps']) {
 				if (seg.stats[k] !== undefined) stats[k] = (stats[k] ?? 0) + seg.stats[k];
 			}
 			if (seg.stats.held) {
@@ -890,7 +893,22 @@ function solveWithEvents(system, f, solver, grid, y0, opts) {
 		if (!seg.stopped) break;
 		t = seg.stopped.t;
 		y = seg.stopped.y;
-		events.fire(seg.stopped.which, t, y);
+		// An event a trigger sets off moves the state, and the next segment
+		// starts from what it leaves. The row *at* the crossing is the state
+		// before, as a timed event's corner is: the segment ends on it here --
+		// a solver reports the requested times, and the crossing is not one --
+		// so the next segment's first row, the state after, is the seam that
+		// is dropped. Without a jump nothing here changes: that first row is
+		// the crossing's own, and the same state.
+		const acted = events.fire(seg.stopped.which, t, y);
+		if (acted) {
+			if (times[times.length - 1] !== t) {
+				times.push(t);
+				rows.push(Float64Array.from(y));
+			}
+			y = acted.y;
+			stats.jumps = (stats.jumps ?? 0) + acted.jumps;
+		}
 		// The blocks that remember see the event's own instant too, so that a
 		// min/max reset at it does not immediately record the value it just
 		// cleared.

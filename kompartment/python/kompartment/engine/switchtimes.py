@@ -67,8 +67,9 @@ def switch_times(project: Any) -> List[float]:
                 continue
             out.add(v)
     for d in _blocks(project, 'events'):
-        keys = ['at'] if (d.get('timing') if d.get('timing') in ('at', 'poisson') else 'at') == 'at' \
-            else ['from', 'until']
+        # One a trigger sets off has no corner known before the run.
+        timing = d.get('timing') if d.get('timing') in ('at', 'poisson', 'trigger') else 'at'
+        keys = ['at'] if timing == 'at' else ['from', 'until'] if timing == 'poisson' else []
         for key in keys:
             v = resolve_switch_time(project, d.get(key))
             if v is None or not (v > start) or not (v < end):

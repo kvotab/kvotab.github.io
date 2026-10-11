@@ -41,7 +41,7 @@ import zlib
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple, Union
 
-from ..blocks import SINGULAR
+from ..blocks import SINGULAR, dependent_moves
 from ..decay import STABLE
 from ..errors import KompartmentError
 from ..keys import COLLECTIONS
@@ -338,6 +338,9 @@ def import_model_xml(text: str, *, file_name: Optional[str] = None,
     # model ended up with.
     _settle_general_variables(project, generals, block_name_by_id, report)
     _rewrite_endpoint_ids(project, block_name_by_id, report, twins)
+    # Last of the rewrites, so the trigger a discrete transfer names, and the
+    # compartments it moves between, are the names the model ended up with.
+    _settle_transfer_events(project, report)
 
     duplicated = names.duplicated()
     if duplicated:
@@ -616,6 +619,14 @@ def _rewrite_renamed_references(project: Dict[str, Any], names: '_NameMapper', r
                 for k in keys:
                     if k in entry:
                         entry[k] = rewrite(entry[k])
+    # A discrete transfer's event is a reference too, until it is settled into
+    # an event of this tool's (`_settle_transfer_events`).
+    for t in project.get('transfers') or []:
+        if t.get('transfer_event') is not None:
+            t['transfer_event'] = rewrite(t['transfer_event'])
+        for entry in t.get('entries') or []:
+            if entry.get('transfer_event') is not None:
+                entry['transfer_event'] = rewrite(entry['transfer_event'])
 
     if touched:
         report.warn(
@@ -683,6 +694,123 @@ class _Candidates:
                 if self.runs[j] <= runs:
                     found.add(j)
         return sorted(found)
+
+
+def _settle_transfer_events(project: Dict[str, Any], report: 'ImportReport') -> None:
+    """Ecolego's discrete transfers, as the events they are here.
+
+    A transfer with a *transfer event* is not a rate: Ecolego leaves it out of
+    the rates of change, and each time the discrete event it names fires it
+    moves what its equation says from one end to the other in one step -- the
+    equation's share of the donor when it multiplies by the donor, or that
+    amount when it does not -- from the state at the crossing. That is an event
+    of this tool's, set off by that trigger and moving that share between the
+    same two compartments, under the transfer's own name. What an event cannot
+    say is left out and named in the report: an amount, or no donor; a share or
+    an event that is not the same at every index; an indexed event, which
+    Ecolego fires index by index; ends not indexed as the transfer is.
+    ``settleTransferEvents`` in ``src/io/eco.js``."""
+    discrete = [t for t in project.get('transfers') or []
+                if t.get('transfer_event') is not None
+                or any(e.get('transfer_event') is not None for e in t.get('entries') or [])]
+    if not discrete:
+        return
+
+    def qualified(b: Dict[str, Any]) -> str:
+        return f"{b['system']}.{b['name']}" if b.get('system') else b['name']
+
+    triggers = {qualified(b): b for b in project.get('triggers') or []}
+    compartments = {qualified(c): c for c in project.get('compartments') or []}
+
+    def lists(b: Optional[Dict[str, Any]]) -> str:
+        return '\u0000'.join((b or {}).get('index_lists') or [])
+
+    made: List[str] = []
+    # The events each discrete event sets off, by the event and the index it is
+    # named at, in the order they will act.
+    together: Dict[str, List[Dict[str, Any]]] = {}
+    for t in discrete:
+        rows = t.get('entries') or []
+        event = t.get('transfer_event')
+        fires: List[str] = []
+
+        def why_not() -> Optional[str]:
+            if not t.get('from'):
+                return 'it starts outside the model, so there is no inventory for an event to move a share of'
+            if t.get('multiply_by_donor') is False or any(e.get('multiply_by_donor') is False for e in rows):
+                return ('it moves an amount at each firing rather than a share of its donor, and an event here '
+                        'moves shares')
+            if event is None or any(e.get('transfer_event') is not None and e['transfer_event'] != event
+                                    for e in rows):
+                return ('its discrete event is not the same one at every index, and an event here is set off by '
+                        'one trigger')
+            if any(e.get('rate') is not None and e['rate'] != t.get('rate') for e in rows):
+                return ('the share it moves is not the same at every index, and an event here moves one share of '
+                        'every index')
+            frm = compartments.get(t['from'])
+            to = None if t.get('to') is None else compartments.get(t['to'])
+            if frm is None or (t.get('to') is not None and to is None):
+                return 'an end of it is not a compartment, and an event here moves between compartments'
+            if lists(t) != lists(frm) or (to is not None and lists(to) != lists(frm)):
+                return ('its ends are not indexed as it is, and an event here moves its share between two '
+                        'compartments cell for cell')
+            # The event's name, and an index for each of its lists or none.
+            ref = re.fullmatch(r'([A-Za-z_][A-Za-z0-9_.]*)((?:\[[^\[\]]+\])*)', event)
+            if not ref:
+                return f"'{event}' does not name a discrete event"
+            named = resolve_reference(ref.group(1), t.get('system') or '', lambda n: n in triggers)
+            if not named:
+                return f"'{event}' is not a discrete event of this model"
+            if ref.group(2).count('[') != len(triggers[named].get('index_lists') or []):
+                return (f"'{event}' is indexed, and Ecolego fires it index by index, setting the transfer off "
+                        'at each index on its own')
+            fires.append(f'{named}{ref.group(2)}')
+            return None
+
+        why = why_not()
+        del project['transfers'][next(i for i, x in enumerate(project['transfers']) if x is t)]
+        if why:
+            report.skip('transfer', qualified(t), f'it has a transfer event, which makes it a discrete transfer, '
+                                                  f'and {why}')
+            continue
+        block: Dict[str, Any] = {'name': t['name']}
+        if t.get('system'):
+            block['system'] = t['system']
+        if t.get('comment'):
+            block['comment'] = t['comment']
+        if t.get('enabled') is False:
+            block['enabled'] = False
+        block['timing'] = 'trigger'
+        block['trigger'] = event
+        block['actions'] = [{'kind': 'move', 'from': t['from'], 'to': t.get('to'), 'fraction': t['rate']}]
+        project.setdefault('events', []).append(block)
+        made.append(t['name'])
+        together.setdefault(fires[0], []).append({**block['actions'][0], 'name': t['name']})
+    # Several set off by one event act in turn here, each on what the one before
+    # left, where Ecolego moves every share from what was there before any of them
+    # moved. The same thing unless one takes its share from where another moved.
+    for moves in together.values():
+        clash = dependent_moves(moves)
+        if clash is None:
+            continue
+        first, second = clash
+        report.warn(
+            f"'{first['name']}' and '{second['name']}' are set off by the same discrete event, and '{second['name']}' "
+            f"takes its share of '{second['from']}' after '{first['name']}' has moved a share "
+            f"{'out of' if first['from'] == second['from'] else 'into'} it. Ecolego takes every share from what was "
+            'there before any of them moved; here events at one instant act in the order they are listed, so '
+            f"'{second['name']}' moves a share of something else.")
+    if made:
+        one = len(made) == 1
+        shown = [f"'{n}'" for n in made[:6]]
+        if len(made) > 6:
+            shown.append(f'{len(made) - 6} more')
+        report.warn(
+            f"{'A transfer has' if one else f'{len(made)} transfers have'} a transfer event, which makes "
+            f"{'it' if one else 'each'} a discrete transfer: it moves its share of the donor all at once "
+            f"whenever that discrete event fires, and nothing in between. {'It' if one else 'Each'} came in as "
+            f'an event set off by that trigger, moving the same share to the same place at the same '
+            f'instant: {_list_of(shown)}.')
 
 
 def _drop_unreachable_targets(project: Dict[str, Any], report: 'ImportReport') -> None:
@@ -883,6 +1011,8 @@ class ImportReport:
             'snapshots': len(project.get('snapshots') or []),
             'delays': len(project.get('delays') or []),
             'triggers': len(project.get('triggers') or []),
+            # Discrete transfers become events: see `_settle_transfer_events`.
+            'events': len(project.get('events') or []),
             'nuclides': len(project.get('nuclides') or []),
         }
 
@@ -900,6 +1030,7 @@ class ImportReport:
             + (f"{c['lookups']} lookup table(s), " if c['lookups'] else '')
             + (f"{c['index_reductions']} index operation(s), " if c['index_reductions'] else '')
             + (f"{c['block_reductions']} aggregate(s), " if c['block_reductions'] else '')
+            + (f"{c['events']} event(s), " if c['events'] else '')
             + f"{c['index_lists']} index list(s), {c['nuclides']} nuclide(s).",
         ]
         if self.skipped:
@@ -1739,7 +1870,11 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
         dim_spec = {'index_lists': dims} if dims else {'per_nuclide': False}
 
         unit = child_text(el, 'unit') or ''
-        comment = child_text(el, 'comment') or ''
+        # A block's comment is its `comment` property, as Ecolego 6 writes it;
+        # a `<comment>` element where there is none (``readBlocks``).
+        comment = _property_text(el, 'comment')
+        if comment is None:
+            comment = child_text(el, 'comment') or ''
         entries = _read_entries(el, dim_lists, report, original)
 
         if type_ in GENERAL_VARIABLE:
@@ -2000,6 +2135,22 @@ def _read_blocks(data_model: Node, project: Dict[str, Any], names: _NameMapper, 
                                                   DONOR_DEFAULT.get(type_, False))
             rate = _or(_pick_default(entries, 'rate'), '0')
 
+            # A discrete transfer -- one that moves what its equation says all
+            # at once whenever a discrete event fires, and nothing in between --
+            # is not a rate. It goes through the renames as a transfer that
+            # carries its event, row by row as the file has it, and becomes an
+            # event of this tool's at the end (`_settle_transfer_events`).
+            if any(e.get('transfer_event') is not None for e in entries):
+                project['transfers'].append(_trim_empty({
+                    'name': name, 'system': system, **dim_spec, 'unit': unit, 'comment': comment,
+                    'from': frm, 'to': to,
+                    'rate': rate,
+                    'multiply_by_donor': donor,
+                    'transfer_event': _pick_default(entries, 'transfer_event'),
+                    'entries': _keep_indexed(entries, ['rate', 'multiply_by_donor', 'transfer_event']),
+                }))
+                continue
+
             # Ecolego keeps the flag row by row, and here it is one setting of
             # the transfer (VALUE_KEYS in engine/project.py). Rows that say
             # otherwise become a second transfer between the same two ends, and
@@ -2161,10 +2312,11 @@ def _read_entries(el: Node, dim_lists: List[Dict[str, Any]], report: ImportRepor
             mult = child_text(entry_el, 'multiply-with-donor')
             if mult is not None and mult != '':
                 rec['multiply_by_donor'] = mult.lower() == 'true'
-            if child_text(entry_el, 'transfer-event'):
-                report.warn(
-                    f"'{block_label}' has a transfer event (a discrete transfer), which "
-                    'this tool does not support.')
+            # The discrete event that makes this a discrete transfer: settled
+            # into an event of this tool's by `_settle_transfer_events`.
+            event = child_text(entry_el, 'transfer-event')
+            if event is not None and event.strip():
+                rec['transfer_event'] = event.strip()
         elif type_ == 'expression':
             _assign_if(rec, 'equation', child_text(entry_el, 'equation'))
         elif type_ == 'parameter':

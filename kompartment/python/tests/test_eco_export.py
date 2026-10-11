@@ -22,6 +22,7 @@ import io
 import json
 import math
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -472,7 +473,8 @@ class Runs(unittest.TestCase):
         run = _engine()
         if isinstance(run, str):
             self.skipTest(run)
-        for name in ('biosphere.json', 'landscape.json', 'recorders.json', 'EVERY_KIND', 'TRANSPORT', 'SWITCHES'):
+        for name in ('biosphere.json', 'landscape.json', 'recorders.json', 'EVERY_KIND', 'TRANSPORT', 'SWITCHES',
+                     'DISCRETE'):
             with self.subTest(model=name):
                 model = models()[name]
                 out = export_eco(model)
@@ -491,8 +493,15 @@ class Runs(unittest.TestCase):
                 for x, y in zip(a.t, b.t):
                     self.assertLessEqual(abs(x - y), 1e-12 * abs(x))
                 theirs = {o['label']: o for o in b.outputs()}
+                # An event set off by a trigger that went out as a transfer per
+                # share comes back as an event per share, each counting what it counted.
+                shares = {}
+                for s in out.report.rewritten:
+                    first = re.search(r'as \d+ transfers, ([^,]+),', s['how']) if s['type'] == 'event' else None
+                    if first:
+                        shares[s['name']] = (s['name'].rsplit('.', 1)[0] + '.' if '.' in s['name'] else '') + first.group(1)
                 for o in a.outputs():
-                    p = theirs.get(o['label'])
+                    p = theirs.get(shares.get(o['label'], o['label']))
                     self.assertIsNotNone(p, o['label'])
                     xs, ys = a.series(o), b.series(p)
                     scale = max((abs(v) for v in xs), default=0.0) or 1.0

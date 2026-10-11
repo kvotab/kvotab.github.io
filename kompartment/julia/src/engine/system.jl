@@ -891,6 +891,26 @@ function fire_events!(sys::System, which, t::Float64, y::Vector{Float64})
     end
 end
 
+"""
+What the events the triggers `which` (1-based) set off do to the state: applied to
+a copy of `y`, in the order the model lists them, each once however many of its
+trigger's indices fired together, reading their shares from `X` as firing the
+triggers left it -- `(state, how many acted)`, or `nothing` when none did (the
+application's `events.fire`).
+"""
+function jumps_at_crossing(sys::System, which, y::Vector{Float64})
+    nxt = nothing
+    acted = 0
+    for j in sys.jumps
+        isempty(j.fired_by) && continue
+        any(i -> (i - 1) in j.fired_by, which) || continue
+        nxt === nothing && (nxt = copy(y))
+        apply_jump!(nxt, sys.X, j)
+        acted += 1
+    end
+    return nxt === nothing ? nothing : (nxt, acted)
+end
+
 """Whether an event's occurrences are drawn for this run, and which."""
 function set_disruption!(sys::System, index::Int, sampled::Bool, times=Float64[])
     layout = sys.builder.disruption_layout

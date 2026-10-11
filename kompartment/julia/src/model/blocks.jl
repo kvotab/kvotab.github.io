@@ -185,7 +185,8 @@ const _BK_FIELDS = let
                             _F("fail_scale", :equation, ""), _F("fail_shape", :equation, "1"),
                             _F("handle_decay", :bool, true)],
         "event" => [_F("timing", :choice, "at"; choices=TIMINGS), _F("at", :equation, ""), _F("rate", :equation, ""),
-                    _F("from", :equation, ""; name="start"), _F("until", :equation, ""), _F("sampled", :bool, true)],
+                    _F("from", :equation, ""; name="start"), _F("until", :equation, ""), _F("trigger", :equation, ""),
+                    _F("sampled", :bool, true)],
     )
     tables = Dict{Symbol,Dict{Symbol,_Field}}()
     for kind in _BK_KINDS

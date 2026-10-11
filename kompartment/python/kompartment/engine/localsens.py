@@ -268,6 +268,14 @@ def uncarried(project: Project, system: Any, wanted: Sequence[Mapping[str, Any]]
         return (f"'{j.name}' makes the state jump at t={_js_str(float(at))}, and dy/dp is not carried across a "
                 'jump: after it, it depends on how the jump moves with the parameters, which the sensitivity '
                 'equations do not have.')
+    # ...and so does an event a trigger sets off, at a time nobody knows until
+    # the crossing is found -- which moves with the parameters too.
+    for D in system.layout.events or []:
+        if D.get('timing') != 'trigger':
+            continue
+        return (f"'{D['name']}' makes the state jump whenever its trigger fires, and dy/dp is not carried across a "
+                'jump: after it, it depends on how the jump and the crossing move with the parameters, which the '
+                'sensitivity equations do not have.')
     # A semi-analytical path's release is read by its own held state, always,
     # and it is a convolution over the whole run's inflow.
     for p in system.layout.farfields or []:

@@ -642,6 +642,113 @@ export const GENERAL_VARIABLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
 	</simulation-settings>
 </data-model>`;
 
+/**
+ * Discrete transfers: transfers with a transfer event, which move what their
+ * equation says all at once whenever the event fires, and nothing in between.
+ * A lake drains at 0.1 a year and empties into the soil when its volume, 20
+ * less the time, comes down to nothing -- the one shape the real models here
+ * use -- beside three that an event of this tool's cannot say: an amount
+ * rather than a share, a share that differs between nuclides, and an event
+ * that is indexed. Both ends of every transfer are on the nuclides.
+ */
+export const TRANSFER_EVENT_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<data-model>
+	<project-properties name="Transfer events"/>
+	<index-list-model>
+		<index-list name="Nuclides">
+			<id>Nuclides</id>
+			<index name="Cs&#45;137" enabled="true"><id>Cs&#45;137</id></index>
+			<index name="I&#45;129" enabled="true"><id>I&#45;129</id></index>
+		</index-list>
+	</index-list-model>
+	<hierarchy-model>
+		<sub-system-block name="Lake_1"><id>Lake_1</id></sub-system-block>
+	</hierarchy-model>
+	<block-model>
+		<component name="Out" type="sink"><id>Out</id></component>
+		<component name="Lake" type="compartment" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Lake</id><sub-system>Lake_1</sub-system>
+			<entry type="compartment"><initial-condition><![CDATA[1000]]></initial-condition></entry>
+		</component>
+		<component name="Soil" type="compartment" dimension="1" index-lists="Nuclides">
+			<id>Soil</id>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="Deep" type="compartment" dimension="1" index-lists="Nuclides">
+			<id>Deep</id>
+			<entry type="compartment"><initial-condition><![CDATA[0]]></initial-condition></entry>
+		</component>
+		<component name="V" type="expression" dimension="0">
+			<id>Lake_1&#46;V</id><sub-system>Lake_1</sub-system>
+			<entry type="expression"><equation><![CDATA[max(20.0-time,0.0)]]></equation></entry>
+		</component>
+		<component name="Gone" type="discrete&#45;event" dimension="0">
+			<id>Lake_1&#46;Gone</id><sub-system>Lake_1</sub-system>
+			<entry type="discrete&#45;event">
+				<first-expression><![CDATA[0.0]]></first-expression>
+				<second-expression><![CDATA[V]]></second-expression>
+				<direction><![CDATA[RIGHT]]></direction>
+			</entry>
+		</component>
+		<component name="Each" type="discrete&#45;event" dimension="1" index-lists="Nuclides">
+			<id>Each</id>
+			<entry type="discrete&#45;event">
+				<first-expression><![CDATA[time]]></first-expression>
+				<second-expression><![CDATA[30.0]]></second-expression>
+				<direction><![CDATA[RIGHT]]></direction>
+			</entry>
+		</component>
+		<connection name="Outflow" type="transfer" source="Lake_1&#46;Lake" target="Out" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Outflow</id><sub-system>Lake_1</sub-system>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[0.1]]></transfer-equation>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+		<connection name="Disappearing" type="transfer" source="Lake_1&#46;Lake" target="Soil" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Disappearing</id><sub-system>Lake_1</sub-system>
+			<property name="comment" type="string"><![CDATA[The lake's activity goes to the soil as the lake disappears.]]></property>
+			<entry type="transfer">
+				<entry-unit><![CDATA[unitless]]></entry-unit>
+				<transfer-equation><![CDATA[1.0]]></transfer-equation>
+				<transfer-event><![CDATA[Gone]]></transfer-event>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+		<connection name="Amount" type="transfer" source="Lake_1&#46;Lake" target="Deep" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Amount</id><sub-system>Lake_1</sub-system>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[5.0]]></transfer-equation>
+				<transfer-event><![CDATA[Gone]]></transfer-event>
+				<multiply-with-donor><![CDATA[false]]></multiply-with-donor>
+			</entry>
+		</connection>
+		<connection name="Uneven" type="transfer" source="Lake_1&#46;Lake" target="Deep" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Uneven</id><sub-system>Lake_1</sub-system>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[0.5]]></transfer-equation>
+				<transfer-event><![CDATA[Gone]]></transfer-event>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+			<entry type="transfer" index="I&#45;129">
+				<transfer-equation><![CDATA[0.25]]></transfer-equation>
+			</entry>
+		</connection>
+		<connection name="Indexed" type="transfer" source="Lake_1&#46;Lake" target="Deep" dimension="1" index-lists="Nuclides">
+			<id>Lake_1&#46;Indexed</id><sub-system>Lake_1</sub-system>
+			<entry type="transfer">
+				<transfer-equation><![CDATA[0.5]]></transfer-equation>
+				<transfer-event><![CDATA[Each]]></transfer-event>
+				<multiply-with-donor><![CDATA[true]]></multiply-with-donor>
+			</entry>
+		</connection>
+	</block-model>
+	<simulation-settings>
+		<start-time>0.0</start-time><end-time>40.0</end-time><time-unit>year</time-unit>
+		<java-solver>java&#45;ode15s</java-solver>
+	</simulation-settings>
+</data-model>`;
+
 // ---------------------------------------------------------------------------
 // An assessment's stored runs (../src/io/ecoruns.js)
 

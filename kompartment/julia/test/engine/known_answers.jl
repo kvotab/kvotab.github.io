@@ -86,4 +86,48 @@ const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
         delete!(raw, "chains")
         @test run(K.Model(raw))["Soil [Y-90]"][end] > 0.0
     end
+
+    @testset "an event a trigger sets off acts at the crossing" begin
+        # A lake drains at 0.1 a year and empties into the soil the moment its
+        # volume, 20 less the time, comes down to nothing (the application's
+        # test of the same name).
+        lake(dry) = K.Model(K.parse_json("""{"name": "drying",
+            "simulation": {"start_time": 0, "end_time": 40, "output_points": 9, "spacing": "linear", "solver": "ndf",
+                           "rtol": 1e-9, "abstol": 1e-12, "time_unit": "year"},
+            "nuclides": ["Cs-137", "I-129"],
+            "index_lists": [{"name": "RN", "for_contaminants": true, "indices": [{"name": "Cs-137"}, {"name": "I-129"}]}],
+            "compartments": [{"name": "Lake", "index_lists": ["RN"], "initial": "1000", "handle_decay": false,
+                              "entries": [{"index": {"RN": "I-129"}, "initial": "2000"}]},
+                             {"name": "Soil", "index_lists": ["RN"], "initial": "0", "handle_decay": false}],
+            "transfers": [{"name": "Outflow", "from": "Lake", "to": null, "rate": "0.1", "index_lists": ["RN"]}],
+            "expressions": [{"name": "V", "equation": "max(20 - time, 0)", "index_lists": []}],
+            "triggers": [{"name": "Gone", "first": "0", "second": "V", "direction": "rising", "index_lists": []},
+                         {"name": "Low", "first": "Lake", "second": "500", "direction": "falling", "index_lists": ["RN"]}],
+            "events": [$dry]}"""))
+        whole = """{"name": "Dry", "timing": "trigger", "trigger": "Gone",
+                    "actions": [{"kind": "move", "from": "Lake", "to": "Soil", "fraction": "1.0"}]}"""
+        for solver in ("ndf", "ros23", "dp45")
+            m = lake(whole)
+            K.simulation(m)["solver"] = solver
+            res = run(m)
+            k = findfirst(t -> 20 < t < 20 + 1e-9, res.t)
+            @test k !== nothing && res.t[k+1] == 25.0
+            # The row at the crossing is the state before; the next, after.
+            @test isapprox(res["Lake [Cs-137]"][k], 1000 * exp(-2); rtol=1e-6)
+            @test res["Soil [Cs-137]"][k] == 0.0 && res["Lake [Cs-137]"][k+1] == 0.0
+            @test res["Soil [I-129]"][end] == res["Lake [I-129]"][k]
+            @test res["Dry"][k] == 0.0 && res["Dry"][end] == 1.0
+            @test res.stats["jumps"] == 1
+        end
+        # An indexed trigger named whole sets it off at each index's crossing; named at one, at that one.
+        tenth(trigger) = """{"name": "Dry", "timing": "trigger", "trigger": "$trigger",
+                             "actions": [{"kind": "move", "from": "Lake", "to": "Soil", "fraction": "0.1"}]}"""
+        twice = run(lake(tenth("Low")))
+        @test twice["Dry"][end] == 2.0 && twice.stats["jumps"] == 2
+        @test isapprox(twice["Lake [Cs-137]"][end], 1000 * exp(-4) * 0.81; rtol=1e-6)
+        once = run(lake(tenth("Low[I-129]")))
+        @test once["Dry"][end] == 1.0 && isapprox(once["Lake [Cs-137]"][end], 1000 * exp(-4) * 0.9; rtol=1e-6)
+        # What it names has to be a trigger.
+        @test_throws K.BuildError run(lake(replace(whole, "\"Gone\"" => "\"Soil\"")))
+    end
 end

@@ -59,7 +59,8 @@ import { interpolationFromEco } from '../domain/lookup.js';
 import { operationFromEco } from '../domain/reduce.js';
 import { extremeFromEco, directionFromEco } from '../domain/recorders.js';
 import { kindInfo, quantile, complete } from '../domain/pdf.js';
-import { tokenize } from '../parser/parser.js';
+import { tokenize, parse } from '../parser/parser.js';
+import { timingOf, normaliseActions, dependentMoves } from '../domain/disruption.js';
 import { RESERVED } from '../domain/names.js';
 import {
 	FARF_DEFAULTS, FARF_METHODS, FARF_NUCLIDE_KEYS, FARF_SURFACE_DEFAULTS,
@@ -506,6 +507,8 @@ class Context {
 		this.skippedBlocks = new Map();
 		/** Transfers written in another form: qualified name -> plan. */
 		this.fluxPlans = new Map();
+		/** Events a trigger sets off, as the discrete transfers they go out as: one plan per share moved. */
+		this.eventPlans = [];
 		/** Source and sink components to write: [{ name, id, system, type }]. */
 		this.boundaries = [];
 		/** Far-field paths that go out as cells: qualified name -> what they became. */
@@ -782,7 +785,35 @@ class Context {
 		}
 		for (const b of raw.events ?? []) {
 			if (!b || typeof b !== 'object') continue;
-			skip(qnameOf(b), 'a disruptive event and what it does to the model have no Ecolego equivalent');
+			const why = this.eventProblem(b);
+			if (why) skip(qnameOf(b), why);
+		}
+		// The events one trigger sets off act in turn here, each on what the one
+		// before left, and Ecolego's discrete transfers move every share from
+		// what was there before any of them moved. The same, unless one takes
+		// its share from where another moved; then none of them goes out.
+		const together = new Map();
+		for (const b of raw.events ?? []) {
+			if (!b || typeof b !== 'object' || this.skippedBlocks.has(qnameOf(b))) continue;
+			const key = this.eventTrigger(b).key;
+			if (!together.has(key)) together.set(key, []);
+			together.get(key).push(b);
+		}
+		for (const [key, events] of together) {
+			const moves = events.flatMap((b) => normaliseActions(b.actions).map((a) => ({
+				name: qnameOf(b), from: this.resolveEnd(a.from, b), to: a.to == null ? null : this.resolveEnd(a.to, b),
+			})));
+			const clash = dependentMoves(moves);
+			if (!clash) continue;
+			const { first, second } = clash;
+			const how = first.from === second.from ? 'out of' : 'into';
+			const why = (first.name === second.name
+				? `one of its shares is taken from '${second.from}' after another has moved a share ${how} it`
+				: `'${second.name}' takes its share of '${second.from}' after '${first.name}' has moved a share ${how} it, `
+					+ `both set off by '${key}'`)
+				+ ': here they act in turn, where Ecolego\'s discrete transfers move every share from what was there '
+				+ 'before any of them moved';
+			for (const b of events) skip(qnameOf(b), why);
 		}
 		for (const collection of COMPONENT_COLLECTIONS) {
 			for (const b of raw[collection] ?? []) {
@@ -881,7 +912,17 @@ class Context {
 			let fell = false;
 			for (const [q, { collection, block }] of this.blocks) {
 				if (this.skippedBlocks.has(q)) continue;
-				if (collection === 'waste_packages' || collection === 'events') continue;
+				if (collection === 'waste_packages') continue;
+				// An event that goes out is transfers, which need their trigger and
+				// the compartments they move between.
+				if (collection === 'events') {
+					const lost = this.eventLoses(block);
+					if (lost) {
+						skip(q, `it ${lost.how} '${lost.name}', which is left out`);
+						fell = true;
+					}
+					continue;
+				}
 				const lost = this.readsSkipped(block, collection);
 				if (lost) {
 					skip(q, `it reads '${lost}', which is left out`);
@@ -1389,6 +1430,81 @@ class Context {
 		}
 	}
 
+	/**
+	 * Why an event cannot go out, or null when it can. One a trigger sets off,
+	 * moving shares of compartments, is Ecolego's discrete transfer: a transfer
+	 * with an event, which moves its equation's share of the donor at once each
+	 * time the event fires, and nothing in between. It goes out as one of those
+	 * per share it moves (`planFluxes`); its count of occurrences, which no
+	 * equation here can read, has nowhere to go. An indexed trigger named whole
+	 * sets it off whenever any index fires, where Ecolego sets a transfer off
+	 * index by index. Every other event has no Ecolego equivalent.
+	 */
+	eventProblem(b) {
+		if (timingOf(b) !== 'trigger') return 'a disruptive event and what it does to the model have no Ecolego equivalent';
+		const actions = normaliseActions(b.actions);
+		if (!actions.length) return 'it does nothing but count the times its trigger fires, and Ecolego keeps no such count';
+		if (actions.some((a) => a.kind !== 'move')) return 'it fails waste packages, which have no Ecolego block';
+		const trigger = this.eventTrigger(b);
+		if (!trigger) return `what sets it off, '${String(b.trigger ?? '').trim()}', is not a trigger of this model`;
+		if (trigger.dims.length && !trigger.indexed) {
+			return `'${trigger.q}' is indexed and named whole, so any of its indices sets the event off, where Ecolego `
+				+ 'sets a transfer off index by index';
+		}
+		for (const a of actions) {
+			const ends = [a.from, a.to].filter((e) => e != null);
+			if (ends.some((e) => this.blocks.get(this.resolveEnd(e, b))?.collection !== 'compartments')) {
+				return 'it moves a share between blocks that are not both compartments';
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * The trigger an event names, `{ q, dims, indexed, key }` -- `key` the
+	 * trigger and the indices it is named at, `Low[I-129]` -- or null when it
+	 * names none.
+	 */
+	eventTrigger(b) {
+		let ast;
+		try { ast = parse(String(b.trigger ?? '').trim()); } catch (e) { return null; }
+		if (ast?.type !== 'ref') return null;
+		const q = resolveReference(ast.name, b.system ?? '', (n) => this.known(n));
+		const found = q == null ? null : this.blocks.get(q);
+		if (found?.collection !== 'triggers') return null;
+		const dims = Array.isArray(found.block.index_lists) ? found.block.index_lists : [];
+		const indices = (ast.indices ?? []).map((i) => String(i).trim());
+		return { q, dims, indexed: indices.length > 0, key: q + indices.map((i) => `[${i}]`).join('') };
+	}
+
+	/** What an event that goes out has lost to `skippedBlocks`, `{ how, name }`, or null. */
+	eventLoses(b) {
+		const trigger = this.eventTrigger(b);
+		if (trigger && this.skippedBlocks.has(trigger.q)) return { how: 'is set off by', name: trigger.q };
+		for (const a of normaliseActions(b.actions)) {
+			for (const end of [a.from, a.to]) {
+				if (end != null && this.skippedBlocks.has(this.resolveEnd(end, b))) return { how: 'moves a share of', name: end };
+			}
+			const lost = this.readIn(a.fraction, b.system ?? '', (q) => this.skippedBlocks.has(q));
+			if (lost) return { how: 'reads', name: lost };
+		}
+		return null;
+	}
+
+	/** The first block one equation reads, written from `system`, that `wanted` picks, or null. */
+	readIn(text, system, wanted) {
+		let toks;
+		try { toks = tokenize(String(text)); } catch (e) { return null; } // an equation that will not tokenize reads nothing
+		for (let i = 0; i < toks.length; i++) {
+			const t = toks[i];
+			if (t.type !== 'ident') continue;
+			if (toks[i + 1]?.type === 'lparen' && RESERVED.has(t.value)) continue;
+			const q = resolveReference(t.value, system, (n) => this.known(n));
+			if (q != null && wanted(q)) return q;
+		}
+		return null;
+	}
+
 	/** The first block a block's equations name that is left out, or null. */
 	readsSkipped(block, collection) {
 		const system = block.system ?? '';
@@ -1559,6 +1675,34 @@ class Context {
 				}
 				this.fluxPlans.set(q, plan);
 			}
+		}
+		// An event a trigger sets off: a discrete transfer per share it moves,
+		// under the event's own name when it moves one, between the same two
+		// compartments -- cell for cell, which is what both ends' dimensions
+		// already say -- or into a sink for a share moved out of the model.
+		for (const b of raw.events ?? []) {
+			if (!b || typeof b !== 'object') continue;
+			const q = qnameOf(b);
+			if (this.skippedBlocks.has(q)) continue;
+			const system = b.system ?? '';
+			const actions = normaliseActions(b.actions);
+			const names = [];
+			actions.forEach((a, k) => {
+				const name = actions.length === 1 ? b.name : this.claimName(system, `${b.name}_${k + 1}`);
+				const plan = {
+					event: b, q, name, system,
+					from: this.resolveEnd(a.from, b), to: a.to == null ? null : this.resolveEnd(a.to, b),
+					dims: this.endDims(a.from, b) ?? [], share: a.fraction,
+				};
+				if (plan.to == null) plan.sink = boundary(name, system, 'sink');
+				this.eventPlans.push(plan);
+				names.push(name);
+			});
+			report.rewrite('event', q, `set off by a trigger, it is written as ${actions.length === 1
+				? 'a transfer' : `${actions.length} transfers, ${names.join(', ')},`} with that trigger as `
+				+ 'the event -- Ecolego\'s discrete transfer, which moves its share of the donor at once each time '
+				+ 'the trigger fires; its count of occurrences is not written, and it comes back as '
+				+ (actions.length === 1 ? 'the event' : 'an event per share'));
 		}
 	}
 
@@ -2341,6 +2485,7 @@ function writeBlocks(w, ctx) {
 		}
 	}
 	for (const t of ctx.generated.transfers) writeConnection(w, ctx, t, ctx.generatedPlans.get(qnameOf(t)));
+	for (const plan of ctx.eventPlans) writeDiscreteTransfer(w, ctx, plan);
 	w.close('block-model');
 	for (const [q, seen] of ctx.respelled) {
 		ctx.report.rewrite(KIND_WORD[seen.collection] ?? 'block', q, respelledHow(seen));
@@ -2362,6 +2507,29 @@ function dimAttrs(ctx, dims, intersection = false) {
 	return [['dimension', String(dims.length)], ['index-lists', intersection ? '' : dims.map((d) => ctx.listId(d)).join(',')]];
 }
 
+/**
+ * One share an event a trigger sets off moves, as Ecolego's discrete transfer:
+ * a transfer whose event makes it move its equation's share of the donor all at
+ * once each time the event fires, and nothing in between. Unitless, as Ecolego
+ * makes a transfer with an event that multiplies by its donor.
+ */
+function writeDiscreteTransfer(w, ctx, plan) {
+	const id = plan.system ? `${plan.system}.${plan.name}` : plan.name;
+	w.open('connection', [
+		['name', plan.name], ['type', 'transfer'],
+		['source', plan.from], ['target', plan.to ?? plan.sink],
+		...dimAttrs(ctx, plan.dims),
+	]);
+	writeCommon(w, ctx, { system: plan.system, enabled: plan.event.enabled, unit: 'unitless', comment: plan.event.comment }, id);
+	if (plan.event.enabled !== false) ctx.resultIds.push(id);
+	w.open('entry', [['type', 'transfer']]);
+	w.cdata('transfer-equation', ctx.equation(equationText(plan.share, '1'), plan.q, 'events'));
+	w.cdata('transfer-event', ctx.equation(String(plan.event.trigger ?? '').trim(), plan.q, 'events'));
+	w.text('multiply-with-donor', 'true');
+	w.close('entry');
+	w.close('connection');
+}
+
 /** The id, GUID, place, switch, unit and comment every block carries. */
 function writeCommon(w, ctx, block, q, collection = null) {
 	w.text('id', q);
@@ -2377,8 +2545,10 @@ function writeCommon(w, ctx, block, q, collection = null) {
 	// the 3,768 compartments in the Ecolego projects here has an empty one, so
 	// it says this and nothing else.
 	else if (collection === 'compartments' && typeof block.unit === 'string') w.text('unit', '');
+	// A block's comment is its `comment` property, which is what Ecolego reads
+	// and writes; it has no `<comment>` element, and passed over one.
 	const comment = String(block.comment ?? '').trim();
-	if (comment) w.cdata('comment', comment);
+	if (comment) w.cdata('property', comment, [['name', 'comment'], ['type', 'string']]);
 }
 
 /** The key of an entry row: the ids of its indices, in the block's order. */

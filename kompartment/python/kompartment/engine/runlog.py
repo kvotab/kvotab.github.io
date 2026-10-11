@@ -331,7 +331,7 @@ def run_log_lines(project: Any, payload: Any, replayed: Any = None, build: str =
             out.append(f"  events: {_s(_get(s, 'events'))}, restarts: {_s(_nz(_get(s, 'restarts'), 0))}")
         if not _nullish(_get(s, 'jumps')):
             out.append(f"  jumps: {_s(_get(s, 'jumps'))} — package failures at a time and disruptive events, "
-                       'applied to the state at their corners')
+                       'applied to the state at their corners and crossings')
         j = _get(payload, 'jacobian')
         if _truthy(j):
             if _truthy(_get(j, 'available')):

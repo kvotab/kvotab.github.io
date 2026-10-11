@@ -32,7 +32,9 @@ function switch_times(project::Project)
         end
     end
     for d in project.blocks["events"]
-        keys_ = (get(d, "timing", nothing) in ("at", "poisson") ? d["timing"] : "at") == "at" ? ["at"] : ["from", "until"]
+        # One a trigger sets off has no corner known before the run.
+        timing = get(d, "timing", nothing) in ("at", "poisson", "trigger") ? d["timing"] : "at"
+        keys_ = timing == "at" ? ["at"] : timing == "poisson" ? ["from", "until"] : String[]
         for key in keys_
             consider(resolve_switch_time(project, get(d, key, nothing)))
         end

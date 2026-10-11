@@ -1501,6 +1501,56 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		}
 	}
 
+	// ...and set off an event: which of the slots above each event that
+	// happens when a trigger fires is watching. Its trigger is a name, read
+	// from where the event is like any reference. An indexed trigger named
+	// whole sets the event off when any of its indices fires; one index named,
+	// `T[Cs-137]`, when that one does. See ../domain/disruption.js.
+	const firedBy = new Map();
+	for (const D of disruptionLayout) {
+		if (D.timing !== 'trigger') continue;
+		const text = String(D.block.trigger ?? '').trim();
+		if (!text) {
+			throw new BuildError(`'${D.block.name}' is set off by a trigger, and names none.`, D.q);
+		}
+		let ast;
+		try {
+			ast = parse(text);
+		} catch (err) {
+			throw new BuildError(`'${text}' is not the name of a trigger.`, D.q);
+		}
+		if (ast.type !== 'ref') {
+			throw new BuildError(
+				`What sets '${D.block.name}' off must name a trigger, not an expression; '${text}' is one.`, D.q,
+			);
+		}
+		const notTrigger = () => new BuildError(
+			`'${ast.name}' is not a trigger, so it cannot set off '${D.block.name}'.`, D.q,
+		);
+		// A block that is there and is not a trigger is said to be one first;
+		// a name that is nobody's, or is switched off, the locator says.
+		const qname = resolveReference(ast.name, systemOf(D.block), (n) => (
+			stateByName.has(n) || paramByName.has(n) || algByName.has(n) || tableByName.has(n)
+		));
+		const whole = qname ? algByName.get(qname) : null;
+		if (qname && whole?.recorder?.kind !== 'trigger') throw notTrigger();
+		const slots = [];
+		if (whole && whole.recorder.dims.length && !ast.indices?.length) {
+			for (let off = 0; off < whole.recorder.width; off++) slots.push(whole.recorder.eventBase + off);
+		} else {
+			// One slot, through the locator, which pins an index written out.
+			const found = makeLocator(D.entry, [], null, [])(ast.name, ast.indices);
+			const owner = found.target?.recorder;
+			if (!owner || owner.kind !== 'trigger') throw notTrigger();
+			slots.push(owner.eventBase + (Number(found.offset) - found.target.base));
+		}
+		for (const s of slots) {
+			if (!firedBy.has(s)) firedBy.set(s, []);
+			firedBy.get(s).push(D);
+		}
+		D.firedBy = slots;
+	}
+
 	/**
 	 * What an availability's amount is made of: one term per inventory it
 	 * sums, each `{ off, factor, when }` -- a state offset, the weight a unit
@@ -2177,6 +2227,10 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		const apply = jumpFunction(lines.join('\n'));
 		if (D.timing === 'at') {
 			jumps.push({ name: D.q, slot: D.setting.at.base, text: String(D.block.at ?? ''), apply });
+		} else if (D.timing === 'trigger') {
+			// Not a corner known before the run: applied where its trigger
+			// fires, by `events.fire` below.
+			D.apply = apply;
 		} else {
 			// The occurrences a realisation drew, if it drew any: read when the
 			// run starts, since they are set after the build.
@@ -2651,6 +2705,17 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 				for (let i = 0; i < eventSlots.length; i++) out[i] = values[eventSlots[i].slot];
 				return out;
 			},
+			/**
+			 * What the triggers in `which` do at `t`: the blocks that remember
+			 * take their snapshots and resets from the state as it stands,
+			 * and then the events they set off act on it. Those act on a copy,
+			 * which comes back -- `{ y, jumps }` with how many events acted --
+			 * so that the row reported *at* the crossing is the state before,
+			 * as it is at a timed event's corner; null when nothing acted.
+			 * Each event acts once however many of its trigger's indices fired
+			 * together, in the order the model lists them, and reads its
+			 * shares as they stand at the crossing.
+			 */
 			fire: (which, t, y) => {
 				const values = evaluateAlgebraic(t, y);
 				for (const i of which) {
@@ -2664,6 +2729,18 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 						);
 					}
 				}
+				if (!firedBy.size) return null;
+				const due = new Set();
+				for (const i of which) for (const D of firedBy.get(i) ?? []) due.add(D);
+				if (!due.size) return null;
+				const next = Float64Array.from(y);
+				let jumps = 0;
+				for (const D of disruptionLayout) {
+					if (!due.has(D)) continue;
+					D.apply(next);
+					jumps++;
+				}
+				return { y: next, jumps };
 			},
 		}
 		: null;
@@ -2888,6 +2965,9 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 				rateSlot: D.setting.rate?.base ?? null,
 				fromSlot: D.setting.from?.base ?? null,
 				untilSlot: D.setting.until?.base ?? null,
+				// The event slots whose firing sets it off, for one a trigger
+				// sets off; null for the others.
+				firedBy: D.firedBy ?? null,
 			})),
 			algebraic,
 			parameters: paramLayout,

@@ -4621,6 +4621,21 @@ the result browser at kvotab.se reads both.
   and choosing another is writing its name into the equation. A general
   variable with nothing chosen, which Ecolego will not run, reads 0 and is
   named in the report.
+- A transfer with an **event** — a *discrete transfer* — moves nothing
+  between events: each time the discrete event it names fires, it moves its
+  equation's share of the donor all at once (`1.0` empties it), worked out
+  from the state at that instant. Here that is an [event](#events) *set off by
+  a trigger*: it arrives under the transfer's name, happening when that trigger
+  fires and moving that share of the one compartment to the other, so a run
+  stops at the same crossing and makes the same jump. One an event cannot say
+  is left out and named in the import report: a discrete transfer that moves an
+  amount rather than a share of its donor, one whose share or event is not the
+  same at every index, one whose event is indexed — Ecolego fires those index
+  by index — and one whose ends are not indexed as it is. Several set off by
+  one event act in turn here, each on what the one before left, where Ecolego
+  takes every share from what was there before any of them moved: the same,
+  unless one takes its share from where another has just moved, and the
+  import report says when it does.
 - Ecolego too keeps every transfer's dimension in step with both ends and
   offers no picker for it. A narrower flux — the same dimensions with one taken
   to a sub-set — is something Ecolego cannot express, and two ends that do not
@@ -4704,6 +4719,21 @@ own way:
 - A transfer **narrowed** onto a sub-set is written over what its two ends
   share, with a zero rate outside the sub-set: Ecolego keeps every transfer's
   dimensions in step with its ends.
+- An **event a trigger sets off** that moves shares of compartments is
+  Ecolego's *discrete transfer*: a transfer with an event, which moves its
+  share of the donor at once each time the event fires. It goes out as one per
+  share it moves — under the event's own name when it moves one, `Name_1`,
+  `Name_2` … when it moves several — with the trigger as its event, and a sink
+  for a share moved out of the model; read back, it is the event again, an
+  event per share where it moved several. Its count of occurrences, which no
+  equation reads, is not written. An event whose shares Ecolego would take
+  differently is not written either. Here an event's actions, and the events
+  one trigger sets off, act in turn, each on what the one before left, where
+  Ecolego's discrete transfers move every share from what was there before any
+  of them moved — the same, unless one takes its share from where another has
+  just moved. Nor is one set off by a trigger with an index list named whole,
+  which any of its indices sets off: Ecolego sets a transfer off index by
+  index.
 - A transfer's **availability** — a solubility limit or Langmuir sorption — is
   folded into its rate, `(rate) * if(Donor > 0, min((limit) / Donor, 1), 1)`,
   which moves the same flux.
@@ -4804,8 +4834,9 @@ own way:
 equivalent, and none is written in a form Ecolego would read as something
 else:
 
-- waste packages and disruptive events, and a far-field pathway that is
-  switched off or whose layers cannot be laid out;
+- waste packages, every event but one a trigger sets off that moves shares
+  (see above), and a far-field pathway that is switched off or whose layers
+  cannot be laid out;
 - a transfer that adds its flux up over *sum extra indices*, or whose
   availability is shared over a group;
 - a block indexed by the `Compartments` or `Transfers` list, and an equation
@@ -5775,6 +5806,9 @@ equal would fire again forever.
 A min/max or a running mean can be **driven by events** as well: `reset_event`
 starts the extreme or the mean again, `start_event` holds it until the event
 fires, and `stop_event` freezes it. Left unset, it records from the beginning.
+And a trigger can set off an [event](#events) that acts on the model itself —
+moves a share of a compartment, or fails a share of the packages — each time
+it fires.
 
 All five differentiate exactly, so a model using them keeps its analytic
 Jacobian: a min/max is `max(so far, target)`, whose derivative is the target's
@@ -6372,7 +6406,7 @@ in the file) is something that happens to the model at an instant:
 
 | | |
 |---|---|
-| **Happens** | *at a time* — an equation that comes to a number before the run, so a parameter with a distribution draws it per realisation — or *at random, at a rate*, a Poisson process between **From** and **Until** (the whole run when blank) |
+| **Happens** | *at a time* — an equation that comes to a number before the run, so a parameter with a distribution draws it per realisation — or *at random, at a rate*, a Poisson process between **From** and **Until** (the whole run when blank) — or *when a trigger fires*, every time the **Trigger** it names crosses (see [Blocks that remember](#blocks-that-remember)) |
 | **Does** | any number of actions, each a share of something: **fail a share of the packages in** a waste-package block (their inventory moves to the exposed waste form, the instant-release part goes wherever the block's release goes), or **move a share of** a compartment to another compartment or out of the model |
 | **Draw the occurrences** | on by default: each probabilistic realisation draws its own occurrence times. Off, every realisation keeps the expected-value form below |
 
@@ -6390,11 +6424,30 @@ timed event is a jump in both. A model whose only randomness is such an event
 can still be run probabilistically; a tornado swings parameters and never
 draws events.
 
+The actions act in the order they are listed, each on what the one before
+left, and so do events due at the same instant, in the order the model lists
+them: moving half of a compartment and then half of it again leaves a quarter.
+
 Each occurrence is a corner the solver lands on, and the jump is applied to the
 state between two segments, so the row *at* the corner is the state before it.
 With the mass-balance audit on, a move into another compartment is a move and a
 move out of the model is counted *out*. The analytic Jacobian covers the block;
 a rate or a window that follows the state declines it.
+
+**An event a trigger sets off** happens wherever the crossing falls, which
+nobody knows before the run: a lake that has filled in with sediment empties
+into the soil the moment its volume comes down to nothing, whenever that turns
+out to be. The solver stops at the crossing, as it does for every trigger, the
+actions are applied to the state there, and the run goes on from what they
+leave — so here too the row *at* the crossing is the state before it, and the
+shares are read as they stand at that instant. A trigger with an index list,
+named whole, sets the event off when any of its indices fires, once however
+many fire together; named with an index, `Gone[Cs-137]`, only that index
+does. There are no dice in a crossing, so it is a jump in a deterministic run
+and in every realisation alike, and the count steps by one each time. A
+model with one is not given a local sensitivity analysis, any more than one
+with a timed jump: after the jump, dy/dp depends on how the crossing moves
+with the parameters, which the sensitivity equations do not carry.
 
 `examples/waste-packages.json` has an earthquake that fails 5 % of the canisters
 at 2 × 10⁻⁵ a year and a glaciation at 100,000 years that strips 80 % of the
@@ -7860,7 +7913,7 @@ Blocks:
 | `functions` | Arithmetic written once and called from any equation: `parameters` names the values passed in, `equation` is the body. See [Functions](#functions). |
 | `inflows` | An input flux into a compartment. |
 | `waste_packages` | The source term with its barriers: an inventory inside packages that fail (`failure`: `never`, `at`, `uniform`, `exponential`, `weibull`, with `fail_at`, `fail_from`/`fail_to`, `fail_start`/`fail_rate`, `fail_start`/`fail_scale`/`fail_shape`), an instant release fraction `irf`, a `degradation_rate` of the matrix, `packages`, `handle_decay`. Per index `inventory`, `irf` and `degradation_rate` through `entries`. Its release leaves through a transfer drawn out of it. See [Waste packages](#waste-packages-the-source-term-with-its-barriers). |
-| `events` | Something that happens at an instant: `timing` `at` (with `at`) or `poisson` (with `rate`, `from`, `until`), `sampled`, and `actions`: `{kind: 'fail', block, fraction}` or `{kind: 'move', from, to, fraction}`. Its value is the count of occurrences. See [Events](#disruptive-events). |
+| `events` | Something that happens at an instant: `timing` `at` (with `at`), `poisson` (with `rate`, `from`, `until`) or `trigger` (with `trigger`, the trigger's name, or `T[index]` for one index), `sampled`, and `actions`: `{kind: 'fail', block, fraction}` or `{kind: 'move', from, to, fraction}`. Its value is the count of occurrences. See [Events](#events). |
 | `lookups` | Time-dependent values: a list of `points` and a rule for reading between them (see below). |
 | `index_reductions` | One block, reduced along one of its index lists. |
 | `block_reductions` | Several blocks, reduced element-wise at each index. |

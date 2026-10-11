@@ -78,7 +78,7 @@ FAILURE_KEYS = {
     'never': (), 'at': ('fail_at',), 'uniform': ('fail_from', 'fail_to'),
     'exponential': ('fail_start', 'fail_rate'), 'weibull': ('fail_start', 'fail_scale', 'fail_shape'),
 }
-TIMINGS = ('at', 'poisson')
+TIMINGS = ('at', 'poisson', 'trigger')
 ACTIONS = ('fail', 'move')
 OUTFLOWS = (0, 1, 2, 3, 4)
 #: How a far-field path gives its flow-wetted surface, and lays its matrix out.
@@ -164,10 +164,27 @@ WASTE_DEFAULTS: Dict[str, Any] = {
     'fail_at': '', 'fail_from': '', 'fail_to': '', 'fail_start': '0', 'fail_rate': '',
     'fail_scale': '', 'fail_shape': '1', 'handle_decay': True,
 }
-EVENT_EQUATION_KEYS = ('at', 'rate', 'from', 'until')
+#: ``trigger`` is an equation in the sense a snapshot's is: its one token names
+#: the trigger that sets the event off, so a rename follows it.
+EVENT_EQUATION_KEYS = ('at', 'rate', 'from', 'until', 'trigger')
 EVENT_DEFAULTS: Dict[str, Any] = {
-    'timing': 'at', 'at': '', 'rate': '', 'from': '', 'until': '', 'sampled': True, 'actions': [],
+    'timing': 'at', 'at': '', 'rate': '', 'from': '', 'until': '', 'trigger': '', 'sampled': True, 'actions': [],
 }
+
+
+def dependent_moves(moves: Sequence[Mapping[str, Any]]) -> Optional[Tuple[Mapping[str, Any], Mapping[str, Any]]]:
+    """The first two moves, of those applied one after the other at one instant,
+    where the later takes its share from a compartment the earlier moved into or
+    out of -- ``(first, second)`` -- or None. Kompartment applies an event's
+    actions, and the events due at one instant, in turn; Ecolego applies the
+    discrete transfers one event sets off together, each share of what was there
+    before any of them moved. The two agree exactly when this finds nothing
+    (``dependentMoves`` in disruption.js)."""
+    for j in range(1, len(moves)):
+        for i in range(j):
+            if moves[j]['from'] == moves[i]['from'] or moves[j]['from'] == moves[i]['to']:
+                return moves[i], moves[j]
+    return None
 
 
 def equation_text(value: Any) -> str:
@@ -1277,9 +1294,10 @@ class WastePackage(Block):
 
 class Event(Block):
     """A disruptive event: something that happens at an instant -- once, at a
-    time, or at random as a Poisson process -- and does something: fails a
-    share of a set of waste packages, or moves a share of one compartment's
-    inventory to another (or out of the model). Its value is its count."""
+    time, at random as a Poisson process, or every time a trigger fires -- and
+    does something: fails a share of a set of waste packages, or moves a share
+    of one compartment's inventory to another (or out of the model). Its value
+    is its count."""
 
     kind = 'event'
     collection = 'events'
@@ -1288,12 +1306,16 @@ class Event(Block):
     equation_keys = EVENT_EQUATION_KEYS
 
     timing = Field('timing', 'choice', 'at', TIMINGS,
-                   doc="``'at'`` (once, at :attr:`at`) or ``'poisson'`` (at :attr:`rate` "
-                       'between :attr:`start` and :attr:`until`).')
+                   doc="``'at'`` (once, at :attr:`at`), ``'poisson'`` (at :attr:`rate` "
+                       "between :attr:`start` and :attr:`until`) or ``'trigger'`` (every time "
+                       ':attr:`trigger` fires).')
     at = Field('at', 'equation', '', doc="For ``'at'``: when it happens.")
     rate = Field('rate', 'equation', '', doc="For ``'poisson'``: occurrences per unit time.")
     start = Field('from', 'equation', '', doc="For ``'poisson'``: when it may begin; '' is the run's start.")
     until = Field('until', 'equation', '', doc="For ``'poisson'``: when it stops; '' is the run's end.")
+    trigger = Field('trigger', 'equation', '',
+                    doc="For ``'trigger'``: the trigger that sets it off -- named whole, any of its indices "
+                        "firing does; ``'T[Cs-137]'``, that index alone.")
     sampled = Field('sampled', 'bool', True, doc='Whether a probabilistic run draws the occurrences '
                     '(otherwise the expected-value form is kept).')
 

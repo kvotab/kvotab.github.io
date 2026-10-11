@@ -10,7 +10,7 @@ derivative -- plus the initial state and the jumps.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -231,6 +231,10 @@ class System:
     def _compile_jumps(self) -> List[Jump]:
         out = []
         b = self.builder
+        # The events a trigger sets off, in the order the model lists them, each
+        # with the event slots it watches: applied where the trigger fires, by
+        # `jumps_at_crossing`, and never at a corner.
+        self.trigger_jumps: List[Tuple[Set[int], Callable[[np.ndarray], None]]] = []
         for k, spec in enumerate(b.jump_specs):
             name = f'jump{k}'
             src = '\n'.join([f'def _{name}(y, X):', *('    ' + line for line in spec['code']), '    return y', ''])
@@ -241,12 +245,34 @@ class System:
                 with np.errstate(all='ignore'):
                     _fn(y, self.X)
 
-            if spec.get('slot') is not None:
+            if spec.get('fired_by') is not None:
+                self.trigger_jumps.append(({int(s) for s in spec['fired_by']}, apply))
+            elif spec.get('slot') is not None:
                 out.append(Jump(spec['name'], apply, slot=spec['slot'], text=spec.get('text', '')))
             else:
                 D = b.disruption_layout[spec['index']]
                 out.append(Jump(spec['name'], apply, times=lambda D=D: D.sampled_times))
         return out
+
+    def jumps_at_crossing(self, which: Sequence[int], y: np.ndarray) -> Optional[Tuple[np.ndarray, int]]:
+        """What the events the triggers in ``which`` set off do to the state:
+        applied to a copy of ``y``, in the order the model lists them, each once
+        however many of its trigger's indices fired together, and reading their
+        shares from ``X`` as firing the triggers left it -- ``(state, how many
+        acted)``, or None when none did (the application's ``events.fire``)."""
+        if not self.trigger_jumps:
+            return None
+        fired = {int(i) for i in which}
+        nxt: Optional[np.ndarray] = None
+        acted = 0
+        for slots, apply in self.trigger_jumps:
+            if not (slots & fired):
+                continue
+            if nxt is None:
+                nxt = np.array(y, dtype=float)
+            apply(nxt)
+            acted += 1
+        return None if nxt is None else (nxt, acted)
 
     # --- evaluating -----------------------------------------------------------------------------
 
@@ -541,7 +567,9 @@ class System:
                      'state': D.entry.base,
                      'rate_slot': D.setting['rate'].base if 'rate' in D.setting else None,
                      'from_slot': D.setting['from'].base if 'from' in D.setting else None,
-                     'until_slot': D.setting['until'].base if 'until' in D.setting else None}
+                     'until_slot': D.setting['until'].base if 'until' in D.setting else None,
+                     # The event slots whose firing sets it off, for one a trigger sets off.
+                     'fired_by': D.get('fired_by')}
                     for D in b.disruption_layout],
             algebraic=b.algebraic, parameters=b.param_layout, lookups=b.lookup_layout, index_space=b.space,
             material_list=b.material_list, nuclides=self.project.material_names,

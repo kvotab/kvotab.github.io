@@ -608,6 +608,20 @@ def run_js_cases() -> List[Case]:
             '<component name="Gone" type="general&#45;variable"><id>Gone</id>'
             '<entry type="expression"><equation><![CDATA[Measured]]></equation></entry></component>'
             '<component name="Unset"')),
+        # discrete transfers: the one an event can say, and three it cannot; a
+        # trigger whose name had to be tidied; one switched off
+        xml('transfer events', fx('TRANSFER_EVENT_XML')),
+        xml('transfer events, a trigger renamed', fx('TRANSFER_EVENT_XML')
+            .replace('<component name="Gone"', '<component name="Gone dry"')
+            .replace('<![CDATA[Gone]]>', '<![CDATA[Gone dry]]>')),
+        xml('transfer events, one switched off', replace(
+            fx('TRANSFER_EVENT_XML'), '<id>Lake_1&#46;Disappearing</id>',
+            '<id>Lake_1&#46;Disappearing</id><enabled>false</enabled>')),
+        xml('transfer events, two from one lake', replace(
+            fx('TRANSFER_EVENT_XML'), '<transfer-equation><![CDATA[5.0]]></transfer-equation>\n\t\t\t\t'
+            '<transfer-event><![CDATA[Gone]]></transfer-event>\n\t\t\t\t<multiply-with-donor><![CDATA[false]]>',
+            '<transfer-equation><![CDATA[0.5]]></transfer-equation>\n\t\t\t\t'
+            '<transfer-event><![CDATA[Gone]]></transfer-event>\n\t\t\t\t<multiply-with-donor><![CDATA[true]]>')),
         # Ecolego's three material lists
         xml('material lists marked', material_lists(True)),
         xml('material lists unmarked', material_lists(False)),
@@ -1527,6 +1541,14 @@ class TheApplicationsOwnVariants(ParityCase):
         self.assertEqual((chosen['Bio.Conc']['equation'], chosen['Bio.Conc']['unit']), ('Bio.Conc_par', 'Bq/m^3'))
         self.assertEqual(chosen['Old']['equation'], 'Bio.Conc_par')
         self.assertEqual(by['general variables']['report']['skipped'], [])
+        # A discrete transfer is an event its trigger sets off, under its own name.
+        events = by['transfer events']['project']['events']
+        self.assertEqual([(e['name'], e['timing'], e['trigger']) for e in events],
+                         [('Disappearing', 'trigger', 'Gone')])
+        self.assertEqual(by['transfer events, a trigger renamed']['project']['events'][0]['trigger'], 'Gone_dry')
+        self.assertIs(by['transfer events, one switched off']['project']['events'][0]['enabled'], False)
+        self.assertTrue(any(w.startswith("'Disappearing' and 'Amount' are set off by the same discrete event")
+                            for w in by['transfer events, two from one lake']['report']['warnings']))
 
 
 @needs_app
@@ -1624,6 +1646,7 @@ class LoadsAsAModel(unittest.TestCase):
             'interface ADD', 'interface into a transfer', 'interface into a parameter',
             'interface end to end', 'material lists marked', 'output listed', 'AUTO both ends', 'abs-tol',
             'dydt', 'expression with arguments', 'empty discrete times', 'scenarios marked',
+            'transfer events',
         }
         cases = [c for c in run_js_cases() if c.label in wanted]
         self.assertEqual(len(cases), len(wanted))

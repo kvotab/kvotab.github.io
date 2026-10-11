@@ -1740,13 +1740,30 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// target and a share; the block's own value is its count of occurrences.
 		const timing = ed.timingOf(block);
 		host.append(derivedField('Value', 'occurrences so far',
-			'The block’s own value: the expected number of occurrences in a deterministic '
-			+ 'run, the number a realisation drew in a probabilistic one. It is charted under '
-			+ 'the block’s name.'));
+			timing === 'trigger'
+				? 'The block’s own value: how many times its trigger has set it off. It is '
+					+ 'charted under the block’s name.'
+				: 'The block’s own value: the expected number of occurrences in a deterministic '
+					+ 'run, the number a realisation drew in a probabilistic one. It is charted under '
+					+ 'the block’s name.'));
 		host.append(selectField('Happens', timing,
 			ed.TIMINGS.map((t) => [t, ed.TIMING_LABEL[t]]),
 			(v) => commit(() => { block.timing = v; }),
 			{ hint: ed.TIMING_BLURB[timing] }));
+		// What sets it off, picked from the model's triggers. A name written
+		// from the event's own sub-system -- which is how an imported one is
+		// written -- is shown as the trigger it names, and one the list cannot
+		// show, an index named or a trigger that is gone, as it is written.
+		if (timing === 'trigger') {
+			const triggers = ed.discreteEvents(project);
+			const known = new Set(triggers);
+			const written = String(block.trigger ?? '').trim();
+			const shown = written ? resolveReference(written, system, (n) => known.has(n)) ?? written : '';
+			host.append(selectField(ed.DIS_LABEL.trigger, shown,
+				[['', 'none'], ...(shown && !known.has(shown) ? [[shown, shown]] : []), ...triggers.map((n) => [n, n])],
+				(v) => commit(() => { block.trigger = v ?? ''; }),
+				{ hint: triggers.length ? ed.DIS_HELP.trigger : 'Add a trigger first: it is what sets the event off.' }));
+		}
 		// The settings the timing reads may each carry a spread. The timing
 		// itself may not: a Poisson process is already a distribution, over the
 		// occurrences within one run, and a second one on top of it would be a

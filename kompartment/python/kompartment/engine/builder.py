@@ -56,7 +56,7 @@ AVOGADRO_AVAILABILITY = 6.02214076e23
 TIME_UNITS = {'second': 1 / SECONDS_PER_YEAR, 'minute': 60 / SECONDS_PER_YEAR, 'hour': 3600 / SECONDS_PER_YEAR,
               'day': 1 / 365.25, 'year': 1.0}
 
-DIS_LABEL = {'at': 'At', 'rate': 'Rate', 'from': 'From', 'until': 'Until'}
+DIS_LABEL = {'at': 'At', 'rate': 'Rate', 'from': 'From', 'until': 'Until', 'trigger': 'Trigger'}
 SLOT_WORDS = {
     **{k: v.lower() for k, v in WASTE_LABEL.items()},
     **{k: f'{v.lower()} setting' for k, v in DIS_LABEL.items()},
@@ -1359,6 +1359,45 @@ class _Builder:
                                          rec.name)
                     which = owner.event_base + (int(index) - target.base)
                     self.event_handlers[which].append({'rec': rec, 'off': off, 'action': EVENT_ACTION[field]})
+        # ...and set off an event: which of the slots above each event set off by
+        # a trigger watches (``firedBy``). Its trigger is a name, read from where
+        # the event is; an indexed trigger named whole sets it off when any of
+        # its indices fires, one index named, ``T[Cs-137]``, when that one does.
+        self.fired_by: Dict[int, List[Entry]] = defaultdict(list)
+        for D in self.disruption_layout:
+            if D.timing != 'trigger':
+                continue
+            local = D.block['name']
+            text = str(D.block.get('trigger') if D.block.get('trigger') is not None else '').strip()
+            if not text:
+                raise BuildError(f"'{local}' is set off by a trigger, and names none.", D.q)
+            try:
+                ast = parse(text)
+            except ParseError:
+                raise BuildError(f"'{text}' is not the name of a trigger.", D.q) from None
+            if ast.type != 'ref':
+                raise BuildError(f"What sets '{local}' off must name a trigger, not an expression; '{text}' is one.",
+                                 D.q)
+            name = ast.name  # type: ignore[attr-defined]
+            indices = ast.indices  # type: ignore[attr-defined]
+            # A block that is there and is not a trigger is said to be one first;
+            # a name that is nobody's, or is switched off, the locator says.
+            qname = resolve_reference(name, D.block.get('system') or '', self._known)
+            whole = self.alg_by_name.get(qname) if qname else None
+            owner = whole.get('recorder') if whole is not None else None
+            if qname and (owner is None or owner.kind != 'trigger'):
+                raise BuildError(f"'{name}' is not a trigger, so it cannot set off '{local}'.", D.q)
+            if owner is not None and owner.dims and not indices:
+                slots = [owner.event_base + off for off in range(owner.width)]
+            else:
+                _, target, index = self.locate(D.entry, [], None, {}, name, indices)
+                owner = target.get('recorder')
+                if owner is None or owner.kind != 'trigger':
+                    raise BuildError(f"'{name}' is not a trigger, so it cannot set off '{local}'.", D.q)
+                slots = [owner.event_base + (int(index) - target.base)]
+            for slot in slots:
+                self.fired_by[slot].append(D)
+            D.fired_by = slots
 
     # --- statements for the algebraic blocks -----------------------------------------------
 
@@ -2236,6 +2275,10 @@ class _Builder:
             if D.timing == 'at':
                 spec.update(slot=D.setting['at'].base, text=str(D.block.get('at') if D.block.get('at') is not None
                                                                  else ''))
+            elif D.timing == 'trigger':
+                # Not a corner known before the run: applied where its trigger
+                # fires (``System.jumps_at_crossing``).
+                spec.update(slot=None, fired_by=D.fired_by)
             else:
                 spec.update(slot=None)
             self.jump_specs.append(spec)

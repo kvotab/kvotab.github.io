@@ -59,6 +59,7 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple, Union
 
 from ..apps import count_app_parts
+from ..blocks import TIMINGS, dependent_moves
 from ..decay import default_chains, half_life
 from ..equations import EquationSyntaxError, tokenize
 from ..errors import KompartmentError
@@ -406,6 +407,55 @@ def _trim(v: Any) -> str:
     return js_trim(_str(v))
 
 
+def _timing_of(b: Mapping[str, Any]) -> str:
+    """``timingOf``: the event's timing, ``at`` unless it says a known other."""
+    t = b.get('timing')
+    return t if isinstance(t, str) and t in TIMINGS else 'at'
+
+
+def _event_actions(raw: Any) -> List[Dict[str, Any]]:
+    """``normaliseActions``: the actions as the model holds them, strings for the equations."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for a in raw:
+        if not isinstance(a, (dict, list)):
+            continue
+        a = a if isinstance(a, dict) else {}
+        d: Dict[str, Any] = {'kind': _str(_or(a.get('kind', _UNDEF), 'move')),
+                             'fraction': _str(_or(a.get('fraction', _UNDEF), '1'))}
+        if d['kind'] == 'fail':
+            d['block'] = None if _nullish(a.get('block', _UNDEF)) else _str(a['block'])
+        else:
+            d['from'] = None if _nullish(a.get('from', _UNDEF)) else _str(a['from'])
+            to = a.get('to', _UNDEF)
+            d['to'] = None if _nullish(to) or to == '' else _str(to)
+        out.append(d)
+    return out
+
+
+def _reference_of(text: str) -> Optional[Tuple[str, List[str]]]:
+    """A reference as the application's parser reads one -- the name, and the
+    indices written against it -- or None for anything else. Brackets around the
+    whole are read through, as the parser reads them."""
+    try:
+        toks = [t for t in tokenize(text) if t.type != 'eof']
+    except EquationSyntaxError:
+        return None
+    while len(toks) >= 2 and toks[0].type == 'lparen' and toks[-1].type == 'rparen':
+        toks = toks[1:-1]
+    if not toks or toks[0].type != 'ident':
+        return None
+    indices: List[str] = []
+    rest = toks[1:]
+    while rest:
+        if len(rest) < 3 or (rest[0].type, rest[1].type, rest[2].type) != ('lbracket', 'index', 'rbracket'):
+            return None
+        indices.append(js_trim(rest[1].text))
+        rest = rest[3:]
+    return toks[0].text, indices
+
+
 def _list(v: Any) -> list:
     return v if isinstance(v, list) else []
 
@@ -597,6 +647,8 @@ class _Context:
                     self.blocks[q] = {'collection': collection, 'block': block}
         self.skipped_blocks: Dict[str, str] = {}
         self.flux_plans: Dict[str, Dict[str, Any]] = {}
+        # Events a trigger sets off, as the discrete transfers they go out as: one plan per share moved.
+        self.event_plans: List[Dict[str, Any]] = []
         self.boundaries: List[Dict[str, str]] = []
         self.paths: Optional[List[str]] = None
         #: Far-field paths that go out as cells, what they are written as, and the
@@ -836,7 +888,34 @@ class _Context:
                 skip(_qname_of(b), 'waste packages and their barriers have no Ecolego block')
         for b in _list(raw.get('events')):
             if isinstance(b, dict):
-                skip(_qname_of(b), 'a disruptive event and what it does to the model have no Ecolego equivalent')
+                why = self.event_problem(b)
+                if why:
+                    skip(_qname_of(b), why)
+        # The events one trigger sets off act in turn here, and Ecolego's discrete
+        # transfers move every share from what was there before any of them moved:
+        # the same, unless one takes its share from where another moved.
+        together: Dict[str, List[Dict[str, Any]]] = {}
+        for b in _list(raw.get('events')):
+            if not isinstance(b, dict) or _qname_of(b) in self.skipped_blocks:
+                continue
+            together.setdefault(self.event_trigger(b)['key'], []).append(b)
+        for key, events in together.items():
+            moves = [{'name': _qname_of(b), 'from': self.resolve_end(a['from'], b),
+                      'to': None if a['to'] is None else self.resolve_end(a['to'], b)}
+                     for b in events for a in _event_actions(b.get('actions', _UNDEF))]
+            clash = dependent_moves(moves)
+            if clash is None:
+                continue
+            first, second = clash
+            how = 'out of' if first['from'] == second['from'] else 'into'
+            why = ((f"one of its shares is taken from '{_str(second['from'])}' after another has moved a share {how} it"
+                    if first['name'] == second['name'] else
+                    f"'{second['name']}' takes its share of '{_str(second['from'])}' after '{first['name']}' has moved "
+                    f"a share {how} it, both set off by '{key}'")
+                   + ": here they act in turn, where Ecolego's discrete transfers move every share from what was "
+                   'there before any of them moved')
+            for b in events:
+                skip(_qname_of(b), why)
         for collection in COMPONENT_COLLECTIONS:
             for b in _list(raw.get(collection)):
                 if not isinstance(b, dict):
@@ -1022,7 +1101,15 @@ class _Context:
                 if q in self.skipped_blocks:
                     continue
                 collection, block = found['collection'], found['block']
-                if collection in ('waste_packages', 'events'):
+                if collection == 'waste_packages':
+                    continue
+                # An event that goes out is transfers, which need their trigger
+                # and the compartments they move between.
+                if collection == 'events':
+                    lost_by = self.event_loses(block)
+                    if lost_by is not None:
+                        skip(q, f"it {lost_by[0]} '{_str(lost_by[1])}', which is left out")
+                        fell = True
                     continue
                 lost = self.reads_skipped(block, collection)
                 if lost:
@@ -1424,6 +1511,78 @@ class _Context:
                     out.append(a[k])
         return out
 
+    def event_problem(self, b: Dict[str, Any]) -> Optional[str]:
+        """Why an event cannot go out, or None (``eventProblem``): one a trigger
+        sets off, moving shares of compartments, is Ecolego's discrete transfer,
+        and goes out as one per share it moves; every other has no equivalent."""
+        if _timing_of(b) != 'trigger':
+            return 'a disruptive event and what it does to the model have no Ecolego equivalent'
+        actions = _event_actions(b.get('actions', _UNDEF))
+        if not actions:
+            return 'it does nothing but count the times its trigger fires, and Ecolego keeps no such count'
+        if any(a['kind'] != 'move' for a in actions):
+            return 'it fails waste packages, which have no Ecolego block'
+        trigger = self.event_trigger(b)
+        if trigger is None:
+            return (f"what sets it off, '{js_trim(_str(_or(b.get('trigger', _UNDEF), '')))}', is not a trigger "
+                    'of this model')
+        if trigger['dims'] and not trigger['indexed']:
+            return (f"'{trigger['q']}' is indexed and named whole, so any of its indices sets the event off, where "
+                    'Ecolego sets a transfer off index by index')
+        for a in actions:
+            for e in (a['from'], a['to']):
+                if e is None:
+                    continue
+                found = self.blocks.get(self.resolve_end(e, b))
+                if not found or found['collection'] != 'compartments':
+                    return 'it moves a share between blocks that are not both compartments'
+        return None
+
+    def event_trigger(self, b: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The trigger an event names -- ``q``, ``dims``, ``indexed`` and ``key``,
+        the trigger and the indices it is named at -- or None (``eventTrigger``)."""
+        ref = _reference_of(js_trim(_str(_or(b.get('trigger', _UNDEF), ''))))
+        if ref is None:
+            return None
+        name, indices = ref
+        q = resolve_reference(name, _str(_or(b.get('system', _UNDEF), '')), self.known)
+        found = self.blocks.get(q) if q is not None else None
+        if not found or found['collection'] != 'triggers':
+            return None
+        return {'q': q, 'dims': _list(found['block'].get('index_lists')), 'indexed': bool(indices),
+                'key': q + ''.join(f'[{i}]' for i in indices)}
+
+    def event_loses(self, b: Dict[str, Any]) -> Optional[Tuple[str, Any]]:
+        """What an event that goes out has lost to the blocks left out, ``(how, name)``, or None."""
+        trigger = self.event_trigger(b)
+        if trigger is not None and trigger['q'] in self.skipped_blocks:
+            return 'is set off by', trigger['q']
+        for a in _event_actions(b.get('actions', _UNDEF)):
+            for end in (a['from'], a['to']):
+                if end is not None and self.resolve_end(end, b) in self.skipped_blocks:
+                    return 'moves a share of', end
+            lost = self.read_in(a['fraction'], _str(_or(b.get('system', _UNDEF), '')),
+                                lambda n: n in self.skipped_blocks)
+            if lost is not None:
+                return 'reads', lost
+        return None
+
+    def read_in(self, text: Any, system: str, wanted: Any) -> Optional[str]:
+        """The first block one equation reads, written from ``system``, that ``wanted`` picks, or None."""
+        try:
+            toks = tokenize(_str(text))
+        except EquationSyntaxError:
+            return None
+        for k, t in enumerate(toks):
+            if t.type != 'ident':
+                continue
+            if k + 1 < len(toks) and toks[k + 1].type == 'lparen' and t.text in RESERVED:
+                continue
+            q = resolve_reference(t.text, system, self.known)
+            if q is not None and wanted(q):
+                return q
+        return None
+
     def reads_skipped(self, block: Dict[str, Any], collection: str) -> Optional[str]:
         system = _str(_or(block.get('system', _UNDEF), ''))
         params = block.get('parameters')
@@ -1606,6 +1765,34 @@ class _Context:
                     report.warn(f"'{q}' has no donor and says it multiplies by one; it is written as the absolute "
                                 'flux it is.')
                 self.flux_plans[q] = plan
+        # An event a trigger sets off: a discrete transfer per share it moves,
+        # under the event's own name when it moves one, between the same two
+        # compartments, or into a sink for a share moved out of the model.
+        for b in _list(raw.get('events')):
+            if not isinstance(b, dict):
+                continue
+            q = _qname_of(b)
+            if q in self.skipped_blocks:
+                continue
+            system = _str(_or(b.get('system', _UNDEF), ''))
+            actions = _event_actions(b.get('actions', _UNDEF))
+            names: List[str] = []
+            for k, a in enumerate(actions):
+                name = (b.get('name') if len(actions) == 1
+                        else self.claim_name(system, f"{_str(b.get('name', _UNDEF))}_{k + 1}"))
+                plan = {'event': b, 'q': q, 'name': name, 'system': system,
+                        'from': self.resolve_end(a['from'], b),
+                        'to': None if a['to'] is None else self.resolve_end(a['to'], b),
+                        'dims': _or(self.end_dims(a['from'], b), []), 'share': a['fraction']}
+                if plan['to'] is None:
+                    plan['sink'] = boundary(name, system, 'sink')
+                self.event_plans.append(plan)
+                names.append(_str(name))
+            many = '' if len(actions) == 1 else f"{len(actions)} transfers, {', '.join(names)},"
+            report.rewrite('event', q, f"set off by a trigger, it is written as {'a transfer' if not many else many} "
+                           "with that trigger as the event -- Ecolego's discrete transfer, which moves its share of "
+                           'the donor at once each time the trigger fires; its count of occurrences is not written, '
+                           f"and it comes back as {'the event' if len(actions) == 1 else 'an event per share'}")
 
     def narrowing(self, dims: Sequence[Any], shared: Sequence[Any]) -> Optional[List[Dict[str, Any]]]:
         if len(dims) != len(shared):
@@ -2339,6 +2526,8 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
                 _write_connection(w, ctx, t, plan)
     for t in ctx.generated['transfers']:
         _write_connection(w, ctx, t, ctx.generated_plans[_qname_of(t)])
+    for plan in ctx.event_plans:
+        _write_discrete_transfer(w, ctx, plan)
     w.close('block-model')
     for q, seen in ctx.respelled.items():
         ctx.report.rewrite(KIND_WORD.get(seen['collection'], 'block'), q, _respelled_how(seen))
@@ -2351,6 +2540,27 @@ def _write_blocks(w: _XmlWriter, ctx: _Context) -> None:
         ctx.report.warn(f"{ctx.dropped_entries} entr{'y was' if one else 'ies were'} "
                         'keyed by an index list or index the block is not indexed by, and took no part in the run; '
                         f"{'it was' if one else 'they were'} not written.")
+
+
+def _write_discrete_transfer(w: _XmlWriter, ctx: _Context, plan: Dict[str, Any]) -> None:
+    """One share an event a trigger sets off moves, as Ecolego's discrete
+    transfer: unitless, multiplied by its donor, with the trigger as its event
+    (``writeDiscreteTransfer``)."""
+    system, name, event = plan['system'], plan['name'], plan['event']
+    tid = f'{system}.{_str(name)}' if system else _str(name)
+    w.open('connection', [('name', name), ('type', 'transfer'), ('source', plan['from']),
+                          ('target', plan['sink'] if plan['to'] is None else plan['to']),
+                          *_dim_attrs(ctx, plan['dims'])])
+    _write_common(w, ctx, {'system': system, 'enabled': event.get('enabled'), 'unit': 'unitless',
+                           'comment': event.get('comment', _UNDEF)}, tid)
+    if event.get('enabled') is not False:
+        ctx.result_ids.append(tid)
+    w.open('entry', [('type', 'transfer')])
+    w.cdata('transfer-equation', ctx.equation(_equation_text(plan['share'], '1'), plan['q'], 'events'))
+    w.cdata('transfer-event', ctx.equation(js_trim(_str(_or(event.get('trigger', _UNDEF), ''))), plan['q'], 'events'))
+    w.text('multiply-with-donor', 'true')
+    w.close('entry')
+    w.close('connection')
 
 
 def _dim_attrs(ctx: _Context, dims: Sequence[Any], intersection: bool = False) -> List[Tuple[str, Any]]:
@@ -2373,9 +2583,11 @@ def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str,
         # Bq -- is written with an empty one: no <unit> at all reads back as
         # the inventory in Bq an Ecolego file means by it.
         w.text('unit', '')
+    # A block's comment is its `comment` property, which is what Ecolego reads
+    # and writes; it has no `<comment>` element (``writeCommon``).
     comment = _trim(_or(block.get('comment', _UNDEF), ''))
     if comment:
-        w.cdata('comment', comment)
+        w.cdata('property', comment, [('name', 'comment'), ('type', 'string')])
 
 
 def _row_key(ctx: _Context, dims: Sequence[Any], combo: Sequence[Any]) -> str:

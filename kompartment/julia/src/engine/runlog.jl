@@ -194,7 +194,7 @@ function run_log_lines(res::Results; project=nothing, build::AbstractString="", 
             push!(out, "  events: $(js_text(s["events"])), restarts: $(js_text(something(get(s, "restarts", nothing), 0)))")
         haskey(s, "jumps") && s["jumps"] !== nothing &&
             push!(out, "  jumps: $(js_text(s["jumps"])) — package failures at a time and disruptive events, applied to " *
-                       "the state at their corners")
+                       "the state at their corners and crossings")
         j = res.system.jacobian
         if j isa JacobianInfo && j.available
             push!(out, "  df/dy: analytic, $(get(s, "sparse", false) === true ? "sparse" : "dense")" *

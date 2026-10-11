@@ -45,7 +45,7 @@ EQUATION_FIELDS: Dict[str, tuple] = {
                  'pen_dep_0'),
     'waste_package': ('inventory', 'irf', 'degradation_rate', 'fail_at', 'fail_from', 'fail_to',
                       'fail_start', 'fail_rate', 'fail_scale', 'fail_shape'),
-    'event': ('at', 'rate', 'from', 'until'),
+    'event': ('at', 'rate', 'from', 'until', 'trigger'),
 }
 TRIGGER_FIELDS = {
     'min_max': ('reset_trigger', 'start_trigger', 'stop_trigger'),
@@ -229,6 +229,12 @@ def check_model(model: 'Model') -> List[str]:
             if kind == 'event':
                 if b.get('timing', 'at') not in TIMINGS:
                     out.append(f"{q}: '{b.get('timing')}' is not a timing")
+                # What sets it off is a trigger, named whole or at one index.
+                trigger = str(b.get('trigger') or '').strip()
+                if b.get('timing') == 'trigger' and trigger:
+                    t = resolve_reference(trigger.split('[', 1)[0].strip(), system, known)
+                    if t is None or model._kind_of(t) != 'trigger':
+                        out.append(f"{q}: its trigger '{trigger}' is not a trigger")
                 for a in b.get('actions') or []:
                     for end in ('block', 'from', 'to'):
                         v = a.get(end) if isinstance(a, dict) else None

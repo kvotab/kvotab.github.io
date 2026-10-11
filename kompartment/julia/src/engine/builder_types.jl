@@ -175,4 +175,6 @@ struct JumpSpec
     slot::Union{Nothing,Int}   # the algebraic slot holding its time; nothing: drawn times
     text::String
     index::Int                 # a disruption's index, -1 for packages
+    fired_by::Vector{Int}      # the event slots (0-based) whose firing applies it; empty: a corner or drawn times
 end
+JumpSpec(name, ops, slot, text, index) = JumpSpec(name, ops, slot, text, index, Int[])

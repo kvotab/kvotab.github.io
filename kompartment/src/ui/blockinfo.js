@@ -186,15 +186,16 @@ export function blockTopic(kind) {
 				+ 'sign.',
 				'**Fires** — rising, falling, or either way.',
 				'Snapshots, and the min/max and running means, name it in their **Taken at** and '
-				+ '**Reset at** to act when it fires.',
+				+ '**Reset at** to act when it fires; an event set off by it acts on the model itself.',
 			],
 			{ diagram: 'a diamond marked with a step', file: '`triggers`', more: 'Blocks that remember' });
 		case 'event': return topic('Event',
 			'Something that happens to the model at an instant: packages breached, a share of an inventory '
-			+ 'moved — an earthquake, a glaciation, a well drilled.',
+			+ 'moved — an earthquake, a glaciation, a well drilled, a lake that dries up.',
 			[
-				'**Happens** — once, at a time; or at random at a rate, between two times.',
-				'**At**, **Rate**, **From**, **Until** — when, as the choice above asks.',
+				'**Happens** — once, at a time; at random at a rate, between two times; or every time a '
+				+ 'trigger fires.',
+				'**At**, **Rate**, **From**, **Until**, **Trigger** — when, as the choice above asks.',
 				'**Does** — its actions: fail a share of the packages in a waste-package block, or move a '
 				+ 'share of a compartment’s inventory to another compartment or out of the model.',
 				'**Draw the occurrences in a probabilistic run** — each realisation draws its own times; '

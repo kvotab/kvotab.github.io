@@ -6,14 +6,21 @@
  * drilled through the repository. GoldSim writes these as *Events* -- timed,
  * or triggered by a Poisson process -- with *consequences* on its Sources and
  * Cells, and the disruptive-event scenarios of an SKB assessment are the same
- * thing in prose. Ecolego's discrete event is a crossing (`first - second`
- * changing sign) that takes snapshots and resets recorders; it does not move
- * mass. This block does.
+ * thing in prose. A trigger (Ecolego's discrete event) is a crossing --
+ * `first - second` changing sign -- that takes snapshots and resets recorders;
+ * on its own it moves no mass. This block does, and a trigger can be what
+ * sets it off.
  *
  * WHEN. Either `at` a time -- an equation that comes to a number before the
  * run, which may be a parameter with a distribution, so a probabilistic run
  * draws it -- or as a Poisson process with a `rate` (occurrences per unit
- * time) between `from` and `until`, the whole run when those are blank.
+ * time) between `from` and `until`, the whole run when those are blank -- or
+ * every time a `trigger` fires: the lake that dries up when its volume comes
+ * down to nothing, whenever in the run that is. The solver stops at the
+ * crossing, as it does for every trigger, and the actions are applied there.
+ * That last is how an Ecolego transfer with a *transfer event* -- a discrete
+ * transfer, which moves its share of the donor at once whenever the event
+ * fires and nothing in between -- comes across (../io/eco.js).
  *
  * WHAT. A list of actions, each a share of something:
  *
@@ -33,7 +40,8 @@
  * block's name and the realisation's number, so a replay reproduces them, and
  * applies the actions as jumps at those times, with the expected-value terms
  * switched off so nothing is counted twice. The block's value is then the
- * number of occurrences so far, a staircase. A timed event is a jump in both.
+ * number of occurrences so far, a staircase. A timed event is a jump in both,
+ * and so is one a trigger sets off: there are no dice in a crossing.
  *
  * WHAT IT IS NOT. A change to a parameter, or to an equation, at an instant --
  * GoldSim's "triggered" changes to any element. That is a different feature
@@ -45,11 +53,12 @@
 import { qualifiedName } from './systems.js';
 
 /** When it happens, as a model spells it. */
-export const TIMINGS = ['at', 'poisson'];
+export const TIMINGS = ['at', 'poisson', 'trigger'];
 
 export const TIMING_LABEL = {
 	at: 'at a time',
 	poisson: 'at random, at a rate',
+	trigger: 'when a trigger fires',
 };
 
 export const TIMING_BLURB = {
@@ -58,6 +67,8 @@ export const TIMING_BLURB = {
 	poisson: 'As a Poisson process: occurrences at the given rate, independently, between '
 		+ 'the two times (the whole run when they are blank). A deterministic run takes '
 		+ 'the expected-value form; a probabilistic realisation draws the occurrences.',
+	trigger: 'Every time the trigger fires. The solver stops at the crossing, the actions '
+		+ 'happen there, and the run goes on from what they leave.',
 };
 
 /** What it does, as a model spells it. */
@@ -76,16 +87,23 @@ export const ACTION_BLURB = {
 		+ 'another compartment, or out of the model.',
 };
 
-/** The block-level equations, in the order the panel shows them. */
-export const DIS_EQUATION_KEYS = ['at', 'rate', 'from', 'until'];
+/**
+ * The block-level equations, in the order the panel shows them. `trigger` is
+ * one in the sense a snapshot's is: an equation whose one token names the
+ * trigger, read the way a reference in any other equation is, so a rename
+ * follows it and a delete sees it.
+ */
+export const DIS_EQUATION_KEYS = ['at', 'rate', 'from', 'until', 'trigger'];
 
-export const DIS_LABEL = { at: 'At', rate: 'Rate', from: 'From', until: 'Until' };
+export const DIS_LABEL = { at: 'At', rate: 'Rate', from: 'From', until: 'Until', trigger: 'Trigger' };
 
 export const DIS_HELP = {
 	at: 'When it happens, in the model’s time unit.',
 	rate: 'Occurrences per unit time. 1e-5 a year is one in a hundred thousand years.',
 	from: 'No occurrence before this. Blank: from the start of the run.',
 	until: 'No occurrence after this. Blank: to the end of the run.',
+	trigger: 'The trigger that sets it off. One that is indexed sets it off when any of '
+		+ 'its indices fires; name one index, as in T[Cs-137], for that index alone.',
 };
 
 export const DIS_DEFAULTS = {
@@ -94,6 +112,7 @@ export const DIS_DEFAULTS = {
 	rate: '',
 	from: '',
 	until: '',
+	trigger: '',
 	// Whether a probabilistic run draws the occurrences. Off, a random event
 	// keeps its expected-value form in every realisation, which is the choice
 	// when the question is about the parameters and not about the dice.
@@ -101,8 +120,11 @@ export const DIS_DEFAULTS = {
 	actions: [],
 };
 
-/** Which of the block-level equations each timing reads. */
-export const TIMING_KEYS = { at: ['at'], poisson: ['rate', 'from', 'until'] };
+/**
+ * Which of the block-level equations each timing reads as a value. A trigger
+ * is read as a name, by the builder, and holds no value of the event's.
+ */
+export const TIMING_KEYS = { at: ['at'], poisson: ['rate', 'from', 'until'], trigger: [] };
 
 /** The timing, `at` unless the block says a known other. */
 export function timingOf(block) {
@@ -154,6 +176,28 @@ export function sampleOccurrences(rate, from, until, stream, max = 10000) {
 	return out;
 }
 
+/**
+ * The first two moves, of those applied one after the other at one instant,
+ * where the later takes its share from a compartment the earlier moved into or
+ * out of -- `{ first, second }` -- or null when there is none.
+ *
+ * Here the actions of an event, and the events due at one instant, are applied
+ * in order, each to what the one before left. Ecolego applies the discrete
+ * transfers one event sets off together, each share of what was there before
+ * any of them moved. The two agree exactly when this finds nothing, which is
+ * what an import and an export across the two ask of it.
+ *
+ * @param {Array<{from: string, to: string|null}>} moves  in the order applied
+ */
+export function dependentMoves(moves) {
+	for (let j = 1; j < moves.length; j++) {
+		for (let i = 0; i < j; i++) {
+			if (moves[j].from === moves[i].from || moves[j].from === moves[i].to) return { first: moves[i], second: moves[j] };
+		}
+	}
+	return null;
+}
+
 /** The share as it reads: `0.1` is 10 %, `f_quake` is itself. */
 export function shareText(fraction) {
 	const v = Number(String(fraction ?? '').trim());
@@ -163,10 +207,13 @@ export function shareText(fraction) {
 /** One line: when, then what. */
 export function describeDisruption(block) {
 	const say = (k) => String(block?.[k] ?? '').trim() || '?';
-	const when = timingOf(block) === 'at'
+	const timing = timingOf(block);
+	const when = timing === 'at'
 		? `at ${say('at')}`
-		: `Poisson ${say('rate')}${String(block?.from ?? '').trim() || String(block?.until ?? '').trim()
-			? ` in ${String(block.from ?? '').trim() || 'start'} – ${String(block.until ?? '').trim() || 'end'}` : ''}`;
+		: timing === 'trigger'
+			? `when ${say('trigger')} fires`
+			: `Poisson ${say('rate')}${String(block?.from ?? '').trim() || String(block?.until ?? '').trim()
+				? ` in ${String(block.from ?? '').trim() || 'start'} – ${String(block.until ?? '').trim() || 'end'}` : ''}`;
 	const what = normaliseActions(block?.actions).map((a) => (a.kind === 'fail'
 		? `fails ${shareText(a.fraction)} of ${a.block ?? '?'}`
 		: `moves ${shareText(a.fraction)} of ${a.from ?? '?'} ${a.to ? `to ${a.to}` : 'out'}`));
@@ -195,6 +242,11 @@ export function disruptionProblems(project) {
 		}
 		if (timing === 'poisson' && !String(b.rate ?? '').trim()) {
 			out.push({ name, field: 'rate', message: 'A random event needs its rate: occurrences per unit time.' });
+		}
+		// Whether the name is a trigger is the build's to say, as it is for a
+		// snapshot's: it resolves the name the way any equation's is resolved.
+		if (timing === 'trigger' && !String(b.trigger ?? '').trim()) {
+			out.push({ name, field: 'trigger', message: 'An event set off by a trigger needs the trigger: name one.' });
 		}
 		// A blank is not a number -- it is "the start" or "the end".
 		const num = (text) => {

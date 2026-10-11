@@ -68,12 +68,15 @@ WASTE_DEFAULTS: Dict[str, Any] = {
     'fail_at': '', 'fail_from': '', 'fail_to': '', 'fail_start': '0', 'fail_rate': '', 'fail_scale': '',
     'fail_shape': '1', 'handle_decay': True,
 }
-TIMINGS = ('at', 'poisson')
+TIMINGS = ('at', 'poisson', 'trigger')
 ACTIONS = ('fail', 'move')
-DIS_EQUATION_KEYS = ('at', 'rate', 'from', 'until')
-DIS_DEFAULTS: Dict[str, Any] = {'timing': 'at', 'at': '', 'rate': '', 'from': '', 'until': '', 'sampled': True,
-                                'actions': []}
-TIMING_KEYS = {'at': ('at',), 'poisson': ('rate', 'from', 'until')}
+# `trigger` is an equation in the sense a snapshot's is: its one token names the
+# trigger that sets the event off (``DIS_EQUATION_KEYS`` in disruption.js).
+DIS_EQUATION_KEYS = ('at', 'rate', 'from', 'until', 'trigger')
+DIS_DEFAULTS: Dict[str, Any] = {'timing': 'at', 'at': '', 'rate': '', 'from': '', 'until': '', 'trigger': '',
+                                'sampled': True, 'actions': []}
+# What each timing reads as a value; a trigger is read as a name, by the builder.
+TIMING_KEYS = {'at': ('at',), 'poisson': ('rate', 'from', 'until'), 'trigger': ()}
 TRANSPORT_ROLES = {'compartment': ('begin', 'end'), 'expression': ('number', 'counter', 'operation')}
 
 INTERPOLATION_FROM_ECO = {
@@ -1375,6 +1378,10 @@ def disruption_problems(project: Project) -> List[Dict[str, Any]]:
             out.append({'name': name, 'field': 'at', 'message': 'An event at a time needs the time: a number or an equation.'})
         if timing == 'poisson' and not str(b.get('rate') or '').strip():
             out.append({'name': name, 'field': 'rate', 'message': 'A random event needs its rate: occurrences per unit time.'})
+        # Whether the name is a trigger is the build's to say, as for a snapshot's.
+        if timing == 'trigger' and not str(b.get('trigger') or '').strip():
+            out.append({'name': name, 'field': 'trigger',
+                        'message': 'An event set off by a trigger needs the trigger: name one.'})
 
         def num(text: Any) -> Optional[float]:
             t = str(text if text is not None else '').strip()

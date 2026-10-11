@@ -299,7 +299,8 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     try
         solution = !isempty(breaks) ? solve_across_breaks(solve_span, span, y0, breaks, isempty(jumps) ? nothing : jump_at) :
                    _as_run(solve_span(span, y0))
-        isempty(jumps) || (solution.stats["jumps"] = jumped[])
+        # The corners' jumps, added to those the triggers set off.
+        isempty(jumps) || (solution.stats["jumps"] = get(solution.stats, "jumps", 0) + jumped[])
         if steps !== nothing
             solution = project.output_mode == "both" ? merge_steps(solution, steps) : from_steps(steps, solution)
         end
@@ -431,7 +432,9 @@ function solve_across_breaks(solve, grid::Vector{Float64}, y0::Vector{Float64}, 
             (!js_truthy(get(stats, "solver", nothing)) && js_truthy(get(s, "solver", nothing))) && (stats["solver"] = s["solver"])
             get(s, "sparse", nothing) !== nothing && (stats["sparse"] = s["sparse"])
             get(s, "fill", nothing) !== nothing && (stats["fill"] = s["fill"])
-            for key in ("npds", "ndecomps", "negative", "events")
+            # `jumps` here are the events a trigger set off inside the segment;
+            # the corners' own are added by `run_project`.
+            for key in ("npds", "ndecomps", "negative", "events", "jumps")
                 get(s, key, nothing) !== nothing && (stats[key] = get(stats, key, 0) + s[key])
             end
             if get(s, "held", nothing) !== nothing
@@ -490,6 +493,19 @@ function solve_with_events(sys::System, f, solver, grid::Vector{Float64}, y0::Ve
         t = stopped.t
         y = stopped.y
         fire_events!(sys, stopped.which, t, y)
+        # An event a trigger sets off moves the state, and the next segment
+        # starts from what it leaves. The row *at* the crossing is the state
+        # before, as a timed event's corner is: the segment ends on it here, so
+        # the next segment's first row, the state after, is the seam dropped.
+        acted = jumps_at_crossing(sys, stopped.which, y)
+        if acted !== nothing
+            if isempty(times) || times[end] != t
+                push!(times, t)
+                push!(rows, copy(y))
+            end
+            y = acted[1]
+            stats["jumps"] = get(stats, "jumps", 0) + acted[2]
+        end
         store_step!(sys, t, y)
         stats["events"] += length(stopped.which)
         stats["restarts"] += 1

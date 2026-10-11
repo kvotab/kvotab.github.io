@@ -134,6 +134,8 @@ function _eco_finish!(r::EcoImportReport, project::JDict)
         "snapshots" => n("snapshots"),
         "delays" => n("delays"),
         "triggers" => n("triggers"),
+        # Discrete transfers become events: see `_eco_settle_transfer_events!`.
+        "events" => n("events"),
         "nuclides" => n("nuclides"),
     ))
 end
@@ -148,6 +150,7 @@ function _eco_summary(r::EcoImportReport)
         (cn("lookups") != 0 ? "$(cn("lookups")) lookup table(s), " : "") *
         (cn("index_reductions") != 0 ? "$(cn("index_reductions")) index operation(s), " : "") *
         (cn("block_reductions") != 0 ? "$(cn("block_reductions")) aggregate(s), " : "") *
+        (cn("events") != 0 ? "$(cn("events")) event(s), " : "") *
         "$(cn("index_lists")) index list(s), $(cn("nuclides")) nuclide(s).",
     ]
     skipped = getfield(r, :skipped)
@@ -529,6 +532,9 @@ function import_model_xml(text::AbstractString; file_name=nothing, version=nothi
     # model ended up with.
     _eco_settle_general_variables!(project, generals, block_name_by_id, report)
     _eco_rewrite_endpoint_ids!(project, block_name_by_id, report, twins)
+    # Last of the rewrites, so the trigger a discrete transfer names, and the
+    # compartments it moves between, are the names the model ended up with.
+    _eco_settle_transfer_events!(project, report)
 
     duplicated = _eco_duplicated(names)
     if !isempty(duplicated)
@@ -871,6 +877,14 @@ function _eco_rewrite_renamed_references!(project::JDict, names, report::EcoImpo
             end
         end
     end
+    # A discrete transfer's event is a reference too, until it is settled into an
+    # event of this tool's (`_eco_settle_transfer_events!`).
+    for t in _eco_list(project, "transfers")
+        get(t, "transfer_event", nothing) !== nothing && (t["transfer_event"] = rewrite(t["transfer_event"]))
+        for entry in _eco_list(t, "entries")
+            get(entry, "transfer_event", nothing) !== nothing && (entry["transfer_event"] = rewrite(entry["transfer_event"]))
+        end
+    end
 
     if touched != 0
         _eco_warn!(report,
@@ -889,6 +903,118 @@ function _eco_rewrite_renamed_references!(project::JDict, names, report::EcoImpo
                 "in an equation was read as the block -- including where it was written " *
                 "as arithmetic between two other blocks. Check those equations by hand.")
         end
+    end
+end
+
+# Ecolego's discrete transfers, as the events they are here. A transfer with a
+# transfer event is not a rate: Ecolego leaves it out of the rates of change, and
+# each time the discrete event it names fires it moves what its equation says,
+# at once, from the state at the crossing. That is an event of this tool's, set
+# off by that trigger and moving that share between the same two compartments,
+# under the transfer's own name. What an event cannot say is left out and named
+# in the report. `settleTransferEvents`.
+function _eco_settle_transfer_events!(project::JDict, report::EcoImportReport)
+    transfers = _eco_list(project, "transfers")
+    discrete = Any[t for t in transfers if get(t, "transfer_event", nothing) !== nothing ||
+                   any(e -> get(e, "transfer_event", nothing) !== nothing, _eco_list(t, "entries"))]
+    isempty(discrete) && return
+    qualified(b) = _eco_truthy(get(b, "system", nothing)) ? "$(b["system"]).$(b["name"])" : String(b["name"])
+    triggers = Dict{String,Any}(qualified(b) => b for b in _eco_list(project, "triggers"))
+    compartments = Dict{String,Any}(qualified(c) => c for c in _eco_list(project, "compartments"))
+    lists(b) = b === nothing ? "" : join(_eco_list(b, "index_lists"), '\0')
+    made = String[]
+    # The events each discrete event sets off, by the event and the index it is
+    # named at, in the order they will act.
+    together = OrderedDict{String,Vector{Any}}()
+    for t in discrete
+        rows = _eco_list(t, "entries")
+        event = get(t, "transfer_event", nothing)
+        fires = ""
+        why = let
+            frm = _eco_truthy(get(t, "from", nothing)) ? get(compartments, t["from"], nothing) : nothing
+            to_name = get(t, "to", nothing)
+            to = to_name === nothing ? nothing : get(compartments, to_name, nothing)
+            if !_eco_truthy(get(t, "from", nothing))
+                "it starts outside the model, so there is no inventory for an event to move a share of"
+            elseif get(t, "multiply_by_donor", nothing) === false ||
+                   any(e -> get(e, "multiply_by_donor", nothing) === false, rows)
+                "it moves an amount at each firing rather than a share of its donor, and an event here moves shares"
+            elseif event === nothing ||
+                   any(e -> get(e, "transfer_event", nothing) !== nothing && e["transfer_event"] != event, rows)
+                "its discrete event is not the same one at every index, and an event here is set off by one trigger"
+            elseif any(e -> get(e, "rate", nothing) !== nothing && e["rate"] != get(t, "rate", nothing), rows)
+                "the share it moves is not the same at every index, and an event here moves one share of every index"
+            elseif frm === nothing || (to_name !== nothing && to === nothing)
+                "an end of it is not a compartment, and an event here moves between compartments"
+            elseif lists(t) != lists(frm) || (to !== nothing && lists(to) != lists(frm))
+                "its ends are not indexed as it is, and an event here moves its share between two " *
+                "compartments cell for cell"
+            elseif (ref = match(r"^([A-Za-z_][A-Za-z0-9_.]*)((?:\[[^\[\]]+\])*)$", event)) === nothing
+                "'$event' does not name a discrete event"
+            else
+                # The event's name, and an index for each of its lists or none.
+                named = resolve_reference(ref.captures[1], _eco_truthy(get(t, "system", nothing)) ? t["system"] : "",
+                                          n -> haskey(triggers, n))
+                if named === nothing
+                    "'$event' is not a discrete event of this model"
+                elseif count(==('['), ref.captures[2]) != length(_eco_list(triggers[named], "index_lists"))
+                    "'$event' is indexed, and Ecolego fires it index by index, setting the transfer off " *
+                    "at each index on its own"
+                else
+                    fires = "$(named)$(ref.captures[2])"
+                    nothing
+                end
+            end
+        end
+        deleteat!(transfers, findfirst(x -> x === t, transfers))
+        if why !== nothing
+            _eco_skip!(report, "transfer", qualified(t),
+                       "it has a transfer event, which makes it a discrete transfer, and $why")
+            continue
+        end
+        block = JDict("name" => t["name"])
+        _eco_truthy(get(t, "system", nothing)) && (block["system"] = t["system"])
+        _eco_truthy(get(t, "comment", nothing)) && (block["comment"] = t["comment"])
+        get(t, "enabled", nothing) === false && (block["enabled"] = false)
+        block["timing"] = "trigger"
+        block["trigger"] = event
+        block["actions"] = Any[JDict("kind" => "move", "from" => t["from"], "to" => get(t, "to", nothing),
+                                     "fraction" => t["rate"])]
+        push!(get!(project, "events", Any[]), block)
+        push!(made, String(t["name"]))
+        move = block["actions"][1]
+        push!(get!(together, fires, Any[]), (name=String(t["name"]), from=move["from"], to=move["to"]))
+    end
+    # Several set off by one event act in turn here, each on what the one before
+    # left, where Ecolego moves every share from what was there before any of them
+    # moved. The same thing unless one takes its share from where another moved.
+    for moves in values(together)
+        clash = nothing
+        for j in 2:length(moves), i in 1:j-1
+            if moves[j].from == moves[i].from || moves[j].from == moves[i].to
+                clash = (moves[i], moves[j])
+                break
+            end
+        end
+        clash === nothing && continue
+        first_, second = clash
+        _eco_warn!(report,
+            "'$(first_.name)' and '$(second.name)' are set off by the same discrete event, and '$(second.name)' takes " *
+            "its share of '$(second.from)' after '$(first_.name)' has moved a share " *
+            "$(first_.from == second.from ? "out of" : "into") it. Ecolego takes every share from what was there " *
+            "before any of them moved; here events at one instant act in the order they are listed, so " *
+            "'$(second.name)' moves a share of something else.")
+    end
+    if !isempty(made)
+        one = length(made) == 1
+        shown = ["'$n'" for n in first(made, 6)]
+        length(made) > 6 && push!(shown, "$(length(made) - 6) more")
+        _eco_warn!(report,
+            "$(one ? "A transfer has" : "$(length(made)) transfers have") a transfer event, which makes " *
+            "$(one ? "it" : "each") a discrete transfer: it moves its share of the donor all at once " *
+            "whenever that discrete event fires, and nothing in between. $(one ? "It" : "Each") came in as " *
+            "an event set off by that trigger, moving the same share to the same place at the same " *
+            "instant: $(_eco_list_of(shown)).")
     end
 end
 
@@ -1352,7 +1478,8 @@ end
 
 # How many state variables the solver will integrate, as the application
 # counts them (`Model.state_count` on the project as it stands): one per
-# combination of each compartment's and running mean's enabled indices.
+# combination of each compartment's and running mean's enabled indices, and one
+# per event.
 function _eco_state_count(project::JDict)
     stored = [l for l in _eco_list(project, "index_lists") if l isa AbstractDict]
     lists = derive_elements(stored)
@@ -1407,6 +1534,9 @@ function _eco_state_count(project::JDict)
             n += c
         end
     end
+    # A discrete transfer comes in as an event, which counts its occurrences in
+    # a state of its own (`_eco_settle_transfer_events!`).
+    n += length(_eco_list(project, "events"))
     return n
 end
 
@@ -1868,7 +1998,10 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
         dim_spec = isempty(dims) ? ("per_nuclide" => false) : ("index_lists" => dims)
 
         unit = _eco_or_str(_eco_child_text(el, "unit"))
-        comment = _eco_or_str(_eco_child_text(el, "comment"))
+        # A block's comment is its `comment` property, as Ecolego 6 writes it;
+        # a `<comment>` element where there is none (`readBlocks`).
+        comment = _eco_property_text(el, "comment")
+        comment === nothing && (comment = _eco_or_str(_eco_child_text(el, "comment")))
         entries = _eco_read_entries(el, dim_lists, report, original)
 
         if type_ in _ECO_GENERAL_VARIABLE
@@ -2127,6 +2260,22 @@ function _eco_read_blocks(data_model::EcoXMLNode, project::JDict, names::_EcoNam
                     _eco_or(_eco_pick_default(entries, "multiply_by_donor"), get(_ECO_DONOR_DEFAULT, type_, false))
             rate = _eco_or(_eco_pick_default(entries, "rate"), "0")
 
+            # A discrete transfer -- one that moves what its equation says all at
+            # once whenever a discrete event fires, and nothing in between -- is
+            # not a rate. It goes through the renames as a transfer that carries
+            # its event, row by row as the file has it, and becomes an event of
+            # this tool's at the end (`_eco_settle_transfer_events!`).
+            if any(e -> get(e, "transfer_event", nothing) !== nothing, entries)
+                push!(project["transfers"], _eco_trim_empty((
+                    "name" => name, "system" => system, dim_spec, "unit" => unit, "comment" => comment,
+                    "from" => frm, "to" => to,
+                    "rate" => rate,
+                    "multiply_by_donor" => donor,
+                    "transfer_event" => _eco_pick_default(entries, "transfer_event"),
+                    "entries" => _eco_keep_indexed(entries, ("rate", "multiply_by_donor", "transfer_event")))))
+                continue
+            end
+
             # Ecolego keeps the flag row by row, and here it is one setting of
             # the transfer. Rows that say otherwise become a second transfer
             # between the same two ends, and the first moves nothing there.
@@ -2302,11 +2451,10 @@ function _eco_read_entries(el::EcoXMLNode, dim_lists::Vector{_EcoList}, report::
                                                  _eco_child_text(entry_el, "equation")))
             mult = _eco_child_text(entry_el, "multiply-with-donor")
             (mult !== nothing && mult != "") && (rec["multiply_by_donor"] = _eco_py_lower(mult) == "true")
-            if _eco_truthy(_eco_child_text(entry_el, "transfer-event"))
-                _eco_warn!(report,
-                    "'$block_label' has a transfer event (a discrete transfer), which " *
-                    "this tool does not support.")
-            end
+            # The discrete event that makes this a discrete transfer: settled
+            # into an event of this tool's by `_eco_settle_transfer_events!`.
+            event = _eco_child_text(entry_el, "transfer-event")
+            (event !== nothing && !isempty(strip(event))) && (rec["transfer_event"] = String(strip(event)))
         elseif type_ == "expression"
             _eco_assign_if!(rec, "equation", _eco_child_text(entry_el, "equation"))
         elseif type_ == "parameter"

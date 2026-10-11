@@ -55,6 +55,7 @@ import {
 	directionFromEco,
 } from '../domain/recorders.js';
 import { resolveReference } from '../domain/systems.js';
+import { dependentMoves } from '../domain/disruption.js';
 import { DEFAULT_SOLVER, solverName } from '../ode/solvers.js';
 import { DEFAULT_SIMULATION } from '../domain/project.js';
 
@@ -424,6 +425,9 @@ function* importSteps(text, meta) {
 	// model ended up with.
 	settleGeneralVariables(project, generals, blockNameById, report);
 	rewriteEndpointIds(project, blockNameById, report, twins);
+	// Last of the rewrites, so the trigger a discrete transfer names, and the
+	// compartments it moves between, are the names the model ended up with.
+	settleTransferEvents(project, report);
 
 	const duplicated = names.duplicated();
 	if (duplicated.length) {
@@ -743,6 +747,15 @@ function rewriteRenamedReferences(project, names, report, blockNameById = new Ma
 			}
 		}
 	}
+	// A discrete transfer's event is a reference too, until it is settled into
+	// an event of this tool's (`settleTransferEvents`). Only where there is one:
+	// the loop above gives every block the keys it lists.
+	for (const t of project.transfers ?? []) {
+		if (t.transfer_event != null) t.transfer_event = rewrite(t.transfer_event);
+		for (const entry of t.entries ?? []) {
+			if (entry.transfer_event != null) entry.transfer_event = rewrite(entry.transfer_event);
+		}
+	}
 
 	if (touched) {
 		report.warn(
@@ -773,6 +786,131 @@ function rewriteRenamedReferences(project, names, report, blockNameById = new Ma
 const IDENT_CHAR = /[A-Za-z0-9_]/;
 /** The characters that make a name readable as an expression in its own right. */
 const OPERATOR_CHAR = /[+\-*/^()[\],]/;
+
+/**
+ * Ecolego's discrete transfers, as the events they are here.
+ *
+ * A transfer with a *transfer event* is not a rate. Ecolego leaves it out of
+ * every compartment's rate of change (`DomainUtil.includeInDifferentialEquation`),
+ * and each time the discrete event it names fires it moves what its equation
+ * says from one end to the other in one step -- the equation's share of the
+ * donor when it multiplies by the donor, so that `1.0` empties it, or that
+ * amount when it does not -- worked out from the state at the crossing
+ * (`TransferClassWriter.writeEventOccuredMethod`, applied by `performEvents` to
+ * a copy of the states). The one real model here that has any uses three,
+ * each emptying a lake into the soil of the object it becomes, at the instant
+ * the lake's volume comes down to nothing.
+ *
+ * That is an event of this tool's: set off by the trigger the file names, and
+ * moving that share of the one compartment to the other, at the same instant
+ * and from the same state. So that is what it becomes, under the transfer's
+ * own name in the transfer's own sub-system.
+ *
+ * What an event cannot say is left out and named in the report. It is not
+ * kept as a transfer: that would move its share continuously, at that rate
+ * per unit of time, for the whole run -- a process the file does not have.
+ *
+ *   - an amount rather than a share of the donor, or no donor at all;
+ *   - a share, or an event, that is not the same at every index;
+ *   - an event that is indexed, which Ecolego fires index by index;
+ *   - ends not indexed as the transfer is, since an event moves its share
+ *     between two compartments cell for cell.
+ */
+function settleTransferEvents(project, report) {
+	const discrete = (project.transfers ?? []).filter((t) => t.transfer_event != null
+		|| (t.entries ?? []).some((e) => e.transfer_event != null));
+	if (!discrete.length) return;
+	const qualified = (b) => (b.system ? `${b.system}.${b.name}` : b.name);
+	const triggers = new Map((project.triggers ?? []).map((b) => [qualified(b), b]));
+	const compartments = new Map((project.compartments ?? []).map((c) => [qualified(c), c]));
+	const lists = (b) => (b?.index_lists ?? []).join('\u0000');
+	const made = [];
+	// The events each discrete event sets off, by the event and the index it is
+	// named at, in the order they will act.
+	const together = new Map();
+	for (const t of discrete) {
+		const rows = t.entries ?? [];
+		const event = t.transfer_event ?? null;
+		let fires = null;
+		const why = (() => {
+			if (!t.from) return 'it starts outside the model, so there is no inventory for an event to move a share of';
+			if (t.multiply_by_donor === false || rows.some((e) => e.multiply_by_donor === false)) {
+				return 'it moves an amount at each firing rather than a share of its donor, and an event here moves shares';
+			}
+			if (event == null || rows.some((e) => e.transfer_event != null && e.transfer_event !== event)) {
+				return 'its discrete event is not the same one at every index, and an event here is set off by one trigger';
+			}
+			if (rows.some((e) => e.rate != null && e.rate !== t.rate)) {
+				return 'the share it moves is not the same at every index, and an event here moves one share of every index';
+			}
+			const from = compartments.get(t.from);
+			const to = t.to == null ? null : compartments.get(t.to);
+			if (!from || (t.to != null && !to)) {
+				return 'an end of it is not a compartment, and an event here moves between compartments';
+			}
+			if (lists(t) !== lists(from) || (to && lists(to) !== lists(from))) {
+				return 'its ends are not indexed as it is, and an event here moves its share between two '
+					+ 'compartments cell for cell';
+			}
+			// The event's name, and an index for each of its lists or none. Named
+			// at one index, it fires the transfer whenever that index fires,
+			// which is what a trigger named at an index does here.
+			const ref = /^([A-Za-z_][\w.]*)((?:\[[^[\]]+\])*)$/.exec(event);
+			if (!ref) return `'${event}' does not name a discrete event`;
+			const named = resolveReference(ref[1], t.system ?? '', (n) => triggers.has(n));
+			if (!named) return `'${event}' is not a discrete event of this model`;
+			const pinned = (ref[2].match(/\[/g) ?? []).length;
+			if (pinned !== (triggers.get(named).index_lists ?? []).length) {
+				return `'${event}' is indexed, and Ecolego fires it index by index, setting the transfer off `
+					+ 'at each index on its own';
+			}
+			fires = `${named}${ref[2]}`;
+			return null;
+		})();
+		project.transfers.splice(project.transfers.indexOf(t), 1);
+		if (why) {
+			report.skip('transfer', qualified(t), `it has a transfer event, which makes it a discrete transfer, and ${why}`);
+			continue;
+		}
+		const block = { name: t.name };
+		if (t.system) block.system = t.system;
+		if (t.comment) block.comment = t.comment;
+		if (t.enabled === false) block.enabled = false;
+		block.timing = 'trigger';
+		block.trigger = event;
+		block.actions = [{ kind: 'move', from: t.from, to: t.to ?? null, fraction: t.rate }];
+		(project.events ??= []).push(block);
+		made.push(t.name);
+		if (!together.has(fires)) together.set(fires, []);
+		together.get(fires).push({ ...block.actions[0], name: t.name });
+	}
+	// Several set off by one event act in turn here, each on what the one before
+	// left, where Ecolego moves every share from what was there before any of them
+	// moved. The same thing unless one takes its share from where another moved.
+	for (const moves of together.values()) {
+		const clash = dependentMoves(moves);
+		if (!clash) continue;
+		const { first, second } = clash;
+		report.warn(
+			`'${first.name}' and '${second.name}' are set off by the same discrete event, and '${second.name}' takes `
+			+ `its share of '${second.from}' after '${first.name}' has moved a share ${first.from === second.from ? 'out of' : 'into'} `
+			+ 'it. Ecolego takes every share from what was there before any of them moved; here events at one '
+			+ `instant act in the order they are listed, so '${second.name}' moves a share of something else.`,
+		);
+	}
+	if (made.length) {
+		const one = made.length === 1;
+		const shown = made.slice(0, 6).map((n) => `'${n}'`);
+		if (made.length > 6) shown.push(`${made.length - 6} more`);
+		report.warn(
+			`${one ? 'A transfer has' : `${made.length} transfers have`} a transfer event, which makes `
+			+ `${one ? 'it' : 'each'} a discrete transfer: it moves its share of the donor all at once `
+			+ `whenever that discrete event fires, and nothing in between. ${one ? 'It' : 'Each'} came in as `
+			+ `an event set off by that trigger, moving the same share to the same place at the same `
+			+ `instant: ${listOf(shown)}.`,
+		);
+	}
+}
 
 /**
  * Drops a reduction whose target was never imported.
@@ -940,6 +1078,8 @@ export class ImportReport {
 			snapshots: (project.snapshots ?? []).length,
 			delays: (project.delays ?? []).length,
 			triggers: (project.triggers ?? []).length,
+			// Discrete transfers become events: see `settleTransferEvents`.
+			events: (project.events ?? []).length,
 			nuclides: (project.nuclides ?? []).length,
 		};
 	}
@@ -955,6 +1095,7 @@ export class ImportReport {
 			(c.lookups ? `${c.lookups} lookup table(s), ` : '') +
 			(c.index_reductions ? `${c.index_reductions} index operation(s), ` : '') +
 			(c.block_reductions ? `${c.block_reductions} aggregate(s), ` : '') +
+			(c.events ? `${c.events} event(s), ` : '') +
 			`${c.index_lists} index list(s), ${c.nuclides} nuclide(s).`,
 		];
 		if (this.skipped.length) {
@@ -1866,7 +2007,11 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 		const dimSpec = dims.length ? { index_lists: dims } : { per_nuclide: false };
 
 		const unit = childText(el, 'unit') ?? '';
-		const comment = childText(el, 'comment') ?? '';
+		// A block's comment is its `comment` property -- Ecolego 6 keeps it as
+		// `<property name="comment">`, the same as the project's own, and
+		// neither reads nor writes a `<comment>` element. That element is read
+		// too, where a file has one and no property.
+		const comment = propertyText(el, 'comment') ?? childText(el, 'comment') ?? '';
 		const entries = readEntries(el, dimLists, report, original);
 
 		if (GENERAL_VARIABLE.has(type)) {
@@ -2160,6 +2305,24 @@ function readBlocks(dataModel, project, names, indexIds, report, hierarchy = nul
 			const donor = from.name == null ? false : pickDefault(entries, 'multiply_by_donor') ?? donorDefault;
 			const rate = pickDefault(entries, 'rate') ?? '0';
 
+			// A discrete transfer -- one that moves what its equation says all at
+			// once whenever a discrete event fires, and nothing in between -- is
+			// not a rate. It goes through the renames below as a transfer that
+			// carries its event, row by row as the file has it, and becomes an
+			// event of this tool's at the end, or is left out with the reason:
+			// see `settleTransferEvents`.
+			if (entries.some((e) => e.transfer_event != null)) {
+				project.transfers.push(trimEmpty({
+					name, system, ...dimSpec, unit, comment,
+					from: from.name, to: to.name,
+					rate,
+					multiply_by_donor: donor,
+					transfer_event: pickDefault(entries, 'transfer_event'),
+					entries: keepIndexed(entries, ['rate', 'multiply_by_donor', 'transfer_event']),
+				}));
+				continue;
+			}
+
 			// Ecolego keeps the flag row by row, and here it is one setting of
 			// the transfer (VALUE_KEYS in ../domain/project.js). Rows that say
 			// otherwise become a second transfer between the same two ends, and
@@ -2358,12 +2521,13 @@ function readEntries(el, dimLists, report, blockLabel) {
 			assignIf(rec, 'rate', childText(entryEl, 'transfer-equation') ?? childText(entryEl, 'equation'));
 			const mult = childText(entryEl, 'multiply-with-donor');
 			if (mult != null && mult !== '') rec.multiply_by_donor = mult.toLowerCase() === 'true';
-			if (childText(entryEl, 'transfer-event')) {
-				report.warn(
-					`'${blockLabel}' has a transfer event (a discrete transfer), which `
-					+ `this tool does not support.`,
-				);
-			}
+			// The discrete event that makes this a discrete transfer: it moves
+			// what its equation says all at once, every time that event fires,
+			// and nothing in between. Kept as written -- an equation whose one
+			// token names the event -- and settled into an event of this
+			// tool's by `settleTransferEvents`.
+			const event = childText(entryEl, 'transfer-event');
+			if (event != null && event.trim()) rec.transfer_event = event.trim();
 		} else if (type === 'expression') {
 			assignIf(rec, 'equation', childText(entryEl, 'equation'));
 		} else if (type === 'parameter') {

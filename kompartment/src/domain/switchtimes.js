@@ -77,9 +77,12 @@ export function switchTimes(project) {
 		}
 	}
 	// A disruptive event at a time is a corner too, and the window of a random
-	// one is two: the expected-value rate switches on and off there.
+	// one is two: the expected-value rate switches on and off there. One a
+	// trigger sets off has none known before the run: the solver finds the
+	// crossing as it goes.
 	for (const d of project?.events ?? []) {
-		const keys = timingOf(d) === 'at' ? ['at'] : ['from', 'until'];
+		const timing = timingOf(d);
+		const keys = timing === 'at' ? ['at'] : timing === 'poisson' ? ['from', 'until'] : [];
 		for (const key of keys) {
 			const v = resolveSwitchTime(project, d[key]);
 			if (v == null || !(v > start) || !(v < end)) continue;

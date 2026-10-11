@@ -1378,6 +1378,43 @@ function _events!(b::Builder)
             end
         end
     end
+    # ...and set off an event: which of the slots above each event set off by a
+    # trigger watches (`firedBy`). Its trigger is a name, read from where the
+    # event is; an indexed trigger named whole sets it off when any of its
+    # indices fires, one index named, `T[Cs-137]`, when that one does.
+    for D in b.disruption_layout
+        D[:timing] == "trigger" || continue
+        local_ = D.block["name"]
+        written = get(D.block, "trigger", nothing)
+        text = written === nothing ? "" : strip(js_str(written))
+        isempty(text) && throw(BuildError("'$local_' is set off by a trigger, and names none.", D[:q]))
+        ast = try
+            parse_equation(text)
+        catch e
+            e isa EquationParseError || rethrow()
+            throw(BuildError("'$text' is not the name of a trigger.", D[:q]))
+        end
+        ast isa ERef || throw(BuildError("What sets '$local_' off must name a trigger, not an expression; '$text' is one.",
+                                         D[:q]))
+        # A block that is there and is not a trigger is said to be one first; a
+        # name that is nobody's, or is switched off, the locator says.
+        qname = resolve_reference(ast.name, something(get(D.block, "system", nothing), ""), n -> _known(b, n))
+        whole = qname === nothing ? nothing : get(b.alg_by_name, qname, nothing)
+        owner = whole === nothing ? nothing : get(whole, :recorder, nothing)
+        (qname !== nothing && (owner === nothing || owner.kind != "trigger")) &&
+            throw(BuildError("'$(ast.name)' is not a trigger, so it cannot set off '$local_'.", D[:q]))
+        slots = Int[]
+        if owner !== nothing && !isempty(owner.dims) && isempty(something(ast.indices, ()))
+            append!(slots, owner[:event_base] .+ (0:owner.width-1))
+        else
+            _, target, index = locate(b, D[:entry], String[], nothing, Tup(), ast.name, ast.indices)
+            owner = get(target, :recorder, nothing)
+            (owner === nothing || owner.kind != "trigger") &&
+                throw(BuildError("'$(ast.name)' is not a trigger, so it cannot set off '$local_'.", D[:q]))
+            push!(slots, owner[:event_base] + (index - target.base))
+        end
+        D[:fired_by] = slots
+    end
 end
 
 # --- statements for the algebraic blocks ----------------------------------------------------
@@ -2288,6 +2325,10 @@ function _jumps!(b::Builder)
         if D[:timing] == "at"
             at = get(D.block, "at", nothing)
             push!(b.jump_specs, JumpSpec(D[:q], ops, D[:setting]["at"].base, at === nothing ? "" : js_str(at), D[:index]))
+        elseif D[:timing] == "trigger"
+            # Not a corner known before the run: applied where its trigger fires
+            # (`jumps_at_crossing`).
+            push!(b.jump_specs, JumpSpec(D[:q], ops, nothing, "", D[:index], D[:fired_by]))
         else
             push!(b.jump_specs, JumpSpec(D[:q], ops, nothing, "", D[:index]))
         end

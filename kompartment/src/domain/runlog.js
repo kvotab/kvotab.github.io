@@ -88,7 +88,7 @@ export function runLogLines({ project, payload, replayed = null, build = '', at 
 		if (methods) out.push(`  methods: ${methods}`);
 		if (s.nbelowtol) out.push(`  steps taken below tolerance: ${s.nbelowtol}`);
 		if (s.events != null) out.push(`  events: ${s.events}, restarts: ${s.restarts ?? 0}`);
-		if (s.jumps != null) out.push(`  jumps: ${s.jumps} — package failures at a time and disruptive events, applied to the state at their corners`);
+		if (s.jumps != null) out.push(`  jumps: ${s.jumps} — package failures at a time and disruptive events, applied to the state at their corners and crossings`);
 		const j = payload?.jacobian;
 		if (j) {
 			out.push(j.available

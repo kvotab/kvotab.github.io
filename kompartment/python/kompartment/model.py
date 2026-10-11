@@ -2852,11 +2852,12 @@ class Model:
         return self._append('waste_packages', raw, system, position)  # type: ignore[return-value]
 
     def add_event(self, name: Optional[str] = None, *, timing: str = 'at', at: Any = '', rate: Any = '',
-                  start: Any = '', until: Any = '', sampled: bool = True, system: str = '',
+                  start: Any = '', until: Any = '', trigger: Any = '', sampled: bool = True, system: str = '',
                   comment: Optional[str] = None, position: Optional[XY] = None) -> Event:
-        """Adds a disruptive event: once ``at`` a time (``timing='at'``), or at
+        """Adds a disruptive event: once ``at`` a time (``timing='at'``), at
         random at ``rate`` per unit time between ``start`` and ``until``
-        (``timing='poisson'``; blank is the run's start and end). Give it
+        (``timing='poisson'``; blank is the run's start and end), or every time
+        the trigger named ``trigger`` fires (``timing='trigger'``). Give it
         actions with :meth:`Event.add_fail_action` and :meth:`Event.add_move_action`."""
         n = self._name_for('event', name, system)
         raw: Dict[str, Any] = {'name': n, **copy.deepcopy(EVENT_DEFAULTS), 'unit': '', 'index_lists': []}
@@ -2865,6 +2866,7 @@ class Model:
         draft = Event(self, raw)
         draft.timing = timing
         draft.at, draft.rate, draft.start, draft.until = at, rate, start, until
+        draft.trigger = trigger
         draft.sampled = sampled
         return self._append('events', raw, system, position)  # type: ignore[return-value]
 

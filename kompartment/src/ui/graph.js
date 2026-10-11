@@ -4243,10 +4243,10 @@ export class GraphEditor {
 					},
 					{
 						label: 'Event',
-						title: 'Something that happens to the model at an instant — at a time, or at '
-							+ 'random at a rate: a share of some packages fail, a share of a compartment '
-							+ 'moves elsewhere. A deterministic run takes the expected-value form; a '
-							+ 'probabilistic realisation draws the occurrences.',
+						title: 'Something that happens to the model at an instant — at a time, at '
+							+ 'random at a rate, or when a trigger fires: a share of some packages fail, a '
+							+ 'share of a compartment moves elsewhere. A deterministic run takes a random '
+							+ 'event’s expected-value form; a probabilistic realisation draws the occurrences.',
 						onPick: () => this._addNodeAt('event', at),
 					},
 					{
