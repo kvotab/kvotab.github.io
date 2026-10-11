@@ -395,10 +395,13 @@ m.run_probabilistic(gsa={'method': 'sobol', 'options': {'samples': 512}})
 The design is drawn whole in every process, from the same named streams the
 application draws from, so the samples are the application's and the answer
 does not depend on `workers`. With `workers` above 1 the realisations are
-shared between processes, started as a split's are: with `spawn`, loading only
-this package and never the calling script (so no `if __name__ == '__main__':`
-guard is needed), each keeping its numerical libraries to one thread. The
-scenarios of `run_scenarios(workers=...)` are shared out the same way.
+shared between processes in chunks, each process building the model once and
+taking the next chunk as it finishes one; the processes are started as a
+split's are: with `spawn`, loading only this package and never the calling
+script (so no `if __name__ == '__main__':` guard is needed), each keeping its
+numerical libraries to one thread. The scenarios of `run_scenarios(workers=...)`
+are shared out the same way. A failure in the first realisation fails the run;
+any other is recorded (its row NaN, `p.ran` 0) and the run goes on.
 
 `progress=True` shows how far the run has got and how long it has left, on one
 line that is redrawn in place in a terminal or a notebook:

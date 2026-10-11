@@ -28,12 +28,13 @@ import math
 from typing import Any, Callable, Dict, List, Mapping
 
 from .pdf import (
-    _jmax, _jmin, _js_str, _meta, _nullish, _prop, _string_to_number, _to_number, _truthy,
+    _div, _exp, _jmax, _jmin, _js_str, _log, _log_space, _meta, _nullish, _param, _params_of, _probit_or_zero,
+    _prop, _sqrt, _string_to_number, _to_number, _truthy,
     cdf_at, complete, phi, probability_cuts, quantile,
 )
 
 # `hash` is left out: a star import would shadow the built-in of that name.
-__all__ = ['stream_for', 'rng', 'Mulberry32', 'value_at_probability', 'uniforms',
+__all__ = ['stream_for', 'rng', 'Mulberry32', 'value_at_probability', 'ValueDrawer', 'uniforms',
            'distributed_slots', 'cdf_at', 'quantile', 'phi']
 
 _M32 = 0xFFFFFFFF
@@ -215,6 +216,103 @@ def value_at_probability(spec: Any, u: float, at: int = 0) -> Any:
     if not _nullish(trmax) and v > _to_number(trmax):
         return _to_number(trmax)
     return v
+
+
+class ValueDrawer:
+    """What :func:`value_at_probability` reads from one distribution that is the
+    same for every draw -- whether it can be drawn from, the probabilities and
+    values its truncation cuts at, the numbers its quantile takes from the
+    parameters, their logarithms too -- worked out once, so that a design's
+    draws do only the arithmetic that depends on the uniform, in the same order:
+    ``ValueDrawer(spec).value(u, at)`` is ``value_at_probability(spec, u, at)``,
+    the same number. A list, or a distribution that is not filled in, is left to
+    :func:`value_at_probability` itself.
+    """
+
+    __slots__ = ('spec', 'kind', 'lo', 'span', 'reversed', 'trmin', 'trmax', 'a', 'b', 'c', 'd', 'e', 'f', 'split')
+
+    def __init__(self, spec: Any) -> None:
+        self.spec = spec
+        self.kind = 'none'
+        self.lo, self.span, self.reversed = 0.0, 1.0, False
+        self.trmin = self.trmax = None
+        self.a = self.b = self.c = self.d = self.e = self.f = self.split = math.nan
+        if not _truthy(spec) or _meta(_prop(spec, 'kind')) is None or not complete(spec):
+            return
+        kind = spec['kind']
+        if kind == 'pg':
+            self.kind = 'list'
+            return
+        cuts = probability_cuts(spec)
+        self.lo, self.span, self.reversed = cuts['lo'], cuts['hi'] - cuts['lo'], cuts['reversed']
+        trmin = _prop(spec, 'trmin')
+        trmax = _prop(spec, 'trmax')
+        self.trmin = None if _nullish(trmin) else _to_number(trmin)
+        self.trmax = None if _nullish(trmax) else _to_number(trmax)
+        p = _params_of(spec)
+        self.kind = 'other'
+        if kind == 'unif':
+            self.kind = 'unif'
+            self.a = _param(p, 'min')
+            self.b = _param(p, 'max') - self.a
+        elif kind in ('triang', 'dtriang', 'logt', 'logdt'):
+            self.kind = kind
+            if kind in ('triang', 'dtriang'):
+                a, b, c = _param(p, 'min'), _param(p, 'max'), _param(p, 'mode')
+            else:
+                a, b, c = _log(_param(p, 'min')), _log(_param(p, 'max')), _log(_param(p, 'mode'))
+            self.a, self.b, self.c = a, b, c
+            self.d, self.e, self.f = b - a, c - a, b - c
+            self.split = _div(c - a, b - a)
+        elif kind == 'logu':
+            self.kind = 'logu'
+            self.a = _log(_param(p, 'min'))
+            self.b = _log(_param(p, 'max')) - self.a
+        elif kind == 'norm':
+            self.kind = 'norm'
+            self.a, self.b = _param(p, 'mean'), _param(p, 'sd')
+        elif kind in ('Logn4', 'logn', 'logn5'):
+            ls = _log_space(spec)
+            if ls:
+                self.kind = 'logn'
+                self.a, self.b = ls
+
+    def value(self, u: float, at: int = 0) -> Any:
+        """``value_at_probability(spec, u, at)``."""
+        k = self.kind
+        if k == 'none':
+            return math.nan
+        if k == 'list':
+            return value_at_probability(self.spec, u, at)
+        q = _jmin(1 - 1e-12, _jmax(1e-12, self.lo + _to_number(u) * self.span))
+        # :func:`quantile` at q, each shape's arithmetic as it is there
+        if k == 'unif':
+            v = self.a + q * self.b
+        elif k == 'triang':
+            v = (self.a + _sqrt(q * self.d * self.e) if q <= self.split
+                 else self.b - _sqrt((1 - q) * self.d * self.f))
+        elif k == 'dtriang':
+            v = self.a + _sqrt(2 * q) * self.e if q <= 0.5 else self.b - self.f * _sqrt(2 * (1 - q))
+        elif k == 'logu':
+            v = _exp(self.a + q * self.b)
+        elif k == 'logt':
+            v = _exp(self.a + _sqrt(q * self.d * self.e) if q <= self.split
+                     else self.b - _sqrt((1 - q) * self.d * self.f))
+        elif k == 'logdt':
+            v = _exp(self.a + _sqrt(2 * q) * self.e if q <= 0.5 else self.b - self.f * _sqrt(2 * (1 - q)))
+        elif k == 'norm':
+            v = self.a + self.b * _probit_or_zero(q)
+        elif k == 'logn':
+            v = _exp(self.a + self.b * _probit_or_zero(q))
+        else:
+            v = math.nan
+        if self.reversed:
+            return v
+        if self.trmin is not None and v < self.trmin:
+            return self.trmin
+        if self.trmax is not None and v > self.trmax:
+            return self.trmax
+        return v
 
 
 def uniforms(n: int, next: Callable[[], float], latin: bool = True) -> Any:  # noqa: A002

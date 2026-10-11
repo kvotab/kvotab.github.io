@@ -79,6 +79,45 @@ class Probabilistic(unittest.TestCase):
         q = a.quantiles(label)
         self.assertEqual(len(q), 3)
 
+    @staticmethod
+    def _listed(values: list) -> kp.Model:
+        """The biosphere example with geoTransit handed out from a list, realisation by realisation."""
+        raw = example('biosphere')
+        raw['simulation']['output_points'] = 20
+        for p in raw['parameters']:
+            if p['name'] == 'geoTransit':
+                p['pdf'] = {'kind': 'pg', 'values': list(values), 'inorder': True, 'pos': 0}
+        return kp.Model.from_dict(raw)
+
+    def test_a_chunk_starts_as_one_process_would(self) -> None:
+        # A word in the list is no number: that realisation keeps the value the last one
+        # left, as one process running them in order holds it -- in whichever process,
+        # and at whichever end of its chunk, the realisation runs.
+        words = self._listed([2e-4, 'x', 3e-4, 2.5e-4, 'x', 'x', 4e-4, 'x', 1e-4, 2e-4, 'x', 3e-4])
+        numbers = self._listed([2e-4, 2e-4, 3e-4, 2.5e-4, 2.5e-4, 2.5e-4, 4e-4, 4e-4, 1e-4, 2e-4, 2e-4, 3e-4])
+        want = numbers.run_probabilistic(12, seed=3, keep=['Dose'])
+        label = want.labels[0]
+        for workers in (1, 3):
+            with self.subTest(workers=workers):
+                got = words.run_probabilistic(12, seed=3, keep=['Dose'], workers=workers)
+                self.assertTrue(np.array_equal(got.realisations(label), want.realisations(label), equal_nan=True))
+                k = got.names.index('geoTransit')
+                self.assertEqual([math.isnan(v) for v in got.samples[k]],
+                                 [w == 'x' for w in [2e-4, 'x', 3e-4, 2.5e-4, 'x', 'x', 4e-4, 'x', 1e-4, 2e-4, 'x',
+                                                     3e-4]])
+
+    def test_only_the_first_realisation_fails_the_run(self) -> None:
+        # An absurd rate breaks one realisation. The first fails the run; any other is
+        # recorded and the run goes on -- with workers too, where it starts a chunk.
+        for workers in (1, 2):
+            with self.subTest(workers=workers):
+                with self.assertRaises(Exception):
+                    self._listed([1e308, 2e-4, 2e-4, 2e-4]).run_probabilistic(4, seed=1, keep=['Dose'], workers=workers)
+                p = self._listed([2e-4, 2e-4, 1e308, 2e-4]).run_probabilistic(4, seed=1, keep=['Dose'],
+                                                                              workers=workers)
+                self.assertEqual((p.stats['failed'], list(p.ran)), (1, [1, 1, 0, 1]))
+                self.assertTrue(np.isnan(p.realisations(p.labels[0])[2]).all())
+
     def test_progress_is_heard_after_every_realisation(self) -> None:
         # With workers too: each process says how far its slice has got, so
         # the caller hears the realisations as they are done, not only the

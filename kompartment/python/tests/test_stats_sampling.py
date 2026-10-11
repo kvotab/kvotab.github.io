@@ -669,6 +669,25 @@ class Sampling(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class Drawers(unittest.TestCase):
+    """A design's draws read each distribution once (``ValueDrawer``): the same
+    numbers as ``value_at_probability``, to the bit, for every shape, cut, list
+    and distribution not filled in."""
+
+    def test_a_drawer_draws_value_at_probability_s_numbers(self):
+        stream = S.uniforms(60, S.stream_for(5, 'drawer')).tolist()
+        specs = EVERY + [None, {}, {'kind': 'constructor'}, spec('pg', values=[1, 'x', 3])]
+        differ = []
+        for s in specs:
+            drawer = S.ValueDrawer(s)
+            for i, u in enumerate(US + stream):
+                for at in (i, 0, 7):
+                    mine, theirs = drawer.value(u, at), S.value_at_probability(s, u, at)
+                    if repr(mine) != repr(theirs):
+                        differ.append(f'{s} u={u} at={at}: {mine!r} against {theirs!r}')
+        self.assertEqual(differ, [])
+
+
 @needs_app
 class Correlations(unittest.TestCase):
     NAMES = ['a', 'b', 'c', 'd', 'Kd[A]', 'Kd[B]', 'Kd[C]', 'rho', 'Kd', 'KdX[A]', 'e']

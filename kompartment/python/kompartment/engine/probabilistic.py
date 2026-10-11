@@ -20,6 +20,7 @@ probability) and a *global sensitivity design* (see
 from __future__ import annotations
 
 import math
+import numbers
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
@@ -27,11 +28,12 @@ import numpy as np
 
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
-from ..stats.sample import distributed_slots, stream_for, uniforms, value_at_probability
+from ..stats.pdf import _to_number
+from ..stats.sample import ValueDrawer, distributed_slots, stream_for, uniforms, value_at_probability
 from .. import jsmath
 from .builder import build_system, tuple_by_list
 from .project import Project, value_at
-from .runner import run
+from .runner import outputs_of, run
 
 MOST_BYTES = 1073741824
 MOST_BYTES_ASKED = 4 * 1073741824
@@ -187,8 +189,11 @@ def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Opti
               and pr['a'] not in grouped and pr['b'] not in grouped]
     corr = iman_conover(draws, usable, names, seed)
 
+    # Each distribution read once: a draw is then only the arithmetic of its uniform.
+    drawers = [ValueDrawer(e['spec']) for e in plan]
+
     def value_for_sample(k: int, i: int) -> float:
-        return value_at_probability(plan[k]['spec'], float(draws[k][i]), i) if varies(plan[k]) else best[k]
+        return drawers[k].value(float(draws[k][i]), i) if varies(plan[k]) else best[k]
 
     return Design(plan, names, best, varies, n, value_for_sample, seed,
                   {'seed': seed, 'latin': latin, 'sampled': len(plan), 'correlated': len(corr['columns']),
@@ -245,10 +250,12 @@ def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[st
     drawn = [({**e['spec'], 'inorder': False} if (e['spec'] or {}).get('kind') == 'pg'
               and (e['spec'] or {}).get('inorder') is not False else e['spec']) for e in plan]
 
+    drawers = [ValueDrawer(s) for s in drawn]
+
     def value_for(k: int, i: int) -> float:
         if factor_of[k] < 0:
             return best[k]
-        return value_at_probability(drawn[k], float(design['u'][factor_of[k]][i]), i)
+        return drawers[k].value(float(design['u'][factor_of[k]][i]), i)
 
     return Design(plan, names, best, varies, int(design['runs']), value_for, seed,
                   {'seed': seed, 'latin': False, 'sampled': len(plan),
@@ -260,6 +267,12 @@ def _gsa_design_for(project: Project, plan: List[Dict[str, Any]], names: List[st
                   gsa_design=design)
 
 
+def _a_number(v: Any) -> bool:
+    """JavaScript's ``Number.isFinite(v)``: a finite number, and nothing read as one
+    -- a list's word, null or Boolean is not (the slot keeps what it held)."""
+    return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def apply_point(system: Any, design: Design, i: int) -> List[float]:
     """Sets design point ``i`` into the system, ready to run; the values set."""
     P = system.P
@@ -267,7 +280,7 @@ def apply_point(system: Any, design: Design, i: int) -> List[float]:
     for k, e in enumerate(design.plan):
         v = design.value_for(k, i)
         out.append(v)
-        if v is not None and math.isfinite(v):
+        if _a_number(v):
             P[e['slot']] = v
         elif not design.varies(e):
             P[e['slot']] = design.best[k]
@@ -398,23 +411,13 @@ def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
     return lambda name, o: name in wanted or o.get('label') in wanted
 
 
-def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_: Optional[Sequence[int]],
-               on_progress: Optional[Callable[[int, int], Any]], large: bool, started: float,
-               compiled: Any = 'auto') -> 'ProbabilisticResults':
+def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool) -> Dict[str, Any]:
+    """What a run of ``design`` keeps, read off the built system before anything
+    runs (``outputs_of``): the series and those kept, the inputs among them, the
+    output grid and the precision they are held in. A run too large to hold is
+    refused here."""
     plan, iterations = design.plan, design.iterations
-    frm = max(0, min(iterations - 1, int(round(range_[0])) if range_ else 0))
-    to = max(frm + 1, min(iterations, int(round(range_[1])) if range_ else iterations))
-    span = to - frm
-    samples = np.zeros((len(plan), span))
-
-    def apply(i: int) -> None:
-        values = apply_point(system, design, i)
-        for k in range(len(plan)):
-            samples[k, i - frm] = values[k] if values[k] is not None else math.nan
-
-    apply(frm)
-    first = run(project, system=system, on_grid=True, compiled=compiled)
-    outputs = first.outputs()
+    outputs = outputs_of(system, project)
     keep_fn = _keep_fn(keep)
     wanted = [k for k, o in enumerate(outputs) if can_be_endpoint(o.get('kind'))
               and (keep_fn is None or keep_fn(o.get('block') or o.get('label') or '', o))]
@@ -438,63 +441,125 @@ def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_:
         raise MemoryError(f'{iterations} {what} of {len(wanted)} series over {times} times is {size["text"]}{extra}; '
                           f'pass large=True to go ahead on a machine with the memory for it, or choose fewer '
                           f'endpoints, or {fewer}.')
-    dtype = np.float32 if precision == 'float32' else np.float64
-    values = [np.zeros((span, times), dtype=dtype) for _ in wanted]
-    kept = [outputs[k] for k in wanted]
+    return {'kept': [outputs[k] for k in wanted], 'inputs': inputs, 'grid': grid, 'times': times,
+            'precision': precision}
 
-    def take(i: int, results: Any) -> None:
-        rows = None
-        if results.t.size != times:
-            rows = np.searchsorted(results.t, grid, side='left')
-            rows = np.minimum(rows, results.t.size - 1)
-        cols = results.series_many(kept)
-        for w, c in enumerate(cols):
-            values[w][i - frm] = c[:times] if rows is None else c[rows]
 
-    take(frm, first)
-    if on_progress:
-        on_progress(1, span)
+def _hold_as_serial(system: Any, design: Design, frm: int, i: int) -> None:
+    """Sets every input's slot to what one process running the design in order
+    from ``frm`` holds before realisation ``i``: the last value that was a number
+    (``apply_point`` keeps the slot where a draw is not), else the model's own."""
+    P = system.P
+    for k, e in enumerate(design.plan):
+        held = design.best[k]
+        for j in range(i - 1, frm - 1, -1):
+            v = design.value_for(k, j)
+            if _a_number(v):
+                held = v
+                break
+            if not design.varies(e):
+                break
+        P[e['slot']] = held
+
+
+def _realisations(project: Project, system: Any, design: Design, frame: Dict[str, Any], lo: int, hi: int,
+                  fatal: int, on_progress: Optional[Callable[[int, int], Any]], compiled: Any,
+                  carry_from: Optional[int] = None) -> Dict[str, Any]:
+    """Realisations ``lo`` to ``hi - 1`` on ``system``, their kept series into
+    arrays of their own. A failure in realisation ``fatal`` fails the run; any
+    other is recorded, its row NaN. ``carry_from``: the system has run other
+    realisations, so the inputs are first set as one process running in order
+    from that realisation holds them (``_hold_as_serial``)."""
+    plan = design.plan
+    kept, grid, times = frame['kept'], frame['grid'], frame['times']
+    span = hi - lo
+    dtype = np.float32 if frame['precision'] == 'float32' else np.float64
+    values = [np.zeros((span, times), dtype=dtype) for _ in kept]
+    samples = np.zeros((len(plan), span))
+    ran = np.ones(span, dtype=np.uint8)
     failed = 0
     trouble: List[str] = []
-    ran = np.ones(span, dtype=np.uint8)
-    for i in range(frm + 1, to):
-        apply(i)
+    if carry_from is not None and lo > carry_from:
+        _hold_as_serial(system, design, carry_from, lo)
+    for i in range(lo, hi):
+        drawn = apply_point(system, design, i)
+        for k in range(len(plan)):
+            # As the application's Float64Array holds it: a word NaN, null 0.
+            samples[k, i - lo] = _to_number(drawn[k])
         try:
             r = run(project, system=system, on_grid=True, compiled=compiled)
-            take(i, r)
+            rows = None
+            if r.t.size != times:
+                rows = np.searchsorted(r.t, grid, side='left')
+                rows = np.minimum(rows, r.t.size - 1)
+            for w, c in enumerate(r.series_many(kept)):
+                values[w][i - lo] = c[:times] if rows is None else c[rows]
         except Exception as e:  # noqa: BLE001 - one realisation failing is reported, not fatal
+            if i == fatal:
+                raise
             failed += 1
             if len(trouble) < 5:
                 trouble.append(f'realisation {i + 1}: {e}')
-            ran[i - frm] = 0
-            for w in range(len(wanted)):
-                values[w][i - frm] = np.nan
+            ran[i - lo] = 0
+            for w in range(len(kept)):
+                values[w][i - lo] = np.nan
         if on_progress:
-            on_progress(i - frm + 1, span)
+            on_progress(i - lo + 1, span)
+    return {'values': values, 'samples': samples, 'ran': ran, 'failed': failed, 'trouble': trouble}
+
+
+def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_: Optional[Sequence[int]],
+               on_progress: Optional[Callable[[int, int], Any]], large: bool, started: float,
+               compiled: Any = 'auto') -> 'ProbabilisticResults':
+    plan, iterations = design.plan, design.iterations
+    frm = max(0, min(iterations - 1, int(round(range_[0])) if range_ else 0))
+    to = max(frm + 1, min(iterations, int(round(range_[1])) if range_ else iterations))
+    frame = _frame(project, system, design, keep, large)
+    got = _realisations(project, system, design, frame, frm, to, frm, on_progress, compiled)
     return ProbabilisticResults({
-        't': grid.copy(), 'outputs': kept, 'values': values, 'plan': plan, 'samples': samples, 'inputs': inputs,
-        'ran': ran, 'iterations': iterations, 'from': frm, 'to': to, 'precision': precision,
-        'names': design.names, 'gsa_design': design.gsa_design,
-        'stats': {'failed': failed, 'trouble': trouble, 'ms': (time.perf_counter() - started) * 1000,
+        't': frame['grid'].copy(), 'outputs': frame['kept'], 'values': got['values'], 'plan': plan,
+        'samples': got['samples'], 'inputs': frame['inputs'], 'ran': got['ran'], 'iterations': iterations,
+        'from': frm, 'to': to, 'precision': frame['precision'], 'names': design.names,
+        'gsa_design': design.gsa_design,
+        'stats': {'failed': got['failed'], 'trouble': got['trouble'], 'ms': (time.perf_counter() - started) * 1000,
                   **design.stats},
     })
 
 
-#: A worker process's channel back to the caller, given as it starts.
+#: A worker process's model and channel back to the caller, given as it starts, and the
+#: model built from them (once, for every chunk the process is handed).
 _SLICE_WORKER: Dict[str, Any] = {}
 
+#: Chunks per worker process: enough that a process which drew quick realisations takes
+#: more of them, and none is left waiting on a slice of slow ones.
+_CHUNKS_PER_WORKER = 8
 
-def _start_slice_worker(heard: Any) -> None:
+
+def _start_slice_worker(heard: Any, raw: Dict[str, Any], opts: Dict[str, Any]) -> None:
     """A worker process's start: the queue its progress goes back by, which a
-    process can only be given as it starts (as split.py's workers are)."""
-    _SLICE_WORKER['heard'] = heard
+    process can only be given as it starts (as split.py's workers are), and the
+    model it runs."""
+    _SLICE_WORKER.clear()
+    _SLICE_WORKER.update(heard=heard, raw=raw, opts=opts)
 
 
-def _pool_slice(args: tuple) -> Dict[str, Any]:
-    raw, opts, lo, hi, n = args
-    project = Project(raw)
-    system = build_system(project)
-    design = design_for(project, system, **_design_options(opts))
+def _slice_context() -> tuple:
+    """The worker's project, system, design and frame, built on its first chunk."""
+    ctx = _SLICE_WORKER.get('context')
+    if ctx is None:
+        opts = _SLICE_WORKER['opts']
+        project = Project(_SLICE_WORKER['raw'])
+        system = build_system(project)
+        design = design_for(project, system, **_design_options(opts))
+        frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False))
+        ctx = _SLICE_WORKER['context'] = (project, system, design, frame)
+    return ctx
+
+
+def _pool_chunk(args: tuple) -> Dict[str, Any]:
+    lo, hi, n = args
+    project, system, design, frame = _slice_context()
+    opts = _SLICE_WORKER['opts']
     heard = _SLICE_WORKER.get('heard')
     last = [0.0]
 
@@ -506,47 +571,53 @@ def _pool_slice(args: tuple) -> Dict[str, Any]:
             last[0] = now
             heard.put((n, int(done)))
 
-    res = _run_slice(project, system, design, opts.get('keep'), (lo, hi), hear if heard is not None else None,
-                     opts.get('large', False), time.perf_counter(), opts.get('compiled', 'auto'))
-    return res.data
+    # The system has run other chunks: the inputs start as one process running the
+    # whole design in order would hold them here, and only the design's first
+    # realisation fails the run.
+    return _realisations(project, system, design, frame, lo, hi, 0, hear if heard is not None else None,
+                         opts.get('compiled', 'auto'), carry_from=0)
 
 
 def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
               on_progress: Optional[Callable[[int, int], Any]], started: float,
               line: Any = None) -> 'ProbabilisticResults':
-    """The realisations shared out between processes, stitched back in order.
-    Each process says how many of its slice it has run, so ``on_progress``
-    hears every realisation as it is done, not every slice."""
+    """The realisations shared out between processes in chunks, a process taking
+    the next as it finishes one, and stitched back in order. Each process says
+    how many of its chunk it has run, so ``on_progress`` hears every realisation
+    as it is done, not every chunk."""
     import concurrent.futures as cf
     import queue as queue_module
     # The number of runs is the design's, which for a GSA or tornado is not
-    # `iterations`: work it out once here.
+    # `iterations`: work it out once here, and what is kept, so that a run too
+    # large to hold is refused before any process starts.
     project = Project(raw)
     system = build_system(project, jacobian=False)
-    total = design_for(project, system, **_design_options(opts)).iterations
+    design = design_for(project, system, **_design_options(opts))
+    total = design.iterations
     if line is not None:
         line.set_total(total)
-    workers = max(1, min(workers, total))
-    edges = np.linspace(0, total, workers + 1).round().astype(int)
-    slices = [(int(edges[k]), int(edges[k + 1])) for k in range(workers) if edges[k + 1] > edges[k]]
     if callable(opts.get('keep')):
         raise ValueError('keep= must be a list of names, not a function, when the run is shared between processes')
-    parts: List[Dict[str, Any]] = [None] * len(slices)  # type: ignore[list-item]
+    frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False))
+    workers = max(1, min(workers, total))
+    size = max(1, math.ceil(total / (workers * _CHUNKS_PER_WORKER)))
+    chunks = [(lo, min(total, lo + size)) for lo in range(0, total, size)]
+    parts: List[Dict[str, Any]] = [None] * len(chunks)  # type: ignore[list-item]
     done = 0
     # Spawned processes with one thread per numerical library, as a split's
     # parts are (``_one_thread_each`` in ./split.py): the realisations are the
     # parallelism here, and a BLAS that starts a thread per core in each of
     # several processes spends the machine waiting. Processes start as the
-    # slices are handed in, which is when they take their environment.
+    # chunks are handed in, which is when they take their environment.
     import multiprocessing as mp
     from .split import _one_thread_each, _without_main
     ctx = mp.get_context('spawn')
     heard = ctx.Queue() if on_progress is not None else None
-    counts = [0] * len(slices)
-    with cf.ProcessPoolExecutor(max_workers=len(slices), mp_context=ctx, initializer=_start_slice_worker,
-                                initargs=(heard,)) as pool:
+    counts = [0] * len(chunks)
+    with cf.ProcessPoolExecutor(max_workers=workers, mp_context=ctx, initializer=_start_slice_worker,
+                                initargs=(heard, raw, opts)) as pool:
         with _one_thread_each(), _without_main():
-            futures = {pool.submit(_pool_slice, (raw, opts, lo, hi, n)): n for n, (lo, hi) in enumerate(slices)}
+            futures = {pool.submit(_pool_chunk, (lo, hi, n)): n for n, (lo, hi) in enumerate(chunks)}
         pending = set(futures)
         while pending:
             finished, pending = cf.wait(pending, timeout=0.1, return_when=cf.FIRST_COMPLETED)
@@ -559,23 +630,24 @@ def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
             for fut in finished:
                 n = futures[fut]
                 parts[n] = fut.result()
-                counts[n] = parts[n]['to'] - parts[n]['from']
+                counts[n] = chunks[n][1] - chunks[n][0]
             if on_progress is not None and sum(counts) > done:
                 done = sum(counts)
                 on_progress(done, total)
     if heard is not None:
         heard.close()
-    first = parts[0]
-    values = [np.concatenate([p['values'][w] for p in parts], axis=0) for w in range(len(first['values']))]
+    values = [np.concatenate([p['values'][w] for p in parts], axis=0) for w in range(len(frame['kept']))]
     samples = np.concatenate([p['samples'] for p in parts], axis=1)
     ran = np.concatenate([p['ran'] for p in parts])
-    failed = sum(p['stats']['failed'] for p in parts)
-    trouble = [t for p in parts for t in p['stats']['trouble']][:5]
-    stats = {**first['stats'], 'failed': failed, 'trouble': trouble, 'ms': (time.perf_counter() - started) * 1000,
-             'workers': len(slices)}
-    precision = 'float32' if any(p['precision'] == 'float32' for p in parts) else 'double'
-    return ProbabilisticResults({**first, 'values': values, 'samples': samples, 'ran': ran, 'from': 0, 'to': total,
-                                 'precision': precision, 'stats': stats})
+    failed = sum(p['failed'] for p in parts)
+    trouble = [t for p in parts for t in p['trouble']][:5]
+    stats = {'failed': failed, 'trouble': trouble, 'ms': (time.perf_counter() - started) * 1000, **design.stats,
+             'workers': workers}
+    return ProbabilisticResults({
+        't': frame['grid'].copy(), 'outputs': frame['kept'], 'values': values, 'plan': design.plan,
+        'samples': samples, 'inputs': frame['inputs'], 'ran': ran, 'iterations': total, 'from': 0, 'to': total,
+        'precision': frame['precision'], 'names': design.names, 'gsa_design': design.gsa_design, 'stats': stats,
+    })
 
 
 class ProbabilisticResults:
