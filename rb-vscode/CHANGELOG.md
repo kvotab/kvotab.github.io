@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.10
+
+* A right-click in the tree opens a menu for the selection, and *Save as
+  HDF5…* saves it as one HDF5 file through VS Code's Save dialog: its
+  datasets at their paths, with their attributes and their groups', the
+  file's times made the scale of its series, and values drawn from the
+  distributions of its parameters and lookup tables. A selection with
+  distributions asks first how many: 1,000, which are the values the
+  histogram shows, or as many as you choose, up to 1,000,000. (On the site
+  the same menu also sends the selection to the User Interface for
+  statsmodels, which is not in VS Code.)
+* From the site: a lookup table whose index is written as text
+  (Kompartment's "0,100,1000") labels its histograms by point, where each
+  character was a label of its own.
+
 ## 0.1.9
 
 * An Ecolego assessment (`.eas`) opens in the browser, as on the site: a
