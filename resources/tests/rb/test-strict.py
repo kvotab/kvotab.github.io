@@ -63,6 +63,7 @@ PROBES = {
     'rb-export':         'copyChartToClipboard',
     'rb-init':           'showSearchTicker',
     'rb-handoff':        'beginHandoffWait',
+    'rb-smui':           'rbSelectionPayload',
 }
 NO_TOP_LEVEL_FUNCTIONS = ['rb-actions', 'rb-resize']
 

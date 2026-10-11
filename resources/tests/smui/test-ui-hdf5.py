@@ -206,7 +206,7 @@ async def main():
     await page.ev(f"{DIALOG}.querySelector('.sm-dialog-head .info-btn').click(); 0")
     t = await until(page, "document.querySelector('#kvot-info-panel .info-panel-title')?.textContent", 10)
     sections = await page.ev("[...document.querySelectorAll('#kvot-info-panel .info-panel-body h3')].map(h => h.textContent)")
-    check('the dialog\'s (i) explains it', (t, sections), ('Open HDF5', ['Tables', 'What the file says', 'Not read', 'Find and tick']))
+    check('the dialog\'s (i) explains it', (t, sections), ('Open HDF5', ['Tables', 'What the file says', 'Not read', 'Find and tick', 'From the HDF5 Browser']))
     await page.ev("document.querySelector('#kvot-info-panel .info-panel-close').click(); 0")
     # a group's box, and its mixed state
     await page.ev(f"{row_box('sub')}.click(); 0")

@@ -611,6 +611,57 @@
       margin-bottom: 4px;
       font-weight: 500;
     }
+    /* How many values to draw (rb-smui.js): radio rows, the last with a field. */
+    .rb-sample-choices input[type="radio"] {
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .rb-sample-other {
+      margin-top: 6px;
+      max-width: 160px;
+    }
+
+    /* The tree's menu (rb-smui.js): the selection named, then what can be
+       done with it. */
+    .rb-tree-menu {
+      position: fixed;
+      z-index: 10000;
+      min-width: 230px;
+      max-width: min(380px, 92vw);
+      padding: 4px;
+      background: var(--color-panel-bg);
+      border: 1px solid var(--color-panel-border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+      font-size: 13px;
+    }
+    .rb-tree-menu-head {
+      margin-bottom: 4px;
+      padding: 5px 10px 6px;
+      border-bottom: 1px solid var(--color-panel-border);
+      font-size: 11.5px;
+      color: var(--color-text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .rb-tree-menu-item {
+      display: block;
+      width: 100%;
+      padding: 7px 10px;
+      border: 0;
+      border-radius: 5px;
+      background: none;
+      color: var(--color-text-primary);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .rb-tree-menu-item:hover,
+    .rb-tree-menu-item:focus-visible {
+      background: var(--color-hover-bg);
+      outline: none;
+    }
 
     /* ==========================================================================
        6. MAIN LAYOUT & PANELS

@@ -64,6 +64,7 @@
         ] },
         { heading: 'Not read', text: 'Object references, opaque bytes, variable-length sequences and HDF5 time values are listed but cannot be ticked, and links to other files are not followed. Compressed data needs its decoder: deflate, shuffle and szip are built in, and lzf, blosc, zstd, lz4, bzip2, bitshuffle and zfp are fetched from cdn.jsdelivr.net the first time a dataset needs one.' },
         { heading: 'Find and tick', text: 'Find shows the groups and datasets whose names contain the text, and Tick shown ticks them. A group\'s box ticks everything under it. A file that is one table and nothing else opens without this dialog.' },
+        { heading: 'From the HDF5 Browser', text: 'The HDF5 Browser (rb.html) sends its selection here: right-click in its tree and choose Send to User Interface for statsmodels. It arrives as an HDF5 file and opens at once, every table in it, unless that is too many or too wide a table, when this dialog asks. Its series come with their times, and values drawn from its distributions come under samples, a row per value. Each send goes to the same tab while it is open.' },
       ],
       more: { label: 'Data tables', id: 'help-tables' },
     },

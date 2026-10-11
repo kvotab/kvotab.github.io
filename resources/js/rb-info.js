@@ -44,7 +44,7 @@ function collectPdfSpecData(attrs, node, path) {
     const indexAttr = attrs.index;
 
     if (isLookupTable && indexAttr) {
-      const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+      const indexLabels = pdfIndexLabels(indexAttr);
       const entries = [];
 
       for (let i = 0; i < pdfRaw.length; i++) {
@@ -58,7 +58,7 @@ function collectPdfSpecData(attrs, node, path) {
 
             if (rawData !== undefined) {
               const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
-              entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null });
+              entries.push({ label: String(indexLabels[i] ?? i), samples: [arr[i]], spec: null, source: { path, point: i } });
             }
           } catch (_) { ignoreFailure('createInfoSection', _); }
           continue;
@@ -78,7 +78,7 @@ function collectPdfSpecData(attrs, node, path) {
               const detVal = (spec.include_deterministic && nRows > 0) ? flat[0 * nCols + i] : null;
               const col = [];
               for (let r = shift; r < nRows; r++) col.push(flat[r * nCols + i]);
-              entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal });
+              entries.push({ label: String(indexLabels[i] ?? i), samples: col, spec: spec, deterministicValue: detVal, source: { path, point: i } });
             }
           } catch (_) { ignoreFailure('createInfoSection', _); }
         } else {
@@ -101,7 +101,7 @@ function collectPdfSpecData(attrs, node, path) {
           const samples = generatePdfSamples(spec, 1000);
           if (samples) {
             const norm = PDFSampler.normalizeDataArray(samples);
-            entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(norm), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null });
+            entries.push({ label: String(indexLabels[i] ?? i), samples: Array.from(norm), spec: spec, deterministicValue: isFinite(detVal) ? detVal : null, source: { path, point: i } });
           } else {
             kvotWarn('generatePdfSamples returned null for spec (lookup index)', spec);
           }
@@ -122,7 +122,7 @@ function collectPdfSpecData(attrs, node, path) {
             const flat = PDFSampler.normalizeDataArray(rawData);
             const shift = pdfRaw.include_deterministic ? 1 : 0;
             const detVal = (pdfRaw.include_deterministic && flat.length > 0) ? flat[0] : null;
-            filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal };
+            filePdfData = { type: 'single', samples: flat.slice(shift), spec: pdfRaw, path, deterministicValue: detVal, source: { path } };
           }
         } catch (_) { ignoreFailure('createInfoSection', _); }
       } else {
@@ -141,7 +141,7 @@ function collectPdfSpecData(attrs, node, path) {
         const samples = generatePdfSamples(pdfRaw, 1000);
         if (samples) {
           const norm = PDFSampler.normalizeDataArray(samples);
-          filePdfData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null };
+          filePdfData = { type: 'single', samples: Array.from(norm), spec: pdfRaw, path, deterministicValue: isFinite(detVal) ? detVal : null, source: { path } };
         } else {
           kvotWarn('generatePdfSamples returned null for pdf spec', pdfRaw, 'at', path);
         }
@@ -151,6 +151,16 @@ function collectPdfSpecData(attrs, node, path) {
     kvotWarn('PDF collect error:', err);
   }
   return filePdfData;
+}
+
+/**
+ * The file a dataset's histogram data came from, on it and on each of its
+ * entries (their source), so the values shown can be found again.
+ */
+function stampPdfFile(data, fileKey) {
+  if (data.source) data.source.fileKey = fileKey;
+  for (const e of data.entries || []) if (e.source) e.source.fileKey = fileKey;
+  return data;
 }
 
 async function showNodeAttributes(path, isGroup = false) {
@@ -291,7 +301,7 @@ async function showNodeAttributes(path, isGroup = false) {
 
       if (!isGroup && attrs.pdf) {
         const filePdfData = collectPdfSpecData(attrs, node, path);
-        if (filePdfData) pdfHistogramByFile.push({ fileKey, data: filePdfData });
+        if (filePdfData) pdfHistogramByFile.push({ fileKey, data: stampPdfFile(filePdfData, fileKey) });
       }
 
       // if still no histogram data for this file, and dataset was marked probabilistic without time-dependent
@@ -345,7 +355,7 @@ async function showNodeAttributes(path, isGroup = false) {
           const nodeName = item.data.path ? item.data.path.split('/').pop() : '';
           const specSuffix = item.data.spec ? ' (' + PDFSampler.pdfLabel(item.data.spec) + ')' : '';
           const label = (nodeName || 'raw') + specSuffix + fileSuffix;
-          mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue });
+          mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue, source: item.data.source });
         } else if (item.data.type === 'lookup') {
           for (const entry of item.data.entries) {
             mergedEntries.push({ ...entry, label: entry.label + fileSuffix });
@@ -1139,7 +1149,7 @@ function showMultipleDatasetAttributes(items) {
         if (attrs.pdf) {
           const datasetName = path.split('/').pop();
           const entryLabel = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
-          const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel);
+          const pdfEntries = collectPdfEntries(dataset, attrs, entryLabel, { path, fileKey });
           if (pdfEntries) combinedHistogramEntries.push(...pdfEntries);
         } else if (checkIsProbabilistic(dataset) && !isTimeDep) {
           // no PDF but probabilistic dataset – include raw values in combined entries

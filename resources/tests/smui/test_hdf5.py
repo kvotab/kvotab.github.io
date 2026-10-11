@@ -636,6 +636,33 @@ def results_like():
     t = table(out, 'sample-a — total')
     check('HDF5 Browser sample: probabilistic series under a time-dependent group open a row per realisation', (t['rows'] if 'rows' in t else len(t['columns'][0]['values']), len(t['columns'])), (12, 9 * 60))
     check('... a column is a time, its values the realisations', (t['columns'][5]['name'], t['columns'][5]['values']), (f'Ac-227 t={float(f"{tm[5]:.6g}"):g}', nums(ac[5, :])))
+    # what the HDF5 Browser sends (rb-smui.js): /time a dimension scale on a
+    # run's realisations, and lookup tables of distributions (a pdf per
+    # point), one as long as /time, one of other times
+    with h5py.File(os.path.join(TMP, 'rb-package.h5'), 'w') as f:
+        tm = f.create_dataset('time', data=np.array([0.0, 10.0, 100.0]))
+        tm.make_scale('time')
+        g = f.create_group('Prob')
+        g.attrs['time_dependent'] = 'TRUE'
+        d = g.create_dataset('Dose', data=np.arange(12, dtype='f8').reshape(3, 4))
+        d.attrs['probabilistic'] = 'TRUE'
+        d.dims[0].attach_scale(tm)
+        g = f.create_group('params')
+        d = g.create_dataset('flow', data=np.array([10.0, 11.0, 12.0]))
+        d.attrs['index'] = '0,100,1000'
+        d.attrs['pdf'] = '[{"type": "norm", "mean": 10, "std": 1}, null, {"type": "unif", "a": 11, "b": 13}]'
+        d = g.create_dataset('rain', data=np.array([5.0, 6.0, 7.0]))
+        d.attrs['index'] = '0,50,500'
+        d.attrs['lookup_table'] = 'true'
+    out = read('rb-package.h5')
+    check('HDF5 Browser package: a table each', sorted(t['name'] for t in out['tables']), ['rb-package — Dose', 'rb-package — flow', 'rb-package — rain'])
+    t = table(out, 'rb-package — Dose')
+    check("... a run's realisations on /time made a dimension scale: a row per run, a column per time, t=…",
+          ([c['name'] for c in t['columns']], t['col']['Dose t=10']['values']), (['Dose t=0', 'Dose t=10', 'Dose t=100'], [4.0, 5.0, 6.0, 7.0]))
+    check('... a lookup table of distributions: its own times, not /time', [(c['name'], c['values']) for c in table(out, 'rb-package — flow')['columns']],
+          [('time', [0.0, 100.0, 1000.0]), ('flow', [10.0, 11.0, 12.0])])
+    check('... a lookup table of other times: not beside it', [(c['name'], c['values']) for c in table(out, 'rb-package — rain')['columns']],
+          [('time', [0.0, 50.0, 500.0]), ('rain', [5.0, 6.0, 7.0])])
     p = os.path.join(REPO, 'resources', 'tests', 'prob-fixture.h5')
     shutil.copyfile(p, os.path.join(TMP, 'prob-fixture.h5'))
     out = read('prob-fixture.h5')

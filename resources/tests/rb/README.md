@@ -189,6 +189,48 @@ data. That page is also worth opening by hand — its three buttons show the
 handoff into a new tab, into a blob URL, and into an iframe — and its source is
 the copy-paste starting point for a real producer.
 
+`test-smui.py` covers the tree's menu (`rb-smui.js`). A right-click on a
+row opens a menu naming the selection: Send to User Interface for
+statsmodels, and Save as HDF5…. A row outside the selection is selected
+first, as a click selects it, and a multi-selection is kept. Both package
+the selection as one HDF5 file. The test reads each saved package back with
+h5py:
+- the datasets are at their paths, with their own attributes and their
+  groups';
+- /time is the dimension scale of the series;
+- the values drawn from each distribution are under /samples, checked
+  against the distribution (a log-normal's logs, a uniform's range, a
+  normal's mean and sd);
+- a lookup table's point without a distribution has its value in every
+  row, and a raw distribution's values are left as they are.
+
+A selection with distributions first asks how many values to draw: 1,000
+to 1,000,000, or another number. The test drives the question with real
+keys: Escape and Cancel save nothing, a number outside 2 to 1,000,000 is
+refused, and Enter saves. At 1,000 the sample must be exactly the values
+the histogram shows, for a parameter and for each point of a lookup table.
+
+Send opens smui.html in a tab of its own and smui makes tables of what it
+receives: the samples side by side, a lookup table with its times, a run's
+realisations a row each. The next send goes to the same tab. The click is
+the gesture the new tab needs, so every click is a CDP mouse event. A
+pop-up blocker is reported. A file read lazily must package as the same
+file in memory does. Two files combined (∩) go under a group each and
+share /time when their times are the same. In VS Code the menu only
+saves.
+
+Last, smui's receiver (`smui-handoff.js`), in a frame, takes nothing
+without `#handoff` and nothing from another origin. The other origin is a
+page served as localhost against smui at 127.0.0.1; as a control, the
+localhost page's own smui must answer it. The receiver also refuses bytes
+that are not HDF5 and a message without a file.
+
+The files are built in the page with h5wasm, as `'<d'`: h5wasm 0.10.3
+reads `'<f8'` as `'<f'`, so the other tests' fixtures are single precision.
+Needs h5py and numpy. 133 checks.
+
+    python3 test-smui.py
+
 `test-constants.py` covers a multi-selection that mixes time series with
 values that do not vary over time. The chart used to be drawn only when every
 selected dataset was time-dependent, so a series selected together with the

@@ -120,6 +120,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
       <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
       <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
+      <li>Right-click in the tree to send the selection to the <strong>User Interface for statsmodels</strong> for statistics, or to save it as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>
       <li><strong>Python</strong>, by the chart's controls, writes the chart as a matplotlib script that draws it from the HDF5 files.</li>
     </ul>
   </div>

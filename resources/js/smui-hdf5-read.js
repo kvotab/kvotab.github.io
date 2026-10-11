@@ -581,8 +581,10 @@
     node.attrNames = io.attrNames(node.path);
     node.attrs = {};
     for (const a of node.attrNames) if (KNOWN.has(a)) node.attrs[a] = io.attr(node.path, a);
-    // a Kompartment lookup table's times (a result series' index is its label)
-    if (node.attrs.lookup_table != null && node.attrNames.includes('index')) node.attrs.index = io.attr(node.path, 'index');
+    // a lookup table's times: Kompartment's say lookup_table, the HDF5
+    // Browser's have a pdf per point (a list); a result series' index is its label
+    const pdfList = typeof node.attrs.pdf === 'string' && /^\s*\[/.test(node.attrs.pdf);
+    if ((node.attrs.lookup_table != null || pdfList) && node.attrNames.includes('index')) node.attrs.index = io.attr(node.path, 'index');
   }
 
   function describe(io, node) {
@@ -673,12 +675,16 @@
       }
     }
     // a run's realisations: a series [times, runs] marked probabilistic (a
-    // group's flags hold for what is in it, as the HDF5 Browser reads them)
+    // group's flags hold for what is in it, as the HDF5 Browser reads them);
+    // its times are its first dimension's scale, else the file's /time
     const flag = (n, k) => (n.attrs[k] != null ? n.attrs[k] : n.parent >= 0 ? nodes[n.parent].attrs[k] : null);
     for (const n of nodes) {
       if (n.form !== 'matrix' || n.ragged) continue;
       const td = flag(n, 'time_dependent');
-      n.realisations = !!time && isTrue(flag(n, 'probabilistic')) && (td == null || isTrue(td)) && n.dims[0] === time.rows;
+      const sid = n.scales && n.kept ? n.scales[n.kept[0]] : null;
+      const own = sid != null && nodes[sid].key ? nodes[sid] : time;
+      n.realisations = !!own && isTrue(flag(n, 'probabilistic')) && (td == null || isTrue(td)) && n.dims[0] === own.rows;
+      if (n.realisations) n.timeOf = own.id;
     }
     // which way round a matrix opens
     for (const n of nodes) {
@@ -740,8 +746,10 @@
     else if (dims.length === 1) { n.form = one ? 'vector' : 'compound'; n.rows = dims[0]; n.cols = one ? 1 : leaves.length; }
     else if (dims.length === 2 && one && !n.chars) { n.form = 'matrix'; n.rows = dims[0]; n.cols = dims[1]; }
     else { n.form = 'cube'; n.rows = prod(dims); n.cols = dims.length + leaves.length; }
-    // a lookup table (Kompartment's data files): its times beside it
-    if (n.form === 'vector' && n.numeric && isTrue(n.attrs.lookup_table)) {
+    // a lookup table (Kompartment's data files, and the HDF5 Browser's pdf
+    // per point): its times beside it
+    const pdfList = typeof n.attrs.pdf === 'string' && /^\s*\[/.test(n.attrs.pdf);
+    if (n.form === 'vector' && n.numeric && (isTrue(n.attrs.lookup_table) || pdfList)) {
       const t = lookupTimes(n.attrs.index);
       if (t && t.length === n.rows) { n.lookup = t; n.cols = 2; }
     }
@@ -871,21 +879,28 @@
       return { id: n.id, transposed: t, rows: t ? n.cols : n.rows, cols: t ? n.rows : n.cols, alone: n.form === 'cube' || n.form === 'compound' || n.form === 'pandas' };
     };
     const colsOf = (it) => { const n = nodes[it.id]; return n.form === 'matrix' && it.transposed ? n.rows : n.cols; };
+    // the scale of an item's rows: items on different scales (two files'
+    // times) are on different grids, and are not put side by side
+    const rowScale = (n, it) => (n.scales && n.kept ? n.scales[n.kept[it.transposed ? 1 : 0]] : null);
     const tables = [];
     const groups = new Map();
     for (const n of rest) {
       const it = itemOf(n);
       if (it.alone || !state.together) { tables.push({ items: [it], rows: it.rows, kind: n.form === 'cube' ? 'stacked' : 'items' }); continue; }
-      if (!groups.has(it.rows)) { const t = { items: [], rows: it.rows, kind: 'items' }; groups.set(it.rows, t); tables.push(t); }
-      groups.get(it.rows).items.push(it);
+      const scale = rowScale(n, it);
+      // a lookup table's rows are its own times: it goes with lookup tables
+      // of the same times only, and takes no key
+      const at = n.lookup ? `lookup|${n.lookup.join(',')}` : `${it.rows}|${scale == null ? '' : scale}`;
+      if (!groups.has(at)) { const t = { items: [], rows: it.rows, kind: 'items', scale, lookup: !!n.lookup }; groups.set(at, t); tables.push(t); }
+      groups.get(at).items.push(it);
     }
     // a row key goes first in each table of its length; one no table uses is a column of its own
     const used = new Set();
     for (const t of tables) {
-      if (t.kind === 'stacked') continue;
+      if (t.kind === 'stacked' || t.lookup) continue;
       const first = nodes[t.items[0].id];
-      const scale = first.scales && first.kept ? first.scales[first.kept[t.items[0].transposed ? 1 : 0]] : null;
-      const cands = keys.filter((k) => k.rows === t.rows);
+      const scale = t.scale != null ? t.scale : first.scales && first.kept ? first.scales[first.kept[t.items[0].transposed ? 1 : 0]] : null;
+      const cands = keys.filter((k) => k.rows === t.rows && (t.scale == null || k.id === t.scale));
       const key = cands.find((k) => k.id === scale) || cands.find((k) => /^(time|times)$/i.test(k.name) && k.parent === 0) || cands[0] || null;
       if (key) { t.key = key.id; used.add(key.id); }
     }
@@ -1254,10 +1269,12 @@
     const scale = sid != null ? ctx.nodes[sid] : null;
     if (scale && scale.rows === count) {
       const v = keyLabels(await cachedVector(ctx, scale, skipped));
-      if (v) return { list: v };
+      // (a run's realisations: a column per time, t=…, as with the file's time)
+      if (v) return { list: n.realisations && sid === n.timeOf ? v.map((x) => `t=${x}`) : v };
     }
-    if (ctx.time && ctx.time.rows === count && n.realisations) {
-      const v = keyLabels(await cachedVector(ctx, ctx.time, skipped));
+    const tnode = n.timeOf != null ? ctx.nodes[n.timeOf] : ctx.time;
+    if (tnode && tnode.rows === count && n.realisations) {
+      const v = keyLabels(await cachedVector(ctx, tnode, skipped));
       if (v) return { list: v.map((x) => `t=${x}`) };
     }
     return { list: Array.from({ length: count }, (_, j) => String(j + 1)) };

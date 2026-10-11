@@ -10,7 +10,10 @@
 
      SM.hdf5.open(app, file, { state, ask })   the tables it added
        state: 'defaults', 'all' or { picked, transposed: [paths], together }
-              opens those without the dialog (scripts and the tests)
+              opens those without the dialog (scripts and the tests);
+              'all-or-ask' everything (a row key where it starts a table),
+              unless that is too many tables or too wide a one, when the
+              dialog asks (a file handed over, smui-handoff.js)
        ask:   the dialog even for a file that is one table
      SM.hdf5.sniff(file)    'hdf5', 'netcdf3', 'mat5', 'hdf4' or null
 
@@ -83,7 +86,17 @@
       const r = await call('open', { file }, ui.progress);
       fid = r.fid;
       ui.pause();
-      let state = givenState(r.nodes, r.defaults, opts.state);
+      let state = givenState(r.nodes, r.defaults, opts.state === 'all-or-ask' ? 'all' : opts.state);
+      if (state && opts.state === 'all-or-ask') {
+        let p = SM.h5.plan(r.nodes, state, { fileName: file.name });
+        // a row key only where it starts a table, as the dialog ticks it
+        const alone = p.tables.filter((t) => t.items.every((it) => r.nodes[it.id].key)).flatMap((t) => t.items.map((it) => it.id));
+        if (alone.length && alone.length < state.picked.size) {
+          alone.forEach((id) => state.picked.delete(id));
+          p = SM.h5.plan(r.nodes, state, { fileName: file.name });
+        }
+        if (!p.tables.length || p.blocked || p.warnings.length || p.tables.length > 12) state = null;
+      }
       if (!state) {
         if (r.defaults.direct && !opts.ask) state = fromDefaults(r.defaults);
         else {

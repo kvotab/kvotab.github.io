@@ -635,6 +635,22 @@ function generatePdfSamples(pdf, n = 1000) { return window.PDFSampler.generatePd
  */
 
 /**
+ * A lookup table's index as labels, one per point: a list as it is, and
+ * text split at its commas -- Kompartment's data files write the times as
+ * "0,100,1000", which read as a list of characters was a label per digit.
+ *
+ * @param {*} indexAttr - The dataset's index attribute
+ * @returns {Array}
+ */
+function pdfIndexLabels(indexAttr) {
+  if (indexAttr === undefined || indexAttr === null) return [];
+  if (typeof indexAttr === 'string') return indexAttr.includes(',') ? indexAttr.split(',').map(s => s.trim()) : [indexAttr];
+  if (Array.isArray(indexAttr)) return indexAttr.map(PDFSampler.toNumber);
+  if (indexAttr.length !== undefined) return Array.from(indexAttr, PDFSampler.toNumber);
+  return [indexAttr];
+}
+
+/**
  * Extract histogram entries from a dataset node that has a 'pdf' attribute.
  * Ensures all returned sample arrays and deterministic values are plain Numbers
  * (converts BigInt -> Number) so Plotly / math ops won't throw.
@@ -642,9 +658,12 @@ function generatePdfSamples(pdf, n = 1000) { return window.PDFSampler.generatePd
  * @param {Object} node  - HDF5 dataset node
  * @param {Object} attrs - Already-extracted attribute dict (must contain attrs.pdf)
  * @param {string} label - Human-readable label prefix for this dataset
+ * @param {{path: string, fileKey: (string|null)}} [source] - Where the dataset
+ *   is; each entry keeps it (with its point of a lookup table), so that the
+ *   values shown can be found again (rb-smui.js sends them)
  * @returns {Array|null}
  */
-function collectPdfEntries(node, attrs, label) {
+function collectPdfEntries(node, attrs, label, source = null) {
   if (!attrs.pdf) return null;
   try {
     let pdfRaw = attrs.pdf;
@@ -654,9 +673,10 @@ function collectPdfEntries(node, attrs, label) {
 
     const isLookupTable = Array.isArray(pdfRaw);
     const indexAttr = attrs.index;
+    const at = (point) => (source ? { ...source, point } : undefined);
 
     if (isLookupTable && indexAttr) {
-      const indexLabels = Array.isArray(indexAttr) ? indexAttr : Array.from(indexAttr);
+      const indexLabels = pdfIndexLabels(indexAttr);
       const entries = [];
       for (let i = 0; i < pdfRaw.length; i++) {
         const spec = pdfRaw[i];
@@ -665,7 +685,7 @@ function collectPdfEntries(node, attrs, label) {
             let rawData = typeof node.value !== 'undefined' ? node.value : (typeof node.toArray === 'function' ? node.toArray() : undefined);
             if (rawData !== undefined) {
               const arr = Array.isArray(rawData) ? rawData : Array.from(rawData);
-              entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [PDFSampler.toNumber(arr[i])], spec: null, deterministicValue: null });
+              entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: [PDFSampler.toNumber(arr[i])], spec: null, deterministicValue: null, source: at(i) });
             }
           } catch (_) { ignoreFailure('collectPdfEntries', _); }
           continue;
@@ -681,7 +701,7 @@ function collectPdfEntries(node, attrs, label) {
               const detVal = spec.include_deterministic && nRows > 0 ? PDFSampler.toNumber(flat[0 * nCols + i]) : null;
               const col = [];
               for (let r = shift; r < nRows; r++) col.push(PDFSampler.toNumber(flat[r * nCols + i]));
-              entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: col, spec, deterministicValue: detVal });
+              entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: col, spec, deterministicValue: detVal, source: at(i) });
             }
           } catch (_) { ignoreFailure('collectPdfEntries', _); }
         } else {
@@ -695,7 +715,7 @@ function collectPdfEntries(node, attrs, label) {
           } catch (_) { ignoreFailure('collectPdfEntries', _); }
           const samples = generatePdfSamples(spec, 1000);
           if (samples) {
-            entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: PDFSampler.normalizeDataArray(samples), spec, deterministicValue: isFinite(detVal) ? detVal : null });
+            entries.push({ label: label + ' – ' + String(indexLabels[i] ?? i), samples: PDFSampler.normalizeDataArray(samples), spec, deterministicValue: isFinite(detVal) ? detVal : null, source: at(i) });
           }
         }
       }
@@ -708,7 +728,7 @@ function collectPdfEntries(node, attrs, label) {
             const flat = Array.isArray(rawData) ? rawData : Array.from(rawData);
             const shift = pdfRaw.include_deterministic ? 1 : 0;
             const detVal = pdfRaw.include_deterministic && flat.length > 0 ? PDFSampler.toNumber(flat[0]) : null;
-            return [{ label, samples: flat.slice(shift).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: detVal }];
+            return [{ label, samples: flat.slice(shift).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: detVal, source: at(null) }];
           }
         } catch (_) { ignoreFailure('collectPdfEntries', _); }
       } else {
@@ -722,7 +742,7 @@ function collectPdfEntries(node, attrs, label) {
         } catch (_) { ignoreFailure('collectPdfEntries', _); }
         const samples = generatePdfSamples(pdfRaw, 1000);
         if (samples) {
-          return [{ label, samples: Array.from(samples).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null }];
+          return [{ label, samples: Array.from(samples).map(PDFSampler.toNumber), spec: pdfRaw, deterministicValue: isFinite(detVal) ? detVal : null, source: at(null) }];
         }
       }
     }
