@@ -2567,16 +2567,24 @@
     // direction may be one number for all of them or one each; an array used to
     // be compared with 0 as a whole, and with two or more entries that is never
     // true, so no crossing was ever seen.
+    //
+    // Reaching zero is crossing, and so is leaving it: a function that rests on
+    // zero and then moves off, as `max(t - 20, 0)` does, crosses where it
+    // moves, as the NDF's search counts it. Not in the first step of a segment,
+    // though: there the zero is the event that stopped the last one, and by
+    // this rule alone it would cross again the moment it moved.
     const crossed = [];
     const { enabled } = ev;
+    const fresh = integ.t === work.segmentStart;
     for (let i = 0; i < ev.n; i++) {
       // A function switched off is not an event, however it moves.
       if (enabled && !enabled[i]) continue;
       const a = gPrev[i];
       const b = gNow[i];
       const dir = directionOf(ev, i);
-      const rising = a < 0 && b >= 0;
-      const falling = a > 0 && b <= 0;
+      const fromZero = a === 0 && !fresh;
+      const rising = (a < 0 && b >= 0) || (fromZero && b > 0);
+      const falling = (a > 0 && b <= 0) || (fromZero && b < 0);
       if ((dir >= 0 && rising) || (dir <= 0 && falling)) crossed.push(i);
     }
     if (!crossed.length) return null;
@@ -2628,6 +2636,15 @@
    * of the crossing: a caller that restarts there sees the function still on
    * the near side, and its first step crosses again. Rodas5P and KenCarp4 fired
    * `A - 0.9704455335485082, down`, with A = exp(-0.3 t), twice, 4e-16 apart.
+   *
+   * Reaching zero is crossing, as findEvent counts it, and the search goes on
+   * from a zero rather than stopping there: a function that reaches zero and
+   * stays, as `0 - max(20 - t, 0)` does from t = 20, is zero from the crossing
+   * to the step's end, and the first zero probed could be anywhere in that
+   * stretch -- the crossing was put up to a step late. With a zero at the far
+   * end the search bisects, since the secant would land on that end, or an ulp
+   * short of it, and creep. A function that starts on zero has crossed where it
+   * has left it.
    */
   function locateRoot(integ, evalAt, ev, which, gStart, work) {
     const { gNow, utmp } = work;
@@ -2636,6 +2653,7 @@
       ev.fun(integ.t + theta * integ.dt, utmp, gNow);
       return gNow[which];
     };
+    const crossedAt = gStart < 0 ? (v) => !(v < 0) : gStart > 0 ? (v) => v <= 0 : (v) => v !== 0;
 
     let lo = 0;
     let hi = 1;
@@ -2645,12 +2663,11 @@
     // secant cannot stall against it.
     for (let it = 0; it < 60 && hi - lo > 1e-14; it++) {
       const denom = fhi - flo;
-      let mid = denom === 0 ? 0.5 * (lo + hi) : lo - flo * (hi - lo) / denom;
+      let mid = denom === 0 || fhi === 0 ? 0.5 * (lo + hi) : lo - flo * (hi - lo) / denom;
       if (!(mid > lo && mid < hi)) mid = 0.5 * (lo + hi);
       const fmid = g(mid);
-      if (fmid === 0) { lo = hi = mid; break; }
-      if ((fmid < 0) === (flo < 0)) { lo = mid; flo = fmid; fhi *= 0.5; }
-      else { hi = mid; fhi = fmid; flo *= 0.5; }
+      if (crossedAt(fmid)) { hi = mid; fhi = fmid; flo *= 0.5; }
+      else { lo = mid; flo = fmid; fhi *= 0.5; }
     }
     return hi;
   }
@@ -2785,6 +2802,9 @@
       gPrev: prob.events ? new Float64Array(prob.events.n) : null,
       utmp: new Float64Array(n),
       uEvent: new Float64Array(n),
+      // Where the event functions were last started afresh: the solve's start,
+      // or the last event applied without stopping (findEvent).
+      segmentStart: t0,
     };
 
     if (!opts.adaptive && !opts.dt) {
@@ -3107,8 +3127,24 @@
           integ.newton.reset();
           integ.controller.reset();
           if (integ.cache.restart) integ.cache.restart(integ);
+          // One row an instant. An event at a time a row was read off the step
+          // at takes that row's place, with the state the run goes on from,
+          // rather than standing beside it at the same time; and a time asked
+          // for that the event lands on -- the step snapped onto a tstop there,
+          // and the row was not yet due -- is this row, not one more after it.
+          if (T.length && T[T.length - 1] === integ.t) {
+            T.pop();
+            U.pop();
+            if (interp) interp.pop();
+            if (choice) choice.pop();
+          }
           remember(integ.t, integ.u, true);
           if (prob.events.terminal) { retcode = Terminated; message = 'An event stopped the run'; break; }
+          if (saveat && saveatAt < saveat.length && saveat[saveatAt] === integ.t) {
+            if (opts.onOutput) opts.onOutput(integ.t, integ.u);
+            saveatAt++;
+          }
+          work.segmentStart = integ.t;
         }
         prob.events.fun(integ.t, integ.uprev, work.gPrev);
       }

@@ -206,6 +206,16 @@ const PROBLEMS = {};
 		...base,
 		events: { n: 1, direction: Int8Array.from([0]), fun: (t, y, out) => { out[0] = y[1] - 0.3; return out; } },
 	};
+	// Events at zero, both rising and both at t = 0.7: one that reaches zero
+	// there and stays, and one that rests on zero until then and moves off.
+	PROBLEMS.event_touch = {
+		...base,
+		events: { n: 1, direction: Int8Array.from([1]), fun: (t, y, out) => { out[0] = -Math.max(0.7 - t, 0); return out; } },
+	};
+	PROBLEMS.event_rest = {
+		...base,
+		events: { n: 1, direction: Int8Array.from([1]), fun: (t, y, out) => { out[0] = Math.max(t - 0.7, 0); return out; } },
+	};
 }
 
 // The chain again with every state held at or above zero. At loose tolerances the

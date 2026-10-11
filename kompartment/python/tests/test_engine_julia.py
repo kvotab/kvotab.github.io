@@ -237,7 +237,7 @@ def functions(name: str) -> Tuple[Callable[[float, np.ndarray], np.ndarray], Cal
                 [0, 0, 0, 0.69, 1.71, -280 * y[7] - 0.43, 0.69, -280 * y[5]],
                 [0, 0, 0, 0, 0, 280 * y[7], -1.81, 280 * y[5]],
                 [0, 0, 0, 0, 0, -280 * y[7], 1.81, -280 * y[5]]], dtype=float)
-    elif name in ('event', 'two_events', 'event_rising'):
+    elif name in ('event', 'two_events', 'event_rising', 'event_touch', 'event_rest'):
         def f(t: float, y: np.ndarray) -> np.ndarray:
             return np.array([-y[0], y[0] - 0.1 * y[1]])
 
@@ -320,6 +320,12 @@ def events_for(name: str) -> Any:
     if name == 'event_rising':
         return SimpleNamespace(n=1, direction=np.array([0], dtype=np.int8),
                                fun=lambda t, y: np.array([y[1] - 0.3]))
+    if name == 'event_touch':
+        return SimpleNamespace(n=1, direction=np.array([1], dtype=np.int8),
+                               fun=lambda t, y: np.array([-max(0.7 - t, 0.0)]))
+    if name == 'event_rest':
+        return SimpleNamespace(n=1, direction=np.array([1], dtype=np.int8),
+                               fun=lambda t, y: np.array([max(t - 0.7, 0.0)]))
     return None
 
 
@@ -698,6 +704,8 @@ BASE = {
     'event': {'rtol': 1e-7, 'abstol': 1e-10},
     'two_events': {'rtol': 1e-7, 'abstol': 1e-10},
     'event_rising': {'rtol': 1e-7, 'abstol': 1e-10},
+    'event_touch': {'rtol': 1e-7, 'abstol': 1e-10},
+    'event_rest': {'rtol': 1e-7, 'abstol': 1e-10},
     'nonneg': {'rtol': 1e-3, 'abstol': 1e-6},
     'forced': {'rtol': 1e-6, 'abstol': 1e-9},
     'jump': {'rtol': 1e-6, 'abstol': 1e-6},
@@ -952,6 +960,23 @@ class Problems(unittest.TestCase):
                 self.assertEqual(mine['stopped']['which'], [1])
                 self.assertLess(abs(mine['stopped']['t'] - 0.5), 1e-9)
         self.assertGreaterEqual(seen, 6)
+
+    def test_a_crossing_at_zero_is_where_it_happens(self) -> None:
+        """An event function that reaches zero at t = 0.7 and stays there, and
+        one that rests on zero until 0.7 and moves off: both cross at 0.7.
+        The search stopped at the first zero it probed, anywhere up to the
+        step's end, and a function leaving zero was never seen to cross."""
+        seen = 0
+        for name, solver, opts, theirs, mine in self.pairs():
+            if name not in ('event_touch', 'event_rest') or 'error' in mine:
+                continue
+            seen += 1
+            with self.subTest(problem=name, solver=solver, opts=opts):
+                self.assertIsNotNone(theirs['stopped'])
+                self.assertIsNotNone(mine['stopped'])
+                self.assertLess(abs(theirs['stopped']['t'] - 0.7), 1e-12)
+                self.assertLess(abs(mine['stopped']['t'] - 0.7), 1e-12)
+        self.assertGreaterEqual(seen, 24)
 
     def test_a_late_start_after_a_jump_runs_to_the_end(self) -> None:
         """The chain restarted at t = 5000.123456789, one member rising from
@@ -1695,7 +1720,8 @@ class BitIdentity(unittest.TestCase):
 
     def test_the_problems(self) -> None:
         cases = [(name, s, dict(BASE[name])) for name in ('robertson', 'vdp', 'hires', 'event', 'event_rising',
-                                                          'two_events', 'forced') for s in SOLVERS]
+                                                          'two_events', 'event_touch', 'event_rest', 'forced')
+                 for s in SOLVERS]
         cases += [('nonneg', s, {**BASE['nonneg'], 'matrix': 'dense'}) for s in SOLVERS]
         cases += [('robertson', s, {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})
                   for s in SOLVERS]
@@ -1717,7 +1743,8 @@ class BitIdentity(unittest.TestCase):
         # takes a run one pow further along, and at rtol 1e-6 this
         # second-order method takes 2700 steps on van der Pol and 15 900 on
         # the forcing, more than its rounds reach (the next test has them).
-        cases = [(name, s, dict(BASE[name])) for name in ('two_events', 'event_rising') for s in NEW if s != 'auto']
+        cases = [(name, s, dict(BASE[name])) for name in ('two_events', 'event_rising', 'event_touch', 'event_rest')
+                 for s in NEW if s != 'auto']
         cases += [(name, s, dict(BASE[name])) for name in ('vdp', 'forced') for s in NEW
                   if s not in ('auto', 'rosenbrock23')]
         cases += [('robertson', s, dict(BASE['robertson'])) for s in ('auto_julia', 'fbdf_krylov', 'rosenbrock23')]

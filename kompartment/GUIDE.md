@@ -5759,9 +5759,12 @@ crossing inside the step with regula falsi over its own dense output, stops
 there, applies whatever the event drives, and starts again from the event. So
 a snapshot taken "when the dose falls back below the limit" is taken at that
 instant, not at whichever step the solver happened to land on next — which for
-a step spanning a century is a different model. A crossing at the very instant
-a restart begins is ignored, or an event whose two expressions stay equal
-would fire again forever.
+a step spanning a century is a different model. Coming level counts as
+crossing — a lake volume that falls to zero and stays there has crossed zero
+where it got there — and so does moving off after resting level, in the
+direction asked, whichever solver runs the model. A crossing at the very
+instant a restart begins is ignored, or an event whose two expressions stay
+equal would fire again forever.
 
 A min/max or a running mean can be **driven by events** as well: `reset_event`
 starts the extreme or the mean again, `start_event` holds it until the event

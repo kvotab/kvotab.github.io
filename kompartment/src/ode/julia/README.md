@@ -106,7 +106,11 @@ its sparsity, `tgrad(t, u, dT)` gives ∂f/∂t, `jvp(t, u, v, out, fu)` gives J
 for the matrix-free FBDF (which differences it otherwise), and `events` is
 `{ n, fun(t, u, out), direction, enabled, terminal, apply(t, u) }`. `direction`
 is one number for every function or an array with one each: above 0 a rising
-crossing counts, below 0 a falling one, 0 either. `enabled`, if given, has an
+crossing counts, below 0 a falling one, 0 either. Reaching zero is crossing,
+and so is leaving it -- a function that rests on zero and then moves off
+crosses where it moves -- except in the first step after the run began, or
+after an event applied without stopping it, where the zero is the event that
+stopped the last run. `enabled`, if given, has an
 entry per function, and one whose entry is 0 is not looked at -- so a caller
 that switches an event off after it fires (FACSIMILE's WHEN) keeps it off. Of
 functions crossing in one step the earliest stops the run; each event on the
@@ -114,7 +118,9 @@ solution names its function in `which` and every function crossing at that
 instant in `all`. The time and state handed back are the first found at which
 the function has crossed -- the far end of the root's bracket, within 1e-14 of
 the step -- so that a run restarted from them does not meet the same crossing
-again.
+again. The solution keeps one row an instant: an event at a time a row was
+saved at takes that row's place, with the state the run goes on from, and a
+time asked for that an event lands on is the event's row.
 
 ## Things worth knowing
 
@@ -464,3 +470,18 @@ Four more, found the same day on the pages that restart at every event:
     taken for divergence, and the run ground on at one short step (facsimile's
     canister presets: 400000 steps without finishing; now about 600). The guess
     is now kept at or above zero for the components held there.
+
+## Fixed on 2026-10-11
+
+13. **Event functions at zero.** The root search stopped at the first probe
+    that read exactly zero, so a function that reaches zero and stays there,
+    as a table falling to zero does, was reported wherever that probe landed,
+    up to a step late; it now goes on to the first θ where the function has
+    reached zero. And a function that rested on zero and then moved off was
+    never seen to cross, where the NDF and the one-step methods count it.
+    Both found in Kompartment, where a trigger's crossing time came out
+    different under these methods from under its own.
+14. **Two rows at one instant.** An event at a time asked for -- the step
+    ending on it as a tstop, the crossing at the step's end -- left the row
+    read off the step there and the event's own row, both at that time. The
+    event's row now takes the other's place.

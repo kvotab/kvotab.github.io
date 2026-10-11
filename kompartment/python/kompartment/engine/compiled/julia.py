@@ -2271,7 +2271,9 @@ def _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pyc
                  fsalfirst, fsallast, ub, gb):
     """``_locate_root``: where in the step, as theta, event function ``which``
     crosses zero -- bisection then Illinois on the step's interpolant; the
-    bracket's far end."""
+    bracket's far end. Reaching zero is crossing, and the search goes on from
+    a zero to the first theta where the function has reached it; from a start
+    on zero, the first where it has left it."""
     P, X, Wm, IW = model
     lo = 0.0
     hi = 1.0
@@ -2282,24 +2284,28 @@ def _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pyc
     it = 0
     while it < 60 and hi - lo > 1e-14:
         denom = fhi - flo
-        mid = 0.5 * (lo + hi) if denom == 0 else lo - flo * (hi - lo) / denom
+        # With a zero at the far end the secant lands on it, or an ulp short, and creeps.
+        mid = 0.5 * (lo + hi) if denom == 0 or fhi == 0 else lo - flo * (hi - lo) / denom
         if not (lo < mid < hi):
             mid = 0.5 * (lo + hi)
         _eval_at(method, coef, ros, fb, qn, ra, ex, r23, f, model, pycb, ctr, mid, t, dt, uprev, u, fsalfirst, fsallast,
                  ub)
         evf(t + mid * dt, ub, gb, P, X, Wm, IW, pycb)
         fmid = gb[which]
-        if fmid == 0:
-            hi = mid
-            break
-        if (fmid < 0) == (flo < 0):
-            lo = mid
-            flo = fmid
-            fhi *= 0.5
+        if g_start < 0:
+            crossed = not fmid < 0
+        elif g_start > 0:
+            crossed = fmid <= 0
         else:
+            crossed = fmid != 0
+        if crossed:
             hi = mid
             fhi = fmid
             flo *= 0.5
+        else:
+            lo = mid
+            flo = fmid
+            fhi *= 0.5
         it += 1
     return hi
 
@@ -2318,12 +2324,17 @@ def _find_event(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb
     nev = evdir.size
     evf(t + dt, u, g_now, P, X, Wm, IW, pycb)
     nfound = 0
+    # Reaching zero is crossing, and so is leaving it -- except in the first
+    # step, where the zero is the event that stopped the last run (every event
+    # is terminal here, so a segment is a solve).
+    fresh = t == t0
     for i in range(nev):
         a = g_prev[i]
         b = g_now[i]
         d = evdir[i]
-        rising = a < 0 and b >= 0
-        falling = a > 0 and b <= 0
+        from_zero = a == 0 and not fresh
+        rising = (a < 0 and b >= 0) or (from_zero and b > 0)
+        falling = (a > 0 and b <= 0) or (from_zero and b < 0)
         if (d >= 0 and rising) or (d <= 0 and falling):
             theta = _locate_root(method, coef, ros, fb, qn, ra, ex, r23, f, ctr, evf, model, pycb, i, a, t, dt, uprev,
                                  u, fsalfirst, fsallast, ub, evbuf[2])
@@ -3047,6 +3058,10 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
                 evstat[1] = t
                 f(t, uprev, fsalfirst, P, X, Wm, IW, pycb)
                 ctr[C_NF] += 1
+                # One row an instant: the event's row takes the place of a row
+                # read off the step at the same time.
+                if rows > 0 and tout[rows - 1] == t:
+                    rows -= 1
                 tout[rows] = t
                 for q in range(n):
                     yout[rows, q] = u[q]

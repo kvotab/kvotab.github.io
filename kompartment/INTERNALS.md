@@ -2946,6 +2946,19 @@ And RadauIIA5 carried its starting guess below zero from a component clamped
 there, where rates that read max(0, y) are flat; it now keeps the guess at or
 above zero where non-negativity was asked for.
 
+Three more on 2026-10-11, found by a trigger on a lake's volume, a table
+falling to zero and staying there. The root search stopped at the first probe
+that read exactly zero, so a function that reaches zero and stays was located
+wherever that probe landed, up to a step late; it now goes on to the first
+point where the function has reached zero. A function that rested on zero and
+then moved off was never seen to cross, where `events.js`, the one-step methods
+and the Julia port all count it; it now crosses where it moves, except in the
+first step of a segment, where the zero is the event that stopped the last one.
+And a crossing at an output time the step ended on -- a corner the runner broke
+the solve at -- left two rows at that time, the one read off the step and the
+event's own; the event's takes the other's place, so every time is saved once.
+All fifteen solvers now put such a crossing at the same time, to rounding.
+
 One trap in the adapter: the package merges what it is
 handed over its own defaults, so passing a key with the value `undefined`
 *replaces* the default rather than leaving it. `dtmax: undefined` made every

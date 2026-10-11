@@ -33,6 +33,11 @@
        same crossing again
    12  RadauIIA5 carried its polynomial below zero from a component clamped
        there, and with rates that read max(0, y) it ground at one short step
+   13  a function that reached zero and stayed there was reported at the
+       first zero the search probed, up to a step late, and one that rested
+       on zero and moved off was never seen to cross (2026-10-11)
+   14  an event at a time a row was saved at left a second row at that time
+       (2026-10-11)
 
   Exit status is 0 when every check passes.
 */
@@ -542,6 +547,82 @@ console.log('\n12. RadauIIA5 goes on past a component held at zero, where the ra
   check('RadauIIA5 reaches the end in a few hundred steps',
     sol.retcode === 'Success' && sol.stats.naccept < 1000,
     `${sol.retcode}, ${sol.stats.naccept} steps, ${sol.stats.nreject} rejected${sol.message ? `: ${sol.message.slice(0, 80)}` : ''}`);
+}
+
+// --- 13. zeros ----------------------------------------------------------------------------
+
+console.log('\n13. reaching zero is crossing, and so is leaving it, except where the run began');
+{
+  // The functions read t alone, so every interpolant gives them exactly and
+  // what is held is the search. The first step is forced long, over 0.2.
+  const slow = (t, u, du) => { du[0] = -0.01 * u[0]; return du; };
+  const cases = [
+    // At zero from t = 0.2 on: the crossing was put at the first zero the
+    // search probed, anywhere up to the step's end.
+    ['reaches zero at 0.2 and stays, rising', 1, (t) => -Math.max(0.2 - t, 0), 0.2],
+    ['reaches zero at 0.2 and stays, falling', -1, (t) => Math.max(0.2 - t, 0), 0.2],
+    // On zero until t = 2, then off it: never a crossing, as the NDF's
+    // search and the one-step methods' find it.
+    ['rests on zero and moves off at 2, rising', 1, (t) => Math.max(t - 2, 0), 2],
+    ['rests on zero and moves off at 2, falling', -1, (t) => -Math.max(t - 2, 0), 2],
+    // On zero where the run began and off it at once: the zero a restart
+    // begins at is the event that stopped the last run, not a crossing.
+    ['on zero where the run began, rising', 1, (t) => t, null],
+    ['on zero where the run began, falling', -1, (t) => -t, null],
+  ];
+  for (const [name, make] of Object.entries(METHODS)) {
+    const wrong = [];
+    for (const [what, direction, g, want] of cases) {
+      const events = { n: 1, direction, terminal: true, fun: (t, u, out) => { out[0] = g(t); return out; } };
+      const sol = solve(new ODEProblem(slow, [1], [0, 5], { events }), make(),
+        { reltol: 1e-2, abstol: 1e-6, dt: 0.5, saveEverystep: false });
+      const ev = sol.events[0];
+      const ok = want === null ? !ev : !!ev && Math.abs(ev.t - want) < 1e-12;
+      if (!ok) wrong.push(`${what}: ${ev ? `event at ${ev.t}` : 'no event'}`);
+    }
+    check(`${name}: each crossing at or from zero where it happens`, !wrong.length, wrong.join('; '));
+  }
+}
+
+// --- 14. one row an instant -----------------------------------------------------------------
+
+console.log('\n14. an event at a saved time leaves one row there, the state the run goes on from');
+{
+  // The function reaches zero at t = 1 and stays there, and 1 is a time asked
+  // for. With 1 a tstop as well, as the times asked for are in a compartment
+  // model, the step ends on it and the crossing is the step's end: the row
+  // read off the step there was saved already, or -- the end snapped onto the
+  // tstop -- falls due in the next. Either way one row: stopping there, the
+  // state at the event; going on, the state the event left (an event's own
+  // record is the state before it acts).
+  const slow = (t, u, du) => { du[0] = -0.01 * u[0]; return du; };
+  const grid = linspace(0, 5, 11);
+  for (const tstops of [null, [1]]) {
+    for (const terminal of [true, false]) {
+      for (const [name, make] of Object.entries(METHODS)) {
+        const events = {
+          n: 1, direction: 1, terminal,
+          fun: (t, u, out) => { out[0] = -Math.max(1 - t, 0); return out; },
+          ...(terminal ? {} : { apply: (t, u) => { u[0] *= 0.5; } }),
+        };
+        const seen = [];
+        const sol = solve(new ODEProblem(slow, [1], [0, 5], { events }), make(),
+          { reltol: 1e-8, abstol: 1e-12, saveat: grid, saveEverystep: false, ...(tstops ? { tstops } : {}),
+            onOutput: (t) => seen.push(t) });
+        const ev = sol.events[0];
+        const k = ev ? sol.t.indexOf(ev.t) : -1;
+        const once = sol.t.every((t, i) => i === 0 || t > sol.t[i - 1]);
+        const want = ev ? (terminal ? ev.u[0] : 0.5 * ev.u[0]) : NaN;
+        // Every time asked for is still handed to onOutput, once.
+        const asked = grid.filter((t) => t > 0 && t <= (terminal ? ev?.t ?? 5 : 5));
+        check(`${name}${tstops ? ', with tstops' : ''}${terminal ? '' : ', going on'}: one row at the event, `
+          + `the state ${terminal ? 'at it' : 'it left'}`,
+          !!ev && once && k >= 0 && sol.u[k][0] === want && Math.abs(ev.t - 1) < 1e-13
+            && seen.length === asked.length && seen.every((t, i) => t === asked[i]),
+          `times ${sol.t.slice(0, 5).join(', ')}; event at ${ev?.t}; onOutput ${seen.slice(0, 4).join(', ')}`);
+      }
+    }
+  }
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

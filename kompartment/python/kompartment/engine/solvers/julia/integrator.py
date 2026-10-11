@@ -276,10 +276,23 @@ def _direction_of(ev: Any, i: int) -> float:
 def _locate_root(integ: Integrator, eval_at: Callable[[float], np.ndarray], ev: Any, which: int,
                  g_start: float) -> float:
     """Where in the step, as theta, event function ``which`` crosses zero:
-    bisection then Illinois on the step's interpolant (``locateRoot``)."""
+    bisection then Illinois on the step's interpolant (``locateRoot``).
+    Reaching zero is crossing, and the search goes on from a zero to the first
+    theta where the function has reached it; from a start on zero, the first
+    where it has left it."""
     def g(theta: float) -> float:
         u = eval_at(theta)
         return float(np.asarray(ev.fun(integ.t + theta * integ.dt, u), dtype=float)[which])
+
+    if g_start < 0:
+        def crossed_at(v: float) -> bool:
+            return not v < 0
+    elif g_start > 0:
+        def crossed_at(v: float) -> bool:
+            return v <= 0
+    else:
+        def crossed_at(v: float) -> bool:
+            return v != 0
 
     lo = 0.0
     hi = 1.0
@@ -288,21 +301,19 @@ def _locate_root(integ: Integrator, eval_at: Callable[[float], np.ndarray], ev: 
     it = 0
     while it < 60 and hi - lo > 1e-14:
         denom = fhi - flo
-        mid = 0.5 * (lo + hi) if denom == 0 else lo - flo * (hi - lo) / denom
+        # With a zero at the far end the secant lands on it, or an ulp short, and creeps.
+        mid = 0.5 * (lo + hi) if denom == 0 or fhi == 0 else lo - flo * (hi - lo) / denom
         if not (lo < mid < hi):
             mid = 0.5 * (lo + hi)
         fmid = g(mid)
-        if fmid == 0:
-            lo = hi = mid
-            break
-        if (fmid < 0) == (flo < 0):
-            lo = mid
-            flo = fmid
-            fhi *= 0.5
-        else:
+        if crossed_at(fmid):
             hi = mid
             fhi = fmid
             flo *= 0.5
+        else:
+            lo = mid
+            flo = fmid
+            fhi *= 0.5
         it += 1
     # The bracket's far end, where the function has crossed: a run restarted
     # from the middle could start a hair short of the crossing and find it
@@ -325,13 +336,17 @@ def _find_event(integ: Integrator, eval_at: Callable[[float], np.ndarray], g_pre
     if ev is None:
         return None
     g_now = np.array(ev.fun(integ.t + integ.dt, integ.u), dtype=float)
+    # Reaching zero is crossing, and so is leaving it -- except in the first
+    # step of a segment, where the zero is the event that stopped the last one.
     crossed = []
+    fresh = integ.t == work['segment_start']
     for i in range(ev.n):
         a = float(g_prev[i])
         b = float(g_now[i])
         direction = _direction_of(ev, i)
-        rising = a < 0 and b >= 0
-        falling = a > 0 and b <= 0
+        from_zero = a == 0 and not fresh
+        rising = (a < 0 and b >= 0) or (from_zero and b > 0)
+        falling = (a > 0 and b <= 0) or (from_zero and b < 0)
         if (direction >= 0 and rising) or (direction <= 0 and falling):
             crossed.append(i)
     if not crossed:
@@ -430,7 +445,9 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
     if hasattr(integ.cache, 'init'):
         integ.cache.init(integ)
 
-    work: Dict[str, Any] = {'utmp': np.zeros(n)}
+    # segment_start: where the event functions were last started afresh -- the
+    # solve's start, or the last event applied without stopping (_find_event).
+    work: Dict[str, Any] = {'utmp': np.zeros(n), 'segment_start': t0}
     g_prev = None
 
     if not opts['adaptive'] and not opts['dt']:
@@ -693,11 +710,25 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
                 restart = getattr(cache, 'restart', None)
                 if restart is not None:
                     restart(integ)
+                # One row an instant: the event's row takes the place of a row
+                # read off the step at the same time, and a time asked for that
+                # the event lands on is this row (``solve`` in the package
+                # explains).
+                if T and T[-1] == integ.t:
+                    T.pop()
+                    U.pop()
+                    if choice is not None:
+                        choice.pop()
                 remember(integ.t, integ.u)
                 if getattr(prob.events, 'terminal', False):
                     retcode = TERMINATED
                     message = 'An event stopped the run'
                     break
+                if saveat is not None and saveat_at < len(saveat) and saveat[saveat_at] == integ.t:
+                    if opts['on_output'] is not None:
+                        opts['on_output'](integ.t, integ.u)
+                    saveat_at += 1
+                work['segment_start'] = integ.t
             g_prev = np.array(prob.events.fun(integ.t, integ.uprev), dtype=float)
 
         # --- the next step ---------------------------------------------------------------

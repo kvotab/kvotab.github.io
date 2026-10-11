@@ -121,10 +121,13 @@ jump late in a run (packages failing at t = 5000.123456789, FBDF's first step
 and its history's clock); a component at rest staying exactly where it is,
 with an event on it firing once; the state at an event lying past the crossing,
 so that a restart does not find it again; and RadauIIA5 going on past a
-component held at zero where the rates are flat below it. Each of its twelve
-groups failed on the package as it was before 2026-09-25 (see the package
-README), and each of groups 9 to 12 fails on the package with only groups 1 to
-8 fixed.
+component held at zero where the rates are flat below it; and an event
+function at zero, one that reaches it and stays or rests on it and moves off;
+and one row an instant where an event lands on a time asked for. Each of
+groups 1 to 12 failed on the package as it was before 2026-09-25 (see the
+package README), and each of groups 9 to 12 fails on the package with only
+groups 1 to 8 fixed; groups 13 and 14 fail on the package as it was before
+2026-10-11.
 
 ## Does it do what DifferentialEquations.jl does?
 
