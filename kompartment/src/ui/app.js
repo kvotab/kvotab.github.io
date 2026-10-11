@@ -2362,7 +2362,7 @@ function openBands() {
 	openBandsDialog({
 		percentiles: prob?.quantiles ?? state.raw.simulation?.percentiles ?? [0.05, 0.25, 0.5, 0.75, 0.95],
 		showMean: !!state.raw.simulation?.show_mean,
-		onApply: ({ percentiles, showMean }) => {
+		onApply: async ({ percentiles, showMean }) => {
 			const sim = state.raw.simulation ?? (state.raw.simulation = {});
 			sim.percentiles = percentiles;
 			if (showMean) sim.show_mean = true; else delete sim.show_mean;
@@ -2370,6 +2370,11 @@ function openBands() {
 			// lines, so saying it here turns that line on rather than leaving
 			// the reader to find the box.
 			state.chartLines = { ...state.chartLines, mean: showMean };
+			// A probabilistic run an assessment stored is summarised again at
+			// these, from its file read again -- off the page's thread, before
+			// anything draws it (see `prepareStored`).
+			const beside = shownBeside();
+			if (beside?.probabilistic) await prepareStored(beside);
 			modelChanged({ layoutOnly: true });
 			const p = currentProb();
 			if (p) ensureWorker().postMessage({ type: 'prob-bands', id: p.runId, percentiles });
@@ -12547,11 +12552,11 @@ function besideItem() {
 				title: besideTitle(run),
 				checked: () => shownBeside() === run,
 				keepOpen: true,
-				onPick: () => showBeside(state.stored?.runs.indexOf(run) ?? -1),
+				onPick: () => pickBeside(run),
 			})),
 			...(runs.length ? [
 				{ separator: true },
-				{ label: 'None', checked: () => !shownBeside(), keepOpen: true, onPick: () => showBeside(-1) },
+				{ label: 'None', checked: () => !shownBeside(), keepOpen: true, onPick: () => pickBeside(null) },
 			] : []),
 			{ separator: true },
 			{
@@ -12598,6 +12603,39 @@ function besideTitle(run) {
 	return `${run.archived ? 'Archived in Ecolego' : 'Ecolego’s current run'}, in ${run.file}`
 		+ (run.probabilistic ? ' — a probabilistic run, drawn as its median and its band' : '')
 		+ (run.matched ? '.' : ' — it saved nothing this model has.');
+}
+
+/**
+ * Reads a run an assessment stored, ahead of showing it: its result file is
+ * inflated off the page's thread where the browser can, and decoded as it
+ * arrives, so a large one neither holds the page for seconds nor sits in
+ * memory whole beside what it becomes (../io/ecoruns.js). A run read already
+ * goes straight on, and so does one that will not read: `storedView` reads
+ * it again, and says why not.
+ */
+async function prepareStored(run) {
+	if (run?.source !== 'ecolego' || !run.prepare) return;
+	try {
+		await run.prepare({ percentiles: state.raw?.simulation?.percentiles ?? null });
+	} catch {
+		// Said where it is shown.
+	}
+}
+
+/**
+ * Shows a run picked from the list, or none, once it has been read -- unless
+ * another was picked while it was being read, which is then the one shown.
+ */
+let besidePicked = 0;
+async function pickBeside(run) {
+	const picked = ++besidePicked;
+	if (run) {
+		const slow = setTimeout(() => flash(`Reading ${besideName(run)}…`, 'info'), 400);
+		await prepareStored(run);
+		clearTimeout(slow);
+		if (picked !== besidePicked) return;
+	}
+	showBeside(run ? state.stored?.runs.indexOf(run) ?? -1 : -1);
 }
 
 /** Shows run `k` of the list beside this one, or none. */
@@ -12744,7 +12782,7 @@ async function openRunBeside(file) {
 	if (read.stored?.runs.length) {
 		const from = state.stored?.runs.length ?? 0;
 		for (const run of read.stored.runs) addBeside({ ...run, source: 'ecolego', file: file.name }, { show: false });
-		showBeside(from + Math.max(0, read.stored.shown));
+		await pickBeside(state.stored.runs[from + Math.max(0, read.stored.shown)]);
 		const n = read.stored.runs.length;
 		const sampled = read.stored.probabilistic;
 		flash(`${n === 1 ? 'The run' : `${n} runs`} Ecolego stored in ${file.name} `
@@ -13569,7 +13607,7 @@ async function openModelFile(file, { read = null } = {}) {
 		setModel(project, { label: file.name });
 		openAsAppIfAsked();
 		if (report) showImportReport(report, file.name);
-		if (stored) acceptStoredRuns(stored, file.name);
+		if (stored) await acceptStoredRuns(stored, file.name);
 		if (datasetProblem) {
 			flash(`${file.name} carries a saved run that could not be read: `
 				+ `${datasetProblem} The model opened without it.`, 'warn');
@@ -13602,6 +13640,7 @@ const OPENING_STAGE = {
 	blocks: [0.45, 'Reading the blocks'],
 	settings: [0.65, 'Connecting the blocks'],
 	setup: [0.8, 'Setting the model up'],
+	stored: [0.9, 'Reading the run Ecolego stored'],
 };
 
 async function showOpening(stage, fileName = '') {
@@ -13831,7 +13870,7 @@ function showImportReport(report, fileName) {
  * another model is opened (see `dropModelsBesideRuns`). Said in the import
  * report, with what was left out.
  */
-function acceptStoredRuns(stored, fileName) {
+async function acceptStoredRuns(stored, fileName) {
 	state.stored ??= { runs: [], shown: -1, drawn: false };
 	const s = state.stored;
 	const from = s.runs.length;
@@ -13841,6 +13880,10 @@ function acceptStoredRuns(stored, fileName) {
 	storedViewCache = null;
 	// Read now rather than when the chart first asks, so the report can say
 	// what is in it -- and so a file that will not read says so here.
+	if (stored.shown >= 0) {
+		await showOpening('stored', fileName);
+		await prepareStored(s.runs[from + stored.shown]);
+	}
 	const view = stored.shown >= 0 ? storedView() : null;
 	const n = stored.runs.length;
 	const said = [];

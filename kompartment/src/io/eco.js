@@ -29,7 +29,7 @@
  */
 
 import { unzip, ZipError } from './zip.js';
-import { readStoredRuns } from './ecoruns.js';
+import { readStoredRuns, isResultFile } from './ecoruns.js';
 import { STABLE, KINDS, SINGULAR, KIND_LABEL, stateCount } from '../domain/edit.js';
 import { FUNCTIONS, FUNCTION_ALIASES } from '../parser/functions.js';
 import {
@@ -224,7 +224,8 @@ export async function importEcoFile(data, meta = {}) {
 	if (onStage) await onStage('unzip');
 	let entries;
 	try {
-		entries = await unzip(bytes);
+		// A run's result file may be large, and is never kept (see ./zip.js).
+		entries = await unzip(bytes, { large: isResultFile });
 	} catch (e) {
 		if (e instanceof ZipError) throw new ImportError(e.message);
 		throw e;

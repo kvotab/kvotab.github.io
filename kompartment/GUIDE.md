@@ -4353,7 +4353,13 @@ memory. The archive is read lazily — only the XML files the importer looks at
 are decompressed, and a stored run's result file when that run is shown, so a
 damaged result file in an assessment's `simulation/` folder costs that run and
 not the model beside it — and the reader stops at 256 MB of decompressed
-output for the whole archive, not per entry.
+output for the whole archive, not per entry. A result file is the exception,
+since a run of a large model saves far more numbers than any model holds: it
+may expand to 64 times what it takes in the archive, up to 2 GB — numbers
+compress a few times over, a file built to exhaust memory about a thousand —
+and it is read as it is decompressed, the outputs of blocks this model has
+decoded and the rest stepped over, so it is never held whole beside the series
+it becomes.
 
 A compartment's dy/dt column in Ecolego comes across as its `dydt` term, at
 the block level and per index; see *An explicit dy/dt term*. An entry with no

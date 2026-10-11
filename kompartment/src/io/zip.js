@@ -34,10 +34,28 @@ export class ZipError extends Error {
  */
 export const MAX_ARCHIVE_INFLATED = MAX_INFLATED;
 
+/**
+ * The most an entry the caller marks as large may expand to, and how far past
+ * what it takes in the archive.
+ *
+ * An assessment's result files (see ./ecoruns.js) are numbers rather than a
+ * model, and a run of a large model saves far more of them than any model
+ * holds: they run to hundreds of megabytes, and past a gigabyte. Numbers
+ * compress a few times over, and a file built to exhaust memory about a
+ * thousand times. So a large entry may expand to LARGE_RATIO times what it
+ * takes in the archive -- never less than MAX_INFLATED, never more than
+ * MAX_LARGE_INFLATED -- and outside the archive's budget, because nothing
+ * keeps it: it is read when its run is shown, and let go (`take`, `stream`).
+ */
+export const LARGE_RATIO = 64;
+export const MAX_LARGE_INFLATED = 2 ** 31;
+
 /** What is left of one archive's decompression allowance. */
 class Budget {
-	constructor(limit) {
+	constructor(limit, entry = MAX_INFLATED) {
 		this.limit = limit;
+		// The most one entry may expand to: MAX_INFLATED unless a test says otherwise.
+		this.entry = entry;
 		this.spent = 0;
 	}
 
@@ -62,6 +80,7 @@ class Budget {
 }
 
 const DEFERRED = Symbol('deferred');
+const STREAM = Symbol('stream');
 
 /**
  * The entries of an archive: a Map of name to bytes, most of them produced on
@@ -78,9 +97,12 @@ const DEFERRED = Symbol('deferred');
  * front instead, where the platform's faster path is still available.
  */
 class ZipEntries extends Map {
-	/** Registers an entry to be produced when something asks for it. */
-	defer(name, produce) {
-		super.set(name, { [DEFERRED]: produce });
+	/**
+	 * Registers an entry to be produced when something asks for it, and, for
+	 * one read as it arrives, how to produce it as a stream.
+	 */
+	defer(name, produce, stream = null) {
+		super.set(name, { [DEFERRED]: produce, [STREAM]: stream });
 		return this;
 	}
 
@@ -92,8 +114,37 @@ class ZipEntries extends Map {
 		return bytes;
 	}
 
+	/**
+	 * An entry's bytes without keeping them: produced again on every call, so
+	 * that a result file read once to be decoded is not held beside what it
+	 * was decoded into.
+	 */
+	take(name) {
+		const held = super.get(name);
+		if (!held || !held[DEFERRED]) return held;
+		return held[DEFERRED]();
+	}
+
+	/**
+	 * An entry as the chunks it inflates to, without keeping it: through the
+	 * platform's inflater where it has one for raw DEFLATE, which works off
+	 * the page's thread and hands the bytes over as they come, so a reader
+	 * can decode them as they arrive rather than hold the whole entry first.
+	 * Elsewhere, and for an entry not deferred as one to stream, one chunk.
+	 */
+	async *stream(name) {
+		const held = super.get(name);
+		if (!held || !held[DEFERRED]) {
+			if (held) yield held;
+			return;
+		}
+		if (held[STREAM]) yield* held[STREAM]();
+		else yield held[DEFERRED]();
+	}
+
 	// Every way of reading the values out goes through `get`, so an entry is
-	// the same array however it is reached and is produced at most once.
+	// the same array however it is reached and is produced at most once --
+	// `take` and `stream` aside, which keep nothing on purpose.
 	*[Symbol.iterator]() {
 		for (const name of [...super.keys()]) yield [name, this.get(name)];
 	}
@@ -115,8 +166,12 @@ const LFH_SIG = 0x04034b50;
 
 /**
  * @param {ArrayBuffer|Uint8Array} data
- * @param {{inflateLimit?: number}} [opts]  what the whole archive may inflate
- *   to; `MAX_ARCHIVE_INFLATED` unless a test says otherwise
+ * @param {{inflateLimit?: number, large?: (name: string) => boolean,
+ *   entryLimit?: number, largeLimit?: number}} [opts]  `inflateLimit` is what
+ *   the whole archive may inflate to, `MAX_ARCHIVE_INFLATED` unless a test
+ *   says otherwise; `large` marks the entries that may be large (see
+ *   LARGE_RATIO); `entryLimit` and `largeLimit` stand in for MAX_INFLATED and
+ *   MAX_LARGE_INFLATED in a test
  * @returns {Promise<Map<string, Uint8Array>>} entry name -> bytes
  */
 export async function unzip(data, opts = {}) {
@@ -135,7 +190,8 @@ export async function unzip(data, opts = {}) {
 	const out = new ZipEntries();
 	// One allowance for the whole archive, spent by every entry that inflates
 	// -- including the ones that inflate later, on first access.
-	const budget = new Budget(opts.inflateLimit ?? MAX_ARCHIVE_INFLATED);
+	const budget = new Budget(opts.inflateLimit ?? MAX_ARCHIVE_INFLATED, opts.entryLimit ?? MAX_INFLATED);
+	const largeLimit = opts.largeLimit ?? MAX_LARGE_INFLATED;
 	let p = cdOffset;
 
 	for (let i = 0; i < entryCount; i++) {
@@ -214,17 +270,26 @@ export async function unzip(data, opts = {}) {
 		}
 		const raw = bytes.subarray(dataStart, dataStart + compressedSize);
 
+		const large = !!opts.large?.(name);
 		if (method === 0) {
 			// Stored data cannot expand, so it is outside the budget: it is
 			// already in the archive and bounded by it. Deferred all the same,
-			// because a copy nobody asked for is still a copy.
-			out.defer(name, () => raw.slice());
+			// because a copy nobody asked for is still a copy -- and streamed
+			// as it lies, since a stream is read rather than kept.
+			out.defer(name, () => raw.slice(), large ? async function* storedChunk() { yield raw; } : null);
 		} else if (method === 8) {
 			// The XML is what the importer reads, and so the only thing worth
-			// the platform's asynchronous inflater. Everything else waits
-			// until something asks for it -- see ZipEntries.
+			// the platform's asynchronous inflater up front. Everything else
+			// waits until something asks for it -- see ZipEntries -- and a
+			// large entry, read as it arrives, gets that inflater then.
 			if (/\.xml$/i.test(name)) {
 				out.set(name, await inflateEntry(raw, uncompressedSize, name, budget));
+			} else if (large) {
+				// Refused when it is read, not here: a result file that will not
+				// read costs its run and not the model beside it.
+				const limit = () => largeAllowanceFor(uncompressedSize, compressedSize, name, budget.entry, largeLimit);
+				out.defer(name, () => inflateSync(raw, uncompressedSize, name, limit()),
+					() => inflateStream(raw, uncompressedSize, name, limit()));
 			} else {
 				out.defer(name, () => inflateEntrySync(raw, uncompressedSize, name, budget));
 			}
@@ -366,26 +431,47 @@ function hasNativeRawDeflate() {
  * everything to believe.
  */
 function allowanceFor(expectedSize, name, budget) {
-	if (expectedSize > MAX_INFLATED) {
+	if (expectedSize > budget.entry) {
 		throw new ZipError(
 			`'${name}' says it expands to ${Math.round(expectedSize / 1048576)} MB, `
-			+ `past the ${Math.round(MAX_INFLATED / 1048576)} MB this reader will `
+			+ `past the ${Math.round(budget.entry / 1048576)} MB this reader will `
 			+ `decompress. No real model is that large.`,
 		);
 	}
 	budget.check(name, expectedSize);
-	return Math.min(MAX_INFLATED, budget.left);
+	return Math.min(budget.entry, budget.left);
+}
+
+/**
+ * How much a large entry may produce (see LARGE_RATIO), with the directory's
+ * claim refused before a byte is decompressed.
+ */
+function largeAllowanceFor(expectedSize, compressedSize, name, floor, ceiling) {
+	const limit = Math.min(ceiling, Math.max(floor, LARGE_RATIO * compressedSize));
+	if (expectedSize <= limit) return limit;
+	const mb = (n) => Math.round(n / 1048576);
+	throw new ZipError(limit < ceiling
+		? `'${name}' says it expands ${Math.round(expectedSize / Math.max(1, compressedSize))} times over, `
+			+ `to ${mb(expectedSize)} MB. A result file may expand ${LARGE_RATIO} times, which numbers `
+			+ 'never reach, so the archive is either damaged or built to exhaust memory.'
+		: `'${name}' says it expands to ${mb(expectedSize)} MB, past the ${mb(ceiling)} MB this `
+			+ 'reader will decompress for one file.');
+}
+
+/** Checks what came out against the directory. */
+function sizeAsSaid(length, expectedSize, name) {
+	if (expectedSize && length !== expectedSize) {
+		throw new ZipError(
+			`'${name}' inflated to ${length} bytes but the directory says ` +
+			`${expectedSize}; the archive looks damaged.`,
+		);
+	}
 }
 
 /** Charges what actually came out, and checks it against the directory. */
 function accept(buf, expectedSize, name, budget) {
 	budget.spend(name, buf.length);
-	if (expectedSize && buf.length !== expectedSize) {
-		throw new ZipError(
-			`'${name}' inflated to ${buf.length} bytes but the directory says ` +
-			`${expectedSize}; the archive looks damaged.`,
-		);
-	}
+	sizeAsSaid(buf.length, expectedSize, name);
 	return buf;
 }
 
@@ -427,6 +513,57 @@ function inflateEntrySync(raw, expectedSize, name, budget) {
 		throw new ZipError(`Could not decompress '${name}': ${e.message}`);
 	}
 	return accept(buf, expectedSize, name, budget);
+}
+
+/** A large entry, whole, by the bundled inflater: outside the budget (see LARGE_RATIO). */
+function inflateSync(raw, expectedSize, name, limit) {
+	let buf;
+	try {
+		buf = inflateRawJS(raw, expectedSize, limit);
+	} catch (e) {
+		if (e instanceof ZipError) throw e;
+		throw new ZipError(`Could not decompress '${name}': ${e.message}`);
+	}
+	sizeAsSaid(buf.length, expectedSize, name);
+	return buf;
+}
+
+/**
+ * A large entry as the chunks the platform's inflater hands over, cut off at
+ * its allowance as `inflateEntry` cuts the XML off; whole, from the bundled
+ * inflater, where there is no platform inflater for raw DEFLATE. A reader
+ * that stops early stops the inflater too.
+ */
+async function* inflateStream(raw, expectedSize, name, limit) {
+	if (!hasNativeRawDeflate()) {
+		yield inflateSync(raw, expectedSize, name, limit);
+		return;
+	}
+	const reader = new Blob([raw]).stream()
+		.pipeThrough(new DecompressionStream('deflate-raw'))
+		.pipeThrough(cappedAt(limit, name))
+		.getReader();
+	let total = 0;
+	let done = false;
+	try {
+		for (;;) {
+			let next;
+			try {
+				next = await reader.read();
+			} catch (e) {
+				done = true;
+				if (e instanceof ZipError) throw e;
+				throw new ZipError(`Could not decompress '${name}': ${e.message}`);
+			}
+			if (next.done) break;
+			total += next.value.byteLength;
+			yield next.value;
+		}
+		done = true;
+	} finally {
+		if (!done) reader.cancel().catch(() => {});
+	}
+	sizeAsSaid(total, expectedSize, name);
 }
 
 /**

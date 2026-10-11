@@ -15528,11 +15528,94 @@ test('a probabilistic run Ecolego stored comes in as its median and its bands', 
 	assert(/besideLine\(stored, o\.label, column\(stored\.view, k\)\)/.test(table), 'the Table sets its single values beside');
 });
 
+test('a stored run is read as it arrives, and its result file is not kept', async () => {
+	// A result file can run past a gigabyte, so it is read as the archive
+	// inflates it -- the blocks this model has decoded, the rest stepped over
+	// -- and never kept: `prepare` reads it ahead of `load`, which makes the
+	// run's series of what was read. Whatever pieces it arrives in, the
+	// answer and the faults are the whole file's.
+	const { readStoredRuns, readResultStream, decodeResultFile, readResultFile } = await import('../src/io/ecoruns.js');
+	const files = storedRunFiles({ version: 6, sims: 3 });
+	const bytesOf = (f) => f.bytes ?? new TextEncoder().encode(f.text);
+	const dta = bytesOf(files.find((f) => f.name.endsWith('0002.dta')));
+	const wanted = new Set([...readResultFile(dta).blocks.keys()].filter((g, k) => k % 2 === 0));
+	const whole = decodeResultFile(dta, wanted);
+	const pieces = async function* inPieces(bytes, size) {
+		for (let p = 0; p < bytes.length; p += size) yield bytes.subarray(p, p + size);
+	};
+	const sameValues = (a, b) => a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+	for (const size of [1, 3, 7, 8, 9, 63, 64, 65, 1023, 1024, 1025, 4096, dta.length]) {
+		const got = await readResultStream(pieces(dta, size), wanted);
+		assert(got.simulations === whole.simulations && got.times === whole.times
+			&& [...got.blocks.keys()].join() === [...whole.blocks.keys()].join()
+			&& [...whole.blocks].every(([g, b]) => got.blocks.get(g).size === b.size
+				&& (b.values ? !!got.blocks.get(g).values && sameValues(b.values, got.blocks.get(g).values) : !got.blocks.get(g).values)),
+		`in pieces of ${size}`);
+	}
+	assert(whole.blocks.size === 7 && [...whole.blocks.values()].filter((b) => b.values).length === 4, 'decoded what was not wanted');
+	const fault = async (bytes) => {
+		let said = null;
+		try { await readResultStream(pieces(bytes, 100), wanted); } catch (e) { said = e; }
+		return said?.message ?? 'no fault';
+	};
+	assert(/shorter than the header/.test(await fault(dta.subarray(0, 1000))), 'a file shorter than its header');
+	assert(/ends inside a block header/.test(await fault(dta.subarray(0, 1030))), 'a file cut in a block header');
+	assert(/runs past the end/.test(await fault(dta.subarray(0, dta.length - 1))), 'a file cut in a block');
+
+	// Each run reads its file once: ahead of `load` when prepared, in `load`
+	// when not -- and a probabilistic run again for other percentiles, since
+	// nothing of its realisations is kept beside its bands.
+	const imported = await importEcoFile(await makeZip([{ name: 'model.xml', text: STORED_MODEL_XML }, ...files]), { fileName: 'spy.eas' });
+	class Spy extends Map {
+		constructor(entries) { super(entries); this.took = 0; this.streamed = 0; }
+		take(name) { this.took++; return this.get(name); }
+		async *stream(name) { this.streamed++; yield* pieces(this.get(name), 100); }
+	}
+	const model = { project: imported.project, blockIds: imported.blockIds };
+	const spy = new Spy(files.map((f) => [f.name, bytesOf(f)]));
+	const stored = readStoredRuns(spy, model);
+	const plain = readStoredRuns(new Map(files.map((f) => [f.name, bytesOf(f)])), model);
+	const sameRun = (a, b) => sameValues(a.t, b.t) && a.series.size === b.series.size
+		&& [...a.series].every(([label, s]) => (s.values ? sameValues(s.values, b.series.get(label)?.values ?? [])
+			: Object.is(s.constant, b.series.get(label)?.constant)));
+	const now = stored.runs.find((r) => r.name === 'Now');
+	await Promise.all([now.prepare(), now.prepare()]);
+	assert(spy.streamed === 1 && spy.took === 0, `prepared twice: ${spy.streamed} reads`);
+	assert(sameRun(now.load(), plain.runs.find((r) => r.name === 'Now').load()) && spy.took === 0,
+		'what was read ahead is not what load would have read');
+	await now.prepare();
+	assert(spy.streamed === 1, 'a run made into series is read again');
+	stored.runs.find((r) => r.name === 'Older').load();
+	assert(spy.took === 1, 'unprepared, load reads the file');
+	const sampled = stored.runs.find((r) => r.name === 'Sampled');
+	await sampled.prepare();
+	const median = sampled.load();
+	const other = sampled.load({ percentiles: [0.1, 0.9] });
+	assert(spy.streamed === 2 && spy.took === 2 && other !== median && other.series.get('Dose').band.q.length === 3,
+		`a probabilistic run not read again for its percentiles: ${spy.streamed}, ${spy.took}`);
+	// Prepared at the percentiles it was made into series at, nothing to read;
+	// at others, read ahead of them.
+	await sampled.prepare({ percentiles: [0.1, 0.9] });
+	assert(spy.streamed === 2, 'read ahead for the percentiles it has');
+	await sampled.prepare({ percentiles: [0.2, 0.8] });
+	assert(spy.streamed === 3 && sampled.load({ percentiles: [0.2, 0.8] }).series.get('Dose').band.q.length === 3
+		&& spy.took === 2, `not read ahead for new percentiles: ${spy.streamed}, ${spy.took}`);
+
+	// A file that will not read says so when it is prepared, and again when
+	// it is loaded -- the run is lost, not the model.
+	const cut = new Map(files.map((f) => [f.name, f.name.endsWith('0002.dta') ? dta.subarray(0, dta.length - 1) : bytesOf(f)]));
+	const broken = readStoredRuns(cut, model).runs.find((r) => r.name === 'Now');
+	let said = null;
+	try { await broken.prepare(); } catch (e) { said = e; }
+	assert(/runs past the end/.test(said?.message), String(said?.message));
+	expectError(() => broken.load(), /runs past the end/, 'loaded after a failed read');
+});
+
 test('the Chart and the Table show a stored run, and beside a run here put it next to it', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	// It comes in with the file and goes with the model.
-	assert(/if \(stored\) acceptStoredRuns\(stored, file\.name\);/.test(app), 'opening a file drops the stored runs');
+	assert(/if \(stored\) await acceptStoredRuns\(stored, file\.name\);/.test(app), 'opening a file drops the stored runs');
 	assert(/dropModelsBesideRuns\(\);/.test(/function setModel\(raw, source\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '')
 		&& /s\.runs = s\.runs\.filter\(\(run\) => !run\.withModel\);/.test(app), 'another model keeps the last one’s stored runs');
 	// Before a run here it is what the two views show, through the same picker.
@@ -23481,6 +23564,69 @@ await (async () => {
 		said = null;
 		try { lazy.get('b.dta'); } catch (e) { said = e; }
 		assert(said instanceof ZipError && /'b\.dta'.*in total/.test(said.message), String(said?.message));
+	});
+
+	test('a result file may be large, and is read without being kept', async () => {
+		// An assessment's result files are numbers rather than a model, and a
+		// run of a large model saves far more of them than one entry may
+		// expand to. One the caller marks large may expand LARGE_RATIO times
+		// what it takes in the archive, outside the archive's budget, and is
+		// never kept: `take` and `stream` produce it afresh. The per-entry cap
+		// is 1 MB here, so 3 MB stands in for a result file past it.
+		const { isResultFile } = await import('../src/io/ecoruns.js');
+		const MB = 1048576;
+		// Numbers hardly compress: a congruential sequence stands in for them.
+		const numbers = new Uint8Array(3 * MB);
+		let x = 12345;
+		for (let i = 0; i < numbers.length; i++) {
+			x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+			numbers[i] = x >>> 24;
+		}
+		const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+		const joined = (chunks) => {
+			const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+			let at = 0;
+			for (const c of chunks) { out.set(c, at); at += c.length; }
+			return out;
+		};
+		const result = 'simulation/results/A0000000-0000-0000-0000-000000000001.dta';
+		assert(isResultFile(result) && isResultFile('simulation\\results\\results.dta') && !isResultFile('other.dta'),
+			'what a result file is called');
+		const raw = deflated(numbers);
+		const opts = { large: isResultFile, entryLimit: MB, inflateLimit: 1.5 * MB };
+		const files = await unzip(lyingZip([model,
+			{ name: result, raw, size: numbers.length },
+			{ name: 'other.dta', raw, size: numbers.length },
+			{ name: 'small.dta', raw: deflated(numbers.subarray(0, MB)), size: MB }]), opts);
+		// Past the per-entry cap, and read -- afresh each time, so nothing holds it.
+		const once = files.take(result);
+		assert(same(once, numbers) && files.take(result) !== once, 'a result file past the per-entry cap');
+		const chunks = [];
+		for await (const chunk of files.stream(result)) chunks.push(chunk);
+		assert(same(joined(chunks), numbers), 'streamed');
+		// Outside the archive's budget: a megabyte more still fits in its 1.5.
+		assert(files.get('small.dta').length === MB, 'charged to the budget');
+		// Any other entry keeps the per-entry cap.
+		let said = null;
+		try { files.get('other.dta'); } catch (e) { said = e; }
+		assert(said instanceof ZipError && /past the 1 MB/.test(said.message), String(said?.message));
+
+		// Zeros expand a thousand times over, which numbers never do: refused
+		// when the entry is read, and not before -- the archive opens, and a
+		// result file that will not read costs its run alone.
+		const bomb = await unzip(lyingZip([model, { name: result, raw: deflated(new Uint8Array(3 * MB)), size: 3 * MB }]), opts);
+		said = null;
+		try { bomb.take(result); } catch (e) { said = e; }
+		assert(said instanceof ZipError && /expands \d+ times over, to 3 MB/.test(said.message), String(said?.message));
+		said = null;
+		try { for await (const chunk of bomb.stream(result)) chunks.push(chunk); } catch (e) { said = e; }
+		assert(said instanceof ZipError && /times over/.test(said.message), String(said?.message));
+		// And never past the ceiling, however it compresses.
+		const capped = await unzip(lyingZip([model, { name: result, raw, size: numbers.length }]), { ...opts, largeLimit: 2 * MB });
+		said = null;
+		try { capped.take(result); } catch (e) { said = e; }
+		assert(said instanceof ZipError && /past the 2 MB this reader will decompress for one file/.test(said.message),
+			String(said?.message));
 	});
 
 	test('a ZIP64 record or directory that lies is a ZipError, not a RangeError', async () => {

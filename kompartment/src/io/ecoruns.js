@@ -65,7 +65,11 @@
  *
  * Nothing is decoded until a run is asked for: an assessment can hold a dozen
  * runs of a large model, and the archive inflates an entry only when it is
- * read.
+ * read. A result file can run past a gigabyte, so it is never kept: `prepare`
+ * reads one as the archive inflates it, decoding the blocks this model has and
+ * stepping over the rest (`readResultStream`), and `load` makes the run's
+ * series of what it read -- or, unprepared, reads the whole file there and
+ * then, and lets it go (`decodeResultFile`).
  */
 
 import { parseXML, child, children, childText, childNumber, XMLError } from './xml.js';
@@ -124,8 +128,142 @@ function doublesOf(file, block) {
 	return out;
 }
 
+/**
+ * A whole result file, decoded as `readResultStream` decodes one: the blocks
+ * in `wanted` (GUIDs) as numbers, the rest by their size alone.
+ *
+ * @param {Uint8Array} bytes
+ * @param {Set<string>} wanted
+ * @returns {{simulations: number, times: number, blocks: Map<string, {size: number, values?: Float64Array}>}}
+ */
+export function decodeResultFile(bytes, wanted) {
+	const file = readResultFile(bytes);
+	const blocks = new Map();
+	for (const [guid, block] of file.blocks) {
+		blocks.set(guid, wanted.has(guid) ? { size: block.size, values: doublesOf(file, block) } : { size: block.size });
+	}
+	return { simulations: file.simulations, times: file.times, blocks };
+}
+
+/**
+ * A result file read as it arrives, in pieces of any size: the blocks in
+ * `wanted` decoded, the rest stepped over -- so that the file is never held
+ * whole, and a block nobody will draw is never decoded. The answer is
+ * `decodeResultFile`'s, and so are the faults.
+ *
+ * Nothing the file says is believed before its bytes have come: a block is
+ * gathered from the pieces it arrived in and decoded when the last of them
+ * is in, so a size that runs past the end is found to, rather than
+ * allocated.
+ *
+ * @param {AsyncIterable<Uint8Array>} chunks
+ * @param {Set<string>} wanted
+ * @returns {Promise<{simulations: number, times: number,
+ *   blocks: Map<string, {size: number, values?: Float64Array}>}>}
+ */
+export async function readResultStream(chunks, wanted) {
+	const head = new Uint8Array(HEADER);
+	let headAt = 0;
+	const blockHead = new Uint8Array(BLOCK_HEADER);
+	const blockView = new DataView(blockHead.buffer);
+	let blockHeadAt = 0;
+	const blocks = new Map();
+	// The block being read: its GUID and size, how many of its bytes are
+	// still to come, and -- for a wanted one -- the pieces they came in.
+	let block = null;
+	let left = 0;
+	const finish = () => {
+		blocks.set(block.guid, block.pieces
+			? { size: block.size, values: decodePieces(block.pieces, block.size) }
+			: { size: block.size });
+		block = null;
+	};
+	for await (const chunk of chunks) {
+		let p = 0;
+		while (p < chunk.length) {
+			if (headAt < HEADER) {
+				const n = Math.min(HEADER - headAt, chunk.length - p);
+				head.set(chunk.subarray(p, p + n), headAt);
+				headAt += n;
+				p += n;
+			} else if (!block) {
+				const n = Math.min(BLOCK_HEADER - blockHeadAt, chunk.length - p);
+				blockHead.set(chunk.subarray(p, p + n), blockHeadAt);
+				blockHeadAt += n;
+				p += n;
+				if (blockHeadAt < BLOCK_HEADER) continue;
+				blockHeadAt = 0;
+				const guid = guidAt(blockHead, 0);
+				const size = Number(blockView.getBigInt64(16, false));
+				if (!(size >= 0)) throw new Error('a block runs past the end of the file');
+				block = { guid, size, pieces: wanted.has(guid) ? [] : null };
+				left = size;
+				if (!left) finish();
+			} else {
+				const n = Math.min(left, chunk.length - p);
+				block.pieces?.push(chunk.subarray(p, p + n));
+				left -= n;
+				p += n;
+				if (!left) finish();
+			}
+		}
+	}
+	if (headAt < HEADER) throw new Error('it is shorter than the header a result file starts with');
+	if (blockHeadAt) throw new Error('it ends inside a block header');
+	if (block) throw new Error('a block runs past the end of the file');
+	const view = new DataView(head.buffer);
+	return { simulations: view.getInt32(0, false), times: view.getInt32(4, false), blocks };
+}
+
+/** A block's numbers out of the pieces its bytes arrived in, a double maybe split across two. */
+function decodePieces(pieces, size) {
+	const n = Math.floor(size / 8);
+	const out = new Float64Array(n);
+	const carry = new Uint8Array(8);
+	const carried = new DataView(carry.buffer);
+	let k = 0;
+	let c = 0;
+	for (const piece of pieces) {
+		if (k >= n) break;
+		const view = new DataView(piece.buffer, piece.byteOffset, piece.byteLength);
+		let p = 0;
+		if (c) {
+			const need = Math.min(8 - c, piece.length);
+			carry.set(piece.subarray(0, need), c);
+			c += need;
+			p = need;
+			if (c < 8) continue;
+			out[k++] = carried.getFloat64(0, false);
+			c = 0;
+		}
+		for (; p + 8 <= piece.length && k < n; p += 8) out[k++] = view.getFloat64(p, false);
+		if (p < piece.length && k < n) {
+			carry.set(piece.subarray(p), 0);
+			c = piece.length - p;
+		}
+	}
+	return out;
+}
+
+/** An entry's bytes, which an archive that can let them go does not keep (see ZipEntries). */
+const takeOf = (entries, name) => (typeof entries.take === 'function' ? entries.take(name) : entries.get(name));
+
+/** An entry as the chunks it inflates to, where the archive can hand them over so. */
+async function* streamOf(entries, name) {
+	if (typeof entries.stream === 'function') yield* entries.stream(name);
+	else yield entries.get(name);
+}
+
 /** An entry's name with either separator, as these archives are written on Windows too. */
 const slashed = (name) => name.replace(/\\/g, '/');
+
+const RESULT_FILE = /^simulation\/results\/([^/]+)\.dta$/i;
+
+/**
+ * Whether an archive entry is a run's result file: what `unzip` is told may be
+ * large (see LARGE_RATIO in ./zip.js).
+ */
+export const isResultFile = (name) => RESULT_FILE.test(slashed(name));
 
 /**
  * The runs an assessment holds, ready to be read.
@@ -152,7 +290,7 @@ export function readStoredRuns(entries, { project, blockIds = new Map(), timeUni
 	for (const name of entries.keys()) {
 		const n = slashed(name);
 		if (n === 'simulation.xml') xmlName = name;
-		const m = /^simulation\/results\/([^/]+)\.dta$/i.exec(n);
+		const m = RESULT_FILE.exec(n);
 		if (m) files.set(m[1].toUpperCase(), name);
 	}
 	if (!xmlName || !files.size) return null;
@@ -177,29 +315,55 @@ export function readStoredRuns(entries, { project, blockIds = new Map(), timeUni
 		// Anything but a single run is a set of realisations.
 		const sampled = !!kind && kind !== 'DETERMINISTIC';
 		let loaded = null;
+		const outputs = children(child(ctx, 'simulation-outputs'), 'output-info');
 		// Counted off the list alone, so a run with nothing to stand beside
 		// is not the one shown first: an assessment can keep runs of another
 		// model, or runs that saved only what this tool does not import.
-		const matched = children(child(ctx, 'simulation-outputs'), 'output-info')
+		const matched = outputs
 			.filter((o) => o.attrs.id && o.attrs.id !== 'time' && known.has(blockIds.get(o.attrs.id) ?? o.attrs.id))
 			.length;
+		// The blocks worth decoding: the times, and every output of a block
+		// this model has -- `loadRun` looks no further.
+		const wanted = new Set(outputs
+			.filter((o) => o.attrs.id === 'time' || (o.attrs.id && known.has(blockIds.get(o.attrs.id) ?? o.attrs.id)))
+			.map((o) => (o.attrs.guid ?? '').trim().toUpperCase()));
+		// What `prepare` read, until `load` has made the run's series of it:
+		// never kept beside them, a probabilistic run's realisations
+		// included, which are read again when the percentiles change.
+		let decoded = null;
+		let reading = null;
+		const keyOf = (percentiles) => {
+			const at = sampled ? percentilesFor(percentiles ?? project?.simulation?.percentiles) : null;
+			return { at, key: at ? at.join(',') : '' };
+		};
 		runs.push({
 			name: childText(info, 'simulation-name') ?? '',
 			date: childNumber(info, 'date'),
 			archived: ctx.attrs.archive === 'true',
 			matched,
 			probabilistic: sampled,
+			// Reads the result file as the archive inflates it, ahead of
+			// `load` at the same percentiles, so that a large one neither holds
+			// the page nor sits in memory whole: the caller awaits this before
+			// the run is shown. Nothing to do for a run already made into
+			// series at them, and once is enough however often it is asked.
+			prepare: ({ percentiles = null } = {}) => {
+				const { key } = keyOf(percentiles);
+				if (decoded || loaded?.key === key) return Promise.resolve();
+				reading ??= readResultStream(streamOf(entries, entryName), wanted)
+					.then((file) => { if (loaded?.key !== key) decoded = file; })
+					.finally(() => { reading = null; });
+				return reading;
+			},
 			// Read once, and only when somebody asks for this run -- and for a
 			// probabilistic one, again only if the percentiles it is to be
 			// summarised at have changed since.
 			load: ({ percentiles = null } = {}) => {
-				const at = sampled ? percentilesFor(percentiles ?? project?.simulation?.percentiles) : null;
-				const key = at ? at.join(',') : '';
+				const { at, key } = keyOf(percentiles);
 				if (loaded?.key !== key) {
-					loaded = {
-						key,
-						data: loadRun(entries.get(entryName), ctx, info, project, blockIds, timeUnitOf, at),
-					};
+					const file = decoded ?? decodeResultFile(takeOf(entries, entryName), wanted);
+					decoded = null;
+					loaded = { key, data: loadRun(file, ctx, info, outputs, project, blockIds, timeUnitOf, at) };
 				}
 				return loaded.data;
 			},
@@ -253,8 +417,7 @@ function blocksByName(project) {
  * `percentiles` is null for a single run, and for a probabilistic one the
  * percentiles to summarise its realisations at (see `percentilesFor`).
  */
-function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf, percentiles = null) {
-	const file = readResultFile(bytes);
+function loadRun(file, ctx, info, outputs, project, blockIds, timeUnitOf, percentiles = null) {
 	// Ecolego 6 names each run by a GUID; Ecolego 5 kept one, unnamed. Two of
 	// the file's conventions follow which it was -- see the two uses below,
 	// each measured on assessments of one model saved by both.
@@ -274,13 +437,12 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf, percentiles = 
 	for (const l of children(child(ctx, 'index-lists'), 'index-list')) {
 		if (l.attrs.name) lists.set(l.attrs.name, children(l, 'index').map((i) => i.text.trim()));
 	}
-	const outputs = children(child(ctx, 'simulation-outputs'), 'output-info');
 	const timeInfo = outputs.find((o) => o.attrs.id === 'time');
 	const timeBlock = timeInfo ? file.blocks.get((timeInfo.attrs.guid ?? '').trim().toUpperCase()) : null;
-	if (!timeBlock) throw new Error('it has no output times');
+	if (!timeBlock?.values) throw new Error('it has no output times');
 	// The first row: Ecolego 5 writes the times only into the first
 	// realisation's, Ecolego 6 into every one.
-	const t = doublesOf(file, timeBlock).subarray(0, nt);
+	const t = timeBlock.values.subarray(0, nt);
 
 	const known = blocksByName(project);
 	const series = new Map();
@@ -306,8 +468,11 @@ function loadRun(bytes, ctx, info, project, blockIds, timeUnitOf, percentiles = 
 		const cells = dims.reduce((n, d) => n * d.length, 1);
 		const timeDependent = childText(o, 'time-dependent') === 'true';
 		const per = timeDependent ? nt : 1;
-		if (block.size !== S * per * cells * 8) { left.unreadable++; continue; }
-		const values = doublesOf(file, block);
+		if (block.size !== S * per * cells * 8 || !block.values) { left.unreadable++; continue; }
+		const { values } = block;
+		// Each block is let go as soon as its series are made of it, so the
+		// run is never held twice over.
+		block.values = null;
 		const unit = childText(child(o, 'output-units'), 'output-unit') ?? '';
 		// Which index runs fastest depends on which Ecolego wrote the file:
 		// the first in Ecolego 6's, whose arrays run that way, and the last in

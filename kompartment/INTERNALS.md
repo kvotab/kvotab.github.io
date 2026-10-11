@@ -967,6 +967,29 @@ rather than once per time, and the output times are themselves an output,
 called `time`. Nothing is decoded until a run is shown, and then only that
 run's file.
 
+**A result file can run past a gigabyte** -- a run of a large model saves far
+more numbers than any model holds -- and it is never held whole. `unzip` is
+told which entries are result files (`isResultFile`): one may expand to 64
+times what it takes in the archive (`LARGE_RATIO`), never less than the 256 MB
+any other entry may and never more than 2 GiB (`MAX_LARGE_INFLATED`), and
+outside the archive's budget, since numbers compress a few times over and a
+file built to exhaust memory a thousand. The claim is checked when the entry is
+read, not when the archive is opened, so a bad one costs its run and not the
+model. Nothing keeps it: `take` inflates it afresh, and `stream` hands over the
+platform inflater's chunks as they come, off the page's thread.
+
+A run's `prepare` reads its file from that stream (`readResultStream`): the
+blocks `loadRun` will use -- the times, and the outputs of blocks this model
+has -- are gathered from the chunks they arrive in and decoded when their last
+byte is in, and the rest are stepped over; nothing the file says is allocated
+before its bytes have come. The page awaits it before a run is shown: opening
+the file (the progress bar's *Reading the run Ecolego stored*), picking a run
+beside, opening one, and applying new percentiles to a probabilistic one.
+`load` then makes the series, letting go of each decoded block as soon as its
+series are made, so the run is never held twice over; unprepared, it reads
+the whole file with the bundled inflater and decodes it the same way
+(`decodeResultFile`). The two give the same series to the last bit.
+
 Two conventions differ between the versions, both measured on one silo
 assessment saved by each:
 
@@ -3949,7 +3972,9 @@ assessment carries a `simulation/` folder of results the importer never reads â€
 so a damaged result file could fail the import of the model beside it. Entries
 are inflated when asked for, under a single budget for the whole archive, and
 every offset a ZIP64 record supplies is checked against the file before it is
-believed. A file past 200 MB asks before it is read.
+believed. An assessment's result files are the exception, read as they arrive
+and never kept (see *An assessment's stored runs*). A file past 200 MB asks
+before it is read.
 
 ## The content policy
 
