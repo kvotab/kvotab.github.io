@@ -18,6 +18,12 @@
   6. An event that has been switched off is not reported.
   7. A floating absolute tolerance handed over as a Float64Array keeps its
      high-water mark in that array.
+  8. The iteration matrix a block at a time: the blocks are the strongly
+     connected components, in block upper triangular order; the block LU
+     solves what the dense one does, scaled and with a mass, refactorises,
+     and declines what it cannot pivot on; `auto` takes it where the matrix
+     falls into blocks, facsimile.html's and rtm.html's entry never; and the
+     natural ordering's trial, stopped at the other's fill, decides as before.
 
   The pages' own suites are what check the numbers against references:
   resources/tests/facsimile/, resources/tests/rtm/ and kompartment/test/.
@@ -233,6 +239,108 @@ function hash(rows) {
   const plain = [1e-10];
   core.ndf(grow, [0, 5], Float64Array.of(1), { rtol: 1e-6, abstol: plain, autoAbstol: true });
   check('and never touches a plain array', plain[0] === 1e-10);
+}
+
+// --- 8. the iteration matrix a block at a time ------------------------------------------
+{
+  // A pattern from (row, column) pairs, the diagonal included, and values for it.
+  const fromPairs = (n, pairs, value) => {
+    const I = [], J = [], V = [];
+    for (let i = 0; i < n; i++) { I.push(i); J.push(i); V.push(value(i, i)); }
+    for (const [i, j] of pairs) { I.push(i); J.push(j); V.push(value(i, j)); }
+    const T = core.cscFromTriplets(n, n, Int32Array.from(I), Int32Array.from(J), Float64Array.from(V));
+    return { pattern: { n, nnz: T.nnz, colPtr: T.colptr, rowIdx: T.rowind }, values: T.values };
+  };
+  // States 0-1 and 3-4-5 are cycles; 2 is fed by 1 and feeds 3; 6 stands alone.
+  const small = fromPairs(7, [[1, 0], [0, 1], [2, 1], [3, 2], [4, 3], [5, 4], [3, 5], [6, 6]], () => 1);
+  const { nblocks, block } = core.blockTriangular(small.pattern);
+  check('the blocks are the strongly connected components', nblocks === 4
+    && block[0] === block[1] && block[3] === block[4] && block[4] === block[5]
+    && new Set([block[0], block[2], block[3], block[6]]).size === 4, JSON.stringify(Array.from(block)));
+  let below = 0;
+  const { colPtr, rowIdx } = small.pattern;
+  for (let j = 0; j < 7; j++) for (let p = colPtr[j]; p < colPtr[j + 1]; p++) if (block[rowIdx[p]] > block[j]) below++;
+  check('  numbered so that no entry lies below the block diagonal', below === 0, below);
+
+  // Decay chains of four nuclides through five cells with a back flow: a block of five
+  // cells per nuclide, the blocks fed one way. Solved against the dense LU.
+  const cells = 5, nuclides = 4, n = cells * nuclides;
+  const state = (c, k) => k * cells + c;
+  const pairs = [];
+  for (let k = 0; k < nuclides; k++) {
+    for (let c = 0; c < cells; c++) {
+      if (c + 1 < cells) { pairs.push([state(c + 1, k), state(c, k)]); pairs.push([state(c, k), state(c + 1, k)]); }
+      if (k + 1 < nuclides) pairs.push([state(c, k + 1), state(c, k)]);
+    }
+  }
+  const rate = (i, j) => (i === j ? -(0.3 + 0.1 * Math.sin(i)) : 0.05 + 0.02 * Math.cos(i + 2 * j));
+  const chains = fromPairs(n, pairs, rate);
+  check('decay chains with a back flow fall into a block per nuclide', core.blockTriangular(chains.pattern).nblocks === nuclides);
+  const dense = (a, values, w, mass) => {
+    const A = Array.from({ length: n }, () => new Float64Array(n));
+    const { colPtr: cp, rowIdx: ri } = chains.pattern;
+    for (let j = 0; j < n; j++) for (let p = cp[j]; p < cp[j + 1]; p++) A[ri[p]][j] -= a * values[p] * (w ? w[j] / w[ri[p]] : 1);
+    for (let i = 0; i < n; i++) A[i][i] += mass ? mass[i] : 1;
+    return A;
+  };
+  const residual = (A, x, b) => Math.max(...A.map((row, i) => Math.abs(row.reduce((s, v, j) => s + v * x[j], 0) - b[i])));
+  const lu = new core.BlockLU(chains.pattern);
+  const b = Float64Array.from({ length: n }, (_, i) => Math.cos(i + 1));
+  const w = Float64Array.from({ length: n }, (_, i) => 10 ** (i % 7 - 3));
+  const mass = Float64Array.from({ length: n }, (_, i) => (i % 6 === 5 ? 0 : 1));
+  let worst = 0;
+  for (const [a, wv, mv] of [[1e-3, null, null], [10, null, null], [1e4, w, null], [3, w, mass], [1e7, null, mass]]) {
+    const ok = lu.factor(a, chains.values, wv, mv);
+    if (!ok) { worst = Infinity; break; }
+    const x = lu.solve(b);
+    const A = dense(a, chains.values, wv, mv);
+    const scale = Math.max(...A.map((row) => row.reduce((s, v) => s + Math.abs(v), 0))) * Math.max(...x.map(Math.abs));
+    worst = Math.max(worst, residual(A, x, b) / scale);
+  }
+  check('the block LU solves what the dense one does, scaled and with a mass', worst < 1e-15, worst);
+  // A singleton block whose pivot is zero, and a value that is not a number, are declined.
+  const singletons = fromPairs(4, [[1, 0], [2, 1], [3, 2]], (i, j) => (i === j ? 0.5 : 1));
+  const one = new core.BlockLU(singletons.pattern);
+  // I - J: 0.5 on the diagonal, -1 below it, so x_k = (1 + x_(k-1)) / 0.5: 2, 6, 14, 30.
+  check('one state per block: a triangular matrix is its own factor', one.factor(1, singletons.values) && one.ops === 0
+    && JSON.stringify(Array.from(one.solve(Float64Array.of(1, 1, 1, 1)))) === '[2,6,14,30]');
+  check('  and a zero pivot is declined', !one.factor(2, singletons.values));
+  const nan = Float64Array.from(chains.values);
+  nan[3] = NaN;
+  check('  as is a value that is not a number', !lu.factor(1, nan));
+
+  // auto takes it where the matrix falls into blocks; facsimile.html's and rtm.html's entry
+  // never does; a strongly connected matrix is factorised whole, as before.
+  const auto = core.iterationMatrix(chains.pattern, chains.values, { denseBelow: 0, mass });
+  check('auto takes the block LU where the matrix falls into blocks', auto.info.lu === 'refactor'
+    && /block triangular/.test(auto.info.ordering), auto.info.ordering);
+  // (Scaled by w inside, the solve answers the unscaled system.)
+  auto.form(3, chains.values, w, null);
+  check('  and solves through it', residual(dense(3, chains.values, null, mass), auto.solve(b), b) < 1e-13);
+  const pages = core.makeIterationMatrix(chains.pattern, chains.values, 'auto', null);
+  check('facsimile.html\'s and rtm.html\'s entry factorises whole', !/block/.test(pages.info.ordering), pages.info.ordering);
+  const declined = core.iterationMatrix(singletons.pattern, singletons.values, { denseBelow: 0 });
+  const said = throws(() => declined.form(2, singletons.values, null, null));
+  check('what the block LU declines, Gilbert-Peierls reports', said && /singular at column/.test(said.message), said && said.message);
+
+  // The natural ordering's trial stops once it fills in past reverse Cuthill-McKee's, and
+  // the ordering chosen is the one two whole trials chose. An arrow matrix fills in
+  // completely in its own order (the dense row and column first) and not at all reversed.
+  const m = 60;
+  const arrow = fromPairs(m, Array.from({ length: m - 1 }, (_, k) => [[0, k + 1], [k + 1, 0]]).flat(), (i, j) => (i === j ? 4 : 0.1));
+  const reversed = fromPairs(m, Array.from({ length: m - 1 }, (_, k) => [[m - 1, k], [k, m - 1]]).flat(), (i, j) => (i === j ? 4 : 0.1));
+  const order = (x) => core.iterationMatrix(x.pattern, x.values, { mode: 'sparse', denseBelow: 0 }).info.ordering;
+  const whole = (x) => {
+    const M = core.makeMiterBuilder(x.pattern).update(1e-3, x.values, null, null);
+    const f = new core.SparseLU(m);
+    f.factorize(M);
+    const natural = f.lnz + f.unz;
+    f.factorize(M, { q: core.reverseCuthillMcKee(M) });
+    return f.lnz + f.unz < natural ? 'reverse Cuthill-McKee' : 'natural';
+  };
+  check('the natural trial stopped early decides as two whole trials did',
+    order(arrow) === whole(arrow) && order(reversed) === whole(reversed) && order(arrow) !== order(reversed),
+    `${order(arrow)} ${whole(arrow)} ${order(reversed)} ${whole(reversed)}`);
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

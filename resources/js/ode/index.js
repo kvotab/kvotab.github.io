@@ -13,6 +13,7 @@
 
 export { EPS, zeros, identity, norm, LU, DenseLU, createMiter } from './core/linalg.js';
 export { RefactorLU, PIVOT_THRESHOLD, KEEP_THRESHOLD, OPS_BUDGET } from './core/refactor.js';
+export { BlockLU, blockTriangular } from './core/blocks.js';
 export {
 	CSC, cscTranspose, cscFromTriplets, cscToDense, cscMulVec, sparseMatVec,
 	makeMiterBuilder, SparseLU, reverseCuthillMcKee, reverseCuthillMcKeeOrder,

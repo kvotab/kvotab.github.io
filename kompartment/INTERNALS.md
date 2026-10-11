@@ -46,6 +46,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ode/core/linalg.js` | Dense LU with partial pivoting (shared core) |
 | `src/ode/core/sparse.js` | CSC, Gilbert-Peierls left-looking LU, reverse Cuthill-McKee, colouring, differencing, and the choice of iteration matrix (shared core) |
 | `src/ode/core/refactor.js` | The sparse LU that keeps its pivots (shared core) |
+| `src/ode/core/blocks.js` | The iteration matrix's block upper triangular form, and the kept-pivot LU a block at a time (shared core) |
 | `src/ode/solvers.js` | The catalogue: names, blurbs, and which settings each method reads |
 | `src/domain/project.js` | The block types and the normalised project |
 | `src/domain/edit.js` | Every editing operation, as pure functions over the project |
@@ -6136,12 +6137,13 @@ facsimile.html and rtm.html used to carry an NDF of their own, written from the
 same papers as this one and in the same shape, and the two had drifted: each
 page had tuned its copy on its own models, fixed its own faults, and grown
 settings the other lacked. They are now one. The integrator and its linear
-algebra live in the site at `resources/js/ode/`, and eight files here are
+algebra live in the site at `resources/js/ode/`, and nine files here are
 copies of it, the same bytes:
 
-    src/ode/core/linalg.js   src/ode/core/refactor.js   src/ode/core/sparse.js
-    src/ode/core/events.js   src/ode/core/onestep.js    src/ode/solvers/ndf.js
-    src/ode/solvers/dormand-prince.js                  src/ode/solvers/rosenbrock23.js
+    src/ode/core/linalg.js   src/ode/core/refactor.js   src/ode/core/blocks.js
+    src/ode/core/sparse.js   src/ode/core/events.js     src/ode/core/onestep.js
+    src/ode/solvers/ndf.js   src/ode/solvers/dormand-prince.js
+    src/ode/solvers/rosenbrock23.js
 
 Do not edit them here. Edit the modules in `resources/js/ode/` and run
 `node scripts/build-solvers.mjs` from the site's root, which rewrites these
@@ -6343,6 +6345,97 @@ value, at HEAD and after:
   0.2 % on corpus models. They cost nothing on Apple silicon and can be slow on
   x86, but JavaScript cannot flush them to zero, and doing it by hand would
   change results.
+
+## The kept-pivot LU a block at a time
+
+Many models are groups of states that feed one another one way only. A
+nuclide's compartments feed its daughter's, and nothing flows back up a decay
+chain, so with the states numbered group by group, in the right order, I − h·J
+is block upper triangular: square blocks on the diagonal, nothing below them.
+The kept-pivot LU of *An LU that keeps its pivots* factorised it whole and did
+not know that. Eliminating one group's columns writes into every row that
+reads them, the coupling to the groups it feeds fills in, and the record holds
+all of it.
+
+`src/ode/core/blocks.js` (shared core) factorises it a block at a time, as KLU
+does. The blocks are the strongly connected components of the matrix's graph,
+an edge from column j to row i for every entry, found by Tarjan's algorithm
+without recursion and numbered in the order it closes them, which puts every
+entry at or above the block diagonal. The diagonal is always in the pattern of
+I − h·J, so no matching is needed first. Each block of more than one state is a
+RefactorLU of its own, threshold Markowitz within the block; a block of one
+state is its own pivot; the entries between blocks are kept as they are. A
+solve takes the blocks from the last to the first: each block's unknowns from
+its own factor, and each unknown's column of entries between blocks taken off
+the right-hand side of the steps above as soon as the backward pass has it.
+The whole factor is laid out in the order the solve walks it, by step
+(`_layout`, made again when a block chooses its pivots again, and `_values`
+after every factorisation), so a solve is one pass over it. It gives the bits
+of a solve block by block through each block's own LU that takes the columns
+between blocks in the order the backward pass finds them. What one block
+declines, the matrix declines, and Gilbert-Peierls takes it, as it takes a
+matrix RefactorLU declines.
+
+**Why the entries between blocks go in the backward pass.** A block's backward
+pass is a chain: on a line of cells each unknown waits for the one before it,
+a load, a multiply, a subtraction and a division in turn, and on the farfield
+example it costs about 7.5 ns a step however few entries the step has. Taken
+in passes of their own after it, the entries between blocks and the copy into
+the answer made the farfield example's solves a quarter slower than the whole
+LU's (29 µs against 23 µs, on the run's own matrices), though its factor holds
+three quarters of the entries. Taken inside the backward pass they are worked
+off while the chain waits, and the two solve alike. Multiplying by stored
+reciprocals of the pivots took another microsecond off and moved answers by up
+to 3·10^-13 of themselves; the division stays, as RefactorLU has it.
+
+**When it is used.** `iterationMatrix` tries it first, for `auto` and
+`refactor`, where the matrix falls into more than one block. A whole trial is
+then kept only where it costs less, and stops as soon as it has spent as much.
+A matrix of one state per block -- decay chains with nothing flowing back --
+costs nothing to factorise, and no whole trial is made. The stats say `refactor`, ordering `block triangular, threshold Markowitz`.
+facsimile.html and rtm.html do not take it (`makeIterationMatrix` passes
+`blocks: false`): their references have not been run on it.
+
+**The trial in the model's own order.** The column order of the Gilbert-Peierls
+LU was chosen from two whole factorisations, the model's own order and reverse
+Cuthill-McKee. On a large model whose states are declared in a scattered
+order, the first filled in many times as far as the second and was most of the
+time it took to make the iteration matrix. Reverse Cuthill-McKee now goes
+first, and the model's own order stops as soon as it fills in past it. The
+order chosen is the one the two whole trials chose, so nothing else moves.
+
+**Measured.** Node 20 on an M1 Max, the least of two runs in each of two
+sessions, the same steps. The made-up models are sixteen decay chains of
+twelve nuclides through a line of compartments: 150 of them one way, or 60 with
+a back flow between neighbours, a block of sixty states per nuclide.
+
+| model | states | factor entries | before | after |
+|---|---|---|---|---|
+| farfield example | 1,581 | 7,886 → 5,788 | 0.71–0.72 s | 0.71–0.72 s |
+| made-up chains, one way | 28,800 | 83,808 → 83,808 | 5.92–5.98 s | 5.57–5.78 s |
+| made-up chains, back flow | 11,520 | 192,141 → 44,736 | 2.92–2.95 s | 2.14–2.18 s |
+
+Within a run, on the chains with a back flow, making the matrix took 56 ms
+instead of 110, the 181 factorisations 93 ms instead of 182 (a refactorisation
+does a sixteenth of the multiply-adds) and the 2,578 solves 429 ms instead of
+1,081. On the chains one way every block is one state, so the factor is the
+matrix itself, as the whole LU had found too; the solves still took 903 ms
+instead of 1,045, a run of blocks of one state being solved in one loop, and
+no whole trial is made. On the farfield example the 507 factorisations took
+28 ms instead of 31 and the 7,548 solves 170 ms instead of 172.
+
+**Checked.** `test/run.js` factorises the farfield model's matrices over twelve
+orders of magnitude of h (backward error below 10^-14) and runs three decay
+chains through eight cells with a back flow, a block per nuclide, through
+`auto`, `sparse` and `dense`, which agree to 10^-9 of each series' peak.
+`resources/tests/ode/test-core.mjs` checks the components and their order on a
+hand-made pattern, solves against the dense LU scaled and with a mass, the
+declining of a zero pivot and a NaN, `auto`'s choice and the pages' entry, and
+that the shortened trial decides as the two whole ones did. Every bundled
+example takes the steps it took. Two take the block LU: the farfield example
+(a factor of 5,788 entries for 7,886), whose outputs moved by 7·10^-14 of their
+peaks, and landscape (as full as before), whose moved by 2·10^-15; the rest
+are the same bits.
 
 ## An (i) instead of a tooltip
 

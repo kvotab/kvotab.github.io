@@ -38156,6 +38156,87 @@ test('the LU that keeps its pivots solves what the searching one does', async ()
 	assert(/singular at column/.test(said), `a singular matrix said ${JSON.stringify(said)}`);
 });
 
+test('the LU a block at a time solves what the whole one does', async () => {
+	// ../src/ode/core/blocks.js factorises the iteration matrix a diagonal block of its block
+	// upper triangular form at a time; sparseIterationMatrix takes it where it costs no more.
+	const { BlockLU, blockTriangular } = await import('../src/ode/core/blocks.js');
+	const { sparseIterationMatrix } = await import('../src/ode/core/sparse.js');
+	const { readFileSync: read } = await import('node:fs');
+	const project = new Project(JSON.parse(read(new URL('../examples/farfield.json', import.meta.url), 'utf8')));
+	const sys = buildSystem(project);
+	const { pattern } = sys.jacobian;
+	const { n, colPtr, rowIdx } = pattern;
+	const J = Float64Array.from(sys.jacobian.evaluate(0, sys.initialState()));
+	// ||(I - hJ) x - b|| / (||I - hJ|| ||x|| + ||b||), infinity norms.
+	const backward = (h, x, b) => {
+		const r = Float64Array.from(x, (v, i) => v - b[i]);
+		const rowSum = new Float64Array(n).fill(1);
+		for (let j = 0; j < n; j++) {
+			for (let p = colPtr[j]; p < colPtr[j + 1]; p++) {
+				r[rowIdx[p]] -= h * J[p] * x[j];
+				rowSum[rowIdx[p]] += Math.abs(h * J[p]);
+			}
+		}
+		const inf = (v) => v.reduce((m, e) => Math.max(m, Math.abs(e)), 0);
+		return inf(r) / (inf(rowSum) * inf(x) + inf(b));
+	};
+	assert(blockTriangular(pattern).nblocks > 1, 'the farfield model is one block now; pick another model');
+	const b = Float64Array.from({ length: n }, (_, i) => Math.sin(i + 1));
+	const lu = new BlockLU(pattern);
+	for (const h of [1e-3, 1, 1e3, 1e6, 1e9]) {
+		assert(lu.factor(h, J), `I - ${h}J of the farfield model was declined`);
+		const e = backward(h, lu.solve(b), b);
+		assert(e < 1e-14, `I - ${h}J solves with backward error ${e}`);
+	}
+	const W = sparseIterationMatrix(n, pattern, J);
+	assert(W?.lu === 'refactor' && /block triangular/.test(W.info.ordering),
+		`sparseIterationMatrix gave the farfield model ${W?.lu}, ${W?.info.ordering}`);
+	W.form(1e3, J);
+	assert(backward(1e3, W.solve(b), b) < 1e-14, 'through sparseIterationMatrix it solves worse');
+
+	// Three decay chains of four nuclides through eight cells, with a back flow between
+	// neighbours: a block of eight cells per nuclide. Every LU gives the same run.
+	const nuclides = [], half = {}, chains = [];
+	for (const [c, element] of ['Qa', 'Qb', 'Qc'].entries()) {
+		const chain = [0, 1, 2, 3].map((k) => `${element}-${100 + k}`);
+		chain.forEach((name, k) => { nuclides.push(name); half[name] = 10 ** (1 + ((k * 7 + c * 3) % 11) * 0.5); });
+		for (let k = 0; k + 1 < chain.length; k++) chains.push([chain[k], chain[k + 1], 1]);
+	}
+	const cells = 8;
+	const model = {
+		name: 'chains with a back flow', nuclides, half_lives: half, chains,
+		simulation: { start_time: 0, end_time: 1e4, output_points: 40, spacing: 'log', solver: 'ndf', rtol: 1e-8,
+			abstol: 1e-6, time_unit: 'year' },
+		parameters: [{ name: 'k', value: 0.05, index_lists: [] }, { name: 'kb', value: 0.01, index_lists: [] }],
+		compartments: Array.from({ length: cells }, (_, i) => ({ name: `C${i}`, initial: i === 0 ? '1e6' : '0',
+			index_lists: ['Radionuclides'] })),
+		transfers: Array.from({ length: cells - 1 }, (_, i) => [
+			{ name: `T${i}`, from: `C${i}`, to: `C${i + 1}`, rate: 'k', index_lists: ['Radionuclides'] },
+			{ name: `B${i}`, from: `C${i + 1}`, to: `C${i}`, rate: 'kb', index_lists: ['Radionuclides'] },
+		]).flat(),
+	};
+	const built = buildSystem(new Project(structuredClone(model)));
+	assert(blockTriangular(built.jacobian.pattern).nblocks === nuclides.length, 'not a block per nuclide');
+	const chosen = sparseIterationMatrix(built.nstate, built.jacobian.pattern,
+		Float64Array.from(built.jacobian.evaluate(0, built.initialState())));
+	assert(/block triangular/.test(chosen?.info.ordering), `auto chose ${chosen?.info.ordering}`);
+	const runs = {};
+	for (const matrix of ['auto', 'sparse', 'dense']) {
+		const m = structuredClone(model);
+		m.simulation.matrix = matrix;
+		runs[matrix] = run(m);
+	}
+	let worst = 0;
+	for (const o of runs.auto.outputs()) {
+		const a = runs.auto.series(o), peak = Math.max(...a.map(Math.abs));
+		for (const other of [runs.sparse, runs.dense]) {
+			const v = other.series(o);
+			for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - v[i]) / Math.max(peak, 1e-300));
+		}
+	}
+	assert(worst < 1e-9, `the block LU's run is ${worst} of a peak from the others'`);
+});
+
 test('what drove it can be asked about each realisation’s own peak', async () => {
 	// A decays into B and B drains away, so B rises and falls -- and when it
 	// peaks depends on the drawn rates, so the realisations peak at different

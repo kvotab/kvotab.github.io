@@ -21,7 +21,8 @@
  * Sparsity is not free: on a matrix whose factor fills in towards dense, this
  * is slower than the dense LU in ./linalg.js, and measurably so. The choice at
  * the end of this file is made from the fill it measures rather than from the
- * pattern it hopes for.
+ * pattern it hopes for, and weighs ./blocks.js beside them: the kept-pivot LU
+ * a block at a time, where the matrix falls into blocks one way round.
  *
  * Index conventions, used throughout:
  *
@@ -49,6 +50,7 @@
 
 import { EPS, LU } from './linalg.js';
 import { RefactorLU, OPS_BUDGET } from './refactor.js';
+import { BlockLU, blockTriangular } from './blocks.js';
 
 // --- the container ----------------------------------------------------------
 
@@ -369,6 +371,7 @@ export class SparseLU {
 		this.nonFinite = false;
 		this.failColumn = -1;		// step k at which no pivot was found
 		this.failOriginalColumn = -1;
+		this.over = false;			// stopped where its fill passed `limit`
 		this.pivotMin = 0;			// smallest |pivot| accepted
 		this.growth = 0;			// max|U| / max|A|, the growth factor
 		this.maxA = 0;
@@ -485,12 +488,16 @@ export class SparseLU {
 	 *        what KLU and UMFPACK call a threshold pivot: it keeps the
 	 *        fill-reducing ordering intact at the price of a bounded loss of
 	 *        stability. tol = 0 is diagonal pivoting, which is unsafe.
+	 *   limit  a trial's: the factorisation stops, `over` set, as soon as L
+	 *        and U hold more entries than this. Nothing is solved with it.
 	 */
 	factorize(A, opts = {}) {
 		const n = this.n;
 		if (A.n !== n || A.m !== n) throw new Error(`SparseLU: expected ${n}x${n}`);
 		const q = opts.q ?? null;
 		const tol = opts.tol ?? 1;
+		const limit = opts.limit ?? Infinity;
+		this.over = false;
 
 		const Ap = A.colptr, Ai = A.rowind, Ax = A.values;
 		this.qcol = q;
@@ -580,6 +587,11 @@ export class SparseLU {
 				}
 				x[i] = 0;				 // leave the accumulator clean
 			}
+			if (lnz + unz > limit) {
+				this.over = true;
+				this.lnz = lnz; this.unz = unz;
+				return this;
+			}
 		}
 
 		this.Lp[n] = lnz;
@@ -636,6 +648,7 @@ export class SparseLU {
 				+ `${this.failOriginalColumn} (step ${this.failColumn}); the matrix is singular`,
 			);
 		}
+		if (this.over) throw new Error('SparseLU.solve: the factorisation stopped at its limit');
 		const { perm, qcol } = this;
 		const t = this._solveWork ?? (this._solveWork = new Float64Array(n));
 		for (let k = 0; k < n; k++) t[k] = b[perm[k]];	 // t = P*b
@@ -907,9 +920,10 @@ function gigabytes(n) {
  * whichever LU is cheapest for this matrix.
  *
  *   'auto'      one real factorisation of each ordering decides: the LU that
- *               keeps its pivots (./refactor.js) where it costs no more than
- *               the alternative, the dense LU where the sparse factor fills
- *               in, and the searching Gilbert-Peierls LU otherwise
+ *               keeps its pivots (./refactor.js), whole or a block at a time
+ *               (./blocks.js), where it costs no more than the alternative,
+ *               the dense LU where the sparse factor fills in, and the
+ *               searching Gilbert-Peierls LU otherwise
  *   'refactor'  the LU that keeps its pivots, whatever it costs
  *   'sparse'    the searching Gilbert-Peierls LU
  *   'dense'     the dense LU of ./linalg.js
@@ -928,6 +942,7 @@ function gigabytes(n) {
  *   denseBelow     `auto` goes dense below this many equations (DENSE_BELOW)
  *   denseFill      `auto` goes dense past this share of n² (DENSE_FILL)
  *   denseMaxBytes  no dense matrix larger than this (DENSE_MAX_BYTES)
+ *   blocks         false: the kept-pivot LU only whole, never a block at a time
  *   hints          {singular, noPattern}: sentences the page adds to those messages
  * @returns {{info: object, form(a, J, w, held), solve(rhs, out)}} `form`
  *   factorises Mass - a·J, in the variables y_i / w_i when `w` is given, with
@@ -1068,14 +1083,21 @@ export function iterationMatrix(pattern, values, opts = {}) {
 	// pattern's promise. A model whose states happen to be declared in a
 	// scattered order fills in badly in the natural ordering and hardly at all
 	// after renumbering, and the only way to know is to try.
+	//
+	// Reverse Cuthill-McKee first, and the model's own order stopped as soon as
+	// it fills in past that: the decision is the one the two whole trials made,
+	// but a large model whose states are declared in a scattered order can fill
+	// in many times as far in its own order, and that trial alone was most of
+	// the time it took to make the matrix.
 	const M = builder.update(1e-3, values, null, mass);
-	factors.factorize(M);
-	let best = factors.singular ? Infinity : factors.lnz + factors.unz;
-	let q = null;
 	const rcm = reverseCuthillMcKee(M);
 	factors.factorize(M, { q: rcm });
-	if (!factors.singular && factors.lnz + factors.unz < best) {
-		best = factors.lnz + factors.unz;
+	const rcmFill = factors.singular ? Infinity : factors.lnz + factors.unz;
+	factors.factorize(M, { limit: rcmFill });
+	let best = factors.singular || factors.over ? Infinity : factors.lnz + factors.unz;
+	let q = null;
+	if (rcmFill < best) {
+		best = rcmFill;
 		q = rcm;
 	}
 	// Both trials singular tells us nothing about the fill, and it used to be
@@ -1117,9 +1139,9 @@ export function iterationMatrix(pattern, values, opts = {}) {
 		const trialRepivots = lu.repivots;
 		info.sparse = true;
 		info.lu = 'refactor';
-		info.ordering = lu.columns
+		info.ordering = lu.ordering ?? (lu.columns
 			? `${q ? 'reverse Cuthill-McKee' : 'natural'} columns, threshold rows`
-			: 'threshold Markowitz';
+			: 'threshold Markowitz');
 		info.fill = lu.valid ? lu.nnz : null;
 		info.repivots = 0;
 		info.fallbacks = 0;
@@ -1151,8 +1173,28 @@ export function iterationMatrix(pattern, values, opts = {}) {
 		// A trial stops as soon as it has spent that much, or OPS_BUDGET.
 		factors.factorize(M, { q });
 		const alternative = fillsIn ? 0.25 * n * n * n / 3 : factors.flops;
-		const limit = mode === 'refactor' ? Infinity : Math.min(OPS_BUDGET, alternative);
+		let limit = mode === 'refactor' ? Infinity : Math.min(OPS_BUDGET, alternative);
+		// A block at a time first, where the matrix falls into more than one
+		// block: a whole trial is then kept only where it costs less, and stops
+		// as soon as it has spent as much. A matrix of one state per block --
+		// decay chains with nothing flowing back -- costs nothing to factorise,
+		// and no whole trial is made.
+		let byBlocks = null;
+		if (opts.blocks !== false) {
+			const split = blockTriangular(pattern);
+			if (split.nblocks > 1) {
+				const lu = new BlockLU(pattern, split);
+				lu.limit = limit;
+				const ok = lu.factor(1e-3, values, null, mass);
+				lu.limit = Infinity;
+				if (ok) {
+					byBlocks = lu;
+					limit = Math.min(limit, lu.ops - 1);
+				}
+			}
+		}
 		const trial = (columns, most) => {
+			if (most < 0) return null;
 			const lu = new RefactorLU(pattern, columns);
 			lu.limit = most;
 			const ok = lu.factor(1e-3, values, null, mass);
@@ -1162,7 +1204,8 @@ export function iterationMatrix(pattern, values, opts = {}) {
 		const byMarkowitz = trial(null, limit);
 		const byColumns = trial(q ?? Int32Array.from({ length: n }, (_, i) => i),
 			byMarkowitz ? Math.min(limit, byMarkowitz.ops) : limit);
-		const lu = byColumns && (!byMarkowitz || byColumns.ops < byMarkowitz.ops) ? byColumns : byMarkowitz;
+		let lu = byColumns && (!byMarkowitz || byColumns.ops < byMarkowitz.ops) ? byColumns : byMarkowitz;
+		if (byBlocks && (!lu || byBlocks.ops <= lu.ops)) lu = byBlocks;
 		if (lu) return kept(lu);
 		if (mode === 'refactor') return kept(new RefactorLU(pattern));
 	}
@@ -1179,10 +1222,12 @@ export function iterationMatrix(pattern, values, opts = {}) {
 /**
  * facsimile.html's and rtm.html's entry: `iterationMatrix` with their mode
  * and mass, their measurements for when a dense LU is cheaper, and their
- * shape: `form(a, J, w)`, `solve(rhs, out)` and `info`.
+ * shape: `form(a, J, w)`, `solve(rhs, out)` and `info`. The kept-pivot LU only
+ * whole, as those pages have always factorised: a block at a time is
+ * Kompartment's until their own references have been run on it.
  */
 export function makeIterationMatrix(pattern, values, mode = 'auto', mass = null) {
-	return iterationMatrix(pattern, values, { mode, mass, denseBelow: 0, denseFill: 0.35 });
+	return iterationMatrix(pattern, values, { mode, mass, denseBelow: 0, denseFill: 0.35, blocks: false });
 }
 
 /**

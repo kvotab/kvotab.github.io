@@ -40,11 +40,11 @@ const PACKAGES = [
 		src: 'resources/js/ode',
 		bundle: 'resources/js/ode-core.js',
 		global: 'OdeCore',
-		files: ['core/linalg.js', 'core/refactor.js', 'core/sparse.js', 'core/events.js', 'core/onestep.js',
-			'solvers/ndf.js', 'solvers/dormand-prince.js', 'solvers/rosenbrock23.js'],
+		files: ['core/linalg.js', 'core/refactor.js', 'core/blocks.js', 'core/sparse.js', 'core/events.js',
+			'core/onestep.js', 'solvers/ndf.js', 'solvers/dormand-prince.js', 'solvers/rosenbrock23.js'],
 		exports: [
 			'EPS', 'zeros', 'identity', 'norm', 'LU', 'DenseLU', 'createMiter',
-			'RefactorLU', 'PIVOT_THRESHOLD', 'KEEP_THRESHOLD', 'OPS_BUDGET',
+			'RefactorLU', 'PIVOT_THRESHOLD', 'KEEP_THRESHOLD', 'OPS_BUDGET', 'BlockLU', 'blockTriangular',
 			'CSC', 'cscTranspose', 'cscFromTriplets', 'cscToDense', 'cscMulVec', 'sparseMatVec',
 			'makeMiterBuilder', 'SparseLU', 'reverseCuthillMcKee', 'reverseCuthillMcKeeOrder',
 			'colourColumns', 'differenceIncrement', 'differenceJacobian',
@@ -55,7 +55,7 @@ const PACKAGES = [
 			'ndf', 'SolverError', 'NdfFailure', 'MAX_ORDER',
 			'dormandPrince', 'dormandPrinceMethod', 'rosenbrock23', 'rosenbrockMethod',
 		],
-		// The same relative paths in Kompartment's src/ode/. The eight modules
+		// The same relative paths in Kompartment's src/ode/. The nine modules
 		// are the same bytes; index.js and the README stay here.
 		copyTo: 'kompartment/src/ode',
 		copy: [],
@@ -64,8 +64,9 @@ const PACKAGES = [
    The solver core of facsimile.html, rtm.html and Kompartment: the
    variable-order NDF/BDF integrator, the one-step Dormand-Prince 4-5 and
    Rosenbrock 2-3 and their driver, the dense, sparse and kept-pivot LUs of
-   the iteration matrix and the choice between them, column colouring and
-   differenced Jacobians, and event location. No dependencies.
+   the iteration matrix (the last whole or a block at a time) and the choice
+   between them, column colouring and differenced Jacobians, and event
+   location. No dependencies.
 
      const { ndf } = OdeCore;
      const res = ndf((t, y, out) => { out[0] = -y[0]; return out; },

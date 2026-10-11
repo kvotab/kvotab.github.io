@@ -75,6 +75,7 @@ Edit the modules here, then run the script. The core's own checks are
 |---|---|
 | `core/linalg.js` | the dense LU with partial pivoting, which also forms Mass − a·J from a pattern |
 | `core/refactor.js` | the sparse LU that keeps its pivots from one factorisation to the next |
+| `core/blocks.js` | the iteration matrix's block upper triangular form (Tarjan's strongly connected components), and the kept-pivot LU a block at a time |
 | `core/sparse.js` | CSC, the Gilbert-Peierls LU, reverse Cuthill-McKee, column colouring, differenced Jacobians, and `iterationMatrix`: which LU, decided by measured fill |
 | `core/events.js` | the earliest zero-crossing in a step, by safeguarded regula falsi on the interpolant |
 | `core/onestep.js` | the driver the one-step methods share: step control, the first step, events, output, the constraint, the stall guard |
