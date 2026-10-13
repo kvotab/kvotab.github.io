@@ -273,8 +273,10 @@ function models103(data, S) {
     if (!model || ['gas', 'decay', 'independent-fallback', 'gas-progeny-fallback'].includes(m.kind)) {
       return { member: m.name, kind: m.kind, label: GAS[m.kind] || 'No model', compartments: [], transfers: [], ages: [], entry: null };
     }
+    // Which model it is, for its figure (figures.js): element/key, none for a progeny's from its parent's section.
+    const modelId = mk.progeny?.model ? null : `${mk.el}/${E?.systemic?.[key] ? key : Object.keys(E?.systemic || {})[0]}`;
     return {
-      member: m.name, kind: m.kind, of: k !== j ? S.members[k].name : null, element: E?.name || mk.el, source: mk.progeny?.model ? null : E?.source,
+      member: m.name, kind: m.kind, of: k !== j ? S.members[k].name : null, element: E?.name || mk.el, el: mk.el, modelId, source: mk.progeny?.model ? null : E?.source,
       label: model.label || key, table: model.table || null, ages: model.ages, entry: model.entry,
       compartments: Object.entries(model.compartments).map(([name, region]) => ({ name, region })),
       transfers: model.transfers,

@@ -368,6 +368,8 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 .dc-diagram .arrow { fill: var(--text-muted); }
 .dc-diagram .arrow.out { fill: var(--accent-line); }
 .dc-diagram .lane { fill: var(--text-muted); font: 700 10px verdana, sans-serif; letter-spacing: 0.06em; text-transform: uppercase; }
+/* A figure's groups of boxes (soft tissue, bone, liver, kidneys, gut), framed as the ICRP's figures frame them. */
+.dc-diagram .group rect { fill: none; stroke: var(--border-color); stroke-width: 1; stroke-dasharray: 4 3; }
 .dc-diagram .node .badge .disc, .dc-body-svg .bp-num .disc { fill: var(--accent-fill); stroke: var(--bg-primary); stroke-width: 1; }
 .dc-diagram .node .badge text { fill: #fff; font: 700 8.5px verdana, sans-serif; }
 .dc-model-figs.dc-lit .dc-diagram .node:not(.lit):not(.sink), .dc-model-figs.dc-lit .dc-diagram .edge { opacity: 0.35; }

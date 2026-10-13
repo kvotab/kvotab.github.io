@@ -124,6 +124,32 @@ const ENTRIES = [
   check(`activity comes into the parent's drawing as the publications say (${n} intakes)`, off.length === 0, off.join('; '));
 }
 
+/* The ICRP's figures the Model tab draws the models by (figures.js): each
+   names models that exist, places only names its models have (or that the
+   drawing adds: the gut's contents, the bladder's, the ways out), places
+   every compartment of its models, and no model is in two figures. */
+{
+  const { FIGURES } = await import(pathToFileURL(path.join(JS, 'figures.js')).href);
+  const elements = JSON.parse(fs.readFileSync(path.resolve(HERE, '../../data/dose/icrp103/elements.json'), 'utf8'));
+  const ADDED = new Set(['Oral cavity', 'Oesophagus (fast)', 'Oesophagus (slow)', 'Stomach contents', 'SI contents', 'Right colon contents', 'Left colon contents',
+    'Rectosigmoid contents', 'UB contents', 'Urine', 'Faeces', 'Excreta']);
+  const off = [], seen = new Map();
+  for (const f of FIGURES) {
+    const placed = Object.keys(f.boxes).map((k) => k.split('|'));
+    const models = f.models.map((id) => [id, elements[id.split('/')[0]]?.systemic?.[id.split('/')[1]]]);
+    for (const [id, m] of models) {
+      if (!m) off.push(`${f.id}: no model ${id}`);
+      if (seen.has(id)) off.push(`${id} in ${seen.get(id)} and ${f.id}`);
+      seen.set(id, f.id);
+    }
+    const has = new Set(models.flatMap(([, m]) => Object.keys(m?.compartments || {})));
+    for (const alts of placed) if (!alts.some((a) => has.has(a) || ADDED.has(a))) off.push(`${f.id}: ${alts.join('|')} is in none of its models`);
+    for (const [id, m] of models) for (const n of Object.keys(m?.compartments || {})) if (!placed.some((alts) => alts.includes(n))) off.push(`${f.id}: ${id}'s ${n} not placed`);
+  }
+  const all = Object.entries(elements).flatMap(([el, E]) => Object.keys(E.systemic || {}).map((k) => `${el}/${k}`));
+  check(`the figures place every compartment of the ${seen.size} models they draw (of ${all.length}), with names their models have`, off.length === 0, off.slice(0, 6).join('; '));
+}
+
 let cases = 0, members = 0, worst = { share: 0 }, sumOff = 0, doseOff = 0, doseWorst = 0;
 const missed = [], errors = [];
 for (const system of ['103', '60']) {
