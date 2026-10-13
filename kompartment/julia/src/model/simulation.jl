@@ -31,6 +31,22 @@ const SIMULATION_DEFAULTS = JDict(
     "sampling" => "latin",
 )
 
+"""
+How many points the shorthand grid is spread over (`shorthandPoints` in the application).
+
+`log` and `linear` are the count in `output_points`, which the loader holds to 2..MAX_OUTPUT_POINTS
+for them. The other spacings never ask for it, yet fall back to this grid -- a model with nothing to
+integrate, a probabilistic run on the solver's own points, `both` with no series -- and a new list of
+series starts from it. A count no grid could be spread over (a 0 left from a shorthand, a million, no
+number at all) gives way to the default. Read as Python's `float()` reads it; halves round up, as the
+application rounds.
+"""
+function shorthand_points(count)
+    v = _ed_pyfloat(count)
+    v !== nothing && 2 <= v <= MAX_OUTPUT_POINTS && return Int(floor(v + 0.5))
+    return Int(SIMULATION_DEFAULTS["output_points"])
+end
+
 """The labels the application gives its solvers."""
 const SOLVER_LABELS = OrderedDict(
     "ndf" => "stiff, NDF", "ros23" => "stiff, low order, Rosenbrock 2-3", "dp45" => "non-stiff, Dormand-Prince 4-5",

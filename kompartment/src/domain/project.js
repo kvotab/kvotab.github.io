@@ -136,6 +136,23 @@ export const DEFAULT_SIMULATION = {
 	sampling: 'latin',
 };
 
+/**
+ * How many points the shorthand grid is spread over.
+ *
+ * `log` and `linear` are the count in `output_points`, which `validate` holds
+ * to 2..MAX_OUTPUT_POINTS for them. The other three spacings never ask for
+ * it -- the field is not even shown with them -- and yet the shorthand grid is
+ * where they fall back to: a model with nothing to integrate, a probabilistic
+ * run of a model on the solver's own points, `both` with no series. The
+ * number is then whatever was left in the field from a shorthand, and a 0 or
+ * a million typed there is not a grid anybody chose for these: the default
+ * stands in for a count that could not be one.
+ */
+export function shorthandPoints(count) {
+	return count >= 2 && count <= MAX_OUTPUT_POINTS
+		? Math.round(count) : DEFAULT_SIMULATION.output_points;
+}
+
 // The two rules a name has to pass, shared with the editor and the importer
 // so that the gates cannot drift apart. See ./names.js.
 
@@ -1564,7 +1581,15 @@ export class Project {
 		// *reported* rather than refused, by `simulationProblems` in the strip
 		// and by the import report. Refusing here would mean a file Ecolego
 		// opens and this tool will not.
-		if (spacing !== 'series' && spacing !== 'both' && !(outputPoints >= 2)) {
+		//
+		// The count is a question for the two shorthands alone. A list of
+		// series carries its own counts, the solver's own steps are however
+		// many it takes, and `both` is those two together: none of them shows
+		// the field, so a 0 left in it from a shorthand would stop a run that
+		// does not use it, with nothing on the panel to put right. See
+		// `shorthandPoints` for the grid they fall back to.
+		const counted = spacing === 'log' || spacing === 'linear';
+		if (counted && !(outputPoints >= 2)) {
 			throw new ValidationError('At least 2 output points are required');
 		}
 		// ...and an upper bound, which nothing had. The results are one row of
@@ -1575,7 +1600,7 @@ export class Project {
 		// `WorkerError` -- so the number is refused here, where it can be
 		// explained. A hundred thousand points is already far past what any
 		// chart or table can show.
-		if (outputPoints > MAX_OUTPUT_POINTS) {
+		if (counted && outputPoints > MAX_OUTPUT_POINTS) {
 			throw new ValidationError(
 				`${outputPoints} output points is more than this can report `
 				+ `(${MAX_OUTPUT_POINTS}). Every point is a row of every state, so the `
@@ -1616,7 +1641,7 @@ export class Project {
 	 *                      so this returns the shorthand one: it is what a
 	 *                      model with nothing to integrate falls back to, and
 	 *                      the runner is what decides to ignore it. See
-	 *                      `solverPoints`.
+	 *                      `solverPoints`, and `shorthandPoints` for its count.
 	 */
 	timeGrid() {
 		const {
@@ -1628,7 +1653,7 @@ export class Project {
 		if (spacing === 'series' || (spacing === 'both' && this.outputTimes.length)) {
 			return combineSeries(this.outputTimes, startTime, endTime);
 		}
-		const n = Math.max(2, Math.round(outputPoints));
+		const n = shorthandPoints(outputPoints);
 		const t = new Float64Array(n);
 		if (spacing === 'log' || spacing === 'solver' || spacing === 'both') {
 			const lo = startTime > 0 ? startTime : Math.max(endTime, 1) * 1e-6;

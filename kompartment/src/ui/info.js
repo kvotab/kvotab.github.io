@@ -831,6 +831,13 @@ function renderModelInfo(host, project, hooks) {
 	// check should be in the first screenful of it, and a card of eight
 	// unbroken rows reads as one list of unrelated numbers.
 	const scenarios = ed.scenarioNames(project);
+	// The count only where the run is spread over it: on a list of series or
+	// the solver's own steps it is a number left in the field from a
+	// shorthand, and the run does not use it.
+	const reported = sim.spacing === 'series' ? 'at the times of a list of series'
+		: sim.spacing === 'solver' ? 'at the solver’s own points'
+			: sim.spacing === 'both' ? 'at a list of series and the solver’s own points'
+				: `${sim.output_points} points, ${sim.spacing === 'linear' ? 'evenly spaced' : 'logarithmic'}`;
 	host.append(el('div', { className: 'info-refs' },
 		el('div', { className: 'info-label' }, 'Simulation'),
 		// Which scenario runs is one of these settings, not a fact about the
@@ -844,9 +851,7 @@ function renderModelInfo(host, project, hooks) {
 		line('Runs',
 			el('span', {}, `${fmtTime(sim.start_time)} to ${fmtTime(sim.end_time)} `
 				+ `${unit}${sim.end_time === 1 ? '' : 's'}`),
-			el('span', { className: 'info-dim' },
-				` — ${sim.output_points} points, `
-				+ `${sim.spacing === 'linear' ? 'evenly spaced' : 'logarithmic'}`)),
+			el('span', { className: 'info-dim' }, ` — ${reported}`)),
 		line('Solver',
 			el('span', { title: SOLVER_INFO[sim.solver]?.blurb ?? '' },
 				solverLabel(sim.solver)),

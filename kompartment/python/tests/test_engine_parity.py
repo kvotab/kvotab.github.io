@@ -94,6 +94,34 @@ class ProjectParity(unittest.TestCase):
                     self.assertEqual(mine[key], js[key], key)
                 self.assertTrue(close(p.time_grid(), numbers(js['timeGrid']), 1e-15))
 
+    def test_output_points_are_asked_of_the_two_shorthands_alone(self) -> None:
+        # A list of series, the solver's own points and the two together carry their own times, so a
+        # count left in the field from a shorthand is refused only where a grid is spread over it; where
+        # those spacings fall back to the shorthand grid, one that could not be a count is the default.
+        listed = [{'kind': 'linear', 'points': 5, 'from': 0, 'to': 10}]
+        cases = [(spacing, count, listed if spacing == 'series' else [])
+                 for spacing in ('log', 'linear', 'series', 'solver', 'both')
+                 for count in (0, 1.4, 2.4, 40, 1e9, None)]
+        cases += [('both', count, listed) for count in (0, 1e9)]
+        for spacing, count, times in cases:
+            model = example('four-compartment')
+            model['simulation'] = {**model['simulation'], 'spacing': spacing, 'output_points': count,
+                                   'output_times': times}
+            with self.subTest(spacing=spacing, count=count, series=len(times)):
+                js = engine('project', model=model)
+                refused = spacing in ('log', 'linear') and not (count is not None and 2 <= count <= 100000)
+                if refused:
+                    with self.assertRaises(ValidationError):
+                        Project(model)
+                    self.assertEqual(js.get('kind'), 'ValidationError', js)
+                    continue
+                self.assertNotIn('error', js)
+                grid = Project(model).time_grid()
+                self.assertTrue(close(grid, numbers(js['project']['timeGrid']), 0))
+                if spacing in ('solver', 'both') and not times:
+                    usable = count is not None and 2 <= count <= 100000
+                    self.assertEqual(len(grid), round(count) if usable else 250)
+
     def test_an_empty_chain_list_means_no_decay_chains_as_in_the_application(self) -> None:
         # `chains: []` states that there are no decay pairs; an absent list
         # would leave the default ones (Pu-241 -> Am-241 -> Np-237 ...) in force.

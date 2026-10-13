@@ -379,11 +379,11 @@ function _sim_property_set!(s::SimulationView, p::Symbol, value)
     elseif p === :spacing
         value in SPACINGS || throw(EditError("'$(_py_str(value))' is not a way of choosing output times ($(join(SPACINGS, ", ")))"))
         if value in ("series", "both") && !py_truthy(get(raw, "output_times", nothing))
-            # Seeded from the grid that was in force, as the application does.
-            op = _ed_pyfloat(get(raw, "output_points", 250))
-            op === nothing && throw(ArgumentError("could not convert $(_py_repr(get(raw, "output_points", 250))) to float"))
+            # Seeded from the grid that was in force, as the application does: the default one for a
+            # count no grid could be spread over.
             raw["output_times"] = Any[JDict("kind" => get(raw, "spacing", nothing) == "linear" ? "linear" : "log",
-                                            "points" => max(2, _py_round(op)), "from" => nothing, "to" => nothing)]
+                                            "points" => shorthand_points(get(raw, "output_points", nothing)),
+                                            "from" => nothing, "to" => nothing)]
         end
         raw["spacing"] = value
     elseif p === :solver

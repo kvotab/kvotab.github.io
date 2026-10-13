@@ -7990,6 +7990,17 @@ test('output times can be a list of series, or the solver’s own steps', async 
 	ed.setSpacing(m, 'series');
 	assert(ed.outputSeries(m).length === 1, JSON.stringify(ed.outputSeries(m)));
 	assert(ed.outputSeries(m)[0].points === 400, JSON.stringify(ed.outputSeries(m)));
+	// ...unless its count could not be one -- a 0 typed into the field before
+	// the spacing changed -- which starts the list at the default rather than
+	// at the run's two ends.
+	for (const [count, want] of [[0, 250], [1, 250], [1e9, 250], [null, 250], ['abc', 250], ['40', 40], [2.5, 3]]) {
+		for (const spacing of ['series', 'both']) {
+			const fresh = model({ output_points: count });
+			ed.setSpacing(fresh, spacing);
+			assert(ed.outputSeries(fresh)[0]?.points === want,
+				`${spacing}, ${count}: ${JSON.stringify(ed.outputSeries(fresh))}`);
+		}
+	}
 	// A new even series is offered over the stretch a logarithmic one cannot
 	// describe: the beginning.
 	const added = ed.addOutputSeries(m, 'linear');
@@ -8043,10 +8054,50 @@ test('output times can be a list of series, or the solver’s own steps', async 
 	// And the run itself takes the same view.
 	const ran = run(mixedProject);
 	assert(ran.t[0] === 1 && ran.t[ran.t.length - 1] === 1e6 && ran.t.includes(5), `${ran.t[0]}..${ran.t[ran.t.length - 1]}`);
-	// The output count is not a question for either of the new ways.
-	assert(!problems({ spacing: 'solver', output_points: 0 }),
-		problems({ spacing: 'solver', output_points: 0 }));
+	// The output count is a question for the two shorthands alone. A list of
+	// series, the solver's own points and the two together do not show the
+	// field, so a count left in it from a shorthand -- a 0, a billion -- is
+	// neither marked on the panel nor refused by the run. It was: the strip
+	// objected under `both` and the run under `solver`.
+	const listedTimes = [{ kind: 'linear', points: 11, from: 0, to: 1e6 }];
+	for (const spacing of ['series', 'solver', 'both']) {
+		for (const count of [0, 1, -5, 1e9]) {
+			const sim = { spacing, output_points: count, output_times: listedTimes, solver: 'ndf' };
+			assert(!problems(sim), `${spacing}, ${count}: ${problems(sim)}`);
+			const ran = run(model(sim));
+			assert(ran.t.length > 2 && Math.abs(ran.t[ran.t.length - 1] - 1e6) < 1e-3,
+				`${spacing}, ${count}: ${ran.t.length} times, ending at ${ran.t[ran.t.length - 1]}`);
+		}
+	}
+	// ...and still is for the shorthands, which are spread over it.
 	assert(/At least 2 output points/.test(problems({ output_points: 1 })));
+	assert(/At least 2 output points/.test(problems({ spacing: 'linear', output_points: 0 })));
+	expectError(() => new Project(model({ output_points: 0 })), /At least 2 output points/, 'log, 0');
+	expectError(() => new Project(model({ spacing: 'linear', output_points: 1e9 })),
+		/more than this can report/, 'linear, a billion');
+	// Where those spacings still fall back to the shorthand grid -- a model
+	// with nothing to integrate, a probabilistic run on the solver's own
+	// points, `both` with no series -- a count that could not be one is the
+	// default, and one that could is kept, so no existing grid moves.
+	const fallback = (sim) => new Project(model(sim)).timeGrid().length;
+	for (const count of [0, 1, 1.4, -5, 1e9, null]) {
+		assert(fallback({ spacing: 'solver', output_points: count }) === DEFAULT_SIMULATION.output_points,
+			`solver, ${count}: ${fallback({ spacing: 'solver', output_points: count })}`);
+		assert(fallback({ spacing: 'both', output_points: count, output_times: [] })
+			=== DEFAULT_SIMULATION.output_points, `both, ${count}`);
+	}
+	assert(fallback({ spacing: 'solver', output_points: 40 }) === 40, 'a usable count was not kept');
+	assert(fallback({ spacing: 'both', output_points: 2.4, output_times: [] }) === 2, 'a usable count was not kept');
+	const algebraicLeftOver = run({
+		simulation: {
+			start_time: 0, end_time: 100, output_points: 0, spacing: 'solver',
+			solver: 'dp45', rtol: 1e-6, abstol: 1e-9, time_unit: 'year',
+		},
+		parameters: [{ name: 'c', value: 2, unit: '' }],
+		expressions: [{ name: 'E', equation: 'c * time', unit: '', index_lists: [] }],
+	});
+	assert(algebraicLeftOver.t.length === DEFAULT_SIMULATION.output_points,
+		`${algebraicLeftOver.t.length} points with nothing to integrate`);
 	// And the engine refuses a spacing it has never heard of rather than
 	// quietly picking one.
 	let caught = null;
@@ -23132,6 +23183,20 @@ await (async () => {
 		const solverOnly = settings({ ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, spacing: 'solver' } });
 		assert(childText(solverOnly, 'output-options') === 'Produce no additional output' && !child(solverOnly, 'time-series-list'),
 			'the solver’s own steps');
+		// A count left in the output-points field from a shorthand is not the
+		// solver-points model's own: not reported lost, and `both` with no
+		// series goes out as the grid it runs on, which is the default one.
+		const leftOver = (sim) => ({ ...fx.SCENARIO_ONLY, simulation: { ...fx.SCENARIO_ONLY.simulation, ...sim } });
+		const lostCount = (sim) => eco.exportModelXML(leftOver(sim)).report.warnings
+			.filter((w) => /output points are not written/.test(w));
+		assert(!lostCount({ spacing: 'solver', output_points: 0 }).length, lostCount({ spacing: 'solver', output_points: 0 }).join());
+		assert(/The model's 40 output points/.test(lostCount({ spacing: 'solver', output_points: 40 }).join()),
+			'a count the run uses went unreported');
+		const bare = leftOver({ spacing: 'both', output_points: 0 });
+		const bareGrid = Array.from(new Project(fx.openedModel(bare)).timeGrid());
+		assert(bareGrid.length === DEFAULT_SIMULATION.output_points, `${bareGrid.length} times`);
+		assert(childText(child(child(settings(bare), 'time-series-list'), 'time-series'), 'values')
+			=== `[${bareGrid.map(eco.javaDouble).join(', ')}]`, 'both with no series did not go out as the grid it runs on');
 		// Endpoints by id, and the probabilistic settings.
 		const every = xmlOf(fx.EVERY_KIND);
 		assert(children(child(child(every, 'simulation-settings'), 'outputs'), 'output').map((o) => o.attrs.id).join()

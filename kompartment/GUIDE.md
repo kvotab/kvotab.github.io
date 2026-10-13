@@ -101,7 +101,9 @@ per-index entry, since a model whose default is fine and whose Cs-137 entry is
 setting, so the field that is wrong is the field that goes red — with the
 reason in its tooltip. What is checked: the time span (the end after the
 start), a non-negative start when the spacing is logarithmic, at least two
-output points, and **both tolerances strictly greater than zero**. That last
+output points when the spacing is logarithmic or linear (the other three carry
+their own times and do not show the field), and **both tolerances strictly
+greater than zero**. That last
 one matters more than it looks: `rtol: 0` is a finite number, but a solver
 asked to meet it works out a step-size factor of zero, halves its step for ever
 and fails thousands of steps later with a stall naming neither the setting nor
@@ -3186,7 +3188,11 @@ Anything outside the run is left out — a time the solver never reaches is not 
 time it can report.
 
 Edit them from **Saved times** in the panel, which says how many times the list
-comes to and opens an editor for the series. The preview at the bottom of that
+comes to and opens an editor for the series. Choosing **Several series…** or
+**Series and the solver's points** while there are none starts the list from the
+grid the model had — one series with the same spacing and count, or 250 points
+when Output points holds no usable count, such as a 0 typed in before the
+switch — and opens that editor on it. The preview at the bottom of that
 dialog is the *engine's* answer, from the same code a run uses: a
 preview that agreed with the editor and disagreed with the run would be worse
 than none.
@@ -3216,13 +3222,16 @@ while being collected, keeping every k-th, and the footer says which: `points
 
 A model with nothing to integrate has no steps to report, so it falls back to
 the grid — the algebraic-only models are evaluated on `output_points` as they
-always were.
+always were. A count no grid could be spread over — a 0 left in the field from
+another spacing, say — is not asked about here, since the field is not shown,
+and the grid takes the default 250 instead.
 
 **A probabilistic run cannot use them**, and says so before it starts. The
 steps are a per-run answer: a thousand realisations take a thousand different
 sets of them, and with no time that every realisation was reported at there is
 no column to take a percentile down. So the realisations are reported on the
-grid — `output_points` times, logarithmically spaced — and the solver is asked
+grid — `output_points` times (250 when that is no usable count), logarithmically
+spaced — and the solver is asked
 for exactly those, answering out of its own interpolant. They are as accurate as
 any other run, the run is a little faster for not collecting a quarter of a
 million steps it would discard, and single runs are unaffected. The corner of

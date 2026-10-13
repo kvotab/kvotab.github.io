@@ -29,7 +29,7 @@ from ..indexlists import (
 from ..keys import COLLECTIONS, migrate_keys
 from ..names import NAME_RE, RESERVED, is_valid_path, is_within, qualified_name, resolve_reference, system_paths
 from ..simulation import DEFAULTS as DEFAULT_SIMULATION
-from ..simulation import TIME_UNITS
+from ..simulation import TIME_UNITS, shorthand_points
 from .farfield import (FARF_DEFAULTS, FARF_EQUATION_KEYS, FARF_NUCLIDE_KEYS, FARF_STRUCTURE_KEYS,
                        FARF_SURFACE_DEFAULTS, SURFACE_KEY, surface_of)
 from .farfield import geometry_problem, rock_problem, structure_problem
@@ -1229,9 +1229,12 @@ class Project:
         if sim['spacing'] == 'log' and start < 0:
             raise ValidationError('Logarithmic output needs a non-negative start time')
         points = sim.get('output_points')
-        if sim['spacing'] not in ('series', 'both') and not (points is not None and points >= 2):
+        # Only the two shorthands are spread from the count: a list of series carries its own, the
+        # solver's own steps are however many it takes, and 'both' is those two together.
+        counted = sim['spacing'] in ('log', 'linear')
+        if counted and not (points is not None and points >= 2):
             raise ValidationError('At least 2 output points are required')
-        if points is not None and points > MAX_OUTPUT_POINTS:
+        if counted and points is not None and points > MAX_OUTPUT_POINTS:
             raise ValidationError(f'{points} output points is more than this can report ({MAX_OUTPUT_POINTS}).')
         for key, label in (('rtol', 'Relative'), ('abstol', 'Absolute')):
             v = js_number(sim.get(key))
@@ -1258,7 +1261,7 @@ class Project:
         from .timeseries import combine_series
         if spacing == 'series' or (spacing == 'both' and self.output_times):
             return combine_series(self.output_times, start, end)
-        n = max(2, int(math.floor(float(points) + 0.5)))
+        n = shorthand_points(points)
         t = np.zeros(n)
         if spacing in ('log', 'solver', 'both'):
             lo = start if start > 0 else max(end, 1) * 1e-6

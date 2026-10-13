@@ -162,6 +162,22 @@ def _number(key: str, value: Any, least: float = -math.inf, most: float = math.i
     return int(v) if v.is_integer() and (whole or not isinstance(value, float)) else v
 
 
+def shorthand_points(count: Any) -> int:
+    """How many points the shorthand grid is spread over (``shorthandPoints`` in the application).
+
+    ``log`` and ``linear`` are the count in ``output_points``, which the loader holds to 2..MAX_OUTPUT_POINTS
+    for them. The other spacings never ask for it, yet fall back to this grid -- a model with nothing to
+    integrate, a probabilistic run on the solver's own points, ``both`` with no series -- and a new list of
+    series starts from it. A count no grid could be spread over (a 0 left from a shorthand, a million, no
+    number at all) gives way to the default. Halves round up, as the application rounds.
+    """
+    try:
+        v = float(count)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULTS['output_points']
+    return int(math.floor(v + 0.5)) if 2 <= v <= MAX_OUTPUT_POINTS else DEFAULTS['output_points']
+
+
 class OutputSeries:
     """One series of output times, in ``simulation.output_times``.
 
@@ -350,10 +366,11 @@ class Simulation:
         if value not in SPACINGS:
             raise EditError(f"'{value}' is not a way of choosing output times ({', '.join(SPACINGS)})")
         if value in ('series', 'both') and not self._raw.get('output_times'):
-            # Seeded from the grid that was in force, as the application does.
+            # Seeded from the grid that was in force, as the application does: the default one for a
+            # count no grid could be spread over.
             self._raw['output_times'] = [{
                 'kind': 'linear' if self._raw.get('spacing') == 'linear' else 'log',
-                'points': max(2, round(float(self._raw.get('output_points', 250)))),
+                'points': shorthand_points(self._raw.get('output_points')),
                 'from': None, 'to': None,
             }]
         self._raw['spacing'] = value

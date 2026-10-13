@@ -98,6 +98,20 @@ class TheSameBytes(unittest.TestCase):
                 self.assertEqual(json_text(out.report.to_dict()), json_text(answer['report']))
                 self.assertEqual(out.bytes, base64.b64decode(answer['base64']))
 
+    def test_a_count_left_from_a_shorthand_goes_out_as_the_application_writes_it(self):
+        # Under the solver's own points a count that could not be one is not reported lost, and 'both'
+        # with no series goes out as the grid it runs on: the default one, for such a count.
+        base = models()['SCENARIO_ONLY']
+        cases = [{**base, 'simulation': {**base['simulation'], 'spacing': spacing, 'output_points': count}}
+                 for spacing in ('solver', 'both', 'log') for count in (0, 40, 1e9, None)]
+        answers = js([{'task': 'export', 'model': m} for m in cases])
+        for model, answer in zip(cases, answers):
+            with self.subTest(spacing=model['simulation']['spacing'], count=model['simulation']['output_points']):
+                self.assertNotIn('error', answer)
+                out = export_eco(model)
+                self.assertEqual(out.xml, answer['xml'])
+                self.assertEqual(json_text(out.report.to_dict()), json_text(answer['report']))
+
     def test_an_app_is_counted_as_the_application_counts_it_however_it_nests(self):
         # The line saying the app is left out counts every part, inside panels
         # and tabs too, and stops where the application's walk stops.

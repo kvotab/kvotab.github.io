@@ -280,6 +280,23 @@ class EditingAModel(unittest.TestCase):
                 self.assertIsNone(refused, f'Python refused what the application did: {refused}')
                 self.assertEqual(differences(m.to_dict(), js['model']), [])
 
+    def test_a_new_list_of_series_starts_where_the_application_starts_it(self):
+        # From the shorthand's count where that is one, and from the default where it could not be: a 0
+        # typed into the field before the spacing changed is not a grid the model had. Halves round up.
+        cases = {0: 250, 1: 250, 1.4: 250, 2.5: 3, 40: 40, 300.5: 301, 100000: 100000, 100001: 250, 1e9: 250,
+                 None: 250, '40': 40, 'abc': 250, '': 250}
+        for count, want in cases.items():
+            for spacing in ('series', 'both'):
+                with self.subTest(count=count, spacing=spacing):
+                    raw = example('four-compartment')
+                    raw['simulation'] = {**raw['simulation'], 'output_points': count}
+                    js = app('edit', model=raw, ops=[['setSpacing', spacing]])
+                    self.assertNotIn('error', js)
+                    m = kp.Model(raw)
+                    m.simulation.spacing = spacing
+                    self.assertEqual(m.simulation.output_series[0].points, want)
+                    self.assertEqual(differences(m.to_dict(), js['model']), [])
+
     def test_a_transfers_availability_follows_a_rename_and_holds_off_a_delete(self):
         raw = example('biosphere')
         raw['parameters'].append({'name': 'Lim', 'value': 2})

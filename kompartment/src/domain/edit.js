@@ -112,6 +112,7 @@ import {
 	clippedEnds,
 	fmtTime,
 } from './timeseries.js';
+import { shorthandPoints } from './project.js';
 import {
 	FARF_DEFAULTS,
 	FARF_EQUATION_KEYS,
@@ -6998,8 +6999,11 @@ export function simulationProblems(project) {
 	}
 
 	// How the output times are chosen decides which of these is even a
-	// question: a list of series carries its own counts, and the solver's own
-	// steps are however many it takes.
+	// question: a list of series carries its own counts, the solver's own
+	// steps are however many it takes, and `both` is those two together. Only
+	// the two shorthands are spread from `output_points`, and only they show
+	// the field -- a problem said about it under any other spacing would mark
+	// a field nobody can see.
 	const spacing = sim.spacing ?? 'log';
 	if (!SPACINGS.includes(spacing)) {
 		say('spacing', `'${spacing}' is not a way of choosing output times`);
@@ -7014,7 +7018,7 @@ export function simulationProblems(project) {
 		// a series that contributes nothing, and the saved-times editor and
 		// the sidebar say so (`outsideSeries`). The run's own start and end
 		// are always saved, so the grid is never empty.
-	} else if (spacing !== 'solver') {
+	} else if (spacing === 'log' || spacing === 'linear') {
 		const points = num('output_points');
 		if (points === null || !(points >= 2)) {
 			say('output_points', 'At least 2 output points are needed');
@@ -8101,7 +8105,10 @@ export function outputTimes(project) {
  * Moving to `series` seeds the list from the shorthand that was in force, so
  * the first thing shown is the grid the model already had rather than an empty
  * editor -- and the second series, the one for the first year, is then an
- * addition to something recognisable.
+ * addition to something recognisable. A count no grid could be spread over --
+ * a 0 typed into the field before the spacing changed -- seeds the default
+ * instead: a series of two points, the run's two ends, is not a grid the
+ * model had.
  */
 export function setSpacing(project, spacing) {
 	if (!SPACINGS.includes(spacing)) {
@@ -8115,7 +8122,7 @@ export function setSpacing(project, spacing) {
 	if ((spacing === 'series' || spacing === 'both') && !outputSeries(project).length) {
 		sim.output_times = [{
 			kind: sim.spacing === 'linear' ? 'linear' : 'log',
-			points: Math.max(2, Math.round(Number(sim.output_points ?? 250))),
+			points: shorthandPoints(Number(sim.output_points ?? 250)),
 			from: null,
 			to: null,
 		}];

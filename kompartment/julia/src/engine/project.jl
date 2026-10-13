@@ -1219,10 +1219,13 @@ function validate!(p::Project)
     end_ > start || throw(ValidationError("End time must be greater than start time"))
     sim["spacing"] == "log" && start < 0 && throw(ValidationError("Logarithmic output needs a non-negative start time"))
     points = get(sim, "output_points", nothing)
-    if !(sim["spacing"] in ("series", "both")) && !(points !== nothing && points >= 2)
+    # Only the two shorthands are spread from the count: a list of series carries its own, the
+    # solver's own steps are however many it takes, and "both" is those two together.
+    counted = sim["spacing"] in ("log", "linear")
+    if counted && !(points !== nothing && points >= 2)
         throw(ValidationError("At least 2 output points are required"))
     end
-    points !== nothing && points > MAX_OUTPUT_POINTS &&
+    counted && points !== nothing && points > MAX_OUTPUT_POINTS &&
         throw(ValidationError("$(js_text(points)) output points is more than this can report ($MAX_OUTPUT_POINTS)."))
     for (key, label) in (("rtol", "Relative"), ("abstol", "Absolute"))
         v = js_number_of(get(sim, key, nothing))
@@ -1386,7 +1389,7 @@ function _time_grid(p::Project, start, end_, points, spacing)
     if spacing == "series" || (spacing == "both" && !isempty(p.output_times))
         return combine_series(p.output_times, start, end_)
     end
-    n = max(2, Int(floor(Float64(points) + 0.5)))
+    n = shorthand_points(points)
     t = zeros(n)
     if spacing in ("log", "solver", "both")
         lo = start > 0 ? start : max(end_, 1.0) * 1e-6

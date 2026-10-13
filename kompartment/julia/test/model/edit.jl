@@ -154,6 +154,19 @@ end
         K.rename_block!(c, "Soil", "Ground")
         @test "Soil" in m && !("Soil" in c)
     end
+
+    @testset "a new list of series starts from the shorthand's count, or the default" begin
+        # A count no grid could be spread over -- a 0 typed into the field before the spacing changed --
+        # starts the list at the default rather than at the run's two ends. Halves round up.
+        for (count, want) in ((0, 250), (1, 250), (1.4, 250), (2.5, 3), (40, 40), (300.5, 301), (100000, 100000),
+                              (100001, 250), (1e9, 250), (nothing, 250), ("40", 40), ("abc", 250), ("", 250)),
+            spacing in ("series", "both")
+            m = two_boxes()
+            K.simulation(m)["output_points"] = count
+            m.simulation.spacing = spacing
+            @test m.simulation.output_series[1].points == want
+        end
+    end
 end
 
 # --- the Python package's edits, replayed -----------------------------------------------------------------

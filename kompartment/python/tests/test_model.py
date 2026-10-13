@@ -375,6 +375,15 @@ class Building(unittest.TestCase):
         self.assertEqual(sim.output_series[0].kind, 'log')
         sim.add_output_series('times', times=[5, 1, 3])
         self.assertEqual(sim.output_series[1].times, [1, 3, 5])
+        # A count no grid could be spread over -- a 0 typed into the field before the spacing changed --
+        # starts a new list at the default rather than at the run's two ends. Halves round up.
+        for count, want in ((0, 250), (1.4, 250), (2.5, 3), (40, 40), (1e9, 250), (None, 250), ('abc', 250)):
+            with self.subTest(count=count):
+                raw = two_boxes().to_dict()
+                raw.setdefault('simulation', {})['output_points'] = count
+                m = kp.Model(raw)
+                m.simulation.spacing = 'both'
+                self.assertEqual(m.simulation.output_series[0].points, want)
 
 
 class Editing(unittest.TestCase):

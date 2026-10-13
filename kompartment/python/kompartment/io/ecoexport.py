@@ -74,6 +74,7 @@ from ..indexlists import (
 from ..jsmath import exp as _js_exp, log as _js_log
 from ..jsonio import js_number
 from ..names import RESERVED, base_name, parent_of, resolve_reference
+from ..simulation import shorthand_points
 from ..stats.pdf import PDF_KINDS, complete, quantile
 from .ecoequation import TO_ROUNDING, WORKED_OTHERWISE, ecolego_equation, reads_of, unsupported_calls
 from .xlsx import _utf8, _zip
@@ -3092,8 +3093,9 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
 
     spacing = sim.get('spacing', _UNDEF)
     spacing = spacing if spacing in ('log', 'linear', 'series', 'solver', 'both') else 'log'
-    points = _js_max(2, js_round(num(sim.get('output_points', _UNDEF), 250)))
-    points = int(points) if float(points).is_integer() else points
+    # The count the run spreads its shorthand grid over, so that 'both' with no series is written as
+    # the grid it runs on.
+    points = shorthand_points(num(sim.get('output_points', _UNDEF), 250))
     series = _normalise_series(sim.get('output_times', _UNDEF))
     written: List[Dict[str, Any]] = []
     if spacing == 'solver':

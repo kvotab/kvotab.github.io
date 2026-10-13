@@ -130,4 +130,28 @@ const EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
         # What it names has to be a trigger.
         @test_throws K.BuildError run(lake(replace(whole, "\"Gone\"" => "\"Soil\"")))
     end
+
+    @testset "output points are asked of the two shorthands alone" begin
+        # A list of series, the solver's own points and the two together carry their own times: a count
+        # left in the field from a shorthand is refused only where a grid is spread over it, and where
+        # those spacings fall back to the shorthand grid, one that could not be a count is the default.
+        raw(spacing, count; times="[]") = K.parse_json("""{"name": "Left over",
+            "simulation": {"start_time": 0, "end_time": 1000, "output_points": $(something(count, "null")),
+                           "spacing": "$spacing", "output_times": $times, "solver": "ndf", "time_unit": "year"},
+            "compartments": [{"name": "A", "initial": "1"}],
+            "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "0.01"}]}""")
+        grid(spacing, count; times="[]") = K.time_grid(K.Project(raw(spacing, count; times)))
+        listed = """[{"kind": "linear", "points": 5, "from": 0, "to": 10}]"""
+        for spacing in ("log", "linear"), count in (0, 1.4, -5, 1e9, nothing)
+            @test_throws K.ValidationError K.Project(raw(spacing, count))
+        end
+        for count in (0, 1.4, -5, 1e9, nothing)
+            @test length(grid("solver", count)) == 250
+            @test length(grid("both", count)) == 250
+            @test grid("series", count; times=listed) == grid("series", 40; times=listed)
+            @test length(run(K.Model(raw("solver", count))).t) > 2
+        end
+        @test length(grid("solver", 40)) == 40 && length(grid("both", 2.4)) == 2
+        @test grid("log", 40) == grid("solver", 40)
+    end
 end

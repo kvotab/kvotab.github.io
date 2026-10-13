@@ -68,6 +68,7 @@ import {
 	releaseWeights, structureProblem, surfaceOf, usesCells,
 } from '../domain/farfield.js';
 import { pathLayouts, cellEquivalent } from '../sim/pathlayout.js';
+import { shorthandPoints } from '../domain/project.js';
 import { ecolegoEquation, readsOf, unsupportedCalls, TO_ROUNDING, WORKED_OTHERWISE } from './ecoequation.js';
 import { countAppParts } from '../domain/apps.js';
 
@@ -3087,7 +3088,9 @@ function writeSimulation(w, raw, ctx) {
 
 	// When results are saved.
 	const spacing = ['log', 'linear', 'series', 'solver', 'both'].includes(sim.spacing) ? sim.spacing : 'log';
-	const points = Math.max(2, Math.round(num(sim.output_points, 250)));
+	// The count the run spreads its shorthand grid over, so that `both` with
+	// no series is written as the grid it runs on.
+	const points = shorthandPoints(num(sim.output_points, 250));
 	const series = normaliseSeries(sim.output_times);
 	let mode;
 	let written = [];
