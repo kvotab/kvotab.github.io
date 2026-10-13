@@ -56,7 +56,7 @@ function column({ blood, inner, innerTop = false, top = [], left = [], bone = []
   for (const n of right) { boxes[n] = [RX, ry, 6.5, 1]; ry += 1.15; }
   if (liver.length) { ry += 0.2; for (const n of liver) { boxes[n] = [RX, ry, 6.5, 1]; ry += 1.1; } }
   Object.assign(boxes, TRACT_RIGHT(RX, ry + 0.3));
-  const bottom = Math.max(ubY + 1.2, ry + 2.5);
+  const bottom = Math.max(ubY + 1.7, ry + 2.5);
   boxes[blood] = [BX, T, 4.5, bottom - T];
   if (inner) boxes[inner] = innerTop ? [BX + 0.7, T + 0.9, 3.1, bottom - T - 2.8] : [BX + 0.7, bottom - 2.1, 3.1, 1.4];
   return boxes;
@@ -74,7 +74,8 @@ export const FIGURES = [
       'UB contents': [7, 5.4, 4.6, 1], 'Excreta': [12.2, 5.65], 'RC contents': [15.4, 5.4, 4.6, 1],
       'Urine': [7.4, 6.7],
       // The alimentary tract, which the figure leaves out.
-      'Stomach contents': [0, 2, 5, 1], 'SI contents': [0, 3.6, 5, 1],
+      'Oesophagus (slow)|Oesophagus (fast)': [0, 0.6, 5, 1], 'Stomach contents': [0, 2, 5, 1], 'SI contents': [0, 3.6, 5, 1],
+      'Left colon contents': [15.4, 6.6, 4.6, 1], 'Rectosigmoid contents': [15.4, 7.7, 4.6, 1], 'Faeces': [21, 7.95],
     },
     in: { 'Blood': 'left', 'OBT-1': 'left' },
   },
@@ -90,6 +91,8 @@ export const FIGURES = [
       'RC contents': [16.2, 5.4, 6, 1], 'LC contents|Left colon contents': [23.5, 5.4, 6, 1], 'RS contents|Rectosigmoid contents': [23.5, 6.7, 6, 1],
       'Faeces': [18.5, 6.9],
       'Urine': [1, 6.9], 'UB contents': [6.2, 6.7, 4.6, 1],
+      // The alimentary tract above the colon, which the figure leaves out.
+      'SI contents': [23.5, 4.2, 6, 1], 'Stomach contents': [23.5, 3.1, 6, 1], 'Oesophagus (slow)|Oesophagus (fast)': [23.5, 2.0, 6, 1],
     },
   },
   {
@@ -278,9 +281,9 @@ export const FIGURES = [
     id: 'iodine', figure: 'Publication 158, Fig. 25.4', models: ['I/default'],
     boxes: {
       'Oral cavity': [0, 0, 5, 1], 'Oesophagus (slow)': [0, 1.2, 5, 1], 'Oesophagus (fast)': [-6.5, 1.2, 5.5, 1], 'St contents': [0, 2.4, 5, 1],
-      'SI contents': [0, 3.8, 5, 1.2], 'RC contents': [0, 5.4, 5, 1.2], 'Left colon contents': [0, 6.8, 5, 1], 'Rectosigmoid contents': [0, 7.9, 5, 1], 'Faeces': [0.5, 9.1],
+      'SI contents': [0, 3.5, 5, 1.2], 'RC contents': [0, 5.4, 5, 1.2], 'Left colon contents': [0, 6.8, 5, 1], 'Rectosigmoid contents': [0, 7.9, 5, 1], 'Faeces': [0.5, 9.1],
       'Salivary glands': [7, 0, 5.5, 1], 'St wall': [7, 2.4, 5.5, 1], 'Liver 2': [7, 3.8, 5.5, 1], 'Liver 1': [7, 4.9, 5.5, 1], 'Other 3': [7, 6.6, 5.5, 1], 'Other 4': [7, 7.7, 5.5, 1],
-      'Blood iodide': [15, 0, 5, 3.2], 'Blood organic': [15, 3.2, 5, 6.4],
+      'Blood iodide': [15, 0, 5, 3.95], 'Blood organic': [15, 3.95, 5, 5.65],
       'Thyroid 1': [22.5, 0.3, 5.5, 1], 'Thyroid 2': [22.5, 1.4, 5.5, 1], 'Other 1': [22.5, 2.4, 5.5, 1], 'Other 2': [22.5, 3.5, 5.5, 1],
       'Kidneys 1': [22.5, 6.4, 5.5, 1], 'Kidneys 2': [22.5, 7.5, 5.5, 1], 'UB contents': [30, 6.4, 5.5, 1.2], 'Urine': [30.5, 8.1],
     },
@@ -369,7 +372,10 @@ export const FIGURES = [
     boxes: {
       'Other': [0, 0, 5, 1], 'Blood': [0, 1.5, 5, 2.6],
       'Trab surface 1': [8, 1.5, 5.5, 1], 'Trab surface 2': [15, 1.5, 5.5, 1], 'Cort surface 1': [8, 2.9, 5.5, 1], 'Cort surface 2': [15, 2.9, 5.5, 1],
-      'Kidneys': [0, 4.6, 5, 1], ...BLADDER(0, 6),
+      'Kidneys': [0, 4.6, 5, 1], 'UB content|UB contents': [0, 6, 5, 1.2], 'Urine': [6, 6.3],
+      // The alimentary tract, which the figure leaves out, down its left.
+      'Oesophagus (slow)|Oesophagus (fast)': [-7.5, 0.4, 6, 1], 'Stomach contents': [-7.5, 1.5, 6, 1], 'SI contents': [-7.5, 2.6, 6, 1],
+      'Right colon contents': [-7.5, 3.7, 6, 1], 'Left colon contents': [-7.5, 4.8, 6, 1], 'Rectosigmoid contents': [-7.5, 5.9, 6, 1], 'Faeces': [-7, 7.1],
     } },
   { id: 'sodium', figure: 'EIR Part 3 (draft), Fig. 4.1', models: ['Na/default'],
     boxes: column({ blood: 'Blood', left: ['Other'], bone: BONE4, right: ['Excreta'] }) },
@@ -461,6 +467,7 @@ export const FIGURES = [
       'Excreta': [14.5, -1], 'Plasma 3': [0, 0.4, 5, 8.4],
       ...stack(7, 0.6, ['Brain 3', 'RBC 2', 'Plasma 4', 'Other 3', 'Liver 3', 'Liver 2', 'Kidneys 2'], { dy: 1.2, w: 5.5 }),
       ...stack(14, 0, ['Skin', 'Brain 1', 'Brain 2', 'RBC', 'Other 1', 'Other 2', 'Liver', 'Kidneys'], { dy: 1.15, w: 5.5 }),
+      'Plasma 4': [7, 2.85, 5.5, 1], // level with the gap between Brain 2 and RBC, through which it sends to Plasma 1
       'Plasma 1': [21.5, 0.4, 5, 8.4], 'Plasma 2': [28.5, 1.2, 5, 1.2],
       'UB content': [7, 9.4, 5.5, 1], 'Urine': [1.5, 9.65],
       'SI content': [14, 9.4, 5.5, 1], 'Right colon contents': [21.5, 9.4, 5, 1], 'Left colon contents': [28.5, 9.4, 5.5, 1], 'Rectosigmoid contents': [28.5, 10.5, 5.5, 1], 'Faeces': [29, 11.7],
@@ -508,18 +515,34 @@ export const FIGURES = [
   },
 ];
 
-const names = (f) => Object.keys(f.boxes).flatMap((k) => k.split('|'));
-
-/* The figure of a model of the Model tab (worker.js models103), or null. */
+/* The figure of a model of the Model tab (worker.js models103): the one of
+   its own model, or null. */
 export function figureFor(model) {
-  if (model.modelId) return FIGURES.find((f) => f.models.includes(model.modelId)) || null;
-  if (!model.el) return null;
-  const own = model.compartments.map((c) => c.name);
-  let best = null, bestShare = 0.6;
-  for (const f of FIGURES.filter((x) => x.models.some((id) => id.startsWith(`${model.el}/`)))) {
-    const has = new Set(names(f));
-    const share = own.filter((n) => has.has(n)).length / own.length;
-    if (share >= bestShare) { best = f; bestShare = share; }
+  return (model.modelId && FIGURES.find((f) => f.models.includes(model.modelId))) || null;
+}
+
+/* Figures a model without one of its own might stand as (diagram.js
+   chooseFigure keeps the one whose arrows cross the fewest boxes, or makes
+   one): those that place all its blood compartments, three in five of all
+   its boxes, and fill half the figure's own boxes, so that no large part of
+   it stands empty; the best first, its own element's on a tie. */
+const ADDED = /contents?$|cont$|^Oesophagus|^Oral cavity$|^(Urine|Faeces|Excreta)$/;
+export function similarFigures(model) {
+  // Only within the ICRP 103 system, whose figures these are (an ICRP 60 model has no element here).
+  if (figureFor(model) || !model.el) return [];
+  const names = new Set(model.compartments.map((c) => c.name));
+  const blood = model.compartments.filter((c) => c.region === 'Blood').map((c) => c.name);
+  const out = [];
+  for (const f of FIGURES) {
+    const keys = Object.keys(f.boxes).map((k) => k.split('|'));
+    const has = (n) => keys.some((alts) => alts.includes(n));
+    if (!blood.every(has)) continue;
+    const cover = [...names].filter(has).length / names.size;
+    const core = keys.filter((alts) => !alts.some((a) => ADDED.test(a)));
+    const fill = core.length ? core.filter((alts) => alts.some((a) => names.has(a))).length / core.length : 0;
+    if (cover < 0.6 || fill < 0.5) continue;
+    const mine = !!model.el && f.models.some((id) => id.startsWith(`${model.el}/`));
+    out.push([cover + fill + (mine ? 0.05 : 0), f]);
   }
-  return best;
+  return out.sort((a, b) => b[0] - a[0]).map(([, f]) => f);
 }

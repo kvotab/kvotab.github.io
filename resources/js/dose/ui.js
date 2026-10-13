@@ -6,8 +6,8 @@
   the tables, the charts and the model. Everything that comes from data is
   put in the page as text nodes.
 */
-import { drawModel, fillBoxes, fmtRate, laneOf, transferKey } from './diagram.js';
-import { figureFor } from './figures.js';
+import { chooseFigure, drawModel, fillBoxes, fmtRate, laneOf, transferKey } from './diagram.js';
+import { figureFor, similarFigures } from './figures.js';
 import { key as placeName } from './regions.js';
 import { drawBody, partsOf, PARTS } from './body.js';
 import { detriment103, detriment60, nominalDetriment, DOSE_LABEL, P103, P60 } from './risk.js';
@@ -1326,6 +1326,14 @@ const entriesDrawn = (entries, routeName) => entries.map((e) => {
   const ws = e.how.map((x) => entryWords(x, routeName));
   return { name: e.name, tip: ws.map((w) => w.box).join('; '), arrows: ws.filter((w) => w.arrow).map((w) => ({ label: w.arrow, tip: `${w.arrow} → ${e.name}: ${w.tip}` })) };
 });
+/* Where the drawing's layout comes from, in a sentence. */
+function layoutSentence(model, figure) {
+  if (!figure) return 'No figure of the ICRP draws this model, so its boxes are laid out as their figures are, each where the arrows cross the fewest other boxes. ';
+  const own = model.modelId && figure.models.includes(model.modelId);
+  const element = model.el && figure.models.some((id) => id.startsWith(`${model.el}/`));
+  const whose = own ? '' : element ? ` (the figure of ${model.element}’s own model)` : ' (the figure of a model with nearly the same compartments)';
+  return `The boxes stand as in ${figure.figure}${whose}; what it does not show is beside it and below. `;
+}
 function renderModel() {
   const r = shownSystem();
   $('dcModelEmpty').hidden = !!r;
@@ -1382,24 +1390,29 @@ function renderModel() {
     decay: 'It decays where it is formed (OIR series).',
   };
   if (kinds[model.kind]) text.push(h('p', {}, kinds[model.kind]));
-  const routeName = r.spec.route, entries = model.entries || [], figure = figureFor(model);
-  if (model.compartments.length) text.push(h('p', {}, `${entrySentences(entries, routeName)}${figure ? `The boxes stand as in ${figure.figure}${model.modelId ? '' : ` (the figure of ${model.element}’s own model)`}; what it does not show is beside it and below. ` : ''}Hover over an arrow for its transfer coefficient at ${AGE_LABEL[chosen] === 'Adult' ? 'adult age' : `the age of ${AGE_LABEL[chosen]}`}.`));
+  // The systemic model, and after it the alimentary tract and the bladder (dashed).
+  const onward = model.onward || [];
+  const transfers = [
+    ...model.transfers.map(([a, b, rates]) => ({ from: a, to: b, rate: rateAt(model.ages, rates, age) })),
+    ...onward.map((t) => ({ from: t.from, to: t.to, rate: rateAt(model.ages, t.rates, age), model: t.model })),
+  ].filter((t) => t.rate > 0);
+  const known = new Set(model.compartments.map((c) => c.name));
+  const added = [];
+  const add = (name, region) => { if (!known.has(name) && laneOf(region, name) !== 'sink') { known.add(name); added.push({ name, region }); } };
+  for (const t of onward) { add(t.from, t.fromRegion); add(t.to, t.toRegion); }
+  for (const c of model.tract || []) add(c.name, c.region);
+  const comps = [...model.compartments, ...added].filter((c) => laneOf(c.region, c.name) !== 'sink' || transfers.some((t) => t.to === c.name));
+  // Every pair a transfer joins at any age: the boxes stay put when the age changes.
+  const links = [...model.transfers.map(([a, b]) => [a, b]), ...onward.map((t) => [t.from, t.to])];
+  // The ICRP's figure of the model; else of a model like it, where its arrows cross no more boxes than in one made for it.
+  const figure = figureFor(model) || (comps.length
+    ? chooseFigure({ compartments: comps, transfers: links.map(([from, to]) => ({ from, to })), links }, similarFigures(model)) : null);
+  const routeName = r.spec.route, entries = model.entries || [];
+  if (model.compartments.length) text.push(h('p', {}, `${entrySentences(entries, routeName)}${layoutSentence(model, figure)}Hover over an arrow for its transfer coefficient at ${AGE_LABEL[chosen] === 'Adult' ? 'adult age' : `the age of ${AGE_LABEL[chosen]}`}.`));
   if (model.onward?.length) text.push(h('p', {}, 'Dashed arrows: what the alimentary tract and urinary bladder models, which the calculation adds around every systemic model, do with the activity that reaches the gut or the bladder — swallowed, cleared from the airways or sent there by this model: down the tract to faeces, back to blood by absorption, out in urine.'));
   $('dcModelText').replaceChildren(...text);
   const diagram = $('dcDiagram'), body = $('dcBody');
   if (model.compartments.length) {
-    // The systemic model, and after it the alimentary tract and the bladder (dashed).
-    const onward = model.onward || [];
-    const transfers = [
-      ...model.transfers.map(([a, b, rates]) => ({ from: a, to: b, rate: rateAt(model.ages, rates, age) })),
-      ...onward.map((t) => ({ from: t.from, to: t.to, rate: rateAt(model.ages, t.rates, age), model: t.model })),
-    ].filter((t) => t.rate > 0);
-    const known = new Set(model.compartments.map((c) => c.name));
-    const added = [];
-    const add = (name, region) => { if (!known.has(name) && laneOf(region, name) !== 'sink') { known.add(name); added.push({ name, region }); } };
-    for (const t of onward) { add(t.from, t.fromRegion); add(t.to, t.toRegion); }
-    for (const c of model.tract || []) add(c.name, c.region);
-    const comps = [...model.compartments, ...added].filter((c) => laneOf(c.region, c.name) !== 'sink' || transfers.some((t) => t.to === c.name));
     // The part of the body each compartment stands for, numbered from head to feet.
     const partsBy = new Map(comps.map((c) => [c.name, partsOf(c.region)]));
     const usedIds = new Set([...partsBy.values()].flat());
@@ -1408,7 +1421,7 @@ function renderModel() {
     const labelOf = (id) => PARTS.find((p) => p.id === id).label + (namesOf(id).length ? `: ${namesOf(id).join(', ')}` : '');
     diagram.replaceChildren(drawModel({
       compartments: comps.map((c) => ({ ...c, parts: partsBy.get(c.name), badge: partsBy.get(c.name).map((id) => used.get(id)).join(',') || null })),
-      transfers, entries: entriesDrawn(entries, routeName), figure,
+      transfers, entries: entriesDrawn(entries, routeName), figure, links,
     }));
     diagram.hidden = false;
     body.replaceChildren(
@@ -2699,7 +2712,7 @@ const TOPICS = {
       ] },
       { heading: 'Not in the drawing', text: 'The respiratory tract (by region: ET, BB, bb, AI and the lymph nodes), the mouth and the oesophagus, and the compartments a progeny is given where it is formed in a part of another member’s model that its own model lacks, are listed under the slider with their shares; with the whole chain, each nuclide’s other places together. With the boxes they make up the whole body.' },
       { heading: 'Pointing', text: 'Pointing at an arrow lights its row of the transfer table and the boxes at its ends, and the other way round; pointing at a box lights the transfers into it (blue) and out of it (red); pointing at a box or an organ lights the others that stand for it.' },
-      { heading: 'Layout', text: 'Where the ICRP has a figure of the model (Publication 158, the drafts of Parts 2 and 3), the boxes stand as in it, a progeny with the figure of its own element; what the figure does not show — the parts of the alimentary tract it leaves out, compartments a progeny is given where it is formed — is beside it and below. Other models are drawn in columns: tissues, blood, bone, with the gut and the bladder along the bottom.' },
+      { heading: 'Layout', text: 'Where the ICRP has a figure of the model (Publication 158, the drafts of Parts 2 and 3), the boxes stand as in it; a model without one takes the figure of a model with nearly the same compartments, where its arrows cross no more boxes than in a layout made for it. What the figure does not show — the parts of the alimentary tract it leaves out, compartments a progeny is given where it is formed — is beside it and below. Any other model, among them those of the ICRP 60 system, is laid out as the ICRP’s figures are: the blood down the middle, soft tissue at the top, bone on the left, the liver and the gut on the right, each other organ on the side where the arrows cross the fewest other boxes; or, where the tissues empty into the excreta rather than back into the blood, the blood on the left, the tissues beside it and the bladder and the gut on the right.' },
       { heading: 'Arrows in', text: 'An arrow from a name outside the boxes brings activity into the drawing, as this calculation has it: the intake where it starts (Inhaled: radon gas into RT-air; Ingested: into the stomach contents; Injected: into blood), and, from the respiratory tract, which the drawing leaves out, what the airways absorb to blood (polonium: Plasma 2) or clear to the gut. What the gut absorbs comes in by the arrow from its contents (polonium: SI contents to Plasma 1; radon: SI contents to Liver). Pointing at an arrow or a box says which.' },
     ],
     more: { label: 'Progeny', id: 'help-progeny' },

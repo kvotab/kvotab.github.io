@@ -8,7 +8,8 @@
   element and a few long chains, each route, in both systems, and keys the
   boxes as ui.js does (nodePlaces) from what renderModel draws. First it
   checks how activity comes into the parent's drawing (its arrows in from
-  outside) for intakes whose way in the publications state.
+  outside) for intakes whose way in the publications state; and every
+  drawing for boxes on one another and arrows across a box.
 
     node resources/tests/dose_coefficients/test-buckets.mjs [--system 60|103] [--quick]
 
@@ -45,7 +46,8 @@ globalThis.self = {
 };
 await import(pathToFileURL(path.join(JS, 'worker.js')).href);
 const ask = (msg) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); self.onmessage({ data: { id, ...msg } }); });
-const { laneOf } = await import(pathToFileURL(path.join(JS, 'diagram.js')).href);
+const { laneOf, layoutModel, chooseFigure } = await import(pathToFileURL(path.join(JS, 'diagram.js')).href);
+const { figureFor, similarFigures } = await import(pathToFileURL(path.join(JS, 'figures.js')).href);
 const { key } = await import(pathToFileURL(path.join(JS, 'regions.js')).href);
 
 let checks = 0;
@@ -78,6 +80,33 @@ function drawnPlaces(model) {
   }
   return keys;
 }
+/* As ui.js renderModel: the boxes and arrows of a model's drawing (adult
+   rates), laid out by its figure, a figure like it or one made for it. */
+function drawnLayout(model) {
+  const onward = model.onward || [];
+  const last = (r) => r[r.length - 1];
+  const transfers = [...model.transfers.map(([a, b, r]) => ({ from: a, to: b, rate: last(r) })),
+    ...onward.map((t) => ({ from: t.from, to: t.to, rate: last(t.rates) }))].filter((t) => t.rate > 0);
+  const known = new Set(model.compartments.map((c) => c.name)), added = [];
+  const add = (name, region) => { if (!known.has(name) && laneOf(region, name) !== 'sink') { known.add(name); added.push({ name, region }); } };
+  for (const t of onward) { add(t.from, t.fromRegion); add(t.to, t.toRegion); }
+  for (const c of model.tract || []) add(c.name, c.region);
+  const comps = [...model.compartments, ...added].filter((c) => laneOf(c.region, c.name) !== 'sink' || transfers.some((t) => t.to === c.name));
+  const links = [...model.transfers.map(([a, b]) => [a, b]), ...onward.map((t) => [t.from, t.to])];
+  const figure = figureFor(model) || chooseFigure({ compartments: comps, transfers: links.map(([from, to]) => ({ from, to })), links }, similarFigures(model));
+  return layoutModel({ compartments: comps, transfers, entries: [], figure, links });
+}
+/* Boxes of a drawing that overlap (a box drawn inside another does not), and arrows that cross a box. */
+function layoutFaults(L) {
+  const inside = (o, n) => n.x >= o.x - 0.5 && n.x + n.w <= o.x + o.w + 0.5 && n.y >= o.y - 0.5 && n.y + n.h <= o.y + o.h + 0.5;
+  const out = [];
+  L.nodes.forEach((a, i) => L.nodes.slice(i + 1).forEach((b) => {
+    if (!inside(a, b) && !inside(b, a) && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) out.push(`${a.name} on ${b.name}`);
+  }));
+  for (const r of L.routes) if (!r.clear) out.push(`${r.from}→${r.to} crosses a box`);
+  return out;
+}
+
 // Listed beside the boxes, not drawn.
 const LISTED = (k) => k.startsWith('l:') || k.startsWith('s:') || /^r:(o-cavity|oesophag-[fs])$/.test(k);
 const FLOOR = 1e-10; // ui.js BUCKET_FLOOR
@@ -150,7 +179,8 @@ const ENTRIES = [
   check(`the figures place every compartment of the ${seen.size} models they draw (of ${all.length}), with names their models have`, off.length === 0, off.slice(0, 6).join('; '));
 }
 
-let cases = 0, members = 0, worst = { share: 0 }, sumOff = 0, doseOff = 0, doseWorst = 0;
+let cases = 0, members = 0, worst = { share: 0 }, sumOff = 0, doseOff = 0, doseWorst = 0, arrows = 0;
+const faults = [];
 const missed = [], errors = [];
 for (const system of ['103', '60']) {
   if (SYSTEM && SYSTEM !== system) continue;
@@ -180,6 +210,10 @@ for (const system of ['103', '60']) {
       o.models.forEach((model, m) => {
         if (!model.compartments.length) return;
         members++;
+        // The drawing: no box on another, no arrow across a box.
+        const L = drawnLayout(model);
+        arrows += L.routes.length;
+        for (const f of layoutFaults(L)) faults.push(`${system} ${e.name} ${route} ${model.member}: ${f}`);
         const keys = drawnPlaces(model);
         const P = ser.places[m] || {};
         ser.times.forEach((t, k) => {
@@ -211,6 +245,7 @@ for (const system of ['103', '60']) {
 check(`${cases} calculations run without an error`, errors.length === 0, errors.slice(0, 5).join('; '));
 check(`the places of each member add up to its whole-body activity (largest difference ${sumOff.toExponential(1)} of it)`, sumOff < 1e-9);
 check(`the dose by place, every member, adds up to e(t) at every output time and to the coefficient at the end (largest difference ${doseOff.toExponential(1)} of it)`, doseOff < 1e-9);
+check(`the ${members} drawings have no box on another and none of their ${arrows} arrows crosses a box`, faults.length === 0, faults.slice(0, 6).join('; '));
 check(`in ${members} member models, no activity above ${FLOOR} Bq per Bq, and no dose from a member, is in a place neither drawn nor listed (largest shares ${worst.share.toExponential(1)}, ${doseWorst.toExponential(1)})`,
   missed.length === 0, missed.slice(0, 5).join('; '));
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);
