@@ -260,6 +260,7 @@ function progenyShare(data, S) {
 
 /* ---- the models, for the Model tab ---------------------------------------- */
 function models103(data, S) {
+  const reached = new Set(reachable(S));
   return S.members.map((m, j) => {
     let k = j;
     while (S.members[k].kind === 'mirror') k = S.members[k].of;
@@ -281,12 +282,62 @@ function models103(data, S) {
   }).map((v, j) => {
     if (!v.compartments.length) return v;
     const { rows, boxes } = onwardOf('103', S, memberOf103(S, j), v);
-    return { ...v, onward: rows, tract: boxes };
+    return { ...v, onward: rows, tract: boxes, entries: entriesOf('103', S, j, v, reached, { rows, boxes }) };
   });
 }
 const memberOf103 = (S, j) => { let k = j; while (S.members[k].kind === 'mirror') k = S.members[k].of; return k; };
 
+/* How activity comes into member j's drawing, as the calculation has it.
+   The drawing has the model's compartments and the contents of the gut and
+   the bladder that its activity reaches, one box a region; it leaves out the
+   airways, and the mouth and the oesophagus unless something drawn feeds
+   them. From outside it come the intake, straight into a box ('intake': an
+   injection, radon gas into RT-air) or past the mouth and the oesophagus
+   into the gut ('ingested'), and from the airways what they absorb to blood
+   ('airways': polonium into Plasma 2) or clear to the gut ('cleared').
+   Absorption from the gut's contents, an arrow of the drawing, is told too
+   ('gut': polonium into Plasma 1, radon into the liver). Read from the
+   assembled system, so that the drawing shows what the calculation does; a
+   mirror's in the boxes of the model it shares. reached: the compartments
+   the intake can reach; drawn: onwardOf's rows and boxes. */
+const ENTRY_ORDER = ['intake', 'ingested', 'airways', 'cleared', 'swallowed', 'gut'];
+function entriesOf(sys, S, j, model, reached, drawn) {
+  const content = sys === '103' ? (r) => GI_103.has(r) || r === 'UB-cont' : (r) => TRACT_60.has(r);
+  const airways = sys === '103' ? (c) => c.kind === 'rt' : (c) => LUNG_REGIONS.has(c.region);
+  const named = new Set(model.compartments.filter((c) => !content(c.region)).map((c) => c.name));
+  const boxes = new Map(); // a region of contents -> its box (ui.js and drawModel make one of a region, the first named)
+  const all = [...model.compartments, ...drawn.rows.flatMap((r) => [{ name: r.from, region: r.fromRegion }, { name: r.to, region: r.toRegion }]), ...drawn.boxes];
+  for (const c of all) if (content(c.region) && !boxes.has(c.region)) boxes.set(c.region, c.name);
+  const base = (c) => { while (c.kind === 'mirror') c = S.comps[c.of]; return c; };
+  const boxOf = (c) => {
+    if (c.member !== j) return null;
+    if (content(c.region)) return boxes.get(c.region) ?? null;
+    if (sys === '103' && base(c).kind !== 'sys') return null;
+    return named.has(c.name) ? c.name : null;
+  };
+  const marks = new Map();
+  const mark = (name, how) => {
+    if (!marks.has(name)) marks.set(name, new Set());
+    marks.get(name).add(how);
+  };
+  if (j === 0) for (const [c] of S.init) { const to = boxOf(S.comps[c]); if (to) mark(to, 'intake'); }
+  const route = S.spec.route;
+  for (const t of S.transfers) {
+    if (t.to < 0 || !reached.has(t.from)) continue;
+    const a = S.comps[t.from], b = S.comps[t.to];
+    const to = a.member === j ? boxOf(b) : null;
+    if (!to) continue;
+    const from = boxOf(a);
+    if (airways(a)) mark(to, content(b.region) ? 'cleared' : 'airways');
+    else if (!from && content(a.region) && j === 0) mark(to, route === 'ingestion' ? 'ingested' : route === 'inhalation' ? 'cleared' : 'swallowed');
+    else if (from && content(a.region) && !content(b.region)) mark(to, 'gut');
+  }
+  const at = (name) => { const i = model.compartments.findIndex((c) => c.name === name); return i < 0 ? model.compartments.length : i; };
+  return [...marks].sort(([a], [b]) => at(a) - at(b)).map(([name, how]) => ({ name, how: ENTRY_ORDER.filter((x) => how.has(x)) }));
+}
+
 function models60(data, S) {
+  const reached = new Set(reachable(S));
   return S.members.map((m, j) => {
     const def = data.models.systemic[m.bio];
     if (!def) return { member: m.name, label: m.bio, compartments: [], transfers: [], ages: [] };
@@ -299,7 +350,7 @@ function models60(data, S) {
       transfers: def.transfers, text: def.text || [],
     };
     const { rows, boxes } = onwardOf('60', S, j, v);
-    return { ...v, onward: rows, tract: boxes };
+    return { ...v, onward: rows, tract: boxes, entries: entriesOf('60', S, j, v, reached, { rows, boxes }) };
   });
 }
 

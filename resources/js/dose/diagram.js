@@ -6,11 +6,18 @@
   body along the bottom. Each arrow carries the transfer coefficient at the
   chosen age in its tooltip.
 
-    drawModel({ compartments: [{name, region, parts?, badge?}], transfers: [{from, to, rate, model?}], entry })
+    drawModel({ compartments: [{name, region, parts?, badge?}], transfers: [{from, to, rate, model?}],
+                entries: [{name, tip, arrows: [{label, tip}]}] })
       -> SVGSVGElement
 
   A transfer with a `model` ('alimentary' or 'bladder') belongs to the
   alimentary tract or bladder model around the systemic one, and is dashed.
+  `entries` are the boxes activity comes into from outside the drawing: tip
+  joins the box's tooltip, and each of arrows comes in from a name of where
+  the activity comes from (as the ICRP draws "Inhaled" and "Ingested"): from
+  above into a box of the columns, which goes first in its column, from
+  below into one of the bottom row. They light like transfers (data-t), in
+  a group of their own (.entry-g) that the transfer table has no row for.
 
   parts (ids of body.js) go on the box as data-part, and badge, the number
   of its part in the drawing of the body, in its corner. Each arrow is a
@@ -46,6 +53,8 @@ export function laneOf(region, name = '') {
 }
 
 const W = 156, H = 34, GAP = 12, COLGAP = 92;
+const BAND = 36;     // room above the columns for the names of arrows coming in
+const CHAR_W = 6.6;  // about the width of a character of those names (11px Verdana italic)
 
 export function fmtRate(r) {
   if (!(r > 0)) return '0';
@@ -61,7 +70,7 @@ function halfTime(r) {
 }
 
 /**
- * @param {object} m  {compartments: [{name, region, label?}], transfers: [{from, to, rate}], entry}
+ * @param {object} m  {compartments: [{name, region, label?}], transfers: [{from, to, rate}], entries: [{name, tip, arrows}]}
  */
 export function drawModel(m) {
   // Compartments of the same alimentary or bladder contents are one box
@@ -86,10 +95,25 @@ export function drawModel(m) {
   for (const t of m.transfers) if (!byName.has(t.to)) { const n = { name: t.to, region: t.to, lane: 'sink' }; nodes.push(n); byName.set(t.to, n); }
   const lanes = { tissue: [], blood: [], bone: [], content: [], sink: [] };
   for (const n of nodes) lanes[n.lane].push(n);
-  // Blood first in its column with the entry on top; bone surfaces before volumes.
-  lanes.blood.sort((a, b) => (b.name === m.entry) - (a.name === m.entry));
+  // The arrows in from outside the drawing, by the box they come into.
+  const tipOf = new Map((m.entries || []).map((e) => [e.name, e.tip]));
+  const comeIn = new Map();
+  for (const e of m.entries || []) {
+    const n = byName.get(e.name);
+    if (!n || n.lane === 'sink') continue;
+    for (const a of e.arrows || []) {
+      const list = comeIn.get(n) || [];
+      if (!list.some((x) => x.label === a.label)) list.push({ ...a, name: e.name });
+      comeIn.set(n, list);
+    }
+  }
+  // A box an arrow comes into first in its column, then blood that activity
+  // enters otherwise; bone surfaces before volumes.
+  const inFirst = (a, b) => comeIn.has(b) - comeIn.has(a);
+  lanes.tissue.sort(inFirst);
+  lanes.blood.sort((a, b) => inFirst(a, b) || tipOf.has(b.name) - tipOf.has(a.name));
   const boneOrder = (n) => (/-s$/.test(norm(n.region)) ? 0 : /-v$/.test(norm(n.region)) ? 1 : 2);
-  lanes.bone.sort((a, b) => boneOrder(a) - boneOrder(b));
+  lanes.bone.sort((a, b) => inFirst(a, b) || boneOrder(a) - boneOrder(b));
   const contentOrder = ['o-cavity', 'oesophag-f', 'oesophag-s', 'st-cont', 'si-cont', 'gb-cont', 'rc-cont', 'uli-cont', 'lc-cont', 'lli-cont', 'rs-cont', 'ub-cont'];
   lanes.content.sort((a, b) => contentOrder.indexOf(norm(a.region)) - contentOrder.indexOf(norm(b.region)));
 
@@ -102,7 +126,7 @@ export function drawModel(m) {
     : [...tissueCols, lanes.blood, ...boneCols]).filter((c) => c.length);
   const tallest = Math.max(1, ...columns.map((c) => c.length));
   const colHeight = tallest * (H + GAP);
-  const top = 26;
+  const top = 26 + ([...comeIn.keys()].some((n) => n.lane !== 'content') ? BAND : 0);
   let x = 16;
   const laneLabels = [];
   columns.forEach((col, k) => {
@@ -183,6 +207,43 @@ export function drawModel(m) {
       el('path', { d, class: `edge${out ? ' out' : ''}${tract}`, 'marker-end': `url(#${out ? 'dcArrowOut' : 'dcArrow'})` })));
   }
   svg.append(g);
+  // The arrows in from outside, each from the name of where its activity
+  // comes from. Into a box of the columns from the band above them: straight
+  // down into the first box of its column, else round the column's right
+  // side into the box's; names that share a column side by side, each once.
+  // Into a box of the bottom row from below it.
+  const ins = el('g');
+  const arrowIn = (a, d, text) => ins.append(el('g', { class: 'entry-g', 'data-t': transferKey(a.label, a.name), 'data-tip': a.tip },
+    el('path', { d, class: 'hit' }),
+    el('path', { d, class: 'edge entry', 'marker-end': 'url(#dcArrow)' }),
+    text));
+  const nameAt = (label, x, y) => el('text', { x, y, class: 'source' }, document.createTextNode(label));
+  for (const col of columns) {
+    const at = new Map(); // a name -> the x of its text
+    let lx = col[0].x + 4;
+    for (const n of col.filter((c) => comeIn.has(c))) {
+      const w = n.w || W;
+      for (const a of comeIn.get(n)) {
+        const first = !at.has(a.label);
+        if (first) { at.set(a.label, lx); lx += a.label.length * CHAR_W + 14; }
+        const sx = at.get(a.label) + 8, sy = top - BAND + 17;
+        const d = n === col[0] && sx < n.x + w - 8
+          ? `M${sx},${sy} L${sx},${n.y}`
+          : `M${sx},${sy} C${n.x + w + 26},${sy} ${n.x + w + 26},${n.y + H / 2} ${n.x + w},${n.y + H / 2}`;
+        arrowIn(a, d, first ? nameAt(a.label, at.get(a.label), top - BAND + 12) : null);
+      }
+    }
+  }
+  for (const n of bottom.filter((c) => comeIn.has(c))) {
+    let lx = n.x + 4;
+    for (const a of comeIn.get(n)) {
+      const sx = lx + 8, ly = n.y + H + 28;
+      arrowIn(a, `M${sx},${ly - 11} L${sx},${n.y + H}`, nameAt(a.label, lx, ly));
+      lx += a.label.length * CHAR_W + 14;
+      height = Math.max(height, ly + 8);
+    }
+  }
+  svg.append(ins);
   // How many drawn transfers come into each box and go out of it, for its tooltip.
   const flows = new Map(nodes.map((n) => [n, [0, 0]]));
   for (const t of m.transfers) {
@@ -201,9 +262,10 @@ export function drawModel(m) {
     const names = [...byName].filter(([, x]) => x === n).map(([k]) => k);
     const [nin, nout] = flows.get(n);
     const counts = nin || nout ? `. ${nin} ${nin === 1 ? 'transfer' : 'transfers'} in (blue), ${nout} out (red)` : '';
+    const entry = names.filter((k) => tipOf.has(k)).map((k) => tipOf.get(k)).join('; ');
     const grp = el('g', { class: `node ${n.lane}`, transform: `translate(${n.x},${n.y})`, 'data-part': n.parts?.length ? n.parts.join(' ') : null, 'data-names': names.join('|'),
       'data-region': n.region || null,
-      'data-tip': `${label}${n.region && n.region !== label ? ` — source region ${n.region}` : ''}${n.name === m.entry ? ' — where absorbed activity enters' : ''}${counts}` },
+      'data-tip': `${label}${n.region && n.region !== label ? ` — source region ${n.region}` : ''}${entry ? ` — ${entry}` : ''}${counts}` },
       el('rect', { width: w, height: H, rx: 6 }));
     if (n.lane !== 'sink') {
       // The bucket's level, empty until fillBoxes() fills it, inside the box's rounded corners.
@@ -213,7 +275,6 @@ export function drawModel(m) {
     grp.append(el('text', { x: 8, y: n.lane === 'sink' ? 21 : 15 }, document.createTextNode(short)));
     if (n.lane !== 'sink' && n.region && n.region !== label) grp.append(el('text', { x: 8, y: 28, class: 'region rcode' }, document.createTextNode(n.region)));
     if (n.lane !== 'sink') grp.append(el('text', { x: 8, y: 28, class: 'share' }));
-    if (n.name === m.entry) grp.append(el('text', { x: w - 10, y: 15, 'text-anchor': 'end', class: 'region' }, document.createTextNode('in')));
     if (n.badge) {
       const b = el('g', { class: 'badge', transform: `translate(${w - 11 - (String(n.badge).length - 1) * 2.5},${H - 10})` });
       b.append(badge(n.badge));

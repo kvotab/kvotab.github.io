@@ -6,7 +6,9 @@
   model that its own lacks); and the dose by place must add up to e(t).
   This runs the page's worker (worker.js) in Node over one nuclide of every
   element and a few long chains, each route, in both systems, and keys the
-  boxes as ui.js does (nodePlaces) from what renderModel draws.
+  boxes as ui.js does (nodePlaces) from what renderModel draws. First it
+  checks how activity comes into the parent's drawing (its arrows in from
+  outside) for intakes whose way in the publications state.
 
     node resources/tests/dose_coefficients/test-buckets.mjs [--system 60|103] [--quick]
 
@@ -81,6 +83,46 @@ const LISTED = (k) => k.startsWith('l:') || k.startsWith('s:') || /^r:(o-cavity|
 const FLOOR = 1e-10; // ui.js BUCKET_FLOOR
 const QUICK_CASES = new Set(['103 Cs-137 ingestion', '103 Pu-239 inhalation', '103 Ra-226 ingestion', '103 U-238 injection', '103 Fe-52 injection',
   '103 Rn-222 inhalation', '103 H-3 ingestion', '60 Cs-137 ingestion', '60 Sr-90 inhalation', '60 Th-232 ingestion', '60 Ac-224 ingestion', '60 Am-241 ingestion']);
+
+/* How activity comes into the parent's drawing, which draws an arrow in from
+   outside for each way but absorption from the gut's (drawn) contents: read
+   from the calculation, and known for these. Publication 158 Fig. 32.1 and
+   para C.18: inhaled radon gas enters RT-air; ingested radon reaches the
+   stomach contents and is absorbed to the liver. Para 503: polonium absorbed
+   from the airways (or injected) enters Plasma 2, from the gut Plasma 1. The
+   Part 3 draft, paras 367-368: mercury vapour dissolved rapidly in the lungs
+   enters Plasma 0, the rest Plasma 1. OBT is absorbed half to Blood, half to
+   OBT-1. What the airways clear reaches the oesophagus (slow), which the
+   drawing then has. In the ICRP 60 system DCAL starts an ingestion in the
+   stomach contents, and tritiated water in blood. */
+const ENTRIES = [
+  ['103', 'Rn-222', 'inhalation', 'gas', 'RT-air: intake'],
+  ['103', 'Rn-222', 'ingestion', 'gas', 'Liver: gut; ST contents: ingested'],
+  ['103', 'Po-210', 'inhalation', 'F', 'Oesophagus (slow): cleared; Plasma 1: gut; Plasma 2: airways'],
+  ['103', 'Po-210', 'injection', 'blood', 'Plasma 1: gut; Plasma 2: intake'],
+  ['103', 'Po-210', 'ingestion', 'diet', 'Plasma 1: gut; Stomach contents: ingested'],
+  ['103', 'Hg-203', 'inhalation', 'vapour', 'Oesophagus (slow): cleared; Plasma 0: airways; Plasma 1: airways gut'],
+  ['103', 'H-3', 'ingestion', 'obt', 'Blood: gut; OBT-1: gut; Stomach contents: ingested'],
+  ['103', 'Cs-137', 'ingestion', 'soluble', 'Blood: gut; St contents: ingested'],
+  ['103', 'Cs-137', 'injection', 'blood', 'Blood: intake gut'],
+  ['60', 'Cs-137', 'ingestion', undefined, 'Blood: gut; ST_Cont: intake'],
+  ['60', 'Sr-90', 'inhalation', undefined, 'Blood: airways gut; St_Cont: cleared'],
+  ['60', 'H-3', 'ingestion', undefined, 'Blood: intake'],
+];
+{
+  const off = [];
+  let n = 0;
+  for (const [system, nuclide, route, form, want] of ENTRIES) {
+    if (SYSTEM && SYSTEM !== system) continue;
+    n++;
+    const spec = { nuclide, route, form, cutoff: 1e-4 };
+    if (route === 'inhalation') spec.amad = 1;
+    const d = await ask({ type: 'describe', system, spec, age: 7300 });
+    const got = d.models[0].entries.map((e) => `${e.name}: ${e.how.join(' ')}`).sort().join('; ');
+    if (got !== want) off.push(`${system} ${nuclide} ${route}: ${got || 'none'}, not ${want}`);
+  }
+  check(`activity comes into the parent's drawing as the publications say (${n} intakes)`, off.length === 0, off.join('; '));
+}
 
 let cases = 0, members = 0, worst = { share: 0 }, sumOff = 0, doseOff = 0, doseWorst = 0;
 const missed = [], errors = [];

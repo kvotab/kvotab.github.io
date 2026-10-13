@@ -1293,6 +1293,38 @@ function rateAt(ages, rates, age) {
   while (age > ages[i + 1]) i++;
   return rates[i] + (rates[i + 1] - rates[i]) * (age - ages[i]) / (ages[i + 1] - ages[i]);
 }
+/* How activity comes into the drawn model (worker.js entriesOf), in words:
+   the name of the arrow that brings it in from outside the drawing, as the
+   ICRP's figures name them (none for absorption from the gut's contents,
+   whose arrow the drawing has), the sentence above the drawing, the box's
+   tooltip and the arrow's. */
+const INTAKE_WORDS = { inhalation: ['Inhaled', 'The inhaled gas'], ingestion: ['Ingested', 'The ingested activity'], injection: ['Injected', 'The injected activity'] };
+const ENTRY_WAYS = ['intake', 'ingested', 'airways', 'cleared', 'swallowed', 'gut'];
+function entryWords(how, routeName) {
+  const [name, what] = INTAKE_WORDS[routeName] || ['Taken in', 'The intake'];
+  const mouth = ' through the mouth and the oesophagus';
+  return {
+    intake: { arrow: name, says: `${what} enters`, box: `where ${what.toLowerCase()} enters`, tip: 'the intake' },
+    ingested: { arrow: 'Ingested', says: 'The ingested activity reaches', via: mouth, box: `where the ingested activity arrives,${mouth}`, tip: `the intake,${mouth}` },
+    airways: { arrow: 'Respiratory tract', says: 'Activity absorbed from the airways enters', box: 'where activity absorbed from the airways enters', tip: 'activity absorbed from the airways' },
+    cleared: { arrow: 'Respiratory tract', says: 'Activity cleared from the airways reaches', box: 'where activity cleared from the airways arrives', tip: 'activity cleared from the airways and swallowed' },
+    swallowed: { arrow: 'Swallowed', says: 'Swallowed activity reaches', via: mouth, box: 'where swallowed activity arrives', tip: mouth.trim() },
+    gut: { arrow: null, says: 'Activity absorbed from the gut enters', box: 'where activity absorbed from the gut enters' },
+  }[how];
+}
+function entrySentences(entries, routeName) {
+  return ENTRY_WAYS.map((how) => {
+    const names = entries.filter((e) => e.how.includes(how)).map((e) => `“${e.name}”`);
+    if (!names.length) return '';
+    const w = entryWords(how, routeName);
+    return `${w.says} ${names.join(' and ')}${w.via || ''}. `;
+  }).join('');
+}
+/* For drawModel: each box's tooltip and its arrows in. */
+const entriesDrawn = (entries, routeName) => entries.map((e) => {
+  const ws = e.how.map((x) => entryWords(x, routeName));
+  return { name: e.name, tip: ws.map((w) => w.box).join('; '), arrows: ws.filter((w) => w.arrow).map((w) => ({ label: w.arrow, tip: `${w.arrow} → ${e.name}: ${w.tip}` })) };
+});
 function renderModel() {
   const r = shownSystem();
   $('dcModelEmpty').hidden = !!r;
@@ -1349,7 +1381,8 @@ function renderModel() {
     decay: 'It decays where it is formed (OIR series).',
   };
   if (kinds[model.kind]) text.push(h('p', {}, kinds[model.kind]));
-  if (model.entry) text.push(h('p', {}, `Activity absorbed to blood enters “${model.entry}”. Hover over an arrow for its transfer coefficient at ${AGE_LABEL[chosen] === 'Adult' ? 'adult age' : `the age of ${AGE_LABEL[chosen]}`}.`));
+  const routeName = r.spec.route, entries = model.entries || [];
+  if (model.compartments.length) text.push(h('p', {}, `${entrySentences(entries, routeName)}Hover over an arrow for its transfer coefficient at ${AGE_LABEL[chosen] === 'Adult' ? 'adult age' : `the age of ${AGE_LABEL[chosen]}`}.`));
   if (model.onward?.length) text.push(h('p', {}, 'Dashed arrows: what the alimentary tract and urinary bladder models, which the calculation adds around every systemic model, do with the activity that reaches the gut or the bladder — swallowed, cleared from the airways or sent there by this model: down the tract to faeces, back to blood by absorption, out in urine.'));
   $('dcModelText').replaceChildren(...text);
   const diagram = $('dcDiagram'), body = $('dcBody');
@@ -1374,7 +1407,7 @@ function renderModel() {
     const labelOf = (id) => PARTS.find((p) => p.id === id).label + (namesOf(id).length ? `: ${namesOf(id).join(', ')}` : '');
     diagram.replaceChildren(drawModel({
       compartments: comps.map((c) => ({ ...c, parts: partsBy.get(c.name), badge: partsBy.get(c.name).map((id) => used.get(id)).join(',') || null })),
-      transfers, entry: model.entry,
+      transfers, entries: entriesDrawn(entries, routeName),
     }));
     diagram.hidden = false;
     body.replaceChildren(
@@ -2665,6 +2698,7 @@ const TOPICS = {
       ] },
       { heading: 'Not in the drawing', text: 'The respiratory tract (by region: ET, BB, bb, AI and the lymph nodes), the mouth and the oesophagus, and the compartments a progeny is given where it is formed in a part of another member’s model that its own model lacks, are listed under the slider with their shares; with the whole chain, each nuclide’s other places together. With the boxes they make up the whole body.' },
       { heading: 'Pointing', text: 'Pointing at an arrow lights its row of the transfer table and the boxes at its ends, and the other way round; pointing at a box lights the transfers into it (blue) and out of it (red); pointing at a box or an organ lights the others that stand for it.' },
+      { heading: 'Arrows in', text: 'An arrow from a name outside the boxes brings activity into the drawing, as this calculation has it: the intake where it starts (Inhaled: radon gas into RT-air; Ingested: into the stomach contents; Injected: into blood), and, from the respiratory tract, which the drawing leaves out, what the airways absorb to blood (polonium: Plasma 2) or clear to the gut. What the gut absorbs comes in by the arrow from its contents (polonium: SI contents to Plasma 1; radon: SI contents to Liver). Pointing at an arrow or a box says which.' },
     ],
     more: { label: 'Progeny', id: 'help-progeny' },
   }),

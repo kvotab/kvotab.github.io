@@ -338,10 +338,12 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 .dc-diagram .edge.tract { stroke-dasharray: 5 3; }
 .dc-table tr.tract td { color: var(--text-secondary); }
 .dc-diagram .hit { fill: none; stroke: transparent; stroke-width: 9; pointer-events: stroke; }
-.dc-diagram .edge-g:hover .edge { stroke-width: 2.2; opacity: 1; }
+.dc-diagram :is(.edge-g, .entry-g):hover .edge { stroke-width: 2.2; opacity: 1; }
+/* Arrows into the drawing from outside it, from the name of where the activity comes from. */
+.dc-diagram .source { fill: var(--text-muted); font: italic 11px verdana, sans-serif; }
 /* An arrow and its row of the transfer table, lit together; the boxes at its ends outlined. */
-.dc-tlit .dc-diagram .edge-g:not(.tlit) { opacity: 0.2; }
-.dc-diagram .edge-g.tlit .edge { stroke: var(--color-kvot-accent); stroke-width: 2.6; opacity: 1; marker-end: url(#dcArrowLit); }
+.dc-tlit .dc-diagram :is(.edge-g, .entry-g):not(.tlit) { opacity: 0.2; }
+.dc-diagram :is(.edge-g, .entry-g).tlit .edge { stroke: var(--color-kvot-accent); stroke-width: 2.6; opacity: 1; marker-end: url(#dcArrowLit); }
 .dc-diagram .arrow.lit { fill: var(--color-kvot-accent); }
 .dc-diagram .node.tend rect { stroke: var(--color-kvot-accent); stroke-width: 2; }
 /* Pointing at a box: the transfers into it in blue, out of it in the accent,
@@ -352,10 +354,10 @@ body.dc-dropping .dc { outline: 2px dashed var(--color-kvot-accent); outline-off
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dc { --dc-in: #6fb3ea; } }
 :root[data-theme="dark"] .dc { --dc-in: #6fb3ea; }
 .dc-diagram .arrow.in { fill: var(--dc-in); }
-.dc-nlit .dc-diagram .edge-g:not(.tin):not(.tout) { opacity: 0.12; }
+.dc-nlit .dc-diagram :is(.edge-g, .entry-g):not(.tin):not(.tout) { opacity: 0.12; }
 .dc-nlit .dc-diagram .node:not(.nsel):not(.nend):not(.lit):not(.sink) { opacity: 0.4; }
 .dc-nlit .dc-model-figs.dc-lit .dc-diagram .node:is(.nsel, .nend):not(.sink) { opacity: 1; }
-.dc-diagram .edge-g.tin .edge, .dc-model-figs.dc-lit .dc-diagram .edge-g.tin .edge { stroke: var(--dc-in); stroke-width: 2.4; opacity: 1; marker-end: url(#dcArrowIn); }
+.dc-diagram :is(.edge-g, .entry-g).tin .edge, .dc-model-figs.dc-lit .dc-diagram :is(.edge-g, .entry-g).tin .edge { stroke: var(--dc-in); stroke-width: 2.4; opacity: 1; marker-end: url(#dcArrowIn); }
 .dc-diagram .edge-g.tout .edge, .dc-model-figs.dc-lit .dc-diagram .edge-g.tout .edge { stroke: var(--color-kvot-accent); stroke-width: 2.4; opacity: 1; marker-end: url(#dcArrowLit); }
 .dc-nlit .dc-diagram .node.nsel rect, .dc-nlit .dc-model-figs.dc-lit .dc-diagram .node.nsel.lit rect { stroke: var(--text-primary); stroke-width: 2.4; }
 .dc-table tbody tr.tin { background: color-mix(in srgb, var(--dc-in) 20%, transparent); }
