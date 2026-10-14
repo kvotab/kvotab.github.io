@@ -413,7 +413,10 @@ test('a response that misses its mass balance is said: by the response, the path
 	// The run's warnings, this path's and those about a path's layers alike.
 	assert(/state\.runWarnings = \[\s*\.\.\.\(Array\.isArray\(payload\.stats\?\.farfield\)/.test(app)
 		&& /\.\.\.\(Array\.isArray\(payload\.stats\?\.layers\)/.test(app), 'the app does not take the run\'s warnings');
-	assert(/for \(const w of state\.runWarnings\)/.test(app), 'the block is not marked');
+	// Marked, unless the run would now leave the block out.
+	assert(/for \(const w of runWarningsShown\(\)\)/.test(app)
+		&& /function runWarningsShown\(\) \{\n\treturn state\.runWarnings\.filter\(\(w\) => !state\.leftOut\.has\(w\.block\)\);/.test(app),
+		'the block is not marked');
 });
 
 slow('a longer seeded sweep: sixteen more made-up paths', () => seededSweep(16, 7));

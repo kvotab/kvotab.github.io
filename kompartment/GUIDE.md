@@ -1884,11 +1884,17 @@ shown*. They are still in the block tree and on the diagram, greyed, which is
 where switching one back on is one click away. A block inside a switched-off
 sub-system is left out for the same reason.
 
-The rule is said by name wherever it bites. A disabled block's own equations
-are not checked — being broken is very often why it was switched off — but an
-enabled block that reads one is told *`Gas_flow` is disabled, so it has no value
-here. Enable it, or disable this block as well*, in the problem strip, under the
-box as you type, and from the build. Nothing is worked out for a disabled block
+**Nothing is said about a block the run leaves out** — switched off itself, off
+with the sub-system it is in, or a transfer or source term gone with the
+compartment it drains or feeds. Being broken is very often why it was switched
+off, so its equations are not checked and its units are not compared: it adds
+nothing to the problem strip or to the warnings, carries no mark on the diagram,
+in the tree or on a sub-system above it, and its settings show no red or amber
+box, while the Information view and its **Enabled** row say it is not being
+checked. The rule is said by name wherever it bites: an enabled block that reads
+one is told *`Gas_flow` is disabled, so it has no value here. Enable it, or
+disable this block as well*, in the problem strip, under the box as you type,
+and from the build. Nothing is worked out for a disabled block
 at the start of the run, so its lines there go quiet; and it is still a name —
 deleting a block it reads is refused the way it would be for any other reader,
 since switching it back on would break it.

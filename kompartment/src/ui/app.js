@@ -609,6 +609,11 @@ const state = {
 	// Equation problems are re-scanned on every edit; a failed run's error
 	// stays until the next run is attempted.
 	problems: [],
+	// The blocks the run leaves out -- switched off, off with a sub-system,
+	// or a connection gone with a compartment that is off -- from the same
+	// scan. Nothing is said about one of them: not in the strip, not as a
+	// mark, not in its settings. See `ed.leftOutOfRun`.
+	leftOut: new Set(),
 	// The unit mismatches, from the same scan. Kept because two things read
 	// them -- the warnings and the rail's information card -- and walking
 	// every equation in the model twice for one answer was most of an edit.
@@ -3762,7 +3767,7 @@ function marksByName() {
 	for (const w of state.warnings) {
 		entries.push({ where: w.name, level: 'warning', message: w.message });
 	}
-	for (const w of state.runWarnings) {
+	for (const w of runWarningsShown()) {
 		entries.push({ where: w.block, level: 'warning', message: `After the last run: ${w.message}` });
 	}
 	for (const w of startWarningsShown()) {
@@ -3774,7 +3779,7 @@ function marksByName() {
 	// would not compile looked like every other block on the diagram, in the
 	// tree and in its own settings, however long the strip said otherwise.
 	for (const p of [state.runProblem, state.buildProblem]) {
-		if (p?.where) entries.push({ where: p.where, level: 'error', message: `${p.what}: ${p.message}` });
+		if (p?.where && !state.leftOut.has(p.where)) entries.push({ where: p.where, level: 'error', message: `${p.what}: ${p.message}` });
 	}
 	// Carried up to every sub-system on the way down to the block, so a
 	// fault in `foo.bar.Expr` is a mark on `foo` at the top level, on
@@ -3807,6 +3812,7 @@ function marksByName() {
  * those still want the rail brought up to date.
  */
 function rescanProblems({ rail = true } = {}) {
+	state.leftOut = ed.leftOutOfRun(state.raw);
 	const found = ed.allEquationProblems(state.raw).map((p) => ({
 		kind: 'equation',
 		where: p.name,
@@ -3829,6 +3835,7 @@ function rescanProblems({ rail = true } = {}) {
 	// An availability that cannot be worked out is a flux that cannot be
 	// worked out. Errors rather than warnings, for that reason.
 	for (const p of availabilityProblems(state.raw)) {
+		if (state.leftOut.has(p.name)) continue;
 		found.push({ kind: 'availability', where: p.name, what: p.field, message: p.message });
 	}
 	// A switch time that cannot be resolved costs accuracy at one corner and
@@ -3839,6 +3846,8 @@ function rescanProblems({ rail = true } = {}) {
 	// know before it starts. Named by the block where there is one, and by
 	// the sub-system otherwise.
 	for (const p of ed.transportProblems(state.raw)) {
+		// Nor about a chain the run leaves out, by its block or by its path.
+		if (p.name ? state.leftOut.has(p.name) : !ed.isSystemEnabled(state.raw, p.path)) continue;
 		found.push({
 			kind: 'transport',
 			where: p.name ?? p.path,
@@ -3967,7 +3976,7 @@ function remark() {
 /** Whether the build's fault is one the strip has not already got. */
 function buildProblemShown() {
 	const b = state.buildProblem;
-	if (!b) return false;
+	if (!b || state.leftOut.has(b.where)) return false;
 	return !state.problems.some((p) => p.message === b.message) && state.runProblem?.message !== b.message;
 }
 
@@ -4014,8 +4023,17 @@ function noteStartWarnings(list) {
 /** The start's warnings that the last run has not already said in the same words. */
 function startWarningsShown() {
 	return state.startWarnings.filter(
-		(w) => !state.runWarnings.some((r) => r.block === w.block && r.message === w.message),
+		(w) => !state.leftOut.has(w.block)
+			&& !state.runWarnings.some((r) => r.block === w.block && r.message === w.message),
 	);
+}
+
+/**
+ * The last run's warnings, but none about a block the run would now leave
+ * out: one switched off since is not owed a word about how it ran.
+ */
+function runWarningsShown() {
+	return state.runWarnings.filter((w) => !state.leftOut.has(w.block));
 }
 
 /**
@@ -4045,9 +4063,9 @@ function fillSettingsProblems() {
 			...state.problems,
 			...(state.runProblem ? [state.runProblem] : []),
 			...(buildProblemShown() ? [state.buildProblem] : []),
-			...state.runWarnings.map((w) => ({ where: w.block, what: 'After the last run', message: w.message })),
+			...runWarningsShown().map((w) => ({ where: w.block, what: 'After the last run', message: w.message })),
 			...startWarningsShown().map((w) => ({ where: w.block, what: 'At the start of a run', message: w.message })),
-		].filter((p) => p.where === name);
+		].filter((p) => p.where === name && !state.leftOut.has(name));
 		box.replaceChildren(...mine.map((p) => el('p', { className: 'settings-problem' },
 			el('b', {}, p.kind === 'run' ? 'The last run failed here. ' : p.kind === 'build' ? 'This will not build. ' : `${p.what}: `),
 			// The block's name is the dialog's title already.
@@ -4073,7 +4091,8 @@ function fillSettingsProblems() {
 function renderProblems() {
 	const box = $('#error');
 	if (!box) return;
-	const all = [...state.problems, ...(state.runProblem ? [state.runProblem] : []),
+	const all = [...state.problems,
+		...(state.runProblem && !state.leftOut.has(state.runProblem.where) ? [state.runProblem] : []),
 		...(buildProblemShown() ? [state.buildProblem] : [])];
 	// The warnings are marked on the diagram and in the tree -- amber, with a
 	// count carried up to every sub-system above them -- and until now that
@@ -4108,7 +4127,7 @@ function renderProblems() {
 			// has no name to link to and an editor instead; `goto` says which.
 			goto: w.goto ?? null,
 			warning: true,
-		})), ...state.runWarnings.map((w) => ({
+		})), ...runWarningsShown().map((w) => ({
 			where: w.block, what: 'last run', message: w.message, warning: true,
 		})), ...startWarningsShown().map((w) => ({
 			where: w.block, what: 'at the start of a run', message: w.message, warning: true,

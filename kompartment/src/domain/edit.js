@@ -2100,11 +2100,15 @@ export function allUnitProblems(project) {
 	// magnitude more of those.
 	const index = blockIndex(project);
 	const material = materialDimensionName(project);
+	// Not of a block the run leaves out: see `leftOutOfRun`.
+	const off = leftOutOfRun(project);
 	for (const collection of KINDS) {
 		const kind = SINGULAR[collection];
 		for (const b of project?.[collection] ?? []) {
 			// Named, since a list over the whole model is read by block.
-			for (const p of unitProblems(project, b, kind, { known, material, index })) out.push({ ...p, name: qualifiedName(b) });
+			const name = qualifiedName(b);
+			if (off.has(name)) continue;
+			for (const p of unitProblems(project, b, kind, { known, material, index })) out.push({ ...p, name });
 		}
 	}
 	return out;
@@ -2154,7 +2158,11 @@ export function modelWarnings(project, { unitProblems = null } = {}) {
 	for (const p of derivedProblems(project)) {
 		out.push({ name: p.name, field: p.field, message: p.message });
 	}
-	return out;
+	// None about a block the run leaves out, whatever said it: see
+	// `leftOutOfRun`. What belongs to no block -- a saved time outside the
+	// run -- stays.
+	const off = leftOutOfRun(project);
+	return out.filter((w) => w.name == null || !off.has(w.name));
 }
 
 /**
@@ -6891,14 +6899,17 @@ const SELF_READING_FIELDS = { compartment: ['dydt'] };
 export function allEquationProblems(project, { only = null } = {}) {
 	const check = equationChecker(project);
 	const out = [];
+	// A block the run leaves out may be broken: that is very often why it was
+	// switched off. It takes no part in the run, so what is in its boxes is
+	// nobody's problem until it is switched on again -- one off with the
+	// sub-system around it, or with the compartment it drains, as much as one
+	// off by its own switch. See `leftOutOfRun`.
+	const off = leftOutOfRun(project);
 	for (const collection of KINDS) {
 		for (const block of project[collection] ?? []) {
 			const name = qualifiedName(block);
 			if (only && name !== only) continue;
-			// A disabled block may be broken: that is very often why it was
-			// disabled. It takes no part in the run, so what is in its boxes
-			// is nobody's problem until it is switched on again.
-			if (!isEnabled(block)) continue;
+			if (off.has(name)) continue;
 			const kind = SINGULAR[collection];
 			// A transport's counter and its operations have no equation of
 			// their own: the run writes them. What is in the box is nobody's.
@@ -7763,6 +7774,26 @@ export function implicitlyDisabled(project) {
 		if (to != null && off.has(to)) {
 			out.set(qualifiedName(src), `it flows into '${to}', which is disabled, so there is nothing for it to feed`);
 		}
+	}
+	return out;
+}
+
+/**
+ * Every block the run leaves out, by qualified name.
+ *
+ * Switched off by its own switch, off with a sub-system around it, or a
+ * connection that goes with a compartment that is off (`implicitlyDisabled`):
+ * what `Project` sets aside before the model is built. Nothing about one of
+ * them can stop a run or move a number, so the problem scan and the warnings
+ * pass over them -- a block is very often switched off *because* it is
+ * broken, and a model with its broken block switched off is a model that runs.
+ * A transfer into a compartment that is off is not here: it still runs, into
+ * the boundary.
+ */
+export function leftOutOfRun(project) {
+	const out = disabledNames(project);
+	for (const key of implicitlyDisabled(project).keys()) {
+		if (!key.endsWith('#to')) out.add(key);
 	}
 	return out;
 }

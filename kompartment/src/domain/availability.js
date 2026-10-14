@@ -35,6 +35,8 @@
  * other.
  */
 
+import { qualifiedName } from './systems.js';
+
 /** The schemes, as a model spells them. */
 export const SCHEMES = ['limit', 'shared_limit', 'langmuir', 'shared_langmuir'];
 
@@ -280,6 +282,10 @@ export function tangentOf(scheme, amount, dAmount, operands, dOperands = {}) {
  * flux that cannot be worked out, and a model that ran anyway would be
  * reporting a number nobody could account for.
  *
+ * Named by qualified name, as every other finding is, so that the mark finds
+ * a transfer inside a sub-system and the scan can pass over one the run
+ * leaves out.
+ *
  * @returns {Array<{name: string, field: string, message: string}>}
  */
 export function availabilityProblems(project) {
@@ -289,7 +295,7 @@ export function availabilityProblems(project) {
 		if (!a) {
 			if (t.availability && t.availability.scheme) {
 				out.push({
-					name: t.name, field: 'availability',
+					name: qualifiedName(t), field: 'availability',
 					message: `'${t.availability.scheme}' is not an availability scheme `
 						+ `(${SCHEMES.join(', ')}).`,
 				});
@@ -298,7 +304,7 @@ export function availabilityProblems(project) {
 		}
 		if (!t.from) {
 			out.push({
-				name: t.name, field: 'availability',
+				name: qualifiedName(t), field: 'availability',
 				message: 'An availability scales what is in the donor compartment, and '
 					+ 'this transfer has none — it carries an absolute flux from outside '
 					+ 'the model.',
@@ -307,7 +313,7 @@ export function availabilityProblems(project) {
 		}
 		if (t.multiply_by_donor === false) {
 			out.push({
-				name: t.name, field: 'availability',
+				name: qualifiedName(t), field: 'availability',
 				message: 'This transfer is an absolute flux rather than a rate times the '
 					+ 'donor, so there is no inventory for an availability to be a '
 					+ 'fraction of.',
@@ -317,7 +323,7 @@ export function availabilityProblems(project) {
 		if (a.scheme === 'limit' || a.scheme === 'shared_limit') {
 			if (!String(a.limit ?? '').trim()) {
 				out.push({
-					name: t.name, field: 'availability',
+					name: qualifiedName(t), field: 'availability',
 					message: 'A solubility limit scheme needs a limit: how much may travel, '
 						+ 'as a number or an equation.',
 				});
@@ -326,7 +332,7 @@ export function availabilityProblems(project) {
 			for (const [key, what] of [['top', 'α, the top'], ['bottom', 'β, the bottom']]) {
 				if (!String(a[key] ?? '').trim()) {
 					out.push({
-						name: t.name, field: 'availability',
+						name: qualifiedName(t), field: 'availability',
 						message: `A Langmuir scheme needs ${what} of (amount + α) ÷ (amount + β).`,
 					});
 				}
@@ -334,7 +340,7 @@ export function availabilityProblems(project) {
 		}
 		if (isShared(a.scheme) && !String(a.over ?? '').trim()) {
 			out.push({
-				name: t.name, field: 'availability',
+				name: qualifiedName(t), field: 'availability',
 				message: 'A shared scheme needs the index list the amount is summed over — '
 					+ 'the isotopes of an element share an elemental solubility, so that '
 					+ 'is the radionuclide list.',
@@ -342,7 +348,7 @@ export function availabilityProblems(project) {
 		}
 		if (a.basis != null && !BASES.includes(a.basis)) {
 			out.push({
-				name: t.name, field: 'availability',
+				name: qualifiedName(t), field: 'availability',
 				message: `'${a.basis}' is not a basis for the shared amount (${BASES.join(', ')}).`,
 			});
 		}

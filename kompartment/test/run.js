@@ -25622,6 +25622,89 @@ test('an enabled block that reads a disabled one is told so by name', () => {
 	assert(!both.some((p) => p.name === 'Fine'), JSON.stringify(both));
 });
 
+test('nothing is said about a block the run leaves out, however it came to be left out', async () => {
+	// The user's rule: a disabled block with something wrong in it shows none
+	// of it -- not in the strip, not as a mark, not in its settings. Off by its
+	// own switch, off with a sub-system around it, or a connection gone with
+	// the compartment it drains or feeds: each is set aside before the model
+	// is built, so nothing about it can stop a run or move a number.
+	const raw = {
+		simulation: { start_time: 0, end_time: 10, output_points: 11, spacing: 'linear', solver: 'dp45', rtol: 1e-8, abstol: 1e-12, time_unit: 'year' },
+		compartments: [
+			{ name: 'A', initial: '1', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [], enabled: false },
+			{ name: 'C', system: 'NF', initial: '1', index_lists: [] },
+		],
+		parameters: [{ name: 'k', value: 0.1, index_lists: [] }, { name: 'm', value: 2, unit: 'kg', index_lists: [] }],
+		expressions: [
+			{ name: 'Broken', equation: 'Nothing_here * 2', index_lists: [], enabled: false },
+			{ name: 'Fine', equation: 'A * k', index_lists: [] },
+			{ name: 'Bad', system: 'NF', equation: 'nope +', index_lists: [] },
+			{ name: 'Wrong', system: 'NF', equation: 'm', unit: 'Bq', index_lists: [] },
+			{ name: 'Wrong2', equation: 'm', unit: 'Bq', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'AB', from: 'A', to: 'B', rate: 'k' },
+			{ name: 'BA', from: 'B', to: 'A', rate: '1 +', availability: { scheme: 'nope' } },
+		],
+		inflows: [{ name: 'In', to: 'B', rate: 'also +' }],
+		systems: ['NF'],
+		disabled_systems: ['NF'],
+	};
+	// What the run leaves out is what the model sets aside, name for name.
+	const off = ed.leftOutOfRun(raw);
+	const p = new Project(structuredClone(raw));
+	assert([...off].sort().join() === [...p.disabled].sort().join(), `${[...off]} against ${[...p.disabled]}`);
+	assert(['Broken', 'B', 'NF.C', 'NF.Bad', 'NF.Wrong', 'BA', 'In'].every((n) => off.has(n)), [...off].join());
+	// A transfer into a compartment that is off still runs, into the boundary.
+	assert(!off.has('AB') && !off.has('Fine') && !off.has('Wrong2'), [...off].join());
+
+	// No broken equation, unit or warning of theirs is reported...
+	assert(!ed.allEquationProblems(raw).length, JSON.stringify(ed.allEquationProblems(raw)));
+	assert(ed.allUnitProblems(raw).map((u) => u.name).join() === 'Wrong2', 'a unit is checked on a block that is off');
+	const warned = ed.modelWarnings(raw).map((w) => w.name);
+	assert(warned.includes('Wrong2') && warned.includes('AB') && !warned.some((n) => off.has(n)), warned.join());
+	// ...and the model runs.
+	const r = run(structuredClone(raw));
+	assert(r.t.length === 11, `${r.t.length} times`);
+	// An enabled block that reads one of them is still told, by name.
+	const reads = structuredClone(raw);
+	reads.expressions[1].equation = 'NF.C + 1';
+	const said = ed.allEquationProblems(reads);
+	assert(said.length === 1 && said[0].name === 'Fine' && /'NF\.C' is disabled/.test(said[0].message), JSON.stringify(said));
+	// The availability check names a transfer as everything else does, so the
+	// mark finds one in a sub-system and the scan can pass over one left out.
+	const A = await import('../src/domain/availability.js');
+	assert(A.availabilityProblems({ transfers: [{ name: 'T', system: 'NF', from: 'NF.C', to: null, availability: { scheme: 'nope' } }] })[0]?.name === 'NF.T',
+		'an availability problem is named by its local name');
+
+	// The editor: one set, from the same scan, and every list read through it.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
+	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	const scan = /function rescanProblems\(\{ rail = true \} = \{\}\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/^\n\tstate\.leftOut = ed\.leftOutOfRun\(state\.raw\);/.test(scan), 'the scan does not start from what is left out');
+	assert(/if \(state\.leftOut\.has\(p\.name\)\) continue;/.test(scan)
+		&& /if \(p\.name \? state\.leftOut\.has\(p\.name\) : !ed\.isSystemEnabled\(state\.raw, p\.path\)\) continue;/.test(scan),
+		'an availability or a transport left out is still reported');
+	// The last run's warnings, and what the start of one found, as shown.
+	assert(!/state\.runWarnings\.map\(/.test(app) && (app.match(/runWarningsShown\(\)/g) ?? []).length >= 3,
+		'a list reads the run’s warnings past the filter');
+	assert(/\(w\) => !state\.leftOut\.has\(w\.block\)\n\t\t\t&& !state\.runWarnings\.some/.test(app), 'start-of-run warnings are not filtered');
+	assert(/\]\.filter\(\(p\) => p\.where === name && !state\.leftOut\.has\(name\)\);/.test(app), 'the settings list a left-out block’s faults');
+	// The Information view and the settings dialog stop checking it, and say so.
+	assert(/const quiet = ed\.leftOutOfRun\(project\)\.has\(qname\);/.test(info)
+		&& /for \(const w of quiet \? \[\] : ed\.unitProblems\(project, block, kind\)\)/.test(info)
+		&& /const warning = quiet \? null : ed\.farfieldWarning\(project, block\);/.test(info), 'the Information view still warns');
+	assert(/and not checked '\n\t\t\t\+ 'while it is\. Nothing that is enabled may read it\.'/.test(info), 'the Information view does not say it is not checked');
+	assert(/const quiet = ed\.leftOutOfRun\(project\)\.has\(qualifiedName\(block\)\);\n\tconst unitProblems = quiet \? \[\] : /.test(insp)
+		&& /const error = quiet \? null : read\(get\(\)\);/.test(insp)
+		&& /const problem = quiet \? null : read\(v\);/.test(insp), 'the settings dialog still paints the boxes');
+	assert((insp.match(/const problem = quiet \? null : validateEquation\(/g) ?? []).length === 2, 'the per-index grid still checks');
+	assert(/Its equations are not checked while it is\./.test(insp), 'the dialog does not say why nothing is checked');
+});
+
 test('a disabled compartment takes its outflows with it, and its inflows leave the model', () => {
 	// Ecolego's rule: only the *source*
 	// is consulted. A transfer out of a disabled compartment has no inventory
@@ -40646,7 +40729,7 @@ test('the Information view lists what flows in and out of a compartment, and eve
 test('a fault found by building the model is marked on its block, and said in its settings', async () => {
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
-	assert(/for \(const p of \[state\.runProblem, state\.buildProblem\]\) \{\n\t\tif \(p\?\.where\) entries\.push/.test(app), 'a build fault marks no block');
+	assert(/for \(const p of \[state\.runProblem, state\.buildProblem\]\) \{\n\t\tif \(p\?\.where && !state\.leftOut\.has\(p\.where\)\) entries\.push/.test(app), 'a build fault marks no block');
 	// In the worker, and on the page where there is none.
 	assert(/startValues = \{ model, rev, id, answers: reply\.fault \? null : new Map\(\), at: null \};\n\tnoteBuildProblem\(reply\.fault \? Object\.assign\(new Error\(reply\.fault\.message\), reply\.fault\) : null\);/.test(app)
 		&& /startValues = \{ model, rev, id: 0, answers: null, at \};\n\tnoteBuildProblem\(fault\);/.test(app),

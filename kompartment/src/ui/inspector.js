@@ -211,7 +211,12 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	 * In the rail it is simply not built: `brief` is about what is on screen,
 	 * not about hiding things behind a disclosure that still takes up a line.
 	 */
-	const unitProblems = ed.unitProblems(project, block, kind);
+	// Left out of the run -- by its own switch, a sub-system's, or a
+	// compartment's -- nothing about the block is checked: no red box, no
+	// amber one, no word when something is typed. Its Enabled row says so.
+	// See `ed.leftOutOfRun`.
+	const quiet = ed.leftOutOfRun(project).has(qualifiedName(block));
+	const unitProblems = quiet ? [] : ed.unitProblems(project, block, kind);
 
 	const more = (node) => { if (!brief) host.append(node); };
 	/** The same, for a field whose per-index grid goes with it. */
@@ -562,9 +567,9 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		uncertain = false, placeholder = '',
 	} = {}) => {
 		const read = check ?? ((text) => validateEquation(project, text, qname, { self }));
-		const error = read(get());
+		const error = quiet ? null : read(get());
 		const input = textField(get(), (v) => {
-			const problem = read(v);
+			const problem = quiet ? null : read(v);
 			set(v);
 			hooks.onChange?.({ soft: !!problem });
 			if (problem) hooks.onStatus?.(`${block.name}: ${problem}`, 'warn');
@@ -838,13 +843,19 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// nothing on its own, and the hint has to say where the one that
 		// matters is.
 		const by = ed.disablingSystem(project, block);
+		// Off with the compartment it drains or feeds: its own switch is on,
+		// and the reason is the other block's.
+		const why = !by && ed.isEnabled(block) ? ed.implicitlyDisabled(project).get(qname) : null;
 		return checkField('Enabled',
 			() => ed.isEnabled(block),
 			(v) => ed.setBlockEnabled(project, qname, v),
 			by
 				? `${by}, the sub-system this block is in, is disabled, so the block is out `
-					+ 'of the run whatever this says. Enable the sub-system to bring it back.'
-				: ed.isEnabled(block)
+					+ 'of the run whatever this says, and its equations are not checked. '
+					+ 'Enable the sub-system to bring it back.'
+				: why
+					? `Left out of the run: ${why}. Its equations are not checked while it is.`
+					: ed.isEnabled(block)
 					? 'Untick to leave this block out of the run. It keeps its equations '
 						+ 'and values, and anything still enabled that reads it will say so.'
 					: 'Disabled: this block takes no part in the run, and nothing that is '
@@ -2174,9 +2185,10 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 			(v) => { block.handle_decay = v; },
 			FARF_HELP.handle_decay));
 
-		const problem = ed.structureProblem(block) ?? ed.geometryProblem(block) ?? ed.rockProblem(block);
+		const problem = quiet ? null
+			: ed.structureProblem(block) ?? ed.geometryProblem(block) ?? ed.rockProblem(block);
 		if (problem) host.append(el('p', { className: 'insp-error' }, `${problem}.`));
-		if (!problem) {
+		if (!problem && !quiet) {
 			// Two independent things can be worth saying: where the release
 			// goes, and whether the grid disperses more than the Peclet number
 			// asks for. Neither is an error -- the model runs, and gives the
@@ -2806,6 +2818,9 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	// The block's identity, not the name in the Name box: a block inside a
 	// sub-system is `NearField.Kd`, and asking for `Kd` finds nothing.
 	const qname = qualifiedName(block);
+	// Left out of the run, what is typed here is not checked: see
+	// `ed.leftOutOfRun`, and the same rule in the block's own form.
+	const quiet = ed.leftOutOfRun(project).has(qname);
 
 	/**
 	 * Whether the grid carries a column of what each index comes to at the
@@ -2851,7 +2866,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 			// Checked against the block's identity, not the name in its Name
 			// box: an override inside a sub-system reads that sub-system's
 			// names, and `block.name` would resolve it at the root.
-			const problem = validateEquation(project, raw, qname);
+			const problem = quiet ? null : validateEquation(project, raw, qname);
 			if (problem) hooks.onStatus?.(`${block.name}: ${problem}`, 'warn');
 		}
 		try {
@@ -3021,7 +3036,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 					if (!text) {
 						ed.clearEntryValue(project, qname, index, x.key);
 					} else {
-						const problem = validateEquation(project, text, qname, { self: true });
+						const problem = quiet ? null : validateEquation(project, text, qname, { self: true });
 						if (problem) hooks.onStatus?.(`${block.name}: ${problem}`, 'warn');
 						ed.setEntryValue(project, qname, index, x.key, text);
 					}

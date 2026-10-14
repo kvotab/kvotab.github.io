@@ -308,6 +308,10 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	const system = systemOf(block);
 	// This page's long lists, and how to draw it again when one is opened.
 	const more = { owner: `block:${qname}`, again };
+	// Left out of the run -- by its own switch, a sub-system's, or a
+	// compartment's -- nothing about it is checked, and this page says nothing
+	// is wrong with it rather than what would be: see `ed.leftOutOfRun`.
+	const quiet = ed.leftOutOfRun(project).has(qname);
 
 	/**
 	 * A block, as something you can click to go there.
@@ -380,8 +384,8 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// until one of the two changes.
 	if (!ed.isEnabled(block)) {
 		host.append(el('p', { className: 'info-note info-disabled' },
-			'Disabled — kept in the model and left out of the run. Nothing that '
-			+ 'is enabled may read it.'));
+			'Disabled — kept in the model and left out of the run, and not checked '
+			+ 'while it is. Nothing that is enabled may read it.'));
 	} else if (ed.disablingSystem(project, block)) {
 		// Off with the sub-system around it, not by its own switch: the switch
 		// to find is the sub-system's, so it is named and is a link.
@@ -391,7 +395,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		go.addEventListener('click', () => hooks.onSelect?.({ kind: 'system', name: by }));
 		host.append(el('p', { className: 'info-note info-disabled' },
 			'Disabled with ', go, ', the sub-system it is in — its own switch is on, '
-			+ 'and it comes back when that one does.'));
+			+ 'and it comes back when that one does. It is not checked while it is out.'));
 	} else {
 		// Switched off with its compartment, or aimed at one that is: the
 		// connection's own switch is on, so the diagram alone would not say.
@@ -400,7 +404,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		const toOff = implied.get(`${qname}#to`);
 		if (why) {
 			host.append(el('p', { className: 'info-note info-disabled' },
-				`Left out of the run: ${why}.`));
+				`Left out of the run: ${why}. It is not checked while it is out.`));
 		} else if (toOff) {
 			host.append(el('p', { className: 'info-note info-disabled' },
 				`Still runs, but ${toOff}.`));
@@ -486,7 +490,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 			el('span', { className: 'info-label' }, label),
 			el('code', { className: 'info-code' },
 				...equationNodes(project, block[key], system, link))));
-		for (const w of ed.unitProblems(project, block, kind)) {
+		for (const w of quiet ? [] : ed.unitProblems(project, block, kind)) {
 			// The field by the name the dialog gives it, where that differs
 			// from the key: `dydt` is the "dy/dt term" box.
 			const field = w.field === 'dydt' ? 'dy/dt term' : w.field;
@@ -581,7 +585,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 			releases.length
 				? joinLinks(releases.map((t) => t.to).filter(Boolean), link)
 				: 'read only — nothing is drawn out of it'));
-		const warning = ed.farfieldWarning(project, block);
+		const warning = quiet ? null : ed.farfieldWarning(project, block);
 		if (warning) host.append(el('p', { className: 'info-warn' }, `${warning}.`));
 	}
 
@@ -659,7 +663,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 					+ (end === 'to'
 						? `every ${what} arrives in the one cell`
 						: `the one cell pays out once per ${what}`)
-					+ (block.sum_extra_indices
+					+ (block.sum_extra_indices || quiet
 						? '.'
 						: ' — which this flux has not asked to do, so the model '
 							+ 'will not build.')));
