@@ -11794,7 +11794,7 @@ test('the tree can put a block on the chart, beside or instead of what is there'
 	// At the top, in all three shapes a menu takes.
 	assert((graph.match(/this\._chartItems\(/g) ?? []).length === 3,
 		'a menu shape cannot reach the chart');
-	assert(/const items = \[\n\t\t\t\.\.\.this\._chartItems\(\[name\]\),/.test(graph),
+	assert(/return \{\n\t\t\titems: \[\n\t\t\t\t\.\.\.this\._chartItems\(\[name\]\),/.test(graph),
 		'the chart items are not at the top of a block menu');
 
 	// A block is not a series: an indexed one is a series per index, so this
@@ -30597,7 +30597,7 @@ test('folding a sub-system keeps every flux in and out of it', async () => {
 		'there is no summary form');
 	// ...and it is not greyed out as forbidden: a cell holding seven fluxes is
 	// not the same thing as a pair that can never be joined.
-	assert(/const impossible = isPath\.has\(a\) && isPath\.has\(b\);/.test(src),
+	assert(/const impossible = refused\(kinds\.get\(a\), kinds\.get\(b\)\);/.test(src),
 		'a folded cell is still marked impossible');
 
 	// Folding changes nothing about the model, so it does not go through
@@ -40156,8 +40156,10 @@ test('on the transfer grid a transfer is a tile, only a crowded square scrolls, 
 	const flow = /\.matrix-flow \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
 	assert(/border: 1px solid var\(--matrix-edge, var\(--border-strong\)\);/.test(flow) && /border-radius: 4px;/.test(flow) && /box-shadow:/.test(flow),
 		'a transfer is flat');
-	// The + for another transfer is in the cell's corner, not a row of the stack.
-	assert(/td\.append\(addButton\(\{ project, hooks, a, b, isPath, extra: here\.length \}\)\);/.test(src), 'the + is in the stack');
+	// No + in a cell: a click on the grid selects, and what it can make is on
+	// its right-click.
+	assert(!/addButton|matrix-add|matrix-more/.test(src) && !/\.matrix-(add|more)\b/.test(css),
+		'a cell still has a + that adds on a click');
 	// A block's name is centred on its tile.
 	assert(/const label = el\('span', \{ className: 'matrix-label' \}, nameOf\(slot\)\);/.test(src) && /\.matrix-label \{ margin: auto; min-width: 0; \}/.test(css));
 	assert(/\.matrix-block \{[\s\S]*?text-align: center;/.test(css));
@@ -40177,10 +40179,207 @@ test('the transfer grid is square and zooms', async () => {
 	assert(/table\.matrix \{\n\t--cell: 96px;[\s\S]{0,200}table-layout: fixed;[\s\S]{0,300}?\n\twidth: calc\(var\(--n, 1\) \* var\(--cell\)\);/.test(css), 'the cells are not square');
 	assert(/table\.matrix td,\ntable\.matrix th \{\n\twidth: var\(--cell\);\n\theight: var\(--cell\);/.test(css), 'the cells are not square');
 	assert(/table\.style\.setProperty\('--n', String\(slots\.length\)\);\n\ttable\.style\.zoom = String\(zoom\);/.test(matrix), 'the table is not sized or zoomed');
-	// Zoomed about the pointer with Ctrl or Cmd and the wheel, wired once per panel.
-	assert(/if \(!\(ev\.ctrlKey \|\| ev\.metaKey\) \|\| !host\.querySelector\('table\.matrix'\)\) return;/.test(matrix), 'no wheel zoom');
-	assert(/if \(wheeled\.has\(host\)\) return;/.test(matrix), 'a wheel listener per render');
+	// Zoomed about the pointer by the wheel, wired once per panel.
+	const wheel = /function wireWheel\(host\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	assert(/setMatrixZoom\(host, zoom \* f, x, y\)/.test(wheel), 'no wheel zoom');
+	assert(/if \(wired\.has\(host\)\) return;/.test(matrix), 'a wheel listener per render');
 	assert(matrixZoom() === 1, `the zoom starts at ${matrixZoom()}`);
+});
+
+test('a click on the transfer grid makes nothing: a cell offers its transfer on the right-click', async () => {
+	const { readFileSync } = await import('node:fs');
+	const src = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const { matrixGrid, pairItem } = await import('../src/ui/matrix.js');
+	// Every edit the grid can make is in the two functions its menu items
+	// call, so none of them is reached by a click.
+	const body = (name) => {
+		const at = src.indexOf(`function ${name}(`);
+		return [at, src.indexOf('\n}\n', at)];
+	};
+	const spans = [body('addFlux'), body('addBlock')];
+	const adds = [...src.matchAll(/ed\.add\w+\(/g)].map((m) => m.index);
+	assert(adds.length >= 6 && adds.every((i) => spans.some(([a, b]) => i > a && i < b)),
+		'something other than a menu item adds to the model');
+
+	// Every kind of pair: two compartments, a path whose release is taken, a
+	// second path, a set of packages, a folded sub-system, and the world
+	// outside the model.
+	const raw = {
+		name: 'pairs', nuclides: [], simulation: { ...DEFAULT_SIMULATION },
+		compartments: [{ name: 'A', initial: '1' }, { name: 'B', initial: '0' },
+			{ name: 'C', system: 'NF', initial: '0' }],
+		transfers: [], inflows: [],
+	};
+	ed.addFarfield(raw, { name: 'P' });
+	ed.addFarfield(raw, { name: 'Q' });
+	ed.addWastePackage(raw, { name: 'W' });
+	ed.addTransfer(raw, 'A', 'B');
+	ed.addTransfer(raw, 'P', 'B');
+	ed.addTransfer(raw, 'A', null);
+	const said = [];
+	const hooks = {
+		onChange: () => said.push('change'),
+		onSelect: (sel) => said.push(sel),
+		onStatus: (m) => said.push(`status: ${m}`),
+	};
+	const view = { ...matrixGrid(raw, new Set()), project: raw, hooks };
+	const id = (s) => (s.kind === 'block' ? s.name : s.kind === 'group' ? s.path : s.kind === 'outside' ? null : undefined);
+	const at = (name) => view.slots.findIndex((s) => id(s) === name);
+	const item = (a, b) => pairItem(view, at(a), at(b));
+	assert(view.slots.map(id).join() === 'A,B,P,Q,W,NF,', view.slots.map(id).join());
+	assert(view.pairAt(at('A'), at('B')).length === 1 && view.kinds.get('W') === 'waste_package',
+		'the grid does not hold what is in the model');
+
+	const open = (a, b, label, title = null) => {
+		const it = item(a, b);
+		assert(it.label === label && !it.disabled && typeof it.onPick === 'function',
+			`${a} -> ${b}: ${JSON.stringify(it)}`);
+		if (title) assert(it.title.includes(title), `${a} -> ${b}: ${it.title}`);
+		return it;
+	};
+	const shut = (a, b, why) => {
+		const it = item(a, b);
+		assert(it.disabled && !it.onPick && it.title.includes(why), `${a} -> ${b}: ${JSON.stringify(it)}`);
+	};
+	open('A', 'B', 'Another transfer from A to B', 'their fluxes add');
+	open('A', null, 'Another outflow from A out of the model');
+	open('B', null, 'Outflow from B out of the model');
+	open('A', 'Q', 'Transfer from A to Q', 'first fracture cell of Q');
+	open('W', 'B', 'W’s release into B');
+	// What the diagram refuses, the grid refuses, and says why: nothing goes
+	// into waste packages, a release does not go straight into a path, a path
+	// has one release, and a fold has no one block to connect.
+	shut('A', 'W', 'nothing flows into them');
+	shut(null, 'W', 'nothing flows into them');
+	shut('Q', 'P', 'cannot be delivered straight into P');
+	shut('W', 'Q', 'cannot be delivered straight into Q');
+	shut('P', 'A', 'already delivers its release');
+	shut('A', 'NF', 'NF is folded up');
+	shut('NF', 'B', 'NF is folded up');
+
+	// Into the model from outside is a source term, as the diagram makes one.
+	const before = { t: raw.transfers.length, s: raw.inflows.length };
+	open(null, 'B', 'Inflow into B', 'A source term').onPick();
+	assert(raw.inflows.length === before.s + 1 && raw.transfers.length === before.t,
+		'an inflow from the grid is not a source term');
+	assert(said[0] === 'change' && said[1]?.kind === 'inflow' && said[1].name === raw.inflows.at(-1).name,
+		JSON.stringify(said));
+	// And a transfer is a transfer, selected as it arrives.
+	said.length = 0;
+	open('B', 'A', 'Transfer from B to A').onPick();
+	const made = raw.transfers.at(-1);
+	assert(made.from === 'B' && made.to === 'A' && said[1]?.kind === 'transfer' && said[1].name === made.name,
+		JSON.stringify(said));
+});
+
+test('the wheel zooms the grid at the diagram’s rate, and a drag on its empty space moves it', async () => {
+	const { readFileSync } = await import('node:fs');
+	const matrix = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	// The two views of one model answer a notch of the wheel alike.
+	const rate = /const WHEEL_RATE = ([\d.]+);/.exec(matrix)?.[1];
+	const diagram = /_onWheel\(ev\) \{[\s\S]*?wheelPixels\(ev\.deltaY, ev\.deltaMode, r\.height\) \* ([\d.]+)\)/.exec(graph)?.[1];
+	assert(rate && rate === diagram, `the grid zooms ${rate} a pixel, the diagram ${diagram}`);
+	const wheel = /function wireWheel\(host\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	assert(!/ctrlKey \|\| ev\.metaKey/.test(wheel), 'the wheel still needs Ctrl to zoom');
+	assert(/if \(!ev\.ctrlKey && Math\.abs\(ev\.deltaX\) > Math\.abs\(ev\.deltaY\)\) return;/.test(wheel),
+		'a sideways wheel zooms too, rather than scrolling along the rows');
+	assert(/wheelPixels\(ev\.deltaY, ev\.deltaMode, host\.clientHeight\) \* WHEEL_RATE/.test(wheel),
+		'a mouse notch is read as three pixels');
+	assert(/requestAnimationFrame\(/.test(wheel) && /pending\.factor \*= factor;/.test(wheel),
+		'every wheel event lays the table out again');
+
+	// The drag: from empty space, the middle button from anywhere, never a
+	// finger (the browser scrolls under one) and never Ctrl and a click, which
+	// is the Mac's right-click.
+	const pan = /function wirePan\(host\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	assert(/if \(drag \|\| ev\.pointerType === 'touch'\) return;/.test(pan), 'a finger is taken from the browser');
+	assert(/if \(!middle && \(ev\.button !== 0 \|\| ev\.ctrlKey \|\| !isEmptySpace\(host, ev\)\)\) return;/.test(pan),
+		'a drag pans from a tile, or from Ctrl and a click');
+	assert(/host\.setPointerCapture\(ev\.pointerId\);/.test(pan) && /if \(Math\.hypot\(dx, dy\) < PAN_SLACK\) return;/.test(pan),
+		'a click whose hand moved is a drag');
+	assert(/host\.scrollLeft = drag\.left - dx;\n\t\thost\.scrollTop = drag\.top - dy;/.test(pan), 'a drag does not move the grid');
+	assert(/if \(clicked && view\?\.selection\) view\.hooks\.onSelect\?\.\(null\);/.test(pan),
+		'a click on nothing keeps the selection');
+	const empty = /function isEmptySpace\(host, ev\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	assert(/t\.closest\('button, a, input, select, textarea, \.matrix-zoom'\)/.test(empty)
+		&& /t\.classList\.contains\('is-crowded'\)/.test(empty), 'a drag from a tile or a scrollbar pans');
+	assert(/#panel-matrix\.is-panning,\n#panel-matrix\.is-panning \* \{ cursor: grabbing; \}/.test(css),
+		'the hand does not close while the grid moves');
+
+	// Wired once, whatever the number of redraws, and an edit's redraw leaves
+	// the grid where it was scrolled.
+	assert(/function wire\(host\) \{\n\tif \(wired\.has\(host\)\) return;\n\twired\.add\(host\);\n\twireWheel\(host\);\n\twirePan\(host\);\n\twireMenu\(host\);\n\}/.test(matrix),
+		'the gestures are wired with each drawing');
+	assert(/const scrolled = \{ left: host\.scrollLeft, top: host\.scrollTop \};\n\thost\.replaceChildren\(\);/.test(matrix)
+		&& /host\.scrollLeft = scrolled\.left;\n\thost\.scrollTop = scrolled\.top;\n\}/.test(matrix),
+		'an edit throws the grid back to its corner');
+});
+
+test('the grid’s right-click is the diagram’s menu on a block, and the place’s own elsewhere', async () => {
+	const { readFileSync } = await import('node:fs');
+	const graphSrc = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	const matrix = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const { GraphEditor } = await import('../src/ui/graph.js');
+	const raw = {
+		name: 'menus', nuclides: [], simulation: { ...DEFAULT_SIMULATION },
+		compartments: [{ name: 'A', initial: '1' }, { name: 'B', initial: '0' },
+			{ name: 'C', system: 'NF', initial: '0' }],
+		transfers: [], inflows: [],
+	};
+	ed.addTransfer(raw, 'A', 'B');
+	const selected = [];
+	const g = Object.assign(Object.create(GraphEditor.prototype), {
+		project: raw, picked: new Set(), pickedShapes: new Set(), hooks: {}, system: '',
+	});
+	g._select = (n) => selected.push(n);
+	const labels = (m) => m.items.map((x) => (x.heading ? `#${x.heading}` : x.separator ? '---' : x.label));
+	// On the diagram, as it was: a line can be straightened, a sub-system opened.
+	assert(labels(g.menuAbout('A_B')).includes('Straighten'), 'the diagram lost Straighten');
+	// From the grid: no line to straighten, and the grid's own item after
+	// Settings, under the heading the diagram puts what can be made under.
+	const grid = labels(g.menuAbout('A_B', { elsewhere: true, adds: [{ label: 'Another' }] }));
+	assert(!grid.includes('Straighten'), 'the grid offers to straighten a line it does not draw');
+	const add = grid.indexOf('#Add');
+	assert(add === grid.indexOf('Settings…') + 1 && grid[add + 1] === 'Another', grid.join(' | '));
+	// A compartment's group takes them in, after its own two.
+	const comp = labels(g.menuAbout('A', { elsewhere: true, adds: [{ label: 'Z' }] }));
+	assert(comp.filter((l) => l === '#Add').length === 1 && comp.indexOf('Z') === comp.indexOf('Transfer to') + 1,
+		comp.join(' | '));
+	// A sub-system opens on the diagram, and says so where opening one means
+	// unfolding it.
+	const sys = labels(g.menuAbout('NF', { elsewhere: true, adds: [{ label: 'Compartment' }] }));
+	assert(sys.includes('Open on the diagram') && !sys.includes('Open') && sys.includes('Compartment'), sys.join(' | '));
+	assert(labels(g.menuAbout('NF')).includes('Open'), 'the diagram’s own menu changed its words');
+	// Selected first, as a right-click does; nothing for a name not there.
+	assert(g.menuAbout('nope') === null, 'a menu for a block that is not there');
+	assert(selected.join() === 'A_B,A_B,A,NF,NF', selected.join());
+	// `openMenuFor` is the same menu, put on the screen; and opening a
+	// sub-system from any of these menus brings the diagram forward first.
+	assert(/openMenuFor\(name, x, y\) \{\n\t\tconst menu = this\.menuAbout\(name\);/.test(graphSrc), 'two menus for one block');
+	assert(/const show = \(path\) => \{\n\t\t\tthis\.hooks\.onShowDiagram\?\.\(\);\n\t\t\trequestAnimationFrame\(\(\) => this\.setSystem\(path\)\);/.test(graphSrc),
+		'a sub-system opens on a canvas nobody can see');
+
+	// The application hands the grid that menu and the rest of what it needs.
+	const draws = /function drawMatrix\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/blockMenu: \(name, adds\) => graph\?\.menuAbout\(name, \{ elsewhere: true, adds \}\) \?\? null,/.test(draws)
+		&& /pasteItem: \(system\) => graph\?\.pasteItem\(system\) \?\? null,/.test(draws)
+		&& /onFoldAll: \(open\) => \{/.test(draws) && /onUnfoldTo: \(path\) => \{/.test(draws),
+		'the grid is not given what its menus need');
+	// Where the click lands decides the menu: a block, a sub-system, the
+	// world outside, a band, a folded count, a transfer, an empty cell.
+	const menuAt = /function menuAt\(host, view, target\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	for (const re of [/if \(i === j\) \{/, /view\.hooks\.blockMenu\?\.\(row\.name, \[\]\)/, /systemMenu\(host, view, row\)/,
+		/outsideMenu\(host, view\)/, /placeMenu\(host, view, bandOf\(view\.frames, row, col, i, j\)\?\.path \?\? ''\)/,
+		/summaryMenu\(host, view, i, j\)/, /view\.hooks\.blockMenu\?\.\(tile\.dataset\.name, another\.disabled \? \[\] : \[another\]\)/,
+		/items: \[\{ heading: 'Add' \}, pairItem\(view, i, j\)/]) {
+		assert(re.test(menuAt), `the grid's menu does not cover ${re}`);
+	}
+	assert(/host\.addEventListener\('contextmenu', \(ev\) => \{/.test(matrix), 'no right-click on the grid');
+	// Unfolding everything is refused where it would draw millions of squares.
+	assert(/const UNFOLD_MOST = \d+;/.test(matrix) && /disabled: big \|\| /.test(matrix), 'unfolding a large model hangs the tab');
 });
 
 test('a fault found by building the model is marked on its block, and said in its settings', async () => {

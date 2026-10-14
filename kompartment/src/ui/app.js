@@ -156,7 +156,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-13';
+const BUILD = '2026-10-14';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -6609,6 +6609,23 @@ function drawMatrix() {
 			}
 			drawMatrix();
 		},
+		// The menu's two that fold the lot, at once.
+		onFoldAll: (open) => {
+			state.matrixOpen.clear();
+			if (open) for (const p of ed.systems(state.raw)) state.matrixOpen.add(p);
+			drawMatrix();
+		},
+		// A block made inside a sub-system from the menu: unfolded to where it
+		// went, without a redraw of its own -- the edit that follows is one.
+		onUnfoldTo: (path) => {
+			let at = path;
+			while (at) { state.matrixOpen.add(at); at = ed.parentOf(at); }
+		},
+		// A block on the grid is the block on the diagram, and its right-click
+		// is the diagram's menu -- see `blockMenu`, which the tree and the
+		// Information view open. As items, so the grid can add its own.
+		blockMenu: (name, adds) => graph?.menuAbout(name, { elsewhere: true, adds }) ?? null,
+		pasteItem: (system) => graph?.pasteItem(system) ?? null,
 	}, { open: state.matrixOpen });
 }
 

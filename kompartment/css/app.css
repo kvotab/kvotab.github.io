@@ -4086,6 +4086,11 @@ textarea.is-suspect {
 
 #panel-matrix { align-content: start; overflow: auto; }
 
+/* Moved by a drag on its empty space (see `wirePan` in ./src/ui/matrix.js),
+   as the diagram is: the hand closes while it moves, over the tiles too. */
+#panel-matrix.is-panning,
+#panel-matrix.is-panning * { cursor: grabbing; }
+
 /* Every cell one square, `--cell` on a side, so the grid reads as the matrix
    it is -- the pattern of who feeds whom, the shape a Jacobian is drawn in --
    rather than as a table whose columns are as wide as their longest rate.
@@ -4397,8 +4402,6 @@ table.matrix td {
 	flex: 1 1 auto;
 }
 
-.matrix-add:hover { background: var(--surface-sunken); }
-
 /* A transfer, as a tile like the blocks on the diagonal: inset from the grid
    lines by the same two pixels, rounded, edged and lifted a little off the
    grid. Laid flat across its square it read as a shading of the cell rather
@@ -4452,7 +4455,7 @@ table.matrix td {
 	-webkit-line-clamp: 3;
 	overflow-wrap: anywhere;
 }
-.matrix-stack:has(> .matrix-cell + .matrix-cell:not(.matrix-add)) .matrix-rate { -webkit-line-clamp: 1; }
+.matrix-stack:has(> .matrix-cell + .matrix-cell) .matrix-rate { -webkit-line-clamp: 1; }
 
 .matrix-name {
 	font-size: 9.5px;
@@ -4462,32 +4465,9 @@ table.matrix td {
 	white-space: nowrap;
 }
 
-/* The "+" is centred, unlike a transfer, which reads from its elbow outward.
-   Over the whole of an empty cell rather than in its flow: in the flow, a
-   button the height of the square made that row a pixel taller than a row
-   with no empty cell in it. */
-.matrix-add {
-	color: var(--text-muted);
-	font-size: 15px;
-	opacity: 0;
-	justify-content: center;
-}
-
-td > .matrix-add:not(.matrix-more) {
-	position: absolute;
-	inset: 0;
-	width: auto;
-	height: auto;
-}
-
-.matrix-empty:hover .matrix-add { opacity: 1; }
-
-.matrix-add:focus-visible { opacity: 1; }
-
-/* A pair may hold several transfers; they stack, newest last, with a short
-   row at the bottom for adding another -- sharing the square between them.
-   Placed over the whole cell rather than sized to it, as the diagonal's tile
-   is and for the same reason: a percentage height in a table cell resolves
+/* A pair may hold several transfers; they stack, newest last, sharing the
+   square between them. Placed over the whole cell rather than sized to it, as
+   the diagonal's tile is and for the same reason: a percentage height in a table cell resolves
    against nothing, and a fixed one came out a pixel taller than the square,
    so the tiles sat off-centre with their bottom gap cut. */
 .matrix-stack {
@@ -4506,33 +4486,6 @@ td > .matrix-add:not(.matrix-more) {
    its rate and name need, and the stack scrolls to show the rest. */
 .matrix-stack.is-crowded { overflow-y: auto; scrollbar-width: thin; }
 .matrix-stack > .matrix-cell { flex: 1 1 0; min-height: 34px; height: auto; }
-
-/* Another transfer between the same pair: a round button in the corner of the
-   square, over the tiles, shown when the square is pointed at. Clear of a
-   crowded stack's scrollbar. */
-.matrix-more {
-	position: absolute;
-	right: 5px;
-	bottom: 5px;
-	z-index: 1;
-	width: 18px;
-	height: 18px;
-	padding: 0;
-	border: 1px solid var(--border-strong);
-	border-radius: 50%;
-	background: var(--surface-1);
-	font-size: 13px;
-	line-height: 1;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-}
-
-.is-crowded ~ .matrix-more { right: 15px; }
-
-.matrix-has:hover .matrix-more { opacity: 0.85; }
-
-.matrix-more:hover { opacity: 1; color: var(--text-primary); border-color: var(--accent); }
-
-.matrix-more:focus-visible { opacity: 1; }
 
 /* Where in the hierarchy the diagram is looking. Hidden for a model with no
    sub-systems, which is most of them. */

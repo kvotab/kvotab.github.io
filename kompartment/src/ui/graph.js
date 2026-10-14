@@ -3431,16 +3431,41 @@ export class GraphEditor {
 	 * @returns {boolean} whether there was anything to show
 	 */
 	openMenuFor(name, x, y) {
-		if (name == null || !this.project) return false;
+		const menu = this.menuAbout(name);
+		if (!menu) return false;
+		openMenu({ x, y, ...menu });
+		return true;
+	}
+
+	/**
+	 * The menu `openMenuFor` opens, as items rather than as a panel on the
+	 * screen: for a view that puts items of its own in it.
+	 *
+	 * The matrix is that view. A block or a transfer there is the same thing
+	 * it is on the diagram and gets the same menu, and the grid adds what only
+	 * the grid can say -- a second transfer between the pair whose cell was
+	 * pointed at, the blocks to make inside a sub-system. Selects what the menu
+	 * is about, as opening it does.
+	 *
+	 * @param {{elsewhere?: boolean, adds?: object[]}} [opts]
+	 *   `elsewhere`: for a view that draws neither the diagram's lines nor its
+	 *   sub-system nodes. Straightening a line has nothing there to act on and
+	 *   is left out, and opening a sub-system says that it opens it on the
+	 *   diagram -- on the grid, opening one is unfolding it.
+	 *   `adds`: the view's own items for making something from this block,
+	 *   put with the menu's `Add` group, under a heading of that name.
+	 * @returns {{items: object[], title: string}|null} null when there is no
+	 *   such block
+	 */
+	menuAbout(name, { elsewhere = false, adds = [] } = {}) {
+		if (name == null || !this.project) return null;
 
 		// Right-clicking inside a group keeps the group: the menu is about all
 		// of it. A sub-system in the group is part of it, so this comes before
 		// the sub-system's own menu.
 		if (this.picked.size > 1 && this.picked.has(name)) {
 			const many = [...this.picked];
-			openMenu({
-				x,
-				y,
+			return {
 				items: [
 					...this._chartItems(many),
 					this._centreItem(many),
@@ -3448,8 +3473,7 @@ export class GraphEditor {
 					...this._menuForMany(many),
 				],
 				title: this._what(many),
-			});
-			return true;
+			};
 		}
 
 		// A sub-system is a node without being a block -- and the top level,
@@ -3461,9 +3485,7 @@ export class GraphEditor {
 			// show what the menu is about while the menu is open. The top
 			// level is not a thing that can be selected: it is where you are.
 			if (name) this._select(name);
-			openMenu({
-				x,
-				y,
+			return {
 				items: [
 					// A sub-system stands for everything in it here too: its
 					// blocks are what would go on the chart.
@@ -3471,29 +3493,38 @@ export class GraphEditor {
 					// The top level is not drawn on anything, so there is
 					// nowhere to centre it.
 					...(name ? [this._centreItem([name]), { separator: true }] : []),
-					...this._menuFor({ name: name ? baseName(name) : 'the model', path: name }, 'system'),
+					...this._menuFor({ name: name ? baseName(name) : 'the model', path: name }, 'system',
+						{ elsewhere, adds }),
 				],
 				title: name ? `sub-system ${name}` : 'the top level',
-			});
-			return true;
+			};
 		}
 
 		const found = ed.findBlock(this.project, name);
-		if (!found) return false;
+		if (!found) return null;
 
 		// Right-clicking anything outside the selection selects that one
 		// first, so the panels show what the menu is about.
 		this._select(name);
 
-		const items = [
-			...this._chartItems([name]),
-			this._centreItem([name]),
-			{ separator: true },
-			...this._menuFor(found.block, found.kind),
-		];
-		if (!items.length) return false;
-		openMenu({ x, y, items, title: `${found.kind} ${name}` });
-		return true;
+		return {
+			items: [
+				...this._chartItems([name]),
+				this._centreItem([name]),
+				{ separator: true },
+				...this._menuFor(found.block, found.kind, { elsewhere, adds }),
+			],
+			title: `${found.kind} ${name}`,
+		};
+	}
+
+	/**
+	 * Paste into a sub-system, as an item for a menu another view builds --
+	 * the matrix's, on its empty space, whose place is a sub-system rather
+	 * than a point on a canvas.
+	 */
+	pasteItem(system) {
+		return this._pasteItem(system ?? '');
 	}
 
 	/**
@@ -4617,13 +4648,27 @@ export class GraphEditor {
 		}
 	}
 
-	_menuFor(block, kind) {
+	_menuFor(block, kind, { elsewhere = false, adds = [] } = {}) {
 		const name = kind === 'system' ? block.path : qualifiedName(block);
 		const del = {
 			label: 'Delete',
 			hint: 'Del',
 			danger: true,
 			onPick: () => { this._select(name); this.deleteSelected(); },
+		};
+		// What the view this menu was opened from makes from the block, as a
+		// group of its own -- see `menuAbout`. A compartment has the group
+		// already and takes them into it.
+		const added = adds.length ? [{ heading: 'Add' }, ...adds] : [];
+		// Showing a sub-system on the canvas, from wherever the menu was
+		// opened. These menus open from the tree, the Information view and
+		// the matrix as well, beside a tab that may not be the diagram, and a
+		// sub-system opened on a canvas nobody can see is a click that did
+		// nothing. A frame after the tab is in front, as `Centre on the
+		// canvas` does it, so the fit measures the canvas on screen.
+		const show = (path) => {
+			this.hooks.onShowDiagram?.();
+			requestAnimationFrame(() => this.setSystem(path));
 		};
 
 		// A sub-system node stands for everything inside it. The top level is
@@ -4633,7 +4678,7 @@ export class GraphEditor {
 			const path = block.path;
 			if (!path) {
 				return [
-					{ label: 'Show the top level', onPick: () => this.setSystem('') },
+					{ label: 'Show the top level', onPick: () => show('') },
 					{ separator: true },
 					this._pasteItem(''),
 				];
@@ -4645,7 +4690,9 @@ export class GraphEditor {
 			// that one, so this one is not offered as though it would help.
 			const byOuter = !on && !ed.disabledSystems(this.project).includes(path);
 			return [
-				{ label: 'Open', hint: 'dbl', onPick: () => this.setSystem(path) },
+				elsewhere
+					? { label: 'Open on the diagram', onPick: () => show(path) }
+					: { label: 'Open', hint: 'dbl', onPick: () => show(path) },
 				...(transport ? [{
 					label: 'Add operation over the chain',
 					title: 'The sum or the mean of the chain’s compartments — all of '
@@ -4667,6 +4714,7 @@ export class GraphEditor {
 					disabled: byOuter,
 					onPick: () => this._setSystemEnabled(path, !on),
 				},
+				...added,
 				{ separator: true },
 				...this._copyItems([path]),
 				this._pasteItem(path),
@@ -4789,6 +4837,7 @@ export class GraphEditor {
 					items: connect,
 					disabled: !connect.length,
 				},
+				...adds,
 				{ separator: true },
 				...copies,
 				{ separator: true },
@@ -4820,6 +4869,7 @@ export class GraphEditor {
 
 			return [
 				settings,
+				...added,
 				{ separator: true },
 				{
 					label: 'Starts at',
@@ -4831,7 +4881,9 @@ export class GraphEditor {
 					items: this._endTargets(block.to, block.from, (to) =>
 						this._moveEnd(name, 'to', to)),
 				},
-				straighten,
+				// A line's bend, which a view that draws no line has nothing
+				// of to straighten.
+				...(elsewhere ? [] : [straighten]),
 				{ separator: true },
 				...copies,
 				{ separator: true },
@@ -4844,6 +4896,7 @@ export class GraphEditor {
 		if (kind === 'inflow') {
 			return [
 				settings,
+				...added,
 				{ separator: true },
 				{
 					label: 'Flows into',
@@ -4875,6 +4928,7 @@ export class GraphEditor {
 		// menu where the eye lands first.
 		return [
 			settings,
+			...added,
 			{ separator: true },
 			...copies,
 			{ separator: true },
