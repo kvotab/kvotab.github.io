@@ -2679,7 +2679,7 @@ footer .stat b { color: var(--text-primary); font-weight: 650; }
 
 .stale-more { font-size: 10.5px; color: var(--text-muted); }
 
-.stale > button.primary { margin-top: 4px; }
+.stale-actions { display: flex; gap: 8px; margin-top: 4px; }
 
 /* In the Table it sits between the bars and the table. */
 #panel-table > .stale { margin: 0 0 8px; }

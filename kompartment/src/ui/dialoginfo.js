@@ -136,6 +136,9 @@ const TOPICS = {
 				+ 'measures beside the rank correlation; **Translate** reads them on logs or ranks.',
 				'**Inputs** — narrow the analysis to some of them.',
 			],
+		}, {
+			text: 'After an edit the realisations are still those of the model before it, and the line '
+				+ 'under the title says so: **Probabilistic…** draws a sample of the model as it now is.',
 		}],
 		more: 'What drove the spread',
 	},

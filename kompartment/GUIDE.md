@@ -235,8 +235,9 @@ parameter's distribution, the settings of a probabilistic run — is marked as
 changing no number, and where nothing else has changed the notice says so
 quietly rather than warning. A tolerance tightened or a solver swapped is no
 reason to lose the curves being read, and the notice is what keeps them from
-passing for the model's as it now stands. A probabilistic run of the model as
-it was is not drawn under them, and the notice says that too.
+passing for the model's as it now stands. A probabilistic run of the same
+model stays drawn with them, under the same notice — see *Being rid of a
+sample*.
 
 The exception is a run already on its way: with **auto-run** on, the notice
 would come up for the third of a second before the new results arrive on every
@@ -6807,7 +6808,8 @@ column heads wear the same marks. **Probabilistic** in the search line above the
 tree shows only the marked blocks. The same chip in the chart's filter lists only
 the lines the sample holds, with a count. It is the quickest way to the lines
 that will be drawn as a spread rather than as a single curve. The marks and both
-chips go with the sample: discard it, or edit the model, and they are gone.
+chips go with the sample: discard it, or run the model again after an edit, and
+they are gone.
 
 **It needs no run.** The blocks it offers come from the model — what a run
 *would* report is a function of the layout, and the layout exists as soon as
@@ -7046,13 +7048,24 @@ way it draws any other.
 
 ### Being rid of a sample
 
-A sample lasts until the model changes. Any edit that the model's numbers depend
-on — widening a distribution, changing a shape, adding a block — makes every
-realisation a realisation of a model that no longer exists, and the bands, the
-histograms and *What drove it…* go with it. Run it again to get them back.
+A sample stays on screen after an edit, beside the run it was drawn with: the
+two are out of date together, under the notice that lists what has changed
+since. An edit the numbers depend on — widening a distribution, changing a
+shape, adding a block — makes every realisation one of a model that no longer
+exists, and the notice is what says so; the bands, the histograms and *What
+drove it…* stay, and *What drove it…* says it answers for the model as it was
+before the latest edits. **Replay a realisation…** waits for a new sample: a
+realisation run again draws from the distributions as they are now, and would
+not come out as it was drawn. The notice has **Probabilistic…** beside **Run**,
+for a new sample of the model as it now is.
 
-To be rid of one before that, **Discard sample** — beside the line that says
-what ran, on both the Chart and the Table, and in the Probabilistic dialog. It
+Running the model again on its own puts a line on screen that the sample does
+not belong under, so the sample is not drawn under it. The line above the chart
+says so, and **Discard sample** is beside it. Run it probabilistically again to
+bring the spread back.
+
+To be rid of one sooner, **Discard sample** — beside the line that says what
+ran, on both the Chart and the Table, and in the Probabilistic dialog. It
 throws away the realisations and the megabytes they are held in without touching
 the model.
 

@@ -2802,15 +2802,35 @@ test('a band belongs to the model it was a run of, and to no other', async () =>
 	assert(probIsCurrent(bands(7), null, 7), 'a band was dropped with no results to check against');
 	assert(!probIsCurrent(bands(7), null, 8), 'a band outlived an edit with no results on screen');
 
-	// And against the model even when the results are *equally* stale, which
-	// is what an edit leaves behind: the deterministic run and the sample were
-	// both of revision 4 and the model is at 5. Judged against the results
-	// alone the two agreed with each other and the sample stayed -- so
-	// widening a distribution left its bands on the chart, the corner still
-	// saying a thousand realisations, and *What drove it…* still offering to
-	// explain a sample of a model the reader had already changed.
-	assert(!probIsCurrent(bands(4), results(4), 5),
-		'editing a distribution left the sample it invalidated on screen');
+	// And when the results are *equally* stale, which is what an edit leaves
+	// behind -- the deterministic run and the sample both of revision 4, the
+	// model at 5 -- the two stay on screen together, under the notice that
+	// says they are out of date and what has changed. That a sample stayed
+	// when its distributions had changed was once the bug here: the bands,
+	// the corner's thousand realisations and *What drove it…* all described a
+	// model the reader had replaced, and nothing said so. Now the notice says
+	// so, *What drove it…* says whose sample it is answering for, and a
+	// realisation is not run again from distributions that are not the ones
+	// it was drawn from.
+	assert(probIsCurrent(bands(4), results(4), 5),
+		'an edit threw away the sample of the model on screen');
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const sens = readFileSync(new URL('../src/ui/sensdialog.js', import.meta.url), 'utf8');
+	assert(/if \(probStale\(prob\)\) \{ flash\(REPLAY_STALE, 'warn'\); return; \}/.test(app)
+		&& /disabled: !has \|\| probStale\(\),/.test(app), 'a realisation of an older sample is run again from today’s distributions');
+	assert(/stale: probStale\(prob\),/.test(app)
+		&& /\(view\.stale \? ' — of the model as it was before the latest edits' : ''\)/.test(sens),
+		'What drove it… does not say whose sample it answers for');
+	// The notice names the sample drawn with the results, and the line in the
+	// corner one that is held and not drawn, with the way to be rid of it.
+	assert(/'The probabilistic run drawn with them is of that model too\.'/.test(app), 'the notice forgets the sample');
+	// And offers the way to a new one beside Run, which brings back the one
+	// run and leaves the sample of the old model undrawn under it.
+	assert(/if \(currentProb\(\)\) \{\n\t\t\tconst again = el\('button'[\s\S]{0,200}?again\.addEventListener\('click', \(\) => openProbabilistic\(\)\);/.test(app),
+		'the notice has no way to a new sample');
+	assert(/const notDrawn = r && !prob && state\.prob && !state\.probRunning && state\.prob\.rev !== r\.rev;/.test(app)
+		&& /b\.hidden = !prob && !notDrawn;/.test(app), 'a sample that is not drawn vanishes without a word');
 
 	// And the reply carrying the answer has to reach the page. `sensitivity`
 	// is about the *probabilistic* run, which keeps its own id; matched
@@ -37159,7 +37179,9 @@ test('a sample can be thrown away without touching the model', async () => {
 	}
 	assert(/for \(const id of \['#chart-discard', '#table-discard'\]\) \{\n\t\t\$\(id\)\?\.addEventListener\('click', \(\) => discardProb\(\)\);/.test(app),
 		'the discard buttons are not wired');
-	assert(/b\.hidden = !prob;/.test(app), 'the discard button shows with no sample to discard');
+	// With a sample drawn, or one held and not drawn -- of a model before the
+	// run on screen -- which is still memory the reader may want back.
+	assert(/b\.hidden = !prob && !notDrawn;/.test(app), 'the discard button shows with no sample to discard');
 	assert(/onDiscard: currentProb\(\) \? \(\) => discardProb\(\) : null,/.test(app),
 		'the probabilistic dialog cannot discard, or offers to with nothing held');
 	assert(/if \(onDiscard\) \{/.test(dialog) && /'Discard sample'/.test(dialog),

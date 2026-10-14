@@ -306,6 +306,7 @@ const MOST_OUTPUTS = 300;
  * @param {number|null} opts.at  the time the table is for, as an index; null when it
  *   is each realisation's own peak
  * @param {object|null} [opts.peaks] when those peaks fall: `{median, low, high}`
+ * @param {boolean} [opts.stale]  the sample is of the model as it was before the latest edits
  * @param {Array} opts.rows      from the worker: name, where, pearson, spearman
  * @param {Array} opts.curves    the few that matter, over time
  * @param {number} opts.iterations
@@ -316,7 +317,7 @@ const MOST_OUTPUTS = 300;
  */
 export function openSensitivityDialog({
 	output, outputs = [], index = 0, t, at, rows, curves, iterations, measures = null,
-	distribution = null, kept = null, peaks = null, sampled = [], using = null, timeUnit = 'year', onAsk, onClose,
+	distribution = null, kept = null, peaks = null, sampled = [], using = null, stale = false, timeUnit = 'year', onAsk, onClose,
 }) {
 	// What is on screen. Replaced wholesale when an answer arrives, so the
 	// dialog is built from one object and there is no half-updated state.
@@ -326,7 +327,7 @@ export function openSensitivityDialog({
 	// dropping to the two correlations for a moment.
 	let view = {
 		output, outputs, index, t, at, rows, curves, iterations, measures, distribution, kept, peaks,
-		sampled, using, family: 'regression', translate: 'none',
+		sampled, using, stale, family: 'regression', translate: 'none',
 	};
 	// What the regression family is fitted to: the values, their ranks (SRRC
 	// and PRCC), or their logarithms. See ../domain/sensitivity.js.
@@ -422,7 +423,9 @@ export function openSensitivityDialog({
 		subtitle: () => `From ${(view.kept ?? view.iterations).toLocaleString()}`
 			+ (view.kept != null && view.kept !== view.iterations
 				? ` of ${view.iterations.toLocaleString()} realisations (the categories shown)` : ' realisations')
-			+ ' — how each sampled input relates to this output',
+			+ ' — how each sampled input relates to this output'
+			// A sample of the model before an edit answers for that model.
+			+ (view.stale ? ' — of the model as it was before the latest edits' : ''),
 		onClose,
 		build: (body) => {
 			const { t: time, rows: table, curves: lines } = view;

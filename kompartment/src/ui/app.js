@@ -1047,17 +1047,18 @@ function treeFilter() {
 /**
  * The rule `currentProb` applies, on its own so it can be tested.
  *
- * Against the **model**, first: a sample is a sample of the distributions it
- * was drawn from, so widening a spread or changing a shape makes every one of
- * its realisations a realisation of a model that no longer exists. Judged
- * against the results alone, an edit that left the deterministic run equally
- * stale kept the sample alive beside it -- the bands, the line in the corner
- * saying what had run, and *What drove it…* all went on describing
- * distributions the reader had already replaced.
+ * Against the results on screen, where there are any: those are what the
+ * bands are drawn beside, and a band belongs under its own line or under none.
+ * Of the same model as they are, it is drawn -- and where an edit has left
+ * both behind, they stay on screen together, under the notice that says they
+ * are out of date and what has changed (`staleNotice`). A sample of a
+ * thousand runs is the last thing to lose over a tolerance tightened, and the
+ * notice, the line in the corner and *What drove it…* all say whose it is.
+ * What would mix it with the model as it now stands -- a realisation run
+ * again, which draws from the distributions as they are now -- asks for it to
+ * be current (`probStale`).
  *
- * And against the results on screen where there are any -- those are what the
- * bands would be drawn beside, and a band belongs under its own line or under
- * none.
+ * With no results to stand under, it is the model's, or it is nothing.
  *
  * @param {object|null} prob     the probabilistic result, with its `rev`
  * @param {object|null} results  the deterministic results on screen
@@ -1066,8 +1067,13 @@ function treeFilter() {
  */
 export function probIsCurrent(prob, results, rev, running = false) {
 	if (!prob || running) return false;
-	if (prob.rev !== rev) return false;
-	return !results || prob.rev === results.rev;
+	if (results) return prob.rev === results.rev;
+	return prob.rev === rev;
+}
+
+/** Whether the sample on screen is of a model that has changed since it was drawn. */
+function probStale(prob = currentProb()) {
+	return !!prob && prob.rev !== state.rev;
 }
 
 /**
@@ -2434,6 +2440,10 @@ function acceptSummary(m) {
 	});
 }
 
+/** Why a realisation of a sample of an older model is not run again. */
+const REPLAY_STALE = 'The model has changed since this sample was drawn, so a realisation run again '
+	+ 'would not come out as it did. Run it probabilistically again first.';
+
 /**
  * One realisation again, in full. The settings are the run's own -- seed,
  * count, sampling, what varied -- so the draws come out the same.
@@ -2441,6 +2451,9 @@ function acceptSummary(m) {
 function openReplay(suggested = 1) {
 	const prob = currentProb();
 	if (!prob) { flash('Run the model probabilistically first.', 'warn'); return; }
+	// The draws are made again from the model as it is now, so a sample of
+	// the model before an edit would not come back as it was drawn.
+	if (probStale(prob)) { flash(REPLAY_STALE, 'warn'); return; }
 	if (state.running) { flash('A run is already going. Stop it first.', 'warn'); return; }
 	openReplayDialog({
 		iterations: prob.iterations, seed: prob.stats.seed, suggested,
@@ -2777,6 +2790,9 @@ function acceptSensitivity(m) {
 		sampled: m.sampled ?? [],
 		using: m.using ?? null,
 		iterations: prob?.iterations ?? 0,
+		// The sample is of the model before an edit: the answer is about that
+		// model, and the dialog says so, as the global analysis's does.
+		stale: probStale(prob),
 	};
 	if (sensModal) { sensModal.update(answer); return; }
 	sensModal = openSensitivityDialog({
@@ -7303,9 +7319,11 @@ function renderSidebar() {
 								+ 'any reading, nothing run again.'
 							: 'Needs a global sensitivity run.',
 						onPick: () => showGsa() },
-					{ label: 'Replay a realisation\u2026', disabled: !has,
-						title: has ? 'Run one realisation of the probabilistic run again as an '
-							+ 'ordinary run, every series of it.' : 'Needs a probabilistic run.',
+					{ label: 'Replay a realisation\u2026', disabled: !has || probStale(),
+						title: !has ? 'Needs a probabilistic run.'
+							: probStale() ? REPLAY_STALE
+								: 'Run one realisation of the probabilistic run again as an '
+									+ 'ordinary run, every series of it.',
 						onPick: () => openReplay() },
 				],
 			});
@@ -8136,15 +8154,30 @@ function staleNotice() {
 					+ 'on every edit would get in the way.'
 				: '';
 	if (why) box.append(el('span', {}, why));
-	// A probabilistic run of that model is not drawn under curves of a model
-	// that has changed since: see `probIsCurrent`.
-	if (state.prob && !state.probRunning && state.prob.rev === state.results.rev && !currentProb()) {
-		box.append(el('span', {}, 'The probabilistic run is of that model too, and is not drawn.'));
+	// The sample, where there is one: drawn with them, of that model too; or
+	// of a model older still, and not drawn under them (see `probIsCurrent`).
+	if (state.prob && !state.probRunning) {
+		if (currentProb()) {
+			box.append(el('span', {}, 'The probabilistic run drawn with them is of that model too.'));
+		} else if (state.prob.rev !== state.results.rev) {
+			box.append(el('span', {}, 'The probabilistic run is of a model older still, and is not drawn.'));
+		}
 	}
 	if (!blocked) {
 		const go = el('button', { className: 'primary', type: 'button' }, still ? 'Run again' : 'Run');
 		go.addEventListener('click', () => runSimulation({ manual: true }));
-		box.append(go);
+		const actions = el('div', { className: 'stale-actions' }, go);
+		// Run brings back the one run, and a sample drawn of the model as it
+		// was is not drawn under it: the way to the spread again is beside it.
+		if (currentProb()) {
+			const again = el('button', {
+				className: 'ghost', type: 'button',
+				title: 'A new sample, of the model as it now is, with the settings of the last one',
+			}, 'Probabilistic\u2026');
+			again.addEventListener('click', () => openProbabilistic());
+			actions.append(again);
+		}
+		box.append(actions);
 	}
 	return box;
 }
@@ -8285,9 +8318,17 @@ function renderRunKind() {
 		words.push(`at ${at.length} optimised value`
 			+ `${at.length === 1 ? '' : 's'} — the model still holds its own`);
 	}
-	// What else could be here, where something could. A probabilistic run is
-	// the thing a reader does not know is possible until it is offered.
-	if (r && !prob && ed.hasDistributions(state.raw)) {
+	// A sample held and not drawn: of a model before the run on screen, so
+	// its bands would be under a line they do not belong to. Said rather than
+	// left to vanish -- it was a thousand runs, and it is still in memory
+	// until it is discarded or drawn again.
+	const notDrawn = r && !prob && state.prob && !state.probRunning && state.prob.rev !== r.rev;
+	if (notDrawn) {
+		words.push('the probabilistic run is of an earlier model and is not drawn — '
+			+ 'Uncertainty → Probabilistic… runs it again');
+	} else if (r && !prob && ed.hasDistributions(state.raw)) {
+		// What else could be here, where something could. A probabilistic run
+		// is the thing a reader does not know is possible until it is offered.
 		words.push('this model has distributions — Uncertainty → Probabilistic… draws the spread');
 	}
 	const text = words.join(' · ');
@@ -8300,7 +8341,7 @@ function renderRunKind() {
 	for (const id of ['#chart-discard', '#table-discard']) {
 		const b = $(id);
 		if (!b) continue;
-		b.hidden = !prob;
+		b.hidden = !prob && !notDrawn;
 		b.title = 'Throw the realisations away: the bands, the histograms and the '
 			+ 'sensitivities go with them, and the memory they are held in is returned. '
 			+ 'The model is not touched.';
