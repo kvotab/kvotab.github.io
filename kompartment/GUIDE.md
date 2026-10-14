@@ -1380,10 +1380,16 @@ reading view that writes each reference as a link moving the selection: the
 block's name and kind, the sub-system it is in, its comment, and **its
 equation with every block it names rendered as a link you can click to go
 there**. Double-clicking the name at the top opens the block's settings, the
-same as double-clicking it anywhere else. Under that, *Uses* and *Used by*:
-what it reads and what reads it, each one named, typed, given its unit and
-summarised — `Kd` on its own says nothing, `Kd · parameter · 0.01` says
-whether it is the one you meant. Following a link changes the selection
+same as double-clicking it anywhere else. A compartment — and a far-field
+pathway or a set of waste packages — lists **what flows into it and what flows
+out of it**, each flux a link with the block at its other end, or the world
+outside the model. Under that, *Uses* and *Used by*: what it reads and what
+reads it, each one named, typed, given its unit and summarised — `Kd` on its
+own says nothing, `Kd · parameter · 0.01` says whether it is the one you meant.
+The fluxes listed above are not named again under *Used by*. A list longer than
+twelve names its first twelve and says how many more there are, and **show
+all** names every one — **show fewer** puts it back, and the view stays where
+it was scrolled. Following a link changes the selection
 everywhere, so the diagram, the inspector and the tree all move with you, and
 **←** / **→** in its title bar walk back and forward through where you have
 been. The tree scrolls to a selection made *elsewhere* — a click on the
@@ -1420,7 +1426,8 @@ model's name puts the caret in the field that spells it, the same as clicking
 the name in the window header and exactly as double-clicking a block's name
 opens the block. Each index list is a link to it on the *Index lists* tab,
 each sub-system a link to it on the diagram, and a model whose units do not
-add up says so with a link to the first block at fault. Everything on it is
+add up says so with a link to the first block at fault, and **show all** lists
+every one of them. Everything on it is
 worked out from the model rather than from the last run, so it says the same
 thing before the first simulation as after it.
 

@@ -34,14 +34,28 @@ import { startValueLine, markStartValue, refreshStartValue } from './startvalue.
 import { el } from './parts.js';
 
 /**
- * How many references are listed before the list says how many more.
+ * How many rows a list shows before it says how many more.
  *
  * This pane has a height of its own and scrolls inside it, so a block read by
  * ninety others is a scroll rather than a wall -- but a list that long is
- * still not a thing anyone reads. The count is always exact; only the naming
- * stops.
+ * still not a thing anyone reads all of, every time the block is selected. The
+ * count is always exact, and the rest are one link away: **show all** names
+ * every one of them, and **show fewer** puts the list back. See `longRows`.
  */
 const MOST = 12;
+
+/**
+ * Which long lists have been opened, on whose page.
+ *
+ * The view is drawn again on every edit and every selection, so what a
+ * `show all` opened is kept here rather than in the elements -- for one page
+ * at a time, like the values at the start: opening a list on another block's
+ * page starts that page's lists afresh.
+ */
+let unfolded = { owner: null, lists: new Set() };
+
+/** The kinds of block joined to the model by fluxes: they have flows in and out. */
+const FLOWING = new Set(['compartment', 'farfield', 'waste_package']);
 
 /**
  * How many values at the start are printed without being asked for, and how
@@ -122,6 +136,20 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// it holding its share of the panel.
 	const pane = host;
 	pane.replaceChildren();
+	// What this view's own links do -- a long list opened, a page of values
+	// loaded -- is to draw it again, in place and scrolled where it was. It is
+	// rebuilt rather than patched, and a rebuilt body starts at its top, which
+	// threw the reader back past the list they had just asked to see.
+	const again = () => {
+		const at = {
+			pane: pane.scrollTop,
+			body: pane.querySelector(':scope > .info-body')?.scrollTop ?? 0,
+		};
+		renderInfo(pane, project, selection, hooks);
+		pane.scrollTop = at.pane;
+		const next = pane.querySelector(':scope > .info-body');
+		if (next) next.scrollTop = at.body;
+	};
 
 	// In a window of its own the window's title bar is the card's: there is
 	// no fold to make, and the buttons go where the caller says.
@@ -261,7 +289,8 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	// A sub-system is not a block, so there is nothing to look up -- but it is
 	// the thing selected, and what it holds is exactly what a reader wants.
 	if (selection?.kind === 'system') {
-		renderSystemInfo(host, project, selection.name, hooks);
+		renderSystemInfo(host, project, selection.name, hooks,
+			{ owner: `system:${selection.name}`, again });
 		if (selection.implied) {
 			host.append(el('p', { className: 'info-none' },
 				'The sub-system the diagram is showing. Click a block for its own page, '
@@ -271,12 +300,14 @@ export function renderInfo(host, project, selection, hooks = {}) {
 	}
 
 	if (!found) {
-		renderModelInfo(host, project, hooks);
+		renderModelInfo(host, project, hooks, { owner: 'model', again });
 		return;
 	}
 	const { block, kind } = found;
 	const qname = ed.qualifiedName(block);
 	const system = systemOf(block);
+	// This page's long lists, and how to draw it again when one is opened.
+	const more = { owner: `block:${qname}`, again };
 
 	/**
 	 * A block, as something you can click to go there.
@@ -678,8 +709,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		box.dataset.startvalueRow = '';
 		box.hidden = !at;
 		if (values?.length > 1) {
-			box.append(...startValueList(qname, values,
-				() => renderInfo(pane, project, selection, hooks)));
+			box.append(...startValueList(qname, values, again));
 		}
 		host.append(box);
 	}
@@ -731,17 +761,42 @@ export function renderInfo(host, project, selection, hooks = {}) {
 				{ from: block.from, to: block.to })
 			: '';
 		if (inherited) host.append(el('p', { className: 'info-note' }, inherited));
-		if (set.length) host.append(overrideList(project, block, kind, dims));
+		if (set.length) host.append(overrideList(project, block, kind, dims, more));
+	}
+
+	// --- what flows in and out of it ---------------------------------------
+	// A compartment is joined to the rest of the model by its fluxes before
+	// anything an equation says: what it receives and from where, what it
+	// gives up and to where. They were in `Used by` below, which names every
+	// block that refers to this one -- a flux refers to its two ends -- mixed
+	// in with the equations that read it and saying neither which way each
+	// ran nor where its other end was. A far-field path and a set of packages
+	// are joined the same way: what is delivered into the one, and the
+	// release out of either.
+	const flows = new Set();
+	if (FLOWING.has(kind)) {
+		const into = [
+			...(project.inflows ?? []).filter((x) => x.to === qname),
+			...(project.transfers ?? []).filter((t) => t.to === qname),
+		];
+		const out = (project.transfers ?? []).filter((t) => t.from === qname);
+		for (const t of [...into, ...out]) flows.add(ed.qualifiedName(t));
+		if (into.length) host.append(flowList('Flows in', into, 'from', link, more));
+		if (out.length) host.append(flowList('Flows out', out, 'to', link, more));
+		if (!flows.size) {
+			host.append(el('p', { className: 'info-none' }, 'Nothing flows into it or out of it.'));
+		}
 	}
 
 	// --- what it is joined to ----------------------------------------------
 	const links = ed.influences(project);
 	const reads = [...new Set(links.filter((i) => i.to === qname).map((i) => i.from))];
-	const usedBy = ed.referencesTo(project, qname);
+	// The fluxes have their lists above, with their directions.
+	const usedBy = ed.referencesTo(project, qname).filter((n) => !flows.has(n));
 
-	if (reads.length) host.append(refList('Uses', reads, project, link));
-	if (usedBy.length) host.append(refList('Used by', usedBy, project, link));
-	if (!reads.length && !usedBy.length) {
+	if (reads.length) host.append(refList('Uses', reads, project, link, more));
+	if (usedBy.length) host.append(refList('Used by', usedBy, project, link, more));
+	if (!reads.length && !usedBy.length && !flows.size) {
 		host.append(el('p', { className: 'info-none' },
 			'Nothing reads this block, and it reads nothing.'));
 	}
@@ -764,7 +819,7 @@ export function renderInfo(host, project, selection, hooks = {}) {
  * Everything here is derived from the project, never from the last run, so it
  * says the same thing before the first simulation as after it.
  */
-function renderModelInfo(host, project, hooks) {
+function renderModelInfo(host, project, hooks, more) {
 	// The defaults Project itself applies, so this says what would actually
 	// run rather than what the file happens to spell out.
 	const sim = { ...DEFAULT_SIMULATION, ...(project.simulation ?? {}) };
@@ -909,6 +964,25 @@ function renderModelInfo(host, project, hooks) {
 			if (first) hooks.onSelect?.({ kind: first.kind, name: bad[0].name });
 		});
 		host.append(el('p', { className: 'info-warn' }, go));
+		// The rest of them, each where it is, behind a link: the line above
+		// goes to the first, which on a model with forty is not enough to
+		// say which forty.
+		if (bad.length > 1) {
+			const box = el('div', { className: 'info-refs' });
+			longRows(box, bad, (p) => {
+				const target = ed.findBlock(project, p.name);
+				let name = el('span', { className: 'info-gone' }, p.name);
+				if (target) {
+					name = el('button', { className: 'info-link', type: 'button', title: p.name },
+						blockIcon(target.kind), el('span', {}, target.block.name));
+					name.addEventListener('click', () => hooks.onSelect?.({ kind: target.kind, name: p.name }));
+				}
+				return el('div', { className: 'info-fault is-warning' }, name,
+					el('span', { className: 'info-dim' },
+						` \u2014 ${p.field === 'dydt' ? 'dy/dt term' : p.field}: ${p.detail}`));
+			}, more, 'units', 0);
+			host.append(box);
+		}
 	}
 
 	host.append(el('p', { className: 'hint' },
@@ -977,7 +1051,7 @@ function childSystemList(project, path, hooks, label) {
  * added here because on a model of any size that is the question you actually
  * have about a part: not what is inside it, but what it is joined to.
  */
-function renderSystemInfo(host, project, path, hooks) {
+function renderSystemInfo(host, project, path, hooks, more) {
 	const link = (name) => {
 		const target = ed.findBlock(project, name);
 		if (!target) return el('span', { className: 'info-gone' }, name);
@@ -1098,16 +1172,12 @@ function renderSystemInfo(host, project, path, hooks) {
 		if (!names.length) return;
 		const box = el('div', { className: 'info-refs' },
 			el('div', { className: 'info-label' }, `${title} (${names.length})`));
-		for (const name of names.slice(0, MOST)) {
+		longRows(box, names, (name) => {
 			const found = ed.findBlock(project, name);
-			box.append(el('div', { className: 'info-ref' }, link(name),
+			return el('div', { className: 'info-ref' }, link(name),
 				el('span', { className: 'info-ref-what' },
-					found ? summarise(found.collection, found.block) : '')));
-		}
-		if (names.length > MOST) {
-			box.append(el('div', { className: 'info-ref-more' },
-				`and ${names.length - MOST} more`));
-		}
+					found ? summarise(found.collection, found.block) : ''));
+		}, more, title);
 		host.append(box);
 	};
 	// What is wrong inside it, block by block and as links: this is the page
@@ -1122,13 +1192,8 @@ function renderSystemInfo(host, project, path, hooks) {
 				? `${errors} problem${errors === 1 ? '' : 's'} inside${mark.inside.length > errors
 					? `, ${mark.inside.length - errors} warning${mark.inside.length - errors === 1 ? '' : 's'}` : ''}`
 				: `${mark.inside.length} warning${mark.inside.length === 1 ? '' : 's'} inside`));
-		for (const x of mark.inside.slice(0, 12)) {
-			box.append(el('div', { className: `info-fault is-${x.level}` },
-				link(x.name), el('span', { className: 'info-dim' }, ` — ${x.message}`)));
-		}
-		if (mark.inside.length > 12) {
-			box.append(el('div', { className: 'info-dim' }, `and ${mark.inside.length - 12} more`));
-		}
+		longRows(box, mark.inside, (x) => el('div', { className: `info-fault is-${x.level}` },
+			link(x.name), el('span', { className: 'info-dim' }, ` — ${x.message}`)), more, 'faults');
 		host.append(box);
 	}
 	crossing('Flows out', out);
@@ -1240,7 +1305,7 @@ function startValueList(qname, values, more) {
 	return out;
 }
 
-function overrideList(project, block, kind, dims) {
+function overrideList(project, block, kind, dims, more) {
 	const extras = ed.ENTRY_EXTRA[kind] ?? [];
 	const label = (key) => symbolText(
 		extras.find((x) => x.key === key)?.label ?? String(key).replace(/_/g, ' '),
@@ -1259,26 +1324,23 @@ function overrideList(project, block, kind, dims) {
 		el('div', { className: 'info-label' }, 'Set per index'));
 	const rows = (block.entries ?? [])
 		.filter((e) => keys.some((k) => Object.prototype.hasOwnProperty.call(e, k)));
-	for (const e of rows.slice(0, MOST)) {
+	longRows(box, rows, (e) => {
 		const where = dims.map((d) => e.index?.[d]).filter(Boolean).join(' \u00b7 ');
 		const what = keys
 			.filter((k) => Object.prototype.hasOwnProperty.call(e, k))
 			.map((k) => `${label(k)} ${show(k, e[k])}`)
 			.join(', ');
-		box.append(el('div', { className: 'info-ref' },
+		return el('div', { className: 'info-ref' },
 			el('code', {}, where || 'every index'),
-			el('span', { className: 'info-ref-what' }, what)));
-	}
-	if (rows.length > MOST) {
-		box.append(el('div', { className: 'info-ref-more' }, `and ${rows.length - MOST} more`));
-	}
+			el('span', { className: 'info-ref-what' }, what));
+	}, more, 'per-index');
 	return box;
 }
 
-function refList(title, names, project, link) {
+function refList(title, names, project, link, more) {
 	const box = el('div', { className: 'info-refs' },
 		el('div', { className: 'info-label' }, `${title} (${names.length})`));
-	for (const name of names.slice(0, MOST)) {
+	longRows(box, names, (name) => {
 		const found = ed.findBlock(project, name);
 		const row = el('div', { className: 'info-ref' }, link(name));
 		if (found) {
@@ -1294,11 +1356,67 @@ function refList(title, names, project, link) {
 			row.append(el('span', { className: 'info-ref-what' },
 				summarise(found.collection, found.block)));
 		}
-		box.append(row);
-	}
-	if (names.length > MOST) {
-		box.append(el('div', { className: 'info-ref-more' },
-			`and ${names.length - MOST} more`));
-	}
+		return row;
+	}, more, title);
 	return box;
+}
+
+/**
+ * The fluxes into a block, or out of it, each with the block at its other end.
+ *
+ * @param {'from'|'to'} end  the end that is not this block: where a flux in
+ *   comes from, where a flux out goes
+ */
+function flowList(title, fluxes, end, link, more) {
+	const box = el('div', { className: 'info-refs' },
+		el('div', { className: 'info-label' }, `${title} (${fluxes.length})`));
+	longRows(box, fluxes, (t) => {
+		// A source term has no `from` at all, and a flux out of the model has
+		// one set to null: both are the world outside.
+		const other = t[end] ?? null;
+		return el('div', { className: 'info-ref' }, link(ed.qualifiedName(t)),
+			el('span', { className: 'info-ref-what', title: String(t.rate ?? '') },
+				other == null
+					? (end === 'from' ? 'from outside the model' : 'out of the model')
+					: `${end} ${other}`));
+	}, more, title);
+	return box;
+}
+
+/**
+ * The rows of a list that may be long: the first `most` of them, then how
+ * many more and a link that shows every one -- and, once they are shown, a
+ * link that puts the list back.
+ *
+ * Every list on this view goes through here, so none of them stops naming
+ * things without a way to see the rest.
+ *
+ * @param {HTMLElement} box  where the rows go
+ * @param {any[]} items
+ * @param {(item: any) => Node} row
+ * @param {{owner: string, again: Function}} more  whose page this is, and how
+ *   to draw it again -- see `unfolded`
+ * @param {string} list  which of the page's lists
+ * @param {number} [most]  how many show before the link; 0 for a list that is
+ *   only a link until it is asked for
+ */
+export function longRows(box, items, row, more, list, most = MOST) {
+	const open = !!more && unfolded.owner === more.owner && unfolded.lists.has(list);
+	const all = open || items.length <= most;
+	for (const item of all ? items : items.slice(0, most)) box.append(row(item));
+	if (items.length <= most) return;
+	if (!more) {
+		box.append(el('div', { className: 'info-ref-more' }, `and ${items.length - most} more`));
+		return;
+	}
+	const link = el('button', { className: 'info-more', type: 'button' },
+		open ? (most ? 'show fewer' : 'hide') : `show all ${items.length}`);
+	link.addEventListener('click', () => {
+		if (unfolded.owner !== more.owner) unfolded = { owner: more.owner, lists: new Set() };
+		if (open) unfolded.lists.delete(list);
+		else unfolded.lists.add(list);
+		more.again();
+	});
+	box.append(el('div', { className: 'info-ref-more' },
+		!open && most ? `and ${items.length - most} more \u00b7 ` : '', link));
 }

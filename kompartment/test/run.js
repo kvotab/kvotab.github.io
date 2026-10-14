@@ -24279,7 +24279,7 @@ test('what the Information view says about an index that differs', async () => {
 		'the count still looks at one key');
 	assert(/if \(set\.length\) host\.append\(overrideList\(/.test(info),
 		'nothing says which indices differ');
-	const list = /function overrideList\(project, block, kind, dims\) \{([\s\S]*?)\n\}/.exec(info)?.[1];
+	const list = /function overrideList\(project, block, kind, dims, more\) \{([\s\S]*?)\n\}/.exec(info)?.[1];
 	assert(list, 'overrideList is gone');
 	assert(/ed\.entryKeys\(kind\)/.test(list), 'it reads one key rather than all of them');
 	assert(/extras\.find\(\(e\) => e\.key === key\)/.test(list),
@@ -26379,7 +26379,7 @@ test('the blocks an equation uses are listed with their units', async () => {
 	// derived from its ends as on its own page.
 	const { readFileSync } = await import('node:fs');
 	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
-	const list = /function refList\(title, names, project, link\) \{([\s\S]*?)\n\}/.exec(info)?.[1];
+	const list = /function refList\(title, names, project, link, more\) \{([\s\S]*?)\n\}/.exec(info)?.[1];
 	assert(list, 'refList is gone');
 	assert(/\? ed\.derivedUnit\(project, found\.block, kind\)\s*\n\s*: found\.block\.unit;/.test(list),
 		'a flux in the list would show no unit, or the wrong one');
@@ -40380,6 +40380,87 @@ test('the grid’s right-click is the diagram’s menu on a block, and the place
 	assert(/host\.addEventListener\('contextmenu', \(ev\) => \{/.test(matrix), 'no right-click on the grid');
 	// Unfolding everything is refused where it would draw millions of squares.
 	assert(/const UNFOLD_MOST = \d+;/.test(matrix) && /disabled: big \|\| /.test(matrix), 'unfolding a large model hangs the tab');
+});
+
+test('the Information view lists what flows in and out of a compartment, and every list it cuts short can be shown whole', async () => {
+	const { readFileSync } = await import('node:fs');
+	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
+	// The fluxes of the blocks fluxes join, source terms with them, with
+	// their other ends -- and not again under Used by, which names every
+	// block that refers to this one.
+	assert(/const FLOWING = new Set\(\['compartment', 'farfield', 'waste_package'\]\);/.test(info), 'no flows');
+	assert(/\.\.\.\(project\.inflows \?\? \[\]\)\.filter\(\(x\) => x\.to === qname\),/.test(info),
+		'a source term is not a flow in');
+	assert(/flowList\('Flows in', into, 'from', link, more\)/.test(info) && /flowList\('Flows out', out, 'to', link, more\)/.test(info),
+		'the flows are not listed');
+	assert(/const usedBy = ed\.referencesTo\(project, qname\)\.filter\(\(n\) => !flows\.has\(n\)\);/.test(info),
+		'every flux is listed twice');
+	// No list is cut short on its own: every one goes through longRows.
+	assert(!/\.slice\(0, (MOST|12)\)/.test(info), 'a list stops naming things without a way to the rest');
+	// Opening one draws the view again where it was scrolled.
+	assert(/renderInfo\(pane, project, selection, hooks\);\n\t\tpane\.scrollTop = at\.pane;/.test(info)
+		&& /box\.append\(\.\.\.startValueList\(qname, values, again\)\);/.test(info), 'a link throws the view back to its top');
+
+	// The list itself, on a stub document -- synchronously, since `document`
+	// is global and other tests run beside this one.
+	const { longRows } = await import('../src/ui/info.js');
+	const node = () => ({
+		nodeType: 1, kids: [], on: {},
+		append(...k) { this.kids.push(...k); },
+		addEventListener(type, fn) { this.on[type] = fn; },
+		setAttribute() {}, removeAttribute() {},
+	});
+	const items = Array.from({ length: 20 }, (_, i) => `b${i}`);
+	const read = (box) => {
+		const line = box.kids.find((k) => k.className === 'info-ref-more');
+		const link = line?.kids.find((k) => k.className === 'info-more');
+		return {
+			rows: box.kids.filter((k) => k.row).length,
+			line: line?.kids.map((k) => k.t ?? k.kids?.map((x) => x.t).join('')).join('') ?? null,
+			click: () => link.on.click(),
+		};
+	};
+	const previous = globalThis.document;
+	globalThis.document = { createElement: node, createTextNode: (t) => ({ nodeType: 3, t }) };
+	let drawn = 0;
+	const page = (owner) => ({ owner, again: () => { drawn += 1; } });
+	const list = (more, name, n = items.length, most) => {
+		const box = node();
+		longRows(box, items.slice(0, n), (x) => ({ nodeType: 1, row: x }), more, name, most);
+		return read(box);
+	};
+	const seen = [];
+	try {
+		const e = page('block:E');
+		let l = list(e, 'Uses');
+		seen.push([l.rows, l.line]);
+		l.click();
+		seen.push(drawn);
+		l = list(e, 'Uses');
+		seen.push([l.rows, l.line]);
+		// Another list on the page, and another page, start short.
+		seen.push(list(e, 'Used by').rows, list(page('block:F'), 'Uses').rows);
+		l = list(e, 'Uses');
+		l.click();
+		seen.push(list(e, 'Uses').rows);
+		// A list that is only a link until it is asked for.
+		l = list(e, 'units', 20, 0);
+		seen.push([l.rows, l.line]);
+		l.click();
+		l = list(e, 'units', 20, 0);
+		seen.push([l.rows, l.line]);
+		// Short enough, and there is nothing to ask for.
+		l = list(e, 'Uses', 12);
+		seen.push([l.rows, l.line]);
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+	const want = [
+		[12, 'and 8 more · show all 20'], 1, [20, 'show fewer'], 12, 12, 12,
+		[0, 'show all 20'], [20, 'hide'], [12, null],
+	];
+	assert(JSON.stringify(seen) === JSON.stringify(want), JSON.stringify(seen));
 });
 
 test('a fault found by building the model is marked on its block, and said in its settings', async () => {

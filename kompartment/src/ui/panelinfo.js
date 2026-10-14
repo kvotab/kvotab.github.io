@@ -143,8 +143,12 @@ export function panelTopic(key, ctx = {}) {
 				list: [
 					'The block’s kind, unit, dimensions and the equation or value that defines it, with '
 					+ 'its values per index when it has several and what it comes to at the start.',
+					'What flows into a compartment and what flows out of it, each with the block at its '
+					+ 'other end — for a far-field pathway and a set of waste packages too.',
 					'The blocks its equation reads, and the blocks that read it. Each is a link: click it to '
 					+ 'go there.',
+					'A list longer than twelve names its first twelve: **show all** names every one, and '
+					+ '**show fewer** puts it back.',
 					'Anything wrong with it that the model’s scan has found, such as a unit that does not '
 					+ 'work out.',
 				],
