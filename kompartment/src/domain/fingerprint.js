@@ -47,13 +47,13 @@ import * as tr from './transport.js';
  * fingerprint costs a re-solve nobody needed; a fingerprint that missed a
  * change would leave a wrong curve on the screen looking like a right one.
  */
-const NOT_NUMERIC = new Set([
+export const NOT_NUMERIC = new Set([
 	'comment', 'pdf', 'x', 'y', 'w', 'h', 'shape', 'colour', 'color', 'label',
 	'collapsed', 'note', 'notes',
 ]);
 
 /** A replacer that sorts every object's keys, so key order never changes a fingerprint. */
-function canonical(key, value) {
+export function canonical(key, value) {
 	if (value && typeof value === 'object' && !Array.isArray(value)) {
 		const out = {};
 		for (const k of Object.keys(value).sort()) out[k] = value[k];

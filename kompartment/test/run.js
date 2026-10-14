@@ -10211,9 +10211,12 @@ test('Stop switches auto-run off', async () => {
 		'the slow-solve hold now reaches in and unticks the box');
 });
 
-test('a problem stays until it is fixed, and stale results are not shown', async () => {
+test('a problem stays until it is fixed, and stale results are shown under what has changed', async () => {
 	// The two halves of the same complaint: an error that faded, and a Chart
-	// tab that went on showing the last model that worked.
+	// tab that went on showing the last model that worked with nothing on it
+	// saying so. Hiding the results answered the second, and lost the curves
+	// over a tolerance tightened; they stay now, under a notice that says they
+	// are out of date and what has changed since.
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
@@ -10251,16 +10254,20 @@ test('a problem stays until it is fixed, and stale results are not shown', async
 	assert(/state\.rev \+= 1/.test(changed), 'the model revision is not bumped');
 
 	// Results carry the revision they were computed from, and the comparison
-	// is what decides whether they are shown.
+	// is what decides whether they are out of date.
 	assert(/rev: state\.runRev/.test(app), 'results are not stamped with a revision');
 	const stale = /function resultsAreStale\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(stale && /state\.results\.rev !== state\.rev/.test(stale),
 		'staleness is not the revision comparison');
-	// ...but not while a run is on its way, or every keystroke would blank the
-	// chart for a third of a second and fill it again.
+	// Out of date, they are still shown...
 	const showable = /function resultsShowable\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
-	assert(showable && /state\.running/.test(showable) && /autoRunTimer/.test(showable),
-		'a run in flight no longer keeps the last results on screen');
+	assert(showable && /return !!shownRun\(\);/.test(showable) && !/resultsAreStale/.test(showable),
+		'results of a model that has changed are hidden again');
+	// ...under the notice -- but not while a run is on its way, or every
+	// keystroke would put it up for a third of a second and take it down.
+	const staleness = /function renderStaleness\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
+	assert(staleness && /if \(!resultsAreStale\(\) \|\| state\.running \|\| autoRunTimer !== null\) return;/.test(staleness),
+		'the notice flickers up during a run, or is never put up');
 	// And the chart does not un-hide itself behind that decision's back.
 	const chart = /function renderChart\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1];
 	assert(chart && !/\$\('#chart'\)\.hidden = false/.test(chart),
@@ -10270,6 +10277,157 @@ test('a problem stays until it is fixed, and stale results are not shown', async
 	for (const cls of ['stale', 'problem', 'problem-where', 'problems-head']) {
 		assert(new RegExp(`\\.${cls}[\\s.,:>{]`).test(css), `.${cls} is styled by nothing`);
 	}
+});
+
+test('what has changed since a run is listed in the model’s terms, each saying whether it can move a number', async () => {
+	const { modelChanges } = await import('../src/domain/changes.js');
+	const before = {
+		name: 'm', description: 'first', simulation: { ...DEFAULT_SIMULATION, solver: 'ros23', rtol: 1e-6, iterations: 1000 },
+		index_lists: [{ name: 'RN', indices: [{ name: 'A' }] }, { name: 'Old', indices: [] }],
+		compartments: [
+			{ name: 'Lake', initial: '1', unit: 'Bq' },
+			{ name: 'Sea', initial: '0', unit: 'Bq', comment: 'deep' },
+			{ name: 'Soil', initial: '0', index_lists: ['RN'], entries: [{ index: { RN: 'A' }, initial: '1', comment: 'x' }] },
+			{ name: 'Well', initial: '0' },
+			{ name: 'Pond', initial: '0' },
+			{ name: 'Gone', initial: '0' },
+		],
+		parameters: [{ name: 'k', value: 0.1, enabled: true }, { name: 'q', value: 1 }],
+		transfers: [{ name: 'T', from: 'Lake', to: 'Sea', rate: 'k' }],
+		layout: { Lake: { x: 0, y: 0 }, Well: { x: 5, y: 7 } },
+		view: { show_grid: true },
+	};
+	const frozen = JSON.stringify(before);
+	const after = structuredClone(before);
+	after.simulation.solver = 'ndf';
+	after.simulation.iterations = 50;
+	after.description = 'second';
+	after.index_lists[0].indices.push({ name: 'B' });
+	after.index_lists.splice(1, 1);
+	after.index_lists.push({ name: 'New', indices: [] });
+	after.compartments[1].comment = 'shallow';
+	after.compartments[2].entries[0].comment = 'y';
+	// Renamed, as the editor renames: its place on the diagram goes with it.
+	after.compartments[3].name = 'Bore';
+	after.compartments[3].color = '#f00';
+	after.layout.Bore = after.layout.Well;
+	delete after.layout.Well;
+	after.compartments[4].system = 'NF';
+	after.compartments.splice(5, 1);
+	after.compartments.push({ name: 'Fresh', initial: '0' });
+	after.parameters[0] = { enabled: true, value: 0.1, name: 'k' };
+	after.parameters[1].enabled = false;
+	after.transfers[0].rate = '2 * k';
+	after.layout.Lake.x = 99;
+	after.view.show_grid = false;
+
+	const got = modelChanges(before, after);
+	assert(JSON.stringify(before) === frozen, 'the run’s copy of the model was written to');
+	const find = (pred) => got.filter(pred);
+	const one = (pred, what) => {
+		const hits = find(pred);
+		assert(hits.length === 1, `${what}: ${JSON.stringify(hits)} in ${JSON.stringify(got)}`);
+		return hits[0];
+	};
+	// The settings, value to value; a probabilistic run's settings move no number of a run.
+	const solver = one((c) => c.where === 'setting' && c.key === 'solver', 'the solver');
+	assert(solver.from === 'ros23' && solver.to === 'ndf' && solver.numeric, JSON.stringify(solver));
+	assert(one((c) => c.key === 'iterations', 'the realisations').numeric === false, 'iterations moves a number');
+	// The index lists, by name.
+	assert(one((c) => c.where === 'list' && c.key === 'RN', 'RN').change === 'changed');
+	assert(one((c) => c.where === 'list' && c.key === 'Old', 'Old').change === 'removed');
+	assert(one((c) => c.where === 'list' && c.key === 'New', 'New').change === 'added');
+	// The description changes no number; the diagram is not listed at all.
+	assert(one((c) => c.where === 'model' && c.key === 'description', 'the description').numeric === false);
+	assert(!find((c) => ['layout', 'view'].includes(c.key)).length, 'the diagram is listed');
+	// A comment, on a block or on one of its indices, moves no number.
+	const sea = one((c) => c.block === 'Sea', 'Sea');
+	assert(sea.change === 'changed' && !sea.numeric && sea.fields[0].key === 'comment', JSON.stringify(sea));
+	assert(one((c) => c.block === 'Soil', 'Soil').numeric === false, 'a comment on one index moves a number');
+	// Renamed through a change of colour; moved into a sub-system.
+	const bore = one((c) => c.block === 'Well', 'the rename');
+	assert(bore.change === 'renamed' && bore.to === 'Bore', JSON.stringify(bore));
+	const pond = one((c) => c.block === 'Pond', 'the move');
+	assert(pond.change === 'moved' && pond.to === 'NF.Pond', JSON.stringify(pond));
+	// Gone deleted and Fresh made are alike in everything but the name, and
+	// are still not one block renamed.
+	assert(one((c) => c.block === 'Gone', 'the deletion').change === 'removed');
+	assert(one((c) => c.block === 'Fresh', 'the addition').change === 'added');
+	// The order of a block's keys is no change, and a switch left on is on.
+	assert(!find((c) => c.block === 'k').length, 'key order, or an explicit enabled: true, is a change');
+	const q = one((c) => c.block === 'q', 'q');
+	assert(q.fields[0].key === 'enabled' && q.fields[0].to === false && q.numeric, JSON.stringify(q));
+	const t = one((c) => c.block === 'T', 'T');
+	assert(t.fields[0].key === 'rate' && t.fields[0].from === 'k' && t.fields[0].to === '2 * k' && t.numeric, JSON.stringify(t));
+	// Settings first, then the lists and the model, then the blocks.
+	const at = (c) => ['setting', 'list', 'model', 'block'].indexOf(c.where);
+	assert(got.every((c, i) => i === 0 || at(got[i - 1]) <= at(c)), got.map((c) => c.where).join());
+	// The same copy against a model edited again: still compared, and nothing
+	// left over from the last time.
+	after.transfers[0].rate = 'k';
+	assert(!modelChanges(before, after).some((c) => c.block === 'T'), 'the copy’s index went stale');
+	assert(modelChanges(before, structuredClone(before)).length === 0, 'a model is different from itself');
+});
+
+test('a change since the run reads as the settings and the dialogs say it', async () => {
+	const { changeText } = await import('../src/ui/app.js');
+	const said = (c) => changeText(c);
+	assert(said({ where: 'setting', key: 'solver', from: 'ros23', to: 'ndf' }) === 'Solver: stiff, low order, Rosenbrock 2-3 → stiff, NDF',
+		said({ where: 'setting', key: 'solver', from: 'ros23', to: 'ndf' }));
+	assert(said({ where: 'setting', key: 'rtol', from: 1e-6, to: 1e-9 }) === 'Rel. tolerance: 1e-6 → 1e-9');
+	// A value missing from the file is the default the run used.
+	assert(said({ where: 'setting', key: 'rtol', from: undefined, to: 1e-9 }) === 'Rel. tolerance: 0.001 → 1e-9');
+	assert(said({ where: 'setting', key: 'output_times', from: [1, 2], to: [1, 3] }) === 'Output times changed');
+	assert(said({ where: 'list', key: 'RN', change: 'removed' }) === 'Index list RN deleted');
+	assert(said({ where: 'model', key: 'nuclides', from: ['a'], to: ['b'] }) === 'The radionuclides changed');
+	assert(said({ where: 'block', change: 'added', kind: 'farfield', block: 'Rock' }) === 'Added far-field pathway Rock');
+	assert(said({ where: 'block', change: 'removed', kind: 'waste_package', block: 'W' }) === 'Deleted waste packages W');
+	assert(said({ where: 'block', change: 'renamed', kind: 'compartment', block: 'Well', to: 'Bore' }) === 'Renamed Well to Bore');
+	assert(said({ where: 'block', change: 'moved', kind: 'compartment', block: 'Pond', to: 'NF.Pond' }) === 'Moved Pond to NF');
+	assert(said({
+		where: 'block', change: 'changed', kind: 'parameter', block: 'k', fields: [
+			{ key: 'value', from: 0.1, to: 0.2 }, { key: 'enabled', from: true, to: false },
+			{ key: 'entries', from: [], to: [{}] }, { key: 'unit', from: undefined, to: 'Bq' },
+		],
+	}) === 'k: value 0.1 → 0.2, switched off, values per index, unit none → Bq');
+	// Rounded alike, a number is said in full rather than as no change.
+	assert(said({ where: 'block', change: 'changed', kind: 'parameter', block: 'k', fields: [{ key: 'value', from: 1.00001, to: 1.00002 }] })
+		=== 'k: value 1.00001 → 1.00002');
+	// An equation of a page is named, not quoted.
+	assert(said({ where: 'block', change: 'changed', kind: 'expression', block: 'E', fields: [{ key: 'equation', from: 'a'.repeat(40), to: 'b' }] })
+		=== 'E: equation');
+});
+
+test('the results on screen keep a copy of the model they were run from, and the notice reads it', async () => {
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	// Taken where a run is launched, as the revision is, and stamped onto the
+	// results as they land -- an edit made while the solver worked must not
+	// pass for one the results include.
+	const launches = (app.match(/state\.runRev = state\.rev;\n\tstate\.runModel = JSON\.stringify\(state\.raw\);/g) ?? []).length;
+	assert(launches === (app.match(/state\.runRev = state\.rev;/g) ?? []).length && launches === 3,
+		`${launches} of the launches keep the model`);
+	assert(/state\.resultsModel = state\.runModel;\n\tstate\.results = \{/.test(app), 'the results do not take the copy');
+	assert((app.match(/state\.results = null;\n\tstate\.resultsModel = null;/g) ?? []).length
+		=== (app.match(/state\.results = null;/g) ?? []).length, 'a copy outlives its results');
+	// Read once a run, compared once a revision.
+	const changes = /function resultChanges\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/if \(changesFor\.text !== text\)/.test(changes) && /if \(changesFor\.rev !== state\.rev\)/.test(changes)
+		&& /modelChanges\(changesFor\.model, state\.raw\)/.test(changes), 'the copy is read or compared too often');
+	// The notice: the changes, a few at a time, quiet where none moves a number.
+	const notice = /function staleNotice\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/const all = \[\.\.\.moving, \.\.\.changes\.filter\(\(c\) => !c\.numeric\)\];/.test(notice), 'what moves a number is not first');
+	assert(/open \? all : all\.slice\(0, STALE_MOST\)/.test(notice) && /`show all \$\{all\.length\}`/.test(notice), 'a long list has no way to the rest');
+	assert(/className: `stale\$\{still \? ' is-still' : ''\}`/.test(notice), 'nothing says when no number moved');
+	// Over the views, not instead of them.
+	const staleness = /function renderStaleness\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/\$\('#unitwarn'\)\?\.after\(staleNotice\(\)\);/.test(staleness) && /\$\('#table-body'\)\?\.before\(staleNotice\(\)\);/.test(staleness),
+		'the notice is not over the chart and the table');
+	const rule = /\n\.stale \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+	assert(rule && !/height: 100%/.test(rule) && /border-left: 3px solid var\(--warn\);/.test(rule), 'the notice still takes the chart’s place');
+	assert(/\.stale-changes \{[\s\S]*?max-height: 40vh;[\s\S]*?overflow-y: auto;/.test(css), 'a long list pushes the chart away');
+	assert(/\.stale\.is-still \{/.test(css), 'the quiet notice is styled by nothing');
 });
 
 test('a copy carries the arrows between what was copied, and nothing else', async () => {

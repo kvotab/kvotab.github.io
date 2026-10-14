@@ -133,6 +133,7 @@ import { symbolNodes } from './symbol.js';
 import { attachCompletion, searchLook, completionIsOpen } from './complete.js';
 import { renderIndexLists, selectIndexList } from './indexlists.js';
 import { fmtTime } from './summary.js';
+import { modelChanges } from '../domain/changes.js';
 import { fillStartValues } from './startvalue.js';
 import { baseName, parentOf, isWithin } from '../domain/systems.js';
 import {
@@ -685,6 +686,12 @@ const state = {
 	// while the solver worked must not pass itself off as included.
 	runRev: 0,
 	runSolver: null,
+	// The model itself, as text, for the same two: what the run in flight was
+	// launched from, and what the results on screen were computed from. The
+	// results stay on screen after an edit, and `resultChanges` says what has
+	// changed since by comparing the model with this.
+	runModel: null,
+	resultsModel: null,
 	// Whether the run in flight asked the worker to re-evaluate rather than
 	// solve. Only for what the footer says about it.
 	reusing: false,
@@ -1463,6 +1470,7 @@ function runSimulation(opts = {}) {
 	state.runId += 1;
 	// Which model this run is of. Stamped onto the results when they arrive.
 	state.runRev = state.rev;
+	state.runModel = JSON.stringify(state.raw);
 	state.runPreview = state.preview;
 	state.runSolver = project.simulation?.solver ?? DEFAULT_SOLVER;
 	state.runKey = integrationKeyNow(project);
@@ -1896,6 +1904,7 @@ function acceptResults(payload, replayed = null, storedLog = null) {
 	// `replayed` says these are one realisation of a probabilistic run, run
 	// again in full -- which the status line says, since a curve that is the
 	// 734th draw and not the model's values is a different thing to read.
+	state.resultsModel = state.runModel;
 	state.results = {
 		...payload, rev: state.runRev ?? state.rev, runId: state.runId, replayed, storedLog,
 		// What these are a run *at*: the model's own values, a preview of
@@ -2446,6 +2455,7 @@ function replayRealisation(settings, index) {
 	const w = ensureWorker();
 	state.runId += 1;
 	state.runRev = state.rev;
+	state.runModel = JSON.stringify(state.raw);
 	state.runSolver = state.raw.simulation?.solver ?? DEFAULT_SOLVER;
 	// A replay is not the model at its values, so nothing later may reuse
 	// its states as if it were.
@@ -7887,20 +7897,18 @@ function resultsAreStale() {
 }
 
 /**
- * Whether to show results at all.
+ * Whether there is a run to show.
  *
- * Stale results are hidden -- but not while a run is on its way, because with
- * auto-run on every keystroke's commit would blank the chart for a third of a
- * second and fill it again, and a chart that flickers on every edit is worse
- * than one that is briefly a third of a second behind. At rest, what is shown
- * is always this model's.
+ * Results of a model that has changed since they were computed are shown as
+ * well, under a notice saying so and what has changed (`staleNotice`). A
+ * solver swapped or a tolerance tightened is no reason to lose the curves
+ * somebody was reading, and the notice is what keeps them from passing for
+ * the model's as it now stands.
  */
 function resultsShowable() {
 	// Before a run here, Ecolego's stored run, where the file brought one: it
 	// is not this tool's answer and cannot go out of date with an edit.
-	if (!state.results) return !!shownRun();
-	if (!resultsAreStale()) return true;
-	return state.running || autoRunTimer !== null;
+	return !!shownRun();
 }
 
 /**
@@ -7920,23 +7928,153 @@ function renderStaleness() {
 	// chart goes with it -- decided here, where every other reason to hide it
 	// is decided, rather than by `renderChart` reaching past this.
 	$('#chart').hidden = !show || nothing || showingSample();
-	$('#legend').hidden = !shown || (!show && !!shown) || nothing
-		|| showingSample();
+	$('#legend').hidden = !show || nothing || showingSample();
 	const table = $('#panel-table table');
 	if (table) table.hidden = !show;
 
-	for (const host of [$('.chart-shell'), $('#panel-table')]) {
-		if (!host) continue;
-		host.querySelector('.stale')?.remove();
-		if (show || !state.results) continue;
-		// One notice at a time: out-of-date beats empty, because it is the
-		// reason nothing is on screen.
-		host.querySelector('.empty-model')?.remove();
-		host.append(staleNotice());
-	}
+	// The notice, over each of the two views. Not while a run is on its way:
+	// with auto-run on, every edit's commit would put it up for the third of a
+	// second the run takes and take it down again, and a notice that flickers
+	// on every edit is worse than results a moment behind.
+	for (const n of document.querySelectorAll('#panel-chart .stale, #panel-table .stale')) n.remove();
+	// Current results need no list of changes, and the copy of the model it
+	// was read from is let go: on the largest models it is megabytes.
+	if (!resultsAreStale()) changesFor = { text: null, model: null, rev: -1, list: null };
+	if (!resultsAreStale() || state.running || autoRunTimer !== null) return;
+	// Above the chart rather than in its frame, which is a grid of the chart
+	// and its legend; and above the table rather than after it, where a long
+	// one would put it out of sight.
+	$('#unitwarn')?.after(staleNotice());
+	$('#table-body')?.before(staleNotice());
 }
 
-/** Why the results are not on screen, and the way to make them current. */
+/** How many changes the notice names before it says how many more. */
+const STALE_MOST = 6;
+
+/** The run whose notice lists every change, rather than the first few. */
+let staleOpen = null;
+
+/**
+ * What has changed in the model since the results on screen were computed,
+ * from the copy of it their run kept (`resultsModel`); null where there is no
+ * copy to compare with.
+ *
+ * The copy is read once per run and compared once per revision: a few
+ * milliseconds on a model of thousands of blocks. See ../domain/changes.js.
+ */
+let changesFor = { text: null, model: null, rev: -1, list: null };
+function resultChanges() {
+	const text = state.results ? state.resultsModel : null;
+	if (!text) return null;
+	if (changesFor.text !== text) {
+		let model;
+		try {
+			model = JSON.parse(text);
+		} catch {
+			return null;
+		}
+		changesFor = { text, model, rev: -1, list: null };
+	}
+	if (changesFor.rev !== state.rev) {
+		changesFor.list = modelChanges(changesFor.model, state.raw);
+		changesFor.rev = state.rev;
+	}
+	return changesFor.list;
+}
+
+/** What each kind of block is called in a sentence. */
+const BLOCK_WORDS = {
+	compartment: 'compartment', expression: 'expression', parameter: 'parameter',
+	lookup: 'lookup table', index_reduction: 'index operation', block_reduction: 'aggregate',
+	function: 'function', min_max: 'min/max', running_mean: 'running mean',
+	snapshot: 'snapshot', delay: 'delay', trigger: 'trigger', farfield: 'far-field pathway',
+	waste_package: 'waste packages', event: 'event', transfer: 'transfer', inflow: 'inflow',
+};
+
+/** The fields of a block that have a name of their own in its settings. */
+const FIELD_WORDS = {
+	initial: 'initial inventory', equation: 'equation', rate: 'rate', value: 'value',
+	unit: 'unit', index_lists: 'index lists', entries: 'values per index',
+	from: 'from', to: 'to', dydt: 'dy/dt term', comment: 'comment', color: 'colour',
+	colour: 'colour', pdf: 'distribution', symbol: 'symbol', handle_decay: 'decay',
+	multiply_by_donor: 'times the donor', non_negative: 'cannot go negative',
+	abstol: 'abs. tolerance', sum_extra_indices: 'summed over its extra indices',
+	points: 'table', argument: 'read at', target: 'target', targets: 'targets',
+	operation: 'operation', availability: 'availability',
+};
+
+/** What the model holds besides its blocks and its settings, in words. */
+const MODEL_WORDS = {
+	name: 'The model’s name', description: 'The description', author: 'The author',
+	nuclides: 'The radionuclides', half_lives: 'The half-lives', decay_unit: 'Decay unit',
+	chains: 'The decay chains', scenario: 'Scenario', systems: 'The sub-systems',
+	transports: 'The transports', disabled_systems: 'The sub-systems switched off',
+	derived: 'The post-processing', app: 'The app',
+};
+
+const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Two values as they would be said, or nulls when either is too long or too
+ * involved to read in a line: a table, a list, an equation of a page. A
+ * setting's words are the panel's own -- `stiff, low order, Rosenbrock 2-3`
+ * -- and are given more room than an equation.
+ */
+function sayPair(a, b, most = 30) {
+	const say = (v) => {
+		if (v === undefined || v === null) return 'none';
+		if (typeof v === 'boolean') return v ? 'on' : 'off';
+		if (typeof v === 'number') return fmtTime(v);
+		if (typeof v === 'string') return v.length <= most ? (v || '""') : null;
+		return null;
+	};
+	let x = say(a);
+	let y = say(b);
+	if (x == null || y == null) return [null, null];
+	// Rounded alike, the change would read as no change.
+	if (x === y && typeof a === 'number' && typeof b === 'number') [x, y] = [String(a), String(b)];
+	return [x, y];
+}
+
+/** A setting's value as the panel shows it. */
+function settingValue(key, v) {
+	const value = v ?? DEFAULT_SIMULATION[key];
+	if (key === 'solver' && typeof value === 'string') return solverLabel(value);
+	return value;
+}
+
+/** One of `resultChanges`, in words. */
+export function changeText(c) {
+	if (c.where === 'setting') {
+		const label = SIM_LABELS[c.key] ?? capital(c.key.replace(/_/g, ' '));
+		const [a, b] = sayPair(settingValue(c.key, c.from), settingValue(c.key, c.to), 60);
+		return a != null ? `${label}: ${a} → ${b}` : `${label} changed`;
+	}
+	if (c.where === 'list') {
+		return `Index list ${c.key} ${{ added: 'added', removed: 'deleted' }[c.change] ?? 'changed'}`;
+	}
+	if (c.where === 'model') {
+		const label = MODEL_WORDS[c.key] ?? capital(c.key.replace(/_/g, ' '));
+		const [a, b] = sayPair(c.from, c.to);
+		return a != null ? `${label}: ${a} → ${b}` : `${label} changed`;
+	}
+	const what = BLOCK_WORDS[c.kind] ?? c.kind.replace(/_/g, ' ');
+	if (c.change === 'added') return `Added ${what} ${c.block}`;
+	if (c.change === 'removed') return `Deleted ${what} ${c.block}`;
+	if (c.change === 'renamed') return `Renamed ${c.block} to ${c.to}`;
+	if (c.change === 'moved') return `Moved ${c.block} to ${ed.parentOf(c.to) || 'the top level'}`;
+	return `${c.block}: ${c.fields.map((f) => {
+		if (f.key === 'enabled') return f.to === false ? 'switched off' : 'switched on';
+		const label = FIELD_WORDS[f.key] ?? f.key.replace(/_/g, ' ');
+		const [a, b] = sayPair(f.from, f.to);
+		return a != null ? `${label} ${a} → ${b}` : label;
+	}).join(', ')}`;
+}
+
+/**
+ * What is on screen is of the model as it was: said over it, with what has
+ * changed since, and the way to bring it up to date.
+ */
 function staleNotice() {
 	const blocked = state.problems.length > 0;
 	// Auto-run is on, and being held off by how long the last solve took.
@@ -7945,29 +8083,66 @@ function staleNotice() {
 	// is what a first SciPy run, at two to twenty times the wall-clock of
 	// the ones here, used to make it look like.
 	const held = !blocked && !state.runProblem && state.autoRun && autoRunHeld();
-	const box = el('div', { className: 'stale' },
-		el('b', {}, blocked
+	const changes = resultChanges();
+	const moving = changes?.filter((c) => c.numeric) ?? [];
+	// Edited, and nothing that can move a number: a comment, a colour, a
+	// distribution, the settings of a probabilistic run. The curves are still
+	// the model's, and the notice says so rather than warning.
+	const still = !!changes && !moving.length;
+	const box = el('div', { className: `stale${still ? ' is-still' : ''}`, role: 'status' });
+	box.append(el('b', {}, still
+		? changes.length
+			? 'Edited since these results were computed, in ways that change no number.'
+			: 'Edited since these results were computed, and put back as it was.'
+		: blocked
 			? 'These results are out of date, and the model will not run.'
-			: 'These results are out of date.'),
-		el('span', {}, blocked
-			? 'The model has changed since they were computed, and something in '
-				+ 'it has to be fixed before it can run again — see the strip '
-				+ 'at the top.'
-			: state.runProblem
-				? 'The model has changed since they were computed, and the last '
-					+ 'run failed — see the strip at the top.'
-				: held
-					? 'The model has changed since they were computed. The last '
-						+ `solve took ${(state.lastSolveMs / 1000).toFixed(1)} s `
-						+ `under ${solverLabel(state.lastSolveSolver)}, which is `
-						+ 'long enough that re-running on every edit would get '
-						+ 'in the way — so this one is waiting to be asked.'
-					: 'The model has changed since they were computed. They are '
-						+ 'not shown, because results that are not this model\u2019s '
-						+ 'are worse than no results.'),
-	);
+			: 'These results are out of date.'));
+	if (!changes) {
+		box.append(el('span', {}, 'The model has changed since they were computed.'));
+	} else if (!still) {
+		box.append(el('span', {}, changes.length === 1
+			? 'They were computed before this change:'
+			: `They were computed before these ${changes.length} changes:`));
+	}
+	if (changes?.length) {
+		// What can move a number first: that is what the reader has to weigh.
+		const all = [...moving, ...changes.filter((c) => !c.numeric)];
+		const runId = state.results.runId;
+		const open = staleOpen === runId;
+		const shown = open ? all : all.slice(0, STALE_MOST);
+		box.append(el('ul', { className: 'stale-changes' }, ...shown.map((c) => el('li',
+			{ className: c.numeric ? '' : 'is-still' },
+			changeText(c),
+			c.numeric || still ? null : el('span', { className: 'stale-quiet' }, ' — changes no number')))));
+		if (all.length > STALE_MOST) {
+			const more = el('button', { className: 'info-more', type: 'button' },
+				open ? 'show fewer' : `show all ${all.length}`);
+			more.addEventListener('click', () => {
+				staleOpen = open ? null : runId;
+				renderStaleness();
+			});
+			box.append(el('div', { className: 'stale-more' },
+				open ? '' : `and ${all.length - STALE_MOST} more · `, more));
+		}
+	}
+	// Why the run is not simply going again, where it is not.
+	const why = blocked
+		? 'Something in the model has to be fixed before it can run again — see the strip at the top.'
+		: state.runProblem
+			? 'The last run failed — see the strip at the top.'
+			: held
+				? `Auto-run is waiting: the last solve took ${(state.lastSolveMs / 1000).toFixed(1)} s `
+					+ `under ${solverLabel(state.lastSolveSolver)}, long enough that running again `
+					+ 'on every edit would get in the way.'
+				: '';
+	if (why) box.append(el('span', {}, why));
+	// A probabilistic run of that model is not drawn under curves of a model
+	// that has changed since: see `probIsCurrent`.
+	if (state.prob && !state.probRunning && state.prob.rev === state.results.rev && !currentProb()) {
+		box.append(el('span', {}, 'The probabilistic run is of that model too, and is not drawn.'));
+	}
 	if (!blocked) {
-		const go = el('button', { className: 'primary', type: 'button' }, 'Run');
+		const go = el('button', { className: 'primary', type: 'button' }, still ? 'Run again' : 'Run');
 		go.addEventListener('click', () => runSimulation({ manual: true }));
 		box.append(go);
 	}
@@ -8167,7 +8342,6 @@ function clearResultsViews() {
 	const shell = $('.chart-shell');
 	if (shell) {
 		shell.querySelector('.empty-model')?.remove();
-		shell.querySelector('.stale')?.remove();
 		shell.querySelector('.results-pending')?.remove();
 		shell.append(pendingResults());
 	}
@@ -13716,6 +13890,7 @@ function openDataset(data, fileName) {
 	setRunning(true);
 	state.runId += 1;
 	state.runRev = state.rev;
+	state.runModel = JSON.stringify(state.raw);
 	// A saved run is of the model's own values: at no app's controls.
 	state.runPreview = null;
 	state.runSolver = data.meta?.stats?.solver ?? null;
@@ -14116,6 +14291,7 @@ function applyModelEditor() {
 	// moment the new run started. The lines that were charted are remembered
 	// by name (`prevLabels`) and come back where the names still exist.
 	state.results = null;
+	state.resultsModel = null;
 	state.pickOpen = null;
 	clearResultsViews();
 	ed.materialiseShorthand(state.raw);
@@ -14264,6 +14440,7 @@ function setModel(raw, source) {
 	modelEditor.opened = false;
 	modelEditor.text = null;
 	state.results = null;
+	state.resultsModel = null;
 	// The runs an assessment stored belong to the file they came in with, and
 	// the file that brought them sets them again after this. The ones kept or
 	// opened beside stay: they are what this model is to be compared with.

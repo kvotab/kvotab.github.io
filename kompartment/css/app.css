@@ -2636,25 +2636,53 @@ footer .stat b { color: var(--text-primary); font-weight: 650; }
 	border-color: var(--warn);
 }
 
-/* Results that are not this model's are not shown; this is what is there
-   instead. Centred in the space the chart would have taken, because it is
-   about the space rather than a note in a corner of it. */
+/* Results of a model that has changed since they were computed stay on
+   screen, and this is over them: that they are out of date, what changed, and
+   the way to run again. Marked down the side in the warning colour, as a
+   disagreement on the Jacobian tab is; quiet where nothing that changed can
+   move a number, since then the curves are still the model's. */
 .stale {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 8px;
-	height: 100%;
-	min-height: 160px;
-	padding: 18px;
-	text-align: center;
+	display: grid;
+	justify-items: start;
+	gap: 4px;
+	margin: 8px 0 0;
+	padding: 8px 12px;
+	border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--border));
+	border-left: 3px solid var(--warn);
+	border-radius: var(--radius);
+	background: color-mix(in oklab, var(--warn) 8%, var(--surface-1));
 	color: var(--text-secondary);
 	font-size: 12px;
+	line-height: 1.45;
 }
 
-.stale b { font-size: 13px; color: var(--text-primary); }
-.stale span { max-width: 46em; line-height: 1.5; }
+.stale.is-still {
+	border-color: var(--border);
+	border-left-color: var(--border-strong);
+	background: var(--surface-1);
+}
+
+.stale b { font-size: 12.5px; color: var(--text-primary); }
+
+/* The changes, one a line. A long list scrolls rather than pushing the chart
+   off the bottom of its panel, which does not scroll. */
+.stale-changes {
+	margin: 0;
+	padding-left: 18px;
+	max-height: 40vh;
+	overflow-y: auto;
+	overflow-wrap: anywhere;
+}
+
+.stale-changes li.is-still,
+.stale-quiet { color: var(--text-muted); }
+
+.stale-more { font-size: 10.5px; color: var(--text-muted); }
+
+.stale > button.primary { margin-top: 4px; }
+
+/* In the Table it sits between the bars and the table. */
+#panel-table > .stale { margin: 0 0 8px; }
 
 /* A model that computes nothing gets the same treatment: the note belongs in
    the space the chart would have taken, not in a corner of it. Its own class

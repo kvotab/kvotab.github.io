@@ -221,19 +221,26 @@ input*, the Information view says *what about this block*, and the diagram says
 *which block* — and the Run button's dot goes from accent to red, so even a
 glance at the header distinguishes "not run yet" from "will not run".
 
-**And results that are not this model's are not shown.** Every set of results
-carries the model revision it was computed from, so the Chart and Table tabs
-can tell. When they do not match, the plot and the table are replaced by a line
-saying why, with a **Run** button when running is possible and a pointer to the
-strip when it is not. The alternative — leaving the curves of the last model
-that worked on screen — says nothing about which model they belong to, and the
-only signs would be a dot on the Run button and a red border on one field in
-one panel.
+**And results that are not this model's say so, and what has changed.** Every
+set of results carries the model revision it was computed from and a copy of
+the model itself, so the Chart and Table tabs can tell. When the revisions do
+not match, the curves and the table stay where they are, under a notice: *These
+results are out of date*, then each change since the run in the model's own
+terms — *Solver: stiff, low order, Rosenbrock 2-3 → stiff, NDF*, *Rel.
+tolerance: 1e-6 → 1e-9*, *k: value 0.1 → 0.2*, *Added parameter p*, *Renamed
+Well to Bore* — the first six of them, with **show all** for the rest, and a
+**Run** button when running is possible and a pointer to the strip when it is
+not. What can move a number comes first. What cannot — a comment, a colour, a
+parameter's distribution, the settings of a probabilistic run — is marked as
+changing no number, and where nothing else has changed the notice says so
+quietly rather than warning. A tolerance tightened or a solver swapped is no
+reason to lose the curves being read, and the notice is what keeps them from
+passing for the model's as it now stands. A probabilistic run of the model as
+it was is not drawn under them, and the notice says that too.
 
-The exception is a run already on its way: with **auto-run** on, blanking the
-chart for the third of a second before the new results arrive would be a
-flicker on every keystroke, so the last results stay up while a run is in
-flight. At rest, what is on screen is always this model's.
+The exception is a run already on its way: with **auto-run** on, the notice
+would come up for the third of a second before the new results arrive on every
+keystroke, so it waits while a run is in flight.
 
 **A slow model says which slow thing it is doing.** Building a large model —
 generating the derivative, the tangent function and the sparsity pattern — is
