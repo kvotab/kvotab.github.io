@@ -55,8 +55,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from ..errors import KompartmentError
 from .csv import JS_WHITESPACE, is_js_boolean, js_string, js_to_number
 
-__all__ = ['XLSXError', 'XMLError', 'xml_escape', 'column_of', 'column_name', 'read_workbook',
-           'write_workbook']
+__all__ = ['XLSXError', 'XMLError', 'CELL_LIMIT', 'xml_escape', 'sheet_title', 'column_of', 'column_name',
+           'read_workbook', 'write_workbook']
 
 #: The most a whole archive may expand to, as the application's reader allows.
 MAX_INFLATED = 256 * 1024 * 1024
@@ -110,6 +110,29 @@ def xml_escape(s: Any, attr: bool = False) -> str:
     if attr:
         out = out.replace('"', '&quot;')
     return _CONTROL.sub('', out)
+
+
+#: The most text Excel keeps in one cell (``CELL_LIMIT``). The file format
+#: sets no limit and Excel enforces one: a longer string opens as a damaged
+#: file, and the repair cuts it to this length without saying what was lost, so
+#: a longer cell is refused by its address instead. The data workbook moves a
+#: long list of values to a sheet of its own first (see
+#: :func:`kompartment.io.datafile.to_sheets`).
+CELL_LIMIT = 32767
+
+
+def _js_length(s: str) -> int:
+    """``s.length``: UTF-16 code units, so a character outside the Basic
+    Multilingual Plane counts twice."""
+    return len(s) + sum(1 for c in s if ord(c) > 0xFFFF)
+
+
+def sheet_title(name: Any, i: int = 0) -> str:
+    """A sheet's name as Excel will take it (``sheetTitle``): at most 31
+    characters and none of ``[]:*?/\\``, mended rather than refused, and
+    ``Sheet{i + 1}`` where nothing is left."""
+    text = _SHEET_NAME_FORBIDDEN.sub(' ', '' if name is None else js_string(name))
+    return _utf16_prefix(text.strip(JS_WHITESPACE), 31) or f'Sheet{i + 1}'
 
 
 def column_of(ref: str) -> int:
@@ -573,9 +596,13 @@ def _cell_xml(value: Any, ref: str, style: int) -> str:
         return f'<c r="{ref}"{s}><v>{js_string(x)}</v></c>'
     if is_js_boolean(value):
         return f'<c r="{ref}"{s} t="b"><v>{1 if value else 0}</v></c>'
+    raw = js_string(value)
+    if _js_length(raw) > CELL_LIMIT:
+        raise XLSXError(f'Cell {ref} holds {_js_length(raw)} characters, and Excel keeps at most '
+                        f'{CELL_LIMIT} in a cell: it would call the file damaged and cut the rest off.')
     # `xml:space` because a value may begin or end with a space, and without it
     # a reader is free to trim.
-    return f'<c r="{ref}"{s} t="inlineStr"><is><t xml:space="preserve">{xml_escape(value)}</t></is></c>'
+    return f'<c r="{ref}"{s} t="inlineStr"><is><t xml:space="preserve">{xml_escape(raw)}</t></is></c>'
 
 
 def _sheet_xml(rows: Sequence[Any], header: bool = True) -> str:
@@ -655,11 +682,7 @@ def write_workbook(book: Mapping[str, Any], *, modified: DateLike = None, compre
     used = set()
     named: List[Dict[str, Any]] = []
     for i, s in enumerate(sheets):
-        raw = s.get('name')
-        name = _SHEET_NAME_FORBIDDEN.sub(' ', '' if raw is None else js_string(raw))
-        name = _utf16_prefix(name.strip(JS_WHITESPACE), 31)
-        if not name:
-            name = f'Sheet{i + 1}'
+        name = sheet_title(s.get('name'), i)
         n = 1
         unique = name
         while unique.lower() in used:

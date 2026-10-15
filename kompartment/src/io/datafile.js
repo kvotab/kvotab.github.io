@@ -34,7 +34,9 @@
  *             for one the columns above cannot hold: a kind with no word of
  *             its own (a log-normal by its mean, one through two quantiles, a
  *             list of values) or a truncation of a curve whose Min and Max are
- *             its ends. Read where `Type` is empty.
+ *             its ends. Read where `Type` is empty. A list of values too long
+ *             for one cell is on a sheet of its own, and its PDF names the
+ *             range instead of holding it -- see `LISTS_SHEET`.
  *
  * ---------------------------------------------------------------------------
  * THE HDF5 TREE
@@ -56,7 +58,9 @@
  * element and then overrides four of them.
  */
 
-import { readWorkbook, writeWorkbook } from './xlsx.js';
+import {
+	readWorkbook, writeWorkbook, columnName, columnOf, sheetTitle, CELL_LIMIT,
+} from './xlsx.js';
 import { writeHDF5, group, dataset, put, F64, STR } from './hdf5.js';
 import { readHDF5 } from './hdf5read.js';
 import { parsePDF, formatPDF, complete, PDF_KINDS } from '../domain/pdf.js';
@@ -404,8 +408,46 @@ export function pdfFromJSON(raw) {
  * THE SPREADSHEET
  * ======================================================================= */
 
-/** The rows of a data table as a grid, header first. */
-export function toSheet(rows) {
+/**
+ * The sheet a list of values too long for one cell is written to.
+ *
+ * Excel keeps 32,767 characters in a cell (`CELL_LIMIT`), and a list of values
+ * sampled somewhere else can run to thousands of numbers: seven thousand is
+ * five times that. Excel opens such a file as damaged and cuts the cell short,
+ * and the realisations past the cut are gone. So a list that long goes to a
+ * sheet of its own as a column of numbers, headed by the row's ID, and the PDF
+ * cell names the range instead of holding it:
+ * `pg(values=Lists!A2:A7001,inorder=true,pos=0)`. A list that fits stays in its
+ * cell, as the data sets this reads write it.
+ */
+export const LISTS_SHEET = 'Lists';
+
+/** The rows an Excel sheet has, its header among them. */
+const SHEET_ROWS = 1048576;
+
+/**
+ * A row's list of values moved to the lists sheet, and the PDF that names
+ * where it went.
+ */
+function listed(r, spec, lists) {
+	const values = spec.values ?? [];
+	if (values.length > SHEET_ROWS - 1) {
+		throw new Error(`${r.id} has ${values.length} values, and an Excel column holds `
+			+ `${SHEET_ROWS - 1} under its header. Save the data as HDF5 instead.`);
+	}
+	const col = columnName(lists.columns.length);
+	lists.columns.push({ head: r.time != null ? `${r.id} at ${r.time}` : String(r.id), values });
+	return formatPDF({ ...spec, values: [] })
+		.replace('values=', `values=${lists.sheet}!${col}2:${col}${values.length + 1}`);
+}
+
+/**
+ * The rows of a data table as a grid, header first.
+ *
+ * With `lists` -- `{sheet, columns}` -- a list of values too long for its cell
+ * is moved into `columns`, for `toSheets` to write on the sheet it names.
+ */
+export function toSheet(rows, { lists = null } = {}) {
 	const at = (i) => COLUMNS[i];
 	const grid = [COLUMNS.slice()];
 	for (const r of rows) {
@@ -424,6 +466,11 @@ export function toSheet(rows) {
 		if (r.time != null) set('Time', r.time);
 		if (r.value != null) set('Value', r.value);
 		for (const [k, v] of Object.entries(sheetColumns(r.pdf))) set(k, v);
+		const pdf = cells[COLUMNS.indexOf('PDF')];
+		if (lists && typeof pdf === 'string' && pdf.length > CELL_LIMIT) {
+			const spec = typeof r.pdf === 'string' ? parsePDF(r.pdf) : r.pdf;
+			if (spec?.kind === 'pg') set('PDF', listed(r, spec, lists));
+		}
 		if (r.note) set('Reference', r.note);
 		// Trailing nulls are dropped so a sheet of values is not twenty empty
 		// cells wide on every row.
@@ -436,14 +483,94 @@ export function toSheet(rows) {
 }
 
 /**
+ * The sheets as a workbook holds them: the data, and after it the lists too
+ * long for a cell, where there are any (see `LISTS_SHEET`).
+ */
+export function toSheets(rows, { name = 'data' } = {}) {
+	// Never the data sheet's name: the PDF cells say which sheet their numbers
+	// are on, and a sheet renamed on the way out would leave them pointing at
+	// nothing.
+	const own = sheetTitle(name).toLowerCase();
+	let sheet = LISTS_SHEET;
+	for (let n = 2; sheet.toLowerCase() === own; n++) sheet = `${LISTS_SHEET}${n}`;
+	const lists = { sheet, columns: [] };
+	const out = [{ name, rows: toSheet(rows, { lists }) }];
+	if (lists.columns.length) {
+		const longest = Math.max(...lists.columns.map((c) => c.values.length));
+		const grid = [lists.columns.map((c) => c.head)];
+		for (let k = 0; k < longest; k++) grid.push(lists.columns.map((c) => c.values[k] ?? null));
+		out.push({ name: sheet, rows: grid });
+	}
+	return out;
+}
+
+/**
+ * A range on another sheet where a PDF's `values=` would hold its numbers:
+ * `Lists!A2:A7001`, `Lists!$A$2:$A$7001`, `'Our lists'!B2:B90` -- Excel's own
+ * way of naming cells, so a range copied out of Excel reads as it is.
+ */
+const LIST_RANGE = /(?<![A-Za-z0-9_])values[ \t]*=[ \t]*(?:'((?:[^']|'')+)'|([^ \t\r\n'!,;()=]+))!\$?([A-Za-z]{1,3})\$?([0-9]+)(?::\$?([A-Za-z]{1,3})\$?([0-9]+))?/;
+
+/** The sheet a range is on, as its reference spells it. */
+const rangeSheet = (m) => (m[1] != null ? m[1].replace(/''/g, "'") : m[2]);
+
+/**
+ * A PDF's text with the list it keeps on another sheet put back in place: the
+ * numbers in the range, row by row and left to right, empty cells skipped.
+ * `{text}`, unchanged where there is no range, or `{bad}` saying what is wrong
+ * with the range.
+ *
+ * @param {string} text
+ * @param {Map<string, {name: string, rows: Array<Array<*>>}>} sheets  by name, lower case
+ */
+export function listValues(text, sheets) {
+	const m = LIST_RANGE.exec(text);
+	if (!m) return { text };
+	const name = rangeSheet(m);
+	const range = `${name}!${m[3].toUpperCase()}${m[4]}${m[5] ? `:${m[5].toUpperCase()}${m[6]}` : ''}`;
+	const sheet = sheets.get(name.toLowerCase());
+	if (!sheet) return { bad: `its list of values is to be in ${range}, and there is no sheet called '${name}'` };
+	const c0 = columnOf(m[3].toUpperCase());
+	const c1 = m[5] ? columnOf(m[5].toUpperCase()) : c0;
+	const r0 = Number(m[4]) - 1;
+	const r1 = m[6] ? Number(m[6]) - 1 : r0;
+	const values = [];
+	// Over the cells the sheet has, not the ones the range names: `A1:XFD1048576`
+	// is a range anybody can type.
+	for (let r = Math.min(r0, r1); r <= Math.min(Math.max(r0, r1), sheet.rows.length - 1); r++) {
+		const line = sheet.rows[r] ?? [];
+		for (let c = Math.min(c0, c1); c <= Math.min(Math.max(c0, c1), line.length - 1); c++) {
+			const v = line[c];
+			if (str(v) === '') continue;
+			const n = num(v);
+			if (n == null) {
+				return { bad: `${name}!${columnName(c)}${r + 1}, in its list of values, is '${str(v)}' rather than a number` };
+			}
+			values.push(n);
+		}
+	}
+	if (!values.length) return { bad: `its list of values is to be in ${range}, which is empty` };
+	return { text: `${text.slice(0, m.index)}values=${values.join(';')}${text.slice(m.index + m[0].length)}` };
+}
+
+/** Whether a grid's header names an ID, or the helpers one is pasted together from. */
+function hasIdColumn(grid) {
+	const header = (grid?.[0] ?? []).map((h) => str(h));
+	return header.includes('ID') || HELPERS.some((h) => header.includes(h));
+}
+
+/**
  * A grid back to rows.
  *
  * The header decides which column is which, by name, so a sheet with the
  * columns in another order -- or with columns this does not know -- reads the
  * same. A sheet whose header has no `ID` and no helpers is refused rather than
  * read as 1,758 rows of nothing.
+ *
+ * `lists` puts back a list of values a PDF keeps on another sheet; see
+ * `listValues`.
  */
-export function fromSheet(grid, { sheet = '' } = {}) {
+export function fromSheet(grid, { sheet = '', lists = null } = {}) {
 	const rows = [];
 	const problems = [];
 	const header = (grid?.[0] ?? []).map((h) => str(h));
@@ -463,7 +590,10 @@ export function fromSheet(grid, { sheet = '' } = {}) {
 		if (!id) continue;
 		const cell = value(at('Value'));
 		const time = num(at('Time'));
-		const spec = pdfFromColumns(at);
+		// Only where the PDF is what is read: a `Type` decides on its own.
+		const pdf = lists && !str(at('Type')) ? lists(str(at('PDF'))) : null;
+		const spec = pdf?.bad ? { bad: pdf.bad }
+			: pdfFromColumns(pdf ? (name) => (name === 'PDF' ? pdf.text : at(name)) : at);
 		if (spec?.bad) {
 			problems.push(`Row ${i + 1}: ${spec.bad}.`);
 		}
@@ -476,9 +606,12 @@ export function fromSheet(grid, { sheet = '' } = {}) {
 	return { rows, problems };
 }
 
-/** A workbook of one sheet per model, or one sheet called `data`. */
+/**
+ * A workbook of one sheet per model, or one sheet called `data` -- and a
+ * second, `Lists`, where a list of values is too long for its cell.
+ */
 export async function writeDataWorkbook(rows, { name = 'data' } = {}) {
-	return writeWorkbook({ sheets: [{ name, rows: toSheet(rows) }] });
+	return writeWorkbook({ sheets: toSheets(rows, { name }) });
 }
 
 /** Every sheet of a workbook, read as rows. */
@@ -486,8 +619,25 @@ export async function readDataWorkbook(bytes) {
 	const book = await readWorkbook(bytes);
 	const rows = [];
 	const problems = [];
+	// By name whatever the case, which is how Excel matches a sheet's name.
+	const sheets = new Map();
+	for (const s of book.sheets) if (!sheets.has(s.name.toLowerCase())) sheets.set(s.name.toLowerCase(), s);
+	// A sheet a PDF takes its values from holds numbers, not rows, and is not
+	// read as rows -- unless it is laid out as data as well, with an ID
+	// column, which a hand-made workbook is free to do.
+	const sources = new Set();
+	for (const s of book.sheets) {
+		for (const line of s.rows) {
+			for (const v of line ?? []) {
+				const m = typeof v === 'string' && v.includes('!') ? LIST_RANGE.exec(v) : null;
+				if (m) sources.add(rangeSheet(m).toLowerCase());
+			}
+		}
+	}
+	const lists = (text) => listValues(text, sheets);
 	for (const sheet of book.sheets) {
-		const got = fromSheet(sheet.rows, { sheet: sheet.name });
+		if (sources.has(sheet.name.toLowerCase()) && !hasIdColumn(sheet.rows)) continue;
+		const got = fromSheet(sheet.rows, { sheet: sheet.name, lists });
 		rows.push(...got.rows);
 		problems.push(...got.problems);
 	}

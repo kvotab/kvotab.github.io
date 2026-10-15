@@ -38138,6 +38138,100 @@ test('every distribution goes out as a spreadsheet and as HDF5, and comes back',
 	assert(at('Type') === 'norm' && at('Min') === -2 && at('Pmax') === 0.99 && at('PDF') === null, JSON.stringify(sheet[1]));
 });
 
+test('a list of values too long for an Excel cell goes to a sheet of its own, and comes back whole', async () => {
+	// Excel keeps 32,767 characters in a cell. A solubility limit sampled
+	// elsewhere, 6,916 values, went out as 157,472 characters in one PDF cell;
+	// Excel opened the workbook as damaged and its repair cut the cell to
+	// 32,767 characters -- the first 1,400-odd values, the rest gone without
+	// a word. A list that long now goes to a sheet of its own.
+	const DF = await import('../src/io/datafile.js');
+	const X = await import('../src/io/xlsx.js');
+	// Numbers as long as a sample's, and the same ones every time.
+	let seed = 1;
+	const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+	const many = Array.from({ length: 7000 }, () => rand() * 10 ** (-12 + 10 * rand()));
+	const rows = [
+		{ id: 'Near.sol.U', unit: 'mol/m^3', value: many[0], pdf: { kind: 'pg', values: many, inorder: true, pos: 0 } },
+		{ id: 'short', value: 2, pdf: { kind: 'pg', values: [1, 2, 3], inorder: true, pos: 0 } },
+		{ id: 'table', time: 10, value: 1, pdf: { kind: 'pg', values: many.slice(0, 3000), inorder: false, pos: 4 } },
+		{ id: 'n', value: 1, pdf: { kind: 'norm', params: { mean: 1, sd: 0.1 } } },
+	];
+	const bytes = await DF.writeDataWorkbook(rows, { name: 'd' });
+	const book = await X.readWorkbook(bytes);
+	assert(book.sheets.map((s) => s.name).join() === 'd,Lists', book.sheets.map((s) => s.name).join());
+	for (const s of book.sheets) {
+		for (const line of s.rows) {
+			for (const v of line ?? []) {
+				assert(typeof v !== 'string' || v.length <= X.CELL_LIMIT, `${s.name} has a cell of ${String(v).length} characters`);
+			}
+		}
+	}
+	const [data, lists] = book.sheets.map((s) => s.rows);
+	const pdf = data[0].indexOf('PDF');
+	assert(data[1][pdf] === 'pg(values=Lists!A2:A7001,inorder=true,pos=0)', data[1][pdf]);
+	assert(data[2][pdf] === 'pg(values=1;2;3,inorder=true,pos=0)', 'a list that fits left its cell');
+	assert(data[3][pdf] === 'pg(values=Lists!B2:B3001,inorder=false,pos=4)', data[3][pdf]);
+	// A column of numbers each, headed by the row it belongs to.
+	assert(lists[0].join() === 'Near.sol.U,table at 10', lists[0].join());
+	assert(lists.length === 7001 && lists[1][0] === many[0] && lists[7000][0] === many[6999], 'the column is not the list');
+	assert(lists[3000][1] === many[2999] && lists[3001][1] == null, 'the shorter list does not end where it ends');
+
+	// Back, every value as it was, and the lists not read as rows of data.
+	const back = await DF.readDataWorkbook(bytes);
+	assert(!back.problems.length, back.problems.join(' | '));
+	assert(back.rows.map((r) => r.id).join() === 'Near.sol.U,short,table,n', back.rows.map((r) => r.id).join());
+	assert(back.rows[0].pdf.values.length === 7000 && back.rows[0].pdf.values.every((v, k) => Object.is(v, many[k])),
+		'the list did not come back whole');
+	assert(back.rows[2].pdf.values.every((v, k) => Object.is(v, many[k])) && back.rows[2].pdf.values.length === 3000
+		&& back.rows[2].pdf.inorder === false && back.rows[2].pdf.pos === 4 && back.rows[2].time === 10,
+	'the table’s point lost what it carried');
+
+	// A data sheet called Lists does not take the lists' name from them.
+	const clash = await DF.writeDataWorkbook(rows.slice(0, 1), { name: 'LISTS' });
+	const clashed = await X.readWorkbook(clash);
+	assert(clashed.sheets.map((s) => s.name).join() === 'LISTS,Lists2', clashed.sheets.map((s) => s.name).join());
+	assert(clashed.sheets[0].rows[1][pdf] === 'pg(values=Lists2!A2:A7001,inorder=true,pos=0)', clashed.sheets[0].rows[1][pdf]);
+	assert((await DF.readDataWorkbook(clash)).rows[0].pdf.values.length === 7000, 'the renamed lists are not found');
+
+	// Any range reads, the way Excel writes one -- a quoted name, `$`, either
+	// case -- and one that cannot be read says which cell and why.
+	const hand = await X.writeWorkbook({
+		sheets: [
+			{ name: 'data', rows: [['ID', 'Value', 'PDF'],
+				['a', 1, "pg(values='My lists'!$b$2:$B$4,inorder=true,pos=0)"],
+				['b', 2, 'pg(values=nowhere!A2:A3)'],
+				['c', 3, 'pg(values=My!A1:A2)'],
+				['d', 4, 'pg(values=num!A2:A9)'],
+				['e', 5, 'pg(values=num!C2:C9)']] },
+			{ name: 'My lists', rows: [['x', 'a'], [9, 1.5], [9, '2.5'], [9, ' 3 ']] },
+			// Named by a range and laid out as data too: read as both.
+			{ name: 'My', rows: [['ID', 'Value'], ['f', 6]] },
+			{ name: 'num', rows: [['h'], [1], ['oops']] },
+		],
+	});
+	const read = await DF.readDataWorkbook(hand);
+	assert(read.rows.map((r) => r.id).join() === 'a,b,c,d,e,f', read.rows.map((r) => r.id).join());
+	assert(read.rows[0].pdf.values.join() === '1.5,2.5,3', JSON.stringify(read.rows[0].pdf));
+	assert(JSON.stringify(read.problems) === JSON.stringify([
+		"Row 3: its list of values is to be in nowhere!A2:A3, and there is no sheet called 'nowhere'.",
+		"Row 4: My!A1, in its list of values, is 'ID' rather than a number.",
+		"Row 5: num!A3, in its list of values, is 'oops' rather than a number.",
+		'Row 6: its list of values is to be in num!C2:C9, which is empty.',
+	]), JSON.stringify(read.problems));
+
+	// And the writer will not make a cell Excel would cut short: the file is
+	// refused, by the cell, rather than written to open damaged.
+	await X.writeWorkbook({ sheets: [{ name: 's', rows: [['y'.repeat(X.CELL_LIMIT)]] }] });
+	let refused = null;
+	try {
+		await X.writeWorkbook({ sheets: [{ name: 's', rows: [['x'], [null, 'y'.repeat(X.CELL_LIMIT + 1)]] }] });
+	} catch (e) {
+		refused = e;
+	}
+	assert(refused?.name === 'XLSXError' && /^Cell B2 holds 32768 characters, and Excel keeps at most 32767/.test(refused.message),
+		refused?.message);
+});
+
 test('HDF5 written the other way round reads here too', async () => {
 	const { readHDF5 } = await import('../src/io/hdf5read.js');
 	const DF = await import('../src/io/datafile.js');

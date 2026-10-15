@@ -22,7 +22,10 @@ dtriang, logt, logdt), ``Group``, ``Min``, ``Max``, ``Mean``, ``Std``, ``GM``,
 columns cannot hold -- a log-normal by its mean or through two quantiles, a
 list of values, or a truncation of a curve whose Min and Max are its ends --
 goes in ``PDF`` whole, written as a model file writes one
-(``logn(mean=2,sd=0.5)``), and a row with no ``Type`` is read from it. A blank
+(``logn(mean=2,sd=0.5)``), and a row with no ``Type`` is read from it. A list
+of values too long for one cell -- Excel keeps 32,767 characters in a cell --
+is a column of numbers on a sheet of its own, ``Lists``, and its ``PDF`` names
+the range instead (``pg(values=Lists!A2:A7001,inorder=true,pos=0)``). A blank
 cell is no value.
 
 **The HDF5 tree**: the path is the id under one root group named after the
@@ -54,11 +57,12 @@ from ..stats.pdf import PDF_KINDS, complete, format_pdf, parse_pdf
 from .csv import JS_WHITESPACE, is_js_boolean, js_string, js_to_number
 from .hdf5 import F64, STR, Group, dataset, group, put, write_hdf5
 from .hdf5read import read_hdf5
-from .xlsx import read_workbook, write_workbook
+from .xlsx import CELL_LIMIT, _js_length, column_name, column_of, read_workbook, sheet_title, write_workbook
 
 __all__ = ['DEFAULT_SEGMENT', 'SHAPES', 'COLUMNS', 'sample_spec', 'pdf_from_columns', 'columns_from_pdf',
-           'pdf_to_json', 'pdf_attribute', 'pdf_list_from_json', 'pdf_from_json', 'to_sheet', 'from_sheet',
-           'write_data_workbook', 'read_data_workbook', 'to_tree', 'write_data_hdf5', 'read_data_hdf5', 'usable']
+           'pdf_to_json', 'pdf_attribute', 'pdf_list_from_json', 'pdf_from_json', 'LISTS_SHEET', 'to_sheet',
+           'to_sheets', 'list_values', 'from_sheet', 'write_data_workbook', 'read_data_workbook', 'to_tree',
+           'write_data_hdf5', 'read_data_hdf5', 'usable']
 
 #: The segment that means "the block's own value, at no index".
 DEFAULT_SEGMENT = '_'
@@ -511,10 +515,41 @@ def pdf_from_json(raw: Any) -> Optional[Dict[str, Any]]:
 
 # --- the spreadsheet ------------------------------------------------------------------------
 
-def to_sheet(rows: Sequence[Mapping[str, Any]]) -> List[List[Any]]:
+#: The sheet a list of values too long for one cell is written to
+#: (``LISTS_SHEET``): a column of numbers headed by the row's ID, with the PDF
+#: cell naming the range -- ``pg(values=Lists!A2:A7001,inorder=true,pos=0)`` --
+#: instead of holding 32,767 characters' worth of it, which Excel would cut
+#: short. A list that fits stays in its cell.
+LISTS_SHEET = 'Lists'
+
+#: The rows an Excel sheet has, its header among them.
+_SHEET_ROWS = 1048576
+
+
+def _listed(r: Mapping[str, Any], spec: Mapping[str, Any], lists: Dict[str, Any]) -> str:
+    """A row's list of values moved to the lists sheet, and the PDF naming where it went."""
+    v = _get(spec, 'values')
+    values = [] if _nullish(v) else list(v)
+    rid = _get(r, 'id')
+    if len(values) > _SHEET_ROWS - 1:
+        raise ValueError(f'{_text(rid)} has {len(values)} values, and an Excel column holds '
+                         f'{_SHEET_ROWS - 1} under its header. Save the data as HDF5 instead.')
+    col = column_name(len(lists['columns']))
+    time = _get(r, 'time')
+    head = _text(rid) if _nullish(time) else f'{_text(rid)} at {js_string(time)}'
+    lists['columns'].append({'head': head, 'values': values})
+    return format_pdf({**spec, 'values': []}).replace(
+        'values=', f"values={lists['sheet']}!{col}2:{col}{len(values) + 1}", 1)
+
+
+def to_sheet(rows: Sequence[Mapping[str, Any]], lists: Optional[Dict[str, Any]] = None) -> List[List[Any]]:
     """The rows of a data table as a grid, header first (``toSheet``). The
     helper columns say where the block lives and what it is called; trailing
-    empty cells are left off."""
+    empty cells are left off.
+
+    With ``lists`` -- ``{'sheet', 'columns'}`` -- a list of values too long for
+    its cell is moved into ``columns``, for :func:`to_sheets` to write on the
+    sheet it names."""
     grid: List[List[Any]] = [list(COLUMNS)]
     for r in rows:
         cells: List[Any] = [None] * len(COLUMNS)
@@ -540,6 +575,12 @@ def to_sheet(rows: Sequence[Mapping[str, Any]]) -> List[List[Any]]:
             put_cell('Value', r['value'])
         for k, v in _sheet_columns(_get(r, 'pdf')).items():
             put_cell(k, v)
+        pdf = cells[COLUMNS.index('PDF')]
+        if lists is not None and isinstance(pdf, str) and _js_length(pdf) > CELL_LIMIT:
+            given = _get(r, 'pdf')
+            spec = parse_pdf(given) if isinstance(given, str) else given
+            if _get(spec, 'kind') == 'pg':
+                put_cell('PDF', _listed(r, spec, lists))
         if _truthy(_get(r, 'note')):
             put_cell('Reference', r['note'])
         last = len(cells)
@@ -549,13 +590,96 @@ def to_sheet(rows: Sequence[Mapping[str, Any]]) -> List[List[Any]]:
     return grid
 
 
-def from_sheet(grid: Optional[Sequence[Any]], sheet: Any = '') -> Dict[str, List[Any]]:
+def to_sheets(rows: Sequence[Mapping[str, Any]], name: Any = 'data') -> List[Dict[str, Any]]:
+    """The sheets as a workbook holds them (``toSheets``): the data, and after
+    it the lists too long for a cell, where there are any."""
+    # Never the data sheet's name: the PDF cells say which sheet their numbers
+    # are on, and a sheet renamed on the way out would leave them pointing at
+    # nothing.
+    own = sheet_title(name).lower()
+    sheet = LISTS_SHEET
+    n = 2
+    while sheet.lower() == own:
+        sheet = f'{LISTS_SHEET}{n}'
+        n += 1
+    lists: Dict[str, Any] = {'sheet': sheet, 'columns': []}
+    out: List[Dict[str, Any]] = [{'name': name, 'rows': to_sheet(rows, lists)}]
+    if lists['columns']:
+        longest = max(len(c['values']) for c in lists['columns'])
+        grid: List[List[Any]] = [[c['head'] for c in lists['columns']]]
+        for k in range(longest):
+            grid.append([c['values'][k] if k < len(c['values']) else None for c in lists['columns']])
+        out.append({'name': sheet, 'rows': grid})
+    return out
+
+
+#: A range on another sheet where a PDF's ``values=`` would hold its numbers:
+#: ``Lists!A2:A7001``, ``Lists!$A$2:$A$7001``, ``'Our lists'!B2:B90`` --
+#: Excel's own way of naming cells, so a range copied out of Excel reads as it is.
+_LIST_RANGE = re.compile(r"(?<![A-Za-z0-9_])values[ \t]*=[ \t]*(?:'((?:[^']|'')+)'|([^ \t\r\n'!,;()=]+))!"
+                         r'\$?([A-Za-z]{1,3})\$?([0-9]+)(?::\$?([A-Za-z]{1,3})\$?([0-9]+))?')
+
+
+def _range_sheet(m: 're.Match[str]') -> str:
+    """The sheet a range is on, as its reference spells it."""
+    return m.group(1).replace("''", "'") if m.group(1) is not None else m.group(2)
+
+
+def list_values(text: str, sheets: Mapping[str, Mapping[str, Any]]) -> Dict[str, str]:
+    """A PDF's text with the list it keeps on another sheet put back in place
+    (``listValues``): the numbers in the range, row by row and left to right,
+    empty cells skipped. ``{'text'}``, unchanged where there is no range, or
+    ``{'bad'}`` saying what is wrong with the range. ``sheets`` holds each
+    sheet (``{'name', 'rows'}``) by its name in lower case."""
+    m = _LIST_RANGE.search(text)
+    if not m:
+        return {'text': text}
+    name = _range_sheet(m)
+    end = f':{m.group(5).upper()}{m.group(6)}' if m.group(5) else ''
+    where = f'{name}!{m.group(3).upper()}{m.group(4)}{end}'
+    sheet = sheets.get(name.lower())
+    if sheet is None:
+        return {'bad': f"its list of values is to be in {where}, and there is no sheet called '{name}'"}
+    c0 = column_of(m.group(3).upper())
+    c1 = column_of(m.group(5).upper()) if m.group(5) else c0
+    r0 = int(m.group(4)) - 1
+    r1 = int(m.group(6)) - 1 if m.group(6) else r0
+    grid = sheet['rows']
+    values: List[Any] = []
+    # Over the cells the sheet has, not the ones the range names: `A1:XFD1048576`
+    # is a range anybody can type.
+    for r in range(max(min(r0, r1), 0), min(max(r0, r1), len(grid) - 1) + 1):
+        line = grid[r] if grid[r] is not None else []
+        for c in range(max(min(c0, c1), 0), min(max(c0, c1), len(line) - 1) + 1):
+            v = line[c]
+            if _str(v) == '':
+                continue
+            n = _num(v)
+            if n is None:
+                return {'bad': f"{name}!{column_name(c)}{r + 1}, in its list of values, is '{_str(v)}' "
+                               'rather than a number'}
+            values.append(n)
+    if not values:
+        return {'bad': f'its list of values is to be in {where}, which is empty'}
+    return {'text': f"{text[:m.start()]}values={';'.join(js_string(v) for v in values)}{text[m.end():]}"}
+
+
+def _has_id_column(grid: Optional[Sequence[Any]]) -> bool:
+    """Whether a grid's header names an ID, or the helpers one is pasted together from."""
+    first = grid[0] if grid is not None and len(grid) and grid[0] is not None else []
+    header = [_str(h) for h in first]
+    return 'ID' in header or any(h in header for h in HELPERS)
+
+
+def from_sheet(grid: Optional[Sequence[Any]], sheet: Any = '',
+               lists: Optional[Callable[[str], Dict[str, str]]] = None) -> Dict[str, List[Any]]:
     """A grid back to rows (``fromSheet``): ``{'rows', 'problems'}``.
 
     The header decides which column is which, by name; a sheet with neither an
     ``ID`` column nor any helper is refused rather than read as rows of
     nothing. Each row is ``{'id', 'unit', 'time', 'value', 'pdf', 'note',
-    'row', 'sheet'}``, ``row`` counting from 1 with the header.
+    'row', 'sheet'}``, ``row`` counting from 1 with the header. ``lists`` puts
+    back a list of values a PDF keeps on another sheet (see :func:`list_values`).
     """
     rows: List[Dict[str, Any]] = []
     problems: List[str] = []
@@ -583,7 +707,16 @@ def from_sheet(grid: Optional[Sequence[Any]], sheet: Any = '') -> Dict[str, List
             continue
         cell = _value(at('Value'))
         time = _num(at('Time'))
-        spec = pdf_from_columns(at)
+        # Only where the PDF is what is read: a `Type` decides on its own.
+        listed = lists(_str(at('PDF'))) if lists is not None and not _str(at('Type')) else None
+        if listed is not None and _truthy(listed.get('bad')):
+            spec: Optional[Dict[str, Any]] = {'bad': listed['bad']}
+        elif listed is not None:
+            def read(name: str, at: Callable[[str], Any] = at, text: str = listed['text']) -> Any:
+                return text if name == 'PDF' else at(name)
+            spec = pdf_from_columns(read)
+        else:
+            spec = pdf_from_columns(at)
         bad = spec.get('bad') if spec is not None else None
         if _truthy(bad):
             problems.append(f'Row {i + 1}: {bad}.')
@@ -597,20 +730,42 @@ def from_sheet(grid: Optional[Sequence[Any]], sheet: Any = '') -> Dict[str, List
 
 def write_data_workbook(rows: Sequence[Mapping[str, Any]], name: Any = 'data', *, modified: Any = None,
                         compress: bool = True) -> bytes:
-    """A workbook of one sheet of the rows (``writeDataWorkbook``), as bytes.
+    """A workbook of one sheet of the rows (``writeDataWorkbook``), as bytes --
+    and a second, ``Lists``, where a list of values is too long for its cell.
     ``modified`` and ``compress`` are :func:`kompartment.io.xlsx.write_workbook`'s."""
-    return write_workbook({'sheets': [{'name': name, 'rows': to_sheet(rows)}]}, modified=modified,
-                          compress=compress)
+    return write_workbook({'sheets': to_sheets(rows, name=name)}, modified=modified, compress=compress)
 
 
 def read_data_workbook(data: Any) -> Dict[str, List[Any]]:
     """Every sheet of a workbook, read as rows (``readDataWorkbook``):
-    ``{'rows', 'problems'}``. ``data`` is the file's bytes or its path."""
+    ``{'rows', 'problems'}``. ``data`` is the file's bytes or its path. A sheet
+    a PDF takes its list of values from is read as those numbers, not as rows,
+    unless it has an ID column of its own."""
     book = read_workbook(data)
     rows: List[Dict[str, Any]] = []
     problems: List[str] = []
+    # By name whatever the case, which is how Excel matches a sheet's name.
+    sheets: Dict[str, Mapping[str, Any]] = {}
+    for s in book['sheets']:
+        sheets.setdefault(s['name'].lower(), s)
+    # A sheet a PDF takes its values from holds numbers, not rows, and is not
+    # read as rows -- unless it is laid out as data as well, with an ID column,
+    # which a hand-made workbook is free to do.
+    sources = set()
+    for s in book['sheets']:
+        for line in s['rows']:
+            for v in line or []:
+                m = _LIST_RANGE.search(v) if isinstance(v, str) and '!' in v else None
+                if m:
+                    sources.add(_range_sheet(m).lower())
+
+    def lists(text: str) -> Dict[str, str]:
+        return list_values(text, sheets)
+
     for sheet in book['sheets']:
-        got = from_sheet(sheet['rows'], sheet=sheet['name'])
+        if sheet['name'].lower() in sources and not _has_id_column(sheet['rows']):
+            continue
+        got = from_sheet(sheet['rows'], sheet=sheet['name'], lists=lists)
         rows.extend(got['rows'])
         problems.extend(got['problems'])
     return {'rows': rows, 'problems': problems}

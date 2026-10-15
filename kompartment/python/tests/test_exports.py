@@ -56,7 +56,7 @@ from kompartment.engine.probabilistic import run_probabilistic
 from kompartment.engine.project import Project
 from kompartment.engine.runner import run
 from kompartment.io import datafile, dataset, hdf5, resultfile
-from kompartment.io.xlsx import _zip
+from kompartment.io.xlsx import CELL_LIMIT, XLSXError, _zip, write_workbook
 from kompartment.jsonio import dumps
 from kompartment.names import qualified_name
 
@@ -1035,6 +1035,87 @@ class DataFiles(unittest.TestCase):
         self.assertEqual(datafile.write_data_hdf5(rows, root='m/odel'), unb64(got[1]['data']))
         self.assertEqual(canon(datafile.to_sheet(rows)), canon(dec(got[2]['grid'])))
         self.assertEqual(datafile.write_data_hdf5(rows), unb64(got[3]['data']))
+
+    def test_a_list_too_long_for_a_cell_goes_to_a_sheet_of_its_own_alike(self) -> None:
+        # Excel keeps 32,767 characters in a cell and its repair cuts a longer
+        # one short, so a list of values that long is a column on `Lists`, and
+        # the PDF names the range. Both ends write the same bytes and read each
+        # other's ranges, the hand-made ones included.
+        seed = [1]
+
+        def rand() -> float:
+            seed[0] = (seed[0] * 16807) % 2147483647
+            return seed[0] / 2147483647
+
+        many = [rand() * 10 ** (-12 + 10 * rand()) for _ in range(7000)]
+        rows = [
+            {'id': 'Near.sol.U', 'unit': 'mol/m^3', 'value': many[0],
+             'pdf': {'kind': 'pg', 'values': many, 'inorder': True, 'pos': 0}},
+            {'id': 'short', 'value': 2, 'pdf': {'kind': 'pg', 'values': [1, 2, 3], 'inorder': True, 'pos': 0}},
+            {'id': 'table', 'time': 10, 'value': 1,
+             'pdf': {'kind': 'pg', 'values': many[:3000], 'inorder': False, 'pos': 4}},
+            {'id': 'n', 'value': 1, 'pdf': {'kind': 'norm', 'params': {'mean': 1, 'sd': 0.1}}},
+        ]
+        hand = write_workbook({'sheets': [
+            {'name': 'data', 'rows': [['ID', 'Value', 'PDF'],
+                                      ['a', 1, "pg(values='My lists'!$b$2:$B$4,inorder=true,pos=0)"],
+                                      ['b', 2, 'pg(values=nowhere!A2:A3)'],
+                                      ['c', 3, 'pg(values=My!A1:A2)'],
+                                      ['d', 4, 'pg(values=num!A2:A9)'],
+                                      ['e', 5, 'pg(values=num!C2:C9)']]},
+            {'name': 'My lists', 'rows': [['x', 'a'], [9, 1.5], [9, '2.5'], [9, ' 3 ']]},
+            {'name': 'My', 'rows': [['ID', 'Value'], ['f', 6]]},
+            {'name': 'num', 'rows': [['h'], [1], ['oops']]},
+        ]})
+        mine = datafile.write_data_workbook(rows, name='d')
+        got = js({'task': 'xlsxwrite', 'rows': rows, 'name': 'd', 'store': True},
+                 {'task': 'xlsxwrite', 'rows': rows[:1], 'name': 'LISTS', 'store': True},
+                 {'task': 'xlsxread', 'data': b64(mine)},
+                 {'task': 'xlsxread', 'data': b64(hand)},
+                 {'task': 'sheet', 'rows': rows})
+        self.assertEqual(datafile.write_data_workbook(rows, name='d', compress=False), unb64(got[0]['data']))
+        self.assertEqual(datafile.write_data_workbook(rows[:1], name='LISTS', compress=False), unb64(got[1]['data']))
+        sheets = datafile.to_sheets(rows, name='d')
+        self.assertEqual([s['name'] for s in sheets], ['d', 'Lists'])
+        pdf = sheets[0]['rows'][0].index('PDF')
+        self.assertEqual([r[pdf] if pdf < len(r) else None for r in sheets[0]['rows'][1:]],
+                         ['pg(values=Lists!A2:A7001,inorder=true,pos=0)', 'pg(values=1;2;3,inorder=true,pos=0)',
+                          'pg(values=Lists!B2:B3001,inorder=false,pos=4)', None])
+        self.assertEqual(sheets[1]['rows'][0], ['Near.sol.U', 'table at 10'])
+        self.assertEqual(datafile.to_sheets(rows[:1], name=' lists ')[1]['name'], 'Lists2')
+        # `toSheet` on its own still holds the list where it was: the move is
+        # the workbook's, and the grid the application hands over agrees.
+        self.assertEqual(canon(datafile.to_sheet(rows)), canon(dec(got[4]['grid'])))
+
+        back = datafile.read_data_workbook(mine)
+        self.assertEqual(back['problems'], [])
+        self.assertEqual(back['rows'][0]['pdf']['values'], many)
+        self.assertEqual(back['rows'][2]['pdf']['values'], many[:3000])
+        same_rows(self, back['rows'], got[2]['rows'], 'the application reading the lists sheet')
+        self.assertEqual(got[2]['problems'], [])
+
+        read = datafile.read_data_workbook(hand)
+        same_rows(self, read['rows'], got[3]['rows'], 'hand-made ranges')
+        self.assertEqual([r['id'] for r in read['rows']], ['a', 'b', 'c', 'd', 'e', 'f'])
+        self.assertEqual(read['rows'][0]['pdf']['values'], [1.5, 2.5, 3])
+        self.assertEqual(read['problems'], got[3]['problems'])
+        self.assertEqual(read['problems'], [
+            "Row 3: its list of values is to be in nowhere!A2:A3, and there is no sheet called 'nowhere'.",
+            "Row 4: My!A1, in its list of values, is 'ID' rather than a number.",
+            "Row 5: num!A3, in its list of values, is 'oops' rather than a number.",
+            'Row 6: its list of values is to be in num!C2:C9, which is empty.',
+        ])
+
+        # The writer refuses a cell Excel would cut short, by its address.
+        write_workbook({'sheets': [{'name': 's', 'rows': [['y' * CELL_LIMIT]]}]})
+        with self.assertRaises(XLSXError) as refused:
+            write_workbook({'sheets': [{'name': 's', 'rows': [['x'], [None, 'y' * (CELL_LIMIT + 1)]]}]})
+        self.assertTrue(str(refused.exception).startswith(
+            'Cell B2 holds 32768 characters, and Excel keeps at most 32767'), str(refused.exception))
+        # Counted as Excel and the application count: a character outside the
+        # Basic Multilingual Plane is two.
+        with self.assertRaises(XLSXError):
+            write_workbook({'sheets': [{'name': 's', 'rows': [['\U0001F600' * (CELL_LIMIT // 2 + 1)]]}]})
 
     def test_the_distribution_helpers_agree(self) -> None:
         columns = [

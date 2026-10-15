@@ -1701,8 +1701,18 @@ is left empty. A row with no `Type` is read from its `PDF` column, with the
 row's `Group`, `Pmin`, `Pmax` and `Value` filling in whatever the expression
 leaves out. In HDF5 the `pdf` attribute holds the same expression where there
 is no word for the shape.
-Excel shows a cell of up to 32,767 characters, which is a list of about a
-thousand values; a longer sample is better exchanged as HDF5.
+
+**A list too long for one cell goes to a sheet of its own.** Excel keeps at
+most 32,767 characters in a cell — a list of a thousand or so values — and
+opens a file with a longer one as damaged, cutting the cell short. So a longer
+list is written as a column of numbers on a second sheet, `Lists`, headed by
+the row's `ID`, and its `PDF` names the range instead of holding the numbers:
+`pg(values=Lists!A2:A7001,inorder=true,pos=0)`. Reading follows any such range,
+written as Excel writes one — `'My lists'!$B$2:$B$90` — so a hand-made sheet
+can keep a long list the same way, and a sheet that only holds lists is not
+read as rows. Anything else that long, a `Reference` say, stops the export with
+the cell named rather than writing a file Excel has to repair. HDF5 has no such
+limit: there the list stays in the attribute.
 
 **A blank cell is no value.** A cell of spaces is empty, not a zero — a `Time`
 of spaces is no time, and a `Value` of spaces leaves the value alone.
