@@ -295,8 +295,10 @@
 							</div>
 							<p class="hint" id="unitwarn" hidden></p>
 						</div>
-						<div class="chart-shell" id="chart-shell"
-							title="Drag over the chart to zoom and shift-drag to pan (the middle button pans too), scroll to zoom about the pointer, double-click to show everything — right-click for the scales, the drag mode, and to save a picture">
+						<!-- No tooltip: the pointer rests on the chart whenever it is
+						     read, and what dragging, scrolling and right-clicking do
+						     is in the (i) of the chart's picker. -->
+						<div class="chart-shell" id="chart-shell">
 							<!-- A panel per block, stacked over one time axis:
 							     see ./src/ui/chartstack.js. -->
 							<div id="chart" class="chart-stack"></div>

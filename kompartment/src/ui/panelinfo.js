@@ -280,6 +280,15 @@ export function panelTopic(key, ctx = {}) {
 					+ 'is in order of how high each line goes.',
 					'**Views** saves all of this by name with the model, and puts a saved one back.',
 				],
+			}, {
+				heading: 'On the chart',
+				list: [
+					'**Drag** a rectangle to zoom in on it — along one axis, that axis alone. **Scroll** to '
+					+ 'zoom about the pointer, and **double-click** to show everything again.',
+					'**Shift-drag**, or drag with the middle button, to pan. **Drag to pan** on the chart’s '
+					+ 'right-click menu swaps the two drags; the menu also has the zoom, the picture and the '
+					+ 'numbers as CSV.',
+				],
 			}],
 			more: 'Picking from the tree',
 		};
