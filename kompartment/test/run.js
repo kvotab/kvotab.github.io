@@ -27492,6 +27492,160 @@ test('Save asks where the file goes, and says nothing when the answer is no', as
 		'the format is decided before the name is settled');
 });
 
+test('every file Save… writes asks where it goes, even one slower than the click', async () => {
+	// Save… says "Asks where to put it." under every kind of file, and only the
+	// model did: the data as Excel or HDF5, the results as CSV or HDF5 and the
+	// realisations went into the downloads folder without a word. All of them
+	// go through `saveExport` now, which opens the operating system's dialog.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const fn = (name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(app)?.[1] ?? '';
+	for (const name of ['exportData', 'downloadCSV', 'deliver', 'downloadHDF5', 'downloadRealisations']) {
+		assert(fn(name), `${name} is gone`);
+		assert(!/\bdownload\(/.test(fn(name)), `${name} still downloads without asking where`);
+	}
+	assert(/where = await saveExport\(`\$\{base\}-data\.xlsx`, bytes, 'xlsx'\);/.test(fn('exportData')),
+		'Data as Excel does not ask where');
+	assert(/await saveExport\(`\$\{slug\(state\.raw\.name\)\}\$\{suffix\}\.csv`, lines\.join\('\\n'\), 'csv'\)/
+		.test(fn('downloadCSV')), 'Results as CSV does not ask where');
+	assert(/const where = await saveExport\(name, bytes, 'h5'\);/.test(fn('deliver')),
+		'HDF5 to disk does not ask where');
+	// A cancel is an answer: nothing was written, so nothing says it was.
+	assert(/if \(where == null\) return;/.test(fn('exportData'))
+		&& /if \(where == null\) return;/.test(fn('downloadCSV'))
+		&& /if \(!sent\) return;/.test(fn('downloadHDF5'))
+		&& /if \(!sent\) return;/.test(fn('downloadRealisations')), 'a cancelled save still reports a file');
+	// Made first, asked second, as the model with its run is: what can be
+	// refused is refused before a folder has been chosen.
+	const real = fn('downloadRealisations');
+	assert(real.indexOf('await askProbMatrices(') >= 0
+		&& real.indexOf('await askProbMatrices(') < real.indexOf('await deliver('),
+	'the dialog opens before the realisations are known to be there');
+	const h5 = fn('downloadHDF5');
+	assert(h5.indexOf('ensureColumns(r, cols)') >= 0 && h5.indexOf('ensureColumns(r, cols)') < h5.indexOf('await deliver('),
+		'the dialog opens before the series are worked out');
+	// The model asks through the same door, so a large run with it survives
+	// a spent click too.
+	assert(/handle = await showSavePicker\(\{/.test(fn('saveFile')), 'Save → Model has no way past a spent click');
+	// The menus that now open a dialog say so.
+	assert(/label: 'Export the numbers to CSV…',/.test(app), 'the chart’s CSV item does not say it asks');
+
+	// And what it does, against stand-ins for the browser.
+	const grab = (re) => re.exec(app)?.[0] ?? '';
+	const code = [
+		grab(/\nconst EXPORT_TYPES = \{[\s\S]*?\n\};/),
+		grab(/\nfunction showSavePicker\(options\) \{[\s\S]*?\n\}/),
+		grab(/\nasync function saveExport\(name, body, kind\) \{[\s\S]*?\n\}/),
+	];
+	assert(code.every(Boolean), 'the pieces are not where they were');
+	const world = ({ picker = null, active = true } = {}) => {
+		const w = {
+			asked: [], downloads: [], errors: [], written: [], modal: null, made: [],
+		};
+		const window = {};
+		if (picker) {
+			window.showSaveFilePicker = async (options) => {
+				w.asked.push(options);
+				return picker(options);
+			};
+		}
+		const navigator = { userActivation: { isActive: active } };
+		const el = (tag, props = {}, ...kids) => {
+			const node = {
+				tag, ...props, kids, on: {},
+				addEventListener(type, f) { (this.on[type] ??= []).push(f); },
+				click() { for (const f of this.on.click ?? []) f(); },
+				focus() { w.focused = this; },
+			};
+			w.made.push(node);
+			return node;
+		};
+		const openModal = (opts) => {
+			const body = { kids: [], append(...k) { this.kids.push(...k); } };
+			opts.build(body);
+			// As the browser does: `close` arrives as an event, after the call.
+			w.modal = { opts, body, closed: false };
+			return { close: () => { w.modal.closed = true; setTimeout(() => opts.onClose?.(), 0); } };
+		};
+		const download = (name, body, type) => w.downloads.push({ name, body, type });
+		const showError = (e) => w.errors.push(e);
+		// eslint-disable-next-line no-new-func
+		const dialogInfo = (id) => ({ key: `dialog:${id}` });
+		w.saveExport = new Function('window', 'navigator', 'el', 'openModal', 'download', 'showError', 'dialogInfo',
+			`${code.join('\n')}\nreturn saveExport;`)(window, navigator, el, openModal, download, showError, dialogInfo);
+		w.button = (text) => w.made.find((n) => n.tag === 'button' && n.kids.includes(text));
+		return w;
+	};
+	const handle = (w, name, fail = false) => ({
+		name,
+		createWritable: async () => {
+			if (fail) throw new Error('read-only');
+			return { write: async (b) => w.written.push(b), close: async () => { w.closed = true; } };
+		},
+	});
+	const bytes = Uint8Array.from([0x50, 0x4b, 3, 4]);
+
+	// A fresh click: the dialog, with the name and the one type offered, and
+	// the file written where it was pointed.
+	let w = world({ picker: () => handle(w, 'chosen.xlsx') });
+	let where = await w.saveExport('m-data.xlsx', bytes, 'xlsx');
+	assert(where === ' — saved as chosen.xlsx', where);
+	assert(w.asked.length === 1 && w.asked[0].suggestedName === 'm-data.xlsx', JSON.stringify(w.asked));
+	assert(JSON.stringify(w.asked[0].types) === JSON.stringify([{ description: 'Excel workbook',
+		accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]),
+	JSON.stringify(w.asked[0].types));
+	assert(w.written.length === 1 && w.written[0] === bytes && w.closed, 'the bytes are not what was written');
+	assert(!w.downloads.length && !w.modal, 'it downloaded or asked twice as well');
+
+	// Cancelled: nothing written, nothing downloaded, nothing said.
+	w = world({ picker: () => { throw new DOMException('aborted', 'AbortError'); } });
+	where = await w.saveExport('m.csv', 'time,a', 'csv');
+	assert(where === null && !w.downloads.length && !w.written.length && !w.errors.length, 'a cancel saved something');
+
+	// No dialog in this browser: the download, and the notice says where it went.
+	w = world();
+	where = await w.saveExport('m.h5', bytes, 'h5');
+	assert(w.downloads.length === 1 && w.downloads[0].name === 'm.h5' && w.downloads[0].type === 'application/x-hdf5',
+		JSON.stringify(w.downloads));
+	assert(/^ — saved as m\.h5 wherever this browser puts downloads; it has no "save as" dialog/.test(where), where);
+
+	// Refused for another reason than a cancel -- a frame of another site --
+	// still ends with a file, and says why it went where it did.
+	w = world({ picker: () => { throw new DOMException('Cross origin sub frames aren’t allowed', 'SecurityError'); } });
+	where = await w.saveExport('m.csv', 'time,a', 'csv');
+	assert(w.downloads.length === 1 && w.downloads[0].type === 'text/csv', JSON.stringify(w.downloads));
+	assert(/would not open its "save as" dialog here$/.test(where), where);
+
+	// A write that fails is reported once, as an error, and is not a file.
+	w = world({ picker: () => handle(w, 'x.h5', true) });
+	where = await w.saveExport('m.h5', bytes, 'h5');
+	assert(where === null && w.errors.length === 1 && /read-only/.test(w.errors[0].message) && !w.downloads.length,
+		JSON.stringify(w.errors));
+
+	// The click is spent -- the file took longer to make than a click lasts:
+	// a window says it is ready, the dialog waits for its Save…, and opens
+	// out of that click.
+	w = world({ active: false, picker: () => handle(w, 'later.h5') });
+	const pending = w.saveExport('m-realisations.h5', bytes, 'h5');
+	await new Promise((r) => setTimeout(r, 0));
+	assert(w.modal && w.modal.opts.subtitle === 'm-realisations.h5', 'no window to click in');
+	assert(w.modal.opts.info?.key === 'dialog:save-ready', 'the window has no (i)');
+	assert(!w.asked.length, 'the dialog was asked for out of a spent click');
+	assert(w.focused === w.button('Save…'), 'Enter does not save');
+	w.button('Save…').click();
+	where = await pending;
+	assert(w.modal.closed && w.asked.length === 1 && where === ' — saved as later.h5', where);
+	assert(w.written[0] === bytes && !w.downloads.length, 'the file did not reach the place chosen');
+
+	// And closing that window is a cancel, as cancelling the dialog is.
+	w = world({ active: false, picker: () => handle(w, 'never.h5') });
+	const dropped = w.saveExport('m.h5', bytes, 'h5');
+	await new Promise((r) => setTimeout(r, 0));
+	w.button('Cancel').click();
+	where = await dropped;
+	assert(where === null && !w.asked.length && !w.downloads.length && !w.written.length, 'closing the window saved');
+});
+
 test('a table is pictured the way it is read', async () => {
 	const { sparkPath } = await import('../src/ui/lookup-editor.js');
 	const { makeTable } = await import('../src/domain/lookup.js');
@@ -31446,7 +31600,7 @@ test('a run is written in the shape the result browser reads', async () => {
 	const menu = app.slice(app.indexOf('function tableMenu(ev) {'));
 	const offered = [...menu.slice(0, menu.indexOf('\n}\n')).matchAll(/label: '([^']*)'/g)].map((m) => m[1]);
 	assert(JSON.stringify(offered)
-		=== JSON.stringify(['Export table to CSV', 'Export table to HDF5', 'Open in the HDF5 Browser']),
+		=== JSON.stringify(['Export table to CSV…', 'Export table to HDF5…', 'Open in the HDF5 Browser']),
 	JSON.stringify(offered));
 	const saving = readFileSync(new URL('../src/ui/savedialog.js', import.meta.url), 'utf8');
 	assert(/key: 'results',[\s\S]*?picks: 'series',/.test(saving), 'only the selection can be exported');
@@ -31456,8 +31610,9 @@ test('a run is written in the shape the result browser reads', async () => {
 		'the writer is not loaded on demand');
 	// One place decides between a file and the tab waiting for it, so the two
 	// cannot drift: everything above it is the same work either way.
-	assert(/download\(name, bytes, 'application\/x-hdf5'\)/.test(app),
-		'the file is not offered as HDF5');
+	assert(/const where = await saveExport\(name, bytes, 'h5'\);/.test(app)
+		&& /h5: \{ description: 'HDF5 file', type: 'application\/x-hdf5', ext: '\.h5' \},/.test(app),
+	'the file is not offered as HDF5');
 	assert(/await handoff\.send\(name, bytes\)/.test(app),
 		'a finished file cannot be handed to the result browser');
 

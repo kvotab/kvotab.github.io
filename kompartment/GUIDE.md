@@ -3043,12 +3043,20 @@ once, and says so while it works. See
 
 ## Saving the results
 
-Right-click the **Table** for what it holds: **Export table to CSV**, **Export
-table to HDF5**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
+Right-click the **Table** for what it holds: **Export table to CSV…**, **Export
+table to HDF5…**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
 to the reader without saving it. Everything else is in **Save…**: *Results*
 for any of the series, every output included, *Realisations* for a
 probabilistic run's sample, its mean or one realisation of it, and *Model with results*, whose chosen
 blocks are the model's endpoints.
+
+Each of them, from a menu or from Save…, asks where to put the file in the
+operating system's own save dialog; cancelling it saves nothing and says
+nothing. Firefox and Safari have no such dialog for a page to open, so there
+the file goes wherever downloads go, and the notice says so. A large file — a
+thousand realisations, a whole run with its model — can take longer to make
+than the few seconds a browser allows between a click and its save dialog; a
+small window then says the file is ready, and its **Save…** opens the dialog.
 
 ### Choosing endpoints
 
@@ -7126,7 +7134,7 @@ that file brings them back without running them (see [Saving a run, and
 opening it again](#saving-a-run-and-opening-it-again)). The files above are
 for reading elsewhere; that one is for coming back to.
 
-The quick version: **Export table to HDF5** on the table's right-click menu
+The quick version: **Export table to HDF5…** on the table's right-click menu
 for the curve, **Save → Realisations** for the sample, its mean or one run of it
 — and **Open in the HDF5 Browser**, on that menu and beside *Save…*, to send any
 of them straight to the reader without saving a file. The whole run is the usual thing to want there,

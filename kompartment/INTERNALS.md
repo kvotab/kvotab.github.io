@@ -5410,6 +5410,37 @@ the warnings now, which is all it has ever hidden. The heading says what else is
 in the list, since its own count is of problems -- nine rows under a heading
 that says three owes the other six.
 
+## Asking where a file goes
+
+Save… says *Asks where to put it.* under every kind of file. `saveFile` asks
+for the model, `saveText` for the run log, and `saveExport` for everything else
+written to disk -- the data as Excel or HDF5, the results as CSV or HDF5, the
+realisations -- from Save… and from the table's and the chart's menus alike.
+Each is `showSaveFilePicker`, with a download only where the browser has no such
+dialog, and the notice says which of the two happened.
+
+**Made first, asked second.** The bytes exist before the dialog opens, so what
+can be refused -- no run, nothing chosen, realisations the worker no longer
+holds -- is refused before a folder has been chosen. The test pins the order in
+`downloadRealisations` and `downloadHDF5`.
+
+**A click lasts five seconds.** Measured in Chrome 155:
+`navigator.userActivation.isActive` is still true 4.5 s after a click and false
+at 5.5 s, and `showSaveFilePicker` then throws a `SecurityError` (*Must be
+handling a user gesture to show a file picker*). A thousand realisations
+fetched from the worker, or a large run zipped with its model, can take longer
+than that. So `showSavePicker` looks first: with the click spent it opens a small
+*Ready to save* window, and the dialog opens out of that window's own **Save…**.
+Closing the window rejects with an `AbortError`, which every caller already
+treats as the cancel it is. `saveFile` goes through it too.
+
+**The types are checked before the gesture.** An invalid MIME type in `types`
+is a `TypeError` even with no click behind it, so a wrong one would turn every
+export into a download; the three in `EXPORT_TYPES` pass. Headless Chrome answers
+a real call with an `AbortError` at once, so the browser check stubs
+`window.showSaveFilePicker` and records whether the click still counted when it
+was called.
+
 ## Handing the file over
 
 The reader already had a protocol for this -- `resources/js/rb-handoff.js` in

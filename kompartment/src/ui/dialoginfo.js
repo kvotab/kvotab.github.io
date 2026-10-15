@@ -206,6 +206,20 @@ const TOPICS = {
 				'**Data** — the parameters and lookup tables, as a spreadsheet or HDF5.',
 				'**Run log** — what the run was, as text.',
 			],
+		}, {
+			text: 'Each asks where to put the file, in the system’s own save dialog. Firefox and Safari '
+				+ 'have no such dialog for a page, so there the file goes wherever downloads go and the '
+				+ 'notice says so.',
+		}],
+		more: 'Saving the results',
+	},
+	'save-ready': {
+		title: 'Ready to save',
+		lead: 'The file is made, and the system’s save dialog is one click away.',
+		sections: [{
+			text: 'A page may open the save dialog only straight out of a click, and a click counts for '
+				+ 'a few seconds. This file took longer than that to make, so **Save…** here is the click '
+				+ 'the dialog opens out of. **Cancel**, or Escape, saves nothing.',
 		}],
 		more: 'Saving the results',
 	},

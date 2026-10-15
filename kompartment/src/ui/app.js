@@ -4502,6 +4502,52 @@ function compareWithFile() {
 }
 
 /**
+ * The operating system's save dialog, even after a slow export.
+ *
+ * A page may open the dialog only out of a click, and Chrome lets a click count
+ * for five seconds; after that the dialog is refused with a SecurityError.
+ * Making a file can take longer -- a thousand realisations fetched from the
+ * worker, a whole run beside its model -- and the refusal used to send the file
+ * into the downloads folder after all. So when the click is spent, a small
+ * window says the file is ready, and its **Save…** is a click of its own for the
+ * dialog to open out of. Closing the window is a cancel, as cancelling the
+ * dialog is.
+ *
+ * Takes and returns what `window.showSaveFilePicker` does.
+ */
+function showSavePicker(options) {
+	if (navigator.userActivation?.isActive !== false) return window.showSaveFilePicker(options);
+	return new Promise((resolve, reject) => {
+		let asked = false;
+		const go = el('button', { type: 'button', className: 'primary' }, 'Save…');
+		const cancel = el('button', { type: 'button', className: 'ghost' }, 'Cancel');
+		const win = openModal({
+			info: dialogInfo('save-ready'),
+			title: 'Ready to save',
+			subtitle: options.suggestedName,
+			build: (body) => {
+				body.append(
+					el('p', { className: 'hint' }, 'Making the file took longer than the few seconds '
+						+ 'a browser allows between a click and its save dialog, so the dialog needs '
+						+ 'a click of its own.'),
+					el('div', { className: 'pdf-foot' }, el('span', { className: 'pdf-note' }), cancel, go),
+				);
+			},
+			onClose: () => {
+				if (!asked) reject(new DOMException('The file was not saved.', 'AbortError'));
+			},
+		});
+		go.addEventListener('click', () => {
+			asked = true;
+			win.close();
+			window.showSaveFilePicker(options).then(resolve, reject);
+		});
+		cancel.addEventListener('click', () => win.close());
+		go.focus();
+	});
+}
+
+/**
  * A text file, asking where it should go: the operating system's own save
  * dialog, as Save… asks for a model, and the browser's download only where
  * there is no such dialog -- which is then said, since the file has gone
@@ -11867,6 +11913,74 @@ function download(name, body, type) {
 	setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER);
 }
 
+/** What each export is, in the save dialog's list of types. */
+const EXPORT_TYPES = {
+	xlsx: {
+		description: 'Excel workbook',
+		type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		ext: '.xlsx',
+	},
+	h5: { description: 'HDF5 file', type: 'application/x-hdf5', ext: '.h5' },
+	csv: { description: 'CSV table', type: 'text/csv', ext: '.csv' },
+};
+
+/**
+ * A finished export, written where the person saving it says.
+ *
+ * Save… says *Asks where to put it.* under every kind of file, and this is
+ * what keeps that true for the data, the results and the realisations -- from
+ * Save… and from the table's and the chart's menus alike: the operating
+ * system's own dialog, as `saveFile` opens for the model. The browser's
+ * download stands in only where there is no such dialog, and the notice then
+ * says where the file went.
+ *
+ * Called with the file already made, as `saveFile` is called with the run
+ * already fetched: what can be refused -- no run, nothing chosen, a sample the
+ * worker no longer holds -- is refused before a folder is chosen, not after.
+ * A file slow enough to outlast the click is `showSavePicker`'s to deal with.
+ *
+ * @param {string} name  the name the dialog offers
+ * @param {string|Uint8Array} body
+ * @param {'xlsx'|'h5'|'csv'} kind
+ * @returns {Promise<string|null>} where the file went, as the end of a notice;
+ *   null when nothing was saved -- a cancel, which is an answer and is not
+ *   remarked on, or a write that failed, which is reported here
+ */
+async function saveExport(name, body, kind) {
+	const { description, type, ext } = EXPORT_TYPES[kind];
+	let why = 'it has no "save as" dialog for a page to open';
+	if (typeof window.showSaveFilePicker === 'function') {
+		let handle = null;
+		try {
+			handle = await showSavePicker({
+				suggestedName: name,
+				types: [{ description, accept: { [type]: [ext] } }],
+			});
+		} catch (e) {
+			if (e?.name === 'AbortError') return null;
+			// Refused rather than cancelled -- a frame from another site may not
+			// open it -- and the point of pressing Save is to end up with a file.
+			why = 'it would not open its "save as" dialog here';
+		}
+		if (handle) {
+			try {
+				const to = await handle.createWritable();
+				await to.write(body);
+				await to.close();
+				return ` — saved as ${handle.name}`;
+			} catch (e) {
+				showError({
+					name: 'Save', message: `Could not write the file: ${e.message}`,
+					hint: 'The folder may be read-only. Try again and pick another place.',
+				});
+				return null;
+			}
+		}
+	}
+	download(name, body, type);
+	return ` — saved as ${name} wherever this browser puts downloads; ${why}`;
+}
+
 /**
  * The model's data out, as a spreadsheet or as an HDF5 tree.
  *
@@ -11889,15 +12003,14 @@ async function exportData(as, keys = null, handoff = null) {
 		return;
 	}
 	const base = slug(state.raw.name);
-	let where = '';
+	let where = null;
 	try {
 		if (as === 'xlsx') {
 			const bytes = await writeDataWorkbook(rows, { name: base.slice(0, 31) || 'data' });
-			download(`${base}-data.xlsx`, bytes,
-				'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+			where = await saveExport(`${base}-data.xlsx`, bytes, 'xlsx');
 		} else {
 			const bytes = writeDataHDF5(rows, { root: state.raw.name || 'model' });
-			({ where } = await deliver(bytes, `${base}-data.h5`, handoff));
+			where = (await deliver(bytes, `${base}-data.h5`, handoff))?.where ?? null;
 		}
 	} catch (e) {
 		handoff?.cancel();
@@ -11905,6 +12018,8 @@ async function exportData(as, keys = null, handoff = null) {
 		flash(`The data could not be written: ${e.message}`, 'warn');
 		return;
 	}
+	// Not saved: the dialog was cancelled, or the write failed and has said so.
+	if (where == null) return;
 	const tables = new Set(rows.filter((r) => r.time != null).map((r) => r.id)).size;
 	flash(`${rows.length.toLocaleString()} rows written`
 		+ (tables ? `, including ${tables.toLocaleString()} lookup tables` : '') + `${where}.`, 'info');
@@ -12418,10 +12533,11 @@ async function downloadCSV(idx = null, suffix = '') {
 	for (let i = 0; i < r.t.length; i++) {
 		lines.push([r.t[i], ...vals.map((v) => v[i])].join(','));
 	}
-	download(`${slug(state.raw.name)}${suffix}.csv`, lines.join('\n'), 'text/csv');
+	const where = await saveExport(`${slug(state.raw.name)}${suffix}.csv`, lines.join('\n'), 'csv');
+	if (where == null) return;
 	flash(`Exported ${vals.length} column${vals.length === 1 ? '' : 's'}`
 		+ (spec ? ` (${beside.length + 1} scenarios)` : '')
-		+ ` and ${r.t.length} row${r.t.length === 1 ? '' : 's'}.${exportCaveat()}`, 'info');
+		+ ` and ${r.t.length} row${r.t.length === 1 ? '' : 's'}${where}.${exportCaveat()}`, 'info');
 }
 
 /**
@@ -12430,14 +12546,17 @@ async function downloadCSV(idx = null, suffix = '') {
  * The two differ only here. Everything above this -- which series, which
  * realisations, building the tree -- is the same work either way, which is the
  * reason this is one function rather than a second export path.
+ *
+ * Null when nothing was saved: the save dialog was cancelled, or the write
+ * failed and `saveExport` has said so.
  */
 async function deliver(bytes, name, handoff) {
 	const size = bytes.length >= 1048576
 		? `${(bytes.length / 1048576).toFixed(1)} MB`
 		: `${Math.max(1, Math.round(bytes.length / 1024))} kB`;
 	if (!handoff) {
-		download(name, bytes, 'application/x-hdf5');
-		return { size, where: '' };
+		const where = await saveExport(name, bytes, 'h5');
+		return where == null ? null : { size, where };
 	}
 	await handoff.send(name, bytes);
 	return { size, where: ' — open in the HDF5 Browser' };
@@ -12523,8 +12642,9 @@ async function downloadHDF5(idx = null, suffix = '', handoff = null) {
 			project: state.raw,
 			indexLists: ed.indexLists(state.raw),
 		}));
-		const { size, where } = await deliver(
-			bytes, handoffName(slug(state.raw.name), suffix), handoff);
+		const sent = await deliver(bytes, handoffName(slug(state.raw.name), suffix), handoff);
+		if (!sent) return;
+		const { size, where } = sent;
 		flash(`Exported ${which.length} series`
 			+ (spec ? ` (${beside.length + 1} scenarios)` : '')
 			+ ` and ${r.t.length} times, ${size}${where}.${exportCaveat()}`, 'info');
@@ -12653,8 +12773,9 @@ async function downloadRealisations(idx = null, suffix = null, want = 'all', han
 				? { realisations: { iterations: reply.iterations, matrixFor: forOutput } }
 				: { sample: { iterations: reply.iterations, of: mean ? 'mean' : one + 1 } }),
 		}));
-		const { size, where } = await deliver(
-			bytesOut, handoffName(slug(state.raw.name), fileSuffix), handoff);
+		const sent = await deliver(bytesOut, handoffName(slug(state.raw.name), fileSuffix), handoff);
+		if (!sent) return;
+		const { size, where } = sent;
 		flash(`Exported ${pairs.length} series over ${times.length} times — `
 			+ (all
 				? `${reply.iterations.toLocaleString()} realisations each`
@@ -12761,7 +12882,7 @@ function chartMenu(ev) {
 			besideItem(),
 			{ separator: true },
 			{
-				label: 'Export the numbers to CSV',
+				label: 'Export the numbers to CSV…',
 				hint: `${state.selected.length} column${state.selected.length === 1 ? '' : 's'}`,
 				disabled: !has || !state.results,
 				title: has && !state.results
@@ -13202,13 +13323,13 @@ function tableMenu(ev) {
 		title: 'table',
 		items: [
 			{
-				label: 'Export table to CSV',
+				label: 'Export table to CSV…',
 				hint: `${shown} column${shown === 1 ? '' : 's'}`,
 				disabled: !shown,
 				onPick: () => downloadCSV(state.selected.slice(), ''),
 			},
 			{
-				label: 'Export table to HDF5',
+				label: 'Export table to HDF5…',
 				hint: `${shown} series`,
 				disabled: !shown,
 				title: 'A .h5 file: the times in /time, '
@@ -13396,7 +13517,7 @@ async function saveFile(as = 'json', { prepared = null, sample = false } = {}) {
 	if (typeof window.showSaveFilePicker === 'function') {
 		let handle = null;
 		try {
-			handle = await window.showSaveFilePicker({
+			handle = await showSavePicker({
 				suggestedName: name,
 				// All three, with the one that was asked for first: the dialog
 				// picks the format from the type that is selected, so the
