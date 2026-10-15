@@ -661,6 +661,10 @@ class Differencer {
  *   events             {n, direction, enabled?, fun(t, y, out)}: every event
  *                      stops the run at the crossing
  *   tStart             where this segment of a restarted run began (tspan[0])
+ *   landing(t, tNext)  where a step from t to tNext is to end instead, strictly
+ *                      between the two, or NaN for where it was going: what
+ *                      the caller reads at the clock can turn and turn back
+ *                      between two steps, where the error test never looks
  *   hints              {singular, noPattern}: sentences added to those messages
  *   onAccepted(t, y)   every accepted step
  *   onOutput(t, y)     every requested time as it is passed
@@ -809,6 +813,7 @@ export function ndf(f, tspan, y0, options = {}) {
 	const vR = events ? new Float64Array(events.n) : null;
 	if (events) events.fun(t0, y, vL);
 	const tStart = o.tStart ?? t0;
+	const landing = typeof o.landing === 'function' ? o.landing : null;
 	let stopped = null;
 
 	// --- the Jacobian, and the matrix built from it ---------------------------
@@ -1044,6 +1049,15 @@ export function ndf(f, tspan, y0, options = {}) {
 		if (1.1 * stepSize >= Math.abs(tEnd - t)) {
 			hTry = tEnd - t;
 			last = true;
+		}
+		// A step that would pass over a pulse in what the caller reads at the
+		// clock ends on it instead: f is never looked at between two steps.
+		if (landing) {
+			const at = landing(t, t + hTry);
+			if (dir * (at - t) > 0 && dir * (t + hTry - at) > 0) {
+				hTry = at - t;
+				last = false;
+			}
 		}
 		if (hTry !== hTable) {
 			table.rescale(k, hTry / hTable);

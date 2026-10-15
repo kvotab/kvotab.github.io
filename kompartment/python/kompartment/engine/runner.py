@@ -279,6 +279,11 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         # The times the model's clock-read tables turn at, which the switching
         # solver's explicit methods land on (``System.table_corners``).
         'table_corners': getattr(system, 'table_corners', None),
+        # Where a step ends instead of passing over a pulse in one of those
+        # tables, which no solver would otherwise see (:mod:`.landing`). Made
+        # for each run from the tables as they stand, so a realisation is
+        # judged by its own points.
+        'landing': system.table_landing(float(sim['rtol'])) if hasattr(system, 'table_landing') else None,
         'on_step': (lambda fraction, n, at: _step(fraction, at)) if on_progress else None,
     }
     if equations is not None:

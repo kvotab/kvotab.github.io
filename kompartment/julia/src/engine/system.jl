@@ -1015,6 +1015,28 @@ function table_corners(sys::System, frm::Float64, to::Float64, limit::Real=Inf)
     return out
 end
 
+"""
+Where a step is to end so as not to pass over a pulse in a table read at the
+clock, for this rtol (`tableLanding`; see engine/landing.jl): a
+[`TableLanding`](@ref), or `nothing` when no table turns. Cyclic tables are left
+out, and a table shared by several slots is judged once. Made from the tables
+as they stand: a realisation writes its points into them first.
+"""
+function table_landing(sys::System, rtol::Float64)::Union{Nothing,TableLanding}
+    seen = Base.IdSet{Any}()
+    tables = Any[]
+    for lk in sys.builder.lookup_layout
+        lk[:argument] !== nothing && continue
+        for k in lk[:tab]:lk[:tab]+lk.width-1
+            table = k < length(sys.data.TAB) ? sys.data.TAB[k+1] : nothing
+            (table === nothing || table.cyclic || table in seen) && continue
+            push!(seen, table)
+            push!(tables, table)
+        end
+    end
+    return table_landing(tables, rtol)
+end
+
 # --- what a run leaves behind -------------------------------------------------------------
 
 """What a run leaves on the system that reading its results depends on."""

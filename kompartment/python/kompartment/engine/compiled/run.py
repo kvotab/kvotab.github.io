@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import numpy as np
 
 from ..jacobian import colour_columns, difference_jacobian
+from ..landing import landing_arrays
 from ..solvers import SolverError
 from ..solvers.matrix import APP_LU_MAX, DENSE_BELOW, IterationMatrix, non_finite_message, singular_message
 from . import solvers as cs
@@ -445,11 +446,13 @@ class CompiledRun:
         stats = np.zeros(9, dtype=np.int64)
         fstat = np.zeros(4)
         cm.W[0] = math.nan
+        LT, LF, LB, LO = landing_arrays(opts.get('landing'))
         status = cs.ndf(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W, cm.IW,
                         cm.py_callback, tspan, y0, atol, constrained, self.jac_mode, self.colptr, self.rowidx,
                         self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                         self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.held_in_w,
-                        self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat)
+                        self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
+                        LT, LF, LB, LO)
         if into is not None:
             into[:] = atol
         if status != cs.OK:
@@ -531,11 +534,13 @@ class CompiledRun:
         stats = np.zeros(8, dtype=np.int64)
         fstat = np.zeros(4)
         cm.W[0] = math.nan
+        LT, LF, LB, LO = landing_arrays(opts.get('landing'))
         status = cs.onestep(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W,
                             cm.IW, cm.py_callback, tspan, y0, atol, nn_idx, self.jac_mode, self.colptr, self.rowidx,
                             self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                             self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.rbuf,
-                            self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat)
+                            self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
+                            LT, LF, LB, LO)
         if status != cs.OK:
             if status == cs.E_HISTORY:
                 raise HistoryFull()

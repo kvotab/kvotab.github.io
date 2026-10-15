@@ -257,6 +257,10 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
                                                       EventFunction((out, t, y) -> (event_values!(out, sys, t, y); nothing)),
                                                       sys.event_direction) : nothing,
         "carry" => Dict{String,Any}(),
+        # Where a step ends instead of passing over a pulse in a table read at
+        # the clock, which no solver would otherwise see (engine/landing.jl).
+        # Made for each run from the tables as they stand.
+        "landing" => table_landing(sys, Float64(sim["rtol"])),
         "rows" => rows === nothing ? nothing : reset_rows!(rows),
         "on_step" => on_progress === nothing ? nothing : (fraction, n, at) -> begin
             r = on_progress(fraction, at)

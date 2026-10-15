@@ -12,6 +12,9 @@
 //                                        colouring, budgetRows, and its values at each point
 //   corners  { model, spans: [[from, to, limit]] } -> tableCorners(from, to, limit) of the built
 //                                        system for each (a limit of null is none)
+//   landing  { model, rtol, steps: [[t, tNext]] } -> where tableLanding(rtol) of the built system
+//                                        ends each step (NaN for where it was going), or
+//                                        landing: null when it makes none
 //   dydt     { model, points: [{t, y}] } -> the derivative and every algebraic slot at each
 //   run      { model, overrides }      -> the run's times and every output series
 //   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name
@@ -187,6 +190,16 @@ switch (req.task) {
 			out = {
 				corners: req.spans.map(([from, to, limit]) => sys.tableCorners(from, to, limit ?? Infinity)),
 			};
+		} catch (e) {
+			out = { error: e.message, kind: e.name, stack: e.stack };
+		}
+		break;
+	}
+	case 'landing': {
+		try {
+			const sys = buildSystem(new Project(req.model), { jacobian: false });
+			const land = sys.tableLanding(req.rtol);
+			out = { landing: land ? req.steps.map(([t, tNext]) => land(t, tNext)) : null };
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}

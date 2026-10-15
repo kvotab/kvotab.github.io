@@ -75,7 +75,7 @@ def variable_order(f: Callable[[float, np.ndarray], np.ndarray], tspan: Any, y0:
         jacobian=opts.get('jacobian'), bdf=bool(opts.get('bdf')), hints=HINTS,
         norm_control=bool(opts.get('norm_control')), auto_abstol=bool(opts.get('auto_abstol')),
         ends_only=bool(opts.get('ends_only')), events=opts.get('events'), on_accepted=opts.get('on_accepted'),
-        on_output=opts.get('on_output'),
+        on_output=opts.get('on_output'), landing=opts.get('landing'),
     )
     if opts.get('max_steps'):
         kw['max_steps'] = opts['max_steps']

@@ -253,6 +253,9 @@ export function julia(id) {
 		if (opts.maxJacAge > 0) settings.maxJacAge = opts.maxJacAge;
 		if (opts.belowTolRun > 0) settings.belowTolRun = opts.belowTolRun;
 		if (opts.matrix) settings.matrix = opts.matrix;
+		// Where a step ends instead of passing over a pulse in a table: see
+		// ../sim/landing.js.
+		if (opts.landing) settings.landing = opts.landing;
 		if (opts.onAccepted) settings.onAccepted = opts.onAccepted;
 		// The requested times as well as the steps, for the blocks that
 		// remember: a step across a whole output interval would otherwise leave

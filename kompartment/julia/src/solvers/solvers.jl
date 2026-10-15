@@ -56,6 +56,8 @@ const StepCallback = FunctionWrapper{Nothing,Tuple{Float64,Vector{Float64}}}
 const StepProgress = FunctionWrapper{Bool,Tuple{Float64,Int}}
 """A runner's `on_step(fraction, n, t)` (Python's opts['on_step']): false aborts."""
 const RunProgress = FunctionWrapper{Bool,Tuple{Float64,Int,Float64}}
+"""`landing(t, t_next)`: where a step from t to t_next is to end instead, or NaN (engine/landing.jl)."""
+const StepLanding = FunctionWrapper{Float64,Tuple{Float64,Float64}}
 
 """
 Rows for a solver's output (`opts["rows"]`), handed out in turn and used again from

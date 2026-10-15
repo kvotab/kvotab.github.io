@@ -759,6 +759,101 @@ def _first_crossing(kind, tl, tr, t_start, direction, evbuf, evwhich, evf, P, X,
     return True, hi
 
 
+# --- where a step ends instead of passing over a pulse in a table (``../landing.py``) ------------------
+
+#: ``landing.LANDING_BLOCK``: turns judged together, one maximum each.
+LANDING_BLOCK = 32
+
+
+@njit(**_OPTS)
+def _land_held(LT, p, n, s):
+    """``landing._held_by`` for the table whose n points start at column p of
+    LT (x, |y|, the area to each point): the area under |table| up to s."""
+    x0 = LT[0, p]
+    if s <= x0:
+        return (s - x0) * LT[1, p]
+    q = p + n - 1
+    if s >= LT[0, q]:
+        return LT[2, q] + (s - LT[0, q]) * LT[1, q]
+    lo = 0
+    hi = n - 1
+    while lo < hi:
+        mid = (lo + hi + 1) >> 1
+        if LT[0, p + mid] <= s:
+            lo = mid
+        else:
+            hi = mid - 1
+    j = lo if lo < n - 2 else n - 2
+    xj = LT[0, p + j]
+    dx = LT[0, p + j + 1] - xj
+    if dx > 0:
+        v = LT[1, p + j] + (LT[1, p + j + 1] - LT[1, p + j]) * ((s - xj) / dx)
+    else:
+        v = LT[1, p + j + 1]
+    return LT[2, p + j] + 0.5 * (s - xj) * (LT[1, p + j] + v)
+
+
+@njit(**_OPTS)
+def _landing(t, t_next, LT, LF, LB, LO):
+    """``landing.TableLanding``: where a step from t to t_next is to end
+    instead, or NaN, from ``landing.landing_arrays``. LO holds where each
+    table starts in LT (its points), LF (its turns: stretch start and end,
+    the time to end on, the criterion) and LB (its block maxima), each list
+    with its end after the last."""
+    best = math.nan
+    if not (t_next > t):
+        return best
+    ntab = LO.size // 3 - 1
+    for k in range(ntab):
+        p = LO[k]
+        n = LO[k + 1] - p
+        f0 = LO[ntab + 1 + k]
+        m = LO[ntab + 2 + k] - f0
+        b0 = LO[2 * (ntab + 1) + k]
+        # From the first stretch that starts at or after t ...
+        lo = 0
+        hi = m
+        while lo < hi:
+            mid = (lo + hi) >> 1
+            if LF[0, f0 + mid] < t:
+                lo = mid + 1
+            else:
+                hi = mid
+        i0 = lo
+        # ... to the last that ends at or before t_next.
+        hi = m
+        while lo < hi:
+            mid = (lo + hi) >> 1
+            if LF[1, f0 + mid] <= t_next:
+                lo = mid + 1
+            else:
+                hi = mid
+        i1 = lo
+        if i1 <= i0:
+            continue
+        held = _land_held(LT, p, n, t_next) - _land_held(LT, p, n, t)
+        found = -1
+        i = i0
+        while i < i1:
+            q = i // LANDING_BLOCK
+            end = min(i1, (q + 1) * LANDING_BLOCK)
+            if i == q * LANDING_BLOCK and end == (q + 1) * LANDING_BLOCK and not (LB[b0 + q] > held):
+                i = end
+                continue
+            while i < end:
+                if LF[3, f0 + i] > held:
+                    found = i
+                    break
+                i += 1
+            if found >= 0:
+                break
+        if found >= 0:
+            at = LF[2, f0 + found]
+            if not (at >= best):
+                best = at
+    return best
+
+
 # --- the NDF --------------------------------------------------------------------------------------------
 
 NDF_SIG = types.int64(
@@ -768,14 +863,15 @@ NDF_SIG = types.int64(
     _A, _I, _M, _I, _I, _A,                             # fpar, ipar, yout, held, stats, fstat
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
     CB_T, CB_T, _M, _I, _A, _A,                         # form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf
-    RHS_T, _A, _M, _A, _I, _A)                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
+    RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
+    _M, _M, _A, _I)                                     # LT, LF, LB, LO: where steps end (``_landing``)
 
 
 @njit(NDF_SIG, **_OPTS)
 def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrained,
         jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
         ct, cy, cint, cflt, form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf,
-        evf, evdir, evbuf, evy, evwhich, evstat):
+        evf, evdir, evbuf, evy, evwhich, evstat, LT, LF, LB, LO):
     """``engine/solvers/ndf.py``'s ``ndf``, compiled.
 
     fpar: rtol, hmax, h0, max_steps, stagnation_tol
@@ -950,6 +1046,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
     dense = np.zeros(neq)
     err = 0.0
 
+    has_landing = LO.size > 3
     while True:
         hmin = _step_floor(t)
         step_size = _pymin(hmax, _pymax(hmin, abs(h)))
@@ -958,6 +1055,12 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
         if 1.1 * step_size >= abs(t_end - t):
             h_try = t_end - t
             last = True
+        # A step that would pass over a pulse in a table ends on it instead.
+        if has_landing:
+            at = _landing(t, t + h_try, LT, LF, LB, LO)
+            if direction * (at - t) > 0 and direction * (t + h_try - at) > 0:
+                h_try = at - t
+                last = False
         if h_try != hTable:
             _regrid(cols, k, 0.0, h_try / hTable, tmpv)
             hTable = h_try
@@ -1467,13 +1570,15 @@ ONESTEP_SIG = types.int64(
     _A, _I, _M, _I, _I, _A,                             # fpar, ipar, yout, held, stats, fstat
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
     CB_T, CB_T, _M, _A, _A,                             # form_cb, solve_cb, jdense, rbuf, xbuf
-    RHS_T, _A, _M, _A, _I, _A)                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
+    RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
+    _M, _M, _A, _I)                                     # LT, LF, LB, LO: where steps end (``_landing``)
 
 
 @njit(ONESTEP_SIG, **_OPTS)
 def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_idx,
             jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
-            ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf, evf, evdir, evbuf, evy, evwhich, evstat):
+            ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf, evf, evdir, evbuf, evy, evwhich, evstat,
+            LT, LF, LB, LO):
     """``engine/solvers/onestep.py``'s ``integrate`` with the Rosenbrock
     (2,3) or the Dormand-Prince stepper, compiled.
 
@@ -1619,6 +1724,13 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
             h = t_end - t
             step_size = abs(h)
             last = True
+        # A step that would pass over a pulse in a table ends on it instead.
+        if LO.size > 3:
+            at = _landing(t, t + h, LT, LF, LB, LO)
+            if direction * (at - t) > 0 and direction * (t + h - at) > 0:
+                h = at - t
+                step_size = abs(h)
+                last = False
         err = 0.0
         worst_at = 0
         failed_once = False

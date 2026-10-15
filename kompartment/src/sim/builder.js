@@ -43,6 +43,7 @@ import {
 	DIRECTION_SIGN, RECORDER_COLLECTION, EQUATION_FIELDS,
 } from '../domain/recorders.js';
 import { Recorder } from './history.js';
+import { tableLanding } from './landing.js';
 import {
 	IndexError, COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
 } from '../domain/indexlists.js';
@@ -585,6 +586,26 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 			if (out.length > limit) return null;
 		}
 		return out;
+	};
+	/**
+	 * Where a step is to end so as not to pass over a pulse in a table read
+	 * at the clock, for this rtol: see ./landing.js. Cyclic tables are left
+	 * out, and a table shared by several slots is judged once. Made from the
+	 * tables as they stand: a realisation writes its points into them first.
+	 */
+	const tableLandingFor = (rtol) => {
+		const seen = new Set();
+		const tables = [];
+		for (const l of lookupLayout) {
+			if (l.argument) continue;
+			for (let k = l.tab; k < l.tab + l.width; k++) {
+				const table = TAB[k];
+				if (!table || table.cyclic || seen.has(table)) continue;
+				seen.add(table);
+				tables.push(table);
+			}
+		}
+		return tableLanding(tables, rtol);
 	};
 
 	// A table with an argument is a function -- `Table(x)` -- so it has no slot
@@ -2930,6 +2951,7 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		},
 		useClockInterpolation,
 		tableCorners,
+		tableLanding: tableLandingFor,
 		clockSlotCount: clockIdx.length,
 		/** The clock-only slots, worked out for `t` if they are not already. */
 		evaluateAtInstant: atInstant,

@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..landing import landing_arrays
 from ..solvers import SolverError
 from . import FAIL_PYTHON, CompiledFailure, python_error
 from . import julia as cj
@@ -123,6 +124,8 @@ def settings_of(opts: Dict[str, Any], saveat: List[float]) -> Dict[str, Any]:
         settings['below_tol_run'] = opts['below_tol_run']
     if opts.get('matrix'):
         settings['matrix'] = opts['matrix']
+    if opts.get('landing') is not None:
+        settings['landing'] = opts['landing']
     return settings
 
 
@@ -598,6 +601,7 @@ class JuliaRun:
         stats = np.zeros(cj.NC + cj.NSO, dtype=np.int64)
         fstat = np.zeros(3)
         cm.W[0] = math.nan
+        LT, LF, LB, LO = landing_arrays(run_opts.get('landing'))
         status = cj.julia(
             cm.rhs, cm.store, self.evf, self._jac_cb or no_callback, self._progress_cb or no_callback,
             self._factor_cb, self._solve_cb, system.P, system.X, cm.W, cm.IW, cm.py_callback,
@@ -605,7 +609,8 @@ class JuliaRun:
             nn, _coefficients(stiff_method, stiff_cache), fpar, cpar, np.concatenate([ipar, mi]), fl,
             jd, jv, gptr, gcols, eptr, erow, ewhich, eent, self.ybuf, wf, wv, j_to_w, diag_w, self.rbuf, self.xbuf,
             self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat, tout, yout, stats, fstat, self.pbuf,
-            self.ct, self.cy, self.cint, self.cflt, np.array(tstops, dtype=float), ecoef, eint, jrow, self.hand)
+            self.ct, self.cy, self.cint, self.cflt, np.array(tstops, dtype=float), ecoef, eint, jrow, self.hand,
+            LT, LF, LB, LO)
 
         if status == cj.E_HISTORY:
             raise HistoryFull()

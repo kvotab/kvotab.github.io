@@ -2766,8 +2766,15 @@ The solver restarts at each of them, exactly as it restarts at a discrete event.
 **This is not a nicety.** A source that is on for five years out of a thousand,
 with the corners undeclared, is stepped clean over: the run reports that nothing
 was ever released. Declare them and the same model gives the right answer to
-four figures. A lookup table needs no declaration — its points are already
-places the value may turn, and the builder knows them.
+four figures.
+
+A lookup table read at the time needs no declaration. Wherever one rises and
+falls back by enough to matter at the run's relative tolerance, the solver ends
+a step on the turn rather than step over it, so a twenty-year pulse in a
+million-year run arrives whole. Two cases are left to the **Maximum step**,
+which then wants to be shorter than the pulse: a cyclic table, where a step on
+every turn of every period would cost more than most runs can spend, and the
+SciPy solvers, which step as SciPy steps.
 
 ## Working the rates out less often
 
@@ -3523,6 +3530,11 @@ comparison closer, not looser, since it is then the same ODE the built-in
 solvers integrate. The second half belongs to the step controller, which is
 SciPy's. Whatever is left over is counted and reported in `stats.negative`,
 which is zero on every model tested here.
+
+**Pulses in a table** are left to SciPy's own step control. The built-in
+solvers end a step on a rise and fall in a table that they would otherwise step
+over; SciPy's are not told where those are, so a pulse shorter than their steps
+wants a **Maximum step** shorter than the pulse.
 
 #### How closely they agree
 

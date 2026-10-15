@@ -35327,6 +35327,102 @@ test('the switching solver lands its explicit steps on the corners, and hands a 
 		`${JSON.stringify(many.stats.stepsBy)}, carry ${JSON.stringify(carry)}`);
 });
 
+test('a pulse in a table read at the clock reaches the model under every solver, after a time of none or on top of a steady release', async () => {
+	// Feed -> A at the table's rate, A -> Out slowly: whatever the table puts
+	// out is in A and Out at the end. A pulse that falls between two steps
+	// used to arrive as nothing, and a spike on a steady release as the
+	// steady release alone, under every solver but auto.
+	const cases = [
+		['a pulse at 1e4 after none', [[0, 0], [1e4, 0], [1e4 + 10, 1], [1e4 + 20, 0], [1e6, 0]]],
+		['a pulse at 3e5 after none', [[0, 0], [3e5, 0], [3e5 + 10, 1], [3e5 + 20, 0], [1e6, 0]]],
+		['a spike on a steady release', [[0, 1e-6], [1e4, 1e-6], [1e4 + 10, 1], [1e4 + 20, 1e-6], [1e6, 1e-6]]],
+	];
+	const solvers = ['ndf', 'ros23', 'dp45', 'auto', 'auto_julia', 'rodas5p', 'radau5', 'fbdf', 'fbdf_krylov',
+		'qndf', 'kencarp4', 'trbdf2', 'rosenbrock23', 'tsit5', 'vern7'];
+	for (const [what, points] of cases) {
+		let total = 0;
+		for (let i = 1; i < points.length; i++) total += (points[i][0] - points[i - 1][0]) * (points[i][1] + points[i - 1][1]) / 2;
+		for (const solver of solvers) {
+			const r = run({
+				name: 'pulse', simulation: { ...DEFAULT_SIMULATION, start_time: 0, end_time: 1e6, output_points: 50,
+					spacing: 'log', solver, rtol: 1e-6, abstol: 1e-9 },
+				lookups: [{ name: 'release', interpolation: 'linear', points }],
+				compartments: [{ name: 'Feed', initial: '1000' }, { name: 'A', initial: '0' }, { name: 'Out', initial: '0' }],
+				transfers: [
+					{ name: 'in', from: 'Feed', to: 'A', rate: 'release', multiply_by_donor: false },
+					{ name: 'drain', from: 'A', to: 'Out', rate: '1e-3' },
+				],
+			});
+			const end = (name) => { const s = r.series(r.outputs().find((o) => o.block === name)); return s[s.length - 1]; };
+			const got = end('A') + end('Out');
+			assert(Math.abs(got / total - 1) < 1e-3, `${what}, ${solver}: ${got} of ${total} arrived`);
+		}
+	}
+});
+
+test('a step ends on the turns of a table that matter, inside the stretch it would pass, by interpolation rule', async () => {
+	const { tableLanding } = await import('../src/sim/landing.js');
+	const table = (points, interpolation = 'linear') => ({
+		x: Float64Array.from(points, (p) => p[0]), y: Float64Array.from(points, (p) => p[1]), interpolation,
+	});
+	const pulse = [[0, 0], [10, 0], [20, 1], [30, 0], [100, 0]];
+	const at = (land, t, tNext) => land(t, tNext);
+	// Straight lines: a step that covers both neighbours ends on the peak.
+	let land = tableLanding([table(pulse)], 1e-3);
+	assert(at(land, 0, 1000) === 20, `linear: ${at(land, 0, 1000)}`);
+	assert(Number.isNaN(at(land, 0, 25)), 'a step that ends inside the pulse sees it');
+	// One that starts inside it saw the peak; it still ends where the pulse
+	// meets zero again, a turn of its own that it would pass whole.
+	assert(at(land, 15, 1000) === 30, `from inside the pulse: ${at(land, 15, 1000)}`);
+	assert(Number.isNaN(at(land, 25, 1000)), 'from inside both');
+	assert(Number.isNaN(at(land, 1000, 0)), 'a step backwards lands nowhere');
+	// The step-wise rules end inside the flat stretch of the turn, never on a jump.
+	assert(tableLanding([table(pulse, 'below')], 1e-3)(0, 1000) === 25, 'below: inside [20, 30)');
+	assert(tableLanding([table(pulse, 'above')], 1e-3)(0, 1000) === 15, 'above: inside (10, 20]');
+	assert(tableLanding([table(pulse, 'nearest')], 1e-3)(0, 1000) === 20, 'nearest: inside (15, 25)');
+	// A dip is a turn as much as a peak.
+	assert(tableLanding([table([[0, 1], [10, 1], [20, 0], [30, 1], [100, 1]])], 1e-3)(0, 1000) === 20, 'a dip');
+	// A wiggle on a steady value holds far less than rtol of what the step passes.
+	land = tableLanding([table([[0, 1], [10, 1], [20, 1 + 1e-7], [30, 1], [1e4, 1]])], 1e-3);
+	assert(Number.isNaN(land(0, 1e4)), 'a wiggle');
+	// The earliest of several tables' turns, and a step that passes the first only.
+	land = tableLanding([table([[0, 0], [500, 0], [510, 1], [520, 0]]), table(pulse)], 1e-3);
+	assert(land(0, 1000) === 20 && land(25, 1000) === 510, `${land(0, 1000)}, ${land(25, 1000)}`);
+	// Many small turns and one that matters: found past the quiet blocks, and
+	// a step over the small ones only lands nowhere.
+	const noisy = [[0, 1]];
+	for (let i = 1; i <= 400; i++) noisy.push([i, 1 + (i % 2 ? 1e-6 : 0)]);
+	noisy.push([410, 1], [420, 50], [430, 1], [1000, 1]);
+	land = tableLanding([table(noisy)], 1e-3);
+	assert(land(0, 1000) === 420, `noisy: ${land(0, 1000)}`);
+	assert(Number.isNaN(land(0, 405)), 'only the small turns');
+	// No table that turns: no landing at all.
+	assert(tableLanding([table([[0, 0], [10, 1], [20, 2]]), table([[0, 5], [1, 5]])], 1e-3) === null, 'monotone');
+});
+
+test('a model whose tables do not turn is given no landing, and so runs as it did', async () => {
+	const base = {
+		name: 'turns', simulation: { ...DEFAULT_SIMULATION, start_time: 0, end_time: 100, output_points: 11,
+			spacing: 'linear', rtol: 1e-6, abstol: 1e-9 },
+		compartments: [{ name: 'A', initial: '1' }],
+		transfers: [{ name: 'T', from: 'A', to: null, rate: '1e-3' }],
+	};
+	assert(buildSystem(new Project(base)).tableLanding(1e-6) === null, 'no table');
+	base.transfers = [{ name: 'T', from: 'A', to: null, rate: 'L * 1e-3' }];
+	const rising = { ...base, lookups: [{ name: 'L', interpolation: 'linear', points: [[0, 1], [50, 2], [100, 3]] }] };
+	assert(buildSystem(new Project(rising)).tableLanding(1e-6) === null, 'a table that only rises');
+	const turning = { ...base, lookups: [{ name: 'L', interpolation: 'linear', points: [[0, 1], [50, 9], [100, 1]] }] };
+	const sys = buildSystem(new Project(turning));
+	assert(sys.tableLanding(1e-6)(0, 100) === 50, 'a peak at 50');
+	// A cyclic table is a matter of its average: left out.
+	const cyclic = { ...base, lookups: [{ ...turning.lookups[0], cyclic: true }] };
+	assert(buildSystem(new Project(cyclic)).tableLanding(1e-6) === null, 'cyclic');
+	// The runner asks for one, and hands it to the solver.
+	const runner = (await import('node:fs')).readFileSync(new URL('../src/sim/runner.js', import.meta.url), 'utf8');
+	assert(/landing: system\.tableLanding\?\.\(project\.simulation\.rtol\) \?\? undefined,/.test(runner),
+		'the runner hands its solvers no landing');
+});
+
 test('a run the switching solver hands to ndf has a row at every time asked, once', async () => {
 	const { julia } = await import('../src/ode/julia-solvers.js');
 	const { variableOrder } = await import('../src/ode/variable-order.js');

@@ -279,8 +279,14 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         on_accepted: Optional[Callable[[float, np.ndarray], None]] = None,
         on_output: Optional[Callable[[float, np.ndarray], None]] = None,
         on_step: Optional[Callable[[float, int], Any]] = None, auto_abstol: bool = False,
-        ends_only: bool = False, mass: Optional[np.ndarray] = None) -> Dict[str, Any]:
-    """Integrates y' = f(t, y) over ``tspan``, answering at every time in it."""
+        ends_only: bool = False, mass: Optional[np.ndarray] = None,
+        landing: Optional[Callable[[float, float], float]] = None) -> Dict[str, Any]:
+    """Integrates y' = f(t, y) over ``tspan``, answering at every time in it.
+
+    ``landing(t, t_next)``, where given, says where a step from t to t_next is
+    to end instead -- strictly between the two -- or NaN: what the caller reads
+    at the clock can turn and turn back between two steps, where the error
+    test never looks (``../landing.py``)."""
     tspan = np.asarray(tspan, dtype=float)
     y0 = np.asarray(y0, dtype=float)
     neq = y0.size
@@ -523,6 +529,13 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         if 1.1 * step_size >= abs(t_end - t):
             h_try = t_end - t
             last = True
+        # A step that would pass over a pulse in what the caller reads at the
+        # clock ends on it instead: f is never looked at between two steps.
+        if landing is not None:
+            at = landing(t, t + h_try)
+            if direction * (at - t) > 0 and direction * (t + h_try - at) > 0:
+                h_try = at - t
+                last = False
         if h_try != cur['hTable']:
             table.rescale(cur['k'], h_try / cur['hTable'])
             cur['hTable'] = h_try

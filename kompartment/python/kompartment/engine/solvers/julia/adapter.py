@@ -249,6 +249,10 @@ def julia(solver_id: str) -> Callable[..., Dict[str, Any]]:
             settings['below_tol_run'] = opts['below_tol_run']
         if opts.get('matrix'):
             settings['matrix'] = opts['matrix']
+        # Where a step ends instead of passing over a pulse in a table
+        # (../../landing.py).
+        if opts.get('landing') is not None:
+            settings['landing'] = opts['landing']
         if opts.get('on_accepted') is not None:
             settings['on_accepted'] = opts['on_accepted']
         if opts.get('on_output') is not None:

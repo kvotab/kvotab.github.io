@@ -20,7 +20,10 @@
  * missing a sharp spike in a source term or transfer rate)".
  *
  * **A lookup table needs no declaration.** Its points are already places the
- * value may turn, and the builder knows them. This is for the times that are
+ * value may turn, and the builder knows them: a step that would pass over a
+ * pulse in a table read at the clock ends on its turn instead (../sim/landing.js),
+ * and the switching solver's explicit methods land on every point
+ * (`tableCorners` in ../sim/builder.js). This is for the times that are
  * written into an equation instead -- the second argument of a `stepUp`, the
  * two ends of a `rampUp`, the year in an `if(time() > 1000, …)`.
  *

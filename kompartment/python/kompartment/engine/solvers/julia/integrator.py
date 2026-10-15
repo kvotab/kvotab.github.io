@@ -104,6 +104,9 @@ DEFAULTS: Dict[str, Any] = {
     'unstable_check': True,
     'adaptive': True,
     'tstops': None,
+    # (t, t_next) -> where a step from t to t_next is to end instead, strictly
+    # between the two, or NaN: a tstop found as the run goes (../../landing.py).
+    'landing': None,
     'max_events': 1000,
     'max_order': 0,
     'min_order': 0,
@@ -435,6 +438,7 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
     if opts['tstops']:
         tstops = [v for v in sorted((float(v) for v in opts['tstops']), reverse=tdir < 0) if tdir * (v - t0) > 0]
     tstop_at = 0
+    landing = opts['landing']
 
     # --- start ---------------------------------------------------------------------------
     integ.fsalfirst[:] = integ.f(t0, integ.uprev)
@@ -519,6 +523,13 @@ def solve(prob: ODEProblem, alg: Any, options: Optional[Dict[str, Any]] = None) 
         limit = tf
         if tstop_at < len(tstops) and tdir * (tstops[tstop_at] - limit) < 0:
             limit = tstops[tstop_at]
+        # Nor past a pulse in what the caller reads at the clock: f is never
+        # looked at between two steps.
+        if landing is not None:
+            reach = limit if tdir * (integ.t + integ.dt - limit) > 0 else integ.t + integ.dt
+            at = landing(integ.t, reach)
+            if tdir * (at - integ.t) > 0 and tdir * (reach - at) > 0:
+                limit = at
         if tdir * (integ.t + integ.dt - limit) > 0:
             integ.dt = limit - integ.t
         elif tdir * (limit - (integ.t + integ.dt)) <= t_eps:

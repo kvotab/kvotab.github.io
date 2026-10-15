@@ -128,6 +128,9 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			// The caller may be keeping its own points off `onAccepted` and will
 			// use only the two ends of what comes back.
 			endsOnly: !!opts.endsOnly,
+			// Where a step ends instead of passing over a pulse in a table:
+			// see ../sim/landing.js.
+			landing: opts.landing ?? null,
 		});
 	} catch (e) {
 		if (e instanceof SolverError) throw e;

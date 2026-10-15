@@ -680,13 +680,15 @@ end
         hmax=0.0, h0=0.0, max_steps=1e6, error_norm="max", norm_control=false, jacobian=nothing,
         matrix="auto", below_tol_run=nothing, stagnation_tol=0.0, min_newton=1, stall_window=2000,
         events=nothing, t_start=nothing, hints=nothing, on_accepted=nothing, on_output=nothing,
-        on_step=nothing, auto_abstol=false, ends_only=false, mass=nothing) -> Solution
+        on_step=nothing, auto_abstol=false, ends_only=false, mass=nothing, rows=nothing,
+        landing=nothing) -> Solution
 
 Integrates y' = f(t, y) over `tspan`, answering at every time in it (the
 Python engine's `ndf`). `non_negative` holds 1-based state indices; `abstol`
 is a number or a vector (with `auto_abstol`, a vector of the right length
 is raised in place, as Python's is); `on_step(t, nsteps)` is asked every 16
-steps and aborts the run by returning false.
+steps and aborts the run by returning false; `landing(t, t_next)` says where
+a step about to be tried is to end instead (NaN for where it would).
 """
 function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<:Real};
              rtol::Real=1e-3, abstol::Union{Real,AbstractVector{<:Real}}=1e-6,
@@ -699,7 +701,8 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
              t_start::Union{Nothing,Real}=nothing, hints::Union{Nothing,Dict{String,String}}=nothing,
              on_accepted::Union{Nothing,StepCallback}=nothing, on_output::Union{Nothing,StepCallback}=nothing,
              on_step::Union{Nothing,StepProgress}=nothing, auto_abstol::Bool=false, ends_only::Bool=false,
-             mass::Union{Nothing,AbstractVector{<:Real}}=nothing, rows::Union{Nothing,RowPool}=nothing)::Solution
+             mass::Union{Nothing,AbstractVector{<:Real}}=nothing, rows::Union{Nothing,RowPool}=nothing,
+             landing::Union{Nothing,StepLanding}=nothing)::Solution
     neq = length(y0)
     atol_in = if auto_abstol && abstol isa Vector{Float64} && length(abstol) == neq
         abstol                      # raised in place, as the caller's array is in Python
@@ -719,7 +722,7 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
                       jacobian, matrix === nothing || isempty(matrix) ? "auto" : String(matrix), floor_run,
                       floor_newton_run, Float64(stagnation_tol), Int(min_newton), Int(stall_window), events,
                       t_start === nothing ? NaN : Float64(t_start), hints, on_accepted, on_output, on_step,
-                      auto_abstol, ends_only, mass_v, rows)
+                      auto_abstol, ends_only, mass_v, rows, landing)
 end
 
 # Not specialised on which of its optional arguments a run has: one compiled solver, in the
@@ -736,7 +739,8 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     @nospecialize(on_output::Union{Nothing,StepCallback}),
                     @nospecialize(on_step::Union{Nothing,StepProgress}),
                     auto_abstol::Bool, ends_only::Bool, @nospecialize(mass::Union{Nothing,Vector{Float64}}),
-                    @nospecialize(rows::Union{Nothing,RowPool}))::Solution
+                    @nospecialize(rows::Union{Nothing,RowPool}),
+                    @nospecialize(landing::Union{Nothing,StepLanding}))::Solution
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]
@@ -910,6 +914,15 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
             if 1.1 * step_size >= abs(t_end - s.t)
                 h_try = t_end - s.t
                 last = true
+            end
+            # A step that would pass over a pulse in a table ends on it instead:
+            # f is never looked at between two steps (engine/landing.jl).
+            if landing !== nothing
+                at = (landing::StepLanding)(s.t, s.t + h_try)
+                if direction * (at - s.t) > 0 && direction * (s.t + h_try - at) > 0
+                    h_try = at - s.t
+                    last = false
+                end
             end
             if h_try != s.hTable
                 _ndf_rescale!(s, s.k, h_try / s.hTable)

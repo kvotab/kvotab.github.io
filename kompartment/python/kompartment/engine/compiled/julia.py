@@ -52,7 +52,7 @@ from . import guard_numba_cache
 from .krylov import C_NF as _KRYLOV_C_NF
 from .krylov import (KF_GAMMA_DT, KF_T, KF_ZNORM, KI_MAX_BASIS, KI_MEMORY, KI_NITER, KI_NSOLVE, NKF, NKI,
                      _krylov_prepare, _krylov_solve, _seq_dot)
-from .solvers import CB_T, RHS_T, STORE_T
+from .solvers import CB_T, RHS_T, STORE_T, _landing
 
 guard_numba_cache()
 
@@ -2477,7 +2477,8 @@ JULIA_SIG = types.int64(
     _A, _M, _A, _I, _A,                             # evdir, evbuf, evy, evwhich, evstat
     _A, _M, _I, _A, _I,                             # tout, yout, stats, fstat, pbuf
     _A, _M, _I, _A,                                 # ct, cy, cint, cflt: the steps as output
-    _A, _A, _I, _I, _A)                             # tstops, ecoef, eint, jrow, hand
+    _A, _A, _I, _I, _A,                             # tstops, ecoef, eint, jrow, hand
+    _M, _M, _A, _I)                                 # LT, LF, LB, LO: where steps end (``solvers._landing``)
 
 
 @njit(inline='always', **_OPTS)
@@ -2532,7 +2533,7 @@ def _explicit_tables(method, ecoef, eint):
 def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, pycb, saveat, y0, atol, atol0, nn,
           coef, fpar, cpar, ipar, fl, jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, wf, wv, j_to_w, diag_w,
           rbuf, xbuf, evdir, evbuf, evy, evwhich, evstat, tout, yout, stats, fstat, pbuf, ct, cy, cint, cflt,
-          tstops, ecoef, eint, jrow, hand):
+          tstops, ecoef, eint, jrow, hand, LT, LF, LB, LO):
     """``integrator.solve`` with the method ``ipar[IP_METHOD]`` -- or, for a
     composite, with the two of ``ipar[IP_METHOD]`` and ``ipar[IP_STIFF]`` and
     the switch between them -- compiled.
@@ -2824,6 +2825,12 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
         limit = tf
         if tstop_at < ntstops and tdir * (tstops[tstop_at] - limit) < 0:
             limit = tstops[tstop_at]
+        # Nor past a pulse in a table: f is never looked at between two steps.
+        if LO.size > 3:
+            reach = limit if tdir * (t + dt - limit) > 0 else t + dt
+            at = _landing(t, reach, LT, LF, LB, LO)
+            if tdir * (at - t) > 0 and tdir * (reach - at) > 0:
+                limit = at
         if tdir * (t + dt - limit) > 0:
             dt = limit - t
         elif tdir * (limit - (t + dt)) <= t_eps:

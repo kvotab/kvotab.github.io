@@ -428,6 +428,12 @@ _opt(opts::AbstractDict, key::String) = get(opts, key, nothing)
 """Python's `opts.get(key) or default`."""
 _opt_or(opts::AbstractDict, key::String, default) = (v = _opt(opts, key); _truthy(v) ? v : default)
 
+"""Where a run's steps end instead of passing over a pulse in a table (engine/landing.jl), or nothing."""
+function _landing_opt(opts::AbstractDict)::Union{Nothing,StepLanding}
+    v = _opt(opts, "landing")
+    return v === nothing ? nothing : v isa StepLanding ? v : StepLanding(v)
+end
+
 _step_callback(x) = x === nothing ? nothing : x isa StepCallback ? x : StepCallback((t, y) -> (x(t, y); nothing))
 _run_progress(x) = x === nothing ? nothing : x isa RunProgress ? x : RunProgress((a, n, t) -> x(a, n, t) !== false)
 
@@ -479,7 +485,7 @@ function _os_integrate(method::Symbol, f::RHSFunction, tspan_in::AbstractVector{
     return _os_run(st, rhs, tspan, y0, rtol, atol, threshold, mask, max_steps, hmax, hmin_opt, stall_window, h0,
                    events === nothing ? nothing : events::EventFunctions,
                    _step_callback(_opt(opts, "on_output")), _step_callback(_opt(opts, "on_accepted")),
-                   _run_progress(_opt(opts, "on_step")))
+                   _run_progress(_opt(opts, "on_step")), _landing_opt(opts))
 end
 
 # Not specialised on which of its optional arguments a run has (see `_ndf_solve`).
@@ -488,7 +494,8 @@ function _os_run(st::S, rhs::_OSRhs, tspan::Vector{Float64}, y0::Vector{Float64}
                  max_steps::Float64, hmax::Float64, hmin_opt::Float64, stall_window::Int, h0::Float64,
                  @nospecialize(events::Union{Nothing,EventFunctions}), @nospecialize(on_output::Union{Nothing,StepCallback}),
                  @nospecialize(on_accepted::Union{Nothing,StepCallback}),
-                 @nospecialize(on_step::Union{Nothing,RunProgress}))::Solution where {S}
+                 @nospecialize(on_step::Union{Nothing,RunProgress}),
+                 @nospecialize(landing::Union{Nothing,StepLanding}=nothing))::Solution where {S}
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]
@@ -583,6 +590,16 @@ function _os_run(st::S, rhs::_OSRhs, tspan::Vector{Float64}, y0::Vector{Float64}
             h = t_end - t
             step_size = abs(h)
             last = true
+        end
+        # A step that would pass over a pulse in a table ends on it instead:
+        # f is never looked at between two steps (engine/landing.jl).
+        if landing !== nothing
+            at = (landing::StepLanding)(t, t + h)
+            if direction * (at - t) > 0 && direction * (t + h - at) > 0
+                h = at - t
+                step_size = abs(h)
+                last = false
+            end
         end
         err = 0.0
         worst_at = 1

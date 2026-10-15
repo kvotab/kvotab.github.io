@@ -95,6 +95,9 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
     hmin_opt = opts['hmin'] if (opts.get('hmin') or 0) > 0 else 0.0
     stall_window = opts.get('stall_window') or STALL_WINDOW_STEPS
     stall_span = STALL_SPAN_FRACTION * span
+    # Where a step ends instead of passing over a pulse in what the caller
+    # reads at the clock (../landing.py), or None.
+    landing = opts.get('landing')
     exponent = 1 / (method.order + 1)
     rhs = HeldDerivative(f, non_negative) if (non_negative is not None and method.holds_at_zero) else f
     stepper = method.set_up(neq, rhs, f, threshold, atol, rtol, opts)
@@ -176,6 +179,14 @@ def integrate(method: Any, f: Callable[[float, np.ndarray], np.ndarray], tspan: 
             h = t_end - t
             step_size = abs(h)
             last = True
+        # A step that would pass over a pulse in what the caller reads at the
+        # clock ends on it instead: f is never looked at between two steps.
+        if landing is not None:
+            at = landing(t, t + h)
+            if direction * (at - t) > 0 and direction * (t + h - at) > 0:
+                h = at - t
+                step_size = abs(h)
+                last = False
         err = 0.0
         worst_at = 0
         failed_once = False

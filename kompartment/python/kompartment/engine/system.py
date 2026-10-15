@@ -388,6 +388,27 @@ class System:
                 return None
         return out
 
+    def table_landing(self, rtol: float) -> Any:
+        """Where a step is to end so as not to pass over a pulse in a table
+        read at the clock, for this rtol (``tableLanding``; see
+        :mod:`.landing`): a :class:`~.landing.TableLanding`, or None when no
+        table turns. Cyclic tables are left out, and a table shared by
+        several slots is judged once. Made from the tables as they stand: a
+        realisation writes its points into them first."""
+        from .landing import table_landing
+        seen: Set[int] = set()
+        tables: List[Any] = []
+        for lk in self.builder.lookup_layout:
+            if lk.argument:
+                continue
+            for k in range(lk.tab, lk.tab + lk.width):
+                table = self.TAB[k] if k < len(self.TAB) else None
+                if table is None or table.cyclic or id(table) in seen:
+                    continue
+                seen.add(id(table))
+                tables.append(table)
+        return table_landing(tables, rtol)
+
     def _clock_into(self, t: float, y: np.ndarray, into: np.ndarray) -> None:
         self._clock(t, y, self.X)
         into[:] = self.X[self.clock_idx]

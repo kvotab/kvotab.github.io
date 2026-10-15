@@ -497,6 +497,11 @@ export function run(input, opts = {}) {
 		// The times the model's clock-read tables turn at, which the switching
 		// solver's explicit methods land on. See `tableCorners` in ./builder.js.
 		tableCorners: system.tableCorners ?? undefined,
+		// Where a step ends instead of passing over a pulse in one of those
+		// tables, which no solver would otherwise see: see ./landing.js. Made
+		// for each run from the tables as they stand, so a realisation is
+		// judged by its own points.
+		landing: system.tableLanding?.(project.simulation.rtol) ?? undefined,
 		onStep: opts.onProgress
 			? (fraction, _n, at) => {
 				if (opts.signal?.aborted) return false;

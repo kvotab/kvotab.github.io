@@ -4124,6 +4124,41 @@ clean over by `dp45`: the run reports that nothing was released. Declared, the
 same model is right to four figures. `src/domain/switchtimes.js` collects the
 times a parameter changes value and the solver is made to land on each of them.
 
+## Pulses in a table
+
+A solver looks at the model at the ends of its steps and at its stages inside
+them, and nowhere else. A table read at the clock that rises and falls back
+between two of those places is never seen: a twenty-year pulse at year 10,000
+of a million-year run arrives as nothing, a spike on a steady release as the
+steady release alone. `src/sim/landing.js` makes each turn of such a table -- a
+point higher than both its neighbours, or lower -- a place a step may not cover
+whole when the turn matters, and the step ends on it instead.
+
+- **When a turn matters**: when the area it adds to the straight line between
+  its neighbours, over the run's `rtol`, is more than the table holds over the
+  step (the area under |y|). At an `rtol` of 1e-3 a wiggle of a part in ten
+  million on a steady release never moves a step; a spike on the same release
+  does.
+- **Where the step ends**: inside the stretch the step would have to cover to
+  miss the turn, by the table's rule -- between the neighbours for `linear` and
+  `extrapolate` (on the point), after the point for `below`, before it for
+  `above`, between the midpoints for `nearest` (on the point) -- so never on a
+  jump.
+- **What it costs**: the turns are in order and judged 32 at a time against the
+  largest of each block, so a long step over a long quiet table is a few
+  binary searches. A model whose tables never turn gets no rule at all, and a
+  run that meets a pulse takes the steps the pulse needs.
+- **Left out**: tables read at an argument, which the solver sees through the
+  state, and cyclic ones, where a step on every turn of every period would cost
+  more than most runs can spend.
+
+`ndf`, `ros23`, `dp45` and the DifferentialEquations.jl ports ask at the start
+of every step and shorten it to land; a step the error test rejects is tried
+again shorter, from the same place. The rule is plain IEEE arithmetic on the
+table's own numbers, so the Python package's `landing.py` lands every step where
+the application does, and its compiled loops where its Python ones do. SciPy's
+methods are not told: they step as SciPy steps.
+
 ## A coarser clock for the clock-only algebra
 
 `min_change_time` works the algebra that depends on nothing but the clock out

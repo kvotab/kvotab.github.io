@@ -163,6 +163,9 @@ const DEFAULTS = {
   unstableCheck: true,
   adaptive: true,        // false: march at the given dt and ignore the error estimate
   tstops: null,
+  landing: null,          // (t, tNext) -> where a step from t to tNext is to
+                          // end instead, strictly between the two, or NaN: a
+                          // tstop found as the run goes (see ../../solvers/ndf.js)
   maxEvents: 1000,
   history: null,          // { t: number[], u: Float64Array[] } before t0, newest
                           // first; the multistep methods start at full order
@@ -640,6 +643,7 @@ export function solve(prob, alg, options = {}) {
     ? Array.from(opts.tstops).slice().sort((a, b) => tdir * (a - b)).filter((t) => tdir * (t - t0) > 0)
     : [];
   let tstopAt = 0;
+  const landing = typeof opts.landing === 'function' ? opts.landing : null;
 
   // --- start ----------------------------------------------------------------
   integ.f(t0, integ.uprev, integ.fsalfirst);
@@ -728,6 +732,13 @@ export function solve(prob, alg, options = {}) {
     // Do not step past the end, nor past the next thing we were told to land on.
     let limit = tf;
     if (tstopAt < tstops.length && tdir * (tstops[tstopAt] - limit) < 0) limit = tstops[tstopAt];
+    // Nor past a pulse in what the caller reads at the clock: f is never
+    // looked at between two steps.
+    if (landing) {
+      const reach = tdir * (integ.t + integ.dt - limit) > 0 ? limit : integ.t + integ.dt;
+      const at = landing(integ.t, reach);
+      if (tdir * (at - integ.t) > 0 && tdir * (reach - at) > 0) limit = at;
+    }
     if (saveat && saveatAt < saveat.length && tdir * (saveat[saveatAt] - limit) < 0) {
       // saveat alone does not force a step; the interpolant covers it. It does
       // stop the step overshooting the *end*, which is handled above.

@@ -129,6 +129,27 @@ function record_step!(r::Record, integ, t::Float64)
     end
 end
 
+"""
+Ends the step about to be taken, `dt` long, on a pulse in a table that it
+would pass over (engine/landing.jl): a stop at the landing, as a timed event's
+is. f is never looked at between two steps, so a pulse shorter than a step
+would otherwise come and go unseen.
+"""
+function land_next!(integ, landing, dt::Float64)
+    t = Float64(integ.t)
+    tdir = integ.tdir
+    reach = t + dt
+    if SciMLBase.has_tstop(integ)
+        stop = Float64(tdir * SciMLBase.first_tstop(integ))
+        tdir * (reach - stop) > 0 && (reach = stop)
+    end
+    at = landing(t, reach)
+    if tdir * (at - t) > 0 && tdir * (reach - at) > 0
+        SciMLBase.add_tstop!(integ, at)
+    end
+    return nothing
+end
+
 function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}, y0_in::AbstractVector{<:Real},
                     opts::AbstractDict)
     tspan = Vector{Float64}(tspan_in)
@@ -194,8 +215,10 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
     ybuf = zeros(n)
     events === nothing || events.fun(vl, t0, y0)
     dense_at! = (out, tq) -> nothing
+    landing = Kompartment._landing_opt(opts)
     # After every accepted step: hold what cannot go negative, then the events,
-    # then the rows due and the recorders.
+    # then the rows due and the recorders, then whether the next step would pass
+    # over a pulse in a table.
     step_cb = DiscreteCallback((u, t, integ) -> true, function (integ)
         moved = false
         for i in rec.non_negative
@@ -237,6 +260,7 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
             copyto!(vl, vr)
         end
         record_step!(rec, integ, t)
+        landing === nothing || land_next!(integ, landing, Float64(SciMLBase.get_proposed_dt(integ)))
     end; save_positions=(false, false))
     push!(callbacks, step_cb)
     kw = Dict{Symbol,Any}(
@@ -253,6 +277,7 @@ function solve_with(id::String, f::RHSFunction, tspan_in::AbstractVector{<:Real}
     alg = algorithm(id)
     label = id in ("auto", "auto_julia") ? "DefaultODEAlgorithm" : string(nameof(typeof(alg)))
     integ = init(prob, alg; kw...)
+    landing === nothing || land_next!(integ, landing, Float64(integ.dt))
     solve!(integ)
     rc = integ.sol.retcode
     ok = rc == ReturnCode.Success || (rc == ReturnCode.Terminated && rec.stopped !== nothing)
