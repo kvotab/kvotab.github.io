@@ -103,9 +103,16 @@ class Guarded(unittest.TestCase):
             return x
 
         elsewhere.__module__ = 'someone_else'
-        theirs = njit(cache=True)(elsewhere)._cache._cache_file
+        cache = njit(cache=True)(elsewhere)._cache
+        theirs = cache._cache_file
         self.assertIs(type(theirs), caching.IndexDataCacheFile)
-        self.assertNotIsInstance(theirs._source_stamp, tuple)
+        # Filed by numba's own stamp alone, whatever numba makes that: 0.62
+        # stamps a source by its time and size, a tuple, and 0.68 by a hash of
+        # it. This asked for "not a tuple", which held for the second only.
+        self.assertEqual(theirs._source_stamp, cache._impl.locator.get_source_stamp())
+        # And ours by numba's stamp and the engine's sources together.
+        mine = runtime.history_hold._cache
+        self.assertEqual(mine._cache_file._source_stamp, (mine._impl.locator.get_source_stamp(), sources_stamp()))
 
     def test_filed_by_every_source_the_code_is_built_from(self) -> None:
         # numba files a function's code by its own module's source, and builds
