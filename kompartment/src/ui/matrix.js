@@ -975,8 +975,8 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 		+ 'and dragging the empty grid moves it.'
 		+ (frames.length || slots.some((x) => x.kind === 'group')
 			? ' A sub-system folds up into a single row and column, with every '
-				+ 'flux in and out of it landing there; unfold it with a click on '
-				+ 'its tile to see the blocks inside, framed together.'
+				+ 'flux in and out of it landing there; a click on its tile unfolds '
+				+ 'it, to show the blocks inside framed together, and selects it.'
 			: '')
 		+ (paths.length
 			? ' A far-field path sits on the diagonal like any other block: a flux '
@@ -1027,21 +1027,25 @@ function diagonalCell(slot, ctx) {
 			className: `matrix-block matrix-system${isOpen ? ' is-open' : ''}`,
 			type: 'button',
 			title: `${slot.path} \u2014 ${isOpen
-				? 'unfolded: the blocks inside it are framed here. Click to fold it up.'
-				: `folded up, holding ${held}. Click to unfold it.`}`,
+				? 'unfolded: the blocks inside it are framed here. A click folds it up and selects it.'
+				: `folded up, holding ${held}. A click unfolds it and selects it.`}`,
 		});
 		btn.dataset.name = slot.path;
+		// Drawn selected when it is: folding draws the grid again, and a tile
+		// that lost its ring on the way would say the selection had gone.
+		if (selection?.name === slot.path) btn.classList.add('is-selected');
 		btn.append(el('span', { className: 'matrix-fold' }, isOpen ? '\u25be' : '\u25b8'));
 		btn.append(el('span', { className: 'matrix-system-name' }, slot.local));
 		if (!isOpen && held) {
 			btn.append(el('span', { className: 'matrix-system-held' }, held));
 		}
-		btn.addEventListener('click', () => hooks.onToggleSystem?.(slot.path));
-		// Selecting it is what the rest of the application means by clicking a
-		// sub-system; folding is what this view is for, so the click folds and
-		// the selection follows.
-		btn.addEventListener('dblclick', (ev) => {
-			ev.preventDefault();
+		// A click folds or unfolds it, which is what this view is for -- and
+		// selects it, which is what a click on a sub-system means everywhere
+		// else, so the Information view shows what it holds and what crosses
+		// its edge. The fold first: it draws the grid again, and the selection
+		// then marks the tile on the grid as it is drawn.
+		btn.addEventListener('click', () => {
+			hooks.onToggleSystem?.(slot.path);
 			hooks.onSelect?.({ kind: 'system', name: slot.path });
 		});
 		th.append(btn);

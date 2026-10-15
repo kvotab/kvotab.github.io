@@ -693,8 +693,10 @@ Inside a frame a block shows its **local** name: `Water`, not
 `NearField.Buffer.Water`, because the frame already says where it is. The full
 path stays on the tooltip. Folding one folds what is inside it, and opening one
 opens the way to it, so a sub-system reached from a fold several deep does not
-vanish behind a closed parent. A click on its tile folds or unfolds one; the
-right-click on the grid's margin folds every one at once, or unfolds every one
+vanish behind a closed parent. A click on its tile folds or unfolds one and
+selects it, so the Information view shows what it holds and what crosses its
+edge; the right-click on the grid's margin folds every one at once, or unfolds
+every one
 where the grid can hold the result — unfolded, a model of thousands of blocks is
 millions of squares, and the item says so instead. None of it is saved or
 changes a number — which sub-systems are open is a fact about the view, and a

@@ -29617,10 +29617,15 @@ test('the transfer grid puts the blocks on its diagonal', async () => {
 		'a block on the diagonal opens nothing');
 	assert(/hooks\.onOpenSettings\?\.\(qualifiedName\(t\)\)/.test(src),
 		'a transfer opens nothing');
-	// Three things on this grid answer a double-click: a block on the
-	// diagonal, a folded sub-system, and a transfer off it.
-	assert((src.match(/addEventListener\('dblclick'/g) ?? []).length === 3,
+	// Two things on this grid answer a double-click: a block on the
+	// diagonal and a transfer off it. A sub-system's tile is selected by its
+	// click, which folds or unfolds it as well.
+	assert((src.match(/addEventListener\('dblclick'/g) ?? []).length === 2,
 		'not everything on the grid answers a double-click');
+	assert(/btn\.addEventListener\('click', \(\) => \{\n\t\t\thooks\.onToggleSystem\?\.\(slot\.path\);\n\t\t\thooks\.onSelect\?\.\(\{ kind: 'system', name: slot\.path \}\);\n\t\t\}\);/.test(src),
+		'a click on a sub-system folds it without selecting it');
+	assert(/if \(selection\?\.name === slot\.path\) btn\.classList\.add\('is-selected'\);/.test(src),
+		'a sub-system drawn again loses its selection ring');
 	// `outside` is not a block: nothing to select, nothing to open.
 	// It gets a tile like everything else on the diagonal, but not a button:
 	// there is nothing to select and nothing to open.
