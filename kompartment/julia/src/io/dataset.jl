@@ -81,25 +81,32 @@ function _ds_timing(timing::AbstractDict)
 end
 
 """
-    dataset_entries(raw, res, inner; stamp=nothing, log=nothing) -> Vector{Pair{String,Vector{UInt8}}}
+    dataset_entries(raw, res, inner; stamp=nothing, log=nothing, states=true, extra=nothing) -> Vector{Pair{String,Vector{UInt8}}}
 
 The entries a results archive holds, the model aside (the application's
 `datasetEntries`): `results/meta.json`, `t.f64` and `y.f64`, then `held.i32`
 and `mem.f64` when there is anything to put in them.
+
+`states=false` leaves the states and the histories out, for a run the engine
+holds and answers for (src/service.jl): the meta says `onEngine`, with what
+`extra` holds beside what it always says.
 """
-function dataset_entries(raw::AbstractDict, res::Results, inner::AbstractString; stamp=nothing, log=nothing)
+function dataset_entries(raw::AbstractDict, res::Results, inner::AbstractString; stamp=nothing, log=nothing,
+                         states::Bool=true, extra=nothing)
     t = Float64[x for x in res.t]
     rows = res.y
     nstate = isempty(rows) ? 0 : length(rows[1])
-    y = Vector{Float64}(undef, length(rows) * nstate)
-    for (i, row) in enumerate(rows)
-        copyto!(y, (i - 1) * nstate + 1, row, 1, nstate)
+    y = Vector{Float64}(undef, states ? length(rows) * nstate : 0)
+    if states
+        for (i, row) in enumerate(rows)
+            copyto!(y, (i - 1) * nstate + 1, row, 1, nstate)
+        end
     end
     held_in = get(res.stats, "held", nothing)
     held = held_in === nothing ? Int32[] : Int32[Int32(h) for h in held_in]
     # Every recorder's history end to end, its times then its values, as the
     # run left them.
-    memory = res.run_state === nothing ? res.system.data.MEM : res.run_state.mem
+    memory = !states ? Any[] : res.run_state === nothing ? res.system.data.MEM : res.run_state.mem
     mem = Float64[]
     recorders = Any[]
     for m in memory
@@ -124,11 +131,13 @@ function dataset_entries(raw::AbstractDict, res::Results, inner::AbstractString;
         "recorders" => recorders,
         "log" => log === nothing ? nothing : Any[String(l) for l in log],
     )
+    states || (meta["onEngine"] = true)
+    extra === nothing || merge!(meta, extra)
     out = Pair{String,Vector{UInt8}}[
         _DS_META => Vector{UInt8}(codeunits(json_text(meta; indent=2))),
         _DS_T => _ds_bytes(t),
-        _DS_Y => _ds_bytes(y),
     ]
+    states && push!(out, _DS_Y => _ds_bytes(y))
     isempty(held) || push!(out, _DS_HELD => _ds_bytes(held))
     isempty(mem) || push!(out, _DS_MEM => _ds_bytes(mem))
     return out
@@ -211,7 +220,8 @@ function _ds_raw(project, res::Results)
 end
 
 """
-    dataset_archive(res; project=nothing, inner=nothing, stamp=now, log=nothing, compress=true, modified=nothing)
+    dataset_archive(res; project=nothing, inner=nothing, stamp=now, log=nothing, compress=true, modified=nothing,
+                    states=true, extra=nothing)
 
 A model and its run as the archive *Save with results* writes: the model at
 the root as `<slug of its name>.json`, the run beside it under `results/`.
@@ -219,15 +229,15 @@ the root as `<slug of its name>.json`, the run beside it under `results/`.
 run was built from; `stamp` when the run was made (ISO text, now by default);
 `log` the run log as lines, the run's own by default (`nothing` for none);
 `compress=false` stores every entry; `modified` is the entries' time stamp
-(the epoch by default).
+(the epoch by default). `states` and `extra` are `dataset_entries`'.
 """
 function dataset_archive(res::Results; project=nothing, inner=nothing, stamp=_ds_now(), log=:default,
-                         compress::Bool=true, modified=nothing)
+                         compress::Bool=true, modified=nothing, states::Bool=true, extra=nothing)
     raw = _ds_raw(project, res)
     log === :default && (log = split(run_log(res; project=raw), "\n"))
     name = inner === nothing ? "$(slug(get(raw, "name", nothing))).json" : String(inner)
     entries = Pair{String,Vector{UInt8}}[name => Vector{UInt8}(codeunits(json_text(raw; indent=2)))]
-    append!(entries, dataset_entries(raw, res, name; stamp, log))
+    append!(entries, dataset_entries(raw, res, name; stamp, log, states, extra))
     return _ds_zip(entries; modified, compress)
 end
 

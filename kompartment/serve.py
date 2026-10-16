@@ -29,6 +29,14 @@ jobs in and progress out (see python/kompartment/service.py). A run comes back
 as the archive *Save with results* writes, which the page reads the way it
 reads a file somebody opened.
 
+A run the page asks to be kept (`"keep": true`) comes back without its states:
+the engine holds it, and the page asks for the series it shows as it shows them
+(`/engine/runs/<id>/series`), and for the whole run only to save it, keep it
+beside or work an edit out over it (`/engine/runs/<id>/archive`). An engine
+holds one such run a page: the page's next one replaces it, and one left
+unasked about for two hours, or held by an engine since restarted, is gone --
+the page then says to run it again.
+
 The engines answer only the page this server served. Every request under
 `/engine/` carries a token the server writes into that page, and must come from
 this machine under this server's own name: a model is code to an engine, and
@@ -75,6 +83,13 @@ KEPT_FOR = 600.0
 #: How long a stopped job has to stop before its engine is ended and started again.
 GRACE = 2.0
 
+#: A run an engine holds for its page is let go of once nobody has asked about it for this long.
+KEPT_RUN_FOR = 7200.0
+
+#: How long an engine has to answer a question about a run it holds: the whole of
+#: the largest assessment's run, written out, takes a while.
+ASK_TIMEOUT = 900.0
+
 
 class Job:
     """One run asked of an engine, and what has been heard of it."""
@@ -87,6 +102,10 @@ class Job:
         self.model = model
         self.options = options
         self.out = out
+        # A run whose engine holds it for its page, its archive without the states.
+        self.keep = kind == "run" and isinstance(options, dict) and options.get("keep") is True
+        # The engine's process it ran in: a held run lasts as long as that does.
+        self.generation = None
         self.state = "queued"
         self.stage = None
         self.progress = {}
@@ -125,6 +144,10 @@ class Engine:
         self.current = None
         self.lock = threading.RLock()
         self.restarts = 0
+        # Bumped at every start: what a process held, a later one does not.
+        self.generation = 0
+        # Questions asked of it and not yet answered, by id: what each waits on.
+        self.questions = {}
 
     def info(self):
         with self.lock:
@@ -153,6 +176,7 @@ class Engine:
             return
         self.proc = proc
         self.ready = None
+        self.generation += 1
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()
         threading.Thread(target=self._relay, args=(proc,), daemon=True).start()
 
@@ -185,8 +209,14 @@ class Engine:
                     job.error = {"name": "EngineError", "message": f"The {self.name} engine stopped during the run.",
                                  "block": None, "hint": "Its console output, where the server runs, may say why."}
                     job.end("error")
+            asked = list(self.questions.values())
+            self.questions.clear()
             if self.queue:
                 self.start()
+        for waiter in asked:
+            waiter["reply"] = {"event": "error", "name": "EngineError",
+                               "message": f"The {self.name} engine stopped before it answered."}
+            waiter["done"].set()
 
     def _heard(self, proc, event):
         with self.lock:
@@ -195,6 +225,13 @@ class Engine:
             if event.get("event") == "ready":
                 self.ready = {k: v for k, v in event.items() if k != "event"}
                 self._pump()
+                return
+            waiter = self.questions.get(event.get("id"))
+            if waiter is not None:
+                if event.get("event") in ("done", "error"):
+                    del self.questions[event["id"]]
+                    waiter["reply"] = event
+                    waiter["done"].set()
                 return
             job = self.current
             if job is None or event.get("id") != job.id:
@@ -222,6 +259,7 @@ class Engine:
                 continue
             job.state = "running"
             job.stage = "starting"
+            job.generation = self.generation
             self.current = job
             try:
                 self.proc.stdin.write(json.dumps({
@@ -279,6 +317,43 @@ class Engine:
 
         threading.Timer(GRACE, end_if_still).start()
 
+    def ask(self, op, generation, timeout=ASK_TIMEOUT, **fields):
+        """A question about a run this engine holds, and its answer: the engine's
+        ``done`` or ``error``, or an ``error`` of this server's when the engine that
+        held it is gone or does not answer."""
+        qid = secrets.token_hex(8)
+        waiter = {"done": threading.Event(), "reply": None}
+        with self.lock:
+            if self.proc is None or self.ready is None or self.generation != generation:
+                return {"event": "error", "name": "Gone", "gone": True,
+                        "message": f"The {self.name} engine has been restarted since the run and no longer "
+                                   "holds it. Run it again."}
+            self.questions[qid] = waiter
+            try:
+                self.proc.stdin.write(json.dumps({"op": op, "id": qid, **fields}) + "\n")
+                self.proc.stdin.flush()
+            except (OSError, ValueError) as e:
+                self.questions.pop(qid, None)
+                return {"event": "error", "name": "EngineError",
+                        "message": f"The {self.name} engine could not be reached: {e}"}
+        if not waiter["done"].wait(timeout):
+            with self.lock:
+                self.questions.pop(qid, None)
+            return {"event": "error", "name": "EngineError",
+                    "message": f"The {self.name} engine did not answer within {timeout:.0f} s."}
+        return waiter["reply"]
+
+    def tell(self, op, generation, **fields):
+        """A word to the engine that needs no answer, if the process it is for still runs."""
+        with self.lock:
+            if self.proc is None or self.generation != generation:
+                return
+            try:
+                self.proc.stdin.write(json.dumps({"op": op, "id": secrets.token_hex(8), **fields}) + "\n")
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+
     def stop(self):
         with self.lock:
             proc = self.proc
@@ -302,11 +377,15 @@ class Engines:
         self.explicit = explicit
         self.folder = folder
         self.jobs = {}
+        # The runs engines hold for their pages, by job id.
+        self.kept = {}
         self.lock = threading.Lock()
         threading.Thread(target=self._sweep, daemon=True).start()
 
     def info(self):
-        return {"default": self.default, "explicit": self.explicit,
+        with self.lock:
+            held = len(self.kept)
+        return {"default": self.default, "explicit": self.explicit, "held": held,
                 "engines": {n: e.info() for n, e in self.engines.items()}}
 
     def submit(self, kind, engine, client, model, options):
@@ -338,21 +417,61 @@ class Engines:
         self.engines[job.engine].cancel(job)
 
     def take(self, job):
-        """The archive of a finished job, read once and then let go of."""
+        """The archive of a finished job, read once and then let go of. A run its
+        engine holds is the page's from now on, in place of the page's last one."""
         try:
             with open(job.out, "rb") as f:
                 data = f.read()
-        finally:
+        except OSError:
+            # Its engine lets go of a run whose page cannot have it.
             self.forget(job)
+            raise
+        self.forget(job, taken=True)
+        if job.keep:
+            with self.lock:
+                older = [k for k, r in self.kept.items() if r["client"] == job.client]
+                self.kept[job.id] = {"engine": job.engine, "client": job.client, "generation": job.generation,
+                                     "seen": time.time()}
+            for k in older:
+                self.let_go(k)
         return data
 
-    def forget(self, job):
+    def forget(self, job, taken=False):
         with self.lock:
             self.jobs.pop(job.id, None)
         try:
             os.remove(job.out)
         except OSError:
             pass
+        # Held by its engine for a page that never came for it.
+        if job.keep and not taken and job.state == "done":
+            self.engines[job.engine].tell("forget", job.generation, run=job.id)
+
+    def held(self, run_id):
+        """The run an engine holds under this id, if one does: its record, marked as asked about."""
+        with self.lock:
+            r = self.kept.get(run_id)
+            if r is not None:
+                r["seen"] = time.time()
+            return r
+
+    def let_go(self, run_id):
+        with self.lock:
+            r = self.kept.pop(run_id, None)
+        if r is not None:
+            self.engines[r["engine"]].tell("forget", r["generation"], run=run_id)
+
+    def ask(self, run_id, op, **fields):
+        """A question about a held run: ``(answer, path)``, the engine's answer and
+        where it wrote what it was asked for. None when no engine holds the run."""
+        r = self.held(run_id)
+        if r is None:
+            return None
+        path = os.path.join(self.folder, secrets.token_hex(8))
+        reply = self.engines[r["engine"]].ask(op, r["generation"], run=run_id, out=path, **fields)
+        if reply.get("gone"):
+            self.let_go(run_id)
+        return reply, path
 
     def _sweep(self):
         while True:
@@ -365,6 +484,10 @@ class Engines:
                     self.cancel(job)
                 elif job.finished is not None and now - job.finished > KEPT_FOR:
                     self.forget(job)
+            with self.lock:
+                idle = [k for k, r in self.kept.items() if now - r["seen"] > KEPT_RUN_FOR]
+            for k in idle:
+                self.let_go(k)
 
     def close(self):
         for e in self.engines.values():
@@ -410,6 +533,8 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         # for a page asking how its run is going five times a second.
         if self.path.startswith("/engine/jobs/") and "GET" in (self.requestline or "") \
                 and not self.path.endswith("/archive"):
+            return
+        if self.path.startswith("/engine/runs/") and self.path.endswith("/series"):
             return
         sys.stderr.write("  %s\n" % (fmt % args))
 
@@ -481,6 +606,10 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/engine/info":
             self._json(200, ENGINES.info())
             return
+        m = re.fullmatch(r"/engine/runs/([0-9a-f]+)/archive", path)
+        if m:
+            self._held_answer(ENGINES.ask(m.group(1), "archive"), "application/zip")
+            return
         m = re.fullmatch(r"/engine/jobs/([0-9a-f]+)(/archive)?", path)
         job = ENGINES.get(m.group(1)) if m else None
         if job is None:
@@ -527,6 +656,21 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 return
             self._json(202, job.status())
             return
+        m = re.fullmatch(r"/engine/runs/([0-9a-f]+)/(series|forget)", path)
+        if m and m.group(2) == "forget":
+            ENGINES.let_go(m.group(1))
+            self._json(200, {"forgotten": m.group(1)})
+            return
+        if m:
+            try:
+                labels = json.loads(body or b"{}").get("labels")
+                if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+                    raise ValueError("ask for the series by their labels, a list of text")
+            except (ValueError, AttributeError) as e:
+                self._json(400, {"error": str(e)})
+                return
+            self._held_answer(ENGINES.ask(m.group(1), "series", labels=labels), "application/octet-stream")
+            return
         m = re.fullmatch(r"/engine/jobs/([0-9a-f]+)/cancel", path)
         job = ENGINES.get(m.group(1)) if m else None
         if job is None:
@@ -534,6 +678,35 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             return
         ENGINES.cancel(job)
         self._json(200, job.status())
+
+
+    def _held_answer(self, asked, kind):
+        """What an engine wrote for a question about a run it holds, sent and then let go of."""
+        if asked is None:
+            self._json(404, {"error": "No engine holds that run any more: it was left unasked about for two hours, "
+                                      "or the page has had a newer one since. Run it again."})
+            return
+        reply, path = asked
+        try:
+            if reply.get("event") != "done":
+                self._json(410 if reply.get("gone") else 502,
+                           {"error": reply.get("message") or "the engine could not answer", "name": reply.get("name")})
+                return
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            self._json(502, {"error": f"the engine's answer could not be read: {e}"})
+            return
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
 
 class Server(socketserver.ThreadingTCPServer):

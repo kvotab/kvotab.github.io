@@ -61,3 +61,44 @@ end
     # The message without its type in front: the page shows the name beside it.
     @test problem["name"] == "ArgumentError" && startswith(problem["message"], "'draw' is not a kind of job")
 end
+
+@testset "a kept run: sent without its states, asked about, let go of" begin
+    four = read(joinpath(EXAMPLES, "four-compartment.json"), String)
+    made = K.run(K.from_json(four))
+    labels = [String(o["label"]) for o in K.outputs(made)]
+    dir = mktempdir()
+    inp = Pipe()
+    Base.link_pipe!(inp; reader_supports_async=true, writer_supports_async=true)
+    outp = Pipe()
+    Base.link_pipe!(outp; reader_supports_async=true, writer_supports_async=true)
+    server = @async K.serve_stdio(; input=inp.out, output=outp.in)
+    ask(d) = (println(inp.in, K.json_text(d; indent=0)); flush(inp.in))
+    # What is said under `id`, once it is done or refused.
+    ended(id) = while true
+        e = K.parse_json(readline(outp.out))
+        get(e, "id", "") == id && get(e, "event", "") in ("done", "error") && return e
+    end
+    ask(Dict("op" => "job", "id" => "r1", "kind" => "run", "model" => four, "options" => Dict("keep" => true),
+             "out" => joinpath(dir, "r1.zip")))
+    @test ended("r1")["event"] == "done"
+    light = K._ds_unzip(read(joinpath(dir, "r1.zip")))
+    meta = K.parse_json(String(copy(light["results/meta.json"])))
+    @test !haskey(light, "results/y.f64") && meta["onEngine"] === true && haskey(meta, "massBalance")
+    # Every series, by label, as a run here works them out.
+    ask(Dict("op" => "series", "id" => "q1", "run" => "r1", "labels" => labels, "out" => joinpath(dir, "q1.f64")))
+    @test ended("q1")["event"] == "done"
+    @test reinterpret(Float64, read(joinpath(dir, "q1.f64"))) == reduce(vcat, K.series_many(made, labels))
+    ask(Dict("op" => "series", "id" => "q2", "run" => "r1", "labels" => ["Nowhere"], "out" => joinpath(dir, "q2")))
+    @test occursin("no series called 'Nowhere'", ended("q2")["message"])
+    # The whole run, states and all.
+    ask(Dict("op" => "archive", "id" => "q3", "run" => "r1", "out" => joinpath(dir, "q3.zip")))
+    @test ended("q3")["event"] == "done"
+    @test haskey(K._ds_unzip(read(joinpath(dir, "q3.zip"))), "results/y.f64")
+    # Let go of, and then said to be gone.
+    ask(Dict("op" => "forget", "id" => "q4", "run" => "r1"))
+    @test ended("q4")["event"] == "done"
+    ask(Dict("op" => "series", "id" => "q5", "run" => "r1", "labels" => labels, "out" => joinpath(dir, "q5.f64")))
+    @test occursin("no longer holds that run", ended("q5")["message"])
+    close(inp.in)
+    wait(server)
+end

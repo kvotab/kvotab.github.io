@@ -90,20 +90,31 @@ its package in `julia/`, which compiles the first time it starts after a change
 — about a minute, said on the bar as *Starting Julia…*. The server's window
 says which engines it found, and why not the others.
 
-The run comes back as the archive **Save → Model with results** writes, and the
-page reads it as it reads such a file: the run is checked against the model, and
-the chart, the table, the bands, *What drove it* and every export work on it as
-on a run made in the browser. The footer says which engine solved it, and the
-run log starts with the engine's own account of the run. **Stop** reaches the
-engine too: a run stops at its next progress report, a probabilistic run at its
-next realisation — or, where that takes more than a couple of seconds, the
-engine is ended, and started again for the next run.
+The engine keeps the run it made and sends the page everything about it but its
+states. The page checks the run against the model, and asks the engine for each
+series as the chart, the table or an export shows it — so the run of a large
+assessment, whose states come to well over a hundred megabytes, is on screen as
+soon as it is solved. The chart, the table, the mass-balance audit and every
+export work on it as on a run made in the browser. What needs every state brings
+the whole run over first: **Save → Model with results**, **Keep this run**, and
+an edit worked out over the states (below). The engine keeps one run for each
+page, the page's next run taking its place, and lets go of one nobody has asked
+about for two hours, or one it held before it was restarted: the page then says
+so where a series is missing, and **Run** makes the run again.
+
+A probabilistic run comes back whole: the bands, *What drove it* and the
+realisations' exports are worked out in the page from the series it kept. The
+footer says which engine solved a run, and the run log starts with the engine's
+own account of it. **Stop** reaches the engine too: a run stops at its next
+progress report, a probabilistic run at its next realisation — or, where that
+takes more than a couple of seconds, the engine is ended, and started again for
+the next run.
 
 What stays in the browser: a tornado and a sensitivity design, whose analyses
 live there; a replayed realisation; the scenarios run beside the chosen one; and
-an edit that changes no state, whose algebra is worked out over the states
-already held. Pressing **Run** after choosing another engine solves again on
-that one. The results agree with the browser's to the solver's tolerance, not
+an edit that changes no state, whose algebra is worked out over the run's
+states, brought over from the engine first. Pressing **Run** after choosing
+another engine solves again on that one. The results agree with the browser's to the solver's tolerance, not
 to the last digit: each engine has arithmetic of its own.
 
 Only this page may ask. The server writes a token into the page it serves, and

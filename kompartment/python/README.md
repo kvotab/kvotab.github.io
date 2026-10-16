@@ -463,7 +463,10 @@ The application's `serve.py` can hand the page's runs to this package instead
 of solving them in the browser. It starts `python3 -m kompartment.service` once
 and keeps it: a line of JSON a message, jobs and cancels in on standard input,
 progress and what became of each job out on standard output, and each run
-written as the archive above. See the module's notes for the protocol.
+written as the archive above -- or kept, and sent without its states, its
+series then asked for as the page shows them (`series`), the whole run when the
+page needs it (`archive`), and let go of (`forget`). See the module's notes for
+the protocol.
 
 ### Importing
 

@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -26,6 +27,7 @@ import numpy as np
 from helpers import APP, EXAMPLES, HAVE_APP, NODE, SRC
 
 from kompartment.engine.probabilistic import run_probabilistic
+from kompartment.engine.runner import run
 from kompartment.io.dataset import sample_archive, sample_entries
 from kompartment.service import serve
 
@@ -68,6 +70,67 @@ class Protocol(unittest.TestCase):
             self.assertEqual(stages, ['building', 'solving', 'writing'])
             problem = next(e for e in events if e.get('id') == 'x1' and e.get('event') == 'error')
             self.assertIn("'draw' is not a kind of job", problem['message'])
+
+
+class _Said(io.StringIO):
+    """Standard output that says when a job has ended."""
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__()
+        self.job_id = job_id
+        self.ended = threading.Event()
+
+    def write(self, s: str) -> int:
+        for line in s.splitlines():
+            if line.strip():
+                e = json.loads(line)
+                if e.get('id') == self.job_id and e.get('event') in ('done', 'error', 'cancelled'):
+                    self.ended.set()
+        return super().write(s)
+
+
+class Kept(unittest.TestCase):
+    def test_a_kept_run_is_sent_without_its_states_and_answers_for_its_series(self):
+        four = (EXAMPLES / 'four-compartment.json').read_text()
+        made = run(json.loads(four))
+        labels = [o['label'] for o in made.outputs()]
+        with tempfile.TemporaryDirectory() as d:
+            out = _Said('r1')
+
+            def lines():
+                yield _job('r1', 'run', four, f'{d}/r1.zip', keep=True)
+                out.ended.wait(120)
+                # Asked about once it is done, as the server asks.
+                for q in ({'op': 'series', 'id': 'q1', 'run': 'r1', 'labels': labels, 'out': f'{d}/q1.f64'},
+                          {'op': 'series', 'id': 'q2', 'run': 'r1', 'labels': ['Nowhere [Xx-0]'], 'out': f'{d}/q2'},
+                          {'op': 'archive', 'id': 'q3', 'run': 'r1', 'out': f'{d}/q3.zip'},
+                          {'op': 'forget', 'id': 'q4', 'run': 'r1'},
+                          {'op': 'series', 'id': 'q5', 'run': 'r1', 'labels': labels, 'out': f'{d}/q5.f64'}):
+                    yield json.dumps(q)
+
+            serve(stdin=lines(), stdout=out)
+            ends = {e['id']: e for e in (json.loads(x) for x in out.getvalue().splitlines()) if 'id' in e
+                    and e.get('event') in ('done', 'error')}
+            self.assertEqual({k: e['event'] for k, e in ends.items()},
+                             {'r1': 'done', 'q1': 'done', 'q2': 'error', 'q3': 'done', 'q4': 'done', 'q5': 'error'})
+            # Without its states, saying so, with the run's audit.
+            with zipfile.ZipFile(f'{d}/r1.zip') as z:
+                names = set(z.namelist())
+                meta = json.loads(z.read('results/meta.json'))
+            self.assertNotIn('results/y.f64', names)
+            self.assertTrue(meta['onEngine'])
+            self.assertIn('massBalance', meta)
+            self.assertEqual((meta['times'], meta['states']), (len(made.t), len(made.y[0])))
+            # Every series, by label, as a run here works them out.
+            got = np.fromfile(f'{d}/q1.f64', '<f8').reshape(len(labels), -1)
+            want = np.array(made.series_many(made.outputs()))
+            self.assertTrue(np.array_equal(got.view(np.int64), want.view(np.int64)))
+            self.assertIn("no series called 'Nowhere [Xx-0]'", ends['q2']['message'])
+            # The whole run, states and all, as Save with results writes it.
+            with zipfile.ZipFile(f'{d}/q3.zip') as z:
+                self.assertIn('results/y.f64', z.namelist())
+            # Let go of, and then said to be gone.
+            self.assertIn('no longer holds that run', ends['q5']['message'])
 
 
 class Sample(unittest.TestCase):
@@ -193,6 +256,55 @@ class Server(unittest.TestCase):
         self.assertEqual(self.call(f'/engine/jobs/{job}/archive', **ok)[0], 404)
         # A kind the engines do not run, refused before anything is started.
         self.assertEqual(self.call('/engine/jobs', {'kind': 'draw', 'engine': 'python', 'model': model}, **ok)[0], 400)
+
+    def finished(self, model, client):
+        """A run kept by its engine for this client: its job id and the archive it sent."""
+        ok = {'X-Kompartment-Token': self.token}
+        code, body = self.call('/engine/jobs', {'kind': 'run', 'engine': 'python', 'client': client, 'model': model,
+                                                'options': {'keep': True}}, **ok)
+        self.assertEqual(code, 202, body)
+        job = json.loads(body)['id']
+        for _ in range(600):
+            state = json.loads(self.call(f'/engine/jobs/{job}', **ok)[1])
+            if state['state'] not in ('queued', 'running'):
+                break
+            time.sleep(0.1)
+        self.assertEqual(state['state'], 'done', state)
+        code, data = self.call(f'/engine/jobs/{job}/archive', **ok)
+        self.assertEqual(code, 200)
+        return job, data
+
+    def test_a_run_its_engine_holds_is_asked_about_and_let_go_of(self):
+        ok = {'X-Kompartment-Token': self.token}
+        model = json.loads((EXAMPLES / 'four-compartment.json').read_text())
+        made = run(model)
+        labels = [o['label'] for o in made.outputs()]
+        job, data = self.finished(model, 'k')
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            self.assertNotIn('results/y.f64', z.namelist())
+        # Only for the page the server served.
+        self.assertEqual(self.call(f'/engine/runs/{job}/series', {'labels': labels[:2]})[0], 403)
+        code, body = self.call(f'/engine/runs/{job}/series', {'labels': labels[:2]}, **ok)
+        self.assertEqual(code, 200, body)
+        got = np.frombuffer(body, '<f8').reshape(2, -1)
+        self.assertTrue(np.array_equal(got, np.array(made.series_many(made.outputs()[:2]))))
+        self.assertEqual(self.call(f'/engine/runs/{job}/series', {'labels': 'not a list'}, **ok)[0], 400)
+        code, body = self.call(f'/engine/runs/{job}/series', {'labels': ['Nowhere']}, **ok)
+        self.assertEqual(code, 502)
+        self.assertIn('no series called', json.loads(body)['error'])
+        code, whole = self.call(f'/engine/runs/{job}/archive', **ok)
+        self.assertEqual(code, 200)
+        with zipfile.ZipFile(io.BytesIO(whole)) as z:
+            self.assertIn('results/y.f64', z.namelist())
+        # The page's next run takes the place of its last one; another page's stays.
+        other, _ = self.finished(model, 'other page')
+        newer, _ = self.finished(model, 'k')
+        self.assertEqual(self.call(f'/engine/runs/{job}/series', {'labels': labels[:1]}, **ok)[0], 404)
+        self.assertEqual(self.call(f'/engine/runs/{other}/series', {'labels': labels[:1]}, **ok)[0], 200)
+        self.assertEqual(self.call(f'/engine/runs/{newer}/series', {'labels': labels[:1]}, **ok)[0], 200)
+        # And a run let go of is gone.
+        self.assertEqual(self.call(f'/engine/runs/{newer}/forget', {}, **ok)[0], 200)
+        self.assertEqual(self.call(f'/engine/runs/{newer}/series', {'labels': labels[:1]}, **ok)[0], 404)
 
 
 if __name__ == '__main__':

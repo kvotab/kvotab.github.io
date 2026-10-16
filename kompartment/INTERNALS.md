@@ -5435,12 +5435,13 @@ Python engine or the Julia one instead of in the browser. The pieces:
   not a tornado or a sensitivity design, and calls `runOnEngine` or
   `probabilisticOnEngine`. Both post the job, poll it every 150 ms -- its
   stages and progress posted as a run here posts them -- and fetch the archive
-  it wrote. A run is read with `readDataset` and `restoreRun`, the same function
-  an opened archive goes through, so its numbers are checked against this
-  worker's build of the same model by `layoutSignature`; a sample with
-  `readSample`, `sampleResult` and `holdSample`. After that it is a run made
-  here: `columns`, the bands, every analysis and every export answer from what
-  the worker holds.
+  it wrote. A run is asked to be kept by its engine (below) and comes back
+  without its states; a whole one -- from an engine that sends it whole -- is
+  read with `readDataset` and `restoreRun`, the same function an opened archive
+  goes through, so its numbers are checked against this worker's build of the
+  same model by `layoutSignature`. A sample is read with `readSample`,
+  `sampleResult` and `holdSample`, and is then a sample made here: the bands,
+  every analysis and every export answer from what the worker holds.
 - **The server** keeps an `Engine` per engine: one process, started the first
   time it is asked for (the default engine at once), a queue, and the job it is
   on. A new job from the same page and of the same kind cancels the older one;
@@ -5458,7 +5459,44 @@ Python engine or the Julia one instead of in the browser. The pieces:
 
 **Why an archive.** It is the one format the three code bases already write and
 read alike, and it carries its own check: an engine's run that did not describe
-this model's states would be refused exactly as a doctored file is. Measured on
+this model's states would be refused exactly as a doctored file is.
+
+**Runs an engine holds.** The states are most of a run -- 51 MB of the far-field
+example's 51.4, and over a hundred on the largest assessment -- and a chart reads
+a dozen series. So a `run` job carries `{"keep": true}`, and the engine keeps the
+results in memory under the job's id and writes the archive without `y.f64` and
+`mem.f64` (0.04 MB for the example): its meta says `onEngine`, with the run's
+mass-balance audit, the one thing the page shows that needs every state, worked
+out there (Julia's renamed to the page's fields).
+- *The worker* checks it as a stored run is checked (`checkLayout`, which
+  `restoreResults` uses too) against its own build, and holds an `EngineResults`
+  (`src/worker/engine-results.js`): a `Results` with `y` null, answering for
+  outputs, parameters, held states and the Jacobian from the build. `columns`
+  awaits `fetchSeries` -- a parameter's value worked out here, everything else
+  posted to `/engine/runs/<id>/series` by label and read back as the labels'
+  values one series after another (`seriesMany` throws, so nothing works one out
+  here unawares). A refusal is posted as `columns-failed`: the page says it as
+  the run's problem, keeps the run, unmarks the columns so the next drawing asks
+  again, and rejects what was waiting on them (an export says *Not exported*).
+- *What needs every state* -- `dataset` (a save, Keep this run) and
+  `re-evaluate` -- calls `materialize`: the whole run fetched from
+  `/engine/runs/<id>/archive`, restored over the same build, and the engine
+  told to let go of it; asked twice at once it is fetched once, and a series
+  fetch caught by the engine letting go is answered here.
+- *The engines* answer `series`, `archive` and `forget` beside the jobs (a
+  thread of their own in Python, a task in Julia), so a page reading one run is
+  not kept waiting by the next solving; each ends with `done` or `error` under
+  its own id.
+- *The server* asks with `Engine.ask` -- a question id, an event to wait on
+  (900 s at most), answered from the engine's output -- and holds one run a
+  page: a run taken by its page replaces the page's last (`client`), one nobody
+  has asked about for two hours (`KEPT_RUN_FOR`) is let go of, and an engine
+  restarted since holds none (`generation`, bumped at every start), which the
+  server says as gone. `/engine/info` counts the runs held (`held`).
+
+Measured on the far-field example: the series an engine sends are the ones
+worked out in the browser from the same states, to the bit, on Python and on
+Julia; the whole run, asked for, takes 1.3 to 1.5 s. Measured on
 the examples: Python's run of `four-compartment.json` matches the browser's to
 1e-15 of each series' peak, Julia's (fast by default) to 1.7e-5; the two
 engines' samples of `biosphere.json` have identical draws -- the design is the
@@ -5483,11 +5521,10 @@ name of its own at 127.0.0.1), come from it (`Origin`, where sent) and carry the
 token, compared in constant time. A model is code to an engine: without these,
 any page open in the same browser could post one.
 
-**Not done yet.** The whole run crosses as one archive, which on the largest
-assessment is over a hundred megabytes; fetching the series the page shows as it
-asks for them is the next step. So is moving the analyses -- tornado,
-sensitivity designs, local sensitivity, calibration -- to an engine that has
-them.
+**Not done yet.** Moving the analyses -- tornado, sensitivity designs, local
+sensitivity, calibration -- to an engine that has them. And the worker still
+builds the model to check a run an engine holds and to answer for its outputs,
+which on the largest assessment is seconds.
 
 ## Asking where a file goes
 

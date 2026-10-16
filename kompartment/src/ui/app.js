@@ -1134,7 +1134,7 @@ export function messageIsCurrent(m, runId) {
 	// any run since has moved `state.runId` past it. Dropped here, the reply
 	// to a question the reader had just asked went nowhere at all.
 	return PROB_REPLIES.has(m.type) || OWN_ID_REPLIES.has(m.type)
-		|| m.type === 'columns' || m.type === 'dataset'
+		|| m.type === 'columns' || m.type === 'columns-failed' || m.type === 'dataset'
 		|| m.id === runId;
 }
 
@@ -1220,6 +1220,7 @@ function ensureWorker() {
 		if (m.type === 'jacobian-check') { acceptJacobianCheck(m); return; }
 		if (m.type === 'local-sensitivity') { acceptLocalSensitivity(m); return; }
 		if (m.type === 'columns') { acceptColumns(m); return; }
+		if (m.type === 'columns-failed') { acceptColumnsFailed(m); return; }
 		if (m.type === 'dataset') { datasetWaiting?.(m); return; }
 		if (m.type === 'sample-entries') { sampleWaiting?.(m); return; }
 		// The selected scenario failing is the model failing: the scenarios
@@ -7738,6 +7739,22 @@ function acceptColumns(m) {
 }
 
 /**
+ * Series the engine holding the run could not send -- it has been restarted
+ * since, or let the run go: said as the run's problem, the results kept, and
+ * asked for again the next time they are drawn. What was waiting on them is
+ * told why.
+ */
+function acceptColumnsFailed(m) {
+	const r = state.results;
+	if (!r || m.id !== r.runId) return;
+	for (const i of m.indices ?? []) r.asked?.delete(i);
+	showError(m);
+	const failed = new Error(m.message ?? 'the series could not be had');
+	for (const done of r.onColumns ?? []) done(failed);
+	r.onColumns = [];
+}
+
+/**
  * Resolves once every one of these columns is here to be read.
  *
  * For an export, which needs the whole of what it writes: immediately when
@@ -7762,10 +7779,11 @@ function ensureColumns(r, indices) {
 	}
 	for (const i of missing) column(r, i);
 	if (!missing.some((i) => !r.columns[i])) return Promise.resolve();
-	return new Promise((resolve) => {
-		(r.onColumns ??= []).push(() => {
-			if (indices.every((i) => r.columns[i])) resolve();
-			else (r.onColumns ??= []).push(() => resolve());
+	return new Promise((resolve, reject) => {
+		(r.onColumns ??= []).push((failed) => {
+			if (failed) reject(failed);
+			else if (indices.every((i) => r.columns[i])) resolve();
+			else (r.onColumns ??= []).push((again) => (again ? reject(again) : resolve()));
 		});
 	});
 }
@@ -12579,8 +12597,13 @@ async function downloadCSV(idx = null, suffix = '') {
 		flash(`Working out ${cols.length} column${cols.length === 1 ? '' : 's'}…`, 'info');
 	}
 	const spec = beside.length ? scenarioColumns(cols, { hidden: false }) : null;
-	await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
-		spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
+	try {
+		await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
+			spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
+	} catch (e) {
+		flash(`Not exported: ${e.message ?? e}`, 'warn');
+		return;
+	}
 	if (state.results !== r) return;
 	const heads = spec ? spec.map((c) => csvCell(c.label)) : cols.map((i) => csvCell(r.outputs[i].label));
 	const vals = spec ? spec.map((c) => c.values()) : cols.map((j) => column(r, j));
@@ -12663,8 +12686,13 @@ async function downloadHDF5(idx = null, suffix = '', handoff = null) {
 		flash(`Working out ${cols.length} series…`, 'info');
 	}
 	const spec = beside.length ? scenarioColumns(cols, { hidden: false }) : null;
-	await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
-		spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
+	try {
+		await Promise.all([ensureColumns(r, cols), ...beside.map((e) => ensureColumns(e.r,
+			spec.filter((c) => c.r === e.r).map((c) => c.i)))]);
+	} catch (e) {
+		flash(`Not exported: ${e.message ?? e}`, 'warn');
+		return;
+	}
 	if (state.results !== r) return;
 	// Scenarios beside the selected one: each series once per scenario, with
 	// the scenario list as one more index of it, so the file holds a group per

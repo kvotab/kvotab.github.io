@@ -27670,9 +27670,11 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 		&& /fetch\(`\/engine\/jobs\/\$\{asked\.id\}\/archive`, \{ headers \}\)/.test(ask), 'the job is not asked for, or its archive not fetched');
 	assert(/if \(cancelled\) stopRemote\(\);/.test(ask) && /stopRemote\(\);\n/.test(worker.slice(worker.indexOf("if (msg.type === 'cancel') {"))),
 		'Stop does not reach the engine');
-	// Read as an opened archive is read: checked against this worker's own build.
+	// Read as an opened archive is read: checked against this worker's own build
+	// -- whole, or held by the engine without its states (the next test).
 	const run = fn(worker, 'runOnEngine');
-	assert(/readDataset\(entries\)/.test(run) && /const results = restoreRun\(project, data\);/.test(run)
+	assert(/readDataset\(entries\)/.test(run)
+		&& /const results = data\.meta\.onEngine \? restoreOnEngine\(project, data, \{ engine, job \}\) : restoreRun\(project, data\);/.test(run)
 		&& /payload: \{ \.\.\.donePayload\(results, outputs\), engine: engine\.name \}/.test(run)
 		&& /log: Array\.isArray\(data\.meta\.log\) \? data\.meta\.log : null/.test(run), 'an engine’s run is not held as a run made here');
 	assert(/const results = restoreRun\(project, data\);/.test(worker.slice(worker.indexOf("if (msg.type === 'open-dataset') {"))),
@@ -27706,6 +27708,121 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 	'the engines answer a page this server did not serve');
 	assert(/"-m", "kompartment\.service"/.test(serve) && /"--threads=auto,1"/.test(serve)
 		&& /Kompartment\.serve_stdio\(\)/.test(serve), 'the engines are not started as their services');
+});
+
+test('a run an engine holds answers for its series as they are asked for', async () => {
+	// The largest assessment's states are 160 MB, and a chart shows a dozen
+	// series: an engine keeps the run it made and sends it without its states,
+	// and the series the page shows are asked of it by label as it shows them.
+	// What needs every state -- a save, a run kept beside, an edit worked out
+	// over the states -- fetches the whole run first. (The engines' side is
+	// python/tests/test_service.py and julia/test/io/service.jl.)
+	const D = await import('../src/io/dataset.js');
+	const { zip, unzip } = await import('../src/io/zip.js');
+	const { EngineResults } = await import('../src/worker/engine-results.js');
+	const { Results } = await import('../src/sim/runner.js');
+	const { readFileSync } = await import('node:fs');
+	const root = new URL('..', import.meta.url);
+	const raw = JSON.parse(readFileSync(new URL('examples/biosphere.json', root), 'utf8'));
+	const made = run(new Project(raw));
+
+	// The archive an engine holding the run sends: the meta says so, with the
+	// run's audit, and there are no states.
+	const parts = D.datasetEntries({ project: raw, results: made, inner: 'm.json' })
+		.filter((e) => e.name !== 'results/y.f64' && e.name !== 'results/mem.f64');
+	const meta = JSON.parse(new TextDecoder().decode(parts[0].bytes));
+	const audit = { worst: 0, closed: true, families: [] };
+	parts[0] = { name: parts[0].name, bytes: new TextEncoder().encode(JSON.stringify({ ...meta, onEngine: true, massBalance: audit })) };
+	const data = D.readDataset(await unzip(await zip([
+		{ name: 'm.json', bytes: new TextEncoder().encode(JSON.stringify(raw)) }, ...parts,
+	])));
+	assert(data && data.flat === null && data.t.length === made.t.length, 'a run without its states is not read');
+	let refused = '';
+	try {
+		D.restoreResults({ project: new Project(raw), system: buildSystem(new Project(raw)), data, Results });
+	} catch (e) { refused = e.message; }
+	assert(/held by an engine/.test(refused), `a run without states was restored as one with them: ${refused}`);
+	// Checked against this worker's own build, as a stored run is.
+	const system = buildSystem(new Project(raw));
+	D.checkLayout(system, data.meta);
+	const wider = structuredClone(raw);
+	wider.compartments.push({ name: 'Extra', initial: '0' });
+	refused = '';
+	try { D.checkLayout(buildSystem(new Project(wider)), data.meta); } catch (e) { refused = e.message; }
+	assert(/does not describe this model/.test(refused), 'another model’s layout was taken');
+
+	// The series, asked of the engine by label -- a parameter's one value is
+	// worked out here -- and the same numbers as the run's own.
+	const asked = [];
+	const was = globalThis.fetch;
+	globalThis.fetch = async (url, opts = {}) => {
+		asked.push({ url, opts });
+		if (/\/series$/.test(url)) {
+			const labels = JSON.parse(opts.body).labels;
+			const outs = labels.map((l) => made.outputs().find((o) => o.label === l));
+			const cols = made.seriesMany(outs);
+			const flat = new Float64Array(cols.length * made.t.length);
+			cols.forEach((c, k) => flat.set(c, k * made.t.length));
+			return { ok: true, status: 200, arrayBuffer: async () => flat.buffer };
+		}
+		return { ok: false, status: 404, json: async () => ({ error: 'No engine holds that run any more.' }) };
+	};
+	try {
+		const held = new EngineResults({
+			project: new Project(raw), system, solution: { t: data.t, y: null, stats: { ...data.meta.stats, held: data.held } },
+			timing: data.meta.timing, handle: { engine: { name: 'julia', token: 'tok' }, job: 'ab12' }, massBalance: audit,
+		});
+		assert(held.onEngine && held.massBalance() === audit, 'the engine’s audit is not the run’s');
+		const outs = held.outputs();
+		const params = outs.filter((o) => o.source === 'P');
+		assert(params.length && outs.some((o) => o.source !== 'P'), 'the example asks nothing of both kinds');
+		const got = await held.fetchSeries(outs);
+		const want = made.seriesMany(made.outputs());
+		for (let k = 0; k < outs.length; k++) {
+			for (let i = 0; i < want[k].length; i++) {
+				assert(Object.is(got[k][i], want[k][i]), `${outs[k].label} at ${i}: ${got[k][i]}, not ${want[k][i]}`);
+			}
+		}
+		assert(asked.length === 1 && asked[0].url === '/engine/runs/ab12/series'
+			&& asked[0].opts.headers['X-Kompartment-Token'] === 'tok', 'not one request, with the page’s token');
+		const labels = JSON.parse(asked[0].opts.body).labels;
+		assert(labels.length === outs.length - params.length && !params.some((o) => labels.includes(o.label)),
+			'a parameter was asked of the engine');
+		let threw = '';
+		try { held.seriesMany(outs); } catch (e) { threw = e.message; }
+		assert(/held by an engine/.test(threw), 'the series were worked out here without the states');
+		// Gone from the engine: said, with what to do, as the engine's.
+		asked.length = 0;
+		let gone = null;
+		try { await held.fetchArchive(); } catch (e) { gone = e; }
+		assert(gone?.name === 'Engine' && /No engine holds/.test(gone.message) && /Run the model again/.test(gone.hint),
+			`a run the engine let go of: ${gone?.message} / ${gone?.hint}`);
+		assert(asked[0].url === '/engine/runs/ab12/archive', 'the whole run is not asked of the engine');
+	} finally {
+		globalThis.fetch = was;
+	}
+
+	// The worker: kept by the engine when it runs, series fetched for the page
+	// as it asks, and the whole run fetched for what needs every state.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	assert(/await engineArchive\(msg, 'run', \{ keep: true \}\)/.test(worker), 'the engine is not asked to keep the run');
+	const columns = worker.slice(worker.indexOf("if (msg.type === 'columns') {"), worker.indexOf("if (msg.type === 'prob-slice') {"));
+	assert(/columns = await results\.fetchSeries\(outputs\);/.test(columns) && /type: 'columns-failed'/.test(columns),
+		'the page’s series are not asked of the engine, or a refusal ends the run');
+	const dataset = worker.slice(worker.indexOf("if (msg.type === 'dataset') {"), worker.indexOf("if (msg.type === 'sample-entries') {"));
+	assert(/if \(held\.results\.onEngine\) await materialize\(held\);/.test(dataset), 'a save of a run the engine holds has no states');
+	const reuse = worker.slice(worker.indexOf("if (msg.type === 're-evaluate') {"));
+	assert(/await materialize\(held\);/.test(reuse.slice(0, reuse.indexOf('const kept = last.results;'))),
+		'an edit is worked out over states that are not here');
+	// The page: a series the engine could not send leaves the run as it was.
+	assert(/if \(m\.type === 'columns-failed'\) \{ acceptColumnsFailed\(m\); return; \}/.test(app)
+		&& /m\.type === 'columns' \|\| m\.type === 'columns-failed'/.test(app), 'a refused series is not heard');
+	// The server: one held run a page, let go of after two hours unasked about.
+	assert(/older = \[k for k, r in self\.kept\.items\(\) if r\["client"\] == job\.client\]/.test(serve)
+		&& /KEPT_RUN_FOR = 7200\.0/.test(serve) && /\/engine\/runs\/\(\[0-9a-f\]\+\)\/\(series\|forget\)/.test(serve),
+	'the server does not hold one run a page, or does not answer for it');
 });
 
 test('a table is pictured the way it is read', async () => {

@@ -11,6 +11,9 @@ and talks to it in lines of JSON, one message a line. In, on standard input::
     {"op": "job", "id": "j1", "kind": "run", "model": "<the model as JSON text>",
      "options": {...}, "out": "/path/to/j1.zip"}
     {"op": "cancel", "id": "j1"}
+    {"op": "series", "id": "q1", "run": "j1", "labels": ["Soil [Cs-137]", ...], "out": "/path/to/q1.f64"}
+    {"op": "archive", "id": "q2", "run": "j1", "out": "/path/to/q2.zip"}
+    {"op": "forget", "id": "q3", "run": "j1"}
 
 Out, on standard output -- the protocol's own, and nothing else: anything the
 engine prints goes to standard error::
@@ -27,6 +30,16 @@ A ``run`` job writes the model and its run as the archive *Save with results*
 writes (:func:`kompartment.io.dataset.write_dataset`); a ``probabilistic`` one
 writes the model and the sample (:func:`kompartment.io.dataset.write_sample_archive`).
 The page reads either the way it reads a file somebody opened.
+
+A ``run`` job with ``"keep": true`` among its options is kept here instead, and
+its archive leaves the states out (``onEngine`` in its meta, with the run's
+mass-balance audit): the page asks for the series it shows as it shows them --
+``series``, the labels' values at the run's times, one series after another as
+little-endian doubles -- and for the whole run only when it needs it, to save it
+or to work an edit out over its states (``archive``). ``forget`` lets it go.
+These are answered beside the jobs, in the order they came, so that a page
+reading one run is not kept waiting by the next one solving; each ends with
+``done`` or ``error`` under its own id.
 
 Jobs run one at a time, in the order they came. A cancel stops a run at its
 next progress report; a probabilistic run stops at the next realisation to
@@ -83,9 +96,11 @@ def _error_event(job_id: str, e: BaseException) -> Dict[str, Any]:
     }
 
 
-def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[], bool]) -> None:
+def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[], bool],
+            kept: Optional[Dict[str, Any]] = None) -> None:
     """One job, said as it goes; the last thing said is ``done``, ``error`` or
-    ``cancelled``."""
+    ``cancelled``. A run asked to be kept goes into ``kept`` under its id, with
+    the model it was made from."""
     job_id = str(job.get('id'))
     kind = job.get('kind')
     options = job.get('options') or {}
@@ -120,7 +135,12 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 raise _Stopped()
             res.timing = {**(res.timing or {}), 'build_ms': build_ms}
             say(id=job_id, event='stage', stage='writing')
-            write_dataset(res, job['out'], project=raw)
+            if options.get('keep') is True and kept is not None:
+                write_dataset(res, job['out'], project=raw, states=False,
+                              extra={'massBalance': res.mass_balance()})
+                kept[job_id] = {'results': res, 'model': raw, 'by_label': None}
+            else:
+                write_dataset(res, job['out'], project=raw)
         elif kind == 'probabilistic':
             from .engine.probabilistic import run_probabilistic
             from .io.dataset import write_sample_archive
@@ -159,6 +179,48 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
     say(id=job_id, event='done', out=job['out'], ms=round((time.perf_counter() - started) * 1000))
 
 
+def answer_query(query: Dict[str, Any], kept: Dict[str, Any], say: Callable[..., None]) -> None:
+    """A question about a kept run, answered with ``done`` or ``error`` under the
+    question's own id."""
+    query_id = str(query.get('id'))
+    op = query.get('op')
+    run_id = str(query.get('run'))
+    try:
+        if op == 'forget':
+            kept.pop(run_id, None)
+            say(id=query_id, event='done')
+            return
+        held = kept.get(run_id)
+        if held is None:
+            raise LookupError('This engine no longer holds that run: it may have been restarted since, '
+                              'or the run let go of. Run it again.')
+        res, raw = held['results'], held['model']
+        if op == 'series':
+            import numpy as np
+            labels = [str(x) for x in (query.get('labels') or [])]
+            by_label = held['by_label']
+            if by_label is None:
+                by_label = held['by_label'] = {o['label']: o for o in res.outputs()}
+            missing = [x for x in labels if x not in by_label]
+            if missing:
+                raise LookupError(f"The engine's run has no series called {missing[0]!r}"
+                                  + (f' (nor {len(missing) - 1} more)' if len(missing) > 1 else '') + '.')
+            columns = res.series_many([by_label[x] for x in labels]) if labels else []
+            data = (np.concatenate([np.asarray(c, dtype='<f8').reshape(-1) for c in columns])
+                    if columns else np.zeros(0, dtype='<f8'))
+            with open(query['out'], 'wb') as f:
+                f.write(data.astype('<f8').tobytes())
+        elif op == 'archive':
+            from .io.dataset import write_dataset
+            write_dataset(res, query['out'], project=raw)
+        else:
+            raise ValueError(f"'{op}' is not something this engine is asked")
+    except Exception as e:  # noqa: BLE001 - the page's to show
+        say(**_error_event(query_id, e))
+        return
+    say(id=query_id, event='done', out=query.get('out'))
+
+
 def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> None:
     """Reads jobs until standard input closes. See the module's notes."""
     out = stdout if stdout is not None else _protocol_stream()
@@ -171,7 +233,11 @@ def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> No
             out.flush()
 
     jobs: 'queue.Queue[Optional[Dict[str, Any]]]' = queue.Queue()
+    queries: 'queue.Queue[Optional[Dict[str, Any]]]' = queue.Queue()
     cancelled = set()
+    # The runs kept for their pages to ask about, by job id: the results, the
+    # model they were made from, and their series by label once asked for.
+    kept: Dict[str, Any] = {}
 
     def read() -> None:
         # On a thread of its own, so a cancel is heard while a job runs.
@@ -183,23 +249,39 @@ def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> No
                 msg = json.loads(line)
             except ValueError:
                 continue
-            if msg.get('op') == 'cancel':
+            op = msg.get('op')
+            if op == 'cancel':
                 cancelled.add(str(msg.get('id')))
-            elif msg.get('op') == 'job':
+            elif op == 'job':
                 jobs.put(msg)
+            elif op in ('series', 'archive', 'forget'):
+                queries.put(msg)
         jobs.put(None)
+        queries.put(None)
+
+    def answer() -> None:
+        # Beside the jobs: a page reading one run while the next one solves.
+        while True:
+            query = queries.get()
+            if query is None:
+                return
+            answer_query(query, kept, say)
 
     threading.Thread(target=read, daemon=True).start()
+    answering = threading.Thread(target=answer, daemon=True)
+    answering.start()
     say(**_engine_detail())
     while True:
         job = jobs.get()
         if job is None:
+            # What was asked before standard input closed is answered first.
+            answering.join()
             return
         job_id = str(job.get('id'))
         if job_id in cancelled:
             say(id=job_id, event='cancelled')
             continue
-        run_job(job, say, lambda: job_id in cancelled)
+        run_job(job, say, lambda: job_id in cancelled, kept)
 
 
 if __name__ == '__main__':

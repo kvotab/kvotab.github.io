@@ -45,9 +45,10 @@ import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
 import {
-	layoutSignature, datasetEntries, restoreResults, sampleEntries, sampleResult, readDataset, readSample,
+	layoutSignature, datasetEntries, restoreResults, checkLayout, sampleEntries, sampleResult, readDataset, readSample,
 } from '../io/dataset.js';
 import { unzip } from '../io/zip.js';
+import { EngineResults } from './engine-results.js';
 import {
 	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
 	wholeLayers,
@@ -831,7 +832,8 @@ function stopRemote() {
 /**
  * A job on an engine, from asking to the archive it wrote: posted to the
  * server, followed until it is done -- its stages and its progress said as a
- * run here says them -- and its archive fetched and opened.
+ * run here says them -- and its archive fetched and opened. With the job's id,
+ * under which an engine holding the run answers for it.
  */
 async function engineArchive(msg, kind, options) {
 	const { id, engine } = msg;
@@ -885,7 +887,7 @@ async function engineArchive(msg, kind, options) {
 		say('engine-receiving');
 		const got = await fetch(`/engine/jobs/${asked.id}/archive`, { headers });
 		if (!got.ok) throw engineFault(engine, `kept no archive of the run (the server answered ${got.status})`);
-		return await unzip(await got.arrayBuffer());
+		return { entries: await unzip(await got.arrayBuffer()), job: asked.id };
 	} catch (e) {
 		if (cancelled) stopRemote();
 		throw e;
@@ -899,15 +901,20 @@ async function engineArchive(msg, kind, options) {
  * against this worker's own build of the same model, which is the check every
  * opened archive gets, and posted as `done`. With the engine's own log, which
  * the page shows as the run's account; the timing is the engine's.
+ *
+ * The engine is asked to keep the run, and then sends it without its states:
+ * its series are asked of it as the page asks for them (see
+ * ./engine-results.js). An engine that sends the states anyway is read as
+ * before.
  */
 async function runOnEngine(msg) {
 	const { id, project, engine } = msg;
-	const entries = await engineArchive(msg, 'run', {});
+	const { entries, job } = await engineArchive(msg, 'run', { keep: true });
 	const data = readDataset(entries);
 	if (!data) throw engineFault(engine, 'sent back no run');
 	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
 	const started = Date.now();
-	const results = restoreRun(project, data);
+	const results = data.meta.onEngine ? restoreOnEngine(project, data, { engine, job }) : restoreRun(project, data);
 	const timing = data.meta.timing ?? {};
 	results.timing = {
 		...timing,
@@ -929,7 +936,7 @@ async function runOnEngine(msg) {
 /** A probabilistic run on an engine, held as one made here. */
 async function probabilisticOnEngine(msg) {
 	const { id, project, engine } = msg;
-	const entries = await engineArchive(msg, 'probabilistic', {
+	const { entries } = await engineArchive(msg, 'probabilistic', {
 		iterations: msg.iterations,
 		seed: msg.seed,
 		latin: msg.latin !== false,
@@ -955,6 +962,45 @@ async function probabilisticOnEngine(msg) {
 function restoreRun(project, data) {
 	const system = buildSystem(new Project(project));
 	return restoreResults({ project: new Project(project), system, data, Results });
+}
+
+/**
+ * A run an engine holds, against this worker's own build of its model: checked
+ * as `restoreRun` checks a stored one, and held without its states.
+ */
+function restoreOnEngine(project, data, handle) {
+	const built = new Project(project);
+	const system = buildSystem(built);
+	checkLayout(system, data.meta);
+	const stats = { ...data.meta.stats };
+	if (data.held) stats.held = data.held;
+	return new EngineResults({
+		project: built, system, solution: { t: data.t, y: null, stats }, timing: data.meta.timing ?? null,
+		handle, massBalance: data.meta.massBalance ?? null,
+	});
+}
+
+/**
+ * The run in `held` brought here whole, when an engine holds it: its archive
+ * fetched and restored over the same build, as an opened file is, for what
+ * needs every state -- saving it, keeping it beside, working an edit out over
+ * it. The engine is then told it may let go of it.
+ */
+async function materialize(held) {
+	const was = held.results;
+	if (!was?.onEngine) return was;
+	// Asked for twice at once -- a save while an edit is being worked out --
+	// it is fetched once.
+	held.materializing ??= (async () => {
+		const data = readDataset(await unzip(await was.fetchArchive()));
+		if (!data || data.meta.onEngine) throw new Error('The engine sent back the run without its states.');
+		const results = restoreResults({ project: was.project, system: was.system, data, Results });
+		results.timing = was.timing;
+		held.results = results;
+		was.forget();
+		return results;
+	})().finally(() => { held.materializing = null; });
+	return held.materializing;
 }
 
 /**
@@ -1203,10 +1249,34 @@ self.onmessage = async (ev) => {
 			const indices = (Array.isArray(msg.indices) ? msg.indices : [])
 				.filter((i) => Number.isInteger(i) && i >= 0 && i < last.outputs.length);
 			const outputs = indices.map((i) => last.outputs[i]);
-			const columns = last.results.seriesMany(outputs);
+			// From the engine, where it holds the run; the answer goes to the
+			// run it was asked for, which the page drops if it has moved on. A
+			// run brought here whole while its series were being fetched -- the
+			// engine let go of it then -- answers for them here.
+			const held = last;
+			const results = held.results;
+			let columns;
+			if (results.onEngine) {
+				try {
+					columns = await results.fetchSeries(outputs);
+				} catch (e) {
+					if (held.results === results || held.results.onEngine) throw e;
+					columns = held.results.seriesMany(outputs);
+				}
+			} else {
+				columns = results.seriesMany(outputs);
+			}
 			self.postMessage({ type: 'columns', id: msg.id, indices, columns },
 				columns.map((c) => c.buffer));
 		} catch (e) {
+			// An engine that could not send them leaves the run as it was:
+			// said, and asked again later.
+			if (e.name === 'Engine') {
+				const indices = (Array.isArray(msg.indices) ? msg.indices : []).filter((i) => Number.isInteger(i));
+				self.postMessage({ type: 'columns-failed', id: msg.id, indices, name: e.name, message: e.message,
+					hint: e.hint ?? null });
+				return;
+			}
 			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
 		}
 		return;
@@ -2045,13 +2115,21 @@ self.onmessage = async (ev) => {
 			return;
 		}
 		try {
+			// Every state goes into the archive: one an engine holds comes here
+			// first.
+			const held = last;
+			if (held.results.onEngine) await materialize(held);
+			if (last !== held) {
+				self.postMessage({ type: 'dataset', id: msg.id, ok: false, why: 'that run is gone' });
+				return;
+			}
 			// The page sends the model, and refuses to ask at all unless it is
 			// the model this run was made from -- so what goes into the archive
 			// is the editor's own text, layout and colours included, rather
 			// than the normalised `Project` this worker happens to hold.
 			const parts = datasetEntries({
 				project: msg.project,
-				results: last.results,
+				results: held.results,
 				inner: msg.inner ?? 'model.json',
 				stamp: msg.stamp ?? null,
 				log: Array.isArray(msg.log) ? msg.log : null,
@@ -2147,6 +2225,14 @@ self.onmessage = async (ev) => {
 		const { id, project } = msg;
 		try {
 			if (!last) { self.postMessage({ type: 'reused', id, ok: false, why: 'nothing kept' }); return; }
+			// An edit is worked out over the states, which an engine holding
+			// the run sends now.
+			if (last.results.onEngine) {
+				const held = last;
+				self.postMessage({ type: 'loading', id, stage: 'engine-receiving', detail: held.engine });
+				await materialize(held);
+				if (last !== held) { self.postMessage({ type: 'reused', id, ok: false, why: 'nothing kept' }); return; }
+			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const started = Date.now();
 			const kept = last.results;

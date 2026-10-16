@@ -315,7 +315,8 @@ def _renamed(d: Any, names: Mapping[str, str]) -> Any:
 
 
 def dataset_entries(project: Any, results: Any, inner: str, stamp: Optional[str] = None,
-                    log: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                    log: Optional[Sequence[str]] = None, *, states: bool = True,
+                    extra: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
     """The entries a results archive holds, the model aside (``datasetEntries``).
 
     ``project`` is the model as it will be saved (for its name), ``results`` a
@@ -324,18 +325,22 @@ def dataset_entries(project: Any, results: Any, inner: str, stamp: Optional[str]
     clock) and ``log`` the run log as lines. Returns ``[{'name', 'bytes'}]``:
     ``results/meta.json``, ``t.f64`` and ``y.f64``, then ``held.i32`` and
     ``mem.f64`` when there is anything to put in them.
+
+    ``states=False`` leaves the states and the histories out, for a run an
+    engine holds and answers for (see :mod:`kompartment.service`): the meta
+    says ``onEngine``, with ``extra`` beside what it always says.
     """
     project = _project_dict(project)
     t = np.asarray(results.t, dtype=np.float64).reshape(-1)
     rows = results.y
     first = rows[0] if len(rows) else None
     nstate = len(first) if first is not None and hasattr(first, '__len__') else 0
-    y = _flatten(rows, nstate)
+    y = _flatten(rows, nstate) if states else None
     stats_in = results.stats if results.stats is not None else {}
     held = _int32(stats_in.get('held') if isinstance(stats_in, Mapping) else None)
 
     # Every recorder's history end to end: its times, then its values.
-    memory = _memory(getattr(results, 'system', None))
+    memory = _memory(getattr(results, 'system', None)) if states else []
     lengths = [len(m.history.t) for m in memory]
     total = sum(lengths)
     mem = np.zeros(total * 2)
@@ -382,11 +387,16 @@ def dataset_entries(project: Any, results: Any, inner: str, stamp: Optional[str]
         'recorders': recorders,
         'log': list(log) if isinstance(log, (list, tuple)) else None,
     }
+    if not states:
+        meta['onEngine'] = True
+    if extra:
+        meta.update(extra)
     out = [
         {'name': META, 'bytes': _utf8(_stringify(meta))},
         {'name': _T, 'bytes': t.astype('<f8').tobytes()},
-        {'name': _Y, 'bytes': y.astype('<f8').tobytes()},
     ]
+    if y is not None:
+        out.append({'name': _Y, 'bytes': y.astype('<f8').tobytes()})
     if held.size:
         out.append({'name': _HELD, 'bytes': held.astype('<i4').tobytes()})
     if total:
@@ -733,7 +743,8 @@ def _default_log(project: Dict[str, Any], results: Any) -> List[str]:
 
 
 def dataset_archive(results: Any, *, project: Any = None, inner: Optional[str] = None, stamp: Any = _DEFAULT,
-                    log: Any = _DEFAULT, compress: bool = True, modified: Any = None) -> bytes:
+                    log: Any = _DEFAULT, compress: bool = True, modified: Any = None, states: bool = True,
+                    extra: Optional[Mapping[str, Any]] = None) -> bytes:
     """A model and its run as the archive *Save with results* writes: the model
     at the root as ``<slug of its name>.json`` (``JSON.stringify(model, null,
     2)``), the run beside it under ``results/``.
@@ -746,7 +757,8 @@ def dataset_archive(results: Any, *, project: Any = None, inner: Optional[str] =
     as the application does where the platform cannot compress; ``modified`` is
     the entries' time stamp, local time, the epoch by default. What would take
     the deflated total past the reader's 256 MB allowance is stored, as the
-    application stores it, so every archive written opens again.
+    application stores it, so every archive written opens again. ``states`` and
+    ``extra`` are :func:`dataset_entries`'.
     """
     raw = _project_dict(results.project if project is None else project)
     name = f"{slug(raw.get('name'))}.json" if inner is None else inner
@@ -754,7 +766,7 @@ def dataset_archive(results: Any, *, project: Any = None, inner: Optional[str] =
         stamp = _iso_now()
     if log is _DEFAULT:
         log = _default_log(raw, results)
-    entries = dataset_entries(raw, results, name, stamp=stamp, log=log)
+    entries = dataset_entries(raw, results, name, stamp=stamp, log=log, states=states, extra=extra)
     return _zip([(name, _utf8(dumps(raw, 2))), *((e['name'], e['bytes']) for e in entries)],
                 modified=modified, compress=compress)
 

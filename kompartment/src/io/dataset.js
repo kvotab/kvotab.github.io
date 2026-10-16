@@ -95,6 +95,15 @@
  * series, which realisation, which input -- it says itself, and it was made
  * from the model in the same file. It is opened only with the run beside it,
  * which is checked.
+ *
+ * ## And a run an engine holds
+ *
+ * An engine on this machine (see serve.py) can keep a run and answer for its
+ * series as they are asked for, rather than hand over every state: then the
+ * archive it sends has no `y.f64` and no `mem.f64`, and its meta says
+ * `onEngine`, with the run's mass-balance audit worked out there. Read here as
+ * any other, it is restored by the worker against an engine rather than by
+ * `restoreResults`.
  */
 
 /** Bumped only for a change that an older reader could not make sense of. */
@@ -272,10 +281,12 @@ export function readDataset(entries) {
 			+ 'in the file opens either way.');
 	}
 	const t = readFloats(entries.get(T));
-	const flat = readFloats(entries.get(Y));
+	// A run an engine holds: everything but its states, which it answers for.
+	const onEngine = meta.onEngine === true;
+	const flat = onEngine ? null : readFloats(entries.get(Y));
 	const nstate = meta.states ?? 0;
 	const want = t.length * nstate;
-	if (flat.length !== want) {
+	if (!onEngine && flat.length !== want) {
 		throw new Error(`The trajectory is ${flat.length.toLocaleString()} numbers `
 			+ `and the file says it should be ${want.toLocaleString()} `
 			+ `(${t.length.toLocaleString()} times × ${nstate.toLocaleString()} `
@@ -338,11 +349,8 @@ export function rowsOf(flat, times, states) {
  * @returns {object} a `Results`
  */
 export function restoreResults({ project, system, data, Results }) {
-	const now = layoutSignature(system);
-	if (now !== data.meta.signature) {
-		throw new Error('The stored run does not describe this model’s state '
-			+ 'vector, so the numbers in it cannot be read against it.');
-	}
+	if (!data.flat) throw new Error('The run is held by an engine, and the archive has no states to restore.');
+	checkLayout(system, data.meta);
 	const stats = { ...data.meta.stats };
 	if (data.held) stats.held = data.held;
 
@@ -372,6 +380,18 @@ export function restoreResults({ project, system, data, Results }) {
 		solution: { t: data.t, y, stats },
 		timing: data.meta.timing ?? null,
 	});
+}
+
+/**
+ * Refuses a stored run whose numbers do not describe this system's state
+ * vector -- the gate `restoreResults` keeps, and a run an engine holds goes
+ * through it too.
+ */
+export function checkLayout(system, meta) {
+	if (layoutSignature(system) !== meta.signature) {
+		throw new Error('The stored run does not describe this model’s state '
+			+ 'vector, so the numbers in it cannot be read against it.');
+	}
 }
 
 /**
