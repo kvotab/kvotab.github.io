@@ -413,7 +413,45 @@ SemiScratch() = SemiScratch(Float64[], Int[])
     return k < 0 ? 0 : (k > npc - 1 ? npc - 1 : k)
 end
 
-"""What the recorded history releases at t, added into `out[i]` for each target."""
+"""
+The count of `t`'s elements that are <= u, walked down from `cnt`, the count for a
+later lag -- or searched for, the first time (`cnt < 0`). `_np_piece` without the
+search, for lags that only fall: the same piece, found in a step or two rather than by
+bisecting the whole response every time, and a history of a few blocks pays for one
+search rather than a walk down the whole response.
+"""
+@inline function _walk_count(t::Vector{Float64}, u::Float64, cnt::Int)
+    if cnt < 0
+        lo = 0
+        hi = length(t)
+        @inbounds while lo < hi
+            mid = (lo + hi) >> 1
+            if t[mid+1] <= u
+                lo = mid + 1
+            else
+                hi = mid
+            end
+        end
+        return lo
+    end
+    @inbounds while cnt > 0 && t[cnt] > u
+        cnt -= 1
+    end
+    return cnt
+end
+
+"""A count of elements <= u as the piece it falls in, clipped as `_np_piece` clips it."""
+@inline _clip_piece(cnt::Int, npc::Int) = (k = cnt - 1; k < 0 ? 0 : (k > npc - 1 ? npc - 1 : k))
+
+"""
+What the recorded history releases at t, added into `out[i]` for each target.
+
+The blocks are oldest first, so the lags they are read at -- each centre's and each
+youngest edge's -- only fall from one block to the next, and so do the response pieces
+holding them: walked down rather than searched for afresh, which on a model whose far
+field is most of the run -- tens of slots, hundreds of blocks a sum, tens of millions of
+blocks a run -- was a third of its time. The same pieces, the same sums: bit for bit.
+"""
 function history!(cv::Convolver, t::Float64, out::Vector{Float64}, scr::SemiScratch)
     isempty(cv.ti) && return nothing
     nb = length(cv.bc)
@@ -430,6 +468,9 @@ function history!(cv::Convolver, t::Float64, out::Vector{Float64}, scr::SemiScra
             wide = scr.wide
             empty!(wide)
             anykeep = false
+            kt = kern.t
+            c_young = -1
+            c_uc = -1
             @inbounds for b in 1:nb
                 uc = t - cv.bc[b]
                 Wd = cv.bw[b]
@@ -437,14 +478,24 @@ function history!(cv::Convolver, t::Float64, out::Vector{Float64}, scr::SemiScra
                 anykeep = true
                 if cv.bp[b] !== nothing
                     young = uc - Wd
-                    ka = _np_piece(kern.t, young, npc)
+                    if isnan(young)
+                        ka = _np_piece(kt, young, npc)
+                    else
+                        c_young = _walk_count(kt, young, c_young)
+                        ka = _clip_piece(c_young, npc)
+                    end
                     sp = young <= kern.t0 ? kern.ahead[1] : kern.ahead[ka+1]
                     if 2 * Wd > SEMI_RHO * sp
                         push!(wide, b)
                         continue
                     end
                 end
-                k = _np_piece(kern.t, uc, npc)
+                if isnan(uc)
+                    k = _np_piece(kt, uc, npc)
+                else
+                    c_uc = _walk_count(kt, uc, c_uc)
+                    k = _clip_piece(c_uc, npc)
+                end
                 nv += 1
                 v[nv] = _from_moment(kern, k, uc, Wd, cv.bm[b])
             end
