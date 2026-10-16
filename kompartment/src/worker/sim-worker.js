@@ -833,9 +833,11 @@ function stopRemote() {
  * A job on an engine, from asking to the archive it wrote: posted to the
  * server, followed until it is done -- its stages and its progress said as a
  * run here says them -- and its archive fetched and opened. With the job's id,
- * under which an engine holding the run answers for it.
+ * under which an engine holding the run answers for it. `raw` takes what the
+ * job wrote as it is, rather than as an archive; `onDetail` hears a job's own
+ * account of how it is going (a calibration's best so far).
  */
-async function engineArchive(msg, kind, options) {
+async function engineArchive(msg, kind, options, { raw = false, onDetail = null } = {}) {
 	const { id, engine } = msg;
 	const headers = { 'X-Kompartment-Token': engine.token };
 	const say = (stage) => self.postMessage({ type: 'loading', id, stage, detail: engine.name });
@@ -876,7 +878,9 @@ async function engineArchive(msg, kind, options) {
 				stage = now;
 				say(now);
 			}
-			if (Number.isFinite(s.fraction)) {
+			if (s.detail && onDetail) {
+				onDetail(s.detail);
+			} else if (Number.isFinite(s.fraction)) {
 				self.postMessage({ type: 'progress', id, fraction: s.fraction, at: s.at ?? null });
 			} else if (s.total) {
 				self.postMessage({
@@ -887,7 +891,8 @@ async function engineArchive(msg, kind, options) {
 		say('engine-receiving');
 		const got = await fetch(`/engine/jobs/${asked.id}/archive`, { headers });
 		if (!got.ok) throw engineFault(engine, `kept no archive of the run (the server answered ${got.status})`);
-		return { entries: await unzip(await got.arrayBuffer()), job: asked.id };
+		const bytes = await got.arrayBuffer();
+		return raw ? { bytes, job: asked.id } : { entries: await unzip(bytes), job: asked.id };
 	} catch (e) {
 		if (cancelled) stopRemote();
 		throw e;
@@ -933,6 +938,77 @@ async function runOnEngine(msg) {
 	});
 }
 
+/**
+ * One realisation replayed on an engine, as an ordinary run there: held as
+ * `runOnEngine` holds a run, with which realisation it was and what its inputs
+ * were, as a replay here says them.
+ */
+async function replayOnEngine(msg) {
+	const { id, project, engine } = msg;
+	const { entries, job } = await engineArchive(msg, 'replay', {
+		keep: true, index: msg.index, seed: msg.seed, iterations: msg.iterations, latin: msg.latin !== false,
+		varied: msg.varied ?? null, tornado: msg.tornado ?? null,
+	});
+	const data = readDataset(entries);
+	if (!data?.meta.replayed) throw engineFault(engine, 'sent back no replayed realisation');
+	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+	const results = data.meta.onEngine ? restoreOnEngine(project, data, { engine, job }) : restoreRun(project, data);
+	results.timing = { ...(data.meta.timing ?? {}), engine: engine.name };
+	const outputs = results.outputs();
+	last = { id, results, outputs, rev: msg.rev ?? null, engine: engine.name };
+	const { index, iterations, values } = data.meta.replayed;
+	self.postMessage({
+		type: 'done', id,
+		replayed: { index, iterations, seed: msg.seed, tornado: !!msg.tornado, values },
+		payload: { ...donePayload(results, outputs), engine: engine.name },
+		log: Array.isArray(data.meta.log) ? data.meta.log : null,
+	});
+}
+
+/**
+ * A calibration on an engine: its best so far said to the page as a search here
+ * says it, and its result, which is a calibration here's.
+ */
+async function calibrateOnEngine(msg) {
+	let lastPost = 0;
+	const { bytes } = await engineArchive(msg, 'calibrate', {
+		targets: msg.targets, variables: msg.variables, method: msg.method, maxEvals: msg.maxEvals, seed: msg.seed,
+	}, {
+		raw: true,
+		onDetail: (p) => {
+			const now = Date.now();
+			if (now - lastPost < 80) return;
+			lastPost = now;
+			self.postMessage({ type: 'optimise-progress', id: msg.id, ...p });
+		},
+	});
+	return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/**
+ * dy/dp on an engine: the times, the parameters, the run's statistics and every
+ * state the page shows with its derivatives -- the elasticities worked out here,
+ * as for a solve here.
+ */
+async function sensitivityOnEngine(msg) {
+	const { bytes } = await engineArchive(msg, 'local-sensitivity', { parameters: msg.parameters }, { raw: true });
+	const r = JSON.parse(new TextDecoder().decode(bytes));
+	const which = r.states.filter((s) => !msg.states?.length || msg.states.includes(s.name));
+	// A number that was not finite came across as null.
+	const numbers = (a) => Float64Array.from(a, (v) => (v === null ? NaN : v));
+	return {
+		type: 'local-sensitivity', id: msg.id, t: r.t, chosen: r.chosen, stats: r.stats,
+		states: which.map((s) => {
+			const y = numbers(s.y);
+			const sens = s.sens.map(numbers);
+			return {
+				name: s.name, y, sens,
+				elasticity: sens.map((row, j) => elasticity(y, row, r.chosen[j].value)),
+			};
+		}),
+	};
+}
+
 /** A probabilistic run on an engine, held as one made here. */
 async function probabilisticOnEngine(msg) {
 	const { id, project, engine } = msg;
@@ -952,6 +1028,88 @@ async function probabilisticOnEngine(msg) {
 	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
 	const payload = holdSample(id, sampleResult(sample), project);
 	self.postMessage({ type: 'probabilistic-done', id, payload: { ...payload, engine: engine.name } });
+}
+
+/**
+ * A tornado's or a sensitivity design's runs: on the engine the page chose, or
+ * here -- also where that engine does not run such a design, which the bar says.
+ */
+async function designHere(msg) {
+	if (!msg.engine) return runDesign(msg);
+	try {
+		return await designOnEngine(msg);
+	} catch (e) {
+		if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+		self.postMessage({ type: 'loading', id: msg.id, stage: 'engine-elsewhere', detail: msg.engine.name });
+		return runDesign(msg);
+	}
+}
+
+/**
+ * A tornado or a sensitivity design on an engine: run there, then drawn here as
+ * `runDesign` draws it -- the plan, the points, and the design a sensitivity's
+ * analysis reads -- and checked against what the engine ran. The analysis pairs
+ * each point's outputs with the inputs the design here says it had, so every
+ * input the engine set must be the design's, to rounding, or nothing is shown.
+ * Held as `runDesign` holds its result: the kept series without the varied
+ * parameters beside them.
+ */
+async function designOnEngine(msg) {
+	const { id, engine } = msg;
+	const { entries } = await engineArchive(msg, 'probabilistic', {
+		seed: msg.seed,
+		latin: msg.latin !== false,
+		blocks: Array.isArray(msg.blocks) && msg.blocks.length ? msg.blocks : null,
+		varied: msg.varied ?? null,
+		large: msg.large === true,
+		workers: Number.isFinite(msg.cores) ? msg.cores : null,
+		tornado: msg.tornado ?? null,
+		gsa: msg.gsa ?? null,
+	});
+	const sample = readSample(entries);
+	if (!sample) throw engineFault(engine, 'sent back no runs');
+	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+	const p = new Project(msg.project);
+	const d = designFor(p, buildSystem(p), {
+		tornado: msg.tornado ?? null, gsa: msg.gsa ?? null, varied: msg.varied ?? null, seed: msg.seed,
+	});
+	const full = sampleResult(sample);
+	const ran = otherDesign(d, full);
+	if (ran) {
+		throw Object.assign(new Error(`The ${engineLabel(engine)} engine ran other inputs than the design here: `
+			+ `${ran}. Its outputs cannot be paired with the inputs that made them.`), {
+			name: 'Engine', hint: 'The browser engine, chosen beside Run, runs the same design.',
+		});
+	}
+	const kept = [];
+	full.flat.forEach((f, k) => { if (!f) kept.push(k); });
+	return {
+		...full,
+		outputs: kept.map((k) => full.outputs[k]),
+		values: kept.map((k) => full.values[k]),
+		flat: undefined,
+		drawnFrom: undefined,
+		...(d.gsaDesign ? { gsaDesign: d.gsaDesign } : {}),
+	};
+}
+
+/** What differs between a design here and the runs an engine made of it, or null. */
+function otherDesign(d, result) {
+	if (result.iterations !== d.iterations) return `${result.iterations} points, not ${d.iterations}`;
+	if (result.plan.length !== d.plan.length
+		|| result.plan.some((e, k) => e.slot !== d.plan[k].slot || e.name !== d.plan[k].name)) {
+		return 'another list of inputs';
+	}
+	for (let k = 0; k < d.plan.length; k++) {
+		for (let i = 0; i < d.iterations; i++) {
+			const want = d.valueFor(k, i);
+			const got = result.samples[k][i];
+			if (Object.is(want, got)) continue;
+			const scale = Math.max(Math.abs(want), Math.abs(got));
+			if (!(Math.abs(want - got) <= 1e-9 * scale)) return `${d.names[k]} at point ${i + 1} is ${got}, not ${want}`;
+		}
+	}
+	return null;
 }
 
 /**
@@ -1609,6 +1767,11 @@ self.onmessage = async (ev) => {
 		cancelled = false;
 		const { id, project } = msg;
 		try {
+			// On the engine the page chose, held there as a run is.
+			if (msg.engine) {
+				await replayOnEngine(msg);
+				return;
+			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const started = Date.now();
 			const r = runRealization(project, {
@@ -1648,7 +1811,7 @@ self.onmessage = async (ev) => {
 		const { id } = msg;
 		try {
 			self.postMessage({ type: 'loading', id, stage: 'building' });
-			const result = await runDesign({ ...msg, tornado: msg.tornado ?? { low: 0.05, high: 0.95 } });
+			const result = await designHere({ ...msg, tornado: msg.tornado ?? { low: 0.05, high: 0.95 } });
 			if (!result) return;
 			lastTornado = { id, result };
 			self.postMessage({
@@ -1677,7 +1840,7 @@ self.onmessage = async (ev) => {
 		const { id } = msg;
 		try {
 			self.postMessage({ type: 'loading', id, stage: 'building' });
-			const result = await runDesign({ ...msg });
+			const result = await designHere({ ...msg });
 			if (!result) return;
 			lastGsa = { id, result };
 			// Opened on the line the chart shows, when the design kept it, so
@@ -1796,6 +1959,18 @@ self.onmessage = async (ev) => {
 		cancelled = false;
 		const { id, project } = msg;
 		try {
+			// On the engine the page chose -- or here, where that engine does
+			// not calibrate.
+			if (msg.engine) {
+				try {
+					const result = await calibrateOnEngine(msg);
+					self.postMessage({ type: 'optimise', id, ok: true, result });
+					return;
+				} catch (e) {
+					if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+					self.postMessage({ type: 'loading', id, stage: 'engine-elsewhere', detail: msg.engine.name });
+				}
+			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			let lastPost = 0;
 			const result = calibrate(project, {
@@ -1843,6 +2018,17 @@ self.onmessage = async (ev) => {
 		cancelled = false;
 		const { id, project } = msg;
 		try {
+			// On the engine the page chose -- or here, where that engine does
+			// not integrate dy/dp, which the bar says.
+			if (msg.engine) {
+				try {
+					self.postMessage(await sensitivityOnEngine(msg));
+					return;
+				} catch (e) {
+					if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+					self.postMessage({ type: 'loading', id, stage: 'engine-elsewhere', detail: msg.engine.name });
+				}
+			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			let lastPost = 0;
 			const r = runSensitivity(project, {

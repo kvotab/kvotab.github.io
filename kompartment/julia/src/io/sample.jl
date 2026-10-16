@@ -15,6 +15,15 @@ const SAMPLE_FORMAT = 1
 
 _sample_bytes(v::AbstractVector{T}) where {T<:Union{Float32,Float64}} = collect(reinterpret(UInt8, htol.(collect(v))))
 
+"""The run's statistics as the page reads them: a tornado's swung inputs counted from 0, as it counts them."""
+function _sample_stats(stats::AbstractDict)
+    tornado = get(stats, "tornado", nothing)
+    (tornado isa AbstractDict && haskey(tornado, "swung")) || return stats
+    out = copy(stats)
+    out["tornado"] = merge(copy(tornado), Dict("swung" => Any[Int(k) - 1 for k in tornado["swung"]]))
+    return out
+end
+
 """
     sample_entries(prob; stamp=nothing) -> Vector{Pair{String,Vector{UInt8}}}
 
@@ -61,7 +70,7 @@ function sample_entries(r::ProbabilisticResults{T}; stamp=nothing) where {T}
         "flat" => flat,
         "drawnFrom" => drawn_from,
         "plan" => r.plan,
-        "stats" => r.stats,
+        "stats" => _sample_stats(r.stats),
     )
     return Pair{String,Vector{UInt8}}[
         _DS_SAMPLE_META => Vector{UInt8}(codeunits(json_text(meta; indent=1))),

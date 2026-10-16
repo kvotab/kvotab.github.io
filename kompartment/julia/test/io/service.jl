@@ -102,3 +102,32 @@ end
     close(inp.in)
     wait(server)
 end
+
+@testset "the analyses on the Julia engine, and those it leaves to the page" begin
+    bio = read(joinpath(EXAMPLES, "biosphere.json"), String)
+    dir = mktempdir()
+    job(id, kind, options) = K.json_text(Dict("op" => "job", "id" => id, "kind" => kind, "model" => bio,
+                                              "options" => options, "out" => joinpath(dir, "$id.zip")); indent=0)
+    lines = [
+        job("t1", "probabilistic", Dict("seed" => 3, "tornado" => Dict("low" => 0.05, "high" => 0.95))),
+        job("r1", "replay", Dict("index" => 5, "seed" => 11, "iterations" => 20)),
+        job("g1", "probabilistic", Dict("gsa" => Dict("method" => "morris", "options" => Dict()))),
+        job("c1", "calibrate", Dict()),
+        job("s1", "local-sensitivity", Dict("parameters" => ["leachRate[I-129]"])),
+    ]
+    out = IOBuffer()
+    K.serve_stdio(; input=IOBuffer(join(lines, "\n") * "\n"), output=out)
+    events = [K.parse_json(l) for l in split(String(take!(out)), '\n') if !isempty(l)]
+    ends = Dict(e["id"] => e for e in events if get(e, "event", "") in ("done", "error"))
+    @test ends["t1"]["event"] == "done" && ends["r1"]["event"] == "done"
+    # A tornado's swung inputs counted from 0, as the page counts them.
+    meta = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "t1.zip")))["results/sample/meta.json"])))
+    @test meta["iterations"] == 31 && meta["stats"]["tornado"]["swung"] == collect(0:14)
+    # A realisation replayed, counted from 0 as well.
+    replayed = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "r1.zip")))["results/meta.json"])))["replayed"]
+    @test (replayed["index"], replayed["iterations"], length(replayed["values"])) == (5, 20, 15)
+    # What it does not do, said before anything runs, for the page to do itself.
+    for id in ("g1", "c1", "s1")
+        @test ends[id]["event"] == "error" && ends[id]["name"] == "NotOnThisEngine"
+    end
+end

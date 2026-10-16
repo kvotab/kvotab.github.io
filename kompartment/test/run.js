@@ -9541,8 +9541,9 @@ test('one realisation can be run again in full, and a tornado is a design of the
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	assert(/if \(msg\.type === 'replay'\)/.test(worker) && /runRealization\(project/.test(worker),
 		'the worker cannot replay a realisation');
-	assert(/if \(msg\.type === 'tornado'\)/.test(worker) && /await runDesign\(\{ \.\.\.msg, tornado/.test(worker),
-		'a tornado does not go through the pool');
+	// Through `designHere`, which is the pool here and an engine's runs where the page chose one.
+	assert(/if \(msg\.type === 'tornado'\)/.test(worker) && /await designHere\(\{ \.\.\.msg, tornado/.test(worker)
+		&& /if \(!msg\.engine\) return runDesign\(msg\);/.test(worker), 'a tornado does not go through the pool');
 	assert(/tornado: msg\.tornado \?\? null,/.test(worker), 'a slice is not told it is a tornado');
 	assert(/type: 'done', id,\n\t\t\t\treplayed: \{/.test(worker), 'a replay does not arrive as an ordinary run');
 	assert(/state\.results = \{\n\t\t\.\.\.payload, rev: state\.runRev \?\? state\.rev, runId: state\.runId, replayed, storedLog,/.test(app),
@@ -27691,7 +27692,9 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 	assert(/meta\[name="kompartment-engines"\]/.test(find) && /fetch\('\/engine\/info'/.test(find), 'the page never asks for engines');
 	// An explicit --engine wins over what was chosen here last time.
 	assert(/const wanted = info\.explicit \? info\.default : stored;/.test(find), 'the server’s --engine does not say how a session starts');
-	assert(/engine: reuse \? null : engineFor\(\),/.test(app) && (app.match(/\t\tengine: engineFor\(\),\n/g) ?? []).length === 2,
+	// A run, a sample, and (the next tests) the analyses an engine runs: a
+	// tornado, a sensitivity design, a replay, a calibration, dy/dp.
+	assert(/engine: reuse \? null : engineFor\(\),/.test(app) && (app.match(/\t\tengine: engineFor\(\),\n/g) ?? []).length === 7,
 		'a run or a sample is not sent to the chosen engine');
 	// Another engine is another solve, not the last one's states again.
 	assert(/&& key === state\.runKey && \(state\.results\.engine \?\? null\) === \(engineFor\(\)\?\.name \?\? null\);/.test(app),
@@ -27823,6 +27826,55 @@ test('a run an engine holds answers for its series as they are asked for', async
 	assert(/older = \[k for k, r in self\.kept\.items\(\) if r\["client"\] == job\.client\]/.test(serve)
 		&& /KEPT_RUN_FOR = 7200\.0/.test(serve) && /\/engine\/runs\/\(\[0-9a-f\]\+\)\/\(series\|forget\)/.test(serve),
 	'the server does not hold one run a page, or does not answer for it');
+});
+
+test('the analyses go to the engine that has them, and come back as the page’s own', async () => {
+	// A tornado and a sensitivity design are run on the engine and read here: the
+	// design is drawn here as a run here draws it, and every input the engine set
+	// is checked against it, since the analysis pairs each point's outputs with
+	// those inputs. A replayed realisation comes back as a run the engine holds.
+	// A calibration and dy/dp come back as the answers a solve here gives. What
+	// an engine does not do -- Julia has no sensitivity designs, calibration or
+	// dy/dp -- it refuses at once (NotOnThisEngine), and the page does it here,
+	// saying so. (Run against the engines by python/tests/test_service.py, whose
+	// node/worker_engine.mjs drives this worker, and julia/test/io/service.jl.)
+	const { readFileSync } = await import('node:fs');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	const fn = (src, name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src)?.[1] ?? '';
+	const handler = (type) => worker.slice(worker.indexOf(`if (msg.type === '${type}') {`)).split('\n\t}\n')[0];
+
+	// Designs: run there, drawn and checked here, or run here where the engine does not.
+	assert(/await designHere\(\{ \.\.\.msg, tornado: msg\.tornado \?\? \{ low: 0\.05, high: 0\.95 \} \}\)/.test(handler('tornado'))
+		&& /await designHere\(\{ \.\.\.msg \}\)/.test(handler('gsa')), 'a tornado or a design never reaches an engine');
+	const here = fn(worker, 'designHere');
+	assert(/if \(!msg\.engine\) return runDesign\(msg\);/.test(here) && /e\.name !== 'NotOnThisEngine'/.test(here)
+		&& /stage: 'engine-elsewhere'/.test(here), 'a design the engine does not run is not run here');
+	const onEngine = fn(worker, 'designOnEngine');
+	assert(/engineArchive\(msg, 'probabilistic', \{/.test(onEngine) && /tornado: msg\.tornado \?\? null,/.test(onEngine)
+		&& /gsa: msg\.gsa \?\? null,/.test(onEngine) && /designFor\(p, buildSystem\(p\), \{/.test(onEngine)
+		&& /const ran = otherDesign\(d, full\);/.test(onEngine), 'an engine’s design is not checked against the one here');
+	const other = fn(worker, 'otherDesign');
+	assert(/d\.valueFor\(k, i\)/.test(other) && /result\.samples\[k\]\[i\]/.test(other) && /1e-9 \* scale/.test(other),
+		'the inputs an engine set are not each compared with the design’s');
+	// A replay, a calibration, dy/dp.
+	assert(/await replayOnEngine\(msg\);/.test(handler('replay')) && /engineArchive\(msg, 'replay', \{/.test(fn(worker, 'replayOnEngine'))
+		&& /replayed: \{ index, iterations, seed: msg\.seed, tornado: !!msg\.tornado, values \}/.test(fn(worker, 'replayOnEngine')),
+	'a replay never reaches an engine');
+	assert(/await calibrateOnEngine\(msg\)/.test(handler('optimise')) && /e\.name !== 'NotOnThisEngine'/.test(handler('optimise'))
+		&& /type: 'optimise-progress'/.test(fn(worker, 'calibrateOnEngine')), 'a calibration never reaches an engine, or says nothing on the way');
+	assert(/await sensitivityOnEngine\(msg\)/.test(handler('local-sensitivity'))
+		&& /elasticity\(y, row, r\.chosen\[j\]\.value\)/.test(fn(worker, 'sensitivityOnEngine')), 'dy/dp never reaches an engine');
+	// The page sends each of them to the engine chosen beside Run, and says when it does one itself.
+	for (const type of ['tornado', 'gsa', 'replay', 'optimise', 'local-sensitivity']) {
+		const at = app.indexOf(`type: '${type}',`);
+		assert(at > 0 && /engine: engineFor\(\),/.test(app.slice(at, at + 600)), `a ${type} is not sent to the chosen engine`);
+	}
+	assert(/'engine-elsewhere': '\{engine\} does not do this: doing it in the browser…',/.test(app), 'the bar does not say where it went');
+	// The server takes each kind, and passes a job's own account of its progress on.
+	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity"\):/.test(serve)
+		&& /\("fraction", "at", "done", "total", "detail"\)/.test(serve), 'the server refuses the analyses');
 });
 
 test('a table is pictured the way it is read', async () => {
@@ -41441,9 +41493,10 @@ test('a sample too large for double is held as float32, and past a gigabyte runs
 	assert(/const needsYes = !tooBig && size\.bytes > MOST_BYTES;/.test(dialog) && /disabled: tooBig \|\| \(needsYes && !large\),/.test(dialog)
 		&& /large: needsYes && large,/.test(dialog), 'the dialog does not ask');
 	assert(/large: choice\.large === true,/.test(app), 'the answer does not leave the page');
-	// Three places a slice is run here, and the fourth hands the sample to an
-	// engine on this machine (`probabilisticOnEngine`).
-	assert((worker.match(/large: (msg|only)\.large === true,/g) ?? []).length === 4, 'a slice runs without the answer');
+	// Three places a slice is run here, the fourth hands the sample to an
+	// engine on this machine (`probabilisticOnEngine`), and the fifth a
+	// tornado's or a sensitivity design's runs (`designOnEngine`).
+	assert((worker.match(/large: (msg|only)\.large === true,/g) ?? []).length === 5, 'a slice runs without the answer');
 });
 
 test('influences reach the blocks that read the model through settings, and show for none, all or the selection', async () => {

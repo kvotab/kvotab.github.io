@@ -230,7 +230,9 @@ solving them in the browser. It starts
 `julia --project=julia --threads=auto,1 -e 'using Kompartment; Kompartment.serve_stdio()'`
 once and keeps it; the protocol is the Python package's (`kompartment.service`),
 a run kept for the page and asked about included, and the interactive thread is
-where a cancel is heard while every other thread solves.
+where a cancel is heard while every other thread solves. It runs a tornado and
+replays a realisation; a sensitivity design, a calibration and dy/dp it refuses
+at once (`NotOnThisEngine`), and the page does them itself.
 
 ## The built model
 

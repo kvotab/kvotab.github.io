@@ -75,8 +75,9 @@ reporting an unknown solver.
 `serve.py` can also hand a run to the Python engine (`python/`) or the Julia one
 (`julia/`) on the same machine, instead of solving it in the browser. Where
 either can be started, a choice appears beside **Run** — *in the browser*, *on
-Python*, *on Julia* — and every Run and every probabilistic run after that is
-solved where it says:
+Python*, *on Julia* — and every Run, every probabilistic run, and every
+analysis that solves the model — a tornado, a sensitivity design, a replayed
+realisation, a calibration, dy/dp — after that is solved where it says:
 
 ```sh
 python3 serve.py 8080 --engine julia     # the page starts on Julia
@@ -110,12 +111,19 @@ progress report, a probabilistic run at its next realisation — or, where that
 takes more than a couple of seconds, the engine is ended, and started again for
 the next run.
 
-What stays in the browser: a tornado and a sensitivity design, whose analyses
-live there; a replayed realisation; the scenarios run beside the chosen one; and
-an edit that changes no state, whose algebra is worked out over the run's
-states, brought over from the engine first. Pressing **Run** after choosing
-another engine solves again on that one. The results agree with the browser's to the solver's tolerance, not
-to the last digit: each engine has arithmetic of its own.
+A tornado's or a sensitivity design's runs are made on the engine, and their
+tables worked out in the page from what comes back, the inputs of every run
+checked against the design first. The Julia engine runs a tornado and replays a
+realisation; a sensitivity design, a calibration and dy/dp it leaves to the
+browser, and the bar says so as it starts on them there.
+
+What stays in the browser: the scenarios run beside the chosen one; what is
+worked out from a sample already drawn, such as *What drove it*; and an edit
+that changes no state, whose algebra is worked out over the run's states,
+brought over from the engine first. Pressing **Run** after choosing another
+engine solves again on that one. The results agree with the browser's to the
+solver's tolerance, not to the last digit: each engine has arithmetic of its
+own.
 
 Only this page may ask. The server writes a token into the page it serves, and
 a request to an engine has to carry it, come from this machine and name the

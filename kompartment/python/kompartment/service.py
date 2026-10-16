@@ -31,6 +31,23 @@ writes (:func:`kompartment.io.dataset.write_dataset`); a ``probabilistic`` one
 writes the model and the sample (:func:`kompartment.io.dataset.write_sample_archive`).
 The page reads either the way it reads a file somebody opened.
 
+A ``replay`` job runs one realisation of a probabilistic run (``index``, from
+0, with the run's ``seed``, ``iterations``, ``latin``, ``varied`` and ``tornado``)
+as an ordinary run, written as a ``run`` job's is, with ``replayed`` in its
+meta: which realisation, of how many, and what each input was.
+
+A ``calibrate`` job searches for the values that meet its ``targets``
+(:func:`kompartment.engine.calibrate.calibrate`, with ``variables``, ``method``,
+``maxEvals`` and ``seed``), saying each step's best as a progress ``detail``; a
+``local-sensitivity`` one integrates dy/dp for its ``parameters``
+(:func:`kompartment.engine.localsens.run_sensitivity`). Each writes its answer
+as JSON: the calibration's result, or the times, the parameters, the run's
+statistics and every state the page shows with its derivatives.
+
+A ``probabilistic`` job with ``tornado`` or ``gsa`` among its options runs that
+design in place of a sample: every input swung alone, or a sensitivity
+design's points (:func:`kompartment.engine.probabilistic.run_probabilistic`).
+
 A ``run`` job with ``"keep": true`` among its options is kept here instead, and
 its archive leaves the states out (``onEngine`` in its meta, with the run's
 mass-balance audit): the page asks for the series it shows as it shows them --
@@ -49,6 +66,7 @@ finish, and the server ends the process if it has not stopped soon after.
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import sys
@@ -135,12 +153,51 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 raise _Stopped()
             res.timing = {**(res.timing or {}), 'build_ms': build_ms}
             say(id=job_id, event='stage', stage='writing')
-            if options.get('keep') is True and kept is not None:
-                write_dataset(res, job['out'], project=raw, states=False,
-                              extra={'massBalance': res.mass_balance()})
-                kept[job_id] = {'results': res, 'model': raw, 'by_label': None}
-            else:
-                write_dataset(res, job['out'], project=raw)
+            _write_run(res, raw, job, options, kept)
+        elif kind == 'replay':
+            from .engine.probabilistic import run_realization
+            say(id=job_id, event='stage', stage='building')
+            design = {k: options[k] for k in ('seed', 'iterations', 'latin', 'varied', 'tornado')
+                      if options.get(k) is not None}
+            say(id=job_id, event='stage', stage='solving')
+            r = run_realization(raw, int(options.get('index') or 0), **design)
+            say(id=job_id, event='stage', stage='writing')
+            _write_run(r['results'], raw, job, options, kept, replayed={
+                'index': int(r['index']), 'iterations': int(r['iterations']),
+                'values': [{'name': v['name'], 'value': float(v['value']), 'held': bool(v['held'])}
+                           for v in r['values']]})
+        elif kind == 'calibrate':
+            from .engine.calibrate import calibrate
+            say(id=job_id, event='stage', stage='solving')
+
+            def step(p: Dict[str, Any]) -> None:
+                # As JSON carries it to the page: a misfit that is not a number is null.
+                throttled(detail=_plain({k: p.get(k) for k in ('evals', 'fx', 'best', 'values')}))
+
+            result = calibrate(raw, targets=options.get('targets'), variables=options.get('variables'),
+                               method=options.get('method'), max_evals=options.get('maxEvals'),
+                               seed=options.get('seed'), on_progress=step, signal=stopped)
+            if stopped():
+                raise _Stopped()
+            _write_json(job['out'], result)
+        elif kind == 'local-sensitivity':
+            from .engine.localsens import run_sensitivity
+            say(id=job_id, event='stage', stage='solving')
+
+            def moved(fraction: float, at: float) -> None:
+                throttled(fraction=float(fraction), at=float(at))
+
+            r = run_sensitivity(raw, options.get('parameters'), on_progress=moved, signal=stopped)
+            if stopped():
+                raise _Stopped()
+            say(id=job_id, event='stage', stage='writing')
+            # Every state the page shows, by its name, with its derivatives.
+            _write_json(job['out'], {
+                't': r['t'], 'chosen': r['chosen'], 'stats': r['stats'],
+                'states': [{'name': s['label'], 'y': r['y'][s['offset']],
+                            'sens': [block[s['offset']] for block in r['sens']]}
+                           for s in r['series'] if not s.get('hidden')],
+            })
         elif kind == 'probabilistic':
             from .engine.probabilistic import run_probabilistic
             from .io.dataset import write_sample_archive
@@ -162,6 +219,9 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 workers=max(1, int(options.get('workers') or 1)),
                 on_progress=tick,
                 large=options.get('large') is True,
+                # A tornado, or a sensitivity design, in place of a sample.
+                tornado=options.get('tornado') or None,
+                gsa=options.get('gsa') or None,
             )
             say(id=job_id, event='stage', stage='writing')
             write_sample_archive(prob, job['out'], project=raw)
@@ -177,6 +237,43 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
         say(**_error_event(job_id, e))
         return
     say(id=job_id, event='done', out=job['out'], ms=round((time.perf_counter() - started) * 1000))
+
+
+def _plain(v: Any) -> Any:
+    """A value as JSON holds it: arrays as lists, and a number that is not finite
+    as null, as the page's JSON.stringify writes one."""
+    import numpy as np
+    if isinstance(v, dict):
+        return {str(k): _plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    if isinstance(v, np.ndarray):
+        return [_plain(x) for x in v.tolist()]
+    if isinstance(v, (bool, np.bool_)):
+        return bool(v)
+    if isinstance(v, (int, np.integer)):
+        return int(v)
+    if isinstance(v, (float, np.floating)):
+        return float(v) if math.isfinite(v) else None
+    return v
+
+
+def _write_json(path: str, value: Any) -> None:
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(_plain(value), f, allow_nan=False)
+
+
+def _write_run(res: Any, raw: Any, job: Dict[str, Any], options: Dict[str, Any], kept: Optional[Dict[str, Any]],
+               replayed: Optional[Dict[str, Any]] = None) -> None:
+    """A run's archive -- without its states, and the run kept, when the page asked
+    for that -- with which realisation it replays, if it replays one."""
+    from .io.dataset import write_dataset
+    extra = {'replayed': replayed} if replayed is not None else {}
+    if options.get('keep') is True and kept is not None:
+        write_dataset(res, job['out'], project=raw, states=False, extra={**extra, 'massBalance': res.mass_balance()})
+        kept[str(job.get('id'))] = {'results': res, 'model': raw, 'by_label': None}
+    else:
+        write_dataset(res, job['out'], project=raw, extra=extra or None)
 
 
 def answer_query(query: Dict[str, Any], kept: Dict[str, Any], say: Callable[..., None]) -> None:

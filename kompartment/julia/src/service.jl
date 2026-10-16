@@ -11,8 +11,9 @@
 # `ready`, `stage`, `progress`, `done`, `error` and `cancelled` out on standard
 # output, which carries nothing else -- what the engine prints goes to standard
 # error. A `run` job writes the model and its run as *Save with results* writes
-# them; a `probabilistic` one the model and the sample (`sample_archive`). A run
-# asked to be kept (`"keep": true`) is held here, its archive without the
+# them; a `probabilistic` one the model and the sample (`sample_archive`), or a
+# tornado's runs -- a sensitivity design is refused (`NotOnThisEngine`), and the
+# page runs it itself. A run asked to be kept (`"keep": true`) is held here, its archive without the
 # states, and `series`, `archive` and `forget` ask about it, answered on a task
 # of their own beside the jobs.
 
@@ -20,6 +21,15 @@ const _SERVICE_PROGRESS_EVERY = 0.1
 
 """A run the page has stopped, raised out of a progress report."""
 struct _ServiceStopped <: Exception end
+
+"""
+What this engine does not do, said before anything runs: the page does it
+itself, in the browser, when it hears this.
+"""
+struct NotOnThisEngine <: Exception
+    message::String
+end
+Base.showerror(io::IO, e::NotOnThisEngine) = print(io, e.message)
 
 function _service_ready()
     OrderedDict{String,Any}("event" => "ready", "engine" => "julia", "version" => string(pkgversion(@__MODULE__)),
@@ -86,17 +96,34 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             end)
             stopped() && throw(_ServiceStopped())
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
-            if _service_option(options, "keep", false) === true && kept !== nothing
-                audit = OrderedDict{String,Any}("massBalance" => _service_audit(mass_balance(res)))
-                write(string(job["out"]), dataset_archive(res; states=false, extra=audit))
-                lock(() -> (kept[id] = Dict{String,Any}("results" => res, "labels" => nothing)), kept_lock)
-            else
-                write(string(job["out"]), dataset_archive(res))
-            end
+            _service_write_run(res, job, options, kept, kept_lock)
+        elseif kind == "calibrate"
+            throw(NotOnThisEngine("Calibration is not on the Julia engine."))
+        elseif kind == "local-sensitivity"
+            throw(NotOnThisEngine("Local sensitivity is not on the Julia engine."))
+        elseif kind == "replay"
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
+            varied = _service_option(options, "varied", nothing)
+            iterations = _service_option(options, "iterations", nothing)
+            tornado = _service_option(options, "tornado", nothing)
+            r = run_realisation(m, Int(_service_option(options, "index", 0)) + 1;
+                seed=Int(_service_option(options, "seed", 1)),
+                iterations=iterations === nothing ? nothing : Int(iterations),
+                latin=_service_option(options, "latin", true) !== false,
+                varied=varied === nothing ? nothing : String[string(v) for v in varied],
+                tornado=tornado === false ? nothing : tornado)
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
+            replayed = OrderedDict{String,Any}("index" => r.number - 1, "iterations" => r.iterations,
+                "values" => Any[OrderedDict{String,Any}("name" => v.name, "value" => v.value, "held" => v.held)
+                                for v in r.values])
+            _service_write_run(r.results, job, options, kept, kept_lock; replayed)
         elseif kind == "probabilistic"
+            _service_option(options, "gsa", nothing) === nothing ||
+                throw(NotOnThisEngine("Sensitivity designs are not on the Julia engine."))
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "building"))
             blocks = _service_option(options, "blocks", nothing)
             varied = _service_option(options, "varied", nothing)
+            tornado = _service_option(options, "tornado", nothing)
             prob = run_probabilistic(m, Int(_service_option(options, "iterations", 100));
                 seed=Int(_service_option(options, "seed", 1)),
                 latin=_service_option(options, "latin", true) !== false,
@@ -104,6 +131,7 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                 keep=blocks === nothing || isempty(blocks) ? nothing : String[string(b) for b in blocks],
                 threads=clamp(Int(_service_option(options, "workers", Threads.nthreads())), 1, Threads.nthreads()),
                 large=_service_option(options, "large", false) === true,
+                tornado=tornado === false ? nothing : tornado,
                 on_progress=(done, total) -> begin
                     stopped() && throw(_ServiceStopped())
                     tell("done" => Int(done), "total" => Int(total))
@@ -125,6 +153,22 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
     end
     say(OrderedDict{String,Any}("id" => id, "event" => "done", "out" => string(job["out"]),
                                 "ms" => round(Int, (time() - started) * 1000)))
+end
+
+"""
+A run's archive -- without its states, and the run kept, when the page asked for
+that -- with which realisation it replays, if it replays one.
+"""
+function _service_write_run(res, job, options, kept, kept_lock; replayed=nothing)
+    extra = OrderedDict{String,Any}()
+    replayed === nothing || (extra["replayed"] = replayed)
+    if _service_option(options, "keep", false) === true && kept !== nothing
+        extra["massBalance"] = _service_audit(mass_balance(res))
+        write(string(job["out"]), dataset_archive(res; states=false, extra))
+        lock(() -> (kept[string(job["id"])] = Dict{String,Any}("results" => res, "labels" => nothing)), kept_lock)
+    else
+        write(string(job["out"]), dataset_archive(res; extra=isempty(extra) ? nothing : extra))
+    end
 end
 
 """A question about a kept run, answered with `done` or `error` under the question's own id."""

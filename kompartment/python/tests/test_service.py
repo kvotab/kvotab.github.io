@@ -21,6 +21,7 @@ import unittest
 import urllib.error
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import numpy as np
 
@@ -131,6 +132,67 @@ class Kept(unittest.TestCase):
                 self.assertIn('results/y.f64', z.namelist())
             # Let go of, and then said to be gone.
             self.assertIn('no longer holds that run', ends['q5']['message'])
+
+
+CAL = {
+    'name': 'cal',
+    'simulation': {'start_time': 0, 'end_time': 100, 'output_points': 101, 'spacing': 'linear', 'solver': 'ndf',
+                   'rtol': 1e-8, 'abstol': 1e-12, 'time_unit': 'year'},
+    'parameters': [{'name': 'k', 'value': '0.05', 'unit': '1/year'}, {'name': 'A0', 'value': '1', 'unit': 'Bq'}],
+    'compartments': [{'name': 'A', 'initial': 'A0', 'unit': 'Bq', 'dydt': '-k*A'}],
+}
+
+
+class Analyses(unittest.TestCase):
+    def test_designs_replays_calibrations_and_dydp_are_run_and_written(self):
+        bio = (EXAMPLES / 'biosphere.json').read_text()
+        targets = [{'output': 'A', 'when': 'at', 'time': t, 'scale': 'log', 'weight': 1,
+                    'value': 5 * 2.718281828459045 ** (-0.03 * t)} for t in (20, 80)]
+        variables = [{'key': 'k', 'lower': 1e-3, 'upper': 1, 'space': 'log'},
+                     {'key': 'A0', 'lower': 0.1, 'upper': 100, 'space': 'log'}]
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                _job('t1', 'probabilistic', bio, f'{d}/t1.zip', seed=3, tornado={'low': 0.05, 'high': 0.95}),
+                _job('g1', 'probabilistic', bio, f'{d}/g1.zip', seed=7,
+                     gsa={'method': 'morris', 'options': {'trajectories': 6, 'levels': 4}}),
+                _job('r1', 'replay', bio, f'{d}/r1.zip', index=5, seed=11, iterations=20),
+                _job('c1', 'calibrate', json.dumps(CAL), f'{d}/c1.json', targets=targets, variables=variables,
+                     method='nelder', maxEvals=400, seed=1),
+                _job('s1', 'local-sensitivity', bio, f'{d}/s1.json', parameters=['leachRate[I-129]', 'leachRate[Cl-36]']),
+            ]
+            out = io.StringIO()
+            serve(stdin=io.StringIO('\n'.join(lines) + '\n'), stdout=out)
+            events = [json.loads(line) for line in out.getvalue().splitlines()]
+            ends = {e['id']: e['event'] for e in events if e.get('event') in ('done', 'error', 'cancelled')}
+            self.assertEqual(ends, {'t1': 'done', 'g1': 'done', 'r1': 'done', 'c1': 'done', 's1': 'done'},
+                             [e for e in events if e.get('event') == 'error'])
+
+            def sample_meta(path):
+                with zipfile.ZipFile(path) as z:
+                    return json.loads(z.read('results/sample/meta.json'))
+
+            # Every input swung alone, counted from 0 as the page counts them.
+            tornado = sample_meta(f'{d}/t1.zip')
+            self.assertEqual(tornado['iterations'], 31)
+            self.assertEqual(tornado['stats']['tornado']['swung'], list(range(15)))
+            self.assertEqual(sample_meta(f'{d}/g1.zip')['stats']['gsa']['method'], 'morris')
+            # A realisation replayed: an ordinary run, saying which.
+            with zipfile.ZipFile(f'{d}/r1.zip') as z:
+                self.assertIn('results/y.f64', z.namelist())
+                replayed = json.loads(z.read('results/meta.json'))['replayed']
+            self.assertEqual((replayed['index'], replayed['iterations'], len(replayed['values'])), (5, 20, 15))
+            # A calibration, its best so far said on the way.
+            result = json.loads(Path(f'{d}/c1.json').read_text())
+            self.assertTrue(result['ok'] and result['matched'], result)
+            got = {v['key']: v['value'] for v in result['values']}
+            self.assertAlmostEqual(got['k'], 0.03, delta=1e-5)
+            steps = [e['detail'] for e in events if e.get('id') == 'c1' and 'detail' in e]
+            self.assertTrue(steps and all(set(x) == {'evals', 'fx', 'best', 'values'} for x in steps), steps[:2])
+            # dy/dp: every state the page shows, with a derivative per parameter.
+            dydp = json.loads(Path(f'{d}/s1.json').read_text())
+            self.assertEqual([c['label'] for c in dydp['chosen']], ['leachRate[I-129]', 'leachRate[Cl-36]'])
+            self.assertTrue(dydp['states'] and all(len(s['y']) == len(dydp['t']) and len(s['sens']) == 2
+                                                   for s in dydp['states']))
 
 
 class Sample(unittest.TestCase):
@@ -273,6 +335,28 @@ class Server(unittest.TestCase):
         code, data = self.call(f'/engine/jobs/{job}/archive', **ok)
         self.assertEqual(code, 200)
         return job, data
+
+    @unittest.skipUnless(HAVE_APP, 'needs Node and the application')
+    def test_the_page_hands_the_engine_its_work_and_gets_back_what_it_works_out_itself(self):
+        # The page's own worker, sent what the page sends it -- a run, a tornado, a
+        # sensitivity design, a replayed realisation, a calibration, dy/dp -- once
+        # with the engine and once without: the same answers.
+        script = Path(__file__).parent / 'node' / 'worker_engine.mjs'
+        done = subprocess.run([NODE, str(script), str(SRC), self.base, self.token, 'python', str(EXAMPLES)],
+                              capture_output=True, text=True, timeout=600)
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+        got = json.loads(done.stdout)
+        self.assertEqual((got['run']['engine'], got['run']['saved']), ('python', True))
+        self.assertLessEqual(got['run']['worst'], 1e-12)
+        self.assertTrue(got['tornado']['onEngine'] and got['tornado']['same'], got['tornado'])
+        self.assertEqual(got['tornado']['points'], 31)
+        self.assertTrue(got['gsa']['onEngine'] and got['gsa']['same'], got['gsa'])
+        self.assertTrue(got['replay']['inputs'] and got['replay']['index'] == 5, got['replay'])
+        self.assertLessEqual(got['replay']['worst'], 1e-9)
+        self.assertTrue(got['calibrate']['onEngine'] and got['calibrate']['matched'] and got['calibrate']['same'],
+                        got['calibrate'])
+        self.assertTrue(got['sensitivity']['onEngine'] and got['sensitivity']['same'], got['sensitivity'])
+        self.assertLessEqual(got['sensitivity']['worst'], 1e-9)
 
     def test_a_run_its_engine_holds_is_asked_about_and_let_go_of(self):
         ok = {'X-Kompartment-Token': self.token}

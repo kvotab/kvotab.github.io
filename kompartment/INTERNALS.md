@@ -5521,10 +5521,43 @@ name of its own at 127.0.0.1), come from it (`Origin`, where sent) and carry the
 token, compared in constant time. A model is code to an engine: without these,
 any page open in the same browser could post one.
 
-**Not done yet.** Moving the analyses -- tornado, sensitivity designs, local
-sensitivity, calibration -- to an engine that has them. And the worker still
-builds the model to check a run an engine holds and to answer for its outputs,
-which on the largest assessment is seconds.
+**The analyses on an engine.** The page sends the engine with `tornado`, `gsa`,
+`replay`, `optimise` and `local-sensitivity` too, and the worker hands each to
+the engine as a job of its own kind:
+- *A tornado or a sensitivity design* is a `probabilistic` job with `tornado`
+  or `gsa` in its options (`designHere`, `designOnEngine`). The worker then draws
+  the design as a run here draws it (`designFor`, one build) and refuses the
+  engine's runs unless every input the engine set is the design's value to
+  1e-9 (`otherDesign`): the analysis pairs each point's outputs with the
+  inputs the design here says it had, and a sensitivity design's own data
+  (`gsaDesign`) is this one. The result is held as `runDesign`'s is, the kept
+  series without the varied parameters beside them. Julia's sample counts a
+  tornado's swung inputs from 0 on the way out (`_sample_stats`), as the page
+  counts them.
+- *A replay* is a `replay` job: one realisation as an ordinary run, held by the
+  engine as a run is, its archive's meta saying which realisation and what its
+  inputs were (`replayed`).
+- *A calibration* is a `calibrate` job, its best so far said as a progress
+  `detail` that the server passes on and the worker posts as
+  `optimise-progress`; *dy/dp* a `local-sensitivity` job. Each writes its answer
+  as JSON (a number that is not finite as null, as `JSON.stringify` writes it),
+  fetched with `engineArchive(…, { raw: true })`; dy/dp sends every state the page
+  shows, and the elasticities are worked out here.
+- What an engine does not do it refuses before anything runs, as
+  `NotOnThisEngine`: Julia has no sensitivity designs, calibration or dy/dp. The
+  worker then does it here, posting `engine-elsewhere` so the bar says so.
+
+Measured on the examples through the worker (`python/tests/node/worker_engine.mjs`,
+which drives it against a running server): a tornado's and a Morris, Sobol,
+eFAST, RBD-FAST or DGSM design's tables, a calibration's values and number of
+evaluations, and dy/dp, with its elasticities, are the browser's to round-off
+or exactly; a replay's inputs are the same, its series as the engine's runs
+agree (1.5e-12 Python, 1.6e-5 Julia).
+
+**Not done yet.** The scenarios run beside the chosen one, which would want a
+run held for each of them. And the worker still builds the model to check a run
+an engine holds and to answer for its outputs, which on the largest assessment
+is seconds.
 
 ## Asking where a file goes
 

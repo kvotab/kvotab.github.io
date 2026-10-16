@@ -21,9 +21,11 @@ machine only.
 ## Engines
 
 The page solves its models in the browser. Served from here, it can also hand
-a run -- Run, and a probabilistic run -- to the Python engine
-(`python/kompartment`) or the Julia one (`julia/`), chosen in the page beside
-Run; `--engine` says which the page starts on. Each engine is a process of its
+a run -- Run, a probabilistic run, and the analyses that solve the model: a
+tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp --
+to the Python engine (`python/kompartment`) or the Julia one (`julia/`), chosen
+in the page beside Run; `--engine` says which the page starts on. What an engine
+does not do, it refuses at once, and the page does it itself. Each engine is a process of its
 own, started the first time it is asked for and kept: a line of JSON a message,
 jobs in and progress out (see python/kompartment/service.py). A run comes back
 as the archive *Save with results* writes, which the page reads the way it
@@ -103,7 +105,7 @@ class Job:
         self.options = options
         self.out = out
         # A run whose engine holds it for its page, its archive without the states.
-        self.keep = kind == "run" and isinstance(options, dict) and options.get("keep") is True
+        self.keep = kind in ("run", "replay") and isinstance(options, dict) and options.get("keep") is True
         # The engine's process it ran in: a held run lasts as long as that does.
         self.generation = None
         self.state = "queued"
@@ -240,7 +242,7 @@ class Engine:
             if kind == "stage":
                 job.stage = event.get("stage")
             elif kind == "progress":
-                job.progress = {k: event[k] for k in ("fraction", "at", "done", "total") if k in event}
+                job.progress = {k: event[k] for k in ("fraction", "at", "done", "total", "detail") if k in event}
             elif kind in ("done", "error", "cancelled"):
                 if kind == "error":
                     job.error = {k: event.get(k) for k in ("name", "message", "block", "hint")}
@@ -391,7 +393,7 @@ class Engines:
     def submit(self, kind, engine, client, model, options):
         if engine not in self.engines:
             raise ValueError(f"There is no engine called '{engine}' here.")
-        if kind not in ("run", "probabilistic"):
+        if kind not in ("run", "probabilistic", "replay", "calibrate", "local-sensitivity"):
             raise ValueError(f"'{kind}' is not a kind of job the engines run.")
         job = Job(kind, engine, client, model, options, None)
         job.out = os.path.join(self.folder, f"{job.id}.zip")

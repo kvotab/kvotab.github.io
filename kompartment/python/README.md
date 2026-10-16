@@ -465,8 +465,11 @@ and keeps it: a line of JSON a message, jobs and cancels in on standard input,
 progress and what became of each job out on standard output, and each run
 written as the archive above -- or kept, and sent without its states, its
 series then asked for as the page shows them (`series`), the whole run when the
-page needs it (`archive`), and let go of (`forget`). See the module's notes for
-the protocol.
+page needs it (`archive`), and let go of (`forget`). It runs the analyses the
+page hands it as well: a tornado or a sensitivity design (a `probabilistic` job
+with `tornado` or `gsa`), a replayed realisation (`replay`), a calibration
+(`calibrate`, its best so far said on the way) and dy/dp (`local-sensitivity`).
+See the module's notes for the protocol.
 
 ### Importing
 

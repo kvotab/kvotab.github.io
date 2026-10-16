@@ -2492,6 +2492,8 @@ function replayRealisation(settings, index) {
 	w.postMessage({
 		type: 'replay', id: state.runId, project: structuredClone(state.raw),
 		index, ...settings,
+		// On the engine chosen beside Run, where there is one.
+		engine: engineFor(),
 	});
 }
 
@@ -2536,6 +2538,8 @@ function openTornado() {
 			w.postMessage({
 				type: 'tornado', id: state.runId, project: structuredClone(state.raw),
 				tornado: { low: choice.low, high: choice.high },
+				// On the engine chosen beside Run, where there is one.
+				engine: engineFor(),
 				blocks: choice.blocks,
 				varied: state.raw.simulation?.partial ?? null,
 				index: 0, stat: 'max', at: 0, wantLabel: first,
@@ -2652,6 +2656,8 @@ function openGsa() {
 			w.postMessage({
 				type: 'gsa', id: state.runId, project: structuredClone(state.raw),
 				gsa: { method: choice.method, options: choice.options },
+				// On the engine chosen beside Run, where there is one.
+				engine: engineFor(),
 				seed: choice.seed,
 				blocks: choice.blocks,
 				varied: state.raw.simulation?.partial ?? null,
@@ -2862,6 +2868,8 @@ function openLocalSensitivity() {
 				id: state.runId,
 				project: structuredClone(state.raw),
 				parameters,
+				// On the engine chosen beside Run, where there is one.
+				engine: engineFor(),
 			});
 		},
 	});
@@ -3272,6 +3280,7 @@ const LOADING_STAGE = {
 	'engine-waiting': 'Waiting for {engine} to finish the run before this one…',
 	'engine-building': 'Building the model on {engine}…',
 	'engine-solving': 'Solving on {engine}…',
+	'engine-elsewhere': '{engine} does not do this: doing it in the browser…',
 	'engine-writing': '{engine} is writing the results…',
 	'engine-receiving': 'Fetching the results from {engine}…',
 	'engine-reading': 'Reading the results from {engine}…',
@@ -12200,6 +12209,8 @@ async function openOptimise() {
 				type: 'optimise',
 				id: state.optId,
 				project: projectNow(),
+				// On the engine chosen beside Run, where there is one.
+				engine: engineFor(),
 				targets: setup.targets,
 				variables: setup.variables,
 				method: setup.method,
