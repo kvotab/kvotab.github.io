@@ -19,19 +19,21 @@
 # in a serial run, and in the Python package's.
 #
 # Besides a sample, a *tornado* (every input swung alone to a low and a high
-# probability) runs the same way. The Python package's global sensitivity
-# designs (`gsa=`) are not ported.
+# probability) and a global sensitivity design (`gsa=`, the points of one of
+# the methods in ../stats/gsa_design.jl) run the same way. What a design is
+# read for -- its indices -- is the page's, or the Python package's: here, its
+# runs.
 #
 # Python's names, and these:
 #
 #     m.run_probabilistic(iterations, seed=, latin=, varied=, keep=, workers=,
-#                         on_progress=, progress=, large=, range_=, tornado=)
+#                         on_progress=, progress=, large=, range_=, tornado=, gsa=)
 #     run_probabilistic(m, iterations; seed, latin, varied, keep, threads,
-#                       on_progress, progress, large, range, tornado)
+#                       on_progress, progress, large, range, tornado, gsa)
 #
 # `workers` (processes) is `threads` here; `range_` (a 0-based, end-exclusive
 # pair) is `range`, a range of realisation numbers counted from 1; `compiled`
-# has no counterpart (every model here is compiled); `gsa` is refused.
+# has no counterpart (every model here is compiled).
 
 const PROB_MOST_BYTES = 1073741824
 const PROB_MOST_BYTES_ASKED = 4 * 1073741824
@@ -130,9 +132,15 @@ struct SampleDesign
     values::Matrix{Float64}         # inputs × iterations: what realisation i draws for input k
     seed::Any
     stats::OrderedDict{String,Any}
+    gsa_design::Any                 # a sensitivity design's own (`build_design`), or nothing
 end
+SampleDesign(plan, names, best, varies, iterations, values, seed, stats) =
+    SampleDesign(plan, names, best, varies, iterations, values, seed, stats, nothing)
 
 is_tornado(d::SampleDesign) = haskey(d.stats, "tornado")
+is_gsa(d::SampleDesign) = haskey(d.stats, "gsa")
+"""Whether the points are designed -- a tornado's or a sensitivity design's -- rather than a sample."""
+is_designed(d::SampleDesign) = is_tornado(d) || is_gsa(d)
 
 """A tornado's two probabilities, from `true`, a dictionary or a named tuple."""
 function _pb_tornado_ends(tornado)
@@ -146,25 +154,28 @@ _pb_truthy_opt(x) = !(x === nothing || x === false || (x isa AbstractDict && ise
                       (x isa NamedTuple && isempty(x)))
 
 """
-    design_for(project, sys; seed=1, iterations=100, latin=true, varied=nothing, tornado=nothing) -> SampleDesign
+    design_for(project, sys; seed=1, iterations=100, latin=true, varied=nothing, tornado=nothing,
+               gsa=nothing) -> SampleDesign
 
 Every realisation's values, drawn whole: one column of uniforms per sampled
 input on a stream named after it (or after its correlation group), Latin
 hypercube or random, the correlations the model asks for put in by
 Iman-Conover, each uniform read through its input's distribution. `varied`
 holds every other input at its own value; `tornado` (`(low=0.05, high=0.95)`)
-swings each varied input alone instead.
+swings each varied input alone instead, and `gsa` (`Dict("method" => "sobol",
+"options" => Dict("samples" => 500))`, or a named tuple) runs the points of a
+sensitivity design.
 """
 function design_for(project::Project, sys::System; seed=1, iterations=nothing, latin::Bool=true, varied=nothing,
                     tornado=nothing, gsa=nothing)
-    _pb_truthy_opt(gsa) && throw(ArgumentError("Global sensitivity designs (gsa=) are not ported to Julia yet: run " *
-                                               "them with the Python package."))
     tornado = _pb_truthy_opt(tornado) ? tornado : nothing
+    gsa = _pb_truthy_opt(gsa) ? gsa : nothing
     plan = sampling_plan(project, sys)
     dice = any(D -> D[:timing] == "poisson" && get(D.block, "sampled", nothing) !== false,
                sys.builder.disruption_layout)
-    if isempty(plan) && !(dice && tornado === nothing)
-        tail = dice ? ", and a tornado swings parameters; the disruptive events are what varies here, and they need " *
+    if isempty(plan) && !(dice && tornado === nothing && gsa === nothing)
+        what = tornado !== nothing ? "tornado swings" : "sensitivity design varies"
+        tail = dice ? ", and a $what parameters; the disruptive events are what varies here, and they need " *
                       "a probabilistic run." :
                ", so every realisation would be the same run. Give a parameter one first — the curve at the end of " *
                "its row in the left panel — or add a disruptive event that draws its occurrences."
@@ -191,6 +202,7 @@ function design_for(project::Project, sys::System; seed=1, iterations=nothing, l
                                                                              "swung" => swung))
         return SampleDesign(plan, names, best, varies, n, values, seed, stats)
     end
+    gsa === nothing || return _pb_gsa_design(project, plan, names, best, varies, seed, gsa)
     count = iterations === nothing ? 100.0 : Float64(iterations)
     n = max(1, Int(floor(count + 0.5)))
     draws = Vector{Float64}[uniforms(n, stream_for(seed, something(sample_group(e), names[k])); latin=latin)
@@ -224,6 +236,107 @@ function design_for(project::Project, sys::System; seed=1, iterations=nothing, l
                                     "correlationProblems" => problems,
                                     "groups" => [OrderedDict{String,Any}("name" => g, "members" => m) for (g, m) in groups])
     return SampleDesign(plan, names, best, varies, n, values, seed, stats)
+end
+
+"""A sensitivity design's method and settings, from a dictionary or a named tuple."""
+function _pb_gsa_spec(gsa)
+    get_(k) = gsa isa AbstractDict ? get(gsa, String(k), get(gsa, k, nothing)) :
+              hasproperty(gsa, k) ? getproperty(gsa, k) : nothing
+    method = get_(:method)
+    options = get_(:options)
+    options isa NamedTuple && (options = Dict{String,Any}(String(k) => v for (k, v) in pairs(options)))
+    return (method isa Symbol ? String(method) : method, _pd_truthy(options) ? options : nothing)
+end
+
+"""
+A sensitivity design's points (`gsaDesignFor`): one factor per varied input, or
+per correlation group (its members move together), a design of the method over
+the factors, and each point's probabilities read through the inputs'
+distributions. Shapley honours the correlations between factors through a
+Gaussian copula, weakened towards none until they are consistent; the other
+methods sample the factors independently, which the statistics say. A list
+read in order hands out its values by realisation number, which a design point
+is not; here it is read by probability, as an unordered list is.
+"""
+function _pb_gsa_design(project::Project, plan::Vector{JDict}, names::Vector{String}, best::Vector{Float64},
+                        varies::Vector{Bool}, seed, gsa)
+    method, options = _pb_gsa_spec(gsa)
+    keys_ = String[]
+    groups = Union{Nothing,String}[]
+    members = Vector{Int}[]
+    by_key = Dict{String,Int}()
+    factor_of = zeros(Int, length(plan))     # 0: held
+    for (k, e) in enumerate(plan)
+        varies[k] || continue
+        g = sample_group(e)
+        key = g === nothing ? names[k] : g
+        j = get!(by_key, key) do
+            push!(keys_, key)
+            push!(groups, g)
+            push!(members, Int[])
+            length(keys_)
+        end
+        push!(members[j], k)
+        factor_of[k] = j
+    end
+    isempty(keys_) && throw(ArgumentError("Every sampled input is held, so a sensitivity design has nothing to vary."))
+    cp = correlation_pairs(project, names)
+    between = [pr for pr in cp.pairs
+               if factor_of[pr.a] > 0 && factor_of[pr.b] > 0 && factor_of[pr.a] != factor_of[pr.b]]
+    corr = nothing
+    shrunk = 0.0
+    if method == "shapley" && !isempty(between)
+        K = length(keys_)
+        R = zeros(K * K)
+        for j in 0:K-1
+            R[j*K+j+1] = 1.0
+        end
+        for pr in between
+            a, b = factor_of[pr.a] - 1, factor_of[pr.b] - 1
+            r = 2 * csin((_GD_PI * pr.r) / 6)
+            R[a*K+b+1] = r
+            R[b*K+a+1] = r
+        end
+        # Correlations given pair by pair need not be consistent with each
+        # other. Shrunk towards independence until they are, and said.
+        lam = 0.0
+        while lam < 1
+            S = Float64[(i - 1) % (K + 1) == 0 ? 1.0 : (1 - lam) * v for (i, v) in enumerate(R)]
+            if gsa_cholesky(S, K) !== nothing
+                corr = S
+                shrunk = lam
+                break
+            end
+            lam += 0.05
+        end
+    end
+    design = build_design(method, keys_, options; seed, corr)
+    u = design["u"]::Matrix{Float64}
+    n = Int(design["runs"])
+    values = Matrix{Float64}(undef, length(plan), n)
+    for (k, e) in enumerate(plan)
+        f = factor_of[k]
+        if f == 0
+            values[k, :] .= best[k]
+            continue
+        end
+        spec = e["spec"]
+        if spec isa AbstractDict && get(spec, "kind", nothing) == "pg" && get(spec, "inorder", nothing) !== false
+            spec = merge(spec, Dict{String,Any}("inorder" => false))
+        end
+        drawer = ValueDrawer(spec)
+        @inbounds for i in 1:n
+            values[k, i] = draw_value(drawer, u[f, i], i - 1)
+        end
+    end
+    stats = OrderedDict{String,Any}("seed" => seed, "latin" => false, "sampled" => length(plan),
+        "gsa" => OrderedDict{String,Any}("method" => method, "options" => design["options"],
+            # each factor's inputs by their place in the plan, counted from 1 (from 0 in a file)
+            "factors" => [OrderedDict{String,Any}("key" => keys_[j], "group" => groups[j], "members" => members[j])
+                          for j in eachindex(keys_)],
+            "correlated" => length(between), "correlationsUsed" => corr !== nothing,
+            "correlationShrunk" => shrunk, "correlationProblems" => cp.problems))
+    return SampleDesign(plan, names, best, varies, n, values, seed, stats, design)
 end
 
 """Input `k`'s value in every realisation, from its uniforms (`value_at_probability`, the reading
@@ -266,7 +379,7 @@ function _pb_apply!(sys::System, design::SampleDesign, eff::Matrix{Float64}, col
         P[e["slot"]+1] = eff[k, column]
     end
     evaluate_invariant!(sys)
-    draw_disruptions!(sys, design.seed, i; sample=!is_tornado(design))
+    draw_disruptions!(sys, design.seed, i; sample=!is_designed(design))
     return sys
 end
 
@@ -319,7 +432,11 @@ values drawn, and the statistics read off them.
 - `precision` (`"double"` or `"float32"`), `stats` (`"failed"`, `"trouble"`,
   `"ms"`, `"seed"`, `"latin"`, `"sampled"`, `"correlated"`,
   `"correlationAdjusted"`, `"correlationProblems"`, `"groups"`, `"threads"`;
-  a tornado's `"tornado" => {"low", "high", "swung"}`).
+  a tornado's `"tornado" => {"low", "high", "swung"}`; a sensitivity design's
+  `"gsa" => {"method", "options", "factors", "correlated", ...}`, a factor's
+  `"members"` its inputs by their place in `plan`; inputs counted from 1);
+- `gsa_design`: a sensitivity design's own (`build_design`: `"u"`, each
+  factor's probability at each run, and the method's layout), or nothing.
 """
 mutable struct ProbabilisticResults{T<:AbstractFloat}
     t::Vector{Float64}
@@ -335,6 +452,7 @@ mutable struct ProbabilisticResults{T<:AbstractFloat}
     precision::String
     stats::OrderedDict{String,Any}
     project::Project
+    gsa_design::Any
 end
 
 Base.show(io::IO, r::ProbabilisticResults) =
@@ -530,7 +648,9 @@ varied parameter is kept as its draws, in `samples`. `seed` and `latin`
 (Latin hypercube, else random) are the sampling's; the model's own settings
 are `simulation(m)["seed"]` and `simulation(m)["sampling"] == "latin"`.
 `varied` holds every input it does not name at its own value. `tornado =
-(low=0.05, high=0.95)` swings each input alone instead (see `run_tornado`).
+(low=0.05, high=0.95)` swings each input alone instead (see `run_tornado`), and
+`gsa = (method="sobol", options=(samples=500,))` runs a sensitivity design's
+points (see `run_gsa`).
 
 The model is built once. `threads` threads share the realisations (at most
 `Threads.nthreads()`; start Julia with `--threads`), each on a copy of the
@@ -557,7 +677,7 @@ function run_probabilistic(project::Project, iterations=100; seed=1, latin::Bool
     started = time()
     line = nothing
     if progress !== false && progress !== nothing
-        what = _pb_truthy_opt(tornado) ? "runs" : "realisations"
+        what = _pb_truthy_opt(tornado) || _pb_truthy_opt(gsa) ? "runs" : "realisations"
         line = ProgressLine(iterations isa Real ? Int(floor(Float64(iterations) + 0.5)) : 0; what=what,
                             io=progress === true ? stderr : progress)
     end
@@ -584,6 +704,18 @@ Every varied input swung alone to a low and a high probability, the rest held
 at their own values: two runs per input and one central run (run 1).
 """
 run_tornado(m; low=0.05, high=0.95, kw...) = run_probabilistic(m, nothing; tornado=(low=low, high=high), kw...)
+
+"""
+    run_gsa(m, method, options=nothing; kw...) -> ProbabilisticResults
+
+The runs of a global sensitivity design: `method` one of `GSA_METHODS`'
+(`"morris"`, `"sobol"`, `"efast"`, `"rbdfast"`, `"ff"`, `"dgsm"`, `"radial"`,
+`"shapley"`), `options` its settings (`gsa_options`), the design drawn from
+`seed` as the application draws it. The indices are read off the runs by the
+page, or by the Python package's `gsa_table`.
+"""
+run_gsa(m, method, options=nothing; kw...) =
+    run_probabilistic(m, nothing; gsa=Dict{String,Any}("method" => String(method), "options" => options), kw...)
 
 """The realisations a run holds, `frm` to `to - 1` counted from 0: all of them, or those `range` numbers (from 1)."""
 function _pb_slice(range, iterations::Int)
@@ -612,7 +744,7 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     wanted = Int[k for (k, o) in enumerate(outs) if can_be_endpoint(get(o, "kind", nothing)) &&
                                                      (keep_fn === nothing || keep_fn(_pb_keep_name(o), o))]
     column = Dict{Int,Int}()
-    if !is_tornado(design)
+    if !is_designed(design)
         for (k, e) in enumerate(plan)
             design.varies[k] && (column[e["slot"]] = k)
         end
@@ -624,8 +756,8 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     precision = hold_precision(length(wanted), times, iterations)
     size_ = estimate(length(wanted), times, iterations, precision)
     if size_.bytes > (large ? PROB_MOST_BYTES_ASKED : PROB_MOST_BYTES)
-        what = is_tornado(design) ? "runs" : "realisations"
-        fewer = is_tornado(design) ? "fewer inputs" : "fewer realisations"
+        what = is_designed(design) ? "runs" : "realisations"
+        fewer = is_tornado(design) ? "fewer inputs" : is_gsa(design) ? "a smaller design" : "fewer realisations"
         extra = precision == "float32" ? " even held as float32" : ""
         throw(ErrorException("$iterations $what of $(length(wanted)) series over $times times is $(size_.text)$extra; " *
                              "pass large=true to go ahead on a machine with the memory for it, or choose fewer " *
@@ -649,7 +781,7 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     merge!(stats, design.stats)
     stats["threads"] = max(1, ntasks)
     return ProbabilisticResults{T}(grid, kept, values, samples, plan, design.names, inputs, ran, iterations,
-                                   frm+1:to, precision, stats, project)
+                                   frm+1:to, precision, stats, project, design.gsa_design)
 end
 
 """
@@ -758,7 +890,7 @@ function _pb_parallel!(values::Vector{Matrix{T}}, ran::Vector{UInt8}, project::P
 end
 
 """
-    run_realisation(m, number; seed=1, iterations=100, latin=true, varied=nothing, tornado=nothing)
+    run_realisation(m, number; seed=1, iterations=100, latin=true, varied=nothing, tornado=nothing, gsa=nothing)
 
 One realisation of a probabilistic run (`number` from 1), as an ordinary run:
 `(results, number, iterations, values)`, `values` each input's
@@ -766,10 +898,10 @@ One realisation of a probabilistic run (`number` from 1), as an ordinary run:
 keeps the model's own value.
 """
 function run_realisation(m, number::Integer; seed=1, iterations=nothing, latin::Bool=true, varied=nothing,
-                         tornado=nothing)
+                         tornado=nothing, gsa=nothing)
     proj = m isa Project ? m : project(m)
     sys = build_system(proj)
-    design = design_for(proj, sys; seed, iterations, latin, varied, tornado)
+    design = design_for(proj, sys; seed, iterations, latin, varied, tornado, gsa)
     i = min(design.iterations - 1, max(0, Int(number) - 1))
     eff = _pb_effective(design, i, i + 1)
     _pb_apply!(sys, design, eff, 1, i)

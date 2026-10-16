@@ -615,6 +615,27 @@ class Standalone(unittest.TestCase):
         self.assertEqual(len(L.run_sensitivity(example('recorders'), ['k_out[Cs-137]'])['t']),
                          len(run(Project(example('recorders')), on_grid=True).t))
 
+    def test_the_compiled_derivative_hears_an_event_switch_a_running_mean_on(self) -> None:
+        # recorders' trigger starts its running mean part way through the run.
+        # The mean's integral is a state of the sensitivity solve whose rate is
+        # the dose while the mean records: the compiled derivative has to hear
+        # the event switch it on, as the Python one does, or the integral stays
+        # at nothing (it was 3e-11 at the end where it is 2.3e-4).
+        model = example('recorders')
+        for differenced in (False, True):
+            with self.subTest(differenced=differenced):
+                fast = L.run_sensitivity(model, ['k_out[Cs-137]', 'Volume[Cs-137]'], differenced=differenced)
+                if not fast['stats']['compiled']:
+                    self.skipTest('numba is not installed: there is no compiled derivative')
+                slow = L.run_sensitivity(model, ['k_out[Cs-137]', 'Volume[Cs-137]'], differenced=differenced,
+                                         compiled=False)
+                mean = next(s['offset'] for s in fast['series'] if s['label'] == 'Mean_dose_after')
+                self.assertGreater(fast['y'][mean][-1], 1e-4)
+                self.assertEqual(fast['stats']['nsteps'], slow['stats']['nsteps'])
+                for a, b in zip(fast['y'] + [v for block in fast['sens'] for v in block],
+                                slow['y'] + [v for block in slow['sens'] for v in block]):
+                    np.testing.assert_array_equal(a, b)
+
     def test_calibration_finds_a_value_it_was_given(self) -> None:
         model = example('lookup-driver')
         truth = 3.1e-4

@@ -443,6 +443,22 @@ using PrecompileTools: @setup_workload, @compile_workload
         what_drove(prob, labels(prob)[1])
         summary(prob, labels(prob)[1]; at=:peak)
         write_hdf5(probabilistic_tree(prob, "all"))
+        # A sensitivity design of every method laid out, one run; a calibration by each
+        # method; dy/dp with df/dp differentiated and differenced.
+        for (method, options) in (("morris", Dict("trajectories" => 2)), ("radial", Dict("samples" => 2)),
+                                  ("sobol", Dict("samples" => 2)), ("efast", Dict("samples" => 8)),
+                                  ("rbdfast", Dict("samples" => 16, "harmonics" => 2)), ("dgsm", Dict("samples" => 2)),
+                                  ("shapley", Dict("nVar" => 2, "nOuter" => 1, "nInner" => 2)), ("ff", Dict()))
+            build_design(method, ["a", "b"], options; seed=1)
+        end
+        sample_archive(run_gsa(m, "ff"; threads=1))
+        for method in ("nelder", "lm", "de")
+            calibrate(m; targets=[Dict("output" => "Conc", "when" => "end", "value" => 1.0)],
+                      variables=[Dict("key" => "k", "lower" => 0.01, "upper" => 0.1, "space" => "log")],
+                      method, max_evals=12)
+        end
+        run_sensitivity(m, ["k"])
+        run_sensitivity(m, ["q"]; differenced=true)
         e = import_ecolego(Vector{UInt8}(codeunits(eco)); file_name="precompile.eco")
         res = run(e)
         run(import_ecolego(Vector{UInt8}(codeunits(chain)); file_name="chain.eco"))

@@ -230,9 +230,9 @@ solving them in the browser. It starts
 `julia --project=julia --threads=auto,1 -e 'using Kompartment; Kompartment.serve_stdio()'`
 once and keeps it; the protocol is the Python package's (`kompartment.service`),
 a run kept for the page and asked about included, and the interactive thread is
-where a cancel is heard while every other thread solves. It runs a tornado and
-replays a realisation; a sensitivity design, a calibration and dy/dp it refuses
-at once (`NotOnThisEngine`), and the page does them itself.
+where a cancel is heard while every other thread solves. It runs everything the
+page hands an engine: a run, a probabilistic run, a tornado, a sensitivity
+design's runs, a replayed realisation, a calibration and dy/dp.
 
 ## The built model
 
@@ -267,6 +267,9 @@ save(prob, "realisations.h5"; time_origin=2000)   # every realisation, as the ap
 
 tor = run_tornado(m; keep=["Dose"])          # each input swung alone to its 5th and 95th percentiles
 tornado_table(tor, "Dose [I-129]")
+
+gsa = run_gsa(m, "sobol", Dict("samples" => 500); keep=["Dose"])   # a sensitivity design's runs
+gsa.gsa_design["u"]                          # each input's probability at every run
 ```
 
 The design is drawn whole before any realisation runs, from the named streams
@@ -286,6 +289,39 @@ the run goes on.
 
 Times are given in output-time positions from 1, or `:peak` (where the mean
 peaks) and `:max` (each realisation's own peak).
+
+A global sensitivity design (`run_gsa`, or `gsa=` to `run_probabilistic`) is
+one of the application's methods -- `"morris"` (random walks, or SALib's
+trajectories), `"radial"`, `"sobol"`, `"efast"`, `"rbdfast"`, `"ff"`,
+`"dgsm"`, `"shapley"` -- laid out over the varied inputs, a correlation group
+moving as one, each point read through the inputs' distributions; Shapley
+draws through a Gaussian copula of the model's correlations.
+`Kompartment.gsa_options` and `Kompartment.gsa_refusal` say what a method takes
+and why it would refuse. The design is the Python package's to the bit
+(`Kompartment.build_design`); the indices read off its runs are the page's, or
+the Python package's `gsa_table`.
+
+## Calibration and dy/dp
+
+```julia
+calibrate(m; targets=[Dict("output" => "Dose [I-129]", "when" => "peak", "value" => 1e-5, "scale" => "log")],
+          variables=[Dict("key" => "Kd[I-129]", "lower" => 1e-4, "upper" => 1, "space" => "log")],
+          method="lm")                       # or "nelder", "de"
+r = run_sensitivity(m, ["Kd[I-129]", "geoTransit"])   # the states and dy/dp, integrated together
+r.sens[1][3]                                 # d(state 3)/d(Kd[I-129]) at every output time
+elasticity(r.y[3], r.sens[1][3], r.chosen[1]["value"])
+```
+
+`calibrate` searches the parameters (`variables_of(m)` lists them, by the
+labels the page uses) for the values that put the endpoints at their targets:
+Nelder-Mead, Levenberg-Marquardt or differential evolution, each step the
+Python package's and the application's, `on_progress` hearing every
+evaluation and `signal` stopping the search. `run_sensitivity` integrates the
+forward sensitivity equations beside the model -- df/dp differentiated where
+the model allows it, differenced otherwise -- and refuses, in words, what they
+cannot carry: a jump in the state, a block that remembers the path of the run
+where the rates read it, a semi-analytical far-field path, a parameter that
+places a corner of the run.
 
 ## Speed
 
@@ -368,12 +404,12 @@ end
 
 - **Solvers**: SciPy's; `auto` is DifferentialEquations.jl's automatic choice
   here rather than the application's own switching solver.
-- **Probabilistic analysis**: the global sensitivity designs (`gsa=`), the
+- **Probabilistic analysis**: the indices read off a global sensitivity
+  design's runs (`gsa_table`; the designs and their runs are here), the
   distribution-free measures of *What drove it* (`family="distribution"`) and
   screening realisations by categories.
 - Writing an Ecolego project (`.eco`), validating through the application's
-  own checks in Node, the App designer, the local-sensitivity and calibration
-  helpers, and reading or writing data tables.
+  own checks in Node, the App designer, and reading or writing data tables.
 
 ## How it agrees with the Python package
 
@@ -391,6 +427,7 @@ The engine is checked against the Python package's, with fixtures the
 | Editing: the model's file after every edit, and every refusal | `tools/edit_fixtures.py DIR`, `KOMPARTMENT_EDIT_FIXTURES=DIR julia --project=. test/model/edit.jl` |
 | Solving in parts: the partition, every plan and refusal, split runs to the bit | `tools/split_fixtures.py DIR`, `KOMPARTMENT_SPLIT_FIXTURES=DIR julia --project=. --threads=4 test/engine/split.jl` |
 | Probabilistic runs: every draw, every realisation, the analysis, the result files | `tools/prob_fixtures.py DIR`, `KOMPARTMENT_PROB_FIXTURES=DIR julia --project=. --threads=auto test/engine/probabilistic.jl` |
+| Sensitivity designs, every step of a calibration, dy/dp and the refusals | `tools/analysis_fixtures.py DIR`, `KOMPARTMENT_ANALYSIS_FIXTURES=DIR julia --project=. test/engine/analyses.jl` |
 | The Ecolego importer | `tools/eco_fixtures.py DIR`, `KOMPARTMENT_ECO_FIXTURES=DIR julia --project=. test/importers/test_eco.jl` |
 | The HDF5 files, byte for byte | `tools/hdf5_fixtures.py DIR`, `KOMPARTMENT_H5_FIXTURES=DIR julia --project=. test/io/test_hdf5.jl` |
 

@@ -117,9 +117,9 @@ the next run.
 
 A tornado's or a sensitivity design's runs are made on the engine, and their
 tables worked out in the page from what comes back, the inputs of every run
-checked against the design first. The Julia engine runs a tornado and replays a
-realisation; a sensitivity design, a calibration and dy/dp it leaves to the
-browser, and the bar says so as it starts on them there.
+checked against the design first. A calibration searches on the engine, its
+best so far shown as it goes, and dy/dp is integrated there; both engines do
+all of these.
 
 What stays in the browser: what is worked out from a sample already drawn,
 such as *What drove it*; and an edit that changes no state, whose algebra is

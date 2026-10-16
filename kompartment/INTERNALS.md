@@ -5544,15 +5544,28 @@ the engine as a job of its own kind:
   fetched with `engineArchive(…, { raw: true })`; dy/dp sends every state the page
   shows, and the elasticities are worked out here.
 - What an engine does not do it refuses before anything runs, as
-  `NotOnThisEngine`: Julia has no sensitivity designs, calibration or dy/dp. The
-  worker then does it here, posting `engine-elsewhere` so the bar says so.
+  `NotOnThisEngine`, and the worker then does it here, posting
+  `engine-elsewhere` so the bar says so. Both engines now do everything the
+  page sends; the refusal stays for an engine that does not.
+- Julia's ports (`julia/src/stats/gsa_design.jl`, `stats/optimise.jl`,
+  `engine/calibrate.jl`, `engine/localsens.jl`, `engine/paramtangent.jl`) are
+  the Python package's step for step, checked against it bit for bit by
+  `julia/tools/analysis_fixtures.py` and `julia/test/engine/analyses.jl`: every
+  design's points, every step of a calibration, and dy/dp on the examples whose
+  augmented system is factorised dense. From 64 states one may be factorised
+  sparse, by SuperLU in Python and KLU in Julia, and the two then agree to
+  round-off (2e-13 of a series' peak on biosphere, the same steps). A design's
+  sin, cos and asin are the C library's in both, as numpy's are; V8's can
+  differ in the last bit, which `otherDesign`'s 1e-9 allows. Julia's runner
+  takes the augmented system as Python's does (`equations` in `run_project`).
 
 Measured on the examples through the worker (`python/tests/node/worker_engine.mjs`,
 which drives it against a running server): a tornado's and a Morris, Sobol,
 eFAST, RBD-FAST or DGSM design's tables, a calibration's values and number of
 evaluations, and dy/dp, with its elasticities, are the browser's to round-off
-or exactly; a replay's inputs are the same, its series as the engine's runs
-agree (1.5e-12 Python, 1.6e-5 Julia).
+or exactly, on either engine (dy/dp to 2.5e-13 of a series' peak on Julia); a
+replay's inputs are the same, its series as the engine's runs agree (1.5e-12
+Python, 1.6e-5 Julia).
 
 **Scenarios beside the chosen one.** Each scenario's worker sends its run to
 the engine as a page of its own -- `scenarioEngine(name)`, the page's client and
@@ -5585,9 +5598,6 @@ its list of outputs is the engine's, in the same order, since the page numbers
 the series as the engine listed them. A run with no build has no generated code
 to show (the code view says so). On the examples the engine's `page` is what
 the page's own run of the model says, field for field.
-
-**Not done yet.** Sensitivity designs, calibration and dy/dp are not ported to
-Julia, so on Julia they run in the browser.
 
 ## Asking where a file goes
 

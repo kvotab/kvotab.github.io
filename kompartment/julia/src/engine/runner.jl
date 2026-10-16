@@ -180,11 +180,21 @@ layers to hold instead of laying them out, as a split run's parts are given
 the whole model's (`whole_layers`). `rows` (a `RowPool`) is where the solver
 records its output, used again by the next run given it: the caller reads a
 run's series before it starts another.
+
+`equations` is a system of equations standing over the model's own,
+integrated by this run's machinery in its place (Python's `equations`, and
+the local sensitivity's, engine/localsens.jl): `(dydt, y0, abstol, jacobian,
+solver, on_segment)` -- `dydt(out, t, Y)`, `Y` starting with the model's
+states and `y0` as long as it; the absolute tolerance per element; the
+`JacobianSpec`; the solver, kept to whatever happens; and `on_segment(from,
+interval)`, told where each stretch between restarts starts and the clock's
+interpolation interval. Nothing after the states is held at zero.
 """
 function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false,
                      threads=nothing, nest::Bool=true, layers=nothing, solver::Union{Nothing,String}=nothing,
-                     rows::Union{Nothing,RowPool}=nothing)
-    system === nothing && return run_whole_or_split(project; on_progress, on_grid, threads, nest)
+                     rows::Union{Nothing,RowPool}=nothing, equations=nothing)
+    system === nothing && equations === nothing && return run_whole_or_split(project; on_progress, on_grid, threads, nest)
+    system === nothing && (system = build_system(project))
     t0 = time()
     sys = system
     # Layers handed in are held instead of laid out: a part of a split run is given the whole
@@ -198,10 +208,14 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     end
     build_ms = 1000 * (time() - t0)
     grid = time_grid(project)
-    y0 = initial_state(sys)
+    y0 = equations === nothing ? initial_state(sys) : equations.y0
     check_initial_state(sys, y0)
     nstate = sys.nstate
     abstol, non_negative = run_tolerances(project, sys)
+    if equations !== nothing
+        abstol = equations.abstol
+        non_negative = vcat(collect(non_negative), falses(length(y0) - nstate))
+    end
     steps = (project.solver_points && !on_grid) ? StepCollector(Float64[], Vector{Float64}[], 1, 0, -Inf) : nothing
     span = (steps !== nothing && project.output_mode == "solver") ? [grid[1], grid[end]] : grid
     solve_start = time()
@@ -220,9 +234,9 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
                        Dict("build_ms" => build_ms, "solve_ms" => 1000 * (time() - solve_start)))
     end
     sim = project.simulation
-    asked = String(something(get(sim, "solver", nothing), "ndf"))
+    asked = equations === nothing ? String(something(get(sim, "solver", nothing), "ndf")) : String(equations.solver)
     # The quickest solver for what the model asks, unless the policy says to keep to its own.
-    solver_id = solver === nothing ? quicker_solver(asked) : solver
+    solver_id = equations !== nothing ? asked : solver === nothing ? quicker_solver(asked) : solver
     solve_fn = get(SOLVERS, solver_id, nothing)
     solve_fn === nothing && throw(ArgumentError(_unavailable_solver(solver_id)))
     prime_recorders!(sys, grid[1], y0)
@@ -239,7 +253,7 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     numeric = get(sim, "jacobian", nothing) == "numeric"
     opts = Dict{String,Any}(
         "rtol" => Float64(sim["rtol"]), "abstol" => abstol,
-        "jacobian" => jacobian_spec(sys, numeric),
+        "jacobian" => equations === nothing ? jacobian_spec(sys, numeric) : equations.jacobian,
         "non_negative" => collect(non_negative),
         "auto_abstol" => get(sim, "auto_abstol", false) === true,
         "hmax" => (something(get(sim, "max_step", nothing), 0) > 0) ? Float64(sim["max_step"]) : nothing,
@@ -290,9 +304,12 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     end
     min_change = py_float(something(get(sim, "min_change_time", nothing), 0))
     isfinite(min_change) || (min_change = 0.0)
-    f = RHSFunction((dy, t, y) -> (rhs!(sys, dy, t, y); nothing))
+    f = equations === nothing ? RHSFunction((dy, t, y) -> (rhs!(sys, dy, t, y); nothing)) :
+        RHSFunction((dy, t, y) -> (equations.dydt(dy, t, y); nothing))
+    on_segment = equations === nothing ? nothing : equations.on_segment
     function solve_span(grid2::Vector{Float64}, start::Vector{Float64})
         use_clock_interpolation!(sys, min_change, grid2[1])
+        on_segment === nothing || on_segment(grid2[1], min_change)
         start_segment!(sys, grid2[1], start)
         if has_events(sys)
             return solve_with_events(sys, f, solve_fn, grid2, start, opts)

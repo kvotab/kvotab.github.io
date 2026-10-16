@@ -21,6 +21,7 @@ const FILES = [
     "engine/farfield.jl",
     "engine/transport.jl",
     "engine/probabilistic.jl",
+    "engine/analyses.jl",
     "engine/scenarios.jl",
     "engine/split.jl",
     "engine/fast.jl",

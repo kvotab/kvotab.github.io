@@ -374,8 +374,11 @@ def model_derivative(system: Any, compiled: Any = 'auto') -> Any:
     numbers to the last bit) unless ``compiled`` is False or numba is
     missing -- ``compiled=True`` insists. The compiled arrays are brought up
     to date whenever a parameter has moved (the invariant pass has run) or
-    the clock interpolation has, and the clock is worked out afresh at each
-    call, since the Jacobian works the algebra out in Python in between."""
+    the clock interpolation has, their running means whenever a discrete
+    event has switched one (whether it records is what its integral's
+    derivative reads, and the events fire on the system's own recorders), and
+    the clock is worked out afresh at each call, since the Jacobian works the
+    algebra out in Python in between."""
     if compiled is False or compiled is None:
         return system.dydt, False
     try:
@@ -385,16 +388,27 @@ def model_derivative(system: Any, compiled: Any = 'auto') -> Any:
         if compiled is True:
             raise
         return system.dydt, False
-    seen: Dict[str, Any] = {'key': None}
+    seen: Dict[str, Any] = {'key': None, 'means': None}
+    means = [rec for rec in getattr(system, 'MEM', None) or [] if getattr(rec, 'kind', None) == 'running_mean']
+
+    def switched() -> tuple:
+        # What an event changes of a running mean; NaN made comparable.
+        return tuple((r.recording, *(v if v == v else 'NaN' for v in (r.total_time, r.last_time, r.reset_sum)))
+                     for r in means)
 
     def f(t: float, y: np.ndarray) -> np.ndarray:
         key = (system._invariant_version, system._min_change, system._origin)
+        now = switched()
         if key != seen['key']:
             if seen['key'] is None:
                 cm.load()
+                seen['means'] = now
             else:
                 cm.load_invariants()
             seen['key'] = key
+        if now != seen['means']:
+            cm.load_recorders()
+            seen['means'] = now
         cm.W[0] = math.nan
         return cm.derivative(t, y)
     return f, True

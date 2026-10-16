@@ -15,12 +15,25 @@ const SAMPLE_FORMAT = 1
 
 _sample_bytes(v::AbstractVector{T}) where {T<:Union{Float32,Float64}} = collect(reinterpret(UInt8, htol.(collect(v))))
 
-"""The run's statistics as the page reads them: a tornado's swung inputs counted from 0, as it counts them."""
+"""
+The run's statistics as the page reads them: a tornado's swung inputs, and the
+inputs of each of a sensitivity design's factors, counted from 0, as it counts them.
+"""
 function _sample_stats(stats::AbstractDict)
+    out = stats
     tornado = get(stats, "tornado", nothing)
-    (tornado isa AbstractDict && haskey(tornado, "swung")) || return stats
-    out = copy(stats)
-    out["tornado"] = merge(copy(tornado), Dict("swung" => Any[Int(k) - 1 for k in tornado["swung"]]))
+    if tornado isa AbstractDict && haskey(tornado, "swung")
+        out = copy(out)
+        out["tornado"] = merge(copy(tornado), Dict("swung" => Any[Int(k) - 1 for k in tornado["swung"]]))
+    end
+    gsa = get(stats, "gsa", nothing)
+    if gsa isa AbstractDict && get(gsa, "factors", nothing) isa AbstractVector
+        out = copy(out)
+        factors = Any[f isa AbstractDict && haskey(f, "members") ?
+                      merge(copy(f), Dict("members" => Any[Int(k) - 1 for k in f["members"]])) : f
+                      for f in gsa["factors"]]
+        out["gsa"] = merge(copy(gsa), Dict("factors" => factors))
+    end
     return out
 end
 

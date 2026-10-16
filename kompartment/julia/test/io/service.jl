@@ -106,31 +106,57 @@ end
     wait(server)
 end
 
-@testset "the analyses on the Julia engine, and those it leaves to the page" begin
+@testset "the analyses on the Julia engine" begin
     bio = read(joinpath(EXAMPLES, "biosphere.json"), String)
+    decay = read(joinpath(EXAMPLES, "exponential-decay.json"), String)
     dir = mktempdir()
-    job(id, kind, options) = K.json_text(Dict("op" => "job", "id" => id, "kind" => kind, "model" => bio,
-                                              "options" => options, "out" => joinpath(dir, "$id.zip")); indent=0)
+    job(id, kind, options; model=bio, out="$id.zip") =
+        K.json_text(Dict("op" => "job", "id" => id, "kind" => kind, "model" => model, "options" => options,
+                         "out" => joinpath(dir, out)); indent=0)
     lines = [
         job("t1", "probabilistic", Dict("seed" => 3, "tornado" => Dict("low" => 0.05, "high" => 0.95))),
         job("r1", "replay", Dict("index" => 5, "seed" => 11, "iterations" => 20)),
-        job("g1", "probabilistic", Dict("gsa" => Dict("method" => "morris", "options" => Dict()))),
-        job("c1", "calibrate", Dict()),
-        job("s1", "local-sensitivity", Dict("parameters" => ["leachRate[I-129]"])),
+        job("g1", "probabilistic", Dict("seed" => 4, "blocks" => ["Dose"],
+                                        "gsa" => Dict("method" => "morris",
+                                                      "options" => Dict("trajectories" => 2, "points" => 3)))),
+        job("c1", "calibrate", Dict("targets" => [Dict("output" => "y", "when" => "at", "time" => 2, "value" => 0.2)],
+                                    "variables" => [Dict("key" => "k", "lower" => 0.1, "upper" => 3)],
+                                    "method" => "lm", "maxEvals" => 40); model=decay, out="c1.json"),
+        job("s1", "local-sensitivity", Dict("parameters" => ["leachRate[I-129]"]); out="s1.json"),
+        job("e1", "calibrate", Dict("targets" => [], "variables" => []); model=decay, out="e1.json"),
     ]
     out = IOBuffer()
     K.serve_stdio(; input=IOBuffer(join(lines, "\n") * "\n"), output=out)
     events = [K.parse_json(l) for l in split(String(take!(out)), '\n') if !isempty(l)]
     ends = Dict(e["id"] => e for e in events if get(e, "event", "") in ("done", "error"))
-    @test ends["t1"]["event"] == "done" && ends["r1"]["event"] == "done"
+    @test all(ends[id]["event"] == "done" for id in ("t1", "r1", "g1", "c1", "s1"))
     # A tornado's swung inputs counted from 0, as the page counts them.
     meta = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "t1.zip")))["results/sample/meta.json"])))
     @test meta["iterations"] == 31 && meta["stats"]["tornado"]["swung"] == collect(0:14)
     # A realisation replayed, counted from 0 as well.
     replayed = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "r1.zip")))["results/meta.json"])))["replayed"]
     @test (replayed["index"], replayed["iterations"], length(replayed["values"])) == (5, 20, 15)
-    # What it does not do, said before anything runs, for the page to do itself.
-    for id in ("g1", "c1", "s1")
-        @test ends[id]["event"] == "error" && ends[id]["name"] == "NotOnThisEngine"
-    end
+    # A sensitivity design's runs, each factor's inputs counted from 0: the points
+    # are the design's, as the page draws it.
+    meta = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, "g1.zip")))["results/sample/meta.json"])))
+    @test meta["iterations"] == 6 && meta["stats"]["gsa"]["method"] == "morris"
+    @test [f["members"] for f in meta["stats"]["gsa"]["factors"]] == [[k] for k in 0:14]
+    proj = K.project(K.from_json(bio))
+    d = K.design_for(proj, K.build_system(proj); seed=4,
+                     gsa=Dict("method" => "morris", "options" => Dict("trajectories" => 2, "points" => 3)))
+    draws = K._ds_unzip(read(joinpath(dir, "g1.zip")))["results/sample/draws.f64"]
+    @test reinterpret(Float64, draws) == vec(permutedims(d.values))
+    # A calibration: each step's best said as it goes, and the answer as JSON.
+    @test any(e -> get(e, "id", "") == "c1" && e["event"] == "progress" && haskey(e, "detail") &&
+                   haskey(e["detail"], "best"), events)
+    c1 = K.parse_json(read(joinpath(dir, "c1.json"), String))
+    @test c1["matched"] && c1["method"] == "lm" && isapprox(c1["values"][1]["value"], log(5) / 2; rtol=1e-4)
+    # dy/dp: every state the page shows, with its derivative.
+    s1 = K.parse_json(read(joinpath(dir, "s1.json"), String))
+    @test [c["label"] for c in s1["chosen"]] == ["leachRate[I-129]"] && s1["stats"]["states"] == 32
+    @test length(s1["states"]) == 16 && s1["states"][1]["name"] == "Repository [I-129]"
+    @test length(s1["states"][1]["y"]) == length(s1["t"]) && length(s1["states"][1]["sens"]) == 1
+    # A calibration that cannot start says why.
+    @test ends["e1"]["event"] == "error" && ends["e1"]["name"] == "OptimiseError" &&
+          ends["e1"]["message"] == "No endpoint has been given a target value."
 end

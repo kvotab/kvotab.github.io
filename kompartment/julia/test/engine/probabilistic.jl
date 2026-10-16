@@ -237,7 +237,7 @@ const PROB_EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
     @test occursin("Probabilistic run: 20 realisations in ", text)
     # Nothing to draw: refused in the application's words.
     @test_throws ArgumentError K.run_probabilistic(K.load(joinpath(PROB_EXAMPLES, "decay-chain.json")), 5)
-    @test_throws ArgumentError K.run_probabilistic(m, 5; gsa=Dict("method" => "sobol"))
+    @test_throws ArgumentError K.run_probabilistic(m, 5; gsa=Dict("method" => "nope"))
     # A tornado: one central run, then each input low and high.
     tor = K.run_tornado(m; keep=["Dose"], threads=Threads.nthreads())
     @test tor.iterations == 2 * length(tor.plan) + 1

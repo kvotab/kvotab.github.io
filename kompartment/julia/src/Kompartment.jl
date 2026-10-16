@@ -87,6 +87,7 @@ include("stats/normal.jl")
 include("stats/pdf.jl")
 include("stats/sample.jl")
 include("stats/correlate.jl")
+include("stats/gsa_design.jl")
 
 # --- importing ------------------------------------------------------------------------
 include("importers/eco.jl")
@@ -113,6 +114,12 @@ include("io/save.jl")
 include("engine/probabilistic.jl")
 include("engine/analysis.jl")
 
+# --- the analyses that solve the model again: dy/dp and calibration ---------------------------
+include("engine/paramtangent.jl")
+include("engine/localsens.jl")
+include("stats/optimise.jl")
+include("engine/calibrate.jl")
+
 # --- the local server's engine: a probabilistic run as the archive holds one, and the service --
 include("io/sample.jl")
 include("service.jl")
@@ -131,9 +138,10 @@ export Model, Results, System, Project, from_json, to_json, save, simulation, se
        held_at_zero, dydt, initial_state, evaluate_algebraic!, import_ecolego, results_tree, write_hdf5,
        write_results_hdf5, run_scenarios, scenarios_tree, write_scenarios_hdf5, values_at_start, run_log,
        load_results, DatasetError,
-       run_probabilistic, run_tornado, run_realisation, ProbabilisticResults, realisations,
+       run_probabilistic, run_tornado, run_gsa, run_realisation, ProbabilisticResults, realisations,
        quantiles, realisations_mean, median_spread, bands, what_drove, tornado_table, probabilistic_tree,
-       write_probabilistic_hdf5
+       write_probabilistic_hdf5, run_sensitivity, elasticity, SensitivityError, calibrate, variables_of,
+       OptimiseError
 
 # The editing API. Left unexported for their generic names, reached as `Kompartment.name`
 # or as properties (`m.parameters`, `m.systems`, ...): check, update!, combinations,

@@ -27843,11 +27843,11 @@ test('the analyses go to the engine that has them, and come back as the page’s
 	// design is drawn here as a run here draws it, and every input the engine set
 	// is checked against it, since the analysis pairs each point's outputs with
 	// those inputs. A replayed realisation comes back as a run the engine holds.
-	// A calibration and dy/dp come back as the answers a solve here gives. What
-	// an engine does not do -- Julia has no sensitivity designs, calibration or
-	// dy/dp -- it refuses at once (NotOnThisEngine), and the page does it here,
-	// saying so. (Run against the engines by python/tests/test_service.py, whose
-	// node/worker_engine.mjs drives this worker, and julia/test/io/service.jl.)
+	// A calibration and dy/dp come back as the answers a solve here gives. Both
+	// engines do all of these; what an engine does not do it refuses at once
+	// (NotOnThisEngine), and the page does it here, saying so. (Run against the
+	// engines by python/tests/test_service.py, whose node/worker_engine.mjs drives
+	// this worker, and julia/test/io/service.jl.)
 	const { readFileSync } = await import('node:fs');
 	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');

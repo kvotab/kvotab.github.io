@@ -12,12 +12,16 @@
 # output, which carries nothing else -- what the engine prints goes to standard
 # error. A `run` job writes the model and its run as *Save with results* writes
 # them; a `probabilistic` one the model and the sample (`sample_archive`), or a
-# tornado's runs -- a sensitivity design is refused (`NotOnThisEngine`), and the
-# page runs it itself. A run asked to be kept (`"keep": true`) is held here, its
+# tornado's or a sensitivity design's runs; a `replay` one realisation of a
+# probabilistic run, as a run. A `calibrate` job searches for the values that meet
+# its targets (`calibrate`), saying each step's best as a progress `detail`, and a
+# `local-sensitivity` one integrates dy/dp (`run_sensitivity`); each writes its
+# answer as JSON. A run asked to be kept (`"keep": true`) is held here, its
 # archive without the states, and `series`, `archive` and `forget` ask about it,
 # answered on a task of their own beside the jobs. Each job is a task of its own:
 # the engine takes one a thread at once (`concurrent` in `ready`), and the server
-# sends it that many.
+# sends it that many. What this engine does not do it refuses before anything
+# runs (`NotOnThisEngine`), and the page does it itself.
 
 const _SERVICE_PROGRESS_EVERY = 0.1
 
@@ -102,9 +106,33 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
             _service_write_run(res, job, options, kept, kept_lock)
         elseif kind == "calibrate"
-            throw(NotOnThisEngine("Calibration is not on the Julia engine."))
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
+            # Each step's best, as JSON carries it to the page: a misfit that is not a number is null.
+            step = p -> tell("detail" => OrderedDict{String,Any}("evals" => p.evals, "fx" => p.fx, "best" => p.best,
+                                                                 "values" => p.values))
+            result = calibrate(m; targets=_service_option(options, "targets", nothing),
+                               variables=_service_option(options, "variables", nothing),
+                               method=_service_option(options, "method", nothing),
+                               max_evals=_service_option(options, "maxEvals", nothing),
+                               seed=_service_option(options, "seed", nothing), on_progress=step, signal=stopped)
+            stopped() && throw(_ServiceStopped())
+            write(string(job["out"]), json_text(result; indent=0))
         elseif kind == "local-sensitivity"
-            throw(NotOnThisEngine("Local sensitivity is not on the Julia engine."))
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
+            r = run_sensitivity(m, _service_option(options, "parameters", nothing);
+                                on_progress=(fraction, at) -> begin
+                                    tell("fraction" => Float64(fraction), "at" => Float64(at))
+                                    !stopped()
+                                end)
+            stopped() && throw(_ServiceStopped())
+            say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
+            # Every state the page shows, by its name, with its derivatives.
+            states = Any[OrderedDict{String,Any}("name" => s["label"], "y" => r.y[s["offset"]+1],
+                                                 "sens" => Any[block[s["offset"]+1] for block in r.sens])
+                         for s in r.series if !s["hidden"]]
+            write(string(job["out"]), json_text(OrderedDict{String,Any}("t" => r.t, "chosen" => r.chosen,
+                                                                        "stats" => r.stats, "states" => states);
+                                                indent=0))
         elseif kind == "replay"
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "solving"))
             varied = _service_option(options, "varied", nothing)
@@ -122,12 +150,11 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                                 for v in r.values])
             _service_write_run(r.results, job, options, kept, kept_lock; replayed)
         elseif kind == "probabilistic"
-            _service_option(options, "gsa", nothing) === nothing ||
-                throw(NotOnThisEngine("Sensitivity designs are not on the Julia engine."))
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "building"))
             blocks = _service_option(options, "blocks", nothing)
             varied = _service_option(options, "varied", nothing)
             tornado = _service_option(options, "tornado", nothing)
+            gsa = _service_option(options, "gsa", nothing)
             prob = run_probabilistic(m, Int(_service_option(options, "iterations", 100));
                 seed=Int(_service_option(options, "seed", 1)),
                 latin=_service_option(options, "latin", true) !== false,
@@ -135,7 +162,9 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                 keep=blocks === nothing || isempty(blocks) ? nothing : String[string(b) for b in blocks],
                 threads=clamp(Int(_service_option(options, "workers", Threads.nthreads())), 1, Threads.nthreads()),
                 large=_service_option(options, "large", false) === true,
+                # A tornado, or a sensitivity design, in place of a sample.
                 tornado=tornado === false ? nothing : tornado,
+                gsa=gsa === false ? nothing : gsa,
                 on_progress=(done, total) -> begin
                     stopped() && throw(_ServiceStopped())
                     tell("done" => Int(done), "total" => Int(total))
