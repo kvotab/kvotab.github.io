@@ -1,0 +1,88 @@
+# A probabilistic run as the application's archive holds one: `results/sample/`
+# beside the model, as src/io/dataset.js writes it (`sampleEntries`) and reads it
+# back (`readSample`, `sampleResult`). The local server's Julia engine hands a
+# probabilistic run to the page this way, and the page holds it as the sample it
+# is -- bands, histograms and *What drove it* worked out there from these numbers.
+
+const _DS_SAMPLE_DIR = "results/sample/"
+const _DS_SAMPLE_META = "results/sample/meta.json"
+const _DS_SAMPLE_T = "results/sample/t.f64"
+const _DS_SAMPLE_DRAWS = "results/sample/draws.f64"
+const _DS_SAMPLE_RAN = "results/sample/ran.u8"
+
+"""The sample's own format, bumped only as `DATASET_FORMAT` is."""
+const SAMPLE_FORMAT = 1
+
+_sample_bytes(v::AbstractVector{T}) where {T<:Union{Float32,Float64}} = collect(reinterpret(UInt8, htol.(collect(v))))
+
+"""
+    sample_entries(prob; stamp=nothing) -> Vector{Pair{String,Vector{UInt8}}}
+
+A probabilistic run as the entries of `results/sample/` (the application's
+`sampleEntries`): the kept series realisation after realisation, in the
+precision the run held them in, then each varied input's draws, which realisations
+integrated, and what it all is. The varied parameters are listed after the kept
+series as the page lists them (`flat`, with the column of draws each came from,
+counted from 0); they are not written as series, and come back from their draws.
+"""
+function sample_entries(r::ProbabilisticResults{T}; stamp=nothing) where {T}
+    n = r.iterations
+    times = length(r.t)
+    each = n * times
+    series = Vector{T}(undef, length(r.values) * each)
+    # A series is held a realisation to a row; the file has each realisation's
+    # times one after another.
+    for (j, m) in enumerate(r.values)
+        size(m) == (n, times) ||
+            throw(ArgumentError("series $j is $(size(m, 1)) × $(size(m, 2)), not $n × $times: a part of a run cannot be written as a sample"))
+        at = (j - 1) * each
+        for i in 1:n, k in 1:times
+            series[at+(i-1)*times+k] = m[i, k]
+        end
+    end
+    draws = vec(permutedims(r.samples))
+    outputs = Any[r.outputs...]
+    flat = Int[0 for _ in r.outputs]
+    drawn_from = Int[-1 for _ in r.outputs]
+    for inp in r.inputs
+        push!(outputs, inp["output"])
+        push!(flat, 1)
+        push!(drawn_from, Int(inp["k"]) - 1)
+    end
+    meta = OrderedDict{String,Any}(
+        "format" => SAMPLE_FORMAT,
+        "kind" => "kompartment-sample",
+        "stamp" => stamp,
+        "iterations" => n,
+        "times" => times,
+        "precision" => T === Float32 ? "float32" : "double",
+        "kept" => length(r.values),
+        "outputs" => outputs,
+        "flat" => flat,
+        "drawnFrom" => drawn_from,
+        "plan" => r.plan,
+        "stats" => r.stats,
+    )
+    return Pair{String,Vector{UInt8}}[
+        _DS_SAMPLE_META => Vector{UInt8}(codeunits(json_text(meta; indent=1))),
+        _DS_SAMPLE_T => _sample_bytes(r.t),
+        "$(_DS_SAMPLE_DIR)series.$(T === Float32 ? "f32" : "f64")" => _sample_bytes(series),
+        _DS_SAMPLE_DRAWS => _sample_bytes(draws),
+        _DS_SAMPLE_RAN => collect(UInt8, r.ran),
+    ]
+end
+
+"""
+    sample_archive(prob; project=nothing, inner=nothing, stamp=now, compress=true, modified=nothing) -> Vector{UInt8}
+
+The model and a probabilistic run of it as one archive: the model at the root
+(by default the one the run was made from), the sample under `results/sample/`.
+"""
+function sample_archive(r::ProbabilisticResults; project=nothing, inner=nothing, stamp=_ds_now(),
+                        compress::Bool=true, modified=nothing)
+    raw = project === nothing ? r.project.raw : project isa AbstractDict ? project : getproperty(project, :raw)
+    name = inner === nothing ? "$(slug(get(raw, "name", nothing))).json" : String(inner)
+    entries = Pair{String,Vector{UInt8}}[name => Vector{UInt8}(codeunits(json_text(raw; indent=2)))]
+    append!(entries, sample_entries(r; stamp))
+    return _ds_zip(entries; modified, compress)
+end

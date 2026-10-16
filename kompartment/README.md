@@ -14,6 +14,10 @@ python3 serve.py          # http://localhost:8080/
 (Do not open `index.html` by double-clicking. Browsers refuse to load ES
 modules from a `file://` page, so you get the toolbar and nothing behind it.)
 
+Served this way it can also solve runs on the Python engine in `python/` or the
+Julia one in `julia/`, chosen beside Run (`python3 serve.py --engine julia` to
+start on Julia): see *Solving on an engine on this machine* in the Guide.
+
 Published, it answers at two addresses: `kompartment.html` one level up frames
 it in the site's own header and footer, and this directory serves the same tool
 on its own. Two query parameters are what the difference is made of --

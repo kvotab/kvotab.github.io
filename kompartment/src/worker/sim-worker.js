@@ -44,7 +44,10 @@ import { runSensitivity, elasticity } from '../sim/localsens.js';
 import { checkJacobian, jacobianPattern } from '../sim/jaccheck.js';
 import { isScipySolver, loadScipy, scipyReady } from '../ode/scipy.js';
 import { SolverError } from '../ode/solvers/dormand-prince.js';
-import { layoutSignature, datasetEntries, restoreResults, sampleEntries, sampleResult } from '../io/dataset.js';
+import {
+	layoutSignature, datasetEntries, restoreResults, sampleEntries, sampleResult, readDataset, readSample,
+} from '../io/dataset.js';
+import { unzip } from '../io/zip.js';
 import {
 	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
 	wholeLayers,
@@ -779,6 +782,181 @@ async function runDesign(msg) {
 	});
 }
 
+/* ==========================================================================
+ * A RUN ON AN ENGINE ON THIS MACHINE
+ *
+ * Served by serve.py, the page can hand a run -- Run, and a probabilistic run
+ * -- to the Python engine or the Julia one instead of solving it here. The
+ * page says which with `msg.engine` ({name, token, client}); everything after
+ * the answer is as it would be had the run been made here, because what comes
+ * back is the archive *Save with results* writes, and this worker reads it the
+ * way it reads a file somebody opened: the run checked against the model's own
+ * build and held for the page to ask about, the sample held as a sample. So
+ * the chart, the table, the bands, *What drove it* and every export work on an
+ * engine's run unchanged.
+ * ======================================================================= */
+
+/** How often the job is asked about: a few times a second, which the bar needs and the server barely notices. */
+const ENGINE_POLL = 150;
+
+/** The job on an engine, while there is one: what a Stop has to reach. */
+let remote = null;
+
+const engineLabel = (engine) => (engine?.name === 'julia' ? 'Julia' : engine?.name === 'python' ? 'Python' : 'the');
+
+/** A fault of the engine or the server, rather than of the model. */
+function engineFault(engine, text) {
+	return Object.assign(new Error(`The ${engineLabel(engine)} engine ${text}.`), {
+		name: 'Engine',
+		hint: 'Is serve.py still running? Its window says what the engine printed; the browser '
+			+ 'engine, chosen beside Run, needs neither.',
+	});
+}
+
+/** What the engine said went wrong with the run, as the run's own error. */
+function engineError(said) {
+	return Object.assign(new Error(said?.message ?? 'The engine could not run the model.'), {
+		name: said?.name ?? 'Error', blockName: said?.block ?? null, hint: said?.hint ?? null,
+	});
+}
+
+/** Tells the server to stop the job, if there is one. Kept alive, since a Stop may be followed by this worker's end. */
+function stopRemote() {
+	if (!remote) return;
+	fetch(`/engine/jobs/${remote.job}/cancel`, {
+		method: 'POST', headers: { 'X-Kompartment-Token': remote.token }, keepalive: true,
+	}).catch(() => {});
+}
+
+/**
+ * A job on an engine, from asking to the archive it wrote: posted to the
+ * server, followed until it is done -- its stages and its progress said as a
+ * run here says them -- and its archive fetched and opened.
+ */
+async function engineArchive(msg, kind, options) {
+	const { id, engine } = msg;
+	const headers = { 'X-Kompartment-Token': engine.token };
+	const say = (stage) => self.postMessage({ type: 'loading', id, stage, detail: engine.name });
+	const aborted = () => new SolverError('Simulation aborted', 0);
+	say('engine-sending');
+	let res;
+	try {
+		res = await fetch('/engine/jobs', {
+			method: 'POST',
+			headers: { ...headers, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kind, engine: engine.name, client: engine.client, model: msg.project, options }),
+		});
+	} catch (e) {
+		throw engineFault(engine, `could not be reached (${e.message ?? e})`);
+	}
+	const asked = await res.json().catch(() => ({}));
+	if (!res.ok) throw engineFault(engine, `refused the run: ${asked.error ?? `the server answered ${res.status}`}`);
+	remote = { job: asked.id, token: engine.token };
+	let stage = null;
+	try {
+		for (;;) {
+			if (cancelled) throw aborted();
+			await new Promise((r) => setTimeout(r, ENGINE_POLL));
+			if (cancelled) throw aborted();
+			let s;
+			try {
+				s = await (await fetch(`/engine/jobs/${asked.id}`, { headers })).json();
+			} catch (e) {
+				throw engineFault(engine, `stopped answering (${e.message ?? e})`);
+			}
+			if (s.state === 'done') break;
+			if (s.state === 'cancelled') throw aborted();
+			if (s.state === 'error') throw engineError(s.error);
+			if (!s.state) throw engineFault(engine, `lost the run: ${s.error ?? 'the server no longer knows it'}`);
+			const now = s.state !== 'queued' ? `engine-${s.stage ?? 'starting'}`
+				: s.engineState === 'starting' || s.engineState === 'stopped' ? 'engine-starting' : 'engine-waiting';
+			if (now !== stage) {
+				stage = now;
+				say(now);
+			}
+			if (Number.isFinite(s.fraction)) {
+				self.postMessage({ type: 'progress', id, fraction: s.fraction, at: s.at ?? null });
+			} else if (s.total) {
+				self.postMessage({
+					type: 'progress', id, fraction: s.done / s.total, at: null, realisation: s.done, of: s.total,
+				});
+			}
+		}
+		say('engine-receiving');
+		const got = await fetch(`/engine/jobs/${asked.id}/archive`, { headers });
+		if (!got.ok) throw engineFault(engine, `kept no archive of the run (the server answered ${got.status})`);
+		return await unzip(await got.arrayBuffer());
+	} catch (e) {
+		if (cancelled) stopRemote();
+		throw e;
+	} finally {
+		remote = null;
+	}
+}
+
+/**
+ * A run on an engine, held as a run made here: the archive's numbers read
+ * against this worker's own build of the same model, which is the check every
+ * opened archive gets, and posted as `done`. With the engine's own log, which
+ * the page shows as the run's account; the timing is the engine's.
+ */
+async function runOnEngine(msg) {
+	const { id, project, engine } = msg;
+	const entries = await engineArchive(msg, 'run', {});
+	const data = readDataset(entries);
+	if (!data) throw engineFault(engine, 'sent back no run');
+	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+	const started = Date.now();
+	const results = restoreRun(project, data);
+	const timing = data.meta.timing ?? {};
+	results.timing = {
+		...timing,
+		buildMs: Number.isFinite(timing.buildMs) ? timing.buildMs : 0,
+		solveMs: Number.isFinite(timing.solveMs) ? timing.solveMs : 0,
+		readMs: Date.now() - started,
+		engine: engine.name,
+	};
+	const outputs = results.outputs();
+	// Which engine made these states, for a re-evaluation over them to say.
+	last = { id, results, outputs, rev: msg.rev ?? null, engine: engine.name };
+	self.postMessage({
+		type: 'done', id,
+		payload: { ...donePayload(results, outputs), engine: engine.name },
+		log: Array.isArray(data.meta.log) ? data.meta.log : null,
+	});
+}
+
+/** A probabilistic run on an engine, held as one made here. */
+async function probabilisticOnEngine(msg) {
+	const { id, project, engine } = msg;
+	const entries = await engineArchive(msg, 'probabilistic', {
+		iterations: msg.iterations,
+		seed: msg.seed,
+		latin: msg.latin !== false,
+		blocks: Array.isArray(msg.blocks) && msg.blocks.length ? msg.blocks : null,
+		varied: msg.varied ?? null,
+		large: msg.large === true,
+		// The reader's own number of cores, where they chose one; otherwise
+		// the engine's.
+		workers: Number.isFinite(msg.cores) ? msg.cores : null,
+	});
+	const sample = readSample(entries);
+	if (!sample) throw engineFault(engine, 'sent back no sample');
+	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+	const payload = holdSample(id, sampleResult(sample), project);
+	self.postMessage({ type: 'probabilistic-done', id, payload: { ...payload, engine: engine.name } });
+}
+
+/**
+ * A stored run read against the model it says it is of: built here, then
+ * checked against what the archive says its numbers mean. `restoreResults` is
+ * where the refusal lives; see ../io/dataset.js for why it is not optional.
+ */
+function restoreRun(project, data) {
+	const system = buildSystem(new Project(project));
+	return restoreResults({ project: new Project(project), system, data, Results });
+}
+
 /**
  * One sensitivity method's table for one output, and the ranking index over
  * time for the inputs that lead it.
@@ -997,6 +1175,9 @@ self.onmessage = async (ev) => {
 
 	if (msg.type === 'cancel') {
 		cancelled = true;
+		// A run on an engine is a job on the server, which is told now: this
+		// worker may be ended before the poll that would have told it.
+		stopRemote();
 		// The workers this one started, if any. A `cancel` reaches *this*
 		// worker while a pool is running -- it is awaiting messages, not
 		// solving -- which is the one moment it can do something about them.
@@ -1100,6 +1281,12 @@ self.onmessage = async (ev) => {
 		cancelled = false;
 		const { id, project } = msg;
 		try {
+			// A sample on an engine, where the page asked for one. A tornado
+			// or a sensitivity design is drawn here: their analyses live here.
+			if (msg.engine && !msg.tornado && !msg.gsa) {
+				await probabilisticOnEngine(msg);
+				return;
+			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const designed = await runDesign(msg);
 			if (!designed) return;
@@ -1916,12 +2103,8 @@ self.onmessage = async (ev) => {
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const started = Date.now();
 			// Built from the model in the archive, then checked against what
-			// the archive says its numbers mean. `restoreResults` is where the
-			// refusal lives; see ../io/dataset.js for why it is not optional.
-			const system = buildSystem(new Project(project));
-			const results = restoreResults({
-				project: new Project(project), system, data, Results,
-			});
+			// the archive says its numbers mean: see `restoreRun`.
+			const results = restoreRun(project, data);
 			results.timing = {
 				...(data.meta.timing ?? {}), buildMs: Date.now() - started, opened: true,
 			};
@@ -1994,9 +2177,13 @@ self.onmessage = async (ev) => {
 				timing: { ...kept.timing, buildMs: Date.now() - started, reused: true },
 			});
 			const outputs = results.outputs();
-			last = { id, results, outputs, rev: msg.rev ?? null };
+			// The states are still whichever engine's solved them, and the
+			// footer says so: only the algebra over them was worked out here.
+			const engine = last.engine ?? null;
+			last = { id, results, outputs, rev: msg.rev ?? null, engine };
 			self.postMessage({
-				type: 'done', id, reused: true, payload: donePayload(results, outputs),
+				type: 'done', id, reused: true,
+				payload: { ...donePayload(results, outputs), ...(engine ? { engine } : {}) },
 			});
 		} catch (e) {
 			// A model that will not build is a model that will not build --
@@ -2074,6 +2261,12 @@ self.onmessage = async (ev) => {
 	const { id, project } = msg;
 
 	try {
+		// On an engine on this machine, where the page asked for one: see
+		// `runOnEngine`.
+		if (msg.engine) {
+			await runOnEngine(msg);
+			return;
+		}
 		if (isScipySolver(project?.simulation?.solver) && !scipyReady()) {
 			await loadScipy({
 				onProgress: (stage, detail) => self.postMessage({

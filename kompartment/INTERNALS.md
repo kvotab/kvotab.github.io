@@ -5410,6 +5410,74 @@ the warnings now, which is all it has ever hidden. The heading says what else is
 in the list, since its own count is of problems -- nine rows under a heading
 that says three owes the other six.
 
+## Engines on this machine
+
+Served by `serve.py`, the page can solve Run and a probabilistic run on the
+Python engine or the Julia one instead of in the browser. The pieces:
+
+- **The page** asks `/engine/info` when `index.html` carries the server's token
+  (`<meta name="kompartment-engines">`, written in as the server serves it) and
+  shows the choice beside Run. `engineFor()` is what a run message carries:
+  `{name, token, client}`, or null for the browser. `--engine` wins over the
+  choice remembered in the browser (`kompartment.engine`) when it was given.
+- **The worker** sees `msg.engine` on `run` and on a `probabilistic` that is
+  not a tornado or a sensitivity design, and calls `runOnEngine` or
+  `probabilisticOnEngine`. Both post the job, poll it every 150 ms -- its
+  stages and progress posted as a run here posts them -- and fetch the archive
+  it wrote. A run is read with `readDataset` and `restoreRun`, the same function
+  an opened archive goes through, so its numbers are checked against this
+  worker's build of the same model by `layoutSignature`; a sample with
+  `readSample`, `sampleResult` and `holdSample`. After that it is a run made
+  here: `columns`, the bands, every analysis and every export answer from what
+  the worker holds.
+- **The server** keeps an `Engine` per engine: one process, started the first
+  time it is asked for (the default engine at once), a queue, and the job it is
+  on. A new job from the same page and of the same kind cancels the older one;
+  a job nobody has asked about for 30 s is cancelled (its page has gone); an
+  archive is handed over once and kept at most ten minutes.
+- **The engines** are `python3 -m kompartment.service` and
+  `Kompartment.serve_stdio()`: a line of JSON a message, jobs and cancels in,
+  `ready`/`stage`/`progress`/`done`/`error`/`cancelled` out on a standard
+  output that carries nothing else. A run is written as *Save with results*
+  writes it (each package's `dataset_archive`), a sample with the new
+  `sample_entries`, which writes the layout `sampleEntries` writes here:
+  Python's matrices are realisations × times and Julia's are too, so both are
+  flattened a realisation at a time, and Julia's 1-based input columns become
+  0-based `drawnFrom`.
+
+**Why an archive.** It is the one format the three code bases already write and
+read alike, and it carries its own check: an engine's run that did not describe
+this model's states would be refused exactly as a doctored file is. Measured on
+the examples: Python's run of `four-compartment.json` matches the browser's to
+1e-15 of each series' peak, Julia's (fast by default) to 1.7e-5; the two
+engines' samples of `biosphere.json` have identical draws -- the design is the
+same -- and series within 1.9e-5.
+
+**Stop.** The worker tells the server (`fetch(…, {keepalive: true})`, since the
+page may end the worker next) and the server tells the engine. A run stops at
+its next progress report -- Python through `signal`, Julia by returning `false`
+from `on_progress`. A probabilistic run stops at its next realisation, raised out
+of the progress callback; if the engine has not stopped 2 s later, the server
+ends the process, and the next job starts it again.
+
+**Reuse.** Pressing Run on an unchanged model works the algebra out again over
+the states held rather than solving (`re-evaluate`). Not across a change of
+engine: the reuse test includes `results.engine`, so choosing Julia and pressing
+Run is Julia's solve. A re-evaluation over an engine's states keeps saying which
+engine solved them.
+
+**Security.** The server listens on 127.0.0.1 only, and every request under
+`/engine/` must name it as it was started (`Host` -- a page elsewhere can point a
+name of its own at 127.0.0.1), come from it (`Origin`, where sent) and carry the
+token, compared in constant time. A model is code to an engine: without these,
+any page open in the same browser could post one.
+
+**Not done yet.** The whole run crosses as one archive, which on the largest
+assessment is over a hundred megabytes; fetching the series the page shows as it
+asks for them is the next step. So is moving the analyses -- tornado,
+sensitivity designs, local sensitivity, calibration -- to an engine that has
+them.
+
 ## Asking where a file goes
 
 Save… says *Asks where to put it.* under every kind of file. `saveFile` asks

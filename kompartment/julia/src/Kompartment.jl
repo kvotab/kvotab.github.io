@@ -113,6 +113,10 @@ include("io/save.jl")
 include("engine/probabilistic.jl")
 include("engine/analysis.jl")
 
+# --- the local server's engine: a probabilistic run as the archive holds one, and the service --
+include("io/sample.jl")
+include("service.jl")
+
 include("precompile.jl")
 
 function __init__()

@@ -33,6 +33,7 @@ const FILES = [
     "solvers/runtests.jl",
     "io/test_hdf5.jl",
     "io/dataset.jl",
+    "io/service.jl",
     "importers/test_eco.jl",
 ]
 

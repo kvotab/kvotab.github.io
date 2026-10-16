@@ -27646,6 +27646,68 @@ test('every file Save… writes asks where it goes, even one slower than the cli
 	assert(where === null && !w.asked.length && !w.downloads.length && !w.written.length, 'closing the window saved');
 });
 
+test('a run can be solved on an engine on this machine, and comes back as a run made here', async () => {
+	// Served by serve.py, the page hands Run and a probabilistic run to the
+	// Python or the Julia engine instead of solving them here. What comes back
+	// is the archive Save with results writes, read the way an opened file is
+	// read, so everything after the solve is the page's whichever engine
+	// solved it. (Run against the engines themselves by python/tests/
+	// test_service.py and julia/test/io/service.jl.)
+	const { readFileSync } = await import('node:fs');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	const fn = (src, name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src)?.[1] ?? '';
+
+	// The worker: Run, and a probabilistic run that is not a tornado's or a
+	// sensitivity design's, go to the engine when the page names one.
+	assert(/if \(msg\.engine\) \{\n\t\t\tawait runOnEngine\(msg\);\n\t\t\treturn;\n\t\t\}/.test(worker), 'Run never reaches an engine');
+	assert(/if \(msg\.engine && !msg\.tornado && !msg\.gsa\) \{\n\t\t\t\tawait probabilisticOnEngine\(msg\);/.test(worker),
+		'a probabilistic run never reaches an engine');
+	const ask = fn(worker, 'engineArchive');
+	assert(/fetch\('\/engine\/jobs', \{/.test(ask) && /'X-Kompartment-Token': engine\.token/.test(ask)
+		&& /fetch\(`\/engine\/jobs\/\$\{asked\.id\}\/archive`, \{ headers \}\)/.test(ask), 'the job is not asked for, or its archive not fetched');
+	assert(/if \(cancelled\) stopRemote\(\);/.test(ask) && /stopRemote\(\);\n/.test(worker.slice(worker.indexOf("if (msg.type === 'cancel') {"))),
+		'Stop does not reach the engine');
+	// Read as an opened archive is read: checked against this worker's own build.
+	const run = fn(worker, 'runOnEngine');
+	assert(/readDataset\(entries\)/.test(run) && /const results = restoreRun\(project, data\);/.test(run)
+		&& /payload: \{ \.\.\.donePayload\(results, outputs\), engine: engine\.name \}/.test(run)
+		&& /log: Array\.isArray\(data\.meta\.log\) \? data\.meta\.log : null/.test(run), 'an engine’s run is not held as a run made here');
+	assert(/const results = restoreRun\(project, data\);/.test(worker.slice(worker.indexOf("if (msg.type === 'open-dataset') {"))),
+		'an opened archive and an engine’s are not read the same way');
+	const prob = fn(worker, 'probabilisticOnEngine');
+	assert(/readSample\(entries\)/.test(prob) && /holdSample\(id, sampleResult\(sample\), project\)/.test(prob),
+		'an engine’s sample is not held as a sample made here');
+	// Algebra over an engine's states still says which engine solved them.
+	assert(/const engine = last\.engine \?\? null;/.test(worker), 'a re-evaluation forgets which engine solved the states');
+
+	// The page: the choice beside Run, shown only when the server says it has engines.
+	assert(/<select id="engine" class="engine-choice" aria-label="Where runs are solved" hidden>/.test(html), 'no choice beside Run');
+	const find = fn(app, 'findEngines');
+	assert(/meta\[name="kompartment-engines"\]/.test(find) && /fetch\('\/engine\/info'/.test(find), 'the page never asks for engines');
+	// An explicit --engine wins over what was chosen here last time.
+	assert(/const wanted = info\.explicit \? info\.default : stored;/.test(find), 'the server’s --engine does not say how a session starts');
+	assert(/engine: reuse \? null : engineFor\(\),/.test(app) && (app.match(/\t\tengine: engineFor\(\),\n/g) ?? []).length === 2,
+		'a run or a sample is not sent to the chosen engine');
+	// Another engine is another solve, not the last one's states again.
+	assert(/&& key === state\.runKey && \(state\.results\.engine \?\? null\) === \(engineFor\(\)\?\.name \?\? null\);/.test(app),
+		'Run after choosing another engine reuses the last engine’s states');
+	assert(/\['engine', p\.engine \? ENGINE_NAMES\[p\.engine\] \?\? p\.engine : null\]/.test(fn(app, 'setStatus')),
+		'the footer does not say which engine solved it');
+	assert(/'engine-solving': 'Solving on \{engine\}…',/.test(app), 'the bar does not say where it is solving');
+
+	// The server: this machine only, under its own name, with the page's token.
+	assert(/Server\(\("127\.0\.0\.1", port\), NoCacheHandler\)/.test(serve), 'the server listens beyond this machine');
+	const allowed = /def _allowed\(self\):([\s\S]*?)\n {4}def /.exec(serve)?.[1] ?? '';
+	assert(/self\.headers\.get\("Host"\) not in names/.test(allowed) && /origin not in/.test(allowed)
+		&& /secrets\.compare_digest\(self\.headers\.get\("X-Kompartment-Token", ""\), TOKEN\)/.test(allowed),
+	'the engines answer a page this server did not serve');
+	assert(/"-m", "kompartment\.service"/.test(serve) && /"--threads=auto,1"/.test(serve)
+		&& /Kompartment\.serve_stdio\(\)/.test(serve), 'the engines are not started as their services');
+});
+
 test('a table is pictured the way it is read', async () => {
 	const { sparkPath } = await import('../src/ui/lookup-editor.js');
 	const { makeTable } = await import('../src/domain/lookup.js');
@@ -41262,7 +41324,9 @@ test('a sample too large for double is held as float32, and past a gigabyte runs
 	assert(/const needsYes = !tooBig && size\.bytes > MOST_BYTES;/.test(dialog) && /disabled: tooBig \|\| \(needsYes && !large\),/.test(dialog)
 		&& /large: needsYes && large,/.test(dialog), 'the dialog does not ask');
 	assert(/large: choice\.large === true,/.test(app), 'the answer does not leave the page');
-	assert((worker.match(/large: (msg|only)\.large === true,/g) ?? []).length === 3, 'a slice runs without the answer');
+	// Three places a slice is run here, and the fourth hands the sample to an
+	// engine on this machine (`probabilisticOnEngine`).
+	assert((worker.match(/large: (msg|only)\.large === true,/g) ?? []).length === 4, 'a slice runs without the answer');
 });
 
 test('influences reach the blocks that read the model through settings, and show for none, all or the selection', async () => {

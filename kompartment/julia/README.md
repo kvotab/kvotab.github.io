@@ -221,6 +221,17 @@ it -- a run is a table, a `time` column and one per series:
 `DataFrame(res)`, or `DataFrame(Kompartment.table(res, outputs(res, "Soil")))`
 for some of them.
 
+A probabilistic run goes into an archive beside its model as the application's
+*Model with results* carries one (`results/sample/`), and opens there as the
+sample it was: `write("run.zip", Kompartment.sample_archive(prob))`.
+
+The application's `serve.py` can hand the page's runs to this package instead of
+solving them in the browser. It starts
+`julia --project=julia --threads=auto,1 -e 'using Kompartment; Kompartment.serve_stdio()'`
+once and keeps it; the protocol is the Python package's (`kompartment.service`),
+and the interactive thread is where a cancel is heard while every other thread
+solves.
+
 ## The built model
 
 ```julia

@@ -64,7 +64,8 @@ from .xlsx import _zip
 
 __all__ = ['FORMAT', 'DIR', 'META', 'DatasetError', 'layout_signature', 'dataset_entries', 'is_dataset',
            'read_dataset', 'rows_of', 'restore_results', 'describe_dataset', 'unzip', 'dataset_archive',
-           'write_dataset', 'read_archive', 'load_results']
+           'write_dataset', 'read_archive', 'load_results', 'SAMPLE_DIR', 'SAMPLE_FORMAT', 'sample_entries',
+           'sample_archive', 'write_sample_archive']
 
 #: Bumped only for a change that an older reader could not make sense of.
 FORMAT = 1
@@ -79,6 +80,17 @@ _MEM = f'{DIR}mem.f64'
 
 #: The most a whole archive may expand to, as the application's reader allows.
 MAX_INFLATED = 256 * 1024 * 1024
+
+#: Where a probabilistic run lives inside the archive, when it carries one
+#: (``SAMPLE_DIR`` in the application's src/io/dataset.js).
+SAMPLE_DIR = f'{DIR}sample/'
+_SAMPLE_META = f'{SAMPLE_DIR}meta.json'
+_SAMPLE_T = f'{SAMPLE_DIR}t.f64'
+_SAMPLE_DRAWS = f'{SAMPLE_DIR}draws.f64'
+_SAMPLE_RAN = f'{SAMPLE_DIR}ran.u8'
+
+#: The sample's own format, bumped only as ``FORMAT`` is.
+SAMPLE_FORMAT = 1
 
 #: The Python engine's names for what the application calls otherwise.
 _STATS_NAMES = {'solver_points': 'solverPoints', 'thinned_by': 'thinnedBy', 'steps_by': 'stepsBy',
@@ -750,6 +762,97 @@ def dataset_archive(results: Any, *, project: Any = None, inner: Optional[str] =
 def write_dataset(results: Any, path: Union[str, Path], **options: Any) -> bytes:
     """Writes :func:`dataset_archive` to ``path`` and returns the bytes."""
     data = dataset_archive(results, **options)
+    Path(path).write_bytes(data)
+    return data
+
+
+def _plain_only(v: Any) -> Any:
+    """A value as ``JSON.stringify(v, plainOnly)`` sees it in the application's
+    sample writer: functions dropped, and a typed array dropped too -- which in
+    Python is any ndarray that is not a plain list of what a design holds. A
+    list of numbers here is a list of numbers there, so arrays are written as
+    lists rather than lost."""
+    if isinstance(v, np.ndarray):
+        return [_plain_only(x) for x in v.tolist()]
+    if isinstance(v, Mapping):
+        out = {}
+        for k, x in v.items():
+            p = _plain_only(x)
+            if p is not _DEFAULT:
+                out[k if isinstance(k, str) else js_string(k)] = p
+        return out
+    if isinstance(v, (list, tuple)):
+        return [None if p is _DEFAULT else p for p in (_plain_only(x) for x in v)]
+    return _plain(v)
+
+
+def sample_entries(result: Any, *, stamp: Optional[str] = None) -> List[Dict[str, Any]]:
+    """A probabilistic run as the entries of ``results/sample/`` (the
+    application's ``sampleEntries``): what the page reads back as the sample
+    the run was, in the precision it was held in.
+
+    ``result`` is a :class:`kompartment.engine.probabilistic.ProbabilisticResults`.
+    The varied parameters are put beside the kept series first, as the page puts
+    them (:func:`kompartment.engine.analysis.with_inputs`, which is idempotent):
+    only the kept series are written as series, and a varied one comes back
+    from its draws."""
+    from ..engine.analysis import with_inputs
+    result = with_inputs(result)
+    n = int(result.iterations)
+    t = np.asarray(result.t, dtype='<f8')
+    each = n * t.size
+    flat = [int(x) for x in result.flat]
+    kept = [k for k in range(len(result.values)) if not flat[k]]
+    single = any(np.asarray(result.values[k]).dtype == np.float32 for k in kept)
+    precision = 'float32' if single else 'double'
+    held = '<f4' if single else '<f8'
+    series = (np.concatenate([np.asarray(result.values[k], dtype=held).reshape(-1)[:each] for k in kept])
+              if kept else np.zeros(0, dtype=held))
+    draws = (np.concatenate([np.asarray(s, dtype='<f8').reshape(-1)[:n] for s in result.samples])
+             if len(result.samples) else np.zeros(0, dtype='<f8'))
+    ran = (np.ones(n, dtype=np.uint8) if result.ran is None
+           else np.asarray(result.ran, dtype=np.uint8).reshape(-1)[:n])
+    meta = {
+        'format': SAMPLE_FORMAT,
+        'kind': 'kompartment-sample',
+        'stamp': stamp,
+        'iterations': n,
+        'times': int(t.size),
+        'precision': precision,
+        'kept': len(kept),
+        'outputs': result.outputs,
+        'flat': flat,
+        'drawnFrom': [int(x) for x in result.drawn_from],
+        'plan': result.plan,
+        'stats': result.stats or {},
+    }
+    return [
+        {'name': _SAMPLE_META, 'bytes': _utf8(dumps(_plain_only(meta), 1))},
+        {'name': _SAMPLE_T, 'bytes': t.tobytes()},
+        {'name': f"{SAMPLE_DIR}series.{'f32' if single else 'f64'}", 'bytes': np.ascontiguousarray(series).tobytes()},
+        {'name': _SAMPLE_DRAWS, 'bytes': np.ascontiguousarray(draws).tobytes()},
+        {'name': _SAMPLE_RAN, 'bytes': ran.tobytes()},
+    ]
+
+
+def sample_archive(result: Any, *, project: Any, inner: Optional[str] = None, stamp: Any = _DEFAULT,
+                   compress: bool = True, modified: Any = None) -> bytes:
+    """The model and a probabilistic run of it, as one archive: the model at
+    the root, the sample under ``results/sample/``. The page reads the sample
+    out of it (``readSample``) and holds it as the run it is; the local
+    server's engines hand a probabilistic run back this way."""
+    raw = _project_dict(project)
+    name = f"{slug(raw.get('name'))}.json" if inner is None else inner
+    if stamp is _DEFAULT:
+        stamp = _iso_now()
+    entries = sample_entries(result, stamp=stamp)
+    return _zip([(name, _utf8(dumps(raw, 2))), *((e['name'], e['bytes']) for e in entries)],
+                modified=modified, compress=compress)
+
+
+def write_sample_archive(result: Any, path: Union[str, Path], **options: Any) -> bytes:
+    """Writes :func:`sample_archive` to ``path`` and returns the bytes."""
+    data = sample_archive(result, **options)
     Path(path).write_bytes(data)
     return data
 

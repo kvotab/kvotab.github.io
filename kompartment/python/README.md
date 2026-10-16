@@ -448,6 +448,23 @@ application's own numbers comes out the same byte for byte, an archive
 written here opens in the application with the run in place and one written
 there opens here, and the data files go both ways.
 
+A probabilistic run goes into an archive beside its model too, as the
+application's *Model with results* carries one (`results/sample/`), and opens
+there as the sample it was:
+
+```python
+from kompartment.io.dataset import write_sample_archive
+write_sample_archive(m.run_probabilistic(iterations=1000), 'run.zip', project=m.raw)
+```
+
+### The engine behind serve.py
+
+The application's `serve.py` can hand the page's runs to this package instead
+of solving them in the browser. It starts `python3 -m kompartment.service` once
+and keeps it: a line of JSON a message, jobs and cancels in on standard input,
+progress and what became of each job out on standard output, and each run
+written as the archive above. See the module's notes for the protocol.
+
 ### Importing
 
 ```python

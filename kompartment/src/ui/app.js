@@ -1496,8 +1496,10 @@ function runSimulation(opts = {}) {
 		// worker checks the state layout before it trusts this and says so if
 		// it will not.
 		const key = state.integrationKey;
+		// Not across a change of engine: Run with another one chosen is a
+		// request for that engine's solve, not for the last one's states.
 		const reuse = !!key && !!state.results && !state.results.detached
-			&& key === state.runKey;
+			&& key === state.runKey && (state.results.engine ?? null) === (engineFor()?.name ?? null);
 		state.reusing = reuse;
 		ensureWorker().postMessage({
 			type: reuse ? 're-evaluate' : 'run',
@@ -1507,6 +1509,9 @@ function runSimulation(opts = {}) {
 			// `splitShare`.
 			cores: splitShare(),
 			workers: workerLimit(),
+			// Solved on an engine on this machine, where one is chosen. Not a
+			// re-evaluation: that is algebra over states already here.
+			engine: reuse ? null : engineFor(),
 		});
 		// And the scenarios chosen to run beside this one, each in a worker of
 		// its own. Not for a preview: that is this scenario at values the model
@@ -2156,6 +2161,7 @@ function startProbabilistic(choice) {
 		// Said in the dialog: hold a sample past what every machine can give
 		// a tab. See MOST_BYTES_ASKED in ../sim/probabilistic.js.
 		large: choice.large === true,
+		engine: engineFor(),
 	});
 }
 
@@ -2179,7 +2185,7 @@ function acceptReuseRefused(m) {
 	state.integrationKey = null;
 	ensureWorker().postMessage({
 		type: 'run', id: state.runId, rev: state.rev, project: state.project.toJSON(),
-		cores: splitShare(), workers: workerLimit(),
+		cores: splitShare(), workers: workerLimit(), engine: engineFor(),
 	});
 }
 
@@ -3174,6 +3180,79 @@ function fmtClock(t) {
  * it is replaced by a word about what is actually happening, and the bar goes
  * indeterminate.
  */
+/* ---------------------------------------------------------------------------
+ * Engines on this machine
+ *
+ * Served by serve.py, the page can solve a run -- Run, and a probabilistic
+ * run -- on the Python engine or the Julia one instead of in the browser. The
+ * server says so by writing a token into the page (`kompartment-engines`),
+ * which every request to it carries. The choice sits beside Run, and is
+ * remembered in this browser as a convenience (`kompartment.engine`): it is a
+ * property of the machine, not of a model, so it is never saved with one.
+ * What comes back is held as a run made here (see `runOnEngine` in the
+ * worker), so everything after the solve -- the chart, the table, the bands,
+ * the analyses, the exports -- is the browser's, whichever engine solved it.
+ */
+const ENGINE_KEY = 'kompartment.engine';
+
+/** What each engine is called in a sentence: `Solving on Julia…`. */
+const ENGINE_NAMES = { browser: 'the browser', python: 'Python', julia: 'Julia' };
+
+/** What each is called in the choice beside Run, which reads on from the button: Run on Julia. */
+const ENGINE_CHOICES = { browser: 'in the browser', python: 'on Python', julia: 'on Julia' };
+
+const engines = {
+	token: null,
+	info: null,
+	chosen: 'browser',
+	// This tab, to the server: a new run of a kind replaces this tab's last
+	// one, as a new run in the browser does.
+	client: Math.random().toString(36).slice(2),
+};
+
+/** Asks the server which engines it has, when it is the one that served this page. */
+async function findEngines() {
+	const token = document.querySelector('meta[name="kompartment-engines"]')?.content;
+	if (!token) return;
+	engines.token = token;
+	let info = null;
+	try {
+		const res = await fetch('/engine/info', { headers: { 'X-Kompartment-Token': token } });
+		if (res.ok) info = await res.json();
+	} catch { /* no server, no engines */ }
+	if (!info?.engines) return;
+	engines.info = info;
+	let stored = null;
+	try { stored = localStorage.getItem(ENGINE_KEY); } catch { /* not kept: fine */ }
+	const usable = (name) => name === 'browser' || !!info.engines[name]?.available;
+	// The server's --engine, where it was given, is how this session was meant
+	// to start; otherwise the last choice made here.
+	const wanted = info.explicit ? info.default : stored;
+	engines.chosen = usable(wanted) ? wanted : usable(info.default) ? info.default : 'browser';
+	renderEngineChoice();
+}
+
+function renderEngineChoice() {
+	const sel = $('#engine');
+	if (!sel || !engines.info) return;
+	sel.hidden = false;
+	for (const opt of sel.options) {
+		const e = engines.info.engines[opt.value];
+		opt.disabled = opt.value !== 'browser' && !e?.available;
+		// Why it cannot be chosen, in the list itself: a greyed entry that
+		// does not say why is a question.
+		opt.textContent = ENGINE_CHOICES[opt.value] + (opt.disabled ? ` — ${e?.why ?? 'not here'}` : '');
+	}
+	sel.value = engines.chosen;
+}
+
+/** The engine a run goes to, as the worker takes it; null for the browser. */
+function engineFor() {
+	if (!engines.token || engines.chosen === 'browser') return null;
+	if (!engines.info?.engines[engines.chosen]?.available) return null;
+	return { name: engines.chosen, token: engines.token, client: engines.client };
+}
+
 const LOADING_STAGE = {
 	runtime: 'Downloading Python (first SciPy run only)…',
 	packages: 'Downloading NumPy and SciPy…',
@@ -3186,6 +3265,15 @@ const LOADING_STAGE = {
 	// output point. Its own word, because "building" through the first minute
 	// of a solve is the label that made a slow model look like a stuck one.
 	solving: 'Solving…',
+	// On an engine on this machine (see `engineFor`): `{engine}` is its name.
+	'engine-sending': 'Sending the model to {engine}…',
+	'engine-starting': 'Starting {engine}…',
+	'engine-waiting': 'Waiting for {engine} to finish the run before this one…',
+	'engine-building': 'Building the model on {engine}…',
+	'engine-solving': 'Solving on {engine}…',
+	'engine-writing': '{engine} is writing the results…',
+	'engine-receiving': 'Fetching the results from {engine}…',
+	'engine-reading': 'Reading the results from {engine}…',
 };
 
 function setLoadingStage(stage, detail) {
@@ -3201,8 +3289,10 @@ function setLoadingStage(stage, detail) {
 	bar.removeAttribute('value');
 	bar.setAttribute('data-loading', stage);
 	const pool = poolNote(state.pool);
-	text.textContent = (LOADING_STAGE[stage] ?? String(stage)) + (pool.text ? ` · ${pool.text}` : '');
-	text.title = detail || pool.title;
+	const engine = String(stage).startsWith('engine-');
+	const words = (LOADING_STAGE[stage] ?? String(stage)).replace('{engine}', ENGINE_NAMES[detail] ?? 'the engine');
+	text.textContent = words + (pool.text ? ` · ${pool.text}` : '');
+	text.title = engine ? pool.title : (detail || pool.title);
 }
 
 /**
@@ -4460,11 +4550,15 @@ function runLogFor() {
 	if (!r) return '';
 	const parts = [];
 	if (r.storedLog?.length) {
-		parts.push('--- as saved with the results ---', ...r.storedLog, '', '--- on opening ---');
+		parts.push(r.engine
+			? `--- as ${ENGINE_NAMES[r.engine] ?? r.engine} made the run ---`
+			: '--- as saved with the results ---', ...r.storedLog, '', r.engine ? '--- as this page reads it ---' : '--- on opening ---');
 	}
 	parts.push(...runLogLines({ project: state.raw, payload: r, replayed: r.replayed ?? null, build: BUILD }));
 	parts.push(...scenarioLogLines(ed.activeScenario(state.raw), scenarioRunsNow()));
-	parts.push(...probabilisticLogLines(currentProb()));
+	const prob = currentProb();
+	if (prob?.engine) parts.push(`The probabilistic run below was made on ${ENGINE_NAMES[prob.engine] ?? prob.engine}.`);
+	parts.push(...probabilisticLogLines(prob));
 	if (state.tornado && state.tornado.rev === state.rev) {
 		parts.push(...probabilisticLogLines({
 			iterations: state.tornado.points, stats: state.tornado.stats, plan: null, screen: null,
@@ -4928,6 +5022,8 @@ function setStatus(p) {
 					? 'no compartments — algebraic blocks only'
 					: 'no compartments — constants only']
 			: ['solver', solverLabel(s.solver)],
+		// Where it was solved, when that was not here.
+		['engine', p.engine ? ENGINE_NAMES[p.engine] ?? p.engine : null],
 		['states', evaluated ? null : p.stateCount], ['steps', s.nsteps],
 		['rejected', s.nfailed], ['f evals', s.nfevals],
 		// The switching solver: which of its methods took the steps, and how
@@ -14938,6 +15034,7 @@ function runAppSample() {
 		workers: workerLimit(),
 		cores: chosenCores(),
 		large: false,
+		engine: engineFor(),
 	});
 	paintAppStatus();
 }
@@ -15629,6 +15726,14 @@ export function boot() {
 			selectTab(next.dataset.tab);
 		});
 	}
+
+	// Where runs are solved, where the server that served the page has engines.
+	$('#engine').addEventListener('change', (e) => {
+		engines.chosen = e.target.value;
+		try { localStorage.setItem(ENGINE_KEY, engines.chosen); } catch { /* not kept: fine */ }
+		flash(`Runs are solved ${ENGINE_CHOICES[engines.chosen]} from now on.`, 'info');
+	});
+	findEngines();
 
 	$('#autorun').addEventListener('change', (e) => {
 		state.autoRun = e.target.checked;

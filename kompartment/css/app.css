@@ -2290,6 +2290,9 @@ footer #status {
 /* The run's wall clock: when it started, and how long it has taken. */
 #run-clock { white-space: nowrap; color: var(--text-secondary); }
 
+/* Where a run is solved, beside Run: a word or two, so the header keeps its room. */
+.engine-choice { font-size: 12px; padding: 3px 4px; max-width: 18em; }
+
 .foot-progress progress {
 	width: 150px;
 	height: 6px;

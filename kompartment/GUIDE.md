@@ -70,6 +70,47 @@ about what the program is. The commonest symptom is a solver the list offers but
 the engine will not run, and that one now says so in as many words rather than
 reporting an unknown solver.
 
+### Solving on an engine on this machine
+
+`serve.py` can also hand a run to the Python engine (`python/`) or the Julia one
+(`julia/`) on the same machine, instead of solving it in the browser. Where
+either can be started, a choice appears beside **Run** — *in the browser*, *on
+Python*, *on Julia* — and every Run and every probabilistic run after that is
+solved where it says:
+
+```sh
+python3 serve.py 8080 --engine julia     # the page starts on Julia
+python3 serve.py 8080 --no-julia         # the browser and Python only
+```
+
+`--engine` says which the page starts on; without it, the page starts on the one
+last chosen in this browser. `--python PATH` and `--julia PATH` say which
+interpreter to use. The Python engine needs NumPy and SciPy, and the Julia one
+its package in `julia/`, which compiles the first time it starts after a change
+— about a minute, said on the bar as *Starting Julia…*. The server's window
+says which engines it found, and why not the others.
+
+The run comes back as the archive **Save → Model with results** writes, and the
+page reads it as it reads such a file: the run is checked against the model, and
+the chart, the table, the bands, *What drove it* and every export work on it as
+on a run made in the browser. The footer says which engine solved it, and the
+run log starts with the engine's own account of the run. **Stop** reaches the
+engine too: a run stops at its next progress report, a probabilistic run at its
+next realisation — or, where that takes more than a couple of seconds, the
+engine is ended, and started again for the next run.
+
+What stays in the browser: a tornado and a sensitivity design, whose analyses
+live there; a replayed realisation; the scenarios run beside the chosen one; and
+an edit that changes no state, whose algebra is worked out over the states
+already held. Pressing **Run** after choosing another engine solves again on
+that one. The results agree with the browser's to the solver's tolerance, not
+to the last digit: each engine has arithmetic of its own.
+
+Only this page may ask. The server writes a token into the page it serves, and
+a request to an engine has to carry it, come from this machine and name the
+server as it was started — any other web page open in the same browser could
+otherwise send an engine a model to run.
+
 **Notices** — what just happened, why an edit was refused, that the block you
 clicked is not drawn on this diagram — appear as a panel over the bottom of the
 window, above the footer, and go after a few seconds (longer for a warning, and

@@ -106,6 +106,14 @@
 		<button id="run" class="primary" type="button" title="Run the simulation (Cmd/Ctrl+Enter)">
 			Run<span id="dirty" class="dot-dirty" aria-hidden="true"></span>
 		</button>
+		<!-- Where a run is solved: in the browser, or -- served by serve.py --
+		     on the Python or the Julia engine on this machine. Shown only when
+		     the server says it has engines; see findEngines in app.js. -->
+		<select id="engine" class="engine-choice" aria-label="Where runs are solved" hidden>
+			<option value="browser">in the browser</option>
+			<option value="python">on Python</option>
+			<option value="julia">on Julia</option>
+		</select>
 		<button id="theme" class="ghost" type="button" title="Cycle light / dark / system">◐</button>
 	</header>
 
