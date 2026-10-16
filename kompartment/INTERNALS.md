@@ -2672,12 +2672,17 @@ they are narrow beside every response spacing they will still meet (`RHO`),
 so it stays about as long as the response's own grid: 2,200 blocks over three
 slots after 10⁵ steps. Two records at one instant are a step in the inflow; a
 jump of what is held between them is an amount delivered at once. The Python
-engine keeps a source's blocks in arrays that grow by doubling, and with numba
-sums the history, records each piece and merges blocks in kernels of its own
-(`_nb_history`, `_nb_piece`, `_nb_compact` in `engine/farfield_semi.py`): twins
-of its Python and numpy path to the bit, numpy's pairwise sum ported and every
-power taken from the C library's pow as Python takes it, since a power whose
-exponent numba knows at compile time can become multiplications. The records
+engine keeps a source's blocks in arrays that grow by doubling. With numba, a
+path's sources are rows of one set of arrays (`_Sources` in
+`engine/farfield_semi.py`: last records, blocks, impulses, and the responses
+end to end), and an instant is recorded, every history summed and the step
+worked out for all of them in a compiled call each (`_nb_push_all`,
+`_nb_histories`, `_nb_parts`): twins of the Python and numpy path to the bit,
+numpy's pairwise sum ported and every power taken from the C library's pow as
+Python takes it, since a power whose exponent numba knows at compile time can
+become multiplications. A path with point masses sums its histories a source at
+a time, the point masses reaching back into the records added between them as
+the Python path adds them. The records
 also travel in `MEM` (as `farfield_inflow` holders), so a run saved with its
 data and read back sweeps the convolution forward again.
 

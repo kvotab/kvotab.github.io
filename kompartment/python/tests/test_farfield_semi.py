@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import copy
 import math
+import types
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Dict, Iterator, List, Tuple
 
 import numpy as np
@@ -425,6 +426,38 @@ def kernels_of_a_chain() -> List[FS.Kernel]:
     return [FS.Kernel(L.unit_response(path, i, 0, t_max=4e3)) for i in (0, 1)]
 
 
+def kernel_of_plug_flow() -> FS.Kernel:
+    """A response under plug flow, with its point mass a hair after the delay."""
+    path = L.prepare_path({'surface': 'aw', 'aw': 0.3922, 'tw': 50.27, 'rho_m': 2700, 'pe': math.inf,
+                           'pen_dep': math.inf, 'kd_f': 0, 'eps_m': 1.888e-4, 'kd_m': 0, 'de_m': 1.508e-6},
+                          L.decay_table([math.log(2) / 8.216e5]))
+    return FS.Kernel(L.unit_response(path, 0, 0, t_max=2e4))
+
+
+def both_kinds(rows: List[List[Dict[str, Any]]]) -> Tuple[List[Any], List[Any]]:
+    """Convolvers for the same sources, in Python and compiled (rows of one ``_Sources``)."""
+    src = FS._Sources(rows)
+    return ([FS.Convolver(targets) for targets in rows],
+            [FS._CompiledConvolver(targets, FS._compiled(), src, slot) for slot, targets in enumerate(rows)])
+
+
+def recorded(cvs: List[Any], seed: int, count: int) -> List[float]:
+    """The same made-up records pushed into every convolver, with steps and point
+    impulses among them: their times."""
+    rng = np.random.default_rng(seed)
+    # Steps from a tenth of a year to twenty, past the responses' reach.
+    times = np.cumsum(10 ** rng.uniform(-1, 1.3, count)).tolist()
+    values = (rng.standard_normal((count, len(cvs))) * 10 ** rng.uniform(-3, 1, (count, len(cvs)))).tolist()
+    for q, t in enumerate(times):
+        for k, cv in enumerate(cvs):
+            cv.push(t, values[q][k])
+            if q % 97 == 0:
+                cv.push(t, -values[q][k])  # a second value at the same instant: a step
+            if q % 331 == 0:
+                cv.impulse(t, values[q][k])
+    return times
+
+
 def same_bits(a: Any, b: Any) -> bool:
     return np.asarray(a, dtype=float).tobytes() == np.asarray(b, dtype=float).tobytes()
 
@@ -451,14 +484,10 @@ class SemiCompiled(unittest.TestCase):
 
     def test_a_sources_blocks_and_history_are_the_same_to_the_bit(self) -> None:
         targets = [{'i': i, 'kern': k} for i, k in enumerate(kernels_of_a_chain())]
-        with without_kernels():
-            py = FS.Convolver(targets)
-        nb = FS.Convolver(targets)
-        self.assertIsNone(py._kernels)
-        self.assertIsNotNone(nb._kernels)
+        (py,), (nb,) = both_kinds([targets])
+        src = nb._src
         rng = np.random.default_rng(3)
-        # Steps from a tenth of a year to twenty, past the responses' reach: blocks of one
-        # piece narrow and wide, merged, and dropped once nothing reaches them.
+        # Blocks of one piece narrow and wide, merged, and dropped once nothing reaches them.
         times = np.cumsum(10 ** rng.uniform(-1, 1.3, 3000)).tolist()
         values = (rng.standard_normal(3000) * 10 ** rng.uniform(-3, 1, 3000)).tolist()
         for q, (t, v) in enumerate(zip(times, values)):
@@ -471,16 +500,79 @@ class SemiCompiled(unittest.TestCase):
             if q % 50 == 0 or q == len(times) - 1:
                 n = py.n
                 self.assertEqual(n, nb.n, q)
-                for name in ('_C', '_W', '_M', '_S', '_E'):
-                    self.assertEqual(getattr(py, name)[:n].tobytes(), getattr(nb, name)[:n].tobytes(), (q, name))
+                for mine, row in (('_C', 'C'), ('_W', 'W'), ('_M', 'M'), ('_S', 'S'), ('_E', 'E')):
+                    self.assertEqual(getattr(py, mine)[:n].tobytes(), getattr(src, row)[0, :n].tobytes(), (q, row))
+                self.assertTrue(same_bits(py.rt, nb.rt) and same_bits(py.rv, nb.rv), q)
+                self.assertTrue(same_bits(py.last_t, nb.last_t) and py.count == nb.count, q)
                 for later in (t, t + 0.5, t + 30.0, t + 900.0):
-                    a, b = np.zeros(2), np.zeros(2)
+                    a, b, c = np.zeros(2), np.zeros(2), np.zeros(2)
                     py.history(later, a)
                     nb.history(later, b)
-                    self.assertTrue(same_bits(a, b), (q, later, a, b))
+                    # ...and summed with every other source's at once, as a release sums them.
+                    FS.LaplaceFarfPath._histories(types.SimpleNamespace(slots=1), [nb], later, c)
+                    self.assertTrue(same_bits(a, b) and same_bits(a, c), (q, later, a, b, c))
         # Blocks of several pieces among those of one, and none left from the start.
         self.assertTrue(0 < int(py._S[:py.n].sum()) < py.n)
         self.assertGreater(float(py._C[0] - py._W[0]), 4e3)
+
+    def test_the_step_is_the_same_to_the_bit(self) -> None:
+        # Two sources: one feeding a chain's two members, one feeding the second through
+        # plug flow, whose point mass falls inside the step once it is longer than the delay.
+        chain = kernels_of_a_chain()
+        rows = [[{'i': 0, 'kern': chain[0]}, {'i': 1, 'kern': chain[1]}], [{'i': 1, 'kern': kernel_of_plug_flow()}]]
+        path = types.SimpleNamespace(nnuc=2, slots=2)
+        py, nb = both_kinds(rows)
+        self.assertEqual(FS._sources_of(nb).points, True)
+        pushed = 0
+        for seed, count in ((7, 1), (8, 2), (9, 3), (10, 400)):
+            for cvs in (py, nb):
+                for cv in cvs:
+                    cv.reset()
+            times = recorded(py, seed, count)
+            recorded(nb, seed, count)
+            pushed += count
+            last = times[-1]
+            IN = np.array([0.7, -1.3])
+            for D in (0.0, 1e-3, 0.3, 30.0, 50.5, 60.0, 400.0, 3e3):
+                cur_py, cur_nb = np.zeros(4), np.zeros(4)
+                parts_py = FS.LaplaceFarfPath._parts(path, py, last + D, cur_py)
+                parts_nb = FS.LaplaceFarfPath._parts(path, nb, last + D, cur_nb)
+                self.assertEqual(len(parts_py), parts_nb.count, (count, D))
+                self.assertTrue(same_bits(cur_py, cur_nb), (count, D, cur_py, cur_nb))
+                res_py, res_nb = np.full(2, 0.25), np.full(2, 0.25)
+                FS.LaplaceFarfPath._add_parts(path, res_py, parts_py, py, IN)
+                FS.LaplaceFarfPath._add_parts(path, res_nb, parts_nb, nb, IN)
+                self.assertTrue(same_bits(res_py, res_nb), (count, D, res_py, res_nb))
+            # Steps and point masses both met: two to four nodes, and every kind of part.
+            if count == 400:
+                kinds = {(int(parts_nb.S[p]), int(parts_nb.C[p])) for p in range(parts_nb.count)}
+                self.assertEqual(kinds, {(0, 4), (1, 4)})
+        self.assertEqual(pushed, 406)
+
+    def test_a_release_asked_for_earlier_and_a_record_taken_back_are_the_same_to_the_bit(self) -> None:
+        # Asked for before its last record, the release is swept forward from the records
+        # again (``_behind``); told of an earlier instant, the path forgets what came after
+        # it and records again (``_truncate``).
+        got = []
+        for kernels in (False, True):
+            with without_kernels() if not kernels else nullcontext():
+                res = run(Project(semi_model()))
+                F = res.system.laplace[0]
+                self.assertEqual(isinstance(F.live[0], FS._CompiledConvolver), kernels)
+                y = np.asarray(res.y[-1], dtype=float)
+                X = res.system.X.copy()
+                T = list(F.records[0]['t'])
+                values = []
+                for q in (len(T) // 5, len(T) // 3, len(T) // 2, len(T) - 2):
+                    F.release(y, X, 0.5 * (T[q] + T[q + 1]))
+                    values.append(X[F.release_slots].copy())
+                F.store(0.5 * (T[len(T) // 2] + T[len(T) // 2 + 1]), y, X)
+                for dt in (0.5, 3.0, 40.0, 900.0):
+                    F.release(y, X, T[len(T) // 2] + dt)
+                    values.append(X[F.release_slots].copy())
+                got.append(np.concatenate(values))
+        self.assertTrue(same_bits(got[0], got[1]))
+        self.assertTrue(np.any(got[0] != 0))
 
     def test_the_history_is_summed_as_numpy_sums(self) -> None:
         rng = np.random.default_rng(5)

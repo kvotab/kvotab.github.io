@@ -23,10 +23,12 @@ application's module says what is solved and why; in short:
 The arithmetic follows the application's operation for operation, except that
 the sum over the history is taken with numpy (one pass per response rather
 than one loop per block), which orders the additions differently: the two agree
-to rounding, not to the bit. With numba installed, the sum over the history and
-the recording and merging of pieces run as compiled kernels instead (``_nb_*``
-below), twins of the Python and numpy path to the bit, whichever path the run
-takes: a run of the far-field example worked out this way is twelve times quicker.
+to rounding, not to the bit. With numba installed, the recording and merging of
+pieces, the sum over the history and the step being taken run as compiled
+kernels instead (``_nb_*`` below), each a call for every source of the path at
+once: twins of the Python and numpy path to the bit, whichever path the run
+takes. A run of the far-field example worked out this way is eighteen times
+quicker.
 """
 
 from __future__ import annotations
@@ -572,10 +574,13 @@ def _nb_history(tt: float, C: Any, Wd: Any, M: Any, S: Any, E: Any, nb: int, t: 
     return total
 
 
-# --- a source's records, compiled ------------------------------------------------------------
+# --- a source's records and the step, compiled -----------------------------------------------
 #
-# What `Convolver._piece` and `Convolver.compact` do to the blocks, with numba, in the same
-# order: twins of the Python below them, as the history's kernel is of `history`.
+# What `Convolver.push` and `Convolver.compact` do to the records and the blocks, and the
+# step being taken (`step_weights`, `point_parts`, `step_sum`), with numba, in the same
+# order: twins of the Python below them, as the history's kernel is of `history`. A path's
+# sources are rows of one `_Sources` -- last records, blocks, impulses -- so that one call
+# records an instant for every source, sums every history, and works out the step.
 
 #: ``BINOM`` as an array, for ``_nb_shift``.
 _BINOM = np.array([[float(BINOM[m][k]) if k <= m else 0.0 for k in range(6)] for m in range(6)])
@@ -585,26 +590,19 @@ _BINOM = np.array([[float(BINOM[m][k]) if k <= m else 0.0 for k in range(6)] for
 _POWERS = np.arange(6.0)
 
 
-def _nb_piece(count: int, n0: float, n1: float, n2: float, v0: float, v1: float, v2: float, t: float, v: float,
-              C: Any, W: Any, M: Any, S: Any, E: Any, b: int) -> None:
-    """``Convolver._piece``: the cubic through the last ``count - 1`` records (``n0``, ``v0``
-    the oldest) and ``v`` at ``t``, put in as block b."""
-    rt = np.empty(3)
-    rv = np.empty(3)
-    rt[0] = n0
-    rt[1] = n1
-    rt[2] = n2
-    rv[0] = v0
-    rv[1] = v1
-    rv[2] = v2
-    ta = rt[count - 2]
+def _nb_piece(rt: Any, rv: Any, nr: int, t: float, v: float, C: Any, W: Any, M: Any, S: Any, E: Any,
+              b: int) -> None:
+    """``Convolver._piece``: the cubic through the last records (``nr`` of them in ``rt``,
+    ``rv``) and ``v`` at ``t``, put in as block b."""
+    ta = rt[nr - 1]
     c = 0.5 * (ta + t)
     w = 0.5 * (t - ta)
+    count = nr + 1 if nr < 3 else 4
     ns = np.empty(4)
     nv = np.empty(4)
     for k in range(count - 1):
-        ns[k] = (rt[k] - c) / w
-        nv[k] = rv[k]
+        ns[k] = (rt[nr - (count - 1) + k] - c) / w
+        nv[k] = rv[nr - (count - 1) + k]
     ns[count - 1] = 1.0
     nv[count - 1] = v
     e = np.zeros(4)
@@ -638,17 +636,17 @@ def _nb_piece(count: int, n0: float, n1: float, n2: float, v0: float, v1: float,
         E[b, q] = e[q]
 
 
-def _nb_ahead(u: float, KT: Any, KA: Any, KOT: Any, KOA: Any, KN: Any, KT0: Any, KTE: Any) -> float:
-    """``Convolver.ahead``, the targets' responses packed end to end (``Convolver._pack``)."""
+def _nb_ahead(u: float, KT: Any, KH: Any, KOT: Any, KN: Any, KT0: Any, KTE: Any, j0: int, j1: int) -> float:
+    """``Convolver.ahead`` over targets j0 to j1 of ``_Sources``."""
     m = math.inf
-    for j in range(KN.shape[0]):
+    for j in range(j0, j1):
         if u >= KTE[j]:
             continue
         if u <= KT0[j]:
-            d = KA[KOA[j]]
+            d = KH[KOT[j]]
         else:
             npc = KN[j]
-            d = KA[KOA[j] + _nb_piece_at(KT[KOT[j]:KOT[j] + npc + 1], npc, u)]
+            d = KH[KOT[j] + _nb_piece_at(KT[KOT[j]:KOT[j] + npc + 1], npc, u)]
         if d < m:
             m = d
     return m
@@ -665,9 +663,15 @@ def _nb_shift(M: Any, b: int, c: float, w: float, nc: float, nw: float, K: Any, 
         out[at + m] = s
 
 
-def _nb_compact(t_now: float, reach: float, C: Any, W: Any, M: Any, S: Any, E: Any, nb: int, KT: Any, KA: Any,
-                KOT: Any, KOA: Any, KN: Any, KT0: Any, KTE: Any, K: Any, out: Any) -> int:
-    """``Convolver.compact``: how many blocks are left."""
+def _nb_compact(t_now: float, reach: float, CC: Any, WW: Any, MM: Any, SS: Any, EE: Any, N: Any, s: int, KT: Any,
+                KH: Any, KOT: Any, KN: Any, KT0: Any, KTE: Any, j0: int, j1: int, K: Any, out: Any) -> int:
+    """``Convolver.compact`` on source s, its targets j0 to j1: how many blocks are left."""
+    C = CC[s]
+    W = WW[s]
+    M = MM[s]
+    S = SS[s]
+    E = EE[s]
+    nb = N[s]
     n = 0
     for k in range(nb):
         c = C[k]
@@ -681,7 +685,7 @@ def _nb_compact(t_now: float, reach: float, C: Any, W: Any, M: Any, S: Any, E: A
             lo = lc - lw
             hi = c + w
             width = hi - lo
-            if width <= RHO * _nb_ahead(t_now - hi, KT, KA, KOT, KOA, KN, KT0, KTE):
+            if width <= RHO * _nb_ahead(t_now - hi, KT, KH, KOT, KN, KT0, KTE, j0, j1):
                 nc = 0.5 * (lo + hi)
                 nw = 0.5 * width
                 _nb_shift(M, last, lc, lw, nc, nw, K, out, 0)
@@ -703,27 +707,246 @@ def _nb_compact(t_now: float, reach: float, C: Any, W: Any, M: Any, S: Any, E: A
             for q in range(4):
                 E[n, q] = E[k, q]
         n += 1
+    N[s] = n
     return n
+
+
+def _nb_push(t: float, v: float, RT: Any, RV: Any, NR: Any, LT: Any, CNT: Any, s: int, C: Any, W: Any, M: Any,
+             S: Any, E: Any, N: Any) -> int:
+    """``Convolver.push`` up to its compacting, on source s: 0, or -1 for an instant
+    earlier than its last."""
+    CNT[s] += 1
+    nr = NR[s]
+    if t == LT[s]:
+        if v == RV[s, nr - 1]:
+            return 0
+        RT[s, 0] = t
+        RV[s, 0] = v
+        NR[s] = 1
+        return 0
+    if t < LT[s]:
+        return -1
+    if nr > 0:
+        _nb_piece(RT[s], RV[s], nr, t, v, C[s], W[s], M[s], S[s], E[s], N[s])
+        N[s] += 1
+    if nr < 4:
+        RT[s, nr] = t
+        RV[s, nr] = v
+        NR[s] = nr + 1
+    else:
+        for k in range(3):
+            RT[s, k] = RT[s, k + 1]
+            RV[s, k] = RV[s, k + 1]
+        RT[s, 3] = t
+        RV[s, 3] = v
+    LT[s] = t
+    return 0
+
+
+def _nb_push_all(t: float, IN: Any, RT: Any, RV: Any, NR: Any, LT: Any, CNT: Any, C: Any, W: Any, M: Any, S: Any,
+                 E: Any, N: Any) -> int:
+    """``_nb_push`` of every source in turn, each with its current inflow: -1, or the first
+    source told about an instant earlier than its last."""
+    for s in range(NR.shape[0]):
+        if _nb_push(t, IN[s], RT, RV, NR, LT, CNT, s, C, W, M, S, E, N) < 0:
+            return s
+    return -1
+
+
+def _nb_histories(t: float, C: Any, W: Any, M: Any, S: Any, E: Any, N: Any, TS: Any, TI: Any, KT: Any, KOT: Any,
+                  KD: Any, KA: Any, KOA: Any, KH: Any, KN: Any, KT0: Any, KTE: Any, IT: Any, IA: Any, IO: Any,
+                  v: Any, wide: Any, out: Any) -> None:
+    """``Convolver.history`` of every source at t, a source after another, added into
+    ``out``."""
+    for s in range(TS.shape[0] - 1):
+        nb = N[s]
+        for j in range(TS[s], TS[s + 1]):
+            npc = KN[j]
+            if npc < 1:
+                continue
+            o = KOT[j]
+            oa = KOA[j]
+            out[TI[j]] += _nb_history(t, C[s], W[s], M[s], S[s], E[s], nb, KT[o:o + npc + 1], KD[oa:oa + npc],
+                                      KA[oa:oa + npc], KH[o:o + npc + 1], npc, KT0[j], KTE[j], IT[IO[s]:IO[s + 1]],
+                                      IA[IO[s]:IO[s + 1]], v, wide)
+
+
+def _nb_lag_basis(s: Any, count: int, D: float, coef: Any) -> None:
+    """``lag_basis``, into the rows of ``coef``."""
+    for k in range(count):
+        for q in range(5):
+            coef[k, q] = 0.0
+        coef[k, 0] = 1.0
+        deg = 0
+        den = 1.0
+        sk = s[k] / D
+        for m in range(count):
+            if m == k:
+                continue
+            sm = s[m] / D
+            for q in range(deg + 1, 0, -1):
+                coef[k, q] = coef[k, q - 1] - sm * coef[k, q]
+            coef[k, 0] = -sm * coef[k, 0]
+            deg += 1
+            den *= sk - sm
+        for q in range(deg + 1):
+            coef[k, q] /= den
+
+
+def _nb_piece_moments(t: Any, a: Any, k: int, ua: float, ub: float, out: Any) -> None:
+    """``piece_moments``, into ``out``."""
+    for q in range(4):
+        out[q] = 0.0
+    if not ub > ua:
+        return
+    t0 = t[k]
+    d = t[k + 1] - t0
+    a0 = a[k, 0]
+    a1 = a[k, 1]
+    a2 = a[k, 2]
+    a3 = a[k, 3]
+    a4 = a[k, 4]
+    a5 = a[k, 5]
+    c = 0.5 * (ua + ub)
+    hw = 0.5 * (ub - ua)
+    for g in range(5):
+        u = c + GL5_X[g] * hw
+        x = (u - t0) / d
+        h = a0 + x * (a1 + x * (a2 + x * (a3 + x * (a4 + x * a5))))
+        w = GL5_W[g] * hw * h
+        out[0] += w
+        out[1] += w * u
+        out[2] += w * u * u
+        out[3] += w * u * u * u
+
+
+def _nb_running_moments(t: Any, a: Any, P: Any, npc: int, t0k: float, t_endk: float, D: float, out: Any,
+                        rest: Any) -> None:
+    """``running_moments``, into ``out`` (``rest`` scratch)."""
+    if not D > t0k or npc < 1:
+        for q in range(4):
+            out[q] = 0.0
+        return
+    top = t_endk if t_endk < D else D
+    k = _nb_piece_at(t, npc, top)
+    for q in range(4):
+        out[q] = P[k, q]
+    _nb_piece_moments(t, a, k, t[k], top, rest)
+    for q in range(4):
+        out[q] += rest[q]
+
+
+def _nb_parts(t: float, RT: Any, RV: Any, NR: Any, LT: Any, TS: Any, TI: Any, KT: Any, KOT: Any, KA: Any, KOA: Any,
+              KP: Any, KN: Any, KT0: Any, KTE: Any, KM0: Any, KTM0: Any, n: int, cur: Any, PS: Any, PI: Any,
+              PC: Any, PN: Any, PW: Any) -> int:
+    """``LaplaceFarfPath._parts``: for every source, a source after another, its
+    ``step_weights`` and then its ``point_parts`` -- the source (PS), target (PI), nodes (PC),
+    records (PN) and node weights (PW) of each part -- with each current inflow's weight added
+    into ``cur``: how many parts."""
+    sv = np.empty(4)
+    coef = np.empty((4, 5))
+    mom = np.empty(4)
+    rest = np.empty(4)
+    nodes = np.empty(4)
+    p = 0
+    for slot in range(TS.shape[0] - 1):
+        j0 = TS[slot]
+        j1 = TS[slot + 1]
+        nr = NR[slot]
+        last = LT[slot]
+        count = nr + 1 if nr < 3 else 4
+        D = t - last
+        if j1 > j0 and nr > 0 and D > 0:
+            for k in range(count - 1):
+                sv[k] = t - RT[slot, nr - (count - 1) + k]
+            sv[count - 1] = 0.0
+            basis = False
+            for j in range(j0, j1):
+                if not D > KT0[j]:
+                    continue
+                if not basis:
+                    _nb_lag_basis(sv, count, D, coef)
+                    basis = True
+                o = KOT[j]
+                npc = KN[j]
+                _nb_running_moments(KT[o:o + npc + 1], KA[KOA[j]:KOA[j] + npc], KP[o:o + npc + 1], npc, KT0[j],
+                                    KTE[j], D, mom, rest)
+                Dq = 1.0
+                for q in range(1, 4):
+                    Dq *= D
+                    mom[q] /= Dq
+                for k in range(count):
+                    val = 0.0
+                    for q in range(count):
+                        val += coef[k, q] * mom[q]
+                    PW[p, k] = val
+                PS[p] = slot
+                PI[p] = TI[j]
+                PC[p] = count
+                PN[p] = nr
+                cur[TI[j] * n + slot % n] += PW[p, count - 1]
+                p += 1
+        if nr > 0:
+            for j in range(j0, j1):
+                if not KM0[j] > 0:
+                    continue
+                tau = t - KTM0[j]
+                if not tau > last:
+                    continue
+                for k in range(count - 1):
+                    nodes[k] = RT[slot, nr - (count - 1) + k]
+                nodes[count - 1] = t
+                for k in range(count):
+                    lk = 1.0
+                    for m in range(count):
+                        if m != k:
+                            lk *= (tau - nodes[m]) / (nodes[k] - nodes[m])
+                    PW[p, k] = KM0[j] * lk
+                PS[p] = slot
+                PI[p] = TI[j]
+                PC[p] = count
+                PN[p] = nr
+                cur[TI[j] * n + slot % n] += PW[p, count - 1]
+                p += 1
+    return p
+
+
+def _nb_add_parts(res: Any, PS: Any, PI: Any, PC: Any, PN: Any, PW: Any, count: int, RV: Any, IN: Any) -> None:
+    """``step_sum`` of each part, against its source's records and current inflow, added
+    into ``res`` in turn."""
+    for p in range(count):
+        s = PS[p]
+        c = PC[p]
+        nr = PN[p]
+        r = PW[p, c - 1] * IN[s]
+        for k in range(c - 1):
+            r += PW[p, k] * RV[s, nr - (c - 1) + k]
+        res[PI[p]] += r
 
 
 class _Compiled:
     """The kernels above, compiled."""
 
-    __slots__ = ('history', 'piece', 'compact')
+    __slots__ = ('history', 'histories', 'push', 'push_all', 'compact', 'parts', 'add_parts')
 
-    def __init__(self, history: Any, piece: Any, compact: Any) -> None:
+    def __init__(self, history: Any, histories: Any, push: Any, push_all: Any, compact: Any, parts: Any,
+                 add_parts: Any) -> None:
         self.history = history
-        self.piece = piece
+        self.histories = histories
+        self.push = push
+        self.push_all = push_all
         self.compact = compact
+        self.parts = parts
+        self.add_parts = add_parts
 
 
 _COMPILED: Any = None
 
 
 def _compiled() -> Optional[_Compiled]:
-    """``_nb_history``, ``_nb_piece`` and ``_nb_compact`` compiled with numba, or None where
-    numba is not installed or will not compile them -- and then a convolver does it all in
-    Python and numpy, as it always did. Compiled once a process, and kept on disk (see
+    """The kernels above compiled with numba, or None where numba is not installed or will
+    not compile them -- and then the convolvers and the path do it all in Python and numpy,
+    as they always did. Compiled once a process, and kept on disk (see
     kompartment.engine.compiled)."""
     global _COMPILED
     if _COMPILED is None:
@@ -736,23 +959,36 @@ def _compiled() -> Optional[_Compiled]:
                 # Each helper as compiled code under its own name, so that the kernels,
                 # compiled after them, call compiled code.
                 for name in ('_nb_block', '_nb_pairwise', '_nb_count', '_nb_walk', '_nb_piece_at', '_nb_kernel_at',
-                             '_nb_direct', '_nb_from_moment', '_nb_ahead', '_nb_shift'):
+                             '_nb_direct', '_nb_from_moment', '_nb_history', '_nb_piece', '_nb_push', '_nb_ahead',
+                             '_nb_shift', '_nb_lag_basis', '_nb_piece_moments', '_nb_running_moments'):
                     fn = jit(globals()[name])
                     if fn is None:
                         raise RuntimeError(name)
                     globals()[name] = fn
-                history, piece, compact = (jit(_nb_history), jit(_nb_piece), jit(_nb_compact))
-                if history is None or piece is None or compact is None:
+                kernels = [jit(fn) for fn in (_nb_histories, _nb_push_all, _nb_compact, _nb_parts, _nb_add_parts)]
+                if any(k is None for k in kernels):
                     raise RuntimeError('a kernel')
-                f2 = np.zeros(2)
-                C, W, M, S, E = np.zeros(2), np.zeros(2), np.zeros((2, 6)), np.zeros(2, dtype=bool), np.zeros((2, 4))
-                history(0.0, C, W, M, S, E, 0, f2, np.ones(1), np.zeros((1, 6)), np.full(2, math.inf), 1, 0.0, 1.0,
-                        np.zeros(0), np.zeros(0), np.zeros(1), np.zeros(1, dtype=np.int64))
-                piece(2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, C, W, M, S, E, 0)
-                compact(1.0, 1.0, C, W, M, S, E, 1, f2, np.full(2, math.inf), np.zeros(1, dtype=np.int64),
-                        np.zeros(1, dtype=np.int64), np.ones(1, dtype=np.int64), np.zeros(1), np.ones(1), _POWERS,
-                        np.zeros(12))
-                _COMPILED = _Compiled(history, piece, compact)
+                histories, push_all, compact, parts, add_parts = kernels
+                # Each called once, on a source without targets, with the types a run hands
+                # it, so that a run finds them compiled.
+                src = _Sources([[]])
+                IT, IA, IO = src.impulses()
+                _nb_history(0.0, src.C[0], src.W[0], src.M[0], src.S[0], src.E[0], 0, np.zeros(2), np.ones(1),
+                            np.zeros((1, 6)), np.full(2, math.inf), 1, 0.0, 1.0, IT, IA, src.v, src.wide)
+                histories(0.0, src.C, src.W, src.M, src.S, src.E, src.N, src.TS, src.TI, src.KT, src.KOT, src.KD,
+                          src.KA, src.KOA, src.KH, src.KN, src.KT0, src.KTE, IT, IA, IO, src.v, src.wide, np.zeros(1))
+                _nb_push(0.0, 0.0, src.RT, src.RV, src.NR, src.LT, src.CNT, 0, src.C, src.W, src.M, src.S, src.E,
+                         src.N)
+                push_all(1.0, np.zeros(1), src.RT, src.RV, src.NR, src.LT, src.CNT, src.C, src.W, src.M, src.S,
+                         src.E, src.N)
+                compact(1.0, src.reach[0], src.C, src.W, src.M, src.S, src.E, src.N, 0, src.KT, src.KH, src.KOT,
+                        src.KN, src.KT0, src.KTE, src.TS[0], src.TS[1], _POWERS, src.out)
+                P = _Parts(1)
+                count = parts(2.0, src.RT, src.RV, src.NR, src.LT, src.TS, src.TI, src.KT, src.KOT, src.KA, src.KOA,
+                              src.KP, src.KN, src.KT0, src.KTE, src.KM0, src.KTM0, 1, np.zeros(1), P.S, P.I, P.C, P.N,
+                              P.W)
+                add_parts(np.zeros(1), P.S, P.I, P.C, P.N, P.W, count, src.RV, np.zeros(1))
+                _COMPILED = _Compiled(_nb_history, histories, _nb_push, push_all, compact, parts, add_parts)
             except Exception:  # noqa: BLE001 - numba present but refusing: Python and numpy, as before
                 _COMPILED = False
     return _COMPILED or None
@@ -768,31 +1004,15 @@ class Convolver:
 
     def __init__(self, targets: List[Dict[str, Any]]) -> None:
         self.targets = targets
-        self._kernels = _compiled()
-        if self._kernels is not None:
-            self._pack()
         self.reset()
-
-    def _pack(self) -> None:
-        """The targets' grids and spacings ahead end to end, for the compiled ``compact``,
-        with where each response's begin, its pieces, and its first and last times."""
-        kerns = [tg['kern'] for tg in self.targets]
-        KOT = np.zeros(len(kerns), dtype=np.int64)
-        KOA = np.zeros(len(kerns), dtype=np.int64)
-        for j in range(1, len(kerns)):
-            KOT[j] = KOT[j - 1] + kerns[j - 1].t.size
-            KOA[j] = KOA[j - 1] + kerns[j - 1].ahead.size
-        self._packed = (np.concatenate([k.t for k in kerns]) if kerns else np.zeros(0),
-                        np.concatenate([k.ahead for k in kerns]) if kerns else np.zeros(0),
-                        KOT, KOA, np.array([k.np for k in kerns], dtype=np.int64),
-                        np.array([k.t0 for k in kerns], dtype=float), np.array([k.t_end for k in kerns], dtype=float))
-        self._reach = self.reach()
-        self._out = np.zeros(12)
 
     def reset(self) -> None:
         self.rt: List[float] = []
         self.rv: List[float] = []
         self.last_t = -math.inf
+        self._reset_blocks()
+
+    def _reset_blocks(self) -> None:
         self.imp_t: List[float] = []
         self.imp_a: List[float] = []
         self.compact_at = 64
@@ -886,17 +1106,6 @@ class Convolver:
         rt = self.rt
         rv = self.rv
         nr = len(rt)
-        self._room(self.n + 1)
-        self._arrays = None
-        if self._kernels is not None:
-            # The last records the cubic goes through, oldest first: three at most.
-            m = nr if nr < 3 else 3
-            o = nr - m
-            self._kernels.piece(m + 1, rt[o], rt[o + 1] if m > 1 else 0.0, rt[o + 2] if m > 2 else 0.0,
-                                rv[o], rv[o + 1] if m > 1 else 0.0, rv[o + 2] if m > 2 else 0.0, t, v,
-                                self._C, self._W, self._M, self._S, self._E, self.n)
-            self.n += 1
-            return
         ta = rt[nr - 1]
         c = 0.5 * (ta + t)
         w = 0.5 * (t - ta)
@@ -931,16 +1140,12 @@ class Convolver:
                 if (q + m) % 2 == 0:
                     s += e[q] * 2 / (q + m + 1)
             mu[m] = w * s
+        self._room(self.n + 1)
         self._set_block(self.n, c, w, mu, e)
         self.n += 1
+        self._arrays = None
 
     def compact(self, t_now: float) -> None:
-        self._arrays = None
-        if self._kernels is not None:
-            self.n = self._kernels.compact(t_now, self._reach, self._C, self._W, self._M, self._S, self._E, self.n,
-                                           *self._packed, _POWERS, self._out)
-            self.compact_at = 2 * self.n + 64
-            return
         reach = self.reach()
         C, W, M, S, E = self._C, self._W, self._M, self._S, self._E
         n = 0
@@ -970,6 +1175,7 @@ class Convolver:
             n += 1
         self.n = n
         self.compact_at = 2 * n + 64
+        self._arrays = None
 
     def _snapshot(self) -> tuple:
         if self._arrays is None:
@@ -981,17 +1187,6 @@ class Convolver:
         """What the recorded history releases at t, added into ``out[i]`` for
         each target."""
         if not self.targets:
-            return
-        if self._kernels is not None:
-            kernel = self._kernels.history
-            nb = self.n
-            imp_t, imp_a = self._impulse_arrays()
-            for tg in self.targets:
-                kern = tg['kern']
-                if kern.np < 1:
-                    continue
-                out[tg['i']] += kernel(t, self._C, self._W, self._M, self._S, self._E, nb, kern.t, kern.d, kern.a,
-                                       kern.ahead, kern.np, kern.t0, kern.t_end, imp_t, imp_a, self._v, self._wide)
             return
         nb = self.n
         C, Wd, M, single = self._snapshot() if nb else (None, None, None, None)
@@ -1022,6 +1217,201 @@ class Convolver:
             for r in range(len(self.imp_t)):
                 total += self.imp_a[r] * kernel_at(kern, t - self.imp_t[r])
             out[tg['i']] += total
+
+
+class _Sources:
+    """A path's sources as the compiled kernels keep them, a row a source: its last records
+    (a convolver's ``rt``, ``rv`` and ``last_t``, oldest first, ``NR`` of them), its blocks
+    (``N`` of them, as a convolver keeps them) and its point impulses; and its targets'
+    responses end to end. Source s's targets are ``TS[s]`` to ``TS[s + 1]``: each one's slot
+    ``TI``, grid ``KT`` with its spacings ahead ``KH`` and running moments ``KP`` beside it
+    (from ``KOT``), pieces' widths ``KD`` and coefficients ``KA`` (from ``KOA``), and its
+    pieces, first and last times and point mass."""
+
+    def __init__(self, targets: List[List[Dict[str, Any]]]) -> None:
+        slots = len(targets)
+        self.RT = np.zeros((slots, 4))
+        self.RV = np.zeros((slots, 4))
+        self.NR = np.zeros(slots, dtype=np.int64)
+        self.LT = np.full(slots, -math.inf)
+        self.CNT = np.zeros(slots, dtype=np.int64)
+        self.N = np.zeros(slots, dtype=np.int64)
+        self.CA = np.full(slots, 64, dtype=np.int64)
+        self.C = np.zeros((slots, 64))
+        self.W = np.zeros((slots, 64))
+        self.M = np.zeros((slots, 64, 6))
+        self.S = np.zeros((slots, 64), dtype=bool)
+        self.E = np.zeros((slots, 64, 4))
+        self.v = np.zeros(64)
+        self.wide = np.zeros(64, dtype=np.int64)
+        self.out = np.zeros(12)
+        self.imp_t: List[List[float]] = [[] for _ in range(slots)]
+        self.imp_a: List[List[float]] = [[] for _ in range(slots)]
+        self._imp: Optional[tuple] = None
+        flat = [tg for row in targets for tg in row]
+        kerns = [tg['kern'] for tg in flat]
+        self.TS = np.zeros(slots + 1, dtype=np.int64)
+        for q, row in enumerate(targets):
+            self.TS[q + 1] = self.TS[q] + len(row)
+        self.TI = np.array([tg['i'] for tg in flat], dtype=np.int64)
+        self.KOT = np.zeros(len(kerns), dtype=np.int64)
+        self.KOA = np.zeros(len(kerns), dtype=np.int64)
+        for j in range(1, len(kerns)):
+            self.KOT[j] = self.KOT[j - 1] + kerns[j - 1].t.size
+            self.KOA[j] = self.KOA[j - 1] + kerns[j - 1].np
+        if any(k.ahead.size != k.t.size for k in kerns):
+            raise ValueError('a response without a spacing ahead of each of its times')
+        self.KT = np.concatenate([k.t for k in kerns]) if kerns else np.zeros(0)
+        self.KH = np.concatenate([k.ahead for k in kerns]) if kerns else np.zeros(0)
+        self.KP = np.concatenate([np.array(k.P, dtype=float).T for k in kerns]) if kerns else np.zeros((0, 4))
+        self.KD = np.concatenate([k.d for k in kerns]) if kerns else np.zeros(0)
+        self.KA = np.concatenate([k.a for k in kerns]) if kerns else np.zeros((0, 6))
+        self.KN = np.array([k.np for k in kerns], dtype=np.int64)
+        self.KT0 = np.array([k.t0 for k in kerns], dtype=float)
+        self.KTE = np.array([k.t_end for k in kerns], dtype=float)
+        self.KM0 = np.array([k.m0 for k in kerns], dtype=float)
+        self.KTM0 = np.array([k.tm0 for k in kerns], dtype=float)
+        # How far back each source's responses reach (``Convolver.reach``).
+        self.reach = np.full(slots, -math.inf)
+        for q, row in enumerate(targets):
+            for tg in row:
+                if tg['kern'].t_end > self.reach[q]:
+                    self.reach[q] = tg['kern'].t_end
+        # Point masses whose lag reaches back into the records are released by the path,
+        # a source at a time, after the source's history.
+        self.points = bool(np.any(self.KM0 > 0))
+        # A part for each target's step, and one for its point mass.
+        self.most = 2 * len(flat)
+
+    def room(self, n: int) -> None:
+        """Rows for at least n blocks, what is in them kept."""
+        cap = self.C.shape[1]
+        if n <= cap:
+            return
+        size = max(n, 2 * cap)
+        for name in ('C', 'W', 'M', 'S', 'E'):
+            old = getattr(self, name)
+            new = np.zeros((old.shape[0], size) + old.shape[2:], dtype=old.dtype)
+            new[:, :cap] = old
+            setattr(self, name, new)
+        self.v = np.zeros(size)
+        self.wide = np.zeros(size, dtype=np.int64)
+
+    def impulses(self) -> tuple:
+        """Every source's point impulses end to end -- times, amounts -- and where each
+        source's begin."""
+        if self._imp is None:
+            IO = np.zeros(len(self.imp_t) + 1, dtype=np.int64)
+            for q, ts in enumerate(self.imp_t):
+                IO[q + 1] = IO[q] + len(ts)
+            self._imp = (np.array([x for ts in self.imp_t for x in ts], dtype=float),
+                         np.array([x for xs in self.imp_a for x in xs], dtype=float), IO)
+        return self._imp
+
+
+class _CompiledConvolver(Convolver):
+    """A convolver whose records, blocks and impulses are row ``slot`` of its path's
+    ``_Sources``, which the compiled kernels keep; read here as the Python convolver's are."""
+
+    def __init__(self, targets: List[Dict[str, Any]], kernels: _Compiled, src: _Sources, slot: int) -> None:
+        self._kernels = kernels
+        self._src = src
+        self._slot = slot
+        super().__init__(targets)
+
+    @property
+    def rt(self) -> List[float]:  # type: ignore[override]
+        return self._src.RT[self._slot, :self._src.NR[self._slot]].tolist()
+
+    @property
+    def rv(self) -> List[float]:  # type: ignore[override]
+        return self._src.RV[self._slot, :self._src.NR[self._slot]].tolist()
+
+    @property
+    def last_t(self) -> float:  # type: ignore[override]
+        return float(self._src.LT[self._slot])
+
+    @property
+    def n(self) -> int:  # type: ignore[override]
+        return int(self._src.N[self._slot])
+
+    @property
+    def count(self) -> int:  # type: ignore[override]
+        return int(self._src.CNT[self._slot])
+
+    @property
+    def compact_at(self) -> int:  # type: ignore[override]
+        return int(self._src.CA[self._slot])
+
+    def reset(self) -> None:
+        src, s = self._src, self._slot
+        src.NR[s] = 0
+        src.LT[s] = -math.inf
+        src.CNT[s] = 0
+        src.N[s] = 0
+        src.CA[s] = 64
+        self.imp_t = src.imp_t[s]
+        self.imp_a = src.imp_a[s]
+        del self.imp_t[:]
+        del self.imp_a[:]
+        src._imp = None
+        self._imp = None
+
+    def impulse(self, t: float, amount: float) -> None:
+        super().impulse(t, amount)
+        self._src._imp = None
+
+    def push(self, t: float, v: float) -> None:
+        src, s = self._src, self._slot
+        src.room(int(src.N[s]) + 1)
+        if self._kernels.push(t, v, src.RT, src.RV, src.NR, src.LT, src.CNT, s, src.C, src.W, src.M, src.S, src.E,
+                              src.N) < 0:
+            raise RuntimeError('a far-field path was told about an earlier instant after a later one')
+        if src.N[s] > src.CA[s]:
+            self.compact(t)
+
+    def compact(self, t_now: float) -> None:
+        src, s = self._src, self._slot
+        n = self._kernels.compact(t_now, src.reach[s], src.C, src.W, src.M, src.S, src.E, src.N, s, src.KT, src.KH,
+                                  src.KOT, src.KN, src.KT0, src.KTE, src.TS[s], src.TS[s + 1], _POWERS, src.out)
+        src.CA[s] = 2 * n + 64
+
+    def history(self, t: float, out: np.ndarray) -> None:
+        if not self.targets:
+            return
+        src, s = self._src, self._slot
+        kernel = self._kernels.history
+        nb = int(src.N[s])
+        imp_t, imp_a = self._impulse_arrays()
+        C, W, M, S, E = src.C[s], src.W[s], src.M[s], src.S[s], src.E[s]
+        for tg in self.targets:
+            kern = tg['kern']
+            if kern.np < 1:
+                continue
+            out[tg['i']] += kernel(t, C, W, M, S, E, nb, kern.t, kern.d, kern.a, kern.ahead, kern.np, kern.t0,
+                                   kern.t_end, imp_t, imp_a, src.v, src.wide)
+
+
+def _sources_of(cvs: Optional[List[Convolver]]) -> Optional[_Sources]:
+    """The compiled sources behind a set of convolvers, or None for Python ones."""
+    if cvs and isinstance(cvs[0], _CompiledConvolver):
+        return cvs[0]._src
+    return None
+
+
+class _Parts:
+    """The step's parts as the compiled kernels write them, ``count`` of them: each one's
+    source, target, nodes, records and node weights."""
+
+    __slots__ = ('count', 'S', 'I', 'C', 'N', 'W')
+
+    def __init__(self, most: int) -> None:
+        self.count = 0
+        self.S = np.empty(most, dtype=np.int64)
+        self.I = np.empty(most, dtype=np.int64)
+        self.C = np.empty(most, dtype=np.int64)
+        self.N = np.empty(most, dtype=np.int64)
+        self.W = np.empty((most, 4))
 
 
 def step_weights(cv: Convolver, t: float) -> List[Dict[str, Any]]:
@@ -1277,15 +1667,20 @@ class LaplaceFarfPath:
         return out
 
     def _convolvers(self) -> List[Convolver]:
+        """A convolver for every source -- compiled ones, rows of one ``_Sources``, when the
+        kernels compiled."""
         n = self.nnuc
-        out: List[Convolver] = []
+        rows: List[List[Dict[str, Any]]] = []
         for o in range(self.other_width):
             kernels = self.combos[o]['kernels']  # type: ignore[index]
             for j in range(n):
-                targets = [{'i': o * n + i, 'kern': kernels[i * n + j]} for i in range(n)
-                           if kernels[i * n + j] is not None]
-                out.append(Convolver(targets))
-        return out
+                rows.append([{'i': o * n + i, 'kern': kernels[i * n + j]} for i in range(n)
+                             if kernels[i * n + j] is not None])
+        compiled = _compiled()
+        if compiled is None:
+            return [Convolver(targets) for targets in rows]
+        src = _Sources(rows)
+        return [_CompiledConvolver(targets, compiled, src, slot) for slot, targets in enumerate(rows)]
 
     # --- the release --------------------------------------------------------------------
 
@@ -1298,17 +1693,58 @@ class LaplaceFarfPath:
             np.add.at(IN, self.in_tgt, vals)
         return IN
 
+    def _parts(self, cvs: List[Convolver], t: float, cur: np.ndarray) -> Any:
+        """The step from the last records to t, for every source of ``cvs`` in turn: its
+        ``step_weights`` and then its ``point_parts``, each part's current-inflow weight
+        added into ``cur`` -- a list of parts, or the compiled kernels' ``_Parts``."""
+        src = _sources_of(cvs)
+        if src is not None:
+            P = _Parts(src.most)
+            P.count = cvs[0]._kernels.parts(t, src.RT, src.RV, src.NR, src.LT, src.TS, src.TI, src.KT, src.KOT,  # type: ignore[attr-defined]
+                                            src.KA, src.KOA, src.KP, src.KN, src.KT0, src.KTE, src.KM0, src.KTM0,
+                                            self.nnuc, cur, P.S, P.I, P.C, P.N, P.W)
+            return P
+        n = self.nnuc
+        parts: List[Dict[str, Any]] = []
+        for slot in range(self.slots):
+            for part in step_weights(cvs[slot], t) + point_parts(cvs[slot], t):
+                part['slot'] = slot
+                parts.append(part)
+                cur[part['i'] * n + (slot % n)] += part['w'][part['count'] - 1]
+        return parts
+
+    def _add_parts(self, res: np.ndarray, parts: Any, cvs: Optional[List[Convolver]], IN: np.ndarray) -> None:
+        """Each part's ``step_sum`` against its source's records and current inflow, added
+        into ``res`` in turn."""
+        src = _sources_of(cvs)
+        if src is not None and isinstance(parts, _Parts):
+            cvs[0]._kernels.add_parts(res, parts.S, parts.I, parts.C, parts.N, parts.W, parts.count, src.RV,  # type: ignore[index, attr-defined]
+                                      IN)
+            return
+        for part in parts:
+            res[part['i']] += step_sum(cvs[part['slot']], part, float(IN[part['slot']]))  # type: ignore[index]
+
+    def _histories(self, cvs: List[Convolver], t: float, out: np.ndarray) -> None:
+        """What every source's history releases at t, added into ``out``, a source after
+        another: its blocks and impulses (``Convolver.history``), then the point masses whose
+        lag reaches back into its records (``_points_behind``)."""
+        src = _sources_of(cvs)
+        if src is not None and not src.points:
+            IT, IA, IO = src.impulses()
+            cvs[0]._kernels.histories(t, src.C, src.W, src.M, src.S, src.E, src.N, src.TS, src.TI, src.KT, src.KOT,  # type: ignore[attr-defined]
+                                      src.KD, src.KA, src.KOA, src.KH, src.KN, src.KT0, src.KTE, IT, IA, IO, src.v,
+                                      src.wide, out)
+            return
+        for slot in range(self.slots):
+            cvs[slot].history(t, out)
+            self._points_behind(cvs[slot], slot, t, out)
+
     def _weights(self, t: float) -> Dict[str, Any]:
         if t == self.weight_t and self.weights is not None:
             return self.weights
-        n = self.nnuc
-        W: Dict[str, Any] = {'cur': np.zeros(self.slots * n), 'parts': []}
+        W: Dict[str, Any] = {'cur': np.zeros(self.slots * self.nnuc), 'parts': []}
         if self.live is not None and t > self.last_t:
-            for slot in range(self.slots):
-                for part in step_weights(self.live[slot], t) + point_parts(self.live[slot], t):
-                    part['slot'] = slot
-                    W['parts'].append(part)
-                    W['cur'][part['i'] * n + (slot % n)] += part['w'][part['count'] - 1]
+            W['parts'] = self._parts(self.live, t, W['cur'])
         self.weights = W
         self.weight_t = t
         return W
@@ -1337,15 +1773,12 @@ class LaplaceFarfPath:
         if t != self.hist_t:
             hist.fill(0.0)
             if self.live is not None:
-                for slot in range(self.slots):
-                    self.live[slot].history(t, hist)
-                    self._points_behind(self.live[slot], slot, t, hist)
+                self._histories(self.live, t, hist)
             self.hist_t = t
         IN = self.inflow(y, X)
         W = self._weights(t)
         res = hist.copy()
-        for part in W['parts']:
-            res[part['i']] += step_sum(self.live[part['slot']], part, float(IN[part['slot']]))  # type: ignore[index]
+        self._add_parts(res, W['parts'], self.live, IN)
         X[self.release_slots] = res
 
     def _behind(self, y: np.ndarray, X: np.ndarray, t: float) -> None:
@@ -1372,14 +1805,10 @@ class LaplaceFarfPath:
                 cv.impulse(imp['t'][q], imp['v'][q])
         self.sweep_at = t
         out = np.zeros(self.slots)
-        for slot in range(self.slots):
-            self.sweep[slot].history(t, out)
-            self._points_behind(self.sweep[slot], slot, t, out)
+        self._histories(self.sweep, t, out)
         IN = self.inflow(y, X)
-        for slot in range(self.slots):
-            cv = self.sweep[slot]
-            for part in step_weights(cv, t) + point_parts(cv, t):
-                out[part['i']] += step_sum(cv, part, float(IN[slot]))
+        parts = self._parts(self.sweep, t, np.zeros(self.slots * self.nnuc))
+        self._add_parts(out, parts, self.sweep, IN)
         X[self.release_slots] = out
 
     def _points_behind(self, cv: Convolver, slot: int, t: float, out: np.ndarray) -> None:
@@ -1466,19 +1895,35 @@ class LaplaceFarfPath:
                 if float(IN[slot]) != rec['v'][-1]:
                     record = True
         if record:
+            src = _sources_of(self.live)
             for slot in range(self.slots):
                 rec = self.records[slot]
                 v = float(IN[slot])
                 rec['t'].append(t)
                 rec['v'].append(v)
-                self.live[slot].push(t, v)
+                if src is None:
+                    self.live[slot].push(t, v)
+            if src is not None:
+                self._push_all(src, t, IN)
         if t not in self.releases:
             self.releases[t] = X[self.release_slots].copy()
         self.last_held[:] = held
         self.last_t = t
         self.hist_t = math.nan
         self.weight_t = math.nan
-        self.stats['blocks'] = sum(cv.n for cv in self.live)
+        src = _sources_of(self.live)
+        self.stats['blocks'] = int(src.N.sum()) if src is not None else sum(cv.n for cv in self.live)
+
+    def _push_all(self, src: _Sources, t: float, IN: np.ndarray) -> None:
+        """Every live source told of t and its current inflow at once, as each
+        ``Convolver.push`` would be, compacting where it is due."""
+        src.room(int(src.N.max()) + 1)
+        cvs = self.live
+        if cvs[0]._kernels.push_all(t, IN, src.RT, src.RV, src.NR, src.LT, src.CNT, src.C, src.W, src.M, src.S,  # type: ignore[index, attr-defined]
+                                    src.E, src.N) >= 0:
+            raise RuntimeError('a far-field path was told about an earlier instant after a later one')
+        for slot in np.nonzero(src.N > src.CA)[0].tolist():
+            cvs[slot].compact(t)  # type: ignore[index]
 
     def _truncate(self, t: float) -> None:
         """Forgets everything recorded after t."""
