@@ -47,7 +47,9 @@ import { tableLanding } from './landing.js';
 import {
 	IndexError, COMPARTMENT_LIST, TRANSFER_LIST, SOURCE_INDEX, TARGET_INDEX,
 } from '../domain/indexlists.js';
-import { buildJacobian, buildParamTangent, blocksRead, withWhatTheyRead } from './jacobian.js';
+import {
+	buildJacobian, buildParamTangent, blocksRead, readByPaths, withWhatTheyRead,
+} from './jacobian.js';
 import { userFunctions, FunctionError } from './functions.js';
 import { FarfPath, layerKey } from './farfield.js';
 import { LaplaceFarfPath } from './farfield-laplace.js';
@@ -2853,6 +2855,13 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		if (paramTangentCache.available) paramTangentCache.pvp = writesClock(paramTangentCache.pvp);
 		return paramTangentCache;
 	};
+	// The parameters a far-field path's rates read, along which df/dp is
+	// differenced: the cheap half of the above, for a dialog to say so.
+	let readByPathsCache = null;
+	const parametersReadByPaths = () => {
+		readByPathsCache ??= readByPaths(generatorInput);
+		return readByPathsCache;
+	};
 
 	// The tangents share `X` -- each works out the algebraic values it needs
 	// and writes them into the slots the derivative reads. So a tangent taken
@@ -2887,6 +2896,8 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		 * for it: see `paramTangent` above.
 		 */
 		paramTangent,
+		/** The parameter slots a far-field path's rates read: see `readByPaths` in ./jacobian.js. */
+		parametersReadByPaths,
 		// Waste packages that fail all at once, and disruptive events: the
 		// state jumps at the time in `slot` -- or at each of `times()` -- and
 		// the runner applies `apply` there. See the runner.

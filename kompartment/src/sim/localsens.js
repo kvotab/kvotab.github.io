@@ -27,7 +27,11 @@
  * built by ./jacobian.js), and differenced otherwise: one forward step per
  * parameter per call, which is right to about eight figures. It is also why
  * this is offered for a handful of chosen parameters rather than for all 617
- * of an assessment's.
+ * of an assessment's. Parameter by parameter: along one a far-field path's
+ * rates read (a diffusivity, a Kd) it is differenced in a model whose other
+ * parameters are differentiated. A solve that gives up with a difference in
+ * it says so (`differencedFailure`): what a difference loses to rounding can
+ * be more than the absolute tolerance dy/dp is held to.
  *
  * **The iteration matrix ignores the second derivatives.** The true Jacobian of
  * the augmented system has `d(J·S)/dy` terms in the sensitivity blocks, which
@@ -66,6 +70,7 @@ import { EVENT_FIELDS } from '../domain/recorders.js';
 import {
 	absoluteTolerance, describeEntry, jumpsOf, run,
 } from './runner.js';
+import { SolverError } from '../ode/one-step.js';
 
 /** A step that is small against the value and large against its rounding. */
 const EPS = Math.sqrt(Number.EPSILON);
@@ -342,9 +347,11 @@ export function runSensitivity(input, opts = {}) {
 	const tangent = opts.differenced
 		? { available: false, reason: 'asked for the differenced df/dp' }
 		: system.paramTangent?.() ?? { available: false, reason: 'not offered' };
-	const dp = tangent.available ? new Float64Array(n) : null;
-	const seedP = tangent.available
-		? new Float64Array(system.layout.nparam) : null;
+	// Parameter by parameter: a far-field path's rates read some, and along
+	// those df/dp is differenced too.
+	const exact = wanted.map((e) => tangent.available && (tangent.covers?.(e.slot) ?? true));
+	const dp = exact.some(Boolean) ? new Float64Array(n) : null;
+	const seedP = dp ? new Float64Array(system.layout.nparam) : null;
 
 	// The clock-only algebra may be worked out on a coarser clock and
 	// interpolated (`min_change_time`), anchored where each segment of the run
@@ -373,7 +380,7 @@ export function runSensitivity(input, opts = {}) {
 			system.jacobian.jvp(t, yv, sv, jv);
 
 			const { slot } = wanted[j];
-			if (dp) {
+			if (exact[j]) {
 				// df/dp in one more, seeded on the parameter instead of on the
 				// state. Exact, and cheaper than the difference it replaced:
 				// one tangent pass against a whole extra derivative evaluation
@@ -507,15 +514,20 @@ export function runSensitivity(input, opts = {}) {
 	// applies to the states and to nothing after them: a sensitivity may
 	// perfectly well be negative. Progress and Stop are read through one hook,
 	// so a caller with only a Stop to offer still has one read.
-	const results = run(project, {
-		system,
-		onGrid: true,
-		signal: opts.signal,
-		onProgress: opts.onProgress ?? (opts.signal ? () => {} : undefined),
-		equations: {
-			dydt, y0: Y0, abstol: atol, jacobian: bigJacobian, solver: 'ndf', onSegment,
-		},
-	});
+	let results;
+	try {
+		results = run(project, {
+			system,
+			onGrid: true,
+			signal: opts.signal,
+			onProgress: opts.onProgress ?? (opts.signal ? () => {} : undefined),
+			equations: {
+				dydt, y0: Y0, abstol: atol, jacobian: bigJacobian, solver: 'ndf', onSegment,
+			},
+		});
+	} catch (e) {
+		throw differencedFailure(e, wanted.filter((_, j) => !exact[j]), tangent, opts, project, P) ?? e;
+	}
 
 	// --- unpack: the states, and one sensitivity block per parameter.
 	const times = results.t.length;
@@ -548,6 +560,54 @@ export function runSensitivity(input, opts = {}) {
 			restarts: results.stats?.restarts ?? 0,
 		},
 	};
+}
+
+/** The ways a solve gives up that a noisy driving term brings about. */
+const NOISY = new Set(['tolerance', 'stalled', 'steps']);
+
+/**
+ * A solve of the sensitivity equations that gave up, said for what it most
+ * likely is when df/dp along some parameter is worked out by a difference, or
+ * null. A difference is right to about eight figures; where the derivative is
+ * a large rate less a large rate, what it loses to rounding can be far more
+ * than the absolute tolerance dy/dp is held to -- the model's over the
+ * parameter's value -- and the solver answers by shrinking its step until it
+ * gives up, saying something about the model that is not so. The far-field
+ * example's U-234 leach rate did, before df/dp along it was generated: the
+ * vault's rate there is U-238's ingrowth, 2.8e6 a year, the leach term a few
+ * Bq, and the difference came out a hundredth out against a tolerance of
+ * 1e-12. The solver's own words become the hint.
+ */
+function differencedFailure(e, differenced, tangent, opts, project, P) {
+	if (!differenced.length || e?.name !== 'SolverError' || !NOISY.has(e.code)) return null;
+	const names = differenced.map(slotLabel);
+	const list = names.length === 1 ? names[0]
+		: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+	let why = `since ${tangent.reason}`;
+	if (opts.differenced) why = 'as asked';
+	else if (tangent.available) why = `since a far-field path's rates read ${names.length === 1 ? 'it' : 'them'}`;
+	const tol = Number(project.simulation.abstol) / (Math.abs(P[differenced[0].slot]) || 1);
+	const where = Number.isFinite(e.t) ? ` past t=${e.t}` : '';
+	return Object.assign(new SolverError(`The sensitivity equations could not be integrated${where}: df/dp along `
+		+ `${list} is worked out by a difference, ${why}, which is right to about eight figures, and what it loses `
+		+ 'to rounding may be more than the absolute tolerance dy/dp is held to -- the model\'s absolute tolerance '
+		+ `over the parameter's value, ${tol.toPrecision(2)} for ${names[0]}. A looser absolute tolerance is the `
+		+ 'first thing to try.', e.t), { code: e.code, hint: solverWords(e.message) });
+}
+
+/**
+ * What the solver said, without the advice the run adds for a model's own
+ * equations -- a compartment held at zero, a stiffer solver, tighter
+ * tolerances -- which is about the wrong thing here.
+ */
+function solverWords(message) {
+	let m = String(message);
+	const held = m.indexOf(' Something is holding a state where it cannot go');
+	if (held >= 0) m = m.slice(0, held);
+	const prefix = 'variableOrder failed: ';
+	const advice = m.indexOf('. If the model is not stiff, dormandPrince may do better');
+	if (m.startsWith(prefix) && advice >= 0) m = m.slice(prefix.length, advice);
+	return m;
 }
 
 /**

@@ -158,7 +158,7 @@ async function augmentedModule() {
 	let text = readFileSync(path.join(dir, 'localsens.js'), 'utf8');
 	text = text.replace(/from '(\.\.?\/[^']+)'/g,
 		(_, rel) => `from '${pathToFileURL(path.join(dir, rel)).href}'`);
-	const anchor = '\tconst results = run(project, {';
+	const anchor = '\tlet results;\n\ttry {\n\t\tresults = run(project, {';
 	if (!text.includes(anchor)) throw new Error('localsens.js has changed: no place for the hook');
 	text = text.replace(anchor, '\tif (opts.expose) return opts.expose({ dydt, bigJacobian, Y0, atol, n, m });\n'
 		+ anchor);
@@ -230,6 +230,8 @@ switch (req.task) {
 			return {
 				available: pt.available,
 				reason: pt.reason ?? null,
+				// Which parameters it carries: not those a far-field path's rates read.
+				covers: pt.available ? Array.from({ length: sys.layout.nparam }, (_, s) => pt.covers(s)) : [],
 				points: pt.available ? req.points.map(({ t, y, seed }) => Array.from(
 					pt.pvp(t, Float64Array.from(y), Float64Array.from(seed)))) : [],
 			};

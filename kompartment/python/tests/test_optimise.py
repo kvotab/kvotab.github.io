@@ -48,6 +48,7 @@ from kompartment.engine.builder import build_system
 from kompartment.engine.paramtangent import build_param_tangent
 from kompartment.engine.project import Project
 from kompartment.engine.runner import run
+from kompartment.engine.solvers import SolverError
 from kompartment.stats import optimise as O
 from kompartment.stats.pdf import _exp, _to_precision
 
@@ -535,11 +536,46 @@ class Standalone(unittest.TestCase):
         tangent = build_param_tangent(system)
         self.assertTrue(tangent['available'], tangent.get('reason'))
         self.assertEqual(tangent['pvp'](3.0, np.array([2.5]), np.ones(1)).tolist(), [-2.5])
-        for name, word in (('farfield', 'far-field'), ('waste-packages', 'waste package'),
-                           ('decay-chain', 'no parameters')):
+        for name, word in (('waste-packages', 'waste package'), ('decay-chain', 'no parameters')):
             got = build_param_tangent(build_system(Project(example(name))))
             self.assertFalse(got['available'])
             self.assertIn(word, got['reason'])
+        # A far-field path on cells: carried along the parameters its rates do
+        # not read, and NaN along those they do, which the caller differences.
+        system = build_system(Project(example('farfield')))
+        tangent = build_param_tangent(system)
+        self.assertTrue(tangent['available'], tangent.get('reason'))
+        carried = {L.slot_label(e): tangent['covers'](e['slot']) for e in L.parameter_slots(system)}
+        self.assertEqual(sorted(k for k, v in carried.items() if not v),
+                         [f'{p}[{n}]' for p in ('De_matrix', 'Kd_matrix') for n in ('Th-230', 'U-234', 'U-238')])
+        y0 = system.initial_state()
+        for label, finite in (('leach_rate[U-234]', True), ('De_matrix[U-234]', False)):
+            seed = np.zeros(system.nparam)
+            seed[next(e['slot'] for e in L.parameter_slots(system) if L.slot_label(e) == label)] = 1.0
+            self.assertEqual(bool(np.all(np.isfinite(tangent['pvp'](10.0, y0, seed)))), finite, label)
+
+    def test_a_difference_that_gives_up_says_so(self) -> None:
+        # The far-field example on two cells of each kind. U-234's leach rate:
+        # its df/dp generated, the run goes through; differenced, it loses the
+        # leach term to the rounding of U-238's ingrowth in the vault, far more
+        # than dy/dp's absolute tolerance, and the solver gives up -- which is
+        # said as that, the solver's own words the hint.
+        model = example('farfield')
+        model['farfields'][0]['n_f'] = 2
+        model['farfields'][0]['n_m'] = 2
+        r = L.run_sensitivity(model, ['leach_rate[U-234]'])
+        self.assertGreater(r['stats']['nsteps'], 100)
+        with self.assertRaises(SolverError) as caught:
+            L.run_sensitivity(model, ['leach_rate[U-234]'], differenced=True)
+        e = caught.exception
+        self.assertEqual(e.code, 'stalled')
+        self.assertRegex(str(e), r'^The sensitivity equations could not be integrated past t=0\.00000\d+: df/dp '
+                                 r'along leach_rate\[U-234\] is worked out by a difference, as asked, which is '
+                                 r'right to about eight figures')
+        self.assertIn('the model\'s absolute tolerance over the parameter\'s value, 1.0e-12 for leach_rate[U-234]. '
+                      'A looser absolute tolerance is the first thing to try.', str(e))
+        self.assertRegex(e.hint, r'^The solver stopped making progress at t=[^ ]+: 2000 accepted steps advanced the '
+                                 r'clock by less than 0\.0001, and the step size is no longer growing\.$')
 
     def test_a_sensitivity_run_is_a_run_of_the_model(self) -> None:
         # Progress and stop reach it.
@@ -826,6 +862,8 @@ class SensitivityParity(unittest.TestCase):
                 if not js['available']:
                     self.assertEqual(mine['reason'], js['reason'])
                     continue
+                # The same parameters carried: not those a far-field path's rates read.
+                self.assertEqual([bool(mine['covers'](s)) for s in range(system.nparam)], js['covers'])
                 exact = total = 0
                 for p, q in zip(points, js['points']):
                     got = mine['pvp'](p['t'], np.array(p['y']), np.array(p['seed']))

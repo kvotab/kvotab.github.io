@@ -61,13 +61,14 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 import numpy as np
 
 from ..errors import KompartmentError
-from ..stats.pdf import _MISSING, _js_str, _jmax, _to_number
+from ..stats.pdf import _MISSING, _js_str, _jmax, _to_number, _to_precision
 from .builder import build_system, tuple_by_list
 from .jacobian import SQRT_EPS, Pattern
 from .paramtangent import param_tangent
 from .project import Project, value_at
 from .recorders import EVENT_FIELDS
 from .runner import absolute_tolerance, describe_entry, jumps_of, run
+from .solvers import SolverError
 from .switchtimes import switch_times
 
 __all__ = ['SensitivityError', 'parameter_slots', 'slot_label', 'state_series', 'uncarried', 'run_sensitivity',
@@ -346,8 +347,14 @@ def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, m
     # Progress and stop are read through one hook, as a run reads them, so a
     # caller with only a stop to offer still has one read.
     hear = on_progress if on_progress is not None else ((lambda fraction, at: None) if signal is not None else None)
-    results = run(problem['project'], system=problem['system'], on_grid=True, on_progress=hear, signal=signal,
-                  equations=problem['equations'])
+    try:
+        results = run(problem['project'], system=problem['system'], on_grid=True, on_progress=hear, signal=signal,
+                      equations=problem['equations'])
+    except SolverError as e:
+        said = _differenced_failure(e, problem, differenced)
+        if said is None:
+            raise
+        raise said from e
 
     # --- unpack: the states, and one sensitivity block per parameter.
     t = np.asarray(results.t, dtype=float)
@@ -366,6 +373,57 @@ def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, m
         'stats': {'ms': int(round((time.time() - started) * 1000)), 'nsteps': 0 if nsteps is None else nsteps,
                   'states': N, 'restarts': stats.get('restarts') or 0, 'compiled': problem['compiled']},
     }
+
+
+#: The ways a solve gives up that a noisy driving term brings about.
+_NOISY = ('tolerance', 'stalled', 'steps')
+
+
+def _differenced_failure(e: SolverError, problem: Mapping[str, Any], asked: bool) -> Optional[SolverError]:
+    """A solve of the sensitivity equations that gave up, said for what it most
+    likely is when df/dp along some parameter is worked out by a difference
+    (``differencedFailure``), or None: what a difference loses to rounding can
+    be more than the absolute tolerance dy/dp is held to. The solver's own
+    words become the hint."""
+    differenced = [e_ for e_, ok in zip(problem['wanted'], problem['exact']) if not ok]
+    if not differenced or getattr(e, 'code', None) not in _NOISY:
+        return None
+    names = [_js_str(slot_label(c)) for c in differenced]
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    tangent = problem['tangent']
+    if asked:
+        why = 'as asked'
+    elif tangent.get('available'):
+        why = f"since a far-field path's rates read {'it' if len(names) == 1 else 'them'}"
+    else:
+        why = f"since {_js_str(tangent.get('reason'))}"
+    a = abs(float(problem['system'].P[differenced[0]['slot']]))
+    tol = _to_number(problem['project'].simulation.get('abstol')) / (a if (a == a and a != 0) else 1.0)
+    t = e.t
+    where = f' past t={_js_str(float(t))}' if t is not None and math.isfinite(float(t)) else ''
+    out = SolverError(e.code, f'The sensitivity equations could not be integrated{where}: df/dp along {listed} is '
+                              f'worked out by a difference, {why}, which is right to about eight figures, and what it '
+                              'loses to rounding may be more than the absolute tolerance dy/dp is held to -- the '
+                              "model's absolute tolerance over the parameter's value, "
+                              f'{_to_precision(tol, 2)} for {names[0]}. A looser absolute tolerance is the first '
+                              'thing to try.', t)
+    out.hint = _solver_words(str(e))
+    return out
+
+
+def _solver_words(message: str) -> str:
+    """What the solver said, without the advice the run adds for a model's own
+    equations -- a compartment held at zero, a stiffer solver, tighter
+    tolerances -- which is about the wrong thing here."""
+    m = message
+    held = m.find(' Something is holding a state where it cannot go')
+    if held >= 0:
+        m = m[:held]
+    prefix = 'variableOrder failed: '
+    advice = m.find('. If the model is not stiff, dormandPrince may do better')
+    if m.startswith(prefix) and advice >= 0:
+        m = m[len(prefix):advice]
+    return m
 
 
 def model_derivative(system: Any, compiled: Any = 'auto') -> Any:
@@ -462,7 +520,11 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
 
     tangent: Mapping[str, Any] = ({'available': False, 'reason': 'asked for the differenced df/dp'} if differenced
                                   else param_tangent(system))
-    pvp = tangent.get('pvp') if tangent.get('available') else None
+    # Parameter by parameter: a far-field path's rates read some, and along
+    # those df/dp is differenced too.
+    covers = tangent.get('covers') or (lambda slot: True)
+    exact = [bool(tangent.get('available')) and bool(covers(slot)) for slot in slots]
+    pvp = tangent.get('pvp') if any(exact) else None
     nparam = max(1, int(system.nparam))
 
     pattern = jac['pattern']
@@ -509,7 +571,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
             base = n * (j + 1)
             jv = jvp(t, yv, values, f0, Y[base:base + n])
             slot = slots[j]
-            if pvp is not None:
+            if exact[j]:
                 seed = np.zeros(nparam)
                 seed[slot] = 1.0
                 out[base:base + n] = jv + np.asarray(pvp(t, yv, seed), dtype=float)
@@ -603,6 +665,9 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         'equations': {'dydt': dydt, 'y0': Y0, 'abstol': atol, 'jacobian': big_jacobian, 'solver': 'ndf',
                       'on_segment': on_segment},
         'compiled': model_compiled,
+        'wanted': wanted,
+        'exact': exact,
+        'tangent': tangent,
     }
 
 

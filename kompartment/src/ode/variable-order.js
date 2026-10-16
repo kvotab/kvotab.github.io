@@ -141,6 +141,9 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 		// wrong thing.
 		if (!(e instanceof NdfFailure)) throw e;
 		const at = e.t ?? t0;
+		// What it was keeps its code, as the Python and Julia engines keep it:
+		// a caller reads `code` rather than the words (see ../sim/localsens.js).
+		const coded = (err) => Object.assign(err, { code: e.code });
 		switch (e.code) {
 			case 'stalled':
 			case 'steps':
@@ -149,26 +152,26 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 				// different too: no tolerance and no other solver helps a
 				// state being held against a bound, so do not send the reader
 				// round that loop.
-				throw new SolverError(
+				throw coded(new SolverError(
 					`${e.message} Something is holding a state where it cannot go: most `
 					+ `often a compartment kept at zero by "cannot go negative" while its `
 					+ `equations push it below. Turn that setting off on the compartment `
 					+ `to see what the model really does.`,
 					at,
-				);
+				));
 			case 'nonfinite':
 				// Say what it is: no tolerance mends a square root of a
 				// negative inventory.
-				throw nonFiniteError(at);
+				throw coded(nonFiniteError(at));
 			case 'singular':
 			case 'jacobian':
-				throw new SolverError(e.message, at);
+				throw coded(new SolverError(e.message, at));
 			default:
-				throw new SolverError(
+				throw coded(new SolverError(
 					`variableOrder failed: ${e.message}. If the model is not stiff, dormandPrince may do `
 					+ `better; if it is very stiff, try tightening the tolerances.`,
 					at,
-				);
+				));
 		}
 	}
 

@@ -1844,10 +1844,11 @@ test('df/dp is differentiated, not differenced', async () => {
 	))).paramTangent();
 	assert(at('four-compartment').available, 'no analytic df/dp for four-compartment');
 	assert(at('biosphere').available, 'no analytic df/dp for biosphere');
-	// The three block types that carry their own runtime differentiation along
-	// the state and not along a parameter. Refused with a reason rather than
-	// approximated, exactly as the Jacobian refuses an availability.
-	for (const [name, word] of [['farfield', 'far-field'], ['waste-packages', 'waste package']]) {
+	// The block types that carry their own runtime differentiation along the
+	// state and not along a parameter. Refused with a reason rather than
+	// approximated, exactly as the Jacobian refuses an availability -- a
+	// far-field path on cells only along the parameters its rates read (below).
+	for (const [name, word] of [['waste-packages', 'waste package']]) {
 		const r = at(name);
 		assert(!r.available && new RegExp(word).test(r.reason),
 			`${name}: ${r.available ? 'generated one anyway' : r.reason}`);
@@ -1913,6 +1914,57 @@ test('df/dp is differentiated, not differenced', async () => {
 		`analytic ${A.stats.nsteps} steps against differenced ${B.stats.nsteps}`);
 });
 
+
+test('df/dp is generated past a far-field path, and a difference that gives up says so', async () => {
+	const { runSensitivity, parameterSlots, slotLabel } = await import('../src/sim/localsens.js');
+	const { buildSystem: build } = await import('../src/sim/builder.js');
+	const { readFileSync } = await import('node:fs');
+	const model = () => {
+		const m = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
+		// Two cells of each kind: the same physics, quickly.
+		m.farfields[0].n_f = 2;
+		m.farfields[0].n_m = 2;
+		return m;
+	};
+	// A path's rates read its settings, and its cells are states. Along a
+	// parameter the settings do not read -- a leach rate into it, the flow of
+	// the well it releases into -- it adds nothing to df/dp, and df/dp is
+	// generated; along one they read (a diffusivity, a Kd) its rates'
+	// derivative is not taken: NaN there, and the run differences it.
+	const system = build(new Project(model()));
+	const pt = system.paramTangent();
+	assert(pt.available, pt.reason);
+	const slots = parameterSlots(system);
+	const read = slots.filter((e) => !pt.covers(e.slot)).map(slotLabel).sort();
+	assert(JSON.stringify(read) === JSON.stringify(['De_matrix', 'Kd_matrix'].flatMap((p) => ['Th-230', 'U-234', 'U-238']
+		.map((n) => `${p}[${n}]`))), `the parameters a path reads: ${read}`);
+	const slotOf = (label) => slots.find((e) => slotLabel(e) === label).slot;
+	const along = (label) => {
+		const w = new Float64Array(system.layout.nparam);
+		w[slotOf(label)] = 1;
+		return pt.pvp(10, system.initialState(), w);
+	};
+	assert(along('leach_rate[U-234]').every(Number.isFinite), 'df/dp along a leach rate is not a number');
+	assert(along('De_matrix[U-234]').every(Number.isNaN), 'df/dp along a diffusivity came out as a number');
+
+	// U-234's leach rate. Its vault's rate is U-238's ingrowth, millions a
+	// year, and the leach term a few Bq: differenced, the term is lost to the
+	// rounding of the ingrowth, far past dy/dp's absolute tolerance (1e-16 over
+	// the leach rate), and the solver gives up -- where the old message blamed
+	// a compartment held at zero. Generated, the run goes through.
+	const r = runSensitivity(model(), { parameters: ['leach_rate[U-234]'] });
+	assert(r.stats.nsteps > 100 && r.sens[0].every((row) => row.every(Number.isFinite)), 'the generated run');
+	let e = null;
+	try {
+		runSensitivity(model(), { parameters: ['leach_rate[U-234]'], differenced: true });
+	} catch (err) { e = err; }
+	assert(e && e.name === 'SolverError' && e.code === 'stalled', `the differenced run: ${e?.message ?? 'ran'}`);
+	assert(/^The sensitivity equations could not be integrated past t=0\.00000\d+: df\/dp along leach_rate\[U-234\] is worked out by a difference, as asked, which is right to about eight figures/.test(e.message)
+		&& e.message.includes("the model's absolute tolerance over the parameter's value, 1.0e-12 for leach_rate[U-234]. "
+			+ 'A looser absolute tolerance is the first thing to try.'), e.message);
+	// The solver's own words, without the advice about compartments held at zero.
+	assert(/^The solver stopped making progress at t=[^ ]+: 2000 accepted steps advanced the clock by less than 0\.0001, and the step size is no longer growing\.$/.test(e.hint), e.hint);
+});
 
 test('a sensitivity run reports its progress and stops when asked', async () => {
 	const { runSensitivity } = await import('../src/sim/localsens.js');

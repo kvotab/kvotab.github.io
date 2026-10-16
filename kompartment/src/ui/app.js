@@ -2849,18 +2849,26 @@ function openLocalSensitivity() {
 	if (state.running) { flash('A run is already going. Stop it first.', 'warn'); return; }
 	let slots;
 	let states;
-	let exact = true;
+	let differenced = null;
 	try {
 		const sys = buildSystem(new Project(structuredClone(state.raw)));
-		slots = parameterSlots(sys).map((s) => ({ label: slotLabel(s), value: s.value }));
+		const all = parameterSlots(sys);
+		slots = all.map((s) => ({ label: slotLabel(s), value: s.value }));
 		states = sys.layout.nstate;
-		// Whether `df/dp` will be generated or differenced, which is what the
-		// cost sentence in the dialog turns on. Read off the layout rather than
-		// by asking for the tangent: generating it is the expensive half, and
-		// the three block types that refuse it are a structural fact.
-		exact = !(sys.layout.farfields ?? []).length
-			&& !(sys.layout.wastes ?? []).length
-			&& !(sys.layout.events ?? []).length;
+		// Along which parameters `df/dp` will be differenced rather than
+		// generated, which is what the cost sentence in the dialog turns on.
+		// Read off the layout and the parameter pattern rather than by asking
+		// for the tangent: generating it is the expensive half. A waste
+		// package, a disruptive event or a semi-analytical path: every one; a
+		// far-field path on cells: those its settings read.
+		const paths = sys.layout.farfields ?? [];
+		if ((sys.layout.wastes ?? []).length || (sys.layout.events ?? []).length
+			|| paths.some((p) => p.farf?.laplace)) {
+			differenced = 'model';
+		} else if (paths.length) {
+			const read = sys.parametersReadByPaths();
+			differenced = new Set(all.filter((s) => read.has(s.slot)).map(slotLabel));
+		}
 	} catch (e) {
 		showError({ name: e.name ?? 'Error', message: e.message, blockName: e.blockName ?? null });
 		flash(`Sensitivity needs a model that builds. ${e.message}`, 'warn');
@@ -2870,7 +2878,7 @@ function openLocalSensitivity() {
 	openLocalSensitivityPicker({
 		slots,
 		states,
-		exact,
+		differenced,
 		onRun: (parameters) => {
 			const w = ensureWorker();
 			state.runId = (state.runId ?? 0) + 1;

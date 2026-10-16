@@ -495,8 +495,11 @@ export class FarfPath {
 		}
 	}
 
-	/** The columns the block's release depends on: its cells, and its rates. */
-	releasePattern(SX) {
+	/**
+	 * The columns the block's release depends on: its cells, and its rates.
+	 * Along the parameters (`cells` false) only its rates': a cell is a state.
+	 */
+	releasePattern(SX, cells = true) {
 		const {
 			nnuc, otherWidth, ncells, nrel, relCells, base,
 		} = this;
@@ -505,12 +508,51 @@ export class FarfPath {
 			for (let m = 0; m < nnuc; m++) {
 				const slot = o * nnuc + m;
 				const s = SX[this.releaseBase + this.dimOff[slot]];
-				for (let r = 0; r < nrel; r++) s.add(obase + relCells[r] * nnuc + m);
+				if (cells) for (let r = 0; r < nrel; r++) s.add(obase + relCells[r] * nnuc + m);
 				for (const key of this.keys) {
 					for (const c of SX[this._at(key, o, this.dimOff[slot])]) s.add(c);
 				}
 			}
 		}
+	}
+
+	/** Every algebraic slot the path's rates are worked out from: each setting of each slot. */
+	settingSlots() {
+		const out = new Set();
+		for (let slot = 0; slot < this.slots; slot++) {
+			const o = Math.floor(slot / this.nnuc);
+			for (const key of this.keys) out.add(this._at(key, o, this.dimOff[slot]));
+		}
+		return [...out].sort((a, b) => a - b);
+	}
+
+	/** Whether a setting moves along the direction `dX` is the tangent of. */
+	settingsMove(dX) {
+		for (let slot = 0; slot < this.slots; slot++) {
+			const o = Math.floor(slot / this.nnuc);
+			for (const key of this.keys) {
+				if (dX[this._at(key, o, this.dimOff[slot])] !== 0) return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The release's tangent along a parameter, the state held: nothing, along
+	 * a parameter no setting moves with -- the weights are the settings' and
+	 * the cells are states. Along one a setting moves with it would be the
+	 * rates' own derivative, which is not taken here: NaN, so that what reads
+	 * it says so (see `buildParamTangent` in ./jacobian.js, which keeps such a
+	 * parameter to the difference).
+	 */
+	releaseStill(dX) {
+		const v = this.settingsMove(dX) ? NaN : 0;
+		for (let slot = 0; slot < this.slots; slot++) dX[this.releaseBase + this.dimOff[slot]] = v;
+	}
+
+	/** The cells' part of df/dp, the state held: nothing, unless a setting moves (see `releaseStill`). */
+	stillAlongParameter(dX, dout) {
+		if (this.settingsMove(dX)) dout.fill(NaN);
 	}
 }
 

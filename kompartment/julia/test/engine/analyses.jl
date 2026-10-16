@@ -185,6 +185,44 @@ end
     @test_throws ArgumentError K.run_sensitivity(m, "k")
 end
 
+@testset "dy/dp past a far-field path" begin
+    # The far-field example on two cells of each kind. A path's rates read its
+    # settings and its cells are states: along a parameter the settings do not read
+    # (a leach rate into it, the flow of the well it releases into) df/dp is
+    # generated; along one they read (a diffusivity, a Kd) it is differenced.
+    small() = (m = K.parse_json(read(joinpath(ANALYSIS_EXAMPLES, "farfield.json"), String));
+               m["farfields"][1]["n_f"] = 2; m["farfields"][1]["n_m"] = 2; K.Model(m))
+    sys = K.build_system(K.project(small()))
+    t = K.param_tangent(sys)
+    @test t.available
+    slots = K.parameter_slots(sys)
+    @test sort([K.slot_label(e) for e in slots if e["slot"] in t.read]) ==
+          ["$p[$n]" for p in ("De_matrix", "Kd_matrix") for n in ("Th-230", "U-234", "U-238")]
+    along(label) = (w = zeros(sys.nparam);
+                    w[only(e["slot"] for e in slots if K.slot_label(e) == label)+1] = 1.0;
+                    K.param_pvp(t.plan, 10.0, K.initial_state(sys), w))
+    @test all(isfinite, along("leach_rate[U-234]")) && all(isnan, along("De_matrix[U-234]"))
+    # U-234's leach rate: generated, the run goes through; differenced, the leach term
+    # is lost to the rounding of U-238's ingrowth in the vault, far past dy/dp's absolute
+    # tolerance, and the solver gives up -- which is said as that.
+    r = K.run_sensitivity(small(), ["leach_rate[U-234]"])
+    @test r.exact == [true] && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
+    e = try
+        K.run_sensitivity(small(), ["leach_rate[U-234]"]; differenced=true)
+        nothing
+    catch err
+        err
+    end
+    @test e isa K.SolverError && e.kind == "stalled"
+    @test startswith(e.message, "The sensitivity equations could not be integrated past t=0.00000")
+    @test occursin("df/dp along leach_rate[U-234] is worked out by a difference, as asked, which is right to about " *
+                   "eight figures", e.message)
+    @test endswith(e.message, "the model's absolute tolerance over the parameter's value, 1.0e-12 for " *
+                              "leach_rate[U-234]. A looser absolute tolerance is the first thing to try.")
+    @test occursin(r"^The solver stopped making progress at t=[^ ]+: 2000 accepted steps advanced the clock by less " *
+                   r"than 0\.0001, and the step size is no longer growing\.$", e.hint)
+end
+
 # --- against the Python package -----------------------------------------------------------------
 
 _fx(v) = v isa AbstractDict ? (haskey(v, "\$f") ? parse(Float64, v["\$f"]) :
@@ -240,13 +278,15 @@ _hexes(v) = Float64[parse(Float64, s) for s in v]
         @testset "dy/dp $(splitext(f)[1])" for f in sort(readdir(joinpath(ANALYSIS_FIXTURES, "sensitivity")))
             fx = K.parse_json(read(joinpath(ANALYSIS_FIXTURES, "sensitivity", f), String))
             got = try
-                K.run_sensitivity(_ex(fx["file"]), String[p for p in fx["parameters"]];
+                K.run_sensitivity(K.Model(fx["model"]), String[p for p in fx["parameters"]];
                                   differenced=fx["differenced"])
             catch e
                 e
             end
             if haskey(fx, "error")
                 @test got isa Exception && sprint(showerror, got) == fx["error"][2]
+                # A solve that gives up: the solver's own words, as its hint.
+                fx["error"][3] === nothing || @test got.hint == fx["error"][3]
             else
                 @test got.t == _hexes(fx["t"])
                 @test all(isequal(got.y[i], _hexes(fx["y"][i])) for i in eachindex(fx["y"]))
@@ -257,6 +297,12 @@ _hexes(v) = Float64[parse(Float64, s) for s in v]
                 @test [(s["offset"], s["label"], s["hidden"]) for s in got.series] ==
                       [(s["offset"], s["label"], s["hidden"]) for s in fx["series"]]
             end
+        end
+        @testset "df/dp generated: $name" for (name, want) in
+                K.parse_json(read(joinpath(ANALYSIS_FIXTURES, "tangents.json"), String))
+            t = K.param_tangent(K.build_system(K.project(_ex(name))))
+            @test t.available == want["available"] && t.reason == want["reason"]
+            @test sort!(collect(t.read)) == want["read_by_paths"]
         end
     end
 end

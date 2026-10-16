@@ -18,7 +18,11 @@ Julia ports of the sensitivity designs (``kompartment/stats/gsa.py`` and
   system is below 64 states, where its iteration matrix is factorised dense
   (from 64 on it may be factorised sparse, by SuperLU here and KLU in Julia,
   which round differently), with df/dp differentiated and differenced: the
-  times, every state and every sensitivity; and the refusals.
+  times, every state and every sensitivity; and the refusals, the words of a
+  solve that gives up with a difference in it among them;
+- ``tangents.json``: for every bundled example, whether df/dp can be
+  generated, why not, and which parameters a far-field path's rates read (along
+  which it is differenced).
 
     python3 tools/analysis_fixtures.py OUT_DIR
 
@@ -217,8 +221,16 @@ def write_calibrations(root):
 
 # --- dy/dp -------------------------------------------------------------------------------------
 
+def small_farfield():
+    """The far-field example on two cells of each kind: the same physics, few states."""
+    m = example('farfield.json')
+    m['farfields'][0]['n_f'] = 2
+    m['farfields'][0]['n_m'] = 2
+    return m
+
+
 SENSITIVITY = [
-    # (case, example, parameters, differenced)
+    # (case, example (or a function making the model), parameters, differenced)
     ('biosphere', 'biosphere.json', ['leachRate[I-129]', 'geoTransit'], False),
     ('brusselator', 'brusselator.json', ['A', 'B'], False),
     ('brusselator-d', 'brusselator.json', ['A', 'B'], True),
@@ -237,6 +249,12 @@ SENSITIVITY = [
     ('sir-epidemic', 'sir-epidemic.json', ['N', 'I0', 'beta'], False),
     ('van-der-pol-stiff', 'van-der-pol-stiff.json', ['mu'], False),
     ('van-der-pol-d', 'van-der-pol.json', ['mu'], True),
+    # A far-field path's: df/dp generated along a parameter its rates do not
+    # read, and differenced as asked -- U-234's leach rate, lost to the rounding
+    # of U-238's ingrowth, which gives up and says so.
+    ('farfield-leach', small_farfield, ['leach_rate[U-234]'], False),
+    ('farfield-well', small_farfield, ['well_flow[U-238]'], False),
+    ('farfield-leach-d', small_farfield, ['leach_rate[U-234]'], True),
     # Refused, each for its own reason.
     ('bouncing-ball', 'bouncing-ball.json', ['g', 'v0'], False),
     ('decay-chain', 'decay-chain.json', [], False),
@@ -250,11 +268,12 @@ def write_sensitivities(root):
     from kompartment.engine.localsens import run_sensitivity
     (root / 'sensitivity').mkdir(parents=True, exist_ok=True)
     for case, name, params, differenced in SENSITIVITY:
-        out = {'case': case, 'file': name, 'parameters': params, 'differenced': differenced}
+        model = name() if callable(name) else example(name)
+        out = {'case': case, 'model': model, 'parameters': params, 'differenced': differenced}
         try:
-            r = run_sensitivity(example(name), params, differenced=differenced)
+            r = run_sensitivity(model, params, differenced=differenced)
         except Exception as e:  # noqa: BLE001 - a refusal is what is being recorded
-            out['error'] = [type(e).__name__, str(e)]
+            out['error'] = [type(e).__name__, str(e), getattr(e, 'hint', None)]
         else:
             if len(r['y']) * (1 + len(r['sens'])) >= 64:
                 raise SystemExit(f'{case}: 64 states or more, where the iteration matrix may be sparse')
@@ -267,6 +286,19 @@ def write_sensitivities(root):
         print('dy/dp', case, out.get('error', [None, ''])[1][:60] or out['nsteps'])
 
 
+def write_tangents(root):
+    from kompartment.engine.builder import build_system
+    from kompartment.engine.paramtangent import build_param_tangent
+    from kompartment.engine.project import Project
+    out = {}
+    for path in sorted(EXAMPLES.glob('*.json')):
+        t = build_param_tangent(build_system(Project(example(path.name))))
+        out[path.name] = {'available': t['available'], 'reason': t.get('reason'),
+                          'read_by_paths': t.get('read_by_paths', [])}
+    (root / 'tangents.json').write_text(json.dumps(out))
+    print('tangents', len(out))
+
+
 def main():
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
@@ -275,6 +307,7 @@ def main():
     write_designs(root)
     write_calibrations(root)
     write_sensitivities(root)
+    write_tangents(root)
 
 
 if __name__ == '__main__':

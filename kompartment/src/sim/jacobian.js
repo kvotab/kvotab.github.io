@@ -539,6 +539,52 @@ function generate(b) {
 }
 
 /**
+ * The parameter columns of every algebraic slot: the parameter slots each
+ * depends on, through the algebra in between, by the walk that fills the
+ * state columns for the Jacobian's pattern. Throws `Refused` where the
+ * dependencies do not settle.
+ */
+function parameterPattern(b) {
+	const { nalg, runtime } = b;
+	const { algSource } = patternSource(b, { collect: 'param' });
+	const rawAlgPattern = buildFunction(['SX', 'ADD', 'MAPS', 'FARF'], algSource, 'patternAlgParam');
+	const SP = Array.from({ length: Math.max(1, nalg) }, () => new Set());
+	const ADD = (dst, src) => { for (const c of src) dst.add(c); };
+	let previous = -1;
+	for (let pass = 0; pass < MAX_PATTERN_PASSES; pass++) {
+		rawAlgPattern(FUNCTIONS, runtime.ctx, SP, ADD, runtime.MAPS, runtime.FARF);
+		let total = 0;
+		for (const s of SP) total += s.size;
+		if (total === previous) break;
+		previous = total;
+		if (pass === MAX_PATTERN_PASSES - 1) {
+			throw new Refused('the algebraic dependencies did not settle');
+		}
+	}
+	return SP;
+}
+
+/**
+ * The parameter slots a far-field path on cells reads -- those its settings
+ * depend on -- along which `df/dp` is differenced rather than generated. From
+ * the parameter pattern when one is given; otherwise worked out, which is the
+ * cheap half of `buildParamTangent` (no function of the model's size is
+ * generated): what the dy/dp dialog asks before anything runs.
+ */
+export function readByPaths(b, SP = null) {
+	const paths = (b.farfLayout ?? []).filter((p) => !p.farf?.laplace);
+	const out = new Set();
+	if (!paths.length) return out;
+	const sets = SP ?? parameterPattern(b);
+	for (const p of paths) {
+		for (const x of b.runtime.FARF[p.farfIndex].settingSlots()) {
+			for (const c of sets[x]) out.add(c);
+		}
+	}
+	return out;
+}
+
+/**
  * `df/dp * w` in one pass: the driving term of the forward sensitivity
  * equations, differentiated rather than differenced.
  *
@@ -558,10 +604,21 @@ function generate(b) {
  * that know how to differentiate along the state and not along a parameter --
  * a far-field path's transport matrix, a waste package's hazard, a disruptive
  * event's rate. Writing the parameter half of each is a piece of work rather
- * than a line, and a wrong matrix is far worse than none, so a model with any
- * of them is refused here and differenced by the caller exactly as before.
+ * than a line, and a wrong matrix is far worse than none, so a model with a
+ * waste package, a disruptive event or a semi-analytical path is refused here
+ * and differenced by the caller exactly as before.
  *
- * @returns {{available: true, pvp: Function, nparam: number}
+ * **A far-field path on cells is taken along the parameters its rates do not
+ * read.** Along those its cells are states, held, and its rates do not move,
+ * so it adds nothing to df/dp: a leach rate into the path, the flow of a well
+ * it releases into. Its rates' derivative along a parameter they do read (a
+ * diffusivity, a Kd) is not taken, so `covers` says which parameters this
+ * carries -- the caller differences the others -- and the path writes NaN
+ * along one it does not, rather than a wrong zero. Which parameters a path's
+ * rates read is the parameter pattern's answer for its settings.
+ *
+ * @returns {{available: true, pvp: Function, nparam: number,
+ *   covers: (slot: number) => boolean}
  *   | {available: false, reason: string}}
  */
 export function buildParamTangent(b) {
@@ -572,7 +629,7 @@ export function buildParamTangent(b) {
 	const has = (what, list) => ((list ?? []).length
 		? `a ${what}, whose derivative along a parameter is not generated`
 		: null);
-	const refusal = has('far-field path', b.farfLayout)
+	const refusal = has('semi-analytical far-field path', (b.farfLayout ?? []).filter((p) => p.farf?.laplace))
 		?? has('waste package', b.wasteLayout)
 		?? has('disruptive event', b.disruptionLayout);
 	if (refusal) {
@@ -583,23 +640,11 @@ export function buildParamTangent(b) {
 		// The parameter columns of every algebraic slot, by the same walk that
 		// fills the state columns. It is what says a quantity is structurally
 		// still along a parameter -- and what the delay refusal below reads.
-		const { algSource } = patternSource(b, { collect: 'param' });
-		const rawAlgPattern = buildFunction(
-			['SX', 'ADD', 'MAPS', 'FARF'], algSource, 'patternAlgParam',
-		);
-		const SP = Array.from({ length: Math.max(1, nalg) }, () => new Set());
-		const ADD = (dst, src) => { for (const c of src) dst.add(c); };
-		let previous = -1;
-		for (let pass = 0; pass < MAX_PATTERN_PASSES; pass++) {
-			rawAlgPattern(FUNCTIONS, runtime.ctx, SP, ADD, runtime.MAPS, runtime.FARF);
-			let total = 0;
-			for (const s of SP) total += s.size;
-			if (total === previous) break;
-			previous = total;
-			if (pass === MAX_PATTERN_PASSES - 1) {
-				throw new Refused('the algebraic dependencies did not settle');
-			}
-		}
+		const SP = parameterPattern(b);
+		// The parameters a far-field path's rates read: along those this does
+		// not go (see `releaseStill` in ./farfield.js), and the caller
+		// differences them.
+		const readByPath = readByPaths(b, SP);
 
 		// `SX` is the name the generator reads the column sets under, and for
 		// this pass the parameter sets are what "does this move?" means. The
@@ -641,9 +686,10 @@ export function buildParamTangent(b) {
 
 		// The same two questions the Jacobian's own tangent has to answer:
 		// that the function can be entered at all, and that what it returns is
-		// a number. A seed of ones exercises every parameter at once, at the
-		// state the run starts from.
+		// a number. A seed of ones exercises every parameter it carries at
+		// once, at the state the run starts from.
 		const seed = new Float64Array(nparam).fill(1);
+		for (const c of readByPath) seed[c] = 0;
 		const wasT = runtime.ctx.t;
 		let probe;
 		try {
@@ -668,7 +714,7 @@ export function buildParamTangent(b) {
 				}
 			}
 		}
-		return { available: true, pvp, nparam };
+		return { available: true, pvp, nparam, covers: (slot) => !readByPath.has(slot) };
 	} catch (e) {
 		if (e instanceof NoDerivative || e instanceof Refused) {
 			return { available: false, reason: e.message };
@@ -708,7 +754,7 @@ function patternSource(b, opts = {}) {
 		// themselves depend on the state, so both go into its column set --
 		// the runtime object knows where its cells are and this does not.
 		if (a.kind === 'farfield') {
-			algLines.push(`\tFARF[${a.farfIndex}].releasePattern(SX);`);
+			algLines.push(`\tFARF[${a.farfIndex}].releasePattern(SX${wantParams ? ', false' : ''});`);
 			continue;
 		}
 		// Waste packages. The hazard reads the clock and the failure settings,
@@ -1215,10 +1261,14 @@ function jvpSourceFor(b, opts = {}) {
 			// A path's release: `sum(w(X)*y)` over a couple of its own cells, so
 			// the tangent carries both the seed and, when a rate follows the
 			// state, the rate's own tangent. It writes X as well as dX, since the
-			// value has to be there for whatever reads it.
+			// value has to be there for whatever reads it. Along a parameter the
+			// cells are held, and the release moves only if a setting does: see
+			// `releaseStill`.
 			if (a.kind === 'farfield') {
 				lines.push(`\tFARF[${a.farfIndex}].release(y, X, ctx.t);`);
-				lines.push(`\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX, ctx.t);`);
+				lines.push(alongState
+					? `\tFARF[${a.farfIndex}].releaseTangent(y, v, X, dX, ctx.t);`
+					: `\tFARF[${a.farfIndex}].releaseStill(dX);`);
 				continue;
 			}
 			// Waste packages. The hazard is a function of the clock and of settings
@@ -1581,11 +1631,14 @@ function jvpSourceFor(b, opts = {}) {
 	// A path: the matrix applied to the seed, plus the rates' own tangents
 	// applied to the state when a rate follows a compartment. Where its
 	// release goes is an ordinary transfer, differentiated above with the
-	// rest of them.
+	// rest of them. Along a parameter the cells are held and decay is not a
+	// parameter's, so only a setting that moves would move it: see
+	// `stillAlongParameter`.
 	for (const p of farfLayout ?? []) {
 		lines.push(`\t// far-field path ${inComment(p.name)}`);
-		lines.push(`\tFARF[${p.farfIndex}].jvp(y, v, dout, X, dX, ${
-			p.decaySlot == null ? 'null' : `DEC[${p.decaySlot}]`});`);
+		lines.push(alongState
+			? `\tFARF[${p.farfIndex}].jvp(y, v, dout, X, dX, ${p.decaySlot == null ? 'null' : `DEC[${p.decaySlot}]`});`
+			: `\tFARF[${p.farfIndex}].stillAlongParameter(dX, dout);`);
 	}
 
 	for (const rec of recorders ?? []) {
