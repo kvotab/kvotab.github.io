@@ -10,7 +10,9 @@
  * worker of its own, so that on a machine with the cores they take no longer
  * together than the slowest of them alone. Nothing about a scenario's run
  * depends on another's, so they are exact: each is what running that scenario
- * on its own would give.
+ * on its own would give. On an engine on this machine each scenario's worker
+ * hands its run to the engine, which holds one run a scenario and solves them
+ * one after another (`scenarioEngine` in ./app.js).
  *
  * The results stay where they were computed, as a run's always have (see
  * ../worker/sim-worker.js): the page holds each scenario's list of outputs and

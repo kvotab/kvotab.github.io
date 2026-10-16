@@ -27676,7 +27676,7 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 	const run = fn(worker, 'runOnEngine');
 	assert(/readDataset\(entries\)/.test(run)
 		&& /const results = data\.meta\.onEngine \? restoreOnEngine\(project, data, \{ engine, job \}\) : restoreRun\(project, data\);/.test(run)
-		&& /payload: \{ \.\.\.donePayload\(results, outputs\), engine: engine\.name \}/.test(run)
+		&& /payload: \{ \.\.\.donePayload\(results, outputs\), engine: engine\.name, \.\.\.\(results\.onEngine \? \{ engineRun: job \} : \{\}\) \}/.test(run)
 		&& /log: Array\.isArray\(data\.meta\.log\) \? data\.meta\.log : null/.test(run), 'an engine’s run is not held as a run made here');
 	assert(/const results = restoreRun\(project, data\);/.test(worker.slice(worker.indexOf("if (msg.type === 'open-dataset') {"))),
 		'an opened archive and an engine’s are not read the same way');
@@ -27875,6 +27875,30 @@ test('the analyses go to the engine that has them, and come back as the page’s
 	// The server takes each kind, and passes a job's own account of its progress on.
 	assert(/if kind not in \("run", "probabilistic", "replay", "calibrate", "local-sensitivity"\):/.test(serve)
 		&& /\("fraction", "at", "done", "total", "detail"\)/.test(serve), 'the server refuses the analyses');
+});
+
+test('the scenarios beside the selected one run on the engine, each held as a run of its own', async () => {
+	// Each scenario's worker hands its run to the engine as a page of its own
+	// (the page's client and the scenario's name), so the engine holds one run a
+	// scenario beside the selected one's rather than in its place, and takes the
+	// scenarios one after another. A scenario's states are reused only from the
+	// same engine; one dropped stops its job and lets the engine go of its run.
+	const { readFileSync } = await import('node:fs');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	const fn = (src, name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src)?.[1] ?? '';
+	assert(/return e \? \{ \.\.\.e, client: `\$\{e\.client\}#\$\{name\}` \} : null;/.test(fn(app, 'scenarioEngine')),
+		'a scenario is not a page of its own to the engine');
+	assert((app.match(/workers: workerLimit\(\), engine: scenarioEngine\(entry\.name\),/g) ?? []).length === 2,
+		'a scenario’s run is not sent to the engine');
+	assert(/&& \(entry\.r\.engine \?\? null\) === \(engineFor\(\)\?\.name \?\? null\);/.test(fn(app, 'queueScenario')),
+		'a scenario reuses another engine’s states');
+	const drop = fn(app, 'dropScenario');
+	assert(/w\.postMessage\(\{ type: 'cancel' \}\)/.test(drop) && /setTimeout\(\(\) => \{ try \{ w\.terminate\(\); \}/.test(drop)
+		&& /forgetEngineRun\(e\.r\);/.test(drop), 'a dropped scenario leaves its job running, or its run held');
+	assert(/fetch\(`\/engine\/runs\/\$\{r\.engineRun\}\/forget`/.test(fn(app, 'forgetEngineRun')), 'the engine is never told');
+	assert(/\.\.\.\(results\.onEngine \? \{ engineRun: job \} : \{\}\)/.test(fn(worker, 'runOnEngine')),
+		'the page never learns which job holds a run');
 });
 
 test('a table is pictured the way it is read', async () => {

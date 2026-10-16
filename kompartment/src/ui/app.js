@@ -1621,7 +1621,7 @@ function acceptScenarioMessage(entry, m) {
 		entry.nextKey = null;
 		entry.worker?.postMessage({
 			type: 'run', id: entry.runId, project: entry.project,
-			cores: splitShare(), workers: workerLimit(),
+			cores: splitShare(), workers: workerLimit(), engine: scenarioEngine(entry.name),
 		});
 		return;
 	}
@@ -1672,7 +1672,9 @@ function queueScenario(name) {
 	const key = integrationKeyNow(project);
 	entry.project = project.toJSON();
 	entry.nextKey = key;
-	entry.reuse = !!key && key === entry.key && !!entry.r && !entry.r.detached && !!entry.worker;
+	// And of the same engine: another engine's states are another solve.
+	entry.reuse = !!key && key === entry.key && !!entry.r && !entry.r.detached && !!entry.worker
+		&& (entry.r.engine ?? null) === (engineFor()?.name ?? null);
 	entry.runId = state.runId;
 	entry.rev = state.runRev;
 	entry.queued = true;
@@ -1705,9 +1707,11 @@ function pumpScenarios() {
 			failScenario(entry, e.message ?? String(e));
 			continue;
 		}
+		// On the engine chosen beside Run, where there is one: it takes the
+		// scenarios one after another.
 		entry.worker.postMessage({
 			type: entry.reuse ? 're-evaluate' : 'run', id: entry.runId, project: entry.project,
-			cores: splitShare(), workers: workerLimit(),
+			cores: splitShare(), workers: workerLimit(), engine: scenarioEngine(entry.name),
 		});
 	}
 }
@@ -1758,7 +1762,17 @@ function dropScenario(name) {
 	const e = state.scenarioRuns.get(name);
 	if (!e) return;
 	state.scenarioRuns.delete(name);
-	try { e.worker?.terminate(); } catch { /* gone already */ }
+	const w = e.worker;
+	if (w && e.running) {
+		// A run on an engine is a job there, which its worker stops when
+		// asked -- it waits on the engine rather than solving, so it hears
+		// -- before it is ended.
+		try { w.postMessage({ type: 'cancel' }); } catch { /* gone already */ }
+		setTimeout(() => { try { w.terminate(); } catch { /* gone already */ } }, 200);
+	} else {
+		try { w?.terminate(); } catch { /* gone already */ }
+	}
+	forgetEngineRun(e.r);
 }
 
 /**
@@ -3260,6 +3274,24 @@ function engineFor() {
 	if (!engines.token || engines.chosen === 'browser') return null;
 	if (!engines.info?.engines[engines.chosen]?.available) return null;
 	return { name: engines.chosen, token: engines.token, client: engines.client };
+}
+
+/**
+ * The engine for a scenario run beside the selected one: the same, asked as a
+ * page of its own, so that the engine holds that scenario's run beside the
+ * selected one's rather than in its place (see serve.py).
+ */
+function scenarioEngine(name) {
+	const e = engineFor();
+	return e ? { ...e, client: `${e.client}#${name}` } : null;
+}
+
+/** Tells the engine holding a run that the page has let go of it. Kept alive: the page may be going. */
+function forgetEngineRun(r) {
+	if (!r?.engineRun || !engines.token) return;
+	fetch(`/engine/runs/${r.engineRun}/forget`, {
+		method: 'POST', headers: { 'X-Kompartment-Token': engines.token }, keepalive: true,
+	}).catch(() => {});
 }
 
 const LOADING_STAGE = {

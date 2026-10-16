@@ -99,9 +99,12 @@ soon as it is solved. The chart, the table, the mass-balance audit and every
 export work on it as on a run made in the browser. What needs every state brings
 the whole run over first: **Save → Model with results**, **Keep this run**, and
 an edit worked out over the states (below). The engine keeps one run for each
-page, the page's next run taking its place, and lets go of one nobody has asked
-about for two hours, or one it held before it was restarted: the page then says
-so where a series is missing, and **Run** makes the run again.
+page, and one for each scenario run beside the chosen one, the next run of
+each taking its place; it lets go of a scenario that is no longer ticked, of a
+run nobody has asked about for two hours, and of one it held before it was
+restarted: the page then says so where a series is missing, and **Run** makes
+the run again. Scenarios run beside the chosen one are solved on the engine one
+after another, rather than at once as the browser solves them.
 
 A probabilistic run comes back whole: the bands, *What drove it* and the
 realisations' exports are worked out in the page from the series it kept. The
@@ -117,10 +120,9 @@ checked against the design first. The Julia engine runs a tornado and replays a
 realisation; a sensitivity design, a calibration and dy/dp it leaves to the
 browser, and the bar says so as it starts on them there.
 
-What stays in the browser: the scenarios run beside the chosen one; what is
-worked out from a sample already drawn, such as *What drove it*; and an edit
-that changes no state, whose algebra is worked out over the run's states,
-brought over from the engine first. Pressing **Run** after choosing another
+What stays in the browser: what is worked out from a sample already drawn,
+such as *What drove it*; and an edit that changes no state, whose algebra is
+worked out over the run's states, brought over from the engine first. Pressing **Run** after choosing another
 engine solves again on that one. The results agree with the browser's to the
 solver's tolerance, not to the last digit: each engine has arithmetic of its
 own.

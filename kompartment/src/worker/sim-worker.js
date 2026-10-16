@@ -933,7 +933,8 @@ async function runOnEngine(msg) {
 	last = { id, results, outputs, rev: msg.rev ?? null, engine: engine.name };
 	self.postMessage({
 		type: 'done', id,
-		payload: { ...donePayload(results, outputs), engine: engine.name },
+		// With the job, where the engine holds the run: the page can let it go.
+		payload: { ...donePayload(results, outputs), engine: engine.name, ...(results.onEngine ? { engineRun: job } : {}) },
 		log: Array.isArray(data.meta.log) ? data.meta.log : null,
 	});
 }

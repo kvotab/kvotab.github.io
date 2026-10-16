@@ -5554,10 +5554,21 @@ evaluations, and dy/dp, with its elasticities, are the browser's to round-off
 or exactly; a replay's inputs are the same, its series as the engine's runs
 agree (1.5e-12 Python, 1.6e-5 Julia).
 
-**Not done yet.** The scenarios run beside the chosen one, which would want a
-run held for each of them. And the worker still builds the model to check a run
-an engine holds and to answer for its outputs, which on the largest assessment
-is seconds.
+**Scenarios beside the chosen one.** Each scenario's worker sends its run to
+the engine as a page of its own -- `scenarioEngine(name)`, the page's client and
+the scenario's name -- so the server holds one run a scenario beside the chosen
+one's, and replaces a scenario's run with its next one alone. The engine takes
+them one after another, the page queueing them as it queues them for cores
+(`pumpScenarios`); a scenario's states are reused only from the same engine.
+Dropping a scenario (`dropScenario`) asks its worker to stop the job -- the
+worker waits on the engine, so it hears -- before ending it, and tells the
+server to let its run go (`forgetEngineRun`, by the `engineRun` the done
+payload carries for a run an engine holds).
+
+**Not done yet.** An engine solves one job at a time, so scenarios beside the
+chosen one are solved one after another there where the browser solves them at
+once. And the worker still builds the model to check a run an engine holds and
+to answer for its outputs, which on the largest assessment is seconds.
 
 ## Asking where a file goes
 

@@ -35,9 +35,10 @@ A run the page asks to be kept (`"keep": true`) comes back without its states:
 the engine holds it, and the page asks for the series it shows as it shows them
 (`/engine/runs/<id>/series`), and for the whole run only to save it, keep it
 beside or work an edit out over it (`/engine/runs/<id>/archive`). An engine
-holds one such run a page: the page's next one replaces it, and one left
-unasked about for two hours, or held by an engine since restarted, is gone --
-the page then says to run it again.
+holds one such run a page -- a scenario run beside the chosen one asks as a page
+of its own -- the page's next one replaces it, and one let go of by the page,
+left unasked about for two hours, or held by an engine since restarted, is
+gone: the page then says to run it again.
 
 The engines answer only the page this server served. Every request under
 `/engine/` carries a token the server writes into that page, and must come from
