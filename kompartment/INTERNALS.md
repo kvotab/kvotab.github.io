@@ -2671,7 +2671,13 @@ step to step, so `isConstant` is false for any model with such a path.
 they are narrow beside every response spacing they will still meet (`RHO`),
 so it stays about as long as the response's own grid: 2,200 blocks over three
 slots after 10⁵ steps. Two records at one instant are a step in the inflow; a
-jump of what is held between them is an amount delivered at once. The records
+jump of what is held between them is an amount delivered at once. The Python
+engine keeps a source's blocks in arrays that grow by doubling, and with numba
+sums the history, records each piece and merges blocks in kernels of its own
+(`_nb_history`, `_nb_piece`, `_nb_compact` in `engine/farfield_semi.py`): twins
+of its Python and numpy path to the bit, numpy's pairwise sum ported and every
+power taken from the C library's pow as Python takes it, since a power whose
+exponent numba knows at compile time can become multiplications. The records
 also travel in `MEM` (as `farfield_inflow` holders), so a run saved with its
 data and read back sweeps the convolution forward again.
 
@@ -2700,8 +2706,8 @@ member; more than `MAX_BLOCK` = 16 nuclides linked from one source to one
 target), and a loop through the release with no state in it (`orderAlgebraic`'s
 cycle, reworded). `whyNotSplit` and `uncarried` refuse split runs and dy/dp,
 and `integrationFingerprint` is null, since each would reuse or split a run
-whose release is a history. The Python engine refuses the compiled path with
-the same reason in `compiled_why`.
+whose release is a history. The Python engine's compiled path takes such a
+path, calling its release back in Python.
 
 ### Written out for Ecolego
 

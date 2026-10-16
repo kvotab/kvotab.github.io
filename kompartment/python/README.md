@@ -559,9 +559,12 @@ Julia-derived methods call the same LAPACK routines from the compiled loop),
 an analytic Jacobian, progress, and a far-field path worked out
 semi-analytically, whose release is the recorded history of its inflow
 convolved with the path's unit responses, kept in Python as the Python path
-keeps it. A path on cells whose settings move during the run is worked out
-again in the compiled code as they move, and handed to Python only to hold
-the matched layers it lays out and to raise what the Python path raises.
+keeps it. The heavy part of that, the sum over the history and the recording
+and merging of its pieces, runs as numba kernels of its own on either path,
+to the same bits as numpy and Python make of it. A path on cells whose
+settings move during the run is worked out again in the compiled code as
+they move, and handed to Python only to hold the matched layers it lays out
+and to raise what the Python path raises.
 
 A model's first run compiles it: a second or two for most models, a minute or
 two for one of hundreds of thousands of algebraic slots. After that, runs and
@@ -586,7 +589,7 @@ runs:
 | recorders (a discrete event), NDF | 69 ms | 2.0 ms |
 | made-up, 21 events and 9 recorders, NDF | 62 ms | 8.2 ms |
 | farfield (1,581 states), NDF | 0.95 s | 0.66 s |
-| farfield worked out semi-analytically, NDF | 2.7 s | 2.5 s |
+| farfield worked out semi-analytically, NDF | 0.27 s | 0.18 s |
 | farfield, its F/TW following the clock, NDF | 4.5 s | 0.74 s |
 | biosphere, Radau IIA 5 | 44 ms | 13 ms |
 | biosphere, FBDF | 111 ms | 21 ms |

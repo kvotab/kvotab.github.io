@@ -12,7 +12,8 @@ from __future__ import annotations
 import copy
 import math
 import unittest
-from typing import Any, Dict, Tuple
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Tuple
 
 import numpy as np
 
@@ -20,6 +21,7 @@ from helpers import example, needs_app
 from test_engine_lang import engine, number
 
 from kompartment.engine import farfield_laplace as L
+from kompartment.engine import farfield_semi as FS
 from kompartment.engine.builder import BuildError, build_system
 from kompartment.engine.project import Project
 from kompartment.engine.runner import Results, run
@@ -401,6 +403,91 @@ class SemiEngine(unittest.TestCase):
             a = res.series(o)
             b = again.series(next(x for x in again.outputs() if x['label'] == o['label']))
             np.testing.assert_allclose(b, a, rtol=1e-12, atol=1e-300)
+
+
+@contextmanager
+def without_kernels() -> Iterator[None]:
+    """The far field's history and blocks worked out in Python and numpy, as without numba."""
+    keep = FS._COMPILED
+    FS._COMPILED = False
+    try:
+        yield
+    finally:
+        FS._COMPILED = keep
+
+
+def kernels_of_a_chain() -> List[FS.Kernel]:
+    """The responses of a parent and its daughter to the parent's inflow, reaching 4000 years."""
+    lam = [math.log(2) / 2000, math.log(2) / 800]
+    path = L.prepare_path({'tw': 50, 'f': 5e4, 'rho_m': 2700, 'pe': 10, 'pen_dep': 0.1, 'kd_f': [2e-4, 5e-4],
+                           'eps_m': 0.005, 'kd_m': [1e-3, 3e-3], 'de_m': [1e-4, 2e-4]},
+                          L.decay_table(lam, [(0, 1, 1.0)]))
+    return [FS.Kernel(L.unit_response(path, i, 0, t_max=4e3)) for i in (0, 1)]
+
+
+def same_bits(a: Any, b: Any) -> bool:
+    return np.asarray(a, dtype=float).tobytes() == np.asarray(b, dtype=float).tobytes()
+
+
+class SemiCompiled(unittest.TestCase):
+    """The history summed and the blocks kept with numba: what Python and numpy make of
+    them, to the bit."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if FS._compiled() is None:
+            raise unittest.SkipTest('numba is not installed')
+
+    def test_a_run_is_the_same_to_the_bit(self) -> None:
+        for name, m in (('a jump, a switch and a branch', semi_model()), ('plug flow', plug_model())):
+            with self.subTest(name):
+                with without_kernels():
+                    a = run(Project(m))
+                b = run(Project(m))
+                self.assertEqual(a.stats['nsteps'], b.stats['nsteps'])
+                self.assertEqual(a.stats.get('farfield_blocks'), b.stats.get('farfield_blocks'))
+                for x, y, o in zip(a.series_many(a.outputs()), b.series_many(b.outputs()), a.outputs()):
+                    self.assertTrue(same_bits(x, y), o['label'])
+
+    def test_a_sources_blocks_and_history_are_the_same_to_the_bit(self) -> None:
+        targets = [{'i': i, 'kern': k} for i, k in enumerate(kernels_of_a_chain())]
+        with without_kernels():
+            py = FS.Convolver(targets)
+        nb = FS.Convolver(targets)
+        self.assertIsNone(py._kernels)
+        self.assertIsNotNone(nb._kernels)
+        rng = np.random.default_rng(3)
+        # Steps from a tenth of a year to twenty, past the responses' reach: blocks of one
+        # piece narrow and wide, merged, and dropped once nothing reaches them.
+        times = np.cumsum(10 ** rng.uniform(-1, 1.3, 3000)).tolist()
+        values = (rng.standard_normal(3000) * 10 ** rng.uniform(-3, 1, 3000)).tolist()
+        for q, (t, v) in enumerate(zip(times, values)):
+            for cv in (py, nb):
+                cv.push(t, v)
+                if q % 97 == 0:
+                    cv.push(t, -v)  # a second value at the same instant: a step
+                if q % 331 == 0:
+                    cv.impulse(t, v)
+            if q % 50 == 0 or q == len(times) - 1:
+                n = py.n
+                self.assertEqual(n, nb.n, q)
+                for name in ('_C', '_W', '_M', '_S', '_E'):
+                    self.assertEqual(getattr(py, name)[:n].tobytes(), getattr(nb, name)[:n].tobytes(), (q, name))
+                for later in (t, t + 0.5, t + 30.0, t + 900.0):
+                    a, b = np.zeros(2), np.zeros(2)
+                    py.history(later, a)
+                    nb.history(later, b)
+                    self.assertTrue(same_bits(a, b), (q, later, a, b))
+        # Blocks of several pieces among those of one, and none left from the start.
+        self.assertTrue(0 < int(py._S[:py.n].sum()) < py.n)
+        self.assertGreater(float(py._C[0] - py._W[0]), 4e3)
+
+    def test_the_history_is_summed_as_numpy_sums(self) -> None:
+        rng = np.random.default_rng(5)
+        v = rng.standard_normal(5100) * 10 ** rng.uniform(-8, 8, 5100)
+        for n in list(range(300)) + [383, 384, 385, 511, 512, 513, 1023, 1024, 1025, 2047, 4999]:
+            for lo in (0, 1, 7):
+                self.assertEqual(float(FS._nb_pairwise(v, lo, n)).hex(), float(np.sum(v[lo:lo + n])).hex(), (n, lo))
 
 
 if __name__ == '__main__':
