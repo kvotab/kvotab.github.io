@@ -57,7 +57,9 @@ export function matching(items, ui) {
  *
  * @param {HTMLElement} host
  * @param {object} opts
- * @param {Array<{key, name, kind, unit, count, system}>} opts.items
+ * @param {Array<{key, name, kind, unit, count, system, detail?}>} opts.items
+ *   `detail`, where there is one, is a line or two under the name -- what
+ *   ticking the row would do, say -- wrapped rather than cut short.
  * @param {Set<string>} opts.chosen   ticked keys, edited in place
  * @param {object} opts.ui            from `pickerState()`, edited in place
  * @param {() => void} opts.onChange  rebuild the dialog around it
@@ -130,7 +132,8 @@ export function renderPicker(host, {
 			el('span', { className: 'pick-kind' }, it.kind ?? ''),
 			el('span', { className: 'pick-unit mono' }, it.unit ?? ''),
 			el('span', { className: 'pick-count mono' },
-				it.count > 1 ? `×${it.count.toLocaleString()}` : '')));
+				it.count > 1 ? `×${it.count.toLocaleString()}` : ''),
+			it.detail ? el('span', { className: 'pick-detail mono' }, it.detail) : null));
 	}
 	if (!shown.length) {
 		list.append(el('p', { className: 'hint' },

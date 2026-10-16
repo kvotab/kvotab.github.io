@@ -1763,6 +1763,13 @@ distributions would land, which ids matched nothing, and which rows could not
 be used. Nothing is changed until *Import* is pressed, and what it then does is
 one undo step.
 
+**Only the ids that would change something are listed**, each with what the
+model has now and what the file would put there: `value 0.00001 → 0.00002`, a
+distribution written out, a list of values by how many of its values change. An id the model already holds just as the file does is counted and left
+out — a data set made for a model is mostly that — and one that matches nothing
+in the model has a list of its own at the end. Untick a row to leave it as it
+is; the line under the list says what the ticked ones come to.
+
 **Create what is missing** decides what an unmatched id does. Off, it is listed
 and left alone. On, it becomes a new block — but with no block to ask, there is
 no way to tell a name from an index, so the last segment is the name and the

@@ -38007,6 +38007,94 @@ test('a data file read onto a model says what it did and what it could not', asy
 		'the file’s own id no longer finds what it made');
 });
 
+test('the data import lists only what would change, with what the model has and what the file would put', async () => {
+	// The dialog listed every id in the file -- 955 of a data set, 127 of which
+	// changed anything -- right under a line saying that ids matching nothing
+	// are listed below, so the list read as 955 failures. What it lists now is
+	// read off the dry run: each id the import would change, with the model's
+	// value and the file's.
+	const DT = await import('../src/domain/datatable.js');
+	const IC = await import('../src/domain/importchanges.js');
+	const { parsePDF } = await import('../src/domain/pdf.js');
+	const model = {
+		name: 'small',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear', time_unit: 'year' },
+		parameters: [
+			{ name: 'a', value: 0.00001, unit: '1/year' },
+			{ name: 'b', value: '1e-5', unit: '1/year' },
+			{ name: 'c', value: '2*a', unit: '1/year' },
+			{ name: 'd', value: '1', unit: 'm', pdf: 'pg(values=1;2;3,inorder=true,pos=0)' },
+			{ name: 'e', value: '1', unit: 'm', pdf: 'logn(mean=1,sd=2)' },
+			{ name: 'f', value: 5, unit: 'm' },
+			{ name: 'g', value: '1', unit: 'm', pdf: 'pg(values=1;2;3,inorder=true,pos=0)' },
+			{ name: 'h', value: '1', unit: 'm', pdf: 'pg(values=1;2;3,inorder=true,pos=0)' },
+			{ name: 'i', value: '1', unit: 'm' },
+		],
+		lookups: [{ name: 'table', points: [[0, 1], [10, 2]], interpolation: 'linear', unit: 'm3/year' }],
+	};
+	const rows = [
+		{ id: 'a', value: 2e-5 },
+		// The same number written another way, and the same expression: no change.
+		{ id: 'b', value: 0.00001 },
+		{ id: 'c', value: '2*a' },
+		{ id: 'd', value: 1, pdf: parsePDF('pg(values=1;2;4,inorder=true,pos=0)') },
+		{ id: 'e', value: 1, pdf: parsePDF('logn(mean=1,sd=3)') },
+		{ id: 'f', value: 5, unit: 'km' },
+		{ id: 'g', value: 1, pdf: parsePDF('pg(values=1;2;3,inorder=false,pos=0)') },
+		{ id: 'h', value: 1, pdf: parsePDF('pg(values=1;2;3;4,inorder=true,pos=0)') },
+		{ id: 'i', value: 1, pdf: parsePDF('pg(values=5;6,inorder=true,pos=0)') },
+		{ id: 'table', time: 0, value: 1 },
+		{ id: 'table', time: 10, value: 3 },
+		{ id: 'nowhere.at.all', value: 3 },
+	];
+	const trial = structuredClone(model);
+	DT.apply(trial, rows);
+	const of = IC.changes(model, trial, rows);
+	assert([...of.keys()].join() === 'a,b,c,d,e,f,g,h,i,table,nowhere.at.all', [...of.keys()].join());
+	const status = Object.fromEntries([...of].map(([id, c]) => [id, c.status]));
+	assert(JSON.stringify(status) === JSON.stringify({
+		a: 'changed', b: 'same', c: 'same', d: 'changed', e: 'changed', f: 'changed', g: 'changed',
+		h: 'changed', i: 'changed', table: 'changed', 'nowhere.at.all': 'unmatched',
+	}), JSON.stringify(status));
+	const lines = (id) => IC.changeLines(of.get(id)).join(' | ');
+	const want = {
+		a: 'value 0.00001 → 0.00002',
+		d: 'distribution a list of 3 values, 1 changed',
+		e: 'distribution logn(mean=1,sd=2) → logn(mean=1,sd=3)',
+		f: 'unit m → km',
+		g: 'distribution the same 3 values, pg(inorder=true,pos=0) → pg(inorder=false,pos=0)',
+		h: 'distribution a list of 3 values → 4',
+		i: 'distribution none → a list of 2 values',
+		table: 'table 2 points, 1 changed',
+	};
+	for (const [id, text] of Object.entries(want)) assert(lines(id) === text, `${id}: ${lines(id)}`);
+	// Nothing is said about what did not move: `1` and `'1'` are one value.
+	assert(of.get('d').fields.length === 1 && of.get('b').fields.length === 0, JSON.stringify(of.get('d').fields));
+
+	// Made, where that is asked for: everything it has is new.
+	const made = structuredClone(model);
+	DT.apply(made, rows, { create: true });
+	const born = IC.changes(model, made, rows).get('nowhere.at.all');
+	assert(born.status === 'created' && IC.changeLines(born).join() === 'value — → 3', JSON.stringify(born));
+
+	// The dialog lists those and no others, takes what is ticked of them, and
+	// keeps the ids that match nothing in a list of their own.
+	const { readFileSync } = await import('node:fs');
+	const dialog = readFileSync(new URL('../src/ui/dataimport.js', import.meta.url), 'utf8');
+	assert(/\.filter\(\(it\) => \['changed', 'created'\]\.includes\(run\.of\.get\(it\.key\)\?\.status\)\)/.test(dialog),
+		'the list is not only what would change');
+	assert(/const rep = dt\.apply\(trial, rows, \{ create \}\);\n\t\t\truns\.set\(create, \{ rep, of: changes\(project, trial, rows\) \}\);/.test(dialog),
+		'what is listed is not read off a dry run of the whole file');
+	assert(/listing\('Match nothing in this model, and are left alone', run\.rep\.unmatched\);/.test(dialog),
+		'the ids that match nothing have no list of their own');
+	assert(!/is listed below and left alone/.test(dialog), 'the line that read as the list’s heading is back');
+	assert(/onApply\(\{ create, keys: keys\(\) \}\);/.test(dialog) && /onTick: recount,/.test(dialog),
+		'the import does not take exactly what is ticked, or the line under the list goes stale');
+	const pick = readFileSync(new URL('../src/ui/pick.js', import.meta.url), 'utf8');
+	assert(/it\.detail \? el\('span', \{ className: 'pick-detail mono' \}, it\.detail\) : null/.test(pick),
+		'a row cannot say what it would change');
+});
+
 test('creating from a data file refuses what cannot be a block, and leaves nothing half made', async () => {
 	const DT = await import('../src/domain/datatable.js');
 	const m = {

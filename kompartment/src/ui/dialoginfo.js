@@ -355,6 +355,14 @@ const TOPICS = {
 			+ 'tables by their IDs.',
 		sections: [{
 			text: 'It says what it would change before it changes anything, and what it could not place.',
+		}, {
+			list: [
+				'**The list** holds only the ids that would change something, each with what the model has '
+					+ 'now and what the file would put there — a list of values by how many of them change.',
+				'**Left out** are the ids the model already holds as the file does: counted, not listed.',
+				'**Match nothing** — ids no block in the model answers to, listed at the end and left '
+					+ 'alone unless **Create what is missing** is ticked.',
+			],
 		}],
 		more: 'Handing the data over',
 	},
