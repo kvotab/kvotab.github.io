@@ -27,7 +27,9 @@ to the Python engine (`python/kompartment`) or the Julia one (`julia/`), chosen
 in the page beside Run; `--engine` says which the page starts on. What an engine
 does not do, it refuses at once, and the page does it itself. Each engine is a process of its
 own, started the first time it is asked for and kept: a line of JSON a message,
-jobs in and progress out (see python/kompartment/service.py). A run comes back
+jobs in and progress out (see python/kompartment/service.py) -- as many jobs at
+once as the engine says it takes, the rest queued (Julia takes one a thread, so
+scenarios run beside each other there; Python one at a time). A run comes back
 as the archive *Save with results* writes, which the page reads the way it
 reads a file somebody opened.
 
@@ -144,7 +146,8 @@ class Engine:
         self.proc = None
         self.ready = None
         self.queue = collections.deque()
-        self.current = None
+        # The jobs it is on, by id: as many at once as it says it takes.
+        self.running = {}
         self.lock = threading.RLock()
         self.restarts = 0
         # Bumped at every start: what a process held, a later one does not.
@@ -161,9 +164,16 @@ class Engine:
             elif self.ready is None:
                 state = "starting"
             else:
-                state = "busy" if self.current else "idle"
+                state = "busy" if self.running else "idle"
             return {"available": self.why is None, "why": self.why, "state": state, "detail": self.ready,
-                    "queued": len(self.queue)}
+                    "queued": len(self.queue), "running": len(self.running), "concurrent": self.capacity()}
+
+    def capacity(self):
+        """How many jobs the engine takes at once: what it said when it was ready, one if nothing."""
+        try:
+            return max(1, int((self.ready or {}).get("concurrent") or 1))
+        except (TypeError, ValueError):
+            return 1
 
     def start(self):
         """Starts the process if it is not running. Called with the lock held."""
@@ -203,9 +213,11 @@ class Engine:
                 return
             self.proc = None
             self.ready = None
-            job = self.current
-            self.current = None
-            if job is not None and job.state == "running":
+            jobs = list(self.running.values())
+            self.running.clear()
+            for job in jobs:
+                if job.state != "running":
+                    continue
                 if job.stopping:
                     job.end("cancelled")
                 else:
@@ -236,8 +248,8 @@ class Engine:
                     waiter["reply"] = event
                     waiter["done"].set()
                 return
-            job = self.current
-            if job is None or event.get("id") != job.id:
+            job = self.running.get(event.get("id"))
+            if job is None:
                 return
             kind = event.get("event")
             if kind == "stage":
@@ -245,25 +257,30 @@ class Engine:
             elif kind == "progress":
                 job.progress = {k: event[k] for k in ("fraction", "at", "done", "total", "detail") if k in event}
             elif kind in ("done", "error", "cancelled"):
-                if kind == "error":
-                    job.error = {k: event.get(k) for k in ("name", "message", "block", "hint")}
-                job.ms = event.get("ms")
-                job.end(kind)
-                self.current = None
+                del self.running[job.id]
+                if job.state == "running":
+                    if kind == "error":
+                        job.error = {k: event.get(k) for k in ("name", "message", "block", "hint")}
+                    job.ms = event.get("ms")
+                    job.end(kind)
+                elif kind == "done" and job.keep:
+                    # Let go of for its page while the engine finished it (see
+                    # `cancel`): a run the engine kept for nobody.
+                    self.tell("forget", job.generation, run=job.id)
                 self._pump()
 
     def _pump(self):
-        """The next job, if the engine is free. Called with the lock held."""
-        if self.current is not None or self.ready is None or self.proc is None:
+        """The next jobs, as many as the engine takes at once. Called with the lock held."""
+        if self.ready is None or self.proc is None:
             return
-        while self.queue:
+        while self.queue and len(self.running) < self.capacity():
             job = self.queue.popleft()
             if job.state != "queued":
                 continue
             job.state = "running"
             job.stage = "starting"
             job.generation = self.generation
-            self.current = job
+            self.running[job.id] = job
             try:
                 self.proc.stdin.write(json.dumps({
                     "op": "job", "id": job.id, "kind": job.kind, "model": job.model,
@@ -274,10 +291,9 @@ class Engine:
                 job.error = {"name": "EngineError", "message": f"The {self.name} engine could not be reached: {e}",
                              "block": None, "hint": None}
                 job.end("error")
-                self.current = None
+                self.running.pop(job.id, None)
                 continue
             job.model = None
-            return
 
     def submit(self, job):
         with self.lock:
@@ -296,7 +312,7 @@ class Engine:
             if job.state == "queued":
                 job.end("cancelled")
                 return
-            if job.state != "running" or self.current is not job or self.proc is None:
+            if job.state != "running" or self.running.get(job.id) is not job or self.proc is None:
                 return
             job.stopping = True
             proc = self.proc
@@ -309,14 +325,20 @@ class Engine:
         def end_if_still():
             # A probabilistic run stops between realisations, and a long one may
             # not reach the next soon: then the process is ended, and the next
-            # job starts it again.
+            # job starts it again -- where every job it is on is being stopped.
+            # Where others are not, this one is let go of for its page, and the
+            # engine finishes it in its own time.
             with self.lock:
-                if self.current is job and self.proc is proc:
+                if self.running.get(job.id) is not job or self.proc is not proc:
+                    return
+                if all(j.stopping for j in self.running.values()):
                     self.restarts += 1
                     try:
                         proc.kill()
                     except OSError:
                         pass
+                else:
+                    job.end("cancelled")
 
         threading.Timer(GRACE, end_if_still).start()
 

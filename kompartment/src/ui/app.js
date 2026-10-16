@@ -11897,6 +11897,13 @@ function renderCode() {
 		return;
 	}
 	const src = state.results.generatedSource;
+	if (!src) {
+		// A run an engine on this machine holds: the page did not build the
+		// model to hold it.
+		pre.textContent = `This run was solved on ${ENGINE_NAMES[state.results.engine] ?? 'an engine on this machine'}, `
+			+ 'whose code is its own. Run the model in the browser to see the derivative function generated here.';
+		return;
+	}
 	// Three passes, in the order they run. The derivative is only the last of
 	// them: what reads neither the clock nor the state is worked out once when
 	// the model is built, what reads only the clock once per instant, and the

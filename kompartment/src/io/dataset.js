@@ -101,9 +101,10 @@
  * An engine on this machine (see serve.py) can keep a run and answer for its
  * series as they are asked for, rather than hand over every state: then the
  * archive it sends has no `y.f64` and no `mem.f64`, and its meta says
- * `onEngine`, with the run's mass-balance audit worked out there. Read here as
- * any other, it is restored by the worker against an engine rather than by
- * `restoreResults`.
+ * `onEngine`, with the run's mass-balance audit worked out there and `page`,
+ * what the page reads of a run besides its series, so that the worker need not
+ * build the model to hold it. Read here as any other, it is restored by the
+ * worker against an engine rather than by `restoreResults`.
  */
 
 /** Bumped only for a change that an older reader could not make sense of. */

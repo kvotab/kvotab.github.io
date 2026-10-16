@@ -121,6 +121,11 @@ class Kept(unittest.TestCase):
             self.assertNotIn('results/y.f64', names)
             self.assertTrue(meta['onEngine'])
             self.assertIn('massBalance', meta)
+            # What the page reads of the run besides its series.
+            page = meta['page']
+            self.assertEqual([o['label'] for o in page['outputs']], labels)
+            self.assertEqual((page['stateCount'], page['nuclides']), (len(made.y[0]), list(made.nuclides)))
+            self.assertTrue(set(page) >= {'jacobian', 'heldAtZero'})
             self.assertEqual((meta['times'], meta['states']), (len(made.t), len(made.y[0])))
             # Every series, by label, as a run here works them out.
             got = np.fromfile(f'{d}/q1.f64', '<f8').reshape(len(labels), -1)
@@ -245,6 +250,74 @@ class Sample(unittest.TestCase):
         self.assertEqual(got['drawn'], np.asarray(self.prob.samples[0]).tolist())
 
 
+FAKE_ENGINE = """
+import json, sys, threading, time
+lock = threading.Lock()
+
+def say(event):
+    with lock:
+        print(json.dumps(event), flush=True)
+
+def job(m):
+    time.sleep(float(m['options'].get('takes', 0.6)))
+    with open(m['out'], 'wb') as f:
+        f.write(b'x')
+    say({'id': m['id'], 'event': 'done', 'ms': 1})
+
+say({'event': 'ready', 'engine': 'fake', 'concurrent': 2})
+for line in sys.stdin:
+    m = json.loads(line)
+    if m.get('op') == 'job':
+        threading.Thread(target=job, args=(m,), daemon=True).start()
+"""
+
+
+class ManyAtOnce(unittest.TestCase):
+    """serve.py's engines take as many jobs at once as they say they do; one stopped among
+    others is let go of for its page rather than the process ended under the rest."""
+
+    def test_jobs_side_by_side_and_one_stopped_among_them(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('kompartment_serve', APP / 'serve.py')
+        server = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / 'fake_engine.py'
+            fake.write_text(FAKE_ENGINE)
+            engine = server.Engine('fake', [sys.executable, str(fake)], dict(os.environ))
+            engines = server.Engines({'fake': engine}, 'fake', tempfile.mkdtemp(dir=d))
+            try:
+                def settle(jobs, most=0, timeout=30.0):
+                    t0 = time.time()
+                    while any(j.state in ('queued', 'running') for j in jobs) and time.time() - t0 < timeout:
+                        most = max(most, len(engine.running))
+                        time.sleep(0.02)
+                    return most
+
+                started = time.time()
+                jobs = [engines.submit('run', 'fake', f'c{k}', '{}', {'takes': 0.6}) for k in range(3)]
+                most = settle(jobs)
+                took = time.time() - started
+                self.assertEqual([j.state for j in jobs], ['done'] * 3)
+                # Two at once, the third after: neither one at a time nor all three at once.
+                self.assertEqual(most, 2)
+                self.assertTrue(1.1 < took < 1.7, took)
+                self.assertEqual(engines.info()['engines']['fake']['concurrent'], 2)
+                # One stopped among others: let go of for its page after the grace,
+                # the other carried on, and the process not ended.
+                slow = engines.submit('run', 'fake', 's1', '{}', {'takes': 10})
+                other = engines.submit('run', 'fake', 's2', '{}', {'takes': 5})
+                time.sleep(0.5)
+                self.assertEqual((slow.state, other.state), ('running', 'running'))
+                engines.cancel(slow)
+                time.sleep(server.GRACE + 0.6)
+                self.assertEqual((slow.state, other.state, engine.restarts), ('cancelled', 'running', 0))
+                settle([other])
+                self.assertEqual(other.state, 'done')
+            finally:
+                engines.close()
+
+
 def _free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -346,6 +419,9 @@ class Server(unittest.TestCase):
                               capture_output=True, text=True, timeout=600)
         self.assertEqual(done.returncode, 0, done.stderr[-2000:])
         got = json.loads(done.stdout)
+        # What the page reads of the run besides its series, from the engine
+        # without a build of the model in the page: as the page's own run says it.
+        self.assertEqual(got['summary'], {'differ': [], 'code': True})
         self.assertEqual((got['run']['engine'], got['run']['saved']), ('python', True))
         self.assertLessEqual(got['run']['worst'], 1e-12)
         self.assertTrue(got['tornado']['onEngine'] and got['tornado']['same'], got['tornado'])

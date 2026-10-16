@@ -84,6 +84,9 @@ end
     light = K._ds_unzip(read(joinpath(dir, "r1.zip")))
     meta = K.parse_json(String(copy(light["results/meta.json"])))
     @test !haskey(light, "results/y.f64") && meta["onEngine"] === true && haskey(meta, "massBalance")
+    # What the page reads of the run besides its series, so that it need not build the model.
+    @test [o["label"] for o in meta["page"]["outputs"]] == labels
+    @test meta["page"]["stateCount"] == length(made.y[1]) && haskey(meta["page"], "jacobian")
     # Every series, by label, as a run here works them out.
     ask(Dict("op" => "series", "id" => "q1", "run" => "r1", "labels" => labels, "out" => joinpath(dir, "q1.f64")))
     @test ended("q1")["event"] == "done"

@@ -5565,10 +5565,29 @@ worker waits on the engine, so it hears -- before ending it, and tells the
 server to let its run go (`forgetEngineRun`, by the `engineRun` the done
 payload carries for a run an engine holds).
 
-**Not done yet.** An engine solves one job at a time, so scenarios beside the
-chosen one are solved one after another there where the browser solves them at
-once. And the worker still builds the model to check a run an engine holds and
-to answer for its outputs, which on the largest assessment is seconds.
+**Several jobs at once.** An engine says in `ready` how many jobs it takes at
+once (`concurrent`): Julia one a thread, each job a task of its own; Python one,
+since a run holds the interpreter while it solves. The server keeps an engine's
+running jobs by id (`Engine.running`) and sends it that many, the rest queued.
+A job stopped while others run is let go of for its page after the grace and
+finished by the engine in its own time (a run it kept for nobody is then
+forgotten); only when every job it is on is being stopped is the process
+ended. Three runs of a far-field model at once on Julia took as long as one.
+
+**No build in the page for a run an engine holds.** The engine sends `page` in
+the archive's meta: the outputs as the page lists them, each parameter's one
+value with it, the nuclides, the length of the state vector, how df/dy was had
+and what the zero floor held -- what `donePayload` reads of a run besides its
+series. The worker then holds the run without building the model (on the
+largest assessment that is 5.3 s and 280 MB); it builds it when the whole run is
+brought here (`materialize`), checks the run against it then, and checks that
+its list of outputs is the engine's, in the same order, since the page numbers
+the series as the engine listed them. A run with no build has no generated code
+to show (the code view says so). On the examples the engine's `page` is what
+the page's own run of the model says, field for field.
+
+**Not done yet.** Sensitivity designs, calibration and dy/dp are not ported to
+Julia, so on Julia they run in the browser.
 
 ## Asking where a file goes
 

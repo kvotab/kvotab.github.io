@@ -13,9 +13,11 @@
 # error. A `run` job writes the model and its run as *Save with results* writes
 # them; a `probabilistic` one the model and the sample (`sample_archive`), or a
 # tornado's runs -- a sensitivity design is refused (`NotOnThisEngine`), and the
-# page runs it itself. A run asked to be kept (`"keep": true`) is held here, its archive without the
-# states, and `series`, `archive` and `forget` ask about it, answered on a task
-# of their own beside the jobs.
+# page runs it itself. A run asked to be kept (`"keep": true`) is held here, its
+# archive without the states, and `series`, `archive` and `forget` ask about it,
+# answered on a task of their own beside the jobs. Each job is a task of its own:
+# the engine takes one a thread at once (`concurrent` in `ready`), and the server
+# sends it that many.
 
 const _SERVICE_PROGRESS_EVERY = 0.1
 
@@ -34,7 +36,9 @@ Base.showerror(io::IO, e::NotOnThisEngine) = print(io, e.message)
 function _service_ready()
     OrderedDict{String,Any}("event" => "ready", "engine" => "julia", "version" => string(pkgversion(@__MODULE__)),
                             "julia" => string(VERSION), "threads" => Threads.nthreads(),
-                            "cores" => Sys.CPU_THREADS)
+                            "cores" => Sys.CPU_THREADS,
+                            # Jobs at once: one a thread, each a task of its own.
+                            "concurrent" => max(1, Threads.nthreads()))
 end
 
 function _service_error(id::String, e)
@@ -155,6 +159,47 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                                 "ms" => round(Int, (time() - started) * 1000)))
 end
 
+"""How df/dy was had, as the page's `Results.jacobian` says it (Python's `jacobian_of`)."""
+function _service_jacobian(res)
+    j = res.system.jacobian
+    (j isa JacobianInfo && j.available) ||
+        return OrderedDict{String,Any}("available" => false, "reason" => j isa JacobianInfo ? j.reason : nothing)
+    common = OrderedDict{String,Any}("colours" => j.colours, "nnz" => j.nnz, "density" => j.density,
+                                     "sparse" => get(res.stats, "sparse", false) === true,
+                                     "fill" => get(res.stats, "fill", nothing))
+    j.budget_rows === nothing || (common["budgetRows"] = j.budget_rows)
+    sim = res.project.simulation
+    solver = something(get(sim, "solver", nothing), DEFAULT_SOLVER)
+    if get(sim, "jacobian", nothing) == "numeric" && "jacobian" in get(_SIM_SOLVER_OPTIONS, solver, ())
+        return merge(OrderedDict{String,Any}("available" => false, "asked" => true), common)
+    end
+    return merge(OrderedDict{String,Any}("available" => true, "constant" => j.constant), common)
+end
+
+"""
+What the page reads of a run besides its series (the worker's `donePayload`):
+the outputs as it lists them, each parameter's one value with it, the nuclides,
+the size of the state vector, how df/dy was had and what the zero floor held --
+so that it holds a run the engine holds without building the model itself.
+"""
+function _service_page(res)
+    outs = Any[]
+    for o in outputs(res)
+        d = OrderedDict{String,Any}("kind" => get(o, "kind", nothing), "block" => get(o, "block", nothing),
+                                    "nuclide" => get(o, "nuclide", nothing), "dims" => something(get(o, "dims", nothing), Any[]),
+                                    "index" => get(o, "index", nothing), "label" => o["label"],
+                                    "unit" => get(o, "unit", nothing),
+                                    "constant" => get(o, "source", nothing) == "P" ? res.system.P[Int(o["offset"])+1] : nothing)
+        get(o, "timeDependent", true) === false && (d["timeDependent"] = false)
+        push!(outs, d)
+    end
+    held = Any[OrderedDict{String,Any}("label" => h.label, "steps" => h.steps, "fraction" => h.fraction)
+               for h in held_at_zero(res)]
+    return OrderedDict{String,Any}("outputs" => outs, "nuclides" => material_names(res.project),
+                                   "stateCount" => isempty(res.y) ? 0 : length(res.y[1]),
+                                   "jacobian" => _service_jacobian(res), "heldAtZero" => held)
+end
+
 """
 A run's archive -- without its states, and the run kept, when the page asked for
 that -- with which realisation it replays, if it replays one.
@@ -164,6 +209,7 @@ function _service_write_run(res, job, options, kept, kept_lock; replayed=nothing
     replayed === nothing || (extra["replayed"] = replayed)
     if _service_option(options, "keep", false) === true && kept !== nothing
         extra["massBalance"] = _service_audit(mass_balance(res))
+        extra["page"] = _service_page(res)
         write(string(job["out"]), dataset_archive(res; states=false, extra))
         lock(() -> (kept[string(job["id"])] = Dict{String,Any}("results" => res, "labels" => nothing)), kept_lock)
     else
@@ -264,10 +310,14 @@ function serve_stdio(; input::IO=stdin, output::IO=stdout)
         end
     end
     say(_service_ready())
+    # Each job a task of its own, as many at once as the server sends -- which
+    # is as many as `concurrent` says.
+    running = Task[]
     while true
         job = take!(jobs)
         if job === nothing
-            # What was asked before the input closed is answered first.
+            # What was asked before the input closed is done and answered first.
+            foreach(wait, running)
             wait(answering)
             return
         end
@@ -277,6 +327,7 @@ function serve_stdio(; input::IO=stdin, output::IO=stdout)
             say(OrderedDict{String,Any}("id" => id, "event" => "cancelled"))
             continue
         end
-        _service_job(job, say, stopped, kept, kept_lock)
+        filter!(!istaskdone, running)
+        push!(running, Threads.@spawn _service_job(job, say, stopped, kept, kept_lock))
     end
 end

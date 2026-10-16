@@ -103,8 +103,9 @@ page, and one for each scenario run beside the chosen one, the next run of
 each taking its place; it lets go of a scenario that is no longer ticked, of a
 run nobody has asked about for two hours, and of one it held before it was
 restarted: the page then says so where a series is missing, and **Run** makes
-the run again. Scenarios run beside the chosen one are solved on the engine one
-after another, rather than at once as the browser solves them.
+the run again. The Julia engine solves the scenarios run beside the chosen one
+side by side, one to a thread, as the browser solves them on its cores; the
+Python engine solves them one after another.
 
 A probabilistic run comes back whole: the bands, *What drove it* and the
 realisations' exports are worked out in the page from the series it kept. The

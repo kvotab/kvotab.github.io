@@ -50,7 +50,8 @@ design's points (:func:`kompartment.engine.probabilistic.run_probabilistic`).
 
 A ``run`` job with ``"keep": true`` among its options is kept here instead, and
 its archive leaves the states out (``onEngine`` in its meta, with the run's
-mass-balance audit): the page asks for the series it shows as it shows them --
+mass-balance audit and ``page``, what the page reads of a run besides its series,
+so that it need not build the model): the page asks for the series it shows as it shows them --
 ``series``, the labels' values at the run's times, one series after another as
 little-endian doubles -- and for the whole run only when it needs it, to save it
 or to work an edit out over its states (``archive``). ``forget`` lets it go.
@@ -58,8 +59,9 @@ These are answered beside the jobs, in the order they came, so that a page
 reading one run is not kept waiting by the next one solving; each ends with
 ``done`` or ``error`` under its own id.
 
-Jobs run one at a time, in the order they came. A cancel stops a run at its
-next progress report; a probabilistic run stops at the next realisation to
+Jobs run one at a time, in the order they came -- ``ready`` says so
+(``concurrent``: 1), and the server sends one at a time. A cancel stops a run at
+its next progress report; a probabilistic run stops at the next realisation to
 finish, and the server ends the process if it has not stopped soon after.
 """
 
@@ -98,6 +100,8 @@ def _engine_detail() -> Dict[str, Any]:
     detail: Dict[str, Any] = {
         'event': 'ready', 'engine': 'python', 'version': __version__,
         'python': sys.version.split()[0], 'cores': os.cpu_count() or 1,
+        # Jobs at once: one, since a run holds the interpreter while it solves.
+        'concurrent': 1,
     }
     try:
         import numba  # noqa: F401
@@ -263,6 +267,23 @@ def _write_json(path: str, value: Any) -> None:
         json.dump(_plain(value), f, allow_nan=False)
 
 
+def _page(res: Any) -> Dict[str, Any]:
+    """What the page reads of a run besides its series (the worker's ``donePayload``):
+    the outputs as it lists them, each parameter's one value with it, the nuclides,
+    the size of the state vector, how df/dy was had and what the zero floor held --
+    so that it holds a run the engine holds without building the model itself."""
+    from .engine.runlog import jacobian_of
+    outputs = []
+    for o in res.outputs():
+        d = {'kind': o.get('kind'), 'block': o.get('block'), 'nuclide': o.get('nuclide'), 'dims': o.get('dims') or [],
+             'index': o.get('index'), 'label': o['label'], 'unit': o.get('unit'), 'constant': res.constant_of(o)}
+        if o.get('timeDependent') is False:
+            d['timeDependent'] = False
+        outputs.append(d)
+    return _plain({'outputs': outputs, 'nuclides': list(res.nuclides), 'stateCount': res.system.layout.nstate,
+                   'jacobian': jacobian_of(res), 'heldAtZero': res.held_at_zero()})
+
+
 def _write_run(res: Any, raw: Any, job: Dict[str, Any], options: Dict[str, Any], kept: Optional[Dict[str, Any]],
                replayed: Optional[Dict[str, Any]] = None) -> None:
     """A run's archive -- without its states, and the run kept, when the page asked
@@ -270,7 +291,8 @@ def _write_run(res: Any, raw: Any, job: Dict[str, Any], options: Dict[str, Any],
     from .io.dataset import write_dataset
     extra = {'replayed': replayed} if replayed is not None else {}
     if options.get('keep') is True and kept is not None:
-        write_dataset(res, job['out'], project=raw, states=False, extra={**extra, 'massBalance': res.mass_balance()})
+        write_dataset(res, job['out'], project=raw, states=False,
+                      extra={**extra, 'massBalance': _plain(res.mass_balance()), 'page': _page(res)})
         kept[str(job.get('id'))] = {'results': res, 'model': raw, 'by_label': None}
     else:
         write_dataset(res, job['out'], project=raw, extra=extra or None)

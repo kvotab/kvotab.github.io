@@ -27814,6 +27814,16 @@ test('a run an engine holds answers for its series as they are asked for', async
 	const columns = worker.slice(worker.indexOf("if (msg.type === 'columns') {"), worker.indexOf("if (msg.type === 'prob-slice') {"));
 	assert(/columns = await results\.fetchSeries\(outputs\);/.test(columns) && /type: 'columns-failed'/.test(columns),
 		'the page’s series are not asked of the engine, or a refusal ends the run');
+	// Not built here at all where the engine says what the page reads of the run;
+	// built, and checked, when the whole run is brought here.
+	const fn = (src, name) => new RegExp(`\\n(?:async )?function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`).exec(src)?.[1] ?? '';
+	const restore = fn(worker, 'restoreOnEngine');
+	assert(/if \(data\.meta\.page\) return new EngineResults\(\{ \.\.\.common, project: null, system: null, page: data\.meta\.page \}\);/.test(restore)
+		&& restore.indexOf('if (data.meta.page)') < restore.indexOf('buildSystem('), 'a run an engine holds is built here anyway');
+	const whole = fn(worker, 'materialize');
+	assert(/system: was\.system \?\? buildSystem\(project\)/.test(whole) && /o\.label !== listed\[i\]\.label/.test(whole),
+		'a run brought here is not built, or not checked against the engine’s list');
+	assert(/generatedSource: results\.system\?\.source \?\? null,/.test(worker), 'a run with no build here breaks its payload');
 	const dataset = worker.slice(worker.indexOf("if (msg.type === 'dataset') {"), worker.indexOf("if (msg.type === 'sample-entries') {"));
 	assert(/if \(held\.results\.onEngine\) await materialize\(held\);/.test(dataset), 'a save of a run the engine holds has no states');
 	const reuse = worker.slice(worker.indexOf("if (msg.type === 're-evaluate') {"));

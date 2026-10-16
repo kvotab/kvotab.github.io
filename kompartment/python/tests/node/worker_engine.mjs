@@ -35,8 +35,12 @@ const worstOf = (as, bs) => {
 const out = {};
 const bio = model('biosphere');
 
+// The browser's own run, for what the engine says of its run to be compared with.
+let got = await send({ type: 'run', id: 100, project: bio });
+const own = got.find((m) => m.type === 'done').payload;
+
 // A run the engine holds: its series fetched, then the whole run brought here for a save.
-let got = await send({ type: 'run', id: 1, project: bio, engine });
+got = await send({ type: 'run', id: 1, project: bio, engine });
 const done = got.find((m) => m.type === 'done');
 const indices = done.payload.outputs.map((_, i) => i).slice(0, 24);
 got = await send({ type: 'columns', id: 1, indices });
@@ -44,6 +48,18 @@ const fetched = got.find((m) => m.type === 'columns').columns;
 got = await send({ type: 'dataset', id: 1, project: bio, inner: 'model.json' });
 const saved = got.find((m) => m.type === 'dataset');
 got = await send({ type: 'columns', id: 1, indices });
+// What the page reads of the run besides its series, as the engine said it,
+// against what the browser's own run of the model says.
+const pick = (p) => JSON.stringify({
+	outputs: p.outputs.map((o) => [o.kind, o.block, o.nuclide, o.dims, o.index, o.label, o.unit, o.constant, o.timeDependent ?? true]),
+	nuclides: p.nuclides, stateCount: p.stateCount, heldAtZero: p.heldAtZero,
+	jacobian: p.jacobian && [p.jacobian.available, p.jacobian.colours, p.jacobian.nnz, p.jacobian.constant ?? null],
+});
+const differ = [];
+for (const key of ['outputs', 'nuclides', 'stateCount', 'heldAtZero', 'jacobian']) {
+	if (JSON.stringify(JSON.parse(pick(done.payload))[key]) !== JSON.stringify(JSON.parse(pick(own))[key])) differ.push(key);
+}
+out.summary = { differ, code: done.payload.generatedSource === null };
 out.run = {
 	engine: done.payload.engine,
 	saved: !!saved?.ok && saved.parts.some((e) => e.name === 'results/y.f64'),

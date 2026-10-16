@@ -448,8 +448,9 @@ function donePayload(results, outputs) {
 		stats: results.stats,
 		timing: results.timing,
 		nuclides: results.nuclides,
-		generatedSource: results.system.source,
-		stateCount: results.system.layout.nstate,
+		// No code here for a run an engine holds and the page has not built.
+		generatedSource: results.system?.source ?? null,
+		stateCount: results.system?.layout.nstate ?? results.stateCount ?? null,
 		jacobian: results.jacobian,
 		heldAtZero: results.heldAtZero(),
 		massBalance: results.massBalance(),
@@ -1124,19 +1125,25 @@ function restoreRun(project, data) {
 }
 
 /**
- * A run an engine holds, against this worker's own build of its model: checked
- * as `restoreRun` checks a stored one, and held without its states.
+ * A run an engine holds, without its states. With what the page reads of a run
+ * (`page`), worked out by the engine, the model is not built here at all -- on
+ * the largest assessment that is five seconds and some hundreds of megabytes; it
+ * is built when the whole run is brought here (`materialize`), and the run is
+ * checked against it then. An engine that sends no `page` has the run checked
+ * against a build here now, as `restoreRun` checks a stored one.
  */
 function restoreOnEngine(project, data, handle) {
+	const stats = { ...data.meta.stats };
+	if (data.held) stats.held = data.held;
+	const common = {
+		solution: { t: data.t, y: null, stats }, timing: data.meta.timing ?? null, handle,
+		massBalance: data.meta.massBalance ?? null, raw: project,
+	};
+	if (data.meta.page) return new EngineResults({ ...common, project: null, system: null, page: data.meta.page });
 	const built = new Project(project);
 	const system = buildSystem(built);
 	checkLayout(system, data.meta);
-	const stats = { ...data.meta.stats };
-	if (data.held) stats.held = data.held;
-	return new EngineResults({
-		project: built, system, solution: { t: data.t, y: null, stats }, timing: data.meta.timing ?? null,
-		handle, massBalance: data.meta.massBalance ?? null,
-	});
+	return new EngineResults({ ...common, project: built, system });
 }
 
 /**
@@ -1153,9 +1160,20 @@ async function materialize(held) {
 	held.materializing ??= (async () => {
 		const data = readDataset(await unzip(await was.fetchArchive()));
 		if (!data || data.meta.onEngine) throw new Error('The engine sent back the run without its states.');
-		const results = restoreResults({ project: was.project, system: was.system, data, Results });
+		// Built now, where the engine said what the page reads of the run.
+		const project = was.project ?? new Project(was.raw);
+		const results = restoreResults({ project, system: was.system ?? buildSystem(project), data, Results });
+		// The page numbers the series as the engine listed them, so the list
+		// here has to be the same one.
+		const outputs = results.outputs();
+		const listed = held.outputs ?? outputs;
+		if (outputs.length !== listed.length || outputs.some((o, i) => o.label !== listed[i].label)) {
+			throw new Error(`The engine listed ${listed.length} series and this build of the model ${outputs.length}, `
+				+ 'or in another order: the run cannot be read here.');
+		}
 		results.timing = was.timing;
 		held.results = results;
+		held.outputs = outputs;
 		was.forget();
 		return results;
 	})().finally(() => { held.materializing = null; });
@@ -1420,7 +1438,8 @@ self.onmessage = async (ev) => {
 					columns = await results.fetchSeries(outputs);
 				} catch (e) {
 					if (held.results === results || held.results.onEngine) throw e;
-					columns = held.results.seriesMany(outputs);
+					// As the run here lists them: the same series, by the same numbers.
+					columns = held.results.seriesMany(indices.map((i) => held.outputs[i]));
 				}
 			} else {
 				columns = results.seriesMany(outputs);
