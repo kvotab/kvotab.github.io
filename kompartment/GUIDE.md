@@ -2103,6 +2103,10 @@ holds, one row each:
 - **Data** — parameters and lookup tables, with the same searchable list and a
   dry run saying what would land before anything does.
 
+Its chooser takes the data files as well as the model files — `.xlsx`, and
+`.h5` as **Save → Data** writes them — and a data file dropped on the window
+comes here too, since it has no model in it to open.
+
 A row the file does not have stays and says so. Nothing is changed until one of
 those buttons is pressed, and each of them asks again.
 

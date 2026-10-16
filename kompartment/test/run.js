@@ -33034,7 +33034,7 @@ test('the editor is wired to the importer', async () => {
 	// saved beside it, or data, and which of those somebody wants is not a
 	// thing the extension can answer. The chooser routes to this dialog for
 	// the blocks.
-	assert(/\$\('#import'\)\.addEventListener\('click', \(\) => pickFile\(chooseImport\)\)/
+	assert(/\$\('#import'\)\.addEventListener\('click', \(\) => pickFile\(chooseImport, IMPORT_ACCEPT\)\)/
 		.test(app), 'the Import button does nothing');
 	assert(/run: \(\) => importFromFile\(file\),/.test(app),
 		'the chooser cannot reach the block importer');
@@ -38554,8 +38554,29 @@ test('everything this tool writes is in one room, and everything a file holds is
 	// Read first, asked second: a `.zip` from this tool is a model *and* a
 	// run, and a `.h5` is a table of values or a thousand realisations of
 	// somebody else's near-field.
-	assert(/\$\('#import'\)\.addEventListener\('click', \(\) => pickFile\(chooseImport\)\)/.test(app),
+	assert(/\$\('#import'\)\.addEventListener\('click', \(\) => pickFile\(chooseImport, IMPORT_ACCEPT\)\)/.test(app),
 		'the Import button does not go through the chooser');
+	// And its chooser lets a data file be picked. It shared Open…'s list, which
+	// has no .xlsx or .h5, so the survey's Data row was out of reach: the file
+	// was greyed out in the operating system's dialog.
+	const accepts = (name) => {
+		const open = /const OPEN_ACCEPT = '([^']*)';/.exec(app)?.[1] ?? '';
+		const text = /const IMPORT_ACCEPT = `([^`]*)`;/.exec(app)?.[1]?.replace('${OPEN_ACCEPT}', open) ?? '';
+		return (name === 'open' ? open : text).split(',');
+	};
+	for (const ext of ['.xlsx', '.h5', '.hdf5', '.he5', '.json', '.zip', '.eco', '.eas']) {
+		assert(accepts('import').includes(ext), `Import… cannot pick a ${ext} file`);
+	}
+	assert(!accepts('open').includes('.xlsx') && !accepts('open').includes('.h5'),
+		'Open… offers a data file, which has no model in it to open');
+	assert(/onPickAnother: \(\) => pickFile\(chooseImport, IMPORT_ACCEPT\)/.test(app),
+		'Pick another file… goes back to the narrower list');
+	assert(/function pickFile\(then, accept = OPEN_ACCEPT\) \{/.test(app), 'the picker cannot be given a list');
+	// A data file dropped on the window goes to the survey, not to Open….
+	assert(/const data = DATA_FILE\.test\(files\[0\]\.name\);\n\t\tif \(data\) chooseImport\(files\[0\]\);\n\t\telse openModelFile\(files\[0\]\);/.test(app),
+		'a dropped data file is opened as a model');
+	assert(/if \(DATA_FILE\.test\(lower\)\) \{/.test(app), 'the survey and the drop disagree about what a data file is');
+	assert(!/function importData\(/.test(app), 'a second data picker, reached from nowhere, is back');
 	const survey = /async function chooseImport\(file\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
 	assert(survey, 'there is no survey');
 	for (const what of ["key: 'data'", "key: 'model'", "key: 'results'"]) {

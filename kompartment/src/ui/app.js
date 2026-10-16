@@ -157,7 +157,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-15';
+const BUILD = '2026-10-16';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -12351,7 +12351,7 @@ async function chooseImport(file) {
 	const lower = name.toLowerCase();
 	const holds = [];
 	try {
-		if (/\.xlsx$/i.test(lower) || /\.h5$|\.hdf5$|\.he5$/i.test(lower)) {
+		if (DATA_FILE.test(lower)) {
 			const bytes = new Uint8Array(await file.arrayBuffer());
 			const { rows, problems } = /\.xlsx$/i.test(lower)
 				? await readDataWorkbook(bytes)
@@ -12441,7 +12441,7 @@ async function chooseImport(file) {
 		flash(`${name} could not be read: ${e.message}`, 'warn');
 		return;
 	}
-	openImportChooser({ name, holds, onPickAnother: () => pickFile(chooseImport) });
+	openImportChooser({ name, holds, onPickAnother: () => pickFile(chooseImport, IMPORT_ACCEPT) });
 }
 
 /** How many blocks a model has, for the line that says what a file holds. */
@@ -12451,47 +12451,6 @@ function countBlocks(project) {
 		if (Array.isArray(project[key]) && project[key][0]?.name) n += project[key].length;
 	}
 	return n;
-}
-
-/** A data file in: the picker, then the dialog that says what it would do. */
-function importData() {
-	const input = el('input', {
-		type: 'file',
-		accept: '.xlsx,.h5,.hdf5,.he5',
-		style: 'display:none',
-	});
-	input.addEventListener('change', async () => {
-		const file = input.files?.[0];
-		input.remove();
-		if (!file) return;
-		try {
-			const bytes = new Uint8Array(await file.arrayBuffer());
-			const xlsx = /\.xlsx$/i.test(file.name);
-			const { rows, problems } = xlsx
-				? await readDataWorkbook(bytes)
-				: await readDataHDF5(bytes);
-			if (!rows.length) {
-				flash(`${file.name} holds no rows this reads.`, 'warn');
-				return;
-			}
-			openDataImport({
-				name: file.name, rows, problems, project: state.raw,
-				onApply: ({ create }) => {
-					const rep = dt.apply(state.raw, rows, { create });
-					// One edit, so one undo takes the whole import back -- which
-					// is the only safe way to try one on a model somebody has
-					// been working on.
-					modelChanged({ hint: `import ${file.name}` });
-					flash(dt.describe(rep), rep.unmatched.length || rep.problems.length ? 'warn' : 'info');
-				},
-			});
-		} catch (e) {
-			showError({ name: e.name ?? 'Error', message: e.message, blockName: null });
-			flash(`${file.name} could not be read: ${e.message}`, 'warn');
-		}
-	});
-	document.body.append(input);
-	input.click();
 }
 
 /** Times in a badge: 1e6 rather than 1000000, and no trailing noise. */
@@ -13700,12 +13659,24 @@ function saveTypes(as) {
 // use for. The model in it reads exactly the same way.
 const OPEN_ACCEPT = '.json,.zip,.gz,.eco,.eas,.xml,application/json,application/zip';
 
+/** A data file: the parameters and lookup tables Save → Data writes, as Excel or HDF5. */
+const DATA_FILE = /\.(xlsx|h5|hdf5|he5)$/i;
+
+/**
+ * What Import… takes: a model file, as Open… does, and a data file as well,
+ * whose rows `chooseImport` offers to write into the model that is open.
+ * Open… has no use for one -- a data file has no model in it -- so the two
+ * lists differ by exactly that.
+ */
+const IMPORT_ACCEPT = `${OPEN_ACCEPT},.xlsx,.h5,.hdf5,.he5`;
+
 function openFile() {
 	pickFile((f) => openModelFile(f));
 }
 
 /**
- * The file picker, shared by Open… and Import… so both accept the same things.
+ * The file picker, shared by Open… and Import…: `accept` is Open…'s list
+ * unless Import… asks for its own, which adds the data files.
  *
  * In the document rather than loose: a detached `<input type=file>` opens the
  * chooser in every browser this runs in, but it is not a node anything else
@@ -13713,9 +13684,9 @@ function openFile() {
  * outside it the one gesture that cannot be driven from a test. Hidden, and
  * taken out again once the file is in hand.
  */
-function pickFile(then) {
+function pickFile(then, accept = OPEN_ACCEPT) {
 	const input = el('input', {
-		type: 'file', accept: OPEN_ACCEPT, id: 'file-picker', hidden: true,
+		type: 'file', accept, id: 'file-picker', hidden: true,
 	});
 	input.addEventListener('change', () => {
 		const f = input.files?.[0];
@@ -14157,9 +14128,13 @@ function setUpFileDrop() {
 		show(false);
 		const files = [...(ev.dataTransfer?.files ?? [])];
 		if (!files.length) return;
-		openModelFile(files[0]);
+		// A data file has no model in it to open: it goes where Import… takes
+		// one, to be written into the model that is open.
+		const data = DATA_FILE.test(files[0].name);
+		if (data) chooseImport(files[0]);
+		else openModelFile(files[0]);
 		if (files.length > 1) {
-			flash(`Opened ${files[0].name}; a drop takes one model at a time.`, 'warn');
+			flash(`${data ? 'Read' : 'Opened'} ${files[0].name}; a drop takes one file at a time.`, 'warn');
 		}
 	});
 }
@@ -15505,7 +15480,7 @@ export function boot() {
 	// One door in: the file is read, then what it holds is offered — a model
 	// to open or to take blocks from, a run saved beside it, or data. Which of
 	// those somebody wants is not a thing the extension can answer.
-	$('#import').addEventListener('click', () => pickFile(chooseImport));
+	$('#import').addEventListener('click', () => pickFile(chooseImport, IMPORT_ACCEPT));
 	setUpFileDrop();
 	// A plain click saves as JSON, which is what most saves are.
 	// The button opens the room where what and how are chosen. ⌘S still writes

@@ -73,7 +73,7 @@
 		<button id="open" class="ghost" type="button" title="Open a .json model, an Ecolego .eco project or .eas assessment, or a bare model.xml">Open…</button>
 		<!-- Open replaces the model; Import brings blocks out of another file
 		     into the one that is open. See importFromFile in app.js. -->
-		<button id="import" class="ghost" type="button" title="Bring blocks from another model file into this one — this model stays open">Import…</button>
+		<button id="import" class="ghost" type="button" title="Bring blocks from another model file into this one, or values from a data file (Excel or HDF5) — this model stays open">Import…</button>
 		<!-- Save, and the format beside it. The formats were offered only inside
 		     the operating system's own save dialog, in a file-type dropdown
 		     nobody finds, and on a browser with no such dialog they could not be
@@ -425,7 +425,8 @@
 		<div class="drop-card">
 			<b>Drop to open</b>
 			<span>a <code>.json</code> project, an Ecolego <code>.eco</code> or
-				<code>.eas</code> archive, or a bare <code>model.xml</code></span>
+				<code>.eas</code> archive, or a bare <code>model.xml</code> — or a
+				data file, <code>.xlsx</code> or <code>.h5</code>, to import into this one</span>
 		</div>
 	</div>
 
