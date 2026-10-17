@@ -80,6 +80,28 @@ Two things had to be handled inside the run itself:
   origin. A failed request for one of *this site's own* files is not external
   and still shows up — that is how a mistyped script URL gets caught.
 
+## test-page-icons.py
+
+    python3 resources/tests/site/test-page-icons.py    # expect 104/104
+
+Every page has a picture for an iPhone's home screen: without an
+`apple-touch-icon` link, iOS draws the title's first letter on a grey tile.
+No server and no browser: the links are read from the pages, and the PNGs
+decoded by `scripts/kvot_icon.py`. For every published page but the 404:
+
+- one touch icon, a 180 × 180 picture of the drawing in the kvot mark's three
+  tones: the page's own mark where it has one (Glosor, Winnetkakort, the
+  departure boards, the guitar tuner, Kompartment, smui, rb, ENSDF, dose),
+  and the kvot mark (`kvot-icon-180.png`) everywhere else;
+- a tab icon in SVG is well-formed XML, with a 32 × 32 PNG beside it;
+- a page whose icon `scripts/kvot_icon.py` draws says what to call it on the
+  home screen (`apple-mobile-web-app-title`).
+
+The icons drawn from blocks have a generator each (`scripts/gen-flashcards-icon.py`,
+`gen-winnetkakort-icon.py`, `gen-sl-icon.py`, `gen-gitarr-icon.py`), sharing
+`scripts/kvot_icon.py`; `gen-kvot-touch-icon.py` puts the kvot mark on the
+dark plate. Change a generator's inputs and run it again, never the SVG.
+
 ## test-chrome-buttons.py
 
 Clicks the theme toggle and the office-map button on every page and checks

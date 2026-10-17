@@ -275,6 +275,14 @@ async def run(page):
     check('no script errors on load', page.errors + page.console, [])
     check('Utseende is the last of the settings: on a phone its twenty looks are a long way to scroll past',
           await page.ev("[...document.querySelectorAll('#fc-settings legend')].map(l => l.textContent).pop()"), 'Utseende')
+    icons = await page.ev("""(async () => {
+      const load = href => new Promise(ok => { const i = new Image(); i.onload = () => ok([i.naturalWidth, i.naturalHeight]); i.onerror = () => ok(null); i.src = href; });
+      const href = sel => (document.querySelector(sel) || {}).href;
+      return [await load(href('link[rel=icon]')), await load(href('link[rel="alternate icon"]')), await load(href('link[rel=apple-touch-icon]')),
+              (document.querySelector('meta[name=apple-mobile-web-app-title]') || {}).content];
+    })()""")
+    check("its own icon: the SVG and the 32 px PNG for the tab, 180 x 180 for an iPhone's home screen, named Glosor there",
+          [icons[0] is not None, icons[1], icons[2], icons[3]], [True, [32, 32], [180, 180], 'Glosor'])
     check('English: 25 themes in five groups, and "Mina glosor"',
           await page.ev("[document.querySelectorAll('#fc-groups .wk-tile').length, document.querySelectorAll('#fc-groups .wk-group').length, !!document.getElementById('fc-g-own')]"),
           [25, 5, True])

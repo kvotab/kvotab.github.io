@@ -69,7 +69,7 @@ ports too:
 
     python3 resources/tests/flashcards/test-ui.py
 
-It exits 0 when all 138 checks pass, in about a minute. With
+It exits 0 when all 139 checks pass, in about a minute. With
 `FC_SHOTS=<folder>` it saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -134,6 +134,9 @@ What it plays:
   plats på orden* turns it back. Other text is pasted as it is.
 - **The settings**: *Utseende* comes last, so a phone need not scroll past
   twenty looks to reach the others.
+- **Its own icon** (scripts/gen-flashcards-icon.py): the SVG and a 32 px
+  PNG for the tab, and 180 x 180 for an iPhone's home screen, which
+  suggests the name Glosor.
 - **Storage that isn't ours**, and the dark theme.
 
 The page exposes `FC.inspect()` for this test: the current round, a card's
