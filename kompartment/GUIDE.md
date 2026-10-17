@@ -8328,31 +8328,34 @@ title beside it. Choosing an entry loads it, over whatever is there.
 `?app` open on the model's app, on its own, and `?app=off` never (see [Apps on a model](#apps-on-a-model)) ·
 `#m=…` open the model the address carries, as **Share…** makes it (see [Handing an app to someone](#handing-an-app-to-someone)) ·
 `?theme=light` / `?theme=dark` force a colour scheme ·
-`?brand=kvotab` use the site palette ·
+`?brand=plain` the tool's own neutral palette instead of the site's ·
 `?chrome=kvotab` leave room for the site's own header and footer ·
 `?full=1` with it, the page's full window: no room kept for them ·
 `?mainthread=1` solve without a Worker
 
-### Embedding it in a page
+### The palette, and embedding it in a page
 
 The interface is one grid that fills its box, and the whole of its colour is
-custom properties — so putting it inside another site is two parameters rather
-than a fork.
+custom properties — so its look is a choice of palette, and putting it inside
+another site is a parameter rather than a fork.
 
-**`?brand=kvotab`** swaps the palette. The greys go warm, the ink becomes the
-site's dark brown, and the accent — filled buttons, focus rings, the tick in a
-checkbox, links — becomes the brand's terracotta, so a Kompartment button
-looks like a kvotab button.
+**The palette is kvotab's**, wherever the tool is started — at its own address,
+from `serve.py`, from the file on disk, or framed in the site. The greys are
+warm, the ink is the site's dark brown, and the accent — filled buttons, focus
+rings, the tick in a checkbox, links — is the brand's terracotta, so a
+Kompartment button looks like a kvotab button. **`?brand=plain`** gives the
+tool's own neutral palette instead: near-black ink on paper-white, and greys
+with no hue at all.
 
 One exception, and it is the only one: the ring around a **selected** block
-stays green. That ring is read against the ring around a **broken** one, on the
+is green. That ring is read against the ring around a **broken** one, on the
 same canvas at the same moment, and the brand's terracotta against the danger
 red is eight degrees of hue and a contrast of 1.4:1 between them — two states,
 one colour, and the one that matters is *this model will not run*. So the
 selection colour is a token of its own (`--select`, which every other palette
 leaves equal to the accent).
 
-What does not change at all is every colour that carries meaning: the red of a
+What the two palettes share is every colour that carries meaning: the red of a
 broken model, the amber of a warning, and the eight series colours of the
 chart, which were chosen to be told apart and not to match anything.
 

@@ -37005,13 +37005,19 @@ test('the second skin is tokens only, and defines the same ones in both modes', 
 	assert(/\.gnode-halo \{[^}]*stroke: var\(--select\)/.test(app),
 		'the selection ring does not use it');
 
-	// And the switch is read before the first paint, or the page flashes the
-	// default palette on the way in.
+	// And the switches are read before the first paint, or the page flashes the
+	// other palette on the way in.
 	const start = readFileSync(new URL('src/ui/start.js', root), 'utf8');
 	assert(/data-brand/.test(start) && /data-chrome/.test(start),
 		'the skin is not turned on in the boot script');
 	const html = readFileSync(new URL('index.html', root), 'utf8');
 	assert(/theme-kvotab\.css/.test(html), 'the skin is not linked');
+	// The kvotab palette is the default wherever the tool is started -- its own
+	// address, serve.py, a file:// page -- so it is in the markup, where no
+	// script has to run for it; and ?brand=plain takes it off again.
+	assert(/<html[^>]*\sdata-brand="kvotab"/.test(html), 'the page does not start in the kvotab palette');
+	assert(/brand === 'plain'\) document\.documentElement\.removeAttribute\('data-brand'\)/.test(start),
+		'?brand=plain does not take the palette off');
 });
 
 test('in the site page, menus and popups are placed above its footer, not under it', async () => {

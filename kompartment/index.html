@@ -1,5 +1,10 @@
 <!doctype html>
-<html lang="en">
+<!-- The site's palette from the first paint, wherever the tool is started: its
+     own address, serve.py, a file:// page, or framed in the site. In the markup
+     rather than set by a script, because on a file:// page no module runs; see
+     css/theme-kvotab.css, and ?brand=plain in src/ui/start.js for the tool's own
+     neutral palette instead. -->
+<html lang="en" data-brand="kvotab">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -47,9 +52,9 @@
 <link rel="alternate icon" href="icon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="stylesheet" href="css/app.css">
-<!-- A second skin, matching the site this tool is embedded in. Every rule in it
-     is under [data-brand], which nothing sets unless ?brand= asks, so a plain
-     page pays only for the bytes. See css/theme-kvotab.css. -->
+<!-- The kvotab palette, over the tool's own neutral one in app.css: every rule
+     in it is under [data-brand], which the root element above carries. See
+     css/theme-kvotab.css. -->
 <link rel="stylesheet" href="css/theme-kvotab.css">
 </head>
 <body>

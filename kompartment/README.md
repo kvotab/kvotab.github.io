@@ -20,11 +20,11 @@ start on Julia): see *Solving on an engine on this machine* in the Guide.
 
 Published, it answers at two addresses: `kompartment.html` one level up frames
 it in the site's own header and footer, and this directory serves the same tool
-on its own. Two query parameters are what the difference is made of --
-`?brand=` picks up the site's palette and `?chrome=` tells the tool that a page
-has a header and a footer of its own, so it insets itself between them and
-hands over its light/dark switch. See `css/theme-kvotab.css` and
-`src/ui/start.js`.
+on its own. Both wear the site's palette (`?brand=plain` for the tool's own
+neutral one), and one query parameter is what the difference is made of:
+`?chrome=` tells the tool that a page has a header and a footer of its own, so
+it insets itself between them and hands over its light/dark switch. See
+`css/theme-kvotab.css` and `src/ui/start.js`.
 
 ## What it is for
 

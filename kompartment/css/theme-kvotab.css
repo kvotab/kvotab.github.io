@@ -1,13 +1,14 @@
 /**
- * The kvotab palette, for the page this tool is embedded in.
+ * The kvotab palette: the tool's own, wherever it is started -- at its own
+ * address, from serve.py, or framed in the site's page.
  *
  * `css/app.css` carries the whole interface in custom properties, so a second
  * skin is only the tokens -- nothing here is a rule about a component, and
  * adding one would be the beginning of a second stylesheet to keep in step.
  *
- * Turned on with `?brand=kvotab`, which sets `data-brand` on the root element.
- * Nothing below matches without it, so this file costs a default page nothing
- * but its own bytes.
+ * Every rule is under `data-brand` on the root element, which index.html's
+ * markup sets, so it is there from the first paint. `?brand=plain` takes it off
+ * (../src/ui/start.js), and what is left is app.css's neutral palette.
  *
  * ---------------------------------------------------------------------------
  * WHAT CHANGES

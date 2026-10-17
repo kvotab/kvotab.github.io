@@ -15,7 +15,13 @@ import { boot } from './app.js';
  *
  * Read here rather than in `boot`, because both are attributes the stylesheet
  * matches on: set after the first paint they would be a visible flash of the
- * default palette, and this file runs before anything is drawn.
+ * other palette, and this file runs before anything is drawn.
+ *
+ * The kvotab palette is the default, and is not set here: index.html's root
+ * element carries `data-brand="kvotab"` in its markup, so it is there before
+ * any script runs -- on a `file://` page too, where this module never does.
+ * `?brand=plain` takes it off, for the tool's own neutral palette (css/app.css);
+ * `?brand=kvotab` is the default said out loud, as the site's page says it.
  *
  * Both are deliberately separate from `?theme=`, which is light against dark.
  * A brand has both of those, and a page embedding this may want the palette
@@ -26,6 +32,7 @@ const BRANDS = new Set(['kvotab']);
 	const params = new URLSearchParams(location.search);
 	const brand = params.get('brand');
 	if (BRANDS.has(brand)) document.documentElement.setAttribute('data-brand', brand);
+	else if (brand === 'plain') document.documentElement.removeAttribute('data-brand');
 	const chrome = params.get('chrome');
 	if (BRANDS.has(chrome)) document.documentElement.setAttribute('data-chrome', chrome);
 	// ... and whether that page has put its header and footer away (its full
