@@ -898,6 +898,8 @@ const FC = (() => {
     const listLang = l ? l.lang : lang();
     for (const r of document.querySelectorAll('input[name=listlang]')) r.checked = r.value === listLang;
     $('fc-editor').hidden = false;
+    resetPhoto();
+    $('fc-photo').hidden = !FC_PHOTO.supported();
     renderListStatus();
     $('fc-editor').scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' });
     $('fc-list-name').focus({ preventScroll: true });
@@ -906,6 +908,9 @@ const FC = (() => {
   function closeEditor() {
     editing = null;
     $('fc-editor').hidden = true;
+    resetPhoto();
+    /* The reader holds a hundred megabytes or so; a phone wants them back. */
+    FC_PHOTO.release();
   }
 
   function renderListStatus() {
@@ -920,6 +925,7 @@ const FC = (() => {
     el.textContent = text;
     el.dataset.tone = parsed.errors.length ? 'ova' : '';
     $('fc-list-save').disabled = !parsed.words.length;
+    $('fc-list-swap').hidden = !parsed.words.length;
   }
 
   function saveList() {
@@ -1013,6 +1019,218 @@ const FC = (() => {
     offered = null;
     $('fc-import').hidden = true;
     clearHash();
+  }
+
+  /* ── Words from a picture ────────────────────────────────────────────── */
+
+  /*
+    A photo of this week's sheet, or a screenshot of it, read by
+    flashcards-photo.js into lines for the editor. The lines are added to
+    what the box already holds, so a second page adds to the first. Turning
+    the picture or reading it again replaces what the last reading added,
+    as long as that is still in the box as it was put there.
+  */
+  const photo = { file: null, url: '', turn: 0, added: '', job: 0, skipped: [] };
+
+  const megabytes = n => (n / 1e6).toLocaleString('sv-SE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const editorLang = () => document.querySelector('input[name=listlang]:checked')?.value || lang();
+
+  function photoStatus(text, tone) {
+    const el = $('fc-photo-status');
+    el.textContent = text;
+    el.dataset.tone = tone || '';
+  }
+
+  /* A fraction, or -1 for "under way", or null for no bar. */
+  function photoProgress(value) {
+    const bar = $('fc-photo-progress');
+    bar.hidden = value == null;
+    if (value == null) return;
+    if (value < 0) bar.removeAttribute('value');
+    else bar.value = Math.max(0, Math.min(1, value));
+  }
+
+  /* 'busy' while reading; 'done' with words found; 'none' without. */
+  function photoButtons(state) {
+    $('fc-photo-cancel').hidden = state !== 'busy';
+    $('fc-photo-turn').hidden = state === 'busy';
+    $('fc-photo-again').hidden = state === 'busy';
+  }
+
+  function resetPhoto() {
+    photo.job += 1;
+    FC_PHOTO.cancel();
+    if (photo.url) URL.revokeObjectURL(photo.url);
+    Object.assign(photo, { file: null, url: '', turn: 0, added: '', skipped: [] });
+    $('fc-photo-result').hidden = true;
+    $('fc-photo-img').removeAttribute('src');
+    $('fc-photo-zoom').setAttribute('aria-pressed', 'false');
+    $('fc-photo-file').value = '';
+    $('fc-editor').classList.remove('fc-drop');
+  }
+
+  async function showPicture(file, turn) {
+    const img = $('fc-photo-img');
+    const zoom = $('fc-photo-zoom');
+    zoom.hidden = false;
+    img.onerror = () => { zoom.hidden = true; };
+    let url = '';
+    try {
+      url = URL.createObjectURL(turn ? await FC_PHOTO.thumbnail(file, turn) : file);
+    } catch (e) {
+      ignoreFailure('flashcards: show the picture', e);
+    }
+    if (photo.file !== file) { if (url) URL.revokeObjectURL(url); return; }
+    if (photo.url) URL.revokeObjectURL(photo.url);
+    photo.url = url;
+    if (url) img.src = url;
+    else zoom.hidden = true;
+  }
+
+  /* What the last reading added, taken out of the box again if unchanged. */
+  function takeBackAdded() {
+    if (!photo.added) return;
+    const box = $('fc-list-text');
+    const at = box.value.lastIndexOf(photo.added);
+    if (at >= 0) box.value = (box.value.slice(0, at) + box.value.slice(at + photo.added.length)).replace(/\n{3,}/g, '\n\n').trim();
+    photo.added = '';
+  }
+
+  function addToBox(text) {
+    const box = $('fc-list-text');
+    const before = box.value.replace(/\s+$/, '');
+    box.value = before ? `${before}\n${text}` : text;
+  }
+
+  /**
+   * Read a picture into the editor.
+   *
+   * @param {Blob} file
+   * @param {number} turn - degrees clockwise
+   * @param {boolean} again - the same picture once more: replace what it added
+   */
+  async function readPhoto(file, turn, again) {
+    if (!file) return;
+    if (file.type && !/^image\//.test(file.type)) {
+      $('fc-photo-result').hidden = false;
+      photoStatus('Det där är ingen bild. Välj ett foto eller en skärmbild av glosorna.', 'ova');
+      photoProgress(null);
+      photoButtons('none');
+      $('fc-photo-turn').hidden = $('fc-photo-again').hidden = true;
+      return;
+    }
+    const job = ++photo.job;
+    if (!again) photo.added = '';
+    photo.file = file;
+    photo.turn = turn;
+    $('fc-photo-result').hidden = false;
+    $('fc-photo-unsure').hidden = true;
+    $('fc-photo-skipped').hidden = true;
+    photoButtons('busy');
+    photoStatus('Gör bilden klar att läsa …');
+    photoProgress(-1);
+    showPicture(file, turn);
+    const l = editorLang();
+    try {
+      const res = await FC_PHOTO.read(file, {
+        /* Turned or read again by hand: as asked, not turned by the reader. */
+        lang: l, turn, upright: !again,
+        onProgress: (p) => { if (photo.job === job) photoProgressText(p, l); },
+      });
+      if (photo.job !== job) return;
+      const turned = (res.turn || 0) !== turn;
+      if (turned) {
+        photo.turn = res.turn;
+        showPicture(file, res.turn);
+      }
+      photoDone(res, again, turned);
+    } catch (e) {
+      if (photo.job !== job || e.kind === 'cancelled') return;
+      photoFailed(e);
+    }
+  }
+
+  function photoProgressText(p, l) {
+    if (p.stage === 'download') {
+      /* The same words all the way, so a screen reader says them once; the
+         bar shows how far it has come. */
+      photoStatus(`Hämtar läsprogrammet, ${megabytes(p.total)} MB – det behövs bara första gången …`);
+      photoProgress(p.progress);
+    } else if (p.stage === 'start') {
+      photoStatus('Startar läsprogrammet …');
+      photoProgress(-1);
+    } else if (p.stage === 'read') {
+      photoStatus(`Läser orden på svenska och ${langName(l)} …`);
+      photoProgress(p.progress);
+    } else if (p.stage === 'again') {
+      photoStatus('Tittar en gång till efter ord som saknas …');
+      photoProgress(p.progress);
+    } else if (p.stage === 'turn') {
+      photoStatus('Hittade nästan inga ord – bilden kanske ligger på sidan. Provar att vrida den …');
+      photoProgress(p.progress);
+    }
+  }
+
+  /* How sure the reader was, under which a word is worth a second look. */
+  const UNSURE = 75;
+
+  function photoDone(res, again, turned) {
+    if (again) takeBackAdded();
+    photoProgress(null);
+    const n = res.pairs.length;
+    if (n) {
+      const text = FC_PHOTO.toText(res.pairs);
+      addToBox(text);
+      photo.added = text;
+    }
+    let named = '';
+    if (n && res.name && !$('fc-list-name').value.trim()) {
+      $('fc-list-name').value = res.name;
+      named = res.name;
+    }
+    renderListStatus();
+
+    if (!n) {
+      photoStatus('Inga glosor gick att läsa i bilden. Ligger den på sidan? Vrid den. Annars: fota närmare, rakt ovanifrån och i bra ljus.', 'ova');
+    } else {
+      let text = `${n === 1 ? 'Ett ord' : `${n} ord`} från bilden står nu i rutan nedanför. Kolla dem mot bilden och rätta det som blev fel innan du sparar.`;
+      if (turned) text += ' Bilden låg på sidan, så den är vriden.';
+      if (res.swapped) text += ` ${res.byHeading ? 'Rubrikerna' : 'Orden'} visade att ${langName(editorLang())} stod först, så orden är vända: svenska först.`;
+      if (named) text += ` Listan heter ${named}.`;
+      photoStatus(text);
+    }
+    photoButtons(n ? 'done' : 'none');
+
+    const unsure = res.pairs.filter(p => p.conf < UNSURE);
+    const box = $('fc-photo-unsure');
+    box.hidden = !unsure.length;
+    box.innerHTML = unsure.length
+      ? `<p>Kolla extra noga – de här var svåra att läsa:</p><ul>${unsure.map(p => `<li class="fc-photo-word">${esc(p.sv)} = ${esc(p.x)}</li>`).join('')}</ul>`
+      : '';
+
+    /* Lines that made no pair, short enough to be words: a tap adds one to
+       the box, where the = and the other word can be put in. */
+    photo.skipped = [...new Set(res.skipped)].filter(t => t.split(' ').length <= 6 && t.length <= 40).slice(0, 12);
+    const skipped = $('fc-photo-skipped');
+    skipped.hidden = !photo.skipped.length;
+    skipped.innerHTML = photo.skipped.length
+      ? `<p>Det här blev inga glosor. Tryck på en rad om den ska med, och skriv till det som fattas.</p><ul>${photo.skipped.map((t, i) => `<li><button type="button" class="fc-photo-line" data-i="${i}" data-on-click="fc:photoLine">${esc(t)}</button></li>`).join('')}</ul>`
+      : '';
+  }
+
+  function photoFailed(e) {
+    photoProgress(null);
+    photoButtons('none');
+    const kind = e && e.kind;
+    let text;
+    if (kind === 'net') text = 'Läsprogrammet gick inte att hämta. Är du ansluten till internet? Försök igen om en stund.';
+    else if (kind === 'integrity') text = 'Läsprogrammet som kom var inte det väntade, så det fick inte köras. Försök igen senare.';
+    else if (kind === 'picture') text = 'Bilden gick inte att öppna. Välj ett foto i JPG- eller PNG-format, eller ta en skärmbild.';
+    else text = 'Bilden gick inte att läsa. Försök igen, eller skriv in orden.';
+    if (kind !== 'picture') $('fc-photo-turn').hidden = true;
+    photoStatus(text, 'ova');
+    if (kind === 'net' || kind === 'picture') ignoreFailure('flashcards: read a picture', e);
+    else reportFailure('flashcards: read a picture', e);
   }
 
   /* ── People ──────────────────────────────────────────────────────────── */
@@ -1137,6 +1355,69 @@ const FC = (() => {
     };
     vv.addEventListener('resize', update);
     update();
+  }
+
+  /* Whether a list stands the other language first, judged as the photo
+     reader judges it: by how Swedish each side of its pairs looks. */
+  function otherFirst(text, l) {
+    const pairs = W.parseList(text).words;
+    return pairs.reduce((n, [a, b]) => n + FC_PHOTO.swedishness(a, l) - FC_PHOTO.swedishness(b, l), 0) < 0;
+  }
+
+  /* A list pasted into the box comes in as the photo reader would put it
+     there: without the numbers of a numbered list, without the heading and
+     the instructions above the list, and Swedish first - and the week in
+     the heading, if the list has no name yet, names it. The box shows what
+     will be saved. */
+  function onListPaste(e) {
+    const text = e.clipboardData && e.clipboardData.getData('text/plain');
+    if (!text) return;
+    const l = editorLang();
+    const pasted = W.pastedList(text);
+    const turned = otherFirst(pasted.text, l);
+    const clean = turned ? W.swapList(pasted.text) : pasted.text;
+    if (clean === text) return;
+    e.preventDefault();
+    if (pasted.name && !$('fc-list-name').value.trim()) $('fc-list-name').value = pasted.name;
+    const box = e.target;
+    /* insertText keeps the paste among what can be undone. */
+    if (!document.execCommand('insertText', false, clean)) box.setRangeText(clean, box.selectionStart, box.selectionEnd, 'end');
+    renderListStatus();
+    if (turned) notifyUser(`${W.LANGS[l].Name} stod först, så orden är vända: svenska först. Blev det fel? Tryck på Byt plats på orden.`);
+  }
+
+  /* A picture pasted while the editor is open, or dropped on it, is read
+     like one chosen with the button. Text pastes and drops as text. */
+  function watchPictures() {
+    const imageOf = list => [...(list || [])].find(f => f && /^image\//.test(f.type));
+    const open = () => !$('fc-editor').hidden && !$('fc-photo').hidden;
+    document.addEventListener('paste', (e) => {
+      const data = e.clipboardData;
+      if (!open() || !data) return;
+      const file = imageOf(data.files);
+      if (!file || (data.getData('text/plain') || '').trim()) return;
+      e.preventDefault();
+      readPhoto(file, 0, false);
+    });
+    const editor = $('fc-editor');
+    const withFiles = e => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+    editor.addEventListener('dragover', (e) => {
+      if (!open() || !withFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      editor.classList.add('fc-drop');
+    });
+    editor.addEventListener('dragleave', (e) => {
+      if (!editor.contains(e.relatedTarget)) editor.classList.remove('fc-drop');
+    });
+    editor.addEventListener('drop', (e) => {
+      editor.classList.remove('fc-drop');
+      if (!open() || !withFiles(e)) return;
+      e.preventDefault();
+      const file = imageOf(e.dataTransfer.files);
+      if (file) readPhoto(file, 0, false);
+      else readPhoto(e.dataTransfer.files[0], 0, false);
+    });
   }
 
   /* ── Sound effects ───────────────────────────────────────────────────── */
@@ -1300,6 +1581,39 @@ const FC = (() => {
         renderHome();
         notifyUser(`Listan ${l.name} är borttagen.`, { tone: 'success' });
       },
+      'fc:photoFile': (e, el) => {
+        const file = el.files && el.files[0];
+        el.value = '';
+        readPhoto(file, 0, false);
+      },
+      'fc:photoCancel': () => {
+        photo.job += 1;
+        FC_PHOTO.cancel();
+        photoProgress(null);
+        photoButtons('none');
+        photoStatus('Läsningen avbröts.');
+      },
+      /* For a list written the other language first, or turned round
+         when it should not have been. */
+      'fc:swapList': () => {
+        $('fc-list-text').value = W.swapList($('fc-list-text').value);
+        /* Line by line, so what the photo reader added is still one block. */
+        photo.added = photo.added ? W.swapList(photo.added) : '';
+        renderListStatus();
+      },
+      'fc:photoZoom': (e, el) => el.setAttribute('aria-pressed', String(el.getAttribute('aria-pressed') !== 'true')),
+      'fc:photoTurn': () => { if (photo.file) readPhoto(photo.file, (photo.turn + 90) % 360, true); },
+      'fc:photoAgain': () => { if (photo.file) readPhoto(photo.file, photo.turn, true); },
+      'fc:photoLine': (e, el) => {
+        const line = photo.skipped[Number(el.dataset.i)];
+        if (line == null) return;
+        addToBox(line);
+        el.disabled = true;
+        renderListStatus();
+        const box = $('fc-list-text');
+        box.focus();
+        box.setSelectionRange(box.value.length, box.value.length);
+      },
       'fc:importYes': () => importOffered(),
       'fc:importNo': () => dismissOffer(),
 
@@ -1363,6 +1677,8 @@ const FC = (() => {
       }, 100));
       if (speech.supported) speechSynthesis.addEventListener('voiceschanged', () => { if (!$('fc-home').hidden) renderSettings(); });
       watchKeyboard();
+      watchPictures();
+      $('fc-list-text').addEventListener('paste', onListPaste);
       fullState();
       CARD_LOOKS.apply(settings().look);
       WK_SOUND.setOn(settings().sound, false);
@@ -1392,6 +1708,7 @@ const FC = (() => {
     store: JSON.parse(JSON.stringify(store)),
     sounds: WK_SOUND.log(),
     audio: WK_SOUND.state(),
+    photo: { ...FC_PHOTO.state(), turn: photo.turn, added: photo.added },
   });
 
   return { init, inspect };

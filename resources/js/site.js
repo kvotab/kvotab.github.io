@@ -118,7 +118,7 @@ const KVOT = (() => {
     {
       href: './flashcards.html',
       label: 'Glosor',
-      desc: 'Practise English and Spanish vocabulary on cards, in Swedish: themes from colours and animals to irregular verbs, both ways round, the words read out, and word lists of one’s own from school that can be shared as a link.',
+      desc: 'Practise English and Spanish vocabulary on cards, in Swedish: themes from colours and animals to irregular verbs, both ways round, the words read out, and word lists of one’s own from school, typed or read off a photo of the sheet, that can be shared as a link.',
     },
     {
       href: './winnetkakort.html',

@@ -35,9 +35,13 @@ SortableJS (MIT), h5wasm (BSD-3-Clause), JSZip (MIT/GPLv3 dual), pdf.js
 the compression libraries it is built from keep their own licences) only when
 an HDF5 file in `rb.html` or `smui.html` needs one of its decompressors, and — only when a
 model in Kompartment asks for a SciPy solver — Pyodide (MPL-2.0) with the
-CPython (PSF), NumPy and SciPy (BSD-3-Clause) builds it carries. They are
-fetched by the visitor's browser from their publishers and are not
-redistributed here.
+CPython (PSF), NumPy and SciPy (BSD-3-Clause) builds it carries. When a
+picture of a word list is read in `flashcards.html`, tesseract.js and
+tesseract.js-core (Apache-2.0; Tesseract itself is Apache-2.0) and
+Tesseract's trained models for Swedish, English and Spanish (Apache-2.0,
+from `@tesseract.js-data`) are fetched too, pinned and checked against their
+hashes. They are fetched by the visitor's browser from their publishers and
+are not redistributed here.
 
 ## Work followed, not copied
 

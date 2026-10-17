@@ -273,6 +273,8 @@ async def run(page):
 
     # --- the home view -----------------------------------------------------------------
     check('no script errors on load', page.errors + page.console, [])
+    check('Utseende is the last of the settings: on a phone its twenty looks are a long way to scroll past',
+          await page.ev("[...document.querySelectorAll('#fc-settings legend')].map(l => l.textContent).pop()"), 'Utseende')
     check('English: 25 themes in five groups, and "Mina glosor"',
           await page.ev("[document.querySelectorAll('#fc-groups .wk-tile').length, document.querySelectorAll('#fc-groups .wk-group').length, !!document.getElementById('fc-g-own')]"),
           [25, 5, True])
@@ -547,6 +549,40 @@ async def run(page):
     check('Dela gives a link with the list in it', link.startswith(f'{ORIGIN}/flashcards.html#glosor='), True)
     await page.ev("document.querySelector('[data-on-click=\"fc:editList\"]').click()")
     check('Ändra brings the list back as text', await page.ev("document.getElementById('fc-list-text').value"), 'hund = dog\nsvamp = mushroom\nmamma = mum / mom')
+    await page.ev("document.querySelector('[data-on-click=\"fc:closeEditor\"]').click()")
+    await page.ev("document.querySelector('[data-on-click=\"fc:newList\"]').click()")
+    paste = """(text) => {
+      const box = document.getElementById('fc-list-text');
+      box.focus();
+      const dt = new DataTransfer();
+      dt.setData('text/plain', text);
+      const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+      box.dispatchEvent(e);
+      return e.defaultPrevented;
+    }"""
+    pasted = await page.ev(f"""(() => {{
+      const paste = {paste};
+      return [paste('katt = cat'),
+              paste('Läxa i engelska åk 6 v 42: ord från texten\\nLär dig orden:\\n1 svarade – replied\\n2. nickade – nodded\\n3) klaga – complain\\n4 20 = twenty'),
+              document.getElementById('fc-list-text').value, document.getElementById('fc-list-status').textContent,
+              document.getElementById('fc-list-name').value];
+    }})()""")
+    check('an assignment pasted in: no heading, no instructions, no numbers, and the week in the heading names the list; other text is pasted as it is',
+          pasted, [False, True, 'svarade – replied\nnickade – nodded\nklaga – complain\n20 = twenty', '4 ord', 'Vecka 42'])
+    await page.ev("document.querySelector('[data-on-click=\"fc:closeEditor\"]').click()")
+    await page.ev("document.querySelector('[data-on-click=\"fc:newList\"]').click()")
+    turned = await page.ev(f"""(() => {{
+      const paste = {paste};
+      paste('Läxa i engelska v 41\\n1 amazing - fantastisk\\n2 a champion - mästare\\n3 pleasant - trevlig');
+      const banner = document.querySelector('#failureBanner .failure-banner-text');
+      return [document.getElementById('fc-list-text').value, document.getElementById('fc-list-name').value,
+              !!banner && banner.textContent.startsWith('Engelska stod först'), document.getElementById('fc-list-swap').hidden];
+    }})()""")
+    check('English first: turned Swedish first, and the page says so', turned,
+          ['fantastisk = amazing\nmästare = a champion\ntrevlig = pleasant', 'Vecka 41', True, False])
+    await page.ev("document.getElementById('fc-list-swap').click()")
+    check('"Byt plats på orden" turns it back', await page.ev("document.getElementById('fc-list-text').value"),
+          'amazing = fantastisk\na champion = mästare\npleasant = trevlig')
     await page.ev("document.querySelector('[data-on-click=\"fc:closeEditor\"]').click()")
 
     # --- the link, opened by somebody else ------------------------------------------------------------------------

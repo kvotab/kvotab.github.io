@@ -6,7 +6,8 @@
   the same design, and the page uses the same markup for them. This file
   adds only what words need: the word, picture and answer on a card, the
   loudspeaker, four answers to choose from, the Spanish letters, the language
-  switch, lists of one's own, and the list of words to look at first.
+  switch, lists of one's own (and words read off a picture of them), and the
+  list of words to look at first.
 
   Every size on a card is in cqi, against the deck (a container in
   winnetkakort.css), so a word fits the card it is on, whatever size that
@@ -259,6 +260,60 @@
 .fc-list-status { min-height: 1.4em; margin: 6px 0 10px; font-size: .9rem; }
 .fc-list-status[data-tone="ova"] { color: var(--accent-text); }
 
+/* Words from a picture: the button is a label over an invisible file
+   field, so a tap anywhere on it opens the camera or the photos, and the
+   keyboard still reaches the field. */
+.fc-photo { margin: 0 0 14px; }
+.fc-photo[hidden] { display: none; }
+.fc-photo-pick { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.fc-photo-pick:focus-within { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.fc-photo-file { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; font-size: 16px; }
+.fc-photo-result {
+  display: grid;
+  grid-template-columns: minmax(0, 230px) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px 16px;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: var(--wk-line, 1px) solid var(--border-color);
+  border-radius: var(--wk-radius, 8px);
+  background: var(--bg-secondary);
+}
+.fc-photo-result[hidden] { display: none; }
+/* The picture, to check the words against: a tap shows it at full width. */
+.fc-photo-zoom { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; touch-action: manipulation; }
+.fc-photo-zoom[hidden] { display: none; }
+.fc-photo-zoom:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.fc-photo-zoom[aria-pressed="true"] { grid-column: 1 / -1; cursor: zoom-out; }
+.fc-photo-img { display: block; width: 100%; max-height: 320px; object-fit: contain; border-radius: 6px; background: var(--bg-surface); }
+.fc-photo-zoom[aria-pressed="true"] .fc-photo-img { max-height: none; }
+.fc-photo-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fc-photo-status { margin: 0; font-size: .9rem; }
+.fc-photo-status[data-tone="ova"] { color: var(--accent-text); }
+.fc-photo-progress { width: 100%; height: 8px; accent-color: var(--accent-fill); }
+.fc-photo-progress[hidden] { display: none; }
+.fc-photo-unsure[hidden], .fc-photo-skipped[hidden] { display: none; }
+.fc-photo-unsure p, .fc-photo-skipped p { margin: 0; font-size: .85rem; color: var(--text-secondary); }
+.fc-photo-unsure ul, .fc-photo-skipped ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.fc-photo-word { padding: 3px 10px; border-radius: 14px; background: var(--wk-ova-soft); font-size: .9rem; }
+.fc-photo-line {
+  min-height: 34px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: .9rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px dashed var(--input-border);
+  border-radius: 14px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fc-photo-line:hover:not(:disabled) { border-color: var(--accent-line); }
+.fc-photo-line:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.fc-photo-line:disabled { opacity: .5; cursor: default; }
+/* A picture dragged over the editor. */
+.fc-editor.fc-drop { outline: 2px dashed var(--accent-line); outline-offset: 4px; }
+
 .fc-import { margin: 0 0 16px; border-color: var(--accent-line); }
 .fc-import[hidden] { display: none; }
 .fc-import-text { margin: 0 0 10px; }
@@ -294,6 +349,10 @@
   .fc-body .wk-top .wk-who { order: 3; }
   .fc-choice { min-height: 48px; font-size: 1rem; }
   .fc-editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .fc-photo-result { grid-template-columns: minmax(0, 1fr); }
+  /* What the reading says first, the picture under it. */
+  .fc-photo-zoom { order: 2; }
+  .fc-photo-img { max-height: 30vh; }
   .fc-study-row { grid-template-columns: 2em minmax(0, 1fr) minmax(0, 1fr) 2.4em; gap: 8px; padding: 6px 10px; font-size: .92rem; }
 }
 

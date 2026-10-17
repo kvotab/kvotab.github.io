@@ -726,26 +726,145 @@ const FC_WORDS = (() => {
 
   const LIMITS = Object.freeze({ words: 200, field: 80, name: 40, lists: 50 });
 
+  const PAIR_LINE = /^(.+?)\s*(?:\t|=|;|:|\s[-–—]\s)\s*(.+)$/;
+
+  /* The number in front of a line of a numbered list: "1 ", "1. ", "1) ",
+     "(1) ", "1: ", or a number and a tab, as from a table. */
+  const LIST_NUMBER = /^\(?(\d{1,3})(?:[.):]\)?\s*|\s+)(?=\S)/;
+
+  /* A line without its number - if what is left is still a pair: "7 20 =
+     twenty" is "20 = twenty", and "20 = twenty" keeps its 20. */
+  function unnumbered(line) {
+    const m = LIST_NUMBER.exec(line);
+    if (!m) return line;
+    const rest = line.slice(m[0].length);
+    const p = PAIR_LINE.exec(rest);
+    return p && p[1].trim() && p[2].trim() ? rest : line;
+  }
+
+  /* A numbered list: two pairs or more with a number in front, more than
+     half of the pairs, and the numbers mostly counting up one at a time (a
+     gap, or a new start at 1, is no matter). "3 äpplen = 3 apples" and
+     "5 bananer = 5 bananas" are no numbered list. */
+  function isNumbered(lines) {
+    const pairs = lines.map(l => l.trim()).filter(l => l && !l.startsWith('#') && PAIR_LINE.test(l));
+    const nums = pairs.map(l => LIST_NUMBER.exec(l)).filter(Boolean).map(m => Number(m[1]));
+    if (nums.length < 2 || 2 * nums.length <= pairs.length) return false;
+    return nums.slice(1).filter((n, i) => n === nums[i] + 1).length >= (nums.length - 1) / 2;
+  }
+
   /**
    * A word list as a teacher writes it, one pair a line, Swedish first:
    *   hund = dog     hund - dog     hund – dog     hund<TAB>dog     hund; dog     hund: dog
-   * Lines starting with # are comments; "/" separates answers that are all right.
+   * Lines starting with # are comments; "/" separates answers that are all
+   * right. The numbers of a numbered list ("1 hund – dog", "2. katt = cat")
+   * are left out.
    *
    * @returns {{words: string[][], errors: {line: number, text: string}[]}}
    */
   function parseList(text) {
     const words = [], errors = [];
     const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+    const inOrder = isNumbered(lines);
     lines.forEach((raw, i) => {
-      const line = raw.trim();
+      let line = raw.trim();
       if (!line || line.startsWith('#')) return;
-      const m = /^(.+?)\s*(?:\t|=|;|:|\s[-–—]\s)\s*(.+)$/.exec(line);
+      if (inOrder) line = unnumbered(line);
+      const m = PAIR_LINE.exec(line);
       if (!m || !m[1].trim() || !m[2].trim()) { errors.push({ line: i + 1, text: line.slice(0, 60) }); return; }
       if (words.length >= LIMITS.words) { errors.push({ line: i + 1, text: `fler än ${LIMITS.words} ord` }); return; }
       const clean = s => s.trim().replace(/\s*\/\s*/g, '|').slice(0, LIMITS.field);
       words.push([clean(m[1]), clean(m[2])]);
     });
     return { words, errors };
+  }
+
+  /**
+   * The list with the two words of every pair changed round - for a list
+   * written the other language first. A line that is no pair stays as it
+   * is, and nothing in the new first word can be read as a separator.
+   */
+  function swapList(text) {
+    return String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return raw;
+      const m = PAIR_LINE.exec(line);
+      if (!m || !m[1].trim() || !m[2].trim()) return raw;
+      const first = m[2].replace(/\s*(?:\t|=|;|:)\s*/g, ' ').replace(/\s[-–—]\s/g, ' ').replace(/\s+/g, ' ').trim();
+      return `${first} = ${m[1].trim()}`;
+    }).join('\n');
+  }
+
+  /* A heading that names the week: "Glosor vecka 42", "Läxa i engelska åk 6
+     v 42: ord från texten …", "v. 42", "Week 42". */
+  const WEEK = /(?:^|[^\p{L}])(?:vecka|v|week|w|semana)\.?\s*(\d{1,2})(?!\d)/iu;
+
+  /** "Vecka 42" from a heading that names the week, or ''. */
+  function weekName(text) {
+    const m = WEEK.exec(String(text ?? ''));
+    const n = m ? Number(m[1]) : 0;
+    return n >= 1 && n <= 53 ? `Vecka ${n}` : '';
+  }
+
+  /**
+   * A list pasted in - from the school's app, say - as it should go into
+   * the box: the numbers of a numbered list taken off, and what comes
+   * before the list left out, as the photo reader leaves it out. Before the
+   * list are the heading, which names the week ("Läxa i engelska åk 6 v 42:
+   * ord från texten …", a pair by its colon), and a line that tells what to
+   * do ("Lär dig orden på engelska:"). A numbered list starts at its first
+   * number; any other list at its first pair that is no heading, and above
+   * that only a short line that is no pair is kept (a pair with its
+   * separator missing). The week a heading names is a name for the list.
+   * Text without a pair in it comes back as it was.
+   *
+   * @returns {{text: string, name: string}}
+   */
+  function pastedList(text) {
+    const all = String(text ?? '');
+    const lines = all.replace(/\r\n?/g, '\n').split('\n');
+    const inOrder = isNumbered(lines);
+    const isPair = (line) => {
+      const m = PAIR_LINE.exec(line);
+      return !!(m && m[1].trim() && m[2].trim());
+    };
+    const start = lines.findIndex((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return false;
+      return inOrder ? unnumbered(line) !== line : isPair(line) && !weekName(line);
+    });
+    if (start < 0) return { text: all, name: '' };
+    const before = lines.slice(0, start);
+    const name = before.map(weekName).find(Boolean) || '';
+    const kept = before.filter((raw) => {
+      const line = raw.trim();
+      return line && !inOrder && !weekName(line) && !line.endsWith(':') && line.split(/\s+/).length < 6;
+    });
+    const body = lines.slice(start).map((raw) => {
+      const line = raw.trim();
+      if (!inOrder || !line || line.startsWith('#')) return raw;
+      const out = unnumbered(line);
+      return out === line ? raw : out;
+    });
+    const out = [...kept, ...body].join('\n');
+    return { text: out === lines.join('\n') ? all : out, name };
+  }
+
+  /**
+   * A numbered list without its numbers, as the editor reads it anyway:
+   * for a list pasted in, so that the box shows what will be saved. Any
+   * other text comes back as it was.
+   */
+  function dropNumbers(text) {
+    const all = String(text ?? '');
+    const lines = all.replace(/\r\n?/g, '\n').split('\n');
+    if (!isNumbered(lines)) return all;
+    return lines.map((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) return raw;
+      const out = unnumbered(line);
+      return out === line ? raw : out;
+    }).join('\n');
   }
 
   /** The list back as text, for editing. */
@@ -816,7 +935,7 @@ const FC_WORDS = (() => {
     LANGS, GROUPS, IRREGULAR, CONJ, PERSONS, LIMITS,
     numberWord, alternatives, shown, normalize, stripAccents, levenshtein,
     check, checkForms, checkGenus, checkKonj, judge, topicsFor, cardsFor, hint, letters, options,
-    parseList, listText, encodeShare, decodeShare, nextStat, isDue, statusOf,
+    WEEK, weekName, parseList, pastedList, dropNumbers, swapList, listText, encodeShare, decodeShare, nextStat, isDue, statusOf,
   };
 })();
 

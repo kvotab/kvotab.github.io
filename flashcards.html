@@ -6,12 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <title>Glosor — kvot ab</title>
-  <meta name="description" content="Öva glosor i engelska och spanska med kort: ordet på framsidan, översättningen på baksidan, och en hög för det du kan och en för det du behöver öva mer på. Teman från färger och djur till oregelbundna verb, egna glosor från skolan och uppläsning av orden.">
+  <meta name="description" content="Öva glosor i engelska och spanska med kort: ordet på framsidan, översättningen på baksidan, och en hög för det du kan och en för det du behöver öva mer på. Teman från färger och djur till oregelbundna verb, egna glosor från skolan – inskrivna eller fotade – och uppläsning av orden.">
   <link rel="canonical" href="https://kvotab.se/flashcards.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
   <meta property="og:title" content="Glosor — kvot ab">
-  <meta property="og:description" content="Öva glosor i engelska och spanska med kort, egna glosor från skolan och uppläsning av orden.">
+  <meta property="og:description" content="Öva glosor i engelska och spanska med kort, egna glosor från skolan – inskrivna eller fotade – och uppläsning av orden.">
   <meta property="og:url" content="https://kvotab.se/flashcards.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
@@ -35,7 +35,7 @@
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <!-- the cards, the piles and the phone layouts are Winnetkakort's; flashcards.css adds what words need -->
   <link rel="stylesheet" href="./resources/css/winnetkakort.css?v=20260930f">
-  <link rel="stylesheet" href="./resources/css/flashcards.css?v=20260930c">
+  <link rel="stylesheet" href="./resources/css/flashcards.css?v=20261017">
   <link rel="stylesheet" href="./resources/css/card-looks.css?v=20260930">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
 </head>
@@ -98,18 +98,13 @@
       <p class="wk-lead">
         Varje kort har ett ord på framsidan och översättningen på baksidan. Ord du kan lägger du i
         <span class="wk-word-kan">Kan</span>-högen, resten i <span class="wk-word-ova">Öva mer</span>-högen – och så övar du
-        på dem tills högen är tom. Välj teman nedan, eller skriv in glosorna du har fått i skolan.
+        på dem tills högen är tom. Välj teman nedan, eller skriv in eller fota glosorna du har fått i skolan.
       </p>
     </div>
 
     <details class="wk-panel wk-settings" id="fc-settings">
       <summary><span class="wk-panel-title">Inställningar</span><span class="wk-settings-sum" id="fc-settings-sum"></span></summary>
       <div class="wk-settings-grid">
-        <fieldset class="wk-looks-field">
-          <legend>Utseende</legend>
-          <p class="wk-help">Välj hur sidan ska se ut. Var och en som övar har sitt eget.</p>
-          <div id="fc-looks"></div>
-        </fieldset>
         <fieldset>
           <legend>Åt vilket håll?</legend>
           <label><input type="radio" name="dir" value="till" data-on-change="fc:setting"> <span data-dir-label="till"></span></label>
@@ -149,6 +144,12 @@
           <label><input type="radio" name="article" value="valfri" data-on-change="fc:setting"> Behövs inte <span class="wk-eg">perro</span></label>
           <label><input type="radio" name="article" value="krav" data-on-change="fc:setting"> Måste vara med <span class="wk-eg">el perro</span></label>
         </fieldset>
+        <!-- Last: twenty looks are a long way to scroll on a phone. -->
+        <fieldset class="wk-looks-field">
+          <legend>Utseende</legend>
+          <p class="wk-help">Välj hur sidan ska se ut. Var och en som övar har sitt eget.</p>
+          <div id="fc-looks"></div>
+        </fieldset>
       </div>
       <div class="wk-person-admin">
         <button type="button" class="wk-btn wk-btn-quiet" id="fc-reset" data-on-click="fc:resetPerson"></button>
@@ -172,13 +173,38 @@
           <label><input type="radio" name="listlang" value="es"> Spanska</label>
         </fieldset>
       </div>
+      <!-- This week's words from a photo of the sheet, or a screenshot: read
+           here in the browser, the picture sent nowhere (flashcards-photo.js). -->
+      <div class="fc-photo" id="fc-photo" hidden>
+        <label class="wk-btn fc-photo-pick">
+          <input type="file" class="fc-photo-file" id="fc-photo-file" accept="image/*" data-on-change="fc:photoFile">
+          <span aria-hidden="true">📷</span> Läs in orden från en bild
+        </label>
+        <p class="wk-help">Fota glospappret rakt ovanifrån i bra ljus, eller välj en skärmbild. Orden läses av här i webbläsaren – bilden skickas ingenstans.</p>
+        <div class="fc-photo-result" id="fc-photo-result" hidden>
+          <button type="button" class="fc-photo-zoom" id="fc-photo-zoom" data-on-click="fc:photoZoom" aria-pressed="false"
+                  aria-label="Visa bilden större"><img class="fc-photo-img" id="fc-photo-img" alt=""></button>
+          <div class="fc-photo-side">
+            <p class="fc-photo-status" id="fc-photo-status" role="status" aria-live="polite"></p>
+            <progress class="fc-photo-progress" id="fc-photo-progress" max="1" aria-label="Hur långt läsningen har kommit"></progress>
+            <div class="fc-photo-unsure" id="fc-photo-unsure" hidden></div>
+            <div class="fc-row">
+              <button type="button" class="wk-btn wk-btn-quiet" id="fc-photo-cancel" data-on-click="fc:photoCancel">Avbryt läsningen</button>
+              <button type="button" class="wk-btn wk-btn-quiet" id="fc-photo-turn" data-on-click="fc:photoTurn" hidden>Vrid bilden</button>
+              <button type="button" class="wk-btn wk-btn-quiet" id="fc-photo-again" data-on-click="fc:photoAgain" hidden>Läs igen</button>
+            </div>
+            <div class="fc-photo-skipped" id="fc-photo-skipped" hidden></div>
+          </div>
+        </div>
+      </div>
       <label class="fc-field" for="fc-list-text">Orden – ett par på varje rad, svenska först</label>
       <textarea id="fc-list-text" rows="9" spellcheck="false" data-on-input="fc:listTyped"
                 placeholder="hund = dog&#10;katt = cat&#10;mamma = mum / mom"></textarea>
-      <p class="wk-help">Mellan orden går det bra med <b>=</b>, <b>-</b>, <b>;</b>, <b>:</b> eller en tabb. Snedstreck skiljer ord som är rätt båda två: <i>mum / mom</i>.</p>
+      <p class="wk-help">Mellan orden går det bra med <b>=</b>, <b>-</b>, <b>;</b>, <b>:</b> eller en tabb. Snedstreck skiljer ord som är rätt båda två: <i>mum / mom</i>. Numren i en numrerad lista tas bort. Klistrar du in en hel läxa hoppas rubriken över, och svenskan hamnar först.</p>
       <p class="fc-list-status" id="fc-list-status" aria-live="polite"></p>
       <div class="fc-row">
         <button type="button" class="wk-btn wk-btn-go" id="fc-list-save" data-on-click="fc:saveList">Spara listan</button>
+        <button type="button" class="wk-btn wk-btn-quiet" id="fc-list-swap" data-on-click="fc:swapList" hidden>Byt plats på orden</button>
         <button type="button" class="wk-btn wk-btn-quiet" data-on-click="fc:closeEditor">Avbryt</button>
       </div>
     </section>
@@ -220,6 +246,9 @@
             á, é, í, ó, ú, ñ och ü.</li>
           <li>Framstegen sparas bara i den här webbläsaren. Ingenting skickas någonstans – inte heller dina egna
             listor, förrän du själv delar en länk.</li>
+          <li>En bild med glosor läses av här i webbläsaren, och bilden skickas ingenstans. Programmet som läser,
+            Tesseract, hämtas från cdn.jsdelivr.net första gången du läser in en bild – ungefär 9 MB – och sedan
+            har webbläsaren det kvar.</li>
           <li>Med högtalarknappen blir det ljud: ett pling för rätt svar, en mjukare ton när du nästan har rätt, ett mjukt
             ”oj” för fel, och korten låter när de vänds och hamnar i högarna. Ljuden görs i webbläsaren – inga ljudfiler
             laddas ner.</li>
@@ -227,6 +256,9 @@
         <h3>Egna glosor</h3>
         <p>
           Har du fått glosor i skolan? Tryck på <i>Ny lista</i> och skriv eller klistra in dem, ett par på varje rad.
+          Eller fota glospappret med <i>Läs in orden från en bild</i>: sidan läser orden, sätter svenskan först och
+          lägger dem i rutan. Tryckt text går bäst; handskrift läses ofta fel. Kolla alltid orden mot bilden innan du
+          sparar. På en dator går det också att klistra in en skärmbild eller dra en bild till rutan.
           Med <i>Dela</i> får du en länk: den som öppnar den kan lägga till listan hos sig. Listan finns i själva länken.
         </p>
         <h3>Läs mer</h3>
@@ -356,10 +388,11 @@
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260930b"></script>
-<script src="./resources/js/flashcards-words.js?v=20260930"></script>
+<script src="./resources/js/flashcards-words.js?v=20261017"></script>
+<script src="./resources/js/flashcards-photo.js?v=20261017"></script>
 <script src="./resources/js/winnetkakort-sound.js?v=20260930c"></script>
 <script src="./resources/js/card-looks.js?v=20260930"></script>
-<script src="./resources/js/flashcards.js?v=20260930c"></script>
+<script src="./resources/js/flashcards.js?v=20261017"></script>
 <script>
   KVOT.renderHeader('Glosor');
   KVOT.renderNav('flashcards.html');

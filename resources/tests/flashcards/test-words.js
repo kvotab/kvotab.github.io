@@ -2,7 +2,8 @@
 /*
   The words of flashcards.html, without a page: the themes hold what they
   should, a typed answer is judged the way a teacher would, the pupil's own
-  lists are read as teachers write them, a shared link carries a list and
+  lists are read as teachers write them (numbered or not, and turned round
+  when written the other way), a shared link carries a list and
   nothing else, and the Leitner boxes send words back when they should.
 
       node resources/tests/flashcards/test-words.js
@@ -153,6 +154,32 @@ check('a line without a pair is reported with its number', parsed.errors, [{ lin
 check('a hyphen inside a word is not a separator', W.parseList('t-shirt = t-shirt\nhej då - goodbye').words, [['t-shirt', 't-shirt'], ['hej då', 'goodbye']]);
 check('and back to text for editing', W.listText([['mamma', 'mum|mom']]), 'mamma = mum / mom');
 check('at most 200 words', W.parseList(Array.from({ length: 205 }, (_, i) => `ord${i} = word${i}`).join('\n')).words.length, 200);
+const backwards = 'dog = hund\n# vecka 12\ncat - katt\nmum / mom = mamma\nbara ett ord\n\nan apple;ett äpple';
+check('a list written the other way round is turned, line by line, the rest left as it is',
+  W.swapList(backwards), 'hund = dog\n# vecka 12\nkatt = cat\nmamma = mum / mom\nbara ett ord\n\nett äpple = an apple');
+check('and turned twice is as it was, but for the separators', W.parseList(W.swapList(W.swapList(backwards))).words, W.parseList(backwards).words);
+const school = 'Läxa i engelska åk 6 v 42: ord från texten\nLär dig orden:\n1 svarade – replied\n2 nickade – nodded\n3. klaga - complain\n'
+  + '4) faktiskt = actually\n(5) citat = quote\n6\tväder\tweather\n7 20 = twenty';
+check('a numbered list: the numbers are no part of the words, however they are written', W.parseList(school).words.slice(1),
+  [['svarade', 'replied'], ['nickade', 'nodded'], ['klaga', 'complain'], ['faktiskt', 'actually'], ['citat', 'quote'], ['väder', 'weather'], ['20', 'twenty']]);
+check('a number that is the word stays: 20 = twenty', W.parseList('20 = twenty\nhund = dog').words[0], ['20', 'twenty']);
+check('numbers that do not count one by one are words too', W.parseList('3 äpplen = 3 apples\n5 bananer = 5 bananas').words,
+  [['3 äpplen', '3 apples'], ['5 bananer', '5 bananas']]);
+check('one numbered line is no numbered list', W.parseList('1 hund = dog').words, [['1 hund', 'dog']]);
+check('pasted in, the numbers come off the lines and nothing else changes',
+  W.dropNumbers('Lär dig orden:\r\n1 svarade – replied\r\n2 nickade – nodded'), 'Lär dig orden:\nsvarade – replied\nnickade – nodded');
+check('text that is no numbered list comes back as it was', W.dropNumbers('hund = dog\r\nkatt = cat'), 'hund = dog\r\nkatt = cat');
+check('the week a heading names', ['Glosor vecka 42', 'Läxa i engelska åk 6 v 42: ord från texten', 'Week 7', 'v.12', 'TV 4', 'av 3 ord', 'vecka 60'].map(W.weekName),
+  ['Vecka 42', 'Vecka 42', 'Vecka 7', 'Vecka 12', '', '', '']);
+check('an assignment pasted from the school\'s app: the heading (a pair by its colon) and what to do are left out, the numbers too, and the week names it',
+  W.pastedList('Läxa i engelska åk 6 v 42: ord från texten "Rainy Days"\r\nLär dig att säga och skriva orden på engelska:\r\n1 svarade – replied\r\n2 nickade – nodded'),
+  { text: 'svarade – replied\nnickade – nodded', name: 'Vecka 42' });
+check('above a list without numbers, a short line that is no pair stays: it may be a pair with its separator missing',
+  W.pastedList('Glosor vecka 7\nLär dig orden till fredag:\nhund dog\nkatt = cat'), { text: 'hund dog\nkatt = cat', name: 'Vecka 7' });
+check('a list on its own, and a heading on its own, come back as they were',
+  [W.pastedList('hund = dog\r\nkatt = cat'), W.pastedList('Glosor vecka 42')],
+  [{ text: 'hund = dog\r\nkatt = cat', name: '' }, { text: 'Glosor vecka 42', name: '' }]);
+check('nothing in the new first word is read as a separator', W.parseList(W.swapList('kl. 3 = three: o\'clock')).words, [["three o'clock", 'kl. 3']]);
 
 // --- sharing a list ----------------------------------------------------------------------------
 const list = { name: 'Vecka 12 – åäö', lang: 'es', words: [['hund', 'el perro'], ['år', 'el año'], ['hej', '¡hola!']] };

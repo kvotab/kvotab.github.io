@@ -1,7 +1,7 @@
 # Tests for flashcards.html
 
-Two files: the words and the answer checking on their own in Node, and the
-page in headless Chrome. The page is built on `winnetkakort.css`, so a change
+Four files: the words and the answer checking on their own in Node, and the
+page in headless Chrome; and the same two for reading a list off a picture. The page is built on `winnetkakort.css`, so a change
 there should be run against `../winnetkakort/test-ui.py` as well. Its looks
 (*Utseenden*) are Winnetkakort's, and `../winnetkakort/test-looks.py` tests
 them on both pages.
@@ -10,7 +10,7 @@ them on both pages.
 
     node resources/tests/flashcards/test-words.js
 
-No page and no browser; exits 0 when all 71 checks pass. It checks that:
+No page and no browser; exits 0 when all 84 checks pass. It checks that:
 
 - **The themes hold what they should.** There are five groups in each
   language, and the grammar belongs to its language: irregular verbs for
@@ -36,7 +36,16 @@ No page and no browser; exits 0 when all 71 checks pass. It checks that:
   exactly one of the four options is right.
 - **Lists of one's own are read the way teachers write them.** Any of
   `=`, `-`, `–`, `;`, `:` or a tab separates the words, and a line without
-  a pair is reported with its number. A shared link carries the list (åäö
+  a pair is reported with its number. The numbers of a numbered list
+  (`1 `, `1.`, `1)`, `(1)`, `1:`, a number and a tab) are no part of the
+  words, but a number that is the word stays (`20 = twenty`), and numbers
+  that do not count one by one are words too. An assignment pasted from
+  the school's app loses its heading (a pair by its colon), the line that
+  tells what to do and the numbers, and the week in the heading
+  (`v 42`, `vecka 7`) names the list; above a list without numbers, a
+  short line that is no pair stays (a pair with its separator missing). A
+  list written the other way round is turned line by line, and nothing in
+  the new first word reads as a separator. A shared link carries the list (åäö
   and ñ included) and nothing else: a hostile link is cut down to text of a
   sane size.
 - **Leitner's boxes.** A word right the first time is known (box 3), a
@@ -60,7 +69,7 @@ ports too:
 
     python3 resources/tests/flashcards/test-ui.py
 
-It exits 0 when all 134 checks pass, in about a minute. With
+It exits 0 when all 138 checks pass, in about a minute. With
 `FC_SHOTS=<folder>` it saves screenshots and the printed cards as
 `cards.pdf`.
 
@@ -119,7 +128,111 @@ What it plays:
     scroll;
   - with the keyboard up (`--fc-vh` set as the page sets it), the word and
     the answer stay above the keyboard.
+- **A list pasted in**: an assignment comes without its heading, its
+  instructions and its numbers, named from the week in the heading; a list
+  with English first is turned Swedish first, the page says so, and *Byt
+  plats på orden* turns it back. Other text is pasted as it is.
+- **The settings**: *Utseende* comes last, so a phone need not scroll past
+  twenty looks to reach the others.
 - **Storage that isn't ours**, and the dark theme.
 
 The page exposes `FC.inspect()` for this test: the current round, a card's
 status and box, and a copy of the store. It is read-only.
+
+## test-photo.js
+
+    node resources/tests/flashcards/test-photo.js
+
+Words from a picture without a browser: how `flashcards-photo.js` puts the
+words Tesseract found back into the rows and columns of a list. The words
+are boxes made up for each case, as wide and tall as their printed letters
+would be. Exits 0 when all 57 checks pass. It checks that:
+
+- **Rows and columns come back.** Two columns either way round, columns
+  that Tesseract read apart, a row that slopes, and a long word that leaves
+  only a space before its translation (split where the other rows show the
+  column starts).
+- **Separators, numbers and headings.** `–`, `=` and `:` separate, spaced
+  or stuck to a word, and a hyphen inside a word does not. Numbering goes,
+  bare numbers only when most rows have one, and a number may be a word
+  (`20 = twenty`). A heading in larger writing is no pair, and "vecka 7" or
+  "v. 42" names the list. A heading in the list's own writing cannot be told
+  from a pair - the one known limit.
+- **What is not a word.** Table lines read as `|`, pronunciation in `[ ]`,
+  a speck read as a letter away from the columns, and a paragraph or page
+  number beside a glossary. A word of one letter (`ö = island`) stays.
+- **Two lists side by side**, left one first; and **holes** - a word
+  without its pair, rows missing - which make the page look again.
+- **A screenshot of the school's app**: in a numbered list, what comes
+  before 1 (the phone's clock and battery) and a number that does not
+  belong ("114 ord · 1587 tecken" under a list of four) make no pairs; a
+  number read stuck to its word ("2imonerad") is still the number; a time
+  is no side of a pair, though a number may be.
+- **Which side is Swedish:** å, ä and ö, the articles, the page's own
+  words, Spanish accents; column headings decide when there are some; and
+  with two readings, the reading that was surer of a column.
+- **Two readings.** For Spanish, Swedish alone and Spanish alone. For
+  English, both languages and then Swedish alone, which only puts back
+  the dots and rings ("6sregnade" → "ösregnade") and changes no other
+  letter ("blixt" stays, though the Swedish reading has "blid"). A word of
+  the second reading goes with the nearest word of the first, not by its
+  box, which can reach over the next word.
+- **Into the editor:** lines the editor reads back as the same pairs.
+- **The picture:** the slope of lines of writing is found within a quarter
+  of a degree; light from one side and the sharp edge of a shadow leave the
+  paper white and the writing dark. Light writing on dark is told by what
+  stands out from the ground, not by how dark the whole picture is: a
+  dark-mode screenshot and a photo of a dark screen against a light wall
+  are light writing, a small sheet on a dark desk is not.
+- **The reader's files** are pinned to versions, with a SHA-384 and a size,
+  from jsDelivr only.
+
+## test-photo-ui.py
+
+    python3 resources/tests/flashcards/test-photo-ui.py
+
+The page reading pictures, with the same server and Chrome as test-ui.py
+(`FC_HTTP_PORT`, `FC_CDP_PORT`). It needs the network: the page fetches
+the reader from jsDelivr. Exits 0 when all 60 checks pass, in about a
+minute and a half. With `FC_SHOTS=<folder>` it saves screenshots and the pictures.
+
+The pictures are made by the test: thirteen sheets laid out the ways
+teachers lay out a list (a table with headings, two columns English first,
+`dog – hund` under a paragraph, a numbered list, Spanish in columns and in a
+table, a table sloping 6.5°, two lists side by side, a sheet photographed
+on its side, a dark-mode screenshot, a textbook page with a glossary box),
+photographed by Chrome as a phone would - in perspective, with a shadow,
+blur, noise and JPEG at 3000 × 4000 - or saved as screenshots. Two copy
+what pupils really send: a phone's screenshot of a school app in dark mode
+(clock, battery, heading, a numbered `to whisper - att viska` list in a
+light typeface, the app's word count), and a photo of a computer screen in
+dark mode against a light wall, with glare and a dark patch. Nothing of
+them is kept in the repository. The words on them are written for the test.
+It checks that:
+
+- **A photo gives the list.** Every pair of every sheet, Swedish first,
+  with at most one word misread per sheet (none are, as measured). The page
+  says what it is doing, fetches the reader the first time only, names the
+  list from a heading, and does not offer headings as missed words.
+- **Nothing goes anywhere but jsDelivr**, for the pinned files only, and
+  nothing is sent: every request is a GET without a body. A file that does
+  not match its SHA-384 is not run (no worker is started), and without the
+  network the page says so.
+- **The buttons.** *Byt plats på orden* (under the box, for any list)
+  turns every pair round and back,
+  and a reading after it replaces the turned lines rather than adding to
+  them. A
+  second page adds to the first and keeps the name. A sheet on its side is
+  turned by the reader itself; *Vrid bilden* turns it a quarter further, as
+  asked, and four quarters round give the words back once. *Läs igen* in
+  Spanish replaces the English reading. *Avbryt läsningen* stops a reading, and
+  closing the editor lets the reader go.
+- **Lines that made no pair** are offered, short ones only, and a tap adds
+  one to the box, where the editor asks for its pair.
+- **Pasted and dropped.** A pasted picture is read, a paste with text in it
+  is left as text; a picture dropped on the editor is read, a text file is
+  not.
+- **A phone**: nothing to scroll sideways, the status above the picture, a
+  16 px field, and the picture larger at a tap.
+- **Without WebAssembly** there is no photo button, and the editor works as
+  before.
