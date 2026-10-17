@@ -117,6 +117,12 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			...(opts.matrix ? { matrix: opts.matrix } : {}),
 			...(opts.belowTolRun != null ? { belowTolRun: opts.belowTolRun } : {}),
 			jacobian: opts.jacobian ?? null,
+			// A state weighed against another's size as well: the sensitivities
+			// of ../sim/localsens.js against their states.
+			...(opts.weightFloor ? { weightFloor: opts.weightFloor } : {}),
+			// ...and the matrix Newton iterates with, where the caller's system
+			// can be solved a block at a time.
+			...(opts.iterationMatrix ? { iterationMatrix: opts.iterationMatrix } : {}),
 			// false selects the NDF formulas, which is what variableOrder does by
 			// default; true falls back to plain BDF.
 			bdf: opts.bdf ?? false,

@@ -7665,7 +7665,12 @@ and on a model with small rates and large inventories it can be twenty orders
 of magnitude away from what the block holds. The run's absolute tolerance is
 therefore divided by the size of the parameter for each sensitivity, which is
 what makes this finish at all: on `four-compartment.json` it is the difference
-between 190 steps and hitting the step ceiling with a solver error.
+between 190 steps and hitting the step ceiling with a solver error. And each
+sensitivity is held to the run's relative tolerance of the larger of itself and
+its block over the parameter — what it means for the answer — so the elasticity
+the chart shows is right to that tolerance, and a sensitivity that is
+negligible beside its block is not asked for more figures than its equations
+can give.
 
 **Nothing in it is approximated.** The sensitivities satisfy
 `S' = J·S + df/dp`, and both terms are differentiated from the model's own
@@ -7677,9 +7682,9 @@ read, the transport matrix and the release move with them, and the matrix
 layers stay as the run laid them out. The exceptions fall back to one forward
 difference for `df/dp`: a model with a waste package, a disruptive event or a
 semi-analytical far-field pathway. A difference is right to about eight
-figures, and where a rate is a large one less a large one it can lose more than
-that to rounding: if the solve then gives up, the dialog says so, and a looser
-absolute tolerance is the first thing to try.
+figures, and in a block that turns over many times a year it can lose more
+than that to rounding: if the solve then gives up, the dialog says so, and
+looser tolerances are the first thing to try.
 
 A model can still be too big for it — each parameter of `farfield.json` adds
 another 1,581 states to the system — and the dialog says what the solve will

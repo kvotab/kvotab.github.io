@@ -5874,11 +5874,33 @@ other three are within two steps of each other either way). On `recorders.json`,
 `k_out[Cs-137]`. (Measured again when the sensitivity solve moved into the
 runner; the counts it replaced were older than that.)
 
-**The iteration matrix leaves out the second derivatives.** The true Jacobian of
-the augmented system carries `d(J·S)/dy` in the sensitivity blocks. Left out,
-exactly as CVODES leaves them out: they change how fast Newton converges and not
-what it converges *to*, so the matrix is the original `J` repeated down the
-diagonal and the answer is the same. That is also why it is always the NDF: a
+**The iteration matrix has the coupling under its diagonal, and is solved a
+block at a time.** `S_j' = J(y)·S_j + df/dp_j(y)`, so the true Jacobian of the
+augmented system is `J` down the diagonal and, under the states' block,
+`C_j = d(S_j')/dy = (dJ/dy)·S_j + d(df/dp_j)/dy` -- on `J`'s own pattern, since
+both terms are derivatives of `J`'s entries. CVODES leaves `C_j` out, and so did
+this: Newton converges to the same answer, but each sensitivity's correction
+trails the state's by an iteration, and the corrector's test reads the trailing
+correction as one that has stopped converging. On the far-field example with its
+travel time a parameter that was a million steps of failed iterations at step
+sizes no cut could mend; with `C_j` it is 1,840 steps, and the plain run takes
+1,756. `C_j` is `J`'s own derivative along `(S_j, e_j)`, both terms at once --
+`J` at the state moved by `ε·S_j` and the parameter by `ε`, less `J`, over `ε` --
+one more Jacobian per parameter where Newton asks for one, which on a linear
+model is once a run; the budget rows take none, as `df/dp` writes them nothing.
+
+The matrix is then block lower triangular, and it is not handed to an LU whole
+(`blockMatrix` in `src/sim/localsens.js`, the NDF's `iterationMatrix` option):
+`A = I - a·J` is factorised once -- twice while the floor holds a state, whose
+row is the identity in the states' block alone -- the states' block is solved
+first, and each sensitivity's after it with `a·C_j` times the states' correction
+on its right-hand side. Besides doing one factorisation where the whole matrix
+took `1 + m`, it never takes a pivot across blocks. An LU of the whole matrix
+pivots a state's column on a sensitivity's row wherever the coupling is the
+larger entry, and mixes that row's rounding into the state's correction: on the
+far-field example the emptied vault's corrections came out hundreds of times
+their size, and the Python engine's dense LU took 135,587 steps where the page's
+block LU took 1,833. That it is always the NDF is for the same matrix: a
 Rosenbrock method puts the Jacobian inside its formula, and an incomplete one
 changes its order rather than its speed.
 
@@ -5951,6 +5973,23 @@ tolerances (`absoluteTolerance`) rather than the bare setting, so the states
 are integrated to what the plain run integrates them to. The regression test
 is a single compartment `dy/dt = -k·y` with `k = 1e-5` and `y₀ = 1e10`, checked
 against `dy/dk = -t·y` at every output time.
+
+**And each sensitivity is weighed against its state over `|p|` as well as
+against itself** (the NDF's `weightFloor`): the error `dy_k/dp` is held to is
+rtol of the larger of `|dy_k/dp|` and `|y_k|/|p|`, which makes the elasticity
+the dialog shows right to rtol. Weighed against itself alone, a sensitivity
+negligible beside its state was still asked for rtol of itself, and the
+rounding of the large terms its equation cancels down to could deny it that: on
+the far-field example's travel time a deep matrix cell's 4.6 came out of terms
+of 1e7, its Newton corrections stalled at 2e-9 of it against a test of 3e-9,
+and the run never finished. Leaving the sensitivities out of the tests
+altogether (CVODES's `errconS` off) finished it too, but was measured unsafe:
+two to ten times less accurate on the linear examples, failing outright on
+`van-der-pol-stiff.json`, and wrong by nine orders of magnitude on
+`michaelis-menten.json`. Weighed against their states they stay under control
+-- within a factor of two of the old accuracy on every bundled example against
+a run at rtol 1e-12, in the same steps or fewer (813 against 1,783 on
+`landscape.json`).
 
 Not every model is reachable even so: `examples/farfield.json` is large for
 it, since the augmented system carries a copy of its 1,581 states per

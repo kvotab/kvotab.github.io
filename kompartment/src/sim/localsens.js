@@ -69,6 +69,7 @@ import {
 	absoluteTolerance, describeEntry, jumpsOf, run,
 } from './runner.js';
 import { SolverError } from '../ode/one-step.js';
+import { iterationMatrix } from '../ode/core/sparse.js';
 
 /** A step that is small against the value and large against its rounding. */
 const EPS = Math.sqrt(Number.EPSILON);
@@ -410,48 +411,129 @@ export function runSensitivity(input, opts = {}) {
 		return out;
 	};
 
-	// --- the iteration matrix: J down the diagonal, (1 + m) times.
+	// --- the iteration matrix: J down the diagonal, (1 + m) times, and under
+	// it how each sensitivity's equations move with the state.
+	//
+	// S_j' = J(y)·S_j + df/dp_j(y), so d(S_j')/dy = (dJ/dy)·S_j + d(df/dp_j)/dy:
+	// a block under the diagonal, on J's own pattern, since both terms are
+	// derivatives of J's entries. Left out, as CVODES leaves it out, Newton
+	// converges to the same answer, but each sensitivity's correction trails
+	// the state's by one iteration, and the iteration's test reads the trailing
+	// correction as one that has stopped converging: the far-field example with
+	// its travel time a parameter failed a million steps' iterations at step
+	// sizes no cut could mend. With it, 1,840 steps; the plain run takes 1,756.
+	//
+	// The block is J's own derivative along (S_j, e_j), both terms at once: J at
+	// the state moved by ε·S_j and the parameter by ε, less J, over ε. One more
+	// Jacobian per parameter, and Newton asks for a Jacobian only when it
+	// stalls. The budget rows take none: df/dp writes them nothing (see
+	// `buildParamTangent` in ./jacobian.js).
 	const pat = system.jacobian.pattern;
 	const blocks = 1 + m;
+	const nnzJ = pat.nnz;
 	const colPtr = new Int32Array(N + 1);
-	const rowIdx = new Int32Array(pat.nnz * blocks);
+	const rowIdx = new Int32Array(nnzJ * (blocks + m));
 	let at = 0;
-	for (let b = 0; b < blocks; b++) {
+	// A state's column: J's entries, then each sensitivity's under them.
+	for (let j = 0; j < n; j++) {
+		colPtr[j] = at;
+		for (let b = 0; b < blocks; b++) {
+			for (let k = pat.colPtr[j]; k < pat.colPtr[j + 1]; k++) rowIdx[at++] = b * n + pat.rowIdx[k];
+		}
+	}
+	// A sensitivity's column: J's entries, in its own block.
+	for (let b = 1; b < blocks; b++) {
 		for (let j = 0; j < n; j++) {
 			colPtr[b * n + j] = at;
-			for (let k = pat.colPtr[j]; k < pat.colPtr[j + 1]; k++) {
-				rowIdx[at++] = b * n + pat.rowIdx[k];
-			}
+			for (let k = pat.colPtr[j]; k < pat.colPtr[j + 1]; k++) rowIdx[at++] = b * n + pat.rowIdx[k];
 		}
 	}
 	colPtr[N] = at;
 	const bigPattern = { n: N, nnz: at, colPtr, rowIdx };
 	const bigValues = new Float64Array(at);
+	// Where J's entries, and each coupling's, sit among the big values: entry k
+	// of a state's column c is at blocks·colPtr[c] + b·(its length) + its place.
+	const stateAt = Array.from({ length: blocks }, () => new Int32Array(nnzJ));
+	for (let c = 0; c < n; c++) {
+		const lo = pat.colPtr[c];
+		const len = pat.colPtr[c + 1] - lo;
+		for (let k = lo; k < lo + len; k++) {
+			for (let b = 0; b < blocks; b++) stateAt[b][k] = blocks * lo + b * len + (k - lo);
+		}
+	}
+	const J0 = new Float64Array(nnzJ);
+	const coupling = Array.from({ length: m }, () => new Float64Array(nnzJ));
+	const yc = new Float64Array(n);
+	const budget = system.layout.budget;
+	const budgetFrom = budget ? budget.base : 0;
+	const budgetTo = budget ? budget.base + budget.terms.length * budget.nfam : 0;
+	/** d(S_j')/dy into `out`, on J's pattern, from J's values `J0` at (t, y). */
+	const couplingOf = (t, Y, j, out) => {
+		const { slot } = wanted[j];
+		const p0 = P[slot];
+		const e = EPS * (Math.abs(p0) || 1);
+		for (let i = 0; i < n; i++) yc[i] = Y[i] + e * Y[n * (j + 1) + i];
+		P[slot] = p0 + e;
+		system.evaluateInvariant();
+		forgetClock();
+		let moved;
+		try {
+			moved = system.jacobian.evaluate(t, yc);
+		} finally {
+			P[slot] = p0;
+			system.evaluateInvariant();
+			forgetClock();
+		}
+		out.fill(0);
+		if (!moved) return;
+		for (let k = 0; k < nnzJ; k++) out[k] = (moved[k] - J0[k]) / e;
+		for (let c = 0; c < n; c++) {
+			for (let k = pat.colPtr[c]; k < pat.colPtr[c + 1]; k++) {
+				const r = pat.rowIdx[k];
+				if (r >= budgetFrom && r < budgetTo) out[k] = 0;
+			}
+		}
+		// A coupling that is not a number is no coupling: the block is left out.
+		for (let k = 0; k < nnzJ; k++) if (!Number.isFinite(out[k])) { out.fill(0); return; }
+	};
 	// Asked to difference its Jacobian (`Jacobian: finite differences`), the
 	// model gets that here too: the pattern and its colouring, and no values.
 	// `J·S` above is the tangent's either way -- the setting is about the
 	// matrix Newton iterates with.
 	const differencedMatrix = project.simulation.jacobian === 'numeric';
+	const G = system.jacobian.groups ?? [];
 	const bigJacobian = {
 		pattern: bigPattern,
 		constant: false,
-		// The colouring is the original's, repeated -- which is what lets a
-		// differenced fallback still cost one evaluation per colour.
-		groups: (system.jacobian.groups ?? []).length
-			? Array.from({ length: (system.jacobian.groups ?? []).length }, (_, g) => {
-				const out = [];
-				for (let b = 0; b < blocks; b++) {
-					for (const j of system.jacobian.groups[g]) out.push(b * n + j);
-				}
-				return out;
-			})
+		// The colouring is the original's, twice: a state's column now reaches
+		// the sensitivities' rows as well, so it shares no group with theirs --
+		// the states' groups, then the sensitivities', each across every block.
+		// A differenced fallback then costs two evaluations per colour.
+		groups: G.length
+			? [
+				...G.map((g) => Array.from(g)),
+				...G.map((g) => {
+					const out = [];
+					for (let b = 1; b < blocks; b++) for (const j of g) out.push(b * n + j);
+					return out;
+				}),
+			]
 			: null,
 		evaluate: (t, Y) => {
 			if (differencedMatrix) return null;
 			for (let i = 0; i < n; i++) yv[i] = Y[i];
 			const v = system.jacobian.evaluate(t, yv);
 			if (!v) return null;
-			for (let b = 0; b < blocks; b++) bigValues.set(v, b * pat.nnz);
+			J0.set(v);
+			for (let j = 0; j < m; j++) couplingOf(t, Y, j, coupling[j]);
+			let w = 0;
+			for (let c = 0; c < n; c++) {
+				const lo = pat.colPtr[c];
+				const hi = pat.colPtr[c + 1];
+				for (let k = lo; k < hi; k++) bigValues[w++] = J0[k];
+				for (let j = 0; j < m; j++) for (let k = lo; k < hi; k++) bigValues[w++] = coupling[j][k];
+			}
+			for (let b = 1; b < blocks; b++) for (let k = 0; k < nnzJ; k++) bigValues[w++] = J0[k];
 			return bigValues;
 		},
 	};
@@ -504,6 +586,23 @@ export function runSensitivity(input, opts = {}) {
 		const scale = Math.abs(P[wanted[j].slot]) || 1;
 		for (let i = 0; i < n; i++) atol[n * (j + 1) + i] = atolAt(i) / scale;
 	}
+	// ...and what each sensitivity is weighed against: itself, and its state
+	// over |p| as well (`weightFloor` in ../ode/solvers/ndf.js). Weighed
+	// against itself alone, a sensitivity negligible beside its state was
+	// still asked for rtol of itself, which the rounding of the large terms its
+	// equation cancels down to can deny it: on the far-field example's travel
+	// time, a deep matrix cell's 4.6 came out of terms of 1e7, its Newton
+	// corrections stalled at 2e-9 of it against a test of 3e-9, and the run
+	// never finished. Against y/|p| too it is held to what it means for y --
+	// an elasticity right to rtol, which is what the dialog shows.
+	const weightFloor = { from: new Int32Array(N).fill(-1), factor: new Float64Array(N) };
+	for (let j = 0; j < m; j++) {
+		const scale = Math.abs(P[wanted[j].slot]) || 1;
+		for (let i = 0; i < n; i++) {
+			weightFloor.from[n * (j + 1) + i] = i;
+			weightFloor.factor[n * (j + 1) + i] = 1 / scale;
+		}
+	}
 
 	// --- and the solve, as a run of the model: see `equations` in ./runner.js.
 	// The floor there is the run's -- each compartment as it sets it -- and
@@ -518,7 +617,14 @@ export function runSensitivity(input, opts = {}) {
 			signal: opts.signal,
 			onProgress: opts.onProgress ?? (opts.signal ? () => {} : undefined),
 			equations: {
-				dydt, y0: Y0, abstol: atol, jacobian: bigJacobian, solver: 'ndf', onSegment,
+				dydt,
+				y0: Y0,
+				abstol: atol,
+				jacobian: bigJacobian,
+				solver: 'ndf',
+				onSegment,
+				weightFloor,
+				iterationMatrix: blockMatrix(pat, n, m, stateAt),
 			},
 		});
 	} catch (e) {
@@ -558,20 +664,110 @@ export function runSensitivity(input, opts = {}) {
 	};
 }
 
+/**
+ * The matrix Newton iterates with for [y, S_1, ..., S_m], a block at a time
+ * (`iterationMatrix` in ../ode/solvers/ndf.js). It is block lower triangular,
+ *
+ *     [  A                 ]        A = I - a·J
+ *     [ -a·C_1   A         ]        C_j = d(S_j')/dy
+ *     [ -a·C_2        A    ]  ...
+ *
+ * so the states' block is solved first and each sensitivity's after it, the
+ * coupling carried to its right-hand side: one factorisation of A -- two while
+ * the floor holds a state, whose row is the identity in the states' block
+ * alone -- where the whole matrix took 1 + m, and never a pivot taken across
+ * blocks. An LU of the whole matrix pivots a state's column on a
+ * sensitivity's row wherever the coupling is the larger entry, and mixes that
+ * row's rounding into the state's correction, which for a state near zero is
+ * all of it: on the far-field example the emptied vault's corrections came
+ * out hundreds of times their size, and Newton stopped converging on them.
+ *
+ * @param {{n: number, nnz: number, colPtr: Int32Array, rowIdx: Int32Array}} base  J's pattern
+ * @param {number} n  the states
+ * @param {number} m  the sensitivities
+ * @param {Int32Array[]} stateAt  where J's entries (block 0) and each coupling
+ *   sit among the big values
+ */
+function blockMatrix(base, n, m, stateAt) {
+	const nnzJ = base.nnz;
+	const J = new Float64Array(nnzJ);
+	const C = Array.from({ length: m }, () => new Float64Array(nnzJ));
+	const ry = new Float64Array(n);
+	const rs = new Float64Array(n);
+	const cd = new Float64Array(n);
+	const xs = new Float64Array(n);
+	const heldY = new Uint8Array(n);
+	const extract = (values) => {
+		for (let b = 0; b <= m; b++) {
+			const at = stateAt[b];
+			const into = b === 0 ? J : C[b - 1];
+			for (let k = 0; k < nnzJ; k++) into[k] = values[at[k]];
+		}
+	};
+	return (pattern, values, opts) => {
+		extract(values);
+		const states = iterationMatrix(base, J, { ...opts, n });
+		let apart = null; // the sensitivities' own, while the floor holds a state
+		let sens = states;
+		let a = 0;
+		return {
+			get info() { return states.info; },
+			get sparse() { return states.sparse; },
+			get lu() { return states.lu; },
+			get fill() { return states.fill; },
+			get repivots() { return states.repivots; },
+			get fallbacks() { return states.fallbacks; },
+			form(aNow, valuesNow, w, held) {
+				if (w) throw new Error('the sensitivity equations are not solved in scaled variables');
+				extract(valuesNow);
+				a = aNow;
+				let any = false;
+				if (held) for (let i = 0; i < n; i++) { heldY[i] = held[i]; if (held[i]) any = true; }
+				states.form(a, J, null, any ? heldY : null);
+				if (any) {
+					apart ??= iterationMatrix(base, J, { ...opts, n });
+					apart.form(a, J, null, null);
+					sens = apart;
+				} else sens = states;
+			},
+			solve(rhs, out) {
+				const x = out ?? new Float64Array(n * (1 + m));
+				for (let i = 0; i < n; i++) ry[i] = rhs[i];
+				const sy = states.solve(ry, xs);
+				for (let i = 0; i < n; i++) x[i] = sy[i];
+				for (let j = 0; j < m; j++) {
+					// The coupling's part: C_j times the states' correction,
+					// column by column.
+					cd.fill(0);
+					const c = C[j];
+					for (let col = 0; col < n; col++) {
+						const v = x[col];
+						for (let k = base.colPtr[col]; k < base.colPtr[col + 1]; k++) cd[base.rowIdx[k]] += c[k] * v;
+					}
+					const off = n * (j + 1);
+					for (let i = 0; i < n; i++) rs[i] = rhs[off + i] + a * cd[i];
+					const sx = sens.solve(rs, xs);
+					for (let i = 0; i < n; i++) x[off + i] = sx[i];
+				}
+				return x;
+			},
+		};
+	};
+}
+
 /** The ways a solve gives up that a noisy driving term brings about. */
 const NOISY = new Set(['tolerance', 'stalled', 'steps']);
 
 /**
  * A solve of the sensitivity equations that gave up, said for what it most
  * likely is when df/dp is worked out by a difference, or null. A difference is
- * right to about eight figures; where the derivative is a large rate less a
- * large rate, what it loses to rounding can be far more than the absolute
- * tolerance dy/dp is held to -- the model's over the parameter's value -- and
+ * right to about eight figures of f·p, and dy/dp is held to rtol of the larger
+ * of itself and its state over |p|: in a state that turns over many times a
+ * unit of time, what the difference loses to rounding is more than that, and
  * the solver answers by shrinking its step until it gives up, saying something
- * about the model that is not so. The far-field example's U-234 leach rate
- * does, differenced: the vault's rate there is U-238's ingrowth, 2.8e6 a year,
- * the leach term a few Bq, and the difference comes out a hundredth out
- * against a tolerance of 1e-12. The solver's own words become the hint.
+ * about the model that is not so. The far-field example's travel time does,
+ * differenced: its matrix cells exchange with the fracture hundreds of times
+ * a year. The solver's own words become the hint.
  */
 function differencedFailure(e, wanted, tangent, opts, project, P) {
 	if (tangent.available || e?.name !== 'SolverError' || !NOISY.has(e.code)) return null;
@@ -583,9 +779,10 @@ function differencedFailure(e, wanted, tangent, opts, project, P) {
 	const where = Number.isFinite(e.t) ? ` past t=${e.t}` : '';
 	return Object.assign(new SolverError(`The sensitivity equations could not be integrated${where}: df/dp along `
 		+ `${list} is worked out by a difference, ${why}, which is right to about eight figures, and what it loses `
-		+ 'to rounding may be more than the absolute tolerance dy/dp is held to -- the model\'s absolute tolerance '
-		+ `over the parameter's value, ${tol.toPrecision(2)} for ${names[0]}. A looser absolute tolerance is the `
-		+ 'first thing to try.', e.t), { code: e.code, hint: solverWords(e.message) });
+		+ 'to rounding may be more than dy/dp is held to: the run\'s relative tolerance of the larger of dy/dp and '
+		+ 'the state over the parameter\'s value, and no less than the absolute tolerance over it, '
+		+ `${tol.toPrecision(2)} for ${names[0]}. Looser tolerances are the first thing to try.`, e.t),
+	{ code: e.code, hint: solverWords(e.message) });
 }
 
 /**

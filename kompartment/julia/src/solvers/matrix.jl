@@ -47,13 +47,17 @@ _non_finite_message(mass::Union{Nothing,Vector{Float64}}, column::Int, value::Fl
     "The iteration matrix $(_matrix_name(mass)) has an entry that is not a number ($(_pyrepr(value))) at column " *
     "$column: the Jacobian has a non-finite entry there."
 
+"""The matrix Newton iterates with: `IterationMatrix`, or one a caller makes for a system of a known block form
+(`iteration_matrix` in `ndf`), with `_mat_form!`, `_mat_solve_inplace!`, `_mat_release!` and `_mat_info`."""
+abstract type AbstractIterationMatrix end
+
 """`_mat_form!(W, a, J, held)` factorises Mass - a*J with the rows `held`
 marks as rows of the identity; `_mat_solve!(W, x, b)` answers for the
 latest one.
 
 `J` is the pattern's values when there is a pattern, and the dense Jacobian
 by columns (`J[i + (j-1)*n]`) otherwise."""
-mutable struct IterationMatrix
+mutable struct IterationMatrix <: AbstractIterationMatrix
     n::Int
     pattern::Union{Nothing,Pattern}
     mass::Union{Nothing,Vector{Float64}}
@@ -423,3 +427,6 @@ function _mat_release!(W::IterationMatrix)
     W.klu === nothing || _klu_free!(W.klu)
     return nothing
 end
+
+"""Which LU, and how full its factor is: `sparse`, `fill`, `lu`."""
+_mat_info(W::IterationMatrix) = W.info

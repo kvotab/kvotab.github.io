@@ -87,6 +87,10 @@ def variable_order(f: Callable[[float, np.ndarray], np.ndarray], tspan: Any, y0:
         kw['matrix'] = opts['matrix']
     if opts.get('below_tol_run') is not None:
         kw['below_tol_run'] = opts['below_tol_run']
+    if opts.get('weight_floor') is not None:
+        kw['weight_floor'] = opts['weight_floor']
+    if opts.get('iteration_matrix') is not None:
+        kw['iteration_matrix'] = opts['iteration_matrix']
     try:
         result = ndf(fun, tspan, y0, **kw)
     except SolverError as e:

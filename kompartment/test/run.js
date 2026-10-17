@@ -1908,9 +1908,10 @@ test('df/dp is differentiated, not differenced', async () => {
 	assert(worst < 1e-4, `the two routes to df/dp disagree by ${worst.toExponential(2)} of y`);
 
 	// And it is cheaper, which is the part a user notices: no extra derivative
-	// evaluation per parameter per step, and a driving term with no difference
-	// noise in it for the step-size controller to chase.
-	assert(A.stats.nsteps < B.stats.nsteps,
+	// evaluation per parameter per step, and never more steps -- dy/dp is
+	// weighed against its state as well, so the difference's noise no longer
+	// drives the step size either.
+	assert(A.stats.nsteps <= B.stats.nsteps,
 		`analytic ${A.stats.nsteps} steps against differenced ${B.stats.nsteps}`);
 });
 
@@ -1993,23 +1994,34 @@ test('df/dp past a far-field path is its rates\' own derivative, and a differenc
 	const de = runSensitivity(model(), { parameters: ['De_matrix[U-234]'] });
 	assert(de.stats.nsteps > 100 && de.sens[0].every((row) => row.every(Number.isFinite)), 'the run along De_matrix');
 
-	// U-234's leach rate. Its vault's rate is U-238's ingrowth, millions a
-	// year, and the leach term a few Bq: differenced, the term is lost to the
-	// rounding of the ingrowth, far past dy/dp's absolute tolerance (1e-16 over
-	// the leach rate), and the solver gives up -- where the old message blamed
-	// a compartment held at zero. Generated, the run goes through.
+	// U-234's leach rate: a parameter no setting of the path reads, generated
+	// and differenced alike.
 	const r = runSensitivity(model(), { parameters: ['leach_rate[U-234]'] });
-	assert(r.stats.nsteps > 100 && r.sens[0].every((row) => row.every(Number.isFinite)), 'the generated run');
+	assert(r.stats.nsteps > 100 && r.sens[0].every((row) => row.every(Number.isFinite)), 'the run along a leach rate');
+
+	// The travel time, a setting of the path's own, with a budget of steps the
+	// run keeps to. Generated, it goes through well inside it. Differenced, it
+	// does not: a difference is right to about eight figures of f·p, against
+	// dy/dp held to rtol of the state over the parameter, and a cell that turns
+	// over many times a year loses more than that -- and the run says so, the
+	// solver's own words the hint.
+	const budgeted = () => {
+		const m = model('matched', 'f');
+		m.simulation.max_steps = 5000;
+		return m;
+	};
+	const tw = runSensitivity(budgeted(), { parameters: ['TW'] });
+	assert(tw.stats.nsteps < 5000 && tw.sens[0].every((row) => row.every(Number.isFinite)), 'the run along TW');
 	let e = null;
 	try {
-		runSensitivity(model(), { parameters: ['leach_rate[U-234]'], differenced: true });
+		runSensitivity(budgeted(), { parameters: ['TW'], differenced: true });
 	} catch (err) { e = err; }
-	assert(e && e.name === 'SolverError' && e.code === 'stalled', `the differenced run: ${e?.message ?? 'ran'}`);
-	assert(/^The sensitivity equations could not be integrated past t=0\.00000\d+: df\/dp along leach_rate\[U-234\] is worked out by a difference, as asked, which is right to about eight figures/.test(e.message)
-		&& e.message.includes("the model's absolute tolerance over the parameter's value, 1.0e-12 for leach_rate[U-234]. "
-			+ 'A looser absolute tolerance is the first thing to try.'), e.message);
+	assert(e && e.name === 'SolverError' && e.code === 'steps', `the differenced run: ${e?.message ?? 'ran'}`);
+	assert(/^The sensitivity equations could not be integrated past t=[^:]+: df\/dp along TW is worked out by a difference, as asked, which is right to about eight figures/.test(e.message)
+		&& e.message.endsWith('and no less than the absolute tolerance over it, 2.0e-18 for TW. Looser tolerances are the first '
+			+ 'thing to try.'), e.message);
 	// The solver's own words, without the advice about compartments held at zero.
-	assert(/^The solver stopped making progress at t=[^ ]+: 2000 accepted steps advanced the clock by less than 0\.0001, and the step size is no longer growing\.$/.test(e.hint), e.hint);
+	assert(/^Exceeded 5000 steps at t=[^ ]+\. Nothing this solver can do with the step size will finish this run\.$/.test(e.hint), e.hint);
 });
 
 test('a sensitivity run reports its progress and stops when asked', async () => {
@@ -2095,7 +2107,11 @@ test('a sensitivity run restarts where the run restarts, and keeps its settings'
 	const r = runSensitivity(pulse, { parameters: ['k'] });
 	const plain = run(pulse);
 	assert(r.stats.restarts >= 2, `restarted ${r.stats.restarts} times`);
-	for (let j = 0; j < r.t.length; j++) close(r.y[0][j], plain.y[j][0], 1e-6, `A at ${r.t[j]}`);
+	// Against A's own scale: at the corner itself A is a few 1e-9 in either,
+	// what the step that lands on it picks up of the pulse beginning there.
+	for (let j = 0; j < r.t.length; j++) {
+		assert(Math.abs(r.y[0][j] - plain.y[j][0]) <= 1e-6, `A at ${r.t[j]}: ${r.y[0][j]} against ${plain.y[j][0]}`);
+	}
 	// After the pulse A = e^(-k(t - 5000)), so dA/dk = -(t - 5000)*A.
 	const last = r.t.length - 1;
 	close(r.sens[0][0][last], -(r.t[last] - 5000.0005) * r.y[0][last], 1e-5, 'dA/dk at the end');

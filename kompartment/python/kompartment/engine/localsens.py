@@ -69,6 +69,7 @@ from .project import Project, value_at
 from .recorders import EVENT_FIELDS
 from .runner import absolute_tolerance, describe_entry, jumps_of, run
 from .solvers import SolverError
+from .solvers.matrix import IterationMatrix
 from .switchtimes import switch_times
 
 __all__ = ['SensitivityError', 'parameter_slots', 'slot_label', 'state_series', 'uncarried', 'run_sensitivity',
@@ -375,6 +376,65 @@ def run_sensitivity(model: Any, parameters: Optional[Sequence[str]] = None, *, m
     }
 
 
+class _BlockMatrix:
+    """The matrix Newton iterates with for [y, S_1, ..., S_m], a block at a time
+    (``blockMatrix`` in the application). It is block lower triangular -- A =
+    I - a·J on the diagonal, -a·C_j under the states' block, C_j = d(S_j')/dy --
+    so the states' block is solved first and each sensitivity's after it, the
+    coupling carried to its right-hand side: one factorisation of A, two while
+    the floor holds a state (whose row is the identity in the states' block
+    alone), and never a pivot taken across blocks. An LU of the whole matrix
+    pivots a state's column on a sensitivity's row wherever the coupling is the
+    larger entry, and mixes that row's rounding into the state's correction,
+    which for a state near zero is all of it."""
+
+    def __init__(self, base: Pattern, n: int, m: int, state_at: List[np.ndarray], values: Any, mode: str,
+                 hints: Any) -> None:
+        self.base, self.n, self.m, self.state_at = base, n, m, state_at
+        self.rows = np.asarray(base.row_idx, dtype=np.int64)
+        self.cols = np.asarray(base.col_of, dtype=np.int64)
+        self.mode, self.hints = mode, hints
+        J, self.C = self._extract(values)
+        self.states = IterationMatrix(n, base, J, mode, None, hints)
+        self.apart: Optional[IterationMatrix] = None
+        self.sens = self.states
+        self.a = 0.0
+
+    @property
+    def info(self) -> Dict[str, Any]:
+        return self.states.info
+
+    def _extract(self, values: Any) -> Any:
+        values = np.asarray(values, dtype=float)
+        return values[self.state_at[0]], [values[at] for at in self.state_at[1:]]
+
+    def form(self, a: float, J: Any, held: Optional[np.ndarray] = None) -> None:
+        Jb, self.C = self._extract(J)
+        self.a = a
+        held_y = None
+        if held is not None and np.any(np.asarray(held)[:self.n]):
+            held_y = np.asarray(held)[:self.n]
+        self.states.form(a, Jb, held_y)
+        if held_y is not None:
+            if self.apart is None:
+                self.apart = IterationMatrix(self.n, self.base, Jb, self.mode, None, self.hints)
+            self.apart.form(a, Jb, None)
+            self.sens = self.apart
+        else:
+            self.sens = self.states
+
+    def solve(self, rhs: np.ndarray) -> np.ndarray:
+        n = self.n
+        out = np.empty(n * (1 + self.m))
+        xy = np.asarray(self.states.solve(np.array(rhs[:n], dtype=float)), dtype=float)
+        out[:n] = xy
+        for j in range(self.m):
+            # The coupling's part: C_j times the states' correction, column by column.
+            cd = np.bincount(self.rows, weights=self.C[j] * xy[self.cols], minlength=n)
+            out[n * (j + 1):n * (j + 2)] = self.sens.solve(rhs[n * (j + 1):n * (j + 2)] + self.a * cd)
+        return out
+
+
 #: The ways a solve gives up that a noisy driving term brings about.
 _NOISY = ('tolerance', 'stalled', 'steps')
 
@@ -382,8 +442,9 @@ _NOISY = ('tolerance', 'stalled', 'steps')
 def _differenced_failure(e: SolverError, problem: Mapping[str, Any], asked: bool) -> Optional[SolverError]:
     """A solve of the sensitivity equations that gave up, said for what it most
     likely is when df/dp is worked out by a difference (``differencedFailure``),
-    or None: what a difference loses to rounding can be more than the absolute
-    tolerance dy/dp is held to. The solver's own words become the hint."""
+    or None: a difference is right to about eight figures of f·p, and in a state
+    that turns over many times a unit of time that is less than dy/dp is held
+    to. The solver's own words become the hint."""
     tangent = problem['tangent']
     if tangent.get('available') or getattr(e, 'code', None) not in _NOISY:
         return None
@@ -397,10 +458,10 @@ def _differenced_failure(e: SolverError, problem: Mapping[str, Any], asked: bool
     where = f' past t={_js_str(float(t))}' if t is not None and math.isfinite(float(t)) else ''
     out = SolverError(e.code, f'The sensitivity equations could not be integrated{where}: df/dp along {listed} is '
                               f'worked out by a difference, {why}, which is right to about eight figures, and what it '
-                              'loses to rounding may be more than the absolute tolerance dy/dp is held to -- the '
-                              "model's absolute tolerance over the parameter's value, "
-                              f'{_to_precision(tol, 2)} for {names[0]}. A looser absolute tolerance is the first '
-                              'thing to try.', t)
+                              "loses to rounding may be more than dy/dp is held to: the run's relative tolerance of the "
+                              "larger of dy/dp and the state over the parameter's value, and no less than the absolute "
+                              f'tolerance over it, {_to_precision(tol, 2)} for {names[0]}. Looser tolerances are the '
+                              'first thing to try.', t)
     out.hint = _solver_words(str(e))
     return out
 
@@ -580,31 +641,95 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
             out[base:base + n] = jv + (fp - f0) / h
         return out
 
-    # --- the iteration matrix: J down the diagonal, (1 + m) times, and the
-    # colouring repeated with it.
+    # --- the iteration matrix: J down the diagonal, (1 + m) times, and under
+    # it how each sensitivity's equations move with the state (``bigJacobian``
+    # in the application). d(S_j')/dy = (dJ/dy)·S_j + d(df/dp_j)/dy, a block
+    # on J's own pattern: left out, each sensitivity's Newton correction trails
+    # the state's by an iteration, and the iteration's test reads it as one
+    # that has stopped converging. It is J's own derivative along (S_j, e_j),
+    # both terms at once -- J at the state moved by e·S_j and the parameter by
+    # e, less J, over e -- and nothing on the budget rows, where df/dp writes
+    # nothing. A state's column holds J's entries and then each sensitivity's
+    # under them; the sensitivities' columns follow, J's entries in their own
+    # block.
     blocks = 1 + m
-    rows = np.concatenate([row_idx + b * n for b in range(blocks)])
-    cols = np.concatenate([col_of + b * n for b in range(blocks)])
+    nnz_j = row_idx.size
+    col_ptr = np.asarray(pattern.col_ptr, dtype=np.int64)
+    within = np.arange(nnz_j, dtype=np.int64) - col_ptr[col_of]
+    length = (col_ptr[1:] - col_ptr[:-1])[col_of]
+    state_at = [blocks * col_ptr[col_of] + b * length + within for b in range(blocks)]
+    rows = np.empty((blocks + m) * nnz_j, dtype=np.int64)
+    cols = np.empty((blocks + m) * nnz_j, dtype=np.int64)
+    for b in range(blocks):
+        rows[state_at[b]] = row_idx + b * n
+        cols[state_at[b]] = col_of
+    for b in range(1, blocks):
+        rows[(blocks + b - 1) * nnz_j:(blocks + b) * nnz_j] = row_idx + b * n
+        cols[(blocks + b - 1) * nnz_j:(blocks + b) * nnz_j] = col_of + b * n
     big = Pattern(N, rows, cols)
     if big.nnz != rows.size or not (np.array_equal(big.row_idx, rows) and np.array_equal(big.col_of, cols)):
         raise RuntimeError('the repeated Jacobian pattern did not keep the order of its blocks')
+    # The colouring twice: a state's column reaches the sensitivities' rows as
+    # well, so it shares no group with theirs -- the states' groups, then the
+    # sensitivities', each across every block.
     base_groups = jac.get('groups') or []
-    big_groups = ([np.concatenate([np.asarray(g, dtype=np.int64) + b * n for b in range(blocks)])
-                   for g in base_groups] if len(base_groups) else None)
+    big_groups = ([np.asarray(g, dtype=np.int64) for g in base_groups]
+                  + [np.concatenate([np.asarray(g, dtype=np.int64) + b * n for b in range(1, blocks)])
+                     for g in base_groups] if len(base_groups) else None)
+    budget = system.builder.budget
+    budget_rows = np.zeros(nnz_j, dtype=bool)
+    if budget is not None:
+        lo = int(budget['base'])
+        budget_rows = (row_idx >= lo) & (row_idx < lo + len(budget['terms']) * int(budget['nfam']))
     # Asked to difference its Jacobian, the model gets that here too: the
     # pattern and its colouring, and no values.
     differenced_matrix = project.simulation.get('jacobian') == 'numeric'
 
+    def coupling_of(t: float, Y: np.ndarray, j: int, J0: np.ndarray) -> np.ndarray:
+        """d(S_j')/dy on J's pattern, from J's values ``J0`` at (t, y)."""
+        slot = slots[j]
+        p0 = float(P[slot])
+        a = abs(p0)
+        e = EPS * (a if (a == a and a != 0) else 1.0)
+        yc = Y[:n] + e * Y[n * (j + 1):n * (j + 2)]
+        P[slot] = p0 + e
+        system.evaluate_invariant()
+        forget_clock()
+        try:
+            moved = jac_evaluate(t, yc)
+        finally:
+            P[slot] = p0
+            system.evaluate_invariant()
+            forget_clock()
+        if moved is None:
+            return np.zeros(nnz_j)
+        c = (np.asarray(moved, dtype=float) - J0) / e
+        c[budget_rows] = 0.0
+        # A coupling that is not a number is no coupling: the block is left out.
+        return c if np.all(np.isfinite(c)) else np.zeros(nnz_j)
+
     def big_evaluate(t: float, Y: np.ndarray) -> Optional[np.ndarray]:
         if differenced_matrix:
             return None
+        Y = np.asarray(Y, dtype=float)
         v = jac_evaluate(t, np.array(Y[:n], dtype=float))
         if v is None:
             return None
-        return np.tile(np.asarray(v, dtype=float), blocks)
+        J0 = np.array(v, dtype=float)
+        out = np.empty(rows.size)
+        out[state_at[0]] = J0
+        for j in range(m):
+            out[state_at[j + 1]] = coupling_of(t, Y, j, J0)
+        out[blocks * nnz_j:] = np.tile(J0, m)
+        return out
 
     big_jacobian = {'available': True, 'pattern': big, 'constant': False, 'groups': big_groups,
                     'evaluate': big_evaluate}
+
+    def block_matrix(neq: int, pattern_: Any, values: Any, mode: str = 'auto', mass: Any = None,
+                     hints: Any = None) -> '_BlockMatrix':
+        """The matrix Newton iterates with, a block at a time (``iteration_matrix`` in .solvers.ndf)."""
+        return _BlockMatrix(pattern, n, m, state_at, values, mode, hints)
 
     # --- initial conditions, the sensitivities included. dy0/dp: an initial
     # inventory may be an equation over parameters, and where it is not this
@@ -632,6 +757,19 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         a = abs(float(P[slot]))
         scale = a if (a == a and a != 0) else 1.0
         atol[n * (j + 1):n * (j + 2)] = per_state / scale
+    # ...and what each sensitivity is weighed against: itself, and its state
+    # over |p| as well (``weight_floor`` in .solvers.ndf), so that it is held to
+    # what it means for y -- an elasticity right to rtol -- and one negligible
+    # beside its state is not asked for rtol of itself, which the rounding of
+    # the terms its equation cancels down to can deny it.
+    floor_from = np.full(N, -1, dtype=np.int64)
+    floor_factor = np.zeros(N)
+    for j, slot in enumerate(slots):
+        a = abs(float(P[slot]))
+        scale = a if (a == a and a != 0) else 1.0
+        floor_from[n * (j + 1):n * (j + 2)] = np.arange(n)
+        floor_factor[n * (j + 1):n * (j + 2)] = 1 / scale
+    weight_floor = (floor_from, floor_factor)
 
     # The floor the run applies -- each compartment's own -- on the states and
     # nothing after them.
@@ -653,7 +791,8 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         'system': system,
         'project': project,
         'equations': {'dydt': dydt, 'y0': Y0, 'abstol': atol, 'jacobian': big_jacobian, 'solver': 'ndf',
-                      'on_segment': on_segment},
+                      'on_segment': on_segment, 'weight_floor': weight_floor, 'iteration_matrix': block_matrix},
+        'weight_floor': weight_floor,
         'compiled': model_compiled,
         'wanted': wanted,
         'tangent': tangent,

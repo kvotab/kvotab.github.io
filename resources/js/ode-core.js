@@ -3458,7 +3458,8 @@
    * measures against the floor as it now is, the Newton test against the floor
    * the run began with. See `autoAbstol` below. `skip` names states the error
    * test leaves out -- the algebraic ones, under `suppressAlgebraic` -- which
-   * count in every other test.
+   * count in every other test. `floor`, set after construction, measures some
+   * states against another's size as well: see `weightFloor` below.
    */
   class Weighting {
   	constructor(neq, threshold, normControl, rms = false, skip = null) {
@@ -3468,6 +3469,7 @@
   		this.inv = new Float64Array(normControl ? 1 : neq);
   		this.skip = !normControl && skip && skip.length ? skip : null;
   		this.invError = this.skip ? new Float64Array(neq) : this.inv;
+  		this.floor = null;
   	}
 
   	/** Sets the weights for a step from `y` to `ynew`. */
@@ -3478,8 +3480,22 @@
   			inv[0] = 1 / Math.max(twoNorm(y), twoNorm(ynew), th[0]);
   			return;
   		}
-  		for (let i = 0; i < y.length; i++) {
-  			inv[i] = 1 / Math.max(Math.abs(y[i]), Math.abs(ynew[i]), th[i]);
+  		const fl = this.floor;
+  		if (fl) {
+  			const { from, factor } = fl;
+  			for (let i = 0; i < y.length; i++) {
+  				let w = Math.max(Math.abs(y[i]), Math.abs(ynew[i]), th[i]);
+  				const k = from[i];
+  				if (k >= 0) {
+  					const v = factor[i] * Math.max(Math.abs(y[k]), Math.abs(ynew[k]));
+  					if (v > w) w = v;
+  				}
+  				inv[i] = 1 / w;
+  			}
+  		} else {
+  			for (let i = 0; i < y.length; i++) {
+  				inv[i] = 1 / Math.max(Math.abs(y[i]), Math.abs(ynew[i]), th[i]);
+  			}
   		}
   		if (this.skip) {
   			this.invError.set(inv);
@@ -3659,6 +3675,26 @@
   }
 
   /**
+   * The `weightFloor` option checked: null, or `{from, factor}` with one entry
+   * per state, `from` another state's index or -1 and `factor` a finite number
+   * of zero or more.
+   */
+  function weightFloorOf(option, neq) {
+  	if (option == null) return null;
+  	const { from, factor } = option;
+  	if (from?.length !== neq || factor?.length !== neq) {
+  		throw new SolverError('weightFloor', `weightFloor needs a from and a factor for each of the ${neq} equations`);
+  	}
+  	for (let i = 0; i < neq; i++) {
+  		const k = from[i];
+  		if (!(Number.isInteger(k) && k >= -1 && k < neq) || !(factor[i] >= 0 && Number.isFinite(factor[i]))) {
+  			throw new SolverError('weightFloor', `weightFloor's entry ${i} is not a state and a factor: ${k}, ${factor[i]}`);
+  		}
+  	}
+  	return { from: Int32Array.from(from), factor: Float64Array.from(factor) };
+  }
+
+  /**
    * df/dy by forward differences, one column at a time or -- given a sparsity
    * pattern -- one group of columns at a time, the groups a colouring of the
    * pattern's columns (../core/sparse.js).
@@ -3727,6 +3763,12 @@
    *   nonNegative        state indices held at or above zero
    *   mass               the diagonal of M: 1 differential, 0 algebraic
    *   suppressAlgebraic  leave the algebraic states out of the error test
+   *   weightFloor        {from, factor}, one entry per state: state i is also
+   *                      weighed against factor[i]·|y[from[i]]| (from[i] -1:
+   *                      not); see where it is read
+   *   iterationMatrix    (pattern, J, opts) => the matrix Newton iterates with,
+   *                      in the shape ../core/sparse.js's `iterationMatrix`
+   *                      gives it, which is used when this is left out
    *   jacobian           see jacobianSource; differenced densely when absent
    *   matrix             'auto' | 'refactor' | 'sparse' | 'dense': ../core/sparse.js
    *   denseBelow, denseFill  when `auto` takes the dense LU (../core/sparse.js)
@@ -3823,6 +3865,16 @@
   	const rms = (o.errorNorm ?? 'max') === 'rms';
   	const errorWeight = new Weighting(neq, threshold, o.normControl, rms, suppressed);
   	const newtonWeight = o.autoAbstol ? new Weighting(neq, newtonThreshold, o.normControl, rms) : errorWeight;
+  	// A state may be weighed against another's size as well as its own: the
+  	// error it is held to is then rtol of the larger. A sensitivity dy_k/dp
+  	// integrated beside y is weighed against y_k/|p| too, so that what it is
+  	// held to is what it means for y -- an elasticity right to rtol -- and one
+  	// that is negligible beside its state is not asked for rtol of itself,
+  	// which the rounding of the equation it comes out of can deny it. Not
+  	// under norm control, which weighs the vector whole.
+  	const floor = weightFloorOf(o.weightFloor, neq);
+  	errorWeight.floor = floor;
+  	newtonWeight.floor = floor;
   	// How many failing steps at the smallest step size may be taken in a row.
   	// Unset, this solver's own rule: up to MAX_BELOW_TOLERANCE steps that fail
   	// the error test, and none whose Newton iteration will not converge. Set,
@@ -3934,7 +3986,10 @@
   	};
   	evaluateJacobian(f0);
 
-  	const W = iterationMatrix(pattern, J, {
+  	// The matrix Newton iterates with: this solver's own, or one the caller
+  	// makes from the same arguments (`iterationMatrix`), which a system of a
+  	// known block form can factorise and solve a block at a time.
+  	const W = (o.iterationMatrix ?? iterationMatrix)(pattern, J, {
   		n: neq,
   		mode: o.matrix ?? 'auto',
   		mass,

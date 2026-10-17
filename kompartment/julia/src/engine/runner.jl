@@ -254,6 +254,12 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     opts = Dict{String,Any}(
         "rtol" => Float64(sim["rtol"]), "abstol" => abstol,
         "jacobian" => equations === nothing ? jacobian_spec(sys, numeric) : equations.jacobian,
+        # Some of the caller's entries weighed against others as well (`weight_floor` in solvers/ndf.jl).
+        "weight_floor" => (equations !== nothing && hasproperty(equations, :weight_floor)) ? equations.weight_floor :
+                          nothing,
+        # ...and the matrix Newton iterates with, solved a block at a time.
+        "iteration_matrix" => (equations !== nothing && hasproperty(equations, :iteration_matrix)) ?
+                              equations.iteration_matrix : nothing,
         "non_negative" => collect(non_negative),
         "auto_abstol" => get(sim, "auto_abstol", false) === true,
         "hmax" => (something(get(sim, "max_step", nothing), 0) > 0) ? Float64(sim["max_step"]) : nothing,

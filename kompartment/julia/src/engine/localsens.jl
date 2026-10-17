@@ -403,29 +403,115 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
         return nothing
     end
 
-    # The iteration matrix: J down the diagonal, (1 + m) times, and the colouring
-    # repeated with it.
+    # The iteration matrix: J down the diagonal, (1 + m) times, and under it how
+    # each sensitivity's equations move with the state (`bigJacobian` in the
+    # application). d(S_j')/dy = (dJ/dy)·S_j + d(df/dp_j)/dy, a block on J's own
+    # pattern: left out, each sensitivity's Newton correction trails the state's
+    # by an iteration, and the iteration's test reads it as one that has stopped
+    # converging. It is J's own derivative along (S_j, e_j), both terms at once
+    # -- J at the state moved by e·S_j and the parameter by e, less J, over e --
+    # and nothing on the budget rows, where df/dp writes nothing. A state's
+    # column holds J's entries and then each sensitivity's under them; the
+    # sensitivities' columns follow, J's entries in their own block.
     blocks = 1 + mm
-    brows = reduce(vcat, [rows .+ b * n for b in 0:blocks-1])
-    bcols = reduce(vcat, [cols .+ b * n for b in 0:blocks-1])
+    colptr = pattern.colptr
+    state_at = [Vector{Int}(undef, nnz_) for _ in 1:blocks]
+    @inbounds for q in 1:nnz_
+        c = cols[q]
+        within = q - colptr[c]
+        len = colptr[c+1] - colptr[c]
+        for b in 0:blocks-1
+            state_at[b+1][q] = blocks * (colptr[c] - 1) + b * len + within + 1
+        end
+    end
+    brows = Vector{Int}(undef, (blocks + mm) * nnz_)
+    bcols = Vector{Int}(undef, (blocks + mm) * nnz_)
+    @inbounds for b in 0:blocks-1, q in 1:nnz_
+        brows[state_at[b+1][q]] = rows[q] + b * n
+        bcols[state_at[b+1][q]] = cols[q]
+    end
+    @inbounds for b in 1:blocks-1, q in 1:nnz_
+        brows[(blocks+b-1)*nnz_+q] = rows[q] + b * n
+        bcols[(blocks+b-1)*nnz_+q] = cols[q] + b * n
+    end
     big = Pattern(N, brows, bcols)
     (big.rowval == brows && big.col_of == bcols) ||
         error("the repeated Jacobian pattern did not keep the order of its blocks")
+    # The colouring twice: a state's column reaches the sensitivities' rows as well,
+    # so it shares no group with theirs -- the states' groups, then the
+    # sensitivities', each across every block.
     base_groups = jac.groups === nothing ? Vector{Int}[] : jac.groups
     big_groups = isempty(base_groups) ? nothing :
-                 [reduce(vcat, [g .+ b * n for b in 0:blocks-1]) for g in base_groups]
+                 vcat([copy(g) for g in base_groups], [reduce(vcat, [g .+ b * n for b in 1:blocks-1]) for g in base_groups])
+    budget_rows = falses(nnz_)
+    if sys.builder.budget !== nothing
+        frm, to = budget_columns(sys.builder)
+        @inbounds for q in 1:nnz_
+            budget_rows[q] = frm < rows[q] <= to
+        end
+    end
     # Asked to difference its Jacobian, the model gets that here too: the pattern
     # and its colouring, and no values.
     numeric = get(proj.simulation, "jacobian", nothing) == "numeric"
-    Jb = zeros(nnz_)
+    J0 = zeros(nnz_)
+    Jm = zeros(nnz_)
+    coupling = zeros(nnz_)
+    yc = zeros(n)
+    # d(S_j')/dy into `coupling`, on J's pattern, from J's values `J0` at (t, y).
+    function coupling_of!(t::Float64, Y::AbstractVector{Float64}, j::Int)
+        slot = slots[j]
+        p0 = P[slot+1]
+        a = abs(p0)
+        e = _LS_EPS * ((a == a && a != 0) ? a : 1.0)
+        @inbounds for i in 1:n
+            yc[i] = Y[i] + e * Y[n*j+i]
+        end
+        P[slot+1] = p0 + e
+        evaluate_invariant!(sys)
+        forget_clock()
+        ok = try
+            analytic_evaluate!(Jm, an, t, yc)
+        finally
+            P[slot+1] = p0
+            evaluate_invariant!(sys)
+            forget_clock()
+        end
+        if !ok
+            fill!(coupling, 0.0)
+            return coupling
+        end
+        @inbounds for q in 1:nnz_
+            coupling[q] = (Jm[q] - J0[q]) / e
+        end
+        @inbounds for q in 1:nnz_
+            budget_rows[q] && (coupling[q] = 0.0)
+        end
+        # A coupling that is not a number is no coupling: the block is left out.
+        all(isfinite, coupling) || fill!(coupling, 0.0)
+        return coupling
+    end
     big_evaluate = numeric ? nothing : JacobianEvaluate((vals, t, Y) -> begin
-        analytic_evaluate!(Jb, an, t, Y[1:n]) || return false
-        for b in 0:blocks-1
-            copyto!(vals, b * nnz_ + 1, Jb, 1, nnz_)
+        analytic_evaluate!(J0, an, t, Y[1:n]) || return false
+        sa = state_at[1]
+        @inbounds for q in 1:nnz_
+            vals[sa[q]] = J0[q]
+        end
+        for j in 1:mm
+            c = coupling_of!(t, Y, j)
+            sa = state_at[j+1]
+            @inbounds for q in 1:nnz_
+                vals[sa[q]] = c[q]
+            end
+        end
+        for b in 1:mm
+            copyto!(vals, (blocks + b - 1) * nnz_ + 1, J0, 1, nnz_)
         end
         return true
     end)
     big_jacobian = JacobianSpec(big, big_groups, big_evaluate, false, false)
+    # The matrix Newton iterates with, a block at a time (`iteration_matrix` in solvers/ndf.jl).
+    block_matrix = (neq, pattern_, values, mode, mass, hints) ->
+        _LSBlockMatrix(pattern, n, mm, state_at, values, String(mode), hints)
 
     # Initial conditions, the sensitivities included. dy0/dp: an initial
     # inventory may be an equation over parameters, and where it is not this is
@@ -454,13 +540,30 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
         scale = (a == a && a != 0) ? a : 1.0
         atol[n*j+1:n*(j+1)] = per_state ./ scale
     end
+    # ...and what each sensitivity is weighed against: itself, and its state over
+    # |p| as well (`weight_floor` in solvers/ndf.jl), so that it is held to what it
+    # means for y -- an elasticity right to rtol -- and one negligible beside its
+    # state is not asked for rtol of itself, which the rounding of the terms its
+    # equation cancels down to can deny it.
+    floor_from = fill(-1, N)
+    floor_factor = zeros(N)
+    for (j, slot) in enumerate(slots)
+        a = abs(P[slot+1])
+        scale = (a == a && a != 0) ? a : 1.0
+        for i in 1:n
+            floor_from[n*j+i] = i - 1
+            floor_factor[n*j+i] = 1 / scale
+        end
+    end
+    weight_floor = (floor_from, floor_factor)
 
     chosen = [JDict("label" => slot_label(e), "name" => e["name"], "index" => e["index"], "value" => e["value"])
               for e in wanted]
-    equations = (dydt=dydt!, y0=Y0, abstol=atol, jacobian=big_jacobian, solver="ndf", on_segment=on_segment)
+    equations = (dydt=dydt!, y0=Y0, abstol=atol, jacobian=big_jacobian, solver="ndf", on_segment=on_segment,
+                 weight_floor=weight_floor, iteration_matrix=block_matrix)
     return (dydt! = dydt!, jacobian=big_jacobian, y0=Y0, rtol=Float64(proj.simulation["rtol"]), abstol=atol, n=n,
             m=mm, chosen=chosen, system=sys, project=proj, equations=equations, tangent=plan !== nothing,
-            wanted=wanted, why=tangent)
+            wanted=wanted, why=tangent, weight_floor=weight_floor)
 end
 
 """
@@ -504,14 +607,134 @@ function run_sensitivity(m, parameters=nothing; most=nothing, differenced::Bool=
             series=state_series(pr.system), stats=stats, tangent=pr.tangent)
 end
 
+"""
+The matrix Newton iterates with for [y, S_1, ..., S_m], a block at a time (`blockMatrix` in the application). It is
+block lower triangular -- A = I - a·J on the diagonal, -a·C_j under the states' block, C_j = d(S_j')/dy -- so the
+states' block is solved first and each sensitivity's after it, the coupling carried to its right-hand side: one
+factorisation of A, two while the floor holds a state (whose row is the identity in the states' block alone), and
+never a pivot taken across blocks. An LU of the whole matrix pivots a state's column on a sensitivity's row wherever
+the coupling is the larger entry, and mixes that row's rounding into the state's correction, which for a state near
+zero is all of it.
+"""
+mutable struct _LSBlockMatrix <: AbstractIterationMatrix
+    n::Int
+    m::Int
+    base::Pattern
+    state_at::Vector{Vector{Int}}
+    mode::String
+    hints::Union{Nothing,Dict{String,String}}
+    J::Vector{Float64}
+    C::Vector{Vector{Float64}}
+    states::IterationMatrix
+    apart::Union{Nothing,IterationMatrix}
+    sens::IterationMatrix
+    a::Float64
+    held_y::Vector{UInt8}
+    xy::Vector{Float64}
+    rs::Vector{Float64}
+    cd::Vector{Float64}
+end
+
+function _LSBlockMatrix(base::Pattern, n::Int, m::Int, state_at::Vector{Vector{Int}}, values::Vector{Float64},
+                        mode::String, hints)
+    nnz_ = pattern_nnz(base)
+    J = zeros(nnz_)
+    C = [zeros(nnz_) for _ in 1:m]
+    _ls_extract!(J, C, state_at, values)
+    states = IterationMatrix(n, base, J, mode, nothing, hints)
+    return _LSBlockMatrix(n, m, base, state_at, mode, hints, J, C, states, nothing, states, 0.0, zeros(UInt8, n),
+                          zeros(n), zeros(n), zeros(n))
+end
+
+"""J's entries and each coupling's, out of the big values."""
+function _ls_extract!(J::Vector{Float64}, C::Vector{Vector{Float64}}, state_at::Vector{Vector{Int}},
+                      values::Vector{Float64})
+    sa = state_at[1]
+    @inbounds for q in eachindex(J)
+        J[q] = values[sa[q]]
+    end
+    for j in eachindex(C)
+        sa = state_at[j+1]
+        c = C[j]
+        @inbounds for q in eachindex(c)
+            c[q] = values[sa[q]]
+        end
+    end
+    return nothing
+end
+
+function _mat_form!(W::_LSBlockMatrix, a::Float64, J::Vector{Float64},
+                    held::Union{Nothing,Vector{UInt8}}=nothing)::Union{Nothing,String}
+    _ls_extract!(W.J, W.C, W.state_at, J)
+    W.a = a
+    any_ = false
+    if held !== nothing
+        @inbounds for i in 1:W.n
+            W.held_y[i] = held[i]
+            held[i] != 0 && (any_ = true)
+        end
+    end
+    msg = _mat_form!(W.states, a, W.J, any_ ? W.held_y : nothing)
+    msg === nothing || return msg
+    if any_
+        W.apart === nothing && (W.apart = IterationMatrix(W.n, W.base, W.J, W.mode, nothing, W.hints))
+        apart = W.apart::IterationMatrix
+        msg = _mat_form!(apart, a, W.J, nothing)
+        msg === nothing || return msg
+        W.sens = apart
+    else
+        W.sens = W.states
+    end
+    return nothing
+end
+
+function _mat_solve_inplace!(W::_LSBlockMatrix, x::Vector{Float64})
+    n = W.n
+    xy, rs, cd = W.xy, W.rs, W.cd
+    @inbounds for i in 1:n
+        xy[i] = x[i]
+    end
+    _mat_solve_inplace!(W.states, xy)
+    @inbounds for i in 1:n
+        x[i] = xy[i]
+    end
+    rows, cols = W.base.rowval, W.base.col_of
+    for j in 1:W.m
+        # The coupling's part: C_j times the states' correction, column by column.
+        fill!(cd, 0.0)
+        c = W.C[j]
+        @inbounds for q in eachindex(c)
+            cd[rows[q]] += c[q] * xy[cols[q]]
+        end
+        off = n * j
+        @inbounds for i in 1:n
+            rs[i] = x[off+i] + W.a * cd[i]
+        end
+        _mat_solve_inplace!(W.sens, rs)
+        @inbounds for i in 1:n
+            x[off+i] = rs[i]
+        end
+    end
+    return x
+end
+
+function _mat_release!(W::_LSBlockMatrix)
+    _mat_release!(W.states)
+    W.apart === nothing || _mat_release!(W.apart::IterationMatrix)
+    return nothing
+end
+
+_mat_info(W::_LSBlockMatrix) = _mat_info(W.states)
+
 """The ways a solve gives up that a noisy driving term brings about."""
 const _LS_NOISY = ("tolerance", "stalled", "steps")
 
 """
 A solve of the sensitivity equations that gave up, said for what it most likely is
-when df/dp is worked out by a difference (`differencedFailure`), or `nothing`: what
-a difference loses to rounding can be more than the absolute tolerance dy/dp is
-held to. The solver's own words become the hint.
+when df/dp is worked out by a difference (`differencedFailure`), or `nothing`: a
+difference is right to about eight figures of f·p, and in a state that turns over
+many times a unit of time that is less than dy/dp is held to. The solver's own
+words become the hint.
 """
 function _ls_differenced_failure(e::SolverError, pr, asked::Bool)
     (pr.tangent || !(e.kind in _LS_NOISY)) && return nothing
@@ -523,9 +746,10 @@ function _ls_differenced_failure(e::SolverError, pr, asked::Bool)
     where_ = isfinite(e.t) ? " past t=$(_pd_js_str(e.t))" : ""
     out = SolverError(e.kind, "The sensitivity equations could not be integrated$where_: df/dp along $listed is " *
                               "worked out by a difference, $why, which is right to about eight figures, and what it " *
-                              "loses to rounding may be more than the absolute tolerance dy/dp is held to -- the " *
-                              "model's absolute tolerance over the parameter's value, $(js_to_precision(tol, 2)) for " *
-                              "$(names[1]). A looser absolute tolerance is the first thing to try.", e.t)
+                              "loses to rounding may be more than dy/dp is held to: the run's relative tolerance of " *
+                              "the larger of dy/dp and the state over the parameter's value, and no less than the " *
+                              "absolute tolerance over it, $(js_to_precision(tol, 2)) for $(names[1]). Looser " *
+                              "tolerances are the first thing to try.", e.t)
     out.hint = _ls_solver_words(e.message)
     return out
 end

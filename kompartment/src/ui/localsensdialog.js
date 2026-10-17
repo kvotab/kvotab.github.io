@@ -146,8 +146,8 @@ export function openLocalSensitivityPicker({
 				exact ? null : el('p', { className: 'hint' },
 					'This model has a waste package, a disruptive event or a semi-analytical far-field '
 					+ 'pathway, so df/dp is differenced rather than differentiated — an approximation, and '
-					+ 'the slower of the two. If a run gives up, a looser absolute tolerance is the first '
-					+ 'thing to try.')));
+					+ 'the slower of the two. If a run gives up, looser tolerances are the first thing to '
+					+ 'try.')));
 
 			const search = el('input', {
 				type: 'search', className: 'ep-search', value: query,

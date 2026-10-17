@@ -144,16 +144,37 @@ function _ndf_regrid_matrix!(T::Matrix{Float64}, vals::Matrix{Float64}, b::Vecto
     return T
 end
 
-"""The norm every test is measured in (`Weighting`)."""
+"""The norm every test is measured in (`Weighting`). `floor_at` names states weighed against another's size as
+well -- `floor_factor` times that of `floor_from`, 1-based -- see `weight_floor` in `ndf`."""
 struct _NDFWeighting
     threshold::Vector{Float64}
     norm_control::Bool
     rms::Bool
     inv::Vector{Float64}
+    floor_at::Vector{Int}
+    floor_from::Vector{Int}
+    floor_factor::Vector{Float64}
 end
 
-_NDFWeighting(neq::Int, threshold::Vector{Float64}, norm_control::Bool, rms::Bool) =
-    _NDFWeighting(threshold, norm_control, (!norm_control) && rms, zeros(norm_control ? 1 : neq))
+const _NDF_NO_FLOOR = (Int[], Int[], Float64[])
+
+_NDFWeighting(neq::Int, threshold::Vector{Float64}, norm_control::Bool, rms::Bool, floor=_NDF_NO_FLOOR) =
+    _NDFWeighting(threshold, norm_control, (!norm_control) && rms, zeros(norm_control ? 1 : neq), floor[1], floor[2],
+                  floor[3])
+
+"""The floored states' weights from `y` and `ynew`: the larger of their own and the floor, where the floor is larger
+(a NaN floor leaves the weight as it was), as `Weighting.update` takes it."""
+@inline function _ndf_floor!(w::_NDFWeighting, inv::Vector{Float64}, thr::Vector{Float64}, y::Vector{Float64},
+                             ynew::Vector{Float64})
+    at, from, factor = w.floor_at, w.floor_from, w.floor_factor
+    @inbounds for q in eachindex(at)
+        i, k = at[q], from[q]
+        ww = max(max(abs(y[i]), abs(ynew[i])), thr[i])
+        v = factor[q] * max(abs(y[k]), abs(ynew[k]))
+        inv[i] = 1 / (v > ww ? v : ww)
+    end
+    return nothing
+end
 
 function _ndf_update!(w::_NDFWeighting, y::Vector{Float64}, ynew::Vector{Float64})
     if w.norm_control
@@ -164,7 +185,33 @@ function _ndf_update!(w::_NDFWeighting, y::Vector{Float64}, ynew::Vector{Float64
     @inbounds for i in eachindex(inv)
         inv[i] = 1 / max(max(abs(y[i]), abs(ynew[i])), thr[i])
     end
+    isempty(w.floor_at) || _ndf_floor!(w, inv, thr, y, ynew)
     return nothing
+end
+
+"""`weight_floor` checked (`weightFloorOf`): `(from, factor)`, one entry per state, `from` another state (0-based) or
+-1 and `factor` a finite number of zero or more; as the floored states, the states they are weighed against (1-based)
+and the factors."""
+function _ndf_weight_floor(option, neq::Int)
+    option === nothing && return _NDF_NO_FLOOR
+    from, factor = option
+    (length(from) == neq && length(factor) == neq) ||
+        throw(SolverError("weightFloor", "weightFloor needs a from and a factor for each of the $neq equations"))
+    at = Int[]
+    frm = Int[]
+    fac = Float64[]
+    for i in 1:neq
+        k, c = from[i], Float64(factor[i])
+        if !(isinteger(k) && -1 <= k < neq) || !(c >= 0 && isfinite(c))
+            throw(SolverError("weightFloor", "weightFloor's entry $(i - 1) is not a state and a factor: " *
+                                             "$(js_text(Float64(k))), $(js_text(c))"))
+        end
+        k >= 0 || continue
+        push!(at, i)
+        push!(frm, Int(k) + 1)
+        push!(fac, c)
+    end
+    return (at, frm, fac)
 end
 
 function _ndf_norm(w::_NDFWeighting, v::Vector{Float64})::Float64
@@ -220,7 +267,7 @@ mutable struct _NDFState
     J::Vector{Float64}
     fresh::Bool
     dwork::DifferenceWork
-    W::IterationMatrix
+    W::AbstractIterationMatrix
     # the difference table: D[j+1] is the j-th backward difference
     D::Vector{Vector{Float64}}
     tmp::Vector{Float64}
@@ -409,6 +456,11 @@ function _ndf_begin!(s::_NDFState, cols::NTuple{K,Vector{Float64}})::Float64 whe
                 ninv[i] = 1 / max(max(abs(y[i]), abs(pred[i])), nthr[i])
             end
         end
+    end
+    # The floored states, once the whole prediction is there to read.
+    if !ew.norm_control && !isempty(ew.floor_at)
+        _ndf_floor!(ew, einv, ethr, y, pred)
+        sep && _ndf_floor!(nw, ninv, nthr, y, pred)
     end
     if ew.norm_control
         ry, rp = sqrt(_seq_sum_squares(y)), sqrt(_seq_sum_squares(ynew))
@@ -681,7 +733,7 @@ end
         matrix="auto", below_tol_run=nothing, stagnation_tol=0.0, min_newton=1, stall_window=2000,
         events=nothing, t_start=nothing, hints=nothing, on_accepted=nothing, on_output=nothing,
         on_step=nothing, auto_abstol=false, ends_only=false, mass=nothing, rows=nothing,
-        landing=nothing) -> Solution
+        landing=nothing, weight_floor=nothing, iteration_matrix=nothing) -> Solution
 
 Integrates y' = f(t, y) over `tspan`, answering at every time in it (the
 Python engine's `ndf`). `non_negative` holds 1-based state indices; `abstol`
@@ -689,6 +741,11 @@ is a number or a vector (with `auto_abstol`, a vector of the right length
 is raised in place, as Python's is); `on_step(t, nsteps)` is asked every 16
 steps and aborts the run by returning false; `landing(t, t_next)` says where
 a step about to be tried is to end instead (NaN for where it would).
+`weight_floor = (from, factor)`, one entry per state, weighs state i against
+`factor[i]·|y[from[i]]|` as well as itself (`from` 0-based, -1 for none: the
+sensitivities of engine/localsens.jl against their states over |p|), and
+`iteration_matrix(n, pattern, J, matrix, mass, hints)` makes the matrix Newton
+iterates with, an `AbstractIterationMatrix`, in place of `IterationMatrix`.
 """
 function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<:Real};
              rtol::Real=1e-3, abstol::Union{Real,AbstractVector{<:Real}}=1e-6,
@@ -702,7 +759,7 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
              on_accepted::Union{Nothing,StepCallback}=nothing, on_output::Union{Nothing,StepCallback}=nothing,
              on_step::Union{Nothing,StepProgress}=nothing, auto_abstol::Bool=false, ends_only::Bool=false,
              mass::Union{Nothing,AbstractVector{<:Real}}=nothing, rows::Union{Nothing,RowPool}=nothing,
-             landing::Union{Nothing,StepLanding}=nothing)::Solution
+             landing::Union{Nothing,StepLanding}=nothing, weight_floor=nothing, iteration_matrix=nothing)::Solution
     neq = length(y0)
     atol_in = if auto_abstol && abstol isa Vector{Float64} && length(abstol) == neq
         abstol                      # raised in place, as the caller's array is in Python
@@ -722,7 +779,8 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
                       jacobian, matrix === nothing || isempty(matrix) ? "auto" : String(matrix), floor_run,
                       floor_newton_run, Float64(stagnation_tol), Int(min_newton), Int(stall_window), events,
                       t_start === nothing ? NaN : Float64(t_start), hints, on_accepted, on_output, on_step,
-                      auto_abstol, ends_only, mass_v, rows, landing)
+                      auto_abstol, ends_only, mass_v, rows, landing, _ndf_weight_floor(weight_floor, neq),
+                      iteration_matrix)
 end
 
 # Not specialised on which of its optional arguments a run has: one compiled solver, in the
@@ -740,7 +798,9 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     @nospecialize(on_step::Union{Nothing,StepProgress}),
                     auto_abstol::Bool, ends_only::Bool, @nospecialize(mass::Union{Nothing,Vector{Float64}}),
                     @nospecialize(rows::Union{Nothing,RowPool}),
-                    @nospecialize(landing::Union{Nothing,StepLanding}))::Solution
+                    @nospecialize(landing::Union{Nothing,StepLanding}),
+                    floor::Tuple{Vector{Int},Vector{Int},Vector{Float64}}=_NDF_NO_FLOOR,
+                    @nospecialize(iteration_matrix=nothing))::Solution
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]
@@ -759,8 +819,8 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
     newton_threshold = auto_abstol ? copy(threshold) : threshold
     algebraic = mass !== nothing ? findall(==(0.0), mass) : Int[]
     rms = error_norm == "rms"
-    error_weight = _NDFWeighting(neq, threshold, norm_control, rms)
-    newton_weight = auto_abstol ? _NDFWeighting(neq, newton_threshold, norm_control, rms) : error_weight
+    error_weight = _NDFWeighting(neq, threshold, norm_control, rms, floor)
+    newton_weight = auto_abstol ? _NDFWeighting(neq, newton_threshold, norm_control, rms, floor) : error_weight
     hmax = hmax_in > 0 ? _pymin(hmax_in, span) : 0.1 * span
 
     constrained = Int[i for i in non_negative if !(mass !== nothing && mass[i] == 0)]
@@ -829,7 +889,8 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
     # --- the Jacobian and the matrix ---------------------------------------------------
     _ndf_evaluate_jacobian!(s, f0)
     try
-        s.W = IterationMatrix(neq, pattern, s.J, matrix, mass, hints)
+        s.W = iteration_matrix === nothing ? IterationMatrix(neq, pattern, s.J, matrix, mass, hints) :
+              iteration_matrix(neq, pattern, s.J, matrix, mass, hints)
     catch e
         e isa MatrixError || rethrow()
         throw(SolverError("singular", e.msg, t0))
@@ -1252,9 +1313,10 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
 
     stats = _ndf_stats(s)
     stats["held"] = held
-    stats["sparse"] = W.info["sparse"]
-    stats["fill"] = W.info["fill"]
-    stats["lu"] = W.info["lu"]
+    info = _mat_info(W)
+    stats["sparse"] = info["sparse"]
+    stats["fill"] = info["fill"]
+    stats["lu"] = info["lu"]
     stats["solver"] = bdf ? "BDF" : "NDF"
     return Solution(tout, yout, s.t, copy(D[1]), stopped, stats)
 end

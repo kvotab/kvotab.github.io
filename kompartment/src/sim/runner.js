@@ -168,6 +168,9 @@ export function jumpsOf(system) {
  *   absolute tolerance of every entry; the Jacobian to hand the solver; the id
  *   of the solver to use rather than the model's; and `onSegment(t, interval)`,
  *   told where each segment starts and what the clock interpolation there is.
+ *   `weightFloor`, given, weighs some entries against others' sizes as well,
+ *   and `iterationMatrix` is the matrix Newton iterates with: see
+ *   ../ode/solvers/ndf.js.
  *   The floor applies to the model's own inventories only, which are the first
  *   entries. A jump in the state is not carried: refuse one before asking.
  * @returns {Results}
@@ -515,8 +518,15 @@ export function run(input, opts = {}) {
 			}
 			: undefined,
 	};
-	// Equations of the caller's own come with a Jacobian of their own.
-	if (opts.equations) solverOpts.jacobian = opts.equations.jacobian;
+	// Equations of the caller's own come with a Jacobian of their own, and
+	// may weigh some of their entries against others and bring the matrix
+	// Newton iterates with (`weightFloor`, `iterationMatrix` in
+	// ../ode/solvers/ndf.js).
+	if (opts.equations) {
+		solverOpts.jacobian = opts.equations.jacobian;
+		if (opts.equations.weightFloor) solverOpts.weightFloor = opts.equations.weightFloor;
+		if (opts.equations.iterationMatrix) solverOpts.iterationMatrix = opts.equations.iterationMatrix;
+	}
 
 	// The times the model says it changes at. The solver is restarted at each
 	// of them rather than allowed to step across: see ../domain/switchtimes.js.

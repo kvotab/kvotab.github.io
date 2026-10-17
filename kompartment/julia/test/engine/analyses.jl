@@ -241,25 +241,30 @@ end
     # Along a diffusivity the run goes through.
     r = K.run_sensitivity(small(), ["De_matrix[U-234]"])
     @test r.tangent && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
-    # U-234's leach rate: generated, the run goes through; differenced, the leach term
-    # is lost to the rounding of U-238's ingrowth in the vault, far past dy/dp's absolute
-    # tolerance, and the solver gives up -- which is said as that.
+    # U-234's leach rate: a parameter no setting of the path reads.
     r = K.run_sensitivity(small(), ["leach_rate[U-234]"])
     @test r.tangent && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
+    # The travel time, with a budget of steps the run keeps to: generated, it goes
+    # through well inside it; differenced it does not -- a difference is right to
+    # about eight figures of f·p, against dy/dp held to rtol of the state over the
+    # parameter -- and the run says so, the solver's own words its hint.
+    budgeted() = (m = farfield_model("matched", "f"); m.raw["simulation"]["max_steps"] = 5000; m)
+    r = K.run_sensitivity(budgeted(), ["TW"])
+    @test r.tangent && r.stats["nsteps"] < 5000 && all(isfinite, r.sens[1][1])
     e = try
-        K.run_sensitivity(small(), ["leach_rate[U-234]"]; differenced=true)
+        K.run_sensitivity(budgeted(), ["TW"]; differenced=true)
         nothing
     catch err
         err
     end
-    @test e isa K.SolverError && e.kind == "stalled"
-    @test startswith(e.message, "The sensitivity equations could not be integrated past t=0.00000")
-    @test occursin("df/dp along leach_rate[U-234] is worked out by a difference, as asked, which is right to about " *
-                   "eight figures", e.message)
-    @test endswith(e.message, "the model's absolute tolerance over the parameter's value, 1.0e-12 for " *
-                              "leach_rate[U-234]. A looser absolute tolerance is the first thing to try.")
-    @test occursin(r"^The solver stopped making progress at t=[^ ]+: 2000 accepted steps advanced the clock by less " *
-                   r"than 0\.0001, and the step size is no longer growing\.$", e.hint)
+    @test e isa K.SolverError && e.kind == "steps"
+    @test startswith(e.message, "The sensitivity equations could not be integrated past t=")
+    @test occursin("df/dp along TW is worked out by a difference, as asked, which is right to about eight figures",
+                   e.message)
+    @test endswith(e.message, "and no less than the absolute tolerance over it, 2.0e-18 for TW. Looser tolerances " *
+                              "are the first thing to try.")
+    @test occursin(r"^Exceeded 5000 steps at t=[^ ]+\. Nothing this solver can do with the step size will finish " *
+                   r"this run\.$", e.hint)
 end
 
 # --- against the Python package -----------------------------------------------------------------

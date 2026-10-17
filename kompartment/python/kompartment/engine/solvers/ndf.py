@@ -20,10 +20,11 @@ with the application's to the tolerance, not to the last bit.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ...jsonio import js_text
 from ..jacobian import Pattern, colour_columns, difference_increment, difference_jacobian
 from . import SolverError
 from . import kernels
@@ -189,7 +190,9 @@ def _seq_sum_squares(v: np.ndarray) -> float:
 
 
 class Weighting:
-    """The norm every test is measured in (``Weighting``)."""
+    """The norm every test is measured in (``Weighting``). ``floor``, set after
+    construction, weighs some states against another's size as well: see
+    ``weight_floor`` in :func:`ndf`."""
 
     def __init__(self, neq: int, threshold: np.ndarray, norm_control: bool, rms: bool = False,
                  skip: Optional[np.ndarray] = None) -> None:
@@ -200,13 +203,21 @@ class Weighting:
         self.skip = skip if (not norm_control and skip is not None and skip.size) else None
         self.inv_error = np.zeros(neq) if self.skip is not None else self.inv
         self._scaled_max = kernels.kernel('scaled_max')
+        self.floor: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None
 
     def update(self, y: np.ndarray, ynew: np.ndarray) -> None:
         if self.norm_control:
             self.inv[0] = 1 / max(math.sqrt(_seq_sum_squares(y)), math.sqrt(_seq_sum_squares(ynew)),
                                   float(self.threshold[0]))
             return
-        self.inv[:] = 1 / np.maximum(np.maximum(np.abs(y), np.abs(ynew)), self.threshold)
+        w = np.maximum(np.maximum(np.abs(y), np.abs(ynew)), self.threshold)
+        if self.floor is not None:
+            # States weighed against another's size as well: the larger, where
+            # it is larger (a NaN floor leaves the weight as it was).
+            which, frm, factor = self.floor
+            v = factor * np.maximum(np.abs(y[frm]), np.abs(ynew[frm]))
+            w[which] = np.where(v > w[which], v, w[which])
+        self.inv[:] = 1 / w
         if self.skip is not None:
             self.inv_error[:] = self.inv
             self.inv_error[self.skip] = 0.0
@@ -232,6 +243,26 @@ class Weighting:
 
     def of_sum(self, a: np.ndarray, b: np.ndarray) -> float:
         return self.of(a + b)
+
+
+def _weight_floor(option: Any, neq: int) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """``weight_floor`` checked (``weightFloorOf``): None, or the states it
+    floors, the states they are weighed against, and the factors."""
+    if option is None:
+        return None
+    frm, factor = option
+    frm = np.asarray(frm)
+    factor = np.asarray(factor, dtype=float)
+    if frm.shape != (neq,) or factor.shape != (neq,):
+        raise SolverError('weightFloor', f'weightFloor needs a from and a factor for each of the {neq} equations')
+    for i in range(neq):
+        k, c = frm[i], float(factor[i])
+        if not (float(k).is_integer() and -1 <= k < neq) or not (c >= 0 and math.isfinite(c)):
+            raise SolverError('weightFloor', f"weightFloor's entry {i} is not a state and a factor: "
+                                             f'{js_text(k)}, {js_text(c)}')
+    frm = frm.astype(np.int64)
+    which = np.nonzero(frm >= 0)[0]
+    return which, frm[which], factor[which]
 
 
 class _Projected:
@@ -280,13 +311,26 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         on_output: Optional[Callable[[float, np.ndarray], None]] = None,
         on_step: Optional[Callable[[float, int], Any]] = None, auto_abstol: bool = False,
         ends_only: bool = False, mass: Optional[np.ndarray] = None,
-        landing: Optional[Callable[[float, float], float]] = None) -> Dict[str, Any]:
+        landing: Optional[Callable[[float, float], float]] = None,
+        weight_floor: Optional[Tuple[Sequence[int], Sequence[float]]] = None,
+        iteration_matrix: Optional[Callable[..., Any]] = None) -> Dict[str, Any]:
     """Integrates y' = f(t, y) over ``tspan``, answering at every time in it.
 
     ``landing(t, t_next)``, where given, says where a step from t to t_next is
     to end instead -- strictly between the two -- or NaN: what the caller reads
     at the clock can turn and turn back between two steps, where the error
-    test never looks (``../landing.py``)."""
+    test never looks (``../landing.py``).
+
+    ``weight_floor``, given, is ``(from, factor)`` with one entry per state:
+    state i is weighed against ``factor[i]·|y[from[i]]|`` as well as against
+    itself (``from[i]`` -1: not), and the error it is held to is rtol of the
+    larger (``weightFloor``). The sensitivities of :mod:`..localsens` are
+    weighed against their states over |p|. Not under norm control.
+
+    ``iteration_matrix``, given, makes the matrix Newton iterates with from
+    :class:`.matrix.IterationMatrix`'s arguments, in its shape (``form``,
+    ``solve``, ``info``): a system of a known block form solved a block at a
+    time (``iterationMatrix``)."""
     tspan = np.asarray(tspan, dtype=float)
     y0 = np.asarray(y0, dtype=float)
     neq = y0.size
@@ -317,6 +361,9 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
     rms = error_norm == 'rms'
     error_weight = Weighting(neq, threshold, norm_control, rms, None)
     newton_weight = Weighting(neq, newton_threshold, norm_control, rms) if auto_abstol else error_weight
+    floor = _weight_floor(weight_floor, neq)
+    error_weight.floor = floor
+    newton_weight.floor = floor
     floor_run = MAX_BELOW_TOLERANCE if below_tol_run is None else max(0, int(round(below_tol_run)))
     floor_newton_run = 0 if below_tol_run is None else floor_run
     hmax = min(hmax, span) if hmax and hmax > 0 else 0.1 * span
@@ -404,7 +451,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
 
     evaluate_jacobian(f0)
     try:
-        W = IterationMatrix(neq, pattern, state['J'], matrix or 'auto', mass_arr, hints)
+        W = (iteration_matrix or IterationMatrix)(neq, pattern, state['J'], matrix or 'auto', mass_arr, hints)
     except RuntimeError as e:
         raise SolverError('singular', str(e), t0) from None
 

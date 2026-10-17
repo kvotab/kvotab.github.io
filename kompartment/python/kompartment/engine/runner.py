@@ -139,7 +139,10 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     own, integrated by this run's machinery in its place (the application's
     ``opts.equations``, and ``kompartment.engine.localsens`` its one user):
     ``{'dydt', 'y0', 'abstol', 'jacobian', 'solver', 'on_segment'}``, the first
-    ``nstate`` entries of ``y0`` being the model's states.
+    ``nstate`` entries of ``y0`` being the model's states; ``weight_floor``,
+    given, weighs some entries against others' sizes as well, and
+    ``iteration_matrix`` makes the matrix Newton iterates with (see
+    :func:`.solvers.ndf.ndf`).
 
     A run that builds its own system is solved in its independent parts on
     several processes when ``simulation.split`` says so and the plan agrees
@@ -288,6 +291,13 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     }
     if equations is not None:
         opts['jacobian'] = eq.get('jacobian')
+        # Some of the caller's entries weighed against others as well
+        # (``weight_floor`` in .solvers.ndf).
+        if eq.get('weight_floor') is not None:
+            opts['weight_floor'] = eq['weight_floor']
+        # ...and the matrix Newton iterates with, solved a block at a time.
+        if eq.get('iteration_matrix') is not None:
+            opts['iteration_matrix'] = eq['iteration_matrix']
     jumps = jumps_of(system)
     for j, at in jumps:
         if j.slot is None:
