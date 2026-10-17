@@ -61,7 +61,7 @@
 			node('p', 'Start the server in the project folder:'),
 			node('pre', 'cd ' + path + '\npython3 serve.py 8080'),
 			node('p', 'then open ', link('http://localhost:8080/', 'http://localhost:8080/'),
-				'. This tool is arbitrary.'),
+				'. The port is arbitrary.'),
 			node('p', 'Use ', node('code', 'serve.py'), ' rather than ',
 				node('code', 'python3 -m http.server'),
 				'. The stdlib server sends no cache headers, so browsers hold on to '
