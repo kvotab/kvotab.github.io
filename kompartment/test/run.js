@@ -1847,7 +1847,7 @@ test('df/dp is differentiated, not differenced', async () => {
 	// The block types that carry their own runtime differentiation along the
 	// state and not along a parameter. Refused with a reason rather than
 	// approximated, exactly as the Jacobian refuses an availability -- a
-	// far-field path on cells only along the parameters its rates read (below).
+	// far-field path on cells is differentiated through its rates (below).
 	for (const [name, word] of [['waste-packages', 'waste package']]) {
 		const r = at(name);
 		assert(!r.available && new RegExp(word).test(r.reason),
@@ -1915,37 +1915,83 @@ test('df/dp is differentiated, not differenced', async () => {
 });
 
 
-test('df/dp is generated past a far-field path, and a difference that gives up says so', async () => {
+test('df/dp past a far-field path is its rates\' own derivative, and a difference that gives up says so', async () => {
 	const { runSensitivity, parameterSlots, slotLabel } = await import('../src/sim/localsens.js');
 	const { buildSystem: build } = await import('../src/sim/builder.js');
 	const { readFileSync } = await import('node:fs');
-	const model = () => {
+	const model = (grid = 'matched', surface = null) => {
 		const m = JSON.parse(readFileSync(new URL('../examples/farfield.json', import.meta.url), 'utf8'));
+		const ff = m.farfields[0];
 		// Two cells of each kind: the same physics, quickly.
-		m.farfields[0].n_f = 2;
-		m.farfields[0].n_m = 2;
+		ff.n_f = 2;
+		ff.n_m = 2;
+		ff.grid = grid;
+		if (surface) {
+			// The path's own settings as parameters: its travel time, Peclet
+			// number, depth and wetted surface, given by F or by an aperture.
+			const p = (name, value, unit) => m.parameters.push({ name, value, unit, index_lists: [] });
+			p('TW', 50, 'year');
+			p('Pe', 2, '');
+			p('Depth', 12.5, 'm');
+			ff.tw = 'TW';
+			ff.pe = 'Pe';
+			ff.pen_dep = 'Depth';
+			if (surface === 'f') {
+				p('F', 1e5, 'year/m');
+				ff.f = 'F';
+			} else {
+				p('Gap', 1e-3, 'm');
+				ff.surface = 'aperture';
+				ff.aperture = 'Gap';
+			}
+		}
 		return m;
 	};
-	// A path's rates read its settings, and its cells are states. Along a
-	// parameter the settings do not read -- a leach rate into it, the flow of
-	// the well it releases into -- it adds nothing to df/dp, and df/dp is
-	// generated; along one they read (a diffusivity, a Kd) its rates'
-	// derivative is not taken: NaN there, and the run differences it.
-	const system = build(new Project(model()));
-	const pt = system.paramTangent();
-	assert(pt.available, pt.reason);
-	const slots = parameterSlots(system);
-	const read = slots.filter((e) => !pt.covers(e.slot)).map(slotLabel).sort();
-	assert(JSON.stringify(read) === JSON.stringify(['De_matrix', 'Kd_matrix'].flatMap((p) => ['Th-230', 'U-234', 'U-238']
-		.map((n) => `${p}[${n}]`))), `the parameters a path reads: ${read}`);
-	const slotOf = (label) => slots.find((e) => slotLabel(e) === label).slot;
-	const along = (label) => {
-		const w = new Float64Array(system.layout.nparam);
-		w[slotOf(label)] = 1;
-		return pt.pvp(10, system.initialState(), w);
-	};
-	assert(along('leach_rate[U-234]').every(Number.isFinite), 'df/dp along a leach rate is not a number');
-	assert(along('De_matrix[U-234]').every(Number.isNaN), 'df/dp along a diffusivity came out as a number');
+	// A path's cells are states and its rates follow its settings: along a
+	// parameter, df/dp is the rates' own derivative -- the transport matrix's
+	// and the release weights' -- over matched layers held for the run, as a
+	// difference holds them, or reference layers that follow the settings.
+	// Against a central difference of the derivative, what is left is the
+	// difference's own error.
+	for (const [grid, surface] of [['matched', null], ['reference', null], ['reference', 'f'], ['matched', 'aperture']]) {
+		const system = build(new Project(model(grid, surface)));
+		const pt = system.paramTangent();
+		assert(pt.available, pt.reason);
+		const n = system.layout.nstate;
+		const P = system.parameterValues;
+		const y = Float64Array.from({ length: n }, (_, i) => 0.5 + 0.1 * i);
+		const f = (slot, p) => {
+			P[slot] = p;
+			system.evaluateInvariant();
+			const out = new Float64Array(n);
+			system.dydt(1000, y, out);
+			return out;
+		};
+		for (const e of parameterSlots(system)) {
+			const label = slotLabel(e);
+			if (/^(leach_rate|well_)/.test(label)) continue;
+			const w = new Float64Array(system.layout.nparam);
+			w[e.slot] = 1;
+			const got = Float64Array.from(pt.pvp(1000, y, w));
+			const p0 = P[e.slot];
+			const h = Math.abs(p0) * 1e-4;
+			const up = f(e.slot, p0 + h);
+			const down = f(e.slot, p0 - h);
+			f(e.slot, p0);
+			let worst = 0;
+			let scale = 0;
+			for (let i = 0; i < n; i++) {
+				const d = (up[i] - down[i]) / (2 * h);
+				scale = Math.max(scale, Math.abs(d));
+				worst = Math.max(worst, Math.abs(d - got[i]));
+			}
+			assert(worst <= 1e-6 * scale,
+				`${grid}${surface ? `, ${surface}` : ''}: df/dp along ${label} is ${(worst / scale).toExponential(2)} off`);
+		}
+	}
+	// Along a diffusivity the run goes through.
+	const de = runSensitivity(model(), { parameters: ['De_matrix[U-234]'] });
+	assert(de.stats.nsteps > 100 && de.sens[0].every((row) => row.every(Number.isFinite)), 'the run along De_matrix');
 
 	// U-234's leach rate. Its vault's rate is U-238's ingrowth, millions a
 	// year, and the leach term a few Bq: differenced, the term is lost to the

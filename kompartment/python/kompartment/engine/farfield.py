@@ -14,7 +14,7 @@ ratio search, and the release through extra outflow cells).
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -163,6 +163,40 @@ def layer_depths(pen_dep: float, nm: int, aw: float, first: Optional[float] = No
         hi *= 100
     q = zeroin(total, 1.0, hi)
     return np.array([d0 * _js_pow(q, j) for j in range(nm)], dtype=float)
+
+
+def layer_depths_tangent(pen_dep: float, nm: int, aw: float, first: Optional[float], d: np.ndarray,
+                         d_pen_dep: float, d_aw: float, d_first: float) -> np.ndarray:
+    """The tangent of :func:`layer_depths` with respect to its own inputs (``layerDepthsTangent``).
+
+    Both thicknesses come out of a root-find, so the derivative comes out of the
+    implicit function theorem: the automatic first layer from sum(x*e^k) = pen_dep
+    (or the bracket 2/aw where that binds), the ratio from d0*sum(q^j) = pen_dep,
+    and then d[j] = d0*q^j termwise."""
+    d0 = float(d[0])
+    q = float(d[1]) / float(d[0]) if nm > 1 else 1.0
+    if first is None or not math.isfinite(first) or first <= 0:
+        bracket = 2 / aw
+        if d0 >= bracket * (1 - 1e-12):
+            dd0 = (-2 / (aw * aw)) * d_aw
+        else:
+            s = 0.0
+            for k in range(1, nm + 1):
+                s += _js_exp(k)
+            dd0 = (math.e / s) * d_pen_dep
+    else:
+        dd0 = d_first
+    total = 0.0
+    dsum = 0.0
+    for j in range(nm):
+        total += _js_pow(q, j)
+        if j > 0:
+            dsum += j * _js_pow(q, j - 1)
+    dq = 0.0 if dsum == 0 else (d_pen_dep - total * dd0) / (d0 * dsum)
+    out = np.zeros(nm)
+    for j in range(nm):
+        out[j] = dd0 * _js_pow(q, j) + (d0 * j * _js_pow(q, j - 1) * dq if j > 0 else 0.0)
+    return out
 
 
 def _js_pow(q: float, j: int) -> float:
@@ -331,6 +365,18 @@ def wetted_surface(s: Dict[str, Any]) -> float:
     return _div(s['f'], s['tw'])
 
 
+def wetted_surface_tangent(s: Dict[str, Any], ds: Dict[str, Any]) -> float:
+    """The tangent of :func:`wetted_surface`, given the tangent of each setting (``wettedSurfaceTangent``)."""
+    how = s.get('surface') if s.get('surface') in SURFACES else 'f'
+    if how == 'aw':
+        v = ds.get('aw')
+        return 0.0 if v is None else v
+    if how == 'aperture':
+        v = ds.get('aperture')
+        return (-2 * (0.0 if v is None else v)) / (s['aperture'] * s['aperture'])
+    return (ds['f'] * s['tw'] - s['f'] * ds['tw']) / (s['tw'] * s['tw'])
+
+
 def _surface_problem(s: Dict[str, Any], aw: float) -> Optional[str]:
     if aw > 0 and math.isfinite(aw):
         return None
@@ -420,6 +466,49 @@ def coefficients(s: Dict[str, Any], grid: Optional[Dict[str, Any]] = None) -> Di
         diff_mmb[j] = (2 * s['de_m']) / (r_m * d[j + 1] * (d[j + 1] + d[j]))
     return {'aw': aw, 'rM': r_m, 'fDf': f_df, 'advF': adv_f, 'dF': d_f, 'd': d, 'h': None, 'grid': 'reference',
             'diffFM1': diff_fm1, 'diffM1F': diff_m1f, 'diffMMF': diff_mmf, 'diffMMB': diff_mmb}
+
+
+def coefficients_tangent(s: Dict[str, Any], ds: Dict[str, Any], c: Dict[str, Any]) -> Dict[str, Any]:
+    """The tangent of :func:`coefficients` ``c``, given the tangent of each setting (``coefficientsTangent``).
+
+    The matched layers are laid out once per run and held, so their thicknesses
+    have no tangent: only the rates written over them move. The reference layers
+    follow the settings, and their tangent is :func:`layer_depths_tangent`'s.
+    Products rather than logarithms throughout: a nuclide that does not diffuse
+    at all has De = 0, and a log form would make every rate's tangent NaN."""
+    nf, nm = s['nf'], s['nm']
+    d_aw = wetted_surface_tangent(s, ds)
+    d_rm = ds['eps_m'] + ds['rho_m'] * s['kd_m'] + s['rho_m'] * ds['kd_m']
+    d_fdf = -(ds['kd_f'] * c['aw'] + s['kd_f'] * d_aw) * c['fDf'] * c['fDf']
+    d_adv_f = (nf * (d_fdf * s['tw'] - c['fDf'] * ds['tw'])) / (s['tw'] * s['tw'])
+    shape = nf / s['pe'] - 0.5
+    d_df = d_adv_f * shape + c['advF'] * (-(nf / (s['pe'] * s['pe'])) * ds['pe']) if c['dF'] > 0 else 0.0
+    de, dde, r_m = s['de_m'], ds['de_m'], c['rM']
+    d_mmf = np.zeros(max(0, nm - 1))
+    d_mmb = np.zeros(max(0, nm - 1))
+    if c['grid'] == 'matched':
+        d, h = c['d'], c['h']
+        d_fm1 = (d_fdf * c['aw'] * de + c['fDf'] * d_aw * de + c['fDf'] * c['aw'] * dde) / h[0]
+        d_m1f = dde / (r_m * d[0] * h[0]) - c['diffM1F'] * (d_rm / r_m)
+        for j in range(nm - 1):
+            d_mmf[j] = dde / (r_m * d[j] * h[j + 1]) - c['diffMMF'][j] * (d_rm / r_m)
+            d_mmb[j] = dde / (r_m * d[j + 1] * h[j + 1]) - c['diffMMB'][j] * (d_rm / r_m)
+        return {'aw': d_aw, 'rM': d_rm, 'fDf': d_fdf, 'advF': d_adv_f, 'dF': d_df, 'd': np.zeros(nm),
+                'diffFM1': d_fm1, 'diffM1F': d_m1f, 'diffMMF': d_mmf, 'diffMMB': d_mmb}
+    d = c['d']
+    dd = layer_depths_tangent(s['pen_dep'], nm, c['aw'], s.get('pen_dep_0'), d, ds['pen_dep'], d_aw, ds['pen_dep_0'])
+    d_fm1 = ((2 / d[0]) * (d_fdf * c['aw'] * de + c['fDf'] * d_aw * de + c['fDf'] * c['aw'] * dde)
+             - (c['diffFM1'] / d[0]) * dd[0])
+    d_m1f = (2 * dde) / (r_m * d[0] * d[0]) - c['diffM1F'] * (d_rm / r_m + (2 * dd[0]) / d[0])
+    for j in range(nm - 1):
+        sumd = d[j] + d[j + 1]
+        dsumd = dd[j] + dd[j + 1]
+        d_mmf[j] = ((2 * dde) / (r_m * d[j] * sumd)
+                    - c['diffMMF'][j] * (d_rm / r_m + dd[j] / d[j] + dsumd / sumd))
+        d_mmb[j] = ((2 * dde) / (r_m * d[j + 1] * sumd)
+                    - c['diffMMB'][j] * (d_rm / r_m + dd[j + 1] / d[j + 1] + dsumd / sumd))
+    return {'aw': d_aw, 'rM': d_rm, 'fDf': d_fdf, 'advF': d_adv_f, 'dF': d_df, 'd': dd,
+            'diffFM1': d_fm1, 'diffM1F': d_m1f, 'diffMMF': d_mmf, 'diffMMB': d_mmb}
 
 
 def cell_index(k: int, j: int, nm: int) -> int:
@@ -939,6 +1028,34 @@ class FarfPath:
                 raise
             if fresh[o]:
                 self.laid_out[o] = True
+
+    def refresh_tangent(self, X: np.ndarray, dX: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """The rates' own tangents along the direction ``dX`` is the tangent of
+        (``refreshTangent``): ``(dvals, drel_w)``, shaped as ``vals`` and ``rel_w``,
+        or None where no setting moves along it. For df/dp, along a parameter a
+        setting is worked out from -- a diffusivity, a Kd. The matched layers are
+        held for the run, so only the rates over them move."""
+        self.refresh(X)
+        d = dX[self.setting_idx]
+        if not np.any(d != 0):
+            return None
+        dvals = np.zeros_like(self.vals)
+        drel = np.zeros_like(self.rel_w)
+        g = self.structure
+        matched = self.grid == 'matched'
+        for o in range(self.other_width):
+            # The reference layers from the first slot's settings, as `refresh` has them.
+            layers = self.layers[o] if matched else None
+            for slot in range(o * self.nnuc, (o + 1) * self.nnuc):
+                s = self._setting(X, slot)
+                ds = {key: float(d[slot, k]) for k, key in enumerate(self.keys)}
+                c = coefficients(s, layers)
+                if layers is None:
+                    layers = {'kind': 'reference', 'd': c['d'], 'h': None}
+                dc = coefficients_tangent(s, ds, c)
+                cell_values(g, dc, dvals[slot])
+                release_weights(g, dc, drel[slot])
+        return dvals, drel
 
     def layer_warnings(self) -> List[Dict[str, Any]]:
         """What the run has to say about this path's layers (``layerWarnings``): matched layers that

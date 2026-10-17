@@ -538,9 +538,9 @@ export function layerDepths(penDep, nm, aw, first = null) {
  *                                             / (d0 * sum(j*q^(j-1)))
  *
  * and then `d[j] = d0*q^j` differentiates termwise. Only reached when a
- * setting depends on the state -- a travel time that follows a compartment --
- * which is the one case where a Jacobian that ignored this would be wrong
- * rather than merely approximate.
+ * setting moves -- along the state, a travel time that follows a compartment;
+ * along a parameter, for dy/dp, a depth worked out from it -- which is where a
+ * derivative that ignored this would be wrong rather than merely approximate.
  */
 export function layerDepthsTangent(penDep, nm, aw, first, d, dPenDep, dAw, dFirst) {
 	const d0 = d[0];

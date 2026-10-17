@@ -27,11 +27,11 @@
 # passed, a snapshot and a delay nothing (a delay whose lag moves with a
 # parameter is refused). A lookup table read at the clock has no tangent.
 #
-# A far-field path on cells is taken along the parameters its rates do not read:
-# along those its cells are states, held, and its rates do not move, so it adds
-# nothing. Its rates' derivative along a parameter they do read is not taken:
-# `read` lists those parameters, the caller differences them, and along one of
-# them `param_pvp` gives NaN rather than a wrong zero.
+# A far-field path on cells is differentiated through its own rates: its cells
+# are states, held, so what moves along a parameter is its rates -- nothing along
+# a leach rate into it, and along a diffusivity or a Kd its settings are worked
+# out from, the transport matrix's and the release weights' own tangents
+# (`farfield_tangent!`), over the matched layers the run laid out.
 #
 # Refused, with the application's reasons, where it refuses: a model with no
 # parameters, a semi-analytical far-field path, a waste package or a disruptive
@@ -60,10 +60,10 @@ struct _PTRecorder
     rec::Entry
 end
 
-"""A far-field path's release: still, unless a setting moves (see `param_pvp`)."""
+"""A far-field path's part in df/dp: which path, and room for its rates' tangents (see `param_pvp`)."""
 struct _PTPath
-    settings::Vector{Int}       # every setting slot of the path, 0-based
-    release::Vector{Int}        # its release slots, 0-based
+    index::Int                  # among the system's paths, 0-based
+    tangent::FarfTangent
 end
 
 """What `param_pvp` walks: the statements in dependency order, and the assembly's terms."""
@@ -147,7 +147,8 @@ function ParamTangentPlan(sys::System)
             throw(_PTRefused("a block whose derivative along a parameter is not generated"))
         end
         # :coef -- decay and ingrowth, whose coefficients are not parameters; :farf -- a
-        # path's cells, held, under rates that move only with its settings (see `param_pvp`).
+        # path's cells, held, under rates that move only with its settings -- taken with its
+        # release (see `param_pvp`).
     end
     return ParamTangentPlan(sys, n, nalg, Tangent(sys.data.TAB, Float64[], 0, 0), items, transfers, xs, means)
 end
@@ -156,14 +157,12 @@ function _pt_special(b, a::Entry, moves::BitVector)
     rec = get(a, :recorder, nothing)
     if a.kind == "farfield"
         # A path on cells: its release moves along a parameter only if a setting does
-        # (the cells are states, held), and then its rates' derivative would be needed,
-        # which is not taken: see `param_pvp`.
+        # (the cells are states, held), with the weights' own tangent: see `param_pvp`.
         F = b.FARF[a[:farf_index]+1]
-        release = Int[x for x in farfield_release_slots(F)]
-        for (slot, x) in enumerate(release)
+        for (slot, x) in enumerate(farfield_release_slots(F))
             moves[x+1] = any(s -> moves[s+1], F.setting_idx[slot, :])
         end
-        return _PTPath(sort!(unique(vec(F.setting_idx))), release)
+        return _PTPath(a[:farf_index], FarfTangent(F))
     end
     rec === nothing && throw(_PTRefused("a far-field path, whose derivative along a parameter is not generated"))
     for off in 0:a.width-1
@@ -210,20 +209,29 @@ function param_pvp(pt::ParamTangentPlan, t::Float64, y::Vector{Float64}, w::Vect
     X = evaluate_algebraic!(sys, t, y)
     dX = zeros(max(1, pt.nalg))
     vals = Float64[]
-    # A far-field path whose settings move along `w`: its rates' derivative is not
-    # taken, and df/dp is NaN rather than wrong.
-    unknown = false
+    # The far-field paths whose rates move along `w`, for the cells' part below.
+    moved = _PTPath[]
     for item in pt.items
         if item isa _PTRecorder
             _pt_recorder!(pt, item, X, dX, t)
             continue
         end
         if item isa _PTPath
-            moving = any(s -> dX[s+1] != 0, item.settings)
-            for x in item.release
-                dX[x+1] = moving ? NaN : 0.0
+            # The release: the weights' tangent applied to the cells, one cell at a time
+            # from zero, as the release is added up.
+            F = sys.data.FARF[item.index+1]
+            T = item.tangent
+            moving = farfield_tangent!(T, F, X, dX)
+            @inbounds for slot in 1:F.slots
+                q = 0.0
+                if moving
+                    for r in 1:F.nrel
+                        q += T.drel[r, slot] * y[F.rel_at[r, slot]]
+                    end
+                end
+                dX[F.release_at[slot]] = q
             end
-            unknown |= moving
+            moving && push!(moved, item)
             continue
         end
         s = item::_PTStatement
@@ -303,6 +311,16 @@ function param_pvp(pt::ParamTangentPlan, t::Float64, y::Vector{Float64}, w::Vect
         end
         out .+= add
     end
+    # A path's cells: the matrix's own tangent applied to them.
+    for item in moved
+        F = sys.data.FARF[item.index+1]
+        dvals = item.tangent.dvals
+        add = zeros(n)
+        @inbounds for i in eachindex(F.row_flat)
+            add[F.row_flat[i]+1] += dvals[i] * y[F.col_flat[i]+1]
+        end
+        out .+= add
+    end
     mem = sys.data.MEM
     for (s_idx, t_idx, first) in pt.means
         for q in eachindex(s_idx)
@@ -310,7 +328,6 @@ function param_pvp(pt::ParamTangentPlan, t::Float64, y::Vector{Float64}, w::Vect
             out[s_idx[q]+1] += recording * dX[t_idx[q]+1]
         end
     end
-    unknown && fill!(out, NaN)
     return out
 end
 
@@ -332,17 +349,15 @@ function _pt_recorder!(pt::ParamTangentPlan, item::_PTRecorder, X, dX, t::Float6
 end
 
 """
-    param_tangent(sys) -> (available, reason, plan, read)
+    param_tangent(sys) -> (available, reason, plan)
 
 The plan of df/dp for a built model, or why there is none (`buildParamTangent`):
 no analytic Jacobian, no parameters, a semi-analytical far-field path, a waste
 package or a disruptive event, a function with no derivative rule, or a
-derivative that is not a number at the start of the run. `read` holds the
-parameters (0-based slots) a far-field path's rates read, along which df/dp is
-not the plan's.
+derivative that is not a number at the start of the run.
 """
 function param_tangent(sys::System)
-    refused(reason) = (available=false, reason=String(reason), plan=nothing, read=Set{Int}())
+    refused(reason) = (available=false, reason=String(reason), plan=nothing)
     jac = sys.jacobian
     if !(jac isa JacobianInfo && jac.available)
         reason = hasproperty(jac, :reason) ? jac.reason : nothing
@@ -361,14 +376,10 @@ function param_tangent(sys::System)
         e isa _PTRefused && return refused(e.message)
         rethrow()
     end
-    read = _pt_read_by_paths(b)
     # The same question the Jacobian's own tangent answers at build: whether what
     # it gives at the start of the run is a number. A seed of ones exercises every
-    # parameter it carries at once.
+    # parameter at once.
     seed = ones(sys.nparam)
-    for c in read
-        seed[c+1] = 0.0
-    end
     probe = try
         param_pvp(plan, sys.start_time, initial_state(sys), seed)
     catch e
@@ -381,72 +392,5 @@ function param_tangent(sys::System)
         return refused("df/dp has a non-finite entry at the starting state, and a driving term that is not a number " *
                        "is not one to integrate")
     end
-    return (available=true, reason=nothing, plan=plan, read=read)
-end
-
-"""
-The parameters (0-based slots) a far-field path's rates read: every parameter its
-settings depend on, through the algebra in between -- the application's parameter
-pattern of the settings, in which a running mean or a min/max reads its target and a
-snapshot, a delay or a table nothing. Along those df/dp is not this tangent's.
-"""
-function _pt_read_by_paths(b)
-    found = Set{Int}()
-    paths = [b.FARF[p[:farf_index]+1] for p in b.farf_layout if !p[:farf].laplace]
-    isempty(paths) && return found
-    # What writes each algebraic slot: a statement's element, a remembering block, or
-    # a path's release.
-    writers = Dict{Int,Vector{Any}}()
-    for a in b.algebraic
-        for s in b.alg_stmts[a.name]
-            if s.special !== nothing
-                rec = get(a, :recorder, nothing)
-                if a.kind == "farfield"
-                    F = b.FARF[a[:farf_index]+1]
-                    for (slot, x) in enumerate(farfield_release_slots(F))
-                        push!(get!(writers, x, Any[]), (:path, F, slot))
-                    end
-                elseif rec !== nothing
-                    for off in 0:a.width-1
-                        push!(get!(writers, a.base + off, Any[]), (:rec, rec, off))
-                    end
-                end
-                continue
-            end
-            W = max(1, s.width)
-            outs = out_indices(s)
-            length(outs) < W && (outs = fill(outs[1], W))
-            for i in 1:W
-                push!(get!(writers, outs[i], Any[]), (:tree, s, i))
-            end
-        end
-    end
-    seen = Set{Int}()
-    leaves_of = IdDict{Any,Vector{TLeaf}}()
-    stack = Int[x for F in paths for x in vec(F.setting_idx)]
-    while !isempty(stack)
-        x = pop!(stack)
-        x in seen && continue
-        push!(seen, x)
-        for w in get(writers, x, Any[])
-            if w[1] === :tree
-                _, s, i = w
-                leaves = get!(() -> tree_leaves(s.tree), leaves_of, s)
-                for leaf in leaves
-                    if leaf.kind === :P
-                        push!(found, leaf_index_at(leaf, i))
-                    elseif leaf.kind === :X
-                        push!(stack, leaf_index_at(leaf, i))
-                    end
-                end
-            elseif w[1] === :rec
-                _, rec, off = w
-                (rec.kind == "min_max" || rec.kind == "running_mean") && push!(stack, rec[:aux]["target"].base + off)
-            else
-                _, F, slot = w
-                append!(stack, F.setting_idx[slot, :])
-            end
-        end
-    end
-    return found
+    return (available=true, reason=nothing, plan=plan)
 end

@@ -185,28 +185,67 @@ end
     @test_throws ArgumentError K.run_sensitivity(m, "k")
 end
 
+"""The far-field example on two cells of each kind, its matrix layers laid out `grid`; with `surface` ("f" or
+"aperture"), the path's own settings as parameters too -- its travel time, Peclet number, depth and wetted surface."""
+function farfield_model(grid="matched", surface=nothing)
+    m = K.parse_json(read(joinpath(ANALYSIS_EXAMPLES, "farfield.json"), String))
+    ff = m["farfields"][1]
+    ff["n_f"] = 2
+    ff["n_m"] = 2
+    ff["grid"] = grid
+    if surface !== nothing
+        p(name, value, unit) = push!(m["parameters"], K.JDict("name" => name, "value" => value, "unit" => unit,
+                                                               "index_lists" => Any[]))
+        p("TW", 50, "year")
+        p("Pe", 2, "")
+        p("Depth", 12.5, "m")
+        ff["tw"], ff["pe"], ff["pen_dep"] = "TW", "Pe", "Depth"
+        if surface == "f"
+            p("F", 1e5, "year/m")
+            ff["f"] = "F"
+        else
+            p("Gap", 1e-3, "m")
+            ff["surface"], ff["aperture"] = "aperture", "Gap"
+        end
+    end
+    return K.Model(m)
+end
+
 @testset "dy/dp past a far-field path" begin
-    # The far-field example on two cells of each kind. A path's rates read its
-    # settings and its cells are states: along a parameter the settings do not read
-    # (a leach rate into it, the flow of the well it releases into) df/dp is
-    # generated; along one they read (a diffusivity, a Kd) it is differenced.
-    small() = (m = K.parse_json(read(joinpath(ANALYSIS_EXAMPLES, "farfield.json"), String));
-               m["farfields"][1]["n_f"] = 2; m["farfields"][1]["n_m"] = 2; K.Model(m))
-    sys = K.build_system(K.project(small()))
-    t = K.param_tangent(sys)
-    @test t.available
-    slots = K.parameter_slots(sys)
-    @test sort([K.slot_label(e) for e in slots if e["slot"] in t.read]) ==
-          ["$p[$n]" for p in ("De_matrix", "Kd_matrix") for n in ("Th-230", "U-234", "U-238")]
-    along(label) = (w = zeros(sys.nparam);
-                    w[only(e["slot"] for e in slots if K.slot_label(e) == label)+1] = 1.0;
-                    K.param_pvp(t.plan, 10.0, K.initial_state(sys), w))
-    @test all(isfinite, along("leach_rate[U-234]")) && all(isnan, along("De_matrix[U-234]"))
+    # A path's cells are states and its rates follow its settings: along a parameter,
+    # df/dp is the rates' own derivative -- the transport matrix's and the release
+    # weights' -- over matched layers held for the run, as a difference holds them, or
+    # reference layers that follow the settings. Against a central difference of the
+    # derivative, what is left is the difference's own error.
+    small() = farfield_model()
+    for (grid, surface) in (("matched", nothing), ("reference", nothing), ("reference", "f"), ("matched", "aperture"))
+        sys = K.build_system(K.project(farfield_model(grid, surface)))
+        t = K.param_tangent(sys)
+        @test t.available
+        y = [0.5 + 0.1 * (i - 1) for i in 1:sys.nstate]
+        f(slot, p) = (sys.P[slot+1] = p; K.evaluate_invariant!(sys); out = zeros(sys.nstate);
+                      K.rhs!(sys, out, 1000.0, y); out)
+        for e in K.parameter_slots(sys)
+            label = K.slot_label(e)
+            (startswith(label, "leach_rate") || startswith(label, "well_")) && continue
+            w = zeros(sys.nparam)
+            w[e["slot"]+1] = 1.0
+            got = K.param_pvp(t.plan, 1000.0, y, w)
+            p0 = sys.P[e["slot"]+1]
+            h = abs(p0) * 1e-4
+            fd = (f(e["slot"], p0 + h) .- f(e["slot"], p0 - h)) ./ (2h)
+            f(e["slot"], p0)
+            @test maximum(abs.(got .- fd)) <= 1e-6 * maximum(abs.(fd))
+        end
+    end
+    # Along a diffusivity the run goes through.
+    r = K.run_sensitivity(small(), ["De_matrix[U-234]"])
+    @test r.tangent && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
     # U-234's leach rate: generated, the run goes through; differenced, the leach term
     # is lost to the rounding of U-238's ingrowth in the vault, far past dy/dp's absolute
     # tolerance, and the solver gives up -- which is said as that.
     r = K.run_sensitivity(small(), ["leach_rate[U-234]"])
-    @test r.exact == [true] && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
+    @test r.tangent && r.stats["nsteps"] > 100 && all(isfinite, r.sens[1][1])
     e = try
         K.run_sensitivity(small(), ["leach_rate[U-234]"]; differenced=true)
         nothing
@@ -302,7 +341,21 @@ _hexes(v) = Float64[parse(Float64, s) for s in v]
                 K.parse_json(read(joinpath(ANALYSIS_FIXTURES, "tangents.json"), String))
             t = K.param_tangent(K.build_system(K.project(_ex(name))))
             @test t.available == want["available"] && t.reason == want["reason"]
-            @test sort!(collect(t.read)) == want["read_by_paths"]
+        end
+        # A far-field path's rates' derivative itself, along every parameter.
+        @testset "df/dp past a far-field path: $name" for (name, fx) in
+                K.parse_json(read(joinpath(ANALYSIS_FIXTURES, "pvp.json"), String))
+            sys = K.build_system(K.project(K.Model(fx["model"])))
+            t = K.param_tangent(sys)
+            @test t.available
+            differ = String[]
+            for p in fx["points"]
+                w = zeros(sys.nparam)
+                w[p["slot"]+1] = 1.0
+                got = K.param_pvp(t.plan, parse(Float64, p["t"]), _hexes(p["y"]), w)
+                isequal(got, _hexes(p["out"])) || push!(differ, "slot $(p["slot"]) at t=$(p["t"])")
+            end
+            @test isempty(differ)
         end
     end
 end

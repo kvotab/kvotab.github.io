@@ -101,21 +101,14 @@ function paint(canvas, t, curves) {
  * @param {object} opts
  * @param {Array} opts.slots   every parameter, from `parameterSlots`
  * @param {number} opts.states how many states the model has, for the cost
- * @param {'model'|Set<string>|null} [opts.differenced] along which parameters
- *   `df/dp` is differenced rather than generated, which is what each costs per
- *   step: every one ('model'), those a far-field pathway's settings read (their
- *   labels), or none
+ * @param {boolean} [opts.exact] whether `df/dp` is generated for this model
+ *   rather than differenced, which is what each parameter costs per step
  * @param {number} opts.most
  * @param {(names: string[]) => void} opts.onRun
  */
 export function openLocalSensitivityPicker({
-	slots, states, differenced = null, most = 12, onRun,
+	slots, states, exact = true, most = 12, onRun,
 }) {
-	const every = differenced === 'model';
-	const some = differenced instanceof Set && differenced.size > 0;
-	// The blocks those are, for the hint: `Kd_matrix and De_matrix`.
-	const blocks = some ? [...new Set([...differenced].map((l) => l.replace(/\[.*$/, '')))] : [];
-	const named = blocks.length > 1 ? `${blocks.slice(0, -1).join(', ')} and ${blocks[blocks.length - 1]}` : blocks[0];
 	const chosen = new Set();
 	let query = '';
 
@@ -144,23 +137,17 @@ export function openLocalSensitivityPicker({
 					// What a parameter costs per step, which is not the same
 					// on every model: df/dp is generated where it can be, and
 					// differenced where a waste package, a disruptive event or a
-					// semi-analytical path makes that impossible -- and, past a
-					// far-field path on cells, along what its settings read.
-					every ? 'an extra evaluation of the whole derivative to every step. '
-						: some ? 'one more pass over the equations to every step — an extra evaluation of the '
-							+ 'whole derivative for one a far-field pathway’s settings read. '
-							: 'one more pass over the equations to every step. ',
+					// semi-analytical far-field path makes that impossible.
+					exact
+						? 'one more pass over the equations to every step. '
+						: 'an extra evaluation of the whole derivative to every step. ',
 					count,
 					cost),
-				every ? el('p', { className: 'hint' },
+				exact ? null : el('p', { className: 'hint' },
 					'This model has a waste package, a disruptive event or a semi-analytical far-field '
 					+ 'pathway, so df/dp is differenced rather than differentiated — an approximation, and '
-					+ 'the slower of the two.')
-					: some ? el('p', { className: 'hint' },
-						`Along a parameter a far-field pathway’s settings read (${named}) df/dp is differenced `
-						+ 'rather than differentiated — an approximation, and the slower of the two. If such a run '
-						+ 'gives up, a looser absolute tolerance is the first thing to try.')
-						: null));
+					+ 'the slower of the two. If a run gives up, a looser absolute tolerance is the first '
+					+ 'thing to try.')));
 
 			const search = el('input', {
 				type: 'search', className: 'ep-search', value: query,
@@ -192,11 +179,7 @@ export function openLocalSensitivityPicker({
 				list.append(el('label', { className: 'prob-item is-pick' },
 					box,
 					el('code', {}, s.label),
-					el('span', { className: 'mono' }, String(s.value)),
-					some && differenced.has(s.label)
-						? el('span', { className: 'pdf-note', title: 'df/dp along this one is differenced' },
-							'differenced')
-						: null));
+					el('span', { className: 'mono' }, String(s.value))));
 			}
 			if (found.length > 200) {
 				list.append(el('div', { className: 'prob-more' },

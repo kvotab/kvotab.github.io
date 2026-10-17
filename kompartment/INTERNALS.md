@@ -5828,26 +5828,40 @@ It is built on first ask and kept, so an ordinary run pays nothing for it.
 
 Three block types are refused rather than approximated, because each carries a
 runtime piece that knows how to differentiate along the state and not along a
-parameter: a far-field path's transport matrix, a waste package's hazard, and a
-disruptive event's rate. A model with a waste package, a disruptive event or a
-semi-analytical path differences `df/dp` exactly as before, which is what
-`differenced: true` also forces — the option exists so the two routes can be
-run against each other on a model with no closed form.
+parameter: a semi-analytical far-field path's convolution, a waste package's
+hazard, and a disruptive event's rate. A model with any of them differences
+`df/dp` exactly as before, which is what `differenced: true` also forces — the
+option exists so the two routes can be run against each other on a model with
+no closed form.
 
-A far-field path on cells is taken along the parameters its rates do not read.
-Along those its cells are states, held, and its rates do not move, so it adds
-nothing to `df/dp`: the generator emits `releaseStill` and `stillAlongParameter`
-(src/sim/farfield.js) for it in parameter mode, and the parameter pattern of its
-settings says which parameters it reads (`covers`). Along one of those the path
-writes NaN rather than a wrong zero, and `runSensitivity` differences that
-parameter alone. On `farfield.json` that took U-234's leach rate from a solve
-that gave up at t = 2e-6 to 4,019 steps: differenced, the leach term was lost to
-the rounding of U-238's ingrowth in the vault (2.8e6 Bq a year), a hundredth
-out against dy/dp's absolute tolerance of 1e-12. A solve that gives up with a
-difference in it now says that (`differencedFailure`), the solver's own words
-its hint without the advice about compartments held at zero; the variable-order
-adapter keeps the NDF's `code` on the errors it rewords, which is what that
-reads. The engines do the same, to the same words.
+A far-field path on cells is differentiated through its own rates. Its cells
+are states, held, so along a parameter what moves is the rates: nothing along a
+leach rate into the path or the flow of a well it releases into, and along a
+diffusivity, a Kd, the travel time or any other setting worked out from a
+parameter, the transport matrix's and the release weights' own tangents. In
+parameter mode the generator emits `releaseAlongParameter` and `alongParameter`
+(src/sim/farfield.js), which apply the tangents `refreshTangent` works out
+from the settings' (`coefficientsTangent` in src/domain/farfield.js — the
+derivative the Jacobian takes when a setting follows the state) to the cells.
+The matched layers are held for the run, as they are when the rates are worked
+out at a parameter moved by a difference; reference layers follow their
+settings, with `layerDepthsTangent`. Against a central difference of the
+derivative it agrees to the difference's own error (1e-10 for a Kd or a
+diffusivity, 1e-6 to 1e-8 for the path's own settings, whose df/dp is small
+beside its rates). The engines carry the same derivative
+(`FarfPath.refresh_tangent` in Python, `farfield_tangent!` in Julia, bit for
+bit with Python).
+
+It is what made `farfield.json` solvable at all. Differenced, U-234's leach
+rate gave up at t = 2e-6: the leach term was lost to the rounding of U-238's
+ingrowth in the vault (2.8e6 Bq a year), a hundredth out against dy/dp's
+absolute tolerance of 1e-12. Along a diffusivity it needed an absolute
+tolerance of 1e-14 and 300,000–790,000 steps. Generated, every parameter of
+the example runs in 3,800–4,300 steps, about a second and a half in the page.
+A solve that gives up with a difference in it says that (`differencedFailure`),
+the solver's own words its hint without the advice about compartments held at
+zero; the variable-order adapter keeps the NDF's `code` on the errors it
+rewords, which is what that reads. The engines do the same, to the same words.
 
 What it is worth, measured on the bundled examples: the two routes agree to
 between 1e-13 and 1e-5 of the state they are a sensitivity of, and the
@@ -6274,14 +6288,12 @@ comfortable to a few hundred states and slow past a thousand. Each refusal
 names itself in the run's statistics rather than happening quietly.
 
 **`df/dp` is generated for most models, differenced for three block types.** A
-far-field path, a waste package and a disruptive event each carry a runtime
-piece that differentiates along the state and not along a parameter. A model
-with a waste package or a disruptive event falls back to a one-sided
-difference, and so does a parameter a far-field path's settings read (the path
-is carried along the others). Lifting it means writing the parameter half of
-each, which is a piece of work rather than a line; for the far-field path it is
-mostly there, since `refreshTangent` already takes the rates' tangent along
-their settings (`coefficientsTangent`), but the two engines would need it too.
+semi-analytical far-field path, a waste package and a disruptive event each
+carry a runtime piece that differentiates along the state and not along a
+parameter, and a model with one falls back to a one-sided difference. Lifting
+it means writing the parameter half of each, which is a piece of work rather
+than a line. (A far-field path on cells has its: see *Which inputs the answer
+depends on*.)
 
 **`∂f/∂t` is still differenced in the Rosenbrock path.** `ros23` takes one
 extra evaluation of `f` per step for it. The same generator would give it

@@ -16,11 +16,9 @@
 # the model allows it** (engine/paramtangent.jl) and differenced otherwise --
 # one forward step of `sqrt(eps)·max(|p|, 1)`, with the invariant pass run on
 # either side so the perturbation reaches the algebra worked out from the
-# parameter. `differenced=true` forces the difference. Parameter by parameter:
-# along one a far-field path's rates read (a diffusivity, a Kd) it is
-# differenced in a model whose other parameters are differentiated. A solve that
-# gives up with a difference in it says so: what a difference loses to rounding
-# can be more than the absolute tolerance dy/dp is held to.
+# parameter. `differenced=true` forces the difference. A solve that gives up
+# with a difference in it says so: what a difference loses to rounding can be
+# more than the absolute tolerance dy/dp is held to.
 #
 # **The iteration matrix ignores the second derivatives**, as CVODES does: it is
 # the original Jacobian repeated down the diagonal, with the original colouring
@@ -287,10 +285,8 @@ The augmented system `run_sensitivity` integrates, set up and not solved:
 `(dydt!, jacobian, y0, rtol, abstol, n, m, chosen, system, project, equations,
 tangent)` -- `dydt!(out, t, Y)` the right-hand side of `Y = [y, S_1, ..., S_m]`,
 `jacobian` the model's own repeated down the diagonal (a `JacobianSpec`),
-`equations` what `run_sensitivity` hands the runner, `exact` whether df/dp along
-each parameter is differentiated (`true`) or differenced -- along one a far-field
-path's rates read it is differenced -- and `tangent` whether it is along every one.
-Refuses as it refuses.
+`equations` what `run_sensitivity` hands the runner, `tangent` whether df/dp
+is differentiated (`true`) or differenced. Refuses as it refuses.
 """
 function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::Bool=false)
     proj = _ls_project(m)
@@ -323,12 +319,9 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
     N = n * (1 + mm)
     P = sys.P
     slots = Int[e["slot"] for e in wanted]
-    tangent = differenced ? (available=false, reason="asked for the differenced df/dp", plan=nothing, read=Set{Int}()) :
+    tangent = differenced ? (available=false, reason="asked for the differenced df/dp", plan=nothing) :
               param_tangent(sys)
-    # Parameter by parameter: a far-field path's rates read some, and along those
-    # df/dp is differenced too.
-    exact = Bool[tangent.available && !(slot in tangent.read) for slot in slots]
-    plan = any(exact) ? tangent.plan : nothing
+    plan = tangent.available ? tangent.plan : nothing
     nparam = max(1, sys.nparam)
     an = jac.analytic
     pattern = jac.pattern
@@ -383,7 +376,7 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
             copyto!(sv, 1, Y, base + 1, n)
             jvp!(t, have)
             slot = slots[j]
-            if exact[j]
+            if plan !== nothing
                 fill!(seed, 0.0)
                 seed[slot+1] = 1.0
                 pv = param_pvp(plan, t, yv, seed)
@@ -466,7 +459,7 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
               for e in wanted]
     equations = (dydt=dydt!, y0=Y0, abstol=atol, jacobian=big_jacobian, solver="ndf", on_segment=on_segment)
     return (dydt! = dydt!, jacobian=big_jacobian, y0=Y0, rtol=Float64(proj.simulation["rtol"]), abstol=atol, n=n,
-            m=mm, chosen=chosen, system=sys, project=proj, equations=equations, tangent=all(exact), exact=exact,
+            m=mm, chosen=chosen, system=sys, project=proj, equations=equations, tangent=plan !== nothing,
             wanted=wanted, why=tangent)
 end
 
@@ -480,14 +473,14 @@ the solve; `differenced` differences df/dp even where it could be generated.
 `on_progress(fraction, t)` hears the run's progress, and returning `false`
 from it stops the run.
 
-Returns `(t, y, sens, chosen, states, series, stats, tangent, exact)`: the output
+Returns `(t, y, sens, chosen, states, series, stats, tangent)`: the output
 times; `y[i]` the series of state `i`; `sens[k][i]` that of `d y_i / d p_k`;
 `chosen[k]` = `{"label", "name", "index", "value"}`; the layout's states; a
 name for every state (`state_series`); `{"ms", "nsteps", "states",
-"restarts", "compiled"}`; whether df/dp along every parameter was differentiated
-(`tangent`), and along each (`exact`). A solve that gives up where df/dp along some
-parameter is differenced says so (what a difference loses to rounding can be more
-than the absolute tolerance dy/dp is held to), the solver's own words its hint.
+"restarts", "compiled"}`; and whether df/dp was differentiated (`true`) or
+differenced. A solve that gives up where df/dp is differenced says so (what a
+difference loses to rounding can be more than the absolute tolerance dy/dp is
+held to), the solver's own words its hint.
 """
 function run_sensitivity(m, parameters=nothing; most=nothing, differenced::Bool=false, on_progress=nothing)
     started = time()
@@ -508,7 +501,7 @@ function run_sensitivity(m, parameters=nothing; most=nothing, differenced::Bool=
     stats = JDict("ms" => round(Int, 1000 * (time() - started)), "nsteps" => something(nsteps, 0), "states" => N,
                   "restarts" => something(get(res.stats, "restarts", nothing), 0), "compiled" => true)
     return (t=copy(res.t), y=y, sens=sens, chosen=pr.chosen, states=pr.system.builder.states,
-            series=state_series(pr.system), stats=stats, tangent=pr.tangent, exact=pr.exact)
+            series=state_series(pr.system), stats=stats, tangent=pr.tangent)
 end
 
 """The ways a solve gives up that a noisy driving term brings about."""
@@ -516,19 +509,16 @@ const _LS_NOISY = ("tolerance", "stalled", "steps")
 
 """
 A solve of the sensitivity equations that gave up, said for what it most likely is
-when df/dp along some parameter is worked out by a difference (`differencedFailure`),
-or `nothing`: what a difference loses to rounding can be more than the absolute
-tolerance dy/dp is held to. The solver's own words become the hint.
+when df/dp is worked out by a difference (`differencedFailure`), or `nothing`: what
+a difference loses to rounding can be more than the absolute tolerance dy/dp is
+held to. The solver's own words become the hint.
 """
 function _ls_differenced_failure(e::SolverError, pr, asked::Bool)
-    differenced = [w for (w, ok) in zip(pr.wanted, pr.exact) if !ok]
-    (isempty(differenced) || !(e.kind in _LS_NOISY)) && return nothing
-    names = String[_pd_js_str(slot_label(c)) for c in differenced]
+    (pr.tangent || !(e.kind in _LS_NOISY)) && return nothing
+    names = String[_pd_js_str(slot_label(c)) for c in pr.wanted]
     listed = length(names) == 1 ? names[1] : "$(join(names[1:end-1], ", ")) and $(names[end])"
-    why = asked ? "as asked" :
-          pr.why.available ? "since a far-field path's rates read $(length(names) == 1 ? "it" : "them")" :
-          "since $(_pd_js_str(pr.why.reason))"
-    a = abs(pr.system.P[differenced[1]["slot"]+1])
+    why = asked ? "as asked" : "since $(_pd_js_str(pr.why.reason))"
+    a = abs(pr.system.P[pr.wanted[1]["slot"]+1])
     tol = _pd_to_number(get(pr.project.simulation, "abstol", _PD_MISSING)) / ((a == a && a != 0) ? a : 1.0)
     where_ = isfinite(e.t) ? " past t=$(_pd_js_str(e.t))" : ""
     out = SolverError(e.kind, "The sensitivity equations could not be integrated$where_: df/dp along $listed is " *

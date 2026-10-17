@@ -21,8 +21,11 @@ Julia ports of the sensitivity designs (``kompartment/stats/gsa.py`` and
   times, every state and every sensitivity; and the refusals, the words of a
   solve that gives up with a difference in it among them;
 - ``tangents.json``: for every bundled example, whether df/dp can be
-  generated, why not, and which parameters a far-field path's rates read (along
-  which it is differenced).
+  generated, and why not;
+- ``pvp.json``: df/dp itself along every parameter of the far-field example on
+  two cells of each kind, at three states, on matched and reference layers and
+  with the path's own settings as parameters: its rates' derivative, which a
+  run's dy/dp only reaches through the solve.
 
     python3 tools/analysis_fixtures.py OUT_DIR
 
@@ -221,11 +224,28 @@ def write_calibrations(root):
 
 # --- dy/dp -------------------------------------------------------------------------------------
 
-def small_farfield():
-    """The far-field example on two cells of each kind: the same physics, few states."""
+def small_farfield(grid='matched', surface=None):
+    """The far-field example on two cells of each kind: the same physics, few states. Its matrix layers
+    laid out ``grid``; with ``surface`` ('f' or 'aperture'), the path's own settings as parameters too
+    -- its travel time, Peclet number, depth and wetted surface."""
     m = example('farfield.json')
-    m['farfields'][0]['n_f'] = 2
-    m['farfields'][0]['n_m'] = 2
+    ff = m['farfields'][0]
+    ff['n_f'] = 2
+    ff['n_m'] = 2
+    ff['grid'] = grid
+    if surface:
+        def p(name, value, unit):
+            m['parameters'].append({'name': name, 'value': value, 'unit': unit, 'index_lists': []})
+        p('TW', 50, 'year')
+        p('Pe', 2, '')
+        p('Depth', 12.5, 'm')
+        ff['tw'], ff['pe'], ff['pen_dep'] = 'TW', 'Pe', 'Depth'
+        if surface == 'f':
+            p('F', 1e5, 'year/m')
+            ff['f'] = 'F'
+        else:
+            p('Gap', 1e-3, 'm')
+            ff['surface'], ff['aperture'] = 'aperture', 'Gap'
     return m
 
 
@@ -249,11 +269,16 @@ SENSITIVITY = [
     ('sir-epidemic', 'sir-epidemic.json', ['N', 'I0', 'beta'], False),
     ('van-der-pol-stiff', 'van-der-pol-stiff.json', ['mu'], False),
     ('van-der-pol-d', 'van-der-pol.json', ['mu'], True),
-    # A far-field path's: df/dp generated along a parameter its rates do not
-    # read, and differenced as asked -- U-234's leach rate, lost to the rounding
-    # of U-238's ingrowth, which gives up and says so.
+    # A far-field path's: df/dp generated, through the path's own rates along
+    # what its settings read, and differenced as asked -- U-234's leach rate,
+    # lost to the rounding of U-238's ingrowth, which gives up and says so.
     ('farfield-leach', small_farfield, ['leach_rate[U-234]'], False),
     ('farfield-well', small_farfield, ['well_flow[U-238]'], False),
+    ('farfield-de', small_farfield, ['De_matrix[U-234]'], False),
+    ('farfield-kd', small_farfield, ['Kd_matrix[U-234]'], False),
+    ('farfield-tw', lambda: small_farfield('matched', 'aperture'), ['TW'], False),
+    ('farfield-gap', lambda: small_farfield('matched', 'aperture'), ['Gap'], False),
+    ('farfield-depth', lambda: small_farfield('reference', 'f'), ['Depth'], False),
     ('farfield-leach-d', small_farfield, ['leach_rate[U-234]'], True),
     # Refused, each for its own reason.
     ('bouncing-ball', 'bouncing-ball.json', ['g', 'v0'], False),
@@ -293,10 +318,41 @@ def write_tangents(root):
     out = {}
     for path in sorted(EXAMPLES.glob('*.json')):
         t = build_param_tangent(build_system(Project(example(path.name))))
-        out[path.name] = {'available': t['available'], 'reason': t.get('reason'),
-                          'read_by_paths': t.get('read_by_paths', [])}
+        out[path.name] = {'available': t['available'], 'reason': t.get('reason')}
     (root / 'tangents.json').write_text(json.dumps(out))
     print('tangents', len(out))
+
+
+PVP_MODELS = [
+    ('matched', lambda: small_farfield()),
+    ('reference', lambda: small_farfield('reference')),
+    ('settings', lambda: small_farfield('reference', 'f')),
+    ('aperture', lambda: small_farfield('matched', 'aperture')),
+]
+
+
+def write_pvps(root):
+    from kompartment.engine.builder import build_system
+    from kompartment.engine.paramtangent import build_param_tangent
+    from kompartment.engine.project import Project
+    rng = np.random.default_rng(3)
+    out = {}
+    for name, make in PVP_MODELS:
+        model = make()
+        system = build_system(Project(model))
+        t = build_param_tangent(system)
+        points = []
+        for frac in (0.0, 0.01, 0.4):
+            y = rng.uniform(0, 10, system.nstate) * 10 ** rng.uniform(-3, 3, system.nstate)
+            at = system.start_time + (system.end_time - system.start_time) * frac
+            for slot in range(system.nparam):
+                seed = np.zeros(system.nparam)
+                seed[slot] = 1.0
+                points.append({'t': float(at).hex(), 'y': hexes(y), 'slot': slot,
+                               'out': hexes(t['pvp'](at, y, seed))})
+        out[name] = {'model': model, 'points': points}
+    (root / 'pvp.json').write_text(json.dumps(out))
+    print('pvp', sum(len(v['points']) for v in out.values()))
 
 
 def main():
@@ -308,6 +364,7 @@ def main():
     write_calibrations(root)
     write_sensitivities(root)
     write_tangents(root)
+    write_pvps(root)
 
 
 if __name__ == '__main__':

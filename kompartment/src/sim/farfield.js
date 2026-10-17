@@ -341,15 +341,16 @@ export class FarfPath {
 	}
 
 	/**
-	 * The rates' own tangents, for the Jacobian.
+	 * The rates' own tangents, for the Jacobian and for df/dp.
 	 *
-	 * Only reached when a setting depends on the state -- a travel time that
-	 * follows a compartment, say. When they are constants or functions of the
-	 * clock alone, `dX` is zero at every setting slot and this does nothing.
-	 * The matched layers are held for the run, so only the rates over them
-	 * move; see `coefficientsTangent`.
+	 * Along the state, only reached when a setting depends on it -- a travel
+	 * time that follows a compartment, say; along a parameter, when a setting
+	 * is worked out from it -- a diffusivity, a Kd. Where no setting moves,
+	 * `dX` is zero at every setting slot and this does nothing. The matched
+	 * layers are held for the run, so only the rates over them move; see
+	 * `coefficientsTangent`.
 	 *
-	 * @returns {boolean} whether any rate moves with the state at all
+	 * @returns {boolean} whether any rate moves along `dX` at all
 	 */
 	refreshTangent(X, dX) {
 		const { keys, nnuc, otherWidth, nnz, nrel } = this;
@@ -516,43 +517,53 @@ export class FarfPath {
 		}
 	}
 
-	/** Every algebraic slot the path's rates are worked out from: each setting of each slot. */
-	settingSlots() {
-		const out = new Set();
-		for (let slot = 0; slot < this.slots; slot++) {
-			const o = Math.floor(slot / this.nnuc);
-			for (const key of this.keys) out.add(this._at(key, o, this.dimOff[slot]));
-		}
-		return [...out].sort((a, b) => a - b);
-	}
-
-	/** Whether a setting moves along the direction `dX` is the tangent of. */
-	settingsMove(dX) {
-		for (let slot = 0; slot < this.slots; slot++) {
-			const o = Math.floor(slot / this.nnuc);
-			for (const key of this.keys) {
-				if (dX[this._at(key, o, this.dimOff[slot])] !== 0) return true;
+	/**
+	 * The release's tangent along a parameter, the state held. The cells are
+	 * states and stay where they are, so what moves is the weights: their own
+	 * tangent, from the settings' (`refreshTangent`), applied to the cells --
+	 * and nothing at all along a parameter no setting moves with.
+	 */
+	releaseAlongParameter(y, X, dX) {
+		this.refresh(X);
+		const moving = this.refreshTangent(X, dX);
+		const {
+			nnuc, otherWidth, ncells, nrel, relCells, drelW, base,
+		} = this;
+		for (let o = 0; o < otherWidth; o++) {
+			const obase = base + o * ncells * nnuc;
+			for (let m = 0; m < nnuc; m++) {
+				const slot = o * nnuc + m;
+				let dq = 0;
+				if (moving) {
+					for (let r = 0; r < nrel; r++) {
+						dq += drelW[slot * nrel + r] * y[obase + relCells[r] * nnuc + m];
+					}
+				}
+				dX[this.releaseBase + this.dimOff[slot]] = dq;
 			}
 		}
-		return false;
 	}
 
 	/**
-	 * The release's tangent along a parameter, the state held: nothing, along
-	 * a parameter no setting moves with -- the weights are the settings' and
-	 * the cells are states. Along one a setting moves with it would be the
-	 * rates' own derivative, which is not taken here: NaN, so that what reads
-	 * it says so (see `buildParamTangent` in ./jacobian.js, which keeps such a
-	 * parameter to the difference).
+	 * The cells' part of df/dp, the state held: the matrix's own tangent
+	 * applied to the cells. Decay has none: its coefficients come from the
+	 * half-lives, which are no parameter's.
 	 */
-	releaseStill(dX) {
-		const v = this.settingsMove(dX) ? NaN : 0;
-		for (let slot = 0; slot < this.slots; slot++) dX[this.releaseBase + this.dimOff[slot]] = v;
-	}
-
-	/** The cells' part of df/dp, the state held: nothing, unless a setting moves (see `releaseStill`). */
-	stillAlongParameter(dX, dout) {
-		if (this.settingsMove(dX)) dout.fill(NaN);
+	alongParameter(y, X, dX, dout) {
+		this.refresh(X);
+		if (!this.refreshTangent(X, dX)) return;
+		const {
+			nnuc, otherWidth, ncells, nnz, rows, cols, dvals, base,
+		} = this;
+		for (let o = 0; o < otherWidth; o++) {
+			const obase = base + o * ncells * nnuc;
+			for (let m = 0; m < nnuc; m++) {
+				const vb = (o * nnuc + m) * nnz;
+				for (let e = 0; e < nnz; e++) {
+					dout[obase + rows[e] * nnuc + m] += dvals[vb + e] * y[obase + cols[e] * nnuc + m];
+				}
+			}
+		}
 	}
 }
 

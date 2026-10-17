@@ -306,6 +306,41 @@ function layer_depths!(d::AbstractVector{Float64}, pen_dep::Float64, nm::Int, aw
     return d
 end
 
+"""The tangent of `layer_depths!` with respect to its own inputs (`layer_depths_tangent`), into `dd`: both thicknesses
+come out of a root-find, so the derivative comes out of the implicit function theorem -- the automatic first layer
+from sum(x e^k) = pen_dep (or the bracket 2/aw where that binds), the ratio from d0 sum(q^j) = pen_dep -- and then
+d[j] = d0 q^j termwise. `first` NaN where the first layer was worked out."""
+function _layer_depths_tangent!(dd::AbstractVector{Float64}, pen_dep::Float64, nm::Int, aw::Float64, first::Float64,
+                                d::AbstractVector{Float64}, d_pen_dep::Float64, d_aw::Float64, d_first::Float64)
+    d0 = d[1]
+    q = nm > 1 ? d[2] / d[1] : 1.0
+    if !isfinite(first) || !(first > 0)
+        bracket = 2 / aw
+        if d0 >= bracket * (1 - 1e-12)
+            dd0 = (-2 / (aw * aw)) * d_aw
+        else
+            s = 0.0
+            for k in 1:nm
+                s += cexp(Float64(k))
+            end
+            dd0 = (2.718281828459045 / s) * d_pen_dep
+        end
+    else
+        dd0 = d_first
+    end
+    total = 0.0
+    dsum = 0.0
+    for j in 0:nm-1
+        total += _js_pow(q, j)
+        j > 0 && (dsum += j * _js_pow(q, j - 1))
+    end
+    dq = dsum == 0 ? 0.0 : (d_pen_dep - total * dd0) / (d0 * dsum)
+    for j in 0:nm-1
+        dd[j+1] = dd0 * _js_pow(q, j) + (j > 0 ? d0 * j * _js_pow(q, j - 1) * dq : 0.0)
+    end
+    return dd
+end
+
 """The depth diffusion reaches into the rock at the fastest frequency the path lets through, for
 one nuclide (`penetration_scale`)."""
 function penetration_scale(de::Float64, rm::Float64, lam::Float64, rf::Float64, aw::Float64, tw::Float64, pe::Float64)
@@ -698,11 +733,15 @@ function _slot_rates!(F::FarfPath, s::FarfSetting, slot::Int, o::Int, ref_ready:
 end
 
 """The transport matrix's values, in the order `cell_structure` lists them, into `F.vals[at+1:]`."""
-function _cell_values!(F::FarfPath, at::Int, adv_f::Float64, d_f::Float64, diff_fm1::Float64, diff_m1f::Float64)
-    out = F.vals
+_cell_values!(F::FarfPath, at::Int, adv_f::Float64, d_f::Float64, diff_fm1::Float64, diff_m1f::Float64) =
+    _cell_values!(F.vals, F, at, adv_f, d_f, diff_fm1, diff_m1f, F.mmf, F.mmb)
+
+"""The same from the layer-to-layer rates `mmf` and `mmb`, into `out[at+1:]` (`cell_values`): the matrix's values, or
+their tangents, which it is linear in."""
+function _cell_values!(out::Vector{Float64}, F::FarfPath, at::Int, adv_f::Float64, d_f::Float64, diff_fm1::Float64,
+                       diff_m1f::Float64, mmf::Vector{Float64}, mmb::Vector{Float64})
     nm, ob = F.nm, F.ob
     NF = F.nf + F.nb
-    mmf, mmb = F.mmf, F.mmb
     @inbounds begin
         i = at + 1
         frac_loss = -(adv_f + 2 * d_f + diff_fm1)
@@ -759,9 +798,9 @@ function _cell_values!(F::FarfPath, at::Int, adv_f::Float64, d_f::Float64, diff_
     return nothing
 end
 
-"""The release weights of slot `slot` (1-based) from the rates (`release_weights`)."""
-function _release_weights!(F::FarfPath, slot::Int, adv_f::Float64, d_f::Float64)
-    w = F.rel_w
+"""The release weights of slot `slot` (1-based) from the rates (`release_weights`), into `w`: `F.rel_w`, or their
+tangents."""
+function _release_weights!(F::FarfPath, slot::Int, adv_f::Float64, d_f::Float64, w::Matrix{Float64}=F.rel_w)
     if F.nb > 0
         w[1, slot] = adv_f + d_f
         w[2, slot] = -d_f
@@ -857,6 +896,140 @@ function farfield_refresh!(F::FarfPath, X::Vector{Float64})
         fresh && (F.laid_out[o] = true)
     end
     return nothing
+end
+
+"""Scratch for the tangents of a path's rates (`farfield_tangent!`): the matrix's, nnz per slot slot after slot as
+`vals`, and the release weights', nrel x slots as `rel_w`, with what working them out needs."""
+struct FarfTangent
+    dvals::Vector{Float64}
+    drel::Matrix{Float64}
+    ds::FarfSetting
+    ref_d::Vector{Float64}
+    dd::Vector{Float64}
+    mmf::Vector{Float64}
+    mmb::Vector{Float64}
+    dmmf::Vector{Float64}
+    dmmb::Vector{Float64}
+end
+FarfTangent(F::FarfPath) =
+    FarfTangent(zeros(F.slots * F.nnz), zeros(F.nrel, F.slots), FarfSetting(), zeros(F.nm), zeros(F.nm),
+                zeros(max(0, F.nm - 1)), zeros(max(0, F.nm - 1)), zeros(max(0, F.nm - 1)), zeros(max(0, F.nm - 1)))
+
+"""Slot `slot`'s (1-based) settings' tangents into `ds`, as `FarfPath.refresh_tangent` reads them (NaN where the path
+has no such setting)."""
+function _read_tangent!(ds::FarfSetting, F::FarfPath, dX::Vector{Float64}, slot::Int)
+    ds.tw = _xset(F, dX, slot, _K_TW)
+    ds.f = _xset(F, dX, slot, _K_F)
+    ds.aw = _xset(F, dX, slot, _K_AW)
+    ds.aperture = _xset(F, dX, slot, _K_APERTURE)
+    ds.kd_f = _xset(F, dX, slot, _K_KD_F)
+    ds.kd_m = _xset(F, dX, slot, _K_KD_M)
+    ds.de_m = _xset(F, dX, slot, _K_DE_M)
+    ds.eps_m = _xset(F, dX, slot, _K_EPS_M)
+    ds.rho_m = _xset(F, dX, slot, _K_RHO_M)
+    ds.pe = _xset(F, dX, slot, _K_PE)
+    ds.pen_dep = _xset(F, dX, slot, _K_PEN_DEP)
+    ds.pen_dep_0 = _xset(F, dX, slot, _K_PEN_DEP_0)
+    return ds
+end
+
+"""The tangent of `_wetted_surface`, given the tangent of each setting (`wetted_surface_tangent`)."""
+@inline function _wetted_surface_tangent(surface::String, s::FarfSetting, ds::FarfSetting)
+    surface == "aw" && return ds.aw
+    surface == "aperture" && return (-2 * ds.aperture) / (s.aperture * s.aperture)
+    return (ds.f * s.tw - s.f * ds.tw) / (s.tw * s.tw)
+end
+
+"""One slot's rates worked out again, as `_slot_rates!` has them (its settings were checked there), and their
+tangents (`coefficients_tangent`) into `T.dvals` and `T.drel`. The reference layers are worked out into `T.ref_d`
+unless `ref_ready`; o is the combination (1-based)."""
+function _slot_rates_tangent!(T::FarfTangent, F::FarfPath, s::FarfSetting, ds::FarfSetting, slot::Int, o::Int,
+                              ref_ready::Bool)
+    nf, nm = F.nf, F.nm
+    pe = s.pe
+    aw = _wetted_surface(F.surface, s)
+    r_m = s.eps_m + s.rho_m * s.kd_m
+    f_df = 1 / (1 + s.kd_f * aw)
+    adv_f = (f_df * nf) / s.tw
+    d_f = _ff_max(0.0, adv_f * (nf / pe - 0.5))
+    d_aw = _wetted_surface_tangent(F.surface, s, ds)
+    d_rm = ds.eps_m + ds.rho_m * s.kd_m + s.rho_m * ds.kd_m
+    d_fdf = -(ds.kd_f * aw + s.kd_f * d_aw) * f_df * f_df
+    d_adv_f = (nf * (d_fdf * s.tw - f_df * ds.tw)) / (s.tw * s.tw)
+    shape = nf / pe - 0.5
+    d_df = d_f > 0 ? d_adv_f * shape + adv_f * (-(nf / (pe * pe)) * ds.pe) : 0.0
+    de, dde = s.de_m, ds.de_m
+    mmf, mmb, dmmf, dmmb = T.mmf, T.mmb, T.dmmf, T.dmmb
+    if F.matched
+        # The matched layers are held for the run: only the rates over them move.
+        d = view(F.layers_d, :, o)
+        h = view(F.layers_h, :, o)
+        diff_m1f = de / (r_m * d[1] * h[1])
+        @inbounds for j in 1:nm-1
+            mmf[j] = de / (r_m * d[j] * h[j+1])
+            mmb[j] = de / (r_m * d[j+1] * h[j+1])
+        end
+        d_fm1 = (d_fdf * aw * de + f_df * d_aw * de + f_df * aw * dde) / h[1]
+        d_m1f = dde / (r_m * d[1] * h[1]) - diff_m1f * (d_rm / r_m)
+        @inbounds for j in 1:nm-1
+            dmmf[j] = dde / (r_m * d[j] * h[j+1]) - mmf[j] * (d_rm / r_m)
+            dmmb[j] = dde / (r_m * d[j+1] * h[j+1]) - mmb[j] * (d_rm / r_m)
+        end
+    else
+        # The reference layers follow the settings, and so does their tangent.
+        d = T.ref_d
+        ref_ready || layer_depths!(d, s.pen_dep, nm, aw, s.pen_dep_0)
+        diff_fm1 = (f_df * 2 * aw * de) / d[1]
+        diff_m1f = (2 * de) / (r_m * d[1] * d[1])
+        @inbounds for j in 1:nm-1
+            mmf[j] = (2 * de) / (r_m * d[j] * (d[j] + d[j+1]))
+            mmb[j] = (2 * de) / (r_m * d[j+1] * (d[j+1] + d[j]))
+        end
+        dd = _layer_depths_tangent!(T.dd, s.pen_dep, nm, aw, s.pen_dep_0, d, ds.pen_dep, d_aw, ds.pen_dep_0)
+        d_fm1 = (2 / d[1]) * (d_fdf * aw * de + f_df * d_aw * de + f_df * aw * dde) - (diff_fm1 / d[1]) * dd[1]
+        d_m1f = (2 * dde) / (r_m * d[1] * d[1]) - diff_m1f * (d_rm / r_m + (2 * dd[1]) / d[1])
+        @inbounds for j in 1:nm-1
+            sumd = d[j] + d[j+1]
+            dsumd = dd[j] + dd[j+1]
+            dmmf[j] = (2 * dde) / (r_m * d[j] * sumd) - mmf[j] * (d_rm / r_m + dd[j] / d[j] + dsumd / sumd)
+            dmmb[j] = (2 * dde) / (r_m * d[j+1] * sumd) - mmb[j] * (d_rm / r_m + dd[j+1] / d[j+1] + dsumd / sumd)
+        end
+    end
+    _cell_values!(T.dvals, F, (slot - 1) * F.nnz, d_adv_f, d_df, d_fm1, d_m1f, dmmf, dmmb)
+    _release_weights!(F, slot, d_adv_f, d_df, T.drel)
+    return nothing
+end
+
+"""
+    farfield_tangent!(T, F, X, dX) -> Bool
+
+The tangents of the path's rates along the direction `dX` is the tangent of (`FarfPath.refresh_tangent`), into
+`T.dvals` and `T.drel`: whether any setting moves along it at all. For df/dp, along a parameter a setting is worked
+out from -- a diffusivity, a Kd. The matched layers are held for the run, so only the rates over them move.
+"""
+function farfield_tangent!(T::FarfTangent, F::FarfPath, X::Vector{Float64}, dX::Vector{Float64})
+    farfield_refresh!(F, X)
+    nkeys = size(F.setting_at, 1)
+    moving = false
+    @inbounds for slot in 1:F.slots, k in 1:nkeys
+        if dX[F.setting_at[k, slot]] != 0
+            moving = true
+            break
+        end
+    end
+    moving || return false
+    nnuc = F.nnuc
+    for o in 1:F.other_width
+        # The reference layers from the first slot's settings, as the refresh has them.
+        ref_ready = false
+        for slot in (o-1)*nnuc+1:o*nnuc
+            s = _read_setting!(F, X, slot)
+            ds = _read_tangent!(T.ds, F, dX, slot)
+            _slot_rates_tangent!(T, F, s, ds, slot, o, ref_ready)
+            ref_ready = true
+        end
+    end
+    return true
 end
 
 """The release out of the far end of every slot, into its slot of X: each slot's weighted sum

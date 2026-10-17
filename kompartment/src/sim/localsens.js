@@ -27,11 +27,9 @@
  * built by ./jacobian.js), and differenced otherwise: one forward step per
  * parameter per call, which is right to about eight figures. It is also why
  * this is offered for a handful of chosen parameters rather than for all 617
- * of an assessment's. Parameter by parameter: along one a far-field path's
- * rates read (a diffusivity, a Kd) it is differenced in a model whose other
- * parameters are differentiated. A solve that gives up with a difference in
- * it says so (`differencedFailure`): what a difference loses to rounding can
- * be more than the absolute tolerance dy/dp is held to.
+ * of an assessment's. A solve that gives up with a difference in it says so
+ * (`differencedFailure`): what a difference loses to rounding can be more
+ * than the absolute tolerance dy/dp is held to.
  *
  * **The iteration matrix ignores the second derivatives.** The true Jacobian of
  * the augmented system has `d(J·S)/dy` terms in the sensitivity blocks, which
@@ -347,11 +345,9 @@ export function runSensitivity(input, opts = {}) {
 	const tangent = opts.differenced
 		? { available: false, reason: 'asked for the differenced df/dp' }
 		: system.paramTangent?.() ?? { available: false, reason: 'not offered' };
-	// Parameter by parameter: a far-field path's rates read some, and along
-	// those df/dp is differenced too.
-	const exact = wanted.map((e) => tangent.available && (tangent.covers?.(e.slot) ?? true));
-	const dp = exact.some(Boolean) ? new Float64Array(n) : null;
-	const seedP = dp ? new Float64Array(system.layout.nparam) : null;
+	const dp = tangent.available ? new Float64Array(n) : null;
+	const seedP = tangent.available
+		? new Float64Array(system.layout.nparam) : null;
 
 	// The clock-only algebra may be worked out on a coarser clock and
 	// interpolated (`min_change_time`), anchored where each segment of the run
@@ -380,7 +376,7 @@ export function runSensitivity(input, opts = {}) {
 			system.jacobian.jvp(t, yv, sv, jv);
 
 			const { slot } = wanted[j];
-			if (exact[j]) {
+			if (dp) {
 				// df/dp in one more, seeded on the parameter instead of on the
 				// state. Exact, and cheaper than the difference it replaced:
 				// one tangent pass against a whole extra derivative evaluation
@@ -526,7 +522,7 @@ export function runSensitivity(input, opts = {}) {
 			},
 		});
 	} catch (e) {
-		throw differencedFailure(e, wanted.filter((_, j) => !exact[j]), tangent, opts, project, P) ?? e;
+		throw differencedFailure(e, wanted, tangent, opts, project, P) ?? e;
 	}
 
 	// --- unpack: the states, and one sensitivity block per parameter.
@@ -567,26 +563,23 @@ const NOISY = new Set(['tolerance', 'stalled', 'steps']);
 
 /**
  * A solve of the sensitivity equations that gave up, said for what it most
- * likely is when df/dp along some parameter is worked out by a difference, or
- * null. A difference is right to about eight figures; where the derivative is
- * a large rate less a large rate, what it loses to rounding can be far more
- * than the absolute tolerance dy/dp is held to -- the model's over the
- * parameter's value -- and the solver answers by shrinking its step until it
- * gives up, saying something about the model that is not so. The far-field
- * example's U-234 leach rate did, before df/dp along it was generated: the
- * vault's rate there is U-238's ingrowth, 2.8e6 a year, the leach term a few
- * Bq, and the difference came out a hundredth out against a tolerance of
- * 1e-12. The solver's own words become the hint.
+ * likely is when df/dp is worked out by a difference, or null. A difference is
+ * right to about eight figures; where the derivative is a large rate less a
+ * large rate, what it loses to rounding can be far more than the absolute
+ * tolerance dy/dp is held to -- the model's over the parameter's value -- and
+ * the solver answers by shrinking its step until it gives up, saying something
+ * about the model that is not so. The far-field example's U-234 leach rate
+ * does, differenced: the vault's rate there is U-238's ingrowth, 2.8e6 a year,
+ * the leach term a few Bq, and the difference comes out a hundredth out
+ * against a tolerance of 1e-12. The solver's own words become the hint.
  */
-function differencedFailure(e, differenced, tangent, opts, project, P) {
-	if (!differenced.length || e?.name !== 'SolverError' || !NOISY.has(e.code)) return null;
-	const names = differenced.map(slotLabel);
+function differencedFailure(e, wanted, tangent, opts, project, P) {
+	if (tangent.available || e?.name !== 'SolverError' || !NOISY.has(e.code)) return null;
+	const names = wanted.map(slotLabel);
 	const list = names.length === 1 ? names[0]
 		: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-	let why = `since ${tangent.reason}`;
-	if (opts.differenced) why = 'as asked';
-	else if (tangent.available) why = `since a far-field path's rates read ${names.length === 1 ? 'it' : 'them'}`;
-	const tol = Number(project.simulation.abstol) / (Math.abs(P[differenced[0].slot]) || 1);
+	const why = opts.differenced ? 'as asked' : `since ${tangent.reason}`;
+	const tol = Number(project.simulation.abstol) / (Math.abs(P[wanted[0].slot]) || 1);
 	const where = Number.isFinite(e.t) ? ` past t=${e.t}` : '';
 	return Object.assign(new SolverError(`The sensitivity equations could not be integrated${where}: df/dp along `
 		+ `${list} is worked out by a difference, ${why}, which is right to about eight figures, and what it loses `

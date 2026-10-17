@@ -7671,15 +7671,15 @@ between 190 steps and hitting the step ceiling with a solver error.
 `S' = J·S + df/dp`, and both terms are differentiated from the model's own
 equations rather than probed with finite differences — `J·S` by the same
 generated tangent the stiff solvers use, and `df/dp` by that generator seeded
-on the parameters instead of on the state. The exceptions fall back to one
-forward difference for `df/dp`, which is what every model used to do: a model
-with a waste package, a disruptive event or a semi-analytical far-field pathway,
-and, in a model with a far-field pathway on cells, a parameter the pathway's own
-settings read — a diffusivity, a Kd — where a leach rate into it or the flow of
-the well it releases into is differentiated as any other. A difference is right
-to about eight figures, and where a rate is a large one less a large one it can
-lose more than that to rounding: if the solve then gives up, the dialog says so,
-and a looser absolute tolerance is the first thing to try.
+on the parameters instead of on the state. A far-field pathway on cells is
+differentiated through its own rates: along a diffusivity or a Kd its settings
+read, the transport matrix and the release move with them, and the matrix
+layers stay as the run laid them out. The exceptions fall back to one forward
+difference for `df/dp`: a model with a waste package, a disruptive event or a
+semi-analytical far-field pathway. A difference is right to about eight
+figures, and where a rate is a large one less a large one it can lose more than
+that to rounding: if the solve then gives up, the dialog says so, and a looser
+absolute tolerance is the first thing to try.
 
 A model can still be too big for it — each parameter of `farfield.json` adds
 another 1,581 states to the system — and the dialog says what the solve will

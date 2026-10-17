@@ -121,6 +121,31 @@ def app(task: str, **request: Any) -> Any:
     return _dec(json.loads(proc.stdout))
 
 
+def farfield_model(grid: str = 'matched', surface: Any = None) -> Dict[str, Any]:
+    """The far-field example on two cells of each kind, its matrix layers laid out
+    ``grid``; with ``surface`` ('f' or 'aperture'), the path's own settings as
+    parameters too -- its travel time, Peclet number, depth and wetted surface."""
+    m = example('farfield')
+    ff = m['farfields'][0]
+    ff['n_f'] = 2
+    ff['n_m'] = 2
+    ff['grid'] = grid
+    if surface:
+        def p(name: str, value: float, unit: str) -> None:
+            m['parameters'].append({'name': name, 'value': value, 'unit': unit, 'index_lists': []})
+        p('TW', 50, 'year')
+        p('Pe', 2, '')
+        p('Depth', 12.5, 'm')
+        ff['tw'], ff['pe'], ff['pen_dep'] = 'TW', 'Pe', 'Depth'
+        if surface == 'f':
+            p('F', 1e5, 'year/m')
+            ff['f'] = 'F'
+        else:
+            p('Gap', 1e-3, 'm')
+            ff['surface'], ff['aperture'] = 'aperture', 'Gap'
+    return m
+
+
 def same(a: Any, b: Any) -> bool:
     """Equal, key order included: numbers as doubles (JSON writes 1.0 as 1),
     NaN equal to NaN, -0 not equal to +0, a boolean only to a boolean."""
@@ -540,19 +565,41 @@ class Standalone(unittest.TestCase):
             got = build_param_tangent(build_system(Project(example(name))))
             self.assertFalse(got['available'])
             self.assertIn(word, got['reason'])
-        # A far-field path on cells: carried along the parameters its rates do
-        # not read, and NaN along those they do, which the caller differences.
-        system = build_system(Project(example('farfield')))
-        tangent = build_param_tangent(system)
-        self.assertTrue(tangent['available'], tangent.get('reason'))
-        carried = {L.slot_label(e): tangent['covers'](e['slot']) for e in L.parameter_slots(system)}
-        self.assertEqual(sorted(k for k, v in carried.items() if not v),
-                         [f'{p}[{n}]' for p in ('De_matrix', 'Kd_matrix') for n in ('Th-230', 'U-234', 'U-238')])
-        y0 = system.initial_state()
-        for label, finite in (('leach_rate[U-234]', True), ('De_matrix[U-234]', False)):
-            seed = np.zeros(system.nparam)
-            seed[next(e['slot'] for e in L.parameter_slots(system) if L.slot_label(e) == label)] = 1.0
-            self.assertEqual(bool(np.all(np.isfinite(tangent['pvp'](10.0, y0, seed)))), finite, label)
+        # A far-field path on cells: its cells are states and its rates follow
+        # its settings, so along a parameter df/dp is the rates' own
+        # derivative -- the transport matrix's and the release weights' --
+        # over matched layers held for the run, as a difference holds them, or
+        # reference layers that follow the settings. Against a central
+        # difference of the derivative, what is left is the difference's own
+        # error.
+        for grid, surface in (('matched', None), ('reference', None), ('reference', 'f'), ('matched', 'aperture')):
+            system = build_system(Project(farfield_model(grid, surface)))
+            tangent = build_param_tangent(system)
+            self.assertTrue(tangent['available'], tangent.get('reason'))
+            y = 0.5 + 0.1 * np.arange(system.nstate)
+            P = system.P
+
+            def f(slot: int, p: float) -> np.ndarray:
+                P[slot] = p
+                system.evaluate_invariant()
+                return np.array(system.dydt(1000.0, y), dtype=float)
+
+            for e in L.parameter_slots(system):
+                label = L.slot_label(e)
+                if label.startswith(('leach_rate', 'well_')):
+                    continue
+                seed = np.zeros(system.nparam)
+                seed[e['slot']] = 1.0
+                got = tangent['pvp'](1000.0, y, seed)
+                p0 = float(P[e['slot']])
+                h = abs(p0) * 1e-4
+                fd = (f(e['slot'], p0 + h) - f(e['slot'], p0 - h)) / (2 * h)
+                f(e['slot'], p0)
+                self.assertLessEqual(float(np.max(np.abs(got - fd))), 1e-6 * float(np.max(np.abs(fd))),
+                                     (grid, surface, label))
+        # Along a diffusivity the run goes through.
+        r = L.run_sensitivity(farfield_model(), ['De_matrix[U-234]'])
+        self.assertTrue(r['stats']['nsteps'] > 100 and all(np.all(np.isfinite(v)) for v in r['sens'][0]))
 
     def test_a_difference_that_gives_up_says_so(self) -> None:
         # The far-field example on two cells of each kind. U-234's leach rate:
@@ -842,10 +889,14 @@ class SensitivityParity(unittest.TestCase):
         differently in its last place; most values are identical, and the
         share that is is printed."""
         rng = np.random.default_rng(11)
-        for name in ('four-compartment', 'lookup-driver', 'scenarios', 'recorders', 'biosphere', 'landscape',
-                     'waste-packages', 'farfield', 'decay-chain', 'post-processing'):
+        # The far-field path's own settings as parameters too, on either layout.
+        models = [(name, example(name)) for name in ('four-compartment', 'lookup-driver', 'scenarios', 'recorders',
+                                                     'biosphere', 'landscape', 'waste-packages', 'farfield',
+                                                     'decay-chain', 'post-processing')]
+        models += [('farfield, its settings', farfield_model('reference', 'f')),
+                   ('farfield, its aperture', farfield_model('matched', 'aperture'))]
+        for name, model in models:
             with self.subTest(example=name):
-                model = example(name)
                 system = build_system(Project(model))
                 mine = build_param_tangent(system)
                 points = []
@@ -862,8 +913,6 @@ class SensitivityParity(unittest.TestCase):
                 if not js['available']:
                     self.assertEqual(mine['reason'], js['reason'])
                     continue
-                # The same parameters carried: not those a far-field path's rates read.
-                self.assertEqual([bool(mine['covers'](s)) for s in range(system.nparam)], js['covers'])
                 exact = total = 0
                 for p, q in zip(points, js['points']):
                     got = mine['pvp'](p['t'], np.array(p['y']), np.array(p['seed']))

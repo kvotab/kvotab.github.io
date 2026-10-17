@@ -381,23 +381,17 @@ _NOISY = ('tolerance', 'stalled', 'steps')
 
 def _differenced_failure(e: SolverError, problem: Mapping[str, Any], asked: bool) -> Optional[SolverError]:
     """A solve of the sensitivity equations that gave up, said for what it most
-    likely is when df/dp along some parameter is worked out by a difference
-    (``differencedFailure``), or None: what a difference loses to rounding can
-    be more than the absolute tolerance dy/dp is held to. The solver's own
-    words become the hint."""
-    differenced = [e_ for e_, ok in zip(problem['wanted'], problem['exact']) if not ok]
-    if not differenced or getattr(e, 'code', None) not in _NOISY:
-        return None
-    names = [_js_str(slot_label(c)) for c in differenced]
-    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    likely is when df/dp is worked out by a difference (``differencedFailure``),
+    or None: what a difference loses to rounding can be more than the absolute
+    tolerance dy/dp is held to. The solver's own words become the hint."""
     tangent = problem['tangent']
-    if asked:
-        why = 'as asked'
-    elif tangent.get('available'):
-        why = f"since a far-field path's rates read {'it' if len(names) == 1 else 'them'}"
-    else:
-        why = f"since {_js_str(tangent.get('reason'))}"
-    a = abs(float(problem['system'].P[differenced[0]['slot']]))
+    if tangent.get('available') or getattr(e, 'code', None) not in _NOISY:
+        return None
+    wanted = problem['wanted']
+    names = [_js_str(slot_label(c)) for c in wanted]
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    why = 'as asked' if asked else f"since {_js_str(tangent.get('reason'))}"
+    a = abs(float(problem['system'].P[wanted[0]['slot']]))
     tol = _to_number(problem['project'].simulation.get('abstol')) / (a if (a == a and a != 0) else 1.0)
     t = e.t
     where = f' past t={_js_str(float(t))}' if t is not None and math.isfinite(float(t)) else ''
@@ -520,11 +514,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
 
     tangent: Mapping[str, Any] = ({'available': False, 'reason': 'asked for the differenced df/dp'} if differenced
                                   else param_tangent(system))
-    # Parameter by parameter: a far-field path's rates read some, and along
-    # those df/dp is differenced too.
-    covers = tangent.get('covers') or (lambda slot: True)
-    exact = [bool(tangent.get('available')) and bool(covers(slot)) for slot in slots]
-    pvp = tangent.get('pvp') if any(exact) else None
+    pvp = tangent.get('pvp') if tangent.get('available') else None
     nparam = max(1, int(system.nparam))
 
     pattern = jac['pattern']
@@ -571,7 +561,7 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
             base = n * (j + 1)
             jv = jvp(t, yv, values, f0, Y[base:base + n])
             slot = slots[j]
-            if exact[j]:
+            if pvp is not None:
                 seed = np.zeros(nparam)
                 seed[slot] = 1.0
                 out[base:base + n] = jv + np.asarray(pvp(t, yv, seed), dtype=float)
@@ -666,7 +656,6 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
                       'on_segment': on_segment},
         'compiled': model_compiled,
         'wanted': wanted,
-        'exact': exact,
         'tangent': tangent,
     }
 

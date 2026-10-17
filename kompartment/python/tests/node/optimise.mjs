@@ -230,8 +230,6 @@ switch (req.task) {
 			return {
 				available: pt.available,
 				reason: pt.reason ?? null,
-				// Which parameters it carries: not those a far-field path's rates read.
-				covers: pt.available ? Array.from({ length: sys.layout.nparam }, (_, s) => pt.covers(s)) : [],
 				points: pt.available ? req.points.map(({ t, y, seed }) => Array.from(
 					pt.pvp(t, Float64Array.from(y), Float64Array.from(seed)))) : [],
 			};

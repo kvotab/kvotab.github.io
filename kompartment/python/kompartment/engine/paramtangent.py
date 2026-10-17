@@ -28,11 +28,12 @@ target is the extreme, a running mean its target's only before any time has
 passed, a snapshot and a delay nothing (a delay whose lag moves with a parameter
 is refused). A lookup table read at the clock has no tangent, as there.
 
-A far-field path on cells is taken along the parameters its rates do not read:
-along those its cells are states, held, and its rates do not move, so it adds
-nothing. Its rates' derivative along a parameter they do read is not taken:
-``covers`` says which parameters this carries, the caller differences the
-others, and along one of those ``pvp`` gives NaN rather than a wrong zero.
+A far-field path on cells is differentiated through its own rates: its cells
+are states, held, so what moves along a parameter is its rates -- nothing along a
+leach rate into it, and along a diffusivity or a Kd its settings are worked out
+from, the transport matrix's and the release weights' own tangents
+(:meth:`~kompartment.engine.farfield.FarfPath.refresh_tangent`), over the matched
+layers the run laid out.
 
 Refused, with the application's reasons, where it refuses: a model with no
 parameters, a semi-analytical far-field path, a waste package or a disruptive
@@ -44,7 +45,6 @@ run.
 
 from __future__ import annotations
 
-import math
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -131,14 +131,13 @@ class _Plan:
         rec = a.get('recorder')
         if a.kind == 'farfield':
             # A path on cells: its release moves along a parameter only if a
-            # setting does (the cells are states, held), and then its rates'
-            # derivative would be needed, which is not taken: see `pvp`.
+            # setting does (the cells are states, held), with the weights' own
+            # tangent: see `pvp`.
             F = self.b.FARF[a.farf_index]
-            settings = np.unique(np.asarray(F.setting_idx, dtype=np.int64).ravel())
             release = int(F.release_base) + np.asarray(F.dim_off, dtype=np.int64)
             for slot, x in enumerate(release):
                 moves[x] = bool(np.any(moves[np.asarray(F.setting_idx[slot], dtype=np.int64)]))
-            return ('farfield', settings, release)
+            return ('farfield', a.farf_index, release)
         if rec is None:
             raise _Refused('a far-field path, whose derivative along a parameter is not generated')
         for off in range(a.width):
@@ -181,7 +180,7 @@ class _Plan:
                 raise _Refused('a block whose derivative along a parameter is not generated')
             # 'coef': decay and ingrowth, whose coefficients are not parameters;
             # 'farf': a path's cells, held, under rates that move only with its
-            # settings (see `pvp`).
+            # settings -- taken with its release (see `pvp`).
 
     # --- evaluation ---------------------------------------------------------------------
 
@@ -192,18 +191,26 @@ class _Plan:
         with np.errstate(all='ignore'):
             X = system.evaluate_algebraic(t, y)
             dX = np.zeros(max(1, self.nalg))
-            # A far-field path whose settings move along `w`: its rates'
-            # derivative is not taken, and df/dp is NaN rather than wrong.
-            unknown = False
+            # The far-field paths whose rates move along `w`, with the matrix's
+            # tangent, for the cells' part below.
+            moved = []
             for item in self.items:
                 if item[0] == 'recorder':
                     self._recorder(item[1], item[2], X, dX, t)
                     continue
                 if item[0] == 'farfield':
-                    _, settings, release = item
-                    moving = bool(np.any(dX[settings] != 0))
-                    dX[release] = math.nan if moving else 0.0
-                    unknown = unknown or moving
+                    # The release: the weights' tangent applied to the cells,
+                    # one cell at a time from zero, as the release is added up.
+                    _, k, release = item
+                    F = system.FARF[k]
+                    moving = F.refresh_tangent(X, dX)
+                    dq = np.zeros(F.slots)
+                    if moving is not None:
+                        dvals, drel = moving
+                        for r in range(F.nrel):
+                            dq += drel[:, r] * y[F.rel_idx[:, r]]
+                        moved.append((F, dvals))
+                    dX[release] = dq
                     continue
                 _, s, leaves, outs, W, p_terms, x_terms, multiply = item
                 terms = []
@@ -245,12 +252,13 @@ class _Plan:
                 out += np.bincount(tgt, weights=sign * dflux[flux], minlength=self.n)
             for tgt, xs in self.xs:
                 out += np.bincount(tgt, weights=dX[xs], minlength=self.n)
+            # A path's cells: the matrix's own tangent applied to them.
+            for F, dvals in moved:
+                out += np.bincount(F.row_flat, weights=(dvals * y[F.col_idx]).ravel(), minlength=self.n)
             for s_idx, t_idx, mem in self.means:
                 recording = np.array([1.0 if system.MEM[k].recording else 0.0
                                       for k in range(mem, mem + s_idx.size)])
                 out[s_idx] += recording * dX[t_idx]
-            if unknown:
-                out[:] = math.nan
         return out
 
     def _recorder(self, a: Any, rec: Any, X: np.ndarray, dX: np.ndarray, t: float) -> None:
@@ -267,70 +275,10 @@ class _Plan:
                 dX[i] = 0.0
 
 
-def _read_by_paths(b: Any) -> set:
-    """The parameters a far-field path's rates read: every parameter slot its
-    settings depend on, through the algebra in between -- the application's
-    parameter pattern of the settings, in which a running mean or a min/max
-    reads its target and a snapshot, a delay or a table nothing."""
-    paths = [b.FARF[p.farf_index] for p in b.farf_layout if not p.farf.laplace]
-    if not paths:
-        return set()
-    # What writes each algebraic slot: a statement's element, a remembering
-    # block, or a path's release.
-    writers: Dict[int, List[Any]] = {}
-    for a in b.algebraic:
-        for s in b.alg_stmts[a.name]:
-            if s.code is not None:
-                rec = a.get('recorder')
-                if a.kind == 'farfield':
-                    F = b.FARF[a.farf_index]
-                    for slot, x in enumerate(int(F.release_base) + np.asarray(F.dim_off, dtype=np.int64)):
-                        writers.setdefault(int(x), []).append(('path', F, slot))
-                elif rec is not None:
-                    for off in range(a.width):
-                        writers.setdefault(a.base + off, []).append(('rec', rec, off))
-                continue
-            W = max(1, s.width)
-            outs = _as_index(s.out, W)
-            for i in range(W):
-                writers.setdefault(int(outs[i]), []).append(('tree', s, i))
-    found: set = set()
-    seen: set = set()
-    leaves_of: Dict[int, Any] = {}
-    stack = [int(x) for F in paths for x in np.asarray(F.setting_idx, dtype=np.int64).ravel()]
-    while stack:
-        x = stack.pop()
-        if x in seen:
-            continue
-        seen.add(x)
-        for w in writers.get(x, []):
-            if w[0] == 'tree':
-                _, s, i = w
-                if id(s) not in leaves_of:
-                    leaves_of[id(s)] = codegen.leaves(s.tree)
-                W = max(1, s.width)
-                for leaf in leaves_of[id(s)]:
-                    if leaf.kind == 'P':
-                        found.add(int(_as_index(leaf.index, W)[i]))
-                    elif leaf.kind == 'X':
-                        stack.append(int(_as_index(leaf.index, W)[i]))
-            elif w[0] == 'rec':
-                _, rec, off = w
-                if rec.kind in ('min_max', 'running_mean'):
-                    stack.append(rec.aux['target'].base + off)
-            else:
-                _, F, slot = w
-                stack.extend(int(v) for v in np.asarray(F.setting_idx[slot], dtype=np.int64))
-    return found
-
-
 def build_param_tangent(system: Any) -> Dict[str, Any]:
-    """``{'available': True, 'pvp', 'nparam', 'covers'}``, or ``{'available':
-    False, 'reason'}`` where the model has something this does not
-    differentiate (``buildParamTangent``). ``covers(slot)`` says whether df/dp
-    along a parameter is this one's: not along one a far-field path's rates
-    read, whose derivative is not taken -- there ``pvp`` gives NaN, and the
-    caller differences instead."""
+    """``{'available': True, 'pvp', 'nparam'}``, or ``{'available': False,
+    'reason'}`` where the model has something this does not differentiate
+    (``buildParamTangent``)."""
     b = system.builder
     jac = system.jacobian or {}
     if not jac.get('available'):
@@ -349,13 +297,10 @@ def build_param_tangent(system: Any) -> Dict[str, Any]:
         return {'available': False, 'reason': f'no derivative rule for {e.what}'}
     except _Refused as e:
         return {'available': False, 'reason': str(e)}
-    read = _read_by_paths(b)
     # The same question the Jacobian's own tangent answers at build: whether
     # what it gives at the start of the run is a number. A seed of ones
-    # exercises every parameter it carries at once.
+    # exercises every parameter at once.
     seed = np.ones(nparam)
-    if read:
-        seed[sorted(read)] = 0.0
     try:
         probe = plan.pvp(system.start_time, system.initial_state(), seed)
     except Exception:  # noqa: BLE001 - the model's own arithmetic at the start says nothing about usability
@@ -363,8 +308,7 @@ def build_param_tangent(system: Any) -> Dict[str, Any]:
     if probe is not None and not np.all(np.isfinite(probe)):
         return {'available': False, 'reason': 'df/dp has a non-finite entry at the starting state, and a driving '
                                               'term that is not a number is not one to integrate'}
-    return {'available': True, 'pvp': plan.pvp, 'nparam': nparam, 'covers': lambda slot: int(slot) not in read,
-            'read_by_paths': sorted(read)}
+    return {'available': True, 'pvp': plan.pvp, 'nparam': nparam}
 
 
 def param_tangent(system: Any) -> Dict[str, Any]:
