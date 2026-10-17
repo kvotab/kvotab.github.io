@@ -44,12 +44,14 @@ too:
 
     python3 resources/tests/winnetkakort/test-ui.py
 
-It exits 0 when all 176 checks pass and takes about a minute and a half. With
+It exits 0 when all 177 checks pass and takes about a minute and a half. With
 `WK_SHOTS=<folder>` it also saves screenshots and the printed cards as
 `cards.pdf`.
 
 What it plays:
 
+- **The settings**: *Utseende* comes last, so a phone need not scroll past
+  twenty looks to reach the others.
 - **A round with every answer right:** ten cards, the record kept, each fact
   stored, the tile and the times grid updated.
 - **A wrong answer:** the card waits, with Nästa kort focused. It shows up in

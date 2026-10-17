@@ -88,11 +88,6 @@
     <details class="wk-panel wk-settings" id="wk-settings">
       <summary><span class="wk-panel-title">Inställningar</span><span class="wk-settings-sum" id="wk-settings-sum"></span></summary>
       <div class="wk-settings-grid">
-        <fieldset class="wk-looks-field">
-          <legend>Utseende</legend>
-          <p class="wk-help">Välj hur sidan ska se ut. Var och en som övar har sitt eget.</p>
-          <div id="wk-looks"></div>
-        </fieldset>
         <fieldset>
           <legend>Så svarar du</legend>
           <label><input type="radio" name="mode" value="skriv" data-on-change="wk:setting"> Skriv svaret</label>
@@ -136,6 +131,12 @@
           <label><input type="radio" name="pad" value="auto" data-on-change="wk:setting"> På pekskärmar</label>
           <label><input type="radio" name="pad" value="pa" data-on-change="wk:setting"> Alltid</label>
           <label><input type="radio" name="pad" value="av" data-on-change="wk:setting"> Aldrig</label>
+        </fieldset>
+        <!-- Last: twenty looks are a long way to scroll on a phone. -->
+        <fieldset class="wk-looks-field">
+          <legend>Utseende</legend>
+          <p class="wk-help">Välj hur sidan ska se ut. Var och en som övar har sitt eget.</p>
+          <div id="wk-looks"></div>
         </fieldset>
       </div>
       <div class="wk-person-admin">

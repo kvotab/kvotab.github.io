@@ -275,6 +275,8 @@ async def run(page):
 
     # --- the home view -------------------------------------------------------
     check('no script errors on load', page.errors + page.console, [])
+    check('Utseende is the last of the settings: on a phone its twenty looks are a long way to scroll past',
+          await page.ev("[...document.querySelectorAll('#wk-settings legend')].map(l => l.textContent).pop()"), 'Utseende')
     check('45 piles in six groups, and no "svåra kort" before anything is missed',
           await page.ev("[document.querySelectorAll('.wk-tile').length, document.querySelectorAll('.wk-group').length]"), [45, 6])
     check('nothing chosen: Börja öva and Skriv ut are off',
