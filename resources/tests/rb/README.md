@@ -432,11 +432,11 @@ Download. Needs h5py, numpy and matplotlib. 189 checks.
 
 `test-icon.py` covers the tab icon, the HDF Group's H cut through its
 crossbar in the kvot mark's language, which `scripts/gen-rb-icon.py` draws. The
-page links the SVG first, a 32-pixel PNG for what will not take one, and a
-180-pixel touch icon; each must decode as a picture of its size. The SVG must
-be XML: a comment holding "--" is not, and the browser drops the icon without
-a word, leaving the tab blank. It is drawn in the mark's three tones only, as
-polygons, and named for the page.
+page links a 32-pixel PNG first, for a browser that will not take an SVG,
+then the SVG, and a 180-pixel touch icon; each must decode as a picture of its
+size. The SVG must be XML: a comment holding "--" is not, and the browser
+drops the icon without a word, leaving the tab blank. It is drawn in the
+mark's three tones only, as polygons, and named for the page.
 
     python3 test-icon.py
 

@@ -82,7 +82,7 @@ Two things had to be handled inside the run itself:
 
 ## test-page-icons.py
 
-    python3 resources/tests/site/test-page-icons.py    # expect 104/104
+    python3 resources/tests/site/test-page-icons.py    # expect 130/130
 
 Every page has a picture for an iPhone's home screen: without an
 `apple-touch-icon` link, iOS draws the title's first letter on a grey tile.
@@ -93,7 +93,11 @@ decoded by `scripts/kvot_icon.py`. For every published page but the 404:
   tones: the page's own mark where it has one (Glosor, Winnetkakort, the
   departure boards, the guitar tuner, Kompartment, smui, rb, ENSDF, dose),
   and the kvot mark (`kvot-icon-180.png`) everywhere else;
-- a tab icon in SVG is well-formed XML, with a 32 × 32 PNG beside it;
+- a page with a tab icon in SVG links a 32 × 32 PNG of it first, as a plain
+  `icon` link with `sizes="32x32"`, for a browser that will not take an SVG
+  (Safari before version 26), and then the SVG, which must be well-formed
+  XML. With the size given, Chrome fetches only the SVG; without it, Chrome
+  fetches both. No page has an `alternate icon` link;
 - a page whose icon `scripts/kvot_icon.py` draws says what to call it on the
   home screen (`apple-mobile-web-app-title`).
 

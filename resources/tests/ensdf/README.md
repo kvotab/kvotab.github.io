@@ -85,7 +85,7 @@ the two on others and say which:
     SITE_HTTP_PORT=8857 SITE_CDP_PORT=9357 python3 resources/tests/ensdf/test-ui.py
 
 165 checks: the built-in release loads; the tab icon (drawn by
-`scripts/gen-ensdf-icon.py`) is linked as an SVG, a 32-pixel PNG and a
+`scripts/gen-ensdf-icon.py`) is linked as a 32-pixel PNG, then an SVG, and a
 180-pixel touch icon, each decodes at its size, and the SVG is XML, in the
 64-unit square, named for the page and drawn in the kvot mark's three tones
 only; the hover card sets its superscripts as

@@ -28,11 +28,13 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/ensdf.css?v=20261009">
-  <!-- The chart's own mark, in the kvot mark's language (see
-       ensdf-icon.svg). SVG first, since it stays sharp on a high-density
-       screen; the PNG is for anything that will not take one. -->
+  <!-- The chart's own mark, in the kvot mark's language (see ensdf-icon.svg).
+       The 32 px PNG comes first, for a browser that will not take an SVG
+       (Safari before version 26); Chrome and Firefox take the SVG, which stays
+       sharp on a high-density screen, and the PNG's size keeps Chrome from
+       fetching the PNG as well. -->
+  <link rel="icon" href="./resources/images/ensdf-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/ensdf-icon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="./resources/images/ensdf-icon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="./resources/images/ensdf-icon-180.png">
 </head>
 <body>

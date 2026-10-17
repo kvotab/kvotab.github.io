@@ -16,11 +16,13 @@
   -->
   <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
   <!-- The page's own mark: the H of the HDF Group's mark, cut through its
-       crossbar, in the kvot mark's language (see rb-icon.svg). SVG first,
-       since it stays sharp on a high-density screen; the PNG is for anything
-       that will not take one. -->
+       crossbar, in the kvot mark's language (see rb-icon.svg). The 32 px PNG
+       comes first, for a browser that will not take an SVG (Safari before
+       version 26); Chrome and Firefox take the SVG, which stays sharp on a
+       high-density screen, and the PNG's size keeps Chrome from fetching the
+       PNG as well. -->
+  <link rel="icon" href="./resources/images/rb-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rb-icon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="./resources/images/rb-icon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="./resources/images/rb-icon-180.png">
   <title>HDF5 Browser — kvot ab</title>
   <meta name="description" content="Browse HDF5 (.h5) files straight in your browser: explore the tree, inspect datasets, plot them and export to Excel.">

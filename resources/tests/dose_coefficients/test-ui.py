@@ -195,24 +195,25 @@ async def main():
         n103 = await p.ev("parseInt(document.getElementById('dcNuclideCount').textContent)")
         check('it lists the 1252 radionuclides of ICRP 107: the 900-odd with models of intakes, and every one for external exposure', n103, 1252)
 
-        # The tab icon: the ICRP's letters in the kvot mark's language (scripts/gen-dose-icon.py), the SVG first with a
-        # PNG for what will not take one and a touch icon. Each must decode as a picture (an SVG whose comment holds
-        # "--" is not XML, and the browser silently drops it), and the drawing keeps to the mark's three tones.
+        # The tab icon: the ICRP's letters in the kvot mark's language (scripts/gen-dose-icon.py), a 32-pixel PNG first for
+        # what will not take an SVG, then the SVG, and a touch icon. Each must decode as a picture (an SVG whose comment
+        # holds "--" is not XML, and the browser silently drops it), and the drawing keeps to the mark's three tones.
         icon = await p.ev("""(async () => {
-          const links = Object.fromEntries([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
-            .map((l) => [l.rel, [l.getAttribute('href'), l.type || '']]));
+          const links = [...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+            .map((l) => [l.rel, l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']);
+          const href = (rel, type) => (links.find((l) => l[0] === rel && (!type || l[2] === type)) || [])[1];
           const load = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok([i.naturalWidth, i.naturalHeight]); i.onerror = () => ok(null); i.src = src; });
-          const svg = await (await fetch(links.icon[0], { cache: 'no-store' })).text();
+          const svg = await (await fetch(href('icon', 'image/svg+xml'), { cache: 'no-store' })).text();
           const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-          return { links, svg: await load(links.icon[0]), png: await load(links['alternate icon'][0]), touch: await load(links['apple-touch-icon'][0]),
+          return { links, svg: await load(href('icon', 'image/svg+xml')), png: await load(href('icon', 'image/png')), touch: await load(href('apple-touch-icon')),
             xml: !doc.querySelector('parsererror'), title: doc.querySelector('svg > title')?.textContent,
             fills: [...new Set([...svg.matchAll(/fill="(#[0-9a-f]{6})"/gi)].map((m) => m[1].toLowerCase()))].sort(),
             gradient: /<(linear|radial)Gradient/.test(svg) };
         })()""", wait=True)
-        check('the tab icon: the SVG first, a 32-pixel PNG for what will not take one, and a touch icon; each decodes',
+        check('the tab icon: a 32-pixel PNG first, for what will not take an SVG, then the SVG, and a touch icon; each decodes',
               (icon['links'], icon['svg'] is not None, icon['png'], icon['touch'], icon['xml']),
-              ({'icon': ['./resources/images/dose-icon.svg', 'image/svg+xml'], 'alternate icon': ['./resources/images/dose-icon-32.png', 'image/png'],
-                'apple-touch-icon': ['./resources/images/dose-icon-180.png', '']}, True, [32, 32], [180, 180], True))
+              ([['icon', './resources/images/dose-icon-32.png', 'image/png', '32x32'], ['icon', './resources/images/dose-icon.svg', 'image/svg+xml', ''],
+                ['apple-touch-icon', './resources/images/dose-icon-180.png', '', '']], True, [32, 32], [180, 180], True))
         check('... drawn in the kvot mark’s three tones only, without gradients, and named for the page',
               (icon['fills'], icon['gradient'], icon['title']), (['#344126', '#bb6c5d', '#f3b87b'], False, 'Dose Coefficients'))
 

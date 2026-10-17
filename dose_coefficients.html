@@ -31,10 +31,12 @@
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
   <link rel="stylesheet" href="./resources/css/dose_coefficients.css?v=20261013b">
   <!-- The page's own mark: the four letters of the ICRP's logotype in the kvot
-       mark's language (see dose-icon.svg). SVG first, since it stays sharp on
-       a high-density screen; the PNG is for anything that will not take one. -->
+       mark's language (see dose-icon.svg). The 32 px PNG comes first, for a
+       browser that will not take an SVG (Safari before version 26); Chrome and
+       Firefox take the SVG, which stays sharp on a high-density screen, and the
+       PNG's size keeps Chrome from fetching the PNG as well. -->
+  <link rel="icon" href="./resources/images/dose-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/dose-icon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="./resources/images/dose-icon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="./resources/images/dose-icon-180.png">
 </head>
 <body>

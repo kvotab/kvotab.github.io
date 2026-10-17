@@ -28189,11 +28189,13 @@ test('the tab icon is drawn in the family it belongs to, and holds its projectio
 	const { readFileSync } = await import('node:fs');
 	const root = new URL('../', import.meta.url);
 	const html = readFileSync(new URL('index.html', root), 'utf8');
-	// SVG first: it is the one that stays sharp on a high-density screen, and
-	// the PNG is for anything that will not take one.
-	assert(/<link rel="icon" href="icon\.svg" type="image\/svg\+xml">/.test(html),
-		'no SVG icon');
-	assert(/<link rel="alternate icon" href="icon-32\.png"/.test(html), 'no PNG fallback');
+	// The 32 px PNG first, for a browser that will not take an SVG (Safari
+	// before version 26), then the SVG, which stays sharp on a high-density
+	// screen. The PNG's size keeps Chrome from fetching it as well, and it is a
+	// plain icon link, as the usual fallback for Safari has it.
+	assert(/<link rel="icon" href="icon-32\.png" sizes="32x32" type="image\/png">\n<link rel="icon" href="icon\.svg" type="image\/svg\+xml">/.test(html),
+		'not the PNG with its size and then the SVG');
+	assert(!/alternate icon/.test(html), 'an "alternate icon" link');
 	for (const f of ['icon.svg', 'icon-32.png', 'icon-64.png', 'icon-180.png']) {
 		assert(readFileSync(new URL(f, root)).length > 200, `${f} is missing or empty`);
 	}

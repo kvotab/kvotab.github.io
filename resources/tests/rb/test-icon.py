@@ -2,11 +2,11 @@
 """rb.html's tab icon: the HDF Group's H, cut through its crossbar, in the
 kvot mark's language (scripts/gen-rb-icon.py draws it).
 
-The page links the SVG first, a 32-pixel PNG for what will not take one, and a
-180-pixel touch icon. Each must decode as a picture: an SVG whose comment holds
-"--" is not XML, and the browser drops it without a word, leaving the tab
-blank. The drawing keeps to the mark's three tones, without gradients, and is
-named for the page.
+The page links a 32-pixel PNG first, for a browser that will not take an SVG,
+then the SVG, and a 180-pixel touch icon. Each must decode as a picture: an SVG
+whose comment holds "--" is not XML, and the browser drops it without a word,
+leaving the tab blank. The drawing keeps to the mark's three tones, without
+gradients, and is named for the page.
 
 Start the server and the browser as in README.md, then
 
@@ -37,21 +37,22 @@ def check(label, got, want=True):
 
 
 ICON = """(async () => {
-  const links = Object.fromEntries([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
-    .map((l) => [l.rel, [l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']]));
+  const links = [...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+    .map((l) => [l.rel, l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']);
+  const href = (rel, type) => (links.find((l) => l[0] === rel && (!type || l[2] === type)) || [])[1];
   const load = (src) => new Promise((ok) => {
     const i = new Image();
     i.onload = () => ok([i.naturalWidth, i.naturalHeight]);
     i.onerror = () => ok(null);
     i.src = src;
   });
-  const svg = await (await fetch(links.icon[0], { cache: 'no-store' })).text();
+  const svg = await (await fetch(href('icon', 'image/svg+xml'), { cache: 'no-store' })).text();
   const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
   return {
     links,
-    svg: await load(links.icon[0]),
-    png: await load(links['alternate icon'][0]),
-    touch: await load(links['apple-touch-icon'][0]),
+    svg: await load(href('icon', 'image/svg+xml')),
+    png: await load(href('icon', 'image/png')),
+    touch: await load(href('apple-touch-icon')),
     xml: !doc.querySelector('parsererror'),
     title: doc.querySelector('svg > title')?.textContent,
     viewBox: doc.documentElement.getAttribute('viewBox'),
@@ -68,11 +69,11 @@ async def main():
         tid, page = await open_page(bws, settle=3)
         try:
             icon = await page.ev(ICON)
-            check('the SVG first, a 32-pixel PNG for what will not take one, and a touch icon',
-                  icon['links'], {
-                      'icon': ['./resources/images/rb-icon.svg', 'image/svg+xml', ''],
-                      'alternate icon': ['./resources/images/rb-icon-32.png', 'image/png', '32x32'],
-                      'apple-touch-icon': ['./resources/images/rb-icon-180.png', '', '']})
+            check('a 32-pixel PNG first, for what will not take an SVG, then the SVG, and a touch icon',
+                  icon['links'], [
+                      ['icon', './resources/images/rb-icon-32.png', 'image/png', '32x32'],
+                      ['icon', './resources/images/rb-icon.svg', 'image/svg+xml', ''],
+                      ['apple-touch-icon', './resources/images/rb-icon-180.png', '', '']])
             check('each decodes as a picture of its size',
                   (icon['svg'] is not None, icon['png'], icon['touch']), (True, [32, 32], [180, 180]))
             check('the SVG is XML, in the 64-unit square, and named for the page',

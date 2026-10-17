@@ -26,13 +26,14 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/gitarr.css?v=20261003">
-  <!-- The page's own mark, in the kvot mark's language (see gitarr-icon.svg):
-       a tuning fork. SVG first, since it stays sharp on a high-density screen;
-       the 32 px PNG is for anything that will not take one, and the 180 px one
-       is what an iPhone puts on its home screen. The title is the name it
-       suggests there. -->
+  <!-- The page's own mark, in the kvot mark's language (see gitarr-icon.svg): a
+       tuning fork. The 32 px PNG comes first, for a browser that will not take
+       an SVG (Safari before version 26); Chrome and Firefox take the SVG, which
+       stays sharp on a high-density screen, and the PNG's size keeps Chrome
+       from fetching the PNG as well. The 180 px PNG is what an iPhone puts on
+       its home screen, and the title the name it suggests there. -->
+  <link rel="icon" href="./resources/images/gitarr-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/gitarr-icon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="./resources/images/gitarr-icon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="./resources/images/gitarr-icon-180.png">
   <meta name="apple-mobile-web-app-title" content="Gitarrstämmare">
 </head>

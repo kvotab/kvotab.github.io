@@ -24,9 +24,12 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <!-- The tool's own mark, so a tab on this page and a tab on the bare tool
-       look like the same thing. -->
+       look like the same thing. The 32 px PNG comes first, for a browser that
+       will not take an SVG (Safari before version 26); Chrome and Firefox take
+       the SVG, which stays sharp on a high-density screen, and the PNG's size
+       keeps Chrome from fetching the PNG as well. -->
+  <link rel="icon" href="./kompartment/icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./kompartment/icon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="./kompartment/icon-32.png" sizes="32x32" type="image/png">
   <link rel="apple-touch-icon" href="./kompartment/icon-180.png">
   <title>Kompartment — kvot ab</title>
   <meta name="description" content="Build compartment models in the browser — blocks and fluxes, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.">

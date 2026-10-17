@@ -177,19 +177,20 @@ async def main():
         # scripts/gen-ensdf-icon.py draws it. An SVG whose comment holds "--" is
         # not XML, and the browser drops it without a word, leaving the tab blank.
         icon = json.loads(await page.ev("""(async () => {
-          const links = Object.fromEntries([...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
-            .map((l) => [l.rel, [l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']]));
+          const links = [...document.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"]')]
+            .map((l) => [l.rel, l.getAttribute('href'), l.type || '', l.getAttribute('sizes') || '']);
+          const href = (rel, type) => (links.find((l) => l[0] === rel && (!type || l[2] === type)) || [])[1];
           const load = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok([i.naturalWidth, i.naturalHeight]); i.onerror = () => ok(null); i.src = src; });
-          const svg = await (await fetch(links.icon[0], { cache: 'no-store' })).text();
+          const svg = await (await fetch(href('icon', 'image/svg+xml'), { cache: 'no-store' })).text();
           const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
-          return JSON.stringify({ links, svg: await load(links.icon[0]), png: await load(links['alternate icon'][0]), touch: await load(links['apple-touch-icon'][0]),
+          return JSON.stringify({ links, svg: await load(href('icon', 'image/svg+xml')), png: await load(href('icon', 'image/png')), touch: await load(href('apple-touch-icon')),
             xml: !doc.querySelector('parsererror'), title: doc.querySelector('svg > title')?.textContent, viewBox: doc.documentElement.getAttribute('viewBox'),
             fills: [...new Set([...svg.matchAll(/fill="(#[0-9a-f]{6})"/gi)].map((m) => m[1].toLowerCase()))].sort(),
             other: /<(linearGradient|radialGradient|path|rect|circle|image|text)\\b|stroke=/.test(svg) }); })()"""))
-        check('the tab icon: the SVG first, a 32-pixel PNG for what will not take one, and a touch icon', icon['links'], {
-              'icon': ['./resources/images/ensdf-icon.svg', 'image/svg+xml', ''],
-              'alternate icon': ['./resources/images/ensdf-icon-32.png', 'image/png', '32x32'],
-              'apple-touch-icon': ['./resources/images/ensdf-icon-180.png', '', '']})
+        check('the tab icon: a 32-pixel PNG first, for what will not take an SVG, then the SVG, and a touch icon', icon['links'], [
+              ['icon', './resources/images/ensdf-icon-32.png', 'image/png', '32x32'],
+              ['icon', './resources/images/ensdf-icon.svg', 'image/svg+xml', ''],
+              ['apple-touch-icon', './resources/images/ensdf-icon-180.png', '', '']])
         check('... each decodes as a picture of its size', (icon['svg'] is not None, icon['png'], icon['touch']), (True, [32, 32], [180, 180]))
         check('... the SVG is XML, in the 64-unit square, and named for the page', (icon['xml'], icon['viewBox'], icon['title']), (True, '0 0 64 64', 'Chart of Nuclides (ENSDF)'))
         check('... drawn in the kvot mark’s three tones only: polygons, no strokes, no gradients', (icon['fills'], icon['other']), (['#344126', '#bb6c5d', '#f3b87b'], False))

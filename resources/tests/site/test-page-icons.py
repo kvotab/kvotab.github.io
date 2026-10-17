@@ -15,9 +15,14 @@ page, which nobody saves):
   * it is the page's own mark where the page has one (the table below), and
     the kvot mark (kvot-icon-180.png, scripts/gen-kvot-touch-icon.py)
     everywhere else;
-  * a tab icon in SVG is well-formed XML (a "--" in a comment makes the
-    browser drop it silently) and has a 32 x 32 PNG beside it for anything
-    that will not take an SVG;
+  * a page with a tab icon in SVG lists a 32 x 32 PNG of it first, as a
+    plain icon link with its size, for a browser that will not take an SVG
+    (Safari before version 26), and the SVG after it. The size keeps Chrome
+    from fetching the PNG as well: Chrome 155 fetched only the SVG with it
+    and both without it (2026-10-17). The SVG is well-formed XML (a "--" in
+    a comment makes the browser drop it silently). No page has an
+    "alternate icon" link: the fallback is a plain icon link, as the usual
+    pattern for Safari has it;
   * a page whose icon is drawn by scripts/kvot_icon.py says what to call it
     on the home screen (apple-mobile-web-app-title).
 
@@ -63,15 +68,19 @@ def check(label, got, want=True):
         failures.append(label)
 
 
-def links(html, rel):
-    """The href of every <link> whose rel is exactly `rel`."""
+def link_tags(html, rel):
+    """The attributes of every <link> whose rel is exactly `rel`, in order."""
     out = []
     for tag in re.findall(r'<link\b[^>]*>', html):
-        r = re.search(r'\brel="([^"]*)"', tag)
-        h = re.search(r'\bhref="([^"]*)"', tag)
-        if r and h and r.group(1) == rel:
-            out.append(h.group(1))
+        a = dict(re.findall(r'\b([a-z-]+)="([^"]*)"', tag))
+        if a.get('rel') == rel and 'href' in a:
+            out.append(a)
     return out
+
+
+def links(html, rel):
+    """The href of every <link> whose rel is exactly `rel`."""
+    return [a['href'] for a in link_tags(html, rel)]
 
 
 def local(href):
@@ -98,17 +107,22 @@ for page in pages:
         seen_png[touch[0]] = local(touch[0]).exists() and is_drawing(local(touch[0]), 180)
     if touch:
         check(f'{page}: the touch icon is a 180 x 180 picture of the drawing', seen_png[touch[0]])
-    icons = links(html, 'icon')
-    check(f'{page}: one tab icon', len(icons), 1)
-    if icons and icons[0].endswith('.svg'):
-        svg = local(icons[0])
+    icons = link_tags(html, 'icon')
+    check(f'{page}: no "alternate icon" link', links(html, 'alternate icon'), [])
+    svgs = [a['href'] for a in icons if a['href'].endswith('.svg')]
+    if not svgs:
+        check(f'{page}: one tab icon', len(icons), 1)
+    else:
+        check(f'{page}: two tab icons, the 32 x 32 PNG with its size first and then the SVG',
+              [(a['href'].rsplit('.', 1)[-1], a.get('type'), a.get('sizes')) for a in icons],
+              [('png', 'image/png', '32x32'), ('svg', 'image/svg+xml', None)])
+        png = local(icons[0]['href'])
+        check(f'{page}: the PNG is a 32 x 32 picture of the drawing', png.exists() and is_drawing(png, 32))
         try:
-            ok = ET.parse(svg).getroot().tag.endswith('svg')
+            ok = ET.parse(local(svgs[0])).getroot().tag.endswith('svg')
         except (ET.ParseError, OSError):
             ok = False
-        check(f'{page}: its SVG icon is well-formed', ok)
-        small = links(html, 'alternate icon')
-        check(f'{page}: and has a 32 x 32 PNG beside it', bool(small) and local(small[0]).exists() and is_drawing(local(small[0]), 32))
+        check(f'{page}: the SVG is well-formed', ok)
     if drawn:
         title = re.search(r'<meta name="apple-mobile-web-app-title" content="([^"]+)">', html)
         check(f'{page}: it says what to call it on the home screen', bool(title))
