@@ -99,21 +99,33 @@ soon as it is solved. The chart, the table, the mass-balance audit and every
 export work on it as on a run made in the browser. What needs every state brings
 the whole run over first: **Save → Model with results**, **Keep this run**, and
 an edit worked out over the states (below). The engine keeps one run for each
-page, and one for each scenario run beside the chosen one, the next run of
-each taking its place; it lets go of a scenario that is no longer ticked, of a
-run nobody has asked about for two hours, and of one it held before it was
-restarted: the page then says so where a series is missing, and **Run** makes
-the run again. The Julia engine solves the scenarios run beside the chosen one
-side by side, one to a thread, as the browser solves them on its cores; the
-Python engine solves them one after another.
+page, and one for each scenario run beside the chosen one, the next run of each
+taking its place; it lets go of a scenario that is no longer ticked, of
+everything it held for a page that is closed, of a run nobody has asked about
+for two hours, and of one it held before it was restarted: the page then says so
+where a series is missing, and **Run** makes the run again. The Julia engine
+solves the scenarios run beside the chosen one side by side, one to a thread, as
+the browser solves them on its cores; the Python engine solves them one after
+another.
 
-A probabilistic run comes back whole: the bands, *What drove it* and the
-realisations' exports are worked out in the page from the series it kept. The
-footer says which engine solved a run, and the run log starts with the engine's
-own account of it. **Stop** reaches the engine too: a run stops at its next
-progress report, a probabilistic run at its next realisation — or, where that
-takes more than a couple of seconds, the engine is ended, and started again for
-the next run.
+A probabilistic run stays on the engine too. The engine keeps every realisation
+and sends the page their bands; each question asked of the sample afterwards —
+other percentiles, categories, a distribution, a histogram or a scatter, *What
+drove it*, a realisation in the table, the realisations' exports — asks the
+engine for the part of the sample it reads (one output time across every
+realisation, every realisation of one series, or one realisation of several) and
+is worked out in the page as for a sample made there, to the same numbers. So a
+sample takes no more of the browser's memory than its bands and the values its
+inputs were drawn at: 2,000 realisations of the biosphere example are about 250
+MB in the browser and 5 MB with an engine holding them. **Save → Model with
+results** brings every realisation over to write it. The engine keeps one sample
+for each page, beside its run, the next probabilistic run taking its place, and
+lets it go as it lets a run go — and when the sample is discarded. The footer
+says which engine solved a run, and the run log starts with the engine's own
+account of it. **Stop** reaches the engine too: a run stops at its next progress
+report, a probabilistic run at its next realisation — or, where that takes more
+than a couple of seconds, the engine is ended, and started again for the next
+run.
 
 A tornado's or a sensitivity design's runs are made on the engine, and their
 tables worked out in the page from what comes back, the inputs of every run
@@ -121,12 +133,12 @@ checked against the design first. A calibration searches on the engine, its
 best so far shown as it goes, and dy/dp is integrated there; both engines do
 all of these.
 
-What stays in the browser: what is worked out from a sample already drawn,
-such as *What drove it*; and an edit that changes no state, whose algebra is
-worked out over the run's states, brought over from the engine first. Pressing **Run** after choosing another
-engine solves again on that one. The results agree with the browser's to the
-solver's tolerance, not to the last digit: each engine has arithmetic of its
-own.
+What stays in the browser: the statistics of a sample already drawn, such as
+*What drove it*, worked out from what the engine sends of it; and an edit that
+changes no state, whose algebra is worked out over the run's states, brought
+over from the engine first. Pressing **Run** after choosing another engine
+solves again on that one. The results agree with the browser's to the solver's
+tolerance, not to the last digit: each engine has arithmetic of its own.
 
 Only this page may ask. The server writes a token into the page it serves, and
 a request to an engine has to carry it, come from this machine and name the

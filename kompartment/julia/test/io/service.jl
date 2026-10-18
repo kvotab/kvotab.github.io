@@ -106,6 +106,81 @@ end
     wait(server)
 end
 
+@testset "a kept sample: sent without its series, asked about, let go of" begin
+    bio = read(joinpath(EXAMPLES, "biosphere.json"), String)
+    prob = run_probabilistic(K.from_json(bio), 10; seed=4, threads=1)
+    n, times = prob.iterations, length(prob.t)
+    count = length(prob.outputs) + length(prob.inputs)
+    kept, varied = length(prob.outputs), length(prob.inputs)
+    dir = mktempdir()
+    inp = Pipe()
+    Base.link_pipe!(inp; reader_supports_async=true, writer_supports_async=true)
+    outp = Pipe()
+    Base.link_pipe!(outp; reader_supports_async=true, writer_supports_async=true)
+    server = @async K.serve_stdio(; input=inp.out, output=outp.in)
+    ask(d) = (println(inp.in, K.json_text(d; indent=0)); flush(inp.in))
+    ended(id) = while true
+        e = K.parse_json(readline(outp.out))
+        get(e, "id", "") == id && get(e, "event", "") in ("done", "error") && return e
+    end
+    doubles(name) = reinterpret(Float64, read(joinpath(dir, name)))
+    ask(Dict("op" => "job", "id" => "p1", "kind" => "probabilistic", "model" => bio,
+             "options" => Dict("iterations" => 10, "seed" => 4, "keep" => true, "workers" => 1),
+             "out" => joinpath(dir, "p1.zip")))
+    @test ended("p1")["event"] == "done"
+    light = K._ds_unzip(read(joinpath(dir, "p1.zip")))
+    meta = K.parse_json(String(copy(light["results/sample/meta.json"])))
+    @test meta["onEngine"] === true && !any(k -> occursin("series.", k), keys(light))
+    @test haskey(light, "results/sample/draws.f64") && haskey(light, "results/sample/ran.u8")
+    @test (meta["iterations"], meta["times"], length(meta["outputs"])) == (n, times, count)
+    # Per series: a run per percentile, the mean, the deviation and its count,
+    # and the median's two intervals -- Python's layout.
+    laid_out(bs) = reduce(vcat, [vcat(b["q"]..., b["mean"], b["sd"].sd, Float64.(b["sd"].n), b["med"]["errLo"],
+                                      b["med"]["errHi"], b["med"]["bodyLo"], b["med"]["bodyHi"]) for b in bs])
+    same(a, b) = length(a) == length(b) && reinterpret(UInt64, collect(a)) == reinterpret(UInt64, collect(b))
+    mask = [1, 1, 0, 1, 0, 1, 1, 1, 0, 1]
+    ask(Dict("op" => "bands", "id" => "q1", "run" => "p1", "percentiles" => [0.05, 0.5, 0.95], "mask" => nothing,
+             "out" => joinpath(dir, "q1")))
+    @test ended("q1")["event"] == "done"
+    @test same(doubles("q1"), laid_out(K.bands(prob; percentiles=[0.05, 0.5, 0.95])))
+    ask(Dict("op" => "bands", "id" => "q2", "run" => "p1", "percentiles" => [0.25, 0.75], "mask" => mask,
+             "out" => joinpath(dir, "q2")))
+    @test ended("q2")["event"] == "done"
+    @test same(doubles("q2"), laid_out(K.bands(prob; percentiles=[0.25, 0.5, 0.75], mask)))
+    @test length(doubles("q2")) == 10 * (kept * times + varied)
+    # Series numbered from 0 as the meta lists them: the kept ones, then each varied parameter.
+    ask(Dict("op" => "realisations", "id" => "q3", "run" => "p1", "series" => [1, kept], "out" => joinpath(dir, "q3")))
+    @test ended("q3")["event"] == "done"
+    got = doubles("q3")
+    @test same(got[1:n*times], vec(permutedims(Float64.(prob.values[2]))))
+    @test same(got[n*times+1:end], vec(K._an_matrix(prob, kept + 1)))
+    ask(Dict("op" => "column", "id" => "q4", "run" => "p1", "series" => [0, kept], "at" => 7, "out" => joinpath(dir, "q4")))
+    @test ended("q4")["event"] == "done"
+    @test same(doubles("q4"), vcat(Float64.(prob.values[1][:, 8]), K._an_matrix(prob, kept + 1)[:, 1]))
+    ask(Dict("op" => "realisation", "id" => "q5", "run" => "p1", "series" => [2, kept + 1], "index" => 3,
+             "out" => joinpath(dir, "q5")))
+    @test ended("q5")["event"] == "done"
+    @test same(doubles("q5"), vcat(Float64.(prob.values[3][4, :]), K._an_matrix(prob, kept + 2)[4, :]))
+    # Asked wrongly, or what a run is asked: said so.
+    ask(Dict("op" => "column", "id" => "q6", "run" => "p1", "series" => [count], "at" => 0, "out" => joinpath(dir, "q6")))
+    @test occursin("no series $count", ended("q6")["message"])
+    ask(Dict("op" => "bands", "id" => "q7", "run" => "p1", "percentiles" => [0.5], "mask" => [1, 0], "out" => joinpath(dir, "q7")))
+    @test occursin("2 entries for 10 realisations", ended("q7")["message"])
+    ask(Dict("op" => "series", "id" => "q8", "run" => "p1", "labels" => ["A"], "out" => joinpath(dir, "q8")))
+    @test occursin("'series' is not something", ended("q8")["message"])
+    # The whole sample, series and all.
+    ask(Dict("op" => "archive", "id" => "q9", "run" => "p1", "out" => joinpath(dir, "q9.zip")))
+    @test ended("q9")["event"] == "done"
+    @test haskey(K._ds_unzip(read(joinpath(dir, "q9.zip"))), "results/sample/series.f64")
+    # Let go of, and then said to be gone.
+    ask(Dict("op" => "forget", "id" => "q10", "run" => "p1"))
+    @test ended("q10")["event"] == "done"
+    ask(Dict("op" => "column", "id" => "q11", "run" => "p1", "series" => [0], "at" => 0, "out" => joinpath(dir, "q11")))
+    @test occursin("no longer holds that run", ended("q11")["message"])
+    close(inp.in)
+    wait(server)
+end
+
 @testset "the analyses on the Julia engine" begin
     bio = read(joinpath(EXAMPLES, "biosphere.json"), String)
     decay = read(joinpath(EXAMPLES, "exponential-decay.json"), String)

@@ -9742,7 +9742,7 @@ test('the realisations can be sorted into categories and the displays screened t
 	assert(/const categories = categoriesOf\(project\);/.test(worker), 'the run does not apply the model’s categories');
 	assert(/if \(msg\.type === 'prob-categories'\)/.test(worker), 'categories cannot be changed after the run');
 	assert(/bandsOf\(result, percentiles, mask\)/.test(worker), 'the bands are not drawn over the kept realisations');
-	assert(/ranked\(pool, read, across, r\.iterations, a,\n\t\t\t\t\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
+	assert(/ranked\(pool, read, across, r\.iterations, a,\n\t+\{ most: msg\.most \?\? 20, mask \}\)/.test(worker),
 		'What drove it ignores the screen');
 	assert(/sim\.categories = cats\.map/.test(app), 'the page does not save the categories');
 	assert(/realisations `\n\t\t\t\+ 'shown \(categories\)'/.test(app), 'the legend does not say the bands are screened');
@@ -27795,7 +27795,8 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 	assert(/const results = restoreRun\(project, data\);/.test(worker.slice(worker.indexOf("if (msg.type === 'open-dataset') {"))),
 		'an opened archive and an engine’s are not read the same way');
 	const prob = fn(worker, 'probabilisticOnEngine');
-	assert(/readSample\(entries\)/.test(prob) && /holdSample\(id, sampleResult\(sample\), project\)/.test(prob),
+	assert(/readSample\(entries\)/.test(prob) && /const result = sampleResult\(sample\);/.test(prob)
+		&& /payload = await holdSample\(id, held, project\);/.test(prob),
 		'an engine’s sample is not held as a sample made here');
 	// Algebra over an engine's states still says which engine solved them.
 	assert(/const engine = last\.engine \?\? null;/.test(worker), 'a re-evaluation forgets which engine solved the states');
@@ -27946,10 +27947,235 @@ test('a run an engine holds answers for its series as they are asked for', async
 	// The page: a series the engine could not send leaves the run as it was.
 	assert(/if \(m\.type === 'columns-failed'\) \{ acceptColumnsFailed\(m\); return; \}/.test(app)
 		&& /m\.type === 'columns' \|\| m\.type === 'columns-failed'/.test(app), 'a refused series is not heard');
-	// The server: one held run a page, let go of after two hours unasked about.
-	assert(/older = \[k for k, r in self\.kept\.items\(\) if r\["client"\] == job\.client\]/.test(serve)
-		&& /KEPT_RUN_FOR = 7200\.0/.test(serve) && /\/engine\/runs\/\(\[0-9a-f\]\+\)\/\(series\|forget\)/.test(serve),
+	// The server: one held run a page and one held sample, let go of after two
+	// hours unasked about.
+	assert(/older = \[k for k, r in self\.kept\.items\(\) if r\["client"\] == job\.client and r\["slot"\] == job\.slot\]/.test(serve)
+		&& /KEPT_RUN_FOR = 7200\.0/.test(serve) && /\/engine\/runs\/\(\[0-9a-f\]\+\)\/\(series\|forget\|/.test(serve),
 	'the server does not hold one run a page, or does not answer for it');
+});
+
+test('a sample an engine holds is asked for what each question needs, and answers as one held here', async () => {
+	// A thousand realisations of a hundred series is 320 MB, and the page draws
+	// their bands. An engine keeps the sample it made and sends the times, the
+	// draws and which realisations ran; the worker asks it for the bands, for
+	// every realisation of a series, for one time across them all and for one
+	// realisation, as each question needs them. Asked the same questions, the
+	// sample an engine holds answers as the same sample held here does, to the
+	// last bit. (The engines' side is python/tests/test_service.py, which also
+	// reads the Python engine's answers with this code, and julia/test/io/service.jl.)
+	const D = await import('../src/io/dataset.js');
+	const { zip, unzip } = await import('../src/io/zip.js');
+	const { quantiles, meanOf } = await import('../src/sim/spread.js');
+	const { medianSpread } = await import('../src/sim/probabilistic.js');
+	const { readFileSync } = await import('node:fs');
+	const model = JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8'));
+	const same = (a, b) => a?.length === b?.length && Array.from(a).every((v, i) => Object.is(v, b[i]));
+	const sameDeep = (a, b) => {
+		if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) return same(a, b);
+		if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameDeep(v, b[i]));
+		if (a && typeof a === 'object') {
+			const ka = Object.keys(a).filter((k) => k !== 'id');
+			const kb = Object.keys(b ?? {}).filter((k) => k !== 'id');
+			return ka.length === kb.length && ka.every((k) => sameDeep(a[k], b[k]));
+		}
+		return Object.is(a, b);
+	};
+
+	// The engine, as serve.py and the engine answer: the sample is the one the
+	// worker made here, read back out of what it saves.
+	let ref = null;
+	let light = null;
+	let refuseNext = 0;
+	const asked = [];
+	const sdOf = (values, times, iterations, mean, mask) => {
+		const out = new Float64Array(times);
+		const n = new Int32Array(times);
+		for (let i = 0; i < iterations; i++) {
+			if (mask && !mask[i]) continue;
+			for (let j = 0; j < times; j++) {
+				const v = values[i * times + j];
+				if (!Number.isFinite(v)) continue;
+				const d = v - mean[j];
+				out[j] += d * d;
+				n[j] += 1;
+			}
+		}
+		for (let j = 0; j < times; j++) out[j] = n[j] > 1 ? Math.sqrt(out[j] / (n[j] - 1)) : NaN;
+		return { sd: out, n };
+	};
+	// Laid out as python/kompartment/service.py's notes lay it out.
+	const bandsAnswer = (percentiles, mask) => ref.values.flatMap((v, k) => {
+		const s = ref.flat[k] ? 1 : ref.t.length;
+		const mean = meanOf(v, s, ref.iterations, mask);
+		const sd = sdOf(v, s, ref.iterations, mean, mask);
+		const med = medianSpread(v, s, ref.iterations, 1.959964, mask);
+		return [...quantiles(v, s, ref.iterations, percentiles, mask).map((b) => b.y), mean, sd.sd, Float64Array.from(sd.n),
+			med.errLo, med.errHi, med.bodyLo, med.bodyHi];
+	});
+	const doubles = (arrays) => {
+		const out = new Float64Array(arrays.reduce((n, a) => n + a.length, 0));
+		let at = 0;
+		for (const a of arrays) { out.set(a, at); at += a.length; }
+		return { ok: true, status: 200, arrayBuffer: async () => out.buffer };
+	};
+	const refuse = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
+	const engine = async (path, body) => {
+		if (path === '/engine/jobs') return { ok: true, status: 202, json: async () => ({ id: 'cd34', state: 'queued' }) };
+		if (path === '/engine/jobs/cd34') return { ok: true, status: 200, json: async () => ({ id: 'cd34', state: 'done' }) };
+		if (path === '/engine/jobs/cd34/archive') return { ok: true, status: 200, arrayBuffer: async () => light.slice().buffer };
+		const op = /^\/engine\/runs\/cd34\/(\w+)$/.exec(path)?.[1];
+		if (op === 'forget') return { ok: true, status: 200, json: async () => ({ forgotten: 'cd34' }) };
+		if (refuseNext) {
+			const status = refuseNext;
+			refuseNext = 0;
+			return refuse(status, 'No engine holds that run any more: run it again.');
+		}
+		const stride = (k) => (ref.flat[k] ? 1 : ref.t.length);
+		if (op === 'bands') return doubles(bandsAnswer(body.percentiles, body.mask && Uint8Array.from(body.mask)));
+		if (op === 'realisations') return doubles(body.series.map((k) => ref.values[k]));
+		if (op === 'column') {
+			return doubles(body.series.map((k) => Float64Array.from({ length: ref.iterations },
+				(_, i) => ref.values[k][i * stride(k) + (ref.flat[k] ? 0 : body.at)])));
+		}
+		if (op === 'realisation') {
+			return doubles(body.series.map((k) => ref.values[k].slice(body.index * stride(k), (body.index + 1) * stride(k))));
+		}
+		return refuse(404, `nothing at ${path}`);
+	};
+	// Other tests swap the fetch too, and run beside this one: only this
+	// engine's job is answered here.
+	const was = globalThis.fetch;
+	const mine = async (url, opts = {}) => {
+		const path = String(url);
+		if (path !== '/engine/jobs' && !/^\/engine\/(jobs|runs)\/cd34(\/|$)/.test(path)) return was(url, opts);
+		const body = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+		asked.push({ path, method: opts.method ?? 'GET', body, token: opts.headers?.['X-Kompartment-Token'] });
+		return engine(path, body);
+	};
+	globalThis.fetch = mine;
+	const harness = await simWorker();
+	let got;
+	try {
+		got = await harness.alone(async (ask) => {
+			const first = async (msg) => (await ask(msg)).find((m) => m.type === msg.type || m.type === 'error');
+			const made = await ask({ type: 'probabilistic', id: 81, project: structuredClone(model), iterations: 24, seed: 5 });
+			const here = made.find((m) => m.type === 'probabilistic-done');
+			if (!here) return { made };
+			const outputs = here.payload.outputs;
+			const kept = outputs.map((o, k) => (o.varied ? -1 : k)).filter((k) => k >= 0);
+			const varied = outputs.findIndex((o) => o.varied);
+			// Two series asked about whole, and one only ever a realisation at a time.
+			const [a, b, c] = kept;
+			// The engine's copy of the sample: what the worker saves of it.
+			const saved = await first({ type: 'sample-entries', id: 81, stamp: 'S' });
+			ref = D.sampleResult(D.readSample(new Map(saved.parts.map((e) => [e.name, e.bytes]))));
+			const finals = Array.from({ length: ref.iterations }, (_, i) => ref.values[a][(i + 1) * ref.t.length - 1])
+				.filter(Number.isFinite).sort((x, y) => x - y);
+			const categories = [{ label: 'High', output: outputs[a].label, stat: 'final', op: '>',
+				value: finals[Math.floor(finals.length / 2)], include: false }];
+			const questions = async (id) => ({
+				bands: await first({ type: 'prob-bands', id, percentiles: [0.1, 0.5, 0.9] }),
+				atTime: await first({ type: 'prob-summary', id, index: a, at: 3 }),
+				atPeak: await first({ type: 'prob-summary', id, index: a, at: 'peak' }),
+				ownPeak: await first({ type: 'prob-summary', id, index: a, at: 'max' }),
+				drawn: await first({ type: 'prob-summary', id, index: varied, at: 2 }),
+				hist: await first({ type: 'prob-hist', id, indices: [b, a, varied, a], at: 'peak' }),
+				points: await first({ type: 'prob-points', id, x: varied, ys: [a, b], at: 4 }),
+				drove: await first({ type: 'sensitivity', id, index: a, at: 'peak', family: 'distribution' }),
+				droveOwn: await first({ type: 'sensitivity', id, index: b, at: 'max' }),
+				all: await first({ type: 'prob-matrix', id, indices: [a, varied], want: 'all' }),
+				compact: await first({ type: 'prob-matrix', id, indices: [a, varied], want: 'all', compact: true }),
+				mean: await first({ type: 'prob-matrix', id, indices: [a, varied], want: 'mean' }),
+				// A series asked twice is two arrays, each handed over on its own.
+				one: await first({ type: 'prob-matrix', id, indices: [c, varied, a, c], want: '5' }),
+				screened: await first({ type: 'prob-categories', id, categories }),
+				screenedDrove: await first({ type: 'sensitivity', id, index: a, at: 3 }),
+				entries: await first({ type: 'sample-entries', id, stamp: 'S' }),
+			});
+			const before = await questions(81);
+			// The same sample, held by the engine: its archive without the series.
+			const meta = JSON.parse(new TextDecoder().decode(saved.parts[0].bytes));
+			light = await zip(saved.parts.filter((e) => !/series\.f(32|64)$/.test(e.name)).map((e) => (e.name.endsWith('meta.json')
+				? { name: e.name, bytes: new TextEncoder().encode(JSON.stringify({ ...meta, onEngine: true })) } : e)));
+			const engineRun = { name: 'python', token: 'tok', client: 'page' };
+			const ran = await ask({ type: 'probabilistic', id: 82, project: structuredClone(model), iterations: 24, seed: 5,
+				engine: engineRun });
+			const there = ran.find((m) => m.type === 'probabilistic-done');
+			if (!there) return { made, ran };
+			const start = asked.length;
+			const after = await questions(82);
+			const during = asked.slice(start);
+			// Asked again, a series fetched whole is not fetched again.
+			const again = asked.length;
+			await first({ type: 'prob-summary', id: 82, index: a, at: 'max' });
+			const refetched = asked.slice(again).filter((q) => q.path.endsWith('/realisations')).length;
+			// Gone from the engine: said as a sample let go of is, and let go of here
+			// too -- the next question, even one the series kept here could answer,
+			// is told so as well.
+			refuseNext = 410;
+			const gone = await first({ type: 'prob-hist', id: 82, indices: [c], at: 3 });
+			const after410 = await first({ type: 'prob-summary', id: 82, index: a, at: 3 });
+			// Held again, then thrown away: the engine is told.
+			await ask({ type: 'probabilistic', id: 83, project: structuredClone(model), iterations: 24, seed: 5, engine: engineRun });
+			const told = asked.length;
+			await ask({ type: 'prob-forget' });
+			const forgot = asked.slice(told).some((q) => q.path === '/engine/runs/cd34/forget' && q.method === 'POST');
+			// And replaced by a sample made here: the engine is told then as well.
+			await ask({ type: 'probabilistic', id: 84, project: structuredClone(model), iterations: 24, seed: 5, engine: engineRun });
+			const told2 = asked.length;
+			await ask({ type: 'probabilistic', id: 85, project: structuredClone(model), iterations: 6, seed: 5 });
+			const replaced = asked.slice(told2).some((q) => q.path === '/engine/runs/cd34/forget');
+			await ask({ type: 'prob-forget' });
+			return { made, here, there, kept, varied, before, after, during, refetched, gone, after410, forgot, replaced };
+		});
+	} finally {
+		if (globalThis.fetch === mine) globalThis.fetch = was;
+	}
+	assert(got.there, JSON.stringify((got.ran ?? got.made)?.filter((m) => m.type === 'error')));
+	// The job asked the engine to keep the sample, with the page's token.
+	const job = asked.find((q) => q.path === '/engine/jobs');
+	assert(job?.body.kind === 'probabilistic' && job.body.options.keep === true && job.token === 'tok',
+		`the engine was not asked to keep the sample: ${JSON.stringify(job?.body.options)}`);
+	// What the page is told of it is the same, bands and all.
+	const p = got.here.payload;
+	const q = got.there.payload;
+	assert(q.engine === 'python', 'the payload does not say which engine holds the sample');
+	assert(sameDeep({ ...p, engine: undefined }, { ...q, engine: undefined }), 'what the page is told of the sample differs');
+	for (const [name, x] of Object.entries(got.before)) {
+		const y = got.after[name];
+		assert(x && !x.gone && x.type !== 'error', `${name}, held here: ${JSON.stringify(x)?.slice(0, 200)}`);
+		assert(sameDeep(x, y), `${name} is not answered the same by the engine's sample: ${JSON.stringify(y)?.slice(0, 300)}`);
+	}
+	assert(got.before.screened.screen?.kept < p.iterations, 'the categories screened nothing out');
+	// Each question asked only what it needs: a time is a column, a peak every
+	// realisation of the one series, the bands the engine's own.
+	const ops = got.during.map((x) => x.path.split('/').pop());
+	assert(ops.includes('bands') && ops.includes('column') && ops.includes('realisations') && ops.includes('realisation'),
+		`the questions asked: ${ops.join()}`);
+	const fetchedWhole = new Set(got.during.filter((x) => x.path.endsWith('/realisations')).flatMap((x) => x.body.series));
+	assert(!fetchedWhole.has(got.varied), 'a varied parameter, whose draws are here, was asked of the engine');
+	assert(got.during.filter((x) => x.path.endsWith('/bands')).every((x) => x.body.percentiles.includes(0.5)),
+		'the bands were asked without the median');
+	assert(got.refetched === 0, 'a series fetched whole was fetched again');
+	assert(got.gone?.gone === true && got.after410?.gone === true, 'an engine that let the sample go is not said to have');
+	assert(got.forgot, 'the engine is not told when the sample is thrown away');
+	assert(got.replaced, 'the engine is not told when a sample made here replaces its own');
+
+	// A page that goes lets go of what the engines hold for it -- unless it goes
+	// into the back/forward cache, from which it may come back and ask.
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	assert(/window\.addEventListener\('pagehide', \(ev\) => \{ if \(!ev\.persisted\) forgetEngineClient\(\); \}\);/.test(app)
+		&& /fetch\(`\/engine\/clients\/\$\{encodeURIComponent\(engines\.client\)\}\/forget`/.test(app)
+		&& /r"\/engine\/clients\/\(\[0-9A-Za-z_-\]\+\)\/forget"/.test(serve),
+	'a page that goes leaves its runs and its sample on the engine');
+	// Questions about the sample are answered in the order asked.
+	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
+	for (const type of ['prob-bands', 'prob-categories', 'prob-summary', 'prob-hist', 'prob-points', 'sensitivity',
+		'prob-matrix', 'sample-entries']) {
+		const branch = new RegExp(`if \\(msg\\.type === '${type}'\\) \\{([\\s\\S]*?)\\n\\t\\}`).exec(worker)?.[1] ?? '';
+		assert(/^\s*(\/\/[^\n]*\n\s*)*await inTurn\(async \(\) => \{/.test(branch), `${type} is not answered in turn`);
+	}
 });
 
 test('the analyses go to the engine that has them, and come back as the page’s own', async () => {
@@ -37641,7 +37867,8 @@ test('a scatter pairs the realisations, and its line is fitted to what is drawn'
 		'screened realisations are plotted');
 	// One list of rows for every column, so a point never pairs one
 	// realisation's x with another's y.
-	assert(/const rows = \[\];/.test(points) && /values\[rows\[j\] \* stride \+ a\]/.test(points),
+	assert(/const rows = \[\];/.test(points) && /await held\.sample\.columns\(asked, at\)/.test(points)
+		&& /out\[j\] = column\[rows\[j\]\];/.test(points),
 		'the columns are not taken over the same realisations');
 
 	// The reply carries the sample's id, so it has to be on the list that
@@ -37888,8 +38115,8 @@ test('a sample can be thrown away without touching the model', async () => {
 	// page holds bands, the worker holds the matrix every other question about
 	// the sample is answered from.
 	assert(/postMessage\(\{ type: 'prob-forget' \}\)/.test(drop), 'the worker keeps the realisations');
-	assert(/if \(msg\.type === 'prob-forget'\) \{\n\t\tlastProb = null;/.test(worker),
-		'the worker does not let go of them');
+	assert(/if \(msg\.type === 'prob-forget'\) \{\n\t\tlastProb\?\.sample\.forget\(\);\n\t\tlastProb = null;/.test(worker),
+		'the worker does not let go of them, or the engine holding them is not told');
 	// The model is not touched -- this is about what has been computed, not
 	// about what the model says. It is *read*, for the default the lines go
 	// back to, and that is all.
@@ -38081,7 +38308,8 @@ test('the Table can be any of the runs a sample holds, and the whole matrix of o
 	assert(/askProbMatrices\(want, String\(state\.tableReal\)\)/.test(app),
 		'one realisation cannot be read out of the sample');
 	assert(/askProbMatrices\(\[k\], 'all'\)/.test(app), 'the whole matrix cannot be read');
-	assert(/want === 'mean'/.test(worker) && /timeMajor\(result\.values\[k\]/.test(worker),
+	assert(/want === 'mean'/.test(worker) && /timeMajor\(v, times, iterations\)/.test(worker)
+		&& /await held\.sample\.realisation\(indices, one\)/.test(worker),
 		'the worker cannot answer either');
 
 	// The matrix is time down and realisation across, so a second series would

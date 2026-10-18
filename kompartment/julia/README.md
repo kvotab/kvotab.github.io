@@ -229,10 +229,11 @@ The application's `serve.py` can hand the page's runs to this package instead of
 solving them in the browser. It starts
 `julia --project=julia --threads=auto,1 -e 'using Kompartment; Kompartment.serve_stdio()'`
 once and keeps it; the protocol is the Python package's (`kompartment.service`),
-a run kept for the page and asked about included, and the interactive thread is
-where a cancel is heard while every other thread solves. It runs everything the
-page hands an engine: a run, a probabilistic run, a tornado, a sensitivity
-design's runs, a replayed realisation, a calibration and dy/dp.
+a run or a probabilistic run kept for the page and asked about included, and the
+interactive thread is where a cancel is heard while every other thread solves.
+It runs everything the page hands an engine: a run, a probabilistic run, a
+tornado, a sensitivity design's runs, a replayed realisation, a calibration and
+dy/dp.
 
 ## The built model
 

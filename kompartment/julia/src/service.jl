@@ -18,7 +18,10 @@
 # `local-sensitivity` one integrates dy/dp (`run_sensitivity`); each writes its
 # answer as JSON. A run asked to be kept (`"keep": true`) is held here, its
 # archive without the states, and `series`, `archive` and `forget` ask about it,
-# answered on a task of their own beside the jobs. Each job is a task of its own:
+# answered on a task of their own beside the jobs. A sample asked to be kept is
+# held the same way, its archive without the kept series, and `bands`,
+# `realisations`, `column`, `realisation`, `archive` and `forget` ask about it,
+# answered as Python's are (see its notes). Each job is a task of its own:
 # the engine takes one a thread at once (`concurrent` in `ready`), and the server
 # sends it that many. What this engine does not do it refuses before anything
 # runs (`NotOnThisEngine`), and the page does it itself.
@@ -170,7 +173,11 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                     tell("done" => Int(done), "total" => Int(total))
                 end)
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
-            write(string(job["out"]), sample_archive(prob))
+            # A sample the page asked the engine to keep goes without its series.
+            held = _service_option(options, "keep", false) === true && kept !== nothing &&
+                   tornado in (nothing, false) && gsa in (nothing, false)
+            write(string(job["out"]), sample_archive(prob; series=!held))
+            held && lock(() -> (kept[id] = Dict{String,Any}("sample" => prob)), kept_lock)
         else
             throw(ArgumentError("'$kind' is not a kind of job this engine runs"))
         end
@@ -260,6 +267,11 @@ function _service_query(q::AbstractDict, kept::AbstractDict, kept_lock, say)
         held = lock(() -> get(kept, run_id, nothing), kept_lock)
         held === nothing && throw(ArgumentError("This engine no longer holds that run: it may have been restarted " *
                                                 "since, or the run let go of. Run it again."))
+        if haskey(held, "sample")
+            _service_sample_answer(op, held["sample"], q)
+            say(OrderedDict{String,Any}("id" => id, "event" => "done", "out" => get(q, "out", nothing)))
+            return
+        end
         res = held["results"]
         if op == "series"
             asked = get(q, "labels", nothing)
@@ -273,6 +285,8 @@ function _service_query(q::AbstractDict, kept::AbstractDict, kept_lock, say)
             write(string(q["out"]), collect(reinterpret(UInt8, htol.(data))))
         elseif op == "archive"
             write(string(q["out"]), dataset_archive(res))
+        elseif op in _SERVICE_SAMPLE_QUERIES
+            throw(ArgumentError("That run is not a probabilistic run: it has no realisations to ask about."))
         else
             throw(ArgumentError("'$op' is not something this engine is asked"))
         end
@@ -281,6 +295,57 @@ function _service_query(q::AbstractDict, kept::AbstractDict, kept_lock, say)
         return
     end
     say(OrderedDict{String,Any}("id" => id, "event" => "done", "out" => get(q, "out", nothing)))
+end
+
+"""What a kept sample is asked, besides `archive` and `forget`."""
+const _SERVICE_SAMPLE_QUERIES = ("bands", "realisations", "column", "realisation")
+
+"""
+A question about a kept sample, its answer written to `q["out"]` as
+little-endian doubles, laid out as Python's are: a series numbered from 0 as
+the sample's meta lists them, the kept series and then each varied parameter.
+"""
+function _service_sample_answer(op, prob::ProbabilisticResults, q::AbstractDict)
+    if op == "archive"
+        write(string(q["out"]), sample_archive(prob))
+        return
+    end
+    op in _SERVICE_SAMPLE_QUERIES ||
+        throw(ArgumentError("'$op' is not something this engine is asked of a probabilistic run"))
+    n = prob.iterations
+    count = _an_count(prob)
+    parts = Vector{Float64}[]
+    if op == "bands"
+        mask = get(q, "mask", nothing)
+        mask === nothing || length(mask) == n ||
+            throw(ArgumentError("The mask has $(length(mask)) entries for $n realisations."))
+        for band in bands(prob; percentiles=get(q, "percentiles", nothing), mask)
+            append!(parts, band["q"])
+            med = band["med"]
+            push!(parts, band["mean"], band["sd"].sd, Float64.(band["sd"].n), med["errLo"], med["errHi"],
+                  med["bodyLo"], med["bodyHi"])
+        end
+    else
+        asked = something(get(q, "series", nothing), Any[])
+        for k in asked
+            (k isa Integer && !(k isa Bool) && 0 <= k < count) ||
+                throw(ArgumentError("The probabilistic run has no series $(repr(k)): it has $count, from 0."))
+        end
+        for k in asked
+            # Realisations down, the times (one for a varied parameter) across, in
+            # the precision they are held in until what was asked is taken out.
+            M = k < length(prob.outputs) ? prob.values[k+1] : _an_matrix(prob, k + 1)
+            if op == "realisations"
+                push!(parts, Float64.(vec(permutedims(M))))
+            elseif op == "column"
+                push!(parts, Float64.(M[:, clamp(Int(something(get(q, "at", nothing), 0)), 0, size(M, 2) - 1)+1]))
+            else
+                push!(parts, Float64.(M[clamp(Int(something(get(q, "index", nothing), 0)), 0, n - 1)+1, :]))
+            end
+        end
+    end
+    data = isempty(parts) ? Float64[] : reduce(vcat, parts)
+    write(string(q["out"]), collect(reinterpret(UInt8, htol.(data))))
 end
 
 """
@@ -302,7 +367,8 @@ function serve_stdio(; input::IO=stdin, output::IO=stdout)
     queries = Channel{Any}(Inf)
     cancelled = Set{String}()
     cancel_lock = ReentrantLock()
-    # The runs kept for their pages to ask about, by job id.
+    # The runs kept for their pages to ask about, by job id: a run's results,
+    # or a probabilistic run's sample.
     kept = Dict{String,Any}()
     kept_lock = ReentrantLock()
     reader = () -> begin
@@ -320,7 +386,7 @@ function serve_stdio(; input::IO=stdin, output::IO=stdout)
                     lock(() -> push!(cancelled, string(get(msg, "id", ""))), cancel_lock)
                 elseif op == "job"
                     put!(jobs, msg)
-                elseif op in ("series", "archive", "forget")
+                elseif op in ("series", "archive", "forget") || op in _SERVICE_SAMPLE_QUERIES
                     put!(queries, msg)
                 end
             end

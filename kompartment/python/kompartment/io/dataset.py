@@ -798,7 +798,7 @@ def _plain_only(v: Any) -> Any:
     return _plain(v)
 
 
-def sample_entries(result: Any, *, stamp: Optional[str] = None) -> List[Dict[str, Any]]:
+def sample_entries(result: Any, *, stamp: Optional[str] = None, series: bool = True) -> List[Dict[str, Any]]:
     """A probabilistic run as the entries of ``results/sample/`` (the
     application's ``sampleEntries``): what the page reads back as the sample
     the run was, in the precision it was held in.
@@ -807,7 +807,12 @@ def sample_entries(result: Any, *, stamp: Optional[str] = None) -> List[Dict[str
     The varied parameters are put beside the kept series first, as the page puts
     them (:func:`kompartment.engine.analysis.with_inputs`, which is idempotent):
     only the kept series are written as series, and a varied one comes back
-    from its draws."""
+    from its draws.
+
+    ``series=False`` leaves the kept series out, for a sample the local server's
+    engine holds and answers for (``onEngine`` in the meta): the page asks for
+    what it shows as it shows it, and holds the draws, the times and which
+    realisations ran."""
     from ..engine.analysis import with_inputs
     result = with_inputs(result)
     n = int(result.iterations)
@@ -818,8 +823,11 @@ def sample_entries(result: Any, *, stamp: Optional[str] = None) -> List[Dict[str
     single = any(np.asarray(result.values[k]).dtype == np.float32 for k in kept)
     precision = 'float32' if single else 'double'
     held = '<f4' if single else '<f8'
-    series = (np.concatenate([np.asarray(result.values[k], dtype=held).reshape(-1)[:each] for k in kept])
-              if kept else np.zeros(0, dtype=held))
+
+    def held_series() -> np.ndarray:
+        return (np.concatenate([np.asarray(result.values[k], dtype=held).reshape(-1)[:each] for k in kept])
+                if kept else np.zeros(0, dtype=held))
+
     draws = (np.concatenate([np.asarray(s, dtype='<f8').reshape(-1)[:n] for s in result.samples])
              if len(result.samples) else np.zeros(0, dtype='<f8'))
     ran = (np.ones(n, dtype=np.uint8) if result.ran is None
@@ -838,26 +846,30 @@ def sample_entries(result: Any, *, stamp: Optional[str] = None) -> List[Dict[str
         'plan': result.plan,
         'stats': result.stats or {},
     }
+    if not series:
+        meta['onEngine'] = True
     return [
         {'name': _SAMPLE_META, 'bytes': _utf8(dumps(_plain_only(meta), 1))},
         {'name': _SAMPLE_T, 'bytes': t.tobytes()},
-        {'name': f"{SAMPLE_DIR}series.{'f32' if single else 'f64'}", 'bytes': np.ascontiguousarray(series).tobytes()},
+        *([{'name': f"{SAMPLE_DIR}series.{'f32' if single else 'f64'}",
+            'bytes': np.ascontiguousarray(held_series()).tobytes()}] if series else []),
         {'name': _SAMPLE_DRAWS, 'bytes': np.ascontiguousarray(draws).tobytes()},
         {'name': _SAMPLE_RAN, 'bytes': ran.tobytes()},
     ]
 
 
 def sample_archive(result: Any, *, project: Any, inner: Optional[str] = None, stamp: Any = _DEFAULT,
-                   compress: bool = True, modified: Any = None) -> bytes:
+                   compress: bool = True, modified: Any = None, series: bool = True) -> bytes:
     """The model and a probabilistic run of it, as one archive: the model at
     the root, the sample under ``results/sample/``. The page reads the sample
     out of it (``readSample``) and holds it as the run it is; the local
-    server's engines hand a probabilistic run back this way."""
+    server's engines hand a probabilistic run back this way -- without its
+    series (``series=False``) when the engine holds the sample."""
     raw = _project_dict(project)
     name = f"{slug(raw.get('name'))}.json" if inner is None else inner
     if stamp is _DEFAULT:
         stamp = _iso_now()
-    entries = sample_entries(result, stamp=stamp)
+    entries = sample_entries(result, stamp=stamp, series=series)
     return _zip([(name, _utf8(dumps(raw, 2))), *((e['name'], e['bytes']) for e in entries)],
                 modified=modified, compress=compress)
 

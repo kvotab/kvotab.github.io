@@ -49,6 +49,7 @@ import {
 } from '../io/dataset.js';
 import { unzip } from '../io/zip.js';
 import { EngineResults } from './engine-results.js';
+import { EngineSample, columnOf, rowOf } from './engine-sample.js';
 import {
 	planSplit, partModel, assembleParts, stateKeys, wholeSolveMs, buildPart, binJobs, partWorkerCap, codeChars,
 	wholeLayers,
@@ -84,8 +85,42 @@ function systemForJacobian(project, rev) {
 	return system;
 }
 
-/** The last probabilistic run, so its sample can be asked about later. */
+/**
+ * The last probabilistic run, so its sample can be asked about later: `sample`
+ * answers for its realisations, held here (`LocalSample`) or by an engine on
+ * this machine (./engine-sample.js), and `result` is what is held here of it.
+ */
 let lastProb = null;
+
+/**
+ * The questions about the sample, answered one after another in the order they
+ * came. A sample an engine holds answers over the network, and a question
+ * waiting on it would otherwise let the next one past -- the histogram of a
+ * time the reader has already moved off arriving after the one they moved to.
+ */
+let sampleTurn = Promise.resolve();
+
+function inTurn(job) {
+	const next = sampleTurn.then(job);
+	sampleTurn = next.catch(() => {});
+	return next;
+}
+
+/**
+ * A question about the sample that could not be answered: `gone` (or `refused`,
+ * for a reply that says so its own way) where the engine holding the sample has
+ * let it go -- and it is let go of here too -- and an error otherwise.
+ */
+function sampleFailed(type, msg, e, held, refused = { gone: true }) {
+	if (e?.gone) {
+		if (lastProb === held) lastProb = null;
+		self.postMessage({ type, id: msg.id, ...refused });
+		return;
+	}
+	self.postMessage({
+		type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null, hint: e.hint ?? null,
+	});
+}
 
 /** The last tornado, so its table can be read for another output. */
 let lastTornado = null;
@@ -684,27 +719,103 @@ function kept(mask, iterations) {
 }
 
 /**
+ * A sample held here, asked what an engine's is asked (./engine-sample.js), so
+ * that every question below is written once for both. A series is the array
+ * the run filled, never a copy; a column or a realisation is a new array.
+ */
+class LocalSample {
+	constructor(result) { this.result = result; }
+
+	get onEngine() { return false; }
+
+	async series(ks) { return ks.map((k) => this.result.values[k]); }
+
+	async columns(ks, at) {
+		const r = this.result;
+		return ks.map((k) => columnOf(r.values[k], strideOf(r, k), r.iterations, timeIn(r, k, at)));
+	}
+
+	async realisation(ks, i) {
+		const r = this.result;
+		return ks.map((k) => rowOf(r.values[k], strideOf(r, k), i));
+	}
+
+	async bands(percentiles, mask) {
+		const { result } = this;
+		return bandsOf(result, percentiles, mask);
+	}
+
+	// Copied out of the arrays the sample is held in, so they can be handed
+	// over and the sample stays here to be asked about.
+	async entries({ stamp = null } = {}) { return sampleEntries(this.result, { stamp }); }
+
+	forget() {}
+}
+
+/**
+ * The realisations sorted into categories (`classify`), the series the
+ * categories read asked of the sample first -- a few, where an engine holds it.
+ */
+async function sortInto(categories, sample) {
+	const r = sample.result;
+	const ks = [...new Set(categories.map((c) => r.outputs.findIndex((o) => o.label === c.output)))]
+		.filter((k) => k >= 0);
+	const got = await sample.series(ks);
+	const values = new Array(r.outputs.length).fill(null);
+	ks.forEach((k, j) => { values[k] = got[j]; });
+	return classify(categories, { ...r, values });
+}
+
+/** What one batch of whole series may come to, asked of an engine at once. */
+const SERIES_BATCH = 64 * 1048576;
+
+/** The series `ks`, in order, in batches of about `SERIES_BATCH` as doubles. */
+function batchesOf(result, ks) {
+	const out = [];
+	let batch = [];
+	let bytes = 0;
+	for (const k of ks) {
+		const size = result.iterations * strideOf(result, k) * 8;
+		if (batch.length && bytes + size > SERIES_BATCH) {
+			out.push(batch);
+			batch = [];
+			bytes = 0;
+		}
+		batch.push(k);
+		bytes += size;
+	}
+	if (batch.length) out.push(batch);
+	return out;
+}
+
+/**
  * A sample, as the one this worker answers questions about, and what the page
  * is told of it: the bands, not the matrix.
  *
  * The categories the model carries are applied at once, so a run lands already
  * sorted; the mask they make is what every later question -- bands,
- * sensitivity, summary -- is asked over. The same for a sample just run and
- * one read back out of a file, which is what makes the two the same thing on
- * the page. `keep` false describes it without holding it: a run beside wants
- * the bands and nothing else.
+ * sensitivity, summary -- is asked over. The same for a sample just run, one
+ * an engine holds and one read back out of a file, which is what makes them the
+ * same thing on the page. `keep` false describes it without holding it: a run
+ * beside wants the bands and nothing else. The sample held before, where an
+ * engine holds it, is let go of there.
  */
-function holdSample(id, result, project, { keep = true } = {}) {
+async function holdSample(id, sample, project, { keep = true } = {}) {
+	const { result } = sample;
 	const percentiles = percentilesFor(project?.simulation?.percentiles);
 	const categories = categoriesOf(project);
-	const sorted = categories.length ? classify(categories, result) : null;
+	const sorted = categories.length ? await sortInto(categories, sample) : null;
 	const mask = sorted ? includeMask(categories, sorted.member) : null;
-	if (keep) lastProb = { id, result, percentiles, categories, member: sorted?.member ?? null, mask };
+	const bands = await sample.bands(percentiles, mask);
+	if (keep) {
+		if (lastProb && lastProb.sample !== sample) lastProb.sample.forget();
+		lastProb = { id, result, sample, percentiles, categories, member: sorted?.member ?? null, mask };
+	}
 	return {
 		t: result.t,
 		quantiles: percentiles,
 		outputs: describeOutputs(result),
-		bands: bandsOf(result, percentiles, mask),
+		bands,
 		iterations: result.iterations,
 		// What the realisations are held in, for what saving them would cost.
 		precision: result.precision ?? 'double',
@@ -1011,10 +1122,14 @@ async function sensitivityOnEngine(msg) {
 	};
 }
 
-/** A probabilistic run on an engine, held as one made here. */
+/**
+ * A probabilistic run on an engine, held as one made here -- by the engine,
+ * which keeps the realisations and answers for them as they are asked for (see
+ * ./engine-sample.js). An engine that sends the series anyway is held here.
+ */
 async function probabilisticOnEngine(msg) {
 	const { id, project, engine } = msg;
-	const { entries } = await engineArchive(msg, 'probabilistic', {
+	const { entries, job } = await engineArchive(msg, 'probabilistic', {
 		iterations: msg.iterations,
 		seed: msg.seed,
 		latin: msg.latin !== false,
@@ -1024,11 +1139,21 @@ async function probabilisticOnEngine(msg) {
 		// The reader's own number of cores, where they chose one; otherwise
 		// the engine's.
 		workers: Number.isFinite(msg.cores) ? msg.cores : null,
+		keep: true,
 	});
-	const sample = readSample(entries);
-	if (!sample) throw engineFault(engine, 'sent back no sample');
-	self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
-	const payload = holdSample(id, sampleResult(sample), project);
+	let payload;
+	try {
+		const sample = readSample(entries);
+		if (!sample) throw engineFault(engine, 'sent back no sample');
+		self.postMessage({ type: 'loading', id, stage: 'engine-reading', detail: engine.name });
+		const result = sampleResult(sample);
+		const held = sample.meta.onEngine ? new EngineSample(result, { engine, job }) : new LocalSample(result);
+		payload = await holdSample(id, held, project);
+	} catch (e) {
+		// Not held here, so not to be held there either.
+		new EngineSample(null, { engine, job }).forget();
+		throw e;
+	}
 	self.postMessage({ type: 'probabilistic-done', id, payload: { ...payload, engine: engine.name } });
 }
 
@@ -1549,7 +1674,7 @@ self.onmessage = async (ev) => {
 			self.postMessage({
 				type: 'probabilistic-done',
 				id,
-				payload: holdSample(id, result, project),
+				payload: await holdSample(id, new LocalSample(result), project),
 			});
 		} catch (e) {
 			// A Stop is not a fault. `closePool` rejects the slices that are
@@ -1566,22 +1691,28 @@ self.onmessage = async (ev) => {
 	}
 
 	// The bands again, at other percentiles or over other categories. Cheap:
-	// a sort per time per series over a matrix that is already here.
+	// a sort per time per series over a matrix that is already here -- or a
+	// question to the engine that holds it, which does the same there.
 	if (msg.type === 'prob-bands') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-bands', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			if (msg.percentiles) lastProb.percentiles = percentilesFor(msg.percentiles);
-			self.postMessage({
-				type: 'prob-bands', id: msg.id,
-				quantiles: lastProb.percentiles,
-				bands: bandsOf(lastProb.result, lastProb.percentiles, lastProb.mask),
-			});
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-bands', id: msg.id, gone: true });
+				return;
+			}
+			const held = lastProb;
+			try {
+				const percentiles = msg.percentiles ? percentilesFor(msg.percentiles) : held.percentiles;
+				const bands = await held.sample.bands(percentiles, held.mask);
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-bands', id: msg.id, gone: true });
+					return;
+				}
+				held.percentiles = percentiles;
+				self.postMessage({ type: 'prob-bands', id: msg.id, quantiles: percentiles, bands });
+			} catch (e) {
+				sampleFailed('prob-bands', msg, e, held);
+			}
+		});
 		return;
 	}
 
@@ -1589,7 +1720,9 @@ self.onmessage = async (ev) => {
 	// thing this worker keeps between runs: dropping the reference here is
 	// what actually returns the memory, since the page's own copy is only the
 	// bands and every question about the realisations is answered from here.
+	// An engine holding them is told it may let go of them too.
 	if (msg.type === 'prob-forget') {
+		lastProb?.sample.forget();
 		lastProb = null;
 		return;
 	}
@@ -1597,29 +1730,38 @@ self.onmessage = async (ev) => {
 	// The realisations sorted into categories, and everything redrawn over
 	// the ones that are kept. See ../domain/categories.js.
 	if (msg.type === 'prob-categories') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-categories', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			const categories = categoriesOf({ simulation: { categories: msg.categories } });
-			const { result } = lastProb;
-			const sorted = categories.length ? classify(categories, result) : null;
-			lastProb.categories = categories;
-			lastProb.member = sorted?.member ?? null;
-			lastProb.mask = sorted ? includeMask(categories, sorted.member) : null;
-			self.postMessage({
-				type: 'prob-categories', id: msg.id,
-				screen: sorted ? {
-					counts: sorted.counts, missing: sorted.missing,
-					kept: kept(lastProb.mask, result.iterations),
-				} : null,
-				quantiles: lastProb.percentiles,
-				bands: bandsOf(result, lastProb.percentiles, lastProb.mask),
-			});
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-categories', id: msg.id, gone: true });
+				return;
+			}
+			const held = lastProb;
+			try {
+				const categories = categoriesOf({ simulation: { categories: msg.categories } });
+				const { result } = held;
+				const sorted = categories.length ? await sortInto(categories, held.sample) : null;
+				const mask = sorted ? includeMask(categories, sorted.member) : null;
+				const bands = await held.sample.bands(held.percentiles, mask);
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-categories', id: msg.id, gone: true });
+					return;
+				}
+				held.categories = categories;
+				held.member = sorted?.member ?? null;
+				held.mask = mask;
+				self.postMessage({
+					type: 'prob-categories', id: msg.id,
+					screen: sorted ? {
+						counts: sorted.counts, missing: sorted.missing,
+						kept: kept(mask, result.iterations),
+					} : null,
+					quantiles: held.percentiles,
+					bands,
+				});
+			} catch (e) {
+				sampleFailed('prob-categories', msg, e, held);
+			}
+		});
 		return;
 	}
 
@@ -1627,51 +1769,63 @@ self.onmessage = async (ev) => {
 	// page can answer value-to-probability and back without asking again, and
 	// the summary statistics over it. See ../domain/distribution.js.
 	if (msg.type === 'prob-summary') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-summary', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			const { result, mask } = lastProb;
-			const k = Number(msg.index);
-			const values = result.values[k];
-			if (!values) return;
-			const times = result.t.length;
-			const stride = strideOf(result, k);
-			// The same three questions as What drove it: a time, where the
-			// output peaks on average (`peak`), or each realisation's own peak
-			// (`max`), which is no one time -- `at` is null then, and `peaks`
-			// says when they fell.
-			let at = null;
-			let peaks = null;
-			let sorted;
-			if (msg.at === 'max') {
-				const found = ownPeaks(values, stride, result.iterations, mask);
-				sorted = sortedColumn(found.max, 1, result.iterations, 0);
-				if (stride > 1) peaks = peakTimes(result.t, found.when);
-			} else {
-				at = msg.at === 'peak'
-					? peakTime(values, stride, result.iterations, mask)
-					: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-				sorted = sortedColumn(values, stride, result.iterations, timeIn(result, k, at), mask);
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-summary', id: msg.id, gone: true });
+				return;
 			}
-			const column = Float64Array.from(sorted);
-			// A varied parameter carries the distribution it was drawn from,
-			// so the dialog can lay that curve over the histogram. `screened`
-			// says the categories have narrowed the realisations, which a
-			// sample need not follow the curve through.
-			const from = result.drawnFrom?.[k] ?? -1;
-			self.postMessage({
-				type: 'prob-summary', id: msg.id, index: k, at, peaks, t: result.t,
-				summary: describeSample(sorted),
-				column,
-				of: result.iterations,
-				spec: from >= 0 ? result.plan[from]?.spec ?? null : null,
-				screened: !!mask,
-			}, [column.buffer]);
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+			const held = lastProb;
+			try {
+				const { result, mask } = held;
+				const k = Number(msg.index);
+				if (!result.outputs[k]) return;
+				const times = result.t.length;
+				const stride = strideOf(result, k);
+				// The same three questions as What drove it: a time, where the
+				// output peaks on average (`peak`), or each realisation's own peak
+				// (`max`), which is no one time -- `at` is null then, and `peaks`
+				// says when they fell. The two peaks read every realisation's
+				// curve; a time reads one column.
+				let at = null;
+				let peaks = null;
+				let sorted;
+				if (msg.at === 'max') {
+					const [values] = await held.sample.series([k]);
+					const found = ownPeaks(values, stride, result.iterations, mask);
+					sorted = sortedColumn(found.max, 1, result.iterations, 0);
+					if (stride > 1) peaks = peakTimes(result.t, found.when);
+				} else {
+					if (msg.at === 'peak') {
+						const [values] = await held.sample.series([k]);
+						at = peakTime(values, stride, result.iterations, mask);
+					} else {
+						at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+					}
+					const [column] = await held.sample.columns([k], at);
+					sorted = sortedColumn(column, 1, result.iterations, 0, mask);
+				}
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-summary', id: msg.id, gone: true });
+					return;
+				}
+				const column = Float64Array.from(sorted);
+				// A varied parameter carries the distribution it was drawn from,
+				// so the dialog can lay that curve over the histogram. `screened`
+				// says the categories have narrowed the realisations, which a
+				// sample need not follow the curve through.
+				const from = result.drawnFrom?.[k] ?? -1;
+				self.postMessage({
+					type: 'prob-summary', id: msg.id, index: k, at, peaks, t: result.t,
+					summary: describeSample(sorted),
+					column,
+					of: result.iterations,
+					spec: from >= 0 ? result.plan[from]?.spec ?? null : null,
+					screened: !!mask,
+				}, [column.buffer]);
+			} catch (e) {
+				sampleFailed('prob-summary', msg, e, held);
+			}
+		});
 		return;
 	}
 
@@ -1685,44 +1839,55 @@ self.onmessage = async (ev) => {
 	// twelve columns of a thousand realisations is 96 kB of numbers nothing on
 	// the page would read.
 	if (msg.type === 'prob-hist') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-hist', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			const { result, mask } = lastProb;
-			const times = result.t.length;
-			// "At the peak" is the peak of a curve, and a varied parameter has
-			// none: it is the first series asked about that has one.
-			const curve = (msg.indices ?? [0]).map(Number)
-				.find((k) => result.values[k] && !result.flat?.[k]);
-			const at = msg.at === 'peak'
-				? (curve === undefined ? times - 1
-					: peakTime(result.values[curve], times, result.iterations, mask))
-				: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			const items = [];
-			for (const raw of msg.indices ?? []) {
-				const k = Number(raw);
-				const values = result.values[k];
-				if (!values) continue;
-				const sorted = sortedColumn(values, strideOf(result, k), result.iterations,
-					timeIn(result, k, at), mask);
-				items.push({
-					index: k,
-					summary: describeSample(sorted),
-					// How many bins and what they are spaced by are the
-					// reader's, not this function's: the shape a sample
-					// appears to have depends on both, and neither can be
-					// guessed well for every output at once.
-					histogram: histogram(sorted, msg.bins ?? null, msg.scale ?? 'auto'),
-				});
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-hist', id: msg.id, gone: true });
+				return;
 			}
-			self.postMessage({
-				type: 'prob-hist', id: msg.id, at, t: result.t, items, of: result.iterations,
-			});
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+			const held = lastProb;
+			try {
+				const { result, mask } = held;
+				const times = result.t.length;
+				// "At the peak" is the peak of a curve, and a varied parameter has
+				// none: it is the first series asked about that has one.
+				const curve = (msg.indices ?? [0]).map(Number)
+					.find((k) => result.outputs[k] && !result.flat?.[k]);
+				let at;
+				if (msg.at === 'peak') {
+					if (curve === undefined) {
+						at = times - 1;
+					} else {
+						const [values] = await held.sample.series([curve]);
+						at = peakTime(values, times, result.iterations, mask);
+					}
+				} else {
+					at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+				}
+				const ks = (msg.indices ?? []).map(Number).filter((k) => result.outputs[k]);
+				const columns = await held.sample.columns(ks, at);
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-hist', id: msg.id, gone: true });
+					return;
+				}
+				const items = ks.map((k, j) => {
+					const sorted = sortedColumn(columns[j], 1, result.iterations, 0, mask);
+					return {
+						index: k,
+						summary: describeSample(sorted),
+						// How many bins and what they are spaced by are the
+						// reader's, not this function's: the shape a sample
+						// appears to have depends on both, and neither can be
+						// guessed well for every output at once.
+						histogram: histogram(sorted, msg.bins ?? null, msg.scale ?? 'auto'),
+					};
+				});
+				self.postMessage({
+					type: 'prob-hist', id: msg.id, at, t: result.t, items, of: result.iterations,
+				});
+			} catch (e) {
+				sampleFailed('prob-hist', msg, e, held);
+			}
+		});
 		return;
 	}
 
@@ -1735,49 +1900,56 @@ self.onmessage = async (ev) => {
 	// being looked at. So this sends them in realisation order, screened the
 	// same way everything else is, and the page pairs them by position.
 	if (msg.type === 'prob-points') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-points', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			const { result, mask } = lastProb;
-			const times = result.t.length;
-			const at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			// Which realisations every column agrees on, once: a point needs
-			// both halves, so a realisation missing either is missing from all
-			// of the series rather than from some.
-			const rows = [];
-			for (let i = 0; i < result.iterations; i++) {
-				if (mask && !mask[i]) continue;
-				rows.push(i);
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-points', id: msg.id, gone: true });
+				return;
 			}
-			const take = (raw) => {
-				const k = Number(raw);
-				const values = result.values[k];
-				if (!values) return null;
-				const stride = strideOf(result, k);
-				const a = timeIn(result, k, at);
-				const out = new Float64Array(rows.length);
-				for (let j = 0; j < rows.length; j++) out[j] = values[rows[j] * stride + a];
-				return out;
-			};
-			const x = take(msg.x);
-			if (!x) { self.postMessage({ type: 'prob-points', id: msg.id, gone: true }); return; }
-			const ys = [];
-			const move = [x.buffer];
-			for (const k of msg.ys ?? []) {
-				const v = take(k);
-				if (!v) continue;
-				ys.push({ index: Number(k), values: v });
-				move.push(v.buffer);
+			const held = lastProb;
+			try {
+				const { result, mask } = held;
+				const times = result.t.length;
+				const at = Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+				// Which realisations every column agrees on, once: a point needs
+				// both halves, so a realisation missing either is missing from all
+				// of the series rather than from some.
+				const rows = [];
+				for (let i = 0; i < result.iterations; i++) {
+					if (mask && !mask[i]) continue;
+					rows.push(i);
+				}
+				const asked = [...new Set([msg.x, ...(msg.ys ?? [])].map(Number))].filter((k) => result.outputs[k]);
+				const got = new Map();
+				(await held.sample.columns(asked, at)).forEach((column, j) => got.set(asked[j], column));
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-points', id: msg.id, gone: true });
+					return;
+				}
+				const take = (raw) => {
+					const column = got.get(Number(raw));
+					if (!column) return null;
+					const out = new Float64Array(rows.length);
+					for (let j = 0; j < rows.length; j++) out[j] = column[rows[j]];
+					return out;
+				};
+				const x = take(msg.x);
+				if (!x) { self.postMessage({ type: 'prob-points', id: msg.id, gone: true }); return; }
+				const ys = [];
+				const move = [x.buffer];
+				for (const k of msg.ys ?? []) {
+					const v = take(k);
+					if (!v) continue;
+					ys.push({ index: Number(k), values: v });
+					move.push(v.buffer);
+				}
+				self.postMessage({
+					type: 'prob-points', id: msg.id, at, t: result.t,
+					x: { index: Number(msg.x), values: x }, ys, of: result.iterations,
+				}, move);
+			} catch (e) {
+				sampleFailed('prob-points', msg, e, held);
 			}
-			self.postMessage({
-				type: 'prob-points', id: msg.id, at, t: result.t,
-				x: { index: Number(msg.x), values: x }, ys, of: result.iterations,
-			}, move);
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+		});
 		return;
 	}
 
@@ -2109,112 +2281,121 @@ self.onmessage = async (ev) => {
 		// know would never come, and the button that asked did nothing at
 		// all -- the same shape as the export that used to sit on a
 		// `columns` batch nobody was going to send.
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'sensitivity', id: msg.id, gone: true });
-			return;
-		}
-		try {
-			const r = lastProb.result;
-			const k = Number(msg.index);
-			const values = r.values[k];
-			if (!values) return;
-			const times = r.t.length;
-			// A varied parameter is read at its one time, and its curves are
-			// that one number across the times. The page does not ask about
-			// one -- they are not in the dialog's list -- but a stale index can.
-			const stride = strideOf(r, k);
-			const { mask } = lastProb;
-			// `at: 'peak'` is "wherever this output is largest on average",
-			// which is the time a reader means by "at the peak" and could not
-			// pick out of a list of four hundred. Worked out here because the
-			// matrix is here: the mean over the realisations at each time, and
-			// the time that maximises it.
-			//
-			// `at: 'max'` is each realisation's own peak instead: not a time of
-			// the matrix at all but a column of its own, one number per
-			// realisation, which every measure below reads in place of a time's
-			// column. `at` is then null, and `peaks` says when they fell.
-			const own = msg.at === 'max';
-			const at = own ? null
-				: msg.at === 'peak'
-					? peakTime(values, stride, r.iterations, mask)
-					: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
-			// What the table reads: `read[i * across + a]` for realisation i.
-			let read = values;
-			let across = stride;
-			let a = own ? 0 : timeIn(r, k, at);
-			let peaks = null;
-			if (own) {
-				const found = ownPeaks(values, stride, r.iterations, mask);
-				read = found.max;
-				across = 1;
-				a = 0;
-				// A varied parameter is one number, and "when" it peaks means nothing.
-				if (stride > 1) peaks = peakTimes(r.t, found.when);
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'sensitivity', id: msg.id, gone: true });
+				return;
 			}
-			// Which sampled inputs the analysis is over: those the reader chose,
-			// or all of them. The table ranks only these, the regression is
-			// fitted to only these, and the distribution measures are of these.
-			// `use[j]` is the sample column of the j-th, and the rows keep the
-			// sample's own numbering.
-			const use = chosenInputs(msg.inputs, r.samples.length);
-			const pool = use.map((c) => r.samples[c]);
-			const rows = ranked(pool, read, across, r.iterations, a,
-				{ most: msg.most ?? 20, mask }).map((row) => ({ ...row, k: use[row.k] }));
-			const posOf = new Map(use.map((c, j) => [c, j]));
-			// The over-time shape for the few that matter, which is the chart
-			// Ecolego draws: an input that governs the first century and not
-			// the next ten thousand years is a thing one number cannot say.
-			const curves = rows.slice(0, 6).map((row) => ({
-				k: row.k,
-				y: spread(overTime(r.samples[row.k], values, stride, r.iterations, { mask }), times),
-			}));
-			// The regression family and the first-order index, at this time.
-			// One inverse of a (K+1)-wide matrix; on the largest sample here
-			// (617 inputs) that is under a second, and it is done for the time
-			// on screen rather than for all of them. Past a few thousand
-			// inputs it is declined rather than attempted.
-			let measures = null;
-			const translate = TRANSLATIONS.has(msg.translate) ? msg.translate : 'none';
-			if (pool.length <= 3000 && pool.length) {
-				const y = new Float64Array(r.iterations);
-				for (let i = 0; i < r.iterations; i++) y[i] = read[i * across + a];
-				const reg = regressionMeasures(pool, y, { translate, mask });
-				measures = {
-					ok: reg.ok, used: reg.used, r2: reg.r2, translate,
-					dropped: reg.dropped ?? 0,
-					src: rows.map((row) => reg.src[posOf.get(row.k)]),
-					b: rows.map((row) => reg.b[posOf.get(row.k)]),
-					pcc: rows.map((row) => reg.pcc[posOf.get(row.k)]),
-					s1: rows.map((row) => firstOrderIndex(r.samples[row.k], y, { mask })),
-				};
+			const held = lastProb;
+			try {
+				const r = held.result;
+				const k = Number(msg.index);
+				if (!r.outputs[k]) return;
+				// Every realisation's curve of it: the peaks and the shapes over
+				// time read them, as well as the column at the time asked.
+				const [values] = await held.sample.series([k]);
+				if (lastProb !== held) {
+					self.postMessage({ type: 'sensitivity', id: msg.id, gone: true });
+					return;
+				}
+				const times = r.t.length;
+				// A varied parameter is read at its one time, and its curves are
+				// that one number across the times. The page does not ask about
+				// one -- they are not in the dialog's list -- but a stale index can.
+				const stride = strideOf(r, k);
+				const { mask } = held;
+				// `at: 'peak'` is "wherever this output is largest on average",
+				// which is the time a reader means by "at the peak" and could not
+				// pick out of a list of four hundred. Worked out here, from every
+				// realisation of this one series: the mean over the realisations
+				// at each time, and the time that maximises it.
+				//
+				// `at: 'max'` is each realisation's own peak instead: not a time of
+				// the matrix at all but a column of its own, one number per
+				// realisation, which every measure below reads in place of a time's
+				// column. `at` is then null, and `peaks` says when they fell.
+				const own = msg.at === 'max';
+				const at = own ? null
+					: msg.at === 'peak'
+						? peakTime(values, stride, r.iterations, mask)
+						: Math.min(times - 1, Math.max(0, Number(msg.at ?? times - 1)));
+				// What the table reads: `read[i * across + a]` for realisation i.
+				let read = values;
+				let across = stride;
+				let a = own ? 0 : timeIn(r, k, at);
+				let peaks = null;
+				if (own) {
+					const found = ownPeaks(values, stride, r.iterations, mask);
+					read = found.max;
+					across = 1;
+					a = 0;
+					// A varied parameter is one number, and "when" it peaks means nothing.
+					if (stride > 1) peaks = peakTimes(r.t, found.when);
+				}
+				// Which sampled inputs the analysis is over: those the reader chose,
+				// or all of them. The table ranks only these, the regression is
+				// fitted to only these, and the distribution measures are of these.
+				// `use[j]` is the sample column of the j-th, and the rows keep the
+				// sample's own numbering.
+				const use = chosenInputs(msg.inputs, r.samples.length);
+				const pool = use.map((c) => r.samples[c]);
+				const rows = ranked(pool, read, across, r.iterations, a,
+					{ most: msg.most ?? 20, mask }).map((row) => ({ ...row, k: use[row.k] }));
+				const posOf = new Map(use.map((c, j) => [c, j]));
+				// The over-time shape for the few that matter, which is the chart
+				// Ecolego draws: an input that governs the first century and not
+				// the next ten thousand years is a thing one number cannot say.
+				const curves = rows.slice(0, 6).map((row) => ({
+					k: row.k,
+					y: spread(overTime(r.samples[row.k], values, stride, r.iterations, { mask }), times),
+				}));
+				// The regression family and the first-order index, at this time.
+				// One inverse of a (K+1)-wide matrix; on the largest sample here
+				// (617 inputs) that is under a second, and it is done for the time
+				// on screen rather than for all of them. Past a few thousand
+				// inputs it is declined rather than attempted.
+				let measures = null;
+				const translate = TRANSLATIONS.has(msg.translate) ? msg.translate : 'none';
+				if (pool.length <= 3000 && pool.length) {
+					const y = new Float64Array(r.iterations);
+					for (let i = 0; i < r.iterations; i++) y[i] = read[i * across + a];
+					const reg = regressionMeasures(pool, y, { translate, mask });
+					measures = {
+						ok: reg.ok, used: reg.used, r2: reg.r2, translate,
+						dropped: reg.dropped ?? 0,
+						src: rows.map((row) => reg.src[posOf.get(row.k)]),
+						b: rows.map((row) => reg.b[posOf.get(row.k)]),
+						pcc: rows.map((row) => reg.pcc[posOf.get(row.k)]),
+						s1: rows.map((row) => firstOrderIndex(r.samples[row.k], y, { mask })),
+					};
+				}
+				const distribution = msg.family === 'distribution'
+					? distributionMeasures(r, read, across, a, rows, mask, { translate, use }) : null;
+				self.postMessage({
+					type: 'sensitivity',
+					id: msg.id,
+					index: k,
+					at,
+					peaks,
+					t: r.t,
+					rows: rows.map((row) => ({
+						...row,
+						name: r.plan[row.k].name,
+						where: Object.values(r.plan[row.k].index ?? {}),
+					})),
+					curves,
+					measures,
+					distribution,
+					kept: kept(mask, r.iterations),
+					// Every input the sample varies, for the dialog to choose from,
+					// and how many of them this answer is over.
+					sampled: r.plan.map((e, c) => ({ k: c, name: e.name, where: Object.values(e.index ?? {}) })),
+					using: use.length,
+				});
+			} catch (e) {
+				sampleFailed('sensitivity', msg, e, held);
 			}
-			const distribution = msg.family === 'distribution'
-				? distributionMeasures(r, read, across, a, rows, mask, { translate, use }) : null;
-			self.postMessage({
-				type: 'sensitivity',
-				id: msg.id,
-				index: k,
-				at,
-				peaks,
-				t: r.t,
-				rows: rows.map((row) => ({
-					...row,
-					name: r.plan[row.k].name,
-					where: Object.values(r.plan[row.k].index ?? {}),
-				})),
-				curves,
-				measures,
-				distribution,
-				kept: kept(mask, r.iterations),
-				// Every input the sample varies, for the dialog to choose from,
-				// and how many of them this answer is over.
-				sampled: r.plan.map((e, c) => ({ k: c, name: e.name, where: Object.values(e.index ?? {}) })),
-				using: use.length,
-			});
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+		});
 		return;
 	}
 
@@ -2235,61 +2416,76 @@ self.onmessage = async (ev) => {
 	// what is then held while the file is built. Doing either after the copy
 	// would mean holding both.
 	if (msg.type === 'prob-matrix') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({ type: 'prob-matrix', id: msg.id, indices: [], matrices: [],
-				gone: true });
-			return;
-		}
-		try {
-			const { result } = lastProb;
-			const times = result.t.length;
-			const iterations = result.iterations;
-			const indices = (Array.isArray(msg.indices) ? msg.indices : [])
-				.filter((k) => Number.isInteger(k) && k >= 0 && k < result.values.length);
-			const want = msg.want ?? 'all';
-			// Clamped rather than refused: a realisation number is a thing
-			// somebody typed, and the run it names either exists or the nearest
-			// one that does is what they meant.
-			const one = want === 'all' || want === 'mean'
-				? -1
-				: Math.min(iterations - 1, Math.max(0, Math.round(Number(want)) || 0));
-			// A varied parameter goes out in the shape every other series does,
-			// its one value per realisation at every time: the table of every
-			// realisation reads it so. A file does not want that for anything
-			// that cannot change over the run (`compact`): one row, the value
-			// each realisation had, which is what it writes -- see
-			// ../io/resultfile.js.
-			const flat = (k) => !!result.flat?.[k];
-			const still = (k) => flat(k) || result.outputs[k]?.timeDependent === false;
-			const row = (k) => {
-				const v = result.values[k];
-				const stride = strideOf(result, k);
-				const out = new Float32Array(iterations);
-				for (let i = 0; i < iterations; i++) out[i] = v[i * stride];
-				return out;
-			};
-			let matrices;
-			if (want === 'all') {
-				matrices = indices.map((k) => (msg.compact && still(k) ? row(k)
-					: flat(k) ? acrossTimes(result.values[k], times, iterations)
-						: timeMajor(result.values[k], times, iterations)));
-			} else if (want === 'mean') {
-				matrices = indices.map((k) => (flat(k)
-					? spread(meanOf(result.values[k], 1, iterations), times)
-					: meanOf(result.values[k], times, iterations)));
-			} else {
-				matrices = indices.map((k) => (flat(k)
-					? new Float64Array(times).fill(result.values[k][one])
-					: Float64Array.from(result.values[k].subarray(one * times, (one + 1) * times))));
+		await inTurn(async () => {
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'prob-matrix', id: msg.id, indices: [], matrices: [],
+					gone: true });
+				return;
 			}
-			self.postMessage(
-				{ type: 'prob-matrix', id: msg.id, indices, matrices, times, iterations,
-					want, realisation: one },
-				matrices.map((m) => m.buffer),
-			);
-		} catch (e) {
-			self.postMessage({ type: 'error', id: msg.id, name: e.name, message: e.message, blockName: e.blockName ?? null });
-		}
+			const held = lastProb;
+			try {
+				const { result } = held;
+				const times = result.t.length;
+				const iterations = result.iterations;
+				const indices = (Array.isArray(msg.indices) ? msg.indices : [])
+					.filter((k) => Number.isInteger(k) && k >= 0 && k < result.outputs.length);
+				const want = msg.want ?? 'all';
+				// Clamped rather than refused: a realisation number is a thing
+				// somebody typed, and the run it names either exists or the nearest
+				// one that does is what they meant.
+				const one = want === 'all' || want === 'mean'
+					? -1
+					: Math.min(iterations - 1, Math.max(0, Math.round(Number(want)) || 0));
+				// A varied parameter goes out in the shape every other series does,
+				// its one value per realisation at every time: the table of every
+				// realisation reads it so. A file does not want that for anything
+				// that cannot change over the run (`compact`): one row, the value
+				// each realisation had, which is what it writes -- see
+				// ../io/resultfile.js.
+				const flat = (k) => !!result.flat?.[k];
+				const still = (k) => flat(k) || result.outputs[k]?.timeDependent === false;
+				const row = (k, v) => {
+					const stride = strideOf(result, k);
+					const out = new Float32Array(iterations);
+					for (let i = 0; i < iterations; i++) out[i] = v[i * stride];
+					return out;
+				};
+				let matrices;
+				if (want === 'all' || want === 'mean') {
+					// Every realisation of each series, a batch at a time where an
+					// engine holds them, so that what is fetched and not yet
+					// narrowed stays a fraction of the answer.
+					matrices = [];
+					for (const batch of batchesOf(result, indices)) {
+						const got = await held.sample.series(batch);
+						batch.forEach((k, j) => {
+							const v = got[j];
+							if (want === 'mean') {
+								matrices.push(flat(k) ? spread(meanOf(v, 1, iterations), times) : meanOf(v, times, iterations));
+							} else {
+								matrices.push(msg.compact && still(k) ? row(k, v)
+									: flat(k) ? acrossTimes(v, times, iterations)
+										: timeMajor(v, times, iterations));
+							}
+						});
+					}
+				} else {
+					const got = await held.sample.realisation(indices, one);
+					matrices = indices.map((k, j) => (flat(k) ? new Float64Array(times).fill(got[j][0]) : got[j]));
+				}
+				if (lastProb !== held) {
+					self.postMessage({ type: 'prob-matrix', id: msg.id, indices: [], matrices: [], gone: true });
+					return;
+				}
+				self.postMessage(
+					{ type: 'prob-matrix', id: msg.id, indices, matrices, times, iterations,
+						want, realisation: one },
+					matrices.map((m) => m.buffer),
+				);
+			} catch (e) {
+				sampleFailed('prob-matrix', msg, e, held, { indices: [], matrices: [], gone: true });
+			}
+		});
 		return;
 	}
 
@@ -2361,22 +2557,25 @@ self.onmessage = async (ev) => {
 	// than a file quietly missing what it was saved for. Asked apart from the
 	// run beside it, which may have been solved on the page.
 	if (msg.type === 'sample-entries') {
-		if (!lastProb || lastProb.id !== msg.id) {
-			self.postMessage({
-				type: 'sample-entries', id: msg.id, ok: false,
-				why: 'The probabilistic run is no longer held. Run it again, or save without it.',
-			});
-			return;
-		}
-		try {
-			// Copied out of the arrays the sample is held in, so they can be
-			// handed over and the sample stays here to be asked about.
-			const parts = sampleEntries(lastProb.result, { stamp: msg.stamp ?? null });
-			self.postMessage({ type: 'sample-entries', id: msg.id, ok: true, parts },
-				parts.map((e) => e.bytes.buffer));
-		} catch (e) {
-			self.postMessage({ type: 'sample-entries', id: msg.id, ok: false, why: e.message ?? String(e) });
-		}
+		await inTurn(async () => {
+			const gone = 'The probabilistic run is no longer held. Run it again, or save without it.';
+			if (!lastProb || lastProb.id !== msg.id) {
+				self.postMessage({ type: 'sample-entries', id: msg.id, ok: false, why: gone });
+				return;
+			}
+			const held = lastProb;
+			try {
+				// Every buffer a new one, so they can be handed over and the
+				// sample stays to be asked about -- fetched first, where an
+				// engine holds it.
+				const parts = await held.sample.entries({ stamp: msg.stamp ?? null });
+				self.postMessage({ type: 'sample-entries', id: msg.id, ok: true, parts },
+					parts.map((e) => e.bytes.buffer));
+			} catch (e) {
+				if (e.gone && lastProb === held) lastProb = null;
+				self.postMessage({ type: 'sample-entries', id: msg.id, ok: false, why: e.gone ? gone : e.message ?? String(e) });
+			}
+		});
 		return;
 	}
 
@@ -2409,7 +2608,8 @@ self.onmessage = async (ev) => {
 			if (data.sample) {
 				let payload = null;
 				try {
-					payload = holdSample(id, sampleResult(data.sample), project, { keep: msg.keep !== false });
+					payload = await holdSample(id, new LocalSample(sampleResult(data.sample)), project,
+						{ keep: msg.keep !== false });
 				} catch (e) {
 					self.postMessage({ type: 'sample-refused', id, message: e.message ?? String(e) });
 				}

@@ -18,6 +18,11 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (url, opts) => realFetch(new URL(url, base), opts);
 await import(`${src}/worker/sim-worker.js`);
 const { variablesOf } = await import(`${src}/sim/calibrate.js`);
+const D = await import(`${src}/io/dataset.js`);
+const { zip, unzip } = await import(`${src}/io/zip.js`);
+const { quantiles, meanOf } = await import(`${src}/sim/spread.js`);
+const { medianSpread } = await import(`${src}/sim/probabilistic.js`);
+const { categoriesOf, classify, includeMask } = await import(`${src}/domain/categories.js`);
 const send = async (data) => { messages.length = 0; await self.onmessage({ data }); return [...messages]; };
 const engine = { name: engineName, token, client: `tests-${engineName}` };
 const model = (name) => JSON.parse(readFileSync(`${examples}/${name}.json`, 'utf8'));
@@ -162,5 +167,97 @@ out.sensitivity = {
 	same: !!sThere && sThere.states.map((s) => s.name).join('|') === sHere.states.map((s) => s.name).join('|'),
 	worst: sThere ? worstOf(rows(sThere), rows(sHere)) : null,
 };
+
+// A probabilistic run the engine holds: the bands the engine worked out, against
+// the page's own formulas over the same realisations, and every question asked of
+// it against the same sample held here.
+const identical = (a, b) => a?.length === b?.length && Array.from(a).every((v, i) => Object.is(v, b[i]));
+const sameDeep = (a, b) => {
+	if (ArrayBuffer.isView(a) || ArrayBuffer.isView(b)) return identical(a, b);
+	if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameDeep(v, b[i]));
+	if (a && typeof a === 'object') {
+		const ka = Object.keys(a).filter((k) => k !== 'id');
+		return ka.length === Object.keys(b ?? {}).filter((k) => k !== 'id').length && ka.every((k) => sameDeep(a[k], b[k]));
+	}
+	return Object.is(a, b);
+};
+const sdOf = (v, times, n, mean, mask) => {
+	const sd = new Float64Array(times);
+	const count = new Int32Array(times);
+	for (let i = 0; i < n; i++) {
+		if (mask && !mask[i]) continue;
+		for (let j = 0; j < times; j++) {
+			const x = v[i * times + j];
+			if (!Number.isFinite(x)) continue;
+			sd[j] += (x - mean[j]) ** 2;
+			count[j] += 1;
+		}
+	}
+	for (let j = 0; j < times; j++) sd[j] = count[j] > 1 ? Math.sqrt(sd[j] / (count[j] - 1)) : NaN;
+	return { sd, n: count };
+};
+const bandsHere = (r, percentiles, mask) => r.values.map((v, k) => {
+	const s = r.flat[k] ? 1 : r.t.length;
+	const mean = meanOf(v, s, r.iterations, mask);
+	const band = {
+		q: quantiles(v, s, r.iterations, percentiles, mask).map((b) => b.y), mean,
+		sd: sdOf(v, s, r.iterations, mean, mask), med: medianSpread(v, s, r.iterations, 1.959964, mask),
+	};
+	if (r.flat[k]) band.flat = true;
+	return band;
+});
+got = await send({ type: 'probabilistic', id: 12, project: bio, iterations: 20, seed: 3, engine });
+const held = got.find((m) => m.type === 'probabilistic-done');
+out.sample = { engine: held?.payload.engine ?? null, error: got.find((m) => m.type === 'error')?.message ?? null };
+if (held) {
+	const p = held.payload;
+	const ks = p.outputs.map((o, k) => (o.varied ? -1 : k)).filter((k) => k >= 0);
+	const varied = p.outputs.findIndex((o) => o.varied);
+	const [a, b, c] = ks;
+	const saved = (await send({ type: 'sample-entries', id: 12, stamp: 'S' })).find((m) => m.type === 'sample-entries');
+	const r = D.sampleResult(D.readSample(new Map(saved.parts.map((e) => [e.name, e.bytes]))));
+	const finals = Array.from({ length: r.iterations }, (_, i) => r.values[a][(i + 1) * r.t.length - 1])
+		.filter(Number.isFinite).sort((x, y) => x - y);
+	const categories = [{ label: 'High', output: p.outputs[a].label, stat: 'final', op: '>',
+		value: finals[Math.floor(finals.length / 2)], include: false }];
+	const cats = categoriesOf({ simulation: { categories } });
+	const mask = includeMask(cats, classify(cats, r).member);
+	const questions = async (id) => {
+		const one = async (msg) => (await send({ ...msg, id })).find((m) => m.type === msg.type || m.type === 'error');
+		return {
+			bands: await one({ type: 'prob-bands', percentiles: [0.1, 0.5, 0.9] }),
+			atTime: await one({ type: 'prob-summary', index: a, at: 3 }),
+			ownPeak: await one({ type: 'prob-summary', index: a, at: 'max' }),
+			hist: await one({ type: 'prob-hist', indices: [b, a, varied], at: 'peak' }),
+			points: await one({ type: 'prob-points', x: varied, ys: [a, b], at: 4 }),
+			drove: await one({ type: 'sensitivity', index: a, at: 'peak' }),
+			one: await one({ type: 'prob-matrix', indices: [c, varied], want: '7' }),
+			mean: await one({ type: 'prob-matrix', indices: [b, varied], want: 'mean' }),
+			screened: await one({ type: 'prob-categories', categories }),
+		};
+	};
+	const there = await questions(12);
+	// The same sample held here: the archive Save with results writes, opened.
+	got = await send({ type: 'run', id: 13, project: bio });
+	const runParts = (await send({ type: 'dataset', id: 13, project: bio, inner: 'model.json' }))
+		.find((m) => m.type === 'dataset').parts;
+	const data = D.readDataset(await unzip(await zip([
+		{ name: 'model.json', bytes: new TextEncoder().encode(JSON.stringify(bio)) }, ...runParts, ...saved.parts,
+	])));
+	got = await send({ type: 'open-dataset', id: 14, project: bio, data });
+	const opened = got.find((m) => m.type === 'probabilistic-done');
+	const here = await questions(14);
+	const differ = Object.keys(there).filter((k) => !there[k] || there[k].gone || there[k].type === 'error'
+		|| !sameDeep(there[k], here[k]));
+	out.sample = {
+		...out.sample,
+		bands: sameDeep(p.bands, bandsHere(r, p.quantiles, null)),
+		screenedBands: !!there.screened?.bands && sameDeep(there.screened.bands, bandsHere(r, there.screened.quantiles, mask)),
+		payload: !!opened && sameDeep({ ...p, engine: undefined }, { ...opened.payload, engine: undefined }),
+		kept: there.screened?.screen?.kept ?? null,
+		iterations: p.iterations,
+		differ,
+	};
+}
 process.stdout.write(JSON.stringify(out));
 process.exit(0);

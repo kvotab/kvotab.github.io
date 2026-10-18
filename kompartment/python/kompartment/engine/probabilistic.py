@@ -760,69 +760,87 @@ def time_major(values: np.ndarray, times: int, iterations: int) -> np.ndarray:
     return np.asarray(values, dtype=np.float32).reshape(iterations, times).T.ravel().copy()
 
 
-def _finite_sorted_column(values: np.ndarray, times: int, iterations: int, j: int,
-                          mask: Optional[np.ndarray]) -> np.ndarray:
-    col = values.reshape(iterations, times)[:, j]
+def _kept_rows(values: np.ndarray, times: int, iterations: int, mask: Optional[np.ndarray]) -> np.ndarray:
+    """The realisations the mask keeps, in their order, as doubles: (kept, times)."""
+    rows = np.asarray(values).reshape(iterations, times)
     if mask is not None:
-        col = col[np.asarray(mask, dtype=bool)]
-    col = col[np.isfinite(col)]
-    return np.sort(col.astype(np.float64))
+        rows = rows[np.asarray(mask, dtype=bool)]
+    return rows.astype(np.float64)
+
+
+def _sorted_columns(values: np.ndarray, times: int, iterations: int,
+                    mask: Optional[np.ndarray]) -> tuple:
+    """Every time's finite values over the realisations kept, ascending, a column
+    each with what is not finite after them; and how many are finite at each time.
+    One sort of the whole series, where a sort per time was the slow part of the
+    bands of a large sample."""
+    rows = _kept_rows(values, times, iterations, mask)
+    finite = np.isfinite(rows)
+    rows[~finite] = np.nan
+    s = np.sort(rows, axis=0)
+    # -0 before 0, as the application's typed-array sort and Julia's leave them:
+    # NumPy's sort takes the two for one value and leaves them in any order.
+    zero = s == 0
+    if zero.any():
+        negative = (np.signbit(rows) & (rows == 0)).sum(axis=0)
+        first = (s < 0).sum(axis=0)
+        s[zero] = 0.0
+        s[zero & (np.arange(s.shape[0])[:, None] < first + negative)] = -0.0
+    return s, finite.sum(axis=0)
+
+
+def _order_statistic(s: np.ndarray, n: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """``s[min(n - 1, max(0, idx)), j]`` at each time j, NaN where none is finite."""
+    out = np.full(n.size, math.nan)
+    has = n > 0
+    if has.any():
+        at = np.minimum(n - 1, np.maximum(0, idx))
+        cols = np.nonzero(has)[0]
+        out[cols] = s[at[cols], cols]
+    return out
+
+
+def _sequential_sum(rows: np.ndarray) -> np.ndarray:
+    """Each column's sum, added row after row as the application's loops add it:
+    ``add.accumulate`` is sequential by definition, where ``sum`` is pairwise down a
+    lone column. The ``+ 0.0`` is the loop's start at zero, which turns an all-zero
+    column's ``-0`` into ``0``. Accumulated over ``rows`` itself, which the caller
+    gives up."""
+    if not rows.shape[0]:
+        return np.zeros(rows.shape[1])
+    return np.add.accumulate(rows, axis=0, out=rows)[-1] + 0.0
 
 
 def quantiles(values: np.ndarray, times: int, iterations: int, qs: Sequence[float] = (0.05, 0.5, 0.95),
               mask: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     """The band at each time: order statistics across the realisations that ran."""
-    values = np.asarray(values)
-    out = [{'q': q, 'y': np.zeros(times)} for q in qs]
-    for j in range(times):
-        s = _finite_sorted_column(values, times, iterations, j, mask)
-        n = s.size
-        for k, q in enumerate(qs):
-            if not n:
-                out[k]['y'][j] = math.nan
-                continue
-            r = q * (n - 1)
-            idx = int(math.floor(r + 0.5))
-            out[k]['y'][j] = s[min(n - 1, max(0, idx))]
-    return out
+    s, n = _sorted_columns(values, times, iterations, mask)
+    return _quantiles_of(s, n, qs)
+
+
+def _quantiles_of(s: np.ndarray, n: np.ndarray, qs: Sequence[float]) -> List[Dict[str, Any]]:
+    # The rank as the loop worked it out: q (n - 1), rounded half up, in doubles.
+    return [{'q': q, 'y': _order_statistic(s, n, np.floor(q * (n - 1) + 0.5).astype(np.int64))} for q in qs]
 
 
 def median_spread(values: np.ndarray, times: int, iterations: int, z: float = 1.959964,
                   mask: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
-    values = np.asarray(values)
-    err_lo, err_hi = np.zeros(times), np.zeros(times)
-    body_lo, body_hi = np.zeros(times), np.zeros(times)
-    for j in range(times):
-        s = _finite_sorted_column(values, times, iterations, j, mask)
-        n = s.size
-        if not n:
-            err_lo[j] = err_hi[j] = body_lo[j] = body_hi[j] = math.nan
-            continue
+    s, n = _sorted_columns(values, times, iterations, mask)
+    return _median_spread_of(s, n, z)
 
-        def at(k: int) -> float:
-            return float(s[min(n - 1, max(0, k))])
 
-        half = (z * math.sqrt(n)) / 2
-        err_lo[j] = at(math.ceil((n - 1) / 2 - half))
-        err_hi[j] = at(math.floor((n - 1) / 2 + half))
-        body_lo[j] = at(int(math.floor(0.158655 * (n - 1) + 0.5)))
-        body_hi[j] = at(int(math.floor(0.841345 * (n - 1) + 0.5)))
-    return {'errLo': err_lo, 'errHi': err_hi, 'bodyLo': body_lo, 'bodyHi': body_hi}
+def _median_spread_of(s: np.ndarray, n: np.ndarray, z: float) -> Dict[str, np.ndarray]:
+    half = (z * np.sqrt(n.astype(np.float64))) / 2
+    ranks = {'errLo': np.ceil((n - 1) / 2 - half), 'errHi': np.floor((n - 1) / 2 + half),
+             'bodyLo': np.floor(0.158655 * (n - 1) + 0.5), 'bodyHi': np.floor(0.841345 * (n - 1) + 0.5)}
+    return {k: _order_statistic(s, n, r.astype(np.int64)) for k, r in ranks.items()}
 
 
 def mean_of(values: np.ndarray, times: int, iterations: int, mask: Optional[np.ndarray] = None) -> np.ndarray:
-    values = np.asarray(values, dtype=np.float64).reshape(iterations, times)
-    out = np.zeros(times)
-    use = np.ones(iterations, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
-    for j in range(times):
-        total = 0.0
-        n = 0
-        for i in range(iterations):
-            if not use[i]:
-                continue
-            v = values[i, j]
-            if math.isfinite(v):
-                total += v
-                n += 1
-        out[j] = total / n if n else math.nan
-    return out
+    rows = _kept_rows(values, times, iterations, mask)
+    finite = np.isfinite(rows)
+    n = finite.sum(axis=0)
+    rows[~finite] = 0.0
+    total = _sequential_sum(rows)
+    with np.errstate(all='ignore'):
+        return np.where(n > 0, total / np.maximum(n, 1), math.nan)

@@ -5439,9 +5439,9 @@ Python engine or the Julia one instead of in the browser. The pieces:
   without its states; a whole one -- from an engine that sends it whole -- is
   read with `readDataset` and `restoreRun`, the same function an opened archive
   goes through, so its numbers are checked against this worker's build of the
-  same model by `layoutSignature`. A sample is read with `readSample`,
-  `sampleResult` and `holdSample`, and is then a sample made here: the bands,
-  every analysis and every export answer from what the worker holds.
+  same model by `layoutSignature`. A sample is asked to be kept by its engine
+  too (below) and comes back without its series; one sent whole is read with
+  `readSample`, `sampleResult` and `holdSample`, and is then a sample made here.
 - **The server** keeps an `Engine` per engine: one process, started the first
   time it is asked for (the default engine at once), a queue, and the job it is
   on. A new job from the same page and of the same kind cancels the older one;
@@ -5501,6 +5501,67 @@ the examples: Python's run of `four-compartment.json` matches the browser's to
 1e-15 of each series' peak, Julia's (fast by default) to 1.7e-5; the two
 engines' samples of `biosphere.json` have identical draws -- the design is the
 same -- and series within 1.9e-5.
+
+**Samples an engine holds.** A sample is every realisation of every kept series
+-- 2,000 realisations of `biosphere.json`'s 40 kept series over 400 times is
+256 MB -- and the page draws their bands. So a `probabilistic` job that is a
+sample (not a tornado or a sensitivity design) carries `{"keep": true}` too: the
+engine keeps the `ProbabilisticResults` under the job's id and writes the sample
+without its series (`sample_entries(…, series=False)`, `onEngine` in the
+sample's meta). The worker holds what every analysis reads whole and costs
+little: the times, the draws, which realisations ran, the outputs and the plan.
+- *One interface for both.* `lastProb.sample` is a `LocalSample`
+  (`sim-worker.js`, over the arrays the run filled) or an `EngineSample`
+  (`src/worker/engine-sample.js`). Each answers `series(ks)` (every realisation),
+  `columns(ks, at)`, `realisation(ks, i)`, `bands(percentiles, mask)` and
+  `entries({stamp})`, so every handler is written once and asks for what it
+  reads: a time a column; a peak (`peakTime`, `ownPeaks`) or an input's influence
+  over time (`overTime`) every realisation of the one series; a category's test
+  the series it names (`sortInto`); the table's realisation one row of each. A
+  varied parameter's values are its draws, never asked for. `EngineSample`
+  keeps the series it fetched whole while they come to 128 MB, the oldest let
+  go first, so a dialog asked about one output at one time after another fetches
+  it once; a series asked for twice in one question is two arrays, each handed
+  over on its own.
+- *In turn.* Every question about the sample goes through `inTurn`, a promise
+  chain, so the answers leave in the order asked even when one waits on the
+  engine -- a histogram of a time the reader has moved off cannot arrive after
+  the one they moved to -- and after each wait a handler checks the sample is
+  still `lastProb`.
+- *The questions* go to `/engine/runs/<id>/bands`, `realisations`, `column` and
+  `realisation` (serve.py checks their fields first: whole numbers, a list of
+  numbers, a mask of 0 and 1 or null) and come back as little-endian doubles:
+  `bands` per series a run per percentile, the mean, the deviation and its
+  count, and the median's two intervals, each a value a time or one for a
+  varied parameter; the others each series asked for, one after another. Both
+  engines' bands are the page's `bandsOf` to the bit. Python's were rewritten for
+  it: each series sorted once, for the quantiles and the median's intervals both;
+  sums by `numpy.add.accumulate`, which is sequential by definition, where
+  `sum` is pairwise down a lone column; and -0 put before 0 among equal values,
+  as a typed array's sort and Julia's leave them, where NumPy's sort left them in
+  any order (the old loops differed from the page there). 100 series × 400
+  times × 1,000 realisations take 1.3 s, where the loops took 8.6.
+- *Saving* (`sample-entries`) fetches every realisation, a batch of series at a
+  time (64 MB of doubles a request), into one array in the sample's precision,
+  and writes it with `sampleEntries`. The engine's `archive` of a sample is the
+  whole sample as one ZIP, which the worker could not open past 256 MB an entry
+  (`unzip`'s inflate cap).
+- *Letting go.* `holdSample` tells the engine to forget the sample it replaces,
+  and `prob-forget` (Discard sample) does too; an engine answering 404 or 410
+  makes the reply `gone`, and the worker lets go of its copy. The server holds
+  one run and one sample a page (`slot`: a sample does not replace the run it is
+  drawn over), and a page that goes (`pagehide`, unless into the back/forward
+  cache) posts `/engine/clients/<client>/forget`, which lets go of everything
+  held for it and for its scenarios (`<client>#<scenario>`).
+
+Measured on `biosphere.json` with 2,000 realisations: the worker holds 249 MB
+(its heap and array buffers) with the sample made in the browser, 5.4 MB with it
+on Python or on Julia. Asked the same questions -- other percentiles, a screen,
+a distribution at a time and at each realisation's peak, a histogram, a
+scatter, What drove it, a realisation, the mean, the matrix -- the sample on
+Python answers as the same sample opened in the page does, to the bit
+(`python/tests/node/worker_engine.mjs`), and `test/run.js` drives the worker
+against an engine of its own making through every question.
 
 **Stop.** The worker tells the server (`fetch(…, {keepalive: true})`, since the
 page may end the worker next) and the server tells the engine. A run stops at

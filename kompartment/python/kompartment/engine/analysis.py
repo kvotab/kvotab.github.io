@@ -26,7 +26,8 @@ from ..stats.gsa import average_ranks, delta_moment, easi, gsa_main, gsa_table, 
 from ..stats.salib import discrepancy_shares, pawn, rank_probabilities
 from ..stats.sample import stream_for, uniforms
 from ..stats.sensitivity import first_order_index, over_time, ranked, regression_measures
-from .probabilistic import mean_of, median_spread, quantiles
+from .probabilistic import (_kept_rows, _median_spread_of, _quantiles_of, _sequential_sum, _sorted_columns, mean_of,
+                            median_spread, quantiles)
 
 QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 TRANSLATIONS = ('none', 'rank', 'log')
@@ -88,17 +89,15 @@ def percentiles_for(lst: Optional[Sequence[float]]) -> List[float]:
 
 def sd_of(values: np.ndarray, times: int, iterations: int, mean: np.ndarray,
           mask: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
-    V = values.reshape(iterations, times)
-    out = np.zeros(times)
-    n = np.zeros(times, dtype=np.int64)
-    for i in range(iterations):
-        if mask is not None and not mask[i]:
-            continue
-        row = V[i]
-        ok = np.isfinite(row)
-        d = np.where(ok, row - mean, 0.0)
-        out += d * d
-        n += ok
+    rows = _kept_rows(values, times, iterations, mask)
+    ok = np.isfinite(rows)
+    with np.errstate(invalid='ignore'):
+        rows -= mean
+    rows[~ok] = 0.0
+    rows *= rows
+    # Added a realisation at a time, as the application adds them.
+    out = _sequential_sum(rows)
+    n = ok.sum(axis=0).astype(np.int64)
     with np.errstate(all='ignore'):
         sd = np.where(n > 1, np.sqrt(out / np.maximum(n - 1, 1)), np.nan)
     return {'sd': sd, 'n': n}
@@ -107,18 +106,19 @@ def sd_of(values: np.ndarray, times: int, iterations: int, mean: np.ndarray,
 def bands(result: Any, percentiles: Optional[Sequence[float]] = None,
           mask: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     """Per series: the quantiles, the mean, the standard deviation and the
-    median's two intervals, over the realisations in ``mask``."""
+    median's two intervals, over the realisations in ``mask``. Each series is
+    sorted once, for the quantiles and the median's intervals both."""
     result = with_inputs(result)
     qs = percentiles_for(percentiles)
     out = []
     for k in range(len(result.values)):
         v = _flat_values(result, k)
         times = stride_of(result, k)
-        q = quantiles(v, times, result.iterations, qs, mask)
+        s, n = _sorted_columns(v, times, result.iterations, mask)
         mean = mean_of(v, times, result.iterations, mask)
-        band = {'q': [b['y'] for b in q], 'quantiles': qs, 'mean': mean,
+        band = {'q': [b['y'] for b in _quantiles_of(s, n, qs)], 'quantiles': qs, 'mean': mean,
                 'sd': sd_of(v, times, result.iterations, mean, mask),
-                'med': median_spread(v, times, result.iterations, 1.959964, mask)}
+                'med': _median_spread_of(s, n, 1.959964)}
         if result.flat[k]:
             band['flat'] = True
         out.append(band)

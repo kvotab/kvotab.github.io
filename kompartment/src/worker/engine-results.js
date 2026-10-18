@@ -21,14 +21,20 @@
 
 import { Results } from '../sim/runner.js';
 
-const engineName = (handle) => (handle.engine?.name === 'julia' ? 'Julia' : 'Python');
+export const engineName = (handle) => (handle.engine?.name === 'julia' ? 'Julia' : 'Python');
 
-/** What the server said went wrong, as an error the page shows. */
-async function refusal(res, handle) {
+/**
+ * What the server said went wrong, as an error the page shows: `gone` when the
+ * engine no longer holds what was asked about (let go of, left unasked about,
+ * or held by an engine since restarted).
+ */
+export async function refusal(res, handle) {
 	const said = await res.json().catch(() => ({}));
+	const gone = res.status === 404 || res.status === 410;
 	return Object.assign(new Error(said.error ?? `The ${engineName(handle)} engine's server answered ${res.status}.`), {
 		name: 'Engine',
-		hint: res.status === 404 || res.status === 410
+		gone,
+		hint: gone
 			? 'Run the model again to have its results here.'
 			: 'Is serve.py still running? Its window says what the engine printed.',
 	});

@@ -139,6 +139,90 @@ class Kept(unittest.TestCase):
             self.assertIn('no longer holds that run', ends['q5']['message'])
 
 
+class KeptSample(unittest.TestCase):
+    def test_a_kept_sample_is_sent_without_its_series_and_answers_for_them(self):
+        from kompartment.engine.analysis import bands, with_inputs
+        bio = (EXAMPLES / 'biosphere.json').read_text()
+        prob = with_inputs(run_probabilistic(json.loads(bio), iterations=10, seed=4))
+        n, times, count = prob.iterations, prob.t.size, len(prob.values)
+        kept = [k for k in range(count) if not prob.flat[k]]
+        varied = [k for k in range(count) if prob.flat[k]]
+        mask = [1, 1, 0, 1, 0, 1, 1, 1, 0, 1]
+        with tempfile.TemporaryDirectory() as d:
+            out = _Said('p1')
+
+            def lines():
+                yield _job('p1', 'probabilistic', bio, f'{d}/p1.zip', iterations=10, seed=4, keep=True)
+                out.ended.wait(300)
+                for q in ({'op': 'bands', 'id': 'q1', 'run': 'p1', 'percentiles': [0.05, 0.5, 0.95], 'mask': None,
+                           'out': f'{d}/q1'},
+                          {'op': 'bands', 'id': 'q2', 'run': 'p1', 'percentiles': [0.25, 0.75], 'mask': mask,
+                           'out': f'{d}/q2'},
+                          {'op': 'realisations', 'id': 'q3', 'run': 'p1', 'series': [kept[1], varied[0]],
+                           'out': f'{d}/q3'},
+                          {'op': 'column', 'id': 'q4', 'run': 'p1', 'series': [kept[0], varied[0]], 'at': 7,
+                           'out': f'{d}/q4'},
+                          {'op': 'realisation', 'id': 'q5', 'run': 'p1', 'series': [kept[2], varied[1]], 'index': 3,
+                           'out': f'{d}/q5'},
+                          {'op': 'column', 'id': 'q6', 'run': 'p1', 'series': [count], 'at': 0, 'out': f'{d}/q6'},
+                          {'op': 'bands', 'id': 'q7', 'run': 'p1', 'percentiles': [0.5], 'mask': [1, 0],
+                           'out': f'{d}/q7'},
+                          {'op': 'series', 'id': 'q8', 'run': 'p1', 'labels': ['A'], 'out': f'{d}/q8'},
+                          {'op': 'archive', 'id': 'q9', 'run': 'p1', 'out': f'{d}/q9.zip'},
+                          {'op': 'forget', 'id': 'q10', 'run': 'p1'},
+                          {'op': 'column', 'id': 'q11', 'run': 'p1', 'series': [0], 'at': 0, 'out': f'{d}/q11'}):
+                    yield json.dumps(q)
+
+            serve(stdin=lines(), stdout=out)
+            ends = {e['id']: e for e in (json.loads(x) for x in out.getvalue().splitlines()) if 'id' in e
+                    and e.get('event') in ('done', 'error')}
+            self.assertEqual({k: e['event'] for k, e in ends.items()},
+                             {'p1': 'done', **{f'q{i}': 'done' for i in (1, 2, 3, 4, 5, 9, 10)},
+                              **{f'q{i}': 'error' for i in (6, 7, 8, 11)}})
+            # Without its series, saying so; the draws, the times and which ran are there.
+            with zipfile.ZipFile(f'{d}/p1.zip') as z:
+                names = set(z.namelist())
+                meta = json.loads(z.read('results/sample/meta.json'))
+            self.assertFalse(any('series.' in x for x in names))
+            self.assertTrue({'results/sample/draws.f64', 'results/sample/t.f64', 'results/sample/ran.u8'} <= names)
+            self.assertTrue(meta['onEngine'])
+            self.assertEqual((meta['iterations'], meta['times'], len(meta['outputs'])), (n, times, count))
+
+            def doubles(name):
+                return np.fromfile(f'{d}/{name}', '<f8')
+
+            def laid_out(bs):
+                # Per series: a run per percentile, the mean, the deviation and its
+                # count, and the median's two intervals.
+                return np.concatenate([np.concatenate([*b['q'], b['mean'], b['sd']['sd'], b['sd']['n'],
+                                                       b['med']['errLo'], b['med']['errHi'], b['med']['bodyLo'],
+                                                       b['med']['bodyHi']]) for b in bs])
+
+            def same(a, b):
+                return a.shape == b.shape and np.array_equal(a.view(np.int64), b.view(np.int64))
+
+            self.assertTrue(same(doubles('q1'), laid_out(bands(prob, [0.05, 0.5, 0.95], None))))
+            # The median always among the percentiles, and the mask leaving realisations out.
+            self.assertTrue(same(doubles('q2'), laid_out(bands(prob, [0.25, 0.5, 0.75], np.array(mask, bool)))))
+            self.assertEqual(doubles('q2').size, sum((3 + 7) * (1 if prob.flat[k] else times) for k in range(count)))
+            got = doubles('q3')
+            self.assertTrue(same(got[:n * times], np.asarray(prob.values[kept[1]], '<f8').ravel()))
+            self.assertTrue(same(got[n * times:], np.asarray(prob.values[varied[0]], '<f8').ravel()))
+            got = doubles('q4')
+            self.assertTrue(same(got, np.concatenate([np.asarray(prob.values[kept[0]])[:, 7],
+                                                      np.asarray(prob.values[varied[0]])[:, 0]])))
+            got = doubles('q5')
+            self.assertTrue(same(got, np.concatenate([np.asarray(prob.values[kept[2]])[3],
+                                                      np.asarray(prob.values[varied[1]])[3]])))
+            self.assertIn(f'no series {count}', ends['q6']['message'])
+            self.assertIn('2 entries for 10 realisations', ends['q7']['message'])
+            self.assertIn("'series' is not something", ends['q8']['message'])
+            # The whole sample, series and all, as a probabilistic job writes it otherwise.
+            with zipfile.ZipFile(f'{d}/q9.zip') as z:
+                self.assertIn('results/sample/series.f64', z.namelist())
+            self.assertIn('no longer holds that run', ends['q11']['message'])
+
+
 CAL = {
     'name': 'cal',
     'simulation': {'start_time': 0, 'end_time': 100, 'output_points': 101, 'spacing': 'linear', 'solver': 'ndf',
@@ -392,11 +476,11 @@ class Server(unittest.TestCase):
         # A kind the engines do not run, refused before anything is started.
         self.assertEqual(self.call('/engine/jobs', {'kind': 'draw', 'engine': 'python', 'model': model}, **ok)[0], 400)
 
-    def finished(self, model, client):
+    def finished(self, model, client, kind='run', **options):
         """A run kept by its engine for this client: its job id and the archive it sent."""
         ok = {'X-Kompartment-Token': self.token}
-        code, body = self.call('/engine/jobs', {'kind': 'run', 'engine': 'python', 'client': client, 'model': model,
-                                                'options': {'keep': True}}, **ok)
+        code, body = self.call('/engine/jobs', {'kind': kind, 'engine': 'python', 'client': client, 'model': model,
+                                                'options': {'keep': True, **options}}, **ok)
         self.assertEqual(code, 202, body)
         job = json.loads(body)['id']
         for _ in range(600):
@@ -433,6 +517,71 @@ class Server(unittest.TestCase):
                         got['calibrate'])
         self.assertTrue(got['sensitivity']['onEngine'] and got['sensitivity']['same'], got['sensitivity'])
         self.assertLessEqual(got['sensitivity']['worst'], 1e-9)
+        # A sample the engine holds: its bands the page's own formulas over its
+        # realisations, to the last bit, screened or not; and every question asked
+        # of it answered as the same sample held in the page answers it.
+        sample = got['sample']
+        self.assertEqual((sample['engine'], sample['error']), ('python', None), sample)
+        self.assertTrue(sample['bands'] and sample['screenedBands'] and sample['payload'], sample)
+        self.assertLess(sample['kept'], sample['iterations'])
+        self.assertEqual(sample['differ'], [])
+
+    def test_a_sample_its_engine_holds_is_asked_about_beside_the_run_and_let_go_of(self):
+        ok = {'X-Kompartment-Token': self.token}
+        model = json.loads((EXAMPLES / 'biosphere.json').read_text())
+        run_job, _ = self.finished(json.loads((EXAMPLES / 'four-compartment.json').read_text()), 's')
+        job, data = self.finished(model, 's', kind='probabilistic', iterations=8, seed=2)
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            self.assertFalse(any('series.' in x for x in z.namelist()))
+            meta = json.loads(z.read('results/sample/meta.json'))
+        n, times = meta['iterations'], meta['times']
+        # Only for the page the server served.
+        self.assertEqual(self.call(f'/engine/runs/{job}/column', {'series': [0], 'at': 2})[0], 403)
+        code, body = self.call(f'/engine/runs/{job}/column', {'series': [0, 1], 'at': 2}, **ok)
+        self.assertEqual((code, len(body)), (200, 2 * n * 8), body[:200])
+        code, body = self.call(f'/engine/runs/{job}/realisations', {'series': [0]}, **ok)
+        self.assertEqual((code, len(body)), (200, n * times * 8))
+        code, body = self.call(f'/engine/runs/{job}/realisation', {'series': [0], 'index': 3}, **ok)
+        self.assertEqual((code, len(body)), (200, times * 8))
+        code, body = self.call(f'/engine/runs/{job}/bands', {'percentiles': [0.05, 0.5, 0.95], 'mask': None}, **ok)
+        self.assertEqual(code, 200)
+        strides = [1 if f else times for f in meta['flat']]
+        self.assertEqual(len(body), sum(10 * s for s in strides) * 8)
+        # Asked wrongly: said so before the engine is asked.
+        for path, ask in (('column', {'series': [0]}), ('column', {'series': ['0'], 'at': 1}),
+                          ('bands', {'percentiles': 'all', 'mask': None}),
+                          ('bands', {'percentiles': [0.5], 'mask': [2]}),
+                          ('realisation', {'series': [0], 'index': -1})):
+            self.assertEqual(self.call(f'/engine/runs/{job}/{path}', ask, **ok)[0], 400, (path, ask))
+        code, body = self.call(f'/engine/runs/{job}/column', {'series': [10 ** 6], 'at': 0}, **ok)
+        self.assertEqual(code, 502)
+        self.assertIn('no series', json.loads(body)['error'])
+        code, whole = self.call(f'/engine/runs/{job}/archive', **ok)
+        with zipfile.ZipFile(io.BytesIO(whole)) as z:
+            self.assertIn('results/sample/series.f64', z.namelist())
+        # Beside the page's run, which it does not replace; the page's next sample replaces it.
+        self.assertEqual(self.call(f'/engine/runs/{run_job}/archive', **ok)[0], 200)
+        newer, _ = self.finished(model, 's', kind='probabilistic', iterations=4, seed=2)
+        self.assertEqual(self.call(f'/engine/runs/{job}/column', {'series': [0], 'at': 0}, **ok)[0], 404)
+        self.assertEqual(self.call(f'/engine/runs/{run_job}/archive', **ok)[0], 200)
+        self.assertEqual(self.call(f'/engine/runs/{newer}/forget', {}, **ok)[0], 200)
+        self.assertEqual(self.call(f'/engine/runs/{newer}/column', {'series': [0], 'at': 0}, **ok)[0], 404)
+        # A tornado is never held: it is read in the page as soon as it is run.
+        torn, data = self.finished(model, 's', kind='probabilistic', tornado={'low': 0.05, 'high': 0.95})
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            self.assertIn('results/sample/series.f64', z.namelist())
+        self.assertEqual(self.call(f'/engine/runs/{torn}/column', {'series': [0], 'at': 0}, **ok)[0], 404)
+        # A page that goes lets go of its run, its sample and its scenarios' runs; another page's stay.
+        four = json.loads((EXAMPLES / 'four-compartment.json').read_text())
+        mine = [self.finished(four, 'gone')[0], self.finished(four, 'gone#Scenario 2')[0],
+                self.finished(model, 'gone', kind='probabilistic', iterations=4, seed=2)[0]]
+        theirs, _ = self.finished(model, 'gonero', kind='probabilistic', iterations=4, seed=2)
+        self.assertEqual(self.call('/engine/clients/gone/forget', {})[0], 403)
+        code, body = self.call('/engine/clients/gone/forget', {}, **ok)
+        self.assertEqual((code, json.loads(body)), (200, {'forgotten': 3}))
+        for k in mine:
+            self.assertEqual(self.call(f'/engine/runs/{k}/archive', **ok)[0], 404)
+        self.assertEqual(self.call(f'/engine/runs/{theirs}/column', {'series': [0], 'at': 0}, **ok)[0], 200)
 
     def test_a_run_its_engine_holds_is_asked_about_and_let_go_of(self):
         ok = {'X-Kompartment-Token': self.token}

@@ -157,7 +157,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-17';
+const BUILD = '2026-10-18';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -2330,7 +2330,11 @@ function discardProb() {
 /** New bands for the run on screen: other percentiles, or other categories. */
 function acceptProbBands(m) {
 	const prob = currentProb();
-	if (!prob || m.gone || m.id !== prob.runId) return;
+	if (!prob || m.id !== prob.runId) return;
+	if (m.gone) {
+		flash('The realisations are no longer held — run the model probabilistically again.', 'warn');
+		return;
+	}
 	prob.quantiles = m.quantiles;
 	prob.bands = m.bands;
 	if (m.screen !== undefined) prob.screen = m.screen;
@@ -3284,6 +3288,19 @@ function engineFor() {
 function scenarioEngine(name) {
 	const e = engineFor();
 	return e ? { ...e, client: `${e.client}#${name}` } : null;
+}
+
+/**
+ * Tells the server this page is going: every run and sample the engines hold for
+ * it, and for the scenarios it ran beside them, let go of now rather than after
+ * the two hours the server keeps one nobody asks about. Kept alive: the page is
+ * going.
+ */
+function forgetEngineClient() {
+	if (!engines.token) return;
+	fetch(`/engine/clients/${encodeURIComponent(engines.client)}/forget`, {
+		method: 'POST', headers: { 'X-Kompartment-Token': engines.token }, keepalive: true,
+	}).catch(() => {});
 }
 
 /** Tells the engine holding a run that the page has let go of it. Kept alive: the page may be going. */
@@ -15948,6 +15965,10 @@ export function boot() {
 	// page goes into the back/forward cache, which are the cases this is for,
 	// and it does not ask the browser for permission to run.
 	window.addEventListener('pagehide', () => draftKeeper.flush());
+	// And what the engines hold for it, which can be every realisation of a
+	// sample: let go of when the page goes, but not when it goes into the
+	// back/forward cache, from which it may come back and ask about them.
+	window.addEventListener('pagehide', (ev) => { if (!ev.persisted) forgetEngineClient(); });
 
 	// Another tab copied something. Nothing here has to be re-read -- the
 	// menus ask `clipboardInfo` when they open, and that reads the shared

@@ -14,6 +14,10 @@ and talks to it in lines of JSON, one message a line. In, on standard input::
     {"op": "series", "id": "q1", "run": "j1", "labels": ["Soil [Cs-137]", ...], "out": "/path/to/q1.f64"}
     {"op": "archive", "id": "q2", "run": "j1", "out": "/path/to/q2.zip"}
     {"op": "forget", "id": "q3", "run": "j1"}
+    {"op": "bands", "id": "q4", "run": "j2", "percentiles": [0.05, 0.5, 0.95], "mask": null, "out": "..."}
+    {"op": "realisations", "id": "q5", "run": "j2", "series": [0, 3], "out": "..."}
+    {"op": "column", "id": "q6", "run": "j2", "series": [0, 3], "at": 120, "out": "..."}
+    {"op": "realisation", "id": "q7", "run": "j2", "series": [0, 3], "index": 17, "out": "..."}
 
 Out, on standard output -- the protocol's own, and nothing else: anything the
 engine prints goes to standard error::
@@ -58,6 +62,24 @@ or to work an edit out over its states (``archive``). ``forget`` lets it go.
 These are answered beside the jobs, in the order they came, so that a page
 reading one run is not kept waiting by the next one solving; each ends with
 ``done`` or ``error`` under its own id.
+
+A ``probabilistic`` job with ``"keep": true`` (a sample, not a tornado or a
+sensitivity design) is kept the same way, and its archive leaves the kept series
+out (``onEngine`` in the sample's meta): the page holds the times, the draws and
+which realisations ran, and asks for the rest as it needs it. A series is
+numbered as the sample's meta lists them, from 0: the kept series, then each
+varied parameter as its draws, one value per realisation. ``bands`` is every
+series' bands over the realisations ``mask`` keeps (one entry per realisation,
+0 to leave it out; null for all), at the ``percentiles`` asked, the median
+always among them: for each series in turn, a run of little-endian doubles per
+percentile, then the mean, the standard deviation, how many realisations each
+time's statistics are over, the median's 95% interval (low, high) and the
+middle 68% (low, high) -- each one value a time, or one value for a varied
+parameter. ``realisations`` is every realisation of each series asked,
+realisation after realisation; ``column`` each one's value at the output time
+``at`` (from 0) in every realisation; ``realisation`` each one's values in
+realisation ``index`` (from 0). ``archive`` is the whole sample, as a
+probabilistic job writes it otherwise.
 
 Jobs run one at a time, in the order they came -- ``ready`` says so
 (``concurrent``: 1), and the server sends one at a time. A cancel stops a run at
@@ -228,7 +250,12 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 gsa=options.get('gsa') or None,
             )
             say(id=job_id, event='stage', stage='writing')
-            write_sample_archive(prob, job['out'], project=raw)
+            # A sample the page asked the engine to keep goes without its series.
+            held = (options.get('keep') is True and kept is not None
+                    and not options.get('tornado') and not options.get('gsa'))
+            write_sample_archive(prob, job['out'], project=raw, series=not held)
+            if held:
+                kept[job_id] = {'sample': prob, 'model': raw}
         else:
             raise ValueError(f"'{kind}' is not a kind of job this engine runs")
     except _Stopped:
@@ -313,7 +340,12 @@ def answer_query(query: Dict[str, Any], kept: Dict[str, Any], say: Callable[...,
         if held is None:
             raise LookupError('This engine no longer holds that run: it may have been restarted since, '
                               'or the run let go of. Run it again.')
-        res, raw = held['results'], held['model']
+        raw = held['model']
+        if 'sample' in held:
+            _answer_sample(op, held['sample'], raw, query)
+            say(id=query_id, event='done', out=query.get('out'))
+            return
+        res = held['results']
         if op == 'series':
             import numpy as np
             labels = [str(x) for x in (query.get('labels') or [])]
@@ -332,12 +364,67 @@ def answer_query(query: Dict[str, Any], kept: Dict[str, Any], say: Callable[...,
         elif op == 'archive':
             from .io.dataset import write_dataset
             write_dataset(res, query['out'], project=raw)
+        elif op in SAMPLE_QUERIES:
+            raise LookupError('That run is not a probabilistic run: it has no realisations to ask about.')
         else:
             raise ValueError(f"'{op}' is not something this engine is asked")
     except Exception as e:  # noqa: BLE001 - the page's to show
         say(**_error_event(query_id, e))
         return
     say(id=query_id, event='done', out=query.get('out'))
+
+
+#: What a kept sample is asked, besides ``archive`` and ``forget``.
+SAMPLE_QUERIES = ('bands', 'realisations', 'column', 'realisation')
+
+
+def _answer_sample(op: str, prob: Any, raw: Any, query: Dict[str, Any]) -> None:
+    """A question about a kept sample, its answer written to ``query['out']``:
+    little-endian doubles, laid out as the module's notes say."""
+    import numpy as np
+    from .engine.analysis import bands, with_inputs
+    if op == 'archive':
+        from .io.dataset import write_sample_archive
+        write_sample_archive(prob, query['out'], project=raw)
+        return
+    if op not in SAMPLE_QUERIES:
+        raise ValueError(f"'{op}' is not something this engine is asked of a probabilistic run")
+    prob = with_inputs(prob)
+    n = int(prob.iterations)
+    count = len(prob.values)
+
+    def rows(k: int) -> np.ndarray:
+        # Realisations down, the times (one for a varied parameter) across, in
+        # the precision they are held in until what was asked is taken out.
+        return np.asarray(prob.values[k]).reshape(n, -1)
+
+    parts = []
+    if op == 'bands':
+        mask = query.get('mask')
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            if mask.size != n:
+                raise ValueError(f'The mask has {mask.size} entries for {n} realisations.')
+        for band in bands(prob, query.get('percentiles'), mask):
+            parts += [*band['q'], band['mean'], band['sd']['sd'], band['sd']['n'], band['med']['errLo'],
+                      band['med']['errHi'], band['med']['bodyLo'], band['med']['bodyHi']]
+    else:
+        asked = query.get('series') or []
+        wrong = [k for k in asked if not (isinstance(k, int) and 0 <= k < count)]
+        if wrong:
+            raise LookupError(f'The probabilistic run has no series {wrong[0]!r}: it has {count}, from 0.')
+        for k in asked:
+            m = rows(k)
+            if op == 'realisations':
+                parts.append(m)
+            elif op == 'column':
+                parts.append(m[:, min(m.shape[1] - 1, max(0, int(query.get('at') or 0)))])
+            else:
+                parts.append(m[min(n - 1, max(0, int(query.get('index') or 0)))])
+    data = (np.concatenate([np.asarray(p, dtype='<f8').reshape(-1) for p in parts]) if parts
+            else np.zeros(0, dtype='<f8'))
+    with open(query['out'], 'wb') as f:
+        f.write(data.tobytes())
 
 
 def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> None:
@@ -355,7 +442,8 @@ def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> No
     queries: 'queue.Queue[Optional[Dict[str, Any]]]' = queue.Queue()
     cancelled = set()
     # The runs kept for their pages to ask about, by job id: the results, the
-    # model they were made from, and their series by label once asked for.
+    # model they were made from, and their series by label once asked for; or a
+    # probabilistic run's sample and its model.
     kept: Dict[str, Any] = {}
 
     def read() -> None:
@@ -373,7 +461,7 @@ def serve(stdin: Optional[TextIO] = None, stdout: Optional[TextIO] = None) -> No
                 cancelled.add(str(msg.get('id')))
             elif op == 'job':
                 jobs.put(msg)
-            elif op in ('series', 'archive', 'forget'):
+            elif op in ('series', 'archive', 'forget', *SAMPLE_QUERIES):
                 queries.put(msg)
         jobs.put(None)
         queries.put(None)

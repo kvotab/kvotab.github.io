@@ -105,6 +105,11 @@
  * what the page reads of a run besides its series, so that the worker need not
  * build the model to hold it. Read here as any other, it is restored by the
  * worker against an engine rather than by `restoreResults`.
+ *
+ * A sample an engine holds comes the same way: no `series.f64`, and `onEngine`
+ * in the sample's meta. The worker holds the rest of it -- the times, the draws,
+ * which realisations ran -- and asks the engine for the realisations as it
+ * needs them (../worker/engine-sample.js).
  */
 
 /** Bumped only for a change that an older reader could not make sense of. */
@@ -509,8 +514,9 @@ function ownFloats(bytes, Kind = Float64Array) {
  * over a view would take the whole file's buffer with it.
  *
  * @param {Map<string, Uint8Array>} entries  from `unzip`
- * @returns {{meta: object, t: Float64Array, series: Float64Array|Float32Array,
- *   draws: Float64Array, ran: Uint8Array}|null}
+ * @returns {{meta: object, t: Float64Array, series: Float64Array|Float32Array|null,
+ *   draws: Float64Array, ran: Uint8Array}|null}  `series` null for a sample an
+ *   engine holds (`meta.onEngine`)
  */
 export function readSample(entries) {
 	if (!(entries instanceof Map) || !entries.has(SAMPLE_META)) return null;
@@ -530,17 +536,19 @@ export function readSample(entries) {
 	const precision = meta.precision === 'float32' ? 'float32' : 'double';
 	const Held = precision === 'float32' ? Float32Array : Float64Array;
 	const named = sampleSeries(precision);
-	for (const name of [SAMPLE_T, named, SAMPLE_DRAWS, SAMPLE_RAN]) {
+	// An engine holding the sample sends it without its series.
+	const onEngine = meta.onEngine === true;
+	for (const name of [SAMPLE_T, ...(onEngine ? [] : [named]), SAMPLE_DRAWS, SAMPLE_RAN]) {
 		if (!entries.has(name)) throw new Error(`the probabilistic run has no ${name.slice(SAMPLE_DIR.length)}`);
 	}
 	const t = ownFloats(entries.get(SAMPLE_T));
-	const series = ownFloats(entries.get(named), Held);
+	const series = onEngine ? null : ownFloats(entries.get(named), Held);
 	const draws = ownFloats(entries.get(SAMPLE_DRAWS));
 	const ran = Uint8Array.from(entries.get(SAMPLE_RAN));
 	const kept = flat.filter((f) => !f).length;
 	const sizes = [
 		[t.length, times, 'times'],
-		[series.length, kept * n * times, 'numbers in its series'],
+		...(series ? [[series.length, kept * n * times, 'numbers in its series']] : []),
 		[draws.length, plan.length * n, 'draws'],
 		[ran.length, n, 'realisations'],
 	];
@@ -556,7 +564,7 @@ export function readSample(entries) {
 /** The buffers of a sample read by `readSample`, to hand over rather than copy. */
 export function sampleBuffers(sample) {
 	if (!sample) return [];
-	return [sample.t, sample.series, sample.draws, sample.ran].map((a) => a.buffer);
+	return [sample.t, sample.series, sample.draws, sample.ran].filter(Boolean).map((a) => a.buffer);
 }
 
 /**
@@ -564,6 +572,7 @@ export function sampleBuffers(sample) {
  * back: the kept series as views into the one array they came in, and each
  * varied parameter put back from its draws, NaN where a realisation failed --
  * which is what the run did with them (`withInputs` in ../worker/sim-worker.js).
+ * A kept series is null where an engine holds the sample.
  */
 export function sampleResult(sample) {
 	const { meta } = sample;
@@ -578,7 +587,7 @@ export function sampleResult(sample) {
 	let j = 0;
 	for (let k = 0; k < meta.outputs.length; k++) {
 		if (!flat[k]) {
-			values.push(sample.series.subarray(j * each, (j + 1) * each));
+			values.push(sample.series ? sample.series.subarray(j * each, (j + 1) * each) : null);
 			j++;
 			continue;
 		}

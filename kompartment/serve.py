@@ -36,11 +36,16 @@ reads a file somebody opened.
 A run the page asks to be kept (`"keep": true`) comes back without its states:
 the engine holds it, and the page asks for the series it shows as it shows them
 (`/engine/runs/<id>/series`), and for the whole run only to save it, keep it
-beside or work an edit out over it (`/engine/runs/<id>/archive`). An engine
-holds one such run a page -- a scenario run beside the chosen one asks as a page
-of its own -- the page's next one replaces it, and one let go of by the page,
-left unasked about for two hours, or held by an engine since restarted, is
-gone: the page then says to run it again.
+beside or work an edit out over it (`/engine/runs/<id>/archive`). A probabilistic
+run kept the same way comes back without its realisations: the page asks for
+its bands, for every realisation of a series, for one time across them all and
+for one realisation (`/engine/runs/<id>/bands`, `realisations`, `column` and
+`realisation`), and for the whole sample only to save it. An engine holds one
+run and one sample a page -- a scenario run beside the chosen one asks as a page
+of its own -- the page's next of each replaces it, and one let go of by the
+page, left unasked about for two hours, or held by an engine since restarted,
+is gone: the page then says to run it again. A page that goes lets go of all it
+had held (`/engine/clients/<client>/forget`).
 
 The engines answer only the page this server served. Every request under
 `/engine/` carries a token the server writes into that page, and must come from
@@ -95,6 +100,18 @@ KEPT_RUN_FOR = 7200.0
 #: the largest assessment's run, written out, takes a while.
 ASK_TIMEOUT = 900.0
 
+#: What a page asks about a held probabilistic run, besides its archive: the
+#: fields each question takes, and what each must be.
+SAMPLE_QUESTIONS = {
+    "bands": ("percentiles", "mask"),
+    "realisations": ("series",),
+    "column": ("series", "at"),
+    "realisation": ("series", "index"),
+}
+
+#: The questions a page asks as it draws, which the console is not told about.
+ASKED_OFTEN = ("/series", *(f"/{q}" for q in SAMPLE_QUESTIONS))
+
 
 class Job:
     """One run asked of an engine, and what has been heard of it."""
@@ -107,8 +124,13 @@ class Job:
         self.model = model
         self.options = options
         self.out = out
-        # A run whose engine holds it for its page, its archive without the states.
-        self.keep = kind in ("run", "replay") and isinstance(options, dict) and options.get("keep") is True
+        # A run whose engine holds it for its page, its archive without the states
+        # -- or a sample, without its realisations (never a tornado's or a design's).
+        asked = isinstance(options, dict) and options.get("keep") is True
+        self.keep = asked and (kind in ("run", "replay") or kind == "probabilistic"
+                               and not options.get("tornado") and not options.get("gsa"))
+        # Which of the two a page's held run is: its next of the same kind replaces it.
+        self.slot = "sample" if kind == "probabilistic" else "run"
         # The engine's process it ran in: a held run lasts as long as that does.
         self.generation = None
         self.state = "queued"
@@ -443,7 +465,8 @@ class Engines:
 
     def take(self, job):
         """The archive of a finished job, read once and then let go of. A run its
-        engine holds is the page's from now on, in place of the page's last one."""
+        engine holds is the page's from now on, in place of the page's last one
+        of the same kind: a sample does not replace the run it is drawn over."""
         try:
             with open(job.out, "rb") as f:
                 data = f.read()
@@ -454,9 +477,9 @@ class Engines:
         self.forget(job, taken=True)
         if job.keep:
             with self.lock:
-                older = [k for k, r in self.kept.items() if r["client"] == job.client]
+                older = [k for k, r in self.kept.items() if r["client"] == job.client and r["slot"] == job.slot]
                 self.kept[job.id] = {"engine": job.engine, "client": job.client, "generation": job.generation,
-                                     "seen": time.time()}
+                                     "slot": job.slot, "seen": time.time()}
             for k in older:
                 self.let_go(k)
         return data
@@ -485,6 +508,15 @@ class Engines:
             r = self.kept.pop(run_id, None)
         if r is not None:
             self.engines[r["engine"]].tell("forget", r["generation"], run=run_id)
+
+    def let_go_of_client(self, client):
+        """Every run and sample held for a page that has gone, and for the
+        scenarios it ran beside (`<client>#<scenario>`): how many there were."""
+        with self.lock:
+            gone = [k for k, r in self.kept.items() if r["client"] == client or r["client"].startswith(f"{client}#")]
+        for k in gone:
+            self.let_go(k)
+        return len(gone)
 
     def ask(self, run_id, op, **fields):
         """A question about a held run: ``(answer, path)``, the engine's answer and
@@ -559,7 +591,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/engine/jobs/") and "GET" in (self.requestline or "") \
                 and not self.path.endswith("/archive"):
             return
-        if self.path.startswith("/engine/runs/") and self.path.endswith("/series"):
+        if self.path.startswith("/engine/runs/") and self.path.endswith(ASKED_OFTEN):
             return
         sys.stderr.write("  %s\n" % (fmt % args))
 
@@ -681,10 +713,18 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 return
             self._json(202, job.status())
             return
-        m = re.fullmatch(r"/engine/runs/([0-9a-f]+)/(series|forget)", path)
+        m = re.fullmatch(r"/engine/runs/([0-9a-f]+)/(series|forget|bands|realisations|column|realisation)", path)
         if m and m.group(2) == "forget":
             ENGINES.let_go(m.group(1))
             self._json(200, {"forgotten": m.group(1)})
+            return
+        if m and m.group(2) in SAMPLE_QUESTIONS:
+            try:
+                fields = sample_question(m.group(2), json.loads(body or b"{}"))
+            except (ValueError, AttributeError, TypeError) as e:
+                self._json(400, {"error": str(e)})
+                return
+            self._held_answer(ENGINES.ask(m.group(1), m.group(2), **fields), "application/octet-stream")
             return
         if m:
             try:
@@ -695,6 +735,10 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
                 return
             self._held_answer(ENGINES.ask(m.group(1), "series", labels=labels), "application/octet-stream")
+            return
+        m = re.fullmatch(r"/engine/clients/([0-9A-Za-z_-]+)/forget", path)
+        if m:
+            self._json(200, {"forgotten": ENGINES.let_go_of_client(m.group(1))})
             return
         m = re.fullmatch(r"/engine/jobs/([0-9a-f]+)/cancel", path)
         job = ENGINES.get(m.group(1)) if m else None
@@ -732,6 +776,29 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+def sample_question(op, asked):
+    """The fields of a question about a held sample, checked: a series is a whole
+    number, a time or a realisation one too, the percentiles numbers, and a mask
+    0 or 1 for each realisation (or null, for all of them)."""
+    def whole(v):
+        return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+    fields = {k: asked.get(k) for k in SAMPLE_QUESTIONS[op]}
+    if "series" in fields and not (isinstance(fields["series"], list) and all(whole(k) for k in fields["series"])):
+        raise ValueError("ask for the series by their numbers, a list of whole numbers from 0")
+    for k in ("at", "index"):
+        if k in fields and not whole(fields[k]):
+            raise ValueError(f"'{k}' is a whole number from 0")
+    if op == "bands":
+        p = fields["percentiles"]
+        if not (isinstance(p, list) and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in p)):
+            raise ValueError("the percentiles are a list of numbers")
+        mask = fields["mask"]
+        if mask is not None and not (isinstance(mask, list) and all(v in (0, 1) for v in mask)):
+            raise ValueError("the mask is 0 or 1 for each realisation, or null")
+    return fields
 
 
 class Server(socketserver.ThreadingTCPServer):
