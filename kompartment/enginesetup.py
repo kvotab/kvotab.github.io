@@ -237,14 +237,21 @@ def install_julia():
     return found
 
 
-def install_julia_packages(julia, project):
+#: How the Julia engine's packages are installed. The registry first, where there is
+#: none: a Julia that has never installed a package has nothing to resolve against,
+#: and `Pkg.resolve` -- unlike `Pkg.instantiate` -- does not fetch one. Resolved
+#: before installing: a manifest older than the project (a checkout pulled since the
+#: packages were last installed) is otherwise installed as it stands, and a package
+#: the project has gained since is not.
+JULIA_PACKAGES = ("using Pkg; isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add(); "
+                  "Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()")
+
+
+def install_julia_packages(julia, project, env=None):
     """The Julia engine's packages, installed and compiled: a few minutes, once."""
     print(f"  Installing the Julia engine's packages and compiling them, a few minutes once ({project})")
-    # Resolved first: a manifest older than the project (a checkout pulled since
-    # the packages were last installed) is otherwise installed as it stands, and
-    # a package the project has gained since is not.
-    code = "using Pkg; Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()"
-    if subprocess.run([julia, f"--project={project}", "--startup-file=no", "-e", code]).returncode:
+    if subprocess.run([julia, f"--project={project}", "--startup-file=no", "-e", JULIA_PACKAGES],
+                      env=env).returncode:
         print("  They did not install: Julia's messages above say why")
         return False
     return True
@@ -344,7 +351,7 @@ def _julia(julia, project, setup, asking, may, answers, env):
         print(f"The Julia engine {why}.")
         if setup or ask("Install them now, and compile them? A few minutes, once."):
             answers["no"].discard("julia")
-            install_julia_packages(found, project)
+            install_julia_packages(found, project, env)
             state = julia_state(found, project, env)
             why = julia_lacks(state)
         else:

@@ -700,6 +700,33 @@ class WhatTheEnginesNeed(unittest.TestCase):
                          'needs Julia 1.10 or newer, and this is 1.9.4')
         self.assertIsNone(E.julia_lacks({'version': '1.13.1-DEV', 'missing': []}))
 
+    def test_a_julia_that_never_installed_a_package_gets_a_registry_first(self):
+        # Julia's resolve does not fetch a registry, as instantiate would: on a machine
+        # that never installed a package it failed with "no registries have been installed".
+        E = _enginesetup()
+        code = E.JULIA_PACKAGES
+        self.assertLess(code.index('Pkg.Registry.add()'), code.index('Pkg.resolve()'))
+        self.assertIn('isempty(Pkg.Registry.reachable_registries())', code)
+        self.assertLess(code.index('Pkg.resolve()'), code.index('Pkg.instantiate()'))
+        self.assertLess(code.index('Pkg.instantiate()'), code.index('Pkg.precompile()'))
+
+    @unittest.skipUnless(os.environ.get('KOMPARTMENT_NETWORK_TESTS') == '1',
+                         'downloads Julia\'s registry and packages: KOMPARTMENT_NETWORK_TESTS=1')
+    def test_the_julia_engine_s_packages_install_on_a_fresh_machine(self):
+        # A fresh checkout (no manifest) on a Julia with an empty depot, installed for real.
+        import shutil as sh
+        E = _enginesetup()
+        julia = E.find_julia('julia')
+        if julia is None:
+            self.skipTest('needs Julia')
+        with tempfile.TemporaryDirectory() as d:
+            project = os.path.join(d, 'project')
+            sh.copytree(APP / 'julia', project, ignore=sh.ignore_patterns('Manifest.toml', 'test'))
+            env = {**os.environ, 'JULIA_DEPOT_PATH': os.path.join(d, 'depot')}
+            self.assertTrue(E.julia_state(julia, project, env)['missing'])
+            self.assertTrue(E.install_julia_packages(julia, project, env))
+            self.assertEqual(E.julia_state(julia, project, env)['missing'], [])
+
     def test_a_no_is_remembered_and_nothing_is_asked_without_a_terminal(self):
         E = _enginesetup()
         with tempfile.TemporaryDirectory() as d:

@@ -5483,7 +5483,12 @@ input and output both a TTY, so never in a test or a pipe) `prepare` offers to
 set up what is missing: a virtual environment at `~/.kompartment/python`
 (`KOMPARTMENT_HOME`) made from the Python serve.py runs on, NumPy and SciPy
 installed into it and then numba on its own, so that numba failing costs only
-speed; juliaup's installer; `Pkg.instantiate(); Pkg.precompile()` in `julia/`.
+speed; juliaup's installer; in `julia/`, the General registry where Julia has
+none (`Pkg.resolve`, unlike `Pkg.instantiate`, does not fetch one, and on a Mac
+that had never installed a package it stopped at "no registries have been
+installed"), then `Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()` --
+resolved first, since a manifest older than the project is otherwise installed
+as it stands.
 Answers no are kept in `~/.kompartment/serve.json`, and `--setup` is the
 consent to all of it. The engine's own Python is used once it is there, unless
 `--python` names another. The server binds its port first, so a port in use is
