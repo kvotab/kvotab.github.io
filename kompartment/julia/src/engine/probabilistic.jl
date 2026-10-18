@@ -27,9 +27,11 @@
 # Python's names, and these:
 #
 #     m.run_probabilistic(iterations, seed=, latin=, varied=, keep=, workers=,
-#                         on_progress=, progress=, large=, range_=, tornado=, gsa=)
+#                         on_progress=, progress=, large=, range_=, tornado=, gsa=,
+#                         most_bytes=, asked_bytes=)
 #     run_probabilistic(m, iterations; seed, latin, varied, keep, threads,
-#                       on_progress, progress, large, range, tornado, gsa)
+#                       on_progress, progress, large, range, tornado, gsa,
+#                       most_bytes, asked_bytes)
 #
 # `workers` (processes) is `threads` here; `range_` (a 0-based, end-exclusive
 # pair) is `range`, a range of realisation numbers counted from 1; `compiled`
@@ -87,9 +89,12 @@ function estimate(series::Integer, times::Integer, iterations::Integer, precisio
     return (bytes=b, text=text)
 end
 
-"""`"float32"` when a run of this shape would hold more than a gigabyte as doubles, else `"double"`."""
-hold_precision(series::Integer, times::Integer, iterations::Integer) =
-    estimate(series, times, iterations).bytes > PROB_MOST_BYTES ? "float32" : "double"
+"""
+`"float32"` when a run of this shape would hold more than `most` bytes as
+doubles (a gigabyte, what a tab may hold), else `"double"`.
+"""
+hold_precision(series::Integer, times::Integer, iterations::Integer, most::Integer=PROB_MOST_BYTES) =
+    estimate(series, times, iterations).bytes > most ? "float32" : "double"
 
 """A Poisson process's occurrence times between two times, drawn from `stream`."""
 function sample_occurrences(rate::Float64, frm::Float64, until::Float64, stream::Mulberry32; most::Int=10000)
@@ -681,8 +686,11 @@ run goes on.
 thread finished it, one call at a time and `done` rising; `progress=true`
 draws a progress line on standard error (or on an `IO` passed as
 `progress`). A run that would hold more than a gigabyte of doubles keeps
-float32; past 1 GB even so it is refused unless `large=true` (4 GB). `range`
-runs only those realisations (numbers from 1) of the whole design.
+float32; past 1 GB even so it is refused unless `large=true` (4 GB). Those are
+what a tab may hold; `most_bytes` and `asked_bytes` put other numbers in their
+place -- the application's, drawn from this machine's memory, for a sample the
+engine holds for its page. `range` runs only those realisations (numbers from
+1) of the whole design.
 """
 function run_probabilistic(m::Model, iterations=100; kw...)
     return run_probabilistic(project(m), iterations; kw...)
@@ -690,7 +698,8 @@ end
 
 function run_probabilistic(project::Project, iterations=100; seed=1, latin::Bool=true, varied=nothing,
                            keep=nothing, threads::Integer=Threads.nthreads(), on_progress=nothing, progress=false,
-                           large::Bool=false, range=nothing, tornado=nothing, gsa=nothing)
+                           large::Bool=false, range=nothing, tornado=nothing, gsa=nothing,
+                           most_bytes::Integer=PROB_MOST_BYTES, asked_bytes::Integer=PROB_MOST_BYTES_ASKED)
     started = time()
     line = nothing
     if progress !== false && progress !== nothing
@@ -705,7 +714,7 @@ function run_probabilistic(project::Project, iterations=100; seed=1, latin::Bool
         sys = build_system(project)
         design = design_for(project, sys; seed, iterations, latin, varied, tornado, gsa)
         line === nothing || set_total!(line, design.iterations)
-        res = _pb_run(project, sys, design, keep, range, tell, large, started, threads)
+        res = _pb_run(project, sys, design, keep, range, tell, large, started, threads, most_bytes, asked_bytes)
     catch
         line === nothing || close_line!(line; stopped=true)
         rethrow()
@@ -743,7 +752,8 @@ function _pb_slice(range, iterations::Int)
 end
 
 function _pb_run(project::Project, sys::System, design::SampleDesign, keep, range, on_progress, large::Bool,
-                 started::Float64, threads::Integer)
+                 started::Float64, threads::Integer, most::Integer=PROB_MOST_BYTES,
+                 asked::Integer=PROB_MOST_BYTES_ASKED)
     plan, iterations = design.plan, design.iterations
     frm, to = _pb_slice(range, iterations)
     span = to - frm
@@ -771,9 +781,9 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
                    if o["source"] == "P" && haskey(column, o["offset"])]
     grid = time_grid(project)
     times = length(grid)
-    precision = hold_precision(length(wanted), times, iterations)
+    precision = hold_precision(length(wanted), times, iterations, most)
     size_ = estimate(length(wanted), times, iterations, precision)
-    if size_.bytes > (large ? PROB_MOST_BYTES_ASKED : PROB_MOST_BYTES)
+    if size_.bytes > (large ? asked : most)
         what = is_designed(design) ? "runs" : "realisations"
         fewer = is_tornado(design) ? "fewer inputs" : is_gsa(design) ? "a smaller design" : "fewer realisations"
         extra = precision == "float32" ? " even held as float32" : ""

@@ -62,11 +62,15 @@ export function howLong(ms) {
  *   what else varies, or could be taken to: the disruptive events that draw
  *   their occurrences, and the failure laws of waste packages, which do not
  *   -- see `implicitInputs` in ../domain/uncertainty.js
+ * @param {{most: number, asked: number, engine: string|null, memory: number|null}} [opts.limits]
+ *   what the sample may come to: a tab's (`MOST_BYTES`, `MOST_BYTES_ASKED`),
+ *   or, where an engine on this machine will hold it, the machine's
+ *   (`engineLimits`), with the engine's name and the machine's memory
  */
 export function openProbabilisticDialog({
 	plan, simulation, series, times, lastSolveMs = null, endpoints = [],
 	endpointSeries = null, workers = 1, cores = null, onChooseEndpoints = null, onDiscard = null, onRun,
-	implicit = [],
+	implicit = [], limits = { most: MOST_BYTES, asked: MOST_BYTES_ASKED, engine: null, memory: null },
 }) {
 	let chosenCores = cores;
 	// A local copy of the list and of what it comes to in series, because the
@@ -94,9 +98,16 @@ export function openProbabilisticDialog({
 	// list is the default where there is one.
 	let onlyEndpoints = endpoints.length > 0;
 	// The reader's go-ahead for a sample past what every machine can give a
-	// tab: see MOST_BYTES_ASKED. Asked only when it is needed, and not
-	// remembered -- it is about this run on this machine.
+	// tab -- or, held by an engine, past an eighth of this machine's memory:
+	// see MOST_BYTES_ASKED and `engineLimits`. Asked only when it is needed,
+	// and not remembered -- it is about this run on this machine.
 	let large = false;
+	// Who holds the realisations, in the words below: the tab, or the engine
+	// with this machine's memory.
+	const held = limits.engine;
+	const memoryText = Number.isFinite(limits.memory) && limits.memory > 0
+		? estimate({ series: 1, times: 1, iterations: limits.memory / 8 }).text : null;
+	const mostText = estimate({ series: 1, times: 1, iterations: limits.most / 8 }).text;
 	// Inputs that move together. The model's, edited here and saved with the
 	// run's other settings; see ../domain/correlate.js for what a pair and a
 	// group are.
@@ -122,10 +133,11 @@ export function openProbabilisticDialog({
 			const keeping = onlyEndpoints
 				? (keptSeries ?? Math.min(series, kept.length))
 				: series;
-			// Held in double while that fits a tab, float32 past it: see
-			// `holdPrecision`. What it would have been in double is said too,
-			// since that is the number the reader was shown before.
-			const precision = holdPrecision({ series: keeping, times, iterations });
+			// Held in double while that fits a tab -- or an eighth of the
+			// machine's memory, where an engine holds it -- float32 past it:
+			// see `holdPrecision`. What it would have been in double is said
+			// too, since that is the number the reader was shown before.
+			const precision = holdPrecision({ series: keeping, times, iterations }, limits.most);
 			const size = estimate({ series: keeping, times, iterations, precision });
 			const inDouble = estimate({ series: keeping, times, iterations });
 			// What a *file* of it would be, which is the number that surprises
@@ -145,9 +157,10 @@ export function openProbabilisticDialog({
 			const cores = Math.max(1, Math.min(chosenCores ?? workers, iterations));
 			const total = perRun ? (perRun * iterations) / cores : null;
 			// Past what every machine can give a tab, the reader may say to go
-			// ahead; past what any machine should be asked for, not.
-			const tooBig = size.bytes > MOST_BYTES_ASKED;
-			const needsYes = !tooBig && size.bytes > MOST_BYTES;
+			// ahead; past what any machine should be asked for, not. Held by an
+			// engine, the same two lines drawn in this machine's memory.
+			const tooBig = size.bytes > limits.asked;
+			const needsYes = !tooBig && size.bytes > limits.most;
 			// What the browser says the machine has, where it says: Chrome
 			// reports it rounded, and no more than 8 GB.
 			const memory = typeof navigator !== 'undefined' ? navigator.deviceMemory ?? null : null;
@@ -195,8 +208,10 @@ export function openProbabilisticDialog({
 					' of results.'),
 				precision === 'float32'
 					? el('p', { className: 'hint' },
-						`Held as float32: in double precision it would be ${inDouble.text}, more `
-						+ 'than every machine can give a tab. Seven significant figures, which is what the '
+						`Held as float32: in double precision it would be ${inDouble.text}, more than `
+						+ (held ? `an eighth of this machine's memory, which is what ${held} holds in double.`
+							: 'every machine can give a tab.')
+						+ ' Seven significant figures, which is what the '
 						+ 'realisation files are written in anyway and far finer than a sample resolves — a '
 						+ 'percentile read off a sample like this is uncertain in its second figure, not its '
 						+ 'seventh. What reads it — the bands, the table, What drove it — works in double.')
@@ -257,8 +272,26 @@ export function openProbabilisticDialog({
 
 			if (tooBig) {
 				body.append(el('p', { className: 'prob-warn' },
-					`That is more than a tab can hold, even as float32. Keep fewer series — the model's `
-					+ `endpoints rather than everything — or ask for fewer realisations.`));
+					(held
+						? `That is more than half of this machine's memory${memoryText ? ` (${memoryText})` : ''}, even `
+							+ `as float32, which is as much as ${held} is asked to hold. `
+						: 'That is more than a tab can hold, even as float32. ')
+					+ `Keep fewer series — the model's endpoints rather than everything — or ask for fewer `
+					+ 'realisations.'));
+			} else if (needsYes && held) {
+				// Held by the engine: the tab keeps the bands and the draws, and
+				// the machine's memory is what the realisations take.
+				const yes = el('input', { type: 'checkbox', checked: large });
+				yes.addEventListener('change', () => { large = yes.checked; modal.refresh(); });
+				body.append(el('div', { className: 'prob-warn prob-large' },
+					el('p', {},
+						el('b', {}, `${size.text} is more than an eighth of this machine's memory`
+							+ `${memoryText ? ` (${memoryText})` : ''}.`),
+						` ${held} holds the realisations, not this tab, and they fit in half of it; with other `
+						+ 'large programs open the machine may slow down while the run holds them. '
+						+ `Fewer series or fewer realisations bring it under ${mostText}.`),
+					el('label', { className: 'prob-large-yes' }, yes,
+						` Let ${held} hold ${size.text} — this machine has the memory for it`)));
 			} else if (needsYes) {
 				// Past what every machine can give a tab, and within what one
 				// with the memory can: the reader knows which kind this is.

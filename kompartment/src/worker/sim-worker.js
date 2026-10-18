@@ -1142,6 +1142,10 @@ async function probabilisticOnEngine(msg) {
 		// the engine's.
 		workers: Number.isFinite(msg.cores) ? msg.cores : null,
 		keep: true,
+		// What the engine may hold, which the page drew from this machine's
+		// memory (`engineLimits`): the tab's limits are not the engine's.
+		most: Number.isFinite(msg.limits?.most) ? msg.limits.most : null,
+		asked: Number.isFinite(msg.limits?.asked) ? msg.limits.asked : null,
 	});
 	let payload;
 	try {

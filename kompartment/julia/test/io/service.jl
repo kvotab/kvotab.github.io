@@ -177,6 +177,19 @@ end
     @test ended("q10")["event"] == "done"
     ask(Dict("op" => "column", "id" => "q11", "run" => "p1", "series" => [0], "at" => 0, "out" => joinpath(dir, "q11")))
     @test occursin("no longer holds that run", ended("q11")["message"])
+    # The page's limits for a sample the engine holds: taken for a kept sample, and
+    # not for one that goes back whole, which a tab must hold.
+    size = 10 * kept * times * 8
+    precision(name) = K.parse_json(String(copy(K._ds_unzip(read(joinpath(dir, name)))["results/sample/meta.json"])))["precision"]
+    # One at a time: `ended` passes over what is said of any other job.
+    limited(id, keep, most) = (ask(Dict("op" => "job", "id" => id, "kind" => "probabilistic", "model" => bio,
+                                        "out" => joinpath(dir, "$id.zip"),
+                                        "options" => Dict("iterations" => 10, "seed" => 4, "keep" => keep,
+                                                          "workers" => 1, "most" => most, "asked" => size)));
+                               ended(id))
+    @test limited("k1", true, size - 1)["event"] == "done" && precision("k1.zip") == "float32"
+    @test occursin("large=true", get(limited("k2", true, size ÷ 4), "message", ""))
+    @test limited("w1", false, size - 1)["event"] == "done" && precision("w1.zip") == "double"
     close(inp.in)
     wait(server)
 end

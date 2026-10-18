@@ -101,7 +101,9 @@ import { buildSystem } from '../sim/builder.js';
 // What a run *would* report, from the layout alone -- so the endpoint picker
 // can offer its list before the model has been run.
 import { outputsOf } from '../sim/runner.js';
-import { samplingPlan, slotName, groupOf } from '../sim/probabilistic.js';
+import {
+	samplingPlan, slotName, groupOf, engineLimits, MOST_BYTES, MOST_BYTES_ASKED,
+} from '../sim/probabilistic.js';
 import { renderMatrix, markSelection } from './matrix.js';
 import { UndoStack } from './undo.js';
 import { renderBlockTree, treeTools, resetFolds, draggedNames } from './tree.js';
@@ -2097,8 +2099,24 @@ function openProbabilistic() {
 		// what will be sampled: the events that draw their occurrences, and the
 		// waste packages' ways of failing, which do not.
 		implicit: implicitInputs(state.raw),
+		// What the sample may come to: a tab's, or this machine's where the
+		// engine chosen beside Run holds it.
+		limits: sampleLimits(),
 		onRun: (choice) => startProbabilistic(choice),
 	});
+}
+
+/**
+ * What a sample may come to: what a tab may hold, or -- where the engine chosen
+ * beside Run will hold the realisations -- what this machine may give it, from
+ * the memory serve.py says it has (`engineLimits`). With the engine's name and
+ * the memory, for the dialog to say whose they are.
+ */
+function sampleLimits() {
+	const engine = engineFor();
+	if (!engine) return { most: MOST_BYTES, asked: MOST_BYTES_ASKED, engine: null, memory: null };
+	const memory = engines.info?.memory ?? null;
+	return { ...engineLimits(memory), engine: ENGINE_NAMES[engine.name] ?? engine.name, memory };
 }
 
 /**
@@ -2177,6 +2195,8 @@ function startProbabilistic(choice) {
 		// a tab. See MOST_BYTES_ASKED in ../sim/probabilistic.js.
 		large: choice.large === true,
 		engine: engineFor(),
+		// And what an engine holding it may hold: this machine's limits.
+		limits: engineFor() ? sampleLimits() : null,
 	});
 }
 
@@ -15130,6 +15150,7 @@ function runAppSample() {
 		cores: chosenCores(),
 		large: false,
 		engine: engineFor(),
+		limits: engineFor() ? sampleLimits() : null,
 	});
 	paintAppStatus();
 }

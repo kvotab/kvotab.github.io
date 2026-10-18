@@ -158,7 +158,15 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
             varied = _service_option(options, "varied", nothing)
             tornado = _service_option(options, "tornado", nothing)
             gsa = _service_option(options, "gsa", nothing)
+            # A sample the page asked the engine to keep is this machine's to hold, and
+            # may come to what the page drew from its memory rather than a tab's limits.
+            keeping = _service_option(options, "keep", false) === true && kept !== nothing &&
+                      tornado in (nothing, false) && gsa in (nothing, false)
+            most = _service_option(options, "most", nothing)
+            asked = _service_option(options, "asked", nothing)
             prob = run_probabilistic(m, Int(_service_option(options, "iterations", 100));
+                most_bytes=keeping && most isa Real ? Int(most) : PROB_MOST_BYTES,
+                asked_bytes=keeping && asked isa Real ? Int(asked) : PROB_MOST_BYTES_ASKED,
                 seed=Int(_service_option(options, "seed", 1)),
                 latin=_service_option(options, "latin", true) !== false,
                 varied=varied === nothing ? nothing : String[string(v) for v in varied],
@@ -174,10 +182,8 @@ function _service_job(job::AbstractDict, say, stopped, kept=nothing, kept_lock=R
                 end)
             say(OrderedDict{String,Any}("id" => id, "event" => "stage", "stage" => "writing"))
             # A sample the page asked the engine to keep goes without its series.
-            held = _service_option(options, "keep", false) === true && kept !== nothing &&
-                   tornado in (nothing, false) && gsa in (nothing, false)
-            write(string(job["out"]), sample_archive(prob; series=!held))
-            held && lock(() -> (kept[id] = Dict{String,Any}("sample" => prob)), kept_lock)
+            write(string(job["out"]), sample_archive(prob; series=!keeping))
+            keeping && lock(() -> (kept[id] = Dict{String,Any}("sample" => prob)), kept_lock)
         else
             throw(ArgumentError("'$kind' is not a kind of job this engine runs"))
         end

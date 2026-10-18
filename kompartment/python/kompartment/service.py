@@ -235,6 +235,12 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 throttled(done=int(done), total=int(total))
 
             blocks = options.get('blocks')
+            # A sample the page asked the engine to keep is this machine's to hold, and
+            # may come to what the page drew from its memory rather than a tab's limits.
+            held = (options.get('keep') is True and kept is not None
+                    and not options.get('tornado') and not options.get('gsa'))
+            limits = {k: int(options[o]) for k, o in (('most_bytes', 'most'), ('asked_bytes', 'asked'))
+                      if held and isinstance(options.get(o), (int, float)) and not isinstance(options.get(o), bool)}
             prob = run_probabilistic(
                 raw,
                 iterations=int(options.get('iterations', 100)),
@@ -248,11 +254,10 @@ def run_job(job: Dict[str, Any], say: Callable[..., None], stopped: Callable[[],
                 # A tornado, or a sensitivity design, in place of a sample.
                 tornado=options.get('tornado') or None,
                 gsa=options.get('gsa') or None,
+                **limits,
             )
             say(id=job_id, event='stage', stage='writing')
             # A sample the page asked the engine to keep goes without its series.
-            held = (options.get('keep') is True and kept is not None
-                    and not options.get('tornado') and not options.get('gsa'))
             write_sample_archive(prob, job['out'], project=raw, series=not held)
             if held:
                 kept[job_id] = {'sample': prob, 'model': raw}

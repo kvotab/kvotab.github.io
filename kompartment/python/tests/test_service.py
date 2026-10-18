@@ -222,6 +222,33 @@ class KeptSample(unittest.TestCase):
                 self.assertIn('results/sample/series.f64', z.namelist())
             self.assertIn('no longer holds that run', ends['q11']['message'])
 
+    def test_a_kept_sample_may_come_to_what_the_page_says_this_machine_holds(self):
+        # The page's limits for a sample the engine holds (`engineLimits`): taken for a
+        # kept sample, and not for one that goes back whole, which a tab must hold.
+        bio = (EXAMPLES / 'biosphere.json').read_text()
+        held = run_probabilistic(json.loads(bio), iterations=6, seed=4)
+        kept = sum(1 for _ in held.outputs)
+        size = 6 * kept * held.t.size * 8
+        with tempfile.TemporaryDirectory() as d:
+            lines = [_job('k1', 'probabilistic', bio, f'{d}/k1.zip', iterations=6, seed=4, keep=True, most=size - 1,
+                          asked=size),
+                     _job('k2', 'probabilistic', bio, f'{d}/k2.zip', iterations=6, seed=4, keep=True, most=size // 4,
+                          asked=size),
+                     _job('w1', 'probabilistic', bio, f'{d}/w1.zip', iterations=6, seed=4, most=size - 1,
+                          asked=size)]
+            out = io.StringIO()
+            serve(stdin=io.StringIO('\n'.join(lines) + '\n'), stdout=out)
+            ends = {e['id']: e for e in (json.loads(x) for x in out.getvalue().splitlines())
+                    if e.get('event') in ('done', 'error')}
+            self.assertEqual({k: e['event'] for k, e in ends.items()}, {'k1': 'done', 'k2': 'error', 'w1': 'done'})
+            self.assertIn('pass large=True', ends['k2']['message'])
+
+            def precision(name):
+                with zipfile.ZipFile(f'{d}/{name}.zip') as z:
+                    return json.loads(z.read('results/sample/meta.json'))['precision']
+
+            self.assertEqual((precision('k1'), precision('w1')), ('float32', 'double'))
+
 
 CAL = {
     'name': 'cal',

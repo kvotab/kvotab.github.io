@@ -76,8 +76,10 @@ def estimate(series: int, times: int, iterations: int, precision: str = 'double'
     return {'bytes': b, 'text': text}
 
 
-def hold_precision(series: int, times: int, iterations: int) -> str:
-    return 'float32' if estimate(series, times, iterations)['bytes'] > MOST_BYTES else 'double'
+def hold_precision(series: int, times: int, iterations: int, most: int = MOST_BYTES) -> str:
+    """``float32`` when a run of this shape would hold more than ``most`` bytes as
+    doubles (a gigabyte, what a tab may hold), else ``double``."""
+    return 'float32' if estimate(series, times, iterations)['bytes'] > most else 'double'
 
 
 def sample_occurrences(rate: float, frm: float, until: float, stream: Callable[[], float],
@@ -374,7 +376,8 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
                       gsa: Optional[Dict[str, Any]] = None, keep: Any = None, workers: int = 1,
                       on_progress: Optional[Callable[[int, int], Any]] = None, progress: Any = False,
                       large: bool = False, range_: Optional[Sequence[int]] = None,
-                      compiled: Any = 'auto') -> 'ProbabilisticResults':
+                      compiled: Any = 'auto', most_bytes: int = MOST_BYTES,
+                      asked_bytes: int = MOST_BYTES_ASKED) -> 'ProbabilisticResults':
     """Runs ``iterations`` realisations and keeps the series asked for.
 
     ``keep``: which series to hold -- None for every endpoint (anything but an
@@ -385,6 +388,12 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
     ``gsa={'method': ..., 'options': {...}}`` runs a sensitivity design.
     ``compiled`` is each run's, as :func:`kompartment.engine.runner.run`
     takes it: the model compiles once, and every realisation runs compiled.
+
+    A run that would hold more than a gigabyte as doubles keeps float32, and past
+    a gigabyte even so it is refused unless ``large`` (4 GB): what a tab may hold.
+    ``most_bytes`` and ``asked_bytes`` put other numbers in their place -- the
+    application's, drawn from this machine's memory, for a sample the engine
+    holds for its page.
 
     ``progress=True`` shows how far the run has got, and how long it has left,
     as a line on standard error (standard output in a notebook), or on a
@@ -404,14 +413,16 @@ def run_probabilistic(model: Any, *, iterations: int = 100, seed: int = 1, latin
         if workers > 1:
             res = _run_pool(project.to_json(), dict(iterations=iterations, seed=seed, latin=latin, varied=varied,
                                                     tornado=tornado, gsa=gsa, keep=keep, large=large,
-                                                    compiled=compiled), workers, tell, started, line)
+                                                    compiled=compiled, most_bytes=most_bytes,
+                                                    asked_bytes=asked_bytes), workers, tell, started, line)
         else:
             system = build_system(project)
             design = design_for(project, system, seed=seed, iterations=iterations, latin=latin, varied=varied,
                                 tornado=tornado, gsa=gsa)
             if line is not None:
                 line.set_total(design.iterations)
-            res = _run_slice(project, system, design, keep, range_, tell, large, started, compiled)
+            res = _run_slice(project, system, design, keep, range_, tell, large, started, compiled,
+                             most_bytes, asked_bytes)
     except BaseException:
         if line is not None:
             line.close(stopped=True)
@@ -441,11 +452,12 @@ def _keep_fn(keep: Any) -> Optional[Callable[[str, Dict[str, Any]], bool]]:
     return lambda name, o: name in wanted or o.get('label') in wanted
 
 
-def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool) -> Dict[str, Any]:
+def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool, most: int = MOST_BYTES,
+           asked: int = MOST_BYTES_ASKED) -> Dict[str, Any]:
     """What a run of ``design`` keeps, read off the built system before anything
     runs (``outputs_of``): the series and those kept, the inputs among them, the
-    output grid and the precision they are held in. A run too large to hold is
-    refused here."""
+    output grid and the precision they are held in. A run too large to hold --
+    past ``most`` bytes, or ``asked`` with ``large`` -- is refused here."""
     plan, iterations = design.plan, design.iterations
     outputs = outputs_of(system, project)
     keep_fn = _keep_fn(keep)
@@ -460,9 +472,9 @@ def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool
               if o['source'] == 'P' and o['offset'] in column]
     grid = project.time_grid()
     times = grid.size
-    precision = hold_precision(len(wanted), times, iterations)
+    precision = hold_precision(len(wanted), times, iterations, most)
     size = estimate(len(wanted), times, iterations, precision)
-    if size['bytes'] > (MOST_BYTES_ASKED if large else MOST_BYTES):
+    if size['bytes'] > (asked if large else most):
         designed = design.stats.get('tornado') or design.stats.get('gsa')
         what = 'runs' if designed else 'realisations'
         fewer = ('fewer inputs' if design.stats.get('tornado')
@@ -515,11 +527,12 @@ def _realisations(project: Project, system: Any, design: Design, frame: Dict[str
 
 def _run_slice(project: Project, system: Any, design: Design, keep: Any, range_: Optional[Sequence[int]],
                on_progress: Optional[Callable[[int, int], Any]], large: bool, started: float,
-               compiled: Any = 'auto') -> 'ProbabilisticResults':
+               compiled: Any = 'auto', most: int = MOST_BYTES,
+               asked: int = MOST_BYTES_ASKED) -> 'ProbabilisticResults':
     plan, iterations = design.plan, design.iterations
     frm = max(0, min(iterations - 1, int(round(range_[0])) if range_ else 0))
     to = max(frm + 1, min(iterations, int(round(range_[1])) if range_ else iterations))
-    frame = _frame(project, system, design, keep, large)
+    frame = _frame(project, system, design, keep, large, most, asked)
     got = _realisations(project, system, design, frame, frm, to, frm, on_progress, compiled)
     return ProbabilisticResults({
         't': frame['grid'].copy(), 'outputs': frame['kept'], 'values': got['values'], 'plan': plan,
@@ -556,7 +569,8 @@ def _slice_context() -> tuple:
         project = Project(_SLICE_WORKER['raw'])
         system = build_system(project)
         design = design_for(project, system, **_design_options(opts))
-        frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False))
+        frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False),
+                       opts.get('most_bytes', MOST_BYTES), opts.get('asked_bytes', MOST_BYTES_ASKED))
         ctx = _SLICE_WORKER['context'] = (project, system, design, frame)
     return ctx
 
@@ -602,11 +616,20 @@ def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
         line.set_total(total)
     if callable(opts.get('keep')):
         raise ValueError('keep= must be a list of names, not a function, when the run is shared between processes')
-    frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False))
+    frame = _frame(project, system, design, opts.get('keep'), opts.get('large', False),
+                   opts.get('most_bytes', MOST_BYTES), opts.get('asked_bytes', MOST_BYTES_ASKED))
     workers = max(1, min(workers, total))
     size = max(1, math.ceil(total / (workers * _CHUNKS_PER_WORKER)))
     chunks = [(lo, min(total, lo + size)) for lo in range(0, total, size)]
-    parts: List[Dict[str, Any]] = [None] * len(chunks)  # type: ignore[list-item]
+    # The whole run, filled in as each chunk comes back and the chunk let go of, so
+    # that the realisations are never held twice -- what a sample as large as half
+    # the machine's memory needs (``most_bytes``, ``asked_bytes``).
+    dtype = np.float32 if frame['precision'] == 'float32' else np.float64
+    values = [np.empty((total, frame['times']), dtype=dtype) for _ in frame['kept']]
+    samples = np.empty((len(design.plan), total))
+    ran = np.empty(total, dtype=np.uint8)
+    failed = 0
+    trouble: List[str] = []
     done = 0
     # Spawned processes with one thread per numerical library, as a split's
     # parts are (``_one_thread_each`` in ./split.py): the realisations are the
@@ -632,19 +655,25 @@ def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
                     break
                 counts[n] = max(counts[n], count)
             for fut in finished:
-                n = futures[fut]
-                parts[n] = fut.result()
-                counts[n] = chunks[n][1] - chunks[n][0]
+                # Taken out of the map, so that the future and the chunk it holds go.
+                n = futures.pop(fut)
+                part = fut.result()
+                lo, hi = chunks[n]
+                for w, v in enumerate(part['values']):
+                    values[w][lo:hi] = v
+                samples[:, lo:hi] = part['samples']
+                ran[lo:hi] = part['ran']
+                failed += part['failed']
+                trouble.append((n, part['trouble']))
+                del part
+                counts[n] = hi - lo
             if on_progress is not None and sum(counts) > done:
                 done = sum(counts)
                 on_progress(done, total)
     if heard is not None:
         heard.close()
-    values = [np.concatenate([p['values'][w] for p in parts], axis=0) for w in range(len(frame['kept']))]
-    samples = np.concatenate([p['samples'] for p in parts], axis=1)
-    ran = np.concatenate([p['ran'] for p in parts])
-    failed = sum(p['failed'] for p in parts)
-    trouble = [t for p in parts for t in p['trouble']][:5]
+    # The first five troubles in the order of the realisations, as one process meets them.
+    trouble = [t for _, chunk in sorted(trouble, key=lambda x: x[0]) for t in chunk][:5]
     stats = {'failed': failed, 'trouble': trouble, 'ms': (time.perf_counter() - started) * 1000, **design.stats,
              'workers': workers}
     return ProbabilisticResults({

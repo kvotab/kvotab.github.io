@@ -117,15 +117,16 @@ realisation, every realisation of one series, or one realisation of several) and
 is worked out in the page as for a sample made there, to the same numbers. So a
 sample takes no more of the browser's memory than its bands and the values its
 inputs were drawn at: 2,000 realisations of the biosphere example are about 250
-MB in the browser and 5 MB with an engine holding them. **Save → Model with
-results** brings every realisation over to write it. The engine keeps one sample
-for each page, beside its run, the next probabilistic run taking its place, and
-lets it go as it lets a run go — and when the sample is discarded. The footer
-says which engine solved a run, and the run log starts with the engine's own
-account of it. **Stop** reaches the engine too: a run stops at its next progress
-report, a probabilistic run at its next realisation — or, where that takes more
-than a couple of seconds, the engine is ended, and started again for the next
-run.
+MB in the browser and 5 MB with an engine holding them, and a sample may come to
+what the machine's memory allows rather than a tab's (see *How much a sample
+holds* under the probabilistic run). **Save → Model with results** brings every
+realisation over to write it. The engine keeps one sample for each page, beside
+its run, the next probabilistic run taking its place, and lets it go as it lets
+a run go — and when the sample is discarded. The footer says which engine solved
+a run, and the run log starts with the engine's own account of it. **Stop**
+reaches the engine too: a run stops at its next progress report, a probabilistic
+run at its next realisation — or, where that takes more than a couple of
+seconds, the engine is ended, and started again for the next run.
 
 A tornado's or a sensitivity design's runs are made on the engine, and their
 tables worked out in the page from what comes back, the inputs of every run
@@ -6887,6 +6888,13 @@ run with it. Tick the box to go ahead, up to 4 GB; past that the run is
 refused, and fewer series or fewer realisations are the way. With several cores
 the workers' slices are put together one series at a time and let go as they
 are copied, so the sample is never held twice.
+
+On an engine on this machine the engine holds the realisations, not the tab,
+so the limits are the machine's memory rather than a tab's: a sample is held in
+double, and runs without asking, while it fits in an eighth of the memory, and
+past that the dialog asks, up to half of it — 8 GB and 32 GB on a computer with
+64 GB, and never less than the tab's gigabyte and four. The dialog says which
+engine holds it and how much memory the machine has.
 
 **A parameter is not an endpoint, and the ones that vary are always kept.** A
 parameter is a constant: one number in an ordinary run, and in a probabilistic

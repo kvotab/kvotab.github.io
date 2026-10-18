@@ -41875,7 +41875,7 @@ test('a fault found by building the model is marked on its block, and said in it
 
 test('a sample too large for double is held as float32, and past a gigabyte runs only when the reader says so', async () => {
 	const { readFileSync } = await import('node:fs');
-	const { holdPrecision, estimate, MOST_BYTES, MOST_BYTES_ASKED, runProbabilistic } = await import('../src/sim/probabilistic.js');
+	const { holdPrecision, estimate, MOST_BYTES, MOST_BYTES_ASKED, runProbabilistic, engineLimits } = await import('../src/sim/probabilistic.js');
 	const { stitch } = await import('../src/worker/prob-pool.js');
 	// Double while it fits a tab, float32 past it.
 	assert(holdPrecision({ series: 30, times: 200, iterations: 5000 }) === 'double');
@@ -41921,9 +41921,30 @@ test('a sample too large for double is held as float32, and past a gigabyte runs
 	const dialog = readFileSync(new URL('../src/ui/probdialog.js', import.meta.url), 'utf8');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const worker = readFileSync(new URL('../src/worker/sim-worker.js', import.meta.url), 'utf8');
-	assert(/const needsYes = !tooBig && size\.bytes > MOST_BYTES;/.test(dialog) && /disabled: tooBig \|\| \(needsYes && !large\),/.test(dialog)
+	assert(/const needsYes = !tooBig && size\.bytes > limits\.most;/.test(dialog) && /const tooBig = size\.bytes > limits\.asked;/.test(dialog)
+		&& /disabled: tooBig \|\| \(needsYes && !large\),/.test(dialog)
 		&& /large: needsYes && large,/.test(dialog), 'the dialog does not ask');
 	assert(/large: choice\.large === true,/.test(app), 'the answer does not leave the page');
+	// Held by an engine on this machine, the limits are the machine's: an eighth
+	// of its memory in double without asking, half with the go-ahead -- never
+	// less than a tab's, and a tab's where the memory is not known.
+	const g = 2 ** 30;
+	const machine = engineLimits(64 * g);
+	assert(machine.most === 8 * g && machine.asked === 32 * g, JSON.stringify(machine));
+	assert(JSON.stringify(engineLimits(4 * g)) === JSON.stringify({ most: g, asked: 4 * g }), JSON.stringify(engineLimits(4 * g)));
+	assert(JSON.stringify(engineLimits(null)) === JSON.stringify({ most: MOST_BYTES, asked: MOST_BYTES_ASKED }));
+	assert(holdPrecision({ series: 150, times: 300, iterations: 10000 }, machine.most) === 'double',
+		'an engine with 64 GB holds 3.4 GB in float32');
+	assert(/holdPrecision\(\{ series: keeping, times, iterations \}, limits\.most\)/.test(dialog)
+		&& /Let \$\{held\} hold \$\{size\.text\}/.test(dialog), 'the dialog does not say the engine holds it');
+	// The page draws them from the memory serve.py says the machine has, gives them
+	// to the dialog and sends them with the run; the worker hands them to the engine.
+	assert(/limits: sampleLimits\(\),/.test(app) && /\.\.\.engineLimits\(memory\)/.test(app)
+		&& (app.match(/limits: engineFor\(\) \? sampleLimits\(\) : null,/g) ?? []).length === 2, 'the page does not send the limits');
+	assert(/most: Number\.isFinite\(msg\.limits\?\.most\) \? msg\.limits\.most : null,/.test(worker)
+		&& /asked: Number\.isFinite\(msg\.limits\?\.asked\) \? msg\.limits\.asked : null,/.test(worker), 'the engine is not told them');
+	const serve = readFileSync(new URL('../serve.py', import.meta.url), 'utf8');
+	assert(/"memory": MEMORY,/.test(serve) && /os\.sysconf\("SC_PHYS_PAGES"\)/.test(serve), 'the server does not say the machine’s memory');
 	// Three places a slice is run here, the fourth hands the sample to an
 	// engine on this machine (`probabilisticOnEngine`), and the fifth a
 	// tornado's or a sensitivity design's runs (`designOnEngine`).

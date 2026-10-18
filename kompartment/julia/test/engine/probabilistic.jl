@@ -238,6 +238,19 @@ const PROB_EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
     text = String(take!(io))
     @test startswith(text, "Probabilistic run [------------------------] 0/20 realisations")
     @test occursin("Probabilistic run: 20 realisations in ", text)
+    # What a run may hold: a tab's limits by default, and the numbers asked for in
+    # their place -- what the application draws from this machine's memory for a
+    # sample the engine holds. 30 realisations of four series over the grid:
+    bytes = 30 * 4 * length(whole.t) * 8
+    small = K.run_probabilistic(m, 30; seed=3, keep=["Dose"], threads=2, most_bytes=bytes - 1,
+                                asked_bytes=bytes)
+    @test small.precision == "float32" && isequal(small.values[1], Float32.(whole.values[1]))
+    @test_throws ErrorException K.run_probabilistic(m, 30; seed=3, keep=["Dose"], most_bytes=bytes ÷ 4,
+                                                    asked_bytes=bytes)
+    asked = K.run_probabilistic(m, 30; seed=3, keep=["Dose"], threads=2, large=true, most_bytes=bytes ÷ 4,
+                                asked_bytes=bytes)
+    @test asked.precision == "float32"
+    @test K.run_probabilistic(m, 30; seed=3, keep=["Dose"], threads=2, most_bytes=bytes).precision == "double"
     # Nothing to draw: refused in the application's words.
     @test_throws ArgumentError K.run_probabilistic(K.load(joinpath(PROB_EXAMPLES, "decay-chain.json")), 5)
     @test_throws ArgumentError K.run_probabilistic(m, 5; gsa=Dict("method" => "nope"))

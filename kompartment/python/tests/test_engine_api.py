@@ -136,6 +136,30 @@ class Probabilistic(unittest.TestCase):
         series = replay['results'].series_many([o for o in replay['results'].outputs() if o['label'] == label])[0]
         self.assertTrue(np.array_equal(series, want.realisations(label)[4], equal_nan=True))
 
+    def test_what_a_run_may_hold_can_be_the_machines(self) -> None:
+        # A tab's limits by default; for a sample an engine holds, the application's
+        # numbers in their place: float32 past ``most_bytes``, refused past it without
+        # the go-ahead, and past ``asked_bytes`` even with it -- with workers too.
+        from kompartment.engine.probabilistic import run_probabilistic
+        raw = self._listed_raw([2e-4, 3e-4, 2.5e-4])
+        whole = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'])
+        held = 12 * len(whole.labels) * whole.t.size * 8
+        for workers in (1, 2):
+            with self.subTest(workers=workers):
+                small = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], workers=workers,
+                                          most_bytes=held - 1, asked_bytes=held)
+                self.assertEqual(small.values[0].dtype, np.float32)
+                self.assertTrue(np.array_equal(small.values[0], whole.values[0].astype(np.float32)))
+                with self.assertRaises(MemoryError):
+                    run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], workers=workers,
+                                      most_bytes=held // 4, asked_bytes=held)
+                asked = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], workers=workers, large=True,
+                                          most_bytes=held // 4, asked_bytes=held)
+                self.assertEqual(asked.values[0].dtype, np.float32)
+                same = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'], workers=workers,
+                                         most_bytes=held)
+                self.assertTrue(np.array_equal(same.values[0], whole.values[0]))
+
     def test_only_the_first_realisation_fails_the_run(self) -> None:
         # An absurd rate breaks one realisation. The first fails the run; any other is
         # recorded and the run goes on -- with workers too, where it starts a chunk.

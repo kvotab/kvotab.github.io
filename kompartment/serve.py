@@ -45,7 +45,9 @@ run and one sample a page -- a scenario run beside the chosen one asks as a page
 of its own -- the page's next of each replaces it, and one let go of by the
 page, left unasked about for two hours, or held by an engine since restarted,
 is gone: the page then says to run it again. A page that goes lets go of all it
-had held (`/engine/clients/<client>/forget`).
+had held (`/engine/clients/<client>/forget`). Since the engine holds the sample,
+the size a sample may come to is drawn from this machine's memory, which
+`/engine/info` says (`memory`), rather than from what a tab may hold.
 
 The engines answer only the page this server served. Every request under
 `/engine/` carries a token the server writes into that page, and must come from
@@ -99,6 +101,18 @@ KEPT_RUN_FOR = 7200.0
 #: How long an engine has to answer a question about a run it holds: the whole of
 #: the largest assessment's run, written out, takes a while.
 ASK_TIMEOUT = 900.0
+
+def machine_memory():
+    """This machine's memory in bytes, or None where it cannot be told: what the
+    page draws the limits of a sample an engine holds from (`engineLimits` in
+    src/sim/probabilistic.js), since the engine, not the tab, holds it."""
+    try:
+        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+MEMORY = machine_memory()
 
 #: What a page asks about a held probabilistic run, besides its archive: the
 #: fields each question takes, and what each must be.
@@ -432,7 +446,7 @@ class Engines:
     def info(self):
         with self.lock:
             held = len(self.kept)
-        return {"default": self.default, "explicit": self.explicit, "held": held,
+        return {"default": self.default, "explicit": self.explicit, "held": held, "memory": MEMORY,
                 "engines": {n: e.info() for n, e in self.engines.items()}}
 
     def submit(self, kind, engine, client, model, options):

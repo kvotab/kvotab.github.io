@@ -123,8 +123,26 @@ export const MOST_BYTES = 1073741824;
 export const MOST_BYTES_ASKED = 4 * 1073741824;
 
 /**
+ * What a sample may come to where an engine on this machine holds it (see
+ * serve.py) rather than the tab: the machine's memory is the limit then, not a
+ * tab's. Held in double, and run without asking, while it fits in an eighth of
+ * the memory; past that, at the reader's word, up to half of it -- the rest for
+ * the browser, the model and whatever else the machine is doing. Never less
+ * than a tab may hold, and the tab's own limits where the memory is not known.
+ *
+ * @param {number|null} memory  the machine's memory in bytes, as serve.py says it
+ * @returns {{most: number, asked: number}}  `most` in place of `MOST_BYTES`,
+ *   `asked` in place of `MOST_BYTES_ASKED`
+ */
+export function engineLimits(memory) {
+	const m = Number.isFinite(memory) && memory > 0 ? memory : 0;
+	return { most: Math.max(MOST_BYTES, Math.floor(m / 8)), asked: Math.max(MOST_BYTES_ASKED, Math.floor(m / 2)) };
+}
+
+/**
  * What the realisations are held in while the run and everything after it
- * reads them: double while that fits in `MOST_BYTES`, float32 past it.
+ * reads them: double while that fits in `MOST_BYTES` -- or `most`, where an
+ * engine holds them (`engineLimits`) -- and float32 past it.
  *
  * Half the size, and seven significant figures -- which is what the
  * realisation files are written in anyway, and far finer than a sample can
@@ -134,8 +152,8 @@ export const MOST_BYTES_ASKED = 4 * 1073741824;
  * histogram is worked out in double either way. Double is kept where it fits
  * only so that a sample of ordinary size stays bit for bit what it was.
  */
-export function holdPrecision({ series, times, iterations }) {
-	return estimate({ series, times, iterations }).bytes > MOST_BYTES ? 'float32' : 'double';
+export function holdPrecision({ series, times, iterations }, most = MOST_BYTES) {
+	return estimate({ series, times, iterations }).bytes > most ? 'float32' : 'double';
 }
 
 /**

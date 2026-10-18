@@ -5566,6 +5566,17 @@ little: the times, the draws, which realisations ran, the outputs and the plan.
   drawn over), and a page that goes (`pagehide`, unless into the back/forward
   cache) posts `/engine/clients/<client>/forget`, which lets go of everything
   held for it and for its scenarios (`<client>#<scenario>`).
+- *How large.* A tab's limits -- 1 GiB in double without asking, 4 GiB at the
+  reader's word -- are about a tab. A sample an engine keeps may come to what the
+  machine's memory allows: serve.py says that memory in `/engine/info`
+  (`memory`, from `sysconf`), the page draws `engineLimits` from it -- double and
+  no question up to an eighth, half at the reader's word, never below a tab's --
+  and sends them with the run (`limits`, the job's `most` and `asked`), which the
+  engines take only for a sample they keep (`most_bytes`, `asked_bytes`). A
+  tornado's or a design's runs come back whole, so a tab's limits stay theirs.
+  Python's pooled run now fills one array per series as each chunk comes back,
+  and lets the chunk go, where it kept every chunk and then concatenated: on a
+  488 MB sample the parent's peak fell from 1,188 MB to 831 MB.
 
 Measured on `biosphere.json` with 2,000 realisations: the worker holds 249 MB
 (its heap and array buffers) with the sample made in the browser, 5.4 MB with it
