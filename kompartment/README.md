@@ -16,7 +16,9 @@ modules from a `file://` page, so you get the toolbar and nothing behind it.)
 
 Served this way it can also solve runs on the Python engine in `python/` or the
 Julia one in `julia/`, chosen beside Run (`python3 serve.py --engine julia` to
-start on Julia): see *Solving on an engine on this machine* in the Guide.
+start on Julia): see *Solving on an engine on this machine* in the Guide. The
+server says what an engine still needs, offers to set it up when started in a
+terminal, and `python3 serve.py --setup` does it without asking.
 
 Published, it answers at two addresses: `kompartment.html` one level up frames
 it in the site's own header and footer, and this directory serves the same tool

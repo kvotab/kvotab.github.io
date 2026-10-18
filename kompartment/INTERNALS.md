@@ -5470,6 +5470,27 @@ Python engine or the Julia one instead of in the browser. The pieces:
   flattened a realisation at a time, and Julia's 1-based input columns become
   0-based `drawnFrom`.
 
+**What the engines need, checked at every start** (`enginesetup.py`, beside
+serve.py). `python_state` imports NumPy and SciPy in the Python asked for -- a
+broken install counts as none -- and looks for numba; `julia_state` asks the
+Julia found (on PATH, else where juliaup and Homebrew put it) for its version
+and where each package of `julia/Project.toml` would be found
+(`Base.identify_package`, `Base.locate_package`): a third of a second, installing
+nothing. A fresh checkout has no `Manifest.toml`, so FunctionWrappers,
+OrderedCollections and PrecompileTools come out missing there, which used to
+show only as an engine that stopped during the run. At a terminal (standard
+input and output both a TTY, so never in a test or a pipe) `prepare` offers to
+set up what is missing: a virtual environment at `~/.kompartment/python`
+(`KOMPARTMENT_HOME`) made from the Python serve.py runs on, NumPy and SciPy
+installed into it and then numba on its own, so that numba failing costs only
+speed; juliaup's installer; `Pkg.instantiate(); Pkg.precompile()` in `julia/`.
+Answers no are kept in `~/.kompartment/serve.json`, and `--setup` is the
+consent to all of it. The engine's own Python is used once it is there, unless
+`--python` names another. The server binds its port first, so a port in use is
+said before any setup, and writes a line at a time, so a log of it is read as it
+goes. Each engine's `why` ends with the command that fixes it, which the page
+shows beside the engine in the choice.
+
 **Why an archive.** It is the one format the three code bases already write and
 read alike, and it carries its own check: an engine's run that did not describe
 this model's states would be refused exactly as a doctored file is.

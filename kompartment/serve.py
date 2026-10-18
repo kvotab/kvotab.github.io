@@ -13,7 +13,7 @@ This server sends `Cache-Control: no-store` for everything, so a plain refresh
 always picks up the current files.
 
     python3 serve.py [port] [--engine browser|python|julia] [--python PATH] [--julia PATH]
-                     [--no-python] [--no-julia]
+                     [--no-python] [--no-julia] [--setup]
 
 Defaults to port 8080. Serves the directory the script lives in, to this
 machine only.
@@ -25,7 +25,16 @@ a run -- Run, a probabilistic run, and the analyses that solve the model: a
 tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp --
 to the Python engine (`python/kompartment`) or the Julia one (`julia/`), chosen
 in the page beside Run; `--engine` says which the page starts on. What an engine
-does not do, it refuses at once, and the page does it itself. Each engine is a process of its
+does not do, it refuses at once, and the page does it itself.
+
+What each engine needs -- Python 3.9 or newer with NumPy and SciPy, numba for
+speed; Julia 1.10 or newer with the packages of `julia/` -- is checked at every
+start, and what is missing is said with how to get it. At a terminal the server
+offers to set it up: a Python of the engine's own (a virtual environment at
+~/.kompartment/python, nothing installed into anybody's own Python), Julia by
+its official installer, and Julia's packages installed and compiled. A question
+answered no is not asked again; `--setup` sets up whatever is missing without
+asking. See enginesetup.py. Each engine is a process of its
 own, started the first time it is asked for and kept: a line of JSON a message,
 jobs in and progress out (see python/kompartment/service.py) -- as many jobs at
 once as the engine says it takes, the rest queued (Julia takes one a thread, so
@@ -80,6 +89,10 @@ EXTRA_TYPES = {
 }
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# What the engines need, and help getting it, beside this file.
+sys.path.insert(0, ROOT)
+import enginesetup  # noqa: E402
 
 #: How large a model a page may send: the largest assessment as JSON is a few
 #: tens of megabytes.
@@ -825,40 +838,45 @@ class Server(socketserver.ThreadingTCPServer):
     request_queue_size = 128
 
 
-def python_engine(python, enabled):
-    """The Python engine: this folder's package, run by `python`, which needs NumPy and SciPy."""
+def python_engine(python, why):
+    """The Python engine: this folder's package, run by `python`; `why` it cannot be, where it cannot."""
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(
         p for p in (os.path.join(ROOT, "python"), os.environ.get("PYTHONPATH")) if p)}
-    why = None if enabled else "is switched off (--no-python)"
-    if why is None:
-        try:
-            check = subprocess.run([python, "-c", "import numpy, scipy"], env=env, capture_output=True,
-                                   timeout=120)
-            if check.returncode:
-                why = f"needs NumPy and SciPy, which {python} does not have"
-        except (OSError, subprocess.TimeoutExpired) as e:
-            why = f"could not be started with {python}: {e}"
     return Engine("python", [python, "-u", "-m", "kompartment.service"], env, why)
 
 
-def julia_engine(julia, enabled):
-    """The Julia engine: this folder's package, run by `julia` with every core and one more for listening."""
+def julia_engine(julia, why):
+    """The Julia engine: this folder's package, run by `julia` with every core and one more for
+    listening; `why` it cannot be, where it cannot."""
     project = os.path.join(ROOT, "julia")
-    found = julia if os.path.sep in julia else shutil.which(julia)
-    why = None
-    if not enabled:
-        why = "is switched off (--no-julia)"
-    elif not found or not os.path.exists(found):
-        why = "needs Julia, which is not installed here (or pass --julia PATH)"
-    elif not os.path.exists(os.path.join(project, "Project.toml")):
-        why = f"needs its package in {project}"
-    return Engine("julia", [found or julia, f"--project={project}", "--threads=auto,1", "-e",
+    return Engine("julia", [julia, f"--project={project}", "--threads=auto,1", "-e",
                             "using Kompartment; Kompartment.serve_stdio()"], dict(os.environ), why)
 
 
+def start_engines(opts):
+    """The engines, after checking what each needs and -- at a terminal, or with
+    `--setup` -- setting up what is missing (enginesetup.py); and the lines worth
+    saying about them. The engine the page starts on is started now, so its
+    first run does not wait for it to load."""
+    project = os.path.join(ROOT, "julia")
+    packaged = os.path.exists(os.path.join(project, "Project.toml"))
+    python, py_why, julia, jl_why, notes = enginesetup.prepare(
+        opts["python"], opts["python_asked"], opts["julia"], opts["use_python"], opts["use_julia"] and packaged,
+        project, setup=opts["setup"])
+    if opts["use_julia"] and not packaged:
+        jl_why = f"needs its package in {project}"
+    engines = {"python": python_engine(python, py_why), "julia": julia_engine(julia, jl_why)}
+    found = Engines(engines, opts["engine"], tempfile.mkdtemp(prefix="kompartment-engines-"), opts["explicit"])
+    first = engines.get(opts["engine"])
+    if first is not None:
+        with first.lock:
+            first.start()
+    return found, notes
+
+
 def arguments(argv):
-    opts = {"port": 8080, "engine": "browser", "explicit": False, "python": sys.executable, "julia": "julia",
-            "use_python": True, "use_julia": True}
+    opts = {"port": 8080, "engine": "browser", "explicit": False, "python": sys.executable, "python_asked": False,
+            "julia": "julia", "use_python": True, "use_julia": True, "setup": False}
     it = iter(argv)
     for a in it:
         if a == "--engine":
@@ -866,6 +884,9 @@ def arguments(argv):
             opts["explicit"] = True
         elif a == "--python":
             opts["python"] = next(it, sys.executable)
+            opts["python_asked"] = True
+        elif a == "--setup":
+            opts["setup"] = True
         elif a == "--julia":
             opts["julia"] = next(it, "julia")
         elif a == "--no-python":
@@ -883,45 +904,44 @@ def arguments(argv):
 
 def main():
     global ENGINES, TOKEN, PORT
+    # A line at a time, also into a file or a pipe: what the server says about
+    # the engines is read while it runs, not when it stops.
+    sys.stdout.reconfigure(line_buffering=True)
     opts = arguments(sys.argv[1:])
     port = PORT = opts["port"]
     os.chdir(ROOT)
     TOKEN = secrets.token_urlsafe(24)
-    engines = {
-        "python": python_engine(opts["python"], opts["use_python"]),
-        "julia": julia_engine(opts["julia"], opts["use_julia"]),
-    }
-    ENGINES = Engines(engines, opts["engine"], tempfile.mkdtemp(prefix="kompartment-engines-"), opts["explicit"])
-    # The engine the page starts on is started now, so its first run does not
-    # wait for it to load.
-    first = engines.get(opts["engine"])
-    if first is not None:
-        with first.lock:
-            first.start()
 
     # Loopback only. `("", port)` binds every interface, and this server hands
     # out the whole project directory with listings on -- so on any shared
     # network (an office, a hotel, a conference) it published these files to
     # every host on the subnet. There is no reason a development server for a
-    # single-user editor should be reachable from another machine.
+    # single-user editor should be reachable from another machine. Bound before
+    # the engines are looked at, so a port in use is said before any setup.
     try:
-        with Server(("127.0.0.1", port), NoCacheHandler) as httpd:
-            print(f"Kompartment on http://localhost:{port}/")
-            print(f"  serving {ROOT} (to this machine only)")
-            print("  caching disabled, so a plain refresh picks up edits")
-            for name, e in engines.items():
-                said = "available" if e.why is None else f"not available: {e.why}"
-                print(f"  {name} engine {said}{' (the page starts on it)' if name == opts['engine'] else ''}")
-            print("  Ctrl+C to stop")
-            httpd.serve_forever()
+        httpd = Server(("127.0.0.1", port), NoCacheHandler)
     except OSError as e:
         print(f"Could not listen on port {port}: {e}")
         print(f"Another server may already be running. Try: python3 serve.py {port + 1}")
         sys.exit(1)
-    except KeyboardInterrupt:
-        print("\nstopped")
-    finally:
-        ENGINES.close()
+    with httpd:
+        try:
+            ENGINES, notes = start_engines(opts)
+            print(f"Kompartment on http://localhost:{port}/")
+            print(f"  serving {ROOT} (to this machine only)")
+            print("  caching disabled, so a plain refresh picks up edits")
+            for name, e in ENGINES.engines.items():
+                said = "available" if e.why is None else f"not available: {e.why}"
+                print(f"  {name} engine {said}{' (the page starts on it)' if name == opts['engine'] else ''}")
+            for note in notes:
+                print(f"  {note}")
+            print("  Ctrl+C to stop")
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nstopped")
+        finally:
+            if ENGINES is not None:
+                ENGINES.close()
 
 
 if __name__ == "__main__":

@@ -643,5 +643,117 @@ class Server(unittest.TestCase):
         self.assertEqual(self.call(f'/engine/runs/{newer}/series', {'labels': labels[:1]}, **ok)[0], 404)
 
 
+
+def _enginesetup():
+    """serve.py's enginesetup module, loaded from beside it."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('enginesetup', APP / 'enginesetup.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class WhatTheEnginesNeed(unittest.TestCase):
+    """What the engines need is checked as serve.py starts, said with how to get it,
+    and set up when asked (enginesetup.py)."""
+
+    def test_a_python_is_read_for_what_it_has(self):
+        E = _enginesetup()
+        state = E.python_state(sys.executable)
+        self.assertTrue(state['numpy'] and state['scipy'], state)
+        self.assertIsNone(E.python_lacks(state))
+        self.assertEqual(E.python_lacks({'version': [3, 12], 'numpy': True, 'scipy': False}), 'needs SciPy')
+        self.assertEqual(E.python_lacks({'version': [3, 12], 'numpy': False, 'scipy': False}),
+                         'needs NumPy and SciPy')
+        self.assertEqual(E.python_lacks({'version': [3, 8], 'numpy': True, 'scipy': True}),
+                         'needs Python 3.9 or newer, and this is 3.8')
+        gone = E.python_state('/nowhere/python')
+        self.assertIn('could not be started with /nowhere/python', E.python_lacks(gone))
+        with tempfile.TemporaryDirectory() as d:
+            # A Python with nothing in it: what a Python the engine cannot run on looks like.
+            subprocess.run([sys.executable, '-m', 'venv', '--without-pip', d], check=True)
+            bare = E.python_state(E.venv_python(d))
+            self.assertEqual(E.python_lacks(bare), 'needs NumPy and SciPy')
+
+    def test_a_julia_is_asked_which_of_its_packages_it_lacks_without_installing_them(self):
+        E = _enginesetup()
+        julia = E.find_julia('julia')
+        if julia is None:
+            self.skipTest('needs Julia')
+        self.assertIsNone(E.find_julia('/nowhere/julia'))
+        self.assertEqual(E.find_julia(julia), julia)
+        with tempfile.TemporaryDirectory() as d:
+            # A fresh checkout on a fresh machine: the project without its manifest, and no depot.
+            project = os.path.join(d, 'project')
+            os.makedirs(project)
+            with open(APP / 'julia' / 'Project.toml', encoding='utf-8') as f, \
+                    open(os.path.join(project, 'Project.toml'), 'w', encoding='utf-8') as g:
+                g.write(f.read())
+            depot = os.path.join(d, 'depot')
+            os.makedirs(depot)
+            state = E.julia_state(julia, project, env={**os.environ, 'JULIA_DEPOT_PATH': depot})
+            self.assertEqual(state['missing'], ['FunctionWrappers', 'OrderedCollections', 'PrecompileTools'], state)
+            self.assertIn('needs its packages, which are not installed (FunctionWrappers,', E.julia_lacks(state))
+            # Julia may keep a compiled standard library there; no package, registry or artifact.
+            self.assertFalse(set(os.listdir(depot)) & {'packages', 'registries', 'artifacts'}, os.listdir(depot))
+        self.assertEqual(E.julia_lacks({'version': '1.9.4', 'missing': []}),
+                         'needs Julia 1.10 or newer, and this is 1.9.4')
+        self.assertIsNone(E.julia_lacks({'version': '1.13.1-DEV', 'missing': []}))
+
+    def test_a_no_is_remembered_and_nothing_is_asked_without_a_terminal(self):
+        E = _enginesetup()
+        with tempfile.TemporaryDirectory() as d:
+            E.HOME = d
+            E.VENV = os.path.join(d, 'python')
+            self.assertEqual(E.declined(), set())
+            E.remember_declined({'julia'})
+            self.assertEqual(E.declined(), {'julia'})
+            with open(os.path.join(d, 'serve.json'), 'w', encoding='utf-8') as f:
+                f.write('not json')
+            self.assertEqual(E.declined(), set())
+            # Not at a terminal: what is missing is said, and nothing is offered or installed.
+            with tempfile.TemporaryDirectory() as bare:
+                subprocess.run([sys.executable, '-m', 'venv', '--without-pip', bare], check=True)
+                python, py_why, julia, jl_why, _ = E.prepare(E.venv_python(bare), True, '/nowhere/julia', True,
+                                                             True, str(APP / 'julia'))
+            self.assertEqual(py_why, 'needs NumPy and SciPy (python3 serve.py --setup sets it up)')
+            self.assertEqual(jl_why, 'has no Julia at /nowhere/julia')
+            self.assertFalse(os.path.exists(E.VENV))
+            # The engine's own Python, where there is one, unless another is asked for.
+            python, py_why, _, _, notes = E.prepare(sys.executable, False, 'julia', True, False, str(APP / 'julia'))
+            self.assertEqual((python, py_why), (sys.executable, None))
+            os.makedirs(os.path.dirname(E.venv_python(E.VENV)))
+            os.symlink(sys.executable, E.venv_python(E.VENV))
+            python, py_why, _, jl_why, notes = E.prepare(sys.executable, False, 'julia', True, False,
+                                                         str(APP / 'julia'))
+            self.assertEqual((python, py_why, jl_why), (E.venv_python(E.VENV), None, 'is switched off (--no-julia)'))
+            self.assertIn(f'Python engine on its own Python, {E.VENV}', notes)
+            python, _, _, _, _ = E.prepare(sys.executable, True, 'julia', True, False, str(APP / 'julia'))
+            self.assertEqual(python, sys.executable)
+
+    def test_the_server_says_what_an_engine_lacks_and_how_to_get_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([sys.executable, '-m', 'venv', '--without-pip', os.path.join(d, 'bare')], check=True)
+            bare = os.path.join(d, 'bare', 'Scripts' if os.name == 'nt' else 'bin',
+                                'python.exe' if os.name == 'nt' else 'python')
+            port = _free_port()
+            proc = subprocess.Popen([sys.executable, str(APP / 'serve.py'), str(port), '--python', bare, '--julia',
+                                     '/nowhere/julia'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    env={**os.environ, 'KOMPARTMENT_HOME': os.path.join(d, 'home')})
+            said = []
+            try:
+                for line in proc.stdout:
+                    said.append(line.rstrip())
+                    if 'Ctrl+C to stop' in line:
+                        break
+            finally:
+                proc.terminate()
+                proc.wait(timeout=10)
+            text = '\n'.join(said)
+            self.assertIn('python engine not available: needs NumPy and SciPy (python3 serve.py --setup sets it up)',
+                          text)
+            self.assertIn('julia engine not available: has no Julia at /nowhere/julia', text)
+            self.assertFalse(os.path.exists(os.path.join(d, 'home')), 'a server not at a terminal set something up')
+
 if __name__ == '__main__':
     unittest.main()

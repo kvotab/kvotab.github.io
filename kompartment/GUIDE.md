@@ -86,10 +86,26 @@ python3 serve.py 8080 --no-julia         # the browser and Python only
 
 `--engine` says which the page starts on; without it, the page starts on the one
 last chosen in this browser. `--python PATH` and `--julia PATH` say which
-interpreter to use. The Python engine needs NumPy and SciPy, and the Julia one
-its package in `julia/`, which compiles the first time it starts after a change
-— about a minute, said on the bar as *Starting Julia…*. The server's window
-says which engines it found, and why not the others.
+interpreter to use. The Julia engine's package compiles the first time it
+starts after a change — about a minute, said on the bar as *Starting Julia…*.
+
+**What the engines need is checked at every start.** The Python engine needs
+Python 3.9 or newer with NumPy and SciPy, and runs several times quicker with
+numba; the Julia engine needs Julia 1.10 or newer and the packages its project
+lists. The server's window says which engines it found, and for the others
+what is missing and how to get it, and so does the choice beside **Run**.
+Started in a terminal, the server offers to set up what is missing:
+
+- **Python**: a Python of the engine's own, made in `~/.kompartment/python`
+  with NumPy, SciPy and numba installed into it, about 300 MB. Nothing is
+  installed into your own Python, so one the system manages (Homebrew's, a
+  Linux distribution's) is never asked to take a package. The server runs the
+  engine on it from then on, unless `--python` says otherwise.
+- **Julia**: its official installer, juliaup, which asks its own questions.
+- **Julia's packages**: installed and compiled once, a few minutes.
+
+A question answered no is not asked again. `python3 serve.py --setup` sets up
+whatever is missing without asking — the Julia installer still asks its own.
 
 The engine keeps the run it made and sends the page everything about it but its
 states. The page checks the run against the model, and asks the engine for each
