@@ -1023,6 +1023,61 @@ the status text by 1px between `Updated 3s ago` and `Updated 4s ago`. Each
 count also has a guard asserting it really ticked, since a board that stood
 still would pass everything else.
 
+## test-chrome-sl-arrivals.py
+
+Whether each departure on the SL boards says when the train will be at the far
+end: Solna on uppsala.html, Uppsala C on solna.html.
+
+    python3 -m http.server 8765 --bind 127.0.0.1
+    "$CHROME" --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/p
+    python3 resources/tests/site/test-chrome-sl-arrivals.py    # expect 30/30
+
+SITE_HTTP_PORT and SITE_CDP_PORT choose other ports.
+
+### Where the time comes from
+
+The departures API cannot give it. It lists at most three departures per line
+and direction, and at the far end those are the trains already on their way
+there; Uppsala C, where line 40 ends, lists no arriving train at all. SL's
+journey planner (`journeyplanner.integration.sl.se/v2/trips`) is keyless and
+CORS-open like the departures API, and asked for trips from the home station to
+the far one it gives each trip's forecast departure and arrival. Its trip id
+ends in the advertised train number - `9015001004002243` is train 2243 - which
+is how SL's `journey.id` ends too, so trips are joined to departures by number.
+Stops are named by the `gid` the departures API lists beside every site,
+`9091001000` and the site id in six digits; all 6,501 sites follow that.
+
+Checked live before building on it: the planner's three trips matched the
+board's three departures on both pages, and on a metro train running 2 min late
+its forecast departure agreed with the departures API to the second while its
+arrival showed the delay carried down the line.
+
+The board keeps the planner's forecast *running time* and adds it to its own
+forecast for the departure, so a departure that slips between two planner
+answers takes the far-end time with it. It asks the planner only when a
+departure appears or moves (in whole minutes), or once a minute otherwise,
+from the first departure's own scheduled minute, three trips at a time; a
+train pushed out of those three by a trip the board does not list is asked for
+again from its own minute. With no live forecast the timetable's running time
+stands in.
+
+### What is checked
+
+Both APIs are stubbed with trains built from the moment of loading: one on
+time, one 7 min late whose forecast catches up 2 min (5 min late at the far
+end, so red), one with no live forecast, and a trip the board does not list
+between the first two, where matching by position would hand its time to the
+wrong train. Then the planner goes down while the first train slips 4 min: the
+far-end time must follow at once, the failure must stay quiet, and three more
+refreshes must not ask the planner again. A cancelled train shows no time;
+rows keep one column on a desktop and fit at 390 and 320px; solna.html asks
+from 9509 to 6086 and labels "At Uppsala C"; with the planner down from the
+start it is asked once, not on every refresh.
+
+Against the code before the feature it scores **8/30** - the checks that pass
+are the ones that hold for any board (three departures listed, no error,
+nothing off the screen).
+
 ## test-chrome-theme-default.py
 
 Which theme a page starts in, given the system setting and what is stored.

@@ -41,6 +41,7 @@ STUB = r"""
   window.fetch = function (input) {
     const url = String((input && input.url) || input || '');
     if (url.indexOf('/trains') >= 0) return json({ timestamp: Math.floor(Date.now() / 1000), count: 0, trains: [] });
+    if (url.indexOf('journeyplanner.integration.sl.se') >= 0) return json({ journeys: [] });
     return json({ departures: [row(113, 0), row(118, 1), row(1500, 2)], stopDeviations: [] });
   };
 })();

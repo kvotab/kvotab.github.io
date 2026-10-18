@@ -126,6 +126,13 @@
 .sl-row-exp { color: #d84a43; font-weight: 700; }
 .sl-row-dest { min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sl-row-plat { color: var(--text-muted); font-size: .82rem; white-space: nowrap; }
+/* The time at the far end ("at Solna 14:44") gets a column of its own beside
+   the departure time, fixed like the rest so the rows still line up. */
+.sl-arrivals .sl-row { grid-template-columns: 78px 66px 128px minmax(0, 260px) 46px 74px; }
+.sl-row-arr { color: var(--text-secondary); white-space: nowrap; }
+.sl-row-arr small { margin-right: 2px; font-size: .72rem; color: var(--text-muted); }
+/* Two minutes or more behind the timetable, in the red a late departure uses. */
+.sl-arr-late { color: #d84a43; font-weight: 700; }
 .sl-row-cancel .sl-row-count, .sl-row-cancel .sl-row-dest { color: var(--text-muted); text-decoration: line-through; }
 /* A message on a following train sits under its row, across the full width. */
 .sl-row .sl-row-dev { grid-column: 1 / -1; margin-top: 2px; }
@@ -367,6 +374,13 @@
   .sl-row-count { grid-area: count; } .sl-row-dest { grid-area: dest; } .sl-row-badge { grid-area: badge; }
   .sl-row-time { grid-area: time; font-size: .82rem; } .sl-row-plat { grid-area: plat; }
   .sl-row .sl-row-dev { grid-area: dev; }
+  /* The far-end time joins the departure time on the second line, where it
+     costs no height. It may wrap under itself on the narrowest screens rather
+     than push the platform off the edge. */
+  .sl-arrivals .sl-row { grid-template-columns: 56px auto minmax(0, 1fr) auto;
+    grid-template-areas: "count dest dest badge" "count time arr plat" "dev dev dev dev"; }
+  .sl-row-arr { grid-area: arr; font-size: .82rem; white-space: normal; }
+  .sl-row-arr .sl-arr-time { white-space: nowrap; }
   .sl-track { margin: 4px 0 0; }
   /* Key above credit, both to the left: a credit pushed to the right of its
      own wrapped line reads as an afterthought hanging off the edge. */

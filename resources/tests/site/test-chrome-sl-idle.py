@@ -17,7 +17,7 @@ PAGE = 'uppsala.html'
 
 STUB = r"""
 (() => {
-  window.__slCalls = { dep: 0, veh: 0 };
+  window.__slCalls = { dep: 0, veh: 0, jp: 0 };
   try { localStorage.setItem('kvot-sl-trains', 'https://stub.invalid/trains'); } catch (e) {}
   /* Three departures, built relative to the moment the page loads: two within
      the hour and one ten hours out. The third is what the board used to hide,
@@ -152,6 +152,12 @@ STUB = r"""
       return json({ timestamp: Math.floor(Date.now() / 1000), count: moving.length + 1,
                     trains: moving.concat([Object.assign({ number: '9999' }, at(0.92))]) });
     }
+    /* The journey planner, asked for each departure's time at Solna. No
+       trips: this file is about when the board calls, not what it shows. */
+    if (url.indexOf('journeyplanner.integration.sl.se') >= 0) {
+      window.__slCalls.jp++;
+      return json({ systemMessages: [], journeys: [] });
+    }
     if (url.indexOf('transport.integration.sl.se') >= 0) {
       window.__slCalls.dep++;
       const forecast = Number((/[?&]forecast=(\d+)/.exec(url) || [])[1]) || 60;
@@ -192,7 +198,7 @@ STATE = r"""JSON.stringify((() => {
   const h = document.getElementById('board').__slBoard;
   /* Tolerant of a board that has none of these, so this file can be run
      against an older sl-board.js and report failures rather than crash. */
-  return { dep: window.__slCalls.dep, veh: window.__slCalls.veh,
+  return { dep: window.__slCalls.dep, veh: window.__slCalls.veh, jp: window.__slCalls.jp || 0,
            polling: typeof h.polling === 'boolean' ? h.polling : null,
            paused: h.paused === undefined ? null : h.paused,
            active: typeof h.isActive === 'function' ? h.isActive() : null,
@@ -251,6 +257,8 @@ async def main():
         check(results, 'positions polled while watched', b['veh'] - a['veh'] >= 2,
               '%d calls in 8s' % (b['veh'] - a['veh']))
         check(results, 'board reports itself active', b['active'] is True and b['polling'] is True, str(b['live']))
+        # So that "no planner calls" below means something: it is called here.
+        check(results, 'journey planner asked while watched', b['jp'] >= 1, '%d calls' % b['jp'])
         check(results, 'not greyed while live', not b['greyed'], '')
 
         print('\n2. Scrolled out of the viewport')
@@ -265,6 +273,8 @@ async def main():
               '%d calls in 4s' % (d['veh'] - c['veh']))
         check(results, 'no departure calls off-screen', d['dep'] == c['dep'],
               '%d calls in 4s' % (d['dep'] - c['dep']))
+        check(results, 'no journey planner calls off-screen', d['jp'] == c['jp'],
+              '%d calls in 4s' % (d['jp'] - c['jp']))
         check(results, 'reason is "not in view"', d['paused'] == 'not in view', repr(d['paused']))
         check(results, 'board greyed while paused', d['greyed'], '')
         check(results, 'says it is paused', 'Paused' in (d['live'] or ''), repr(d['live']))

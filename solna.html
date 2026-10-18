@@ -33,7 +33,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20260923b">
+  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20261018">
   <!-- The page's own mark, in the kvot mark's language (see sl-icon.svg): a
        departure sign on a post. The 32 px PNG comes first, for a browser that
        will not take an SVG (Safari before version 26); Chrome and Firefox take
@@ -51,10 +51,11 @@
 <main><div class="sl-wrap">
   <p class="sl-intro">
     The next SL commuter trains (pendeltåg line 40) leaving <b>Solna</b> for <b>Uppsala C</b>.
-    Line 41 also calls here but turns at Märsta, so only trains bound for Uppsala are shown. The
-    board refreshes itself and the minutes count down between refreshes. The line below shows
-    every SL train between Stockholm City and Helenelund, lines 40 and 41 in both directions, so
-    you can see how busy the stretch is; late trains are ringed red.
+    Line 41 also calls here but turns at Märsta, so only trains bound for Uppsala are shown, each
+    with the time it is expected at Uppsala C. The board refreshes itself and the minutes count
+    down between refreshes. The line below shows every SL train between Stockholm City and
+    Helenelund, lines 40 and 41 in both directions, so you can see how busy the stretch is; late
+    trains are ringed red.
   </p>
   <div id="board"></div>
   <p class="sl-other">Going the other way? <a href="./uppsala.html">Uppsala → Solna</a></p>
@@ -68,7 +69,7 @@
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260925"></script>
-<script src="./resources/js/sl-board.js?v=20260923b"></script>
+<script src="./resources/js/sl-board.js?v=20261018"></script>
 <script>
   KVOT.renderHeader('Solna → Uppsala');
   KVOT.renderNav('solna.html');
@@ -92,6 +93,8 @@
     toName: 'Uppsala C',
     keep: (d) => d.destination === 'Uppsala C',
     directionCode: 2,
+    /* Uppsala C, where each departure's expected time is shown beside it. */
+    toSiteId: 6086,
     /* Only the northbound carriageway: this board is about getting to
        Uppsala, so the trains heading into town are not drawn and the
        diagram is a single line rather than two. */

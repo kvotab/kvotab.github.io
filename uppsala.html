@@ -33,7 +33,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
-  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20260923b">
+  <link rel="stylesheet" href="./resources/css/sl-board.css?v=20261018">
   <!-- The page's own mark, in the kvot mark's language (see sl-icon.svg): a
        departure sign on a post. The 32 px PNG comes first, for a browser that
        will not take an SVG (Safari before version 26); Chrome and Firefox take
@@ -51,10 +51,11 @@
 <main><div class="sl-wrap">
   <p class="sl-intro">
     The next SL commuter trains (pendeltåg line 40) leaving <b>Uppsala C</b> southbound. Every
-    southbound line-40 train calls at Solna, about 45 minutes later. The board refreshes itself
-    and the minutes count down between refreshes. The line below shows every SL train between
-    Uppsala and Upplands Väsby: above the rail those heading south, below it those arriving at
-    Uppsala &ndash; the next train to leave is usually one of them.
+    southbound line-40 train calls at Solna, and each departure shows the time it is expected
+    there. The board refreshes itself and the minutes count down between refreshes. The line
+    below shows every SL train between Uppsala and Upplands Väsby: above the rail those heading
+    south, below it those arriving at Uppsala &ndash; the next train to leave is usually one of
+    them.
   </p>
   <div id="board"></div>
   <p class="sl-other">Going the other way? <a href="./solna.html">Solna → Uppsala</a></p>
@@ -68,7 +69,7 @@
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20260925"></script>
-<script src="./resources/js/sl-board.js?v=20260923b"></script>
+<script src="./resources/js/sl-board.js?v=20261018"></script>
 <script>
   KVOT.renderHeader('Uppsala → Solna');
   KVOT.renderNav('uppsala.html');
@@ -94,6 +95,8 @@
     toName: 'Solna',
     keep: (d) => d.line === '40' && d.destination !== 'Uppsala C',
     directionCode: 1,
+    /* Solna, where each departure's expected time is shown beside it. */
+    toSiteId: 9509,
     /* Live train positions. The endpoint is a Cloudflare Worker
        (workers/sl-vehicles.js) that holds the Trafikverket key; this page is
        static and public, so no key can live here. The URL itself is not a

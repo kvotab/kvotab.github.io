@@ -38,6 +38,10 @@
   data; the motion in between is interpolation, redrawn every second and
   slid by CSS, and would be no smoother at any polling rate.
 
+  When a train will be at the far end - Solna for one leaving Uppsala, Uppsala
+  C for one leaving Solna - comes from a second keyless SL API on Trafiklab,
+  the journey planner; see refreshArrivals.
+
   The data are CC BY. The licence requires the page to say it is based on
   information from Trafiklab.se, with a link, and forbids keeping a copy
   beyond a cache - this module holds only recent responses, in memory.
@@ -46,6 +50,13 @@
   'use strict';
 
   const API = 'https://transport.integration.sl.se/v1/sites';
+  /* SL's journey planner, open and keyless like the departures API. */
+  const PLANNER = 'https://journeyplanner.integration.sl.se/v2/trips';
+  /* How often the far-end times are asked for again when nothing on the
+     board has changed. A departure that appears or moves is asked about at
+     once, and the time shown follows the board's own forecast in between,
+     so this only refreshes the planner's idea of the running time. */
+  const ARRIVALS_MS = 60 * 1000;
 
   const REFRESH_MS = 10 * 1000;
   /* On an error the interval doubles, up to this, and resets on success. */
@@ -127,6 +138,18 @@
     const s = String(journeyId == null ? '' : journeyId);
     return /^\d{13}$/.test(s) ? String(parseInt(s.slice(8), 10)) : null;
   }
+  /* The journey planner's trip id ends in the same five digits:
+     "9015001004002243" is train 2243. Checked against the departures API on
+     both boards' trains, and on a metro train running late, whose two
+     forecasts agreed to the second. */
+  function tripNumberOf(tripId) {
+    const s = String(tripId == null ? '' : tripId);
+    return /^\d{10,}$/.test(s) ? String(parseInt(s.slice(-5), 10)) : null;
+  }
+  /* The planner names a stop by the global id the departures API lists
+     beside every site: 9091001000 followed by the site id in six digits
+     (all 6,501 sites follow it). */
+  const stopGid = (siteId) => '9091001000' + String(siteId).padStart(6, '0');
 
   /* The states a departure can be in, and what the board says about each.
      From the spec's departureStateEnum; the ones the API actually produced in
@@ -323,7 +346,7 @@
        bar is a link somebody can send to somebody else, and a page that
        fetches whatever a link tells it to is a page doing as it is told by a
        stranger. */
-    const cfg = Object.assign({ refreshMs: REFRESH_MS, forecast: FORECAST_MIN, corridor: [], directionCode: null, trainsUrl: null, idleMs: IDLE_MS, lines: null, oneWay: false, branches: null }, config);
+    const cfg = Object.assign({ refreshMs: REFRESH_MS, forecast: FORECAST_MIN, corridor: [], directionCode: null, trainsUrl: null, idleMs: IDLE_MS, lines: null, oneWay: false, branches: null, toSiteId: null }, config);
     if (!cfg.trainsUrl) {
       try { cfg.trainsUrl = localStorage.getItem('kvot-sl-trains') || null; } catch (e) { /* storage unavailable */ }
     }
@@ -419,10 +442,18 @@
     let refreshTimer = null;
     let tickTimer = null;
     let inFlight = null;
+    /* The far end's times - see refreshArrivals. */
+    const arrivals = new Map(); // journeyId -> { run, runPlanned }, in ms
+    let arrivalsKey = '';       // the departures they were last asked for
+    let arrivalsAt = 0;         // when the planner last answered
+    let arrivalsRetryAt = 0;    // after a failure, not before this
+    let arrivalsInFlight = null;
     const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     root.classList.add('sl-board');
     if (reducedMotion) root.classList.add('sl-reduced');
+    /* The rows keep a column for the far-end time only on a board that shows one. */
+    if (cfg.toSiteId) root.classList.add('sl-arrivals');
     root.innerHTML = `
       <div class="sl-head">
         <div class="sl-relation">
@@ -524,6 +555,7 @@
           fetchedAt = new Date();
           lastError = null;
           backoffMs = cfg.refreshMs;
+          refreshArrivals();
         })
         .catch((err) => {
           lastError = err;
@@ -536,6 +568,138 @@
           schedule();
         });
       return inFlight;
+    }
+
+    /*
+      When each train will be at the far end of the relation: Solna for a
+      train leaving Uppsala, Uppsala C for one leaving Solna.
+
+      The departures API cannot say. It lists three departures per line and
+      direction, and at the far end those are the trains already on their
+      way there, not the ones this board is counting down to - and Uppsala C,
+      where line 40 ends, lists no arriving train at all. SL's journey planner
+      can: asked for trips from here to there, it gives each one's forecast
+      departure and arrival. Its trip id ends in the train number that ends
+      SL's journey id, so a trip is joined to a departure by identity, the way
+      live positions are, never by being next in a list.
+
+      What is kept is the running time it forecasts, not its clock time, and
+      the board adds that to its own forecast for the departure. The two
+      forecasts normally agree to the second; when the departure slips between
+      two answers from the planner, the time at the far end slips with it,
+      rather than contradicting the countdown above it.
+    */
+    async function planTrips(from) {
+      const pad = (v) => String(v).padStart(2, '0');
+      const query = new URLSearchParams({
+        type_origin: 'any', name_origin: stopGid(cfg.siteId),
+        type_destination: 'any', name_destination: stopGid(cfg.toSiteId),
+        /* The planner's maximum, and as many as the board ever lists. */
+        calc_number_of_trips: '3',
+        max_changes: '0',
+        /* From the minute asked for on. By default it adds the trip before,
+           which here is a train that has already gone. */
+        calc_one_direction: 'true',
+        /* No drawing of the route: it was two thirds of the answer. */
+        gen_c: 'false',
+        /* The departure's own minute, in the zone-less Swedish time the
+           departures API gives and the planner expects. */
+        itd_date: `${from.getFullYear()}${pad(from.getMonth() + 1)}${pad(from.getDate())}`,
+        itd_time: `${pad(from.getHours())}${pad(from.getMinutes())}`,
+      });
+      const res = await fetch(`${PLANNER}?${query}`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      /* The train a leg rides, by number; a walk between platforms has none. */
+      const numberOf = (leg) => leg && leg.transportation
+        && tripNumberOf(leg.properties?.tripId ?? leg.transportation.properties?.RealtimeTripId);
+      const trips = new Map();
+      for (const j of (data && data.journeys) || []) {
+        const rides = (j.legs || []).filter(numberOf);
+        /* One train all the way, or it is not a trip on one of these trains. */
+        if (rides.length === 1) trips.set(numberOf(rides[0]), rides[0]);
+      }
+      return trips;
+    }
+
+    /* A trip's running time as forecast, and as timetabled. The forecast is
+       missing when the planner has no live data for the train; the timetable
+       then stands in for it. */
+    function runningTimes(leg) {
+      const at = (iso) => (iso ? Date.parse(iso) : NaN);
+      const o = leg.origin || {}, e = leg.destination || {};
+      const planned = at(e.arrivalTimePlanned) - at(o.departureTimePlanned);
+      const forecast = at(e.arrivalTimeEstimated) - at(o.departureTimeEstimated);
+      const sane = (ms) => Number.isFinite(ms) && ms > 0 && ms < 6 * 3600 * 1000;
+      if (!sane(planned) && !sane(forecast)) return null;
+      return { run: sane(forecast) ? forecast : planned, runPlanned: sane(planned) ? planned : forecast };
+    }
+
+    /* Asked after every refresh of the departures, but only goes to the
+       network when a departure has appeared or moved, or the last answer is
+       a minute old - the running time changes far less often than that. */
+    function refreshArrivals() {
+      if (!cfg.toSiteId || arrivalsInFlight) return arrivalsInFlight;
+      const want = departures.filter((d) => d.journeyId && d.scheduled && d.expected
+        && !GONE.has(d.state) && !CANCELLED.has(d.state));
+      /* In whole minutes, as SL revises a train's forecast: one that wobbles
+         by seconds is not a train that has moved. */
+      const key = want.map((d) => `${d.journeyId}@${Math.round(d.expected.getTime() / 60000)}`).join(' ');
+      const now = Date.now();
+      if (!want.length || now < arrivalsRetryAt || (key === arrivalsKey && now - arrivalsAt < ARRIVALS_MS)) return null;
+      arrivalsInFlight = (async () => {
+        /* Usually one request: the planner's next three trips from the first
+           departure's minute are the board's three departures. Anything it
+           lists that the board does not - a replacement bus, say - takes a
+           place among the three, so a departure still unmatched is asked for
+           again from its own minute, until an answer brings nothing new. */
+        const matched = new Set();
+        for (let round = 0; round < 3; round++) {
+          const todo = want.filter((d) => !matched.has(d.journeyId));
+          if (!todo.length) break;
+          const from = todo.reduce((a, b) => (b.scheduled < a.scheduled ? b : a)).scheduled;
+          const trips = await planTrips(from);
+          let more = 0;
+          for (const d of todo) {
+            const leg = trips.get(trainNumberOf(d.journeyId));
+            if (!leg || String(leg.transportation.disassembledName ?? d.line) !== d.line) continue;
+            const times = runningTimes(leg);
+            if (!times) continue;
+            arrivals.set(d.journeyId, times);
+            matched.add(d.journeyId);
+            more++;
+          }
+          if (!more) break;
+        }
+        const listed = new Set(departures.map((d) => d.journeyId));
+        for (const id of [...arrivals.keys()]) if (!listed.has(id)) arrivals.delete(id);
+        arrivalsKey = key;
+        arrivalsAt = Date.now();
+      })()
+        .catch((err) => {
+          /* Quiet, like the positions: the board is complete without these
+             times, and the last ones known still follow the departures. */
+          arrivalsRetryAt = Date.now() + ARRIVALS_MS;
+          if (typeof ignoreFailure === 'function') ignoreFailure('sl-board:arrivals', err);
+        })
+        .finally(() => {
+          arrivalsInFlight = null;
+          render();
+        });
+      return arrivalsInFlight;
+    }
+
+    /* A departure's time at the far end - its own forecast plus the running
+       time - and how many minutes that is behind the timetable. Both are
+       sums of differences, so they hold whatever zone the visitor's clock is
+       in. */
+    function arrivalOf(d) {
+      const a = arrivals.get(d.journeyId);
+      if (!a || CANCELLED.has(d.state) || !d.expected || !d.scheduled) return null;
+      return {
+        when: new Date(d.expected.getTime() + a.run),
+        late: Math.round(((d.expected - d.scheduled) + (a.run - a.runPlanned)) / 60000),
+      };
     }
 
     /*
@@ -1312,9 +1476,16 @@
       return { big: hhmm(d.expected), small: 'departure', day: days };
     }
 
+    /* "At Solna 14:44": the time the train is expected at the far end, red
+       when that is two minutes or more behind the timetable, as a late
+       departure is. Nothing at all until the planner has answered. */
+    const arrivalTime = (arr) =>
+      `<span class="sl-arr-time${arr.late >= 2 ? ' sl-arr-late' : ''}">${hhmm(arr.when)}</span>`;
+
     function renderHero(d, now) {
       const c = countdown(d, now);
       const cancelled = CANCELLED.has(d.state);
+      const arr = arrivalOf(d);
       return `
         <div class="sl-hero${cancelled ? ' sl-hero-cancel' : ''}">
           <div class="sl-count">
@@ -1332,6 +1503,7 @@
               <span class="sl-time${d.delayMin >= 2 ? ' sl-time-struck' : ''}">${hhmm(d.scheduled)}</span>
               ${d.delayMin >= 2 || d.delayMin <= -2 ? `<span class="sl-time-label">Expected</span><span class="sl-time sl-time-strong">${hhmm(d.expected)}</span>` : ''}
               ${d.platform ? `<span class="sl-time-label">Platform</span><span class="sl-platform">${esc(d.platform)}</span>` : ''}
+              ${arr ? `<span class="sl-time-label">At ${esc(cfg.toName)}</span><span class="sl-time sl-arr">${arrivalTime(arr)}</span>` : ''}
             </div>
             ${d.deviations.length ? `<div class="sl-row-dev">${d.deviations.map((x) => esc(x.message)).join('<br>')}</div>` : ''}
           </div>
@@ -1342,10 +1514,12 @@
       const c = countdown(d, now);
       const unit = c.day ? (c.day === 1 ? ' tomorrow' : ` in ${c.day} days`)
         : (c.big === 'Now' || CANCELLED.has(d.state) || c.small !== 'minutes') ? '' : ' min';
+      const arr = arrivalOf(d);
       return `
         <li class="sl-row${CANCELLED.has(d.state) ? ' sl-row-cancel' : ''}">
           <span class="sl-row-count">${tabular(c.big)}<small>${unit}</small></span>
           <span class="sl-row-time">${hhmm(d.scheduled)}${d.delayMin >= 2 ? ` <span class="sl-row-exp">→ ${hhmm(d.expected)}</span>` : ''}</span>
+          ${cfg.toSiteId ? `<span class="sl-row-arr sl-arr">${arr ? `<small>at ${esc(cfg.toName)}</small> ${arrivalTime(arr)}` : ''}</span>` : ''}
           <span class="sl-row-dest"><span class="sl-line sl-line-sm">${esc(d.line)}</span> ${esc(d.destination)}</span>
           <span class="sl-row-plat">${d.platform ? 'Pl. ' + esc(d.platform) : ''}</span>
           <span class="sl-row-badge">${badge(d)}</span>
@@ -1492,6 +1666,6 @@
   }
 
   global.KVOT_SL = { mountBoard, shape, parseLocal, locate, kmBetween, STATE_LABEL,
-    trainNumberOf, runsForward,
+    trainNumberOf, tripNumberOf, runsForward,
     REFRESH_MS, STALE_MS, FORECAST_MIN, GPS_MS, GPS_CORRIDOR_KM, IDLE_MS };
 })(window);
