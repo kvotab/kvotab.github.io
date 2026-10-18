@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from helpers import example
+from helpers import example, needs_app
 
 import kompartment as kp
 
@@ -80,31 +80,61 @@ class Probabilistic(unittest.TestCase):
         self.assertEqual(len(q), 3)
 
     @staticmethod
-    def _listed(values: list) -> kp.Model:
+    def _listed_raw(values: list) -> dict:
         """The biosphere example with geoTransit handed out from a list, realisation by realisation."""
         raw = example('biosphere')
         raw['simulation']['output_points'] = 20
         for p in raw['parameters']:
             if p['name'] == 'geoTransit':
                 p['pdf'] = {'kind': 'pg', 'values': list(values), 'inorder': True, 'pos': 0}
-        return kp.Model.from_dict(raw)
+        return raw
+
+    @classmethod
+    def _listed(cls, values: list) -> kp.Model:
+        return kp.Model.from_dict(cls._listed_raw(values))
+
+    @needs_app
+    def test_a_draw_that_is_no_number_is_held_as_the_application_holds_it(self) -> None:
+        # A gap, a word and a true in the list: each realisation of them runs with, and
+        # records, the value the one before it ran with -- here as in the application.
+        from test_engine_lang import engine, number
+
+        from kompartment.engine.probabilistic import run_probabilistic
+        raw = self._listed_raw([2e-4, 'x', 3e-4, None, 2.5e-4, True, 4e-4, None, 1e-4, 'x', 2e-4, 3e-4])
+        js = engine('probabilistic', model=raw, opts={'iterations': 12, 'seed': 3}, keep=['Dose'])
+        self.assertNotIn('error', js, js.get('error'))
+        mine = run_probabilistic(raw, iterations=12, seed=3, keep=['Dose'])
+        drawn = np.asarray(mine.samples, dtype=float)
+        self.assertTrue(np.array_equal(drawn.ravel(), np.array([number(v) for v in np.ravel(js['samples'])])))
+        self.assertEqual(list(drawn[mine.names.index('geoTransit')]),
+                         [2e-4, 2e-4, 3e-4, 3e-4, 2.5e-4, 2.5e-4, 4e-4, 4e-4, 1e-4, 1e-4, 2e-4, 3e-4])
+        for k, label in enumerate(mine.labels):
+            a = np.asarray(mine.values[k], dtype=float).ravel()
+            b = np.array([number(v) for v in np.ravel(js['values'][js['labels'].index(label)])])
+            self.assertLess(float(np.max(np.abs(a - b)) / np.max(np.abs(b))), 1e-9, label)
 
     def test_a_chunk_starts_as_one_process_would(self) -> None:
         # A word in the list is no number: that realisation keeps the value the last one
         # left, as one process running them in order holds it -- in whichever process,
-        # and at whichever end of its chunk, the realisation runs.
+        # and at whichever end of its chunk, the realisation runs; and the value it ran
+        # with is what the run records of it.
+        held = [2e-4, 2e-4, 3e-4, 2.5e-4, 2.5e-4, 2.5e-4, 4e-4, 4e-4, 1e-4, 2e-4, 2e-4, 3e-4]
         words = self._listed([2e-4, 'x', 3e-4, 2.5e-4, 'x', 'x', 4e-4, 'x', 1e-4, 2e-4, 'x', 3e-4])
-        numbers = self._listed([2e-4, 2e-4, 3e-4, 2.5e-4, 2.5e-4, 2.5e-4, 4e-4, 4e-4, 1e-4, 2e-4, 2e-4, 3e-4])
+        numbers = self._listed(held)
         want = numbers.run_probabilistic(12, seed=3, keep=['Dose'])
         label = want.labels[0]
         for workers in (1, 3):
             with self.subTest(workers=workers):
                 got = words.run_probabilistic(12, seed=3, keep=['Dose'], workers=workers)
                 self.assertTrue(np.array_equal(got.realisations(label), want.realisations(label), equal_nan=True))
-                k = got.names.index('geoTransit')
-                self.assertEqual([math.isnan(v) for v in got.samples[k]],
-                                 [w == 'x' for w in [2e-4, 'x', 3e-4, 2.5e-4, 'x', 'x', 4e-4, 'x', 1e-4, 2e-4, 'x',
-                                                     3e-4]])
+                self.assertEqual(list(got.samples[got.names.index('geoTransit')]), held)
+        # Replayed on its own, a realisation whose draw is no number runs as it ran in the run.
+        from kompartment.engine.probabilistic import run_realization
+        replay = run_realization(words, 4, seed=3, iterations=12)
+        entry = next(v for v in replay['values'] if v['name'] == 'geoTransit')
+        self.assertEqual((entry['value'], entry['held']), (2.5e-4, True))
+        series = replay['results'].series_many([o for o in replay['results'].outputs() if o['label'] == label])[0]
+        self.assertTrue(np.array_equal(series, want.realisations(label)[4], equal_nan=True))
 
     def test_only_the_first_realisation_fails_the_run(self) -> None:
         # An absurd rate breaks one realisation. The first fails the run; any other is

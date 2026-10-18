@@ -28,7 +28,6 @@ import numpy as np
 
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
-from ..stats.pdf import _to_number
 from ..stats.sample import ValueDrawer, distributed_slots, stream_for, uniforms, value_at_probability
 from .. import jsmath
 from .builder import build_system, tuple_by_list
@@ -131,6 +130,9 @@ class Design:
         self.seed = seed
         self.stats = stats
         self.gsa_design = gsa_design
+        # Each input's values held over a draw that is no number, worked out the
+        # first time one is met (``value_set``).
+        self.held_over: Dict[int, np.ndarray] = {}
 
 
 def design_for(project: Project, system: Any, *, seed: int = 1, iterations: Optional[int] = None,
@@ -273,17 +275,43 @@ def _a_number(v: Any) -> bool:
     return isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def value_set(design: Design, k: int, i: int) -> float:
+    """The value input ``k`` takes in realisation ``i`` (the application's
+    ``valueSet``): what is set into the run, and what the run records of it.
+
+    The value drawn, where that is a number. A draw that is not -- a gap in a
+    list, a word or a Boolean in one, a distribution with no value there --
+    leaves a varied input at the last value drawn before it that was, as one
+    run going through the realisations in order holds it, and at the model's
+    own where none was; an input that is held is at the model's own throughout.
+    Read off the design alone, so that a realisation is the same run however
+    the realisations are shared out between processes, and replayed on its own."""
+    v = design.value_for(k, i)
+    if _a_number(v):
+        return float(v)
+    if not design.varies(design.plan[k]):
+        return design.best[k]
+    column = design.held_over.get(k)
+    if column is None:
+        column = np.empty(design.iterations)
+        last = design.best[k]
+        for j in range(design.iterations):
+            w = design.value_for(k, j)
+            if _a_number(w):
+                last = float(w)
+            column[j] = last
+        design.held_over[k] = column
+    return float(column[i])
+
+
 def apply_point(system: Any, design: Design, i: int) -> List[float]:
-    """Sets design point ``i`` into the system, ready to run; the values set."""
+    """Sets design point ``i`` into the system, ready to run; the values set (``value_set``)."""
     P = system.P
     out = []
     for k, e in enumerate(design.plan):
-        v = design.value_for(k, i)
+        v = value_set(design, k, i)
         out.append(v)
-        if _a_number(v):
-            P[e['slot']] = v
-        elif not design.varies(e):
-            P[e['slot']] = design.best[k]
+        P[e['slot']] = v
     system.evaluate_invariant()
     draw_disruptions(system, design.seed, i, sample=not design.stats.get('tornado') and not design.stats.get('gsa'))
     return out
@@ -328,10 +356,12 @@ def run_realization(model: Any, index: int, **opts: Any) -> Dict[str, Any]:
     i = min(design.iterations - 1, max(0, int(round(float(index))) if index is not None else 0))
     values = apply_point(system, design, i)
     results = run(project, system=system, compiled=opts.get('compiled', 'auto'))
+    # Held: not varied, at the model's value in a tornado's point, or held over
+    # from a realisation before, the draw being no number.
     return {'results': results, 'index': i, 'iterations': design.iterations,
             'values': [{'name': design.names[k], 'value': values[k],
-                        'held': (not design.varies(e)) or (values[k] == design.best[k]
-                                                             if design.stats.get('tornado') else False)}
+                        'held': (not design.varies(e)) or not _a_number(design.value_for(k, i))
+                        or (values[k] == design.best[k] if design.stats.get('tornado') else False)}
                        for k, e in enumerate(design.plan)]}
 
 
@@ -445,31 +475,11 @@ def _frame(project: Project, system: Any, design: Design, keep: Any, large: bool
             'precision': precision}
 
 
-def _hold_as_serial(system: Any, design: Design, frm: int, i: int) -> None:
-    """Sets every input's slot to what one process running the design in order
-    from ``frm`` holds before realisation ``i``: the last value that was a number
-    (``apply_point`` keeps the slot where a draw is not), else the model's own."""
-    P = system.P
-    for k, e in enumerate(design.plan):
-        held = design.best[k]
-        for j in range(i - 1, frm - 1, -1):
-            v = design.value_for(k, j)
-            if _a_number(v):
-                held = v
-                break
-            if not design.varies(e):
-                break
-        P[e['slot']] = held
-
-
 def _realisations(project: Project, system: Any, design: Design, frame: Dict[str, Any], lo: int, hi: int,
-                  fatal: int, on_progress: Optional[Callable[[int, int], Any]], compiled: Any,
-                  carry_from: Optional[int] = None) -> Dict[str, Any]:
+                  fatal: int, on_progress: Optional[Callable[[int, int], Any]], compiled: Any) -> Dict[str, Any]:
     """Realisations ``lo`` to ``hi - 1`` on ``system``, their kept series into
-    arrays of their own. A failure in realisation ``fatal`` fails the run; any
-    other is recorded, its row NaN. ``carry_from``: the system has run other
-    realisations, so the inputs are first set as one process running in order
-    from that realisation holds them (``_hold_as_serial``)."""
+    arrays of their own, and the values each set (``value_set``). A failure in
+    realisation ``fatal`` fails the run; any other is recorded, its row NaN."""
     plan = design.plan
     kept, grid, times = frame['kept'], frame['grid'], frame['times']
     span = hi - lo
@@ -479,13 +489,8 @@ def _realisations(project: Project, system: Any, design: Design, frame: Dict[str
     ran = np.ones(span, dtype=np.uint8)
     failed = 0
     trouble: List[str] = []
-    if carry_from is not None and lo > carry_from:
-        _hold_as_serial(system, design, carry_from, lo)
     for i in range(lo, hi):
-        drawn = apply_point(system, design, i)
-        for k in range(len(plan)):
-            # As the application's Float64Array holds it: a word NaN, null 0.
-            samples[k, i - lo] = _to_number(drawn[k])
+        samples[:, i - lo] = apply_point(system, design, i)
         try:
             r = run(project, system=system, on_grid=True, compiled=compiled)
             rows = None
@@ -571,11 +576,10 @@ def _pool_chunk(args: tuple) -> Dict[str, Any]:
             last[0] = now
             heard.put((n, int(done)))
 
-    # The system has run other chunks: the inputs start as one process running the
-    # whole design in order would hold them here, and only the design's first
-    # realisation fails the run.
+    # Only the design's first realisation fails the run. A realisation sets its inputs
+    # from the design alone (``value_set``), so it runs as it would in one process.
     return _realisations(project, system, design, frame, lo, hi, 0, hear if heard is not None else None,
-                         opts.get('compiled', 'auto'), carry_from=0)
+                         opts.get('compiled', 'auto'))
 
 
 def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
@@ -652,7 +656,8 @@ def _run_pool(raw: Dict[str, Any], opts: Dict[str, Any], workers: int,
 
 class ProbabilisticResults:
     """What a probabilistic run kept: every realisation of each kept series,
-    the values drawn, and the statistics read off them."""
+    the value each input took in each (``value_set``), and the statistics read
+    off them."""
 
     def __init__(self, data: Dict[str, Any]) -> None:
         self.data = data

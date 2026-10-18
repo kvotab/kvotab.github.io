@@ -30,10 +30,13 @@ _same(a::Float64, b::Float64) = a === b || (isnan(a) && isnan(b))
 _same(a::AbstractVector, b::AbstractVector) = length(a) == length(b) && all(i -> _same(Float64(a[i]), Float64(b[i])), eachindex(a))
 _first_diff(a, b) = (i = findfirst(i -> !_same(Float64(a[i]), Float64(b[i])), eachindex(a)); i === nothing ? nothing : (i, a[i], b[i]))
 
-"""A value as tools/prob_fixtures.py writes it: hex text, null for none (NaN), {"\$b": x} for a boolean."""
+"""
+A value as tools/prob_fixtures.py writes it: hex text, null for none (NaN), {"\$b": x} for a
+Boolean -- NaN here, since a Boolean a list hands out is no number to set into a run.
+"""
 function _drawn(v)
     v === nothing && return NaN
-    v isa AbstractDict && return Float64(v["\$b"])
+    v isa AbstractDict && return NaN
     return parse(Float64, v)
 end
 

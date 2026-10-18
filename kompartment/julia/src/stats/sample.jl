@@ -121,7 +121,9 @@ function _sm_element(values, index::Float64)
     i = Int(index)
     (i < 0 || i >= length(values)) && return NaN
     v = values[firstindex(values)+i]
-    return v isa Real ? Float64(v) : NaN
+    # A Boolean is no number to set into a run, as a word or a gap is not
+    # (JavaScript's `Number.isFinite`, which the run asks): NaN, held over.
+    return (v isa Real && !(v isa Bool)) ? Float64(v) : NaN
 end
 
 """`((spec.pos ?? 0) + at) % length`, with JavaScript's `+` and `%`."""

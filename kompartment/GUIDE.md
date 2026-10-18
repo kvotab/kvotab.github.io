@@ -6700,6 +6700,12 @@ Eleven shapes: the nine the corpus uses, and skbrnt's two double triangulars:
 | **Log-normal (two quantiles)** | fitted through two points you know — "5% below this, 95% below that" |
 | **List of values** | not a curve but values sampled elsewhere, one per realisation |
 
+An entry of a list that is not a number — an empty one, or a word — gives its
+realisation the value the realisation before it had: the last number drawn
+before it, or the parameter's own value where there was none. The realisation
+is run with that value and records it, however the run is shared out among
+cores, and a replay of it uses it too.
+
 Any of them can be **truncated** above, below or both. Truncation cuts the
 drawing as well as the density and what is left is scaled back up, so the chart
 shows the distribution you would actually sample rather than the one you

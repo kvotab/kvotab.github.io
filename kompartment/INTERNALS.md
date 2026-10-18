@@ -4218,6 +4218,19 @@ cannot draw its own. Each Worker runs `rng(seed)` over all `n` realisations and
 integrates only its range. It costs `plan.length × n` random numbers per Worker,
 which is nothing, and it is what makes the result identical.
 
+*A realisation's values are the design's, not the system's.* A draw that is no
+number -- a gap in a list, a word or a `true` in one, a distribution with no
+value there -- leaves a varied input at the last value drawn before it that was,
+or at the model's own (`valueSet`; Python's `value_set`, Julia's
+`_pb_effective`). That used to be done by not setting the slot, which made a
+realisation depend on what ran before it in the same Worker: a slice starting on
+a gap, and a replay of it, ran the model's own value where the whole run held the
+one before (a final dose 1.25e-10 against 1.35e-10 on biosphere.json with a
+gapped list). Read off the design, it is the same run wherever it runs, and it is
+what is recorded: the samples hold the value each realisation ran with, where the
+page's `Float64Array` used to hold 0 for a gap, 1 for a `true` and NaN for a word
+-- and Python copied it, and Julia held NaN for all three.
+
 *Slices are placed, not appended.* The fourth Worker often answers first, and a
 matrix assembled in arrival order is a run whose realisations are shuffled.
 Every statistic over it would accept that without complaint — a quantile does
@@ -5805,7 +5818,7 @@ derivative at all:
 -- computed from the sample a probabilistic run has already drawn, and shown as
 a ranked table and as *correlation rank coefficients over time*. So this is
 built on the run rather than beside it: `runProbabilistic` keeps the values it
-drew, and the analysis is a pass over them.
+set, and the analysis is a pass over them.
 
 **Pearson and Spearman are here; the other five are not.** The reason is cost
 rather than difficulty. A correlation is a dot product. SRC, PCC, SRRC and PRCC

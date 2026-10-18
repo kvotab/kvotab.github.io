@@ -349,16 +349,31 @@ function _pb_draw!(values::Matrix{Float64}, k::Int, drawer::ValueDrawer, u::Vect
 end
 
 """
-What each input's slot in `P` holds for realisations `frm` to `to - 1` (from 0)
-as a serial run holds it: the value drawn where it is a number; the model's own
-for an input that is held; and, for a varied input whose draw is not a number,
-what the slot held from the realisation before (the model's own for the first).
+The value each input takes in realisations `frm` to `to - 1` (from 0), which is
+what is set into the run and what it records (the application's `valueSet`):
+the value drawn where it is a number; the model's own for an input that is
+held; and, for a varied input whose draw is not a number (a gap in a list, a
+word or a Boolean in one), the last value drawn before it that was, as one run
+going through the realisations in order from the first holds it -- the model's
+own where none was. Read off the design alone, so that a realisation is the
+same run on whichever thread and in whichever range it runs, and replayed on
+its own.
 """
 function _pb_effective(design::SampleDesign, frm::Int, to::Int)
     nplan = length(design.plan)
     eff = Matrix{Float64}(undef, nplan, to - frm)
     for k in 1:nplan
         prev = design.best[k]
+        if design.varies[k]
+            # What the realisations before `frm` left it at.
+            for j in frm:-1:1
+                v = design.values[k, j]
+                if isfinite(v)
+                    prev = v
+                    break
+                end
+            end
+        end
         for c in 1:to-frm
             v = design.values[k, frm+c]
             if isfinite(v)
@@ -414,14 +429,16 @@ end
     ProbabilisticResults
 
 What a probabilistic run kept: every realisation of each kept series, the
-values drawn, and the statistics read off them.
+value each input took in each, and the statistics read off them.
 
 - `t`: the output times every realisation was reported on;
 - `outputs`: the kept series' descriptors (`"label"`, `"block"`, `"kind"`, ...);
 - `values`: one matrix per kept series, realisations × times (row `i` is
   realisation `i`; a failed realisation's row is NaN), `Float64`, or
   `Float32` when a run of this shape would hold more than a gigabyte;
-- `samples`: inputs × realisations, what was drawn for each sampled input;
+- `samples`: inputs × realisations, the value each sampled input took: the
+  value drawn, or where that was no number, the one held over from a
+  realisation before (`_pb_effective`);
 - `plan`, `names`: the sampled inputs (`"slot"` from 0, `"name"`, `"index"`,
   `"spec"`) and their names as the application spells them (`Kd[I-129]`);
 - `inputs`: the varied parameters as series, `"output"` a descriptor and `"k"`
@@ -730,8 +747,9 @@ function _pb_run(project::Project, sys::System, design::SampleDesign, keep, rang
     plan, iterations = design.plan, design.iterations
     frm, to = _pb_slice(range, iterations)
     span = to - frm
-    samples = design.values[:, frm+1:to]
     eff = _pb_effective(design, frm, to)
+    # What each realisation ran with, recorded: a draw that is no number as the value held over.
+    samples = copy(eff)
 
     # Which series there are is the built system's to say, so every realisation -- the first
     # with the rest -- runs on the threads.
@@ -907,8 +925,10 @@ function run_realisation(m, number::Integer; seed=1, iterations=nothing, latin::
     _pb_apply!(sys, design, eff, 1, i)
     results = run_project(proj; system=sys)
     tor = is_tornado(design)
-    values = [(name=design.names[k], value=design.values[k, i+1],
-               held=!design.varies[k] || (tor && design.values[k, i+1] == design.best[k]))
+    # Held: not varied, at the model's value in a tornado's point, or held over from
+    # a realisation before, the draw being no number.
+    values = [(name=design.names[k], value=eff[k, 1],
+               held=!design.varies[k] || !isfinite(design.values[k, i+1]) || (tor && eff[k, 1] == design.best[k]))
               for k in eachindex(design.plan)]
     return (results=results, number=i + 1, iterations=design.iterations, values=values)
 end

@@ -28,7 +28,9 @@ import { run, Results } from '../sim/runner.js';
 import { buildSystem } from '../sim/builder.js';
 import { valuesAtStart } from '../sim/atstart.js';
 import { Project } from '../domain/project.js';
-import { runProbabilistic, runRealization, designFor, quantiles, meanOf, medianSpread, timeMajor } from '../sim/probabilistic.js';
+import {
+	runProbabilistic, runRealization, designFor, valueSet, quantiles, meanOf, medianSpread, timeMajor,
+} from '../sim/probabilistic.js';
 import { percentilesFor } from '../sim/spread.js';
 import { runPool, workersFor } from './prob-pool.js';
 import { ranked, overTime, regressionMeasures, firstOrderIndex } from '../domain/sensitivity.js';
@@ -1229,7 +1231,7 @@ function otherDesign(d, result) {
 	}
 	for (let k = 0; k < d.plan.length; k++) {
 		for (let i = 0; i < d.iterations; i++) {
-			const want = d.valueFor(k, i);
+			const want = valueSet(d, k, i);
 			const got = result.samples[k][i];
 			if (Object.is(want, got)) continue;
 			const scale = Math.max(Math.abs(want), Math.abs(got));

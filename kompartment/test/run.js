@@ -9671,6 +9671,53 @@ test('one realisation can be run again in full, and a tornado is a design of the
 	assert(/state\.runKey = null;/.test(rep), 'a replay offers its states for reuse');
 });
 
+
+test('a draw that is no number holds the value before it, in one run, shared out, and replayed', async () => {
+	// A list with a gap, a word and a true in it: none is a number, so each of
+	// those realisations keeps the value the one before it ran with, as one run
+	// going through them in order holds it. That is read off the design, so a
+	// run shared out among workers -- a slice starting on a gap, never having
+	// run the realisations before it -- and a realisation replayed on its own
+	// run as the whole run does, and what is recorded is the value run with.
+	const Pr = await import('../src/sim/probabilistic.js');
+	const { readFileSync } = await import('node:fs');
+	const raw = JSON.parse(readFileSync(new URL('../examples/biosphere.json', import.meta.url), 'utf8'));
+	raw.simulation.output_points = 20;
+	const listed = (values) => {
+		const m = structuredClone(raw);
+		for (const p of m.parameters) if (p.name === 'geoTransit') p.pdf = { kind: 'pg', values, inorder: true, pos: 0 };
+		return m;
+	};
+	const list = [2e-4, 'x', 3e-4, null, 2.5e-4, true, 4e-4, null, 1e-4, 'x', 2e-4, 3e-4];
+	const held = [2e-4, 2e-4, 3e-4, 3e-4, 2.5e-4, 2.5e-4, 4e-4, 4e-4, 1e-4, 1e-4, 2e-4, 3e-4];
+	const opts = { iterations: 12, seed: 3, keep: (name) => name === 'Dose' };
+	const same = (a, b) => a.length === b.length && Array.from(a).every((v, i) => Object.is(v, b[i]));
+	const want = Pr.runProbabilistic(listed(held), opts);
+	const whole = Pr.runProbabilistic(listed(list), opts);
+	const k = whole.plan.findIndex((e) => e.name === 'geoTransit');
+	assert(k >= 0 && same(whole.samples[k], held), `recorded ${Array.from(whole.samples[k])}`);
+	assert(want.values.length && want.values.every((v, w) => same(whole.values[w], v)),
+		'the run is not the run of the values it held');
+	const times = whole.t.length;
+	for (const [from, to] of [[0, 3], [3, 6], [6, 10], [10, 12]]) {
+		const part = Pr.runProbabilistic(listed(list), { ...opts, range: { from, to } });
+		assert(same(part.samples[k], held.slice(from, to)), `slice ${from}–${to} recorded ${Array.from(part.samples[k])}`);
+		assert(want.values.every((v, w) => same(part.values[w], v.subarray(from * times, to * times))),
+			`slice ${from}–${to} ran otherwise`);
+	}
+	for (const i of [3, 5, 9]) {
+		const rep = Pr.runRealization(listed(list), { iterations: 12, seed: 3 }, i);
+		const v = rep.values[k];
+		assert(v.value === held[i] && v.held === true, `realisation ${i + 1} replayed with ${JSON.stringify(v)}`);
+		whole.outputs.forEach((o, w) => {
+			const col = rep.results.series(rep.results.outputs().find((x) => x.label === o.label));
+			assert(same(col, whole.values[w].subarray(i * times, (i + 1) * times)), `realisation ${i + 1} of ${o.label}`);
+		});
+	}
+	// The same value whoever asks: the check an engine's design runs are read against.
+	const d = Pr.designFor(new Project(listed(list)), buildSystem(new Project(listed(list))), { iterations: 12, seed: 3 });
+	assert(same(held.map((_, i) => Pr.valueSet(d, k, i)), held), 'valueSet is not the value run with');
+});
 test('the realisations can be sorted into categories and the displays screened to them', async () => {
 	const C = await import('../src/domain/categories.js');
 	const { quantiles, meanOf } = await import('../src/sim/probabilistic.js');
@@ -28206,7 +28253,7 @@ test('the analyses go to the engine that has them, and come back as the page’s
 		&& /gsa: msg\.gsa \?\? null,/.test(onEngine) && /designFor\(p, buildSystem\(p\), \{/.test(onEngine)
 		&& /const ran = otherDesign\(d, full\);/.test(onEngine), 'an engine’s design is not checked against the one here');
 	const other = fn(worker, 'otherDesign');
-	assert(/d\.valueFor\(k, i\)/.test(other) && /result\.samples\[k\]\[i\]/.test(other) && /1e-9 \* scale/.test(other),
+	assert(/valueSet\(d, k, i\)/.test(other) && /result\.samples\[k\]\[i\]/.test(other) && /1e-9 \* scale/.test(other),
 		'the inputs an engine set are not each compared with the design’s');
 	// A replay, a calibration, dy/dp.
 	assert(/await replayOnEngine\(msg\);/.test(handler('replay')) && /engineArchive\(msg, 'replay', \{/.test(fn(worker, 'replayOnEngine'))

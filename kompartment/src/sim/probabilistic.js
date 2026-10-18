@@ -29,8 +29,9 @@
  * realisation, because quantiles need them. What that costs is said before it
  * is spent (`estimate`), and refused rather than attempted when it cannot be
  * held. The inputs it varies -- parameters, and the points of lookup tables
- * that carry a spread -- are kept too, and always, but as the values drawn
- * rather than as curves: see `inputs` in `runProbabilistic`.
+ * that carry a spread -- are kept too, and always, but as the values each
+ * realisation set rather than as curves: see `inputs` in `runProbabilistic`
+ * and `valueSet`.
  */
 
 import { sampleOccurrences } from '../domain/disruption.js';
@@ -204,7 +205,8 @@ export function samplingPlan(project, system) {
  * not need the matrix the run kept.
  *
  * @returns {{plan, names, best, varies, iterations, valueFor, stats}} where
- *   `valueFor(k, i)` is what input `k` takes in realisation `i`, and `stats`
+ *   `valueFor(k, i)` is what input `k` is drawn at in realisation `i` -- which
+ *   is what it takes there where it is a number: see `valueSet` -- and `stats`
  *   is what to say about the design in the run's statistics
  */
 export function designFor(project, system, opts = {}) {
@@ -411,18 +413,52 @@ function gsaDesignFor(project, plan, names, best, varies, seed, gsa) {
 }
 
 /**
+ * The value input `k` takes in realisation `i`: what is set into the run, and
+ * what the run records of it.
+ *
+ * The value drawn, where that is a number. A draw that is not -- a gap in a
+ * list, a word or a true in one, a distribution with no value there -- leaves
+ * a varied input at the last value drawn before it that was, as one run going
+ * through the realisations in order holds it, and at the model's own where
+ * none was; an input that is held is at the model's own throughout.
+ *
+ * Read off the design alone and never off what the system last held, so that
+ * a realisation is the same run whether the realisations before it ran in
+ * this worker, in another, or not at all: shared out among cores, or replayed
+ * on its own. The values held over are worked out once a design, for an input
+ * that has a draw that is not a number, and only then.
+ */
+export function valueSet(design, k, i) {
+	const v = design.valueFor(k, i);
+	if (Number.isFinite(v)) return v;
+	if (!design.varies(design.plan[k])) return design.best[k];
+	design.heldOver ??= new Map();
+	let column = design.heldOver.get(k);
+	if (!column) {
+		column = new Float64Array(design.iterations);
+		let last = design.best[k];
+		for (let j = 0; j < design.iterations; j++) {
+			const w = design.valueFor(k, j);
+			if (Number.isFinite(w)) last = w;
+			column[j] = last;
+		}
+		design.heldOver.set(k, column);
+	}
+	return column[i];
+}
+
+/**
  * Sets one design point into the system, ready to run.
  *
- * @returns {number[]} the values set, one per input of the plan
+ * @returns {number[]} the values set, one per input of the plan (`valueSet`)
  */
 export function applyPoint(system, design, i) {
 	const P = system.parameterValues;
 	const out = new Array(design.plan.length);
 	for (let k = 0; k < design.plan.length; k++) {
-		const v = design.valueFor(k, i);
+		const v = valueSet(design, k, i);
 		out[k] = v;
-		if (Number.isFinite(v)) P[design.plan[k].slot] = v;
-		else if (!design.varies(design.plan[k])) P[design.plan[k].slot] = design.best[k];
+		P[design.plan[k].slot] = v;
 	}
 	// The algebra that was worked out from the old parameters, worked out
 	// again from these. Without this the run is silently the last one's.
@@ -499,10 +535,12 @@ export function runRealization(input, opts, index) {
 		results,
 		index: i,
 		iterations: design.iterations,
+		// Held: not varied, at the model's value in a tornado's point, or
+		// held over from a realisation before, the draw being no number.
 		values: design.plan.map((e, k) => ({
 			name: design.names[k],
 			value: set[k],
-			held: !design.varies(e) || (design.stats.tornado
+			held: !design.varies(e) || !Number.isFinite(design.valueFor(k, i)) || (design.stats.tornado
 				? set[k] === design.best[k] : false),
 		})),
 	};
@@ -541,7 +579,10 @@ export function runProbabilistic(input, opts = {}) {
 	//
 	// This one is the slice's, not the whole run's: it is filled as each
 	// realisation is applied, so a worker only knows its own, and whoever
-	// shared the job out stitches them back together in order.
+	// shared the job out stitches them back together in order. A draw that is
+	// no number is recorded as the value the realisation ran with, held over
+	// from one before it (`valueSet`): a 0 or a NaN there would pair an input
+	// with an output it did not make.
 	const samples = plan.map(() => new Float64Array(span));
 	const apply = (i) => {
 		const set = applyPoint(system, design, i);
