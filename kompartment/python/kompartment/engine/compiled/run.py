@@ -15,16 +15,17 @@ messages included:
   than the compiled loop ports (see :func:`.julia_run.why_python`) -- handed
   the compiled model.
 
-What stays in Python is called back: an analytic Jacobian, with the
-recorders handed over first (they live in the compiled arrays during a run);
-the progress report; where the Python solver would factorise with LAPACK (a
-dense matrix past the application's LU) or SuperLU (without the
-application's sparse LUs), the iteration matrix itself, formed and solved with
-by the Python solver's own
+What stays in Python is called back: an analytic Jacobian the compiled
+one (:mod:`.jacobian`) does not take, with the recorders handed over first
+(they live in the compiled arrays during a run); the progress report; where
+the Python solver would factorise with LAPACK (a dense matrix past the
+application's LU) or SuperLU (without the application's sparse LUs), the
+iteration matrix itself, formed and solved with by the Python solver's own
 :class:`~kompartment.engine.solvers.matrix.IterationMatrix`; and the blocks a
 model works out in Python (see :mod:`.model`). A sparse matrix the
 application's LUs factorise (:mod:`~kompartment.engine.solvers.sparselu`) is
-formed and solved with in the loop.
+formed and solved with in the loop, and the analytic Jacobian the compiled
+one takes is worked out there.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from ..landing import landing_arrays
 from ..solvers import SolverError
 from ..solvers import sparselu
 from ..solvers.matrix import APP_LU_MAX, DENSE_BELOW, IterationMatrix, non_finite_message, singular_message
+from . import jacobian as cj
 from . import solvers as cs
 from . import FAIL_PYTHON, LOOP_SOLVERS, CompiledFailure, NotCompiled, loop_refusal, python_error
 from .model import Callback, CompiledModel, HistoryFull, compile_model
@@ -146,7 +148,23 @@ class PythonLoopRun:
         self.loop_why = (f"the solver '{solver_id}' keeps the loop of its own, in Python, on the compiled model"
                          + (f': {why}' if why else ''))
         jac = opts.get('jacobian')
-        if jac and jac.get('evaluate') is not None:
+        #: Whether the analytic Jacobian is worked out compiled, and why not.
+        self.jacobian_compiled: Optional[bool] = None
+        self.jacobian_why: Optional[str] = None
+        jp, why = (cj.analytic_program(system, cm, jac['evaluate']) if jac and jac.get('evaluate') is not None
+                   else (None, None))
+        if jp is not None:
+            self.jacobian_compiled = True
+
+            def compiled(t: float, y: np.ndarray) -> Any:
+                # The derivative's slots at (t, y), then the Jacobian from them.
+                yy = np.ascontiguousarray(y, dtype=float)
+                self.cm.derivative(t, yy)
+                return cj.jacobian(jp, t, yy, system.X, system.P, self.cm.W, self.cm.IW)
+            jac = dict(jac, evaluate=compiled)
+        elif jac and jac.get('evaluate') is not None:
+            self.jacobian_compiled = False
+            self.jacobian_why = why
             evaluate = jac['evaluate']
 
             def handed(t: float, y: np.ndarray) -> Any:
@@ -221,6 +239,17 @@ class CompiledRun:
             self.gcols = np.ascontiguousarray(np.concatenate(groups) if sizes else none, dtype=np.int64)
             self.jvals = np.zeros(self.pattern.nnz)
             self.jac_mode = cs.JAC_CALLBACK if self.evaluate is not None else cs.JAC_PATTERN
+        #: The analytic Jacobian worked out in the loop (``jac_mode`` JAC_COMPILED), or why it is called back.
+        self.jp = cj.none()
+        self.jacobian_compiled: Optional[bool] = None
+        self.jacobian_why: Optional[str] = None
+        if self.jac_mode == cs.JAC_CALLBACK:
+            jp, why = cj.analytic_program(system, cm, self.evaluate)
+            self.jacobian_compiled = jp is not None
+            self.jacobian_why = why
+            if jp is not None:
+                self.jac_mode = cs.JAC_COMPILED
+                self.jp = jp
         self.ybuf = np.zeros(n)
         self._jac_cb = Callback(self._jacobian) if self.jac_mode == cs.JAC_CALLBACK else None
         # What the matrix callbacks read and write: the Jacobian without a
@@ -455,12 +484,12 @@ class CompiledRun:
         fstat = np.zeros(4)
         cm.W[0] = math.nan
         LT, LF, LB, LO = landing_arrays(opts.get('landing'))
-        status = cs.ndf(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W, cm.IW,
-                        cm.py_callback, tspan, y0, atol, constrained, self.jac_mode, self.colptr, self.rowidx,
-                        self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
-                        self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.held_in_w,
-                        self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
-                        LT, LF, LB, LO, sw)
+        status = cs.loops()['ndf'](
+            cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W, cm.IW,
+            cm.py_callback, tspan, y0, atol, constrained, self.jac_mode, self.colptr, self.rowidx, self.jvals,
+            self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat, self.ct, self.cy, self.cint,
+            self.cflt, form_cb, solve_cb, self.jdense, self.held_in_w, self.rbuf, self.xbuf, self.evf, self.evdir,
+            self.evbuf, self.evy, self.evwhich, self.evstat, LT, LF, LB, LO, sw, self.jp)
         if into is not None:
             into[:] = atol
         if status != cs.OK:
@@ -543,12 +572,12 @@ class CompiledRun:
         fstat = np.zeros(4)
         cm.W[0] = math.nan
         LT, LF, LB, LO = landing_arrays(opts.get('landing'))
-        status = cs.onestep(cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W,
-                            cm.IW, cm.py_callback, tspan, y0, atol, nn_idx, self.jac_mode, self.colptr, self.rowidx,
-                            self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
-                            self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.rbuf,
-                            self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
-                            LT, LF, LB, LO, sw)
+        status = cs.loops()['onestep'](
+            cm.rhs, cm.store, self._jac_cb or cs.no_callback, progress, system.P, system.X, cm.W, cm.IW,
+            cm.py_callback, tspan, y0, atol, nn_idx, self.jac_mode, self.colptr, self.rowidx, self.jvals,
+            self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat, self.ct, self.cy, self.cint,
+            self.cflt, form_cb, solve_cb, self.jdense, self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf,
+            self.evy, self.evwhich, self.evstat, LT, LF, LB, LO, sw, self.jp)
         if status != cs.OK:
             if status == cs.E_HISTORY:
                 raise HistoryFull()

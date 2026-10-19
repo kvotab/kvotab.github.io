@@ -5,9 +5,8 @@
 #     PYTHONPATH=../python python3 tools/run_fixtures.py <scratch>/runs
 #     KOMPARTMENT_RUN_FIXTURES=<scratch>/runs julia --project=. test/engine/runs.jl
 #
-# A model large enough for the sparse solver (above 200 states) is the one
-# exception: Python factorises with SuperLU and this package with KLU, so the
-# solves round differently and a run agrees to its tolerance instead.
+# A model factorised densely above 200 states is the one exception: each
+# engine's LAPACK rounds differently, and a run agrees to its tolerance instead.
 
 module RunTests
 
@@ -49,9 +48,9 @@ end
             res = K.run_project(K.Project(raw))
             labels = String[o["label"] for o in fx["outputs"]]
             @test K.labels(res) == labels
-            sparse = get(res.stats, "sparse", false) === true
+            lapack = get(res.stats, "sparse", false) !== true && res.system.nstate > 200
             t = unhex(fx["t"])
-            if !sparse
+            if !lapack
                 for k in COUNTS
                     @test get(res.stats, k, nothing) == get(fx["stats"], k, nothing)
                 end
@@ -64,13 +63,13 @@ end
                 end
                 @test K.to_csv(res) == fx["csv"]
             elseif length(res.t) == length(t) && same(res.t, t)
-                # The sparse path: the same run within its tolerance.
+                # LAPACK's on both engines: the same run within its tolerance.
                 rtol = Float64(something(get(raw["simulation"], "rtol", nothing), 1e-3))
                 cols = K.series_many(res, K.outputs(res))
                 worst = maximum((relative_gap(c, unhex(w)) for (c, w) in zip(cols, fx["series"])); init=0.0)
                 @test worst <= 100 * rtol
             else
-                @info "$(fx["name"]): solved sparse, on its own output times; only the labels are compared"
+                @info "$(fx["name"]): LAPACK's, on its own output times; only the labels are compared"
             end
         end
     end

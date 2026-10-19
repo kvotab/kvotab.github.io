@@ -27,6 +27,11 @@
 //                                        form, each solve's answer; and how often the kept-pivot LU chose
 //                                        its pivots again from a step past the first, and then from the
 //                                        start. Doubles travel as little-endian hex, to the bit
+//   package_lu { cases: [{n, colPtr, rowIdx, rcm, ops}] } -> the Julia-derived solvers' SparseLU
+//                                        (src/ode/julia/core/linalg.js) behind reverseCuthillMcKee's order
+//                                        or none, taken through its ops ({values} factorises, {b} solves):
+//                                        the order, each factorisation's ok, singular and fill, each
+//                                        solve's answer, as little-endian hex
 //   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
 //   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
 //                                        planSplit(system, project, o) for each o of opts (with
@@ -52,6 +57,7 @@ const { LU } = await load('ode/core/linalg.js');
 const { iterationMatrix, SparseLU, makeMiterBuilder, reverseCuthillMcKee } = await load('ode/core/sparse.js');
 const { RefactorLU } = await load('ode/core/refactor.js');
 const { BlockLU, blockTriangular } = await load('ode/core/blocks.js');
+const packageLinalg = await load('ode/julia/core/linalg.js');
 const { partitionOf } = await load('sim/partition.js');
 const split = await load('sim/split.js');
 const { layerDepths } = await load('domain/farfield.js');
@@ -262,6 +268,26 @@ switch (req.task) {
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}
+		break;
+	}
+	case 'package_lu': {
+		const unhex = (h) => new Float64Array(Uint8Array.from(Buffer.from(h, 'hex')).buffer);
+		const hex = (a) => Buffer.from(Float64Array.from(a).buffer).toString('hex');
+		out = req.cases.map((c) => {
+			const colPtr = Int32Array.from(c.colPtr);
+			const rowIdx = Int32Array.from(c.rowIdx);
+			const perm = c.rcm ? packageLinalg.reverseCuthillMcKee(c.n, colPtr, rowIdx) : null;
+			const lu = new packageLinalg.SparseLU(c.n, colPtr, rowIdx, perm);
+			let ok = false;
+			const steps = c.ops.map((op) => {
+				if (op.values !== undefined) {
+					ok = lu.factor(colPtr, rowIdx, unhex(op.values));
+					return { ok, singular: lu.singular, fill: lu.fill };
+				}
+				return ok ? { x: hex(lu.solve(unhex(op.b))) } : { unsolved: true };
+			});
+			return { perm: perm ? Array.from(perm) : null, steps };
+		});
 		break;
 	}
 	case 'sparse_lu': {

@@ -546,6 +546,8 @@ res = m.run()
 res.stats['compiled']                          # True: the model was compiled
 res.stats['compiled_loop']                     # and the solver's loop with it
 res.stats.get('compiled_loop_why')             # why not: SciPy's solvers keep their own
+res.stats.get('compiled_jacobian')             # the analytic Jacobian compiled too, where there is one
+res.stats.get('compiled_jacobian_why')         # why not: a semi-analytical far-field path, say
 res.stats.get('compiled_why')                  # why not compiled at all
 ```
 
@@ -555,9 +557,8 @@ the compiled model: its derivative, what the recorders keep at each step.
 run to the compiled NDF; `auto_julia` switches between its methods there.
 Warm, against the Python loop: 9 to 57 times quicker on the bundled examples
 for the explicit methods, GMRES and `auto`, 4 to 6 times on 600 to 1600
-states for GMRES; 1.5 to 4 times where every step forms W from the model's
-analytic Jacobian (`rosenbrock23`, `auto_julia` on a small model), which is
-worked out in Python and called back.
+states for GMRES; 20 to 40 times where every step forms W from the model's
+analytic Jacobian (Rodas5P, `rosenbrock23`, `auto_julia` on a small model).
 Local sensitivity integrates the model's derivative, compiled, in equations
 of its own (`m.local_sensitivity(..., compiled='auto')`).
 
@@ -565,15 +566,19 @@ A sparse iteration matrix -- the NDF's and Rosenbrock's -- is factorised by
 the application's own sparse LUs, which this package has compiled with numba:
 the same choice between them, the same pivots, the same bits
 (`kompartment/engine/solvers/sparselu.py`, checked against the application's by
-`test_engine_sparse.py`). The compiled loop forms and solves with them in
-place. A few things are worked out in Python even then, called back from the
-compiled code: LAPACK's factorisations and solves of the NDF's and
-Rosenbrock's dense matrices of more than 200 states (the Julia-derived methods
-call the same LAPACK routines from the compiled loop, and SuperLU for a sparse
-matrix), an analytic Jacobian, progress, and a far-field path worked out
-semi-analytically, whose release is the recorded history of its inflow
-convolved with the path's unit responses, kept in Python as the Python path
-keeps it. Its arithmetic -- recording and merging the pieces, the sum over
+`test_engine_sparse.py`). The Julia-derived methods' sparse W is factorised by
+their package's own sparse LU, compiled the same way
+(`engine/solvers/julia/packagelu.py`, `test_engine_package_lu.py`). The
+compiled loops form and solve with them in place. The model's analytic
+Jacobian is worked out in the loop too (`engine/compiled/jacobian.py`), to the
+Python one's bits. A few things are worked out in Python even then, called
+back from the compiled code: LAPACK's factorisations and solves of the NDF's
+and Rosenbrock's dense matrices of more than 200 states (the Julia-derived
+methods call the same LAPACK routines from the compiled loop), progress, the
+analytic Jacobian of a model with a far-field path whose settings move or one
+worked out semi-analytically, and that semi-analytical path itself, whose
+release is the recorded history of its inflow convolved with the path's unit
+responses, kept in Python as the Python path keeps it. Its arithmetic -- recording and merging the pieces, the sum over
 the history and the step being taken -- runs as numba kernels of its own on
 either path, a call for every source of the path at once, to the same bits
 as numpy and Python make of it. A path on cells whose
@@ -608,8 +613,10 @@ runs:
 | farfield (1,581 states), NDF | 0.62 s | 0.36 s |
 | farfield worked out semi-analytically, NDF | 0.21 s | 0.12 s |
 | farfield, its F/TW following the clock, NDF | 3.3 s | 0.41 s |
-| biosphere, Radau IIA 5 | 44 ms | 13 ms |
-| biosphere, FBDF | 111 ms | 21 ms |
+| biosphere, Radau IIA 5 | 29 ms | 2.5 ms |
+| biosphere, FBDF | 87 ms | 3.7 ms |
+| oregonator, Rodas5P | 238 ms | 6.2 ms |
+| waste-packages, FBDF | 164 ms | 5.8 ms |
 | made-up decay chains, 2,000 states | 0.27 s | 0.16 s |
 | made-up decay chains, 16,000 states | 1.9 s | 1.4 s |
 | biosphere, Sobol design of 272 runs, one process | 12.1 s | 1.35 s |
@@ -618,9 +625,7 @@ The application takes 2.5 s over the biosphere's Sobol design. On a large
 model the gain shrinks: what is done with the iteration matrix is compiled on
 both paths -- its solves, which wait on one another down a chain of
 compartments, take much of a sparse model's run -- and building the model is
-Python either way (a third of the 16,000 states' run). Rosenbrock gains two to three times on a model whose
-analytic Jacobian moves, since it asks for a Jacobian at every step, and that
-Jacobian is worked out in Python.
+Python either way (a third of the 16,000 states' run).
 
 Each worker process of a probabilistic run or a split run is compiled like
 any other.
@@ -629,18 +634,20 @@ any other.
 
 In editing, nowhere that the parity tests can find. In a run:
 
-- The iteration matrix is factorised densely up to 64 states, where the
-  application tries its sparse LUs from 24 states up, and by LAPACK where a
-  dense one has more than 200 states. Above 64 states it goes to the
-  application's own sparse LUs, chosen as the application chooses them --
-  with numba; SuperLU's without. Where the two differ, the run log's sparse
-  flag and fill differ, and the solutions agree to round-off.
+- The iteration matrix is factorised as the application factorises it --
+  densely below 24 states, and above that by its own sparse LUs where they
+  pay -- but for a dense matrix of more than 200 states, which is LAPACK's,
+  and without numba, when every matrix is LAPACK's or SuperLU's. Where the
+  two differ, the run log's sparse flag and fill differ, and the solutions
+  agree to round-off.
 - The numbers of a run agree with the application's to round-off rather
   than to the last bit (see *Running a model*): step counts usually match
   and can differ by a few per cent where an error estimate sits at rounding
   level.
-- The Julia-derived solvers factorise with SciPy's LUs; the solutions agree
-  to round-off.
+- The Julia-derived solvers factorise a dense W with LAPACK, through SciPy,
+  and without numba a sparse one with SuperLU; the solutions agree to
+  round-off. A sparse W is otherwise factorised by the application's own LU,
+  to the bit.
 - *Split into parts* runs its parts in processes rather than workers, so
   `auto` decides with numbers of its own (see *Solving in parts*). A run
   with a SciPy solver is split here, where the application would have each
@@ -683,6 +690,11 @@ matrices and the solver's own steps as output;
 Julia-derived methods and the switching solvers, and
 `test_engine_compiled_farfield.py` for a
 far-field path whose every setting follows the clock or the state;
+`test_engine_compiled_jacobian.py` holds the compiled analytic Jacobian to the
+Python one's bits, its gradients and its matrix, at many states of every
+bundled example and of models that reach every derivative rule;
+`test_engine_sparse.py` and `test_engine_package_lu.py` hold the compiled
+sparse LUs to the application's, factorisation by factorisation;
 `test_engine_compiled_cache.py` has processes compiling at once share the
 cache, and none find code it did not ask for. `tools/gen_data.mjs` writes the
 ICRP 107 table and the reserved names from the application's sources;

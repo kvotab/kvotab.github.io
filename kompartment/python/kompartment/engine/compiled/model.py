@@ -69,10 +69,15 @@ HOOKS = 4
 #: Each min/max's history starts with room for this many entries; a run that
 #: needs more is run again with twice the room.
 HISTORY_CAPACITY = 65536
+#: numpy's functions the compiled code may call as numba compiles them: those
+#: numba gives numpy's bits. Not ``np.power``, whose short cut numba lacks
+#: (``runtime.np_power``), nor ``np.tanh``, numpy's own and not the C library's,
+#: nor ``np.minimum``, ``np.maximum`` and ``np.sign``, whose zeros numba signs
+#: otherwise (``runtime.js_minimum``, ``js_maximum``, ``js_sign``).
 _ALLOWED_NP = {
     'np.abs', 'np.sqrt', 'np.exp', 'np.log', 'np.log10', 'np.log2', 'np.sin', 'np.cos', 'np.tan', 'np.sinh',
-    'np.cosh', 'np.tanh', 'np.arcsin', 'np.arccos', 'np.arctan', 'np.ceil', 'np.floor', 'np.sign',
-    'np.arctan2', 'np.hypot', 'np.power', 'np.where', 'np.minimum', 'np.maximum',
+    'np.cosh', 'np.arcsin', 'np.arccos', 'np.arctan', 'np.ceil', 'np.floor',
+    'np.arctan2', 'np.hypot', 'np.where',
     'np.arcsinh', 'np.arccosh', 'np.arctanh',
 }
 _CACHE: Dict[str, Any] = {}
@@ -462,6 +467,69 @@ class CompiledModel:
         self._size_w()
 
 
+def _accepts(t: Any) -> Any:
+    """A test that a value is what a compiled version takes for numba type ``t``."""
+    from numba.core.ccallback import CFunc
+    from numba.core.dispatcher import Dispatcher
+    from numba.experimental import structref
+    if isinstance(t, types.Array):
+        dtype = np.dtype(str(t.dtype))
+        ndim = t.ndim
+        contiguous = t.layout == 'C'
+        mutable = t.mutable
+
+        def array(a: Any) -> bool:
+            return (type(a) is np.ndarray and a.dtype == dtype and a.ndim == ndim
+                    and (not contiguous or a.flags.c_contiguous) and (not mutable or a.flags.writeable))
+        return array
+    if isinstance(t, types.Integer):
+        return lambda a: isinstance(a, (int, np.integer)) and not isinstance(a, bool)
+    if isinstance(t, types.Float):
+        return lambda a: isinstance(a, (float, np.floating))
+    if isinstance(t, types.FunctionType):
+        return lambda a: hasattr(a, '__wrapper_address__') or isinstance(a, (CFunc, Dispatcher))
+    if isinstance(t, types.StructRef):
+        return lambda a: isinstance(a, structref.StructRefProxy) and (a._type is t or a._type == t)
+    return lambda a: False
+
+
+class Loop:
+    """A compiled loop called past numba's dispatcher, whose typing of fifty
+    arguments costs more than a short span's solve: its one compiled version
+    is called directly, once every argument is seen to be of the type it was
+    compiled for -- the checks that version does not make itself (it reads a
+    strided array as a contiguous one, an integer array as doubles).
+    Anything else goes through the dispatcher, as it always did.
+
+    The model's compiled functions are handed to it as the dispatchers they
+    are, not as their bare addresses, though numba then looks those up on
+    every call: through a dispatcher the loop calls the function's own
+    compiled code, whose errors (``CompiledFailure``, a model's equation
+    raising) reach the loop and end the run, where through an address it
+    calls numba's C wrapper of it, which prints them and goes on."""
+
+    def __init__(self, fn: Any) -> None:
+        self.fn = fn
+        self.entry: Any = None
+        self.accepts: List[Any] = []
+        try:
+            sig = fn.signatures[0]
+            entry = fn.overloads[sig].entry_point
+            self.accepts = [_accepts(t) for t in sig]
+            self.entry = entry
+        except Exception:  # noqa: BLE001 - numba's internals moved: the dispatcher does it all
+            self.entry = None
+
+    def __call__(self, *args: Any) -> Any:
+        if self.entry is not None and len(args) == len(self.accepts):
+            for accepts, a in zip(self.accepts, args):
+                if not accepts(a):
+                    break
+            else:
+                return self.entry(*args)
+        return self.fn(*args)
+
+
 def _entry_point(fn: Any) -> Any:
     """A compiled function's entry point for its one signature, which skips
     the dispatcher's type resolution -- the caller hands it exactly the types
@@ -557,6 +625,11 @@ def _rewrite(src: str, ns: Dict[str, Any], consts: Dict[str, np.ndarray], L: Dic
             return f'W[DISO + {sl.group(1)}:DISO + {sl.group(2)}]'
         return f'W[DISO + {idx}]'
     out = re.sub(r'DIS\[([^\]]+)\]', dis, out)
+    # numpy's power, short cut and all (``runtime.np_power``), where numba's is the C library's pow alone;
+    # and numpy's minimum, maximum and sign, which numba's differ from at a zero's sign.
+    out = out.replace('np.power(', 'np_power(')
+    out = out.replace('np.minimum(', 'js_minimum(').replace('np.maximum(', 'js_maximum(')
+    out = out.replace('np.sign(', 'js_sign(')
     out = out.replace('_pow(', 'js_pow(').replace('_round(', 'js_round(')
 
     def func(name: str, args: List[str]) -> str:

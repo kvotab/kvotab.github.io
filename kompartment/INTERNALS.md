@@ -5666,9 +5666,10 @@ the engine as a job of its own kind:
   the Python package's step for step, checked against it bit for bit by
   `julia/tools/analysis_fixtures.py` and `julia/test/engine/analyses.jl`: every
   design's points, every step of a calibration, and dy/dp on the examples whose
-  augmented system is factorised dense. From 64 states one may be factorised
-  sparse, by the application's sparse LUs in Python and KLU in Julia, and the
-  two then agree to round-off (2e-13 of a series' peak on biosphere, the same steps). A design's
+  augmented system is factorised dense. From 24 states one may be factorised
+  sparse, by the application's sparse LUs in both engines, to the bit as well; a
+  dense one above 200 states is each engine's own LAPACK, and the two then
+  agree to round-off (2e-13 of a series' peak on biosphere, the same steps). A design's
   sin, cos and asin are the C library's in both, as numpy's are; V8's can
   differ in the last bit, which `otherDesign`'s 1e-9 allows. Julia's runner
   takes the augmented system as Python's does (`equations` in `run_project`).
@@ -6965,15 +6966,15 @@ example takes the steps it took. Two take the block LU: the farfield example
 peaks, and landscape (as full as before), whose moved by 2·10^-15; the rest
 are the same bits.
 
-## The application's sparse LUs in the Python engine
+## The application's sparse LUs in the Python and Julia engines
 
 The Python engine factorised a sparse iteration matrix with SuperLU, through
 SciPy. Its compiled loops had to call back into Python for that, at every
 factorisation and at every solve: on the farfield example the 507
 factorisations (314 ms), the 7,548 solves (260 ms) and forming the matrices
 for them in Python (120 ms) were most of a compiled run of 0.94 s, in which
-the loop's own arithmetic took 183 ms. The Julia engine, whose KLU is compiled
-code, takes the same 3,776 steps in 0.20 s.
+the loop's own arithmetic took 183 ms. The Julia engine, with KLU, took the
+same 3,776 steps in 0.20 s.
 
 `python/kompartment/engine/solvers/sparselu.py` is the shared core's three
 sparse LUs and `iterationMatrix`'s choice between them, compiled with numba:
@@ -6990,16 +6991,22 @@ Rosenbrock (2,3) loops form and solve with it in place (`MAT_SPARSE` in
 `compiled/solvers.py`), and the Python solvers reach it through
 `IterationMatrix`, so a compiled run is still the Python path's to the bit.
 
-**Where it is used.** The Python engine keeps its own rules around it: dense up
-to 64 states, where the application goes sparse from 24, because the Julia
-engine keeps the dense LU to 64 states too and reproduces the Python engine's
-runs to the bit below that (at 24, landscape's 28 states would part the two);
-LAPACK for a dense matrix of more than 200 states; and SuperLU without numba,
-or where the port does not compile. Above 64 states a sparse matrix is the
-application's. Where the Python and Julia engines both factorise sparse they
-agree to round-off, as they did with SuperLU. The port leaves out the Newton
-weights facsimile.html and rtm.html scale the matrix by: Kompartment never
-scales it.
+**Where it is used.** Both local engines factorise as the application does:
+dense below 24 states, and above that the application's choice. The Julia
+engine's port, `julia/src/solvers/sparselu.jl`, is the Python one line for
+line -- its indices counted from zero, as here, so the two read side by side
+-- and agrees with it to the bit (`julia/test/solvers/sparselu.jl`, on the
+cases `julia/tools/sparse_fixtures.py` writes from the Python package), so the
+Julia engine's parity mode reproduces a sparse run to the bit too. A dense
+matrix of more than 200 states is LAPACK's in both, each engine's own build.
+Without numba, or where the port does not compile, the Python engine keeps to
+SuperLU. The Julia engine had KLU, in its default mode too; there the
+application's LUs were the quicker on every example and made-up model tried
+(farfield 150 ms against 170, with F and TW following the clock 269 against
+302, landscape 1.5 against 1.9, the made-up chains of 2,000 states 65
+against 63 and of 16,000 states 634 against 672), and KLU is gone. The port
+leaves out the Newton weights facsimile.html and rtm.html scale the matrix
+by: Kompartment never scales it.
 
 **A solve after a failed formation.** In the application it reads a half-made
 factor: an elimination stopped partway leaves the step offsets of the record
@@ -7051,6 +7058,214 @@ test fails on all but one, which cannot change a result (a block LU kept where
 a whole one costs as much: the whole trial is stopped short of that). Every
 bundled example runs to the same bits on the compiled loop as on the Python
 path, under the NDF and Rosenbrock (2,3).
+
+## The Python engine's analytic Jacobian, compiled
+
+The Python engine's compiled path ran the derivative, the solvers' loops and
+the application's LUs in compiled code, but called back into Python for every
+analytic Jacobian a loop asked for. `_Analytic.evaluate` worked the slots the
+derivative reads out again in Python, then walked each statement's tree once
+for every leaf that reads the state, in numpy. A call cost 20 to 60 µs on the
+bundled examples and a few milliseconds on a model of many functions over
+many nuclides. On a nonlinear model that was most of a run: 55 % of the
+oregonator's under the NDF, and 75 to 90 % under Rodas5P, which asks for a
+Jacobian at every step.
+
+`python/kompartment/engine/compiled/jacobian.py` works the same plan out
+where the loop runs. `_Analytic`'s plan is laid out once, in the flat arrays
+of a numba `structref`:
+
+- each statement's tree as a tape, its nodes children first, as the Julia
+  engine's `TangentTape` lays it out;
+- its leaves and what they read;
+- the y and X terms, and the slot's own gradient that a multiplying statement
+  scales;
+- the far-field paths' release weights and the recorders' parts;
+- the direct and chain terms of the assembly, kind by kind.
+  `_plan_assembly` now records each term's kind and numbers beside the
+  closure that works it out in Python.
+
+The loop calls the compiled derivative at (t, y), which leaves the slots in X
+as `evaluate_for_derivative` leaves them for the Python Jacobian. Then it runs
+the program: every node's value for one element at a time, the tangent of each
+leaf that reads the state carried up the one path from it to the root, and the
+terms added in `np.add.at`'s order. Python loops (SciPy's solvers) are handed
+the program as their `evaluate`.
+
+**The same numbers.** Every operation is the Python one's, in its order, with
+numpy's semantics where they differ from the C library's:
+
+- A power takes numpy's short cut (a square, a square root, a reciprocal)
+  where the exponent is one value for every element, numpy's 0-d rule
+  included: a conditional whose test is one value takes the shape of the
+  branch it chose. So does a smooth step's steepness.
+- `min`, `max` and `sign` treat zeros as numpy does. In `minimum` and
+  `maximum`, −0 is below +0, as in JavaScript's `Math.min` and `Math.max`; and
+  `sign(−0)` is +0. numba's own `np.minimum`, `np.maximum` and `np.sign` differ
+  at a zero's sign, and so did the compiled derivative. It now calls kernels of
+  the runtime's own (`js_minimum`, `js_maximum`, `js_sign`).
+- The Julia engine's `kf_min` and `kf_max` returned either zero too, and now
+  put −0 first as well.
+- `tanh` is the C library's, as `functions.tanh` now is: numpy's own differs
+  from it in the last bit for about one argument in five.
+
+numba's scalar `exp`, `log`, `sin` and the rest give numpy's bits on every
+argument tried: 40,000 per function, in arrays of every length and at 0-d.
+`sign` was the one exception.
+
+**`pow` by a name of the runtime's own.** The Julia engine's runs of the
+made-up models below, against the Python package's, found one more: a model's
+`2^A` was not numpy's on the compiled path. numba takes `pow` through LLVM's
+intrinsic, and where the base is written into the code and reaches the call
+after inlining (`2^A` of one value; not an indexed one, whose loop is not
+inlined), LLVM rewrites `pow(2.0, x)` as `exp2(x)`. That rounds otherwise for
+about one argument in five hundred. The runtime now calls the C library's
+`pow` under a name LLVM does not know (`kompartment_pow`, registered as the
+Julia loops' LAPACK is), which is what numpy calls. `test_engine_compiled`
+checks it on a model read at 2,001 times, and fails with the intrinsic put
+back.
+
+**What it does not take** stays with the callback, and the run's stats say
+why (`stats['compiled_jacobian']`, `stats['compiled_jacobian_why']`):
+
+- a semi-analytical path, whose release the Python path works out;
+- a path on cells whose settings move. Its refresh keeps a state of its own,
+  and working the derivative out once more for the Jacobian could lay its
+  layers out at another instant than the Python path does;
+- a plan that calls a function the program has no kernel for (the
+  interpolations and transports).
+
+**A bug it found.** The Python Jacobian read `start_time()`, `end_time()` and
+an event's expected-value switch as 0 in its tangents (`_Analytic._leaf_value`;
+`paramtangent.py` read them right). A rate such as `k*A*start_time()` then had
+the wrong df/dy wherever the run did not start at 0: −5.82 where the
+application has −16.61, on a two-state model started at 5. Newton converged
+more slowly, and the runs took other steps than the application's. The Julia
+engine had the same `_leaf_value`. Both now read the system's start, end and
+switches. `test_engine_parity` checks the matrix of such a model against the
+application's, to the bit.
+
+**Checked.** `python/tests/test_engine_compiled_jacobian.py` compares the
+program with `_Analytic.evaluate` at 30 states of every bundled example and of
+these made-up models:
+
+- every function with a derivative rule, each in an expression of its own;
+- powers of both kinds on 400 nuclides;
+- tables read at the state: linear, extrapolated, stepped, cyclic, one per
+  nuclide;
+- every availability scheme;
+- recorders and the audit's budgets;
+- a far-field path on cells;
+- the clock's ends.
+
+It compares the gradients first and then the matrix, to the bit, declines
+included, and runs five solvers that work the Jacobian out in the loop against
+the Python runs, to the bit. Four mutations were tried against it: a rule's
+last bit, and the short cut in a power's value, in a power's tangent and in a
+smooth step. The first version of the test caught none of them, because a
+one-bit difference in one rule rounds away in the sums the matrix makes. The
+test now catches all four.
+
+**Measured.** The bundled examples on the compiled path, the least of three
+runs, before and after (an M1 Max, otherwise idle):
+
+| model | solver | before | after | |
+|---|---|---|---|---|
+| oregonator | NDF | 5.4 ms | 2.2 ms | 2.5x |
+| oregonator | Rodas5P | 74.7 ms | 5.8 ms | 13x |
+| van-der-pol-stiff | Rodas5P | 55.7 ms | 5.7 ms | 9.8x |
+| lotka-volterra | Rodas5P | 39.0 ms | 3.9 ms | 10x |
+| robertson | Rodas5P | 22.0 ms | 4.0 ms | 5.5x |
+| lookup-driver | FBDF | 10.3 ms | 2.8 ms | 3.7x |
+| recorders | FBDF | 18.2 ms | 6.3 ms | 2.9x |
+| waste-packages | Rodas5P | 46.3 ms | 28.8 ms | 1.6x |
+| farfield | FBDF | 901 ms | 783 ms | 1.15x |
+
+A linear model whose Jacobian is constant evaluates it once under the NDF and
+gains nothing there. The Julia-derived solvers evaluate it again at every
+refresh, so under them it gains as the others do (decay-chain under Rodas5P:
+10.2 to 4.5 ms).
+
+## The Julia-derived solvers' sparse W, the package's own LU
+
+The Julia-derived solvers formed their sparse W in the compiled loop, then
+called back into Python for every factorisation and every solve: SciPy's
+SuperLU, behind the package's reverse Cuthill-McKee order. The package
+(`src/ode/julia/core/linalg.js`) goes sparse wherever the pattern holds less
+than a quarter of n², which is nearly every Kompartment model. So 60
+realisations of waste-packages under FBDF made 230,000 calls into Python.
+
+`python/kompartment/engine/solvers/julia/packagelu.py` is that file's
+`SparseLU`, compiled with numba: the left-looking Gilbert-Peierls LU with its
+depth-first search, the first largest pivot in the order the search leaves the
+rows, exact zeros left out of the factor, and the solve and its scatter
+through the column order. It holds W's pattern in its `structref`, so the
+compiled loop factorises and solves with it in place (`FL_PACKAGE_LU` in
+`compiled/julia.py`), in the Python solver's own LU state. The Python solver
+takes it for a sparse W wherever numba is installed (`linalg.SparseLU`), and
+SuperLU otherwise. The compiled loop still calls SuperLU back where the Python
+solver has it.
+
+**The application's bits.** SuperLU agreed with the package to rounding; this
+LU gives its factors and solves to the last bit. Against the application's own
+code (`tests/node/engine.mjs`, task `package_lu`), 1,900 made-up matrices
+gave the same outcome, fill and answer in every one of 4,713 factorisations
+(657 of them singular) and 4,096 solves. The cases were random patterns,
+chains, blocks and anything-goes, with and without the order, with values
+zeroed, tied or not a number. `test_engine_package_lu.py` keeps 600 of them.
+
+That makes a sparse run the application's: `test_engine_julia`'s
+`BitIdentity` now takes the decay chain and the non-negative problem sparse
+under every original method, and the chains of 70 and 120 states sparse under
+`auto_julia`, and each is the application's run, step for step and bit for
+bit. Before, it had to run them dense. `test_every_count_is_the_applications`
+holds the run log's fill to the application's exactly, the NDF's included
+(the NDF has had the application's LUs since the section above).
+
+The colouring and the reverse Cuthill-McKee order of a pattern are now kept
+for the eight patterns met last. The Python solver is built again for every
+span of a run and every realisation, and worked both out again each time:
+keeping them takes those 60 realisations from 15.0 to 13.3 ms each.
+
+**Measured.** The same 60 realisations of waste-packages under FBDF, the
+package's LU against SuperLU patched back in, one after the other in one
+process: 59 ms a realisation with SuperLU, 13 ms with the package's LU. Single
+runs on the compiled path, after the compiled Jacobian, before and after:
+biosphere under FBDF 20.3 to 3.7 ms, waste-packages under FBDF 25.2 to 5.8 ms
+and under Rodas5P 28.8 to 4.2 ms, the farfield example under FBDF 783 to
+486 ms. The Python path takes the LU too: biosphere under FBDF, SuperLU against
+the package's LU in one process, 105 to 86 ms.
+
+## The loops called past numba's dispatcher
+
+A compiled loop is one call per span, and a run with breaks -- jumps, events,
+a waste package's failures -- is many spans: waste-packages makes 23. Each
+call went through numba's dispatcher, which types all of the loop's fifty
+arguments, eight functions among them, before it calls.
+
+`Loop` (`compiled/model.py`, made once in `solvers.loops()`) calls a loop's
+one compiled version directly, through its entry point, once every argument
+is seen to be of the type it was compiled for. Anything else goes through the
+dispatcher, as before. The check matters: an entry point checks nothing, and
+a scratch test showed what it does with the wrong argument. It reads a
+strided array as a contiguous one, and an integer array as doubles, both
+silently.
+
+**The functions are handed as dispatchers.** A first version also handed the
+loops each compiled function as an object holding its address, found once,
+to save numba looking it up on every call. Through such an address numba
+calls a C wrapper of the function, which prints an error the model raises
+(`CompiledFailure`) and carries on, and a run that must stop went on to its
+end. `test_what_the_equations_raise_is_raised_alike` caught it. Through the
+dispatcher itself numba calls the function's own compiled code, whose errors
+reach the loop, so the functions are handed as dispatchers again.
+
+**Measured.** 100 realisations of waste-packages under the NDF, with the
+entry points and without, one after the other in one process: 7.4 ms a
+realisation without, 6.6 ms with, so about 35 µs saved on each of the 23
+calls. A first measurement had made the dispatcher's cost ten times that, but
+it was taken under cProfile, which inflates numba's typing (Python code), and
+with the test suite running beside it.
 
 ## An (i) instead of a tooltip
 

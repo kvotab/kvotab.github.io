@@ -14,14 +14,15 @@ It maps the run's options as the adapter does, and builds the Python
 solver's own ``Integrator`` for each span, which holds every number the
 methods are configured with (their tableaux, orders and controllers, the
 switch's thresholds), the Jacobian's colouring, W's pattern and, for a
-sparse W, the ``SparseLU`` the compiled loop calls back to factorise and to
-solve with: the loop is handed those objects' arrays, so a run is configured
-exactly as the Python solver configures it. A method that forms no matrix --
-an explicit one, the matrix-free FBDF, ``auto``'s explicit start -- is handed
-none. What stays in Python is called back -- an analytic Jacobian (the
-recorders handed over first), progress, SuperLU -- and an exception any of
-them raises, or the model's equations raise, comes out as the adapter turns
-it into a :class:`~kompartment.engine.solvers.SolverError`.
+sparse W, its ``SparseLU``: the package's own (``packagelu``), whose state the
+loop factorises and solves with in place, or SuperLU, which it calls back.
+The loop is handed those objects' arrays, so a run is configured exactly as
+the Python solver configures it. A method that forms no matrix -- an explicit
+one, the matrix-free FBDF, ``auto``'s explicit start -- is handed none. What
+stays in Python is called back -- an analytic Jacobian the compiled one does
+not take (the recorders handed over first), progress, SuperLU -- and an
+exception any of them raises, or the model's equations raise, comes out as
+the adapter turns it into a :class:`~kompartment.engine.solvers.SolverError`.
 
 ``auto`` is the adapter's ``auto`` step for step: the compiled explicit start
 at a tenth of the tolerances, landing on the corners of the clock-read
@@ -46,9 +47,10 @@ import numpy as np
 from ..landing import landing_arrays
 from ..solvers import SolverError
 from . import FAIL_PYTHON, CompiledFailure, python_error
+from . import jacobian as cjac
 from . import julia as cj
 from .model import Callback, CompiledModel, HistoryFull
-from .solvers import no_callback, no_events
+from .solvers import loops, no_callback, no_events
 
 #: The solvers whose loop :mod:`.julia` compiles, and the family each is (a
 #: switching solver: None, its methods chosen from the default algorithm's).
@@ -307,17 +309,28 @@ class JuliaRun:
                    if jac.get('pattern') is not None else None)
         self.jacobian = jac
         self.evaluate = jac.get('evaluate') if jac else None
+        self._jrows = self._jcols = np.zeros(0, dtype=np.int64)
+        #: The analytic Jacobian worked out in the loop, or why it is called back.
+        self.jp = cjac.none()
+        self.jbuf = np.zeros(1)
+        self.jacobian_compiled: Optional[bool] = None
+        self.jacobian_why: Optional[str] = None
         if self.evaluate is not None:
             pattern = jac['pattern']
             self._jrows = np.asarray(pattern.row_idx, dtype=np.int64)
             self._jcols = np.repeat(np.arange(pattern.n, dtype=np.int64),
                                     np.diff(np.asarray(pattern.col_ptr, dtype=np.int64)))
+            jp, self.jacobian_why = cjac.analytic_program(system, cm, self.evaluate)
+            self.jacobian_compiled = jp is not None
+            if jp is not None:
+                self.jp = jp
+                self.jbuf = np.zeros(pattern.nnz)
         self.ybuf = np.zeros(n)
         self.rbuf = np.zeros(n)
         self.xbuf = np.zeros(n)
         self.pbuf = np.zeros(1, dtype=np.int64)
         self.integ: Any = None  # the Python solver's objects for the span under way
-        self._jac_cb = Callback(self._jacobian) if self.evaluate is not None else None
+        self._jac_cb = Callback(self._jacobian) if (self.evaluate is not None and not self.jacobian_compiled) else None
         self._factor_cb = Callback(self._factor)
         self._solve_cb = Callback(self._solve)
         on_step = opts.get('on_step')
@@ -588,7 +601,12 @@ class JuliaRun:
             below_tol_max, cm.has_store, self._progress_cb is not None, at, order, integ.auto_abstol,
             newton.max_iters, getattr(alg, 'initdt', None) == 'sciml')
         cpar = np.concatenate([pcs.ravel(), mv]).astype(float)
-        fl = np.array([self._jac_cb is not None, sparse, run_opts['norm'] == 'max'], dtype=np.int64)
+        # A sparse W the package's LU factorises is factorised and solved with in the loop.
+        from ..solvers.julia import packagelu
+        own_lu = W is not None and W.sparse and isinstance(W.lu, packagelu.SparseLU)
+        wlu = W.lu.state if own_lu else packagelu.none()
+        fl = np.array([self._jac_cb is not None, sparse, run_opts['norm'] == 'max', bool(self.jacobian_compiled),
+                       own_lu], dtype=np.int64)
         ecoef, eint = _explicit_tables(mcode0)
         # The integrator's own tolerance, which the loop raises in place under
         # auto_abstol (a copy the Integrator made: the run's is never touched).
@@ -602,7 +620,7 @@ class JuliaRun:
         fstat = np.zeros(3)
         cm.W[0] = math.nan
         LT, LF, LB, LO = landing_arrays(run_opts.get('landing'))
-        status = cj.julia(
+        status = loops()['julia'](
             cm.rhs, cm.store, self.evf, self._jac_cb or no_callback, self._progress_cb or no_callback,
             self._factor_cb, self._solve_cb, system.P, system.X, cm.W, cm.IW, cm.py_callback,
             np.array(times, dtype=float), np.ascontiguousarray(y0, dtype=float), atol, _floats(run_opts['abstol'], n),
@@ -610,7 +628,10 @@ class JuliaRun:
             jd, jv, gptr, gcols, eptr, erow, ewhich, eent, self.ybuf, wf, wv, j_to_w, diag_w, self.rbuf, self.xbuf,
             self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat, tout, yout, stats, fstat, self.pbuf,
             self.ct, self.cy, self.cint, self.cflt, np.array(tstops, dtype=float), ecoef, eint, jrow, self.hand,
-            LT, LF, LB, LO)
+            LT, LF, LB, LO, self.jp, self.jbuf, self._jrows, self._jcols, wlu)
+        if own_lu and stats[cj.C_NFACTOR] > 0:
+            # As the callback marks it: the package reports a fill once it has factorised.
+            W._factored = True
 
         if status == cj.E_HISTORY:
             raise HistoryFull()

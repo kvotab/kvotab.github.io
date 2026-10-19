@@ -428,10 +428,12 @@ def cases() -> List[Dict[str, Any]]:
              tspan=[0.0, 1.0], y0=[1.0, math.nan, 0.0], opts={'rtol': 1e-6, 'abstol': 1e-12}),
         case('vo_initial_nan', problem='decay3', solver='variable_order', jac='exact', params={'l': [0.5, 2e-3, 30.0]},
              tspan=[0.0, 1.0], y0=[1.0, math.nan, 0.0], opts={'rtol': 1e-6, 'abstol': 1e-12}),
-        # the sparse path: agreement to the tolerance only (KLU against SuperLU)
-        case('rob_sparse', solver='ndf', jac='exact', opts=dict(tol6, matrix='sparse'), exact=False, **rob),
+        # the sparse path: the application's sparse LUs on both sides, to the bit -- but the
+        # landscape's derivative is scipy's CSR product here, whose multiply-adds are fused, so
+        # a run of it agrees to the tolerance only
+        case('rob_sparse', solver='ndf', jac='exact', opts=dict(tol6, matrix='sparse'), **rob),
         case('sparse2000_nanjac0', problem='landscape', solver='ndf', jac='exact_nan0', params={'nb': 200},
-             tspan=[0.0, 1.0, 10.0], y0=[0.0] * 2000, opts={'rtol': 1e-6, 'abstol': 1e-12}, exact=False),
+             tspan=[0.0, 1.0, 10.0], y0=[0.0] * 2000, opts={'rtol': 1e-6, 'abstol': 1e-12}),
         case('ros_sparse2000', problem='landscape', solver='ros23', jac='exact', params={'nb': 200},
              tspan=[0.0, 1.0, 10.0, 100.0], y0=[0.0] * 2000, opts={'rtol': 1e-3, 'abstol': 1e-10}, exact=False),
         case('sparse2000', problem='landscape', solver='ndf', jac='exact', params={'nb': 200},

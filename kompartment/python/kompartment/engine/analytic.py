@@ -659,8 +659,7 @@ class _Analytic:
                             acc[np.searchsorted(row_cols, cols)] += scale * G[self.g_ptr[r]:self.g_ptr[r + 1]]
             G[self.g_ptr[r_out]:self.g_ptr[r_out + 1]] += acc
 
-    @staticmethod
-    def _leaf_value(leaf: Leaf, y: np.ndarray, X: np.ndarray, P: np.ndarray, t: float) -> Any:
+    def _leaf_value(self, leaf: Leaf, y: np.ndarray, X: np.ndarray, P: np.ndarray, t: float) -> Any:
         k = leaf.kind
         if k == 'y':
             return y[leaf.index]
@@ -672,22 +671,42 @@ class _Analytic:
             return leaf.index
         if k == 'T':
             return np.float64(t)
-        if k in ('T0', 'T1', 'DIS', 'TAB'):
-            return 0.0
-        return 0.0
+        if k == 'T0':
+            return np.float64(self.system.start_time)
+        if k == 'T1':
+            return np.float64(self.system.end_time)
+        if k == 'DIS':
+            return self.system.DIS[leaf.index]
+        return 0.0  # a table's index: read by the 'tab' node, never as a value
 
     # --- the assembly ---------------------------------------------------------------------
 
     def _plan_assembly(self) -> None:
         """Direct terms (row, column, value source) and chain terms (row, slot,
-        coefficient source), from the same phases the derivative is made of."""
+        coefficient source), from the same phases the derivative is made of --
+        and, beside each, what it works out in a form a compiled evaluation
+        reads (``direct_spec``, ``chain_spec``: see
+        :mod:`kompartment.engine.compiled.jacobian`)."""
         b = self.b
         n = self.n
         direct: List[Tuple[np.ndarray, Any]] = []   # (pattern positions, value fn(y, X))
         chain: List[Tuple[np.ndarray, np.ndarray, np.ndarray, Any]] = []  # (elements, G src, J dst, coef fn)
+        #: (kind, positions, slots, factors, s1, s2): J[pos] += the kind's value.
+        direct_spec: List[Tuple[str, np.ndarray, np.ndarray, np.ndarray, int, int]] = []
+        #: (kind, elements, G src, J dst, factors, states, s1): J[dst] += coef[elem] * G[src].
+        chain_spec: List[Tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]] = []
         br = self.budget_rows
+        none_i = np.zeros(0, dtype=np.int64)
+        none_f = np.zeros(0)
 
-        def add_chain(rows: np.ndarray, slots: np.ndarray, coef: Any) -> None:
+        def add_direct(pos: np.ndarray, fn: Any, kind: str, slots: np.ndarray = none_i, factors: np.ndarray = none_f,
+                       s1: int = -1, s2: int = -1) -> None:
+            direct.append((pos, fn))
+            direct_spec.append((kind, np.asarray(pos, dtype=np.int64), np.asarray(slots, dtype=np.int64),
+                                np.asarray(factors, dtype=float), int(s1), int(s2)))
+
+        def add_chain(rows: np.ndarray, slots: np.ndarray, coef: Any, kind: str = '', factors: np.ndarray = none_f,
+                      states: np.ndarray = none_i, s1: int = -1) -> None:
             elems, srcs, dsts = [], [], []
             for i, (r, x) in enumerate(zip(rows, slots)):
                 if br[r] or self.moving[x] != 2 or int(x) not in self.g_row_of:
@@ -701,6 +720,8 @@ class _Analytic:
                 dsts.append(self.pat_pos(np.full(cols.size, r, dtype=np.int64), cols))
             if elems:
                 chain.append((np.concatenate(elems), np.concatenate(srcs), np.concatenate(dsts), coef))
+                chain_spec.append((kind, chain[-1][0], chain[-1][1], chain[-1][2], np.asarray(factors, dtype=float),
+                                   np.asarray(states, dtype=np.int64), int(s1)))
 
         for ph in b.phases:
             kind = ph[0]
@@ -714,61 +735,68 @@ class _Analytic:
                 if keep.any():
                     pos = self.pat_pos(tgt[keep], src[keep])
                     r_k, s_k = rate[keep], sign[keep]
-                    direct.append((pos, lambda y, X, r=r_k, s=s_k: s * X[r]))
+                    add_direct(pos, lambda y, X, r=r_k, s=s_k: s * X[r], 'xsign', r_k, s_k)
                 # d/dX[rate] = sign * (y[src] if multiplying by the donor else 1)
                 mbd = src >= 0
                 src_safe = np.where(mbd, src, 0)
-                add_chain(tgt, rate, lambda y, X, s=sign, m=mbd, ss=src_safe: s * np.where(m, y[ss], 1.0))
+                add_chain(tgt, rate, lambda y, X, s=sign, m=mbd, ss=src_safe: s * np.where(m, y[ss], 1.0),
+                          'signdonor', sign, np.where(mbd, src, -1))
             elif kind == 'x':
                 _, tgt, xs = ph
-                add_chain(tgt, xs, lambda y, X, k=tgt.size: np.ones(k))
+                add_chain(tgt, xs, lambda y, X, k=tgt.size: np.ones(k), 'ones')
             elif kind == 'waste':
                 _, p_idx, m_idx, h, r_idx, budget = ph
                 pos_p = self.pat_pos(p_idx, p_idx)
                 pos_m = self.pat_pos(m_idx, p_idx)
-                direct.append((pos_p, lambda y, X, h=h, k=p_idx.size: -np.full(k, X[h])))
-                direct.append((pos_m, lambda y, X, h=h, k=p_idx.size: np.full(k, X[h])))
+                add_direct(pos_p, lambda y, X, h=h, k=p_idx.size: -np.full(k, X[h]), 'negxh', s1=h)
+                add_direct(pos_m, lambda y, X, h=h, k=p_idx.size: np.full(k, X[h]), 'xh', s1=h)
                 hs = np.full(p_idx.size, h, dtype=np.int64)
-                add_chain(p_idx, hs, lambda y, X, p=p_idx: -y[p])
-                add_chain(m_idx, hs, lambda y, X, p=p_idx: y[p])
-                add_chain(m_idx, r_idx, lambda y, X, k=p_idx.size: -np.ones(k))
+                add_chain(p_idx, hs, lambda y, X, p=p_idx: -y[p], 'negy', states=p_idx)
+                add_chain(m_idx, hs, lambda y, X, p=p_idx: y[p], 'y', states=p_idx)
+                add_chain(m_idx, r_idx, lambda y, X, k=p_idx.size: -np.ones(k), 'negone')
                 # The release into the budget's `out`, where it leaves the audit.
                 if budget is not None:
-                    add_chain(np.asarray(budget, dtype=np.int64), r_idx, lambda y, X, k=p_idx.size: np.ones(k))
+                    add_chain(np.asarray(budget, dtype=np.int64), r_idx, lambda y, X, k=p_idx.size: np.ones(k), 'ones')
             elif kind == 'move':
                 _, a_idx, second, lam_slot, share_slot = ph
                 pos_a = self.pat_pos(a_idx, a_idx)
-                direct.append((pos_a, lambda y, X, l=lam_slot, s=share_slot, k=a_idx.size:
-                               -np.full(k, X[l] * X[s])))
+                add_direct(pos_a, lambda y, X, l=lam_slot, s=share_slot, k=a_idx.size: -np.full(k, X[l] * X[s]),
+                           'negxx', s1=lam_slot, s2=share_slot)
                 if second is not None and not br[second].all():
                     keep = ~br[second]
                     pos_b = self.pat_pos(second[keep], a_idx[keep])
-                    direct.append((pos_b, lambda y, X, l=lam_slot, s=share_slot, k=int(keep.sum()):
-                                   np.full(k, X[l] * X[s])))
+                    add_direct(pos_b, lambda y, X, l=lam_slot, s=share_slot, k=int(keep.sum()):
+                               np.full(k, X[l] * X[s]), 'xx', s1=lam_slot, s2=share_slot)
                 ls = np.full(a_idx.size, lam_slot, dtype=np.int64)
                 ss = np.full(a_idx.size, share_slot, dtype=np.int64)
-                add_chain(a_idx, ls, lambda y, X, s=share_slot, a=a_idx: -(X[s] * y[a]))
-                add_chain(a_idx, ss, lambda y, X, l=lam_slot, a=a_idx: -(X[l] * y[a]))
+                add_chain(a_idx, ls, lambda y, X, s=share_slot, a=a_idx: -(X[s] * y[a]), 'negxy', states=a_idx,
+                          s1=share_slot)
+                add_chain(a_idx, ss, lambda y, X, l=lam_slot, a=a_idx: -(X[l] * y[a]), 'negxy', states=a_idx,
+                          s1=lam_slot)
                 if second is not None:
-                    add_chain(second, ls, lambda y, X, s=share_slot, a=a_idx: X[s] * y[a])
-                    add_chain(second, ss, lambda y, X, l=lam_slot, a=a_idx: X[l] * y[a])
+                    add_chain(second, ls, lambda y, X, s=share_slot, a=a_idx: X[s] * y[a], 'xy', states=a_idx,
+                              s1=share_slot)
+                    add_chain(second, ss, lambda y, X, l=lam_slot, a=a_idx: X[l] * y[a], 'xy', states=a_idx,
+                              s1=lam_slot)
             elif kind == 'mean':
                 _, s_idx, t_idx, mem = ph
                 add_chain(s_idx, t_idx, lambda y, X, m=mem, k=s_idx.size: np.array(
-                    [1.0 if self.system.MEM[j].recording else 0.0 for j in range(m, m + k)]))
+                    [1.0 if self.system.MEM[j].recording else 0.0 for j in range(m, m + k)]), 'recording', s1=mem)
             elif kind == 'coef':
                 _, tgt, coef, src = ph
                 keep = ~br[tgt]
                 if keep.any():
                     pos = self.pat_pos(tgt[keep], src[keep])
                     c = coef[keep]
-                    direct.append((pos, lambda y, X, c=c: c))
+                    add_direct(pos, lambda y, X, c=c: c, 'const', factors=c)
             elif kind == 'farf':
                 F = self.system.FARF[ph[1]]
                 pos = self.pat_pos(F.row_flat, F.col_flat)
-                direct.append((pos, lambda y, X, F=F: (F.refresh(X), F.vals.ravel())[1]))
+                add_direct(pos, lambda y, X, F=F: (F.refresh(X), F.vals.ravel())[1], 'farf', s1=ph[1])
         self.direct = direct
         self.chain = chain
+        self.direct_spec = direct_spec
+        self.chain_spec = chain_spec
 
     def _is_constant(self) -> bool:
         """True when df/dy moves with neither the clock nor the state, so it can

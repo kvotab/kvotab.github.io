@@ -193,6 +193,19 @@ def ramp_up(x: Any, start: Any, end: Any) -> Any:
     return 1.0 - ramp_down(x, start, end)
 
 
+_C_TANH = np.frompyfunc(math.tanh, 1, 1)
+
+
+def tanh(x: Any) -> Any:
+    """The C library's tanh, element by element: numpy's own, vectorised,
+    differs from it in the last bit for about one argument in five, and the
+    compiled path and the Julia engine have the C library's."""
+    a = _arr(x)
+    if a.ndim == 0:
+        return math.tanh(float(a))
+    return _C_TANH(a).astype(float)
+
+
 def smooth_down(x: Any, X: Any, s: Any) -> Any:
     x, X, s = _arr(x), _arr(X), _arr(s)
     with np.errstate(all='ignore'):
@@ -336,7 +349,7 @@ FUNCTIONS: Dict[str, Dict[str, Any]] = {
     'atan2': {'arity': 2, 'fn': np.arctan2},
     'sinh': {'arity': 1, 'fn': np.sinh},
     'cosh': {'arity': 1, 'fn': np.cosh},
-    'tanh': {'arity': 1, 'fn': np.tanh},
+    'tanh': {'arity': 1, 'fn': tanh},
     'asinh': {'arity': 1, 'fn': np.arcsinh},
     'acosh': {'arity': 1, 'fn': np.arccosh},
     'atanh': {'arity': 1, 'fn': np.arctanh},

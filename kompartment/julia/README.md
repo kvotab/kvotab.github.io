@@ -332,7 +332,8 @@ through function wrappers, so the solvers themselves are compiled once for
 every model. The derivative is one sparse product -- over the merged entries
 by default, term by term in the application's order with parity on -- and
 the Jacobian is the model's own, derived from its equations. The sparse
-solves use KLU.
+solves use the application's own sparse LUs (`src/solvers/sparselu.jl`), as the
+Python package does.
 
 The Python package's timing model -- 16 decay chains of 12 made-up nuclides
 through 150 compartments, 28,800 states (`tools/bench.jl`) -- and the bundled
@@ -422,6 +423,7 @@ The engine is checked against the Python package's, with fixtures the
 | Layout, invariant values, initial state, derivative at five states | `tools/engine_fixtures.py DIR`, `KOMPARTMENT_ENGINE_FIXTURES=DIR julia --project=. test/engine/parity.jl` |
 | Whole runs: steps, times, every series, the CSV | `tools/run_fixtures.py DIR`, `KOMPARTMENT_RUN_FIXTURES=DIR julia --project=. test/engine/runs.jl` |
 | The solvers, step by step | `test/solvers/runtests.jl` (fixtures included) |
+| The application's sparse LUs: every choice, formation and solve | `tools/sparse_fixtures.py DIR`, `KOMPARTMENT_SPARSE_FIXTURES=DIR julia --project=. test/solvers/sparselu.jl` |
 | The far-field pathway | `tools/farfield_fixtures.py DIR`, `KOMPARTMENT_FARFIELD_FIXTURES=DIR julia --project=. test/engine/farfield.jl` |
 | A model opened and written: normalisation, units, stamps | `tools/model_fixtures.py DIR`, `KOMPARTMENT_MODEL_FIXTURES=DIR/text julia --project=. test/model/normalise.jl` |
 | Transports and unit literals: expansion, derivative, runs | `tools/model_fixtures.py DIR` (and `engine_fixtures.py`, `run_fixtures.py` on its models), `KOMPARTMENT_TRANSPORT_FIXTURES=DIR julia --project=. test/engine/transport.jl` |
@@ -437,10 +439,9 @@ Each tool runs on the Python package (`PYTHONPATH=../python`). `julia
 variable is set and the rest of it regardless. These tests switch parity on.
 
 With parity on, every bundled example runs to the same bits as the Python
-package. A model whose iteration matrix is factorised sparse (from 64 states,
-where its factor stays sparse) parts at round-off: the factorisations are KLU's
-here and the application's sparse LUs in Python, so the runs agree to the
-tolerance, as two machines do.
+package, sparse ones too: both factorise with the application's own LUs. A
+dense matrix of more than 200 states is each package's own LAPACK, which can
+round differently, so such a run agrees to the tolerance, as two machines do.
 
 The default, fast mode is held to parity mode's accuracy instead
 (`test/engine/fast.jl`): every bundled example is solved to a far tighter
@@ -451,5 +452,6 @@ Some things needed care to come out the same. The model's arithmetic calls
 the C library, as numpy does, rather than Julia's own `exp`, `log` and `^`,
 which round differently for a few arguments in a hundred; numpy's shortcut for
 a power of 2, 0.5 or -1 is taken where numpy takes it; the minimum and maximum
-keep the first of equal values; the time grid and the solvers' step-size
-formulas use the application's own JavaScript arithmetic.
+keep the first of equal values, but put −0 below +0, as numpy and JavaScript
+do; the time grid and the solvers' step-size formulas use the application's
+own JavaScript arithmetic.

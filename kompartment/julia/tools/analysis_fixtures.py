@@ -14,10 +14,8 @@ Julia ports of the sensitivity designs (``kompartment/stats/gsa.py`` and
   page reads;
 - ``calibrations/<case>.json``: a calibration of a bundled example by each
   method -- every step the search took, and the result -- and the refusals;
-- ``sensitivity/<case>.json``: dy/dp of the bundled examples whose augmented
-  system is below 64 states, where its iteration matrix is factorised dense
-  (from 64 on it may be factorised sparse, by SuperLU here and KLU in Julia,
-  which round differently), with df/dp differentiated and differenced: the
+- ``sensitivity/<case>.json``: dy/dp of the bundled examples, with df/dp
+  differentiated and differenced: the
   times, every state and every sensitivity; and the refusals, the words of a
   solve that gives up with a difference in it among them;
 - ``tangents.json``: for every bundled example, whether df/dp can be
@@ -300,8 +298,6 @@ def write_sensitivities(root):
         except Exception as e:  # noqa: BLE001 - a refusal is what is being recorded
             out['error'] = [type(e).__name__, str(e), getattr(e, 'hint', None)]
         else:
-            if len(r['y']) * (1 + len(r['sens'])) >= 64:
-                raise SystemExit(f'{case}: 64 states or more, where the iteration matrix may be sparse')
             out.update({'t': hexes(r['t']), 'y': [hexes(v) for v in r['y']],
                         'sens': [[hexes(v) for v in block] for block in r['sens']],
                         'chosen': plain(r['chosen']), 'nsteps': r['stats']['nsteps'],

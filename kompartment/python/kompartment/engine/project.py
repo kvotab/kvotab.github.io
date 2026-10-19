@@ -934,6 +934,42 @@ class Project:
             is_nuclide = name in self.nuclides
         return ('mol' if self.decay_unit == 'mol' else 'Bq') if is_nuclide else ''
 
+    def material_reader(self) -> Callable[[Any], str]:
+        """``material_unit`` for many names, the index lists read once: every
+        name looked up where :meth:`material_unit` scans the lists for it,
+        which over a list of a thousand nuclides made a block's unit a
+        million comparisons. The same answers, the first index of a name
+        in the catalogue its stated unit."""
+        lists = self.index_lists
+        catalogue = next((lst for lst in lists if lst.get('for_contaminants')), None)
+        nuclides = next((lst for lst in lists if lst.get('for_nuclides')), None) or catalogue
+        try:
+            first: Dict[Any, Any] = {}
+            for i in (catalogue or {}).get('indices') or []:
+                first.setdefault(i.get('name'), i)
+            names = {i.get('name') for i in nuclides.get('indices') or []} if nuclides else None
+        except TypeError:  # a name that is no key: each looked for as material_unit looks
+            return self.material_unit
+        unit = 'mol' if self.decay_unit == 'mol' else 'Bq'
+        own = self.nuclides
+
+        def read(name: Any) -> str:
+            try:
+                index = first.get(name)
+                is_nuclide = name in names if names is not None else name in own
+            except TypeError:
+                return self.material_unit(name)
+            stated = str((index or {}).get('unit') or '').strip()
+            if stated:
+                return stated
+            return unit if is_nuclide else ''
+        return read
+
+    def material_units(self, names: Any) -> Dict[str, str]:
+        """``material_unit`` of each of ``names``."""
+        read = self.material_reader()
+        return {n: read(n) for n in names}
+
     def dimension_unit(self, list_name: str) -> str:
         lists = self.index_lists
         lst = next((l for l in lists if l.get('name') == list_name), None)
@@ -941,10 +977,11 @@ class Project:
             return '' if any(l.get('for_contaminants') or l.get('for_nuclides') for l in lists) else (
                 'mol' if self.decay_unit == 'mol' else 'Bq')
         one = None
+        read = self.material_reader()
         for i in lst.get('indices') or []:
             if i.get('enabled') is False:
                 continue
-            u = self.material_unit(i.get('name'))
+            u = read(i.get('name'))
             if not u:
                 return ''
             if one is None:

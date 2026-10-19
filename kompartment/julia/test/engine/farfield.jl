@@ -183,12 +183,11 @@ end
                 end
             end
             cols = K.series_many(res, outs)
-            if get(fx["stats"], "sparse", false) === true || res.system.nstate > 200
-                # Only the application's own dense LU (up to 200 states) is the same
-                # arithmetic on both engines: on the sparse LU the Python engine
-                # factorises with SuperLU and this one with KLU, and above 200 dense
-                # states each with its own LAPACK. Their round-off parts after the
-                # first steps, so the run is held to the solver's tolerance instead.
+            if get(fx["stats"], "sparse", false) !== true && res.system.nstate > 200
+                # The application's LUs, dense up to 200 states or sparse, are the same
+                # arithmetic on both engines; a dense matrix of more than 200 states is
+                # each engine's own LAPACK. Their round-off parts after the first steps,
+                # so such a run is held to the solver's tolerance instead.
                 @test res.stats["nsteps"] == fx["stats"]["nsteps"]
                 for (c, ph) in zip(cols, fx["series"])
                     p = unhex(ph)

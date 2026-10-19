@@ -225,6 +225,30 @@ class BuildParity(unittest.TestCase):
         self.assertEqual(j['pattern'].nnz, js['nnz'])
         self.assertEqual(len(j['groups']), js['colours'])
 
+    def test_a_jacobian_that_reads_the_runs_start_and_end_is_the_applications(self) -> None:
+        # The start and the end read with the state: their tangents once read them as 0.
+        import kompartment as kp
+        m = kp.Model.new('Clocks')
+        m.simulation.update(start_time=5, end_time=30, output_points=6)
+        m.add_compartment('A', initial='1')
+        m.add_compartment('B')
+        m.add_parameter('k', 0.1)
+        m.add_expression('e', 'A * start_time() + A * A * end_time() / (1 + time)')
+        m.add_transfer('A', 'B', rate='k * (1 + e)')
+        model = m.to_dict()
+        s = build_system(Project(copy.deepcopy(model)))
+        j = s.jacobian
+        self.assertTrue(j['available'], j.get('reason'))
+        points = [{'t': 5.0, 'y': [1.0, 0.0]}, {'t': 7.0, 'y': [1.3, 0.2]}, {'t': 29.5, 'y': [0.4, 0.9]}]
+        js = engine('matrix', model=model, points=points)
+        for p, theirs in zip(points, js['values']):
+            mine = j['evaluate'](p['t'], np.array(p['y']))
+            s._clock_at = math.nan
+            self.assertEqual(np.asarray(mine).tolist(), theirs)
+        # d/dA of k*(1 + A*5 + A^2*30/(1 + t))*A at t = 7, A = 1.3: not k*(1 + e) alone.
+        J = j['pattern'].matrix(j['evaluate'](7.0, np.array([1.3, 0.2]))).toarray()
+        self.assertAlmostEqual(-J[0, 0], 0.1 * (1 + 6.5 + 1.69 * 30 / 8) + 0.13 * (5 + 2.6 * 30 / 8), places=12)
+
     def test_matrix_layers_as_the_application_lays_them(self) -> None:
         # Many layers from a thin first one once overflowed q**j in the
         # bracket search (a Python OverflowError where JavaScript has Infinity).
@@ -627,3 +651,61 @@ class AtStartParity(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MaterialUnits(unittest.TestCase):
+    """``material_reader`` reads the index lists once for many names; it must
+    answer what ``material_unit`` answers for each, and ``dimension_unit``
+    what it answered when it asked ``material_unit`` name by name."""
+
+    @staticmethod
+    def dimension_unit_one_by_one(p: Project, list_name: str) -> str:
+        lists = p.index_lists
+        lst = next((l for l in lists if l.get('name') == list_name), None)  # noqa: E741
+        if lst is None:
+            return '' if any(l.get('for_contaminants') or l.get('for_nuclides') for l in lists) else (  # noqa: E741
+                'mol' if p.decay_unit == 'mol' else 'Bq')
+        one = None
+        for i in lst.get('indices') or []:
+            if i.get('enabled') is False:
+                continue
+            u = p.material_unit(i.get('name'))
+            if not u:
+                return ''
+            if one is None:
+                one = u
+            elif one != u:
+                return ''
+        return one or ''
+
+    def projects(self) -> List[Project]:
+        out = [Project(example(name)) for name in EXAMPLES]
+        # The landscape's catalogue with units of its own stated (one with spaces
+        # about it, one empty), and a list of nuclides of its own; and in mol.
+        raw = example('landscape')
+        catalogue = raw['index_lists'][0]
+        units = {'I-129': ' kg ', 'Tc-99': '', 'Ra-226': 'm3'}
+        for i in catalogue['indices']:
+            if i['name'] in units:
+                i['unit'] = units[i['name']]
+        raw['index_lists'].append({'name': 'Nuclides', 'for_nuclides': True,
+                                   'indices': [{'name': 'I-129'}, {'name': 'Pb-210'}]})
+        out.append(Project(copy.deepcopy(raw)))
+        raw['decay_unit'] = 'mol'
+        out.append(Project(copy.deepcopy(raw)))
+        # No list of contaminants or nuclides at all: the project's own nuclides.
+        raw = example('decay-chain')
+        out.append(Project(raw))
+        return out
+
+    def test_read_once_as_one_at_a_time(self) -> None:
+        names = ['Water', 'Ore', 'I-129', 'Tc-99', 'Ra-226', 'Pb-210', 'Cs-137', 'Lake', 'nothing', '', None]
+        for p in self.projects():
+            read = p.material_reader()
+            with self.subTest(project=p.name):
+                for n in names + list(p.material_names) + list(p.nuclides):
+                    self.assertEqual(read(n), p.material_unit(n), n)
+                self.assertEqual(p.material_units(p.material_names),
+                                 {n: p.material_unit(n) for n in p.material_names})
+                for lst in [l.get('name') for l in p.index_lists] + ['no such list']:  # noqa: E741
+                    self.assertEqual(p.dimension_unit(lst), self.dimension_unit_one_by_one(p, lst), lst)

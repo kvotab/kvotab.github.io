@@ -3,10 +3,12 @@
 #
 #   julia --startup-file=no --project=kompartment/julia kompartment/julia/test/solvers/runtests.jl
 #
-# On a dense problem a run must take the Python run's steps -- the same
-# accepted times, the same counts -- and give its outputs bit for bit; a
-# failure must say what Python's says, word for word. On the sparse path
-# (KLU here, SuperLU there) the two agree to the tolerance.
+# A run must take the Python run's steps -- the same accepted times, the same
+# counts -- and give its outputs bit for bit, on the sparse path too, where
+# both factorise with the application's sparse LUs; a failure must say what
+# Python's says, word for word. The made-up landscape's derivative is scipy's
+# CSR product on the Python side, whose multiply-adds are fused: its runs
+# agree to the tolerance.
 
 using Test
 using SparseArrays
@@ -330,10 +332,12 @@ end
     end
 end
 
-@testset "a stopped KLU factorisation is freed" begin
+@testset "a sparse matrix is the application's sparse LUs'" begin
     f, parts, _ = prob_landscape(Dict("nb" => 20))
     jac = jacobian_of(parts, "exact")
-    sol = ST.ndf(f, [0.0, 1.0, 100.0], zeros(200); rtol=1e-6, abstol=1e-12, jacobian=jac, matrix="sparse")
-    @test sol.stats["sparse"] == true && sol.stats["lu"] == "KLU"
-    @test all(isfinite, sol.y[end])
+    for (matrix, lu) in (("sparse", "sparse"), ("refactor", "refactor"), ("auto", "refactor"))
+        sol = ST.ndf(f, [0.0, 1.0, 100.0], zeros(200); rtol=1e-6, abstol=1e-12, jacobian=jac, matrix=matrix)
+        @test sol.stats["sparse"] == true && sol.stats["lu"] == lu
+        @test all(isfinite, sol.y[end])
+    end
 end

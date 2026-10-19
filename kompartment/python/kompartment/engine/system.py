@@ -595,5 +595,5 @@ class System:
             algebraic=b.algebraic, parameters=b.param_layout, lookups=b.lookup_layout, index_space=b.space,
             material_list=b.material_list, nuclides=self.project.material_names,
             has_nuclides=bool(b.material_list),
-            material_units={n: self.project.material_unit(n) for n in self.project.material_names},
+            material_units=self.project.material_units(self.project.material_names),
         )

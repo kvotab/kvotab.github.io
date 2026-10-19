@@ -10,11 +10,13 @@ same order, so that a run takes the Python solver's steps, to the last bit.
 As in :mod:`.solvers`, the loop is compiled once for every model: the model's
 derivative, what its recorders keep at a step and its events' functions are
 handed in as first-class functions. It returns to Python only for an analytic
-Jacobian, for progress, and for what the Python solver hands to SuperLU: a
-sparse W is formed here and factorised and solved with by the Python solver's
-own ``SparseLU``, called back. A dense W, and Radau's complex one, is
-factorised and solved with by the LAPACK routines SciPy calls for the Python
-solver (``getrf``, ``getrs``), called from here at the addresses
+Jacobian the compiled one (:mod:`.jacobian`) does not take, for progress, and
+for a sparse W the Python solver factorises with SuperLU (where numba could
+not compile the package's LU), called back. A sparse W the package's own LU
+factorises (``solvers/julia/packagelu.py``) is formed, factorised and solved
+with here, in the Python solver's own LU state. A dense W, and Radau's complex
+one, is factorised and solved with by the LAPACK routines SciPy calls for the
+Python solver (``getrf``, ``getrs``), called from here at the addresses
 ``scipy.linalg.cython_lapack`` publishes: the same routines on the same
 matrices, so the same bits.
 
@@ -52,6 +54,8 @@ from . import guard_numba_cache
 from .krylov import C_NF as _KRYLOV_C_NF
 from .krylov import (KF_GAMMA_DT, KF_T, KF_ZNORM, KI_MAX_BASIS, KI_MEMORY, KI_NITER, KI_NSOLVE, NKF, NKI,
                      _krylov_prepare, _krylov_solve, _seq_dot)
+from ..solvers.julia import packagelu as _plu
+from . import jacobian as _cjac
 from .solvers import CB_T, RHS_T, STORE_T, _landing
 
 guard_numba_cache()
@@ -101,8 +105,10 @@ assert C_NF == _KRYLOV_C_NF  # GMRES counts its evaluations of f into the same p
 
 # What the matrix is (``fl``).
 FL_CALLBACK = 0        # the Jacobian is the callback's, differenced where it declines
-FL_SPARSE = 1          # W is sparse: the Python solver's SparseLU factorises it
+FL_SPARSE = 1          # W is sparse: the Python solver's SparseLU factorises it (here, with FL_PACKAGE_LU)
 FL_NORM_MAX = 2        # the 'max' norm, else the rms
+FL_COMPILED = 3        # the analytic Jacobian worked out here (``jacobian.py``), differenced where it declines
+FL_PACKAGE_LU = 4      # a sparse W factorised and solved with here, by the package's LU (``packagelu.py``)
 NFL = 3
 
 # ``WFactorization``'s state (``ws``).
@@ -433,11 +439,26 @@ def _jacobian(f, model, pycb, jac_cb, jac, fl, ctr, t, u, fu):
     ``jac``: the dense J or J's values on the pattern (``jd``, ``jv``), the
     colouring -- per group its columns (``gptr``, ``gcols``) and the entries
     it fills (``eptr``; each entry's row, its column's place in ``gcols`` and
-    its place in ``jv``) -- and the buffers the callback and the differences use."""
+    its place in ``jv``) -- the buffers the callback and the differences use,
+    and the compiled analytic Jacobian (``jp``) with its values' buffer and
+    their rows and columns, for a dense J."""
     P, X, Wm, IW = model
-    jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, upert, fpert, dscale = jac
+    jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, upert, fpert, dscale, jp, jbuf, jsr, jsc = jac
     ctr[C_NJAC] += 1
-    if fl[FL_CALLBACK]:
+    if fl[FL_COMPILED]:
+        # The derivative's slots at (t, u) first, as the Python Jacobian has them.
+        f(t, u, fpert, P, X, Wm, IW, pycb)
+        if fl[FL_SPARSE]:
+            if _cjac.evaluate(jp, t, u, X, P, Wm, IW, jv) == 1:
+                return 0
+        elif _cjac.evaluate(jp, t, u, X, P, Wm, IW, jbuf) == 1:
+            for i in range(u.size):
+                for j in range(u.size):
+                    jd[i, j] = 0.0
+            for p in range(jbuf.size):
+                jd[jsr[p], jsc[p]] = jbuf[p]
+            return 0
+    elif fl[FL_CALLBACK]:
         for i in range(u.size):
             ybuf[i] = u[i]
         r = jac_cb(t, 0.0)
@@ -485,9 +506,10 @@ def _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fu, 
 
     ``mat``: the state (``ws``), the dense W by columns and its pivots, W's
     values on its own pattern with where J's and the diagonal sit in them,
-    and the buffers the sparse solve's callback reads and writes."""
+    the buffers the sparse solve's callback reads and writes, and the
+    package's sparse LU, where the loop factorises with it itself."""
     jd, jv = jac[0], jac[1]
-    ws, wf, ipiv, lints, trans, wv, j_to_w, diag_w, rbuf, xbuf = mat
+    ws, wf, ipiv, lints, trans, wv, j_to_w, diag_w, rbuf, xbuf, wlu = mat
     if force_jac or ws[WS_STALE] != 0 or ws[WS_AGE] >= ws[WS_MAX_AGE]:
         if _jacobian(f, model, pycb, jac_cb, jac, fl, ctr, t, uprev, fu) < 0:
             return -1
@@ -513,10 +535,13 @@ def _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fu, 
             for i in range(n):
                 wv[diag_w[i]] += 1
         ctr[C_NFACTOR] += 1
-        r = factor_cb(0.0, 0.0)
-        if r < 0:
-            return -1
-        ok = r == 1
+        if fl[FL_PACKAGE_LU]:
+            ok = _plu.lu_factor(wlu, wv)
+        else:
+            r = factor_cb(0.0, 0.0)
+            if r < 0:
+                return -1
+            ok = r == 1
     else:
         if transform:
             d = 1 / gamma_dt
@@ -544,8 +569,13 @@ def _form_w(f, model, pycb, jac_cb, jac, factor_cb, mat, fl, ctr, t, uprev, fu, 
 def _solve_w(solve_cb, mat, fl, ctr, b, x):
     """``WFactorization.solve``: x = W^-1 b (x may be b); False when the
     callback raised."""
-    ws, wf, ipiv, lints, trans, wv, j_to_w, diag_w, rbuf, xbuf = mat
+    ws, wf, ipiv, lints, trans, wv, j_to_w, diag_w, rbuf, xbuf, wlu = mat
     ctr[C_NSOLVE] += 1
+    if fl[FL_SPARSE] and fl[FL_PACKAGE_LU]:
+        for i in range(b.size):
+            x[i] = b[i]
+        _plu.lu_solve(wlu, x)
+        return True
     if fl[FL_SPARSE]:
         for i in range(b.size):
             rbuf[i] = b[i]
@@ -2478,7 +2508,9 @@ JULIA_SIG = types.int64(
     _A, _M, _I, _A, _I,                             # tout, yout, stats, fstat, pbuf
     _A, _M, _I, _A,                                 # ct, cy, cint, cflt: the steps as output
     _A, _A, _I, _I, _A,                             # tstops, ecoef, eint, jrow, hand
-    _M, _M, _A, _I)                                 # LT, LF, LB, LO: where steps end (``solvers._landing``)
+    _M, _M, _A, _I,                                 # LT, LF, LB, LO: where steps end (``solvers._landing``)
+    _cjac.JP_T, _A, _I, _I,                         # jp, jbuf, jsr, jsc: the compiled analytic Jacobian
+    _plu.LU_T)                                      # wlu: a sparse W's LU, under FL_PACKAGE_LU
 
 
 @njit(inline='always', **_OPTS)
@@ -2533,7 +2565,7 @@ def _explicit_tables(method, ecoef, eint):
 def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, pycb, saveat, y0, atol, atol0, nn,
           coef, fpar, cpar, ipar, fl, jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, wf, wv, j_to_w, diag_w,
           rbuf, xbuf, evdir, evbuf, evy, evwhich, evstat, tout, yout, stats, fstat, pbuf, ct, cy, cint, cflt,
-          tstops, ecoef, eint, jrow, hand, LT, LF, LB, LO):
+          tstops, ecoef, eint, jrow, hand, LT, LF, LB, LO, jp, jbuf, jsr, jsc, wlu):
     """``integrator.solve`` with the method ``ipar[IP_METHOD]`` -- or, for a
     composite, with the two of ``ipar[IP_METHOD]`` and ``ipar[IP_STIFF]`` and
     the switch between them -- compiled.
@@ -2583,7 +2615,8 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     t_eps = 16 * _jmax(_ulp(t0), _ulp(tf))
 
     # --- what the methods share: J, W, the Newton iteration, the controllers
-    jac = (jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, np.zeros(n), np.zeros(n), np.zeros(max(gcols.size, 1)))
+    jac = (jd, jv, gptr, gcols, eptr, erow, ewhich, eent, ybuf, np.zeros(n), np.zeros(n), np.zeros(max(gcols.size, 1)),
+           jp, jbuf, jsr, jsc)
     ws = np.zeros(NWS)
     ws[WS_GAMMA_DT] = np.nan
     ws[WS_STALE] = 1.0
@@ -2593,7 +2626,7 @@ def julia(f, store, evf, jac_cb, progress, factor_cb, solve_cb, P, X, Wm, IW, py
     lints[2] = 1
     trans = np.zeros(1, dtype=np.uint8)
     trans[0] = 78  # 'N'
-    mat = (ws, wf, np.zeros(n, dtype=np.int32), lints, trans, wv, j_to_w, diag_w, rbuf, xbuf)
+    mat = (ws, wf, np.zeros(n, dtype=np.int32), lints, trans, wv, j_to_w, diag_w, rbuf, xbuf, wlu)
     nwt = (np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n))
     ns = np.zeros(NNS)
     ns[NS_GAMMA] = 1.0

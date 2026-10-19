@@ -159,7 +159,10 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     (raising ``NotCompiled`` when it cannot), False keeps to Python.
     ``stats['compiled']`` says which path ran and ``stats['compiled_why']``
     why not, when it was not; ``stats['compiled_loop']`` whether the
-    solver's loop was compiled too, and ``stats['compiled_loop_why']`` why not.
+    solver's loop was compiled too, and ``stats['compiled_loop_why']`` why not;
+    ``stats['compiled_jacobian']`` whether the analytic Jacobian, where there
+    is one, was worked out compiled, and ``stats['compiled_jacobian_why']``
+    why not.
     """
     if not isinstance(project, Project):
         raw = project.to_dict() if hasattr(project, 'to_dict') else project
@@ -408,6 +411,12 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
                 solution['stats']['compiled_loop'] = looped
                 if not looped:
                     solution['stats']['compiled_loop_why'] = getattr(compiled_run, 'loop_why', None)
+                # Whether the analytic Jacobian was worked out compiled too, where there is one.
+                jac_compiled = getattr(compiled_run, 'jacobian_compiled', None)
+                if jac_compiled is not None:
+                    solution['stats']['compiled_jacobian'] = jac_compiled
+                    if not jac_compiled:
+                        solution['stats']['compiled_jacobian_why'] = compiled_run.jacobian_why
             if compiled_why and compiled_run is None:
                 solution['stats']['compiled_why'] = compiled_why
             # What a semi-analytical path could not hold to its mass balance,

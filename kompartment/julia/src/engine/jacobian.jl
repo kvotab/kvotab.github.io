@@ -902,13 +902,16 @@ function _special_plan(an::Analytic, a::Entry)
     return SpecialPlan(:recorder, a, rec, Int[])
 end
 
-function _leaf_value(l::TLeaf, i::Int, y, X, P, t)
+function _leaf_value(l::TLeaf, i::Int, y, X, P, t, sys::System)
     k = l.kind
     k === :y && return y[leaf_index_at(l, i)+1]
     k === :X && return X[leaf_index_at(l, i)+1]
     k === :P && return P[leaf_index_at(l, i)+1]
     k === :K && return leaf_value_at(l, i)
     k === :T && return t
+    k === :T0 && return sys.start_time
+    k === :T1 && return sys.end_time
+    k === :DIS && return sys.data.DIS[leaf_index_at(l, i)+1]
     k === :TAB && return Float64(leaf_index_at(l, i))   # read by the tangent as the table's index
     return 0.0
 end
@@ -941,7 +944,7 @@ function _statement_gradient!(an::Analytic, plan::StatementPlan, G::Vector{Float
     VALS = reshape(view(an.leafwork, 1:nl*W), nl, W)
     for i in 1:W
         for (p, l) in enumerate(plan.leaves)
-            VALS[p, i] = _leaf_value(l, i, y, X, P, t)
+            VALS[p, i] = _leaf_value(l, i, y, X, P, t, an.sys)
         end
         _tape_values!(view(NV, :, i), tp, view(VALS, :, i), tables)
     end

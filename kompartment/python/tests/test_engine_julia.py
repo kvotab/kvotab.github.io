@@ -35,13 +35,14 @@ in Node:
   -- a transcription of the package's dense LU in place of LAPACK's, and V8's
   own ``Math.pow`` values (asked of Node for every argument a run meets) in
   place of the C library's ``pow`` -- are the application's step for step,
-  bit for bit.
+  bit for bit, a sparse W's included: the package's sparse LU is its own here
+  (``packagelu.py``), as it is there.
 * ``Examples``: every bundled example with each of the ids, through the
   application's runner and this engine's.
 
 Why the counts carry a margin. ``BitIdentity`` shows that the port's own
-arithmetic is the package's. Left as it ships, the port factorises with
-LAPACK and SuperLU and raises to powers with the platform's ``pow``, and each
+arithmetic is the package's. Left as it ships, the port factorises a dense W
+with LAPACK and raises to powers with the platform's ``pow``, and each
 differs from the application in the last bit of some results -- V8's ``pow``
 agrees with the C library's on about 91 % of the arguments these controllers
 meet. Most runs never notice. Where an error estimate sits at rounding level
@@ -860,13 +861,7 @@ class Problems(unittest.TestCase):
                 total += 1
                 self.assertEqual(mine['stats']['solver'], theirs['stats']['solver'])
                 self.assertEqual(mine['stats']['sparse'], theirs['stats']['sparse'])
-                # The NDF that `auto` hands a run to factorises a sparse
-                # matrix with SuperLU here and with the application's own LU
-                # there, which fill in differently (hires sparse: 35 against 27).
-                if 'NDF' in (mine['stats'].get('steps_by') or {}):
-                    self.assertEqual(mine['stats']['fill'] is None, theirs['stats']['fill'] is None)
-                else:
-                    self.assertEqual(mine['stats']['fill'], theirs['stats']['fill'])
+                self.assertEqual(mine['stats']['fill'], theirs['stats']['fill'])
                 self.assertEqual(counts_agree(mine['stats'], theirs['stats']), [])
                 exact += all(mine['stats'][k] == theirs['stats'][k] for k in COUNTS)
         # The margin is for the runs a last-bit difference reaches (see the
@@ -1725,6 +1720,10 @@ class BitIdentity(unittest.TestCase):
         cases += [('nonneg', s, {**BASE['nonneg'], 'matrix': 'dense'}) for s in SOLVERS]
         cases += [('robertson', s, {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})
                   for s in SOLVERS]
+        # A sparse W, factorised by the package's own sparse LU on both sides; the
+        # chain at 1e-3, where every method takes fewer steps than until_known has rounds.
+        cases += [('chain', s, {**BASE['chain'], 'rtol': 1e-3, 'abstol': 1e-8}) for s in SOLVERS]
+        cases += [('nonneg', s, dict(BASE['nonneg'])) for s in SOLVERS]
         theirs = bridge('solve', runs=[{'problem': n, 'solver': s, 'opts': o} for n, s, o in cases])['runs']
         runs = until_known([(lambda n=n, s=s, o=o: run_here(n, s, o)) for n, s, o in cases])
         for (name, solver, opts), js, mine in zip(cases, theirs, runs):
@@ -1749,12 +1748,13 @@ class BitIdentity(unittest.TestCase):
                   if s not in ('auto', 'rosenbrock23')]
         cases += [('robertson', s, dict(BASE['robertson'])) for s in ('auto_julia', 'fbdf_krylov', 'rosenbrock23')]
         cases += [('hires', s, dict(BASE['hires'])) for s in ('auto_julia', 'fbdf_krylov')]
-        # The chains dense, as nonneg is above: sparse, they would be
-        # factorised by SuperLU here and by the package's own sparse LU there.
+        # The chains dense and sparse: the package's own sparse LU on both sides.
         # The chain of 120 switches 23 times at 1e-3 (Switching has it at 1e-6).
         cases += [('vdp1000', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6}),
                   ('chain', 'auto_julia', {**BASE['chain'], 'matrix': 'dense'}),
+                  ('chain', 'auto_julia', dict(BASE['chain'])),
                   ('chain120', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6, 'matrix': 'dense'}),
+                  ('chain120', 'auto_julia', {'rtol': 1e-3, 'abstol': 1e-6}),
                   ('kepler', 'vern7', {'rtol': 1e-8, 'abstol': 1e-10}),
                   ('nonneg', 'auto_julia', {**BASE['nonneg'], 'matrix': 'dense'}),
                   ('robertson', 'auto_julia', {**BASE['robertson'], 'errorNorm': 'max', 'autoUpdateAbsTol': True})]

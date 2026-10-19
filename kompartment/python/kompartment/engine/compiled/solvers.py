@@ -29,6 +29,7 @@ from numba import cfunc, njit, types
 
 from . import guard_numba_cache
 from ..solvers import sparselu as _splu
+from . import jacobian as _cj
 
 guard_numba_cache()
 
@@ -74,6 +75,7 @@ MAT_SPARSE = 2         # here, by the application's sparse LUs (``solvers/sparse
 JAC_DENSE = 0          # differenced, one column at a time (no pattern)
 JAC_PATTERN = 1        # differenced through the pattern, one evaluation per colour
 JAC_CALLBACK = 2       # the callback's values, differenced where it declines
+JAC_COMPILED = 3       # the analytic Jacobian worked out here (``jacobian.py``), differenced where it declines
 
 _F = types.float64
 _A = types.float64[::1]
@@ -103,6 +105,19 @@ def no_callback(a, b):  # pragma: no cover - compiled
 def no_events(t, y, out, P, X, W, IW, pycb):  # pragma: no cover - compiled
     """The event-function slot of a model with no discrete events."""
     return
+
+
+_LOOP_ARGS: dict = {}
+
+
+def loops() -> dict:
+    """The NDF's, the one-step solvers' and the Julia-derived solvers' loops,
+    called past numba's dispatcher (``model.Loop``); made once."""
+    if not _LOOP_ARGS:
+        from .julia import julia
+        from .model import Loop
+        _LOOP_ARGS.update(ndf=Loop(ndf), onestep=Loop(onestep), julia=Loop(julia))
+    return _LOOP_ARGS
 
 
 # --- small arithmetic, as the Python solvers do it -----------------------------------------------
@@ -486,6 +501,16 @@ def _differenced(f, t, y, fy, jac_mode, colptr, rowidx, gptr, gcols, threshold, 
             for p in range(colptr[j], colptr[j + 1]):
                 i = rowidx[p]
                 jvals[p] = (fd[i] - fy[i]) / dl[j]
+
+
+@njit(**_OPTS)
+def _compiled_jacobian(f, jp, t, y, P, X, W, IW, pycb, jvals, scratch):
+    """The analytic Jacobian at (t, y), worked out here: the derivative's
+    slots there first, as ``evaluate_for_derivative`` leaves them for the
+    Python one (f's own answer, in ``scratch``, is not counted, as that
+    one's is not). 1 given, 0 declined."""
+    f(t, y, scratch, P, X, W, IW, pycb)
+    return _cj.evaluate(jp, t, y, X, P, W, IW, jvals)
 
 
 @njit(**_OPTS)
@@ -879,14 +904,15 @@ NDF_SIG = types.int64(
     CB_T, CB_T, _M, _I, _A, _A,                         # form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf
     RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
     _M, _M, _A, _I,                                     # LT, LF, LB, LO: where steps end (``_landing``)
-    _splu.SW_T)                                         # sw: the sparse matrix, under MAT_SPARSE
+    _splu.SW_T,                                         # sw: the sparse matrix, under MAT_SPARSE
+    _cj.JP_T)                                           # jp: the analytic Jacobian, under JAC_COMPILED
 
 
 @njit(NDF_SIG, **_OPTS)
 def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrained,
         jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
         ct, cy, cint, cflt, form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf,
-        evf, evdir, evbuf, evy, evwhich, evstat, LT, LF, LB, LO, sw):
+        evf, evdir, evbuf, evy, evwhich, evstat, LT, LF, LB, LO, sw, jp):
     """``engine/solvers/ndf.py``'s ``ndf``, compiled.
 
     fpar: rtol, hmax, h0, max_steps, stagnation_tol
@@ -988,6 +1014,8 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
         if got < 0:
             stats[7] = counts[0]
             return E_CALLBACK
+    elif jac_mode == JAC_COMPILED:
+        got = _compiled_jacobian(f, jp, t, cols[0], P, X, W, IW, pycb, jvals, fd)
     if got == 0:
         _differenced(f, t, cols[0], f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
                      P, X, W, IW, pycb, ytry, fd, dl, counts)
@@ -1206,6 +1234,8 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                         if got < 0:
                             stats[7] = counts[0]
                             return E_CALLBACK
+                    elif jac_mode == JAC_COMPILED:
+                        got = _compiled_jacobian(f, jp, t, cols[0], P, X, W, IW, pycb, jvals, fd)
                     if got == 0:
                         f(t, cols[0], raw, P, X, W, IW, pycb)
                         counts[0] += 1
@@ -1542,16 +1572,20 @@ def _any_below(v, nn_idx):
 
 
 @njit(**_OPTS)
-def _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
+def _ros_jacobian(f, jac_cb, jp, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
                   P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on):
-    """``_Stepper._jacobian``: the callback's values, else differenced with
-    the held derivative. The evaluations spent (the callback's count
-    none), or -1 when the callback raised."""
+    """``_Stepper._jacobian``: the callback's values (or the compiled
+    analytic Jacobian's), else differenced with the held derivative. The
+    evaluations spent (the callback's count none), or -1 when the callback
+    raised."""
     if jac_mode == JAC_CALLBACK:
         r = _callback_jacobian(jac_cb, t, y, W, ybuf)
         if r < 0:
             return -1
         if r == 1:
+            return 0
+    elif jac_mode == JAC_COMPILED:
+        if _compiled_jacobian(f, jp, t, y, P, X, W, IW, pycb, jvals, fd) == 1:
             return 0
     n = y.size
     _increment(y, threshold, dl)
@@ -1589,14 +1623,15 @@ ONESTEP_SIG = types.int64(
     CB_T, CB_T, _M, _A, _A,                             # form_cb, solve_cb, jdense, rbuf, xbuf
     RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
     _M, _M, _A, _I,                                     # LT, LF, LB, LO: where steps end (``_landing``)
-    _splu.SW_T)                                         # sw: the sparse matrix, under MAT_SPARSE
+    _splu.SW_T,                                         # sw: the sparse matrix, under MAT_SPARSE
+    _cj.JP_T)                                           # jp: the analytic Jacobian, under JAC_COMPILED
 
 
 @njit(ONESTEP_SIG, **_OPTS)
 def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_idx,
             jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
             ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf, evf, evdir, evbuf, evy, evwhich, evstat,
-            LT, LF, LB, LO, sw):
+            LT, LF, LB, LO, sw, jp):
     """``engine/solvers/onestep.py``'s ``integrate`` with the Rosenbrock
     (2,3) or the Dormand-Prince stepper, compiled.
 
@@ -1689,7 +1724,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
 
     if ros:
         _held(f, t, y, f0, P, X, W, IW, pycb, nn_idx, push, hold_on)
-        if _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
+        if _ros_jacobian(f, jac_cb, jp, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold, jvals, jdense,
                          P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on) < 0:
             return E_CALLBACK
         npds += 1
@@ -1761,7 +1796,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
             if ros:
                 before = spent
                 if need_jacobian and not (constant and npds > 0):
-                    used = _ros_jacobian(f, jac_cb, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold,
+                    used = _ros_jacobian(f, jac_cb, jp, t, y, f0, jac_mode, colptr, rowidx, gptr, gcols, threshold,
                                          jvals, jdense, P, X, W, IW, pycb, ytry, fd, dl, ybuf, nn_idx, push, hold_on)
                     if used < 0:
                         stats[2] = nfevals

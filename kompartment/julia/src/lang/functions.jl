@@ -108,9 +108,22 @@ to an infinite or NaN power are NaN. `kf_jspow` with an exponent per element,
 @inline kf_asinh(x::Float64) = casinh(x)
 @inline kf_acosh(x::Float64) = cacosh(x)
 @inline kf_atanh(x::Float64) = catanh(x)
-"""numpy's `minimum`/`maximum`: NaN in, NaN out; of two equal values, the first."""
-@inline kf_min(a::Float64, b::Float64) = (a <= b || isnan(a)) ? a : b
-@inline kf_max(a::Float64, b::Float64) = (a >= b || isnan(a)) ? a : b
+"""numpy's `minimum`/`maximum`: the first NaN where either is one; of two
+equal values the first, but for -0 below +0 (as JavaScript's `Math.min`)."""
+@inline function kf_min(a::Float64, b::Float64)
+    isnan(a) && return a
+    isnan(b) && return b
+    a < b && return a
+    b < a && return b
+    return (a == 0.0 && signbit(b)) ? b : a
+end
+@inline function kf_max(a::Float64, b::Float64)
+    isnan(a) && return a
+    isnan(b) && return b
+    a > b && return a
+    b > a && return b
+    return (a == 0.0 && signbit(a)) ? b : a
+end
 @inline kf_not(a::Float64) = b2f(a == 0.0)
 
 const FACTORIAL_MAX = 170

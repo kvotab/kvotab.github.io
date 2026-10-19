@@ -444,10 +444,10 @@ class TheSolversTakeThem(unittest.TestCase):
         y = V.solve(b)
         self.assertLess(np.max(np.abs(x - y)) / np.max(np.abs(y)), 1e-12)
 
-    def test_auto_goes_sparse_from_64_states(self) -> None:
-        # A decay chain of 63 states is factorised densely, of 64 sparsely
-        # (the application goes sparse from 24; the Julia engine from 64).
-        for size, sparse in ((63, False), (64, True)):
+    def test_auto_goes_sparse_from_the_applications_size(self) -> None:
+        # A decay chain of 23 states is factorised densely, of 24 sparsely,
+        # as in the application.
+        for size, sparse in ((23, False), (24, True)):
             p = chain_pattern(size)
             W = IterationMatrix(size, p, -np.ones(p.nnz), 'auto')
             self.assertEqual(W.sparse, sparse)

@@ -12,6 +12,7 @@ min_change_time, far-field paths of every kind and every solver.
 
 from __future__ import annotations
 
+import math
 import unittest
 from typing import Any, Callable, Dict, Optional, Tuple
 from unittest import mock
@@ -132,6 +133,72 @@ def functions(nuclides: bool = False, **sim: Any) -> kp.Model:
     m.add_parameter('k', 0.3)
     total = ' + '.join(f'1e-3 * {n}' for n in FUNCTION_EXPRESSIONS)
     m.add_transfer('A', 'B', rate=f'k * (1 + 0.01 * ({total}))')
+    return m
+
+
+#: Powers numpy works out by a short cut where the exponent is one value -- a
+#: square, a square root, a reciprocal, which differ from the C library's pow
+#: in the last bit for about one argument in a thousand -- and by pow where
+#: there is one exponent per element; smoothDown and smoothUp at steepnesses
+#: whose 2*s is one of those; and tanh, the C library's.
+POWER_EXPRESSIONS = {
+    'sq': '(A + 1)^2 + (A + 1)^0.5 + (A + 1)^-1',
+    'par': '(A + 1)^k2 + power(A + 1, k2) + (A + 1)^kh',
+    'per': '(A + 1)^(2 + 0 * A) + (A + 1)^(0.5 + 0 * A) + power(A + 1, -1 + 0 * A)',
+    'smooth': 'smoothDown(A + 1, 1.7, 1) + smoothUp(A + 1, 1.6, 0.25) + smoothDown(A + 1, 1.5, 0.5 + 0 * A)',
+    'tnh': 'tanh(3 * A)',
+}
+
+
+def powers(**sim: Any) -> Project:
+    """POWER_EXPRESSIONS on forty nuclides' amounts, each decaying at its own
+    rate, so that every power is taken of many different numbers."""
+    names = [f'Qa-{100 + i}' for i in range(40)]
+    raw = {
+        'name': 'Powers', 'nuclides': names, 'half_lives': {n: 1 + 0.37 * i for i, n in enumerate(names)},
+        'chains': [],
+        'simulation': {'start_time': 0, 'end_time': 30, 'output_points': 31, 'solver': 'ndf', 'rtol': 1e-8,
+                       'abstol': 1e-14, 'time_unit': 'year', **sim},
+        'parameters': [{'name': 'k', 'value': 0.1, 'index_lists': []},
+                       {'name': 'k2', 'value': 2, 'index_lists': []},
+                       {'name': 'kh', 'value': 0.5, 'index_lists': []}],
+        'compartments': [{'name': 'A', 'initial': '1', 'index_lists': ['Radionuclides']},
+                         {'name': 'B', 'initial': '0', 'index_lists': ['Radionuclides']}],
+        'expressions': [{'name': n, 'equation': eq, 'index_lists': ['Radionuclides']}
+                        for n, eq in POWER_EXPRESSIONS.items()],
+        'transfers': [{'name': 'T', 'from': 'A', 'to': 'B', 'index_lists': ['Radionuclides'],
+                       'rate': f'k * (1 + 1e-3 * ({" + ".join(POWER_EXPRESSIONS)}))'}],
+    }
+    return Project(raw)
+
+
+def zeros(**sim: Any) -> kp.Model:
+    """min, max and sign where the sign of a zero tells: numpy's -- and
+    JavaScript's -- put -0 below +0 and give sign(-0) as +0, where numba's own
+    take either zero; a rate then reads atan(1/z), a quarter turn either way."""
+    m = kp.Model.new('Zeros')
+    settings(m, sim, end_time=20, output_points=21, rtol=1e-6, abstol=1e-10)
+    m.add_compartment('A', initial='1')
+    m.add_compartment('B')
+    m.add_expression('z', 'atan(1 / sign(-0 * A)) + atan(1 / min(0 * A, -0 * A)) + atan(1 / max(-0 * A, 0 * A)) '
+                          '+ atan(1 / min(-0 * A, 0 * A)) + atan(1 / max(0 * A, -0 * A))')
+    m.add_parameter('k', 0.3)
+    m.add_transfer('A', 'B', rate='k * (1 + 0.01 * z)')
+    return m
+
+
+def literal_bases(**sim: Any) -> kp.Model:
+    """Powers of a base written into the equation, of one value each, read at
+    2,001 times: LLVM would take pow(2.0, x) as exp2(x), which rounds
+    otherwise for about one argument in five hundred, were pow not called by a
+    name of the runtime's own."""
+    m = kp.Model.new('Bases')
+    settings(m, sim, end_time=20, output_points=2001, rtol=1e-6, abstol=1e-10)
+    m.add_compartment('A', initial='1')
+    m.add_compartment('B')
+    m.add_expression('p', '2^(3 * A) + 2^(-A) + 10^(A - 1) + 2^(time / 7)')
+    m.add_parameter('k', 0.3)
+    m.add_transfer('A', 'B', rate='k * (1 + 0.01 * p)')
     return m
 
 
@@ -356,6 +423,25 @@ class Identical(unittest.TestCase):
             for solver in ('ndf', 'ros23', 'dp45'):
                 with self.subTest(nuclides=nuclides, solver=solver):
                     self.same(functions(nuclides, solver=solver).project())
+
+    def test_powers_as_numpy_takes_them_and_the_c_librarys_tanh(self) -> None:
+        for solver in ('ndf', 'ros23', 'dp45'):
+            with self.subTest(solver=solver):
+                a, b = self.same(powers(solver=solver))
+                self.assertGreater(a.stats['nsteps'], 30)
+
+    def test_powers_of_a_base_written_into_the_equation(self) -> None:
+        for solver in ('ndf', 'ros23', 'dp45'):
+            with self.subTest(solver=solver):
+                self.same(literal_bases(solver=solver).project())
+
+    def test_zeros_signed_as_numpy_signs_them(self) -> None:
+        for solver in ('ndf', 'ros23', 'dp45'):
+            with self.subTest(solver=solver):
+                a, _ = self.same(zeros(solver=solver).project())
+                # The rate is k*(1 + 0.01*(pi/2 - pi/2 + pi/2 - pi/2 + pi/2)): A decays at that rate.
+                self.assertAlmostEqual(float(np.asarray(a.y)[-1, 0]), math.exp(-0.3 * (1 + 0.005 * math.pi) * 20),
+                                       delta=1e-5)
 
     def test_what_the_equations_raise_is_raised_alike(self) -> None:
         # The same exception, with the same message, at the same evaluation.

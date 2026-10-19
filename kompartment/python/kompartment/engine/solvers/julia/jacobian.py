@@ -9,19 +9,36 @@ factorises it, and knows when it may reuse the factor or must re-evaluate J.
 from __future__ import annotations
 
 import math
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from ._js import SQRT_EPS, max_or_zero
-from .linalg import DenseLU, SparseLU, csc_from_triplets, dense_pattern, reverse_cuthill_mckee
+from .linalg import (KEPT_PATTERNS, DenseLU, SparseLU, csc_from_triplets, dense_pattern, pattern_key,
+                     reverse_cuthill_mckee)
 
 Pattern = Tuple[np.ndarray, np.ndarray]
 
 
+#: The colourings of the patterns met last (see ``linalg._RCM_KEPT``).
+_COLOURS_KEPT: Dict[Tuple[int, bytes, bytes], List[np.ndarray]] = {}
+
+
 def colour_columns(n: int, col_ptr: np.ndarray, row_idx: np.ndarray) -> List[np.ndarray]:
     """Groups of columns that share no row: greedy, largest degree first, a
-    stable sort (``colourColumns``). Each group lists its columns ascending."""
+    stable sort (``colourColumns``). Each group lists its columns ascending.
+    Kept for the patterns met last."""
+    key = pattern_key(n, col_ptr, row_idx)
+    kept = _COLOURS_KEPT.get(key)
+    if kept is None:
+        kept = _colour_columns(n, col_ptr, row_idx)
+        if len(_COLOURS_KEPT) >= KEPT_PATTERNS:
+            _COLOURS_KEPT.pop(next(iter(_COLOURS_KEPT)))
+        _COLOURS_KEPT[key] = kept
+    return [g.copy() for g in kept]
+
+
+def _colour_columns(n: int, col_ptr: np.ndarray, row_idx: np.ndarray) -> List[np.ndarray]:
     cp = np.asarray(col_ptr, dtype=np.int64)
     ri = np.asarray(row_idx, dtype=np.int64)
     # rows -> the columns that touch them

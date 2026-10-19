@@ -7,11 +7,11 @@
 # arguments. The per-state arithmetic is the Python engine's element for
 # element and in its order (no fused multiply-adds, sums kept sequential), the
 # powers in the step-size formulas are the C library's (`cpow`, as Python's
-# `**` is), and a dense matrix of up to 200 states is factorised by the
-# application's own LU -- so on a dense problem a run takes the Python
-# engine's steps and gives its numbers to the last bit. A sparse matrix is
-# factorised by KLU (SuiteSparse) where Python uses SuperLU: there the two
-# agree to the tolerance, not to the bit.
+# `**` is), a dense matrix of up to 200 states is factorised by the
+# application's own LU and a sparse one by its sparse LUs, as the Python
+# engine factorises them -- so a run takes the Python engine's steps and gives
+# its numbers to the last bit. A dense matrix of more than 200 states is
+# LAPACK's in both, whose two builds can round differently.
 #
 # Messages are the Python engine's, word for word -- the indices they quote
 # (a state, a column) are counted from zero as there.
@@ -19,8 +19,6 @@
 # Included inside `module Kompartment`, which has `using LinearAlgebra,
 # SparseArrays` and `import FunctionWrappers: FunctionWrapper`; needs
 # `cpow` and `clog2` from lang/jsmath.jl.
-
-using SuiteSparse_jll: libklu
 
 """A run the solver could not finish. `kind` says how, `t` where.
 
@@ -89,7 +87,7 @@ end
 include("pyfmt.jl")
 include("pattern.jl")
 include("kernels.jl")
-include("klu.jl")
+include("sparselu.jl")
 include("matrix.jl")
 include("events.jl")
 include("ndf.jl")

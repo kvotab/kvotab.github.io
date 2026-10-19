@@ -32,6 +32,7 @@ const FILES = [
     "model/normalise.jl",
     "model/edit.jl",
     "solvers/runtests.jl",
+    "solvers/sparselu.jl",
     "io/test_hdf5.jl",
     "io/dataset.jl",
     "io/service.jl",

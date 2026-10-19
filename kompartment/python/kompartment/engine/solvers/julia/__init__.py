@@ -16,9 +16,10 @@ Each of ``fbdf, qndf, rodas5p, radau5, kencarp4, trbdf2, auto, auto_julia,
 fbdf_krylov, rosenbrock23, tsit5, vern7`` takes ``(f, tspan, y0, opts)`` and
 returns ``{'t', 'y', 'stopped', 'stats'}``.
 
-The per-state arithmetic follows the package's order of operations; the
-factorisations are LAPACK's and SuperLU's (see :mod:`.linalg`), so a run
-takes the application's steps and agrees with it to rounding.
+The per-state arithmetic follows the package's order of operations; a sparse
+W is factorised by the package's own LU (compiled; SuperLU's without numba)
+and a dense one by LAPACK (see :mod:`.linalg`), so a run takes the
+application's steps and agrees with it to rounding.
 """
 
 from __future__ import annotations

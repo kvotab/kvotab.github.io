@@ -17,8 +17,10 @@ do, and are written once for each with ``numba.extending.overload``.
 
 from __future__ import annotations
 
+import ctypes
 import math
 
+import llvmlite.binding as _llvm
 import numpy as np
 from numba import literal_unroll, njit, types
 from numba.extending import overload
@@ -32,9 +34,13 @@ from . import (FAIL_INTERPOLATION_ARGS, FAIL_LOOKUP_NO_X, FAIL_PYTHON, FAIL_RANG
                FAIL_TRANSPORT_ABOVE, FAIL_TRANSPORT_BELOW, CompiledFailure, guard_numba_cache)
 from .farfield import DONE as _REFRESHED
 from .farfield import refresh as _farf_refresh
-from .solvers import CB_T
 
 guard_numba_cache()
+
+#: The callback into Python, ``solvers.CB_T`` -- the same type, declared here
+#: too, so that this module does not import the solvers, whose loops call the
+#: compiled Jacobian (:mod:`.jacobian`) that calls this one.
+CB_T = types.FunctionType(types.int64(types.float64, types.float64))
 
 #: The overloads made around a kernel (``_binary``, ``_unary``, ``_ternary``,
 #: ``_tuple_call``) are not cached: numba files a version by its closure's
@@ -42,6 +48,33 @@ guard_numba_cache()
 #: every process -- so no other process would ever find it, and every one
 #: would add its own.
 _UNCACHED = {'cache': False, 'error_model': 'numpy'}
+
+# --- the C library's pow, by a name of this module's own --------------------------------------------
+# numba takes pow through LLVM's intrinsic, and LLVM rewrites pow(2.0, x),
+# the base written into the code, as exp2(x), which rounds otherwise for about
+# one argument in five hundred: a model's 2^A was not numpy's. Called by a name
+# LLVM does not know, it is the C library's pow, which numpy calls, whatever
+# the code says of its arguments. The symbol is registered in each process
+# before the cached code that calls it by name is loaded (as ``julia.py``'s
+# LAPACK is).
+
+
+def _c_pow_address():
+    try:
+        return ctypes.cast(ctypes.CDLL(None).pow, ctypes.c_void_p).value
+    except Exception:  # noqa: BLE001 - no C library to look the symbol up in: the intrinsic, then
+        return None
+
+
+_C_POW = _c_pow_address()
+if _C_POW:
+    _llvm.add_symbol('kompartment_pow', _C_POW)
+    _c_pow = types.ExternalFunction('kompartment_pow', types.float64(types.float64, types.float64))
+else:  # pragma: no cover - a platform without a C library numba can see
+    @njit(cache=True, inline='always', error_model='numpy')
+    def _c_pow(a, b):
+        return np.power(a, b)
+
 
 # --- JavaScript's arithmetic -----------------------------------------------------------------
 
@@ -87,40 +120,76 @@ def _is_arr(t):
 
 
 @njit(cache=True, inline='always', error_model='numpy')
-def _pow1(a, b):
-    r = np.power(float(a), float(b))
+def _np_pow1(a, b, one):
+    """numpy's ``power`` of one element. With one exponent for every element
+    (``one``: a number, or one value broadcast over more) numpy works out 2,
+    0.5 and -1 as a square, a square root and a reciprocal, and those differ
+    from the C library's pow in the last bit for about one argument in a
+    thousand; an exponent per element always goes to pow."""
+    if one:
+        if b == 2.0:
+            return a * a
+        if b == 0.5:
+            return np.sqrt(a)
+        if b == -1.0:
+            return 1.0 / a
+    return _c_pow(a, b)
+
+
+@njit(cache=True, inline='always', error_model='numpy')
+def _pow1(a, b, one):
+    """``Math.pow``: numpy's power, but 1 and -1 to an infinite or NaN power are NaN."""
+    r = _np_pow1(float(a), float(b), one)
     if abs(a) == 1.0 and not math.isfinite(b):
         return np.nan
     return r
 
 
-@overload(js_pow, jit_options={'cache': True, 'error_model': 'numpy'})
-def _ov_pow(a, b):
-    if _is_num(a) and _is_num(b):
-        return lambda a, b: _pow1(a, b)
-    if _is_arr(a) and _is_num(b):
-        def impl(a, b):
-            out = np.empty(a.size)
-            for i in range(a.size):
-                out[i] = _pow1(a[i], b)
-            return out
-        return impl
-    if _is_num(a) and _is_arr(b):
-        def impl(a, b):
-            out = np.empty(b.size)
-            for i in range(b.size):
-                out[i] = _pow1(a, b[i])
-            return out
-        return impl
-    if _is_arr(a) and _is_arr(b):
-        def impl(a, b):
-            n = max(a.size, b.size)
-            out = np.empty(n)
-            for i in range(n):
-                out[i] = _pow1(a[i if a.size > 1 else 0], b[i if b.size > 1 else 0])
-            return out
-        return impl
-    return None
+def _power_overload(scalar):
+    """An overload body for a power of numbers or arrays, as numpy broadcasts
+    it: the exponent is one value where it is a number, or one element spread
+    over more."""
+    def ov(a, b):
+        if _is_num(a) and _is_num(b):
+            return lambda a, b: scalar(a, b, True)
+        if _is_arr(a) and _is_num(b):
+            def impl(a, b):
+                out = np.empty(a.size)
+                for i in range(a.size):
+                    out[i] = scalar(a[i], b, True)
+                return out
+            return impl
+        if _is_num(a) and _is_arr(b):
+            def impl(a, b):
+                out = np.empty(b.size)
+                for i in range(b.size):
+                    out[i] = scalar(a, b[i], False)
+                return out
+            return impl
+        if _is_arr(a) and _is_arr(b):
+            def impl(a, b):
+                n = max(a.size, b.size)
+                one = b.size == 1 and n > 1
+                out = np.empty(n)
+                for i in range(n):
+                    out[i] = scalar(a[i if a.size > 1 else 0], b[i if b.size > 1 else 0], one)
+                return out
+            return impl
+        return None
+    return ov
+
+
+def np_power(a, b):  # pragma: no cover - replaced by the overload in compiled code
+    raise NotImplementedError
+
+
+@njit(cache=True, inline='always', error_model='numpy')
+def _np_power1(a, b, one):
+    return _np_pow1(float(a), float(b), one)
+
+
+overload(js_pow, jit_options={'cache': True, 'error_model': 'numpy'})(_power_overload(_pow1))
+overload(np_power, jit_options={'cache': True, 'error_model': 'numpy'})(_power_overload(_np_power1))
 
 
 @njit(cache=True, inline='always', error_model='numpy')
@@ -266,14 +335,55 @@ overload(js_erf, jit_options=_UNCACHED)(_unary(_erf1))
 
 @njit(cache=True, inline='always', error_model='numpy')
 def _npmin(a, b):
-    """``np.minimum``: the first when they are equal, NaN when either is."""
-    return a if (a <= b or a != a) else b
+    """``np.minimum``: the first NaN when either is one, and -0 below +0 (as
+    numpy has it, and JavaScript's ``Math.min``; numba's own takes either zero)."""
+    if a != a:
+        return a
+    if b != b:
+        return b
+    if a < b:
+        return a
+    if b < a:
+        return b
+    return b if (a == 0.0 and math.copysign(1.0, b) < 0) else a
 
 
 @njit(cache=True, inline='always', error_model='numpy')
 def _npmax(a, b):
-    """``np.maximum``."""
-    return a if (a >= b or a != a) else b
+    """``np.maximum``: the first NaN when either is one, and +0 above -0."""
+    if a != a:
+        return a
+    if b != b:
+        return b
+    if a > b:
+        return a
+    if b > a:
+        return b
+    return b if (a == 0.0 and math.copysign(1.0, a) < 0) else a
+
+
+@njit(cache=True, inline='always', error_model='numpy')
+def _sign1(a):
+    """``np.sign``: 0 at either zero (numba's gives -0 at -0), NaN at NaN."""
+    if a > 0:
+        return 1.0
+    if a < 0:
+        return -1.0
+    if a == 0:
+        return 0.0
+    return a
+
+
+def js_minimum(a, b):  # pragma: no cover - replaced by the overload in compiled code
+    raise NotImplementedError
+
+
+def js_maximum(a, b):  # pragma: no cover
+    raise NotImplementedError
+
+
+def js_sign(a):  # pragma: no cover
+    raise NotImplementedError
 
 
 @njit(cache=True, error_model='numpy')
@@ -322,8 +432,10 @@ def _ramp_up1(x, start, end):
 
 
 @njit(cache=True, inline='always', error_model='numpy')
-def _smooth_down1(x, X, s):
-    r = np.power(x / X, 2 * s)
+def _smooth_down1(x, X, s, one):
+    """``one``: the steepness is one value for every element, so that numpy's
+    power takes its short cut for 2*s (see :func:`_np_pow1`)."""
+    r = _np_pow1(x / X, 2 * s, one)
     val = 1.0 / (1.0 + r) if math.isfinite(r) else 0.0
     if not (x > 0):
         return 1.0
@@ -333,8 +445,31 @@ def _smooth_down1(x, X, s):
 
 
 @njit(cache=True, inline='always', error_model='numpy')
-def _smooth_up1(x, X, s):
-    return 1.0 - _smooth_down1(x, X, s)
+def _smooth_up1(x, X, s, one):
+    return 1.0 - _smooth_down1(x, X, s, one)
+
+
+def _smooth_overload(scalar):
+    """An overload body for smoothDown and smoothUp, which pass on whether the
+    steepness is one value for every element."""
+    def ov(a, b, c):
+        if _is_num(a) and _is_num(b) and _is_num(c):
+            return lambda a, b, c: scalar(float(a), float(b), float(c), True)
+        if _is_arr(a) or _is_arr(b) or _is_arr(c):
+            def impl(a, b, c):
+                aa = np.asarray(a)
+                bb = np.asarray(b)
+                cc = np.asarray(c)
+                n = max(aa.size, bb.size, cc.size)
+                one = cc.ndim == 0 or (cc.size == 1 and n > 1)
+                out = np.empty(n)
+                for i in range(n):
+                    out[i] = scalar(aa.flat[i if aa.size > 1 else 0], bb.flat[i if bb.size > 1 else 0],
+                                    cc.flat[i if cc.size > 1 else 0], one)
+                return out
+            return impl
+        return None
+    return ov
 
 
 def _ternary(scalar):
@@ -390,14 +525,30 @@ def js_smooth_up(a, b, c):  # pragma: no cover
     raise NotImplementedError
 
 
+overload(js_minimum, jit_options=_UNCACHED)(_binary(_npmin))
+overload(js_maximum, jit_options=_UNCACHED)(_binary(_npmax))
+overload(js_sign, jit_options=_UNCACHED)(_unary(_sign1))
 overload(js_factorial, jit_options=_UNCACHED)(_unary(_factorial1))
 overload(js_binomial, jit_options=_UNCACHED)(_binary(_binomial1))
 overload(js_bq2mole, jit_options=_UNCACHED)(_binary(_bq2mole1))
 overload(js_mole2bq, jit_options=_UNCACHED)(_binary(_mole2bq1))
 overload(js_ramp_down, jit_options=_UNCACHED)(_ternary(_ramp_down1))
 overload(js_ramp_up, jit_options=_UNCACHED)(_ternary(_ramp_up1))
-overload(js_smooth_down, jit_options=_UNCACHED)(_ternary(_smooth_down1))
-overload(js_smooth_up, jit_options=_UNCACHED)(_ternary(_smooth_up1))
+overload(js_smooth_down, jit_options=_UNCACHED)(_smooth_overload(_smooth_down1))
+overload(js_smooth_up, jit_options=_UNCACHED)(_smooth_overload(_smooth_up1))
+
+
+def js_tanh(a):  # pragma: no cover - replaced by the overload in compiled code
+    raise NotImplementedError
+
+
+@njit(cache=True, inline='always', error_model='numpy')
+def _tanh1(a):
+    """The C library's tanh, as the Python path's ``functions.tanh`` is."""
+    return math.tanh(a)
+
+
+overload(js_tanh, jit_options=_UNCACHED)(_unary(_tanh1))
 
 
 # --- the functions of any number of arguments ----------------------------------------------------
@@ -826,7 +977,7 @@ del _stub, _kernel
 # ``TUPLE_FUNCTIONS`` take their arguments as one tuple.
 FUNCTION_NAMES = {
     'round': 'js_round', 'mod': 'js_mod', 'rem': 'js_rem', 'fix': 'js_fix', 'ulp': 'js_ulp',
-    'erfc': 'js_erfc', 'erf': 'js_erf',
+    'erfc': 'js_erfc', 'erf': 'js_erf', 'tanh': 'js_tanh',
     'asinh': 'np.arcsinh', 'acosh': 'np.arccosh', 'atanh': 'np.arctanh',
     'factorial': 'js_factorial', 'binomial': 'js_binomial', 'bq2mole': 'js_bq2mole', 'mole2bq': 'js_mole2bq',
     'rampDown': 'js_ramp_down', 'rampUp': 'js_ramp_up', 'smoothDown': 'js_smooth_down', 'smoothUp': 'js_smooth_up',
@@ -840,12 +991,12 @@ TUPLE_FUNCTIONS = frozenset({
     'transport_point', 'transport_sum', 'transport_mean',
 })
 #: What the generated module imports from this one.
-RUNTIME_IMPORTS = ('js_pow', 'js_round', 'js_mod', 'js_rem', 'js_fix', 'js_ulp', 'js_erfc', 'js_erf',
-                   'js_factorial', 'js_binomial', 'js_bq2mole', 'js_mole2bq', 'js_ramp_down', 'js_ramp_up',
-                   'js_smooth_down', 'js_smooth_up', 'js_and', 'js_or', 'js_nand', 'js_nor', 'js_xor',
-                   'js_percentile', 'js_interp_linear', 'js_interp_extrapolate', 'js_transport_point',
-                   'js_transport_sum', 'js_transport_mean', 'tab1', 'tabs', 'extreme', 'running_mean', 'snapshot',
-                   'delayed', 'recorder_store', 'recorder_fire', 'release', 'farf_refresh')
+RUNTIME_IMPORTS = ('js_pow', 'np_power', 'js_tanh', 'js_minimum', 'js_maximum', 'js_sign', 'js_round', 'js_mod',
+                   'js_rem', 'js_fix', 'js_ulp', 'js_erfc', 'js_erf', 'js_factorial', 'js_binomial', 'js_bq2mole',
+                   'js_mole2bq', 'js_ramp_down', 'js_ramp_up', 'js_smooth_down', 'js_smooth_up', 'js_and', 'js_or',
+                   'js_nand', 'js_nor', 'js_xor', 'js_percentile', 'js_interp_linear', 'js_interp_extrapolate',
+                   'js_transport_point', 'js_transport_sum', 'js_transport_mean', 'tab1', 'tabs', 'extreme',
+                   'running_mean', 'snapshot', 'delayed', 'recorder_store', 'recorder_fire', 'release', 'farf_refresh')
 # ...and the ones the language's own ``functions.py`` names for them, which
 # the Python code writer binds; see :mod:`.model`.
 PYTHON_FUNCTIONS = {'js_round': 'round', 'js_mod': 'mod', 'js_rem': 'rem', 'fix': 'fix', '_ulp': 'ulp',

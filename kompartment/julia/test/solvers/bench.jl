@@ -1,6 +1,7 @@
 # How fast the Julia NDF is (warm, best of several), on the problems
 # tools/solver_fixtures.py --bench times in Python: Robertson, and the
-# landscape-like linear system of 2,000 and 20,000 states (KLU), and the
+# landscape-like linear system of 2,000 and 20,000 states (the application's
+# sparse LUs), and the
 # dense cases of fixtures.json.
 #
 #   julia --startup-file=no --project=kompartment/julia kompartment/julia/test/solvers/bench.jl

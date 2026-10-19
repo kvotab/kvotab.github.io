@@ -272,7 +272,9 @@ end
                     outs = K.outputs(res)
                     @test [o["label"] for o in outs] == r["labels"]
                     y = unhex(r["y"])                                     # row by row, as numpy ravels them
-                    if get(res.stats, "sparse", false) !== true
+                    # The application's LUs on both engines, dense or sparse: to the bit, but
+                    # for a dense matrix of more than 200 states, each engine's own LAPACK.
+                    if get(res.stats, "sparse", false) === true || r["nstate"] <= 200
                         @test same(reduce(vcat, res.y), y)
                         for (o, col, want) in zip(outs, K.series_many(res, outs), r["series"])
                             ok = same(col, unhex(want))
@@ -280,8 +282,9 @@ end
                             @test ok
                         end
                     else
-                        # A part above 200 states is factorised by KLU here and by SuperLU in
-                        # Python: the same steps (above), the values to round-off.
+                        # A part of more than 200 states factorised densely is LAPACK's on both
+                        # engines, whose builds round differently: the same steps (above), the
+                        # values to round-off.
                         @test maximum(abs.(reduce(vcat, res.y) .- y)) <= 1e-12 * maximum(abs, y)
                         rtol = Float64(fx["model"]["simulation"]["rtol"])
                         for (col, want) in zip(K.series_many(res, outs), r["series"])

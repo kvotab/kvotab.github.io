@@ -33,11 +33,9 @@ DENSE_MAX_BYTES = 2 * 1024 ** 3
 #: Up to this many states a dense matrix is factorised by the application's
 #: LU (when numba is installed); beyond it LAPACK's blocked one is quicker.
 APP_LU_MAX = 200
-#: ``auto`` factorises densely below this many states. The application goes
-#: sparse from 24; the Julia engine goes sparse from here too, so that below
-#: it the two engines' runs are the same to the bit (above it, KLU and the
-#: application's sparse LUs agree to round-off).
-DENSE_BELOW = 64
+#: ``auto`` factorises densely below this many states, as the application
+#: does (and the Julia engine).
+DENSE_BELOW = 24
 DENSE_FILL = 0.15
 #: The column orderings SuperLU is tried with, the model's own first.
 ORDERINGS = ('NATURAL', 'COLAMD', 'MMD_AT_PLUS_A')

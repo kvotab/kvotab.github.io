@@ -197,7 +197,10 @@ end
             series_same = length(cols) == length(fx["series"]) &&
                           all(same_bits(c, unhex(w)) for (c, w) in zip(cols, fx["series"]))
             identical = stats_same && t_same && series_same && K.to_csv(res) == fx["csv"]
-            if identical || get(fx["stats"], "sparse", false) !== true
+            # Both engines factorise with the application's LUs, dense or sparse; only a
+            # dense matrix of more than 200 states is LAPACK's, each engine's own build.
+            lapack = get(fx["stats"], "sparse", false) !== true && res.system.nstate > 200
+            if identical || !lapack
                 for (k, v) in fx["stats"]
                     k == "held" && continue
                     got = get(res.stats, k, nothing)
@@ -214,11 +217,9 @@ end
                 end
                 @test K.to_csv(res) == fx["csv"]
             else
-                # The sparse path factorises with SciPy's SuperLU in Python and with
-                # KLU here (src/solvers/): the solves round differently in the last
-                # bits, and a stiff run carries that on, while the derivative and the
-                # analytic Jacobian are the same to the bit. The same run within its
-                # tolerance, then.
+                # Each engine's LAPACK rounds differently in the last bits, and a stiff
+                # run carries that on, while the derivative and the analytic Jacobian
+                # are the same to the bit. The same run within its tolerance, then.
                 @test_broken identical
                 t_same || @info "$(fx["name"]): the output times (the solver's own steps here) differ, so the series are not compared"
                 if t_same
@@ -232,7 +233,7 @@ end
                         d = d[isfinite.(d)]
                         isempty(d) || scale == 0 || (worst = max(worst, maximum(d) / scale))
                     end
-                    worst < 10 * rtol || @info "$(fx["name"]): sparse path, worst difference $worst of the scale"
+                    worst < 10 * rtol || @info "$(fx["name"]): LAPACK's, worst difference $worst of the scale"
                     @test worst < 10 * rtol
                 end
             end

@@ -12,10 +12,12 @@ states, counts, recorders, series and failures must be identical -- the
 comparison is ``test_engine_compiled``'s, on its models and the bundled
 examples, through every option the adapter maps.
 
-What the compiled loop leaves to Python is checked here too: SuperLU through
-the Python solver's own ``SparseLU`` (the chains of 70 states and the
-examples), LAPACK called at SciPy's own addresses (bit for bit against
-``lu_factor`` and ``lu_solve``), the analytic Jacobian, progress and stopping;
+What the compiled loop does in place of the Python solver is checked here
+too -- a sparse W factorised by the package's own LU in the Python solver's
+own LU state (the chains of 70 states and the examples), LAPACK called at
+SciPy's own addresses (bit for bit against ``lu_factor`` and ``lu_solve``) --
+and what it leaves to Python: SuperLU, where the Python solver has it, an
+analytic Jacobian the compiled one does not take, progress and stopping;
 and a Python solver given other arithmetic -- as ``test_engine_julia``'s
 ``BitIdentity`` gives it the application's ``pow`` -- keeps its own loop.
 """
@@ -207,13 +209,20 @@ class Identical(unittest.TestCase):
                 self.same(self.raw('biosphere', solver, auto_abstol=True, error_norm='max'))
 
     def test_matrices_python_factorises_sparsely(self) -> None:
-        # 70 states in a chain: W is SuperLU's, which the compiled loop calls
-        # back to factorise and to solve with, as the Python solver does.
+        # 70 states in a chain: W is sparse, factorised by the package's own LU
+        # -- in the loop, in the Python solver's own LU state, never called
+        # back -- or by SuperLU, called back, where the Python solver has that.
+        from kompartment.engine.compiled.julia_run import JuliaRun
+        from kompartment.engine.solvers.julia import linalg
         for solver in SOLVERS:
             with self.subTest(solver=solver):
-                a, b = self.same(base.chain(n=70, solver=solver).project())
+                with mock.patch.object(JuliaRun, '_factor', side_effect=AssertionError('W was called back')):
+                    a, b = self.same(base.chain(n=70, solver=solver).project())
                 self.assertTrue(a.stats['sparse'])
                 self.assertIsNotNone(a.stats['fill'])
+                with mock.patch('kompartment.engine.solvers.julia.jacobian.SparseLU', linalg.SuperSparseLU):
+                    c, _ = self.same(base.chain(n=70, solver=solver).project())
+                self.assertTrue(c.stats['sparse'])
                 self.same(base.chain(n=70, solver=solver, matrix='dense').project())
                 self.same(base.chain(n=70, solver=solver, jacobian='numeric').project())
 

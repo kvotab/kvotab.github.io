@@ -70,7 +70,7 @@ Tree = Tuple[Any, ...]
 INLINE_NUMPY = {
     'abs': 'np.abs', 'sqrt': 'np.sqrt', 'exp': 'np.exp', 'log': 'np.log', 'log10': 'np.log10',
     'log2': 'np.log2', 'sin': 'np.sin', 'cos': 'np.cos', 'tan': 'np.tan', 'sinh': 'np.sinh',
-    'cosh': 'np.cosh', 'tanh': 'np.tanh', 'asin': 'np.arcsin', 'acos': 'np.arccos', 'atan': 'np.arctan',
+    'cosh': 'np.cosh', 'asin': 'np.arcsin', 'acos': 'np.arccos', 'atan': 'np.arctan',
     'ceil': 'np.ceil', 'floor': 'np.floor', 'sign': 'np.sign', 'atan2': 'np.arctan2', 'hypot': 'np.hypot',
 }
 

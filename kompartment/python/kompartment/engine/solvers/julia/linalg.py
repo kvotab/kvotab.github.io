@@ -2,28 +2,29 @@
 
 The package factorises W with three LUs of its own: a dense one, a complex
 dense one for Radau, and a left-looking sparse one (Gilbert-Peierls) behind a
-reverse Cuthill-McKee column ordering. Here the factorisations are LAPACK's
-and SuperLU's, through SciPy, and what the package decides around them is
-kept:
+reverse Cuthill-McKee column ordering. Here the dense factorisations are
+LAPACK's, through SciPy, and the sparse one is the package's own, compiled
+with numba (:mod:`.packagelu`) -- or, without numba, SuperLU's. What the
+package decides around them is kept:
 
-* the ordering: the sparse LU is SuperLU with its own ordering switched off,
-  run on the columns in the package's reverse Cuthill-McKee order -- the same
-  column-by-column elimination with partial pivoting, on the same order, so
-  the fill it reports is the package's;
+* the ordering: the package's reverse Cuthill-McKee order of the columns, which
+  SuperLU, its own ordering switched off, eliminates in the same
+  column-by-column way with partial pivoting, so the fill it reports is the
+  package's;
 * ``fill``: the non-zeros of L below the diagonal plus those of U, counted
   numerically as the package counts them;
 * singular means what it means there: a pivot column that is exactly zero.
 
-Pivots are the largest entry in both (LAPACK's ``izamax`` measures a complex
-entry by ``|re| + |im|``, as the package does), so the factors agree with the
-package's to rounding; the accumulation order inside LAPACK and SuperLU is
-theirs, so not to the last bit.
+Pivots are the largest entry in all of them (LAPACK's ``izamax`` measures a
+complex entry by ``|re| + |im|``, as the package does). The package's sparse
+LU gives its factors and solutions to the last bit; LAPACK's and SuperLU's
+agree with the package's to rounding, their accumulation order being theirs.
 """
 
 from __future__ import annotations
 
 import warnings
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import scipy.linalg as la
@@ -56,10 +57,33 @@ def dense_pattern(n: int) -> Tuple[np.ndarray, np.ndarray]:
     return col_ptr, row_idx
 
 
+def pattern_key(n: int, col_ptr: Sequence[int], row_idx: Sequence[int]) -> Tuple[int, bytes, bytes]:
+    """A pattern as a key: what an ordering or a colouring of it is kept by."""
+    return (n, np.ascontiguousarray(col_ptr, dtype=np.int64).tobytes(),
+            np.ascontiguousarray(row_idx, dtype=np.int64).tobytes())
+
+
+#: The orderings of the patterns met last: a run made of many spans, or many
+#: realisations, builds the solver again for each, on the same pattern.
+_RCM_KEPT: Dict[Tuple[int, bytes, bytes], np.ndarray] = {}
+KEPT_PATTERNS = 8
+
+
 def reverse_cuthill_mckee(n: int, col_ptr: Sequence[int], row_idx: Sequence[int]) -> np.ndarray:
     """Reverse Cuthill-McKee on the symmetrised pattern, new -> old
     (``reverseCuthillMcKee``, as fixed on 2026-09-25: the leftovers of the first
-    sweep are ordered after it)."""
+    sweep are ordered after it); kept for the patterns met last."""
+    key = pattern_key(n, col_ptr, row_idx)
+    kept = _RCM_KEPT.get(key)
+    if kept is None:
+        kept = _reverse_cuthill_mckee(n, col_ptr, row_idx)
+        if len(_RCM_KEPT) >= KEPT_PATTERNS:
+            _RCM_KEPT.pop(next(iter(_RCM_KEPT)))
+        _RCM_KEPT[key] = kept
+    return kept.copy()
+
+
+def _reverse_cuthill_mckee(n: int, col_ptr: Sequence[int], row_idx: Sequence[int]) -> np.ndarray:
     cp = [int(v) for v in col_ptr]
     ri = [int(v) for v in row_idx]
     deg = [0] * n
@@ -164,8 +188,9 @@ class ComplexDenseLU(DenseLU):
     (``ComplexDenseLU``)."""
 
 
-class SparseLU:
-    """Sparse LU with partial pivoting behind a column ordering (``SparseLU``).
+class SuperSparseLU:
+    """Sparse LU with partial pivoting behind a column ordering (``SparseLU``),
+    by SuperLU: where numba is not installed (see :data:`SparseLU`).
 
     ``perm`` is new -> old: column k of the factorised matrix is column
     ``perm[k]`` of W, and the solution is scattered back through it.
@@ -220,3 +245,10 @@ class SparseLU:
         x = np.empty(self.n)
         x[self.perm] = y
         return x
+
+
+try:
+    #: The package's sparse LU itself (:mod:`.packagelu`), where numba is installed.
+    from .packagelu import SparseLU
+except Exception:  # noqa: BLE001 - numba is optional (or does not compile here): SuperLU then
+    SparseLU = SuperSparseLU  # type: ignore[misc,assignment]

@@ -7,9 +7,9 @@
 # parity on, it does exactly what the Python package does -- the C library's
 # math, the application's dense LU, every term summed in the application's
 # order, the model's own solver -- so a run gives the Python package's
-# numbers to the last bit (on a dense problem; KLU and SuperLU part at
-# round-off on a sparse one). That is how the package is checked against the
-# Python one.
+# numbers to the last bit (but where a dense matrix of more than 200 states
+# goes to LAPACK, whose two builds can round differently). That is how the
+# package is checked against the Python one.
 #
 # A system takes the setting when it is built (its generated code and its
 # derivative's layout) and a run when it starts (its solver and its linear
