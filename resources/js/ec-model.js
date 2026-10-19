@@ -859,6 +859,352 @@
     return { t, nAdv: Array.from(nAdv), nFail: Array.from(nFail), nFailHighestHs: Array.from(nFailHi) };
   }
 
+  /* ---------------------------------------------------------------------
+     The failure histogram
+
+     A hole that fails for m of the n sulphide values has m rows in the
+     failure table, one per value, and each row stands for 1/n of a
+     canister: the chance that the hole meets that value. Counting rows
+     would make the bars grow with the length of the sulphide table; adding
+     1/n per row, scaled as the corrected mean is, keeps them in canisters,
+     so that the bars add up to the mean number of failed canisters however
+     finely the distribution is resolved.
+     --------------------------------------------------------------------- */
+
+  /** Bins per decade of a logarithmic time axis, and bins over the assessment time of a linear one. */
+  const HIST_BINS = Object.freeze({
+    log: Object.freeze({ coarse: 5, medium: 10, fine: 20 }),
+    linear: Object.freeze({ coarse: 20, medium: 50, fine: 100 }),
+  });
+
+  /** 10^k as the double the literal 1e<k> is, so that a value typed as 1e-5 sits on its band's edge exactly. */
+  const decade = (k) => Number(`1e${k}`);
+
+  /** The decade k with 10^k <= x < 10^(k+1), for x > 0. */
+  function decadeOf(x) {
+    let k = Math.floor(Math.log10(x));
+    if (x < decade(k)) k--;
+    else if (x >= decade(k + 1)) k++;
+    return k;
+  }
+
+  /**
+   * What one row of the failure table counts for: 1 for 'rows', 1/n of a
+   * canister for 'uncorrected', and that scaled by the canisters to
+   * normalise to over the accepted holes for 'corrected'. Over nReal
+   * realisations each counts 1/nReal, as the summary's mean does.
+   */
+  function rowWeight(res, count, nReal = 1) {
+    if (count === 'rows') return 1;
+    const w = 1 / (res.key.nHs * nReal);
+    return count === 'uncorrected' ? w : w * res.params.nCanisters / res.key.nAccepted;
+  }
+
+  /**
+   * The sulphide table in decade bands, highest first: [10^k, 10^(k+1)) for
+   * each decade the table reaches, the lowest of them merged into one band
+   * below 10^k when there would be more than `maxBands`. `n` is how many of
+   * the values fall in the band.
+   */
+  function hsBands(hsDesc, maxBands = 5) {
+    const top = decadeOf(hsDesc[0]);
+    const bottom = decadeOf(hsDesc[hsDesc.length - 1]);
+    const bands = [];
+    const band = (k) => ({ exp: k, lo: decade(k), hi: decade(k + 1), n: 0, below: false });
+    let k = top;
+    for (; k >= bottom && bands.length < maxBands - 1; k--) bands.push(band(k));
+    if (k === bottom) bands.push(band(k));
+    else if (k > bottom) bands.push({ exp: k, lo: 0, hi: decade(k + 1), n: 0, below: true });
+    for (const x of hsDesc) bands[bandIndex(bands, x)].n++;
+    return bands;
+  }
+
+  /** The band of hsBands() that holds x. */
+  function bandIndex(bands, x) {
+    for (let b = 0; b < bands.length - 1; b++) if (x >= bands[b].lo) return b;
+    return bands.length - 1;
+  }
+
+  /**
+   * The bin edges of a failure-time histogram, ascending, ending at the
+   * assessment time tLim. Logarithmic: `bins` per decade over whole decades
+   * of tLim down to below tMin, so that with tLim = 10^6 the edges fall on
+   * 10^k. Linear: equal bins from 0.
+   */
+  function timeEdges(tMin, tLim, scale, fineness) {
+    if (scale === 'linear') {
+      const n = HIST_BINS.linear[fineness] || HIST_BINS.linear.medium;
+      return Float64Array.from({ length: n + 1 }, (_, j) => tLim * j / n);
+    }
+    const m = HIST_BINS.log[fineness] || HIST_BINS.log.medium;
+    const span = Math.log10(tLim / Math.max(tMin, tLim * 1e-12));
+    const nb = Math.max(1, Math.ceil(span - 1e-12)) * m;
+    return Float64Array.from({ length: nb + 1 }, (_, j) => (j === nb ? tLim : tLim * Math.pow(10, (j - nb) / m)));
+  }
+
+  /**
+   * The canisters that fail: one entry per hole with rows in the failure
+   * table, the largest share of the corrected mean first. `share` is the
+   * fraction of the sulphide values that fail it in time -- its chance of
+   * failing -- and `weight` what each of its rows counts for in `count`.
+   * tFail at a concentration c is tAdv + corrPerHs/c.
+   */
+  function failingCanisters(results, count = 'corrected') {
+    const nReal = results.length;
+    const out = [];
+    results.forEach((r, ri) => {
+      const c = r.columns;
+      const w = rowWeight(r, count, nReal);
+      const wc = rowWeight(r, 'corrected', nReal);
+      const C = r.key.corrHoleFact;
+      for (let i = 0; i < r.n; i++) {
+        const rows = c.nHsPoints[i];
+        if (c.skip[i] || !(rows > 0)) continue;
+        out.push({
+          key: `${ri}:${i}`, real: ri, hole: i, id: r.id[i], rows,
+          share: rows / r.key.nHs,
+          weight: w, value: rows * w, corrected: rows * wc,
+          tAdv: c.tAdv[i], qeq: c.qeqEb[i], corrPerHs: C / c.qeqEb[i], hsMin: c.hsMin[i],
+          // As the failure table writes them: its first and last row.
+          earliest: c.tAdv[i] + C / (c.qeqEb[i] * r.hs[0]),
+          latest: c.tAdv[i] + C / (c.qeqEb[i] * r.hs[rows - 1]),
+          edge: !!c.edge[i],
+        });
+      }
+    });
+    out.sort((a, b) => b.corrected - a.corrected || a.earliest - b.earliest || a.real - b.real || a.hole - b.hole);
+    return out;
+  }
+
+  /**
+   * The sulphide values that fail a canister, split into `k` runs, highest
+   * value first, that give as near 1/k of the failures each as whole values
+   * allow. `weightOf` maps each value to what its rows count for. Every cut
+   * goes to the boundary between two values whose running total is nearest
+   * its target, j/k of the whole; cuts that meet are one cut. A group cannot
+   * split a value, so where one value gives more than 1/k of the failures
+   * there are fewer, larger groups, and the shares differ from 1/k.
+   *
+   * Returns the groups, highest first, each with its values (highest first),
+   * the lowest and highest of them, and its weight.
+   */
+  function equalShareSplit(weightOf, k) {
+    const values = [...weightOf.keys()].sort((a, b) => b - a);
+    const m = values.length;
+    const run = new Float64Array(m + 1);
+    for (let i = 0; i < m; i++) run[i + 1] = run[i] + weightOf.get(values[i]);
+    const cuts = new Set();
+    for (let j = 1; j < k; j++) {
+      const target = run[m] * j / k;
+      let best = 0;
+      let off = Infinity;
+      for (let b = 1; b < m; b++) {
+        const d = Math.abs(run[b] - target);
+        if (d < off) { off = d; best = b; }
+      }
+      if (best) cuts.add(best);
+    }
+    const out = [];
+    let from = 0;
+    for (const to of [...[...cuts].sort((a, b) => a - b), m]) {
+      const vs = values.slice(from, to);
+      out.push({ hi: vs[0], lo: vs[vs.length - 1], values: vs, weight: run[to] - run[from] });
+      from = to;
+    }
+    return out;
+  }
+
+  /**
+   * The sulphide table cut at percentiles: its entries in groups by their
+   * place in it, highest first. An entry's percentile is the share of the
+   * table below it, so the j-th highest of n is at 100·(n − j)/n, and the
+   * group from P_a to P_b holds the entries at or above P_a and below P_b
+   * (the top group up to the highest). `cuts` are percentiles strictly
+   * between 0 and 100. Returns, highest first, {pLo, pHi, from, to}: the
+   * entries from `from` to `to`, counted from the top -- none when
+   * from > to, as when the cuts are closer than one entry.
+   */
+  function percentileSplit(n, cuts) {
+    const cs = [...new Set(cuts.filter((x) => x > 0 && x < 100))].sort((a, b) => b - a);
+    const bounds = [100, ...cs, 0];
+    // How many entries lie at or above percentile p: j <= n·(100 − p)/100.
+    const atOrAbove = (p) => (p >= 100 ? 0 : Math.floor(n * (100 - p) / 100 + 1e-9));
+    return bounds.slice(0, -1).map((pHi, g) => {
+      const pLo = bounds[g + 1];
+      return { pLo, pHi, from: atOrAbove(pHi) + 1, to: atOrAbove(pLo) };
+    });
+  }
+
+  /**
+   * The failure times of the realisations given -- all of them, or the one
+   * shown -- as a histogram.
+   *
+   *   opts.scale   'log' (default) or 'linear'
+   *   opts.bins    'coarse', 'medium' (default) or 'fine'; see HIST_BINS
+   *   opts.count   'corrected' (default), 'uncorrected' or 'rows'; see rowWeight
+   *   opts.by      'hs' (default): one group per sulphide band of hsBands;
+   *                'hsq': the failing sulphide values in `divisions` groups
+   *                of equal shares of the failures, see equalShareSplit;
+   *                'hsp': the sulphide table cut at `percentiles` (default
+   *                50, 90, 99, 99.9), see percentileSplit;
+   *                'canister': the `top` canisters of failingCanisters on
+   *                their own and the rest together; 'none': one group
+   *
+   * Returns the bin edges, the groups in stacking order (bottom first),
+   * each with its value per bin and total, the canisters and bands behind
+   * them, and for each band its rows, its part of the corrected mean and
+   * the canisters that fail for one of its values (bandStats). With 'hsq'
+   * and 'hsp' also the groups' ranges of [HS⁻] (intervals) and their stats,
+   * and with 'hsq' the values below them, which fail no canister. The totals
+   * add up to the corrected mean (or the mean, or the rows) of the
+   * realisations, averaged over them.
+   */
+  function failureHistogram(results, opts = {}) {
+    const scale = opts.scale === 'linear' ? 'linear' : 'log';
+    const count = opts.count === 'uncorrected' || opts.count === 'rows' ? opts.count : 'corrected';
+    const by = ['canister', 'none', 'hsq', 'hsp'].includes(opts.by) ? opts.by : 'hs';
+    const top = opts.top ?? 8;
+    const divisions = Math.max(1, Math.min(20, Math.round(Number(opts.divisions) || 5)));
+    const percentiles = Array.isArray(opts.percentiles) && opts.percentiles.length ? opts.percentiles.map(Number) : [50, 90, 99, 99.9];
+    const nReal = results.length;
+    const tLim = Math.max(...results.map((r) => r.key.tLim));
+    const bands = hsBands(results[0].hs);
+    const canisters = failingCanisters(results, count);
+    let tMin = Infinity;
+    let nRows = 0;
+    for (const r of results) for (const f of r.failures) { nRows++; if (f.tFail < tMin) tMin = f.tFail; }
+    const out = { scale, count, by, divisions, percentiles, nReal, tLim, bands, canisters, nRows, tMin: nRows ? tMin : null,
+      edges: new Float64Array(0), groups: [], total: 0, bandStats: [], intervals: [], intervalStats: [], below: null };
+    if (!nRows) return out;
+
+    const edges = timeEdges(tMin, tLim, scale, opts.bins);
+    const nb = edges.length - 1;
+    const perDecade = HIST_BINS.log[opts.bins] || HIST_BINS.log.medium;
+    const binOf = scale === 'linear'
+      ? (t) => Math.min(nb - 1, Math.max(0, Math.floor(t / tLim * nb)))
+      : (t) => Math.min(nb - 1, Math.max(0, nb + Math.floor(perDecade * Math.log10(t / tLim))));
+    const group = (key, kind, extra) => ({ key, kind, ...extra, values: new Float64Array(nb), total: 0 });
+
+    let groups;
+    let groupOf;
+    let intervals = [];
+    let below = null;
+    let intervalOf = null;
+    if (by === 'hs') {
+      groups = bands.map((b, i) => group(`hs${i}`, 'band', { band: b }));
+      groupOf = (ri, f) => bandIndex(bands, f.hs);
+    } else if (by === 'hsq') {
+      const weightOf = new Map();
+      for (const r of results) {
+        const w = rowWeight(r, count, nReal);
+        for (const f of r.failures) weightOf.set(f.hs, (weightOf.get(f.hs) || 0) + w);
+      }
+      const hsDesc = results[0].hs;
+      const inTable = (lo, hi) => { let n = 0; for (const x of hsDesc) if (x >= lo && x <= hi) n++; return n; };
+      intervals = equalShareSplit(weightOf, divisions).map((s) => ({ lo: s.lo, hi: s.hi, n: inTable(s.lo, s.hi), distinct: s.values.length, values: s.values }));
+      const index = new Map();
+      intervals.forEach((iv, i) => { for (const v of iv.values) index.set(v, i); });
+      intervalOf = (f) => index.get(f.hs);
+      groups = intervals.map((iv, i) => group(`q${i}`, 'interval', { interval: iv }));
+      groupOf = (ri, f) => intervalOf(f);
+      // The values under the lowest group fail no canister.
+      const lowest = intervals[intervals.length - 1].lo;
+      const under = hsDesc.filter((x) => x < lowest);
+      below = { hi: under.length ? under[0] : null, lo: under.length ? under[under.length - 1] : null, n: under.length };
+    } else if (by === 'hsp') {
+      // By place in the table, so by the row's rank: equal values on either
+      // side of a cut go each to its own group, as entries of the table.
+      const hsDesc = results[0].hs;
+      const nT = hsDesc.length;
+      intervals = percentileSplit(nT, percentiles).map((g) => {
+        const n = Math.max(0, g.to - g.from + 1);
+        return { ...g, n, hi: n ? hsDesc[g.from - 1] : null, lo: n ? hsDesc[g.to - 1] : null };
+      });
+      const groupOfRank = new Int32Array(nT + 1);
+      intervals.forEach((iv, i) => { for (let j = iv.from; j <= iv.to; j++) groupOfRank[j] = i; });
+      intervalOf = (f) => groupOfRank[f.hsIndex];
+      groups = intervals.map((iv, i) => group(`p${i}`, 'percentile', { interval: iv }));
+      groupOf = (ri, f) => intervalOf(f);
+    } else if (by === 'canister') {
+      const own = canisters.slice(0, top);
+      const index = new Map(own.map((c, i) => [c.key, i]));
+      groups = own.map((c) => group(`c${c.key}`, 'canister', { canister: c }));
+      if (canisters.length > own.length) groups.push(group('other', 'other', { canisters: canisters.length - own.length }));
+      groupOf = (ri, f) => index.get(`${ri}:${f.hole}`) ?? groups.length - 1;
+    } else {
+      groups = [group('all', 'all', {})];
+      groupOf = () => 0;
+    }
+
+    // And whatever the colours, what each sulphide band gives: its rows, its
+    // part of the corrected mean and the canisters that fail for one of its
+    // values at least.
+    const tally = () => ({ rows: 0, corrected: 0, canisters: new Set() });
+    const add = (t, ri, f, wc) => { t.rows++; t.corrected += wc; t.canisters.add(`${ri}:${f.hole}`); };
+    const done = (t) => ({ rows: t.rows, corrected: t.corrected, canisters: t.canisters.size });
+    const perBand = bands.map(tally);
+    const perInterval = intervals.map(tally);
+    let total = 0;
+    results.forEach((r, ri) => {
+      const w = rowWeight(r, count, nReal);
+      const wc = rowWeight(r, 'corrected', nReal);
+      for (const f of r.failures) {
+        const g = groups[groupOf(ri, f)];
+        g.values[binOf(f.tFail)] += w;
+        g.total += w;
+        total += w;
+        add(perBand[bandIndex(bands, f.hs)], ri, f, wc);
+        if (intervalOf) add(perInterval[intervalOf(f)], ri, f, wc);
+      }
+    });
+    return { ...out, edges, groups, total, bandStats: perBand.map(done), intervals, intervalStats: perInterval.map(done), below };
+  }
+
+  /**
+   * One canister's failure time against the sulphide concentration,
+   * tFail = tAdv + CorrHoleFact/(Qeq·[HS⁻]), from hsHi down to hsLo: `n`
+   * points evenly spaced in log [HS⁻], with the concentrations in `extra`
+   * that lie between added, highest first.
+   */
+  function failureCurve(can, hsHi, hsLo, n = 40, extra = []) {
+    const lo = Math.log10(hsLo);
+    const hi = Math.log10(hsHi);
+    const hs = [];
+    for (let j = 0; j < n; j++) hs.push(j === 0 ? hsHi : (j === n - 1 ? hsLo : Math.pow(10, hi + (lo - hi) * j / (n - 1))));
+    for (const x of extra) if (x < hsHi && x > hsLo) hs.push(x);
+    hs.sort((a, b) => b - a);
+    return { hs, t: hs.map((c) => can.tAdv + can.corrPerHs / c) };
+  }
+
+  /**
+   * The share of a sulphide table at or above each of its values: the
+   * distinct values, highest first, each with the fraction of the table at
+   * or above it -- a staircase, vertical between values. A canister fails
+   * for the values above its HSmin, so the share at HSmin is its chance of
+   * failing in time. Long tables are thinned to steps of about `step` in
+   * log10 of either coordinate; the highest value and the lowest are kept.
+   */
+  function hsExceedance(hsDesc, step = 0.004) {
+    const n = hsDesc.length;
+    const hs = [];
+    const share = [];
+    let lastS = -Infinity;
+    let lastH = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (j + 1 < n && hsDesc[j + 1] === hsDesc[j]) continue;   // the last of equal values counts them all
+      const s = (j + 1) / n;
+      const ls = Math.log10(s);
+      const lh = Math.log10(hsDesc[j]);
+      if (!hs.length || j === n - 1 || ls - lastS >= step || lastH - lh >= step) {
+        hs.push(hsDesc[j]);
+        share.push(s);
+        lastS = ls;
+        lastH = lh;
+      }
+    }
+    return { hs, share };
+  }
+
   /**
    * Remaining copper thickness at time t in every accepted hole, for one
    * sulphide concentration: d = dCan·clamp(1 − (t − tAdv)/tCorr, 0, 1).
@@ -881,9 +1227,10 @@
   }
 
   return {
-    NEVER, GROUPS, PARAMS, PARAM_BY_KEY, REJECT, REJECT_NAMES, STAT_KEYS,
+    NEVER, GROUPS, PARAMS, PARAM_BY_KEY, REJECT, REJECT_NAMES, STAT_KEYS, HIST_BINS,
     defaults, normalise, derived, dCionRim, lambertW, normInv,
     sortHs, countAbove, rejectReasons,
     evaluate, evaluateMany, stats, ecdf, distributions, timeHistory, remainingThickness,
+    decadeOf, rowWeight, hsBands, bandIndex, timeEdges, failingCanisters, equalShareSplit, percentileSplit, failureHistogram, failureCurve, hsExceedance,
   };
 }));

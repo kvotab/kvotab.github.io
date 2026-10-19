@@ -261,6 +261,7 @@
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 .ec-toolbar .ec-spacer { flex: 1 1 auto; }
+.ec-toolbar input:invalid { border-color: var(--color-kvot-accent); }
 /* A toolbar that opens with a note: the note takes the room that is left,
    so the buttons and the (i) stay on its first line rather than dropping
    below it one by one. */
@@ -269,6 +270,18 @@
 /* ---- charts and the empty state ----------------------------------------- */
 .plot { width: 100%; height: 460px; }
 .plot[hidden] { display: none; }
+/* The failure histogram: the bars over the curves and the sulphide table. */
+.plot.ec-plot-tall { height: 640px; }
+.ec-hist-tables { margin-top: 10px; }
+.ec-hist-tables[hidden] { display: none; }
+.ec-hist-tables .ec-table-wrap + .ec-toolbar { margin-top: 14px; }
+.ec-table.ec-plain th { cursor: default; }
+.ec-table td.swatch, .ec-table th.swatch { padding-right: 0; width: 12px; cursor: default; }
+.ec-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.ec-table tfoot td { font-weight: 600; border-top: 1px solid var(--border-color); border-bottom: 0; }
+/* Under a table that shows its first rows: how many, and the button for more. */
+.ec-more { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0 0; }
+.ec-more[hidden] { display: none; }
 .ec-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; }
 .ec-empty[hidden] { display: none; }
 
@@ -374,4 +387,5 @@
   .ec-main { margin-left: 0; padding-left: 0; }
   .ec-tabs { margin-left: 0; padding-left: 10px; }
   .plot { height: 360px; }
+  .plot.ec-plot-tall { height: 600px; }
 }

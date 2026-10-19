@@ -471,6 +471,226 @@ console.log('\n--- sulphide tables ---');
   check('custom text: numbers out, descending, junk counted', c.values.length === 4 && c.values[0] === 1e-3 && c.values[3] === 3.5e-6 && c.dropped === 1);
 }
 
+/* ======================================================================
+   11. The failure histogram: rows weighted by what they stand for
+   ====================================================================== */
+console.log('\n--- failure histogram ---');
+{
+  // A layout of our own: 60 holes whose fracture flow rises from 1e-4 to
+  // 1e-1 m/yr through an aperture of 0.1 mm, so that the canisters fail
+  // for more and more of the sulphide table; with two rejected, one
+  // skipped by OKFLAG and one without a fracture.
+  const synth = (n = 60, scale = 1) => {
+    const h = { name: 'synth', format: 'test', n, id: Array.from({ length: n }, (_, i) => 1001 + i), warnings: [], meta: {} };
+    for (const c of ECHydro.COLUMNS) h[c] = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      h.u0[i] = scale * Math.pow(10, -4 + 3 * i / (n - 1));
+      h.trapp[i] = 1e-4;
+      h.tw[i] = 100 + i;
+      h.f[i] = 1e5 * (i + 1);
+      h.flen[i] = 20;
+    }
+    h.fpc[n - 1] = 1;            // the strongest flow, rejected
+    h.efpc[n - 2] = 5;           // and the next, by EFPC
+    h.okflag[n - 3] = 1;         // skipped, not rejected
+    h.trapp[n - 4] = 0;          // no fracture
+    return h;
+  };
+  const p = ECModel.defaults();
+  const relClose = (a, b, tol) => Math.abs(a - b) <= tol * Math.max(Math.abs(b), 1e-300);
+  const hs10k = ECHS.generic({ n: 10000 });
+  const r = ECModel.evaluate(synth(), hs10k, p);
+  check('the synthetic layout fails canisters', r.failures.length > 100 && r.key.nFailedHighestHs >= 5, `${r.failures.length} rows from ${r.key.nFailedHighestHs} holes`);
+
+  // The bars add up to the key outputs, however they are binned and coloured.
+  const want = { corrected: r.key.meanFailedCorrected, uncorrected: r.key.meanFailed, rows: r.key.nFailRows };
+  let sums = true; let groupsAddUp = true; let binsAddUp = true;
+  for (const count of ['corrected', 'uncorrected', 'rows']) {
+    for (const scale of ['log', 'linear']) {
+      for (const bins of ['coarse', 'medium', 'fine']) {
+        for (const by of ['hs', 'canister', 'none']) {
+          const h = ECModel.failureHistogram([r], { count, scale, bins, by });
+          if (!relClose(h.total, want[count], 1e-12)) sums = false;
+          if (!relClose(h.groups.reduce((s, g) => s + g.total, 0), h.total, 1e-12)) groupsAddUp = false;
+          if (!h.groups.every((g) => relClose(g.values.reduce((s, x) => s + x, 0), g.total, 1e-12))) binsAddUp = false;
+        }
+      }
+    }
+  }
+  check('the bars add up to the corrected mean, the mean and the rows, in every binning and colouring', sums);
+  check('the groups add up to the total', groupsAddUp);
+  check('and each group’s bins to its total', binsAddUp);
+
+  // Every row lands in the bin that holds its failure time.
+  for (const scale of ['log', 'linear']) {
+    const h = ECModel.failureHistogram([r], { scale, count: 'rows', by: 'none' });
+    const e = h.edges;
+    const counts = new Float64Array(e.length - 1);
+    for (const f of r.failures) {
+      let j = 0;
+      while (j < e.length - 2 && f.tFail >= e[j + 1]) j++;
+      counts[j]++;
+    }
+    check(`${scale} bins: every row in the bin of its failure time`, counts.every((c, j) => c === h.groups[0].values[j]),
+      Array.from(counts).join(',') + ' vs ' + Array.from(h.groups[0].values).join(','));
+    check(`${scale} bins end at the assessment time and start at or below the earliest failure`,
+      e[e.length - 1] === r.key.tLim && e[0] <= r.key.earliestFailure);
+  }
+  const eLog = ECModel.timeEdges(52608, 1e6, 'log', 'medium');
+  check('log bins: ten to a decade, whole decades of the assessment time', eLog.length === 21 && relClose(eLog[0], 1e4, 1e-14) && relClose(eLog[10], 1e5, 1e-14) && eLog[20] === 1e6);
+  check('log bins: coarse and fine', ECModel.timeEdges(52608, 1e6, 'log', 'coarse').length === 11 && ECModel.timeEdges(52608, 1e6, 'log', 'fine').length === 41);
+  const eLin = ECModel.timeEdges(52608, 1e6, 'linear', 'medium');
+  check('linear bins: 50 from 0 to the assessment time', eLin.length === 51 && eLin[0] === 0 && eLin[50] === 1e6 && eLin[1] === 20000);
+  check('a failure at exactly a tenth of the assessment time opens the first decade', ECModel.timeEdges(1e5, 1e6, 'log', 'medium')[0] === 1e5 * 1);
+
+  // The canisters: one entry per hole, its rows its share of the table.
+  const cans = ECModel.failingCanisters([r]);
+  check('one canister per hole with rows', cans.length === new Set(r.failures.map((f) => f.hole)).size);
+  check('their rows add up to the failure table', cans.reduce((s, c) => s + c.rows, 0) === r.failures.length);
+  close('their shares of the corrected mean add up to it', cans.reduce((s, c) => s + c.corrected, 0), r.key.meanFailedCorrected, 1e-12);
+  check('share = rows / sulphide values', cans.every((c) => c.share === c.rows / r.key.nHs));
+  check('largest first', cans.every((c, i) => i === 0 || c.corrected <= cans[i - 1].corrected));
+  check('earliest and latest are the first and last rows of the hole', cans.every((c) => {
+    const ts = r.failures.filter((f) => f.hole === c.hole).map((f) => f.tFail);
+    return c.earliest === ts[0] && c.latest === ts[ts.length - 1] && c.id === r.id[c.hole];
+  }));
+  check('no rejected or skipped hole among them', cans.every((c) => !r.columns.skip[c.hole]));
+
+  // Coloured by canister: the eight largest on their own, the rest together.
+  const hc = ECModel.failureHistogram([r], { by: 'canister' });
+  check('eight canisters on their own and the rest as one', hc.groups.length === Math.min(9, cans.length + (cans.length > 8 ? 1 : 0))
+    && hc.groups.slice(0, 8).every((g, i) => g.kind === 'canister' && g.canister.key === cans[i].key));
+  if (cans.length > 8) {
+    const other = hc.groups[8];
+    close('the rest add up to the canisters left over', other.total, cans.slice(8).reduce((s, c) => s + c.corrected, 0), 1e-12);
+    check('and say how many they are', other.kind === 'other' && other.canisters === cans.length - 8);
+  }
+  close('a canister’s bars add up to its share of the corrected mean', hc.groups[0].total, cans[0].corrected, 1e-12);
+
+  // Coloured by sulphide: decade bands, every row in the band of its value.
+  const hb = ECModel.failureHistogram([r], { by: 'hs', count: 'rows' });
+  const bands = hb.bands;
+  check('the bands hold every value of the table', bands.reduce((s, b) => s + b.n, 0) === r.key.nHs);
+  check('highest first, no more than five', bands.length <= 5 && bands.every((b, i) => i === 0 || b.lo < bands[i - 1].lo || b.below));
+  const rowsInBand = bands.map((b) => r.failures.filter((f) => f.hs >= b.lo && f.hs < b.hi).length);
+  check('each band’s bars count the rows of its values', hb.groups.every((g, i) => g.total === rowsInBand[i]), `${hb.groups.map((g) => g.total)} vs ${rowsInBand}`);
+  // What each band gives, whatever the colours: rows, part of the corrected
+  // mean, canisters failing for one of its values.
+  const bs = ECModel.failureHistogram([r], { by: 'canister', count: 'rows' }).bandStats;
+  check('band by band, the rows of its values in any colouring', bs.every((b, i) => b.rows === rowsInBand[i]));
+  close('their parts of the corrected mean add up to it', bs.reduce((s, b) => s + b.corrected, 0), r.key.meanFailedCorrected, 1e-12);
+  check('and each band’s canisters are those with a row in it', bs.every((b, i) => b.canisters
+    === new Set(r.failures.filter((f) => f.hs >= bands[i].lo && f.hs < bands[i].hi).map((f) => f.hole)).size));
+  check('the highest band fails the most canisters, the lowest the fewest', bs[0].canisters >= bs[1].canisters && bs[1].canisters >= bs[bs.length - 1].canisters);
+
+  // Equal shares of the failures: cuts at j/k of them, each at the nearest
+  // boundary between two values; cuts that meet are one.
+  const weights = (pairs) => new Map(pairs);
+  const even = ECModel.equalShareSplit(weights(Array.from({ length: 100 }, (_, i) => [100 - i, 1])), 5);
+  check('equal shares: a hundred values of one row each make five groups of twenty', even.length === 5 && even.every((g) => g.weight === 20 && g.values.length === 20));
+  const dom = ECModel.equalShareSplit(weights([[9, 0.5], [8, 0.1], [7, 0.1], [6, 0.1], [5, 0.1], [4, 0.1]]), 5);
+  check('a value with half the failures is a group of its own: the cuts at 20 and 40 % meet at it',
+    dom.map((g) => `${g.values.join('/')}:${g.weight.toFixed(2)}`).join(' ') === '9:0.50 8:0.10 7/6:0.20 5/4:0.20');
+  check('the groups hold every value once, highest first, each from its lowest to its highest',
+    dom.flatMap((g) => g.values).join() === '9,8,7,6,5,4' && dom.every((g) => g.hi === g.values[0] && g.lo === g.values[g.values.length - 1]));
+  check('one value makes one group', ECModel.equalShareSplit(weights([[1.2e-4, 4]]), 5).length === 1);
+  check('three values for five divisions make three groups', ECModel.equalShareSplit(weights([[3, 0.5], [2, 0.3], [1, 0.2]]), 5).length === 3);
+  let evenly = true;
+  for (const k of [2, 3, 4, 5]) {
+    const hq = ECModel.failureHistogram([r], { by: 'hsq', divisions: k });
+    if (hq.groups.length !== k || !hq.groups.every((g) => Math.abs(g.total / hq.total - 1 / k) < 0.005)) evenly = false;
+  }
+  check('the synthetic layout with 10,000 values splits into 2, 3, 4 and 5 shares within half a per cent', evenly);
+  const hq = ECModel.failureHistogram([r], { by: 'hsq', divisions: 5, count: 'rows' });
+  check('the groups take every row, by the value behind it', hq.groups.every((g) => g.total === r.failures.filter((f) => f.hs >= g.interval.lo && f.hs <= g.interval.hi).length));
+  check('their values and those that fail no canister make the whole table', hq.intervals.reduce((s, iv) => s + iv.n, 0) + hq.below.n === r.key.nHs
+    && hq.below.hi < hq.intervals[hq.intervals.length - 1].lo);
+  check('and they say what they give', hq.intervalStats.reduce((s, t) => s + t.rows, 0) === r.failures.length
+    && Math.abs(hq.intervalStats.reduce((s, t) => s + t.corrected, 0) - r.key.meanFailedCorrected) < 1e-12 * r.key.meanFailedCorrected);
+  // Percentiles of the table: the j-th highest of n at 100·(n − j)/n.
+  const sizes = (n, cuts) => ECModel.percentileSplit(n, cuts).map((g) => Math.max(0, g.to - g.from + 1)).join(',');
+  check('percentiles of 10,000 values at 50, 90, 99, 99.9: 10, 90, 900, 4000 and 5000 of them', sizes(10000, [50, 90, 99, 99.9]) === '10,90,900,4000,5000');
+  check('of 46 values: the two highest groups empty, the highest value lying at P97.8', sizes(46, [50, 90, 99, 99.9]) === '0,0,4,19,23');
+  check('quintiles of 46 values', sizes(46, [80, 60, 40, 20]) === '9,9,9,9,10');
+  check('cuts outside (0, 100) and repeated ones are left out', sizes(1000, [99, 0, 100, 99, -5, 150]) === '10,990');
+  const hp = ECModel.failureHistogram([r], { by: 'hsp', percentiles: [50, 90, 99, 99.9], count: 'rows' });
+  check('by percentile, every row goes to the group of its place in the table', hp.groups.every((g) => g.total
+    === r.failures.filter((f) => f.hsIndex >= g.interval.from && f.hsIndex <= g.interval.to).length));
+  check('the groups hold 0.1, 0.9, 9, 40 and 50 % of the values', hp.intervals.map((iv) => iv.n / r.key.nHs).join(',') === '0.001,0.009,0.09,0.4,0.5');
+  check('each from its lowest value to its highest', hp.intervals.every((iv) => iv.hi === r.hs[iv.from - 1] && iv.lo === r.hs[iv.to - 1]));
+  check('their stats add up to the failure table', hp.intervalStats.reduce((s, t) => s + t.rows, 0) === r.failures.length
+    && Math.abs(hp.intervalStats.reduce((s, t) => s + t.corrected, 0) - r.key.meanFailedCorrected) < 1e-12 * r.key.meanFailedCorrected);
+  check('without percentiles given, the tail ones', ECModel.failureHistogram([r], { by: 'hsp' }).percentiles.join() === '50,90,99,99.9');
+
+  const fewF = ECModel.failureHistogram([ECModel.evaluate(synth(), ECHS.HS_FORSMARK, p)], { by: 'hsq', divisions: 5 });
+  const failingF = new Set(ECModel.evaluate(synth(), ECHS.HS_FORSMARK, p).failures.map((f) => f.hs)).size;
+  check('HSForsmark: no more groups than failing values, their shares adding up to one',
+    fewF.groups.length <= Math.min(5, failingF) && Math.abs(fewF.groups.reduce((s, g) => s + g.total, 0) / fewF.total - 1) < 1e-12, `${fewF.groups.length} groups of ${failingF} values`);
+  check('decadeOf puts 1e-5 in its own decade', ECModel.decadeOf(1e-5) === -5 && ECModel.decadeOf(9.999999999999999e-6) === -6 && ECModel.decadeOf(0.000099999) === -5);
+  const wide = ECModel.hsBands(ECModel.sortHs([3e-2, 2e-3, 4e-4, 5e-5, 6e-6, 7e-7, 8e-8]));
+  check('six decades and more: the lowest merged into one band below', wide.length === 5 && wide[4].below && wide[4].hi === 1e-5 && wide[4].n === 3 && wide[0].lo === 1e-2);
+  const forsmark = ECModel.hsBands(ECHS.HS_FORSMARK);
+  check('HSForsmark: four decades, one value in the highest', forsmark.length === 4 && forsmark[0].lo === 1e-4 && forsmark[0].n === 1 && forsmark.every((b) => !b.below));
+
+  // The share of the sulphide table at or above each value; at a
+  // canister's HSmin it is the canister's share.
+  const exF = ECModel.hsExceedance(ECHS.HS_FORSMARK);
+  const distinct = new Set(ECHS.HS_FORSMARK).size;
+  check('HSForsmark: a step at every distinct value, from 1/46 to all of them', exF.hs.length === distinct && exF.share[0] === 1 / 46 && exF.share[exF.share.length - 1] === 1);
+  check('equal values make one step', exF.share[exF.hs.indexOf(1.2474271814382826e-07)] === 1 && exF.share.every((s, i) => i === 0 || s > exF.share[i - 1]));
+  const ex = ECModel.hsExceedance(hs10k);
+  check('a long table is thinned, keeping its ends', ex.hs.length < 2000 && ex.hs[0] === hs10k[0] && ex.share[0] === 1e-4 && ex.share[ex.share.length - 1] === 1);
+  const shareAt = (e, c) => { let s = 0; for (let j = 0; j < e.hs.length; j++) if (e.hs[j] > c) s = e.share[j]; return s; };
+  check('the share above a canister’s HSmin is its share', cans.slice(0, 8).every((cn) => Math.abs(shareAt(ECModel.hsExceedance(hs10k, 0), cn.hsMin) - cn.share) < 1e-12));
+
+  // A canister's curve: from its earliest failure to the assessment time.
+  const c0 = cans[0];
+  const curve = ECModel.failureCurve(c0, r.key.hsMax, c0.hsMin, 30, [1e-4, 1e-5]);
+  close('the curve starts at the earliest failure', curve.t[0], c0.earliest, 1e-12);
+  close('and meets the assessment time at HSmin', curve.t[curve.t.length - 1], r.key.tLim, 1e-12);
+  check('later as the sulphide falls', curve.t.every((t, i) => i === 0 || t > curve.t[i - 1]) && curve.hs.every((x, i) => i === 0 || x < curve.hs[i - 1]));
+
+  // Resolution: twice the values, twice the rows, the same bars.
+  const r20k = ECModel.evaluate(synth(), ECHS.generic({ n: 20000 }), p);
+  check('twice the sulphide values give about twice the rows', relClose(r20k.failures.length, 2 * r.failures.length, 0.01), `${r20k.failures.length} vs ${r.failures.length}`);
+  const h10 = ECModel.failureHistogram([r], {});
+  const h20 = ECModel.failureHistogram([r20k], {});
+  close('and the same corrected mean', h20.total, h10.total, 2e-3);
+  const l1 = h10.groups.reduce((s, g, gi) => s + g.values.reduce((a, x, j) => a + Math.abs(x - h20.groups[gi].values[j]), 0), 0);
+  check('bar by bar', h10.edges.length === h20.edges.length && l1 < 0.01 * h10.total, `L1 ${l1} of ${h10.total}`);
+  const c20 = ECModel.failingCanisters([r20k]);
+  check('each canister keeps its share', cans.every((c) => { const d = c20.find((x) => x.hole === c.hole); return d && Math.abs(d.share - c.share) < 2e-4; }));
+
+  // Several realisations: the mean over them, as the summary's.
+  const many = ECModel.evaluateMany([synth(), synth(60, 0.7)], hs10k, p);
+  const hm = ECModel.failureHistogram(many.results, {});
+  close('over realisations the bars add up to the mean corrected mean', hm.total, many.summary.meanFailedCorrected.mean, 1e-12);
+  check('and count every row', ECModel.failureHistogram(many.results, { count: 'rows' }).total === many.summary.nFailRowsTotal);
+  const cm = ECModel.failingCanisters(many.results);
+  check('the same hole in two realisations is two canisters', new Set(cm.map((c) => c.key)).size === cm.length
+    && cm.some((c) => c.real === 1) && cm.some((c) => c.real === 0));
+
+  // Nothing fails: an empty histogram, not an error.
+  const none = ECModel.failureHistogram([ECModel.evaluate(synth(), [1e-9], p)], {});
+  check('no failures: no bins, no groups, nothing in total', none.nRows === 0 && none.groups.length === 0 && none.total === 0 && none.tMin === null);
+
+  if (haveTestCase) {
+    // The code test case: holes 1-3 fail for all ten values, hole 4 for five.
+    const rt = ECModel.evaluate(readTestCase(), ECHS.HS_TEST, { ...ECModel.defaults(), buffModel: 'OldKTH', fTDilute: 0.25, nCanisters: 3000 });
+    const ct = ECModel.failingCanisters([rt]);
+    check('test case: four canisters, 10, 10, 10 and 5 rows', ct.map((c) => c.rows).sort((a, b) => b - a).join(',') === '10,10,10,5');
+    check('shares 1, 1, 1 and ½', ct.map((c) => c.share).sort((a, b) => b - a).join(',') === '1,1,1,0.5');
+    close('hole 2 fails first, at 85,000 years', ct.find((c) => c.id === 2).earliest, 85000, 2e-4);
+    const ht = ECModel.failureHistogram([rt], {});
+    close('the bars add up to the corrected mean (1.75 with 3000 canisters)', ht.total, 1.75, 1e-12);
+    const ht2 = ECModel.failureHistogram([rt], { by: 'canister', count: 'rows', scale: 'linear' });
+    const g2 = ht2.groups.find((g) => g.canister && g.canister.id === 2);
+    const filled = Array.from(g2.values).map((v, j) => (v ? j : -1)).filter((j) => j >= 0);
+    check('hole 2’s ten rows sit in the bins of 80,000 to 100,000 years', g2.total === 10
+      && filled.every((j) => ht2.edges[j] >= 80000 && ht2.edges[j + 1] <= 100000), filled.join(','));
+  } else skipped('the failure histogram of the code test case');
+}
+
 /* ====================================================================== */
 console.log(`\n${checks} checks, ${failures.length} failed`);
 if (failures.length) {

@@ -28,7 +28,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261004">
-  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20260927">
+  <link rel="stylesheet" href="./resources/css/erosion_corrosion.css?v=20261019">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -142,6 +142,7 @@
         <div class="ec-tabs" role="tablist">
           <button type="button" class="active" data-tab="summary" data-on-click="ec:tab">Summary</button>
           <button type="button" data-tab="failures" data-on-click="ec:tab">Failure times</button>
+          <button type="button" data-tab="histogram" data-on-click="ec:tab">Failure histogram</button>
           <button type="button" data-tab="time" data-on-click="ec:tab">Against time</button>
           <button type="button" data-tab="distributions" data-on-click="ec:tab">Distributions</button>
           <button type="button" data-tab="holes" data-on-click="ec:tab">Deposition holes</button>
@@ -163,7 +164,85 @@
             <span class="kvot-info-slot" data-info-key="pane:failures"></span>
           </div>
           <div class="ec-table-wrap" id="ecFailTable"></div>
+          <div class="ec-more" id="ecFailMoreLine" hidden>
+            <span class="ec-muted" id="ecFailNote"></span>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:failuresMore">Show more</button>
+          </div>
           <p class="ec-empty" id="ecFailEmpty">Run the model to get the table of failure times.</p>
+        </section>
+
+        <!-- ---- the failure histogram ---- -->
+        <section class="ec-pane" data-pane="histogram" hidden>
+          <div class="ec-toolbar">
+            <label>Count
+              <select id="ecHistCount" data-on-change="ec:histChanged">
+                <option value="corrected">failed canisters, corrected</option>
+                <option value="uncorrected">failed canisters</option>
+                <option value="rows">rows of the failure table</option>
+              </select>
+            </label>
+            <label>Colour by
+              <select id="ecHistBy" data-on-change="ec:histChanged">
+                <option value="hs">[HS⁻] decade</option>
+                <option value="hsq">[HS⁻] in equal shares</option>
+                <option value="hsp">[HS⁻] percentiles</option>
+                <option value="canister">canister</option>
+                <option value="none">nothing</option>
+              </select>
+            </label>
+            <label id="ecHistPctBox" hidden>Percentiles
+              <select id="ecHistPct" data-on-change="ec:histChanged">
+                <option value="tail">50, 90, 99, 99.9</option>
+                <option value="upper">90, 95, 99, 99.9</option>
+                <option value="quintiles">quintiles: 20, 40, 60, 80</option>
+                <option value="quartiles">quartiles: 25, 50, 75</option>
+                <option value="custom">other…</option>
+              </select>
+            </label>
+            <label id="ecHistPctTextBox" hidden>Cut at
+              <input type="text" id="ecHistPctText" spellcheck="false" autocomplete="off" style="width:110px" data-on-change="ec:histChanged">
+            </label>
+            <label id="ecHistDiv" hidden>Divisions
+              <select id="ecHistDivisions" data-on-change="ec:histChanged">
+                <option value="5">5 (20 % each)</option>
+                <option value="4">4 (25 % each)</option>
+                <option value="3">3 (33 % each)</option>
+                <option value="2">2 (50 % each)</option>
+              </select>
+            </label>
+            <label>Time axis
+              <select id="ecHistScale" data-on-change="ec:histChanged">
+                <option value="log">logarithmic</option>
+                <option value="linear">linear</option>
+              </select>
+            </label>
+            <label>Bins
+              <select id="ecHistBins" data-on-change="ec:histChanged"></select>
+            </label>
+            <label id="ecHistReal" hidden>Realisation
+              <select id="ecHistRealSelect" data-on-change="ec:histChanged"></select>
+            </label>
+            <span class="kvot-info-slot" data-info-key="pane:histogram"></span>
+            <span class="ec-spacer"></span>
+            <button type="button" class="ec-btn secondary small" data-on-click="ec:histCsv">CSV</button>
+          </div>
+          <div class="plot ec-plot-tall" id="ecChartHist" hidden></div>
+          <p class="ec-empty" id="ecHistEmpty">Run the model to see the failure times as a histogram.</p>
+          <div class="ec-hist-tables" id="ecHistTables" hidden>
+            <div class="ec-toolbar">
+              <span class="ec-muted" id="ecDecadeNote"></span>
+              <span class="ec-spacer"></span>
+              <span class="kvot-info-slot" data-info-key="pane:decades"></span>
+            </div>
+            <div class="ec-table-wrap" id="ecDecadeTable"></div>
+            <div class="ec-toolbar">
+              <span class="ec-muted" id="ecCanisterNote"></span>
+              <span class="ec-spacer"></span>
+              <button type="button" class="ec-btn secondary small" data-on-click="ec:canistersCsv">CSV</button>
+              <span class="kvot-info-slot" data-info-key="pane:canisters"></span>
+            </div>
+            <div class="ec-table-wrap" id="ecCanisterTable"></div>
+          </div>
         </section>
 
         <!-- ---- against time ---- -->
@@ -245,8 +324,9 @@
             modelling (flow, aperture, travel time, transport resistance, and which holes are cut by large
             fractures), a distribution of sulphide concentrations, and the parameter set on the left. What
             comes back is the table of failure times that feeds the radionuclide transport calculations,
-            the key outputs of the workbook’s <em>Info</em> sheet, and the distribution plots of its five
-            plot sheets.</p>
+            the key outputs of the workbook’s <em>Info</em> sheet, the distribution plots of its five
+            plot sheets, and a histogram of the failure times with the canisters and the sulphide values
+            behind them.</p>
 
           <h3 id="help-holes">What happens to each hole</h3>
           <h4 id="help-rejection">1. Rejection</h4>
@@ -322,6 +402,45 @@
             lines the workbook draws (5 cm of copper in 10<sup>6</sup> and 10<sup>5</sup> years; 1200 kg in the
             assessment time and in the dilute fraction of it).</p>
 
+          <h4 id="help-histogram">6. The failure histogram</h4>
+          <p>A hole that fails for <i>m</i> of the <i>n</i> sulphide values has <i>m</i> rows in the failure
+            table, one per value, and each row stands for 1/<i>n</i> of a canister: the chance that the hole
+            meets that value. The histogram adds 1/<i>n</i> for each row whose failure time falls in a bin,
+            scaled by <i>N</i><sub>canisters</sub> / (<i>N</i><sub>tot</sub> − <i>N</i><sub>rejected</sub>) as
+            the corrected mean is, so its bars add up to the mean number of failed canisters. A finer sulphide
+            distribution gives the same canister more rows, not taller bars. Counting rows instead is one of the
+            choices; those bars add up to the length of the table. With several realisations a bar is the mean
+            over them.</p>
+          <p>The bars can be split by the decade of the sulphide value behind each row, which shows the part
+            of the distribution that the failures at each time come from, or by canister: the eight that
+            contribute most on their own, the rest together. The legend gives each colour’s share of the
+            failures, its part of the bars. A table under the chart sets each decade’s share of the sulphide
+            values beside its share of the failures: a decade holding few of the values can give most of the
+            failures.</p>
+          <p>The split can also be made by the failures themselves: the sulphide values that fail a canister,
+            highest first, in two to five groups that each give the same share of the failures, the legend
+            naming the range of [HS⁻] each group holds. With five, the cuts are at 20, 40, 60 and 80 % of the
+            failures, each moved to the nearest boundary between two sulphide values, since a group holds
+            whole values; cuts that land on the same boundary are one. Where single values give more than a
+            group’s share there are fewer groups, and the legend and the table give the shares as made.</p>
+          <p>Or by how probable the sulphide values are: by their percentiles in the table, a value’s
+            percentile being the share of the table below it, so that the highest of <i>n</i> values lies at
+            100·(<i>n</i> − 1)/<i>n</i>. The table is cut at 50, 90, 99 and 99.9, which resolve the upper tail
+            where the failures come from, at its quintiles or quartiles, or at up to four percentiles of one’s
+            own. The legend gives each group’s percentiles and share of the failures, and under them the
+            range of [HS⁻] the group holds; a table too short to fill a group leaves it empty, and the table
+            under the chart says so.</p>
+          <p>Below the bars each canister is a curve of its failure time against the sulphide
+            concentration,</p>
+          <p class="ec-eq"><i>t</i><sub>fail</sub> = <i>t</i><sub>adv</sub> + CorrHoleFact / (<i>Q</i><sub>eq</sub>·[HS⁻]),</p>
+          <p>from the highest value of the table down to the hole’s HSmin, where the curve meets the assessment
+            time. At high concentrations it turns up towards <i>t</i><sub>adv</sub>: the buffer has to be
+            eroded before any sulphide reaches the copper. Beside the curves is the share of the sulphide table at
+            or above each concentration, with a dot for each canister at its HSmin, level with the foot of its
+            curve. The share there is the canister’s chance of failing in time, and those chances add up, over
+            the canisters, to the mean number of failed canisters. The second table under the chart has one row per
+            canister that fails, however many sulphide values fail it.</p>
+
           <h3 id="help-hydro">Hydro files</h3>
           <p>Four shapes are read, detected from the content rather than the extension:</p>
           <table class="ec-ref">
@@ -355,8 +474,9 @@
             numbers cached in the workbook itself — and against the Python port’s failure tables in six
             configurations. <code>resources/tests/erosion_corrosion/test-model.js</code> exercises the test case
             and the TR-16-11 rates read off that report’s figures 4-5 and 4-7 (given a local copy of the test
-            file), the closed forms, single holes through every model and option, and the readers for every
-            file format.</p>
+            file), the closed forms, single holes through every model and option, the readers for every
+            file format, and that the bars of the failure histogram add up to the key outputs however long
+            the sulphide table is.</p>
           <p>Two places where the sources differ from each other, and what this page does: the workbook’s VBA
             Lambert W stops at a residual of 10<sup>−3</sup> while the Python port uses SciPy’s — this page
             solves to machine precision, which matters only with “force rRSS” off; and the Python port’s
@@ -413,11 +533,11 @@
       kvot-info    the (i) next to each setting and its panel
       ec-ui        this page
   -->
-  <script src="./resources/js/ec-model.js?v=20260926"></script>
+  <script src="./resources/js/ec-model.js?v=20261019"></script>
   <script src="./resources/js/ec-hsdata.js?v=20260921"></script>
   <script src="./resources/js/ec-hydro.js?v=20260926"></script>
   <script src="./resources/js/xlsxwrite.js?v=20260902"></script>
   <script src="./resources/js/kvot-info.js?v=20261004"></script>
-  <script src="./resources/js/ec-ui.js?v=20261004"></script>
+  <script src="./resources/js/ec-ui.js?v=20261019"></script>
 </body>
 </html>

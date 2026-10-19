@@ -23,6 +23,15 @@
   const STORAGE_KEY = 'kvot-ec-v1';
   const DEFAULT_WIDTH = 340;
   const NEVER = ECModel.NEVER;
+  /** The choices of the failure histogram's selects, as kept in the state. */
+  const HIST_CHOICES = {
+    count: ['corrected', 'uncorrected', 'rows'],
+    by: ['hs', 'hsq', 'hsp', 'canister', 'none'],
+    scale: ['log', 'linear'],
+    bins: ['coarse', 'medium', 'fine'],
+    divisions: ['2', '3', '4', '5'],
+    pcts: ['tail', 'upper', 'quintiles', 'quartiles', 'custom'],
+  };
 
   /* ---------------------------------------------------------------------
      State
@@ -38,9 +47,11 @@
     sections: {},
     autoRun: true,
     dist: { which: 'qeq', real: 'all' },
+    hist: { count: 'corrected', by: 'hs', divisions: '5', pcts: 'tail', pctText: '95 99', scale: 'log', bins: 'medium', real: 'all' },
     holes: { filter: 'all', search: '', real: 0, limit: 300 },
-    sort: { failures: { key: 'index', asc: true }, holes: { key: 'id', asc: true } },
+    sort: { failures: { key: 'index', asc: true }, holes: { key: 'id', asc: true }, canisters: { key: 'corrected', asc: false } },
     result: null,              // {results, table, summary}
+    histogram: null,           // the failure histogram drawn last: {h, numbers, many}
     lastError: null,
   };
 
@@ -49,7 +60,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         params: state.params, hs: state.hs, totalHoles: state.totalHoles, tab: state.tab,
         sideWidth: state.sideWidth, sections: state.sections, autoRun: state.autoRun,
-        dist: state.dist, holes: { filter: state.holes.filter, real: state.holes.real },
+        dist: state.dist, hist: state.hist, holes: { filter: state.holes.filter, real: state.holes.real },
       }));
     } catch (e) { /* storage unavailable */ }
   }
@@ -71,6 +82,11 @@
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
       if (typeof s.autoRun === 'boolean') state.autoRun = s.autoRun;
       if (s.dist && typeof s.dist === 'object') Object.assign(state.dist, s.dist);
+      if (s.hist && typeof s.hist === 'object') {
+        for (const [k, allowed] of Object.entries(HIST_CHOICES)) if (allowed.includes(s.hist[k])) state.hist[k] = s.hist[k];
+        if (typeof s.hist.real === 'string' && /^(all|\d+)$/.test(s.hist.real)) state.hist.real = s.hist.real;
+        if (typeof s.hist.pctText === 'string' && parsePercentiles(s.hist.pctText)) state.hist.pctText = s.hist.pctText;
+      }
       if (s.holes && typeof s.holes === 'object') Object.assign(state.holes, s.holes);
     } catch (e) { /* a corrupt entry: start fresh */ }
   }
@@ -505,9 +521,21 @@
     return out;
   }
 
+  /**
+   * The table shows the first rows in the order asked for, and Show more
+   * adds to them: a long sulphide table gives every failing hole a row per
+   * value, hundreds of thousands of rows over ten realisations, and a page
+   * holding them all takes seconds to draw and to sort.
+   */
+  const FAIL_PAGE = 300;
+  const FAIL_MORE = 1000;
+  let failLimit = FAIL_PAGE;
+
   function renderFailures() {
     const host = $('ecFailTable');
     const empty = $('ecFailEmpty');
+    const moreLine = $('ecFailMoreLine');
+    moreLine.hidden = true;
     if (!state.result) { host.innerHTML = ''; empty.hidden = false; empty.textContent = 'Run the model to get the table of failure times.'; return; }
     const rows = state.result.table;
     if (!rows.length) { host.innerHTML = ''; empty.hidden = false; empty.textContent = 'No canister fails within the assessment time with these settings.'; return; }
@@ -516,8 +544,13 @@
     const cols = FAIL_COLS.filter((c) => !c.many || many);
     const sort = state.sort.failures;
     const head = cols.map((c) => `<th class="${c.text ? 'text ' : ''}${sort.key === c.key ? `sorted${sort.asc ? ' asc' : ''}` : ''}" data-on-click="ec:sortFailures" data-key="${c.key}">${esc(c.label)}</th>`).join('');
-    const body = sortedRows(rows, sort).map((r) => `<tr>${cols.map((c) => `<td${c.text ? ' class="text"' : ''}>${esc(c.f(r[c.key]))}</td>`).join('')}</tr>`).join('');
+    const shown = (sort.key === 'index' && sort.asc ? rows : sortedRows(rows, sort)).slice(0, failLimit);
+    const body = shown.map((r) => `<tr>${cols.map((c) => `<td${c.text ? ' class="text"' : ''}>${esc(c.f(r[c.key]))}</td>`).join('')}</tr>`).join('');
     host.innerHTML = `<table class="ec-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    if (rows.length > shown.length) {
+      moreLine.hidden = false;
+      $('ecFailNote').textContent = `Showing ${shown.length.toLocaleString('en')} of ${rows.length.toLocaleString('en')} rows, in the order shown; the CSV and the Excel workbook have them all.`;
+    }
   }
 
   /** The failure table as the workbook's sheet "InputTrptCalcs", with the realisation added. */
@@ -633,6 +666,7 @@
       grid: cs.getPropertyValue('--border-color').trim() || '#ddd',
       surface: cs.getPropertyValue('--bg-surface').trim() || '#fff',
       muted: cs.getPropertyValue('--text-muted').trim() || '#888',
+      bg: cs.getPropertyValue('--bg-primary').trim() || '#fff',     // what the charts stand on
     };
   }
 
@@ -745,9 +779,630 @@
     $('ecDistNote').textContent = 'A curve starts where the holes with a non-zero value begin: the gap below it is the share of holes at zero (no flowing fracture, or set to zero after rejection). Holes in deformation zones (FPC = 2) are zero in every series.';
   }
 
+  /* ---------------------------------------------------------------------
+     The failure histogram
+
+     Three panels on one time axis: the bars, every canister's failure
+     time against [HS⁻] under them, and the sulphide table beside the
+     curves. A colour, and a legend entry, is one sulphide decade or one
+     canister in all three. The arithmetic is ECModel.failureHistogram.
+     --------------------------------------------------------------------- */
+
+  // The colours, stepped for each theme and checked with a palette
+  // validator: eight canister hues in a fixed order, adjacent ones apart
+  // under protanopia and deuteranopia and for full colour vision, and a
+  // one-hue ramp for the sulphide decades, lowest decade first, light to
+  // dark on the light theme and dark to light on the dark one, with
+  // visible steps and the faintest still clear of the background.
+  const HIST_COLORS = {
+    light: {
+      canister: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
+      other: '#a39b93',
+      one: '#2a78d6',
+      ramp: [[], ['#256abf'], ['#86b6ef', '#0d366b'], ['#6da7ec', '#256abf', '#0d366b'],
+        ['#86b6ef', '#3987e5', '#1c5cab', '#0d366b'], ['#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b']],
+    },
+    dark: {
+      canister: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'],
+      other: '#7b7269',
+      one: '#3987e5',
+      ramp: [[], ['#6da7ec'], ['#184f95', '#cde2fb'], ['#184f95', '#5598e7', '#cde2fb'],
+        ['#1c5cab', '#3987e5', '#86b6ef', '#cde2fb'], ['#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb']],
+    },
+  };
+  // Dots for the rows of the failure table on the curves: for a table of
+  // values short enough that they stand apart, and not too many to draw.
+  const HIST_DOTS_MAX_HS = 200;
+  const HIST_DOTS_MAX_ROWS = 5000;
+
+  /** 10^k as chart markup, with a true minus. */
+  const pow10 = (k) => `10<sup>${k < 0 ? `−${-k}` : k}</sup>`;
+  /** A share as a percentage. */
+  const pct = (x) => `${fmt(100 * x, 3)} %`;
+
+  /** A sulphide band of ECModel.hsBands, as chart markup or as plain text. */
+  function bandLabel(b, plain) {
+    const p = plain ? (k) => `1e${k}` : pow10;
+    return b.below ? `below ${p(b.exp + 1)} M` : `${p(b.exp)}${plain ? ' to ' : '–'}${p(b.exp + 1)} M`;
+  }
+
+  /**
+   * A concentration as m·10^k to `sig` digits, as chart markup or as plain
+   * text. The digits stay (1.0·10⁻⁴), so that a value rounded to a power of
+   * ten does not read as one; only a power of ten itself is 10⁻⁴.
+   */
+  function conc(x, plain, sig = 2) {
+    let k = Math.floor(Math.log10(x));
+    let m = Number((x / Math.pow(10, k)).toPrecision(sig));
+    if (m >= 10) { m /= 10; k += 1; }
+    const ms = m.toFixed(sig - 1);
+    if (plain) return `${ms}e${k}`;
+    return x === Number(`1e${k}`) ? pow10(k) : `${ms}·${pow10(k)}`;
+  }
+
+  /**
+   * A group of equal shares, ECModel.equalShareSplit: the range of its
+   * sulphide values, lowest to highest, or the one value. Two digits, or
+   * three where two would make the ends the same.
+   */
+  function intervalLabel(iv, plain) {
+    let lo = conc(iv.lo, plain);
+    let hi = conc(iv.hi, plain);
+    if (lo === hi && iv.lo !== iv.hi) { lo = conc(iv.lo, plain, 3); hi = conc(iv.hi, plain, 3); }
+    if (lo === hi) return `${hi} M`;
+    return `${lo}${plain ? ' to ' : '–'}${hi} M`;
+  }
+
+  /** The realisations the histogram shows: all of them, or the one chosen. */
+  function histChosen() {
+    const results = state.result.results;
+    const many = results.length > 1;
+    const one = many && state.hist.real !== 'all' && Number(state.hist.real) < results.length ? Number(state.hist.real) : null;
+    return one === null
+      ? { chosen: results, numbers: results.map((_, i) => i + 1), many }
+      : { chosen: [results[one]], numbers: [one + 1], many };
+  }
+
+  /** The cuts of the Percentiles choice; see ECModel.percentileSplit. */
+  const PCT_PRESETS = { tail: [50, 90, 99, 99.9], upper: [90, 95, 99, 99.9], quintiles: [20, 40, 60, 80], quartiles: [25, 50, 75] };
+
+  /**
+   * The percentiles typed under Cut at: numbers between 0 and 100, any
+   * separator, a comma inside a number its decimal mark; at most four, as
+   * five groups is as many as the colours tell apart. Null if not so.
+   */
+  function parsePercentiles(text) {
+    const { values, dropped } = ECHS.parseCustom(text);
+    if (dropped || !values.length || Array.from(values).some((x) => x >= 100)) return null;
+    const cuts = [...new Set(values)].sort((a, b) => a - b);
+    return cuts.length <= 4 ? cuts : null;
+  }
+
+  /** The percentiles the colours are cut at now. */
+  function percentilesNow() {
+    return state.hist.pcts === 'custom' ? parsePercentiles(state.hist.pctText) || [95, 99] : PCT_PRESETS[state.hist.pcts] || PCT_PRESETS.tail;
+  }
+
+  /** P99–P99.9: a group of ECModel.percentileSplit by its percentiles. */
+  const pctLabel = (iv) => `P${iv.pLo}–P${iv.pHi}`;
+
+  /** The histogram of what is shown, worked out when it is drawn and kept for the CSVs and the (i). */
+  function histogramNow() {
+    const { chosen, numbers, many } = histChosen();
+    const h = ECModel.failureHistogram(chosen, {
+      scale: state.hist.scale, bins: state.hist.bins, count: state.hist.count, by: state.hist.by,
+      divisions: Number(state.hist.divisions), percentiles: percentilesNow(),
+    });
+    state.histogram = { h, numbers, many: many && chosen.length > 1, chosen };
+    return state.histogram;
+  }
+
+  /** A canister's name: its hole ID, after its realisation when several are shown. Escaped. */
+  function canisterName(can, view) {
+    return `${view.many ? `r${view.numbers[can.real]} · ` : ''}${esc(String(can.id))}`;
+  }
+
+  const HIST_COUNT_TEXT = { corrected: 'failed canisters, corrected', uncorrected: 'failed canisters', rows: 'rows' };
+
+  /** The bin widths of the select, for the axis in use. */
+  function writeHistBinOptions() {
+    const sel = $('ecHistBins');
+    const tLim = state.result ? Math.max(...state.result.results.map((r) => r.key.tLim)) : state.params.tFailFilteringLim;
+    const label = state.hist.scale === 'linear'
+      ? (k) => `${fmtYears(tLim / ECModel.HIST_BINS.linear[k])} years`
+      : (k) => `1/${ECModel.HIST_BINS.log[k]} decade`;
+    const html = HIST_CHOICES.bins.map((k) => `<option value="${k}">${esc(label(k))}</option>`).join('');
+    if (sel.dataset.options !== html) { sel.innerHTML = html; sel.dataset.options = html; }
+    sel.value = state.hist.bins;
+  }
+
+  /** Ticks for a log10 axis of time: 1, 2 and 5 of each decade, or the decades alone over more than four or on a narrow chart. */
+  function logTimeTicks(tLo, tHi, narrow) {
+    const vals = [];
+    const text = [];
+    const k0 = Math.floor(Math.log10(tLo));
+    const k1 = Math.ceil(Math.log10(tHi));
+    for (let k = k0; k <= k1; k++) {
+      for (const m of narrow || k1 - k0 > 4 ? [1] : [1, 2, 5]) {
+        const v = Number(`${m}e${k}`);
+        if (v < tLo * (1 - 1e-9) || v > tHi * (1 + 1e-9)) continue;
+        vals.push(Math.log10(v));
+        text.push(!narrow || v < 1e3 ? v.toLocaleString('en') : (v < 1e6 ? `${v / 1e3}k` : `${v / 1e6}M`));
+      }
+    }
+    return { tickmode: 'array', tickvals: vals, ticktext: text };
+  }
+
+  /** Ticks for a log10 axis of concentration: the decades, with 2 and 5 of them over a short range. */
+  function logHsTicks(lo, hi) {
+    const vals = [];
+    const text = [];
+    for (let k = Math.floor(lo); k <= Math.ceil(hi); k++) {
+      for (const m of hi - lo > 2.5 ? [1] : [1, 2, 5]) {
+        const x = k + Math.log10(m);
+        if (x < lo || x > hi) continue;
+        vals.push(x);
+        text.push(m === 1 ? pow10(k) : `${m}·${pow10(k)}`);
+      }
+    }
+    return { tickmode: 'array', tickvals: vals, ticktext: text };
+  }
+
+  function renderHistogram() {
+    const plot = $('ecChartHist');
+    const empty = $('ecHistEmpty');
+    const realSel = $('ecHistReal');
+    const box = $('ecHistTables');
+    writeHistBinOptions();
+    $('ecHistDiv').hidden = state.hist.by !== 'hsq';
+    $('ecHistPctBox').hidden = state.hist.by !== 'hsp';
+    $('ecHistPctTextBox').hidden = state.hist.by !== 'hsp' || state.hist.pcts !== 'custom';
+    const none = (text) => {
+      plot.hidden = true;
+      box.hidden = true;
+      empty.hidden = false;
+      empty.textContent = text;
+    };
+    if (!state.result || !havePlotly()) {
+      state.histogram = null;
+      realSel.hidden = true;
+      none(!havePlotly() ? 'The chart library (Plotly) did not load.' : 'Run the model to see the failure times as a histogram.');
+      return;
+    }
+    const results = state.result.results;
+    realSel.hidden = results.length < 2;
+    if (results.length > 1) {
+      const sel = $('ecHistRealSelect');
+      sel.innerHTML = '<option value="all">all, the mean over them</option>'
+        + results.map((r, i) => `<option value="${i}">r${i + 1}: ${esc(state.hydro[i]?.name || '')}</option>`).join('');
+      sel.value = state.hist.real !== 'all' && Number(state.hist.real) < results.length ? state.hist.real : 'all';
+    }
+    const view = histogramNow();
+    const { h } = view;
+    if (!h.nRows) { none('No canister fails within the assessment time with these settings.'); return; }
+    empty.hidden = true;
+    plot.hidden = false;
+    box.hidden = false;
+
+    const pal = HIST_COLORS[document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'];
+    const c = themeColors();
+    const r0 = view.chosen[0];
+    const hsDesc = r0.hs;
+    const nHs = hsDesc.length;
+    const hsLowest = hsDesc[nHs - 1];
+    const log = h.scale === 'log';
+    const X = log ? (t) => Math.log10(t) : (t) => t;
+    // The sulphide groups the colours stand for, highest first, as cuts on
+    // the [HS⁻] axis: the decades, the groups of equal shares or the
+    // percentiles, the lowest group taking in everything under it. A group
+    // of percentiles that holds no value takes no point (its cut is never met).
+    const bySulphide = h.by === 'hs' || h.by === 'hsq' || h.by === 'hsp';
+    const hsCuts = h.by === 'hsq' || h.by === 'hsp'
+      ? h.intervals.map((iv, i) => ({ lo: i === h.intervals.length - 1 ? 0 : (iv.n ? iv.lo : Infinity) }))
+      : h.bands;
+    const hsEdges = hsCuts.map((b) => b.lo).filter((x) => x > 0 && x < Infinity);
+    const ramp = pal.ramp[Math.min(hsCuts.length, pal.ramp.length - 1)];
+    const sulphideColor = (b) => ramp[Math.max(0, ramp.length - 1 - b)];
+    const wide = plot.clientWidth >= 640;
+    // The gap between the two lower panels holds the last time label and the first share label.
+    const main = wide ? [0, 0.76] : [0, 0.68];
+    const side = wide ? [0.83, 1] : [0.78, 1];
+    const lim = h.tLim.toLocaleString('en');
+    const countText = HIST_COUNT_TEXT[h.count];
+    const traces = [];
+
+    // Each group: its colour, its entry in the legend, and the label and
+    // heading its curves, dots and bars show on hover. The curves and dots of
+    // a colour join its legend group. An entry gives the colour's share of
+    // the bars, which is what the eye compares the legend with; what lies
+    // behind the colour -- the share of the sulphide values in a decade, the
+    // share that fails a canister -- is in the tables under the chart and on
+    // hover, where it cannot be taken for a part of the bars.
+    const share = (g) => pct(h.total > 0 ? g.total / h.total : 0);
+    const styles = h.groups.map((g, gi) => {
+      if (g.kind === 'band' || g.kind === 'interval') {
+        const label = g.kind === 'band' ? bandLabel(g.band) : intervalLabel(g.interval);
+        const n = g.kind === 'band' ? g.band.n : g.interval.n;
+        return { color: sulphideColor(gi), label, head: `${label}, which holds ${pct(n / nHs)} of the values`, name: `${label}: ${share(g)}` };
+      }
+      if (g.kind === 'percentile') {
+        // Its percentiles and share, and under them, smaller, the [HS⁻] they
+        // hold: the colour stands for the place in the table, not the value.
+        const iv = g.interval;
+        const range = iv.n ? intervalLabel(iv) : 'no values';
+        const label = `${pctLabel(iv)} (${range})`;
+        return { color: sulphideColor(gi), label, head: `${pctLabel(iv)}, ${range}, which holds ${pct(iv.n / nHs)} of the values`,
+          name: `${pctLabel(iv)}: ${share(g)}<br><span style="font-size:9px;color:${c.muted}">${range}</span>` };
+      }
+      if (g.kind === 'canister') {
+        const label = canisterName(g.canister, view);
+        return { color: pal.canister[gi], label, head: `${label}, which fails for ${pct(g.canister.share)} of the values`, name: `${label}: ${share(g)}` };
+      }
+      if (g.kind === 'other') {
+        const label = `${g.canisters} other canisters`;
+        return { color: pal.other, label, head: label, name: `${label}: ${share(g)}` };
+      }
+      return { color: pal.one, label: 'all canisters', head: 'all canisters', name: 'all canisters' };
+    });
+    const legendTitle = h.count === 'rows' ? 'Share of the rows' : 'Share of the failures';
+    const groupOfCanister = new Map();
+    if (h.by === 'canister') {
+      h.canisters.forEach((can) => {
+        const gi = h.groups.findIndex((g) => g.kind === 'canister' && g.canister.key === can.key);
+        groupOfCanister.set(can.key, gi >= 0 ? gi : h.groups.length - 1);
+      });
+    }
+    // A legend whenever the colours stand for something, also when there is
+    // one of them: it names the sulphide range or the canister.
+    const showLegend = h.by !== 'none';
+
+    // ---- the bars
+    const nb = h.edges.length - 1;
+    const centres = [];
+    const widths = [];
+    const binText = [];
+    for (let j = 0; j < nb; j++) {
+      const a = h.edges[j];
+      const b = h.edges[j + 1];
+      centres.push((X(a) + X(b)) / 2);
+      widths.push(X(b) - X(a));
+      binText.push(`${fmtYears(a)} to ${fmtYears(b)} years`);
+    }
+    const valueText = (v) => (h.count === 'rows' ? fmt(v) : fmt(v, 4));
+    // The first group on top of the stacks: the highest decade, or the
+    // canister with the largest part, as it is first in the legend, at the
+    // top of the curves' [HS⁻] axis and in the tables. Plotly stacks in the
+    // order of the traces, so they go in last first, and legendrank puts
+    // the legend back in the order of the groups.
+    h.groups.slice().reverse().forEach((g) => {
+      const gi = h.groups.indexOf(g);
+      if (g.kind === 'percentile' && !g.interval.n) return;
+      traces.push({
+        type: 'bar', xaxis: 'x', yaxis: 'y2', x: centres, width: widths,
+        y: Array.from(g.values, (v) => (v > 0 ? v : null)),
+        name: styles[gi].name, legendgroup: g.key, legendrank: gi, showlegend: showLegend,
+        marker: { color: styles[gi].color, line: { color: c.bg, width: 1 } },
+        customdata: Array.from(g.values, (v, j) => `${showLegend ? `${styles[gi].head}<br>` : ''}${binText[j]}: ${valueText(v)} ${countText}`),
+        hovertemplate: '%{customdata}<extra></extra>',
+      });
+    });
+
+    // ---- the curves, one per canister, split at the decades in 'hs'
+    const nGroups = h.groups.length;
+    const lines = Array.from({ length: nGroups }, () => ({ x: [], y: [], text: [] }));
+    const cut = (line) => { if (line.x.length) { line.x.push(null); line.y.push(null); line.text.push(null); } };
+
+    for (const can of h.canisters) {
+      const curve = ECModel.failureCurve(can, hsDesc[0], Math.max(can.hsMin, hsLowest), 40, hsEdges);
+      const about = `${canisterName(can, view)} fails in time for ${pct(can.share)} of the values (${can.rows.toLocaleString('en')} of ${nHs.toLocaleString('en')})`;
+      const put = (gi, from, to) => {
+        const line = lines[gi];
+        cut(line);
+        for (let j = from; j <= to; j++) {
+          line.x.push(X(curve.t[j]));
+          line.y.push(Math.log10(curve.hs[j]));
+          line.text.push(`${about}<br>at ${fmt(curve.hs[j], 3)} M it fails at ${fmtYears(curve.t[j])} years`);
+        }
+      };
+      if (bySulphide) {
+        // The points of one group are consecutive, the curve running down in
+        // [HS⁻], and the groups' edges are among them: a group's stretch ends
+        // on the edge, where the next one starts, so the curve is unbroken.
+        let from = 0;
+        let band = ECModel.bandIndex(hsCuts, curve.hs[0]);
+        for (let j = 1; j < curve.hs.length; j++) {
+          const next = ECModel.bandIndex(hsCuts, curve.hs[j]);
+          if (next === band) continue;
+          put(band, from, j - 1);
+          from = j - 1;
+          band = next;
+        }
+        put(band, from, curve.hs.length - 1);
+      } else put(h.by === 'canister' ? groupOfCanister.get(can.key) : 0, 0, curve.hs.length - 1);
+    }
+    lines.forEach((line, gi) => {
+      if (!line.x.length) return;
+      traces.push({
+        type: 'scatter', mode: 'lines', xaxis: 'x', yaxis: 'y', x: line.x, y: line.y, text: line.text,
+        name: styles[gi].label, legendgroup: h.groups[gi].key, legendrank: gi, showlegend: false, connectgaps: false,
+        line: { color: styles[gi].color, width: 1.5 },
+        hovertemplate: '%{text}<extra></extra>',
+      });
+    });
+
+    // ---- dots for the rows, on the curves
+    if (nHs <= HIST_DOTS_MAX_HS && h.nRows <= HIST_DOTS_MAX_ROWS) {
+      const byKey = new Map(h.canisters.map((can) => [can.key, can]));
+      const dots = Array.from({ length: nGroups }, () => ({ x: [], y: [], text: [] }));
+      view.chosen.forEach((r, ri) => {
+        for (const f of r.failures) {
+          const can = byKey.get(`${ri}:${f.hole}`);
+          const gi = bySulphide ? ECModel.bandIndex(hsCuts, f.hs) : (h.by === 'canister' ? groupOfCanister.get(can.key) : 0);
+          dots[gi].x.push(X(f.tFail));
+          dots[gi].y.push(Math.log10(f.hs));
+          dots[gi].text.push(`${canisterName(can, view)}: row of value ${f.hsIndex} of ${nHs}, ${fmt(f.hs, 4)} M<br>fails at ${fmtYears(f.tFail)} years`);
+        }
+      });
+      dots.forEach((d, gi) => {
+        if (!d.x.length) return;
+        traces.push({
+          type: 'scatter', mode: 'markers', xaxis: 'x', yaxis: 'y', x: d.x, y: d.y, text: d.text,
+          name: styles[gi].label, legendgroup: h.groups[gi].key, legendrank: gi, showlegend: false,
+          marker: { color: styles[gi].color, size: 8, line: { color: c.bg, width: 1.5 } },
+          hovertemplate: '%{text}<extra></extra>',
+        });
+      });
+    }
+
+    // ---- beside the curves, the sulphide table: the share of its values at
+    // or above each concentration. A canister's dot sits where its curve
+    // meets the assessment time, at its HSmin: the share there is its chance
+    // of failing in time.
+    const ex = ECModel.hsExceedance(hsDesc);
+    traces.push({
+      type: 'scatter', mode: 'lines', xaxis: 'x2', yaxis: 'y',
+      x: ex.share.map((s) => 100 * s), y: ex.hs.map((x) => Math.log10(x)),
+      text: ex.share.map((s, j) => `${pct(s)} of the values at or above ${fmt(ex.hs[j], 3)} M`),
+      name: 'sulphide values', legendgroup: 'hs-table', showlegend: false,
+      line: { color: pal.other, width: 2, shape: 'vh' },
+      hovertemplate: '%{text}<extra></extra>',
+    });
+    const feet = Array.from({ length: nGroups }, () => ({ x: [], y: [], text: [] }));
+    for (const can of h.canisters) {
+      const foot = Math.max(can.hsMin, hsLowest);
+      // Its colour is that of the lowest value that fails it, the last row of the canister.
+      const gi = bySulphide ? ECModel.bandIndex(hsCuts, hsDesc[can.rows - 1]) : (h.by === 'canister' ? groupOfCanister.get(can.key) : 0);
+      feet[gi].x.push(100 * can.share);
+      feet[gi].y.push(Math.log10(foot));
+      feet[gi].text.push(`${canisterName(can, view)} fails in time for [HS⁻] above ${fmt(can.hsMin, 3)} M:<br>${pct(can.share)} of the values (${can.rows.toLocaleString('en')} of ${nHs.toLocaleString('en')})`);
+    }
+    feet.forEach((d, gi) => {
+      if (!d.x.length) return;
+      traces.push({
+        type: 'scatter', mode: 'markers', xaxis: 'x2', yaxis: 'y', x: d.x, y: d.y, text: d.text,
+        name: styles[gi].label, legendgroup: h.groups[gi].key, legendrank: gi, showlegend: false,
+        marker: { color: styles[gi].color, size: 8, line: { color: c.bg, width: 1.5 } },
+        hovertemplate: '%{text}<extra></extra>',
+      });
+    });
+
+    // ---- axes and words
+    const tLo = h.edges[0];
+    const xLo = X(tLo);
+    const xHi = X(h.tLim);
+    const yLo = Math.log10(hsLowest) - 0.1;
+    const yHi = Math.log10(hsDesc[0]) + 0.1;
+    const sLo = Math.log10(100 * ex.share[0]) - 0.15;
+    // Every decade of the share, or on a narrow chart every second one down from 100 %.
+    const shareTicks = [100, 10, 1, 0.1, 0.01, 0.001, 0.0001].filter((v, i) => Math.log10(v) >= sLo && (wide || i % 2 === 0));
+    const axis = { gridcolor: c.grid, linecolor: c.grid, zeroline: false, title: { font: { size: 11 } } };
+    const layout = baseLayout();
+    Object.assign(layout, {
+      margin: { l: wide ? 70 : 58, r: 12, t: 30, b: wide ? 52 : 110 },
+      barmode: 'stack',
+      bargap: 0,
+      hovermode: 'closest',
+      showlegend: showLegend,
+      legend: wide
+        ? { x: side[0], xanchor: 'left', y: 1, yanchor: 'top', orientation: 'v', font: { size: 10 }, tracegroupgap: 3, bgcolor: 'rgba(0,0,0,0)',
+          title: { text: legendTitle, side: 'top', font: { size: 10, color: c.muted } } }
+        : { x: 0, xanchor: 'left', y: -0.09, yanchor: 'top', orientation: 'h', font: { size: 10 }, tracegroupgap: 3,
+          title: { text: legendTitle, side: 'top', font: { size: 10, color: c.muted } } },
+      xaxis: {
+        ...axis, domain: main, anchor: 'y', range: [xLo, xHi + 0.03 * (xHi - xLo)],
+        title: { text: 'failure time (years)', font: { size: 11 } },
+        ...(log ? logTimeTicks(tLo, h.tLim, !wide) : (wide ? { tickformat: ',d' } : { tickformat: '~s', nticks: 4 })),
+      },
+      yaxis: {
+        ...axis, domain: [0, 0.5], anchor: 'x', range: [yLo, yHi],
+        title: { text: '[HS⁻] (mol/L)', font: { size: 11 } },
+        ...logHsTicks(yLo, yHi),
+      },
+      yaxis2: { ...axis, domain: [0.6, 1], anchor: 'x', rangemode: 'tozero', title: { text: countText, font: { size: 11 } } },
+      xaxis2: {
+        ...axis, domain: side, anchor: 'y', type: 'log', range: [sLo, 2.05],
+        tickmode: 'array', tickvals: shareTicks, ticktext: shareTicks.map((v) => v.toLocaleString('en', { maximumFractionDigits: 4 })),
+        title: { text: wide ? 'share at or above (%)' : '% at or above', font: { size: 11 } },
+      },
+      shapes: [{ type: 'line', xref: 'x', yref: 'paper', x0: xHi, x1: xHi, y0: 0, y1: 1, line: { color: c.muted, width: 1, dash: 'dot' } }],
+    });
+    const many = view.many ? `, mean over ${view.chosen.length} realisations` : '';
+    const sum = {
+      corrected: `Failure times. The bars add up to ${fmt(h.total, 4)}, the corrected mean at ${lim} years${many}`,
+      uncorrected: `Failure times. The bars add up to ${fmt(h.total, 4)}, the mean number of failed canisters at ${lim} years${many}`,
+      rows: `Failure times. The bars count the ${fmt(h.total)} rows of the failure table`,
+    }[h.count];
+    const note = (x, y, text, extra) => ({ x, y, xref: 'paper', yref: 'paper', text, showarrow: false, xanchor: 'left', yanchor: 'bottom', font: { size: 11, color: c.text }, ...extra });
+    const nCan = `${h.canisters.length.toLocaleString('en')} canister${h.canisters.length === 1 ? '' : 's'}`;
+    // A narrow chart keeps the titles short, and the axis titles name the side panel.
+    layout.annotations = wide ? [
+      note(0, 1, sum, { yshift: 4 }),
+      note(0, 0.5, `Each canister’s failure time against [HS⁻]: ${nCan}`, { yshift: 4 }),
+      note(side[0], 0.5, '[HS⁻] values', { yshift: 4 }),
+      { x: xHi, y: 0.5, xref: 'x', yref: 'paper', text: 'assessment time', showarrow: false,
+        xanchor: 'right', yanchor: 'bottom', xshift: -3, yshift: 4, font: { size: 10, color: c.muted } },
+    ] : [
+      note(0, 1, `The bars add up to ${h.count === 'rows' ? fmt(h.total) : fmt(h.total, 4)}`, { yshift: 4 }),
+      note(0, 0.5, `Failure time against [HS⁻]: ${nCan}`, { yshift: 4 }),
+    ];
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    if (!plot.ecIsolates) {
+      // A double click on a legend entry shows that entry alone, as Plotly's
+      // own does, but keeps the sulphide table, which has no entry to click.
+      plot.on('plotly_legenddoubleclick', (ev) => { isolateGroup(plot, ev.curveNumber); return false; });
+      plot.ecIsolates = true;
+    }
+    renderHsTable();
+    renderCanisters();
+  }
+
+  /**
+   * The sulphide values in groups, highest first: how much of the table each
+   * group holds beside how much of the failures its values give -- the part
+   * of the distribution the failures come from, in numbers. The groups are
+   * the decades, or with Colour by set to equal shares those groups, and
+   * then the values under them, which fail no canister.
+   */
+  function renderHsTable() {
+    const view = state.histogram;
+    const host = $('ecDecadeTable');
+    if (!view || !view.h.nRows) { host.innerHTML = ''; return; }
+    const { h } = view;
+    const pal = HIST_COLORS[document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'];
+    const equal = h.by === 'hsq';
+    const byPct = h.by === 'hsp';
+    // bandLabel, intervalLabel and conc are the page's own markup around numbers.
+    const groups = equal || byPct
+      ? h.intervals.map((iv, i) => ({ label: iv.n ? intervalLabel(iv) : 'no values', n: iv.n, st: h.intervalStats[i], pct: byPct ? pctLabel(iv) : null }))
+      : h.bands.map((b, i) => ({ label: bandLabel(b), n: b.n, st: h.bandStats[i], pct: null }));
+    const nHs = h.bands.reduce((s, b) => s + b.n, 0);
+    const ramp = pal.ramp[Math.min(groups.length, pal.ramp.length - 1)];
+    const coloured = h.by === 'hs' || equal || byPct;
+    const corrected = groups.reduce((s, g) => s + g.st.corrected, 0);
+    const cell = (x) => `<td>${esc(x)}</td>`;
+    const row = (colour, g) => `<tr><td class="swatch">${colour ? `<span class="ec-swatch" style="background:${colour}"></span>` : ''}</td>`
+      + `${byPct ? `<td class="text">${esc(g.pct || '')}</td>` : ''}<td class="text">${g.label}</td>${cell(fmt(g.n))}${cell(pct(g.n / nHs))}`
+      + `${cell(pct(corrected > 0 ? g.st.corrected / corrected : 0))}${cell(fmt(g.st.corrected, 4))}${cell(fmt(g.st.rows))}${cell(fmt(g.st.canisters))}</tr>`;
+    const rows = groups.map((g, i) => row(coloured && g.n ? ramp[Math.max(0, ramp.length - 1 - i)] : '', g));
+    if (equal && h.below && h.below.n) {
+      rows.push(row('', { label: `below ${conc(h.intervals[h.intervals.length - 1].lo)} M, failing no canister`, n: h.below.n, st: { corrected: 0, rows: 0, canisters: 0 } }));
+    }
+    const heads = [...(byPct ? ['Percentiles'] : []), '[HS⁻]', 'Values', 'Share of the values', 'Share of the failures', 'Failed, corrected', 'Rows', 'Canisters'];
+    const texts = byPct ? 2 : 1;
+    const head = '<th class="swatch"></th>' + heads.map((x, i) => `<th${i < texts ? ' class="text"' : ''}>${esc(x)}</th>`).join('');
+    const foot = `<tr><td class="swatch"></td><td class="text">All</td>${byPct ? '<td></td>' : ''}<td>${esc(fmt(nHs))}</td><td>100 %</td><td>100 %</td>`
+      + `<td>${esc(fmt(corrected, 4))}</td><td>${esc(fmt(h.nRows))}</td><td>${esc(fmt(h.canisters.length))}</td></tr>`;
+    host.innerHTML = `<table class="ec-table ec-plain"><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody><tfoot>${foot}</tfoot></table>`;
+    let note = 'The sulphide table by decade: the share of its values in each decade, beside the share of the failures those values give.';
+    if (equal) {
+      const k = h.divisions;
+      const got = h.intervals.length;
+      note = got === k
+        ? `The sulphide values that fail a canister, in ${k} groups of about ${pct(1 / k)} of the failures each, and the values under them, which fail none.`
+        : `The sulphide values that fail a canister, in ${got} group${got === 1 ? '' : 's'}, not ${k}: a group cannot split a sulphide value, and single values `
+          + `give more than ${pct(1 / k)} of the failures. The shares are those of the groups as made.`;
+    } else if (byPct) {
+      const cuts = h.intervals.slice(0, -1).map((iv) => iv.pLo).reverse();
+      note = `The sulphide table cut at its ${cuts.join(', ')} percentiles, a value’s percentile being the share of the table below it: `
+        + 'the share of the values in each group, beside the share of the failures they give.';
+      const empty = h.intervals.filter((iv) => !iv.n).length;
+      if (empty) {
+        note += ` ${empty} of the groups hold${empty === 1 ? 's' : ''} no value: with ${fmt(nHs)} values the highest lies at `
+          + `P${fmt(100 * (nHs - 1) / nHs, 3)} and the table cannot fill groups narrower than one value.`;
+      }
+    }
+    $('ecDecadeNote').textContent = note;
+  }
+
+  /** One legend group of the histogram alone, or all of them again when it is alone already. */
+  function isolateGroup(plot, curveNumber) {
+    const group = plot.data[curveNumber].legendgroup;
+    const kept = (t) => t.legendgroup === 'hs-table';
+    const mine = (t) => t.legendgroup === group;
+    const alone = plot.data.every((t) => kept(t) || (mine(t) ? t.visible !== 'legendonly' : t.visible === 'legendonly'));
+    Plotly.restyle(plot, { visible: plot.data.map((t) => (kept(t) || alone || mine(t) ? true : 'legendonly')) });
+  }
+
+  /* The canisters behind the bars, one row each. */
+  const CANISTER_COLS = [
+    { key: 'real', label: 'Real.', f: (x) => `r${x}`, many: true },
+    { key: 'id', label: 'ID', f: (x) => String(x), text: true },
+    { key: 'share', label: 'Share of [HS⁻] values', f: (x) => pct(x) },
+    { key: 'corrected', label: 'Failed, corrected', f: (x) => fmt(x, 4) },
+    { key: 'rows', label: 'Rows', f: fmt },
+    { key: 'earliest', label: 'Earliest failure (yr)', f: fmtYears },
+    { key: 'latest', label: 'Latest failure (yr)', f: fmtYears },
+    { key: 'hsMin', label: 'HSmin (M)', f: (x) => fmt(x, 3) },
+    { key: 'tAdv', label: 'tAdv (yr)', f: (x) => (x < 1e-3 ? '0' : fmtYears(x)) },
+    { key: 'qeq', label: 'Qeq (m³/yr)', f: (x) => fmt(x, 4) },
+    { key: 'edge', label: 'Edge', f: (x) => (x ? 'yes' : '') },
+  ];
+
+  /** The canisters of the histogram drawn last, as rows of the table, sorted as asked. */
+  function canisterRows() {
+    const view = state.histogram;
+    if (!view) return [];
+    const rows = view.h.canisters.map((can) => ({ ...can, real: view.numbers[can.real] }));
+    return sortedRows(rows, state.sort.canisters);
+  }
+
+  function renderCanisters() {
+    const view = state.histogram;
+    const host = $('ecCanisterTable');
+    if (!view || !view.h.nRows) { host.innerHTML = ''; return; }
+    const { h } = view;
+    const pal = HIST_COLORS[document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'];
+    const colour = new Map();
+    if (h.by === 'canister') h.groups.forEach((g, gi) => { if (g.kind === 'canister') colour.set(g.canister.key, pal.canister[gi]); });
+    const cols = CANISTER_COLS.filter((col) => !col.many || view.many);
+    const sort = state.sort.canisters;
+    const head = `<th class="swatch"></th>` + cols.map((col) => `<th class="${col.text ? 'text ' : ''}${sort.key === col.key ? `sorted${sort.asc ? ' asc' : ''}` : ''}" data-on-click="ec:sortCanisters" data-key="${col.key}">${esc(col.label)}</th>`).join('');
+    const body = canisterRows().map((row) => {
+      const sw = colour.get(row.key);
+      return `<tr><td class="swatch">${sw ? `<span class="ec-swatch" style="background:${sw}"></span>` : ''}</td>`
+        + cols.map((col) => `<td${col.text ? ' class="text"' : ''}>${esc(col.f(row[col.key]))}</td>`).join('') + '</tr>';
+    }).join('');
+    const totals = { corrected: h.canisters.reduce((s, can) => s + can.corrected, 0), rows: h.canisters.reduce((s, can) => s + can.rows, 0) };
+    const foot = '<tr><td class="swatch"></td>' + cols.map((col, i) => {
+      if (i === 0) return `<td class="text">${h.canisters.length.toLocaleString('en')} canister${h.canisters.length === 1 ? '' : 's'}</td>`;
+      return `<td>${col.key in totals ? esc(col.f(totals[col.key])) : ''}</td>`;
+    }).join('') + '</tr>';
+    host.innerHTML = `<table class="ec-table ec-canister-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
+    $('ecCanisterNote').textContent = `The canisters behind the bars, one row each: ${h.canisters.length.toLocaleString('en')} that fail before ${h.tLim.toLocaleString('en')} years, `
+      + `in ${h.nRows.toLocaleString('en')} row${h.nRows === 1 ? '' : 's'} of the failure table${view.many ? ` of ${view.chosen.length} realisations` : ''}.`;
+  }
+
+  /** The bins of the histogram drawn last: their edges and a column per colour. */
+  function histogramCsv() {
+    const view = state.histogram || histogramNow();
+    const { h } = view;
+    const name = (g) => {
+      if (g.kind === 'band') return `[HS-] ${bandLabel(g.band, true)}`;
+      if (g.kind === 'interval') return `[HS-] ${intervalLabel(g.interval, true)}`;
+      if (g.kind === 'percentile') return `[HS-] P${g.interval.pLo} to P${g.interval.pHi} (${g.interval.n ? intervalLabel(g.interval, true) : 'no values'})`;
+      if (g.kind === 'canister') return `${view.many ? `r${view.numbers[g.canister.real]} ` : ''}canister ${g.canister.id}`;
+      if (g.kind === 'other') return `other canisters (${g.canisters})`;
+      return 'all canisters';
+    };
+    const lines = [['From (yr)', 'To (yr)', ...h.groups.map(name), `Total (${HIST_COUNT_TEXT[h.count]})`].map((x) => raw(x)).join(',')];
+    for (let j = 0; j < h.edges.length - 1; j++) {
+      const vals = h.groups.map((g) => g.values[j]);
+      lines.push([h.edges[j], h.edges[j + 1], ...vals, vals.reduce((s, x) => s + x, 0)].map((x) => raw(x)).join(','));
+    }
+    return lines.join('\n');
+  }
+
+  /** The canisters of the histogram drawn last, sorted as shown. */
+  function canistersCsv() {
+    if (!state.histogram) histogramNow();
+    const lines = ['Realisation,ID,Rows,Share,FailedCorrected,EarliestFailure,LatestFailure,HSmin,tAdv,Qeq,Edge'];
+    for (const r of canisterRows()) lines.push([r.real, raw(r.id), r.rows, r.share, r.corrected, r.earliest, r.latest, r.hsMin, r.tAdv, r.qeq, r.edge ? 1 : 0].join(','));
+    return lines.join('\n');
+  }
+
   function resizePlots() {
     if (!havePlotly()) return;
-    ['ecChartTime', 'ecChartDist'].forEach((id) => { const el = $(id); if (el && !el.hidden && el.data) Plotly.Plots.resize(el); });
+    ['ecChartTime', 'ecChartDist', 'ecChartHist'].forEach((id) => { const el = $(id); if (el && !el.hidden && el.data) Plotly.Plots.resize(el); });
   }
 
   /* ---------------------------------------------------------------------
@@ -850,6 +1505,7 @@
     switch (state.tab) {
       case 'summary': renderSummary(); break;
       case 'failures': renderFailures(); break;
+      case 'histogram': renderHistogram(); resizePlots(); break;
       case 'time': renderTime(); resizePlots(); break;
       case 'distributions': renderDistributions(); resizePlots(); break;
       case 'holes': renderHoles(); break;
@@ -1055,6 +1711,18 @@
     velocity: 'v = U0·w/δ in the intersecting fracture, in m/yr.',
     tAdv: 'The time to advective conditions of the accepted holes with a flowing fracture, in years. The line is the assessment time.',
   };
+  const HIST_COUNT_WHAT = {
+    corrected: 'Each row counts 1/n of a canister, n the number of sulphide values, scaled by the canisters to normalise to over the accepted holes: the bars add up to the corrected mean of the Summary.',
+    uncorrected: 'Each row counts 1/n of a canister: the bars add up to the mean number of failed canisters.',
+    rows: 'Each row counts one: the bars add up to the rows of the failure table, which grow with the length of the sulphide table.',
+  };
+  const HIST_BY_WHAT = {
+    hs: 'The decade of the sulphide value behind each row, darker for higher on the light theme and lighter for higher on the dark one: which part of the distribution the failures at each time come from. The legend gives each decade’s share of the failures, the part of the bars in its colour; the table of decades under the chart sets it beside the decade’s share of the sulphide values. Over more than five decades the lowest are merged into one.',
+    hsq: 'The sulphide values that fail a canister, highest first, in as many groups as Divisions says, each giving the same share of the failures: a fifth each with 5. The legend names the range of [HS⁻] each group holds and gives its share as made. A group cannot split a sulphide value, so where single values give more than their share there are fewer groups and the shares differ; the table under the chart says so.',
+    hsp: 'The place of the sulphide value behind each row in the sulphide table, cut at the percentiles chosen under Percentiles: the colours say how probable the values are that give the failures. A value’s percentile is the share of the table below it, so with n values the highest lies at 100·(n − 1)/n, and a short table leaves its highest groups empty. Each legend entry gives a group’s percentiles and share of the failures, and under them the range of [HS⁻] it holds.',
+    canister: 'The eight canisters with the largest part of the mean on their own, the rest together in grey. The legend gives each one’s share of the failures, the part of the bars in its colour; the canister table under the chart gives the share of the sulphide values that fail it, its chance of failing in time.',
+    none: 'One colour for every row.',
+  };
   const HOLE_FILTER_WHAT = {
     all: 'Every hole of the realisation.',
     flowing: 'A fracture crosses the hole and the water in it moves: v > 0.',
@@ -1210,7 +1878,7 @@
             '`F`, `tw` and `q`: the transport resistance and the travel time from the hydro file, and the flow through the eroded hole.',
             '`Edge`: the hole is an EFPC edge position.',
           ] },
-          { text: 'Click a heading to sort by it, and again to reverse the order.' },
+          { text: 'Click a heading to sort by it, and again to reverse the order. The table shows the first 300 rows in that order, and **Show more** under it adds 1000: a long sulphide table gives a hole a row for every value that fails it.' },
           { heading: 'Saving', list: [
             '**CSV**: every row in Index order, whatever the sort on screen, at full precision: Index, Realisation, the workbook’s IDProb, tFailProb, FProb, twProb and qProb, then tAdv, tCorr, HS, HSIndex and Edge.',
             '**Excel**: one workbook with the case settings, the key outputs, this table, the per-hole sheet of each realisation and the sulphide table used.',
@@ -1218,6 +1886,103 @@
         ],
         more: more('Corrosion and the failure table', 'help-corrosion'),
       }),
+      'pane:histogram': () => {
+        const h = state.histogram && state.histogram.h;
+        const sum = h && h.nRows ? (h.count === 'rows' ? fmt(h.total) : fmt(h.total, 4)) : '';
+        return {
+          kicker: 'Tab',
+          title: 'Failure histogram',
+          lead: 'When the canisters fail: the failure times of the failure table as a histogram, with the sulphide values and the canisters behind them.',
+          facts: [
+            ['Rows in the failure table', h ? h.nRows.toLocaleString('en') : 'not run yet'],
+            ['Canisters that fail', h ? h.canisters.length.toLocaleString('en') : ''],
+            ['The bars add up to', sum ? `${sum} ${HIST_COUNT_TEXT[h.count]}` : ''],
+          ],
+          sections: [
+            { heading: 'What a bar counts', text: [
+              'A hole that fails for m of the n sulphide values has m rows in the failure table, one per value, and each row stands for 1/n of a canister: the chance that the hole meets that value. A bar adds 1/n for each row whose failure time falls in its bin, scaled as the corrected mean is, so the bars add up to the mean number of failed canisters. A longer sulphide table gives a canister more rows, not taller bars.',
+              'With several realisations a bar is the mean over them, as the mean column of the Summary is. **Realisation** shows one of them instead.',
+            ] },
+            { heading: 'Count', choices: optionChoices('ecHistCount', HIST_COUNT_WHAT, state.hist.count) },
+            { heading: 'Colour by', choices: optionChoices('ecHistBy', HIST_BY_WHAT, state.hist.by) },
+            { heading: 'Percentiles', text: [
+              'With Colour by set to [HS⁻] percentiles: where the sulphide table is cut. 50, 90, 99 and 99.9 resolve the upper tail, where the failures come from; quintiles and quartiles cut the table in equal shares of its values; other… takes up to four percentiles of your own under Cut at, with any separator, a comma inside a number being its decimal mark.',
+              'A group holds the values at or above its lower percentile and below its upper one, by their place in the table: equal values on either side of a cut are each in their own group.',
+            ] },
+            { heading: 'Divisions', text: [
+              'With Colour by set to [HS⁻] in equal shares: how many groups, 2 to 5. More would need shades of the colour that cannot be told apart.',
+              'The cuts are at 20, 40, 60 and 80 % of the failures with 5, each moved to the nearest boundary between two sulphide values, the values taken highest first; cuts that land on the same boundary are one. Each group then holds whole values, and its share is what those values give.',
+            ] },
+            { heading: 'Time axis and bins', text: 'On the logarithmic axis the bins are equal in log time, in whole decades down from the assessment time, so that with 1,000,000 years they start on a power of ten. On the linear axis they are equal in time from 0. Either way the last bin ends at the assessment time, the dotted line.' },
+            { heading: 'Under the bars', list: [
+              '**Each canister’s failure time against [HS⁻]**: a curve per canister that fails, tFail = tAdv + CorrHoleFact/(Qeq·[HS⁻]), from the highest value of the table down to the canister’s HSmin, where it meets the assessment time. At high concentrations a curve turns up towards tAdv, the time the buffer takes to erode. When the sulphide table has at most 200 values and the failure table at most 5,000 rows, a dot marks each row on its curve.',
+              '**[HS⁻] values**: the share of the sulphide table at or above each concentration, on a logarithmic axis. Each canister has a dot at its HSmin, level with the foot of its curve: it fails for the values above, and the share there is its chance of failing in time.',
+            ] },
+            { heading: 'The legend', text: [
+              'Each entry gives its colour’s share of the failures, which is its part of the bars; with Count set to rows, its share of the rows. What lies behind a colour is in the tables under the chart: the share of the sulphide values in a decade, the share that fails a canister.',
+              'A click on an entry hides its bars, curves and dots; a double click shows that entry alone.',
+            ] },
+            { heading: 'Saving', text: '**CSV** saves the bins: their edges in years and a column per colour, at full precision. The camera above the chart saves it as a picture.' },
+          ],
+          more: more('The failure histogram', 'help-histogram'),
+        };
+      },
+      'pane:decades': () => {
+        const equal = state.hist.by === 'hsq';
+        const byPct = state.hist.by === 'hsp';
+        const group = equal || byPct ? 'group' : 'decade';
+        return {
+          kicker: 'Failure histogram',
+          title: byPct ? 'The sulphide table by percentile' : (equal ? 'The sulphide values in equal shares' : 'The sulphide decades'),
+          lead: byPct
+            ? 'The sulphide table cut at the percentiles chosen, highest first: the share of the table each group holds, beside the share of the failures its values give.'
+            : (equal
+              ? 'The sulphide values that fail a canister in the groups of equal shares of the failures, highest first, and under them the values that fail none: the share of the table each group holds, beside the share of the failures its values give.'
+              : 'The sulphide table in decades of concentration, highest first: the share of the table each decade holds, beside the share of the failures its values give.'),
+          sections: [
+            { heading: 'Columns', list: [
+              ...(byPct ? ['`Percentiles`: the group, from its lower percentile to its upper one; a value’s percentile is the share of the table below it.'] : []),
+              byPct
+                ? '`[HS⁻]`: the lowest and the highest sulphide value of the group, or its one value; no values where the table is too short to fill the group.'
+                : (equal
+                  ? '`[HS⁻]`: the lowest and the highest sulphide value of the group, or its one value. The last row holds the values under the lowest group, which fail no canister.'
+                  : '`[HS⁻]`: the decade, from 10^k to 10^(k+1) mol/L. Over more than five decades the lowest are merged into one, below the others.'),
+              `\`Values\` and \`Share of the values\`: how many of the sulphide values lie in the ${group}, and their share of the table.`,
+              `\`Share of the failures\`: the ${group}’s part of the corrected mean, as a share of it. It is the part of the bars in the ${group}’s colour, with Count set to failed canisters.`,
+              '`Failed, corrected`: that part itself; the column adds up to the corrected mean.',
+              `\`Rows\`: the rows of the failure table with a value in the ${group}.`,
+              `\`Canisters\`: the canisters that fail for at least one value in the ${group}. A canister that fails for a value fails for every higher one too.`,
+            ] },
+            { text: byPct
+              ? 'The two shares side by side say how probable the values are that give the failures: with the tail percentiles, a group holding a thousandth of the values can give a large part of them.'
+              : equal
+              ? 'The two shares side by side say how few of the values give each part of the failures. When the line above the table says there are fewer groups than Divisions asked for, single sulphide values give more than a group’s share, and the shares are those of the groups as made.'
+              : 'The two shares side by side say which part of the distribution the failures come from: a decade with few of the values can give most of the failures, and the bulk of the values none. With Colour by set to [HS⁻] decade the swatch is the decade’s colour in the chart.' },
+          ],
+          more: more('The failure histogram', 'help-histogram'),
+        };
+      },
+      'pane:canisters': {
+        kicker: 'Failure histogram',
+        title: 'The canisters that fail',
+        lead: 'One row per canister with rows in the failure table, however many sulphide values fail it.',
+        sections: [
+          { heading: 'Columns', list: [
+            '`Real.`: the realisation, when all of several are shown.',
+            '`ID`: the deposition hole.',
+            '`Share of [HS⁻] values`: the fraction of the sulphide table that fails the canister within the assessment time, its rows over the number of values. It is the chance that the canister fails.',
+            '`Failed, corrected`: the canister’s part of the corrected mean, the share scaled by the canisters to normalise to over the accepted holes, and divided by the number of realisations when all of several are shown. The column adds up to the corrected mean.',
+            '`Rows`: its rows in the failure table.',
+            '`Earliest failure` and `Latest failure`: its first and last failure time, at the highest value of the table and at the lowest value that fails it in time.',
+            '`HSmin`: the sulphide concentration that fails it exactly at the assessment time.',
+            '`tAdv` and `Qeq`: the time to advective conditions, and the equivalent flow rate through the eroded buffer.',
+            '`Edge`: an EFPC edge position.',
+          ] },
+          { text: 'With **Colour by** set to canister, the swatch is the canister’s colour in the chart. Click a heading to sort by it, and again to reverse the order.' },
+          { heading: 'Saving', text: '**CSV** saves every row, sorted as shown, at full precision.' },
+        ],
+        more: more('The failure histogram', 'help-histogram'),
+      },
       'pane:time': {
         kicker: 'Tab',
         title: 'Against time',
@@ -1348,6 +2113,30 @@
       infoRefresh();
     },
     'ec:holesMore': () => { state.holes.limit += 1000; renderHoles(); },
+    'ec:failuresMore': () => { failLimit += FAIL_MORE; renderFailures(); },
+    'ec:histChanged': (ev, el) => {
+      const key = { ecHistCount: 'count', ecHistBy: 'by', ecHistDivisions: 'divisions', ecHistPct: 'pcts', ecHistScale: 'scale', ecHistBins: 'bins', ecHistRealSelect: 'real' }[el.id];
+      if (key) state.hist[key] = el.value;
+      if (el.id === 'ecHistPctText') {
+        // Kept only when it reads as percentiles; otherwise the field says so
+        // and the colours stay cut where they were.
+        const ok = !!parsePercentiles(el.value);
+        el.setCustomValidity(ok ? '' : 'Up to four percentiles between 0 and 100, such as 95 99 99.9');
+        if (!ok) { el.reportValidity(); return; }
+        state.hist.pctText = el.value;
+      }
+      saveState();
+      renderHistogram();
+      infoRefresh();
+    },
+    'ec:histCsv': () => { if (state.result) download('erosion_corrosion_histogram.csv', histogramCsv()); },
+    'ec:canistersCsv': () => { if (state.result) download('erosion_corrosion_canisters.csv', canistersCsv()); },
+    'ec:sortCanisters': (ev, el) => {
+      const key = el.dataset.key;
+      const s = state.sort.canisters;
+      if (s.key === key) s.asc = !s.asc; else { s.key = key; s.asc = true; }
+      renderCanisters();
+    },
   });
 
   /* ---------------------------------------------------------------------
@@ -1360,6 +2149,12 @@
   $('ecTotalHoles').value = state.totalHoles;
   $('ecAutoRun').checked = state.autoRun;
   $('ecDistWhich').value = state.dist.which;
+  $('ecHistCount').value = state.hist.count;
+  $('ecHistBy').value = state.hist.by;
+  $('ecHistDivisions').value = state.hist.divisions;
+  $('ecHistPct').value = state.hist.pcts;
+  $('ecHistPctText').value = state.hist.pctText;
+  $('ecHistScale').value = state.hist.scale;
   $('ecHoleFilter').value = state.holes.filter;
   setupInfo();
   initSideResize();
@@ -1367,7 +2162,7 @@
   initDrop();
   renderParamReference();
   renderHydroList();
-  showTab(['failures', 'time', 'distributions', 'holes', 'help'].includes(state.tab) ? state.tab : 'summary');
+  showTab(['failures', 'histogram', 'time', 'distributions', 'holes', 'help'].includes(state.tab) ? state.tab : 'summary');
   window.addEventListener('resize', resizePlots);
   document.documentElement.addEventListener('kvot-theme-change', () => renderTab());
   run();

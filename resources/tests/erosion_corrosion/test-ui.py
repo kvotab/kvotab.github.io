@@ -12,7 +12,9 @@ rather than a silence.
 
 The test file is SKB's and not in the repository: the checks that need it
 drop the local copy that make-local-fixtures.py writes, and are skipped
-without it.
+without it. The failure histogram, its legend, its canister table and the
+paging of a long failure table are checked on a layout of the test's own
+(synthetic_csv), with or without that copy.
 
 Start the server and the browser as in ../rb/README.md (other ports with
 EC_HTTP_PORT and EC_CDP_PORT), then
@@ -22,6 +24,8 @@ EC_HTTP_PORT and EC_CDP_PORT), then
 Exit status is 0 when every check passes.
 """
 import asyncio
+import csv
+import io
 import json
 import os
 import sys
@@ -61,6 +65,62 @@ DROP_CASE = """(async (name) => {
   const dt = new DataTransfer(); dt.items.add(f);
   document.querySelector('.ec').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
 })(%%s)""" % json.dumps(CASE)
+
+
+def synthetic_csv(n=200):
+    """A layout of our own: n holes whose fracture flow rises from 1e-6 to
+    10^-2.8 m/yr through an aperture of 0.1 mm, the last two rejected. With
+    a generated sulphide table of 1000 values about 40 canisters fail, for
+    one value to a few dozen each."""
+    lines = ['POINT,OKFLAG,U0,QEQ,TW,F,TRAPP,FPC,EFPC,FLEN']
+    for i in range(n):
+        u0 = 10 ** (-6 + 3.2 * i / (n - 1))
+        lines.append(','.join(str(x) for x in [i + 1, 0, f'{u0:.6e}', 1e-5, 100 + i, 1e5 * (i + 1), 1e-4,
+                                                  1 if i == n - 1 else 0, 5 if i == n - 2 else 0, 20]))
+    return '\n'.join(lines) + '\n'
+
+
+# Drops a file with the given text and name on the panel.
+DROP_TEXT = """((text, name) => {
+  const f = new File([text], name, { type: 'text/csv' });
+  const dt = new DataTransfer(); dt.items.add(f);
+  document.querySelector('.ec').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+})(%s, %s)"""
+# The text a button would download, caught on its way out.
+CAUGHT_DOWNLOAD = """(async (sel) => {
+  const make = URL.createObjectURL, revoke = URL.revokeObjectURL, click = HTMLAnchorElement.prototype.click;
+  let blob = null, name = null;
+  URL.createObjectURL = (b) => { blob = b; return 'blob:caught'; };
+  URL.revokeObjectURL = () => {};
+  HTMLAnchorElement.prototype.click = function () { name = this.download; };
+  try { document.querySelector(sel).click(); } finally {
+    URL.createObjectURL = make; URL.revokeObjectURL = revoke; HTMLAnchorElement.prototype.click = click;
+  }
+  return blob ? [name, await blob.text()] : null;
+})(%s)"""
+# Whether the legend of the failure histogram is titled as given and every
+# entry is "<label>: <its colour's share of the bars> %", the label as the
+# function given says.
+LEGEND_SHARES = """((title, label) => {
+  const gd = document.getElementById('ecChartHist');
+  const bars = gd.data.filter((t) => t.type === 'bar' && t.yaxis === 'y2');
+  const h = ECPage.getState().histogram.h;
+  const sum = new Map(bars.map((t) => [t.legendgroup, t.y.reduce((a, v) => a + (v || 0), 0)]));
+  const total = [...sum.values()].reduce((a, b) => a + b, 0);
+  const sums = h.groups.map((g) => sum.get(g.key));
+  const texts = Array.from(document.querySelectorAll('#ecChartHist .legendtext')).map((e) => e.textContent.replace(/\\u200b/g, ''));
+  const head = document.querySelector('#ecChartHist .legendtitletext');
+  return !!head && head.textContent === title && texts.length === bars.length
+    && texts.every((t, i) => t === label(i, h) + ': ' + ECPage.fmt(100 * sums[i] / total, 3) + ' %%');
+})(%s, %s)"""
+# The legend entries of the failure histogram, and the rows of the table of
+# sulphide groups under it, as text (Plotly sets superscripts off with
+# zero-width spaces).
+LEGEND_TEXTS = """Array.from(document.querySelectorAll('#ecChartHist .legendtext')).map((e) => e.textContent.replace(/\\u200b/g, ''))"""
+HS_ROWS = """Array.from(document.querySelectorAll('#ecDecadeTable tbody tr')).map((tr) => Array.from(tr.children).slice(1).map((td) => td.textContent.replace(/\\u200b/g, '')))"""
+# What the bars of the failure histogram add up to.
+BARS_SUM = """document.getElementById('ecChartHist').data.filter((t) => t.type === 'bar' && t.yaxis === 'y2')
+  .reduce((s, t) => s + t.y.reduce((a, v) => a + (v || 0), 0), 0)"""
 
 failures = []
 checks = 0
@@ -180,7 +240,7 @@ async def main():
             check('nor any other control', await page.ev(NO_CONTROL_IN_SUMMARY), '')
             check('each heading\'s (i) is centred on its line, at its end', await page.ev(HEADING_I_OFF % '.kvot-info-sec'), '')
             check('and every result tab’s toolbar',
-                  await page.ev("['failures', 'time', 'distributions', 'holes']"
+                  await page.ev("['failures', 'histogram', 'time', 'distributions', 'holes']"
                                 ".filter((t) => !document.querySelector(`.ec-pane[data-pane=\"${t}\"] .ec-toolbar .info-btn`))"), [])
             # (A file name cut short keeps its title: the whole name, not a tooltip.)
             check('no hover tooltips left on the settings or the toolbars',
@@ -280,7 +340,7 @@ async def main():
             # SR-Site settings on the panel and drop the local copy.
             have_case = await page.ev(f"fetch({json.dumps(CASE)}, {{ method: 'HEAD' }}).then((r) => r.ok, () => false)")
             if not have_case:
-                print('skip  the code test case and everything that needs hydro data: no local copy of the test file'
+                print('skip  the code test case and the checks on its results: no local copy of the test file'
                       ' (python3 resources/tests/erosion_corrosion/make-local-fixtures.py <folder>)')
             else:
                 await page.ev("(() => { const s = document.querySelector('select[data-key=\"buffModel\"]'); s.value = 'OldKTH';"
@@ -332,6 +392,13 @@ async def main():
                       await page.ev("(() => { const d = document.getElementById('ecChartTime'); return d.data ? d.data.length : 'none'; })()"), 3)
                 check('and its failed-canister curve ends at the corrected mean',
                       await page.ev("(() => { const y = document.getElementById('ecChartTime').data[0].y; return Math.abs(y[y.length - 1] - 3.5) < 1e-9; })()"), True)
+                await page.ev("document.querySelector('[data-tab=\"histogram\"]').click()")
+                await asyncio.sleep(1.2)
+                check('the failure histogram adds up to the corrected mean too', abs(await page.ev(BARS_SUM) - 3.5) < 1e-9, True)
+                check('its canisters: holes 1 to 3 fail for every sulphide value, hole 4 for half',
+                      await page.ev("Array.from(document.querySelectorAll('#ecCanisterTable tbody tr'))"
+                                    ".map((tr) => tr.children[1].textContent + ':' + tr.children[2].textContent).sort().join(' ')"),
+                      '1:100 % 2:100 % 3:100 % 4:50 %')
                 await page.ev("document.querySelector('[data-tab=\"distributions\"]').click()")
                 await asyncio.sleep(1.5)
                 check('the Qeq distribution draws four curves plus a line',
@@ -379,9 +446,8 @@ async def main():
 
                 # --- a second realisation, and pooling -------------------------
                 await page.ev(DROP_CASE % json.dumps('copy.csv'))
-                await asyncio.sleep(2.5)
                 check('a dropped file becomes a second realisation',
-                      await page.ev("ECPage.getState().result ? ECPage.getState().result.results.length : 0"), 2)
+                      await settle(page, "ECPage.getState().result ? ECPage.getState().result.results.length : 0", 2), 2)
                 check('the status says two realisations',
                       await page.ev("document.getElementById('ecStatus').textContent.includes('2 realisations')"), True)
                 await page.ev("document.querySelector('[data-tab=\"summary\"]').click()")
@@ -414,6 +480,270 @@ async def main():
                   '600:true:HSLaxemar')
             check('and reports the unknown key',
                   await page.ev("document.getElementById('ecStatus').textContent.includes('bogus')"), True)
+
+            # --- the failure histogram, on a layout of our own ---------------
+            async def choose(sel, value):
+                await page.ev("(() => { const s = document.querySelector(%s); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % (json.dumps(sel), json.dumps(value)))
+                await asyncio.sleep(0.6)
+
+            async def set_sulphide(n):
+                await page.ev("(() => { const s = document.getElementById('ecHsTable'); s.value = 'generic';"
+                              " s.dispatchEvent(new Event('change', { bubbles: true }));"
+                              " const el = document.getElementById('ecHsN'); el.value = %s;"
+                              " el.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(str(n)))
+
+            async def sulphide_values(n):
+                await set_sulphide(n)
+                return await settle(page, "ECPage.getState().result && ECPage.getState().result.results[0].key.nHs", n)
+
+            await page.ev("document.querySelector('[data-on-click=\"ec:resetParams\"]').click()")
+            await page.ev("document.querySelector('[data-on-click=\"ec:clearHydro\"]').click()")
+            await set_sulphide(1000)
+            await page.ev(DROP_TEXT % (json.dumps(synthetic_csv()), json.dumps('synthetic.csv')))
+            check('a layout of our own runs with a generated sulphide table of 1000 values',
+                  await settle(page, "!!ECPage.getState().result && ECPage.getState().hydro.length === 1"
+                                     " && ECPage.getState().result.results[0].key.nHs === 1000", True), True)
+            await page.ev("document.querySelector('[data-tab=\"histogram\"]').click()")
+            await asyncio.sleep(1.2)
+            state = "ECPage.getState()"
+            check('the failure histogram draws',
+                  await page.ev("!document.getElementById('ecChartHist').hidden && document.getElementById('ecChartHist').data.length > 3"), True)
+            def close(a, b, tol=1e-9):
+                return isinstance(a, (int, float)) and isinstance(b, (int, float)) and abs(a - b) <= tol * max(abs(b), 1e-300)
+            mean_corr = await page.ev(f"{state}.result.summary.meanFailedCorrected.mean")
+            n_rows = await page.ev(f"{state}.result.results[0].key.nFailRows")
+            n_cans = await page.ev(f"{state}.histogram.h.canisters.length")
+            n_rows_text, n_cans_text = f'{n_rows:,}', f'{n_cans:,}'
+            check('its bars add up to the corrected mean', close(await page.ev(BARS_SUM), mean_corr), True)
+            check('one colour per sulphide decade',
+                  await page.ev(f"document.getElementById('ecChartHist').data.filter((t) => t.type === 'bar').length === {state}.histogram.h.bands.length"), True)
+            # Each legend entry gives its colour's share of the bars, and under
+            # it the share of the sulphide values in its decade.
+            check('the legend gives each decade’s share of the bars, under the title Share of the failures',
+                  await page.ev(LEGEND_SHARES % (json.dumps('Share of the failures'),
+                                                 "(i, h) => { const p = (k) => '10' + (k < 0 ? '−' + -k : String(k)); const b = h.bands[i];"
+                                                 " return b.below ? 'below ' + p(b.exp + 1) + ' M' : p(b.exp) + '–' + p(b.exp + 1) + ' M'; }")), True)
+            # Under the chart: the share of the values in each decade, beside
+            # the share of the failures they give.
+            decades = await page.ev("""Array.from(document.querySelectorAll('#ecDecadeTable tbody tr'))
+              .map((tr) => Array.from(tr.children).slice(1).map((td) => td.textContent))""")
+            check('the table of decades has a row per decade', len(decades), await page.ev(f"{state}.histogram.h.bands.length"))
+            check('with the share of the sulphide values in each',
+                  [row[2] for row in decades],
+                  await page.ev(f"{state}.histogram.h.bands.map((b) => ECPage.fmt(100 * b.n / 1000, 3) + ' %')"))
+            check('beside its share of the failures, the part of the bars in its colour',
+                  [row[3] for row in decades],
+                  await page.ev("(() => { const bars = document.getElementById('ecChartHist').data.filter((t) => t.type === 'bar' && t.yaxis === 'y2');"
+                                " const sum = new Map(bars.map((t) => [t.legendgroup, t.y.reduce((a, v) => a + (v || 0), 0)]));"
+                                " const total = [...sum.values()].reduce((a, b) => a + b, 0);"
+                                " return ECPage.getState().histogram.h.groups.map((g) => ECPage.fmt(100 * sum.get(g.key) / total, 3) + ' %'); })()"))
+            check('the highest decade is on top of the stacks and first in the legend, as in the table',
+                  await page.ev("(() => { const gd = document.getElementById('ecChartHist'); const h = ECPage.getState().histogram.h;"
+                                " const bars = gd.data.filter((t) => t.type === 'bar' && t.yaxis === 'y2').map((t) => t.legendgroup);"
+                                " const first = document.querySelector('#ecChartHist .legendtext').textContent.replace(/\\u200b/g, '');"
+                                " return bars[bars.length - 1] === h.groups[0].key && bars[0] === h.groups[h.groups.length - 1].key"
+                                " && first.startsWith('10' + (h.bands[0].exp < 0 ? '−' + -h.bands[0].exp : h.bands[0].exp) + '–'); })()"), True)
+            check('and its canisters fewer the lower the decade',
+                  all(int(a[6].replace(',', '')) >= int(b[6].replace(',', '')) for a, b in zip(decades, decades[1:]) if int(b[1].replace(',', '')) > 0), True)
+            check('its total row: every value, every row, every canister',
+                  await page.ev("Array.from(document.querySelector('#ecDecadeTable tfoot tr').children).slice(1).map((td) => td.textContent).join('|')"),
+                  f'All|1,000|100 %|100 %|{await page.ev(f"ECPage.fmt({state}.result.summary.meanFailedCorrected.mean, 4)")}|{n_rows_text}|{n_cans_text}')
+            check('several rows to a canister, more than eight canisters', n_rows > n_cans > 8, True)
+            await choose('#ecHistCount', 'rows')
+            check('counting rows, they add up to the rows of the failure table', close(await page.ev(BARS_SUM), n_rows), True)
+            await choose('#ecHistCount', 'uncorrected')
+            check('uncorrected, to the mean number of failed canisters',
+                  close(await page.ev(BARS_SUM), await page.ev(f"{state}.result.results[0].key.meanFailed")), True)
+            await choose('#ecHistCount', 'corrected')
+            await choose('#ecHistBy', 'canister')
+            check('by canister: eight on their own and the rest together',
+                  await page.ev("Array.from(document.querySelectorAll('#ecChartHist .legendtext')).map((e) => e.textContent).pop()"),
+                  f'{n_cans - 8} other canisters: {await page.ev("ECPage.fmt(100 * ECPage.getState().histogram.h.groups[8].total / ECPage.getState().histogram.h.total, 3)")} %')
+            check('the legend gives each canister’s share of the bars',
+                  await page.ev(LEGEND_SHARES % (json.dumps('Share of the failures'),
+                                                 "(i, h) => i < 8 ? String(h.groups[i].canister.id) : h.groups[i].canisters + ' other canisters'")), True)
+            check('and still adding up to the corrected mean', close(await page.ev(BARS_SUM), mean_corr), True)
+
+            async def click_legend(i, clicks):
+                # Plotly holds a single click back for its double-click delay, so
+                # the checks below wait for the state rather than for a time. The
+                # clicks go from inside the page, on the entry's toggle, so that the
+                # two of a double click come within that delay however busy the
+                # machine (sent one by one over CDP they can miss it).
+                await page.ev("((i, clicks) => {"
+                              " const t = document.querySelectorAll('#ecChartHist .legend .traces')[i].querySelector('.legendtoggle');"
+                              " const r = t.getBoundingClientRect();"
+                              " const o = { bubbles: true, cancelable: true, view: window, button: 0, clientX: r.left + 10, clientY: r.top + r.height / 2 };"
+                              " for (let n = 1; n <= clicks; n++) {"
+                              "  t.dispatchEvent(new MouseEvent('mousedown', { ...o, detail: n })); t.dispatchEvent(new MouseEvent('mouseup', { ...o, detail: n })); }"
+                              "})(%d, %d)" % (i, clicks))
+            shown = ("[...new Set(document.getElementById('ecChartHist')._fullData.filter((t) => t.visible === true)"
+                     ".map((t) => t.legendgroup))].sort().join(' ')")
+            groups = await page.ev(f"{state}.histogram.h.groups.map((g) => g.key)")
+            hidden = ("document.getElementById('ecChartHist')._fullData.filter((t) => t.visible === 'legendonly')"
+                      ".map((t) => t.legendgroup + ':' + t.type + ':' + t.xaxis).sort().join(' ')")
+            await click_legend(0, 1)
+            want = ' '.join(sorted(f'{groups[0]}:{t}' for t in ('bar:x', 'scatter:x', 'scatter:x2')))
+            check('a click on a canister in the legend hides its bars, curve and dot', await settle(page, hidden, want), want)
+            await click_legend(0, 1)
+            await settle(page, hidden, '')
+            await click_legend(1, 2)
+            want = ' '.join(sorted([groups[1], 'hs-table']))
+            check('a double click shows that canister alone, with the sulphide table', await settle(page, shown, want), want)
+            await asyncio.sleep(0.4)
+            await click_legend(1, 2)
+            want = ' '.join(sorted(groups + ['hs-table']))
+            check('and another shows them all again', await settle(page, shown, want), want)
+
+            check('the canister table has a row per canister',
+                  await page.ev("document.querySelectorAll('#ecCanisterTable tbody tr').length"), n_cans)
+            check('its colours are the chart’s, for the eight',
+                  await page.ev("document.querySelectorAll('#ecCanisterTable .ec-swatch').length"), 8)
+            check('its corrected column adds up to the corrected mean',
+                  await page.ev("document.querySelector('#ecCanisterTable tfoot').textContent.includes(ECPage.fmt(ECPage.getState().result.summary.meanFailedCorrected.mean, 4))"), True)
+            await page.ev("document.querySelector('#ecCanisterTable th[data-key=\"earliest\"]').click()")
+            await asyncio.sleep(0.3)
+            check('sorting by earliest failure puts the first failure first',
+                  await page.ev("document.querySelector('#ecCanisterTable tbody tr').children[5].textContent"
+                                f" === ECPage.fmt(Math.round(Math.min(...{state}.histogram.h.canisters.map((x) => x.earliest))))"), True)
+            dots = "document.getElementById('ecChartHist').data.filter((t) => t.mode === 'markers' && t.xaxis === 'x').length"
+            check('no dots for the rows of a table of 1000 values', await page.ev(dots), 0)
+            await choose('#ecHistScale', 'linear')
+            check('a linear time axis offers bins in years',
+                  await page.ev("Array.from(document.getElementById('ecHistBins').options).map((o) => o.textContent)"),
+                  ['50,000 years', '20,000 years', '10,000 years'])
+            check('and draws them from 0', await page.ev(f"{state}.histogram.h.edges[0] === 0 && {state}.histogram.h.edges.length === 51"), True)
+            await choose('#ecHistScale', 'log')
+            check('a logarithmic one, in tenths of a decade',
+                  await page.ev("document.getElementById('ecHistBins').value + ':' + document.getElementById('ecHistBins').selectedOptions[0].textContent"),
+                  'medium:1/10 decade')
+            # Twice the sulphide values: twice the rows, the same bars.
+            await sulphide_values(2000)
+            await asyncio.sleep(0.6)
+            rows2 = await page.ev(f"{state}.result.results[0].key.nFailRows")
+            check('twice the sulphide values give about twice the rows', 1.8 < rows2 / n_rows < 2.3, True)
+            check('and bars that still add up to the corrected mean',
+                  close(await page.ev(BARS_SUM), await page.ev(f"{state}.result.summary.meanFailedCorrected.mean")), True)
+            check('which moves by less than five per cent',
+                  abs(await page.ev(f"{state}.result.summary.meanFailedCorrected.mean") / mean_corr - 1) < 0.05, True)
+            # The saved bins and canisters.
+            got = await page.ev(CAUGHT_DOWNLOAD % json.dumps('[data-on-click="ec:histCsv"]'))
+            table = list(csv.reader(io.StringIO(got[1]))) if got else [[]]
+            n_colours = await page.ev(f"{state}.histogram.h.groups.length")
+            check('CSV saves the bins with a column per colour and a total', bool(got) and got[0] == 'erosion_corrosion_histogram.csv'
+                  and table[0][:2] == ['From (yr)', 'To (yr)'] and len(table[0]) == n_colours + 3
+                  and table[0][-1] == 'Total (failed canisters, corrected)', True)
+            check('and the totals add up to the corrected mean',
+                  close(sum(float(row[-1]) for row in table[1:]), await page.ev(f"{state}.histogram.h.total"), 1e-12), True)
+            got = await page.ev(CAUGHT_DOWNLOAD % json.dumps('[data-on-click="ec:canistersCsv"]'))
+            lines = got[1].strip().split('\n') if got else []
+            check('the canisters’ CSV has a line per canister',
+                  bool(lines) and lines[0].startswith('Realisation,ID,Rows,Share,FailedCorrected') and len(lines) - 1 == await page.ev(f"{state}.histogram.h.canisters.length"), True)
+            # The (i) of the tab marks the choices in force.
+            await page.ev("document.querySelector('[data-info=\"pane:histogram\"]').click()")
+            await asyncio.sleep(0.3)
+            check('the tab’s (i) opens on the histogram',
+                  await page.ev("document.querySelector('.info-panel .info-panel-title').textContent"), 'Failure histogram')
+            check('and marks the count and the colours in force', await page.ev(current), ['failed canisters, corrected', 'canister'])
+            await choose('#ecHistBy', 'hs')
+            check('following a change', await page.ev(current), ['failed canisters, corrected', '[HS⁻] decade'])
+            await page.ev("document.querySelector('.info-panel .info-panel-more').click()")
+            await asyncio.sleep(0.4)
+            check('its Help link opens the section on the histogram',
+                  await page.ev("""(() => {
+                    const pane = document.querySelector('.ec-pane[data-pane="help"]');
+                    const h = document.getElementById('help-histogram');
+                    return ECPage.getState().tab === 'help' && Math.abs(h.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2;
+                  })()"""), True)
+            # A measured table: a dot for each row, on its canister's curve.
+            await choose('#ecHsTable', 'HSForsmark')
+            await settle(page, "ECPage.getState().result && ECPage.getState().result.results[0].key.nHs", 46)
+            await page.ev("document.querySelector('[data-tab=\"histogram\"]').click()")
+            await asyncio.sleep(1.0)
+            check('with HSForsmark every row is a dot on a curve',
+                  await page.ev("document.getElementById('ecChartHist').data.filter((t) => t.mode === 'markers' && t.xaxis === 'x')"
+                                ".reduce((s, t) => s + t.x.length, 0)"), await page.ev(f"{state}.result.results[0].key.nFailRows"))
+            # Equal shares of the failures: here every canister fails for the
+            # highest value alone, which no cut can split.
+            await choose('#ecHistBy', 'hsq')
+            check('colouring by equal shares shows the Divisions', await page.ev("!document.getElementById('ecHistDiv').hidden"), True)
+            check('one value gives every failure: one group, its legend entry that value and 100 %',
+                  await page.ev(f"(() => {{ const l = {LEGEND_TEXTS}; const r = {HS_ROWS};"
+                                " return l.length === 1 && l[0] === r[0][0] + ': 100 %' && r[0][1] === '1' && !r[0][0].includes('–'); })()"), True)
+            check('and the table says why there are fewer groups than asked for',
+                  await page.ev("document.getElementById('ecDecadeNote').textContent.startsWith('The sulphide values that fail a canister, in 1 group, not 5: a group cannot split a sulphide value')"), True)
+            check('with the values that fail no canister in its last row',
+                  await page.ev(f"(() => {{ const r = {HS_ROWS}; return r.length === 2 && r[1][0].endsWith('failing no canister') && r[1][3] === '0 %'"
+                                " && r[0][3] === '100 %'; })()"), True)
+            # By percentile: 46 values put the highest at P97.8, so P99 and up hold none.
+            await choose('#ecHistBy', 'hsp')
+            check('colouring by percentiles shows the Percentiles, not the Divisions',
+                  await page.ev("[!document.getElementById('ecHistPctBox').hidden, document.getElementById('ecHistPctTextBox').hidden, document.getElementById('ecHistDiv').hidden].join()"),
+                  'true,true,true')
+            check('HSForsmark leaves P99.9–P100 and P99–P99.9 without values, and the table says why',
+                  await page.ev(f"(() => {{ const r = {HS_ROWS}; return r.length === 5 && r[0][1] === 'no values' && r[1][1] === 'no values' && r[2][0] === 'P90–P99'; }})()")
+                  and await page.ev("document.getElementById('ecDecadeNote').textContent.includes('2 of the groups hold no value: with 46 values the highest lies at P97.8')"), True)
+            check('and the legend only the groups that hold values',
+                  await page.ev(f"{LEGEND_TEXTS}.map((t) => t.split(':')[0]).join()"), 'P90–P99,P50–P90,P0–P50')
+            # A long table of failure times shows its first rows.
+            await sulphide_values(10000)
+            await page.ev("document.querySelector('[data-tab=\"failures\"]').click()")
+            await asyncio.sleep(0.8)
+            n10 = await page.ev(f"{state}.result.table.length")
+            check('a long failure table shows its first 300 rows',
+                  await page.ev("document.querySelectorAll('#ecFailTable tbody tr').length") == 300 and n10 > 1000, True)
+            check('and says how many there are',
+                  await page.ev("document.getElementById('ecFailNote').textContent"),
+                  f'Showing 300 of {n10:,} rows, in the order shown; the CSV and the Excel workbook have them all.')
+            await page.ev("document.querySelector('[data-on-click=\"ec:failuresMore\"]').click()")
+            await asyncio.sleep(0.4)
+            check('Show more adds a thousand', await page.ev("document.querySelectorAll('#ecFailTable tbody tr').length"), min(1300, n10))
+            await choose('#ecHistBy', 'hsq')
+            # With 10,000 values the shares come out as even as whole values
+            # allow: no value is split, so a share can miss its target by as
+            # much as the largest value gives, the highest one here (it fails
+            # the most canisters), about 5 % of the rows.
+            await page.ev("document.querySelector('[data-tab=\"histogram\"]').click()")
+            await asyncio.sleep(1.0)
+            top = await page.ev("(() => { const r = ECPage.getState().result; const hi = r.results[0].key.hsMax;"
+                                " return 100 * r.table.filter((f) => f.hs === hi).length / r.table.length; })()")
+            for k in (5, 3):
+                await choose('#ecHistDivisions', str(k))
+                shares = [float(t.rsplit(': ', 1)[1].rstrip(' %')) for t in await page.ev(LEGEND_TEXTS)]
+                check(f'{k} divisions of 10,000 values: {k} groups of {100 / k:.3g} % of the failures, each as near as whole values allow',
+                      len(shares) == k and all(abs(x - 100 / k) <= top for x in shares) and abs(sum(shares) - 100) < 0.5, True)
+            check('each legend entry is the range of its group and its share, as in the table',
+                  await page.ev(f"(() => {{ const l = {LEGEND_TEXTS}; const r = {HS_ROWS}; return l.length === 3 && l.every((t, i) => t === r[i][0] + ': ' + r[i][3]); }})()"), True)
+            check('the groups’ shares of the values grow as they go down the concentrations',
+                  await page.ev(f"(() => {{ const r = {HS_ROWS}.slice(0, 3).map((x) => parseFloat(x[2])); return r[0] < r[1] && r[1] < r[2]; }})()"), True)
+            await choose('#ecHistBy', 'hs')
+            check('and the Divisions go with the colouring', await page.ev("document.getElementById('ecHistDiv').hidden"), True)
+            # Percentiles of 10,000 values: the tail cuts, quintiles and cuts of one's own.
+            await choose('#ecHistBy', 'hsp')
+            check('the tail percentiles hold 0.1, 0.9, 9, 40 and 50 % of the values',
+                  await page.ev(f"{HS_ROWS}.map((x) => x[3]).join(' | ')"), '0.1 % | 0.9 % | 9 % | 40 % | 50 %')
+            check('each legend entry: the percentiles, the share of the failures, then the [HS⁻] range, as in the table',
+                  await page.ev(f"(() => {{ const l = {LEGEND_TEXTS}; const r = {HS_ROWS};"
+                                " return l.length === 5 && l.every((t, i) => t === r[i][0] + ': ' + r[i][4] + r[i][1]); })()"), True)
+            await choose('#ecHistPct', 'quintiles')
+            check('quintiles: five groups of a fifth of the values',
+                  await page.ev(f"{HS_ROWS}.map((x) => x[0] + ' ' + x[3]).join(' | ')"), 'P80–P100 20 % | P60–P80 20 % | P40–P60 20 % | P20–P40 20 % | P0–P20 20 %')
+            await choose('#ecHistPct', 'custom')
+            check('other… brings up Cut at', await page.ev("!document.getElementById('ecHistPctTextBox').hidden"), True)
+            await choose('#ecHistPctText', '90; 99,9')
+            check('where a comma inside a number is its decimal mark',
+                  await page.ev(f"{LEGEND_TEXTS}.map((t) => t.split(':')[0]).join()"), 'P99.9–P100,P90–P99.9,P0–P90')
+            await page.ev("(() => { const el = document.getElementById('ecHistPctText'); el.value = '120 5';"
+                          " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            check('a percentile of 100 or more is refused, and the cuts stay',
+                  await page.ev("!document.getElementById('ecHistPctText').validity.valid && ECPage.getState().hist.pctText === '90; 99,9'"
+                                " && ECPage.getState().histogram.h.percentiles.join() === '90,99.9'"), True)
+            await page.ev("(() => { const el = document.getElementById('ecHistPctText'); el.value = '90; 99,9';"
+                          " el.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await choose('#ecHistPct', 'tail')
+            await choose('#ecHistBy', 'hs')
 
             check('no script errors during the session', page.errors, [])
         finally:
