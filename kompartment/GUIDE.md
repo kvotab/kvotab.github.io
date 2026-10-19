@@ -101,6 +101,11 @@ Started in a terminal, the server offers to set up what is missing:
   installed into your own Python, so one the system manages (Homebrew's, a
   Linux distribution's) is never asked to take a package. The server runs the
   engine on it from then on, unless `--python` says otherwise.
+- **numba**, where the engine runs without it: installed into the engine's own
+  Python where it has one, or, where your Python has NumPy and SciPy but not
+  numba, by making the engine one of its own as above. numba needs Python 3.10
+  or newer, so it is not offered on an older one, nor for a Python named with
+  `--python`.
 - **Julia**: its official installer, juliaup, which asks its own questions.
 - **Julia's packages**: installed and compiled once, a few minutes.
 

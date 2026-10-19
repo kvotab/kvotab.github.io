@@ -15,6 +15,8 @@ get it, and, at a terminal, offers to get it:
   Python, and one a system manages (Homebrew's, a Linux distribution's) is
   never asked to take a package. Once it is there, serve.py runs the engine on
   it unless told another (`--python`).
+- numba, where the engine runs without it: into the engine's own Python where
+  it has one, else by making it one, as above.
 - Julia: its official installer (juliaup), which asks its own questions.
 - Julia's packages: the project's, resolved, installed and compiled once --
   which is the minute the engine's first start would otherwise take.
@@ -44,6 +46,9 @@ PYTHON_WANTS = ["numba>=0.62"]
 #: The oldest Python and Julia the engines run on (python/pyproject.toml, julia/Project.toml).
 PYTHON_OLDEST = (3, 9)
 JULIA_OLDEST = (1, 10)
+
+#: The oldest Python numba 0.62 installs on: it has no wheel for 3.9.
+NUMBA_PYTHON = (3, 10)
 
 #: How Julia is installed, as the people who make it say: juliaup, which asks its own questions.
 JULIA_INSTALL = (["winget", "install", "--name", "Julia", "--id", "9NJNWW8PVKMN", "-e", "-s", "msstore"]
@@ -312,17 +317,47 @@ def _python(python, asked, setup, may, answers, env):
             answers["no"].add("python")
     if why:
         return python, f"{why} ({SETUP} sets it up)"
+    # A Python named with --python stays the engine's: numba, which it can do
+    # without, does not move the engine onto one of its own.
+    if not state.get("numba") and (python == own or not asked):
+        python, state = _numba(python, own, state, setup, may, answers, env)
     if not state.get("numba"):
-        if python == own and setup:
-            install_numba(python)
+        quicker = "Python engine without numba, which makes it several times quicker"
+        if tuple(state["version"]) < NUMBA_PYTHON:
+            answers["notes"].append("{} and needs Python {}.{} or newer: pass one with --python".format(
+                quicker, *NUMBA_PYTHON))
         elif python == own:
-            answers["notes"].append(f"Python engine without numba, which makes it several times quicker ({SETUP})")
+            answers["notes"].append(f"{quicker} ({SETUP} installs it)")
         else:
-            answers["notes"].append(f"Python engine without numba, which makes it several times quicker: "
-                                    f"{python} -m pip install numba")
+            answers["notes"].append(f"{quicker}: {python} -m pip install numba, or {SETUP}")
     if python == own:
         answers["notes"].append(f"Python engine on its own Python, {VENV}")
     return python, None
+
+
+def _numba(python, own, state, setup, may, answers, env):
+    """numba for an engine that runs without it, offered as Julia's packages are:
+    into the engine's own Python where it has one, else by making it one, since
+    nothing is installed into anybody's own. Not offered on a Python numba does
+    not install on. The interpreter and its state afterwards; a no, or an install
+    that failed, is remembered, so that the next start does not ask again."""
+    if not may("numba") or tuple(state["version"]) < NUMBA_PYTHON:
+        return python, state
+    print(f"The Python engine runs without numba, which makes it several times quicker ({python}).")
+    if python == own:
+        if setup or ask("Install numba into the engine's own Python? A few tens of MB."):
+            install_numba(own)
+    elif setup or ask(f"Make it a Python of its own at {VENV}, with NumPy, SciPy and numba -- about 300 MB, "
+                      "and nothing installed into your own Python?"):
+        made = set_up_python(python)
+        if made:
+            python = made
+    state = python_state(python, env)
+    if state.get("numba"):
+        answers["no"].discard("numba")
+    else:
+        answers["no"].add("numba")
+    return python, state
 
 
 def _julia(julia, project, setup, asking, may, answers, env):

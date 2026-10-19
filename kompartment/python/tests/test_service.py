@@ -727,6 +727,65 @@ class WhatTheEnginesNeed(unittest.TestCase):
             self.assertTrue(E.install_julia_packages(julia, project, env))
             self.assertEqual(E.julia_state(julia, project, env)['missing'], [])
 
+    def test_numba_is_offered_as_julia_s_packages_are(self):
+        # Where the engine runs without numba: into its own Python where it has one,
+        # else by making it one -- never into the reader's own Python. Probes and
+        # installers stood in for, so that nothing is downloaded.
+        E = _enginesetup()
+        with tempfile.TemporaryDirectory() as d:
+            E.HOME, E.VENV = d, os.path.join(d, 'python')
+            own = E.venv_python(E.VENV)
+            states = {'/my/python': {'version': [3, 12], 'numpy': True, 'scipy': True, 'numba': False},
+                      '/old/python': {'version': [3, 9], 'numpy': True, 'scipy': True, 'numba': False}}
+            E.python_state = lambda python, env=None: dict(states.get(python, {'error': f'no {python}'}))
+            E.interactive = lambda: True
+            replies = []
+            E.ask = lambda question: replies.pop(0)  # an unexpected question fails the test
+            made, installed = [], []
+
+            def set_up(base):
+                made.append(base)
+                os.makedirs(os.path.dirname(own), exist_ok=True)
+                open(own, 'w').close()
+                states[own] = {'version': [3, 12], 'numpy': True, 'scipy': True, 'numba': True}
+                return own
+
+            def numba(python):
+                installed.append(python)
+                states[python]['numba'] = True
+                return True
+
+            E.set_up_python, E.install_numba = set_up, numba
+            project = str(APP / 'julia')
+            run = lambda python, asked=False, **kw: E.prepare(python, asked, 'julia', True, False, project, **kw)  # noqa: E731
+            # Asked, and told no: nothing made, the no kept, how to get it said -- and not asked again.
+            replies[:] = [False]
+            python, why, _, _, notes = run('/my/python')
+            self.assertEqual((python, why, made, replies), ('/my/python', None, [], []))
+            self.assertIn('numba', E.declined())
+            self.assertIn('Python engine without numba, which makes it several times quicker: /my/python -m pip '
+                          'install numba, or python3 serve.py --setup', notes)
+            run('/my/python')
+            # --setup: the engine's own Python made, from the reader's, and run on.
+            python, why, _, _, notes = run('/my/python', setup=True)
+            self.assertEqual((python, why, made), (own, None, ['/my/python']))
+            self.assertNotIn('numba', E.declined())
+            self.assertIn(f'Python engine on its own Python, {E.VENV}', notes)
+            # The engine's own Python without numba: numba installed into it, at a yes.
+            states[own]['numba'] = False
+            replies[:] = [True]
+            python, _, _, _, notes = run('/my/python')
+            self.assertEqual((python, installed, replies), (own, [own], []))
+            self.assertFalse(any('without numba' in n for n in notes), notes)
+            # Not offered on a Python numba does not install on, nor for one named with --python.
+            os.remove(own)
+            _, _, _, _, notes = run('/old/python')
+            self.assertIn('Python engine without numba, which makes it several times quicker and needs Python '
+                          '3.10 or newer: pass one with --python', notes)
+            python, _, _, _, notes = run('/my/python', asked=True)
+            self.assertEqual(python, '/my/python')
+            self.assertEqual(made, ['/my/python'])
+
     def test_a_no_is_remembered_and_nothing_is_asked_without_a_terminal(self):
         E = _enginesetup()
         with tempfile.TemporaryDirectory() as d:

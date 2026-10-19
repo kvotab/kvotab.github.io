@@ -5483,7 +5483,10 @@ input and output both a TTY, so never in a test or a pipe) `prepare` offers to
 set up what is missing: a virtual environment at `~/.kompartment/python`
 (`KOMPARTMENT_HOME`) made from the Python serve.py runs on, NumPy and SciPy
 installed into it and then numba on its own, so that numba failing costs only
-speed; juliaup's installer; in `julia/`, the General registry where Julia has
+speed; numba, where the engine runs without it, into that Python or by making
+it (`_numba`: not on a Python older than 3.10, which numba 0.62 has no wheel
+for, nor for one named with `--python`; a no or a failed install is kept as
+`numba`); juliaup's installer; in `julia/`, the General registry where Julia has
 none (`Pkg.resolve`, unlike `Pkg.instantiate`, does not fetch one, and on a Mac
 that had never installed a package it stopped at "no registries have been
 installed"), then `Pkg.resolve(); Pkg.instantiate(); Pkg.precompile()` --
