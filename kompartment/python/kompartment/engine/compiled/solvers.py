@@ -13,10 +13,11 @@ Jacobian and for progress, through ``int64(float64, float64)`` callbacks
 numbers the Python error messages need.
 
 The iteration matrix is factorised where the Python solver would factorise
-it: by the application's dense LU, compiled here (what the Python solvers use
-up to 200 states unless a sparse factorisation fills in less), or -- for a
-larger or sparser matrix -- by the Python solver's own ``IterationMatrix``
-(SuperLU or LAPACK), which the loop calls back to form and to solve with.
+it: by the application's dense LU, compiled here (up to 200 states, where the
+matrix is not sparse); by its sparse LUs (``solvers/sparselu.py``, which the
+Python solvers use too), formed and solved with in the loop; or -- a dense
+matrix past 200 states -- by the Python solver's own ``IterationMatrix``
+(LAPACK), which the loop calls back to form and to solve with.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import numpy as np
 from numba import cfunc, njit, types
 
 from . import guard_numba_cache
+from ..solvers import sparselu as _splu
 
 guard_numba_cache()
 
@@ -66,6 +68,7 @@ E_MATRIX = 11          # t: the Python matrix would not factorise; the driver ho
 # Where the iteration matrix is factorised.
 MAT_KERNEL = 0         # here, by the application's dense LU
 MAT_PYTHON = 1         # by the Python solver's own IterationMatrix (SuperLU, LAPACK), called back
+MAT_SPARSE = 2         # here, by the application's sparse LUs (``solvers/sparselu.py``)
 
 # Jacobian modes.
 JAC_DENSE = 0          # differenced, one column at a time (no pattern)
@@ -403,12 +406,20 @@ def _singular(fstat, t, fail, st):
 
 
 @njit(**_OPTS)
-def _form_m(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held, any_held, lu, piv, fail):
+def _form_m(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held, any_held, lu, piv, fail, sw):
     """I - a*J formed and factorised where the Python solver would: 0, a
-    status of :func:`_form` here, or through the callback 3 (it would not
-    factorise) and -1 (it raised)."""
+    status of :func:`_form` here or of the application's sparse LUs in
+    ``sw`` (1 singular, 2 a value not a number, the column and the value in
+    ``fail``), or through the callback 3 (it would not factorise) and -1 (it
+    raised)."""
     if mat_mode == MAT_KERNEL:
         return _form(a, jac_mode, colptr, rowidx, jvals, jdense, held, any_held, lu, piv, fail)
+    if mat_mode == MAT_SPARSE:
+        st = _splu.sw_form(sw, a, jvals, held, any_held)
+        if st != _splu.OK:
+            fail[0] = sw.fail_column
+            fail[1] = sw.fail_value
+        return st
     r = form_cb(a, 1.0 if any_held else 0.0)
     if r < 0:
         return -1
@@ -416,11 +427,14 @@ def _form_m(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held,
 
 
 @njit(**_OPTS)
-def _lsolve(mat_mode, solve_cb, lu, piv, b, x, rbuf, xbuf):
+def _lsolve(mat_mode, solve_cb, lu, piv, b, x, rbuf, xbuf, sw):
     """x = (I - a*J)^-1 b with the latest factorisation; False when the
     callback raised."""
     if mat_mode == MAT_KERNEL:
         _solve(lu, piv, b, x)
+        return True
+    if mat_mode == MAT_SPARSE:
+        _splu.sw_solve(sw, b, x)
         return True
     for i in range(b.size):
         rbuf[i] = b[i]
@@ -523,7 +537,7 @@ def _proj(f, t, y, out, P, X, W, IW, pycb, constrained, push, held_rows, flags, 
 
 @njit(**_OPTS)
 def _form_w(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held_now, held_in_w, constrained,
-            lu, piv, fail):
+            lu, piv, fail, sw):
     any_held = False
     if constrained.size:
         for i in range(held_now.size):
@@ -533,7 +547,7 @@ def _form_w(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held_
                 any_held = True
                 break
     return _form_m(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held_in_w, any_held, lu, piv,
-                   fail)
+                   fail, sw)
 
 
 @njit(**_OPTS)
@@ -864,14 +878,15 @@ NDF_SIG = types.int64(
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
     CB_T, CB_T, _M, _I, _A, _A,                         # form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf
     RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
-    _M, _M, _A, _I)                                     # LT, LF, LB, LO: where steps end (``_landing``)
+    _M, _M, _A, _I,                                     # LT, LF, LB, LO: where steps end (``_landing``)
+    _splu.SW_T)                                         # sw: the sparse matrix, under MAT_SPARSE
 
 
 @njit(NDF_SIG, **_OPTS)
 def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrained,
         jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
         ct, cy, cint, cflt, form_cb, solve_cb, jdense, held_in_w, rbuf, xbuf,
-        evf, evdir, evbuf, evy, evwhich, evstat, LT, LF, LB, LO):
+        evf, evdir, evbuf, evy, evwhich, evstat, LT, LF, LB, LO, sw):
     """``engine/solvers/ndf.py``'s ``ndf``, compiled.
 
     fpar: rtol, hmax, h0, max_steps, stagnation_tol
@@ -1019,7 +1034,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
         for i in range(neq):
             held_now[i] = held_rows[i]
     st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now, held_in_w,
-                 constrained, lu, piv, fail)
+                 constrained, lu, piv, fail, sw)
     if st != 0:
         stats[7] = counts[0]
         return _singular(fstat, t, fail, st)
@@ -1086,7 +1101,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     break
         if h != hW or k != kW or moved:
             st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                         held_in_w, constrained, lu, piv, fail)
+                         held_in_w, constrained, lu, piv, fail, sw)
             if st != 0:
                 stats[7] = counts[0]
                 return _singular(fstat, t, fail, st)
@@ -1129,6 +1144,8 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     resid[i] = (h * fv[i] - hist[i]) * scale - d[i]
                 if mat_mode == MAT_KERNEL:
                     _solve(lu, piv, resid, delta)
+                elif mat_mode == MAT_SPARSE:
+                    _splu.sw_solve(sw, resid, delta)
                 elif solve_cb(0.0, 0.0) < 0:
                     stats[7] = counts[0]
                     return E_CALLBACK
@@ -1172,7 +1189,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                         for i in range(neq):
                             held_now[i] = held_rows[i]
                         st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense,
-                                     held_now, held_in_w, constrained, lu, piv, fail)
+                                     held_now, held_in_w, constrained, lu, piv, fail, sw)
                         if st != 0:
                             stats[7] = counts[0]
                             return _singular(fstat, t, fail, st)
@@ -1199,7 +1216,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                         for i in range(neq):
                             held_now[i] = held_rows[i]
                     st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                                 held_in_w, constrained, lu, piv, fail)
+                                 held_in_w, constrained, lu, piv, fail, sw)
                     if st != 0:
                         stats[7] = counts[0]
                         return _singular(fstat, t, fail, st)
@@ -1227,7 +1244,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                 mask_reforms = 0
                 last = False
                 st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                             held_in_w, constrained, lu, piv, fail)
+                             held_in_w, constrained, lu, piv, fail, sw)
                 if st != 0:
                     stats[7] = counts[0]
                     return _singular(fstat, t, fail, st)
@@ -1247,7 +1264,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     mask_reforms += 1
                     stats[1] += 1
                     st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                                 held_in_w, constrained, lu, piv, fail)
+                                 held_in_w, constrained, lu, piv, fail, sw)
                     if st != 0:
                         stats[7] = counts[0]
                         return _singular(fstat, t, fail, st)
@@ -1289,7 +1306,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     for i in range(neq):
                         held_now[i] = held_rows[i]
                     st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                                 held_in_w, constrained, lu, piv, fail)
+                                 held_in_w, constrained, lu, piv, fail, sw)
                     if st != 0:
                         stats[7] = counts[0]
                         return _singular(fstat, t, fail, st)
@@ -1327,7 +1344,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
             mask_reforms = 0
             last = False
             st = _form_w(mat_mode, form_cb, h / leading[k], jac_mode, colptr, rowidx, jvals, jdense, held_now,
-                         held_in_w, constrained, lu, piv, fail)
+                         held_in_w, constrained, lu, piv, fail, sw)
             if st != 0:
                 stats[7] = counts[0]
                 return _singular(fstat, t, fail, st)
@@ -1571,14 +1588,15 @@ ONESTEP_SIG = types.int64(
     _A, _M, _I, _A,                                     # ct, cy, cint, cflt: the steps as output
     CB_T, CB_T, _M, _A, _A,                             # form_cb, solve_cb, jdense, rbuf, xbuf
     RHS_T, _A, _M, _A, _I, _A,                          # evf, evdir, evbuf, evy, evwhich, evstat: the events
-    _M, _M, _A, _I)                                     # LT, LF, LB, LO: where steps end (``_landing``)
+    _M, _M, _A, _I,                                     # LT, LF, LB, LO: where steps end (``_landing``)
+    _splu.SW_T)                                         # sw: the sparse matrix, under MAT_SPARSE
 
 
 @njit(ONESTEP_SIG, **_OPTS)
 def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_idx,
             jac_mode, colptr, rowidx, jvals, gptr, gcols, ybuf, fpar, ipar, yout, held, stats, fstat,
             ct, cy, cint, cflt, form_cb, solve_cb, jdense, rbuf, xbuf, evf, evdir, evbuf, evy, evwhich, evstat,
-            LT, LF, LB, LO):
+            LT, LF, LB, LO, sw):
     """``engine/solvers/onestep.py``'s ``integrate`` with the Rosenbrock
     (2,3) or the Dormand-Prince stepper, compiled.
 
@@ -1759,7 +1777,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                         ft[i] = (ftmp[i] - f0[i]) / dt
                     dfdt_at = t
                 st = _form_m(mat_mode, form_cb, h * ROS_D, jac_mode, colptr, rowidx, jvals, jdense, held, False,
-                             lu, piv, fail)
+                             lu, piv, fail, sw)
                 if st != 0:
                     stats[2] = nfevals
                     return _singular(fstat, t, fail, st)
@@ -1768,7 +1786,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                 half_h = 0.5 * h
                 for i in range(neq):
                     tmp[i] = f0[i] + hD * ft[i]
-                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k1, rbuf, xbuf):
+                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k1, rbuf, xbuf, sw):
                     stats[2] = nfevals
                     return E_CALLBACK
                 for i in range(neq):
@@ -1776,7 +1794,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                 _held(f, t + 0.5 * h, ymid, f1, P, X, W, IW, pycb, nn_idx, push, hold_on)
                 for i in range(neq):
                     tmp[i] = f1[i] - k1[i]
-                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k2, rbuf, xbuf):
+                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k2, rbuf, xbuf, sw):
                     stats[2] = nfevals
                     return E_CALLBACK
                 for i in range(neq):
@@ -1786,7 +1804,7 @@ def onestep(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, nn_i
                 _held(f, tnew, ynew, f2, P, X, W, IW, pycb, nn_idx, push, hold_on)
                 for i in range(neq):
                     tmp[i] = f2[i] - ROS_E32 * (k2[i] - f1[i]) - 2 * (k1[i] - f0[i]) + hD * ft[i]
-                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k3, rbuf, xbuf):
+                if not _lsolve(mat_mode, solve_cb, lu, piv, tmp, k3, rbuf, xbuf, sw):
                     stats[2] = nfevals
                     return E_CALLBACK
                 for i in range(neq):

@@ -19,6 +19,14 @@
 //   run      { model, overrides }      -> the run's times and every output series
 //   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name
 //   lu       { cases: [{n, a, colPtr, rowIdx, values, mass, b}] } -> the dense LU's factors and solution
+//   sparse_lu { cases: [{lu, n, colPtr, rowIdx, values, mass, ops, ...}] } -> each case's sparse LU taken
+//                                        through its ops ({form: {a, values, held}} or {solve: b}):
+//                                        iterationMatrix (lu 'matrix', with mode, denseBelow, denseFill,
+//                                        denseMaxBytes, blocks), RefactorLU (columns or none), BlockLU or
+//                                        SparseLU (order 'rcm' or natural) -- its info or counts after each
+//                                        form, each solve's answer; and how often the kept-pivot LU chose
+//                                        its pivots again from a step past the first, and then from the
+//                                        start. Doubles travel as little-endian hex, to the bit
 //   partition { model }                -> partitionOf(system): ok, refusal, count, of, sizes, largest
 //   plan     { model, opts: [...] }    -> stateKeys, stateMaterials and splitJobs of the built system,
 //                                        planSplit(system, project, o) for each o of opts (with
@@ -41,6 +49,9 @@ const { run } = await load('sim/runner.js');
 const prob = await load('sim/probabilistic.js');
 const { valuesAtStart } = await load('sim/atstart.js');
 const { LU } = await load('ode/core/linalg.js');
+const { iterationMatrix, SparseLU, makeMiterBuilder, reverseCuthillMcKee } = await load('ode/core/sparse.js');
+const { RefactorLU } = await load('ode/core/refactor.js');
+const { BlockLU, blockTriangular } = await load('ode/core/blocks.js');
 const { partitionOf } = await load('sim/partition.js');
 const split = await load('sim/split.js');
 const { layerDepths } = await load('domain/farfield.js');
@@ -251,6 +262,88 @@ switch (req.task) {
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}
+		break;
+	}
+	case 'sparse_lu': {
+		const unhex = (h) => new Float64Array(Uint8Array.from(Buffer.from(h, 'hex')).buffer);
+		const hex = (a) => Buffer.from(Float64Array.from(a).buffer).toString('hex');
+		// The kept-pivot LU's choices from a step past the first, and from the
+		// start again after one of those cost too much.
+		const counts = { partial: 0, again: 0 };
+		const { choose, factor } = RefactorLU.prototype;
+		RefactorLU.prototype.choose = function (s0) {
+			if (s0 > 0) {
+				counts.partial++;
+				this.choseFrom = true;
+			} else if (this.choseFrom) counts.again++;
+			return choose.call(this, s0);
+		};
+		RefactorLU.prototype.factor = function (...args) {
+			this.choseFrom = false;
+			return factor.apply(this, args);
+		};
+		const pick = (i) => ({ sparse: i.sparse, lu: i.lu, fill: i.fill, ordering: i.ordering, repivots: i.repivots,
+			fallbacks: i.fallbacks });
+		const results = req.cases.map((c) => {
+			const pattern = { n: c.n, nnz: c.colPtr[c.n], colPtr: Int32Array.from(c.colPtr), rowIdx: Int32Array.from(c.rowIdx) };
+			const mass = c.mass ? unhex(c.mass) : null;
+			const steps = [];
+			let solvable = false;
+			if (c.lu === 'matrix') {
+				let W;
+				try {
+					W = iterationMatrix(pattern, unhex(c.values), {
+						mode: c.mode, mass, denseBelow: c.denseBelow, denseFill: c.denseFill,
+						denseMaxBytes: c.denseMaxBytes, blocks: c.blocks,
+					});
+				} catch (e) {
+					return { refused: e.message };
+				}
+				const made = pick(W.info);
+				for (const op of c.ops) {
+					if (op.form) {
+						try {
+							W.form(op.form.a, unhex(op.form.values), null, op.form.held ? Uint8Array.from(op.form.held) : null);
+							steps.push({ info: pick(W.info) });
+							solvable = true;
+						} catch (e) {
+							steps.push({ error: e.message, info: pick(W.info) });
+							solvable = false;
+						}
+					} else steps.push(solvable ? { x: hex(W.solve(unhex(op.solve))) } : { unsolved: true });
+				}
+				return { made, steps };
+			}
+			if (c.lu === 'gp') {
+				const builder = makeMiterBuilder(pattern);
+				const gp = new SparseLU(c.n);
+				const q = c.order === 'rcm' ? reverseCuthillMcKee(builder.update(1e-3, unhex(c.values), null, mass)) : null;
+				for (const op of c.ops) {
+					if (op.form) {
+						gp.factorize(builder.update(op.form.a, unhex(op.form.values), null, mass), { q });
+						steps.push({ singular: gp.singular, nonFinite: gp.nonFinite, column: gp.failOriginalColumn,
+							lnz: gp.lnz, unz: gp.unz, flops: gp.flops });
+						solvable = !gp.singular;
+					} else steps.push(solvable ? { x: hex(gp.solve(unhex(op.solve))) } : { unsolved: true });
+				}
+				return { order: q ? Array.from(q) : null, steps };
+			}
+			let lu, split = null;
+			if (c.lu === 'blocks') {
+				split = blockTriangular(pattern);
+				lu = new BlockLU(pattern, split);
+			} else lu = new RefactorLU(pattern, c.columns ? Int32Array.from(c.columns) : null);
+			for (const op of c.ops) {
+				if (op.form) {
+					solvable = lu.factor(op.form.a, unhex(op.form.values), null, mass);
+					steps.push({ ok: solvable, ops: lu.ops, nnz: lu.nnz, repivots: lu.repivots, valid: lu.valid });
+				} else steps.push(solvable ? { x: hex(lu.solve(unhex(op.solve))) } : { unsolved: true });
+			}
+			return { blocks: split ? { nblocks: split.nblocks, block: Array.from(split.block) } : null, steps };
+		});
+		RefactorLU.prototype.choose = choose;
+		RefactorLU.prototype.factor = factor;
+		out = { results, counts };
 		break;
 	}
 	case 'lu': {

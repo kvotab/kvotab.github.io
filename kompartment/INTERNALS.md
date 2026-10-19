@@ -5667,8 +5667,8 @@ the engine as a job of its own kind:
   `julia/tools/analysis_fixtures.py` and `julia/test/engine/analyses.jl`: every
   design's points, every step of a calibration, and dy/dp on the examples whose
   augmented system is factorised dense. From 64 states one may be factorised
-  sparse, by SuperLU in Python and KLU in Julia, and the two then agree to
-  round-off (2e-13 of a series' peak on biosphere, the same steps). A design's
+  sparse, by the application's sparse LUs in Python and KLU in Julia, and the
+  two then agree to round-off (2e-13 of a series' peak on biosphere, the same steps). A design's
   sin, cos and asin are the C library's in both, as numpy's are; V8's can
   differ in the last bit, which `otherDesign`'s 1e-9 allows. Julia's runner
   takes the augmented system as Python's does (`equations` in `run_project`).
@@ -6964,6 +6964,93 @@ example takes the steps it took. Two take the block LU: the farfield example
 (a factor of 5,788 entries for 7,886), whose outputs moved by 7·10^-14 of their
 peaks, and landscape (as full as before), whose moved by 2·10^-15; the rest
 are the same bits.
+
+## The application's sparse LUs in the Python engine
+
+The Python engine factorised a sparse iteration matrix with SuperLU, through
+SciPy. Its compiled loops had to call back into Python for that, at every
+factorisation and at every solve: on the farfield example the 507
+factorisations (314 ms), the 7,548 solves (260 ms) and forming the matrices
+for them in Python (120 ms) were most of a compiled run of 0.94 s, in which
+the loop's own arithmetic took 183 ms. The Julia engine, whose KLU is compiled
+code, takes the same 3,776 steps in 0.20 s.
+
+`python/kompartment/engine/solvers/sparselu.py` is the shared core's three
+sparse LUs and `iterationMatrix`'s choice between them, compiled with numba:
+Gilbert-Peierls in the model's own column order or reverse Cuthill-McKee's
+(`sparse.js`), the LU that keeps its pivots (`refactor.js`) and that LU a block
+at a time (`blocks.js`). They are ported step for step -- the same trials, the
+same pivots, the same eliminations in the same order, one rounding per
+operation, numba never fusing a multiply and an add -- so they give the
+application's choice, fill, factors and solves to the last bit. A matrix's
+state is a numba `structref`: a struct the compiled loops take as an argument
+and Python holds as an object, which keeps the arrays the kept-pivot LU grows
+when it chooses its pivots again in the middle of a run. The compiled NDF and
+Rosenbrock (2,3) loops form and solve with it in place (`MAT_SPARSE` in
+`compiled/solvers.py`), and the Python solvers reach it through
+`IterationMatrix`, so a compiled run is still the Python path's to the bit.
+
+**Where it is used.** The Python engine keeps its own rules around it: dense up
+to 64 states, where the application goes sparse from 24, because the Julia
+engine keeps the dense LU to 64 states too and reproduces the Python engine's
+runs to the bit below that (at 24, landscape's 28 states would part the two);
+LAPACK for a dense matrix of more than 200 states; and SuperLU without numba,
+or where the port does not compile. Above 64 states a sparse matrix is the
+application's. Where the Python and Julia engines both factorise sparse they
+agree to round-off, as they did with SuperLU. The port leaves out the Newton
+weights facsimile.html and rtm.html scale the matrix by: Kompartment never
+scales it.
+
+**A solve after a failed formation.** In the application it reads a half-made
+factor: an elimination stopped partway leaves the step offsets of the record
+pointing past the arrays, which JavaScript reads as undefined, so NaN. In numba
+that is memory the process does not own, and it crashed in testing. The solvers
+stop at a failed formation and never solve after one, so the port answers NaN
+there instead.
+
+**Measured.** On an M1 Max with another program busy on four of its ten cores,
+before and after alternately, the least of two rounds; the same steps, but for
+the farfield with F and TW following the clock (4,756 steps before, 4,627
+after, from round-off alone):
+
+| run | states | Python path | compiled |
+|---|---|---|---|
+| farfield example | 1,581 | 1.03 → 0.62 s | 0.76 → 0.36 s |
+| farfield, F and TW following the clock | 1,581 | 4.03 → 3.25 s | 0.96 → 0.41 s |
+| made-up chains (`chains(10, 10, 20)` of `test_engine_split.py`) | 2,000 | 0.36 → 0.27 s | 0.23 → 0.16 s |
+| made-up chains (`chains(16, 10, 100)`) | 16,000 | 2.57 → 1.91 s | 1.93 → 1.39 s |
+
+The factors are the application's, and smaller: 5,788 entries on the farfield
+example where SuperLU's held 9,427, and 46,240 where it held 62,240 on the
+16,000 states. Within the compiled farfield run the loop takes 322 ms: its 507
+formations 13 ms (26 µs each, a replay of the record) and its 7,548 solves 156
+ms (21 µs each). A solve is the chain *The kept-pivot LU a block at a time*
+describes, a division waiting on the one before it down a line of cells, and
+takes much the time it takes in V8. What remains is the derivative and the
+NDF's own arithmetic. On the 16,000 states a third of the run is building the
+model, in Python. Compiling the port is a cost paid once per install or
+change: the package's compiled code takes about 50 s on its first use instead
+of 18, and a fresh process loads it from the cache in a tenth of a second.
+
+**Checked.** `python/tests/test_engine_sparse.py`, through the application's own
+code (`tests/node/engine.mjs`, task `sparse_lu`, doubles in hex): 400 made-up
+matrices -- chains of cells, blocks one way round, matrices that fill in, a
+decay chain, gaps on the diagonal, algebraic rows, held rows, values that move
+far enough for the kept pivots to fail their test, values that tie, singular
+ones and ones with a value that is not a number -- each through `auto`,
+`refactor` or `sparse` and up to six formations, every choice, every `info` and
+every solve to the bit; each LU on its own over 300 more, the kept-pivot one in
+fixed column orders too; and the farfield example's own first matrix in the
+three modes. The application's `RefactorLU` is wrapped to count its choices from
+a step past the first and from the start again, and the test holds that both
+were made. Of twelve mutations of the port -- a tie broken the other way, the
+keeping threshold, the growth that makes it choose from the start, a block's
+backward pass, the order a column's slots are scanned in, reverse
+Cuthill-McKee's ties, held rows, the search's width, the trials' rules -- the
+test fails on all but one, which cannot change a result (a block LU kept where
+a whole one costs as much: the whole trial is stopped short of that). Every
+bundled example runs to the same bits on the compiled loop as on the Python
+path, under the NDF and Rosenbrock (2,3).
 
 ## An (i) instead of a tooltip
 

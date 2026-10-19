@@ -561,11 +561,16 @@ worked out in Python and called back.
 Local sensitivity integrates the model's derivative, compiled, in equations
 of its own (`m.local_sensitivity(..., compiled='auto')`).
 
-A few things are worked out in Python even then, called back from the
-compiled code: SuperLU's factorisations and solves (and LAPACK's, for the
-NDF's and Rosenbrock's dense matrices of more than 200 states; the
-Julia-derived methods call the same LAPACK routines from the compiled loop),
-an analytic Jacobian, progress, and a far-field path worked out
+A sparse iteration matrix -- the NDF's and Rosenbrock's -- is factorised by
+the application's own sparse LUs, which this package has compiled with numba:
+the same choice between them, the same pivots, the same bits
+(`kompartment/engine/solvers/sparselu.py`, checked against the application's by
+`test_engine_sparse.py`). The compiled loop forms and solves with them in
+place. A few things are worked out in Python even then, called back from the
+compiled code: LAPACK's factorisations and solves of the NDF's and
+Rosenbrock's dense matrices of more than 200 states (the Julia-derived methods
+call the same LAPACK routines from the compiled loop, and SuperLU for a sparse
+matrix), an analytic Jacobian, progress, and a far-field path worked out
 semi-analytically, whose release is the recorded history of its inflow
 convolved with the path's unit responses, kept in Python as the Python path
 keeps it. Its arithmetic -- recording and merging the pieces, the sum over
@@ -577,7 +582,9 @@ they move, and handed to Python only to hold the matched layers it lays out
 and to raise what the Python path raises.
 
 A model's first run compiles it: a second or two for most models, a minute or
-two for one of hundreds of thousands of algebraic slots. After that, runs and
+two for one of hundreds of thousands of algebraic slots. The package's own
+compiled code -- the solvers' loops and the sparse LUs -- is compiled on its
+first use after it is installed or changed, in about a minute, and cached too. After that, runs and
 other processes load it from the cache -- `KOMPARTMENT_CACHE`, or the user's
 cache directory -- in a fraction of a second. The compiled code
 holds the model's structure and none of its numbers, which it reads at run
@@ -598,19 +605,20 @@ runs:
 | waste-packages, Dormand-Prince | 0.99 s | 17 ms |
 | recorders (a discrete event), NDF | 69 ms | 2.0 ms |
 | made-up, 21 events and 9 recorders, NDF | 62 ms | 8.2 ms |
-| farfield (1,581 states), NDF | 0.95 s | 0.66 s |
+| farfield (1,581 states), NDF | 0.62 s | 0.36 s |
 | farfield worked out semi-analytically, NDF | 0.21 s | 0.12 s |
-| farfield, its F/TW following the clock, NDF | 4.5 s | 0.74 s |
+| farfield, its F/TW following the clock, NDF | 3.3 s | 0.41 s |
 | biosphere, Radau IIA 5 | 44 ms | 13 ms |
 | biosphere, FBDF | 111 ms | 21 ms |
-| made-up decay chains, 2,000 states | 146 ms | 102 ms |
-| made-up decay chains, 16,000 states | 0.88 s | 0.73 s |
+| made-up decay chains, 2,000 states | 0.27 s | 0.16 s |
+| made-up decay chains, 16,000 states | 1.9 s | 1.4 s |
 | biosphere, Sobol design of 272 runs, one process | 12.1 s | 1.35 s |
 
 The application takes 2.5 s over the biosphere's Sobol design. On a large
-model the gain shrinks: most of the time goes to SuperLU's factorisations and
-solves, the same calls on both paths, and to building the model, which is
-Python either way. Rosenbrock gains two to three times on a model whose
+model the gain shrinks: what is done with the iteration matrix is compiled on
+both paths -- its solves, which wait on one another down a chain of
+compartments, take much of a sparse model's run -- and building the model is
+Python either way (a third of the 16,000 states' run). Rosenbrock gains two to three times on a model whose
 analytic Jacobian moves, since it asks for a Jacobian at every step, and that
 Jacobian is worked out in Python.
 
@@ -621,10 +629,12 @@ any other.
 
 In editing, nowhere that the parity tests can find. In a run:
 
-- The iteration matrix is factorised by the application's own dense LU
-  (compiled with numba) or LAPACK up to 64 states and by SuperLU above,
-  where the application tries its own sparse LUs from 24 states up. The run
-  log's sparse flag and fill can differ; the solutions agree to round-off.
+- The iteration matrix is factorised densely up to 64 states, where the
+  application tries its sparse LUs from 24 states up, and by LAPACK where a
+  dense one has more than 200 states. Above 64 states it goes to the
+  application's own sparse LUs, chosen as the application chooses them --
+  with numba; SuperLU's without. Where the two differ, the run log's sparse
+  flag and fill differ, and the solutions agree to round-off.
 - The numbers of a run agree with the application's to round-off rather
   than to the last bit (see *Running a model*): step counts usually match
   and can differ by a few per cent where an error estimate sits at rounding

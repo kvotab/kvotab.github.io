@@ -1013,10 +1013,11 @@ class SensitivityParity(unittest.TestCase):
                 if same_steps:
                     _note('sensitivity: step count where it has been the same', apart)
                 # The augmented solve's step count follows the round-off of its
-                # LU: landscape's takes 2,169, 2,270 or 2,263 steps with SuperLU
-                # in the natural, COLAMD or MMD order, against the
-                # application's 2,289 -- 0.8 to 5.2 per cent from one choice of
-                # column order alone.
+                # LU and of every power its step sizes go through. With the
+                # application's sparse LUs it has been the application's on
+                # these examples; another LU's column order alone moves
+                # landscape's by up to 5 per cent (SuperLU's took 2,169 to
+                # 2,270 steps against the application's 2,289).
                 self.assertLess(apart, 0.08)
                 self.assertEqual(mine['stats']['states'], js['stats']['states'])
                 # The grid to the bit; a discrete event's instant, a row of its

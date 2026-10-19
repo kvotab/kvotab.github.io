@@ -437,9 +437,10 @@ Each tool runs on the Python package (`PYTHONPATH=../python`). `julia
 variable is set and the rest of it regardless. These tests switch parity on.
 
 With parity on, every bundled example runs to the same bits as the Python
-package. A model large enough for the sparse solver (above 200 states) parts
-at round-off: the factorisations are KLU's here and SuperLU's in Python, so the
-runs agree to the tolerance, as two machines do.
+package. A model whose iteration matrix is factorised sparse (from 64 states,
+where its factor stays sparse) parts at round-off: the factorisations are KLU's
+here and the application's sparse LUs in Python, so the runs agree to the
+tolerance, as two machines do.
 
 The default, fast mode is held to parity mode's accuracy instead
 (`test/engine/fast.jl`): every bundled example is solved to a far tighter

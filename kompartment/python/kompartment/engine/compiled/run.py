@@ -17,11 +17,14 @@ messages included:
 
 What stays in Python is called back: an analytic Jacobian, with the
 recorders handed over first (they live in the compiled arrays during a run);
-the progress report; where the Python solver would factorise with SuperLU or
-LAPACK rather than the application's dense LU, the iteration matrix itself,
-formed and solved with by the Python solver's own
+the progress report; where the Python solver would factorise with LAPACK (a
+dense matrix past the application's LU) or SuperLU (without the
+application's sparse LUs), the iteration matrix itself, formed and solved with
+by the Python solver's own
 :class:`~kompartment.engine.solvers.matrix.IterationMatrix`; and the blocks a
-model works out in Python (see :mod:`.model`).
+model works out in Python (see :mod:`.model`). A sparse matrix the
+application's LUs factorise (:mod:`~kompartment.engine.solvers.sparselu`) is
+formed and solved with in the loop.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import numpy as np
 from ..jacobian import colour_columns, difference_jacobian
 from ..landing import landing_arrays
 from ..solvers import SolverError
+from ..solvers import sparselu
 from ..solvers.matrix import APP_LU_MAX, DENSE_BELOW, IterationMatrix, non_finite_message, singular_message
 from . import solvers as cs
 from . import FAIL_PYTHON, LOOP_SOLVERS, CompiledFailure, NotCompiled, loop_refusal, python_error
@@ -299,17 +303,19 @@ class CompiledRun:
         return 1
 
     def _matrix(self, t0: float, y0: np.ndarray, threshold: np.ndarray, mode: str, kind: str,
-                held: np.ndarray) -> Tuple[int, Optional[IterationMatrix], Any, Any]:
+                held: np.ndarray) -> Tuple[int, Optional[IterationMatrix], Any, Any, Any]:
         """Where this span's matrix is factorised, as the Python solver would
-        decide it: ``(where, its IterationMatrix, form, solve)``, the last two
-        the callbacks when it is the Python matrix."""
+        decide it: ``(where, its IterationMatrix, form, solve, sparse)``, form
+        and solve the callbacks when it is the Python matrix, and ``sparse``
+        the state of the application's sparse LUs the loop forms and solves
+        with when it is theirs."""
         from ..solvers import kernels
         from ..solverset import HINTS
         n = self.system.nstate
         if n <= APP_LU_MAX and kernels.available() and (self.pattern is None or mode == 'dense'
                                                         or (mode == 'auto' and n < DENSE_BELOW)):
             # The application's dense LU without a trial: nothing to ask the Python matrix.
-            return cs.MAT_KERNEL, None, cs.no_callback, cs.no_callback
+            return cs.MAT_KERNEL, None, cs.no_callback, cs.no_callback, sparselu.none()
         hints = HINTS if kind == 'ndf' else {'singular': SINGULAR_HINT}
         # The first Jacobian only decides between sparse and dense, by trial
         # factorisations, which the Python solver makes only here.
@@ -326,9 +332,11 @@ class CompiledRun:
                 raise variable_order_failure(SolverError('singular', str(e), t0), t0) from None
             raise RuntimeError(str(e)) from None
         if W._kernels and not W.sparse:
-            return cs.MAT_KERNEL, W, cs.no_callback, cs.no_callback
+            return cs.MAT_KERNEL, W, cs.no_callback, cs.no_callback, sparselu.none()
+        if W._sw is not None:
+            return cs.MAT_SPARSE, W, cs.no_callback, cs.no_callback, W._sw
         return cs.MAT_PYTHON, W, Callback(lambda a, any_held: self._form(W, a, any_held)), \
-            Callback(lambda _a, _b: self._solve(W))
+            Callback(lambda _a, _b: self._solve(W)), sparselu.none()
 
     def _form(self, W: IterationMatrix, a: float, any_held: float) -> int:
         J = self.jvals if self.pattern is not None else self.jdense
@@ -428,8 +436,8 @@ class CompiledRun:
         else:
             atol = np.array(abstol, dtype=float)
         constrained = np.array([i for i, v in enumerate(opts.get('non_negative') or []) if v], dtype=np.int64)
-        where, W, form_cb, solve_cb = self._matrix(t0, y0, atol / rtol, opts.get('matrix') or 'auto', 'ndf',
-                                                   constrained)
+        where, W, form_cb, solve_cb, sw = self._matrix(t0, y0, atol / rtol, opts.get('matrix') or 'auto', 'ndf',
+                                                       constrained)
         max_order = max(1, min(cs.MAX_ORDER, int(math.floor((opts.get('max_order') or 5) + 0.5))))
         below = opts.get('below_tol_run')
         max_steps = opts['max_steps'] if opts.get('max_steps') else 1e6
@@ -452,7 +460,7 @@ class CompiledRun:
                         self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                         self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.held_in_w,
                         self.rbuf, self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
-                        LT, LF, LB, LO)
+                        LT, LF, LB, LO, sw)
         if into is not None:
             into[:] = atol
         if status != cs.OK:
@@ -521,8 +529,8 @@ class CompiledRun:
         nn_idx = (np.nonzero(np.array(nn, dtype=bool))[0].astype(np.int64) if nn is not None and any(nn)
                   else np.zeros(0, dtype=np.int64))
         max_steps = opts.get('max_steps') or method.default_max_steps
-        where, W, form_cb, solve_cb = (self._matrix(t0, y0, atol / rtol, 'auto', 'ros23', nn_idx) if ros
-                                       else (cs.MAT_KERNEL, None, cs.no_callback, cs.no_callback))
+        where, W, form_cb, solve_cb, sw = (self._matrix(t0, y0, atol / rtol, 'auto', 'ros23', nn_idx) if ros
+                                           else (cs.MAT_KERNEL, None, cs.no_callback, cs.no_callback, sparselu.none()))
         fpar = np.array([rtol, float(opts['hmax']) if (opts.get('hmax') or 0) > 0 else 0.0,
                          float(opts['h0']) if (opts.get('h0') or 0) > 0 else 0.0, float(max_steps),
                          float(opts['hmin']) if (opts.get('hmin') or 0) > 0 else 0.0])
@@ -540,7 +548,7 @@ class CompiledRun:
                             self.jvals, self.gptr, self.gcols, self.ybuf, fpar, ipar, yout, held, stats, fstat,
                             self.ct, self.cy, self.cint, self.cflt, form_cb, solve_cb, self.jdense, self.rbuf,
                             self.xbuf, self.evf, self.evdir, self.evbuf, self.evy, self.evwhich, self.evstat,
-                            LT, LF, LB, LO)
+                            LT, LF, LB, LO, sw)
         if status != cs.OK:
             if status == cs.E_HISTORY:
                 raise HistoryFull()

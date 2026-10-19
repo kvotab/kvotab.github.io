@@ -12,9 +12,13 @@ three things the application adds beyond the published method are here too:
 * a Jacobian that declines a point is differenced there instead;
 * a run that accepts steps but covers none of the interval stops, saying so.
 
-The per-state arithmetic is the application's, element for element; the
-linear algebra is LAPACK's or SuperLU's (see :mod:`.matrix`), so results agree
-with the application's to the tolerance, not to the last bit.
+The per-state arithmetic is the application's, element for element. With
+numba so are the LUs (see :mod:`.matrix`), if not always the one the
+application would choose, but for a dense matrix of more than 200 states,
+which is LAPACK's; without numba every matrix is LAPACK's or SuperLU's. Every
+step size goes through a power, the C library's here and V8's in the
+application, which round differently now and then; so results agree with
+the application's to the tolerance, not to the last bit.
 """
 
 from __future__ import annotations

@@ -323,13 +323,18 @@ class Identical(unittest.TestCase):
                 self.assertEqual(e.code, 'tolerance')
 
     def test_a_matrix_python_would_factorise_sparsely(self) -> None:
-        # 70 states in a chain: SuperLU, which the compiled loop calls back
-        # to form the matrix and to solve with, as the Python solver does.
+        # 70 states in a chain: the application's sparse LUs, which the
+        # compiled loop forms and solves with in place, as the Python solver
+        # does through its matrix -- in each mode that takes them.
         for solver in ('ndf', 'ros23'):
             with self.subTest(solver=solver):
                 a, b = self.same(chain(n=70, solver=solver).project())
                 self.assertTrue(a.stats['sparse'])
                 self.assertEqual(a.stats['fill'], b.stats['fill'])
+        for matrix in ('refactor', 'sparse'):
+            with self.subTest(matrix=matrix):
+                a, b = self.same(chain(n=70, solver='ndf', matrix=matrix).project())
+                self.assertTrue(a.stats['sparse'])
         self.same(chain(n=70, solver='ndf', matrix='dense').project())
         self.same(chain(n=240, solver='ndf', matrix='dense').project())  # LAPACK, past the application's LU
 

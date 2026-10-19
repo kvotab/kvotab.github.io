@@ -19,11 +19,11 @@ with numba, so that a run returns to Python only when it ends.
 
 Every model takes the path, and a compiled run takes the same steps as the
 Python path, to the last bit. A few things are worked out in Python and
-called back from the compiled code: SuperLU, an analytic Jacobian, progress,
-and a far-field path worked out semi-analytically (its history and step are
-the Python path's, worked out by numba kernels of their own in
-:mod:`kompartment.engine.farfield_semi`). numba is optional; without it
-there is only the Python path.
+called back from the compiled code: LAPACK, for a dense matrix past 200
+states, an analytic Jacobian, progress, and a far-field path worked out
+semi-analytically (its history and step are the Python path's, worked out by
+numba kernels of their own in :mod:`kompartment.engine.farfield_semi`).
+numba is optional; without it there is only the Python path.
 
 What numba compiles is cached on disk by every process that compiles it,
 under a lock (:func:`guard_numba_cache`).

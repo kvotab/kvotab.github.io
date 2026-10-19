@@ -1,13 +1,16 @@
 """The iteration matrix Mass - a*J: formed, factorised, solved with.
 
-The application carries three LUs of its own (a dense one, a searching sparse
-one, and one that keeps its pivots). Here a dense matrix is factorised by the
-application's own dense LU compiled with numba (``kernels.py``) up to
-``APP_LU_MAX`` states -- the application's arithmetic, and quicker than any
-library call on a small system -- and by LAPACK beyond that or without numba;
-a sparse one by SuperLU, through SciPy. Which one is used follows the
-application's rule: dense for small systems or where the sparse factor fills
-in past a share of n^2, sparse otherwise -- decided on one real factorisation.
+The application carries LUs of its own: a dense one, and for a sparse matrix a
+searching Gilbert-Peierls LU and one that keeps its pivots, whole or a block
+at a time. With numba, these are what factorise here. A sparse matrix is
+factorised by the application's sparse LUs (``sparselu.py``), chosen as it
+chooses them, on one real factorisation of each, and to its last bit. A dense one is
+factorised by its dense LU (``kernels.py``) up to ``APP_LU_MAX`` states --
+the application's arithmetic, and quicker than any library call on a small
+system -- and by LAPACK beyond. Which is used follows the application's rule:
+dense for small systems or where the sparse factor fills in past a share of
+n^2, sparse otherwise. Without numba a dense matrix is LAPACK's and a sparse
+one SuperLU's, through SciPy.
 """
 
 from __future__ import annotations
@@ -30,6 +33,10 @@ DENSE_MAX_BYTES = 2 * 1024 ** 3
 #: Up to this many states a dense matrix is factorised by the application's
 #: LU (when numba is installed); beyond it LAPACK's blocked one is quicker.
 APP_LU_MAX = 200
+#: ``auto`` factorises densely below this many states. The application goes
+#: sparse from 24; the Julia engine goes sparse from here too, so that below
+#: it the two engines' runs are the same to the bit (above it, KLU and the
+#: application's sparse LUs agree to round-off).
 DENSE_BELOW = 64
 DENSE_FILL = 0.15
 #: The column orderings SuperLU is tried with, the model's own first.
@@ -76,9 +83,11 @@ class IterationMatrix:
         self.pattern = pattern
         self.mass = mass
         self.hints = hints or {}
-        self.info: Dict[str, Any] = {'sparse': False, 'lu': 'dense', 'fill': None, 'ordering': 'natural',
-                                     'nnz': pattern.nnz if pattern else n * n, 'repivots': 0, 'fallbacks': 0}
+        self._info: Dict[str, Any] = {'sparse': False, 'lu': 'dense', 'fill': None, 'ordering': 'natural',
+                                      'nnz': pattern.nnz if pattern else n * n, 'repivots': 0, 'fallbacks': 0}
         too_big = n * n * 8 > DENSE_MAX_BYTES
+        #: The application's sparse LUs' matrix, where they take it (``sparselu``).
+        self._sw: Any = None
         self._lu: Any = None
         self._diag = np.arange(n)
         self._kernels = n <= APP_LU_MAX and _k.available()
@@ -110,6 +119,18 @@ class IterationMatrix:
         if mode == 'auto' and n < dense_below and not too_big:
             self.sparse = False
             return
+        sparse_lu = _sparse_lu()
+        if sparse_lu is not None:
+            sw = sparse_lu.decide(n, pattern.col_ptr, pattern.row_idx, values, mode, mass, dense_fill, too_big)
+            got = sparse_lu.state(sw)
+            self._info.update(fill=got['fill'], ordering=got['ordering'])
+            if got['kind'] == sparse_lu.DENSE:
+                self.sparse = False
+                return
+            self._sw = sw
+            self.sparse = True
+            self._info.update(sparse=True, lu=got['lu'])
+            return
         self.sparse = True
         self._permc = 'COLAMD'
         if not too_big:
@@ -134,11 +155,20 @@ class IterationMatrix:
                     self._permc = 'NATURAL'
                 else:
                     self._permc = min(fills, key=lambda k: (fills[k], ORDERINGS.index(k)))
-                self.info['fill'] = fills[self._permc]
+                self._info['fill'] = fills[self._permc]
                 if mode == 'auto' and fills[self._permc] > dense_fill * n * n:
                     self.sparse = False
         if self.sparse:
-            self.info.update(sparse=True, lu='SuperLU', ordering=self._permc)
+            self._info.update(sparse=True, lu='SuperLU', ordering=self._permc)
+
+    @property
+    def info(self) -> Dict[str, Any]:
+        """Which LU, how full its factor is, and how often the kept pivots were
+        chosen again or a matrix went elsewhere -- the application's ``info``."""
+        if self._sw is not None:
+            got = _sparse_lu().state(self._sw)  # type: ignore[union-attr]
+            self._info.update(fill=got['fill'], repivots=got['repivots'], fallbacks=got['fallbacks'])
+        return self._info
 
     @staticmethod
     def _find_diagonal(pattern: Pattern) -> np.ndarray:
@@ -210,6 +240,15 @@ class IterationMatrix:
     def form(self, a: float, J: Any, held: Optional[np.ndarray] = None) -> None:
         n = self.n
         mass = self.mass
+        if self._sw is not None:
+            splu = _sparse_lu()
+            status = splu.form(self._sw, a, J, held)  # type: ignore[union-attr]
+            if status:
+                got = splu.state(self._sw)  # type: ignore[union-attr]
+                if status == splu.NONFINITE:  # type: ignore[union-attr]
+                    raise RuntimeError(non_finite_message(mass, got['column'], got['value']))
+                raise RuntimeError(singular_message(mass, got['column'], self.hints.get('singular')))
+            return
         if self._kernels and not self.sparse:
             self._form_with_kernel(a, J, held)
             return
@@ -256,6 +295,8 @@ class IterationMatrix:
             return 0
 
     def solve(self, rhs: np.ndarray) -> np.ndarray:
+        if self._sw is not None:
+            return _sparse_lu().solve(self._sw, rhs)  # type: ignore[union-attr]
         if self._dense:
             if self._lu == 'kernel':
                 return self._solve_kernel(self._lu_buf, self._piv, np.ascontiguousarray(rhs, dtype=float),
@@ -263,3 +304,32 @@ class IterationMatrix:
             x, _ = _getrs(self._lu[0], self._lu[1], rhs)
             return x
         return self._lu.solve(rhs)
+
+
+_SPARSE_LU: list = []
+
+
+def _sparse_lu() -> Any:
+    """The application's sparse LUs (:mod:`.sparselu`), compiled and tried
+    once on a small matrix; None without numba, or where they would not
+    compile, and a sparse matrix is then SuperLU's."""
+    if not _SPARSE_LU:
+        mod = None
+        if _k.available():
+            try:
+                from . import sparselu as mod
+                # Each mode, with blocks and without, once with rows held.
+                col_ptr = np.array([0, 2, 4, 5], dtype=np.int64)
+                row_idx = np.array([0, 1, 0, 1, 2], dtype=np.int64)
+                values = np.array([-1.0, 0.5, 0.25, -2.0, -1.0])
+                for mode in ('auto', 'refactor', 'sparse'):
+                    for blocks in (True, False):
+                        sw = mod.decide(3, col_ptr, row_idx, values, mode, None, 0.15, False, blocks)
+                        mod.form(sw, 0.5, values)
+                        mod.form(sw, 0.5, values, np.array([0, 0, 1]))
+                        mod.solve(sw, np.ones(3))
+                        mod.state(sw)
+            except Exception:  # noqa: BLE001 - numba refusing: SuperLU, as without it
+                mod = None
+        _SPARSE_LU.append(mod)
+    return _SPARSE_LU[0]
