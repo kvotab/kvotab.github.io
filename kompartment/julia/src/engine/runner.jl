@@ -241,15 +241,17 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     solve_fn === nothing && throw(ArgumentError(_unavailable_solver(solver_id)))
     prime_recorders!(sys, grid[1], y0)
     stored = (t, y) -> (store_step!(sys, t, y); nothing)
-    on_accepted = if steps !== nothing && has_store_step(sys)
-        (t, y) -> (store_step!(sys, t, y); collect_step!(steps, t, y); nothing)
-    elseif steps !== nothing
-        (t, y) -> (collect_step!(steps, t, y); nothing)
-    elseif has_store_step(sys)
-        stored
-    else
-        nothing
-    end
+    # The last step the solver accepted, should the run fail on a value that is
+    # not a number: the equations are looked at there to say where it came from
+    # (engine/nonfinite.jl). The NDF hands back its own with its error, and is
+    # spared the copy; the others say only when, so the runner keeps it.
+    held = solver_id == "ndf" ? nothing : (t=Ref(NaN), y=zeros(length(y0)))
+    hold = held === nothing ? nothing : (t, y) -> (held.t[] = t; copyto!(held.y, y); nothing)
+    hooks = Any[h for h in (has_store_step(sys) ? stored : nothing,
+                            steps !== nothing ? (t, y) -> (collect_step!(steps, t, y); nothing) : nothing,
+                            hold) if h !== nothing]
+    on_accepted = isempty(hooks) ? nothing : length(hooks) == 1 ? hooks[1] :
+                  (t, y) -> (foreach(h -> h(t, y), hooks); nothing)
     numeric = get(sim, "jacobian", nothing) == "numeric"
     opts = Dict{String,Any}(
         "rtol" => Float64(sim["rtol"]), "abstol" => abstol,
@@ -313,7 +315,11 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
     f = equations === nothing ? RHSFunction((dy, t, y) -> (rhs!(sys, dy, t, y); nothing)) :
         RHSFunction((dy, t, y) -> (equations.dydt(dy, t, y); nothing))
     on_segment = equations === nothing ? nothing : equations.on_segment
+    # Where the stretch being solved began: a solver that fails at its first
+    # instant has nothing later to say where, and this is where.
+    stretch = Ref{Any}((Float64(span[1]), y0))
     function solve_span(grid2::Vector{Float64}, start::Vector{Float64})
+        stretch[] = (grid2[1], start)
         use_clock_interpolation!(sys, min_change, grid2[1])
         on_segment === nothing || on_segment(grid2[1], min_change)
         start_segment!(sys, grid2[1], start)
@@ -351,6 +357,10 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
                              "cause: \"$(SOLVER_LABELS["ndf"])\" carries a binding constraint, and turning the setting off on " *
                              "that compartment shows what the model is really doing.")
             end
+            # A value that is not a number is the model's, whatever the solver
+            # made of it, and no hint about solvers is the answer to it: said
+            # instead, where it starts and what it reaches (the application's runner).
+            explain_non_finite!(e, sys; start=stretch[], held, end_=Float64(span[end])) && empty!(hints)
             isempty(hints) || (e.hint = join(hints, " "))
         end
         rethrow()

@@ -2127,7 +2127,7 @@ export function allUnitProblems(project) {
  * because there is nothing to put a mark on.
  *
  * @returns {Array<{name: string|null, field: string|null, message: string,
- *   goto?: string}>}
+ *   goto?: string, index?: object}>}
  */
 export function modelWarnings(project, { unitProblems = null } = {}) {
 	// The scan is handed in where the caller has already done it. The editor
@@ -2136,6 +2136,9 @@ export function modelWarnings(project, { unitProblems = null } = {}) {
 	// the same answer -- once here and once in the rail's info card.
 	const out = (unitProblems ?? allUnitProblems(project)).map((p) => ({
 		name: p.name, field: p.field ?? 'unit', message: `Units: ${p.detail}`,
+		// The entry it is about, for an equation written for one index: the
+		// strip says which, since two entries can be wrong in the same words.
+		...(p.index ? { index: p.index } : {}),
 	}));
 	for (const f of project?.farfields ?? []) {
 		for (const w of [farfieldWarning(project, f), dispersionWarning(f)]) {

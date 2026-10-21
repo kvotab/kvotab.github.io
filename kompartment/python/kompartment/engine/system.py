@@ -18,6 +18,13 @@ from .builder import Entry, Stmt, _Builder, merge_statements, write_statements
 from .codegen import read_tables
 
 
+def _same(a: float, b: float) -> bool:
+    """``Object.is``: the same number, NaN being the same as NaN and -0 not as 0."""
+    if a != a or b != b:
+        return a != a and b != b
+    return a == b and math.copysign(1.0, a) == math.copysign(1.0, b)
+
+
 class Layout:
     """Where everything is: the application's ``layout``, as attributes."""
 
@@ -491,11 +498,33 @@ class System:
             return
         for r in self.MEM:
             r.prime(t0, 0.0)
+        # A seed may read another block that remembers -- the peak of a dose
+        # worked out from a delayed volume -- and the pass that works it out
+        # reads that block's history before it has one: the seeds are worked
+        # out again with the histories primed, until none of them moves (the
+        # application's ``primeRecorders``).
         values = self.evaluate_algebraic(t0, y0)
-        for rec in self.remembering:
-            seed = rec.aux['initial'] if rec.kind == 'snapshot' else rec.aux['target']
-            for off in range(rec.width):
-                self.MEM[rec.mem + off].prime(t0, float(values[seed.base + off]))
+        seeds: List[float] = []
+        for sweep in range(len(self.remembering) + 1):
+            moved = False
+            i = 0
+            for rec in self.remembering:
+                seed = rec.aux['initial'] if rec.kind == 'snapshot' else rec.aux['target']
+                for off in range(rec.width):
+                    v = float(values[seed.base + off])
+                    if sweep > 0 and _same(seeds[i], v):
+                        i += 1
+                        continue
+                    if sweep == 0:
+                        seeds.append(v)
+                    else:
+                        seeds[i] = v
+                    self.MEM[rec.mem + off].prime(t0, v)
+                    moved = True
+                    i += 1
+            if not moved:
+                break
+            values = self.evaluate_algebraic(t0, y0)
         # A semi-analytical path starts its history with the inflow at t0.
         for F in self.laplace:
             F.prime(t0, y0, values)

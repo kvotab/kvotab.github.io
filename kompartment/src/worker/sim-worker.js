@@ -1512,10 +1512,12 @@ self.onmessage = async (ev) => {
 		} catch (e) {
 			fault = { name: e?.name ?? 'Error', message: e?.message ?? String(e), blockName: e?.blockName ?? null };
 		}
-		// A few lines, sent with the answer rather than asked for: what the
-		// far-field paths' layers would be warned about.
+		// A few lines, sent with the answer rather than asked for: what a run
+		// would be warned about at its start -- the far-field paths' layers, and
+		// a value that is not a number (see `startWarnings` in ../sim/nonfinite.js).
 		self.postMessage({
-			type: 'start-values', id: msg.id, ms: Date.now() - started, fault, layers: preview?.at?.layers ?? [],
+			type: 'start-values', id: msg.id, ms: Date.now() - started, fault,
+			layers: preview?.at?.layers ?? [], warnings: preview?.at?.warnings ?? [],
 		});
 		return;
 	}

@@ -25,6 +25,7 @@
 
 import { buildSystem } from './builder.js';
 import { describeEntry } from './runner.js';
+import { startWarnings } from './nonfinite.js';
 import { coarseLayersWarning } from '../domain/farfield.js';
 
 /** What a block's own value comes from, given the layout entry it lives in. */
@@ -203,11 +204,29 @@ export function valuesAtStart(project, { system = null } = {}) {
 		}
 	}
 
+	/*
+	  What a run would trip over at its first step, said before one is run: a
+	  value that is not a number, at the block that makes it, with the operation
+	  and the values that did -- and whether the run reads it, and so stops on
+	  it, or only a result does. See `startWarnings` in ./nonfinite.js. After the
+	  layers, which read the values above: it works the equations out again. A
+	  fault in it costs the warnings, never the values.
+	*/
+	let notNumbers = [];
+	try {
+		notNumbers = startWarnings(sys, t0, y);
+	} catch {
+		notNumbers = [];
+	}
+
 	return {
 		t0,
 		size: own.size,
 		// What the far-field paths' layers would be warned about: `{block, message}`.
 		layers,
+		// Everything a run would be warned about at its start, those included:
+		// `{block, message}`, and `stops` where the run will stop on it.
+		warnings: [...layers, ...notNumbers],
 		of(name) {
 			if (!asked.has(name)) asked.set(name, describe(name));
 			return asked.get(name);

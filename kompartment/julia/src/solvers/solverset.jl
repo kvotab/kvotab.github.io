@@ -15,9 +15,20 @@ _solverset_non_finite_error(at::Float64) =
                              "equation divides by zero, takes the log of zero or a negative, or overflows; the state " *
                              "or rate that went first is where to look.", at)
 
-"""What `variableOrder` says when the NDF fails with `e`."""
+"""What `variableOrder` says when the NDF fails with `e`, keeping where the
+solver was when it gave up (`last_t`, `last_y`): the runner looks at the
+equations there (engine/nonfinite.jl)."""
 function variable_order_failure(e::SolverError, t0::Float64)::SolverError
     (e.kind == "aborted" || e.kind == "span") && return e
+    failure = _variable_order_failure(e, t0)
+    if failure !== e && !isempty(e.last_y)
+        failure.last_t = e.last_t
+        failure.last_y = e.last_y
+    end
+    return failure
+end
+
+function _variable_order_failure(e::SolverError, t0::Float64)::SolverError
     at = isnan(e.t) ? t0 : e.t
     if e.kind == "stalled" || e.kind == "steps"
         return SolverError(e.kind, "$(e.message) Something is holding a state where it cannot go: most often a " *

@@ -832,12 +832,29 @@ function prime_recorders!(sys::System, t0::Float64, y0::Vector{Float64})
     for r in sys.data.MEM
         prime!(r, t0, 0.0)
     end
+    # A seed may read another block that remembers -- the peak of a dose
+    # worked out from a delayed volume -- and the pass that works it out reads
+    # that block's history before it has one: the seeds are worked out again
+    # with the histories primed, until none of them moves (the application's
+    # `primeRecorders`).
     values = evaluate_algebraic!(sys, t0, y0)
-    for rec in sys.remembering
-        seed = rec.kind == "snapshot" ? rec[:aux]["initial"] : rec[:aux]["target"]
-        for off in 0:rec.width-1
-            prime!(sys.data.MEM[rec[:mem]+off+1], t0, values[seed.base+off+1])
+    seeds = Float64[]
+    for sweep in 0:length(sys.remembering)
+        moved = false
+        i = 0
+        for rec in sys.remembering
+            seed = rec.kind == "snapshot" ? rec[:aux]["initial"] : rec[:aux]["target"]
+            for off in 0:rec.width-1
+                i += 1
+                v = values[seed.base+off+1]
+                sweep > 0 && isequal(seeds[i], v) && continue
+                sweep == 0 ? push!(seeds, v) : (seeds[i] = v)
+                prime!(sys.data.MEM[rec[:mem]+off+1], t0, v)
+                moved = true
+            end
         end
+        moved || break
+        values = evaluate_algebraic!(sys, t0, y0)
     end
     for F in sys.laplace
         farfield_prime!(F, t0, y0, values)

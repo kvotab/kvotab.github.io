@@ -16,8 +16,9 @@
 //                                        ends each step (NaN for where it was going), or
 //                                        landing: null when it makes none
 //   dydt     { model, points: [{t, y}] } -> the derivative and every algebraic slot at each
-//   run      { model, overrides }      -> the run's times and every output series
-//   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name
+//   run      { model, overrides }      -> the run's times and every output series; or the error, its
+//                                        name and its block
+//   atstart  { model, names }          -> valuesAtStart(...).of(name) for each name, and its warnings
 //   lu       { cases: [{n, a, colPtr, rowIdx, values, mass, b}] } -> the dense LU's factors and solution
 //   sparse_lu { cases: [{lu, n, colPtr, rowIdx, values, mass, ops, ...}] } -> each case's sparse LU taken
 //                                        through its ops ({form: {a, values, held}} or {solve: b}):
@@ -253,7 +254,8 @@ switch (req.task) {
 				mass: res.massBalance?.() ?? null,
 			};
 		} catch (e) {
-			out = { error: e.message, kind: e.name, stack: e.stack };
+			// `block`: where a value that is not a number starts (../../src/sim/nonfinite.js).
+			out = { error: e.message, kind: e.name, block: e.blockName ?? null, stack: e.stack };
 		}
 		break;
 	}
@@ -264,7 +266,11 @@ switch (req.task) {
 				const r = v.of(n);
 				return r ? { ...r, fields: Object.fromEntries(r.fields) } : null;
 			};
-			out = { t0: v.t0, size: v.size, of: Object.fromEntries(req.names.map((n) => [n, one(n)])) };
+			out = {
+				t0: v.t0, size: v.size, of: Object.fromEntries(req.names.map((n) => [n, one(n)])),
+				// What a run would be warned about at its start (../../src/sim/nonfinite.js).
+				warnings: v.warnings,
+			};
 		} catch (e) {
 			out = { error: e.message, kind: e.name, stack: e.stack };
 		}

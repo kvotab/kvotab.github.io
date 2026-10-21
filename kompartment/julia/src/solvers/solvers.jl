@@ -25,6 +25,9 @@
 Kinds: 'span', 'tolerance', 'nonfinite', 'singular', 'stalled', 'steps',
 'jacobian', 'aborted', 'output'. `t`, `last_t` are NaN where Python's are
 None; `trace`, `last_y` and `stats` are empty until the solver fills them.
+`block_name` is the block a value that is not a number starts in, and
+`solver_message` what the solver said before the message was said again with
+it in (engine/nonfinite.jl).
 """
 mutable struct SolverError <: Exception
     kind::String
@@ -35,10 +38,13 @@ mutable struct SolverError <: Exception
     last_y::Vector{Float64}
     stats::Dict{String,Any}
     hint::Union{Nothing,String}
+    block_name::Union{Nothing,String}
+    solver_message::Union{Nothing,String}
 end
 
 SolverError(kind::AbstractString, message::AbstractString, t::Real=NaN) =
-    SolverError(String(kind), String(message), Float64(t), Any[], NaN, Float64[], Dict{String,Any}(), nothing)
+    SolverError(String(kind), String(message), Float64(t), Any[], NaN, Float64[], Dict{String,Any}(), nothing,
+                nothing, nothing)
 
 Base.showerror(io::IO, e::SolverError) = print(io, e.message)
 

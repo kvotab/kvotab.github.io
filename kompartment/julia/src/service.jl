@@ -49,7 +49,7 @@ function _service_ready()
 end
 
 function _service_error(id::String, e)
-    block = e isa BuildError ? e.block_name : nothing
+    block = e isa BuildError || e isa SolverError ? e.block_name : nothing
     hint = hasproperty(e, :hint) ? getproperty(e, :hint) : nothing
     # The message without the type in front of it: the page shows the name beside it.
     message = sprint(showerror, e)

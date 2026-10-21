@@ -18,6 +18,7 @@ import { cellNames, heldCells, usesCells } from '../domain/farfield.js';
 import { valueAt } from '../domain/project.js';
 import { dormandPrince, rosenbrock23, SolverError } from '../ode/one-step.js';
 import { variableOrder } from '../ode/variable-order.js';
+import { explainNonFinite } from './nonfinite.js';
 import {
 	SOLVER_IDS, DEFAULT_SOLVER, solverLabel, solverName, solverOptions, addMethodSteps,
 } from '../ode/solvers.js';
@@ -61,6 +62,13 @@ const SOLVERS = Object.assign(Object.create(null), {
 function solverFor(id) {
 	if (SOLVERS[id]) return SOLVERS[id];
 	return isScipySolver(id) ? scipySolver(id) : null;
+}
+
+/** One `(t, y)` hook calling each of those given in turn; undefined for none. */
+function chain(...hooks) {
+	const fns = hooks.filter(Boolean);
+	if (fns.length < 2) return fns[0] ?? undefined;
+	return (t, y) => { for (const fn of fns) fn(t, y); };
 }
 
 /**
@@ -416,6 +424,13 @@ export function run(input, opts = {}) {
 	// solver accepts steps.
 	system.primeRecorders?.(grid[0], y0);
 
+	// The last step the solver accepted, should the run fail on a value that
+	// is not a number: the equations are looked at there to say where it came
+	// from (./nonfinite.js). The NDF hands back its own with its error, and is
+	// spared the copy; the others say only when, so the runner keeps it.
+	const held = solverId === 'ndf' ? null : { t: NaN, y: new Float64Array(y0.length) };
+	const holdStep = held ? (t, y) => { held.t = t; held.y.set(y); } : null;
+
 	const sim = project.simulation;
 	const solverOpts = {
 		rtol: project.simulation.rtol,
@@ -472,12 +487,11 @@ export function run(input, opts = {}) {
 		maxJacAge: sim.max_jac_age,
 		belowTolRun: sim.below_tol_run,
 		matrix: sim.matrix,
-		// Two things may want to see each accepted step: the blocks that
-		// remember, and the collector above. Chained rather than one or the
-		// other, since a model can perfectly well want both.
-		onAccepted: collect && system.storeStep
-			? (t, y) => { system.storeStep(t, y); collect(t, y); }
-			: collect ?? system.storeStep ?? undefined,
+		// Three things may want to see each accepted step: the blocks that
+		// remember, the collector above, and the last step held for a failure
+		// to be explained from (below). Chained rather than one or the other,
+		// since a model can perfectly well want all of them.
+		onAccepted: chain(system.storeStep, collect, holdStep),
 		// The blocks that remember see the requested times as well as the
 		// steps: a solver crossing a whole output interval in one step would
 		// otherwise leave a min/max blind to the extreme the table reports
@@ -568,7 +582,12 @@ export function run(input, opts = {}) {
 	// declared -- see `useClockInterpolation` in ./builder.js.
 	const minChange = Number(project.simulation.min_change_time ?? 0);
 	const f = opts.equations?.dydt ?? system.dydt;
+	// Where the stretch being solved began: a solver that fails at its first
+	// instant has nothing later to say where, and this is where. See
+	// `explainNonFinite` in ./nonfinite.js.
+	let stretch = { t: span[0], y: y0 };
 	const solveSpan = (grid2, start) => {
+		stretch = { t: grid2[0], y: start };
 		system.useClockInterpolation?.(minChange, grid2[0]);
 		opts.equations?.onSegment?.(grid2[0], minChange);
 		// A semi-analytical path records the instant a segment starts at: the
@@ -635,6 +654,11 @@ export function run(input, opts = {}) {
 					+ `turning the setting off on that compartment shows what the `
 					+ `model is really doing.`);
 			}
+			// A value that is not a number is the model's, whatever the solver
+			// made of it -- a step it could not take, a matrix it could not
+			// factorise -- and no hint about solvers is the answer to it. Said
+			// instead: where it starts and what it reaches.
+			if (explainNonFinite(e, system, { start: stretch, held, end: span[span.length - 1] })) hints.length = 0;
 			if (hints.length) e.hint = hints.join(' ');
 		}
 		throw e;

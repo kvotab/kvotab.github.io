@@ -250,7 +250,12 @@ export function integrate(method, f, tspan, y0, opts = {}) {
 		const h1 = m <= 1e-15 ? Math.max(1e-6, guess * 1e-3) : (0.01 / m) ** exponent;
 		stepSize = Math.min(100 * guess, h1);
 	}
-	stepSize = Math.min(hmax, Math.max(oneStepFloor(t0), hminOpt, stepSize));
+	// A derivative that is not a number at the start makes a first step that
+	// is not one either, and `Math.max` keeps a NaN: the step never shrank to
+	// the floor, and the run went round the retry below for ever. The floor is
+	// the step then, and the attempt at it fails and says why -- as the Python
+	// port's, whose `max` drops the NaN, always did.
+	stepSize = Math.min(hmax, Math.max(oneStepFloor(t0), hminOpt, Number.isNaN(stepSize) ? 0 : stepSize));
 
 	let atFloor = 0;
 	let stallStep = 0;

@@ -27,9 +27,18 @@ def non_finite_error(at: float) -> SolverError:
 
 
 def variable_order_failure(e: SolverError, t0: float) -> SolverError:
-    """What ``variableOrder`` says when the NDF fails with ``e``."""
+    """What ``variableOrder`` says when the NDF fails with ``e``, keeping where
+    the solver was when it gave up (``last_t``, ``last_y``): the runner looks
+    at the equations there (:mod:`.nonfinite`)."""
     if e.code in ('aborted', 'span'):
         return e
+    failure = _variable_order_failure(e, t0)
+    if failure is not e and e.last_y is not None:
+        failure.last_t, failure.last_y = e.last_t, e.last_y
+    return failure
+
+
+def _variable_order_failure(e: SolverError, t0: float) -> SolverError:
     at = e.t if e.t is not None else t0
     if e.code in ('stalled', 'steps'):
         return SolverError(e.code, f'{e} Something is holding a state where it cannot go: most often a compartment '

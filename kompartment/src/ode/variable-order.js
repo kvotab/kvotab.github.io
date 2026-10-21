@@ -149,7 +149,12 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 		const at = e.t ?? t0;
 		// What it was keeps its code, as the Python and Julia engines keep it:
 		// a caller reads `code` rather than the words (see ../sim/localsens.js).
-		const coded = (err) => Object.assign(err, { code: e.code });
+		// And where the solver was when it gave up, for the runner to look at
+		// the equations there (../sim/nonfinite.js).
+		const coded = (err) => Object.assign(err, {
+			code: e.code,
+			...(e.lastY ? { lastT: e.lastT, lastY: e.lastY } : {}),
+		});
 		switch (e.code) {
 			case 'stalled':
 			case 'steps':

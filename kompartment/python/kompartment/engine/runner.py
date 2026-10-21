@@ -251,15 +251,26 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
     def stored(t: float, y: np.ndarray) -> None:
         store_hook[0](t, y)
 
+    # The last step the solver accepted, should the run fail on a value that
+    # is not a number: the equations are looked at there to say where it came
+    # from (:mod:`.nonfinite`). The NDF hands back its own with its error, and
+    # is spared the copy; the others say only when, so the runner keeps it.
+    # A loop run compiled never calls back, and keeps none.
+    held: Optional[Dict[str, Any]] = None if solver_id == 'ndf' else {'t': math.nan, 'y': np.zeros(len(y0))}
+
+    def hold_step(t: float, y: np.ndarray) -> None:
+        held['t'] = t  # type: ignore[index]
+        held['y'][:] = y  # type: ignore[index]
+
+    hooks = [h for h in (stored if system.has_store_step else None, collect if steps is not None else None,
+                         hold_step if held is not None else None) if h is not None]
     on_accepted: Optional[Callable[[float, np.ndarray], None]] = None
-    if steps is not None and system.has_store_step:
+    if len(hooks) == 1:
+        on_accepted = hooks[0]
+    elif hooks:
         def on_accepted(t: float, y: np.ndarray) -> None:
-            stored(t, y)
-            collect(t, y)
-    elif steps is not None:
-        on_accepted = collect
-    elif system.has_store_step:
-        on_accepted = stored
+            for hook in hooks:
+                hook(t, y)
     opts: Dict[str, Any] = {
         'rtol': float(sim['rtol']), 'abstol': abstol,
         'jacobian': _jacobian_option(system, sim),
@@ -338,8 +349,12 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
         store_hook[0] = compiled_run.store_step
 
     start_segment = getattr(system, 'start_segment', None)
+    # Where the stretch being solved began: a solver that fails at its first
+    # instant has nothing later to say where, and this is where.
+    stretch: List[Any] = [(float(span[0]), y0)]
 
     def solve_span(grid2: np.ndarray, start: np.ndarray) -> Dict[str, Any]:
+        stretch[0] = (float(grid2[0]), start)
         system.use_clock_interpolation(min_change, float(grid2[0]))
         if on_segment is not None:
             on_segment(float(grid2[0]), min_change)
@@ -451,6 +466,12 @@ def run(project: Any, system: Any = None, on_progress: Optional[Callable[[float,
             hints.append('If a compartment reaches zero at this time, its "cannot go negative" setting is the likely '
                          f'cause: "{SOLVER_LABELS["ndf"]}" carries a binding constraint, and turning the setting off '
                          'on that compartment shows what the model is really doing.')
+        # A value that is not a number is the model's, whatever the solver made
+        # of it, and no hint about solvers is the answer to it: said instead,
+        # where it starts and what it reaches (the application's runner).
+        from .nonfinite import explain_non_finite
+        if explain_non_finite(e, system, start=stretch[0], held=held, end=float(span[-1])):
+            hints = []
         if hints:
             e.hint = ' '.join(hints)
         raise

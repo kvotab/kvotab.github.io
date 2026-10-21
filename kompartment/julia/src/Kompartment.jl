@@ -80,6 +80,7 @@ include("engine/switchtimes.jl")
 include("engine/derived.jl")
 include("engine/massbalance.jl")
 include("engine/runner.jl")
+include("engine/nonfinite.jl")
 include("engine/split.jl")
 
 # --- many runs: probabilistic runs and what they say -----------------------------------

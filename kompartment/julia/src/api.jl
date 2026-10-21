@@ -226,6 +226,10 @@ struct ValuesAtStart
     own::OrderedDict{String,NamedTuple{(:entry, :kind, :where),Tuple{Entry,String,String}}}
     fields::IdDict{Any,OrderedDict{String,NamedTuple{(:entry, :where),Tuple{Entry,String}}}}
     asked::Dict{String,Any}
+    # What a run would trip over at its first step, said before one is run:
+    # `Dict("block", "message", "stops")` for every block whose value is not a
+    # number at the start of its own making (`start_warnings`, engine/nonfinite.jl).
+    warnings::Vector{Dict{String,Any}}
 end
 
 const _AT_START_SOURCE = Dict("state" => "y", "algebraic" => "X", "parameter" => "P")
@@ -235,10 +239,17 @@ function ValuesAtStart(project::Project, sys::System=build_system(project; jacob
     y = initial_state(sys)
     prime_recorders!(sys, t0, y)
     X = copy(evaluate_algebraic!(sys, t0, y))
+    # It works the equations out again, so after the copies above; a fault in it
+    # costs the warnings, never the values.
+    warnings = try
+        start_warnings(sys, t0, y)
+    catch
+        Dict{String,Any}[]
+    end
     v = ValuesAtStart(project, sys, Dict("y" => y, "X" => X, "P" => sys.P),
                       OrderedDict{String,NamedTuple{(:entry, :kind, :where),Tuple{Entry,String,String}}}(),
                       IdDict{Any,OrderedDict{String,NamedTuple{(:entry, :where),Tuple{Entry,String}}}}(),
-                      Dict{String,Any}())
+                      Dict{String,Any}(), warnings)
     remember(e, kind, where_) = haskey(v.own, e.name) || (v.own[e.name] = (entry=e, kind=kind, where=where_))
     fields_of(block) = get!(() -> OrderedDict{String,NamedTuple{(:entry, :where),Tuple{Entry,String}}}(), v.fields,
                             block)

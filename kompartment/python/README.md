@@ -321,6 +321,7 @@ m.run(solver='fbdf_krylov').stats.get('krylov_iters')  # GMRES's iterations, of 
 
 ```python
 m.values_at_start('Soil')                      # what the equations come to at the first instant
+m.values_at_start().warnings                   # what is not a number there, where it starts, and whether a run stops on it
 runs = m.run_scenarios(workers=3)              # {scenario: Results}, one run per scenario
 system = m.build()                             # the built equations: system.dydt(t, y), system.layout
 system.evaluate_algebraic(t, y)                # every algebraic value at (t, y); dydt works out only those it reads

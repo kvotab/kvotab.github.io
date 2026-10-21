@@ -243,6 +243,7 @@ y0 = initial_state(sys)
 dydt(sys, t, y)                    # the derivative
 evaluate_algebraic!(sys, t, y)     # every algebraic value at (t, y)
 values_at_start(m, "Soil")         # what a block and its settings come to at the first instant
+values_at_start(m).warnings        # what is not a number there, where it starts, and whether a run stops on it
 ```
 
 ## Scenarios

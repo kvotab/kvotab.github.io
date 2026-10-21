@@ -2065,6 +2065,19 @@ be wrong here:
   commented-out code beside it shows the intent was to seed it with the target's
   initial condition, which is what this does.
 
+**The seeds are worked out until they settle.** A seed is its target at the
+start, worked out by one pass of the algebra -- and a target may read another
+block that remembers, whose history that pass has not given it yet. The model
+that showed it divides a dose by a delayed volume: in a single pass the delay
+read 0, the dose was 0/0, and each peak dose was seeded with NaN, which `max`
+then kept for the whole run while the dose itself was a number. So
+`primeRecorders` primes, works the algebra out again and primes once more until
+no seed moves: two passes for a model without such a chain (the second only
+confirming the first, so nothing a run gives changes), one more for each link
+of one. The Python and Julia engines do the same (`prime_recorders`,
+`prime_recorders!`); `test/run.js` checks a peak read through a delay, and
+fails with one pass.
+
 **All five differentiate exactly**, so a model using them keeps its analytic
 Jacobian rather than falling back to differences: a min/max is `max(so far,
 target)`, whose derivative is the target's wherever one exists; a running mean's
@@ -3404,6 +3417,65 @@ starts at zero somewhere, and a line reading `not a number at all 3 indices`, or
 `0 Bq to 5 Bq over 61 indices — 1 infinite`, is the feature working rather than
 failing. Only a model that will not build has no answer, and that is already the
 problem strip's business.
+
+## A value that is not a number
+
+A run that met a NaN or an infinity said when and nothing else, in words that
+depended on the solver: *the state or its derivative became non-finite at t=0*,
+*the iteration matrix is singular*, *component 1*. On an assessment of eleven
+thousand states, the block, the index and the reason are the whole of the
+answer, and everything needed to give them is at hand when the run fails.
+`src/sim/nonfinite.js` gives them, and the Python and Julia engines say the same
+sentences (`engine/nonfinite.py`, `src/engine/nonfinite.jl`); the three suites
+hold the same strings.
+
+- **Where it is looked for.** At the state the solver last held: the NDF hands
+  its own back with its error (`lastY`, kept through `variableOrder`'s
+  rewording), and for every other solver the runner keeps the last accepted step
+  -- one copy of the state per step, spared the NDF. Then at the instant the
+  solver failed with that state, which catches what the clock alone changes, a
+  table reaching zero. A failure with neither, at the instant a stretch of the
+  run began, is looked at there: that is where a model dividing nothing by
+  nothing fails, on every solver. The Python engine's compiled loop keeps no
+  state of its own, so there only that last case is explained.
+- **Followed by value, not by name.** From the slots the derivative's assembly
+  reads -- transfers, inflows, dy/dt terms -- that are not numbers, each element
+  is followed down its equation: the operand that is not a number, the branch a
+  conditional took, into the slot a reference reads if that is where it came
+  from, until an operation that made one out of numbers -- `0/0`, `log(-x)`, an
+  overflow -- or a state or parameter that is one. A block that is not a number
+  at one index is followed only where it is read at that one. The first root in
+  the algebra's own order is the one the message names; the others are counted.
+- **Worked out by the code the derivative runs.** `equationAt(k, off)` in the
+  builder resolves an element's equation with the same locator the emitter uses,
+  at the element's tuple, and compiles a part on demand with the same `emit`:
+  what it says went wrong is what did. The engines evaluate their own resolved
+  trees with their own arithmetic.
+- **A step past.** A compartment a hair below zero under a square root is fine
+  at the last state held and not a number in the step the solver could not
+  take. When a failure is about a value that is not a number and the state held
+  shows none, explicit steps from it are tried, four times longer each time from
+  the shortest the clock tells apart, and the first that shows one is the place;
+  the message says so. Only then: a tolerance failure is not taken for one.
+- **The block becomes the error's.** `blockName` (`block_name` in the engines'
+  service lines) is what the problem strip links to and the diagram marks, and
+  hints about stiffness or the floor are dropped -- no solver setting is the
+  answer to `0/0`.
+- **Said before a run as well.** `startWarnings` follows every value that is not
+  a number at the start the same way, from the values the editor works out
+  anyway (`valuesAtStart`'s `warnings`, beside the far-field layers' warning).
+  Those the run reads stop it at its first step and are a warning each, marked
+  on the block. Those only results read are harmless and common -- 54 of 220
+  imported projects that build have them, up to 30 each, concentrations of
+  objects not there yet -- so the strip gathers them into one row, unmarked, and
+  each block's settings carry its own sentence. A start warning a failed run has
+  explained is not said twice.
+
+Two things found with it. The one-step methods worked out their first step from
+y' at the start, and a NaN there made a NaN step that `Math.max` kept: dp45 went
+round its retry loop for ever on a model dividing zero by zero (the Python port
+escaped only because its `max` drops a NaN). And the seeds of the blocks that
+remember were worked out in one pass -- see *Blocks that remember*.
 
 ## The variable-order solver
 

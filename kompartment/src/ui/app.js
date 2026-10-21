@@ -159,7 +159,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-18';
+const BUILD = '2026-10-21';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -3805,7 +3805,7 @@ async function computeStartValues() {
 	startCost = { model, ms: reply.ms, budget: START_BUDGET };
 	startValues = { model, rev, id, answers: reply.fault ? null : new Map(), at: null };
 	noteBuildProblem(reply.fault ? Object.assign(new Error(reply.fault.message), reply.fault) : null);
-	noteStartWarnings(reply.fault ? [] : reply.layers);
+	noteStartWarnings(reply.fault ? [] : reply.warnings ?? reply.layers);
 	sayStartBudget();
 	return true;
 }
@@ -3843,7 +3843,7 @@ async function computeStartValuesHere(model, rev) {
 	startCost = { model, ms: Date.now() - started, budget: START_BUDGET_ON_PAGE };
 	startValues = { model, rev, id: 0, answers: null, at };
 	noteBuildProblem(fault);
-	noteStartWarnings(at?.layers);
+	noteStartWarnings(at?.warnings ?? at?.layers);
 	sayStartBudget();
 	return true;
 }
@@ -3939,7 +3939,11 @@ function marksByName() {
 	for (const w of runWarningsShown()) {
 		entries.push({ where: w.block, level: 'warning', message: `After the last run: ${w.message}` });
 	}
+	// Not the values only results read, though: a landscape model has a
+	// concentration per object not there yet, thirty of them, and a mark on
+	// each would hide the ones that stop a run. Their own settings say it.
 	for (const w of startWarningsShown()) {
+		if (w.stops === false) continue;
 		entries.push({ where: w.block, level: 'warning', message: `At the start of a run: ${w.message}` });
 	}
 	// And a fault found by building the model -- by the last run, or by the
@@ -4176,7 +4180,8 @@ function noteBuildProblem(e) {
 }
 
 /**
- * What the same build found about the far-field paths' matched layers,
+ * What the same build found a run would be warned about at its start -- the
+ * far-field paths' matched layers, and a value that is not a number there --
  * kept as the build's fault is: replaced by every build, and forgotten with
  * it where the model costs too much to build again after an edit.
  */
@@ -4189,12 +4194,48 @@ function noteStartWarnings(list) {
 	remark();
 }
 
-/** The start's warnings that the last run has not already said in the same words. */
+/**
+ * The start's warnings that the last run has not already said in the same
+ * words -- nor in its failure: a run that stopped on a value that is not a
+ * number names the block it starts in, at greater length.
+ */
 function startWarningsShown() {
 	return state.startWarnings.filter(
 		(w) => !state.leftOut.has(w.block)
-			&& !state.runWarnings.some((r) => r.block === w.block && r.message === w.message),
+			&& !state.runWarnings.some((r) => r.block === w.block && r.message === w.message)
+			&& !(w.stops && state.runProblem?.where === w.block),
 	);
+}
+
+/**
+ * The start's warnings as rows of the strip. A value that is not a number and
+ * stops a run has a row of its own; the ones only results read are gathered
+ * into one, naming them, since a landscape model has thirty -- a concentration
+ * per object not there yet -- and a row each would bury the ones that matter.
+ * Each still says its own piece in its block's settings.
+ */
+function startWarningRows() {
+	const shown = startWarningsShown();
+	const quiet = shown.filter((w) => w.stops === false);
+	const rows = shown.filter((w) => w.stops !== false).map((w) => ({
+		where: w.block, what: 'at the start of a run', message: w.message, warning: true,
+	}));
+	if (quiet.length === 1) {
+		rows.push({ where: quiet[0].block, what: 'at the start of a run', message: quiet[0].message, warning: true });
+	} else if (quiet.length > 1) {
+		const named = quiet.slice(0, 3).map((w) => w.block);
+		const more = quiet.length - named.length;
+		rows.push({
+			where: quiet[0].block,
+			what: 'at the start of a run',
+			message: `${quiet.length} blocks come to NaN or Infinity at the start: ${more
+				? `${named.join(', ')} and ${more} more` : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`}. `
+				+ 'Only results read them, so a run goes on, with those values at its first point; '
+				+ 'each block’s settings say what makes it.',
+			warning: true,
+		});
+	}
+	return rows;
 }
 
 /**
@@ -4290,7 +4331,10 @@ function renderProblems() {
 		? []
 		: [...state.warnings.map((w) => ({
 			where: w.name,
-			what: w.field ?? 'units',
+			// An equation written for one index says which: two entries of a
+			// block warned in the same words were two rows that read as one
+			// warning said twice.
+			what: w.field ? `${w.field}${w.index ? ` [${Object.values(w.index).join(', ')}]` : ''}` : 'units',
 			message: w.message,
 			// Not every warning is about a block. One about the output grid
 			// has no name to link to and an editor instead; `goto` says which.
@@ -4298,9 +4342,7 @@ function renderProblems() {
 			warning: true,
 		})), ...runWarningsShown().map((w) => ({
 			where: w.block, what: 'last run', message: w.message, warning: true,
-		})), ...startWarningsShown().map((w) => ({
-			where: w.block, what: 'at the start of a run', message: w.message, warning: true,
-		}))];
+		})), ...startWarningRows()];
 	const rows = [...all, ...warnings];
 	box.replaceChildren();
 	box.hidden = !rows.length;
@@ -4325,7 +4367,10 @@ function renderProblems() {
 		: el('div', { className: 'problems-head' },
 			el('b', {}, warnings.length === 1 ? '1 warning' : `${warnings.length} warnings`),
 			el('span', { className: 'problems-what' },
-				'the model runs; these are worth a look'));
+				// Not while one of them says a run will stop at its first step.
+				startWarningsShown().some((w) => w.stops)
+					? 'a run will stop at its first step: see those at the start of a run'
+					: 'the model runs; these are worth a look'));
 	// The same open-and-close control the foot of the list carries, on the
 	// header as well -- which is sticky, so it is reachable whether the list
 	// is six rows or thirty. The one at the foot is at the end of a scrolling

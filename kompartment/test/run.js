@@ -32433,6 +32433,207 @@ test('ndf reports an iteration matrix it cannot factorise instead of solving on'
 	}
 });
 
+test('a derivative that is not a number at the start is refused by the one-step methods, not gone round for ever', () => {
+	// The first step is worked out from y' at the start, and a NaN there made a
+	// NaN step that `Math.max` kept: the retry loop never reached the floor,
+	// and dp45 on a model dividing zero by zero never came back.
+	const f = (t, y, o) => { o[0] = 0 / y[1]; o[1] = 0; return o; };
+	for (const [name, solver] of [['dp45', dormandPrince], ['ros23', rosenbrock23]]) {
+		const started = performance.now();
+		let caught = null;
+		try { solver(f, [0, 1, 2], Float64Array.from([1, 0]), { rtol: 1e-6, abstol: 1e-9 }); }
+		catch (e) { caught = e; }
+		assert(caught && caught.name === 'SolverError', `${name} returned`);
+		assert(performance.now() - started < 2000, `${name} took ${performance.now() - started} ms to give up`);
+	}
+});
+
+// =========================================================================
+section('a run that meets a value that is not a number says where it starts');
+
+/** Packages that may crack: none have, and the concentration in them is 0/0. */
+const crackedModel = (solver = 'ndf') => ({
+	name: 'cracked packages', nuclides: ['Cs-137', 'Sr-90'],
+	simulation: { ...DEFAULT_SIMULATION, end_time: 10, output_points: 3, spacing: 'linear', solver },
+	index_lists: [{ name: 'Radionuclides', for_contaminants: true, indices: [{ name: 'Cs-137' }, { name: 'Sr-90' }] }],
+	parameters: [{ name: 'N_cracked', value: 0 }, { name: 'V', value: 2 }, { name: 'limit', value: 100 }],
+	compartments: [
+		{ name: 'Waste', initial: '0', index_lists: ['Radionuclides'] },
+		{ name: 'Wall', initial: '0', index_lists: ['Radionuclides'] },
+	],
+	expressions: [
+		{ name: 'C_waste', equation: 'min(Waste/(V*N_cracked), limit)', index_lists: ['Radionuclides'] },
+		{ name: 'C_out', equation: 'Wall/(V*N_cracked)', index_lists: ['Radionuclides'] },
+	],
+	transfers: [{
+		name: 'Diffusion', from: 'Waste', to: 'Wall', rate: 'N_cracked*C_waste', multiply_by_donor: false,
+		index_lists: ['Radionuclides'],
+	}],
+	inflows: [],
+});
+
+/** What the engines say of it, word for word: the Python and Julia engines' tests hold the same. */
+const CRACKED_SAYS = 'The simulation produced a value that is not a number at t=0. It starts in C_waste '
+	+ '[Radionuclides=Cs-137] (and 1 more of its indices): Waste/(V*N_cracked) comes to 0/0, with Waste = 0, '
+	+ 'V = 2 and N_cracked = 0. It reaches 2 compartments, 4 states in all: Waste and Wall, through the transfer '
+	+ 'Diffusion.';
+
+test('a value that is not a number at the start is followed back to the operation that made it, on every solver', () => {
+	// The run used to say when and nothing else -- "the state or its derivative
+	// became non-finite at t=0", "the iteration matrix is singular", "component 1"
+	// by solver -- on a model of thousands of equations.
+	for (const solver of ['ndf', 'ros23', 'dp45', 'tsit5', 'auto', 'rodas5p', 'fbdf']) {
+		let caught = null;
+		try { run(crackedModel(solver)); } catch (e) { caught = e; }
+		assert(caught?.name === 'SolverError', `${solver} ran`);
+		assert(caught.message === CRACKED_SAYS, `${solver}: ${caught.message}`);
+		// The block it starts in, for the page to mark and link to.
+		assert(caught.blockName === 'C_waste', `${solver} named ${caught.blockName}`);
+		// The solver's own words are kept, and no hint about solvers is given.
+		assert(caught.solverMessage && caught.solverMessage !== caught.message, `${solver} lost its own words`);
+		assert(!caught.hint, `${solver} hinted: ${caught.hint}`);
+	}
+});
+
+test('a value that is not a number only a step past the state held is found there', () => {
+	// A compartment taken a hair below zero under a square root: the state the
+	// solver held gives numbers, and the step it could not take does not.
+	const model = (solver) => ({
+		name: 'below zero',
+		simulation: {
+			...DEFAULT_SIMULATION, end_time: 10, output_points: 20, spacing: 'linear', solver, non_negative: false,
+			rtol: 1e-6, abstol: 1e-9,
+		},
+		compartments: [{ name: 'A', initial: '1', non_negative: false }, { name: 'B', initial: '0' }],
+		expressions: [{ name: 'R', equation: 'sqrt(A)' }],
+		transfers: [
+			{ name: 'Drain', from: 'A', to: 'B', rate: '0.5 + 0*R', multiply_by_donor: false },
+			{ name: 'Leak', from: 'B', to: null, rate: '0.01*R', multiply_by_donor: false },
+		],
+		parameters: [], inflows: [],
+	});
+	for (const solver of ['ndf', 'ros23', 'dp45', 'tsit5']) {
+		let caught = null;
+		try { run(model(solver)); } catch (e) { caught = e; }
+		assert(caught?.name === 'SolverError', `${solver} ran`);
+		const m = /^The simulation produced a value that is not a number at t=([\d.e+-]+)\. The state it held there gives numbers; a step of [\d.e+-]+ past it does not\. It starts in R: sqrt\(A\) comes to sqrt\(-[\d.e+-]+\), with A = -[\d.e+-]+\. It reaches 2 compartments, 2 states in all: A and B, through the transfers Drain and Leak\.$/.exec(caught.message);
+		assert(m, `${solver}: ${caught.message}`);
+		close(Number(m[1]), 2, 1e-9, `${solver} placed it`);
+		assert(caught.blockName === 'R', `${solver} named ${caught.blockName}`);
+	}
+});
+
+test('the warnings at the start say which values are not numbers, and which of them stop a run', () => {
+	const at = valuesAtStart(new Project(crackedModel()));
+	const notNumbers = at.warnings.filter((w) => w.stops !== undefined);
+	assert(notNumbers.length === 2, `${notNumbers.length} warnings: ${JSON.stringify(notNumbers)}`);
+	const [stops, goesOn] = notNumbers;
+	assert(stops.block === 'C_waste' && stops.stops === true, JSON.stringify(stops));
+	assert(stops.message === 'Comes to NaN at the start at Radionuclides=Cs-137 (and 1 more of its indices): '
+		+ 'Waste/(V*N_cracked) comes to 0/0, with Waste = 0, V = 2 and N_cracked = 0. The run reads it, through the '
+		+ 'transfer Diffusion, so it will stop at its first step.', stops.message);
+	// Read by a result alone, it is said too, and that a run goes on.
+	assert(goesOn.block === 'C_out' && goesOn.stops === false, JSON.stringify(goesOn));
+	assert(goesOn.message === 'Comes to NaN at the start at Radionuclides=Cs-137 (and 1 more of its indices): '
+		+ 'Wall/(V*N_cracked) comes to 0/0, with Wall = 0, V = 2 and N_cracked = 0. Only results read it, so a run '
+		+ 'goes on, with these values at its first point.', goesOn.message);
+	// With a package cracked there is nothing to say, and the run goes.
+	const fixed = crackedModel();
+	fixed.parameters[0].value = 1;
+	assert(valuesAtStart(new Project(fixed)).warnings.length === 0, 'a model of numbers was warned about');
+	assert(run(fixed).t.length === 3);
+	// An initial value that is not a number stops a run before it starts.
+	const bad = crackedModel();
+	bad.compartments[0].initial = '0/N_cracked';
+	const said = valuesAtStart(new Project(bad)).warnings;
+	assert(said.length === 1 && said[0].block === 'Waste' && said[0].stops
+		&& said[0].message === 'Its initial value comes to NaN at Radionuclides=Cs-137 (and 1 more of its indices), '
+		+ 'so a run cannot start.', JSON.stringify(said));
+});
+
+test('a peak read through a delay starts at its target, not at NaN it kept for the whole run', () => {
+	// The seeds of the blocks that remember were worked out in one pass, before
+	// any of them had a history: a delayed volume read 0, the dose divided by it,
+	// and the peak dose was seeded with NaN -- which a max then kept to the end.
+	const model = {
+		name: 'peak through a delay',
+		simulation: { ...DEFAULT_SIMULATION, end_time: 10, output_points: 3, spacing: 'linear' },
+		lookups: [{ name: 'V', points: [[0, 2], [10, 2]] }],
+		delays: [{ name: 'V_delay', target: 'V', delay: '0.001' }],
+		compartments: [{ name: 'A', initial: '1' }],
+		transfers: [{ name: 'Out', from: 'A', to: null, rate: '0.1' }],
+		expressions: [{ name: 'Dose', equation: 'A/V_delay' }],
+		min_maxes: [{ name: 'Peak', operation: 'max', target: 'Dose' }],
+		parameters: [], inflows: [],
+	};
+	const r = run(model);
+	const outs = r.outputs();
+	const [dose, peak] = ['Dose', 'Peak'].map((l) => r.series(outs.find((o) => o.label === l)));
+	assert(peak.every(Number.isFinite), `the peak is ${Array.from(peak)}`);
+	close(peak[0], 0.5, 1e-12, 'the peak at the start is the dose there');
+	close(peak[0], dose[0], 1e-12, 'peak and dose at the start');
+	// Nothing to warn about at the start either.
+	assert(valuesAtStart(new Project(model)).warnings.length === 0, 'the start was warned about');
+});
+
+test('the page gathers the warnings only results read into one row, and marks none of them', async () => {
+	const { readFileSync } = await import('node:fs');
+	const src = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	assert(/function startWarningRows\(\)/.test(src), 'the rows are made in one place');
+	assert(/if \(w\.stops === false\) continue;/.test(src), 'the diagram marks them');
+	assert(/!\(w\.stops && state\.runProblem\?\.where === w\.block\)/.test(src),
+		'a warning a failed run has explained is said twice');
+	assert(/noteStartWarnings\(reply\.fault \? \[\] : reply\.warnings \?\? reply\.layers\)/.test(src),
+		'the worker’s warnings are not read');
+	// The heading does not say the model runs while a warning says it will stop.
+	assert(/startWarningsShown\(\)\.some\(\(w\) => w\.stops\)\s*\?\s*'a run will stop at its first step/.test(src),
+		'the heading says the model runs over a warning that it will not');
+});
+
+/** Equations whose brackets, signs and powers a message has to write back as the parser read them. */
+const WRITTEN_BACK = [
+	'a/(b*c)', 'a-b-c', 'a-(b-c)', '-a^2', '(-a)^2', '2^-3', '2^-3^2', 'a^b^c', 'a^(b^c)', '-(a*b)', '-a*b',
+	'a*-b', 'min(a, b*c, -d)', 'x>1 && y<2', '(a || b) && c', 'a ? b : c ? d : e', '(a ? b : c) + 1',
+	'if(c, a+1, b)', 'a*(b+c)/d', '1e-5*a', '0.01[m]*a', 'Cs[Cs-137]*2', 'M[_Ra-226][Pb-210]', 'M[][x]',
+	'a == b', 'a ~= b', 'not(z)', 'exp(-(a+b)/c)', 'sqrt(a - b)^0.5',
+];
+
+test('an equation is written back as the parser read it, brackets and all', async () => {
+	// What a message quotes of an equation is the tree the parser made of it,
+	// written out again: a bracket short and `a-(b-c)` reads as `a-b-c`.
+	const { equationText } = await import('../src/sim/nonfinite.js');
+	const strip = (n) => JSON.parse(JSON.stringify(n));
+	for (const eq of WRITTEN_BACK) {
+		const tree = parse(eq);
+		const text = equationText(tree);
+		assert(JSON.stringify(strip(parse(text))) === JSON.stringify(strip(tree)), `${eq} came back as ${text}`);
+	}
+	// A reference a reducing block builds names its list outright.
+	assert(equationText({ type: 'ref', name: 'Target', indices: { Objects: '01' } }) === 'Target[01]');
+});
+
+test('a unit warning about one entry of a block says which entry', () => {
+	// Two entries wrong in the same words were two rows of the strip reading
+	// as one warning said twice.
+	const m = {
+		name: 'entries', nuclides: ['Cs-137', 'Sr-90'],
+		simulation: { ...DEFAULT_SIMULATION, end_time: 10, output_points: 3, spacing: 'linear' },
+		index_lists: [{ name: 'Radionuclides', for_contaminants: true, indices: [{ name: 'Cs-137' }, { name: 'Sr-90' }] }],
+		parameters: [{ name: 'a', value: 1, unit: 'm' }],
+		expressions: [{
+			name: 'E', unit: 'm^2', equation: '0', index_lists: ['Radionuclides'],
+			entries: [
+				{ index: { Radionuclides: 'Cs-137' }, equation: 'a' },
+				{ index: { Radionuclides: 'Sr-90' }, equation: 'a' },
+			],
+		}],
+		compartments: [], transfers: [], inflows: [],
+	};
+	const said = ed.modelWarnings(m).filter((w) => w.name === 'E');
+	assert(said.length === 2, JSON.stringify(said));
+	assert(said.map((w) => Object.values(w.index ?? {}).join()).sort().join('|') === 'Cs-137|Sr-90', JSON.stringify(said));
+});
+
 // =========================================================================
 section('a Jacobian may decline a state');
 

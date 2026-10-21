@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from .builder import build_system
+from .nonfinite import start_warnings
 from .project import Project
 from .runner import Results, describe_entry, run
 
@@ -60,6 +61,16 @@ class ValuesAtStart:
             remember(p, 'parameter', 'parameter')
             fields_of(p.block)['value'] = {'entry': p, 'where': 'parameter'}
         self._asked: Dict[str, Any] = {}
+        #: What a run would trip over at its first step, said before one is
+        #: run: ``{'block', 'message', 'stops'}`` for every block whose value
+        #: is not a number at the start of its own making (``start_warnings``
+        #: in :mod:`.nonfinite`). It works the equations out again, so it
+        #: comes after the values above, which are copies; a fault in it costs
+        #: the warnings, never the values.
+        try:
+            self.warnings: List[Dict[str, Any]] = start_warnings(sys_, self.t0, y)
+        except Exception:  # noqa: BLE001
+            self.warnings = []
 
     @property
     def size(self) -> int:

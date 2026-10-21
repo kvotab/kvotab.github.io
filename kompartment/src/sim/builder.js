@@ -2676,14 +2676,32 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		// Cleared first, so the pass that works out the seeds reads an empty
 		// history rather than the one left by the previous run.
 		for (const r of MEM) r.prime(t0, 0);
-		const values = evaluateAlgebraic(t0, y0);
-		for (const rec of remembering) {
-			// A snapshot starts at its own initial value; the others start at
-			// their target, which is what `initBatch` seeds them with.
-			const seed = rec.kind === 'snapshot' ? rec.aux.initial : rec.aux.target;
-			for (let off = 0; off < rec.width; off++) {
-				MEM[rec.mem + off].prime(t0, values[seed.base + off]);
+		// A seed may read another block that remembers -- the peak of a dose
+		// worked out from a delayed volume -- and the pass that works it out
+		// reads that block's history before it has one: the delay said 0, the
+		// dose divided by it, and the peak was seeded with NaN, which a max
+		// then kept for the whole run. So the seeds are worked out again with
+		// the histories primed, until none of them moves: once more for a model
+		// with no such chain, and a pass more for each link of one.
+		let values = evaluateAlgebraic(t0, y0);
+		const seeds = [];
+		for (let pass = 0; pass <= remembering.length; pass++) {
+			let moved = false;
+			let i = 0;
+			for (const rec of remembering) {
+				// A snapshot starts at its own initial value; the others start at
+				// their target, which is what `initBatch` seeds them with.
+				const seed = rec.kind === 'snapshot' ? rec.aux.initial : rec.aux.target;
+				for (let off = 0; off < rec.width; off++, i++) {
+					const v = values[seed.base + off];
+					if (pass > 0 && Object.is(seeds[i], v)) continue;
+					seeds[i] = v;
+					MEM[rec.mem + off].prime(t0, v);
+					moved = true;
+				}
 			}
+			if (!moved) break;
+			values = evaluateAlgebraic(t0, y0);
 		}
 		// A semi-analytical path starts its history with the inflow at t0.
 		for (const F of laplacePaths) F.prime(t0, y0, values);
@@ -2875,10 +2893,62 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 		}
 	}
 
+	/**
+	 * One element of an algebraic slot's equation, taken apart: its tree, where
+	 * each reference in it reads, and what any part of it comes to at a time
+	 * and a state. What ./nonfinite.js follows a value that is not a number
+	 * back through, after a run has failed on one.
+	 *
+	 * A part is worked out by the code the derivative runs -- the same emitter
+	 * and resolvers, at this element's own tuple, so every offset is a number --
+	 * and reads `X` as the last evaluation left it, so the caller evaluates at
+	 * the instant first. It writes nothing. Null for a slot with no equation of
+	 * its own: a lookup table, a block that remembers, a far-field path, a
+	 * waste package's hazard and release.
+	 */
+	const equationAt = (k, off) => {
+		const a = algebraic[k];
+		const ast = a?.asts?.length ? a.asts[a.uniform ? 0 : off] : null;
+		if (!ast) return null;
+		const tuple = a.dims.length ? tupleByList(space, a.dims, off) : {};
+		const locate = makeLocator(a, a.dims, null, tuple);
+		const resolveRef = makeResolver(a, a.dims, null, tuple);
+		const resolveCall = makeCall(a, a.dims, null, tuple);
+		const compiled = new Map();
+		return {
+			ast,
+			text: a.equations[a.uniform ? 0 : off],
+			read: (node) => {
+				const r = locate(node.name, node.indices, node);
+				return { array: ARRAY_OF[r.kind] ?? null, offset: Number(r.offset) };
+			},
+			valueOf: (node, t, y) => {
+				let fn = compiled.get(node);
+				if (fn === undefined) {
+					try {
+						// eslint-disable-next-line no-new-func
+						fn = new Function('F', 'ctx', ...ARGS,
+							`"use strict";\nreturn ${emit(node, resolveRef, resolveCall)};`);
+					} catch {
+						fn = null;
+					}
+					compiled.set(node, fn);
+				}
+				if (!fn) return undefined;
+				try {
+					return fn(FUNCTIONS, { ...ctx, t }, y, null, P, X, DEC, MAPS, TAB, MEM, FARF);
+				} catch {
+					return undefined;
+				}
+			},
+		};
+	};
+
 	return {
 		dydt,
 		evaluateAlgebraic,
 		initialState,
+		equationAt,
 		jacobian,
 		/**
 		 * `df/dp` for the forward sensitivity equations, built on first ask.

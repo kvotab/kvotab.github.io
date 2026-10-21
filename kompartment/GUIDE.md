@@ -215,6 +215,21 @@ line: a model the scan has already objected to is not handed to the solver at
 all, since it would fail the same way and say so a second time in slightly
 different words.
 
+**A run that stops on a value that is not a number says where it came from.**
+The equations are worked out again at the state the solver last held — or at
+the start, which is where a model that divides nothing by nothing fails, on
+every solver — and the value is followed back to the block that makes it, and
+inside that block's equation to the one operation that turned numbers into
+something else: *It starts in C_waste [Radionuclides=Cs-137] (and 1 more of its
+indices): Waste/(V\*N_cracked) comes to 0/0, with Waste = 0, V = 2 and
+N_cracked = 0.* Then what it reached: the compartments whose rate of change it
+made meaningless and the transfers that carried it there. That block is the
+one the strip links to and the diagram marks. A value that goes wrong only in
+the step the solver could not take — a compartment taken a hair below zero under
+a square root — is looked for a step past the last state held, and the message
+says that is where it was found. Each engine on this machine says it in the same
+words.
+
 **And a block carries its own.** The Information view for a block shows what is
 wrong with *that block* at the top, above what it is — the same fact the strip
 carries for the whole model, where the reader is already looking. Red rather
@@ -1376,6 +1391,19 @@ that divides by a compartment starting at zero *says*, `not a number` is what
 dividing nothing by it says, and half the imported projects say one or the other
 somewhere. What has no answer is a model that will not build, and there the
 line goes quiet rather than repeating what the problem strip already says.
+
+**What would stop a run is said before one.** The same pass follows every value
+that is not a number back to the block that makes it, and one the run reads is
+a warning *at the start of a run* in the problem strip, with a mark on the block:
+*Comes to NaN at the start at Radionuclides=Cs-137 (and 1 more of its indices):
+Waste/(V\*N_cracked) comes to 0/0, with Waste = 0, V = 2 and N_cracked = 0. The
+run reads it, through the transfer Diffusion, so it will stop at its first
+step.* A compartment whose initial value is not a number is said the same way,
+since a run cannot start from it. The ones only results read do the run no harm
+and are common — a landscape model has a concentration for every object not
+there yet, the volume of each still zero — so they share one row in the strip,
+naming them, carry no marks, and each block's own settings say what makes it.
+Once a run has failed on one, the strip says it once, in the run's words.
 
 **What it costs.** One evaluation of the whole model, which is the same first
 step a run takes: a tenth of a millisecond. *Building* the model to do it is the
@@ -4780,6 +4808,16 @@ one of Ecolego's files sits at `/biosphere/1BLA/drained_mire/total/Cs-137` —
 and the realisation file from **Save → Realisations** has the shape Ecolego
 writes, one row per output time and one column per realisation. That is why
 the result browser at kvotab.se reads both.
+
+**`min` and `max` of a value that is not a number.** Ecolego passes over an
+argument of `min` or `max` that is not a number unless it is the last one, so
+`min(0/0, limit)` is `limit` there, while `max(1, 0/0)` is not a number. Here
+both are not a number, as any arithmetic on one is: a value that is not a
+number is a fault in the model, and a function that hides it gives a result
+that only looks right. A model that leans on Ecolego passing over one stops
+here at its first step, and the warnings at the start of a run say which
+equation and why. Guard what divides by zero instead, as in
+`if(N > 0, min(x/N, limit), 0)`.
 
 **Blocks and dimensions.**
 
