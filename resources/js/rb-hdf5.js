@@ -215,7 +215,7 @@ function getTimeUnit(file) {
  */
 function isTimeDependent(dataset) {
   try {
-    const val = getAttr(dataset, 'time_dependent');
+    const val = getAttrOrGroup(dataset, 'time_dependent');
     return isTruthyAttribute(val);
   } catch (e) {
     kvotWarn('Error checking time_dependent attribute:', e);

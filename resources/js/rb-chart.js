@@ -172,7 +172,7 @@ function createPlotlyChart(path, savedAxisState) {
     // Get y-axis unit from the first file's dataset (best-effort)
     try {
       const dataset = FileService.get(firstFile, path);
-      const unit = getAttr(dataset, 'unit');
+      const unit = getAttrOrGroup(dataset, 'unit');
       if (unit !== undefined && unit !== null) yAxisUnit = unit;
     } catch (e) {
       kvotWarn('Could not read unit from dataset:', e);
@@ -654,7 +654,7 @@ function createMultiDatasetChart(items) {
       if (!isTimeDependent(dataset)) {
         const values = constantValuesOf(dataset, nIter);
         if (values) {
-          constants.push({ at: traces.length, values, nIter, unit: getAttr(dataset, 'unit'), fileKey, path,
+          constants.push({ at: traces.length, values, nIter, unit: getAttrOrGroup(dataset, 'unit'), fileKey, path,
             name: buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys),
             line: lineFor(fileKey, baseColor) });
         }
@@ -663,7 +663,7 @@ function createMultiDatasetChart(items) {
 
       // Get unit
       let yAxisUnit = '';
-      const unitVal = getAttr(dataset, 'unit');
+      const unitVal = getAttrOrGroup(dataset, 'unit');
       if (unitVal !== undefined && unitVal !== null) {
         yAxisUnit = unitVal;
         yAxisUnits.add(yAxisUnit);
@@ -1301,10 +1301,10 @@ function accumulateRadionuclideTotal({ totalDataByFile, fileKey, nIter, series, 
   }
 }
 
-/** A dataset's unit attribute as text, or '' when it has none. */
+/** A dataset's unit attribute (or its group's) as text, or '' when neither has one. */
 function unitAttrOf(node) {
   try {
-    const unit = node ? getAttr(node, 'unit') : undefined;
+    const unit = node ? getAttrOrGroup(node, 'unit') : undefined;
     return unit === undefined || unit === null ? '' : String(unit);
   } catch (_) {
     return '';

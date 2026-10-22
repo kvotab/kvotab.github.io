@@ -166,6 +166,51 @@ function getAttr(node, name) {
 }
 
 /**
+ * The group a dataset or group is in, or null for an object at the root of its
+ * file (or when it cannot be read).
+ *
+ * @param {Object} node - h5wasm node (Dataset/Group), or one of a lazy file
+ * @returns {Object|null} The parent group
+ */
+function getParentNode(node) {
+  try {
+    const path = node && typeof node.path === 'string' ? node.path : '';
+    const cut = path.lastIndexOf('/');
+    if (cut <= 0) return null;
+    const parentPath = path.slice(0, cut);
+    // A lazy file has loaded the group of every node it has handed out (rb-lazy.js).
+    const lazy = lazyStateOf(node);
+    if (lazy) {
+      const group = lazy.groups.get(parentPath);
+      return group ? new RbLazyGroup(lazy, parentPath, group.attrs) : null;
+    }
+    for (const file of Object.values(loadedFiles)) {
+      if (file && !lazyStateOf(file) && file.file_id === node.file_id) return FileService.get(file, parentPath);
+    }
+  } catch (e) { ignoreFailure('getParentNode', e); }
+  return null;
+}
+
+/**
+ * Read an attribute of a dataset, or else of the group it is in. Result files
+ * store the attributes the datasets of a group share (time_dependent,
+ * probabilistic, unit, columns, ...) on the group only; older ones on every
+ * dataset as well. A group, a dataset at the root of a file, and a dataset
+ * whose name starts with '_' (an index or a background source beside the
+ * results, such as _phase) have only their own attributes.
+ *
+ * @param {Object} node - h5wasm node (Dataset/Group) with attrs
+ * @param {string} name - Attribute name
+ * @returns {*} Attribute value, or undefined if neither has it
+ */
+function getAttrOrGroup(node, name) {
+  const value = getAttr(node, name);
+  if (value !== undefined || !node || node.type !== 'Dataset') return value;
+  if (String(node.path).slice(String(node.path).lastIndexOf('/') + 1).startsWith('_')) return value;
+  return getAttr(getParentNode(node), name);
+}
+
+/**
  * Read all non-internal attributes from a node into a plain object.
  * Filters out attribute names starting with '_'.
  *
@@ -837,7 +882,7 @@ function isTruthyAttribute(value) {
  * @returns {boolean} True if probabilistic
  */
 function checkIsProbabilistic(dataset) {
-  const val = getAttr(dataset, 'probabilistic');
+  const val = getAttrOrGroup(dataset, 'probabilistic');
   return val !== undefined && isTruthyAttribute(val);
 }
 
@@ -951,7 +996,7 @@ function extractColumnSeriesAt(rawData, timeLength, columnIndex, columnCount) {
  * @returns {{meanSeries: Array<number|null>, p5Series: Array<number|null>|null, p95Series: Array<number|null>|null, sigmaSeries: Array<number|null>|null, columns: Object}|null}
  */
 function getColumnStatisticsSeries(dataset, rawData, timeData) {
-  const columns = parseColumnsAttribute(getAttr(dataset, 'columns'));
+  const columns = parseColumnsAttribute(getAttrOrGroup(dataset, 'columns'));
   if (!columns.length || !Array.isArray(timeData) || timeData.length === 0) return null;
 
   const normalized = columns.map(c => String(c).trim().toLowerCase().replace(/\s+/g, ''));
