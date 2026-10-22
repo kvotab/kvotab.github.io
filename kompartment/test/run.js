@@ -9464,8 +9464,9 @@ test('a block can be brought to the middle of the canvas', async () => {
 	assert(/found\.kind === 'transfer' \|\| found\.kind === 'inflow'/.test(stands)
 		&& /block\.from, found\.block\.to/.test(stands),
 		'a connection cannot be centred on');
-	// Nothing to measure against is answered, not guessed at.
-	assert(/if \(!r\.width\) return false;/.test(fn), 'a canvas with no size is centred on anyway');
+	// Nothing to measure against is answered, not guessed at. Measured as
+	// what can be seen (`_seen`): the canvas less the bar along its top.
+	assert(/const s = this\._seen\(\);\n\t+if \(!s\.w\) return false;/.test(fn), 'a canvas with no size is centred on anyway');
 
 	const item = /_centreItem\(names\) \{([\s\S]*?)\n\t\}/.exec(graph)?.[1] ?? '';
 	assert(/onShowDiagram/.test(item), 'picked from the tree, it centres a canvas nobody can see');
@@ -11429,8 +11430,9 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	// Six gestures place something — a resize, a bend, a loose end, a node
 	// drag, and a shape being moved or resized — two axes each, and the node
 	// drag asks twice per axis: once for the anchored form and once for the
-	// fallback with no members to anchor to.
-	assert((graph.match(/this\._snap\(/g) ?? []).length === 14,
+	// fallback with no members to anchor to. And the bar over the diagram
+	// places a block two ways, by a click and by a drag, two axes each.
+	assert((graph.match(/this\._snap\(/g) ?? []).length === 18,
 		'a drag that places something is not asking about the grid');
 
 	// The block under the pointer lands *on* the lattice, and the rest move by
@@ -11466,7 +11468,9 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	// Both are under **Canvas**, together and in that order: whether the
 	// lattice is drawn, and whether a drag lands on it. Neither is part of the
 	// model, which is why they are not under *Show* with the blocks.
-	const canvas = /label: 'Canvas',\n\t+items: \[([\s\S]*?)\n\t+\],/.exec(graph)?.[1] ?? '';
+	// The canvas menu's, and the bar over the diagram's: one list for both.
+	assert(/\{ label: 'Canvas', items: this\._canvasItems\(\) \}/.test(graph), 'the Canvas menu is gone');
+	const canvas = /\t_canvasItems\(\) \{([\s\S]*?)\n\t\}/.exec(graph)?.[1] ?? '';
 	assert(canvas, 'the Canvas menu is gone');
 	assert(canvas.indexOf("toggle('show_grid', 'Show grid'") >= 0, 'Canvas has no grid item');
 	assert(canvas.indexOf("label: 'Snap to the grid',") > canvas.indexOf("'Show grid'"),
@@ -11475,7 +11479,8 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	assert(/snap_to_grid: !ed\.view\(this\.project\)\.snap_to_grid/.test(canvas),
 		'Canvas has no snap item');
 	// And out of *Show*, which is now only what is drawn as part of the model.
-	const show = /label: 'Show',\n\t+items: \[([\s\S]*?)\n\t+\],\n\t+\},/.exec(graph)?.[1] ?? '';
+	assert(/\{ label: 'Show', items: this\._showItems\(\) \}/.test(graph), 'the Show menu is gone');
+	const show = /\t_showItems\(\) \{([\s\S]*?)\n\t\}/.exec(graph)?.[1] ?? '';
 	assert(show, 'the Show menu is gone');
 	assert(!/show_grid|show_help/.test(show), 'the canvas settings are still under Show');
 	// Its three groups, in the order a reader narrows down: which blocks are
@@ -11934,8 +11939,11 @@ test('the diagram says nothing about a block on hover unless asked to', async ()
 	const m = {};
 	ed.setView(m, { show_tooltips: true });
 	assert(JSON.parse(JSON.stringify(m)).view.show_tooltips === true, 'it is not saved with the model');
-	const canvas = /label: 'Canvas',\n\t+items: \[([\s\S]*?)\n\t+\],/.exec(graph)?.[1] ?? '';
-	assert(canvas.indexOf("toggle('show_tooltips', 'Show tooltips'") > canvas.indexOf("toggle('show_help', 'Show help'"),
+	// The canvas menu's Canvas, which the bar over the diagram opens too.
+	assert(/\{ label: 'Canvas', items: this\._canvasItems\(\) \}/.test(graph), 'the canvas menu has no Canvas');
+	const canvas = /\t_canvasItems\(\) \{([\s\S]*?)\n\t\}/.exec(graph)?.[1] ?? '';
+	assert(canvas.indexOf("toggle('show_help', 'Show help'") > 0
+		&& canvas.indexOf("toggle('show_tooltips', 'Show tooltips'") > canvas.indexOf("toggle('show_help', 'Show help'"),
 		'Canvas has no tooltip switch beside the help line');
 
 	// Every tooltip on something drawn for the model goes through the switch:
@@ -41630,9 +41638,13 @@ test('every (i) outside the Simulation section has something to say, and its lin
 		for (const x of strings(t)) {
 			assert((x.match(/\*\*/g) ?? []).length % 2 === 0, `${where}: an unpaired ** in ${x}`);
 			assert((x.match(/`/g) ?? []).length % 2 === 0, `${where}: an unpaired backtick in ${x}`);
+			// The panel has bold and code, and no italics: `*a word*` shows
+			// its stars. A star in a code span is the code's.
+			const prose = x.replace(/`[^`]*`/g, '').replace(/\*\*/g, '');
+			assert(!/\*[^*\s][^*]*\*/.test(prose), `${where}: italics the panel cannot show, in ${x}`);
 		}
 	};
-	for (const key of ['model', 'simulation', 'tree', 'information', 'indexlists', 'json']) {
+	for (const key of ['model', 'simulation', 'tree', 'information', 'indexlists', 'json', 'canvasbar']) {
 		for (const ctx of [{}, { systems: true, sample: true, picking: true }]) check(`panel:${key}`, panelTopic(key, ctx));
 	}
 	// The tree's says what is above it only when it is there.
@@ -41653,6 +41665,80 @@ test('every (i) outside the Simulation section has something to say, and its lin
 		check(`dialog:${id}`, info.topic());
 	}
 	assert(dialogInfo('nonsense') === null, 'a dialog there is not has a topic');
+});
+
+test('the bar over the diagram opens the canvas menu’s own menus, and the menu is as it was', async () => {
+	const { GraphEditor } = await import('../src/ui/graph.js');
+	const { readFileSync } = await import('node:fs');
+	const project = JSON.parse(readFileSync(new URL('../examples/landscape.json', import.meta.url), 'utf8'));
+	const g = Object.assign(Object.create(GraphEditor.prototype), {
+		project, system: '', picked: new Set(), hooks: {}, bar: { shown: true },
+	});
+	const at = { x: 10, y: 20 };
+	const labels = (items) => JSON.stringify(items.map((i) => i.heading ?? i.label ?? (i.separator ? '—' : '?')));
+	const menu = g._canvasMenu(at);
+	assert(labels(menu) === JSON.stringify(['Add here', 'Compartment', 'Expression', 'Parameter', 'Inflow',
+		'Other blocks', 'Sub-system', '—', 'Paste', 'Import…', '—', 'Show', 'Add shape…', 'Save as picture',
+		'Canvas']), labels(menu));
+	// Its submenus are the pieces the bar opens, so the two cannot drift.
+	const sub = (label) => menu.find((i) => i.label === label)?.items ?? [];
+	assert(labels(sub('Show')) === labels(g._showItems()), 'Show');
+	assert(labels(sub('Other blocks')) === labels(g._otherBlockItems(at)), 'Other blocks');
+	assert(labels(sub('Inflow')) === labels(g._inflowItems()) && g._inflowItems().length === 3, 'Inflow');
+	assert(labels(sub('Save as picture')) === labels(g._pictureItems()), 'Save as picture');
+	assert(labels(sub('Canvas')) === labels(g._canvasItems()), 'Canvas');
+	const canvasbar = readFileSync(new URL('../src/ui/canvasbar.js', import.meta.url), 'utf8');
+	for (const piece of ['_inflowItems()', '_otherBlockItems(', '_transportOperationItems(', '_showItems()',
+		'_canvasItems()', '_pictureItems()', '_pickShape(']) {
+		assert(canvasbar.includes(`g.${piece}`), `the bar does not open ${piece}`);
+	}
+	// The one addition: Canvas ▸ Show toolbar, which reads the bar.
+	const toolbar = g._canvasItems().find((i) => i.label === 'Show toolbar');
+	assert(toolbar?.keepOpen && toolbar.checked() === true, 'no Show toolbar switch');
+	g.bar.shown = false;
+	assert(toolbar.checked() === false, 'the switch does not read the bar');
+	// The operation over a transport's chain: inside one, and nowhere else.
+	assert(g._transportOperationItems(at).length === 0, 'an operation offered outside a transport');
+	const t = Object.assign(Object.create(GraphEditor.prototype), {
+		project: colourModel(), system: 'Col', picked: new Set(), hooks: {}, bar: null,
+	});
+	assert(labels(t._transportOperationItems(at)) === '["Transport operation"]', 'no operation inside a transport');
+	assert(labels(t._canvasMenu(at)).includes('"Sub-system","Transport operation"'), labels(t._canvasMenu(at)));
+	// Whether it is up is this browser's: off only when it was said so.
+	const { barWanted } = await import('../src/ui/canvasbar.js');
+	const had = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+	try {
+		Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => 'off' } });
+		assert(barWanted() === false, 'put away, and up again');
+		Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } });
+		assert(barWanted() === true, 'not up by default');
+		Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('blocked'); } });
+		assert(barWanted() === true, 'storage that refuses hides the bar');
+	} finally {
+		if (had) Object.defineProperty(globalThis, 'localStorage', had);
+		else delete globalThis.localStorage;
+	}
+});
+
+test('a block the bar adds goes to the nearest place nothing is drawn at', async () => {
+	const { clearSpot } = await import('../src/ui/graph.js');
+	const box = { x: 0, y: 0, w: 100, h: 50 };
+	const overlaps = (a, b, m = 12) => !(a.x >= b.x + b.w + m || b.x >= a.x + a.w + m
+		|| a.y >= b.y + b.h + m || b.y >= a.y + a.h + m);
+	// Clear: where it was asked for.
+	assert(JSON.stringify(clearSpot({ ...box, x: 500 }, [box], 30)) === '{"x":500,"y":0}', 'a clear spot moved');
+	// Taken: the nearest clear place. A 50-high box clears another by three
+	// steps of 30 up or down, before five across would.
+	const moved = clearSpot({ ...box }, [box], 30);
+	assert(!overlaps({ ...box, ...moved }, box) && moved.x === 0 && Math.abs(moved.y) === 90, JSON.stringify(moved));
+	// Two in a row are two blocks.
+	const second = clearSpot({ ...box }, [box, { ...box, ...moved }], 30);
+	assert(!overlaps({ ...box, ...second }, box) && !overlaps({ ...box, ...second }, { ...box, ...moved }),
+		JSON.stringify(second));
+	// Nowhere clear near it: where it was asked for, anyway.
+	const wall = [];
+	for (let i = -10; i <= 10; i++) for (let j = -10; j <= 10; j++) wall.push({ x: i * 30, y: j * 30, w: 30, h: 30 });
+	assert(JSON.stringify(clearSpot({ ...box }, wall, 30)) === '{"x":0,"y":0}', 'a full canvas');
 });
 
 test('every dialog has an (i) in its title bar, and every dialog topic a dialog to be in', async () => {

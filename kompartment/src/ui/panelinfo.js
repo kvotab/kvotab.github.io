@@ -3,7 +3,7 @@
  * (./infopanel.js): the Model and Simulation sections, the tree with its
  * search and filters, and the Information view -- and the two tabs that are
  * a pane of their own rather than a view of the diagram, Index lists and
- * JSON.
+ * JSON, what the Chart and the Table draw, and the bar over the diagram.
  *
  * The rows of the Simulation section have topics of their own (./siminfo.js);
  * these are one level up -- what a section is for and what is in it, for
@@ -14,7 +14,7 @@ const KICKER = 'Left panel';
 const TAB = 'Tab';
 
 /**
- * @param {'model'|'simulation'|'tree'|'information'|'indexlists'|'json'|'chart'|'table'} key
+ * @param {'model'|'simulation'|'tree'|'information'|'indexlists'|'json'|'chart'|'table'|'canvasbar'} key
  * @param {object} [ctx]
  * @param {boolean} [ctx.systems]  the model has sub-systems
  * @param {boolean} [ctx.sample]   a probabilistic run stands
@@ -317,6 +317,44 @@ export function panelTopic(key, ctx = {}) {
 				],
 			}],
 			more: 'The table’s layouts',
+		};
+		case 'canvasbar': return {
+			kicker: TAB,
+			title: 'The bar over the diagram',
+			lead: 'What the canvas’s right-click menu is reached for most for, a click away: blocks to '
+				+ 'add, what the diagram shows, and the zoom. It floats over the top of the diagram rather '
+				+ 'than taking a row of its own, and it can be put away.',
+			sections: [{
+				heading: 'Adding',
+				list: [
+					'**Compartment**, **Expression**, **Parameter** and **Sub-system** — a click adds one in '
+					+ 'the middle of the view, on the nearest place nothing is drawn at, and selects it. Drag '
+					+ 'the button onto the diagram instead and it lands where it is dropped; Escape during the '
+					+ 'drag adds nothing.',
+					'**Inflow ▾** — a source term into one of the compartments drawn here. **More ▾** — the '
+					+ 'rest of the blocks, as Other blocks on the canvas menu has them, in the middle of the view. '
+					+ '**Shape** — the shape picker, and the shape in the middle of the view.',
+				],
+			}, {
+				heading: 'Looking',
+				list: [
+					'**Show ▾** — which blocks are drawn, what is written along the transfers and the influence '
+					+ 'arrows, as Show on the canvas menu has them.',
+					'**− 100% +** and **Fit** — the zoom: out, back to the diagram’s own size, in, and all of '
+					+ 'it in view, below the bar.',
+					'The **lattice** and the **magnet** — the grid behind the diagram, and whether a drag lands '
+					+ 'on it. **Canvas ▾** has the rest of Canvas on the canvas menu, and **Picture ▾** saves '
+					+ 'the diagram as SVG, PNG or JPEG.',
+				],
+			}, {
+				text: 'Everything on it is on the right-click menu as well, where a block lands at the point '
+					+ 'clicked. Tab reaches the bar once, and the arrow keys move along it.',
+			}, {
+				text: '**×** puts it away, and **Canvas ▸ Show toolbar** on the right-click menu brings it '
+					+ 'back. This browser remembers which, whatever model is open: it is not saved with the '
+					+ 'model.',
+			}],
+			more: 'The bar over the diagram',
 		};
 		default:
 			return null;

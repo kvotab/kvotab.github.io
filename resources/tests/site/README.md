@@ -1265,3 +1265,30 @@ and closes it; a pasted line break is a space; Down moves down a wrapped line
 and opens the list at the end; and a grid's box opens wider than its column,
 to the right, and wraps a long equation at the grid's edge, with the copy
 wrapping where the field does, one line or several.
+
+## test-chrome-kompartment-canvasbar.py
+
+Kompartment's bar over the diagram, on the Build tab.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-canvasbar.py    # expect 14/14
+
+The bar floats over the top of the canvas with what the canvas's right-click
+menu is reached for most for (`kompartment/src/ui/canvasbar.js`). With real
+presses and drags, on the landscape model: it is up, at the top of the canvas,
+one stop for Tab, and a fitted diagram starts below it; a click on Compartment
+adds one in the middle of what can be seen, selected, and a second click puts
+the next beside it rather than on it; a drag of Expression drops one centred
+where it is let go, an outline following the pointer, and Escape during a drag
+adds nothing; Show opens the canvas menu's own Show under the button and a
+second press closes it; the grid switch and the canvas menu's tick follow each
+other; the zoom reads 100%, 125% and 80% as its buttons say; the arrow keys
+move along the bar and Down opens a menu that Escape closes, the focus going
+back to its button; inside a transport the sub-system button is off and More
+starts with a transport operation; and × puts the bar away, a reload keeps it
+away, and Canvas ▸ Show toolbar brings it back.
+
+Two things about driving it. A drag's moves are sent with the button that is
+held (`button: 'left'`, not `none`): sent as `none`, Chrome takes them for a
+hover and never gives the pointer capture a drag asks for. And a menu opened
+low in the window is cut to the room there and scrolls, so an item is brought
+into sight before it is clicked.

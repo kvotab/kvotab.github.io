@@ -47,6 +47,7 @@ import {
 	pipeTag,
 } from './shapes.js';
 import { openMenu, closeMenu } from './menu.js';
+import { CanvasBar } from './canvasbar.js';
 import { GRID } from '../domain/layout.js';
 
 /**
@@ -269,6 +270,12 @@ export class GraphEditor {
 		this.blank.className = 'graph-blank';
 		this.blank.hidden = true;
 		container.append(this.blank);
+
+		// The bar over the top of the canvas, with what the canvas menu is
+		// reached for most for: see ./canvasbar.js. In the container for the
+		// reason the note above is -- it stays put whatever the camera does.
+		this.bar = new CanvasBar(this);
+		container.append(this.bar.el);
 
 		this._bind();
 		// How many times the diagram has been drawn; see `_changed`.
@@ -606,6 +613,8 @@ export class GraphEditor {
 		// the mark exists to allow.
 		this._applyPendingCut();
 		this._renderBlank(nodes.size);
+		// The bar's switches, which the menu or an undo may have changed.
+		this.bar?.sync();
 		// Back to the diagram itself rather than to the node that had it: what
 		// is selected after an edit is often something else, and the root is
 		// where the keys are listened for.
@@ -1021,6 +1030,9 @@ export class GraphEditor {
 		const { x, y, k } = this.camera;
 		this.viewport.setAttribute('transform', `translate(${x} ${y}) scale(${k})`);
 		this._applyGrid();
+		// The zoom the bar says, however it changed: its buttons, the menu,
+		// the wheel, a fit.
+		this.bar?.syncZoom();
 	}
 
 	/**
@@ -4156,21 +4168,49 @@ export class GraphEditor {
 		} catch (e) { this.hooks.onStatus?.(e.message, 'warn'); }
 	}
 
-	_canvasMenu(at) {
+	/**
+	 * A setting of the view as a menu item: ticked in place, and the menu kept
+	 * open, since you rarely change only one.
+	 */
+	_viewToggle(key, label, title = null) {
+		return {
+			label,
+			title,
+			checked: () => !!ed.view(this.project)[key],
+			keepOpen: true,
+			onPick: () => this.setViewOption({ [key]: !ed.view(this.project)[key] }),
+		};
+	}
+
+	/** What a source term drawn on this canvas can flow into. */
+	_inflowTargets() {
 		const here = this.system ?? '';
-		const inTransport = ed.isTransport(this.project, here);
 		// Only the compartments of this sub-system can take a source term
 		// drawn here.
 		// ...and a far-field path is somewhere a source term can be delivered
 		// too: it lands in the first cell of the fracture.
-		const comps = [
+		// ...but not waste packages: a source term goes into a compartment or a
+		// path, and the packages already are one.
+		return [
 			...(this.project.compartments ?? []),
 			...(this.project.farfields ?? []),
 		].filter((c) => systemOf(c) === here);
-		// ...but not waste packages: a source term goes into a compartment or a
-		// path, and the packages already are one.
-		const v = ed.view(this.project);
-		const paths = ed.systems(this.project);
+	}
+
+	/** The menus' *Inflow*: a source term into one of them. */
+	_inflowItems() {
+		return this._inflowTargets().map((c) => ({
+			label: `into ${c.name}`,
+			onPick: () => this._addSourceTo(qualifiedName(c)),
+		}));
+	}
+
+	/**
+	 * Everything else a model is made of, landing at `at`: the canvas menu's
+	 * *Other blocks*, and the bar's *More*.
+	 */
+	_otherBlockItems(at) {
+		const inTransport = ed.isTransport(this.project, this.system ?? '');
 		// A block with no dimension has no index to reduce over.
 		const reducible = ed.reducibleBlocks(this.project, { indexed: true });
 		const aggregable = ed.reducibleBlocks(this.project);
@@ -4181,13 +4221,290 @@ export class GraphEditor {
 		// A path is one path per nuclide by construction, so it cannot exist
 		// in a model with no radionuclides.
 		const hasNuclides = !!ed.nuclideList(this.project);
-		const toggle = (key, label, title = null) => ({
-			label,
-			title,
-			checked: () => !!ed.view(this.project)[key],
-			keepOpen: true,
-			onPick: () => this.setViewOption({ [key]: !ed.view(this.project)[key] }),
+		return [
+			{
+				label: 'Lookup table',
+				title: 'A value that follows a series of points as time passes',
+				onPick: () => this._addNodeAt('lookup', at),
+			},
+			{
+				// Created with one parameter and an empty body: a body
+				// this could invent would be a guess, and the problem
+				// strip asks for the real one by name.
+				label: 'Function',
+				title: 'Arithmetic written once and called from any equation, '
+					+ 'as Func(x)',
+				onPick: () => this._addNodeAt('function', at),
+			},
+			{
+				label: '1-D transport',
+				title: inTransport
+					? 'A transport holds no sub-system, and a transport is one'
+					: 'A chain of N identical compartments drawn as two, Begin and End: '
+						+ 'transport through a soil column or a sediment, discretised without '
+						+ 'drawing every slice. Comes with Begin, End, N and an element counter.',
+				disabled: inTransport,
+				onPick: () => this._addTransportHere(at),
+			},
+			{
+				// A path needs no radionuclides: indexed by nothing it
+				// carries one quantity that does not decay, and its
+				// dimension box can make it a path per species.
+				label: 'Far-field pathway',
+				title: 'FARFCOMP: transport along a fracture in rock, with diffusion '
+					+ 'into the rock matrix. A source term goes into it and the '
+					+ 'release comes out the other side.'
+					+ (hasNuclides ? '' : ' With no radionuclides in the model it carries '
+						+ 'one quantity that does not decay, until it is indexed by a list.'),
+				onPick: () => this._addNodeAt('farfield', at),
+			},
+			{
+				label: 'Event',
+				title: 'Something that happens to the model at an instant — at a time, at '
+					+ 'random at a rate, or when a trigger fires: a share of some packages fail, a '
+					+ 'share of a compartment moves elsewhere. A deterministic run takes a random '
+					+ 'event’s expected-value form; a probabilistic realisation draws the occurrences.',
+				onPick: () => this._addNodeAt('event', at),
+			},
+			{
+				label: 'Waste packages',
+				title: 'The source term with its barriers: an inventory inside packages '
+					+ 'that fail over time, a waste form that degrades, and a release '
+					+ 'drawn out of the block into the near field.',
+				onPick: () => this._addNodeAt('waste_package', at),
+			},
+			{
+				// A reduction with nothing to reduce is not a model, so
+				// one is created already pointed at something and the
+				// inspector changes it -- the same bargain as a new
+				// compartment, which starts at zero.
+				label: 'Reduce over an index',
+				title: reducible.length
+					? 'Sums, averages or takes the extreme of one block '
+						+ `along one of its index lists — starts on ${reducible[0]}`
+					: 'Needs a block with at least one index list',
+				disabled: !reducible.length,
+				onPick: () => this._addReductionAt('index_reduction', at, reducible),
+			},
+			{
+				label: 'Combine blocks',
+				title: aggregable.length
+					? 'Combines several blocks, index by index — starts on '
+						+ `${aggregable[0]}`
+					: 'Needs a block to combine',
+				disabled: !aggregable.length,
+				onPick: () => this._addReductionAt('block_reduction', at, aggregable),
+			},
+			{
+				// The blocks that depend on what has already happened.
+				// Each is created watching something, for the same
+				// reason a reduction is created pointed at something: a
+				// block with nothing to watch is not yet a model.
+				label: 'Recorder',
+				title: watchable.length
+					? `What a block has been, not only what it is — starts on ${watchable[0]}`
+					: 'Needs a block to watch',
+				disabled: !watchable.length,
+				items: [
+					{
+						label: 'Min/max',
+						title: 'The largest or smallest value its target has taken',
+						onPick: () => this._addRecorderAt('min_max', at, watchable),
+					},
+					{
+						label: 'Running mean',
+						title: 'The mean of its target over the time it has been recording',
+						onPick: () => this._addRecorderAt('running_mean', at, watchable),
+					},
+					{
+						label: 'Snapshot',
+						title: events.length
+							? 'Its target as it was when an event last fired'
+							: 'Needs a discrete event to take the snapshot',
+						disabled: !events.length,
+						onPick: () => this._addRecorderAt('snapshot', at, watchable, events[0]),
+					},
+					{
+						label: 'Delay',
+						title: 'Its target as it was a given time ago',
+						onPick: () => this._addRecorderAt('delay', at, watchable),
+					},
+					{ separator: true },
+					{
+						label: 'Trigger',
+						title: 'The instant one expression crosses another. The solver '
+							+ 'stops there, so whatever it drives happens when it happens — '
+							+ 'a snapshot taken, a recording started or stopped. It moves no mass '
+							+ 'itself; an Event does that.',
+						onPick: () => this._addRecorderAt('trigger', at, watchable),
+					},
+				],
+			},
+		];
+	}
+
+	/** What the diagram draws: the menus' *Show*. */
+	_showItems() {
+		const v = ed.view(this.project);
+		const toggle = (key, label, title) => this._viewToggle(key, label, title);
+		// Three groups, in the order a reader narrows down: which
+		// blocks are drawn, then what is drawn *between* them, then
+		// the one thing here that is not on the diagram at all.
+		return [
+			toggle('show_expressions', 'expressions'),
+			toggle('show_parameters', 'parameters'),
+			toggle('show_lookups', 'lookup tables'),
+			toggle('show_reductions', 'index operations & aggregates'),
+			toggle('show_functions', 'functions'),
+			toggle('show_recorders', 'recorders & events'),
+			toggle('show_sources', 'inflow icons'),
+			toggle('show_sinks', 'outflow icons'),
+			{ separator: true },
+			// What runs between the blocks. The first is not a switch
+			// but it is the same question -- what a transfer shows on
+			// the diagram -- so it belongs beside the other one rather
+			// than in a group of its own.
+			{
+				label: 'Transfer labels',
+				hint: v.connection_label,
+				items: ed.CONNECTION_LABELS.map((mode) => ({
+					label: mode,
+					checked: () => ed.view(this.project).connection_label === mode,
+					keepOpen: true,
+					onPick: () => this.setViewOption({ connection_label: mode }),
+				})),
+			},
+			// The arrows from what a block reads: none, all of them,
+			// or those of the blocks selected, which is the set a
+			// model of any size can be read in.
+			{
+				label: 'Influences',
+				hint: ed.influenceMode(this.project),
+				items: ed.INFLUENCE_MODES.map((mode) => ({
+					label: mode,
+					title: {
+						none: 'No influence arrows',
+						all: 'An arrow from every block a definition reads, to the block that reads it',
+						selected: 'Only the arrows into and out of the blocks selected — select one, or several',
+					}[mode],
+					checked: () => ed.influenceMode(this.project) === mode,
+					keepOpen: true,
+					onPick: () => this.setShowInfluences(mode),
+				})),
+			},
+			{ separator: true },
+			// Not a kind of block, and not the amber marks either --
+			// those stay whatever this says. It is the list under the
+			// tabs, here because this is where the other "show me /
+			// do not show me" switches are. The ⚠ button in the
+			// header is the other way to it.
+			toggle('show_warning_list', 'the warning list'),
+		];
+	}
+
+	/** The diagram as a picture: the menus' *Save as picture*. */
+	_pictureItems() {
+		return Object.entries(PICTURE_KINDS).map(([kind, spec]) => ({
+			label: spec.label,
+			title: kind === 'svg'
+				? 'Lines and text rather than pixels: it scales to any size '
+					+ 'and can be edited in a drawing program.'
+				: kind === 'jpeg'
+					? 'Photographic compression, so the lines soften a little; '
+						+ 'PNG is the better choice for a diagram.'
+					: 'Pixels, at twice the size on screen so it stays sharp '
+						+ 'in print.',
+			onPick: () => this.savePicture(kind),
+		}));
+	}
+
+	/** What is about the canvas rather than the model: the menus' *Canvas*. */
+	_canvasItems() {
+		const toggle = (key, label, title) => this._viewToggle(key, label, title);
+		// The settings that decide what it looks like, what it says and how a
+		// drag behaves on it, then four things it already does by wheel and
+		// drag. None of them is part of the model, which is why they are not
+		// under *Show* with the blocks.
+		return [
+			toggle('show_grid', 'Show grid',
+				'The lattice behind the diagram, at whatever spacing the zoom '
+				+ 'can show. It is drawn or not drawn; whether a drag lands on '
+				+ 'it is the setting below.'),
+			{
+				label: 'Snap to the grid',
+				checked: () => !!ed.view(this.project).snap_to_grid,
+				keepOpen: true,
+				title: 'Whether a block lands on the grid when it is moved '
+					+ 'or resized — and a bend or a loose end when it is '
+					+ 'dragged. Hold Alt during a drag to do the opposite '
+					+ 'of whatever this says, for one placement without '
+					+ 'changing the setting.',
+				onPick: () => this.setViewOption({
+					snap_to_grid: !ed.view(this.project).snap_to_grid,
+				}),
+			},
+			toggle('show_help', 'Show help',
+				'The line under the diagram saying what the pointer can do '
+				+ 'here. It costs the diagram the room, so it is worth turning '
+				+ 'off once the gestures are familiar.'),
+			toggle('show_tooltips', 'Show tooltips',
+				'What a block, a connection’s marks or an influence arrow '
+				+ 'says about itself when the pointer rests on it. The handles '
+				+ 'say what dragging them does either way, and a problem '
+				+ 'always gives its reason.'),
+			// Not the model's, and so not saved with it: whether the bar is
+			// up is this browser's, like the theme. See ./canvasbar.js.
+			{
+				label: 'Show toolbar',
+				checked: () => !!this.bar?.shown,
+				keepOpen: true,
+				title: 'The bar along the top of the diagram, with what is reached for '
+					+ 'most here: blocks to add, what is drawn, the zoom. Kept in this '
+					+ 'browser rather than in the model.',
+				onPick: () => this.bar?.setShown(!this.bar.shown),
+			},
+			{ separator: true },
+			{ label: 'Auto-layout', onPick: () => this.relayout() },
+			{ label: 'Fit to view', onPick: () => this.fit() },
+			{ label: 'Zoom in', hint: 'scroll', onPick: () => this.zoomBy(1.25) },
+			{ label: 'Zoom out', hint: 'scroll', onPick: () => this.zoomBy(0.8) },
+		];
+	}
+
+	/**
+	 * Inside a transport, the one block that belongs to a transport and
+	 * nowhere else: an operation over the chain, landing at `at`. It is also
+	 * on the transport's own menu from outside. Anywhere else, nothing.
+	 */
+	_transportOperationItems(at) {
+		const here = this.system ?? '';
+		if (!ed.isTransport(this.project, here)) return [];
+		return [{
+			label: 'Transport operation',
+			title: 'The sum or the mean of the chain’s compartments — all of them, '
+				+ 'or a stretch a caller asks for.',
+			onPick: () => this._addOperationTo(here, at),
+		}];
+	}
+
+	/**
+	 * The shape picker, and the shape picked drawn where `spot` says: a point
+	 * from the canvas menu, which knows where it was opened, or, from the bar,
+	 * a place worked out from the shape's size.
+	 */
+	async _pickShape(spot) {
+		const { openShapePicker } = await import('./shapepicker.js');
+		openShapePicker({
+			onPick: (figure) => this._addShapeAt(figure,
+				typeof spot === 'function' ? spot(figureSize(figure)) : spot),
 		});
+	}
+
+	_canvasMenu(at) {
+		const here = this.system ?? '';
+		const inTransport = ed.isTransport(this.project, here);
+		const comps = this._inflowTargets();
+		const paths = ed.systems(this.project);
 
 		// Arranged as a list of what this menu is for, in the order somebody
 		// reaches for them: make something, move something, go somewhere, then
@@ -4223,10 +4540,7 @@ export class GraphEditor {
 					? 'An input from outside the model, into a compartment or a '
 						+ 'far-field path'
 					: 'A source needs a compartment to flow into',
-				items: comps.map((c) => ({
-					label: `into ${c.name}`,
-					onPick: () => this._addSourceTo(qualifiedName(c)),
-				})),
+				items: this._inflowItems(),
 			},
 			{
 				// Everything else a model is made of. Grouped because the list
@@ -4235,126 +4549,7 @@ export class GraphEditor {
 				// will not find. Compartments, expressions, parameters and
 				// source terms stay outside it: they are what you reach for.
 				label: 'Other blocks',
-				items: [
-					{
-						label: 'Lookup table',
-						title: 'A value that follows a series of points as time passes',
-						onPick: () => this._addNodeAt('lookup', at),
-					},
-					{
-						// Created with one parameter and an empty body: a body
-						// this could invent would be a guess, and the problem
-						// strip asks for the real one by name.
-						label: 'Function',
-						title: 'Arithmetic written once and called from any equation, '
-							+ 'as Func(x)',
-						onPick: () => this._addNodeAt('function', at),
-					},
-					{
-						label: '1-D transport',
-						title: inTransport
-							? 'A transport holds no sub-system, and a transport is one'
-							: 'A chain of N identical compartments drawn as two, Begin and End: '
-								+ 'transport through a soil column or a sediment, discretised without '
-								+ 'drawing every slice. Comes with Begin, End, N and an element counter.',
-						disabled: inTransport,
-						onPick: () => this._addTransportHere(at),
-					},
-					{
-						// A path needs no radionuclides: indexed by nothing it
-						// carries one quantity that does not decay, and its
-						// dimension box can make it a path per species.
-						label: 'Far-field pathway',
-						title: 'FARFCOMP: transport along a fracture in rock, with diffusion '
-							+ 'into the rock matrix. A source term goes into it and the '
-							+ 'release comes out the other side.'
-							+ (hasNuclides ? '' : ' With no radionuclides in the model it carries '
-								+ 'one quantity that does not decay, until it is indexed by a list.'),
-						onPick: () => this._addNodeAt('farfield', at),
-					},
-					{
-						label: 'Event',
-						title: 'Something that happens to the model at an instant — at a time, at '
-							+ 'random at a rate, or when a trigger fires: a share of some packages fail, a '
-							+ 'share of a compartment moves elsewhere. A deterministic run takes a random '
-							+ 'event’s expected-value form; a probabilistic realisation draws the occurrences.',
-						onPick: () => this._addNodeAt('event', at),
-					},
-					{
-						label: 'Waste packages',
-						title: 'The source term with its barriers: an inventory inside packages '
-							+ 'that fail over time, a waste form that degrades, and a release '
-							+ 'drawn out of the block into the near field.',
-						onPick: () => this._addNodeAt('waste_package', at),
-					},
-					{
-						// A reduction with nothing to reduce is not a model, so
-						// one is created already pointed at something and the
-						// inspector changes it -- the same bargain as a new
-						// compartment, which starts at zero.
-						label: 'Reduce over an index',
-						title: reducible.length
-							? 'Sums, averages or takes the extreme of one block '
-								+ `along one of its index lists — starts on ${reducible[0]}`
-							: 'Needs a block with at least one index list',
-						disabled: !reducible.length,
-						onPick: () => this._addReductionAt('index_reduction', at, reducible),
-					},
-					{
-						label: 'Combine blocks',
-						title: aggregable.length
-							? 'Combines several blocks, index by index — starts on '
-								+ `${aggregable[0]}`
-							: 'Needs a block to combine',
-						disabled: !aggregable.length,
-						onPick: () => this._addReductionAt('block_reduction', at, aggregable),
-					},
-					{
-						// The blocks that depend on what has already happened.
-						// Each is created watching something, for the same
-						// reason a reduction is created pointed at something: a
-						// block with nothing to watch is not yet a model.
-						label: 'Recorder',
-						title: watchable.length
-							? `What a block has been, not only what it is — starts on ${watchable[0]}`
-							: 'Needs a block to watch',
-						disabled: !watchable.length,
-						items: [
-							{
-								label: 'Min/max',
-								title: 'The largest or smallest value its target has taken',
-								onPick: () => this._addRecorderAt('min_max', at, watchable),
-							},
-							{
-								label: 'Running mean',
-								title: 'The mean of its target over the time it has been recording',
-								onPick: () => this._addRecorderAt('running_mean', at, watchable),
-							},
-							{
-								label: 'Snapshot',
-								title: events.length
-									? 'Its target as it was when an event last fired'
-									: 'Needs a discrete event to take the snapshot',
-								disabled: !events.length,
-								onPick: () => this._addRecorderAt('snapshot', at, watchable, events[0]),
-							},
-							{
-								label: 'Delay',
-								title: 'Its target as it was a given time ago',
-								onPick: () => this._addRecorderAt('delay', at, watchable),
-							},
-							{ separator: true },
-							{
-								label: 'Trigger',
-								title: 'The instant one expression crosses another. The solver '
-									+ 'stops there, so whatever it drives happens when it happens — '
-									+ 'a snapshot taken, a recording started or stopped. It moves no mass '
-									+ 'itself; an Event does that.',
-								onPick: () => this._addRecorderAt('trigger', at, watchable),
-							},
-						],
-					},
-				],
+				items: this._otherBlockItems(at),
 			},
 			// A transport holds the compartments of its chain and nothing else
 			// -- the rule for what may be moved where refuses a sub-system in one -- so
@@ -4367,15 +4562,7 @@ export class GraphEditor {
 				disabled: inTransport,
 				onPick: () => this._addSystemHere(at),
 			},
-			// Inside a transport, the one block that belongs to a transport
-			// and nowhere else: an operation over the chain, at the point
-			// clicked. It is also on the transport's own menu from outside.
-			...(inTransport ? [{
-				label: 'Transport operation',
-				title: 'The sum or the mean of the chain’s compartments — all of them, '
-					+ 'or a stretch a caller asks for.',
-				onPick: () => this._addOperationTo(here, at),
-			}] : []),
+			...this._transportOperationItems(at),
 
 			{ separator: true },
 			// What is on the clipboard and what goes onto it.
@@ -4426,138 +4613,27 @@ export class GraphEditor {
 			}] : []),
 
 			{ separator: true },
-			{
-				// Three groups, in the order a reader narrows down: which
-				// blocks are drawn, then what is drawn *between* them, then
-				// the one thing here that is not on the diagram at all.
-				label: 'Show',
-				items: [
-					toggle('show_expressions', 'expressions'),
-					toggle('show_parameters', 'parameters'),
-					toggle('show_lookups', 'lookup tables'),
-					toggle('show_reductions', 'index operations & aggregates'),
-					toggle('show_functions', 'functions'),
-					toggle('show_recorders', 'recorders & events'),
-					toggle('show_sources', 'inflow icons'),
-					toggle('show_sinks', 'outflow icons'),
-					{ separator: true },
-					// What runs between the blocks. The first is not a switch
-					// but it is the same question -- what a transfer shows on
-					// the diagram -- so it belongs beside the other one rather
-					// than in a group of its own.
-					{
-						label: 'Transfer labels',
-						hint: v.connection_label,
-						items: ed.CONNECTION_LABELS.map((mode) => ({
-							label: mode,
-							checked: () => ed.view(this.project).connection_label === mode,
-							keepOpen: true,
-							onPick: () => this.setViewOption({ connection_label: mode }),
-						})),
-					},
-					// The arrows from what a block reads: none, all of them,
-					// or those of the blocks selected, which is the set a
-					// model of any size can be read in.
-					{
-						label: 'Influences',
-						hint: ed.influenceMode(this.project),
-						items: ed.INFLUENCE_MODES.map((mode) => ({
-							label: mode,
-							title: {
-								none: 'No influence arrows',
-								all: 'An arrow from every block a definition reads, to the block that reads it',
-								selected: 'Only the arrows into and out of the blocks selected — select one, or several',
-							}[mode],
-							checked: () => ed.influenceMode(this.project) === mode,
-							keepOpen: true,
-							onPick: () => this.setShowInfluences(mode),
-						})),
-					},
-					{ separator: true },
-					// Not a kind of block, and not the amber marks either --
-					// those stay whatever this says. It is the list under the
-					// tabs, here because this is where the other "show me /
-					// do not show me" switches are. The ⚠ button in the
-					// header is the other way to it.
-					toggle('show_warning_list', 'the warning list'),
-				],
-			},
+			{ label: 'Show', items: this._showItems() },
 			{
 				// Down here with the rest of what is about the canvas rather
 				// than about the model: a shape is drawn on it, a picture is
 				// taken of it, and the settings below decide how it behaves.
 				// It goes where it was asked for, which is what this menu
-				// knows and a toolbar button never could.
+				// knows; the bar's button puts it in the middle of the view.
 				label: 'Add shape…',
 				title: 'A box to group things in, an arrow to point with, or a '
 					+ 'picture of what the model is about — drawn behind the '
 					+ 'blocks, saved with the model, and read by nothing in it',
-				onPick: async () => {
-					const { openShapePicker } = await import('./shapepicker.js');
-					openShapePicker({
-						onPick: (figure) => this._addShapeAt(figure, at),
-					});
-				},
+				onPick: () => this._pickShape(at),
 			},
 			{
 				label: 'Save as picture',
 				title: 'The whole diagram of this sub-system, at 1:1 — not the part '
 					+ 'in view, and without the selection rings and handles, which '
 					+ 'are about the editor rather than the model.',
-				items: Object.entries(PICTURE_KINDS).map(([kind, spec]) => ({
-					label: spec.label,
-					title: kind === 'svg'
-						? 'Lines and text rather than pixels: it scales to any size '
-							+ 'and can be edited in a drawing program.'
-						: kind === 'jpeg'
-							? 'Photographic compression, so the lines soften a little; '
-								+ 'PNG is the better choice for a diagram.'
-							: 'Pixels, at twice the size on screen so it stays sharp '
-								+ 'in print.',
-					onPick: () => this.savePicture(kind),
-				})),
+				items: this._pictureItems(),
 			},
-			{
-				// What is about the canvas rather than about the model: the
-				// four settings that decide what it looks like, what it says
-				// and how a drag behaves on it, then four things it already
-				// does by wheel and drag. None of them is part of the model, which is why they
-				// are not under *Show* with the blocks.
-				label: 'Canvas',
-				items: [
-					toggle('show_grid', 'Show grid',
-						'The lattice behind the diagram, at whatever spacing the zoom '
-						+ 'can show. It is drawn or not drawn; whether a drag lands on '
-						+ 'it is the setting below.'),
-					{
-						label: 'Snap to the grid',
-						checked: () => !!ed.view(this.project).snap_to_grid,
-						keepOpen: true,
-						title: 'Whether a block lands on the grid when it is moved '
-							+ 'or resized — and a bend or a loose end when it is '
-							+ 'dragged. Hold Alt during a drag to do the opposite '
-							+ 'of whatever this says, for one placement without '
-							+ 'changing the setting.',
-						onPick: () => this.setViewOption({
-							snap_to_grid: !ed.view(this.project).snap_to_grid,
-						}),
-					},
-					toggle('show_help', 'Show help',
-						'The line under the diagram saying what the pointer can do '
-						+ 'here. It costs the diagram the room, so it is worth turning '
-						+ 'off once the gestures are familiar.'),
-					toggle('show_tooltips', 'Show tooltips',
-						'What a block, a connection’s marks or an influence arrow '
-						+ 'says about itself when the pointer rests on it. The handles '
-						+ 'say what dragging them does either way, and a problem '
-						+ 'always gives its reason.'),
-					{ separator: true },
-					{ label: 'Auto-layout', onPick: () => this.relayout() },
-					{ label: 'Fit to view', onPick: () => this.fit() },
-					{ label: 'Zoom in', hint: 'scroll', onPick: () => this.zoomBy(1.25) },
-					{ label: 'Zoom out', hint: 'scroll', onPick: () => this.zoomBy(0.8) },
-				],
-			},
+			{ label: 'Canvas', items: this._canvasItems() },
 		];
 	}
 
@@ -5581,14 +5657,64 @@ export class GraphEditor {
 
 	// --- view helpers -------------------------------------------------------
 
-	zoomBy(factor) {
+	/**
+	 * The part of the canvas that can be seen: all of it, less the room the
+	 * bar takes along the top when it is up. In the canvas's own pixels.
+	 */
+	_seen() {
 		const r = this.root.getBoundingClientRect();
-		const cx = r.width / 2, cy = r.height / 2;
+		const top = Math.min(this.bar?.inset() ?? 0, r.height / 2);
+		return { w: r.width, h: r.height - top, top };
+	}
+
+	/** Zooms about the middle of what can be seen. */
+	zoomBy(factor) {
+		const s = this._seen();
+		const cx = s.w / 2, cy = s.top + s.h / 2;
 		const k = Math.min(2.5, Math.max(0.25, this.camera.k * factor));
 		this.camera.x = cx - ((cx - this.camera.x) * k) / this.camera.k;
 		this.camera.y = cy - ((cy - this.camera.y) * k) / this.camera.k;
 		this.camera.k = k;
 		this._applyView();
+	}
+
+	/** To a zoom, rather than by one: 1 is the diagram's own size. */
+	zoomTo(k) {
+		this.zoomBy(k / this.camera.k);
+	}
+
+	/**
+	 * Where a block of `size` goes when the bar adds it: in the middle of what
+	 * can be seen, or the nearest place to it that nothing is drawn at, so
+	 * that two added in a row are two blocks and not one on top of the other.
+	 * On the grid when a drag would land on it.
+	 */
+	viewSpot(size = ed.DEFAULT_SIZE.compartment) {
+		const s = this._seen();
+		const r = this.root.getBoundingClientRect();
+		const mid = this._toModel({ clientX: r.left + s.w / 2, clientY: r.top + s.top + s.h / 2 });
+		const want = { x: mid.x - size.w / 2, y: mid.y - size.h / 2, w: size.w, h: size.h };
+		const taken = this._nodes().filter((n) => Number.isFinite(n.x));
+		const at = clearSpot(want, taken, GRID * 3);
+		return { x: this._snap(at.x), y: this._snap(at.y) };
+	}
+
+	/**
+	 * A block from the bar: where it was dropped, centred on the pointer --
+	 * snapped as a drag is, Alt included -- or, from a click, where
+	 * `viewSpot` says.
+	 */
+	addFromBar(kind, ev = null) {
+		const size = ed.DEFAULT_SIZE[kind] ?? ed.DEFAULT_SIZE.compartment;
+		let at;
+		if (ev) {
+			const p = this._toModel(ev);
+			at = { x: this._snap(p.x - size.w / 2, ev), y: this._snap(p.y - size.h / 2, ev) };
+		} else {
+			at = this.viewSpot(size);
+		}
+		if (kind === 'system') this._addSystemHere(at);
+		else this._addNodeAt(kind, at);
 	}
 
 	/**
@@ -5638,11 +5764,12 @@ export class GraphEditor {
 		}
 		if (!Number.isFinite(box.x0)) return false;
 
-		const r = this.root.getBoundingClientRect();
-		if (!r.width) return false;
+		// The middle of what can be seen, which the bar along the top is not.
+		const s = this._seen();
+		if (!s.w) return false;
 		const { k } = this.camera;
-		this.camera.x = r.width / 2 - ((box.x0 + box.x1) / 2) * k;
-		this.camera.y = r.height / 2 - ((box.y0 + box.y1) / 2) * k;
+		this.camera.x = s.w / 2 - ((box.x0 + box.x1) / 2) * k;
+		this.camera.y = s.top + s.h / 2 - ((box.y0 + box.y1) / 2) * k;
 		this._applyView();
 		return true;
 	}
@@ -5693,16 +5820,18 @@ export class GraphEditor {
 			y1 = Math.max(y1, drawn.y1 + 20);
 		}
 		const pad = 28;
+		// Into what can be seen: under the bar along the top, not behind it.
+		const s = this._seen();
 		const k = Math.min(
 			1.4,
 			Math.max(0.25, Math.min(
-				(r.width - pad * 2) / Math.max(1, x1 - x0),
-				(r.height - pad * 2) / Math.max(1, y1 - y0),
+				(s.w - pad * 2) / Math.max(1, x1 - x0),
+				(s.h - pad * 2) / Math.max(1, y1 - y0),
 			)),
 		);
 		this.camera.k = k;
-		this.camera.x = (r.width - (x1 - x0) * k) / 2 - x0 * k;
-		this.camera.y = (r.height - (y1 - y0) * k) / 2 - y0 * k;
+		this.camera.x = (s.w - (x1 - x0) * k) / 2 - x0 * k;
+		this.camera.y = s.top + (s.h - (y1 - y0) * k) / 2 - y0 * k;
 		this._applyView();
 	}
 
@@ -5719,6 +5848,34 @@ export class GraphEditor {
 }
 
 // --- geometry --------------------------------------------------------------
+
+/**
+ * The nearest place to `want` -- a box, `{x, y, w, h}` -- that none of
+ * `taken` overlaps, with a margin round each: `want` itself when it is clear,
+ * otherwise the closest of the places a `step` apart on rings round it, out to
+ * eight steps. Past that the canvas around the middle is full, and `want` is
+ * where it goes anyway: on top of something is still somewhere to start from.
+ */
+export function clearSpot(want, taken, step, margin = 12) {
+	const clear = (x, y) => taken.every((n) => x >= n.x + n.w + margin || n.x >= x + want.w + margin
+		|| y >= n.y + n.h + margin || n.y >= y + want.h + margin);
+	if (clear(want.x, want.y)) return { x: want.x, y: want.y };
+	for (let ring = 1; ring <= 8; ring++) {
+		const spots = [];
+		for (let i = -ring; i <= ring; i++) {
+			for (let j = -ring; j <= ring; j++) {
+				if (Math.max(Math.abs(i), Math.abs(j)) === ring) spots.push([i * step, j * step]);
+			}
+		}
+		// Nearest first, and across before down when two are as near: a
+		// diagram reads along its rows.
+		spots.sort((a, b) => Math.hypot(...a) - Math.hypot(...b) || Math.abs(a[1]) - Math.abs(b[1]));
+		for (const [dx, dy] of spots) {
+			if (clear(want.x + dx, want.y + dy)) return { x: want.x + dx, y: want.y + dy };
+		}
+	}
+	return { x: want.x, y: want.y };
+}
 
 /**
  * How far the pointer must travel before a press counts as a drag.

@@ -86,6 +86,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/siminfo.js` | What each simulation setting is, for that panel |
 | `src/ui/panelinfo.js`, `src/ui/blockinfo.js`, `src/ui/dialoginfo.js` | The same for the left panel's parts and the Index lists and JSON tabs, each kind of block's settings window, and every dialog |
 | `src/ui/graph.js` | The diagram, in SVG |
+| `src/ui/canvasbar.js` | The bar over the top of the diagram: the canvas menu's most-used parts, a click away. See *The bar over the diagram* |
 | `src/ui/matrix.js` | The transfer grid |
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
 | `src/ui/chartplan.js` | What the Chart draws from what is picked: each block's lines, its panels and its total |
@@ -7581,6 +7582,49 @@ Tested in `test/run.js` (the keys and the text, and the copy, on a stand-in
 for the page; the colourer part by part and against the check) and by
 resources/tests/site/test-chrome-kompartment-equations.py, which drives the
 layout, the mouse, the keys and the colours in Chrome.
+
+## The bar over the diagram
+
+`CanvasBar` (src/ui/canvasbar.js) is made by `GraphEditor`'s constructor and
+put in the canvas's container, over the SVG, for the reason the empty-model
+note is there: it stays put whatever the camera does. It holds no menus of its
+own. `_canvasMenu` was cut into the pieces it was built from --
+`_inflowItems`, `_otherBlockItems(at)`, `_transportOperationItems(at)`,
+`_showItems`, `_pictureItems`, `_canvasItems`, `_pickShape(spot)`, and
+`_viewToggle` for the switches -- and the menu buttons open those, under the
+button, through `openMenu`. The canvas menu came out of the cut item for item
+the same, measured by building both menus on five bundled models from the old
+and the new file; its *Canvas* gained **Show toolbar**.
+
+Where a block from it goes: `addFromBar(kind, ev)`. From a click, `viewSpot`
+-- the middle of what can be seen (`_seen`: the canvas less the strip the bar
+covers), moved to the nearest spot `clearSpot` finds that no drawn node
+overlaps, on rings a few grid steps apart, and snapped. From a drag, the drop
+point, the block centred on it and snapped as a drag is, Alt included. The
+drag is the button's own pointer, captured, so the click that ends it lands on
+the button and is swallowed there (`b.dragged`); a ghost the size of the block
+at the camera's zoom follows the pointer. Escape, or letting go over the bar or
+outside the canvas, adds nothing.
+
+`fit`, `centreOn` and `zoomBy` work in `_seen`, so a fitted diagram starts
+under the bar. `render` calls `bar.sync` for the switches' state and the
+disabled buttons (*Inflow* with nothing to flow into, *Sub-system* inside a
+transport), and `_applyView` calls `bar.syncZoom`, which every camera change
+goes through.
+
+A menu button closes its menu on a second press. The menu closes itself on any
+press outside it, the button's included, before the button's own handlers
+run, so `openMenu` gained `onClose`, and the button keeps `menuFor` for a task
+after the close: the press that closed its menu sees that it was its own.
+
+Whether the bar is up is `localStorage['kompartment.canvasBar']`, not a view
+setting: it is about the person, not the model, so it is not written into
+model files and the Python package's view defaults do not grow a key.
+`role="toolbar"` with one Tab stop, the arrow keys, Home and End moving
+along it, and ↓ opening a menu button's menu.
+
+Tested in `test/run.js` (the canvas menu, `clearSpot`, the (i) topic) and by
+resources/tests/site/test-chrome-kompartment-canvasbar.py.
 
 ## A pipe's place, per canvas
 

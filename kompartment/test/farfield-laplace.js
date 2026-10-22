@@ -1979,7 +1979,7 @@ test('the panel, the (i) topic and the Guide offer the choice and say what it ca
 	assert(/equationField\(FARF_TERM\.pen_dep,/.test(insp), 'the depth into the matrix is not offered when worked out exactly');
 	// The (i) topic says what each way is.
 	const info = read('../src/ui/blockinfo.js');
-	assert(/\*\*Worked out\*\* — \*on cells\*/.test(info) && /\*Semi-analytically\*/.test(info),
+	assert(/\*\*Worked out\*\* — \*\*on cells\*\*/.test(info) && /\*\*Semi-analytically\*\*/.test(info),
 		'the far-field topic does not describe the method');
 	// The Guide has the section, with the limits, and says nothing about
 	// another code there.

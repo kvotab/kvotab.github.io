@@ -220,8 +220,8 @@ export function blockTopic(kind) {
 			+ 'the rock matrix beside them, sorption and decay — worked out on cells with the rest of the '
 			+ 'model, or semi-analytically from the path’s transfer function.',
 			[
-				'**Worked out** — *on cells*: the fracture and the rock divided into cells, solved with '
-				+ 'the rest of the model, every setting free to change during the run. *Semi-analytically*: '
+				'**Worked out** — **on cells**: the fracture and the rock divided into cells, solved with '
+				+ 'the rest of the model, every setting free to change during the run. **Semi-analytically**: '
 				+ 'the path solved exactly once per run, and what flows in convolved with its responses — '
 				+ 'one state per nuclide for what it holds, no cells to refine, the settings constant '
 				+ 'through the run and the rock going on past the release point.',

@@ -3149,6 +3149,83 @@ dialog #flash {
 
 .graph-svg.is-panning { cursor: grabbing; }
 
+/* The bar over the diagram (src/ui/canvasbar.js): over the canvas's top-left
+   corner rather than in a row of its own, so the diagram keeps the room, and
+   drawn as the Matrix tab's zoom is, which is the same kind of thing. On a
+   narrow canvas it wraps. */
+.canvas-bar {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	z-index: 5;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+	max-width: calc(100% - 16px);
+	padding: 3px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface-1);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.canvas-bar[hidden] { display: none; }
+
+.canvas-bar-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 3px;
+	min-width: 28px;
+	height: 26px;
+	padding: 2px 7px;
+	border-color: transparent;
+	font-size: 12px;
+	color: var(--text-secondary);
+}
+
+.canvas-bar-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--surface-sunken); }
+
+/* A switch that is on, and a button whose menu is open. */
+.canvas-bar-btn[aria-pressed="true"] {
+	color: var(--accent);
+	background: color-mix(in oklab, var(--accent) 14%, transparent);
+	border-color: color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.canvas-bar-btn[aria-expanded="true"] { color: var(--text-primary); background: var(--surface-sunken); }
+
+.canvas-bar-caret { font-size: 11px; line-height: 1; color: var(--text-muted); }
+.canvas-bar-what { margin: 0 3px 0 5px; font-size: 11px; color: var(--text-muted); }
+.canvas-bar-level { min-width: 52px; font-family: var(--mono); font-size: 11px; }
+.canvas-bar .tb-sep { margin: 0 4px; }
+.canvas-bar .info-btn { margin: 0 3px 0 4px; }
+.canvas-bar-close { min-width: 24px; padding: 2px 6px; font-size: 15px; line-height: 1; }
+
+/* A block's button can be dragged onto the diagram as well as pressed. */
+.canvas-bar-drag { cursor: grab; touch-action: none; }
+
+/* A block on its way from the bar: an outline of its size at the zoom on
+   screen, centred on the pointer, and faint until it is over the diagram,
+   where letting go puts it down. */
+.canvas-bar-ghost {
+	position: fixed;
+	z-index: 95;
+	display: grid;
+	place-items: center;
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+	border: 1.5px dashed var(--accent);
+	border-radius: 8px;
+	background: color-mix(in oklab, var(--accent) 10%, transparent);
+	font-size: 11px;
+	color: var(--text-secondary);
+	opacity: 0.45;
+}
+
+.canvas-bar-ghost.is-over { opacity: 1; }
+
 /* --- shapes drawn on the canvas -------------------------------------------
    Annotation, behind everything: a group box round four compartments has to
    be behind the four compartments. Each shape carries its own --decor-line

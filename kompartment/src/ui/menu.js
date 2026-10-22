@@ -46,9 +46,10 @@ function scheduleSubClose(panel) {
 export function closeMenu() {
 	cancelSubClose();
 	if (!current) return;
-	const { root, cleanup, opener } = current;
+	const { root, cleanup, opener, onClose } = current;
 	current = null;
 	cleanup();
+	onClose?.();
 	// Only when the focus is about to be lost with the menu: a click on some
 	// other control has already put it where the user wanted it.
 	const inMenu = root.contains(document.activeElement) || document.activeElement === document.body;
@@ -82,9 +83,11 @@ export function menuIsOpen() {
  *   stays up, because you rarely change only one
  * @property {string} [title]      tooltip
  *
- * @param {{x: number, y: number, items: MenuItem[], title?: string}} opts
+ * @param {{x: number, y: number, items: MenuItem[], title?: string,
+ *   onClose?: () => void}} opts `onClose` is told when the menu goes, however
+ *   it goes -- for a button that opened it and says whether it is open
  */
-export function openMenu({ x, y, items, title = '' }) {
+export function openMenu({ x, y, items, title = '', onClose = null }) {
 	closeMenu();
 
 	const root = el('div', { className: 'menu-layer' });
@@ -144,6 +147,7 @@ export function openMenu({ x, y, items, title = '' }) {
 
 	current = {
 		root,
+		onClose,
 		// Where the keyboard was when the menu opened, to be given it back
 		// when the menu closes: `closeMenu` removes the element that holds
 		// the focus, which otherwise falls to the body, and the next Tab
