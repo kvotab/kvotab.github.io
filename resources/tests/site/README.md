@@ -1228,3 +1228,33 @@ distribution in logn.html. Each page is checked twice: by Chrome's rule over
 the page and its same-origin frames, and by the issues Chrome raised itself
 (`Audits.issueAdded`, `InteractiveContentSummaryDescendant`), which the other
 tests' drivers do not listen for.
+
+## test-chrome-kompartment-equations.py
+
+Kompartment's equation boxes, in a block's settings window.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-equations.py    # expect 22/22
+
+An equation is typed in a box that is one line at rest and opens, while it
+has the keyboard, over the window to show the whole equation: as wide as the
+text on one line, up to the edge of the panel it is in, then wrapped
+(`kompartment/src/ui/equationbox.js`). Home and End go to the start and the
+end of the equation. On a Mac they are commands to scroll the page, which in
+a text field leave the caret where it was; the test sends them both ways,
+plain and with the Mac's commands (`commands` on `Input.dispatchKeyEvent`),
+since without the commands Blink's own table moves the caret, as on Windows
+and Linux, and a box of one line would pass with no fix at all.
+
+With real presses, on the mass on a spring (Exact) and the landscape model's
+per-index grid (Release): the box at rest is as tall as an `<input>` in its
+place; a press puts the caret on the character pressed, also past where the
+open box wraps its first line, and the release opens the box with all of the
+equation in sight and the line under it where it was; a double-click on a
+word in a box at rest selects the word; Home and End, plain, with Shift and
+as a Mac sends them, go to the ends and do not scroll the window; the
+completion list opens under the open box and Home closes it; Enter with the
+list open takes a row and commits nothing, Enter with it closed commits once
+and leaves the box open with the caret in place, and Tab commits nothing more
+and closes it; a pasted line break is a space; Down moves down a wrapped line
+and opens the list at the end; and a grid's box opens wider than its column,
+to the right, and wraps a long equation at the grid's edge.

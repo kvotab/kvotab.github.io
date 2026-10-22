@@ -4009,6 +4009,61 @@ th.has-sample .smark { margin-left: 5px; }
 
 .insp-row input.is-invalid { border-color: var(--danger); }
 
+/* An equation's box (src/ui/equationbox.js). A textarea, and at rest one line
+   laid out as the <input> beside it is -- the same font, padding, border and
+   height -- rather than the tall code-panel box every other textarea is. */
+.eq-box { min-width: 0; }
+
+.eq-field {
+	display: block;
+	width: 100%;
+	min-height: 0;
+	margin: 0;
+	padding: 4px 7px;
+	resize: none;
+	overflow: hidden;
+	white-space: pre;
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 1.5;
+	color: var(--text-primary);
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+/* Over `.insp-row textarea`, which is sized for prose. */
+.insp-row .eq-field { font-size: 11.5px; }
+
+.eq-field.is-invalid { border-color: var(--danger); }
+
+/* Open, while it is typed in: over the form rather than in it, with the room
+   it left held by the box, and the equation wrapped. Wrapped where a line is
+   full rather than between words -- an equation is mostly written without a
+   space in it anyway -- so the line the box showed at rest keeps every
+   character where it was, and what was under the pointer for the first click
+   of a double-click is still under it for the second. Past the cap it
+   scrolls. */
+.eq-box.is-open { position: relative; }
+
+.eq-box.is-open > .eq-field {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 2;
+	white-space: pre-wrap;
+	line-break: anywhere;
+	overflow-wrap: anywhere;
+	overflow-x: hidden;
+	overflow-y: auto;
+	max-height: min(40vh, 400px);
+	/* Brought into sight with its focus ring, which is drawn outside it. */
+	scroll-margin: 4px;
+}
+
+/* Lifted off the form, once it is bigger than the box it came out of. */
+.eq-box.is-grown > .eq-field { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+
 /* A value the model works out for itself: shaped like the inputs beside it so
    the rows still line up, but flat and unfocusable, because it is a readout. */
 .insp-derived {
@@ -5412,7 +5467,8 @@ table.matrix td {
 .insp-entry-head {
 	position: sticky;
 	top: 0;
-	z-index: 1;
+	/* Over an open equation box (2) in a row scrolled up under it. */
+	z-index: 3;
 	background: var(--surface-1);
 	border-bottom: 1px solid var(--border);
 	font-size: 9.5px;
@@ -5448,6 +5504,8 @@ table.matrix td {
 	font-size: 11px;
 }
 
+.insp-entry .eq-field { padding: 2px 6px; font-size: 11px; }
+
 /* A dimension this block cannot carry: shown, so the list does not look as if
    it went missing, with the reason on it. */
 .insp-dim.is-off {
@@ -5469,7 +5527,8 @@ table.matrix td {
 .insp-unit-take { flex: none; white-space: nowrap; }
 
 /* Inherited values are shown but visibly not owned by this row. */
-.insp-entry:not(.is-set) input { color: var(--text-muted); }
+.insp-entry:not(.is-set) input,
+.insp-entry:not(.is-set) .eq-field { color: var(--text-muted); }
 
 /* A kind with per-index properties beside the block's own value -- a
    compartment's absolute tolerance, a far-field path's three other retention
@@ -8349,7 +8408,8 @@ input.ix-unit { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	min-width: 0;
 }
 
-.insp-eq input { flex: 1; min-width: 0; }
+.insp-eq input,
+.insp-eq > .eq-box { flex: 1; min-width: 0; }
 
 .insp-spread {
 	flex: none;

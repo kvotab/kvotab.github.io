@@ -1183,6 +1183,23 @@ The gesture is the conventional one: the space bar opens the list and Enter
 replaces the word under the caret. What it shows is every name in the model,
 unfiltered, and it refuses to open inside brackets.
 
+**The box opens while you type in it.** An equation's box is one line, like
+the fields around it, until it has the keyboard. Then it opens over the window
+to show the whole equation — wider first, as far as the panel it is in allows,
+then over as many lines as the equation takes — and closes when you leave it.
+Nothing else in the window moves, and neither does the line the box showed: a
+click puts the caret on the character clicked, and a double-click selects the
+word under it. In a grid of values per index the box opens across the columns
+beside it, so an equation in a narrow column is read on one line where it fits.
+An equation is one line however many it is shown on, so the lines break
+wherever one is full, and **Home** and **End** go to the start and the end of
+the whole equation — with **Shift**, they select to it. ↓ moves down a line,
+and at the end of the equation, or in one shown on a single line, it opens the
+list. **Enter** keeps what you typed, as leaving the box does; a line break
+is no part of an equation, so one in pasted text becomes a space. An empty box
+in a per-index grid shows the value it inherits, greyed, and opens to show all
+of that too.
+
 **The tree.** Its spine is the sub-systems, nested the way their names are:
 that is how a model of any size is actually organised, and in one of the real
 ones a bare name settles nothing — one assessment model has 1,298 blocks in 55

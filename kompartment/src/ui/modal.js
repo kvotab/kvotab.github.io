@@ -114,7 +114,9 @@ function focusKey(body, active) {
 		label: active.getAttribute('aria-label') || null,
 		name: active.getAttribute('name') || null,
 		at: all.indexOf(active),
-		caret: typeof active.selectionStart === 'number' && /^(text|search|number|)$/.test(active.type ?? '')
+		// A textarea's too: an equation is typed in one (see ./equationbox.js).
+		caret: typeof active.selectionStart === 'number'
+			&& /^(text|search|number|textarea|)$/.test(active.type ?? '')
 			? [active.selectionStart, active.selectionEnd] : null,
 	};
 }

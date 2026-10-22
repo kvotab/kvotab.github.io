@@ -43,6 +43,7 @@ import { pointsBox, sparkPath } from './lookup-editor.js';
 import * as qa from '../domain/qa.js';
 import { symbolNodes } from './symbol.js';
 import { attachCompletion, equationLook } from './complete.js';
+import { equationBox } from './equationbox.js';
 import {
 	OPERATIONS,
 	AGGREGATE_OPERATIONS,
@@ -568,12 +569,16 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	} = {}) => {
 		const read = check ?? ((text) => validateEquation(project, text, qname, { self }));
 		const error = quiet ? null : read(get());
-		const input = textField(get(), (v) => {
+		// One line at rest and the whole equation while it is typed in: see
+		// ./equationbox.js.
+		const { box, field: input } = equationBox({ value: get(), placeholder });
+		input.addEventListener('change', () => {
+			const v = input.value;
 			const problem = quiet ? null : read(v);
 			set(v);
 			hooks.onChange?.({ soft: !!problem });
 			if (problem) hooks.onStatus?.(`${block.name}: ${problem}`, 'warn');
-		}, { mono: true, placeholder });
+		});
 		// Names are what an equation is mostly made of, and this model's are
 		// neither short nor guessable -- `NearField.Bentoniteinlet.Comp_5`.
 		attachCompletion(input, complete ?? equationLook(project, qname, system));
@@ -591,8 +596,8 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		// side, because they are two halves of one answer: what it is, and how
 		// well it is known.
 		const control = uncertain && field
-			? el('div', { className: 'insp-eq' }, input, spreadButton(field, label, get))
-			: input;
+			? el('div', { className: 'insp-eq' }, box, spreadButton(field, label, get))
+			: box;
 		// Directly under the box rather than after the hint: it is about what
 		// is in the box, and the hint is about what may go in it.
 		const spreadHint = uncertain && field ? spreadNote(field) : null;
@@ -3021,12 +3026,10 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 		// does. Blank is the compartment's own, shown greyed as the placeholder.
 		if (x.equation) {
 			const shownEq = own ? String(value ?? '') : '';
-			const input = el('input', {
-				type: 'text',
-				className: `mono insp-entry-extra is-eq${own ? ' is-own' : ''}`,
+			const { box, field: input } = equationBox({
+				className: `insp-entry-extra is-eq${own ? ' is-own' : ''}`,
 				value: shownEq,
 				placeholder: value != null ? String(value) : '',
-				spellcheck: false,
 				title: ed.symbolText(x.title),
 			});
 			attachCompletion(input, equationLook(project, qname, parentOf(qname)));
@@ -3045,7 +3048,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 					hooks.onStatus?.(e.message, 'warn');
 				}
 			});
-			return input;
+			return box;
 		}
 		const fallback = x.fallback?.(project);
 		const shown = own ? String(value ?? '') : '';
@@ -3101,13 +3104,16 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 			rowEl.append(el('span', { className: 'insp-entry-idx' },
 				dims.map((d) => index[d]).join(' \u00b7 ')));
 		}
-		const input = el('input', {
-			type: 'text',
-			className: 'mono',
-			value: value == null ? ''
-				: Array.isArray(value) ? value.join(' + ') : String(value),
-			spellcheck: false,
-			title: set ? 'Set for this index' : 'Inherited from the block default',
+		const shown = value == null ? ''
+			: Array.isArray(value) ? value.join(' + ') : String(value);
+		const title = set ? 'Set for this index' : 'Inherited from the block default';
+		// A parameter's value is a number, in a box like any other. Anything
+		// else is an equation, or an aggregate's list of names, and gets the
+		// box that opens to show all of it: this column is a fraction of the
+		// window's width.
+		const eq = numeric ? null : equationBox({ value: shown, title });
+		const input = eq?.field ?? el('input', {
+			type: 'text', className: 'mono', value: shown, spellcheck: false, title,
 		});
 		input.addEventListener('change', () => commitValue(index, input.value, input, value));
 		// The same completion the block-level field has: a per-index override
@@ -3118,7 +3124,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 			attachCompletion(input, equationLook(project, qname, parentOf(qname),
 				{ functions: kind !== 'block_reduction' }));
 		}
-		rowEl.append(input);
+		rowEl.append(eq?.box ?? input);
 		// What that equation comes to at the start, beside it rather than
 		// under it: in a grid the answer belongs in the row it is about.
 		// Marked so that it fills itself in when the values arrive, and filled

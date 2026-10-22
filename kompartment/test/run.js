@@ -22098,6 +22098,136 @@ test('a lookup table called at an argument is a usable equation, not an unknown 
 	assert(validateEquation(n, 'Sub.Q(2)', 'C') === null);
 });
 
+test('an equation box: Home and End go to the ends of the equation, Enter commits it once, a line break is a space', async () => {
+	// The box's text and keys, on a stand-in for the page: how it opens and
+	// how big it grows is layout, which only a browser has -- that half is
+	// resources/tests/site/test-chrome-kompartment-equations.py.
+	const { equationBox } = await import('../src/ui/equationbox.js');
+	class Node extends EventTarget {
+		constructor(tag) {
+			super();
+			this.tagName = tag.toUpperCase();
+			this.nodeType = 1;
+			this.kids = [];
+			this.parentElement = null;
+			this.style = {};
+			this.value = '';
+			this.selectionStart = 0;
+			this.selectionEnd = 0;
+			this.selectionDirection = 'none';
+			const names = new Set();
+			this.classList = {
+				add: (...c) => c.forEach((x) => names.add(x)),
+				remove: (...c) => c.forEach((x) => names.delete(x)),
+				contains: (x) => names.has(x),
+				toggle: (x, on = !names.has(x)) => (on ? names.add(x) : names.delete(x)),
+			};
+			Object.defineProperty(this, 'className', {
+				get: () => [...names].join(' '),
+				set: (v) => { names.clear(); String(v).split(/\s+/).filter(Boolean).forEach((x) => names.add(x)); },
+				enumerable: true,
+			});
+		}
+		setAttribute() {}
+		removeAttribute() {}
+		append(...kids) { for (const k of kids) { this.kids.push(k); k.parentElement = this; } }
+		setSelectionRange(a, b, dir = 'none') {
+			this.selectionStart = a;
+			this.selectionEnd = b;
+			this.selectionDirection = dir;
+		}
+	}
+	const previous = globalThis.document;
+	globalThis.document = { createElement: (t) => new Node(t), createTextNode: (t) => ({ nodeType: 3, t }) };
+	try {
+		// Given a value with a line break in it, it holds what an <input> would.
+		const { box, field } = equationBox({ value: 'a*b\n+c', className: 'is-eq' });
+		assert(field.tagName === 'TEXTAREA' && box.kids[0] === field, 'the field is not in its box');
+		assert(field.value === 'a*b+c', field.value);
+		assert(field.classList.contains('eq-field') && field.classList.contains('is-eq'), field.className);
+
+		const key = (name, opts = {}) => {
+			const ev = Object.assign(new Event('keydown', { cancelable: true }), {
+				key: name, shiftKey: false, altKey: false, ...opts,
+			});
+			field.dispatchEvent(ev);
+			return ev;
+		};
+		const sel = () => [field.selectionStart, field.selectionEnd, field.selectionDirection];
+		const seen = [];
+		field.setSelectionRange(2, 2);
+		seen.push(key('End').defaultPrevented, sel());
+		seen.push(key('Home').defaultPrevented, sel());
+		// With Shift, from where the selection is anchored, either way.
+		field.setSelectionRange(2, 2);
+		key('End', { shiftKey: true });
+		seen.push(sel());
+		key('Home', { shiftKey: true });
+		seen.push(sel());
+		// Alt with them is the platform's.
+		field.setSelectionRange(2, 2);
+		seen.push(key('Home', { altKey: true }).defaultPrevented, sel());
+		const want = [
+			true, [5, 5, 'none'], true, [0, 0, 'none'],
+			[2, 5, 'forward'], [0, 2, 'backward'],
+			false, [2, 2, 'none'],
+		];
+		assert(JSON.stringify(seen) === JSON.stringify(want), JSON.stringify(seen));
+
+		// Enter commits -- `change`, as on an <input> -- and only text it has
+		// not committed already: the browser's own `change` when the box is
+		// left would otherwise be the same edit twice.
+		const commits = [];
+		field.addEventListener('change', () => commits.push(field.value));
+		assert(key('Enter').defaultPrevented, 'Enter puts a line break in an equation');
+		assert(commits.length === 0, 'an Enter with nothing typed committed');
+		field.value = 'a*b+c+d';
+		key('Enter');
+		key('Enter');
+		field.dispatchEvent(new Event('change'));
+		assert(JSON.stringify(commits) === '["a*b+c+d"]', JSON.stringify(commits));
+		field.value = 'a*b+c+d*2';
+		field.dispatchEvent(new Event('change'));
+		assert(commits.length === 2 && commits[1] === 'a*b+c+d*2', JSON.stringify(commits));
+		// An Enter that finishes an IME's composition is the IME's.
+		assert(!key('Enter', { isComposing: true }).defaultPrevented, 'Enter taken from the IME');
+
+		// Pasted: every line break a space, the ones at the end dropped, and
+		// the caret where the same text has it.
+		field.value = 'x\ny\n';
+		field.setSelectionRange(4, 4);
+		field.dispatchEvent(new Event('input'));
+		assert(field.value === 'x y' && field.selectionStart === 3, `${JSON.stringify(field.value)} ${field.selectionStart}`);
+		field.value = 'p\r\nq+r';
+		field.setSelectionRange(3, 3);
+		field.dispatchEvent(new Event('input'));
+		assert(field.value === 'p q+r' && field.selectionStart === 2, `${JSON.stringify(field.value)} ${field.selectionStart}`);
+		const typed = Object.assign(new Event('beforeinput', { cancelable: true }), { inputType: 'insertLineBreak' });
+		field.dispatchEvent(typed);
+		assert(typed.defaultPrevented, 'a line break can be typed');
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+});
+
+test('every equation in a block’s settings is typed in an equation box', async () => {
+	const { readFileSync } = await import('node:fs');
+	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	const field = /const equationField = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
+	assert(/equationBox\(\{ value: get\(\), placeholder \}\)/.test(field), 'the block’s own equation is in an <input>');
+	const extra = /const extraBox = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
+	assert(/if \(x\.equation\) \{[\s\S]{0,200}?= equationBox\(\{/.test(extra), 'a per-index equation column is in an <input>');
+	const row = /const valueRow = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
+	assert(/const eq = numeric \? null : equationBox\(/.test(row) && /rowEl\.append\(eq\?\.box \?\? input\)/.test(row),
+		'a per-index equation is in an <input>');
+	// The window is rebuilt by every edit made in it, and gives the field that
+	// had the keyboard its caret back -- a textarea's too.
+	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
+	assert(/\/\^\(text\|search\|number\|textarea\|\)\$\/\.test\(active\.type/.test(modal),
+		'the caret is not given back to an equation box');
+});
+
 section('XML parsing');
 
 test('elements, attributes, text and nesting', () => {

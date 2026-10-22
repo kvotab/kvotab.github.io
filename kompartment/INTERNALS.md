@@ -95,6 +95,7 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/prefix.js` | A prefix for an axis's unit — kBq, µSv/year, kyear — by the HDF5 Browser's rule |
 | `src/ui/tree.js`, `src/ui/icons.js` | The block tree, and the glyph beside each name |
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
+| `src/ui/equationbox.js` | The box an equation is typed in: one line at rest, the whole equation while it is typed in. See *The box an equation is typed in* |
 | `src/ui/indexlists.js` | Index lists, contaminants and decay data, in one panel |
 | `src/ui/jsoneditor.js` | The JSON tab's box: the coloured copy of the lines in view under the textarea, the check as you type (`jsonErrorAt` says where text stops being JSON, in words and the same in every browser), and whether Apply is offered |
 | `src/ui/endpoints.js` | Which blocks a probabilistic run keeps |
@@ -7475,6 +7476,75 @@ is kept across a rebuild while the same thing is shown. The place, the size and
 whether it was out are stored in `localStorage` under `kompartment.infoWindow`
 (read and written in try/catch, and saved on every `pointerup` on the window),
 and the first model on screen reopens the window if it was out.
+
+## The box an equation is typed in
+
+Every equation in a block's settings window -- the block's own, an extra
+equation column of a per-index grid, and each row of that grid but a
+parameter's -- is typed in `equationBox` (src/ui/equationbox.js). It returns
+`{ box, field }`: the box goes into the form, the field is a `<textarea>` and
+takes the listeners. At rest it is one line, laid out as the `<input>` it
+stands in for -- the same font, padding, border and height, 27.25 px in a
+row and 22.5 px in a grid (`.eq-field` in css/app.css, after the
+`.insp-row textarea` rule it has to override). While it has the keyboard it
+is open: `position: absolute` in its box (`.eq-box.is-open`), which holds
+the height it had, so it is drawn over the form and nothing in the form
+moves. `fit` sizes it, on opening and on every `input`: as wide as the text
+on one line, between its own width and the inside edge of the nearest
+ancestor that clips (`roomRight`: the window's body, or the grid's scrolling
+list), then as many lines as the text wraps to at that width -- counted in
+lines, since `scrollHeight` is a whole number of pixels and a line is not,
+so that a box of one line is exactly as tall open as at rest. Past
+`max-height` it scrolls. An empty box is sized by its placeholder, which in
+a grid is the value the row inherits. `is-grown`, and the shadow with it,
+only when it came out bigger than its box. It opens on `focus`, except that a
+press opens it on the release (`pointerup`, then a task later, after the
+click), so the caret goes where the click was in the line that was seen and a
+drag selects in it; `scrollIntoView` then brings all of it into sight, with
+`scroll-margin` for the focus ring.
+
+Built on what was measured (Chrome 155):
+
+- a textarea's `scrollWidth` counts its left padding and not its right one:
+  218 px for 211.9 px of text with 6 px on either side. The text is measured
+  on a hidden `<span>` in the field's font instead (`textWidth`).
+- Open, the text wraps with `line-break: anywhere`, wherever a line is full.
+  Wrapped between words, the first line of the 89-character
+  `x0*exp(-zeta*omega*time())*(cos(omega_d*time()) + ...` ended after 27
+  characters where the box at rest showed 46, so the characters under the
+  pointer moved between the two clicks of a double-click and the second
+  selected something else. Filled to the edge, the line seen at rest keeps
+  every character where it was.
+- On a Mac, Home and End in a text field are `scrollToBeginningOfDocument:`
+  and `scrollToEndOfDocument:`: the caret stays where it is. The box takes
+  them in a capture-phase `keydown`, which runs before the completion list's
+  own -- in its other fields the list moves to its first and last row on
+  them -- closes the list, and goes to the ends of the equation, with Shift
+  from the selection's anchor. A CDP key event carries no Mac command unless
+  given one (`commands: ['scrollToBeginningOfDocument']`), and without one
+  Blink's own table moves the caret, as on Windows and Linux, so a test that
+  does not send them would pass on a box of one line with no fix at all.
+- Enter raises `change` when the text is new, unless the completion list is
+  open, where Enter takes the highlighted row. The browser raises its own
+  `change` when the box is left, which after an Enter would commit the same
+  text twice; the box's own `change` listener, registered before any
+  caller's, stops a `change` that carries nothing new.
+- A line break is no part of an equation. One in a value given to the box is
+  taken out, as an `<input>` takes it out; in pasted text it becomes a space,
+  and one at the end is dropped, as Blink does for an `<input>`.
+- ↓ against a closed list asks for it (src/ui/complete.js). In an open box of
+  more than one line the box takes it first and lets the caret go down a
+  line, except at the end of the equation.
+- The window rebuilds its body on every edit and gives the field that had
+  the keyboard its caret back (`focusKey` in src/ui/modal.js), which reads
+  the caret only of the control types it names: `textarea` is one of them.
+
+The sticky head of a per-index grid is at z-index 3, over an open box (2)
+scrolled up under it.
+
+Tested in `test/run.js` (the keys and the text, on a stand-in for the page)
+and by resources/tests/site/test-chrome-kompartment-equations.py, which drives
+the layout, the mouse and the keys in Chrome.
 
 ## A pipe's place, per canvas
 
