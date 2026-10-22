@@ -4011,26 +4011,64 @@ th.has-sample .smark { margin-left: 5px; }
 
 /* An equation's box (src/ui/equationbox.js). A textarea, and at rest one line
    laid out as the <input> beside it is -- the same font, padding, border and
-   height -- rather than the tall code-panel box every other textarea is. */
-.eq-box { min-width: 0; }
+   height -- rather than the tall code-panel box every other textarea is.
 
-.eq-field {
+   Coloured, the text is drawn by a copy under the field (`.eq-hl`), and the
+   field over it keeps the caret and the selection with its own text made
+   invisible: the JSON tab's arrangement. Everything that decides where a
+   character lands is declared for the two at once, here and in the rules
+   for a grid and for an open box below, so every character of the copy is
+   where the field has it. */
+.eq-box { position: relative; min-width: 0; }
+
+.eq-field,
+.eq-hl {
 	display: block;
 	width: 100%;
 	min-height: 0;
 	margin: 0;
 	padding: 4px 7px;
-	resize: none;
 	overflow: hidden;
 	white-space: pre;
 	font-family: var(--mono);
 	font-size: 11.5px;
 	line-height: 1.5;
-	color: var(--text-primary);
-	background: var(--surface-2);
+	letter-spacing: normal;
+	font-variant-ligatures: none;
+	tab-size: 2;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 }
+
+.eq-field {
+	position: relative;
+	resize: none;
+	color: var(--text-primary);
+	background: var(--surface-2);
+}
+
+.eq-hl {
+	position: absolute;
+	top: 0;
+	left: 0;
+	height: 100%;
+	color: var(--text-primary);
+	background: var(--surface-2);
+	border-color: transparent;
+	pointer-events: none;
+}
+
+.eq-box.is-coloured > .eq-field {
+	background: transparent;
+	-webkit-text-fill-color: transparent;
+	caret-color: var(--text-primary);
+}
+
+/* The field's own: a placeholder is drawn by the field, not by the copy. */
+.eq-box.is-coloured > .eq-field::placeholder { -webkit-text-fill-color: var(--text-muted); }
+.eq-box.is-coloured > .eq-field::selection { background: color-mix(in oklab, var(--accent) 38%, transparent); }
+/* A unit that does not add up tints the box, over the copy's ground. */
+.eq-box.is-coloured > .eq-field.is-suspect { background: var(--caution-bg); }
 
 /* Over `.insp-row textarea`, which is sized for prose. */
 .insp-row .eq-field { font-size: 11.5px; }
@@ -4043,26 +4081,60 @@ th.has-sample .smark { margin-left: 5px; }
    space in it anyway -- so the line the box showed at rest keeps every
    character where it was, and what was under the pointer for the first click
    of a double-click is still under it for the second. Past the cap it
-   scrolls. */
-.eq-box.is-open { position: relative; }
+   scrolls, the copy with it. */
+.eq-box.is-open { z-index: 2; }
 
-.eq-box.is-open > .eq-field {
+.eq-box.is-open > .eq-field,
+.eq-box.is-open > .eq-hl {
 	position: absolute;
 	top: 0;
 	left: 0;
-	z-index: 2;
 	white-space: pre-wrap;
 	line-break: anywhere;
 	overflow-wrap: anywhere;
+	max-height: min(40vh, 400px);
+}
+
+/* The field scrolls; the copy is moved with it, and is given the room the
+   field's scrollbar takes as padding (see `fit`) rather than one of its own. */
+.eq-box.is-open > .eq-field {
 	overflow-x: hidden;
 	overflow-y: auto;
-	max-height: min(40vh, 400px);
 	/* Brought into sight with its focus ring, which is drawn outside it. */
 	scroll-margin: 4px;
 }
 
 /* Lifted off the form, once it is bigger than the box it came out of. */
 .eq-box.is-grown > .eq-field { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); }
+
+/* The colours. A block is in its kind's hue, the one its fill on the diagram
+   has, at the strength of text: a compartment green, a parameter amber, an
+   expression violet, a lookup table olive, and any other block teal. The
+   library's functions are blue, what is in a bracket slate, and the
+   operators and brackets recede. A number keeps the text colour: its digits
+   say what it is, and an orange one sat too close to the red of a mistake.
+   Each hue is mixed towards the text colour, as the JSON tab's are, so it
+   reads on either ground. A name the check would refuse is red and
+   underlined where it stands. */
+.eqh-fn { color: color-mix(in oklab, var(--shape-blue) 72%, var(--text-primary)); }
+.eqh-index,
+.eqh-unit { color: color-mix(in oklab, var(--shape-slate) 72%, var(--text-primary)); }
+.eqh-op,
+.eqh-punct { color: var(--text-muted); }
+.eqh-ref { color: color-mix(in oklab, var(--shape-teal) 72%, var(--text-primary)); }
+.eqh-compartment { color: color-mix(in oklab, var(--shape-green) 72%, var(--text-primary)); }
+.eqh-parameter { color: color-mix(in oklab, var(--shape-amber) 72%, var(--text-primary)); }
+.eqh-expression { color: color-mix(in oklab, var(--shape-purple) 72%, var(--text-primary)); }
+.eqh-lookup { color: color-mix(in oklab, var(--shape-olive) 72%, var(--text-primary)); }
+.eqh-bad {
+	color: var(--danger);
+	text-decoration: underline wavy var(--danger);
+	text-decoration-skip-ink: none;
+}
+
+/* A value inherited rather than set, as `.insp-entry:not(.is-set) input`. */
+.eq-hl.is-muted,
+.eq-hl.is-muted span { color: var(--text-muted); }
 
 /* A value the model works out for itself: shaped like the inputs beside it so
    the rows still line up, but flat and unfocusable, because it is a readout. */
@@ -5504,7 +5576,8 @@ table.matrix td {
 	font-size: 11px;
 }
 
-.insp-entry .eq-field { padding: 2px 6px; font-size: 11px; }
+.insp-entry .eq-field,
+.insp-entry .eq-hl { padding: 2px 6px; font-size: 11px; }
 
 /* A dimension this block cannot carry: shown, so the list does not look as if
    it went missing, with the reason on it. */

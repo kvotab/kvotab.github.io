@@ -12,6 +12,7 @@
  */
 
 import { tokenize, parse, collectReferences, ParseError } from '../parser/parser.js';
+import { lookupFunction } from '../parser/functions.js';
 import { describePDF } from './pdf.js';
 import { NAME_RE, RESERVED } from './names.js';
 import {
@@ -6726,16 +6727,19 @@ export function applyNuclides(project, sel) {
  * @returns {string|null} an error message, or null when the equation is usable
  */
 /**
- * A reusable equation checker for one model.
+ * How an equation's names are read in one model: what each resolves to, and
+ * whether it may be read where it is written.
  *
- * The two sets it closes over -- every block's qualified name, and which of
- * them are lookup tables -- cost O(blocks) to build and do not change between
- * one equation and the next. `validateEquation` used to build them per call,
- * which made a whole-model scan quadratic: on a 1,600-block model that is
- * three million set insertions on every keystroke, and the scan runs on every
- * edit. Built once here instead.
+ * The one judgement the check (`equationChecker`) and the colouring
+ * (`equationColourer`) share, so that a name marked in the box is a name the
+ * message under it names, and for the same reason. The sets it closes over --
+ * every block's qualified name, and which of them are lookup tables -- cost
+ * O(blocks) to build and do not change between one equation and the next.
+ * `validateEquation` used to build them per call, which made a whole-model
+ * scan quadratic: on a 1,600-block model that is three million set insertions
+ * on every keystroke, and the scan runs on every edit. Built once per model.
  */
-export function equationChecker(project) {
+function nameReader(project) {
 	// Resolved the way the builder resolves it, against qualified names and in
 	// the owner's own sub-system. Matching local names against local names
 	// instead reported every qualified reference as unknown, and quietly
@@ -6768,6 +6772,55 @@ export function equationChecker(project) {
 		const b = (project?.expressions ?? []).find((x) => qualifiedName(x) === q);
 		return b?.argument === 'range' ? '(0, 0.5)' : '(0.5)';
 	};
+	const resolve = (n, system) => resolveReference(n, system, (x) => known.has(x));
+
+	return {
+		functions,
+		resolve,
+		/** Whether `n(...)` is a call the model makes: a table, an operation, a function of its own. */
+		calls(n, system) {
+			const q = resolve(n, system) ?? '';
+			return tables.has(q) || called.has(q) || functions.has(n);
+		},
+		/**
+		 * Why `ref`, resolved to `q` (null for nothing), may not be read in
+		 * `ownerName`'s equation; null when it may.
+		 */
+		refused(ref, q, ownerName, self) {
+			const system = parentOf(ownerName ?? '');
+			// A block may not read its own value -- there is nothing to read
+			// until it has been worked out -- except in the one field that
+			// is *about* its own value changing: a compartment's dy/dt term,
+			// where `-k*C` inside C is the whole point. `self` says so.
+			if (q === ownerName && !self) return `'${ref}' refers to itself`;
+			if (!q) {
+				return `'${ref}' is not a block in this model`
+					+ (system ? `, or in '${system}'` : '');
+			}
+			if (off.has(q) && !off.has(ownerName)) {
+				return `'${ref}' is disabled, so it has no value here. Enable it, `
+					+ `or disable this block as well`;
+			}
+			if (called.has(q)) {
+				return `'${ref}' is a transport operation read at a position along the `
+					+ `chain, so it has no value of its own; call it, as ${ref}${calledHow(q)}`;
+			}
+			// The element counter has a value only inside its own chain: it
+			// is which pair of neighbours is being assembled, and outside the
+			// transport there is no pair. See `tr.counterVisibleTo`.
+			if (counters.has(q) && !tr.counterVisibleTo(project, q, ownerName)) {
+				return `'${ref}' is the element counter of '${parentOf(q)}', and counts the `
+					+ 'compartments of that chain: it has a value only inside the transport.';
+			}
+			return null;
+		},
+	};
+}
+
+/** A reusable equation checker for one model: see `nameReader` for why. */
+export function equationChecker(project) {
+	const names = nameReader(project);
+	const { functions } = names;
 
 	/**
 	 * One equation, checked.
@@ -6779,11 +6832,7 @@ export function equationChecker(project) {
 	 */
 	return (equation, ownerName, { self = false, locals = null } = {}) => {
 		const system = parentOf(ownerName ?? '');
-		const resolve = (n) => resolveReference(n, system, (x) => known.has(x));
-		const calls = (n) => {
-			const q = resolve(n) ?? '';
-			return tables.has(q) || called.has(q) || functions.has(n);
-		};
+		const calls = (n) => names.calls(n, system);
 		const arity = (ast) => {
 			if (!ast || typeof ast !== 'object') return null;
 			if (ast.type === 'call' && functions.has(ast.name)) {
@@ -6823,31 +6872,8 @@ export function equationChecker(project) {
 			// Everything else in a body is a block, read at the top level:
 			// see ../sim/functions.js.
 			if (locals?.has(ref)) continue;
-			const q = resolve(ref);
-			// A block may not read its own value -- there is nothing to read
-			// until it has been worked out -- except in the one field that
-			// is *about* its own value changing: a compartment's dy/dt term,
-			// where `-k*C` inside C is the whole point. `self` says so.
-			if (q === ownerName && !self) return `'${ref}' refers to itself`;
-			if (!q) {
-				return `'${ref}' is not a block in this model`
-					+ (system ? `, or in '${system}'` : '');
-			}
-			if (off.has(q) && !off.has(ownerName)) {
-				return `'${ref}' is disabled, so it has no value here. Enable it, `
-					+ `or disable this block as well`;
-			}
-			if (called.has(q)) {
-				return `'${ref}' is a transport operation read at a position along the `
-					+ `chain, so it has no value of its own; call it, as ${ref}${calledHow(q)}`;
-			}
-			// The element counter has a value only inside its own chain: it
-			// is which pair of neighbours is being assembled, and outside the
-			// transport there is no pair. See `tr.counterVisibleTo`.
-			if (counters.has(q) && !tr.counterVisibleTo(project, q, ownerName)) {
-				return `'${ref}' is the element counter of '${parentOf(q)}', and counts the `
-					+ 'compartments of that chain: it has a value only inside the transport.';
-			}
+			const problem = names.refused(ref, names.resolve(ref, system), ownerName, self);
+			if (problem) return problem;
 		}
 		return null;
 	};
@@ -6856,6 +6882,83 @@ export function equationChecker(project) {
 /** One equation, checked. For a field that has just been typed in. */
 export function validateEquation(project, equation, ownerName, opts = {}) {
 	return equationChecker(project)(equation, ownerName, opts);
+}
+
+/**
+ * What each part of an equation is, for the box it is typed in to colour.
+ *
+ * Read with the check's own judgement of names (`nameReader`), but token by
+ * token rather than up to the first fault: every name the check would refuse
+ * is marked `bad` where it stands, and no other, so the mark under a word and
+ * the message under the box agree. A half-typed equation is read as far as it
+ * goes, and a character the language has no use for is marked rather than
+ * thrown. What the check finds wrong with the shape -- a bracket left open, an
+ * argument too many -- is left to its message: a mark on one token would be a
+ * guess at where the mistake is.
+ *
+ * @returns {(text: string, ownerName: string, opts?: {self?: boolean,
+ *   locals?: Set<string>|null, quiet?: boolean}) => Array<{text: string,
+ *   part: string|null, kind?: string}>} the parts in order, covering the
+ *   text. `part` is `num`; `fn`, a function -- the library's, one of the
+ *   model's own, or a constant such as `time` written bare; `ref`, a block,
+ *   with its `kind`; `local`, a function's parameter in its body; `index` and
+ *   `unit`, what is in a bracket after a name and after a number; `op`;
+ *   `punct`; `bad`; or null for the space between and for a name that is
+ *   nothing. `quiet` marks nothing bad, for a block the run leaves out (see
+ *   `leftOutOfRun`). `self` and `locals` are the check's.
+ */
+export function equationColourer(project) {
+	const names = nameReader(project);
+	const blocks = blockIndex(project);
+	const PUNCT = new Set(['lparen', 'rparen', 'comma', 'lbracket', 'rbracket']);
+	return (text, ownerName, { self = false, locals = null, quiet = false } = {}) => {
+		const src = String(text ?? '');
+		const system = parentOf(ownerName ?? '');
+		const tokens = tokenize(src, true);
+		const out = [];
+		let at = 0;
+		const put = (tok, part, kind = null) => {
+			if (tok.pos > at) out.push({ text: src.slice(at, tok.pos), part: null });
+			out.push(kind ? { text: tok.text, part, kind } : { text: tok.text, part });
+			at = tok.pos + tok.text.length;
+		};
+		const kindOf = (q) => blocks.get(q)?.kind ?? null;
+		// What a name is: a parameter of the function it is the body of, a
+		// call, a constant of the library's written bare, or a block -- and
+		// read the way the parser reads it, which takes a name followed by a
+		// bracket as a call before it looks for a block.
+		const name = (tok, i) => {
+			const n = tok.value;
+			if (locals?.has(n)) return put(tok, 'local');
+			const fn = lookupFunction(n);
+			if (tokens[i + 1]?.type === 'lparen') {
+				if (fn || names.functions.has(n)) return put(tok, 'fn');
+				// A table read at an argument, or a transport operation at a
+				// position: a block, called.
+				const q = names.calls(n, system) ? names.resolve(n, system) : null;
+				if (q) return put(tok, 'ref', kindOf(q));
+				return put(tok, quiet ? null : 'bad');
+			}
+			if (fn?.arity === 0) return put(tok, 'fn');
+			const q = names.resolve(n, system);
+			if (!quiet && names.refused(n, q, ownerName, self)) return put(tok, 'bad');
+			return q ? put(tok, 'ref', kindOf(q)) : put(tok, null);
+		};
+		for (let i = 0; i < tokens.length; i++) {
+			const tok = tokens[i];
+			if (tok.type === 'eof') break;
+			if (tok.type === 'ident') name(tok, i);
+			else if (tok.type === 'number') put(tok, 'num');
+			else if (tok.type === 'op') put(tok, 'op');
+			else if (PUNCT.has(tok.type)) put(tok, 'punct');
+			// In a bracket after a number it is the number's unit, `0.01[m]`;
+			// after anything else, an index.
+			else if (tok.type === 'index') put(tok, tokens[i - 2]?.type === 'number' ? 'unit' : 'index');
+			else put(tok, quiet ? null : 'bad');
+		}
+		if (at < src.length) out.push({ text: src.slice(at), part: null });
+		return out;
+	};
 }
 
 /**

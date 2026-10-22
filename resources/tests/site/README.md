@@ -1233,12 +1233,13 @@ tests' drivers do not listen for.
 
 Kompartment's equation boxes, in a block's settings window.
 
-    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-equations.py    # expect 22/22
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-equations.py    # expect 30/30
 
 An equation is typed in a box that is one line at rest and opens, while it
 has the keyboard, over the window to show the whole equation: as wide as the
 text on one line, up to the edge of the panel it is in, then wrapped
-(`kompartment/src/ui/equationbox.js`). Home and End go to the start and the
+(`kompartment/src/ui/equationbox.js`). It is drawn in colour by a copy under
+the field, whose own text is invisible. Home and End go to the start and the
 end of the equation. On a Mac they are commands to scroll the page, which in
 a text field leave the caret where it was; the test sends them both ways,
 plain and with the Mac's commands (`commands` on `Input.dispatchKeyEvent`),
@@ -1247,7 +1248,12 @@ and Linux, and a box of one line would pass with no fix at all.
 
 With real presses, on the mass on a spring (Exact) and the landscape model's
 per-index grid (Release): the box at rest is as tall as an `<input>` in its
-place; a press puts the caret on the character pressed, also past where the
+place; its text is drawn by the copy, each part in the span for what it is,
+with the copy's characters where the field has them (measured with a `Range`
+against the field's own character width -- the field's computed `font` is
+empty, so the width is measured in its font's longhands); a name the model
+has not got is marked, and an inherited value in a grid is muted; a press
+puts the caret on the character pressed, also past where the
 open box wraps its first line, and the release opens the box with all of the
 equation in sight and the line under it where it was; a double-click on a
 word in a box at rest selects the word; Home and End, plain, with Shift and
@@ -1257,4 +1263,5 @@ list open takes a row and commits nothing, Enter with it closed commits once
 and leaves the box open with the caret in place, and Tab commits nothing more
 and closes it; a pasted line break is a space; Down moves down a wrapped line
 and opens the list at the end; and a grid's box opens wider than its column,
-to the right, and wraps a long equation at the grid's edge.
+to the right, and wraps a long equation at the grid's edge, with the copy
+wrapping where the field does, one line or several.

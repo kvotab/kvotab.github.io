@@ -22215,7 +22215,7 @@ test('every equation in a block’s settings is typed in an equation box', async
 	const { readFileSync } = await import('node:fs');
 	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
 	const field = /const equationField = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
-	assert(/equationBox\(\{ value: get\(\), placeholder \}\)/.test(field), 'the block’s own equation is in an <input>');
+	assert(/equationBox\(\{\s*value: get\(\),\s*placeholder,/.test(field), 'the block’s own equation is in an <input>');
 	const extra = /const extraBox = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
 	assert(/if \(x\.equation\) \{[\s\S]{0,200}?= equationBox\(\{/.test(extra), 'a per-index equation column is in an <input>');
 	const row = /const valueRow = [\s\S]*?\n\t\};/.exec(insp)?.[0] ?? '';
@@ -22226,6 +22226,172 @@ test('every equation in a block’s settings is typed in an equation box', async
 	const modal = readFileSync(new URL('../src/ui/modal.js', import.meta.url), 'utf8');
 	assert(/\/\^\(text\|search\|number\|textarea\|\)\$\/\.test\(active\.type/.test(modal),
 		'the caret is not given back to an equation box');
+});
+
+test('tokenize, told to be lenient, goes on past a character the language has no use for', async () => {
+	const { tokenize } = await import('../src/parser/parser.js');
+	let threw = null;
+	try { tokenize('a @ b'); } catch (e) { threw = e; }
+	assert(threw instanceof ParseError && threw.position === 2, String(threw));
+	// The whole character, where it is: an emoji is two code units, and half
+	// of one is not something to draw.
+	const toks = tokenize('a @ b😀[Cs-137', true).map((t) => [t.type, t.text, t.pos]);
+	const want = [['ident', 'a', 0], ['bad', '@', 2], ['ident', 'b', 4], ['bad', '😀', 5],
+		['lbracket', '[', 7], ['index', 'Cs-137', 8], ['eof', '<end>', 14]];
+	assert(JSON.stringify(toks) === JSON.stringify(want), JSON.stringify(toks));
+});
+
+/** A model with one of everything the colouring tells apart. */
+const colourModel = () => ({
+	systems: ['S'],
+	transports: ['Col'],
+	parameters: [{ name: 'k', value: 1 }, { name: 'Kd', system: 'S', value: 2 }],
+	compartments: [
+		{ name: 'C', initial: '0' },
+		{ name: 'Off', initial: '0', enabled: false },
+		{ name: 'W', system: 'S', initial: '0' },
+		{ name: 'Begin', system: 'Col', transport: 'begin', initial: '0' },
+		{ name: 'End', system: 'Col', transport: 'end', initial: '0' },
+	],
+	expressions: [
+		{ name: 'E', equation: '1' },
+		{ name: 'N', system: 'Col', transport: 'number', equation: '3' },
+		{ name: 'i', system: 'Col', transport: 'counter' },
+	],
+	lookups: [{ name: 'Q', points: [[0, 1], [1, 2]], argument: 'X' }],
+	functions: [{ name: 'f', parameters: ['x'], equation: 'x*2' }],
+	transfers: [{ name: 'Down', system: 'Col', from: 'Col.Begin', to: 'Col.End', rate: 'k*Col.i' }],
+});
+
+test('an equation is coloured part by part: a block by its kind, the library, brackets, and what the check refuses', () => {
+	const colour = ed.equationColourer(colourModel());
+	const parts = (text, owner, opts) => colour(text, owner, opts)
+		.map((p) => (p.part ? `${p.part}${p.kind ? `:${p.kind}` : ''}=${p.text}` : p.text));
+	// Every character once, in order, whatever is typed.
+	for (const t of ['', 'k*C', 'C[Cs-137][ x', '2@3', 'min(k, 0.01[m]) + time', ' f( k ) ', 'a😀b']) {
+		assert(colour(t, 'E').map((p) => p.text).join('') === t, JSON.stringify(t));
+	}
+	const text = 'k*C + E - min(k, 0.01[m]) + time + Q(2) + f(k) + C[Cs-137] + S.W + Off + nope + 3@';
+	assert(JSON.stringify(parts(text, 'E')) === JSON.stringify([
+		'ref:parameter=k', 'op=*', 'ref:compartment=C', ' ', 'op=+', ' ', 'bad=E', ' ', 'op=-', ' ',
+		'fn=min', 'punct=(', 'ref:parameter=k', 'punct=,', ' ', 'num=0.01', 'punct=[', 'unit=m', 'punct=]',
+		'punct=)', ' ', 'op=+', ' ', 'fn=time', ' ', 'op=+', ' ', 'ref:lookup=Q', 'punct=(', 'num=2',
+		'punct=)', ' ', 'op=+', ' ', 'fn=f', 'punct=(', 'ref:parameter=k', 'punct=)', ' ', 'op=+', ' ',
+		'ref:compartment=C', 'punct=[', 'index=Cs-137', 'punct=]', ' ', 'op=+', ' ',
+		'ref:compartment=S.W', ' ', 'op=+', ' ', 'bad=Off', ' ', 'op=+', ' ', 'bad=nope', ' ', 'op=+',
+		' ', 'num=3', 'bad=@',
+	]), JSON.stringify(parts(text, 'E')));
+	// Its own name is fine where the field is about itself; a left-out block
+	// is marked nowhere; a function's parameters are its own.
+	assert(parts('E + 1', 'E', { self: true })[0] === 'ref:expression=E', JSON.stringify(parts('E + 1', 'E', { self: true })));
+	assert(!colour(text, 'E', { quiet: true }).some((p) => p.part === 'bad'), 'a left-out block is marked');
+	assert(JSON.stringify(parts('x*2 + k', 'f', { locals: new Set(['x']) }))
+		=== JSON.stringify(['local=x', 'op=*', 'num=2', ' ', 'op=+', ' ', 'ref:parameter=k']),
+	JSON.stringify(parts('x*2 + k', 'f', { locals: new Set(['x']) })));
+	// Names are read from where the equation is written: `Kd` is S's, and
+	// at the top it is nothing.
+	assert(parts('Kd', 'S.W')[0] === 'ref:parameter=Kd' && parts('Kd', 'E')[0] === 'bad=Kd',
+		`${parts('Kd', 'S.W')} / ${parts('Kd', 'E')}`);
+	// A table read bare is a value; a parameter called is no function.
+	assert(parts('Q', 'E')[0] === 'ref:lookup=Q' && parts('k(1)', 'E')[0] === 'bad=k',
+		`${parts('Q', 'E')} / ${parts('k(1)', 'E')}`);
+});
+
+test('the colouring marks a name exactly where the check refuses one', async () => {
+	// Every block written into every block's equation, in every bundled
+	// example and in a model with a sub-system, a transport and a block
+	// switched off: the mark and the message are one judgement, so they
+	// must not disagree anywhere.
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const dir = new URL('../examples/', import.meta.url);
+	const models = [['colourModel', colourModel()], ...readdirSync(dir).filter((f) => f.endsWith('.json'))
+		.map((f) => [f, JSON.parse(readFileSync(new URL(f, dir), 'utf8'))])];
+	let compared = 0;
+	let refused = 0;
+	for (const [file, project] of models) {
+		const check = ed.equationChecker(project);
+		const colour = ed.equationColourer(project);
+		const known = ed.knownNames(project);
+		const names = ed.blockNames(project);
+		for (const owner of names) {
+			for (const target of [...names, 'Nothing_by_this_name']) {
+				const text = `${sys.referenceFrom(target, sys.parentOf(owner), known)} + 1`;
+				const problem = check(text, owner);
+				const marked = colour(text, owner).some((p) => p.part === 'bad');
+				assert(!!problem === marked,
+					`${file}: '${text}' in ${owner}: the check says ${problem}, the colouring ${marked ? 'marks it' : 'does not'}`);
+				compared += 1;
+				if (problem) refused += 1;
+			}
+		}
+	}
+	assert(compared > 3000 && refused > 400, `${compared} compared, ${refused} refused`);
+});
+
+test('a coloured equation box draws its text from a copy, kept as the text is typed', async () => {
+	const { equationBox } = await import('../src/ui/equationbox.js');
+	// The stand-in for the page the box test above uses, with what the copy
+	// needs besides.
+	class Node extends EventTarget {
+		constructor(tag) {
+			super();
+			this.tagName = tag.toUpperCase();
+			this.nodeType = 1;
+			this.kids = [];
+			this.parentElement = null;
+			this.style = {};
+			this.value = '';
+			this.scrollTop = 0;
+			this.scrollLeft = 0;
+			this.selectionStart = 0;
+			this.selectionEnd = 0;
+			const names = new Set();
+			this.classList = {
+				add: (...c) => c.forEach((x) => names.add(x)),
+				remove: (...c) => c.forEach((x) => names.delete(x)),
+				contains: (x) => names.has(x),
+				toggle: (x, on = !names.has(x)) => (on ? names.add(x) : names.delete(x)),
+			};
+			Object.defineProperty(this, 'className', {
+				get: () => [...names].join(' '),
+				set: (v) => { names.clear(); String(v).split(/\s+/).filter(Boolean).forEach((x) => names.add(x)); },
+				enumerable: true,
+			});
+		}
+		get textContent() { return this.kids.map((k) => k.textContent ?? k.t).join(''); }
+		setAttribute() {}
+		removeAttribute() {}
+		append(...kids) { for (const k of kids) { this.kids.push(k); k.parentElement = this; } }
+		prepend(...kids) { for (const k of kids) { this.kids.unshift(k); k.parentElement = this; } }
+		replaceChildren(...kids) { this.kids = []; this.append(...kids); }
+		setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; }
+	}
+	const previous = globalThis.document;
+	globalThis.document = { createElement: (t) => new Node(t), createTextNode: (t) => ({ nodeType: 3, t }) };
+	try {
+		const colour = ed.equationColourer(colourModel());
+		const { box, field } = equationBox({ value: 'k*C', colour: (t) => colour(t, 'E'), muted: true });
+		const copy = box.kids[0];
+		assert(box.classList.contains('is-coloured') && box.kids[1] === field, box.className);
+		assert(copy.className === 'eq-hl is-muted' && copy.textContent === 'k*C', `${copy.className} ${copy.textContent}`);
+		assert(copy.kids.map((k) => k.className).join(' ') === 'eqh-ref eqh-parameter eqh-op eqh-ref eqh-compartment',
+			copy.kids.map((k) => k.className).join(' '));
+		field.value = 'k*C + nope';
+		field.dispatchEvent(new Event('input'));
+		assert(copy.textContent === 'k*C + nope' && copy.kids.at(-1).className === 'eqh-bad',
+			`${copy.textContent} ${copy.kids.at(-1).className}`);
+		// Scrolled with the field.
+		field.scrollTop = 34;
+		field.scrollLeft = 5;
+		field.dispatchEvent(new Event('scroll'));
+		assert(copy.scrollTop === 34 && copy.scrollLeft === 5, `${copy.scrollTop} ${copy.scrollLeft}`);
+		// Without `colour`, no copy.
+		const plain = equationBox({ value: 'k' });
+		assert(plain.box.kids.length === 1 && !plain.box.classList.contains('is-coloured'), 'a copy nobody asked for');
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
 });
 
 section('XML parsing');

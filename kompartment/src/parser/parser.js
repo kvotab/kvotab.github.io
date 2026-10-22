@@ -39,6 +39,8 @@ const T = {
 	LBRACKET: 'lbracket',
 	RBRACKET: 'rbracket',
 	INDEX: 'index',
+	/** A character the language has no use for: only from `tokenize(src, true)`. */
+	BAD: 'bad',
 	EOF: 'eof',
 };
 
@@ -73,7 +75,15 @@ const isIdentPart = (c) => {
 		|| (k >= ZERO && k <= NINE) || k === UNDERSCORE;
 };
 
-export function tokenize(src) {
+/**
+ * The tokens of an equation, each with its `text` and its `pos` in `src`.
+ *
+ * `lenient` goes on past a character the language has no use for, as a `bad`
+ * token, where the parser needs to stop at it: an equation is coloured as it
+ * is typed, half-written and wrong as often as not (`equationColourer` in
+ * ../domain/edit.js).
+ */
+export function tokenize(src, lenient = false) {
 	const tokens = [];
 	let i = 0;
 
@@ -158,6 +168,13 @@ export function tokenize(src) {
 			continue;
 		}
 
+		if (lenient) {
+			// The whole character, not half of a surrogate pair.
+			const text = String.fromCodePoint(src.codePointAt(i));
+			tokens.push({ type: T.BAD, text, pos: i });
+			i += text.length;
+			continue;
+		}
 		throw new ParseError(`Unexpected character '${c}'`, i, src);
 	}
 

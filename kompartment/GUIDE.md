@@ -1200,6 +1200,16 @@ is no part of an equation, so one in pasted text becomes a space. An empty box
 in a per-index grid shows the value it inherits, greyed, and opens to show all
 of that too.
 
+**The equation is in colour.** A block's name is in the colour of its kind,
+the hue its box has on the diagram: a compartment green, a parameter amber, an
+expression violet, a lookup table olive, and any other block teal. Functions
+are blue, index names and units in brackets slate, and operators and brackets
+grey; a number keeps the colour of the text. A name the check would refuse —
+one the model has not got, a block naming itself, a block that is switched off
+— is red with a wavy line under it, and it is the name the message under the
+box gives. In a block the run leaves out nothing is marked. The value a row of
+a per-index grid inherits from the block is all grey.
+
 **The tree.** Its spine is the sub-systems, nested the way their names are:
 that is how a model of any size is actually organised, and in one of the real
 ones a bare name settles nothing — one assessment model has 1,298 blocks in 55

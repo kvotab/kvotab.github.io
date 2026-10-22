@@ -218,6 +218,9 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	// See `ed.leftOutOfRun`.
 	const quiet = ed.leftOutOfRun(project).has(qualifiedName(block));
 	const unitProblems = quiet ? [] : ed.unitProblems(project, block, kind);
+	// What each part of an equation is, for its box to draw it in colour: one
+	// reading of the model for every box in the form.
+	const colourer = ed.equationColourer(project);
 
 	const more = (node) => { if (!brief) host.append(node); };
 	/** The same, for a field whose per-index grid goes with it. */
@@ -559,19 +562,24 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 	/**
 	 * A box holding an equation.
 	 *
-	 * `check` and `complete` override how it is read and what it offers, for
-	 * the one field whose scope is not the model: a function's body, where the
-	 * names are its parameters. Everything else takes the defaults.
+	 * `check`, `complete` and `colour` override how it is read, what it offers
+	 * and how it is drawn, for the one field whose scope is not the model: a
+	 * function's body, where the names are its parameters. Everything else
+	 * takes the defaults.
 	 */
 	const equationField = (label, get, set, {
 		hint, field = null, title, self = false, check = null, complete = null,
-		uncertain = false, placeholder = '',
+		colour = null, uncertain = false, placeholder = '',
 	} = {}) => {
 		const read = check ?? ((text) => validateEquation(project, text, qname, { self }));
 		const error = quiet ? null : read(get());
 		// One line at rest and the whole equation while it is typed in: see
 		// ./equationbox.js.
-		const { box, field: input } = equationBox({ value: get(), placeholder });
+		const { box, field: input } = equationBox({
+			value: get(),
+			placeholder,
+			colour: colour ?? ((text) => colourer(text, qname, { self, quiet })),
+		});
 		input.addEventListener('change', () => {
 			const v = input.value;
 			const problem = quiet ? null : read(v);
@@ -1679,6 +1687,7 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 				locals: new Set(params()),
 			}),
 			complete: equationLook(project, qname, '', { locals: new Set(params()) }),
+			colour: (text) => colourer(text, qname, { locals: new Set(params()), quiet }),
 			hint: `What ${called} works out to. It may use `
 				+ (params().length
 					? `${params().join(', ')}, the built-in functions and the model’s other `
@@ -2826,6 +2835,8 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	// Left out of the run, what is typed here is not checked: see
 	// `ed.leftOutOfRun`, and the same rule in the block's own form.
 	const quiet = ed.leftOutOfRun(project).has(qname);
+	// One reading of the model for every box in the grid: see `equationField`.
+	const colourer = ed.equationColourer(project);
 
 	/**
 	 * Whether the grid carries a column of what each index comes to at the
@@ -3031,6 +3042,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 				value: shownEq,
 				placeholder: value != null ? String(value) : '',
 				title: ed.symbolText(x.title),
+				colour: (text) => colourer(text, qname, { self: true, quiet }),
 			});
 			attachCompletion(input, equationLook(project, qname, parentOf(qname)));
 			input.addEventListener('change', () => {
@@ -3111,7 +3123,12 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 		// else is an equation, or an aggregate's list of names, and gets the
 		// box that opens to show all of it: this column is a fraction of the
 		// window's width.
-		const eq = numeric ? null : equationBox({ value: shown, title });
+		const eq = numeric ? null : equationBox({
+			value: shown,
+			title,
+			colour: (text) => colourer(text, qname, { quiet }),
+			muted: !set,
+		});
 		const input = eq?.field ?? el('input', {
 			type: 'text', className: 'mono', value: shown, spellcheck: false, title,
 		});

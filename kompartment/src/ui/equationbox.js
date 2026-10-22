@@ -94,13 +94,27 @@ function roomRight(box) {
 /**
  * An equation box.
  *
+ * Given `colour`, the equation is drawn in colour: a copy of its text under
+ * the field, each part in a span, and the field's own text made invisible
+ * over it, as the JSON tab's box is (./jsoneditor.js) -- so the caret, the
+ * selection, undo and paste are still the textarea's own. The copy is laid
+ * out by the same rules as the field, at rest and open, and is moved with it
+ * when it scrolls.
+ *
  * @param {{value?: string, className?: string, placeholder?: string,
- *   title?: string}} [opts] `className` goes on the text field, which is what
- *   carries the look of a field -- invalid, inherited -- and what listeners go on
+ *   title?: string, colour?: (text: string) => Array<{text: string,
+ *   part: string|null, kind?: string}>, muted?: boolean}} [opts]
+ *   `className` goes on the text field, which is what carries the look of a
+ *   field -- invalid, inherited -- and what listeners go on. `colour` says
+ *   what each part of the text is (`equationColourer` in
+ *   ../domain/edit.js); `muted` draws all of it in the colour of a value that
+ *   is inherited rather than set.
  * @returns {{box: HTMLElement, field: HTMLTextAreaElement}} the box goes in
  *   the form; the field is the control
  */
-export function equationBox({ value = '', className = '', placeholder = '', title = '' } = {}) {
+export function equationBox({
+	value = '', className = '', placeholder = '', title = '', colour = null, muted = false,
+} = {}) {
 	const field = el('textarea', {
 		className: `eq-field mono${className ? ` ${className}` : ''}`,
 		rows: 1,
@@ -110,6 +124,29 @@ export function equationBox({ value = '', className = '', placeholder = '', titl
 	if (title) field.title = title;
 	field.value = oneLine(value);
 	const box = el('div', { className: 'eq-box' }, field);
+
+	const copy = colour
+		? el('div', { className: `eq-hl${muted ? ' is-muted' : ''}`, 'aria-hidden': 'true' })
+		: null;
+	if (copy) {
+		box.prepend(copy);
+		box.classList.add('is-coloured');
+	}
+	/** The copy where the field is: scrolled sideways under a drag at rest, down past an open box's cap. */
+	const follow = () => {
+		if (!copy) return;
+		copy.scrollTop = field.scrollTop;
+		copy.scrollLeft = field.scrollLeft;
+	};
+	const paint = () => {
+		if (!copy) return;
+		copy.replaceChildren(...colour(field.value).map((p) => (p.part
+			? el('span', { className: `eqh-${p.part}${p.kind ? ` eqh-${p.kind}` : ''}` }, p.text)
+			: document.createTextNode(p.text))));
+		follow();
+	};
+	paint();
+	field.addEventListener('scroll', follow);
 
 	const isOpen = () => box.classList.contains('is-open');
 
@@ -137,6 +174,18 @@ export function equationBox({ value = '', className = '', placeholder = '', titl
 			+ pads + px(cs.borderTopWidth) + px(cs.borderBottomWidth));
 		field.style.overflow = '';
 		field.style.height = `${tall}px`;
+		if (copy) {
+			copy.style.width = field.style.width;
+			copy.style.height = field.style.height;
+			// The copy never scrolls of itself -- given a scrollbar the moment
+			// it opened, before it was wide, it kept it and wrapped narrower
+			// than the field -- so the field's, when past the cap it has one,
+			// is made up as padding, and the two wrap at the same width.
+			const bar = field.offsetWidth - field.clientWidth
+				- px(cs.borderLeftWidth) - px(cs.borderRightWidth);
+			copy.style.paddingRight = bar > 0 ? `${px(cs.paddingRight) + bar}px` : '';
+			follow();
+		}
 		// Lifted off the form only when it is bigger than the box it came out of.
 		box.classList.toggle('is-grown', wide > at.width + 0.5 || tall > at.height + 0.5);
 	};
@@ -158,9 +207,15 @@ export function equationBox({ value = '', className = '', placeholder = '', titl
 		box.style.height = '';
 		field.style.width = '';
 		field.style.height = '';
+		if (copy) {
+			copy.style.width = '';
+			copy.style.height = '';
+			copy.style.paddingRight = '';
+		}
 		// A box at rest shows where its equation starts.
 		field.scrollTop = 0;
 		field.scrollLeft = 0;
+		follow();
 	};
 
 	// A press opens it on the release, after the click has put the caret down
@@ -195,6 +250,7 @@ export function equationBox({ value = '', className = '', placeholder = '', titl
 			field.value = text;
 			field.setSelectionRange(caret, caret);
 		}
+		paint();
 		if (isOpen()) fit();
 	});
 

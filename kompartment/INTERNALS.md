@@ -7542,9 +7542,45 @@ Built on what was measured (Chrome 155):
 The sticky head of a per-index grid is at z-index 3, over an open box (2)
 scrolled up under it.
 
-Tested in `test/run.js` (the keys and the text, on a stand-in for the page)
-and by resources/tests/site/test-chrome-kompartment-equations.py, which drives
-the layout, the mouse and the keys in Chrome.
+### In colour
+
+A box given `colour` draws its text from a copy under the field (`.eq-hl`),
+each part a span, with the field's own glyphs made invisible
+(`-webkit-text-fill-color: transparent`, which leaves `color` free to say
+what the field is) and the caret, the selection and the placeholder still
+the field's: the JSON tab's arrangement. Everything that places a character
+is declared for the two in one rule -- at rest, in a grid and open -- and
+`fit` gives the copy the field's size. The copy never scrolls of itself: it
+clips, `follow` gives it the field's scroll position, and when the field is
+past its cap the room its scrollbar takes is added to the copy's padding on
+the right, so the two wrap at the same width. A copy that could scroll was
+given a scrollbar in the instant it opened, while it was still as narrow as
+at rest, kept it, and wrapped a word earlier than the field. Each coloured
+part is a text run of its own, and a run's width is rounded to the layout
+unit, so the copy can drift from the field by a few hundredths of a pixel a
+part: drawn alone, the field and the copy differ by no more than 0.2 px over
+a 300 px line, and no shift of a pixel matches better.
+
+What each part is comes from `equationColourer` (src/domain/edit.js), built
+once per window from the model -- `blockIndex` for the kinds -- and asked on
+every keystroke. It reads names with `nameReader`, the half of the check that
+decides what a name refers to and whether it may be read where it is
+written, which `equationChecker` calls as well: a name the box marks red is
+the name the message under it gives, and `test/run.js` holds the two to that
+over every block written into every block's equation in every bundled
+example. The tokens come from `tokenize(src, true)`, which goes on past a
+character the language has no use for, as a `bad` token, where the parser
+throws. A block the run leaves out is coloured with nothing marked (`quiet`),
+and the value a per-index row inherits is drawn muted (`muted`).
+
+The field's computed `font` is empty once it has `font-variant-ligatures:
+none`, which no shorthand can say, so anything copying its font copies the
+longhands, as `textWidth` does.
+
+Tested in `test/run.js` (the keys and the text, and the copy, on a stand-in
+for the page; the colourer part by part and against the check) and by
+resources/tests/site/test-chrome-kompartment-equations.py, which drives the
+layout, the mouse, the keys and the colours in Chrome.
 
 ## A pipe's place, per canvas
 
