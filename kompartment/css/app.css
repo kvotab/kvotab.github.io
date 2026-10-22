@@ -5824,17 +5824,43 @@ table.matrix td {
 
 .lk-points { display: grid; gap: 5px; min-width: 0; }
 
-.lk-preview-wrap { line-height: 0; }
-
+/* A lookup table's picture (`pointsPreview`): the curve in a box stretched to
+   the width it is given, and its range as text round it -- the y range down
+   the left, level with the top and the bottom of the curve's box, and the x
+   range along the bottom. Text, not drawing, so it keeps its shape however
+   wide the window is. */
 .lk-preview {
-	width: 100%;
-	height: 72px;
-	display: block;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	grid-template-areas:
+		"ymax plot"
+		"ymin plot"
+		".    xaxis";
+	column-gap: 6px;
+	row-gap: 1px;
+	padding: 5px 7px 3px 6px;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
+	background: var(--surface-sunken);
 }
 
-.lk-preview-bg { fill: var(--surface-sunken); }
+.lk-preview.is-empty {
+	grid-template-areas: none;
+	grid-template-columns: minmax(0, 1fr);
+	place-items: center;
+	height: 72px;
+}
+
+.lk-preview-plot {
+	grid-area: plot;
+	display: block;
+	width: 100%;
+	height: 56px;
+	/* Where the line meets the box, so the eye has an edge to read the
+	   numbers beside it against. */
+	border-left: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+}
 
 .lk-preview-line {
 	fill: none;
@@ -5847,11 +5873,22 @@ table.matrix td {
 .lk-preview-tick,
 .lk-preview-note {
 	font-family: var(--mono);
-	font-size: 9px;
-	fill: var(--text-muted);
+	font-size: 10px;
+	line-height: 1.2;
+	color: var(--text-muted);
+	white-space: nowrap;
 }
 
-.lk-preview-note { text-anchor: middle; }
+.lk-preview-ymax { grid-area: ymax; align-self: start; text-align: right; }
+.lk-preview-ymin { grid-area: ymin; align-self: end; text-align: right; }
+.lk-preview-ymax.is-flat { grid-area: 1 / 1 / 3 / 2; align-self: center; }
+
+.lk-preview-xaxis {
+	grid-area: xaxis;
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}
 
 .lk-text {
 	width: 100%;

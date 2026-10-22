@@ -20276,6 +20276,58 @@ test('the sparkline fits the box and keeps the last point', () => {
 	assert(sparkPath([], 0, 0, 10, 10) === null);
 });
 
+test('a lookup table’s picture keeps its numbers out of the part that is stretched', async () => {
+	// The curve is drawn in an SVG stretched to the width the window gives it.
+	// Its numbers were drawn in it too, and were stretched with it -- nearly
+	// twice as wide as tall in a wide window. They are text beside it now.
+	const { pointsPreview } = await import('../src/ui/lookup-editor.js');
+	class Node {
+		constructor(tag, ns = null) {
+			Object.assign(this, { tagName: tag, ns, nodeType: 1, kids: [], attrs: {}, className: '' });
+		}
+		setAttribute(k, v) { this.attrs[k] = String(v); }
+		removeAttribute(k) { delete this.attrs[k]; }
+		append(...kids) { this.kids.push(...kids); }
+		get textContent() { return this.kids.map((k) => k.textContent ?? k.t).join(''); }
+		all(pred, out = []) {
+			if (pred(this)) out.push(this);
+			for (const k of this.kids) k.all?.(pred, out);
+			return out;
+		}
+	}
+	const previous = globalThis.document;
+	globalThis.document = {
+		createElement: (t) => new Node(t),
+		createElementNS: (ns, t) => new Node(t, ns),
+		createTextNode: (t) => ({ nodeType: 3, t }),
+	};
+	try {
+		const box = pointsPreview([[0, 1.2], [10000, 2.099], [20000, 0.07884]]);
+		const drawn = box.all((n) => n.ns);
+		assert(drawn.length && drawn.every((n) => n.tagName !== 'text'), 'a number is drawn in the stretched part');
+		const plot = drawn.find((n) => n.tagName === 'svg');
+		assert(plot?.attrs.preserveAspectRatio === 'none' && plot.attrs.class === 'lk-preview-plot',
+			JSON.stringify(plot?.attrs));
+		// The y range down the left, top then bottom; the x range along the bottom.
+		const ticks = box.all((n) => !n.ns && /lk-preview-tick/.test(n.className))
+			.map((n) => [n.className.replace('lk-preview-tick', '').trim(), n.textContent]);
+		assert(JSON.stringify(ticks) === JSON.stringify([
+			['lk-preview-ymax', '2.099'], ['lk-preview-ymin', '0.07884'], ['', '0'], ['', '20000'],
+		]), JSON.stringify(ticks));
+		assert(box.attrs['aria-label'] === 'The table: x from 0 to 20000, y from 0.07884 to 2.099',
+			box.attrs['aria-label']);
+		// A flat table is one value, level with the line drawn across the middle.
+		const y = pointsPreview([[0, 5], [100, 5]]).all((n) => /lk-preview-y/.test(n.className));
+		assert(y.length === 1 && /is-flat/.test(y[0].className) && y[0].textContent === '5',
+			JSON.stringify(y.map((n) => [n.className, n.textContent])));
+		const empty = pointsPreview([]);
+		assert(/is-empty/.test(empty.className) && empty.textContent === 'no points', empty.textContent);
+	} finally {
+		if (previous === undefined) delete globalThis.document;
+		else globalThis.document = previous;
+	}
+});
+
 
 section('model editing');
 

@@ -183,51 +183,59 @@ const svgEl = (tag, attrs = {}) => {
 	return n;
 };
 
+/** The curve's own box, in its own units: stretched to the width it is given. */
 const PREVIEW_W = 260;
-const PREVIEW_H = 72;
+const PREVIEW_H = 56;
+/** Room at its edges for the width of the line. */
+const PREVIEW_PAD = 3;
 
 /**
- * A larger version of the diagram's sparkline, with the range labelled.
+ * A larger version of the diagram's sparkline, with its range along two axes.
  *
  * `interpolation` because the picture has to be of the table as it is read:
  * see `sparkPath`.
+ *
+ * The curve is drawn in a box of its own, stretched to whatever width the
+ * window gives it -- a line can be, with a stroke that does not scale -- and
+ * the numbers are text around that box rather than in it. In it, they were
+ * stretched with it: in a wide window a 9-pixel `20000` came out nearly twice
+ * as wide as it was tall, and wider again as the window was pulled out. The
+ * y range is down the left, its largest value level with the top of the
+ * curve's box and its smallest with the bottom, and the x range along the
+ * bottom, as an axis has them.
  */
 export function pointsPreview(points, interpolation = 'linear') {
-	const box = svgEl('svg', {
-		class: 'lk-preview',
+	const plot = svgEl('svg', {
+		class: 'lk-preview-plot',
 		viewBox: `0 0 ${PREVIEW_W} ${PREVIEW_H}`,
 		preserveAspectRatio: 'none',
-		role: 'img',
+		'aria-hidden': 'true',
+		focusable: 'false',
 	});
-	const pad = { l: 4, r: 4, t: 6, b: 14 };
-	const w = PREVIEW_W - pad.l - pad.r;
-	const h = PREVIEW_H - pad.t - pad.b;
-	box.append(svgEl('rect', {
-		class: 'lk-preview-bg', x: 0, y: 0, width: PREVIEW_W, height: PREVIEW_H,
-	}));
-	const d = sparkPath(points, pad.l, pad.t, w, h, interpolation);
+	const d = sparkPath(points, PREVIEW_PAD, PREVIEW_PAD,
+		PREVIEW_W - 2 * PREVIEW_PAD, PREVIEW_H - 2 * PREVIEW_PAD, interpolation);
 	if (!d) {
-		const t = svgEl('text', { class: 'lk-preview-note', x: PREVIEW_W / 2, y: PREVIEW_H / 2 });
-		t.textContent = 'no points';
-		box.append(t);
-		return box;
+		return el('div', { className: 'lk-preview is-empty' },
+			el('span', { className: 'lk-preview-note' }, 'no points'));
 	}
-	box.append(svgEl('path', { class: 'lk-preview-line', d }));
+	plot.append(svgEl('path', { class: 'lk-preview-line', d }));
 
 	const xs = points.map((p) => Number(p[0])).filter(Number.isFinite);
 	const ys = points.map((p) => Number(p[1])).filter(Number.isFinite);
 	const num = (v) => String(Number(v.toPrecision(4)));
-	const label = (x, anchor, text) => {
-		const t = svgEl('text', { class: 'lk-preview-tick', x, y: PREVIEW_H - 4, 'text-anchor': anchor });
-		t.textContent = text;
-		return t;
-	};
-	box.append(label(pad.l, 'start', num(Math.min(...xs))));
-	box.append(label(PREVIEW_W - pad.r, 'end', num(Math.max(...xs))));
-	const range = svgEl('text', { class: 'lk-preview-tick', x: PREVIEW_W / 2, y: PREVIEW_H - 4, 'text-anchor': 'middle' });
-	range.textContent = `y ${num(Math.min(...ys))} – ${num(Math.max(...ys))}`;
-	box.append(range);
-	return box;
+	const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+	const tick = (cls, v) => el('span', { className: `lk-preview-tick ${cls}` }, num(v));
+	return el('div', {
+		className: 'lk-preview',
+		role: 'img',
+		'aria-label': `The table: x from ${num(x0)} to ${num(x1)}, y from ${num(y0)} to ${num(y1)}`,
+	},
+	// A flat table is one value, said once and level with its line, which
+	// `sparkPath` draws across the middle.
+	tick(y0 === y1 ? 'lk-preview-ymax is-flat' : 'lk-preview-ymax', y1),
+	y0 === y1 ? null : tick('lk-preview-ymin', y0),
+	plot,
+	el('span', { className: 'lk-preview-xaxis' }, tick('', x0), tick('', x1)));
 }
 
 /**

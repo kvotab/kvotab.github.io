@@ -5604,7 +5604,10 @@ on the diagram, the one in the left panel and the larger preview in the points
 editor all follow the rule the table carries, so a table read with *use input
 below* is a staircase and not a sloping line. They used to be straight lines
 whatever the rule, which for a table of four points showed a quantity ramping
-where the model holds it flat — the opposite of what the picture is for.
+where the model holds it flat — the opposite of what the picture is for. The
+larger preview carries the table's range as axes do: its largest and smallest
+values down the left, level with the top and the bottom of the curve, and its
+first and last x along the bottom.
 
 Five rules, with the counts they carry across the `.eco` files on this
 machine:
