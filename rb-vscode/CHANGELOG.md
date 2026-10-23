@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11
+
+* From the site: a result file that keeps the attributes its datasets share
+  (`time_dependent`, `probabilistic`, `unit` and `columns`) on their group
+  alone is drawn as one that has them on every dataset: a series over time,
+  with its unit on the axis, a probabilistic one as its iterations, and a
+  summary's statistics columns with their band. A dataset's own attribute
+  still comes first, and one whose name starts with `_`, such as an index
+  beside the results, has only its own.
+
 ## 0.1.10
 
 * A right-click in the tree opens a menu for the selection, and *Save as
