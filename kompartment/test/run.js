@@ -11401,6 +11401,39 @@ test('a diagram can be saved as a picture', async () => {
 		'a submenu can still be opened on a panel that has gone');
 });
 
+test('the bar writes the zoom level only when it changes, and during a zoom at most every 150 ms', async () => {
+	// Every pan and every wheel step reaches syncZoom, and a label written has
+	// the browser lay the whole page out again: on a sub-system of three
+	// thousand elements that was most of each frame of a pan, and half of each
+	// frame of a zoom.
+	const { CanvasBar } = await import('../src/ui/canvasbar.js');
+	const writes = [];
+	const level = {
+		text: '100%',
+		get textContent() { return this.text; },
+		set textContent(v) { this.text = v; writes.push(v); },
+	};
+	const bar = Object.assign(Object.create(CanvasBar.prototype), {
+		shown: true, level, zoomText: '', zoomAt: -Infinity, zoomTimer: 0, graph: { camera: { k: 1 } },
+	});
+	bar.syncZoom();
+	assert(writes.length === 0, 'a pan rewrote the level');
+	bar.graph.camera.k = 1.25;
+	bar.syncZoom();
+	assert(writes.join() === '125%', `a zoom did not write the level at once: ${writes.join()}`);
+	for (const k of [1.3, 1.4, 1.5]) {
+		bar.graph.camera.k = k;
+		bar.syncZoom();
+	}
+	assert(writes.length === 1 && bar.zoomTimer, 'a zoom wrote the level at every step');
+	await new Promise((r) => setTimeout(r, 220));
+	assert(writes.join() === '125%,150%', `the level the zoom ended on was not written: ${writes.join()}`);
+	bar.shown = false;
+	bar.graph.camera.k = 2;
+	bar.syncZoom();
+	assert(writes.length === 2 && !bar.zoomTimer, 'a bar put away still writes its level');
+});
+
 test('the grid can be turned off, and so can snapping to it', async () => {
 	const { readFileSync } = await import('node:fs');
 	const root = new URL('..', import.meta.url);
@@ -11451,17 +11484,22 @@ test('the grid can be turned off, and so can snapping to it', async () => {
 	assert(grid && /GRID \* this\.camera\.k/.test(grid), 'the pitch ignores the zoom');
 	assert(grid && /while \(step > 0 && step < 9\) step \*= 2;/.test(grid),
 		'a quarter zoom would draw a 2.5px lattice, which is moire');
-	assert(grid && /--grid-x/.test(grid) && /--grid-y/.test(grid),
+	assert(grid && /s\.backgroundPosition = `\$\{this\.camera\.x\}px \$\{this\.camera\.y\}px`/.test(grid),
 		'the lattice does not follow a pan');
+	assert(grid && /s\.backgroundSize = `\$\{step\}px \$\{step\}px`/.test(grid), 'the lattice does not follow a zoom');
+	// The background's own properties, not custom ones for the stylesheet to
+	// read: those are inherited, and one set on the svg restyled every element
+	// under it at every step of a pan -- a third of each frame on a sub-system
+	// of three thousand elements.
+	assert(grid && !/setProperty\('--/.test(grid), 'a pan restyles the whole diagram');
 	assert(/_applyView\(\) \{[\s\S]*?this\._applyGrid\(\);/.test(graph),
 		'the grid is not refreshed with the view');
 
-	// The stylesheet draws it only when the class is there, and takes the
-	// pitch and the offset from the camera rather than fixing them.
+	// The stylesheet draws it only when the class is there; the pitch and the
+	// offset are the camera's, set on the element, never read from a variable.
 	assert(/\.graph-svg\.has-grid \{[^}]*background-image/.test(css),
 		'the grid is not behind the class');
-	assert(/background-size: var\(--grid-step/.test(css)
-		&& /background-position: var\(--grid-x/.test(css), 'the grid is fixed in place');
+	assert(!/var\(--grid-(step|x|y)/.test(css), 'the stylesheet reads the camera from an inherited variable');
 	assert(!/\.graph-svg \{[^}]*background-image/.test(css),
 		'the plain rule still draws a grid, so it cannot be turned off');
 

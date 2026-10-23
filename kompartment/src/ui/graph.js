@@ -1066,6 +1066,11 @@ export class GraphEditor {
 	 * Stepped up when the pitch would be too fine to read: at a quarter zoom
 	 * 10 units is 2.5 pixels, which is moire rather than a grid. Doubling
 	 * keeps every drawn line a line the drag can land on.
+	 *
+	 * The pitch and the offset are the background's own properties, set on
+	 * the svg, and not custom properties for the stylesheet to read: those are
+	 * inherited, and changing one restyles every element under the svg -- on
+	 * a sub-system of three thousand elements, a third of each frame of a pan.
 	 */
 	_applyGrid() {
 		const on = !!ed.view(this.project).show_grid;
@@ -1073,9 +1078,9 @@ export class GraphEditor {
 		if (!on) return;
 		let step = GRID * this.camera.k;
 		while (step > 0 && step < 9) step *= 2;
-		this.root.style.setProperty('--grid-step', `${step}px`);
-		this.root.style.setProperty('--grid-x', `${this.camera.x}px`);
-		this.root.style.setProperty('--grid-y', `${this.camera.y}px`);
+		const s = this.root.style;
+		s.backgroundSize = `${step}px ${step}px`;
+		s.backgroundPosition = `${this.camera.x}px ${this.camera.y}px`;
 	}
 
 

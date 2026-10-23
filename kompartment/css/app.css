@@ -3133,14 +3133,14 @@ dialog #flash {
 
 /* A faint grid gives the eye something to judge alignment against -- and it is
    the same lattice a drag snaps to, at the zoom being looked at, so a block
-   that looks aligned is aligned. The pitch and the offset come from the camera
-   (see `_applyGrid`); `Show > the grid` takes the class away. */
+   that looks aligned is aligned. The pitch and the offset come from the camera,
+   set on the element itself (see `_applyGrid`); `Show > the grid` takes the
+   class away. */
 .graph-svg.has-grid {
 	background-image:
 		linear-gradient(to right, var(--grid) 1px, transparent 1px),
 		linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
-	background-size: var(--grid-step, 20px) var(--grid-step, 20px);
-	background-position: var(--grid-x, 0) var(--grid-y, 0);
+	background-size: 20px 20px;
 }
 
 .graph-svg:focus { outline: none; }

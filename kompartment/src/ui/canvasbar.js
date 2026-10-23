@@ -30,6 +30,14 @@ import * as ed from '../domain/edit.js';
 
 const KEY = 'kompartment.canvasBar';
 
+/**
+ * During a zoom the level is written at most this often. Every pan and every
+ * wheel step reaches `syncZoom`, and a label written has the browser lay the
+ * whole page out again: on a sub-system of three thousand elements that was
+ * half of each frame of a zoom. The level the zoom ends on is always written.
+ */
+const ZOOM_LABEL_MS = 150;
+
 /** Whether the bar is wanted: this browser's choice, up unless it said otherwise. */
 export function barWanted() {
 	try { return localStorage.getItem(KEY) !== 'off'; } catch { return true; }
@@ -86,6 +94,10 @@ export class CanvasBar {
 		this.shown = barWanted();
 		/** The button whose menu is open, if one is. */
 		this.menuFor = null;
+		/** The zoom level to write, when it was last written, and the write waiting (see ZOOM_LABEL_MS). */
+		this.zoomText = '';
+		this.zoomAt = -Infinity;
+		this.zoomTimer = 0;
 		this.el = el('div', { className: 'canvas-bar', role: 'toolbar', 'aria-label': 'Diagram' });
 		this.el.hidden = !this.shown;
 		this.build();
@@ -329,8 +341,24 @@ export class CanvasBar {
 		this.syncZoom();
 	}
 
+	/**
+	 * The zoom level, as the label says it: written only when it changes -- a
+	 * pan, which leaves it as it was, writes nothing -- and during a zoom at
+	 * most every ZOOM_LABEL_MS, the last level always.
+	 */
 	syncZoom() {
-		if (this.shown) this.level.textContent = `${Math.round(this.graph.camera.k * 100)}%`;
+		if (!this.shown) return;
+		this.zoomText = `${Math.round(this.graph.camera.k * 100)}%`;
+		if (this.level.textContent === this.zoomText || this.zoomTimer) return;
+		const wait = ZOOM_LABEL_MS - (performance.now() - this.zoomAt);
+		if (wait <= 0) this.writeZoom();
+		else this.zoomTimer = setTimeout(() => this.writeZoom(), wait);
+	}
+
+	writeZoom() {
+		this.zoomTimer = 0;
+		this.zoomAt = performance.now();
+		if (this.level.textContent !== this.zoomText) this.level.textContent = this.zoomText;
 	}
 
 	/**
