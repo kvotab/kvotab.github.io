@@ -2156,7 +2156,7 @@ export class GraphEditor {
 		// from one render to the next, because a drag redraws the edges on
 		// every pointer move and the model is the same each time.
 		this._influenceCache ??= ed.influences(this.project);
-		for (const { from: read, to: reader } of this._influenceCache) {
+		for (const { from: read, to: reader, dormant } of this._influenceCache) {
 			const to = place(reader);
 			const from = place(read);
 			if (!to || !from) continue;
@@ -2165,8 +2165,14 @@ export class GraphEditor {
 			if (from.name === to.name) continue;
 			const key = `${from.name}\u0000${to.name}`;
 			const already = drawn.get(key);
-			if (already) { already.count++; already.pairs.push([read, reader]); continue; }
-			drawn.set(key, { count: 1, pairs: [[read, reader]] });
+			if (already) {
+				already.count++;
+				already.pairs.push([read, reader]);
+				// One dependency some run reads is enough to keep it at full strength.
+				if (!dormant) already.live = true;
+				continue;
+			}
+			drawn.set(key, { count: 1, pairs: [[read, reader]], live: !dormant });
 
 			let p0;
 			let p1;
@@ -2195,27 +2201,34 @@ export class GraphEditor {
 				class: 'gedge-line', d: curve(p0, p1, true),
 				'marker-end': 'url(#arrow-dot)',
 			}));
-			// Filled in below: what this one line stands for is not known
-			// until every pair has been seen.
-			if (tips) g._says = drawn.get(key);
+			// Filled in below: what this one line stands for, and whether any
+			// run reads it, are not known until every pair has been seen.
+			g._says = drawn.get(key);
 			out.push(g);
 		}
 
-		// One arrow can be several dependencies -- three blocks inside a
-		// sub-system reading the same parameter -- and `Kd is used by
-		// NearField` says less than naming what actually reads it.
-		for (const g of tips ? out : []) {
+		for (const g of out) {
 			const entry = g._says;
 			delete g._says;
+			// No run reads any dependency it stands for: each is in a block
+			// that is switched off, or in a value held for an index that is
+			// (see `ed.influences`). Faded rather than left out, because the
+			// model still says it, and it is read again once those are back on.
+			if (!entry.live) g.classList.add('is-dormant');
+			if (!tips) continue;
+			// One arrow can be several dependencies -- three blocks inside a
+			// sub-system reading the same parameter -- and `Kd is used by
+			// NearField` says less than naming what actually reads it.
 			const title = svg('title');
 			g.append(title);
 			const [[read, reader]] = entry.pairs;
-			title.textContent = entry.count === 1
+			title.textContent = (entry.count === 1
 				? `${read} is used by ${reader}`
 				: `${entry.count} dependencies: `
 					+ entry.pairs.slice(0, 4)
 						.map(([a, b]) => `${a} \u2192 ${b}`).join(', ')
-					+ (entry.count > 4 ? ', \u2026' : '');
+					+ (entry.count > 4 ? ', \u2026' : ''))
+				+ (entry.live ? '' : '. No run reads it: what names it is switched off.');
 		}
 		return out;
 	}

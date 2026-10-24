@@ -18,7 +18,8 @@ const COMMON = [
 	'**Indexed by** — the index lists it has a value per combination of, such as the '
 	+ 'radionuclides. What the lists hold is edited on the Index lists tab.',
 	'**Values per index** — a value of its own for particular indices, where the one above is '
-	+ 'only the default.',
+	+ 'only the default. A value held for an index that is switched off is listed greyed and '
+	+ 'marked off: it is kept, and no run reads it.',
 	'**Appearance** — its colour and shape on the diagram. **Comment** — notes that travel '
 	+ 'with the model. **Review** — approvals, when the model tracks them.',
 	'**Enabled** — switched off, a block stays in the model and takes no part in the run.',

@@ -752,11 +752,17 @@ export function renderInfo(host, project, selection, hooks = {}) {
 		// "none set" about it would be answering a narrower question than the
 		// one being asked.
 		const set = ed.setIndexes(block, kind);
+		// Those held for an index that is switched off are counted apart: they
+		// are not combinations of the run, and no run reads them. See
+		// `ed.switchedOff`, and the same count in the block's settings.
+		const offOf = ed.switchedOff(project, dims);
+		const off = set.filter((index) => offOf(index)).length;
 		host.append(line('Indexed by',
 			el('span', {}, dims.join(' × ')),
 			el('span', { className: 'info-dim' },
 				` — ${total} combination${total === 1 ? '' : 's'}`
-				+ `${set.length ? `, ${set.length} set` : ''}`)));
+				+ `${set.length > off ? `, ${set.length - off} set` : ''}`
+				+ `${off ? `, ${off} set for ${off === 1 ? 'an index' : 'indices'} switched off` : ''}`)));
 		// A flux does not choose its dimensions -- they are the indices its two
 		// ends have in common -- so where they came from is worth a line, and
 		// an intersection between two different lists is worth naming.
@@ -1324,6 +1330,7 @@ function overrideList(project, block, kind, dims, more) {
 		return text.length > 34 ? `${text.slice(0, 33)}\u2026` : text;
 	};
 	const keys = ed.entryKeys(kind);
+	const offOf = ed.switchedOff(project, dims);
 	const box = el('div', { className: 'info-refs' },
 		el('div', { className: 'info-label' }, 'Set per index'));
 	const rows = (block.entries ?? [])
@@ -1334,8 +1341,11 @@ function overrideList(project, block, kind, dims, more) {
 			.filter((k) => Object.prototype.hasOwnProperty.call(e, k))
 			.map((k) => `${label(k)} ${show(k, e[k])}`)
 			.join(', ');
-		return el('div', { className: 'info-ref' },
+		// Held for an index that is switched off: kept, and read by no run.
+		const off = offOf(e.index ?? {});
+		return el('div', { className: `info-ref${off ? ' is-off' : ''}` },
 			el('code', {}, where || 'every index'),
+			off ? el('span', { className: 'info-ref-off', title: ed.switchedOffText(off) }, 'off') : null,
 			el('span', { className: 'info-ref-what' }, what));
 	}, more, 'per-index');
 	return box;

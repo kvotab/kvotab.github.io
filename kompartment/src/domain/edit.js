@@ -1701,24 +1701,59 @@ function readsGraph(project) {
 	return reads;
 }
 
+/**
+ * Which block reads which: every name a block's definition gives, as
+ * `{from, to}` from the block named to the block naming it, once per pair.
+ *
+ * A pair carries `dormant: true` when no run reads any reference behind it:
+ * every one is in a block the run leaves out (`leftOutOfRun` -- switched off,
+ * in a sub-system that is, or a connection that goes with a compartment that
+ * is), or in a value held for an index that is switched off (`switchedOff`).
+ * It is still a pair: the model says it, the Used-by lists and the delete
+ * gate count it, and it is read again once what is off is switched back on.
+ * The diagram draws it faded. A block that runs and reads one that does not
+ * is not dormant: that run stops, and says so by name.
+ */
 export function influences(project) {
 	const known = new Set(blockNames(project));
 	const has = (n) => known.has(n);
 	const out = [];
-	const seen = new Set();
+	// One pair each, dormant only while every reference behind it is: a second
+	// reference that some run reads wakes it.
+	const pairs = new Map();
+	const leftOut = leftOutOfRun(project);
+	// The indices a run has, list by list, as `dimensionIndices` says.
+	const on = new Map();
+	const isOn = (list, name) => {
+		if (!on.has(list)) on.set(list, new Set(dimensionIndices(project, [list])[0]));
+		return on.get(list).has(name);
+	};
+	const dormantEntry = (e) => Object.entries(e?.index ?? {}).some(([list, name]) => !isOn(list, name));
 
-	const add = (block, refs) => {
+	const add = (block, refs, dormant = false) => {
 		const to = qualifiedName(block);
 		const system = systemOf(block);
+		const asleep = dormant || leftOut.has(to);
 		for (const r of refs) {
 			if (!r) continue;
 			const from = resolveReference(String(r), system, has);
 			if (!from || from === to) continue;
 			const key = `${from}\u0000${to}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			out.push({ from, to });
+			const had = pairs.get(key);
+			if (had) {
+				if (!asleep) delete had.dormant;
+				continue;
+			}
+			const pair = asleep ? { from, to, dormant: true } : { from, to };
+			pairs.set(key, pair);
+			out.push(pair);
 		}
+	};
+	// A block's own text, and each value of it per index: the same names, and
+	// a value held for an index that is switched off is read by no run.
+	const addWithEntries = (block, own, ofEntry) => {
+		add(block, own);
+		for (const e of block.entries ?? []) add(block, ofEntry(e), dormantEntry(e));
 	};
 
 	// What an equation reads. Block level and per entry: a rate that only
@@ -1736,8 +1771,7 @@ export function influences(project) {
 	const fromEquations = (list, key) => {
 		for (const b of list ?? []) {
 			const locals = functionLocals(b, key);
-			const texts = [b[key], ...(b.entries ?? []).map((e) => e[key])];
-			add(b, texts.flatMap((t) => namesIn(t, locals)));
+			addWithEntries(b, namesIn(b[key], locals), (e) => namesIn(e[key], locals));
 		}
 	};
 	fromEquations(project.expressions, 'equation');
@@ -1767,20 +1801,15 @@ export function influences(project) {
 	for (const [kind, plural] of Object.entries(RECORDER_COLLECTION)) {
 		for (const key of EQUATION_FIELDS[kind]) fromEquations(project[plural], key);
 		for (const key of EVENT_FIELDS[kind]) {
-			for (const b of project[plural] ?? []) {
-				add(b, [b[key], ...(b.entries ?? []).map((e) => e[key])]
-					.filter((v) => typeof v === 'string' && v.trim())
-					.map((v) => v.trim()));
-			}
+			const named = (v) => (typeof v === 'string' && v.trim() ? [v.trim()] : []);
+			for (const b of project[plural] ?? []) addWithEntries(b, named(b[key]), (e) => named(e[key]));
 		}
 	}
 
 	// What a reduction names.
-	for (const o of project.index_reductions ?? []) {
-		add(o, [o.target, ...(o.entries ?? []).map((e) => e.target)]);
-	}
+	for (const o of project.index_reductions ?? []) addWithEntries(o, [o.target], (e) => [e.target]);
 	for (const g of project.block_reductions ?? []) {
-		add(g, [...(g.targets ?? []), ...(g.entries ?? []).flatMap((e) => e.targets ?? [])]);
+		addWithEntries(g, g.targets ?? [], (e) => e.targets ?? []);
 	}
 
 	// The blocks that read the model through settings of their own rather
@@ -4212,6 +4241,93 @@ export function indexCombinations(project, dims) {
 
 export function combinationCount(project, dims) {
 	return dimensionIndices(project, dims).reduce((n, l) => n * l.length, 1);
+}
+
+/**
+ * What keeps an index combination out of the run, as a test to put to one
+ * combination after another: the first of its indices that is switched off in
+ * its list -- or that the list has not got -- or null when the run reads it.
+ *
+ * A value set for an index that is switched off stays in the block. It is
+ * saved, the arrows and the Used-by lists read its equation, and it applies
+ * again once the index is switched back on: the loader keeps it dormant rather
+ * than refusing it. What no run does is read it. A grid of the combinations a
+ * run has leaves it out -- and with it the one equation that explains an
+ * arrow, when a scenario that is switched off has an equation of its own
+ * naming a parameter -- and a count of every value set says more are set than
+ * the grid has rows for. Both ask this.
+ *
+ * On is what `dimensionIndices` says it is, so that a combination is either one
+ * of `indexCombinations` or out of the run, never both. A dimension an entry
+ * does not name is no reason: a far-field path holds its per-object settings
+ * over fewer dimensions than its grid, and their entries name only those.
+ *
+ * @returns {(index: object) => ({dim: string, index: string, missing: boolean}|null)}
+ */
+export function switchedOff(project, dims) {
+	const lists = dims ?? [];
+	const on = dimensionIndices(project, lists).map((names) => new Set(names));
+	const known = lists.map((name) =>
+		new Set((findIndexList(project, name)?.indices ?? []).map((i) => i.name)));
+	return (index) => {
+		for (const [d, dim] of lists.entries()) {
+			const name = index?.[dim];
+			if (name === undefined || on[d].has(name)) continue;
+			return { dim, index: String(name), missing: !known[d].has(name) };
+		}
+		return null;
+	};
+}
+
+/** `switchedOff`'s answer as a sentence, for a title. */
+export function switchedOffText(off) {
+	if (!off) return '';
+	return off.missing
+		? `${off.dim} has no index called ${off.index}, so no run can read this value.`
+		: `${off.index} is switched off in ${off.dim}, so no run reads this value. `
+			+ `It is kept, and applies again when ${off.index} is switched on.`;
+}
+
+/**
+ * How a block's per-index values stand: how many combinations it has, how many
+ * of those carry a value of their own, and how many values it holds for
+ * combinations that no run reads (see `switchedOff`).
+ */
+export function entryCounts(project, block, kind, dims) {
+	const offOf = switchedOff(project, dims);
+	const set = setIndexes(block, kind);
+	const off = set.filter((index) => offOf(index)).length;
+	return { total: combinationCount(project, dims), set: set.length - off, off };
+}
+
+/**
+ * The rows of a block's per-index grid: every combination a run reads, and
+ * every one that carries a value of its own although it is out of the run,
+ * with what puts it out. In the lists' own order, so that a row switched off
+ * sits where the Index lists tab has its index rather than at the foot.
+ *
+ * @returns {{index: object, off: object|null}[]}
+ */
+export function entryRows(project, block, kind, dims) {
+	const rows = indexCombinations(project, dims).map((index) => ({ index, off: null }));
+	const offOf = switchedOff(project, dims);
+	const dormant = setIndexes(block, kind)
+		.map((index) => ({ index, off: offOf(index) }))
+		.filter((row) => row.off);
+	if (!dormant.length) return rows;
+	// Where each index stands in its list, switched on or off. A name the list
+	// has not got goes after all of them.
+	const at = dims.map((name) => new Map(
+		(findIndexList(project, name)?.indices ?? []).map((i, n) => [i.name, n])));
+	const place = (index) => dims.map((dim, d) => at[d].get(index[dim]) ?? Infinity);
+	const keyed = [...rows, ...dormant].map((row) => ({ row, key: place(row.index) }));
+	keyed.sort((a, b) => {
+		for (let d = 0; d < a.key.length; d++) {
+			if (a.key[d] !== b.key[d]) return a.key[d] < b.key[d] ? -1 : 1;
+		}
+		return 0;
+	});
+	return keyed.map(({ row }) => row);
 }
 
 /**

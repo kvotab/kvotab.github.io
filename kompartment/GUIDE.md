@@ -852,7 +852,15 @@ new model starts folded.
   than a wall: an expression inside `NearField` that reads `Kd` out here gets
   an arrow to the `NearField` node, the same substitution the transfers make,
   and several dependencies that fold onto the same pair are drawn as one arrow
-  that says how many it stands for.
+  that says how many it stands for. **An arrow no run reads is faded**: every
+  dependency it stands for is in a block that is switched off — by its own
+  switch or with its sub-system, or a transfer that goes off with its donor —
+  or in a value held for an index that is switched off, such as a scenario's
+  own equation with the scenario off. It is still drawn, since the model still
+  says it and it is read again once those are back on. A block that runs and
+  reads one that is switched off keeps its arrow at full strength: that run
+  stops and names the block, and the arrow is the way to it. One arrow folding
+  several dependencies together is faded only when all of them are.
 - **lookup tables** — lookup-table blocks (on by default; each draws its own
   curve, which is the thing worth seeing at a glance)
 - **index operations & aggregates** — the reducing blocks (on by default; they
@@ -1396,6 +1404,9 @@ something of their own, **which ones and what**: `I-129 · Mire — initial 1e12
 `Cs-137 — abs. tol. 1e-6`, `I-129 · Lake — floor may go negative`. Across every
 per-index key, not only the block's own value, so an index that differs solely
 in its tolerance or its floor is not an index that looks the same as the rest.
+A value held for an index that is switched off is marked **off** and counted
+apart — `2 combinations, 1 set, 2 set for indices switched off` — since no run
+reads it.
 It is the thing you go looking for in the settings dialog, and finding it by
 opening the grid and reading down it means — on a model whose nuclide list is
 fifty long — passing forty-nine rows that say nothing.
@@ -3969,7 +3980,8 @@ and the right pane is the one you are editing.
 It opens with *Defined as* — an axis of its own, a sub-set of, or a grouping of
 — then the indices themselves as chips: click one to disable it, double-click
 to rename it, **×** to remove it. A disabled index stays in the file and keeps
-its values but takes no part in a simulation. Past 60 indices the card grows a
+its values but takes no part in a simulation; a block's settings still list
+those values, greyed and marked **off**. Past 60 indices the card grows a
 filter and shows a windowful at a time, because real lists get large: one assessment model's
 `Transfers` list has 1,624, and drawn all at once that is one card twenty
 thousand pixels tall.
@@ -4517,6 +4529,18 @@ Select an indexed block and the inspector shows two things:
 A row you have set is highlighted and its **×** is active; the rest show the
 inherited default in grey. Type into any row to set that combination; press **×**
 to clear it back to the default. The header counts both (`12 combinations, 3 set`).
+
+**A value set for an index that is switched off is listed too.** Switching an
+index off on the **Index lists** tab keeps what is set for it, and it applies
+again when the index is switched back on; until then no run reads it. Its row
+sits where the list has the index, greyed and marked **off** — the mark says
+which index is off and in which list — and it is edited or cleared like any
+other. It is counted apart: `1/2 set · 2 off` is one of the two combinations a
+run has set, and two values held for indices that are off. The diagram's
+influence arrows still come from what such a row's equation names, faded since
+no run reads them, so a faded arrow into a block whose other rows name nothing
+of the kind comes from one of these: a scenario that is switched off, with an
+equation of its own that reads a parameter.
 
 **A row is more than one value.** A compartment's carries its **dy/dt** term,
 its **absolute tolerance** and its **floor** — `cannot go negative` — beside

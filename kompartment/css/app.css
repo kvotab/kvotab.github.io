@@ -3867,6 +3867,12 @@ th.has-sample .smark { margin-left: 5px; }
    changes which are seen without the diagram being drawn again. */
 .graph-svg.shows-chosen-influences .gedge-influence:not(.is-chosen) { display: none; }
 
+/* An influence no run reads: every dependency it stands for is in a block that
+   is switched off, or in a value held for an index that is. Faded as far as a
+   disabled connection is, and still dotted, since it is still an influence --
+   of the model, if not of any run. Selected, it gets heavier and stays faded. */
+.gedge-influence.is-dormant { opacity: 0.4; }
+
 .gedge.is-linked .gedge-label { fill: var(--text-primary); }
 
 /* A connection whose rate will not parse. Dashed as well as red, so it is
@@ -5645,6 +5651,40 @@ table.matrix td {
 
 .insp-entry.is-set .insp-entry-idx { color: var(--text-primary); font-weight: 600; }
 
+/* A value held for an index that is switched off (`ed.switchedOff`): kept and
+   saved, and its equation is one the influence arrows draw from, but no run
+   reads it -- so it is listed, greyed rather than highlighted, and marked. In
+   a narrow column the index names give way to the mark. */
+.insp-entry.is-off { background: var(--surface-sunken); }
+
+.insp-entry.is-off .insp-entry-idx {
+	display: flex;
+	align-items: baseline;
+	gap: 5px;
+	color: var(--text-muted);
+	font-weight: 400;
+}
+
+.insp-entry-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.insp-entry.is-off input,
+.insp-entry.is-off .eq-field { color: var(--text-muted); }
+
+.insp-entry-off,
+.info-ref-off {
+	flex: none;
+	padding: 0 4px;
+	border: 1px solid var(--border);
+	border-radius: 3px;
+	font-size: 9.5px;
+	line-height: 1.4;
+	color: var(--text-muted);
+}
+
 .insp-entry input {
 	width: 100%;
 	min-width: 0;
@@ -6976,6 +7016,10 @@ table.ix-table input { width: 130px; padding: 2px 6px; font-size: 11.5px; }
 	font-size: 11.5px;
 	min-width: 0;
 }
+
+/* A value set for an index that is switched off, in the list of what is set
+   per index: marked as the settings grid marks it. */
+.info-ref.is-off > code { color: var(--text-muted); }
 
 /* The unit of a block an equation reads, between its name and what it is. */
 .info-ref-unit {

@@ -11993,7 +11993,7 @@ test('the diagram says nothing about a block on hover unless asked to', async ()
 		['a symbol', /this\._tip\(g, `\$\{n\.name\} — shown as \$\{plain\}`\);/],
 		['an outflow', /this\._tip\(g, `\$\{conn\.name\}: leaves the model/],
 		['a pipe', /this\._tip\(g, `\$\{conn\.name\} \$\{inward \? 'comes from' : 'goes to'\}/],
-		['an influence', /const tips = !!this\.view\.show_tooltips;[\s\S]*?for \(const g of tips \? out : \[\]\) \{/],
+		['an influence', /const tips = !!this\.view\.show_tooltips;[\s\S]*?for \(const g of out\) \{[\s\S]*?if \(!tips\) continue;[\s\S]{0,300}?const title = svg\('title'\);/],
 	]) assert(re.test(graph), `${what} has a tooltip of its own`);
 	assert((graph.match(/this\._tip\(g, says\);/g) ?? []).length === 2, 'an inflow icon has a tooltip of its own');
 	// ... and the handles and the problems do not.
@@ -25036,6 +25036,168 @@ test('what the Information view says about an index that differs', async () => {
 	// Ecolego's own grid (IC, DIFF_EQ, NON_NEGATIVE, ABS_TOL).
 	assert(ed.entryKeys('compartment').join() === 'initial,dydt,abstol,non_negative',
 		`the per-index keys are ${ed.entryKeys('compartment').join()}`);
+});
+
+test('a value set for an index that is switched off is listed, marked and counted apart', async () => {
+	const { readFileSync } = await import('node:fs');
+	// As in the model this was found in: an expression per scenario whose one
+	// equation naming a parameter belongs to a scenario that is switched off.
+	// The arrow from the parameter is drawn, and the settings grid listed only
+	// the scenarios that are on, all at the default, under a count of `3/3 set`.
+	const project = {
+		index_lists: [
+			{
+				name: 'Scenarios', for_scenarios: true, indices: [
+					{ name: 'Base', enabled: true },
+					{ name: 'Quake', enabled: false },
+					{ name: 'Warm', enabled: true },
+					{ name: 'Cold', enabled: false },
+				],
+			},
+			{ name: 'Objects', indices: [{ name: 'A', enabled: true }, { name: 'B', enabled: false }] },
+		],
+		parameters: [{ name: 'quake_time', value: 3500 }],
+		expressions: [{
+			name: 'fail_time', index_lists: ['Scenarios'], equation: '200000.0',
+			entries: [
+				{ index: { Scenarios: 'Quake' }, equation: 'min(quake_time, 65000.0)' },
+				{ index: { Scenarios: 'Cold' }, equation: '65000.0' },
+				{ index: { Scenarios: 'Warm' }, equation: '1000.0' },
+			],
+		}],
+	};
+	const block = project.expressions[0];
+	const dims = ['Scenarios'];
+
+	// What keeps a combination out of the run.
+	const offOf = ed.switchedOff(project, dims);
+	assert(offOf({ Scenarios: 'Base' }) === null, 'a scenario that is on is out of the run');
+	assert(JSON.stringify(offOf({ Scenarios: 'Quake' })) === '{"dim":"Scenarios","index":"Quake","missing":false}',
+		JSON.stringify(offOf({ Scenarios: 'Quake' })));
+	assert(offOf({ Scenarios: 'Gone' })?.missing === true, 'an index the list has not got is not out of the run');
+	// A dimension an entry does not name is no reason: a far-field path's
+	// per-object settings name only the objects.
+	const both = ed.switchedOff(project, ['Scenarios', 'Objects']);
+	assert(both({ Objects: 'A' }) === null, 'an entry naming one dimension of two is out of the run');
+	assert(both({ Objects: 'B' })?.dim === 'Objects', JSON.stringify(both({ Objects: 'B' })));
+	const said = ed.switchedOffText(offOf({ Scenarios: 'Quake' }));
+	assert(/^Quake is switched off in Scenarios, so no run reads this value\./.test(said), said);
+	assert(/^Scenarios has no index called Gone/.test(ed.switchedOffText(offOf({ Scenarios: 'Gone' }))),
+		ed.switchedOffText(offOf({ Scenarios: 'Gone' })));
+	assert(ed.switchedOffText(null) === '', 'a combination in the run has a reason');
+
+	// Counted apart: one set of the two that run, and two more switched off.
+	const counts = ed.entryCounts(project, block, 'expression', dims);
+	assert(JSON.stringify(counts) === '{"total":2,"set":1,"off":2}', JSON.stringify(counts));
+
+	// The grid's rows: every combination a run reads and every dormant value,
+	// in the list's own order, the dormant ones with what keeps them out.
+	const rows = ed.entryRows(project, block, 'expression', dims)
+		.map((r) => `${r.index.Scenarios}${r.off ? ' off' : ''}`);
+	assert(rows.join() === 'Base,Quake off,Warm,Cold off', rows.join());
+	// With nothing dormant, exactly the run's combinations.
+	const live = { ...block, entries: [block.entries[2]] };
+	const plain = ed.entryRows(project, live, 'expression', dims);
+	assert(plain.map((r) => r.index.Scenarios).join() === 'Base,Warm' && plain.every((r) => r.off === null),
+		JSON.stringify(plain));
+	// Two dimensions: out when either index is off, and where both lists put it.
+	const two = {
+		name: 'k', index_lists: ['Scenarios', 'Objects'], equation: '1',
+		entries: [
+			{ index: { Scenarios: 'Warm', Objects: 'B' }, equation: '2' },
+			{ index: { Scenarios: 'Quake', Objects: 'A' }, equation: '3' },
+		],
+	};
+	const rows2 = ed.entryRows(project, two, 'expression', ['Scenarios', 'Objects'])
+		.map((r) => `${r.index.Scenarios}/${r.index.Objects}${r.off ? ` off:${r.off.index}` : ''}`);
+	assert(rows2.join() === 'Base/A,Quake/A off:Quake,Warm/A,Warm/B off:B', rows2.join());
+
+	// The arrow stays: the model still has the equation, and it applies again
+	// when the scenario is switched on.
+	assert(ed.influences(project).some((i) => i.from === 'quake_time' && i.to === 'fail_time'),
+		'the arrow from the parameter is gone');
+
+	// The panels ask it. The grid lists `entryRows`, a dormant row marked; the
+	// section, the rail and the Information view count dormant values apart.
+	const insp = readFileSync(new URL('../src/ui/inspector.js', import.meta.url), 'utf8');
+	assert(/for \(const \{ index, off \} of ed\.entryRows\(project, block, kind, dims\)\) \{\n\t+list\.append\(valueRow\(index, \{ off \}\)\);/.test(insp),
+		'the grid lists only the combinations a run reads');
+	assert(/const \{ total, set, off \} = ed\.entryCounts\(project, block, kind, dims\);/.test(insp),
+		'the section counts a dormant value as set');
+	assert(/el\('span', \{ className: 'insp-entry-off' \}, 'off'\)/.test(insp), 'a dormant row is not marked');
+	assert(/className: `insp-entry\$\{set \? ' is-set' : ''\}\$\{off \? ' is-off' : ''\}`/.test(insp),
+		'a dormant row is not greyed');
+	assert(/for \(const o of overrides\) list\.append\(valueRow\(o\.index, \{ off: o\.off \}\)\);/.test(insp),
+		'past the grid, a dormant value is not marked');
+	const info = readFileSync(new URL('../src/ui/info.js', import.meta.url), 'utf8');
+	assert(/const off = set\.filter\(\(index\) => offOf\(index\)\)\.length;/.test(info)
+		&& /\$\{set\.length > off \? `, \$\{set\.length - off\} set` : ''\}/.test(info),
+		'the Information view counts a dormant value as set');
+	assert(/el\('span', \{ className: 'info-ref-off', title: ed\.switchedOffText\(off\) \}, 'off'\)/.test(info),
+		'the Information view does not mark a dormant value');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	assert(/\.insp-entry\.is-off \{ background: var\(--surface-sunken\); \}/.test(css)
+		&& css.indexOf('.insp-entry.is-off {') > css.indexOf('.insp-entry.is-set {'),
+		'a dormant row is highlighted as a set one is');
+});
+
+test('an influence no run reads is dormant, and the diagram draws it faded', async () => {
+	const { readFileSync } = await import('node:fs');
+	const project = {
+		systems: ['Off'],
+		disabled_systems: ['Off'],
+		index_lists: [{
+			name: 'Scenarios', for_scenarios: true,
+			indices: [{ name: 'Base', enabled: true }, { name: 'Quake', enabled: false }],
+		}],
+		parameters: [{ name: 'p', value: 1 }, { name: 'k', value: 1 }, { name: 'gone', value: 2, enabled: false }],
+		compartments: [{ name: 'A', enabled: false }, { name: 'B' }],
+		// Its donor is off, so it is off with it.
+		transfers: [{ name: 'T', from: 'A', to: 'B', rate: 'k' }],
+		expressions: [
+			// Read only by a scenario that is switched off.
+			{ name: 'quake', index_lists: ['Scenarios'], equation: '1',
+				entries: [{ index: { Scenarios: 'Quake' }, equation: 'p' }] },
+			// ...and by one that is on as well, which is enough.
+			{ name: 'both', index_lists: ['Scenarios'], equation: '1',
+				entries: [{ index: { Scenarios: 'Quake' }, equation: 'p' }, { index: { Scenarios: 'Base' }, equation: '2*p' }] },
+			// Switched off itself, or by the sub-system around it.
+			{ name: 'asleep', enabled: false, equation: 'p' },
+			{ name: 'inside', system: 'Off', equation: 'p' },
+			// Running, and reading a block that is off: the run stops and names
+			// it, and the arrow is the way to it.
+			{ name: 'broken', equation: 'gone' },
+			{ name: 'live', equation: 'p' },
+		],
+	};
+	const got = ed.influences(project);
+	const dormant = Object.fromEntries(got.map((i) => [`${i.from}->${i.to}`, i.dormant === true]));
+	const want = {
+		'p->quake': true, 'p->both': false, 'p->asleep': true, 'p->Off.inside': true,
+		'gone->broken': false, 'p->live': false, 'k->T': true,
+	};
+	assert(JSON.stringify(dormant) === JSON.stringify({ ...dormant, ...want })
+		&& Object.keys(want).every((k) => k in dormant), JSON.stringify(dormant));
+	// A pair some run reads is written as it always was.
+	assert(JSON.stringify(got.find((i) => i.to === 'live')) === '{"from":"p","to":"live"}',
+		JSON.stringify(got.find((i) => i.to === 'live')));
+	// Switched back on, it is read again.
+	const back = structuredClone(project);
+	back.index_lists[0].indices[1].enabled = true;
+	delete back.expressions.find((b) => b.name === 'asleep').enabled;
+	const woke = ed.influences(back).filter((i) => i.dormant).map((i) => `${i.from}->${i.to}`).sort();
+	assert(woke.join() === 'k->T,p->Off.inside', woke.join());
+
+	// The diagram: an arrow is faded only when every dependency behind it is
+	// dormant -- several blocks in a folded sub-system are one arrow.
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	assert(/for \(const \{ from: read, to: reader, dormant \} of this\._influenceCache\)/.test(graph)
+		&& /drawn\.set\(key, \{ count: 1, pairs: \[\[read, reader\]\], live: !dormant \}\);/.test(graph)
+		&& /if \(!dormant\) already\.live = true;/.test(graph),
+		'an arrow does not follow what its dependencies are');
+	assert(/if \(!entry\.live\) g\.classList\.add\('is-dormant'\);/.test(graph), 'a dormant arrow is not marked');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	assert(/\.gedge-influence\.is-dormant \{ opacity: 0\.4; \}/.test(css), 'a dormant arrow is not faded');
 });
 
 test('a path’s geometry is editable per index once it has one', async () => {

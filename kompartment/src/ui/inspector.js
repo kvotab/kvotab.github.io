@@ -1068,27 +1068,35 @@ export function renderInspector(host, project, selection, hooks = {}, opts = {})
 		host.append(valueRow);
 		if (!dims.length || entriesPlaced) return;
 		entriesPlaced = true;
-		const total = ed.combinationCount(project, dims);
+		// The values a run reads, counted apart from those held for an index
+		// that is switched off: those are not combinations of the run, and
+		// counted with the rest they made `3/3 set` of a grid whose three rows
+		// all used the default. See `ed.switchedOff`.
+		const { total, set, off } = ed.entryCounts(project, block, kind, dims);
+		const dormant = off ? ` \u00b7 ${off} off` : '';
+		const dormantTitle = off
+			? `${off} more ${off === 1 ? 'is' : 'are'} set for `
+				+ `${off === 1 ? 'an index' : 'indices'} switched off, which no run reads`
+			: '';
 		if (brief) {
 			// A grid of 53 nuclides does not belong in a 300-pixel column. The
 			// rail says how much of it has been filled in and opens it.
-			const set = ed.setIndexes(block, kind).length;
 			// One combination with nothing set is the default itself, and
 			// saying so is a row that tells you nothing.
-			if (total <= 1 && !set) return;
-			const open = el('button', { className: 'insp-link', type: 'button' },
-				set ? `${set} of ${total} set` : `${total}, all default`);
+			if (total <= 1 && !set && !off) return;
+			const open = el('button', { className: 'insp-link', type: 'button', title: dormantTitle },
+				`${set ? `${set} of ${total} set` : `${total}, all default`}${dormant}`);
 			open.addEventListener('click', () => hooks.onOpenSettings?.(qname));
 			host.append(el('div', { className: 'insp-row' },
 				el('label', { className: 'insp-label' }, 'Values per index'), open));
 			return;
 		}
-		const set = ed.setIndexes(block, kind).length;
 		const box = railSection('entries', 'Values per index',
-			set ? `${set}/${total} set` : `${total}`,
-			set
+			`${set ? `${set}/${total} set` : `${total}`}${dormant}`,
+			(set
 				? `${set} of ${total} combinations set; the rest use the default above`
-				: `${total} combinations, all using the default above`);
+				: `${total} combinations, all using the default above`)
+			+ (off ? `. ${dormantTitle}, greyed below` : ''));
 		box.append(renderEntryEditor(project, block, kind, dims, hooks,
 			{ heading: false }));
 		host.append(box);
@@ -2812,21 +2820,29 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	const section = el('div', {
 		className: `insp-entries${heading ? '' : ' is-bare'}`,
 	});
-	const overrides = ed.setIndexes(block, kind).map((index) => ({ index }));
+	// Each with what keeps it out of the run, if anything does: a value held
+	// for an index that is switched off is listed too, greyed, since its
+	// equation is still one the arrows draw from. See `ed.switchedOff`.
+	const offOf = ed.switchedOff(project, dims);
+	const overrides = ed.setIndexes(block, kind).map((index) => ({ index, off: offOf(index) }));
+	const dormant = overrides.filter((o) => o.off).length;
 
 	if (heading) {
+		const live = overrides.length - dormant;
 		section.append(el('div', { className: 'insp-entries-head' },
 			el('span', { className: 'insp-label' }, 'Values per index'),
 			el('span', { className: 'insp-entries-count' },
 				`${total} combination${total === 1 ? '' : 's'}`
-				+ (overrides.length ? `, ${overrides.length} set` : ''))));
+				+ (live ? `, ${live} set` : '')
+				+ (dormant ? `, ${dormant} off` : ''))));
 	}
 
 	if (total === 0) {
 		section.append(el('p', { className: 'insp-hint' },
 			'Every index of at least one of this block\u2019s dimensions is disabled, '
-			+ 'so it holds no values.'));
-		return section;
+			+ 'so it holds no values'
+			+ (dormant ? '. What is set for the indices switched off is kept, greyed below.' : '.')));
+		if (!dormant) return section;
 	}
 
 	// The block's identity, not the name in the Name box: a block inside a
@@ -2903,32 +2919,46 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	};
 
 	/**
+	 * A row's index names -- and, on a row the run does not read, the word
+	 * saying so, with the reason as its title. In a narrow column the names
+	 * give way to the word, not the other way about.
+	 */
+	const indexLabel = (index, off) => {
+		const names = dims.map((d) => index[d]).join(' \u00b7 ');
+		if (!off) return el('span', { className: 'insp-entry-idx' }, names);
+		return el('span', { className: 'insp-entry-idx', title: ed.switchedOffText(off) },
+			el('span', { className: 'insp-entry-name' }, names),
+			el('span', { className: 'insp-entry-off' }, 'off'));
+	};
+
+	/** The start column of a row the run does not read, which has no start. */
+	const noStart = (tag) => el(tag,
+		{ className: 'insp-entry-start mono', title: 'Not in the run' }, '\u2014');
+
+	/**
 	 * A table per index, as a disclosure: the points are far too tall to sit in
 	 * a grid row, and a model that sets them per index sets a handful, not all
 	 * of them.
 	 */
-	const tableRow = (index, { showLabels = true } = {}) => {
+	const tableRow = (index, { showLabels = true, off = null } = {}) => {
 		const set = ed.isOverridden(block, key, index);
 		const pts = ed.effectiveValue(block, key, index) ?? [];
 		const det = el('details', {
-			className: `insp-entry insp-entry-table${set ? ' is-set' : ''}`
+			className: `insp-entry insp-entry-table${set ? ' is-set' : ''}${off ? ' is-off' : ''}`
 				+ `${showStart ? ' has-start' : ''}`,
 		});
 		det.append(el('summary', {},
-			showLabels
-				? el('span', { className: 'insp-entry-idx' },
-					dims.map((d) => index[d]).join(' \u00b7 '))
-				: null,
+			showLabels ? indexLabel(index, off) : null,
 			el('span', { className: 'insp-entry-sum' },
 				`${summariseTable({ points: pts })}${set ? '' : ' (default)'}`),
 			// What the table reads at the start, which is the one point of it
 			// the rest of the model sees first.
-			showStart
-				? refreshStartValue(markStartValue(
-					el('span', { className: 'insp-entry-start mono' }),
-					qname, key, dims.map((d) => index[d]),
-				), hooks.atStart(qname, key))
-				: null));
+			!showStart ? null
+				: off ? noStart('span')
+					: refreshStartValue(markStartValue(
+						el('span', { className: 'insp-entry-start mono' }),
+						qname, key, dims.map((d) => index[d]),
+					), hooks.atStart(qname, key))));
 		const body = el('div', { className: 'insp-entry-body' });
 		body.append(pointsBox({
 			points: pts,
@@ -3101,24 +3131,29 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 		return input;
 	};
 
-	/** One editable row: the index labels, the value, and a reset button. */
-	const valueRow = (index, { showLabels = true } = {}) => {
-		if (kind === 'lookup') return tableRow(index, { showLabels });
+	/**
+	 * One editable row: the index labels, the value, and a reset button.
+	 *
+	 * `off` is what keeps the row out of the run (`ed.switchedOff`), for a
+	 * value held for an index that is switched off: greyed and marked, and as
+	 * editable as the rest -- it is the model's, and applies again once the
+	 * index is switched back on.
+	 */
+	const valueRow = (index, { showLabels = true, off = null } = {}) => {
+		if (kind === 'lookup') return tableRow(index, { showLabels, off });
 		// Highlighted when anything on the row is this index's own, not only
 		// the block's value: a tolerance set here is a value set here.
 		const set = keys.some((k) => ed.isOverridden(block, k, index));
 		const value = ed.effectiveValue(block, key, index);
 		const rowEl = el('div', {
-			className: `insp-entry${set ? ' is-set' : ''}`
+			className: `insp-entry${set ? ' is-set' : ''}${off ? ' is-off' : ''}`
 				+ `${extras.length ? ' has-extra' : ''}${startColumn ? ' has-start' : ''}`,
 		});
-		if (showLabels) {
-			rowEl.append(el('span', { className: 'insp-entry-idx' },
-				dims.map((d) => index[d]).join(' \u00b7 ')));
-		}
+		if (showLabels) rowEl.append(indexLabel(index, off));
 		const shown = value == null ? ''
 			: Array.isArray(value) ? value.join(' + ') : String(value);
-		const title = set ? 'Set for this index' : 'Inherited from the block default';
+		const title = off ? ed.switchedOffText(off)
+			: set ? 'Set for this index' : 'Inherited from the block default';
 		// A parameter's value is a number, in a box like any other. Anything
 		// else is an equation, or an aggregate's list of names, and gets the
 		// box that opens to show all of it: this column is a fraction of the
@@ -3127,7 +3162,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 			value: shown,
 			title,
 			colour: (text) => colourer(text, qname, { quiet }),
-			muted: !set,
+			muted: !set || !!off,
 		});
 		const input = eq?.field ?? el('input', {
 			type: 'text', className: 'mono', value: shown, spellcheck: false, title,
@@ -3147,7 +3182,9 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 		// Marked so that it fills itself in when the values arrive, and filled
 		// now if they are already known -- which is what the rows a `load
 		// more` adds, and the picker's single row, depend on.
-		if (startColumn) {
+		if (startColumn && off) {
+			rowEl.append(noStart('output'));
+		} else if (startColumn) {
 			const cell = markStartValue(
 				el('output', { className: 'insp-entry-start mono' }),
 				qname, key, dims.map((d) => index[d]),
@@ -3220,13 +3257,15 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	if (total <= GRID_LIMIT) {
 		const list = newList();
 		list.append(head());
-		for (const index of ed.indexCombinations(project, dims)) {
-			list.append(valueRow(index));
+		for (const { index, off } of ed.entryRows(project, block, kind, dims)) {
+			list.append(valueRow(index, { off }));
 		}
 		section.append(list);
 		section.append(el('p', { className: 'insp-hint' },
 			'A highlighted row is set for that index; the rest inherit the default '
-			+ 'above. \u00d7 clears the row back to the default.'));
+			+ 'above. \u00d7 clears the row back to the default.'
+			+ (dormant ? ' A greyed row marked off is set for an index that is switched off '
+				+ 'on the Index lists tab: it is kept, and no run reads it.' : '')));
 		return section;
 	}
 
@@ -3234,7 +3273,7 @@ export function renderEntryEditor(project, block, kind, dims, hooks, opts = {}) 
 	if (overrides.length) {
 		const list = newList();
 		list.append(head());
-		for (const o of overrides) list.append(valueRow(o.index));
+		for (const o of overrides) list.append(valueRow(o.index, { off: o.off }));
 		section.append(list);
 	} else {
 		section.append(el('p', { className: 'insp-hint' },

@@ -1292,3 +1292,31 @@ held (`button: 'left'`, not `none`): sent as `none`, Chrome takes them for a
 hover and never gives the pointer capture a drag asks for. And a menu opened
 low in the window is cut to the room there and scrolls, so an item is brought
 into sight before it is clicked.
+
+## test-chrome-kompartment-switched-off.py
+
+Kompartment's per-index values for an index that is switched off.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-switched-off.py    # expect 24/24
+
+A value set for an index that is switched off -- a scenario that is not run,
+an object taken out -- stays in the block, and the influence arrows still draw
+from its equation, so a block's settings window lists it: greyed, marked off
+and in the list's own order, with the counts keeping it apart from what is set
+(`switchedOff` in `kompartment/src/domain/edit.js`); and an influence arrow no
+run reads -- every dependency behind it in such a value or in a block that is
+switched off -- is drawn faded (`influences`, `dormant`). With real presses, on
+a model of its own dropped on the page: the arrows out of a parameter are faded
+to 0.4 into an expression naming it only in a scenario's value, into one naming
+it only in an object's value and into one switched off, and at full strength
+into one that reads it; a scenario-indexed expression whose one
+equation naming a parameter belongs to a scenario that is off has the arrow
+from the parameter drawn, a grid of Base, Quake, Warm and Cold with the two
+that are off greyed, marked and explained and Quake's equation in sight, a
+section reading `1/2 set · 2 off` and a hint saying what a greyed row is; the
+mark is not cut off and a greyed row's ground is not a set row's; × on a row
+that is off clears it and the count follows; a parameter's numbers go the same
+way; in a grid with a column of values at the start the row that is off has a
+dash there and lines up with the rest; and the Information view counts and
+marks the values the same way. Against the code before the grid and the counts
+changed, 15 of its checks fail.
