@@ -8,10 +8,15 @@ change from run to run):
 
 - the page loads without a script error, in the site's header and footer;
 - the sample scene shows Google's real Swedish, seven subtitles to look at;
+  Keep, Leave out and the setting for sound descriptions change it at once,
+  from Google's recording;
 - a live run asks for its model on the click, sends whole sentences twelve at
-  a time, and keeps the phrasebook's line;
+  a time, and keeps the phrasebook's line; a subtitle kept while it runs is
+  translated after the rest;
 - an .srt opened from disk is translated, and saved as a Windows-ready .srt
-  under a Swedish name; the work is still there after a reload;
+  under a Swedish name; the work is still there after a reload; after that,
+  Keep translates a sound description at once, and the setting for sound
+  descriptions translates only the subtitles it changes;
 - without the translator the page picks the open model by itself;
 - the front page has the tool's card.
 
@@ -57,7 +62,11 @@ STUB = r"""
       if (monitor) monitor(target);
       for (const v of [0, 0.5, 1]) { await new Promise(r => setTimeout(r, 40)); const e = new Event('downloadprogress'); e.loaded = v; target.dispatchEvent(e); }
       state = 'available';
-      return { translate: async t => { window.__trCalls.push(t); return t.split('\n').map(l => 'SV ' + l).join('\n'); } };
+      return { translate: async t => {
+        window.__trCalls.push(t);
+        if (window.__trDelay) await new Promise(r => setTimeout(r, window.__trDelay));
+        return t.split('\n').map(l => 'SV ' + l).join('\n');
+      } };
     },
   };
 })();
@@ -103,6 +112,9 @@ class Page:
             if r.get('method') == 'Runtime.exceptionThrown' and r.get('sessionId') == self.sid:
                 d = r['params']['exceptionDetails']
                 self.errors.append(str(d.get('exception', {}).get('description') or d.get('text', ''))[:300])
+            # A button's handler that throws is caught by the site's dispatcher and only logged.
+            if r.get('method') == 'Runtime.consoleAPICalled' and r.get('sessionId') == self.sid and r['params']['type'] == 'error':
+                self.errors.append(' '.join(str(a.get('value', a.get('description', ''))) for a in r['params']['args'])[:300])
             if 'id' in r and r['id'] in self.pending and not self.pending[r['id']].done():
                 self.pending[r['id']].set_result(r)
 
@@ -157,6 +169,20 @@ def sv_of(n):
     return f"document.querySelector('.st-row[data-n=\"{n}\"] .st-sv-text').textContent"
 
 
+def click_row(n, action):
+    """A row's button: st:keep or st:leave-out."""
+    return f"document.querySelector('.st-row[data-n=\"{n}\"] [data-on-click=\"{action}\"]').click()"
+
+
+def set_sdh(value):
+    """'keep' or 'remove' in "Sound descriptions like [door slams] and NAME:", as a choice in the list makes it."""
+    return ("(() => { const s = document.querySelector('#st-settings [name=sdh]'); s.value = '" + value +
+            "'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+
+
+SDH_LOCKED = "[document.querySelector('#st-settings [name=sdh]').disabled, document.getElementById('st-sdh-note').textContent]"
+
+
 def test_srt():
     """60 subtitles: sound descriptions, a speaker label, italics, two speakers,
     a sentence over two subtitles and a filler, and a pause after every tenth."""
@@ -200,12 +226,36 @@ async def main():
                   await settle(page, f"[document.getElementById('st-eng-chrome').checked, {text('#st-chrome-state')}]", [True, 'Ready to download']), [True, 'Ready to download'])
             check('subtitles 6 and 7 are one sentence', await page.ev(sv_of(7)), 'hade vi inte behövt köra\nåtta mil för att leta efter dig.')
 
+            # --- sound descriptions in the sample ---------------------------------
+            check('the setting for sound descriptions can be changed on the sample', await page.ev(SDH_LOCKED), [False, ''])
+            await page.ev(click_row(1, 'st:keep'))
+            check('Keep translates the door at once, from Google\'s recording', await settle(page, sv_of(1), '[dörren slår igen]'), '[dörren slår igen]')
+            await page.ev(click_row(1, 'st:leave-out'))
+            check('and Leave out leaves it out again', await settle(page, sv_of(1), 'Sound description, left out'), 'Sound description, left out')
+            await page.ev(set_sdh('keep'))
+            want = ['[dörren slår igen]', '(suckar) Du sålde pappas bil?', '24']
+            check('"Translate them" brings in the door and the sigh', await settle(page, f"[{sv_of(1)}, {sv_of(20)}, {text('#st-c-all')}]", want), want)
+            check('and the first step no longer says it removes them', await page.ev(text('#st-prep-desc')),
+                  'Removes fillers (um, you know, like) and joins sentences that run over several subtitles.')
+            await page.ev(set_sdh('remove'))
+            want = ['Sound description, left out', 'Sålde du pappas bil?', '23', '7']
+            check('"Leave them out" puts the sample back as it was', await settle(page, f"[{sv_of(1)}, {sv_of(20)}, {text('#st-c-all')}, {text('#st-c-attn')}]", want), want)
+            check('none of it needed the translator', await page.ev("window.__trCalls.length"), 0)
+
             # --- the sample, live ---------------------------------------------
-            await page.ev("document.getElementById('st-go').click()")
+            await page.ev("window.__trDelay = 600; document.getElementById('st-go').click()")
+            check('a live run of the sample starts', await settle(page, "window.__trCalls.length >= 1", True), True)
+            check('the setting for sound descriptions waits for it', await page.ev(SDH_LOCKED),
+                  [True, 'Wait for the translation to finish, or stop it, to change this.'])
+            await page.ev(click_row(1, 'st:keep'))
+            check('the door, kept while the run goes, says it is on its way', await settle(page, sv_of(1), 'Translating…'), 'Translating…')
             check('a live run of the sample finishes', await settle(page, f"{text('#st-alert')}.startsWith('Done.')", True), True)
+            await page.ev("window.__trDelay = 0")
             check('the model was fetched on the click', await page.ev(text('#st-chrome-state')), 'Ready')
             calls = await page.ev("window.__trCalls.map(c => c.split('\\n').length)")
-            check('whole sentences, twelve to a request', calls, [12, 10])
+            check('whole sentences, twelve to a request, and then the door', calls, [12, 10, 1])
+            check('the door is translated after the rest', [await page.ev("window.__trCalls[2]"), await page.ev(sv_of(1))], ['[door slams]', 'SV [door slams]'])
+            check('and the setting can be changed again', await page.ev(SDH_LOCKED), [False, ''])
             check('the filler was gone before it went', await page.ev("window.__trCalls[0].split('\\n')[1]"), 'I got held up at work.')
             check('the phrasebook\'s line is kept', await page.ev(sv_of(23)), 'Nu räcker det för i kväll.')
             check('two speakers, a hyphen each', await page.ev(sv_of(4)), '-SV At two in the morning?\n-SV I\'m sorry, okay?')
@@ -236,8 +286,36 @@ async def main():
             check('starting at the first subtitle', body.split('\r\n')[:3], ['1', '00:00:01,000 --> 00:00:02,800', "SV I don't know what you mean."])
             check('with the italics back on', '<i>SV Leave a message after the tone.</i>' in body, True)
 
+            # The reload returns before the new page is there: the old page has the mark, the new one not.
+            await page.ev("window.__beforeReload = true")
             await page.call('Page.reload', {}, session=page.sid)
-            check('the work is still there after a reload', await settle(page, f"[{text('#st-file-name')}, {text('#st-c-todo')}]", ['Test.Film.en.srt', '0']), ['Test.Film.en.srt', '0'])
+            want = [False, 'Test.Film.en.srt', '0']
+            check('the work is still there after a reload', await settle(page, f"[!!window.__beforeReload, {text('#st-file-name')}, {text('#st-c-todo')}]", want), want)
+
+            # --- sound descriptions after the translation -------------------------
+            await page.ev("window.__trCalls.length = 0")
+            await page.ev(click_row(2, 'st:keep'))
+            check('Keep translates a sound description at once', await settle(page, sv_of(2), 'SV [phone ringing]'), 'SV [phone ringing]')
+            check('on its own', await page.ev("window.__trCalls"), ['[phone ringing]'])
+            await page.ev(click_row(2, 'st:leave-out'))
+            check('Leave out leaves it out', await settle(page, sv_of(2), 'Sound description, left out'), 'Sound description, left out')
+            await page.ev(click_row(2, 'st:keep'))
+            check('and Keep brings its Swedish back without the translator',
+                  [await settle(page, sv_of(2), 'SV [phone ringing]'), await page.ev("window.__trCalls.length")], ['SV [phone ringing]', 1])
+            await page.ev("window.__trCalls.length = 0")
+            await page.ev(set_sdh('keep'))
+            want = ['SV HOPE: You know exactly what I mean,', 'and you know it.', 'SV [phone ringing]', '60', '0']
+            check('"Translate them" after the translation translates what it changes',
+                  await settle(page, f"[{sv_of(3)}, {sv_of(4)}, {sv_of(10)}, {text('#st-c-all')}, {text('#st-c-todo')}]", want), want)
+            check('and only that: seven sounds and eight sentences with a speaker label',
+                  await page.ev("window.__trCalls.map(c => c.split('\\n').length)"), [12, 3])
+            await page.ev("window.__trCalls.length = 0")
+            await page.ev(set_sdh('remove'))
+            want = ['SV You know exactly what I mean,', 'Sound description, left out', 'Sound description, left out', '52', '0']
+            check('"Leave them out" takes the sounds out, the kept one too, and the labels out of their sentences',
+                  await settle(page, f"[{sv_of(3)}, {sv_of(2)}, {sv_of(10)}, {text('#st-c-all')}, {text('#st-c-todo')}]", want), want)
+            check('translating only the eight sentences with a label', await page.ev("window.__trCalls.map(c => c.split('\\n').length)"), [8])
+            check('no script errors with the sound descriptions', page.errors, [])
 
             await page.ev("document.querySelector('footer .theme-toggle').click()")
             await asyncio.sleep(0.3)

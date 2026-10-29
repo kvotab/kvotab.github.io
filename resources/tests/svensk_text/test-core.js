@@ -90,6 +90,14 @@ check('the sample is 23 sentences', units.length, 23);
 check('two of them run over two subtitles: 6 and 7, 15 and 16', units.filter(u => u.parts.length > 1).map(u => u.parts.map(p => p.n)), [[6, 7], [15, 16]]);
 check('every sentence is either in Google’s sample output or in the phrasebook',
   units.filter(u => u.text && !C.phrasebook(u.text) && !(u.text in C.SAMPLE_GOOGLE)).map(u => u.text), []);
+{
+  const kept = C.buildUnits(cues.map(c => ({ ...c, en: c.raw, removed: !c.raw })), { fillers: true });
+  check('with the sound descriptions translated, 24 sentences, all in Google’s sample output or the phrasebook',
+    [kept.length, kept.filter(u => u.text && !C.phrasebook(u.text) && !(u.text in C.SAMPLE_GOOGLE)).map(u => u.text)], [24, []]);
+  const u = C.buildUnits([{ n: 1, start: 0, end: 1000, en: 'If you had answered,' }, { n: 2, start: 1100, end: 2000, en: '[door slams]' },
+    { n: 3, start: 2100, end: 3000, en: "we wouldn't have driven." }], { fillers: true });
+  check('a sound description kept in mid-sentence is a sentence of its own', u.map(x => x.text), ['If you had answered,', '[door slams]', "we wouldn't have driven."]);
+}
 check('a sentence ending in a comma goes on', C.continues('If you go,', 'I go too.', 300), true);
 check('one that trails off goes on into "..."', C.continues('I was going to...', '...say something.', 300), true);
 check('but not into a new sentence', C.continues('I was going to...', 'Never mind.', 300), false);

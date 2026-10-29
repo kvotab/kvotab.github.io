@@ -34,7 +34,7 @@ const ST = (() => {
   const OPUS_MODEL = 'Xenova/opus-mt-en-sv';
   const DEFAULTS = { engine: 'chrome', engineChosen: false, audience: 'adult', maxLen: 42, dash: 'nospace', sdh: 'remove', fillers: true, extend: true, encoding: 'utf8bom' };
   const S = {
-    p: null, set: { ...DEFAULTS }, sel: 1, filter: 'all', q: '', qa: [], job: { running: false }, rows: new Map(),
+    p: null, set: { ...DEFAULTS }, sel: 1, filter: 'all', q: '', qa: [], job: { running: false }, queue: new Set(), rows: new Map(),
     editing: 0, play: null, dirty: new Set(), frame: 0, names: null,
     chrome: { state: 'checking', tr: null }, opus: { state: 'idle', pipe: null, loading: null, progress: 0 },
   };
@@ -155,25 +155,44 @@ const ST = (() => {
   }
 
   /* ---------- the project ---------- */
-  function makeProject(name, parsed, kind, sdh) {
+  function makeProject(name, parsed, kind, sdh, kept) {
     parsed.sort((a, b) => a.start - b.start);
     const cues = parsed.map((c, i) => {
       const nc = normalizeCue(c.raw);
       return { n: i + 1, start: c.start, end: c.end, raw: nc.text, pos: nc.pos, ital: nc.ital, en: '', removed: false, sv: null, prev: null, why: '', by: '', err: '', pieces: null };
     });
+    if (kept) cues.forEach((c, i) => { if (kept[i] != null) c.kept = kept[i]; });
     applySDH(cues, sdh);
     return { v: 1, name, kind, cues, phase: 'new', stats: null };
   }
+  // Each subtitle's English, with or without its sound descriptions: as the setting says, or as the
+  // subtitle's own Keep (kept true) or Leave out (kept false) says. A subtitle whose English changes
+  // loses the Swedish made from the old English, unless you wrote it; a sound description that is
+  // left out keeps its Swedish for when it comes back. Returns the subtitles that now need translating.
   function applySDH(cues, mode) {
+    const todo = [];
     for (const c of cues) {
-      if (c.kept) { c.en = c.raw; c.removed = false; continue; }
-      const t = mode === 'remove' ? cleanSDH(c.raw) : c.raw;
-      c.en = t;
-      c.removed = !stripTags(t).trim();
+      const en = (c.kept ?? mode === 'keep') ? c.raw : cleanSDH(c.raw);
+      const removed = !stripTags(en).trim();
+      if (en === c.en && removed === c.removed) continue;
+      const back = c.removed && !removed;
+      c.en = en;
+      c.removed = removed;
+      if (removed) continue;
+      if (c.sv != null && !back) {
+        if (c.by === 'you') c.why = 'The English changed with the setting for sound descriptions. Check the Swedish.';
+        else Object.assign(c, { sv: null, prev: null, why: '', by: '', err: '' });
+      }
+      if (c.sv == null) todo.push(c.n);
     }
+    return todo;
   }
+  // A subtitle that is only a sound description or a speaker label, whether it is left out or not.
+  const soundOnly = c => !stripTags(cleanSDH(c.raw)).trim();
   const active = () => S.p.cues.filter(c => !c.removed && c.en);
-  const pendingIds = () => active().filter(c => c.sv == null).map(c => c.n);
+  const isPending = c => !c.removed && !!c.en && c.sv == null;
+  const pendingIds = () => S.p.cues.filter(isPending).map(c => c.n);
+  const inRun = c => S.job.running && S.job.ids.has(c.n);
 
   // Puts one translated sentence back into the subtitles it came from.
   function applyUnit(u, sv, by) {
@@ -215,20 +234,46 @@ const ST = (() => {
     }
   }
 
-  // The sample scene as Google translated it, put through the same steps as a run.
-  function makeSampleProject() {
-    const p = makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample', 'remove');
-    S.p = p;
-    const units = buildUnits(p.cues, { fillers: true });
-    for (const u of units) {
+  // The sample's Swedish is what Google returned for it (SAMPLE_GOOGLE), put through the same
+  // steps as a run, so the sample needs no translator.
+  function translateRecorded(ids) {
+    const want = new Set(ids);
+    for (const u of buildUnits(S.p.cues, { fillers: true })) {
+      if (!u.parts.some(x => want.has(x.n))) continue;
       const pb = phrasebook(u.text);
       if (pb) applyUnit(u, pb, 'phrasebook');
       else if (!u.text) applyUnit(u, '', 'filler');
-      else applyUnit(u, SAMPLE_GOOGLE[u.text] ?? null, 'google');
+      else if (SAMPLE_GOOGLE[u.text] != null) applyUnit(u, SAMPLE_GOOGLE[u.text], 'google');
     }
+  }
+  function makeSampleProject() {
+    const p = makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample', S.set.sdh);
+    S.p = p;
+    translateRecorded(p.cues.map(c => c.n));
     p.phase = 'done';
-    p.stats = { units: units.length };
+    p.stats = { units: buildUnits(p.cues, { fillers: true }).length };
     return p;
+  }
+
+  // The setting for sound descriptions, or a row's Keep or Leave out, has changed what there is to
+  // translate. Once the work has started, what it brings in is translated at once.
+  function sdhChanged() {
+    const p = S.p, started = S.job.running || p.cues.some(c => c.sv != null);
+    const todo = applySDH(p.cues, S.set.sdh);
+    p.stats = { units: buildUnits(p.cues, opts()).length };
+    if (todo.length && p.phase === 'done') p.phase = 'translating';
+    qaAll();
+    for (const c of p.cues) touch(c.n);
+    if (p.kind === 'sample') { translateRecorded(todo); p.phase = 'done'; }
+    else if (started && todo.length) translateSoon(todo);
+    scheduleSave();
+  }
+  // A row's Keep or Leave out: this sound description in or out, whatever the setting says.
+  function keepSound(n, keep) {
+    const c = S.p.cues[n - 1];
+    if (keep === (S.set.sdh === 'keep')) delete c.kept;
+    else c.kept = keep;
+    sdhChanged();
   }
 
   function setProject(p, sel) {
@@ -311,7 +356,7 @@ const ST = (() => {
         box.tabIndex = 0;
         box.setAttribute('role', 'button');
         box.setAttribute('aria-label', `Edit the Swedish for subtitle ${c.n}`);
-        if (c.sv == null) { box.classList.add('st-muted'); box.textContent = c.err ? 'Not translated. Press Resume to try again, or type it here.' : 'Not translated yet'; }
+        if (c.sv == null) { box.classList.add('st-muted'); box.textContent = inRun(c) ? 'Translating…' : c.err ? 'Not translated. Press Resume to try again, or type it here.' : 'Not translated yet'; }
         else if (!c.sv) { box.classList.add('st-muted'); box.textContent = 'Left out (only fillers)'; }
         else { renderRich(box, c.sv); box.classList.toggle('st-ital', !!c.ital); }
       }
@@ -331,14 +376,12 @@ const ST = (() => {
     }
 
     qaEl.replaceChildren();
-    if (c.removed) {
-      qaEl.appendChild(chip('SDH', '', 'Sound description or speaker label'));
+    const sdhButton = (label, action, title) => {
       const k = document.createElement('button');
-      k.type = 'button'; k.className = 'st-btn st-btn-sm st-qa-end'; k.dataset.onClick = 'st:keep'; k.textContent = 'Keep';
-      k.title = 'Translate this subtitle instead of leaving it out';
-      qaEl.appendChild(k);
-      return;
-    }
+      k.type = 'button'; k.className = 'st-btn st-btn-sm st-qa-end'; k.dataset.onClick = action; k.textContent = label; k.title = title;
+      qaEl.append(chip('SDH', '', 'Sound description or speaker label'), k);
+    };
+    if (c.removed) { sdhButton('Keep', 'st:keep', 'Translate this subtitle instead of leaving it out'); return; }
     if (c.sv) {
       const lv = q.issues.find(x => x.code === 'cps');
       qaEl.appendChild(chip(q.cps.toFixed(1) + ' cps', lv ? lv.lv : 'ok', 'Characters per second'));
@@ -346,6 +389,7 @@ const ST = (() => {
       if (q.ext > 0) qaEl.appendChild(chip('+' + Math.max(0.1, Math.ceil(q.ext / 100) / 10).toFixed(1) + ' s', '', 'Stays on screen a little longer, into the pause after it'));
       if (c.by === 'phrasebook') qaEl.appendChild(chip('phrase', '', 'Standard subtitle wording from the built-in phrasebook'));
     }
+    if (soundOnly(c)) sdhButton('Leave out', 'st:leave-out', 'Leave this sound description out of the Swedish subtitles');
     for (const x of q.issues) {
       if (x.code === 'cps' && x.lv === 'warn') continue;
       const d = document.createElement('div');
@@ -357,9 +401,9 @@ const ST = (() => {
   function rowVisible(c) {
     const q = S.qa[c.n - 1];
     if (S.filter === 'attn' && !(q && (q.level === 'warn' || q.level === 'bad'))) return false;
-    if (S.filter === 'edited' && c.by !== 'you') return false;
-    if (S.filter === 'todo' && !(c.sv == null && !c.removed && c.en)) return false;
-    if (S.q && !((c.en + '\n' + (c.sv || '')).toLowerCase().includes(S.q))) return false;
+    if (S.filter === 'edited' && !(c.by === 'you' && !c.removed)) return false;
+    if (S.filter === 'todo' && !isPending(c)) return false;
+    if (S.q && !((c.removed ? c.raw : c.en + '\n' + (c.sv || '')).toLowerCase().includes(S.q))) return false;
     return true;
   }
   function applyFilter() {
@@ -375,8 +419,8 @@ const ST = (() => {
       const q = S.qa[c.n - 1];
       if (!c.removed) all++;
       if (q && (q.level === 'warn' || q.level === 'bad')) attn++;
-      if (c.by === 'you') edited++;
-      if (c.sv == null && !c.removed && c.en) todo++;
+      if (c.by === 'you' && !c.removed) edited++;
+      if (isPending(c)) todo++;
     }
     $('#st-c-all').textContent = all; $('#st-c-attn').textContent = attn; $('#st-c-edit').textContent = edited; $('#st-c-todo').textContent = todo;
     for (const b of document.querySelectorAll('.st-seg button')) b.setAttribute('aria-pressed', String(b.dataset.f === S.filter));
@@ -410,7 +454,7 @@ const ST = (() => {
     renderRich($('#st-en-line'), c.removed ? c.raw : c.en);
     const meta = $('#st-meta');
     meta.replaceChildren(chip('#' + c.n, ''), chip(((c.end - c.start) / 1000).toFixed(1) + ' s' + (q.ext ? ' +' + (q.ext / 1000).toFixed(1) : ''), ''));
-    if (c.sv) {
+    if (c.sv && !c.removed) {
       const lv = (q.issues || []).find(x => x.code === 'cps');
       meta.appendChild(chip(q.cps.toFixed(1) + ' cps', lv ? lv.lv : 'ok', 'Characters per second'));
       meta.appendChild(chip(q.lens.join(' · ') + ' / ' + o.maxLen, q.lens.some(l => l > o.maxLen) || q.lens.length > 2 ? 'bad' : '', 'Characters per line'));
@@ -425,7 +469,7 @@ const ST = (() => {
     sub.classList.toggle('st-sub-top', !!(c && /\\an?8/.test(c.pos)));
     if (!S.play && c && !text) {
       empty.hidden = false;
-      empty.textContent = c.removed ? 'Sound description, left out' : c.sv == null ? 'Not translated yet' : 'Left out (only fillers)';
+      empty.textContent = c.removed ? 'Sound description, left out' : c.sv == null ? (inRun(c) ? 'Translating…' : 'Not translated yet') : 'Left out (only fillers)';
     } else empty.hidden = true;
     $('#st-scr-tc').textContent = fmtSrtTime(t);
   }
@@ -578,19 +622,13 @@ const ST = (() => {
     c.sv = c.prev; c.prev = null; c.why = ''; c.by = 'you';
     qaOne(n); touch(n); scheduleSave();
   }
-  function keep(n) {
-    const c = S.p.cues[n - 1];
-    c.kept = true; c.removed = false; c.en = c.raw; c.sv = null;
-    if (S.p.phase === 'done') S.p.phase = 'translating';
-    qaOne(n); touch(n); scheduleSave(); renderRail();
-  }
   function replaceAll() {
     const find = $('#st-q').value, rep = $('#st-rep').value;
     if (!find) return;
     const re = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     let count = 0;
     for (const c of S.p.cues) {
-      if (!c.sv || !rowVisible(c)) continue;
+      if (c.removed || !c.sv || !rowVisible(c)) continue;
       const v = c.sv.replace(re, () => { count++; return rep; });
       if (v !== c.sv) { c.prev = c.sv; c.sv = v; c.by = 'you'; c.why = ''; qaOne(c.n); touch(c.n); }
     }
@@ -600,15 +638,26 @@ const ST = (() => {
 
   /* ---------- a run ---------- */
   function stopJob() { if (!S.job.running) return; S.job.stop = true; S.job.note = 'Stopping after the current sentences…'; renderRail(); }
-  async function run() {
+  // Translates these subtitles now, or when the run that is going has done its own.
+  function translateSoon(ids) {
+    if (!S.job.running) { run(ids); return; }
+    for (const n of ids) { S.queue.add(n); S.job.ids.add(n); }
+  }
+  // A run translates every subtitle not translated yet, or only `only` (a Keep, a change of
+  // setting) when it is given, and then what was kept while it ran.
+  async function run(only) {
     const p = S.p;
     if (!p || S.job.running) return;
     if (S.editing) commitEdit();
     stopPlay();
     const engine = S.set.engine;
-    const J = S.job = { running: true, stop: false, done: 0, total: 0, note: 'Getting ready…', t0: performance.now() };
+    const asked = only ? new Set(only) : null;
+    const ids = new Set(asked ? only.filter(n => isPending(p.cues[n - 1])) : pendingIds());
+    const J = S.job = { running: true, stop: false, done: 0, total: 0, note: 'Getting ready…', t0: performance.now(), ids };
     setAlert('');
+    for (const n of ids) touch(n);
     renderRail();
+    renderSettings();
     try {
       if (engine === 'chrome') {
         if (!hasTranslator()) throw { code: 'chrome-missing' };
@@ -617,44 +666,51 @@ const ST = (() => {
       } else await opusTranslator();
       const translate = engine === 'chrome' ? translateChrome : translateOpus;
 
-      const pend = new Set(pendingIds());
-      const units = buildUnits(p.cues, opts()).filter(u => u.parts.some(x => pend.has(x.n)));
-      p.stats = { units: units.length };
       p.phase = 'translating';
-      J.total = units.length;
-      const todo = [];
-      for (const u of units) {
-        const pb = phrasebook(u.text);
-        if (pb) { applyUnit(u, pb, 'phrasebook'); J.done++; }
-        else if (!u.text) { applyUnit(u, '', 'filler'); J.done++; }
-        else todo.push(u);
-      }
-      for (const chunk of chunkUnits(todo, engine === 'chrome' ? 12 : 4, 1500)) {
-        if (J.stop) throw { code: 'cancelled' };
-        const lastPart = chunk[chunk.length - 1].parts;
-        J.note = `Translating subtitles ${chunk[0].parts[0].n}–${lastPart[lastPart.length - 1].n}`;
-        renderRail();
-        const out = await translate(chunk.map(u => u.text));
-        chunk.forEach((u, i) => {
-          const sv = out[i];
-          if (sv == null || !String(sv).trim()) { for (const x of u.parts) { p.cues[x.n - 1].err = 'empty'; qaOne(x.n); touch(x.n); } }
-          else applyUnit(u, sv, 'google');
-          J.done++;
-        });
-        scheduleSave();
-        await new Promise(r => setTimeout(r, 0));
+      for (let pend = ids; pend.size; ) {
+        const all = buildUnits(p.cues, opts());
+        p.stats = { units: all.length };
+        const units = all.filter(u => u.parts.some(x => pend.has(x.n)));
+        J.total += units.length;
+        const todo = [];
+        for (const u of units) {
+          const pb = phrasebook(u.text);
+          if (pb) { applyUnit(u, pb, 'phrasebook'); J.done++; }
+          else if (!u.text) { applyUnit(u, '', 'filler'); J.done++; }
+          else todo.push(u);
+        }
+        for (const chunk of chunkUnits(todo, engine === 'chrome' ? 12 : 4, 1500)) {
+          if (J.stop) throw { code: 'cancelled' };
+          const lastPart = chunk[chunk.length - 1].parts;
+          J.note = `Translating subtitles ${chunk[0].parts[0].n}–${lastPart[lastPart.length - 1].n}`;
+          renderRail();
+          const out = await translate(chunk.map(u => u.text));
+          chunk.forEach((u, i) => {
+            const sv = out[i];
+            if (sv == null || !String(sv).trim()) { for (const x of u.parts) { p.cues[x.n - 1].err = 'empty'; qaOne(x.n); touch(x.n); } }
+            else applyUnit(u, sv, 'google');
+            J.done++;
+          });
+          scheduleSave();
+          await new Promise(r => setTimeout(r, 0));
+        }
+        pend = new Set([...S.queue].filter(n => isPending(p.cues[n - 1])));
+        S.queue.clear();
+        if (asked) for (const n of pend) asked.add(n);
       }
       const left = pendingIds().length;
+      const missed = asked ? [...asked].filter(n => isPending(p.cues[n - 1])).length : left;
       if (!left) {
         p.phase = 'done';
         const attn = S.qa.filter(q => q.level === 'warn' || q.level === 'bad').length;
         setAlert(attn ? `Done. ${attn} subtitle${attn === 1 ? ' needs' : 's need'} a look, mostly to shorten. Choose Needs a look above the list.` : 'Done. Every subtitle is within the limits.', 'ok');
-      } else setAlert(`${left} subtitle${left === 1 ? ' was' : 's were'} not translated. Press Resume to try again.`, 'bad');
+      } else if (missed) setAlert(`${missed} subtitle${missed === 1 ? ' was' : 's were'} not translated. Press Resume to try again.`, 'bad');
     } catch (e) {
       if ((e && e.code === 'cancelled') || J.stop) setAlert('Stopped. Everything translated so far is kept. Press Resume to continue.', 'info');
       else setAlert(engineError(e), 'bad');
     } finally {
       J.running = false;
+      S.queue.clear();
       saveNow();
       // The whole list now, not on the next frame: a tab in the background may not get one for a while.
       if (S.frame) { cancelAnimationFrame(S.frame); clearTimeout(S.frame); }
@@ -708,9 +764,10 @@ const ST = (() => {
       ? 'This sample scene shows what the page does with Google’s real output. Click a subtitle to see what changed. Open your own English .srt file to translate a film or an episode.'
       : `${act} subtitles${left ? `, plus ${left} sound description${left === 1 ? '' : 's'} left out` : ''}.`;
 
-    const fills = p.cues.filter(c => /Fillers left out|Only fillers/.test(c.why || '')).length;
-    const pbs = p.cues.filter(c => c.by === 'phrasebook').length;
-    const fixes = p.cues.filter(c => /is "|converted|Filler removed|allihop|Herregud/.test(c.why || '')).length;
+    const live = p.cues.filter(c => !c.removed);
+    const fills = live.filter(c => /Fillers left out|Only fillers/.test(c.why || '')).length;
+    const pbs = live.filter(c => c.by === 'phrasebook').length;
+    const fixes = live.filter(c => /is "|converted|Filler removed|allihop|Herregud/.test(c.why || '')).length;
     const attn = S.qa.filter(q => q.level === 'warn' || q.level === 'bad').length;
     const done = p.phase === 'done' && !pend;
     const state = {
@@ -720,12 +777,14 @@ const ST = (() => {
       check: done ? 'done' : 'todo',
     };
     const cnt = {
-      prep: p.stats ? `${p.stats.units} sentences` : '',
+      prep: p.stats ? `${p.stats.units} sentence${p.stats.units === 1 ? '' : 's'}` : '',
       translate: act ? `${translated}/${act}` : '',
       clean: translated ? `${pbs} phrase${pbs === 1 ? '' : 's'} · ${fixes + fills} fix${fixes + fills === 1 ? '' : 'es'}` : '',
       check: done ? `${attn} to look at` : '',
     };
     for (const li of document.querySelectorAll('#st-steps li')) { li.dataset.state = state[li.dataset.step]; li.querySelector('.st-cnt').textContent = cnt[li.dataset.step]; }
+    const gone = [S.set.sdh === 'remove' && 'sound descriptions', S.set.fillers && 'fillers (um, you know, like)'].filter(Boolean);
+    $('#st-prep-desc').textContent = (gone.length ? `Removes ${gone.join(' and ')} and joins` : 'Joins') + ' sentences that run over several subtitles.';
     $('#st-check-desc').textContent = `Two lines, ${o.maxLen} characters per line, ${o.cps} characters per second. Subtitles over the limit are marked for you to shorten.`;
     const google = S.set.engine === 'chrome';
     $('#st-step-tr-h').textContent = google ? 'Translate with Google' : 'Translate with the open model';
@@ -761,9 +820,9 @@ const ST = (() => {
     f.elements.audience.value = s.audience; f.elements.maxLen.value = opts().maxLen; f.elements.dash.value = s.dash;
     f.elements.sdh.value = s.sdh; f.elements.fillers.checked = !!s.fillers; f.elements.extend.checked = !!s.extend;
     $('#st-encoding').value = s.encoding;
-    const started = S.p.kind !== 'sample' && S.p.cues.some(c => c.sv != null);
-    f.elements.sdh.disabled = started || S.p.kind === 'sample';
-    $('#st-sdh-note').textContent = S.p.kind === 'sample' ? 'Applies to your own files.' : started ? 'Set this before translating. Use Keep on a single subtitle to bring it back.' : '';
+    // Not while a run is going: it would change the English of sentences on their way to the translator.
+    f.elements.sdh.disabled = S.job.running;
+    $('#st-sdh-note').textContent = S.job.running ? 'Wait for the translation to finish, or stop it, to change this.' : '';
     $('#st-guide-lbl').textContent = `${opts().maxLen} characters`;
   }
   function renderSave() {
@@ -873,12 +932,8 @@ const ST = (() => {
     extend: requalify,
     maxLen: repolish,
     dash: repolish,
-    sdh: () => {
-      if (S.p.kind === 'sample' || S.p.cues.some(c => c.sv != null)) return;
-      applySDH(S.p.cues, S.set.sdh);
-      S.p.stats = { units: buildUnits(S.p.cues, opts()).length };
-      qaAll(); buildList(); renderStage();
-    },
+    // The setting is for every subtitle: what a row's Keep or Leave out said before it goes.
+    sdh: () => { for (const c of S.p.cues) delete c.kept; sdhChanged(); },
     fillers: () => { if (S.p.kind === 'file') S.p.stats = { units: buildUnits(S.p.cues, opts()).length }; },
   };
 
@@ -892,7 +947,7 @@ const ST = (() => {
         if (pendingFile) { const f = pendingFile; pendingFile = null; await loadFile(f); } else doClose();
       },
       'st:go': () => {
-        if (S.p.kind === 'sample') setProject(makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample-live', 'remove'));
+        if (S.p.kind === 'sample') setProject(makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample-live', S.set.sdh, S.p.cues.map(c => c.kept)));
         run();
       },
       'st:stop': () => stopJob(),
@@ -910,7 +965,8 @@ const ST = (() => {
       'st:search': (e, el) => { S.q = el.value.trim().toLowerCase(); applyFilter(); },
       'st:replace': () => replaceAll(),
       'st:undo': (e, el) => undo(rowOf(el)),
-      'st:keep': (e, el) => keep(rowOf(el)),
+      'st:keep': (e, el) => keepSound(rowOf(el), true),
+      'st:leave-out': (e, el) => keepSound(rowOf(el), false),
       'st:save': () => saveSrt(),
       'st:copy': () => copySrt(),
     });

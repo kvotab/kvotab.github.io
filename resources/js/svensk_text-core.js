@@ -18,6 +18,8 @@
 
    SAMPLE_GOOGLE is what translate.google.com returned on 29 October 2026 for
    the prepared sentences of SAMPLE_SRT; the page shows it on a first visit.
+   The two sentences that only exist when sound descriptions are translated
+   are from Google's translate endpoint, the same day.
    ========================================================================== */
 
 const ST_CORE = (() => {
@@ -150,7 +152,11 @@ Let's just call it a night.
     "Your audition's tomorrow, right? Break a leg, Hope.": 'Du har väl en provspelning i morgon? Lycka till, Hope.',
     "Let's just call it a night.": 'Vi säger god natt nu.',
     'Night, Will.': 'God natt, Will.',
-    'Night, sis.': 'God natt, syrran.'
+    'Night, sis.': 'God natt, syrran.',
+    // The two sentences that change when sound descriptions are translated, as Google's
+    // translate endpoint (translate.googleapis.com) returned them on 29 October 2026.
+    '[door slams]': '[dörren slår igen]',
+    "(SIGHS) You sold Dad's car?": '(suckar) Du sålde pappas bil?'
   };
 
   const TIME_RE = /(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})/;
@@ -269,21 +275,22 @@ Let's just call it a night.
   }
 
   // Splits subtitles into translation units: whole sentences, possibly running over several subtitles.
-  // Each part knows which subtitle (n) and which speaker line (k) it came from.
+  // Each part knows which subtitle (n) and which speaker line (k) it came from. A subtitle that is
+  // only a sound description ([door slams], kept to be translated) is a unit of its own.
   function buildUnits(cues, opts) {
     const units = [];
     let cur = null, last = null;
     for (const c of cues) {
       if (c.removed || !c.en) { cur = null; continue; }
-      const dlg = isDialogue(c.en);
+      const dlg = isDialogue(c.en), sound = !stripTags(cleanSDH(c.en)).trim();
       const lines = dlg ? c.en.split('\n').map(l => l.replace(/^((?:<[^>]+>)*)\s*[-–—]\s*/, '$1')) : [c.en.split('\n').join(' ')];
       lines.forEach((raw, k) => {
         const text = stripTags(raw).replace(/\s+/g, ' ').trim();
         const clean = opts.fillers ? preClean(text) : text;
         const part = { n: c.n, k, en: text, clean };
-        if (cur && k === 0 && !dlg && last && continues(last.en, text, c.start - last.end) && cur.parts.length < 4) cur.parts.push(part);
+        if (cur && k === 0 && !dlg && !sound && last && continues(last.en, text, c.start - last.end) && cur.parts.length < 4) cur.parts.push(part);
         else { cur = { parts: [part] }; units.push(cur); }
-        if (dlg || endsSentence(text)) cur = null;
+        if (dlg || sound || endsSentence(text)) cur = null;
       });
       last = { en: dlg ? '' : stripTags(c.en).replace(/\s+/g, ' ').trim(), end: c.end };
     }

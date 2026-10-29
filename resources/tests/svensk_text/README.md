@@ -10,7 +10,7 @@ translator with a stand-in that answers "SV " and the English.
 
     node resources/tests/svensk_text/test-core.js
 
-No page and no browser; under a second, and exits 0 when all 110 checks pass.
+No page and no browser; under a second, and exits 0 when all 112 checks pass.
 It checks that:
 
 - **Files are read** as .srt or .vtt, in UTF-8, UTF-16 or Windows-1252, with
@@ -18,7 +18,9 @@ It checks that:
   position tag and italics over a whole subtitle are kept aside and put back.
 - **What subtitles for the deaf carry is left out:** [sounds], (SIGHS) and
   ALL-CAPS speaker labels, inside italics and dialogue too, but not a clock
-  time or a lone "I:".
+  time or a lone "I:". A sound description that is kept is a sentence of its
+  own, even in the middle of one, and with them kept every sentence of the
+  sample is still in Google's recording.
 - **The English is made ready:** hesitations, stutters and the fillers
   "you know", "I mean", "like" and "well" out, and nothing that only looks
   like them ("Do you know what I mean?", "Her umbrella").
@@ -55,16 +57,24 @@ sessions use ports too:
 
     python3 resources/tests/svensk_text/test-ui.py
 
-About 15 s; 34 checks. It needs the `websockets` package. It checks that the
+About 6 s; 56 checks. It needs the `websockets` package. It checks that the
 page loads in the site's header, menu and footer without a script error; that
-the sample shows Google's Swedish with seven subtitles to look at; that a
-live run asks for the translator's model on the click, sends whole sentences
-twelve to a request with the fillers already gone, and keeps the phrasebook's
-line; that an .srt from disk is translated, the list up to date when the run
-ends, and saved as `Test.Film.sv.srt` in UTF-8 with a BOM and Windows line
-ends; that the work survives a reload; that the theme switch redraws without
-an error; that a browser without the translator gets the open model chosen for
-it; and that the front page has the card.
+the sample shows Google's Swedish with seven subtitles to look at; that in
+the sample, Keep and Leave out and the setting for sound descriptions work
+at once from Google's recording, with no translator; that a live run asks
+for the translator's model on the click, sends whole sentences twelve to a
+request with the fillers already gone, keeps the phrasebook's line, holds the
+setting for sound descriptions until it ends, and translates a subtitle kept
+while it ran after its own sentences; that an .srt from disk is translated,
+the list up to date when the run ends, and saved as `Test.Film.sv.srt` in
+UTF-8 with a BOM and Windows line ends; that the work survives a reload; that
+after the translation Keep translates a sound description at once, Leave out
+leaves it out and Keep brings its Swedish back, and either choice in the
+setting translates only the subtitles it changes; that the theme switch
+redraws without an error; that a browser without the translator gets the open
+model chosen for it; and that the front page has the card. An error a
+button's handler throws counts as a script error: the site's dispatcher
+catches it and only logs it.
 
 What it cannot check is Google's translator itself: a headless Chrome cannot
 fetch its model. That was checked by hand in Chrome 156 on macOS.
