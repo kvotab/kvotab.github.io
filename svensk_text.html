@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Svensk text — kvot ab</title>
+  <meta name="description" content="Translate English subtitles (.srt or .vtt) into Swedish in the browser, for free, with Google's translator built into Chrome. Whole sentences go to the translator instead of single subtitles, fillers and sound descriptions are left out, and every subtitle is checked against Swedish subtitling limits.">
+  <link rel="canonical" href="https://kvotab.se/svensk_text.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Svensk text — kvot ab">
+  <meta property="og:description" content="English subtitles into Swedish ones in the browser, free, with Google's translator built into Chrome and the rules of Swedish subtitling.">
+  <meta property="og:url" content="https://kvotab.se/svensk_text.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20260922c">
+  <link rel="stylesheet" href="./resources/css/svensk_text.css?v=20261029">
+  <!-- The page's own mark, in the kvot mark's language (see svensk_text-icon.svg):
+       two lines of a subtitle. The 32 px PNG comes first, for a browser that
+       will not take an SVG (Safari before version 26); Chrome and Firefox take
+       the SVG, and the PNG's size keeps Chrome from fetching the PNG as well.
+       The 180 px PNG is what an iPhone puts on its home screen. -->
+  <link rel="icon" href="./resources/images/svensk_text-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="./resources/images/svensk_text-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./resources/images/svensk_text-icon-180.png">
+  <meta name="apple-mobile-web-app-title" content="Svensk text">
+</head>
+<body class="st-body">
+<header></header>
+<div class="content st-content" id="st-content">
+<main class="st" id="st">
+
+  <div class="st-top">
+    <p class="st-lede">Turn English subtitles into Swedish ones for free, right in your browser. The page sends whole sentences
+      instead of single subtitles, removes fillers and sound descriptions, and checks every subtitle against Swedish
+      subtitling limits.</p>
+    <div class="st-top-end">
+      <span class="st-file"><b id="st-file-name">Sample scene</b><span id="st-file-meta"></span><button class="st-x" id="st-close" type="button"
+        data-on-click="st:close" title="Close this file" aria-label="Close this file" hidden><svg viewBox="0 0 16 16" width="14" height="14" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></span>
+      <button class="st-btn st-btn-go" type="button" data-on-click="st:open">Open .srt file</button>
+    </div>
+  </div>
+
+  <div class="st-confirm" id="st-confirm" hidden>
+    <p id="st-confirm-text"></p>
+    <div class="st-actions"><button class="st-btn st-btn-sm" type="button" data-on-click="st:confirm-no">Cancel</button><button
+      class="st-btn st-btn-sm st-btn-go" id="st-confirm-yes" type="button" data-on-click="st:confirm-yes">Replace</button></div>
+  </div>
+
+  <div class="st-layout">
+    <div class="st-main">
+      <section class="st-stage" aria-label="Preview">
+        <div class="st-screen">
+          <div class="st-scr-tag">Preview</div>
+          <div class="st-scr-tc" id="st-scr-tc">00:00:00,000</div>
+          <div class="st-scr-guide" aria-hidden="true"><span id="st-guide-lbl">42 characters</span></div>
+          <div class="st-sub" id="st-sub" aria-live="polite"></div>
+          <div class="st-scr-empty" id="st-scr-empty" hidden></div>
+        </div>
+        <div class="st-transport">
+          <button class="st-ibtn" type="button" data-on-click="st:prev" title="Previous subtitle (K)" aria-label="Previous subtitle"><svg viewBox="0 0 16 16"
+            fill="currentColor" aria-hidden="true"><path d="M3 2h2v12H3zM14 2.5v11L6 8z"/></svg></button>
+          <button class="st-ibtn" id="st-play" type="button" data-on-click="st:play" title="Play the subtitles in real time (Space)" aria-label="Play"><svg
+            viewBox="0 0 16 16" fill="currentColor" id="st-play-icon" aria-hidden="true"><path d="M4 2.5v11L13 8z"/></svg></button>
+          <button class="st-ibtn" type="button" data-on-click="st:next" title="Next subtitle (J)" aria-label="Next subtitle"><svg viewBox="0 0 16 16"
+            fill="currentColor" aria-hidden="true"><path d="M11 2h2v12h-2zM2 2.5v11L10 8z"/></svg></button>
+          <span class="st-tc" id="st-tc">00:00:00,000</span>
+          <div class="st-meta" id="st-meta"></div>
+        </div>
+        <canvas class="st-timeline" id="st-timeline" aria-label="Timeline of all subtitles, coloured by their check. Click to jump."></canvas>
+        <p class="st-en-line"><span class="st-lbl">EN</span><span id="st-en-line"></span></p>
+      </section>
+
+      <section class="st-card st-engine-card" aria-labelledby="st-eng-title">
+        <div class="st-card-h"><h2 id="st-eng-title">Translator</h2><span class="st-fine">Both are free and translate on this computer. No account, no key.</span></div>
+        <div class="st-engines">
+          <label class="st-eng">
+            <input type="radio" name="engine" value="chrome" id="st-eng-chrome" data-on-change="st:engine">
+            <span class="st-eng-h"><b>Google in Chrome</b><span class="st-pill" id="st-chrome-state">Checking…</span></span>
+            <span class="st-fine">Google Translate built into Chrome and Edge on a computer (version 138 or later). The browser downloads
+              Google's English-to-Swedish model once. Best quality.</span>
+            <span class="st-fine" id="st-chrome-note"></span>
+          </label>
+          <label class="st-eng">
+            <input type="radio" name="engine" value="opus" id="st-eng-opus" data-on-change="st:engine">
+            <span class="st-eng-h"><b>Open model (OPUS-MT)</b><span class="st-pill" id="st-opus-state">Not downloaded</span></span>
+            <span class="st-fine">For Safari, Firefox and other browsers. The page downloads a free English-to-Swedish model from the
+              University of Helsinki (about 105 MB, from Hugging Face) the first time. Slower than Google, and the Swedish needs more editing.</span>
+            <span class="st-fine" id="st-opus-note"></span>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <aside class="st-rail">
+      <section class="st-card" aria-labelledby="st-run-title">
+        <div class="st-card-h"><h2 id="st-run-title">Translate</h2><span class="st-pill" id="st-state">Example</span></div>
+        <p class="st-fine" id="st-intro"></p>
+        <ol class="st-steps" id="st-steps">
+          <li data-step="prep"><span class="st-num" aria-hidden="true"></span><div><b>Prepare the English</b><span>Removes sound descriptions and
+            fillers (um, you know, like) and joins sentences that run over several subtitles.</span></div><em class="st-cnt"></em></li>
+          <li data-step="translate"><span class="st-num" aria-hidden="true"></span><div><b id="st-step-tr-h">Translate with Google</b><span
+            id="st-step-tr-d">Whole sentences go to Google, a dozen at a time, so word order and context come out right.</span></div><em class="st-cnt"></em></li>
+          <li data-step="clean"><span class="st-num" aria-hidden="true"></span><div><b>Swedish clean-up</b><span>Common subtitle lines get standard
+            Swedish wording. Miles become km, mr and dr go lowercase, numbers two to ten are written out.</span></div><em class="st-cnt"></em></li>
+          <li data-step="check"><span class="st-num" aria-hidden="true"></span><div><b>Check every subtitle</b><span id="st-check-desc">Two lines,
+            42 characters per line, 17 characters per second. Subtitles over the limit are marked for you to shorten.</span></div><em class="st-cnt"></em></li>
+        </ol>
+        <div class="st-progress" id="st-progress" hidden><div class="st-bar"><i id="st-bar-fill"></i></div><p class="st-fine" id="st-ptext"></p></div>
+        <div class="st-actions"><button class="st-btn st-btn-go" id="st-go" type="button" data-on-click="st:go">Translate</button><button
+          class="st-btn" id="st-stop" type="button" data-on-click="st:stop" hidden>Stop</button></div>
+        <p class="st-fine" id="st-estimate"></p>
+        <div class="st-alert" id="st-alert" role="status" hidden></div>
+      </section>
+
+      <details class="st-card">
+        <summary><h2>Style rules</h2></summary>
+        <form class="st-form" id="st-settings">
+          <label class="st-field">Reading speed
+            <select name="audience" data-on-change="st:setting"><option value="adult">Adults: 17 characters per second</option><option
+              value="kids">Children: 13 characters per second</option></select>
+          </label>
+          <label class="st-field">Characters per line
+            <input name="maxLen" type="number" min="30" max="60" step="1" inputmode="numeric" data-on-change="st:setting">
+          </label>
+          <label class="st-field">Two speakers in one subtitle
+            <select name="dash" data-on-change="st:setting"><option value="nospace">-Kommer du? (Netflix style)</option><option
+              value="space">- Kommer du? (with a space)</option></select>
+          </label>
+          <label class="st-field">Sound descriptions like [door slams] and NAME:
+            <select name="sdh" data-on-change="st:setting"><option value="remove">Leave them out</option><option value="keep">Translate them</option></select>
+            <small id="st-sdh-note"></small>
+          </label>
+          <label class="st-chk"><input name="fillers" type="checkbox" data-on-change="st:setting"><span>Leave out fillers before translating
+            (um, uh, you know, I mean, like)</span></label>
+          <label class="st-chk"><input name="extend" type="checkbox" data-on-change="st:setting"><span>Let a subtitle stay up to 1 second longer
+            when there is a pause after it and it is too fast to read</span></label>
+        </form>
+      </details>
+
+      <section class="st-card" aria-labelledby="st-save-title">
+        <div class="st-card-h"><h2 id="st-save-title">Save</h2><span class="st-fine" id="st-save-name"></span></div>
+        <label class="st-field">Text encoding
+          <select name="encoding" id="st-encoding" data-on-change="st:setting"><option value="utf8bom">UTF-8 with BOM (works almost everywhere)</option><option
+            value="utf8">UTF-8</option><option value="cp1252">Windows-1252 (older TVs and players)</option></select>
+        </label>
+        <div class="st-actions"><button class="st-btn st-btn-go" type="button" data-on-click="st:save">Save .srt</button><button class="st-btn"
+          type="button" data-on-click="st:copy">Copy as text</button></div>
+        <p class="st-fine" id="st-save-info"></p>
+        <div class="st-alert" id="st-save-alert" role="status" hidden></div>
+        <textarea class="st-copy-box" id="st-copy-box" readonly hidden aria-label="Subtitle text to copy"></textarea>
+      </section>
+    </aside>
+  </div>
+
+  <section class="st-cues" aria-label="Subtitles">
+    <div class="st-tools">
+      <div class="st-seg" role="group" aria-label="Show">
+        <button type="button" data-f="all" data-on-click="st:filter" aria-pressed="true">All <b id="st-c-all">0</b></button>
+        <button type="button" data-f="attn" data-on-click="st:filter" aria-pressed="false">Needs a look <b id="st-c-attn">0</b></button>
+        <button type="button" data-f="edited" data-on-click="st:filter" aria-pressed="false">Edited <b id="st-c-edit">0</b></button>
+        <button type="button" data-f="todo" data-on-click="st:filter" aria-pressed="false">Not translated <b id="st-c-todo">0</b></button>
+      </div>
+      <div class="st-tools-end">
+        <input class="st-search" id="st-q" type="search" placeholder="Search English or Swedish" aria-label="Search the subtitles" data-on-input="st:search">
+        <span class="st-replace" id="st-replace" hidden><input id="st-rep" placeholder="Replace in Swedish with…" aria-label="Replace in Swedish with"><button
+          class="st-btn st-btn-sm" type="button" data-on-click="st:replace">Replace all</button></span>
+      </div>
+    </div>
+    <div class="st-table">
+      <div class="st-thead" aria-hidden="true"><span>#</span><span>Time</span><span>English</span><span>Swedish · click to edit</span><span>Check</span></div>
+      <div id="st-list"></div>
+      <p class="st-list-empty" id="st-list-empty" hidden>Nothing to show with this filter.</p>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<input type="file" id="st-file-input" accept=".srt,.vtt,.txt,text/plain" hidden>
+<div class="st-drop" id="st-drop" hidden><div>Drop the .srt file to open it</div></div>
+
+<div id="kvotmap"></div>
+
+<footer></footer>
+<noscript><p class="st-noscript">Svensk text needs JavaScript.</p></noscript>
+<script src="./resources/js/kvot-errors.js?v=20260921"></script>
+<script src="./resources/js/kvot-safe.js?v=20260911"></script>
+<script src="./resources/js/kvot-actions.js?v=20260902"></script>
+<script src="./resources/js/kvot-icons.js?v=20260902"></script>
+<script src="./resources/js/site.js?v=20261029"></script>
+<script src="./resources/js/svensk_text-core.js?v=20261029"></script>
+<script src="./resources/js/svensk_text.js?v=20261029"></script>
+<script>
+  KVOT.renderHeader('Svensk text');
+  KVOT.renderNav('svensk_text.html');
+  KVOT.renderFooter();
+  KVOT.initMap('kvotmap');
+  ST.init();
+</script>
+</body>
+</html>

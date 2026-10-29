@@ -40,8 +40,11 @@ picture of a word list is read in `flashcards.html`, tesseract.js and
 tesseract.js-core (Apache-2.0; Tesseract itself is Apache-2.0) and
 Tesseract's trained models for Swedish, English and Spanish (Apache-2.0,
 from `@tesseract.js-data`) are fetched too, pinned and checked against their
-hashes. They are fetched by the visitor's browser from their publishers and
-are not redistributed here.
+hashes. When the open model is chosen in `svensk_text.html`, Transformers.js
+3.8.1 (Apache-2.0) with ONNX Runtime Web (MIT) and the Helsinki-NLP group's
+OPUS-MT English–Swedish model (Apache-2.0, in the browser build
+`Xenova/opus-mt-en-sv` on Hugging Face) are fetched too. They are fetched by
+the visitor's browser from their publishers and are not redistributed here.
 
 ## Work followed, not copied
 

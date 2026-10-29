@@ -131,6 +131,11 @@ const KVOT = (() => {
       desc: 'Tune an acoustic guitar to standard tuning with the microphone, in Swedish: the page hears which string is played and shows on a picture of the headstock which key to turn, and which way, until the string is in tune.',
     },
     {
+      href: './svensk_text.html',
+      label: 'Svensk text',
+      desc: 'Translate English subtitles into Swedish in the browser, for free, with Google’s translator built into Chrome: whole sentences go to the translator rather than single subtitles, fillers and sound descriptions are left out, and every subtitle is checked against Swedish subtitling limits — two lines, 42 characters to a line, 17 characters a second.',
+    },
+    {
       href: './uppsala.html',
       label: 'Uppsala → Solna',
       desc: 'Live departures for the next SL commuter trains from Uppsala C towards Solna, refreshed every 30 seconds.',

@@ -1,0 +1,1993 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Svensk text (free)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: an editing suite. A black preview screen and the translator choice on the left, the workflow rail beside it, the subtitle list below as the working surface. */
+:root {
+  --bg: #EDF0F4;
+  --panel: #FFFFFF;
+  --sunk: #F4F6F9;
+  --ink: #141820;
+  --ink-2: #4A5363;
+  --ink-3: #737D8F;
+  --rule: #D8DDE5;
+  --accent: #0A5296;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E2ECF8;
+  --mark: #FFCD00;
+  --screen: #050607;
+  --screen-hi: #1B2029;
+  --screen-ink: #FFFFFF;
+  --screen-dim: #8A93A3;
+  --ok: #1C7745;
+  --ok-soft: #E2F2E8;
+  --warn: #8C5A00;
+  --warn-soft: #FBEFD4;
+  --bad: #B0261D;
+  --bad-soft: #FAE3E0;
+  --todo: #A9B1BF;
+  --ok-fill: #48A874;
+  --warn-fill: #E2A21C;
+  --bad-fill: #D9483B;
+  --font-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sub: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --r: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0D1015; --panel: #151A21; --sunk: #10141A; --ink: #E6EAF1; --ink-2: #A6AFBD; --ink-3: #7C8698; --rule: #29303B;
+    --accent: #7FB2F0; --accent-ink: #061322; --accent-soft: #17283E; --mark: #FFCD00;
+    --screen: #000000; --screen-hi: #161B23; --screen-ink: #FFFFFF; --screen-dim: #7C8698;
+    --ok: #52C48C; --ok-soft: #112A1E; --warn: #F0B43C; --warn-soft: #2C2311; --bad: #FF7B70; --bad-soft: #351715; --todo: #4E5868;
+    --ok-fill: #45B57E; --warn-fill: #E9AE36; --bad-fill: #F06A5E;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0D1015; --panel: #151A21; --sunk: #10141A; --ink: #E6EAF1; --ink-2: #A6AFBD; --ink-3: #7C8698; --rule: #29303B;
+  --accent: #7FB2F0; --accent-ink: #061322; --accent-soft: #17283E; --mark: #FFCD00;
+  --screen: #000000; --screen-hi: #161B23; --screen-ink: #FFFFFF; --screen-dim: #7C8698;
+  --ok: #52C48C; --ok-soft: #112A1E; --warn: #F0B43C; --warn-soft: #2C2311; --bad: #FF7B70; --bad-soft: #351715; --todo: #4E5868;
+  --ok-fill: #45B57E; --warn-fill: #E9AE36; --bad-fill: #F06A5E;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.005em; }
+p { margin: 0; }
+a { color: var(--accent); }
+.fine { font-size: 13px; color: var(--ink-2); }
+:focus-visible { outline: 3px solid var(--mark); outline-offset: 2px; }
+
+.wrap {
+  max-width: 1320px; margin: 0 auto; display: grid; gap: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(20px + env(safe-area-inset-top, 0px)) calc(64px + env(safe-area-inset-bottom, 0px));
+}
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.brand { display: grid; gap: 6px; max-width: 64ch; }
+.brand h1 { font-size: clamp(28px, 3.4vw, 38px); font-weight: 700; letter-spacing: -0.015em; line-height: 1; }
+.brand h1 .mk { text-decoration: underline; text-decoration-color: var(--mark); text-decoration-thickness: .16em; text-underline-offset: .14em; text-decoration-skip-ink: none; }
+.brand h1 small { font-size: .42em; font-weight: 600; letter-spacing: .02em; color: var(--ink-3); margin-left: .4em; vertical-align: .55em; }
+.brand p { color: var(--ink-2); }
+.top-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.file-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 6px 4px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); font-size: 13px; color: var(--ink-2); max-width: 100%; }
+.file-chip b { color: var(--ink); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+.file-chip .x { width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; cursor: pointer; color: var(--ink-3); display: inline-grid; place-items: center; }
+.file-chip .x:hover { background: var(--sunk); color: var(--ink); }
+
+/* buttons */
+.btn { appearance: none; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 8px 14px; min-height: 40px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.btn:hover:not(:disabled) { border-color: var(--ink-3); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.small { min-height: 32px; padding: 5px 10px; font-size: 13px; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 700; cursor: pointer; font-size: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ibtn { width: 34px; height: 34px; display: inline-grid; place-items: center; border-radius: 8px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); cursor: pointer; flex: none; }
+.ibtn:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-3); }
+.ibtn svg { width: 16px; height: 16px; }
+
+.confirm { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; background: var(--warn-soft); border: 1px solid var(--rule); border-radius: var(--r); padding: 10px 14px; }
+.confirm .actions { display: flex; gap: 8px; }
+
+/* main layout */
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 16px; align-items: start; }
+@media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.main-col { display: grid; gap: 16px; min-width: 0; align-content: start; }
+.stage { display: grid; gap: 10px; min-width: 0; }
+
+/* the screen */
+.screen { position: relative; aspect-ratio: 16 / 9; width: 100%; max-width: 100%; border-radius: var(--r); overflow: hidden; background: radial-gradient(125% 95% at 50% 22%, var(--screen-hi) 0%, var(--screen) 72%); container-type: inline-size; }
+.scr-tag, .scr-tc { position: absolute; top: 3.2cqw; font-family: var(--font-mono); font-size: clamp(10px, 1.45cqw, 13px); line-height: 1; letter-spacing: .07em; text-transform: uppercase; color: var(--screen-dim); }
+.scr-tag { left: 3.4cqw; }
+.scr-tc { right: 3.4cqw; font-variant-numeric: tabular-nums; }
+.scr-guide { position: absolute; left: 50%; bottom: 4.6%; transform: translateX(-50%); width: 82%; height: 0; border-top: 1px dashed color-mix(in srgb, var(--screen-dim) 45%, transparent); }
+.scr-guide span { position: absolute; right: 0; top: 4px; font-family: var(--font-mono); font-size: clamp(9px, 1.2cqw, 11px); color: var(--screen-dim); letter-spacing: .05em; }
+@container (max-width: 520px) { .scr-guide span { display: none; } }
+.sub { position: absolute; left: 6%; right: 6%; bottom: 8.5%; text-align: center; font-family: var(--font-sub); font-size: 3.75cqw; line-height: 1.24; color: var(--screen-ink); white-space: pre-line; text-shadow: 0 0 .09em #000, .05em .05em .05em #000, -.05em .05em .05em #000, .05em -.05em .05em #000, -.05em -.05em .05em #000; }
+.sub.top { top: 9%; bottom: auto; }
+.sub.ital { font-style: italic; }
+.scr-empty { position: absolute; left: 0; right: 0; bottom: 10%; text-align: center; font-size: clamp(11px, 1.6cqw, 15px); color: var(--screen-dim); font-style: italic; }
+
+.transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tc { font-family: var(--font-mono); font-weight: 500; font-size: 14px; font-variant-numeric: tabular-nums; padding-inline: 6px; }
+.meta { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+#timeline { display: block; width: 100%; height: 36px; border-radius: 7px; cursor: pointer; background: var(--panel); border: 1px solid var(--rule); }
+.en-line { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: baseline; color: var(--ink-2); }
+.en-line span:last-child { white-space: pre-line; overflow-wrap: anywhere; }
+.lbl { font-family: var(--font-mono); font-weight: 600; font-size: 11px; letter-spacing: .08em; color: var(--ink-3); border: 1px solid var(--rule); padding: 2px 5px; border-radius: 4px; }
+
+/* cards */
+.rail { display: grid; gap: 12px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.card-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pill { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 4px 8px; border-radius: 999px; background: var(--sunk); color: var(--ink-2); border: 1px solid var(--rule); white-space: nowrap; }
+.pill[data-s="run"] { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.pill[data-s="done"], .pill[data-s="ok"] { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pill[data-s="paused"], .pill[data-s="warn"] { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.pill[data-s="bad"] { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+
+/* translator choice */
+.engines { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+@container (max-width: 640px) { .engines { grid-template-columns: minmax(0, 1fr); } }
+.engine-card { container-type: inline-size; }
+.eng { position: relative; display: grid; gap: 8px; align-content: start; border: 1.5px solid var(--rule); border-radius: 9px; padding: 12px 12px 12px 40px; cursor: pointer; background: var(--panel); }
+.eng:hover { border-color: var(--ink-3); }
+.eng:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.eng input[type="radio"] { position: absolute; left: 13px; top: 14px; width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+.eng b { font-size: 14.5px; }
+.eng .fine { color: var(--ink-2); }
+.eng .row-h { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; counter-reset: st; }
+.steps li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: start; counter-increment: st; }
+.steps .st { position: relative; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--rule); display: grid; place-items: center; font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--ink-3); background: var(--panel); }
+.steps .st::before { content: counter(st); }
+.steps li[data-state="done"] .st { background: var(--ok); border-color: var(--ok); color: var(--panel); }
+.steps li[data-state="done"] .st::before { content: "✓"; font-family: var(--font-body); font-size: 14px; }
+.steps li[data-state="run"] .st { color: var(--accent); }
+.steps li[data-state="run"] .st::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--accent); animation: spin .9s linear infinite; }
+.steps b { display: block; font-size: 14px; }
+.steps li > div > span { display: block; font-size: 13px; color: var(--ink-2); }
+.steps .cnt { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); white-space: nowrap; font-style: normal; padding-top: 3px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.progress { display: grid; gap: 6px; }
+.bar { height: 7px; border-radius: 4px; background: var(--sunk); border: 1px solid var(--rule); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .35s ease; }
+.ptext { font-size: 13px; color: var(--ink-2); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.alert { border-radius: 8px; padding: 10px 12px; font-size: 14px; background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent); overflow-wrap: anywhere; }
+.alert[data-kind="info"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.alert[data-kind="ok"] { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+
+details.card > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::after { content: ""; flex: none; width: 8px; height: 8px; border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3); transform: rotate(45deg); transition: transform .2s; margin: 0 4px 4px 0; }
+details.card[open] > summary::after { transform: rotate(-135deg); margin-bottom: -4px; }
+.form { display: grid; gap: 12px; }
+.field { display: grid; gap: 5px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.field select, .field input { font-weight: 400; color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 7px; padding: 7px 9px; min-height: 38px; width: 100%; min-width: 0; }
+.field small { font-weight: 400; color: var(--ink-3); }
+.chk { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 14px; }
+.chk input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--accent); }
+
+/* cue list */
+.cues { display: grid; gap: 10px; min-width: 0; }
+.list-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 3px; background: var(--panel); border: 1px solid var(--rule); border-radius: 9px; padding: 3px; }
+.seg button { border: 0; background: transparent; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.seg b { font-family: var(--font-mono); font-weight: 500; font-size: 12px; opacity: .85; }
+.list-right { display: flex; gap: 8px; align-items: center; flex: 1 1 300px; justify-content: flex-end; flex-wrap: wrap; }
+.search { flex: 1 1 180px; max-width: 280px; min-height: 38px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); padding: 6px 10px; min-width: 0; }
+.replace { display: flex; gap: 8px; flex: 1 1 260px; max-width: 380px; }
+.replace input { flex: 1 1 auto; min-width: 0; min-height: 38px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
+.table { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; }
+.thead, .row { display: grid; grid-template-columns: 40px 78px minmax(0, 1fr) minmax(0, 1.15fr) 150px; column-gap: 14px; padding: 10px 12px 10px 10px; }
+.thead { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); background: var(--sunk); border-bottom: 1px solid var(--rule); }
+.row { border-left: 3px solid transparent; border-bottom: 1px solid var(--rule); }
+.row:last-child { border-bottom: 0; }
+.row[data-lv="warn"] { border-left-color: var(--warn); }
+.row[data-lv="bad"] { border-left-color: var(--bad); }
+.row[data-lv="todo"] { border-left-color: var(--todo); }
+.row.sel { background: var(--accent-soft); }
+.row .n { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); padding-top: 2px; }
+.row .t { font-family: var(--font-mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); padding-top: 2px; font-variant-numeric: tabular-nums; }
+.row .t span { color: var(--ink-3); }
+.row .en { color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+.row .en.gone { text-decoration: line-through; text-decoration-color: var(--ink-3); color: var(--ink-3); }
+.row .sv { min-width: 0; }
+.sv-text { white-space: pre-line; overflow-wrap: anywhere; border-radius: 6px; padding: 2px 6px; margin: -2px -6px; cursor: text; min-height: 1.6em; }
+.sv-text:hover { background: var(--sunk); }
+.sv-text.muted { color: var(--ink-3); font-style: italic; }
+.sv-ta { width: 100%; resize: vertical; font-family: var(--font-body); font-size: 15px; line-height: 1.45; border: 1.5px solid var(--accent); border-radius: 7px; padding: 6px 8px; background: var(--panel); min-height: 3.4em; }
+.meter { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--ink-3); align-items: center; }
+.note { font-size: 12.5px; color: var(--ink-2); margin-top: 5px; overflow-wrap: anywhere; }
+.note em { font-style: normal; font-weight: 700; color: var(--ink); }
+.qa { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; align-items: center; }
+.qa .issue { flex-basis: 100%; font-size: 12.5px; line-height: 1.35; color: var(--bad); }
+.qa .issue.warn { color: var(--warn); }
+.qa .tools { margin-left: auto; display: flex; gap: 4px; }
+.chip { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; line-height: 1; padding: 4px 6px; border-radius: 5px; background: var(--sunk); color: var(--ink-2); border: 1px solid var(--rule); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.chip.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.chip.bad { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+.list-empty { padding: 28px 16px; text-align: center; color: var(--ink-2); }
+@media (max-width: 760px) {
+  .thead { display: none; }
+  .row { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "n t" "en en" "sv sv" "qa qa"; row-gap: 6px; }
+  .row .n { grid-area: n; } .row .t { grid-area: t; } .row .en { grid-area: en; } .row .sv { grid-area: sv; } .row .qa { grid-area: qa; }
+  .row .t br { display: none; }
+  .row .t span::before { content: " · "; }
+  .replace { max-width: none; }
+}
+
+.drop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: calc(24px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) calc(24px + env(safe-area-inset-left, 0px)); background: color-mix(in srgb, var(--bg) 82%, transparent); }
+.drop div { border: 2px dashed var(--accent); border-radius: 16px; padding: 44px 32px; background: var(--panel); font-family: var(--font-display); font-weight: 700; font-size: 20px; color: var(--accent); text-align: center; }
+.copybox { width: 100%; min-height: 160px; font-family: var(--font-mono); font-size: 12px; border: 1px solid var(--rule); border-radius: 7px; padding: 8px; background: var(--sunk); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header class="top">
+    <div class="brand">
+      <h1>Svensk <span class="mk">text</span><small>Free edition</small></h1>
+      <p>Turn English subtitles into Swedish ones for free, right in your browser. The page sends whole sentences instead of single subtitles, removes fillers and sound descriptions, and checks every subtitle against Swedish subtitling limits.</p>
+    </div>
+    <div class="top-actions">
+      <span class="file-chip"><b id="fileName">Sample scene</b><span id="fileMeta"></span><button class="x" id="closeBtn" type="button" title="Close this file" aria-label="Close this file" hidden><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></span>
+      <button class="btn primary" id="openBtn" type="button">Open .srt file</button>
+    </div>
+  </header>
+
+  <div class="confirm" id="confirmBar" hidden>
+    <p id="confirmText"></p>
+    <div class="actions"><button class="btn small" id="confirmNo" type="button">Cancel</button><button class="btn small primary" id="confirmYes" type="button">Replace</button></div>
+  </div>
+
+  <div class="layout">
+    <div class="main-col">
+      <section class="stage" aria-label="Preview">
+        <div class="screen">
+          <div class="scr-tag">Preview</div>
+          <div class="scr-tc" id="scrTc">00:00:00,000</div>
+          <div class="scr-guide" aria-hidden="true"><span id="guideLbl">42 characters</span></div>
+          <div class="sub" id="sub" aria-live="polite"></div>
+          <div class="scr-empty" id="scrEmpty" hidden></div>
+        </div>
+        <div class="transport">
+          <button class="ibtn" id="prevBtn" type="button" title="Previous subtitle (K)" aria-label="Previous subtitle"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 2h2v12H3zM14 2.5v11L6 8z"/></svg></button>
+          <button class="ibtn" id="playBtn" type="button" title="Play subtitles in real time (Space)" aria-label="Play"><svg viewBox="0 0 16 16" fill="currentColor" id="playIcon"><path d="M4 2.5v11L13 8z"/></svg></button>
+          <button class="ibtn" id="nextBtn" type="button" title="Next subtitle (J)" aria-label="Next subtitle"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M11 2h2v12h-2zM2 2.5v11L10 8z"/></svg></button>
+          <span class="tc" id="tc">00:00:00,000</span>
+          <div class="meta" id="meta"></div>
+        </div>
+        <canvas id="timeline" aria-label="Timeline of all subtitles, coloured by check result. Click to jump."></canvas>
+        <p class="en-line"><span class="lbl">EN</span><span id="enLine"></span></p>
+      </section>
+
+      <section class="card engine-card" aria-labelledby="engH">
+        <div class="card-h"><h2 id="engH">Translator</h2><span class="fine">Both are free and translate on this computer. No account, no key.</span></div>
+        <div class="engines">
+          <label class="eng">
+            <input type="radio" name="engine" value="chrome" id="engChrome">
+            <span class="row-h"><b>Google in Chrome</b><span class="pill" id="chromeState">Checking…</span></span>
+            <span class="fine">Google Translate built into Chrome and Edge on a computer (version 138 or later). The browser downloads Google's English-to-Swedish model once. Best quality.</span>
+            <span class="fine" id="chromeNote"></span>
+          </label>
+          <label class="eng">
+            <input type="radio" name="engine" value="opus" id="engOpus">
+            <span class="row-h"><b>Open model (OPUS-MT)</b><span class="pill" id="opusState">Not downloaded</span></span>
+            <span class="fine">For Safari, Firefox and other browsers. The page downloads a free English-to-Swedish model from the University of Helsinki (about 105 MB, from Hugging Face) the first time. Slower than Google, and the Swedish needs more editing.</span>
+            <span class="fine" id="opusNote"></span>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <aside class="rail">
+      <section class="card" aria-labelledby="workH">
+        <div class="card-h"><h2 id="workH">Translate</h2><span class="pill" id="statePill">Example</span></div>
+        <p class="fine" id="workIntro"></p>
+        <ol class="steps" id="steps">
+          <li data-step="prep"><span class="st" aria-hidden="true"></span><div><b>Prepare the English</b><span>Removes sound descriptions and fillers (um, you know, like) and joins sentences that run over several subtitles.</span></div><em class="cnt"></em></li>
+          <li data-step="translate"><span class="st" aria-hidden="true"></span><div><b id="stepTrH">Translate with Google</b><span id="stepTrD">Whole sentences go to Google, a dozen at a time, so word order and context come out right.</span></div><em class="cnt"></em></li>
+          <li data-step="clean"><span class="st" aria-hidden="true"></span><div><b>Swedish clean-up</b><span>Common subtitle lines get standard Swedish wording. Miles become km, mr and dr go lowercase, numbers two to ten are written out.</span></div><em class="cnt"></em></li>
+          <li data-step="check"><span class="st" aria-hidden="true"></span><div><b>Check every subtitle</b><span id="checkDesc">Two lines, 42 characters per line, 17 characters per second. Subtitles over the limit are marked for you to shorten.</span></div><em class="cnt"></em></li>
+        </ol>
+        <div class="progress" id="progress" hidden><div class="bar"><i id="barFill"></i></div><p class="ptext" id="ptext"></p></div>
+        <div class="actions"><button class="btn primary" id="goBtn" type="button">Translate with Google</button><button class="btn" id="stopBtn" type="button" hidden>Stop</button></div>
+        <p class="fine" id="estimate"></p>
+        <div class="alert" id="alert" role="status" hidden></div>
+      </section>
+
+      <details class="card">
+        <summary><h2>Style rules</h2></summary>
+        <div class="form">
+          <label class="field">Reading speed
+            <select id="sAud"><option value="adult">Adults: 17 characters per second</option><option value="kids">Children: 13 characters per second</option></select>
+          </label>
+          <label class="field">Characters per line
+            <input id="sLen" type="number" min="30" max="60" step="1" inputmode="numeric">
+          </label>
+          <label class="field">Two speakers in one subtitle
+            <select id="sDash"><option value="nospace">-Kommer du? (Netflix style)</option><option value="space">- Kommer du? (with a space)</option></select>
+          </label>
+          <label class="field">Sound descriptions like [door slams] and NAME:
+            <select id="sSdh"><option value="remove">Leave them out</option><option value="keep">Translate them</option></select>
+            <small id="sdhNote"></small>
+          </label>
+          <label class="chk"><input id="sFill" type="checkbox"><span>Leave out fillers before translating (um, uh, you know, I mean, like)</span></label>
+          <label class="chk"><input id="sExt" type="checkbox"><span>Let a subtitle stay up to 1 second longer when there is a pause after it and it is too fast to read</span></label>
+        </div>
+      </details>
+
+      <section class="card" aria-labelledby="saveH">
+        <div class="card-h"><h2 id="saveH">Save</h2><span class="fine" id="saveName" style="font-family:var(--font-mono)"></span></div>
+        <label class="field">Text encoding
+          <select id="sEnc"><option value="utf8bom">UTF-8 with BOM (works almost everywhere)</option><option value="utf8">UTF-8</option><option value="cp1252">Windows-1252 (older TVs and players)</option></select>
+        </label>
+        <div class="actions"><button class="btn primary" id="saveBtn" type="button">Save .srt</button><button class="btn" id="copyBtn" type="button">Copy as text</button></div>
+        <p class="fine" id="saveInfo"></p>
+        <div class="alert" id="saveAlert" role="status" hidden></div>
+        <textarea class="copybox" id="copyBox" readonly hidden aria-label="Subtitle text to copy"></textarea>
+      </section>
+    </aside>
+  </div>
+
+  <section class="cues" aria-label="Subtitles">
+    <div class="list-tools">
+      <div class="seg" role="group" aria-label="Show">
+        <button type="button" data-f="all" aria-pressed="true">All <b id="cAll">0</b></button>
+        <button type="button" data-f="attn" aria-pressed="false">Needs a look <b id="cAttn">0</b></button>
+        <button type="button" data-f="edited" aria-pressed="false">Edited <b id="cEdit">0</b></button>
+        <button type="button" data-f="todo" aria-pressed="false">Not translated <b id="cTodo">0</b></button>
+      </div>
+      <div class="list-right">
+        <input class="search" id="q" type="search" placeholder="Search English or Swedish" aria-label="Search subtitles">
+        <span class="replace" id="replaceBox" hidden><input id="rep" placeholder="Replace in Swedish with…" aria-label="Replace in Swedish with"><button class="btn small" id="repBtn" type="button">Replace all</button></span>
+      </div>
+    </div>
+    <div class="table">
+      <div class="thead" aria-hidden="true"><span>#</span><span>Time</span><span>English</span><span>Swedish · click to edit</span><span>Check</span></div>
+      <div id="list"></div>
+      <p class="list-empty" id="listEmpty" hidden>Nothing to show with this filter.</p>
+    </div>
+  </section>
+</div>
+
+<input type="file" id="fileInput" accept=".srt,.vtt,.txt,text/plain" hidden>
+<div class="drop" id="drop" hidden><div>Drop the .srt file to open it</div></div>
+
+<script>
+"use strict";
+/* CORE:BEGIN — pure functions and data, no DOM */
+
+const SAMPLE_SRT = `1
+00:00:01,000 --> 00:00:02,400
+[door slams]
+
+2
+00:00:02,800 --> 00:00:05,100
+Will! Where the hell have you been?
+
+3
+00:00:05,300 --> 00:00:07,600
+Um, well, you know... I got held up at work.
+
+4
+00:00:07,900 --> 00:00:10,400
+- At two in the morning?
+- I'm sorry, okay?
+
+5
+00:00:10,800 --> 00:00:12,900
+Mom's been calling you all night.
+
+6
+00:00:13,100 --> 00:00:15,600
+If you had answered your phone even once,
+
+7
+00:00:15,700 --> 00:00:18,200
+we wouldn't have driven
+fifty miles looking for you.
+
+8
+00:00:18,600 --> 00:00:20,700
+You guys drove into the city? Seriously?
+
+9
+00:00:21,200 --> 00:00:24,300
+<i>Hi, this is Dr. Patel's office
+calling for Mr. William Carter.</i>
+
+10
+00:00:24,500 --> 00:00:27,000
+<i>Please call us back
+before 3:30 tomorrow.</i>
+
+11
+00:00:27,400 --> 00:00:29,000
+Dr. Patel? Are you sick?
+
+12
+00:00:29,200 --> 00:00:31,000
+It's nothing. Just a checkup.
+
+13
+00:00:31,400 --> 00:00:33,600
+Eventually you'll have to tell her.
+
+14
+00:00:33,800 --> 00:00:34,900
+Tell her what?
+
+15
+00:00:35,100 --> 00:00:38,600
+That the company you've been killing yourself for
+is being sold for, like, two billion dollars
+
+16
+00:00:38,700 --> 00:00:40,400
+and you're getting nothing.
+
+17
+00:00:40,800 --> 00:00:43,000
+Actually, I'm getting a bonus.
+
+18
+00:00:43,300 --> 00:00:45,400
+Where's the car, Will?
+
+19
+00:00:45,600 --> 00:00:47,200
+I sold it.
+
+20
+00:00:47,500 --> 00:00:49,800
+(SIGHS) You sold Dad's car?
+
+21
+00:00:50,000 --> 00:00:52,600
+I'm sorry. I needed the money.
+
+22
+00:00:53,000 --> 00:00:55,400
+Your audition's tomorrow, right?
+Break a leg, Hope.
+
+23
+00:00:55,600 --> 00:00:57,200
+Let's just call it a night.
+
+24
+00:00:57,400 --> 00:00:59,300
+- Night, Will.
+- Night, sis.
+`;
+
+// What translate.google.com returned for the prepared sample sentences (English to Swedish, 29 October 2026).
+const SAMPLE_GOOGLE = {
+  'Will! Where the hell have you been?': 'Will! Vart i helvete har du hållit hus?',
+  'I got held up at work.': 'Jag blev kvar på jobbet.',
+  'At two in the morning?': 'Klockan två på natten?',
+  "I'm sorry, okay?": 'Förlåt, okej?',
+  "Mom's been calling you all night.": 'Mamma har ringt dig hela natten.',
+  "If you had answered your phone even once, we wouldn't have driven fifty miles looking for you.": 'Om du hade svarat i telefonen bara en enda gång hade vi inte behövt köra åtta mil för att leta efter dig.',
+  'You guys drove into the city? Seriously?': 'Åkte ni in till stan? På allvar?',
+  "Hi, this is Dr. Patel's office calling for Mr. William Carter.": 'Hej, det här är dr Patels mottagning som söker William Carter.',
+  'Please call us back before 3:30 tomorrow.': 'Ring oss gärna före 15.30 i morgon.',
+  'Dr. Patel? Are you sick?': 'Dr Patel? Är du sjuk?',
+  "It's nothing. Just a checkup.": 'Det är inget. Bara en vanlig kontroll.',
+  "Eventually you'll have to tell her.": 'Förr eller senare måste du berätta det för henne.',
+  'Tell her what?': 'Berätta vadå?',
+  "That the company you've been killing yourself for is being sold for two billion dollars and you're getting nothing.": 'Att företaget du har slitit ihjäl dig för säljs för två miljarder dollar – och att du inte får någonting.',
+  "Actually, I'm getting a bonus.": 'Jag får faktiskt en bonus.',
+  "Where's the car, Will?": 'Var är bilen, Will?',
+  'I sold it.': 'Jag sålde den.',
+  "You sold Dad's car?": 'Sålde du pappas bil?',
+  "I'm sorry. I needed the money.": 'Förlåt. Jag behövde pengarna.',
+  "Your audition's tomorrow, right? Break a leg, Hope.": 'Du har väl en provspelning i morgon? Lycka till, Hope.',
+  "Let's just call it a night.": 'Vi säger god natt nu.',
+  'Night, Will.': 'God natt, Will.',
+  'Night, sis.': 'God natt, syrran.'
+};
+
+const TIME_RE = /(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})\s*-->\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{1,2})[,.](\d{1,3})/;
+const TAG_RE = /<[^>]*>|\{\\[^}]*\}/g;
+
+function pad(n, w) { return String(n).padStart(w, '0'); }
+function toMs(h, m, s, f) { return ((+(h || 0)) * 3600 + (+m) * 60 + (+s)) * 1000 + (+String(f).padEnd(3, '0').slice(0, 3)); }
+function fmtSrtTime(ms) {
+  ms = Math.max(0, Math.round(ms));
+  return `${pad(Math.floor(ms / 3600000), 2)}:${pad(Math.floor(ms / 60000) % 60, 2)}:${pad(Math.floor(ms / 1000) % 60, 2)},${pad(ms % 1000, 3)}`;
+}
+function fmtClock(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  return h ? `${h}:${pad(m, 2)}:${pad(s, 2)}` : `${pad(m, 2)}:${pad(s, 2)}`;
+}
+function stripTags(s) { return String(s ?? '').replace(TAG_RE, ''); }
+function visLen(s) { return Array.from(stripTags(s)).length; }
+function wordCount(s) { return (stripTags(s).match(/[\p{L}\p{N}']+/gu) || []).length; }
+function isDlgLine(l) { return /^\s*(?:<[^>]+>\s*)*[-–—]/.test(l); }
+function isDialogue(t) { const ls = String(t).split('\n'); return ls.length >= 2 && ls.filter(isDlgLine).length >= 2; }
+
+function decodeBytes(input) {
+  const b = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (b[0] === 0xFF && b[1] === 0xFE) return new TextDecoder('utf-16le').decode(b.subarray(2));
+  if (b[0] === 0xFE && b[1] === 0xFF) return new TextDecoder('utf-16be').decode(b.subarray(2));
+  if (b.length > 3 && b[1] === 0 && b[3] === 0) return new TextDecoder('utf-16le').decode(b);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(b).replace(/^﻿/, ''); }
+  catch { return new TextDecoder('windows-1252').decode(b); }
+}
+
+// SRT and WebVTT: returns [{start, end, raw}] in file order.
+function parseSubtitles(text) {
+  const lines = String(text).replace(/^﻿/, '').replace(/\r\n?/g, '\n').split('\n');
+  const cues = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = TIME_RE.exec(lines[i]);
+    if (!m) { i++; continue; }
+    const start = toMs(m[1], m[2], m[3], m[4]), end = toMs(m[5], m[6], m[7], m[8]);
+    i++;
+    const body = [];
+    while (i < lines.length && lines[i].trim() !== '' && !TIME_RE.test(lines[i])) body.push(lines[i++]);
+    if (body.length && /^\d+$/.test(body[body.length - 1].trim()) && i < lines.length && TIME_RE.test(lines[i])) body.pop();
+    cues.push({ start, end: Math.max(end, start), raw: body.join('\n').trim() });
+  }
+  return cues;
+}
+
+// Strips styling cruft, pulls out a position tag and whole-subtitle italics.
+function normalizeCue(raw) {
+  let t = String(raw);
+  t = t.replace(/<v(?:\.[^\s>]*)?\s+[^>]*>/gi, '').replace(/<\/v>/gi, '').replace(/<\/?c(?:\.[^>]*)?>/gi, '').replace(/<\/?(?:ruby|rt|lang|span)[^>]*>/gi, '');
+  t = t.replace(/<\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3}>/g, '');
+  t = t.replace(/<\/?font[^>]*>/gi, '');
+  t = t.replace(/<(\/?)([ibu])\s*>/gi, (m, s, n) => `<${s}${n.toLowerCase()}>`);
+  let pos = '';
+  t = t.replace(/\{\\an?\d+\}/g, (m) => { if (!pos) pos = m; return ''; });
+  t = t.replace(/\{\\[^}]*\}/g, '');
+  t = t.replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  t = t.split('\n').map(l => l.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
+  let ital = false;
+  const m = /^<i>([\s\S]*)<\/i>$/.exec(t);
+  if (m && !/<\/?i>/.test(m[1])) { ital = true; t = m[1].trim(); }
+  else {
+    const ls = t.split('\n');
+    if (ls.length > 1 && ls.every(l => /^<i>[^<]*<\/i>$/.test(l))) { ital = true; t = ls.map(l => l.slice(3, -4)).join('\n'); }
+  }
+  return { pos, ital, text: t };
+}
+
+// Removes [sound], (sound) and ALL-CAPS speaker labels used in subtitles for the deaf and hard of hearing.
+function cleanSDH(text) {
+  let t = String(text).replace(/\[[^\]]*\]/g, ' ').replace(/\([^)]*\)/g, ' ');
+  t = t.split('\n').map(line => line.replace(
+    /^((?:\s*<[^>]+>)*\s*(?:[-–—]\s*)?(?:<[^>]+>\s*)*)([A-ZÅÄÖÉ][A-ZÅÄÖÉ0-9 .'’#&-]*[A-ZÅÄÖÉ0-9.#])\s*:(?=\s|$)\s*/,
+    (m, pre, name) => (/[A-ZÅÄÖÉ]{2}/.test(name) ? pre : m))).join('\n');
+  let lines = t.split('\n').map(l => l.replace(/<([ibu])>\s*<\/\1>/g, '').replace(/[ \t]{2,}/g, ' ').trim().replace(/^((?:<[^>]+>)+)\s+/, '$1').replace(/\s+((?:<\/[^>]+>)+)$/, '$1'));
+  lines = lines.filter(l => /[\p{L}\p{N}]/u.test(stripTags(l)));
+  lines = lines.map(l => l.replace(/^((?:<[^>]+>)*)\s*([-–—])\s*[,.;:]\s*/, '$1$2 ').replace(/^((?:<[^>]+>)*)\s*[,.;:]\s+/, '$1'));
+  if (lines.length === 1) lines[0] = lines[0].replace(/^((?:<[^>]+>)*)\s*[-–—]\s*/, '$1');
+  return lines.join('\n').trim();
+}
+
+// Removes hesitations, stutters and filler phrases before the English goes to Google.
+function preClean(text) {
+  const src = String(text).trim();
+  const upper = /^[^\p{L}]*\p{Lu}/u.test(src);
+  let t = src, prev = null;
+  const lead = s => s.replace(/^\s*(?:(?:\.\.\.|…|[,;:])\s*)+/, '');
+  for (let k = 0; k < 8 && t !== prev; k++) {
+    prev = t;
+    t = t.replace(/\b([a-z]{1,3})-(?=\1)/gi, '');
+    t = lead(t.replace(/(^|[\s,.!?…-])(?:u+h+|u+m+|e+r+m*|h+m+)(?=$|[\s,.!?…])[,.…]*/gi, '$1'));
+    t = t.replace(/,\s*you know\?\s*$/i, '.');
+    t = t.replace(/(^|[.!?…]\s+|,\s*)you know(?:\s*,\s*|\s*(?=[.?!…])|\s*$)/gi, '$1');
+    t = lead(t.replace(/(^|[.!?…]\s+)(?:well|so|okay so|I mean)(?:,|\.\.\.|…)\s*/gi, '$1'));
+    t = t.replace(/,\s*(?:like|I mean),\s*/gi, ' ');
+    t = t.replace(/\s+([,.!?…])/g, '$1').replace(/,\s*,/g, ',').replace(/,(?=[.!?…])/g, '').replace(/\s{2,}/g, ' ').trim();
+  }
+  if (!/[\p{L}\p{N}]/u.test(t)) return '';
+  if (upper) t = t.replace(/^([^\p{L}]*)(\p{Ll})/u, (m, a, b) => a + b.toUpperCase());
+  return t;
+}
+
+function endsSentence(t) { return /[.!?♪]["'”)\]]*$/.test(stripTags(t).trim()) && !/(\.\.\.|…)$/.test(stripTags(t).trim()); }
+const EN_OPEN = /\b(and|but|or|so|because|if|when|while|that|which|who|whom|whose|where|to|the|a|an|of|for|with|in|on|at|from|by|about|into|my|your|his|her|its|our|their|is|are|was|were|be|been|being|have|has|had|will|would|can|could|should|must|might|not|than|as|just|even|very)$/i;
+// Does a subtitle's last sentence continue in the next subtitle?
+function continues(a, b, gap) {
+  if (gap > 2500) return false;
+  const x = stripTags(a).trim(), y = stripTags(b).trim();
+  if (!x || !y) return false;
+  const yLower = /^(?:\.\.\.|…)?\s*[\p{Ll}]/u.test(y), yEll = /^(?:\.\.\.|…)/.test(y);
+  if (/(\.\.\.|…)$/.test(x)) return yEll || yLower;
+  if (/[.!?♪]["'”)\]]*$/.test(x)) return false;
+  return yLower || yEll || /[,;:–—-]$/.test(x) || EN_OPEN.test(x);
+}
+
+// Splits subtitles into translation units: whole sentences, possibly running over several subtitles.
+// Each part knows which subtitle (n) and which speaker line (k) it came from.
+function buildUnits(cues, opts) {
+  const units = [];
+  let cur = null, last = null;
+  for (const c of cues) {
+    if (c.removed || !c.en) { cur = null; continue; }
+    const dlg = isDialogue(c.en);
+    const lines = dlg ? c.en.split('\n').map(l => l.replace(/^((?:<[^>]+>)*)\s*[-–—]\s*/, '$1')) : [c.en.split('\n').join(' ')];
+    lines.forEach((raw, k) => {
+      const text = stripTags(raw).replace(/\s+/g, ' ').trim();
+      const clean = opts.fillers ? preClean(text) : text;
+      const part = { n: c.n, k, en: text, clean };
+      if (cur && k === 0 && !dlg && last && continues(last.en, text, c.start - last.end) && cur.parts.length < 4) cur.parts.push(part);
+      else { cur = { parts: [part] }; units.push(cur); }
+      if (dlg || endsSentence(text)) cur = null;
+    });
+    last = { en: dlg ? '' : stripTags(c.en).replace(/\s+/g, ' ').trim(), end: c.end };
+  }
+  for (const u of units) {
+    const live = u.parts.filter(p => p.clean);
+    u.text = live.map((p, i) => {
+      let t = p.clean;
+      if (i < live.length - 1) t = t.replace(/\s*(?:\.\.\.|…)$/, '');
+      if (i > 0) t = t.replace(/^(?:\.\.\.|…)\s*/, '');
+      return t;
+    }).join(' ').replace(/\s{2,}/g, ' ').trim();
+  }
+  return units;
+}
+
+const SV_NOEND = new Set('en ett den det de dom the min din sin vår er mitt ditt sitt mina dina sina våra era hans hennes deras i på till från med av för om under över efter mot vid hos utan genom inom bland åt ur kring att och men eller som så när har hade är var ska skulle kan kunde vill ville måste får fick inte mr mrs ms miss dr herr fru'.split(' '));
+const SV_START = new Set('och men eller så att som när om eftersom därför medan innan tills fast trots utan då där vilket vilken vad hur varför vem vart'.split(' '));
+const SV_NUMWORD = new Set('två tre fyra fem sex sju åtta nio tio elva tolv tjugo trettio fyrtio femtio sextio sjuttio åttio nittio hundra tusen'.split(' '));
+const lowWord = w => stripTags(w).toLowerCase().replace(/[^\p{L}]/gu, '');
+// A number should stay on the same line as what it counts ("åtta mil", "två miljarder").
+const isNumberWord = w => /^\d[\d\s.,]*$/.test(stripTags(w)) || SV_NUMWORD.has(lowWord(w));
+
+// Divides one translated sentence over the subtitles it came from, in proportion to the English,
+// preferring breaks after punctuation and before conjunctions.
+function splitForParts(sv, weights) {
+  const k = weights.length;
+  const words = String(sv).trim().split(/\s+/).filter(Boolean);
+  if (k <= 1) return [words.join(' ')];
+  if (words.length <= k) { const out = words.slice(); while (out.length < k) out.push(''); return out; }
+  const pos = [0];
+  for (let j = 0; j < words.length; j++) pos.push(pos[j] + visLen(words[j]) + (j ? 1 : 0));
+  const total = pos[words.length], W = weights.reduce((a, b) => a + b, 0) || k;
+  const targets = [];
+  let acc = 0;
+  for (let i = 0; i < k - 1; i++) { acc += weights[i] || 1; targets.push(total * acc / W); }
+  const gap = j => {
+    const prev = stripTags(words[j - 1]);
+    let c = 0;
+    if (/[.!?…]["'”)]*$/.test(prev)) c -= 16;
+    else if (/[,;:]$/.test(prev) || /^[–—-]$/.test(prev)) c -= 10;
+    if (SV_START.has(lowWord(words[j]))) c -= 6;
+    if (SV_NOEND.has(lowWord(words[j - 1]))) c += 14;
+    if (isNumberWord(words[j - 1]) && !/[,.!?]$/.test(prev)) c += 14;
+    return c;
+  };
+  const n = words.length, INF = 1e9;
+  const f = Array.from({ length: k - 1 }, () => new Array(n + 1).fill(INF));
+  const from = Array.from({ length: k - 1 }, () => new Array(n + 1).fill(-1));
+  for (let j = 1; j <= n - (k - 1); j++) f[0][j] = Math.abs(pos[j] - targets[0]) + gap(j);
+  for (let i = 1; i < k - 1; i++) {
+    for (let j = i + 1; j <= n - (k - 1 - i); j++) {
+      const base = Math.abs(pos[j] - targets[i]) + gap(j);
+      for (let p = i; p < j; p++) if (f[i - 1][p] + base < f[i][j]) { f[i][j] = f[i - 1][p] + base; from[i][j] = p; }
+    }
+  }
+  let bj = -1, best = INF;
+  for (let j = k - 1; j <= n - 1; j++) if (f[k - 2][j] < best) { best = f[k - 2][j]; bj = j; }
+  const cuts = [bj];
+  for (let i = k - 2; i > 0; i--) cuts.unshift(from[i][cuts[0]]);
+  const out = [];
+  let s = 0;
+  for (const c of [...cuts, n]) { out.push(words.slice(s, c).join(' ')); s = c; }
+  return out.map((t, i) => (i < k - 1 ? t.replace(/\s*[–—-]$/, '') : t).replace(/^[–—-]\s+/, '').trim());
+}
+
+// Standard Swedish subtitle wording for very common short lines.
+// [English variants, Swedish, kind]: kind '?' questions, '!' exclamations, '.' statements and exclamations, '' any.
+const PHRASEBOOK = [
+  ["i'm sorry|i am sorry|sorry|so sorry", 'Förlåt', '.'],
+  ['sorry|pardon|pardon me|excuse me', 'Ursäkta', '?'],
+  ['excuse me', 'Ursäkta', '.'],
+  ['thank you|thanks', 'Tack', ''],
+  ['thank you so much|thank you very much|thanks a lot|thanks so much', 'Tack så mycket', ''],
+  ["you're welcome", 'Ingen orsak', '.'],
+  ['no problem', 'Inga problem', '.'],
+  ['come on', 'Kom igen', '.'],
+  ["let's go", 'Nu går vi', '.'],
+  ["let's get out of here", 'Vi sticker härifrån', '.'],
+  ['oh, my god|oh my god|my god|oh god|oh, god|oh, my gosh|oh my gosh|jesus|oh, jesus|jesus christ|oh, jesus christ', 'Herregud', '.'],
+  ['thank god', 'Gudskelov', '.'],
+  ['what the hell', 'Vad fan', ''],
+  ['what the fuck', 'Vad i helvete', ''],
+  ['damn it|dammit|goddamn it|goddammit', 'Fan också', '.'],
+  ['shit|oh, shit|oh shit|fuck|oh, fuck|oh fuck|damn', 'Fan', '.'],
+  ['holy shit', 'Fy fan', '.'],
+  ["i don't know", 'Jag vet inte', '.'],
+  ['i know', 'Jag vet', '.'],
+  ['i see', 'Jag förstår', '.'],
+  ["i'm fine", 'Jag mår bra', '.'],
+  ['okay|ok|all right|alright', 'Okej', ''],
+  ['yeah|yes', 'Ja', ''],
+  ['yep|yup', 'Japp', '.'],
+  ['no|nope', 'Nej', ''],
+  ['hey', 'Hallå', '!'],
+  ['hey|hi|hello', 'Hej', '.'],
+  ['hello', 'Hallå', '?'],
+  ['bye|goodbye|bye-bye|bye bye', 'Hej då', '.'],
+  ["good night|goodnight|night|'night", 'God natt', '.'],
+  ['good morning|morning', 'God morgon', '.'],
+  ['good luck|break a leg', 'Lycka till', '.'],
+  ['bless you', 'Prosit', '.'],
+  ['here you go|here you are|there you go', 'Varsågod', '.'],
+  ['hold on|hang on|wait a minute|wait a second|just a minute|just a second', 'Vänta lite', '.'],
+  ['wait', 'Vänta', '.'],
+  ['never mind', 'Strunt samma', '.'],
+  ['forget it', 'Glöm det', '.'],
+  ['calm down', 'Lugna dig', '.'],
+  ['take care', 'Sköt om dig', '.'],
+  ['be careful', 'Var försiktig', '.'],
+  ["don't worry", 'Oroa dig inte', '.'],
+  ['trust me', 'Lita på mig', '.'],
+  ['me too', 'Jag med', '.'],
+  ['me neither', 'Inte jag heller', '.'],
+  ['of course', 'Självklart', '.'],
+  ['sure', 'Visst', '.'],
+  ['exactly', 'Precis', '.'],
+  ['good', 'Bra', '.'],
+  ['great', 'Toppen', '.'],
+  ['perfect', 'Perfekt', '.'],
+  ['good job|well done|nice work|nice job', 'Bra jobbat', '.'],
+  ['please', 'Snälla', '.'],
+  ['help', 'Hjälp', '.'],
+  ['stop it', 'Sluta', '.'],
+  ['shh|shush|hush', 'Tyst', '.'],
+  ['oops|whoops', 'Hoppsan', '.'],
+  ['ouch|ow', 'Aj', '.'],
+  ['uh-huh|mm-hmm|mhm|mm-hm', 'Mm', ''],
+  ['i love you', 'Jag älskar dig', '.'],
+  ['i love you too', 'Jag älskar dig också', '.'],
+  ['i miss you', 'Jag saknar dig', '.'],
+  ['see you|see you later|see ya|see you around', 'Vi ses', '.'],
+  ['see you tomorrow', 'Vi ses i morgon', '.'],
+  ['happy birthday', 'Grattis på födelsedagen', '.'],
+  ['congratulations|congrats', 'Grattis', '.'],
+  ['merry christmas', 'God jul', '.'],
+  ['happy new year', 'Gott nytt år', '.'],
+  ["let's call it a night|let's just call it a night", 'Nu räcker det för i kväll', '.'],
+  ["let's call it a day|let's just call it a day", 'Nu räcker det för i dag', '.'],
+  ["i'm coming|coming", 'Jag kommer', '.'],
+  ['come here', 'Kom hit', '.'],
+  ['come in', 'Kom in', '.'],
+  ['sit down', 'Sätt dig', '.'],
+  ['get out', 'Ut', '.'],
+  ['leave me alone', 'Lämna mig i fred', '.'],
+  ['let me go', 'Släpp mig', '.'],
+  ['hurry up|hurry', 'Skynda dig', '.'],
+  ['i promise', 'Jag lovar', '.'],
+  ['i swear', 'Jag svär', '.'],
+  ["it's okay|it's ok|it's all right", 'Det är lugnt', '.'],
+  ['i have no idea|no idea', 'Ingen aning', '.'],
+  ["i don't care", 'Jag bryr mig inte', '.'],
+  ['whatever', 'Strunt samma', '.'],
+  ['not now', 'Inte nu', ''],
+  ['not yet', 'Inte än', ''],
+  ['nothing', 'Ingenting', ''],
+  ['what', 'Vad', '?'], ['why', 'Varför', '?'], ['who', 'Vem', '?'], ['where', 'Var', '?'], ['how', 'Hur', '?'], ['when', 'När', '?'],
+  ['really', 'Verkligen', ''],
+  ['seriously', 'Seriöst', ''],
+  ['right', 'Eller hur', '?'],
+  ['are you okay|are you ok|are you all right|you okay|you ok|you all right', 'Är du okej', '?'],
+  ["what's going on", 'Vad händer', '?'],
+  ["what's wrong", 'Vad är det', '?'],
+  ['what happened', 'Vad hände', '?'],
+  ['are you sure', 'Är du säker', '?'],
+  ['what do you mean', 'Hur menar du', '?'],
+  ['how are you', 'Hur mår du', '?'],
+  ['how are you doing', 'Hur är det', '?'],
+  ['you know what', 'Vet du vad', '?'],
+  ['guess what', 'Gissa vad', '?'],
+  ['mom', 'Mamma', ''], ['dad', 'Pappa', '']
+];
+const PB = (() => {
+  const m = new Map();
+  for (const [en, sv, kind] of PHRASEBOOK) for (const v of en.split('|')) { const key = v + '|' + kind; if (!m.has(key)) m.set(key, sv); }
+  return m;
+})();
+function phrasebook(text) {
+  const t = stripTags(text).toLowerCase().replace(/[‘’]/g, "'").replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
+  const mm = /^(.*?)\s*([.!?…]+|\.\.\.)?$/.exec(t);
+  if (!mm || !mm[1]) return null;
+  const base = mm[1].replace(/[,;:]$/, ''), p = mm[2] || '';
+  const kind = p.includes('?') ? '?' : p.includes('!') ? '!' : (p === '…' || p === '...') ? '…' : '.';
+  const order = kind === '?' ? ['?', ''] : kind === '!' ? ['!', '.', ''] : ['.', ''];
+  for (const k of order) {
+    const sv = PB.get(base + '|' + k);
+    if (sv) return sv + (kind === '?' ? '?' : kind === '!' ? '!' : kind === '…' ? '…' : '.');
+  }
+  return null;
+}
+
+const EN_NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, 'a hundred': 100 };
+const SV_NUMW = { en: 1, ett: 1, 'två': 2, tre: 3, fyra: 4, fem: 5, sex: 6, sju: 7, 'åtta': 8, nio: 9, tio: 10, elva: 11, tolv: 12, femton: 15, tjugo: 20, trettio: 30, fyrtio: 40, femtio: 50, sextio: 60, sjuttio: 70, 'åttio': 80, nittio: 90, hundra: 100 };
+const SV_DIGIT = { 2: 'två', 3: 'tre', 4: 'fyra', 5: 'fem', 6: 'sex', 7: 'sju', 8: 'åtta', 9: 'nio', 10: 'tio' };
+function km(x) { return x < 10 ? `${(Math.round(x * 10) / 10).toString().replace('.', ',')} km` : `${Math.round(x)} km`; }
+
+// Fixes typical machine-translation slips in Swedish subtitles. `notes` collects what changed.
+function postFix(sv, en, notes) {
+  let t = String(sv ?? '').trim();
+  const src = String(en ?? '');
+  const fix = (re, rep, note) => { const t2 = t.replace(re, rep); if (t2 !== t) { t = t2; if (note && !notes.includes(note)) notes.push(note); } };
+  const cap = (m, word) => (m[0] === m[0].toUpperCase() ? word[0].toUpperCase() + word.slice(1) : word);
+  // Swedish fillers that slipped through
+  fix(/^(?:Äh|Öh|Eh|Hm+|Ehm)[,.…]?\s+(\p{L})/u, (m, l) => l.toUpperCase(), 'Filler removed');
+  fix(/,\s*(?:typ|liksom|du vet),\s*/g, ' ', 'Filler removed');
+  // An apology is "Förlåt"
+  if (/\b(?:i'?m|i am)\s+(?:so\s+|really\s+|very\s+|truly\s+)?sorry\b(?!\s*(?:for|about|to|that|if|but)\b)/i.test(src)) fix(/\b[Jj]ag är (?:så |verkligen |väldigt )?ledsen\b(?!\s+för)/u, m => cap(m, 'förlåt'), '"I\'m sorry" as an apology is "Förlåt"');
+  // False friends
+  if (/\beventually\b/i.test(src)) fix(/\b[Ee]ventuellt\b/u, m => cap(m, 'till slut'), '"Eventually" is "till slut"');
+  if (/\bactually\b/i.test(src)) fix(/\b[Aa]ktuellt\b/u, m => cap(m, 'faktiskt'), '"Actually" is "faktiskt"');
+  if (/\bbillions?\b/i.test(src) && !/\btrillions?\b/i.test(src)) fix(/\b([Bb])iljon(er|en|erna)?\b/gu, (m, b, s) => (b === 'B' ? 'M' : 'm') + 'iljard' + (s || ''), 'A billion is a "miljard"');
+  if (/\bguys\b/i.test(src) && !/\b(?:those|these|the|two|three|some|other|bad|good|nice|tough)\s+guys\b/i.test(src)) fix(/\bkillar\b/u, 'allihop', '"Guys" to a group is "allihop"');
+  if (/\b(?:oh,?\s+)?my god\b/i.test(src)) fix(/(?<![\p{L}])(?:[ÅåOo]h?,?\s+)?[Mm]in [Gg]ud(?![\p{L}])/u, m => cap(m, 'herregud'), '"Oh my God" is "Herregud"');
+  // Miles, feet and mph to metric, when Google kept the English unit or the same number
+  fix(/(\d+(?:[.,]\d+)?)\s*(?:engelska\s+mil|miles?)\b/giu, (m, n) => km(parseFloat(n.replace(',', '.')) * 1.609), 'Miles converted to km');
+  const mileNums = [...src.matchAll(/\b(\d+(?:[.,]\d+)?|[a-z]+(?:-[a-z]+)?)\s+miles?\b/gi)].map(m => {
+    const w = m[1].toLowerCase();
+    if (/^\d/.test(w)) return parseFloat(w.replace(',', '.'));
+    const [a, b] = w.split('-');
+    return EN_NUM[a] != null ? EN_NUM[a] + (b && EN_NUM[b] ? EN_NUM[b] : 0) : NaN;
+  }).filter(x => !Number.isNaN(x));
+  if (mileNums.length) {
+    fix(/(?<![\p{L}\d])(\d+(?:[.,]\d+)?|\p{L}+)\s+mil(?![\p{L}])/gu, (m, n) => {
+      const v = /^\d/.test(n) ? parseFloat(n.replace(',', '.')) : SV_NUMW[n.toLowerCase()];
+      return v != null && mileNums.includes(v) ? km(v * 1.609) : m;
+    }, 'Miles converted to km');
+    fix(/(?<![\p{L}\d])(\d+(?:[.,]\d+)?)\s*km(?![\p{L}])/gu, (m, n) => {
+      const v = parseFloat(n.replace(',', '.'));
+      return mileNums.includes(v) ? km(v * 1.609) : m;
+    }, 'Miles converted to km');
+  }
+  fix(/(\d+(?:[.,]\d+)?)\s*(?:fot|feet)\b/giu, (m, n) => `${Math.round(parseFloat(n.replace(',', '.')) * 0.3048 * 10) / 10} meter`.replace('.', ','), 'Feet converted to metres');
+  fix(/(\d+)\s*(?:mph|miles i timmen|engelska mil i timmen)\b/giu, (m, n) => `${Math.round(n * 1.609)} km/h`, 'mph converted to km/h');
+  // Money, titles, clock times
+  fix(/\$\s?(\d[\d\s.,]*\d|\d)(\s+(?:miljoner|miljarder|tusen))?/g, (m, n, mult) => `${n.trim()}${mult || ''} dollar`);
+  fix(/\b(Mr|Mrs|Ms|Dr)\.?(?=\s+\p{Lu})/gu, (m, x, off, all) => (/(?:^|[.!?]\s+|["'(]\s*)$/.test(all.slice(0, off)) ? x : x.toLowerCase()));
+  fix(/\b(\d{1,2}):(\d{2})\b/g, '$1.$2');
+  // Numbers two to ten in words (Netflix Swedish style), except times, decimals, dates, units and labels
+  fix(/(^|[^\d.,:–/-])(?<!(?:kl\.|klockan|nummer|nr\.?|rum|sida|kapitel|avsnitt|säsong|plats|kanal|buss|linje|spår|våning|bord)\s)\b([2-9]|10)\b(?![.,:/–-]?\d|\s\d{3}\b|\s*(?:%|procent|°|kr\b|km|kg|cm|mm|m\b|januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december))/giu,
+    (m, pre, d, off, all) => pre + ((off + pre.length === 0 || /[.!?]\s*$/.test(all.slice(0, off + pre.length))) ? SV_DIGIT[d][0].toUpperCase() + SV_DIGIT[d].slice(1) : SV_DIGIT[d]));
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
+// Rebreaks lines: keeps a good two-line break, otherwise finds the best one (bottom-heavy, at phrase boundaries).
+function rebreak(text, maxLen) {
+  const lines = String(text).split('\n');
+  if (isDialogue(text)) return text;
+  if (lines.length <= 2 && lines.every(l => visLen(l) <= maxLen)) return text;
+  const flat = lines.join(' ').replace(/\s+/g, ' ').trim();
+  if (visLen(flat) <= maxLen) return flat;
+  const words = flat.split(' ');
+  let best = null;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(' '), b = words.slice(i).join(' ');
+    const la = visLen(a), lb = visLen(b), prevRaw = stripTags(words[i - 1]);
+    let cost = (Math.max(0, la - maxLen) + Math.max(0, lb - maxLen)) * 100 + Math.abs(la - lb);
+    if (la > lb) cost += (la - lb) * 0.6;
+    if (/[.!?…]["'”]?$/.test(prevRaw)) cost -= 30;
+    else if (/[,;:]$/.test(prevRaw)) cost -= 18;
+    if (SV_START.has(lowWord(words[i]))) cost -= 10;
+    if (SV_NOEND.has(lowWord(words[i - 1]))) cost += 25;
+    if (isNumberWord(words[i - 1]) && !/[,.!?]$/.test(prevRaw)) cost += 20;
+    if (i <= 2) cost += 14;
+    if (i === words.length - 1) cost += 14;
+    if (!best || cost < best.cost) best = { cost, a, b };
+  }
+  return best ? best.a + '\n' + best.b : flat;
+}
+
+// House style for one subtitle's Swedish text.
+function polish(sv, o) {
+  let t = String(sv ?? '').replace(/\r\n?/g, '\n');
+  t = t.replace(/\.{3}/g, '…').replace(/[“”„]/g, '"').replace(/[ \t ]{2,}/g, ' ');
+  t = t.split('\n').map(l => l.trim()).filter(l => stripTags(l).trim()).join('\n');
+  if (isDialogue(t)) {
+    const d = o.dash === 'space' ? '- ' : '-';
+    t = t.split('\n').map(l => isDlgLine(l) ? l.replace(/^((?:\s*<[^>]+>)*)\s*[-–—]\s*/, (m, tags) => tags + d) : l).join('\n');
+  }
+  return rebreak(t, o.maxLen);
+}
+
+function nums(s) {
+  return (stripTags(s).replace(/\b\d{1,2}[:.]\d{2}\b/g, ' ').replace(/(\d)[,\s ](?=\d{3}\b)/g, '$1').match(/\d+(?:[.,]\d+)?/g) || []).map(x => x.replace(',', '.'));
+}
+function missingNumbers(en, sv) {
+  const have = new Set(nums(sv));
+  return [...new Set(nums(en))].filter(x => parseFloat(x) > 10 && !have.has(x));
+}
+const EN_HINT = new Set(['the', 'you', 'your', 'and', 'is', 'are', 'was', 'what', 'this', 'that', 'with', 'have', "don't", "i'm", "it's", 'of', 'to', 'not', 'we', 'they', 'he', 'she', 'will', 'would', 'can', 'just', 'my', 'me', 'it']);
+function looksEnglish(sv, en) {
+  const a = stripTags(sv).toLowerCase().replace(/\s+/g, ' ').trim();
+  const b = stripTags(en).toLowerCase().replace(/\s+/g, ' ').trim();
+  const words = a.match(/[\p{L}']+/gu) || [];
+  if (words.length >= 3 && a === b) return true;
+  if (words.length < 4) return false;
+  const hits = words.filter(w => EN_HINT.has(w)).length;
+  return hits >= 2 && hits / words.length >= 0.3;
+}
+
+// Reading speed, line lengths, display-time extension and issues for one subtitle.
+function computeQA(c, next, o) {
+  const q = { level: 'ok', cps: 0, chars: 0, lens: [], end: c.end, ext: 0, issues: [] };
+  if (c.removed) { q.level = 'off'; return q; }
+  if (c.sv == null) {
+    if (c.err) { q.level = 'bad'; q.issues.push({ lv: 'bad', code: 'missing', msg: 'Not translated. Google returned nothing for it.' }); }
+    else q.level = 'todo';
+    return q;
+  }
+  const lines = c.sv ? c.sv.split('\n') : [];
+  q.lens = lines.map(visLen);
+  q.chars = q.lens.reduce((a, b) => a + b, 0);
+  if (!q.chars) return q;
+  const dur = Math.max(1, c.end - c.start);
+  if (o.extend) {
+    const need = q.chars / o.cps * 1000;
+    if (need > dur) {
+      const cap = Math.min(c.end + 1000, c.start + 7000, next ? next.start - 84 : Infinity);
+      const e = Math.min(c.start + need, cap);
+      if (e > c.end) { q.end = Math.round(e); q.ext = q.end - c.end; }
+    }
+  }
+  q.cps = q.chars / ((q.end - c.start) / 1000);
+  if (lines.length > 2) q.issues.push({ lv: 'bad', code: 'lines', msg: `${lines.length} lines. The limit is 2.` });
+  const long = Math.max(...q.lens);
+  if (long > o.maxLen) q.issues.push({ lv: 'bad', code: 'len', msg: `A line has ${long} characters. The limit is ${o.maxLen}.` });
+  if (q.cps > o.cps + 3) q.issues.push({ lv: 'bad', code: 'cps', msg: `Too fast to read: ${q.cps.toFixed(1)} characters per second (limit ${o.cps}). Shorten it.` });
+  else if (q.cps > o.cps + 0.05) q.issues.push({ lv: 'warn', code: 'cps', msg: `A little fast: ${q.cps.toFixed(1)} characters per second (limit ${o.cps}).` });
+  if ((c.sv.match(/<i>/g) || []).length !== (c.sv.match(/<\/i>/g) || []).length) q.issues.push({ lv: 'bad', code: 'tags', msg: 'An italics tag is not closed.' });
+  if (looksEnglish(c.sv, c.en)) q.issues.push({ lv: 'bad', code: 'english', msg: 'Looks untranslated.' });
+  const miss = missingNumbers(c.en, c.sv);
+  if (miss.length) q.issues.push({ lv: 'warn', code: 'num', msg: `Check the number ${miss.join(', ')}.` });
+  const times = (stripTags(c.en).match(/\b\d{1,2}:\d{2}\b/g) || []).filter(tm => !timeKept(c.sv, +tm.split(':')[0], +tm.split(':')[1]));
+  if (times.length) q.issues.push({ lv: 'warn', code: 'time', msg: `Check the time ${times.join(', ')}.` });
+  q.level = q.issues.some(x => x.lv === 'bad') ? 'bad' : q.issues.length ? 'warn' : 'ok';
+  return q;
+}
+function nextActiveIn(cues, n) {
+  for (let k = n; k < cues.length; k++) if (!cues[k].removed && (cues[k].en || cues[k].sv)) return cues[k];
+  return null;
+}
+
+function buildSRT(cues, qa, o) {
+  const blocks = [];
+  let k = 0;
+  for (const c of cues) {
+    if (c.removed) continue;
+    let t = c.sv != null ? c.sv : c.en;
+    if (!stripTags(t || '').trim()) continue;
+    if (o.encoding === 'cp1252') t = t.replace(/[♪♫]/g, '#');
+    if (c.ital) t = `<i>${t}</i>`;
+    if (c.pos) t = c.pos + t;
+    const end = (o.extend && qa && qa[c.n - 1] && qa[c.n - 1].end) || c.end;
+    blocks.push(`${++k}\n${fmtSrtTime(c.start)} --> ${fmtSrtTime(end)}\n${t}`);
+  }
+  return blocks.join('\n\n') + '\n';
+}
+
+const CP1252 = { 0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F };
+function encodeText(str, enc) {
+  if (enc === 'cp1252') {
+    const out = new Uint8Array(str.length);
+    let n = 0, bad = 0;
+    for (const ch of str) {
+      const cp = ch.codePointAt(0);
+      let b;
+      if (cp < 0x80 || (cp >= 0xA0 && cp <= 0xFF)) b = cp;
+      else if (CP1252[cp] != null) b = CP1252[cp];
+      else { b = 0x3F; bad++; }
+      out[n++] = b;
+    }
+    return { bytes: out.slice(0, n), bad };
+  }
+  const u = new TextEncoder().encode(str);
+  if (enc === 'utf8bom') { const o = new Uint8Array(u.length + 3); o.set([0xEF, 0xBB, 0xBF]); o.set(u, 3); return { bytes: o, bad: 0 }; }
+  return { bytes: u, bad: 0 };
+}
+
+function splitSentences(text) {
+  return String(text).split(/(?<!\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Mt|vs|etc|Lt|Sgt|Capt|Gen|Col)\.)(?<=[.!?…]["')\]]*)\s+(?=["'(\[]?[\p{Lu}\d])/u).map(s => s.trim()).filter(Boolean);
+}
+// Words written with a capital in the middle of a sentence somewhere in the file: almost always names.
+const NOT_NAMES = new Set(['I', "I'm", "I'll", "I've", "I'd", 'OK', 'TV', 'Mom', 'Mum', 'Dad', 'Mommy', 'Daddy', 'Grandma', 'Grandpa', 'Sis', 'Bro', 'God', 'Jesus', 'Christ', 'Sir', 'Ma’am', "Ma'am", 'Honey', 'Sweetie', 'Baby']);
+function collectNames(cues) {
+  const names = new Set(['Mr', 'Mrs', 'Ms', 'Dr']);
+  for (const c of cues) {
+    if (c.removed || !c.en) continue;
+    for (const s of stripTags(c.en).split('\n').flatMap(l => splitSentences(l.replace(/^\s*[-–—]\s*/, '')))) {
+      s.split(/\s+/).forEach((w, i) => {
+        const m = /^[("']*(\p{Lu}[\p{L}-]*?)(?:'s|’s)?[,.!?;:…")]*$/u.exec(w);
+        if (m && i > 0 && !NOT_NAMES.has(m[1])) names.add(m[1]);
+      });
+    }
+  }
+  return names;
+}
+// "Will!" or "Dr. Patel?" on its own: nothing to translate, and a small model tends to invent a reply.
+function isNamesOnly(s, names) {
+  const words = s.replace(/[.,!?;:…"]/g, ' ').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every(w => names.has(w.replace(/(?:'s|’s)$/, '')));
+}
+const SV_HOUR = ['tolv', 'ett', 'två', 'tre', 'fyra', 'fem', 'sex', 'sju', 'åtta', 'nio', 'tio', 'elva', 'tolv'];
+// Is the English clock time (h:mm) still there in the Swedish, as digits or as spoken Swedish ("halv fyra")?
+function timeKept(sv, h, mm) {
+  const t = stripTags(sv).toLowerCase(), m2 = String(mm).padStart(2, '0');
+  const hours = [h, h % 12, (h % 12) + 12].filter(x => x <= 24);
+  if (hours.some(x => new RegExp(`(?<!\\d)0?${x}[.:]${m2}(?!\\d)`).test(t))) return true;
+  const w = SV_HOUR[h % 12], next = SV_HOUR[(h % 12) + 1];
+  const spoken = mm === 0 ? [`klockan ${w}`, `kl. ${w}`, ` ${w}`] : mm === 30 ? [`halv ${next}`] : mm === 15 ? [`kvart över ${w}`] : mm === 45 ? [`kvart i ${next}`] : [];
+  return spoken.some(s => t.includes(s));
+}
+// Groups units into requests: up to a dozen sentences, joined by line breaks so Google sees the context.
+function chunkUnits(units, maxUnits, maxChars) {
+  const out = [];
+  let cur = [], len = 0;
+  for (const u of units) {
+    if (cur.length && (cur.length >= maxUnits || len + u.text.length + 1 > maxChars)) { out.push(cur); cur = []; len = 0; }
+    cur.push(u); len += u.text.length + 1;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+function outName(name) {
+  let b = String(name || 'subtitles').replace(/\.(srt|vtt|txt)$/i, '');
+  b = b.replace(/[._ -](sdh|hi|cc|forced)$/i, '').replace(/[._ -](en|eng|english|en-us|en-gb)$/i, '');
+  return (b || 'subtitles') + '.sv.srt';
+}
+/* CORE:END */
+
+/* ===================== app ===================== */
+const $ = (s, r) => (r || document).querySelector(s);
+const KEY = 'svensk-text-free.v1';
+const DEFAULTS = { engine: 'chrome', engineChosen: false, audience: 'adult', maxLen: 42, dash: 'nospace', sdh: 'remove', fillers: true, extend: true, encoding: 'utf8bom' };
+const S = { p: null, set: { ...DEFAULTS }, sel: 1, filter: 'all', q: '', qa: [], job: { running: false }, rows: new Map(), editing: 0, play: null, dirty: new Set(), frame: 0, chrome: { state: 'checking', tr: null }, opus: { state: 'idle', pipe: null, loading: null, progress: 0 } };
+const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+const OPUS_MODEL = 'Xenova/opus-mt-en-sv';
+
+function opts() {
+  const s = S.set;
+  return { cps: s.audience === 'kids' ? 13 : 17, maxLen: Math.min(60, Math.max(30, parseInt(s.maxLen, 10) || 42)), dash: s.dash, extend: !!s.extend, sdh: s.sdh, fillers: !!s.fillers, encoding: s.encoding };
+}
+
+/* ---------- translators ---------- */
+const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r('timeout'), ms))]);
+async function checkChrome() {
+  let st = 'missing';
+  if ('Translator' in self && typeof self.Translator.availability === 'function') {
+    try { st = await withTimeout(self.Translator.availability({ sourceLanguage: 'en', targetLanguage: 'sv' }), 6000); }
+    catch { st = 'unavailable'; }
+  }
+  S.chrome.state = st;
+  if (!S.set.engineChosen) S.set.engine = st === 'missing' || st === 'unavailable' || st === 'timeout' ? 'opus' : 'chrome';
+  renderEngines();
+  renderRail();
+}
+async function chromeTranslator() {
+  if (S.chrome.tr) return S.chrome.tr;
+  if (!('Translator' in self)) throw { code: 'chrome-missing' };
+  S.chrome.tr = await self.Translator.create({
+    sourceLanguage: 'en', targetLanguage: 'sv',
+    monitor(m) {
+      m.addEventListener('downloadprogress', e => {
+        const v = e.total ? e.loaded / e.total : e.loaded;
+        S.chrome.progress = v;
+        S.job.note = `Chrome is downloading Google's English-to-Swedish model: ${Math.round(Math.min(1, v) * 100)}%`;
+        renderRail();
+      });
+    }
+  });
+  S.chrome.state = 'available';
+  renderEngines();
+  return S.chrome.tr;
+}
+// Each engine takes a list of lines and returns translated lines in the same order.
+async function translateChrome(lines) {
+  const tr = await chromeTranslator();
+  if (lines.length > 1) {
+    const joined = await tr.translate(lines.join('\n'));
+    const out = String(joined).split('\n');
+    if (out.length === lines.length) return out;
+  }
+  const out = [];
+  for (const l of lines) out.push(String(await tr.translate(l)));
+  return out;
+}
+// The open model: OPUS-MT English to Swedish, run in the page with Transformers.js.
+async function opusTranslator() {
+  if (S.opus.pipe) return S.opus.pipe;
+  if (!S.opus.loading) {
+    S.opus.loading = (async () => {
+      S.opus.state = 'downloading';
+      renderEngines();
+      let T;
+      try { T = await import(TRANSFORMERS_URL); }
+      catch { throw { code: 'opus-download' }; }
+      T.env.allowLocalModels = false;
+      const files = {};
+      return T.pipeline('translation', OPUS_MODEL, {
+        dtype: 'q8', device: 'wasm',
+        progress_callback: p => {
+          if (p.status !== 'progress' || !p.file || !p.total) return;
+          files[p.file] = { loaded: p.loaded, total: p.total };
+          const all = Object.values(files), loaded = all.reduce((a, f) => a + f.loaded, 0), total = all.reduce((a, f) => a + f.total, 0);
+          S.opus.progress = total ? loaded / total : 0;
+          S.job.note = `Downloading the open model: ${Math.round(loaded / 1e6)} of ${Math.max(Math.round(total / 1e6), 100)} MB`;
+          renderEngines(); renderRail();
+        }
+      });
+    })();
+  }
+  try { S.opus.pipe = await S.opus.loading; }
+  catch (e) { S.opus.loading = null; S.opus.state = 'idle'; renderEngines(); throw e && e.code ? e : { code: 'opus-download', message: e && e.message }; }
+  S.opus.state = 'ready';
+  renderEngines();
+  return S.opus.pipe;
+}
+// The open model works one sentence at a time: batches pick up junk at the end, and longer inputs lose sentences.
+async function translateOpus(lines) {
+  const pipe = await opusTranslator();
+  const names = S.names || (S.names = collectNames(S.p.cues));
+  const out = [];
+  for (const line of lines) {
+    const parts = [];
+    for (const s of splitSentences(line)) {
+      if (isNamesOnly(s, names)) { parts.push(s); continue; }
+      const words = s.split(/\s+/).length;
+      const res = await pipe(s, { max_new_tokens: Math.min(200, 12 + Math.ceil(words * 2.5)), num_beams: 1 });
+      let txt = String((Array.isArray(res) ? res[0] : res).translation_text || '').trim();
+      txt = txt.replace(/^[-–—]\s*/, '').replace(/\s+[-–—]\s+(?=\p{Lu})/gu, ' ');
+      const said = splitSentences(txt);
+      if (said.length > 1) txt = said[0];
+      parts.push(txt.replace(/([.!?…])[.!?…]+$/u, '$1'));
+      await new Promise(r => setTimeout(r, 0));
+    }
+    out.push(parts.join(' '));
+  }
+  return out;
+}
+const ENGINE_ERR = {
+  'chrome-missing': 'Google’s translator isn’t built into this browser. Open the page in Chrome or Edge on a computer (version 138 or later), or choose the open model under Translator.',
+  'chrome-unavailable': 'Chrome can’t translate English to Swedish on this computer. Choose the open model under Translator instead.',
+  'opus-download': 'Couldn’t download the open model. Check the internet connection and press Resume. It’s only needed the first time.'
+};
+function engineError(e) {
+  if (!e) return 'Something went wrong. Press Resume to try again.';
+  if (ENGINE_ERR[e.code]) return ENGINE_ERR[e.code];
+  if (e.name === 'NotAllowedError') return 'Chrome needs a click to start the download. Press the button again.';
+  if (e.name === 'NotSupportedError' || e.name === 'OperationError') return 'Chrome couldn’t prepare the English-to-Swedish translator: ' + (e.message || e.name) + '. Choose the open model under Translator instead.';
+  return 'Translation stopped: ' + (e.message || String(e)) + '. Press Resume to try again.';
+}
+
+/* ---------- project ---------- */
+function makeProject(name, parsed, kind, sdh) {
+  parsed.sort((a, b) => a.start - b.start);
+  const cues = parsed.map((c, i) => {
+    const nc = normalizeCue(c.raw);
+    return { n: i + 1, start: c.start, end: c.end, raw: nc.text, pos: nc.pos, ital: nc.ital, en: '', removed: false, sv: null, prev: null, why: '', by: '', err: '', pieces: null };
+  });
+  applySDH(cues, sdh);
+  return { v: 1, name, kind, cues, phase: 'new', stats: null };
+}
+function applySDH(cues, mode) {
+  for (const c of cues) {
+    if (c.kept) { c.en = c.raw; c.removed = false; continue; }
+    const t = mode === 'remove' ? cleanSDH(c.raw) : c.raw;
+    c.en = t;
+    c.removed = !stripTags(t).trim();
+  }
+}
+const active = () => S.p.cues.filter(c => !c.removed && c.en);
+const pendingIds = () => active().filter(c => c.sv == null).map(c => c.n);
+
+// Puts one translated unit back into its subtitles.
+function applyUnit(u, sv, by) {
+  const o = opts(), cues = S.p.cues, notes = [];
+  let t = sv == null ? '' : String(sv);
+  if (by === 'google') t = postFix(t, u.text, notes);
+  if (by === 'phrasebook') notes.push('Standard subtitle wording');
+  const live = u.parts.filter(p => p.clean);
+  const pieces = live.length > 1 ? splitForParts(t, live.map(p => Math.max(1, visLen(p.clean)))) : [t];
+  const multi = live.length > 1 ? `One sentence over subtitles ${live[0].n}–${live[live.length - 1].n}.` : '';
+  const touched = new Set();
+  for (const p of u.parts) {
+    const c = cues[p.n - 1];
+    if (!c.pieces) c.pieces = {};
+    const i = live.indexOf(p);
+    c.pieces[p.k] = i >= 0 ? pieces[i] : '';
+    c.notes = c.notes || [];
+    if (p.clean !== p.en && p.clean) c.notes.push('Fillers left out.');
+    if (!p.clean) c.notes.push('Only fillers, left out.');
+    if (multi) c.notes.push(multi);
+    c.notes.push(...notes);
+    c.via = by;
+    touched.add(c);
+  }
+  for (const c of touched) {
+    const lines = isDialogue(c.en) ? c.en.split('\n').length : 1;
+    if (Object.keys(c.pieces).length < lines) continue;
+    if (c.by === 'you') { c.pieces = null; c.notes = []; continue; }
+    const parts = [];
+    for (let k = 0; k < lines; k++) parts.push(c.pieces[k] || '');
+    const kept = parts.filter(Boolean);
+    const text = kept.length > 1 ? kept.map(x => '-' + x).join('\n') : (kept[0] || '');
+    c.sv = polish(text, o);
+    c.by = c.via === 'phrasebook' ? 'phrasebook' : 'google';
+    c.why = [...new Set(c.notes)].join(' ');
+    c.prev = null; c.err = ''; c.pieces = null; c.notes = [];
+    qaOne(c.n);
+    if (c.n > 1) qaOne(c.n - 1);
+    touch(c.n);
+  }
+}
+
+function makeSampleProject() {
+  const p = makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample', 'remove');
+  S.p = p;
+  const units = buildUnits(p.cues, { fillers: true });
+  for (const u of units) {
+    const pb = phrasebook(u.text);
+    if (pb) applyUnit(u, pb, 'phrasebook');
+    else if (!u.text) applyUnit(u, '', 'filler');
+    else applyUnit(u, SAMPLE_GOOGLE[u.text] ?? null, 'google');
+  }
+  p.phase = 'done';
+  p.stats = { units: units.length };
+  return p;
+}
+
+function setProject(p, sel) {
+  stopPlay();
+  S.p = p;
+  S.names = null;
+  S.editing = 0;
+  const first = p.cues.find(c => !c.removed) || p.cues[0];
+  S.sel = sel && p.cues[sel - 1] ? sel : (first ? first.n : 1);
+  tlStatic = null;
+  qaAll();
+  buildList();
+  renderAll();
+}
+
+/* ---------- QA ---------- */
+function nextActive(n) { return nextActiveIn(S.p.cues, n); }
+function qaAll() { const o = opts(); S.qa = S.p.cues.map(c => computeQA(c, nextActive(c.n), o)); }
+function qaOne(n) { if (!S.qa) S.qa = []; S.qa[n - 1] = computeQA(S.p.cues[n - 1], nextActive(n), opts()); }
+
+/* ---------- rich text (only <i>, <b>, <u> become formatting) ---------- */
+function renderRich(el, text) {
+  el.replaceChildren();
+  const stack = [el];
+  const re = /<(\/?)([ibu])>|([^<]+|<)/gi;
+  let m;
+  const t = String(text ?? '').replace(/\{\\[^}]*\}/g, '');
+  while ((m = re.exec(t))) {
+    const top = stack[stack.length - 1];
+    if (m[2]) {
+      if (m[1]) { if (stack.length > 1) stack.pop(); }
+      else { const tag = m[2].toLowerCase(); const e = document.createElement(tag === 'i' ? 'em' : tag === 'b' ? 'strong' : 'u'); top.appendChild(e); stack.push(e); }
+    } else top.appendChild(document.createTextNode(m[3]));
+  }
+}
+
+/* ---------- list ---------- */
+const ROW_HTML = '<div class="n"></div><div class="t"></div><div class="en"></div><div class="sv"></div><div class="qa"></div>';
+function buildList() {
+  const list = $('#list');
+  list.replaceChildren();
+  S.rows.clear();
+  const frag = document.createDocumentFragment();
+  for (const c of S.p.cues) {
+    const r = document.createElement('div');
+    r.className = 'row';
+    r.dataset.n = c.n;
+    r.innerHTML = ROW_HTML;
+    S.rows.set(c.n, r);
+    fillRow(r, c);
+    frag.appendChild(r);
+  }
+  list.appendChild(frag);
+  applyFilter();
+}
+function chip(text, cls, title) {
+  const s = document.createElement('span');
+  s.className = 'chip' + (cls ? ' ' + cls : '');
+  s.textContent = text;
+  if (title) s.title = title;
+  return s;
+}
+function fillRow(r, c) {
+  const q = (S.qa && S.qa[c.n - 1]) || { level: 'todo', issues: [], lens: [] };
+  const o = opts();
+  r.dataset.lv = c.removed ? 'off' : q.level;
+  r.classList.toggle('sel', c.n === S.sel);
+  const [nEl, tEl, enEl, svEl, qaEl] = r.children;
+  nEl.textContent = c.n;
+  tEl.replaceChildren(fmtClock(c.start), document.createElement('br'), Object.assign(document.createElement('span'), { textContent: ((c.end - c.start) / 1000).toFixed(1) + ' s' }));
+  enEl.classList.toggle('gone', c.removed);
+  renderRich(enEl, c.removed ? c.raw : c.en);
+  enEl.style.fontStyle = c.ital && !c.removed ? 'italic' : '';
+
+  if (S.editing !== c.n) {
+    svEl.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'sv-text';
+    if (c.removed) { box.classList.add('muted'); box.textContent = 'Sound description, left out'; }
+    else {
+      box.tabIndex = 0;
+      box.setAttribute('role', 'button');
+      box.setAttribute('aria-label', `Edit the Swedish for subtitle ${c.n}`);
+      if (c.sv == null) { box.classList.add('muted'); box.textContent = c.err ? 'Not translated. Press Resume to try again, or type it here.' : 'Not translated yet'; }
+      else if (!c.sv) { box.classList.add('muted'); box.textContent = 'Left out (only fillers)'; }
+      else { renderRich(box, c.sv); box.style.fontStyle = c.ital ? 'italic' : ''; }
+    }
+    svEl.appendChild(box);
+    if (!c.removed && (c.why || c.prev != null || c.by === 'phrasebook')) {
+      const note = document.createElement('div');
+      note.className = 'note';
+      if (c.why) note.appendChild(document.createTextNode(c.why + ' '));
+      if (c.prev != null) {
+        const u = document.createElement('button');
+        u.type = 'button'; u.className = 'linkbtn'; u.dataset.act = 'undo'; u.textContent = 'Undo';
+        u.title = 'Go back to: ' + (c.prev || '(empty)');
+        note.appendChild(u);
+      }
+      svEl.appendChild(note);
+    }
+  }
+
+  qaEl.replaceChildren();
+  if (c.removed) {
+    qaEl.appendChild(chip('SDH', '', 'Sound description or speaker label'));
+    const tools = document.createElement('div'); tools.className = 'tools';
+    const k = document.createElement('button'); k.type = 'button'; k.className = 'btn small'; k.dataset.act = 'keep'; k.textContent = 'Keep';
+    k.title = 'Translate this subtitle instead of leaving it out';
+    tools.appendChild(k); qaEl.appendChild(tools);
+    return;
+  }
+  if (c.sv) {
+    const lv = q.issues.find(x => x.code === 'cps');
+    qaEl.appendChild(chip(q.cps.toFixed(1) + ' cps', lv ? lv.lv : 'ok', 'Characters per second'));
+    qaEl.appendChild(chip(q.lens.join(' · '), q.lens.some(l => l > o.maxLen) || q.lens.length > 2 ? 'bad' : '', `Characters per line (limit ${o.maxLen})`));
+    if (q.ext > 0) qaEl.appendChild(chip('+' + Math.max(0.1, Math.ceil(q.ext / 100) / 10).toFixed(1) + ' s', '', 'Stays on screen a little longer, into the pause after it'));
+    if (c.by === 'phrasebook') qaEl.appendChild(chip('phrase', '', 'Standard subtitle wording from the built-in phrasebook'));
+  }
+  for (const x of q.issues) {
+    if (x.code === 'cps' && x.lv === 'warn') continue;
+    const d = document.createElement('div');
+    d.className = 'issue' + (x.lv === 'warn' ? ' warn' : '');
+    d.textContent = x.msg;
+    qaEl.appendChild(d);
+  }
+}
+function rowVisible(c) {
+  const q = S.qa[c.n - 1];
+  if (S.filter === 'attn' && !(q && (q.level === 'warn' || q.level === 'bad'))) return false;
+  if (S.filter === 'edited' && c.by !== 'you') return false;
+  if (S.filter === 'todo' && !(c.sv == null && !c.removed && c.en)) return false;
+  if (S.q && !((c.en + '\n' + (c.sv || '')).toLowerCase().includes(S.q))) return false;
+  return true;
+}
+function applyFilter() {
+  let shown = 0;
+  for (const c of S.p.cues) { const r = S.rows.get(c.n); if (!r) continue; const v = rowVisible(c); r.hidden = !v; if (v) shown++; }
+  $('#listEmpty').hidden = shown > 0;
+  $('#replaceBox').hidden = !S.q;
+  updateCounts();
+}
+function updateCounts() {
+  let attn = 0, edited = 0, todo = 0, all = 0;
+  for (const c of S.p.cues) {
+    const q = S.qa[c.n - 1];
+    if (!c.removed) all++;
+    if (q && (q.level === 'warn' || q.level === 'bad')) attn++;
+    if (c.by === 'you') edited++;
+    if (c.sv == null && !c.removed && c.en) todo++;
+  }
+  $('#cAll').textContent = all; $('#cAttn').textContent = attn; $('#cEdit').textContent = edited; $('#cTodo').textContent = todo;
+  for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b.dataset.f === S.filter));
+}
+
+/* batched UI updates while translating */
+function touch(n) {
+  if (n) S.dirty.add(n);
+  if (!S.frame) S.frame = (document.hidden ? (f => setTimeout(f, 50)) : requestAnimationFrame)(flush);
+}
+function flush() {
+  S.frame = 0;
+  for (const n of S.dirty) { const r = S.rows.get(n); if (r) { fillRow(r, S.p.cues[n - 1]); r.hidden = !rowVisible(S.p.cues[n - 1]); } }
+  const hadSel = S.dirty.has(S.sel);
+  S.dirty.clear();
+  updateCounts();
+  renderRail();
+  renderSave();
+  drawTimeline(true);
+  if (hadSel && !S.play) renderStage();
+}
+
+/* ---------- preview screen ---------- */
+function renderStage() {
+  const c = S.p.cues[S.sel - 1];
+  if (!c) return;
+  const q = S.qa[c.n - 1] || {};
+  const o = opts();
+  showOnScreen(c, c.start);
+  $('#tc').textContent = fmtSrtTime(c.start);
+  renderRich($('#enLine'), c.removed ? c.raw : c.en);
+  const meta = $('#meta');
+  meta.replaceChildren(chip('#' + c.n, ''), chip(((c.end - c.start) / 1000).toFixed(1) + ' s' + (q.ext ? ' +' + (q.ext / 1000).toFixed(1) : ''), ''));
+  if (c.sv) {
+    const lv = (q.issues || []).find(x => x.code === 'cps');
+    meta.appendChild(chip(q.cps.toFixed(1) + ' cps', lv ? lv.lv : 'ok', 'Characters per second'));
+    meta.appendChild(chip(q.lens.join(' · ') + ' / ' + o.maxLen, q.lens.some(l => l > o.maxLen) || q.lens.length > 2 ? 'bad' : '', 'Characters per line'));
+  }
+  drawTimeline(false);
+}
+function showOnScreen(c, t) {
+  const sub = $('#sub'), empty = $('#scrEmpty');
+  const text = c && !c.removed && c.sv ? c.sv : '';
+  renderRich(sub, text);
+  sub.classList.toggle('ital', !!(c && c.ital));
+  sub.classList.toggle('top', !!(c && /\\an?8/.test(c.pos)));
+  if (!S.play && c && !text) {
+    empty.hidden = false;
+    empty.textContent = c.removed ? 'Sound description, left out' : c.sv == null ? 'Not translated yet' : 'Left out (only fillers)';
+  } else empty.hidden = true;
+  $('#scrTc').textContent = fmtSrtTime(t);
+}
+
+let tlStatic = null;
+function tlColors() {
+  const cs = getComputedStyle(document.documentElement), v = k => cs.getPropertyValue(k).trim();
+  return { ok: v('--ok-fill'), warn: v('--warn-fill'), bad: v('--bad-fill'), todo: v('--todo'), off: v('--rule'), bg: v('--panel'), mark: v('--mark'), ink: v('--ink') };
+}
+function totalMs() { return Math.max(1000, ...S.p.cues.map(c => c.end)) + 500; }
+function drawTimeline(rebuild, playT) {
+  const cv = $('#timeline');
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); rebuild = true; }
+  const col = tlColors(), T = totalMs();
+  if (rebuild || !tlStatic) {
+    tlStatic = document.createElement('canvas');
+    tlStatic.width = cv.width; tlStatic.height = cv.height;
+    const g = tlStatic.getContext('2d');
+    g.scale(dpr, dpr);
+    g.fillStyle = col.bg; g.fillRect(0, 0, w, h);
+    for (const c of S.p.cues) {
+      const q = S.qa[c.n - 1];
+      const lv = c.removed ? 'off' : q ? q.level : 'todo';
+      const x = c.start / T * w, x2 = Math.max(x + 1, c.end / T * w);
+      g.fillStyle = col[lv] || col.todo;
+      g.fillRect(x, 9, x2 - x, h - 18);
+    }
+  }
+  const g = cv.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.drawImage(tlStatic, 0, 0);
+  g.scale(dpr, dpr);
+  const c = S.p.cues[S.sel - 1];
+  if (c && playT == null) {
+    const x = c.start / T * w, x2 = Math.max(x + 3, c.end / T * w);
+    g.fillStyle = col.mark; g.fillRect(x - 1, 2, x2 - x + 2, 4); g.fillRect(x - 1, h - 6, x2 - x + 2, 4);
+  }
+  if (playT != null) { const x = playT / T * w; g.fillStyle = col.ink; g.fillRect(x - 1, 1, 2, h - 2); }
+}
+
+function cueAt(t) {
+  const cs = S.p.cues;
+  let lo = 0, hi = cs.length - 1, k = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= t) { k = m; lo = m + 1; } else hi = m - 1; }
+  for (let j = k; j >= 0 && j > k - 4; j--) { const c = cs[j], q = S.qa[j]; const end = (S.set.extend && q && q.end) || c.end; if (!c.removed && t >= c.start && t < end) return c; }
+  return null;
+}
+function togglePlay() { if (S.play) stopPlay(); else startPlay(); }
+function startPlay() {
+  const c = S.p.cues[S.sel - 1];
+  S.play = { t0: performance.now(), base: c ? c.start : 0, last: null };
+  setPlayIcon(true);
+  requestAnimationFrame(tick);
+}
+function stopPlay() {
+  if (!S.play) return;
+  const last = S.play.last;
+  S.play = null;
+  setPlayIcon(false);
+  if (last) select(last.n, true); else renderStage();
+}
+function tick(now) {
+  if (!S.play) return;
+  const t = S.play.base + (now - S.play.t0);
+  const c = cueAt(t);
+  if (c) S.play.last = c;
+  showOnScreen(c, t);
+  drawTimeline(false, t);
+  if (t > totalMs()) { stopPlay(); return; }
+  requestAnimationFrame(tick);
+}
+function setPlayIcon(playing) {
+  $('#playIcon').innerHTML = playing ? '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>' : '<path d="M4 2.5v11L13 8z"/>';
+  $('#playBtn').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+}
+function select(n, scroll) {
+  if (!S.p.cues[n - 1]) return;
+  const old = S.rows.get(S.sel);
+  if (old) old.classList.remove('sel');
+  S.sel = n;
+  const r = S.rows.get(n);
+  if (r) { r.classList.add('sel'); if (scroll && !r.hidden) r.scrollIntoView({ block: 'nearest' }); }
+  if (!S.play) renderStage();
+}
+function step(dir) {
+  const cs = S.p.cues;
+  for (let n = S.sel + dir; n >= 1 && n <= cs.length; n += dir) { const r = S.rows.get(n); if (!cs[n - 1].removed && !(r && r.hidden)) { select(n, true); return; } }
+}
+
+/* ---------- editing ---------- */
+function startEdit(n) {
+  if (S.editing && S.editing !== n) commitEdit();
+  const c = S.p.cues[n - 1];
+  if (!c || c.removed) return;
+  stopPlay();
+  S.editing = n;
+  select(n);
+  const cell = S.rows.get(n).children[3];
+  const ta = document.createElement('textarea');
+  ta.className = 'sv-ta'; ta.lang = 'sv'; ta.spellcheck = true;
+  ta.value = c.sv || '';
+  ta.rows = Math.max(2, (c.sv || '').split('\n').length + 1);
+  ta.setAttribute('aria-label', `Swedish for subtitle ${n}`);
+  const meter = document.createElement('div');
+  meter.className = 'meter';
+  const help = document.createElement('span');
+  help.textContent = 'Enter for a new line, Ctrl+Enter or click outside to save, Esc to cancel';
+  const upd = () => {
+    const o = opts(), q = computeQA({ ...c, sv: ta.value.replace(/\r/g, '') }, nextActive(n), o);
+    meter.replaceChildren(chip(q.cps ? q.cps.toFixed(1) + ' cps' : '0 cps', q.cps > o.cps + 3 ? 'bad' : q.cps > o.cps ? 'warn' : 'ok'), chip(q.lens.join(' · ') || '0', q.lens.some(l => l > o.maxLen) || q.lens.length > 2 ? 'bad' : ''), help);
+  };
+  ta.addEventListener('input', upd);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitEdit(); }
+  });
+  ta.addEventListener('blur', () => setTimeout(() => { if (S.editing === n && document.activeElement !== ta) commitEdit(); }, 120));
+  cell.replaceChildren(ta, meter);
+  upd();
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+function commitEdit() {
+  const n = S.editing;
+  if (!n) return;
+  const c = S.p.cues[n - 1], ta = S.rows.get(n).querySelector('textarea');
+  S.editing = 0;
+  if (ta) {
+    const v = ta.value.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean).join('\n');
+    if (v !== (c.sv || '') && !(c.sv == null && !v)) {
+      c.prev = c.sv == null ? null : c.sv;
+      c.sv = v; c.by = 'you'; c.why = ''; c.err = '';
+      qaOne(n);
+      if (n > 1) qaOne(n - 1);
+      scheduleSave();
+    }
+  }
+  touch(n);
+}
+function cancelEdit() { const n = S.editing; S.editing = 0; touch(n); }
+function undo(n) {
+  const c = S.p.cues[n - 1];
+  if (c.prev == null) return;
+  c.sv = c.prev; c.prev = null; c.why = ''; c.by = 'you';
+  qaOne(n); touch(n); scheduleSave();
+}
+function keep(n) {
+  const c = S.p.cues[n - 1];
+  c.kept = true; c.removed = false; c.en = c.raw; c.sv = null;
+  if (S.p.phase === 'done') S.p.phase = 'translating';
+  qaOne(n); touch(n); scheduleSave(); renderRail();
+}
+function replaceAll() {
+  const find = $('#q').value, rep = $('#rep').value;
+  if (!find) return;
+  const re = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  let count = 0;
+  for (const c of S.p.cues) {
+    if (!c.sv || !rowVisible(c)) continue;
+    const v = c.sv.replace(re, () => { count++; return rep; });
+    if (v !== c.sv) { c.prev = c.sv; c.sv = v; c.by = 'you'; c.why = ''; qaOne(c.n); touch(c.n); }
+  }
+  setAlert(count ? `Replaced ${count} time${count === 1 ? '' : 's'} in the Swedish. Each changed subtitle has an Undo.` : `"${find}" isn’t in the Swedish text.`, count ? 'ok' : 'info');
+  scheduleSave();
+}
+
+/* ---------- translating ---------- */
+function stopJob() { if (!S.job.running) return; S.job.stop = true; S.job.note = 'Stopping after the current sentences…'; renderRail(); }
+async function run() {
+  const p = S.p;
+  if (!p || S.job.running) return;
+  if (S.editing) commitEdit();
+  stopPlay();
+  const engine = S.set.engine;
+  const J = S.job = { running: true, stop: false, done: 0, total: 0, note: 'Getting ready…', phase: 'translate', t0: performance.now() };
+  setAlert('');
+  renderRail();
+  try {
+    if (engine === 'chrome') {
+      if (!('Translator' in self)) throw { code: 'chrome-missing' };
+      if (S.chrome.state === 'unavailable' || S.chrome.state === 'timeout') throw { code: 'chrome-unavailable' };
+      await chromeTranslator();
+    } else await opusTranslator();
+    const translate = engine === 'chrome' ? translateChrome : translateOpus;
+
+    const o = opts();
+    const pend = new Set(pendingIds());
+    const units = buildUnits(p.cues, o).filter(u => u.parts.some(x => pend.has(x.n)));
+    p.stats = { units: units.length };
+    p.phase = 'translating';
+    J.total = units.length;
+    const todo = [];
+    for (const u of units) {
+      const pb = phrasebook(u.text);
+      if (pb) { applyUnit(u, pb, 'phrasebook'); J.done++; }
+      else if (!u.text) { applyUnit(u, '', 'filler'); J.done++; }
+      else todo.push(u);
+    }
+    const chunks = chunkUnits(todo, engine === 'chrome' ? 12 : 4, 1500);
+    for (const chunk of chunks) {
+      if (J.stop) throw { code: 'cancelled' };
+      J.note = `Translating subtitles ${chunk[0].parts[0].n}–${chunk[chunk.length - 1].parts[chunk[chunk.length - 1].parts.length - 1].n}`;
+      renderRail();
+      const out = await translate(chunk.map(u => u.text));
+      chunk.forEach((u, i) => {
+        const sv = out[i];
+        if (sv == null || !String(sv).trim()) { for (const x of u.parts) { const c = p.cues[x.n - 1]; c.err = 'empty'; qaOne(x.n); touch(x.n); } }
+        else applyUnit(u, sv, 'google');
+        J.done++;
+      });
+      scheduleSave();
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const left = pendingIds().length;
+    if (!left) {
+      p.phase = 'done';
+      const attn = S.qa.filter(q => q.level === 'warn' || q.level === 'bad').length;
+      setAlert(attn ? `Done. ${attn} subtitle${attn === 1 ? ' needs' : 's need'} a look, mostly to shorten. Choose Needs a look above the list.` : 'Done. Every subtitle is within the limits.', 'ok');
+    } else setAlert(`${left} subtitle${left === 1 ? ' was' : 's were'} not translated. Press Resume to try again.`, 'bad');
+  } catch (e) {
+    if (e && e.code === 'cancelled' || J.stop) setAlert('Stopped. Everything translated so far is kept. Press Resume to continue.', 'info');
+    else setAlert(engineError(e), 'bad');
+  } finally {
+    J.running = false;
+    saveNow();
+    for (const c of S.p.cues) touch(c.n);
+    renderAll();
+  }
+}
+
+/* ---------- rail, engines, settings, save ---------- */
+function setAlert(msg, kind) {
+  const a = $('#alert');
+  a.hidden = !msg;
+  a.textContent = msg || '';
+  a.dataset.kind = kind || 'bad';
+}
+function renderEngines() {
+  const st = S.chrome.state, pill = $('#chromeState'), note = $('#chromeNote');
+  const map = {
+    checking: ['Checking…', ''], available: ['Ready', 'ok'], downloadable: ['Ready to download', 'warn'], downloading: ['Downloading', 'warn'],
+    unavailable: ['Not for Swedish here', 'bad'], missing: ['Not in this browser', 'bad'], timeout: ['Not responding', 'bad']
+  };
+  const [label, s] = map[st] || [st, ''];
+  pill.textContent = label; pill.dataset.s = s;
+  note.textContent = st === 'downloadable' || st === 'downloading' ? 'The first translation starts a one-time download of the language model. Keep the tab open until it finishes.'
+    : st === 'missing' ? 'This browser has no built-in translator. Open the page in Chrome or Edge on a computer, or use the open model.'
+    : st === 'unavailable' ? 'Chrome says it can’t translate English to Swedish on this computer. Use the open model.'
+    : st === 'timeout' ? 'The built-in translator didn’t answer. This happens in browsers based on Chrome that don’t include Google’s models. Use the open model.'
+    : '';
+  $('#engChrome').checked = S.set.engine === 'chrome';
+  $('#engOpus').checked = S.set.engine === 'opus';
+  const o = S.opus, op = $('#opusState');
+  op.textContent = o.state === 'ready' ? 'Ready' : o.state === 'downloading' ? `Downloading ${Math.round(o.progress * 100)}%` : 'Not downloaded';
+  op.dataset.s = o.state === 'ready' ? 'ok' : o.state === 'downloading' ? 'warn' : '';
+  $('#opusNote').textContent = o.state === 'downloading' ? 'Keep the tab open until the download finishes.' : '';
+}
+function renderRail() {
+  const p = S.p, J = S.job, o = opts();
+  const act = active().length, pend = pendingIds().length, translated = act - pend;
+  const isSample = p.kind === 'sample';
+  const pill = $('#statePill');
+  let st = 'idle', label = 'Ready';
+  if (isSample) label = 'Example';
+  else if (J.running) { st = 'run'; label = 'Translating'; }
+  else if (p.phase === 'done' && !pend) { st = 'done'; label = 'Done'; }
+  else if (translated > 0) { st = 'paused'; label = 'Paused'; }
+  pill.dataset.s = st; pill.textContent = label;
+
+  const left = p.cues.length - act;
+  $('#workIntro').textContent = isSample
+    ? 'This sample scene shows what the page does with Google’s real output. Click a subtitle to see what changed. Open your own English .srt file to translate a film or an episode.'
+    : `${act} subtitles${left ? `, plus ${left} sound description${left === 1 ? '' : 's'} left out` : ''}.`;
+
+  const fills = p.cues.filter(c => /Fillers left out|Only fillers/.test(c.why || '')).length;
+  const pbs = p.cues.filter(c => c.by === 'phrasebook').length;
+  const fixes = p.cues.filter(c => /is "|converted|Filler removed|allihop|Herregud/.test(c.why || '')).length;
+  const attn = S.qa.filter(q => q.level === 'warn' || q.level === 'bad').length;
+  const done = p.phase === 'done' && !pend;
+  const state = {
+    prep: translated || J.running ? 'done' : 'todo',
+    translate: J.running ? 'run' : act && !pend ? 'done' : 'todo',
+    clean: done ? 'done' : 'todo',
+    check: done ? 'done' : 'todo'
+  };
+  const cnt = {
+    prep: p.stats ? `${p.stats.units} sentences` : '',
+    translate: act ? `${translated}/${act}` : '',
+    clean: translated ? `${pbs} phrase${pbs === 1 ? '' : 's'} · ${fixes + fills} fix${fixes + fills === 1 ? '' : 'es'}` : '',
+    check: done ? `${attn} to look at` : ''
+  };
+  for (const li of document.querySelectorAll('#steps li')) { li.dataset.state = state[li.dataset.step]; li.querySelector('.cnt').textContent = cnt[li.dataset.step]; }
+  $('#checkDesc').textContent = `Two lines, ${o.maxLen} characters per line, ${o.cps} characters per second. Subtitles over the limit are marked for you to shorten.`;
+  const google = S.set.engine === 'chrome';
+  $('#stepTrH').textContent = google ? 'Translate with Google' : 'Translate with the open model';
+  $('#stepTrD').textContent = google ? 'Whole sentences go to Google, a dozen at a time, so word order and context come out right.' : 'Whole sentences go to the model instead of fragments, so word order comes out right.';
+
+  $('#progress').hidden = !J.running;
+  if (J.running) {
+    const frac = J.total ? J.done / J.total : 0;
+    $('#barFill').style.width = Math.max(3, Math.round(frac * 100)) + '%';
+    $('#ptext').textContent = (J.note || '') + (J.total ? ` · ${J.done} of ${J.total} sentences` : '');
+  }
+  const go = $('#goBtn');
+  $('#stopBtn').hidden = !J.running;
+  go.hidden = J.running;
+  go.disabled = false;
+  if (isSample) go.textContent = 'Translate the sample live';
+  else if (!translated) go.textContent = 'Translate';
+  else if (pend) go.textContent = 'Resume';
+  else { go.textContent = 'All translated'; go.disabled = true; }
+
+  const est = $('#estimate');
+  if (J.running || go.disabled) est.textContent = '';
+  else if (S.set.engine === 'chrome') est.textContent = `Free, and runs on this computer.${S.chrome.state === 'downloadable' ? ' The first time, Chrome downloads Google’s language model.' : ''}`;
+  else est.textContent = `Free, and runs on this computer.${S.opus.state === 'ready' ? '' : ' The first time, the page downloads the open model (about 105 MB).'} A film takes several minutes.`;
+}
+function renderHeader() {
+  const p = S.p, dur = p.cues.length ? p.cues[p.cues.length - 1].end : 0;
+  $('#fileName').textContent = p.kind === 'file' ? p.name : 'Sample scene';
+  $('#fileMeta').textContent = `· ${p.cues.length} subtitles · ${fmtClock(dur)}`;
+  $('#closeBtn').hidden = p.kind === 'sample';
+}
+function renderSettings() {
+  const s = S.set;
+  $('#sAud').value = s.audience; $('#sLen').value = opts().maxLen; $('#sDash').value = s.dash;
+  $('#sSdh').value = s.sdh; $('#sFill').checked = !!s.fillers; $('#sExt').checked = !!s.extend; $('#sEnc').value = s.encoding;
+  const started = S.p.kind !== 'sample' && S.p.cues.some(c => c.sv != null);
+  $('#sSdh').disabled = started || S.p.kind === 'sample';
+  $('#sdhNote').textContent = S.p.kind === 'sample' ? 'Applies to your own files.' : started ? 'Set this before translating. Use Keep on a single subtitle to bring it back.' : '';
+  $('#guideLbl').textContent = `${opts().maxLen} characters`;
+}
+function renderSave() {
+  const todo = pendingIds().length;
+  $('#saveName').textContent = S.p.kind === 'file' ? outName(S.p.name) : 'sample.sv.srt';
+  $('#saveInfo').textContent = (todo ? `${todo} subtitle${todo === 1 ? ' is' : 's are'} not translated yet and will be saved in English. ` : '') +
+    'Put the .srt next to the video with the same name, and players like VLC and Plex pick it up as Swedish.';
+}
+function renderAll() { renderHeader(); renderSettings(); renderEngines(); renderRail(); renderSave(); renderStage(); updateCounts(); }
+
+function srtText() { return buildSRT(S.p.cues, S.qa, opts()); }
+function saveSrt() {
+  if (S.editing) commitEdit();
+  const name = S.p.kind === 'file' ? outName(S.p.name) : 'sample.sv.srt';
+  const { bytes, bad } = encodeText(srtText().replace(/\n/g, '\r\n'), S.set.encoding);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/x-subrip' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  const sa = $('#saveAlert');
+  sa.hidden = false; sa.dataset.kind = 'ok';
+  sa.textContent = `Saved ${name} to your downloads.` + (bad ? ` ${bad} character${bad === 1 ? '' : 's'} had no Windows-1252 version and became "?".` : '');
+}
+function copySrt() {
+  if (S.editing) commitEdit();
+  const text = srtText(), sa = $('#saveAlert'), box = $('#copyBox');
+  const name = S.p.kind === 'file' ? outName(S.p.name) : 'sample.sv.srt';
+  const fallback = () => { box.hidden = false; box.value = text; box.focus(); box.select(); sa.hidden = false; sa.dataset.kind = 'info'; sa.textContent = 'Copy the selected text below, paste it into a plain text file and save it as ' + name + '.'; };
+  try { navigator.clipboard.writeText(text).then(() => { box.hidden = true; sa.hidden = false; sa.dataset.kind = 'ok'; sa.textContent = 'Copied. Paste it into a plain text file and save it as ' + name + '.'; }, fallback); }
+  catch { fallback(); }
+}
+
+/* ---------- storage (this browser only) ---------- */
+let saveTimer = 0;
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 700); }
+function saveNow() {
+  clearTimeout(saveTimer);
+  try {
+    localStorage.setItem(KEY + ':settings', JSON.stringify(S.set));
+    if (S.p && S.p.kind === 'file') localStorage.setItem(KEY + ':project', JSON.stringify({ p: S.p, sel: S.sel }));
+  } catch { /* storage full or blocked: work continues without it */ }
+}
+function loadSaved() {
+  try { const s = JSON.parse(localStorage.getItem(KEY + ':settings') || 'null'); if (s && typeof s === 'object') S.set = { ...DEFAULTS, ...s }; } catch { /* ignore */ }
+  if (S.set.engine !== 'chrome' && S.set.engine !== 'opus') S.set.engine = 'chrome';
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY + ':project') || 'null');
+    if (d && d.p && Array.isArray(d.p.cues) && d.p.cues.length) return d;
+  } catch { /* ignore */ }
+  return null;
+}
+function forgetProject() { try { localStorage.removeItem(KEY + ':project'); } catch { /* ignore */ } }
+
+/* ---------- files ---------- */
+let pendingFile = null;
+async function openFile(file) {
+  if (!file) return;
+  if (S.job.running) { setAlert('Stop the current translation before opening another file.', 'bad'); return; }
+  const p = S.p;
+  if (p.kind === 'file' && p.cues.some(c => c.sv != null)) {
+    pendingFile = file;
+    $('#confirmText').textContent = `Open ${file.name}? The translation of ${p.name} in this browser will be replaced. Save it first if you want to keep it.`;
+    $('#confirmYes').textContent = 'Open';
+    $('#confirmBar').hidden = false;
+    return;
+  }
+  await loadFile(file);
+}
+async function loadFile(file) {
+  try {
+    if (file.size > 20 * 1024 * 1024) { setAlert('That file is larger than 20 MB, which is far more than a subtitle file. Pick the .srt file.', 'bad'); return; }
+    const parsed = parseSubtitles(decodeBytes(new Uint8Array(await file.arrayBuffer())));
+    if (!parsed.length) { setAlert(`No subtitles found in ${file.name}. Pick an English .srt or .vtt file.`, 'bad'); return; }
+    const p = makeProject(file.name, parsed, 'file', S.set.sdh);
+    p.stats = { units: buildUnits(p.cues, opts()).length };
+    setAlert('');
+    $('#saveAlert').hidden = true; $('#copyBox').hidden = true;
+    setProject(p);
+    saveNow();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch {
+    setAlert(`Couldn’t read ${file.name}. Pick an English .srt or .vtt file.`, 'bad');
+  }
+}
+function closeProject() {
+  if (S.job.running) return;
+  pendingFile = null;
+  if (S.p.kind === 'file' && S.p.cues.some(c => c.sv != null)) {
+    $('#confirmText').textContent = `Close ${S.p.name}? Its translation is removed from this browser. Save it first if you want to keep it.`;
+    $('#confirmYes').textContent = 'Close';
+    $('#confirmBar').hidden = false;
+    return;
+  }
+  doClose();
+}
+function doClose() { forgetProject(); setAlert(''); setProject(makeSampleProject()); }
+
+/* ---------- events ---------- */
+function bind() {
+  $('#openBtn').addEventListener('click', () => $('#fileInput').click());
+  $('#fileInput').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; openFile(f); });
+  $('#closeBtn').addEventListener('click', closeProject);
+  $('#confirmNo').addEventListener('click', () => { pendingFile = null; $('#confirmBar').hidden = true; });
+  $('#confirmYes').addEventListener('click', async () => { $('#confirmBar').hidden = true; if (pendingFile) { const f = pendingFile; pendingFile = null; await loadFile(f); } else doClose(); });
+
+  $('#goBtn').addEventListener('click', () => {
+    if (S.p.kind === 'sample') {
+      const p = makeProject('Sample scene', parseSubtitles(SAMPLE_SRT), 'sample-live', 'remove');
+      setProject(p);
+    }
+    run();
+  });
+  $('#stopBtn').addEventListener('click', stopJob);
+
+  for (const id of ['#engChrome', '#engOpus']) $(id).addEventListener('change', e => { S.set.engine = e.target.value; S.set.engineChosen = true; scheduleSave(); renderEngines(); renderRail(); });
+
+  $('#prevBtn').addEventListener('click', () => { stopPlay(); step(-1); });
+  $('#nextBtn').addEventListener('click', () => { stopPlay(); step(1); });
+  $('#playBtn').addEventListener('click', togglePlay);
+  $('#timeline').addEventListener('click', e => {
+    const rect = e.currentTarget.getBoundingClientRect(), t = (e.clientX - rect.left) / rect.width * totalMs();
+    let best = null, bd = Infinity;
+    for (const c of S.p.cues) { const d = t < c.start ? c.start - t : t > c.end ? t - c.end : 0; if (d < bd) { bd = d; best = c; } }
+    if (best) { stopPlay(); select(best.n, true); }
+  });
+
+  $('#list').addEventListener('click', e => {
+    const row = e.target.closest('.row');
+    if (!row) return;
+    const n = +row.dataset.n, act = e.target.closest('[data-act]');
+    if (act) { if (act.dataset.act === 'undo') undo(n); else if (act.dataset.act === 'keep') keep(n); return; }
+    if (e.target.closest('textarea')) return;
+    if (e.target.closest('.sv-text') && !S.p.cues[n - 1].removed) { startEdit(n); return; }
+    if (S.editing && S.editing !== n) commitEdit();
+    select(n);
+  });
+  $('#list').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.classList.contains('sv-text')) { e.preventDefault(); startEdit(+e.target.closest('.row').dataset.n); }
+  });
+  for (const b of document.querySelectorAll('.seg button')) b.addEventListener('click', () => { S.filter = b.dataset.f; applyFilter(); });
+  $('#q').addEventListener('input', e => { S.q = e.target.value.trim().toLowerCase(); applyFilter(); });
+  $('#repBtn').addEventListener('click', replaceAll);
+
+  const setting = (id, key, conv, after) => $(id).addEventListener('change', e => { S.set[key] = conv(e.target); scheduleSave(); if (after) after(); renderSettings(); renderRail(); renderSave(); });
+  const requalify = () => { qaAll(); for (const c of S.p.cues) touch(c.n); renderStage(); };
+  const repolish = () => { const o = opts(); for (const c of S.p.cues) if (c.sv) c.sv = polish(c.sv, o); requalify(); };
+  setting('#sAud', 'audience', t => t.value, requalify);
+  setting('#sLen', 'maxLen', t => Math.min(60, Math.max(30, parseInt(t.value, 10) || 42)), repolish);
+  setting('#sDash', 'dash', t => t.value, repolish);
+  setting('#sSdh', 'sdh', t => t.value, () => { if (S.p.kind !== 'sample' && !S.p.cues.some(c => c.sv != null)) { applySDH(S.p.cues, S.set.sdh); S.p.stats = { units: buildUnits(S.p.cues, opts()).length }; qaAll(); buildList(); renderStage(); } });
+  setting('#sFill', 'fillers', t => t.checked, () => { if (S.p.kind === 'file') S.p.stats = { units: buildUnits(S.p.cues, opts()).length }; });
+  setting('#sExt', 'extend', t => t.checked, requalify);
+  setting('#sEnc', 'encoding', t => t.value);
+  $('#saveBtn').addEventListener('click', saveSrt);
+  $('#copyBtn').addEventListener('click', copySrt);
+
+  document.addEventListener('keydown', e => {
+    const t = e.target, tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); stopPlay(); step(1); }
+    else if (e.key === 'k' || e.key === 'K') { e.preventDefault(); stopPlay(); step(-1); }
+    else if (e.key === ' ' && tag !== 'BUTTON' && tag !== 'SUMMARY' && !(t && t.classList && t.classList.contains('sv-text'))) { e.preventDefault(); togglePlay(); }
+  });
+
+  let depth = 0;
+  const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); depth++; $('#drop').hidden = false; });
+  window.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) $('#drop').hidden = true; });
+  window.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; $('#drop').hidden = true; openFile(e.dataTransfer.files && e.dataTransfer.files[0]); });
+
+  new ResizeObserver(() => drawTimeline(true)).observe($('#timeline'));
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => requestAnimationFrame(() => drawTimeline(true)));
+  window.addEventListener('beforeunload', saveNow);
+}
+
+/* ---------- start ---------- */
+(function start() {
+  const saved = loadSaved();
+  bind();
+  let p = saved && saved.p ? saved.p : null;
+  if (!p) p = makeSampleProject();
+  setProject(p, saved && saved.sel);
+  checkChrome();
+})();
+</script>
+</body>
+</html>
