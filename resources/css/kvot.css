@@ -50,6 +50,8 @@
 	--code-bg: #f6efe8;
 	--code-text: #3b3126;
 	--overlay-bg: rgba(26, 20, 16, 0.45);
+	/* Under the open menu: lighter than a dialog's, as the page stays in view. */
+	--menu-scrim: rgba(53, 41, 33, 0.16);
 	--modal-bg: #fefcfb;
 	--table-border: #e0d7ce;
 	--table-stripe: #fbf8f4;
@@ -139,6 +141,7 @@
 	--code-bg: #2a221b;
 	--code-text: #e8ddd0;
 	--overlay-bg: rgba(0, 0, 0, 0.7);
+	--menu-scrim: rgba(0, 0, 0, 0.45);
 	--modal-bg: #2a221b;
 	--table-border: #51453a;
 	--table-stripe: #332b23;
@@ -327,44 +330,172 @@ body{
   -webkit-transform-origin: 15% 95%;
           transform-origin: 15% 95%;
 }
+/*
+  THE MENU. #menu is a layer over the window below the header that dims the
+  page while the menu is open, and .nav-panel is the menu on it. Closed, the
+  layer is hidden and lets every click through. Its visibility flips at once
+  on opening, so the find field can take focus in the same moment, and only
+  after the fade on closing.
+*/
 #menu {
   position: fixed;
-  top: calc(var(--header-height) + 1px);
-  right: 8px;
+  top: var(--header-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 1000000000;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px var(--shadow-color);
-  padding: 6px 0;
-  min-width: 230px;
+  background: var(--menu-scrim);
+  font-family: RawengulkSans;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-8px);
-  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  pointer-events: none;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
 }
 #menu.open {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+  pointer-events: auto;
+  transition: opacity 0.2s ease, visibility 0s;
+}
+/* The find field hides what it leaves out with [hidden]; no display given
+   below may bring it back. */
+#menu [hidden] {
+  display: none !important;
+}
+.nav-panel {
+  position: absolute;
+  top: 1px;
+  right: 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: min(820px, calc(100vw - 16px));
+  max-height: calc(100% - 9px);
+  overflow: hidden;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--shadow-color);
+  transform: translateY(-8px);
+  transition: transform 0.2s ease;
+}
+#menu.open .nav-panel {
+  transform: none;
+}
+.nav-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+.nav-find {
+  position: relative;
+  display: flex;
+  flex: 0 1 320px;
+  min-width: 0;
+}
+.nav-find svg {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.nav-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px 0 35px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  font: inherit;
+  /* iOS zooms into any field under 16px, on a phone held either way up, and
+     leaves the page zoomed. */
+  font-size: 16px;
+}
+.nav-search::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+.nav-search:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+/* The browser's own clear button is blue; this one is the page's colour. */
+.nav-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-left: 6px;
+  background: var(--text-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  cursor: pointer;
+}
+.nav-home {
+  margin-left: auto;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  text-decoration: none;
+}
+.nav-groups {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 14px 4px;
+}
+/* The columns are inside the scroller rather than on it: a multi-column box
+   of limited height adds columns sideways instead of growing downwards, and
+   a short window would then have to be scrolled across. */
+.nav-cols {
+  column-width: 220px;
+  column-count: 3;
+  column-gap: 14px;
+}
+.nav-group {
+  break-inside: avoid;
+  padding-bottom: 10px;
+}
+.nav-group-label {
+  padding: 6px 10px 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 #menu ul {
-  padding: 0;
   margin: 0;
-}
-#menu li {
+  padding: 0;
   list-style: none;
 }
-#menu a {
+.nav-groups a,
+.nav-groups .nav-current {
   display: block;
-  padding: 10px 20px;
+  padding: 6px 10px;
+  border-radius: 6px;
   color: var(--text-primary);
-  text-decoration: none;
   font-size: 15px;
-  font-family: RawengulkSans;
+  line-height: 1.35;
+  text-decoration: none;
   transition: background 0.15s ease, color 0.15s ease;
 }
-#menu a:hover {
+#menu a:hover,
+.nav-groups a.nav-picked {
   background: var(--bg-secondary);
   color: var(--link-color);
 }
@@ -372,22 +503,87 @@ body{
   outline: 2px solid var(--accent-line);
   outline-offset: -2px;
 }
-#menu .nav-divider {
-  height: 1px;
-  background: var(--border-color);
-  margin: 4px 12px;
+/* The page one is on, in its place but not a link. */
+#menu .nav-current {
+  background: var(--bg-secondary);
+  box-shadow: inset 3px 0 0 var(--accent-line);
+  color: var(--link-color);
 }
-#menu .nav-section-label {
-  padding: 8px 20px 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+/* What Enter in the find field opens. */
+.nav-groups a.nav-picked::after {
+  content: '\21B5';
+  float: right;
+  margin-left: 8px;
   color: var(--text-muted);
-  font-family: RawengulkSans;
 }
-#menu .nav-sub a {
-  padding-left: 32px;
-  font-size: 14px;
+.nav-empty {
+  margin: 0;
+  padding: 6px 10px 16px;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+.nav-empty:empty {
+  display: none;
+}
+/* A phone, or a window as narrow: the menu is a sheet over everything below
+   the header, scrolled as a whole, and the field is as wide as it can be. */
+@media (max-width: 700px) {
+  .nav-panel {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .nav-find {
+    flex: 1 1 auto;
+  }
+  .nav-search {
+    height: 40px;
+  }
+  .nav-home,
+  .nav-groups a,
+  .nav-groups .nav-current,
+  .nav-empty {
+    font-size: 16px;
+  }
+}
+/* One column, and no multi-column box: a heading can then stick to the top
+   while its projects scroll under it. */
+@media (max-width: 560px) {
+  .nav-groups {
+    padding-top: 0;
+  }
+  .nav-cols {
+    column-count: auto;
+    column-width: auto;
+  }
+  .nav-group-label {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding-top: 12px;
+    background: var(--bg-surface);
+  }
+}
+/* A fingertip needs more to aim at than a pointer does: 44px a row. */
+@media (pointer: coarse) {
+  .nav-home,
+  .nav-groups a,
+  .nav-groups .nav-current {
+    padding: 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #menu,
+  #menu.open,
+  .nav-panel {
+    transition: none;
+  }
 }
 
 
@@ -552,6 +748,18 @@ footer .theme-toggle {
   text-decoration: underline;
 }
 
+/* The projects under the same headings as the menu, a grid of cards each. */
+.project-group + .project-group {
+  margin-top: 30px;
+}
+.project-group-title {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));

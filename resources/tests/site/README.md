@@ -1167,6 +1167,40 @@ wholly on the screen, not running off the sides, with the switch clear of
 the last icon and the map button kept. At 1400 the address is still there.
 There are 45 checks.
 
+## test-chrome-nav-menu.py
+
+The site menu, with every project under its heading. As one list it had
+grown to 1011px in an 800px window, and being fixed it could not be scrolled:
+the last seven projects could not be reached on a laptop, and on a phone more
+than half were off the bottom. The headings now sit side by side where there
+is room, the panel scrolls inside itself where there is not, and a field at
+the top narrows the list.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-nav-menu.py
+
+The ports default to 8765 and 9222. On every page that calls `renderNav`
+(found by reading the pages): the toggle and the menu are children of
+`<body>`, since several pages hide them as `body > #menu` in their
+full-window modes, and the menu is a `div` with a role rather than a `<nav>`,
+which rdc.css styles. Every project is listed once under its heading, the page
+itself marked and not a link, and home. At 1440 × 800 the open menu is under
+the header, on the screen and has nothing to scroll; Escape closes it and gives
+the keyboard back to the toggle.
+
+On the landing page and rdc.html, the find field: a name, accents folded away,
+case, a description, two words, a name match picked before a description
+match, nothing found. Down and Up between the field and the projects, typing
+on a project going on in the field, keys not reaching the page underneath, a
+click on the dimmed page closing the menu without reaching the page, the
+field empty again on reopening, Tab past the last project closing it, and
+Enter opening the project picked. On touch screens upright, on their side and
+at 600px: the field is not focused (the keyboard would cover the list) and is
+16px or more, the sheet fills the screen below the header, the last project
+can be scrolled to, rows are 44px or more, and on a phone the heading of the
+projects in view sticks. The landing page and the 404 list the projects under
+the same headings, and so do the landing page's list for browsers without
+scripts and the sitemap. There are 377 checks.
+
 ## test-xlsxwrite.py
 
 `resources/js/xlsxwrite.js`, the Excel writer that facsimile, rb,

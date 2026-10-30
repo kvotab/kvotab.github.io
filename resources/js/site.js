@@ -19,130 +19,170 @@ const KVOT = (() => {
 
   // ── All projects ───────────────────────────────────────────────────────────
 
+  /*
+    The menu and the landing page list the projects under these headings, in
+    this order, and each project names its own. Within a heading the projects
+    keep their order in ALL_PROJECTS. A project naming a heading that is not
+    here is listed under "Other" at the end rather than left out.
+  */
+  const PROJECT_GROUPS = [
+    { id: 'data', label: 'Data and statistics' },
+    { id: 'nuclear', label: 'Nuclear data and dose' },
+    { id: 'models', label: 'Modelling' },
+    { id: 'documents', label: 'Reports and references' },
+    { id: 'accounts', label: 'Accounts and tax' },
+    { id: 'everyday', label: 'Everyday' },
+  ];
+
   const ALL_PROJECTS = [
     {
       href: './rb.html',
       label: 'HDF5 Browser',
+      group: 'data',
       desc: 'Open .h5 files straight in the browser — walk the tree, inspect datasets, plot them and export to Excel.',
     },
     {
       href: './ensdf.html',
       label: 'Chart of Nuclides',
+      group: 'nuclear',
       desc: 'Every nuclide in the Evaluated Nuclear Structure Data File by N and Z, coloured by half-life or decay mode, with its states, Q-values, levels and radiation, and the whole decay chain of any radionuclide.',
     },
     {
       href: './distributions.html',
       label: 'Probability Distributions',
+      group: 'data',
       desc: 'Define and compare probability distributions — 38 parametric families in several parameterisations each, empirical distributions from data, truncation — with their statistics, seeded samples (random, Latin hypercube, Sobol, Halton), fits to data by maximum likelihood or moments ranked by AIC and goodness of fit, and calculations from tail probabilities to Monte Carlo sums.',
     },
     {
       href: './kompartment.html',
       label: 'Kompartment',
+      group: 'models',
       desc: 'Build compartment models in the browser — blocks and fluxes drawn on a canvas, expressions, uncertainty and calibration — and solve them with a choice of stiff and non-stiff solvers.',
     },
     {
       href: './smui.html',
       label: 'User Interface for statsmodels',
+      group: 'data',
       desc: 'A statistics workbench in the working style of JMP, computed by statsmodels in the browser: a data table with modeling types and row states, Distribution, Bivariate Analysis, Fit Model, multivariate methods, time series, survival, quality and design of experiments, and Graph Maker, with linked graphs and the Python behind every result.',
     },
     {
       href: './rtm.html',
       label: 'Reactive Transport',
+      group: 'models',
       desc: 'Specify and solve reactive transport models: reactions written the usual way, a batch reactor or a column with diffusion and advection, and an analytic sparse Jacobian built from your own reaction set.',
     },
     {
       href: './skbref.html',
       label: 'SKB Reference Checker',
+      group: 'documents',
       desc: 'Check citations and reference lists in a Word document against the SKB reference guides.',
     },
     {
       href: './zoterify.html',
       label: 'Zoterify',
+      group: 'documents',
       desc: 'Turn the plain-text citations in a Word document into live Zotero citations, matched against your own zotero.sqlite, with every change tracked in your own document.',
     },
     {
       href: './skb_qa_summary.html',
       label: 'SKB QC Summary',
+      group: 'documents',
       desc: 'Summarise QA review status across Excel workbooks, with filters, statistics and CSV export.',
     },
     {
       href: './dose_coefficients.html',
       label: 'Dose Coefficients',
+      group: 'nuclear',
       desc: 'Committed effective and equivalent dose coefficients for members of the public, by age at intake, for ingestion and inhalation, calculated with the ICRP’s own models in the ICRP 60 system (Publication 72) or the ICRP 103 system (Publication 158): retention, excretion and the models themselves.',
     },
     {
       href: './proj.html',
       label: 'Swedish Coordinate Conversions',
+      group: 'data',
       desc: 'Convert between WGS 84, SWEREF 99 and RT 90, one point at a time or in bulk from a pasted list.',
     },
     {
       href: './FARF31.html',
       label: 'FARF31 Far-Field Transport',
+      group: 'models',
       desc: 'SKB’s far-field model FARF31: radionuclides along a stream tube with dispersion, matrix diffusion and sorption, and decay chains of any length, solved in the Laplace domain from the release you give; FARF31’s own input and output files read and written.',
     },
     {
       href: './facsimile.html',
       label: 'Canister Radiolysis',
+      group: 'models',
       desc: 'Solve the FACSIMILE radiolysis and corrosion model of the gas in an intact spent-fuel canister, with editable reactions and a sparse analytic Jacobian.',
     },
     {
       href: './erosion_corrosion.html',
       label: 'Erosion and Corrosion',
+      group: 'models',
       desc: 'SKB’s buffer erosion and canister corrosion calculation for every deposition hole of a KBS-3 layout, from hydro data you drop in: rejection criteria, time to advection, sulphide-driven failure times and the key outputs of the PSAR workbook.',
     },
     {
       href: './SimpleFunctions.html',
       label: 'Simple Functions',
+      group: 'models',
       desc: 'Radionuclide solubility limits by SKB’s Simple Functions: the SR-Site and PSAR calculation for 20 elements in the water of a failed canister, Monte Carlo over groundwater compositions and equilibrium constants, with controlling solids, speciation and sensitivities.',
     },
     {
       href: './rdc.html',
       label: 'Radionuclide Decay Chains',
+      group: 'nuclear',
       desc: 'Explore the ICRP Publication 107 decay data as an interactive chain graph, and plot activity over time.',
     },
     {
       href: './logn.html',
       label: 'Lognormal Conversions',
+      group: 'data',
       desc: 'Convert between lognormal parameterisations — μ and σ, geometric mean and GSD, percentiles — with the equations shown.',
     },
     {
       href: './arsredovisning.html',
       label: 'Digital årsredovisning',
+      group: 'accounts',
       desc: 'Build a K2 annual report from a SIE file and check the iXBRL against what Bolagsverket looks at.',
     },
     {
       href: './inkomstdeklaration.html',
       label: 'Inkomstdeklaration',
+      group: 'accounts',
       desc: 'Build the SRU files for Skatteverket from a SIE file, using BAS official account mapping.',
     },
     {
       href: './flashcards.html',
       label: 'Glosor',
+      group: 'everyday',
       desc: 'Practise English and Spanish vocabulary on cards, in Swedish: themes from colours and animals to irregular verbs, both ways round, the words read out, and word lists of one’s own from school, typed or read off a photo of the sheet, that can be shared as a link.',
     },
     {
       href: './winnetkakort.html',
       label: 'Winnetkakort',
+      group: 'everyday',
       desc: 'Practise the arithmetic facts with Winnetka cards, in Swedish: the task on the front, the answer on the back, and one pile for what you know and one for what needs more practice — addition and subtraction, the times tables, division, fractions, percent and negative numbers.',
     },
     {
       href: './gitarr.html',
       label: 'Gitarrstämmare',
+      group: 'everyday',
       desc: 'Tune an acoustic guitar to standard tuning with the microphone, in Swedish: the page hears which string is played and shows on a picture of the headstock which key to turn, and which way, until the string is in tune.',
     },
     {
       href: './svensk_text.html',
       label: 'Svensk text',
+      group: 'everyday',
       desc: 'Translate English subtitles into Swedish in the browser, for free, with Google’s translator built into Chrome: whole sentences go to the translator rather than single subtitles, fillers and sound descriptions are left out, and every subtitle is checked against Swedish subtitling limits — two lines, 42 characters to a line, 17 characters a second.',
     },
     {
       href: './uppsala.html',
       label: 'Uppsala → Solna',
+      group: 'everyday',
       desc: 'Live departures for the next SL commuter trains from Uppsala C towards Solna, refreshed every 30 seconds.',
     },
     {
       href: './solna.html',
       label: 'Solna → Uppsala',
+      group: 'everyday',
       desc: 'Live departures for the next SL commuter trains from Solna to Uppsala C, refreshed every 30 seconds.',
     },
   ];
@@ -274,7 +314,35 @@ const KVOT = (() => {
     header.innerHTML = LOGO_SVG + heading + extraHTML + '<section></section>';
   }
 
-  // ── Navigation toggle + overlay ────────────────────────────────────────────
+  // ── Navigation toggle + menu ───────────────────────────────────────────────
+  /*
+    The hamburger opens every project under its heading. As a single list it
+    had grown taller than a laptop's screen, and the menu, being fixed, could
+    not be scrolled: the last projects were out of reach. The headings now sit
+    side by side where there is room, the panel scrolls inside itself where
+    there is not (a phone, a short window), and a field at the top narrows the
+    list as one types.
+
+    #menu covers the window below the header and dims the page; a click there
+    closes the menu without reaching the page underneath. It and the toggle
+    stay children of <body>, because several pages' full-window modes hide
+    them as `body > .nav-toggle` and `body > #menu`. It is a div with a role
+    rather than a <nav>, since rdc.css styles every <nav> for rdc.html's own.
+  */
+
+  // The headings in PROJECT_GROUPS order, each with its projects.
+  function projectGroups() {
+    const known = new Set(PROJECT_GROUPS.map(g => g.id));
+    const groups = PROJECT_GROUPS.map(g => ({ ...g, projects: ALL_PROJECTS.filter(p => p.group === g.id) }));
+    groups.push({ id: 'other', label: 'Other', projects: ALL_PROJECTS.filter(p => !known.has(p.group)) });
+    return groups.filter(g => g.projects.length);
+  }
+
+  // Accents folded away and case ignored, so "arsredovisning" finds
+  // Digital årsredovisning and "stammare" the guitar tuner.
+  function foldForSearch(text) {
+    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
 
   function renderNav(currentPage) {
     const header = document.querySelector('header');
@@ -294,28 +362,106 @@ const KVOT = (() => {
     toggle.innerHTML = '<span class="bar-top"></span><span class="bar-mid"></span><span class="bar-bot"></span>';
     header.insertAdjacentElement('afterend', toggle);
 
-    // Build project sub-links (exclude current page)
-    const projectLinks = ALL_PROJECTS
-      .filter(p => p.href !== './' + currentPage)
-      .map(p => `<li class="nav-sub"><a href="${p.href}">${p.label}</a></li>`)
-      .join('\n        ');
+    // The page one is on keeps its place in the list, marked, but is not a
+    // link: the list shows where one is without offering the page again.
+    const here = './' + currentPage;
+    const entry = p => p.href === here
+      ? `<span class="nav-current" aria-current="page">${p.label}</span>`
+      : `<a href="${p.href}">${p.label}</a>`;
+    const home = here === './index.html'
+      ? '<span class="nav-home nav-current" aria-current="page">home</span>'
+      : '<a class="nav-home" href="./index.html">home</a>';
+    const groups = projectGroups();
 
-    // Dropdown card
     const menu = document.createElement('div');
     menu.id = 'menu';
+    menu.setAttribute('role', 'navigation');
+    menu.setAttribute('aria-label', 'Site');
     menu.innerHTML = `
-      <ul>
-        <li><a href="./index.html">home</a></li>
-        <li><div class="nav-divider"></div></li>
-        <li><div class="nav-section-label">projects</div></li>
-        ${projectLinks}
-      </ul>`;
+      <div class="nav-panel">
+        <div class="nav-top">
+          <div class="nav-find">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+            <input type="search" class="nav-search" placeholder="Find a project" aria-label="Find a project"
+                   autocomplete="off" spellcheck="false" enterkeyhint="go">
+          </div>
+          ${home}
+        </div>
+        <div class="nav-groups">
+          <div class="nav-cols">${groups.map(g => `
+            <div class="nav-group">
+              <div class="nav-group-label" id="nav-group-${g.id}">${g.label}</div>
+              <ul aria-labelledby="nav-group-${g.id}">${g.projects.map(p => `
+                <li data-project="${ALL_PROJECTS.indexOf(p)}">${entry(p)}</li>`).join('')}
+              </ul>
+            </div>`).join('')}
+          </div>
+          <p class="nav-empty" role="status"></p>
+        </div>
+      </div>`;
     toggle.insertAdjacentElement('afterend', menu);
 
+    const panel = menu.querySelector('.nav-panel');
+    const search = menu.querySelector('.nav-search');
+    const scroller = menu.querySelector('.nav-groups');
+    const empty = menu.querySelector('.nav-empty');
+
+    // What the field looks in: a project's name and file name first, then its
+    // description and its heading. A match on the name is the one Enter opens.
+    const entries = [...menu.querySelectorAll('li[data-project]')].map(li => {
+      const p = ALL_PROJECTS[li.dataset.project];
+      const file = p.href.replace(/^\.\//, '').replace(/\.html$/, '').replace(/_/g, ' ');
+      const heading = groups.find(g => g.projects.includes(p)).label;
+      return {
+        li,
+        link: li.querySelector('a'),
+        name: foldForSearch(p.label + ' ' + file),
+        more: foldForSearch(p.desc + ' ' + heading),
+      };
+    });
+    let picked = null;
+
+    function pick(link) {
+      if (picked) picked.classList.remove('nav-picked');
+      picked = link;
+      if (picked) picked.classList.add('nav-picked');
+    }
+
+    function filterMenu() {
+      const words = foldForSearch(search.value).split(/\s+/).filter(Boolean);
+      let shown = 0, byName = null, first = null;
+      for (const e of entries) {
+        const inName = words.every(w => e.name.includes(w));
+        const found = inName || words.every(w => e.name.includes(w) || e.more.includes(w));
+        e.li.hidden = !found;
+        if (!found) continue;
+        shown++;
+        if (e.link && inName && !byName) byName = e.link;
+        if (e.link && !first) first = e.link;
+      }
+      menu.querySelectorAll('.nav-group').forEach(g => {
+        g.hidden = !g.querySelector('li:not([hidden])');
+      });
+      pick(words.length ? byName || first : null);
+      empty.textContent = shown ? '' : `No project matches “${search.value.trim()}”.`;
+    }
+    search.addEventListener('input', filterMenu);
+
+    // With a mouse or trackpad one can type straight away. On a touch screen
+    // the keyboard would cover half the list, so the field waits for a tap.
+    const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+
     function setMenuOpen(open) {
+      if (open === menu.classList.contains('open')) return;
       toggle.classList.toggle('opened', open);
       menu.classList.toggle('open', open);
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) return;
+      // Every opening starts from the whole list, scrolled to the top.
+      search.value = '';
+      filterMenu();
+      scroller.scrollTop = 0;
+      if (finePointer.matches) search.focus({ preventScroll: true });
     }
 
     function closeMenu() {
@@ -331,11 +477,46 @@ const KVOT = (() => {
     // Close when clicking a link
     menu.querySelectorAll('a').forEach(a => a.addEventListener('click', closeMenu));
 
-    // Close when clicking anywhere outside
+    // Close when clicking anywhere outside the panel, the dimmed page included
     document.addEventListener('click', function (e) {
-      if (!menu.contains(e.target) && !toggle.contains(e.target)) {
+      if (!panel.contains(e.target) && !toggle.contains(e.target)) {
         closeMenu();
       }
+    });
+
+    // Close when the keyboard moves on past the menu, so focus never sits in
+    // the page underneath while the menu still covers it.
+    menu.addEventListener('focusout', function (e) {
+      const to = e.relatedTarget;
+      if (to && !menu.contains(to) && to !== toggle) closeMenu();
+    });
+
+    // Up and down walk the field and the projects in view, Enter in the field
+    // opens the project it has picked out, and typing on a project goes on in
+    // the field. Keys stop here, Escape apart, so that typing a name cannot
+    // set off a page's own shortcuts underneath.
+    menu.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') return;
+      e.stopPropagation();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const stops = [search, ...entries.filter(x => x.link && !x.li.hidden).map(x => x.link)];
+        const at = stops.indexOf(document.activeElement);
+        if (at < 0) return;
+        const next = e.key === 'ArrowDown' ? (at === 0 && picked) || stops[at + 1] : stops[at - 1];
+        if (!next) return;
+        e.preventDefault();
+        next.focus();
+      } else if (e.key === 'Enter' && e.target === search) {
+        if (!picked) return;
+        e.preventDefault();
+        picked.click();
+      } else if (e.target !== search && e.key.length === 1 && e.key !== ' '
+                 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        search.focus();
+      }
+    });
+    menu.addEventListener('keyup', function (e) {
+      if (e.key !== 'Escape') e.stopPropagation();
     });
 
     // Close on Escape key, returning focus to the control that opened it
@@ -479,14 +660,20 @@ const KVOT = (() => {
 
   // ── Project cards ──────────────────────────────────────────────────────────
 
+  // The same headings as the menu, each over a grid of its own cards.
   function renderProjectCards(elementId) {
     const el = document.getElementById(elementId);
     if (!el) return;
-    el.innerHTML = ALL_PROJECTS.map(p => `
-      <a class="project-card" href="${p.href}">
-        <span class="project-card-title">${p.label}</span>
-        <span class="project-card-desc">${p.desc}</span>
-      </a>`).join('');
+    el.innerHTML = projectGroups().map(g => `
+      <section class="project-group" aria-labelledby="projects-${g.id}">
+        <h3 class="project-group-title" id="projects-${g.id}">${g.label}</h3>
+        <div class="project-grid">${g.projects.map(p => `
+          <a class="project-card" href="${p.href}">
+            <span class="project-card-title">${p.label}</span>
+            <span class="project-card-desc">${p.desc}</span>
+          </a>`).join('')}
+        </div>
+      </section>`).join('');
   }
 
   // ── Actions declared by the chrome this module renders ────────────────────
