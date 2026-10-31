@@ -949,7 +949,7 @@ function pyChartScript(gd) {
     `CHART = ${pyStr(subject.title)}`,
     `FILES = [${files.map(f => pyStr(outName(f))).join(', ')}]`,
     'FOLDER = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()',
-    'TEXT, GRID, MINOR_GRID = "#2D2416", "#E5DDD5", "#F0EBE5"  # the page\'s light theme',
+    'TEXT, GRID, MINOR_GRID = "#161B22", "#DBE0E6", "#EEF1F4"  # the page\'s light theme',
     'PT = 0.75  # points in a px: widths and lengths are the page\'s, in px',
     '',
     '',

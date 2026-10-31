@@ -13,7 +13,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261030">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <title>Inkomstdeklaration — kvot ab</title>
@@ -112,7 +112,7 @@
 
     pre.ar-code { background:var(--code-bg);color:var(--code-text);border:1px solid var(--border-color);
                   border-radius:9px;padding:12px 14px;overflow-x:auto;font-size:.78rem;line-height:1.5;
-                  font-family:'SF Mono',Menlo,Monaco,monospace;margin:0 0 14px;max-height:360px; }
+                  font-family:var(--font-mono);margin:0 0 14px;max-height:360px; }
     .ar-code-head { display:flex;align-items:center;gap:10px;margin:16px 0 6px; }
     .ar-code-head h4 { margin:0; }
     code { background:var(--code-bg);color:var(--code-text);padding:1px 5px;border-radius:4px;font-size:.85em; }
@@ -135,11 +135,11 @@
     .sru-alla { display:inline-flex;align-items:center;gap:6px;font-size:.82rem;
                 color:var(--text-secondary);cursor:pointer; }
     .sru-alla input { accent-color:var(--color-kvot-bright);cursor:pointer; }
-    table.sru-falt td.sru-kod { font-family:'SF Mono',Menlo,monospace;font-weight:600;
+    table.sru-falt td.sru-kod { font-family:var(--font-mono);font-weight:600;
                                 color:var(--text-primary);white-space:nowrap; }
-    table.sru-falt td.sru-punkt { font-family:'SF Mono',Menlo,monospace;color:var(--text-muted);
+    table.sru-falt td.sru-punkt { font-family:var(--font-mono);color:var(--text-muted);
                                   white-space:nowrap; }
-    table.sru-falt input { width:11em;padding:4px 8px;text-align:right;font-family:'SF Mono',Menlo,monospace;
+    table.sru-falt input { width:11em;padding:4px 8px;text-align:right;font-family:var(--font-mono);
                            font-size:.82rem;border:1px solid var(--border-color);border-radius:6px;
                            background:var(--input-bg);color:var(--text-primary); }
     table.sru-falt tr.sru-obl td { background:color-mix(in srgb,var(--color-kvot-bright) 7%,transparent); }
@@ -455,7 +455,7 @@
 <script src="./resources/js/kvot-safe.js?v=20260911"></script>
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-<script src="./resources/js/site.js?v=20261030"></script>
+<script src="./resources/js/site.js?v=20261031"></script>
 <script src="./resources/js/arsred-taxonomi.js?v=20260916"></script>
 <script src="./resources/js/arsred-bygg.js?v=20260916"></script>
 <script src="./resources/js/arsred-export.js?v=20260916"></script>

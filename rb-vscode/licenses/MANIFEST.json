@@ -185,8 +185,8 @@
   "sha256": "71f85db195892fcaf0e048fbba166270f736e5150d9c84cb98a346f13fcc2a52"
  },
  {
-  "file": "rawengulk-sans/SIL Open Font License.txt",
-  "source": "vendors/font/SIL Open Font License.txt in this repository",
-  "sha256": "60e7375ff5fe9dd43b144bd82fe71f44976cfc6a4b748a9424a58611581b88ba"
+  "file": "ibm-plex/LICENSE.txt",
+  "source": "vendors/font/ibm-plex-sans/LICENSE.txt in this repository",
+  "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da"
  }
 ]

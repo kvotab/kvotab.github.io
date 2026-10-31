@@ -11,7 +11,7 @@
   grid-template-columns: var(--ec-side-width, 340px) 8px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -61,7 +61,7 @@
   margin: 10px 0 6px;
   padding: 0 0 4px 16px;
   border-bottom: 1px solid var(--border-color);
-  font: 700 0.95rem RawengulkSans, sans-serif;
+  font: 700 0.95rem var(--font-sans);
   color: var(--text-primary);
   cursor: pointer;
   list-style: none;
@@ -78,7 +78,7 @@
 .ec-sec[open] > summary::before { transform: rotate(90deg); }
 .ec-sec > summary .ec-sec-title { flex: 1 1 auto; min-width: 0; }
 .ec-sec > summary .ec-count {
-  font: 11px verdana, sans-serif;
+  font: 11px var(--font-sans);
   color: var(--text-muted);
 }
 .ec-about { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: var(--text-muted); }
@@ -89,7 +89,7 @@
 .ec-row label { display: block; margin: 0 0 2px; color: var(--text-primary); }
 .ec-row .ec-name, .ec-check .ec-name {
   display: block;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
 }
@@ -100,7 +100,7 @@
   border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .ec-row textarea { min-height: 80px; resize: vertical; }
 /* The label line of a field: the label, then its (i) at the right-hand end
@@ -166,7 +166,7 @@
   border-radius: 6px;
   background: var(--accent-fill);
   color: #fff;
-  font: 600 12px verdana, sans-serif;
+  font: 600 12px var(--font-sans);
   cursor: pointer;
 }
 .ec-btn.secondary { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); }
@@ -223,7 +223,7 @@
   border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -258,7 +258,7 @@
   border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .ec-toolbar .ec-spacer { flex: 1 1 auto; }
 .ec-toolbar input:invalid { border-color: var(--color-kvot-accent); }
@@ -290,7 +290,7 @@
 .ec-table {
   border-collapse: collapse;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 .ec-table th, .ec-table td {
@@ -322,13 +322,13 @@
 .ec-key { border-collapse: collapse; font-size: 12px; margin: 0 0 14px; }
 .ec-key th, .ec-key td { padding: 4px 14px 4px 0; border-bottom: 1px solid var(--table-border); vertical-align: top; }
 .ec-key th { text-align: left; font-weight: 600; color: var(--text-primary); }
-.ec-key td { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; white-space: nowrap; }
-.ec-key td.text { text-align: left; font-family: verdana, sans-serif; }
+.ec-key td { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
+.ec-key td.text { text-align: left; font-family: var(--font-sans); }
 .ec-key thead th { text-align: right; color: var(--text-secondary); font-weight: 400; font-size: 11px; }
 .ec-key thead th:first-child { text-align: left; }
 .ec-key tr.total td, .ec-key tr.total th { font-weight: 700; }
 .ec-key .ec-desc { font-weight: 400; max-width: 34em; white-space: normal; }
-.ec-summary h3 { margin: 14px 0 6px; font: 700 1rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.ec-summary h3 { margin: 14px 0 6px; font: 700 1rem var(--font-sans); color: var(--text-primary); }
 .ec-summary h3:first-child { margin-top: 2px; }
 .ec-summary .ec-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 0 0 14px; }
 .ec-card {
@@ -337,7 +337,7 @@
   border-radius: 8px;
   background: var(--bg-surface);
 }
-.ec-card .ec-card-value { font: 700 1.35rem ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); }
+.ec-card .ec-card-value { font: 700 1.35rem var(--font-mono); color: var(--text-primary); }
 .ec-card .ec-card-label { font-size: 11px; color: var(--text-secondary); line-height: 1.4; margin-top: 2px; }
 .ec-settings-list { font-size: 12px; line-height: 1.6; columns: 2; column-gap: 28px; margin: 0; padding: 0; list-style: none; }
 .ec-settings-list li { break-inside: avoid; }
@@ -346,9 +346,9 @@
 
 /* ---- help --------------------------------------------------------------- */
 .ec-help { max-width: 64rem; line-height: 1.65; }
-.ec-help h2 { margin: 4px 0 10px; font: 700 1.3rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.ec-help h3 { margin: 22px 0 6px; font: 700 1.05rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.ec-help h4 { margin: 16px 0 4px; font: 700 0.95rem verdana, sans-serif; color: var(--color-kvot-accent); }
+.ec-help h2 { margin: 4px 0 10px; font: 700 1.3rem var(--font-sans); color: var(--text-primary); }
+.ec-help h3 { margin: 22px 0 6px; font: 700 1.05rem var(--font-sans); color: var(--text-primary); }
+.ec-help h4 { margin: 16px 0 4px; font: 700 0.95rem var(--font-sans); color: var(--color-kvot-accent); }
 .ec-help p { margin: 0 0 10px; }
 .ec-help pre {
   margin: 0 0 12px;

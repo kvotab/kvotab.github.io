@@ -102,8 +102,8 @@ def main():
     for folder, name, url, member in TARBALLS:
         with tarfile.open(fileobj=io.BytesIO(get(url)), mode='r:gz') as tar:
             keep(folder, name, tar.extractfile(member).read(), f'{url} ({member})')
-    with open(os.path.join(REPO, 'vendors', 'font', 'SIL Open Font License.txt'), 'rb') as fh:
-        keep('rawengulk-sans', 'SIL Open Font License.txt', fh.read(), 'vendors/font/SIL Open Font License.txt in this repository')
+    with open(os.path.join(REPO, 'vendors', 'font', 'ibm-plex-sans', 'LICENSE.txt'), 'rb') as fh:
+        keep('ibm-plex', 'LICENSE.txt', fh.read(), 'vendors/font/ibm-plex-sans/LICENSE.txt in this repository')
 
     with open(os.path.join(HERE, 'MANIFEST.json'), 'w') as fh:
         json.dump(manifest, fh, indent=1, ensure_ascii=False)

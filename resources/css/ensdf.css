@@ -18,15 +18,15 @@
    ========================================================================== */
 
 :root {
-  --nz-chart-bg: #fdfaf7;
-  --nz-magic: #c9bdb1;
+  --nz-chart-bg: #fcfdfe;
+  --nz-magic: #c3cad2;
   --nz-select: #bb6c5d;
   /* What fills a circle of the series as a bucket (Inventory): rdc.html's yellow. */
   --nz-bucket: #fff4a3;
 }
 [data-theme="dark"] {
-  --nz-chart-bg: #1f1813;
-  --nz-magic: #5a4d41;
+  --nz-chart-bg: #11151a;
+  --nz-magic: #3d4651;
   --nz-select: #f3b87b;
   --nz-bucket: #5a4520;
 }
@@ -37,7 +37,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
   color: var(--text-primary);
 }
@@ -61,7 +61,7 @@
   padding: 3px 8px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
-  font: 13px verdana, sans-serif;
+  font: 13px var(--font-sans);
 }
 .nz-search input:focus-visible, .nz-field select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
 .nz-field { display: inline-flex; gap: 6px; align-items: center; color: var(--text-secondary); font-size: 12px; }
@@ -72,7 +72,7 @@
   padding: 2px 6px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
 }
 .nz-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
 .nz-barright { flex: 1 1 200px; min-width: 0; display: flex; gap: 10px; align-items: center; }
@@ -96,7 +96,7 @@
   border-radius: 6px;
   background: var(--accent-fill);
   color: #fff;
-  font: 600 12px verdana, sans-serif;
+  font: 600 12px var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -196,7 +196,7 @@
   padding: 1px 6px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
 }
 .nz-chainopts select:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
 .nz-views [data-view], .nz-tabs button {
@@ -206,7 +206,7 @@
   border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -331,8 +331,8 @@
 }
 .nz-pane { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px 18px; line-height: 1.5; }
 .nz-pane[hidden] { display: none; }
-.nz-pane h3 { margin: 16px 0 6px; font: 700 0.98rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.nz-pane h4 { margin: 12px 0 4px; font: 700 12px verdana, sans-serif; color: var(--text-primary); }
+.nz-pane h3 { margin: 16px 0 6px; font: 700 0.98rem var(--font-sans); color: var(--text-primary); }
+.nz-pane h4 { margin: 12px 0 4px; font: 700 12px var(--font-sans); color: var(--text-primary); }
 .nz-pane-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
 .nz-pane-head h3 { margin-top: 2px; }
 
@@ -373,7 +373,7 @@
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
   color: var(--text-primary);
-  font: 700 1.1rem RawengulkSans, sans-serif;
+  font: 700 1.1rem var(--font-sans);
   pointer-events: none;
 }
 .nz.dropping .nz-drop { display: flex; }
@@ -389,7 +389,7 @@
   background: var(--bg-surface);
   color: var(--text-secondary);
   box-shadow: 0 4px 14px var(--shadow-color);
-  font: 12px/1.45 verdana, sans-serif;
+  font: 12px/1.45 var(--font-sans);
   pointer-events: none;
 }
 .nz-tip[hidden] { display: none; }
@@ -406,14 +406,14 @@
   background: var(--bg-surface);
   color: var(--text-primary);
   box-shadow: 0 8px 32px var(--shadow-color);
-  font: 13px/1.5 verdana, sans-serif;
+  font: 13px/1.5 var(--font-sans);
 }
 .nz-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
 .nz-dialog-title {
   margin: 0;
   padding: 12px 18px 10px;
   border-bottom: 1px solid var(--border-color);
-  font: 700 1rem RawengulkSans, sans-serif;
+  font: 700 1rem var(--font-sans);
 }
 .nz-dialog-body { padding: 12px 18px 4px; }
 .nz-dialog-body p { margin: 0 0 10px; }
@@ -435,7 +435,7 @@
 /* ---- the nuclide tab ----------------------------------------------------- */
 .nz-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin: 0 0 8px; }
 .nz-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.nz-big { font: 700 2rem RawengulkSans, sans-serif; color: var(--text-primary); line-height: 1.1; }
+.nz-big { font: 700 2rem var(--font-sans); color: var(--text-primary); line-height: 1.1; }
 .nz-big sup { font-size: 0.55em; vertical-align: 0.8em; margin-right: 1px; }
 .nz-long { color: var(--text-secondary); }
 .nz-zna { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
@@ -451,7 +451,7 @@
   border-radius: 7px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  font: 11px verdana, sans-serif;
+  font: 11px var(--font-sans);
   text-align: left;
   cursor: pointer;
 }
@@ -479,7 +479,7 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-kv th { padding: 3px 12px 3px 0; text-align: left; font-weight: 600; white-space: nowrap; }
 .nz-kv td { padding: 3px 12px 3px 0; white-space: nowrap; }
 .nz-kv td.nz-dim { white-space: normal; }
-.nz-welcome h2 { margin: 2px 0 8px; font: 700 1.3rem RawengulkSans, sans-serif; }
+.nz-welcome h2 { margin: 2px 0 8px; font: 700 1.3rem var(--font-sans); }
 .nz-welcome p { margin: 0 0 10px; }
 
 /* ---- tables -------------------------------------------------------------- */
@@ -518,7 +518,7 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-rad { margin: 0 0 12px; }
 .nz-rad h4 { font-weight: 700; }
 .nz-sort { display: inline-flex; gap: 2px; align-items: center; font-size: 11px; color: var(--text-muted); }
-.nz-sort button { padding: 2px 7px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-primary); color: var(--text-secondary); font: 11px verdana, sans-serif; cursor: pointer; }
+.nz-sort button { padding: 2px 7px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-primary); color: var(--text-secondary); font: 11px var(--font-sans); cursor: pointer; }
 .nz-sort button.active { border-color: var(--nz-select); color: var(--text-primary); }
 
 /* ---- the decay-chain view ------------------------------------------------ */
@@ -555,7 +555,7 @@ a.nz-nuc:hover { text-decoration: underline; }
 
 /* ---- about --------------------------------------------------------------- */
 .nz-help { line-height: 1.6; }
-.nz-help h2 { margin: 2px 0 10px; font: 700 1.25rem RawengulkSans, sans-serif; }
+.nz-help h2 { margin: 2px 0 10px; font: 700 1.25rem var(--font-sans); }
 .nz-help h3 { margin: 18px 0 6px; }
 .nz-help p { margin: 0 0 10px; }
 .nz-help code { padding: 1px 4px; border-radius: 3px; background: var(--code-bg); font-size: 0.92em; }
@@ -616,8 +616,8 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-inv .nz-inv-lead { margin: 0 0 8px; font-size: 11.5px; }
 .nz-inv-bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 0 0 6px; }
 .nz-inv-bar .nz-field { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; }
-.nz-inv-bar input[type=text] { box-sizing: border-box; width: 5.6em; height: 26px; padding: 2px 5px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px verdana, sans-serif; }
-.nz-inv-bar select { height: 26px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px verdana, sans-serif; max-width: 100%; }
+.nz-inv-bar input[type=text] { box-sizing: border-box; width: 5.6em; height: 26px; padding: 2px 5px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px var(--font-sans); }
+.nz-inv-bar select { height: 26px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 6px; font: 12px var(--font-sans); max-width: 100%; }
 .nz-inv-at { margin: 0 0 4px; font-size: 11.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nz-inv-tools { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 0 0 6px; }
 .nz-inv-tools .nz-btn[aria-pressed] { min-width: 6.2em; }
@@ -634,7 +634,7 @@ a.nz-nuc:hover { text-decoration: underline; }
   background: var(--bg-surface);
   color: var(--text-secondary);
   box-shadow: 0 4px 14px var(--shadow-color);
-  font: 11px/1.45 verdana, sans-serif;
+  font: 11px/1.45 var(--font-sans);
   pointer-events: none;
 }
 .nz-inv-tip[hidden] { display: none; }
@@ -667,9 +667,9 @@ a.nz-nuc:hover { text-decoration: underline; }
 .nz-inv-table td.nz-inv-life { white-space: normal; }
 .nz-inv-table th:first-child, .nz-inv-table td.nz-inv-swcell { padding-left: 5px; padding-right: 3px; }
 .nz-inv-table td.nz-inv-in { white-space: nowrap; }
-.nz-inv-table td.nz-inv-in input { box-sizing: border-box; width: 5.2em; height: 22px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 4px; font: 11.5px verdana, sans-serif; }
+.nz-inv-table td.nz-inv-in input { box-sizing: border-box; width: 5.2em; height: 22px; padding: 1px 4px; border: 1px solid var(--input-border); border-radius: 4px; font: 11.5px var(--font-sans); }
 .nz-inv-table td.nz-inv-in input[aria-invalid="true"] { border-color: var(--color-kvot-accent); box-shadow: 0 0 0 1px var(--color-kvot-accent); }
-.nz-inv-table td.nz-inv-in select { height: 22px; font: 11px verdana, sans-serif; border: 1px solid var(--input-border); border-radius: 4px; }
+.nz-inv-table td.nz-inv-in select { height: 22px; font: 11px var(--font-sans); border: 1px solid var(--input-border); border-radius: 4px; }
 .nz-inv-table td.nz-inv-in select { margin-left: 3px; }
 /* After the rules above, which it overrides: a field of 4.3em, and its menu, in 98 px. */
 @container nzpanel (max-width: 400px) {

@@ -447,7 +447,7 @@ async def main():
             inset: document.getElementById('nzChainSvg').getBoundingClientRect().left - document.querySelector('.nz-chain-scroll').getBoundingClientRect().left }); })()"""))
         check('back on the grid: boxes again, no circles, and that is kept', (grid['discs'], grid['boxes'] > 0, grid['aria'], grid['saved']),
               (0, True, 'Decay chain: atomic number across, mass number down', 'grid'))
-        check('... on the chart’s own background, inside the view’s padding, as before', (grid['bg'], grid['inset']), ('#fdfaf7', 12))
+        check('... on the chart’s own background, inside the view’s padding, as before', (grid['bg'], grid['inset']), ('#fcfdfe', 12))
 
         # ---------------------------------------------------------- zooming the chain
         # As on the chart: buttons, + − 0, and a pinch (the wheel with Ctrl) about

@@ -455,12 +455,12 @@ export function figure(items, fn, s, th, opts = {}) {
   if (fn === 'cdf' && !s.logy) yaxis.range = [0, 1.02];
   const layout = {
     paper_bgcolor: th.bg, plot_bgcolor: th.bg,
-    font: { family: 'verdana, sans-serif', size: 11, color: th.text2 },
+    font: { family: '"IBM Plex Sans", verdana, sans-serif', size: 11, color: th.text2 },
     margin: { l: 58, r: 14, t: several ? 34 : 12, b: 40 },
     showlegend: several,
     legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.01, yanchor: 'bottom', font: { size: 11, color: th.text }, bgcolor: 'rgba(0,0,0,0)', itemclick: 'toggle', itemdoubleclick: false },
     hovermode: 'x unified',
-    hoverlabel: { bgcolor: th.bg, bordercolor: th.grid, font: { color: th.text, size: 12, family: 'verdana, sans-serif' } },
+    hoverlabel: { bgcolor: th.bg, bordercolor: th.grid, font: { color: th.text, size: 12, family: '"IBM Plex Sans", verdana, sans-serif' } },
     xaxis, yaxis,
   };
   return { data: [...fills, ...traces], layout, range: [lo, hi] };
@@ -560,7 +560,7 @@ export function fitFigure(data, fits, kind, th, logx, bins) {
     data: traces,
     layout: {
       paper_bgcolor: th.bg, plot_bgcolor: th.bg,
-      font: { family: 'verdana, sans-serif', size: 11, color: th.text2 },
+      font: { family: '"IBM Plex Sans", verdana, sans-serif', size: 11, color: th.text2 },
       margin: { l: 58, r: 14, t: several ? 34 : 12, b: 42 },
       showlegend: true,
       legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.01, yanchor: 'bottom', font: { size: 11, color: th.text }, bgcolor: 'rgba(0,0,0,0)' },

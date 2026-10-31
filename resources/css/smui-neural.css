@@ -63,7 +63,7 @@
 
 /* ---- the Diagram ----------------------------------------------------------------- */
 .sm-nn-diagram { padding: 2px 0 6px; }
-.sm-nn-svg { display: block; font-family: verdana, sans-serif; }
+.sm-nn-svg { display: block; font-family: var(--font-sans); }
 .sm-nn-edge { stroke: var(--text-muted); stroke-opacity: 0.5; stroke-width: 1; }
 .sm-nn-edge:hover { stroke: var(--color-kvot-accent); stroke-opacity: 1; stroke-width: 2.2; }
 .sm-nn-in rect { fill: var(--sm-nn-in-bg); stroke: var(--sm-nn-in-line); stroke-width: 1.2; }

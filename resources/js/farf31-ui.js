@@ -934,7 +934,7 @@
       margin: { l: 70, r: 24, t: 20, b: 56 },
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
-      font: { color: c.text, size: 11, family: 'verdana, sans-serif' },
+      font: { color: c.text, size: 11, family: '"IBM Plex Sans", verdana, sans-serif' },
       legend: { orientation: 'h', y: -0.2, font: { size: 10 } },
       xaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid },
       yaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid },

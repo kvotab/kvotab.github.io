@@ -51,7 +51,7 @@
       view: { s: 6, cx: 90, cy: 60 }, W: 0, H: 0, dpr: 1, fitted: false,
       hover: null, sel: null, chain: null, highlight: null,
       rowSpan: new Map(), colSpan: new Map(),
-      ink: '#352921', muted: '#786b5d', bg: '#ffffff', line: '#e0d7ce', accent: '#bb7d37', select: '#bb6c5d',
+      ink: '#161b22', muted: '#5d6773', bg: '#ffffff', line: '#dbe0e6', accent: '#b0682a', select: '#b4533f',
       frame: 0,
     };
 
@@ -121,12 +121,12 @@
     /* ---------------- colours ---------------- */
     function readTheme() {
       st.theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-      st.ink = cssVar('--text-primary', '#352921');
-      st.muted = cssVar('--text-muted', '#786b5d');
+      st.ink = cssVar('--text-primary', '#161b22');
+      st.muted = cssVar('--text-muted', '#5d6773');
       st.bg = cssVar('--nz-chart-bg', cssVar('--bg-primary', '#ffffff'));
-      st.line = cssVar('--nz-magic', cssVar('--border-color', '#e0d7ce'));
-      st.accent = cssVar('--accent-line', '#bb7d37');
-      st.select = cssVar('--nz-select', cssVar('--color-kvot-accent', '#bb6c5d'));
+      st.line = cssVar('--nz-magic', cssVar('--border-color', '#dbe0e6'));
+      st.accent = cssVar('--accent-line', '#b0682a');
+      st.select = cssVar('--nz-select', cssVar('--color-kvot-accent', '#b4533f'));
     }
 
     function recolour() {
@@ -227,7 +227,7 @@
         ctx.fillStyle = st.muted;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.font = `${Math.min(15, Math.max(9, s * 0.55))}px verdana, sans-serif`;
+        ctx.font = `${Math.min(15, Math.max(9, s * 0.55))}px "IBM Plex Sans", verdana, sans-serif`;
         for (const [z, r] of st.rowSpan) {
           if (z < zMin || z > zMax) continue;
           const el = C.ELEMENTS[z] ? C.ELEMENTS[z][0] : '';
@@ -273,14 +273,14 @@
       const lines = s >= 64 ? 3 : s >= 44 ? 2 : 1;
       const cy = y + s / 2 - (lines - 1) * small * 0.72;
       /* Mass number set small and high before the symbol. */
-      ctx.font = `600 ${big}px verdana, sans-serif`;
+      ctx.font = `600 ${big}px "IBM Plex Sans", verdana, sans-serif`;
       const symW = ctx.measureText(nm.sym).width;
-      ctx.font = `${big * 0.62}px verdana, sans-serif`;
+      ctx.font = `${big * 0.62}px "IBM Plex Sans", verdana, sans-serif`;
       const massW = nm.mass ? ctx.measureText(nm.mass).width : 0;
       const x0 = x + s / 2 - (symW + massW) / 2;
       ctx.textAlign = 'left';
       if (nm.mass) ctx.fillText(nm.mass, x0, cy - big * 0.28);
-      ctx.font = `600 ${big}px verdana, sans-serif`;
+      ctx.font = `600 ${big}px "IBM Plex Sans", verdana, sans-serif`;
       ctx.fillText(nm.sym, x0 + massW, cy);
       if (lines >= 2 && g) drawRich(C.halfLifeShort(g), x + s / 2, cy + small * 1.45, small, s - 4);
       if (lines >= 3 && g) {
@@ -300,7 +300,7 @@
       if (!runs.length) return;
       let px = size;
       const width = () => runs.reduce((t, r) => {
-        ctx.font = `${r.sup ? px * 0.7 : px}px verdana, sans-serif`;
+        ctx.font = `${r.sup ? px * 0.7 : px}px "IBM Plex Sans", verdana, sans-serif`;
         r.w = ctx.measureText(r.t).width;
         return t + r.w;
       }, 0);
@@ -309,7 +309,7 @@
       ctx.textAlign = 'left';
       let at = cx - total / 2;
       for (const r of runs) {
-        ctx.font = `${r.sup ? px * 0.7 : px}px verdana, sans-serif`;
+        ctx.font = `${r.sup ? px * 0.7 : px}px "IBM Plex Sans", verdana, sans-serif`;
         ctx.fillText(r.t, at, r.sup ? y - px * 0.36 : y);
         at += r.w;
       }
@@ -370,7 +370,7 @@
       ctx.fillRect(0, H - GUTTER_BOTTOM, W, GUTTER_BOTTOM);
       ctx.globalAlpha = 1;
       ctx.fillStyle = st.muted;
-      ctx.font = '10px verdana, sans-serif';
+      ctx.font = '10px "IBM Plex Sans", verdana, sans-serif';
       const step = s >= 18 ? 1 : s >= 9 ? 2 : s >= 5 ? 5 : 10;
       const step10 = Math.max(step, 1);
       ctx.textAlign = 'right';
@@ -393,7 +393,7 @@
       ctx.fillRect(0, 0, GUTTER_LEFT, 18);
       ctx.textAlign = 'left';
       ctx.fillStyle = st.ink;
-      ctx.font = '600 10px verdana, sans-serif';
+      ctx.font = '600 10px "IBM Plex Sans", verdana, sans-serif';
       ctx.fillText('N →', 3, H - 6);
       ctx.fillText('Z ↑', 3, 12);
     }
@@ -516,6 +516,9 @@
     }
 
     document.documentElement.addEventListener('kvot-theme-change', () => { readTheme(); recolour(); redraw(); });
+    // A canvas keeps the face it was drawn in: drawn before the page's fonts
+    // have arrived, its labels are in the fallback until something redraws it.
+    if (document.fonts) document.fonts.ready.then(redraw);
     readTheme();
 
     return {

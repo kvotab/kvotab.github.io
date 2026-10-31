@@ -2197,7 +2197,7 @@ print("SMUI-POINTS " + _json.dumps({{"n": len(_got), "gap": float(_np.max(_np.ab
     await asyncio.sleep(1.2)
     r = await page.ev('''(async () => { await _gm.idle(); await gbSet({ x: ['height (cm)'], y: ['weight (kg)'], overlay: ['sex'] }, ['points', 'fit']);
       const bg = getComputedStyle(_rep.body.querySelector('.sm-gm-zone')).backgroundColor; return { bg, font: _gm.plot().box.layout && _gm.plot().box.layout.font.color }; })()''')
-    check('dark theme: the graph takes the theme\'s text colour', r['font'] not in (None, '#352921'), True)
+    check('dark theme: the graph takes the theme\'s text colour', r['font'] not in (None, '#161b22'), True)
     await shot(page, 'g08-dark.png')
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)
     await asyncio.sleep(0.8)

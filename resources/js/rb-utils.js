@@ -90,7 +90,7 @@ function getPanelBgColor() {
     const val = getComputedStyle(document.documentElement).getPropertyValue('--color-panel-bg').trim();
     if (val) return val;
   } catch (_) { ignoreFailure('getPanelBgColor', _); }
-  return isDark ? '#2a221b' : '#faf8f6';
+  return isDark ? '#151a20' : '#f8f9fb';
 }
 
 /**
@@ -1549,10 +1549,10 @@ function applyAxisState(layout, savedState) {
  */
 function createBaseLayout({ title, xAxisTitle, yAxisTitle, xScale = 'linear', yScale = 'linear' }) {
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const textColor = isDark ? '#e8ddd0' : '#2d2416';
-  const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
-  const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
-  const bgColor = isDark ? '#2a221b' : '#ffffff';
+  const textColor = isDark ? '#e4e8ec' : '#161b22';
+  const gridColor = isDark ? '#2c343d' : '#dbe0e6';
+  const minorGridColor = isDark ? '#20262d' : '#eef1f4';
+  const bgColor = isDark ? '#151a20' : '#ffffff';
   const panelBg = getPanelBgColor();
 
   return {
@@ -1624,10 +1624,10 @@ window.ChartService = {
   },
 
   relayoutForTheme(isDark) {
-    const textColor = isDark ? '#e8ddd0' : '#2d2416';
-    const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
-    const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
-    const bgColor  = isDark ? '#2a221b' : '#ffffff';
+    const textColor = isDark ? '#e4e8ec' : '#161b22';
+    const gridColor = isDark ? '#2c343d' : '#dbe0e6';
+    const minorGridColor = isDark ? '#20262d' : '#eef1f4';
+    const bgColor  = isDark ? '#151a20' : '#ffffff';
     const panelBg = getPanelBgColor();
     return {
       paper_bgcolor: panelBg,
@@ -1896,10 +1896,10 @@ function createPdfHistogram(data) {
   const useLog = allPositive && document.getElementById('histLogScale') && document.getElementById('histLogScale').checked;
 
   // ...existing code...
-  const textColor = isDark ? '#e8ddd0' : '#2d2416';
-  const gridColor = isDark ? '#4a3f35' : '#e5ddd5';
-  const minorGridColor = isDark ? '#3a322b' : '#f0ebe5';
-  const bgColor  = isDark ? '#2a221b' : '#ffffff';
+  const textColor = isDark ? '#e4e8ec' : '#161b22';
+  const gridColor = isDark ? '#2c343d' : '#dbe0e6';
+  const minorGridColor = isDark ? '#20262d' : '#eef1f4';
+  const bgColor  = isDark ? '#151a20' : '#ffffff';
   const barColor  = isDark ? 'rgba(243,184,123,0.45)' : 'rgba(187,108,93,0.45)';
   const barLine   = isDark ? 'rgba(243,184,123,0.8)'  : 'rgba(187,108,93,0.8)';
   const pdfLineColor = isDark ? 'rgba(255,220,160,1)' : 'rgba(140,60,45,1)';

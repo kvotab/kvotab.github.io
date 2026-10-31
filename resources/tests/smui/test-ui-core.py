@@ -1080,7 +1080,7 @@ async def main():
       const rep = SM.app.reports[0]; const p = rep.plots.find(p => p.drawn);
       const img = await rep.plotImage(p, 'svg');
       const svg = decodeURIComponent(img.data.replace(/^data:image\\/svg\\+xml,/, ''));
-      return { dark: SM.util.themeColors().dark, paper: /rgb\\(53, ?41, ?33\\)|#352921/i.test(svg) };
+      return { dark: SM.util.themeColors().dark, paper: /rgb\\(22, ?27, ?34\\)|#161b22/i.test(svg) };
     })()''')
     check('dark theme: a graph for a document is drawn in the light theme', (r['dark'], r['paper']), (True, True))
     # a diagram drawn as SVG and styled by the page's CSS (Partition's tree,
@@ -1105,7 +1105,7 @@ async def main():
       SM.app.closeReport(rep);
       return { text: text && text.getAttribute('style'), box: box && box.getAttribute('style'), buttons: doc.querySelectorAll('svg [role="button"]').length, pics };
     })()''')
-    check('a document keeps an SVG diagram\'s paint, in the light theme\'s colours', ('fill:rgb(53, 41, 33)' in (r['text'] or ''), 'stroke:rgb(120, 107, 93)' in (r['box'] or '')), (True, True))
+    check('a document keeps an SVG diagram\'s paint, in the light theme\'s colours', ('fill:rgb(22, 27, 34)' in (r['text'] or ''), 'stroke:rgb(93, 103, 115)' in (r['box'] or '')), (True, True))
     check('without its buttons', r['buttons'], 0)
     check('Word gets it as a picture', r['pics'], 1)
     await page.call('Emulation.setDeviceMetricsOverride', {'width': 400, 'height': 860, 'deviceScaleFactor': 1, 'mobile': True}, session=page.sid)

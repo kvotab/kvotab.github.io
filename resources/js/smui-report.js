@@ -521,11 +521,11 @@
     const axis = { gridcolor: c.grid, zerolinecolor: c.grid, linecolor: c.muted, tickcolor: c.muted, automargin: true, showline: true, mirror: false, ticks: 'outside', ticklen: 3 };
     let L = merge({
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-      font: { family: 'verdana, sans-serif', size: 11, color: c.text },
+      font: { family: '"IBM Plex Sans", verdana, sans-serif', size: 11, color: c.text },
       margin: { l: 50, r: 12, t: 8, b: 36 },
       showlegend: false, hovermode: 'closest', dragmode: 'zoom',
       legend: { font: { size: 10.5 }, bgcolor: 'rgba(0,0,0,0)' },
-      hoverlabel: { font: { family: 'verdana, sans-serif', size: 11 } },
+      hoverlabel: { font: { family: '"IBM Plex Sans", verdana, sans-serif', size: 11 } },
       width: w, height: h, autosize: false,
     }, user);
     for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) L[k] = merge(axis, L[k]);
@@ -1698,9 +1698,9 @@
       // The Python goes along when the report shows it (the Python code button) or its block is open; a traceback always.
       if (!this.spec.options.showCode) clone.querySelectorAll('details.sm-code').forEach((d) => { if (!d.closest('.sm-ob-error') && !d.open) d.remove(); });
       clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
-      const css = `body{font-family:verdana,sans-serif;font-size:12.5px;color:#352921;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #e0d7ce;text-align:right;white-space:nowrap}th{background:#f5eee7}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#6b5d50;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}td.sm-rt-barcell{vertical-align:middle}.sm-rt-bartrack{display:block;width:100px;height:10px}.sm-rt-bar{display:block;height:100%;min-width:1px;background:#8fa9c2;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}pre{background:#f7f2ec;padding:8px;border:1px solid #e0d7ce;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#6b5d50;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
+      const css = `body{font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-size:12.5px;color:#161b22;background:#fff;margin:20px}h2,h3,h4{font-size:13px;margin:10px 0 4px}.sm-ob-body{padding-left:18px}.sm-ob.is-closed>.sm-ob-body{display:none}table{border-collapse:collapse;margin:2px 0 8px}th,td{padding:2px 9px;border-bottom:1px solid #dbe0e6;text-align:right;white-space:nowrap}th{background:#f2f4f6}.sm-l{text-align:left}.p-sig{color:#c8322b;font-weight:600}caption{text-align:left;font-weight:600;color:#454e59;padding-bottom:3px}.sm-ob-row{display:flex;flex-wrap:wrap;gap:16px 22px}td.sm-rt-barcell{vertical-align:middle}.sm-rt-bartrack{display:block;width:100px;height:10px}.sm-rt-bar{display:block;height:100%;min-width:1px;background:#8fa9c2;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}pre{background:#f2f4f6;padding:8px;border:1px solid #dbe0e6;font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;overflow-x:auto;white-space:pre-wrap}.sm-ob-note{color:#454e59;font-size:11.5px}.sm-ob-warn{border-left:3px solid #f3b87b;padding:4px 8px;background:#fdf4e9}.sm-ob-error{border-left:3px solid #c0392b;padding:4px 8px}img{max-width:100%;height:auto}`
         + '@page{margin:15mm}@media print{body{margin:0}table,img,.sm-plot,caption{break-inside:avoid}h2,h3,h4{break-after:avoid}summary{list-style:none}}';
-      return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.title)}</title><style>${css}</style></head><body><h1 style="font-size:16px">${escapeHtml(this.title)}</h1><p style="color:#786b5d">${this.table ? `Table: ${escapeHtml(this.table.name)}. ` : ''} Made with the User Interface for statsmodels (kvotab.se/smui.html), statsmodels ${escapeHtml(SM.engine.versions ? SM.engine.versions.statsmodels : '')}, ${new Date().toISOString().slice(0, 10)}.</p>${clone.innerHTML}</body></html>`;
+      return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(this.title)}</title><style>${css}</style></head><body><h1 style="font-size:16px">${escapeHtml(this.title)}</h1><p style="color:#5d6773">${this.table ? `Table: ${escapeHtml(this.table.name)}. ` : ''} Made with the User Interface for statsmodels (kvotab.se/smui.html), statsmodels ${escapeHtml(SM.engine.versions ? SM.engine.versions.statsmodels : '')}, ${new Date().toISOString().slice(0, 10)}.</p>${clone.innerHTML}</body></html>`;
     }
 
     async exportHtml() {
@@ -1766,7 +1766,7 @@
   }
 
   // A graph's colours on paper (and in a document) are the light theme's.
-  const PAPER = { text: '#352921', muted: '#786b5d', grid: '#e0d7ce' };
+  const PAPER = { text: '#161b22', muted: '#5d6773', grid: '#dbe0e6' };
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

@@ -15,7 +15,7 @@
   grid-template-columns: var(--fac-side-width, 340px) 8px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -80,7 +80,7 @@
   margin: 10px 0 6px;
   padding: 0 0 4px 16px;
   border-bottom: 1px solid var(--border-color);
-  font: 700 0.95rem RawengulkSans, sans-serif;
+  font: 700 0.95rem var(--font-sans);
   color: var(--text-primary);
   cursor: pointer;
   list-style: none;
@@ -137,7 +137,7 @@
 }
 .fac-row label .fac-name {
   display: block;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
 }
@@ -148,7 +148,7 @@
   border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 /*
   The "Advanced settings" toggle: a link, not a button, because it reveals
@@ -228,7 +228,7 @@
   border-radius: 6px;
   background: var(--accent-fill);
   color: #fff;
-  font: 600 12px verdana, sans-serif;
+  font: 600 12px var(--font-sans);
   cursor: pointer;
 }
 /* A value, not a filter: brightness() darkens the white label along with the
@@ -364,7 +364,7 @@
   border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
   cursor: pointer;
 }
 .fac-tabs button:hover { color: var(--text-primary); }
@@ -435,7 +435,7 @@
 .fac-chart .plot { width: 100%; height: 360px; }
 .fac-chart h3 {
   margin: 4px 8px;
-  font: 600 13px RawengulkSans, sans-serif;
+  font: 600 13px var(--font-sans);
   color: var(--text-secondary);
 }
 .fac-toolbar {
@@ -477,7 +477,7 @@
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 .fac-group[hidden] { display: none; }
@@ -579,7 +579,7 @@
   border-radius: 10px;
   background: var(--bg-surface);
   color: var(--text-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   cursor: pointer;
 }
@@ -601,7 +601,7 @@
 .fac-table-wrap { overflow: auto; max-height: calc(100% - 44px); }
 table.fac-table {
   border-collapse: collapse;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -651,7 +651,7 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 6px;
-  font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  font: 12px/1.45 var(--font-mono);
   letter-spacing: normal;
   tab-size: 4;
   white-space: pre;
@@ -713,7 +713,7 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
 .fac-jac { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
 .fac-jac canvas { border: 1px solid var(--border-color); background: var(--bg-surface); image-rendering: pixelated; }
 .fac-jac .legend { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
-.fac-jac .hover { font-family: ui-monospace, Menlo, Consolas, monospace; min-height: 1.4em; }
+.fac-jac .hover { font-family: var(--font-mono); min-height: 1.4em; }
 
 /* code and help */
 .fac-pre {
@@ -721,16 +721,16 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   padding: 10px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  font: 11px/1.4 var(--font-mono);
   white-space: pre;
   overflow: auto;
   max-height: calc(100% - 50px);
 }
 .fac-help { max-width: 78ch; line-height: 1.55; font-size: 13px; color: var(--text-primary); }
-.fac-help h3 { margin: 18px 0 6px; font: 700 15px RawengulkSans, sans-serif; }
-.fac-help h4 { margin: 14px 0 4px; font: 700 13px verdana, sans-serif; }
+.fac-help h3 { margin: 18px 0 6px; font: 700 15px var(--font-sans); }
+.fac-help h4 { margin: 14px 0 4px; font: 700 13px var(--font-sans); }
 .fac-help code, .fac-help pre {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   background: var(--code-bg);
   color: var(--code-text);
@@ -745,7 +745,7 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
 /* misc */
 .fac-muted { color: var(--text-muted); font-size: 11px; }
 .fac-inline-err { color: var(--color-kvot-accent); }
-.fac-kbd { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+.fac-kbd { font-family: var(--font-mono); font-size: 11px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
 
 /* ---- a file dragged over the page ------------------------------------------ */
 /*
@@ -769,8 +769,8 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
   pointer-events: none;
 }
 .fac-drop[hidden] { display: none; }
-.fac-drop b { display: block; font: 700 1.1rem RawengulkSans, sans-serif; }
-.fac-drop span { display: block; margin-top: 6px; font: 13px verdana, sans-serif; color: var(--text-secondary); }
+.fac-drop b { display: block; font: 700 1.1rem var(--font-sans); }
+.fac-drop span { display: block; margin-top: 6px; font: 13px var(--font-sans); color: var(--text-secondary); }
 
 /* narrow screens: stack the columns */
 @media (max-width: 860px) {

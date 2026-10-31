@@ -29,7 +29,7 @@
 /* ---- the editor ---------------------------------------------------------------------- */
 .sm-ed {
   position: relative;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.5;
   border: 1px solid var(--border-color);
@@ -108,7 +108,7 @@
 .sm-nb-bar .sm-nb-stop { border-color: var(--sm-nom); color: var(--sm-nom); }
 .sm-nb-body { overflow: auto; padding: 10px 14px 80px; }
 .sm-nb-lead { margin: 0 0 10px 60px; max-width: 1040px; font-size: 11.5px; color: var(--text-muted); }
-.sm-nb-lead code, .sm-nb-md code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95em; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.sm-nb-lead code, .sm-nb-md code { font-family: var(--font-mono); font-size: 0.95em; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
 .sm-nb-cells { display: flex; flex-direction: column; gap: 8px; max-width: 1100px; }
 .sm-nb-cell {
   display: grid;
@@ -120,7 +120,7 @@
 }
 .sm-nb-cell.is-active { border-left-color: var(--color-kvot-accent); }
 .sm-nb-gutter { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; padding-top: 4px; }
-.sm-nb-count { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-muted); white-space: pre; }
+.sm-nb-count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); white-space: pre; }
 .sm-nb-run { border: 0; border-radius: 3px; background: none; color: var(--link-color); cursor: pointer; font-size: 12px; line-height: 1; padding: 3px 5px; }
 .sm-nb-run:hover, .sm-nb-run:focus-visible { background: var(--sm-sel-bg); }
 .sm-nb-main { min-width: 0; }
@@ -154,7 +154,7 @@
 .sm-nb-stream, .sm-nb-error {
   margin: 0;
   padding: 3px 8px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;
   white-space: pre-wrap;

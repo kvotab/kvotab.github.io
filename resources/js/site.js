@@ -660,7 +660,9 @@ const KVOT = (() => {
 
   // ── Project cards ──────────────────────────────────────────────────────────
 
-  // The same headings as the menu, each over a grid of its own cards.
+  // The same headings as the menu, each over a grid of its own cards. A card
+  // ends with its page's file name, which says nothing a reader of the link
+  // needs to hear again, so it is hidden from the link's spoken name.
   function renderProjectCards(elementId) {
     const el = document.getElementById(elementId);
     if (!el) return;
@@ -671,6 +673,7 @@ const KVOT = (() => {
           <a class="project-card" href="${p.href}">
             <span class="project-card-title">${p.label}</span>
             <span class="project-card-desc">${p.desc}</span>
+            <span class="project-card-path" aria-hidden="true">${p.href.replace(/^\.\//, '')}</span>
           </a>`).join('')}
         </div>
       </section>`).join('');

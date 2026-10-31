@@ -152,12 +152,12 @@
   units came out twice as thick on the top of a ring as on its sides.
 */
 :root {
-  --tl-ink: #232323;
-  --tl-band-a: #e2d8cc;   /* the rail, one quiet colour for both directions */
-  --tl-band-b: #e2d8cc;
+  --tl-ink: #161b22;
+  --tl-band-a: #dde2e8;   /* the rail, one quiet colour for both directions */
+  --tl-band-b: #dde2e8;
   --tl-stop: #ffffff;
-  --tl-stop-ring: #9a8b7c;
-  --tl-chip: #cec6ba;   /* an unnamed train: clear of the stop's white */
+  --tl-stop-ring: #86909c;
+  --tl-chip: #c6ccd4;   /* an unnamed train: clear of the stop's white */
   /*
     The other lines are context, not subject. They are on the diagram to show
     how busy the track is and whether something ahead is running late enough to
@@ -167,23 +167,23 @@
     Their punctuality ring stays green or red: whether they are delayed is the
     whole reason they are worth drawing.
   */
-  --tl-quiet-41: #e7e2da;
-  --tl-quiet-43: #d3cbc0;
+  --tl-quiet-41: #e3e7ec;
+  --tl-quiet-43: #cdd3da;
   /* A line 40 not here yet: its own beige, watered down. */
   --tl-wait-40: #fbe6d1;
 }
 [data-theme="dark"] {
-  --tl-ink: #f0e9e0;
-  --tl-band-a: #463b31;
-  --tl-band-b: #463b31;
-  --tl-stop: #1c1611;
-  --tl-stop-ring: #9f9182;
-  --tl-chip: #4d4339;
-  /* Stepped down from #7c7266 and #635a50: the light chip text on a 41 was
-     3.9:1, under the 4.5 small type needs. Now 4.7:1 and 6.9:1, and still
-     as far apart from each other as they were. */
-  --tl-quiet-41: #6f665b;
-  --tl-quiet-43: #564d44;
+  --tl-ink: #e9ecef;
+  --tl-band-a: #36404a;
+  --tl-band-b: #36404a;
+  --tl-stop: #12161b;
+  --tl-stop-ring: #8f99a5;
+  --tl-chip: #3e4751;
+  /* Dark enough for the light chip text on them: 4.7:1 on a 41 and 6.7:1 on
+     a 43, the 4.5 small type needs and more, and still as far apart from
+     each other as a 41 and a 43 need to be. */
+  --tl-quiet-41: #5f6873;
+  --tl-quiet-43: #4a525c;
   --tl-wait-40: #4c3826;   /* #5d4631 left its number at 3.8:1; now 4.8 */
 }
 

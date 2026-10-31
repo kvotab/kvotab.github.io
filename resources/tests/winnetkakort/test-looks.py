@@ -236,7 +236,7 @@ async def run(page):
       document.documentElement.dataset.look = id;
       return [id, getComputedStyle(document.querySelector('.wk-paper')).fontFamily.split(',')[0].replace(/"/g, '')];
     })))"""))
-    check('each look its own card font: Verdana, Comic Sans, monospace', fonts, {'kvot': 'verdana', 'hjalte': 'Comic Sans MS', 'pixel': 'ui-monospace'})
+    check('each look its own card font: the site’s IBM Plex Sans, Comic Sans, monospace', fonts, {'kvot': 'IBM Plex Sans', 'hjalte': 'Comic Sans MS', 'pixel': 'ui-monospace'})
     await page.ev("document.documentElement.dataset.look = 'kvot'")
 
     # --- the picker ----------------------------------------------------------

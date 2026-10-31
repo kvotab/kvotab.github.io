@@ -19,17 +19,17 @@
 .smf-main { display: flex; flex-direction: column; min-width: 0; }
 .smf-namerow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 4px; }
 .smf-namerow input { flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; }
-.smf-expr { box-sizing: border-box; width: 100%; min-height: 110px; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); color: var(--text-primary); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; resize: vertical; }
+.smf-expr { box-sizing: border-box; width: 100%; min-height: 110px; padding: 7px 9px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--input-bg); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; line-height: 1.45; resize: vertical; }
 .smf-expr:focus { outline: 2px solid var(--color-kvot-accent); outline-offset: -1px; }
 .smf-pad { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0 2px; }
-.smf-pad .sm-btn { min-width: 30px; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.smf-pad .sm-btn { min-width: 30px; justify-content: center; font-family: var(--font-mono); }
 .smf-help { min-height: 32px; margin: 4px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
-.smf-help code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.smf-help code { font-family: var(--font-mono); color: var(--text-primary); background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
 .smf-alias { color: var(--text-muted); }
 .smf-preview { min-height: 60px; max-height: 250px; overflow: auto; }
 .smf-rows { margin: 0; }
 .smf-error { padding: 6px 10px; border-left: 3px solid #c0392b; background: color-mix(in oklab, #c0392b 10%, transparent); font-size: 12px; }
-.smf-where { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.smf-where { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; font-family: var(--font-mono); font-size: 12px; }
 .smf-where mark { background: color-mix(in oklab, #c0392b 38%, transparent); color: var(--text-primary); border-radius: 2px; padding: 0 1px; }
 
 /* ---- the Tables dialogs -------------------------------------------------------- */
@@ -119,7 +119,7 @@
 @media (max-width: 760px) { .smp-editor > .sm-ed-hl { min-height: 140px; } }
 .smp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 4px; }
 .smp-out { max-width: 900px; }
-.smp-stdout, .smp-tb { margin: 4px 0 8px; padding: 8px 10px; max-height: 420px; overflow: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--code-bg); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre; }
+.smp-stdout, .smp-tb { margin: 4px 0 8px; padding: 8px 10px; max-height: 420px; overflow: auto; border: 1px solid var(--border-color); border-radius: 4px; background: var(--code-bg); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.45; white-space: pre; }
 .smp-tb { background: none; border: 0; padding: 4px 0 0; }
 .smp-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
 

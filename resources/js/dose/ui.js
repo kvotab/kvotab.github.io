@@ -1133,7 +1133,7 @@ function layout(title, ytitle, xtitle = 'Time after intake (days)') {
   const t = plotTheme();
   return {
     title: { text: title, font: { size: 13, color: t.text } }, paper_bgcolor: t.bg, plot_bgcolor: t.bg,
-    font: { family: 'verdana, sans-serif', size: 11, color: t.text },
+    font: { family: '"IBM Plex Sans", verdana, sans-serif', size: 11, color: t.text },
     xaxis: { type: 'log', title: xtitle, gridcolor: t.grid, zerolinecolor: t.grid, linecolor: t.grid, exponentformat: 'power', spikecolor: t.muted, spikethickness: 1 },
     yaxis: { type: 'log', title: ytitle, gridcolor: t.grid, zerolinecolor: t.grid, linecolor: t.grid, exponentformat: 'power' },
     margin: { l: 70, r: 16, t: 36, b: 48 }, legend: { orientation: 'h', y: -0.22 }, hovermode: 'x unified',

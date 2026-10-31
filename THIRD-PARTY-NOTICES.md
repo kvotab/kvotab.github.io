@@ -25,7 +25,8 @@ others. Each item keeps its own licence.
 | Error-function coefficients in `resources/js/erf.js` | Boost Software License 1.0 (John Maddock) | header in the file |
 | CALERF (`resources/js/erf.f`, `erf.js`; its coefficients also in `resources/js/distributions/special.js`, and those of its first interval in `kompartment/src/parser/functions.js` and `kompartment/python/kompartment/stats/_normal.py`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
 | Sobol direction numbers of Joe and Kuo (the first 16 dimensions of `new-joe-kuo-6.21201`, in `resources/js/distributions/sampling.js`) | BSD-style (Frances Y. Kuo and Stephen Joe, 2008) | `resources/js/distributions/sobol.LICENSE` |
-| Rawengulk Sans | SIL Open Font License 1.1 | `vendors/font/SIL Open Font License.txt` |
+| [IBM Plex](https://github.com/IBM/plex) Sans 1.1.0 and Mono 2.5.0, IBM's split WOFF2 files, unmodified (`vendors/font/ibm-plex-sans/`, `vendors/font/ibm-plex-mono/`) | SIL Open Font License 1.1 | `LICENSE.txt` in each folder |
+| Rawengulk Sans (no longer used by any page) | SIL Open Font License 1.1 | `vendors/font/SIL Open Font License.txt` |
 
 ## Libraries loaded from public CDNs
 

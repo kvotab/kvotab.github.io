@@ -46,7 +46,7 @@ The extension host's reader uses the page's plugin files, from `media/vendor/`.
 
 | Font | Licence | Text |
 |---|---|---|
-| Rawengulk Sans | SIL Open Font License 1.1 | `licenses/rawengulk-sans/` |
+| IBM Plex Sans and IBM Plex Mono | SIL Open Font License 1.1 | `licenses/ibm-plex/` |
 
 ## Work followed, not copied
 

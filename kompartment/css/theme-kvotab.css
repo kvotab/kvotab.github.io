@@ -13,15 +13,12 @@
  * ---------------------------------------------------------------------------
  * WHAT CHANGES
  *
- * The greys go warm. The brand is four colours -- `#f3b87b` beige, `#bb6c5d`
- * red-brown, `#352921` dark brown, `#344126` dark green -- and a page built on
- * them reads warm throughout. This tool's own palette is neutral: near-black
- * ink on paper-white, greys with no hue at all. Dropping it into that page
- * unchanged looks like a screenshot pasted onto it.
- *
- * So every surface, every border and every piece of ink is re-tinted toward
- * `#352921`, and the page ground, the raised surfaces and the text pick up the
- * site's own values where it has one.
+ * The site's neutrals are graphite: one cool hue at a very low chroma, from
+ * the paper of the page to the ink of its header. This tool's own palette is
+ * neutral with no hue at all, and close to the site's already; what differs
+ * is the cast, so every surface, every border and every piece of ink takes
+ * the site's own value where it has one, and the page ground goes one step
+ * below the site's panels so the tool's panels separate from it.
  *
  * WHAT DOES NOT
  *
@@ -33,77 +30,63 @@
  *
  * **The block fills.** A compartment is green, an expression lilac, a
  * parameter sand: the diagram's own vocabulary, which a reader learns once.
- * The three neutral ones are warmed, because a grey rock on warm paper reads
- * as a hole in it; the rest stay.
+ * app.css drew them for a neutral ground, which the graphite one is near
+ * enough to, so they are app.css's in both modes.
  *
  * THE ACCENT IS THE ONE REAL DECISION
  *
  * The accent rings a selected block, draws a focus ring and fills the primary
- * button. The brand's own accent is `#bb6c5d`, and it cannot be used for this:
- * a red-brown ring around a selected block sits next to the red ring around a
- * broken one, and the two readings are *selected* and *will not run*. The
- * site's light link colour `#a8503f` is nearer the danger red still.
+ * button. The site's accent is a terracotta, and it cannot be used for all of
+ * that: a terracotta ring around a selected block sits next to the red ring
+ * around a broken one, and the two readings are *selected* and *will not run*.
  *
- * So the accent comes from the brand's other pole, the dark green `#344126` --
- * lightened in light mode so white ink can sit on it, and lifted well clear of
- * the ground in dark mode where `#344126` is almost invisible on `#1a1410`.
+ * So the accent fills the buttons and draws the links, as on the site's own
+ * pages, and the selection comes from the brand's other pole, the logo's dark
+ * green -- lightened in light mode so white ink can sit on it, and lifted
+ * well clear of the ground in dark mode where `#344126` is almost invisible.
  * It is a brand colour, and it is the one that cannot be mistaken for either
  * of the two states that already own a colour here.
- *
- * `#bb6c5d` is not wasted: it is what a *link* is, in both modes, which is
- * where the site uses it and where nothing else competes.
  */
 
 /* ------------------------------------------------------------------ light */
 
 :root[data-brand="kvotab"] {
-	/* The site's own three, warmed one step further at the page ground so the
-	   panels above it separate. */
-	--surface-0: #f1ece5;
-	--surface-1: #faf8f4;
+	/* The site's panels and paper, with the page ground one step below them
+	   so the panels above it separate. */
+	--surface-0: #eef1f4;
+	--surface-1: #f8f9fb;
 	--surface-2: #ffffff;
-	--surface-sunken: #e7e0d6;
+	--surface-sunken: #e6eaee;
 
-	/* The brand brown at low alpha rather than black: a border drawn in the
-	   page's own darkest colour belongs to it, and stays right over every
+	/* The header's graphite at low alpha rather than black: a border drawn in
+	   the page's own darkest colour belongs to it, and stays right over every
 	   surface above. */
-	--border: rgba(53, 41, 33, 0.16);
-	--border-strong: rgba(53, 41, 33, 0.30);
+	--border: rgba(19, 23, 28, 0.14);
+	--border-strong: rgba(19, 23, 28, 0.28);
 
-	--text-primary: #352921;
-	--text-secondary: #6b5d4f;
-	--text-muted: #8a7d6f;
+	--text-primary: #161b22;
+	--text-secondary: #454e59;
+	--text-muted: #5d6773;
 
-	--grid: rgba(53, 41, 33, 0.08);
-	--axis: rgba(53, 41, 33, 0.32);
+	--grid: rgba(19, 23, 28, 0.08);
+	--axis: rgba(19, 23, 28, 0.32);
 
-	/* The brand's own accent, where the site's pages put it: filled buttons,
-	   focus rings, the tick in a checkbox.
-	 *
-	 * One step down from `#bb6c5d` itself, which carries white at 3.88:1 --
-	 * under the 4.5 a label needs, and this palette fills a button with it and
-	 * writes Run on it. `#ad5748` is the same terracotta at 4.96:1, and sits
-	 * beside the site's own link colour `#a8503f` rather than apart from it. */
-	--accent: #ad5748;
+	/* The site's accent as a fill: filled buttons, focus rings, the tick in
+	   a checkbox. White on it is 5.8:1, where a label needs 4.5. */
+	--accent: #a8473a;
 	--accent-ink: #ffffff;
-	--accent-hover: #984739;
+	--accent-hover: #8f3b30;
 
-	/* Everywhere but the one place. See the note above: `#344126` lightened
-	   until white ink on it clears 4.5:1, because the brand green is too dark
-	   to carry a label at the size a control is. */
-	--select: #4d6437;
+	/* Everywhere but the one place. See the note above: the logo's green,
+	   lightened until white ink on it clears 4.5:1 (5.7:1). */
+	--select: #4f7034;
 
 	/* The site's own link colour. */
-	--link: #a8503f;
+	--link: #a5432f;
 
-	/* Paper-white blocks would float off a warm ground. */
-	--node-fill: #fffdf9;
-	--node-fill-farfield: #e0ded9;
-	--node-fill-waste: #e8e0d2;
-	--node-stroke: rgba(53, 41, 33, 0.30);
-	--node-ink: #352921;
-	--node-ink-dim: #6b5d4f;
-	--edge: rgba(53, 41, 33, 0.48);
+	--node-stroke: rgba(19, 23, 28, 0.28);
+	--node-ink: #161b22;
+	--edge: rgba(19, 23, 28, 0.48);
 }
 
 /* ------------------------------------------------------------------- dark */
@@ -115,100 +98,178 @@
    light system picks Dark. */
 @media (prefers-color-scheme: dark) {
 	:root[data-brand="kvotab"]:not([data-theme="light"]) {
-		--surface-0: #1a1410;
-		--surface-1: #241d17;
-		--surface-2: #2e251d;
-		--surface-sunken: #120e0a;
+		--surface-0: #0d1015;
+		--surface-1: #151a20;
+		--surface-2: #1b2128;
+		--surface-sunken: #090b0e;
 
-		/* The bright beige at low alpha: on a brown ground a border wants the
-		   light end of the brand, not the dark one. */
-		--border: rgba(243, 184, 123, 0.16);
-		--border-strong: rgba(243, 184, 123, 0.30);
+		/* White at low alpha: on a graphite ground a border wants the light
+		   end, not the dark one. */
+		--border: rgba(255, 255, 255, 0.12);
+		--border-strong: rgba(255, 255, 255, 0.24);
 
-		--text-primary: #e8ddd0;
-		--text-secondary: #b8a898;
-		--text-muted: #9c8e7f;
+		--text-primary: #e4e8ec;
+		--text-secondary: #b0b9c3;
+		--text-muted: #949ea9;
 
-		--grid: rgba(243, 184, 123, 0.06);
-		--axis: rgba(243, 184, 123, 0.32);
+		--grid: rgba(255, 255, 255, 0.06);
+		--axis: rgba(255, 255, 255, 0.30);
 
-		/* The brand's accent, lifted so white ink still sits on it against a
-		   dark ground. */
+		/* The accent, lifted off the dark ground, with dark ink on it (6.1:1). */
 		--accent: #c97f6e;
-		--accent-ink: #1a1410;
+		--accent-ink: #0d1015;
 		--accent-hover: #d99383;
 
-		/* And the brand green lifted off a near-black brown, which `#344126`
+		/* And the brand green lifted off a near-black ground, which `#344126`
 		   cannot be seen against. */
 		--select: #8aa864;
 
-		--link: #f3b87b;
+		--link: #f0a184;
 
-		/* Each fill keeps its *offset* from the ground it was drawn against
-		   and takes that offset onto this one. The offset is what tells a
-		   compartment from an expression from a lookup table, so it is the
-		   thing to preserve; mixing brown into the colours themselves closes
-		   the gaps between them and the diagram stops saying what each block
-		   is. */
-		--node-fill: #312820;
-		--node-fill-compartment: #2e3625;
-		--node-fill-expression: #342935;
-		--node-fill-parameter: #3e2f1a;
-		--node-fill-lookup: #37351b;
-		--node-fill-reduction: #2a3323;
-		--node-fill-aggregate: #27332c;
-		--node-fill-recorder: #41321c;
-		--node-fill-delay: #29332c;
-		--node-fill-event: #432821;
-		--node-fill-farfield: #362f2e;
-		--node-fill-waste: #45362b;
-		--node-stroke: rgba(243, 184, 123, 0.34);
-		--node-ink: #e8ddd0;
-		--node-ink-dim: #b8a898;
-		--edge: rgba(243, 184, 123, 0.50);
+		--node-stroke: rgba(255, 255, 255, 0.30);
+		--node-ink: #e4e8ec;
+		--edge: rgba(255, 255, 255, 0.48);
 	}
 }
 
 :root[data-brand="kvotab"][data-theme="dark"] {
-	--surface-0: #1a1410;
-	--surface-1: #241d17;
-	--surface-2: #2e251d;
-	--surface-sunken: #120e0a;
+	--surface-0: #0d1015;
+	--surface-1: #151a20;
+	--surface-2: #1b2128;
+	--surface-sunken: #090b0e;
 
-	--border: rgba(243, 184, 123, 0.16);
-	--border-strong: rgba(243, 184, 123, 0.30);
+	--border: rgba(255, 255, 255, 0.12);
+	--border-strong: rgba(255, 255, 255, 0.24);
 
-	--text-primary: #e8ddd0;
-	--text-secondary: #b8a898;
-	--text-muted: #9c8e7f;
+	--text-primary: #e4e8ec;
+	--text-secondary: #b0b9c3;
+	--text-muted: #949ea9;
 
-	--grid: rgba(243, 184, 123, 0.06);
-	--axis: rgba(243, 184, 123, 0.32);
+	--grid: rgba(255, 255, 255, 0.06);
+	--axis: rgba(255, 255, 255, 0.30);
 
 	--accent: #c97f6e;
-	--accent-ink: #1a1410;
+	--accent-ink: #0d1015;
 	--accent-hover: #d99383;
 	--select: #8aa864;
 
-	--link: #f3b87b;
+	--link: #f0a184;
 
-	/* See the note in the block above. */
-	--node-fill: #312820;
-	--node-fill-compartment: #2e3625;
-	--node-fill-expression: #342935;
-	--node-fill-parameter: #3e2f1a;
-	--node-fill-lookup: #37351b;
-	--node-fill-reduction: #2a3323;
-	--node-fill-aggregate: #27332c;
-	--node-fill-recorder: #41321c;
-	--node-fill-delay: #29332c;
-	--node-fill-event: #432821;
-	--node-fill-farfield: #362f2e;
-	--node-fill-waste: #45362b;
-	--node-stroke: rgba(243, 184, 123, 0.34);
-	--node-ink: #e8ddd0;
-	--node-ink-dim: #b8a898;
-	--edge: rgba(243, 184, 123, 0.50);
+	--node-stroke: rgba(255, 255, 255, 0.30);
+	--node-ink: #e4e8ec;
+	--edge: rgba(255, 255, 255, 0.48);
+}
+
+/* ------------------------------------------------------------ the faces
+ *
+ * The site's IBM Plex, framed in the site's page: Sans for the interface,
+ * Mono for values, names and code. The files are the site's (vendors/font/,
+ * SIL Open Font License 1.1), so only where the site is -- under serve.py the
+ * tool is served from its own folder, they are not there, and it keeps the
+ * system's faces rather than asking for files that do not exist. The faces
+ * are declared here, as the frame does not load the site's stylesheet; a
+ * browser fetches one only once some text is set in it.
+ */
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+
+:root[data-chrome="kvotab"] {
+	--sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* ------------------------------------------------- inside the page's chrome

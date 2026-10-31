@@ -11,7 +11,7 @@
   grid-template-columns: var(--zf-side-width, 340px) 8px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -51,7 +51,7 @@
   margin: 10px 0 6px;
   padding: 0 0 4px 16px;
   border-bottom: 1px solid var(--border-color);
-  font: 700 0.95rem RawengulkSans, sans-serif;
+  font: 700 0.95rem var(--font-sans);
   color: var(--text-primary);
   cursor: pointer;
   list-style: none;
@@ -80,7 +80,7 @@
   border-radius: 4px;
   font-size: 12px;
 }
-.zf-row textarea { min-height: 5.5em; resize: vertical; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+.zf-row textarea { min-height: 5.5em; resize: vertical; font: 11.5px/1.45 var(--font-mono); }
 
 /* How each line of the list of abbreviated names was read. */
 .zf-names { margin: -4px 0 8px; font-size: 11px; line-height: 1.45; color: var(--text-secondary); }
@@ -144,7 +144,7 @@
   border-radius: 6px;
   background: var(--accent-fill);
   color: #fff;
-  font: 600 12px verdana, sans-serif;
+  font: 600 12px var(--font-sans);
   cursor: pointer;
 }
 .zf-btn.secondary { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border-color); }
@@ -207,7 +207,7 @@
   border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -263,13 +263,13 @@
   background: var(--bg-surface);
   min-width: 7em;
 }
-.zf-stat b { display: block; font: 700 1.2rem ui-monospace, Menlo, Consolas, monospace; color: var(--text-primary); }
+.zf-stat b { display: block; font: 700 1.2rem var(--font-mono); color: var(--text-primary); }
 .zf-stat span { font-size: 11px; color: var(--text-secondary); }
 
 /* ---- a citation to review ----------------------------------------------- */
-.zf-group-title { margin: 14px 0 6px; font: 700 0.95rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-group-title { margin: 14px 0 6px; font: 700 0.95rem var(--font-sans); color: var(--text-primary); }
 .zf-group-title:first-child { margin-top: 2px; }
-.zf-group-title small { font: 400 11px verdana, sans-serif; color: var(--text-muted); margin-left: 6px; }
+.zf-group-title small { font: 400 11px var(--font-sans); color: var(--text-muted); margin-left: 6px; }
 .zf-item {
   margin: 0 0 8px;
   padding: 8px 10px;
@@ -310,10 +310,10 @@
   line-height: 1.4;
 }
 .zf-cands li:first-child { border-top: 0; }
-.zf-cands .zf-conf, .zf-conf { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.zf-cands .zf-conf, .zf-conf { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .zf-itemline { overflow-wrap: anywhere; }
 .zf-itemline .zf-year { color: var(--text-secondary); }
-.zf-itemline .zf-key { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--text-muted); }
+.zf-itemline .zf-key { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); }
 .zf-search { margin-top: 6px; display: flex; gap: 6px; align-items: center; }
 .zf-search input {
   flex: 1 1 auto;
@@ -344,7 +344,7 @@
 }
 .zf-table tbody tr:nth-child(even) { background: var(--table-stripe); }
 .zf-table td.nowrap { white-space: nowrap; }
-.zf-table td.num { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; white-space: nowrap; }
+.zf-table td.num { text-align: right; font-family: var(--font-mono); white-space: nowrap; }
 .zf-status-tag { font-size: 11px; white-space: nowrap; }
 .zf-status-tag.ok { color: var(--accent-success); }
 .zf-status-tag.amb { color: var(--text-primary); }
@@ -364,10 +364,10 @@
 }
 .zf-report.warn { border-left-color: var(--color-kvot-bright); }
 .zf-report ul { margin: 4px 0 0; padding-left: 18px; }
-.zf-report h4 { margin: 0 0 4px; font: 700 0.95rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-report h4 { margin: 0 0 4px; font: 700 0.95rem var(--font-sans); color: var(--text-primary); }
 
 /* ---- reference list ----------------------------------------------------- */
-.zf-refs h3 { margin: 14px 0 6px; font: 700 1rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-refs h3 { margin: 14px 0 6px; font: 700 1rem var(--font-sans); color: var(--text-primary); }
 .zf-refs h3:first-child { margin-top: 2px; }
 .zf-refs p { font-size: 12px; line-height: 1.55; max-width: 64rem; }
 .zf-reflist { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.55; max-width: 64rem; }
@@ -375,8 +375,8 @@
 
 /* ---- help --------------------------------------------------------------- */
 .zf-help { max-width: 64rem; line-height: 1.65; }
-.zf-help h2 { margin: 4px 0 10px; font: 700 1.3rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.zf-help h3 { margin: 22px 0 6px; font: 700 1.05rem RawengulkSans, sans-serif; color: var(--text-primary); }
+.zf-help h2 { margin: 4px 0 10px; font: 700 1.3rem var(--font-sans); color: var(--text-primary); }
+.zf-help h3 { margin: 22px 0 6px; font: 700 1.05rem var(--font-sans); color: var(--text-primary); }
 .zf-help p { margin: 0 0 10px; }
 .zf-help li { margin: 0 0 4px; }
 .zf-help code { padding: 1px 4px; border-radius: 3px; background: var(--code-bg); font-size: 0.92em; overflow-wrap: anywhere; }

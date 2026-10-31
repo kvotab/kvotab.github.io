@@ -146,7 +146,7 @@
       svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       svg.setAttribute('width', W);
       svg.setAttribute('height', H);
-      svg.setAttribute('font-family', 'verdana, sans-serif');
+      svg.setAttribute('font-family', '"IBM Plex Sans", verdana, sans-serif');
       el('rect', { x: 0, y: 0, width: W, height: H, fill: col.bg }, svg);
       if (!d || !d.series.length) {
         const t = el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', 'font-size': 12, fill: col.muted }, svg);

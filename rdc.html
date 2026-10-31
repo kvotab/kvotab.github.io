@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
     <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css" integrity="sha384-vIQIPaHJRqkO8xhnLxSZ0rHF6LyiWXbLF3grsa9pv9yDFyOPGrE1teHOuRNMJoZs" crossorigin="anonymous">
     <link href="./vendors/css/jstree/style.min.css?v=20260911" rel="stylesheet" />
-    <link href="./resources/css/rdc.css?v=20261007" rel="stylesheet" />
+    <link href="./resources/css/rdc.css?v=20261031" rel="stylesheet" />
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -16,7 +16,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-    <link href="./resources/css/kvot.css?v=20261030" rel="stylesheet" />  
+    <link href="./resources/css/kvot.css?v=20261031" rel="stylesheet" />  
     <!--
       jQuery 1.8.3 (2012) and jQuery UI 1.9.2 (2013) were vendored here. Both
       carry published XSS advisories — jQuery below 3.5.0 in the DOM
@@ -66,8 +66,8 @@
 .rdc-status{position:fixed;z-index:10000;left:50%;top:1rem;transform:translateX(-50%);max-width:min(720px,90vw);padding:.75rem 1rem;border-radius:.35rem;background:#7a1f1f;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.3)}
 
 /* Professional decay-chart dialog */
-.rdc-chart-window.ui-dialog{overflow:hidden;border:1px solid rgba(74,57,43,.28)!important;border-radius:14px!important;background:#fff!important;box-shadow:0 20px 55px rgba(35,25,17,.28),0 3px 10px rgba(35,25,17,.12)!important}
-.rdc-chart-window .ui-dialog-titlebar{min-height:46px;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid rgba(255,255,255,.12)!important;border-radius:0!important;background:linear-gradient(135deg,#34281f,#5b4635)!important;color:#fff!important;display:flex;align-items:center}
+.rdc-chart-window.ui-dialog{overflow:hidden;border:1px solid rgba(19,23,28,.28)!important;border-radius:14px!important;background:#fff!important;box-shadow:0 20px 55px rgba(13,16,21,.28),0 3px 10px rgba(13,16,21,.12)!important}
+.rdc-chart-window .ui-dialog-titlebar{min-height:46px;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid rgba(255,255,255,.12)!important;border-radius:0!important;background:linear-gradient(135deg,#13171c,#2a313a)!important;color:#fff!important;display:flex;align-items:center}
 .rdc-chart-window .ui-dialog-title{font-size:15px;font-weight:650;letter-spacing:.015em;overflow:visible!important;white-space:nowrap}
 .rdc-chart-window .ui-dialog-titlebar-close{top:50%!important;right:11px!important;width:29px!important;height:29px!important;margin-top:-15px!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:8px!important;background:rgba(255,255,255,.08)!important}
 .rdc-chart-window .ui-dialog-titlebar-close:hover{background:rgba(255,255,255,.2)!important}
@@ -108,7 +108,7 @@
 #chartdialog .chart-time-row #timeunit{border-left:1px solid var(--border-color);border-radius:0 7px 7px 0}
 #chartdialog .chart-badge{display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;height:34px;padding:0 11px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);color:var(--text-muted);font-size:10px;font-weight:650;letter-spacing:.02em;white-space:nowrap}
 #chartdialog .chart-badge span{width:7px;height:7px;border-radius:50%;background:var(--color-kvot-bright)}
-#chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(99,80,63,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(45,34,25,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(177,103,45,.12)}#chartdialog .modebar-btn path{fill:#655347!important}
+#chartdialog .modebar{top:8px!important;right:10px!important;padding:3px 4px!important;border:1px solid rgba(19,23,28,.18);border-radius:8px;background:rgba(255,255,255,.92)!important;box-shadow:0 3px 10px rgba(19,23,28,.1)}#chartdialog .modebar-btn{border-radius:5px}#chartdialog .modebar-btn:hover{background:rgba(176,104,42,.12)}#chartdialog .modebar-btn path{fill:#5d6773!important}
 /* Container queries, not viewport ones: the settings sit in a window that is
    510px wide on a 1400px desktop, so a viewport query never matched and three
    columns were laid out in the room for two — which is why the badge was cut
@@ -117,15 +117,15 @@
 #chartdialog{container-name:chartpanel}
 @container chartpanel (max-width:620px){#chartdialog .settings{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}#chartdialog .chart-badge{display:none}}
 @container chartpanel (max-width:400px){#chartdialog .settings{grid-template-columns:minmax(0,1fr)}}
-html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!important;background:#28211a!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#201914,#3b2e24)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#2a221b!important}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(220,195,171,.16);background:rgba(34,27,22,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#d5c2af!important}
+html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#36404a!important;background:#161b21!important;box-shadow:0 20px 55px rgba(0,0,0,.58)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{background:linear-gradient(135deg,#0d1015,#232a33)!important}html[data-theme="dark"] .rdc-chart-window .ui-dialog-content{background:#151a20!important}html[data-theme="dark"] #chartdialog .modebar{border-color:rgba(200,210,220,.16);background:rgba(10,13,17,.9)!important}html[data-theme="dark"] #chartdialog .modebar-btn path{fill:#c5ccd4!important}
 
 /* Final integrated chart shell and plot clearance */
-.rdc-chart-window.ui-dialog{box-sizing:border-box!important;padding:0!important;overflow:hidden!important;border:1px solid #cfc5bb!important;border-radius:14px!important;background:#fff!important;background-clip:padding-box!important;box-shadow:0 16px 44px rgba(41,31,23,.20),0 2px 8px rgba(41,31,23,.10)!important}
-.rdc-chart-window .ui-dialog-titlebar{box-sizing:border-box!important;width:100%!important;min-height:44px!important;margin:0!important;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid #ded6ce!important;border-radius:13px 13px 0 0!important;background:linear-gradient(180deg,#faf8f5 0%,#f0ece7 100%)!important;color:#40342a!important}
-.rdc-chart-window .ui-dialog-title{padding-left:0!important;color:#40342a!important;font-size:14px!important;font-weight:700!important}
+.rdc-chart-window.ui-dialog{box-sizing:border-box!important;padding:0!important;overflow:hidden!important;border:1px solid #ccd3da!important;border-radius:14px!important;background:#fff!important;background-clip:padding-box!important;box-shadow:0 16px 44px rgba(13,16,21,.20),0 2px 8px rgba(13,16,21,.10)!important}
+.rdc-chart-window .ui-dialog-titlebar{box-sizing:border-box!important;width:100%!important;min-height:44px!important;margin:0!important;padding:0 48px 0 17px!important;border:0!important;border-bottom:1px solid #dbe0e6!important;border-radius:13px 13px 0 0!important;background:linear-gradient(180deg,#f8f9fb 0%,#f2f4f6 100%)!important;color:#1f252d!important}
+.rdc-chart-window .ui-dialog-title{padding-left:0!important;color:#1f252d!important;font-size:14px!important;font-weight:700!important}
 .rdc-chart-window .ui-dialog-title::before{display:none!important}
-.rdc-chart-window .ui-dialog-titlebar-close{border:1px solid #d3c8bd!important;background:#fff!important;color:#5a493c!important;box-shadow:0 1px 2px rgba(45,35,27,.06)}
-.rdc-chart-window .ui-dialog-titlebar-close:hover,.rdc-chart-window .ui-dialog-titlebar-close:focus-visible{border-color:#b7a696!important;background:#eee7df!important}
+.rdc-chart-window .ui-dialog-titlebar-close{border:1px solid #cdd4db!important;background:#fff!important;color:#4a5360!important;box-shadow:0 1px 2px rgba(19,23,28,.06)}
+.rdc-chart-window .ui-dialog-titlebar-close:hover,.rdc-chart-window .ui-dialog-titlebar-close:focus-visible{border-color:#9aa3ad!important;background:#eef1f4!important}
 .rdc-chart-window .ui-dialog-content{box-sizing:border-box!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0 0 13px 13px!important;background:#fff!important}
 #chartdialog{position:relative!important;overflow:hidden!important}
 #chartdialog .modebar{top:calc(var(--chart-toolbar-top,96px) - 36px)!important;right:6px!important;left:auto!important;z-index:50!important;opacity:1!important;visibility:visible!important;max-width:calc(100% - 12px);flex-wrap:wrap;justify-content:flex-end}
@@ -133,10 +133,10 @@ html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#59493b!importa
    right:6px is measured from there rather than from the panel. Anchored to
    the panel, it can be told how much room it has. */
 #chartdialog .modebar-container{left:0!important;right:0!important;width:auto!important}
-html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#5b4b3e!important;background:#2a221b!important;box-shadow:0 18px 48px rgba(0,0,0,.52)!important}
-html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{border-bottom-color:#554638!important;background:linear-gradient(180deg,#393028 0%,#302820 100%)!important;color:#eadfd4!important}
-html[data-theme="dark"] .rdc-chart-window .ui-dialog-title{color:#eadfd4!important}
-html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color:#665448!important;background:#241e19!important;color:#eadfd4!important}
+html[data-theme="dark"] .rdc-chart-window.ui-dialog{border-color:#38424d!important;background:#151a20!important;box-shadow:0 18px 48px rgba(0,0,0,.52)!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar{border-bottom-color:#333c46!important;background:linear-gradient(180deg,#232a33 0%,#1c2229 100%)!important;color:#e4e8ec!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-title{color:#e4e8ec!important}
+html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color:#3f4954!important;background:#12161b!important;color:#e4e8ec!important}
 
 #chartdialog .modebar-container{opacity:1!important;}
 
@@ -393,7 +393,7 @@ html[data-theme="dark"] .rdc-chart-window .ui-dialog-titlebar-close{border-color
 <script src="./resources/js/kvot-safe.js?v=20260911"></script>
 <script src="./resources/js/kvot-actions.js?v=20260902"></script>
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-<script src="./resources/js/site.js?v=20261030"></script>
+<script src="./resources/js/site.js?v=20261031"></script>
 <script src="./resources/js/rdc.js?v=20261007"></script>
 <script>
 // ── Shared components ────────────────────────────────────────────────────────
@@ -1063,19 +1063,19 @@ document.addEventListener('DOMContentLoaded', function() {
 function isDarkMode() {
     return document.documentElement.getAttribute('data-theme') === 'dark';
 }
-function cyEdgeColor()    { return isDarkMode() ? '#b8a898' : '#000'; }
-function cyBgColor()      { return isDarkMode() ? '#2a221b' : 'white'; }
-function cyNodeBgColor()  { return isDarkMode() ? '#2a221b' : 'white'; }
-function cyTextColor()    { return isDarkMode() ? '#b8a898' : 'gray'; }
-function cyTextBgColor()  { return isDarkMode() ? '#1a1410' : 'white'; }
+function cyEdgeColor()    { return isDarkMode() ? '#b0b9c3' : '#000'; }
+function cyBgColor()      { return isDarkMode() ? '#151a20' : 'white'; }
+function cyNodeBgColor()  { return isDarkMode() ? '#151a20' : 'white'; }
+function cyTextColor()    { return isDarkMode() ? '#b0b9c3' : 'gray'; }
+function cyTextBgColor()  { return isDarkMode() ? '#0d1015' : 'white'; }
 function cyNodeTextColor(){ return isDarkMode() ? '#f3b87b' : 'black'; }
 function cyLevelFill()    { return isDarkMode() ? '#5a4520' : '#FFF4A3'; }
-function cyLevelStroke()  { return isDarkMode() ? '#5a4f42' : 'black'; }
-function plotlyPaperBg()  { return isDarkMode() ? '#332b23' : 'rgb(253,254,255)'; }
-function plotlyPlotBg()   { return isDarkMode() ? '#2a221b' : 'rgb(255,255,255)'; }
-function plotlyFontColor(){ return isDarkMode() ? '#e8ddd0' : '#333'; }
-function plotlyGridColor(){ return isDarkMode() ? '#5a4f42' : '#eee'; }
-function plotlyLineColor(){ return isDarkMode() ? '#5a4f42' : '#bbb'; }
+function cyLevelStroke()  { return isDarkMode() ? '#4a5562' : 'black'; }
+function plotlyPaperBg()  { return isDarkMode() ? '#1b2128' : 'rgb(253,254,255)'; }
+function plotlyPlotBg()   { return isDarkMode() ? '#151a20' : 'rgb(255,255,255)'; }
+function plotlyFontColor(){ return isDarkMode() ? '#e4e8ec' : '#333'; }
+function plotlyGridColor(){ return isDarkMode() ? '#2c343d' : '#eee'; }
+function plotlyLineColor(){ return isDarkMode() ? '#4a5562' : '#bbb'; }
 
 // ── Element icon helper (colored SVG data URIs for jstree) ─────────────────────
 function makeElementIcon(color) {

@@ -13,7 +13,7 @@
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
-  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261030">
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
   <title>karaoke – kvot ab</title>
@@ -70,7 +70,7 @@
     }
 
     .lyric-line {
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
       text-align: center;
       transition: all 0.35s ease;
       line-height: 1.25;
@@ -133,7 +133,7 @@
 
     /* ── time indicator ── */
     #lyric-time {
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
       font-size: 0.75rem;
       color: var(--text-muted);
       flex-shrink: 0;
@@ -150,7 +150,7 @@
       color: var(--text-primary, #f0f0f0);
       border-radius: 6px;
       padding: 6px 10px;
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
       cursor: pointer;
     }
 
@@ -177,7 +177,7 @@
 
     .edit-panel h3 {
       margin: 0 0 8px;
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
       font-size: 1rem;
       color: var(--color-kvot-bright);
     }
@@ -205,7 +205,7 @@
       background: rgba(0, 0, 0, 0.15);
       color: inherit;
       padding: 5px 6px;
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
     }
 
     .edit-list {
@@ -250,7 +250,7 @@
       border-radius: 5px;
       padding: 4px 8px;
       cursor: pointer;
-      font-family: RawengulkSans, verdana, sans-serif;
+      font-family: var(--font-sans);
       font-size: 0.8rem;
     }
 
@@ -339,7 +339,7 @@
   <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-  <script src="./resources/js/site.js?v=20261030"></script>
+  <script src="./resources/js/site.js?v=20261031"></script>
   <script>
     KVOT.renderHeader('karaoke');
     KVOT.renderNav('karaoke.html');

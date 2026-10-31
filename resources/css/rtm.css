@@ -13,7 +13,7 @@
   grid-template-columns: var(--rtm-side-width, 330px) 8px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -61,7 +61,7 @@
   margin: 10px 0 6px;
   padding: 0 0 4px 16px;
   border-bottom: 1px solid var(--border-color);
-  font: 700 0.95rem RawengulkSans, sans-serif;
+  font: 700 0.95rem var(--font-sans);
   color: var(--text-primary);
   cursor: pointer;
   list-style: none;
@@ -83,7 +83,7 @@
 .rtm-row label { display: block; margin: 0 0 2px; color: var(--text-primary); }
 .rtm-row label .rtm-name {
   display: block;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
 }
@@ -94,7 +94,7 @@
   border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .rtm-check { display: flex; gap: 6px; align-items: center; margin: 0 0 6px; cursor: pointer; }
 .rtm-check[hidden] { display: none; }
@@ -115,7 +115,7 @@
 .rtm-check-line > .rtm-check { flex: 1 1 auto; min-width: 0; margin: 0; }
 
 .rtm-facts {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -147,7 +147,7 @@
   border-radius: 6px;
   background: var(--accent-fill);
   color: #fff;
-  font: 600 12px verdana, sans-serif;
+  font: 600 12px var(--font-sans);
   cursor: pointer;
 }
 .rtm-btn.secondary {
@@ -261,7 +261,7 @@
   border-radius: 6px 6px 0 0;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px verdana, sans-serif;
+  font: 12px var(--font-sans);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -320,7 +320,7 @@
   border: 1px solid var(--input-border);
   border-radius: 4px;
   font-size: 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 /* ---- the species picker -------------------------------------------------
@@ -337,7 +337,7 @@
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
@@ -405,7 +405,7 @@
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 6px;
-  font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  font: 12px/1.5 var(--font-mono);
   letter-spacing: normal;
   tab-size: 4;
   white-space: pre;
@@ -492,9 +492,9 @@
 
 /* ---- help --------------------------------------------------------------- */
 .rtm-help { max-width: 62rem; line-height: 1.65; }
-.rtm-help h2 { margin: 4px 0 10px; font: 700 1.3rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.rtm-help h3 { margin: 22px 0 6px; font: 700 1.05rem RawengulkSans, sans-serif; color: var(--text-primary); }
-.rtm-help h4 { margin: 16px 0 4px; font: 700 0.95rem ui-monospace, Menlo, monospace; color: var(--color-kvot-accent); }
+.rtm-help h2 { margin: 4px 0 10px; font: 700 1.3rem var(--font-sans); color: var(--text-primary); }
+.rtm-help h3 { margin: 22px 0 6px; font: 700 1.05rem var(--font-sans); color: var(--text-primary); }
+.rtm-help h4 { margin: 16px 0 4px; font: 700 0.95rem var(--font-mono); color: var(--color-kvot-accent); }
 .rtm-help p { margin: 0 0 10px; }
 .rtm-help pre {
   margin: 0 0 12px;

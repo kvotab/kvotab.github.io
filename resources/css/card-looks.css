@@ -620,7 +620,7 @@ body.wk-body {
   gap: 6px;
   padding: 6px;
   font: inherit;
-  font-family: var(--wk-font, verdana, sans-serif);
+  font-family: var(--wk-font, var(--font-sans));
   color: var(--text-primary);
   text-align: center;
   background: var(--bg-surface);
@@ -655,7 +655,7 @@ body.wk-body {
   box-sizing: border-box;
 }
 .wk-look-band { flex: none; height: 10px; background: var(--wk-blue); }
-.wk-look-sample { flex: 1; display: grid; place-items: center; font-family: var(--wk-card-font, verdana, sans-serif); font-size: 14px; color: var(--text-primary); }
+.wk-look-sample { flex: 1; display: grid; place-items: center; font-family: var(--wk-card-font, var(--font-sans)); font-size: 14px; color: var(--text-primary); }
 .wk-look-motif {
   position: absolute;
   right: 5px;
@@ -665,4 +665,4 @@ body.wk-body {
   transform: rotate(-10deg);
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
 }
-.wk-look-name { font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-size: .88rem; line-height: 1.2; }
+.wk-look-name { font-family: var(--wk-head-font, var(--font-sans)); font-size: .88rem; line-height: 1.2; }

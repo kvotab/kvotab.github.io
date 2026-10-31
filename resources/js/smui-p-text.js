@@ -442,7 +442,7 @@
   function textWidth(text, px) {
     if (measurer === undefined) { try { measurer = document.createElement('canvas').getContext('2d'); } catch (e) { measurer = null; } }
     if (!measurer) return text.length * px * 0.62;
-    measurer.font = `${px}px verdana, sans-serif`;
+    measurer.font = `${px}px "IBM Plex Sans", verdana, sans-serif`;
     return measurer.measureText(text).width;
   }
 

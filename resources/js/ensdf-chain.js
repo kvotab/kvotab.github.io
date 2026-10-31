@@ -512,7 +512,7 @@
     let w = 0;
     for (const r of C.supRuns(text)) {
       const px = r.sup ? Math.round(size * 0.72) : size;
-      if (measurer) { measurer.font = `${bold ? 'bold ' : ''}${px}px verdana, sans-serif`; w += measurer.measureText(r.t).width; }
+      if (measurer) { measurer.font = `${bold ? 'bold ' : ''}${px}px "IBM Plex Sans", verdana, sans-serif`; w += measurer.measureText(r.t).width; }
       else w += r.t.length * px * (bold ? 0.7 : 0.62);
     }
     return w;
@@ -751,13 +751,13 @@
     return {
       theme,
       bg: v('--nz-chart-bg', v('--bg-primary', '#ffffff')),
-      ink: v('--text-primary', '#352921'),
-      muted: v('--text-muted', '#786b5d'),
-      line: v('--text-secondary', '#6b5d4f'),
-      grid: v('--border-color', '#e0d7ce'),
+      ink: v('--text-primary', '#161b22'),
+      muted: v('--text-muted', '#5d6773'),
+      line: v('--text-secondary', '#454e59'),
+      grid: v('--border-color', '#dbe0e6'),
       select: v('--nz-select', '#bb6c5d'),
-      accent: v('--accent-line', '#bb7d37'),
-      label: v('--bg-surface', '#fcf7f2'),
+      accent: v('--accent-line', '#b0682a'),
+      label: v('--bg-surface', '#f8f9fb'),
       /* What fills a circle of the series as a bucket: rdc.html's yellow. */
       bucket: v('--nz-bucket', theme === 'dark' ? '#5a4520' : '#fff4a3'),
       pal: C.PALETTE[theme],
@@ -838,7 +838,7 @@
     svg.setAttribute('viewBox', `0 0 ${L.width} ${L.height}`);
     svg.setAttribute('width', L.width);
     svg.setAttribute('height', L.height);
-    svg.setAttribute('font-family', 'verdana, sans-serif');
+    svg.setAttribute('font-family', '"IBM Plex Sans", verdana, sans-serif');
     el('rect', { x: 0, y: 0, width: L.width, height: L.height, fill: col.bg }, svg);
 
     const defs = el('defs', {}, svg);
@@ -1093,8 +1093,8 @@
    */
   function setLevels(svg, levels) {
     const css = getComputedStyle(document.documentElement);
-    const halo = css.getPropertyValue('--bg-surface').trim() || '#fcf7f2';
-    const ink = css.getPropertyValue('--text-primary').trim() || '#352921';
+    const halo = css.getPropertyValue('--bg-surface').trim() || '#f8f9fb';
+    const ink = css.getPropertyValue('--text-primary').trim() || '#161b22';
     svg.querySelectorAll('.nz-node').forEach((g) => {
       const base = g.querySelector('rect');
       const lv = g.querySelector('.nz-level');
@@ -1146,7 +1146,7 @@
     if (disc) {
       g.appendChild(el('circle', {
         class: 'nz-hot-ring', cx: disc.getAttribute('cx'), cy: disc.getAttribute('cy'), r: +disc.getAttribute('r') + 7,
-        fill: 'none', stroke: css.getPropertyValue('--accent-line').trim() || '#bb7d37', 'stroke-width': 3, 'pointer-events': 'none',
+        fill: 'none', stroke: css.getPropertyValue('--accent-line').trim() || '#b0682a', 'stroke-width': 3, 'pointer-events': 'none',
       }));
       return;
     }
@@ -1154,7 +1154,7 @@
     if (!b) return;
     const ring = el('rect', {
       class: 'nz-hot-ring', x: +b.getAttribute('x') - 4, y: +b.getAttribute('y') - 4, width: +b.getAttribute('width') + 8, height: +b.getAttribute('height') + 8,
-      rx: 8, fill: 'none', stroke: css.getPropertyValue('--accent-line').trim() || '#bb7d37', 'stroke-width': 3, 'pointer-events': 'none',
+      rx: 8, fill: 'none', stroke: css.getPropertyValue('--accent-line').trim() || '#b0682a', 'stroke-width': 3, 'pointer-events': 'none',
     });
     g.appendChild(ring);
   }

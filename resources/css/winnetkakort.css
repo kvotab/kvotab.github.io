@@ -8,11 +8,12 @@
   Colours come from the site's theme variables. The six pile colours are the
   exception: they are what tells one box of cards from another, as the
   coloured boxes in a classroom do, so each has a light and a dark value of
-  its own. Text on them is --text-primary, dark brown on the light pastels
-  and light beige on the dark ones (4.9:1 or better either way).
+  its own. Text on them is --text-primary, dark ink on the light pastels
+  and light ink on the dark ones (4.9:1 or better either way).
 
-  The card numbers are set in Verdana rather than the site's display face:
-  a 1 and a 7, a 3 and an 8 must never be mistaken for each other by a child.
+  The card numbers are set in the site's IBM Plex Sans, whose 1 has a flag
+  and a foot and whose figures are all one width: a 1 and a 7, a 3 and an 8
+  must never be mistaken for each other by a child.
 */
 
 .wk-body {
@@ -24,9 +25,9 @@
   --wk-teal: #bde2db;
   --wk-accent: #f3b87b;
 
-  --wk-paper: #fffdf9;
-  --wk-paper-back: #fbf3e8;
-  --wk-edge: #bcae9f;
+  --wk-paper: #ffffff;
+  --wk-paper-back: #f3f5f8;
+  --wk-edge: #b6bec8;
 
   --wk-kan: var(--accent-success);
   --wk-on-kan: #ffffff;
@@ -52,11 +53,11 @@
   --wk-teal: #2c5752;
   --wk-accent: #7a5634;
 
-  --wk-paper: #2b241e;
-  --wk-paper-back: #342b23;
-  --wk-edge: #6b5c4e;
+  --wk-paper: #1b2128;
+  --wk-paper-back: #222932;
+  --wk-edge: #4a5562;
 
-  --wk-on-kan: #1a1410;
+  --wk-on-kan: #0d1015;
   --wk-kan-soft: #3a4a2b;
   --wk-nara: #5f7640;
   --wk-ova-soft: #5a3328;
@@ -79,7 +80,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  font-family: var(--wk-font, verdana, sans-serif);
+  font-family: var(--wk-font, var(--font-sans));
 }
 
 .wk {
@@ -101,7 +102,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 
 /* The looks in card-looks.css set the three fonts, the corners and the line
    width through these; without a look they are the values here. */
-.wk h2, .wk h3, .wk-panel-title { font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-weight: normal; }
+.wk h2, .wk h3, .wk-panel-title { font-family: var(--wk-head-font, var(--font-sans)); font-weight: normal; }
 
 /* ── Buttons ──────────────────────────────────────────────────────────── */
 
@@ -138,7 +139,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-homelink { display: flex; border-radius: 6px; }
 .wk-homelink:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
 .wk-homelink img { display: block; width: 28px; height: 28px; }
-.wk-title { margin: 0; font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-weight: normal; font-size: 1.7rem; line-height: 1.1; }
+.wk-title { margin: 0; font-family: var(--wk-head-font, var(--font-sans)); font-weight: normal; font-size: 1.7rem; line-height: 1.1; }
 .wk-top-end { display: flex; gap: 8px; margin-left: auto; }
 
 .wk-fullbtn, .wk-soundbtn, .wk-top-end > .theme-toggle {
@@ -384,7 +385,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; width: 100%; }
 /* "← Avsluta" never breaks in two: the title beside it gives way instead. */
 .wk-bar > .wk-btn { flex: none; white-space: nowrap; }
-.wk-bar-title { flex: 1 1 auto; font-family: var(--wk-head-font, RawengulkSans, verdana, sans-serif); font-size: 1.25rem; }
+.wk-bar-title { flex: 1 1 auto; font-family: var(--wk-head-font, var(--font-sans)); font-size: 1.25rem; }
 .wk-bar-meta { display: flex; gap: 14px; font-size: .9rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .wk-stage {
@@ -574,7 +575,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .wk-pic-gone { opacity: .3; }
 .wk-pic-x { stroke: var(--text-primary); stroke-width: 2; stroke-linecap: round; }
 .wk-pic-axis { stroke: var(--text-secondary); stroke-width: 1.5; fill: none; }
-.wk-pic-label { fill: var(--text-secondary); font: 11px verdana, sans-serif; text-anchor: middle; }
+.wk-pic-label { fill: var(--text-secondary); font: 11px var(--font-sans); text-anchor: middle; }
 .wk-pic-mark { fill: var(--text-primary); font-weight: bold; }
 
 .wk-numpad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: min(100%, 340px); }
@@ -750,7 +751,7 @@ body.wk-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   --wk-green: #d3e6bd; --wk-blue: #c6dbef; --wk-yellow: #f1dd98; --wk-red: #f1c4b6;
   --wk-purple: #dacbea; --wk-teal: #bde2db; --wk-accent: #f3b87b;
   color: #000;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
 }
 
 @media print {

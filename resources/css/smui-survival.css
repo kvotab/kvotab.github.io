@@ -52,7 +52,7 @@
 /* Fit Curve and Nonlinear: the model's formula */
 .sm-curve-formula {
   margin: 2px 0 6px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -71,7 +71,7 @@
   border-radius: 3px;
   background: var(--input-bg);
   color: var(--text-primary);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   min-width: 0;
 }

@@ -6,7 +6,7 @@
 /* the fitted equation under a fit's title */
 .sm-biv-eq {
   margin: 2px 0 6px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -27,7 +27,7 @@
 
 /* connecting letters line up in columns */
 .sm-biv-letters td:nth-child(2) {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: pre;
   color: var(--text-primary);
 }

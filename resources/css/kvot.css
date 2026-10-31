@@ -1,8 +1,45 @@
 :root {
-	--color-kvot-bright:#f3b87b; 	/* beige*/
-	--color-kvot-accent:#bb6c5d;	/*red-brown*/
-	--color-kvot-background:#352921;/*dark-brown*/
-	--color-kvot-primary:#344126;	/*dark-green*/
+	/*
+	  THE KVOT MARK. The logo's three faces, and nothing else is painted from
+	  these: the header's mark and the page icons keep them whatever the theme
+	  or the palette below does.
+	*/
+	--logo-top: #f3b87b;
+	--logo-right: #bb6c5d;
+	--logo-left: #344126;
+
+	/*
+	  THE BRAND COLOURS AS THE PAGES USE THEM. The pages name these four
+	  several hundred times between them, so the names stay; what they hold is
+	  the palette's, not the logo's, since the logo has its own three above.
+
+	    bright      the highlight: a chosen chip's fill, a hover or focus ring
+	                on the dark chrome, the edge of a note that wants looking
+	                at. The logo's top face, unchanged.
+	    accent      the signal: a primary button, a heading picked out, the
+	                mark on what is active. The logo's terracotta deepened
+	                until it reads as text (4.9:1 on white, where the logo's
+	                own is 3.9:1) and white reads on it as well.
+	    background  the ink of the chrome: text on a bright fill, the darkest
+	                fill. Graphite, as the header is.
+	    primary     the logo's green, for the few places that use it.
+	*/
+	--color-kvot-bright: #f3b87b;
+	--color-kvot-accent: #b4533f;
+	--color-kvot-background: #13171c;
+	--color-kvot-primary: #344126;
+
+	/*
+	  TYPE. IBM Plex (SIL Open Font License 1.1, vendors/font/): Sans for
+	  reading and for the interface, Mono for whatever a program reads or
+	  writes -- values, code, file names, units. Plex Sans has every figure
+	  the same width, so a column of numbers lines up in either face. The
+	  files are IBM's own split ones, unmodified, so a page fetches only the
+	  scripts it shows; a character none of them has comes from the system
+	  faces that follow.
+	*/
+	--font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
 	/* Fixed chrome metrics: header = 30px content + 2x6px padding + 1px border,
 	   footer = 24px content + 5px padding-top + 1px padding + 1px border. */
@@ -12,147 +49,138 @@
 	/*
 	  COLOUR ROLES.
 
-	  The four brand colours above are fixed marks -- they are what the logo is
-	  painted with, and they do not move. What follows are the roles a page
-	  actually paints with, and a role may need a different value in each theme
-	  to go on doing the same job.
+	  What follows are the roles a page actually paints with, and a role may
+	  need a different value in each theme to go on doing the same job.
 
-	  Every neutral below sits on the same warm hue as the brand browns
-	  (OKLCH H ~ 68), so no part of the ramp reads cold against another part.
-	  The light theme used to mix pure greys (#f5f5f5, #ccc, #333, #ddd,
-	  #f9f9f9) into that warm ramp: a neutral grey beside a warm off-white
-	  looks dirty rather than neutral, and it was the one cold note on an
-	  otherwise warm page. The dark theme never had the fault -- every token in
-	  it was already warm -- which is why the two halves did not feel like one
-	  design.
+	  The neutrals are graphite: one cool hue (OKLCH H ~ 250) at a very low
+	  chroma, from the paper of the page to the ink of the header, so no grey
+	  reads warmer or colder than the one beside it. Colour is kept for what
+	  means something -- the accent, the highlight, success -- and stands out
+	  the more for being the only colour there is.
 	*/
 
 	/* Light mode (default) */
 	--bg-primary: #ffffff;
-	--bg-secondary: #f6efe8;
-	--bg-surface: #fcf7f2;
-	--text-primary: #352921;
-	--text-secondary: #6b5d4f;
-	--text-muted: #786b5d;
-	--border-color: #e0d7ce;
+	--bg-secondary: #f2f4f6;
+	--bg-surface: #f8f9fb;
+	--text-primary: #161b22;
+	--text-secondary: #454e59;
+	/* 5.2:1 on --bg-secondary, the darkest surface it is written on. */
+	--text-muted: #5d6773;
+	--border-color: #dbe0e6;
 	--input-bg: #ffffff;
-	/* 3.1:1 against every page surface: the border IS the field (WCAG 1.4.11),
-	   and the #ccc it replaces was 1.6:1. */
-	--input-border: #96887b;
-	--input-text: #3b3126;
-	--header-bg: #352921;
-	--header-text: #f3b87b;
-	--footer-bg: #352921;
-	--footer-text: #f3b87b;
-	--link-color: #a8503f;
-	/* Warm shadow. A neutral-black shadow over a warm surface greys it. */
-	--shadow-color: rgba(53, 41, 33, 0.12);
-	--code-bg: #f6efe8;
-	--code-text: #3b3126;
-	--overlay-bg: rgba(26, 20, 16, 0.45);
+	/* 3:1 against every page surface: the border IS the field (WCAG 1.4.11). */
+	--input-border: #848e9a;
+	--input-text: #161b22;
+	--header-bg: #13171c;
+	--header-text: #e9ecef;
+	--footer-bg: #13171c;
+	--footer-text: #b4bcc6;
+	--link-color: #a5432f;
+	--shadow-color: rgba(19, 23, 28, 0.12);
+	--code-bg: #f2f4f6;
+	--code-text: #161b22;
+	--overlay-bg: rgba(9, 11, 14, 0.45);
 	/* Under the open menu: lighter than a dialog's, as the page stays in view. */
-	--menu-scrim: rgba(53, 41, 33, 0.16);
-	--modal-bg: #fefcfb;
-	--table-border: #e0d7ce;
-	--table-stripe: #fbf8f4;
-	--scrollbar-thumb: #c3b8ad;
-	--scrollbar-track: #f1ece6;
+	--menu-scrim: rgba(19, 23, 28, 0.18);
+	--modal-bg: #ffffff;
+	--table-border: #dbe0e6;
+	--table-stripe: #f8f9fb;
+	--scrollbar-thumb: #bcc3cb;
+	--scrollbar-track: #eef1f4;
 	/* Readable text on a --color-kvot-bright fill; white gives only 1.8:1. */
-	--on-bright: #352921;
+	--on-bright: #161b22;
 	/*
-	  THE BRAND COLOUR AS A LINE, rather than as a fill.
+	  THE HIGHLIGHT AS A LINE, rather than as a fill.
 
 	  --color-kvot-bright works as a fill in either theme: put --on-bright on
-	  it and that is 8:1. It does not work as a *stroke* on a light page.
+	  it and that is 9.9:1. It does not work as a *stroke* on a light page.
 	  #f3b87b is 1.76:1 against white, so a 1px hover border or a 2px focus
 	  ring drawn in it is very nearly not there -- and a focus ring has to
-	  clear 3:1 (WCAG 1.4.11), so on the light theme that was a keyboard user
-	  with no visible focus. This is the same colour carried down in lightness
-	  until it can be seen on paper; in the dark theme the brand colour already
-	  clears 3:1 and this is simply that colour.
+	  clear 3:1 (WCAG 1.4.11). This is the same colour carried down in
+	  lightness until it can be seen on paper (4.3:1); in the dark theme the
+	  highlight already clears 3:1 and this is simply that colour.
 
 	  Use --color-kvot-bright for fills, and for anything drawn on the dark
-	  brown chrome (header, footer, nav toggle). Use --accent-line for
-	  outlines, hover borders and focus rings drawn on the page itself.
+	  chrome (header, footer, nav toggle). Use --accent-line for outlines,
+	  hover borders and focus rings drawn on the page itself.
 	*/
-	--accent-line: #bb7d37;
+	--accent-line: #b0682a;
 	/*
-	  --color-kvot-primary is the green facet of the logo and stays where it
+	  --color-kvot-primary is the green face of the logo and stays where it
 	  is. This is that green as a usable signal colour: the logo green is
-	  1.7:1 on the dark page, which is why rb.css had already grown private
-	  overrides for the places it was used as text.
+	  1.7:1 on the dark page.
 	*/
-	--accent-success: #587339;
+	--accent-success: #4f7034;
 	/*
-	  THE ACCENT AS A SOLID FILL CARRYING WHITE TEXT.
+	  THE ACCENT AS A SOLID FILL CARRYING WHITE TEXT (5.8:1).
 
-	  --color-kvot-accent is a brand constant and stays put, but white on it is
-	  3.88:1 -- fine for a large label, short of the 4.5:1 that ~14px button
-	  text needs, and it was the fill under a dozen buttons. This is the same
-	  terracotta carried down in lightness until white clears 4.5:1 with room
-	  to spare.
-
-	  It is per-theme because the two requirements collide on a dark page:
-	  white at 4.5:1 caps the fill's relative luminance at 0.183, while
-	  clearing 3:1 against the --bg-surface panel needs 0.184. Light can
-	  afford the darker, safer fill; dark takes the lightest fill that still
-	  carries white, which is also the one that separates from the panel.
+	  It is per-theme because the two requirements nearly collide on a dark
+	  page: white at 4.5:1 caps the fill's relative luminance at 0.183, while
+	  clearing 3:1 against the --bg-surface panel needs at least 0.143. Light
+	  can afford the darker, safer fill; dark takes one near the top of that
+	  narrow window (white 4.7:1, panel 3.5:1).
 	*/
-	--accent-fill: #a5503f;
-	/*
-	  The accent as TEXT on a page surface or on a faint accent tint -- the
-	  error pills in logn.html and skbref.css, where the accent was 2.8-3.1:1
-	  on its own 10-18% wash.
-	*/
-	--accent-text: #9d4637;
+	--accent-fill: #a8473a;
+	/* The accent as TEXT on a page surface or on a faint accent tint. */
+	--accent-text: #9b3f2f;
 	/*
 	  The hover for an --accent-fill button. It can only ever be DARKER: the
 	  dark theme's fill already sits at the lightest a fill can be and still
 	  carry white at 4.5:1, so lightening a hover takes the label under. Set as
 	  a value rather than a `filter: brightness()`, because a filter darkens the
 	  label along with the fill and quietly costs contrast rather than gaining
-	  it -- which is what it was doing here (4.38:1 on the dark theme).
-
-	  The dark hover is 2.5:1 against a --bg-surface panel, under the 3:1 the
-	  rest state holds. That is the trade the two constraints force, and it is
-	  the transient state rather than the one the button sits in.
+	  it.
 	*/
-	--accent-fill-hover: #914637;
+	--accent-fill-hover: #8f3b30;
+	/* Corners: small and alike everywhere the shared chrome draws a box. */
+	--radius-sm: 3px;
+	--radius: 6px;
+	/* The squared paper under the landing page's heading. */
+	--grid-dot: #cdd4db;
 }
 
 [data-theme="dark"] {
-	--bg-primary: #1a1410;
-	--bg-secondary: #2a221b;
-	--bg-surface: #332b23;
-	--text-primary: #e8ddd0;
-	--text-secondary: #b8a898;
-	/* Was #9c8e7f, which fell to 4.4:1 once it sat on --bg-surface. */
-	--text-muted: #9f9182;
-	--border-color: #51453a;
-	--input-bg: #2a221b;
-	--input-border: #817364;
-	--input-text: #e8ddd0;
-	--header-bg: #0f0b08;
-	--header-text: #f3b87b;
-	--footer-bg: #0f0b08;
-	--footer-text: #f3b87b;
-	--link-color: #f3b87b;
-	--shadow-color: rgba(0, 0, 0, 0.45);
-	--code-bg: #2a221b;
-	--code-text: #e8ddd0;
+	/*
+	  The accent on a dark page has two jobs that pull apart: as text it needs
+	  4.5:1 on the page, and white on it as a fill wants it dark. This value
+	  meets the first (4.6:1) and comes as near the second as the first allows
+	  (4.2:1, where the logo's terracotta gave 3.9:1).
+	*/
+	--color-kvot-accent: #c0604c;
+	--bg-primary: #0d1015;
+	--bg-secondary: #151a20;
+	--bg-surface: #1b2128;
+	--text-primary: #e4e8ec;
+	--text-secondary: #b0b9c3;
+	/* 6.0:1 on --bg-surface, the lightest surface it is written on. */
+	--text-muted: #949ea9;
+	--border-color: #2c343d;
+	--input-bg: #151a20;
+	--input-border: #6f7a86;
+	--input-text: #e4e8ec;
+	--header-bg: #090b0e;
+	--header-text: #e9ecef;
+	--footer-bg: #090b0e;
+	--footer-text: #a3acb6;
+	--link-color: #f0a184;
+	--shadow-color: rgba(0, 0, 0, 0.5);
+	--code-bg: #151a20;
+	--code-text: #e4e8ec;
 	--overlay-bg: rgba(0, 0, 0, 0.7);
 	--menu-scrim: rgba(0, 0, 0, 0.45);
-	--modal-bg: #2a221b;
-	--table-border: #51453a;
-	--table-stripe: #332b23;
-	--scrollbar-thumb: #6b5d4e;
-	--scrollbar-track: #2a221b;
-	--on-bright: #352921;
+	--modal-bg: #151a20;
+	--table-border: #2c343d;
+	--table-stripe: #1b2128;
+	--scrollbar-thumb: #3f4852;
+	--scrollbar-track: #151a20;
+	--on-bright: #161b22;
 	--accent-line: #f3b87b;
 	--accent-success: #9bba7d;
-	--accent-fill: #b35d4e;
-	--accent-text: #ce8b7d;
-	--accent-fill-hover: #a15343;
+	--accent-fill: #b65848;
+	--accent-text: #ec9a86;
+	--accent-fill-hover: #a14d3f;
+	--grid-dot: #29313a;
 }
 
 /*
@@ -256,17 +284,120 @@ input[type="radio"]:focus-visible {
 	color-scheme: dark;
 }
 
-@font-face {
-	font-family: RawengulkSans;
-	src: url(../../vendors/font/RawengulkSans-094.otf);
-}
+/*
+  THE FACES. IBM's own split files, unmodified: the licence reserves the name
+  "Plex", so a subset of our own would have to be renamed, and IBM's split is
+  already what a subset would be for -- a page fetches the Latin it shows, and
+  Greek, extended Latin or the symbols (arrows, sub- and superscript digits,
+  the common operators) only once it shows one. SemiBold answers for both 600
+  and 700, so bold text is drawn by a real face, never thickened by the
+  browser. `swap` shows the text in the fallback at once rather than leaving
+  it blank while a file arrives.
+*/
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Regular-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: italic; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Italic-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-Medium-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin1.woff2) format('woff2');
+	unicode-range: U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Greek.woff2) format('woff2');
+	unicode-range: U+037E, U+0386-038A, U+038C, U+038E-03A1, U+03A3-03CE; }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-sans/IBMPlexSans-SemiBold-Pi.woff2) format('woff2');
+	unicode-range: U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A, U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+ECE0, U+EFCC, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Medium-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin1.woff2) format('woff2');
+	unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin2.woff2) format('woff2');
+	unicode-range: U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192, U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259, U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE, U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin3.woff2) format('woff2');
+	unicode-range: U+0102-0103, U+01CD-01DC, U+1E0C-1E0D, U+1E12-1E13, U+1E24-1E25, U+1E36-1E37, U+1E3C-1E3D, U+1E40-1E47, U+1E4A-1E4B, U+1E62-1E63, U+1E6C-1E6D, U+1E70-1E71, U+1E92-1E93, U+1EA0-1EF9, U+20AB; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600 700; font-display: swap;
+	src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Pi.woff2) format('woff2');
+	unicode-range: U+03C0, U+0E3F, U+2000-200D, U+2010-2012, U+2015, U+2028-2029, U+202F, U+2032-2033, U+203E, U+205F, U+2070, U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151, U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7, U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+2219-221A, U+221E, U+222B, U+2236, U+2248, U+2260, U+2264-2265, U+2400-2421, U+2500-259F, U+25CA, U+2713, U+274C, U+2B0E-2B11, U+3000, U+FEFF, U+FFFD; }
+
 body{
   margin: 0;
   padding: 0;
   overflow-x: hidden;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 .nav-toggle {
@@ -345,7 +476,7 @@ body{
   left: 0;
   z-index: 1000000000;
   background: var(--menu-scrim);
-  font-family: RawengulkSans;
+  font-family: var(--font-sans);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -374,7 +505,7 @@ body{
   overflow: hidden;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius);
   box-shadow: 0 12px 32px var(--shadow-color);
   transform: translateY(-8px);
   transition: transform 0.2s ease;
@@ -417,7 +548,7 @@ body{
   margin: 0;
   padding: 0 10px 0 35px;
   border: 1px solid var(--input-border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   font: inherit;
   /* iOS zooms into any field under 16px, on a phone held either way up, and
      leaves the page zoomed. */
@@ -447,7 +578,7 @@ body{
 .nav-home {
   margin-left: auto;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 15px;
   text-decoration: none;
@@ -471,11 +602,14 @@ body{
   break-inside: avoid;
   padding-bottom: 10px;
 }
+/* A heading is a label, set as the page's other labels are: small mono
+   capitals. */
 .nav-group-label {
   padding: 6px 10px 4px;
   color: var(--text-muted);
+  font-family: var(--font-mono);
   font-size: 11px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 #menu ul {
@@ -487,7 +621,7 @@ body{
 .nav-groups .nav-current {
   display: block;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 15px;
   line-height: 1.35;
@@ -597,7 +731,9 @@ header {
         sizing the padding is added to that width, which made the header
         12px wider than the screen. */
      right: 0;
-     border-bottom: var(--color-kvot-accent) solid 1px;
+     /* A hairline lighter than the bar itself: it is what separates the bar
+        from a dark page, and on a light one there is nothing to separate. */
+     border-bottom: 1px solid rgba(255, 255, 255, 0.09);
      background: var(--header-bg);
      color: var(--header-text);
      height: 30px;
@@ -614,32 +750,35 @@ header {
      transform-origin: 50% 50%;
 }
 
-header .logo:hover {
-  fill: var(--color-kvot-accent);
-  /*transform: scale(1.05);*/
-}
 .stRight{
-  fill: var(--color-kvot-accent);
+  fill: var(--logo-right);
 }
 .stTop{
-  fill: var(--color-kvot-bright);
+  fill: var(--logo-top);
 }
 .stLeft{
-  fill: var(--color-kvot-primary);
+  fill: var(--logo-left);
 }
+/* The page's name, set off from the mark by a rule, as an application's
+   window names the document it has open. */
 header .title {
-  margin:2px;
-  margin-left: 8px;
-  font-size: 1.5em;
-  font-weight: normal;
-  line-height: 1.2;
+  margin: 0 0 0 10px;
+  padding-left: 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  line-height: 30px;
   text-align: left;
-  color: var(--color-kvot-bright);
-  font-family: RawengulkSans;
+  color: var(--header-text);
+}
+header .title:empty {
+  border-left: 0;
 }
 header input {
 width:140px;
-border-radius:4px;
+border-radius: var(--radius-sm);
 border: 1px solid var(--input-border);
 margin-top:4px;
 padding:1px;
@@ -654,16 +793,25 @@ footer {
    bottom: 0;
    left: 0;
    right: 0;
-   border-top: var(--color-kvot-accent) solid 1px;
+   border-top: 1px solid rgba(255, 255, 255, 0.09);
    background: var(--footer-bg);
    color: var(--footer-text);
    height: 24px;
    padding:1px;
    text-align:center;
-   font-size:15px;
+   /* A status line: the mono face, small, and every part of it in the
+      footer's own colour, links and icons included, until pointed at. */
+   font-family: var(--font-mono);
+   font-size: 12px;
+   letter-spacing: 0.01em;
    padding-top:5px;
-   font-family:RawengulkSans;
    transition: background-color 0.3s ease, color 0.3s ease;
+}
+footer a {
+   color: inherit;
+}
+footer a:hover {
+   color: var(--color-kvot-bright);
 }
 
 .footer-content {
@@ -690,7 +838,10 @@ footer .theme-toggle {
 @media (max-width: 560px) {
    .footer-address { display: none; }
    .footer-content { box-sizing: border-box; padding-right: 38px; }
-   .footer-center { white-space: nowrap; }
+   /* The mono face's space is as wide as a letter (7px here), and the line
+      has a dozen of them between its icons: brought down to a sans
+      space's 3px, the line fits beside the switch again. */
+   .footer-center { white-space: nowrap; word-spacing: -0.35em; }
 }
 /* Narrower still (the first iPhone SE), the name goes too: the logo in the
    header carries it. */
@@ -707,42 +858,54 @@ footer .theme-toggle {
   /* dvh follows the browser's own chrome as it retracts; the vh line
      above stays as the fallback. */
   height: calc(100dvh - var(--header-height) - var(--footer-height));
-  font-family:RawengulkSans;
+  font-family: var(--font-sans);
   color: var(--text-primary);
- /* */
 }
 /* ==========================================================================
    LANDING PAGE
    ========================================================================== */
 .landing {
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  /*
+    Squared paper under the top of the page: a dot every 22px, fading into the
+    plain page by 380px. Both layers scroll with the page (`local`), and the
+    fade, once it has reached the page's colour, holds it to the bottom, so
+    the dots are only ever behind the heading.
+  */
+  background:
+    linear-gradient(to bottom, transparent 0, var(--bg-primary) 380px) 0 0 / 100% 100% no-repeat local,
+    radial-gradient(circle, var(--grid-dot) 1px, transparent 1.4px) 11px 11px / 22px 22px local;
 }
 .landing-inner {
   box-sizing: border-box;
-  max-width: 980px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 34px 24px 56px;
+  padding: 48px 24px 56px;
 }
 .landing h1 {
-  margin: 0 0 10px;
-  font-size: 2.1rem;
-  letter-spacing: 0.01em;
+  margin: 0 0 14px;
+  font-size: 2.6rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 .landing .tagline {
-  max-width: 62ch;
+  max-width: 64ch;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 1.05rem;
+  font-size: 1.1rem;
   line-height: 1.6;
 }
 .landing h2 {
-  margin: 40px 0 16px;
-  padding-bottom: 7px;
+  margin: 48px 0 18px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
-  font-family: RawengulkSans;
-  font-size: 1.15rem;
-  font-weight: 700;
+  font-family: var(--font-sans);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 .landing a:hover {
   text-decoration: underline;
@@ -750,37 +913,37 @@ footer .theme-toggle {
 
 /* The projects under the same headings as the menu, a grid of cards each. */
 .project-group + .project-group {
-  margin-top: 30px;
+  margin-top: 32px;
 }
 .project-group-title {
   margin: 0 0 12px;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  font-weight: normal;
-  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .project-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 .project-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 16px 18px;
+  padding: 16px 18px 13px;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--bg-surface);
   color: var(--text-primary);
   text-decoration: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .project-card:hover {
   border-color: var(--accent-line);
   box-shadow: 0 4px 14px var(--shadow-color);
-  transform: translateY(-2px);
   text-decoration: none;
 }
 .project-card:focus-visible {
@@ -788,14 +951,37 @@ footer .theme-toggle {
   outline-offset: 2px;
 }
 .project-card-title {
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  font-weight: 600;
+  transition: color 0.15s ease;
+}
+.project-card:hover .project-card-title {
   color: var(--link-color);
-  font-size: 1rem;
-  font-weight: 700;
 }
 .project-card-desc {
+  flex: 1 1 auto;
   color: var(--text-secondary);
-  font-size: 0.88rem;
-  line-height: 1.5;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+/* The page's own address, as a program would name it. */
+.project-card-path {
+  padding-top: 6px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+.project-card-path::after {
+  content: ' \2192';
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.project-card:hover .project-card-path {
+  color: var(--link-color);
+}
+.project-card:hover .project-card-path::after {
+  opacity: 1;
 }
 
 .info-grid {
@@ -833,10 +1019,12 @@ footer .theme-toggle {
   gap: 8px;
   padding: 2px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: inherit;
   font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
   cursor: pointer;
 }
 .copy-btn:hover {
@@ -943,15 +1131,14 @@ input[data-field="p"] {
 
 
 h1 {
-	font-family:RawengulkSans;
+	font-family: var(--font-sans);
 }
  a {
      color: var(--link-color);
      text-decoration: none;
 }
  .smallsvg:hover {
-     fill: var(--color-kvot-accent);
-     transform: scale(1.05);
+     fill: var(--color-kvot-bright);
      cursor:pointer;
 }
  .icon-btn {
@@ -970,11 +1157,10 @@ h1 {
      border-radius: 3px;
 }
  .smallsvg {
-     fill: var(--color-kvot-bright);
+     fill: currentColor;
      vertical-align: bottom;
      height: 15px;
-     transition: all 0.2s;
-     transform-origin: 50% 50%;
+     transition: fill 0.15s ease;
 }
  .navbarsvg:hover {
      fill: var(--color-kvot-accent);
@@ -1127,23 +1313,47 @@ html[data-theme="dark"] .leaflet-bar a.leaflet-disabled {
 /* ==========================================================================
    THEME TOGGLE BUTTON
    ========================================================================== */
+/*
+  The switch shows a line drawing of where it goes -- a moon on a light page,
+  a sun on a dark one -- in the colour of the text around it. Its text is
+  still the emoji site.js writes, which scripts and tests read; the drawing
+  stands in for it, and the size here outranks the one a page's own bar gives
+  the emoji. Display is left to the pages: several show their switch only in
+  a full window.
+*/
 .theme-toggle {
   background: none;
   border: none;
   cursor: pointer;
   padding: 2px 6px;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--footer-text);
-  transition: transform 0.3s ease;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  color: var(--text-secondary);
+  transition: color 0.15s ease;
   vertical-align: middle;
 }
-.theme-toggle:hover {
-  transform: scale(1.15);
+.theme-toggle::before {
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: auto;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M13.94 8.87A6 6 0 1 1 7.13 2.06 5 5 0 0 0 13.94 8.87z' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M13.94 8.87A6 6 0 1 1 7.13 2.06 5 5 0 0 0 13.94 8.87z' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
 }
-
+[data-theme="dark"] .theme-toggle::before {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='none' stroke='%23000' stroke-width='1.5'/%3E%3Cpath d='M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M3.2 12.8l1.1-1.1M11.7 4.3l1.1-1.1' stroke='%23000' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='3' fill='none' stroke='%23000' stroke-width='1.5'/%3E%3Cpath d='M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M3.2 12.8l1.1-1.1M11.7 4.3l1.1-1.1' stroke='%23000' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+.theme-toggle:hover {
+  color: var(--text-primary);
+}
+footer .theme-toggle {
+  color: var(--footer-text);
+}
 footer .theme-toggle:hover {
-  transform: translateY(-50%) scale(1.15);
+  color: var(--color-kvot-bright);
 }
 
 /* ==========================================================================
@@ -1171,6 +1381,20 @@ table {
 pre {
   background-color: var(--code-bg);
   color: var(--code-text);
+}
+
+/*
+  CHARTS. Plotly writes a face on every piece of text it draws, as an inline
+  style -- its own default ("Open Sans", then Verdana) wherever a layout names
+  none -- and measures the text on a copy of it, off-screen in
+  #js-plotly-tester. Both take the page's face here, so a chart is set in the
+  type around it and measured in the face it is drawn in. A chart exported as
+  a picture or to Excel keeps the faces its layout names, since neither can
+  see this rule.
+*/
+.js-plotly-plot .plotly text,
+#js-plotly-tester text {
+  font-family: var(--font-sans) !important;
 }
 
 /* ==========================================================================

@@ -25,7 +25,7 @@
   grid-template-rows: 30px minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  font-family: verdana, sans-serif;
+  font-family: var(--font-sans);
   font-size: 12.5px;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -38,7 +38,7 @@
    than empty, and its line only after a moment, so a quick load shows the
    frame alone. */
 #smApp { height: 100%; }      /* the stand-in fills the work area too, before the app makes it .sm */
-.sm-boot { display: grid; grid-template-rows: 30px minmax(0, 1fr); height: 100%; font-family: verdana, sans-serif; font-size: 12.5px; color: var(--text-primary); background: var(--bg-primary); }
+.sm-boot { display: grid; grid-template-rows: 30px minmax(0, 1fr); height: 100%; font-family: var(--font-sans); font-size: 12.5px; color: var(--text-primary); background: var(--bg-primary); }
 .sm-boot-bar { border-bottom: 1px solid var(--border-color); background: var(--bg-surface); }
 .sm-boot-body { display: grid; grid-template-columns: var(--sm-boot-side-w, 250px) minmax(0, 1fr); min-height: 0; }
 .sm-boot-side { border-right: 1px solid var(--border-color); background: var(--bg-surface); }
@@ -256,7 +256,7 @@
   min-width: 0;
 }
 .sm-gridbar .sm-spacer { flex: 1 1 auto; }
-.sm-gridbar .sm-cellref { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-gridbar .sm-cellref { font-family: var(--font-mono); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sm-grid { position: relative; overflow: auto; outline: none; background: var(--bg-primary); }
 .sm-grid-inner { position: relative; }
 .sm-grid-head {
@@ -505,7 +505,7 @@
 @media (min-width: 1100px) {
   :root.kvot-info-open .sm-modal-back { padding-right: calc(min(400px, 100vw - 24px) + 12px); }
 }
-.sm-modal-back, .sm-menu, .sm-toast { font-family: verdana, sans-serif; }
+.sm-modal-back, .sm-menu, .sm-toast { font-family: var(--font-sans); }
 .sm-modal-back { font-size: 12.5px; color: var(--text-primary); }
 .sm-modal-back input, .sm-modal-back select, .sm-modal-back textarea, .sm-modal-back button { font-family: inherit; }
 .sm-modal-back { position: fixed; inset: 0; z-index: 50; background: rgba(20, 14, 10, 0.34); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 12px 12px; overflow-y: auto; }
@@ -564,7 +564,7 @@
 .sm-launch-msg.is-info { color: var(--text-secondary); }
 .sm-form { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; align-items: center; font-size: 12.5px; }
 .sm-form input[type="text"], .sm-form input[type="number"], .sm-form select, .sm-form textarea { padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--input-bg); color: var(--text-primary); font: inherit; min-width: 0; }
-.sm-form textarea { min-height: 70px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.sm-form textarea { min-height: 70px; font-family: var(--font-mono); font-size: 12px; }
 .sm-form .full { grid-column: 1 / -1; }
 .sm-toast { position: fixed; z-index: 70; left: 50%; bottom: calc(var(--footer-height, 31px) + 14px); transform: translateX(-50%); max-width: min(620px, 92vw); padding: 8px 14px; border-radius: 5px; background: var(--text-primary); color: var(--bg-primary); font-size: 12.5px; box-shadow: 0 6px 20px var(--shadow-color); }
 .sm-toast.error { background: #a8322a; color: #fff; }
@@ -639,7 +639,7 @@
 .sm-dist-wrap.is-stacked { flex-direction: column; }
 .sm-dist-wrap[style*="--per-row"] > .sm-ob { flex-basis: calc(100% / var(--per-row) - 30px); }
 .sm-dist-tables { display: flex; flex-direction: column; gap: 2px; }
-.sm-stem { margin: 2px 0 6px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.35; }
+.sm-stem { margin: 2px 0 6px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.35; }
 .sm-platforms td { font-size: 12px; }
 .sm-platforms td code { font-size: 11px; }
 
@@ -651,7 +651,7 @@
 .sm-help-inner h3 { margin: 18px 0 6px; font-size: 13.5px; }
 .sm-help-inner p { margin: 0 0 10px; }
 .sm-help-inner ul { margin: 0 0 10px; padding-left: 20px; }
-.sm-help-inner code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
+.sm-help-inner code { font-family: var(--font-mono); font-size: 12px; background: var(--code-bg); padding: 0 3px; border-radius: 3px; }
 .sm-help-inner table { border-collapse: collapse; font-size: 12px; margin: 4px 0 12px; }
 .sm-help-inner th, .sm-help-inner td { border-bottom: 1px solid var(--border-color); padding: 3px 10px 3px 0; text-align: left; vertical-align: top; }
 .sm-help-inner .sm-build { margin-top: 30px; font-size: 11px; color: var(--text-muted); }
@@ -742,7 +742,7 @@
 /* the dragged item under the finger: above everything (a phone's dialog is
    at 10010, over the site's header), a little above the finger so that it
    is seen, tinted over a place that takes it */
-.sm-touchghost { position: fixed; z-index: 10050; pointer-events: none; display: flex; align-items: center; gap: 7px; transform: translate(-50%, calc(-100% - 34px)); max-width: 78vw; padding: 7px 14px; border: 1.5px solid var(--color-kvot-accent); border-radius: 17px; background: var(--bg-surface); box-shadow: 0 8px 24px var(--shadow-color); font: 600 13.5px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; animation: sm-ghost-in 0.16s ease-out; }
+.sm-touchghost { position: fixed; z-index: 10050; pointer-events: none; display: flex; align-items: center; gap: 7px; transform: translate(-50%, calc(-100% - 34px)); max-width: 78vw; padding: 7px 14px; border: 1.5px solid var(--color-kvot-accent); border-radius: 17px; background: var(--bg-surface); box-shadow: 0 8px 24px var(--shadow-color); font: 600 13.5px var(--font-sans); color: var(--text-primary); white-space: nowrap; animation: sm-ghost-in 0.16s ease-out; }
 .sm-touchghost span { overflow: hidden; text-overflow: ellipsis; }
 .sm-touchghost.is-yes { background: color-mix(in oklab, var(--color-kvot-bright) 38%, var(--bg-surface)); }
 @keyframes sm-ghost-in { from { opacity: 0; transform: translate(-50%, calc(-100% - 18px)) scale(0.8); } }
@@ -760,7 +760,7 @@
 .sm-removing { text-decoration: line-through; }
 .sm-refusing { opacity: 0.45; }
 :root.sm-dragging .sm-role-list.sm-refusing, :root.sm-dragging .smt-zone.sm-refusing { outline: none; }
-.sm-dropcue { position: fixed; z-index: 10060; pointer-events: none; display: flex; align-items: center; gap: 6px; box-sizing: border-box; max-width: min(360px, 86vw); padding: 4px 11px 4px 8px; border: 1.5px solid var(--sm-remove); border-radius: 13px; background: var(--bg-surface); box-shadow: 0 5px 16px var(--shadow-color); font: 600 12px verdana, sans-serif; color: var(--text-primary); white-space: nowrap; }
+.sm-dropcue { position: fixed; z-index: 10060; pointer-events: none; display: flex; align-items: center; gap: 6px; box-sizing: border-box; max-width: min(360px, 86vw); padding: 4px 11px 4px 8px; border: 1.5px solid var(--sm-remove); border-radius: 13px; background: var(--bg-surface); box-shadow: 0 5px 16px var(--shadow-color); font: 600 12px var(--font-sans); color: var(--text-primary); white-space: nowrap; }
 .sm-dropcue[hidden] { display: none; }
 .sm-dropcue > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .sm-dropcue-x { flex: none; color: var(--sm-remove); font-size: 15px; line-height: 1; }

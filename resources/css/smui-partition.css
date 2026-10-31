@@ -26,7 +26,7 @@
   background: var(--bg-primary);
 }
 .sm-part-treebox.is-small { max-height: 320px; align-self: flex-start; }
-.sm-part-tree { display: block; font-family: verdana, sans-serif; }
+.sm-part-tree { display: block; font-family: var(--font-sans); }
 
 .sm-part-links path { fill: none; stroke: var(--text-muted); stroke-width: 1.2; }
 

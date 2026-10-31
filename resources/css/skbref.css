@@ -72,7 +72,7 @@
     .spacing-group > summary { cursor: pointer; font-weight: 600; }
     .spacing-group-row { padding: 6px 0; border-bottom: 1px solid var(--border-color); font-size: .86rem; }
     .spacing-group-row:last-child { border-bottom: 0; }
-    .spacing-group-count { display: inline-block; min-width: 2.6em; color: var(--text-muted); font-family: ui-monospace, monospace; }
+    .spacing-group-count { display: inline-block; min-width: 2.6em; color: var(--text-muted); font-family: var(--font-mono); }
 
     #doc-info { display: none; margin-bottom: 20px; padding: 10px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .84rem; line-height: 1.6; }
     #doc-info.show { display: block; }
@@ -89,7 +89,7 @@
     .sum-card.warn { border-color: var(--color-kvot-accent); background: color-mix(in srgb, var(--color-kvot-accent) 8%, var(--bg-secondary)); }
     .sum-card.ok { border-color: #5cb85c; background: color-mix(in srgb, #5cb85c 8%, var(--bg-secondary)); }
     .sum-label { margin-bottom: 4px; color: var(--text-muted); font-size: .7rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-    .sum-value { color: var(--text-primary); font: 700 1.5rem 'SF Mono', Menlo, monospace; }
+    .sum-value { color: var(--text-primary); font: 700 1.5rem var(--font-mono); }
     .sum-card.warn .sum-value { color: var(--color-kvot-accent); }
     .sum-card.ok .sum-value { color: #5cb85c; }
 
@@ -232,7 +232,7 @@
     .ref-table td { padding: 8px 10px; border-bottom: 1px solid var(--border-color); line-height: 1.4; vertical-align: top; }
     .ref-table tr:last-child td { border-bottom: 0; }
     .ref-table tr:hover td { background: var(--bg-surface); }
-    .ref-key { color: var(--color-kvot-accent); font: .83rem 'SF Mono', Menlo, monospace; white-space: nowrap; }
+    .ref-key { color: var(--color-kvot-accent); font: .83rem var(--font-mono); white-space: nowrap; }
     /*
       The reference list is the one table whose cell contents have no upper
       bound: a key can be an author list of seven names and the reference text
@@ -345,8 +345,8 @@
     .zotero-db-warn { color: var(--accent-line); font-size: .78rem; }
     .forbidden-match { color: var(--color-kvot-accent); font-weight: 700; }
     .forbidden-context { max-width: 520px; color: var(--text-secondary); }
-    .forbidden-rule { font-family: 'SF Mono', Menlo, monospace; font-size: .76rem; color: var(--text-muted); }
-    .rule-name{display:block;color:var(--text-primary);font-weight:800;line-height:1.35}.rule-id{display:block;margin-top:3px;color:var(--text-muted);font:.7rem 'SF Mono',Menlo,monospace;overflow-wrap:anywhere}.rule-legacy-id{display:block;margin-top:2px;color:var(--text-muted);font:.66rem 'SF Mono',Menlo,monospace;opacity:.78;overflow-wrap:anywhere}
+    .forbidden-rule { font-family: var(--font-mono); font-size: .76rem; color: var(--text-muted); }
+    .rule-name{display:block;color:var(--text-primary);font-weight:800;line-height:1.35}.rule-id{display:block;margin-top:3px;color:var(--text-muted);font:.7rem var(--font-mono);overflow-wrap:anywhere}.rule-legacy-id{display:block;margin-top:2px;color:var(--text-muted);font:.66rem var(--font-mono);opacity:.78;overflow-wrap:anywhere}
     .invalid-citation-match { color: var(--color-kvot-accent); font-weight: 700; }
     .invalid-citation-context { max-width: 560px; color: var(--text-secondary); }
     .invalid-citation-reason { color: var(--text-secondary); font-size: .82rem; }
@@ -404,7 +404,7 @@
     .language-badge.en { color:#6c3b93; }
     .language-badge.mixed { color:#9a6108; }
     .language-badge.unknown { color:var(--text-muted); }
-    .language-intervals{margin-top:8px;padding:8px 10px;border-left:3px solid var(--border-color);background:var(--bg-secondary);font-size:.76rem}.language-intervals>summary{cursor:pointer;font-weight:800}.language-interval{padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;margin-top:6px}.language-interval-text{display:block;margin-top:3px;white-space:pre-wrap}.language-source{color:var(--text-muted);font-family:'SF Mono',Menlo,monospace}
+    .language-intervals{margin-top:8px;padding:8px 10px;border-left:3px solid var(--border-color);background:var(--bg-secondary);font-size:.76rem}.language-intervals>summary{cursor:pointer;font-weight:800}.language-interval{padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;margin-top:6px}.language-interval-text{display:block;margin-top:3px;white-space:pre-wrap}.language-source{color:var(--text-muted);font-family:var(--font-mono)}
 
     @media (max-width: 700px) { #summary-cards { grid-template-columns: 1fr 1fr; } }
     @media (max-width: 480px) { #app { padding: 14px 12px 32px; } #summary-cards { gap: 8px; } }

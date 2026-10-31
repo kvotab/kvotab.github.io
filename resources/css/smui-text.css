@@ -20,7 +20,7 @@
 
 /* ---- the word cloud ---- */
 .sm-tx-cloudbox { max-width: 100%; margin: 4px 0 6px; }
-.sm-tx-cloud { display: block; width: 100%; height: auto; font-family: verdana, sans-serif; user-select: none; }
+.sm-tx-cloud { display: block; width: 100%; height: auto; font-family: var(--font-sans); user-select: none; }
 .sm-tx-cloud.is-uniform .sm-tx-word { fill: var(--text-primary); }
 .sm-tx-word { cursor: pointer; }
 .sm-tx-word:hover { text-decoration: underline; }
@@ -53,7 +53,7 @@
 .sm-tx-regexrow { margin-top: 6px; }
 .sm-tx-regex {
   width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 3px;
-  background: var(--input-bg); color: var(--text-primary); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  background: var(--input-bg); color: var(--text-primary); font-family: var(--font-mono); font-size: 12px;
 }
 .sm-tx-regex:focus-visible { outline: 2px solid var(--color-kvot-accent); outline-offset: 1px; }
 .sm-tx-hint { margin: 5px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.4; }
