@@ -30,6 +30,11 @@
                              major): rows as MATLAB has them; char is text,
                              logical is 0/1; cells, objects and tables are
                              MATLAB's own and not read
+     a MAT-file opened as    any version, read by the HDF5 Browser's reader
+     one (smui-mat.js)       and written as that page shows it: each dataset
+                             in MATLAB's shape already (MATLAB_size says
+                             so), a cell or an object as a group of what it
+                             holds, or as one dataset when it is a table
      Kompartment, Ecolego    /time is the first column of every table of
      and the HDF5 Browser    its length; a run's realisations ([times ×
                              runs], probabilistic) come a row per run, a
@@ -61,6 +66,7 @@
   const MAX_LEAVES = 4096;          // columns from one element (compound fields, array members)
   const CHUNK_BYTES = 8 << 20;      // read at a time
   const ATTR_TEXT = 4000;           // characters of an attribute kept
+  const HEADER_SCAN = 1e6;          // values of a MAT-file's cell read to find a row of headings
 
   /* The datatype classes, as HDF5 (and h5wasm's metadata) numbers them. */
   const T = { INTEGER: 0, FLOAT: 1, TIME: 2, STRING: 3, BITFIELD: 4, OPAQUE: 5, COMPOUND: 6, REFERENCE: 7, ENUM: 8, VLEN: 9, ARRAY: 10 };
@@ -74,7 +80,7 @@
     'unit', 'units', 'Unit', 'Units', 'long_name', 'description', 'Description', 'title', 'label', 'standard_name', 'lookup_table', 'pdf', 'reference',
     'time_dependent', 'probabilistic', 'n_iter', 'n_times', 'realisation', 'IndexLists', 'kind', 'block', 'name',
     'CLASS', 'NAME', '_FillValue', 'missing_value', 'scale_factor', 'add_offset', 'calendar', '_Unsigned', '_NCProperties',
-    'MATLAB_class', 'MATLAB_empty', 'MATLAB_int_decode',
+    'MATLAB_class', 'MATLAB_empty', 'MATLAB_int_decode', 'MATLAB_size', 'MATLAB_sparse', 'MATLAB_note', 'MATLAB_format', 'MATLAB_fields',
     'pandas_type', 'pandas_version', 'table_type', 'index_variety', 'columns_variety', 'axis0_variety', 'axis1_variety', 'nblocks', 'ndim', 'value_type', 'transposed', 'PSEUDOATOM',
     'nan_rep', 'non_index_axes', 'values_cols', 'data_columns', 'index_cols', 'levels', 'index_kind', 'info', 'encoding', 'tz', 'freq',
     'columns', 'column_names', 'colnames', 'names', 'fields', 'header', 'labels', 'variables',
@@ -103,6 +109,23 @@
     const head = String.fromCharCode(...u8.subarray(0, 19));
     if (head === 'MATLAB 5.0 MAT-file') return 'mat5';
     return null;
+  }
+
+  /* Which MAT-file a file is, by its first bytes and its name, as the HDF5
+     Browser tells one (rb-mat.js): 'v73' (HDF5 behind MATLAB's 512-byte
+     header), 'v5' (-v6 and -v7: the header's text, or its version and
+     byte-order mark, which other programs write too), 'v4' (no header at
+     all: a .mat name and no other format's signature), or null. An HDF5
+     file named .mat without MATLAB's header is plain HDF5. */
+  function matFormat(u8, name = '') {
+    const kind = sniff(u8);
+    const head = String.fromCharCode(...u8.subarray(0, 19));
+    if (kind === 'hdf5') return head === 'MATLAB 7.3 MAT-file' ? 'v73' : null;
+    if (kind && kind !== 'mat5') return null;
+    const marked = u8.length >= 128 && ((u8[126] === 0x49 && u8[127] === 0x4d && u8[124] === 0 && u8[125] === 1)
+      || (u8[126] === 0x4d && u8[127] === 0x49 && u8[124] === 1 && u8[125] === 0));
+    if (kind === 'mat5' || marked) return 'v5';
+    return /\.mat$/i.test(String(name || '')) ? 'v4' : null;
   }
 
   /* ---- text ---------------------------------------------------------------- */
@@ -396,6 +419,14 @@
     return { leaves, bad, vlen, compound: md.type === T.COMPOUND };
   }
 
+  /* A MAT-file's dataset by the class MATLAB gives it; a cell by what its
+     elements hold (a struct array's field names their classes). */
+  function matTypeText(n, md) {
+    if (n.matlab === 'cell') return md.type === T.STRING ? 'cell of text' : 'cell of numbers';
+    if (md.type === T.COMPOUND) return `complex ${n.matlab}`;
+    return n.attrs.MATLAB_sparse != null ? `sparse ${n.matlab}` : n.matlab;
+  }
+
   function typeText(md, leaves, matlab) {
     if (matlab === 'char') return 'MATLAB text';
     if (matlab === 'logical') return 'MATLAB logical';
@@ -566,15 +597,29 @@
     }
     const info = { objects: all.length, listed: list.length, capped: all.length > list.length };
     await classify(io, nodes, at, info);
-    // children in natural order (N2 before N10), the tree's order and the columns'
+    // children in natural order (N2 before N10), the tree's order and the
+    // columns'; a MATLAB struct's or table's fields in MATLAB's order
     let order = 0;
     const visit = (n) => {
       n.order = order++;
-      n.children.sort((a, b) => collator.compare(nodes[a].name, nodes[b].name));
+      const fields = fieldOrder(n);
+      const place = (id) => (fields && fields.has(nodes[id].name) ? fields.get(nodes[id].name) : Infinity);
+      n.children.sort((a, b) => place(a) - place(b) || collator.compare(nodes[a].name, nodes[b].name));
       for (const c of n.children) visit(nodes[c]);
     };
     visit(rootNode);
     return { nodes, info };
+  }
+
+  /* A MATLAB struct's or table's fields (MATLAB_fields: names, or each name
+     as its characters, as a -v7.3 file keeps them) as name -> place, each
+     name as an HDF5 link has it (a / is the HDF5 Browser's ⁄), or null. */
+  function fieldOrder(n) {
+    const f = n.kind === 'group' && n.attrs ? n.attrs.MATLAB_fields : null;
+    if (!Array.isArray(f) || !f.length) return null;
+    const names = f.map((x) => (typeof x === 'string' ? x : Array.isArray(x) && x.every((c) => typeof c === 'string') ? x.join('') : null));
+    if (names.some((x) => x == null)) return null;
+    return new Map(names.map((x, i) => [x.replace(/\//g, '⁄').trim(), i]));
   }
 
   function describeAttrs(io, node) {
@@ -623,6 +668,16 @@
     // every dataset's form, size and type (the parts of a pandas object too:
     // its reader uses them)
     for (const n of nodes) if (n.kind === 'dataset') classifyDataset(n);
+    // a MAT-file's cell, or a struct array's field, of numbers and text: the
+    // HDF5 Browser writes each number in it as text (rb-mat.js's matTable).
+    // Its columns of numbers open as numbers, and a cell whose top rows are
+    // text over such a column -- a sheet with its headings, as xlsread gives
+    // it -- is a table of its own, its columns named by them (cellHeader)
+    for (const n of nodes) {
+      if (!n.matSize || !n.readable || !n.leaves || n.leaves[0].kind !== 'text' || !MIXED.test(attrText(n.attrs.MATLAB_note ?? ''))) continue;
+      n.mixed = true;
+      if (n.form === 'matrix' && n.rows >= 2 && n.rows * n.cols <= HEADER_SCAN) await cellHeader(io, n);
+    }
     // MATLAB's own groups, and PyTables' indexes, are not data
     for (const n of nodes) {
       if (n.kind === 'group' && (/^#(refs|subsystem)#$/.test(n.name) || /^_i_/.test(n.name))) hideBelow(nodes, n, 'internal');
@@ -689,8 +744,8 @@
     // which way round a matrix opens
     for (const n of nodes) {
       if (n.form !== 'matrix') continue;
-      if (n.matlab) n.transposed = true;          // MATLAB's rows are HDF5's second dimension
-      else n.transposed = !!n.realisations;       // a row per realisation, a column per time
+      if (n.matlab && !n.matSize) n.transposed = true;   // MATLAB's rows are HDF5's second dimension
+      else n.transposed = !!n.realisations;              // a row per realisation, a column per time
     }
     // the file's own description, for the notes
     const notes = [];
@@ -698,6 +753,9 @@
     if (typeof ra.Information === 'string' && ra.Information.trim()) notes.push(markupText(ra.Information).slice(0, 600));
     info.notes = notes.join('; ');
     info.matlab = nodes.some((n) => n.matlab);
+    // a MAT-file written as the HDF5 Browser shows it: its format, and what
+    // was left out of it (more arrays than are shown)
+    if (ra.MATLAB_format != null) info.mat = { format: attrText(ra.MATLAB_format), note: ra.MATLAB_note != null ? attrText(ra.MATLAB_note) : '' };
   }
 
   function hideBelow(nodes, n, why) {
@@ -717,14 +775,17 @@
     const mcls = typeof n.attrs.MATLAB_class === 'string' ? n.attrs.MATLAB_class : null;
     if (mcls) {
       n.matlab = mcls;
-      if (isTrue(n.attrs.MATLAB_empty)) { n.why = 'an empty MATLAB array'; return; }
-      if (!/^(double|single|u?int(8|16|32|64)|logical|char)$/.test(mcls)) { n.why = `a MATLAB ${mcls} (not read: MATLAB's own format)`; return; }
+      // a MAT-file written as the HDF5 Browser shows it (smui-mat.js): in
+      // MATLAB's shape already, and plain values whatever the class
+      if (n.attrs.MATLAB_size != null) n.matSize = attrText(n.attrs.MATLAB_size);
+      else if (isTrue(n.attrs.MATLAB_empty)) { n.why = 'an empty MATLAB array'; return; }
+      else if (!/^(double|single|u?int(8|16|32|64)|logical|char)$/.test(mcls)) { n.why = `a MATLAB ${mcls} (not read: MATLAB's own format)`; return; }
     }
     const { leaves, bad, vlen, compound } = typeLeaves(md);
     n.leaves = leaves;
     n.badLeaves = bad;
     n.vlen = vlen;
-    n.typeText = typeText(md, leaves, mcls);
+    n.typeText = n.matSize ? matTypeText(n, md) : typeText(md, leaves, mcls);
     if (!leaves.length) { n.why = bad.length ? `${bad[0].why} (not read)` : 'nothing to read'; return; }
     if (!n.shape) { n.why = 'empty (no dataspace)'; return; }
     if (n.shape.some((d) => d === 0)) { n.why = 'empty'; return; }
@@ -737,7 +798,7 @@
     // each, the text along the last dimension), MATLAB's char (UTF-16 code
     // units, down its first)
     if (one && leaf.kind === 'text' && !leaf.vlen && leaf.size === 1 && n.shape.length >= 1) { n.chars = 'last'; kept = kept.filter((i) => i !== n.shape.length - 1); }
-    else if (mcls === 'char' && one && (leaf.kind === 'uint' || leaf.kind === 'int') && n.shape.length >= 2) { n.chars = 'matlab'; kept = kept.filter((i) => i !== 0); }
+    else if (mcls === 'char' && !n.matSize && one && (leaf.kind === 'uint' || leaf.kind === 'int') && n.shape.length >= 2) { n.chars = 'matlab'; kept = kept.filter((i) => i !== 0); }
     const dims = kept.map((i) => n.shape[i]);
     n.kept = kept;
     n.dims = dims;
@@ -755,6 +816,68 @@
     }
     if (n.rows * n.cols > MAX_CELLS * 4) { n.why = `too large (${plural(n.rows * n.cols, 'value')})`; return; }
     n.readable = true;
+  }
+
+  /* ---- a MAT-file's cells of numbers and text -------------------------------
+     rb-mat.js writes such a cell (and such a field of a struct array) as
+     text, and says so in its note; each number in full, as MATLAB would read
+     it back: 1.5, 1e-310, NaN, Inf, -Inf, true, false. */
+  const MIXED = /Numbers and text in one table/;
+  const NUMBER_TEXT = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i;
+  const WORD_NUMBERS = { NaN: NaN, Inf: Infinity, '-Inf': -Infinity, true: 1, false: 0 };
+  // text that stands for a missing number, as in a CSV file (SM.io)
+  const MISSING_TEXT = /^(\.|na|nan|null|n\/a|missing)$/i;
+  const HEAD_ROWS = 3;              // rows of headings over a cell of numbers, at most
+
+  /* A number written as text, or undefined for text that is not one. */
+  function numberOf(s) {
+    if (Object.prototype.hasOwnProperty.call(WORD_NUMBERS, s)) return WORD_NUMBERS[s];
+    return NUMBER_TEXT.test(s) ? Number(s) : undefined;
+  }
+
+  /* A column of such texts as numbers (empty is missing), or null when
+     any of them is text. */
+  function numbersBack(values) {
+    const out = new Float64Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v == null || MISSING_TEXT.test(v)) { out[i] = NaN; continue; }
+      const x = numberOf(v);
+      if (x === undefined) return null;
+      out[i] = x;
+    }
+    return out;
+  }
+
+  /* A cell whose top rows (up to three) hold text and no number, over
+     columns of numbers -- a sheet with its headings, as xlsread gives it:
+     the fullest of those rows names the columns (the first, of rows as
+     full; a row of units under the names goes into the notes), and the rest
+     is a table of its own, as a compound dataset is. A heading has to stand
+     over a column of numbers, or the top rows are data with numbers
+     missing. */
+  async function cellHeader(io, n) {
+    const [r, c] = n.dims;
+    const { values } = await leafValues(io, n, n.leaves[0], r * c);
+    const row = (i) => values.slice(i * c, (i + 1) * c);
+    let h = 0;
+    while (h < Math.min(HEAD_ROWS, r - 1) && row(h).every((v) => v == null || numberOf(v) === undefined)) h++;
+    if (!h) return;
+    const numeric = [];
+    for (let j = 0; j < c; j++) {
+      const below = [];
+      for (let i = h; i < r; i++) below.push(values[i * c + j]);
+      if (below.some((v) => v != null && !MISSING_TEXT.test(v)) && numbersBack(below)) numeric.push(j);
+    }
+    const filled = (i) => row(i).filter((v) => v != null).length;
+    let at = 0;
+    for (let i = 1; i < h; i++) if (filled(i) > filled(at)) at = i;
+    const names = row(at);
+    if (filled(at) < Math.ceil(c / 2) || !numeric.some((j) => names[j] != null && !MISSING_TEXT.test(names[j]))) return;
+    n.header = { rows: h, names, more: [...Array(h).keys()].filter((i) => i !== at).map(row) };
+    n.form = 'compound';
+    n.rows = r - h;
+    n.typeText = `cell, ${plural(c, 'named column')}`;
   }
 
   /* A lookup table's times: "0,10,100" as Kompartment writes them, or numbers. */
@@ -1019,7 +1142,7 @@
           const n = nodes[it.id];
           await attempt(n, async () => {
             if (n.form === 'vector') return n.lookup ? vectorColumns(io, n, skipped) : [copyColumn(await cachedVector(ctx, n, skipped))];
-            if (n.form === 'compound') return compoundColumns(io, n, skipped);
+            if (n.form === 'compound') return n.header ? cellColumns(io, n) : compoundColumns(io, n, skipped);
             if (n.form === 'matrix') return matrixColumns(io, n, it.transposed, ctx, skipped);
             if (n.form === 'cube') return cubeColumns(io, n, ctx, skipped);
             if (n.form === 'pandas') return pandasColumns(io, nodes, n, skipped);
@@ -1082,9 +1205,14 @@
   function columnNotes(n) {
     const a = n.attrs || {};
     const bits = [`${n.path}`];
+    if (n.matSize) bits.push(`MATLAB ${n.matlab} ${n.matSize}`);
     const unit = unitOf(n);
     if (unit && !n.cf) bits.push(`unit: ${unit}`);
     for (const k of ['long_name', 'description', 'Description', 'title', 'label', 'standard_name']) if (a[k] != null && attrText(a[k])) { bits.push(attrText(a[k])); break; }
+    // (the HDF5 Browser's word on numbers shown as text is not this page's:
+    // here they are numbers again where a column holds only them)
+    const note = n.matSize && a.MATLAB_note != null ? attrText(a.MATLAB_note).replace(/\s*Numbers and text in one table:[^.]*\./, '').trim() : '';
+    if (note) bits.push(note);
     return bits.join('; ');
   }
 
@@ -1169,6 +1297,8 @@
     const leaf = n.leaves[0];
     const { values, big } = await leafValues(io, n, leaf, prod(n.shape));
     if (big) remark(skipped, `${n.path}: integers beyond 2^53 rounded to the nearest double`);
+    const back = n.mixed ? numbersBack(values) : null;
+    if (back) return [{ name: n.name, dataType: 'numeric', values: back, notes: columnNotes(n), ...own }];
     const extra = leaf.kind === 'text' ? {} : finishNumbers(n, values, leaf);
     const col = columnOf(n.name, values, leaf, { ...extra, ...(n.matlab === 'logical' ? LOGICAL : {}), notes: columnNotes(n), ...own });
     if (!n.lookup) return [col];
@@ -1223,9 +1353,10 @@
         for (let k = 0; k < readers.length; k++) outs[k][first + i] = readers[k](dv, b);
       }
     });
-    // a compound's fields by their names; an array type's members after the dataset's, x[1], x[2]
+    // a compound's fields by their names; an array type's members after the
+    // dataset's, x[1], x[2]; a MAT-file's complex numbers as z.real, z.imag
     const field = n.md.type === T.COMPOUND;
-    return n.leaves.map((l, k) => columnOf(field ? l.name || n.name : `${n.name}${l.name}`, outs[k], l, {
+    return n.leaves.map((l, k) => columnOf(field ? (n.matSize ? `${n.name}.${l.name}` : l.name || n.name) : `${n.name}${l.name}`, outs[k], l, {
       notes: field ? `${n.path}, field ${l.name}` : `${n.path}, member ${l.name}`, _origin: n.path, _alt: (p) => (field ? `${p}.${l.name}` : `${p}${l.name}`) }));
   }
 
@@ -1254,7 +1385,33 @@
       else for (let i = 0; i < rows; i++) v[i] = ragged && i >= ragged[j] ? gone : values[i * c0 + j];
       const label = labels.list[j];
       const name = labels.bare ? label : `${n.name} ${label}`;
-      cols.push(columnOf(name, v, leaf, { ...extra, ...(n.matlab === 'logical' ? LOGICAL : {}), notes: `${notes}; ${transposed ? 'row' : 'column'} ${j + 1}`, _origin: n.path, _alt: (p) => `${p} ${label}` }));
+      const own = { notes: `${notes}; ${transposed ? 'row' : 'column'} ${j + 1}`, _origin: n.path, _alt: (p) => `${p} ${label}` };
+      const back = n.mixed ? numbersBack(v) : null;
+      cols.push(back ? { name, dataType: 'numeric', values: back, ...own } : columnOf(name, v, leaf, { ...extra, ...(n.matlab === 'logical' ? LOGICAL : {}), ...own }));
+    }
+    return cols;
+  }
+
+  /* A MAT-file's cell with headings (cellHeader): a column for each, named
+     by it (Column 3 where it has none, x_ for a second x, as a CSV file's
+     columns are), of numbers where they all are. */
+  async function cellColumns(io, n) {
+    const [r, c] = n.dims;
+    const { values } = await leafValues(io, n, n.leaves[0], r * c);
+    const { rows: h, names, more } = n.header;
+    const notes = columnNotes(n);
+    const used = new Set();
+    const cols = [];
+    for (let j = 0; j < c; j++) {
+      const v = [];
+      for (let i = h; i < r; i++) v.push(values[i * c + j]);
+      let name = names[j] == null ? `Column ${j + 1}` : names[j];
+      while (used.has(name)) name = `${name}_`;
+      used.add(name);
+      const also = more.map((m) => m[j]).filter((x) => x != null);
+      const back = numbersBack(v);
+      cols.push({ name, dataType: back ? 'numeric' : 'character', values: back || v,
+        notes: `${notes}; column ${j + 1}${names[j] == null ? '' : `, headed ${names[j]}`}${also.length ? ` (${also.join(', ')})` : ''}` });
     }
     return cols;
   }
@@ -1566,7 +1723,7 @@
   }
 
   SM.h5 = Object.freeze({
-    sniff, inspect, plan, defaults, read, unpickle, numpyArray, ioFor, cfTime, decodeText, half, markupText, typeLeaves, baseName,
+    sniff, matFormat, inspect, plan, defaults, read, unpickle, numpyArray, ioFor, cfTime, decodeText, half, markupText, typeLeaves, baseName,
     MAX_CELLS, WIDE,
   });
 }(typeof self !== 'undefined' ? self : this));

@@ -12,7 +12,11 @@
    learnt from the HDF Group's myHDF5, and its h5wasm build and compression
    plugins are the ones pinned here.
 
-   Messages in:   { id, cmd: 'open', file }       -> { fid, nodes, info, defaults }
+   A MAT-file (mat: its version, as SM.h5.matFormat says it) is read whole
+   instead, by the HDF5 Browser's reader, and written as an HDF5 file in
+   memory (smui-mat.js), which is then opened as any other.
+
+   Messages in:   { id, cmd: 'open', file, mat }  -> { fid, nodes, info, defaults, mat }
                   { id, cmd: 'read', fid, plan }  -> { tables, failed }
                   { id, cmd: 'close', fid }
    Messages out:  { id, ok } or { id, err }; { id, progress: { done, total, text } }
@@ -117,6 +121,19 @@ const ready = (async () => {
   return lib;
 })();
 
+/* MAT-files: the HDF5 Browser's reader (rb-mat.js), the site's size limit it
+   reads against (kvot-safe.js) and the writing (smui-mat.js), loaded when the
+   first comes. The HDF5 files written from them are kept in memory, in /mat. */
+const MAT_DIR = '/mat';
+let matLoaded = false;
+function loadMat() {
+  if (matLoaded) return;
+  const v = self.location.search;
+  importScripts(`kvot-safe.js${v}`, `rb-mat.js${v}`, `smui-mat.js${v}`);
+  FS.mkdirTree(MAT_DIR);
+  matLoaded = true;
+}
+
 const pluginLoads = new Map();
 /** The plugins a dataset's filters need, fetched and installed once each. */
 async function ensurePlugins(fileId, path) {
@@ -137,7 +154,7 @@ async function ensurePlugins(fileId, path) {
   }));
 }
 
-const files = new Map();   // fid -> { file, name, io, nodes, info }
+const files = new Map();   // fid -> { file, path, io, nodes, info }
 let nextFid = 0;
 
 /* What the page needs of a node: plan() and the dialog's lines, not the
@@ -166,24 +183,35 @@ function transferables(tables) {
 }
 
 const handlers = {
-  async open({ id, file }) {
+  async open({ id, file, mat }) {
     const lib = await ready;
     const fid = ++nextFid;
-    const name = `f${fid}`;
-    FS.filesystems.WORKERFS.createNode(mountRoot, name, FS.filesystems.WORKERFS.FILE_MODE, 0, file);
+    let path = `/work/f${fid}`;
+    let made = null;
+    if (mat) {
+      loadMat();
+      path = `${MAT_DIR}/f${fid}.h5`;
+      try {
+        made = await self.SM.mat.write(lib, await file.arrayBuffer(), path, { fileName: file.name,
+          onProgress: (done, total, text) => self.postMessage({ id, progress: { done, total, text } }) });
+      } catch (e) {
+        try { FS.unlink(path); } catch (_) { /* never written */ }
+        throw e;
+      }
+    } else FS.filesystems.WORKERFS.createNode(mountRoot, `f${fid}`, FS.filesystems.WORKERFS.FILE_MODE, 0, file);
     let f;
     try {
-      f = new lib.File(`/work/${name}`, 'r');
+      f = new lib.File(path, 'r');
     } catch (e) {
-      try { FS.unlink(`/work/${name}`); } catch (_) { /* gone already */ }
+      try { FS.unlink(path); } catch (_) { /* gone already */ }
       throw new Error(`not an HDF5 file this reader can open (${String(e && e.message || e).split('\n').filter(Boolean).pop()})`);
     }
-    const io = H.ioFor(lib, Module, f, { ensurePlugins: (path) => ensurePlugins(f.file_id, path) });
+    const io = H.ioFor(lib, Module, f, { ensurePlugins: (p) => ensurePlugins(f.file_id, p) });
     const progress = (done, total) => self.postMessage({ id, progress: { done, total, text: `Listing the file: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} objects` } });
     const { nodes, info } = await H.inspect(io, { onProgress: progress });
-    files.set(fid, { file: f, name, io, nodes, info });
+    files.set(fid, { file: f, path, io, nodes, info });
     const d = H.defaults(nodes, info);
-    return { fid, info, nodes: nodes.map(forPage), defaults: { picked: [...d.picked], transposed: [...d.transposed], together: d.together, direct: !!d.direct } };
+    return { fid, info, nodes: nodes.map(forPage), defaults: { picked: [...d.picked], transposed: [...d.transposed], together: d.together, direct: !!d.direct }, mat: made };
   },
 
   async read({ id, fid, plan, fileName }) {
@@ -199,7 +227,7 @@ const handlers = {
     if (!held) return true;
     files.delete(fid);
     try { held.file.close(); } catch (_) { /* closed already */ }
-    try { FS.unlink(`/work/${held.name}`); } catch (_) { /* gone already */ }
+    try { FS.unlink(held.path); } catch (_) { /* gone already */ }
     return true;
   },
 };

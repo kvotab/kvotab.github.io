@@ -126,8 +126,12 @@ def run(mode, path, state=None):
     return json.loads(r.stdout)
 
 
-def read(name, state=None):
-    out = run('read', os.path.join(TMP, name), state)
+def read(name, state=None, mode='read'):
+    """name in TMP, or a path. read opens it as the page does (a MAT-file
+    written as HDF5 first), read-hdf5 as the HDF5 file it is."""
+    out = run(mode, os.path.join(TMP, name), state)
+    if 'nodes' not in out:
+        return out
     out['node'] = {n['path']: n for n in out['nodes']}
     for t in out['tables']:
         for c in t['columns']:
@@ -194,6 +198,23 @@ def sniffs():
     want = {'hdf5': 'hdf5', 'userblock': 'hdf5', 'netcdf3': 'netcdf3', 'netcdf3b': 'netcdf3', 'mat5': 'mat5', 'hdf4': 'hdf4', 'text': None, 'empty': None}
     check('sniff: HDF5 at 0 and after a 512-byte user block (MATLAB v7.3); netCDF-3, MATLAB 5, HDF4 told apart; text and nothing are none',
           {k: run('sniff', p)['kind'] for k, p in files.items()}, want)
+    # which MAT-file: by MATLAB's header, a Level 5 file's version and
+    # byte-order mark (whatever its text), a .mat name alone for Level 4
+    for kind, name, head in [('marked-le', 'x.bin', b'written by another program'.ljust(124, b' ') + b'\x00\x01IM'),
+                             ('marked-be', 'x.bin', b'written by another program'.ljust(124, b' ') + b'\x01\x00MI'),
+                             ('v4', 'v4.mat', b'\x00\x00\x00\x00\x02\x00\x00\x00'), ('v4-other-name', 'v4.dat', b'\x00\x00\x00\x00\x02\x00\x00\x00')]:
+        p = os.path.join(TMP, f'sig-{kind}-{name}')
+        with open(p, 'wb') as w:
+            w.write(head + b'\0' * 100)
+        files[kind] = p
+    p = os.path.join(TMP, 'plain.mat')
+    with h5py.File(p, 'w') as f:
+        f['x'] = [1.0]
+    files['hdf5-named-mat'] = p
+    want = {'hdf5': None, 'userblock': 'v73', 'netcdf3': None, 'netcdf3b': None, 'mat5': 'v5', 'hdf4': None, 'text': None, 'empty': None,
+            'marked-le': 'v5', 'marked-be': 'v5', 'v4': 'v4', 'v4-other-name': None, 'hdf5-named-mat': None}
+    check('sniff: a MAT-file -v7.3 by its header, Level 5 by its header or its mark, Level 4 by its .mat name; an HDF5 file named .mat without MATLAB\'s header is HDF5',
+          {k: run('sniff', p)['mat'] for k, p in files.items()}, want)
 
 
 # ---- h5py: vectors, matrices, keys, links, the unreadable --------------------
@@ -551,7 +572,8 @@ def matlab():
     p = os.path.join(TMP, 'mlab.mat')
     hdf5storage.savemat(p, {'A': A, 'v': np.arange(5.0).reshape(5, 1), 'r': np.arange(4.0).reshape(1, 4) + 10, 's': 'hello', 'I': I, 'L': L,
                             'st': {'x': np.arange(3.0).reshape(3, 1), 'y': np.array([[9.0], [8.0], [7.0]])}}, format='7.3', matlab_compatible=True)
-    out = read('mlab.mat', {'picked': 'all'})
+    # as the HDF5 file it is (a -v7.3 file too large to read whole opens so)
+    out = read('mlab.mat', {'picked': 'all'}, mode='read-hdf5')
     nd = out['node']
     check('MATLAB: transposed back (rows as MATLAB has them)', (nd['/A']['transposed'], nd['/I']['transposed']), (True, True))
     t = table(out, 'mlab — 3 rows')
@@ -563,6 +585,155 @@ def matlab():
     check('MATLAB: column and row vectors', (table(out, 'mlab — v')['col']['v']['values'], table(out, 'mlab — r')['col']['r']['values']), (nums(np.arange(5.0)), nums(np.arange(4.0) + 10)))
     vals = table(out, 'mlab — values')
     check('MATLAB: char as text', [(x['name'], x['values']) for x in vals['columns']], [('Name', ['s']), ('Text', ['hello'])])
+    whole = read('mlab.mat', {'picked': 'all'})
+    tables = lambda o: [(t['name'], [(c['name'], c['dataType'], c['values'], c.get('valueLabels')) for c in t['columns']]) for t in o['tables']]
+    check('MATLAB: the same file read whole, as the page reads a MAT-file, makes the same tables', (whole['mat']['format'], tables(whole)), ('7.3 (-v7.3, HDF5)', tables(out)))
+
+
+# ---- MATLAB MAT-files, read whole as the page reads them ------------------------
+RB_FIXTURES = os.path.join(REPO, 'resources', 'tests', 'rb', 'fixtures')
+
+
+def mat_files():
+    """Every version, read by the HDF5 Browser's reader and written as HDF5 by
+    smui-mat.js. The HDF5 Browser's fixtures were written by MATLAB R2023a
+    (resources/tests/rb/mat_fixtures.m): the values checked are that
+    script's. SciPy's files are checked against SciPy's loadmat."""
+    v7 = read(os.path.join(RB_FIXTURES, 'matlab-v7.mat'), {'picked': 'all'})
+    v73 = read(os.path.join(RB_FIXTURES, 'matlab-v73.mat'), {'picked': 'all'})
+    check('MAT: -v7 read whole, all 30 variables', (v7['mat']['format'], v7['mat']['variables'], v7['mat']['unread']), ('Level 5, compressed (-v7)', 30, 0))
+    check('MAT: -v7.3 likewise', (v73['mat']['format'], v73['mat']['variables'], v73['mat']['unread']), ('7.3 (-v7.3, HDF5)', 30, 0))
+    same = lambda o: [(t['name'].split(' — ', 1)[1], [(c['name'], c['dataType'], c['values'], c.get('valueLabels')) for c in t['columns']]) for t in o['tables']]
+    check('MAT: -v7 and -v7.3 make the same tables', same(v7), same(v73))
+    nd = v7['node']
+    check('MAT: arrays in MATLAB\'s shape, none transposed', [p for p, n in nd.items() if n['transposed']], [])
+    check('MAT: each with its class', {p: nd[p]['typeText'] for p in ['/d_mat', '/s_single', '/i64', '/u8', '/lg', '/cz', '/sp', '/ch', '/str_arr', '/c_str', '/c_nums', '/fh', '/c_table']},
+          {'/d_mat': 'double', '/s_single': 'single', '/i64': 'int64', '/u8': 'uint8', '/lg': 'logical', '/cz': 'complex double', '/sp': 'sparse double', '/ch': 'char',
+           '/str_arr': 'string', '/c_str': 'cell of text', '/c_nums': 'cell of numbers', '/fh': 'function_handle', '/c_table': 'cell, 2 named columns'})
+    check('MAT: an empty array is listed, not read', (nd['/d_empty']['readable'], nd['/d_empty']['why'], nd['/c_mixed/{2,3}']['why']), (False, 'empty', 'empty'))
+    four = table(v7, 'matlab-v7 — 4 rows')['col']
+    magic4 = [[16, 2, 3, 13], [5, 11, 10, 8], [9, 7, 6, 12], [4, 14, 15, 1]]
+    check('MAT: magic(4) as MATLAB shows it, 4 rows of 4', [four[f'd_mat {j}']['values'] for j in (1, 2, 3, 4)], [nums([r[j] for r in magic4]) for j in range(4)])
+    check('MAT: a column\'s notes name the variable, its class and size', four['d_mat 1']['notes'], '/d_mat; MATLAB double 4×4; column 1')
+    two = table(v7, 'matlab-v7 — 2 rows')['col']
+    check('MAT: logical as 0/1 labelled false and true', (two['lg 1']['values'], two['lg 3']['values'], two['lg 1']['valueLabels']), (nums([1, 0]), nums([1, 0]), [[0, 'false'], [1, 'true']]))
+    check('MAT: single exact, int64 to the nearest double', (two['s_single 2']['values'], two['i64']['values']), (nums([2.5, 4.5]), [float(-2 ** 63), float(2 ** 63 - 1)]))
+    check('MAT: a char matrix a text per row, a string array its strings', (two['ch_mat']['values'], two['str_arr 1']['values'], two['str_arr 2']['values']),
+          (['abc', 'def'], ['alpha', 'gamma'], ['beta', 'δέλτα']))
+    check('MAT: a table\'s variables side by side', (two['n']['values'], two['name']['values']), (nums([1, 2]), ['a', 'b']))
+    three = table(v7, 'matlab-v7 — 3 rows')['col']
+    check('MAT: a struct array\'s fields as columns, a row per element', (three['y']['values'], three['z']['values']), (nums([10, 20, 30]), ['p', 'q', 'r']))
+    check('MAT: a field of numbers and text stays text, and its notes do not say otherwise', (three['m']['dataType'], three['m']['values'], three['m']['notes']),
+          ('character', ['1', 'two', None], '/sa/m; MATLAB double, char 1×3; The field m of each element.'))
+    check('MAT: a cell of numbers with an empty cell, missing there', three['c_nums']['values'], nums([1, math.nan, 3]))
+    check('MAT: a sparse matrix with its zeros', [three[f'sp {j}']['values'] for j in (1, 2, 3)], [nums([1, 0, 3]), nums([0, 0, 0]), nums([0, 2, 0])])
+    check('MAT: strings, a missing one as <missing>', (three['c_str']['values'], three['str_missing']['values']), (['Ac-227', 'Am-241', 'Cs-135'], ['<missing>', 'x', None]))
+    ct = table(v7, 'matlab-v7 — c_table')['columns']
+    check('MAT: a cell with its headings is a table of its own: text, and numbers again', [(c['name'], c['dataType'], c['values']) for c in ct],
+          [('Nuclide', 'character', ['Cs-135', 'I-129']), ('Q', 'numeric', nums([1.5, math.nan]))])
+    cz = table(v7, 'matlab-v7 — cz')['col']
+    check('MAT: complex as real and imaginary parts, stacked', (cz['cz.real']['values'], cz['cz.imag']['values']), (nums([1, 3, 0, -6]), nums([2, -4, 5, 0])))
+    d3 = table(v7, 'matlab-v7 — d_3d')['col']
+    e = np.arange(24)
+    check('MAT: reshape(1:24, 2, 3, 4) stacked, a row per element with its place', (d3['d_3d dimension 1']['values'], d3['d_3d dimension 3']['values'], d3['d_3d']['values']),
+          (nums(e // 12 + 1), nums(e % 4 + 1), nums(1 + e // 12 + 2 * ((e // 4) % 3) + 6 * (e % 4))))
+    big = table(v7, 'matlab-v7 — sp_big')['col']
+    check('MAT: a large sparse matrix as row, column and value', (len(big['row']['values']), big['row']['values'][:3], big['value']['values'][:3]), (1100, nums([1, 2, 3]), nums([1, 1, 1])))
+    vals = table(v7, 'matlab-v7 — values')
+    got = dict(zip(vals['col']['Name']['values'], zip(vals['col']['Value']['values'], vals['col']['Text']['values'])))
+    check('MAT: single values: char (UTF-16 too), function handles, a global, a struct\'s field',
+          [got[k] for k in ('ch', 'ch_uni', 'ch_emoji', 'fh', 'fh_named', 'gv', 's/b')],
+          [(None, 'hello'), (None, 'Ångström µ ✓ δ'), (None, 'smile 😀'), (None, '@(x)x.^2+1'), (None, '@sin'), (42.0, None), (None, 'text')])
+    check('MAT: the notes say which MAT-file', 'MAT-file Level 5, compressed (-v7), 30 variables' in vals['notes'], True)
+    d = read(os.path.join(RB_FIXTURES, 'matlab-v7.mat'))
+    check('MAT: more tables than the dialog ticks at once: nothing ticked', (d['defaults']['picked'], d['defaults']['direct']), ([], False))
+    v4 = read(os.path.join(RB_FIXTURES, 'matlab-v4.mat'), {'picked': 'all'})
+    check('MAT: -v4: double, char, complex and sparse', (v4['mat']['format'], [(t['name'], [(c['name'], c['values']) for c in t['columns']]) for t in v4['tables']]),
+          ('Level 4 (-v4)', [('matlab-v4 — 2 rows', [('v4_char', ['ab', 'cd']), ('v4_sp 1', nums([0, 2])), ('v4_sp 2', nums([1, 0]))]),
+                             ('matlab-v4 — v4_cplx', [('v4_cplx.real', nums([1, 3])), ('v4_cplx.imag', nums([2, 0]))]),
+                             ('matlab-v4 — v4_mat', [('v4_mat 1', nums([8, 3, 4])), ('v4_mat 2', nums([1, 5, 9])), ('v4_mat 3', nums([6, 7, 2]))])]))
+
+    # damaged files, and none
+    with open(os.path.join(TMP, 'junk.mat'), 'wb') as w:
+        w.write(b'\x07' * 300)
+    check('MAT: a .mat file that is none is refused with the reason', read('junk.mat')['mat']['error'], 'it is not a MAT-file this page can read: it starts with none of the headers MATLAB writes')
+    with open(os.path.join(TMP, 'empty.mat'), 'wb') as w:
+        w.write(b'MATLAB 5.0 MAT-file, written by test_hdf5.py'.ljust(116, b' ') + b' ' * 8 + b'\x00\x01IM')
+    check('MAT: a MAT-file of no variables is refused so', read('empty.mat')['mat']['error'], 'it holds no variables')
+    raw = open(os.path.join(RB_FIXTURES, 'matlab-v7.mat'), 'rb').read()
+    with open(os.path.join(TMP, 'cut.mat'), 'wb') as w:
+        w.write(raw[:len(raw) // 2])
+    cut = read('cut.mat')
+    check('MAT: a file cut short opens with what can be read, and says what cannot',
+          (cut['mat']['unread'], cut['mat']['variables'] > 10, [n['note'][:32] for n in cut['nodes'] if n['kind'] == 'group' and (n['note'] or '').startswith('This variable')]),
+          (1, True, ['This variable could not be read:']))
+
+    # what the HDF5 Browser sends of a MAT-file it has open: its datasets with
+    # MATLAB_size, in MATLAB's shape
+    with h5py.File(os.path.join(TMP, 'handed.h5'), 'w') as f:
+        ds = f.create_dataset('A', data=np.arange(6.0).reshape(2, 3))
+        ds.attrs['MATLAB_class'], ds.attrs['MATLAB_size'] = 'double', '2×3'
+        ds = f.create_dataset('c', data=['x', 'y'], dtype=h5py.string_dtype())
+        ds.attrs['MATLAB_class'], ds.attrs['MATLAB_size'] = 'cell', '2×1'
+    out = read('handed.h5')
+    check('MAT: what the HDF5 Browser sends (MATLAB_size) is in MATLAB\'s shape, and a cell is read',
+          (out['node']['/A']['transposed'], [(c['name'], c['values']) for c in table(out, 'handed')['columns']]),
+          (False, [('c', ['x', 'y']), ('A 1', nums([0, 3])), ('A 2', nums([1, 4])), ('A 3', nums([2, 5]))]))
+
+    try:
+        import scipy.io as sio
+    except ImportError:
+        print('(SciPy is not installed: the checks on the MAT-files it writes are skipped)')
+        return
+
+    def cell(rows):
+        out = np.empty((len(rows), len(rows[0])), dtype=object)
+        for i, r in enumerate(rows):
+            for j, v in enumerate(r):
+                out[i, j] = np.zeros((0, 0)) if v is None else v
+        return out
+    sa = np.zeros((1, 3), dtype=[('x', 'O'), ('s', 'O')])
+    for k, x in enumerate([1.5, 2.5, np.zeros((0, 0))]):
+        sa[0, k] = (x, 'abc'[k])
+    ws = {
+        'M': np.arange(6.0).reshape(2, 3), 'iv': np.array([[3, 1, 2]], dtype='i2'), 'name': 'smui', 'sa': sa,
+        'blank_corner': cell([[None, 'a', 'b'], ['r1', 1.0, 2.0], ['r2', 3.0, 4.0]]),
+        'units': cell([['t', 'x'], ['s', 'mm'], [0.0, 1.5], [1.0, 2.5]]),
+        'titled': cell([['Results', None], ['t', 'x'], [0.0, 1.0], [1.0, 2.0]]),
+        'no_heading': cell([['a', 1.0], ['b', 2.0]]),
+        'gaps_on_top': cell([['a', None], ['b', None], ['c', 3.0], ['d', 4.0]]),
+        'markers': cell([['x', 'y'], [1.0, 'NA'], [2.0, 3.0]]),
+    }
+    for packed in (True, False):
+        sio.savemat(os.path.join(TMP, f'scipy-{packed}.mat'), ws, do_compression=packed)
+    a = read('scipy-True.mat', {'picked': 'all'})
+    b = read('scipy-False.mat', {'picked': 'all'})
+    check('MAT: SciPy\'s files, compressed (-v7) and not (-v6), read whole', (a['mat']['format'], b['mat']['format'], a['mat']['unread']), ('Level 5, compressed (-v7)', 'Level 5 (-v6)', 0))
+    check('MAT: … and make the same tables', same(a), same(b))
+    back = sio.loadmat(os.path.join(TMP, 'scipy-True.mat'))
+    c2 = table(a, 'scipy-True — 2 rows')['col']
+    check('MAT: a matrix as SciPy reads it back', [c2[f'M {j}']['values'] for j in (1, 2, 3)], [nums(back['M'][:, j]) for j in range(3)])
+    c3 = table(a, 'scipy-True — 3 rows')['col']
+    check('MAT: int16, and a struct array\'s fields (an empty element missing), as SciPy reads them back', (c3['iv']['values'], c3['x']['values'], c3['s']['values']),
+          (nums(back['iv'].ravel()), nums([1.5, 2.5, math.nan]), [str(back['sa'][0, k]['s'][0]) for k in range(3)]))
+    cols = lambda name: [(c['name'], c['dataType'], c['values']) for c in table(a, f'scipy-True — {name}')['columns']]
+    check('MAT: headings over row labels: the empty corner is Column 1, as in a CSV file', cols('blank_corner'),
+          [('Column 1', 'character', ['r1', 'r2']), ('a', 'numeric', nums([1, 3])), ('b', 'numeric', nums([2, 4]))])
+    check('MAT: names over units: the names name the columns', cols('units'), [('t', 'numeric', nums([0, 1])), ('x', 'numeric', nums([1.5, 2.5]))])
+    check('MAT: … and the units go into their notes', [c['notes'].rsplit('; ', 1)[1] for c in table(a, 'scipy-True — units')['columns']], ['column 1, headed t (s)', 'column 2, headed x (mm)'])
+    check('MAT: a title over the names: the fuller row names the columns', cols('titled'), [('t', 'numeric', nums([0, 1])), ('x', 'numeric', nums([1, 2]))])
+    check('MAT: NA among numbers is missing', cols('markers'), [('x', 'numeric', nums([1, 2])), ('y', 'numeric', nums([math.nan, 3]))])
+    check('MAT: no headings (a number in the first row): a column of numbers is numeric, one of text is text',
+          [(k, c2[k]['dataType'], c2[k]['values']) for k in ('no_heading 1', 'no_heading 2')], [('no_heading 1', 'character', ['a', 'b']), ('no_heading 2', 'numeric', nums([1, 2]))])
+    check('MAT: text over a gap in a column of numbers is data, not headings', cols('gaps_on_top'),
+          [('gaps_on_top 1', 'character', ['a', 'b', 'c', 'd']), ('gaps_on_top 2', 'numeric', nums([math.nan, math.nan, 3, 4]))])
+    sio.savemat(os.path.join(TMP, 'one.mat'), {'sa': sa})
+    one = read('one.mat')
+    check('MAT: a file that is one table opens without the dialog', (one['defaults']['direct'], [(t['name'], [c['name'] for c in t['columns']]) for t in one['tables']]), (True, [('one', ['x', 's'])]))
+    sio.savemat(os.path.join(TMP, 'v4.mat'), {'M': np.arange(6.0).reshape(2, 3), 'c': np.array(['ab', 'cd'])}, format='4')
+    v4 = read('v4.mat', {'picked': 'all'})
+    check('MAT: SciPy\'s -v4', (v4['mat']['format'], [(c['name'], c['values']) for c in table(v4, 'v4')['columns']]),
+          ('Level 4 (-v4)', [('c', ['ab', 'cd']), ('M 1', nums([0, 3])), ('M 2', nums([1, 4])), ('M 3', nums([2, 5]))]))
 
 
 # ---- Kompartment's own result files -----------------------------------------------
@@ -730,6 +901,7 @@ def main():
         pandas_files()
         netcdf()
         matlab()
+        mat_files()
         kompartment()
         results_like()
         pickles()

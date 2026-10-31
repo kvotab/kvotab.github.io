@@ -11,12 +11,17 @@ what each line says, the boxes that cannot be ticked, the (i), Find and
 Tick shown, a group's box, ⇄, Side by side, the summary and Open), the
 tables against what was written (a probabilistic Kompartment run as a
 table of realisations), a file of one table opened without asking, the
-compression plugins fetched by their pins, files that are not HDF5 or are
-damaged (and binary data never read as text, UTF-16 text read), hostile
-names and attributes shown as text only, Cancel during a long listing
-(the reader works again after), a Distribution report on an opened
-column, the dark theme and phone width; and that the worker pins h5wasm
-and its plugins exactly as rb.html does.
+compression plugins fetched by their pins; MATLAB MAT-files (the HDF5
+Browser's fixtures, written by MATLAB, and SciPy's): the Open MAT-file
+dialog, a struct's and a table's lines, a cell with its headings opened
+as a table, a one-table file opened without asking, -v4, a file over the
+size read whole (-v7.3 opened as HDF5, others refused with the reason);
+files that are not HDF5 or are damaged (and binary data never read as
+text, UTF-16 text read), hostile names and attributes (in an HDF5 file and
+a MAT-file) shown as text only, Cancel during a long listing (the reader
+works again after), a Distribution report on an opened column, the dark
+theme and phone width; and that the worker pins h5wasm and its plugins
+exactly as rb.html does.
 
 Start a server on the repository root and headless Chrome (the recipe is in
 ../rb/README.md) on SMUI_HTTP_PORT and SMUI_CDP_PORT (defaults 8791, 9291),
@@ -24,7 +29,8 @@ then
 
     python3 resources/tests/smui/test-ui-hdf5.py
 
-Needs numpy, h5py and node; hdf5plugin adds the plugin checks. With
+Needs numpy, h5py and node; hdf5plugin adds the plugin checks, SciPy those
+on the MAT-files it writes. With
 SMUI_SHOTS=<folder> it saves screenshots. Exit status 0 when every check
 passes.
 """
@@ -131,6 +137,26 @@ def fixtures():
         with h5py.File(p, 'w') as h:
             h.create_dataset('lzf', data=np.arange(500.0) * 3, chunks=(50,), compression='lzf')
         f['squeezed'] = p
+    # MATLAB: the HDF5 Browser's fixtures (written by MATLAB, mat_fixtures.m),
+    # and SciPy's: a struct array alone, and hostile names
+    for v in ('v4', 'v7', 'v73'):
+        f[f'matlab-{v}'] = os.path.join(REPO, 'resources', 'tests', 'rb', 'fixtures', f'matlab-{v}.mat')
+    try:
+        import scipy.io as sio
+        sa = np.zeros((1, 3), dtype=[('dose', 'O'), ('site', 'O')])
+        for k in range(3):
+            sa[0, k] = (k + 0.5, 'ABC'[k])
+        f['onemat'] = os.path.join(TMP, 'onemat.mat')
+        sio.savemat(f['onemat'], {'sa': sa})
+        cells = np.empty((3, 2), dtype=object)
+        cells[0, 0], cells[0, 1] = '<img src=x onerror="window.__matpwned=1">', 'line\nbreak'
+        cells[1, 0], cells[1, 1], cells[2, 0], cells[2, 1] = 'a', 1.0, 'b', 2.0
+        s = np.zeros((1, 1), dtype=[('<svg onload="window.__matpwned=2">', 'O')])
+        s[0, 0] = (np.arange(3.0),)
+        f['evilmat'] = os.path.join(TMP, 'evilmat.mat')
+        sio.savemat(f['evilmat'], {'cells': cells, 's': s}, long_field_names=True)
+    except ImportError:
+        print('   (SciPy is not installed: the MAT-file checks use MATLAB\'s files alone)')
     return f
 
 
@@ -303,13 +329,86 @@ async def main():
         want = {k: [float(v) for v in h[k][()]] for k in h}
     check(f'compressed data ({", ".join(sorted(want))}): the decoders fetched and the values right', {c['name']: c['values'] for c in t['cols']}, want)
 
+    # ---- MATLAB MAT-files ----------------------------------------------------------------
+    n0 = await page.ev('SM.app.tables.length')
+    await choose(page, fx['matlab-v7'])
+    check('a MAT-file opens the Open MAT-file dialog', bool(await until(page, OPEN, 120)), True)
+    check('... titled with the file', await page.ev(f"{DIALOG}.querySelector('h2').textContent"), 'Open MAT-file: matlab-v7.mat')
+    lead = await page.ev(f"{DIALOG}.querySelector('.sm-dialog-lead').textContent")
+    check('... nothing ticked (more tables than it ticks at once), and it says so', 'The file holds 53 arrays that can be tables' in lead, True)
+    rows = {x['name']: x for x in await page.ev(ROWS)}
+    check('a MAT-file\'s lines: a struct, a table and a cell by class and size; arrays by size and class',
+          [rows[k]['desc'] for k in ('sa', 'tbl', 'c_long', 'd_mat', 'ch', 'lg', 'c_table')],
+          ['struct 1×3 · 4 items', 'table 2×2 · 2 items', 'cell 1×12 · 12 items', '4 × 4 double · 4 rows × 4 columns', 'a single value · char',
+           '2 × 3 logical · 2 rows × 3 columns', '2 rows · cell, 2 named columns'])
+    check('... a large sparse matrix says how it opens; an empty array cannot be ticked', (rows['sp_big']['desc'], rows['d_empty']['disabled'], rows['d_empty']['desc']),
+          ('double 1100×1100 · 3 items · Too large to show with its zeros: each value with its row and column.', True, 'empty'))
+    await shot(page, 'mat-dialog.png')
+    await page.ev(f"{DIALOG}.querySelector('.sm-dialog-head .info-btn').click(); 0")
+    t = await until(page, "document.querySelector('#kvot-info-panel .info-panel-title')?.textContent", 10)
+    sections = await page.ev("[...document.querySelectorAll('#kvot-info-panel .info-panel-body h3')].map(h => h.textContent)")
+    check('the dialog\'s (i) explains MAT-files', (t, sections), ('Open MAT-file', ['Variables', 'What is said', 'Larger files', 'Find and tick']))
+    await page.ev("document.querySelector('#kvot-info-panel .info-panel-close').click(); 0")
+    await page.ev(f"{row_box('c_table')}.click(); {row_box('tbl')}.click(); 0")
+    check('a cell with its headings is a table of its own; a table\'s variables one', await page.ev(SUMMARY),
+          'Opens 2 tables:\n\nmatlab-v7 — c_table — 2 rows × 2 columns\nmatlab-v7 — tbl — 2 rows × 2 columns')
+    await page.ev(f'{OPEN_BTN}.click(); 0')
+    got = await until(page, f'SM.app.tables.length >= {n0 + 2} && !{OPEN}', 60)
+    tabs = await tables_since(page, n0)
+    check('Open makes them: the headings name the columns, numbers are numbers again; a MATLAB table\'s variables in its order',
+          [(t['name'], [(c['name'], c['type'], c['values']) for c in t['cols']]) for t in tabs] if got else tabs,
+          [('matlab-v7 — c_table', [('Nuclide', 'character', ['Cs-135', 'I-129']), ('Q', 'numeric', [1.5, None])]),
+           ('matlab-v7 — tbl', [('n', 'numeric', [1.0, 2.0]), ('name', 'character', ['a', 'b'])])])
+    check('... the notes say where each column came from', tabs[0]['cols'][1]['notes'] if got else None, '/c_table; MATLAB cell 3×2; column 2, headed Q')
+    if 'onemat' in fx:
+        n0 = await page.ev('SM.app.tables.length')
+        for kind in ('dragEnter', 'dragOver', 'drop'):
+            await page.call('Input.dispatchDragEvent', {'type': kind, 'x': 700, 'y': 400, 'data': {'items': [], 'files': [fx['onemat']], 'dragOperationsMask': 1}}, session=page.sid)
+        got = await until(page, f'SM.app.tables.length > {n0}', 60)
+        t = (await tables_since(page, n0))[0] if got else {'cols': []}
+        check('a MAT-file of one struct array opens as its table without the dialog, its fields in order',
+              (await page.ev(OPEN), [(c['name'], c['values']) for c in t['cols']], await page.ev("document.querySelector('.sm-toast')?.textContent")),
+              (False, [('dose', [0.5, 1.5, 2.5]), ('site', ['A', 'B', 'C'])], 'Opened onemat.mat: 3 rows × 2 columns'))
+    n0 = await page.ev('SM.app.tables.length')
+    await choose(page, fx['matlab-v4'])
+    await until(page, OPEN, 60)
+    check('-v4: the dialog, every table ticked', await page.ev(SUMMARY),
+          'Opens 3 tables:\n\nmatlab-v4 — 2 rows — 3 columns\nmatlab-v4 — v4_cplx — 2 rows × 2 columns\nmatlab-v4 — v4_mat — 3 rows × 3 columns')
+    await page.ev(f'{OPEN_BTN}.click(); 0')
+    await until(page, f'SM.app.tables.length >= {n0 + 3}', 60)
+    t = (await tables_since(page, n0))[2]
+    check('... magic(3) as MATLAB shows it', [c['values'] for c in t['cols']], [[8.0, 3.0, 4.0], [1.0, 5.0, 9.0], [6.0, 7.0, 2.0]])
+    # over the size this page reads whole (a File whose size says 2 GB to the
+    # page; the worker gets the bytes there are)
+    big = '''const big = async (name) => { const b = await (await fetch(`resources/tests/rb/fixtures/${name}`, { cache: 'no-cache' })).arrayBuffer();
+      const f = new File([b], name); Object.defineProperty(f, 'size', { value: 2e9 }); return f; };'''
+    msg = await page.ev(f'''(async () => {{ {big}
+      document.querySelectorAll('.sm-toast').forEach(t => t.remove());
+      await SM.app.openFiles([await big('matlab-v7.mat')]);
+      return document.querySelector('.sm-toast.error')?.textContent; }})()''')
+    check('a MAT-file over 1 GB, not -v7.3: refused, saying how to save it', msg,
+          "matlab-v7.mat: 1.9 GB, more than this page reads of a MAT-file (1.0 GB); saved with save(..., '-v7.3') it opens without being read whole")
+    await page.ev(f'(async () => {{ {big} SM.hdf5.open(SM.app, await big("matlab-v73.mat")); }})(); 0')
+    await until(page, OPEN, 60)
+    r = await page.ev(f'''(() => ({{ title: {DIALOG}.querySelector('h2').textContent, lead: {DIALOG}.querySelector('.sm-dialog-lead').textContent,
+      cell: [...document.querySelectorAll('.sm-h5-row')].find(r => r.querySelector('.sm-h5-name').textContent === 'c_str').querySelector('.sm-h5-desc').textContent }}))()''')
+    check('a -v7.3 file over 1 GB opens as the HDF5 file it is, and says so; its cells are not read',
+          (r['title'], r['lead'].endswith('At 1.9 GB it is too large to read whole, and opens as the HDF5 file it is: its cell arrays and objects are not read.'), r['cell']),
+          ('Open HDF5: matlab-v73.mat', True, "a MATLAB cell (not read: MATLAB's own format)"))
+    await page.ev("[...document.querySelectorAll('.sm-h5-dialog .sm-dialog-foot .sm-btn')].find(b => b.textContent === 'Cancel').click(); 0")
+    await until(page, f'!{OPEN}', 10)
+
     # ---- not HDF5, damaged, binary, UTF-16 ------------------------------------------
     async def toast_of(path):
         await page.ev("document.querySelectorAll('.sm-toast').forEach(t => t.remove()); 0")
         await choose(page, path)
         return await until(page, "document.querySelector('.sm-toast.error')?.textContent", 30)
     check('a netCDF-3 file says what it is', await toast_of(fx['classic.nc']), 'classic.nc: a netCDF-3 (classic) file, which is not HDF5: save it as netCDF-4, or as CSV')
-    check('a MATLAB 5 file says what it is', await toast_of(fx['old.mat']), "old.mat: a MATLAB 5 .mat file, which is not HDF5: save it with save(..., '-v7.3') or as CSV")
+    check('a MATLAB 5 file of no variables says so', await toast_of(fx['old.mat']), 'old.mat: it holds no variables')
+    with open(os.path.join(TMP, 'junk.mat'), 'wb') as w:
+        w.write(b'\x07' * 300)
+    check('a .mat file that is no MAT-file says so', await toast_of(os.path.join(TMP, 'junk.mat')),
+          'junk.mat: it is not a MAT-file this page can read: it starts with none of the headers MATLAB writes')
     msg = await toast_of(fx['damaged.h5'])
     check('a damaged HDF5 file is refused, with HDF5\'s reason', bool(msg) and msg.startswith('damaged.h5: not an HDF5 file this reader can open ('), True)
     n0 = await page.ev('SM.app.tables.length')
@@ -336,6 +435,19 @@ async def main():
     side = await page.ev("(() => { const s = document.querySelector('.sm-side'); return { tags: s.querySelectorAll('img, script, svg[onload]').length, text: s.textContent }; })()")
     check('... the notes are text (the Information markup\'s tags dropped, a name kept as written), and nothing ran',
           ('<script>' in t['notes'], '/<img src=x' in t['notes'], side['tags'], await page.ev('window.__h5pwned || null')), (False, True, 0, None))
+    if 'evilmat' in fx:
+        n0 = await page.ev('SM.app.tables.length')
+        await choose(page, fx['evilmat'])
+        await until(page, OPEN, 60)
+        r = await page.ev(f'''(() => ({{ tags: {DIALOG}.querySelectorAll('img, script, svg[onload]').length, names: [...document.querySelectorAll('.sm-h5-name')].map(n => n.textContent) }}))()''')
+        check('a MAT-file\'s hostile names are text in the dialog', (r['tags'], r['names']), (0, ['cells', 's', '<svg onload="window.__matpwned=2">']))
+        await page.ev(f'{OPEN_BTN}.click(); 0')
+        await until(page, f'SM.app.tables.length >= {n0 + 2}', 30)
+        tabs = await tables_since(page, n0)
+        main = await page.ev("document.querySelector('.sm-main').querySelectorAll('img, script, svg[onload]').length")
+        check('... and in the tables: a heading of markup is a name, one with a line break on one line; nothing ran',
+              ([c['name'] for t in tabs for c in t['cols']], main, await page.ev('window.__matpwned || null')),
+              (['<img src=x onerror="window.__matpwned=1">', 'line break', '<svg onload="window.__matpwned=2">'], 0, None))
 
     # ---- Cancel during a long listing ------------------------------------------------------
     n0 = await page.ev('SM.app.tables.length')

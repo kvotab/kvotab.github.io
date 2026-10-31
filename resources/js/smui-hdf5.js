@@ -1,12 +1,17 @@
 /* ==========================================================================
    SMUI.HTML: OPENING HDF5 FILES
 
-   An HDF5 file (.h5, .hdf5, netCDF-4 .nc, MATLAB v7.3 .mat, …) is told by
-   its first bytes, whatever its name. The HDF5 worker (smui-hdf5-worker.js)
-   lists it; the Open HDF5 dialog shows its groups and datasets, each with
-   what it would become, ticked as smui-hdf5-read.js's defaults() suggests;
-   Open makes tables of what is ticked. A file that is one table and
-   nothing else opens without asking.
+   An HDF5 file (.h5, .hdf5, netCDF-4 .nc, …) is told by its first bytes,
+   whatever its name. The HDF5 worker (smui-hdf5-worker.js) lists it; the
+   Open HDF5 dialog shows its groups and datasets, each with what it would
+   become, ticked as smui-hdf5-read.js's defaults() suggests; Open makes
+   tables of what is ticked. A file that is one table and nothing else opens
+   without asking.
+
+   A MATLAB MAT-file, of any version, is read whole in the worker by the
+   HDF5 Browser's reader and opens in the same dialog, as that page shows it
+   (smui-mat.js). A -v7.3 file too large to read whole is HDF5, and opens as
+   the HDF5 file it is.
 
      SM.hdf5.open(app, file, { state, ask })   the tables it added
        state: 'defaults', 'all' or { picked, transposed: [paths], together }
@@ -15,7 +20,7 @@
               unless that is too many tables or too wide a one, when the
               dialog asks (a file handed over, smui-handoff.js)
        ask:   the dialog even for a file that is one table
-     SM.hdf5.sniff(file)    'hdf5', 'netcdf3', 'mat5', 'hdf4' or null
+     SM.hdf5.sniff(file)    'hdf5', 'mat', 'netcdf3', 'hdf4' or null
 
    Every name and attribute shown comes from the file and is untrusted: the
    dialog puts them in as text only.
@@ -28,9 +33,11 @@
   const EXT = /\.(h5|hdf5|he5|hdf|h5ad|hd5|nc|nc4|cdf|mat)$/i;
   const NOT_HDF5 = {
     netcdf3: 'a netCDF-3 (classic) file, which is not HDF5: save it as netCDF-4, or as CSV',
-    mat5: 'a MATLAB 5 .mat file, which is not HDF5: save it with save(..., \'-v7.3\') or as CSV',
     hdf4: 'an HDF4 file, which is not HDF5: convert it (h4toh5) or save it as CSV',
   };
+  // a MAT-file larger than this is not read whole (kvot-safe.js's limit, the
+  // HDF5 Browser's too)
+  const MAT_WHOLE = KVOT_FILE_SIZE_LIMITS.dataset;
   const MAX_ROWS = 3000;     // tree lines drawn at once
   const fmtN = (n) => Number(n).toLocaleString('en-US');
 
@@ -72,18 +79,28 @@
     });
   }
 
+  const head = async (file) => new Uint8Array(await file.slice(0, 65544).arrayBuffer());
+
   async function sniff(file) {
-    return SM.h5.sniff(new Uint8Array(await file.slice(0, 65544).arrayBuffer()));
+    const u8 = await head(file);
+    return SM.h5.matFormat(u8, file.name) ? 'mat' : SM.h5.sniff(u8);
   }
 
   /* ---- opening ------------------------------------------------------------------ */
   async function open(app, file, opts = {}) {
-    const kind = await sniff(file);
-    if (kind !== 'hdf5') throw new Error(NOT_HDF5[kind] || 'not an HDF5 file: it does not start with the HDF5 signature');
+    const u8 = await head(file);
+    const kind = SM.h5.sniff(u8);
+    let mat = SM.h5.matFormat(u8, file.name);
+    // (a -v7.3 file is HDF5: too large to read whole, it opens as that)
+    const asHdf5 = mat === 'v73' && file.size > MAT_WHOLE;
+    if (asHdf5) mat = null;
+    if (mat && file.size > MAT_WHOLE) throw new Error(`${kvotFormatBytes(file.size)}, more than this page reads of a MAT-file (${kvotFormatBytes(MAT_WHOLE)}); saved with save(..., '-v7.3') it opens without being read whole`);
+    if (!mat && kind !== 'hdf5') throw new Error(NOT_HDF5[kind] || 'not an HDF5 file: it does not start with the HDF5 signature');
     const ui = busy(file.name);
     let fid = null;
     try {
-      const r = await call('open', { file }, ui.progress);
+      const r = await call('open', { file, mat }, ui.progress);
+      if (asHdf5) r.asHdf5 = true;
       fid = r.fid;
       ui.pause();
       let state = givenState(r.nodes, r.defaults, opts.state === 'all-or-ask' ? 'all' : opts.state);
@@ -207,10 +224,15 @@
     const together = el('input', { type: 'checkbox', id: SM.util.uid('h5t') });
     together.checked = state.together;
     const counts = r.info || {};
+    // a MAT-file: what of it could not be read, or that it is not read whole
+    const mat = r.mat || null;
     const lead = el('p', { class: 'sm-dialog-lead' },
       'Tick what to open. Vectors and matrices with the same number of rows open side by side, as the columns of one table; ⇄ swaps a matrix\'s rows and columns.',
-      picked.size ? null : ` The file holds ${fmtN(all.length)} datasets that can be tables: tick the ones you want (Find narrows the list).`,
-      counts.capped ? ` Only its first ${fmtN(counts.listed)} of ${fmtN(counts.objects)} objects are listed.` : null);
+      picked.size ? null : ` The file holds ${fmtN(all.length)} ${mat ? 'arrays' : 'datasets'} that can be tables: tick the ones you want (Find narrows the list).`,
+      counts.capped ? ` Only its first ${fmtN(counts.listed)} of ${fmtN(counts.objects)} objects are listed.` : null,
+      mat && mat.unread ? ` ${mat.unread === 1 ? 'One of its variables' : `${fmtN(mat.unread)} of its variables`} could not be read: ${mat.unread === 1 ? 'its line says' : 'their lines say'} why.` : null,
+      counts.mat && counts.mat.note ? ` ${counts.mat.note}` : null,
+      r.asHdf5 ? ` At ${kvotFormatBytes(file.size)} it is too large to read whole, and opens as the HDF5 file it is: its cell arrays and objects are not read.` : null);
     const body = el('div', { class: 'sm-h5' }, lead,
       el('div', { class: 'sm-h5-bar' }, find, tickShown, untick), tree,
       el('label', { class: 'sm-h5-together', for: together.id }, together, 'Side by side: vectors and matrices with the same number of rows open as one table'),
@@ -290,7 +312,18 @@
       if (n.kind === 'broken') return `link to ${n.target || '?'}, which is not there`;
       if (n.kind === 'datatype') return 'a named datatype';
       if (n.form === 'pandas') return n.readable ? `pandas ${/^series/.test(n.pandas.type) ? 'Series' : 'DataFrame'} · ${fmtN(n.rows)} rows × ${fmtN(n.cols)} columns` : n.why;
-      if (n.kind === 'group') { const k = (n.children || []).filter((c) => !nodes[c].hidden).length; return k === 1 ? '1 item' : `${fmtN(k)} items`; }
+      if (n.kind === 'group') {
+        const k = (n.children || []).filter((c) => !nodes[c].hidden).length;
+        // a MAT-file's struct, cell or object: its class and size as MATLAB
+        // gives them, and why it holds nothing when it could not be read
+        const a = n.attrs || {};
+        const note = typeof a.MATLAB_note === 'string' ? a.MATLAB_note : '';
+        const bits = [];
+        if (typeof a.MATLAB_class === 'string' && a.MATLAB_size != null) bits.push(`${a.MATLAB_class} ${a.MATLAB_size}`);
+        if (k || !note) bits.push(k === 1 ? '1 item' : `${fmtN(k)} items`);
+        if (note) bits.push(note);
+        return bits.join(' · ');
+      }
       if (!n.readable) return n.why || 'not read';
       const unit = n.attrs && (n.attrs.unit || n.attrs.units || n.attrs.Unit || n.attrs.Units);
       const bits = [];
@@ -375,7 +408,7 @@
     let dlg = null;
     return new Promise((resolve) => {
       dlg = SM.ui.dialog({
-        title: `Open HDF5: ${file.name}`, body, info: 'file:hdf5', className: 'sm-h5-dialog',
+        title: `${mat ? 'Open MAT-file' : 'Open HDF5'}: ${file.name}`, body, info: mat ? 'file:mat' : 'file:hdf5', className: 'sm-h5-dialog',
         buttons: [
           { label: 'Cancel', result: null },
           { label: 'Open', primary: true, action: () => { const p = plan(); if (!p.tables.length || p.blocked) return false; resolve(state); return true; } },

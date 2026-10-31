@@ -3,17 +3,24 @@
    defaults(), plan() and read() the worker runs make its tables.
 
      node hdf5-read.mjs <h5wasm dir> read <file> [state.json]
+     node hdf5-read.mjs <h5wasm dir> read-hdf5 <file> [state.json]
      node hdf5-read.mjs <h5wasm dir> sniff <file>
      node hdf5-read.mjs <h5wasm dir> unpickle <file>
 
-   read prints { nodes, info, defaults, plan, tables, failed } as JSON, a
+   read opens a file as the page does: a MAT-file (SM.h5.matFormat) is
+   written as an HDF5 file first, by smui-mat.js with the HDF5 Browser's
+   reader, as the worker writes it; read-hdf5 opens it as the HDF5 file it
+   is (a -v7.3 file too large to read whole opens so). read prints { mat,
+   nodes, info, defaults, plan, tables, failed } as JSON, mat being { format,
+   header, variables, unread } or { error }, a
    Float64Array as a list (NaN null, infinities 'inf' and '-inf');
    state.json { "picked": [paths] | "all", "transposed": [paths],
    "together": true } picks the tables (without it, the ones the open
    dialog ticks). sniff prints what the first bytes say; unpickle the
    pickle's value (a Map as { "$map": [[k, v] …] }, bytes as { "$bytes":
    [...] }). test_hdf5.py drives it. */
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -34,8 +41,26 @@ const plain = (v) => {
   return v;
 };
 
+/* A MAT-file written as an HDF5 file in dir, as the worker writes it:
+   { target, mat } or { mat: { error } }. rb-mat.js keeps a -v7.3 file's
+   bytes among h5wasm's files at /, which are in memory in the browser and
+   on disk here: here they go into dir. */
+async function writeMat(h5wasm, bytes, name, dir) {
+  const at = (p) => path.join(dir, p.replace(/^\/+/, ''));
+  globalThis.window = { h5wasm: { FS: { writeFile: (p, d) => writeFileSync(at(p), d), unlink: (p) => unlinkSync(at(p)) },
+    File: class extends h5wasm.File { constructor(p, m) { super(at(p), m); } } } };
+  for (const js of ['kvot-safe.js', 'rb-mat.js', 'smui-mat.js']) vm.runInThisContext(readFileSync(path.join(here, '..', '..', 'js', js), 'utf8'), { filename: js });
+  const target = path.join(dir, 'mat.h5');
+  try {
+    return { target, mat: await globalThis.SM.mat.write(h5wasm, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length), target, { fileName: name }) };
+  } catch (e) {
+    return { mat: { error: String(e && e.message || e) } };
+  }
+}
+
 if (mode === 'sniff') {
-  process.stdout.write(JSON.stringify({ kind: H.sniff(new Uint8Array(readFileSync(file).subarray(0, 65544))) }));
+  const head = new Uint8Array(readFileSync(file).subarray(0, 65544));
+  process.stdout.write(JSON.stringify({ kind: H.sniff(head), mat: H.matFormat(head, path.basename(file)) }));
 } else if (mode === 'unpickle') {
   let out;
   try {
@@ -49,7 +74,20 @@ if (mode === 'sniff') {
   const h5wasm = await import(pathToFileURL(path.join(dir, 'hdf5_hl.js')).href);
   const Module = await h5wasm.ready;
   Module.activate_throwing_error_handler();
-  const f = new h5wasm.File(path.resolve(file), 'r');
+  const name = path.basename(file);
+  const bytes = readFileSync(file);
+  const tmp = mode === 'read' && H.matFormat(new Uint8Array(bytes.subarray(0, 65544)), name) ? mkdtempSync(path.join(os.tmpdir(), 'smui-mat-')) : null;
+  try {
+    const { target, mat } = tmp ? await writeMat(h5wasm, bytes, name, tmp) : { target: path.resolve(file), mat: null };
+    if (target) await readFile(h5wasm, Module, target, name, mat);
+    else process.stdout.write(JSON.stringify({ mat }));
+  } finally {
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function readFile(h5wasm, Module, target, name, mat) {
+  const f = new h5wasm.File(target, 'r');
   const io = H.ioFor(h5wasm, Module, f);
   const { nodes, info } = await H.inspect(io);
   const def = H.defaults(nodes, info);
@@ -64,7 +102,6 @@ if (mode === 'sniff') {
       together: s.together !== false,
     };
   }
-  const name = path.basename(file);
   const planned = H.plan(nodes, state, { fileName: name });
   let tables = [], failed = [], error = null;
   try {
@@ -74,9 +111,11 @@ if (mode === 'sniff') {
   }
   f.close();
   process.stdout.write(JSON.stringify({
+    mat,
     info,
     nodes: nodes.map((n) => ({ path: n.path, kind: n.kind, form: n.form || null, rows: n.rows ?? null, cols: n.cols ?? null, readable: !!n.readable, why: n.why || null,
-      hidden: n.hidden || null, key: !!n.key, meta: n.meta || null, transposed: !!n.transposed, typeText: n.typeText || null, target: n.target || null })),
+      hidden: n.hidden || null, key: !!n.key, meta: n.meta || null, transposed: !!n.transposed, typeText: n.typeText || null, target: n.target || null,
+      matlab: n.matlab || null, mixed: !!n.mixed, header: n.header || null, note: (n.attrs && n.attrs.MATLAB_note) ?? null })),
     defaults: { picked: [...def.picked].map((id) => nodes[id].path).sort(), transposed: [...def.transposed].map((id) => nodes[id].path).sort(), direct: !!def.direct },
     plan: { ...planned, tables: planned.tables.map((t) => ({ ...t, items: t.items.map((it) => ({ path: nodes[it.id].path, transposed: it.transposed })), key: t.key == null ? null : nodes[t.key].path })) },
     tables: tables.map((t) => ({ ...t, columns: t.columns.map((c) => ({ ...c, values: plain(c.values) })) })),
