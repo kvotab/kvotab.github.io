@@ -47,6 +47,7 @@ PROBES = {
     'rb-lazy':           'wantsLazyFile',
     'rb-file':           'getEnabledFiles',
     'rb-eas':            'isEcolegoAssessment',
+    'rb-mat':            'isMatFile',
     'rb-tabs':           'hideFileTabTooltip',
     'rb-tree':           'toggleGroupExpansion',
     'rb-chart-axes':     'getNamedColor',

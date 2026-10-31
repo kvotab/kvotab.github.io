@@ -941,9 +941,10 @@ document.getElementById('fileInput').addEventListener('change', async (e) => {
       const file = files[i];
       updateFileLoadTicker(i, files.length, file.name);
       try {
-        // An Ecolego assessment is read whole: its runs are written out as
-        // HDF5 in memory (rb-eas.js), which a worker reading from disk cannot do.
-        if (!isEcolegoAssessment(file.name, null) && wantsLazyFile(file)) {
+        // An Ecolego assessment or a MAT-file is read whole: it is written
+        // out as HDF5 in memory (rb-eas.js, rb-mat.js), which a worker reading
+        // from disk cannot do.
+        if (!isEcolegoAssessment(file.name, null) && !isMatFile(file.name, null) && wantsLazyFile(file)) {
           // Read from disk as it is looked at, in a worker, whatever its
           // size: see rb-lazy.js. The limit below is for reading it whole.
           await ingestHdf5Lazy(file, 'fileInput:load');

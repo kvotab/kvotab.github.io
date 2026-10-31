@@ -39,7 +39,7 @@ const KVOT = (() => {
       href: './rb.html',
       label: 'HDF5 Browser',
       group: 'data',
-      desc: 'Open .h5 files: walk the tree, plot datasets and export them to Excel.',
+      desc: 'Open HDF5 and MATLAB files: walk the tree, plot datasets and export to Excel.',
     },
     {
       href: './ensdf.html',

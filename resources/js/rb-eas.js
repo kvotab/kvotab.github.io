@@ -76,8 +76,8 @@ function isEcolegoAssessment(fileName, buffer) {
 
 /**
  * Open a file handed over by any transport, whatever it is: HDF5 as itself,
- * an Ecolego assessment as a file for each run it keeps. Does not refresh the
- * tree.
+ * an Ecolego assessment as a file for each run it keeps, a MATLAB MAT-file as
+ * a file of its variables (rb-mat.js). Does not refresh the tree.
  *
  * @param {string} fileName - Display name
  * @param {ArrayBuffer} buffer - The file's bytes
@@ -89,6 +89,7 @@ function isEcolegoAssessment(fileName, buffer) {
  */
 async function ingestFileBuffer(fileName, buffer, context = 'ingestFileBuffer', options = {}) {
   if (isEcolegoAssessment(fileName, buffer)) return ingestEcolegoAssessment(fileName, buffer, context, options);
+  if (isMatFile(fileName, buffer)) return ingestMatFile(fileName, buffer, context);
   return [await ingestHdf5Buffer(fileName, buffer, context)];
 }
 
@@ -737,7 +738,10 @@ function easSetAttributes(obj, attrs) {
  * Writing holds the page about a tenth of a millisecond per series, so it
  * stops to let the page draw now and then and says how far it has come.
  *
- * @param {Object} tree - From easRunTree
+ * A dataset is written as doubles of its shape, or as a list of strings,
+ * unless it names its own HDF5 type, as a MAT-file's arrays do (rb-mat.js).
+ *
+ * @param {Object} tree - From easRunTree or matTree
  * @param {function(number): void} [onProgress] - Series written so far
  * @returns {Promise<ArrayBuffer>}
  */
@@ -763,10 +767,14 @@ async function easWriteHdf5(tree, onProgress) {
             continue;
           }
           const data = child.make();
-          const ds = Array.isArray(data)
-            ? into.create_dataset({ name, data })
-            : into.create_dataset({ name, data, shape: child.shape, dtype: '<d' });
+          const ds = child.dtype
+            ? into.create_dataset({ name, data, shape: child.shape, dtype: child.dtype })
+            : Array.isArray(data)
+              ? into.create_dataset({ name, data })
+              : into.create_dataset({ name, data, shape: child.shape, dtype: '<d' });
           easSetAttributes(ds, child.attrs);
+          // Written once: what it was made from need not outlive the writing.
+          child.make = null;
           written++;
           if (performance.now() - paused > 150) {
             if (onProgress) onProgress(written);

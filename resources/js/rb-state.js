@@ -103,7 +103,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
   <div class="welcome-section">
     <h4>Getting Started</h4>
     <ol>
-      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>
+      <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>
       <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
       <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
     </ol>
@@ -117,6 +117,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li>Use the <strong>search bar</strong> to filter the tree — supports <code>*</code> wildcards and <code>/</code> full-path search.</li>
       <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
       <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
+      <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
       <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
       <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
       <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
