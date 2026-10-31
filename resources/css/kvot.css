@@ -964,6 +964,7 @@ footer .theme-toggle {
   color: var(--text-secondary);
   font-size: 0.86rem;
   line-height: 1.55;
+  text-wrap: balance;
 }
 /* The page's own address, as a program would name it. */
 .project-card-path {
