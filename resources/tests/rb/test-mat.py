@@ -135,6 +135,7 @@ def vectors():
     e = '<'
     return header(e) + b''.join([
         matrix(6, [1000, 1], 'v', [doubles(VECTOR, e)], e),
+        matrix(6, [1000, 1], 'v2', [doubles([2 * x + 1 for x in VECTOR], e)], e),
         matrix(7, [1, 50], 'w', [element(7, struct.pack(e + '50f', *[k - 25 for k in range(50)]), e)], e),
         matrix(6, [5, 1], 'gaps', [doubles([1, float('nan'), 3, float('inf'), 5], e)], e),
         matrix(6, [20000, 1], 'long', [doubles([k % 97 for k in range(20000)], e)], e),
@@ -239,6 +240,8 @@ PREVIEW = """(async () => {
            colorbar: ((pd.data || []).find(t => t.showscale) || {}).colorbar?.title?.text,
            panels: (fl.annotations || []).map(a => a.text), element: visible('histIterLabel'), stats: visible('histStatsLabel'),
            slice: visible('histSliceLabel') ? document.getElementById('histSliceText').textContent : null,
+           xAxis: visible('histXLabel') ? [...document.getElementById('histXSelect').options].map(o => o.text) : null,
+           xType: fl.xaxis && fl.xaxis.type,
            log: visible('histLogLabel'), pdf: visible('histPdfLabel'), place: document.getElementById('histIterText').textContent };
 })()"""
 
@@ -560,6 +563,66 @@ async def main():
             check('  MATLAB\'s own reshape(1:24, 2, 3, 4), slice 2', (d3['traces'][0]['z'], d3['slice']),
                   ([[7, 9, 11], [8, 10, 12]], 'of 4 · (:, :, 2)'))
             check('  a matrix has no slices to choose', (await preview(page, '/mtx'))['slice'], None)
+
+            # --- several selected --------------------------------------------------
+            add = "(async (p) => { __row(p, false).dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); await __wait(400); })"
+            await page.ev("__click('/v', false)")
+            await page.ev(f"{add}('/w')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('two vectors Ctrl-clicked: their histograms together, each under its name',
+                  (sel['mode'], [(t['type'], t['name'], t['n']) for t in sel['traces']]),
+                  ('histogram', [('histogram', 'v', 1000), ('histogram', 'w', 50)]))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  and with Scatter a series of each', [(t['type'], t['name'], t['n']) for t in sel['traces']],
+                  [('scatter', 'v', 1000), ('scatter', 'w', 50)])
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
+            await page.ev("__click('/mtx', false)")
+            await page.ev(f"{add}('/pm')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('two matrices: their heatmaps side by side, each named',
+                  ([(t['type'], t['xaxis']) for t in sel['traces']], sel['panels']), ([('heatmap', 'x'), ('heatmap', 'x2')], ['mtx', 'pm']))
+            await page.ev("__click('/v', false)")
+            await page.ev(f"{add}('/mtx')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('a vector and a matrix: a histogram of each, the matrix\'s of all its values',
+                  [(t['type'], t['name'], t['n']) for t in sel['traces']], [('histogram', 'v', 1000), ('histogram', 'mtx', 12)])
+            await page.ev("__click('/v', false)")
+            await page.ev(f"{add}('/v2')")
+            await page.ev(f"{add}('/w')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('vectors of one length: no x axis to choose in a histogram', sel['xAxis'], None)
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  in a scatter, the place or either of the two as long as each other', sel['xAxis'], ['Element', 'v', 'v2'])
+            pick = "(i) => { const s = document.getElementById('histXSelect'); s.value = String(i); s.dispatchEvent(new Event('change', { bubbles: true })); }"
+            await page.ev(f"({pick})(0)")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  v chosen: v2 drawn against it, element by element; w, of another length, left out',
+                  ([(t['type'], t['name'], t['n'], t['x'], t['y']) for t in sel['traces']], sel['x'], sel['y']),
+                  ([('scatter', 'v2', 1000, VECTOR[:3], [2 * x + 1 for x in VECTOR[:3]])], 'v', 'v2'))
+            await page.ev("document.getElementById('histStats').click()")
+            sel = await page.ev(PREVIEW, timeout=30)
+            mean2 = sum(2 * x + 1 for x in VECTOR) / len(VECTOR)
+            levels = {t['name'].rsplit(' (', 1)[0]: t for t in sel['traces'][1:]}
+            check('  its statistics are levels across the range of v', (levels['Mean']['x'], levels['Mean']['y'][0]),
+                  ([min(VECTOR), max(VECTOR)], mean2))
+            ask = "(n) => { const i = document.getElementById('histIterNum'); i.value = n; i.dispatchEvent(new Event('input', { bubbles: true })); }"
+            await page.ev("document.getElementById('histStats').click()")
+            await page.ev(f"({ask})('5')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  the element asked for is ringed at its two values', [(t['x'], t['y']) for t in sel['traces'][1:]],
+                  [([VECTOR[4]], [2 * VECTOR[4] + 1])])
+            await page.ev(f"({ask})('')")
+            await page.ev("document.getElementById('histLogScale').click()")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  Log₁₀ makes both axes logarithmic', (sel['xType'], sel['yType']), ('log', 'log'))
+            await page.ev("document.getElementById('histLogScale').click()")
+            await page.ev("__click('/v', false)")
+            await page.ev(f"{add}('/v2')")
+            sel = await page.ev(PREVIEW, timeout=30)
+            check('  a new selection is drawn against the place again', (sel['traces'][0]['x'], sel['x']), ([1, 2, 3], 'Element'))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
             x = await preview(page, '/' + HOSTILE_VECTOR)
             check('a vector named with markup is drawn under its name as text; nothing runs',
                   (x['shown'], x['traces'][0]['name'], await page.ev("document.querySelectorAll('#plotlyChart img').length"),

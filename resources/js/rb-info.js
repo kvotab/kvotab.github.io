@@ -1181,6 +1181,17 @@ function showMultipleDatasetAttributes(items) {
           } catch (err) {
             kvotWarn('probabilistic collect error:', err);
           }
+        } else if (!isTimeDep) {
+          // Numbers that are neither -- a vector, a matrix, an array of more
+          // dimensions -- are drawn with the others selected: a histogram or
+          // a scatter of each, matrices side by side (createPdfHistogram).
+          const preview = numericPreviewValues(dataset);
+          if (preview) {
+            const datasetName = path.split('/').pop();
+            const entryLabel = buildTraceName(datasetName, path, fileKey, allPaths, allFileKeys);
+            combinedHistogramEntries.push({ label: entryLabel, samples: preview.values, spec: null, deterministicValue: null,
+                                            matrix: preview.matrix, pages: preview.pages, vector: true });
+          }
         }
       } catch (err) { kvotWarn('PDF collect error:', err); }
 
@@ -1206,7 +1217,12 @@ function showMultipleDatasetAttributes(items) {
   if (anyTimeSeries) {
     createMultiDatasetChart(normalizedItems);
   } else if (combinedHistogramEntries.length > 0) {
-    createPdfHistogram({ type: 'lookup', entries: combinedHistogramEntries, path: 'Multi-selection' });
+    // Drawn as one vector -- or one matrix -- is when all of them are; the
+    // selection, as what keeps its slice until another is made.
+    createPdfHistogram({ type: 'lookup', entries: combinedHistogramEntries, path: 'Multi-selection',
+                         key: normalizedItems.map(d => `${d.path}|${d.fileKey}`).join('\n'),
+                         vector: combinedHistogramEntries.every(e => e.vector),
+                         matrix: combinedHistogramEntries.every(e => e.matrix) });
   } else {
     document.getElementById('plotlyChartContainer').classList.remove('visible');
     currentChartData = null;

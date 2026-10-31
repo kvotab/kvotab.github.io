@@ -249,7 +249,9 @@ async def main():
                    [t['name'] for t in c['traces'] if t['name'] in ('k', 'c0') and t['type'] == 'scatter']),
                   (True, True, []))
             await page.ev("__select([{ path: '/geosphere/k', fileKey: 'constants.h5' }, { path: '/geosphere/table', fileKey: 'constants.h5' }])")
-            check('  and values without one give no chart', (await page.ev('__chart()'))['visible'], False)
+            c = await page.ev('__chart()')
+            check('  and of values without one, a vector is drawn as its values are, a histogram; a single value is not',
+                  (c['visible'], [(t['type'], t['name'], len(t['x'])) for t in c['traces']]), (True, [('histogram', 'table', 3)]))
 
             check('a file without /time loads', await page.ev("__build('notime.h5')"), ['constants.h5', 'notime.h5'])
             await page.ev("__select([{ path: '/x', fileKey: 'notime.h5' }, { path: '/k2', fileKey: 'notime.h5' }])")

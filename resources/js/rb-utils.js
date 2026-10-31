@@ -1933,7 +1933,8 @@ function createPdfHistogram(data) {
   currentPdfHistogramData = data;
 
   // An array of three dimensions or more is drawn a slice at a time: the one
-  // the Slice field asks for, from 1 again for each array clicked.
+  // the Slice field asks for, from 1 again for each array, or selection,
+  // clicked.
   const pages = previewPages(data);
   const sliceLabel = document.getElementById('histSliceLabel');
   const sliceInput = document.getElementById('histSliceNum');
@@ -1941,8 +1942,9 @@ function createPdfHistogram(data) {
   if (pages) {
     let page = 1;
     if (sliceInput) {
-      if (sliceInput.dataset.path !== String(data.path)) {
-        sliceInput.dataset.path = String(data.path);
+      const key = String(data.key || data.path);
+      if (sliceInput.dataset.path !== key) {
+        sliceInput.dataset.path = key;
         sliceInput.value = '1';
       }
       sliceInput.max = String(pages);
@@ -1997,6 +1999,29 @@ function createPdfHistogram(data) {
   const valuesName = data.vector ? ((data.path || '').split('/').pop() || 'Values') : 'Samples';
   const placeName = data.vector ? 'Element' : 'Iteration';
 
+  // Several vectors of one length: one of them can be the scatter's x axis,
+  // the others of its length drawn against it. Offered while the selection
+  // lasts; a new one starts against the place again.
+  const xLabel = document.getElementById('histXLabel');
+  const xSelect = document.getElementById('histXSelect');
+  const xChoices = [];
+  if (data.type === 'lookup' && kind === 'vector') {
+    const lengths = new Map();
+    for (const e of data.entries) lengths.set(e.samples.length, (lengths.get(e.samples.length) || 0) + 1);
+    data.entries.forEach((e, i) => { if (lengths.get(e.samples.length) > 1) xChoices.push(i); });
+  }
+  let xIndex = null;
+  if (xLabel) xLabel.style.display = scatter && xChoices.length ? '' : 'none';
+  if (scatter && xChoices.length && xSelect) {
+    const key = String(data.key || data.path);
+    if (xSelect.dataset.key !== key) {
+      xSelect.dataset.key = key;
+      xSelect.replaceChildren(new Option(placeName, ''), ...xChoices.map(i => new Option(data.entries[i].label, String(i))));
+      xSelect.value = '';
+    }
+    xIndex = xSelect.value === '' ? null : Number(xSelect.value);
+  }
+
   // Determine if all sample values are strictly positive (log10 is only meaningful then)
   const positive = (samples) => {
     const values = finite(samples);
@@ -2005,6 +2030,10 @@ function createPdfHistogram(data) {
   let allPositive = true;
   if (data.type === 'single') {
     allPositive = positive(data.samples);
+  } else if (xIndex !== null) {
+    // Against a vector, only it and the others of its length are drawn.
+    const n = data.entries[xIndex].samples.length;
+    allPositive = data.entries.every(e => e.samples.length !== n || positive(e.samples));
   } else if (data.type === 'lookup') {
     allPositive = data.entries.every(e => positive(e.samples));
   }
@@ -2105,6 +2134,8 @@ function createPdfHistogram(data) {
                                     deterministicValue: e.deterministicValue,
                                     color: palette[i % palette.length].line, mark: palette[i % palette.length].pdf }));
   let placeTitle = placeName;
+  let xyTitle = 'Value';
+
 
   /** Interpolate the PDF overlay y-value at a given display-space x. Returns null if not possible. */
   function _pdfYAt(pdfXArr, pdfYArr, xVal) {
@@ -2187,8 +2218,8 @@ function createPdfHistogram(data) {
    * Drawn as its points are: WebGL draws over everything else, so a level
    * among a WebGL cloud of points is drawn with WebGL too, after them.
    */
-  function _level(n, val, name, line, type) {
-    traces.push({ x: [1, Math.max(n, 1)], y: [val, val], type, mode: 'lines', line, name, showlegend: true });
+  function _level(n, val, name, line, type, span = [1, Math.max(n, 1)]) {
+    traces.push({ x: span, y: [val, val], type, mode: 'lines', line, name, showlegend: true });
   }
 
   if (heatmap) {
@@ -2238,6 +2269,47 @@ function createPdfHistogram(data) {
                            xanchor: 'center', yanchor: 'bottom', showarrow: false, font: { color: textColor } });
       }
     });
+
+  } else if (scatter && xIndex !== null) {
+    // The others of its length against the vector chosen, element by element:
+    // a level for each statistic of each across that vector's range, a ring
+    // round the element asked for. Log₁₀ makes both axes logarithmic.
+    const along = data.entries[xIndex];
+    const n = along.samples.length;
+    const xs = Array.from(along.samples, Number);
+    const finiteX = finite(xs);
+    const span = finiteX.length ? [Math.min(...finiteX), Math.max(...finiteX)] : [0, 1];
+    const others = data.entries.map((e, i) => ({ e, i })).filter(({ e, i }) => i !== xIndex && e.samples.length === n);
+    const type = n * others.length > 10000 ? 'scattergl' : 'scatter';
+    const element = Array.from({ length: n }, (_, k) => k + 1);
+    for (const { e, i } of others) {
+      const c = palette[i % palette.length];
+      const ys = Array.from(e.samples, Number);
+      traces.push({
+        x: xs, y: ys, type, mode: 'markers', name: e.label, customdata: element,
+        marker: { color: c.line, size: n > 2000 ? 3 : 6 },
+        hovertemplate: `${placeName} %{customdata}<br>${escapeHtml(along.label)}: %{x}<br>${escapeHtml(e.label)}: %{y}<extra></extra>`,
+      });
+      if (showStats) {
+        for (const st of _statistics(finite(ys))) {
+          if (st.val == null || !isFinite(st.val) || (useLog && st.val <= 0)) continue;
+          _level(n, st.val, st.label + (others.length > 1 ? ' \u2013 ' + e.label : '') + ' (' + Number(st.val.toPrecision(4)) + ')',
+                 { color: c.pdf, width: 1.5, dash: st.dash }, type, span);
+        }
+      }
+      if (iterNum !== null && iterNum <= n && isFinite(xs[iterNum - 1]) && isFinite(ys[iterNum - 1])
+          && (!useLog || (xs[iterNum - 1] > 0 && ys[iterNum - 1] > 0))) {
+        traces.push({
+          x: [xs[iterNum - 1]], y: [ys[iterNum - 1]], type, mode: 'markers',
+          marker: { color: c.pdf, size: 14, symbol: 'circle-open', line: { width: 2 } },
+          name: placeName + ' ' + iterNum + (others.length > 1 ? ' \u2013 ' + e.label : '')
+            + ' (' + Number(xs[iterNum - 1].toPrecision(4)) + ', ' + Number(ys[iterNum - 1].toPrecision(4)) + ')',
+          showlegend: true,
+        });
+      }
+    }
+    placeTitle = along.label;
+    xyTitle = others.length === 1 ? others[0].e.label : 'Value';
 
   } else if (scatter) {
     // Each value against its place: a matrix's in a series for each column --
@@ -2439,10 +2511,10 @@ function createPdfHistogram(data) {
     plot_bgcolor: bgColor,
     font: { color: textColor },
     xaxis: scatter
-      ? { ...axisStyle, title: placeTitle }
+      ? { ...axisStyle, title: placeTitle, type: xIndex !== null && useLog ? 'log' : 'linear' }
       : { ...axisStyle, title: useLog ? 'log\u2081\u2080(Value)' : 'Value' },
     yaxis: scatter
-      ? { ...axisStyle, title: 'Value', type: useLog ? 'log' : 'linear' }
+      ? { ...axisStyle, title: xyTitle, type: useLog ? 'log' : 'linear' }
       : { ...axisStyle, title: 'Probability Density', rangemode: 'tozero' },
     ...heatAxes,
     margin: { t: annotations.length ? 30 : 20, r: 30, b: 60, l: 60 },
