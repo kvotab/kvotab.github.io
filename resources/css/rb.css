@@ -100,6 +100,9 @@
 
     header {
       grid-template-columns: 60px auto 1fr 80px;
+      /* One row, the header's own height whatever its tallest item: the tabs
+         stand on the row's bottom (.tabs-container). */
+      grid-template-rows: 30px;
       z-index: 1000000000;
     }
 
@@ -110,16 +113,23 @@
       overflow-x: auto;
       overflow-y: hidden;
       margin-left: 12px;
+      /*
+        The tabs, and the buttons beside them, stand on the page: their bottom
+        edge is the header's own, over its hairline -- the row's bottom, then
+        the header's 6px of padding and its 1px border. A tab that stopped
+        short left a band of the header between it and the page, and did not
+        read as a tab.
+      */
+      align-self: end;
       position: relative;
-      top: 3px;
+      top: 7px;
     }
 
     /*
-      The strip the tabs scroll in, and the one place on this page where the
-      scrollbar's thickness is a layout fact rather than a matter of taste: the
-      header row is 32.8px, a tab is 25px of it, and the bar has what is left.
-      Section 17's 8px fits; the 15px this page was getting instead did not,
-      and what it pushed out was the top of every tab. See the note there.
+      The strip the tabs scroll in. When they overflow it, its scrollbar goes
+      under them and the strip grows upward to hold it (.tabs-container stands
+      on its bottom edge), so the bar costs the tabs none of their height;
+      section 17 keeps it to 8px all the same. See the note there.
     */
     #fileTabs {
       display: flex;
