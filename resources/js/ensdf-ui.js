@@ -1019,6 +1019,50 @@
     document.querySelector('.nz-chain-scroll').scrollTop = 0;
   }
 
+  /* A drag moves the drawing, as on the chart: across in its own box and
+     down with the view, as the scroll bars move it. It takes the left
+     button pressed on the drawing, not on a scroll bar, and a move of a few
+     pixels, so that a click still picks a box; the click that ends a drag
+     picks none. A finger scrolls the boxes by itself. */
+  function setupChainDrag() {
+    const svg = $('nzChainSvg');
+    const draw = svg.parentElement;
+    const box = document.querySelector('.nz-chain-scroll');
+    let drag = null;
+    let dragged = false;
+    draw.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType !== 'mouse' || ev.button !== 0 || !svg.contains(ev.target)) return;
+      drag = { x: ev.clientX, y: ev.clientY, left: draw.scrollLeft, top: box.scrollTop, moved: false };
+    });
+    const end = () => {
+      if (!drag) return;
+      if (drag.moved) {
+        draw.classList.remove('panning');
+        dragged = true;
+        setTimeout(() => { dragged = false; });
+      }
+      drag = null;
+    };
+    draw.addEventListener('pointermove', (ev) => {
+      if (!drag) return;
+      /* The button was let go where the drawing did not hear it. */
+      if (!(ev.buttons & 1)) { end(); return; }
+      const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) <= 4) return;
+        drag.moved = true;
+        draw.setPointerCapture(ev.pointerId);
+        draw.classList.add('panning');
+        hideTip();
+      }
+      draw.scrollLeft = drag.left - dx;
+      box.scrollTop = drag.top - dy;
+    });
+    draw.addEventListener('pointerup', end);
+    draw.addEventListener('pointercancel', end);
+    draw.addEventListener('click', (ev) => { if (dragged) ev.stopPropagation(); }, true);
+  }
+
   /* How long a member must live to be drawn in a chain, and the smallest
      branch: the settings ensdf-core.js keeps for every page that draws one. */
   const LIFE_OPTIONS = C.LIFE_OPTIONS;
@@ -1904,6 +1948,7 @@
       const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
       zoomChain(Math.exp(-dy * 0.01), ev.clientX, ev.clientY);
     }, { passive: false });
+    setupChainDrag();
     setView(state.view);
     renderPanel();
 

@@ -541,8 +541,10 @@ a.nz-nuc:hover { text-decoration: underline; }
 /* A series stands on the view's own colour and runs out to its edges, over
    the scroll box's padding: no band between the edge and the drawing. */
 .nz-chain-draw[data-style="series"] { margin: -12px -12px 8px; }
-.nz-chain-draw svg { display: block; max-width: none; }
+/* A drag on the drawing moves it (ensdf-ui.js), so it selects no text. */
+.nz-chain-draw svg { display: block; max-width: none; -webkit-user-select: none; user-select: none; }
 .nz-chain-draw .nz-node { cursor: pointer; outline: none; }
+.nz-chain-draw.panning, .nz-chain-draw.panning .nz-node { cursor: grabbing; }
 .nz-chain-draw .nz-node:hover rect:first-child, .nz-chain-draw .nz-node:focus-visible rect:first-child { filter: brightness(1.06); }
 .nz-chain-draw .nz-node:focus-visible rect:first-child { stroke: var(--accent-line); stroke-width: 2; }
 /* The series: a circle keeps its fill and lights its outline. */

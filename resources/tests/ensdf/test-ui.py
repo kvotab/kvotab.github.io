@@ -5,7 +5,7 @@ test-parse.js proves the reading and the chains. This proves the wiring: the
 built-in release loads, a nuclide can be reached by address, by search, by
 clicking the chart and by the arrow keys, every colour mode draws its legend,
 the decay-chain chart draws with no label on top of a box, and draws as a
-series of circles (the way rdc.html draws chains) too, and zooms, the options change
+series of circles (the way rdc.html draws chains) too, zooms and moves when dragged, the options change
 the chain, the chain runs up to the parents as well, the Levels, Radiation and
 Data sets tabs fill, a user's ENSDF zip
 opens in the worker, is remembered across a reload and can be forgotten, the
@@ -93,6 +93,20 @@ class Page:
     async def mouse(self, x, y):
         for typ in ('mouseMoved', 'mousePressed', 'mouseReleased'):
             await self.call('Input.dispatchMouseEvent', {'type': typ, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1}, session=self.sid)
+
+    async def drag(self, points, during=None):
+        # The left button pressed at the first point and held through the
+        # rest; `during` is read while it is held, before it is let go.
+        async def send(typ, x, y, buttons):
+            await self.call('Input.dispatchMouseEvent', {'type': typ, 'x': x, 'y': y, 'button': 'left', 'buttons': buttons, 'clickCount': 1}, session=self.sid)
+        (x, y), last = points[0], points[-1]
+        await send('mouseMoved', x, y, 0)
+        await send('mousePressed', x, y, 1)
+        for px, py in points[1:]:
+            await send('mouseMoved', px, py, 1)
+        held = await self.ev(during) if during else None
+        await send('mouseReleased', last[0], last[1], 0)
+        return held
 
     async def key(self, key, code):
         for typ in ('keyDown', 'keyUp'):
@@ -501,6 +515,51 @@ async def main():
               (zoom['kept'], zoom['fresh'], zoom['freshWhole']), ([True, 238], True, True))
         check('... not zoomed, the chain stays whole as the view narrows; zoomed, it keeps its scale as the view widens',
               (zoom['follows'], zoom['keeps']), ([True, True], True))
+
+        # ---------------------------------------------------------- dragging the chain
+        # As on the chart, a drag moves the drawing -- across in its own box and
+        # down with the view, as the scroll bars do -- and a click still picks.
+        await page.ev("ENSDFPage.select('U-238'); 'ok'")
+        await asyncio.sleep(0.3)
+        at = """(key) => { const r = document.querySelector(`#nzChainSvg .nz-node[data-key="${key}"] rect`).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }"""
+        pos = json.loads(await page.ev(f"""(async () => {{
+          const at = {at};
+          for (let i = 0; i < 4; i++) document.querySelector('[data-on-click="nz:chainZoomIn"]').click();
+          /* 226Ra in the middle of the view, with room to move every way. */
+          const box = document.querySelector('.nz-chain-scroll'), draw = document.querySelector('.nz-chain-draw');
+          let [x, y] = at('88,226,0'); const d = draw.getBoundingClientRect(), b = box.getBoundingClientRect();
+          draw.scrollLeft += x - (d.left + d.width / 2); box.scrollTop += y - (b.top + b.height / 2);
+          await new Promise(r => setTimeout(r, 50));
+          [x, y] = at('88,226,0');
+          return JSON.stringify({{ x, y, left: draw.scrollLeft, top: box.scrollTop }}); }})()"""))
+        held = json.loads(await page.drag([(pos['x'] - 120 * i / 12, pos['y'] - 80 * i / 12) for i in range(13)], during="""JSON.stringify([
+          getComputedStyle(document.querySelector('#nzChainSvg .nz-node[data-key="88,226,0"] rect')).cursor, document.getElementById('nzTip').hidden])"""))
+        await asyncio.sleep(0.3)
+        dragged = json.loads(await page.ev("""JSON.stringify({ left: document.querySelector('.nz-chain-draw').scrollLeft, top: document.querySelector('.nz-chain-scroll').scrollTop,
+          sel: ENSDFPage.state.sel, root: ENSDFPage.state.root, text: getSelection().toString(), panning: document.querySelector('.nz-chain-draw').classList.contains('panning') })"""))
+        check('a drag on the chain moves the drawing with the pointer, across and down, as the scroll bars move it',
+              (round(dragged['left'] - pos['left']), round(dragged['top'] - pos['top'])), (120, 80))
+        check('... the box it started on is not picked, no text is selected, and the hand grips the drawing while it moves, with no hover card',
+              (dragged['sel'], dragged['root'], dragged['text'], held, dragged['panning']),
+              ({'z': 92, 'a': 238, 'k': 0}, {'z': 92, 'a': 238, 'k': 0}, '', ['grabbing', True], False))
+        rn = json.loads(await page.ev(f"JSON.stringify(({at})('86,222,0'))"))
+        await page.drag([(rn[0], rn[1]), (rn[0] + 2, rn[1] + 1)])
+        await asyncio.sleep(0.3)
+        check('... a click with a pixel or two of play still picks a box, and keeps the start',
+              await page.ev("JSON.stringify([ENSDFPage.state.sel, ENSDFPage.state.root.a])"), json.dumps([{'z': 86, 'a': 222, 'k': 0}, 238], separators=(',', ':')))
+        # The drawing's own scroll bar, across, is at its foot: in view, with the thumb half-way.
+        bar = json.loads(await page.ev("""(async () => {
+          const box = document.querySelector('.nz-chain-scroll'), draw = document.querySelector('.nz-chain-draw');
+          draw.scrollLeft = (draw.scrollWidth - draw.clientWidth) / 2;
+          box.scrollTop += draw.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom + 20;
+          await new Promise(r => setTimeout(r, 50));
+          const d = draw.getBoundingClientRect(), h = draw.offsetHeight - draw.clientHeight;
+          return JSON.stringify({ x: d.left + d.width / 2, y: d.top + draw.clientTop + draw.clientHeight + h / 2, left: draw.scrollLeft, h }); })()"""))
+        panned = await page.drag([(bar['x'] - 10 * i, bar['y']) for i in range(9)], during="document.querySelector('.nz-chain-draw').classList.contains('panning')")
+        await asyncio.sleep(0.2)
+        check('... a press on the drawing’s scroll bar drags the scroll bar, not the drawing',
+              (bar['h'] > 0, panned, await page.ev("document.querySelector('.nz-chain-draw').scrollLeft") < bar['left']), (True, False, True))
+        await page.ev("document.querySelector('[data-on-click=\"nz:chainWhole\"]').click(); 'ok'")
         # − + ⤢ set in type sat where the font put them, a pixel or more under the
         # middle of the button, and ⤢ in another font, smaller still.
         icons = json.loads(await page.ev("""(async () => {
