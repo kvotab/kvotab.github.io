@@ -567,7 +567,7 @@ async def main():
       return { theme: document.documentElement.dataset.theme, bg: cs(d).backgroundColor, sel: cs(o).backgroundColor, label: cs(o.querySelector('.sm-search-label')).color,
                path: cs(o.querySelector('.sm-search-path')).color, under: cs(o.querySelector('.sm-search-snip, .sm-search-why')).color, under2: cs(o2.querySelector('.sm-search-snip, .sm-search-why')).color,
                mark: cs(o.querySelector('mark')).textDecorationColor, markBg: cs(o.querySelector('mark')).backgroundColor, input: cs(d.querySelector('.sm-search-input')).color, field: cs(d.querySelector('.sm-search-field')).backgroundColor }; })()''')
-    check('dark theme: the dialog in the dark theme\'s surface colour', (col['theme'], col['bg']), ('dark', 'rgb(51, 43, 35)'))
+    check('dark theme: the dialog in the dark theme\'s surface colour', (col['theme'], col['bg']), ('dark', 'rgb(27, 33, 40)'))
     bg, sel = rgb_of(col['bg']), rgb_of(col['sel'])
     check('... the selected row\'s label, path and help line readable (contrast ≥ 7, 4.5, 4.5)',
           (contrast(rgb_of(col['label']), sel) >= 7, contrast(rgb_of(col['path']), sel) >= 4.5, contrast(rgb_of(col['under']), sel) >= 4.5), (True, True, True))
