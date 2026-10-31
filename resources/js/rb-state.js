@@ -58,6 +58,8 @@ let currentChartData = null;
 let currentPdfHistogram = false;
 /** @type {Object|null} Stored PDF histogram data for re-rendering on theme/log change */
 let currentPdfHistogramData = null;
+/** @type {{vector: string, matrix: string}} How the data preview draws a vector (histogram or scatter) and a matrix (heatmap, histogram or scatter) */
+let histogramMode = { vector: 'histogram', matrix: 'heatmap' };
 /** @type {string|null} Filename of the first enabled file (determines tree structure source) */
 let currentTreeFile = null;
 /** @type {string} Selected background overlay source for special group charts */
@@ -118,6 +120,7 @@ const INFO_PANEL_DEFAULT_MESSAGE = `
       <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
       <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
       <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
+      <li>A <strong>vector</strong> of numbers — one dimension longer than one, a 1000×1 double, say — is drawn by its values: as a histogram, or with <strong>Scatter</strong> each value against its place. A <strong>matrix</strong> is drawn as a <strong>Heatmap</strong>, its first row at the top, as a histogram of all its values, or with each column against its row; an array of more dimensions a <strong>Slice</strong> at a time, the matrix of its first two.</li>
       <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
       <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
       <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>

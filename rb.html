@@ -58,7 +58,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20261031b">
 </head>
 <body>
   <div id="dropOverlay">
@@ -283,6 +283,14 @@
           </div>
           <div id="histControls" class="chart-controls" style="display: none;">
             <span style="font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">📊 Data preview</span>
+            <div class="scale-toggle hist-mode" id="histModeToggle" role="group" aria-label="Draw the values as">
+              <button type="button" data-mode="heatmap" data-on-click="setHistogramMode" aria-pressed="false" title="A cell for each value, coloured by it, the first row at the top" hidden>Heatmap</button>
+              <button type="button" data-mode="histogram" data-on-click="setHistogramMode" class="active" aria-pressed="true" title="How often each value occurs">Histogram</button>
+              <button type="button" data-mode="scatter" data-on-click="setHistogramMode" aria-pressed="false" title="Each value against its place, from 1">Scatter</button>
+            </div>
+            <label id="histSliceLabel" style="display: none;" title="Which matrix of the array to draw: its first two dimensions, at this place in the others, counted as MATLAB counts its pages">
+              Slice: <input type="number" id="histSliceNum" min="1" value="1" data-on-input="redrawHistogram" aria-label="Slice"> <span id="histSliceText"></span>
+            </label>
             <label id="histDetLabel" style="display: none;">
               <input type="checkbox" id="histDet" checked data-on-change="redrawHistogram">
               Deterministic
@@ -300,7 +308,7 @@
               Log₁₀ scale
             </label>
             <label id="histIterLabel" style="display: none;">
-              Iteration: <input type="number" id="histIterNum" min="1" value="" data-on-input="redrawHistogram" title="Show a vertical line for this iteration (1-based index)">
+              <span id="histIterText">Iteration:</span> <input type="number" id="histIterNum" min="1" value="" data-on-input="redrawHistogram" title="Mark this one in the chart, counted from 1">
             </label>
           </div>
           <div id="plotlyChart"></div>
@@ -334,6 +342,7 @@
                     <li>Load <strong>multiple files</strong> and use the ∩ (intersect) or ∪ (union) toggle to combine trees.</li>
                     <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
                     <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
+                    <li>A <strong>vector</strong> of numbers — one dimension longer than one, a 1000×1 double, say — is drawn by its values: as a histogram, or with <strong>Scatter</strong> each value against its place. A <strong>matrix</strong> is drawn as a <strong>Heatmap</strong>, its first row at the top, as a histogram of all its values, or with each column against its row; an array of more dimensions a <strong>Slice</strong> at a time, the matrix of its first two.</li>
                     <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
                     <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
                     <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
@@ -452,10 +461,10 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20261031"></script>
-  <script src="./resources/js/rb-utils.js?v=20261031"></script>
-  <script src="./resources/js/rb-actions.js?v=20261008b"></script>
-  <script src="./resources/js/rb-hdf5.js?v=20261022"></script>
+  <script src="./resources/js/rb-state.js?v=20261031c"></script>
+  <script src="./resources/js/rb-utils.js?v=20261031c"></script>
+  <script src="./resources/js/rb-actions.js?v=20261031"></script>
+  <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
   <script src="./resources/js/rb-file.js?v=20261031"></script>
   <script src="./resources/js/rb-eas.js?v=20261031"></script>
@@ -464,13 +473,13 @@
   <script src="./resources/js/rb-tree.js?v=20260926"></script>
   <script src="./resources/js/rb-chart-axes.js?v=20261008b"></script>
   <script src="./resources/js/rb-chart-presets.js?v=20261008b"></script>
-  <script src="./resources/js/rb-chart-export.js?v=20261007"></script>
-  <script src="./resources/js/rb-chart-excel.js?v=20261007"></script>
+  <script src="./resources/js/rb-chart-export.js?v=20261031"></script>
+  <script src="./resources/js/rb-chart-excel.js?v=20261031"></script>
   <script src="./resources/js/rb-chart-python.js?v=20261031"></script>
   <script src="./resources/js/rb-chart-toggles.js?v=20261007"></script>
   <script src="./resources/js/rb-chart.js?v=20261022"></script>
   <script src="./resources/js/rb-legend.js?v=20260926"></script>
-  <script src="./resources/js/rb-info.js?v=20261011"></script>
+  <script src="./resources/js/rb-info.js?v=20261031b"></script>
   <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>

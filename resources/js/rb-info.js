@@ -320,6 +320,18 @@ async function showNodeAttributes(path, isGroup = false) {
         }
       }
 
+      // Real numbers that are none of those -- a column or a matrix of a
+      // MAT-file, say -- are drawn by their values too: a vector as a
+      // histogram of them or each against its place, a matrix as a heatmap as
+      // well, an array of more dimensions a slice at a time (createPdfHistogram).
+      if (!isGroup && !pdfHistogramByFile.some(e => e.fileKey === fileKey) && !isTimeDependent(node)) {
+        const preview = numericPreviewValues(node);
+        if (preview) {
+          pdfHistogramByFile.push({ fileKey, data: { type: 'single', samples: preview.values, spec: null, path,
+                                                     vector: true, matrix: preview.matrix, pages: preview.pages } });
+        }
+      }
+
       if (!isGroup) {
         const excelWrap = document.createElement('div'); excelWrap.className = 'info-excel-footer';
         const excelBtn = document.createElement('button'); excelBtn.className = 'info-btn-excel';
@@ -355,14 +367,19 @@ async function showNodeAttributes(path, isGroup = false) {
           const nodeName = item.data.path ? item.data.path.split('/').pop() : '';
           const specSuffix = item.data.spec ? ' (' + PDFSampler.pdfLabel(item.data.spec) + ')' : '';
           const label = (nodeName || 'raw') + specSuffix + fileSuffix;
-          mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue, source: item.data.source });
+          mergedEntries.push({ label, samples: item.data.samples, spec: item.data.spec, deterministicValue: item.data.deterministicValue,
+                               source: item.data.source, matrix: item.data.matrix || null, pages: item.data.pages || null });
         } else if (item.data.type === 'lookup') {
           for (const entry of item.data.entries) {
             mergedEntries.push({ ...entry, label: entry.label + fileSuffix });
           }
         }
       }
-      if (mergedEntries.length > 0) pdfHistogramData = { type: 'lookup', entries: mergedEntries, path };
+      if (mergedEntries.length > 0) {
+        pdfHistogramData = { type: 'lookup', entries: mergedEntries, path,
+                             vector: pdfHistogramByFile.every(e => e.data.vector),
+                             matrix: pdfHistogramByFile.every(e => e.data.matrix) };
+      }
     }
 
     if (isRadionuclidesGroup) { currentPdfHistogram = false; await createRadionuclidesChart(path); }

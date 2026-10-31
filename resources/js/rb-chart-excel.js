@@ -934,6 +934,12 @@ async function downloadChartDataAsExcel() {
     notifyUser('There is no chart data to export yet.');
     return;
   }
+  // The chart is drawn in Excel line by line, and Excel has no histogram or
+  // heatmap of the page's to draw: the dataset's values are in its own export.
+  if (currentChartData.traces.some(t => t.type === 'histogram' || t.type === 'heatmap')) {
+    notifyUser('Excel draws no histogram or heatmap: Download Excel, under the dataset\'s information, writes its values.');
+    return;
+  }
   if (!window.xlsxReady || !window.XlsxWriter) {
     reportFailure('downloadChartDataAsExcel', new Error('xlsxwrite.js did not load'),
       { userMessage: 'The Excel export library is not loaded. Reload the page and try again' });

@@ -1385,6 +1385,27 @@
       outline: none;
     }
 
+    /* The data preview's Histogram/Scatter: a pill like lin/log, whose
+       buttons are each clicked for themselves */
+    .chart-controls .hist-mode,
+    .chart-controls .hist-mode button {
+      cursor: pointer;
+    }
+    /* Heatmap is offered for a matrix alone: when it is not, the pill begins
+       at Histogram, which then takes the rounded end */
+    .chart-controls .hist-mode button[hidden] {
+      display: none;
+    }
+    .chart-controls .hist-mode button[hidden] + button {
+      border-top-left-radius: 999px;
+      border-bottom-left-radius: 999px;
+    }
+    /* A mode that makes no chart of these values is disabled, and its title
+       says why: so it keeps the pointer, which shows the title */
+    .chart-controls .hist-mode button:disabled {
+      pointer-events: auto;
+    }
+
     /* The prefix for an axis's unit, beside its lin/log: a pill like it */
     .chart-controls select.prefix-select {
       padding: 3px 20px 3px 9px;

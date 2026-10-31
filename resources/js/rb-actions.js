@@ -51,4 +51,5 @@ registerActions({
 
   /* ── Data preview histogram ──────────────────────────────────────────── */
   redrawHistogram: () => redrawHistogram(),
+  setHistogramMode: (event, el) => setHistogramMode(el.dataset.mode),
 });

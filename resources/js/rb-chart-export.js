@@ -19,7 +19,8 @@
 /**
  * Export current chart data to a CSV file.
  * Creates a downloadable file with columns: Series, X, Y.
- * Each trace in the chart becomes a series in the CSV.
+ * Each trace in the chart becomes a series in the CSV; a heatmap is written
+ * as its matrix instead.
  *
  * The values are in the file's units, whatever prefix the axes show them
  * with (changeAxisPrefix): a CSV says nothing of units, so it holds the
@@ -33,14 +34,28 @@ function downloadChartData() {
     return;
   }
 
-  let csv = 'Series,X,Y\n';
-
-  for (const trace of currentChartData.traces) {
-    const name = trace._exportName || trace.name;
-    const x = '_fileX' in trace ? trace._fileX : trace.x;
-    const y = '_fileY' in trace ? trace._fileY : trace.y;
-    for (let i = 0; i < x.length; i++) {
-      csv += `"${name}",${x[i]},${y[i]}\n`;
+  let csv = '';
+  const heatmaps = currentChartData.traces.filter(t => t.type === 'heatmap');
+  if (heatmaps.length) {
+    // A heatmap is its matrix, a line for each row, with the values the file
+    // holds whatever scale the colours are on; a block for each file's.
+    for (const t of heatmaps) {
+      const m = t._matrix;
+      csv += `"${t.name}"\nRow,${Array.from({ length: m.cols }, (_, j) => j + 1).join(',')}\n`;
+      for (let i = 0; i < m.rows; i++) {
+        csv += `${i + 1},${Array.from(m.values.slice(i * m.cols, (i + 1) * m.cols)).join(',')}\n`;
+      }
+    }
+  } else {
+    csv = 'Series,X,Y\n';
+    for (const trace of currentChartData.traces) {
+      const name = trace._exportName || trace.name;
+      const x = ('_fileX' in trace ? trace._fileX : trace.x) || [];
+      // A histogram's points are its values, with no y of their own.
+      const y = ('_fileY' in trace ? trace._fileY : trace.y) || [];
+      for (let i = 0; i < x.length; i++) {
+        csv += `"${name}",${x[i]},${y[i] ?? ''}\n`;
+      }
     }
   }
   

@@ -258,6 +258,49 @@ function constantValuesOf(dataset, nIter = null) {
   return values.some(Number.isFinite) ? values : null;
 }
 
+/** The longest vector the data preview draws: a million points is a second's drawing. */
+const RB_VECTOR_MAX = 1000000;
+/** The most cells of a matrix it draws: four million are half a second's heatmap. */
+const RB_MATRIX_MAX = 4000000;
+/** The most values of an array of three dimensions or more it draws slices of. */
+const RB_SLICED_MAX = 50000000;
+
+/**
+ * The values of a dataset of real numbers -- floating-point or integer -- that
+ * the data preview draws: a vector, one dimension longer than one and any
+ * other of length one (n, n×1 or 1×n, as a column in a MAT-file is); a
+ * matrix, two dimensions longer than one; or an array of more, drawn a slice
+ * at a time, the matrix of its first two dimensions at a place in the others.
+ * Null for any other dataset -- text, a compound -- and for one with more
+ * values than the preview draws.
+ *
+ * @param {Object} dataset - h5wasm Dataset object
+ * @returns {{values: ArrayLike<number|bigint>, matrix: number[]|null, pages: number[]|null}|null}
+ *   The values in the dataset's order; for a matrix, or each slice of a larger
+ *   array, its rows and columns; for such an array, the length of each of its
+ *   other dimensions. An array's values are kept as the file gave them, and
+ *   read a slice at a time.
+ */
+function numericPreviewValues(dataset) {
+  if (!dataset || typeof dataset.dtype !== 'string' || !/^[<>|=]?[efdbBhHiIqQ]$/.test(dataset.dtype)) return null;
+  const dims = Array.isArray(dataset.shape) ? dataset.shape.map(Number) : [];
+  const long = dims.filter(d => d > 1);
+  const size = dims.reduce((n, d) => n * d, 1);
+  if (long.length < 1) return null;
+  if (long.length === 1 && size > RB_VECTOR_MAX) return null;
+  if (long.length === 2 && size > RB_MATRIX_MAX) return null;
+  if (long.length > 2 && (size > RB_SLICED_MAX || long[0] * long[1] > RB_MATRIX_MAX)) return null;
+  let values;
+  try {
+    values = typeof dataset.value !== 'undefined' ? dataset.value : dataset.toArray();
+  } catch (e) {
+    return null;
+  }
+  if (!values || values.length !== size) return null;
+  if (long.length > 2) return { values, matrix: long.slice(0, 2), pages: long.slice(2) };
+  return { values: Array.from(values, Number), matrix: long.length === 2 ? long : null, pages: null };
+}
+
 /**
  * The index lists whose members a group draws together, as one chart. An
  * Ecolego run opened from an assessment puts the members of these lists at

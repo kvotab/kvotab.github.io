@@ -123,6 +123,33 @@ def deep():
     return header('<') + inner + matrix(6, [1, 1], 'after', [doubles([2], '<')], '<')
 
 
+VECTOR = [1 + (k * 37 % 1000) / 10 for k in range(1000)]
+
+
+HOSTILE_VECTOR = '<img src=x onerror="window.__matXss=3">'
+
+
+def vectors():
+    """Vectors and matrices of numbers, which are drawn, and a scalar, which is not.
+    A matrix's values are written as MATLAB keeps them, a column at a time."""
+    e = '<'
+    return header(e) + b''.join([
+        matrix(6, [1000, 1], 'v', [doubles(VECTOR, e)], e),
+        matrix(7, [1, 50], 'w', [element(7, struct.pack(e + '50f', *[k - 25 for k in range(50)]), e)], e),
+        matrix(6, [5, 1], 'gaps', [doubles([1, float('nan'), 3, float('inf'), 5], e)], e),
+        matrix(6, [20000, 1], 'long', [doubles([k % 97 for k in range(20000)], e)], e),
+        matrix(12, [1, 5], 'iv', [element(5, struct.pack(e + '5i', 1, 2, 3, 4, 5), e)], e),
+        matrix(6, [3, 4], 'mtx', [doubles(list(range(12)), e)], e),
+        matrix(6, [2, 2], 'pm', [doubles([1, 100, 10, 1000], e)], e),
+        matrix(6, [2, 2], 'nm', [doubles([1, float('inf'), float('nan'), 4], e)], e),
+        matrix(6, [150, 120], 'big', [doubles([k % 7 for k in range(150 * 120)], e)], e),
+        matrix(6, [1, 1], 'sc', [doubles([7], e)], e),
+        matrix(6, [3, 1], HOSTILE_VECTOR, [doubles([1, 2, 3], e)], e),
+        matrix(6, [2, 3, 4], 'cube', [doubles(list(range(24)), e)], e),
+        matrix(6, [2, 2, 2, 3], 'hyper', [doubles(list(range(24)), e)], e),
+    ])
+
+
 HOSTILE = '<img src=x onerror="window.__matXss=1">'
 
 
@@ -192,6 +219,35 @@ HELPERS = r"""(() => {
 })()"""
 
 
+# What the data preview draws: whether it shows, the traces by kind, name and
+# length, the first few points, the axes, and the controls offered beside it.
+PREVIEW = """(async () => {
+  await __wait(900);
+  const pd = document.getElementById('plotlyChart');
+  const shown = document.getElementById('plotlyChartContainer').classList.contains('visible') && currentPdfHistogram;
+  const traces = (shown ? pd.data || [] : []).map(t => ({ type: t.type, name: t.name, n: (t.y || t.x || []).length,
+    x: Array.from(t.x || []).slice(0, 3), y: Array.from(t.y || []).slice(0, 3).map(v => (Number.isFinite(v) ? v : String(v))),
+    z: t.z ? t.z.map(r => Array.from(r)) : undefined, xaxis: t.xaxis }));
+  const fl = pd._fullLayout || {};
+  const visible = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== 'none'; };
+  return { shown, traces, x: fl.xaxis && fl.xaxis.title && fl.xaxis.title.text, y: fl.yaxis && fl.yaxis.title && fl.yaxis.title.text,
+           yType: fl.yaxis && fl.yaxis.type, yReversed: !!(fl.yaxis && fl.yaxis.range && fl.yaxis.range[0] > fl.yaxis.range[1]),
+           mode: (document.querySelector('#histModeToggle button.active') || {}).dataset?.mode,
+           vector: !!(currentPdfHistogramData && currentPdfHistogramData.vector),
+           pressed: [...document.querySelectorAll('#histModeToggle button')].filter(b => !b.hidden).map(b => [b.dataset.mode, b.getAttribute('aria-pressed')]),
+           disabled: [...document.querySelectorAll('#histModeToggle button')].filter(b => b.disabled).map(b => [b.dataset.mode, b.title]),
+           colorbar: ((pd.data || []).find(t => t.showscale) || {}).colorbar?.title?.text,
+           panels: (fl.annotations || []).map(a => a.text), element: visible('histIterLabel'), stats: visible('histStatsLabel'),
+           slice: visible('histSliceLabel') ? document.getElementById('histSliceText').textContent : null,
+           log: visible('histLogLabel'), pdf: visible('histPdfLabel'), place: document.getElementById('histIterText').textContent };
+})()"""
+
+
+async def preview(page, path):
+    await page.ev(f"__click({json.dumps(path)}, false)")
+    return await page.ev(PREVIEW, timeout=30)
+
+
 async def pick_files(page, paths):
     doc = await page.send('DOM.getDocument', {})
     found = await page.send('DOM.querySelector', {'nodeId': doc['result']['root']['nodeId'], 'selector': '#fileInput'})
@@ -232,6 +288,8 @@ async def main():
         'damaged-zlib.mat': damaged_compressed(),
         'huge.mat': huge_cell(),
         'notmat.mat': bytes(range(256)) * 4,
+        'vectors.mat': vectors(),
+        'vectors-b.mat': vectors(),
     }
     v7 = open(os.path.join(FIXTURES, 'matlab-v7.mat'), 'rb').read()
     written['truncated.mat'] = v7[:len(v7) * 3 // 5]
@@ -385,6 +443,145 @@ async def main():
                 try { await matInflate(bytes, { left: 4096 }); return 'unpacked'; }
                 catch (e) { return /unpack to more than/.test(e.message); } })()"""
                 % json.dumps(base64.b64encode(zlib.compress(b'\0' * 1000000)).decode())), True)
+
+            # --- vectors drawn -------------------------------------------------------
+            await pick_files(page, [at('vectors.mat')])
+            v = await preview(page, '/v')
+            check('a vector of doubles is drawn: a histogram of its values, under its name',
+                  (v['shown'], v['vector'], [(t['type'], t['name'], t['n']) for t in v['traces']], v['x'], v['y']),
+                  (True, True, [('histogram', 'v', 1000)], 'Value', 'Probability Density'))
+            check('  Histogram and Scatter offered, Histogram pressed; log offered, the values all positive; a place is an Element',
+                  (v['pressed'], v['log'], v['place']), ([['histogram', 'true'], ['scatter', 'false']], True, 'Element:'))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            v = await page.ev(PREVIEW, timeout=30)
+            check('Scatter: each value against its place, counted from 1',
+                  (v['mode'], v['traces'][0]['type'], v['traces'][0]['n'], v['traces'][0]['x'], v['traces'][0]['y'], v['x'], v['y'], v['pressed']),
+                  ('scatter', 'scatter', 1000, [1, 2, 3], VECTOR[:3], 'Element', 'Value', [['histogram', 'false'], ['scatter', 'true']]))
+            await page.ev("document.getElementById('histStats').click()")
+            v = await page.ev(PREVIEW, timeout=30)
+            mean = sum(VECTOR) / len(VECTOR)
+            levels = {t['name'].rsplit(' (', 1)[0]: t for t in v['traces'][1:]}
+            check('  statistics are levels across it, from the first place to the last',
+                  (sorted(levels), levels['Mean']['x'], levels['Mean']['y'][0]),
+                  (sorted(['Mean', 'Geo. Mean', 'P5', 'P50 (median)', 'P95']), [1, 1000], mean))
+            await page.ev("document.getElementById('histStats').click(); document.getElementById('histLogScale').click()")
+            check('  Log₁₀ makes its value axis logarithmic', (await page.ev(PREVIEW, timeout=30))['yType'], 'log')
+            await page.ev("""(() => { document.getElementById('histLogScale').click();
+                const i = document.getElementById('histIterNum'); i.value = '5'; i.dispatchEvent(new Event('input', { bubbles: true })); })()""")
+            v = await page.ev(PREVIEW, timeout=30)
+            check('  the element asked for is ringed, and named with its value',
+                  [(t['x'], t['y'], t['name']) for t in v['traces'][1:]], [([5], [VECTOR[4]], f'Element 5 ({VECTOR[4]:g})')])
+            await page.ev("(() => { const i = document.getElementById('histIterNum'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()")
+            w = await preview(page, '/w')
+            check('a single row vector is drawn too, still as a scatter; log not offered for values below zero',
+                  (w['shown'], w['mode'], w['traces'][0]['n'], w['traces'][0]['y'], w['log']), (True, 'scatter', 50, [-25, -24, -23], False))
+            g = await preview(page, '/gaps')
+            check('  NaN and Inf keep their places in a scatter', (g['traces'][0]['n'], g['traces'][0]['y']), (5, [1, 'NaN', 3]))
+            check('  a long one is drawn with WebGL', (await preview(page, '/long'))['traces'][0]['type'], 'scattergl')
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
+            g = await preview(page, '/gaps')
+            check('  and a histogram counts only the finite values', (g['mode'], g['traces'][0]['type'], g['traces'][0]['n']), ('histogram', 'histogram', 3))
+            iv = await preview(page, '/iv')
+            check('a vector of integers is drawn as one of doubles is',
+                  (iv['shown'], [(t['type'], t['name'], t['n']) for t in iv['traces']]), (True, [('histogram', 'iv', 5)]))
+            check('a scalar is not drawn', (await preview(page, '/sc'))['shown'], False)
+
+            # --- matrices drawn ------------------------------------------------------
+            m = await preview(page, '/mtx')
+            check('a matrix is drawn as a heatmap: a cell for each value, the first row at the top',
+                  (m['shown'], m['traces'][0]['type'], m['traces'][0]['z'], m['x'], m['y'], m['yReversed'], m['colorbar']),
+                  (True, 'heatmap', [[0, 3, 6, 9], [1, 4, 7, 10], [2, 5, 8, 11]], 'Column', 'Row', True, 'Value'))
+            check('  Heatmap, Histogram and Scatter offered, Heatmap pressed; no element to ask for, no statistics',
+                  (m['pressed'], m['element'], m['stats']),
+                  ([['heatmap', 'true'], ['histogram', 'false'], ['scatter', 'false']], False, False))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            m = await page.ev(PREVIEW, timeout=30)
+            check('  Scatter: a series for each row of a matrix wider than it is tall, against its column',
+                  ([(t['name'], t['n'], t['y']) for t in m['traces']], m['x']),
+                  ([('Row 1', 4, [0, 3, 6]), ('Row 2', 4, [1, 4, 7]), ('Row 3', 4, [2, 5, 8])], 'Column'))
+            v = await preview(page, '/v')
+            check('  a vector keeps its own choice, a histogram', (v['mode'], v['traces'][0]['type']), ('histogram', 'histogram'))
+            m = await preview(page, '/mtx')
+            check('  and the matrix its own, a scatter', m['mode'], 'scatter')
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
+            m = await page.ev(PREVIEW, timeout=30)
+            check('  Histogram: all its values', (m['mode'], [(t['type'], t['n']) for t in m['traces']]), ('histogram', [('histogram', 12)]))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=heatmap]').click()")
+            await page.ev("__click('/pm', false)")
+            await page.ev("document.getElementById('histLogScale').checked || document.getElementById('histLogScale').click()")
+            pm = await page.ev(PREVIEW, timeout=30)
+            check('  Log₁₀ colours a positive matrix by the log of its values',
+                  (pm['traces'][0]['z'], pm['colorbar']), ([[0, 1], [2, 3]], 'log₁₀(Value)'))
+            await page.ev("document.getElementById('histLogScale').click()")
+            nm = await preview(page, '/nm')
+            check('  NaN and Inf leave their cells blank', nm['traces'][0]['z'], [[1, None], [None, 4]])
+            big = await preview(page, '/big')
+            check('a matrix of 120 columns and 150 rows: a heatmap, and no scatter of 120 series, saying why',
+                  (big['traces'][0]['type'], big['disabled']), ('heatmap', [['scatter', 'More than 100 columns or rows to draw']]))
+            await page.ev("__click('/mtx', false)")
+            csv = await page.ev("""(async () => {
+                await __wait(900);
+                const keep = [URL.createObjectURL, HTMLAnchorElement.prototype.click];
+                let blob = null;
+                URL.createObjectURL = (b) => { blob = b; return 'blob:stub'; };
+                HTMLAnchorElement.prototype.click = function () {};
+                try { downloadChartData(); } finally { [URL.createObjectURL, HTMLAnchorElement.prototype.click] = keep; }
+                return blob ? await blob.text() : null; })()""", timeout=30)
+            check('  its CSV is the matrix, a line for each row', csv, '"mtx"\nRow,1,2,3,4\n1,0,3,6,9\n2,1,4,7,10\n3,2,5,8,11\n')
+            said = await page.ev("""(async () => {
+                const keep = notifyUser;
+                let said = null;
+                notifyUser = (m) => { said = m; };
+                try { await downloadChartDataAsExcel(); } finally { notifyUser = keep; }
+                return said; })()""", timeout=30)
+            check('  and Excel, which has no heatmap, says where its values are',
+                  said, "Excel draws no histogram or heatmap: Download Excel, under the dataset's information, writes its values.")
+            c = await preview(page, '/cube')
+            check('an array of three dimensions: a heatmap of its first slice, which says which',
+                  (c['traces'][0]['type'], c['traces'][0]['name'], c['traces'][0]['z'], c['slice']),
+                  ('heatmap', 'cube (:, :, 1)', [[0, 2, 4], [1, 3, 5]], 'of 4 · (:, :, 1)'))
+            slice = "(n) => { const i = document.getElementById('histSliceNum'); i.value = String(n); i.dispatchEvent(new Event('input', { bubbles: true })); }"
+            await page.ev(f"({slice})(4)")
+            c = await page.ev(PREVIEW, timeout=30)
+            check('  Slice 4 is A(:, :, 4)', (c['traces'][0]['z'], c['slice']), ([[18, 20, 22], [19, 21, 23]], 'of 4 · (:, :, 4)'))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
+            c = await page.ev(PREVIEW, timeout=30)
+            check('  and its histogram is the slice\'s values', [(t['type'], t['n']) for t in c['traces']], [('histogram', 6)])
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=heatmap]').click()")
+            h = await preview(page, '/hyper')
+            check('  another array starts at slice 1 again', h['slice'], 'of 6 · (:, :, 1, 1)')
+            await page.ev(f"({slice})(5)")
+            h = await page.ev(PREVIEW, timeout=30)
+            check('  of four dimensions, its slices counted as MATLAB counts pages, the third fastest',
+                  (h['traces'][0]['z'], h['slice']), ([[16, 18], [17, 19]], 'of 6 · (:, :, 1, 3)'))
+            d3 = await preview(page, '/d_3d')
+            await page.ev(f"({slice})(2)")
+            d3 = await page.ev(PREVIEW, timeout=30)
+            check('  MATLAB\'s own reshape(1:24, 2, 3, 4), slice 2', (d3['traces'][0]['z'], d3['slice']),
+                  ([[7, 9, 11], [8, 10, 12]], 'of 4 · (:, :, 2)'))
+            check('  a matrix has no slices to choose', (await preview(page, '/mtx'))['slice'], None)
+            x = await preview(page, '/' + HOSTILE_VECTOR)
+            check('a vector named with markup is drawn under its name as text; nothing runs',
+                  (x['shown'], x['traces'][0]['name'], await page.ev("document.querySelectorAll('#plotlyChart img').length"),
+                   await page.ev('typeof window.__matXss')), (True, HOSTILE_VECTOR, 0, 'undefined'))
+            await pick_files(page, [at('vectors-b.mat')])
+            # Two files in one chart: the two alone enabled, their trees joined (∪).
+            check('two files with the same vector, their trees joined', await page.ev("""(async () => {
+                for (const k of Object.keys(fileStates)) if (fileStates[k] && !['vectors.mat', 'vectors-b.mat'].includes(k)) toggleFileState(k);
+                await __wait(800);
+                document.querySelector('#treeModeContainer button[data-value="union"]').click();
+                await __wait(1500);
+                return [getEnabledFiles(), getTreeMode()]; })()""", timeout=60), [['vectors.mat', 'vectors-b.mat'], 'union'])
+            two = await preview(page, '/v')
+            check('two files open: a histogram of each', (two['vector'], [(t['type'], t['n']) for t in two['traces']]),
+                  (True, [('histogram', 1000), ('histogram', 1000)]))
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=scatter]').click()")
+            two = await page.ev(PREVIEW, timeout=30)
+            check('  and a scatter of each', [(t['type'], t['n']) for t in two['traces']], [('scatter', 1000), ('scatter', 1000)])
+            await page.ev("document.querySelector('#histModeToggle button[data-mode=histogram]').click()")
+            two = await preview(page, '/mtx')
+            check('  a matrix in each: their heatmaps side by side, each named',
+                  ([(t['type'], t['xaxis']) for t in two['traces']], len(two['panels'])), ([('heatmap', 'x'), ('heatmap', 'x2')], 2))
 
             # --- hostile -----------------------------------------------------------
             await pick_files(page, [at('hostile.mat')])

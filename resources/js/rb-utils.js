@@ -1854,6 +1854,69 @@ function renderChart(traces, layout, path, afterRender, axisUnits) {
   });
 }
 
+/** The most series a matrix is drawn in as a scatter: a column (or row) each. */
+const PREVIEW_MAX_SERIES = 100;
+/** The most files whose matrices are drawn side by side as heatmaps. */
+const PREVIEW_MAX_PANELS = 4;
+
+/**
+ * Whether the data preview draws a vector -- a sample among them -- or a
+ * matrix: from one file, or from each file of a joined tree.
+ *
+ * @param {Object|null} data - pdfHistogramData object
+ * @returns {'vector'|'matrix'}
+ */
+function previewKind(data) {
+  if (!data) return 'vector';
+  const matrix = data.type === 'lookup' ? data.matrix && data.entries.every(e => e.matrix) : data.matrix;
+  return matrix ? 'matrix' : 'vector';
+}
+
+/**
+ * How many slices the data preview's array has: the product of its
+ * dimensions after the first two, the most of any file's. Zero for a vector
+ * or a matrix.
+ *
+ * @param {Object} data - pdfHistogramData object
+ * @returns {number}
+ */
+function previewPages(data) {
+  const items = data.type === 'lookup' ? data.entries : [data];
+  return items.reduce((n, d) => Math.max(n, d.pages ? d.pages.reduce((a, b) => a * b, 1) : 0), 0);
+}
+
+/**
+ * The data preview's array at one slice: the matrix of its first two
+ * dimensions at the place `page`, from 1, in the others, counted as MATLAB
+ * counts its pages, the third dimension fastest. A file whose array has fewer
+ * slices is drawn at its last.
+ *
+ * @param {Object} data - pdfHistogramData object
+ * @param {number} page
+ * @returns {Object} The data of that matrix, each item's `page` its place,
+ *   from 1, in each dimension after the first two
+ */
+function previewSlice(data, page) {
+  const one = (d) => {
+    if (!d.pages) return d;
+    const [rows, cols] = d.matrix;
+    const block = d.pages.reduce((n, x) => n * x, 1);
+    let rest = Math.min(page, block) - 1;
+    const subs = d.pages.map(n => {
+      const s = rest % n;
+      rest = Math.floor(rest / n);
+      return s;
+    });
+    // In the file's order the last dimension is the fastest: the slice is one
+    // place in each block of the others' values.
+    const offset = subs.reduce((o, s, i) => o * d.pages[i] + s, 0);
+    const samples = new Array(rows * cols);
+    for (let k = 0; k < rows * cols; k++) samples[k] = Number(d.samples[k * block + offset]);
+    return { ...d, samples, pages: null, page: subs.map(s => s + 1) };
+  };
+  return data.type === 'lookup' ? { ...data, entries: data.entries.map(one) } : one(data);
+}
+
 /**
  * Render a PDF histogram in the main chart area (#plotlyChart).
  * Handles both single-distribution and lookup-table (multi-index) cases.
@@ -1869,17 +1932,81 @@ function createPdfHistogram(data) {
   // Store data globally for re-rendering on theme / log toggle
   currentPdfHistogramData = data;
 
+  // An array of three dimensions or more is drawn a slice at a time: the one
+  // the Slice field asks for, from 1 again for each array clicked.
+  const pages = previewPages(data);
+  const sliceLabel = document.getElementById('histSliceLabel');
+  const sliceInput = document.getElementById('histSliceNum');
+  if (sliceLabel) sliceLabel.style.display = pages ? '' : 'none';
+  if (pages) {
+    let page = 1;
+    if (sliceInput) {
+      if (sliceInput.dataset.path !== String(data.path)) {
+        sliceInput.dataset.path = String(data.path);
+        sliceInput.value = '1';
+      }
+      sliceInput.max = String(pages);
+      page = Math.min(Math.max(parseInt(sliceInput.value, 10) || 1, 1), pages);
+    }
+    data = previewSlice(data, page);
+    const first = data.type === 'lookup' ? data.entries[0] : data;
+    const sliceText = document.getElementById('histSliceText');
+    if (sliceText) sliceText.textContent = `of ${pages.toLocaleString('en-US')} \u00b7 (:, :, ${first.page.join(', ')})`;
+  }
+  /** A slice's place, after its name: (:, :, 5) */
+  const at = (d) => (d.page ? ` (:, :, ${d.page.join(', ')})` : '');
+
   // Hide time-series controls, show histogram controls when applicable
   const controls = container.querySelector('.chart-controls');
   if (controls) controls.style.display = 'none';
   const histControls = document.getElementById('histControls');
 
+  // How it is drawn (histogramMode): a vector -- a sample among them -- as a
+  // histogram of its values or each against its place; a matrix as a
+  // heatmap besides, or with each column, or each row when it is wider than
+  // it is tall, against its place. A mode that would make no chart of these
+  // values -- a scatter of more series than a legend holds, heatmaps of more
+  // files than fit side by side -- is offered disabled, and says why.
+  const kind = previewKind(data);
+  const modes = kind === 'matrix' ? ['heatmap', 'histogram', 'scatter'] : ['histogram', 'scatter'];
+  const matrices = kind === 'matrix' ? (data.type === 'single' ? [data.matrix] : data.entries.map(e => e.matrix)) : [];
+  const unusable = {
+    scatter: matrices.reduce((n, [rows, cols]) => n + Math.min(rows, cols), 0) > PREVIEW_MAX_SERIES
+      ? `More than ${PREVIEW_MAX_SERIES} columns or rows to draw` : '',
+    heatmap: data.type === 'lookup' && data.entries.length > PREVIEW_MAX_PANELS
+      ? `More than ${PREVIEW_MAX_PANELS} files to draw side by side` : '',
+  };
+  let mode = histogramMode[kind];
+  if (!modes.includes(mode) || unusable[mode]) mode = 'histogram';
+  const scatter = mode === 'scatter';
+  const heatmap = mode === 'heatmap';
+  document.querySelectorAll('#histModeToggle button').forEach(b => {
+    const m = b.dataset.mode;
+    if (b.dataset.title === undefined) b.dataset.title = b.title;
+    b.hidden = !modes.includes(m);
+    b.disabled = !!unusable[m];
+    b.title = unusable[m] || b.dataset.title;
+    b.classList.toggle('active', m === mode);
+    b.setAttribute('aria-pressed', String(m === mode));
+  });
+  // What a histogram and its statistics are made of: NaN and the infinities
+  // fall in no bin. A scatter keeps every place, with a gap for each.
+  const finite = (samples) => Array.prototype.filter.call(samples, Number.isFinite);
+  // A sample is drawn as 'Samples'; a vector by its own name, its values
+  // counted as MATLAB counts them, from 1.
+  const valuesName = data.vector ? ((data.path || '').split('/').pop() || 'Values') : 'Samples';
+  const placeName = data.vector ? 'Element' : 'Iteration';
+
   // Determine if all sample values are strictly positive (log10 is only meaningful then)
+  const positive = (samples) => {
+    const values = finite(samples);
+    return values.length > 0 && values.every(v => v > 0);
+  };
   let allPositive = true;
   if (data.type === 'single') {
-    allPositive = data.samples.every(v => v > 0);
+    allPositive = positive(data.samples);
   } else if (data.type === 'lookup') {
-    allPositive = data.entries.every(e => e.samples.every(v => v > 0));
+    allPositive = data.entries.every(e => positive(e.samples));
   }
 
   // Always show the Data preview header when a histogram is rendered.
@@ -1933,9 +2060,13 @@ function createPdfHistogram(data) {
     data.entries.forEach(e => { if (e.samples.length > maxIterCount) maxIterCount = e.samples.length; });
   }
   const iterLabel = document.getElementById('histIterLabel');
-  if (iterLabel) iterLabel.style.display = maxIterCount > 0 ? '' : 'none';
+  if (iterLabel) iterLabel.style.display = maxIterCount > 0 && kind === 'vector' ? '' : 'none';
+  const iterText = document.getElementById('histIterText');
+  if (iterText) iterText.textContent = placeName + ':';
   if (iterInput) iterInput.max = maxIterCount;
-  const iterNum = (isFinite(iterNumRaw) && iterNumRaw >= 1 && iterNumRaw <= maxIterCount) ? iterNumRaw : null;
+  const iterNum = (kind === 'vector' && isFinite(iterNumRaw) && iterNumRaw >= 1 && iterNumRaw <= maxIterCount) ? iterNumRaw : null;
+  const statsLabel = document.getElementById('histStatsLabel');
+  if (statsLabel) statsLabel.style.display = heatmap ? 'none' : '';
 
   // Detect whether any deterministic values exist and show/hide the checkbox
   // Detect whether any PDF overlays can be drawn (not raw/empirical)
@@ -1950,12 +2081,30 @@ function createPdfHistogram(data) {
     hasPdf = data.entries.some(e => _canDrawPdf(e.spec));
   }
   const detLabel = document.getElementById('histDetLabel');
-  if (detLabel) detLabel.style.display = hasDet ? '' : 'none';
+  if (detLabel) detLabel.style.display = hasDet && !heatmap ? '' : 'none';
   const pdfLabel = document.getElementById('histPdfLabel');
-  if (pdfLabel) pdfLabel.style.display = hasPdf ? '' : 'none';
+  if (pdfLabel) pdfLabel.style.display = hasPdf && mode === 'histogram' ? '' : 'none';
 
   let traces = [];
   let shapes = [];
+  const annotations = [];
+  const heatAxes = {};
+  const axisStyle = {
+    showgrid: false,
+    zeroline: false,
+    color: textColor,
+    showline: true, linecolor: textColor, linewidth: 1,
+    ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
+  };
+  // What is drawn: the one item, or one from each file, with a matrix's rows
+  // and columns.
+  const panels = data.type === 'single'
+    ? [{ label: valuesName + at(data), samples: data.samples, dims: data.matrix || null, deterministicValue: data.deterministicValue,
+         color: barLine, mark: null }]
+    : data.entries.map((e, i) => ({ label: e.label + at(e), samples: e.samples, dims: e.matrix || null,
+                                    deterministicValue: e.deterministicValue,
+                                    color: palette[i % palette.length].line, mark: palette[i % palette.length].pdf }));
+  let placeTitle = placeName;
 
   /** Interpolate the PDF overlay y-value at a given display-space x. Returns null if not possible. */
   function _pdfYAt(pdfXArr, pdfYArr, xVal) {
@@ -1971,9 +2120,9 @@ function createPdfHistogram(data) {
     return null;
   }
 
-  /** Compute statistics from samples and add vertical line traces/shapes. */
-  function _addStatLines(samples, pdfXArr, pdfYArr, lineColor) {
-    if (!samples || samples.length === 0) return;
+  /** Mean, geometric mean and three percentiles of samples, with how each is drawn. */
+  function _statistics(samples) {
+    if (!samples || samples.length === 0) return [];
     const sorted = [...samples].sort((a, b) => a - b);
     const n = sorted.length;
     const arithMean = samples.reduce((s, v) => s + v, 0) / n;
@@ -1990,17 +2139,20 @@ function createPdfHistogram(data) {
     const p50 = percentile(50);
     const p95 = percentile(95);
 
-    const stats = [
+    return [
       { val: arithMean, label: 'Mean', dash: 'solid' },
       { val: geoMean, label: 'Geo. Mean', dash: 'dot' },
       { val: p5, label: 'P5', dash: 'dash' },
       { val: p50, label: 'P50 (median)', dash: 'longdash' },
       { val: p95, label: 'P95', dash: 'dash' },
     ];
+  }
 
+  /** Compute statistics from samples and add vertical line traces/shapes. */
+  function _addStatLines(samples, pdfXArr, pdfYArr, lineColor) {
     const statsColor = lineColor || (isDark ? '#80cbc4' : '#00897b');
 
-    stats.forEach(st => {
+    _statistics(samples).forEach(st => {
       if (st.val == null || !isFinite(st.val)) return;
       if (useLog && st.val <= 0) return;
       const xVal = xform(st.val);
@@ -2029,11 +2181,137 @@ function createPdfHistogram(data) {
     });
   }
 
-  if (data.type === 'single') {
+  /**
+   * A level across a scatter, from its first place to its last: a line
+   * trace, not a shape, which a log axis would place by the log of its value.
+   * Drawn as its points are: WebGL draws over everything else, so a level
+   * among a WebGL cloud of points is drawn with WebGL too, after them.
+   */
+  function _level(n, val, name, line, type) {
+    traces.push({ x: [1, Math.max(n, 1)], y: [val, val], type, mode: 'lines', line, name, showlegend: true });
+  }
+
+  if (heatmap) {
+    // A cell for each value, the first row at the top, as a matrix is read; a
+    // panel for each file, side by side, all on one colour scale. A value the
+    // scale cannot place -- NaN, an infinity, zero or less on a log scale --
+    // leaves its cell blank.
+    const cell = (v) => (Number.isFinite(v) && (!useLog || v > 0) ? (useLog ? Math.log10(v) : v) : null);
+    let lo = Infinity;
+    let hi = -Infinity;
+    const grids = panels.map(({ samples, dims: [rows, cols] }) => {
+      const z = new Array(rows);
+      for (let i = 0; i < rows; i++) {
+        const row = new Array(cols);
+        for (let j = 0; j < cols; j++) {
+          const v = cell(samples[i * cols + j]);
+          row[j] = v;
+          if (v !== null) {
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+          }
+        }
+        z[i] = row;
+      }
+      return z;
+    });
+    const gap = 0.06;
+    const width = (1 - gap * (panels.length - 1)) / panels.length;
+    const valueTitle = useLog ? 'log\u2081\u2080(Value)' : 'Value';
+    panels.forEach((p, k) => {
+      const n = k ? String(k + 1) : '';
+      const [rows, cols] = p.dims;
+      const left = k * (width + gap);
+      traces.push({
+        type: 'heatmap', z: grids[k], name: p.label, xaxis: 'x' + n, yaxis: 'y' + n,
+        _matrix: { values: p.samples, rows, cols },
+        x: Array.from({ length: cols }, (_, j) => j + 1), y: Array.from({ length: rows }, (_, i) => i + 1),
+        colorscale: 'Viridis', zmin: lo <= hi ? lo : undefined, zmax: lo <= hi ? hi : undefined,
+        showscale: k === panels.length - 1,
+        colorbar: { title: { text: valueTitle, font: { color: textColor } }, tickfont: { color: textColor }, outlinewidth: 0 },
+        hovertemplate: `Row %{y}, column %{x}: %{z}${useLog ? ' (log\u2081\u2080)' : ''}<extra>${escapeHtml(p.label)}</extra>`,
+      });
+      heatAxes['xaxis' + n] = { ...axisStyle, title: 'Column', domain: [left, left + width], anchor: 'y' + n };
+      heatAxes['yaxis' + n] = { ...axisStyle, title: k ? '' : 'Row', autorange: 'reversed', anchor: 'x' + n };
+      if (panels.length > 1) {
+        annotations.push({ text: escapeHtml(p.label), xref: 'paper', yref: 'paper', x: left + width / 2, y: 1,
+                           xanchor: 'center', yanchor: 'bottom', showarrow: false, font: { color: textColor } });
+      }
+    });
+
+  } else if (scatter) {
+    // Each value against its place: a matrix's in a series for each column --
+    // or each row, when it is wider than it is tall -- with a level for each
+    // statistic of all its values. A vector's with a level for each of its
+    // statistics and for the deterministic value, and a ring round the one
+    // asked for.
+    const series = [];
+    const matrixLevels = [];
+    for (const p of panels) {
+      if (!p.dims) {
+        series.push(p);
+        continue;
+      }
+      const [rows, cols] = p.dims;
+      const down = rows >= cols;
+      const count = down ? cols : rows;
+      const length = down ? rows : cols;
+      placeTitle = down ? 'Row' : 'Column';
+      for (let k = 0; k < count; k++) {
+        const values = new Array(length);
+        for (let i = 0; i < length; i++) values[i] = p.samples[down ? i * cols + k : k * cols + i];
+        series.push({ label: `${down ? 'Column' : 'Row'} ${k + 1}${panels.length > 1 ? ' \u2013 ' + p.label : ''}`,
+                      samples: values, color: undefined, mark: null, deterministicValue: null, inMatrix: true });
+      }
+      if (showStats) matrixLevels.push({ panel: p, length });
+    }
+    // Ten thousand points and more are drawn with WebGL, which SVG cannot keep up with.
+    const type = series.reduce((n, s) => n + s.samples.length, 0) > 10000 ? 'scattergl' : 'scatter';
+    for (const s of series) {
+      const n = s.samples.length;
+      traces.push({
+        x: Array.from({ length: n }, (_, k) => k + 1), y: Array.from(s.samples, Number),
+        type, mode: 'markers', name: s.label,
+        marker: { color: s.color, size: n > 2000 ? 3 : 6 },
+      });
+      if (s.inMatrix) continue;
+      if (showStats) {
+        const statsColor = s.mark || (isDark ? '#80cbc4' : '#00897b');
+        for (const st of _statistics(finite(s.samples))) {
+          if (st.val == null || !isFinite(st.val) || (useLog && st.val <= 0)) continue;
+          _level(n, st.val, st.label + ' (' + Number(st.val.toPrecision(4)) + ')', { color: statsColor, width: 1.5, dash: st.dash }, type);
+        }
+      }
+      const det = s.deterministicValue;
+      if (showDet && det !== null && det !== undefined && isFinite(det) && (!useLog || det > 0)) {
+        _level(n, det, 'Deterministic (' + Number(det.toPrecision(4)) + ')', { color: s.mark ? s.color : detColor, width: 2, dash: 'dashdot' }, type);
+      }
+      if (iterNum !== null && iterNum <= n) {
+        const v = s.samples[iterNum - 1];
+        if (v != null && isFinite(v) && (!useLog || v > 0)) {
+          traces.push({
+            x: [iterNum], y: [v], type, mode: 'markers',
+            marker: { color: s.mark || iterColor, size: 14, symbol: 'circle-open', line: { width: 2 } },
+            name: placeName + ' ' + iterNum + (series.length > 1 ? ' – ' + s.label : '') + ' (' + Number(v.toPrecision(4)) + ')',
+            showlegend: true,
+          });
+        }
+      }
+    }
+    for (const { panel, length } of matrixLevels) {
+      const statsColor = panel.mark || (isDark ? '#80cbc4' : '#00897b');
+      const of = panels.length > 1 ? ' \u2013 ' + panel.label : '';
+      for (const st of _statistics(finite(panel.samples))) {
+        if (st.val == null || !isFinite(st.val) || (useLog && st.val <= 0)) continue;
+        _level(length, st.val, st.label + of + ' (' + Number(st.val.toPrecision(4)) + ')', { color: statsColor, width: 1.5, dash: st.dash }, type);
+      }
+    }
+
+  } else if (data.type === 'single') {
     const label = data.spec ? PDFSampler.pdfLabel(data.spec) : 'raw';
 
     // Histogram trace (probability density)
-    traces.push(ChartService.histogramTrace({ samples: data.samples.map(xform), name: 'Samples', color: barColor, lineColor: barLine, opacity: 0.85 }));
+    traces.push(ChartService.histogramTrace({ samples: finite(data.samples).map(xform), name: valuesName + at(data), color: barColor, lineColor: barLine, opacity: 0.85 }));
 
     // Analytical PDF overlay line (always compute for stat line heights)
     const overlay = data.spec ? computePdfOverlay(data.spec) : null;
@@ -2090,15 +2368,15 @@ function createPdfHistogram(data) {
     }
 
     // Statistics lines
-    if (showStats) _addStatLines(data.samples, pdfXArr, pdfYArr, null);
+    if (showStats) _addStatLines(finite(data.samples), pdfXArr, pdfYArr, null);
 
   } else if (data.type === 'lookup') {
     data.entries.forEach((entry, i) => {
       const c = palette[i % palette.length];
       const pdfSuffix = entry.spec ? ' (' + PDFSampler.pdfLabel(entry.spec) + ')' : '';
-      const label = (pdfSuffix && entry.label.includes(pdfSuffix)) ? entry.label : entry.label + pdfSuffix;
+      const label = ((pdfSuffix && entry.label.includes(pdfSuffix)) ? entry.label : entry.label + pdfSuffix) + at(entry);
 
-      traces.push(ChartService.histogramTrace({ samples: entry.samples.map(xform), name: label, color: c.bar, lineColor: c.line, opacity: 0.7 }));
+      traces.push(ChartService.histogramTrace({ samples: finite(entry.samples).map(xform), name: label, color: c.bar, lineColor: c.line, opacity: 0.7 }));
 
       const overlay = entry.spec ? computePdfOverlay(entry.spec) : null;
       let pdfXArr = null, pdfYArr = null;
@@ -2150,37 +2428,28 @@ function createPdfHistogram(data) {
       }
 
       // Statistics lines (per entry)
-      if (showStats) _addStatLines(entry.samples, pdfXArr, pdfYArr, c.pdf);
+      if (showStats) _addStatLines(finite(entry.samples), pdfXArr, pdfYArr, c.pdf);
     });
   }
 
 
   const layout = {
-    barmode: data.type === 'lookup' ? 'overlay' : undefined,
+    barmode: mode === 'histogram' && data.type === 'lookup' ? 'overlay' : undefined,
     paper_bgcolor: panelBg,
     plot_bgcolor: bgColor,
     font: { color: textColor },
-    xaxis: {
-      title: useLog ? 'log\u2081\u2080(Value)' : 'Value',
-      showgrid: false,
-      zeroline: false,
-      color: textColor,
-      showline: true, linecolor: textColor, linewidth: 1,
-      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-    },
-    yaxis: {
-      title: 'Probability Density',
-      showgrid: false,
-      zeroline: false,
-      color: textColor,
-      rangemode: 'tozero',
-      showline: true, linecolor: textColor, linewidth: 1,
-      ticks: 'outside', ticklen: 5, tickwidth: 1, tickcolor: textColor,
-    },
-    margin: { t: 20, r: 30, b: 60, l: 60 },
-    showlegend: true,
+    xaxis: scatter
+      ? { ...axisStyle, title: placeTitle }
+      : { ...axisStyle, title: useLog ? 'log\u2081\u2080(Value)' : 'Value' },
+    yaxis: scatter
+      ? { ...axisStyle, title: 'Value', type: useLog ? 'log' : 'linear' }
+      : { ...axisStyle, title: 'Probability Density', rangemode: 'tozero' },
+    ...heatAxes,
+    margin: { t: annotations.length ? 30 : 20, r: 30, b: 60, l: 60 },
+    showlegend: !heatmap,
     legend: { font: { color: textColor } },
     shapes: shapes,
+    annotations,
   };
 
   const config = getPlotlyConfig('pdf_histogram');
@@ -2195,6 +2464,18 @@ function createPdfHistogram(data) {
     hideChartLoading(container);
     _presetPanelSync();   // a histogram's axes are not the presets window's
   });
+}
+
+/**
+ * Draw the data preview as a histogram, a scatter or a heatmap; the switch
+ * says which when it is drawn. The choice holds for the next vector, or the
+ * next matrix, drawn, until changed: each kind keeps its own.
+ *
+ * @param {'histogram'|'scatter'} mode
+ */
+function setHistogramMode(mode) {
+  if (['heatmap', 'histogram', 'scatter'].includes(mode)) histogramMode[previewKind(currentPdfHistogramData)] = mode;
+  redrawHistogram();
 }
 
 /**
