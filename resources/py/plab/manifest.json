@@ -14,6 +14,7 @@
     "graphics_base.py",
     "glayout.py",
     "colormaps.py",
+    "matfile.py",
     "worker_api.py",
     "help.py",
     "helptext.py",

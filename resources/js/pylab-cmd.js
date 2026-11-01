@@ -168,6 +168,12 @@
       this.ta.value = '';
       this._fit();
       this.histPos = -1;
+      this.enter(code);
+    }
+
+    /* A command entered as if typed (also a dropped MAT-file's load): it
+       runs now, or waits its turn while a program runs. */
+    enter(code) {
       if (this.busy && this.mode !== 'debug') {
         this.queue.push(code);
         this._showQueue();

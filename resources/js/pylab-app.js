@@ -9,7 +9,8 @@
    It runs what is typed and what the Editor asks for through the engine,
    keeps the panels up to date after each run, and drives the debugger:
    breakpoints set in the Editor's margin, the stop at one (the arrow, the
-   K>> prompt in the paused function's workspace), and the steps.
+   K>> prompt in the paused function's workspace), and the steps. Files
+   dropped from the computer are copied in and opened (wireDrops).
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -230,6 +231,7 @@
       this.figLayer = el('div', { class: 'pl-figlayer' });
       this.figures = new PL.Figures(this.figLayer);
       r.replaceChildren(this.tabsEl, this.stripEl, this.address, this.main, this.status, this.figLayer);
+      this.wireDrops();
       this.figLayer.style.top = '0';
       this.restoreLayout();
       window.matchMedia('(max-width: 760px)').addEventListener('change', (ev) => {
@@ -1042,18 +1044,203 @@
       input.click();
     }
 
-    async upload(files, dir) {
-      let n = 0;
-      for (const f of files) {
-        if (f.size > 200 * 1024 * 1024) { U.toast(`${f.name} is larger than 200 MB and was not uploaded.`); continue; }
-        const data = await f.arrayBuffer();
-        try {
-          await PL.engine.fs('write', { path: U.joinPath(dir || this.cwd, f.name), data, binary: true }, [data]);
-          n += 1;
-        } catch (e) { U.toast(`Could not upload ${f.name}: ${e.message}`); }
+    upload(files, dir) {
+      return this.copyIn(files.map((file) => ({ entry: null, file })), dir || this.cwd, false);
+    }
+
+    /* ---- files dropped from the computer -------------------------------------------- */
+    /* Dropped anywhere on the page, files are copied into the current folder
+       and opened as a double-click in the Current Folder opens them: programs
+       and text in the Editor, MAT-files loaded into the workspace (the load
+       shows in the Command Window, as if typed), pictures shown; other files
+       are only copied. The Current Folder only copies what is dropped on it,
+       into the folder under the pointer. A dropped folder is copied with what
+       it holds. */
+    wireDrops() {
+      const hasFiles = (ev) => [...(ev.dataTransfer?.types || [])].includes('Files');
+      this.deskZone = el('div', { class: 'pl-dropzone is-desk', hidden: true }, el('strong', null, 'Drop to open'), el('span'));
+      this.root.append(this.deskZone);
+      window.addEventListener('dragover', (ev) => {
+        if (!hasFiles(ev)) return;
+        ev.preventDefault();      // a file dropped anywhere is the page's, never the browser's to open
+        const modal = !!document.querySelector('.pl-modal-back');
+        ev.dataTransfer.dropEffect = modal ? 'none' : 'copy';
+        this.showDeskZone(!modal && !ev.target.closest?.('.pl-p-folder'));
+      });
+      window.addEventListener('drop', (ev) => {
+        if (!hasFiles(ev)) return;
+        const taken = ev.defaultPrevented;    // the Current Folder copied it
+        ev.preventDefault();
+        this.showDeskZone(false);
+        if (taken || document.querySelector('.pl-modal-back')) return;
+        this.takeDrop(ev.dataTransfer, this.cwd, true);
+      });
+    }
+
+    /* The zone is hidden again when dragover stops coming: the drag left the
+       window or was given up (neither tells the page reliably). */
+    showDeskZone(on) {
+      clearTimeout(this._zoneTimer);
+      if (on) {
+        if (this.deskZone.hidden) this.deskZone.lastChild.textContent = `They are copied into ${U.basename(this.cwd) || '/'}: programs open in the Editor, MAT-files load into the workspace.`;
+        this._zoneTimer = setTimeout(() => { this.deskZone.hidden = true; }, 250);
       }
-      if (n) U.toast(`${n} file${n > 1 ? 's' : ''} uploaded to ${U.basename(dir || this.cwd) || '/'}.`);
-      this.folder.refresh();
+      this.deskZone.hidden = !on;
+    }
+
+    /* What a drop holds must be taken while its event lasts. */
+    takeDrop(dt, into, open) {
+      const items = [];
+      for (const it of dt.items || []) {
+        if (it.kind !== 'file') continue;
+        items.push({ entry: it.webkitGetAsEntry ? it.webkitGetAsEntry() : null, file: it.getAsFile() });
+      }
+      if (!items.length) for (const file of dt.files || []) items.push({ entry: null, file });
+      if (items.length) return this.copyIn(items, into, open);
+      return null;
+    }
+
+    /* True once Python is ready (at once if it is), false if it is not running. */
+    whenReady() {
+      if (PL.engine.state === 'ready') return Promise.resolve(true);
+      if (PL.engine.state !== 'loading') return Promise.resolve(false);
+      this.cmd.write('Python is still starting: the files will be copied when it is ready.\n', 'info');
+      return new Promise((resolve) => { const off = PL.engine.on('ready', () => { off(); resolve(true); }); });
+    }
+
+    /* Files (and folders, as entries) copied into a folder; with open, each
+       file is then opened. A name already there asks first. Gives the names
+       the files got in the folder, or null when nothing was copied. */
+    async copyIn(items, into, open) {
+      const MAX_FILE = 200 * 1024 * 1024, MAX_ALL = 1024 * 1024 * 1024, MAX_COUNT = 5000;
+      const files = [];      // { rel: 'top/sub/name', file }
+      const dirs = [];
+      const tops = [];       // { name, dir }
+      try {
+        const walk = async (entry, rel) => {
+          if (files.length > MAX_COUNT) throw new Error(`there are more than ${MAX_COUNT} files`);
+          if (entry.isFile) files.push({ rel, file: await new Promise((res, rej) => entry.file(res, rej)) });
+          else if (entry.isDirectory) {
+            dirs.push(rel);
+            const reader = entry.createReader();
+            for (;;) {
+              const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+              if (!batch.length) break;
+              for (const e of batch) if (!e.name.startsWith('.')) await walk(e, `${rel}/${e.name}`);
+            }
+          }
+        };
+        for (const { entry, file } of items) {
+          if (entry && entry.isDirectory) { tops.push({ name: entry.name, dir: true }); await walk(entry, entry.name); }
+          else if (file) { tops.push({ name: file.name, dir: false }); files.push({ rel: file.name, file }); }
+        }
+      } catch (e) { U.toast(`The dropped files could not be read: ${e.message || e}.`, 5000); return null; }
+      if (!tops.length) return null;
+      const big = files.filter((f) => f.file.size > MAX_FILE);
+      const total = files.reduce((s, f) => s + f.file.size, 0);
+      if (files.length > MAX_COUNT || total - big.reduce((s, f) => s + f.file.size, 0) > MAX_ALL) {
+        U.toast(`Not copied: at most ${MAX_COUNT} files and 1 GB at a time (these are ${files.length} files, ${U.fmtBytes(total)}).`, 6000);
+        return null;
+      }
+      if (!(await this.whenReady())) { U.toast('Python is not running: restart it, then copy the files again.', 5000); return null; }
+      const exists = (p) => PL.engine.fs('exists', { path: p }).catch(() => false);
+      const rename = new Map();
+      const clash = [];
+      for (const t of tops) if (await exists(U.joinPath(into, t.name))) clash.push(t);
+      if (clash.length) {
+        const names = clash.map((t) => t.name);
+        const list = names.length > 4 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ').replace(/, ([^,]*)$/, ' and $1');
+        const folders = clash.some((t) => t.dir);
+        const r = await U.dialog({
+          title: 'Replace files',
+          body: el('p', { style: { margin: 0 } }, `${list} ${names.length > 1 ? 'are' : 'is'} already in ${U.basename(into) || '/'}. Replace ${names.length > 1 ? 'them' : 'it'}, or keep both (what you dropped gets a new name)?`
+            + (folders ? ' A folder replaced keeps the files that the dropped one does not have.' : '')),
+          buttons: [{ label: 'Cancel', value: null }, { label: 'Keep both', value: 'both' }, { label: 'Replace', primary: true, value: 'replace' }],
+        });
+        if (!r) return null;
+        if (r === 'both') {
+          for (const t of clash) {
+            const dot = t.dir ? -1 : t.name.lastIndexOf('.');
+            const [base, ext] = dot > 0 ? [t.name.slice(0, dot), t.name.slice(dot)] : [t.name, ''];
+            let n = 2;
+            while (await exists(U.joinPath(into, `${base}_${n}${ext}`))) n += 1;
+            rename.set(t.name, `${base}_${n}${ext}`);
+          }
+        }
+      }
+      const target = (rel) => {
+        const i = rel.indexOf('/');
+        const top = i < 0 ? rel : rel.slice(0, i);
+        return U.joinPath(into, (rename.get(top) || top) + (i < 0 ? '' : rel.slice(i)));
+      };
+      const failed = [];
+      let copied = 0;
+      try {
+        for (const d of dirs) await PL.engine.fs('mkdir', { path: target(d) });
+        for (const f of files) {
+          if (f.file.size > MAX_FILE) { failed.push(`${f.rel} (larger than 200 MB)`); continue; }
+          if (files.length > 5) this.statusText.textContent = `Copying ${copied + 1} of ${files.length}: ${f.rel}`;
+          try {
+            const data = await f.file.arrayBuffer();
+            await PL.engine.fs('write', { path: target(f.rel), data, binary: true }, [data]);
+            copied += 1;
+            this.reloadDoc(target(f.rel));
+          } catch (e) { failed.push(`${f.rel} (${e.message || e})`); }
+        }
+      } finally {
+        this.statusText.textContent = '';
+        this.folder.refresh();
+      }
+      const where = U.basename(into) || '/';
+      if (failed.length) U.toast(`${copied ? `${copied} of ${files.length} files copied into ${where}. ` : ''}Not copied: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? ` and ${failed.length - 3} more` : ''}.`, 7000);
+      else if (!open || tops.some((t) => t.dir || !this.opens(t.name))) {
+        const what = tops.length === 1 && tops[0].dir ? `The folder ${rename.get(tops[0].name) || tops[0].name} (${copied} file${copied === 1 ? '' : 's'}) was` : `${copied} file${copied === 1 ? ' was' : 's were'}`;
+        U.toast(`${what} copied into ${where}.`);
+      }
+      const named = tops.filter((t) => !failed.some((x) => x.startsWith(`${t.name} (`))).map((t) => ({ name: rename.get(t.name) || t.name, dir: t.dir }));
+      if (open) await this.openDropped(named, into);
+      return named;
+    }
+
+    /* How a dropped file is opened, by its extension (as the Current Folder sorts them). */
+    opens(name) {
+      const ext = (/\.[^./]+$/.exec(name.toLowerCase()) || [''])[0];
+      if (ext === '.m') return 'editor';
+      if (ext === '.mat') return 'load';
+      if (['.png', '.jpg', '.jpeg', '.svg', '.gif'].includes(ext)) return 'image';
+      if (['.txt', '.csv', '.dat', '.json', '.md', '.tsv'].includes(ext)) return 'editor';
+      return null;
+    }
+
+    async openDropped(tops, into) {
+      for (const t of tops) {
+        if (t.dir) continue;
+        const path = U.joinPath(into, t.name);
+        const how = this.opens(t.name);
+        if (how === 'editor') await this.openFile(path);
+        else if (how === 'image') await this.previewImage(path);
+      }
+      for (const t of tops) {
+        if (t.dir || this.opens(t.name) !== 'load') continue;
+        const q = U.mstr(into === this.cwd ? t.name : U.joinPath(into, t.name));
+        if (q) this.cmd.enter(`load(${q})`);
+        else U.toast(`${t.name.replace(/[\u0000-\u001f\u007f]/g, '?')} was copied but not loaded: its name holds a control character.`, 5000);
+      }
+    }
+
+    /* A file written over while it is open in the Editor: the Editor shows
+       the new text, unless it holds changes not saved (they stay, as changes
+       to the new file). */
+    async reloadDoc(path) {
+      const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
+      if (!doc) return;
+      let text;
+      try { text = await PL.engine.fs('read', { path }); } catch (e) { return; }
+      if (doc.dirty) { doc.saved = text; doc.setDirty(doc.editor.value !== text); return; }
+      doc.saved = text;
+      doc.editor.value = text;
+      doc.setDirty(false);
+      this.scheduleLint(doc);
     }
 
     async previewImage(path) {
@@ -1107,14 +1294,17 @@
       if (d.dirty && !(await this.save(d))) return;
       const path = d.key;
       if (!/\.m$/i.test(path)) { U.toast('Only program files (.m) run.'); return; }
-      const name = U.basename(path).replace(/\.m$/i, '');
-      if (U.dirname(path) === this.cwd) this.runCommand(name);
-      else this.runCommand(`run('${path.replace(/'/g, "''")}')`);
+      this.runFile(path);
     }
 
-    async runFile(path) {
-      if (U.dirname(path) === this.cwd) this.runCommand(U.basename(path).replace(/\.m$/i, ''));
-      else this.runCommand(`run('${path.replace(/'/g, "''")}')`);
+    /* A program in the current folder runs by its name, as typed; any other
+       (or one whose name is no name) through run. */
+    runFile(path) {
+      const name = U.basename(path).replace(/\.m$/i, '');
+      if (U.dirname(path) === this.cwd && U.isName(name)) { this.runCommand(name); return; }
+      const q = U.mstr(path);
+      if (q) this.runCommand(`run(${q})`);
+      else U.toast('A file whose name holds a control character cannot be run: rename it first.', 5000);
     }
 
     runSection(advance) {
@@ -1222,8 +1412,10 @@
     async saveWorkspace(names) {
       const fname = await U.prompt('Save workspace', 'MAT-file name (in the current folder)', 'workspace.mat');
       if (!fname) return;
-      const list = names && names.length ? ` ${names.join(' ')}` : '';
-      const r = await this.runCommand(`save('${fname.replace(/'/g, "''")}'${list ? `,${names.map((n) => `'${n}'`).join(',')}` : ''})`, { silent: true });
+      const q = U.mstr(fname);
+      if (!q) { U.toast('A file name cannot hold a control character.'); return; }
+      const list = (names || []).filter(U.isName).map((n) => `,'${n}'`).join('');
+      const r = await this.runCommand(`save(${q}${list})`, { silent: true });
       if (r && r.ok) U.toast(`Saved ${fname}.`);
     }
 
@@ -1233,9 +1425,16 @@
         const f = input.files[0];
         input.remove();
         if (!f) return;
-        await this.upload([f], this.cwd);
-        if (/\.mat$/i.test(f.name)) this.runCommand(`load('${f.name.replace(/'/g, "''")}')`);
-        else this.runCommand(`${f.name.replace(/\.\w+$/, '').replace(/\W/g, '_').replace(/^(\d)/, 'x$1')} = readmatrix('${f.name.replace(/'/g, "''")}')`);
+        const got = await this.upload([f], this.cwd);
+        if (!got || !got.length) return;
+        const name = got[0].name;
+        const q = U.mstr(name);
+        if (!q) return;
+        if (/\.mat$/i.test(name)) this.runCommand(`load(${q})`);
+        else {
+          const v = name.replace(/\.\w+$/, '').replace(/\W/g, '_').replace(/^[^A-Za-z]/, 'x$&');
+          this.runCommand(`${U.isName(v) ? v : 'data'} = readmatrix(${q})`);
+        }
       });
       document.body.append(input);
       input.click();

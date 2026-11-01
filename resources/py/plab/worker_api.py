@@ -404,9 +404,14 @@ def file_info(path):
             info['help'] = help_comment(text)
             info['kind'] = 'function' if text.lstrip().startswith('function') else 'script'
         elif ext == '.mat':
-            from .builtins.iofun import _load_mat
-            d = _load_mat(path)
-            info['vars'] = [{'name': k, 'size': size_str(shape_of(v)), 'class': class_of(v)} for k, v in d.items()]
+            from . import matfile
+            if matfile.kind(path) == 'v73':
+                try:
+                    import h5py  # noqa: F401
+                except ImportError:
+                    # the worker loads it and asks again
+                    return json.dumps({'path': path, 'need': 'h5py'})
+            info['vars'] = [{'name': matfile.shown(k), 'size': size_str(sz) if sz else '', 'class': matfile.shown(c)} for k, sz, c in matfile.variables(path)]
     except Exception as e:
         info['error'] = str(e)
     return json.dumps(info)

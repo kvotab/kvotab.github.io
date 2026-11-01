@@ -1,0 +1,485 @@
+"""MAT-files read by load (resources/py/plab/matfile.py): each layout the
+reader knows, in files this script writes, and the same values back through
+save.
+
+    python3 test_matfile.py      (from any folder; needs numpy, scipy and h5py)
+
+The files come from SciPy's writer (Level 4 and Level 5), from h5py in the
+layout of version 7.3 files as the open-source readers document it, and from
+Level 5 data elements written out below (text in UTF-8, UTF-16 and UTF-32,
+big-endian files, small elements, logical sparse matrices, objects, function
+handles, damaged and hostile files). Each case loads a file with the
+language's own commands and checks the variables, their classes and the
+warnings.
+"""
+import asyncio
+import json
+import math
+import os
+import shutil
+import struct
+import sys
+import tempfile
+import zlib
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, '..', '..', 'py'))
+
+from plab import runtime as R  # noqa: E402
+from plab import matfile as MF  # noqa: E402
+from plab import worker_api  # noqa: E402
+from plab.values import Char, Cell, Struct, Str, FH, class_of  # noqa: E402
+
+R.setup()
+TMP = tempfile.mkdtemp(prefix='pylab-matfile-')
+R.STATE['cwd'] = TMP
+
+failed = []
+checks = [0]
+
+
+def check(label, ok, detail=''):
+    checks[0] += 1
+    if not ok:
+        failed.append(label)
+        print(f'FAIL  {label}  {detail}')
+
+
+def run(code):
+    """Run code in a fresh base workspace: (workspace, output text)."""
+    R.BASE.clear()
+    R.BASE.gnames.clear()
+    R.take_output()
+    asyncio.run(R.execute(code))
+    return R.BASE, R.take_output()
+
+
+def val(v):
+    """A plain Python form of a value for comparing."""
+    t = type(v)
+    if t is float or t is bool or t is complex:
+        return v
+    if t is np.ndarray:
+        if v.size == 1 and v.ndim == 2:
+            return v.reshape(-1)[0].item()
+        return v.tolist()
+    if t is Char:
+        return v.str() if v.a.shape[0] <= 1 else v.row_strs()
+    if t is Str:
+        return [s for s in v.a.reshape(-1, order='F')]
+    if t is Cell:
+        return [val(x) for x in v.a.reshape(-1, order='F')]
+    if t is Struct:
+        if v.size == 1:
+            return {k: val(v.get1(k)) for k in v.f}
+        return [{k: val(a.reshape(-1, order='F')[i]) for k, a in v.f.items()} for i in range(v.size)]
+    return v
+
+
+def same(a, b):
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return list(a) == list(b) and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+        return True
+    return a == b
+
+
+def case(label, code, want=None, cls=None, shape=None, shows=(), hides=(), error=None):
+    try:
+        W, out = run(code)
+    except Exception as e:  # noqa: BLE001 -- a crash is a failure, with its reason
+        check(label, False, f'raised {type(e).__name__}: {e}')
+        return None
+    if error is not None:
+        check(f'{label}: error', error in out, repr(out))
+        return W
+    if 'Error' in out:
+        check(f'{label}: no error', False, repr(out))
+    for name, w in (want or {}).items():
+        got = val(W[name]) if name in W else '(none)'
+        check(f'{label}: {name}', same(got, w), f'got {got!r}, want {w!r}')
+    for name, c in (cls or {}).items():
+        got = class_of(W[name]) if name in W else '(none)'
+        check(f'{label}: class({name})', got == c, f'got {got}, want {c}')
+    for name, s in (shape or {}).items():
+        got = tuple(getattr(W[name], 'shape', (1, 1))) if name in W else None
+        check(f'{label}: size({name})', got == s, f'got {got}, want {s}')
+    for s in shows:
+        check(f'{label}: shows {s[:50]!r}', s in out, repr(out))
+    for s in hides:
+        check(f'{label}: does not show {s[:50]!r}', s not in out, repr(out))
+    return W
+
+
+def path(name):
+    return os.path.join(TMP, name)
+
+
+# ---- Level 5 written element by element ------------------------------------------------------------
+
+def el(t, data, o='<'):
+    """A data element: small (in eight bytes) when its data fits in four."""
+    n = len(data)
+    if n <= 4 and t not in (14, 15):
+        return struct.pack(o + 'I', (n << 16) | t) + data.ljust(4, b'\0')
+    return struct.pack(o + 'II', t, n) + data + b'\0' * (-n % 8)
+
+
+def matrix(klass, dims, name, parts=(), flags=0, o='<'):
+    body = el(6, struct.pack(o + 'II', klass | flags, 0), o)
+    if klass != 17:
+        body += el(5, struct.pack(o + f'{len(dims)}i', *dims), o)
+    body += el(1, name.encode(), o) + b''.join(parts)
+    return struct.pack(o + 'II', 14, len(body)) + body
+
+
+def double(name, a, o='<'):
+    a = np.atleast_2d(np.asarray(a, float))
+    return matrix(6, a.shape, name, [el(9, a.astype(o + 'f8').tobytes(order='F'), o)], o=o)
+
+
+def chars(name, s, o='<'):
+    units = np.frombuffer(s.encode('utf-16-le', 'surrogatepass'), '<u2')
+    return matrix(4, (1, units.size), name, [el(4, units.astype(o + 'u2').tobytes(), o)], o=o)
+
+
+def struct1(name, fields, o='<'):
+    """A 1x1 struct of the given (name, element) pairs."""
+    flen = 32
+    names = b''.join(k.encode().ljust(flen, b'\0') for k, _ in fields)
+    return matrix(2, (1, 1), name, [el(5, struct.pack(o + 'i', flen), o), el(1, names, o)] + [v for _, v in fields], o=o)
+
+
+def compressed(element, o='<'):
+    z = zlib.compress(element)
+    return struct.pack(o + 'II', 15, len(z)) + z
+
+
+def header(o='<', sub=0, text='MATLAB 5.0 MAT-file, written by test_matfile.py'):
+    return (text.encode().ljust(116, b' ') + struct.pack(o + 'Q', sub) + struct.pack(o + 'H', 0x0100)
+            + (b'IM' if o == '<' else b'MI'))
+
+
+def write(name, data):
+    with open(path(name), 'wb') as f:
+        f.write(data)
+
+
+EMOJI = '\U0001F600'
+u16 = 'Ångström µ ✓ δ ' + EMOJI
+units32 = np.frombuffer(('a' + EMOJI + 'b').encode('utf-32-le'), '<u4')
+
+
+def fhandle(name, text, kind, workspace=None):
+    """A function handle as a struct describing it, with the captured values (name, element) if any."""
+    fields = [('function', chars('', text)), ('type', chars('', kind)), ('file', chars('', ''))]
+    if workspace:
+        fields.append(('workspace', struct1('', workspace)))
+    return matrix(16, (1, 1), name, [struct1('', [('function_handle', struct1('', fields))])])
+
+
+deep = double('', 7)
+for _ in range(70):
+    deep = matrix(1, (1, 1), '', [deep])
+
+hand = header() + b''.join([
+    matrix(4, (1, len(u16.encode('utf-16-le')) // 2), 'u16', [el(17, u16.encode('utf-16-le'))]),
+    matrix(4, (1, 4), 'u32', [el(18, units32.tobytes())]),
+    matrix(4, (1, 3), 'u8', [el(16, ('x' + EMOJI).encode('utf-8'))]),
+    matrix(4, (2, 2), 'cm', [el(4, np.array([ord(c) for c in 'acbd'], '<u2').tobytes())]),
+    matrix(6, (1, 1), 'smalld', [el(2, bytes([7]))]),
+    matrix(5, (3, 2), 'lsp', [el(5, np.array([0, 2], '<i4').tobytes()), el(5, np.array([0, 1, 2], '<i4').tobytes()),
+                              el(2, bytes([1, 1]))], flags=0x200),
+    matrix(2, (0, 0), 'es', [el(5, struct.pack('<i', 32)), el(1, b'a'.ljust(32, b'\0') + b'b'.ljust(32, b'\0'))]),
+    matrix(3, (1, 1), 'obj', [el(1, b'myclass'), el(5, struct.pack('<i', 32)), el(1, b'v'.ljust(32, b'\0')), double('', 5)]),
+    fhandle('fh', 'sin', 'simple'),
+    fhandle('fa', '@(x)x.^2+1', 'anonymous'),
+    fhandle('fw', '@(x)x+a', 'anonymous', [('a', double('', 3))]),
+    matrix(8, (1, 2), 'ci', [el(1, bytes([1, 2])), el(1, bytes([3, 4]))], flags=0x800),
+    matrix(17, None, 'str', [el(1, b'MCOS'), el(1, b'string'), matrix(13, (1, 6), '', [el(6, np.arange(6, dtype='<u4').tobytes())])]),
+    matrix(1, (1, 1), 'deep', [deep]),
+    matrix(5, (100000, 100000), 'bigsp', [el(5, np.array([0], '<i4').tobytes()), el(5, np.r_[0, np.ones(100000)].astype('<i4').tobytes()),
+                                          el(9, np.array([1.0]).tobytes())]),
+    double('after', 42),
+])
+write('hand.mat', hand)
+
+case('Level 5 text in every encoding', "load('hand.mat', 'u*', 'cm', 'smalld')",
+     want={'u16': u16, 'u32': 'a' + EMOJI + 'b', 'u8': 'x' + EMOJI, 'cm': ['ab', 'cd'], 'smalld': 7.0},
+     cls={'u16': 'char', 'smalld': 'double'}, shape={'u32': (1, 4), 'u8': (1, 3), 'cm': (2, 2)})
+case('a logical sparse matrix is held full', "load('hand.mat', 'lsp')", want={'lsp': [[True, False], [False, False], [False, True]]},
+     cls={'lsp': 'logical'})
+case('an empty struct keeps its fields', "load('hand.mat', 'es'); f = fieldnames(es)'; n = numel(es);", want={'f': ['a', 'b'], 'n': 0.0},
+     cls={'es': 'struct'})
+case('an old-style object loads as a struct, with a warning', "load('hand.mat', 'obj'); v = obj.v;", want={'v': 5.0},
+     shows=["Warning: Variable 'obj' was loaded, but it was saved as an object of class 'myclass' and is now a struct."])
+case('function handles', "load('hand.mat', 'f*'); a = fh(0); b = fa(2); c = fw(1); t = func2str(fa);",
+     want={'a': 0.0, 'b': 5.0, 'c': 4.0, 't': '@(x)x.^2+1'}, cls={'fh': 'function_handle'})
+case('a complex integer keeps its real part', "load('hand.mat', 'ci')", want={'ci': [[1, 2]]}, cls={'ci': 'int8'},
+     shows=["Warning: Variable 'ci' was loaded, but its imaginary part was left out"])
+W = case('variables that cannot be read are left out, the rest load', "load('hand.mat')",
+         want={'after': 42.0, 'u8': 'x' + EMOJI},
+         shows=["Warning: Variable 'str' was not loaded: it is an object of class 'string'",
+                "Warning: Variable 'deep' was not loaded: its cells and structs are nested too deeply.",
+                "Warning: Variable 'bigsp' was not loaded: it is a sparse 100000x100000 matrix, too large to hold here"])
+check('the unreadable variables are absent', W is not None and not ({'str', 'deep', 'bigsp'} & set(W.keys())))
+case('S = load(...) gives a struct of the variables', "S = load('hand.mat', 'after', 'cm'); f = fieldnames(S)'; a = S.after;",
+     want={'f': ['cm', 'after'], 'a': 42.0}, hides=['Warning'])
+case('a name not in the file is warned about', "load('hand.mat', 'after', 'nosuch')", want={'after': 42.0},
+     shows=["Warning: Variable 'nosuch' not found."])
+case('command syntax', 'load hand.mat after', want={'after': 42.0})
+
+# big-endian, compressed and not
+be = header('>') + double('m', [[1, 2, 3], [4, 5, 6]], '>') + matrix(10, (1, 2), 'k', [el(3, np.array([1, -2], '>i2').tobytes(), '>')], o='>') \
+    + struct1('s', [('a', chars('', 'hé', '>'))], '>') + compressed(double('z', [1, 2, 3], '>'), '>')
+be = be.replace(struct1('s', [('a', chars('', 'hé', '>'))], '>'), matrix(2, (1, 1), 's', [
+    el(5, struct.pack('>i', 32), '>'), el(1, b'a'.ljust(32, b'\0'), '>'), chars('', 'hé', '>')], o='>'))
+write('be.mat', be)
+case('a big-endian Level 5 file', "load('be.mat'); a = s.a;", want={'m': [[1, 2, 3], [4, 5, 6]], 'k': [[1, -2]], 'a': 'hé', 'z': [[1, 2, 3]]},
+     cls={'k': 'int16'})
+
+# the subsystem's element (named by the header's offset) is no variable
+body = double('v', 1)
+sub = matrix(9, (1, 4), '', [el(2, bytes([1, 2, 3, 4]))])
+write('subsys.mat', header(sub=128 + len(body)) + body + sub)
+case('the subsystem data is not a variable', "load('subsys.mat'); n = numel(who);", want={'v': 1.0, 'n': 1.0}, hides=['Warning'])
+
+# damaged and hostile files
+two = header() + compressed(double('a', [1, 2, 3])) + compressed(double('b', [4, 5, 6]))
+write('cut.mat', two[:len(two) - 10])
+case('a file cut short loads what comes before the cut', "load('cut.mat')", want={'a': [[1, 2, 3]]},
+     shows=['Warning: Part of cut.mat could not be read: the rest of the file is damaged.'])
+rng = np.random.default_rng(1)
+big = rng.random(5000)
+z = zlib.compress(double('b', big))
+bad = bytearray(header() + compressed(double('a', [1, 2, 3])) + compressed(double('b', big)) + compressed(double('c', 9)))
+at = 128 + 8 + len(zlib.compress(double('a', [1, 2, 3]))) + 8 + 30000
+bad[at:at + 16] = bytes(16)
+write('corrupt.mat', bytes(bad))
+case('damaged compressed data spoils one variable only', "load('corrupt.mat')", want={'a': [[1, 2, 3]], 'c': 9.0},
+     shows=["Warning: Variable 'b' was not loaded: its compressed data is damaged."])
+bad[128 + 8 + 2:128 + 8 + 10] = b'\xff' * 8
+write('corrupt2.mat', bytes(bad))
+case('a variable whose name cannot be read', "load('corrupt2.mat')", want={'c': 9.0},
+     shows=['Warning: Part of corrupt2.mat could not be read: its compressed data is damaged.'])
+write('notmat.mat', b'hello, this is text and not a MAT-file\n' * 10)
+case('a text file named .mat is refused', "load('notmat.mat')", error='is not a MAT-file')
+write('empty.mat', b'')
+case('an empty file is refused', "load('empty.mat')", error='the file is empty')
+write('bomb.mat', header() + compressed(matrix(9, (1, 3_000_000), 'big', [el(2, bytes(3_000_000))])) + double('ok', 1))
+MF.INFLATE_LIMIT, kept = 1 << 20, MF.INFLATE_LIMIT
+case('inflating stops at the limit', "load('bomb.mat')", want={'ok': 1.0},
+     shows=["Warning: Variable 'big' was not loaded: it is larger than 1 GB once uncompressed."])
+MF.INFLATE_LIMIT = kept
+lie = header() + matrix(6, (1000, 1000), 'lie', [el(9, np.array([1.0, 2.0]).tobytes())]) + double('ok', 1)
+write('lie.mat', lie)
+case('a size the data does not have', "load('lie.mat')", want={'ok': 1.0},
+     shows=["Warning: Variable 'lie' was not loaded: its data does not match its size."])
+
+# names from a file never become code: a variable or a field whose name is not a name is left out,
+# and a function handle's text must be one anonymous function
+names = header() + b''.join([
+    double("a;disp(66)", 1), double('\x01', 2), double('fine', 3),
+    struct1('st', [('ok', double('', 4)), ("b;disp(77)", double('', 5))]),
+    fhandle('evil', '@(x)x; disp(99)', 'anonymous'),
+])
+write('names.mat', names)
+W = case('names that are not names are left out', "load('names.mat'); k = fieldnames(st)'; o = st.ok;",
+         want={'fine': 3.0, 'k': ['ok'], 'o': 4.0},
+         shows=["Warning: Variable 'a;disp(66)' was not loaded: its name is not a valid variable name.",
+                "Warning: Variable '?' was not loaded: its name is not a valid variable name.",
+                "Warning: Variable 'st' was loaded, but its field 'b;disp(77)' was left out (not a valid field name).",
+                "Warning: Variable 'evil' was not loaded: its function handle does not compile here (Invalid anonymous function: @(x)x; disp(99))."],
+         hides=['    66\n', '    77\n', '    99\n'])
+if W is not None:
+    check('no variable with a name that is not a name', sorted(W.keys()), ['fine', 'k', 'o', 'st'])
+write('v4names.mat', struct.pack('<5i', 0, 1, 1, 0, 4) + b'a b\0' + np.array([1.0]).tobytes() + struct.pack('<5i', 0, 1, 1, 0, 2) + b'c\0' + np.array([2.0]).tobytes())
+case('a Level 4 name that is not a name', "load('v4names.mat')", want={'c': 2.0},
+     shows=["Warning: Variable 'a b' was not loaded: its name is not a valid variable name."])
+
+# ---- Level 4 -------------------------------------------------------------------------------------
+import scipy.io as sio  # noqa: E402
+import scipy.sparse as sps  # noqa: E402
+
+sio.savemat(path('v4.mat'), {'m': np.arange(6.).reshape(2, 3), 'c': np.array([[1 + 2j, 3]]),
+                             'sp': sps.csc_matrix(np.array([[0., 1.], [2., 0.]])), 't': np.array(['ab', 'cd'])}, format='4')
+case('Level 4 from SciPy', "load('v4.mat')", want={'m': [[0, 1, 2], [3, 4, 5]], 'c': [[1 + 2j, 3]], 'sp': [[0, 1], [2, 0]], 't': ['ab', 'cd']},
+     cls={'t': 'char', 'sp': 'double'})
+v4be = struct.pack('>5i', 1000, 1, 2, 0, 2) + b'x\0' + np.array([1.5, 2.5], '>f8').tobytes()
+write('v4be.mat', v4be)
+case('a big-endian Level 4 file', "load('v4be.mat')", want={'x': [[1.5, 2.5]]})
+write('v4cut.mat', v4be + struct.pack('<5i', 0, 3, 3, 0, 2) + b'y\0' + b'\0' * 20)
+case('a Level 4 file cut short', "load('v4cut.mat')", want={'x': [[1.5, 2.5]]},
+     shows=["Warning: Variable 'y' was not loaded: the file ends inside it."])
+
+# ---- Level 5 from SciPy ----------------------------------------------------------------------------
+sa = np.zeros((1, 3), dtype=[('x', object), ('y', object)])
+sa[0, 0] = (1.0, 'p')
+sa[0, 1] = (np.array([[1., 2.]]), 'q')
+sa[0, 2] = ('three', 'r')
+scipy_vars = {
+    'd3': np.arange(24.).reshape(2, 3, 4, order='F'), 'z': np.array([[1 + 2j, 3 - 4j]]),
+    'i8': np.array([[-128, 127]], np.int8), 'u64': np.array([[2**64 - 1, 2**53 + 1]], np.uint64),
+    'i64': np.array([[-2**63, 2**63 - 1]], np.int64), 's': np.array([[1.5, 2.5]], np.float32),
+    'lg': np.array([[True, False], [False, True]]), 'chm': np.array(['abc', 'def']), 'emo': 'smile ' + EMOJI,
+    'cel': np.array([[1.0, 'two', np.array([[3., 4.]])]], dtype=object), 'st': {'a': 1.0, 'b': 'text', 'c': {'n': np.eye(2)}},
+    'sp': sps.csc_matrix(np.array([[1., 0, 0], [0, 0, 2], [3, 0, 0]])), 'spz': sps.csc_matrix(np.array([[1 + 1j, 0], [0, 2]])),
+    'empty': np.zeros((0, 3)), 'sa': sa,
+}
+for comp in (False, True):
+    name = f'scipy{"7" if comp else "6"}.mat'
+    sio.savemat(path(name), scipy_vars, do_compression=comp)
+    case(f'Level 5 from SciPy ({"compressed" if comp else "not compressed"})',
+         f"load('{name}'); d = d3(2, 3, 4); n = st.c.n; c2 = cel{{2}}; x2 = sa(2).x; y3 = sa(3).y;",
+         want={'d': 23.0, 'z': [[1 + 2j, 3 - 4j]], 'i8': [[-128, 127]], 'u64': [[2**64 - 1, 2**53 + 1]], 'i64': [[-2**63, 2**63 - 1]],
+               's': [[1.5, 2.5]], 'lg': [[True, False], [False, True]], 'chm': ['abc', 'def'], 'emo': 'smile ' + EMOJI,
+               'n': [[1, 0], [0, 1]], 'c2': 'two', 'sp': [[1, 0, 0], [0, 0, 2], [3, 0, 0]], 'spz': [[1 + 1j, 0], [0, 2]],
+               'x2': [[1, 2]], 'y3': 'r'},
+         cls={'i8': 'int8', 'u64': 'uint64', 'i64': 'int64', 's': 'single', 'lg': 'logical', 'cel': 'cell', 'st': 'struct', 'sa': 'struct'},
+         shape={'d3': (2, 3, 4), 'empty': (0, 3), 'sa': (1, 3), 'emo': (1, 8)}, hides=['Warning'])
+
+# ---- version 7.3 (HDF5) ----------------------------------------------------------------------------
+import h5py  # noqa: E402
+
+
+def h5matfile(name, build):
+    with h5py.File(path(name), 'w', userblock_size=512) as f:
+        build(f)
+    with open(path(name), 'r+b') as fh:
+        fh.write(b'MATLAB 7.3 MAT-file, written by test_matfile.py'.ljust(116, b' ') + b'\0' * 8 + struct.pack('<H', 0x0200) + b'IM')
+
+
+def put(g, name, a, cls, **attrs):
+    """MATLAB's array a (in its own shape) as a dataset: HDF5 keeps the dimensions reversed."""
+    ds = g.create_dataset(name, data=np.asarray(a).T)
+    ds.attrs['MATLAB_class'] = np.bytes_(cls)
+    for k, v in attrs.items():
+        ds.attrs[k] = v
+    return ds
+
+
+def fields_attr(g, names):
+    dt = h5py.vlen_dtype(np.dtype('S1'))
+    data = np.empty(len(names), object)
+    for i, n in enumerate(names):
+        data[i] = np.array([bytes([c]) for c in n.encode()], dtype='S1')
+    g.attrs.create('MATLAB_fields', data=data, dtype=dt)
+
+
+def build73(f):
+    refs = f.create_group('#refs#')
+    put(f, 'd', [[1, 2, 3], [4, 5, 6]], 'double')
+    z = np.zeros((1, 2), dtype=[('real', '<f8'), ('imag', '<f8')])
+    z['real'], z['imag'] = [1, 3], [2, -4]
+    put(f, 'z', z, 'double')
+    put(f, 'c', np.frombuffer(('hé' + EMOJI).encode('utf-16-le', 'surrogatepass'), '<u2').reshape(1, -1), 'char', MATLAB_int_decode=np.int32(2))
+    put(f, 'l', np.array([[1, 0], [0, 1]], np.uint8), 'logical', MATLAB_int_decode=np.int32(1))
+    put(f, 'i', np.array([[1, -2]], np.int8), 'int8')
+    put(f, 'u64', np.array([[2**64 - 1]], np.uint64), 'uint64')
+    put(f, 's1', np.array([[0.5]], np.float32), 'single')
+    put(f, 'nd', np.arange(24.).reshape(2, 3, 4, order='F'), 'double')
+    e = f.create_dataset('e', data=np.array([0, 3], np.uint64))
+    e.attrs['MATLAB_class'] = np.bytes_('double')
+    e.attrs['MATLAB_empty'] = np.uint8(1)
+    ec = f.create_dataset('ec', data=np.array([0, 0], np.uint64))
+    ec.attrs['MATLAB_class'] = np.bytes_('char')
+    ec.attrs['MATLAB_empty'] = np.uint8(1)
+    a = put(refs, 'a', [[5.0]], 'double')
+    b = put(refs, 'b', np.array([[ord('x')]], np.uint16), 'char')
+    cel = f.create_dataset('cel', data=np.array([[a.ref], [b.ref]], dtype=h5py.ref_dtype))
+    cel.attrs['MATLAB_class'] = np.bytes_('cell')
+    st = f.create_group('st')
+    st.attrs['MATLAB_class'] = np.bytes_('struct')
+    fields_attr(st, ['b', 'a'])
+    put(st, 'a', [[1.0]], 'double')
+    put(st, 'b', np.array([[ord(ch) for ch in 'txt']], np.uint16), 'char')
+    sa = f.create_group('sa')
+    sa.attrs['MATLAB_class'] = np.bytes_('struct')
+    fields_attr(sa, ['x'])
+    x1 = put(refs, 'x1', [[1.0]], 'double')
+    x2 = put(refs, 'x2', np.array([[ord(ch) for ch in 'two']], np.uint16), 'char')
+    x3 = put(refs, 'x3', [[3.0, 4.0]], 'double')
+    sa.create_dataset('x', data=np.array([[x1.ref], [x2.ref], [x3.ref]], dtype=h5py.ref_dtype))
+    sp = f.create_group('sp')
+    sp.attrs['MATLAB_class'] = np.bytes_('double')
+    sp.attrs['MATLAB_sparse'] = np.uint64(3)
+    sp.create_dataset('data', data=np.array([1.0, 3.0, 2.0]))
+    sp.create_dataset('ir', data=np.array([0, 2, 1], np.uint64))
+    sp.create_dataset('jc', data=np.array([0, 2, 2, 3], np.uint64))
+    s = f.create_dataset('str', data=np.arange(6, dtype=np.uint32).reshape(6, 1))
+    s.attrs['MATLAB_class'] = np.bytes_('string')
+    s.attrs['MATLAB_object_decode'] = np.int32(3)
+    fhg = f.create_group('fh')
+    fhg.attrs['MATLAB_class'] = np.bytes_('function_handle')
+    f.create_dataset('plain', data=np.array([1, 2, 3], np.float32))
+
+
+h5matfile('v73.mat', build73)
+
+
+def build73names(f):
+    put(f, 'bad name', [[1.0]], 'double')
+    put(f, 'good', [[2.0]], 'double')
+    g = f.create_group('st')
+    g.attrs['MATLAB_class'] = np.bytes_('struct')
+    put(g, 'x y', [[3.0]], 'double')
+    put(g, 'z', [[4.0]], 'double')
+
+
+h5matfile('v73names.mat', build73names)
+case('version 7.3 names that are not names', "load('v73names.mat'); k = fieldnames(st)';", want={'good': 2.0, 'k': ['z']},
+     shows=["Warning: Variable 'bad name' was not loaded: its name is not a valid variable name.",
+            "Warning: Variable 'st' was loaded, but its field 'x y' was left out (not a valid field name)."])
+W = case('version 7.3 (HDF5)', "load('v73.mat'); c1 = cel{1}; c2 = cel{2}; sb = st.b; x2 = sa(2).x; x3 = sa(3).x; f = fieldnames(st)';",
+         want={'d': [[1, 2, 3], [4, 5, 6]], 'z': [[1 + 2j, 3 - 4j]], 'c': 'hé' + EMOJI, 'l': [[True, False], [False, True]],
+               'i': [[1, -2]], 'u64': 2**64 - 1, 's1': 0.5, 'c1': 5.0, 'c2': 'x', 'sb': 'txt', 'x2': 'two', 'x3': [[3, 4]],
+               'sp': [[1, 0, 0], [0, 0, 2], [3, 0, 0]], 'plain': [[1, 2, 3]], 'f': ['b', 'a']},
+         cls={'c': 'char', 'l': 'logical', 'i': 'int8', 'u64': 'uint64', 's1': 'single', 'e': 'double', 'ec': 'char',
+              'sa': 'struct', 'plain': 'single'},
+         shape={'nd': (2, 3, 4), 'e': (0, 3), 'ec': (0, 0), 'sa': (1, 3), 'cel': (1, 2)},
+         shows=["Warning: Variable 'str' was not loaded: it is an object of class 'string'",
+                "Warning: Variable 'fh' was not loaded: it is a function handle"])
+if W is not None:
+    check('version 7.3: an N-D array keeps its order', val(W['nd'])[1][2][3] == 23.0, val(W['nd']))
+
+# ---- the Details panel's list, from the headers -----------------------------------------------------
+for name, want in (('v4.mat', {'m': ('2×3', 'double'), 'sp': ('2×2', 'double'), 't': ('2×2', 'char')}),
+                   ('scipy7.mat', {'d3': ('2×3×4', 'double'), 'lg': ('2×2', 'logical'), 'sa': ('1×3', 'struct'), 'sp': ('3×3', 'double')}),
+                   ('hand.mat', {'str': ('', 'string'), 'fh': ('1×1', 'function_handle'), 'obj': ('1×1', 'myclass'), 'es': ('0×0', 'struct')}),
+                   ('v73.mat', {'sa': ('1×3', 'struct'), 'sp': ('3×3', 'double'), 'e': ('0×3', 'double'), 'str': ('', 'string'),
+                                'plain': ('1×3', 'single')})):
+    info = json.loads(worker_api.file_info(path(name)))
+    rows = {v['name']: (v['size'], v['class']) for v in info.get('vars', [])}
+    for k, w in want.items():
+        check(f'Details of {name}: {k}', rows.get(k) == w, f'got {rows.get(k)}, want {w}; {info}')
+
+# ---- back through save ------------------------------------------------------------------------------
+RT = ("a = int16([1 -2; 3 4]); b = single(pi); c = {1, 'two'; [3 4], {5}}; s(2).x = 'y'; s(1).x = [1 2 3]; "
+      "t = struct('n', struct('m', magic(3))); u = 'Ångström'; m = ['ab'; 'cd']; l = [true false]; z = [1+2i 3]; "
+      "e = zeros(0, 3); n3 = reshape(1:24, 2, 3, 4); q = uint64(18446744073709551615); ")
+for ver in ('-v7', '-v6'):
+    case(f'save {ver} and load', RT + f"save('rt.mat', '{ver}'); clear; load('rt.mat'); c22 = c{{2,2}}; s2 = s(2).x; tm = t.n.m(2, 3);",
+         want={'a': [[1, -2], [3, 4]], 'c22': [5.0], 's2': 'y', 'tm': 7.0, 'u': 'Ångström', 'm': ['ab', 'cd'], 'l': [[True, False]],
+               'z': [[1 + 2j, 3]], 'q': 2**64 - 1},
+         cls={'a': 'int16', 'b': 'single', 'c': 'cell', 's': 'struct', 'l': 'logical', 'q': 'uint64'},
+         shape={'e': (0, 3), 'n3': (2, 3, 4), 's': (1, 2)}, hides=['Warning'])
+case('save -append keeps what the file holds', "x = 1; save('ap.mat', 'x'); y = 2; save('ap.mat', 'y', '-append'); clear; load('ap.mat');",
+     want={'x': 1.0, 'y': 2.0})
+size = os.path.getsize(path('hand.mat'))
+case('save -append refuses to lose a variable it cannot read', "y = 2; save('hand.mat', 'y', '-append');",
+     error="Unable to append to hand.mat: its variable 'str' cannot be read or written here, and would be lost. Nothing was saved.")
+check('save -append left the file as it was', os.path.getsize(path('hand.mat')) == size)
+case('matfile and importdata', "m = matfile('be.mat'); k = m.k; z = importdata('be.mat'); zk = z.k; w = importdata('v4be.mat');",
+     want={'k': [[1, -2]], 'zk': [[1, -2]], 'w': [[1.5, 2.5]]})
+write('data.dat', bytes(open(path('v4be.mat'), 'rb').read()))
+case('load -mat reads a MAT-file of any name', "load('data.dat', '-mat')", want={'x': [[1.5, 2.5]]})
+case('load of a text file still reads numbers', "fid = fopen('nums.txt', 'w'); fprintf(fid, '1 2\\n3 4\\n'); fclose(fid); load('nums.txt')",
+     want={'nums': [[1, 2], [3, 4]]})
+
+shutil.rmtree(TMP, ignore_errors=True)
+print(f'\n{checks[0] - len(failed)} of {checks[0]} checks passed')
+sys.exit(1 if failed else 0)

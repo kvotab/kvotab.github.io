@@ -124,13 +124,24 @@ async function run(msg) {
 const CALLS = new Set(['complete', 'var_view', 'lint', 'python_of', 'file_info', 'list_dir', 'workspace_json', 'help_text',
   'all_figures', 'figure_event', 'set_format', 'set_cwd', 'set_breakpoints', 'debug_command', 'files_changed']);
 
-function call(msg) {
+/* A call may answer { need: package } first (h5py, for MAT-files of version
+   7.3): the package is loaded and the call made again. */
+const NEEDS = new Set(['h5py']);
+
+async function call(msg) {
   if (!api) return post({ type: 'answer', id: msg.id, error: 'the engine is not ready' });
   if (!CALLS.has(msg.fn)) return post({ type: 'answer', id: msg.id, error: `unknown call ${msg.fn}` });
-  try {
+  const once = () => {
     const r = api[msg.fn](...(msg.args || []));
-    let result = r;
-    if (typeof r === 'string') { try { result = JSON.parse(r); } catch (e) { result = r; } }
+    if (typeof r !== 'string') return r;
+    try { return JSON.parse(r); } catch (e) { return r; }
+  };
+  try {
+    let result = once();
+    if (result && NEEDS.has(result.need)) {
+      await py.loadPackage(result.need, { messageCallback: () => {} });
+      result = once();
+    }
     if (msg.fn === 'set_cwd' || msg.fn === 'files_changed') scheduleSync();
     post({ type: 'answer', id: msg.id, result });
   } catch (e) {

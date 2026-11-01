@@ -793,22 +793,35 @@ def func2str(nargout, *args):
     return Char.of(t[1:] if isinstance(f, R.NamedFH) else t)
 
 
+def anon_from_text(s, captured=None):
+    """An anonymous function from its text, capturing the values given by
+    name (as when it was made where they were variables)."""
+    from ..compiler import compile_source
+    from .. import parser as P
+    ws = R.Workspace('str2func')
+    for k, v in (captured or {}).items():
+        ws[k] = v
+    src, linemap, prog = compile_source('plabTmpFn = ' + s + ';', R.BUILTINS, kind='command', user_funcs=R._user_file,
+                                        ws_names=tuple(ws))
+    # the text is run as an assignment: it must be one anonymous function, and nothing after it
+    if len(prog.body) != 1 or type(prog.body[0]) is not P.Assign or type(prog.body[0].rhs) is not P.Anon or prog.funcs:
+        raise err('MATLAB:str2func:invalidFunctionName', f'Invalid anonymous function: {s}', 'str2func')
+    R._cmd_n[0] += 1
+    pyfile = f'<plab:str2func#{R._cmd_n[0]}>'
+    code = compile(src, pyfile, 'exec')
+    ns = R.make_ns('command')
+    exec(code, ns)
+    R.MODULES[pyfile] = R.CompiledModule('command', 'str2func', s, src, linemap, 'command', ns)
+    R.run_sync(ns['SCRIPT'](ws))
+    return ws['plabTmpFn']
+
+
 @bi('str2func', ws=True, arr=False)
 def str2func(W, nargout, *args):
     nargchk(args, 1, 2, 'str2func')
     s = sval(args[0], 'function name', 'str2func').strip()
     if s.startswith('@'):
-        from ..compiler import compile_source
-        ws = R.Workspace('str2func')
-        src, linemap, prog = compile_source('plabTmpFn = ' + s + ';', R.BUILTINS, kind='command', user_funcs=R._user_file)
-        R._cmd_n[0] += 1
-        pyfile = f'<plab:str2func#{R._cmd_n[0]}>'
-        code = compile(src, pyfile, 'exec')
-        ns = R.make_ns('command')
-        exec(code, ns)
-        R.MODULES[pyfile] = R.CompiledModule('command', 'str2func', s, src, linemap, 'command', ns)
-        R.run_sync(ns['SCRIPT'](ws))
-        return ws['plabTmpFn']
+        return anon_from_text(s)
     return R.NamedFH(s)
 
 

@@ -604,6 +604,21 @@ async def call(W, name, nargout, args):
     if W is not None and getattr(W, 'gnames', None) and name in W.gnames:
         v = GLOBALS.get(name, NOVAL)
         return idx(v, args) if args else v
+    if W is not None and '.' in name:
+        # s.a.b compiled as a package function's name because s was no
+        # variable then: a field of the variable if there is one now
+        base, *fields = name.split('.')
+        v = W.get(base, NOVAL)
+        if v is NOVAL and base in getattr(W, 'gnames', ()):
+            v = GLOBALS.get(base, NOVAL)
+        if v is not NOVAL:
+            for f in fields:
+                v = fld1(v, f)
+            if args and isinstance(v, FH):
+                return await v.acall(nargout, *args)
+            if nargout > 1:
+                raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+            return idx(v, args) if args else v
     target = resolve(name)
     if target is None:
         raise MError('MATLAB:UndefinedFunction', f"Unrecognized function or variable '{name}'.")

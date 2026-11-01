@@ -267,22 +267,36 @@
         ev.preventDefault();
         this.folderMenu(ev.clientX, ev.clientY);
       });
-      // files dropped from the computer are uploaded here
+      // files dropped from the computer are copied here, or into the folder under the pointer
       this.el.addEventListener('dragover', (ev) => {
-        if ([...ev.dataTransfer.types].includes('Files')) {
-          ev.preventDefault();
-          ev.dataTransfer.dropEffect = 'copy';
-          if (!this.zone) { this.zone = el('div', { class: 'pl-dropzone' }, 'Drop to upload into this folder'); this.el.append(this.zone); }
-        }
-      });
-      this.el.addEventListener('dragleave', (ev) => { if (!this.el.contains(ev.relatedTarget)) { this.zone?.remove(); this.zone = null; } });
-      this.el.addEventListener('drop', (ev) => {
-        this.zone?.remove();
-        this.zone = null;
-        if (!ev.dataTransfer.files.length) return;
+        if (![...ev.dataTransfer.types].includes('Files')) return;
         ev.preventDefault();
-        this.app.upload([...ev.dataTransfer.files], this.path);
+        ev.dataTransfer.dropEffect = 'copy';
+        this.dropTarget(ev.target.closest?.('tr[data-name]'));
       });
+      this.el.addEventListener('dragleave', (ev) => { if (!this.el.contains(ev.relatedTarget)) this.dropTarget(false); });
+      this.el.addEventListener('drop', (ev) => {
+        if (![...ev.dataTransfer.types].includes('Files')) return;
+        ev.preventDefault();
+        const into = this.dropInto || this.path;
+        this.dropTarget(false);
+        this.app.takeDrop(ev.dataTransfer, into, false);
+      });
+    }
+
+    /* The zone and the folder row a drop would go into (a row that is no
+       folder means this folder); false hides them. They hide by themselves
+       when dragover stops coming (the drag left or was given up). */
+    dropTarget(row) {
+      clearTimeout(this.zoneTimer);
+      const it = row && this.items.find((i) => i.dir && i.name === row.dataset.name);
+      for (const tr of this.table.querySelectorAll('tr.is-droptarget')) if (!it || tr !== row) tr.classList.remove('is-droptarget');
+      if (row === false) { this.zone?.remove(); this.zone = null; this.dropInto = null; return; }
+      if (it) row.classList.add('is-droptarget');
+      this.dropInto = it ? U().joinPath(this.path, it.name) : null;
+      if (!this.zone) { this.zone = el('div', { class: 'pl-dropzone' }); this.el.append(this.zone); }
+      this.zone.textContent = `Drop to upload into ${it ? it.name : U().basename(this.path) || '/'}`;
+      this.zoneTimer = setTimeout(() => this.dropTarget(false), 250);
     }
 
     folderMenu(x, y) {
@@ -342,8 +356,8 @@
           U().menu(ev.clientX, ev.clientY, [
             { label: it.dir ? 'Open folder' : 'Open', action: () => this.open(it) },
             it.kind === 'mfile' ? { label: 'Run', kbd: 'F5', action: () => this.app.runFile(p) } : null,
-            it.kind === 'mat' ? { label: 'Load into the workspace', action: () => this.app.runCommand(`load('${p.replace(/'/g, "''")}')`) } : null,
-            it.dir ? { label: 'Add to path', action: () => this.app.runCommand(`addpath('${p.replace(/'/g, "''")}')`) } : null,
+            it.kind === 'mat' && U().mstr(p) ? { label: 'Load into the workspace', action: () => this.app.runCommand(`load(${U().mstr(p)})`) } : null,
+            it.dir && U().mstr(p) ? { label: 'Add to path', action: () => this.app.runCommand(`addpath(${U().mstr(p)})`) } : null,
             '-',
             !it.dir ? { label: 'Download', action: () => this.app.downloadFile(p) } : null,
             { label: 'Rename…', action: () => this.rename(it) },
@@ -373,7 +387,7 @@
     open(it) {
       const p = U().joinPath(this.path, it.name);
       if (it.dir) this.app.cd(p);
-      else if (it.kind === 'mat') this.app.runCommand(`load('${p.replace(/'/g, "''")}')`);
+      else if (it.kind === 'mat') { if (U().mstr(p)) this.app.runCommand(`load(${U().mstr(p)})`); }
       else if (it.kind === 'image') this.app.previewImage(p);
       else this.app.openFile(p);
     }
@@ -446,7 +460,9 @@
         const b = el('tbody');
         for (const f of v.fields) {
           const name = el('td', { class: `txt${f.open ? ' open' : ''}` }, f.name);
-          if (f.open) name.addEventListener('click', () => this.app.openVariable(`${this.name}.${f.name}`));
+          // a field opens by its name, or quoted (s.('…')) when that is no name: a field's name never becomes code
+          const q = U().isName(f.name) ? f.name : U().mstr(f.name) && `(${U().mstr(f.name)})`;
+          if (f.open && q) name.addEventListener('click', () => this.app.openVariable(`${this.name}.${q}`));
           b.append(el('tr', null, name, el('td', { class: 'txt' }, f.value), el('td', { class: 'txt' }, f.size || ''), el('td', { class: 'txt' }, f.class || '')));
         }
         t.append(b);

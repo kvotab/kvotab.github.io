@@ -10,6 +10,7 @@ from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, 
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, class_of, shape_of, numel,
                       _2d, EMPTY, py_str, share, share_all, scalar_out)
 from ..ops import cat as _cat
+from ..index import field_name
 from .. import runtime as R
 
 
@@ -95,6 +96,8 @@ def cell2struct(nargout, *args):
     a2 = np.moveaxis(a, dim, 0)
     if a2.shape[0] != len(fields):
         raise err('MATLAB:cell2struct:FieldNameAndCellMismatch', 'Number of field names must match number of fields in new structure.', 'cell2struct')
+    for f in fields:
+        field_name(f, 'cell2struct')
     rest = a2.shape[1:]
     shape = rest if len(rest) >= 2 else (rest[0], 1) if rest else (1, 1)
     s = Struct(shape, {})
@@ -143,7 +146,7 @@ def struct(nargout, *args):
     vals = []
     shape = None
     for i in range(0, len(args), 2):
-        name = sval(args[i], 'field name', 'struct')
+        name = field_name(sval(args[i], 'field name', 'struct'), 'struct')
         v = args[i + 1]
         names.append(name)
         vals.append(v)
@@ -228,7 +231,7 @@ def rmfield(nargout, *args):
 @bi('setfield')
 def setfield(nargout, *args):
     s = args[0]
-    names = [py_str(a) for a in args[1:-1] if is_str(a)]
+    names = [field_name(py_str(a), 'setfield') for a in args[1:-1] if is_str(a)]
     from ..index import fasgn, asgn_chain
     steps = tuple(('.', n) for n in names)
     v = args[-1]

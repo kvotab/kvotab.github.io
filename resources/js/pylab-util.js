@@ -279,13 +279,23 @@
   function dirname(p) { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); }
   function joinPath(a, b) { if (b.startsWith('/')) return b; return `${a.replace(/\/+$/, '')}/${b}`; }
 
+  /* A text as a char vector of the language ('it''s'), for a command the
+     page writes; null when it holds a control character, which a char
+     vector cannot hold. File names and paths go into commands only this way,
+     and as a bare name only when isName: what comes from a file never
+     becomes code. */
+  function mstr(s) {
+    return /[\u0000-\u001f\u007f]/.test(s) ? null : `'${s.replace(/'/g, "''")}'`;
+  }
+  const isName = (s) => /^[A-Za-z][A-Za-z0-9_]*$/.test(s);
+
   function fmtBytes(n) {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     return `${(n / 1024 / 1024).toFixed(1)} MB`;
   }
 
-  PL.util = { el, Emitter, icon, menu, closeMenu, dialog, prompt, confirm, toast, store, download, isMac, mod, modName, basename, dirname, joinPath, fmtBytes };
+  PL.util = { el, Emitter, icon, menu, closeMenu, dialog, prompt, confirm, toast, store, download, isMac, mod, modName, basename, dirname, joinPath, mstr, isName, fmtBytes };
   PL.el = el;
   PL.Emitter = Emitter;
   PL.icon = icon;

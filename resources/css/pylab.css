@@ -480,6 +480,11 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 }
 
 .pl-dropzone { position: absolute; inset: 0; z-index: 30; border: 2px dashed var(--accent-line); background: color-mix(in oklab, var(--accent-line) 10%, transparent); display: grid; place-content: center; color: var(--pl-text); font-weight: 600; pointer-events: none; }
+/* files dragged over the rest of the desktop: copied into the current folder and opened */
+.pl-dropzone.is-desk { inset: 8px; z-index: 50; border-radius: 6px; gap: 6px; padding: 16px; text-align: center; background: color-mix(in oklab, var(--accent-line) 12%, color-mix(in oklab, var(--pl-chrome) 72%, transparent)); }
+.pl-dropzone.is-desk strong { font-size: 18px; }
+.pl-dropzone.is-desk span { font-weight: 400; max-width: 46ch; }
+.pl-folder tr.is-droptarget > td { background: color-mix(in oklab, var(--accent-line) 24%, transparent); }
 
 /* ---- figure windows -------------------------------------------------------------------------- */
 .pl-figlayer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }

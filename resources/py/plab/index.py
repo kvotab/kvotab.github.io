@@ -9,6 +9,8 @@ Reads of A{i} and A.f can give several values (a comma-separated list), so
 cidx and fld return lists; cidx1 and fld1 are the one-value forms.
 """
 import math
+import re
+
 import numpy as np
 
 from .values import (MError, NOVAL, COLON, Char, Cell, Struct, Str, FH, Obj, F64, C128,
@@ -339,10 +341,23 @@ def dyn_name(v):
     """The name in A.(expr)."""
     t = type(v)
     if t is Char:
-        return v.str()
-    if t is Str and v.a.size == 1:
-        return v.a.flat[0]
+        return field_name(v.str())
+    if t is Str and v.a.size == 1 and v.a.flat[0] is not None:
+        return field_name(v.a.flat[0])
     raise MError('MATLAB:dynamicFieldName', 'Dynamic structure field names must be character vectors or string scalars.')
+
+
+_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
+
+
+def field_name(name, fn=None):
+    """A field's name as given, if it is a name (a letter, then letters,
+    digits and underscores): the desktop writes field names into code."""
+    if not _NAME.fullmatch(name):
+        e = MError('MATLAB:InvalidFieldName', f'Invalid field name "{name}".')
+        e.fn = fn
+        raise e
+    return name
 
 
 # ---- writing --------------------------------------------------------------------

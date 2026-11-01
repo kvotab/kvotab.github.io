@@ -1750,13 +1750,19 @@ writecell: Write a cell array of numbers and text to a delimited file.
 load: Load variables from a MAT-file, or a matrix from a text file.
     load filename
     load filename x y
+    load filename -mat
     S = load(filename)
-    * MAT-files of versions 4 to 7 and 7.3 load; a text file of numbers loads as a variable named after the file.
+    * MAT-files of versions 4, 6, 7 and 7.3 load, compressed or not. The names may hold * as a wildcard.
+    * A variable that cannot be read is left out with a warning and the others load: objects such as string arrays, tables and datetimes are not read. Sparse matrices load as full ones.
+    * A text file of numbers loads as a variable named after the file; -mat reads a MAT-file of any name.
 save: Save variables to a MAT-file (or to a text file with -ascii).
     save filename
     save filename x y
     save(filename, 'x', 'y')
+    save filename x -append
     save filename x -ascii
+    * -append adds to what the file holds; it refuses, saving nothing, rather than lose a variable of the file it cannot read.
+    * The file is of version 7 (compressed), or 6 or 4 when asked; -v7.3 also writes version 7. Function handles and objects are not saved.
 matfile: The variables of a MAT-file, as a struct.
     m = matfile(filename)
 importdata: The data of a file: a MAT-file's variables, or the numbers of a text file.

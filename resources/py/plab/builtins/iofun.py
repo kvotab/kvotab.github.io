@@ -17,6 +17,7 @@ from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
                       shape_of, numel, _2d, EMPTY, py_str, share, share_all, text_list)
 from .. import runtime as R
+from .. import matfile as MF
 
 
 def abspath(p):
@@ -1068,49 +1069,67 @@ def to_py_mat(v):
     return np.array([[0.0]])
 
 
-def from_py_mat(x):
-    """A value read by scipy.io.loadmat, as the language holds it."""
-    if isinstance(x, np.ndarray):
-        if x.dtype.kind in 'US':
-            if x.size == 0:
-                return Char.of('')
-            strs = [str(s) for s in x.reshape(-1)]
-            return Char.of(strs[0]) if len(strs) == 1 else Char.rows(strs)
-        if x.dtype.names:
-            if x.size == 1:
-                return Struct.scalar({k: from_py_mat(x[k].reshape(-1)[0]) for k in x.dtype.names})
-            s = Struct(_2d(x).shape, {})
-            for k in x.dtype.names:
-                a = np.empty(s.shape, object)
-                for i in range(x.size):
-                    a.flat[i] = from_py_mat(x[k].flat[i])
-                s.f[k] = a
-            return s
-        if x.dtype == object:
-            a = np.empty(_2d(x).shape, object)
-            for i in range(x.size):
-                a.flat[i] = from_py_mat(x.flat[i])
-            return Cell(a)
-        if x.dtype.kind == 'b':
-            return out(x)
-        if x.dtype.kind in 'iu':
-            return make(_2d(x), DTYPE_CLASS[x.dtype.newbyteorder('=')]) if x.dtype.newbyteorder('=') in DTYPE_CLASS else out(x.astype(F64))
-        if x.dtype == np.float32:
-            return make(_2d(x), 'single')
-        return out(x.astype(C128 if x.dtype.kind == 'c' else F64))
-    if isinstance(x, str):
-        return Char.of(x)
-    if isinstance(x, dict):
-        return Struct.scalar({k: from_py_mat(v) for k, v in x.items()})
-    if hasattr(x, '_fieldnames'):
-        return Struct.scalar({k: from_py_mat(getattr(x, k)) for k in x._fieldnames})
-    if isinstance(x, (int, float, complex, np.number)):
-        return out(np.array([[x]]))
-    return EMPTY()
+async def _need_h5py(fn):
+    """MAT-files of version 7.3 are HDF5, read through h5py: in the page, Pyodide
+    loads it the first time one is read."""
+    try:
+        import h5py  # noqa: F401
+        return
+    except ImportError:
+        pass
+    try:
+        import pyodide_js
+    except ImportError:
+        raise err('MATLAB:load:unableToReadMatFile', 'MAT-files of version 7.3 are HDF5 files, and reading them needs the h5py package.', fn)
+    try:
+        await pyodide_js.loadPackage('h5py')
+    except Exception as e:
+        raise err('MATLAB:load:unableToReadMatFile', f'h5py, which reads MAT-files of version 7.3, could not be loaded ({e}).', fn)
 
 
-@bi('save', ws=True)
-def save(W, nargout, *args):
+def _fh_from_mat(text, captured):
+    """A function handle saved in a MAT-file, made again from its text."""
+    text = text.strip()
+    if text.startswith('@'):
+        from .core import anon_from_text
+        try:
+            return anon_from_text(text, captured)
+        except MError as e:
+            raise MF.Unreadable(f'its function handle does not compile here ({e.message})')
+        except Exception:  # noqa: BLE001 -- the text is the file's, any failure leaves the variable out
+            raise MF.Unreadable('its function handle does not compile here')
+    if re.fullmatch(r'[A-Za-z]\w*(\.[A-Za-z]\w*)*', text):
+        return R.NamedFH(text)
+    raise MF.Unreadable(f'it is a handle to {text}, which cannot be made again here')
+
+
+async def read_mat(p, names=None, fn='load'):
+    """The variables of a MAT-file, warning about each one that could not be
+    read (the others are read all the same)."""
+    try:
+        if MF.kind(p) == 'v73':
+            await _need_h5py(fn)
+        values, problems = MF.read(p, names, make_fh=_fh_from_mat)
+    except MF.MatError as e:
+        raise err('MATLAB:load:unableToReadMatFile', f"Unable to read MAT-file {p}: {e}.", fn)
+    except OSError as e:
+        raise err('MATLAB:load:couldNotReadFile', f"Unable to read file '{p}': {e.strerror or e}.", fn)
+    except MError:
+        raise
+    except Exception as e:  # noqa: BLE001 -- a file's damage is reported, never an internal error
+        raise err('MATLAB:load:unableToReadMatFile', f'Unable to read MAT-file {p}: it is damaged ({type(e).__name__}: {e}).', fn)
+    for name, why in problems:
+        if not name:
+            R.warn('MATLAB:load:cannotReadPart', f'Part of {os.path.basename(p)} could not be read: {why}.')
+        elif name in values:
+            R.warn('MATLAB:load:variableChanged', f"Variable '{MF.shown(name)}' was loaded, but {why}.")
+        else:
+            R.warn('MATLAB:load:variableNotLoaded', f"Variable '{MF.shown(name)}' was not loaded: {why}.")
+    return values
+
+
+@bi('save', ws=True, aw=True)
+async def save(W, nargout, *args):
     words = [sval(a, 'argument', 'save') for a in args]
     fname = None
     names = []
@@ -1179,10 +1198,19 @@ def save(W, nargout, *args):
     import scipy.io as sio
     mdict = {}
     if append and os.path.isfile(p):
+        # what the file holds already is written again with the new variables:
+        # refuse rather than lose a variable that cannot be read or written
         try:
-            mdict = {k: v for k, v in sio.loadmat(p).items() if not k.startswith('__')}
-        except Exception:
-            mdict = {}
+            if MF.kind(p) == 'v73':
+                await _need_h5py('save')
+            old, problems = MF.read(p, make_fh=_fh_from_mat)
+        except MF.MatError as e:
+            raise err('MATLAB:save:couldNotWriteFile', f'Unable to append to {fname}: {e}.', 'save')
+        lost = [n for n, _ in problems if n not in old] + [n for n, v in old.items() if isinstance(v, FH) and n not in data]
+        if lost:
+            raise err('MATLAB:save:couldNotWriteFile', f"Unable to append to {fname}: its variable '{lost[0] or '?'}' cannot be "
+                      'read or written here, and would be lost. Nothing was saved.', 'save')
+        mdict = {k: to_py_mat(v) for k, v in old.items()}
     for k, v in data.items():
         if isinstance(v, (FH,)) or (isinstance(v, Obj) and not hasattr(v, 'opts')):
             R.warn('MATLAB:save:cannotSaveObject', f"Variable '{k}' of class {class_of(v)} was not saved.")
@@ -1193,68 +1221,19 @@ def save(W, nargout, *args):
     return None
 
 
-def _load_mat(p):
-    import scipy.io as sio
-    try:
-        d = sio.loadmat(p, squeeze_me=False, struct_as_record=True, mat_dtype=False, chars_as_strings=True)
-    except NotImplementedError:
-        return _load_mat73(p)
-    return {k: from_py_mat(v) for k, v in d.items() if not k.startswith('__')}
-
-
-def _load_mat73(p):
-    try:
-        import h5py
-    except ImportError:
-        raise err('MATLAB:load:v73', 'Version 7.3 MAT-files (HDF5) need the h5py package, which is not loaded here.', 'load')
-    out_d = {}
-    with h5py.File(p, 'r') as f:
-        for k in f:
-            if k.startswith('#'):
-                continue
-            out_d[k] = _h5_value(f, f[k])
-    return out_d
-
-
-def _h5_value(f, node):
-    import h5py
-    cls = node.attrs.get('MATLAB_class', b'double')
-    cls = cls.decode() if isinstance(cls, bytes) else str(cls)
-    if isinstance(node, h5py.Group):
-        return Struct.scalar({k: _h5_value(f, node[k]) for k in node})
-    data = node[()]
-    if cls == 'char':
-        a = np.asarray(data).T
-        return Char(_2d(a.astype(np.uint16)))
-    if cls == 'cell':
-        refs = np.asarray(data).T
-        c = np.empty(refs.shape, object)
-        for i in range(refs.size):
-            c.flat[i] = _h5_value(f, f[refs.flat[i]])
-        return Cell(_2d(c))
-    a = np.asarray(data)
-    if a.dtype.names and 'real' in a.dtype.names:
-        a = a['real'] + 1j * a['imag']
-    a = a.T
-    if cls == 'logical':
-        return out(a.astype(bool))
-    if cls in INT_TYPES:
-        return make(_2d(a), cls)
-    if cls == 'single':
-        return make(_2d(a), 'single')
-    return out(_2d(a.astype(C128 if a.dtype.kind == 'c' else F64)))
-
-
-@bi('load', ws=True)
-def load(W, nargout, *args):
+@bi('load', ws=True, aw=True)
+async def load(W, nargout, *args):
     words = [sval(a, 'argument', 'load') for a in args]
     fname = None
     names = []
     ascii_ = False
+    mat_ = False
     for w in words:
         if w.startswith('-'):
             if w.lower() == '-ascii':
                 ascii_ = True
+            elif w.lower() == '-mat':
+                mat_ = True
             continue
         if fname is None:
             fname = w
@@ -1267,14 +1246,12 @@ def load(W, nargout, *args):
         p += '.mat'
     if not os.path.isfile(p):
         raise err('MATLAB:load:couldNotReadFile', f"Unable to find file or directory '{fname}'.", 'load')
-    with open(p, 'rb') as fh:
-        head = fh.read(128)
-    is_mat = (not ascii_) and (p.lower().endswith('.mat') or head[:6] == b'MATLAB')
+    is_mat = not ascii_ and (mat_ or p.lower().endswith('.mat') or MF.kind(p) is not None)
     if is_mat:
-        data = _load_mat(p)
-        if names:
-            import fnmatch
-            data = {k: v for k, v in data.items() if any(fnmatch.fnmatch(k, n) for n in names)}
+        data = await read_mat(p, names)
+        for n in names:
+            if not any(c in n for c in '*?') and n not in data:
+                R.warn('MATLAB:load:variableNotFound', f"Variable '{n}' not found.")
     else:
         a = _read_numeric(p)
         var = re.sub(r'\W', '_', os.path.splitext(os.path.basename(p))[0])
@@ -1290,20 +1267,19 @@ def load(W, nargout, *args):
     return None
 
 
-@bi('matfile')
-def matfile(nargout, *args):
+@bi('matfile', aw=True)
+async def matfile(nargout, *args):
     p = abspath(sval(args[0], 'file name', 'matfile'))
-    return Struct.scalar(_load_mat(p))
+    return Struct.scalar(await read_mat(p, fn='matfile'))
 
 
-@bi('importdata')
-def importdata(nargout, *args):
+@bi('importdata', aw=True)
+async def importdata(nargout, *args):
     p = abspath(sval(args[0], 'file name', 'importdata'))
-    if p.lower().endswith('.mat'):
-        d = _load_mat(p)
+    if p.lower().endswith('.mat') or (os.path.isfile(p) and MF.kind(p) is not None):
+        d = await read_mat(p, fn='importdata')
         if len(d) == 1:
             return next(iter(d.values()))
         return Struct.scalar(d)
     a = _read_numeric(p)
     return out(a) if type(a) is np.ndarray else a
-

@@ -451,6 +451,10 @@ case('typecast and class conversion', "a = double(int8(-5)); b = uint8(300); c =
      want={'a': -5, 'b': 255, 'c': -4, 'd': [[True, False]]})
 case('mat files', "x = [1 2; 3 4]; s.name = 'a'; c = {1, 'two'}; save('t1.mat', 'x', 's', 'c'); clear; load('t1.mat'); y = x(2,1); n = s.name; k = c{2};",
      want={'y': 3, 'n': 'a', 'k': 'two'})
+case('a field of a variable made while the line runs', "eval('s.a.b = 5; f.g = @(x) 2*x;'); x = s.a.b; y = s.a; z = f.g(4); clear s; s.a.b = 6; w = s.a.b;",
+     want={'x': 5, 'y': {'b': 5}, 'z': 8, 'w': 6})
+case('a dotted name that is no variable is still a function', 'm = containers.Map(); n = m.Count;', want={'n': 0})
+case('a letter that is not ASCII is an invalid character', 'x\u3429 = 1', error='Invalid text character')
 case('text files', "fid = fopen('t.txt', 'w'); fprintf(fid, '%d %d\\n', [1 2; 3 4]); fclose(fid); A = readmatrix('t.txt'); t = fileread('t.txt');",
      want={'A': [[1, 3], [2, 4]], 't': '1 3\n2 4\n'})
 case('fgetl loop', "fid = fopen('t2.txt', 'w'); fprintf(fid, 'a\\nbb\\n'); fclose(fid); fid = fopen('t2.txt'); n = 0; while true, l = fgetl(fid); if ~ischar(l), break; end; n = n + numel(l); end; fclose(fid);",

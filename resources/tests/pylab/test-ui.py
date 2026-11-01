@@ -16,6 +16,17 @@ draws in the dark theme; the full window hides the site around the desktop
 and is remembered; at phone width the page does not scroll sideways, the
 Command Window is there and the Workspace opens from its menu.
 
+Files dragged from the computer (trusted drag events with real files): a
+program dropped on the Command Window is copied into the current folder and
+opened in the Editor; MAT-files of versions 7 and 7.3 dropped on the
+Workspace load, as if typed (waiting their turn while a program runs); a
+name already there asks, and Keep both or
+Replace do what they say (an open file shows its new text); on the Current
+Folder files are only copied, on a folder row into that folder; a drag given
+up leaves no zone; text dragged into the Command Window is still text; a
+drop while a dialog is open is ignored; a folder is copied with its files;
+a program whose file name is no name runs through run(), never as code.
+
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on PYLAB_HTTP_PORT and PYLAB_CDP_PORT (defaults 8811, 9311), then
 
@@ -27,7 +38,9 @@ check passes.
 import asyncio
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 from cdp import BASE, Checks, open_page, wait_engine
 
@@ -252,6 +265,172 @@ async def desktop(page):
     check('close all closes the windows', await until(page, 'PL.app.figures.wins.size === 0', 5), True)
 
 
+def drop_fixtures():
+    """Files to drop, written here: a script, MAT-files of version 7 (SciPy)
+    and 7.3 (h5py), a file of no known kind, and the script changed."""
+    import h5py
+    import numpy as np
+    import scipy.io as sio
+    d = tempfile.mkdtemp(prefix='pylab-drop-')
+    with open(os.path.join(d, 'dropped_demo.m'), 'w') as f:
+        f.write('% dropped from the computer\ny = 41 + 1;\n')
+    sio.savemat(os.path.join(d, 'dropped.mat'), {'q': np.array([[1.0, 2.0, 3.0]]), 's': {'a': 'x'}})
+    sio.savemat(os.path.join(d, 'later.mat'), {'w': np.array([[7.0]])})
+    with h5py.File(os.path.join(d, 'dropped73.mat'), 'w', userblock_size=512) as f:
+        ds = f.create_dataset('h', data=np.array([[1.0, 2.0], [3.0, 4.0]]).T)
+        ds.attrs['MATLAB_class'] = np.bytes_('double')
+    with open(os.path.join(d, 'dropped73.mat'), 'r+b') as f:
+        f.write(b'MATLAB 7.3 MAT-file, written by test-ui.py'.ljust(116, b' ') + b'\0' * 8 + b'\x00\x02IM')
+    with open(os.path.join(d, 'a;disp(5).m'), 'w') as f:
+        f.write('ran = 1;\n')
+    with open(os.path.join(d, 'notes.xyz'), 'wb') as f:
+        f.write(b'\x00\x01 not text')
+    os.makedirs(os.path.join(d, 'changed'))
+    with open(os.path.join(d, 'changed', 'dropped_demo.m'), 'w') as f:
+        f.write('% dropped again, changed\ny = 43;\n')
+    return d
+
+
+async def drag_files(page, x, y, paths, kinds=('dragEnter', 'dragOver', 'drop')):
+    """A drag of files from the computer: Chrome hands the page trusted drag
+    events with real files."""
+    data = {'items': [], 'files': paths, 'dragOperationsMask': 1}
+    for kind in kinds:
+        await page.call('Input.dispatchDragEvent', {'type': kind, 'x': x, 'y': y, 'data': data}, session=page.sid)
+
+
+async def middle(page, expr):
+    return await page.ev(f'(() => {{ const r = ({expr}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }})()')
+
+
+async def press_button(page, label, secs=10):
+    """Click a dialog's button by its text (a click: Escape can hang headless Chrome)."""
+    return await until(page, f"(() => {{ const b = [...document.querySelectorAll('.pl-dialog button')].find(b => b.textContent === {json.dumps(label)}); "
+                             'if (!b) return false; b.click(); return true; })()', secs)
+
+
+async def drops(page):
+    d = drop_fixtures()
+    at = lambda name: os.path.join(d, name)  # noqa: E731
+    exists = "(p) => PL.engine.fs('exists', { path: p })"
+    await command(page, "clear; clc; mkdir('/home/user/droptest'); cd /home/user/droptest; mkdir sub")
+    await page.ev("window.__dropSeen = []; addEventListener('drop', (ev) => __dropSeen.push(ev.defaultPrevented)); 1")
+
+    # a program dropped on the Command Window: copied into the current folder and opened in the Editor
+    x, y = await middle(page, 'PL.app.pCmd')
+    await drag_files(page, x, y, [at('dropped_demo.m')], ('dragEnter', 'dragOver'))
+    check('drop: the desktop shows where files go', await page.ev('!PL.app.deskZone.hidden && PL.app.deskZone.textContent'),
+          'Drop to openThey are copied into droptest: programs open in the Editor, MAT-files load into the workspace.')
+    await drag_files(page, x, y, [at('dropped_demo.m')], ('drop',))
+    check('drop: a program opens in the Editor', await until(page, "PL.app.current && PL.app.current.key === '/home/user/droptest/dropped_demo.m' && PL.app.current.editor.value"),
+          '% dropped from the computer\ny = 41 + 1;\n')
+    check('drop: the page keeps the drop (the browser opens nothing)', await page.ev('__dropSeen[0]'), True)
+    check('drop: the zone is gone after the drop', await page.ev('PL.app.deskZone.hidden'), True)
+
+    # MAT-files dropped on the Workspace load into it, as if typed
+    x, y = await middle(page, 'PL.app.pWs')
+    await drag_files(page, x, y, [at('dropped.mat'), at('dropped73.mat')])
+    got = await until(page, "PL.app.ws.rows.some(r => r.name === 'h') && PL.app.ws.rows.map(r => r.name).join(' ')", 120)
+    check('drop: MAT-files of versions 7 and 7.3 load (h5py loads for the second)', got, 'h q s')
+    await idle(page)
+    out = await tail(page, 600)
+    check("drop: the loads show in the Command Window", ">> load('dropped.mat')" in out and ">> load('dropped73.mat')" in out, True)
+    check('drop: and in the Command History', await page.ev('PL.app.history.items.slice(-2).map(i => i.c)'), ["load('dropped.mat')", "load('dropped73.mat')"])
+    out = await command(page, 'v = [s.a, num2str(h(2, 1) + q(3))]')
+    check('drop: the loaded values', "v =\n\n    'x6'" in out, True)
+
+    # a name already in the folder asks; Keep both gives the dropped file a new name
+    await drag_files(page, x, y, [at('dropped.mat')])
+    check('drop: a name already there asks first', await press_button(page, 'Keep both'), True)
+    check('drop: kept both, the new one loaded', await until(page, "PL.app.history.items.at(-1).c === \"load('dropped_2.mat')\"", 20), True)
+    await idle(page)
+
+    # while a program runs, a dropped MAT-file's load waits its turn, as a typed command does
+    await page.ev("PL.app.runCommand('pause(2)'); 1")
+    await until(page, 'PL.engine.busy', 5)
+    await drag_files(page, x, y, [at('later.mat')])
+    check('drop: while a program runs, the load waits its turn', await until(page, "PL.app.cmd.queue.join() === \"load('later.mat')\"", 10), True)
+    check('drop: and then runs', await until(page, "PL.app.ws.rows.some(r => r.name === 'w')", 30), True)
+    await idle(page)
+
+    # Replace writes over an open file, and the Editor shows the new text
+    x, y = await middle(page, 'PL.app.pEditor')
+    await drag_files(page, x, y, [at('changed/dropped_demo.m')])
+    check('drop: Replace is asked for', await press_button(page, 'Replace'), True)
+    check('drop: the Editor shows the replaced file', await until(page, "PL.app.docs.find(d => d.key === '/home/user/droptest/dropped_demo.m').editor.value.includes('y = 43')", 10), True)
+    check('drop: and it is not marked changed', await page.ev("PL.app.docs.find(d => d.key === '/home/user/droptest/dropped_demo.m').dirty"), False)
+
+    # a program whose file name is no name runs through run(), its name never code
+    await drag_files(page, x, y, [at('a;disp(5).m')])
+    await until(page, "PL.app.current && PL.app.current.key === '/home/user/droptest/a;disp(5).m'", 10)
+    await page.ev('PL.app.runCurrent(); 1')
+    await until(page, "PL.app.ws.rows.some(r => r.name === 'ran')", 20)
+    await idle(page)
+    out = await tail(page, 300)
+    check('drop: a file whose name is no name runs through run()', [">> run('/home/user/droptest/a;disp(5).m')" in out, '     5\n' in out], [True, False])
+
+    # dropped on the Current Folder: only copied, on a folder row into that folder
+    tabs = await page.ev('PL.app.docs.length')
+    hist = await page.ev('PL.app.history.items.length')
+    x, y = await middle(page, 'PL.app.folder.el')
+    await drag_files(page, x, y, [at('notes.xyz')], ('dragEnter', 'dragOver'))
+    check('drop: the Current Folder says where files go', await page.ev("PL.app.folder.zone && PL.app.folder.zone.textContent"), 'Drop to upload into droptest')
+    check('drop: the desktop zone stays hidden over it', await page.ev('PL.app.deskZone.hidden'), True)
+    await drag_files(page, x, y, [at('notes.xyz')], ('drop',))
+    check('drop: copied into the Current Folder', await until(page, f"({exists})('/home/user/droptest/notes.xyz')", 10), 'file')
+    await until(page, "PL.app.folder.items.some(i => i.name === 'notes.xyz')", 10)
+    check('drop: and not opened', await page.ev('[PL.app.docs.length, PL.app.history.items.length]'), [tabs, hist])
+    x, y = await middle(page, "PL.app.folder.table.querySelector('tr[data-name=\"sub\"]')")
+    await drag_files(page, x, y, [at('dropped.mat')], ('dragEnter', 'dragOver'))
+    check('drop: a folder row is the target', await page.ev("[PL.app.folder.zone.textContent, !!PL.app.folder.table.querySelector('tr.is-droptarget[data-name=\"sub\"]')]"),
+          ['Drop to upload into sub', True])
+    await drag_files(page, x, y, [at('dropped.mat')], ('drop',))
+    check('drop: copied into that folder', await until(page, f"({exists})('/home/user/droptest/sub/dropped.mat')", 10), 'file')
+
+    # a drag given up hides the zone (Chrome tells the page nothing)
+    x, y = await middle(page, 'PL.app.pCmd')
+    await drag_files(page, x, y, [at('notes.xyz')], ('dragEnter', 'dragOver', 'dragCancel'))
+    await asyncio.sleep(0.5)
+    check('drop: a drag given up leaves no zone', await page.ev('PL.app.deskZone.hidden && !PL.app.folder.zone'), True)
+
+    # text dragged into the Command Window is still text
+    await page.ev("PL.app.cmd.setLine(''); 1")
+    tx, ty = await middle(page, 'PL.app.cmd.ta')
+    await page.call('Input.dispatchDragEvent', {'type': 'dragEnter', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)
+    await page.call('Input.dispatchDragEvent', {'type': 'dragOver', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)
+    await page.call('Input.dispatchDragEvent', {'type': 'drop', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)
+    check('drop: text dropped in the Command Window is typed there', await until(page, "PL.app.cmd.ta.value === 'disp(7)'", 5), True)
+    await page.ev("PL.app.cmd.setLine(''); 1")
+
+    # a drop while a dialog is open is ignored
+    await page.ev("PL.util.dialog({ title: 'Test', body: 'x', buttons: [{ label: 'Close it', value: null }] }); 1")
+    await drag_files(page, x, y, [at('dropped73.mat')])
+    await asyncio.sleep(0.6)
+    check('drop: ignored while a dialog is open', await page.ev(f"({exists})('/home/user/droptest/dropped73_2.mat')"), False)
+    await press_button(page, 'Close it')
+    check('drop: and no Replace question came', await page.ev("document.querySelectorAll('.pl-dialog').length"), 0)
+
+    # a folder: walked with what it holds (dot files left out), as Chrome's entries give it
+    walked = await page.ev("""(() => {
+      const file = (name, text) => ({ isFile: true, isDirectory: false, name, file: (ok) => ok(new File([text], name)) });
+      const dir = (name, kids) => ({ isFile: false, isDirectory: true, name, createReader() { let sent = false; return { readEntries(ok) { ok(sent ? [] : kids); sent = true; } }; } });
+      const proj = dir('proj', [file('main.m', 'disp(1)'), file('.DS_Store', 'x'), dir('data', [file('b.txt', '1 2 3')]), dir('empty', [])]);
+      return PL.app.copyIn([{ entry: proj, file: null }], '/home/user/droptest', true).then((got) => JSON.stringify(got));
+    })()""")
+    check('drop: a folder is copied', walked, '[{"name":"proj","dir":true}]')
+    found = await page.ev(f"Promise.all(['proj/main.m', 'proj/data/b.txt', 'proj/empty', 'proj/.DS_Store'].map(p => ({exists})('/home/user/droptest/' + p)))")
+    check('drop: with its files and folders, dot files left out', found, ['file', 'file', 'dir', False])
+
+    # the Details of a version 7.3 file in a new Python: the worker loads h5py for it, then lists it
+    await page.ev('PL.engine.restart(); 1')
+    check('drop: Python starts again', await until(page, "PL.engine.state === 'ready'", 240), True)
+    await page.ev("PL.app.details.show('/home/user/droptest/dropped73.mat'); 1")
+    got = await until(page, "PL.app.details.el.querySelector('tbody') && PL.app.details.el.querySelector('tbody').textContent", 120)
+    check('drop: the Details list a version 7.3 file (h5py loaded for them)', got, 'h2×2double')
+    check('drop: no script errors', page.errors, [])
+    shutil.rmtree(d, ignore_errors=True)
+
+
 async def full_window(page):
     await page.ev('PL.app.toggleFull(); 1')
     await asyncio.sleep(0.3)
@@ -272,6 +451,7 @@ async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
         await desktop(page)
+        await drops(page)
         await full_window(page)
         await shot(page, 'desktop.png')
         check('no script errors', page.errors, [])

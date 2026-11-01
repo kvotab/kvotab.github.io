@@ -225,7 +225,7 @@ def tokenize(text, is_var=None, keep_comments=False):
             i = m.end()
             stmt_start = False
             continue
-        if c.isalpha():
+        if c.isalpha() and c.isascii():
             m = _ID.match(text, i)
             w = m.group(0)
             j = m.end()
