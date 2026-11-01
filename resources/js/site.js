@@ -66,6 +66,12 @@ const KVOT = (() => {
       desc: 'A statistics workbench in the style of JMP, computed by statsmodels.',
     },
     {
+      href: './pylab.html',
+      label: 'pylab',
+      group: 'data',
+      desc: 'A desktop for programs in the MATLAB language, compiled to Python and NumPy.',
+    },
+    {
       href: './rtm.html',
       label: 'Reactive Transport',
       group: 'models',

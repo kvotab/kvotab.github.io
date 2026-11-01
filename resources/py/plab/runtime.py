@@ -1,0 +1,1134 @@
+"""The runtime the compiled code calls as R.<name>: workspaces, calls,
+function handles, output, errors, and the session that runs commands and
+files.
+
+One session per Python process: the worker's. Its state is module-level.
+"""
+import asyncio
+import math
+import os
+import sys
+import time
+import types
+import traceback
+
+import numpy as np
+
+from .values import (MError, Interrupt, NOVAL, COLON, Char, Str, Cell, Struct, FH, Obj, F64, C128,
+                     EMPTY, share, share_all, is_shared, writable, class_of, shape_of, numel,
+                     scalar_out, is_empty_double, py_str, to_float, size_str, Unset)
+from .ops import (plus, minus, times, rdivide, ldivide, power, mtimes, mrdivide, mldivide, mpower,
+                  uminus, uplus, not_, and_, or_, xor, eq, ne, lt, le, gt, ge, transpose, ctranspose,
+                  colon, truth, sc_truth, hcat, vcat, matrix, cat)
+from .index import (idx, cidx, cidx1, fld, fld1, dyn_name, asgn, casgn, fasgn, asgn_chain, endv, one)
+from . import display as D
+from . import ops as _ops
+
+INF = math.inf
+NINF = -math.inf
+NAN = math.nan
+
+GLOBALS = {}
+PERSISTENT = {}
+
+
+# ---- workspaces -------------------------------------------------------------------
+
+class Workspace(dict):
+    """A function's (or the base) variables. A name with no value raises the
+    language's error; a parameter not passed says so."""
+    __slots__ = ('fname', 'params', 'gnames', 'nargs')
+
+    def __init__(self, fname='base', params=()):
+        super().__init__()
+        self.fname = fname
+        self.params = params
+        self.gnames = set()
+        self.nargs = (-1, -1)
+
+    def __missing__(self, key):
+        if key in self.params:
+            raise MError('MATLAB:minrhs', 'Not enough input arguments.')
+        raise MError('MATLAB:UndefinedFunction', f"Unrecognized function or variable '{key}'.")
+
+
+class NestedWorkspace(Workspace):
+    """A nested function's variables. The names it shares with the functions
+    around it (`outer`: name -> the workspace of the nearest one that has it)
+    are read and written there, so the functions see each other's changes;
+    the rest are its own."""
+    __slots__ = ('outer',)
+
+    def __init__(self, fname, params, outer):
+        super().__init__(fname, params)
+        self.outer = outer
+
+    def __getitem__(self, key):
+        o = self.outer.get(key)
+        return o[key] if o is not None else dict.__getitem__(self, key)
+
+    def __setitem__(self, key, value):
+        o = self.outer.get(key)
+        if o is not None:
+            o[key] = value
+        else:
+            dict.__setitem__(self, key, value)
+
+    def __delitem__(self, key):
+        o = self.outer.get(key)
+        if o is not None:
+            del o[key]
+        else:
+            dict.__delitem__(self, key)
+
+    def __contains__(self, key):
+        o = self.outer.get(key)
+        return key in o if o is not None else dict.__contains__(self, key)
+
+    def get(self, key, default=None):
+        o = self.outer.get(key)
+        return o.get(key, default) if o is not None else dict.get(self, key, default)
+
+    def pop(self, key, *default):
+        o = self.outer.get(key)
+        return o.pop(key, *default) if o is not None else dict.pop(self, key, *default)
+
+    def keys(self):
+        return list(dict.keys(self)) + [k for k, o in self.outer.items() if k in o]
+
+    def __iter__(self):
+        return iter(self.keys())
+
+    def __len__(self):
+        return len(self.keys())
+
+    def items(self):
+        return [(k, self[k]) for k in self.keys()]
+
+    def values(self):
+        return [self[k] for k in self.keys()]
+
+
+BASE = Workspace('base')
+
+
+def declare_global(W, name):
+    if name not in GLOBALS:
+        v = W.get(name, NOVAL) if isinstance(W, dict) else NOVAL
+        GLOBALS[name] = EMPTY() if v is NOVAL else v
+    W.gnames.add(name)
+    if name in W:
+        del W[name]
+
+
+def persistent_store(path, fname):
+    key = (path, fname)
+    s = PERSISTENT.get(key)
+    if s is None:
+        s = PERSISTENT[key] = {}
+    return s
+
+
+def varargin(args):
+    c = Cell.of_list(list(args))
+    share_all(c.a)
+    return c
+
+
+def too_many_inputs(name):
+    e = MError('MATLAB:TooManyInputs', 'Too many input arguments.')
+    e.fn = name
+    return e
+
+
+def too_many_outputs(name):
+    e = MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    e.fn = name
+    return e
+
+
+def fout(W, outs, nargout, fname):
+    """A function's outputs, as a call asked for them."""
+    if not outs:
+        return None
+    if outs[-1] == 'varargout':
+        fixed = list(outs[:-1])
+        vals = []
+        for o in fixed:
+            vals.append(W.get(o, NOVAL))
+        vo = W.get('varargout', NOVAL)
+        if vo is not NOVAL:
+            if type(vo) is not Cell:
+                raise MError('MATLAB:varargoutNotCell', 'The variable varargout must be a cell array.')
+            vals += vo.items()
+    else:
+        vals = [W.get(o, NOVAL) for o in outs]
+        fixed = outs
+    want = max(nargout, 1)
+    if nargout <= 1:
+        v = vals[0] if vals else NOVAL
+        if v is NOVAL:
+            if nargout == 0:
+                return None
+            name = outs[0]
+            raise MError('MATLAB:unassignedOutputs', f'Output argument "{name}" (and possibly others) not assigned a value in the execution with "{fname}" function.')
+        return v
+    if len(vals) < nargout:
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.') if outs[-1] != 'varargout' else MError('MATLAB:unassignedOutputs', f'Output argument "varargout{{{len(vals) - len(fixed) + 1}}}" not assigned a value in the execution with "{fname}" function.')
+    for i in range(nargout):
+        if vals[i] is NOVAL:
+            name = outs[i] if i < len(fixed) else f'varargout{{{i - len(fixed) + 1}}}'
+            raise MError('MATLAB:unassignedOutputs', f'Output argument "{name}" (and possibly others) not assigned a value in the execution with "{fname}" function.')
+    return tuple(vals[:nargout])
+
+
+def outs(r, n):
+    """The n values of a multiple assignment from a call's result."""
+    if n <= 1:
+        if r is None:
+            raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+        return (r,)
+    if r is None or not isinstance(r, tuple):
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    if len(r) < n:
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    return r
+
+
+def need(vals, n):
+    if len(vals) < n:
+        raise MError('MATLAB:needMoreRhsOutputs', 'Insufficient number of outputs from right hand side of equal sign to satisfy assignment.')
+    return vals
+
+
+def single_out(v, n):
+    if n > 1 if isinstance(n, int) else int(n) > 1:
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    return v
+
+
+def idx_n(A, args, nargout):
+    """Indexing where a call could also be meant (nargout given)."""
+    if nargout > 1:
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    return idx(A, args)
+
+
+def cellmat(rows):
+    """A { ... } literal: every value is one element (a cell inside braces
+    stays a cell, nested)."""
+    out_rows = []
+    for r in rows:
+        if not r:
+            continue
+        a = np.empty((1, len(r)), object)
+        for j, v in enumerate(r):
+            a[0, j] = share(v)
+        out_rows.append(a)
+    if not out_rows:
+        return Cell.empty()
+    if len(out_rows) == 1:
+        return Cell(out_rows[0])
+    n = out_rows[0].shape[1]
+    for a in out_rows:
+        if a.shape[1] != n:
+            raise MError('MATLAB:catenate:dimensionMismatch', 'Dimensions of arrays being concatenated are not consistent.')
+    return Cell(np.vstack(out_rows))
+
+
+# ---- conditions -------------------------------------------------------------------
+
+def is_false1(v):
+    """A scalar that is false: the left of & in an if stops there."""
+    t = type(v)
+    if t is bool:
+        return not v
+    if t is float:
+        return v == 0.0
+    return numel(v) == 1 and not truth(v) if t is np.ndarray else False
+
+
+def is_true1(v):
+    t = type(v)
+    if t is bool:
+        return v
+    if t is float:
+        return v != 0.0 and v == v
+    return numel(v) == 1 and truth(v) if t is np.ndarray else False
+
+
+def swmatch(v, case):
+    """switch: a case matches by ==  for numbers, strcmp for text, and a
+    cell case matches if any element does."""
+    tc = type(case)
+    if tc is Cell:
+        for x in case.a.reshape(-1, order='F'):
+            if swmatch(v, x):
+                return True
+        return False
+    tv = type(v)
+    if tv in (Char, Str) or tc in (Char, Str):
+        if tv not in (Char, Str) or tc not in (Char, Str):
+            return False
+        try:
+            return py_str(v) == py_str(case)
+        except MError:
+            return False
+    if numel(case) == 0 or numel(v) == 0:
+        return False
+    if numel(v) != 1:
+        raise MError('MATLAB:switch:caseExpressionNotScalar', 'SWITCH expression must be a scalar or a character vector.')
+    try:
+        r = eq(v, case)
+    except MError:
+        return False
+    if type(r) is bool:
+        return r
+    return bool(np.all(r)) if numel(case) == 1 else False
+
+
+# ---- loops and yielding -------------------------------------------------------------
+
+def forrange(a, b, s=None):
+    """The values of a for loop over a:b or a:s:b."""
+    if s is None:
+        r = _ops.frange(a, b)
+        if r is not None:
+            return r
+        return forit(colon(a, b))
+    r = _ops.frange(a, s, b)
+    if r is not None:
+        return r
+    return forit(colon(a, s, b))
+
+
+def forit(v):
+    """A for loop takes the columns of its value one at a time."""
+    t = type(v)
+    if t is float or t is bool or t is complex:
+        return (v,)
+    if t is np.ndarray:
+        if v.size == 0:
+            return ()
+        if v.ndim == 2 and v.shape[0] == 1:
+            if v.dtype == np.float64 or v.dtype == np.bool_ or v.dtype == np.complex128:
+                return v.reshape(-1).tolist() if v.dtype != np.complex128 else [complex(x) for x in v.reshape(-1)]
+            return [v[:, j:j + 1].copy() for j in range(v.shape[1])]
+        a = v.reshape(v.shape[0], -1, order='F')
+        return [scalar_out(a[:, j:j + 1].copy()) for j in range(a.shape[1])]
+    if t is Char:
+        a = v.a.reshape(v.a.shape[0], -1, order='F') if v.a.ndim > 2 else v.a
+        return [Char(a[:, j:j + 1].copy()) for j in range(a.shape[1])] if a.size else ()
+    if t is Cell:
+        a = v.a.reshape(v.a.shape[0], -1, order='F') if v.a.ndim > 2 else v.a
+        out = []
+        for j in range(a.shape[1]):
+            col = a[:, j:j + 1].copy()
+            share_all(col)
+            out.append(Cell(col))
+        return out
+    if t is Str:
+        a = v.a
+        return [Str(a[:, j:j + 1].copy()) for j in range(a.shape[1])] if a.size else ()
+    if t is Struct:
+        out = []
+        for j in range(v.shape[1] if len(v.shape) > 1 else 1):
+            out.append(idx(v, (COLON, float(j + 1))))
+        return out
+    return (v,)
+
+
+_TICK = [0, 0.0]
+YIELD_EVERY = 0.05
+SYNC = [0]
+INTERRUPT = [False]
+T_DEBUG = [False]
+
+
+def tk():
+    """Called once per loop iteration: true when it is time to look up
+    (Ctrl+C, output to send)."""
+    n = _TICK[0] + 1
+    if n < 200:
+        _TICK[0] = n
+        return False
+    _TICK[0] = 0
+    now = time.perf_counter()
+    if now - _TICK[1] >= YIELD_EVERY or INTERRUPT[0]:
+        return True
+    return False
+
+
+async def H(W, line, mod):
+    """The hook between statements: Ctrl+C, the debugger, and a moment for
+    the page."""
+    if INTERRUPT[0]:
+        INTERRUPT[0] = False
+        raise Interrupt()
+    if SYNC[0]:
+        return
+    if DEBUGGER.active:
+        await DEBUGGER.hook(W, line, mod)
+    now = time.perf_counter()
+    if now - _TICK[1] >= YIELD_EVERY:
+        _TICK[1] = now
+        flush()
+        await asyncio.sleep(0)
+        if INTERRUPT[0]:
+            INTERRUPT[0] = False
+            raise Interrupt()
+
+
+def run_sync(coro):
+    """Run a coroutine to its end without an event loop (for callbacks from
+    SciPy). It must not wait for anything."""
+    SYNC[0] += 1
+    try:
+        try:
+            coro.send(None)
+        except StopIteration as e:
+            return e.value
+        coro.close()
+        raise MError('MATLAB:callbackWait', 'This function cannot wait for input here (it runs inside a numerical routine).')
+    finally:
+        SYNC[0] -= 1
+
+
+class _Debugger:
+    active = False
+
+    def wants(self, path):
+        return False
+
+    async def hook(self, W, line, mod):
+        pass
+
+    async def keyboard(self, W):
+        raise MError('MATLAB:keyboard', 'keyboard: the debugger is not available here.')
+
+
+DEBUGGER = _Debugger()
+
+EVENT_HOOK = [None]       # fn(dict): events for the page (clc, figures, files)
+INPUT_HOOK = [None]       # async fn(prompt, kind) -> str: the page's answer
+
+
+PAGE_HOOK = [None]        # async fn(request) -> answer: the page draws, measures or asks
+FLUSH_FIGURES = None      # set by the graphics module
+
+
+async def ask_page(request):
+    """Ask the page for something only it can give (a figure drawn to a
+    picture, mouse clicks) and wait for the answer."""
+    flush()
+    if PAGE_HOOK[0] is None or SYNC[0]:
+        return None
+    return await PAGE_HOOK[0](request)
+
+
+def flush_figures():
+    if FLUSH_FIGURES is not None:
+        FLUSH_FIGURES()
+
+
+async def ask_input(prompt, kind='line'):
+    """Wait for the user to answer (input(), pause with no time)."""
+    flush()
+    if INPUT_HOOK[0] is None:
+        raise MError('MATLAB:input:noInput', 'Input is not available here.')
+    if SYNC[0]:
+        raise MError('MATLAB:callbackWait', 'This function cannot wait for input here (it runs inside a numerical routine).')
+    return await INPUT_HOOK[0](prompt, kind)
+
+
+async def sleep(t):
+    """pause(t): flush the output and figures, then wait."""
+    flush()
+    if EVENT_HOOK[0] is not None:
+        EVENT_HOOK[0]({'type': 'drawnow'})
+    if SYNC[0]:
+        end = time.perf_counter() + t
+        while time.perf_counter() < end:
+            pass
+        return
+    end = time.perf_counter() + t
+    while True:
+        left = end - time.perf_counter()
+        if left <= 0:
+            break
+        await asyncio.sleep(min(left, 0.05))
+        if INTERRUPT[0]:
+            INTERRUPT[0] = False
+            raise Interrupt()
+    _TICK[1] = time.perf_counter()
+
+
+class Cleanup(Obj):
+    """onCleanup(f): runs f when the variable holding it goes."""
+    __slots__ = ('f', 'done')
+    cls = 'onCleanup'
+    is_handle = True
+
+    def __init__(self, f):
+        self.f = f
+        self.done = False
+
+    def __del__(self):
+        if not self.done:
+            self.done = True
+            try:
+                if isinstance(self.f, FH):
+                    self.f.scall(0)
+            except Exception:
+                pass
+
+
+# ---- function handles ---------------------------------------------------------------
+
+class Anon(FH):
+    """@(x) ...: the compiled body and the values it captured."""
+    __slots__ = ('fn', 'src', 'cap', 'nparams', 'vararg')
+
+    def __init__(self, fn, src, cap, nparams, vararg=False):
+        self.fn = fn
+        self.src = src
+        self.cap = cap
+        self.nparams = nparams
+        self.vararg = vararg
+
+    def text(self):
+        return self.src
+
+    async def acall(self, nargout, *args):
+        if len(args) > self.nparams and not self.vararg:
+            raise MError('MATLAB:TooManyInputs', 'Too many input arguments.')
+        return await self.fn(nargout, self.cap, args)
+
+    def scall(self, nargout, *args):
+        return run_sync(self.acall(nargout, *args))
+
+    def name(self):
+        return self.src
+
+
+class NamedFH(FH):
+    """@name: a function found by name when called (a builtin or a file)."""
+    __slots__ = ('fname', 'target')
+
+    def __init__(self, fname, target=None):
+        self.fname = fname
+        self.target = target
+
+    def text(self):
+        return '@' + self.fname
+
+    async def acall(self, nargout, *args):
+        if self.target is not None:
+            return await self.target(nargout, *args)
+        return await call(None, self.fname, nargout, args)
+
+    def scall(self, nargout, *args):
+        info = BUILTINS.get(self.fname)
+        if info is not None and not info.aw and not info.ws and self.target is None and not _user_file(self.fname):
+            return info.fn(nargout, *args)
+        return run_sync(self.acall(nargout, *args))
+
+    def name(self):
+        return self.fname
+
+
+def fh(name):
+    return NamedFH(name)
+
+
+def LocalFH(name, fn):
+    return NamedFH(name, fn)
+
+
+async def fcall(f, nargout, args):
+    """f(args) for a function handle."""
+    return await f.acall(nargout, *args)
+
+
+def anon_ws(cap, params, args):
+    W = Workspace('@', tuple(p for p in params if p != '~'))
+    W.update(cap)
+    n = len(args)
+    for i, p in enumerate(params):
+        if p == 'varargin':
+            W['varargin'] = varargin(args[i:])
+            break
+        if i < n and p != '~':
+            W[p] = share(args[i])
+    return W
+
+
+def anon_one(v, nargout):
+    if nargout > 1:
+        raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+    return v
+
+
+def anon_list(vals, nargout):
+    if nargout <= 1:
+        return one(vals)
+    if len(vals) < nargout:
+        raise MError('MATLAB:needMoreRhsOutputs', 'Insufficient number of outputs from right hand side of equal sign to satisfy assignment.')
+    return tuple(vals[:nargout])
+
+
+# ---- calls by name ------------------------------------------------------------------
+
+BUILTINS = {}          # name -> Info (filled by builtins.load())
+B = types.SimpleNamespace()
+
+
+async def vget(W, name):
+    """A name in a script that may be a variable now or a function."""
+    v = W.get(name, NOVAL) if W is not None else NOVAL
+    if v is not NOVAL:
+        return v
+    return await call(W, name, 1, ())
+
+
+async def call(W, name, nargout, args):
+    """A call to a function by name: a variable of that name first (made at
+    run time, by load or eval), then a file on the path, then a builtin."""
+    if W is not None and name in W and name not in ('ans',):
+        v = W[name]
+        if isinstance(v, FH):
+            return await v.acall(nargout, *args)
+        if nargout > 1:
+            raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
+        return idx(v, args) if args else v
+    if W is not None and getattr(W, 'gnames', None) and name in W.gnames:
+        v = GLOBALS.get(name, NOVAL)
+        return idx(v, args) if args else v
+    target = resolve(name)
+    if target is None:
+        raise MError('MATLAB:UndefinedFunction', f"Unrecognized function or variable '{name}'.")
+    kind, obj = target
+    if kind == 'builtin':
+        info = obj
+        if info.ws:
+            r = info.fn(W if W is not None else BASE, nargout, *args)
+        else:
+            r = info.fn(nargout, *args)
+        if info.aw:
+            r = await r
+        return r
+    if kind == 'script':
+        if args:
+            raise MError('MATLAB:scriptNotAFunction', f"Attempt to execute SCRIPT {name} as a function:\n{obj.path}")
+        if nargout > 0:
+            raise MError('MATLAB:scriptNotAFunction', f"Attempt to execute SCRIPT {name} as a function:\n{obj.path}")
+        await run_script(obj, W if W is not None else BASE)
+        return None
+    return await obj(nargout, *args)
+
+
+# ---- results and display --------------------------------------------------------------
+
+_out = []
+OUT_HOOK = [None]       # fn(text, kind) to send output somewhere
+_last_flush = [0.0]
+
+
+def write(text, kind='out'):
+    if not text:
+        return
+    if OUT_HOOK[0] is not None:
+        _out.append((kind, text))
+        if len(_out) > 200:
+            flush()
+    else:
+        _out.append((kind, text))
+
+
+def flush():
+    if OUT_HOOK[0] is not None and _out:
+        # join consecutive pieces of the same kind
+        merged = []
+        for k, t in _out:
+            if merged and merged[-1][0] == k:
+                merged[-1][1].append(t)
+            else:
+                merged.append((k, [t]))
+        _out.clear()
+        for k, ts in merged:
+            OUT_HOOK[0](''.join(ts), k)
+
+
+def take_output():
+    text = ''.join(t for k, t in _out)
+    _out.clear()
+    return text
+
+
+def show(W, name):
+    write(D.display(name, W[name]))
+
+
+def show_value(name, v):
+    write(D.display(name, v))
+
+
+def ans_list(W, vals, show_it):
+    for v in vals:
+        W['ans'] = share(v)
+        if show_it:
+            write(D.display('ans', v))
+
+
+def warn(ident, msg):
+    if WARN_STATE.get(ident, WARN_STATE.get('all', 'on')) == 'off':
+        return
+    LASTWARN[0] = (msg, ident)
+    write(f'Warning: {msg}\n', 'warn')
+
+
+WARN_STATE = {}
+LASTWARN = [('', '')]
+_ops._warn_hook[0] = warn
+
+
+# ---- errors -------------------------------------------------------------------------
+
+class MExc(Obj):
+    """An MException value: identifier, message, stack, cause."""
+    __slots__ = ('err',)
+    cls = 'MException'
+
+    def __init__(self, err):
+        self.err = err
+
+    def getprop(self, name):
+        e = self.err
+        if name == 'message':
+            return Char.of(e.message)
+        if name == 'identifier':
+            return Char.of(e.identifier)
+        if name == 'stack':
+            st = Struct((len(e.stack), 1), {k: np.empty((len(e.stack), 1), object) for k in ('file', 'name', 'line')})
+            for i, (nm, fl, ln) in enumerate(e.stack):
+                st.f['file'][i, 0] = Char.of(fl)
+                st.f['name'][i, 0] = Char.of(nm)
+                st.f['line'][i, 0] = float(ln)
+            return st
+        if name == 'cause':
+            return Cell.of_list([MExc(c) for c in e.cause], (len(e.cause), 1))
+        if name == 'Correction':
+            return EMPTY()
+        return super().getprop(name)
+
+    def propnames(self):
+        return ['identifier', 'message', 'cause', 'stack']
+
+    def display_lines(self):
+        e = self.err
+        lines = ['  MException with properties:', '']
+        lines.append(f"    identifier: '{e.identifier}'")
+        lines.append(f"       message: '{e.message}'")
+        lines.append(f"         cause: {{{len(e.cause)}×1 cell}}")
+        lines.append(f"         stack: [{len(e.stack)}×1 struct]")
+        lines.append('    Correction: []')
+        return lines
+
+
+def mexc(e):
+    return MExc(e)
+
+
+def caught(e):
+    """An exception caught by try/catch, as the language's error (Python
+    errors from the runtime included)."""
+    if isinstance(e, MError):
+        if not e.stack:
+            e.stack = stack_of(e.__traceback__)
+        return e
+    m = as_merror(e)
+    m.stack = stack_of(e.__traceback__)
+    return m
+
+
+def as_merror(e):
+    if isinstance(e, MError):
+        return e
+    if isinstance(e, KeyError):
+        return MError('MATLAB:internal', f'Internal error: missing key {e}.')
+    if isinstance(e, RecursionError):
+        return MError('MATLAB:recursionLimit', 'Maximum recursion limit reached.')
+    if isinstance(e, MemoryError):
+        return MError('MATLAB:nomem', 'Out of memory.')
+    if isinstance(e, TypeError):
+        s = str(e)
+        if 'positional argument' in s or 'takes' in s and 'given' in s:
+            if 'missing' in s:
+                return MError('MATLAB:minrhs', 'Not enough input arguments.')
+            return MError('MATLAB:TooManyInputs', 'Too many input arguments.')
+    if isinstance(e, ZeroDivisionError):
+        return MError('MATLAB:divideByZero', 'Division by zero.')
+    if isinstance(e, (np.linalg.LinAlgError,)):
+        return MError('MATLAB:linalg', str(e))
+    m = MError('MATLAB:internal', f'{type(e).__name__}: {e}')
+    m.internal = traceback.format_exception(type(e), e, e.__traceback__)
+    return m
+
+
+MODULES = {}       # python filename -> CompiledModule
+
+
+def stack_of(tb):
+    """The compiled frames a traceback went through: [(name, file, line)],
+    innermost first."""
+    out = []
+    while tb is not None:
+        fr = tb.tb_frame
+        fn = fr.f_code.co_filename
+        if fn.startswith('<plab:'):
+            mod = MODULES.get(fn)
+            if mod is not None:
+                pyline = tb.tb_lineno
+                ml = mod.linemap[pyline - 1] if 0 < pyline <= len(mod.linemap) else 0
+                name = fr.f_code.co_name
+                if name.startswith('LF_'):
+                    name = name[3:]
+                    if mod.kind == 'function' and name != mod.name:
+                        name = f'{mod.name}>{name}'
+                elif name == 'SCRIPT':
+                    name = mod.name
+                elif name.startswith('_A'):
+                    name = mod.ns.get('_ANON_TEXT', {}).get(name, '@(...)') if mod.ns else '@(...)'
+                out.append((name, mod.path, ml))
+        tb = tb.tb_next
+    out.reverse()
+    return out
+
+
+def stack_of_frames():
+    """The compiled functions running now, innermost first: [{name, file,
+    line}] (for the debugger's stack list)."""
+    f = sys._getframe(1)
+    out = []
+    while f is not None:
+        fn = f.f_code.co_filename
+        if fn.startswith('<plab:') and fn in MODULES:
+            mod = MODULES[fn]
+            nm = f.f_code.co_name
+            if nm.startswith('LF_') or nm == 'SCRIPT':
+                ln = mod.linemap[f.f_lineno - 1] if 0 < f.f_lineno <= len(mod.linemap) else 0
+                name = nm[3:] if nm.startswith('LF_') else mod.name
+                if mod.path != 'command':
+                    out.append({'name': name, 'file': mod.path, 'line': ln})
+        f = f.f_back
+    return out
+
+
+def source_line(path, line):
+    mod = None
+    for m in MODULES.values():
+        if m.path == path:
+            mod = m
+            break
+    text = mod.text if mod else None
+    if text is None:
+        return ''
+    lines = text.split('\n')
+    if 0 < line <= len(lines):
+        return lines[line - 1]
+    return ''
+
+
+def link(path, line, text):
+    """Output text that the page shows as a link to a file's line."""
+    return f'\x01{path}:{line}\x02{text}\x03'
+
+
+def format_error(e):
+    """The text the Command Window shows for an error."""
+    if isinstance(e, Interrupt):
+        return 'Operation terminated by user.\n'
+    m = as_merror(e)
+    stack = m.stack or stack_of(e.__traceback__)
+    lines = []
+    user_frames = [s for s in stack if not s[0].startswith('@(') or True]
+    if getattr(m, 'from_error_fn', False) and user_frames:
+        name, path, ln = user_frames[0]
+        label = name.split('>')[-1] if '>' not in name else name
+        lines.append('Error using ' + (link(path, ln, label) if path != 'command' else label))
+        lines.append(m.message)
+        rest = user_frames[1:]
+    elif m.fn:
+        lines.append(f'Error using {m.fn}')
+        lines.append(m.message)
+        rest = user_frames
+    else:
+        lines.append(m.message)
+        rest = user_frames
+    rest = [f for f in rest if f[0] != 'command']
+    if rest:
+        lines.append('')
+        for name, path, ln in rest:
+            if name.startswith('@'):
+                # an anonymous function is named by its text, with no line
+                lines.append('Error in ' + (link(path, ln, name) if path != 'command' else name))
+                continue
+            lines.append('Error in ' + link(path, ln, f'{name} (line {ln})'))
+            src = source_line(path, ln)
+            if src:
+                lines.append(src.lstrip())
+    text = '\n'.join(lines)
+    return text + '\n'
+
+
+# ---- files and the path -----------------------------------------------------------------
+
+STATE = {'cwd': '/home/user', 'path': [], 'epoch': 0}
+_file_cache = {}      # path -> (mtime, size, epoch, CompiledModule)
+_resolve_cache = {}
+
+
+class CompiledModule:
+    def __init__(self, path, name, text, src, linemap, kind, ns):
+        self.path = path
+        self.name = name
+        self.text = text
+        self.src = src
+        self.linemap = linemap
+        self.kind = kind
+        self.ns = ns
+
+
+def bump_epoch():
+    """Files were added, removed or changed: compiled code is rebuilt as it
+    is next called."""
+    STATE['epoch'] += 1
+    _resolve_cache.clear()
+
+
+def search_dirs():
+    return [STATE['cwd']] + [p for p in STATE['path'] if p != STATE['cwd']]
+
+
+def _user_file(name):
+    if name in _resolve_cache:
+        r = _resolve_cache[name]
+        return r is not None and r[0] != 'builtin'
+    for d in search_dirs():
+        p = os.path.join(d, name + '.m')
+        if os.path.isfile(p):
+            return True
+    return False
+
+
+def find_file(name):
+    for d in search_dirs():
+        p = os.path.join(d, name + '.m')
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def resolve(name):
+    r = _resolve_cache.get(name)
+    if r is not None:
+        kind, obj, epoch = r
+        if epoch == STATE['epoch']:
+            if kind == 'file':
+                return _file_target(obj)
+            return kind, obj
+    p = find_file(name)
+    if p is not None:
+        _resolve_cache[name] = ('file', p, STATE['epoch'])
+        return _file_target(p)
+    info = BUILTINS.get(name)
+    if info is not None:
+        _resolve_cache[name] = ('builtin', info, STATE['epoch'])
+        return 'builtin', info
+    return None
+
+
+def _file_target(path):
+    mod = load_file(path)
+    if mod.kind == 'script':
+        return 'script', mod
+    return 'function', mod.ns['MAIN']
+
+
+def load_file(path):
+    """The compiled module of a file (compiled again when the file or the
+    set of files changed)."""
+    st = os.stat(path)
+    c = _file_cache.get(path)
+    if c is not None and c[0] == st.st_mtime_ns and c[1] == st.st_size and c[2] == STATE['epoch']:
+        return c[3]
+    with open(path, encoding='utf-8', errors='replace') as f:
+        text = f.read()
+    mod = compile_file(path, text)
+    _file_cache[path] = (st.st_mtime_ns, st.st_size, STATE['epoch'], mod)
+    return mod
+
+
+def compile_file(path, text):
+    from .compiler import compile_source
+    name = os.path.splitext(os.path.basename(path))[0]
+    kind_hint = 'file'
+    src, linemap, prog = compile_source(text, BUILTINS, kind='file', user_funcs=_user_file, modname=name, path=path)
+    if prog.kind == 'function':
+        fname = prog.funcs[0].name
+        if fname != name:
+            pass   # the file name wins, as in the language
+        modkind = 'function'
+    else:
+        modkind = 'script'
+    pyfile = f'<plab:{path}>'
+    code = compile(src, pyfile, 'exec')
+    ns = make_ns(path)
+    exec(code, ns)
+    if modkind == 'function':
+        ns['MAIN'] = ns[f'LF_{prog.funcs[0].name}']
+    mod = CompiledModule(path, name, text, src, linemap, modkind, ns)
+    mod.prog = prog
+    MODULES[pyfile] = mod
+    return mod
+
+
+def make_ns(path):
+    from . import runtime as R_mod
+    return {'R': R_mod, 'B': B, 'NOVAL': NOVAL, 'COLON': COLON, 'FH': FH, 'G': GLOBALS,
+            'T_': DEBUGGER.active and DEBUGGER.wants(path) if hasattr(DEBUGGER, 'wants') else False,
+            'M_': path, '__name__': f'plab_{os.path.basename(path)}'}
+
+
+async def run_script(mod, W):
+    """A script runs in the caller's workspace; it is compiled for the
+    names that workspace holds."""
+    from .compiler import compile_source
+    key_names = frozenset(W.keys())
+    fh_names = frozenset(k for k, v in W.items() if isinstance(v, FH))
+    gn = frozenset(getattr(W, 'gnames', ()))
+    cache = getattr(mod, 'variants', None)
+    if cache is None:
+        cache = mod.variants = {}
+    used = getattr(mod, 'used_names', None)
+    if used is None:
+        from .compiler import uses_names
+        used = mod.used_names = uses_names(mod.prog.body) | set().union(*[uses_names(f.body) for f in mod.prog.funcs]) if mod.prog.funcs else uses_names(mod.prog.body)
+    sig = (frozenset(n for n in key_names if n in used), frozenset(n for n in fh_names if n in used), gn)
+    entry = cache.get(sig)
+    if entry is None:
+        src, linemap, prog = compile_source(mod.text, BUILTINS, kind='file', user_funcs=_user_file,
+                                            ws_names=sig[0], ws_fh=sig[1], ws_globals=gn,
+                                            modname=mod.name, path=mod.path)
+        pyfile = f'<plab:{mod.path}>'
+        code = compile(src, pyfile, 'exec')
+        ns = make_ns(mod.path)
+        exec(code, ns)
+        m2 = CompiledModule(mod.path, mod.name, mod.text, src, linemap, 'script', ns)
+        MODULES[pyfile] = m2
+        entry = cache[sig] = (ns['SCRIPT'], m2)
+    fn, m2 = entry
+    MODULES[f'<plab:{mod.path}>'] = m2
+    await fn(W)
+
+
+# ---- the session ------------------------------------------------------------------------
+
+_cmd_n = [0]
+
+
+def compile_command(text, W=None):
+    """A command line, compiled against the base workspace's names."""
+    from .compiler import compile_source
+    W = W if W is not None else BASE
+    names = set(W.keys())
+    fh_names = set(k for k, v in W.items() if isinstance(v, FH))
+    src, linemap, prog = compile_source(text, BUILTINS, kind='command', user_funcs=_user_file,
+                                        ws_names=names, ws_fh=fh_names, ws_globals=W.gnames,
+                                        modname='command', path='command')
+    _cmd_n[0] += 1
+    pyfile = f'<plab:command#{_cmd_n[0]}>'
+    code = compile(src, pyfile, 'exec')
+    ns = make_ns('command')
+    exec(code, ns)
+    mod = CompiledModule('command', 'command', text, src, linemap, 'command', ns)
+    MODULES[pyfile] = mod
+    # keep the last few commands' modules (their anonymous functions may still be called)
+    return ns['SCRIPT'], mod
+
+
+async def execute(text, W=None):
+    """Run a command line. Errors are written to the output; returns True
+    when it ran to the end."""
+    W = W if W is not None else BASE
+    try:
+        fn, mod = compile_command(text, W)
+    except MError as e:
+        write(format_parse_error(e, text), 'err')
+        return False
+    try:
+        await fn(W)
+        return True
+    except Interrupt:
+        flush()
+        write('Operation terminated by user.\n', 'err')
+        return False
+    except MError as e:
+        e.stack = e.stack or stack_of(e.__traceback__)
+        LASTERR[0] = e
+        write(format_error(e), 'err')
+        return False
+    except RecursionError as e:
+        m = MError('MATLAB:recursionLimit', 'Maximum recursion limit reached. Use set(0,\'RecursionLimit\',N) to change the limit. Be aware that exceeding your available stack space can crash the program and/or your computer.')
+        m.stack = stack_of(e.__traceback__)
+        LASTERR[0] = m
+        write(format_error(m), 'err')
+        return False
+    except Exception as e:
+        m = as_merror(e)
+        m.stack = stack_of(e.__traceback__)
+        LASTERR[0] = m
+        write(format_error(m), 'err')
+        if getattr(m, 'internal', None):
+            write(''.join(m.internal[-3:]), 'internal')
+        return False
+
+
+LASTERR = [None]
+
+
+def format_parse_error(e, text):
+    line = getattr(e, 'line', None)
+    pos = getattr(e, 'pos', None)
+    lines = text.split('\n')
+    out = []
+    if line and 0 < line <= len(lines) and pos is not None:
+        start = sum(len(l) + 1 for l in lines[:line - 1])
+        col = max(0, pos - start)
+        src = lines[line - 1]
+        out.append(' ' + src)
+        out.append(' ' + ' ' * col + '↑')
+    out.append('Error: ' + e.message)
+    return '\n'.join(out) + '\n'
+
+
+def shell_escape(cmd):
+    raise MError('MATLAB:shell', 'Operating system commands are not available here.')
+
+
+# ---- startup ----------------------------------------------------------------------------
+
+BI = {}      # dotted names (containers.Map): name -> function
+
+
+def setup():
+    from . import builtins as BIM
+    BIM.load(BUILTINS)
+    B.__dict__.clear()
+    BI.clear()
+    from .compiler import pyname
+    for name, info in BUILTINS.items():
+        if '.' in name:
+            BI[name] = info.fn
+        else:
+            setattr(B, pyname(name), info.fn)

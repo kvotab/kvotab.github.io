@@ -101,6 +101,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://kvotab.se/pylab.html</loc>
+    <lastmod>2026-11-01</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://kvotab.se/arsredovisning.html</loc>
     <lastmod>2026-09-16</lastmod>
     <priority>0.8</priority>

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" data-build="20261101a">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>pylab — kvot ab</title>
+  <meta name="description" content="A desktop for MATLAB-language programs in the browser: a Command Window, an Editor with breakpoints, the Workspace, the Current Folder and figure windows. The programs are compiled to Python and run on NumPy and SciPy (Pyodide), in the page.">
+  <link rel="canonical" href="https://kvotab.se/pylab.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="pylab — kvot ab">
+  <meta property="og:description" content="Write and run MATLAB-language scripts and functions in the browser; they are compiled to Python and run on NumPy and SciPy.">
+  <meta property="og:url" content="https://kvotab.se/pylab.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+        // the full window (the toolstrip's button): no site header or footer, from the first paint
+        if (localStorage.getItem('pylab.full') === '1') document.documentElement.classList.add('pl-full');
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/pylab.css?v=20261101a">
+  <link rel="icon" href="./resources/images/pylab-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="./resources/images/pylab-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./resources/images/pylab-icon-180.png">
+  <meta name="apple-mobile-web-app-title" content="pylab">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div id="plApp" class="pl">
+      <!-- A stand-in in the desktop's own frame while the scripts load
+           (pylab-app.js replaces it). -->
+      <div class="pl-boot" role="status">
+        <div class="pl-boot-strip"></div>
+        <div class="pl-boot-body">
+          <p class="pl-boot-title">pylab</p>
+          <p class="pl-boot-text">Loading the desktop…</p>
+        </div>
+      </div>
+      <noscript><p style="padding:20px">This page needs JavaScript: the programs run in Python compiled to WebAssembly, in the browser.</p></noscript>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20261101a"></script>
+  <script>
+    KVOT.renderHeader('pylab');
+    KVOT.renderNav('pylab.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+    The page's scripts, in the order they need each other (all deferred):
+      pylab-util     DOM building, events, small helpers
+      pylab-engine   the Python engine (pylab-worker.mjs, a module worker)
+      pylab-lang     the language's tokens: colours, and whether a line is complete
+      pylab-editor   the code editor (a textarea over coloured lines)
+      pylab-figure   figure windows and the drawing of axes, lines, surfaces
+      pylab-cmd      the Command Window
+      pylab-panels   Current Folder, Workspace, Command History, variables
+      pylab-help     the Help panel
+      pylab-app      the desktop: toolstrip, layout, files, debugging
+  -->
+  <script defer src="./resources/js/pylab-util.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-engine.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-lang.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-editor.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-figure.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-cmd.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-panels.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-help.js?v=20261101a"></script>
+  <script defer src="./resources/js/pylab-app.js?v=20261101a"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      PL.app = new PL.App(document.getElementById('plApp'));
+      PL.app.start({ version: document.documentElement.dataset.build });
+    });
+  </script>
+</body>
+</html>

@@ -47,6 +47,7 @@ OWN = {
     'flashcards.html': ('resources/images/flashcards-icon-180.png', True),
     'gitarr.html': ('resources/images/gitarr-icon-180.png', True),
     'kompartment.html': ('kompartment/icon-180.png', False),
+    'pylab.html': ('resources/images/pylab-icon-180.png', True),
     'rb.html': ('resources/images/rb-icon-180.png', False),
     'smui.html': ('resources/images/smui-icon-180.png', False),
     'solna.html': ('resources/images/sl-icon-180.png', True),
