@@ -32,7 +32,9 @@ Workspace load, as if typed (waiting their turn while a program runs), string
 arrays too; a
 name already there asks, and Keep both or
 Replace do what they say (an open file shows its new text); on the Current
-Folder files are only copied, on a folder row into that folder; a drag given
+Folder files are only copied, on a folder row into that folder (a program
+there is not found from the current folder, and the error says where it is;
+from its own folder it runs, Windows line ends and all); a drag given
 up leaves no zone; text dragged into the Command Window is still text; a
 drop while a dialog is open is ignored; a folder is copied with its files;
 a program whose file name is no name runs through run(), never as code.
@@ -444,6 +446,9 @@ def drop_fixtures():
         f.write('ran = 1;\n')
     with open(os.path.join(d, 'notes.xyz'), 'wb') as f:
         f.write(b'\x00\x01 not text')
+    with open(os.path.join(d, 'tucked_fn.m'), 'wb') as f:      # Windows line ends, as a file from a PC has
+        f.write(b"function tucked_fn(cmd)\r\nif ~nargin\r\n    feval(mfilename, 'go')\r\n    return\r\nend\r\n"
+                b"c = {2, 3};\r\nA = magic(4);\r\nfprintf('tucked %s %d\\n', cmd, A(c{:}));\r\n")
     os.makedirs(os.path.join(d, 'changed'))
     with open(os.path.join(d, 'changed', 'dropped_demo.m'), 'w') as f:
         f.write('% dropped again, changed\ny = 43;\n')
@@ -550,6 +555,15 @@ async def drops(page):
           ['Drop to upload into sub', True])
     await drag_files(page, x, y, [at('dropped.mat')], ('drop',))
     check('drop: copied into that folder', await until(page, f"({exists})('/home/user/droptest/sub/dropped.mat')", 10), 'file')
+
+    # a program in that folder is not found from this one: the error says where it is
+    await drag_files(page, x, y, [at('tucked_fn.m')])
+    await until(page, f"({exists})('/home/user/droptest/sub/tucked_fn.m')", 10)
+    await command(page, 'tucked_fn')
+    check('drop: a program not found says where its file is', "Unrecognized function or variable 'tucked_fn'.\ntucked_fn.m is in /home/user/droptest/sub, which is not the current folder or on the path"
+          in await tail(page, 400), True)
+    await command(page, 'cd sub; tucked_fn; cd ..')
+    check('drop: from its folder it runs (Windows line ends, mfilename, one cs-list as the index)', (await tail(page, 100)).endswith('tucked go 10\n'), True)
 
     # a drag given up hides the zone (Chrome tells the page nothing)
     x, y = await middle(page, 'PL.app.pCmd')

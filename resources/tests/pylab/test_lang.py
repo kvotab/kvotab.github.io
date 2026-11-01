@@ -203,6 +203,9 @@ case('cell basics', "c = {1, 'two', [3 4]}; a = c{3}; b = class(c(2)); n = numel
 case('cell grow', 'c = {}; c{3} = 5; n = numel(c); e = isempty(c{1});', want={'n': 3, 'e': True})
 case('cs-list into a function', 'c = {1, 2, 3}; m = max(c{2:3}); v = [c{:}];', want={'m': 3, 'v': [[1, 2, 3]]})
 case('cs-list to outputs', 'c = {4, 5}; [a, b] = c{:};', want={'a': 4, 'b': 5})
+case('one cs-list as the whole index', 'c = {2, 3}; A = magic(4); a = A(c{:}); s.p = {1, 4}; s.b = magic(4); b = s.b(s.p{:}); '
+     'd = {5}; v = 10:10:60; e = v(d{:}); f = @(x) x * 2; g = f(d{:}); s.f = @(x, y) x + y; h = s.f(c{:});',
+     want={'a': 10, 'b': 13, 'e': 50, 'g': 10, 'h': 5})
 case('cell of cells', 'c = {{1, 2}, {3}}; x = c{1}{2};', want={'x': 2})
 case('paren on cells', "c = {1, 'a', 2}; d = c([1 3]); c(2) = [];", want={'d': [1, 2], 'c': [1, 2]})
 case('brace on non-cell', 'x = 5; y = x{1};', error='Brace indexing is not supported for variables of this type.')
@@ -321,6 +324,11 @@ FILES = {
     'siblings.m': ("function [a, b] = siblings()\none();\ntwo();\na = getone();\nb = 7;\n    function one()\n        x = 1;\n    end\n"
                    "    function two()\n        x = 2;\n    end\n    function v = getone()\n        v = exist('x', 'var');\n    end\nend\n"),
     'argslocal.m': 'function r = argslocal()\nk = 100;\nq = twice(3);\nr = [k q];\n    function k = twice(k)\n        k = 2 * k;\n    end\nend\n',
+    # one cs-list as the whole index, in a file (as ud.solution(ud.currpos{:}))
+    'cslistidx.m': 'function r = cslistidx(ud)\nif ud.solution(ud.currpos{:}) == 10 && ud.board(ud.histpos{:}, ud.currpos{:}) == 10\n    r = 1;\nelse\n    r = 0;\nend\n',
+    'whoami.m': "function [a, b] = whoami()\na = mfilename;\nb = mfilename('fullpath');\n",
+    'whoscript.m': 'ws_name = mfilename;\n',
+    'selfcall.m': "function r = selfcall(cmd)\nif ~nargin\n    r = feval(mfilename, 'init');\n    return\nend\nr = [cmd '!'];\n",
 }
 tmp = tempfile.mkdtemp(prefix='pylab-test-')
 for name, text in FILES.items():
@@ -360,6 +368,29 @@ case('a variable the parent only reads', 'r = readsonly();', want={'r': 5})
 case('two levels of nesting', 'r = twolevel(1);', want={'r': 63})
 case('siblings share only what the parent uses', '[a, b] = siblings();', want={'a': False, 'b': 7})
 case("a nested function's arguments are its own", 'r = argslocal();', want={'r': [[100, 6]]})
+case('one cs-list as the whole index in a file', 'ud.solution = magic(4); ud.board = magic(4); ud.currpos = {2, 3}; ud.histpos = {}; '
+     'r = cslistidx(ud);', want={'r': 1})
+case('mfilename', "[a, b] = whoami(); whoscript; c = mfilename; d = isempty(c); e = selfcall();",
+     want={'a': 'whoami', 'b': os.path.join(tmp, 'whoami'), 'ws_name': 'whoscript', 'd': True, 'e': 'init!'})
+case('a function typed at the prompt', 'function y = typed(x)\ny = x;\nend', error='Functions are defined in program files: save typed as typed.m')
+case('a function given to eval', "try, eval('function g, end'), catch e, m = e.message; end",
+     want={'m': 'Functions are defined in program files: save g as g.m, then call it by that name.'})
+
+# a program that is not found: the Command Window says where one of that name is
+os.makedirs(os.path.join(tmp, 'tucked'))
+with open(os.path.join(tmp, 'tucked', 'tucked_fn.m'), 'w') as f:
+    f.write('function tucked_fn\n')
+with open(os.path.join(tmp, 'wrongname.m'), 'w') as f:
+    f.write('% made as a new script, then given a function\n\nfunction r = rightname()\nr = 1;\n')
+R.STATE['home'] = tmp
+case('a file in a folder not searched', 'tucked_fn', shows=["Unrecognized function or variable 'tucked_fn'.\ntucked_fn.m is in " + os.path.join(tmp, 'tucked'),
+                                                            'which is not the current folder or on the path: cd to its folder, or add the folder with addpath'])
+case('a function in a file of another name', 'x = rightname();', shows=[f'\x01{os.path.join(tmp, "wrongname.m")}:3\x02wrongname.m\x03 in {tmp} has the function rightname',
+                                                                        'called by its own name, wrongname: rename the file rightname.m'])
+case('try/catch gets the message alone', 'try, tucked_fn, catch e, m = e.message; end', want={'m': "Unrecognized function or variable 'tucked_fn'."})
+case('a name no file has gets no more', 'nothing_named_so', shows="Unrecognized function or variable 'nothing_named_so'.\n")
+case('the folder on the path', "addpath(fullfile(pwd, 'tucked')); tucked_fn; rmpath(fullfile(pwd, 'tucked'));", shows=None)
+del R.STATE['home']
 
 # ---- workspace and session ----------------------------------------------------------------------
 case('clear', 'a = 1; b = 2; clear a', want={'b': 2}, absent=['a'])

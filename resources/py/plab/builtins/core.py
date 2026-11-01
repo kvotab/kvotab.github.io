@@ -1036,6 +1036,26 @@ def inputname(nargout, *args):
     return Char.of('')
 
 
+@bi('mfilename')
+def mfilename(nargout, *args):
+    """The name of the file whose code calls it (with 'fullpath', its path
+    without .m); '' for a line typed in the Command Window."""
+    import os
+    nargchk(args, 0, 1, 'mfilename')
+    opt = sval(args[0], 'option', 'mfilename').lower() if args else ''
+    if opt not in ('', 'fullpath', 'class'):
+        raise err('MATLAB:mfilename:InvalidInput', "The option must be 'fullpath' or 'class'.", 'mfilename')
+    f = sys._getframe(1)
+    while f is not None:
+        mod = R.MODULES.get(f.f_code.co_filename)
+        if mod is not None:
+            if mod.path == 'command' or opt == 'class':
+                return Char.of('')
+            return Char.of(os.path.splitext(mod.path)[0] if opt == 'fullpath' else mod.name)
+        f = f.f_back
+    return Char.of('')
+
+
 @bi('validateattributes')
 def validateattributes(nargout, *args):
     nargchk(args, 3, None, 'validateattributes')

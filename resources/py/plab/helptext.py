@@ -1799,6 +1799,10 @@ assignin: Set a variable in the caller's or the base workspace.
     assignin('base' | 'caller', name, value)
 inputname: The name of a variable passed as an input, or '' for an expression.
     s = inputname(k)
+mfilename: The name of the program file the code runs in; '' in the Command Window.
+    name = mfilename
+    p = mfilename('fullpath')
+    * 'fullpath' gives the file's folder and name, without .m.
 nargin: The number of inputs a function was called with (or takes, for nargin(fun)).
     n = nargin
     n = nargin(fun)

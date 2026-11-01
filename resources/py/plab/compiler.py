@@ -35,6 +35,12 @@ def pyname(name):
     return name + '_' if name in PYKW else name
 
 
+def pytuple(parts):
+    """A Python tuple of the parts. One part takes a comma: without it, (x)
+    is x and (*c) is no Python at all."""
+    return '(' + ', '.join(parts) + (',)' if len(parts) == 1 else ')')
+
+
 class CompileError(MError):
     def __init__(self, msg, line):
         super().__init__('MATLAB:compile', msg)
@@ -978,9 +984,7 @@ class Compiler:
             else:
                 parts.append(self.expr(a)[0])
         self._end = save
-        if len(parts) == 1 and not parts[0].startswith('*'):
-            return f'({parts[0]},)'
-        return '(' + ', '.join(parts) + ')'
+        return pytuple(parts)
 
     def call_args(self, args, tv=None):
         """A function's arguments, cs-lists spread out. When the call may
@@ -1037,7 +1041,7 @@ class Compiler:
                 tv = self.tmp()
                 args = self.index_args(x.args, tv)
                 if n in self.scope.fh_vars:
-                    cargs = '(' + ', '.join(self.call_args(x.args, tv)) + (',)' if len(x.args) == 1 and not self.is_cslist(x.args[0]) else ')')
+                    cargs = pytuple(self.call_args(x.args, tv))
                     return f'((await R.fcall({tv}, {nargout}, {cargs})) if isinstance({tv} := {v}, FH) else R.idx_n({tv}, {args}, {nargout}))'
                 return f'R.idx_n(({tv} := {v}), {args}, {nargout})'
             if n in ('nargin', 'nargout') and n not in self.scope.local_funcs and not self.user_funcs(n):
@@ -1051,7 +1055,7 @@ class Compiler:
             tv = self.tmp()
             base, _ = self.expr(x.base)
             args = self.index_args(x.args, tv)
-            cargs = '(' + ', '.join(self.call_args(x.args, tv)) + (',)' if len(x.args) == 1 and not self.is_cslist(x.args[0]) else ')')
+            cargs = pytuple(self.call_args(x.args, tv))
             return f'((await R.fcall({tv}, {nargout}, {cargs})) if isinstance({tv} := {base}, FH) else R.idx_n({tv}, {args}, {nargout}))'
         code, _ = self.expr(x)
         if multi:
@@ -1156,7 +1160,7 @@ class Compiler:
                 tv = self.tmp()
                 args = self.index_args(x.args, tv)
                 if n in self.scope.fh_vars:
-                    cargs = '(' + ', '.join(self.call_args(x.args, tv)) + (',)' if len(x.args) == 1 and not self.is_cslist(x.args[0]) else ')')
+                    cargs = pytuple(self.call_args(x.args, tv))
                     return f'((await R.fcall({tv}, 1, {cargs})) if isinstance({tv} := {v}, FH) else R.idx({tv}, {args}))', False
                 if any(self.has_end(a) for a in x.args):
                     return f'R.idx(({tv} := {v}), {args})', True
@@ -1309,6 +1313,10 @@ def compile_source(text, builtins, kind='command', user_funcs=None, ws_names=(),
             names = P.assigned_names(text) | set(ws_names)
             is_var = lambda n: n in names
     prog = P.parse(text, is_var, 'file' if kind != 'command' else 'command')
+    if kind == 'command' and prog.kind == 'function':
+        # a function's text typed, run as a section or given to eval
+        f = prog.funcs[0]
+        raise CompileError(f'Functions are defined in program files: save {f.name} as {f.name}.m, then call it by that name.', f.line)
     c = Compiler(builtins, user_funcs, modname, path)
     c.debug = debug
     if prog.kind == 'function':

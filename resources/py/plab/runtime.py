@@ -7,6 +7,7 @@ One session per Python process: the worker's. Its state is module-level.
 import asyncio
 import math
 import os
+import re
 import sys
 import time
 import types
@@ -990,6 +991,10 @@ def format_error(e):
     else:
         lines.append(m.message)
         rest = user_frames
+    if m.identifier == 'MATLAB:UndefinedFunction':
+        mm = re.match(r"Unrecognized function or variable '([A-Za-z]\w*)'\.$", m.message)
+        if mm:
+            lines += where_else(mm.group(1))
     rest = [f for f in rest if f[0] != 'command']
     if rest:
         lines.append('')
@@ -1052,6 +1057,62 @@ def find_file(name):
         if os.path.isfile(p):
             return p
     return None
+
+
+_FUNCTION_LINE = re.compile(r'function\b\s*(?:\[[^\]]*\]\s*=\s*|[A-Za-z]\w*\s*=\s*)?([A-Za-z]\w*)')
+
+
+def where_else(name):
+    """For the Command Window's error when a name is no function or
+    variable: lines that say where a program of that name is after all.
+    A file name.m in a folder under the home folder that is not searched,
+    or a file in a searched folder whose function is called name (a file
+    is called by its own name). Looked for only when the error is shown,
+    never for one that try/catch takes."""
+    searched = set(search_dirs())
+    home = STATE.get('home', '/home/user')
+    out = []
+    folders = []
+    seen = 0
+    for d, subs, files in os.walk(home):
+        seen += 1
+        if seen > 2000:
+            break
+        subs[:] = sorted(s for s in subs if not s.startswith('.')) if d[len(home):].count('/') < 5 else []
+        if d not in searched and name + '.m' in files:
+            folders.append(d)
+    if folders:
+        where = folders[0] if len(folders) == 1 else ', '.join(folders[:3]) + (' and more' if len(folders) > 3 else '')
+        out.append(f'{name}.m is in {where}, which is not the current folder or on the path: cd to its folder, or add the folder with addpath, to call {name}.')
+    others = []
+    seen = 0
+    for d in search_dirs():
+        try:
+            entries = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for f in entries:
+            if not f.endswith('.m') or f == name + '.m':
+                continue
+            seen += 1
+            if seen > 1000:
+                break
+            try:
+                with open(os.path.join(d, f), encoding='utf-8', errors='replace') as fh:
+                    head = fh.read(8192)
+            except OSError:
+                continue
+            for k, ln in enumerate(head.splitlines()):
+                s = ln.strip()
+                if s and not s.startswith('%'):
+                    mm = _FUNCTION_LINE.match(s)
+                    if mm and mm.group(1) == name:
+                        others.append((os.path.join(d, f), k + 1))
+                    break
+    for p, line in others[:3]:
+        out.append(f'{link(p, line, os.path.basename(p))} in {os.path.dirname(p)} has the function {name}, but a program file is called by its own name, '
+                   f'{os.path.splitext(os.path.basename(p))[0]}: rename the file {name}.m to call it as {name}.')
+    return out
 
 
 def resolve(name):
