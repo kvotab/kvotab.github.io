@@ -475,6 +475,7 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 
 .pl-toast {
   position: fixed; z-index: 10040; left: 50%; bottom: calc(var(--footer-height) + 34px); transform: translateX(-50%);
+  pointer-events: none;   /* a note only: clicks and drops go to the prompt line under it */
   background: var(--header-bg); color: var(--header-text); padding: 7px 14px; border-radius: var(--radius); font-size: 12.5px;
   box-shadow: var(--pl-shadow); max-width: min(560px, calc(100vw - 32px));
 }

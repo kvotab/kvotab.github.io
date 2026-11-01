@@ -40,6 +40,10 @@
       this.chars = 0;
       this.pendingText = '';
       this._raf = 0;
+      // made smaller (the Editor opening above it), it keeps the prompt in view if it was at the end
+      this.atEnd = true;
+      this.el.addEventListener('scroll', () => { this.atEnd = this.el.scrollTop + this.el.clientHeight >= this.el.scrollHeight - 4; });
+      new ResizeObserver(() => { if (this.atEnd) this.scrollEnd(); }).observe(this.el);
       this.ta.addEventListener('keydown', (ev) => this._key(ev));
       this.ta.addEventListener('input', () => { this._fit(); this.histPos = -1; this._closeComplete(); });
       this.el.addEventListener('mouseup', () => {

@@ -6,9 +6,10 @@ save.
 
 The files come from SciPy's writer (Level 4 and Level 5), from h5py in the
 layout of version 7.3 files as the open-source readers document it, and from
-Level 5 data elements written out below (text in UTF-8, UTF-16 and UTF-32,
+data elements written out (matfixtures.py: text in UTF-8, UTF-16 and UTF-32,
 big-endian files, small elements, logical sparse matrices, objects, function
-handles, damaged and hostile files). Each case loads a file with the
+handles, string arrays kept as objects in the file's subsystem, damaged and
+hostile files). Each case loads a file with the
 language's own commands and checks the variables, their classes and the
 warnings.
 """
@@ -68,7 +69,7 @@ def val(v):
     if t is Char:
         return v.str() if v.a.shape[0] <= 1 else v.row_strs()
     if t is Str:
-        return [s for s in v.a.reshape(-1, order='F')]
+        return [s for s in v.a.reshape(-1, order='F')] if v.a.size != 1 else v.a.flat[0]
     if t is Cell:
         return [val(x) for x in v.a.reshape(-1, order='F')]
     if t is Struct:
@@ -88,7 +89,7 @@ def same(a, b):
     return a == b
 
 
-def case(label, code, want=None, cls=None, shape=None, shows=(), hides=(), error=None):
+def case(label, code, want=None, cls=None, shape=None, shows=(), hides=(), error=None, absent=()):
     try:
         W, out = run(code)
     except Exception as e:  # noqa: BLE001 -- a crash is a failure, with its reason
@@ -112,6 +113,8 @@ def case(label, code, want=None, cls=None, shape=None, shows=(), hides=(), error
         check(f'{label}: shows {s[:50]!r}', s in out, repr(out))
     for s in hides:
         check(f'{label}: does not show {s[:50]!r}', s not in out, repr(out))
+    for name in absent:
+        check(f'{label}: no {name}', name not in W)
     return W
 
 
@@ -121,47 +124,7 @@ def path(name):
 
 # ---- Level 5 written element by element ------------------------------------------------------------
 
-def el(t, data, o='<'):
-    """A data element: small (in eight bytes) when its data fits in four."""
-    n = len(data)
-    if n <= 4 and t not in (14, 15):
-        return struct.pack(o + 'I', (n << 16) | t) + data.ljust(4, b'\0')
-    return struct.pack(o + 'II', t, n) + data + b'\0' * (-n % 8)
-
-
-def matrix(klass, dims, name, parts=(), flags=0, o='<'):
-    body = el(6, struct.pack(o + 'II', klass | flags, 0), o)
-    if klass != 17:
-        body += el(5, struct.pack(o + f'{len(dims)}i', *dims), o)
-    body += el(1, name.encode(), o) + b''.join(parts)
-    return struct.pack(o + 'II', 14, len(body)) + body
-
-
-def double(name, a, o='<'):
-    a = np.atleast_2d(np.asarray(a, float))
-    return matrix(6, a.shape, name, [el(9, a.astype(o + 'f8').tobytes(order='F'), o)], o=o)
-
-
-def chars(name, s, o='<'):
-    units = np.frombuffer(s.encode('utf-16-le', 'surrogatepass'), '<u2')
-    return matrix(4, (1, units.size), name, [el(4, units.astype(o + 'u2').tobytes(), o)], o=o)
-
-
-def struct1(name, fields, o='<'):
-    """A 1x1 struct of the given (name, element) pairs."""
-    flen = 32
-    names = b''.join(k.encode().ljust(flen, b'\0') for k, _ in fields)
-    return matrix(2, (1, 1), name, [el(5, struct.pack(o + 'i', flen), o), el(1, names, o)] + [v for _, v in fields], o=o)
-
-
-def compressed(element, o='<'):
-    z = zlib.compress(element)
-    return struct.pack(o + 'II', 15, len(z)) + z
-
-
-def header(o='<', sub=0, text='MATLAB 5.0 MAT-file, written by test_matfile.py'):
-    return (text.encode().ljust(116, b' ') + struct.pack(o + 'Q', sub) + struct.pack(o + 'H', 0x0100)
-            + (b'IM' if o == '<' else b'MI'))
+from matfixtures import el, matrix, double, chars, struct1, compressed, header, strings_v5, strings_v73  # noqa: E402
 
 
 def write(name, data):
@@ -223,7 +186,7 @@ case('a complex integer keeps its real part', "load('hand.mat', 'ci')", want={'c
      shows=["Warning: Variable 'ci' was loaded, but its imaginary part was left out"])
 W = case('variables that cannot be read are left out, the rest load', "load('hand.mat')",
          want={'after': 42.0, 'u8': 'x' + EMOJI},
-         shows=["Warning: Variable 'str' was not loaded: it is an object of class 'string'",
+         shows=["Warning: Variable 'str' was not loaded: its text is kept in the file's object data, which the file does not have.",
                 "Warning: Variable 'deep' was not loaded: its cells and structs are nested too deeply.",
                 "Warning: Variable 'bigsp' was not loaded: it is a sparse 100000x100000 matrix, too large to hold here"])
 check('the unreadable variables are absent', W is not None and not ({'str', 'deep', 'bigsp'} & set(W.keys())))
@@ -441,17 +404,60 @@ W = case('version 7.3 (HDF5)', "load('v73.mat'); c1 = cel{1}; c2 = cel{2}; sb = 
          cls={'c': 'char', 'l': 'logical', 'i': 'int8', 'u64': 'uint64', 's1': 'single', 'e': 'double', 'ec': 'char',
               'sa': 'struct', 'plain': 'single'},
          shape={'nd': (2, 3, 4), 'e': (0, 3), 'ec': (0, 0), 'sa': (1, 3), 'cel': (1, 2)},
-         shows=["Warning: Variable 'str' was not loaded: it is an object of class 'string'",
+         shows=["Warning: Variable 'str' was not loaded: its text is kept in the file's object data, which the file does not have.",
                 "Warning: Variable 'fh' was not loaded: it is a function handle"])
 if W is not None:
     check('version 7.3: an N-D array keeps its order', val(W['nd'])[1][2][3] == 23.0, val(W['nd']))
+
+# ---- string arrays: objects whose text is in the file's object data (its subsystem) ---------------------
+S = lambda rows: np.array(rows, dtype=object)  # noqa: E731 -- a string array in MATLAB's shape; None is <missing>
+STRINGS = {'hello': S([['hello']]), 'arr': S([['alpha', 'beta'], ['gamma', 'δέλτα ' + EMOJI]]),
+           'gaps': S([[None, 'x', '']]), 'none': np.empty((0, 3), object), 'num': 4.0}
+WANT = {'hello': 'hello', 'g21': 'gamma', 'g22': 'δέλτα ' + EMOJI, 'gaps': [None, 'x', ''], 'n': 0.0, 'num': 4.0,
+        'm': [[True, False, False]], 'k': 'x'}
+LOOK = "g21 = arr(2, 1); g22 = arr(2, 2); n = numel(none); m = ismissing(gaps); k = gaps(2);"
+for label, name, data in (('Level 5', 'str5.mat', strings_v5(STRINGS)),
+                          ('Level 5 compressed', 'str5z.mat', strings_v5(STRINGS, compress=True)),
+                          ('Level 5 big-endian', 'str5be.mat', strings_v5(STRINGS, order='>'))):
+    write(name, data)
+    case(f'string arrays ({label})', f"load('{name}'); {LOOK}", want=WANT,
+         cls={'hello': 'string', 'arr': 'string', 'gaps': 'string', 'none': 'string', 'k': 'string'},
+         shape={'arr': (2, 2), 'gaps': (1, 3), 'none': (0, 3)}, hides=['Warning'])
+strings_v73(path('str73.mat'), STRINGS)
+case('string arrays (version 7.3)', f"load('str73.mat'); {LOOK}", want=WANT,
+     cls={'hello': 'string', 'arr': 'string', 'none': 'string'}, shape={'arr': (2, 2), 'none': (0, 3)}, hides=['Warning'])
+write('strcell.mat', strings_v5({'c': ('cell', [S([['in a cell']]), 5.0, S([['b', 'c']])])}))
+case('string arrays in a cell', "load('strcell.mat'); a = c{1}; b = c{3}; k = class(c{1});",
+     want={'a': 'in a cell', 'b': ['b', 'c'], 'k': 'string'}, hides=['Warning'])
+case('a string array shows as one', "load('str5.mat'); arr", shows=['arr =\n\n  2×2 string array\n'], absent=['ans'])
+
+# damaged object data leaves the strings out, never the rest
+bad_any = np.frombuffer(np.array([1, 2, 1, 1, 50], np.uint64).tobytes() + 'short'.encode('utf-16-le').ljust(16, b'\0'), '<u8')
+write('strbad.mat', strings_v5({'ok': S([['fine']]), 'bad': ('any', bad_any), 'num': 3.0}))
+case('a string whose text is cut short', "load('strbad.mat')", want={'ok': 'fine', 'num': 3.0},
+     shows=["Warning: Variable 'bad' was not loaded: its text is damaged (shorter than its lengths)."])
+data = bytearray(strings_v5({'s': S([['x']]), 'num': 3.0}))
+at = data.index(struct.pack('<2i', 4, 2))      # the metadata's version
+data[at:at + 4] = struct.pack('<i', 9)
+write('strversion.mat', bytes(data))
+case('object data of a version not known here', "load('strversion.mat')", want={'num': 3.0},
+     shows=["Warning: Variable 's' was not loaded: its text is kept in the file's object data, which could not be read "
+            "(its version (9) is not known here)."])
+data = bytearray(strings_v5({'s': S([['x']]), 'num': 3.0}))
+at = data.index(np.array([0xDD000000, 2, 1, 1, 1, 1], '<u4').tobytes())
+data[at + 16:at + 20] = struct.pack('<I', 77)  # an object that is not there
+write('strobject.mat', bytes(data))
+case('a reference to an object that is not there', "load('strobject.mat')", want={'num': 3.0},
+     shows=["Warning: Variable 's' was not loaded: it is damaged (an object that is not there)."])
 
 # ---- the Details panel's list, from the headers -----------------------------------------------------
 for name, want in (('v4.mat', {'m': ('2×3', 'double'), 'sp': ('2×2', 'double'), 't': ('2×2', 'char')}),
                    ('scipy7.mat', {'d3': ('2×3×4', 'double'), 'lg': ('2×2', 'logical'), 'sa': ('1×3', 'struct'), 'sp': ('3×3', 'double')}),
                    ('hand.mat', {'str': ('', 'string'), 'fh': ('1×1', 'function_handle'), 'obj': ('1×1', 'myclass'), 'es': ('0×0', 'struct')}),
                    ('v73.mat', {'sa': ('1×3', 'struct'), 'sp': ('3×3', 'double'), 'e': ('0×3', 'double'), 'str': ('', 'string'),
-                                'plain': ('1×3', 'single')})):
+                                'plain': ('1×3', 'single')}),
+                   ('str5z.mat', {'arr': ('2×2', 'string'), 'none': ('0×3', 'string'), 'num': ('1×1', 'double')}),
+                   ('str73.mat', {'arr': ('2×2', 'string'), 'gaps': ('1×3', 'string')})):
     info = json.loads(worker_api.file_info(path(name)))
     rows = {v['name']: (v['size'], v['class']) for v in info.get('vars', [])}
     for k, w in want.items():

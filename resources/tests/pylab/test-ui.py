@@ -19,7 +19,8 @@ Command Window is there and the Workspace opens from its menu.
 Files dragged from the computer (trusted drag events with real files): a
 program dropped on the Command Window is copied into the current folder and
 opened in the Editor; MAT-files of versions 7 and 7.3 dropped on the
-Workspace load, as if typed (waiting their turn while a program runs); a
+Workspace load, as if typed (waiting their turn while a program runs), string
+arrays too; a
 name already there asks, and Keep both or
 Replace do what they say (an open file shows its new text); on the Current
 Folder files are only copied, on a folder row into that folder; a drag given
@@ -276,6 +277,9 @@ def drop_fixtures():
         f.write('% dropped from the computer\ny = 41 + 1;\n')
     sio.savemat(os.path.join(d, 'dropped.mat'), {'q': np.array([[1.0, 2.0, 3.0]]), 's': {'a': 'x'}})
     sio.savemat(os.path.join(d, 'later.mat'), {'w': np.array([[7.0]])})
+    from matfixtures import strings_v5
+    with open(os.path.join(d, 'dropped_strings.mat'), 'wb') as f:
+        f.write(strings_v5({'names': np.array([['alpha', None], ['beta', 'δ']], dtype=object)}))
     with h5py.File(os.path.join(d, 'dropped73.mat'), 'w', userblock_size=512) as f:
         ds = f.create_dataset('h', data=np.array([[1.0, 2.0], [3.0, 4.0]]).T)
         ds.attrs['MATLAB_class'] = np.bytes_('double')
@@ -338,6 +342,11 @@ async def drops(page):
     check('drop: and in the Command History', await page.ev('PL.app.history.items.slice(-2).map(i => i.c)'), ["load('dropped.mat')", "load('dropped73.mat')"])
     out = await command(page, 'v = [s.a, num2str(h(2, 1) + q(3))]')
     check('drop: the loaded values', "v =\n\n    'x6'" in out, True)
+    await drag_files(page, x, y, [at('dropped_strings.mat')])
+    check('drop: a string array loads as one', await until(page, "(PL.app.ws.rows.find(r => r.name === 'names') || {}).class", 30), 'string')
+    await idle(page)
+    out = await command(page, 'g = names(2, 2), k = nnz(ismissing(names))')
+    check('drop: with its text and its missing string', ['g = \n\n    "δ"' in out or 'g =\n\n    "δ"' in out, 'k =\n\n     1' in out], [True, True])
 
     # a name already in the folder asks; Keep both gives the dropped file a new name
     await drag_files(page, x, y, [at('dropped.mat')])
@@ -395,7 +404,9 @@ async def drops(page):
 
     # text dragged into the Command Window is still text
     await page.ev("PL.app.cmd.setLine(''); 1")
+    await asyncio.sleep(0.2)
     tx, ty = await middle(page, 'PL.app.cmd.ta')
+    check('drop: the prompt stays in view with the Editor open above it', await page.ev(f'document.elementFromPoint({tx}, {ty}) === PL.app.cmd.ta'), True)
     await page.call('Input.dispatchDragEvent', {'type': 'dragEnter', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)
     await page.call('Input.dispatchDragEvent', {'type': 'dragOver', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)
     await page.call('Input.dispatchDragEvent', {'type': 'drop', 'x': tx, 'y': ty, 'data': {'items': [{'mimeType': 'text/plain', 'data': 'disp(7)'}], 'dragOperationsMask': 1}}, session=page.sid)

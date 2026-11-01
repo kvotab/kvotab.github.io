@@ -668,6 +668,19 @@ class Compiler:
                 else:
                     e(f'{self.var(name)}', line)
                 return
+            if self.scope.dynamic and name not in self.scope.local_funcs:
+                # a variable made while the line runs (by load or eval) shows by its name and leaves ans alone
+                e(f'if {name!r} in W:', line)
+                self.out.ind += 1
+                e(f'R.show_value({name!r}, W[{name!r}])' if s.show else 'pass', line)
+                self.out.ind -= 1
+                e('else:', line)
+                self.out.ind += 1
+                r = self.tmp()
+                e(f'{r} = {self.call_expr(x, "0")}', line)
+                e(f'if {r} is not None: W["ans"] = {r}' + ('; R.show(W, "ans")' if s.show else ''), line)
+                self.out.ind -= 1
+                return
         # a call at statement level asks for no output; its first, if any, is ans
         if self.is_call(x):
             code = self.call_expr(x, '0')

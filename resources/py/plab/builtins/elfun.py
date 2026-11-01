@@ -15,7 +15,7 @@ import numpy as np
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, check_real)
-from ..values import (MError, Char, Cell, Struct, Str, F64, C128, INT_TYPES, DTYPE_CLASS, class_of, shape_of,
+from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS, class_of, shape_of,
                       numel, _2d, scalar_out, EMPTY)
 from ..ops import finish, to_int_class, INT_CLASSES, align, check_bcast, round_half_away
 
@@ -537,6 +537,23 @@ def isnan(nargout, *args):
         raise err('MATLAB:UndefinedFunction', f"Undefined function 'isnan' for input arguments of type '{class_of(x)}'.", 'isnan')
     if type(x) is Str:
         return out(np.vectorize(lambda s: s is None, otypes=[bool])(x.a))
+    a = arr(x)
+    return out(np.isnan(a) if a.dtype.kind in 'fc' else np.zeros(a.shape, bool))
+
+
+@bi('ismissing')
+def ismissing(nargout, *args):
+    nargchk(args, 1, 1, 'ismissing')
+    x = args[0]
+    if type(x) is Str:
+        return out(np.vectorize(lambda s: s is None, otypes=[bool])(x.a))
+    if type(x) is Char:
+        return out(x.a == 32)
+    if type(x) is Cell:
+        # a cell of text: the empty char vectors
+        return out(np.vectorize(lambda v: type(v) is Char and v.a.size == 0, otypes=[bool])(x.a))
+    if type(x) is Struct or isinstance(x, (FH, Obj)):
+        raise err('MATLAB:UndefinedFunction', f"Undefined function 'ismissing' for input arguments of type '{class_of(x)}'.", 'ismissing')
     a = arr(x)
     return out(np.isnan(a) if a.dtype.kind in 'fc' else np.zeros(a.shape, bool))
 

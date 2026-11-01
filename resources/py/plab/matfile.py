@@ -15,9 +15,11 @@ reading their data.
 Level 5 files (those saved with -v6 or -v7: compressed or not, in either
 byte order) and Level 4 files are read here; -v7.3 files are HDF5 and are
 read through h5py, which the caller makes importable first. The layouts are
-the ones the open-source readers (SciPy, h5py, hdf5storage) know. Objects
-whose layout is not published, such as string arrays, tables and datetimes,
-are reported as problems, not guessed at.
+the ones the open-source readers (SciPy, h5py, hdf5storage) know. String
+arrays, which MATLAB keeps as objects in the file's object data (its
+subsystem), are read in the layout the open-source mat-io reader documents
+(github.com/foreverallama/matio, BSD-3-Clause, (c) 2025 foreverallama);
+other objects, such as tables and datetimes, are reported as problems.
 
 make_fh(text, captured) makes a saved function handle again from its text
 ('@(x) x + 1' or a function's name) and, for an anonymous function, a dict
@@ -34,7 +36,7 @@ import struct
 
 import numpy as np
 
-from .values import Char, Cell, Struct, F64, C128, INT_TYPES, EMPTY
+from .values import Char, Cell, Struct, Str, F64, C128, INT_TYPES, EMPTY
 from .ops import finish
 
 
@@ -42,6 +44,8 @@ from .ops import finish
 # nothing else from a file becomes one
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
 BAD_NAME = 'its name is not a valid variable name'
+OBJECT = ("it is an object of class '{}', and objects other than string arrays (tables, datetimes and the like) "
+          "cannot be read from MAT-files here")
 
 
 def shown(name):
@@ -197,11 +201,16 @@ def variables(path):
 # ---- Level 5 ---------------------------------------------------------------------------------
 
 class _V5:
-    def __init__(self, data, make_fh):
+    def __init__(self, data, make_fh, order=None):
         self.data = data
-        self.o = '<' if bytes(data[126:128]) == b'IM' else '>'
+        self.o = order or ('<' if bytes(data[126:128]) == b'IM' else '>')
         self.make_fh = make_fh
         self.notes = []
+        # the subsystem (objects' data) is at the offset in bytes 116-123 of the header
+        self.sub = struct.unpack_from(self.o + 'Q', data, 116)[0] if order is None and len(data) >= 124 else 0
+        self.in_subsystem = False
+        self._mcos = None
+        self._mcos_why = None
 
     # data elements
     def tag(self, b, p, end):
@@ -276,7 +285,7 @@ class _V5:
         b = self.data
         end = len(b)
         o = self.o
-        sub = struct.unpack_from(o + 'Q', b, 116)[0] if end >= 124 else 0
+        sub = self.sub
         p = 128
         while p + 8 <= end:
             at = p
@@ -365,12 +374,15 @@ class _V5:
             except Unreadable:
                 continue
             if klass == MX_OPAQUE:
+                cls, size = 'object', None
                 try:
-                    p = self.text(b, p, end)[1]
-                    cls = self.text(b, p, end)[0]
+                    kind_, p = self.text(b, p, end)
+                    cls, p = self.text(b, p, end)
+                    if kind_ == 'MCOS' and cls == 'string':
+                        size = self.mcos().string(self.element(b, p, end, 0)[0], size_only=True)
                 except Unreadable:
-                    cls = 'object'
-                rows.append((name, None, cls))
+                    pass
+                rows.append((name, size, cls))
                 continue
             if klass == MX_OBJECT:
                 try:
@@ -395,8 +407,14 @@ class _V5:
             return EMPTY(), nxt
         if depth >= DEPTH_LIMIT:
             raise Unreadable('its cells and structs are nested too deeply')
-        klass, word, dims, _, q = self.header(b, d, d + n)
-        return self.body(b, q, d + n, klass, word, dims, depth + 1), nxt
+        try:
+            klass, word, dims, _, q = self.header(b, d, d + n)
+            return self.body(b, q, d + n, klass, word, dims, depth + 1), nxt
+        except Unreadable as e:
+            if not self.in_subsystem:
+                raise
+            # the subsystem holds more than strings need: what cannot be read is set aside
+            return _Raw(None, None, None, str(e)), nxt
 
     def body(self, b, p, end, klass, word, dims, depth):
         count = _count(dims) if dims is not None else 0
@@ -487,11 +505,68 @@ class _V5:
             v, p = self.element(b, p, end, depth)
             return self.handle(v)
         if klass == MX_OPAQUE:
+            # the kind of object ('MCOS' for MATLAB's classes), its class, and its reference into the subsystem
             kind_, p = self.text(b, p, end)
             cname, p = self.text(b, p, end)
-            raise Unreadable(f"it is an object of class '{cname}', and objects (string arrays, tables, datetimes "
-                             "and the like) cannot be read from MAT-files here")
+            meta, p = self.element(b, p, end, depth)
+            if self.in_subsystem:
+                return _Raw(kind_, cname, meta)
+            if kind_ == 'MCOS' and cname == 'string':
+                return self.mcos().string(meta)
+            raise Unreadable(OBJECT.format(cname))
         raise Unreadable(f'its class is unknown ({klass})')
+
+    def mcos(self):
+        """The file's objects (its subsystem), read the first time a string needs them."""
+        if self._mcos is None and self._mcos_why is None:
+            try:
+                self._mcos = self._read_mcos()
+                if self._mcos is None:
+                    self._mcos_why = 'the file does not have'
+            except Unreadable as e:
+                self._mcos_why = f'could not be read ({e})'
+            except (ValueError, TypeError, IndexError, KeyError, OverflowError, struct.error) as e:
+                self._mcos_why = f'could not be read (it is damaged: {e})'
+            except MemoryError:
+                self._mcos_why = 'is too large to read here'
+        if self._mcos is None:
+            raise Unreadable(f"its text is kept in the file's object data, which {self._mcos_why}")
+        return self._mcos
+
+    def array_at(self, b, p, end):
+        """The array of the miMATRIX or compressed element at p."""
+        t, n = struct.unpack_from(self.o + 'II', b, p) if p + 8 <= end else (0, 0)
+        if t >> 16 or n > end - p - 8:
+            raise Unreadable('it is damaged')
+        if t == MI_COMPRESSED:
+            b = _inflate(b[p + 8:p + 8 + n], INFLATE_LIMIT)
+            p, end = 0, len(b)
+            t, n = struct.unpack_from(self.o + 'II', b, 0) if len(b) >= 8 else (0, 0)
+        if t != MI_MATRIX or n > end - p - 8:
+            raise Unreadable('it is damaged')
+        klass, word, dims, _, q = self.header(b, p + 8, p + 8 + n)
+        return self.body(b, q, p + 8 + n, klass, word, dims, 0)
+
+    def _read_mcos(self):
+        if not 128 <= self.sub < len(self.data):
+            return None
+        # an array of bytes that is a small MAT-file stream of its own: a version and a byte
+        # order in 4 bytes, 4 more, then a struct whose field MCOS is the FileWrapper__ object
+        raw = self.array_at(self.data, self.sub, len(self.data))
+        if type(raw) is not np.ndarray or raw.dtype != np.uint8:
+            raise Unreadable('it is damaged')
+        stream = memoryview(raw.reshape(-1, order='F').tobytes())
+        if len(stream) < 16 or bytes(stream[2:4]) not in (b'IM', b'MI'):
+            raise Unreadable('it is damaged')
+        s = _V5(stream, None, order='<' if bytes(stream[2:4]) == b'IM' else '>')
+        s.in_subsystem = True
+        top = s.array_at(stream, 8, len(stream))
+        if type(top) is not Struct or 'MCOS' not in top.f:
+            return None
+        fw = top.get1('MCOS')
+        if not isinstance(fw, _Raw) or fw.cname != 'FileWrapper__' or type(fw.value) is not Cell:
+            raise Unreadable('it is damaged')
+        return _Mcos(list(fw.value.a.reshape(-1, order='F')), s.o)
 
     def handle(self, v):
         """A function handle from the struct that describes it."""
@@ -502,6 +577,162 @@ class _V5:
             raise Unreadable('it is a function handle in a form not known here')
         text, captured = info
         return self.make_fh(text, captured)
+
+
+class _Raw:
+    """An object (or a part that could not be read) inside the subsystem, kept as it was."""
+    __slots__ = ('kind', 'cname', 'value', 'why')
+
+    def __init__(self, kind, cname, value, why=None):
+        self.kind = kind
+        self.cname = cname
+        self.value = value
+        self.why = why
+
+
+MCOS_MAGIC = 0xDD000000
+STRING_MISSING = (1 << 64) - 1
+
+
+class _Mcos:
+    """MATLAB's objects in a MAT-file: the FileWrapper__ cell of its subsystem.
+
+    The cell's first element is the metadata, int32 values in the stream's
+    byte order: a version (2 to 4), the number of names, 8 offsets of the
+    regions, the names (NUL-separated), then the regions: (1) each class's
+    namespace and name (4 values a class), (2) the properties of objects
+    saved through saveobj, (3) each object's class and property records (6
+    values an object), (4) the properties of the other objects, (5) dynamic
+    properties. A property record is a count, then (name, kind, value)
+    triples, padded to an even length; kind 1 means the value is a cell of
+    the saved properties. Class and object 0 are placeholders.
+
+    The saved properties are the cells after the first two, up to the last
+    one (version 2), two (3) or three (4). A string array is one object whose
+    property 'any' is a uint64 array: 1 (its version), the number of
+    dimensions, the size, each string's length in UTF-16 code units (all
+    ones for a missing string), then the text, four code units a word.
+    """
+
+    def __init__(self, items, order):
+        self.o = order
+        if not items or type(items[0]) is not np.ndarray:
+            raise Unreadable('it is damaged')
+        meta = items[0].reshape(-1, order='F').astype(np.uint8).tobytes()
+        it = np.dtype(order + 'i4')
+        if len(meta) < 40:
+            raise Unreadable('it is damaged')
+        self.version = int(np.frombuffer(meta, it, 1, 0)[0])
+        if not 2 <= self.version <= 4:
+            raise Unreadable(f'its version ({self.version}) is not known here')
+        offs = [int(x) for x in np.frombuffer(meta, it, 8, 8)]
+        if not 40 <= offs[0] <= offs[1] <= offs[2] <= offs[3] <= offs[4] <= offs[5] <= len(meta):
+            raise Unreadable('it is damaged')
+        self.names = [s.decode('ascii', 'replace') for s in meta[40:offs[0]].split(b'\0') if s]
+
+        def region(k):
+            return np.frombuffer(meta, it, (offs[k] - offs[k - 1]) // 4, offs[k - 1]).astype(np.int64)
+        self.classes, self.saveobj, self.objects, self.nobj = region(1), region(2), region(3), region(4)
+        self.saved = items[2:len(items) - {2: 1, 3: 2, 4: 3}[self.version]]
+        self._records = {}      # where each property record starts, found as the regions are walked
+
+    def name(self, i):
+        if not 1 <= i <= len(self.names):
+            raise Unreadable('it is damaged (a name that is not there)')
+        return self.names[i - 1]
+
+    def classname(self, cid):
+        if not (0 < cid and 4 * cid + 4 <= self.classes.size):
+            raise Unreadable('it is damaged (a class that is not there)')
+        ns, nm = int(self.classes[4 * cid]), int(self.classes[4 * cid + 1])
+        return (self.name(ns) + '.' if ns else '') + self.name(nm)
+
+    def properties(self, oid):
+        """An object's saved properties by name."""
+        if not 0 < oid or 6 * oid + 6 > self.objects.size:
+            raise Unreadable('it is damaged (an object that is not there)')
+        _, _, _, saveobj_id, nobj_id, _ = (int(x) for x in self.objects[6 * oid:6 * oid + 6])
+        which, rid = ('saveobj', saveobj_id) if saveobj_id else ('nobj', nobj_id)
+        reg = self.saveobj if saveobj_id else self.nobj
+        starts = self._records.setdefault(which, [int(reg[0]) if reg.size else 0])
+        if rid < 0:
+            raise Unreadable('it is damaged')
+        while len(starts) <= rid:
+            at = starts[-1]
+            if not 0 <= at < reg.size:
+                raise Unreadable('it is damaged (a property record that is not there)')
+            at += 1 + 3 * int(reg[at])
+            starts.append(at + at % 2)
+        at = starts[rid]
+        if not 0 <= at < reg.size or at + 1 + 3 * int(reg[at]) > reg.size:
+            raise Unreadable('it is damaged (a property record that is not there)')
+        props = {}
+        for k in range(int(reg[at])):
+            name_i, kind, value = (int(x) for x in reg[at + 1 + 3 * k:at + 4 + 3 * k])
+            if kind == 1:
+                if not 0 <= value < len(self.saved):
+                    raise Unreadable('it is damaged (a property that is not there)')
+                props[self.name(name_i)] = self.saved[value]
+        return props
+
+    def string(self, meta, size_only=False):
+        """A string array from its reference into the subsystem: [magic, number of dimensions, size,
+        the objects, the class]."""
+        m = np.asarray(meta).reshape(-1).astype(np.int64) if type(meta) is np.ndarray else np.zeros(0, np.int64)
+        if m.size < 4 or m[0] != MCOS_MAGIC or not 0 <= m[1] <= 32:
+            raise Unreadable('its object data is damaged')
+        nd = int(m[1])
+        dims = [int(x) for x in m[2:2 + nd]]
+        n = _count(dims)
+        if min(dims, default=0) < 0 or m.size < 3 + nd + n:
+            raise Unreadable('its object data is damaged')
+        if self.classname(int(m[-1])) != 'string':
+            raise Unreadable('its object data is damaged (it is not a string)')
+        oids = [int(x) for x in m[2 + nd:2 + nd + n]]
+        if not oids:
+            return _shape(dims) if size_only else Str(np.empty(_shape(dims), object))
+        if len(oids) == 1:
+            return self.strings(self.properties(oids[0]).get('any'), size_only)
+        # an array of string objects, a string each
+        items = np.empty(len(oids), object)
+        for k, oid in enumerate(oids):
+            one = self.strings(self.properties(oid).get('any'))
+            if one.a.size != 1:
+                raise Unreadable('its object data is damaged')
+            items[k] = one.a.flat[0]
+        return _shape(dims) if size_only else Str(items.reshape(_shape(dims), order='F'))
+
+    def strings(self, any_, size_only=False):
+        if type(any_) is not np.ndarray or any_.dtype != np.uint64:
+            raise Unreadable('its text is not in the file')
+        a = any_.reshape(-1, order='F')
+        if a.size == 0:
+            return (1, 0) if size_only else Str(np.empty((1, 0), object))
+        if a[0] != 1 or a.size < 2 or not 0 <= int(a[1]) <= 32 or a.size < 2 + int(a[1]):
+            raise Unreadable('its text is saved in a form not known here')
+        nd = int(a[1])
+        dims = [int(x) for x in a[2:2 + nd]]
+        n = _count(dims)
+        if a.size < 2 + nd + n:
+            raise Unreadable('its text is damaged')
+        if size_only:
+            return _shape(dims)
+        counts = a[2 + nd:2 + nd + n]
+        text = a[2 + nd + n:].astype(self.o + 'u8').tobytes()
+        codec = 'utf-16-le' if self.o == '<' else 'utf-16-be'
+        lengths = np.where(counts == np.uint64(STRING_MISSING), 0, counts).astype(object)
+        if sum(lengths) * 2 > len(text):
+            raise Unreadable('its text is damaged (shorter than its lengths)')
+        items = np.empty(n, object)
+        at = 0
+        for k in range(n):
+            if counts[k] == np.uint64(STRING_MISSING):
+                items[k] = None
+                continue
+            size = int(counts[k]) * 2
+            items[k] = text[at:at + size].decode(codec, 'surrogatepass')
+            at += size
+        return Str(items.reshape(_shape(dims), order='F'))
 
 
 def _handle_info(v, depth):
@@ -675,11 +906,18 @@ def _h5_names(g):
         raise MatError(f'its HDF5 data is damaged ({e})')
 
 
+def _order_of(path):
+    with open(path, 'rb') as fh:
+        head = fh.read(128)
+    return '>' if head[126:128] == b'MI' else '<'
+
+
 def _read_v73(path, keep, make_fh):
+    order = _order_of(path)
     h5py, f = _open_h5(path)
     values, problems = {}, []
     with f:
-        r = _H5(h5py, f, make_fh)
+        r = _H5(h5py, f, make_fh, order)
         for name in _h5_names(f):
             if name.startswith('#') or not keep(name):
                 continue
@@ -700,9 +938,11 @@ def _read_v73(path, keep, make_fh):
 
 
 def _list_v73(path):
+    order = _order_of(path)
     h5py, f = _open_h5(path)
     rows = []
     with f:
+        r = _H5(h5py, f, None, order)
         for name in _h5_names(f):
             if name.startswith('#'):
                 continue
@@ -722,6 +962,9 @@ def _list_v73(path):
                 elif node.attrs.get('MATLAB_empty'):
                     _fits(node)
                     rows.append((name, _shape(np.asarray(node[()]).reshape(-1)), cls or 'double'))
+                elif r.is_string(node, cls):
+                    _fits(node)
+                    rows.append((name, r.mcos().string(np.asarray(node[()]), size_only=True), cls))
                 else:
                     if cls is None:
                         cls = _class_of_dtype(node.dtype)
@@ -750,12 +993,54 @@ def _class_of_dtype(dt):
 
 
 class _H5:
-    def __init__(self, h5py, f, make_fh):
+    def __init__(self, h5py, f, make_fh, order='<'):
         self.h5py = h5py
         self.f = f
         self.make_fh = make_fh
+        self.o = order
         self.notes = []
         self.left = NODE_LIMIT
+        self._mcos = None
+        self._mcos_why = None
+
+    def is_string(self, node, cls):
+        """A string array: an object of class string, its data a reference into #subsystem#."""
+        dec = node.attrs.get('MATLAB_object_decode')
+        return (cls == 'string' and isinstance(node, self.h5py.Dataset) and dec is not None
+                and np.asarray(dec).size == 1 and int(np.asarray(dec).reshape(-1)[0]) == 3)
+
+    def mcos(self):
+        """The file's objects (#subsystem#/MCOS, the FileWrapper__ cell), read the first time a
+        string needs them."""
+        if self._mcos is None and self._mcos_why is None:
+            try:
+                g = self.f['#subsystem#'] if '#subsystem#' in self.f else None
+                if g is None or not isinstance(g, self.h5py.Group) or 'MCOS' not in g:
+                    self._mcos_why = 'the file does not have'
+                else:
+                    ds = g['MCOS']
+                    if not isinstance(ds, self.h5py.Dataset) or self.h5py.check_dtype(ref=ds.dtype) is None:
+                        raise Unreadable('it is damaged')
+                    _fits(ds)
+                    items = []
+                    for ref in np.asarray(ds[()]).reshape(-1):
+                        node = self.f[ref]
+                        # the metadata and the saved properties are arrays; the rest is not needed
+                        if isinstance(node, self.h5py.Dataset) and node.dtype.kind in 'ui':
+                            _fits(node)
+                            items.append(np.transpose(np.asarray(node[()])))
+                        else:
+                            items.append(None)
+                    self._mcos = _Mcos(items, self.o)
+            except Unreadable as e:
+                self._mcos_why = f'could not be read ({e})'
+            except (ValueError, TypeError, IndexError, KeyError, OSError, RuntimeError, AttributeError, OverflowError) as e:
+                self._mcos_why = f'could not be read (it is damaged: {e})'
+            except MemoryError:
+                self._mcos_why = 'is too large to read here'
+        if self._mcos is None:
+            raise Unreadable(f"its text is kept in the file's object data, which {self._mcos_why}")
+        return self._mcos
 
     def deref(self, ref, depth):
         try:
@@ -780,10 +1065,12 @@ class _H5:
                 return self.struct(node, depth)
             if cls == 'function_handle':
                 raise Unreadable('it is a function handle, which cannot be read from MAT-files of version 7.3 here')
-            raise Unreadable(f"it is an object of class '{cls}', and objects cannot be read from MAT-files here")
+            raise Unreadable(OBJECT.format(cls))
+        if self.is_string(node, cls):
+            _fits(node)
+            return self.mcos().string(np.asarray(node[()]))
         if 'MATLAB_object_decode' in node.attrs or (cls is not None and cls not in CLASSES):
-            raise Unreadable(f"it is an object of class '{cls}', and objects (string arrays, tables, datetimes and "
-                             "the like) cannot be read from MAT-files here")
+            raise Unreadable(OBJECT.format(cls))
         _fits(node)
         if node.attrs.get('MATLAB_empty'):
             # an empty array keeps its size as its data

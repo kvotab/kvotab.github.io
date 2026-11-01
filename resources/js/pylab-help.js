@@ -16,7 +16,7 @@
     ['Arithmetic', 'plus minus times rdivide ldivide mtimes mrdivide mldivide power mpower uminus uplus transpose ctranspose abs sign sqrt nthroot hypot exp expm1 log log1p log2 log10 pow2 nextpow2 reallog realpow realsqrt floor ceil round fix mod rem idivide gcd lcm factorial nchoosek primes isprime factor perms rat rats'],
     ['Trigonometry', 'sin cos tan sec csc cot asin acos atan atan2 asec acsc acot sinh cosh tanh sech csch coth asinh acosh atanh asech acsch acoth sind cosd tand secd cscd cotd asind acosd atand asecd acscd acotd atan2d sinpi cospi deg2rad rad2deg'],
     ['Complex numbers', 'real imag conj angle complex isreal cplxpair unwrap'],
-    ['Comparison and logic', 'eq ne lt gt le ge and or not xor any all isequal isequaln isnan isinf isfinite'],
+    ['Comparison and logic', 'eq ne lt gt le ge and or not xor any all isequal isequaln isnan ismissing isinf isfinite'],
     ['Data analysis', 'sum prod cumsum cumprod cummax cummin diff mean median mode std var min max bounds range sort sortrows issorted unique ismember union intersect setdiff setxor histcounts histc discretize cov corrcoef trapz cumtrapz quantile prctile iqr skewness kurtosis movmean movsum movmax movmin movmedian movstd rescale normalize'],
     ['Linear algebra', 'inv det trace rank norm vecnorm cond rcond condest eig eigs svd svds qr lu chol schur hess pinv null orth rref expm logm sqrtm funm cross dot linsolve lsqnonneg balance givens planerot isdiag'],
     ['Sparse matrices', 'sparse full issparse nzmax spalloc speye spones sprand sprandn spzeros spdiags'],

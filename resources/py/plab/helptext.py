@@ -515,6 +515,8 @@ isequaln: Like isequal, with NaN equal to NaN.
     tf = isequaln(A, B, ...)
 isnan: True for NaN elements.
     tf = isnan(A)
+ismissing: True for missing elements: NaN, <missing> strings, blanks in a char array, empty text in a cell.
+    tf = ismissing(A)
 isinf: True for Inf and -Inf elements.
     tf = isinf(A)
 isfinite: True for elements that are neither Inf nor NaN.
@@ -1753,7 +1755,7 @@ load: Load variables from a MAT-file, or a matrix from a text file.
     load filename -mat
     S = load(filename)
     * MAT-files of versions 4, 6, 7 and 7.3 load, compressed or not. The names may hold * as a wildcard.
-    * A variable that cannot be read is left out with a warning and the others load: objects such as string arrays, tables and datetimes are not read. Sparse matrices load as full ones.
+    * String arrays load. A variable that cannot be read is left out with a warning and the others load: other objects, such as tables and datetimes, are not read. Sparse matrices load as full ones.
     * A text file of numbers loads as a variable named after the file; -mat reads a MAT-file of any name.
 save: Save variables to a MAT-file (or to a text file with -ascii).
     save filename
