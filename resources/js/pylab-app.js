@@ -934,7 +934,7 @@
         d.tab.setAttribute('aria-selected', String(d === doc));
       }
       doc.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      if (doc.editor) { requestAnimationFrame(() => { doc.editor._size(); doc.editor.focus(); }); }
+      if (doc.editor) { requestAnimationFrame(() => { doc.editor._gutterDraw(); doc.editor.focus(); }); }
       if (doc.kind === 'var' && doc.vv) doc.vv.refresh();
       if (doc.kind === 'file') this.showStrip('editor');
       this.renderEdTabs();

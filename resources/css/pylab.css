@@ -318,10 +318,27 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-details pre { margin: 6px 0 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--pl-text); }
 .pl-details .pl-muted { color: var(--pl-muted); }
 
+/* IBM Plex Mono under a name of pylab's own, for the code typed in the Command
+   Window and the Editor: its ascent and descent made even about the letters
+   (brackets reach 0.76 em above the baseline, descenders 0.21 em below; the
+   font's own box goes 1.025 em up and 0.275 em down). The caret is as tall as
+   that box: so it stands centred on the text, and the text in the middle of its
+   line. Other characters come from IBM Plex Mono itself. */
+@font-face { font-family: 'PL Code'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-Regular-Latin1.woff2) format('woff2');
+  unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+  ascent-override: 92.4%; descent-override: 37.6%; line-gap-override: 0%; }
+@font-face { font-family: 'PL Code'; font-style: normal; font-weight: 600 700; font-display: swap;
+  src: url(../../vendors/font/ibm-plex-mono/IBMPlexMono-SemiBold-Latin1.woff2) format('woff2');
+  unicode-range: U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6, U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026, U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+  ascent-override: 92.4%; descent-override: 37.6%; line-gap-override: 0%; }
+
 /* ---- the Command Window ---------------------------------------------------------------- */
+/* lines a whole number of pixels apart, so every line has its leading split the
+   same way; padding inside the height, or the panel scrolls it under its header */
 .pl-cmd {
-  height: 100%; overflow: auto; padding: 6px 10px 10px; font-family: var(--font-mono); font-size: var(--pl-mono-size);
-  line-height: 1.35; cursor: text; background: var(--pl-panel);
+  box-sizing: border-box; height: 100%; overflow: auto; padding: 6px 10px 10px; font-family: 'PL Code', var(--font-mono); font-size: var(--pl-mono-size);
+  line-height: 1.35; line-height: round(1.35em, 1px); cursor: text; background: var(--pl-panel);
 }
 .pl-cmd-out { white-space: pre-wrap; word-break: break-word; tab-size: 4; }
 .pl-cmd-out .o-err { color: var(--pl-err); }
@@ -337,8 +354,8 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-prompt.is-input { color: var(--pl-text); }
 .pl-cmd-ta {
   width: 100%; border: none; outline: none; background: transparent; color: var(--pl-text); resize: none; padding: 0; margin: 0;
-  font-family: var(--font-mono); font-size: var(--pl-mono-size); line-height: 1.35; overflow: hidden; min-height: 1.35em;
-  caret-color: var(--pl-text);
+  font-family: 'PL Code', var(--font-mono); font-size: var(--pl-mono-size); line-height: 1.35; line-height: round(1.35em, 1px);
+  overflow: hidden; min-height: 1.35em; min-height: round(1.35em, 1px); caret-color: var(--pl-text);
 }
 .pl-cmd.is-busy .pl-cmd-in .pl-prompt { visibility: hidden; }
 .pl-cmd .pl-queued { color: var(--pl-muted); font-style: italic; }
@@ -375,36 +392,48 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-edview.is-shown { display: block; }
 .pl-edempty { display: grid; place-content: center; height: 100%; color: var(--pl-muted); text-align: center; gap: 6px; padding: 12px; }
 
+/* Lines a whole number of pixels apart: the gutter places its numbers by that
+   step, and every line has its leading split the same way. The gutter stays at
+   the left edge when the code scrolls sideways; the scroll padding keeps the
+   caret from going under it. */
 .ple {
-  position: absolute; inset: 0; overflow: auto; font-family: var(--font-mono); font-size: var(--pl-mono-size); line-height: 1.45;
-  --ple-lh: calc(var(--pl-mono-size) * 1.45); --ple-gutter: 58px; tab-size: 4;
+  position: absolute; inset: 0; overflow: auto; font-family: 'PL Code', var(--font-mono); font-size: var(--pl-mono-size);
+  --ple-lh: calc(var(--pl-mono-size) * 1.45); --ple-gutter: 58px; line-height: var(--ple-lh); tab-size: 4;
+  scroll-padding-left: calc(var(--ple-gutter) + 10px);
 }
-.ple-inner { position: relative; min-height: 100%; }
+@supports (width: round(1.5px, 1px)) { .ple { --ple-lh: round(var(--pl-mono-size) * 1.45, 1px); } }
+.ple-inner { position: relative; display: flex; width: max-content; min-width: 100%; min-height: 100%; }
 .ple-gutter {
-  position: absolute; left: 0; top: 0; width: var(--ple-gutter); background: var(--pl-chrome); border-right: 1px solid var(--pl-border);
-  color: var(--pl-muted); text-align: right; user-select: none; z-index: 2; min-height: 100%;
+  position: sticky; left: 0; flex: none; box-sizing: border-box; width: var(--ple-gutter); background: var(--pl-chrome); border-right: 1px solid var(--pl-border);
+  color: var(--pl-muted); text-align: right; user-select: none; z-index: 2;
 }
-.ple-gl { position: absolute; left: 0; right: 0; height: var(--ple-lh); line-height: var(--ple-lh); padding-right: 8px; font-size: 0.86em; cursor: pointer; }
+.ple-gl { position: absolute; left: 0; right: 0; height: var(--ple-lh); padding-right: 8px; cursor: pointer; }
+.ple-gl .n { font-size: 0.86em; line-height: 0; }   /* smaller, on the baseline of the code's line */
 .ple-gl .bp { position: absolute; left: 6px; top: calc((var(--ple-lh) - 11px) / 2); width: 11px; height: 11px; border-radius: 50%; background: var(--pl-bp); }
 .ple-gl .bp.is-off { background: transparent; border: 1.5px solid var(--pl-bp); }
 .ple-gl .arrow { position: absolute; left: 20px; top: calc((var(--ple-lh) - 10px) / 2); width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 9px solid var(--pl-arrow); }
 .ple-gl .lint { position: absolute; left: 2px; top: 2px; bottom: 2px; width: 3px; background: var(--pl-err); border-radius: 1px; }
 .ple-gl:hover { color: var(--pl-text); }
+/* the coloured text sizes the code; the textarea lies over all of it. The
+   code's background is under the section and current-line bands (the site
+   gives every pre one, which hid them) */
+.ple-code { position: relative; flex: 1 0 auto; background: var(--code-bg); }
 .ple-hl, .ple-ta {
-  position: absolute; top: 0; left: var(--ple-gutter); margin: 0; padding: 4px 10px 40px; border: 0; white-space: pre;
+  margin: 0; padding: 4px 10px 40px; border: 0; white-space: pre;
   font: inherit; line-height: var(--ple-lh); letter-spacing: normal; tab-size: 4; box-sizing: border-box;
 }
-.ple-hl { color: var(--pl-text); pointer-events: none; min-width: calc(100% - var(--ple-gutter)); }
+/* room on the right for what is typed before the text is coloured again */
+.ple-hl { position: relative; padding-right: 40px; background: none; color: var(--pl-text); pointer-events: none; }
 .ple-ta {
-  width: calc(100% - var(--ple-gutter)); height: 100%; resize: none; outline: none; background: transparent; color: transparent;
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%; resize: none; outline: none; background: transparent; color: transparent;
   caret-color: var(--pl-text); overflow: hidden; z-index: 1;
 }
 .ple-ta::selection { background: color-mix(in oklab, #3d7bd9 30%, transparent); color: transparent; }
 .ple .ln { display: block; height: var(--ple-lh); }
 .ple .ln.is-section { box-shadow: inset 0 1px 0 var(--pl-section-line); }
-.ple-sectionbg { position: absolute; left: var(--ple-gutter); right: 0; background: var(--pl-section); pointer-events: none; z-index: 0; }
-.ple-curline { position: absolute; left: var(--ple-gutter); right: 0; height: var(--ple-lh); background: var(--pl-current-line); pointer-events: none; z-index: 0; }
-.ple-lintline { position: absolute; left: var(--ple-gutter); right: 0; height: 2px; background: repeating-linear-gradient(90deg, var(--pl-err) 0 3px, transparent 3px 6px); pointer-events: none; }
+.ple-sectionbg { position: absolute; left: 0; right: 0; background: var(--pl-section); pointer-events: none; z-index: 0; }
+.ple-curline { position: absolute; left: 0; right: 0; height: var(--ple-lh); background: var(--pl-current-line); pointer-events: none; z-index: 0; }
+.ple-lintline { position: absolute; left: 0; right: 0; height: 2px; background: repeating-linear-gradient(90deg, var(--pl-err) 0 3px, transparent 3px 6px); pointer-events: none; }
 .ple-match { background: color-mix(in oklab, #e0b000 35%, transparent); border-radius: 2px; }
 .t-k { color: var(--pl-kw); }
 .t-s { color: var(--pl-str); }

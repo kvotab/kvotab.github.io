@@ -4,7 +4,8 @@
    A textarea over a <pre> that shows the same text in colour, beside a
    gutter of line numbers. The textarea keeps the browser's own editing,
    selection and undo (changes made by keys go through insertText, so undo
-   still takes them back). Lines never wrap; the frame scrolls both ways.
+   still takes them back). Lines never wrap; the frame scrolls both ways, the
+   gutter staying at its left edge, and the coloured text sets its size.
 
        const ed = new PL.Editor({ value, readOnly, language });
        ed.el                 the element to place
@@ -41,7 +42,8 @@
       this.gutter = el('div', { class: 'ple-gutter' });
       this.sectionBg = el('div', { class: 'ple-sectionbg', hidden: true });
       this.curline = el('div', { class: 'ple-curline', hidden: true });
-      this.inner = el('div', { class: 'ple-inner' }, this.sectionBg, this.curline, this.gutter, this.hl, this.ta);
+      this.code = el('div', { class: 'ple-code' }, this.sectionBg, this.curline, this.hl, this.ta);
+      this.inner = el('div', { class: 'ple-inner' }, this.gutter, this.code);
       this.el = el('div', { class: `ple lang-${language}` }, this.inner);
       this.el._editor = this;
       this.ta.value = value;
@@ -59,9 +61,10 @@
         const line = Math.floor((ev.clientY - r.top - this._pad()) / this._lh()) + 1;
         if (line >= 1 && line <= this._lines) { ev.preventDefault(); this.emit('gutter', line); }
       });
-      // sized in the next frame: sizing the content inside the observed box
-      // at once makes the browser report a ResizeObserver loop
-      new ResizeObserver(() => { cancelAnimationFrame(this._rzf); this._rzf = requestAnimationFrame(() => this._size()); }).observe(this.el);
+      // numbers for the lines a taller frame shows, drawn in the next frame:
+      // changing the content inside the observed box at once makes the browser
+      // report a ResizeObserver loop
+      new ResizeObserver(() => { cancelAnimationFrame(this._rzf); this._rzf = requestAnimationFrame(() => this._gutterDraw()); }).observe(this.el);
       this._draw(true);
     }
 
@@ -72,7 +75,6 @@
     focus() { this.ta.focus({ preventScroll: true }); }
 
     _lh() {
-      const v = getComputedStyle(this.el).getPropertyValue('--ple-lh');
       const px = parseFloat(getComputedStyle(this.hl).lineHeight);
       return Number.isFinite(px) && px > 0 ? px : 19;
     }
@@ -82,30 +84,27 @@
     _draw(now = false) {
       const paint = () => {
         this._raf = 0;
+        // text pasted past the end of the textarea made it scroll its own text
+        // to show the caret; grown with the coloured text it scrolls back, so
+        // the frame takes that scroll over and the caret stays where it was
+        const sx = this.ta.scrollLeft;
+        const sy = this.ta.scrollTop;
         const text = this.ta.value;
         this._lines = text.split('\n').length;
         if (this.language === 'python') this.hl.innerHTML = L().highlightPython(text);
         else if (text.length > 400000) this.hl.textContent = text;
         else this.hl.innerHTML = L().highlight(text);
-        this._size();
+        if ((sx || sy) && document.activeElement === this.ta) {
+          this.ta.scrollLeft = 0;
+          this.ta.scrollTop = 0;
+          this.el.scrollLeft += sx;
+          this.el.scrollTop += sy;
+        }
         this._sections();
         this._gutterDraw();
       };
       if (now) { cancelAnimationFrame(this._raf); paint(); return; }
       if (!this._raf) this._raf = requestAnimationFrame(paint);
-    }
-
-    _size() {
-      const lh = this._lh();
-      const pad = this._pad();
-      const h = Math.max(this.el.clientHeight, this._lines * lh + pad + 40);
-      const w = Math.max(this.el.clientWidth - this.gutter.offsetWidth, this.hl.scrollWidth + 30);
-      this.inner.style.height = `${h}px`;
-      this.inner.style.width = `${w + this.gutter.offsetWidth}px`;
-      this.ta.style.height = `${h}px`;
-      this.ta.style.width = `${w}px`;
-      this.gutter.style.height = `${h}px`;
-      this._gutterDraw();
     }
 
     _gutterDraw() {
@@ -118,7 +117,7 @@
       const frag = document.createDocumentFragment();
       const lintLines = new Set(this.lint.map((x) => x.line));
       for (let i = first; i <= last; i++) {
-        const d = el('div', { class: 'ple-gl', style: { top: `${pad + (i - 1) * lh}px` } }, String(i));
+        const d = el('div', { class: 'ple-gl', style: { top: `${pad + (i - 1) * lh}px` } }, el('span', { class: 'n' }, String(i)));
         if (this.breakpoints.has(i)) d.append(el('span', { class: 'bp' }));
         if (this.arrow === i) d.append(el('span', { class: 'arrow' }));
         if (lintLines.has(i)) {

@@ -16,6 +16,15 @@ draws in the dark theme; the full window hides the site around the desktop
 and is remembered; at phone width the page does not scroll sideways, the
 Command Window is there and the Workspace opens from its menu.
 
+The Editor's view (screenshots of a line taken with the caret hidden and
+shown): the caret stands centred on the letters of its line and the line
+numbers on the code's baseline, also 500 lines down, where each number is
+still at its line; typing never widens the code; scrolled sideways, the line
+numbers stay at the left edge and a caret moved left comes back beside them,
+not under them; after a paste of more lines than the frame holds the caret
+is in view. The Command Window's caret stands centred on its letters too,
+and the Command Window fits its panel, so nothing scrolls it under its header.
+
 Files dragged from the computer (trusted drag events with real files): a
 program dropped on the Command Window is copied into the current folder and
 opened in the Editor; MAT-files of versions 7 and 7.3 dropped on the
@@ -276,6 +285,140 @@ async def desktop(page):
     await shot(page, 'surface.png')
     await command(page, 'close all')
     check('close all closes the windows', await until(page, 'PL.app.figures.wins.size === 0', 5), True)
+
+
+EDITOR = "document.querySelector('.pl-edview.is-shown .ple')._editor"
+
+# The rows a 4x screenshot of a strip covers, worked out by the page: the
+# letters (darker or lighter than the strip's top-left pixel) and, given a
+# second shot, the caret (where the two differ), in px from the strip's top.
+ROWS = r'''async (a, b) => {
+  const load = (s) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = `data:image/png;base64,${s}`; });
+  const pixels = (img) => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0); return x.getImageData(0, 0, img.width, img.height).data; };
+  const A = await load(a), w = A.width, h = A.height, p = pixels(A), q = b ? pixels(await load(b)) : null;
+  const lum = (d, i) => d[i] + d[i + 1] + d[i + 2];
+  const rows = (hit) => { let lo = -1, hi = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (hit(4 * (y * w + x))) { if (lo < 0) lo = y; hi = y; break; }
+    return lo < 0 ? null : [lo / 4, (hi + 1) / 4]; };
+  return { ink: rows((i) => Math.abs(lum(p, i) - lum(p, 0)) > 150), caret: q ? rows((i) => Math.abs(lum(p, i) - lum(q, i)) > 60) : null };
+}'''
+
+# The x of a line's column in the coloured text, in page coordinates.
+X_AT = '''((line, col) => { const ln = %s.hl.querySelectorAll('.ln')[line - 1];
+  const tw = document.createTreeWalker(ln, NodeFilter.SHOW_TEXT); let n, k = col - 1;
+  while ((n = tw.nextNode())) { if (k <= n.length) { const r = document.createRange(); r.setStart(n, k); r.collapse(true); return r.getBoundingClientRect().left; } k -= n.length; }
+  return null; })''' % EDITOR
+
+
+async def strip(page, x, y, w, h):
+    r = await page.call('Page.captureScreenshot', {'format': 'png', 'clip': {'x': x, 'y': y, 'width': w, 'height': h, 'scale': 4}}, session=page.sid)
+    return r['result']['data']
+
+
+async def caret_rows(page, x, y, h, gx=None):
+    """A line's strip from (x, y), h high, with the caret in it: the rows of
+    its letters and of the caret (shot until it shows, as it blinks), and of
+    the line's number from the gutter at gx, in px from the line's top."""
+    hide = "(document.getElementById('caret-off') || document.head.appendChild(Object.assign(document.createElement('style'), { id: 'caret-off' })))"
+    await page.ev(f"{hide}.textContent = '.ple-ta, .pl-cmd-ta {{ caret-color: transparent !important; }}'; 1")
+    await asyncio.sleep(0.05)
+    off = await strip(page, x, y, 300, h)
+    number = await page.ev(f"({ROWS})({json.dumps(await strip(page, gx, y, 50, h))}, null)") if gx is not None else {'ink': None}
+    await page.ev(f"{hide}.textContent = ''; 1")
+    rows = {}
+    for _ in range(25):
+        rows = await page.ev(f"({ROWS})({json.dumps(off)}, {json.dumps(await strip(page, x, y, 300, h))})")
+        if rows.get('caret'):
+            break
+        await asyncio.sleep(0.08)
+    rows['number'] = number['ink']
+    return rows
+
+
+def centred(rows):
+    """The caret reaches as far above its line's letters as below them."""
+    ink, caret = rows['ink'], rows['caret']
+    if not caret:
+        return None
+    above, below = ink[0] - caret[0], caret[1] - ink[1]
+    return above > 0 and below > 0 and abs(above - below) <= 1.0
+
+
+async def line_rows(page, line, col):
+    """caret_rows for the Editor's caret put at a line's column, in view."""
+    x, gx, y, h = await page.ev(f"""(() => {{ const ed = {EDITOR}; ed.focus(); const s = ed.lineStart({line}) + {col} - 1;
+      ed.ta.setSelectionRange(s, s); ed.revealLine({line}, false);
+      const r = ed.hl.querySelectorAll('.ln')[{line - 1}].getBoundingClientRect();
+      return [ed.code.getBoundingClientRect().left, ed.gutter.getBoundingClientRect().left, r.top, r.height]; }})()""")
+    await asyncio.sleep(0.2)
+    return await caret_rows(page, x, y, h, gx)
+
+
+async def editor_view(page):
+    await page.call('Emulation.setFocusEmulationEnabled', {'enabled': True}, session=page.sid)
+    long = 'y = ' + ' + '.join(f'a{i}' for i in range(150)) + ';'
+    text = '\n'.join(['x = linspace(0, 2*pi, 100);', long, 'z = 3;', 'for k = 1:3', '    disp(k)', 'end'] * 85) + '\n'
+    path = '/tmp/pylab-ui/view.m'
+    await page.ev(f"PL.engine.fs('write', {{ path: '{path}', data: {json.dumps(text)} }}).then(() => PL.app.openFile('{path}')).then(() => 1)")
+    await page.ev('document.fonts.ready.then(() => 1)')
+    await asyncio.sleep(0.5)
+
+    rows = await line_rows(page, 1, 13)
+    check('the Editor draws the caret', rows['caret'] is not None, True)
+    check('the caret stands centred on the letters of its line', centred(rows), True)
+    rows = await line_rows(page, 6, 1)
+    check("a line's number stands on the code's baseline", abs(rows['number'][1] - rows['ink'][1]) <= 0.5, True)
+    rows = await line_rows(page, 504, 1)
+    check('500 lines down too', abs(rows['number'][1] - rows['ink'][1]) <= 0.5, True)
+    tops = await page.ev(f"""(() => {{ const ed = {EDITOR}; const g = [...ed.gutter.children].find((d) => d.textContent === '504');
+      return [g.getBoundingClientRect().top, ed.hl.querySelectorAll('.ln')[503].getBoundingClientRect().top]; }})()""")
+    check('and the number is at its line', abs(tops[0] - tops[1]) < 0.01, True)
+
+    # typing on a short line leaves the width to the longest line
+    await page.ev(f"(() => {{ const ed = {EDITOR}; ed.revealLine(3, false); const s = ed.lineStart(3) + 6; ed.ta.setSelectionRange(s, s); ed.el.scrollLeft = 0; return 1; }})()")
+    width = await page.ev(f'{EDITOR}.el.scrollWidth')
+    for ch in 'abcdefghijkl':
+        await page.call('Input.insertText', {'text': ch}, session=page.sid)
+        await asyncio.sleep(0.03)
+    await asyncio.sleep(0.2)
+    check('typing does not widen the code', await page.ev(f'{EDITOR}.el.scrollWidth'), width)
+
+    # sideways: the numbers stay, and a caret moved left comes back beside them
+    await page.ev(f"(() => {{ const ed = {EDITOR}; const s = ed.lineStart(2) + 7; ed.ta.setSelectionRange(s, s); ed.el.scrollLeft = 900; return 1; }})()")
+    await asyncio.sleep(0.2)
+    check('scrolled sideways, the line numbers stay at the left edge',
+          await page.ev(f'{EDITOR}.gutter.getBoundingClientRect().left === {EDITOR}.el.getBoundingClientRect().left'), True)
+    await shot(page, 'editor-sideways.png')
+    left = {'key': 'ArrowLeft', 'code': 'ArrowLeft', 'windowsVirtualKeyCode': 37, 'nativeVirtualKeyCode': 37}
+    await page.call('Input.dispatchKeyEvent', {'type': 'rawKeyDown', **left}, session=page.sid)
+    await page.call('Input.dispatchKeyEvent', {'type': 'keyUp', **left}, session=page.sid)
+    await asyncio.sleep(0.2)
+    at = await page.ev(f"[{EDITOR}.cursorCol(), {X_AT}(2, {EDITOR}.cursorCol()), {EDITOR}.gutter.getBoundingClientRect().right]")
+    check('a caret moved left comes back beside the line numbers', (at[0], at[1] >= at[2] + 5), (7, True))
+
+    # a paste of more lines than the frame holds leaves the caret in view
+    await page.ev(f"(() => {{ const ed = {EDITOR}; const n = ed.ta.value.length; ed.ta.setSelectionRange(n, n); return 1; }})()")
+    await page.call('Input.insertText', {'text': '\n'.join(f'w{i} = {i} + ' + 'q' * 200 for i in range(60))}, session=page.sid)
+    await asyncio.sleep(0.4)
+    view = await page.ev(f"""(() => {{ const ed = {EDITOR}; const f = ed.el.getBoundingClientRect(), g = ed.gutter.getBoundingClientRect();
+      const r = ed.hl.querySelectorAll('.ln')[ed.cursorLine() - 1].getBoundingClientRect(); const x = {X_AT}(ed.cursorLine(), ed.cursorCol());
+      return [r.top >= f.top, r.bottom <= f.top + ed.el.clientHeight + 1, x >= g.right, x <= f.left + ed.el.clientWidth]; }})()""")
+    check('after a paste of many lines the caret is in view', view, [True, True, True, True])
+
+    await page.ev(f"(() => {{ const d = PL.app.docs.find((x) => x.key === '{path}'); d.saved = d.editor.value; d.setDirty(false); return PL.app.closeDoc(d).then(() => 1); }})()")
+    await page.ev(f"PL.engine.fs('remove', {{ path: '/tmp/pylab-ui' }}).then(() => 1)")
+
+    # the Command Window's caret, in a line typed at the prompt
+    await page.ev("(() => { const c = PL.app.cmd; c.setLine('x = linspace(0, 2*pi, 100);'); c.ta.setSelectionRange(12, 12); c.scrollEnd(); return 1; })()")
+    await asyncio.sleep(0.3)
+    x, y, h = await page.ev("(() => { const t = PL.app.cmd.ta, r = t.getBoundingClientRect(); return [r.left, r.top, parseFloat(getComputedStyle(t).lineHeight)]; })()")
+    rows = await caret_rows(page, x, y, h)
+    check("the Command Window's caret stands centred on the letters too", centred(rows), True)
+    await page.ev("PL.app.cmd.setLine(''); 1")
+    check('the Command Window fits its panel, so nothing scrolls it under its header',
+          await page.ev("(() => { const b = PL.app.cmd.el.closest('.pl-panel-body'); return b.scrollHeight <= b.clientHeight; })()"), True)
+    await page.call('Emulation.setFocusEmulationEnabled', {'enabled': False}, session=page.sid)
 
 
 def drop_fixtures():
@@ -542,6 +685,7 @@ async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
         await desktop(page)
+        await editor_view(page)
         await drops(page)
         await parallel(page)
         await statistics(page)
