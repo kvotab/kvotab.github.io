@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Emit Svensk text's icon (svensk_text.html): resources/images/
+"""Emit Svensk text's icon (svensk_text.html and its standalone copy,
+svensk-text-free.html): resources/images/
 svensk_text-icon.svg, and from it svensk_text-icon-32.png (the fallback) and
 svensk_text-icon-180.png (the touch icon, for an iPhone's home screen).
 

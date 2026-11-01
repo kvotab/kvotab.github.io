@@ -51,6 +51,8 @@ OWN = {
     'rb.html': ('resources/images/rb-icon-180.png', False),
     'smui.html': ('resources/images/smui-icon-180.png', False),
     'solna.html': ('resources/images/sl-icon-180.png', True),
+    'svensk-text-free.html': ('resources/images/svensk_text-icon-180.png', True),
+    'svensk_text.html': ('resources/images/svensk_text-icon-180.png', True),
     'uppsala.html': ('resources/images/sl-icon-180.png', True),
     'winnetkakort.html': ('resources/images/winnetkakort-icon-180.png', True),
 }
