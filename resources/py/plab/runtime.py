@@ -302,6 +302,116 @@ def forrange(a, b, s=None):
     return forit(colon(a, s, b))
 
 
+class LoopRange:
+    """The values of a parfor loop over a range of whole numbers, as floats:
+    gone through more than once (the pool is tried first) and never made."""
+    __slots__ = ('first', 'step', 'count')
+
+    def __init__(self, first, step, count):
+        self.first, self.step, self.count = first, step, count
+
+    def __iter__(self):
+        return map(float, range(self.first, self.first + self.step * self.count, self.step))
+
+    def __len__(self):
+        return self.count
+
+
+def parfor_values(a, b, s=None):
+    """A parfor loop's values: a LoopRange for a range of whole numbers,
+    else the values a for loop takes."""
+    start, step, stop = (a, 1.0, b) if s is None else (a, b, s)
+    if type(start) is float and type(step) is float and type(stop) is float and start == start and stop == stop \
+            and start == int(start) and step == int(step) and step != 0 and abs(start) < 2 ** 52 and abs(stop) < 2 ** 52:
+        n = int(math.floor((stop - start) / step + 1e-9)) + 1
+        return LoopRange(int(start), int(step), max(n, 0))
+    return forit(colon(a, b) if s is None else colon(a, b, s))
+
+
+async def parfor(W, fn, plan, vals, maxw):
+    """A parfor loop on the pool's workers: True when it ran there, False when
+    the caller runs it here one pass at a time (no pool, or something it
+    needs cannot go to the workers)."""
+    from .builtins.parallel import run_parfor
+    return await run_parfor(W, fn, plan, vals, maxw)
+
+
+def parfor_note(reason, line, path, noted):
+    """Say once (noted: the module's own record) why a parfor loop's passes
+    run one at a time."""
+    key = (line, reason)
+    if key in noted:
+        return
+    noted.add(key)
+    where = f'at line {line}' if path == 'command' else f'in {os.path.basename(path)} at line {line}'
+    warn('MATLAB:parfor:serial', f'The parfor loop {where} runs one pass at a time: {reason}.')
+
+
+class _RedUnset:
+    """A reduction a worker has not reached yet."""
+    def __repr__(self):
+        return 'RED_UNSET'
+
+
+RED_UNSET = _RedUnset()
+
+
+def red_join(op, prefix, cur, v):
+    """cur op v (or v op cur when prefix): one step of a reduction, or the
+    join of two parts of it."""
+    a, b = (v, cur) if prefix else (cur, v)
+    if op == '+':
+        return plus(a, b)
+    if op == '-':
+        return minus(a, b)
+    if op == '.*':
+        return times(a, b)
+    if op == '*':
+        return mtimes(a, b)
+    if op == '&':
+        return and_(a, b)
+    if op == '|':
+        return or_(a, b)
+    if op == 'h':
+        return hcat([a, b])
+    if op == 'v':
+        return vcat([a, b])
+    return BUILTINS[op].fn(1, a, b)
+
+
+def red_step(op, prefix, cur, v):
+    """A worker's reduction step: its first sets the part (x - e starts it at
+    -e, so that the parts are joined by +)."""
+    if cur is RED_UNSET:
+        return uminus(v) if op == '-' else share(v)
+    return red_join(op, prefix, cur, v)
+
+
+def parfor_collect(W, ks, sliced, reds):
+    """What a block of passes sends back: each sliced variable's slice for
+    each pass (None where the pass set none), and each reduction's part
+    (None when no pass reached it)."""
+    slices = {}
+    for name, brace, pattern in sliced:
+        x = W.get(name, NOVAL)
+        got = []
+        for k in ks:
+            if x is NOVAL:
+                got.append(None)
+                continue
+            args = tuple(float(k) if p == 'k' else COLON if p == ':' else float(p) for p in pattern)
+            try:
+                got.append(cidx1(x, args) if brace else idx(x, args))
+            except MError:
+                got.append(None)
+        slices[name] = got
+    parts = {}
+    for name in reds:
+        v = W.get(name, RED_UNSET)
+        parts[name] = None if v is RED_UNSET else v
+    return {'slices': slices, 'reds': parts}
+
+
 def forit(v):
     """A for loop takes the columns of its value one at a time."""
     t = type(v)
@@ -1010,7 +1120,7 @@ def compile_file(path, text):
 
 def make_ns(path):
     from . import runtime as R_mod
-    return {'R': R_mod, 'B': B, 'NOVAL': NOVAL, 'COLON': COLON, 'FH': FH, 'G': GLOBALS,
+    return {'R': R_mod, 'B': B, 'NOVAL': NOVAL, 'COLON': COLON, 'FH': FH, 'G': GLOBALS, '_PF_NOTED': set(),
             'T_': DEBUGGER.active and DEBUGGER.wants(path) if hasattr(DEBUGGER, 'wants') else False,
             'M_': path, '__name__': f'plab_{os.path.basename(path)}'}
 

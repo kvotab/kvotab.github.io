@@ -208,14 +208,16 @@ class If(Stmt):
 
 
 class For(Stmt):
-    __slots__ = ('var', 'it', 'body', 'par')
+    """for var = it ... end; par for parfor, workers its (parfor (k = 1:n, M)) limit or None."""
+    __slots__ = ('var', 'it', 'body', 'par', 'workers')
 
-    def __init__(self, var, it, body, line, par=False):
+    def __init__(self, var, it, body, line, par=False, workers=None):
         self.var = var
         self.it = it
         self.body = body
         self.line = line
         self.par = par
+        self.workers = workers
 
 
 class While(Stmt):
@@ -639,14 +641,15 @@ class Parser:
         var = self.postfix()
         self.expect_op('=')
         it = self.expr()
+        workers = None
         if paren:
             if self.at_op(','):
                 self.next()
-                self.expr()
+                workers = self.expr()
             self.expect_op(')')
         body = self.block()
         self.expect_kw('end', t0)
-        return For(var, it, body, t0.line, t0.v == 'parfor')
+        return For(var, it, body, t0.line, t0.v == 'parfor', workers)
 
     def switch_stmt(self):
         t0 = self.next()

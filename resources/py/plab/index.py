@@ -240,10 +240,10 @@ def idx(A, args):
         f = getattr(A, 'index', None)
         if f is not None:
             return f(args)
-        r = take(np.array([[A]], object), args)
+        from .graphics_base import HArr
+        r = take(A.a if isinstance(A, HArr) else np.array([[A]], object), args)
         if r.size == 1:
             return r.reshape(-1)[0]
-        from .graphics_base import HArr
         return HArr(r)
     if isinstance(A, FH):
         raise MError('MATLAB:fhIndex', 'Function handles must be called with parentheses, not indexed.')

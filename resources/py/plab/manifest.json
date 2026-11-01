@@ -15,6 +15,7 @@
     "glayout.py",
     "colormaps.py",
     "matfile.py",
+    "parfor.py",
     "worker_api.py",
     "help.py",
     "helptext.py",
@@ -32,7 +33,12 @@
     "builtins/iofun.py",
     "builtins/timefun.py",
     "builtins/sparse.py",
-    "builtins/graphics.py"
+    "builtins/graphics.py",
+    "builtins/parallel.py",
+    "builtins/statdesc.py",
+    "builtins/distributions.py",
+    "builtins/stattests.py",
+    "builtins/statplots.py"
   ],
   "examples": [
     "README.txt",

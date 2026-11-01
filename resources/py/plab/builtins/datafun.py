@@ -169,6 +169,8 @@ def diff(nargout, *args):
 def mean(nargout, *args):
     nargchk(args, 1, 4, 'mean')
     x = args[0]
+    if getattr(x, 'is_probdist', False):
+        return x.moment('mean')
     if type(x) is float and len(args) == 1:
         return x
     a = _num_input(x, 'mean')
@@ -191,6 +193,8 @@ def mean(nargout, *args):
 def median(nargout, *args):
     nargchk(args, 1, 3, 'median')
     x = args[0]
+    if getattr(x, 'is_probdist', False):
+        return x.moment('median')
     a = _num_input(x, 'median')
     dim, flags, rest = _dim_and_flags(args[1:], ('omitnan', 'includenan'), 'median')
     A = a.astype(F64) if a.dtype.kind in 'biu' or a.dtype == np.uint16 else a
@@ -295,11 +299,15 @@ def _var_std(name, args, sq):
 
 @bi('var')
 def var(nargout, *args):
+    if args and getattr(args[0], 'is_probdist', False):
+        return args[0].moment('var')
     return _var_std('var', args, False)
 
 
 @bi('std')
 def std(nargout, *args):
+    if args and getattr(args[0], 'is_probdist', False):
+        return args[0].moment('std')
     return _var_std('std', args, True)
 
 
@@ -1206,6 +1214,8 @@ def prctile(nargout, *args):
 
 @bi('iqr')
 def iqr(nargout, *args):
+    if args and getattr(args[0], 'is_probdist', False):
+        return args[0].moment('iqr')
     x = darr(args[0])
     q = _quantiles(x.reshape(-1, 1) if (x.ndim == 2 and 1 in x.shape) else x, [0.25, 0.75], 0)
     return out(np.diff(q, axis=0))

@@ -10,7 +10,8 @@
 
    Events: 'status' (text while loading), 'ready', 'fatal', 'busy' (true or
    false), and the messages Python sends: 'out', 'figures', 'input',
-   'request', 'dbg', 'dbgwait', 'cwd', 'files', 'edit', 'clc', 'raise', 'web'.
+   'request', 'dbg', 'dbgwait', 'cwd', 'files', 'edit', 'clc', 'raise', 'web',
+   and 'pool' (a parfor loop's progress on the parallel pool).
    Runs are queued in the worker and done one at a time; calls and file
    operations are answered at once, also while a program runs (between its
    steps).

@@ -502,6 +502,7 @@
       E.on('dbg', (m) => this.onDebug(m));
       E.on('dbgwait', (m) => { if (this.debug) this.debug.waitId = m.id; this.flushDebugQueue(); });
       E.on('restart', () => { this.figures.clear(); this.cmd.write('\nPython was restarted: the workspace is empty and the figures are closed.\n\n', 'warn'); });
+      E.on('pool', (m) => this.poolProgress(m));
 
       this.cmd.on('submit', (code) => this.submit(code));
       this.cmd.on('interrupt', () => this.interrupt());
@@ -517,6 +518,11 @@
         if (this.docs.some((d) => d.dirty)) { ev.preventDefault(); ev.returnValue = ''; }
       });
       new ResizeObserver(() => { cancelAnimationFrame(this._swf); this._swf = requestAnimationFrame(() => this.sendWidth()); }).observe(this.cmd.el);
+    }
+
+    /* A parfor loop's passes on the pool's workers, in the status bar while they run. */
+    poolProgress(m) {
+      this.statusText.textContent = m.end ? '' : `parfor: ${m.done} of ${m.total} passes done, on ${m.workers} worker${m.workers === 1 ? '' : 's'}`;
     }
 
     async ready(info, versions) {

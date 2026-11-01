@@ -682,3 +682,101 @@ def debug_command(cmd_json):
 def set_breakpoints(path, lines_json):
     R.DEBUGGER.set_breakpoints(path, json.loads(lines_json))
     return True
+
+
+# ---- a worker of the parallel pool --------------------------------------------------------------
+
+_JOB = {}
+
+
+def pool_setup(post_fn, home=HOME, index=1):
+    """A worker of the parallel pool: what its passes print goes to the
+    Command Window; figures, input() and the debugger stay with the client."""
+    global _post
+    _post = post_fn
+    R.setup()
+    R.OUT_HOOK[0] = lambda text, kind: post({'type': 'out', 'text': text, 'kind': kind})
+    R.EVENT_HOOK[0] = None
+    R.INPUT_HOOK[0] = None
+    R.PAGE_HOOK[0] = None
+    os.makedirs(home, exist_ok=True)
+    R.STATE['cwd'] = home
+    R.STATE['home'] = home
+    R.STATE['pool_index'] = int(index)
+    return json.dumps({'index': int(index)})
+
+
+def _to_bytes(x):
+    if isinstance(x, (bytes, bytearray, memoryview)):
+        return bytes(x)
+    return x.to_bytes()          # a JavaScript Uint8Array
+
+
+def pool_job(meta_json, ins, files, remove):
+    """A parfor loop's job: the files that changed, the loop's module, and the
+    values of its variables, kept for its blocks of passes."""
+    from .builtins.parallel import loads, POOL
+    meta = json.loads(meta_json)
+    for p in remove:
+        try:
+            os.remove(str(p))
+        except OSError:
+            pass
+    for item in files:
+        path, data = str(item[0]), _to_bytes(item[1])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(data)
+    R.STATE['cwd'] = meta['cwd'] if os.path.isdir(meta['cwd']) else R.STATE['home']
+    R.STATE['path'] = [p for p in meta['path'] if os.path.isdir(p)]
+    R.bump_epoch()
+    m = meta['module']
+    mod = R.MODULES.get(m['pyfile'])
+    if mod is None or mod.src != m['src']:
+        ns = R.make_ns(m['path'])
+        exec(compile(m['src'], m['pyfile'], 'exec'), ns)
+        mod = R.CompiledModule(m['path'], m['name'], m['text'], m['src'], m['linemap'], m['kind'], ns)
+        R.MODULES[m['pyfile']] = mod
+    from .builtins.elmat import RNG
+    RNG.seed((int(meta['seed']) + 7919 * int(R.STATE.get('pool_index') or 1)) % (2 ** 31 - 1) or 1)
+    _JOB.clear()
+    _JOB.update(id=int(meta['job']), fn=mod.ns[meta['fn']], ins=loads(_to_bytes(ins)), files=POOL.scan())
+
+
+async def pool_chunk(job, first, count):
+    """A block of passes: the bytes of what it sends back, or the error as
+    JSON text ({identifier, message} or {interrupted})."""
+    from .builtins.parallel import dumps
+    if _JOB.get('id') != int(job):
+        return json.dumps({'identifier': 'parallel:pool:NoJob', 'message': 'The worker does not have that loop.'})
+    R.INTERRUPT[0] = False
+    R._TICK[1] = time.perf_counter()
+    try:
+        res = await _JOB['fn'](0, R.LoopRange(int(first), 1, int(count)), _JOB['ins'])
+        R.flush()
+        return dumps(res)
+    except Interrupt:
+        R.flush()
+        return json.dumps({'interrupted': True})
+    except MError as e:
+        R.flush()
+        return json.dumps({'identifier': e.identifier, 'message': e.message})
+    except Exception as e:  # noqa: BLE001 -- any failure of a pass is the loop's error
+        m = R.as_merror(e)
+        R.flush()
+        return json.dumps({'identifier': m.identifier, 'message': m.message})
+
+
+def pool_written(job):
+    """The files the job's passes wrote or changed: [(path, bytes)]."""
+    from .builtins.parallel import POOL, FILE_MAX
+    before = _JOB.get('files', {}) if _JOB.get('id') == int(job) else {}
+    out = []
+    for p, stamp in sorted(POOL.scan().items()):
+        if before.get(p) != stamp and stamp[1] <= FILE_MAX:
+            try:
+                with open(p, 'rb') as f:
+                    out.append((p, f.read()))
+            except OSError:
+                pass
+    return out

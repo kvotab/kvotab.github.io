@@ -892,6 +892,7 @@
           let x0, x1, y0, y1;
           if (c.horizontal) { y0 = fr.fy(e[i]); y1 = fr.fy(e[i + 1]); x0 = fr.fx(0); x1 = fr.fx(v[i]); }
           else { x0 = fr.fx(e[i]); x1 = fr.fx(e[i + 1]); y0 = fr.fy(Math.max(0, fr.ylog ? 1e-300 : 0)); y1 = fr.fy(v[i]); }
+          if (stairs && c.horizontal) { if (i === 0) ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); ctx.lineTo(x1, y1); if (i === v.length - 1) ctx.lineTo(x0, y1); continue; }
           if (stairs) { if (i === 0) ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.lineTo(x1, y1); if (i === v.length - 1) ctx.lineTo(x1, y0); continue; }
           if (v[i] === 0) continue;
           ctx.fillStyle = face;

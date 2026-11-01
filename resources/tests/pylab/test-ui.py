@@ -28,6 +28,18 @@ up leaves no zone; text dragged into the Command Window is still text; a
 drop while a dialog is open is ignored; a folder is copied with its files;
 a program whose file name is no name runs through run(), never as code.
 
+parfor on a pool of two real workers: four passes of a second take two,
+slices and reductions come back in the order of the passes, both workers
+take passes, a function file reaches the workers and the files the passes
+write come back, an error in a pass stops the loop with its message, the
+status bar shows the passes, Ctrl+C stops the loop on the workers and the
+pool works after, delete(gcp) stops the pool.
+
+Statistics on the page's NumPy and SciPy: tests run, a fitted distribution
+shows its estimates and intervals, anova1 shows its table and draws its box
+plots, and boxplot, scatterhist, gplotmatrix, histfit, normplot, qqplot and
+gscatter draw their figures.
+
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on PYLAB_HTTP_PORT and PYLAB_CDP_PORT (defaults 8811, 9311), then
 
@@ -442,6 +454,74 @@ async def drops(page):
     shutil.rmtree(d, ignore_errors=True)
 
 
+async def parallel(page):
+    """parfor on a pool of real workers (engines in Web Workers of their own)."""
+    out = await command(page, "clear; clc; mkdir('/home/user/pftest'); cd /home/user/pftest; p = parpool(2); n = p.NumWorkers")
+    check('parpool: a pool of two workers', ['Starting a parallel pool of 2 workers' in out, 'n =\n\n     2' in out], [True, True])
+    out = await command(page, 'tic; parfor k = 1:4, pause(1); end; t = toc; fast = t < 3.2')
+    check('parfor: four passes of a second take two on two workers', out[-40:].strip().endswith('1'), True)
+    out = await command(page, 's = 0; parfor k = 1:200, y(k) = k^2; s = s + k; end; ok = isequal(y, (1:200).^2) && s == 20100')
+    check('parfor: slices and a sum come back in order', out[-40:].strip().endswith('1'), True)
+    out = await command(page, 'parfor k = 1:8, t = getCurrentTask(); w(k) = t.ID; end; n = numel(unique(w))')
+    check('parfor: both workers took passes', 'n =\n\n     2' in out[-30:], True)
+    await page.ev("PL.engine.fs('write', { path: '/home/user/pftest/pfsq.m', data: 'function y = pfsq(x)\\ny = x.^2;\\nend\\n' }).then(() => 1)")
+    out = await command(page, "parfor k = 1:3, writematrix(pfsq(k), sprintf('sq%d.txt', k)); end; v = readmatrix('sq3.txt')")
+    check('parfor: a function file goes to the workers, the files the passes write come back', 'v =\n\n     9' in out[-30:], True)
+    out = await command(page, "parfor k = 1:4, if k == 3, error('my:id', 'pass %d failed', k); end, end")
+    check('parfor: an error in a pass stops the loop with its message', 'pass 3 failed' in out[-80:], True)
+    await page.ev("PL.app.runCommand('parfor k = 1:4, pause(30); end'); 1")
+    shown = await until(page, "PL.app.statusText.textContent.startsWith('parfor: ') && PL.app.statusText.textContent", 30)
+    check('parfor: the status bar shows the passes', shown, 'parfor: 0 of 4 passes done, on 2 workers')
+    await asyncio.sleep(1)
+    await page.ev('PL.app.interrupt(); 1')
+    check('parfor: Ctrl+C stops it on the workers', await until(page, '!PL.engine.busy', 10), True)
+    check('parfor: and says so', 'Operation terminated by user.' in (await tail(page, 200)), True)
+    out = await command(page, 'parfor k = 1:2, z(k) = 10 * k; end; z')
+    check('parfor: the pool works after', 'z =\n\n    10    20' in out[-40:], True)
+    out = await command(page, "delete(gcp); e = isempty(gcp('nocreate'))")
+    check('delete(gcp) stops the pool', out[-40:].strip().endswith('1'), True)
+    check('parfor: no script errors', page.errors, [])
+
+
+INK = (f'(() => {{ const c = {WIN}.canvas; const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let n = 0; '
+       'for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++; return n / (d.length / 4); })()')
+
+
+async def drawn(page, frames):
+    """Wait for the newest figure window to draw its axes (a legend draws a frame of its own too): the share of
+    its canvas inked."""
+    ok = await until(page, f'{WIN} && {WIN}.renderer.frames.length >= {frames}', 20)
+    return await page.ev(INK) if ok else 0
+
+
+async def statistics(page):
+    """The statistics functions on the page's NumPy and SciPy, and their plots drawn."""
+    out = await command(page, "clear; clc; close all; rng(7); x = normrnd(5, 2, 200, 1); [h, p] = ttest(x, 5); [h2, p2] = lillietest(x);"
+                              "[h3, p3] = jbtest(x); [h4, p4] = adtest(x); [h5, p5] = kstest2(x(1:100), x(101:end)); ok = all([p p2 p3 p4 p5] > 0 & [p p2 p3 p4 p5] <= 1)")
+    check('statistics: the tests run in the page', out[-30:].strip().endswith('1'), True)
+    out = await command(page, "pd = fitdist(x, 'Weibull')")
+    check('statistics: a fitted distribution object shows its estimates and intervals', 'Weibull distribution, fitted to 200 values' in out[-300:], True)
+    out = await command(page, 'p = anova1(x, repmat([1; 2], 100, 1));')
+    check('statistics: anova1 shows its table', 'One-way ANOVA' in out[-600:], True)
+    check('statistics: and draws the box plots', await drawn(page, 1) > 0.01, True)
+    await command(page, "close all; boxplot([x, x + 2, x.^1.2], 'Notch', 'on', 'Labels', {'a', 'b', 'c'}); title('Box plots')")
+    check('statistics: boxplot draws', await drawn(page, 1) > 0.01, True)
+    await shot(page, 'stats-boxplot.png')
+    await command(page, "close all; y = 0.5 * x + randn(200, 1); g = repmat({'one'; 'two'}, 100, 1); scatterhist(x, y, 'Group', g, 'Kernel', 'overlay')")
+    check('statistics: scatterhist draws three axes', await drawn(page, 3) > 0.01, True)
+    await shot(page, 'stats-scatterhist.png')
+    await command(page, "close all; gplotmatrix([x, y, x - y], [], g, [], [], [], 'on', 'stairs', {'x', 'y', 'x - y'}); title('By group')")
+    check('statistics: gplotmatrix draws its matrix', await drawn(page, 11) > 0.01, True)
+    await shot(page, 'stats-gplotmatrix.png')
+    await command(page, "close all; subplot(2, 2, 1); histfit(x); subplot(2, 2, 2); normplot(x); subplot(2, 2, 3); qqplot(x, y); subplot(2, 2, 4); gscatter(x, y, g)")
+    check('statistics: histfit, normplot, qqplot and gscatter draw', await drawn(page, 4) > 0.01, True)
+    await shot(page, 'stats-four.png')
+    out = await command(page, 'help ranksum')
+    check('statistics: help answers', 'Wilcoxon rank sum test' in out[-800:], True)
+    await command(page, 'close all; clear; clc')
+    check('statistics: no script errors', page.errors, [])
+
+
 async def full_window(page):
     await page.ev('PL.app.toggleFull(); 1')
     await asyncio.sleep(0.3)
@@ -463,6 +543,8 @@ async def main():
     try:
         await desktop(page)
         await drops(page)
+        await parallel(page)
+        await statistics(page)
         await full_window(page)
         await shot(page, 'desktop.png')
         check('no script errors', page.errors, [])

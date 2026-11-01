@@ -215,6 +215,9 @@ class Scope:
         self.local_funcs = local_funcs or {}
         self.fh_vars = fh_vars if fh_vars is not None else set(variables)
         self.loop_depth = 0
+        self.nested = False           # a nested function, or one that has some (its workspace is shared)
+        self.in_parfor = False        # the body of a parfor's chunk function (a parfor there runs as for)
+        self.reductions = None        # id(statement) -> how the chunk function reduces it
 
 
 class Compiler:
@@ -235,6 +238,9 @@ class Compiler:
         self.top = []                 # module-level definitions (anonymous functions)
         self.scope = None
         self.debug = True
+        self.local = {}               # the file's local functions: name -> Python name
+        self.extra = []               # parfor chunk functions: (lines, line map), at the module's end
+        self.parfor_n = 0
 
     # ---- helpers ---------------------------------------------------------------
     def tmp(self):
@@ -300,7 +306,7 @@ class Compiler:
         local functions. ws_names are the variables of the workspace it will
         run in."""
         self.top_lines, self.top_map = [], []
-        local = {f.name: f'LF_{f.name}' for f in prog.funcs}
+        local = self.local = {f.name: f'LF_{f.name}' for f in prog.funcs}
         variables = assigned(prog.body) | set(ws_names)
         g, p = globals_of(prog.body)
         g |= set(ws_globals)
@@ -323,12 +329,15 @@ class Compiler:
             fl, fm = self.compile_function(f, local)
             body_lines += [''] + fl
             body_map += [0] + fm
+        for fl, fm in self.extra:
+            body_lines += [''] + fl
+            body_map += [0] + fm
         return self.module_source(body_lines, body_map)
 
     def compile_file_functions(self, prog):
         """A function file: its functions, the first is the file's own."""
         self.top_lines, self.top_map = [], []
-        local = {}
+        local = self.local = {}
 
         def register(funcs):
             for f in funcs:
@@ -338,6 +347,9 @@ class Compiler:
         body_lines, body_map = [], []
         for f in prog.funcs:
             fl, fm = self.compile_function(f, local)
+            body_lines += fl + ['']
+            body_map += fm + [0]
+        for fl, fm in self.extra:
             body_lines += fl + ['']
             body_map += fm + [0]
         return self.module_source(body_lines, body_map)
@@ -367,6 +379,7 @@ class Compiler:
         dynamic = bool(names_used & _DYNAMIC_CALLS)
         fh_vars = self._fh_vars(body, set(p for p in params) | set(shared), variables, local)
         sc = Scope('function', f.name, variables, params, f.outs, g, pn, dynamic, local, fh_vars)
+        sc.nested = bool(f.subs or outer)
         save_out, save_scope = self.out, self.scope
         out = Emitter()
         self.out = out
@@ -627,22 +640,27 @@ class Compiler:
         return f'R.sc_truth({code}, {op!r})'
 
     def for_stmt(self, s):
-        e = self.out.emit
-        line = s.line
-        it = s.it
-        v = self.tmp()
-        var = s.var
+        if s.par and not self.scope.in_parfor:
+            return self.parfor_stmt(s)
+        self.loop_over(s, self.loop_values(s.it, 'R.forrange'))
+
+    def loop_values(self, it, fn):
+        """The code of a for loop's values: fn(a, b[, s]) over a range, else R.forit(value)."""
         if type(it) is P.Range:
             a, _ = self.expr(it.a)
             b, _ = self.expr(it.b)
             if it.s is None:
-                src = f'R.forrange({a}, {b})'
-            else:
-                st, _ = self.expr(it.s)
-                src = f'R.forrange({a}, {b}, {st})'
-        else:
-            code, _ = self.expr(it)
-            src = f'R.forit({code})'
+                return f'{fn}({a}, {b})'
+            st, _ = self.expr(it.s)
+            return f'{fn}({a}, {b}, {st})'
+        code, _ = self.expr(it)
+        return f'R.forit({code})'
+
+    def loop_over(self, s, src):
+        e = self.out.emit
+        line = s.line
+        v = self.tmp()
+        var = s.var
         e(f'for {v} in {src}:', line)
         self.out.ind += 1
         if type(var) is P.Id:
@@ -654,6 +672,73 @@ class Compiler:
         self.block(s.body)
         self.scope.loop_depth -= 1
         self.out.ind -= 1
+
+    def parfor_stmt(self, s):
+        """parfor: its passes on the pool's workers when the body allows (see parfor.py),
+        else, or when there is no pool, one at a time as a for loop."""
+        from . import parfor as PF
+        e = self.out.emit
+        line = s.line
+        if self.scope.nested:
+            plan = 'it is in a function that has nested functions, or is one'
+        elif self.scope.kind not in ('function', 'script'):
+            plan = 'it is not in a function or a script'
+        else:
+            plan = PF.plan(s, self.is_var, self.scope.dynamic)
+        vals = self.tmp()
+        e(f'{vals} = {self.loop_values(s.it, "R.parfor_values")}', line)
+        if isinstance(plan, str):
+            e(f'R.parfor_note({plan!r}, {line}, M_, _PF_NOTED)', line)
+            self.loop_over(s, vals)
+            return
+        fn = self.parfor_chunk(s, plan)
+        mw = self.expr(s.workers)[0] if s.workers is not None else 'None'
+        e(f'if not await R.parfor(W, {fn}, {plan.literal()!r}, {vals}, {mw}):', line)
+        self.out.ind += 1
+        self.loop_over(s, vals)
+        self.out.ind -= 1
+
+    def parfor_chunk(self, s, plan):
+        """The parfor's body as a module-level function the pool's workers call with
+        a block of passes: PF<n>(nargout, ks, ins) -> R.parfor_collect(...). ins holds
+        the broadcast and sliced variables' values; reductions start unset."""
+        self.parfor_n += 1
+        pyfn = f'PF{self.parfor_n}'
+        k = plan.var
+        sliced = [n for n, _, _ in plan.sliced]
+        reds = [n for n, _, _ in plan.reductions]
+        variables = assigned(s.body) | set(plan.broadcast) | set(sliced) | set(reds) | {k}
+        fh_vars = self._fh_vars(s.body, set(plan.broadcast) | set(sliced), variables, self.local)
+        # in a script, names made while it runs (load) are looked up then, as where the loop is
+        sc = Scope('function', 'parfor', variables, (), (), (), (), self.scope.dynamic, self.local, fh_vars)
+        sc.in_parfor = True
+        sc.reductions = plan.red_stmts
+        save_out, save_scope = self.out, self.scope
+        out = Emitter()
+        self.out, self.scope = out, sc
+        e = out.emit
+        line = s.line
+        e(f'async def {pyfn}(nargout, ks, ins):', line)
+        out.ind += 1
+        e("W = R.Workspace('parfor', ())", line)
+        e('_na = 0; _no = 0', line)
+        e('for _n, _v in ins.items(): W[_n] = R.share(_v)', line)
+        for n in reds:
+            e(f'W[{n!r}] = R.RED_UNSET', line)
+        v = self.tmp()
+        e(f'for {v} in ks:', line)
+        out.ind += 1
+        e(f'W[{k!r}] = {v}', line)
+        e(f'if T_ or R.tk(): await R.H(W, {line}, M_)', line)
+        sc.loop_depth += 1
+        self.block(s.body)
+        sc.loop_depth -= 1
+        out.ind -= 1
+        e(f'return R.parfor_collect(W, ks, {plan.sliced!r}, {reds!r})', line)
+        out.ind -= 1
+        self.out, self.scope = save_out, save_scope
+        self.extra.append((out.lines, out.map))
+        return pyfn
 
     def expr_stmt(self, s):
         e = self.out.emit
@@ -743,6 +828,12 @@ class Compiler:
         lhs = s.lhs[0]
         line = s.line
         rhs = s.rhs
+        red = self.scope.reductions.get(id(s)) if self.scope.reductions else None
+        if red is not None:
+            name, op, prefix, other = red
+            code, _ = self.expr(other)
+            self.out.emit(f'W[{name!r}] = R.red_step({op!r}, {prefix}, W[{name!r}], {code})', line)
+            return
         if self.is_cslist(rhs) and not (type(lhs) is P.Id):
             code = f'R.one({self.list_expr(rhs)})'
             fresh = False

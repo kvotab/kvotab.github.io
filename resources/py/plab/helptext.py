@@ -40,10 +40,26 @@ otherwise: The branch of a switch block taken when no case matches.
     switch x, case 1, ..., otherwise, ..., end
 catch: The part of a try block that runs when the try part throws an error.
     try, ..., catch err, ..., end
-parfor: A for loop whose passes may run in parallel; here they run one after another.
+parfor: A for loop whose passes run in parallel, on the workers of a pool.
     parfor k = 1:n, statements, end
+    parfor (k = 1:n, M), statements, end
+    * The pool starts with the first parfor if there is none (see parpool). The passes run in blocks on the workers, in no set order, and the results are put together in the order of the passes: what the loop gives run one pass at a time.
+    * A variable read and never set in the loop goes to every worker. One indexed by k in one subscript, the same way wherever it appears (y(k), A(:, k), c{k}), is a slice each pass sets for itself. One set only as s = s + e (or - .* * & |, [s, e], [s; e], min, max) is reduced. One set in a pass before it is read there belongs to that pass.
+    * A loop that does not keep to that (a pass reading what another pass set), or that has break, return, eval, load without an output, clear or global variables, runs one pass at a time, and a warning says why. So does parfor (k = 1:n, 0); M limits the workers it uses.
+    * The workers get the files of the current folder and the program files of the path, and the files the passes write come back. Figures, input() and breakpoints stay here: the passes cannot use them.
 spmd: A block for parallel workers; here its body runs once.
     spmd, statements, end
+parpool: Start a pool of workers for parfor loops.
+    parpool
+    parpool(n)
+    p = parpool(...)
+    * Without n the pool has a worker for each processor core but one, at most 8. Each worker is a Python engine of its own in this tab: it takes a few seconds to start and holds memory of its own. delete(gcp) stops the pool.
+gcp: The pool of workers, started if there is none.
+    p = gcp
+    p = gcp('nocreate')
+    * p.NumWorkers is its number of workers; with 'nocreate', [] when there is no pool. delete(p) stops the pool.
+getCurrentTask: On a worker of the pool, its task (t.ID is the worker's number); [] elsewhere.
+    t = getCurrentTask()
 classdef: Not available here: classes of your own cannot be defined. Use functions, structs and containers.Map.
 break: Leave the innermost for or while loop.
     break
@@ -561,10 +577,13 @@ mean: The average.
     M = mean(A, dim)
     M = mean(A, 'all')
     M = mean(..., 'omitnan')
+    m = mean(pd)
+    * mean(pd) is the mean of a distribution object (makedist, fitdist); so too median, std, var and iqr.
 median: The middle value.
     M = median(A)
     M = median(A, dim)
     M = median(..., 'omitnan')
+    m = median(pd)
 mode: The most frequent value (the smallest of those tied).
     M = mode(A)
     M = mode(A, dim)
@@ -574,10 +593,12 @@ std: The standard deviation (normalized by N-1, or N with w = 1).
     s = std(A, w)
     s = std(A, w, dim)
     s = std(..., 'omitnan')
+    s = std(pd)
 var: The variance (normalized by N-1, or N with w = 1).
     v = var(A)
     v = var(A, w)
     v = var(A, w, dim)
+    v = var(pd)
 min: The smallest elements, or the smaller of two arrays element by element.
     m = min(A)
     m = min(A, [], dim)
@@ -664,6 +685,7 @@ prctile: Percentiles of a sample.
     P = prctile(X, p, dim)
 iqr: The interquartile range.
     r = iqr(X)
+    r = iqr(pd)
 skewness: The sample skewness.
     s = skewness(X)
     s = skewness(X, flag)
@@ -691,6 +713,291 @@ normalize: Centre and scale data (z-scores by default).
     N = normalize(A)
     N = normalize(A, dim)
     N = normalize(..., 'range')
+
+# ---- descriptive statistics ------------------------------------------------------------------
+trimmean: The mean of the data left when a share of the smallest and the largest values is set aside.
+    m = trimmean(X, percent)
+    m = trimmean(X, percent, flag)
+    m = trimmean(X, percent, flag, dim)
+    * percent is the share set aside in all, half at each end: 20 leaves out the lowest 10% and the highest 10%. flag says what to do when that is not a whole number of values: 'round' (the default) rounds it, 'floor' rounds it down, 'weighted' gives the values on the edge partial weights.
+geomean: The geometric mean: the nth root of the product of n values.
+    m = geomean(X)
+    m = geomean(X, dim)
+    * The values must not be negative; a zero among them gives 0.
+harmmean: The harmonic mean: the number of values divided by the sum of their reciprocals.
+    m = harmmean(X)
+    m = harmmean(X, dim)
+mad: The mean absolute deviation from the mean, or the median absolute deviation from the median.
+    d = mad(X)
+    d = mad(X, flag)
+    d = mad(X, flag, dim)
+    * flag 0 (the default) gives mean(abs(X - mean(X))), flag 1 median(abs(X - median(X))). NaN values are left out.
+moment: A central moment of a sample: the mean of (X - mean(X)).^order.
+    m = moment(X, order)
+    m = moment(X, order, dim)
+    * The second is the variance normalized by N.
+zscore: Standardized data: the values less their mean, divided by their standard deviation.
+    Z = zscore(X)
+    Z = zscore(X, flag)
+    Z = zscore(X, flag, dim)
+    [Z, mu, sigma] = zscore(...)
+    * flag 1 normalizes the standard deviation by N instead of N-1. Values that are all the same give zeros.
+nanmean: The mean of the values that are not NaN.
+    m = nanmean(X)
+    m = nanmean(X, dim)
+nanmedian: The median of the values that are not NaN.
+    m = nanmedian(X)
+    m = nanmedian(X, dim)
+nanstd: The standard deviation of the values that are not NaN.
+    s = nanstd(X)
+    s = nanstd(X, flag)
+    s = nanstd(X, flag, dim)
+nanvar: The variance of the values that are not NaN.
+    v = nanvar(X)
+    v = nanvar(X, flag)
+    v = nanvar(X, flag, dim)
+nansum: The sum of the values that are not NaN.
+    s = nansum(X)
+    s = nansum(X, dim)
+nanmax: The largest values, NaN left out (as max does).
+    m = nanmax(X)
+    [m, i] = nanmax(X, [], dim)
+nanmin: The smallest values, NaN left out (as min does).
+    m = nanmin(X)
+    [m, i] = nanmin(X, [], dim)
+tabulate: How often each value occurs: the value, its count and its percentage.
+    tabulate(x)
+    T = tabulate(x)
+    * For whole numbers from 1 up, every value from 1 to the largest is listed, those that do not occur with the count 0. For text (a cell of text, a char matrix or a string array) T is a cell array.
+grp2idx: The groups of a grouping variable: a group number for each observation, and the groups' names.
+    [g, names] = grp2idx(group)
+    [g, names, levels] = grp2idx(group)
+    * Numbers make groups in increasing order, text in the order it first appears. Missing values (NaN, empty text) get g = NaN.
+grpstats: Statistics of each group of the data.
+    means = grpstats(X, group)
+    [s1, s2, ...] = grpstats(X, group, {'stat1', 'stat2', ...})
+    [...] = grpstats(X, group, whichstats, 'Alpha', alpha)
+    * The statistics: 'mean', 'sem' (the standard error of the mean), 'numel', 'gname' (the group's name), 'std', 'var', 'min', 'max', 'range', 'median', 'meanci' and 'predci' (intervals for the mean and for one more observation, 95% unless alpha is given). Each has a row for each group and a column for each column of X; NaN values are left out.
+ecdf: The empirical distribution function of a sample, with confidence bounds.
+    [f, x] = ecdf(y)
+    [f, x, flo, fup] = ecdf(y)
+    [...] = ecdf(y, 'Function', 'survivor' | 'cumulative hazard', 'Alpha', alpha)
+    ecdf(y)
+    * f(i) is the share of the data at or below x(i); x starts with the smallest value twice, so that f starts at 0. flo and fup are Greenwood's bounds. With no outputs the function is drawn as steps.
+ksdensity: A kernel estimate of the density (or the distribution function) a sample comes from.
+    [f, xi] = ksdensity(x)
+    f = ksdensity(x, pts)
+    [f, xi, bw] = ksdensity(..., 'Bandwidth', bw, 'Kernel', 'normal' | 'box' | 'triangle' | 'epanechnikov')
+    [...] = ksdensity(..., 'Function', 'cdf' | 'survivor' | 'cumhazard' | 'icdf', 'Support', 'positive' | [lo hi], 'NumPoints', n)
+    ksdensity(x)
+    * Without pts the estimate is given at 100 points over the data and a little beyond. The bandwidth suits normal data (Silverman's rule with a robust spread, the median absolute deviation) unless it is given. A bounded support works on the log of the data (or its logit, between lo and hi). With no outputs the estimate is drawn.
+corr: Correlations between the columns of matrices, with p-values.
+    rho = corr(X)
+    rho = corr(X, Y)
+    [rho, p] = corr(..., 'Type', 'Pearson' | 'Spearman' | 'Kendall', 'Rows', 'all' | 'complete' | 'pairwise', 'Tail', 'both' | 'right' | 'left')
+    * The p-values test for no correlation: from the t distribution for Pearson's and Spearman's, Kendall's own for Kendall's.
+bootstrp: A statistic of samples drawn from the data with replacement.
+    stats = bootstrp(nboot, @fun, data)
+    stats = bootstrp(nboot, @fun, data1, data2, ...)
+    [stats, samples] = bootstrp(...)
+    * Each row of stats is fun of one sample, made into a row. The data must have the same number of rows (vectors the same length); the same rows are drawn from each. samples has the indices drawn, a column for each sample. The draws come from the generator that rng sets.
+jackknife: A statistic of the data with each observation left out in turn.
+    stats = jackknife(@fun, data)
+    stats = jackknife(@fun, data1, data2, ...)
+    * Row i of stats is fun of the data without row i.
+
+# ---- probability distributions ---------------------------------------------------------------
+makedist: A probability distribution object with the parameters given.
+    pd = makedist(name)
+    pd = makedist(name, 'param', value, ...)
+    names = makedist
+    * name: 'Normal', 'Lognormal', 'Exponential', 'Gamma', 'Weibull', 'Beta', 'Uniform', 'Poisson', 'Binomial', 'NegativeBinomial', 'ExtremeValue', 'GeneralizedExtremeValue', 'GeneralizedPareto', 'Rayleigh', 'Logistic', 'Loglogistic', 'InverseGaussian', 'Nakagami', 'Rician', 'BirnbaumSaunders', 'Burr', 'HalfNormal', 'tLocationScale', 'Triangular' or 'Loguniform'; makedist with no input lists them. Parameters left out keep their defaults (the Normal's mu 0 and sigma 1).
+    * The object goes to pdf, cdf, icdf, random, mean, median, std, var, iqr, truncate and negloglik. Its parameters are its properties (pd.mu), as are ParameterValues, ParameterNames and DistributionName.
+fitdist: A probability distribution object fitted to data.
+    pd = fitdist(x, name)
+    pd = fitdist(x, 'Kernel', 'Kernel', kernel, 'Bandwidth', bw)
+    [pds, names] = fitdist(x, name, 'By', group)
+    * Maximum likelihood estimates, except the Normal's and the Lognormal's sigma, which is the unbiased one that normfit gives. paramci(pd) gives the parameters' confidence intervals. With 'By' there is an object for each group, in a cell array.
+mle: Maximum likelihood estimates of a distribution's parameters, with confidence intervals.
+    phat = mle(x)
+    [phat, pci] = mle(x, 'Distribution', name, 'Alpha', alpha)
+    phat = mle(x, 'Distribution', 'Binomial', 'NTrials', n)
+    * Without a distribution the data are taken to be normal. The normal sigma here is the likelihood's own, normalized by N. pci has the intervals' lower ends in its first row and their upper ends in its second.
+pdf: The density of a distribution at x (the probabilities, for a discrete one).
+    y = pdf(pd, x)
+    y = pdf(name, x, A)
+    y = pdf(name, x, A, B, C)
+    * pd is a distribution object (makedist, fitdist); name is a distribution's name ('Normal', 'Poisson', 't', ...) with its parameters in the order its own function takes them (normpdf(x, mu, sigma)).
+cdf: The cumulative distribution function of a distribution at x.
+    p = cdf(pd, x)
+    p = cdf(name, x, A, B, C)
+    p = cdf(..., 'upper')
+    * With 'upper', the probability above x.
+icdf: The quantiles of a distribution: the inverse of its cdf.
+    x = icdf(pd, p)
+    x = icdf(name, p, A, B, C)
+random: Random numbers from a distribution.
+    r = random(pd)
+    r = random(pd, m, n)
+    r = random(name, A, B, C, m, n)
+    * The numbers come from the generator that rng sets.
+truncate: A distribution object limited to an interval, its probability there scaled up to 1.
+    t = truncate(pd, lower, upper)
+paramci: The confidence intervals of a fitted distribution object's parameters.
+    ci = paramci(pd)
+    ci = paramci(pd, 'Alpha', alpha)
+    * A column for each parameter: the interval's lower end, then its upper end.
+negloglik: The negative log-likelihood of a fitted distribution object for its data.
+    nll = negloglik(pd)
+normfit: The mean and the standard deviation of normal data, with confidence intervals.
+    [muhat, sigmahat] = normfit(x)
+    [muhat, sigmahat, muci, sigmaci] = normfit(x, alpha)
+    * sigmahat is the sample standard deviation (normalized by N-1); the intervals come from the t and the chi-square distributions. A matrix gives estimates for each column.
+unifit: The limits of uniform data (their smallest and largest values), with confidence intervals.
+    [ahat, bhat] = unifit(x)
+    [ahat, bhat, aci, bci] = unifit(x, alpha)
+binofit: The probability of success from a count of successes in n trials, with an exact (Clopper-Pearson) interval.
+    phat = binofit(x, n)
+    [phat, pci] = binofit(x, n, alpha)
+mvnpdf: The density of the multivariate normal distribution.
+    y = mvnpdf(X)
+    y = mvnpdf(X, mu, Sigma)
+    * Each row of X is a point; mu is a row and Sigma the covariance matrix (a row gives a diagonal one). Left out: zero means and the identity matrix.
+mvncdf: The multivariate normal distribution function: the probability below each row of X.
+    p = mvncdf(X)
+    p = mvncdf(X, mu, Sigma)
+    * Computed by numerical integration (Genz's method), good to about 1e-5.
+mvnrnd: Random vectors from the multivariate normal distribution.
+    R = mvnrnd(mu, Sigma)
+    R = mvnrnd(mu, Sigma, n)
+    * Each row of R is one vector. Sigma may be singular (positive semidefinite).
+mvtpdf: The density of the multivariate t distribution with correlation matrix C.
+    y = mvtpdf(X, C, df)
+mvtcdf: The multivariate t distribution function with correlation matrix C.
+    p = mvtcdf(X, C, df)
+mvtrnd: Random vectors from the multivariate t distribution with correlation matrix C.
+    R = mvtrnd(C, df)
+    R = mvtrnd(C, df, n)
+randsample: A random sample of values, drawn without replacement unless asked.
+    y = randsample(n, k)
+    y = randsample(population, k)
+    y = randsample(population, k, replace)
+    y = randsample(population, k, replace, w)
+    * randsample(n, k) draws k of the numbers 1 to n. w weights the values. The draws come from the generator that rng sets.
+datasample: A random sample of the data: elements of a vector, or rows of a matrix.
+    y = datasample(data, k)
+    y = datasample(data, k, dim)
+    [y, idx] = datasample(..., 'Replace', false, 'Weights', w)
+    * With replacement unless 'Replace' is false; idx has the indices drawn.
+
+# ---- hypothesis tests -------------------------------------------------------------------------
+ttest: The one-sample or paired t-test: is the mean m (0 unless given)?
+    h = ttest(x)
+    h = ttest(x, m)
+    h = ttest(x, y)
+    [h, p, ci, stats] = ttest(..., 'Alpha', alpha, 'Tail', 'both' | 'right' | 'left', 'Dim', dim)
+    * h is 1 where the test rejects the hypothesis at the level alpha (0.05 unless given) and 0 where it does not; p is the p-value, ci the confidence interval of the mean (of x - y, for paired data), stats has the t statistic (tstat), its degrees of freedom (df) and the standard deviation (sd).
+    * A matrix is tested column by column ('Dim', 2: row by row), NaN values left out. 'right' tests against a mean larger than m, 'left' against a smaller one.
+ttest2: The two-sample t-test: do two samples have the same mean?
+    h = ttest2(x, y)
+    [h, p, ci, stats] = ttest2(x, y, 'Alpha', alpha, 'Tail', tail, 'Vartype', 'equal' | 'unequal')
+    * 'unequal' does not take the variances to be equal (Welch's test, with Satterthwaite's degrees of freedom). ci is the interval of mean(x) - mean(y).
+ztest: The z-test: is the mean m, for data whose standard deviation sigma is known?
+    h = ztest(x, m, sigma)
+    [h, p, ci, zval] = ztest(x, m, sigma, 'Alpha', alpha, 'Tail', tail)
+vartest: The chi-square test of a variance: is the variance of normal data v?
+    h = vartest(x, v)
+    [h, p, ci, stats] = vartest(x, v, 'Alpha', alpha, 'Tail', tail)
+    * ci is the interval of the variance; stats has the statistic (chisqstat) and its degrees of freedom.
+vartest2: The F-test of two variances: do two normal samples have the same variance?
+    h = vartest2(x, y)
+    [h, p, ci, stats] = vartest2(x, y, 'Alpha', alpha, 'Tail', tail)
+    * ci is the interval of var(x)/var(y); stats has fstat, df1 and df2.
+vartestn: A test of equal variances in several groups.
+    p = vartestn(X)
+    p = vartestn(x, group)
+    [p, stats] = vartestn(..., 'TestType', type, 'Display', 'off')
+    * TestType: 'Bartlett' (the default, for normal data), 'LeveneAbsolute' or 'LeveneQuadratic' (Levene's test on the absolute or squared deviations from the groups' means), 'BrownForsythe' (absolute deviations from the medians) or 'OBrien'. The groups are the columns of X, or the values of x by group. The Command Window shows each group's count, mean and standard deviation unless 'Display' is 'off'.
+signtest: The sign test: is the median m (0 unless given), or for paired data the median of x - y zero?
+    p = signtest(x)
+    p = signtest(x, m)
+    p = signtest(x, y)
+    [p, h, stats] = signtest(..., 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    * The p-value comes first, then h. Values equal to m count on neither side. The binomial p-value is exact below 100 values, a normal approximation above.
+signrank: The Wilcoxon signed rank test: is the median m (0 unless given), or that of x - y zero?
+    p = signrank(x)
+    p = signrank(x, m)
+    p = signrank(x, y)
+    [p, h, stats] = signrank(..., 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    * Exact (ties too) up to 15 values; above, a normal approximation corrected for ties, whose z is stats.zval. stats.signedrank is the sum of the ranks of the positive differences.
+ranksum: The Wilcoxon rank sum test (Mann-Whitney U): do two samples come from distributions with the same median?
+    p = ranksum(x, y)
+    [p, h, stats] = ranksum(x, y, 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    * stats.ranksum is the sum of x's ranks among all the values. Exact for small samples (both under 10 and together under 20), a normal approximation corrected for ties above.
+kstest: The one-sample Kolmogorov-Smirnov test: do the data come from a given continuous distribution (the standard normal unless given)?
+    h = kstest(x)
+    [h, p, ksstat, cv] = kstest(x, 'CDF', pd, 'Alpha', alpha, 'Tail', 'unequal' | 'larger' | 'smaller')
+    * The distribution is a distribution object (makedist) or a two-column matrix of x and F(x). Its parameters must not be estimated from the same data: for that, lillietest. The p-value is exact.
+kstest2: The two-sample Kolmogorov-Smirnov test: do two samples come from the same continuous distribution?
+    h = kstest2(x1, x2)
+    [h, p, ks2stat] = kstest2(x1, x2, 'Alpha', alpha, 'Tail', 'unequal' | 'larger' | 'smaller')
+    * The p-value is the large-sample one, with Stephens' correction for small samples.
+lillietest: The Lilliefors test: are the data normal (or exponential, or extreme value), with the parameters estimated from them?
+    h = lillietest(x)
+    [h, p, kstat, cv] = lillietest(x, 'Alpha', alpha, 'Distr', 'norm' | 'exp' | 'ev')
+    * For the normal the p-value is Dallal and Wilkinson's approximation up to 0.1 and Stephens' above. For 'exp' and 'ev' it comes from a simulation of the statistic with a fixed seed, so the same data always give the same p-value.
+jbtest: The Jarque-Bera test of normality, from the sample's skewness and kurtosis.
+    h = jbtest(x)
+    [h, p, jbstat, critval] = jbtest(x, alpha)
+    * Up to 2000 values the p-value and the critical value come from a simulation of normal samples of that size (with a fixed seed); above, from the statistic's chi-square limit with 2 degrees of freedom.
+adtest: The Anderson-Darling test: do the data come from a family of distributions, or from one distribution?
+    h = adtest(x)
+    [h, p, adstat, cv] = adtest(x, 'Distribution', 'norm' | 'exp' | 'ev' | 'logn' | 'weibull' | pd, 'Alpha', alpha)
+    * With a family's name its parameters are estimated from the data; the p-values of 'norm', 'logn' and 'exp' come from Stephens' formulas, those of 'ev' and 'weibull' from a simulation with a fixed seed. With a distribution object (parameters known) the p-value comes from a simulation too.
+chi2gof: The chi-square goodness-of-fit test, on the data counted in bins.
+    h = chi2gof(x)
+    [h, p, stats] = chi2gof(x, 'CDF', pd, 'NBins', n, 'Edges', edges, 'Ctrs', centers, 'Alpha', alpha)
+    [...] = chi2gof(x, 'CDF', @fun)
+    [...] = chi2gof(x, 'CDF', {@fun, a, b})
+    [...] = chi2gof(x, 'Expected', E, 'NParams', k, 'EMin', 5, 'Frequency', f)
+    * Without a distribution the data are tested for normality, with the mean and the standard deviation estimated from them. The parameters in a cell with the function count as estimated, unless NParams says otherwise. 10 bins span the data, the outer ones taking the tails; bins expected to hold fewer than EMin values join their neighbours. A fitted distribution object counts its parameters as estimated. stats has chi2stat, df, the bins' edges, and the observed and expected counts O and E.
+runstest: The runs test: do the values above and below a reference (their median unless given) come in random order?
+    h = runstest(x)
+    h = runstest(x, v)
+    [h, p, stats] = runstest(..., 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    * Values equal to the reference are left out. stats has the number of runs (nruns), the counts above (n1) and below (n0), and z. Exact below 50 values.
+anova1: One-way analysis of variance: do several groups have the same mean?
+    p = anova1(X)
+    p = anova1(x, group)
+    [p, tbl, stats] = anova1(..., 'off')
+    * The groups are the columns of X, or the values of x by group. The Command Window shows the ANOVA table and a figure the groups' box plots, unless the last input is 'off'. tbl is the table as a cell array; stats goes to multcompare.
+anova2: Two-way analysis of variance of a balanced layout: the columns are one factor, the rows (in blocks of reps) the other.
+    p = anova2(Y)
+    p = anova2(Y, reps)
+    [p, tbl, stats] = anova2(Y, reps, 'off')
+    * With reps > 1 the interaction is tested too. p has the p-values of the columns, the rows and (with reps > 1) the interaction.
+kruskalwallis: The Kruskal-Wallis test: do several groups come from distributions with the same median? (One-way analysis of variance of ranks.)
+    p = kruskalwallis(X)
+    p = kruskalwallis(x, group)
+    [p, tbl, stats] = kruskalwallis(..., 'off')
+    * The statistic is corrected for ties and its p-value comes from the chi-square distribution. The table and the box plots are shown unless the last input is 'off'.
+friedman: Friedman's test: do the columns differ, the rows (blocks) taken out? (Two-way analysis of variance of ranks within blocks.)
+    p = friedman(X)
+    p = friedman(X, reps)
+    [p, tbl, stats] = friedman(X, reps, 'off')
+multcompare: Which pairs of groups differ, after anova1, kruskalwallis or friedman.
+    c = multcompare(stats)
+    [c, m, h, gnames] = multcompare(stats, 'Alpha', alpha, 'CType', type, 'Display', 'off')
+    * Each row of c compares two groups: their numbers, the lower end of the interval of the difference, the difference, the upper end, and the p-value. m has each group's mean (or mean rank) and its standard error. CType: 'tukey-kramer' (the default), 'bonferroni', 'dunn-sidak', 'lsd' or 'scheffe'.
+    * The figure shows each group's estimate with an interval: two intervals that do not overlap mark a significant difference (exactly so for groups of equal size).
+crosstab: A table of counts by two or more grouping variables, with the chi-square test of their independence.
+    tbl = crosstab(g1, g2)
+    [tbl, chi2, p, labels] = crosstab(g1, g2, ...)
+    * tbl(i, j) counts the observations in group i of g1 and group j of g2; labels has the groups' names, a column for each variable.
+fishertest: Fisher's exact test of independence in a 2-by-2 table of counts.
+    h = fishertest(x)
+    [h, p, stats] = fishertest(x, 'Alpha', alpha, 'Tail', tail)
+    * stats has the odds ratio and its confidence interval (Woolf's, on the log scale).
 
 # ---- linear algebra --------------------------------------------------------------------------
 inv: The inverse of a square matrix.
@@ -1862,6 +2169,74 @@ quiver: Arrows for a 2-D vector field.
 quiver3: Arrows for a 3-D vector field.
     quiver3(x, y, z, u, v, w)
 
+# ---- statistical plots -------------------------------------------------------------------------
+boxplot: Box plots: each group's quartiles as a box with its median, whiskers out to the most extreme values within reach, and the outliers beyond.
+    boxplot(X)
+    boxplot(x, group)
+    boxplot(..., 'Notch', 'on', 'Labels', labels, 'Orientation', 'horizontal', 'Whisker', w, 'Symbol', 'r+')
+    boxplot(..., 'Widths', w, 'Colors', c, 'Positions', p, 'GroupOrder', names, 'Jitter', j, 'OutlierSize', s)
+    boxplot(..., 'PlotStyle', 'compact', 'BoxStyle', 'filled', 'MedianStyle', 'target', 'LabelOrientation', 'inline')
+    h = boxplot(...)
+    * The groups are the columns of X, or the values of x by group (a cell of grouping variables groups by all of them at once). Values more than w (1.5) times the box's height beyond it are outliers. A notch marks an interval for the median, 1.57 IQR/sqrt(n) each way: two medians whose notches do not overlap differ at about the 5% level.
+    * h has a column of seven lines for each box, with the Tags 'Upper Whisker', 'Lower Whisker', 'Upper Adjacent Value', 'Lower Adjacent Value', 'Box', 'Median' and 'Outliers'.
+gscatter: A scatter plot by group: each group in its own color and marker, named in a legend.
+    gscatter(x, y, group)
+    gscatter(x, y, group, colors, markers, sizes)
+    gscatter(x, y, group, colors, markers, sizes, 'off', xname, yname)
+    h = gscatter(...)
+    * colors is a string of color letters ('rgb'), an m-by-3 matrix or a cell of color names, markers a string of marker symbols ('o+x'); each is used in turn, one for each group. 'off' leaves out the legend. h has a line for each group.
+gplotmatrix: A matrix of scatter plots by group: the columns of Y against those of X, or those of X against each other.
+    gplotmatrix(X, [], group)
+    gplotmatrix(X, Y, group)
+    gplotmatrix(X, Y, group, colors, markers, sizes, legend, dispopt, xnames, ynames)
+    [h, ax, bigax] = gplotmatrix(...)
+    * With Y empty the diagonal shows each variable by dispopt: 'stairs' (an outlined histogram for each group, the default), 'hist' (one histogram), 'grpbars' (the groups' bars side by side), 'variable' (its name) or 'none'. Only the outer plots have tick labels. bigax, invisible axes over the whole matrix, is made the current axes, so that title and the like label the whole.
+plotmatrix: A matrix of scatter plots: the columns of Y against those of X, or those of X against each other with histograms on the diagonal.
+    plotmatrix(X)
+    plotmatrix(X, Y)
+    plotmatrix(..., linespec)
+    [S, AX, BigAx, H, HAx] = plotmatrix(...)
+scatterhist: A scatter plot with the histograms of x and y beside it.
+    scatterhist(x, y)
+    scatterhist(x, y, 'Group', g, 'Kernel', 'on' | 'overlay', 'NBins', [nx ny], 'Location', 'SouthWest' | 'SouthEast' | 'NorthWest' | 'NorthEast', 'Direction', 'in' | 'out')
+    scatterhist(..., 'Color', c, 'Marker', m, 'MarkerSize', s, 'LineStyle', ls, 'LineWidth', w, 'Style', 'stairs' | 'bar', 'Bandwidth', bw, 'Legend', 'off', 'PlotGroup', 'off')
+    h = scatterhist(...)
+    * The histograms sit below and to the left of the scatter plot unless Location says otherwise, their bars pointing toward it ('Direction', 'in'). By group, each group has its own color and its own outlined histogram, or with 'Kernel' its density curve. h has the three axes: the scatter plot's, x's histogram's and y's.
+histfit: A histogram of data with a fitted density drawn over it.
+    histfit(x)
+    histfit(x, nbins)
+    histfit(x, nbins, dist)
+    h = histfit(...)
+    * The density is scaled to the histogram's counts. dist is a name fitdist knows ('normal' unless given, 'lognormal', 'gamma', 'weibull', 'kernel', 'poisson', ...); a discrete distribution has a bar for each whole number. nbins is the square root of the number of values, rounded up, unless given. h has the bars and the line.
+normplot: A normal probability plot: the sorted data against normal quantiles, on an axis marked in probabilities.
+    normplot(x)
+    h = normplot(X)
+    * Normal data lie near the straight line through the quartiles (solid between them, dashed beyond). A matrix gives points for each column. h has the points' lines, then the solid lines, then the dashed ones.
+qqplot: A quantile-quantile plot: a sample's quantiles against those of the standard normal, of a distribution, or of another sample.
+    qqplot(x)
+    qqplot(x, pd)
+    qqplot(x, y)
+    qqplot(x, y, pvec)
+    h = qqplot(...)
+    * Points near the line through the quartiles mean that the two distributions differ at most in location and scale. For samples of two sizes the larger one's quantiles are taken at the smaller one's plotting positions; pvec gives percentiles to plot instead.
+cdfplot: The empirical distribution function of a sample, drawn as steps.
+    cdfplot(x)
+    [h, stats] = cdfplot(x)
+    * stats has the sample's min, max, mean, median and std.
+lsline: Least-squares lines through the scatter plots in the current axes.
+    lsline
+    h = lsline(ax)
+    * A line is fitted to each plot of points alone (markers without lines) and drawn across its x values, in its color.
+refline: A reference line y = m*x + b across the current axes.
+    refline(m, b)
+    refline([m b])
+    h = refline(...)
+    * With no inputs, the least-squares lines of lsline.
+refcurve: A polynomial curve across the current axes.
+    refcurve(p)
+    h = refcurve(p)
+    * p has the coefficients from the highest power down, as polyval takes them.
+
 # ---- surfaces, contours and images ------------------------------------------------------------
 contour: Contour lines of a matrix.
     contour(Z)
@@ -2242,3 +2617,84 @@ def _parse(text):
 
 
 HELP = _parse(_TEXT)
+
+
+# The functions of each distribution (normpdf, normcdf, norminv, normrnd,
+# normstat, and normfit and normlike where there are such): its prefix, its
+# name, and its parameters (name, meaning, the value when it is left out).
+_DISTS = (
+    ('norm', 'normal', (('mu', 'the mean', '0'), ('sigma', 'the standard deviation', '1'))),
+    ('logn', 'lognormal', (('mu', 'the mean of log(x)', '0'), ('sigma', 'the standard deviation of log(x)', '1'))),
+    ('exp', 'exponential', (('mu', 'the mean', '1'),)),
+    ('gam', 'gamma', (('a', 'the shape', None), ('b', 'the scale', '1'))),
+    ('beta', 'beta', (('a', 'the first shape', None), ('b', 'the second shape', None))),
+    ('wbl', 'Weibull', (('A', 'the scale', '1'), ('B', 'the shape', '1'))),
+    ('unif', 'continuous uniform', (('a', 'the lower limit', '0'), ('b', 'the upper limit', '1'))),
+    ('unid', 'discrete uniform', (('N', 'the largest value (the values are 1 to N)', None),)),
+    ('bino', 'binomial', (('N', 'the number of trials', None), ('p', 'the probability of success', None))),
+    ('poiss', 'Poisson', (('lambda', 'the mean', None),)),
+    ('geo', 'geometric', (('p', 'the probability of success (x counts the failures before the first success)', None),)),
+    ('nbin', 'negative binomial', (('R', 'the number of successes', None),
+                                   ('p', 'the probability of success (x counts the failures before the Rth success)', None))),
+    ('hyge', 'hypergeometric', (('M', 'the size of the population', None), ('K', 'the number of successes in it', None),
+                                ('N', 'the number drawn', None))),
+    ('chi2', 'chi-square', (('nu', 'the degrees of freedom', None),)),
+    ('ncx2', 'noncentral chi-square', (('nu', 'the degrees of freedom', None), ('delta', 'the noncentrality', None))),
+    ('t', "Student's t", (('nu', 'the degrees of freedom', None),)),
+    ('nct', 'noncentral t', (('nu', 'the degrees of freedom', None), ('delta', 'the noncentrality', None))),
+    ('f', 'F', (('nu1', 'the numerator degrees of freedom', None), ('nu2', 'the denominator degrees of freedom', None))),
+    ('ncf', 'noncentral F', (('nu1', 'the numerator degrees of freedom', None), ('nu2', 'the denominator degrees of freedom', None),
+                             ('delta', 'the noncentrality', None))),
+    ('ev', 'extreme value (of minima, Gumbel)', (('mu', 'the location', '0'), ('sigma', 'the scale', '1'))),
+    ('gev', 'generalized extreme value', (('k', 'the shape', None), ('sigma', 'the scale', None), ('mu', 'the location', None))),
+    ('gp', 'generalized Pareto', (('k', 'the shape', None), ('sigma', 'the scale', '1'), ('theta', 'the threshold', '0'))),
+    ('rayl', 'Rayleigh', (('B', 'the scale', '1'),)),
+)
+_DISCRETE = {'unid', 'bino', 'poiss', 'geo', 'nbin', 'hyge'}
+_FITS = {'logn', 'gam', 'beta', 'wbl', 'ev', 'gev', 'gp', 'rayl', 'nbin', 'exp', 'poiss'}
+_LIKES = {'norm', 'logn', 'exp', 'gam', 'beta', 'wbl', 'ev', 'gev', 'gp', 'nbin'}
+
+
+def _distribution_help():
+    table = {}
+    for code, name, params in _DISTS:
+        args = ', '.join(p[0] for p in params)
+        given = '; '.join(f'{p}, {meaning}' + (f' ({d} when left out)' if d is not None else '') for p, meaning, d in params)
+        pnote = f'The parameters: {given}. Arrays of one size and scalars combine element by element.'
+        if code in _DISCRETE:
+            table[code + 'pdf'] = (f'The probabilities of the {name} distribution (its probability mass function).',
+                                   [f'y = {code}pdf(x, {args})'], pnote)
+        else:
+            table[code + 'pdf'] = (f'The probability density of the {name} distribution.', [f'y = {code}pdf(x, {args})'], pnote)
+        table[code + 'cdf'] = (f'The cumulative distribution function of the {name} distribution.',
+                               [f'p = {code}cdf(x, {args})', f"q = {code}cdf(x, {args}, 'upper')"],
+                               "With 'upper', the probability above x, computed as such (more accurate than 1 - p far out "
+                               'in the tail).\n' + pnote)
+        table[code + 'inv'] = (f'The quantiles of the {name} distribution: the inverse of its cdf.', [f'x = {code}inv(p, {args})'],
+                               ('The smallest whole x whose cdf reaches p.\n' if code in _DISCRETE else '') + pnote)
+        table[code + 'rnd'] = (f'Random numbers from the {name} distribution.',
+                               [f'r = {code}rnd({args})', f'r = {code}rnd({args}, m, n)', f'r = {code}rnd({args}, [m n ...])'],
+                               'The numbers come from the generator that rng sets; without a size, r has the size of the '
+                               'parameters.\n' + pnote)
+        table[code + 'stat'] = (f'The mean and the variance of the {name} distribution.', [f'[m, v] = {code}stat({args})'], pnote)
+        if code in _FITS:
+            note = (f'phat has the estimates in the order {code}pdf takes them; pci has the intervals\' lower ends in its first '
+                    'row and their upper ends in its second (95% unless alpha is given).')
+            if code == 'logn':
+                note += ' sigma is the unbiased estimate, as normfit gives for log(x); mu is the mean of log(x).'
+            elif code == 'gp':
+                note = 'The data are exceedances over the threshold (theta 0): phat = [k sigma]. ' + note
+            else:
+                note = 'Maximum likelihood estimates. ' + note
+            table[code + 'fit'] = (f'Estimates of the {name} distribution\'s parameters from data, with confidence intervals.',
+                                   [f'phat = {code}fit(x)', f'[phat, pci] = {code}fit(x, alpha)'], note)
+        if code in _LIKES:
+            table[code + 'like'] = (f'The negative log-likelihood of parameters of the {name} distribution for data.',
+                                    [f'nlogL = {code}like(params, x)', f'[nlogL, acov] = {code}like(params, x)'],
+                                    f'params has the parameters in the order {code}pdf takes them'
+                                    + (' (the threshold 0: [k sigma])' if code == 'gp' else '')
+                                    + '; acov approximates their covariance (the inverse of the observed information).')
+    return table
+
+
+HELP.update(_distribution_help())

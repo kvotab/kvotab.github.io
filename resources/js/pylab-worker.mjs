@@ -26,6 +26,13 @@
      { type: 'done', id, result }                 a run ended
      { type: 'answer', id, result | error }       a call or fs answered
      { type: 'fatal', message }
+
+   The same file runs the workers of the parallel pool (parfor), which this
+   engine starts as workers of its own (init with role 'pool'): see `pool`.
+   A pool worker takes { type: 'job' } (a loop's module, values and files),
+   { type: 'chunk' } (a block of its passes) and { type: 'jobend' } (send
+   the files the passes wrote), and answers jobready, chunkdone or chunkerr,
+   and jobfiles; what its passes print goes up as { type: 'py' }.
    ========================================================================== */
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs';
 
@@ -36,8 +43,10 @@ let api = null;
 let queue = Promise.resolve();
 let persistent = false;
 let syncTimer = 0;
+let BASE = '';
+let VERSION = '';
 
-const post = (m) => self.postMessage(m);
+const post = (m, transfer) => self.postMessage(m, transfer || []);
 
 function lastLine(e) {
   const s = String((e && e.message) || e);
@@ -54,7 +63,9 @@ function scheduleSync() {
   }, 300);
 }
 
-async function boot(base, version) {
+async function boot(base, version, role, index) {
+  BASE = base;
+  VERSION = version;
   post({ type: 'status', text: 'Loading Python (Pyodide)…' });
   py = await loadPyodide({ indexURL: PYODIDE });
   post({ type: 'status', text: 'Loading NumPy and SciPy…' });
@@ -73,6 +84,24 @@ async function boot(base, version) {
     py.FS.writeFile(`/home/pyodide/plab/${f}`, await r.text());
   }));
   if (missing.length) throw new Error(`the interpreter did not load: resources/py/plab/${missing.join(', ')}`);
+
+  if (role === 'pool') {
+    // a worker of the parallel pool: no folder of its own to keep; the files come with each loop
+    py.FS.mkdirTree(HOME);
+    py.runPython("import sys\nif '/home/pyodide' not in sys.path: sys.path.insert(0, '/home/pyodide')");
+    api = py.pyimport('plab.worker_api');
+    api.pool_setup((t) => post({ type: 'py', msg: JSON.parse(t) }), HOME, index);
+    post({ type: 'ready' });
+    return;
+  }
+  py.registerJsModule('plabpool', {
+    unavailable: () => pool.unavailable(),
+    cores: () => pool.cores(),
+    size: () => pool.size(),
+    start: (n) => pool.start(n),
+    stop: () => pool.stop(),
+    run: (meta, ins, files, remove, use) => pool.run(meta, ins, files, remove, use),
+  });
 
   // the user's folder, kept in IndexedDB
   py.FS.mkdirTree(HOME);
@@ -200,17 +229,234 @@ function fsOp(msg) {
   }
 }
 
+/* ---- the parallel pool ------------------------------------------------------------------
+   parfor's workers: engines of their own, started by this one as workers of
+   its own. Every worker gets each loop (its files keep them up to date);
+   the workers that run it (as many as the loop may use) get its blocks of
+   passes as they come free; the results come back in the blocks' order. */
+const pool = {
+  workers: [],          // { w, index, ready, busy, settle }
+  starting: null,
+  job: null,
+
+  unavailable() {
+    return typeof Worker === 'undefined' ? 'this browser cannot start workers from a worker' : '';
+  },
+
+  cores() { return (self.navigator && self.navigator.hardwareConcurrency) || 2; },
+
+  size() { return this.workers.filter((r) => r.ready).length; },
+
+  start(n) {
+    if (this.starting) return this.starting;
+    this.starting = new Promise((resolve) => {
+      let settled = 0;
+      const settle = () => {
+        settled += 1;
+        if (settled < n) return;
+        this.starting = null;
+        this.workers = this.workers.filter((r) => r.ready);
+        resolve(this.workers.length);
+      };
+      for (let i = 1; i <= n; i += 1) {
+        let w;
+        try { w = new Worker(import.meta.url, { type: 'module' }); } catch (e) { settle(); continue; }
+        const rec = { w, index: i, ready: false, busy: false, settle };
+        w.onmessage = (ev) => this.message(rec, ev.data);
+        w.onerror = (ev) => this.failed(rec, ev.message || 'it stopped');
+        w.postMessage({ type: 'init', base: BASE, version: VERSION, role: 'pool', index: i });
+        this.workers.push(rec);
+      }
+    });
+    return this.starting;
+  },
+
+  stop() {
+    const job = this.job;
+    for (const r of this.workers) r.w.terminate();
+    this.workers = [];
+    if (job) this.finish({ error: { identifier: 'parallel:pool:Stopped', message: 'The parallel pool was stopped.' } });
+  },
+
+  ready(rec) {
+    if (rec.settle) { const s = rec.settle; rec.settle = null; s(); }
+  },
+
+  message(rec, m) {
+    const job = this.job;
+    switch (m.type) {
+      case 'ready': rec.ready = true; this.ready(rec); break;
+      case 'fatal': rec.ready = false; rec.w.terminate(); this.workers = this.workers.filter((r) => r !== rec); this.ready(rec); break;
+      case 'py': post(m); break;                 // what a pass printed, for the Command Window
+      case 'jobready': if (job && m.job === job.id) this.next(rec); break;
+      case 'chunkdone':
+        if (!job || m.job !== job.id) break;
+        job.results[m.i] = m.data;
+        job.doneBlocks += 1;
+        job.donePasses += job.blocks[m.i][1];
+        rec.busy = false;
+        this.progress(job);
+        this.next(rec);
+        break;
+      case 'chunkerr': {
+        if (!job || m.job !== job.id) break;
+        rec.busy = false;
+        const e = JSON.parse(m.error);
+        if (e.interrupted) job.interrupted = true;
+        else if (!job.error) {
+          job.error = e;
+          for (const r of job.runners) if (r.busy) r.w.postMessage({ type: 'interrupt' });
+        }
+        this.maybeEnd(job);
+        break;
+      }
+      case 'jobfiles':
+        if (!job || m.job !== job.id) break;
+        job.files.push(...m.files);
+        job.waiting -= 1;
+        if (job.waiting === 0) this.finish({ chunks: job.results, files: job.files });
+        break;
+      default: break;
+    }
+  },
+
+  run(meta, ins, files, remove, use) {
+    const m = JSON.parse(meta);
+    return new Promise((resolve) => {
+      const all = this.workers.filter((r) => r.ready);
+      const job = {
+        id: m.job, blocks: m.blocks, total: m.total, results: new Array(m.blocks.length).fill(null),
+        next: 0, doneBlocks: 0, donePasses: 0, error: null, interrupted: false, files: [], waiting: 0,
+        runners: all.slice(0, Math.max(1, use)), resolve, shown: 0,
+      };
+      this.job = job;
+      if (!all.length) { this.finish({ error: { identifier: 'parallel:pool:NoWorkers', message: 'The parallel pool has no workers.' } }); return; }
+      const filesJs = Array.from(files, (f) => [String(f[0]), f[1]]);
+      for (const r of all) {
+        const insCopy = ins.slice();
+        const fileCopies = filesJs.map((f) => [f[0], f[1].slice()]);
+        r.busy = false;
+        r.w.postMessage({ type: 'job', job: job.id, meta, ins: insCopy, files: fileCopies, remove: Array.from(remove, String) },
+          [insCopy.buffer, ...fileCopies.map((f) => f[1].buffer)]);
+      }
+      this.progress(job);
+    });
+  },
+
+  /* A worker that runs the job came free: its next block, or the end of the job. */
+  next(rec) {
+    const job = this.job;
+    if (!job || !job.runners.includes(rec) || rec.busy) return;
+    if (job.error || job.interrupted || job.next >= job.blocks.length) { this.maybeEnd(job); return; }
+    const i = job.next;
+    job.next += 1;
+    rec.busy = true;
+    rec.w.postMessage({ type: 'chunk', job: job.id, i, first: job.blocks[i][0], count: job.blocks[i][1] });
+  },
+
+  maybeEnd(job) {
+    if (job !== this.job || job.runners.some((r) => r.busy) || job.waiting) return;
+    if (job.error || job.interrupted) { this.finish({ error: job.error, interrupted: !job.error }); return; }
+    if (job.doneBlocks < job.blocks.length) return;
+    // every block is in: the files the passes wrote
+    job.waiting = job.runners.length;
+    for (const r of job.runners) r.w.postMessage({ type: 'jobend', job: job.id });
+  },
+
+  finish(res) {
+    const job = this.job;
+    if (!job) return;
+    this.job = null;
+    post({ type: 'py', msg: { type: 'pool', end: true } });
+    job.resolve(Object.assign({ interrupted: false, error: undefined, chunks: [], files: [] }, res, { error: res.error || undefined }));
+  },
+
+  progress(job) {
+    const now = Date.now();
+    if (now - job.shown < 250 && job.doneBlocks < job.blocks.length) return;
+    job.shown = now;
+    post({ type: 'py', msg: { type: 'pool', done: job.donePasses, total: job.total, workers: job.runners.length } });
+  },
+
+  /* Ctrl+C: the passes that run stop, and the loop with them. */
+  interrupt() {
+    const job = this.job;
+    if (!job) return;
+    job.interrupted = true;
+    for (const r of job.runners) if (r.busy) r.w.postMessage({ type: 'interrupt' });
+    this.maybeEnd(job);
+  },
+
+  /* A worker stopped (it ran out of memory, or failed to start). */
+  failed(rec, why) {
+    rec.w.terminate();
+    rec.ready = false;
+    rec.busy = false;
+    this.workers = this.workers.filter((r) => r !== rec);
+    this.ready(rec);
+    const job = this.job;
+    if (!job || !job.runners.includes(rec)) return;
+    job.runners = job.runners.filter((r) => r !== rec);
+    if (!job.error) {
+      job.error = { identifier: 'parallel:pool:WorkerFailed', message: `A worker of the parallel pool stopped (${why}).` };
+      for (const r of job.runners) if (r.busy) r.w.postMessage({ type: 'interrupt' });
+    }
+    this.maybeEnd(job);
+  },
+};
+
+/* A pool worker's side: a loop, its blocks of passes, the files they wrote. */
+function poolJob(msg) {
+  try {
+    api.pool_job(msg.meta, msg.ins, msg.files, msg.remove);
+    post({ type: 'jobready', job: msg.job });
+  } catch (e) {
+    post({ type: 'chunkerr', job: msg.job, i: -1, error: JSON.stringify({ identifier: 'parallel:pool:JobFailed', message: lastLine(e) }) });
+  }
+}
+
+async function poolChunk(msg) {
+  let r;
+  try {
+    r = await api.pool_chunk(msg.job, msg.first, msg.count);
+  } catch (e) {
+    post({ type: 'chunkerr', job: msg.job, i: msg.i, error: JSON.stringify({ identifier: 'parallel:pool:Failed', message: lastLine(e) }) });
+    return;
+  }
+  if (typeof r === 'string') { post({ type: 'chunkerr', job: msg.job, i: msg.i, error: r }); return; }
+  const data = r.toJs();
+  r.destroy();
+  post({ type: 'chunkdone', job: msg.job, i: msg.i, data }, [data.buffer]);
+}
+
+function poolEnd(msg) {
+  const r = api.pool_written(msg.job);
+  const files = r.toJs();
+  r.destroy();
+  post({ type: 'jobfiles', job: msg.job, files }, files.map((f) => f[1].buffer));
+}
+
 self.onmessage = (ev) => {
   const msg = ev.data;
   switch (msg.type) {
     case 'init':
-      queue = queue.then(() => boot(msg.base, msg.version)).catch((e) => post({ type: 'fatal', message: lastLine(e) }));
+      queue = queue.then(() => boot(msg.base, msg.version, msg.role || 'main', msg.index || 0)).catch((e) => post({ type: 'fatal', message: lastLine(e) }));
+      break;
+    case 'job':
+      queue = queue.then(() => poolJob(msg));
+      break;
+    case 'chunk':
+      queue = queue.then(() => poolChunk(msg));
+      break;
+    case 'jobend':
+      queue = queue.then(() => poolEnd(msg));
       break;
     case 'run':
       queue = queue.then(() => run(msg)).catch((e) => post({ type: 'done', id: msg.id, result: null, error: lastLine(e) }));
       break;
     case 'interrupt':
       if (api) api.interrupt();
+      pool.interrupt();
       break;
     case 'reply':
       if (api) api.reply(msg.id, JSON.stringify(msg.value === undefined ? null : msg.value));

@@ -285,7 +285,7 @@ def _num_inline(v):
         x = float(x)
         if not math.isfinite(x):
             out.append(_special(x))
-        elif allint and abs(x) < 1e9:
+        elif (allint and abs(x) < 1e9) or x == 0:
             out.append(str(int(x)))
         elif mode in ('long', 'longG', 'longE'):
             out.append(_g(x, 15) if mode != 'longE' else f'{x:.15e}')
