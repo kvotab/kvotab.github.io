@@ -77,7 +77,8 @@ function isEcolegoAssessment(fileName, buffer) {
 /**
  * Open a file handed over by any transport, whatever it is: HDF5 as itself,
  * an Ecolego assessment as a file for each run it keeps, a MATLAB MAT-file as
- * a file of its variables (rb-mat.js). Does not refresh the tree.
+ * a file of its variables (rb-mat.js), a JSON or XML file as a file of its
+ * values (rb-json.js, rb-xml.js). Does not refresh the tree.
  *
  * @param {string} fileName - Display name
  * @param {ArrayBuffer} buffer - The file's bytes
@@ -90,6 +91,8 @@ function isEcolegoAssessment(fileName, buffer) {
 async function ingestFileBuffer(fileName, buffer, context = 'ingestFileBuffer', options = {}) {
   if (isEcolegoAssessment(fileName, buffer)) return ingestEcolegoAssessment(fileName, buffer, context, options);
   if (isMatFile(fileName, buffer)) return ingestMatFile(fileName, buffer, context);
+  if (isJsonFile(fileName, buffer)) return ingestJsonFile(fileName, buffer, context);
+  if (isXmlFile(fileName, buffer)) return ingestXmlFile(fileName, buffer, context);
   return [await ingestHdf5Buffer(fileName, buffer, context)];
 }
 

@@ -25,12 +25,12 @@
   <link rel="icon" href="./resources/images/rb-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rb-icon-180.png">
   <title>HDF5 Browser — kvot ab</title>
-  <meta name="description" content="Browse HDF5 (.h5) and MATLAB (.mat, .fig) files straight in your browser: explore the tree, inspect datasets, plot them, see figures drawn and export to Excel.">
+  <meta name="description" content="Browse HDF5 (.h5), MATLAB (.mat, .fig), JSON and XML files straight in your browser: explore the tree, inspect datasets, plot them, see figures drawn and export to Excel.">
   <link rel="canonical" href="https://kvotab.se/rb.html">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="kvot ab">
   <meta property="og:title" content="HDF5 Browser — kvot ab">
-  <meta property="og:description" content="Browse HDF5 (.h5) and MATLAB (.mat, .fig) files straight in your browser: explore the tree, inspect datasets, plot them, see figures drawn and export to Excel.">
+  <meta property="og:description" content="Browse HDF5 (.h5), MATLAB (.mat, .fig), JSON and XML files straight in your browser: explore the tree, inspect datasets, plot them, see figures drawn and export to Excel.">
   <meta property="og:url" content="https://kvotab.se/rb.html">
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
@@ -67,7 +67,7 @@
   
   <header></header>
 
-  <input id="fileInput" type="file" accept=".h5,.hdf5,.he5,.eas,.mat,.fig" multiple />
+  <input id="fileInput" type="file" accept=".h5,.hdf5,.he5,.eas,.mat,.fig,.json,.xml" multiple />
 
   <!-- ======================================================================
        Modal dialogs. All four share the .url-dialog-overlay / .url-dialog
@@ -77,7 +77,7 @@
   <div id="urlDialog" class="url-dialog-overlay" style="display:none;">
     <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="urlDialogTitle">
       <h3 id="urlDialogTitle">Load HDF5 from URL</h3>
-      <p>Enter the direct URL to an <code>.h5</code> / <code>.hdf5</code> file, a MATLAB MAT-file (<code>.mat</code>) or figure (<code>.fig</code>), or an Ecolego assessment (<code>.eas</code>).</p>
+      <p>Enter the direct URL to an <code>.h5</code> / <code>.hdf5</code> file, a MATLAB MAT-file (<code>.mat</code>) or figure (<code>.fig</code>), a JSON (<code>.json</code>) or XML (<code>.xml</code>) file, or an Ecolego assessment (<code>.eas</code>).</p>
       <input type="text" id="urlInput" class="url-input" placeholder="https://example.com/data.h5" autocomplete="off" />
       <!--
         A GitHub token, for a file in a repository that is not public. It is
@@ -346,6 +346,7 @@
                     <li>An <strong>Ecolego assessment</strong> (<code>.eas</code>) opens too: each run it keeps opens as a file of its own.</li>
                     <li>A <strong>MATLAB MAT-file</strong> (<code>.mat</code>) opens too, in any format MATLAB saves (<code>-v4</code>, <code>-v6</code>, <code>-v7</code> and <code>-v7.3</code>): each variable is a dataset or a group in the tree, its class and size as MATLAB gives them. A cell array's elements are <code>{1}</code>, <code>{2}</code>, …, but a cell of numbers and text, as from a spreadsheet, is one table, and so is a struct array's field.</li>
                     <li>A <strong>MATLAB figure</strong> (<code>.fig</code>) opens too, as the tree of its objects — axes, lines, texts, controls — each a group of the objects it holds and of its properties. Select the file, the figure or an object in it to see the figure drawn as MATLAB shows it, that object set apart; click an object in the drawing to select it in the tree.</li>
+                    <li>A <strong>JSON</strong> or <strong>XML</strong> file (<code>.json</code>, <code>.xml</code>) opens too, as the tree of its values: an object or an element is a group, a value a dataset, and numbers are numbers, so a list of them is drawn as any vector is. An array of objects, or elements of one tag, that hold only values is a table: a dataset for each member, its values over all of them.</li>
                     <li>A <strong>vector</strong> of numbers — one dimension longer than one, a 1000×1 double, say — is drawn by its values: as a histogram, or with <strong>Scatter</strong> each value against its place. A <strong>matrix</strong> is drawn as a <strong>Heatmap</strong>, its first row at the top, as a histogram of all its values, or with each column against its row; an array of more dimensions a <strong>Slice</strong> at a time, the matrix of its first two. <kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) several to draw them together; in a scatter, a vector as long as another can be the <strong>X axis</strong> they are drawn against.</li>
                     <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
                     <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
@@ -430,6 +431,9 @@
       rb-mat      MATLAB MAT-files (.mat), written as HDF5 in memory
       rb-fig      MATLAB figures (.fig): their objects in the tree, the figure
                   drawn in SVG
+      rb-json     JSON files (.json), written as HDF5 in memory; what JSON and
+                  XML files share
+      rb-xml      XML files (.xml), written as HDF5 in memory
       rb-tabs     the file tab strip
       rb-tree     tree building, lazy expansion, intersect and union
       rb-chart-*  charting, split across seven files that must load in this
@@ -467,15 +471,17 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20261102"></script>
+  <script src="./resources/js/rb-state.js?v=20261102b"></script>
   <script src="./resources/js/rb-utils.js?v=20261031e"></script>
   <script src="./resources/js/rb-actions.js?v=20261031"></script>
   <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
-  <script src="./resources/js/rb-file.js?v=20261102"></script>
-  <script src="./resources/js/rb-eas.js?v=20261031"></script>
+  <script src="./resources/js/rb-file.js?v=20261102b"></script>
+  <script src="./resources/js/rb-eas.js?v=20261102"></script>
   <script src="./resources/js/rb-mat.js?v=20261102"></script>
   <script src="./resources/js/rb-fig.js?v=20261102"></script>
+  <script src="./resources/js/rb-json.js?v=20261102"></script>
+  <script src="./resources/js/rb-xml.js?v=20261102"></script>
   <script src="./resources/js/rb-tabs.js?v=20261009"></script>
   <script src="./resources/js/rb-tree.js?v=20260926"></script>
   <script src="./resources/js/rb-chart-axes.js?v=20261008b"></script>
@@ -490,7 +496,7 @@
   <script src="./resources/js/rb-search.js?v=20260926"></script>
   <script src="./resources/js/rb-dragdrop.js?v=20260921"></script>
   <script src="./resources/js/rb-export.js?v=20260921"></script>
-  <script src="./resources/js/rb-init.js?v=20261031"></script>
+  <script src="./resources/js/rb-init.js?v=20261102"></script>
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20261009"></script>
   <script src="./resources/js/rb-smui.js?v=20261011"></script>

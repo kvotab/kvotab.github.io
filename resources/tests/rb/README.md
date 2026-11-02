@@ -474,6 +474,20 @@ Xfig drawing, refused.
 
     python3 test-fig.py
 
+`test-json-xml.py` covers JSON and XML files (`rb-json.js`, `rb-xml.js`): each
+opens as an HDF5 file the page writes in memory, a group for an object or an
+element and a dataset for a value -- numbers as numbers, so an array of them
+is a vector or a matrix that draws as any does -- and an array of records, or
+elements of one tag that are records, as a table of columns. The files are
+written by the test: JSON of every kind of value, JSON as Python writes it
+(NaN, Infinity) with comments and trailing commas, JSON nested too deep; XML
+as DarcyTools and GDAL write it (Fortran numbers, a list between |, a decimal
+comma), attributes, text beside elements, entities, CDATA, namespaces,
+UTF-16 and ISO-8859-1; broken files of both, refused saying where, an entity
+bomb, an external entity, an HTML page; markup in every name and value.
+
+    python3 test-json-xml.py
+
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
 characterise.py only runs its walk when started as a script.

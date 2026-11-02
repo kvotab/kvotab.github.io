@@ -339,7 +339,7 @@ async function ingestHdf5Buffer(fileName, buffer, context = 'ingestHdf5Buffer') 
  *
  * @param {URL} parsed
  * @returns {string} A name ending in .h5 / .hdf5 / .he5, an Ecolego
- *   assessment's .eas, a MAT-file's .mat or a figure's .fig
+ *   assessment's .eas, a MAT-file's .mat, a figure's .fig, or .json or .xml
  */
 function hdf5FileNameFromUrl(parsed) {
   const parts = (parsed.pathname || '').split('/').filter(Boolean);
@@ -347,7 +347,7 @@ function hdf5FileNameFromUrl(parsed) {
   if (parsed.protocol === 'blob:' || parsed.protocol === 'data:' || !name) {
     name = 'handoff.h5';
   }
-  if (!/\.(h5|hdf5|he5|eas|mat|fig)$/i.test(name)) name += '.h5';
+  if (!/\.(h5|hdf5|he5|eas|mat|fig|json|xml)$/i.test(name)) name += '.h5';
   return name;
 }
 
