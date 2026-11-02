@@ -33,3 +33,5 @@ resources/tests/erosion_corrosion/local/
 resources/tests/smui/local/
 # The ICRP's own dose coefficients for resources/tests/dose_coefficients (make-local-fixtures.py); not ours to publish
 resources/tests/dose_coefficients/local/
+# Paths to real inventories for resources/tests/inventory (make-local-fixtures.py); client data, not public
+resources/tests/inventory/local/

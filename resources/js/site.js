@@ -138,6 +138,12 @@ const KVOT = (() => {
       desc: 'Explore decay chains from ICRP\u00a0107 or ENSDF and plot activity over time.',
     },
     {
+      href: './canister_inventory.html',
+      label: 'Canister Inventory',
+      group: 'nuclear',
+      desc: 'A spent-fuel inventory canister by canister, at any time, beside PSAR\u2019s.',
+    },
+    {
       href: './logn.html',
       label: 'Lognormal Conversions',
       group: 'data',

@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta http-equiv="Content-Security-Policy" content="base-uri 'self'; object-src 'none'">
+  <title>Canister Inventory — kvot ab</title>
+  <meta name="description" content="Browse a spent-fuel radionuclide inventory canister by canister: nuclides, parts, reactors, decay heat and decay over time, in moles, becquerels or grams, as packed or in any later year, and set it beside SKB’s PSAR inventory. Everything is read in the browser.">
+  <link rel="canonical" href="https://kvotab.se/canister_inventory.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="kvot ab">
+  <meta property="og:title" content="Canister Inventory — kvot ab">
+  <meta property="og:description" content="A spent-fuel radionuclide inventory, canister by canister, at any time and in any unit, beside SKB’s PSAR inventory.">
+  <meta property="og:url" content="https://kvotab.se/canister_inventory.html">
+  <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
+  <meta name="twitter:card" content="summary">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/inventory.css?v=20261102">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+</head>
+<body>
+  <header></header>
+
+  <div class="content">
+    <div class="inv" id="inv">
+
+      <!-- ===================== files and settings ===================== -->
+      <div class="inv-bar">
+        <div class="inv-files" id="invFiles">
+          <button type="button" class="inv-btn" data-on-click="inv:open">Open files…</button>
+          <input type="file" id="invFile" multiple accept=".json,.xlsx,.xlsm,.docx,.zip,.gz" hidden data-on-change="inv:filesChosen">
+          <span class="kvot-info-slot" data-info-key="set:files"></span>
+          <span class="inv-msg" id="invMsg" role="alert" hidden><span id="invMsgText"></span><button type="button" aria-label="Dismiss" data-on-click="inv:msgClose">×</button></span>
+        </div>
+        <div class="inv-settings" id="invSettings">
+          <span class="inv-setting">
+            <label for="invAt">Time</label>
+            <select id="invAt" data-on-change="inv:settings">
+              <option value="packed">as packed</option>
+              <option value="year">in the year</option>
+            </select>
+            <input type="text" id="invYear" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="Year" hidden data-on-input="inv:yearTyped" data-on-change="inv:settings">
+            <span class="inv-hint" id="invYearHint" hidden></span>
+            <span class="kvot-info-slot" data-info-key="set:time"></span>
+          </span>
+          <span class="inv-setting">
+            <label for="invUnit">Unit</label>
+            <select id="invUnit" data-on-change="inv:settings">
+              <option value="mol">mol</option>
+              <option value="Bq">Bq</option>
+              <option value="g">g</option>
+            </select>
+            <span class="kvot-info-slot" data-info-key="set:unit"></span>
+          </span>
+          <span class="inv-setting">
+            <label for="invHalf">Half-lives</label>
+            <select id="invHalf" data-on-change="inv:settings">
+              <option value="icrp">ICRP 107</option>
+              <option value="report" disabled>PSAR report, Table D-1</option>
+            </select>
+            <span class="kvot-info-slot" data-info-key="set:half"></span>
+          </span>
+          <span class="inv-setting">
+            <label for="invType">Canisters</label>
+            <select id="invType" data-on-change="inv:settings">
+              <option value="-1">all</option>
+            </select>
+            <span class="kvot-info-slot" data-info-key="set:type"></span>
+          </span>
+        </div>
+      </div>
+
+      <!-- ============================ tabs ============================ -->
+      <div class="inv-tabs" role="tablist" aria-label="Views">
+        <button type="button" role="tab" id="invTab-overview" aria-selected="true" aria-controls="invPane-overview" data-tab="overview" data-on-click="inv:tab">Overview</button>
+        <button type="button" role="tab" id="invTab-nuclides" aria-selected="false" aria-controls="invPane-nuclides" data-tab="nuclides" data-on-click="inv:tab">Nuclides</button>
+        <button type="button" role="tab" id="invTab-canisters" aria-selected="false" aria-controls="invPane-canisters" data-tab="canisters" data-on-click="inv:tab">Canisters</button>
+        <button type="button" role="tab" id="invTab-time" aria-selected="false" aria-controls="invPane-time" data-tab="time" data-on-click="inv:tab">Over time</button>
+        <button type="button" role="tab" id="invTab-psar" aria-selected="false" aria-controls="invPane-psar" data-tab="psar" data-on-click="inv:tab">Compare with PSAR</button>
+        <button type="button" role="tab" id="invTab-raw" aria-selected="false" aria-controls="invPane-raw" data-tab="raw" data-on-click="inv:tab">Raw data</button>
+        <button type="button" role="tab" id="invTab-help" aria-selected="false" aria-controls="invPane-help" data-tab="help" data-on-click="inv:tab">Help</button>
+      </div>
+
+      <!-- ========================== overview ========================== -->
+      <section class="inv-pane" id="invPane-overview" role="tabpanel" aria-labelledby="invTab-overview" data-pane="overview">
+        <div class="inv-start" id="invStart">
+          <h1>A radionuclide inventory, canister by canister</h1>
+          <p>Open a spent-fuel inventory to browse it: its canisters and their fuel elements, the nuclides in each and how they are shared between fuel, crud and structural material, the reactors the fuel came from, the decay heat, and how all of it decays over a million years. Open SKB’s PSAR inventory beside it to compare the two.</p>
+          <div class="inv-drop" id="invDrop" role="button" tabindex="0" data-on-click="inv:open" aria-label="Open files">
+            <strong>Drop files here</strong>
+            <span>or click to choose them; several at once are fine, and zipped ones too</span>
+          </div>
+          <ul class="inv-kinds">
+            <li><b>The inventory (.json)</b>One object of canisters, each with its packing date, its fuel elements and, for every element, the moles of each nuclide in each part (<code>fuel</code>, <code>crud</code>, <code>structural_material</code>), with the element’s reactor, type, fuel type and decay heat.</li>
+            <li><b>PSAR’s workbook (.xlsx)</b>“Data för radionuklidinventariet PSAR” (SKBdoc 1668003): totals per kind of fuel, the average canisters, and the encapsulation simulation of 5 689 canisters.</li>
+            <li><b>PSAR’s report (.docx)</b>“Använt kärnbränsle att hantera i KBS-3-systemet” (SKBdoc 1380282): the half-lives of its Table D-1, the totals of Table D-2 and the canisters of Tables E-1 to E-7.</li>
+          </ul>
+          <p class="inv-sub">Any of them may come zipped: a .zip archive holding one or more of them (archives in it too), or a gzip file such as <code>inventory.json.gz</code>. A zipped inventory is unpacked as it is read, so it never needs room for itself unpacked.</p>
+          <p class="inv-privacy">Files are read in this browser and never leave it. Nothing is stored.</p>
+        </div>
+        <div id="invOverview" hidden>
+          <div class="inv-warn" id="invNotes" hidden></div>
+          <div class="inv-toolbar">
+            <span class="inv-sub" id="invOverviewSub"></span>
+            <span class="inv-spacer"></span>
+            <button type="button" class="inv-btn secondary small" data-on-click="inv:overviewExcel">Excel</button>
+            <span class="kvot-info-slot" data-info-key="pane:overview"></span>
+          </div>
+          <div class="inv-tiles" id="invTiles"></div>
+          <div class="inv-grid-2">
+            <section class="inv-card">
+              <h2>Canisters packed each year</h2>
+              <div class="inv-chart" id="invChartYears"></div>
+              <p class="inv-note" id="invYearsNote"></p>
+            </section>
+            <section class="inv-card">
+              <h2>Fuel elements by reactor</h2>
+              <div class="inv-chart" id="invChartReactors"></div>
+              <p class="inv-note" id="invReactorsNote"></p>
+            </section>
+          </div>
+          <section class="inv-card">
+            <h2>Decay heat of each canister when packed</h2>
+            <div class="inv-chart" id="invChartHeat"></div>
+            <p class="inv-note" id="invHeatNote"></p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========================== nuclides ========================== -->
+      <section class="inv-pane" id="invPane-nuclides" role="tabpanel" aria-labelledby="invTab-nuclides" data-pane="nuclides" hidden>
+        <div class="inv-toolbar">
+          <label>Show
+            <select id="invNucShow" data-on-change="inv:view">
+              <option value="average">the average canister</option>
+              <option value="total">all canisters together</option>
+              <option value="one">one canister</option>
+            </select>
+          </label>
+          <label id="invNucCanBox" hidden>Canister <input type="text" id="invNucCan" autocomplete="off" spellcheck="false" data-on-change="inv:view"></label>
+          <label>Nuclides
+            <select id="invNucSet" data-on-change="inv:view">
+              <option value="all">all in the file</option>
+              <option value="actinides">actinides and their daughters</option>
+              <option value="products">fission and activation products</option>
+            </select>
+          </label>
+          <label>Order
+            <select id="invNucOrder" data-on-change="inv:view">
+              <option value="chain">decay chains</option>
+              <option value="name">name</option>
+              <option value="amount">largest first</option>
+            </select>
+          </label>
+          <span class="inv-spacer"></span>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:nucCsv">CSV</button>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:nucExcel">Excel</button>
+          <span class="kvot-info-slot" data-info-key="pane:nuclides"></span>
+        </div>
+        <p class="inv-empty" data-needs="inventory">Open an inventory to see its nuclides.</p>
+        <div data-has="inventory" hidden>
+          <section class="inv-card">
+            <div class="inv-card-head"><h2 id="invNucTitle">Nuclides</h2><span class="inv-sub" id="invNucSub"></span></div>
+            <div class="inv-key" id="invNucKey"></div>
+            <div class="inv-chart tall" id="invChartNuc"></div>
+            <p class="inv-note" id="invNucNote"></p>
+          </section>
+          <section class="inv-card">
+            <h2>The numbers</h2>
+            <div class="inv-table-wrap" id="invNucTable"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========================== canisters ========================= -->
+      <section class="inv-pane" id="invPane-canisters" role="tabpanel" aria-labelledby="invTab-canisters" data-pane="canisters" hidden>
+        <div class="inv-toolbar">
+          <label>Each
+            <select id="invLevel" data-on-change="inv:view">
+              <option value="can">canister</option>
+              <option value="el">fuel element</option>
+            </select>
+          </label>
+          <label>Show <select id="invQty" data-on-change="inv:view"></select></label>
+          <label>Against <select id="invAgainst" data-on-change="inv:view"></select></label>
+          <span class="inv-spacer"></span>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:canCsv">CSV</button>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:canExcel">Excel</button>
+          <span class="kvot-info-slot" data-info-key="pane:canisters"></span>
+        </div>
+        <p class="inv-empty" data-needs="inventory">Open an inventory to see its canisters.</p>
+        <div data-has="inventory" hidden>
+          <section class="inv-card inv-detail" id="invDetail" hidden>
+            <div class="inv-card-head"><h2 id="invDetailTitle"></h2><span class="inv-spacer"></span>
+              <button type="button" class="inv-btn secondary small" data-on-click="inv:detailPrev" aria-label="The canister before">‹</button>
+              <button type="button" class="inv-btn secondary small" data-on-click="inv:detailNext" aria-label="The canister after">›</button>
+              <button type="button" class="inv-btn secondary small" data-on-click="inv:detailClose">Close</button>
+            </div>
+            <dl class="inv-facts" id="invDetailFacts"></dl>
+            <div class="inv-table-wrap" id="invDetailElements"></div>
+            <div class="inv-chart" id="invChartDetail"></div>
+            <p class="inv-note" id="invDetailNote"></p>
+          </section>
+          <div class="inv-grid-2">
+            <section class="inv-card">
+              <h2 id="invScatterTitle">Each canister</h2>
+              <div class="inv-chart" id="invChartScatter"></div>
+              <p class="inv-note" id="invScatterNote"></p>
+            </section>
+            <section class="inv-card">
+              <h2 id="invHistTitle">How they spread</h2>
+              <div class="inv-chart" id="invChartHist"></div>
+              <div class="inv-key" id="invHistKey"></div>
+              <p class="inv-note" id="invHistNote"></p>
+            </section>
+          </div>
+          <section class="inv-card">
+            <div class="inv-card-head"><h2 id="invCanTableTitle">Largest first</h2><span class="inv-sub">Click a canister for its elements and nuclides.</span></div>
+            <div class="inv-table-wrap" id="invCanTable"></div>
+            <div class="inv-more" id="invCanMore" hidden><span id="invCanMoreNote"></span><button type="button" class="inv-btn secondary small" data-on-click="inv:canMore">Show more</button></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- ========================== over time ========================= -->
+      <section class="inv-pane" id="invPane-time" role="tabpanel" aria-labelledby="invTab-time" data-pane="time" hidden>
+        <div class="inv-toolbar">
+          <label>Of
+            <select id="invTimeOf" data-on-change="inv:view">
+              <option value="average">the average canister</option>
+              <option value="total">all canisters together</option>
+              <option value="one">one canister</option>
+            </select>
+          </label>
+          <label id="invTimeCanBox" hidden>Canister <input type="text" id="invTimeCan" autocomplete="off" spellcheck="false" data-on-change="inv:view"></label>
+          <label>Show
+            <select id="invTimeQty" data-on-change="inv:view">
+              <option value="Bq">activity (Bq)</option>
+              <option value="mol">amount (mol)</option>
+              <option value="g">mass (g)</option>
+              <option value="heat">decay heat (W)</option>
+            </select>
+          </label>
+          <label>Up to
+            <select id="invTimeTo" data-on-change="inv:view">
+              <option value="1e3">1 000 years</option>
+              <option value="1e4">10 000 years</option>
+              <option value="1e5">100 000 years</option>
+              <option value="1e6" selected>1 000 000 years</option>
+            </select>
+          </label>
+          <label id="invTimeRefBox" hidden>Beside it <select id="invTimeRef" data-on-change="inv:view"></select></label>
+          <span class="inv-spacer"></span>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:timeCsv">CSV</button>
+          <button type="button" class="inv-btn secondary small" data-on-click="inv:timeExcel">Excel</button>
+          <span class="kvot-info-slot" data-info-key="pane:time"></span>
+        </div>
+        <p class="inv-empty" data-needs="inventory">Open an inventory to see it decay.</p>
+        <div data-has="inventory" hidden>
+          <section class="inv-card">
+            <div class="inv-card-head"><h2 id="invTimeTitle">Over time</h2><span class="inv-sub" id="invTimeSub"></span></div>
+            <div class="inv-chart tall" id="invChartTime"></div>
+            <p class="inv-note" id="invTimeNote"></p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ====================== compare with PSAR ===================== -->
+      <section class="inv-pane" id="invPane-psar" role="tabpanel" aria-labelledby="invTab-psar" data-pane="psar" hidden>
+        <div class="inv-empty" id="invPsarEmpty">
+          <p>Open PSAR’s inventory beside this one: its workbook (SKBdoc 1668003), its report (SKBdoc 1380282), or both.</p>
+          <button type="button" class="inv-btn" data-on-click="inv:open">Open files…</button>
+        </div>
+        <div id="invPsar" hidden>
+          <div class="inv-toolbar">
+            <span class="inv-sub" style="margin:0">This inventory beside PSAR’s, at one time and in one unit.</span>
+            <span class="inv-spacer"></span>
+            <button type="button" class="inv-btn secondary small" data-on-click="inv:psarExcel">Excel</button>
+          </div>
+          <div class="inv-warn" id="invPsarTime" hidden></div>
+          <section class="inv-card" id="invRatioCard">
+            <div class="inv-card-head"><h2>The average canister against PSAR’s</h2><span class="inv-spacer"></span>
+              <label>Compare with <select id="invRef" data-on-change="inv:view"></select></label>
+              <span class="kvot-info-slot" data-info-key="pane:ratio"></span>
+            </div>
+            <p class="inv-sub" id="invRatioSub"></p>
+            <div class="inv-key" id="invRatioKey"></div>
+            <div class="inv-chart tall" id="invChartRatio"></div>
+            <p class="inv-note" id="invRatioNote"></p>
+            <div class="inv-table-wrap" id="invRatioTable"></div>
+          </section>
+          <section class="inv-card" id="invCatCard">
+            <div class="inv-card-head"><h2>Totals by kind of fuel</h2><span class="inv-spacer"></span>
+              <label>Of <select id="invCatNuc" data-on-change="inv:view"></select></label>
+              <span class="kvot-info-slot" data-info-key="pane:categories"></span>
+            </div>
+            <p class="inv-sub" id="invCatSub"></p>
+            <div class="inv-table-wrap free" id="invCatTable"></div>
+            <p class="inv-note" id="invCatNote"></p>
+          </section>
+          <div class="inv-grid-2">
+            <section class="inv-card" id="invReactorCard">
+              <h2>Fuel elements by reactor</h2>
+              <div class="inv-table-wrap" id="invReactorTable"></div>
+              <p class="inv-note" id="invReactorNote"></p>
+            </section>
+            <section class="inv-card" id="invCanCmpCard">
+              <h2>Canisters</h2>
+              <div class="inv-table-wrap free" id="invCanCmp"></div>
+              <p class="inv-note" id="invCanCmpNote"></p>
+            </section>
+          </div>
+          <div class="inv-grid-2">
+            <section class="inv-card" id="invDepCard">
+              <h2>Canisters each year</h2>
+              <div class="inv-chart" id="invChartDep"></div>
+              <p class="inv-note" id="invDepNote"></p>
+            </section>
+            <section class="inv-card" id="invHeatCmpCard">
+              <h2>Decay heat per canister</h2>
+              <div class="inv-chart" id="invChartHeatCmp"></div>
+              <p class="inv-note" id="invHeatCmpNote"></p>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================== raw data ========================== -->
+      <section class="inv-pane" id="invPane-raw" role="tabpanel" aria-labelledby="invTab-raw" data-pane="raw" hidden>
+        <p class="inv-empty" data-needs="inventory">Open an inventory to save its values.</p>
+        <div data-has="inventory" hidden>
+          <section class="inv-card">
+            <div class="inv-card-head"><h2>Every element or canister, each part and nuclide</h2><span class="inv-spacer"></span><span class="kvot-info-slot" data-info-key="pane:raw"></span></div>
+            <p class="inv-sub" id="invRawSub"></p>
+            <div class="inv-raw-form">
+              <div class="inv-raw-row" role="radiogroup" aria-label="Rows"><span class="inv-raw-label">Rows</span>
+                <label><input type="radio" name="invRawLevel" value="el" checked data-on-change="inv:raw"> each fuel element</label>
+                <label><input type="radio" name="invRawLevel" value="can" data-on-change="inv:raw"> each canister, its elements chosen summed</label>
+              </div>
+              <div class="inv-raw-row"><label class="inv-raw-label" for="invRawQty">Values</label>
+                <select id="invRawQty" data-on-change="inv:raw">
+                  <option value="mol">moles</option>
+                  <option value="Bq">becquerels</option>
+                  <option value="g">grams</option>
+                  <option value="W">decay heat (W)</option>
+                </select>
+              </div>
+              <div class="inv-raw-row"><span class="inv-raw-label">Parts</span>
+                <span class="inv-raw-checks" id="invRawParts"></span>
+                <select id="invRawApart" aria-label="Parts in columns" data-on-change="inv:raw">
+                  <option value="apart">a column for each</option>
+                  <option value="sum">summed</option>
+                </select>
+              </div>
+              <div class="inv-raw-row"><label class="inv-raw-label" for="invRawNuc">Nuclides</label>
+                <select id="invRawNuc" data-on-change="inv:raw">
+                  <option value="all">all in the file</option>
+                  <option value="actinides">actinides and their daughters</option>
+                  <option value="products">fission and activation products</option>
+                  <option value="picked">those picked below</option>
+                </select>
+              </div>
+              <details class="inv-raw-pick" id="invRawNucPick" hidden>
+                <summary id="invRawNucSum">Nuclides picked</summary>
+                <div class="inv-raw-tools"><button type="button" class="inv-btn secondary small" data-on-click="inv:rawAll" data-list="invRawNucList">All</button><button type="button" class="inv-btn secondary small" data-on-click="inv:rawNone" data-list="invRawNucList">None</button></div>
+                <div class="inv-raw-checks" id="invRawNucList"></div>
+              </details>
+              <div class="inv-raw-row"><span class="inv-raw-label">Packed</span>
+                <label>from <input type="text" id="invRawFrom" inputmode="numeric" autocomplete="off" placeholder="first" data-on-change="inv:raw"></label>
+                <label>to <input type="text" id="invRawTo" inputmode="numeric" autocomplete="off" placeholder="last" data-on-change="inv:raw"></label>
+              </div>
+              <div class="inv-raw-row"><label class="inv-raw-label" for="invRawPlanned">Planned elements</label>
+                <select id="invRawPlanned" data-on-change="inv:raw">
+                  <option value="with">with the others</option>
+                  <option value="without">left out</option>
+                  <option value="only">only these</option>
+                </select>
+              </div>
+              <details class="inv-raw-pick" id="invRawReactorPick">
+                <summary id="invRawReactorSum">Reactors</summary>
+                <div class="inv-raw-tools"><button type="button" class="inv-btn secondary small" data-on-click="inv:rawAll" data-list="invRawReactorList">All</button><button type="button" class="inv-btn secondary small" data-on-click="inv:rawNone" data-list="invRawReactorList">None</button></div>
+                <div class="inv-raw-checks" id="invRawReactorList"></div>
+              </details>
+              <details class="inv-raw-pick" id="invRawFuelPick">
+                <summary id="invRawFuelSum">Fuel types</summary>
+                <div class="inv-raw-tools"><button type="button" class="inv-btn secondary small" data-on-click="inv:rawAll" data-list="invRawFuelList">All</button><button type="button" class="inv-btn secondary small" data-on-click="inv:rawNone" data-list="invRawFuelList">None</button></div>
+                <div class="inv-raw-checks" id="invRawFuelList"></div>
+              </details>
+            </div>
+            <div class="inv-toolbar inv-raw-save">
+              <span class="inv-sub" id="invRawCount"></span>
+              <span class="inv-spacer"></span>
+              <button type="button" class="inv-btn secondary small" data-on-click="inv:rawCsv">CSV</button>
+              <button type="button" class="inv-btn secondary small" data-on-click="inv:rawExcel">Excel</button>
+            </div>
+          </section>
+          <section class="inv-card">
+            <h2>The first rows</h2>
+            <div class="inv-table-wrap" id="invRawPreview"></div>
+            <p class="inv-note" id="invRawNote"></p>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============================ help ============================ -->
+      <section class="inv-pane" id="invPane-help" role="tabpanel" aria-labelledby="invTab-help" data-pane="help" hidden>
+        <div class="inv-help">
+          <h2 id="help-what">What it does</h2>
+          <p>The page reads a spent-fuel radionuclide inventory given canister by canister and fuel element by fuel element, and shows it: the amount of each nuclide, how it is shared between the parts of the fuel, how it spreads from canister to canister, where the fuel came from, how much heat it gives off and how it decays. Every view can show the inventory as packed or as it will be in any later year, in moles, becquerels or grams. Opened beside it, SKB’s inventory for PSAR is brought to the same time and unit, so that the two can be compared nuclide by nuclide.</p>
+
+          <h2 id="help-files">Opening files</h2>
+          <p>Drop files anywhere on the page, or use <b>Open files…</b>. A file is recognised by what it holds, so names do not matter, and several can be opened at once. The inventory takes the place of any opened before it; PSAR’s files are added beside it. Each shows as a chip in the bar, with × to close it. Everything is read in the browser; nothing is sent anywhere or kept after the page is closed.</p>
+          <h3 id="help-zip">Zipped files</h3>
+          <p>Any of the files may come in a zip archive, one or several to an archive, or as a gzip file (<code>inventory.json.gz</code>); an archive in an archive is opened too. A zipped or gzipped inventory is unpacked a piece at a time as it is read, so a large one needs no room for itself unpacked; its name in the bar is the archive’s and its own (<code>archive.zip › inventory.json</code>). Files in an archive that the page does not read are passed over, and so are those macOS adds to its archives (<code>__MACOSX</code>, <code>.DS_Store</code>). An archive with several inventories opens the first. Archives over 4 GB (zip64) are read; encrypted ones are not.</p>
+          <h3 id="help-json">The inventory</h3>
+          <p>A JSON file with one member per canister. A canister holds its packing date (as <code>YYYY-MM-DD</code>), its fuel elements, and whatever else it is given (decay heat, declared heat). An element holds its parts, each a map from nuclide to amount, and its properties: reactor, reactor type, fuel type, decay heat, declared heat. Names are not fixed: an element’s parts are the members that map nuclide names (<code>cs137</code>, <code>Cs-137</code>, <code>am242m</code>) to numbers, its properties its other numbers and texts. An array of canisters, or of elements, does as well. Amounts are taken to be moles, at the date each canister was packed.</p>
+          <p>The file is read a piece at a time, so its size is no matter: an inventory of 47 000 elements is read in a few seconds. Missing amounts (<code>null</code>, or <code>NaN</code> as Python writes it) count as none, and the bar says how many there were.</p>
+          <p>Elements whose name begins with PLAN are the fuel the reactors are expected to discharge in future, and the page counts them apart as <b>planned</b>.</p>
+          <h3 id="help-psar-files">PSAR’s files</h3>
+          <ul>
+            <li><b>The workbook</b> (“Data för radionuklidinventariet PSAR”, SKBdoc 1668003): the total activity of each kind of fuel, the average canister over all of them, the average BWR and PWR canister with their spread, each part of an element, and the encapsulation simulation, every element with its reactor, design, canister, deposition year, decay heat and burnup. Its activities are taken to hold for 2045, the year the report gives.</li>
+            <li><b>The report</b> (“Använt kärnbränsle att hantera i KBS-3-systemet”, SKBdoc 1380282): the half-lives of Table D-1, the totals of Table D-2 (with the number of elements of each kind), the low, medium and high burnup canisters of Tables E-1 to E-6, the average canisters of Table E-7, and the number of canisters of each type.</li>
+          </ul>
+          <p>Tables and sheets are found by their headings and captions, not by where they sit, and numbers are read as the documents write them (decimal commas, spaces between thousands).</p>
+
+          <h2 id="help-settings">Settings</h2>
+          <h3 id="help-time">Time</h3>
+          <p><b>As packed</b> shows each canister as the file gives it, at its own packing date. Sums over canisters then add amounts that hold for different dates, as the file’s own totals would. <b>In the year</b> brings every canister to 1 January of that year by radioactive decay, from its own packing date, so that all of them, and PSAR’s inventory, hold for one time. The year cannot be earlier than the last canister was packed, nor, for PSAR’s values, earlier than the year they hold for.</p>
+          <p>Decay follows every chain to its end: Am-241 grows from Pu-241, Np-237 from Am-241, Ra-226 from Th-230 and U-234. Half-lives, branches and the energy of each decay are those of ICRP Publication 107, or of an ENSDF release chosen under <b>Half-lives</b>, and the system is solved by the Chebyshev rational approximation of order 16 (CRAM), as burnup codes solve it. It is exact to about 1 part in 10<sup>13</sup> at any time, with no step to choose. Below that, what nothing feeds decays exactly (H-3 after a thousand years is 10<sup>−25</sup> of what it was), and what has decayed away with all that feeds it is none.</p>
+          <p>Nuclides that a file does not list but that live less than a year are held in secular equilibrium with what feeds them (Ba-137m with Cs-137, Y-90 with Sr-90, the radon daughters with Ra-226), so that the decay heat counts them from the start. They are not shown, and a sum of activity is of the listed nuclides only, as an assessment’s tables are.</p>
+          <h3 id="help-unit">Unit</h3>
+          <p>Moles as the file gives them, becquerels (A = λN), or grams (by the atomic mass in ICRP Publication 107). A conversion to or from becquerels depends on the half-life, so it changes with <b>Half-lives</b>.</p>
+          <h3 id="help-half">Half-lives</h3>
+          <p>ICRP Publication 107 by default. PSAR worked with half-lives of its own, those of its report’s Table D-1, used to turn ORIGEN’s results into becquerels. Once the report is open they can be chosen here; they then replace ICRP 107’s half-life for each nuclide they list, both in decay and in converting between moles and becquerels, and the chains stay ICRP 107’s. The choice matters: PSAR’s Ni-59 lives 76 000 years and ICRP 107’s 101 000, so the same activity is a third more moles by ICRP 107.</p>
+          <p>An ENSDF release on the site, the one the Chart of Nuclides reads, can be chosen too. Its half-lives, its branches and so its chains, and the energy each decay gives off then take the place of ICRP 107’s, the chains built as Radionuclide Decay Chains builds them: every branch, isomers living under a second passed through. The atomic masses stay ICRP 107’s, as ENSDF gives none. A nuclide of the inventory is the state of that nuclide whose half-life in ENSDF is closest to ICRP 107’s (the inventory’s Am-242m is ENSDF’s Am-242m1). The release is read when it is first chosen. With ENSDF 2026, Ni-59 lives 76 000 years, as in PSAR, Se-79 327 000 and Th-229 7 907.</p>
+          <h3 id="help-type">Canisters</h3>
+          <p>All canisters, or those of one reactor type. A canister’s type is that of most of its elements; in practice a canister holds one type only. Every view shows the canisters chosen here, except the comparison of the average canister with PSAR’s, which compares like with like (BWR with BWR, PWR with PWR, all with all).</p>
+
+          <h2 id="help-views">The views</h2>
+          <h3 id="help-overview">Overview</h3>
+          <p>The number of canisters and fuel elements, when they were packed, the uranium and plutonium in them, their activity and decay heat; PSAR’s numbers below where they are open. The charts show the canisters packed each year (PSAR’s deposited each year as a line), the elements from each reactor (PSAR’s as rings), and the decay heat of each canister when packed, from the file, with the declared heat beside it and the limit of 1 700 W.</p>
+          <h3 id="help-decay-heat">Decay heat</h3>
+          <p>The file gives each element and canister two heats: its decay heat and its declared heat. The page shows both as given. In a later year it works out the heat itself, from the nuclides listed and their short-lived daughters. For fuel packed soon after discharge that is less than the file’s heat, because nuclides the file does not list (Cs-134, Co-60, Eu-154, Kr-85) still give off heat; within a few decades of packing they have decayed, and the two agree to within a per cent.</p>
+          <h3 id="help-nuclides">Nuclides</h3>
+          <p>Every nuclide of the average canister, of all canisters together, or of one canister, on a scale of powers of ten: a dot for the value, a line for the range from the 5th to the 95th percentile of the canisters (nine canisters in ten lie on it), and a ring for PSAR’s value at the same time where one is open. Beside it, how each nuclide is shared between fuel, crud and structural material. The table below holds the numbers, and the CSV and Excel buttons save them.</p>
+          <h3 id="help-canisters">Canisters</h3>
+          <p>One quantity for each canister or each fuel element: a nuclide, the activity, the decay heat or, for canisters, the number of elements. The left chart sets it against the packing date or a second quantity, the right one shows how it spreads, with PSAR’s average canister and its low and high burnup canisters where they are open. The table lists the largest first; click a row for that canister’s elements and its nuclides against the average canister of its type.</p>
+          <h3 id="help-time-view">Over time</h3>
+          <p>How the average canister, all of them or one of them decays from the year shown up to a million years, as activity, moles, grams or decay heat (this view has its own choice of quantity; activity tells the most): the eight nuclides that make the largest share of the total at some time in the span, and the total of all of them. <b>Beside it</b> draws PSAR’s values of the same kind, dashed: its average canister of the type shown (all canisters, or BWR or PWR as chosen under <b>Canisters</b>, or the type of the one canister), or, for all canisters together, its totals. Each is named by the document it comes from, as the workbook and the report give the same averages. PSAR’s values hold for 1 January 2045; they are brought to the year shown by decay and ingrowth through the whole chains, with the same half-lives as the inventory, and decay alike from there. With <b>Time</b> as packed, the start is the first 1 January after the last canister was packed.</p>
+          <h3 id="help-psar">Compare with PSAR</h3>
+          <p><b>The average canister</b>: for each nuclide, this inventory’s average canister over PSAR’s, at the same time and in the same unit; it is drawn only when both can be brought to the year shown, and a button sets such a year. A value of 1 means the same; the grey band is PSAR’s own spread, from its low to its high burnup canister (Table E-7); the line is the spread of this inventory’s canisters from the 5th to the 95th percentile, over the same PSAR value. PSAR’s average canister is the total over all its fuel divided by its 5 689 canisters; its average BWR and PWR canisters are 12 and 4 elements of average burnup, the PWR canister with 0.0863 control rods per element. The control rods carry most of the Ag-108m and Cd-113m of a PWR canister.</p>
+          <p><b>Totals by kind of fuel</b>: BWR and PWR fuel from the Swedish reactors, Ågesta’s, the swap MOX from four German reactors (Gundremmingen, Kahl, Obrigheim and the Mehrzweckforschungsreaktor in Karlsruhe), Studsvik’s, and PSAR’s rod skeletons, each summed over its elements whichever canisters they are in.</p>
+          <p>The tables of elements by reactor and of canisters, the canisters each year and the decay heat per canister set this inventory beside PSAR’s encapsulation simulation, from its workbook.</p>
+
+          <h3 id="help-raw">Raw data</h3>
+          <p>The inventory’s own values, row by row, for use elsewhere: a row for each fuel element, or for each canister with the elements chosen in it summed, and a column for each part and nuclide (or for each nuclide, the parts summed), in moles, becquerels, grams or decay heat. The rows can be narrowed to the years the canisters were packed in, to planned elements or the others, and to some reactors and fuel types; the canister type, the time and the half-lives are those chosen above. With <b>Time</b> as packed the values are the file’s own, unchanged; in a year, each canister is decayed to 1 January of it from its own packing date, each part on its own. Each row keeps the file’s fields, its heats among them, as the file gives them. The table below the choices shows the first rows; Excel and CSV save them all, every digit, with what they are (an <b>About</b> sheet in Excel, lines beginning with # at the top of the CSV file).</p>
+          <h2 id="help-saving">Saving</h2>
+          <p>Every view saves as an Excel workbook (<b>Excel</b>), and the Nuclides, Canisters, Over time and Raw data views as CSV too. The numbers keep every digit; Excel only shows them in a format (amounts as 1.234E-05, dates as dates), with a filter on each table’s headings. Each workbook ends with a sheet <b>About</b> naming the files, the time, the unit, the half-lives and the canisters the numbers are for.</p>
+          <ul>
+            <li><b>Overview</b>: its numbers beside PSAR’s, the canisters packed each year and the fuel elements from each reactor.</li>
+            <li><b>Nuclides</b>: the table as shown, with each part, the spread among the canisters and PSAR’s value.</li>
+            <li><b>Canisters</b>: every canister (or fuel element) of those chosen, not only the rows shown, in the table’s order, with its fields from the file, its decay heat and activity, and every nuclide in the unit and at the time shown. A sheet of every element and nuclide is large, some 3 million cells, and takes a few seconds to write; the page goes on meanwhile.</li>
+            <li><b>Over time</b>: every nuclide at every time, not only the eight drawn, and PSAR’s values beside it where they are drawn.</li>
+            <li><b>Compare with PSAR</b>: each table of the comparison that is shown, a sheet each.</li>
+            <li><b>Raw data</b>: every element or canister chosen, a column for each part and nuclide; all fuel elements with every part and nuclide make a sheet of some 8 million values, written as it goes in a few seconds.</li>
+          </ul>
+
+          <h2 id="help-limits">Good to know</h2>
+          <ul>
+            <li>A time earlier than a canister’s packing date cannot be reached by decay: the year is at least the year after the last packing.</li>
+            <li>Nuclides the decay data does not know are kept as given at every time and cannot be shown in becquerels.</li>
+            <li>The categories of PSAR’s tables (BWR, PWR, Ågesta, swap MOX) are told from an element’s reactor: Ågesta, the four German reactors and Studsvik by name, the others by their type.</li>
+            <li>PSAR’s report gives two or three digits; its workbook every digit. Where both are open, the workbook’s values are the ones used.</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20261102b"></script>
+  <script>
+    KVOT.renderHeader('Canister Inventory');
+    KVOT.renderNav('canister_inventory.html');
+    KVOT.renderFooter();
+  </script>
+  <!--
+      plotly            the charts
+      rndecaydata       ICRP Publication 107: half-lives, branches, energies
+      ensdf-parse/core  the decay solver (CRAM), as on the Chart of Nuclides
+      inventory-json    reading the inventory, a slice at a time (also in the worker)
+      inventory-model   the inventory at any time and in any unit
+      inventory-psar    PSAR's workbook and report
+      ensdf-sources     the ENSDF releases on the site, read when one is chosen under Half-lives
+      rdc-ensdf         ENSDF's chains as records of ICRP 107's shape, as for Radionuclide Decay Chains
+      inventory-ensdf   the inventory's nuclides among them
+      kvot-info         the (i) next to each setting and its panel
+      inventory-ui      this page
+      (the raw data is written by inventory-raw.js in a worker, inventory-raw-worker.js)
+      (SheetJS loads when a workbook is opened; the Excel files
+       are written by inventory-excel.js and SheetJS in a worker, inventory-excel-worker.js)
+  -->
+  <script src="./vendors/js/plotly-2.27.0.min.js?v=20260911"></script>
+  <script src="./resources/js/rndecaydata.js?v=20260911"></script>
+  <script src="./resources/js/ensdf-parse.js?v=20260923"></script>
+  <script src="./resources/js/ensdf-core.js?v=20261006"></script>
+  <script src="./resources/js/inventory-json.js?v=20261102b"></script>
+  <script src="./resources/js/inventory-model.js?v=20261102d"></script>
+  <script src="./resources/js/inventory-psar.js?v=20261102d"></script>
+  <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
+  <script src="./resources/js/rdc-ensdf.js?v=20261006"></script>
+  <script src="./resources/js/inventory-ensdf.js?v=20261102a"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/inventory-ui.js?v=20261102d"></script>
+</body>
+</html>
