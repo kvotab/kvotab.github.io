@@ -2505,3 +2505,46 @@
       padding-top: 12px;
       border-top: 1px solid var(--color-border);
     }
+
+    /* A MATLAB figure drawn in the information panel (rb-fig.js). The
+       drawing keeps MATLAB's colours in either theme, as a picture of it
+       would; an object in it is clicked to select it in the tree. */
+    .fig-view {
+      margin: 4px 0 12px;
+    }
+    .fig-block + .fig-block {
+      margin-top: 16px;
+    }
+    .fig-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .fig-title {
+      font-weight: 600;
+      color: var(--color-text-primary);
+    }
+    .fig-size {
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .fig-buttons {
+      margin-left: auto;
+      display: inline-flex;
+      gap: 6px;
+    }
+    .fig-svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--color-panel-border);
+      cursor: pointer;
+    }
+    .fig-note {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--color-text-muted);
+    }

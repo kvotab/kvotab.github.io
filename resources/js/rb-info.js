@@ -218,6 +218,10 @@ async function showNodeAttributes(path, isGroup = false) {
 
       const h = document.createElement('h4'); h.textContent = fileKey; fileSection.appendChild(h);
 
+      // A MATLAB figure file, its figure or an object in it: the figure drawn (rb-fig.js).
+      const figure = figShowFor(fileKey, path);
+      if (figure) fileSection.appendChild(figure);
+
       if (nodeType === 'BrokenSoftLink') {
         fileSection.appendChild(createInfoSection('Path', path));
         fileSection.appendChild(createInfoSection('Type', 'Broken Soft Link'));

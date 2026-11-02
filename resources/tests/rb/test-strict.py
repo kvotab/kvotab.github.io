@@ -48,6 +48,7 @@ PROBES = {
     'rb-file':           'getEnabledFiles',
     'rb-eas':            'isEcolegoAssessment',
     'rb-mat':            'isMatFile',
+    'rb-fig':            'figTexRuns',
     'rb-tabs':           'hideFileTabTooltip',
     'rb-tree':           'toggleGroupExpansion',
     'rb-chart-axes':     'getNamedColor',

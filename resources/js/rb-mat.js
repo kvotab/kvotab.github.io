@@ -103,7 +103,8 @@ const MAT_FULL_SPARSE = 1 << 20;   // elements a sparse matrix may have and be s
 const MAT_HOST_LITTLE = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 /**
- * Whether bytes handed over are a MATLAB MAT-file.
+ * Whether bytes handed over are a MATLAB MAT-file, or a figure file, which
+ * is one (rb-fig.js).
  *
  * By name, or for bytes that arrive under another name -- a link that does
  * not end in .mat, a handoff named .h5 -- by the text MATLAB writes at the
@@ -115,7 +116,7 @@ const MAT_HOST_LITTLE = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
  * @returns {boolean}
  */
 function isMatFile(fileName, buffer) {
-  if (/\.mat$/i.test(String(fileName || ''))) return true;
+  if (/\.(mat|fig)$/i.test(String(fileName || ''))) return true;
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < 128) return false;
   return /^MATLAB (5\.0|7\.3) MAT-file/.test(matLatin1(new Uint8Array(buffer, 0, 19)));
 }
@@ -1009,9 +1010,12 @@ function matStringArray(any) {
  *
  * @param {string} fileName
  * @param {Object} mat - From readMatFile
+ * @param {Object} [hooks] - For a variable written some other way:
+ *   variableNode(v, ctx, path) returns its node, or undefined to have it
+ *   written here; done() is called when all are (see rb-fig.js)
  * @returns {{tree: Object, datasets: number}}
  */
-function matTree(fileName, mat) {
+function matTree(fileName, mat, hooks = null) {
   const e = escapeHtml;
   const unread = mat.variables.filter(v => v.error).length;
   const count = mat.variables.length;
@@ -1024,21 +1028,27 @@ function matTree(fileName, mat) {
   });
   const ctx = { objects: mat.objects, arrays: 0, datasets: 0, capped: false };
   for (const v of mat.variables) {
-    const name = easLinkName(v.name || 'unnamed variable');
-    const node = v.error
-      ? easGroup({ MATLAB_note: `This variable could not be read: ${v.error}` })
-      : matNode(v.array, ctx, 0, new Set());
-    if (node) matPut(root, name, node);
+    const key = matFreeName(root, easLinkName(v.name || 'unnamed variable'));
+    let node = v.error ? easGroup({ MATLAB_note: `This variable could not be read: ${v.error}` }) : undefined;
+    if (node === undefined && hooks && hooks.variableNode) node = hooks.variableNode(v, ctx, `/${key}`);
+    if (node === undefined) node = matNode(v.array, ctx, 0, new Set());
+    if (node) root.children.set(key, node);
   }
+  if (hooks && hooks.done) hooks.done();
   if (ctx.capped) root.attrs.MATLAB_note = `Only the first ${MAT_MAX_ARRAYS.toLocaleString('en-US')} arrays are shown.`;
   return { tree: root, datasets: ctx.datasets };
 }
 
-/** A child put in a group under its name, numbered when the name is taken. */
-function matPut(group, name, node) {
+/** The name a child takes in a group: its own, numbered when that is taken. */
+function matFreeName(group, name) {
   let key = name;
   for (let n = 2; group.children.has(key); n++) key = `${name} (${n})`;
-  group.children.set(key, node);
+  return key;
+}
+
+/** A child put in a group under its name, numbered when the name is taken. */
+function matPut(group, name, node) {
+  group.children.set(matFreeName(group, name), node);
 }
 
 function matDataset(ctx, attrs, shape, dtype, make) {
@@ -1453,6 +1463,10 @@ async function ingestMatFile(fileName, buffer, context = 'ingestMatFile') {
     throw new Error(kvotFileTooLarge({ name: fileName, size: buffer.byteLength },
                                      KVOT_FILE_SIZE_LIMITS.dataset).reason);
   }
+  // Other programs name their files .fig too: Xfig's drawings are text.
+  if (/\.fig$/i.test(fileName) && !/^MATLAB (5\.0|7\.3) MAT-file/.test(matLatin1(new Uint8Array(buffer, 0, Math.min(19, buffer.byteLength))))) {
+    throw new Error(`${fileName} is not a MATLAB figure: MATLAB saves a figure as a MAT-file, and this file is not one.`);
+  }
   setFileLoadProgress(null, `${fileName} — reading its variables…`);
   await yieldForPaint();
   let mat;
@@ -1464,13 +1478,19 @@ async function ingestMatFile(fileName, buffer, context = 'ingestMatFile') {
   if (!mat.variables.length) throw new Error(`${fileName} holds no variables.`);
   if (mat.variables.every(v => v.error)) throw new Error(`${fileName} could not be read: ${mat.variables[0].error}`);
 
-  const { tree, datasets } = matTree(fileName, mat);
+  // A figure file's figure is laid out as its objects, and kept to be drawn.
+  const figure = figFileModel(fileName, mat);
+  const { tree, datasets } = matTree(fileName, mat, figure && figure.hooks);
+  if (figure) tree.attrs.Information += figDescribe(figure.model);
   // The arrays as read are held now by the tree alone, which lets each go as
   // it is written: a file's values are not held three times over at once.
+  // A figure's model keeps those it draws.
   mat = null;
   setFileLoadProgress(null, `${fileName}: writing ${datasets.toLocaleString('en-US')} arrays…`);
   await yieldForPaint();
   const h5 = await easWriteHdf5(tree, (done) => setFileLoadProgress(datasets ? done / datasets : null,
     `${fileName}: ${done.toLocaleString('en-US')} of ${datasets.toLocaleString('en-US')} arrays written…`));
-  return [await ingestHdf5Buffer(fileName, h5, context)];
+  const name = await ingestHdf5Buffer(fileName, h5, context);
+  if (figure) figRegister(name, figure.model);
+  return [name];
 }

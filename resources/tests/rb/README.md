@@ -456,6 +456,24 @@ without results, a cut-off archive and one that unpacks to more than it says.
 
     python3 test-eas.py
 
+`test-fig.py` covers MATLAB figure files (`rb-fig.js`): a `.fig` opens as the
+MAT-file it is, its figure as the tree of its objects, each a group named by
+its place, type and label -- `(1) axes`, `(3) graph2d.lineseries 'half'`,
+`(7) text Title '...'` -- with its type, handle and special as attributes and
+its properties beside the objects it holds. Selecting the file, the figure or
+an object draws the figure in SVG in the information panel, that object set
+apart; the test reads the drawing back: the objects by kind, the texts as TeX
+made them, the faded and the framed, the figure's size from its Position in
+pixels or characters. An object clicked in the drawing is selected in the
+tree, and the drawing saves as SVG and PNG. Six figures MATLAB R2023a wrote
+(`fig_fixtures.m`: lines and a legend, a subplot of each kind, a window of
+controls, two figures in a file, a compact one, a tiled layout); three the
+test writes itself: one as releases before R2014b saved them, its legend an
+axes of its own, a hostile one, one nested too deep; and a `.fig` that is an
+Xfig drawing, refused.
+
+    python3 test-fig.py
+
 The extension in `rb-vscode/` also runs `characterise.py`'s steps, inside
 VS Code (`rb-vscode/test/characterise-vscode.py` imports them), which is why
 characterise.py only runs its walk when started as a script.
@@ -476,7 +494,10 @@ which the VS Code extension's `test-vscode.py` uses too.
 
 The one exception is `fixtures/lzf.h5` (26 KB, made-up values), which h5wasm
 cannot write: writing LZF needs the very plugin `test-lazy.py` checks is
-fetched. `fixtures/make-lzf.py` makes it again with h5py.
+fetched. `fixtures/make-lzf.py` makes it again with h5py. The files MATLAB
+wrote are the others: `matlab-v4/v7/v73.mat` (`mat_fixtures.m`) and the six
+`figure-*.fig` (`fig_fixtures.m`), made-up values all, written once with MATLAB
+R2023a; `test-fig.py` checks that no figure keeps a home folder.
 
 ## Known noise
 
