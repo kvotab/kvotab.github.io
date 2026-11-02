@@ -4,7 +4,7 @@
 
    Runs a model through the page's own worker handler and hands the reply to
    rtm-hdf5.js, so that what lands on disk is byte for byte what rtm.html
-   sends the HDF5 Browser. test-hdf5.py opens the result with h5py.
+   sends the Data Browser. test-hdf5.py opens the result with h5py.
 
      node resources/tests/rtm/write-h5.js out.h5                 # the built-in model
      node resources/tests/rtm/write-h5.js out.h5 --example batch-first

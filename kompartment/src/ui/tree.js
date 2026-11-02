@@ -459,7 +459,7 @@ export function renderBlockTree(host, project, selection, hooks = {}, filter = n
 				onPick: (ev) => {
 					// Beside a chart, the key that adds a row to the selection
 					// adds the block to the chart as well, or takes it off: the
-					// gesture the HDF5 Browser compares datasets with.
+					// gesture the Data Browser compares datasets with.
 					if (pick && all && (ev?.metaKey || ev?.ctrlKey) && !ev?.shiftKey) {
 						pick.toggle(all.items.map((it) => it.i), ev);
 					}

@@ -1,7 +1,7 @@
 /* ==========================================================================
    A REACTIVE-TRANSPORT RUN AS AN HDF5 FILE
 
-   Turns what rtm.html has just solved into the tree the HDF5 Browser reads,
+   Turns what rtm.html has just solved into the tree the Data Browser reads,
    so that a run can be looked at, compared with another file and exported
    from there without ever being written to disk.
 

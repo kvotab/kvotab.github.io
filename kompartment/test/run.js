@@ -4811,7 +4811,7 @@ test('an override may not point the result browser anywhere it likes', async () 
 	// `?rb=` decides where a result file is *sent*. Taken as written, a link
 	// to `index.html?rb=https://somewhere.else/x` made the page open that
 	// address, hand it `window.opener`, and post the reader's whole result
-	// file to it on one click of *Open in the HDF5 browser* -- with nothing on
+	// file to it on one click of *Open in the Data Browser* -- with nothing on
 	// screen to say where it had gone. `?model=` has always been checked
 	// against the list of examples; this is the same check.
 	const here = 'http://localhost:8080/index.html';
@@ -32803,14 +32803,14 @@ test('a run is written in the shape the result browser reads', async () => {
 	assert(names.length === 2 && !names.some((p) => p.includes('kg/m2')), JSON.stringify(names));
 
 	// And the table's menu offers it beside the CSV it is an answer to, and
-	// the HDF5 Browser beside both: those three, and nothing else. Every
+	// the Data Browser beside both: those three, and nothing else. Every
 	// other file -- the whole run, the realisations -- is in Save….
 	const { readFileSync } = await import('node:fs');
 	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
 	const menu = app.slice(app.indexOf('function tableMenu(ev) {'));
 	const offered = [...menu.slice(0, menu.indexOf('\n}\n')).matchAll(/label: '([^']*)'/g)].map((m) => m[1]);
 	assert(JSON.stringify(offered)
-		=== JSON.stringify(['Export table to CSV…', 'Export table to HDF5…', 'Open in the HDF5 Browser']),
+		=== JSON.stringify(['Export table to CSV…', 'Export table to HDF5…', 'Open in the Data Browser']),
 	JSON.stringify(offered));
 	const saving = readFileSync(new URL('../src/ui/savedialog.js', import.meta.url), 'utf8');
 	assert(/key: 'results',[\s\S]*?picks: 'series',/.test(saving), 'only the selection can be exported');

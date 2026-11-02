@@ -242,7 +242,7 @@ async def main():
 
                 await key('ArrowDown', keycode=40)
                 check(f'{page}: Down from the field goes to the first project',
-                      await ev('document.activeElement.textContent'), 'HDF5 Browser')
+                      await ev('document.activeElement.textContent'), 'Data Browser')
                 await key('ArrowDown', keycode=40)
                 check(f'{page}: and on to the next', await ev('document.activeElement.textContent'), 'Probability Distributions')
                 await key('ArrowUp', keycode=38)

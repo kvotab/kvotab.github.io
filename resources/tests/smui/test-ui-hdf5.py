@@ -137,7 +137,7 @@ def fixtures():
         with h5py.File(p, 'w') as h:
             h.create_dataset('lzf', data=np.arange(500.0) * 3, chunks=(50,), compression='lzf')
         f['squeezed'] = p
-    # MATLAB: the HDF5 Browser's fixtures (written by MATLAB, mat_fixtures.m),
+    # MATLAB: the Data Browser's fixtures (written by MATLAB, mat_fixtures.m),
     # and SciPy's: a struct array alone, and hostile names
     for v in ('v4', 'v7', 'v73'):
         f[f'matlab-{v}'] = os.path.join(REPO, 'resources', 'tests', 'rb', 'fixtures', f'matlab-{v}.mat')
@@ -232,7 +232,7 @@ async def main():
     await page.ev(f"{DIALOG}.querySelector('.sm-dialog-head .info-btn').click(); 0")
     t = await until(page, "document.querySelector('#kvot-info-panel .info-panel-title')?.textContent", 10)
     sections = await page.ev("[...document.querySelectorAll('#kvot-info-panel .info-panel-body h3')].map(h => h.textContent)")
-    check('the dialog\'s (i) explains it', (t, sections), ('Open HDF5', ['Tables', 'What the file says', 'Not read', 'Find and tick', 'From the HDF5 Browser']))
+    check('the dialog\'s (i) explains it', (t, sections), ('Open HDF5', ['Tables', 'What the file says', 'Not read', 'Find and tick', 'From the Data Browser']))
     await page.ev("document.querySelector('#kvot-info-panel .info-panel-close').click(); 0")
     # a group's box, and its mixed state
     await page.ev(f"{row_box('sub')}.click(); 0")

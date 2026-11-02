@@ -1,7 +1,7 @@
 /* ==========================================================================
-   HDF5 BROWSER FOR VISUAL STUDIO CODE
+   DATA BROWSER FOR VISUAL STUDIO CODE
 
-   rb.html -- kvotab.se's HDF5 Browser -- as an editor for .h5, .hdf5 and
+   rb.html -- kvotab.se's Data Browser -- as an editor for .h5, .hdf5 and
    .he5 files, and for Ecolego assessments (.eas), whose runs the page opens
    as files of their own (resources/js/rb-eas.js). The page runs in a webview
    as it runs on the site, from the same scripts, which build.mjs copies in;
@@ -161,7 +161,7 @@ async function readHead(uri) {
   }
 }
 
-/** The editor tab of an HDF5 Browser on `uri`, in the group of `column` if it has one there, or null. */
+/** The editor tab of a Data Browser on `uri`, in the group of `column` if it has one there, or null. */
 function tabOf(uri, column) {
   const key = uri.toString();
   const groups = vscode.window.tabGroups.all.slice().sort((a, b) => (b.viewColumn === column) - (a.viewColumn === column));
@@ -180,7 +180,7 @@ function standInHtml(name) {
     + '<style>body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;'
     + 'font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);'
     + 'color:var(--vscode-descriptionForeground);background:var(--vscode-editor-background)}</style>'
-    + `</head><body>Adding ${escapeAttribute(name)} to the HDF5 Browser\u2026</body></html>`;
+    + `</head><body>Adding ${escapeAttribute(name)} to the Data Browser\u2026</body></html>`;
 }
 
 function formatBytes(n) {
@@ -304,7 +304,7 @@ class View {
     if (size > WHOLE_MAX_BYTES) {
       throw new Error(`${file.name} is ${formatBytes(size)}; more than ${formatBytes(WHOLE_MAX_BYTES)} is not read whole.`
         + (file.uri.scheme === 'file' && !ASSESSMENT_NAME.test(file.uri.path)
-          ? ' Set "HDF5 Browser: Read Lazily" to auto or always to open it.' : ''));
+          ? ' Set "Data Browser: Read Lazily" to auto or always to open it.' : ''));
     }
     const bytes = compact(await vscode.workspace.fs.readFile(file.uri));
     return { token: file.token, name: file.name, size, mode: 'whole', bytes };
@@ -370,7 +370,7 @@ class View {
       }
     } catch (e) {
       this.provider.log.error(`Handling "${m.type}" from the page failed:`, e);
-      vscode.window.showErrorMessage(`HDF5 Browser: ${e && e.message ? e.message : e}`);
+      vscode.window.showErrorMessage(`Data Browser: ${e && e.message ? e.message : e}`);
     }
   }
 
@@ -630,7 +630,7 @@ class Hdf5BrowserProvider {
     const uris = tabs.map(t => t.input.uri);
     const column = tabs[0].group.viewColumn;
     view.add(uris, 'added');
-    this.log.info(`${uris.map(u => path.posix.basename(u.path)).join(', ')} opened with ${path.posix.basename(view.documentUri.path)}; added to its HDF5 Browser`);
+    this.log.info(`${uris.map(u => path.posix.basename(u.path)).join(', ')} opened with ${path.posix.basename(view.documentUri.path)}; added to its Data Browser`);
     this.event({ type: 'gathered', into: view.documentUri.fsPath, files: uris.map(u => u.fsPath) });
     setTimeout(async () => {
       for (const uri of uris) {
@@ -647,7 +647,7 @@ class Hdf5BrowserProvider {
 
   /** The file goes into `view`; the editor VS Code opened for it says so, and is closed. */
   addInstead(view, uri, panel) {
-    this.log.info(`${uri.fsPath || uri.toString()} was opened where an HDF5 Browser was showing; added to it`);
+    this.log.info(`${uri.fsPath || uri.toString()} was opened where a Data Browser was showing; added to it`);
     view.add([uri], 'added');
     this.event({ type: 'addedInstead', into: view.documentUri.fsPath, file: uri.fsPath });
     this.gatherInto(view, panel.viewColumn, uri);
@@ -811,7 +811,7 @@ class Hdf5BrowserProvider {
 /* ── activation ───────────────────────────────────────────────────────── */
 
 function activate(context) {
-  const log = vscode.window.createOutputChannel('HDF5 Browser', { log: true });
+  const log = vscode.window.createOutputChannel('Data Browser', { log: true });
   context.subscriptions.push(log);
 
   // First, so that a copy whose page cannot start still updates itself. A
@@ -825,12 +825,12 @@ function activate(context) {
   try {
     build = JSON.parse(fs.readFileSync(path.join(__dirname, 'media', 'build.json'), 'utf8'));
   } catch (e) {
-    const message = 'HDF5 Browser is not built: run "node build.mjs" in its folder.';
+    const message = 'Data Browser is not built: run "node build.mjs" in its folder.';
     log.error(message, e);
     vscode.window.showErrorMessage(message);
     return;
   }
-  log.info(`HDF5 Browser ${context.extension.packageJSON.version}, page ${build.stamp}`);
+  log.info(`Data Browser ${context.extension.packageJSON.version}, page ${build.stamp}`);
 
   const reader = new Reader(build, log);
   provider = new Hdf5BrowserProvider(context, build, reader, log);

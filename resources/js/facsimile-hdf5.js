@@ -1,7 +1,7 @@
 /* ==========================================================================
    A CANISTER RUN AS AN HDF5 FILE
 
-   Turns what facsimile.html has just solved into the tree the HDF5 Browser
+   Turns what facsimile.html has just solved into the tree the Data Browser
    reads, so that a run can be looked at, compared with another file, and
    exported from there without ever being written to disk.
 

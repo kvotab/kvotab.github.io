@@ -37,9 +37,9 @@ const KVOT = (() => {
   const ALL_PROJECTS = [
     {
       href: './rb.html',
-      label: 'HDF5 Browser',
+      label: 'Data Browser',
       group: 'data',
-      desc: 'Open HDF5 and MATLAB files: walk the tree, plot datasets and export to Excel.',
+      desc: 'Open HDF5, MATLAB, JSON and XML files: walk the tree, plot and export to Excel.',
     },
     {
       href: './ensdf.html',

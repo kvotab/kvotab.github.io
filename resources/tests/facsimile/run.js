@@ -203,7 +203,7 @@ for (const id of scenarios) {
   const TIMH = Array.from(res.t, (v) => v / 3600);
   const last = res.t.length - 1;
 
-  // The same file the page hands to the HDF5 Browser, written to disk so the
+  // The same file the page hands to the Data Browser, written to disk so the
   // real library can be asked whether it is one. See test-hdf5.py.
   if (opt.h5) {
     const width = names.length;

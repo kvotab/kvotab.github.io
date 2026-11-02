@@ -886,7 +886,7 @@ function xlChartSubject(model) {
     const mode = typeof getTreeMode === 'function' && files.length > 1 ? getTreeMode() : 'separated';
     lines.push(`${files.length > 1 ? 'Files' : 'File'}: ${files.join(', ')}${mode !== 'separated' ? ` (${mode})` : ''}`);
   }
-  lines.push(`Exported from the HDF5 Browser (kvotab.se) on ${new Date().toLocaleString('sv-SE').slice(0, 16)}`);
+  lines.push(`Exported from the Data Browser (kvotab.se) on ${new Date().toLocaleString('sv-SE').slice(0, 16)}`);
   const exp = chartExponents();
   for (const axis of ['x', 'y']) {
     const e = exp[axis];

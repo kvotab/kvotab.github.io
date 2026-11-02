@@ -293,7 +293,7 @@ mode worth remembering:
 `resources/js/kvot-hdf5-write.js` writes HDF5 by hand rather than through a
 library, so the question is whether libhdf5 agrees that the result is a file.
 `write-h5.js` runs a model through the page's own worker handler and hands the
-reply to `rtm-hdf5.js`, which is exactly what rtm.html sends the HDF5 Browser;
+reply to `rtm-hdf5.js`, which is exactly what rtm.html sends the Data Browser;
 `test-hdf5.py` opens the result with h5py.
 
 Four models, for the shapes the tree can take: a batch, which is one

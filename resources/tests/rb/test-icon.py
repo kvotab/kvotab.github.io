@@ -77,7 +77,7 @@ async def main():
             check('each decodes as a picture of its size',
                   (icon['svg'] is not None, icon['png'], icon['touch']), (True, [32, 32], [180, 180]))
             check('the SVG is XML, in the 64-unit square, and named for the page',
-                  (icon['xml'], icon['viewBox'], icon['title']), (True, '0 0 64 64', 'HDF5 Browser'))
+                  (icon['xml'], icon['viewBox'], icon['title']), (True, '0 0 64 64', 'Data Browser'))
             check('drawn in the kvot mark’s three tones only: polygons, no strokes, no gradients',
                   (icon['fills'], icon['other']), (['#344126', '#bb6c5d', '#f3b87b'], False))
             check('no console errors', page.logs[:3], [])

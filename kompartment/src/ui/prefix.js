@@ -2,7 +2,7 @@
  * A prefix for an axis's unit: k shows Bq as kBq and its numbers divided by a
  * thousand, µ shows Sv/year as µSv/year and its numbers times a million.
  *
- * The rule is the HDF5 Browser's (the unit prefixes in
+ * The rule is the Data Browser's (the unit prefixes in
  * resources/js/rb-chart-axes.js at kvotab.se), here so that a chart of a run
  * reads the same in both tools; a test compares the two where the browser's
  * file is in reach. Which units take a prefix, and how one already there is

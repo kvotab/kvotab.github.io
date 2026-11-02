@@ -1177,7 +1177,7 @@
      The run as an HDF5 file
 
      The same two things facsimile.html offers: the file handed straight to
-     the HDF5 Browser in another tab, and the same file as a download. The
+     the Data Browser in another tab, and the same file as a download. The
      tree itself is rtm-hdf5.js.
      --------------------------------------------------------------------- */
 
@@ -1205,7 +1205,7 @@
   }
 
   /**
-   * Opens the HDF5 Browser and hands it this run, without a file ever reaching
+   * Opens the Data Browser and hands it this run, without a file ever reaching
    * the disk. The other half of the protocol is resources/js/rb-handoff.js.
    *
    * The tab is opened first, before the file exists, and that is not an
@@ -1220,7 +1220,7 @@
     const win = window.open(`${HDF5_BROWSER}#handoff=${encodeURIComponent(origin)}`, '_blank');
     if (!win) {
       setStatus('The browser blocked the new tab. Allow pop-ups for this page, or use '
-        + '“HDF5” beside it and open the file in the HDF5 Browser yourself.', 'error');
+        + '“HDF5” beside it and open the file in the Data Browser yourself.', 'error');
       return;
     }
 
@@ -1243,7 +1243,7 @@
       setStatus(`Writing ${name}…`);
       await new Promise((r) => setTimeout(r, 0));     // let that reach the screen
       const bytes = buildHdf5();
-      setStatus(`Sending ${name} (${(bytes.length / 1048576).toFixed(1)} MB) to the HDF5 Browser…`);
+      setStatus(`Sending ${name} (${(bytes.length / 1048576).toFixed(1)} MB) to the Data Browser…`);
       if (!ready) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(
@@ -1261,8 +1261,8 @@
       });
       win.postMessage({ kvot: 'rb-open', name, buffer }, origin, [buffer]);
       const answer = await answered;
-      if (!answer.ok) throw new Error(answer.message || 'the HDF5 Browser refused the file');
-      setStatus(`${name} is open in the HDF5 Browser.`, 'ok');
+      if (!answer.ok) throw new Error(answer.message || 'the Data Browser refused the file');
+      setStatus(`${name} is open in the Data Browser.`, 'ok');
     } catch (e) {
       setStatus(`The handoff failed: ${e.message}. “HDF5” beside it writes the same file.`, 'error');
     } finally {
@@ -1892,7 +1892,7 @@
             '**from**: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**clear**: unticks every species.',
             '**CSV**: the species ticked, or all of them when none is, at the cell and layer shown or through the end shown, a row per stored point.',
-            '**View in HDF5 Browser**: the whole run as an HDF5 file, opened in the HDF5 Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
+            '**View in Data Browser**: the whole run as an HDF5 file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
             '**HDF5**: the same file, as a download.',
           ] },
           { heading: 'The list', text: [

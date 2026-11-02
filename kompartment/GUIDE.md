@@ -1082,7 +1082,7 @@ Eight views over one model, all editing the same object:
 | **Matrix** | The transfer grid, laid out the way a Jacobian is drawn: **the blocks are on the diagonal and the flows between them are off it**. A cell is what leaves the name on the diagonal along its row and arrives at the name down its column — so the diagonal is a staircase of names and the grid needs no header band, in either direction. Each filled cell carries the elbow that traces its route: above the diagonal it turns down, below it turns up, which is also how a feedback loop shows itself at a glance. **Sub-systems fold**: see below. Everything in it that stands for a block behaves like one: a click selects it, a double-click opens its settings and a right-click opens the menu it has on the diagram, on the diagonal and off it alike. Nothing is made by a click. **The right-click offers what can be done where it lands**: on an empty cell, the transfer between its two blocks — shown refused, with the reason, where the diagram refuses the same line (nothing goes into waste packages, a release does not go straight into a far-field pathway, a pathway has one release, a folded sub-system has no one block to connect); on a transfer, its own menu and another between the same pair, since a pair may hold several and their fluxes add; on a sub-system's tile, folding it and the blocks that can be made inside it; on a folded count, unfolding it or selecting any one of the fluxes it stands for; on the dashed *outside*, an inflow into a block or an outflow from one; and on the margin round the grid, or the band along an open sub-system, a new compartment, far-field pathway, set of waste packages or sub-system there, **Paste**, folding or unfolding every sub-system at once, and the zoom. A block on the diagonal, and a transfer off it, wears the colour it was given on the diagram, with its label picked from that colour rather than from the theme — a model of any size is read by its colours as much as by its names, and two views showing it in different colours made this one a separate thing to learn. A far-field pathway sits on the diagonal like any other block. **The world outside the model gets a row and a column of its own**, at the end and outside the hierarchy — its row is what comes in, its column what leaves — and only when something actually crosses that boundary, since an empty pair in every closed model is furniture. It is the one view that puts every source term and every outflow together, the diagram having drawn each of them beside its own block. Built when this tab is opened rather than on every edit, and a selection that moves within one model moves the highlight rather than rebuilding the grid: it is (compartments + paths + 1) squared. **Every cell is the same square**, so the grid reads as a pattern — the shape a Jacobian is drawn in — rather than as a table whose columns are as wide as their longest rate; what does not fit a square is on its tooltip. A transfer is a tile like the blocks on the diagonal, with its rate over its name; two share a square between them, and only a third makes the square scroll. The **zoom** above the grid — −, the percentage (back to 100%), +, and **Fit** for the whole grid in view — or the wheel, or a pinch, scales it about the pointer, a notch at a time as on the diagram, and the level is remembered in this browser. **Dragging the grid's empty space moves it**, as dragging the diagram's empty canvas does, and the middle button drags it from anywhere; a click on empty space clears the selection. |
 | **Index lists** | The model's dimensions. One pane lists them, the other is the one you are editing: its name, what it is defined from, its indices, and — for the radionuclide list — half-lives and decay chains. Everything about a list is made and unmade here. |
 | **Chart** | Results over time, log-log unless the model says otherwise. What is on it is picked in the tree on the left — a box on every block, a box for each index of a block that is opened, the model's endpoints first — and each block is drawn as one thing: a line per nuclide in that nuclide's own colour, with the block's total, in a panel of its own or with the others in one chart. A line above the chart holds the scales, the axes' window, saved axes and what the legend says, and **Views ▾** saves all of it by name; **Find lines…** searches every series across blocks. Drag a rectangle over the chart to zoom, scroll to zoom about the pointer, shift-drag or middle-drag to pan, double-click to go back. Right-click it for the zoom, the drag mode, **Save as picture ▸ SVG · PNG · JPEG**, and the numbers as CSV. See [The chart and the table](#the-chart-and-the-table). |
-| **Table** | The same numbers, for reading and copying: picked the same way, beside this tab too, and laid out **over time** — at every output time or at the times you type — as **peaks**, a row of numbers per series, or as a **pivot**, nuclides down and objects or blocks across. **Copy** puts all of it on the clipboard for a spreadsheet. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the HDF5 Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
+| **Table** | The same numbers, for reading and copying: picked the same way, beside this tab too, and laid out **over time** — at every output time or at the times you type — as **peaks**, a row of numbers per series, or as a **pivot**, nuclides down and objects or blocks across. **Copy** puts all of it on the clipboard for a spreadsheet. Built when this tab is opened rather than on every run, and two thousand rows at a time with a button for the next two thousand: a run may hold a hundred thousand output times, and a row of the table is a DOM element per column. The CSV export is not bounded by that — it streams the whole run. Right-click it for the table as it stands **as CSV** or **as HDF5**, or to **Open in the Data Browser**; every other file the run can make is in **Save…**. See [Saving the results](#saving-the-results). |
 | **JSON** | The project file itself. |
 | **Generated code** | Two views of what the builder made. *Derivative code* is the function compiled from the equations — in the three passes it runs as: what reads neither the clock nor the state, worked out once when the model is built; what reads only the clock, once per instant; and the rest, on every call. *Jacobian* is the matrix of its partial derivatives, drawn as its sparsity pattern and checked against finite differences — see [Looking at the Jacobian](#looking-at-the-jacobian). |
 | **Help** | This file, and `INTERNALS.md`, read here — with a table of contents down the side. Set apart from the others because it is not a view of the model. |
@@ -2226,7 +2226,7 @@ memory stick.
 
 **Results**, **Realisations** and **Data** have **Open in the HDF5
 Browser** beside *Save…*: the same file, handed to the
-[HDF5 Browser](https://kvotab.se/rb.html) in a new tab instead of written to
+[Data Browser](https://kvotab.se/rb.html) in a new tab instead of written to
 disk. The browser reads HDF5 and nothing else, so that is what it is sent
 whichever format the dialog is on.
 
@@ -2661,7 +2661,7 @@ one landscape object, is a tick away. A row that is a single series shows, once
 it is on, the line it is drawn with.
 
 - **⌘-click** (Ctrl-click) a block to add it to the chart, or take it off, as
-  well as selecting it beside the others: the gesture the HDF5 Browser at
+  well as selecting it beside the others: the gesture the Data Browser at
   kvotab.se compares datasets with.
 - **Alt-click** a box for that block or index and nothing else.
 - With several blocks selected, ticking one of them ticks them all, so a handful
@@ -2705,7 +2705,7 @@ these**. It is beside the Table as well.
 A block over the nuclides is drawn as **a line per nuclide, in that nuclide's own
 colour and pattern**: I-129 is the same blue on every chart, whatever else is
 drawn beside it, so a nuclide is read off a chart without going to the legend
-once it has been read there. The colours are the HDF5 Browser's, which also
+once it has been read there. The colours are the Data Browser's, which also
 names the repositories, pathways and exposed groups a safety assessment
 reports, so a run opened there from here (right-click the Table) is drawn in the
 same colours. A colour that would hardly show on the chart's ground — white or
@@ -2821,7 +2821,7 @@ Times are separated by semicolons or spaces, and a comma between two digits is
 a decimal point. **Copy** puts the whole table on the clipboard — every row and
 every column, not only the ones drawn — tab-separated, which a spreadsheet
 pastes straight into cells, and with every digit. A right-click still exports it
-as CSV or HDF5, or opens it in the HDF5 Browser.
+as CSV or HDF5, or opens it in the Data Browser.
 
 ## Two runs side by side
 
@@ -3251,7 +3251,7 @@ once, and says so while it works. See
 ## Saving the results
 
 Right-click the **Table** for what it holds: **Export table to CSV…**, **Export
-table to HDF5…**, or **Open in the HDF5 Browser**, which hands the same HDF5 file
+table to HDF5…**, or **Open in the Data Browser**, which hands the same HDF5 file
 to the reader without saving it. Everything else is in **Save…**: *Results*
 for any of the series, every output included, *Realisations* for a
 probabilistic run's sample, its mean or one realisation of it, and *Model with results*, whose chosen
@@ -7382,7 +7382,7 @@ for reading elsewhere; that one is for coming back to.
 
 The quick version: **Export table to HDF5…** on the table's right-click menu
 for the curve, **Save → Realisations** for the sample, its mean or one run of it
-— and **Open in the HDF5 Browser**, on that menu and beside *Save…*, to send any
+— and **Open in the Data Browser**, on that menu and beside *Save…*, to send any
 of them straight to the reader without saving a file. The whole run is the usual thing to want there,
 which is **Save → Results** with every block in the file (**»** moves them all):
 a reader is opened to look around in, which is exactly when you want more than
@@ -7390,7 +7390,7 @@ the four lines you happened to chart.
 
 **Or open it in the reader without saving it at all.** **Open in the HDF5
 Browser** — on the table's menu, and beside *Save…* for Results, Realisations
-and Data — opens the HDF5 Browser at kvotab.se in a new tab and hands it the
+and Data — opens the Data Browser at kvotab.se in a new tab and hands it the
 file directly. No download, nothing to find in a downloads folder afterwards,
 and nothing left behind when the tab is closed. From Realisations it sends
 whatever *Holds* is set to, so the sample can go across the same way.

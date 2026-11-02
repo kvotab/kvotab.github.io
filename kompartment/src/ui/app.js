@@ -159,7 +159,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-10-24';
+const BUILD = '2026-11-02';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -9249,7 +9249,7 @@ function pickChanged() {
 /**
  * Puts these series on, or takes them off: off when every one of them is
  * already on, on otherwise -- and with Alt, these and nothing else, the way a
- * plain click in the HDF5 Browser shows one dataset.
+ * plain click in the Data Browser shows one dataset.
  */
 function toggleSeries(indices, ev = null) {
 	if (!shownRun() || !indices.length) return;
@@ -12232,7 +12232,7 @@ async function saveExport(name, body, kind) {
  * carries -- not only the distributed half, so the file that comes out is one
  * this can read back as a complete picture rather than as a patch.
  *
- * With `handoff` the HDF5 tree goes to the HDF5 Browser rather than the disk,
+ * With `handoff` the HDF5 tree goes to the Data Browser rather than the disk,
  * as the results do; see `deliver`.
  */
 async function exportData(as, keys = null, handoff = null) {
@@ -12533,7 +12533,7 @@ function openSave() {
 /**
  * What the dialog asked for, done.
  *
- * `open` sends the file to the HDF5 Browser instead of the disk. The tab is
+ * `open` sends the file to the Data Browser instead of the disk. The tab is
  * opened before anything here awaits: this runs inside the click, and a
  * pop-up is allowed out of a user gesture and not out of a promise that
  * settles after one.
@@ -12769,7 +12769,7 @@ async function deliver(bytes, name, handoff) {
 		return where == null ? null : { size, where };
 	}
 	await handoff.send(name, bytes);
-	return { size, where: ' — open in the HDF5 Browser' };
+	return { size, where: ' — open in the Data Browser' };
 }
 
 /**
@@ -12782,7 +12782,7 @@ async function deliver(bytes, name, handoff) {
 function openResultBrowser() {
 	const handoff = openHandoff();
 	if (!handoff) {
-		flash('The HDF5 Browser could not be opened — allow pop-ups for this page '
+		flash('The Data Browser could not be opened — allow pop-ups for this page '
 			+ 'and try again.', 'warn');
 	}
 	return handoff;
@@ -13522,7 +13522,7 @@ async function openSavedTimes() {
  *
  * The export used to be a button in the tab bar, which is an odd place for it:
  * it acts on the table, so it belongs to the table. What it holds, as CSV, as
- * HDF5, or into the HDF5 Browser; every other file is in Save….
+ * HDF5, or into the Data Browser; every other file is in Save….
  */
 function tableMenu(ev) {
 	ev.preventDefault();
@@ -13549,14 +13549,14 @@ function tableMenu(ev) {
 				disabled: !shown,
 				title: 'A .h5 file: the times in /time, '
 					+ 'the index lists in /IndexLists, and one dataset per series '
-					+ 'under its block. The HDF5 Browser at kvotab.se reads it.',
+					+ 'under its block. The Data Browser at kvotab.se reads it.',
 				onPick: () => downloadHDF5(state.selected.slice(), ''),
 			},
 			{
-				label: 'Open in the HDF5 Browser',
+				label: 'Open in the Data Browser',
 				hint: `${shown} series`,
 				disabled: !shown,
-				title: 'Opens the HDF5 Browser at kvotab.se and hands it these series '
+				title: 'Opens the Data Browser at kvotab.se and hands it these series '
 					+ 'directly, without saving a file first.',
 				onPick: () => {
 					const handoff = openResultBrowser();

@@ -1,4 +1,4 @@
-# Characterisation tests for the HDF5 Browser
+# Characterisation tests for the Data Browser
 
 These exist to answer one question: **did a change to rb.html alter its
 behaviour?** They do not assert that the behaviour is correct — they record what

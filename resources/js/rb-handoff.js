@@ -24,7 +24,7 @@
        }
        if (e.data && e.data.kvot === 'rb-error') {
          removeEventListener('message', onMsg);
-         console.error('HDF5 Browser refused the file:', e.data.message);
+         console.error('Data Browser refused the file:', e.data.message);
        }
      });
 

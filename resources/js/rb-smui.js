@@ -499,7 +499,7 @@ function rbSend(plan, how, n) {
       setFileLoadProgress(0, 'Packaging the selection…');
       const pack = await rbBuildPackage(plan, n, (done, total) => {
         setFileLoadProgress(total ? done / total : null, `Packaging the selection: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} datasets`);
-        if (tab) tab.progress(`The HDF5 Browser is packaging its selection: ${done} of ${total} datasets`);
+        if (tab) tab.progress(`The Data Browser is packaging its selection: ${done} of ${total} datasets`);
       });
       if (how === 'save') {
         hideFileLoadTicker();
@@ -783,9 +783,9 @@ async function rbBuildPackage(plan, n, onProgress) {
     : '';
   // (said once everything is written, with what could not be)
   const rootAttrs = () => ({
-    source: `the HDF5 Browser (rb.html): ${files.join(', ')}`,
+    source: `the Data Browser (rb.html): ${files.join(', ')}`,
     created_time: rbStamp(new Date()),
-    description: `${plan.items.length === 1 ? 'One dataset' : `${plan.items.length} datasets`} sent from the HDF5 Browser.${drawnNote}${notes.length ? ` Left out: ${notes.slice(0, 8).join('; ')}${notes.length > 8 ? `; and ${notes.length - 8} more` : ''}.` : ''}`,
+    description: `${plan.items.length === 1 ? 'One dataset' : `${plan.items.length} datasets`} sent from the Data Browser.${drawnNote}${notes.length ? ` Left out: ${notes.slice(0, 8).join('; ')}${notes.length > 8 ? `; and ${notes.length - 8} more` : ''}.` : ''}`,
   });
   const buffer = await rbWritePackage(root, plan.items.length, onProgress, notes, rootAttrs);
   const name = (files.length > 1 ? `${plan.label} (${names[0]} and ${files.length - 1} more).h5` : `${names[0]} ${plan.label}.h5`).replace(/[\\/]/g, '_');

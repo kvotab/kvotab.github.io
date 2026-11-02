@@ -1,6 +1,6 @@
 # Third-party notices
 
-The HDF5 Browser extension is written by Kvot AB and published under the MIT
+The Data Browser extension is written by Kvot AB and published under the MIT
 licence (see `LICENSE`). Unlike the page on kvotab.se, which has the visitor's
 browser fetch these libraries from their publishers, the extension carries
 copies of them, so it carries their licences too: every text is in

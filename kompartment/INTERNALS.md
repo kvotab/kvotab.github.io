@@ -91,9 +91,9 @@ exercise `domain/` and `sim/` directly, which is why they can be plain Node.
 | `src/ui/chart.js`, `src/ui/svgcanvas.js` | The chart on a canvas, and the same paint routine writing SVG |
 | `src/ui/chartplan.js` | What the Chart draws from what is picked: each block's lines, its panels and its total |
 | `src/ui/chartstack.js` | Panels: a chart each over one time axis, and one picture of all of them |
-| `src/ui/linestyles.js` | The colour and pattern of a line that stands for a known index — the HDF5 Browser's table — and the lightness moved to stand off the chart |
+| `src/ui/linestyles.js` | The colour and pattern of a line that stands for a known index — the Data Browser's table — and the lightness moved to stand off the chart |
 | `src/ui/tableviews.js`, `src/ui/readnum.js` | The Table's peaks and pivot, and numbers typed with a decimal comma |
-| `src/ui/prefix.js` | A prefix for an axis's unit — kBq, µSv/year, kyear — by the HDF5 Browser's rule |
+| `src/ui/prefix.js` | A prefix for an axis's unit — kBq, µSv/year, kyear — by the Data Browser's rule |
 | `src/ui/tree.js`, `src/ui/icons.js` | The block tree, and the glyph beside each name |
 | `src/ui/inspector.js` | The settings panel for whatever is selected |
 | `src/ui/equationbox.js` | The box an equation is typed in: one line at rest, the whole equation while it is typed in. See *The box an equation is typed in* |
@@ -3884,7 +3884,7 @@ no style is placed by its position — `MAX_SERIES` (32) bounds those — while
 styled ones go up to `MOST_LINES` (400) per panel. A `set` on a series
 still overrides the pattern, which is how the mean, a scenario and the run
 beside keep their meaning on a nuclide's colour. The named table is copied from
-the HDF5 Browser (`NAMED_LINE_STYLES` in resources/js/rb-chart-axes.js) and a
+the Data Browser (`NAMED_LINE_STYLES` in resources/js/rb-chart-axes.js) and a
 test compares the two where that file is in reach. `forSurface` moves a colour's
 OKLab lightness by bisection until it stands off the chart's surface by 1.7:1
 on a light ground (the browser's own floor for its pathway colours) or 3:1 on a
@@ -3920,7 +3920,7 @@ tick labels and the readout are shifted by (`shiftDecimal`, which moves decimal
 digits rather than multiplying), and the titles carry `unitWithPrefix`'s unit;
 everything the chart computes — its window, a zoom, the axes set by hand —
 stays in the model's numbers, so nothing else needs to know of them. The rule for which
-units take a letter is the HDF5 Browser's, ported to ./src/ui/prefix.js and
+units take a letter is the Data Browser's, ported to ./src/ui/prefix.js and
 compared with it by a test. They are `view.chart_time_prefix` and
 `view.chart_value_prefix`, written only while set, and presets and views carry
 `x_prefix`/`y_prefix` (null for "says nothing").

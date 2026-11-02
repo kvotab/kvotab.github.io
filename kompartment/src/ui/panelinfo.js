@@ -313,7 +313,7 @@ export function panelTopic(key, ctx = {}) {
 				list: [
 					'**Copy** puts every row of the table on the clipboard, tab-separated, which a '
 					+ 'spreadsheet pastes straight into cells.',
-					'Right-click the table to export it as CSV or HDF5, or to open it in the HDF5 Browser.',
+					'Right-click the table to export it as CSV or HDF5, or to open it in the Data Browser.',
 				],
 			}],
 			more: 'The table’s layouts',

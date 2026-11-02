@@ -53,7 +53,7 @@
           'A pandas DataFrame or Series saved with to_hdf (fixed or table format) opens as itself: its columns, types, categories and index. An index of 0, 1, 2 … is the row numbers, and is left out.',
         ] },
         { heading: 'What the file says', list: [
-          'A time vector at the top (/time, as Kompartment\'s and the HDF5 Browser\'s result files have it) and a dimension scale are row keys: each is the first column of the tables of its length.',
+          'A time vector at the top (/time, as Kompartment\'s and the Data Browser\'s result files have it) and a dimension scale are row keys: each is the first column of the tables of its length.',
           'A probabilistic run\'s series (times × realisations) opens a row per realisation and a column per time, beside the sampled values. Where each realisation has times of its own (a time matrix with n_times), a series opens a column per realisation, each to its last step.',
           'A lookup table in a Kompartment data file opens with its times (its index attribute) beside its values.',
           'netCDF-4: units such as "days since 2000-01-01" make dates; _FillValue and missing_value are missing; scale_factor and add_offset are applied; character arrays are text.',
@@ -64,13 +64,13 @@
         ] },
         { heading: 'Not read', text: 'Object references, opaque bytes, variable-length sequences and HDF5 time values are listed but cannot be ticked, and links to other files are not followed. Compressed data needs its decoder: deflate, shuffle and szip are built in, and lzf, blosc, zstd, lz4, bzip2, bitshuffle and zfp are fetched from cdn.jsdelivr.net the first time a dataset needs one.' },
         { heading: 'Find and tick', text: 'Find shows the groups and datasets whose names contain the text, and Tick shown ticks them. A group\'s box ticks everything under it. A file that is one table and nothing else opens without this dialog.' },
-        { heading: 'From the HDF5 Browser', text: 'The HDF5 Browser (rb.html) sends its selection here: right-click in its tree and choose Send to User Interface for statsmodels. It arrives as an HDF5 file and opens at once, every table in it, unless that is too many or too wide a table, when this dialog asks. Its series come with their times, and values drawn from its distributions come under samples, a row per value. Each send goes to the same tab while it is open.' },
+        { heading: 'From the Data Browser', text: 'The Data Browser (rb.html) sends its selection here: right-click in its tree and choose Send to User Interface for statsmodels. It arrives as an HDF5 file and opens at once, every table in it, unless that is too many or too wide a table, when this dialog asks. Its series come with their times, and values drawn from its distributions come under samples, a row per value. Each send goes to the same tab while it is open.' },
       ],
       more: { label: 'Data tables', id: 'help-tables' },
     },
     'file:mat': {
       kicker: 'File', title: 'Open MAT-file',
-      lead: 'The variables of a MATLAB MAT-file, each with what it would become. Tick what to open, and Open makes the tables. A MAT-file saved with -v4, -v6, -v7 or -v7.3 opens, read whole in this browser (up to 1 GB), and as the HDF5 Browser (rb.html) shows it.',
+      lead: 'The variables of a MATLAB MAT-file, each with what it would become. Tick what to open, and Open makes the tables. A MAT-file saved with -v4, -v6, -v7 or -v7.3 opens, read whole in this browser (up to 1 GB), and as the Data Browser (rb.html) shows it.',
       sections: [
         { heading: 'Variables', list: [
           'A numeric or logical array opens in the size MATLAB gives it: a 1000×3 double is 1,000 rows of 3 columns (⇄ swaps them), and a row or column vector is one column. Logical values are 0 and 1, labelled false and true; a complex array opens as its real and imaginary parts.',

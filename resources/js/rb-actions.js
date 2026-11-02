@@ -1,5 +1,5 @@
 /* ==========================================================================
-   HDF5 BROWSER ACTIONS
+   DATA BROWSER ACTIONS
 
    The names the page's controls declare in their data-on-* attributes, and
    the functions they reach. The dispatch mechanism itself is shared with the

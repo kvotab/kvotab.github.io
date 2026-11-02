@@ -2,7 +2,7 @@
    SMUI.HTML: MATLAB MAT-FILES
 
    A MAT-file, in any of the formats MATLAB saves (-v4, -v6, -v7 and -v7.3),
-   opens in the Open dialog as the HDF5 Browser (rb.html) shows it. That
+   opens in the Open dialog as the Data Browser (rb.html) shows it. That
    page's reader, rb-mat.js, reads the variables into its tree of groups and
    datasets: an array in MATLAB's own size, char as text, a cell -- or a
    struct array's field -- that reads as a table as one dataset, a table's
@@ -25,7 +25,7 @@
   'use strict';
   const SM = root.SM || (root.SM = {});
 
-  /* What rb-mat.js asks of the HDF5 Browser's page, given as that page has
+  /* What rb-mat.js asks of the Data Browser's page, given as that page has
      it: rb-eas.js's groups and link names, rb-utils.js's escaping and its
      wait for h5wasm, rb-init.js's check of the HDF5 signature. The size
      limit and the byte counts are kvot-safe.js's, as on that page. rb-mat.js

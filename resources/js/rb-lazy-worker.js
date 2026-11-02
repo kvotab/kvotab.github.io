@@ -1,7 +1,7 @@
 /* ==========================================================================
    RB LAZY WORKER — a large local HDF5 file read from disk a piece at a time
    --------------------------------------------------------------------------
-   The HDF5 Browser reads a file it is given into memory whole, twice over
+   The Data Browser reads a file it is given into memory whole, twice over
    (its own bytes, and h5wasm's copy), which is why it stopped at 1 GB. A file
    the reader picks from disk does not have to be read that way. Here h5wasm
    opens it through Emscripten's WORKERFS, which reads the File object with

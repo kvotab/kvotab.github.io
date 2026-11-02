@@ -29,7 +29,7 @@ produce no findings; each paragraph under "ERRORS BELOW" must produce exactly
 one. The reference list at the end carries a superscript edition ordinal and
 an out-of-order entry.
 
-## HDF5 Browser fixtures
+## Data Browser fixtures
 
 `prob-fixture.h5` is a small padded probabilistic file: `/time` and `/grp/DS`
 both have shape (40, 8) with `probabilistic=1` and `n_times=[40, 37, 34]`, so

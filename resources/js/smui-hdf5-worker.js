@@ -8,12 +8,12 @@
    The file is not read into memory. h5wasm opens it through Emscripten's
    WORKERFS, which reads the File where HDF5 asks (FileReaderSync, only in a
    worker), through a cache of 1 MB blocks: HDF5 reads its metadata a few
-   hundred bytes at a time. This is the HDF5 Browser's way (rb-lazy-worker.js),
+   hundred bytes at a time. This is the Data Browser's way (rb-lazy-worker.js),
    learnt from the HDF Group's myHDF5, and its h5wasm build and compression
    plugins are the ones pinned here.
 
    A MAT-file (mat: its version, as SM.h5.matFormat says it) is read whole
-   instead, by the HDF5 Browser's reader, and written as an HDF5 file in
+   instead, by the Data Browser's reader, and written as an HDF5 file in
    memory (smui-mat.js), which is then opened as any other.
 
    Messages in:   { id, cmd: 'open', file, mat }  -> { fid, nodes, info, defaults, mat }
@@ -121,7 +121,7 @@ const ready = (async () => {
   return lib;
 })();
 
-/* MAT-files: the HDF5 Browser's reader (rb-mat.js), the site's size limit it
+/* MAT-files: the Data Browser's reader (rb-mat.js), the site's size limit it
    reads against (kvot-safe.js) and the writing (smui-mat.js), loaded when the
    first comes. The HDF5 files written from them are kept in memory, in /mat. */
 const MAT_DIR = '/mat';

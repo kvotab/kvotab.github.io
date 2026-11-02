@@ -457,10 +457,10 @@ async def packages(page, count):
     check('flow t=1000: uniform on 11 to 13', bool(flow[:, 2].min() >= 11 and flow[:, 2].max() <= 13))
     check('drawn afresh per point', attrs(f['samples/flow']).get('drawn'), '10000 values drawn per point')
     r = attrs(f)
-    check('the root says where it came from', r.get('source'), 'the HDF5 Browser (rb.html): fx.h5')
+    check('the root says where it came from', r.get('source'), 'the Data Browser (rb.html): fx.h5')
     check('and when, in local time', bool(re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d:\d\d', r.get('created_time', ''))))
     check('and what the samples are', r.get('description'),
-          '4 datasets sent from the HDF5 Browser. Values from the distributions (under /samples): 10,000 per distribution, '
+          '4 datasets sent from the Data Browser. Values from the distributions (under /samples): 10,000 per distribution, '
           "independent random draws (Monte Carlo) from each one's pdf attribute, not the realisations of a run.")
 
     print('\nthe histogram\'s values')

@@ -1,4 +1,4 @@
-# Tests of the HDF5 Browser extension
+# Tests of the Data Browser extension
 
 Six, from the cheapest up. All but the first need `node build.mjs` first.
 

@@ -240,7 +240,7 @@
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5">View in HDF5 Browser</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5">View in Data Browser</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadHdf5">HDF5</button>
             <span class="kvot-info-slot" data-info-key="pane:time"></span>
           </div>
@@ -931,8 +931,8 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
 
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes the species ticked in the list, at the cell the chart is showing,
-            a row per stored step. <em>View in HDF5 Browser</em> writes the whole run as an HDF5
-            file and opens it in the <a href="./rb.html">HDF5 Browser</a> in another tab, without
+            a row per stored step. <em>View in Data Browser</em> writes the whole run as an HDF5
+            file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
             need a run behind them, and neither sends anything anywhere: the file is built in this
             browser and handed to a page of the same origin.</p>
@@ -1049,7 +1049,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-  <script src="./resources/js/site.js?v=20261102b"></script>
+  <script src="./resources/js/site.js?v=20261102c"></script>
   <script>
     KVOT.renderHeader('Reactive Transport');
     KVOT.renderNav('rtm.html');
@@ -1089,6 +1089,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261006a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261102"></script>
 </body>
 </html>

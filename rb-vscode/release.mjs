@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* ==========================================================================
-   RELEASE THE HDF5 BROWSER EXTENSION
+   RELEASE THE DATA BROWSER EXTENSION
 
    node release.mjs [--no-build] [--force]
    node release.mjs --new-key | --replace-key

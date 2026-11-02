@@ -339,7 +339,7 @@
               <span class="fac-muted" id="facXMinUnit">h</span>
             </label>
             <label><input type="checkbox" id="facLogY" checked data-on-change="fac:redraw"> log amounts</label>
-            <button type="button" class="fac-btn secondary small" id="facToHdf5" data-on-click="fac:toHdf5">View in HDF5 Browser</button>
+            <button type="button" class="fac-btn secondary small" id="facToHdf5" data-on-click="fac:toHdf5">View in Data Browser</button>
             <span class="kvot-info-slot" data-info-key="pane:charts"></span>
             <span class="fac-muted" id="facChartNote">Run the model to draw the charts.</span>
           </div>
@@ -600,8 +600,8 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
           <h3 id="help-files">Files</h3>
           <p><em>Save as .fac</em> writes the model text; <em>Open…</em> reads one back, and so does dropping the file anywhere on the page. A dropped file is taken as a model only when it ends in <code>.fac</code>, <code>.txt</code> or <code>.in</code>, and only one at a time, so that something dropped by mistake does not replace the text in the editor. <em>Download Excel</em> writes SETTINGS, DATA (the outputs) and STATES (the species) sheets in the layout of the Python port; CSV writes the table's columns at every solver step. Where the model has a <code>&lt;TIMES&gt;</code> section and the Table tab is set to those times, all three write that grid instead, and the buttons say so.</p>
 
-          <h3 id="help-hdf5">Sending a run to the HDF5 Browser</h3>
-          <p><em>View in HDF5 Browser</em> on the Charts tab writes the run as an HDF5 file and opens it in the <a href="./rb.html">HDF5 Browser</a> in a second tab. The bytes are handed straight across between the two tabs, so nothing is written to disk and nothing is uploaded. <em>Download HDF5</em> on the Table tab writes the same file, for h5py or anything else that reads HDF5.</p>
+          <h3 id="help-hdf5">Sending a run to the Data Browser</h3>
+          <p><em>View in Data Browser</em> on the Charts tab writes the run as an HDF5 file and opens it in the <a href="./rb.html">Data Browser</a> in a second tab. The bytes are handed straight across between the two tabs, so nothing is written to disk and nothing is uploaded. <em>Download HDF5</em> on the Table tab writes the same file, for h5py or anything else that reads HDF5.</p>
           <p><code>/Settings</code> and <code>/Constants</code> hold the case and what it works out to as a dataset each, carrying its own <code>unit</code> and <code>description</code> — the same two attributes every other dataset in the file has, read the same way from the comment beside the value in the model text. They were attributes on the group to begin with, which read as an empty group in a browser that lists children; then both, which made the group itself a wall of sixty name–value pairs. One dataset each is what a reader can actually open.</p>
           <p>The file carries the run and the case that produced it:</p>
           <table>
@@ -638,7 +638,7 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
   <script src="./resources/js/kvot-icons.js?v=20260902"></script>
-  <script src="./resources/js/site.js?v=20261102b"></script>
+  <script src="./resources/js/site.js?v=20261102c"></script>
   <script>
     KVOT.renderHeader('Canister Radiolysis');
     KVOT.renderNav('facsimile.html');
@@ -679,6 +679,6 @@ Y2 = , rf = 3.0E7*Y2*Y2</pre>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/facsimile-hdf5.js?v=20260917zd"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/facsimile-ui.js?v=20261005"></script>
+  <script src="./resources/js/facsimile-ui.js?v=20261102"></script>
 </body>
 </html>

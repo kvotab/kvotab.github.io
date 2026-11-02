@@ -1,5 +1,5 @@
 /**
- * Handing a result file to the HDF5 browser without it touching the disk.
+ * Handing a result file to the Data Browser without it touching the disk.
  *
  * The result browser at kvotab.se already accepts a file this way -- see
  * `resources/js/rb-handoff.js` there -- and this is the other half of that
@@ -51,7 +51,7 @@ export const RESULT_BROWSER = 'https://kvotab.se/rb.html';
  * taken as written, so a link to `index.html?rb=https://somewhere.else/x` made
  * the page open that address, hand it `window.opener`, and post the reader's
  * complete result file to it -- a whole assessment's realisations, on one
- * click of *Open in the HDF5 Browser*, with nothing on screen to say where it
+ * click of *Open in the Data Browser*, with nothing on screen to say where it
  * had gone. `?model=` has always been checked against the list of examples;
  * this is the same check, and it belongs here rather than at the call site
  * because `browserURL` is what everything asks.

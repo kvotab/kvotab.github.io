@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The site's characterisation walk (resources/tests/rb/characterise.py),
-inside the HDF5 Browser in VS Code.
+inside the Data Browser in VS Code.
 
 The same seventeen steps, evaluated in the webview's page instead of a tab,
 with the two fixtures opened as a reader opens them in VS Code: together,

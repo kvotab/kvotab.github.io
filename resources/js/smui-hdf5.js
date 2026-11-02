@@ -9,7 +9,7 @@
    without asking.
 
    A MATLAB MAT-file, of any version, is read whole in the worker by the
-   HDF5 Browser's reader and opens in the same dialog, as that page shows it
+   Data Browser's reader and opens in the same dialog, as that page shows it
    (smui-mat.js). A -v7.3 file too large to read whole is HDF5, and opens as
    the HDF5 file it is.
 
@@ -36,7 +36,7 @@
     hdf4: 'an HDF4 file, which is not HDF5: convert it (h4toh5) or save it as CSV',
   };
   // a MAT-file larger than this is not read whole (kvot-safe.js's limit, the
-  // HDF5 Browser's too)
+  // Data Browser's too)
   const MAT_WHOLE = KVOT_FILE_SIZE_LIMITS.dataset;
   const MAX_ROWS = 3000;     // tree lines drawn at once
   const fmtN = (n) => Number(n).toLocaleString('en-US');

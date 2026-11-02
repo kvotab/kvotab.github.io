@@ -194,7 +194,7 @@ because it differenced its Jacobian.
 ## The page
 
 `test-ui.py` drives facsimile.html in headless Chrome over the DevTools
-protocol, reusing the driver the HDF5 Browser tests use. Start the server and
+protocol, reusing the driver the Data Browser tests use. Start the server and
 the browser as in ../rb/README.md, then
 
     python3 resources/tests/facsimile/test-ui.py
@@ -542,7 +542,7 @@ numbers -- including two things the file has to be internally consistent about:
 `/Results/TIMH` is `/time` exactly, and `/Results/O2MOL` is `/Species/O2` times
 the free volume in `/Constants`.
 
-`test-ui.py` covers the other end of it: it clicks *View in HDF5 Browser*, waits
+`test-ui.py` covers the other end of it: it clicks *View in Data Browser*, waits
 for the status line to say the file is open, then attaches to the tab that
 opened and asks h5wasm -- the real library again, in the browser -- what it
 holds. That the tree shows `/Species` and that `f.get('/Species/H2').value` has

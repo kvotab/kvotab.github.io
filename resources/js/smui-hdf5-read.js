@@ -30,13 +30,13 @@
                              major): rows as MATLAB has them; char is text,
                              logical is 0/1; cells, objects and tables are
                              MATLAB's own and not read
-     a MAT-file opened as    any version, read by the HDF5 Browser's reader
+     a MAT-file opened as    any version, read by the Data Browser's reader
      one (smui-mat.js)       and written as that page shows it: each dataset
                              in MATLAB's shape already (MATLAB_size says
                              so), a cell or an object as a group of what it
                              holds, or as one dataset when it is a table
      Kompartment, Ecolego    /time is the first column of every table of
-     and the HDF5 Browser    its length; a run's realisations ([times ×
+     and the Data Browser    its length; a run's realisations ([times ×
                              runs], probabilistic) come a row per run, a
                              column per time, beside the sampled values;
                              a data file's lookup table comes with its
@@ -613,7 +613,7 @@
 
   /* A MATLAB struct's or table's fields (MATLAB_fields: names, or each name
      as its characters, as a -v7.3 file keeps them) as name -> place, each
-     name as an HDF5 link has it (a / is the HDF5 Browser's ⁄), or null. */
+     name as an HDF5 link has it (a / is the Data Browser's ⁄), or null. */
   function fieldOrder(n) {
     const f = n.kind === 'group' && n.attrs ? n.attrs.MATLAB_fields : null;
     if (!Array.isArray(f) || !f.length) return null;
@@ -669,7 +669,7 @@
     // its reader uses them)
     for (const n of nodes) if (n.kind === 'dataset') classifyDataset(n);
     // a MAT-file's cell, or a struct array's field, of numbers and text: the
-    // HDF5 Browser writes each number in it as text (rb-mat.js's matTable).
+    // Data Browser writes each number in it as text (rb-mat.js's matTable).
     // Its columns of numbers open as numbers, and a cell whose top rows are
     // text over such a column -- a sheet with its headings, as xlsread gives
     // it -- is a table of its own, its columns named by them (cellHeader)
@@ -706,7 +706,7 @@
       });
     }
     // the row keys: a dimension scale, and the file's time (Kompartment's,
-    // Ecolego's and the HDF5 Browser's /time)
+    // Ecolego's and the Data Browser's /time)
     for (const n of nodes) {
       if (n.kind !== 'dataset' || n.hidden || !n.readable || n.form !== 'vector') continue;
       if (n.isScale || (n.parent === 0 && /^(time|times)$/i.test(n.name) && n.numeric)) n.key = true;
@@ -719,7 +719,7 @@
       const lists = root.children.map((c) => nodes[c]).find((n) => n.kind === 'group' && n.name === 'IndexLists');
       if (lists) markBelow(nodes, lists, 'meta');
     }
-    // the HDF5 Browser's probabilistic time: [steps, iterations padded], its
+    // the Data Browser's probabilistic time: [steps, iterations padded], its
     // n_times the steps each iteration has; a series of that shape is laid
     // out alike (a column per iteration, the steps after its last missing)
     const rt = root.children.map((c) => nodes[c]).find((n) => n.form === 'matrix' && /^(time|times)$/i.test(n.name) && isTrue(n.attrs.probabilistic) && Array.isArray(n.attrs.n_times));
@@ -730,7 +730,7 @@
       }
     }
     // a run's realisations: a series [times, runs] marked probabilistic (a
-    // group's flags hold for what is in it, as the HDF5 Browser reads them);
+    // group's flags hold for what is in it, as the Data Browser reads them);
     // its times are its first dimension's scale, else the file's /time
     const flag = (n, k) => (n.attrs[k] != null ? n.attrs[k] : n.parent >= 0 ? nodes[n.parent].attrs[k] : null);
     for (const n of nodes) {
@@ -753,7 +753,7 @@
     if (typeof ra.Information === 'string' && ra.Information.trim()) notes.push(markupText(ra.Information).slice(0, 600));
     info.notes = notes.join('; ');
     info.matlab = nodes.some((n) => n.matlab);
-    // a MAT-file written as the HDF5 Browser shows it: its format, and what
+    // a MAT-file written as the Data Browser shows it: its format, and what
     // was left out of it (more arrays than are shown)
     if (ra.MATLAB_format != null) info.mat = { format: attrText(ra.MATLAB_format), note: ra.MATLAB_note != null ? attrText(ra.MATLAB_note) : '' };
   }
@@ -775,7 +775,7 @@
     const mcls = typeof n.attrs.MATLAB_class === 'string' ? n.attrs.MATLAB_class : null;
     if (mcls) {
       n.matlab = mcls;
-      // a MAT-file written as the HDF5 Browser shows it (smui-mat.js): in
+      // a MAT-file written as the Data Browser shows it (smui-mat.js): in
       // MATLAB's shape already, and plain values whatever the class
       if (n.attrs.MATLAB_size != null) n.matSize = attrText(n.attrs.MATLAB_size);
       else if (isTrue(n.attrs.MATLAB_empty)) { n.why = 'an empty MATLAB array'; return; }
@@ -807,7 +807,7 @@
     else if (dims.length === 1) { n.form = one ? 'vector' : 'compound'; n.rows = dims[0]; n.cols = one ? 1 : leaves.length; }
     else if (dims.length === 2 && one && !n.chars) { n.form = 'matrix'; n.rows = dims[0]; n.cols = dims[1]; }
     else { n.form = 'cube'; n.rows = prod(dims); n.cols = dims.length + leaves.length; }
-    // a lookup table (Kompartment's data files, and the HDF5 Browser's pdf
+    // a lookup table (Kompartment's data files, and the Data Browser's pdf
     // per point): its times beside it
     const pdfList = typeof n.attrs.pdf === 'string' && /^\s*\[/.test(n.attrs.pdf);
     if (n.form === 'vector' && n.numeric && (isTrue(n.attrs.lookup_table) || pdfList)) {
@@ -890,7 +890,7 @@
 
   // deflate, shuffle, fletcher32, szip, nbit and scale-offset are in h5wasm itself
   const FILTERS_OK = new Set([1, 2, 3, 4, 5, 6]);
-  // the rest by plugin (h5wasm-plugins), as the HDF5 Browser fetches them
+  // the rest by plugin (h5wasm-plugins), as the Data Browser fetches them
   const PLUGIN_FILTERS = new Set([307, 32000, 32001, 32004, 32008, 32013, 32015, 32019, 32022, 32023, 32026]);
 
   /* ---- pandas ---------------------------------------------------------------
@@ -1209,7 +1209,7 @@
     const unit = unitOf(n);
     if (unit && !n.cf) bits.push(`unit: ${unit}`);
     for (const k of ['long_name', 'description', 'Description', 'title', 'label', 'standard_name']) if (a[k] != null && attrText(a[k])) { bits.push(attrText(a[k])); break; }
-    // (the HDF5 Browser's word on numbers shown as text is not this page's:
+    // (the Data Browser's word on numbers shown as text is not this page's:
     // here they are numbers again where a column holds only them)
     const note = n.matSize && a.MATLAB_note != null ? attrText(a.MATLAB_note).replace(/\s*Numbers and text in one table:[^.]*\./, '').trim() : '';
     if (note) bits.push(note);

@@ -255,7 +255,7 @@ def svg(pieces):
     lower, upper = pieces
     return '\n'.join([
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {SIZE} {SIZE}" role="img">',
-        '\t<title>HDF5 Browser</title>',
+        '\t<title>Data Browser</title>',
         COMMENT,
         '\t<!-- the lower half, an upside-down U -->', *polys(lower),
         '\n\t<!-- the upper half, a U above the cut -->', *polys(upper),

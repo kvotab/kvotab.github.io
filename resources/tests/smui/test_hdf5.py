@@ -595,8 +595,8 @@ RB_FIXTURES = os.path.join(REPO, 'resources', 'tests', 'rb', 'fixtures')
 
 
 def mat_files():
-    """Every version, read by the HDF5 Browser's reader and written as HDF5 by
-    smui-mat.js. The HDF5 Browser's fixtures were written by MATLAB R2023a
+    """Every version, read by the Data Browser's reader and written as HDF5 by
+    smui-mat.js. The Data Browser's fixtures were written by MATLAB R2023a
     (resources/tests/rb/mat_fixtures.m): the values checked are that
     script's. SciPy's files are checked against SciPy's loadmat."""
     v7 = read(os.path.join(RB_FIXTURES, 'matlab-v7.mat'), {'picked': 'all'})
@@ -668,7 +668,7 @@ def mat_files():
           (cut['mat']['unread'], cut['mat']['variables'] > 10, [n['note'][:32] for n in cut['nodes'] if n['kind'] == 'group' and (n['note'] or '').startswith('This variable')]),
           (1, True, ['This variable could not be read:']))
 
-    # what the HDF5 Browser sends of a MAT-file it has open: its datasets with
+    # what the Data Browser sends of a MAT-file it has open: its datasets with
     # MATLAB_size, in MATLAB's shape
     with h5py.File(os.path.join(TMP, 'handed.h5'), 'w') as f:
         ds = f.create_dataset('A', data=np.arange(6.0).reshape(2, 3))
@@ -676,7 +676,7 @@ def mat_files():
         ds = f.create_dataset('c', data=['x', 'y'], dtype=h5py.string_dtype())
         ds.attrs['MATLAB_class'], ds.attrs['MATLAB_size'] = 'cell', '2×1'
     out = read('handed.h5')
-    check('MAT: what the HDF5 Browser sends (MATLAB_size) is in MATLAB\'s shape, and a cell is read',
+    check('MAT: what the Data Browser sends (MATLAB_size) is in MATLAB\'s shape, and a cell is read',
           (out['node']['/A']['transposed'], [(c['name'], c['values']) for c in table(out, 'handed')['columns']]),
           (False, [('c', ['x', 'y']), ('A 1', nums([0, 3])), ('A 2', nums([1, 4])), ('A 3', nums([2, 5]))]))
 
@@ -798,16 +798,16 @@ def results_like():
     t = out['tables'][0]
     check('result file: columns named by the times', [c['name'] for c in t['columns']][:3], ['C-14 t=0', 'C-14 t=1', 'C-14 t=2'])
     check('result file: the index lists are not ticked', '/IndexLists/Radionuclides' in out['defaults']['picked'], False)
-    # the HDF5 Browser's own test files (resources/tests/rb/fixtures, ours)
+    # the Data Browser's own test files (resources/tests/rb/fixtures, ours)
     a = os.path.join(REPO, 'resources', 'tests', 'rb', 'fixtures', 'sample-a.h5')
     shutil.copyfile(a, os.path.join(TMP, 'sample-a.h5'))
     out = read('sample-a.h5')
     with h5py.File(a) as f:
         ac, tm = f['biosphere/vault_A/mire/total/Ac-227'][()], f['time'][()]
     t = table(out, 'sample-a — total')
-    check('HDF5 Browser sample: probabilistic series under a time-dependent group open a row per realisation', (t['rows'] if 'rows' in t else len(t['columns'][0]['values']), len(t['columns'])), (12, 9 * 60))
+    check('Data Browser sample: probabilistic series under a time-dependent group open a row per realisation', (t['rows'] if 'rows' in t else len(t['columns'][0]['values']), len(t['columns'])), (12, 9 * 60))
     check('... a column is a time, its values the realisations', (t['columns'][5]['name'], t['columns'][5]['values']), (f'Ac-227 t={float(f"{tm[5]:.6g}"):g}', nums(ac[5, :])))
-    # what the HDF5 Browser sends (rb-smui.js): /time a dimension scale on a
+    # what the Data Browser sends (rb-smui.js): /time a dimension scale on a
     # run's realisations, and lookup tables of distributions (a pdf per
     # point), one as long as /time, one of other times
     with h5py.File(os.path.join(TMP, 'rb-package.h5'), 'w') as f:
@@ -826,7 +826,7 @@ def results_like():
         d.attrs['index'] = '0,50,500'
         d.attrs['lookup_table'] = 'true'
     out = read('rb-package.h5')
-    check('HDF5 Browser package: a table each', sorted(t['name'] for t in out['tables']), ['rb-package — Dose', 'rb-package — flow', 'rb-package — rain'])
+    check('Data Browser package: a table each', sorted(t['name'] for t in out['tables']), ['rb-package — Dose', 'rb-package — flow', 'rb-package — rain'])
     t = table(out, 'rb-package — Dose')
     check("... a run's realisations on /time made a dimension scale: a row per run, a column per time, t=…",
           ([c['name'] for c in t['columns']], t['col']['Dose t=10']['values']), (['Dose t=0', 'Dose t=10', 'Dose t=100'], [4.0, 5.0, 6.0, 7.0]))
@@ -841,7 +841,7 @@ def results_like():
         ds, tt, steps = f['grp/DS'][()], f['time'][()], [int(k) for k in f['time'].attrs['n_times']]
     t = out['tables'][0]
     want = [[fin(float(ds[i, k])) if i < steps[k] else None for i in range(ds.shape[0])] for k in range(len(steps))]
-    check('HDF5 Browser per-iteration time (n_times): a column per iteration, the padding left out', [c['name'] for c in t['columns']], ['DS 1', 'DS 2', 'DS 3', 'time 1', 'time 2', 'time 3'])
+    check('Data Browser per-iteration time (n_times): a column per iteration, the padding left out', [c['name'] for c in t['columns']], ['DS 1', 'DS 2', 'DS 3', 'time 1', 'time 2', 'time 3'])
     check('... each iteration to its last step', [c['values'] for c in t['columns'][:3]], want)
     check('... the times alike', [c['values'] for c in t['columns'][3:]], [[fin(float(tt[i, k])) if i < steps[k] else None for i in range(tt.shape[0])] for k in range(len(steps))])
 

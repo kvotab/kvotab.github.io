@@ -59,7 +59,7 @@
         background: 'var(--vscode-inputValidation-warningBackground, #5f4a0e)',
         borderBottom: '1px solid var(--vscode-inputValidation-warningBorder, #b89500)'
       });
-      bar.textContent = 'The HDF5 Browser was updated while this window was open. Run "Developer: Reload Window" '
+      bar.textContent = 'The Data Browser was updated while this window was open. Run "Developer: Reload Window" '
         + 'from the Command Palette to use the new version: until then parts of it may not work.';
       const close = document.createElement('button');
       close.type = 'button';
@@ -111,7 +111,7 @@
       try {
         fn(m);
       } catch (e) {
-        console.error(`HDF5 Browser: handling "${m.type}" failed`, e);
+        console.error(`Data Browser: handling "${m.type}" failed`, e);
       }
     }
   });
@@ -229,7 +229,7 @@
     const key = new URL(String(url), `${MEDIA}/`).pathname.slice(new URL(`${MEDIA}/`).pathname.length);
     const sources = window.KVOT_VSCODE_WORKER_SOURCES || {};
     if (!Object.prototype.hasOwnProperty.call(sources, key)) {
-      throw new Error(`HDF5 Browser: no bundled worker for ${url} (build.mjs bundles the workers the page names)`);
+      throw new Error(`Data Browser: no bundled worker for ${url} (build.mjs bundles the workers the page names)`);
     }
     const blob = new Blob([PREAMBLE, sources[key], `\n//# sourceURL=${MEDIA}/${key}`], { type: 'text/javascript' });
     // Not revoked: the worker may not have read it yet, and a page makes two workers at most.

@@ -1,6 +1,6 @@
 function fig_fixtures(outdir)
 % The MATLAB-written figure files test-fig.py reads: figures of the kinds
-% the HDF5 Browser draws, saved by savefig. Written once with MATLAB R2023a
+% the Data Browser draws, saved by savefig. Written once with MATLAB R2023a
 % into resources/tests/rb/fixtures; to write them again,
 %
 %     matlab -batch "fig_fixtures('<repository>/resources/tests/rb/fixtures')"

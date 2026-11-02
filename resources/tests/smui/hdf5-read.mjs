@@ -8,7 +8,7 @@
      node hdf5-read.mjs <h5wasm dir> unpickle <file>
 
    read opens a file as the page does: a MAT-file (SM.h5.matFormat) is
-   written as an HDF5 file first, by smui-mat.js with the HDF5 Browser's
+   written as an HDF5 file first, by smui-mat.js with the Data Browser's
    reader, as the worker writes it; read-hdf5 opens it as the HDF5 file it
    is (a -v7.3 file too large to read whole opens so). read prints { mat,
    nodes, info, defaults, plan, tables, failed } as JSON, mat being { format,

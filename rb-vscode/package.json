@@ -1,7 +1,7 @@
 {
   "name": "hdf5-browser",
-  "displayName": "HDF5 Browser",
-  "description": "Browse HDF5 (.h5) files and Ecolego assessments (.eas) in VS Code with kvotab.se's HDF5 Browser: explore the tree, inspect datasets, chart them and export to Excel.",
+  "displayName": "Data Browser",
+  "description": "Browse HDF5 (.h5) files and Ecolego assessments (.eas) in VS Code with kvotab.se's Data Browser: explore the tree, inspect datasets, chart them and export to Excel.",
   "version": "0.1.11",
   "publisher": "kvotab",
   "icon": "icon.png",
@@ -49,7 +49,7 @@
     "customEditors": [
       {
         "viewType": "kvotab.hdf5Browser",
-        "displayName": "HDF5 Browser",
+        "displayName": "Data Browser",
         "selector": [
           {
             "filenamePattern": "*.{h5,hdf5,he5,eas}"
@@ -61,18 +61,18 @@
     "commands": [
       {
         "command": "kvotab.hdf5Browser.openTogether",
-        "title": "Open Together in HDF5 Browser",
-        "category": "HDF5 Browser"
+        "title": "Open Together in Data Browser",
+        "category": "Data Browser"
       },
       {
         "command": "kvotab.hdf5Browser.showLog",
         "title": "Show Log",
-        "category": "HDF5 Browser"
+        "category": "Data Browser"
       },
       {
         "command": "kvotab.hdf5Browser.checkForUpdates",
         "title": "Check for Updates",
-        "category": "HDF5 Browser"
+        "category": "Data Browser"
       }
     ],
     "menus": {
@@ -98,7 +98,7 @@
       ]
     },
     "configuration": {
-      "title": "HDF5 Browser",
+      "title": "Data Browser",
       "properties": {
         "hdf5Browser.readLazily": {
           "type": "string",
@@ -113,12 +113,12 @@
             "Every file is read whole, up to 1 GB."
           ],
           "default": "auto",
-          "markdownDescription": "How a file is read. Read whole, it is held in the editor's memory; read lazily, the extension's HDF5 reader reads only what is looked at, so a file of any size opens at once. The same rule the [HDF5 Browser](https://kvotab.se/rb.html) applies on the web."
+          "markdownDescription": "How a file is read. Read whole, it is held in the editor's memory; read lazily, the extension's HDF5 reader reads only what is looked at, so a file of any size opens at once. The same rule the [Data Browser](https://kvotab.se/rb.html) applies on the web."
         },
         "hdf5Browser.addToOpenBrowser": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "A file dropped on an HDF5 Browser goes into it as another file tab, as *Add Files* would add it, instead of opening a browser of its own. VS Code opens a dropped file as an editor in the group it was dropped on, so this takes any HDF5 file opened there while a browser shows in the group: a double-click in the Explorer too. A preview (a single click) and *Open Together* still open their own browser, and so does a drop on the edge of a group, which VS Code opens beside it."
+          "markdownDescription": "A file dropped on a Data Browser goes into it as another file tab, as *Add Files* would add it, instead of opening a browser of its own. VS Code opens a dropped file as an editor in the group it was dropped on, so this takes any HDF5 file opened there while a browser shows in the group: a double-click in the Explorer too. A preview (a single click) and *Open Together* still open their own browser, and so does a drop on the edge of a group, which VS Code opens beside it."
         },
         "hdf5Browser.theme": {
           "type": "string",
@@ -133,7 +133,7 @@
             "Dark, whatever VS Code is in."
           ],
           "default": "auto",
-          "markdownDescription": "Light or dark mode in the HDF5 Browser's views. The toggle at the right of a view's header sets this; toggling back to the mode VS Code is in sets it to `auto` again."
+          "markdownDescription": "Light or dark mode in the Data Browser's views. The toggle at the right of a view's header sets this; toggling back to the mode VS Code is in sets it to `auto` again."
         },
         "hdf5Browser.updates": {
           "type": "string",
@@ -145,14 +145,14 @@
           "enumDescriptions": [
             "A new version is installed when it is out, and the window is offered a reload to start it.",
             "A new version is offered, and installed if you choose to.",
-            "No looking by itself: only HDF5 Browser: Check for Updates looks."
+            "No looking by itself: only Data Browser: Check for Updates looks."
           ],
           "default": "install",
           "scope": "application",
           "tags": [
             "usesOnlineServices"
           ],
-          "markdownDescription": "What a new version of the HDF5 Browser leads to. The extension comes from [kvotab.se](https://kvotab.se/rb.html), not from the Marketplace, so it looks there itself, reading the site's release note twice a day: soon after VS Code starts, unless it looked in the last twelve hours, and every twelve hours while VS Code runs. A version is installed only if its signature shows kvotab released it. With VS Code's own `#extensions.autoUpdate#` off, a new version is offered rather than installed; with `#extensions.autoCheckUpdates#` off, the extension looks only when asked, as with `off`."
+          "markdownDescription": "What a new version of the Data Browser leads to. The extension comes from [kvotab.se](https://kvotab.se/rb.html), not from the Marketplace, so it looks there itself, reading the site's release note twice a day: soon after VS Code starts, unless it looked in the last twelve hours, and every twelve hours while VS Code runs. A version is installed only if its signature shows kvotab released it. With VS Code's own `#extensions.autoUpdate#` off, a new version is offered rather than installed; with `#extensions.autoCheckUpdates#` off, the extension looks only when asked, as with `off`."
         }
       }
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The HDF5 Browser extension in a real VS Code: what the site does not have.
+"""The Data Browser extension in a real VS Code: what the site does not have.
 
 characterise-vscode.py shows the page behaves inside VS Code as it does on
 the site. This covers what is the extension's own:

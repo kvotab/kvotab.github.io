@@ -1874,7 +1874,7 @@
   }
 
   /* ---------------------------------------------------------------------
-     Handing a run to the HDF5 Browser
+     Handing a run to the Data Browser
      --------------------------------------------------------------------- */
 
   /** Where the browser is: a sibling page, so the handoff is same-origin. */
@@ -1894,7 +1894,7 @@
   }
 
   /**
-   * Opens the HDF5 Browser and hands it this run, without a file ever reaching
+   * Opens the Data Browser and hands it this run, without a file ever reaching
    * the disk. The other half of the protocol is resources/js/rb-handoff.js.
    *
    * The tab is opened first, before the file exists, and that is not an
@@ -1909,7 +1909,7 @@
     const win = window.open(`${HDF5_BROWSER}#handoff=${encodeURIComponent(origin)}`, '_blank');
     if (!win) {
       notifyUser('The browser blocked the new tab. Allow pop-ups for this page, or use '
-        + '“Download HDF5” on the Table tab and open the file in the HDF5 Browser yourself.');
+        + '“Download HDF5” on the Table tab and open the file in the Data Browser yourself.');
       return;
     }
 
@@ -1932,7 +1932,7 @@
       setStatus(`Writing ${name}…`);
       await new Promise((r) => setTimeout(r, 0));     // let that reach the screen
       const bytes = buildHdf5();
-      setStatus(`Sending ${name} (${(bytes.length / 1048576).toFixed(1)} MB) to the HDF5 Browser…`);
+      setStatus(`Sending ${name} (${(bytes.length / 1048576).toFixed(1)} MB) to the Data Browser…`);
       if (!ready) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(
@@ -1950,8 +1950,8 @@
       });
       win.postMessage({ kvot: 'rb-open', name, buffer }, origin, [buffer]);
       const answer = await answered;
-      if (!answer.ok) throw new Error(answer.message || 'the HDF5 Browser refused the file');
-      setStatus(`${name} is open in the HDF5 Browser.`, 'ok');
+      if (!answer.ok) throw new Error(answer.message || 'the Data Browser refused the file');
+      setStatus(`${name} is open in the Data Browser.`, 'ok');
     } catch (e) {
       setStatus(`The handoff failed: ${e.message}. “Download HDF5” on the Table tab `
         + 'writes the same file.', 'error');
@@ -2634,11 +2634,11 @@
           '**Time axis**: hours or years, log or linear, for every chart but the first, which is always in years on a linear axis',
           '**from**: the left-hand end of a log time axis, in its unit. The points before it are dropped rather than hidden, so the height of a chart is decided by what is shown; empty starts at the first point of the run. Not offered on a linear axis.',
           '**log amounts**: a log scale for the oxygen and corrosion axis of the second chart and for the amounts of the third',
-          '**View in HDF5 Browser**: writes the run as an HDF5 file and opens it in the HDF5 Browser in a second tab. The file is handed across in memory: nothing is written to disk or uploaded.',
+          '**View in Data Browser**: writes the run as an HDF5 file and opens it in the Data Browser in a second tab. The file is handed across in memory: nothing is written to disk or uploaded.',
         ] },
         { heading: 'Keep in mind', text: 'An event is drawn as a dotted line, labelled with what it changed. A model that reports none of the first three charts’ quantities gets a note there instead; the fourth chart works for any model.' },
       ],
-      more: more('Sending a run to the HDF5 Browser', 'help-hdf5'),
+      more: more('Sending a run to the Data Browser', 'help-hdf5'),
     },
     'pane:series': {
       kicker: 'Charts', title: 'Your own selection',
@@ -2665,7 +2665,7 @@
           `**Rows**: about 200 or 1000 rows spread evenly in log time, every step kept, or the model’s own output times${times ? `, ${times} here` : ', where it has a `<TIMES>` section'}. Those are the cubic through the accepted steps on either side and their derivatives, not a solver’s own interpolant, so every method gives the same grid.`,
           '**Download CSV**: the chosen columns at every kept step, or at the output times when those are chosen; the button says which',
           '**Download Excel**: SETTINGS, DATA and STATES sheets in the layout of the Python port, at the same rows',
-          '**Download HDF5**: the file View in HDF5 Browser hands over, with the run, the case and the model text, for h5py or anything else that reads HDF5',
+          '**Download HDF5**: the file View in Data Browser hands over, with the run, the case and the model text, for h5py or anything else that reads HDF5',
         ] }],
         more: more('Files', 'help-files'),
       };

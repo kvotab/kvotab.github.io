@@ -9,7 +9,7 @@
  * fifth line is a different nuclide on every chart -- so a line that stands
  * for a known index wears that index's own colour and pattern.
  *
- * The table is the HDF5 Browser's (`NAMED_LINE_STYLES` in
+ * The table is the Data Browser's (`NAMED_LINE_STYLES` in
  * resources/js/rb-chart-axes.js at kvotab.se), copied as it is, so a nuclide
  * looks the same in both tools: a run handed from here to the browser draws
  * in the colours it was drawn in here. A test compares the two tables where

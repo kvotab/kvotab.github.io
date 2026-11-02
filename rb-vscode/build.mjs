@@ -47,7 +47,7 @@ const CACHE = path.join(HERE, '.cache');
   change with them: compare, then put the new hash here.
 */
 const READER_MIRRORS = {
-  'resources/js/rb-lazy-worker.js': 'sha256-i9o8c5+25g1xtqWAcQnHF3c5YuISMxIHIHSXYetAepc='
+  'resources/js/rb-lazy-worker.js': 'sha256-jniRVet13Qjg1c112f1Yezzosj0rtfmKPbTZt9/JFBQ='
 };
 
 /* Files the site does not load but the extension ships, pinned here. */
@@ -60,7 +60,7 @@ const EXTRA = [
 
 /* The welcome panel's first step names the URL button; here it names the Explorer. */
 const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>';
-const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in HDF5 Browser</em>.</li>';
+const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in Data Browser</em>.</li>';
 
 /* The tree's menu sends the selection to the User Interface for statsmodels on the
    site (rb-smui.js); here, where there is none, it only saves. */
@@ -176,7 +176,7 @@ async function main() {
   // The header is the file toolbar alone, without the logo and the page's
   // name: VS Code's editor tab names the file already, and the file tabs get
   // the width. rb-vscode.css lays it out.
-  headerJs = once(headerJs, "KVOT.renderHeader('HDF5 Browser', fileToolbar);", `{
+  headerJs = once(headerJs, "KVOT.renderHeader('Data Browser', fileToolbar);", `{
       const header = document.querySelector('header');
       header.classList.add('rb-vscode-header');
       header.innerHTML = fileToolbar;
@@ -238,7 +238,7 @@ async function main() {
     '  <meta name="viewport" content="width=device-width,initial-scale=1"/>',
     '  <meta http-equiv="Content-Security-Policy" content="{{CSP}}">',
     '  <meta name="kvot-vscode" content="{{CONFIG}}">',
-    '  <title>HDF5 Browser</title>',
+    '  <title>Data Browser</title>',
     '  <script src="{{MEDIA}}/rb-vscode/codec.js"></script>',
     '  <script src="{{MEDIA}}/rb-vscode/early.js"></script>',
     '  <script src="{{MEDIA}}/rb-vscode/workers.js"></script>',

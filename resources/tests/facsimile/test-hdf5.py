@@ -4,7 +4,7 @@
 `resources/js/kvot-hdf5-write.js` writes the format by hand rather than
 pulling in h5wasm, so the question that matters is whether libhdf5 agrees that
 the result is an HDF5 file. This solves a case through the engine, writes the
-same file the page hands to the HDF5 Browser, and opens it with h5py:
+same file the page hands to the Data Browser, and opens it with h5py:
 structure, attributes, and the numbers themselves.
 
     python3 resources/tests/facsimile/test-hdf5.py            # case 13g

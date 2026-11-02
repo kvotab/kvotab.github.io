@@ -72,7 +72,7 @@ const at = (outs, label) => outs.findIndex((o) => o.label === label);
 
 // --- the named lines --------------------------------------------------------------
 
-test('the named line styles are the HDF5 Browser’s, so a nuclide looks the same in both', () => {
+test('the named line styles are the Data Browser’s, so a nuclide looks the same in both', () => {
 	const rb = new URL('../../resources/js/rb-chart-axes.js', import.meta.url);
 	// The browser lives beside this tool in the site's repository; a copy of
 	// the tool on its own has nothing to compare with.
@@ -503,7 +503,7 @@ test('beside the Chart and the Table, the tree is the chart’s picker, and the 
 	assert(/if \(pick\) \{ toggle\(state, node\.path, !open\); draw\(\); return; \}/.test(tree),
 		'a sub-system beside the chart takes the page to the diagram');
 	// The platform key adds a block to the chart as it adds it to the
-	// selection, the way the HDF5 Browser compares datasets.
+	// selection, the way the Data Browser compares datasets.
 	assert(/if \(pick && all && \(ev\?\.metaKey \|\| ev\?\.ctrlKey\) && !ev\?\.shiftKey\) \{\n\t\t\t\t\t\tpick\.toggle\(/.test(tree),
 		'⌘-click does not reach the chart');
 	// Alt is that and nothing else.
@@ -795,7 +795,7 @@ test('Same chart is one chart whatever the units, and a total never adds two of 
 	assert(/for \(const p of panels\) p\.yLabel = unitsWithPrefix\(p\.units, ey\);/.test(app), 'the axis does not name every unit');
 });
 
-test('a prefix letters a unit as the HDF5 Browser does, and moves numbers by their digits', () => {
+test('a prefix letters a unit as the Data Browser does, and moves numbers by their digits', () => {
 	const cases = [
 		['Bq', 3, 'kBq'], ['Bq/year', 3, 'kBq/year'], ['mSv/year', 3, 'Sv/year'], ['mSv/year', -3, 'µSv/year'],
 		['Sv', -6, 'µSv'], ['year', 3, 'kyear'], ['m3', 3, '10³ m3'], ['m^3/year', 3, '10³ m^3/year'],

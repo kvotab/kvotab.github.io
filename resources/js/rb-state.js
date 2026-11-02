@@ -99,7 +99,7 @@ let dragCounter = 0;
  */
 const INFO_PANEL_DEFAULT_MESSAGE = `
 <div class="welcome-panel">
-  <h2><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> HDF5 Browser</h2>
+  <h2><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Data Browser</h2>
   <p>An interactive browser for exploring and visualising HDF5 data files.</p>
 
   <div class="welcome-section">

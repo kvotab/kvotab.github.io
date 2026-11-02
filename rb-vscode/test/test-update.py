@@ -14,7 +14,7 @@ KVOT_HDF5_UPDATE_KEY; everything else is as installed), and then:
      and VS Code marks the old one for removal;
   3. which does not look again so soon: a look holds for twelve hours, for
      every window and every version;
-  4. HDF5 Browser: Check for Updates, from the Command Palette, looks at
+  4. Data Browser: Check for Updates, from the Command Palette, looks at
      once, and says it is up to date;
   5. and the extension's gear menu in the Extensions view has it too. The
      menu is read where VS Code draws it in the window (window.menuStyle
@@ -107,7 +107,7 @@ process.stdout.write(JSON.stringify({
     sha256 = hashlib.sha256(package).hexdigest()
     out = json.loads(subprocess.run(['node', '-e', script, os.path.join(EXTENSION, 'src', 'update.js'), version, sha256],
                                     check=True, capture_output=True, text=True).stdout)
-    note = {'name': 'HDF5 Browser', 'version': version, 'file': 'hdf5-browser.vsix', 'bytes': len(package), 'sha256': sha256,
+    note = {'name': 'Data Browser', 'version': version, 'file': 'hdf5-browser.vsix', 'bytes': len(package), 'sha256': sha256,
             'released': time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime()), 'build': 'test-update.py',
             'vscode': '^1.100.0', 'signature': out['signature']}
     return note, out['publicKey']
@@ -326,7 +326,7 @@ async def main():
         await wb.connect()
 
         # 1. by itself: download, check, install, offer the reload
-        started = wait_log(profile, rf'HDF5 Browser {re.escape(base_version)}, page', 90, proc)
+        started = wait_log(profile, rf'Data Browser {re.escape(base_version)}, page', 90, proc)
         check(f'{base_version} starts (installed, not run from its folder)', bool(started))
         installed = wait_log(profile, rf'Installed {re.escape(new_version)}', 120, proc)
         check(f'soon after, it installs {new_version} by itself', bool(installed))
@@ -338,14 +338,14 @@ async def main():
         with open(os.path.join(ext, 'extensions.json')) as fh:
             listed = [e['version'] for e in json.load(fh) if e['identifier']['id'] == ID]
         check('  and lists it as the version installed', listed, [new_version])
-        offer = f'HDF5 Browser {new_version} is installed. Reload the window to start it.'
+        offer = f'Data Browser {new_version} is installed. Reload the window to start it.'
         toast = await wb.wait_toast(lambda t: t.startswith(offer), 20)
         check('  and the window is offered a reload', toast and toast['buttons'], ['Reload Window'])
 
         # 2. Reload Window, from that notification
         clicked = await wb.click(offer, 'Reload Window')
         check('Reload Window can be clicked', clicked)
-        restarted = wait_log(profile, rf'HDF5 Browser {re.escape(new_version)}, page', 90, proc)
+        restarted = wait_log(profile, rf'Data Browser {re.escape(new_version)}, page', 90, proc)
         check(f'  and the window runs {new_version}', bool(restarted))
         with open(os.path.join(ext, '.obsolete')) as fh:
             check(f'  and VS Code is to remove {base_version}', json.load(fh), {f'{ID}-{base_version}': True})
@@ -357,16 +357,16 @@ async def main():
               [p.split('?')[0] for p in site.requests], ['/dist/latest.json', '/dist/hdf5-browser.vsix'])
 
         # 4. the command, as a user gives it
-        await wb.command('HDF5 Browser: Check for Updates')
+        await wb.command('Data Browser: Check for Updates')
         up = await wb.wait_toast(lambda t: 'is up to date' in t, 20)
-        check('HDF5 Browser: Check for Updates, from the Command Palette, looks at once and says it is up to date',
-              up and up['text'], f'The HDF5 Browser is up to date: {new_version} is the latest version.')
+        check('Data Browser: Check for Updates, from the Command Palette, looks at once and says it is up to date',
+              up and up['text'], f'The Data Browser is up to date: {new_version} is the latest version.')
         check('  having read the note, and downloaded nothing', [p.split('?')[0] for p in site.requests],
               ['/dist/latest.json', '/dist/hdf5-browser.vsix', '/dist/latest.json'])
 
         # 5. the gear menu
         if draws_menus_in_window(exe):
-            labels = await wb.gear_menu('HDF5 Browser')
+            labels = await wb.gear_menu('Data Browser')
             check("the extension's gear menu in the Extensions view has Check for Updates", 'Check for Updates' in (labels or []))
         else:
             print("skip  the extension's gear menu: this VS Code draws it with macOS's own menus", flush=True)

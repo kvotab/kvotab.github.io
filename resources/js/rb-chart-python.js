@@ -299,7 +299,7 @@ def _file(name):
 
 @functools.lru_cache(maxsize=None)
 def read(file, path):
-    """A dataset's values, flat and as floats, as the HDF5 Browser reads them (read once, never changed)."""
+    """A dataset's values, flat and as floats, as the Data Browser reads them (read once, never changed)."""
     values = np.asarray(_file(file)[path][()], dtype=float).ravel()
     values.setflags(write=False)
     return values` },
@@ -325,7 +325,7 @@ def mean_over_realisations(values, n, stride):
     return realisations(values, n, stride).mean(axis=1)` },
   { name: 'percentile', needs: [], code: String.raw`
 def percentile(rows, q):
-    """The q-th percentile of each row's finite values, between the two nearest as the HDF5 Browser
+    """The q-th percentile of each row's finite values, between the two nearest as the Data Browser
     takes it (computeProbabilisticPercentile); a row with none is a gap."""
     rows = np.atleast_2d(rows)
     finite = np.isfinite(rows)
@@ -390,7 +390,7 @@ def add_up(n, parts):
   { name: 'total_realisations', needs: ['gaps_as_zero'], code: String.raw`
 def total_realisations(parts):
     """Show Total's realisations, a row a time, for the total's bands, added up part by part as the
-    HDF5 Browser adds them (accumulateRadionuclideTotal). A part is its series and its realisations:
+    Data Browser adds them (accumulateRadionuclideTotal). A part is its series and its realisations:
     rows, None for a part without them, or False for one whose could not be read. None when they do
     not add up (two parts with different realisations)."""
     rows, before = None, []
@@ -937,12 +937,12 @@ function pyChartScript(gd) {
     'import numpy as np', 'from matplotlib.ticker import AutoMinorLocator, FuncFormatter, LogLocator, NullFormatter'];
   const helpers = pyHelpersFor(used);
   const out = [
-    '"""A chart of the HDF5 Browser (kvotab.se/rb.html), drawn with matplotlib.',
+    '"""A chart of the Data Browser (kvotab.se/rb.html), drawn with matplotlib.',
     '',
     'Run it in the folder the HDF5 files are in (FILES names them). It needs h5py,',
     'numpy and matplotlib: pip install h5py numpy matplotlib. It reads the datasets',
     'the chart is drawn from and computes from them what the page computed, so it',
-    `draws the same lines. Made by the HDF5 Browser on ${date}.`,
+    `draws the same lines. Made by the Data Browser on ${date}.`,
     '"""',
     ...imports,
     '',

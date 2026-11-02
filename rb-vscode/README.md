@@ -1,6 +1,6 @@
-# HDF5 Browser for Visual Studio Code
+# Data Browser for Visual Studio Code
 
-The [HDF5 Browser](https://kvotab.se/rb.html) from kvotab.se, as an editor for
+The [Data Browser](https://kvotab.se/rb.html) from kvotab.se, as an editor for
 `.h5`, `.hdf5` and `.he5` files, and for Ecolego assessments (`.eas`). Open a
 file from the Explorer and it opens in an editor tab: the file's tree, each dataset's attributes and values, and the
 charts, with every feature the page has on the web — radionuclide groups with
@@ -29,7 +29,7 @@ the extension looks itself. It reads the site's release note twice a day —
 soon after VS Code starts, unless it looked in the last twelve hours, and
 every twelve hours while VS Code runs. A newer version is downloaded, checked
 and installed as *Install from VSIX…* would install it, and the window offers
-*Reload Window* to start it. *HDF5 Browser: Check for Updates* — in the
+*Reload Window* to start it. *Data Browser: Check for Updates* — in the
 Command Palette, and in the extension's gear menu in the Extensions view —
 looks at once.
 
@@ -58,7 +58,7 @@ Marketplace, and does not reach this one; the setting does.
   exports work on it as on any other. When it keeps several runs, a list
   asks which to open. Rewritten on disk, it opens the same runs again.
 * **Compare files**: select them in the Explorer, right-click, *Open Together
-  in HDF5 Browser*. They open in one tab, where the ∩ and ∪ buttons combine
+  in Data Browser*. They open in one tab, where the ∩ and ∪ buttons combine
   their trees. *Add Files* in the tab adds more.
 * **Drop files on a browser** — from the Explorer or from the Finder — and
   they go into it as more file tabs, as *Add Files* would add them. VS Code
@@ -134,9 +134,9 @@ the machine, the user or the files open is sent. `hdf5Browser.updates` set to
 
 | Command | |
 |---|---|
-| *Open Together in HDF5 Browser* | Explorer context menu, on one or more HDF5 files |
-| *HDF5 Browser: Show Log* | What the extension and its pages have reported |
-| *HDF5 Browser: Check for Updates* | Looks for a newer version on kvotab.se now; also in the extension's gear menu in the Extensions view |
+| *Open Together in Data Browser* | Explorer context menu, on one or more HDF5 files |
+| *Data Browser: Show Log* | What the extension and its pages have reported |
+| *Data Browser: Check for Updates* | Looks for a newer version on kvotab.se now; also in the extension's gear menu in the Extensions view |
 
 ## Building and testing
 

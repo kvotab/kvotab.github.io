@@ -6,7 +6,7 @@
    That is what a result file is.
 
    It exists so that a page which has just computed something can hand it to
-   the HDF5 Browser, or offer it as a .h5 download, without pulling in h5wasm
+   the Data Browser, or offer it as a .h5 download, without pulling in h5wasm
    -- 4.7 MB of WebAssembly from a CDN, which is a great deal to fetch in order
    to *write* a few hundred kilobytes.
 

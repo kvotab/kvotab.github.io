@@ -22,7 +22,7 @@
    newer version leads to: installed (install, the default), offered
    (notify), or nothing until asked (off). VS Code's own Extensions: Auto
    Update and Auto Check Updates settings, when off, hold it back the same way
-   they hold back VS Code's updates of extensions. "HDF5 Browser: Check for
+   they hold back VS Code's updates of extensions. "Data Browser: Check for
    Updates" looks at once, whatever the settings say.
 
    The note and the package are fetched as any of the site's files are:
@@ -268,19 +268,19 @@ class Updater {
     } catch (e) {
       this.log.warn(`Looking for an update: ${e.message}`);
       this.event({ type: 'update', state: 'failed', message: e.message });
-      if (asked) this.fail(`Could not look for an update of the HDF5 Browser: ${e.message}`);
+      if (asked) this.fail(`Could not look for an update of the Data Browser: ${e.message}`);
       return;
     }
     if (!isNewer(note.version, this.version)) {
       this.log.info(`Looked for an update: ${this.version} is up to date (the site has ${note.version})`);
       this.event({ type: 'update', state: 'latest', version: note.version });
-      if (asked) vscode.window.showInformationMessage(`The HDF5 Browser is up to date: ${this.version} is the latest version.`);
+      if (asked) vscode.window.showInformationMessage(`The Data Browser is up to date: ${this.version} is the latest version.`);
       return;
     }
     const version = note.version;
     const oldest = oldestVscode(note.vscode);
     if (oldest && !vscodeIsAtLeast(vscode.version, oldest)) {
-      const text = `HDF5 Browser ${version} needs VS Code ${oldest} or later, and this is ${vscode.version}: update VS Code to have it.`;
+      const text = `Data Browser ${version} needs VS Code ${oldest} or later, and this is ${vscode.version}: update VS Code to have it.`;
       this.log.warn(text);
       this.event({ type: 'update', state: 'needsVscode', version, oldest });
       if (asked || this.tellOnce(`needs ${version}`)) vscode.window.showWarningMessage(text);
@@ -291,7 +291,7 @@ class Updater {
       return;
     }
     if (this.context.extensionMode !== vscode.ExtensionMode.Production) {
-      const text = `HDF5 Browser ${version} is out. This copy runs from its folder, not installed, so it is not updated.`;
+      const text = `Data Browser ${version} is out. This copy runs from its folder, not installed, so it is not updated.`;
       this.log.info(text);
       this.event({ type: 'update', state: 'development', version });
       if (asked) vscode.window.showInformationMessage(text);
@@ -318,7 +318,7 @@ class Updater {
     this.event({ type: 'update', state: 'offered', version });
     // Not awaited: an offer may wait in the notification centre for days, and
     // a look meanwhile (the command) must not wait for it.
-    vscode.window.showInformationMessage(`HDF5 Browser ${version} is out; you have ${this.version}.`, INSTALL, NOT_NOW).then((choice) => {
+    vscode.window.showInformationMessage(`Data Browser ${version} is out; you have ${this.version}.`, INSTALL, NOT_NOW).then((choice) => {
       if (choice === INSTALL) return this.install(note, true);
       this.log.info(`${version} was not installed (${choice || 'the offer was closed'})`);
       return undefined;
@@ -428,14 +428,14 @@ class Updater {
     if (!lock) {
       this.log.info(`Another window is installing an update; ${version} is left to it`);
       this.event({ type: 'update', state: 'locked', version });
-      if (visibly) vscode.window.showInformationMessage(`Another VS Code window is installing HDF5 Browser ${version}.`);
+      if (visibly) vscode.window.showInformationMessage(`Another VS Code window is installing Data Browser ${version}.`);
       return;
     }
     const file = path.join(this.context.globalStorageUri.fsPath, `hdf5-browser-${version}.vsix`);
     try {
       await vscode.window.withProgress({
         location: visibly ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
-        title: `HDF5 Browser ${version}`
+        title: `Data Browser ${version}`
       }, async (progress) => {
         progress.report({ message: 'downloading…' });
         this.log.info(`Downloading ${version}`);
@@ -460,7 +460,7 @@ class Updater {
 
   offerReload(version) {
     const { vscode } = this;
-    vscode.window.showInformationMessage(`HDF5 Browser ${version} is installed. Reload the window to start it.`, RELOAD).then((choice) => {
+    vscode.window.showInformationMessage(`Data Browser ${version} is installed. Reload the window to start it.`, RELOAD).then((choice) => {
       if (choice === RELOAD) return vscode.commands.executeCommand('workbench.action.reloadWindow');
       return undefined;
     });
@@ -475,7 +475,7 @@ class Updater {
     this.log.error(`Did not install ${version}: ${message}`);
     this.event({ type: 'update', state: 'refused', version, message });
     if (!asked && !this.tellOnce(`refused ${version}`)) return;
-    this.vscode.window.showWarningMessage(`HDF5 Browser ${version} was not installed: ${message}.`, SHOW_LOG)
+    this.vscode.window.showWarningMessage(`Data Browser ${version} was not installed: ${message}.`, SHOW_LOG)
       .then(choice => this.follow(choice));
   }
 
@@ -483,7 +483,7 @@ class Updater {
     this.log.error(`Installing ${version} failed: ${message}`);
     this.event({ type: 'update', state: 'failed', version, message });
     if (!visibly && !this.tellOnce(`failed ${version}`)) return;
-    this.fail(`Could not install HDF5 Browser ${version}: ${message}`);
+    this.fail(`Could not install Data Browser ${version}: ${message}`);
   }
 
   fail(text) {

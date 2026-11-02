@@ -47,7 +47,7 @@ from driver import open_page  # noqa: E402
 HTTP = int(os.environ.get('FAC_HTTP_PORT', '8765'))
 CDP = int(os.environ.get('FAC_CDP_PORT', '9222'))
 if CDP != 9222:
-    # The HDF5 Browser's driver asks port 9222 for the list of tabs, and it
+    # The Data Browser's driver asks port 9222 for the list of tabs, and it
     # is that page's file rather than this one's; its question is sent to the
     # port given here instead.
     _urlopen = urllib.request.urlopen
@@ -110,7 +110,7 @@ POINTS = "(() => { const d = document.getElementById('chart4'); "\
 
 
 async def open_rb_tab(bws, settle_seconds=6):
-    """Attaches to the HDF5 Browser tab the page opened, if it is there."""
+    """Attaches to the Data Browser tab the page opened, if it is there."""
     listing = json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP}/json/list'))
     target = next((t for t in listing if 'rb.html' in t.get('url', '')), None)
     if not target:
@@ -800,18 +800,18 @@ async def main():
             await asyncio.sleep(0.6)
             check('a second run keeps the custom plot', await page.ev(CUSTOM), '1:1')
 
-            # --- handing the run to the HDF5 Browser ----------------------------
+            # --- handing the run to the Data Browser ----------------------------
             # The status line only says this once the other tab has mounted the
             # file with h5wasm -- the real library -- and answered, so reading
             # it back is an end-to-end check of the writer and the handoff.
             await click(page, '#facToHdf5')
             handed = await settle(page, "document.getElementById('facStatus').textContent.includes("
-                                        "'is open in the HDF5 Browser')", True, tries=240, pause=0.5)
-            check('the run reaches the HDF5 Browser', handed, True)
+                                        "'is open in the Data Browser')", True, tries=240, pause=0.5)
+            check('the run reaches the Data Browser', handed, True)
             if handed:
                 opened = await open_rb_tab(bws)
                 if opened is None:
-                    check('the HDF5 Browser tab is there', False, True)
+                    check('the Data Browser tab is there', False, True)
                 else:
                     rb, rb_tid = opened
                     try:

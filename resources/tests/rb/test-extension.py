@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The VS Code button: the dialog that hands out the HDF5 Browser extension.
+"""The VS Code button: the dialog that hands out the Data Browser extension.
 
 rb-vscode/release.mjs puts the latest package in rb-vscode/dist, as
 hdf5-browser.vsix, with latest.json saying which version it is. The dialog
@@ -114,7 +114,7 @@ async def main():
                   (True, 'No version of the extension is published at the moment.'))
             check('  and offers no Download', (s['download'], s['error']), (False, ''))
 
-            note = {'name': 'HDF5 Browser', 'version': '9.8.7', 'file': 'hdf5-browser.vsix', 'bytes': 4739681,
+            note = {'name': 'Data Browser', 'version': '9.8.7', 'file': 'hdf5-browser.vsix', 'bytes': 4739681,
                     'sha256': '0' * 64, 'released': '2026-09-30T08:00:00.000Z', 'build': 'abc1234 2026-09-30 08:00', 'vscode': '^1.100.0'}
             s = await opened(page, json.dumps(note))
             check('a release note gives the version, size, date and the VS Code it needs', s['release'],

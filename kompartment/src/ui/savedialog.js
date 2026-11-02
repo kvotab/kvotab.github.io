@@ -32,9 +32,9 @@ import { exportReportNodes } from './ecoreport.js';
  * outputs, `data` for the parameters and lookup tables, nothing for a whole
  * model. `needs` is what has to be true, and the dialog turns it into a
  * sentence rather than a grey row. `browser` is whether the same file can go
- * straight to the HDF5 Browser instead of the disk; it reads HDF5 and nothing
- * else, so that is the file it gets whichever format is chosen. `holds` is
- * whether it asks which of a sample the file is of -- see `HOLDS`.
+ * straight to the Data Browser instead of the disk; it reads HDF5 and neither
+ * CSV nor Excel, so that is the file it gets whichever format is chosen.
+ * `holds` is whether it asks which of a sample the file is of -- see `HOLDS`.
  */
 export const KINDS = [
 	{
@@ -153,7 +153,7 @@ function refusal(kind, can) {
  *   chosen -- and `reveal` is what a block's name in it does when clicked
  *   (see ./ecoreport.js)
  * @param {(choice) => void} opts.onSave  `{kind, format, keys, open, holds, which, sample, withSample}`;
- *   `open` is the HDF5 Browser rather than the disk, and is called from the
+ *   `open` is the Data Browser rather than the disk, and is called from the
  *   click itself, so that the tab can be opened there; `holds` and `which` say
  *   which of a sample a Realisations file is of; `sample` is whether a Model
  *   with results carries the probabilistic run, and `withSample` the box as it
@@ -334,10 +334,10 @@ export function openSaveDialog({
 				? el('button', {
 					type: 'button',
 					className: 'ghost save-open',
-					title: 'Opens the HDF5 Browser at kvotab.se in a new tab and hands it this '
+					title: 'Opens the Data Browser at kvotab.se in a new tab and hands it this '
 						+ 'file directly, without saving it first. It reads HDF5, so that is '
 						+ 'what it is sent whichever format is chosen.',
-				}, 'Open in the HDF5 Browser')
+				}, 'Open in the Data Browser')
 				: null;
 			const note = el('span', { className: 'pdf-note' });
 			const noteText = (none) => (none ? 'Nothing is chosen.'
@@ -399,7 +399,7 @@ export function openSaveDialog({
 			body.append(cols);
 
 			// --- the buttons ----------------------------------------------
-			// Save is the end of the dialog. The HDF5 Browser is a look at the
+			// Save is the end of the dialog. The Data Browser is a look at the
 			// file in another tab, and the dialog stays for what usually comes
 			// next: another choice of blocks, or saving the file after all.
 			const send = (toBrowser) => {

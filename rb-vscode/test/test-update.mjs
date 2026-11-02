@@ -69,7 +69,7 @@ const noteRequests = () => site.requests.filter(r => r.startsWith('/dist/latest.
 /** A package (any bytes will do) and its release note, signed as release.mjs signs one. */
 function publish(version, { bytes = crypto.randomBytes(3000), key = release.privateKey, signedVersion = version, vscode = '^1.100.0', drop = [] } = {}) {
   const note = {
-    name: 'HDF5 Browser', version, file: 'hdf5-browser.vsix', bytes: bytes.length, sha256: sha(bytes),
+    name: 'Data Browser', version, file: 'hdf5-browser.vsix', bytes: bytes.length, sha256: sha(bytes),
     released: '2026-09-30T12:00:00.000Z', build: 'test', vscode, signature: U.signRelease(key, ID, signedVersion, sha(bytes))
   };
   for (const k of drop) delete note[k];
@@ -186,14 +186,14 @@ check('a note that is not JSON, or names no version, says so',
   await t.updater.check(true);
   await t.settle();
   check('asked, with the same version on the site: up to date, and nothing downloaded',
-    [t.texts(), packageRequests(), t.states()], [['info: The HDF5 Browser is up to date: 0.1.5 is the latest version.'], 0, ['latest']]);
+    [t.texts(), packageRequests(), t.states()], [['info: The Data Browser is up to date: 0.1.5 is the latest version.'], 0, ['latest']]);
 }
 {
   const t = vscodeWith();
   publish('0.1.4', { drop: ['signature'] });   // as 0.1.4's note is: from before the signing
   await t.updater.check(true);
   await t.settle();
-  check('an older version on the site, its note unsigned: up to date too, no complaint', t.texts(), ['info: The HDF5 Browser is up to date: 0.1.5 is the latest version.']);
+  check('an older version on the site, its note unsigned: up to date too, no complaint', t.texts(), ['info: The Data Browser is up to date: 0.1.5 is the latest version.']);
 }
 {
   const t = vscodeWith({ answer: (text, buttons) => (buttons.includes('Reload Window') ? 'Reload Window' : undefined) });
@@ -205,7 +205,7 @@ check('a note that is not JSON, or names no version, says so',
     [t.installed.length, t.installed.length && t.installed[0].bytes.equals(bytes)], [1, true]);
   check('  with the progress in a notification', t.progress, [15]);
   check('  then the window is offered a reload, and reloaded when that is chosen',
-    [t.texts(), t.ran], [['info: HDF5 Browser 0.1.6 is installed. Reload the window to start it.'], ['workbench.extensions.installExtension', 'workbench.action.reloadWindow']]);
+    [t.texts(), t.ran], [['info: Data Browser 0.1.6 is installed. Reload the window to start it.'], ['workbench.extensions.installExtension', 'workbench.action.reloadWindow']]);
   check('  the downloaded file and the lock are gone afterwards', fs.readdirSync(t.context.globalStorageUri.fsPath), []);
   check('  and the package was asked for as that version\'s', site.requests.filter(r => r.startsWith('/dist/hdf5-browser.vsix')), ['/dist/hdf5-browser.vsix?v=0.1.6']);
   check('  and the note with a query that no cache on the way has answered before', /^\/dist\/latest\.json\?t=\d+$/.test(site.requests[0]));
@@ -222,7 +222,7 @@ check('a note that is not JSON, or names no version, says so',
   await t.settle();
   check('by itself, in the default mode, a newer version is installed, the progress in the status bar',
     [t.installed.length, t.progress, t.states()], [1, [10], ['installed']]);
-  check('  and the window is offered a reload', t.texts(), ['info: HDF5 Browser 0.1.6 is installed. Reload the window to start it.']);
+  check('  and the window is offered a reload', t.texts(), ['info: Data Browser 0.1.6 is installed. Reload the window to start it.']);
   check('  and when it looked is kept for every window', t.state.get(U.LAST_LOOK_KEY) >= before);
   site.requests = [];
   await t.updater.lookIfDue();
@@ -243,7 +243,7 @@ check('a note that is not JSON, or names no version, says so',
   await t.updater.lookIfDue();
   await t.settle();
   check('hdf5Browser.updates notify: a newer version is offered, not installed',
-    [t.said.map(m => [m.text, m.buttons]), t.installed.length], [[['HDF5 Browser 0.1.6 is out; you have 0.1.5.', ['Install', 'Not Now']]], 0]);
+    [t.said.map(m => [m.text, m.buttons]), t.installed.length], [[['Data Browser 0.1.6 is out; you have 0.1.5.', ['Install', 'Not Now']]], 0]);
   t.state.clear();
   await t.updater.lookIfDue();
   await t.settle();
@@ -257,7 +257,7 @@ check('a note that is not JSON, or names no version, says so',
   await t.settle();
   check('  Install chosen: installed, the progress in a notification',
     [t.installed.length && t.installed[0].bytes.equals(bytes), t.progress, t.texts().at(-1)],
-    [true, [15], 'info: HDF5 Browser 0.1.6 is installed. Reload the window to start it.']);
+    [true, [15], 'info: Data Browser 0.1.6 is installed. Reload the window to start it.']);
 }
 {
   const t = vscodeWith({ settings: { 'hdf5Browser.updates': 'notify' } });
@@ -314,7 +314,7 @@ async function refusedCase(label, arrange, { want, downloads = 0 }) {
   await t.settle();
   check(`${label}: not installed`, [t.installed.length, t.states(), packageRequests()], [0, ['refused'], downloads]);
   check('  said, with no way to the site: the one package not to install by hand',
-    t.said.map(m => [m.kind, m.text, m.buttons]), [['warning', `HDF5 Browser ${site.note.version} was not installed: ${want}.`, ['Show Log']]]);
+    t.said.map(m => [m.kind, m.text, m.buttons]), [['warning', `Data Browser ${site.note.version} was not installed: ${want}.`, ['Show Log']]]);
   t.state.clear();
   await t.updater.lookIfDue();
   await t.settle();
@@ -346,7 +346,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.settle();
   check('a package that comes short fails (the network, not a forgery): an error, with the site to get it from',
     t.said.map(m => [m.kind, m.text, m.buttons]),
-    [['error', `Could not install HDF5 Browser 0.1.6: the package came to 1000 bytes, and its release note says 3000`, ['Download from kvotab.se', 'Show Log']]]);
+    [['error', `Could not install Data Browser 0.1.6: the package came to 1000 bytes, and its release note says 3000`, ['Download from kvotab.se', 'Show Log']]]);
 }
 {
   const t = vscodeWith();
@@ -354,7 +354,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.updater.check(true);
   await t.settle();
   check('a version for a newer VS Code: said, and nothing downloaded', [t.texts(), packageRequests() && t.installed.length],
-    [['warning: HDF5 Browser 0.1.6 needs VS Code 1.200.0 or later, and this is 1.135.0: update VS Code to have it.'], 0]);
+    [['warning: Data Browser 0.1.6 needs VS Code 1.200.0 or later, and this is 1.135.0: update VS Code to have it.'], 0]);
 }
 
 /* ── when the site cannot be read ─────────────────────────────────────── */
@@ -368,14 +368,14 @@ await refusedCase('a package larger than the note says', () => {
   await t.updater.check(true);
   await t.settle();
   check('  asked: said, with the site to try instead', t.said.map(m => [m.kind, m.text, m.buttons]),
-    [['error', 'Could not look for an update of the HDF5 Browser: the release note: HTTP 404', ['Download from kvotab.se', 'Show Log']]]);
+    [['error', 'Could not look for an update of the Data Browser: the release note: HTTP 404', ['Download from kvotab.se', 'Show Log']]]);
 }
 {
   const t = vscodeWith();
   site.note = '{ "version": ';
   await t.updater.check(true);
   await t.settle();
-  check('a note that is not JSON, asked', t.said[0].text.startsWith('Could not look for an update of the HDF5 Browser: the release note is not JSON'));
+  check('a note that is not JSON, asked', t.said[0].text.startsWith('Could not look for an update of the Data Browser: the release note is not JSON'));
 }
 {
   const t = vscodeWith();
@@ -401,7 +401,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.updater.check(true);
   await t.settle();
   check('a version installed already (by another window): a reload is offered, nothing downloaded',
-    [t.texts(), packageRequests(), t.ran], [['info: HDF5 Browser 0.1.6 is installed. Reload the window to start it.'], 0, ['workbench.action.reloadWindow']]);
+    [t.texts(), packageRequests(), t.ran], [['info: Data Browser 0.1.6 is installed. Reload the window to start it.'], 0, ['workbench.action.reloadWindow']]);
   fs.writeFileSync(path.join(t.extensions, '.obsolete'), JSON.stringify({ [`${ID}-0.1.6`]: true }));
   await t.updater.check(true);
   await t.settle();
@@ -416,7 +416,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.updater.check(true);
   await t.settle();
   check('another window installing (its lock): not installed here too', [t.installed.length, t.texts()],
-    [0, ['info: Another VS Code window is installing HDF5 Browser 0.1.6.']]);
+    [0, ['info: Another VS Code window is installing Data Browser 0.1.6.']]);
   const old = (Date.now() - 11 * 60 * 1000) / 1000;
   fs.utimesSync(lock, old, old);
   await t.updater.check(true);
@@ -430,7 +430,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.settle();
   check('VS Code refusing the install: said, with the site to get it from',
     t.said.map(m => [m.kind, m.text, m.buttons]),
-    [['error', 'Could not install HDF5 Browser 0.1.6: Unable to install the extension: not allowed by extensions.allowed', ['Download from kvotab.se', 'Show Log']]]);
+    [['error', 'Could not install Data Browser 0.1.6: Unable to install the extension: not allowed by extensions.allowed', ['Download from kvotab.se', 'Show Log']]]);
   check('  the downloaded file and the lock are gone', fs.readdirSync(t.context.globalStorageUri.fsPath), []);
 }
 {
@@ -440,7 +440,7 @@ await refusedCase('a package larger than the note says', () => {
   await t.updater.check(true);
   await t.settle();
   check('a copy run from its folder (development) is not updated, and says so', [t.texts(), packageRequests()],
-    [['info: HDF5 Browser 0.1.6 is out. This copy runs from its folder, not installed, so it is not updated.'], 0]);
+    [['info: Data Browser 0.1.6 is out. This copy runs from its folder, not installed, so it is not updated.'], 0]);
 }
 
 /* ── the key ──────────────────────────────────────────────────────────── */
@@ -455,7 +455,7 @@ await refusedCase('a package larger than the note says', () => {
   publish('0.1.6');
   await broken.check(true);
   await t.settle();
-  check('  without one, a look says it cannot check a release', t.said[0] && t.said[0].text.startsWith('Could not look for an update of the HDF5 Browser: this copy has no key'), true);
+  check('  without one, a look says it cannot check a release', t.said[0] && t.said[0].text.startsWith('Could not look for an update of the Data Browser: this copy has no key'), true);
 }
 
 /* ── release.mjs's key checks (they come before any build) ────────────── */

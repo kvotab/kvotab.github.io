@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A file dropped on an HDF5 Browser goes into it, as another file tab.
+"""A file dropped on a Data Browser goes into it, as another file tab.
 
 VS Code keeps a drag out of every webview unless Shift is held: it turns the
 webview's pointer events off as soon as a drag is over its own window, so a

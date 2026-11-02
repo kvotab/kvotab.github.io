@@ -193,7 +193,7 @@ class RbLazyDataset {
  * One lazy file: what has been fetched of it, and the fetching.
  *
  * `call` is the reader that opened it, asked as rbLazyCall is asked. It is
- * rb-lazy-worker.js for a file picked or dropped here; the HDF5 Browser
+ * rb-lazy-worker.js for a file picked or dropped here; the Data Browser
  * extension for VS Code (rb-vscode/) hands in one that reads the file in its
  * extension host, where a worker in the page cannot reach it.
  */

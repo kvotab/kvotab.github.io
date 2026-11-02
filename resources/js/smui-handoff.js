@@ -1,7 +1,7 @@
 /* ==========================================================================
    SMUI.HTML: FILES HANDED OVER BY ANOTHER PAGE
 
-   The HDF5 Browser (rb.html) sends its tree's selection here as an HDF5
+   The Data Browser (rb.html) sends its tree's selection here as an HDF5
    file that never touches the disk (rb-smui.js): it opens this page with
    #handoff=<its origin>, this page says { kvot: 'smui-ready' } to it once
    it is listening (and again each second until something comes: the
@@ -107,7 +107,7 @@
     const announce = () => { try { target.postMessage({ kvot: 'smui-ready' }, to); } catch (e) { /* the opener is gone */ } };
     announce();
     const pinger = root.setInterval(() => { if (heard || target.closed) root.clearInterval(pinger); else announce(); }, PING_MS);
-    SM.whenApp(() => { if (!heard) SM.ui.toast('Waiting for the HDF5 Browser to send its selection…'); });
+    SM.whenApp(() => { if (!heard) SM.ui.toast('Waiting for the Data Browser to send its selection…'); });
   }
 
   SM.handoff = Object.freeze({ ALLOWED, cleanName });
