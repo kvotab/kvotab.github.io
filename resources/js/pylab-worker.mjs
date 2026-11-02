@@ -114,15 +114,24 @@ async function boot(base, version, role, index) {
     post({ type: 'py', msg: { type: 'out', kind: 'warn', text: 'Warning: this browser does not keep files between visits here (no IndexedDB); they last until the tab closes.\n' } });
   }
   let fresh = false;
-  try { py.FS.stat(`${HOME}/.pylab`); } catch (e) { fresh = true; }
-  if (fresh) {
+  let marker = '';
+  try { marker = py.FS.readFile(`${HOME}/.pylab`, { encoding: 'utf8' }); } catch (e) { fresh = true; }
+  // the examples: all of them in a new home folder; in one made before, those
+  // added since, once each (never over a file there, never again once deleted)
+  const known = new Set(marker.split('\n').filter((l) => l.startsWith('example ')).map((l) => l.slice(8)));
+  const toWrite = (manifest.examples || []).filter((f) => !known.has(f));
+  if (toWrite.length) {
     post({ type: 'status', text: 'Writing the examples…' });
     py.FS.mkdirTree(`${HOME}/examples`);
-    await Promise.all((manifest.examples || []).map(async (f) => {
+    await Promise.all(toWrite.map(async (f) => {
+      const path = `${HOME}/examples/${f}`;
+      let there = true;
+      try { py.FS.stat(path); } catch (e) { there = false; }
+      if (there && !fresh) return;
       const r = await fetch(url(`examples/${f}`), { cache: 'no-cache' });
-      if (r.ok) py.FS.writeFile(`${HOME}/examples/${f}`, await r.text());
+      if (r.ok) py.FS.writeFile(path, await r.text());
     }));
-    py.FS.writeFile(`${HOME}/.pylab`, `examples written ${new Date().toISOString()}\n`);
+    py.FS.writeFile(`${HOME}/.pylab`, `${marker || `examples written ${new Date().toISOString()}\n`}${toWrite.map((f) => `example ${f}\n`).join('')}`);
     scheduleSync();
   }
   post({ type: 'status', text: 'Starting…' });
@@ -150,7 +159,7 @@ async function run(msg) {
 }
 
 /* Calls to worker_api functions that return JSON text. */
-const CALLS = new Set(['complete', 'var_view', 'lint', 'python_of', 'file_info', 'list_dir', 'workspace_json', 'help_text',
+const CALLS = new Set(['complete', 'ui_event', 'var_view', 'lint', 'python_of', 'file_info', 'list_dir', 'workspace_json', 'help_text',
   'all_figures', 'figure_event', 'set_format', 'set_cwd', 'set_breakpoints', 'debug_command', 'files_changed']);
 
 /* A call may answer { need: package } first (h5py, for MAT-files of version

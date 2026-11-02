@@ -1362,3 +1362,18 @@ def sscanf(nargout, *args):
     if nargout <= 1:
         return vals
     return (vals, float(count), Char.of(errmsg), float(nxt))[:nargout]
+
+
+@bi('strmatch')
+def strmatch(nargout, *args):
+    nargchk(args, 2, 3, 'strmatch')
+    s = py_str(args[0])
+    a = args[1]
+    if type(a) is Char:
+        rows = a.row_strs() if a.a.shape[0] > 1 else [a.str()]
+    else:
+        rows = cellstr_list(a) if type(a) is Cell else [x or '' for x in to_str_array(a).a.reshape(-1, order='F')]
+    exact = len(args) > 2 and sval(args[2], 'option', 'strmatch').lower() == 'exact'
+    # rows of a char matrix are padded: trailing blanks and nulls never count
+    hits = [i + 1.0 for i, r in enumerate(rows) if (r.rstrip(' \0') == s if exact else r.startswith(s))]
+    return np.array(hits, float).reshape(-1, 1)

@@ -10,3 +10,4 @@ after `cd examples`.
   sections.m      code sections (%%) to run one at a time with Ctrl+Enter
   spiral.m        an animation with drawnow
   stats_demo.m    random numbers, a histogram and summary statistics
+  wavelab.m       a small app: a plot with controls, menus, a toolbar and a timer

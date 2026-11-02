@@ -302,9 +302,44 @@ def _cmp_operand(v, sym):
     raise _optype_error(sym, v)
 
 
+def _handles_of(v):
+    """Handle objects (graphics objects, timers) as an object array, or None."""
+    if type(v).__name__ == 'HArr':
+        return v.a
+    if isinstance(v, Obj) and getattr(v, 'is_handle', False):
+        a = np.empty((1, 1), object)
+        a[0, 0] = v
+        return a
+    return None
+
+
+def _handle_compare(a, b, sym):
+    """h1 == h2: the same object; a handle against numbers, by its number."""
+    ha, hb = _handles_of(a), _handles_of(b)
+    num = lambda h: np.vectorize(lambda x: x.number_value() if hasattr(x, 'number_value') else np.nan, otypes=[float])(h)
+    A = ha if hb is not None or ha is None else num(ha)
+    B = hb if ha is not None or hb is None else num(hb)
+    if ha is None:
+        A = _cmp_operand(a, sym)
+    if hb is None:
+        B = _cmp_operand(b, sym)
+    A, B = np.broadcast_arrays(np.asarray(A, object), np.asarray(B, object)) if ha is not None and hb is not None else (A, B)
+    check_bcast(np.asarray(A), np.asarray(B))
+    if ha is not None and hb is not None:
+        r = np.vectorize(lambda x, y: x is y, otypes=[bool])(A, B)
+    else:
+        r = np.equal(np.asarray(A, float), np.asarray(B, float))
+    if sym == '~=':
+        r = ~r
+    r = _2d(np.asarray(r))
+    return bool(r.reshape(-1)[0]) if r.size == 1 else r
+
+
 def _compare(a, b, fn, sym):
     if type(a) is Str or type(b) is Str:
         return str_compare(a, b, fn, sym)
+    if sym in ('==', '~=') and (_handles_of(a) is not None or _handles_of(b) is not None):
+        return _handle_compare(a, b, sym)
     A = _cmp_operand(a, sym)
     B = _cmp_operand(b, sym)
     A, B = align(A, B)

@@ -51,6 +51,15 @@ shows its estimates and intervals, anova1 shows its table and draws its box
 plots, and boxplot, scatterhist, gplotmatrix, histfit, normplot, qqplot and
 gscatter draw their figures.
 
+A program's own windows: the wavelab example (a popup, a slider, a field,
+radio buttons and a check box change its plot; a click in its axes, an
+arrow key and a menu accelerator reach their callbacks; a toggle tool runs
+a timer; a right click opens a context menu; a bad number brings an error
+dialog that Enter closes; closing runs its CloseRequestFcn); tabs with axes
+and a table, a list double-clicked; questdlg, inputdlg, listdlg and
+uigetfile as the page shows them; a message box and a wait bar, never the
+current figure; uiwait until a callback calls uiresume.
+
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on PYLAB_HTTP_PORT and PYLAB_CDP_PORT (defaults 8811, 9311), then
 
@@ -679,6 +688,191 @@ async def statistics(page):
     check('statistics: no script errors', page.errors, [])
 
 
+WAVE = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Wave lab")'
+PIECES = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Pieces")'
+
+
+async def vkey(page, key, code, vk, text='', modifiers=0):
+    """A key as a keyboard gives it (Chrome moves nothing without the key code)."""
+    for kind in ('keyDown', 'keyUp'):
+        await page.call('Input.dispatchKeyEvent', {'type': kind, 'key': key, 'code': code, 'windowsVirtualKeyCode': vk,
+                                                   'text': text if kind == 'keyDown' else '', 'modifiers': modifiers}, session=page.sid)
+
+
+async def ui_set(page, win, sel, value, event='change'):
+    """A control of a program's window given a value, as a person would."""
+    await page.ev(f"(() => {{ const e = {win}.el.querySelector({json.dumps(sel)}); e.value = {json.dumps(value)}; "
+                  f"e.dispatchEvent(new Event({json.dumps(event)}, {{ bubbles: true }})); return 1; }})()")
+    await idle(page)
+
+
+async def in_axes(page, win, x, y):
+    """Page coordinates of a data point in a window's first axes."""
+    return await page.ev(f"(() => {{ const w = {win}; const f = w.renderer.frames[0]; const c = w.canvas.getBoundingClientRect(); "
+                         f"return [c.left + f.fr.fx({x}), c.top + f.fr.fy({y})]; }})()")
+
+
+async def click_dialog(page, label):
+    return await page.ev(f"(() => {{ const b = [...document.querySelectorAll('.pl-dialog .pl-dfoot button')].find(b => b.textContent === {json.dumps(label)}); "
+                         "if (!b) return false; b.click(); return true; })()")
+
+
+PIECES_PROG = r"""f = figure('Name', 'Pieces', 'MenuBar', 'none', 'Position', [100 100 520 360]);
+tg = uitabgroup(f, 'Position', [0 0 0.6 1]);
+t1 = uitab(tg, 'Title', 'Plot');
+t2 = uitab(tg, 'Title', 'Table');
+ax = axes('Parent', t1);
+plot(ax, 1:10, (1:10).^2)
+tbl = uitable(t2, 'Data', {1, 'a', true; 2, 'b', false}, 'ColumnName', {'n', 'name', 'ok'}, 'ColumnEditable', [true true true], ...
+    'Units', 'normalized', 'Position', [0.05 0.05 0.9 0.9], 'CellEditCallback', 'edited = get(gcbo, ''Data'');');
+lb = uicontrol(f, 'Style', 'listbox', 'String', {'alpha', 'beta', 'gamma'}, 'Units', 'normalized', 'Position', [0.65 0.4 0.3 0.5], ...
+    'Callback', 'picked = {get(gcbo, ''Value''), get(gcbf, ''SelectionType'')};');
+"""
+
+
+async def user_interfaces(page):
+    """A program's own windows: the wavelab example's controls, menus,
+    toolbar, keys, clicks, context menu, timer and close; tabs, a table and
+    a list; the dialogs the page shows; a message box, a wait bar and
+    uiwait."""
+    await command(page, "close all; clc; cd /home/user/examples; wavelab")
+    await until(page, f"{WAVE} && {WAVE}.ui.ctl.size", 20)
+    await asyncio.sleep(0.5)
+    win = await page.ev(f"(() => {{ const w = {WAVE}; return [w.ui.ctl.size, [...w.ui.menubar.children].map(b => b.textContent), "
+                        f"w.ui.toolbars.querySelectorAll('.pl-uitool').length, w.tools.hidden, w.btnSave.hidden]; }})()")
+    check('gui: a program window with its controls, menus and tools, no plot tools', win, [14, ['File', 'View'], 2, True, False])
+    await shot(page, 'gui-wavelab.png')
+    await ui_set(page, WAVE, '.pl-uipopup select', '2')
+    await ui_set(page, WAVE, '.pl-uislider input', '6')
+    await page.ev(f"(() => {{ const i = {WAVE}.el.querySelector('.pl-uiedit input'); i.focus(); i.select(); return 1; }})()")
+    await page.call('Input.insertText', {'text': '1.5'}, session=page.sid)
+    await vkey(page, 'Enter', 'Enter', 13, '\r')
+    await idle(page)
+    await page.ev(f"[...{WAVE}.el.querySelectorAll('.pl-uiradio')].find(l => l.textContent === 'Dotted').querySelector('input').click(); 1")
+    await idle(page)
+    await page.ev(f"{WAVE}.el.querySelector('.pl-uicheck input').click(); 1")
+    await idle(page)
+    out = await command(page, "l = findobj(0, 'Type', 'line'); fprintf('%s|%s|%s\\n', get(l, 'LineStyle'), get(l, 'Marker'), get(get(gca, 'Title'), 'String'))")
+    check('gui: popup, slider, edit, radio buttons and check box set the plot', out.rstrip().endswith(':|o|Square, frequency 6, amplitude 1.5'), True)
+    x, y = await in_axes(page, WAVE, 3.1416, 1)
+    await page.click(x, y)
+    await idle(page)
+    check('gui: a click in the axes runs their ButtonDownFcn with CurrentPoint', await page.ev(f"[...{WAVE}.el.querySelectorAll('.pl-uitext')].pop().textContent"),
+          'x = 3.142y = 1.000')
+    await vkey(page, 'ArrowUp', 'ArrowUp', 38)
+    await idle(page)
+    await vkey(page, 'g', 'KeyG', 71, '', 4 if await page.ev('PL.util.isMac') else 2)
+    await idle(page)
+    out = await command(page, "fprintf('%s|%s\\n', get(get(gca, 'Title'), 'String'), get(gca, 'XGrid'))")
+    check('gui: a key reaches KeyPressFcn, and a menu accelerator its item', out.rstrip().endswith('Square, frequency 7, amplitude 1.5|off'), True)
+    await page.ev(f"{WAVE}.ui.toolbars.querySelector('.pl-uitool[aria-pressed]').click(); 1")
+    y0 = await command(page, "y = get(findobj(0, 'Type', 'line'), 'YData'); fprintf('%.3f\\n', y(1))")
+    await asyncio.sleep(1.0)
+    y1 = await command(page, "y = get(findobj(0, 'Type', 'line'), 'YData'); fprintf('%.3f\\n', y(1))")
+    check('gui: a toggle tool starts a timer that moves the wave', y0.rstrip().splitlines()[-1] != y1.rstrip().splitlines()[-1], True)
+    await page.ev(f"{WAVE}.ui.toolbars.querySelector('.pl-uitool[aria-pressed]').click(); 1")
+    await idle(page)
+    out = await command(page, "t = timerfindall; fprintf('%s\\n', get(t, 'Running'))")
+    check('gui: and stops it', out.rstrip().endswith('off'), True)
+    await page.mouse('mouseMoved', x, y)
+    await page.mouse('mousePressed', x, y, button='right')
+    await page.mouse('mouseReleased', x, y, button='right')
+    check('gui: a right click opens the axes\' context menu', await until(page, "[...document.querySelectorAll('.pl-figpopup button .lbl')].map(b => b.textContent).join(',')", 5),
+          'Blue,Red,Green')
+    await page.ev("[...document.querySelectorAll('.pl-figpopup button')].find(b => b.textContent === 'Red').click(); 1")
+    await idle(page)
+    out = await command(page, "fprintf('%g ', get(findobj(0, 'Type', 'line'), 'Color')); fprintf('\\n')")
+    check('gui: its item runs', out.rstrip().endswith('0.85 0.2 0.1'), True)
+    await page.ev(f"(() => {{ const i = {WAVE}.el.querySelector('.pl-uiedit input'); i.focus(); i.select(); return 1; }})()")
+    await page.call('Input.insertText', {'text': 'big'}, session=page.sid)
+    await vkey(page, 'Enter', 'Enter', 13, '\r')
+    await until(page, "document.querySelector('.pl-figwin.is-dialog')", 10)
+    await idle(page)
+    dlg = await page.ev("(() => { const d = document.querySelector('.pl-figwin.is-dialog'); return [d.querySelector('.t').textContent, d.textContent.includes('at most 2'), "
+                        "document.activeElement && document.activeElement.textContent]; })()")
+    check('gui: errordlg is a window of its own, OK in focus', dlg, ['Wave lab', True, 'OK'])
+    await shot(page, 'gui-errordlg.png')
+    await vkey(page, 'Enter', 'Enter', 13, '\r')
+    check('gui: Enter closes it', await until(page, "!document.querySelector('.pl-figwin.is-dialog')", 5), True)
+    check('gui: the program put the amplitude back', await page.ev(f"{WAVE}.el.querySelector('.pl-uiedit input').value"), '1.5')
+    await page.ev(f"{WAVE}.btnClose.click(); 1")
+    await idle(page)
+    out = await command(page, "fprintf('%d %d\\n', numel(findobj(0, 'Name', 'Wave lab')), numel(timerfindall))")
+    check('gui: closing runs CloseRequestFcn (the timer goes with the window)', out.rstrip().endswith('0 0'), True)
+
+    # tabs, a table and a list
+    await page.ev(f"PL.engine.fs('write', {{ path: '/home/user/pieces.m', data: {json.dumps(PIECES_PROG)} }}).then(() => 1)")
+    await command(page, "cd /home/user; pieces")
+    await until(page, f"{PIECES} && {PIECES}.renderer.frames.length", 20)
+    check('gui: the axes in the first tab are drawn', await page.ev(f"{PIECES}.renderer.frames.length"), 1)
+    await page.ev(f"[...{PIECES}.el.querySelectorAll('.pl-uitabs .strip button')].find(b => b.textContent === 'Table').click(); 1")
+    await idle(page)
+    await asyncio.sleep(0.3)
+    tab = await page.ev(f"[{PIECES}.renderer.frames.length, {PIECES}.el.querySelector('.pl-uitable').getBoundingClientRect().height > 50]")
+    check('gui: another tab shows its table; the axes of the first are not drawn', tab, [0, True])
+    out = await command(page, "disp(get(get(tg, 'SelectedTab'), 'Title'))")
+    check('gui: SelectedTab follows', out.rstrip().endswith('Table'), True)
+    await page.ev(f"(() => {{ const i = {PIECES}.el.querySelectorAll('.pl-uitable td input[type=text]')[1]; i.focus(); i.select(); return 1; }})()")
+    await page.call('Input.insertText', {'text': 'zed'}, session=page.sid)
+    await vkey(page, 'Enter', 'Enter', 13, '\r')
+    await idle(page)
+    out = await command(page, "disp(edited{1, 2})")
+    check('gui: a table cell typed in runs CellEditCallback with the new Data', out.rstrip().endswith('zed'), True)
+    await page.ev(f"(() => {{ const s = {PIECES}.el.querySelector('.pl-uilist select'); s.options[1].selected = true; s.dispatchEvent(new Event('change', {{ bubbles: true }})); "
+                  "s.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return 1; })()")
+    await idle(page)
+    out = await command(page, "fprintf('%d %s\\n', picked{1}, picked{2})")
+    check('gui: a double click in a list is SelectionType open', out.rstrip().endswith('2 open'), True)
+    await shot(page, 'gui-pieces.png')
+
+    # the dialogs the page shows
+    await page.ev("PL.app.runCommand(\"answer = questdlg('Ready?', 'Question', 'Yes', 'No', 'No');\"); 1")
+    check('gui: questdlg asks with its buttons, the default first in line', await until(page, "[...document.querySelectorAll('.pl-dialog .pl-dfoot button')].map(b => b.textContent + (b.classList.contains('is-primary') ? '*' : '')).join(',')", 10),
+          'Yes,No*')
+    await click_dialog(page, 'Yes')
+    await idle(page)
+    check('gui: and gives the answer', (await command(page, 'disp(answer)')).rstrip().endswith('Yes'), True)
+    await page.ev("PL.app.runCommand(\"names = inputdlg({'First', 'Last'}, 'Who', 1, {'Ada', ''});\"); 1")
+    await until(page, "document.querySelectorAll('.pl-dialog input[type=text]').length === 2", 10)
+    await page.ev("(() => { const i = document.querySelectorAll('.pl-dialog input[type=text]')[1]; i.value = 'Lovelace'; return 1; })()")
+    await click_dialog(page, 'OK')
+    await idle(page)
+    check('gui: inputdlg', (await command(page, "fprintf('%s %s\\n', names{:})")).rstrip().endswith('Ada Lovelace'), True)
+    await page.ev("PL.app.runCommand(\"[k, ok] = listdlg('ListString', {'red', 'green', 'blue'}, 'SelectionMode', 'single', 'Name', 'Colour');\"); 1")
+    await until(page, "document.querySelector('.pl-dialog select')", 10)
+    await page.ev("(() => { const s = document.querySelector('.pl-dialog select'); s.options[2].selected = true; return 1; })()")
+    await click_dialog(page, 'OK')
+    await idle(page)
+    check('gui: listdlg', (await command(page, "fprintf('%d %d\\n', k, ok)")).rstrip().endswith('3 1'), True)
+    await page.ev("PL.app.runCommand(\"[fn, fp, fi] = uigetfile({'*.m', 'Programs'; '*.txt', 'Text'}, 'Pick one');\"); 1")
+    await until(page, "[...document.querySelectorAll('.pl-pick-row')].some(r => r.textContent.includes('pieces.m'))", 10)
+    names = await page.ev("[...document.querySelectorAll('.pl-pick-row')].map(r => r.textContent.replace('▸', ''))")
+    check('gui: uigetfile lists folders and the files of the type', 'pieces.m' in names and 'examples' in names and not any(n.endswith('.mat') for n in names), True)
+    await page.ev("[...document.querySelectorAll('.pl-pick-row')].find(r => r.textContent.includes('pieces.m')).click(); 1")
+    await click_dialog(page, 'Open')
+    await idle(page)
+    check('gui: and gives the name, folder and type', (await command(page, "fprintf('%s|%s|%d\\n', fn, fp, fi)")).rstrip().endswith('pieces.m|/home/user/|1'), True)
+
+    # a message box, a wait bar, and uiwait on a dialog of the program's own
+    await command(page, "close all; h = msgbox('Saved.', 'Done'); w = waitbar(0.4, 'Copying', 'Name', 'Copy');")
+    await until(page, "document.querySelectorAll('.pl-figwin.is-dialog').length === 2", 10)
+    await asyncio.sleep(0.3)
+    bar = await page.ev("(() => { const w = [...PL.app.figures.wins.values()].find(w => w.fig.name === 'Copy'); return w && w.renderer.frames.length; })()")
+    check('gui: a wait bar is drawn', bar, 1)
+    await shot(page, 'gui-dialogs.png')
+    out = await command(page, "fprintf('%d\\n', isempty(gcf) || gcf ~= h)")
+    check('gui: dialogs are never the current figure', out.rstrip().endswith('1'), True)
+    await page.ev("PL.app.runCommand(\"d = dialog('Name', 'Wait'); uicontrol(d, 'String', 'Done', 'Position', [130 60 100 30], 'Callback', 'uiresume(gcbf)'); uiwait(d); disp('waited'); delete(d)\"); 1")
+    await until(page, "[...document.querySelectorAll('.pl-figwin.is-dialog .pl-uibtn')].some(b => b.textContent === 'Done')", 10)
+    await asyncio.sleep(0.3)
+    check('gui: uiwait keeps the program waiting', await page.ev('PL.engine.busy'), True)
+    await page.ev("[...document.querySelectorAll('.pl-figwin.is-dialog .pl-uibtn')].find(b => b.textContent === 'Done').click(); 1")
+    await idle(page)
+    check('gui: until a callback calls uiresume', (await tail(page, 100)).rstrip().endswith('waited'), True)
+    await command(page, 'close all force')
+    check('gui: no script errors', page.errors, [])
+
+
 async def full_window(page):
     await page.ev('PL.app.toggleFull(); 1')
     await asyncio.sleep(0.3)
@@ -703,6 +897,7 @@ async def main():
         await drops(page)
         await parallel(page)
         await statistics(page)
+        await user_interfaces(page)
         await full_window(page)
         await shot(page, 'desktop.png')
         check('no script errors', page.errors, [])

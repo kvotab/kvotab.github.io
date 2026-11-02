@@ -501,8 +501,12 @@
       E.on('request', (m) => this.pageRequest(m.request));
       E.on('dbg', (m) => this.onDebug(m));
       E.on('dbgwait', (m) => { if (this.debug) this.debug.waitId = m.id; this.flushDebugQueue(); });
-      E.on('restart', () => { this.figures.clear(); this.cmd.write('\nPython was restarted: the workspace is empty and the figures are closed.\n\n', 'warn'); });
+      E.on('restart', () => { this.figures.clear(); this.stopTimers(); this.cmd.write('\nPython was restarted: the workspace is empty and the figures are closed.\n\n', 'warn'); });
       E.on('pool', (m) => this.poolProgress(m));
+      E.on('timer', (m) => this.timer(m));
+      E.on('movegui', (m) => this.figures.move(m.figure, m.where));
+      E.on('focus', (m) => this.figures.focusControl(m.id));
+      E.on('help', (m) => this.openHelp(m.name || undefined));
 
       this.cmd.on('submit', (code) => this.submit(code));
       this.cmd.on('interrupt', () => this.interrupt());
@@ -512,6 +516,7 @@
       this.folder.on('select', (p) => this.details.show(p));
       this.figures.on('event', (ev) => PL.engine.call('figure_event', JSON.stringify(ev)).catch(() => {}));
       this.figures.on('run', (code) => this.runCommand(code, { silent: true, noHistory: true }));
+      this.figures.on('ui', (ev) => this.uiEvent(ev));
       document.documentElement.addEventListener('kvot-theme-change', () => this.figures.redrawAll());
       window.addEventListener('keydown', (ev) => this.globalKey(ev));
       window.addEventListener('beforeunload', (ev) => {
@@ -657,7 +662,57 @@
       } else if (req.type === 'ginput') {
         this.statusText.textContent = 'Click points in the figure; Enter ends.';
         this.figures.startGinput(req.figure, req.n, (pts) => { this.statusText.textContent = ''; PL.engine.reply(req.id, pts); });
+      } else if (PL.asks && PL.asks[req.type]) {
+        let answer = null;
+        try { answer = await PL.asks[req.type](this, req); } catch (e) { console.error(e); }
+        PL.engine.reply(req.id, answer === undefined ? null : answer);
       } else PL.engine.reply(req.id, null);
+    }
+
+    /* ---- programs' user interfaces ------------------------------------------------------------ */
+    /* Something a person did in a figure: the engine sets what it sets at
+       once, and when it queued callbacks they run, as a run of their own (or
+       sooner, at a running program's drawnow or pause). */
+    async uiEvent(ev) {
+      if (PL.engine.state !== 'ready') return;
+      let r = null;
+      try { r = await PL.engine.call('ui_event', JSON.stringify(ev)); } catch (e) { return; }
+      if (r && r.queued > 0) this.runCallbacks();
+    }
+
+    runCallbacks() {
+      if (this._callbacks) { this._callbacksAgain = true; return; }
+      this._callbacks = true;
+      PL.engine.run('', { callbacks: true }).then((res) => {
+        this._callbacks = false;
+        if (res) {
+          this.ws.update(res.ws);
+          if (res.cwd !== this.cwd) this.setCwd(res.cwd, true);
+          this.refreshVariableViews();
+        }
+        // what came in while they ran
+        if (this._callbacksAgain || (res && res.pending)) { this._callbacksAgain = false; this.runCallbacks(); }
+      }).catch(() => { this._callbacks = false; });
+    }
+
+    /* timer objects: the page keeps their time; each tick is an event. */
+    timer(m) {
+      const T = this.timers || (this.timers = new Map());
+      const old = T.get(m.id);
+      if (old) { clearTimeout(old.t); clearInterval(old.i); T.delete(m.id); }
+      if (m.op !== 'start') return;
+      const rec = {};
+      const tick = () => this.uiEvent({ type: 'timer', id: m.id });
+      rec.t = setTimeout(() => {
+        tick();
+        if (m.mode !== 'singleShot') rec.i = setInterval(tick, Math.max(1, m.period * 1000));
+      }, Math.max(0, m.delay * 1000));
+      T.set(m.id, rec);
+    }
+
+    stopTimers() {
+      for (const r of (this.timers || new Map()).values()) { clearTimeout(r.t); clearInterval(r.i); }
+      if (this.timers) this.timers.clear();
     }
 
     /* ---- the debugger --------------------------------------------------------------------- */

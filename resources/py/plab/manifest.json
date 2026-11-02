@@ -12,6 +12,8 @@
     "compiler.py",
     "runtime.py",
     "graphics_base.py",
+    "uiobjects.py",
+    "uievents.py",
     "glayout.py",
     "colormaps.py",
     "matfile.py",
@@ -34,6 +36,7 @@
     "builtins/timefun.py",
     "builtins/sparse.py",
     "builtins/graphics.py",
+    "builtins/uifun.py",
     "builtins/parallel.py",
     "builtins/statdesc.py",
     "builtins/distributions.py",
@@ -49,6 +52,7 @@
     "spiral.m",
     "stats_demo.m",
     "surfaces.m",
+    "wavelab.m",
     "waves.m"
   ]
 }

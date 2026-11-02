@@ -1518,6 +1518,10 @@ matches: True when text equals a pattern (or one of several).
     tf = matches(s, pattern)
 strfind: The starting indices of a pattern in text.
     k = strfind(s, pattern)
+strmatch: The rows of a char matrix (or elements of a cell array) that start with some text, or (with 'exact') are that text.
+    k = strmatch(s, list)
+    k = strmatch(s, list, 'exact')
+    * The blanks that pad the rows of a char matrix never count.
 count: How many times a pattern occurs in text.
     n = count(s, pattern)
 strtok: The first token of text, and the rest.
@@ -2039,6 +2043,12 @@ writelines: Write text to a file, one line per string.
 textscan: Read columns of formatted data from a file or text.
     C = textscan(fid, format)
     C = textscan(text, format, 'Delimiter', ',', 'HeaderLines', 1)
+textread: Read a file by applying a format again and again, over line ends; one output per field.
+    words = textread(filename, '%s')
+    [names, ages] = textread(filename, '%s %d', 'headerlines', 1)
+    [a, b] = textread(filename, '%f %f', n, 'delimiter', ',')
+    * %d %f %n %u read numbers (as doubles), %s a word, %q a word in double quotes, %c one character, %[...] characters of a set; %*s skips a field.
+    * Options: delimiter, whitespace, headerlines, commentstyle ('matlab', 'shell', 'c', 'c++') and emptyvalue.
 readmatrix: A numeric matrix from a text file of delimited numbers.
     A = readmatrix(filename)
     A = readmatrix(filename, 'NumHeaderLines', n)
@@ -2510,11 +2520,15 @@ isgraphics: True for valid graphics objects (of a type, if given).
     tf = isgraphics(h, type)
 isvalid: True for objects that have not been deleted.
     tf = isvalid(h)
+ishghandle: True for valid graphics handles.
+    tf = ishghandle(h)
 isprop: True when an object has a property.
     tf = isprop(h, name)
-drawnow: Draw the figures now (while a long program runs).
+drawnow: Draw the figures now (while a long program runs), and run the callbacks of what people did meanwhile.
     drawnow
     drawnow limitrate
+    drawnow nocallbacks
+    * pause, uiwait and waitfor run waiting callbacks too.
 refresh: Accepted, with no effect: figures redraw by themselves.
     refresh
 shg: Accepted, with no effect.
@@ -2550,12 +2564,162 @@ linkaxes: Accepted, with no effect.
     linkaxes(ax)
 linkprop: Accepted, with no effect.
     linkprop(h, props)
-uistack: Accepted, with no effect.
+uistack: Bring an object to the front of its siblings, or send it back.
     uistack(h, 'top')
-movegui: Accepted, with no effect: drag the figure window by its title bar.
-    movegui(fig, position)
+    uistack(h, 'up' | 'down', steps)
+    uistack(h, 'bottom')
+movegui: Move a figure window: to the middle of the desktop, or to an edge.
+    movegui(fig, 'center')
+    movegui(fig, 'north' | 'south' | 'east' | 'west' | 'northeast' | ...)
 whitebg: Accepted, with no effect.
     whitebg
+
+# ---- user interfaces -------------------------------------------------------------------------
+uicontrol: A control in a figure: a button, check box, text field, slider, list and more.
+    h = uicontrol('Style', 'pushbutton', 'String', 'Go', 'Callback', @go)
+    h = uicontrol(parent, 'Name', value, ...)
+    uicontrol(h)
+    * Style: pushbutton, togglebutton, checkbox, radiobutton, edit, text, slider, listbox, popupmenu or frame.
+    * Position [left bottom width height] is in Units (pixels unless set) from the lower left of the parent.
+    * Value is the state (Max when on, Min when off), the slider's place, or the chosen items of a list (1-based).
+    * Callback runs when the control is used: text (run in the base workspace), a function handle called as f(src, event), or a cell {f, a, b} called as f(src, event, a, b).
+    * uicontrol(h) gives h the keyboard.
+uipanel: A panel in a figure: a frame with a title that holds controls and axes.
+    p = uipanel('Title', 'Settings', 'Position', [0.05 0.05 0.4 0.9])
+    p = uipanel(parent, 'Name', value, ...)
+    * What it holds is placed from the panel's lower left, in its own Units.
+uibuttongroup: A panel whose radio buttons and toggle buttons are chosen one at a time.
+    g = uibuttongroup('Title', 'Method', 'SelectionChangedFcn', @changed)
+    * SelectedObject is the chosen button; SelectionChangedFcn gets OldValue and NewValue in its event data.
+uitable: A table of numbers, logical values or text in a figure.
+    t = uitable('Data', magic(4), 'ColumnName', {'a', 'b', 'c', 'd'})
+    t = uitable(parent, 'Name', value, ...)
+    * ColumnEditable says which columns can be typed in; CellEditCallback gets Indices, PreviousData and NewData.
+uitabgroup: A set of tabs in a figure; each tab holds controls and axes.
+    g = uitabgroup(parent)
+    * SelectedTab is the tab shown; SelectionChangedFcn runs when someone picks another.
+uitab: A tab of a tab group.
+    t = uitab(g, 'Title', 'Data')
+uimenu: A menu in a figure's menu bar, an item of a menu, or an item of a context menu.
+    m = uimenu(fig, 'Label', '&File')
+    item = uimenu(m, 'Label', 'Open', 'Accelerator', 'O', 'Callback', @open)
+    * Accelerator is a key that, with Ctrl (Command on a Mac), chooses the item.
+    * Checked, Enable and Separator are 'on' or 'off'; Text and MenuSelectedFcn are other names for Label and Callback.
+uicontextmenu: A menu that opens where someone right-clicks an object.
+    cm = uicontextmenu(fig);
+    uimenu(cm, 'Label', 'Delete', 'Callback', @remove)
+    set(h, 'UIContextMenu', cm)
+uitoolbar: A toolbar in a figure, for push and toggle tools.
+    tb = uitoolbar(fig)
+uipushtool: A button with a picture on a toolbar.
+    t = uipushtool(tb, 'CData', icon, 'TooltipString', 'Open', 'ClickedCallback', @open)
+    * CData is the picture: m x n x 3 colours from 0 to 1 (or uint8); NaN shows through.
+uitoggletool: A toolbar button that stays in or out.
+    t = uitoggletool(tb, 'CData', icon, 'OnCallback', @on, 'OffCallback', @off)
+    * State is 'on' or 'off'; ClickedCallback runs after OnCallback or OffCallback.
+gcbo: The object whose callback is running, and its figure.
+    h = gcbo
+    [h, fig] = gcbo
+    * Empty outside callbacks.
+gcbf: The figure of the object whose callback is running.
+    fig = gcbf
+closereq: Close the figure whose close button was pressed (the default CloseRequestFcn).
+    closereq
+uiwait: Wait (letting callbacks run) until a figure is closed or uiresume is called.
+    uiwait(fig)
+    uiwait(fig, seconds)
+uiresume: End a uiwait.
+    uiresume(fig)
+waitfor: Wait (letting callbacks run) until an object is deleted or a property changes.
+    waitfor(h)
+    waitfor(h, 'Name')
+    waitfor(h, 'Name', value)
+guidata: Keep data with a figure, or get it back (from any object in the figure).
+    guidata(h, data)
+    data = guidata(h)
+setappdata: Keep a named value with a graphics object.
+    setappdata(h, 'name', value)
+getappdata: A named value kept with a graphics object ([] when there is none), or all of them as a struct.
+    value = getappdata(h, 'name')
+    s = getappdata(h)
+isappdata: True when a graphics object keeps a value of that name.
+    tf = isappdata(h, 'name')
+rmappdata: Forget a named value kept with a graphics object.
+    rmappdata(h, 'name')
+msgbox: A window with a message and an OK button; the program goes on.
+    h = msgbox(message)
+    h = msgbox(message, title)
+    h = msgbox(message, title, 'error' | 'warn' | 'help')
+    h = msgbox(message, title, 'custom', picture, colormap)
+    * uiwait(h) waits until it is closed; 'modal' as the last input keeps it in front.
+errordlg: A message window with an error sign.
+    h = errordlg(message, title)
+warndlg: A message window with a warning sign.
+    h = warndlg(message, title)
+helpdlg: A message window with an information sign.
+    h = helpdlg(message, title)
+questdlg: Ask a question with buttons; the answer is the text of the button pressed.
+    answer = questdlg(question)
+    answer = questdlg(question, title, 'Yes', 'No', 'Yes')
+    answer = questdlg(question, title, b1, b2, b3, default)
+    * With no buttons given they are Yes, No and Cancel; closing the window answers ''.
+inputdlg: Ask for one or more lines of text.
+    answers = inputdlg(prompt)
+    answers = inputdlg({'Name', 'Age'}, title, [1; 1], {'Ada', '36'})
+    * The answers are a cell array of text, {} when the window is cancelled.
+listdlg: Ask for a choice from a list.
+    [indx, tf] = listdlg('ListString', items)
+    [indx, tf] = listdlg('ListString', items, 'SelectionMode', 'single', 'PromptString', text, 'Name', title)
+    * tf is 0 and indx empty when the window is cancelled.
+uigetfile: Ask for a file to open, among the page's files.
+    [file, path] = uigetfile
+    [file, path, index] = uigetfile({'*.m'; '*.mat'}, title)
+    [file, path, index] = uigetfile({'*.csv', 'Data (*.csv)'}, title, 'MultiSelect', 'on')
+    * file is 0 when the window is cancelled; path ends with /.
+uiputfile: Ask for a name and folder to save a file in, among the page's files.
+    [file, path, index] = uiputfile({'*.txt', 'Text (*.txt)'}, title, 'results.txt')
+    * index is the file type chosen; a name typed without one gets that type's extension.
+uigetdir: Ask for a folder, among the page's folders.
+    folder = uigetdir
+    folder = uigetdir(start, title)
+uisetcolor: Ask for a colour.
+    rgb = uisetcolor
+    rgb = uisetcolor([1 0 0], title)
+waitbar: A window with a bar that shows how far a long job has come.
+    h = waitbar(0, 'Working...')
+    waitbar(fraction, h)
+    waitbar(fraction, h, 'Almost there')
+    h = waitbar(0, 'Working...', 'CreateCancelBtn', 'setappdata(gcbf, ''cancelled'', 1)')
+    * waitbar(fraction) alone moves the newest bar.
+dialog: An empty window for a dialog of one's own making.
+    d = dialog('Name', 'Settings', 'Position', [300 300 250 150])
+menu: Ask for a choice among buttons; the number of the button pressed (0 when the window is closed).
+    k = menu('Shape', 'Circle', 'Square', 'Triangle')
+printdlg: Print a figure, with the browser's printing.
+    printdlg(fig)
+printpreview: Print a figure, with the browser's printing.
+    printpreview(fig)
+helpwin: Show the help of a function in the Help panel.
+    helpwin name
+doc: Show the help of a function in the Help panel.
+    doc name
+timer: A timer that runs a callback after a delay, and again as often as asked.
+    t = timer('TimerFcn', @tick, 'Period', 1, 'ExecutionMode', 'fixedRate')
+    start(t)
+    * ExecutionMode: singleShot (once, the default), fixedRate, fixedSpacing or fixedDelay.
+    * TasksToExecute stops it after so many runs; BusyMode says what a tick does while the last one has not run.
+    * The callbacks run when the engine is idle, or at a running program's drawnow and pause.
+start: Start a timer.
+    start(t)
+stop: Stop a timer.
+    stop(t)
+wait: Wait (letting callbacks run) until a timer stops.
+    wait(t)
+timerfind: The timers there are, or those with given properties.
+    t = timerfind
+    t = timerfind('Name', value, ...)
+timerfindall: The timers there are, hidden ones included.
+    t = timerfindall
 
 # ---- colormaps -------------------------------------------------------------------------------
 parula: A colormap from blue through green to yellow (the default here).

@@ -1283,3 +1283,133 @@ async def importdata(nargout, *args):
         return Struct.scalar(d)
     a = _read_numeric(p)
     return out(a) if type(a) is np.ndarray else a
+
+
+# ---- textread: a format applied over a whole file -----------------------------------------------
+
+_TR_ITEM = re.compile(r'%(\*?)(\d*)(?:\.\d+)?(\[\^?\]?[^\]]*\]|[dfnusqc])|(\s+)|([^%\s]+|%%)')
+_TR_NUM = re.compile(r'[+-]?(?:(?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?|[Ii]nf|NaN|nan)')
+
+
+def _tr_comments(text, style):
+    style = style.lower()
+    if style == 'matlab':
+        return re.sub(r'%[^\n]*', '', text)
+    if style == 'shell':
+        return re.sub(r'#[^\n]*', '', text)
+    if style == 'c':
+        return re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    if style == 'c++':
+        return re.sub(r'//[^\n]*', '', text)
+    raise err('MATLAB:textread:BadCommentStyle', "commentstyle is 'matlab', 'shell', 'c' or 'c++'.", 'textread')
+
+
+@bi('textread', nout=99)
+def textread(nargout, *args):
+    nargchk(args, 1, None, 'textread')
+    name = sval(args[0], 'file name', 'textread')
+    p = abspath(name)
+    if not os.path.isfile(p):
+        raise err('MATLAB:textread:FileNotFound', f'File not found: {name}', 'textread')
+    fmt = unescape(sval(args[1], 'format', 'textread')) if len(args) > 1 else '%f'
+    rest = list(args[2:])
+    count = int(num(rest.pop(0))) if rest and not is_str(rest[0]) else -1
+    delim, white, header, empty, comments = '', ' \b\t', 0, 0.0, None
+    for i in range(0, len(rest) - 1, 2):
+        k = sval(rest[i], 'option', 'textread').lower()
+        v = rest[i + 1]
+        if k == 'delimiter':
+            delim = unescape(py_str(v))
+        elif k == 'whitespace':
+            white = unescape(py_str(v))
+        elif k == 'headerlines':
+            header = int(num(v))
+        elif k == 'emptyvalue':
+            empty = float(num(v))
+        elif k == 'commentstyle':
+            comments = py_str(v)
+    with open(p, encoding='utf-8', errors='replace') as fh:
+        text = fh.read()
+    if header:
+        text = '\n'.join(text.split('\n')[header:])
+    if comments:
+        text = _tr_comments(text, comments)
+    space = set(white) | {'\n', '\r'}
+    seps = set(delim)
+    items = []
+    for m in _TR_ITEM.finditer(fmt):
+        if m.group(3):
+            items.append(('conv', m.group(3), bool(m.group(1)), int(m.group(2)) if m.group(2) else 0))
+        elif m.group(5):
+            items.append(('lit', m.group(5).replace('%%', '%')))
+    convs = [it for it in items if it[0] == 'conv' and not it[2]]
+    cols = [[] for _ in convs]
+    pos, n, passes = 0, len(text), 0
+
+    def skip(pos):
+        while pos < n and text[pos] in space:
+            pos += 1
+        return pos
+
+    while (count < 0 or passes < count) and skip(pos) < n:
+        start = pos
+        k = 0
+        for it in items:
+            pos = skip(pos)
+            if it[0] == 'lit':
+                if text.startswith(it[1], pos):
+                    pos += len(it[1])
+                continue
+            _, kind, skipped, width = it
+            if kind in 'dfnu':
+                m = _TR_NUM.match(text, pos)
+                if m:
+                    val = float(m.group(0).replace('d', 'e').replace('D', 'e'))
+                    pos = m.end()
+                elif pos >= n or text[pos] in seps:
+                    val = empty
+                else:
+                    raise err('MATLAB:textread:Trouble', f'Trouble reading a number from file {name} at character {pos + 1}.', 'textread')
+            elif kind == 'c':
+                w = width or 1
+                val, pos = text[pos:pos + w], pos + w
+            elif kind.startswith('['):
+                neg = kind.startswith('[^')
+                chars = set(kind[2:-1] if neg else kind[1:-1])
+                e = pos
+                while e < n and ((text[e] not in chars) if neg else (text[e] in chars)) and (not width or e - pos < width):
+                    e += 1
+                val, pos = text[pos:e], e
+            elif kind == 'q' and pos < n and text[pos] == '"':
+                e = text.find('"', pos + 1)
+                e = n if e < 0 else e
+                val, pos = text[pos + 1:e], min(n, e + 1)
+            else:
+                e = pos
+                while e < n and text[e] not in space and text[e] not in seps and (not width or e - pos < width):
+                    e += 1
+                val, pos = text[pos:e], e
+            if pos < n and text[pos] in seps:
+                pos += 1
+            if not skipped:
+                cols[k].append(val)
+                k += 1
+        passes += 1
+        if pos == start:
+            break
+    res = []
+    for it, c in zip(convs, cols):
+        kind = it[1]
+        if kind in 'dfnu':
+            res.append(np.array(c, float).reshape(-1, 1))
+        elif kind == 'c':
+            res.append(Char.rows(c) if c else Char.of(''))
+        else:
+            res.append(Cell.of_list([Char.of(s) for s in c], (len(c), 1)))
+    if not res:
+        return None
+    if nargout <= 1:
+        return res[0]
+    if nargout > len(res):
+        raise err('MATLAB:TooManyOutputs', 'Too many output arguments.', 'textread')
+    return tuple(res[:nargout])

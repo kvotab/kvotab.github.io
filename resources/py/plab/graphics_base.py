@@ -13,6 +13,7 @@ from .values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128,
                      _2d, EMPTY, py_str, share, size_str)
 
 _ids = itertools.count(1)
+DELETE_HOOK = [None]      # fn(obj): runs an object's DeleteFcn (set by uievents)
 
 
 def gerr(msg, ident='MATLAB:graphics'):
@@ -31,6 +32,12 @@ COLOR_ORDER = np.array([[0, 0.447, 0.741], [0.85, 0.325, 0.098], [0.929, 0.694, 
                         [0.466, 0.674, 0.188], [0.301, 0.745, 0.933], [0.635, 0.078, 0.184]])
 
 AXIS_COLOR = (0.15, 0.15, 0.15)
+
+# what every object a person can click has: callbacks, whether clicks reach
+# it, and who sees its handle
+INTERACT = {'ButtonDownFcn': '', 'UIContextMenu': None, 'HitTest': True, 'PickableParts': 'visible', 'Interruptible': True,
+            'BusyAction': 'queue', 'CreateFcn': '', 'DeleteFcn': '', 'HandleVisibility': 'on', 'BeingDeleted': False,
+            'Selected': False, 'SelectionHighlight': True}
 
 
 def to_color(v, allowed=()):
@@ -142,10 +149,11 @@ class GObj(Obj):
 
     @classmethod
     def canon(cls, name):
-        m = cls._lower.get(name.lower())
+        low = name.lower()
+        m = cls._lower.get(low) or cls._alias.get(low)
         if m is None:
             # unique prefix matches too, as the language allows
-            hits = [v for k, v in cls._lower.items() if k.startswith(name.lower())]
+            hits = [v for k, v in cls._lower.items() if k.startswith(low)]
             if len(hits) == 1:
                 return hits[0]
             return None
@@ -213,8 +221,12 @@ class GObj(Obj):
         return sorted(self.props) + ['Children', 'Parent', 'Type']
 
     def delete_handle(self):
-        if not self.valid:
+        if not self.valid or self.props.get('BeingDeleted'):
             return
+        if DELETE_HOOK[0] is not None and self.props.get('DeleteFcn') not in (None, ''):
+            # DeleteFcn runs first, while the object is still there to read
+            self.props['BeingDeleted'] = True
+            DELETE_HOOK[0](self)
         self.touch()
         for c in list(self.children):
             c.delete_handle()
@@ -272,13 +284,22 @@ def export_value(k, v):
 _COLOR_PROPS = {'Color': ('none',), 'MarkerFaceColor': ('none', 'auto', 'flat'), 'MarkerEdgeColor': ('none', 'auto', 'flat'),
                 'FaceColor': ('none', 'flat', 'interp', 'texturemap', 'auto'), 'EdgeColor': ('none', 'flat', 'interp', 'auto'),
                 'XColor': ('none',), 'YColor': ('none',), 'ZColor': ('none',), 'BackgroundColor': ('none',),
-                'GridColor': ('none',), 'MinorGridColor': ('none',), 'TextColor': ('none',), 'MarkerEdge': ('none',)}
+                'GridColor': ('none',), 'MinorGridColor': ('none',), 'TextColor': ('none',), 'MarkerEdge': ('none',),
+                'ForegroundColor': (), 'HighlightColor': (), 'ShadowColor': ()}
 _ONOFF = {'Visible', 'Box', 'XGrid', 'YGrid', 'ZGrid', 'XMinorGrid', 'YMinorGrid', 'ZMinorGrid', 'XMinorTick', 'YMinorTick',
-          'ZMinorTick', 'Clipping', 'HitTest', 'NumberTitle', 'AutoUpdate', 'Resize', 'ShowText', 'Selected'}
+          'ZMinorTick', 'Clipping', 'HitTest', 'NumberTitle', 'AutoUpdate', 'Resize', 'ShowText', 'Selected',
+          'Interruptible', 'BeingDeleted', 'SelectionHighlight', 'Separator', 'Checked', 'State', 'Enable', 'IntegerHandle',
+          'DockControls', 'RowStriping'}
 
 
 def import_value(obj, k, v):
     """A value of the language stored as a property."""
+    if k == 'UIContextMenu':
+        if isinstance(v, HArr) and v.a.size == 1:
+            v = v.a.flat[0]
+        return v if isinstance(v, GObj) and v.TYPE == 'uicontextmenu' else None
+    if k == 'Enable' and type(v) in (Char, Str) and py_str(v).lower() == 'inactive':
+        return 'inactive'
     if k in _COLOR_PROPS:
         c = to_color(v, _COLOR_PROPS[k])
         return c if c != 'none' or k != 'Color' else 'none'
@@ -324,7 +345,11 @@ class Root(GObj):
         if name.lower() == 'currentfigure':
             return STORE.current if STORE.current is not None and STORE.current.valid else EMPTY()
         if name.lower() == 'children':
-            return HArr.of([f for f in sorted(STORE.figures.values(), key=lambda f: -f.order)], col=True)
+            return HArr.of([f for f in sorted(STORE.figures.values(), key=lambda f: -f.order) if f.props['HandleVisibility'] == 'on'], col=True)
+        if name.lower() == 'callbackobject':
+            from .uievents import gcbo
+            o = gcbo()
+            return o if o is not None else EMPTY()
         return super().getprop(name)
 
     def setprop(self, name, value):
@@ -349,7 +374,16 @@ class Figure(GObj):
                 'Color': (0.94, 0.94, 0.94), 'Colormap': _cm_default, 'Visible': True, 'WindowStyle': 'normal',
                 'Units': 'pixels', 'NextPlot': 'add', 'Tag': '', 'UserData': lambda: EMPTY(), 'CurrentAxes': None,
                 'MenuBar': 'figure', 'ToolBar': 'auto', 'Resize': True, 'PaperPositionMode': 'auto',
-                'CloseRequestFcn': 'closereq', 'HandleVisibility': 'on', 'InvertHardcopy': 'on', 'Renderer': 'opengl'}
+                'CloseRequestFcn': 'closereq', 'HandleVisibility': 'on', 'InvertHardcopy': 'on', 'Renderer': 'opengl',
+                'KeyPressFcn': '', 'KeyReleaseFcn': '', 'WindowKeyPressFcn': '', 'WindowKeyReleaseFcn': '',
+                'WindowButtonDownFcn': '', 'WindowButtonUpFcn': '', 'WindowButtonMotionFcn': '', 'WindowScrollWheelFcn': '',
+                'ButtonDownFcn': '', 'SizeChangedFcn': '', 'ResizeFcn': '', 'CreateFcn': '', 'DeleteFcn': '',
+                'CurrentCharacter': '', 'CurrentKey': '', 'CurrentModifier': lambda: [], 'CurrentObject': None,
+                'CurrentPoint': lambda: np.array([[0.0, 0.0]]), 'SelectionType': 'normal', 'Pointer': 'arrow',
+                'UIContextMenu': None, 'Interruptible': True, 'BusyAction': 'queue', 'IntegerHandle': True,
+                'DockControls': True, 'WindowState': 'normal', 'FileName': '', 'Clipping': True, 'HitTest': True,
+                'BeingDeleted': False}
+    ALIASES = {'ContextMenu': 'UIContextMenu'}
     SHOWN = ['Number', 'Name', 'Color', 'Position', 'Units']
 
     def __init__(self, number):
@@ -358,13 +392,27 @@ class Figure(GObj):
         self.version = 1
         self.order = next(_order)
         self.layout = None        # tiledlayout grid, when made
+        if number < 0:
+            # a dialog's window: no number of its own, and no current figure
+            self.props['IntegerHandle'] = False
+            self.props['HandleVisibility'] = 'callback'
+            self.props['NumberTitle'] = False
         STORE.figures[number] = self
         STORE.dirty.add(self)
+
+    @property
+    def is_dialog(self):
+        return self.props['Number'] < 0
 
     def get_value(self, k):
         if k == 'CurrentAxes':
             a = self.props.get('CurrentAxes')
             return a if a is not None and a.valid else EMPTY()
+        if k == 'Number' and self.is_dialog:
+            return EMPTY()
+        if k == 'CurrentObject':
+            o = self.props.get('CurrentObject')
+            return o if o is not None and o.valid else EMPTY()
         return super().get_value(k)
 
     def set_value(self, k, value):
@@ -380,6 +428,12 @@ class Figure(GObj):
             if a.size != 4:
                 raise gerr('Value must be a 4-element vector.')
             self.props[k] = a
+            return
+        if k in ('CurrentObject', 'UIContextMenu'):
+            self.props[k] = value if isinstance(value, GObj) else None
+            return
+        if k == 'Pointer':
+            self.props[k] = py_str(value).lower()
             return
         super().set_value(k, value)
 
@@ -568,6 +622,10 @@ class Axes(GObj):
             if a.ndim != 2 or a.shape[1] != 3:
                 raise gerr('ColorOrder must be an m-by-3 matrix of RGB values.')
             self.props[k] = a
+            return
+        if k in ('Units', 'Position', 'CurrentPoint'):
+            from .uiobjects import set_placed
+            set_placed(self, k, value)
             return
         super().set_value(k, value)
 
@@ -976,10 +1034,24 @@ def _color(c):
     return [round(float(x), 6) for x in c]
 
 
+def has_callback(v):
+    """Whether a callback property holds something to run."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return False
+    return not (isinstance(v, np.ndarray) and v.size == 0)
+
+
+def _interact_json(o):
+    p = o.props
+    cm = p.get('UIContextMenu')
+    return {'bdf': has_callback(p.get('ButtonDownFcn')), 'hit': bool(p.get('HitTest', True)) and p.get('PickableParts', 'visible') != 'none',
+            'cmenu': cm.id if cm is not None and cm.valid else None}
+
+
 def _text_json(t):
     p = t.props
     s = p.get('String', '')
-    return {'id': t.id, 'string': s if isinstance(s, list) else str(s), 'fontSize': float(p['FontSize']),
+    return {'id': t.id, 'string': s if isinstance(s, list) else str(s), 'fontSize': float(p['FontSize']), 'fontUnits': p.get('FontUnits', 'points'),
             'fontWeight': p['FontWeight'], 'fontAngle': p['FontAngle'], 'color': _color(p['Color']),
             'rotation': float(p['Rotation']), 'interpreter': p['Interpreter'], 'visible': bool(p['Visible']),
             'halign': p['HorizontalAlignment'], 'valign': p['VerticalAlignment'],
@@ -999,6 +1071,7 @@ def serialize_child(c, ax):
     p = c.props
     t = c.TYPE
     d = {'id': c.id, 'type': t, 'visible': bool(p.get('Visible', True)), 'displayName': p.get('DisplayName', '')}
+    d.update(_interact_json(c))
     if t == 'line':
         d.update(x=_arr(p['XData']), y=_arr(p['YData']), z=_arr(p['ZData']) if numel(p['ZData']) else None,
                  color=_color(p['Color']), lineStyle=p['LineStyle'], lineWidth=float(p['LineWidth']),
@@ -1099,7 +1172,10 @@ def serialize_axes(ax):
         'children': [serialize_child(c, ax) for c in reversed(ax.children) if c.valid and not getattr(c, 'hidden', False)],
         'texts': [],
         'yy': None,
+        'units': p['Units'], 'fontUnits': p['FontUnits'],
+        'parent': ax.parent.id if ax.parent is not None and ax.parent.TYPE not in ('figure', 'axes') else None,
     }
+    d.update(_interact_json(ax))
     if ax.yy is not None:
         d['yy'] = {'side': ax.yy['side'], 'right': serialize_axes(ax.yy['right']) if ax.yy.get('right') is not None else None}
     return d
@@ -1154,12 +1230,30 @@ def serialize_figure(f):
         d['sgtitle'] = _text_json(f.sgtitle)
     if f.layout is not None:
         d['layout'] = f.layout
+    from .uiobjects import serialize_ui
+    serialize_ui(f, d)
     return d
 
 
-# property names as typed, matched without regard to case
-_EXTRA = {Axes: ('Title', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Text: ('Extent',)}
-for _C in (Root, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar, Light, Series):
-    _names = list(_C.DEFAULTS) + list(_EXTRA.get(_C, ()))
-    _C._lower = {n.lower(): n for n in _names}
+# what a person can click has callbacks; text can size itself to its axes
+for _C in (Axes, Line, Surface, Patch, Image, Text, Series):
+    _C.DEFAULTS = {**_C.DEFAULTS, **INTERACT}
+    _C.ALIASES = {'ContextMenu': 'UIContextMenu'}
+Text.DEFAULTS['FontUnits'] = 'points'
+Axes.DEFAULTS['FontUnits'] = 'points'
+Axes.DEFAULTS['CurrentPoint'] = lambda: np.zeros((2, 3))
+
+
+def register(*classes):
+    """Property names as typed, matched without regard to case; the other
+    names some properties go by."""
+    for C in classes:
+        names = list(C.DEFAULTS) + list(_EXTRA.get(C, ()))
+        C._lower = {n.lower(): n for n in names}
+        C._alias = {a.lower(): n for a, n in getattr(C, 'ALIASES', {}).items() if n in C.DEFAULTS}
+
+
+_EXTRA = {Axes: ('Title', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Text: ('Extent',), Root: ('CallbackObject',)}
+register(Root, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar, Light, Series)
 GObj._lower = {}
+GObj._alias = {}

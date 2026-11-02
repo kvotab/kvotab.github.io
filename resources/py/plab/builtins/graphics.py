@@ -177,7 +177,9 @@ def groot(nargout, *args):
 
 @bi('gco', arr=False)
 def gco(nargout, *args):
-    return EMPTY()
+    f = args[0] if args and isinstance(args[0], Figure) else STORE.current
+    o = f.props.get('CurrentObject') if f is not None and f.valid else None
+    return o if o is not None and o.valid else EMPTY()
 
 
 @bi('clf', arr=False)
@@ -192,28 +194,44 @@ def clf(nargout, *args):
     return f if nargout else None
 
 
-@bi('close', arr=False)
-def close(nargout, *args):
-    if not args:
+async def _close_one(f, force):
+    """A figure closes as its CloseRequestFcn says (closereq deletes it);
+    force deletes it all the same."""
+    from .. import uievents as E
+    crf = f.props['CloseRequestFcn']
+    if force or (isinstance(crf, str) and crf.strip().rstrip(';').replace('()', '') == 'closereq'):
+        f.delete_handle()
+    else:
+        await E.run_one(f, 'CloseRequestFcn', E.evdata(f, 'Close'))
+
+
+@bi('close', aw=True, arr=False)
+async def close(nargout, *args):
+    words = [opt_str(a).lower() for a in args if opt_str(a) is not None]
+    force = 'force' in words or 'all force' in words
+    hidden = 'hidden' in words or 'all hidden' in words or 'all force' in words
+    rest = [a for a in args if opt_str(a) is None or opt_str(a).lower() not in ('force', 'hidden')]
+    if not rest:
         f = STORE.current
         if f is not None and f.valid:
-            f.delete_handle()
+            await _close_one(f, force)
         return None
-    a = args[0]
+    a = rest[0]
     s = opt_str(a)
     if s is not None:
         if s.lower() in ('all', 'all hidden', 'all force'):
             for f in list(STORE.figures.values()):
-                f.delete_handle()
+                if f.valid and (hidden or f.props['HandleVisibility'] == 'on'):
+                    await _close_one(f, force)
             return True if nargout else None
         for f in list(STORE.figures.values()):
-            if f.props['Name'] == s:
-                f.delete_handle()
+            if f.valid and f.props['Name'] == s:
+                await _close_one(f, force)
         return None
     items = a.a.reshape(-1) if isinstance(a, HArr) else ([a] if isinstance(a, Figure) else [STORE.figures.get(int(x)) for x in arr(a).reshape(-1)])
     for f in items:
         if f is not None and f.valid:
-            f.delete_handle()
+            await _close_one(f, force)
     return True if nargout else None
 
 
@@ -316,9 +334,13 @@ def axes(nargout, *args):
         set_current_axes(args[0])
         return args[0] if nargout else None
     f = gcf_()
-    pairs = name_value(args, 0)
-    parent = next((v for k, v in pairs if k.lower() == 'parent'), None)
-    if isinstance(parent, Figure):
+    rest = list(args)
+    parent = rest.pop(0) if rest and isinstance(rest[0], GObj) and rest[0].TYPE in ('figure', 'uipanel', 'uibuttongroup', 'uitab') else None
+    pairs = name_value(rest, 0)
+    parent = next((v for k, v in pairs if k.lower() == 'parent'), parent)
+    if isinstance(parent, HArr) and parent.a.size == 1:
+        parent = parent.a.flat[0]
+    if isinstance(parent, GObj) and parent.TYPE in ('figure', 'uipanel', 'uibuttongroup', 'uitab'):
         f = parent
     a = Axes(f)
     apply_props(a, pairs)
@@ -2293,7 +2315,18 @@ def box(nargout, *args):
 @bi('text', arr=False)
 def text(nargout, *args):
     ax, rest = split_axes_arg(args)
+    given = next((rest[i + 1] for i in range(len(rest) - 1) if opt_str(rest[i]) is not None and opt_str(rest[i]).lower() == 'parent'), None)
+    if isinstance(given, HArr) and given.a.size == 1:
+        given = given.a.flat[0]
+    if is_axes(given):
+        ax = given
     ax = ax or gca_()
+    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in Text._lower and len(rest) % 2 == 0:
+        # text('Name', value, ...): no position or string first
+        t = Text(ax)
+        apply_props(t, name_value(rest, 0))
+        ax.touch()
+        return t if nargout else None
     data = []
     while rest and opt_str(rest[0]) is None and type(rest[0]) not in (Cell,) and len(data) < 3:
         data.append(rest.pop(0))
@@ -2524,7 +2557,7 @@ def get(nargout, *args):
     return Cell(c)
 
 
-@bi('ishandle', 'isgraphics', 'isvalid')
+@bi('ishandle', 'isgraphics', 'ishghandle', 'isvalid')
 def ishandle(nargout, *args):
     v = args[0]
     if isinstance(v, HArr):
@@ -2532,7 +2565,7 @@ def ishandle(nargout, *args):
     if isinstance(v, GObj):
         return bool(v.valid)
     if isinstance(v, Obj):
-        return True
+        return bool(getattr(v, 'valid', True))
     if type(v) in (float, np.ndarray):
         a = np.asarray(v, float)
         res = [(x == 0) or (int(x) in STORE.figures) or (int(x) in STORE.objects) for x in a.reshape(-1)]
@@ -2544,26 +2577,27 @@ def ishandle(nargout, *args):
 def findobj(nargout, *args):
     rest = list(args)
     roots = []
+    from ..uievents import gcbf as _gcbf
+    shown = lambda f: f.props['HandleVisibility'] == 'on' or (f.props['HandleVisibility'] == 'callback' and _gcbf() is f)
     if rest and (isinstance(rest[0], (GObj, HArr)) or (type(rest[0]) is float)):
         roots = _handles(rest.pop(0))
     else:
-        roots = [f for f in STORE.figures.values()]
+        roots = [f for f in STORE.figures.values() if shown(f)]
+
+    found = []
 
     def walk(o):
-        yield o
-        kids = list(o.children)
-        if isinstance(o, Axes):
-            kids = kids
-        for c in kids:
+        found.append(o)
+        for c in o.children:
             if c.valid:
-                yield from walk(c)
-    found = []
+                walk(c)
     for r in roots:
         if r is ROOT:
             for f in STORE.figures.values():
-                found += list(walk(f))
+                if shown(f):
+                    walk(f)
         else:
-            found += list(walk(r))
+            walk(r)
     conds = []
     i = 0
     while i < len(rest):
@@ -2577,25 +2611,48 @@ def findobj(nargout, *args):
         if i + 1 < len(rest):
             conds.append((s, rest[i + 1]))
         i += 2
-    res = []
-    for h in found:
-        ok = True
-        for k, v in conds:
-            try:
-                hv = h.getprop(k)
-            except MError:
-                ok = False
-                break
-            from .core import _equal
-            if k.lower() == 'type':
-                ok = py_str(hv) == py_str(v)
-            elif not _equal(hv, v, False):
-                ok = False
-            if not ok:
-                break
-        if ok:
-            res.append(h)
+    tests = [_find_test(k, v) for k, v in conds]
+    if len(tests) == 1:
+        res = list(filter(tests[0], found))
+    else:
+        res = [h for h in found if all(test(h) for test in tests)]
     return HArr.of(res, col=True)
+
+
+def _find_test(k, v):
+    """findobj's test of one property: text against the text an object keeps
+    is compared as it is (programs ask for Tags over and over), anything else
+    as isequal would."""
+    from .core import _equal
+    if k.lower() == 'type':
+        want = py_str(v)
+        return lambda h: getattr(h, 'TYPE', None) == want or (getattr(h, 'TYPE', None) is not None and _safe_text(h, k) == want)
+    text = py_str(v) if is_str(v) and numel(v) <= max(1, len(py_str(v))) else None
+    names = {}
+
+    def test(h):
+        c = names.get(type(h), _MISSING)
+        if c is _MISSING:
+            c = names[type(h)] = h.canon(k) if hasattr(h, 'canon') else None
+        if c is not None and text is not None:
+            raw = h.props.get(c, _MISSING)
+            if isinstance(raw, str):
+                return raw == text
+        try:
+            return _equal(h.getprop(k), v, False)
+        except MError:
+            return False
+    return test
+
+
+_MISSING = object()
+
+
+def _safe_text(h, k):
+    try:
+        return py_str(h.getprop(k))
+    except MError:
+        return None
 
 
 @bi('allchild', arr=False)
@@ -2622,9 +2679,12 @@ def ancestor(nargout, *args):
     return o if o is not None else EMPTY()
 
 
-@bi('drawnow', arr=False)
-def drawnow(nargout, *args):
+@bi('drawnow', aw=True, arr=False)
+async def drawnow(nargout, *args):
     flush_figures()
+    if not any(opt_str(a) == 'nocallbacks' for a in args):
+        from .. import uievents as E
+        await E.process()
     return None
 
 
@@ -2791,8 +2851,14 @@ async def saveas(nargout, *args):
             name = s
         elif fmt is None:
             fmt = s.lower()
+    if name is None and fmt in ('meta', 'bitmap'):
+        # print -dmeta (or -dbitmap) with no file: the figure goes to the clipboard
+        flush_figures()
+        if not await R.ask_page({'type': 'copyfig', 'figure': f.id}):
+            R.warn('MATLAB:print:clipboard', 'The figure could not be copied to the clipboard here.')
+        return None
     if name is None:
-        name = f'figure{int(f.props["Number"])}'
+        name = f'figure{int(f.props["Number"])}' if not f.is_dialog else 'dialog'
     import os
     ext = os.path.splitext(name)[1].lower().lstrip('.')
     if not ext:

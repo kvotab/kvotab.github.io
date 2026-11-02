@@ -14,6 +14,12 @@
    click goes back to the view the program set. The toolbar picks zoom by
    box, pan, rotate or data tips instead. The limits and views a person sets
    are sent back, so xlim and view report them.
+
+   A program's own window (MenuBar or ToolBar 'none') has no plot tools and
+   none of that: its clicks, keys, wheel and close button go to the program
+   (CurrentPoint, SelectionType, CurrentCharacter, gco, and its callbacks),
+   as do clicks in any figure that a ButtonDownFcn or WindowButtonDownFcn
+   takes. Its menus, toolbars and controls are pylab-ui.js's.
    ========================================================================== */
 (function (root) {
   'use strict';
@@ -221,9 +227,29 @@
     return runs;
   }
 
+  const MONO_FONT = 'ui-monospace, "IBM Plex Mono", Menlo, Consolas, monospace';
+
   function runFont(r, size, base) {
     const sz = r.small ? size * 0.72 : size;
-    return `${r.italic || base.italic ? 'italic ' : ''}${r.bold || base.bold ? 'bold ' : ''}${sz}px ${FONT}`;
+    return `${r.italic || base.italic ? 'italic ' : ''}${r.bold || base.bold ? 'bold ' : ''}${sz}px ${base.family || FONT}`;
+  }
+
+  /* FontName FixedWidth (and the usual monospaced names) draws monospaced. */
+  function faceOf(name) {
+    const n = String(name || '').toLowerCase();
+    return n === 'fixedwidth' || /courier|mono|consol|menlo/.test(n) ? MONO_FONT : null;
+  }
+
+  /* A FontSize in its FontUnits as CSS pixels (normalized: of the axes' height). */
+  function fontSizePx(t, boxH) {
+    const s = t.fontSize;
+    switch (t.fontUnits) {
+      case 'normalized': return s * boxH;
+      case 'pixels': return s;
+      case 'inches': return s * 96;
+      case 'centimeters': return s * 96 / 2.54;
+      default: return s * PT;
+    }
   }
 
   function measureRuns(ctx, runs, size, base) {
@@ -236,7 +262,7 @@
   function drawText(ctx, str, x, y, opts = {}) {
     const size = opts.size || 12;
     const lines = Array.isArray(str) ? str : String(str).split('\n');
-    const base = { bold: opts.bold, italic: opts.italic };
+    const base = { bold: opts.bold, italic: opts.italic, family: opts.family };
     const lh = size * 1.2;
     ctx.save();
     ctx.translate(x, y);
@@ -446,18 +472,22 @@
 
   /* ---- drawing a figure -------------------------------------------------------------------- */
   class Renderer {
-    constructor() { this.frames = []; }
+    constructor() { this.frames = []; this.textBoxes = new Map(); }
 
     draw(ctx, fig, W, H) {
       this.frames = [];
+      this.textBoxes = new Map();
       MIN_LW = 1 / (ctx.getTransform().a || 1);
       ctx.save();
       ctx.fillStyle = rgb(fig.color);
       ctx.fillRect(0, 0, W, H);
+      // panels and tabs: their colour here, under the axes they hold
+      for (const f of fig._fills || []) { ctx.fillStyle = rgb(f.color); ctx.fillRect(f.x, f.y, f.w, f.h); }
       ctx.lineJoin = 'round';
       const legendFor = new Map((fig.legends || []).map((l) => [l.axes, l]));
       const cbarFor = new Map((fig.colorbars || []).map((c) => [c.axes, c]));
       for (const ax of fig.axes) {
+        if (ax._skip) continue;
         try {
           this.drawAxes(ctx, fig, ax, W, H, legendFor.get(ax.id), cbarFor.get(ax.id));
         } catch (e) {
@@ -476,8 +506,12 @@
 
     axesRect(ax, W, H, cbar, legend) {
       const p = ax.position;
-      let x = p[0] * W, w = p[2] * W, h = p[3] * H;
-      let y = H - (p[1] + p[3]) * H;
+      // in its container (the figure, or a panel or tab the page placed), in its Units
+      const b = ax._box || { x: 0, y: 0, w: W, h: H };
+      let x, y, w, h;
+      const u = PL.uiUnits && ax.units && ax.units !== 'normalized' ? PL.uiUnits[ax.units] : null;
+      if (u) { x = b.x + p[0] * u[0]; w = p[2] * u[0]; h = p[3] * u[1]; y = b.y + b.h - p[1] * u[1] - h; }
+      else { x = b.x + p[0] * b.w; w = p[2] * b.w; h = p[3] * b.h; y = b.y + b.h - (p[1] + p[3]) * b.h; }
       if (cbar && cbar.visible && (cbar.location || 'eastoutside') === 'eastoutside') w -= Math.min(70, w * 0.16);
       if (cbar && cbar.visible && cbar.location === 'southoutside') h -= Math.min(54, h * 0.18);
       if (legend && legend.visible && /outside$/.test(legend.location) && legend.location.startsWith('northeast')) w -= Math.min(120, w * 0.25);
@@ -860,9 +894,15 @@
       let x, y;
       if (c.units === 'normalized') { x = fr.r.x + p[0] * fr.r.w; y = fr.r.y + fr.r.h - p[1] * fr.r.h; }
       else { x = fr.fx(p[0]); y = fr.fy(p[1]); }
-      ctx.save();
-      ctx.restore();
-      drawText(ctx, c.string, x, y, { size: c.fontSize * PT, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic' });
+      const size = fontSizePx(c, fr.r.h);
+      const m = drawText(ctx, c.string, x, y, { size, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic', family: faceOf(c.fontName) });
+      // where the letters are, for a click on the text
+      if (m && m.width > 0 && !c.rotation) {
+        const x0 = c.halign === 'center' ? x - m.width / 2 : c.halign === 'right' ? x - m.width : x;
+        const va = c.valign || 'middle';
+        const y0 = va === 'top' || va === 'cap' ? y : va === 'bottom' ? y - m.height : va === 'baseline' ? y - size * 0.85 : y - m.height / 2;
+        this.textBoxes.set(c.id, { x: x0, y: y0, w: m.width, h: m.height });
+      }
     }
 
     series2(ctx, ax, fr, c) {
@@ -1698,7 +1738,8 @@
         return b;
       };
       this.btnClose = tb('close', 'Close the figure', () => this.mgr.requestClose(this));
-      this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, tb('image', 'Save as a picture', () => this.savePicture()), this.btnClose);
+      this.btnSave = tb('image', 'Save as a picture', () => this.savePicture());
+      this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnSave, this.btnClose);
       this.toolBtns = {
         zoomin: tb('zoomin', 'Zoom in (drag a box, or click)', (b) => this.setTool('zoomin'), true),
         zoomout: tb('zoomout', 'Zoom out (click)', (b) => this.setTool('zoomout'), true),
@@ -1713,31 +1754,58 @@
         tb('legend', 'Legend on or off', () => this.mgr.run(`figure(${fig.number}); if isempty(get(gca,'Legend')), legend show, else, legend off, end`)),
         tb('colorbar', 'Colorbar on or off', () => this.mgr.run(`figure(${fig.number}); if isempty(findobj(gcf,'Type','colorbar')), colorbar, else, colorbar off, end`)));
       this.canvas = el('canvas');
-      this.stage = el('div', { class: 'pl-figcanvas' }, this.canvas);
+      // what the program made with uicontrol, uimenu, uitoolbar ... (pylab-ui.js)
+      this.ui = new PL.FigureUI(this);
+      this.stage = el('div', { class: 'pl-figcanvas' }, this.canvas, this.ui.layer);
       this.grip = el('div', { class: 'pl-figgrip', title: 'Drag to resize' });
-      this.el = el('div', { class: 'pl-figwin', role: 'dialog', 'aria-label': 'Figure', tabindex: '-1' }, this.titlebar, this.tools, this.stage, this.grip);
+      this.el = el('div', { class: 'pl-figwin', role: 'dialog', 'aria-label': 'Figure', tabindex: '-1' }, this.titlebar, this.ui.menubar, this.ui.toolbars, this.tools, this.stage, this.grip);
       this.el.addEventListener('pointerdown', () => this.mgr.focus(this), true);
       this._drag();
       this._resize();
       this._interact();
+      this._keys();
       this.update(fig);
     }
 
     update(fig) {
       this.fig = fig;
-      const t = fig.numberTitle ? `Figure ${fig.number}${fig.name ? `: ${fig.name}` : ''}` : (fig.name || `Figure ${fig.number}`);
+      const t = fig.numberTitle ? `Figure ${fig.number}${fig.name ? `: ${fig.name}` : ''}` : (fig.name || (fig.dialog ? '' : `Figure ${fig.number}`));
       this.title.textContent = t;
-      this.el.setAttribute('aria-label', t);
+      this.el.setAttribute('aria-label', t || 'Dialog');
+      this.ui.update(fig);
+      // a program's own window: no plot tools unless it asks (MenuBar none hides them, as ToolBar none does)
+      this.plotTools = fig.toolBar === 'figure' || (fig.toolBar !== 'none' && fig.menuBar !== 'none');
+      this.tools.hidden = !this.plotTools;
+      if (!this.plotTools && this.tool) this.setTool(this.tool);
+      this.btnSave.hidden = !!fig.dialog;
+      this.grip.hidden = fig.resize === false;
+      this.el.classList.toggle('is-dialog', !!fig.dialog);
       if (!this.sized) {
         this.sized = true;
         this.setSize(fig.width, fig.height);
       }
       this.el.hidden = !fig.visible;
+      this.setPointer();
       this.redraw();
     }
 
+    /* The program's Pointer, unless a figure tool shows its own. */
+    setPointer() {
+      if (this.tool) return;
+      const P = { crosshair: 'crosshair', watch: 'wait', hand: 'pointer', ibeam: 'text', fleur: 'move', circle: 'crosshair', cross: 'crosshair',
+        topl: 'nwse-resize', botr: 'nwse-resize', topr: 'nesw-resize', botl: 'nesw-resize', left: 'ew-resize', right: 'ew-resize', top: 'ns-resize', bottom: 'ns-resize' };
+      this.stage.style.cursor = P[this.fig.pointer] || '';
+    }
+
+    redrawSoon() {
+      cancelAnimationFrame(this._soon);
+      this._soon = requestAnimationFrame(() => this.redraw());
+    }
+
     setSize(w, h) {
-      const chrome = 26 + 27;
+      // the rows above the canvas: title, and menus and tools when there are
+      let chrome = 26;
+      for (const row of [this.ui.menubar, this.ui.toolbars, this.tools]) if (!row.hidden) chrome += row.offsetHeight || (row === this.tools ? 27 : row === this.ui.menubar ? 25 : 30 * row.childElementCount);
       const layer = this.mgr.layer.getBoundingClientRect();
       const maxW = Math.max(240, layer.width - 16), maxH = Math.max(180, layer.height - 16);
       const W = Math.min(w, maxW), H = Math.min(h + chrome, maxH);
@@ -1751,6 +1819,7 @@
     }
 
     redraw() {
+      if (this.ui) this.ui.prepare(this.fig);
       const { w, h } = this.canvasSize();
       const dpr = window.devicePixelRatio || 1;
       this.canvas.width = Math.round(w * dpr);
@@ -1790,7 +1859,111 @@
       this.tool = this.tool === t ? null : t;
       for (const [k, b] of Object.entries(this.toolBtns)) b.setAttribute('aria-pressed', String(k === this.tool));
       this.stage.style.cursor = this.tool === 'zoomin' ? 'zoom-in' : this.tool === 'zoomout' ? 'zoom-out' : this.tool === 'pan' ? 'grab' : this.tool === 'rotate' ? 'move' : this.tool === 'datatip' ? 'crosshair' : 'default';
+      if (!this.tool) this.setPointer();
       if (this.tool !== 'datatip') { this.tips = []; this.redraw(); }
+    }
+
+    /* What a click at (px, py) on the canvas hits: the topmost object that
+       takes clicks (a text's letters, a line, a patch's face or edge, an
+       image), else its axes, else the figure; and the point in the axes'
+       data. */
+    hitTest(px, py) {
+      const fig = this.fig;
+      const fs = this.renderer.frames.filter((f) => f.ax && !f.yyRight);
+      for (let i = fs.length - 1; i >= 0; i--) {
+        const f = fs[i];
+        const r = f.rect;
+        if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) continue;
+        const ax = f.ax;
+        const point = f.is3d || f.fr.polar ? null : [f.fr.ix(px), f.fr.iy(py)];
+        const at = (c) => ({ id: c.id, axes: ax.id, point, bdf: !!c.bdf, cmenu: c.cmenu || ax.cmenu || fig.cmenu || null });
+        if (!f.is3d && !f.fr.polar) {
+          for (let k = ax.children.length - 1; k >= 0; k--) {
+            const c = ax.children[k];
+            if (c.visible === false || c.hit === false) continue;
+            if (this.hits(f, c, px, py)) return at(c);
+          }
+        }
+        if (ax.hit === false) return { id: fig.id, axes: ax.id, point, bdf: !!(fig.flags && fig.flags.bdf), cmenu: fig.cmenu || null };
+        return at(ax);
+      }
+      return { id: fig.id, axes: null, point: null, bdf: !!(fig.flags && fig.flags.bdf), cmenu: fig.cmenu || null };
+    }
+
+    hits(f, c, px, py) {
+      const fr = f.fr;
+      if (c.type === 'text') {
+        const b = this.renderer.textBoxes.get(c.id);
+        return !!b && px >= b.x - 2 && px <= b.x + b.w + 2 && py >= b.y - 2 && py <= b.y + b.h + 2;
+      }
+      const near = (pts, tol) => {
+        for (let i = 1; i < pts.length; i++) {
+          const [x1, y1] = pts[i - 1], [x2, y2] = pts[i];
+          const dx = x2 - x1, dy = y2 - y1;
+          const L = dx * dx + dy * dy;
+          const t = L ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / L)) : 0;
+          if (Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy)) <= tol) return true;
+        }
+        return pts.length === 1 && Math.hypot(px - pts[0][0], py - pts[0][1]) <= tol;
+      };
+      if (c.type === 'line') {
+        const x = vec(decode(c.x)), y = vec(decode(c.y));
+        const pts = [];
+        for (let i = 0; i < Math.min(x.length, y.length); i++) if (fr.ok(x[i], y[i])) pts.push([fr.fx(x[i]), fr.fy(y[i])]);
+        const tol = Math.max(3, (c.lineWidth || 0.5) / 2 + 2);
+        if (c.lineStyle !== 'none' && near(pts, tol)) return true;
+        return c.marker && c.marker !== 'none' && pts.some(([qx, qy]) => Math.hypot(px - qx, py - qy) <= (c.markerSize || 6) / 2 + 2);
+      }
+      if (c.type === 'patch') {
+        for (const poly of patchPolys(c)) {
+          const pts = poly.pts.map(([x, y]) => [fr.fx(x), fr.fy(y)]);
+          if (pts.length < 2) continue;
+          if (c.faceColor !== 'none') {
+            let inside = false;
+            for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+              const [xi, yi] = pts[i], [xj, yj] = pts[j];
+              if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+            }
+            if (inside) return true;
+          }
+          if (c.edgeColor !== 'none' && near(pts.concat([pts[0]]), 3)) return true;
+        }
+        return false;
+      }
+      if (c.type === 'image' || c.type === 'surface') {
+        const xs = vec(decode(c.x)), ys = vec(decode(c.y));
+        if (!xs.length || !ys.length) return false;
+        const X = [fr.fx(Math.min(...xs)), fr.fx(Math.max(...xs))], Y = [fr.fy(Math.min(...ys)), fr.fy(Math.max(...ys))];
+        return px >= Math.min(...X) && px <= Math.max(...X) && py >= Math.min(...Y) && py <= Math.max(...Y);
+      }
+      return false;
+    }
+
+    /* Keys in the window go to the program: menu accelerators first, then
+       the figure's (or a control's) key callbacks. */
+    _keys() {
+      const send = (ev, release) => {
+        const fig = this.fig;
+        if (!fig || !fig.flags) return;
+        const ctl = this.ui.controlOf(ev.target);
+        const typing = ev.target && (ev.target.tagName === 'INPUT' && ev.target.type === 'text' || ev.target.tagName === 'TEXTAREA' || ev.target.tagName === 'SELECT');
+        const own = ctl && ctl.kpf;
+        const fl = fig.flags;
+        const toFigure = !ctl || (!own && !typing);
+        const listens = release ? (fl.krf || fl.wkrf) : (fl.kpf || fl.wkpf || own);
+        if (!listens || (!toFigure && !own && !(release ? fl.wkrf : fl.wkpf))) return;
+        const info = PL.uiKeys(ev);
+        this.mgr.ui(Object.assign({ type: 'key', id: own ? ctl.id : fig.id, release, toFigure }, info));
+        // the figure's keys are the program's (arrows scroll nothing, space presses nothing)
+        if (toFigure && !release && (fl.kpf || fl.wkpf) && !ev.metaKey && !(ev.ctrlKey && ['c', 'v', 'x'].includes(ev.key))) ev.preventDefault();
+      };
+      this.el.addEventListener('keydown', (ev) => {
+        if (ev.target.closest && ev.target.closest('.pl-figtitle, .pl-figtools')) return;
+        if (this.fig && this.fig.menus && this.ui.accelerator(ev)) return;
+        send(ev, false);
+        if (this.fig && this.fig.flags && (this.fig.flags.kpf || this.fig.flags.wkpf) && !this.ui.controlOf(ev.target)) ev.stopPropagation();
+      });
+      this.el.addEventListener('keyup', (ev) => send(ev, true));
     }
 
     frameAt(px, py) {
@@ -1845,13 +2018,25 @@
     _interact() {
       let drag = null;
       const pos = (ev) => { const r = this.canvas.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+      const mouse = (type, ev, px, py, hit) => {
+        const h = hit || this.hitTest(px, py);
+        this.mgr.ui({ type, id: this.fig.id, hit: h.id, axes: h.axes, point: h.point, fpt: [px, (this.lastSize ? this.lastSize.h : 0) - py],
+          button: ev.button === 2 ? 3 : ev.button === 1 ? 2 : 1, clicks: ev.detail || 1, modifiers: PL.uiMods(ev) });
+      };
       this.canvas.addEventListener('pointerdown', (ev) => {
-        if (ev.button !== 0) return;
         const [px, py] = pos(ev);
         const f = this.frameAt(px, py);
-        if (this.mgr.ginput) { this.mgr.ginputClick(this, f, px, py, ev.button); return; }
-        if (!f) return;
+        if (this.mgr.ginput) { if (ev.button === 0) this.mgr.ginputClick(this, f, px, py, ev.button); return; }
+        this.el.focus({ preventScroll: true });
+        const fl = this.fig.flags || {};
+        const hit = this.hitTest(px, py);
+        // the program hears every press (CurrentPoint, SelectionType, gco; and its callbacks)
+        mouse('down', ev, px, py, hit);
+        if (fl.wbuf || fl.wbmf) { this.canvas.setPointerCapture(ev.pointerId); this.pressed = true; }
+        if (ev.button !== 0 || !f) return;
         this.mgr.send({ type: 'currentaxes', id: f.ax.id });
+        // a click the program takes, or a window of the program's own, is not panned or tipped
+        if (!this.tool && (fl.wbdf || hit.bdf || !this.plotTools)) return;
         const mode = this.tool || (f.is3d ? 'rotate' : 'pan');
         if (mode === 'datatip') { this.addTip(f, px, py); return; }
         if (mode === 'zoomout') { this.zoomAt(f, px, py, 1.6); return; }
@@ -1864,7 +2049,13 @@
         }
       });
       this.canvas.addEventListener('pointermove', (ev) => {
-        if (!drag) return;
+        if (!drag) {
+          if (this.fig.flags && this.fig.flags.wbmf && !this._moveRaf) {
+            const [mx, my] = pos(ev);
+            this._moveRaf = requestAnimationFrame(() => { this._moveRaf = 0; mouse('motion', ev, mx, my); });
+          }
+          return;
+        }
         const [px, py] = pos(ev);
         const dx = px - drag.x0, dy = py - drag.y0;
         if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
@@ -1897,6 +2088,10 @@
         }
       });
       const end = (ev) => {
+        if (this.pressed) {
+          this.pressed = false;
+          if (this.fig.flags && this.fig.flags.wbuf) { const [ux, uy] = pos(ev); mouse('up', ev, ux, uy); }
+        }
         if (!drag) return;
         const [px, py] = pos(ev);
         const d = drag;
@@ -1921,12 +2116,24 @@
       this.canvas.addEventListener('pointercancel', end);
       this.canvas.addEventListener('wheel', (ev) => {
         const [px, py] = pos(ev);
+        if (this.fig.flags && this.fig.flags.scroll) {
+          ev.preventDefault();
+          this.mgr.ui({ type: 'scroll', id: this.fig.id, count: Math.sign(ev.deltaY) || 1, fpt: [px, (this.lastSize ? this.lastSize.h : 0) - py] });
+          return;
+        }
+        if (!this.plotTools) return;
         const f = this.frameAt(px, py);
         if (!f || f.fr.polar) return;
         ev.preventDefault();
         this.zoomAt(f, px, py, ev.deltaY > 0 ? 1.15 : 1 / 1.15);
       }, { passive: false });
-      this.canvas.addEventListener('dblclick', () => this.restoreView());
+      this.canvas.addEventListener('dblclick', () => { if (this.plotTools && !(this.fig.flags && this.fig.flags.wbdf)) this.restoreView(); });
+      this.canvas.addEventListener('contextmenu', (ev) => {
+        const [px, py] = pos(ev);
+        const hit = this.hitTest(px, py);
+        if (hit.cmenu && this.ui.showCmenu(hit.cmenu, ev.clientX, ev.clientY)) ev.preventDefault();
+        else if (!this.plotTools || hit.bdf) ev.preventDefault();
+      });
     }
 
     /* A tip at the data point nearest the click (lines, scatter, images). */
@@ -2019,7 +2226,10 @@
         if (!d) return;
         d = null;
         const { w, h } = this.canvasSize();
-        this.mgr.send({ type: 'resize', id: this.id, width: w, height: h });
+        const fl = this.fig.flags || {};
+        // a program that listens (SizeChangedFcn) hears it; the size is set either way
+        if (fl.size || fl.resize) this.mgr.ui({ type: 'resize', id: this.id, width: w, height: h });
+        else this.mgr.send({ type: 'resize', id: this.id, width: w, height: h });
         this.mgr.savePlaces();
       };
       this.grip.addEventListener('pointerup', up);
@@ -2042,6 +2252,32 @@
 
     send(ev) { this.emit('event', ev); }
     run(code) { this.emit('run', code); }
+    ui(ev) { this.emit('ui', ev); }
+
+    /* movegui: a window to the middle (or an edge) of the desktop. */
+    move(id, where) {
+      const w = this.wins.get(id);
+      if (!w) return;
+      const L = this.layer.getBoundingClientRect();
+      const ww = w.el.offsetWidth, wh = w.el.offsetHeight;
+      let l = w.el.offsetLeft, t = w.el.offsetTop;
+      if (where === 'center') { l = (L.width - ww) / 2; t = (L.height - wh) / 2; }
+      else {
+        if (where.includes('north')) t = 4;
+        if (where.includes('south')) t = L.height - wh - 4;
+        if (where.includes('west')) l = 4;
+        if (where.includes('east')) l = L.width - ww - 4;
+        if (where === 'north' || where === 'south') l = (L.width - ww) / 2;
+        if (where === 'east' || where === 'west') t = (L.height - wh) / 2;
+      }
+      w.el.style.left = `${Math.max(0, Math.min(l, L.width - 60))}px`;
+      w.el.style.top = `${Math.max(0, Math.min(t, L.height - 26))}px`;
+      this.savePlaces();
+    }
+
+    focusControl(id) {
+      for (const w of this.wins.values()) if (w.ui.ctl.has(id)) { this.focus(w); w.ui.focusControl(id); }
+    }
 
     apply(msg) {
       for (const id of msg.closed || []) this.remove(id);
@@ -2059,9 +2295,18 @@
     }
 
     place(w) {
-      const saved = this.places[w.fig.number];
+      const saved = w.fig.dialog ? null : this.places[w.fig.number];
       const layer = this.layer.getBoundingClientRect();
-      if (saved && saved.l < layer.width - 40 && saved.t < layer.height - 30) {
+      w.setSize(w.fig.width, w.fig.height);
+      if (w.fig.dialog) {
+        // a dialog: in the middle, over the rest (and beside one already there)
+        let l = Math.max(4, (layer.width - w.el.offsetWidth) / 2);
+        let t = Math.max(4, (layer.height - w.el.offsetHeight) / 3);
+        const others = [...this.wins.values()].filter((o) => o !== w && o.fig.dialog && !o.el.hidden);
+        while (others.some((o) => Math.abs(o.el.offsetLeft - l) < 12 && Math.abs(o.el.offsetTop - t) < 12) && t < layer.height - 60) { l += 26; t += 26; }
+        w.el.style.left = `${l}px`;
+        w.el.style.top = `${t}px`;
+      } else if (saved && saved.l < layer.width - 40 && saved.t < layer.height - 30) {
         w.el.style.left = `${saved.l}px`;
         w.el.style.top = `${saved.t}px`;
         if (saved.w && saved.h) { w.el.style.width = `${Math.min(saved.w, layer.width)}px`; w.el.style.height = `${Math.min(saved.h, layer.height)}px`; }
@@ -2079,6 +2324,7 @@
 
     savePlaces() {
       for (const w of this.wins.values()) {
+        if (w.fig.dialog) continue;
         this.places[w.fig.number] = { l: w.el.offsetLeft, t: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight };
       }
       PL.util.store.set('figplaces', this.places);
@@ -2102,6 +2348,7 @@
     }
 
     requestClose(w) {
+      if (w.fig.closeDefault === false) { this.ui({ type: 'closerequest', id: w.id }); return; }   // the program's CloseRequestFcn decides
       this.send({ type: 'close', id: w.id });
       this.remove(w.id);
     }

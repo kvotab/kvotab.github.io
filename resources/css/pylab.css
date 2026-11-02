@@ -519,10 +519,12 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 /* ---- figure windows -------------------------------------------------------------------------- */
 .pl-figlayer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
 .pl-figwin {
-  position: absolute; pointer-events: auto; display: grid; grid-template-rows: auto auto minmax(0, 1fr);
+  position: absolute; pointer-events: auto; display: flex; flex-direction: column;
   background: var(--pl-fig-bg); border: 1px solid var(--pl-border); border-radius: var(--radius); box-shadow: var(--pl-shadow);
   min-width: 220px; min-height: 160px; overflow: hidden;
 }
+.pl-figwin > [hidden] { display: none !important; }
+.pl-figwin.is-dialog { min-height: 0; min-width: 160px; }
 .pl-figwin.is-current { border-color: var(--accent-line); }
 .pl-figtitle {
   display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 10px; background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border);
@@ -534,7 +536,7 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-figtools .pl-iconbtn { width: 26px; height: 22px; }
 .pl-figtools .pl-iconbtn[aria-pressed="true"] { background: var(--pl-sel-strong); border-color: var(--pl-border); }
 .pl-figtools .gap { flex: 1; }
-.pl-figcanvas { position: relative; min-height: 0; overflow: hidden; background: #f0f0f0; }
+.pl-figcanvas { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; background: #f0f0f0; }
 .pl-figcanvas canvas { position: absolute; left: 0; top: 0; display: block; }
 .pl-figcanvas .pl-zoombox { position: absolute; border: 1px solid #333; background: rgba(80, 120, 200, 0.12); pointer-events: none; }
 .pl-figcanvas .pl-tip {
@@ -545,6 +547,91 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
   background: linear-gradient(135deg, transparent 50%, var(--pl-muted) 50%, var(--pl-muted) 58%, transparent 58%, transparent 70%, var(--pl-muted) 70%, var(--pl-muted) 78%, transparent 78%); opacity: 0.6; }
 .pl-figwin.is-docked { position: relative; inset: auto; box-shadow: none; border-radius: 0; height: 100%; width: 100% !important; left: 0 !important; top: 0 !important; }
 .pl-figwin.is-docked .pl-figtitle { cursor: default; }
+
+/* ---- a program's user interface in its figure (pylab-ui.js) --------------------------------------- */
+.pl-figmenubar { display: flex; align-items: center; height: 25px; box-sizing: border-box; padding: 0 4px; background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border); font-size: 12.5px; flex: none; }
+.pl-figmenu-top { background: none; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 1px 9px; color: var(--pl-text); font: inherit; cursor: default; }
+.pl-figmenu-top:hover:not(:disabled), .pl-figmenu-top.is-open { background: var(--pl-hover); border-color: var(--pl-border); }
+.pl-figmenu-top:disabled { opacity: 0.45; }
+.pl-figmenu-top:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -1px; }
+.pl-figpopup { min-width: 170px; }
+.pl-figpopup button .lbl { flex: 1; white-space: nowrap; }
+.pl-figpopup button .sub { color: var(--pl-muted); }
+.pl-uitoolbars { background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border); flex: none; }
+.pl-uitoolbar { display: flex; align-items: center; gap: 1px; height: 30px; box-sizing: border-box; padding: 2px 4px; }
+.pl-uitool { width: 26px; height: 24px; display: inline-grid; place-items: center; padding: 0; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: default; }
+.pl-uitool img { width: 16px; height: 16px; image-rendering: pixelated; }
+.pl-uitool .noicon { width: 12px; height: 12px; border: 1px dashed var(--pl-muted); }
+.pl-uitool:hover:not(:disabled) { background: var(--pl-hover); border-color: var(--pl-border); }
+.pl-uitool[aria-pressed="true"] { background: var(--pl-sel-strong); border-color: var(--pl-border); }
+.pl-uitool:disabled img { opacity: 0.35; }
+.pl-uitool:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -1px; }
+.pl-uitoolbar .sep { width: 1px; height: 18px; background: var(--pl-border); margin: 0 4px; }
+
+/* controls over the canvas: the light look a figure has, whatever the page's theme */
+.pl-uilayer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.pl-uictl { position: absolute; box-sizing: border-box; margin: 0; pointer-events: auto; color: #000; color-scheme: light; accent-color: #2f6db5; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; line-height: 1.2;
+  /* the site draws check boxes and radio buttons from these: light ones here, in either theme */
+  --input-border: #8a8a8a; --input-bg: #fff; --check-fill: #2f6db5; }
+.pl-uictl[hidden] { display: none !important; }
+.pl-uictl.is-inactive { pointer-events: none; }
+.pl-uibtn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 4px; overflow: hidden; white-space: nowrap; color: inherit; font: inherit;
+  background: var(--ui-bg, #f0f0f0); border: 1px solid #a3a3a3; border-radius: 3px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7); cursor: default; }
+.pl-uibtn:hover:not(:disabled) { border-color: #6b8fbf; }
+.pl-uibtn:active:not(:disabled), .pl-uibtn[aria-pressed="true"] { background: color-mix(in srgb, var(--ui-bg, #f0f0f0) 80%, #4a6fa5); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25); }
+.pl-uibtn:disabled { color: #8c8c8c; }
+.pl-uibtn:focus-visible { outline: 2px solid #4a6fa5; outline-offset: -2px; }
+.pl-uibtn img, .pl-uitext img { image-rendering: pixelated; flex: none; }
+.pl-uicheck, .pl-uiradio { display: flex; align-items: center; gap: 4px; padding: 0 2px; white-space: nowrap; overflow: hidden; }
+.pl-uicheck input, .pl-uiradio input { margin: 0; flex: none; }
+.pl-uiedit input, .pl-uiedit textarea { display: block; width: 100%; height: 100%; box-sizing: border-box; margin: 0; padding: 1px 4px; resize: none;
+  border: 1px solid #a3a3a3; border-radius: 2px; background: transparent; color: inherit; font: inherit; }
+.pl-uiedit input:focus, .pl-uiedit textarea:focus { outline: 2px solid #4a6fa5; outline-offset: -2px; }
+.pl-uitext { display: flex; gap: 8px; align-items: flex-start; overflow: hidden; }
+.pl-uitext .lines { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pl-uiframe { border: 1px solid #a3a3a3; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.8); }
+.pl-uislider { display: flex; align-items: center; justify-content: center; }
+.pl-uislider input { width: 100%; margin: 0; }
+.pl-uislider.is-vertical input { writing-mode: vertical-lr; direction: rtl; width: auto; height: 100%; }
+.pl-uilist select, .pl-uipopup select { display: block; width: 100%; height: 100%; box-sizing: border-box; margin: 0; border: 1px solid #a3a3a3; border-radius: 2px; background: transparent; color: inherit; font: inherit; }
+.pl-uilist select { overflow: auto; }
+.pl-uipopup select { max-height: 100%; }
+.pl-uipanel { pointer-events: none; border: 1px solid #b4b4b4; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.8); }
+.pl-uipanel[data-border="none"] { border-color: transparent; box-shadow: none; }
+.pl-uipanel[data-border="line"] { border-color: #4d4d4d; box-shadow: none; }
+.pl-uipanel[data-border="beveledout"], .pl-uipanel[data-border="etchedout"] { border-color: #fff #8c8c8c #8c8c8c #fff; }
+.pl-uipanel > .title { position: absolute; left: 7px; top: 0; padding: 0 3px; white-space: nowrap; line-height: 1.15; }
+.pl-uipanel[data-title-pos$="center"] > .title, .pl-uipanel[data-title-pos="centertop"] > .title { left: 50%; transform: translateX(-50%); }
+.pl-uipanel[data-title-pos^="right"] > .title { left: auto; right: 7px; }
+.pl-uibody { position: absolute; inset: 1px; pointer-events: none; }
+.pl-uipanel.has-title > .pl-uibody { top: calc(1px + 1.25em); }
+.pl-uitabs { display: flex; flex-direction: column; pointer-events: none; }
+.pl-uitabs.is-bottom { flex-direction: column-reverse; }
+.pl-uitabs .strip { pointer-events: auto; display: flex; align-items: flex-end; gap: 2px; height: 26px; box-sizing: border-box; padding: 0 4px; border-bottom: 1px solid #a3a3a3; flex: none; }
+.pl-uitabs .strip button { height: 22px; padding: 0 12px; border: 1px solid #a3a3a3; border-bottom: none; border-radius: 4px 4px 0 0; background: #e3e3e3; color: #000; font: 12px "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: default; }
+.pl-uitabs .strip button[aria-selected="true"] { background: #f0f0f0; height: 24px; margin-bottom: -1px; }
+.pl-uitabs .bodies { position: relative; flex: 1; pointer-events: none; }
+.pl-uitabbody { position: absolute; inset: 0; }
+.pl-uitable { overflow: auto; background: #fff; border: 1px solid #a3a3a3; }
+.pl-uitable table { border-collapse: collapse; min-width: 100%; }
+.pl-uitable th, .pl-uitable td { border: 1px solid #d4d4d4; padding: 1px 6px; white-space: nowrap; }
+.pl-uitable thead th { position: sticky; top: 0; z-index: 1; background: #ececec; font-weight: 500; }
+.pl-uitable tbody th { position: sticky; left: 0; background: #ececec; font-weight: 400; text-align: right; }
+.pl-uitable td.is-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pl-uitable td.is-bool { text-align: center; }
+.pl-uitable td input[type="text"] { width: 100%; min-width: 4em; box-sizing: border-box; padding: 0; border: none; background: transparent; color: inherit; font: inherit; text-align: inherit; }
+
+/* the dialogs a program asks for */
+.pl-ask p { margin: 0; white-space: pre-wrap; }
+.pl-ask-list { width: 100%; font: 12.5px var(--font-mono); }
+.pl-dialog.is-menu .pl-dfoot { flex-direction: column; align-items: stretch; }
+.pl-dialog textarea { padding: 5px 8px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--input-text); font-family: var(--font-mono); resize: vertical; }
+.pl-dialog .pl-pick-path { font-size: 12px; color: var(--pl-muted); overflow-wrap: anywhere; }
+.pl-dialog .pl-pick-list { height: 240px; overflow: auto; border: 1px solid var(--pl-border); border-radius: var(--radius-sm); }
+.pl-pick-row { display: flex; gap: 6px; padding: 2px 8px; font-size: 12.5px; cursor: default; user-select: none; }
+.pl-pick-row:hover { background: var(--pl-hover); }
+.pl-pick-row.is-sel { background: var(--pl-sel-strong); }
+.pl-pick-row .ic { width: 1em; color: var(--pl-muted); }
 
 /* ---- the Help panel -------------------------------------------------------------------------------- */
 .pl-help { position: absolute; inset: 0; overflow: auto; padding: 14px 18px 30px; font-size: 13.5px; line-height: 1.5; }

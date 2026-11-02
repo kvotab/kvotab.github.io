@@ -51,6 +51,8 @@ def setup(post_fn, home=HOME):
     os.makedirs(home, exist_ok=True)
     R.STATE['cwd'] = home
     R.STATE['home'] = home
+    from .builtins.uifun import write_icons
+    write_icons()
     names = sorted(n for n in R.BUILTINS if n.replace('.', '').replace('_', '').isalnum() and n[0].isalpha())
     return json.dumps({'builtins': names, 'cwd': home})
 
@@ -128,7 +130,11 @@ async def run(code, opts_json='{}'):
         R.OUT_HOOK[0] = lambda text, kind: (post({'type': 'out', 'text': text, 'kind': kind}) if kind in ('err', 'internal') else None)
     ok = False
     try:
-        ok = await R.execute(code, R.BASE)
+        if opts.get('callbacks'):
+            from . import uievents
+            ok = await uievents.run_queued()
+        else:
+            ok = await R.execute(code, R.BASE)
     finally:
         R.flush()
         R.OUT_HOOK[0] = saved_hook
@@ -137,7 +143,8 @@ async def run(code, opts_json='{}'):
         except Exception as e:
             post({'type': 'out', 'text': f'Warning: figures could not be sent: {e}\n', 'kind': 'warn'})
         R.DEBUGGER.end_run()
-    return json.dumps({'ok': ok, 'ws': workspace(R.BASE), 'cwd': R.STATE['cwd'], 'format': dict(D.FMT)})
+    from .uievents import QUEUE
+    return json.dumps({'ok': ok, 'ws': workspace(R.BASE), 'cwd': R.STATE['cwd'], 'format': dict(D.FMT), 'pending': len(QUEUE)})
 
 
 def workspace(W=None):
@@ -497,7 +504,7 @@ def figure_event(ev_json):
             obj.delete_handle()
             STORE.closed.clear()
     elif t == 'current':
-        if isinstance(obj, Figure) and obj.valid:
+        if isinstance(obj, Figure) and obj.valid and obj.props['HandleVisibility'] == 'on':
             STORE.current = obj
     elif t == 'resize':
         if isinstance(obj, Figure) and obj.valid:
@@ -522,6 +529,19 @@ def figure_event(ev_json):
             f = obj.figure()
             f.props['CurrentAxes'] = obj if obj.yy_owner is None else obj.yy_owner
     return True
+
+
+def ui_event(ev_json):
+    """Something a person did in a figure: what it sets is set at once (and
+    the page told); the callbacks it queues run when the page asks for
+    them, or sooner, at a running program's drawnow or pause."""
+    from . import uievents
+    n = uievents.handle(json.loads(ev_json))
+    try:
+        R.flush_figures()
+    except Exception:
+        pass
+    return json.dumps({'queued': n})
 
 
 def all_figures():

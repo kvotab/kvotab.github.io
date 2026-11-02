@@ -562,6 +562,7 @@ async def sleep(t):
         while time.perf_counter() < end:
             pass
         return
+    from .uievents import process
     end = time.perf_counter() + t
     while True:
         left = end - time.perf_counter()
@@ -571,6 +572,8 @@ async def sleep(t):
         if INTERRUPT[0]:
             INTERRUPT[0] = False
             raise Interrupt()
+        # the callbacks of what people did meanwhile run here, as at drawnow
+        await process(wait=False)
     _TICK[1] = time.perf_counter()
 
 
