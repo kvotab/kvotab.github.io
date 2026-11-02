@@ -471,6 +471,86 @@ run("fill([0 1 1], [0 0 1], 'r');")
 check('fill draws afresh unless held', num("numel(findobj(fa, 'Type', 'patch'))"), 1)
 run("close all force")
 
+# ---- figure files ------------------------------------------------------------------------------------------------------
+run("f = figure('Name', 'Round', 'Position', [100 100 500 380], 'Color', [0.9 0.95 1]); ax = axes('Position', [0.15 0.2 0.6 0.7]); "
+    "l = plot(ax, 1:5, [2 4 3 5 1], 'r--o', 'LineWidth', 2, 'Tag', 'data'); hold(ax, 'on'); patch(ax, [1 2 2], [1 1 3], [0 0.5 0]); "
+    "text(ax, 2, 4.5, 'peak', 'FontSize', 14); title(ax, 'The title'); xlabel(ax, 'time'); ylabel(ax, 'height'); xlim(ax, [0 6]); "
+    "b = bar(ax, [1 2 3], [0.5 1 1.5], 'FaceColor', [1 0.5 0]); legend(ax, [l b], {'line', 'bars'}); "
+    "cm = uicontextmenu(f); uimenu(cm, 'Label', 'Hello'); set(l, 'UIContextMenu', cm); m = uimenu(f, 'Label', 'Things'); "
+    "uimenu(m, 'Label', 'Do', 'Callback', 'disp(''done'')', 'Accelerator', 'D'); "
+    "uicontrol(f, 'String', 'Press', 'Position', [400 20 80 30], 'Callback', 'pressed = 1;', 'CreateFcn', 'made = made + 1;'); "
+    "bg = uibuttongroup(f, 'Position', [0.8 0.3 0.18 0.3]); uicontrol(bg, 'Style', 'radiobutton', 'String', 'One', 'Position', [5 40 60 20]); "
+    "r2 = uicontrol(bg, 'Style', 'radiobutton', 'String', 'Two', 'Position', [5 10 60 20]); set(bg, 'SelectedObject', r2); "
+    "setappdata(f, 'note', 'kept'); made = 0;")
+check('savefig writes a figure file', ('' == run("savefig(f, 'round.fig');"), os.path.isfile(os.path.join(TMP, 'round.fig'))), (True, True))
+run("close all force; made = 0; g = openfig('round.fig');")
+check('openfig: the figure again', (text("get(g, 'Name')"), num("get(g, 'Position')"), num("get(g, 'Color')")), ('Round', [100.0, 100.0, 500.0, 380.0], [0.9, 0.95, 1.0]))
+run("a2 = findobj(g, 'Type', 'axes'); l2 = findobj(g, 'Tag', 'data');")
+check('its axes, title, labels and limits', (num('numel(a2)'), text("get(get(a2, 'Title'), 'String')"), text("get(get(a2, 'XLabel'), 'String')"),
+                                             text("get(get(a2, 'YLabel'), 'String')"), num("get(a2, 'XLim')")), (1, 'The title', 'time', 'height', [0.0, 6.0]))
+check('a line with its style, data and context menu', (text("get(l2, 'LineStyle')"), text("get(l2, 'Marker')"), num("get(l2, 'LineWidth')"),
+                                                       num("get(l2, 'YData')"), text("get(get(l2, 'UIContextMenu'), 'Type')")),
+      ('--', 'o', 2, [2.0, 4.0, 3.0, 5.0, 1.0], 'uicontextmenu'))
+check('a patch, a text, a bar series and the legend', (num("numel(findobj(g, 'Type', 'patch'))"), num("get(findobj(g, 'String', 'peak'), 'FontSize')"),
+                                                       num("get(findobj(g, 'Type', 'bar'), 'FaceColor')"), num("numel(findall(g, 'Type', 'legend'))")),
+      (1, 14, [1.0, 0.5, 0.0], 1))
+check('controls with their callbacks; CreateFcn ran', (text("get(findobj(g, 'Style', 'pushbutton'), 'Callback')"), num('made'),
+                                                       text("get(get(findobj(g, 'Type', 'uibuttongroup'), 'SelectedObject'), 'String')")), ('pressed = 1;', 1, 'Two'))
+check('menus, application data and FileName', (text("get(findobj(g, 'Label', 'Do'), 'Accelerator')"), text("getappdata(g, 'note')"),
+                                               text("get(g, 'FileName')")), ('D', 'kept', os.path.join(TMP, 'round.fig')))
+run("g2 = openfig('round.fig', 'reuse');")
+check("openfig 'reuse': the figure already open", num("g2 == g"), True)
+run("close all force")
+
+# a file in the layout of older releases: a lineseries, a group, labels named by handle number, a kind not made here
+import scipy.io as sio  # noqa: E402
+
+FIELDS = [('type', object), ('handle', object), ('properties', object), ('children', object), ('special', object)]
+
+
+def fig_node(kind, handle, props, children=(), special=()):
+    kids = np.zeros((len(children), 1), dtype=FIELDS)
+    for i, c in enumerate(children):
+        for k, _ in FIELDS:
+            kids[i, 0][k] = c[k]
+    return {'type': kind, 'handle': float(handle), 'properties': props, 'children': kids,
+            'special': np.array([list(special)], float) if special else np.zeros((0, 0))}
+
+
+labels = [fig_node('text', 101.0011 + i, {'String': s, 'Position': [0.5, 1.0, 0.0]}) for i, s in enumerate(['A title', 'x axis', 'y axis', ''])]
+axes_node = fig_node('axes', 100.0016, {'Units': 'normalized', 'Position': [0.1, 0.1, 0.8, 0.8], 'XLim': [0.0, 10.0], 'XLimMode': 'manual',
+                                        'Title': 101.0011, 'XLabel': 102.0011, 'YLabel': 103.0011, 'ZLabel': 104.0011},
+                     [fig_node('graph2d.lineseries', 105.0013, {'XData': [[1.0, 2.0, 3.0]], 'YData': [[3.0, 1.0, 2.0]], 'Color': [[1.0, 0.0, 0.0]],
+                                                                'Tag': 'old'}),
+                      fig_node('hggroup', 106.0014, {}, [fig_node('line', 107.0015, {'XData': [[0.0, 1.0]], 'YData': [[0.0, 1.0]], 'Tag': 'inside'})]),
+                      fig_node('scribe.arrow', 108.0016, {})] + labels, special=(4, 5, 6, 7))
+root = fig_node('figure', 1.0, {'Units': 'pixels', 'Position': [50.0, 50.0, 420.0, 300.0], 'Name': 'Older', 'Color': [[1.0, 1.0, 1.0]]},
+                [axes_node, fig_node('uicontrol', 109.0017, {'Style': 'pushbutton', 'String': 'Go', 'Callback': 'went = 1;',
+                                                             'Units': 'pixels', 'Position': [10.0, 10.0, 60.0, 25.0]})])
+sio.savemat(os.path.join(TMP, 'older.fig'), {'hgS_070000': root})
+out = run("h = openfig('older.fig');")
+check('an older layout opens: what was not made is named', 'scribe.arrow (1)' in out, True)
+check('a lineseries is a line, a group what it holds', (num("get(findobj(h, 'Tag', 'old'), 'YData')"), text("get(findobj(h, 'Tag', 'old'), 'Type')"),
+                                                        num("numel(findobj(h, 'Tag', 'inside'))")), ([3.0, 1.0, 2.0], 'line', 1))
+check('labels found by their handle numbers', (text("get(get(gca, 'Title'), 'String')"), text("get(get(gca, 'XLabel'), 'String')"),
+                                              text("get(get(gca, 'YLabel'), 'String')"), num("numel(findobj(h, 'Type', 'text'))")),
+      ('A title', 'x axis', 'y axis', 0))
+check('the figure and its button', (text("get(h, 'Name')"), num("get(h, 'Position')"), text("get(findobj(h, 'Style', 'pushbutton'), 'Callback')")),
+      ('Older', [50.0, 50.0, 420.0, 300.0], 'went = 1;'))
+sio.savemat(os.path.join(TMP, 'compact.fig'), {'hgM_070000': np.array([[1.0]])})
+check("a file of the compact form only is refused, saying so", 'compact' in run("openfig('compact.fig')"), True)
+sio.savemat(os.path.join(TMP, 'plain.mat'), {'x': np.array([[5.0]])})
+check('a MAT-file that is no figure', 'holds no figure' in run("openfig('plain.mat')"), True)
+run("hh = open('older.fig'); s = open('plain.mat');")
+check('open: a figure file opens, a MAT-file loads', (text("get(hh, 'Name')"), num("s.x")), ('Older', 5))
+run("close all force; f = figure('Name', 'Saved as'); uicontrol(f, 'Callback', @(s, e) disp(1));")
+out = run("saveas(f, 'savedas.fig')")
+check('saveas writes a figure file; a function handle callback is left out, with a warning', (os.path.isfile(os.path.join(TMP, 'savedas.fig')), 'function handles' in out),
+      (True, True))
+run("close all force; k = openfig('savedas.fig');")
+check('and it opens', text("get(k, 'Name')"), 'Saved as')
+run("close all force")
+
 # ---- timers ----------------------------------------------------------------------------------------------------------
 EVENTS.clear()
 run("t = timer('TimerFcn', 'ticks = ticks + 1;', 'StartFcn', 'started = 1;', 'StopFcn', 'stopped = 1;', 'Period', 0.5, 'ExecutionMode', 'fixedRate', 'TasksToExecute', 3); ticks = 0; started = 0; stopped = 0;")

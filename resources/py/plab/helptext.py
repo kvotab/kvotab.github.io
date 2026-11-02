@@ -2001,8 +2001,10 @@ type: Show the text of a file.
 edit: Open a file in the Editor (a new script if it does not exist).
     edit
     edit filename
-open: Open a file: program files in the Editor, MAT-files into the workspace.
+open: Open a file: program files in the Editor, MAT-files into the workspace, figure files as figures.
     open filename
+    s = open('data.mat')
+    h = open('plot.fig')
 run: Run a script file.
     run filename
 mkdir: Make a folder.
@@ -2588,12 +2590,33 @@ shg: Accepted, with no effect.
     shg
 getframe: Not available here: write a picture with saveas or exportgraphics.
     F = getframe
-saveas: Save a figure as a picture file (PNG or SVG, by the extension).
+saveas: Save a figure as a picture file (PNG or SVG, by the extension), or as a figure file (.fig).
     saveas(fig, filename)
     saveas(fig, filename, format)
+    saveas(fig, 'plot.fig')
 exportgraphics: Save a figure or axes as a picture file.
     exportgraphics(obj, filename)
     exportgraphics(obj, filename, 'Resolution', dpi)
+openfig: Open a figure saved in a figure file (.fig).
+    openfig(filename)
+    h = openfig(filename, 'new' | 'reuse')
+    h = openfig(filename, 'visible' | 'invisible')
+    * A .fig file is a MAT-file holding the figure as a tree of structs (hgS_070000). Axes, lines, surfaces, patches, images, text, lights, figure controls and menus are made again, with their callbacks (as text); a CreateFcn runs when all are made.
+    * Groups of older releases (hggroup, lineseries, scatter groups) come as what they draw; objects of other kinds are left out with a warning.
+    * Files saved with savefig's 'compact' keep the figure only in the form of R2014b and later, which is not read.
+    * 'reuse' brings forward the figure opened from the same file, if there is one.
+hgload: Open the objects saved in a figure file.
+    h = hgload(filename)
+    h = hgload(filename, props)
+    * props is a struct of properties set on what is opened.
+savefig: Save figures as a figure file (.fig), to open again with openfig.
+    savefig(filename)
+    savefig(fig, filename)
+    * fig may be several figures; the file holds them all. 'compact' is accepted and writes the usual form.
+    * Callbacks given as function handles are left out, with a warning: text callbacks are kept.
+hgsave: Save a figure (or other graphics objects) as a figure file.
+    hgsave(filename)
+    hgsave(h, filename)
 print: Save the current figure as a picture file.
     print(filename, '-dpng')
     print(fig, filename, '-dsvg')

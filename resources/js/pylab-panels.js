@@ -238,7 +238,7 @@
 
   /* ---- the current folder ---------------------------------------------------- */
   function fileIcon(kind) {
-    return icon({ folder: 'folder', mfile: 'mfile', mat: 'matfile', text: 'textfile', image: 'image' }[kind] || 'file', 'pl-ficon');
+    return icon({ folder: 'folder', mfile: 'mfile', mat: 'matfile', fig: 'figure', text: 'textfile', image: 'image' }[kind] || 'file', 'pl-ficon');
   }
 
   class FolderPanel extends Emitter {
@@ -388,6 +388,7 @@
       const p = U().joinPath(this.path, it.name);
       if (it.dir) this.app.cd(p);
       else if (it.kind === 'mat') { if (U().mstr(p)) this.app.runCommand(`load(${U().mstr(p)})`); }
+      else if (it.kind === 'fig') { if (U().mstr(p)) this.app.runCommand(`openfig(${U().mstr(p)})`); }
       else if (it.kind === 'image') this.app.previewImage(p);
       else this.app.openFile(p);
     }

@@ -899,6 +899,17 @@ async def user_interfaces(page):
                         "const d = c.getContext('2d').getImageData(Math.round((r.x + 21) * k), Math.round((r.y + r.h - 24) * k), Math.round(12 * k), Math.round(8 * k)).data; "
                         "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; })()")
     check('gui: text in pixels stands that far from the axes\' corner', red > 20, True)
+
+    # a figure saved as a .fig, opened again from the Current Folder
+    await command(page, "close all force; f = figure('Name', 'Kept'); plot(1:3, [2 1 3]); title('Kept plot'); savefig(f, 'kept.fig'); close all force")
+    row = "document.querySelector('.pl-folder tr[data-name=\"kept.fig\"]')"
+    await until(page, row, 10)
+    check('gui: a .fig shows in the Current Folder as a figure', await page.ev(f"!!{row} && !!{row}.querySelector('svg')"), True)
+    await page.ev(f"{row}.dispatchEvent(new MouseEvent('dblclick', {{ bubbles: true }})); 1")
+    await until(page, "[...PL.app.figures.wins.values()].some(w => w.fig.name === 'Kept')", 20)
+    await idle(page)
+    kept = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Kept")'
+    check('gui: and opens as the figure it was, drawn', await page.ev(f"!!{kept} && {kept}.renderer.frames.length === 1 && {kept}.fig.axes[0].title.string === 'Kept plot'"), True)
     await command(page, 'close all force')
     check('gui: no script errors', page.errors, [])
 

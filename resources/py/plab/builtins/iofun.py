@@ -434,7 +434,7 @@ def type_(nargout, *args):
     return None
 
 
-@bi('edit', 'open')
+@bi('edit')
 def edit(nargout, *args):
     if not args:
         _event('edit', path='')

@@ -962,7 +962,7 @@
           b.append(tr);
         }
         for (const it of res.items || []) {
-          const tr = el('tr', null, el('td', null, el('span', { class: 'pl-name' }, icon(it.dir ? 'folder' : it.kind === 'mfile' ? 'mfile' : 'file', 'pl-ficon'), el('span', null, it.name))));
+          const tr = el('tr', null, el('td', null, el('span', { class: 'pl-name' }, icon(it.dir ? 'folder' : it.kind === 'mfile' ? 'mfile' : it.kind === 'fig' ? 'figure' : it.kind === 'mat' ? 'matfile' : 'file', 'pl-ficon'), el('span', null, it.name))));
           tr.addEventListener('click', () => { for (const x of b.children) x.classList.remove('is-sel'); tr.classList.add('is-sel'); chosen = it.dir ? null : U.joinPath(d, it.name); });
           tr.addEventListener('dblclick', () => { if (it.dir) show(U.joinPath(d, it.name)); else { chosen = U.joinPath(d, it.name); close?.(); } });
           b.append(tr);
@@ -980,7 +980,13 @@
         onOpen: (body) => { close = () => body.closest('.pl-dialog').querySelector('.is-primary').click(); },
       });
       const r = await p;
-      if (r) this.openFile(r);
+      if (!r) return;
+      // a figure opens as a figure, a MAT-file loads, a picture shows; the rest goes to the Editor
+      const how = this.opens(r);
+      const q = U.mstr(r);
+      if ((how === 'openfig' || how === 'load') && q) this.runCommand(`${how}(${q})`);
+      else if (how === 'image') this.previewImage(r);
+      else this.openFile(r);
     }
 
     async openFile(path, line) {
@@ -1302,6 +1308,7 @@
       const ext = (/\.[^./]+$/.exec(name.toLowerCase()) || [''])[0];
       if (ext === '.m') return 'editor';
       if (ext === '.mat') return 'load';
+      if (ext === '.fig') return 'openfig';
       if (['.png', '.jpg', '.jpeg', '.svg', '.gif'].includes(ext)) return 'image';
       if (['.txt', '.csv', '.dat', '.json', '.md', '.tsv'].includes(ext)) return 'editor';
       return null;
@@ -1316,10 +1323,11 @@
         else if (how === 'image') await this.previewImage(path);
       }
       for (const t of tops) {
-        if (t.dir || this.opens(t.name) !== 'load') continue;
+        const how = t.dir ? null : this.opens(t.name);
+        if (how !== 'load' && how !== 'openfig') continue;
         const q = U.mstr(into === this.cwd ? t.name : U.joinPath(into, t.name));
-        if (q) this.cmd.enter(`load(${q})`);
-        else U.toast(`${t.name.replace(/[\u0000-\u001f\u007f]/g, '?')} was copied but not loaded: its name holds a control character.`, 5000);
+        if (q) this.cmd.enter(`${how}(${q})`);
+        else U.toast(`${t.name.replace(/[\u0000-\u001f\u007f]/g, '?')} was copied but not ${how === 'load' ? 'loaded' : 'opened'}: its name holds a control character.`, 5000);
       }
     }
 

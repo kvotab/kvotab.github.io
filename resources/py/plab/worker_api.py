@@ -392,6 +392,8 @@ def _file_kind(n):
         return 'mfile'
     if ext == '.mat':
         return 'mat'
+    if ext == '.fig':
+        return 'fig'
     if ext in ('.png', '.jpg', '.jpeg', '.svg', '.gif'):
         return 'image'
     if ext in ('.txt', '.csv', '.dat', '.json', '.md', '.tsv'):

@@ -2978,6 +2978,9 @@ async def saveas(nargout, *args):
     if name is None:
         name = f'figure{int(f.props["Number"])}' if not f.is_dialog else 'dialog'
     import os
+    if os.path.splitext(name)[1].lower() == '.fig' or (fmt == 'fig' and not os.path.splitext(name)[1]):
+        # a figure file, to open again with openfig
+        return await _write_fig([f, Char.of(name if name.lower().endswith('.fig') else name + '.fig')], 'saveas', 0)
     ext = os.path.splitext(name)[1].lower().lstrip('.')
     if not ext:
         ext = {'png': 'png', 'jpeg': 'jpg', 'jpg': 'jpg', 'svg': 'svg', 'pdf': 'pdf', 'epsc': 'eps'}.get(fmt or 'png', 'png')
@@ -2993,6 +2996,110 @@ async def saveas(nargout, *args):
         fh.write(base64.b64decode(data))
     files_changed(os.path.dirname(p))
     return None
+
+
+# ---- figure files (.fig) ---------------------------------------------------------------------------
+
+def _fig_file(name, fn, must_exist=True):
+    import os
+    from .iofun import abspath
+    p = abspath(name if os.path.splitext(name)[1] else name + '.fig')
+    if must_exist and not os.path.isfile(p):
+        raise err(f'MATLAB:{fn}:FileNotFound', f"File '{name}' not found.", fn)
+    return p
+
+
+async def _read_fig(p, fn, visible=None):
+    from .. import matfile as MF
+    from ..figfile import load
+    from .iofun import _need_h5py
+    try:
+        if MF.kind(p) == 'v73':
+            await _need_h5py(fn)
+        objs = load(p, visible)
+    except MF.MatError as e:
+        raise err(f'MATLAB:{fn}:notAFigure', f'{p} is not a figure file: {e}.', fn)
+    flush_figures()
+    return objs
+
+
+@bi('openfig', aw=True, arr=False)
+async def openfig(nargout, *args):
+    nargchk(args, 1, 3, 'openfig')
+    p = _fig_file(sval(args[0], 'file name', 'openfig'), 'openfig')
+    opts = [opt_str(a).lower() for a in args[1:] if opt_str(a) is not None]
+    if 'reuse' in opts:
+        # the figure opened from this file before, brought forward
+        same = [f for f in STORE.figures.values() if f.valid and f.props.get('FileName') == p]
+        if same:
+            STORE.current = same[-1]
+            R.EVENT_HOOK[0] and R.EVENT_HOOK[0]({'type': 'raise', 'figure': same[-1].id})
+            return same[-1] if nargout else None
+    visible = Char.of('off') if 'invisible' in opts else (Char.of('on') if 'visible' in opts else None)
+    objs = await _read_fig(p, 'openfig', visible)
+    return handles_out(objs) if nargout else None
+
+
+@bi('hgload', aw=True, arr=False)
+async def hgload(nargout, *args):
+    nargchk(args, 1, 2, 'hgload')
+    objs = await _read_fig(_fig_file(sval(args[0], 'file name', 'hgload'), 'hgload'), 'hgload')
+    if len(args) > 1:
+        if type(args[1]) is not Struct:
+            raise err('MATLAB:hgload:InvalidPropertyStruct', 'The second input is a struct of properties to set.', 'hgload')
+        for o in objs:
+            for k in args[1].f:
+                o.setprop(k, args[1].get1(k))
+        flush_figures()
+    return handles_out(objs) if nargout else None
+
+
+async def _write_fig(args, fn, nargout):
+    import os
+    from ..figfile import save
+    from .iofun import files_changed
+    rest = [a for a in args if not (is_str(a) and opt_str(a) is not None and opt_str(a).lower() in ('compact', 'all') or
+                                    is_str(a) and opt_str(a) is not None and opt_str(a).startswith('-'))]
+    objs = _handles(rest.pop(0)) if rest and not is_str(rest[0]) else [gcf_()]
+    name = sval(rest[0], 'file name', fn) if rest else 'Untitled.fig'
+    if any(not isinstance(o, GObj) or not o.valid for o in objs):
+        raise err('MATLAB:hg:InvalidHandle', 'Invalid or deleted object.', fn)
+    p = _fig_file(name, fn, must_exist=False)
+    flush_figures()
+    dropped = save(objs, p)
+    files_changed(os.path.dirname(p))
+    if dropped:
+        R.warn(f'MATLAB:{fn}:functionHandles', 'Callbacks given as function handles are not kept in figure files written '
+               'here (' + ', '.join(dropped) + '); text callbacks are.')
+    return None
+
+
+@bi('savefig', aw=True, arr=False)
+async def savefig(nargout, *args):
+    return await _write_fig(args, 'savefig', nargout)
+
+
+@bi('hgsave', aw=True, arr=False)
+async def hgsave(nargout, *args):
+    return await _write_fig(args, 'hgsave', nargout)
+
+
+@bi('open', ws=True, aw=True, arr=False)
+async def open_(W, nargout, *args):
+    """open name: a figure file opens as a figure, a MAT-file loads (into a
+    struct, given an output), the rest goes to the Editor."""
+    import os
+    names = [sval(a, 'file name', 'open') for a in args]
+    exts = {os.path.splitext(n)[1].lower() for n in names}
+    if names and exts == {'.fig'}:
+        objs = []
+        for n in names:
+            objs += await _read_fig(_fig_file(n, 'open'), 'open')
+        return handles_out(objs) if nargout else None
+    from .iofun import edit, load
+    if len(names) == 1 and exts == {'.mat'}:
+        return await load(W, nargout, *args)
+    return edit(nargout, *args)
 
 
 @bi('getframe', arr=False)
