@@ -254,6 +254,16 @@ case('char rows must match', "m = ['ab'; 'cde'];", error='Dimensions of arrays b
 case('sprintf', "a = sprintf('%d-%s', 5, 'x'); b = sprintf('%5.2f|', [1.234 5]); c = sprintf('%d', [1 2 3]); d = sprintf('%d\\n', 1.5);",
      want={'a': '5-x', 'b': ' 1.23| 5.00|', 'c': '123', 'd': '1.500000e+00\n'})
 case('sprintf recycles', "a = sprintf('%d, %d; ', 1, 2, 3);", want={'a': '1, 2; 3, '})
+case('sprintf: an empty argument fills its %s', "a = sprintf('%d|%s|%d', 1, '', 3); b = sprintf('[%s],[%s]', [], 'x'); c = sprintf('x = %d;', []);",
+     want={'a': '1||3', 'b': '[],[x]', 'c': 'x = ;'})
+case("'' takes no part in concatenation", "x = ''; a = [x 'ab']; b = ['ab'; x]; c = ['' 65]; d = class(['' '']); e = size(['' '']); "
+     "s = ''; for k = 1:3, s = [s sprintf('%d,', k)]; end; f = numel([{'a'} '']);",
+     want={'a': 'ab', 'b': 'ab', 'c': 'A', 'd': 'char', 'e': [[0, 0]], 's': '1,2,3,', 'f': 1})
+case("brace assignment into '' or []", "x = ''; x{end+1} = 'a'; x{end+1} = 'b'; n = numel(x); s.l = ''; s.l{end+1} = 'z'; c = class(s.l);",
+     want={'n': 2, 'c': 'cell'})
+case('brace assignment into text is refused', "y = 'abc'; y{1} = 1;", error='brace indexing is not supported')
+case('symvar', "a = symvar('k1*Acc1 + exp(-lambda*Time) + 2.5e-3*x'); b = symvar('pi*r^2'); c = size(symvar('3 + 4'));",
+     want={'a': ['Acc1', 'Time', 'k1', 'lambda', 'x'], 'b': ['r'], 'c': [[0, 1]]})
 case('sprintf escapes', "a = sprintf('a\\tb\\\\c%%');", want={'a': 'a\tb\\c%'})
 case('num2str', "a = num2str(pi); b = num2str(42); c = num2str(pi, 8); d = num2str([1 2 3]); e = num2str(-0.5);",
      want={'a': '3.1416', 'b': '42', 'c': '3.1415927', 'd': '1  2  3', 'e': '-0.5'})
@@ -352,6 +362,9 @@ tmp = tempfile.mkdtemp(prefix='pylab-test-')
 for name, text in FILES.items():
     with open(os.path.join(tmp, name), 'w') as f:
         f.write(text)
+# a program file of an older release, in Windows-1252: its letters read as they were written
+with open(os.path.join(tmp, 'latin.m'), 'wb') as f:
+    f.write("function s = latin()\n% LATIN  A file of sm\u00f6rg\u00e5sar\ns = 'Sm\u00f6rg\u00e5s \u2122';\n".encode('cp1252'))
 R.STATE['cwd'] = tmp
 R.bump_epoch()
 
@@ -379,6 +392,8 @@ case('return', 'a = early(-1); b = early(4);', want={'a': 0, 'b': 2})
 case('function handle to a file', 'f = @fact; a = f(5); b = arrayfun(@fact, 1:4);', want={'a': 120, 'b': [[1, 2, 6, 24]]})
 case('exist', "a = exist('fact'); b = exist('sin'); x = 1; c = exist('x', 'var'); d = exist('nothing_here');", want={'a': 2, 'b': 5, 'c': 1, 'd': 0})
 case('which', 'which fact', shows='fact.m')
+case('a Windows-1252 program file reads as written', "s = latin(); h = help('latin');", want={'s': 'Sm\u00f6rg\u00e5s \u2122'})
+case('and its help too', "h = contains(help('latin'), 'sm\u00f6rg\u00e5sar');", want={'h': True})
 case('help with an output', "t = help('addup'); a = contains(t, 'The sum of any number'); b = isempty(help('nosuchthing')); c = contains(help('sin'), 'sin');",
      want={'a': True, 'b': True, 'c': True})
 case('help in a program prints', "help('addup')", shows='The sum of any number of arguments.')
@@ -424,6 +439,11 @@ case('assignin', "assignin('base', 'q', 3);", want={'q': 3})
 case('command syntax', 'format long; x = pi; format short', shows=None)
 case('isvarname', "a = isvarname('x1'); b = isvarname('1x'); c = isvarname('end');", want={'a': True, 'b': False, 'c': False})
 case('tic toc', 't = tic; e = toc(t); ok = e >= 0;', want={'ok': True})
+case('lasterr after a caught error', "try, error('my:id', 'boom'), catch, end, m = lasterr;", want={'m': 'boom'})
+case('ode45 with an output function: init, the steps, done; OutputSel', "seen = {}; o = odeset('OutputFcn', @(t, y, f) size(y, 1) > 1, 'OutputSel', 2); "
+     "[t, y] = ode45(@(t,y) -y, [0 1], [1; 2], o); n = size(y, 2); last = t(end);", want={'n': 2, 'last': 1})
+case('an output function that answers true stops the solution', "o = odeset('OutputFcn', @(t, y, f) ~isempty(t) && t(end) > 0.5); [t, y] = ode45(@(t,y) -y, [0 1], 1, o); "
+     "a = t(end) > 0.5 && t(end) < 1;", want={'a': True})
 case('etime is t1 less t0', 'e = etime([2026 1 1 0 1 1.5], [2026 1 1 0 0 0]); t0 = clock; f = etime(clock, t0) >= 0;', want={'e': 61.5, 'f': True})
 case('input without a page', "x = input('n: ');", error='Input is not available here.')
 

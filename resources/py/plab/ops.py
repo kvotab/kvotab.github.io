@@ -943,11 +943,11 @@ def _concat_arrays(arrs, axis):
 
 
 def _drop_empties(vals):
-    """[] (0x0) takes no part in concatenation."""
+    """[] and '' (0x0) take no part in concatenation."""
     out = []
     for v in vals:
         t = type(v)
-        if t is np.ndarray and v.ndim == 2 and v.shape == (0, 0):
+        if (t is np.ndarray and v.ndim == 2 and v.shape == (0, 0)) or (t is Char and v.a.shape == (0, 0)):
             continue
         out.append(v)
     return out
@@ -969,7 +969,7 @@ def cat(axis, vals):
                 if v.a.shape == (0, 0):
                     continue
                 parts.append(v.a)
-            elif type(v) is np.ndarray and v.shape == (0, 0):
+            elif (type(v) is np.ndarray and v.shape == (0, 0)) or (type(v) is Char and v.a.shape == (0, 0)):
                 continue
             else:
                 a = np.empty((1, 1), object)
@@ -1023,12 +1023,16 @@ def cat(axis, vals):
     if any(isinstance(v, (Obj, FH)) for v in vals):
         from .graphics_base import cat_handles
         return cat_handles(axis, vals)
+    had_char = any(type(v) is Char for v in vals)
     vals = _drop_empties(vals)
     if not vals:
-        return EMPTY()
-    if len(vals) == 1:
+        return Char(np.zeros((0, 0), np.uint16)) if had_char else EMPTY()
+    if len(vals) == 1 and (type(vals[0]) is Char or not had_char):
         return vals[0]
     cls = _num_cat_class(vals)
+    if had_char and cls == 'double':
+        # an empty '' still makes the numbers characters: ['' 65] is 'A'
+        cls = 'char'
     arrs = [_as_np(v) for v in vals]
     if cls == 'char':
         conv = []

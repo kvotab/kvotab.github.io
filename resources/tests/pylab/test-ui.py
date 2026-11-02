@@ -196,9 +196,11 @@ async def desktop(page):
     check('the prompt is K>>', await page.ev('PL.app.cmd.prompt.textContent'), 'K>> ')
     check('the Editor marks the line', await page.ev("!!document.querySelector('.ple-gl .arrow')"), True)
     await shot(page, 'debugger.png')
+    # the Editor takes the focus a frame after the pause: typed sooner, the Enter could land in it
+    await page.ev('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
     await type_line(page, 'numel(seq)')
-    await asyncio.sleep(1.0)
-    check('a command runs in the paused workspace', 'ans =\n\n     9' in await tail(page, 80), True)
+    seen = await until(page, f"{OUTPUT}.slice(-80).includes('ans =\\n\\n     9')", 10)
+    check('a command runs in the paused workspace', seen, True)
     await page.ev("PL.app.dbg('step'); 1")
     await until(page, 'PL.app.debug && PL.app.debug.line !== 14', 10)
     check('Step moves on', await page.ev('PL.app.debug && PL.app.debug.line'), 15)
@@ -486,6 +488,9 @@ async def drops(page):
     d = drop_fixtures()
     at = lambda name: os.path.join(d, name)  # noqa: E731
     exists = "(p) => PL.engine.fs('exists', { path: p })"
+    # the home folder is kept in the browser's profile: a run before this one left its files
+    await command(page, "cd /home/user; if exist('droptest', 'dir'), rmdir('droptest', 's'); end")
+    await page.ev("PL.app.fileRemoved('/home/user/droptest'); 1")
     await command(page, "clear; clc; mkdir('/home/user/droptest'); cd /home/user/droptest; mkdir sub")
     await page.ev("window.__dropSeen = []; addEventListener('drop', (ev) => __dropSeen.push(ev.defaultPrevented)); 1")
 
@@ -759,6 +764,15 @@ async def user_interfaces(page):
     await idle(page)
     check('gui: a click in the axes runs their ButtonDownFcn with CurrentPoint', await page.ev(f"[...{WAVE}.el.querySelectorAll('.pl-uitext')].pop().textContent"),
           'x = 3.142y = 1.000')
+    sel = "disp(get(findobj(0, 'Name', 'Wave lab'), 'SelectionType'))"
+    one = (await command(page, sel)).rstrip().splitlines()[-1]
+    await asyncio.sleep(0.6)
+    for k in (1, 2):
+        await page.mouse('mousePressed', x, y, clicks=k)
+        await page.mouse('mouseReleased', x, y, clicks=k)
+    await idle(page)
+    two = (await command(page, sel)).rstrip().splitlines()[-1]
+    check('gui: a click in the axes is SelectionType normal, a double click open', [one, two], ['normal', 'open'])
     await vkey(page, 'ArrowUp', 'ArrowUp', 38)
     await idle(page)
     await vkey(page, 'g', 'KeyG', 71, '', 4 if await page.ev('PL.util.isMac') else 2)
@@ -900,6 +914,13 @@ async def user_interfaces(page):
                         "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; })()")
     check('gui: text in pixels stands that far from the axes\' corner', red > 20, True)
 
+    # a program that lays itself out when its window is first shown: the ResizeFcn runs once the command ends
+    await command(page, "close all force; rf = figure('Visible', 'off', 'Name', 'Laid out', 'ResizeFcn', "
+                        "'set(findobj(gcbf, ''Tag'', ''pp''), ''Position'', [10 10 120 60])'); "
+                        "uipanel(rf, 'Units', 'pixels', 'Tag', 'pp'); set(rf, 'Visible', 'on')")
+    out = await command(page, "fprintf('%g ', get(findobj(rf, 'Tag', 'pp'), 'Position')); fprintf('\\n')")
+    check('gui: a window first shown runs its ResizeFcn when the command ends, with no click', out.rstrip().endswith('10 10 120 60'), True)
+
     # a figure saved as a .fig, opened again from the Current Folder
     await command(page, "close all force; f = figure('Name', 'Kept'); plot(1:3, [2 1 3]); title('Kept plot'); savefig(f, 'kept.fig'); close all force")
     row = "document.querySelector('.pl-folder tr[data-name=\"kept.fig\"]')"
@@ -911,6 +932,16 @@ async def user_interfaces(page):
     kept = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Kept")'
     check('gui: and opens as the figure it was, drawn', await page.ev(f"!!{kept} && {kept}.renderer.frames.length === 1 && {kept}.fig.axes[0].title.string === 'Kept plot'"), True)
     await command(page, 'close all force')
+
+    # a program file of an older release, in Windows-1252: read as written, in the Editor and when run
+    data = list("function s = latin1()\n% LATIN1  A file of smörgåsar\ns = 'Smörgås ™';\n".encode('cp1252'))
+    await page.ev("PL.app.fileRemoved('/home/user/latin1.m'); 1")    # a tab kept from a run before this one
+    await page.ev(f"PL.engine.fs('write', {{ path: '/home/user/latin1.m', data: new Uint8Array({json.dumps(data)}) }}).then(() => 1)")
+    await page.ev("PL.app.openFile('/home/user/latin1.m').then(() => 1)")
+    text = await page.ev("(() => { const d = PL.app.docs.find((d) => d.key === '/home/user/latin1.m'); return d ? d.editor.value : null; })()")
+    check('gui: a Windows-1252 file shows its letters in the Editor', bool(text) and "Smörgås ™" in text, True)
+    out = await command(page, 'disp(latin1())')
+    check('gui: and runs with them', out.rstrip().endswith("Smörgås ™"), True)
     check('gui: no script errors', page.errors, [])
 
 

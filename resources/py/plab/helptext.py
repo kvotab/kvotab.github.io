@@ -1442,10 +1442,14 @@ ode15i: Solve an implicit system f(t, y, y') = 0.
 odeset: Make or change the options for the ODE solvers.
     options = odeset('RelTol', 1e-6, 'AbsTol', 1e-9, ...)
     options = odeset(oldopts, 'Name', value, ...)
-    * Among the names: RelTol, AbsTol, MaxStep, InitialStep, Events, Mass, Jacobian, NonNegative, OutputFcn.
+    * Among the names: RelTol, AbsTol, MaxStep, InitialStep, Events, Mass, Jacobian, NonNegative, OutputFcn, OutputSel.
+    * OutputFcn is called with 'init', then after each step with its times and the states OutputSel names (all, unless given), then 'done'; a true answer stops the solution. A solver asked for no output plots with odeplot.
 odeget: An option's value from an ODE options structure.
     v = odeget(options, 'Name')
     v = odeget(options, 'Name', default)
+odeplot: The output function that plots each solution component against time as the solver goes.
+    options = odeset('OutputFcn', @odeplot)
+    * The solvers use it when no output is asked for: ode45(@f, [0 10], y0) plots the solution.
 deval: Evaluate the solution structure of an ODE solver at new times.
     y = deval(sol, t)
     y = deval(sol, t, idx)
@@ -1749,6 +1753,9 @@ typecast: Read the bytes of numbers as another numeric class, without converting
     y = typecast(x, classname)
 func2str: The text of a function handle.
     s = func2str(fh)
+symvar: The variables an expression uses, sorted.
+    names = symvar('a*x + exp(-k*t)')
+    * Other names are left out: i, j, pi, Inf, NaN, eps and the functions there are.
 str2func: A function handle from its text.
     fh = str2func('name')
     fh = str2func('@(x) x.^2')
@@ -2041,6 +2048,9 @@ isdir: True when a folder exists (older; isfolder is preferred).
 addpath: Add folders to the search path for functions.
     addpath(folder)
     addpath(folder1, folder2, ..., '-end')
+rehash: Look again for the program files on the path.
+    rehash
+    * Files written or changed are seen at once anyway; programs that call rehash after writing one run as they are.
 rmpath: Remove folders from the search path.
     rmpath(folder)
 path: The search path, or set it.

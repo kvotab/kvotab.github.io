@@ -101,7 +101,8 @@ def odeset(nargout, *args):
     if args and type(args[0]) is Struct:
         base = _struct_opts(args[0])
         i = 1
-    for n in ('RelTol', 'AbsTol', 'MaxStep', 'InitialStep', 'Events', 'OutputFcn', 'Mass', 'Jacobian', 'NonNegative', 'Refine', 'Stats', 'Vectorized'):
+    for n in ('RelTol', 'AbsTol', 'MaxStep', 'InitialStep', 'Events', 'OutputFcn', 'OutputSel', 'Mass', 'Jacobian', 'NonNegative', 'Refine',
+              'Stats', 'Vectorized', 'MaxOrder', 'BDF', 'NormControl'):
         base.setdefault(n, EMPTY())
     while i + 1 < len(args):
         k = py_str(args[i])
@@ -478,7 +479,7 @@ _ODE_METHOD = {'ode45': 'RK45', 'ode23': 'RK23', 'ode113': 'DOP853', 'ode78': 'D
 _REFINE = {'ode45': 4, 'ode78': 8, 'ode89': 4}
 
 
-def _ode(name, nargout, args, label=None):
+async def _ode(name, nargout, args, label=None):
     nargchk(args, 3, None, name)
     from scipy.integrate import solve_ivp
     f = args[0] if isinstance(args[0], _Implicit) else _fn(args[0])
@@ -569,6 +570,14 @@ def _ode(name, nargout, args, label=None):
     else:
         T = sol.t
         Y = sol.y.T
+    # an output function (odeplot when nothing is asked for), as the solver goes
+    outfcn = _opt(opts, 'OutputFcn')
+    if outfcn is None and nargout == 0:
+        outfcn = R.NamedFH('odeplot')
+    if outfcn is not None:
+        T, Y = await _outputs(_fn(outfcn, 'output function'), _opt(opts, 'OutputSel'), tspan, y0v, T, Y, sol.t, extra)
+    if nargout == 0:
+        return None
     if nargout == 1:
         s = Struct.scalar({'solver': Char.of(label or name), 'extdata': Struct.scalar({'odefun': getattr(f, 'F', f), 'options': Struct.scalar(opts), 'varargin': Cell.of_list(list(extra))}),
                            'x': out(sol.t.reshape(1, -1)), 'y': out(sol.y), 'stats': Struct.scalar({'nsteps': float(sol.t.size - 1), 'nfevals': float(sol.nfev)}),
@@ -609,11 +618,75 @@ class _DenseHolder(Obj):
 
 for _n in _ODE_METHOD:
     def _mk(n):
-        def f(nargout, *args):
-            return _ode(n, nargout, args)
+        async def f(nargout, *args):
+            return await _ode(n, nargout, args)
         f.__name__ = n
         return f
-    bi(_n, nout=5, arr=False)(_mk(_n))
+    bi(_n, nout=5, aw=True, arr=False)(_mk(_n))
+
+
+async def _outputs(fn, sel, tspan, y0, T, Y, steps, extra):
+    """The output function called as the solvers call it: 'init' with the
+    time span and the start, then after each step with its times (a row)
+    and states (a column each, those OutputSel names), then 'done'. A true
+    answer stops the solution there."""
+    from ..ops import truth
+    idx = [int(i) - 1 for i in darr(sel).reshape(-1)] if sel is not None and numel(sel) else list(range(Y.shape[1]))
+    await fn.acall(0, out(tspan.reshape(1, -1)), out(y0[idx].reshape(-1, 1)), Char.of('init'), *extra)
+    start = 1
+    for end in np.searchsorted(T, steps[1:], side='right'):
+        if end <= start:
+            continue
+        status = await fn.acall(1, out(T[start:end].reshape(1, -1)), out(Y[start:end][:, idx].T), Char.of(''), *extra)
+        start = end
+        if status is not None and truth(status):
+            T, Y = T[:end], Y[:end]
+            break
+    await fn.acall(0, EMPTY(), EMPTY(), Char.of('done'), *extra)
+    return T, Y
+
+
+_ODEPLOT = {}
+
+
+@bi('odeplot', arr=False)
+def odeplot(nargout, *args):
+    """The output function that plots each component against time as the
+    solver goes; the solvers use it when no output is asked for."""
+    from .graphics import newplot
+    from ..graphics_base import Line
+    flag = py_str(args[2]).lower() if len(args) > 2 and is_str(args[2]) else ''
+    if flag == 'init':
+        t = darr(args[0]).reshape(-1)
+        y = darr(args[1]).reshape(-1)
+        ax = newplot(None)
+        lines = []
+        for v in y:
+            h = Line(ax)
+            h.props['XData'] = np.array([[float(t[0])]])
+            h.props['YData'] = np.array([[float(v.real)]])
+            h.props['Color'] = ax.next_color()
+            lines.append(h)
+        if t.size > 1 and t[-1] != t[0]:
+            ax.set_value('XLim', np.array([[min(t[0], t[-1]), max(t[0], t[-1])]]))
+        ax.touch()
+        _ODEPLOT['state'] = (ax, lines)
+        return None
+    if flag == 'done':
+        _ODEPLOT.pop('state', None)
+        return None
+    st = _ODEPLOT.get('state')
+    if st is None or not args or not numel(args[0]):
+        return False
+    ax, lines = st
+    t = darr(args[0]).reshape(1, -1)
+    y = darr(args[1]).reshape(len(lines), -1) if len(lines) else np.zeros((0, t.size))
+    for h, row in zip(lines, y):
+        if h.valid:
+            h.props['XData'] = np.hstack([h.props['XData'].reshape(1, -1), t])
+            h.props['YData'] = np.hstack([h.props['YData'].reshape(1, -1), row.real.reshape(1, -1)])
+    ax.touch()
+    return False
 
 
 @bi('deval', nout=2)
@@ -682,8 +755,8 @@ class _Implicit:
         return out(yp.reshape(-1, 1))
 
 
-@bi('ode15i', nout=5, arr=False)
-def ode15i(nargout, *args):
+@bi('ode15i', nout=5, aw=True, arr=False)
+async def ode15i(nargout, *args):
     nargchk(args, 4, None, 'ode15i')
     F = _fn(args[0])
     y0 = darr(args[2]).reshape(-1)
@@ -696,11 +769,11 @@ def ode15i(nargout, *args):
     r0 = g.res(float(darr(args[1]).reshape(-1)[0].real), y0, yp0, args[5:])
     if np.any(np.abs(r0) > 1e-6 * (1 + np.abs(y0))):
         R.warn('MATLAB:ode15i:InconsistentIC', "The initial conditions are not consistent: f(t0, y0, yp0) is not zero, so yp0 is corrected at the first step.")
-    return _ode('ode15s', nargout, [g, args[1], args[2], opts, *args[5:]], label='ode15i')
+    return await _ode('ode15s', nargout, [g, args[1], args[2], opts, *args[5:]], label='ode15i')
 
 
-@bi('odextend', arr=False)
-def odextend(nargout, *args):
+@bi('odextend', aw=True, arr=False)
+async def odextend(nargout, *args):
     """Carry a solution structure on to a later time with the solver that
     made it: the solution from its last point joined to it."""
     nargchk(args, 3, 5, 'odextend')
@@ -717,7 +790,7 @@ def odextend(nargout, *args):
     extra = list(ext.get1('varargin').a.reshape(-1, order='F'))
     if name == 'ode15i':
         raise err('MATLAB:odextend:ode15i', 'odextend does not carry on ode15i solutions here: call ode15i again from the last point.', 'odextend')
-    new = _ode(name, 1, [f, np.array([[x[0, -1], tfinal]]), out(y0), opts, *extra])
+    new = await _ode(name, 1, [f, np.array([[x[0, -1], tfinal]]), out(y0), opts, *extra])
     x2, y2 = darr(new.get1('x')), darr(new.get1('y'))
     t1 = x[0, -1]
     f1, f2 = sol.get1('idata').fn, new.get1('idata').fn

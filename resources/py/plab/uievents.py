@@ -399,6 +399,28 @@ def _resize(obj, fig, ev):
         sx, sy = scr[2], scr[3]
     pos[2], pos[3] = float(ev['width']) / sx, float(ev['height']) / sy
     fig.props['Position'] = pos.reshape(1, 4)
+    fig.__dict__['sized'] = _size_px(fig)
+    queue(fig, 'SizeChangedFcn', evdata(fig, 'SizeChanged'))
+    queue(fig, 'ResizeFcn', evdata(fig, 'SizeChanged'))
+
+
+def _size_px(fig):
+    from .uiobjects import inner_px
+    w, h = inner_px(fig)
+    return round(w), round(h)
+
+
+def shown(fig):
+    """A figure shown for the first time, or shown at a size its program has
+    not heard of (set while it was hidden, or by the program itself), runs
+    its SizeChangedFcn and ResizeFcn: programs lay out their panels and
+    controls there."""
+    if not fig.valid or not fig.props['Visible']:
+        return
+    size = _size_px(fig)
+    if fig.__dict__.get('sized') == size:
+        return
+    fig.__dict__['sized'] = size
     queue(fig, 'SizeChangedFcn', evdata(fig, 'SizeChanged'))
     queue(fig, 'ResizeFcn', evdata(fig, 'SizeChanged'))
 

@@ -13,8 +13,7 @@ def help_for(name):
     p = R.find_file(name[:-2] if name.endswith('.m') else name)
     if p is not None:
         from .worker_api import help_comment
-        with open(p, encoding='utf-8', errors='replace') as f:
-            text = f.read(40000)
+        text = R.read_source(p, 40000)
         h = help_comment(text)
         return {'name': name, 'kind': 'file', 'path': p, 'text': h or f'{name} is a program file with no help comment.\n'}
     from .helptext import HELP

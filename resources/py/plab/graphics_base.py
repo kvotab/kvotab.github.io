@@ -6,6 +6,7 @@ query and change.
 import base64
 import itertools
 import math
+import re
 
 import numpy as np
 
@@ -142,6 +143,8 @@ class GObj(Obj):
         for k, v in props.items():
             self.props[k] = v
         STORE.objects[self.id] = self
+        if USER_DEFAULTS[0]:
+            self.apply_defaults()
 
     @property
     def cls(self):
@@ -188,6 +191,9 @@ class GObj(Obj):
                 return self.getprop('Children')
             if name.lower() == 'type':
                 return Char.of(self.TYPE)
+            d = split_default(name)
+            if d is not None:
+                return self.default_value(*d)
             raise gerr(f"Unrecognized property '{name}' for class '{self.CLASSNAME.split('.')[-1]}'.", 'MATLAB:noSuchMethodOrField')
         return self.get_value(k)
 
@@ -203,6 +209,10 @@ class GObj(Obj):
             return
         k = self.canon(name)
         if k is None:
+            d = split_default(name)
+            if d is not None and d[0] == 'default':
+                self.set_default(d[1], d[2], value)
+                return
             raise gerr(f"Unrecognized property '{name}' for class '{self.CLASSNAME.split('.')[-1]}'.", 'MATLAB:noPublicFieldForClass')
         self.set_value(k, value)
         self.touch()
@@ -242,6 +252,49 @@ class GObj(Obj):
 
     def on_delete(self):
         pass
+
+    # default property values: set(0, 'DefaultAxesFontSize', 14) on the root, a
+    # figure or a container, for the objects made in it from then on
+    def set_default(self, cls, prop, value):
+        d = self.__dict__.setdefault('user_defaults', {})
+        if type(value) in (Char, Str) and py_str(value).lower() == 'remove':
+            d.pop((cls, prop), None)
+            return
+        d[(cls, prop)] = value
+        USER_DEFAULTS[0] = True
+
+    def default_value(self, kind, cls, prop):
+        if kind == 'default':
+            # the nearest set: this object, its ancestors, the root
+            o = self
+            while o is not None:
+                d = o.__dict__.get('user_defaults')
+                if d and (cls, prop) in d:
+                    return d[(cls, prop)]
+                o = o.parent if o.parent is not None else (ROOT if o is not ROOT else None)
+        v = cls.DEFAULTS.get(prop)
+        if callable(v) and not isinstance(v, FH):
+            v = v()
+        return export_value(prop, v)
+
+    def apply_defaults(self):
+        chain = []
+        o = self.parent
+        while o is not None:
+            chain.append(o)
+            o = o.parent
+        if ROOT not in chain:
+            chain.append(ROOT)
+        for o in reversed(chain):          # the nearest last, so it wins
+            d = o.__dict__.get('user_defaults')
+            if not d:
+                continue
+            for (cls, prop), v in d.items():
+                if type(self) is cls:
+                    try:
+                        self.set_value(prop, v)
+                    except Exception:
+                        pass
 
     def number_value(self):
         """The object's handle as a number: a figure's number, 0 for the root,
@@ -1019,6 +1072,35 @@ def cat_handles(axis, vals):
         return HArr(np.empty((0, 0), object))
     from .ops import _concat_arrays
     return HArr(_concat_arrays(parts, axis))
+
+
+USER_DEFAULTS = [False]     # a default has been set somewhere: new objects look
+_DEFAULT_NAME = re.compile(r'(default|factory)(.+)$', re.I)
+
+
+def _default_types():
+    from . import uiobjects as U
+    return {'root': Root, 'figure': Figure, 'axes': Axes, 'line': Line, 'surface': Surface, 'patch': Patch, 'image': Image,
+            'text': Text, 'light': Light, 'uicontrol': U.UIControl, 'uipanel': U.UIPanel, 'uibuttongroup': U.UIButtonGroup,
+            'uitable': U.UITable, 'uitabgroup': U.UITabGroup, 'uitab': U.UITab, 'uimenu': U.UIMenu,
+            'uicontextmenu': U.UIContextMenu, 'uitoolbar': U.UIToolbar, 'uipushtool': U.UIPushTool,
+            'uitoggletool': U.UIToggleTool}
+
+
+def split_default(name):
+    """('default' or 'factory', the class, its property) of a name such as
+    DefaultAxesFontSize or FactoryUicontrolPosition, else None."""
+    m = _DEFAULT_NAME.match(name)
+    if m is None:
+        return None
+    rest = m.group(2).lower()
+    types = _default_types()
+    for t in sorted(types, key=len, reverse=True):
+        if rest.startswith(t) and len(rest) > len(t):
+            prop = types[t].canon(rest[len(t):])
+            if prop is not None:
+                return m.group(1).lower(), types[t], prop
+    return None
 
 
 ROOT = Root(None)

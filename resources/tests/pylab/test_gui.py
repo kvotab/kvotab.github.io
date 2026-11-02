@@ -283,6 +283,26 @@ check('WindowScrollWheelFcn', num('wheel'), -1)
 run("set(f, 'SizeChangedFcn', 'sized = get(gcbf, ''Position'');');")
 ui({'type': 'resize', 'id': idof('f'), 'width': 500, 'height': 350})
 check('a resize sets Position and runs SizeChangedFcn', num('sized(3:4)'), [500.0, 350.0])
+
+
+def shown():
+    """The page is sent the figures (as at a command's end); the callbacks that queued run."""
+    R.flush_figures()
+    asyncio.run(E.run_queued())
+
+
+run("g = figure('Visible', 'off', 'ResizeFcn', 'laid = laid + 1;'); laid = 0; g2 = figure('SizeChangedFcn', 'sc = 1;'); sc = 0;")
+shown()
+check('a hidden figure does not run its ResizeFcn; one shown for the first time runs SizeChangedFcn', [num('laid'), num('sc')], [0, 1])
+run("set(g, 'Visible', 'on');")
+shown()
+check('shown, it runs ResizeFcn (programs lay themselves out there)', num('laid'), 1)
+shown()
+check('and not again while its size stays', num('laid'), 1)
+run("set(g, 'Position', [100 100 300 200]);")
+shown()
+check('a size the program sets runs it again', num('laid'), 2)
+run("close(g, g2)")
 run("set(f, 'CloseRequestFcn', 'asked = 1;'); asked = 0;")
 ui({'type': 'closerequest', 'id': idof('f')})
 check('the close button runs CloseRequestFcn', (num('asked'), num('ishandle(f)')), (1, True))
@@ -465,6 +485,20 @@ d = serialize_figure(val('fo'))
 tj = [c for c in d['axes'][0]['children'] if c['id'] == val('tb').id][0]
 check("a text's box: its margin and line width go to the page", (tj['margin'], tj['lineWidth']), (6.0, 2.0))
 check('a figure whose Position the program set opens at it', (d['placed'], serialize_figure(val('fn'))['placed']), (True, False))
+check('default values: the factory ones read from the root', (num("get(0, 'DefaultUicontrolPosition')"), num("get(0, 'FactoryAxesFontSize')")), ([20.0, 20.0, 60.0, 20.0], 10))
+run("set(0, 'DefaultAxesFontSize', 14); set(fo, 'DefaultLineLineWidth', 3); da = axes(fo); dl = line(da, [0 1], [0 1]); "
+    "f9 = figure; dl2 = line([0 1], [0 1]); figure(fo);")
+check("set on the root or a figure, new objects take them; another figure's line not", (num("get(da, 'FontSize')"), num("get(dl, 'LineWidth')"), num("get(dl2, 'LineWidth')")),
+      (14, 3, 0.5))
+run("set(0, 'DefaultAxesFontSize', 'remove'); da2 = axes(fo);")
+check("'remove' takes one away", (num("get(da2, 'FontSize')"), num("get(0, 'DefaultAxesFontSize')")), (10, 10))
+run("delete([da da2 f9]); axes(fa);")
+check('a style may be shortened: push, radio, popup', [text(f"get(uicontrol(fo, 'Style', '{s}'), 'Style')") for s in ('push', 'radio', 'popup')],
+      ['pushbutton', 'radiobutton', 'popupmenu'])
+check('plot(x, y) with one x: a line of one point for each value', (num("numel(plot(fa, 1, [1 2 3], '-o'))"), num("numel(plot(fa, [1 2 3], 5, 'x'))")), (3, 3))
+out = run("cla(fa); ode45(@(t, y) -y, [0 1], [1; 2])")
+check('a solver asked for no output plots with odeplot, from t0 to tfinal', (out, num("numel(findobj(fa, 'Type', 'line'))"), num("get(fa, 'XLim')")),
+      ('', 2, [0.0, 1.0]))
 run("cla(fa); p1 = patch([0 1 1], [0 0 1], 'r'); p2 = patch([0 1 0], [0 1 1], [0 0 1]);")
 check('patch adds to the axes as they are', num("numel(findobj(fa, 'Type', 'patch'))"), 2)
 run("fill([0 1 1], [0 0 1], 'r');")

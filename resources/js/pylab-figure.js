@@ -2040,10 +2040,18 @@
     _interact() {
       let drag = null;
       const pos = (ev) => { const r = this.canvas.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
-      const mouse = (type, ev, px, py, hit) => {
+      const mouse = (type, ev, px, py, hit, clicks = 1) => {
         const h = hit || this.hitTest(px, py);
         this.mgr.ui({ type, id: this.fig.id, hit: h.id, axes: h.axes, point: h.point, fpt: [px, (this.lastSize ? this.lastSize.h : 0) - py],
-          button: ev.button === 2 ? 3 : ev.button === 1 ? 2 : 1, clicks: ev.detail || 1, modifiers: PL.uiMods(ev) });
+          button: ev.button === 2 ? 3 : ev.button === 1 ? 2 : 1, clicks, modifiers: PL.uiMods(ev) });
+      };
+      // a pointerdown's detail is 0, so presses are counted here: the same button
+      // again within half a second and a few pixels makes a double-click
+      let last = null;
+      const presses = (ev, px, py) => {
+        const n = last && last.button === ev.button && ev.timeStamp - last.t < 500 && Math.hypot(px - last.x, py - last.y) < 5 ? last.n + 1 : 1;
+        last = { t: ev.timeStamp, x: px, y: py, button: ev.button, n };
+        return n;
       };
       this.canvas.addEventListener('pointerdown', (ev) => {
         const [px, py] = pos(ev);
@@ -2053,7 +2061,7 @@
         const fl = this.fig.flags || {};
         const hit = this.hitTest(px, py);
         // the program hears every press (CurrentPoint, SelectionType, gco; and its callbacks)
-        mouse('down', ev, px, py, hit);
+        mouse('down', ev, px, py, hit, presses(ev, px, py));
         if (fl.wbuf || fl.wbmf) { this.canvas.setPointerCapture(ev.pointerId); this.pressed = true; }
         if (ev.button !== 0 || !f) return;
         this.mgr.send({ type: 'currentaxes', id: f.ax.id });

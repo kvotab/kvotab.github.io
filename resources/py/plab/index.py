@@ -934,7 +934,8 @@ def casgn(A, args, V):
             k -= 1
             a[k % a.shape[0], k // a.shape[0]] = V
             return A
-    if A is NOVAL or (t is np.ndarray and A.size == 0):
+    if A is NOVAL or (t is np.ndarray and A.size == 0) or (t is Char and A.a.size == 0):
+        # x = []; x{1} = v, and the same for '' (a list box's String when it lists nothing)
         A = Cell.empty()
         t = Cell
     if t is Str:
@@ -1002,7 +1003,7 @@ def fasgn(A, name, V):
 
 def _sub_for_assign(A, kind, key):
     """The part of A a chain goes into, or NOVAL when it is not there yet."""
-    if A is NOVAL or is_empty_double(A):
+    if A is NOVAL or is_empty_double(A) or (kind == '{}' and type(A) is Char and A.a.size == 0):
         return NOVAL
     t = type(A)
     if kind == '.':

@@ -408,8 +408,7 @@ def file_info(path):
     ext = os.path.splitext(path)[1].lower()
     try:
         if ext == '.m':
-            with open(path, encoding='utf-8', errors='replace') as f:
-                text = f.read(20000)
+            text = R.read_source(path, 20000)
             info['help'] = help_comment(text)
             info['kind'] = 'function' if text.lstrip().startswith('function') else 'script'
         elif ext == '.mat':

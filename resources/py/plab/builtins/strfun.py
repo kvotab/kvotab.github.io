@@ -1341,6 +1341,29 @@ def regexprep(nargout, *args):
     return tin.back([f(s) for s in tin.items])
 
 
+_SYM_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|(?<![\w.])\d+\.?\d*(?:[eEdD][+-]?\d+)?|(?<![\w.])\.\d+(?:[eEdD][+-]?\d+)?|[A-Za-z]\w*")
+_SYM_SKIP = {'i', 'j', 'pi', 'Inf', 'inf', 'NaN', 'nan', 'eps'}
+
+
+@bi('symvar')
+def symvar(nargout, *args):
+    """The variables an expression uses, sorted: its names other than i, j,
+    pi, Inf, NaN, eps and the functions there are."""
+    from .. import runtime as R
+    nargchk(args, 1, 1, 'symvar')
+    s = sval(args[0], 'expression', 'symvar')
+    names = set()
+    for m in _SYM_TOKEN.finditer(s):
+        t = m.group(0)
+        if not (t[0].isalpha()) or t in _SYM_SKIP or t in names:
+            continue
+        if R.resolve(t) is not None:
+            continue        # a function (or a program file)
+        names.add(t)
+    found = sorted(names)
+    return Cell.of_list([Char.of(n) for n in found], (len(found), 1)) if found else Cell.empty((0, 1))
+
+
 @bi('regexptranslate')
 def regexptranslate(nargout, *args):
     kind = py_str(args[0]).lower()

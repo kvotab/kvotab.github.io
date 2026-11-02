@@ -260,6 +260,9 @@ class UIControl(_Placed):
     def set_value(self, k, value):
         if k == 'Style':
             s = py_str(value).lower()
+            hits = [x for x in STYLES if x.startswith(s)] if s and s not in STYLES else []
+            if len(hits) == 1:
+                s = hits[0]         # an abbreviation that names one: 'push', 'radio', 'popup'
             if s not in STYLES:
                 raise gerr(f"'{py_str(value)}' is not a valid value for Style. Use one of these values: {_choices(STYLES)}.")
             self.props[k] = s

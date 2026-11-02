@@ -526,6 +526,11 @@ def _columns(x, y, z=None):
         raise err('MATLAB:plot3:XYZLengthMismatch', 'Data dimensions must agree.', 'plot3')
     if xv and yv:
         if X.size != Y.size:
+            # one x and several values (or the other way): a line of one point for each
+            if X.size == 1:
+                return [(X.reshape(-1), np.array([v]), None) for v in Y.reshape(-1)]
+            if Y.size == 1:
+                return [(np.array([v]), Y.reshape(-1), None) for v in X.reshape(-1)]
             raise err('MATLAB:samelen', 'Vectors must be the same length.', 'plot')
         return [(X.reshape(-1), Y.reshape(-1), None)]
     if xv and not yv:
@@ -2940,6 +2945,9 @@ def flush_figures():
             R.write(f'Warning: Figure {int(f.props["Number"])} could not be drawn: {e}\n', 'warn')
     cur = STORE.current.id if STORE.current is not None and STORE.current.valid else None
     hook({'type': 'figures', 'figures': figs, 'closed': closed, 'current': cur})
+    from .. import uievents as E
+    for f in dirty:
+        E.shown(f)
 
 
 R.FLUSH_FIGURES = flush_figures

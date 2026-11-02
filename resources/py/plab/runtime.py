@@ -870,13 +870,16 @@ def mexc(e):
 
 def caught(e):
     """An exception caught by try/catch, as the language's error (Python
-    errors from the runtime included)."""
+    errors from the runtime included). It is the last error too, as
+    `catch, errordlg(lasterr)` expects."""
     if isinstance(e, MError):
         if not e.stack:
             e.stack = stack_of(e.__traceback__)
+        LASTERR[0] = e
         return e
     m = as_merror(e)
     m.stack = stack_of(e.__traceback__)
+    LASTERR[0] = m
     return m
 
 
@@ -1101,8 +1104,7 @@ def where_else(name):
             if seen > 1000:
                 break
             try:
-                with open(os.path.join(d, f), encoding='utf-8', errors='replace') as fh:
-                    head = fh.read(8192)
+                head = read_source(os.path.join(d, f), 8192)
             except OSError:
                 continue
             for k, ln in enumerate(head.splitlines()):
@@ -1144,6 +1146,24 @@ def _file_target(path):
     return 'function', mod.ns['MAIN']
 
 
+def source_text(data):
+    """The text of a program file's bytes: UTF-8, or for a file of an older
+    release that is not UTF-8, Windows-1252 (in which letters such as 'ö'
+    and signs such as '®' were written then)."""
+    try:
+        return data.decode('utf-8-sig')
+    except UnicodeDecodeError as e:
+        if e.reason == 'unexpected end of data' and e.start >= len(data) - 3:
+            # a part read: the last letter was cut
+            return data[:e.start].decode('utf-8-sig', errors='replace')
+        return data.decode('cp1252', errors='replace')
+
+
+def read_source(path, limit=-1):
+    with open(path, 'rb') as f:
+        return source_text(f.read(limit))
+
+
 def load_file(path):
     """The compiled module of a file (compiled again when the file or the
     set of files changed)."""
@@ -1151,8 +1171,7 @@ def load_file(path):
     c = _file_cache.get(path)
     if c is not None and c[0] == st.st_mtime_ns and c[1] == st.st_size and c[2] == STATE['epoch']:
         return c[3]
-    with open(path, encoding='utf-8', errors='replace') as f:
-        text = f.read()
+    text = read_source(path)
     mod = compile_file(path, text)
     _file_cache[path] = (st.st_mtime_ns, st.st_size, STATE['epoch'], mod)
     return mod

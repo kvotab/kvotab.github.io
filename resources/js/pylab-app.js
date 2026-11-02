@@ -615,6 +615,8 @@
         this.ws.update(res.ws);
         if (res.cwd !== this.cwd) this.setCwd(res.cwd, true);
         this.refreshVariableViews();
+        // callbacks the run left waiting (a window's SizeChangedFcn when it is first shown) run now
+        if (res.pending) this.runCallbacks();
       }
       return res;
     }

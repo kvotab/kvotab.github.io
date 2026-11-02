@@ -187,6 +187,13 @@ async function call(msg) {
   }
 }
 
+/* A file's text: UTF-8, or for a file of an older release that is not UTF-8,
+   Windows-1252 (as the engine reads program files). */
+function textOf(bytes) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch (e) { return new TextDecoder('windows-1252').decode(bytes); }
+}
+
 /* Files, through Emscripten's file system (the same one Python sees). */
 function fsOp(msg) {
   const FS = py && py.FS;
@@ -195,9 +202,9 @@ function fsOp(msg) {
     let result = null;
     switch (msg.op) {
       case 'read': {
-        const data = FS.readFile(msg.path, { encoding: msg.binary ? 'binary' : 'utf8' });
-        result = msg.binary ? data.slice().buffer : data;
-        if (msg.binary) { post({ type: 'answer', id: msg.id, result }, [result]); return; }
+        const data = FS.readFile(msg.path, { encoding: 'binary' });
+        if (msg.binary) { result = data.slice().buffer; post({ type: 'answer', id: msg.id, result }, [result]); return; }
+        result = textOf(data);
         break;
       }
       case 'write': {

@@ -388,6 +388,14 @@ def path_(nargout, *args):
     return None
 
 
+@bi('rehash')
+def rehash(nargout, *args):
+    """Program files written or changed by a program are seen at once anyway;
+    rehash makes sure of it (with any of its options)."""
+    R.bump_epoch()
+    return None
+
+
 @bi('genpath')
 def genpath(nargout, *args):
     root = abspath(sval(args[0], 'folder', 'genpath'))

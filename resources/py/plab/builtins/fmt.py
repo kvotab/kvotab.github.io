@@ -106,7 +106,20 @@ class _Args:
 
     def take_string(self):
         """For %s: a whole character vector if one starts here, else one
-        element."""
+        element. An empty argument ('' or []) is an empty string:
+        sprintf('%d|%s|%d', 1, '', 3) is '1||3', and sprintf('[%s],[%s]',
+        [], 'a') is '[],[a]'."""
+        while self.i < len(self.items):
+            k, v = self.items[self.i]
+            n = v.a.size if k == 'c' else 1 if k == 's' else len(v)
+            if k in 'cn' and n == 0 and self.j == 0:
+                self.taken += 1
+                self.i += 1
+                return ('str', '')
+            if self.j < n:
+                break
+            self.i += 1
+            self.j = 0
         if not self.left():
             return None
         k, v = self.items[self.i]
