@@ -2047,6 +2047,33 @@ copyfile: Copy a file or folder.
     copyfile(source, destination)
 movefile: Move or rename a file or folder.
     movefile(source, destination)
+zip: Compress files and folders into a zip file.
+    zip(zipfile, files)
+    zip(zipfile, files, rootfolder)
+    entries = zip(...)
+    * files is a name, a cell of names, or a pattern with * and ?; a folder brings everything in it. The entries are named by their paths from rootfolder (the current folder unless given), and .zip is added to a name with no extension.
+unzip: Unpack a zip file.
+    unzip(zipfile)
+    unzip(zipfile, outputfolder)
+    files = unzip(...)
+    * The files go to outputfolder (the current folder unless given); an entry that would land outside it is left out, with a warning.
+gzip: Compress files, each into a gzip file of its own (.gz added to its name).
+    gzip(files)
+    gzip(files, outputfolder)
+    names = gzip(...)
+gunzip: Unpack gzip files, each into a file of its name without .gz.
+    gunzip(files)
+    gunzip(files, outputfolder)
+    names = gunzip(...)
+tar: Put files and folders into a tar file, compressed with gzip when its name ends in .tgz or .tar.gz.
+    tar(tarfile, files)
+    tar(tarfile, files, rootfolder)
+    entries = tar(...)
+untar: Unpack a tar file, compressed or not.
+    untar(tarfile)
+    untar(tarfile, outputfolder)
+    files = untar(...)
+    * Only files and folders are unpacked; an entry that would land outside the folder is left out, with a warning.
 fullfile: A path from its parts.
     p = fullfile(part1, part2, ...)
 fileparts: The folder, name and extension of a path.
@@ -2578,10 +2605,18 @@ text: Text at a point of the axes.
     text(x, y, s)
     text(x, y, z, s)
     h = text(..., 'Name', value)
-annotation: Text, a line, an arrow or a box on the figure, in normalized figure units.
-    annotation('textbox', [x y w h], 'String', s)
-    annotation('arrow', [x1 x2], [y1 y2])
-    annotation('line', [x1 x2], [y1 y2])
+annotation: A line, an arrow, a text arrow, a rectangle, an ellipse or a text box on the figure, in normalized figure units.
+    h = annotation('line', [x1 x2], [y1 y2])
+    h = annotation('arrow', [x1 x2], [y1 y2])
+    h = annotation('doublearrow', [x1 x2], [y1 y2])
+    h = annotation('textarrow', [x1 x2], [y1 y2], 'String', s)
+    h = annotation('rectangle', [x y w h])
+    h = annotation('ellipse', [x y w h])
+    h = annotation('textbox', [x y w h], 'String', s)
+    h = annotation(fig, ...)
+    * (0, 0) is the figure's lower left corner and (1, 1) its upper right. An arrow's head is at its second point; a text arrow's text is at its first, on the side away from the head.
+    * Their properties: X and Y (the ends) or Position, Color, LineStyle and LineWidth; HeadStyle ('vback2', 'plain', 'diamond', 'ellipse', 'rectangle', 'none' ...), HeadLength and HeadWidth in points (Head1... and Head2... for the two heads of a double arrow); FaceColor and FaceAlpha for a rectangle or an ellipse; String, FontSize and the font, Color (of the text), BackgroundColor, EdgeColor, Margin and FitBoxToText for a text box; TextColor, TextBackgroundColor and TextEdgeColor for a text arrow.
+    * Annotations are not among the figure's Children: findobj and findall find them by Type ('lineshape', 'arrowshape', 'doubleendarrowshape', 'textarrowshape', 'rectangleshape', 'ellipseshape', 'textboxshape').
 set: Set properties of graphics objects.
     set(h, 'Name', value, ...)
     set(h, s)
@@ -2629,15 +2664,39 @@ refresh: Accepted, with no effect: figures redraw by themselves.
     refresh
 shg: Accepted, with no effect.
     shg
-getframe: Not available here: write a picture with saveas or exportgraphics.
+getframe: The figure or axes as drawn, as a movie frame.
     F = getframe
-saveas: Save a figure as a picture file (PNG or SVG, by the extension), or as a figure file (.fig).
+    F = getframe(ax)
+    F = getframe(fig)
+    F = getframe(h, [left bottom width height])
+    * F.cdata is the picture, rows by columns by 3 of uint8, as large as the figure is on screen in pixels; F.colormap is [].
+    * With no input it takes the current axes (the figure when there are none). An axes' frame is its box as drawn, without the tick labels outside it; a rectangle is in pixels from the lower left corner of the figure or axes.
+    * frame2im(F) gives the picture, movie(F) plays a struct array of frames, and im2frame makes a frame of a picture.
+frame2im: The picture of a movie frame.
+    X = frame2im(F)
+    [X, map] = frame2im(F)
+    * X is F.cdata (rows by columns by 3 of uint8 from getframe) and map is F.colormap.
+im2frame: A movie frame of a picture.
+    F = im2frame(X)
+    F = im2frame(X, map)
+    * X is rows by columns by 3 (doubles from 0 to 1 become uint8), or a matrix of colormap indices with its colormap.
+movie: Play a movie's frames in the current axes.
+    movie(F)
+    movie(F, n)
+    movie(F, n, fps)
+    movie(h, F, ...)
+    * F is a struct array of frames (getframe's or im2frame's). n plays them n times (back and forth for a negative n); n = [k i j ...] plays the frames i, j, ... k times. fps frames a second, 12 unless given.
+saveas: Save a figure as a picture or vector file, by the extension, or as a figure file (.fig).
     saveas(fig, filename)
     saveas(fig, filename, format)
     saveas(fig, 'plot.fig')
-exportgraphics: Save a figure or axes as a picture file.
+    * The files: .png and .jpg pictures at twice the figure's size on screen, .bmp and .tif (uncompressed), and .svg, .pdf and .eps, which keep lines and text as lines and text. format ('png', 'jpeg', 'bmp', 'tiff', 'svg', 'pdf', 'epsc') gives the kind when the name has no extension.
+    * PDF and EPS write text in the standard fonts, Helvetica or Courier with Greek letters and mathematical signs from Symbol; other characters come out as ?, while SVG keeps all text. EPS has no transparency: translucent colours are mixed with white.
+    * The figure's own controls (uicontrol and the like) are not in the file.
+exportgraphics: Save a figure as a picture or vector file.
     exportgraphics(obj, filename)
     exportgraphics(obj, filename, 'Resolution', dpi)
+    * The extension decides the kind, as for saveas: .png, .jpg, .bmp, .tif, .svg, .pdf or .eps. Given an axes, the whole figure it is in is written.
 openfig: Open a figure saved in a figure file (.fig).
     openfig(filename)
     h = openfig(filename, 'new' | 'reuse')
@@ -2654,13 +2713,16 @@ savefig: Save figures as a figure file (.fig), to open again with openfig.
     savefig(filename)
     savefig(fig, filename)
     * fig may be several figures; the file holds them all. 'compact' is accepted and writes the usual form.
-    * Callbacks given as function handles are left out, with a warning: text callbacks are kept.
+    * Callbacks given as function handles are left out, with a warning: text callbacks are kept. Annotations are left out too, with a warning.
 hgsave: Save a figure (or other graphics objects) as a figure file.
     hgsave(filename)
     hgsave(h, filename)
-print: Save the current figure as a picture file.
+print: Save the current figure as a picture or vector file.
     print(filename, '-dpng')
-    print(fig, filename, '-dsvg')
+    print(fig, filename, '-dpdf')
+    print(filename, '-dpng', '-r300')
+    * The devices are -dpng, -djpeg, -dbmp, -dtiff, -dsvg, -dpdf and -depsc (or -deps); the file's extension decides when it has a known one, and PNG when there is neither. -r gives a picture's resolution in dots an inch (screen pixels are 96 an inch; 192 unless given).
+    * print -dmeta with no file name copies the figure to the clipboard.
 ginput: Points clicked in the current figure.
     [x, y] = ginput(n)
     [x, y, button] = ginput(n)
@@ -2768,7 +2830,7 @@ msgbox: A window with a message and an OK button; the program goes on.
     h = msgbox(message, title)
     h = msgbox(message, title, 'error' | 'warn' | 'help')
     h = msgbox(message, title, 'custom', picture, colormap)
-    * uiwait(h) waits until it is closed; 'modal' as the last input keeps it in front.
+    * uiwait(h) waits until it is closed. 'modal' as the last input makes it modal: until it is closed, the rest of the page takes no clicks or keys (Ctrl+C still stops a program).
 errordlg: A message window with an error sign.
     h = errordlg(message, title)
 warndlg: A message window with a warning sign.
@@ -2808,8 +2870,9 @@ waitbar: A window with a bar that shows how far a long job has come.
     waitbar(fraction, h, 'Almost there')
     h = waitbar(0, 'Working...', 'CreateCancelBtn', 'setappdata(gcbf, ''cancelled'', 1)')
     * waitbar(fraction) alone moves the newest bar.
-dialog: An empty window for a dialog of one's own making.
+dialog: An empty modal window for a dialog of one's own making.
     d = dialog('Name', 'Settings', 'Position', [300 300 250 150])
+    * Its WindowStyle is 'modal': until it is closed (or made 'normal'), the rest of the page takes no clicks or keys.
 menu: Ask for a choice among buttons; the number of the button pressed (0 when the window is closed).
     k = menu('Shape', 'Circle', 'Square', 'Triangle')
 printdlg: Print a figure, with the browser's printing.
@@ -2983,3 +3046,6 @@ def _distribution_help():
 
 
 HELP.update(_distribution_help())
+
+
+from .howtext import HOW  # noqa: E402,F401  (how PyLAB computes each function)

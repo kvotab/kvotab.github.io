@@ -346,12 +346,13 @@ _COLOR_PROPS = {'Color': ('none',), 'MarkerFaceColor': ('none', 'auto', 'flat'),
                 'FaceColor': ('none', 'flat', 'interp', 'texturemap', 'auto'), 'EdgeColor': ('none', 'flat', 'interp', 'auto'),
                 'XColor': ('none',), 'YColor': ('none',), 'ZColor': ('none',), 'BackgroundColor': ('none',),
                 'GridColor': ('none',), 'MinorGridColor': ('none',), 'TextColor': ('none',), 'MarkerEdge': ('none',),
+                'TextBackgroundColor': ('none',), 'TextEdgeColor': ('none',),
                 'ForegroundColor': (), 'HighlightColor': (), 'ShadowColor': ()}
 _ONOFF = {'Visible', 'Box', 'XGrid', 'YGrid', 'ZGrid', 'XMinorGrid', 'YMinorGrid', 'ZMinorGrid', 'XMinorTick', 'YMinorTick',
           'ZMinorTick', 'Clipping', 'HitTest', 'NumberTitle', 'AutoUpdate', 'Resize', 'ShowText', 'Selected',
           'Interruptible', 'BeingDeleted', 'SelectionHighlight', 'Separator', 'Checked', 'State', 'Enable', 'IntegerHandle',
           'DockControls', 'RowStriping', 'ShowHiddenHandles', 'DoubleBuffer', 'BackingStore', 'ShareColors',
-          'GraphicsSmoothing', 'LineSmoothing', 'Editing', 'FontSmoothing'}
+          'GraphicsSmoothing', 'LineSmoothing', 'Editing', 'FontSmoothing', 'FitBoxToText'}
 
 
 def import_value(obj, k, v):
@@ -836,6 +837,23 @@ class Image(GObj):
     SHOWN = ['CData', 'CDataMapping']
 
 
+def string_value(value):
+    """A String property as kept: one line, or a list of lines."""
+    if type(value) is Cell:
+        return [py_str(x) if type(x) in (Char, Str) else _num_label(x) for x in value.a.reshape(-1, order='F')]
+    if type(value) is Char:
+        return value.row_strs() if value.a.shape[0] > 1 else value.str()
+    if type(value) is Str:
+        return [s or '' for s in value.a.reshape(-1, order='F')] if value.a.size != 1 else (value.a.flat[0] or '')
+    if type(value) in (float, np.ndarray, bool):
+        return ' '.join(_num_label(x) for x in np.asarray(value).reshape(-1)) if numel(value) else ''
+    return str(value)
+
+
+def string_get(v):
+    return Cell.of_list([Char.of(s) for s in v], (len(v), 1)) if isinstance(v, list) else Char.of(v)
+
+
 class Text(GObj):
     TYPE = 'text'
     CLASSNAME = 'matlab.graphics.primitive.Text'
@@ -853,16 +871,7 @@ class Text(GObj):
 
     def set_value(self, k, value):
         if k == 'String':
-            if type(value) is Cell:
-                self.props[k] = [py_str(x) if type(x) in (Char, Str) else _num_label(x) for x in value.a.reshape(-1, order='F')]
-            elif type(value) is Char:
-                self.props[k] = value.row_strs() if value.a.shape[0] > 1 else value.str()
-            elif type(value) is Str:
-                self.props[k] = [s or '' for s in value.a.reshape(-1, order='F')] if value.a.size != 1 else (value.a.flat[0] or '')
-            elif type(value) in (float, np.ndarray, bool):
-                self.props[k] = ' '.join(_num_label(x) for x in np.asarray(value).reshape(-1)) if numel(value) else ''
-            else:
-                self.props[k] = str(value)
+            self.props[k] = string_value(value)
             return
         if k == 'Position':
             a = np.asarray(value, float).reshape(-1)
@@ -958,6 +967,142 @@ class Colorbar(GObj):
             self.axes.props['CLimMode'] = 'manual'
             return
         super().set_value(k, value)
+
+
+# ---- annotations ------------------------------------------------------------------------
+
+HEAD_STYLES = ('none', 'plain', 'ellipse', 'vback1', 'vback2', 'vback3', 'cback1', 'cback2', 'cback3', 'fourstar', 'rectangle',
+               'diamond', 'rose', 'hypocycloid', 'astroid', 'deltoid')
+
+
+class Shape(GObj):
+    """annotation(...): a line, arrow, double arrow or text arrow, whose ends X
+    and Y are in the figure's normalized units, or a rectangle, ellipse or
+    text box at Position [x y w h]. For the line kinds Position is
+    [x1 y1 x2-x1 y2-y1], and X, Y and Position are kept in step. Like the
+    language's annotations, they are not among the figure's Children."""
+    TYPE = 'shape'
+    KIND = None
+    LINEAR = False
+    BASE = {'Units': 'normalized', 'Visible': True, 'Tag': '', 'UserData': lambda: EMPTY(), 'HandleVisibility': 'on',
+            'Selected': False, 'BeingDeleted': False, 'CreateFcn': '', 'DeleteFcn': ''}
+
+    def __init__(self, parent=None, **props):
+        super().__init__(parent, **props)
+        self.hidden = True
+
+    def set_value(self, k, value):
+        if k in ('X', 'Y') and self.LINEAR:
+            a = np.asarray(value, float).reshape(-1) if numel(value) else np.zeros(0)
+            if a.size != 2 or not np.all(np.isfinite(a)):
+                raise gerr(f'{k} must be a vector of two numbers: the two ends.', 'MATLAB:annotation:BadXY')
+            self.props[k] = a.reshape(1, 2)
+            x, y = self.props['X'].reshape(-1), self.props['Y'].reshape(-1)
+            self.props['Position'] = np.array([[x[0], y[0], x[1] - x[0], y[1] - y[0]]])
+            return
+        if k == 'Position':
+            a = np.asarray(value, float).reshape(-1) if numel(value) else np.zeros(0)
+            if a.size != 4 or not np.all(np.isfinite(a)):
+                raise gerr('Position must be a vector of four numbers.', 'MATLAB:annotation:BadPosition')
+            self.props[k] = a.reshape(1, 4)
+            if self.LINEAR:
+                self.props['X'] = np.array([[a[0], a[0] + a[2]]])
+                self.props['Y'] = np.array([[a[1], a[1] + a[3]]])
+            return
+        if k == 'String':
+            self.props[k] = string_value(value)
+            return
+        if k.endswith('Style') and k != 'LineStyle':
+            s = py_str(value).lower() if type(value) in (Char, Str) else ''
+            if s not in HEAD_STYLES:
+                raise gerr(f"{k} must be one of: {', '.join(HEAD_STYLES)}.", 'MATLAB:annotation:BadHeadStyle')
+            self.props[k] = s
+            return
+        super().set_value(k, value)
+
+    def get_value(self, k):
+        if k == 'String':
+            return string_get(self.props.get('String', ''))
+        return super().get_value(k)
+
+    def serialize(self):
+        """What the page draws: the kind, where, and how."""
+        p = self.props
+        d = {'id': self.id, 'shape': self.KIND, 'units': p['Units'], 'visible': bool(p['Visible']), 'color': _color(p['Color']),
+             'lineStyle': p['LineStyle'], 'lineWidth': float(p['LineWidth']),
+             'position': [float(v) for v in np.asarray(p['Position'], float).reshape(-1)]}
+        if self.LINEAR:
+            d['x'] = [float(v) for v in p['X'].reshape(-1)]
+            d['y'] = [float(v) for v in p['Y'].reshape(-1)]
+        head = lambda s: {'style': p[s + 'Style'], 'length': float(p[s + 'Length']), 'width': float(p[s + 'Width'])}  # noqa: E731
+        if 'HeadStyle' in p:
+            d['head2'] = head('Head')
+        if 'Head1Style' in p:
+            d['head1'], d['head2'] = head('Head1'), head('Head2')
+        if 'FaceColor' in p:
+            d['faceColor'] = _color(p['FaceColor'])
+        if 'FaceAlpha' in p:
+            d['faceAlpha'] = float(p['FaceAlpha'])
+        if 'String' in p:
+            s = p['String']
+            d.update(string=s if isinstance(s, list) else str(s), fontSize=float(p['FontSize']), fontName=p['FontName'],
+                     fontWeight=p['FontWeight'], fontAngle=p['FontAngle'], interpreter=p['Interpreter'],
+                     halign=p['HorizontalAlignment'], valign=p['VerticalAlignment'])
+        if 'TextColor' in p:
+            d.update(textColor=_color(p['TextColor']), textBackground=_color(p['TextBackgroundColor']), textEdge=_color(p['TextEdgeColor']),
+                     textLineWidth=float(p['TextLineWidth']), textMargin=float(p['TextMargin']), textRotation=float(p['TextRotation']))
+        if 'EdgeColor' in p:
+            d.update(edgeColor=_color(p['EdgeColor']), background=_color(p['BackgroundColor']), margin=float(p['Margin']),
+                     fitBox=bool(p['FitBoxToText']))
+        return d
+
+
+_LINE_SHAPE = {'X': lambda: np.array([[0.3, 0.4]]), 'Y': lambda: np.array([[0.3, 0.4]]), 'Position': lambda: np.array([[0.3, 0.3, 0.1, 0.1]]),
+               'Color': (0.0, 0.0, 0.0), 'LineStyle': '-', 'LineWidth': 0.5}
+_TEXT_SHAPE = {'String': '', 'FontName': 'Helvetica', 'FontSize': 10.0, 'FontWeight': 'normal', 'FontAngle': 'normal', 'Interpreter': 'tex'}
+
+
+class LineShape(Shape):
+    TYPE, KIND, LINEAR, CLASSNAME = 'lineshape', 'line', True, 'matlab.graphics.shape.Line'
+    DEFAULTS = {**_LINE_SHAPE, **Shape.BASE}
+
+
+class ArrowShape(Shape):
+    TYPE, KIND, LINEAR, CLASSNAME = 'arrowshape', 'arrow', True, 'matlab.graphics.shape.Arrow'
+    DEFAULTS = {**_LINE_SHAPE, 'HeadStyle': 'vback2', 'HeadLength': 10.0, 'HeadWidth': 10.0, **Shape.BASE}
+
+
+class DoubleArrowShape(Shape):
+    TYPE, KIND, LINEAR, CLASSNAME = 'doubleendarrowshape', 'doublearrow', True, 'matlab.graphics.shape.DoubleEndArrow'
+    DEFAULTS = {**_LINE_SHAPE, 'Head1Style': 'vback2', 'Head1Length': 10.0, 'Head1Width': 10.0, 'Head2Style': 'vback2',
+                'Head2Length': 10.0, 'Head2Width': 10.0, **Shape.BASE}
+
+
+class TextArrowShape(Shape):
+    TYPE, KIND, LINEAR, CLASSNAME = 'textarrowshape', 'textarrow', True, 'matlab.graphics.shape.TextArrow'
+    DEFAULTS = {**_LINE_SHAPE, 'HeadStyle': 'vback2', 'HeadLength': 10.0, 'HeadWidth': 10.0, **_TEXT_SHAPE,
+                'TextColor': (0.0, 0.0, 0.0), 'TextBackgroundColor': 'none', 'TextEdgeColor': 'none', 'TextLineWidth': 0.5,
+                'TextMargin': 2.0, 'TextRotation': 0.0, 'HorizontalAlignment': 'center', 'VerticalAlignment': 'middle', **Shape.BASE}
+
+
+class RectangleShape(Shape):
+    TYPE, KIND, CLASSNAME = 'rectangleshape', 'rectangle', 'matlab.graphics.shape.Rectangle'
+    DEFAULTS = {'Position': lambda: np.array([[0.3, 0.3, 0.1, 0.1]]), 'Color': (0.0, 0.0, 0.0), 'LineStyle': '-', 'LineWidth': 0.5,
+                'FaceColor': 'none', 'FaceAlpha': 1.0, **Shape.BASE}
+
+
+class EllipseShape(RectangleShape):
+    TYPE, KIND, CLASSNAME = 'ellipseshape', 'ellipse', 'matlab.graphics.shape.Ellipse'
+
+
+class TextBoxShape(Shape):
+    TYPE, KIND, CLASSNAME = 'textboxshape', 'textbox', 'matlab.graphics.shape.TextBox'
+    DEFAULTS = {'Position': lambda: np.array([[0.3, 0.3, 0.1, 0.1]]), **_TEXT_SHAPE, 'FitBoxToText': False, 'Color': (0.0, 0.0, 0.0),
+                'BackgroundColor': 'none', 'EdgeColor': (0.0, 0.0, 0.0), 'FaceAlpha': 1.0, 'LineStyle': '-', 'LineWidth': 0.5,
+                'HorizontalAlignment': 'left', 'VerticalAlignment': 'top', 'Margin': 5.0, **Shape.BASE}
+
+
+SHAPES = {C.KIND: C for C in (LineShape, ArrowShape, DoubleArrowShape, TextArrowShape, RectangleShape, EllipseShape, TextBoxShape)}
 
 
 class Light(GObj):
@@ -1369,6 +1514,8 @@ def serialize_figure(f):
                                    'visible': bool(cp['Visible']), 'ticks': [float(x) for x in cp['Ticks'].reshape(-1)] if cp['Ticks'] is not None else None,
                                    'tickLabels': cp['TickLabels'], 'label': _text_json(c.label), 'color': _color(cp['Color']),
                                    'direction': cp['Direction']})
+        elif isinstance(c, Shape):
+            d['annotations'].append(c.serialize())
         elif c.TYPE == 'text':
             d['annotations'].append(serialize_child(c, None))
     if getattr(f, 'sgtitle', None) is not None:
@@ -1415,6 +1562,6 @@ def register(*classes):
 
 
 _EXTRA = {Axes: ('Title', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Text: ('Extent',), Root: ('CallbackObject',)}
-register(Root, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar, Light, Series)
+register(Root, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar, Light, Series, *SHAPES.values())
 GObj._lower = {}
 GObj._alias = {}

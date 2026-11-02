@@ -24,6 +24,7 @@
     "worker_api.py",
     "help.py",
     "helptext.py",
+    "howtext.py",
     "builtins/__init__.py",
     "builtins/_util.py",
     "builtins/fmt.py",

@@ -660,7 +660,13 @@
     async pageRequest(req) {
       if (req.type === 'render') {
         await new Promise((r) => requestAnimationFrame(r));
-        const data = this.figures.render(req.figure, req.format);
+        let data = null;
+        try { data = await this.figures.render(req.figure, req.format, req.scale || 2); } catch (e) { console.error(e); }
+        PL.engine.reply(req.id, data);
+      } else if (req.type === 'frame') {
+        await new Promise((r) => requestAnimationFrame(r));
+        let data = null;
+        try { data = this.figures.frame(req.figure, req.axes, req.rect); } catch (e) { console.error(e); }
         PL.engine.reply(req.id, data);
       } else if (req.type === 'ginput') {
         this.statusText.textContent = 'Click points in the figure; Enter ends.';
@@ -1166,7 +1172,7 @@
       window.addEventListener('dragover', (ev) => {
         if (!hasFiles(ev)) return;
         ev.preventDefault();      // a file dropped anywhere is the page's, never the browser's to open
-        const modal = !!document.querySelector('.pl-modal-back');
+        const modal = !!document.querySelector('.pl-modal-back, .pl-figveil');
         ev.dataTransfer.dropEffect = modal ? 'none' : 'copy';
         this.showDeskZone(!modal && !ev.target.closest?.('.pl-p-folder'));
       });
@@ -1175,7 +1181,7 @@
         const taken = ev.defaultPrevented;    // the Current Folder copied it
         ev.preventDefault();
         this.showDeskZone(false);
-        if (taken || document.querySelector('.pl-modal-back')) return;
+        if (taken || document.querySelector('.pl-modal-back, .pl-figveil')) return;
         this.takeDrop(ev.dataTransfer, this.cwd, true);
       });
     }
@@ -1466,7 +1472,7 @@
 
     globalKey(ev) {
       const mod = U.mod(ev);
-      if (document.querySelector('.pl-modal-back')) return;
+      if (document.querySelector('.pl-modal-back, .pl-figveil')) return;
       if (mod && (ev.key === 'n' || ev.key === 'N') && !ev.shiftKey && !ev.altKey) { ev.preventDefault(); this.newFile('script'); return; }
       if (mod && (ev.key === 'o' || ev.key === 'O') && !ev.shiftKey) { ev.preventDefault(); this.openDialog(); return; }
       if (mod && ev.key === '0' && !ev.shiftKey) { ev.preventDefault(); this.cmd.focus(); return; }

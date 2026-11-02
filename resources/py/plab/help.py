@@ -16,7 +16,7 @@ def help_for(name):
         text = R.read_source(p, 40000)
         h = help_comment(text)
         return {'name': name, 'kind': 'file', 'path': p, 'text': h or f'{name} is a program file with no help comment.\n'}
-    from .helptext import HELP
+    from .helptext import HELP, HOW
     entry = HELP.get(name)
     if entry is not None:
         summary, syntax, more = entry if len(entry) == 3 else (entry[0], entry[1], '')
@@ -25,10 +25,31 @@ def help_for(name):
             lines += [''] + ['    ' + s for s in syntax]
         if more:
             lines += [''] + ['    ' + l for l in more.split('\n')]
-        return {'name': name, 'kind': 'builtin', 'text': '\n'.join(lines) + '\n', 'summary': summary}
+        out = {'name': name, 'kind': 'builtin', 'text': '\n'.join(lines) + '\n', 'summary': summary}
+        how = HOW.get(name)
+        if how:
+            # the Help panel sets these out as paragraphs; the Command Window has them wrapped
+            out['base'] = out['text']
+            out['how'] = [{'p': b} if kind == 'p' else {'pre': '\n'.join(b)} for kind, b in how]
+            out['text'] += '\n' + how_text(how)
+        return out
     if name in R.BUILTINS:
         return {'name': name, 'kind': 'builtin', 'text': f' {name} is a built-in function.\n'}
     return {'name': name, 'kind': 'missing', 'text': f'{name} not found.\n'}
+
+
+def how_text(blocks, width=76):
+    """A function's How it works for the Command Window: paragraphs wrapped,
+    formulas as written."""
+    import textwrap
+    lines = [' How it works', '']
+    for kind, b in blocks:
+        if kind == 'p':
+            lines += textwrap.wrap(b, width, initial_indent='    ', subsequent_indent='    ', break_on_hyphens=False)
+        else:
+            lines += ['      ' + l for l in b]
+        lines.append('')
+    return '\n'.join(lines)
 
 
 def overview():

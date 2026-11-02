@@ -4,7 +4,9 @@ what people do with them (the page's events, as uievents.handle takes
 them) and the callbacks that answer, by text, function handle and cell;
 gcbo, gcbf and gco; uiwait, waitfor, drawnow and pause letting callbacks
 run; the dialogs (the page's answers stood in for); timers; data kept with
-objects; textread and strmatch; and the description the page builds from.
+objects; textread and strmatch; annotations as objects; the files saveas,
+print and exportgraphics ask the page for; getframe, frame2im, im2frame and
+movie; modal windows; and the description the page builds from.
 
     python3 test_gui.py          (from any folder; needs numpy and scipy)
 """
@@ -690,5 +692,56 @@ from plab.builtins.uifun import write_icons  # noqa: E402
 write_icons(os.path.join(TMP, 'mroot'))
 run(f"s = load('{TMP}/mroot/toolbox/matlab/icons/opendoc.mat');")
 check('the pictures are there, drawn here', (num("size(s.cdata)"), num("any(isnan(s.cdata(:)))")), ([16.0, 16.0, 3.0], True))
+
+# ---- annotations, figure files, frames and modal windows ----------------------------------------------------------------
+run("close all force; f = figure; plot(1:3); h = annotation('arrow', [0.2 0.5], [0.3 0.6]);")
+check('an arrow annotation: its type and class', (text("get(h, 'Type')"), text('class(h)')), ('arrowshape', 'matlab.graphics.shape.Arrow'))
+check('Position from X and Y', num("get(h, 'Position')"), [0.2, 0.3, 0.3, 0.3])
+run("set(h, 'Position', [0.1 0.2 0.4 0.2]);")
+check('X and Y from Position', (num("get(h, 'X')"), num("get(h, 'Y')")), ([0.1, 0.5], [0.2, 0.4]))
+check('a head style is checked', 'HeadStyle must be one of' in run("set(h, 'HeadStyle', 'star')"), True)
+check('X must have two ends', 'two numbers' in run("set(h, 'X', [1 2 3])"), True)
+check("not among the figure's Children; findobj finds it by Type", (num("numel(get(f, 'Children'))"), num("numel(findobj(f, 'Type', 'arrowshape'))")), (1, 1))
+run("b = annotation('textbox', [0.1 0.7 0.3 0.1], 'String', {'one', 'two'}, 'FitBoxToText', 'on', 'BackgroundColor', 'y'); "
+    "d = annotation(f, 'doublearrow', [0.6 0.9], [0.5 0.5], 'Head1Style', 'diamond'); e = annotation('ellipse', [0.5 0.1 0.2 0.1], 'FaceColor', 'g');")
+shapes = {a['shape']: a for a in serialize_figure(val('f'))['annotations']}
+check('the page is told each kind, where and how', (sorted(shapes), shapes['textbox']['string'], shapes['textbox']['fitBox'], shapes['textbox']['background'],
+      shapes['doublearrow']['head1']['style'], shapes['doublearrow']['head2']['style'], shapes['arrow']['x'], shapes['ellipse']['faceColor']),
+      (['arrow', 'doublearrow', 'ellipse', 'textbox'], ['one', 'two'], True, [1.0, 1.0, 0.0], 'diamond', 'vback2', [0.1, 0.5], [0.0, 1.0, 0.0]))
+check('a textbox gives its lines back as a cell', num("iscell(get(b, 'String'))"), True)
+check('an unknown kind is refused', "Unknown annotation type 'star'" in run("annotation('star')"), True)
+check('a figure file leaves annotations out, saying so', 'Annotations' in run("savefig(f, 'withshapes.fig')"), True)
+run("delete(h);")
+check('delete takes it away', [a['shape'] for a in serialize_figure(val('f'))['annotations']].count('arrow'), 0)
+
+ANSWERS['render'] = lambda req: base64.b64encode(f"{req['format']}:{req['scale']:g}".encode()).decode()
+for cmd, fname, want in (("saveas(f, 'p.pdf')", 'p.pdf', 'pdf:2'), ("print('-dsvg', 'q')", 'q.svg', 'svg:2'), ("print(f, 'r.png', '-r300')", 'r.png', 'png:3.125'),
+                         ("saveas(f, 'out.dat', 'png')", 'out.dat', 'png:2'), ("exportgraphics(gca, 'a.eps', 'Resolution', 144)", 'a.eps', 'eps:1.5'),
+                         ("print('-dtiff', 'z')", 'z.tif', 'tif:2'), ("saveas(f, 'k', 'jpeg')", 'k.jpg', 'jpg:2'), ("saveas(f, 'm.bmp')", 'm.bmp', 'bmp:2')):
+    run(cmd)
+    pth = os.path.join(TMP, fname)
+    check(f'{cmd}: the kind and size asked of the page, written as {fname}', open(pth, 'rb').read().decode() if os.path.isfile(pth) else None, want)
+check('a .gif is refused, naming the formats there are', 'Unable to write a .gif file here' in run("saveas(f, 'x.gif')"), True)
+ANSWERS['render'] = None
+
+ANSWERS['frame'] = lambda req: {'width': 2, 'height': 1, 'data': base64.b64encode(bytes([255, 0, 0, 0, 255, 0])).decode()}
+run("F = getframe; ax = gca;")
+check('getframe asks for the current axes', (ASKED[-1]['type'], ASKED[-1]['axes'] == val('ax').id), ('frame', True))
+check('cdata: rows x columns x 3 of uint8; colormap []', (num('size(F.cdata)'), text('class(F.cdata)'), num('F.cdata(1, 2, 2)'), num('isempty(F.colormap)')),
+      ([1.0, 2.0, 3.0], 'uint8', 255, True))
+run("getframe(f, [10 20 30 40]);")
+check('getframe(fig, rect): the whole figure and the rectangle', (ASKED[-1]['axes'], ASKED[-1]['rect']), (None, [10.0, 20.0, 30.0, 40.0]))
+check('frame2im gives the picture', num('isequal(frame2im(F), F.cdata)'), True)
+check('im2frame of doubles makes uint8', (text("class(getfield(im2frame(rand(2, 2, 3)), 'cdata'))"), num("getfield(im2frame(ones(1, 1, 3)), 'cdata')")),
+      ('uint8', [255.0, 255.0, 255.0]))
+check('an indexed picture needs its colormap', 'needs its colormap' in run('im2frame(magic(3))'), True)
+check('movie plays the frames', run('movie(F, 2, 100)'), '')
+ANSWERS['frame'] = None
+check('getframe with no page to draw it says so', 'could not be drawn' in run('getframe(f)'), True)
+
+run("m = msgbox('hi', 'T', 'modal'); n = msgbox('hi'); dd = dialog;")
+check("msgbox 'modal' and dialog are modal windows; a plain msgbox is not",
+      [serialize_figure(val(x))['windowStyle'] for x in ('m', 'n', 'dd')], ['modal', 'normal', 'modal'])
+run("close all force")
 
 sys.exit(check.done())

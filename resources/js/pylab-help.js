@@ -34,11 +34,11 @@
     ['Parallel loops', 'parfor parpool gcp getCurrentTask spmd'],
     ['Programs and the workspace', 'disp display fprintf input keyboard error warning lasterr lastwarn MException throw rethrow throwAsCaller addCause getReport assert onCleanup exist clear clearvars who whos eval evalin evalc assignin inputname mfilename nargin nargout narginchk nargoutchk validateattributes isvarname iskeyword genvarname matlab.lang.makeValidName builtin format clc more echo diary beep sound soundsc profile help version ver computer ispc ismac isunix isdeployed usejava matlabroot userpath getenv setenv web exit quit'],
     ['Dates and time', 'tic toc pause cputime clock now date datenum datestr datevec etime weekday eomday addtodate leapyear'],
-    ['Files and folders', 'pwd cd dir ls what which type edit open run mkdir rmdir delete copyfile movefile fullfile fileparts filesep pathsep tempdir tempname isfile isfolder isdir addpath rmpath path genpath rehash fopen fclose fgetl fgets fread fwrite fprintf fscanf feof ferror frewind ftell fseek fileread readlines writelines textscan textread readmatrix writematrix csvread csvwrite dlmread dlmwrite readcell writecell load save matfile importdata'],
+    ['Files and folders', 'pwd cd dir ls what which type edit open run mkdir rmdir delete copyfile movefile zip unzip gzip gunzip tar untar fullfile fileparts filesep pathsep tempdir tempname isfile isfolder isdir addpath rmpath path genpath rehash fopen fclose fgetl fgets fread fwrite fprintf fscanf feof ferror frewind ftell fseek fileread readlines writelines textscan textread readmatrix writematrix csvread csvwrite dlmread dlmwrite readcell writecell load save matfile importdata'],
     ['Line and area plots', 'plot plot3 line semilogx semilogy loglog fplot ezplot scatter scatter3 bar barh histogram hist area fill fill3 patch stairs stem errorbar pie polarplot polar quiver quiver3'],
     ['Statistical plots', 'boxplot gscatter gplotmatrix plotmatrix scatterhist histfit normplot qqplot cdfplot lsline refline refcurve'],
     ['Surfaces, contours and images', 'contour contourf contour3 contourc clabel fcontour ezcontour surf surfc surfl mesh meshc meshz waterfall pcolor surface fsurf fmesh ezsurf ezmesh image imagesc imshow peaks sphere cylinder ellipsoid shading view camzoom camva light camlight lighting material colorbar colormap clim caxis alpha hidden'],
-    ['Figures and axes', 'figure clf close gcf gca gco groot axes cla subplot tiledlayout nexttile hold ishold newplot axis xlim ylim zlim xticks yticks zticks xticklabels yticklabels zticklabels xtickangle ytickangle grid box daspect pbaspect yyaxis colororder title subtitle sgtitle suptitle xlabel ylabel zlabel legend text annotation set get findobj findall allchild ancestor gobjects ishandle ishghandle isgraphics isvalid isprop drawnow refresh shg getframe saveas exportgraphics print savefig openfig hgsave hgload ginput waitforbuttonpress zoom pan rotate3d datacursormode brush linkaxes linkprop whitebg'],
+    ['Figures and axes', 'figure clf close gcf gca gco groot axes cla subplot tiledlayout nexttile hold ishold newplot axis xlim ylim zlim xticks yticks zticks xticklabels yticklabels zticklabels xtickangle ytickangle grid box daspect pbaspect yyaxis colororder title subtitle sgtitle suptitle xlabel ylabel zlabel legend text annotation set get findobj findall allchild ancestor gobjects ishandle ishghandle isgraphics isvalid isprop drawnow refresh shg getframe frame2im im2frame movie saveas exportgraphics print savefig openfig hgsave hgload ginput waitforbuttonpress zoom pan rotate3d datacursormode brush linkaxes linkprop whitebg'],
     ['User interfaces', 'uicontrol uipanel uibuttongroup uitable uitabgroup uitab uimenu uicontextmenu uitoolbar uipushtool uitoggletool gcbo gcbf closereq uiwait uiresume waitfor guidata setappdata getappdata isappdata rmappdata msgbox errordlg warndlg helpdlg questdlg inputdlg listdlg menu uigetfile uiputfile uigetdir uisetcolor waitbar dialog printdlg printpreview helpwin doc timer start stop wait timerfind timerfindall movegui uistack'],
     ['Colormaps', 'parula viridis turbo jet gray hot cool spring summer autumn winter bone copper pink hsv lines prism flag white colorcube'],
   ];
@@ -103,8 +103,14 @@
       const back = el('button', { class: 'pl-btn', type: 'button' }, '← All functions');
       back.addEventListener('click', () => this.home());
       const pre = el('pre');
-      pre.textContent = h.text;
+      pre.textContent = h.base || h.text;
       const parts = [back, el('h2', null, name), pre];
+      // how PyLAB computes it, as paragraphs (the Command Window has them wrapped into its text)
+      if (h.how && h.how.length) {
+        const how = el('section', { class: 'pl-how' }, el('h3', null, 'How it works'));
+        for (const b of h.how) how.append(b.pre !== undefined ? el('pre', null, b.pre) : el('p', null, b.p));
+        parts.push(how);
+      }
       if (h.kind === 'file') {
         const open = el('button', { class: 'pl-btn', type: 'button' }, 'Open in the Editor');
         open.addEventListener('click', () => this.app.openFile(h.path));

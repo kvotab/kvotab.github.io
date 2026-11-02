@@ -13,7 +13,7 @@ import numpy as np
 
 from ..values import MError, Char, Str, Cell, Struct, FH, Obj, class_of
 
-_CONV = re.compile(r'%(?P<flags>[-+ #0]*)(?P<width>\*|\d+)?(?:\.(?P<prec>\*|\d+))?(?P<len>[lhL]*)(?P<conv>[diouxXfFeEgGcsaA%])')
+_CONV = re.compile(r'%(?P<flags>[-+ #0]*)(?P<width>\*|\d+)?(?:\.(?P<prec>\*|\d*))?(?P<len>[lhL]*)(?P<conv>[diouxXfFeEgGcsaA%])')
 _ESC = re.compile(r'\\(x[0-9a-fA-F]+|[0-7]{1,3}|.)', re.S)
 
 
@@ -207,6 +207,8 @@ def sprintf(fmt, args):
             flags = m.group('flags') or ''
             width = m.group('width')
             prec = m.group('prec')
+            if prec == '':
+                prec = '0'          # a point with no number: no decimals (%.f)
             conv = m.group('conv')
             if width == '*':
                 v = a.take_value()

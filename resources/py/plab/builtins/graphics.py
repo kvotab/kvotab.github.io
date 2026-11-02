@@ -2409,32 +2409,39 @@ def text(nargout, *args):
 
 @bi('annotation', arr=False)
 def annotation(nargout, *args):
-    f = gcf_()
-    kind = sval(args[0], 'type', 'annotation').lower()
-    rest = list(args[1:])
-    t = Text(f)
-    t.props['Units'] = 'normalized'
-    if kind == 'textbox':
-        pos = darr(rest.pop(0)).reshape(-1) if rest and opt_str(rest[0]) is None else np.array([0.3, 0.3, 0.1, 0.1])
-        t.props['Position'] = np.array([[pos[0], pos[1] + pos[3], 0.0]])
-        t.props['VerticalAlignment'] = 'top'
-        t.props['EdgeColor'] = (0.0, 0.0, 0.0)
-        t.kind = 'textbox'
-    else:
-        x = darr(rest.pop(0)).reshape(-1) if rest and opt_str(rest[0]) is None else np.array([0.3, 0.4])
-        y = darr(rest.pop(0)).reshape(-1) if rest and opt_str(rest[0]) is None else np.array([0.3, 0.4])
-        t.props['Position'] = np.array([[x[-1], y[-1], 0.0]])
-        t.kind = kind
-        t.arrow = (list(map(float, x)), list(map(float, y)))
-    for k, v in name_value(rest, 0):
-        if k.lower() == 'string':
-            t.set_value('String', v)
-        elif k.lower() in ('fitboxtotext', 'headstyle', 'headlength', 'headwidth', 'linestyle'):
-            continue
-        else:
-            t.setprop(k, v)
+    """annotation(type, x, y, ...) for a line, arrow, double arrow or text
+    arrow; annotation(type, [x y w h], ...) for a rectangle, ellipse or text
+    box; the figure (or a panel in it) may come first."""
+    from ..graphics_base import SHAPES
+    rest = list(args)
+    f = None
+    if rest and not is_str(rest[0]):
+        h = _handles(rest.pop(0))[0]
+        f = h.figure() if isinstance(h, GObj) else None
+        if f is None:
+            raise err('MATLAB:annotation:BadParent', 'The first input must be a figure, or the type of annotation.', 'annotation')
+    f = f or gcf_()
+    kind = sval(rest.pop(0), 'type', 'annotation').lower() if rest else 'line'
+    C = SHAPES.get(kind)
+    if C is None:
+        raise err('MATLAB:annotation:BadType', f"Unknown annotation type '{kind}': use line, arrow, doublearrow, textarrow, "
+                  'rectangle, ellipse or textbox.', 'annotation')
+    a = C(f)
+    if C.LINEAR and len(rest) >= 2 and opt_str(rest[0]) is None and opt_str(rest[1]) is None:
+        a.set_value('X', rest.pop(0))
+        a.set_value('Y', rest.pop(0))
+    elif not C.LINEAR and rest and opt_str(rest[0]) is None:
+        a.set_value('Position', rest.pop(0))
+    if len(rest) % 2:
+        raise err('MATLAB:annotation:NameValue', 'Properties must come in name-value pairs.', 'annotation')
+    try:
+        for i in range(0, len(rest), 2):
+            a.setprop(sval(rest[i], 'property name', 'annotation'), rest[i + 1])
+    except MError:
+        a.delete_handle()
+        raise
     f.touch()
-    return t if nargout else None
+    return a if nargout else None
 
 
 @bi('yyaxis', arr=False)
@@ -2993,8 +3000,20 @@ R.FLUSH_FIGURES = flush_figures
 
 # ---- saving pictures -----------------------------------------------------------------------------
 
+# the picture files by extension, and print's -d devices
+PICTURES = {'png': 'png', 'jpg': 'jpg', 'jpeg': 'jpg', 'bmp': 'bmp', 'tif': 'tif', 'tiff': 'tif', 'svg': 'svg', 'pdf': 'pdf', 'eps': 'eps'}
+DEVICES = {'png': 'png', 'jpeg': 'jpg', 'jpg': 'jpg', 'bmp': 'bmp', 'bmp16m': 'bmp', 'bmp256': 'bmp', 'tiff': 'tif', 'tiffn': 'tif',
+           'tif': 'tif', 'svg': 'svg', 'pdf': 'pdf', 'eps': 'eps', 'epsc': 'eps', 'eps2': 'eps', 'epsc2': 'eps'}
+
+
 @bi('saveas', 'print', 'exportgraphics', aw=True, arr=False)
 async def saveas(nargout, *args):
+    """The figure as a picture file (PNG, JPEG, BMP, TIFF) or a vector file
+    (SVG, PDF, EPS), by the file's extension or print's -d device; the page
+    draws it. A .fig name writes a figure file."""
+    import os
+    import re
+    fn = 'saveas'
     rest = list(args)
     f = None
     if rest and isinstance(rest[0], (Figure, Axes)):
@@ -3003,18 +3022,29 @@ async def saveas(nargout, *args):
     f = f or gcf_()
     name = None
     fmt = None
-    for a in rest:
-        s = opt_str(a)
+    dpi = None
+    i = 0
+    while i < len(rest):
+        s = opt_str(rest[i])
+        i += 1
         if s is None:
             continue
-        if s.startswith('-d'):
-            fmt = s[2:].lower()
-        elif s.startswith('-r') or s.startswith('-'):
+        low = s.lower()
+        if low == 'resolution' and i < len(rest):
+            dpi = float(num(rest[i]))
+            i += 1
+        elif low in ('contenttype', 'backgroundcolor', 'colorspace', 'append') and i < len(rest):
+            i += 1
+        elif low.startswith('-d'):
+            fmt = low[2:]
+        elif re.fullmatch(r'-r\d+(\.\d*)?', low):
+            dpi = float(low[2:])
+        elif s.startswith('-'):
             continue
         elif name is None:
             name = s
         elif fmt is None:
-            fmt = s.lower()
+            fmt = low
     if name is None and fmt in ('meta', 'bitmap'):
         # print -dmeta (or -dbitmap) with no file: the figure goes to the clipboard
         flush_figures()
@@ -3023,20 +3053,27 @@ async def saveas(nargout, *args):
         return None
     if name is None:
         name = f'figure{int(f.props["Number"])}' if not f.is_dialog else 'dialog'
-    import os
-    if os.path.splitext(name)[1].lower() == '.fig' or (fmt == 'fig' and not os.path.splitext(name)[1]):
-        # a figure file, to open again with openfig
-        return await _write_fig([f, Char.of(name if name.lower().endswith('.fig') else name + '.fig')], 'saveas', 0)
     ext = os.path.splitext(name)[1].lower().lstrip('.')
-    if not ext:
-        ext = {'png': 'png', 'jpeg': 'jpg', 'jpg': 'jpg', 'svg': 'svg', 'pdf': 'pdf', 'epsc': 'eps'}.get(fmt or 'png', 'png')
-        name += '.' + ext
+    if ext == 'fig' or (fmt == 'fig' and not ext):
+        # a figure file, to open again with openfig
+        return await _write_fig([f, Char.of(name if ext == 'fig' else name + '.fig')], fn, 0)
+    if ext in PICTURES:
+        kind = PICTURES[ext]
+    elif fmt in DEVICES or (fmt is None and not ext):
+        kind = DEVICES.get(fmt, 'png')
+        if not ext:
+            name += '.' + kind
+    else:
+        raise err('MATLAB:print:UnknownFormat', f"Unable to write {'a .' + ext if ext else 'the ' + str(fmt)} file here: the formats are "
+                  '.png, .jpg, .bmp, .tif, .svg, .pdf, .eps and .fig.', fn)
+    # the size: twice the screen's unless a resolution is given (96 dots an inch on screen)
+    scale = 2.0 if not dpi else max(0.25, min(8.0, dpi / 96.0))
     from .iofun import abspath, files_changed
     p = abspath(name)
     flush_figures()
-    data = await R.ask_page({'type': 'render', 'figure': f.id, 'format': ext if ext in ('png', 'jpg', 'jpeg', 'svg') else 'png'})
+    data = await R.ask_page({'type': 'render', 'figure': f.id, 'format': kind, 'scale': scale})
     if data is None:
-        raise err('MATLAB:print:noRenderer', 'The figure could not be drawn to a file here.', 'saveas')
+        raise err('MATLAB:print:noRenderer', 'The figure could not be drawn to a file here.', fn)
     import base64
     with open(p, 'wb') as fh:
         fh.write(base64.b64decode(data))
@@ -3117,6 +3154,9 @@ async def _write_fig(args, fn, nargout):
     if dropped:
         R.warn(f'MATLAB:{fn}:functionHandles', 'Callbacks given as function handles are not kept in figure files written '
                'here (' + ', '.join(dropped) + '); text callbacks are.')
+    from ..graphics_base import Shape
+    if any(isinstance(c, Shape) and c.valid for o in objs for c in o.children):
+        R.warn(f'MATLAB:{fn}:annotations', 'Annotations (arrows, text boxes and the like) are not kept in figure files written here.')
     return None
 
 
@@ -3148,9 +3188,115 @@ async def open_(W, nargout, *args):
     return edit(nargout, *args)
 
 
-@bi('getframe', arr=False)
-def getframe(nargout, *args):
-    raise err('MATLAB:getframe:notAvailable', 'getframe is not available here: use saveas or exportgraphics to write a picture.', 'getframe')
+@bi('getframe', aw=True, arr=False)
+async def getframe(nargout, *args):
+    """A movie frame of the figure or axes as drawn: cdata (rows x columns x 3,
+    uint8) and colormap ([]). The current axes unless a figure or axes is
+    given; rect [left bottom width height] in pixels from its lower left."""
+    import base64
+    nargchk(args, 0, 2, 'getframe')
+    rest = list(args)
+    h = _handles(rest.pop(0))[0] if rest else None
+    if h is None:
+        f = gcf_()
+        h = gca_(f) if f.axes_list() else f
+    if isinstance(h, Axes) and h.yy_owner is not None:
+        h = h.yy_owner
+    if not isinstance(h, (Figure, Axes)):
+        raise err('MATLAB:getframe:BadHandle', 'getframe takes a figure or an axes.', 'getframe')
+    rect = [float(v) for v in darr(rest[0]).reshape(-1)] if rest else None
+    if rect is not None and (len(rect) != 4 or not all(math.isfinite(v) for v in rect)):
+        raise err('MATLAB:getframe:BadRect', 'The rectangle must be [left bottom width height], in pixels.', 'getframe')
+    f = h if isinstance(h, Figure) else h.figure()
+    flush_figures()
+    res = await R.ask_page({'type': 'frame', 'figure': f.id, 'axes': h.id if isinstance(h, Axes) else None, 'rect': rect})
+    if not res:
+        raise err('MATLAB:getframe:noPicture', 'The figure could not be drawn as a picture here.', 'getframe')
+    w, hh = int(res['width']), int(res['height'])
+    raw = base64.b64decode(res['data']) if w and hh else b''
+    return Struct.scalar({'cdata': np.frombuffer(raw, np.uint8).reshape(hh, w, 3).copy(), 'colormap': EMPTY()})
+
+
+def _frame_parts(F, fn):
+    if type(F) is not Struct or 'cdata' not in F.f:
+        raise err(f'MATLAB:{fn}:BadFrame', 'Frames are structs with the fields cdata and colormap, as getframe makes them.', fn)
+    cdata = list(F.f['cdata'].reshape(-1, order='F'))
+    cmaps = list(F.f['colormap'].reshape(-1, order='F')) if 'colormap' in F.f else [EMPTY()] * len(cdata)
+    return cdata, cmaps
+
+
+@bi('frame2im', nout=2)
+def frame2im(nargout, *args):
+    nargchk(args, 1, 1, 'frame2im')
+    cdata, cmaps = _frame_parts(args[0], 'frame2im')
+    if len(cdata) != 1:
+        raise err('MATLAB:frame2im:OneFrame', 'frame2im takes one frame: index the movie, F(k).', 'frame2im')
+    return (share(cdata[0]), share(cmaps[0])) if nargout > 1 else share(cdata[0])
+
+
+@bi('im2frame')
+def im2frame(nargout, *args):
+    nargchk(args, 1, 2, 'im2frame')
+    a = arr(args[0])
+    cmap = args[1] if len(args) > 1 else EMPTY()
+    if a.ndim == 3 and a.shape[2] == 3:
+        if a.dtype.kind == 'f':
+            a = np.round(np.clip(np.nan_to_num(a), 0.0, 1.0) * 255).astype(np.uint8)
+        elif a.dtype != np.uint8:
+            a = np.clip(a, 0, 255).astype(np.uint8)
+        cdata = a
+    elif a.ndim == 2:
+        if not numel(cmap):
+            raise err('MATLAB:im2frame:NeedColormap', 'An indexed image needs its colormap: im2frame(X, map).', 'im2frame')
+        cdata = share(args[0])
+    else:
+        raise err('MATLAB:im2frame:BadImage', 'The image must be m-by-n (with a colormap) or m-by-n-by-3.', 'im2frame')
+    return Struct.scalar({'cdata': cdata, 'colormap': share(cmap)})
+
+
+@bi('movie', aw=True, arr=False)
+async def movie(nargout, *args):
+    """Plays a movie's frames in the current axes (or the axes or figure
+    given): n times, fps frames a second."""
+    rest = list(args)
+    target = None
+    if rest and isinstance(rest[0], (Figure, Axes)):
+        target = rest.pop(0)
+    if not rest:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', 'movie')
+    cdata, cmaps = _frame_parts(rest.pop(0), 'movie')
+    n = darr(rest[0]).reshape(-1) if rest else np.array([1.0])
+    fps = float(num(rest[1])) if len(rest) > 1 else 12.0
+    if not (math.isfinite(fps) and fps > 0):
+        raise err('MATLAB:movie:BadFPS', 'The number of frames a second must be positive.', 'movie')
+    order = list(range(len(cdata)))
+    if n.size > 1:
+        order = [int(k) - 1 for k in n[1:]]
+        if any(k < 0 or k >= len(cdata) for k in order):
+            raise err('MATLAB:movie:BadFrame', 'The frames to play must be numbers of the movie\'s frames.', 'movie')
+    reps = int(n[0]) if n.size else 1
+    if reps < 0:
+        order = order + order[::-1]
+    ax = target if isinstance(target, Axes) else gca_(target if isinstance(target, Figure) else None)
+    ax = newplot(ax)
+    img = Image(ax)
+    ax.props['YDir'] = 'reverse'
+    ax.props['View'] = np.array([[0.0, 90.0]])
+    ax.props['DataAspectRatio'] = np.array([[1.0, 1.0, 1.0]])
+    ax.props['DataAspectRatioMode'] = 'manual'
+    ax.props['Visible'] = False
+    for _ in range(max(abs(reps), 1) if order else 0):
+        for k in order:
+            c = arr(cdata[k])
+            img.props['CData'] = c
+            img.props['CDataMapping'] = 'direct'
+            img.props['XData'] = np.array([[1.0, float(c.shape[1])]])
+            img.props['YData'] = np.array([[1.0, float(c.shape[0])]])
+            if numel(cmaps[k]):
+                ax.props['Colormap'] = as_colormap(arr(cmaps[k]))
+            ax.touch()
+            await R.sleep(1.0 / fps)
+    return None
 
 
 @bi('ginput', nout=3, aw=True, arr=False)

@@ -501,6 +501,7 @@
         }
       }
       for (const t of fig.annotations || []) {
+        if (t.shape) { this.drawShape(ctx, t, W, H); continue; }
         const p = t.position;
         if (t.units === 'normalized') drawText(ctx, t.string, p[0] * W, H - p[1] * H, { size: t.fontSize * PT, color: rgb(t.color), halign: t.halign, valign: t.valign, rotation: t.rotation, background: rgb(t.background), edge: rgb(t.edge), interpreter: t.interpreter, bold: t.fontWeight === 'bold' });
       }
@@ -508,6 +509,108 @@
         drawText(ctx, fig.sgtitle.string, W / 2, 8, { size: fig.sgtitle.fontSize * PT, valign: 'top', halign: 'center', bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
       }
       ctx.restore();
+    }
+
+    /* annotation(...): a line, arrow, double arrow, text arrow, rectangle,
+       ellipse or text box, in the figure's normalized units (or its Units). */
+    drawShape(ctx, a, W, H) {
+      if (a.visible === false) return;
+      const u = a.units && a.units !== 'normalized' ? (PL.uiUnits && PL.uiUnits[a.units]) || [1, 1] : null;
+      const px = (x) => (u ? x * u[0] : x * W), py = (y) => H - (u ? y * u[1] : y * H);
+      const textOpts = { size: a.fontSize * PT, interpreter: a.interpreter, bold: a.fontWeight === 'bold', italic: a.fontAngle === 'italic', family: faceOf(a.fontName) };
+      const lines = Array.isArray(a.string) ? a.string : String(a.string ?? '').split('\n');
+      const hasText = lines.some((l) => l !== '');
+      ctx.save();
+      ctx.lineJoin = 'round';
+      if (a.shape === 'rectangle' || a.shape === 'ellipse' || a.shape === 'textbox') {
+        const p = a.position;
+        let x = px(p[0]), y = py(p[1] + p[3]), w = px(p[0] + p[2]) - x, h = py(p[1]) - y;
+        const box = a.shape === 'textbox';
+        const edge = box ? a.edgeColor : a.color, face = box ? a.background : a.faceColor;
+        const m = box ? (a.margin ?? 5) : 0;
+        if (box && a.fitBox && hasText) {
+          // the box takes the size of its text, its top left corner kept
+          const t = textSize(ctx, lines, textOpts.size, textOpts);
+          w = t.width + 2 * m; h = t.height + 2 * m;
+        }
+        ctx.beginPath();
+        if (a.shape === 'ellipse') ctx.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, 2 * Math.PI);
+        else ctx.rect(x, y, w, h);
+        if (face && face !== 'none') { ctx.fillStyle = rgb(face, a.faceAlpha ?? 1); ctx.fill(); }
+        if (edge && edge !== 'none' && a.lineStyle !== 'none') {
+          ctx.strokeStyle = rgb(edge);
+          ctx.lineWidth = lw(a.lineWidth);
+          dash(ctx, a.lineStyle, a.lineWidth);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        if (box && hasText) {
+          const ha = a.halign || 'left', va = a.valign || 'top';
+          const tx = ha === 'center' ? x + w / 2 : ha === 'right' ? x + w - m : x + m;
+          const ty = va === 'middle' ? y + h / 2 : va === 'bottom' || va === 'baseline' ? y + h - m : y + m;
+          drawText(ctx, lines, tx, ty, { ...textOpts, color: rgb(a.color), halign: ha, valign: va === 'baseline' ? 'bottom' : va === 'cap' ? 'top' : va });
+        }
+        ctx.restore();
+        return;
+      }
+      const x1 = px(a.x[0]), y1 = py(a.y[0]), x2 = px(a.x[1]), y2 = py(a.y[1]);
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      const d = len > 0 ? [(x2 - x1) / len, (y2 - y1) / len] : [1, 0];
+      const heads = [];
+      if (a.head2 && a.shape !== 'line') heads.push({ tip: [x2, y2], d, ...a.head2 });
+      if (a.head1 && a.shape === 'doublearrow') heads.push({ tip: [x1, y1], d: [-d[0], -d[1]], ...a.head1 });
+      // the line stops inside each head, so that a thick line does not show past its point
+      let s = [x1, y1], e = [x2, y2];
+      for (const hd of heads) {
+        if (!hd.style || hd.style === 'none') continue;
+        const back = Math.min(len / 2, (hd.length || 10) * PT * 0.5);
+        if (hd.tip[0] === x2 && hd.tip[1] === y2) e = [x2 - d[0] * back, y2 - d[1] * back];
+        else s = [x1 + d[0] * back, y1 + d[1] * back];
+      }
+      if (a.color && a.color !== 'none') {
+        if (a.lineStyle !== 'none') {
+          ctx.strokeStyle = rgb(a.color);
+          ctx.lineWidth = lw(a.lineWidth);
+          dash(ctx, a.lineStyle, a.lineWidth);
+          ctx.beginPath(); ctx.moveTo(s[0], s[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        for (const hd of heads) this.arrowHead(ctx, hd, rgb(a.color));
+      }
+      if (a.shape === 'textarrow' && hasText) {
+        // the text at the tail, on the side away from the head
+        let ha = 'center', va = 'middle';
+        if (Math.abs(d[0]) >= Math.abs(d[1])) ha = d[0] > 0 ? 'right' : 'left';
+        else va = d[1] > 0 ? 'bottom' : 'top';
+        drawText(ctx, lines, x1 - d[0] * 3, y1 - d[1] * 3, { ...textOpts, color: rgb(a.textColor), halign: ha, valign: va, rotation: a.textRotation || 0,
+          background: rgb(a.textBackground), edge: rgb(a.textEdge), boxWidth: a.textLineWidth, margin: a.textMargin });
+      }
+      ctx.restore();
+    }
+
+    /* An arrow's head at tip, pointing along d; its HeadLength and HeadWidth in points. */
+    arrowHead(ctx, hd, color) {
+      const style = hd.style || 'vback2';
+      if (style === 'none') return;
+      const L = (hd.length || 10) * PT, Wd = (hd.width || 10) * PT;
+      const { tip, d } = hd;
+      const n = [-d[1], d[0]];
+      const at = (along, across) => [tip[0] - d[0] * along + n[0] * across, tip[1] - d[1] * along + n[1] * across];
+      const poly = (pts) => { ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p); ctx.closePath(); };
+      const notch = { vback1: 0.15, vback2: 0.3, vback3: 0.45, cback1: 0.15, cback2: 0.3, cback3: 0.45 }[style];
+      ctx.beginPath();
+      if (style === 'plain' || style === 'deltoid') poly([tip, at(L, Wd / 2), at(L, -Wd / 2)]);
+      else if (style === 'diamond') poly([tip, at(L / 2, Wd / 2), at(L, 0), at(L / 2, -Wd / 2)]);
+      else if (style === 'rectangle') poly([at(0, Wd / 2), at(L, Wd / 2), at(L, -Wd / 2), at(0, -Wd / 2)]);
+      else if (style === 'ellipse') { const c = at(L / 2, 0); ctx.ellipse(c[0], c[1], L / 2, Wd / 2, Math.atan2(d[1], d[0]), 0, 2 * Math.PI); }
+      else if (style.startsWith('cback')) {
+        ctx.moveTo(...tip); ctx.lineTo(...at(L, Wd / 2));
+        const q = at(L * (1 - 2 * notch), 0), b = at(L, -Wd / 2);
+        ctx.quadraticCurveTo(q[0], q[1], b[0], b[1]);
+        ctx.closePath();
+      } else poly([tip, at(L, Wd / 2), at(L * (1 - (notch ?? 0.3)), 0), at(L, -Wd / 2)]);
+      ctx.fillStyle = color;
+      ctx.fill();
     }
 
     axesRect(ax, W, H, cbar, legend) {
@@ -1872,17 +1975,71 @@
       this.lastSize = { w, h };
     }
 
-    renderTo(scale = 2, type = 'image/png') {
-      const { w, h } = this.lastSize || this.canvasSize();
+    /* The size the figure is drawn at: as on screen, or its own for a window not shown. */
+    exportSize() {
+      if (this.el.hidden || !this.el.isConnected) return { w: Math.max(10, Math.round(this.fig.width)), h: Math.max(10, Math.round(this.fig.height)) };
+      return this.lastSize || this.canvasSize();
+    }
+
+    /* The figure drawn on a canvas of its size times scale (and the renderer that drew it). */
+    rasterize(scale = 2) {
+      const { w, h } = this.exportSize();
       const c = document.createElement('canvas');
-      c.width = Math.round(w * scale);
-      c.height = Math.round(h * scale);
+      c.width = Math.max(1, Math.round(w * scale));
+      c.height = Math.max(1, Math.round(h * scale));
       const ctx = c.getContext('2d');
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
       PL.figureCtx = ctx;
-      new Renderer().draw(ctx, this.fig, w, h);
+      const r = new Renderer();
+      r.draw(ctx, this.fig, w, h);
       PL.figureCtx = this.canvas.getContext('2d');
-      return c.toDataURL(type, 0.92);
+      return { canvas: c, renderer: r, w, h };
+    }
+
+    renderTo(scale = 2, type = 'image/png') {
+      return this.rasterize(scale).canvas.toDataURL(type, 0.92);
+    }
+
+    /* saveas, print and exportgraphics: the file's bytes as base64. PNG and JPEG
+       come from the canvas, BMP and TIFF from its pixels, and SVG, PDF and EPS
+       from the drawing itself (pylab-export.js). */
+    async fileData(format, scale = 2) {
+      const X = PL.figureExport;
+      if (format === 'svg' || format === 'pdf' || format === 'eps') {
+        const { w, h } = this.exportSize();
+        const title = this.title.textContent || `Figure ${this.fig.number}`;
+        return X.base64(await X.vector(format, w, h, (ctx) => new Renderer().draw(ctx, this.fig, w, h), title));
+      }
+      const { canvas } = this.rasterize(scale);
+      if (format === 'bmp' || format === 'tif') return X.base64(X.raster(format, canvas, 96 * scale));
+      const url = canvas.toDataURL(format === 'jpg' ? 'image/jpeg' : 'image/png', 0.92);
+      return url.slice(url.indexOf(',') + 1);
+    }
+
+    /* getframe: the figure's pixels at its size on screen, or those of an axes'
+       box; rect [left bottom width height] in pixels from the lower-left corner
+       of the figure (or of the axes). RGB rows from the top, as base64. */
+    frame(axesId, rect) {
+      const { canvas, renderer, w, h } = this.rasterize(1);
+      let x = 0, y = 0, cw = w, ch = h;
+      if (axesId != null) {
+        const f = renderer.frames.find((fr) => fr.ax && fr.ax.id === axesId && !fr.yyRight);
+        if (f) ({ x, y, w: cw, h: ch } = f.rect);
+      }
+      if (rect && rect.length === 4) {
+        const bottom = y + ch;
+        x += rect[0]; cw = rect[2]; ch = rect[3]; y = bottom - rect[1] - ch;
+      }
+      const x0 = Math.max(0, Math.round(x)), y0 = Math.max(0, Math.round(y));
+      const x1 = Math.min(canvas.width, Math.round(x + cw)), y1 = Math.min(canvas.height, Math.round(y + ch));
+      if (x1 <= x0 || y1 <= y0) return { width: 0, height: 0, data: '' };
+      const d = canvas.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      const rgb = new Uint8Array((x1 - x0) * (y1 - y0) * 3);
+      for (let i = 0, j = 0; j < d.length; i += 3, j += 4) {
+        const a = d[j + 3] / 255;
+        rgb[i] = Math.round(d[j] * a + 255 * (1 - a)); rgb[i + 1] = Math.round(d[j + 1] * a + 255 * (1 - a)); rgb[i + 2] = Math.round(d[j + 2] * a + 255 * (1 - a));
+      }
+      return { width: x1 - x0, height: y1 - y0, data: PL.figureExport.base64(rgb) };
     }
 
     savePicture() {
@@ -2346,6 +2503,56 @@
       // the order made: a dialog opened over it stays over it
       if (msg.current && msg.current !== this.engineCurrent && !opened.has(msg.current)) this.setCurrent(msg.current, false);
       this.engineCurrent = msg.current;
+      this.updateModal();
+    }
+
+    /* A figure whose WindowStyle is 'modal' keeps the rest of the page from
+       being used while it is shown: a veil under it takes the clicks, keys
+       typed elsewhere go nowhere (Ctrl+C still stops a program), and the
+       focus stays in it. The page's own dialogs stay above it. */
+    updateModal() {
+      const modal = [...this.wins.values()].filter((w) => w.fig.windowStyle === 'modal' && !w.el.hidden && !w.el.classList.contains('is-docked'));
+      for (const w of this.wins.values()) w.el.classList.toggle('is-modal', modal.includes(w));
+      if (!modal.length) {
+        if (this.veil) {
+          this.veil.remove();
+          this.veil = null;
+          document.removeEventListener('keydown', this.veilKeys, true);
+          document.removeEventListener('focusin', this.veilFocus, true);
+        }
+        return;
+      }
+      if (!this.veil) {
+        this.veil = el('div', { class: 'pl-figveil' });
+        this.layer.append(this.veil);
+        const inside = (t) => t && t.closest && !!(t.closest('.pl-figwin.is-modal') || t.closest('.pl-modal-back'));
+        this.veilKeys = (ev) => {
+          if (inside(ev.target) || ((ev.ctrlKey || ev.metaKey) && (ev.key === 'c' || ev.key === 'C'))) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+        };
+        this.veilFocus = (ev) => { if (!inside(ev.target)) this.modalFocus(); };
+        document.addEventListener('keydown', this.veilKeys, true);
+        document.addEventListener('focusin', this.veilFocus, true);
+      }
+      this.restackModal();
+      this.modalFocus();
+    }
+
+    /* The veil over every other window, the modal windows over it (in their order). */
+    restackModal() {
+      const modal = [...this.wins.values()].filter((w) => w.el.classList.contains('is-modal'))
+        .sort((p, q) => (+p.el.style.zIndex || 0) - (+q.el.style.zIndex || 0));
+      this.veil.style.zIndex = String(++this.z);
+      for (const w of modal) w.el.style.zIndex = String(++this.z);
+      return modal;
+    }
+
+    modalFocus() {
+      const modal = [...this.wins.values()].filter((w) => w.el.classList.contains('is-modal'))
+        .sort((p, q) => (+p.el.style.zIndex || 0) - (+q.el.style.zIndex || 0));
+      const top = modal[modal.length - 1];
+      if (top && !top.el.contains(document.activeElement)) top.el.focus({ preventScroll: true });
     }
 
     place(w) {
@@ -2391,6 +2598,7 @@
       for (const x of this.wins.values()) x.el.classList.toggle('is-current', x === w);
       if (this.current !== w.id && tell) this.send({ type: 'current', id: w.id });
       this.current = w.id;
+      if (this.veil) this.restackModal();
     }
 
     setCurrent(id, tell) {
@@ -2416,6 +2624,7 @@
       this.wins.delete(id);
       if (this.current === id) this.current = null;
       this.emit('closed', id);
+      this.updateModal();
     }
 
     clear() {
@@ -2423,12 +2632,16 @@
     }
 
     /* saveas/print: the figure drawn to a picture, as base64. */
-    render(id, format) {
+    async render(id, format, scale = 2) {
       const w = this.wins.get(id);
       if (!w) return null;
-      const type = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : 'image/png';
-      const url = w.renderTo(2, type);
-      return url.slice(url.indexOf(',') + 1);
+      return w.fileData(format, scale);
+    }
+
+    /* getframe: a figure's (or an axes') pixels. */
+    frame(id, axesId, rect) {
+      const w = this.wins.get(id);
+      return w ? w.frame(axesId, rect) : null;
     }
 
     /* ginput: clicks in the current axes until n are taken or Enter. */

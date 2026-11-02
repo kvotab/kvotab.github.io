@@ -182,6 +182,178 @@ def movefile(nargout, *args):
     return True if nargout else None
 
 
+# ---- archives ------------------------------------------------------------------------------------
+
+def _members(names, root, fn, leave=None):
+    """The files named (wildcards and folders allowed, relative to root), as
+    (path, name in the archive): their paths from root, or their own names
+    when they are outside it."""
+    import glob
+    out = []
+    for n in names:
+        pat = n if os.path.isabs(n) else os.path.join(root, n)
+        # a name that is there is taken as it is ([Content_Types].xml), else as a pattern
+        hits = [pat] if os.path.exists(pat) else sorted(glob.glob(pat)) if any(c in n for c in '*?[') else []
+        if not hits:
+            raise err(f'MATLAB:{fn}:FileNotFound', f"File or folder '{n}' not found.", fn)
+        for h in hits:
+            h = os.path.normpath(h)
+            paths = [h]
+            if os.path.isdir(h):
+                paths = []
+                for d, subs, files in os.walk(h):
+                    subs.sort()
+                    paths += [os.path.join(d, f) for f in sorted(files)]
+            for q in paths:
+                if q == leave:
+                    continue
+                rel = os.path.relpath(q, root)
+                out.append((q, os.path.basename(q) if rel.startswith('..') else rel))
+    return out
+
+
+def _inside(dest, name, fn):
+    """Where an archive's entry goes in dest; None (with a warning) for one that would land outside it."""
+    target = os.path.normpath(os.path.join(dest, name))
+    if target == dest or target.startswith(dest.rstrip('/') + '/'):
+        return target
+    R.warn(f'MATLAB:{fn}:entryOutside', f"'{name}' would be written outside the folder: it is left out.")
+    return None
+
+
+def _named(written, nargout):
+    return Cell.of_list([Char.of(w) for w in written]) if nargout else None
+
+
+@bi('zip')
+def zip_(nargout, *args):
+    import zipfile
+    nargchk(args, 2, 3, 'zip')
+    name = sval(args[0], 'zip file name', 'zip')
+    if not os.path.splitext(name)[1]:
+        name += '.zip'
+    p = abspath(name)
+    root = abspath(sval(args[2], 'folder', 'zip')) if len(args) > 2 else R.STATE['cwd']
+    members = _members(text_list(args[1]), root, 'zip', leave=p)
+    with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as z:
+        for path, entry in members:
+            z.write(path, entry)
+    files_changed(os.path.dirname(p))
+    return _named([e for _, e in members], nargout)
+
+
+@bi('unzip')
+def unzip(nargout, *args):
+    import zipfile
+    nargchk(args, 1, 2, 'unzip')
+    name = sval(args[0], 'zip file name', 'unzip')
+    p = abspath(name)
+    if not os.path.isfile(p) and os.path.isfile(p + '.zip'):
+        p += '.zip'
+    dest = abspath(sval(args[1], 'folder', 'unzip')) if len(args) > 1 else R.STATE['cwd']
+    try:
+        z = zipfile.ZipFile(p)
+    except (OSError, zipfile.BadZipFile):
+        raise err('MATLAB:unzip:invalidZipFile', f"'{name}' is not a zip file that can be read.", 'unzip')
+    written = []
+    with z:
+        for info in z.infolist():
+            target = _inside(dest, info.filename, 'unzip')
+            if target is None:
+                continue
+            if info.is_dir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with z.open(info) as src, open(target, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+            written.append(target)
+    files_changed(dest)
+    return _named(written, nargout)
+
+
+@bi('gzip')
+def gzip_(nargout, *args):
+    import gzip
+    nargchk(args, 1, 2, 'gzip')
+    dest = abspath(sval(args[1], 'folder', 'gzip')) if len(args) > 1 else None
+    written = []
+    for path, _ in _members(text_list(args[0]), R.STATE['cwd'], 'gzip'):
+        folder = dest or os.path.dirname(path)
+        os.makedirs(folder, exist_ok=True)
+        target = os.path.join(folder, os.path.basename(path) + '.gz')
+        with open(path, 'rb') as src, gzip.open(target, 'wb') as dst:
+            shutil.copyfileobj(src, dst)
+        written.append(target)
+    files_changed(dest or R.STATE['cwd'])
+    return _named(written, nargout)
+
+
+@bi('gunzip')
+def gunzip(nargout, *args):
+    import gzip
+    nargchk(args, 1, 2, 'gunzip')
+    dest = abspath(sval(args[1], 'folder', 'gunzip')) if len(args) > 1 else None
+    written = []
+    for path, _ in _members(text_list(args[0]), R.STATE['cwd'], 'gunzip'):
+        base = os.path.basename(path)
+        folder = dest or os.path.dirname(path)
+        os.makedirs(folder, exist_ok=True)
+        target = os.path.join(folder, base[:-3] if base.lower().endswith('.gz') and len(base) > 3 else base + '.out')
+        try:
+            with gzip.open(path, 'rb') as src, open(target, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+        except (OSError, EOFError):
+            raise err('MATLAB:gunzip:notGzip', f"'{base}' is not a gzip file that can be read.", 'gunzip')
+        written.append(target)
+    files_changed(dest or R.STATE['cwd'])
+    return _named(written, nargout)
+
+
+@bi('tar')
+def tar_(nargout, *args):
+    import tarfile
+    nargchk(args, 2, 3, 'tar')
+    name = sval(args[0], 'tar file name', 'tar')
+    if not os.path.splitext(name)[1]:
+        name += '.tar'
+    p = abspath(name)
+    root = abspath(sval(args[2], 'folder', 'tar')) if len(args) > 2 else R.STATE['cwd']
+    members = _members(text_list(args[1]), root, 'tar', leave=p)
+    with tarfile.open(p, 'w:gz' if p.lower().endswith(('.tgz', '.tar.gz')) else 'w') as tf:
+        for path, entry in members:
+            tf.add(path, entry, recursive=False)
+    files_changed(os.path.dirname(p))
+    return _named([e for _, e in members], nargout)
+
+
+@bi('untar')
+def untar(nargout, *args):
+    import tarfile
+    nargchk(args, 1, 2, 'untar')
+    name = sval(args[0], 'tar file name', 'untar')
+    p = abspath(name)
+    dest = abspath(sval(args[1], 'folder', 'untar')) if len(args) > 1 else R.STATE['cwd']
+    try:
+        tf = tarfile.open(p)
+    except (OSError, tarfile.TarError):
+        raise err('MATLAB:untar:invalidTarFile', f"'{name}' is not a tar file that can be read.", 'untar')
+    written = []
+    with tf:
+        for m in tf.getmembers():
+            if not (m.isfile() or m.isdir()) or _inside(dest, m.name, 'untar') is None:
+                continue
+            try:
+                tf.extract(m, dest, filter='data')
+            except tarfile.FilterError:
+                R.warn('MATLAB:untar:entryOutside', f"'{m.name}' cannot be written safely: it is left out.")
+                continue
+            if m.isfile():
+                written.append(os.path.join(dest, m.name))
+    files_changed(dest)
+    return _named(written, nargout)
+
+
 def _dir_entries(p):
     import glob
     import time

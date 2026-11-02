@@ -677,9 +677,47 @@ def _isrow(v):
     return len(sh) == 2 and sh[0] == 1
 
 
+def _on_handles(fn, nargout, args, ndata, values=True):
+    """A set function given graphics objects: worked on their handle numbers
+    (as handles were numbers in the language's older graphics), and the values
+    of the answer made objects again; None when no data argument is one."""
+    from ..graphics_base import GObj, HArr, handle_of_number
+    data = args[:ndata]
+    if not any(isinstance(a, GObj) or (isinstance(a, HArr) and all(isinstance(h, GObj) for h in a.a.flat)) for a in data):
+        return None
+    objs = {}
+
+    def number(a):
+        if isinstance(a, GObj):
+            a = HArr.of([a])
+        if not isinstance(a, HArr):
+            return a
+        nums = np.empty(a.a.shape)
+        for i, h in enumerate(a.a.reshape(-1)):
+            if not isinstance(h, GObj):
+                raise err('MATLAB:invalidType', 'Invalid data type: handles of graphics objects and other values cannot be mixed here.')
+            nums.reshape(-1)[i] = objs.setdefault(h.number_value(), h).number_value()
+        return out(nums) if nums.size != 1 else float(nums.reshape(-1)[0])
+
+    res = fn(nargout, *[number(a) for a in data], *args[ndata:])
+    if not values:
+        return res
+
+    def handles(v):
+        a = np.asarray(arr(v), float)
+        hs = np.empty(a.shape, object)
+        for i, x in enumerate(a.reshape(-1)):
+            hs.reshape(-1)[i] = objs.get(float(x)) or handle_of_number(float(x))
+        return HArr(hs)
+    return handles(res) if nargout <= 1 else (handles(res[0]),) + tuple(res[1:])
+
+
 @bi('unique', nout=3)
 def unique(nargout, *args):
     nargchk(args, 1, 4, 'unique')
+    r = _on_handles(unique, nargout, args, 1)
+    if r is not None:
+        return r
     x = args[0]
     rest, flags = strip_flags(args[1:], ('stable', 'sorted', 'rows', 'first', 'last', 'legacy'))
     kind, data, sk = _set_input(x, 'unique')
@@ -771,6 +809,9 @@ def unique(nargout, *args):
 @bi('ismember', nout=2)
 def ismember(nargout, *args):
     nargchk(args, 2, 3, 'ismember')
+    r = _on_handles(ismember, nargout, args, 2, values=False)
+    if r is not None:
+        return r
     x, s = args[0], args[1]
     rest, flags = strip_flags(args[2:], ('rows', 'legacy'))
     if type(x) in (Char, Str) and type(s) in (Cell, Str) or type(x) in (Cell, Str):
@@ -808,6 +849,9 @@ def ismember(nargout, *args):
 
 def _setop(name, args, nargout, op):
     nargchk(args, 2, 4, name)
+    r = _on_handles(lambda n, *a: _setop(name, a, n, op), nargout, args, 2)
+    if r is not None:
+        return r
     a, b = args[0], args[1]
     rest, flags = strip_flags(args[2:], ('stable', 'sorted', 'rows', 'legacy'))
     stable = 'stable' in flags

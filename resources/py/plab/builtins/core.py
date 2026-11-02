@@ -410,8 +410,22 @@ def _equal(a, b, nan_eq):
     if isinstance(a, FH) and isinstance(b, FH):
         return a is b or (isinstance(a, R.NamedFH) and isinstance(b, R.NamedFH) and a.fname == b.fname)
     if isinstance(a, Obj) and isinstance(b, Obj):
-        return a is b or (hasattr(a, 'equals') and a.equals(b))
+        if a is b:
+            return True
+        ha, hb = _handle_items(a), _handle_items(b)
+        if ha is not None and hb is not None:
+            return all(x is y for x, y in zip(ha, hb))
+        return hasattr(a, 'equals') and a.equals(b)
     return False
+
+
+def _handle_items(v):
+    """The objects a handle (or an array of handles) holds, in order; None
+    for a value that is not a handle."""
+    from ..graphics_base import HArr
+    if isinstance(v, HArr):
+        return list(v.a.reshape(-1, order='F'))
+    return [v] if getattr(v, 'is_handle', False) else None
 
 
 # ---- sizes -------------------------------------------------------------------------------

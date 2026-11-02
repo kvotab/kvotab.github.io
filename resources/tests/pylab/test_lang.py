@@ -537,6 +537,16 @@ case('fgetl loop', "fid = fopen('t2.txt', 'w'); fprintf(fid, 'a\\nbb\\n'); fclos
      want={'n': 3})
 case('sscanf', "a = sscanf('3 4 5', '%d')'; b = sscanf('1.5,2.5', '%f,%f')';", want={'a': [[3, 4, 5]], 'b': [[1.5, 2.5]]})
 case('dir and fileparts', "[p, n, e] = fileparts('/a/b/c.txt'); f = fullfile('a', 'b', 'c.m');", want={'p': '/a/b', 'n': 'c', 'e': '.txt', 'f': 'a/b/c.m'})
+case('a point with no precision writes no decimals', "s = sprintf('[%.f|%5.f|%.f|%.s]', 2.6, 3.5, -0.4, 'abc');", want={'s': '[3|    4|-0|]'})
+case('archives: zip of a folder and a file, unzip into another folder', "mkdir('za'); fid = fopen('za/one.txt', 'w'); fprintf(fid, 'hello'); fclose(fid); "
+     "fid = fopen('[two].txt', 'w'); fprintf(fid, 'two'); fclose(fid); e = zip('pack', {'za', '[two].txt'}); mkdir('zout'); "
+     "got = unzip('pack.zip', 'zout'); t = fileread('zout/za/one.txt'); u = fileread('zout/[two].txt'); n = numel(got);",
+     want={'e': ['za/one.txt', '[two].txt'], 't': 'hello', 'u': 'two', 'n': 2})
+case('archives: zip with a wildcard and a root folder', "e = zip('w.zip', '*.txt', 'za');", want={'e': ['one.txt']})
+case('archives: gzip and gunzip, tar and untar', "gzip('za/one.txt', 'gz'); g = gunzip('gz/one.txt.gz', 'ungz'); a = fileread('ungz/one.txt'); "
+     "tar('t.tgz', 'za'); mkdir('tout'); r = untar('t.tgz', 'tout'); b = fileread('tout/za/one.txt');",
+     want={'a': 'hello', 'b': 'hello'})
+case('archives: a name that is not there', "zip('x.zip', 'nothere.txt')", error="'nothere.txt' not found")
 
 case('ode15i', "[t, y] = ode15i(@(t, y, yp) yp + y, [0 1], 1, -1); e = abs(y(end) - exp(-1)) < 1e-3; "
      "[t, y] = ode15i(@(t, y, yp) yp.^3 + yp + y, [0 2], 1, -0.6823278); n = abs(y(end) - 0.18267339) < 1e-3;",
@@ -567,8 +577,61 @@ C('help: no internal names among the builtins', not [n for n in R.BUILTINS if n.
   [n for n in R.BUILTINS if n.endswith('_') or 'unused' in n or n[0].isdigit()])
 h = help_for('sum')
 C('help sum', h['kind'] == 'builtin' and h['text'].startswith(' sum - ') and '    S = sum(A, dim)' in h['text'], h)
+from plab.helptext import HOW  # noqa: E402
+solvers = ['ode45', 'ode23', 'ode113', 'ode78', 'ode89', 'ode15s', 'ode23s', 'ode23t', 'ode23tb', 'ode15i']
+C('help: each ODE solver says how PyLAB computes it, naming its Python class',
+  all(s in HOW and 'Python:' in HOW[s][0][1] for s in solvers) and not set(HOW) - set(HELP), sorted(set(solvers) - set(HOW)))
+h = help_for('ode113')
+C('help ode113: How it works after the call forms, wrapped for the Command Window; apart for the Help panel',
+  '\n How it works\n' in h['text'] and 'Shampine and Gordon' in h['text'] and max(len(l) for l in h['text'].split('How it works')[1].split('\n')
+  if not l.startswith('      ')) <= 76 and 'How it works' not in h['base'] and any('pre' in b for b in h['how']), h.get('how'))
+C('help: every builtin says how PyLAB computes it, starting with the Python that does',
+  set(HOW) == set(R.BUILTINS) and all(HOW[n][0][0] == 'p' and HOW[n][0][1].startswith('Python: ') for n in HOW),
+  sorted(set(HOW) ^ set(R.BUILTINS)) or [n for n in HOW if not HOW[n][0][1].startswith('Python: ')])
+
+
+def _how_texts():
+    for name, blocks in HOW.items():
+        for kind, b in blocks:
+            yield name, b if kind == 'p' else '\n'.join(b)
+
+
+def _how_missing():
+    """The engine's files and the NumPy, SciPy and standard-library names
+    that How it works quotes but that do not exist."""
+    import importlib
+    import re
+    plab_dir = os.path.dirname(R.__file__)
+    missing = set()
+    for name, text in _how_texts():
+        for f in re.findall(r'\b(\w+\.py)\b', text):
+            if not (os.path.isfile(os.path.join(plab_dir, f)) or os.path.isfile(os.path.join(plab_dir, 'builtins', f))):
+                missing.add((name, f))
+        for ref in re.findall(r'\b((?:numpy|scipy|math|cmath|itertools|statistics|random)(?:\.[A-Za-z_]\w*)+)', text):
+            parts = ref.split('.')
+            for i in range(len(parts), 0, -1):
+                try:
+                    obj = importlib.import_module('.'.join(parts[:i]))
+                    break
+                except ImportError:
+                    continue
+            try:
+                for p in parts[i:]:
+                    obj = getattr(obj, p)
+            except AttributeError:
+                missing.add((name, ref))
+    return sorted(missing)
+
+
+C('help: the files and the NumPy and SciPy names How it works quotes exist', not _how_missing(), _how_missing())
 
 # ---- graphics state --------------------------------------------------------------------------------------
+case('set functions on graphics objects, by their handle numbers', "close all; f = figure; plot(1:3); a = findobj(f, 'type', 'axes'); "
+     "b = findobj(a, 'tag', 'legend'); g = axes; c = setdiff(a, b); k = class(c); s = isequal(c, a); u = numel(unique([a; g; a])); "
+     "[tf, loc] = ismember(g, [a g]); i = isequal(intersect([a g], g), g); v = isequal(union(g, a), [a g]); x = isequal(setxor([a g], a), g); close all;",
+     want={'k': 'matlab.graphics.axis.Axes', 's': True, 'u': 2, 'tf': True, 'loc': 2, 'i': True, 'v': True, 'x': True})
+case('isequal on handles compares the objects', "close all; a = axes; b = axes; r = [isequal(gca, b), isequal(a, b), isequal([a b], [a b]), isequal([a b], [b a])]; close all;",
+     want={'r': [[True, False, True, False]]})
 case('figure handles', "close all; h = plot(1:10); c = get(h, 'Color'); h.LineWidth = 2; w = h.LineWidth; f = gcf; n = f.Number;",
      want={'c': [[0, 0.447, 0.741]], 'w': 2, 'n': 1})
 case('hold and colors', 'close all; plot(1:3); hold on; h2 = plot(3:-1:1); c = h2.Color; hold off;', want={'c': [[0.85, 0.325, 0.098]]})

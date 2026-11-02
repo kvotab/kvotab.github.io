@@ -526,6 +526,8 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-figwin > [hidden] { display: none !important; }
 .pl-figwin.is-dialog { min-height: 0; min-width: 160px; }
 .pl-figwin.is-current { border-color: var(--accent-line); }
+/* a modal figure: the veil under it takes the clicks meant for the rest of the page */
+.pl-figveil { position: absolute; inset: 0; pointer-events: auto; background: color-mix(in oklab, var(--overlay-bg) 45%, transparent); }
 .pl-figtitle {
   display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 10px; background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border);
   cursor: move; user-select: none; font-size: 12px; touch-action: none;
@@ -638,12 +640,14 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-help h2 { font-size: 17px; margin: 4px 0 8px; }
 .pl-help h3 { font-size: 14px; margin: 18px 0 6px; font-family: var(--font-mono); letter-spacing: 0.02em; }
 .pl-help code, .pl-help pre { font-family: var(--font-mono); font-size: 12.5px; }
-.pl-help pre { background: var(--code-bg); padding: 8px 10px; border-radius: var(--radius-sm); overflow: auto; }
+.pl-help pre { background: var(--code-bg); padding: 8px 10px; border-radius: var(--radius-sm); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pl-help .pl-fnlist { columns: 3 150px; column-gap: 18px; font-family: var(--font-mono); font-size: 12px; }
 .pl-help .pl-fnlist a { display: block; color: var(--pl-link); cursor: pointer; text-decoration: none; padding: 1px 0; break-inside: avoid; }
 .pl-help .pl-fnlist a:hover { text-decoration: underline; }
 .pl-help input[type="search"] { width: min(360px, 100%); padding: 5px 8px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--input-text); font-size: 16px; }
 .pl-help .pl-notice { color: var(--pl-muted); font-size: 12px; margin-top: 22px; border-top: 1px solid var(--pl-border); padding-top: 8px; }
+.pl-help .pl-how p { max-width: 80ch; margin: 0 0 9px; }
+.pl-help .pl-how pre { margin: 0 0 9px; white-space: pre; }
 
 /* ---- narrow windows and phones --------------------------------------------------------------------- */
 @media (max-width: 900px) {

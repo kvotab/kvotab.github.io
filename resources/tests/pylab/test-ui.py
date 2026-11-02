@@ -60,6 +60,13 @@ and a table, a list double-clicked; questdlg, inputdlg, listdlg and
 uigetfile as the page shows them; a message box and a wait bar, never the
 current figure; uiwait until a callback calls uiresume.
 
+Figure files: saveas writes PNG, JPEG, BMP, TIFF, SVG, PDF and EPS files
+that are what their names say (the SVG well formed, the PDF's objects where
+its cross-reference table says, the EPS read through by pscheck.py), print
+-dpdf and -r, and a .gif refused; an arrow annotation drawn; getframe of a
+figure and of an axes, frame2im and movie; a modal message box laying a
+veil over the page until its OK is clicked, and dialog's modal window.
+
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on PYLAB_HTTP_PORT and PYLAB_CDP_PORT (defaults 8811, 9311), then
 
@@ -182,6 +189,10 @@ async def desktop(page):
     await page.ev("PL.app.openHelp('ode45'); 1")
     help_text = await until(page, "document.querySelector('.pl-help pre')?.textContent")
     check('the Help panel shows a function', 'ode45 - Solve a nonstiff ODE system' in (help_text or ''), True)
+    how = await page.ev("(() => { const s = document.querySelector('.pl-help .pl-how'); "
+                        "return !!s && s.querySelector('h3').textContent === 'How it works' && s.querySelectorAll('p').length >= 2 "
+                        "&& !document.querySelector('.pl-help pre').textContent.includes('How it works'); })()")
+    check('and how PyLAB computes it, as paragraphs after the call forms', how, True)
     await page.ev("PL.app.openHelp(); 1")
     n_links = await page.ev("document.querySelectorAll('.pl-help [data-fn]').length")
     check('the Help panel lists the functions', (n_links or 0) > 700, True)
@@ -688,7 +699,8 @@ async def statistics(page):
     check('statistics: histfit, normplot, qqplot and gscatter draw', await drawn(page, 4) > 0.01, True)
     await shot(page, 'stats-four.png')
     out = await command(page, 'help ranksum')
-    check('statistics: help answers', 'Wilcoxon rank sum test' in out[-800:], True)
+    check('statistics: help answers, and says how PyLAB computes it',
+          'Wilcoxon rank sum test' in out[-2500:] and 'How it works' in out[-2500:] and 'scipy.stats.rankdata' in out[-2500:], True)
     await command(page, 'close all; clear; clc')
     check('statistics: no script errors', page.errors, [])
 
@@ -967,6 +979,104 @@ async def user_interfaces(page):
     check('gui: no script errors', page.errors, [])
 
 
+FILE_B64 = ("(async (p) => { const b = await PL.engine.fs('read', { path: p, binary: true }); const u = new Uint8Array(b.buffer || b); "
+            "let s = ''; for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768)); return btoa(s); })")
+
+
+async def engine_file(page, path):
+    """A file of the engine's folder, as bytes."""
+    import base64
+    b = await page.ev(f'{FILE_B64}({json.dumps(path)})', timeout=60)
+    return base64.b64decode(b) if isinstance(b, str) and not b.startswith('EXCEPTION') else b''
+
+
+def pdf_problems(b):
+    """What is wrong with a PDF's frame: its header, its trailer, and each object where its cross-reference table says."""
+    import re
+    if not b.startswith(b'%PDF-1.'):
+        return ['no %PDF header']
+    m = re.search(rb'startxref\s+(\d+)\s+%%EOF\s*$', b)
+    if not m:
+        return ['no startxref at the end']
+    x = int(m.group(1))
+    if not b.startswith(b'xref', x):
+        return ['startxref does not point at the table']
+    n = int(re.match(rb'xref\s+0\s+(\d+)', b[x:]).group(1))
+    rows = re.findall(rb'(\d{10}) (\d{5}) ([nf]) ?\r?\n', b[x:])[:n]
+    bad = [i for i, (off, _, kind) in enumerate(rows) if kind == b'n' and not b.startswith(f'{i} 0 obj'.encode(), int(off))]
+    return [f'objects not where the table says: {bad[:5]}'] if bad else []
+
+
+async def figure_files(page):
+    import re
+    import xml.etree.ElementTree as ET
+    from pscheck import check_eps
+    out = await command(page, "close all force; wasIn = cd(tempdir); f = figure('Position', [100 100 560 420]); x = linspace(0, 2*pi, 40); "
+                        "plot(x, sin(x), 'r-o'); hold on; imagesc([4 6], [-0.5 0.5], magic(4)); title('\\alpha and x^2 \\leq \\infty'); "
+                        "annotation('arrow', [0.2 0.5], [0.2 0.5], 'LineWidth', 2); "
+                        "annotation('textbox', [0.6 0.75 0.3 0.1], 'String', 'note', 'BackgroundColor', [1 1 0.8]); "
+                        "for e = {'png', 'jpg', 'bmp', 'tif', 'svg', 'pdf', 'eps'}, saveas(f, ['fig.' e{1}]); end")
+    check('figure files: saveas writes every format', 'Error' not in out[-800:], True)
+    folder = re.findall(r'\[(.*?)\]', await command(page, "fprintf('[%s]\\n', pwd)"))[-1]
+    files = {e: await engine_file(page, f'{folder}/fig.{e}') for e in ('png', 'jpg', 'bmp', 'tif', 'svg', 'pdf', 'eps')}
+    magic = {'png': b'\x89PNG', 'jpg': b'\xff\xd8\xff', 'bmp': b'BM', 'tif': b'II*\x00', 'svg': b'<?xml', 'pdf': b'%PDF-1.4', 'eps': b'%!PS-Adobe-3.0 EPSF-3.0'}
+    check('figure files: each is the kind its name says', {e: files[e][:len(m)] == m for e, m in magic.items()}, {e: True for e in magic})
+    w = int.from_bytes(files['bmp'][18:22], 'little'), int.from_bytes(files['bmp'][22:26], 'little')
+    check('figure files: BMP and PNG of one size, twice the figure on screen',
+          (w, (int.from_bytes(files['png'][16:20], 'big'), int.from_bytes(files['png'][20:24], 'big'))) == (w, w) and w[0] > 500, True)
+    svg = ET.fromstring(files['svg'])
+    ns = '{http://www.w3.org/2000/svg}'
+    texts = [e.text or '' for e in svg.iter(f'{ns}text')]
+    check('figure files: the SVG is well formed, with paths, text (the TeX made characters) and the picture',
+          (svg.tag == f'{ns}svg', len(list(svg.iter(f'{ns}path'))) >= 10, 'note' in texts, any('α' in s for s in texts),
+           any('≤' in s for s in texts), len(list(svg.iter(f'{ns}image')))), (True, True, True, True, True, 1))
+    check('figure files: the PDF has its objects where its table says', pdf_problems(files['pdf']), [])
+    check('figure files: the PDF writes text in Helvetica, Greek in Symbol, and the picture as an image',
+          [k in files['pdf'] for k in (b'/BaseFont /Helvetica ', b'/BaseFont /Symbol', b'/Subtype /Image')], [True, True, True])
+    problems, counts = check_eps(files['eps'])
+    check('figure files: the EPS reads through (operands, balance, fonts, the picture data)', problems, [])
+    check('figure files: the EPS shows text and draws its picture', (counts.get('show', 0) > 10, counts.get('image', 0)), (True, 1))
+    out = await command(page, "print(f, 'printed', '-dpdf'); print('hi', '-dpng', '-r96'); saveas(f, 'x.gif')")
+    check('figure files: print -dpdf adds the extension; a .gif is refused', ('.gif file' in out[-300:], (await engine_file(page, f'{folder}/printed.pdf'))[:5]),
+          (True, b'%PDF-'))
+    hi = await engine_file(page, f'{folder}/hi.png')
+    check('figure files: print -r96 writes the figure at its size on screen', int.from_bytes(hi[16:20], 'big') == w[0] // 2, True)
+    # the arrow drawn over the axes, from (0.2, 0.2) to (0.5, 0.5) of the figure
+    dark = await page.ev(f"(() => {{ const c = {WIN}.canvas; const g = c.getContext('2d'); const k = c.width / c.clientWidth; "
+                         "return [0.3, 0.35, 0.4].map((t) => { const d = g.getImageData(Math.round(t * c.clientWidth * k), Math.round((1 - t) * c.clientHeight * k), 1, 1).data; "
+                         "return d[0] + d[1] + d[2] < 200; }); })()")
+    check('figure files: the arrow annotation is drawn', dark, [True, True, True])
+    # getframe
+    await command(page, "F = getframe(f); s = size(F.cdata); k = class(F.cdata); G = getframe(gca); t = size(G.cdata); same = isequal(frame2im(F), F.cdata); movie(G, 1, 50)")
+    size = await page.ev(f'[{WIN}.canvas.clientHeight, {WIN}.canvas.clientWidth]')
+    vals = await command(page, "fprintf('<%d %d %d %s %d %d %d>\\n', s, k, t(1:2), same)")
+    got = re.findall(r'<(\d+) (\d+) (\d+) (\w+) (\d+) (\d+) (\d+)>', vals)[-1]
+    check('getframe: the figure at its size on screen, uint8 RGB; an axes smaller; frame2im', (
+        [int(got[0]), int(got[1])] == size, got[2], got[3], 0 < int(got[4]) < size[0], 0 < int(got[5]) < size[1], got[6]), (True, '3', 'uint8', True, True, '1'))
+    # a modal message box
+    await command(page, "m = msgbox('Wait for me', 'Modal', 'modal');")
+    veiled = await until(page, "!!document.querySelector('.pl-figveil')", 10)
+    check('modal: a modal message box lays a veil over the page', bool(veiled), True)
+    hit = await page.ev("(() => { const r = PL.app.cmd.el.getBoundingClientRect(); const e = document.elementFromPoint(r.x + 12, r.y + r.height - 12); "
+                        "return e ? e.className : ''; })()")
+    check('modal: a click on the Command Window meets the veil', hit, 'pl-figveil')
+    await page.ev('PL.app.cmd.ta.focus(); 1')
+    check('modal: the focus stays in the modal window', await page.ev("!!document.activeElement.closest('.pl-figwin.is-modal')"), True)
+    box = await page.ev("(() => { const b = [...document.querySelectorAll('.pl-figwin.is-modal button')].find((x) => x.textContent === 'OK'); "
+                        "if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    if box:
+        for kind in ('mousePressed', 'mouseReleased'):
+            await page.call('Input.dispatchMouseEvent', {'type': kind, 'x': box[0], 'y': box[1], 'button': 'left', 'clickCount': 1}, session=page.sid)
+    gone = await until(page, "!document.querySelector('.pl-figveil')", 10)
+    check('modal: its OK button closes it, and the veil goes', (bool(box), bool(gone)), (True, True))
+    await command(page, "d = dialog('Name', 'Mine');")
+    check("modal: dialog's window is modal", bool(await until(page, "!!document.querySelector('.pl-figveil')", 10)), True)
+    await command(page, "set(d, 'WindowStyle', 'normal');")
+    check("modal: and an ordinary window when made 'normal'", bool(await until(page, "!document.querySelector('.pl-figveil')", 10)), True)
+    await command(page, "close all force; cd(wasIn); clear; clc")
+    check('figure files: no script errors', page.errors, [])
+
+
 async def full_window(page):
     await page.ev('PL.app.toggleFull(); 1')
     await asyncio.sleep(0.3)
@@ -992,6 +1102,7 @@ async def main():
         await parallel(page)
         await statistics(page)
         await user_interfaces(page)
+        await figure_files(page)
         await full_window(page)
         await shot(page, 'desktop.png')
         check('no script errors', page.errors, [])
