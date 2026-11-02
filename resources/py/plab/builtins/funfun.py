@@ -101,7 +101,7 @@ def odeset(nargout, *args):
     if args and type(args[0]) is Struct:
         base = _struct_opts(args[0])
         i = 1
-    for n in ('RelTol', 'AbsTol', 'MaxStep', 'InitialStep', 'Events', 'OutputFcn', 'OutputSel', 'Mass', 'Jacobian', 'NonNegative', 'Refine',
+    for n in ('RelTol', 'AbsTol', 'MaxStep', 'InitialStep', 'Events', 'OutputFcn', 'OutputSel', 'Mass', 'MStateDependence', 'MassSingular', 'Jacobian', 'NonNegative', 'Refine',
               'Stats', 'Vectorized', 'MaxOrder', 'BDF', 'NormControl'):
         base.setdefault(n, EMPTY())
     while i + 1 < len(args):
@@ -474,23 +474,34 @@ def integral3(nargout, *args):
 
 # ---- ordinary differential equations -------------------------------------------------------------
 
-_ODE_METHOD = {'ode45': 'RK45', 'ode23': 'RK23', 'ode113': 'DOP853', 'ode78': 'DOP853', 'ode89': 'DOP853',
-               'ode15s': 'BDF', 'ode23s': 'Radau', 'ode23t': 'Radau', 'ode23tb': 'Radau'}
+_ODE_METHOD = {'ode45': 'RK45', 'ode23': 'RK23', 'ode113': 'Adams', 'ode78': 'Verner78', 'ode89': 'Verner89',
+               'ode15s': 'NDF', 'ode23s': 'Rosenbrock23', 'ode23t': 'Trapezoid', 'ode23tb': 'TRBDF2'}
 _REFINE = {'ode45': 4, 'ode78': 8, 'ode89': 4}
+_EXPLICIT = ('ode45', 'ode23', 'ode113', 'ode78', 'ode89')
 
 
-async def _ode(name, nargout, args, label=None):
+def _onoff(v):
+    from ..ops import truth
+    return py_str(v).lower() == 'on' if is_str(v) else bool(truth(v))
+
+
+async def _ode(name, nargout, args, label=None, implicit=None):
+    """The solvers' common part. implicit is (F, yp0, jacobian) for ode15i,
+    which solves F(t, y, y') = 0 (args[0] is then F)."""
     nargchk(args, 3, None, name)
     from scipy.integrate import solve_ivp
-    f = args[0] if isinstance(args[0], _Implicit) else _fn(args[0])
+    from .. import odesolvers as S
+    who = label or name
+    f = args[0] if implicit else _fn(args[0])
     tspan = darr(args[1]).reshape(-1).real
     y0 = darr(args[2])
     yshape = y0.shape
     y0v = y0.reshape(-1)
+    n = y0v.size
     opts = _struct_opts(args[3]) if len(args) > 3 else {}
     extra = args[4:]
     if tspan.size < 2:
-        raise err('MATLAB:odearguments:TspanNotVector', 'The timespan must have at least two elements.', name)
+        raise err('MATLAB:odearguments:TspanNotVector', 'The timespan must have at least two elements.', who)
     rtol = _opt(opts, 'RelTol')
     atol = _opt(opts, 'AbsTol')
     maxstep = _opt(opts, 'MaxStep')
@@ -506,34 +517,83 @@ async def _ode(name, nargout, args, label=None):
     kw['max_step'] = num(maxstep) if maxstep is not None else 0.1 * abs(float(tspan[-1] - tspan[0]))
     if first is not None:
         kw['first_step'] = num(first)
-    method = _ODE_METHOD[name]
-    cplx = np.iscomplexobj(y0v)
-    Minv = None
-    if mass is not None and not isinstance(mass, FH):
-        M = darr(mass)
-        Minv = np.linalg.inv(M)
+    method = 'NDF' if implicit else _ODE_METHOD[name]
     nn_idx = [int(i) - 1 for i in darr(nonneg).reshape(-1)] if nonneg is not None else []
+    # a real y0 whose derivative is complex (y' = 1i*y from 1): the solution is complex
+    cplx = np.iscomplexobj(y0v) or (not implicit and darr(f.scall(1, float(tspan[0]), out(y0v.reshape(-1, 1)), *extra)).dtype.kind == 'c')
+    if cplx:
+        y0v = y0v.astype(C128)
 
-    def rhs(t, y):
+    def col(y):
+        return out(np.asarray(y).reshape(-1, 1))
+
+    def f_raw(t, y):
         yy = y.reshape(yshape) if len(yshape) == 2 and yshape[1] == 1 else y.reshape(-1, 1)
         if nn_idx:
             yy = yy.copy()
             yy.reshape(-1)[nn_idx] = np.maximum(yy.reshape(-1)[nn_idx], 0)
         r = darr(f.scall(1, float(t), out(yy.reshape(-1, 1)), *extra)).reshape(-1)
         if r.size != y.size:
-            raise err('MATLAB:odearguments:SizeIC', f'{f.text() if hasattr(f, "text") else "The function"} returns a vector of length {r.size}, but the length of initial conditions vector is {y.size}. The vector returned by the function and the initial conditions vector must have the same number of elements.', name)
-        if Minv is not None:
-            r = Minv @ r
+            raise err('MATLAB:odearguments:SizeIC', f'{f.text() if hasattr(f, "text") else "The function"} returns a vector of length {r.size}, but the length of initial conditions vector is {y.size}. The vector returned by the function and the initial conditions vector must have the same number of elements.', who)
         if nn_idx:
             for i in nn_idx:
                 if y[i] <= 0 and r[i] < 0:
                     r[i] = 0
         return r.astype(C128 if cplx else F64) if (cplx or r.dtype.kind == 'c') else r
-    if jac is not None and method in ('BDF', 'Radau') and not isinstance(jac, FH):
-        J = darr(jac)
-        kw['jac'] = J
-    elif jac is not None and isinstance(jac, FH) and method in ('BDF', 'Radau'):
-        kw['jac'] = lambda t, y: darr(jac.scall(1, float(t), out(y.reshape(-1, 1))))
+
+    rhs = f_raw
+    # the mass matrix: a matrix, or a function of t (MStateDependence 'none', or one input) or of t and y
+    if mass is not None:
+        if isinstance(mass, FH):
+            dep = py_str(_opt(opts, 'MStateDependence', Char.of('weak'))).lower()
+            of_t = dep == 'none' or (isinstance(mass, R.Anon) and mass.nparams == 1 and not mass.vararg)
+
+            def M_of(t, y):
+                M = darr(mass.scall(1, float(t), *extra) if of_t else mass.scall(1, float(t), col(y), *extra))
+                if M.shape != (n, n):
+                    raise err('MATLAB:odearguments:MassSize', f'The mass matrix must be {n}-by-{n}.', who)
+                return M
+            M0 = M_of(float(tspan[0]), y0v)
+            mass_opt = M_of
+        else:
+            M0 = darr(mass)
+            if M0.shape != (n, n):
+                raise err('MATLAB:odearguments:MassSize', f'The mass matrix must be {n}-by-{n}.', who)
+            mass_opt = M0
+        ms = py_str(_opt(opts, 'MassSingular', Char.of('maybe'))).lower()
+        singular = ms == 'yes' or (ms == 'maybe' and S.null_spaces(M0)[0] is not None)
+        if singular and name not in ('ode15s', 'ode23t'):
+            raise err('MATLAB:odearguments:MassSingular',
+                      f'The mass matrix is singular: {who} cannot solve a differential-algebraic system; ode15s and ode23t can.', who)
+        if name == 'ode23s' and isinstance(mass, FH):
+            raise err('MATLAB:ode23s:MassMatrixNotConstant', 'ode23s takes a constant mass matrix only.', who)
+        if name in _EXPLICIT:
+            if isinstance(mass, FH):
+                rhs = lambda t, y: np.linalg.solve(M_of(t, y), f_raw(t, y))     # noqa: E731
+            else:
+                from scipy.linalg import lu_factor, lu_solve
+                Mlu = lu_factor(M0)
+                rhs = lambda t, y: lu_solve(Mlu, f_raw(t, y))     # noqa: E731
+        else:
+            kw['mass'] = mass_opt
+    # the Jacobian, for the solvers that use one
+    if jac is not None and name not in _EXPLICIT and not implicit:
+        if isinstance(jac, FH):
+            kw['jac'] = lambda t, y: darr(jac.scall(1, float(t), col(y), *extra))
+        else:
+            kw['jac'] = darr(jac)
+    if name == 'ode15s' or implicit:
+        mo = _opt(opts, 'MaxOrder')
+        if mo is not None:
+            k = num(mo)
+            if k not in (1, 2, 3, 4, 5):
+                raise err('MATLAB:odeget:MaxOrder', 'MaxOrder must be 1, 2, 3, 4 or 5.', who)
+            kw['max_order'] = int(k)
+        bdf = _opt(opts, 'BDF')
+        kw['bdf'] = bool(implicit) or (bdf is not None and _onoff(bdf))
+    if implicit:
+        kw['residual'], kw['yp0'], kw['jac'] = implicit
+        rhs = lambda t, y: np.zeros_like(y)     # noqa: E731  (ode15i has no f(t, y))
     ev_list = []
     if events_fn is not None and isinstance(events_fn, FH):
         v0, term0, dir0 = events_fn.scall(3, float(tspan[0]), out(y0v.reshape(-1, 1)), *extra)
@@ -547,15 +607,18 @@ async def _ode(name, nargout, args, label=None):
             ev.terminal = bool(term0[k]) if term0.size > k else False
             ev.direction = float(dir0[k]) if dir0.size > k else 0.0
             ev_list.append(ev)
-    direction = 1 if tspan[-1] >= tspan[0] else -1
     t_eval = tspan if tspan.size > 2 else None
-    sol = solve_ivp(rhs, (float(tspan[0]), float(tspan[-1])), y0v, method=method, t_eval=t_eval,
-                    dense_output=(tspan.size == 2) or nargout == 1, events=ev_list or None, **kw)
+    rf = int(num(refine)) if refine is not None else _REFINE.get(name, 1)
+    solver = method if method in ('RK45', 'RK23') else getattr(S, method)
+    try:
+        sol = solve_ivp(rhs, (float(tspan[0]), float(tspan[-1])), y0v, method=solver, t_eval=t_eval,
+                        dense_output=nargout == 1 or (tspan.size == 2 and rf > 1), events=ev_list or None, **kw)
+    except S.SolverError as e:
+        raise err(f'MATLAB:{who}:Solver', str(e), who) from None
     if sol.status == -1:
-        R.warn(f'MATLAB:{label or name}:IntegrationTolNotMet', f'Failure at t={sol.t[-1]:e}.  Unable to meet integration tolerances without reducing the step size below the smallest value allowed at time t.')
+        R.warn(f'MATLAB:{who}:IntegrationTolNotMet', f'Failure at t={sol.t[-1]:e}.  Unable to meet integration tolerances without reducing the step size below the smallest value allowed at time t.')
     if tspan.size == 2:
         ts = sol.t
-        rf = int(num(refine)) if refine is not None else _REFINE.get(name, 1)
         if rf > 1 and ts.size > 1 and sol.sol is not None:
             pts = [ts[0]]
             for i in range(ts.size - 1):
@@ -579,8 +642,10 @@ async def _ode(name, nargout, args, label=None):
     if nargout == 0:
         return None
     if nargout == 1:
-        s = Struct.scalar({'solver': Char.of(label or name), 'extdata': Struct.scalar({'odefun': getattr(f, 'F', f), 'options': Struct.scalar(opts), 'varargin': Cell.of_list(list(extra))}),
-                           'x': out(sol.t.reshape(1, -1)), 'y': out(sol.y), 'stats': Struct.scalar({'nsteps': float(sol.t.size - 1), 'nfevals': float(sol.nfev)}),
+        s = Struct.scalar({'solver': Char.of(who), 'extdata': Struct.scalar({'odefun': f, 'options': Struct.scalar(opts), 'varargin': Cell.of_list(list(extra))}),
+                           'x': out(sol.t.reshape(1, -1)), 'y': out(sol.y),
+                           'stats': Struct.scalar({'nsteps': float(sol.t.size - 1), 'nfevals': float(sol.nfev),
+                                                   'npds': float(sol.njev), 'ndecomps': float(sol.nlu)}),
                            'idata': _DenseHolder(sol.sol)})
         if ev_list:
             te = np.concatenate([np.asarray(x) for x in sol.t_events]) if sol.t_events else np.zeros(0)
@@ -704,72 +769,114 @@ def deval(nargout, *args):
     return out(Y)
 
 
-class _Implicit:
-    """f(t, y, y') = 0 made explicit for ode15i: y' is found by Newton's
-    method at each call, from the last y' found (a finite-difference
-    Jacobian in y'). That needs df/dy' to be nonsingular: an implicit ODE,
-    not a DAE."""
+def _implicit_parts(F, opts, extra, n, who):
+    """F(t, y, yp) and its Jacobian [dF/dy, dF/dyp] (None: by differences) as
+    the solvers call them."""
+    def res(t, y, yp):
+        r = darr(F.scall(1, float(t), out(y.reshape(-1, 1)), out(yp.reshape(-1, 1)), *extra)).reshape(-1)
+        if r.size != n:
+            raise err('MATLAB:odearguments:SizeIC', f'The function returns a vector of length {r.size}, but the length of the initial conditions vector is {n}.', who)
+        return r
+    jac = _opt(opts, 'Jacobian')
+    if jac is None:
+        jpy = None
+    elif isinstance(jac, FH):
+        def jpy(t, y, yp):
+            a, b = jac.scall(2, float(t), out(y.reshape(-1, 1)), out(yp.reshape(-1, 1)), *extra)
+            return darr(a), darr(b)
+    elif type(jac) is Cell and jac.a.size == 2:
+        a, b = jac.a.reshape(-1, order='F')
+        jpy = (darr(a), darr(b))
+    else:
+        raise err(f'MATLAB:{who}:JacobianForm', 'The Jacobian is a function returning [dfdy, dfdyp], or a cell {dfdy, dfdyp}.', who)
+    return res, jpy
 
-    def __init__(self, F, yp0, jac):
-        self.F = F
-        self.yp = yp0.astype(F64)
-        self.jac = jac
 
-    def text(self):
-        return self.F.text() if hasattr(self.F, 'text') else 'The function'
-
-    def res(self, t, y, yp, extra):
-        return darr(self.F.scall(1, t, out(y.reshape(-1, 1)), out(yp.reshape(-1, 1)), *extra)).reshape(-1)
-
-    def dres(self, t, y, yp, r0, extra):
-        if self.jac is not None:
-            if isinstance(self.jac, FH):
-                return darr(self.jac.scall(2, t, out(y.reshape(-1, 1)), out(yp.reshape(-1, 1)), *extra)[1])
-            if type(self.jac) is Cell and self.jac.a.size == 2:
-                return darr(self.jac.a.reshape(-1, order='F')[1])
-        J = np.empty((r0.size, yp.size))
-        for k in range(yp.size):
-            h = 1e-7 * max(1.0, abs(yp[k]))
-            d = yp.copy()
-            d[k] += h
-            J[:, k] = (self.res(t, y, d, extra) - r0) / h
-        return J
-
-    def scall(self, nout, t, y, *extra):
-        t = float(t)
-        y = darr(y).reshape(-1)
-        yp = self.yp.copy()
-        for _ in range(50):
-            r = self.res(t, y, yp, extra)
-            if r.size != y.size:
-                raise err('MATLAB:odearguments:SizeIC', f'{self.text()} returns a vector of length {r.size}, but the length of initial conditions vector is {y.size}.', 'ode15i')
-            J = self.dres(t, y, yp, r, extra)
-            if np.linalg.cond(J) > 1e13:
-                raise err('MATLAB:ode15i:SingularDerivative',
-                          "The derivative of the function by y' is singular: ode15i here solves f(t,y,y') = 0 for y', which a differential-algebraic system does not allow.", 'ode15i')
-            step = np.linalg.solve(J, r)
-            yp = yp - step
-            if np.all(np.abs(step) <= 1e-10 * (1 + np.abs(yp))):
-                break
-        self.yp = yp
-        return out(yp.reshape(-1, 1))
+def _implicit_jac(res, jpy, t, y, yp, atol):
+    from ..odesolvers import _fd
+    if jpy is None:
+        r = res(t, y, yp)
+        return (_fd(lambda z: res(t, z, yp), y, r, atol * np.ones(y.size)),
+                _fd(lambda z: res(t, y, z), yp, r, np.maximum(np.abs(yp), 1.0) * 1e-8))
+    if callable(jpy):
+        return jpy(t, y, yp)
+    return jpy
 
 
 @bi('ode15i', nout=5, aw=True, arr=False)
 async def ode15i(nargout, *args):
+    """F(t, y, y') = 0 by the BDFs of order 1 to 5: an implicit ODE, or a
+    DAE of index 1 whose initial conditions are consistent (decic finds
+    such)."""
+    from ..odesolvers import EPS, _norm
     nargchk(args, 4, None, 'ode15i')
     F = _fn(args[0])
-    y0 = darr(args[2]).reshape(-1)
-    yp0 = darr(args[3]).reshape(-1)
+    t0 = float(darr(args[1]).reshape(-1)[0].real)
+    y0 = darr(args[2]).reshape(-1).astype(float) if not np.iscomplexobj(darr(args[2])) else darr(args[2]).reshape(-1)
+    yp0 = darr(args[3]).reshape(-1).astype(y0.dtype)
     if yp0.size != y0.size:
         raise err('MATLAB:ode15i:YP0Size', 'The initial conditions y0 and yp0 must have the same number of elements.', 'ode15i')
     opts = args[4] if len(args) > 4 else Struct.scalar()
-    jac = _struct_opts(opts).get('Jacobian') if type(opts) is Struct else None
-    g = _Implicit(F, yp0, jac)
-    r0 = g.res(float(darr(args[1]).reshape(-1)[0].real), y0, yp0, args[5:])
-    if np.any(np.abs(r0) > 1e-6 * (1 + np.abs(y0))):
-        R.warn('MATLAB:ode15i:InconsistentIC', "The initial conditions are not consistent: f(t0, y0, yp0) is not zero, so yp0 is corrected at the first step.")
-    return await _ode('ode15s', nargout, [g, args[1], args[2], opts, *args[5:]], label='ode15i')
+    o = _struct_opts(opts) if type(opts) is Struct else {}
+    extra = args[5:]
+    rtol = num(_opt(o, 'RelTol')) if _opt(o, 'RelTol') is not None else 1e-3
+    atol = darr(_opt(o, 'AbsTol')).reshape(-1) if _opt(o, 'AbsTol') is not None else np.array(1e-6)
+    res, jpy = _implicit_parts(F, o, extra, y0.size, 'ode15i')
+    r0 = res(t0, y0, yp0)
+    Fy, Fyp = _implicit_jac(res, jpy, t0, y0, yp0, atol)
+    sy, syp = atol + rtol * np.abs(y0), atol + rtol * np.abs(yp0)
+    if np.linalg.cond(Fyp) < 1 / (1000 * EPS):
+        # an implicit ODE: y' follows from y, so yp0 is made to fit y0
+        yp = yp0.copy()
+        for _ in range(50):
+            step = np.linalg.solve(_implicit_jac(res, jpy, t0, y0, yp, atol)[1], -res(t0, y0, yp))
+            yp = yp + step
+            if _norm(step / syp) < 1e-6:
+                break
+        if _norm((yp - yp0) / syp) > 1:
+            R.warn('MATLAB:ode15i:InconsistentIC', 'The initial conditions are not consistent: F(t0, y0, yp0) is not zero, so yp0 is corrected to fit y0.')
+        yp0 = yp
+    else:
+        delta = np.linalg.lstsq(np.hstack([Fy, Fyp]), -r0, rcond=None)[0]
+        if _norm(np.concatenate([delta[:y0.size] / sy, delta[y0.size:] / syp])) > 1:
+            raise err('MATLAB:ode15i:NeedConsistentIC', 'The initial conditions are not consistent: F(t0, y0, yp0) is not zero. decic finds consistent ones.', 'ode15i')
+    return await _ode('ode15i', nargout, [F, args[1], args[2], opts, *extra], label='ode15i', implicit=(res, yp0, jpy))
+
+
+@bi('decic', nout=3)
+def decic(nargout, *args):
+    """Initial conditions for F(t, y, y') = 0 that satisfy it, changing the
+    components not held as little as least squares can."""
+    from ..odesolvers import _norm
+    nargchk(args, 6, None, 'decic')
+    F = _fn(args[0])
+    t0 = float(num(args[1]))
+    y = darr(args[2]).reshape(-1).astype(float)
+    hold_y = darr(args[3]).reshape(-1) != 0
+    yp = darr(args[4]).reshape(-1).astype(float)
+    hold_yp = darr(args[5]).reshape(-1) != 0
+    n = y.size
+    if yp.size != n or hold_y.size != n or hold_yp.size != n:
+        raise err('MATLAB:decic:Sizes', 'y0, yp0 and the vectors saying which of them are fixed must have the same length.', 'decic')
+    if int(hold_y.sum() + hold_yp.sum()) > n:
+        raise err('MATLAB:decic:TooManyFixed', f'More than {n} of the 2*{n} initial values are fixed: the conditions cannot all be met.', 'decic')
+    o = _struct_opts(args[6]) if len(args) > 6 else {}
+    extra = args[7:]
+    atol = darr(_opt(o, 'AbsTol')).reshape(-1) if _opt(o, 'AbsTol') is not None else np.array(1e-6)
+    res, jpy = _implicit_parts(F, o, extra, n, 'decic')
+    free_y, free_yp = ~hold_y, ~hold_yp
+    k = int(free_y.sum())
+    for _ in range(100):
+        r = res(t0, y, yp)
+        Fy, Fyp = _implicit_jac(res, jpy, t0, y, yp, atol)
+        A = np.hstack([Fy[:, free_y], Fyp[:, free_yp]])
+        delta = np.linalg.lstsq(A, -r, rcond=None)[0]
+        y[free_y] += delta[:k]
+        yp[free_yp] += delta[k:]
+        if _norm(delta) <= 1e-13 * (1 + _norm(np.concatenate([y, yp]))):
+            break
+    resnrm = float(np.linalg.norm(res(t0, y, yp)))
+    return out(y.reshape(-1, 1)), out(yp.reshape(-1, 1)), resnrm
 
 
 @bi('odextend', aw=True, arr=False)

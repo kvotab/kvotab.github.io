@@ -503,6 +503,16 @@ run("cla(fa); p1 = patch([0 1 1], [0 0 1], 'r'); p2 = patch([0 1 0], [0 1 1], [0
 check('patch adds to the axes as they are', num("numel(findobj(fa, 'Type', 'patch'))"), 2)
 run("fill([0 1 1], [0 0 1], 'r');")
 check('fill draws afresh unless held', num("numel(findobj(fa, 'Type', 'patch'))"), 1)
+run("view(fa, 3); v3 = get(fa, 'CameraViewAngle'); view(fa, 2);")
+check('CameraViewAngle: automatic, 6.6086 from above and 10.3396 in 3-D', (text("get(fa, 'CameraViewAngleMode')"), num("get(fa, 'CameraViewAngle')"), num('v3')),
+      ('auto', 6.6086, 10.3396))
+run("set(fa, 'CameraViewAngle', 2*atand(tand(6.6086/2)/2));")
+check('a smaller one is manual, and the page draws the axes that much larger', (text("get(fa, 'CameraViewAngleMode')"), round(serialize_figure(val('fo'))['axes'][-1]['camZoom'], 9)),
+      ('manual', 2.0))
+run("set(fa, 'CameraViewAngleMode', 'auto'); camzoom(fa, 2); z2 = camva(fa); camva(fa, 'auto'); m = camva(fa, 'mode'); camva(fa, 5);")
+check('camzoom narrows the angle; camva reads and sets it, and its mode', (round(num('z2'), 4), text('m'), num('camva(fa)'), text("camva(fa, 'mode')")),
+      (3.307, 'auto', 5.0, 'manual'))
+check('an angle of 180 or more is refused', 'less than 180' in run("set(fa, 'CameraViewAngle', 180)"), True)
 run("close all force")
 
 # ---- figure files ------------------------------------------------------------------------------------------------------

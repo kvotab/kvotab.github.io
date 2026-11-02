@@ -181,7 +181,7 @@ async def desktop(page):
     check('help sum', ' sum - The sum of the elements' in out, True)
     await page.ev("PL.app.openHelp('ode45'); 1")
     help_text = await until(page, "document.querySelector('.pl-help pre')?.textContent")
-    check('the Help panel shows a function', 'ode45 - Solve an ODE system' in (help_text or ''), True)
+    check('the Help panel shows a function', 'ode45 - Solve a nonstiff ODE system' in (help_text or ''), True)
     await page.ev("PL.app.openHelp(); 1")
     n_links = await page.ev("document.querySelectorAll('.pl-help [data-fn]').length")
     check('the Help panel lists the functions', (n_links or 0) > 700, True)
@@ -920,6 +920,28 @@ async def user_interfaces(page):
                         "uipanel(rf, 'Units', 'pixels', 'Tag', 'pp'); set(rf, 'Visible', 'on')")
     out = await command(page, "fprintf('%g ', get(findobj(rf, 'Tag', 'pp'), 'Position')); fprintf('\\n')")
     check('gui: a window first shown runs its ResizeFcn when the command ends, with no click', out.rstrip().endswith('10 10 120 60'), True)
+
+    # a camera zoom (CameraViewAngle): the axes drawn larger about their middle, inside their panel
+    await command(page, "close all force; cz = figure('Name', 'Zoomed', 'Position', [100 100 500 400]); cp = uipanel(cz, 'Position', [0 0 0.6 1]); "
+                        "ca = axes(cp, 'Position', [0.1 0.1 0.8 0.8]); plot(ca, 0:10, 0:10); xlim(ca, [0 10]); ylim(ca, [0 10]); "
+                        "set(ca, 'ButtonDownFcn', 'czp = get(gca, ''CurrentPoint'');');")
+    zoomed = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Zoomed")'
+    w0 = await page.ev(f"{zoomed}.renderer.frames[0].rect.w")
+    await command(page, 'camzoom(ca, 2)')
+    await asyncio.sleep(0.4)
+    w1 = await page.ev(f"{zoomed}.renderer.frames[0].rect.w")
+    check('gui: camzoom draws the axes twice as large', abs(w1 / w0 - 2) < 0.01, True)
+    x, y = await in_axes(page, zoomed, 6, 7)
+    await page.click(x, y)
+    await idle(page)
+    hit = (await command(page, "fprintf('%.1f %.1f\\n', czp(1, 1), czp(1, 2))")).rstrip()
+    px, py = await page.ev(f"(() => {{ const w = {zoomed}; const b = w.renderer.frames[0].ax._box; const c = w.canvas.getBoundingClientRect(); "
+                           "return [c.left + b.x + b.w + 40, c.top + b.y + b.h / 2]; })()")
+    await page.click(px, py)
+    await idle(page)
+    # the window heard that click (its CurrentPoint is past the panel's 300 pixels), but the axes did not
+    past = (await command(page, "fprintf('%.1f %.1f %d\\n', czp(1, 1), czp(1, 2), get(cz, 'CurrentPoint') * [1; 0] > 300)")).rstrip().splitlines()[-1]
+    check('gui: a click on the zoomed axes gives the point under it; one past their panel misses them', [hit.endswith('6.0 7.0'), past], [True, '6.0 7.0 1'])
 
     # a figure saved as a .fig, opened again from the Current Folder
     await command(page, "close all force; f = figure('Name', 'Kept'); plot(1:3, [2 1 3]); title('Kept plot'); savefig(f, 'kept.fig'); close all force")

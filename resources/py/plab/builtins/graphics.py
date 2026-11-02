@@ -2100,6 +2100,44 @@ def view(nargout, *args):
     return None
 
 
+@bi('camzoom', nout=0, arr=False)
+def camzoom(nargout, *args):
+    ax, rest = split_axes_arg(args)
+    ax = ax or gca_()
+    nargchk(rest, 1, 1, 'camzoom')
+    f = float(num(rest[0], 'zoom factor', 'camzoom'))
+    if not f > 0:
+        raise err('MATLAB:camzoom:factor', 'The zoom factor must be greater than 0.', 'camzoom')
+    va = float(ax.get_value('CameraViewAngle'))
+    ax.set_value('CameraViewAngle', math.degrees(2 * math.atan(math.tan(math.radians(va) / 2) / f)))
+    ax.touch()
+    return None
+
+
+@bi('camva', nout=1, arr=False)
+def camva(nargout, *args):
+    ax, rest = split_axes_arg(args)
+    ax = ax or gca_()
+    nargchk(rest, 0, 1, 'camva')
+    if not rest:
+        return float(ax.get_value('CameraViewAngle'))
+    s = opt_str(rest[0])
+    if s is not None:
+        s = s.lower()
+        if s == 'mode':
+            return Char.of(ax.props['CameraViewAngleMode'])
+        if s == 'manual':
+            ax.set_value('CameraViewAngle', float(ax.get_value('CameraViewAngle')))     # kept at what it is now
+        elif s == 'auto':
+            ax.set_value('CameraViewAngleMode', 'auto')
+        else:
+            raise err('MATLAB:camva:option', f"Unknown option '{s}': use a view angle, 'mode', 'auto' or 'manual'.", 'camva')
+    else:
+        ax.set_value('CameraViewAngle', rest[0])
+    ax.touch()
+    return None
+
+
 @bi('axis', nout=1, arr=False)
 def axis(nargout, *args):
     ax, rest = split_axes_arg(args)

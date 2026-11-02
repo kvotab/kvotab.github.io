@@ -541,7 +541,11 @@ case('dir and fileparts', "[p, n, e] = fileparts('/a/b/c.txt'); f = fullfile('a'
 case('ode15i', "[t, y] = ode15i(@(t, y, yp) yp + y, [0 1], 1, -1); e = abs(y(end) - exp(-1)) < 1e-3; "
      "[t, y] = ode15i(@(t, y, yp) yp.^3 + yp + y, [0 2], 1, -0.6823278); n = abs(y(end) - 0.18267339) < 1e-3;",
      want={'e': True, 'n': True})
-case('ode15i refuses a DAE', 'ode15i(@(t, y, yp) [yp(1) - y(2); y(1) + y(2)], [0 1], [1; -1], [-1; 0]);', error="singular")
+case('ode15i solves a DAE of index 1', "o = odeset('RelTol', 1e-6, 'AbsTol', 1e-9); [t, y] = ode15i(@(t, y, yp) [yp(1) - y(2); y(1) + y(2)], [0 1], [1; -1], [-1; 0], o); "
+     "e = max(abs(y(end, :) - [exp(-1), -exp(-1)])) < 1e-5;", want={'e': True})
+case('ode15i refuses an inconsistent start of a DAE', 'ode15i(@(t, y, yp) [yp(1) - y(2); y(1) + y(2)], [0 1], [1; -0.5], [-1; 0]);', error='decic finds')
+case('decic: the free components moved until F(t0, y0, yp0) = 0', "[y0, yp0, r] = decic(@(t, y, yp) [yp(1) - y(2); y(1) + y(2)], 0, [1; -0.5], [1; 0], [0; 0], [0; 0]);",
+     want={'y0': [[1], [-1]], 'yp0': [[-1], [0]], 'r': 0})
 case('odextend', 'sol = ode45(@(t, y) -y, [0 1], 1); sol = odextend(sol, [], 3); a = abs(deval(sol, 2.5) - exp(-2.5)) < 1e-6; '
      'b = abs(deval(sol, 0.5) - exp(-0.5)) < 1e-6; e = sol.x(end);', want={'a': True, 'b': True, 'e': 3})
 case('spdiags', '[B, d] = spdiags(magic(3)); A = full(spdiags(B, d, 3, 3)); D = spdiags(magic(4), [-1 1]); C = spdiags([10 20 30]\', 0, magic(3));',

@@ -60,6 +60,12 @@
 
   function vec(a) { return a ? a.data : new Float64Array(0); }
 
+  /* Is (px, py) inside the panel or tab that holds the axes (anywhere, when the figure does)? */
+  function inBox(ax, px, py) {
+    const b = ax && ax._box;
+    return !b || (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h);
+  }
+
   function rgb(c, alpha = 1) {
     if (!c || c === 'none') return 'transparent';
     if (typeof c === 'string') return c;
@@ -446,7 +452,7 @@
       for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) corners.push(this.proj0([x * box[0] / 2, y * box[1] / 2, z * box[2] / 2]));
       const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
       const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
-      this.scale = Math.min(rect.w / w, rect.h / h) * (ax.zoom3 || 1);
+      this.scale = Math.min(rect.w / w, rect.h / h) * (ax.zoom3 || 1) * (ax.camZoom || 1);
       this.cx = rect.x + rect.w / 2 - (Math.max(...xs) + Math.min(...xs)) / 2 * this.scale;
       this.cy = rect.y + rect.h / 2 + (Math.max(...ys) + Math.min(...ys)) / 2 * this.scale;
     }
@@ -536,11 +542,21 @@
     }
 
     drawAxes(ctx, fig, ax, W, H, legend, cbar) {
-      const rect = this.axesRect(ax, W, H, cbar, legend);
+      // axes in a panel or tab are drawn inside it (a camera zoom takes them past their Position)
+      const b = ax._box;
+      if (b) { ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip(); }
+      try { this.drawAxesIn(ctx, fig, ax, W, H, legend, cbar); } finally { if (b) ctx.restore(); }
+    }
+
+    drawAxesIn(ctx, fig, ax, W, H, legend, cbar) {
+      let rect = this.axesRect(ax, W, H, cbar, legend);
       const is3d = !(Math.abs(ax.view[1]) === 90 && ax.view[0] % 90 === 0);
       const cmap = decode(ax.cmap) || decode(fig.cmap);
       ax._cmap = cmap;
       if (ax.kind === 'polar') { this.drawPolar(ctx, ax, rect); if (legend) this.drawLegend(ctx, ax, rect, legend, null); return; }
+      // a CameraViewAngle smaller than the automatic one: the axes drawn larger about their middle
+      const k = ax.camZoom || 1;
+      if (k !== 1 && !is3d) rect = { x: rect.x + rect.w * (1 - k) / 2, y: rect.y + rect.h * (1 - k) / 2, w: rect.w * k, h: rect.h * k };
       if (is3d) {
         const fr = new Frame3(ax, rect);
         this.frames.push({ ax, fr, rect, is3d: true });
@@ -1895,7 +1911,7 @@
       for (let i = fs.length - 1; i >= 0; i--) {
         const f = fs[i];
         const r = f.rect;
-        if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) continue;
+        if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h || !inBox(f.ax, px, py)) continue;
         const ax = f.ax;
         const point = f.is3d || f.fr.polar ? null : [f.fr.ix(px), f.fr.iy(py)];
         const at = (c) => ({ id: c.id, axes: ax.id, point, bdf: !!c.bdf, cmenu: c.cmenu || ax.cmenu || fig.cmenu || null });
@@ -1993,7 +2009,7 @@
       for (let i = fs.length - 1; i >= 0; i--) {
         const f = fs[i];
         const r = f.rect;
-        if (px >= r.x - 4 && px <= r.x + r.w + 4 && py >= r.y - 4 && py <= r.y + r.h + 4) return f;
+        if (px >= r.x - 4 && px <= r.x + r.w + 4 && py >= r.y - 4 && py <= r.y + r.h + 4 && inBox(f.ax, px, py)) return f;
       }
       return null;
     }

@@ -556,6 +556,7 @@ class Axes(GObj):
         'UserData': lambda: EMPTY(), 'Units': 'normalized', 'Clipping': True, 'Projection': 'orthographic',
         'TickLabelInterpreter': 'tex', 'Colormap': None, 'ActivePositionProperty': 'outerposition', 'SortMethod': 'depth',
         'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None,
+        'CameraViewAngle': 6.6086, 'CameraViewAngleMode': 'auto',
     }
     SHOWN = ['XLim', 'YLim', 'XScale', 'YScale', 'GridLineStyle', 'Position', 'Units']
 
@@ -594,6 +595,8 @@ class Axes(GObj):
         if k == 'CLim' and self.props['CLimMode'] == 'auto':
             from .glayout import auto_clim
             return np.array([auto_clim(self)])
+        if k == 'CameraViewAngle' and self.props['CameraViewAngleMode'] == 'auto':
+            return self.auto_view_angle()
         if k == 'Title':
             return self.title
         if k == 'XLabel':
@@ -648,8 +651,16 @@ class Axes(GObj):
             self.props[k] = labels
             self.props[k + 'Mode'] = 'manual'
             return
+        if k == 'CameraViewAngle':
+            a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.size != 1 or not 0 <= a[0] < 180:
+                raise gerr('Value must be a scalar greater than or equal to 0 and less than 180.')
+            self.props[k] = float(a[0])
+            self.props[k + 'Mode'] = 'manual'
+            return
         if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode',
-                 'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode'):
+                 'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode',
+                 'CameraViewAngleMode'):
             s = py_str(value).lower()
             if s not in ('auto', 'manual'):
                 raise gerr(f"Invalid value for {k}: use 'auto' or 'manual'.")
@@ -701,6 +712,20 @@ class Axes(GObj):
     def is3d(self):
         v = self.props['View'].reshape(-1)
         return not (abs(v[1]) == 90 and v[0] % 90 == 0 and abs(v[1]) == 90) or self.kind == '3d'
+
+    def auto_view_angle(self):
+        """The camera's angle when the axes fill their place: a view from
+        above, or the wider one of a 3-D view."""
+        return 10.3396 if self.is3d() else 6.6086
+
+    def camera_zoom(self):
+        """How much larger a CameraViewAngle smaller than the automatic one
+        draws the axes (about their middle; they may then go past their
+        Position, as far as their figure or panel)."""
+        if self.props['CameraViewAngleMode'] != 'manual':
+            return 1.0
+        a = max(float(self.props['CameraViewAngle']), 1e-6)
+        return math.tan(math.radians(self.auto_view_angle()) / 2) / math.tan(math.radians(a) / 2)
 
     def next_color(self):
         """The color for the next line (ColorOrder, cycled; held axes go on)."""
@@ -1285,6 +1310,7 @@ def serialize_axes(ax):
         'xaxisLocation': p['XAxisLocation'], 'yaxisLocation': p['YAxisLocation'],
         'dar': [float(x) for x in p['DataAspectRatio'].reshape(-1)], 'darMode': p['DataAspectRatioMode'],
         'pbar': [float(x) for x in p['PlotBoxAspectRatio'].reshape(-1)], 'pbarMode': p['PlotBoxAspectRatioMode'],
+        'camZoom': ax.camera_zoom(),
         'visible': bool(p['Visible']), 'layer': p['Layer'],
         'title': _text_json(ax.title), 'subtitle': _text_json(ax.subtitle), 'xlabel': _text_json(ax.xlabel), 'ylabel': _text_json(ax.ylabel),
         'zlabel': _text_json(ax.zlabel), 'cmap': _b64(np.asarray(cmap, float)),

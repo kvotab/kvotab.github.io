@@ -19,6 +19,8 @@
     "matfile.py",
     "figfile.py",
     "parfor.py",
+    "odesolvers.py",
+    "vernertab.py",
     "worker_api.py",
     "help.py",
     "helptext.py",

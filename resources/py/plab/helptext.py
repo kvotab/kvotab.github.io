@@ -1409,41 +1409,61 @@ triplequad: A triple integral over a box (older; integral3 is preferred).
     q = triplequad(fun, xmin, xmax, ymin, ymax, zmin, zmax)
 
 # ---- differential equations ------------------------------------------------------------------
-ode45: Solve an ODE system y' = f(t, y): explicit Runge-Kutta (4,5), for nonstiff problems.
+ode45: Solve a nonstiff ODE system y' = f(t, y) by the Dormand-Prince Runge-Kutta pair of orders 5 and 4: the first solver to try.
     [t, y] = ode45(odefun, tspan, y0)
     [t, y] = ode45(odefun, tspan, y0, options)
     sol = ode45(...)
     [t, y, te, ye, ie] = ode45(..., options)
     * odefun(t, y) returns a column; tspan with more than two values asks for the solution at those times.
-ode23: Solve a nonstiff ODE system by the Runge-Kutta (2,3) pair, for loose tolerances.
+    * Each of the solvers takes the options odeset makes; a mass matrix M(t, y) y' = f(t, y) is solved for y' at each evaluation by the nonstiff ones.
+ode23: Solve a nonstiff ODE system by the Bogacki-Shampine Runge-Kutta pair of orders 3 and 2, for loose tolerances.
     [t, y] = ode23(odefun, tspan, y0)
     [t, y] = ode23(odefun, tspan, y0, options)
-ode113: Solve a nonstiff ODE system by a variable-order Adams method.
+ode113: Solve a nonstiff ODE system by Adams-Bashforth-Moulton formulas of variable step and order (1 to 12), for tight tolerances or a costly odefun.
     [t, y] = ode113(odefun, tspan, y0)
     [t, y] = ode113(odefun, tspan, y0, options)
-ode78: Solve a nonstiff ODE system by a Runge-Kutta (7,8) pair, for tight tolerances.
+    * Predict, evaluate, correct, evaluate: two evaluations of odefun a step. The order and the step are chosen together from error estimates at the neighbouring orders (Shampine and Gordon's method).
+ode78: Solve a nonstiff ODE system by Verner's Runge-Kutta pair of orders 8 and 7, for tight tolerances.
+    [t, y] = ode78(odefun, tspan, y0)
     [t, y] = ode78(odefun, tspan, y0, options)
-ode89: Solve a nonstiff ODE system by a Runge-Kutta (8,9) pair, for very tight tolerances.
+    * Values between the steps come from an interpolant of order 7, whose extra stages are evaluated only for the steps they are asked of.
+ode89: Solve a nonstiff ODE system by Verner's Runge-Kutta pair of orders 9 and 8, for very tight tolerances.
+    [t, y] = ode89(odefun, tspan, y0)
     [t, y] = ode89(odefun, tspan, y0, options)
-ode15s: Solve a stiff ODE system (or one with a mass matrix) by a variable-order BDF method.
+    * Values between the steps come from an interpolant of order 8.
+ode15s: Solve a stiff ODE system, or a differential-algebraic one (a singular mass matrix), by the numerical differentiation formulas of orders 1 to 5.
     [t, y] = ode15s(odefun, tspan, y0)
     [t, y] = ode15s(odefun, tspan, y0, options)
-ode23s: Solve a stiff ODE system by a Rosenbrock method.
+    * MaxOrder (1 to 5) caps the order; BDF 'on' takes the backward differentiation formulas instead of the NDFs.
+    * With a singular mass matrix the algebraic part of y0 is first moved until the algebraic equations hold.
+ode23s: Solve a stiff ODE system by the modified Rosenbrock pair of orders 2 and 3, for loose tolerances.
+    [t, y] = ode23s(odefun, tspan, y0)
     [t, y] = ode23s(odefun, tspan, y0, options)
-ode23t: Solve a moderately stiff ODE system by the trapezoidal rule.
+    * The Jacobian is formed at every step; the mass matrix, if any, must be constant.
+ode23t: Solve a moderately stiff ODE system, or a differential-algebraic one, by the trapezoidal rule.
+    [t, y] = ode23t(odefun, tspan, y0)
     [t, y] = ode23t(odefun, tspan, y0, options)
-ode23tb: Solve a stiff ODE system by TR-BDF2.
+    * The rule does not damp: a component far stiffer than the step rings about its value, so ode15s or ode23tb suit a very stiff problem better.
+ode23tb: Solve a stiff ODE system by TR-BDF2: a trapezoidal stage, then a second-order backward differentiation stage, for loose tolerances.
+    [t, y] = ode23tb(odefun, tspan, y0)
     [t, y] = ode23tb(odefun, tspan, y0, options)
-ode15i: Solve an implicit system f(t, y, y') = 0.
+ode15i: Solve an implicit system F(t, y, y') = 0, an implicit ODE or a differential-algebraic one of index 1, by the backward differentiation formulas of orders 1 to 5.
     [t, y] = ode15i(odefun, tspan, y0, yp0)
     [t, y] = ode15i(odefun, tspan, y0, yp0, options)
     sol = ode15i(...)
-    * Here y' is found from f(t, y, y') = 0 at each step, which needs df/dy' to be nonsingular: implicit ODEs, not differential-algebraic systems.
+    * y0 and yp0 must satisfy F(t0, y0, yp0) = 0, and decic finds values that do. For an implicit ODE (dF/dy' nonsingular) yp0 is corrected to fit y0, with a warning.
+    * The Jacobian option is a function returning [dFdy, dFdyp], or a cell {dFdy, dFdyp}; MaxOrder caps the order.
+decic: Initial conditions that satisfy F(t0, y0, yp0) = 0, for ode15i.
+    [y0new, yp0new] = decic(odefun, t0, y0, fixed_y0, yp0, fixed_yp0)
+    [y0new, yp0new, resnrm] = decic(odefun, t0, y0, fixed_y0, yp0, fixed_yp0, options)
+    * fixed_y0 and fixed_yp0 hold (with 1) components at the values given; the others change as little as least squares can. resnrm is the norm of F at the result.
 odeset: Make or change the options for the ODE solvers.
     options = odeset('RelTol', 1e-6, 'AbsTol', 1e-9, ...)
     options = odeset(oldopts, 'Name', value, ...)
-    * Among the names: RelTol, AbsTol, MaxStep, InitialStep, Events, Mass, Jacobian, NonNegative, OutputFcn, OutputSel.
+    * Among the names: RelTol, AbsTol, MaxStep, InitialStep, Refine, Events, Jacobian, NonNegative, OutputFcn, OutputSel, Mass, MStateDependence, MassSingular, MaxOrder, BDF.
+    * Mass is a matrix, or a function of t (MStateDependence 'none', or a function of one input) or of t and y; MassSingular ('yes', 'no' or 'maybe') says whether to look for a singular one.
     * OutputFcn is called with 'init', then after each step with its times and the states OutputSel names (all, unless given), then 'done'; a true answer stops the solution. A solver asked for no output plots with odeplot.
+    * Stats, Vectorized and NormControl are accepted and change nothing.
 odeget: An option's value from an ODE options structure.
     v = odeget(options, 'Name')
     v = odeget(options, 'Name', default)
@@ -2393,6 +2413,17 @@ view: The viewpoint: azimuth and elevation in degrees.
     view(3)
     view(az, el)
     [az, el] = view
+camzoom: Zoom the camera: the axes drawn larger by a factor above 1, smaller by one below.
+    camzoom(f)
+    camzoom(ax, f)
+    * It narrows the axes' CameraViewAngle by the factor; the axes may then reach past their Position, as far as their figure or panel.
+camva: The camera's view angle in degrees: a smaller angle draws the axes larger.
+    va = camva
+    camva(va)
+    camva(ax, va)
+    m = camva('mode')
+    camva auto | manual
+    * The axes' CameraViewAngle. Left automatic it is 6.6086 for a view from above (10.3396 in 3-D), and the axes fill their place.
 light: Add a light to the axes.
     light
     h = light('Position', [x y z])
