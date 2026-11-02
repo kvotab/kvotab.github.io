@@ -15,7 +15,7 @@ import numpy as np
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, check_real)
-from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS, class_of, shape_of,
+from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, INT_RANGE, DTYPE_CLASS, class_of, shape_of,
                       numel, _2d, scalar_out, EMPTY)
 from ..ops import finish, to_int_class, INT_CLASSES, align, check_bcast, round_half_away
 
@@ -422,6 +422,163 @@ def idivide(nargout, *args):
         fn = {'fix': np.trunc, 'floor': np.floor, 'ceil': np.ceil, 'round': _round_half}[kind]
         r = fn(q)
     return finish(r, klass)
+
+
+# ---- bits ------------------------------------------------------------------------------------------
+
+_UNSIGNED = {'int8': np.uint8, 'int16': np.uint16, 'int32': np.uint32, 'int64': np.uint64,
+             'uint8': np.uint8, 'uint16': np.uint16, 'uint32': np.uint32, 'uint64': np.uint64}
+
+
+def _bit_args(vals, fn, assumed=None):
+    """The integer class bit functions work in, the class they give, and the
+    inputs as arrays of the first: an integer input's class, or for doubles
+    the assumed type (uint64 unless named), their values whole numbers in
+    its range; the result is then double."""
+    ints = {class_of(v) for v in vals} & set(INT_CLASSES)
+    if len(ints) > 1:
+        raise err(f'MATLAB:{fn}:mixedClasses', 'Integer inputs must be of the same class.', fn)
+    if ints:
+        klass = ints.pop()
+        if assumed is not None and assumed.lower() != klass:
+            raise err(f'MATLAB:{fn}:assumedtypeForIntegers', 'An assumed type is for double inputs only.', fn)
+        result = klass
+    else:
+        klass = (assumed or 'uint64').lower()
+        if klass not in INT_CLASSES:
+            raise err(f'MATLAB:{fn}:badAssumedType', 'The assumed type must be the name of an integer class, such as uint8 or int64.', fn)
+        result = 'double'
+    dt = INT_TYPES[klass]
+    lo, hi = INT_RANGE[klass]
+    arrays = []
+    for v in vals:
+        a = arr(v)
+        if a.dtype == dt:
+            arrays.append(a)
+            continue
+        if a.dtype.kind == 'c':
+            raise err(f'MATLAB:{fn}:complexInput', 'Inputs must be real.', fn)
+        f = np.asarray(a, F64)
+        if f.size and (not np.all(np.isfinite(f)) or np.any(f != np.floor(f)) or np.any(f < lo) or np.any(f >= float(hi) + 1.0)):
+            raise err(f'MATLAB:{fn}:outOfRange', 'Double inputs must have integer values in the range of ASSUMEDTYPE.', fn)
+        arrays.append(f.astype(np.int64 if lo < 0 else np.uint64).astype(dt))
+    return klass, result, arrays
+
+
+def _bit_out(r, result):
+    return out(r if result != 'double' else r.astype(F64))
+
+
+def _bcast(*arrays):
+    """Arrays brought to one size, the language's way."""
+    n = max(a.ndim for a in arrays)
+    arrays = [a.reshape(a.shape + (1,) * (n - a.ndim)) for a in arrays]
+    for a in arrays[1:]:
+        check_bcast(arrays[0], a)
+    try:
+        return np.broadcast_arrays(*arrays)
+    except ValueError:
+        raise err('MATLAB:sizeDimensionsMustMatch', 'Arrays have incompatible sizes for this operation.')
+
+
+def _bitwise(args, fn, op):
+    nargchk(args, 2, 3, fn)
+    klass, result, (a, b) = _bit_args(args[:2], fn, opt_str(args[2]) if len(args) > 2 else None)
+    a, b = _bcast(a, b)
+    return _bit_out(op(a, b), result)
+
+
+@bi('bitand')
+def bitand(nargout, *args):
+    return _bitwise(args, 'bitand', np.bitwise_and)
+
+
+@bi('bitor')
+def bitor(nargout, *args):
+    return _bitwise(args, 'bitor', np.bitwise_or)
+
+
+@bi('bitxor')
+def bitxor(nargout, *args):
+    return _bitwise(args, 'bitxor', np.bitwise_xor)
+
+
+def _bit_positions(bit, nbits, fn):
+    b = np.asarray(arr(bit), F64)
+    if b.size and (np.any(b != np.floor(b)) or np.any(b < 1) or np.any(b > nbits)):
+        raise err(f'MATLAB:{fn}:outOfRange', f'Bit positions must be integers from 1 to {nbits}.', fn)
+    return b
+
+
+@bi('bitget')
+def bitget(nargout, *args):
+    nargchk(args, 2, 3, 'bitget')
+    klass, result, (a,) = _bit_args(args[:1], 'bitget', opt_str(args[2]) if len(args) > 2 else None)
+    ut = _UNSIGNED[klass]
+    width = 8 * np.dtype(ut).itemsize
+    b = _bit_positions(args[1], width, 'bitget')
+    u, b = _bcast(np.ascontiguousarray(a).view(ut), b)
+    r = (u >> (b - 1).astype(ut)) & ut(1)
+    return _bit_out(r.astype(INT_TYPES[klass]), result)
+
+
+@bi('bitset')
+def bitset(nargout, *args):
+    nargchk(args, 2, 4, 'bitset')
+    rest = list(args[2:])
+    assumed = opt_str(rest.pop()) if rest and opt_str(rest[-1]) is not None else None
+    klass, result, (a,) = _bit_args(args[:1], 'bitset', assumed)
+    ut = _UNSIGNED[klass]
+    width = 8 * np.dtype(ut).itemsize
+    b = _bit_positions(args[1], width, 'bitset')
+    v = np.asarray(arr(rest[0]), F64) if rest else np.ones((1, 1))
+    u, b, v = _bcast(np.ascontiguousarray(a).view(ut), b, v)
+    mask = ut(1) << (b - 1).astype(ut)
+    r = np.where(v != 0, u | mask, u & ~mask).astype(ut)
+    return _bit_out(r.view(INT_TYPES[klass]), result)
+
+
+@bi('bitshift')
+def bitshift(nargout, *args):
+    nargchk(args, 2, 3, 'bitshift')
+    third = args[2] if len(args) > 2 else None
+    assumed = opt_str(third) if third is not None else None
+    klass, result, (a,) = _bit_args(args[:1], 'bitshift', assumed)
+    ut = _UNSIGNED[klass]
+    width = 8 * np.dtype(ut).itemsize
+    k = np.asarray(arr(args[1]), F64)
+    if k.size and np.any(k != np.floor(k)):
+        raise err('MATLAB:bitshift:nonIntegerShift', 'The number of bits to shift must be an integer.', 'bitshift')
+    a, k = _bcast(np.ascontiguousarray(a), k)
+    with np.errstate(all='ignore'):
+        u = a.view(ut)
+        s = np.minimum(np.abs(k), width - 1).astype(ut)
+        # left: the bit pattern moves up and what passes the top is gone;
+        # right: down, a signed value's sign filling in (rounding to -Inf)
+        down = (a >> s.astype(a.dtype)).view(ut) if a.dtype.kind == 'i' else u >> s
+        r = np.where(k >= 0, u << s, down).astype(ut)
+        gone = np.abs(k) >= width
+        if gone.any():
+            r = np.where(gone, np.where((k < 0) & (a < 0), ~ut(0), ut(0)), r).astype(ut)
+    if third is not None and assumed is None and int(num(third)) < width:
+        # the older form's third input: bits past the lowest n are dropped
+        r = r & ut((1 << int(num(third))) - 1)
+    return _bit_out(r.view(INT_TYPES[klass]), result)
+
+
+@bi('bitcmp')
+def bitcmp(nargout, *args):
+    nargchk(args, 1, 2, 'bitcmp')
+    second = args[1] if len(args) > 1 else None
+    assumed = opt_str(second) if second is not None else None
+    klass, result, (a,) = _bit_args(args[:1], 'bitcmp', assumed)
+    if second is not None and assumed is None:
+        # the older form: complement the lowest n bits
+        n = int(num(second))
+        ut = _UNSIGNED[klass]
+        r = (np.ascontiguousarray(a).view(ut) ^ ut((1 << n) - 1)).view(INT_TYPES[klass])
+        return _bit_out(r, result)
+    return _bit_out(np.invert(a), result)
 
 
 @bi('sign')

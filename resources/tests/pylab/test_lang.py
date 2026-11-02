@@ -132,6 +132,15 @@ case('integer saturation', 'a = int8(100) + int8(100); b = uint8(3) - uint8(5); 
 case('integer and double', 'a = int8(5) * 2.6;', want={'a': 13}, cls={'a': 'int8'})
 case('mixed integers refused', 'a = int8(1) + int16(1);', error='Integers can only be combined')
 case('single wins over double', 'a = single(1) + 2;', cls={'a': 'single'})
+case('bit functions', 'a = bitand(12, 10); b = bitor(uint8(12), 3); c = bitxor(int8(-1), int8(5)); d = bitshift(1, 3); e = bitshift(int8(-8), -1); '
+     'f = bitshift(uint8(255), 4); g = bitcmp(uint8(5)); h = bitget(5, 1:3); k = bitset(uint8(255), 1, 0); m = bitcmp(5, 8); n = bitshift(int16(-1), -20);',
+     want={'a': 8, 'b': 15, 'c': -6, 'd': 8, 'e': -4, 'f': 240, 'g': 250, 'h': [[1, 0, 1]], 'k': 254, 'm': 250, 'n': -1},
+     cls={'a': 'double', 'b': 'uint8', 'c': 'int8', 'f': 'uint8', 'g': 'uint8', 'k': 'uint8', 'n': 'int16'})
+case('the bits of a uint64 kept to the last', "p = uint64([0 0]); p(1) = bitset(bitset(bitset(p(1), 1), 33), 54); s = sprintf('%d', p(1)); b = find(bitget(p(1), 1:64));",
+     want={'s': '9007203549708289', 'b': [[1, 33, 54]]})
+case('bit functions take whole numbers', 'x = bitand(1.5, 1);', error='Double inputs must have integer values')
+case('integers convert exactly, saturating', "a = bitset(bitset(int64(0), 54), 1); s = sprintf('%d', uint64(a)); c = int16(uint64(70000)); d = uint64(int64(-5)); e = uint8(int8([100 -100]));",
+     want={'s': '9007199254740993', 'c': 32767, 'd': 0, 'e': [[100, 0]]}, cls={'c': 'int16', 'd': 'uint64', 'e': 'uint8'})
 case('char arithmetic', "a = 'a' + 1; b = double('AB');", want={'a': 98, 'b': [[65, 66]]})
 case('logical arithmetic', 'a = true + true; b = class(a);', want={'a': 2, 'b': 'double'})
 case('implicit expansion', 'a = [1 2 3] + [10; 20];', want={'a': [[11, 12, 13], [21, 22, 23]]})
@@ -224,6 +233,15 @@ case('cellfun', "a = cellfun(@numel, {'ab', 'cde', ''}); b = cellfun('isempty', 
      want={'a': [[2, 3, 0]], 'b': [[True, False]], 'mn': [[1, 2]], 'mx': [[5, 3]]})
 case('cellfun nonuniform error', 'a = cellfun(@(x) [x x], {1, 2});', error='Non-scalar in Uniform output')
 case('structfun', 's.a = 1; s.b = 4; v = structfun(@(x) x*2, s)\';', want={'v': [[2, 8]]})
+case('arrayfun asked for nothing asks the function for nothing',
+     "figure; arrayfun(@(x) disp(x*10), 1:2), arrayfun(@(x) plot([0 1], [x x]), 1:2), cellfun(@(x) fprintf('<%s>', x), {'a', 'b'}), close all",
+     shows=['10', '20', '<a><b>'], absent=('ans',))
+case('and still gives what the function gives', 'arrayfun(@(x) x*2, 1:3)', want={'ans': [[2, 4, 6]]})
+case('arrayfun and cellfun over a matrix, not uniform',
+     "names = {'A', 'B', 'C'}; c = arrayfun(@(x) names{x}, [1 2; 3 1], 'UniformOutput', false); s = size(c); "
+     "d = cellfun(@(x) x*2, {1 2; 3 4}, 'UniformOutput', false); [p, q] = arrayfun(@(x) deal(x, -x), [1 2; 3 4], 'UniformOutput', false); r = q{2, 1};",
+     want={'c': ['A', 'C', 'B', 'A'], 's': [[2, 2]], 'd': [2, 6, 4, 8], 'r': -3})
+case('num2cell of a struct matrix', 's = struct(\'a\', {1, 2, 3, 4}); n = num2cell(reshape(s, 2, 2)); u = n{2, 1}.a; v = n{1, 2}.a;', want={'u': 2, 'v': 3})
 case('num2cell and cell2mat', 'c = num2cell([1 2; 3 4]); m = cell2mat({[1 2], [3]; [4 5], [6]});', want={'c': [1, 3, 2, 4], 'm': [[1, 2, 3], [4, 5, 6]]})
 case('containers.Map', "m = containers.Map(); m('a') = 1; m('b') = 2; k = keys(m); v = m('b'); n = m.Count; h = isKey(m, 'c');",
      want={'k': ['a', 'b'], 'v': 2, 'n': 2, 'h': False})
@@ -361,6 +379,9 @@ case('return', 'a = early(-1); b = early(4);', want={'a': 0, 'b': 2})
 case('function handle to a file', 'f = @fact; a = f(5); b = arrayfun(@fact, 1:4);', want={'a': 120, 'b': [[1, 2, 6, 24]]})
 case('exist', "a = exist('fact'); b = exist('sin'); x = 1; c = exist('x', 'var'); d = exist('nothing_here');", want={'a': 2, 'b': 5, 'c': 1, 'd': 0})
 case('which', 'which fact', shows='fact.m')
+case('help with an output', "t = help('addup'); a = contains(t, 'The sum of any number'); b = isempty(help('nosuchthing')); c = contains(help('sin'), 'sin');",
+     want={'a': True, 'b': True, 'c': True})
+case('help in a program prints', "help('addup')", shows='The sum of any number of arguments.')
 case('nested functions share the variables both use', 'r = nestsum(4);', want={'r': 110})
 case('a handle keeps the workspace of its call', 'f = makecounter(); a = f(); b = f(); g = makecounter(); c = g(); d = f();',
      want={'a': 1, 'b': 2, 'c': 1, 'd': 3})
@@ -403,6 +424,7 @@ case('assignin', "assignin('base', 'q', 3);", want={'q': 3})
 case('command syntax', 'format long; x = pi; format short', shows=None)
 case('isvarname', "a = isvarname('x1'); b = isvarname('1x'); c = isvarname('end');", want={'a': True, 'b': False, 'c': False})
 case('tic toc', 't = tic; e = toc(t); ok = e >= 0;', want={'ok': True})
+case('etime is t1 less t0', 'e = etime([2026 1 1 0 1 1.5], [2026 1 1 0 0 0]); t0 = clock; f = etime(clock, t0) >= 0;', want={'e': 61.5, 'f': True})
 case('input without a page', "x = input('n: ');", error='Input is not available here.')
 
 # ---- display ----------------------------------------------------------------------------------------

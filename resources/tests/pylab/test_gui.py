@@ -9,6 +9,7 @@ objects; textread and strmatch; and the description the page builds from.
     python3 test_gui.py          (from any folder; needs numpy and scipy)
 """
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -354,7 +355,17 @@ for fn, title in (('errordlg', 'Error'), ('warndlg', 'Warning'), ('helpdlg', 'He
     run(f"h = {fn}('Something');")
     check(f'{fn} has its title', text("get(h, 'Name')"), title)
 run("h = msgbox('x', 'Box', 'custom', uint8(255 * ones(4, 4, 3)), []);")
-check('a message box with a picture of its own', num("size(get(findobj(h, 'Tag', 'IconAxes'), 'CData'))"), [4.0, 4.0, 3.0])
+check('a message box with a picture of its own, stretched over the sign\'s square', num("size(get(findobj(h, 'Tag', 'IconAxes'), 'CData'))"), [32.0, 32.0, 3.0])
+run("ico = 3 * ones(13); ico(:, 1:4:13) = 1; ico(1:4:13, :) = 1; ico(2:4, 2:4) = 2; "
+    "h2 = msgbox('y', 'Grid', 'custom', ico, [0 0 0; .5 .5 .6; 1 1 1]); c = get(findobj(h2, 'Tag', 'IconAxes'), 'CData');")
+check('an indexed picture in its colours', (num('size(c)'), num('squeeze(c(1, 1, :))\''), num('squeeze(c(5, 5, :))\''), num('squeeze(c(16, 16, :))\'')),
+      ([32.0, 32.0, 3.0], [0.0, 0.0, 0.0], [0.5, 0.5, 0.6], [1.0, 1.0, 1.0]))
+check('findall finds the hidden dialogs', num("numel(findall(0, 'Name', 'Box'))"), 1)
+run("hw = msgbox(repmat('ab ', 1, 40), 'Wide');")
+check('a message box wraps its text at 75 letters', num("cellfun(@numel, get(findobj(hw, 'Tag', 'MessageBox'), 'String'))'"), [74.0, 45.0])
+run("cbf = figure; uicontrol(cbf, 'Callback', 'seen = [numel(findobj(0, ''Name'', ''Box'')) numel(get(0, ''Children''))];');")
+ui({'type': 'control', 'id': val('cbf').children[0].id, 'action': 'click'})
+check('a callback sees them, by findobj and the root\'s Children', num('seen'), [1.0, float(len([f for f in STORE.figures.values() if f.valid]))])
 run("w = waitbar(0, 'Working', 'Name', 'Job');")
 check('a waitbar is a figure with a patch', (text("get(w, 'Name')"), num("numel(findobj(w, 'Type', 'patch'))")), ('Job', 1))
 run("waitbar(0.5)")
@@ -405,6 +416,61 @@ run("d = dialog('Name', 'Mine');")
 check('dialog: a window of its own', (text("get(d, 'Name')"), text("get(d, 'WindowStyle')")), ('Mine', 'modal'))
 run("close all force")
 
+# ---- finding objects ---------------------------------------------------------------------------------------------------
+run("fo = figure('Name', 'Find'); fa = axes(fo); hold(fa, 'on'); l1 = plot(fa, 1:3, 'Tag', 'part1'); "
+    "l2 = plot(fa, 2:4, 'Tag', 'part2', 'HandleVisibility', 'off'); l3 = plot(fa, 3:5, 'Tag', 'other');")
+check('findobj leaves out what HandleVisibility hides, findall not', (num("numel(findobj(fo, 'Type', 'line'))"), num("numel(findall(fo, 'Type', 'line'))")), (2, 3))
+check('-regexp', (num("numel(findobj(fo, '-regexp', 'Tag', '^part'))"), num("numel(findall(fo, '-regexp', 'Tag', 'art'))")), (1, 2))
+check('-or, and -not before a test', (num("numel(findobj(fo, 'Tag', 'part1', '-or', 'Tag', 'other'))"), num("numel(findobj(fo, '-not', 'Tag', 'part1', '-and', 'Type', 'line'))")), (2, 1))
+check('-xor', num("numel(findobj(fo, 'Type', 'line', '-xor', 'Tag', 'other'))"), 1)
+check('flat and -depth', (num("numel(findobj(fo, 'flat'))"), num("numel(findobj(fo, '-depth', 1))"), num("numel(findobj(fo, '-depth', 0, 'Type', 'line'))")), (1, 2, 0))
+check('-property', num("numel(findobj(fa, '-property', 'Marker'))"), 2)
+check('-function, on the object or on a property', (num("numel(findobj(fo, '-function', @(h) strcmp(get(h, 'Type'), 'line')))"), num("numel(findobj(fo, '-function', 'Tag', @(t) numel(t) == 5))")), (2, 2))
+run("set(0, 'ShowHiddenHandles', 'on');")
+check('the root\'s ShowHiddenHandles shows them to findobj', num("numel(findobj(fo, 'Type', 'line'))"), 3)
+run("set(0, 'ShowHiddenHandles', 'off');")
+check('and off again', (num("numel(findobj(fo, 'Type', 'line'))"), text("get(0, 'ShowHiddenHandles')")), (2, 'off'))
+check('the root is among what findobj finds', text("get(findobj('Type', 'root'), 'Type')"), 'root')
+run("tx = text(fa, 2, 9, 'outside'); set(l1, 'Clipping', 'off');")
+kids = {c['id']: c for c in serialize_figure(val('fo'))['axes'][0]['children']}
+check('text is not clipped to the axes, lines are unless asked', (kids[val('tx').id]['clip'], kids[val('l3').id]['clip'], kids[val('l1').id]['clip']), (False, True, False))
+run("close all force")
+
+# ---- programs written for older releases -----------------------------------------------------------------------------
+run("fo = figure('Position', [100 100 500 400], 'DoubleBuffer', 'on', 'BackingStore', 'off'); fn = figure; figure(fo); "
+    "fa = axes('Units', 'pixels', 'Position', [50 50 400 300], 'DrawMode', 'fast'); ln = line([0 1], [0 1], 'EraseMode', 'xor');")
+check('their properties are kept: DoubleBuffer, DrawMode, EraseMode', (text("get(fo, 'DoubleBuffer')"), text("get(fo, 'BackingStore')"), text("get(fa, 'DrawMode')"),
+                                                                       text("get(ln, 'EraseMode')")), ('on', 'off', 'fast', 'xor'))
+run("z = zeros(1, 2); z(2) = line(fa, [0 1], [1 0]); h = []; h(1) = line(fa, [0 1], [0 0]);")
+check('an object kept among numbers is its handle number, never a whole one', (num('z(1)'), num('mod(z(2), 1) > 0'), text('class(h)')),
+      (0, True, 'matlab.graphics.chart.primitive.Line'))
+run("set(z(2), 'Color', [1 0 0]);")
+check('set, get, == and ishandle take the number', (num("get(z(2), 'Color')"), num("z(2) == findobj(fa, 'Color', [1 0 0])"), num('ishandle([z(2) 2.5])')),
+      ([1.0, 0.0, 0.0], True, [True, False]))
+run("delete(z(2));")
+check('delete too; a figure is its number', (num('ishandle(z(2))'), num('double(fo) == round(double(fo))')), (False, True))
+run("t1 = text(fa, 0, 0, 'a', 'FontSize', 30, 'FontUnits', 'Normalized'); t2 = text(fa, 0, 0, 'b', 'FontUnits', 'normalized', 'FontSize', 0.1);")
+check("FontSize before FontUnits keeps the size, as a part of the axes' height", (text("get(t1, 'FontUnits')"), round(num("get(t1, 'FontSize')"), 4), num("get(t2, 'FontSize')")),
+      ('normalized', 0.1333, 0.1))
+run("set(t1, 'FontUnits', 'points');")
+check('and back in points', round(num("get(t1, 'FontSize')"), 6), 30.0)
+run("xlim(fa, [0 10]); ylim(fa, [0 5]); tu = text(fa, 200, 150, 'c', 'Units', 'Pixels');")
+check("text(x, y, s, 'Units', u): x and y in those units", (text("get(tu, 'Units')"), num("get(tu, 'Position')")), ('pixels', [200.0, 150.0, 0.0]))
+run("set(tu, 'Units', 'data');")
+check('Units changed later: the place converted', num("get(tu, 'Position')"), [5.0, 2.5, 0.0])
+run("set(tu, 'Units', 'normalized');")
+check('to normalized', num("get(tu, 'Position')"), [0.5, 0.5, 0.0])
+run("tb = text(fa, 1, 1, 'box', 'EdgeColor', 'k', 'Margin', 6, 'LineWidth', 2);")
+d = serialize_figure(val('fo'))
+tj = [c for c in d['axes'][0]['children'] if c['id'] == val('tb').id][0]
+check("a text's box: its margin and line width go to the page", (tj['margin'], tj['lineWidth']), (6.0, 2.0))
+check('a figure whose Position the program set opens at it', (d['placed'], serialize_figure(val('fn'))['placed']), (True, False))
+run("cla(fa); p1 = patch([0 1 1], [0 0 1], 'r'); p2 = patch([0 1 0], [0 1 1], [0 0 1]);")
+check('patch adds to the axes as they are', num("numel(findobj(fa, 'Type', 'patch'))"), 2)
+run("fill([0 1 1], [0 0 1], 'r');")
+check('fill draws afresh unless held', num("numel(findobj(fa, 'Type', 'patch'))"), 1)
+run("close all force")
+
 # ---- timers ----------------------------------------------------------------------------------------------------------
 EVENTS.clear()
 run("t = timer('TimerFcn', 'ticks = ticks + 1;', 'StartFcn', 'started = 1;', 'StopFcn', 'stopped = 1;', 'Period', 0.5, 'ExecutionMode', 'fixedRate', 'TasksToExecute', 3); ticks = 0; started = 0; stopped = 0;")
@@ -435,6 +501,36 @@ out = during("wait(t2); disp('waited')", [lambda ids: {'type': 'timer', 'id': id
 check('wait until a timer stops', out.strip(), 'waited')
 run("delete(timerfindall)")
 
+# ---- sound -----------------------------------------------------------------------------------------------------------
+
+
+def sounds():
+    return [e for e in EVENTS if e['type'] == 'sound']
+
+
+def samples(e):
+    return np.frombuffer(base64.b64decode(e['data']), '<f4').reshape(e['channels'], -1)
+
+
+EVENTS.clear()
+run("sound(sin(1:100), 8000)")
+e = sounds()[-1]
+check('sound sends the samples to the page', (e['rate'], e['channels'], samples(e).shape[1], round(float(samples(e)[0, 0]), 5)), (8000.0, 1, 100, round(float(np.sin(1.0)), 5)))
+run("sound([2 -3 0.5])")
+check('sound clips to -1..1, 8192 a second', (sounds()[-1]['rate'], [round(float(x), 3) for x in samples(sounds()[-1])[0]]), (8192.0, [1.0, -1.0, 0.5]))
+run("soundsc([0 2 4], 4000)")
+check("soundsc: the data's range becomes -1..1", [round(float(x), 3) for x in samples(sounds()[-1])[0]], [-1.0, 0.0, 1.0])
+run("soundsc([0 2 4], 4000, [0 8])")
+check('or the range given', [round(float(x), 3) for x in samples(sounds()[-1])[0]], [-1.0, -0.5, 0.0])
+run("sound([zeros(4, 1), 0.5 * ones(4, 1)])")
+check('two columns are left and right', (sounds()[-1]['channels'], [round(float(x), 2) for x in samples(sounds()[-1])[1]]), (2, [0.5] * 4))
+check('three are refused', 'two columns' in run("sound(ones(4, 3))"), True)
+n = len(sounds())
+run("beep off; beep")
+check('beep off silences beep', (len(sounds()), text('beep')), (n, 'off'))
+run("beep on; beep")
+check('beep plays a tone', len(sounds()), n + 1)
+
 # ---- data kept with objects -----------------------------------------------------------------------------------------------
 run("f = figure; b = uicontrol(f); setappdata(f, 'n', 5); guidata(b, struct('x', 7));")
 check('getappdata', num("getappdata(f, 'n')"), 5)
@@ -450,6 +546,7 @@ run("close all force")
 check('strmatch: the rows that start with', num("strmatch('Nor', {'Easy', 'Normal', 'Hard'})"), 2)
 check("strmatch 'exact', blanks of a char matrix not counted", num("strmatch('a', ['abc'; 'a  '; 'xa '], 'exact')"), 2)
 check('strmatch with no match', num("size(strmatch('q', {'a'}))"), [0.0, 1.0])
+check('strmatch in a cell matrix: its elements down the columns', num("strmatch('A', {'A', 'B'; 'C', 'A'}')"), [1.0, 4.0])
 with open(os.path.join(TMP, 'words.txt'), 'w') as fh:
     fh.write('...|.1.|...\n-----------\n2.3 x\n')
 check('textread %s: the words over the lines', num("numel(textread('words.txt', '%s'))"), 4)

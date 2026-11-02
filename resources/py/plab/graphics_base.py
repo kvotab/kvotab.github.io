@@ -208,6 +208,10 @@ class GObj(Obj):
         self.touch()
 
     def set_value(self, k, value):
+        if k == 'FontUnits':
+            from .uiobjects import set_font_units
+            set_font_units(self, value)
+            return
         self.props[k] = import_value(self, k, value)
 
     def reparent(self, p):
@@ -240,7 +244,11 @@ class GObj(Obj):
         pass
 
     def number_value(self):
-        return float(self.id) if self.TYPE != 'figure' else float(self.props.get('Number', self.id))
+        """The object's handle as a number: a figure's number, 0 for the root,
+        and for the rest a number that is never whole, so never a figure's."""
+        if self.TYPE == 'figure':
+            return float(self.props.get('Number', self.id))
+        return 0.0 if self.TYPE == 'root' else self.id + HANDLE_FRACTION
 
     def display_lines(self):
         name = self.CLASSNAME.split('.')[-1]
@@ -289,7 +297,8 @@ _COLOR_PROPS = {'Color': ('none',), 'MarkerFaceColor': ('none', 'auto', 'flat'),
 _ONOFF = {'Visible', 'Box', 'XGrid', 'YGrid', 'ZGrid', 'XMinorGrid', 'YMinorGrid', 'ZMinorGrid', 'XMinorTick', 'YMinorTick',
           'ZMinorTick', 'Clipping', 'HitTest', 'NumberTitle', 'AutoUpdate', 'Resize', 'ShowText', 'Selected',
           'Interruptible', 'BeingDeleted', 'SelectionHighlight', 'Separator', 'Checked', 'State', 'Enable', 'IntegerHandle',
-          'DockControls', 'RowStriping'}
+          'DockControls', 'RowStriping', 'ShowHiddenHandles', 'DoubleBuffer', 'BackingStore', 'ShareColors',
+          'GraphicsSmoothing', 'LineSmoothing', 'Editing', 'FontSmoothing'}
 
 
 def import_value(obj, k, v):
@@ -345,7 +354,9 @@ class Root(GObj):
         if name.lower() == 'currentfigure':
             return STORE.current if STORE.current is not None and STORE.current.valid else EMPTY()
         if name.lower() == 'children':
-            return HArr.of([f for f in sorted(STORE.figures.values(), key=lambda f: -f.order) if f.props['HandleVisibility'] == 'on'], col=True)
+            from .builtins.graphics import shown_test
+            shown = shown_test()
+            return HArr.of([f for f in sorted(STORE.figures.values(), key=lambda f: -f.order) if shown(f)], col=True)
         if name.lower() == 'callbackobject':
             from .uievents import gcbo
             o = gcbo()
@@ -428,6 +439,8 @@ class Figure(GObj):
             if a.size != 4:
                 raise gerr('Value must be a 4-element vector.')
             self.props[k] = a
+            # a size the program chose: the page opens the window at it, not at one remembered
+            self.placed = True
             return
         if k in ('CurrentObject', 'UIContextMenu'):
             self.props[k] = value if isinstance(value, GObj) else None
@@ -779,6 +792,10 @@ class Text(GObj):
                 a = np.append(a, 0.0)
             self.props[k] = a.reshape(1, -1)
             return
+        if k == 'Units':
+            from .uiobjects import set_text_units
+            set_text_units(self, value)
+            return
         super().set_value(k, value)
 
     def get_value(self, k):
@@ -932,6 +949,10 @@ class HArr(Obj):
     def __init__(self, a):
         self.a = _2d(np.asarray(a, object)) if not isinstance(a, np.ndarray) else _2d(a)
 
+    @property
+    def is_graphics(self):
+        return any(getattr(x, 'is_graphics', False) for x in self.a.flat)
+
     @staticmethod
     def of(items, col=False):
         a = np.empty((len(items), 1) if col else (1, len(items)), object)
@@ -1001,6 +1022,21 @@ def cat_handles(axis, vals):
 
 
 ROOT = Root(None)
+HANDLE_FRACTION = 0.0001       # objects' handle numbers are their ids plus this
+
+
+def handle_of_number(x):
+    """The graphics object a handle number stands for, or None: 0 is the
+    root, a whole number a figure, and the rest objects by their ids."""
+    if x == 0:
+        return ROOT
+    if not math.isfinite(x):
+        return None
+    if x == int(x):
+        f = STORE.figures.get(int(x))
+        return f if f is not None and f.valid else None
+    o = STORE.objects.get(int(math.floor(x)))
+    return o if o is not None and o.valid and o.TYPE != 'figure' and o.number_value() == x else None
 
 
 # ---- the description the page draws ------------------------------------------------------------
@@ -1057,7 +1093,7 @@ def _text_json(t):
             'halign': p['HorizontalAlignment'], 'valign': p['VerticalAlignment'],
             'position': [float(x) for x in np.asarray(p['Position'], float).reshape(-1)],
             'units': p['Units'], 'background': _color(p['BackgroundColor']), 'edge': _color(p['EdgeColor']),
-            'fontName': p.get('FontName', 'Helvetica')}
+            'fontName': p.get('FontName', 'Helvetica'), 'margin': float(p.get('Margin', 3.0)), 'lineWidth': float(p.get('LineWidth', 0.5))}
 
 
 def _num(v):
@@ -1070,7 +1106,8 @@ def _num(v):
 def serialize_child(c, ax):
     p = c.props
     t = c.TYPE
-    d = {'id': c.id, 'type': t, 'visible': bool(p.get('Visible', True)), 'displayName': p.get('DisplayName', '')}
+    d = {'id': c.id, 'type': t, 'visible': bool(p.get('Visible', True)), 'displayName': p.get('DisplayName', ''),
+         'clip': bool(p.get('Clipping', True))}
     d.update(_interact_json(c))
     if t == 'line':
         d.update(x=_arr(p['XData']), y=_arr(p['YData']), z=_arr(p['ZData']) if numel(p['ZData']) else None,
@@ -1242,6 +1279,22 @@ for _C in (Axes, Line, Surface, Patch, Image, Text, Series):
 Text.DEFAULTS['FontUnits'] = 'points'
 Axes.DEFAULTS['FontUnits'] = 'points'
 Axes.DEFAULTS['CurrentPoint'] = lambda: np.zeros((2, 3))
+
+# Properties programs of older releases set, kept and shown by get but
+# drawing nothing different: DoubleBuffer, EraseMode, DrawMode and the like.
+Figure.DEFAULTS.update({'DoubleBuffer': True, 'BackingStore': True, 'MinColormap': 64.0, 'ShareColors': True,
+                        'RendererMode': 'auto', 'PaperUnits': 'inches', 'PaperSize': lambda: np.array([[8.5, 11.0]]),
+                        'PaperType': 'usletter', 'PaperOrientation': 'portrait', 'Selected': False, 'SelectionHighlight': True,
+                        'GraphicsSmoothing': True, 'Alphamap': lambda: np.linspace(0.0, 1.0, 64).reshape(1, -1)})
+Axes.DEFAULTS.update({'DrawMode': 'normal', 'ALim': lambda: np.array([[0.0, 1.0]]), 'ALimMode': 'auto', 'MinorGridLineStyle': ':'})
+for _C in (Line, Patch, Surface, Image, Text):
+    _C.DEFAULTS['EraseMode'] = 'normal'
+for _C in (Patch, Surface, Image):
+    _C.DEFAULTS.setdefault('Clipping', True)
+Line.DEFAULTS['LineSmoothing'] = False
+Patch.DEFAULTS.update({'LineSmoothing': False, 'EdgeLighting': 'none'})
+Image.DEFAULTS['AlphaDataMapping'] = 'none'
+Text.DEFAULTS.update({'LineStyle': '-', 'Editing': False, 'FontSmoothing': True})
 
 
 def register(*classes):

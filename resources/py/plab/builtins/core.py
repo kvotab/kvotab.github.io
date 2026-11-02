@@ -914,7 +914,7 @@ def clc(nargout, *args):
     return None
 
 
-@bi('more', 'echo', 'diary', 'beep', 'profile')
+@bi('more', 'echo', 'diary', 'profile')
 def ignored(nargout, *args):
     return None
 
@@ -968,9 +968,22 @@ def quit_(nargout, *args):
     raise err('MATLAB:quit', 'This page cannot be closed by a command: close the browser tab.')
 
 
+@bi('help', arr=False)
+def help_(nargout, *args):
+    """help NAME in a program (typed at the prompt, the page answers it):
+    the help printed, or with an output given back as text."""
+    from ..help import help_for
+    nargchk(args, 0, 1, 'help')
+    h = help_for(sval(args[0], 'name', 'help') if args else '')
+    if nargout:
+        return Char.of('' if h['kind'] == 'missing' else h['text'])
+    R.write(h['text'] if h['text'].endswith('\n') else h['text'] + '\n')
+    return None
+
+
 @bi('version')
 def version(nargout, *args):
-    return Char.of('pylab (MATLAB-language interpreter on Python)')
+    return Char.of('PyLAB (MATLAB-language interpreter on Python)')
 
 
 @bi('ver')
@@ -982,7 +995,7 @@ def ver(nargout, *args):
     except Exception:
         sv = 'not loaded'
     R.write('-' * 74 + '\n')
-    R.write(f'pylab, a MATLAB-language interpreter running on Python {platform.python_version()}\n')
+    R.write(f'PyLAB, a MATLAB-language interpreter running on Python {platform.python_version()}\n')
     R.write(f'NumPy {numpy.__version__}, SciPy {sv}\n')
     R.write('-' * 74 + '\n')
     return None

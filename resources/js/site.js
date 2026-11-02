@@ -67,7 +67,7 @@ const KVOT = (() => {
     },
     {
       href: './pylab.html',
-      label: 'pylab',
+      label: 'PyLAB',
       group: 'data',
       desc: 'A desktop for programs in the MATLAB language, compiled to Python and NumPy.',
     },

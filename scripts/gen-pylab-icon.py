@@ -64,7 +64,7 @@ def main():
         sys.exit('not written:\n  ' + '\n  '.join(errors))
     half = len(placed) // 2
     # Each tone in at least half the share measured when the icon was drawn.
-    K.write(OUT, PNG32, PNG180, K.svg(placed, 'pylab', COMMENT, (('the first chevron', half), ('the second', len(placed) - half))),
+    K.write(OUT, PNG32, PNG180, K.svg(placed, 'PyLAB', COMMENT, (('the first chevron', half), ('the second', len(placed) - half))),
             {K.TOP: 0.032, K.RIGHT: 0.008}, {K.TOP: 0.029, K.RIGHT: 0.01, K.LEFT: 0.009})
 
 

@@ -109,6 +109,13 @@ def to_int_class(r, cls):
     """Round half away from zero and saturate to an integer class."""
     lo, hi = INT_RANGE[cls]
     r = np.asarray(r)
+    if r.dtype.kind in 'iub':
+        # integers convert exactly, saturating in their own type (through
+        # float64 a 64-bit value above 2^53 would lose its lowest bits)
+        if r.dtype.kind != 'b':
+            info = np.iinfo(r.dtype)
+            r = np.clip(r, max(lo, int(info.min)), min(hi, int(info.max)))
+        return r.astype(INT_TYPES[cls])
     if r.dtype.kind == 'c':
         r = r.real
     r = r.astype(F64, copy=False)

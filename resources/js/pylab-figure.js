@@ -289,7 +289,7 @@
       const m = opts.margin == null ? 3 : opts.margin;
       const by = y0 - size * 0.85;
       if (opts.background && opts.background !== 'transparent') { ctx.fillStyle = opts.background; ctx.fillRect(bx - m, by - m, maxw + 2 * m, total + 2 * m); }
-      if (opts.edge && opts.edge !== 'transparent') { ctx.strokeStyle = opts.edge; ctx.lineWidth = 0.75; ctx.strokeRect(bx - m, by - m, maxw + 2 * m, total + 2 * m); }
+      if (opts.edge && opts.edge !== 'transparent') { ctx.strokeStyle = opts.edge; ctx.lineWidth = opts.boxWidth || 0.75; ctx.strokeRect(bx - m, by - m, maxw + 2 * m, total + 2 * m); }
       ctx.fillStyle = opts.color || AXIS_INK;
     }
     measured.forEach(({ runs, w }, k) => {
@@ -555,10 +555,7 @@
           const fr2 = new Frame2(Object.assign({}, right, { xlim: ax.xlim, xscale: ax.xscale, xdir: ax.xdir }), rect);
           fr2.ax._cmap = cmap;
           this.frames.push({ ax: right, fr: fr2, rect, is3d: false, yyRight: true });
-          ctx.save();
-          ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
-          for (const c of right.children) if (c.visible !== false) this.child2(ctx, right, fr2, c);
-          ctx.restore();
+          this.children2(ctx, right, fr2, rect);
           this.yAxisRight(ctx, right, fr2, rect);
         }
       }
@@ -581,6 +578,23 @@
       return { ticks, labels, exp };
     }
 
+    /* The axes' children in their order, each kept inside the axes' box
+       unless its Clipping is off (text's is, unless set). */
+    children2(ctx, ax, fr, r) {
+      let clipped = false;
+      for (const c of ax.children) {
+        if (c.visible === false) continue;
+        const want = c.clip !== false;
+        if (want !== clipped) {
+          if (clipped) ctx.restore();
+          else { ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip(); }
+          clipped = want;
+        }
+        this.child2(ctx, ax, fr, c);
+      }
+      if (clipped) ctx.restore();
+    }
+
     draw2(ctx, ax, fr) {
       const r = fr.r;
       const fs = ax.fontSize * PT;
@@ -595,12 +609,7 @@
       ax._ticks = { xt, yt };
       // grid under the data
       if (ax.visible) this.grid2(ctx, ax, fr, xt, yt);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(r.x, r.y, r.w, r.h);
-      ctx.clip();
-      for (const c of ax.children) if (c.visible !== false) this.child2(ctx, ax, fr, c);
-      ctx.restore();
+      this.children2(ctx, ax, fr, r);
       if (!ax.visible) { this.labels2(ctx, ax, fr, null, null, true); return; }
       // the axes' lines, ticks and labels on top
       ctx.save();
@@ -891,17 +900,23 @@
 
     text2(ctx, ax, fr, c) {
       const p = c.position;
+      // normalized and the lengths (pixels, points ...) from the axes' lower left; data as plotted
+      const u = c.units && c.units !== 'data' && c.units !== 'normalized' ? (PL.uiUnits && PL.uiUnits[c.units]) || [1, 1] : null;
       let x, y;
       if (c.units === 'normalized') { x = fr.r.x + p[0] * fr.r.w; y = fr.r.y + fr.r.h - p[1] * fr.r.h; }
+      else if (u) { x = fr.r.x + p[0] * u[0]; y = fr.r.y + fr.r.h - p[1] * u[1]; }
       else { x = fr.fx(p[0]); y = fr.fy(p[1]); }
       const size = fontSizePx(c, fr.r.h);
-      const m = drawText(ctx, c.string, x, y, { size, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic', family: faceOf(c.fontName) });
-      // where the letters are, for a click on the text
+      const boxed = Array.isArray(c.background) || Array.isArray(c.edge);
+      const margin = c.margin == null ? 3 : c.margin;
+      const m = drawText(ctx, c.string, x, y, { size, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic', family: faceOf(c.fontName), margin, boxWidth: c.lineWidth ? lw(c.lineWidth) : null });
+      // where the letters are (and a box drawn round them), for a click on the text
       if (m && m.width > 0 && !c.rotation) {
         const x0 = c.halign === 'center' ? x - m.width / 2 : c.halign === 'right' ? x - m.width : x;
         const va = c.valign || 'middle';
         const y0 = va === 'top' || va === 'cap' ? y : va === 'bottom' ? y - m.height : va === 'baseline' ? y - size * 0.85 : y - m.height / 2;
-        this.textBoxes.set(c.id, { x: x0, y: y0, w: m.width, h: m.height });
+        const g = boxed ? margin : 0;
+        this.textBoxes.set(c.id, { x: x0 - g, y: y0 - g, w: m.width + 2 * g, h: m.height + 2 * g });
       }
     }
 
@@ -1783,7 +1798,11 @@
       if (!this.sized) {
         this.sized = true;
         this.setSize(fig.width, fig.height);
+      } else if (this.figSize && (fig.width !== this.figSize.w || fig.height !== this.figSize.h)) {
+        // a size the program set (set(f, 'Position', ...), a ResizeFcn squaring the window): the window takes it
+        this.setSize(fig.width, fig.height);
       }
+      this.figSize = { w: fig.width, h: fig.height };
       this.el.hidden = !fig.visible;
       this.setPointer();
       this.redraw();
@@ -1811,6 +1830,9 @@
       const W = Math.min(w, maxW), H = Math.min(h + chrome, maxH);
       this.el.style.width = `${W}px`;
       this.el.style.height = `${H}px`;
+      // a window grown past the edge of the windows' area moves back in, as far as it fits
+      if (this.el.offsetLeft + W > layer.width) this.el.style.left = `${Math.max(0, layer.width - W - 4)}px`;
+      if (this.el.offsetTop + H > layer.height) this.el.style.top = `${Math.max(0, layer.height - H - 4)}px`;
     }
 
     canvasSize() {
@@ -2227,6 +2249,7 @@
         d = null;
         const { w, h } = this.canvasSize();
         const fl = this.fig.flags || {};
+        this.figSize = { w, h };
         // a program that listens (SizeChangedFcn) hears it; the size is set either way
         if (fl.size || fl.resize) this.mgr.ui({ type: 'resize', id: this.id, width: w, height: h });
         else this.mgr.send({ type: 'resize', id: this.id, width: w, height: h });
@@ -2246,6 +2269,7 @@
       this.wins = new Map();
       this.z = 10;
       this.current = null;
+      this.engineCurrent = null;     // gcf as the engine last told it
       this.ginput = null;
       this.places = PL.util.store.get('figplaces', {});
     }
@@ -2281,6 +2305,7 @@
 
     apply(msg) {
       for (const id of msg.closed || []) this.remove(id);
+      const opened = new Set();
       for (const fig of msg.figures || []) {
         let w = this.wins.get(fig.id);
         if (!w) {
@@ -2288,10 +2313,15 @@
           this.wins.set(fig.id, w);
           this.layer.append(w.el);
           this.place(w);
+          opened.add(fig.id);
           this.emit('opened', w);
         } else w.update(fig);
       }
-      if (msg.current) this.setCurrent(msg.current, false);
+      // gcf comes to the front when it changes (figure(h) raises it on its own),
+      // not with every drawing, and a window just opened is already stacked in
+      // the order made: a dialog opened over it stays over it
+      if (msg.current && msg.current !== this.engineCurrent && !opened.has(msg.current)) this.setCurrent(msg.current, false);
+      this.engineCurrent = msg.current;
     }
 
     place(w) {
@@ -2309,7 +2339,9 @@
       } else if (saved && saved.l < layer.width - 40 && saved.t < layer.height - 30) {
         w.el.style.left = `${saved.l}px`;
         w.el.style.top = `${saved.t}px`;
-        if (saved.w && saved.h) { w.el.style.width = `${Math.min(saved.w, layer.width)}px`; w.el.style.height = `${Math.min(saved.h, layer.height)}px`; }
+        // the size a window was left at, unless the program gave the figure its Position
+        if (saved.w && saved.h && !w.fig.placed) { w.el.style.width = `${Math.min(saved.w, layer.width)}px`; w.el.style.height = `${Math.min(saved.h, layer.height)}px`; }
+        else if (w.el.offsetLeft + w.el.offsetWidth > layer.width) w.el.style.left = `${Math.max(0, layer.width - w.el.offsetWidth - 4)}px`;
       } else {
         const n = this.wins.size - 1;
         const ww = w.el.offsetWidth, wh = w.el.offsetHeight;

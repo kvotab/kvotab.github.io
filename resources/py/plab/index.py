@@ -586,6 +586,10 @@ def _np_of(v):
         return v.a, 'char'
     if t is int:
         return np.array([[float(v)]]), 'double'
+    if getattr(v, 'is_graphics', False):
+        # h = zeros(1, 3); h(2) = line(...) keeps the line's handle number
+        items = v.a if hasattr(v, 'a') else np.array([[v]], object)
+        return np.vectorize(lambda o: o.number_value() if o is not None else math.nan, otypes=[float])(items), 'double'
     return None, class_of(v)
 
 
@@ -672,7 +676,8 @@ def asgn(A, args, V):
             return EMPTY()
         A = _empty_like_value(V)
         t = type(A)
-    elif t is np.ndarray and A.size == 0 and A.dtype is _DF and type(V) in (Cell, Struct, Str):
+    elif t is np.ndarray and A.size == 0 and A.dtype is _DF and (type(V) in (Cell, Struct, Str) or getattr(V, 'is_graphics', False)):
+        # h = []; h(1) = plot(...) makes a graphics array
         A = _empty_like_value(V)
         t = type(A)
     # deletion

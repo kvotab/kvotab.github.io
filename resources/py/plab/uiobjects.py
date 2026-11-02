@@ -147,6 +147,78 @@ def _font_px(o):
     return s * UNIT_PX.get(u, (4 / 3, 4 / 3))[1]
 
 
+TEXT_UNITS = ('data', 'normalized', 'pixels', 'points', 'inches', 'centimeters', 'characters')
+
+
+def set_text_units(t, value):
+    """A text's Units, its Position converted so the text stays where it is:
+    data through the axes' limits, the rest from the axes' lower left."""
+    u = py_str(value).lower()
+    if u not in TEXT_UNITS:
+        raise gerr(f"'{py_str(value)}' is not a valid value for Units. Use one of these values: {_choices(TEXT_UNITS)}.")
+    old = t.props.get('Units', 'data')
+    ax = t.parent
+    if u != old and ax is not None and ax.TYPE == 'axes':
+        p = np.asarray(t.props['Position'], float).reshape(-1).copy()
+        _, _, w, h = to_pixels(ax)
+        if 'data' in (u, old):
+            from .glayout import auto_limits
+            auto = None
+            span = []
+            for k in ('XLim', 'YLim'):
+                if ax.props.get(k + 'Mode') == 'manual':
+                    lo, hi = (float(v) for v in np.asarray(ax.props[k], float).reshape(-1)[:2])
+                else:
+                    auto = auto or auto_limits(ax)
+                    lo, hi = (float(v) for v in np.asarray(auto[k], float).reshape(-1)[:2])
+                span.append((lo, (hi - lo) or 1.0))
+
+        def per(unit, i):
+            """Pixels per unit along x (i 0) or y (i 1), and where 0 is."""
+            if unit == 'data':
+                return (w, h)[i] / span[i][1], span[i][0]
+            if unit == 'normalized':
+                return (w, h)[i], 0.0
+            return UNIT_PX[unit][i], 0.0
+        for i in (0, 1):
+            k0, o0 = per(old, i)
+            k1, o1 = per(u, i)
+            p[i] = (p[i] - o0) * k0 / k1 + o1
+        t.props['Position'] = p.reshape(1, -1)
+    t.props['Units'] = u
+
+
+FONT_UNITS = ('points', 'pixels', 'inches', 'centimeters', 'normalized')
+
+
+def _font_ref_px(o):
+    """The height a normalized FontSize is a part of: a text's axes, an axes'
+    or a control's own."""
+    if o.TYPE == 'text':
+        o = o.parent
+    try:
+        if o is None or o.TYPE in ('figure', 'uitab'):
+            return inner_px(o)[1]
+        return float(to_pixels(o)[3]) or 1.0
+    except Exception:
+        return 420.0
+
+
+def set_font_units(o, value):
+    """FontUnits, with FontSize changed to keep the letters their size, as
+    FontSize given before FontUnits ('FontSize', 20, 'FontUnits',
+    'normalized') means a size in the units it had."""
+    u = py_str(value).lower()
+    if u not in FONT_UNITS:
+        raise gerr(f"'{py_str(value)}' is not a valid value for FontUnits. Use one of these values: {_choices(FONT_UNITS)}.")
+    old = o.props.get('FontUnits', 'points')
+    if u != old and 'FontSize' in o.props:
+        ref = _font_ref_px(o) if 'normalized' in (u, old) else 1.0
+        per = lambda unit: ref if unit == 'normalized' else UNIT_PX[unit][1]
+        o.props['FontSize'] = float(o.props['FontSize']) * per(old) / per(u)
+    o.props['FontUnits'] = u
+
+
 class _Placed(GObj):
     """An object with a Position in the Units of its container."""
 
@@ -653,7 +725,8 @@ def serialize_ui(f, d):
     p = f.props
     crf = p['CloseRequestFcn']
     d.update(menuBar=str(p['MenuBar']).lower(), toolBar=str(p['ToolBar']).lower(), pointer=p['Pointer'], resize=bool(p['Resize']),
-             dialog=f.is_dialog, closeDefault=isinstance(crf, str) and crf.strip().rstrip(';').replace('()', '') == 'closereq',
+             dialog=f.is_dialog, placed=bool(getattr(f, 'placed', False)),
+             closeDefault=isinstance(crf, str) and crf.strip().rstrip(';').replace('()', '') == 'closereq',
              flags={k: has_callback(p[v]) for k, v in FLAGS.items()},
              cmenu=p['UIContextMenu'].id if p['UIContextMenu'] is not None and p['UIContextMenu'].valid else None)
     kids = [c for c in reversed(f.children) if c.valid]

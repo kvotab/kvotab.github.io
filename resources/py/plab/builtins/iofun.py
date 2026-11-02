@@ -127,6 +127,15 @@ def delete(nargout, *args):
                 if hasattr(h, 'delete_handle'):
                     h.delete_handle()
             continue
+        if type(a) is float or (type(a) is np.ndarray and a.dtype.kind in 'fiu'):
+            # graphics objects by their handle numbers
+            from ..graphics_base import handle_of_number
+            for x in np.asarray(a, float).reshape(-1):
+                h = handle_of_number(x)
+                if h is None or h.TYPE == 'root':
+                    raise err('MATLAB:hg:InvalidHandle', 'Invalid or deleted object.', 'delete')
+                h.delete_handle()
+            continue
         pat = abspath(sval(a, 'file name', 'delete'))
         hits = glob.glob(pat)
         if not hits:

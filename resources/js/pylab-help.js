@@ -13,7 +13,7 @@
     ['The language', 'if elseif else for while switch case otherwise try catch function end break continue return global persistent classdef'],
     ['Making arrays', 'zeros ones eye rand randn randi randperm rng linspace logspace colon magic diag repmat reshape cat horzcat vertcat meshgrid ndgrid true false pi eps Inf NaN i j intmax intmin realmax realmin flintmax blkdiag toeplitz hankel vander hilb invhilb pascal compan wilkinson rosser accumarray'],
     ['Size and shape', 'size numel length ndims isempty isscalar isvector isrow iscolumn ismatrix issquare squeeze permute ipermute circshift flip fliplr flipud rot90 tril triu kron sub2ind ind2sub find nnz nonzeros'],
-    ['Arithmetic', 'plus minus times rdivide ldivide mtimes mrdivide mldivide power mpower uminus uplus transpose ctranspose abs sign sqrt nthroot hypot exp expm1 log log1p log2 log10 pow2 nextpow2 reallog realpow realsqrt floor ceil round fix mod rem idivide gcd lcm factorial nchoosek primes isprime factor perms rat rats'],
+    ['Arithmetic', 'plus minus times rdivide ldivide mtimes mrdivide mldivide power mpower uminus uplus transpose ctranspose abs sign sqrt nthroot hypot exp expm1 log log1p log2 log10 pow2 nextpow2 reallog realpow realsqrt floor ceil round fix mod rem idivide bitand bitor bitxor bitshift bitcmp bitget bitset gcd lcm factorial nchoosek primes isprime factor perms rat rats'],
     ['Trigonometry', 'sin cos tan sec csc cot asin acos atan atan2 asec acsc acot sinh cosh tanh sech csch coth asinh acosh atanh asech acsch acoth sind cosd tand secd cscd cotd asind acosd atand asecd acscd acotd atan2d sinpi cospi deg2rad rad2deg'],
     ['Complex numbers', 'real imag conj angle complex isreal cplxpair unwrap'],
     ['Comparison and logic', 'eq ne lt gt le ge and or not xor any all isequal isequaln isnan ismissing isinf isfinite'],
@@ -32,7 +32,7 @@
     ['Cells, structs and maps', 'cell cellfun num2cell cell2mat cell2struct struct2cell struct fieldnames isfield rmfield setfield getfield orderfields arrayfun structfun containers.Map keys values isKey remove deal iscell iscellstr isstruct'],
     ['Types', 'class isa isnumeric isfloat isinteger islogical ischar isstring isobject double single int8 uint8 int16 uint16 int32 uint32 int64 uint64 logical cast typecast func2str str2func feval functions'],
     ['Parallel loops', 'parfor parpool gcp getCurrentTask spmd'],
-    ['Programs and the workspace', 'disp display fprintf input keyboard error warning lasterr lastwarn MException throw rethrow throwAsCaller addCause getReport assert onCleanup exist clear clearvars who whos eval evalin evalc assignin inputname mfilename nargin nargout narginchk nargoutchk validateattributes isvarname iskeyword genvarname matlab.lang.makeValidName builtin format clc more echo diary beep profile version ver computer ispc ismac isunix isdeployed usejava matlabroot userpath getenv setenv web exit quit'],
+    ['Programs and the workspace', 'disp display fprintf input keyboard error warning lasterr lastwarn MException throw rethrow throwAsCaller addCause getReport assert onCleanup exist clear clearvars who whos eval evalin evalc assignin inputname mfilename nargin nargout narginchk nargoutchk validateattributes isvarname iskeyword genvarname matlab.lang.makeValidName builtin format clc more echo diary beep sound soundsc profile help version ver computer ispc ismac isunix isdeployed usejava matlabroot userpath getenv setenv web exit quit'],
     ['Dates and time', 'tic toc pause cputime clock now date datenum datestr datevec etime weekday eomday addtodate leapyear'],
     ['Files and folders', 'pwd cd dir ls what which type edit open run mkdir rmdir delete copyfile movefile fullfile fileparts filesep pathsep tempdir tempname isfile isfolder isdir addpath rmpath path genpath fopen fclose fgetl fgets fread fwrite fprintf fscanf feof ferror frewind ftell fseek fileread readlines writelines textscan textread readmatrix writematrix csvread csvwrite dlmread dlmwrite readcell writecell load save matfile importdata'],
     ['Line and area plots', 'plot plot3 line semilogx semilogy loglog fplot ezplot scatter scatter3 bar barh histogram hist area fill fill3 patch stairs stem errorbar pie polarplot polar quiver quiver3'],
@@ -64,7 +64,7 @@
         return [el('h3', null, title), list];
       });
       this.el.replaceChildren(
-        el('h2', null, 'pylab'),
+        el('h2', null, 'PyLAB'),
         el('p', null, 'A desktop for programs in the MATLAB language. What you type in the Command Window and the files you run from the Editor are compiled to Python and run on NumPy and SciPy, in this browser tab (Pyodide). Nothing is sent to a server; your files are kept in this browser.'),
         el('p', null, search),
         el('h3', null, 'Getting started'),
@@ -92,7 +92,7 @@
           el('li', null, 'MAT-files of versions 4 to 7 load and save; version 7.3 files load.')),
         el('h3', null, 'Functions'),
         ...lists.flat(),
-        el('p', { class: 'pl-notice' }, 'MATLAB is a registered trademark of The MathWorks, Inc. pylab is not made by The MathWorks and is not affiliated with or endorsed by it; it runs programs written in the same language.'),
+        el('p', { class: 'pl-notice' }, 'MATLAB is a registered trademark of The MathWorks, Inc. PyLAB is not made by The MathWorks and is not affiliated with or endorsed by it; it runs programs written in the same language.'),
       );
       this.el.scrollTop = 0;
     }

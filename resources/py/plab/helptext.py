@@ -367,6 +367,32 @@ rem: The remainder after division, with the sign of the dividend: rem(a, b) = a 
 idivide: Integer division with a chosen rounding.
     c = idivide(a, b)
     c = idivide(a, b, 'fix' | 'round' | 'floor' | 'ceil')
+bitand: The bits set in both inputs.
+    c = bitand(a, b)
+    c = bitand(a, b, assumedtype)
+    * Integers keep their class; doubles must be whole numbers in the range of assumedtype (uint64 unless named), and the result is double.
+    * The inputs expand to one size, as in arithmetic.
+bitor: The bits set in either input.
+    c = bitor(a, b)
+    c = bitor(a, b, assumedtype)
+bitxor: The bits set in one input but not both.
+    c = bitxor(a, b)
+    c = bitxor(a, b, assumedtype)
+bitshift: Bits moved left (k > 0) or right (k < 0).
+    c = bitshift(a, k)
+    c = bitshift(a, k, assumedtype)
+    * Bits moved past the top of the type are lost; a right shift rounds down, a signed value keeping its sign.
+bitcmp: Every bit turned round.
+    c = bitcmp(a)
+    c = bitcmp(a, assumedtype)
+    c = bitcmp(a, n)
+    * bitcmp(a, n) turns the lowest n bits of a whole number.
+bitget: The bit (1 or 0) at a position, 1 the lowest.
+    b = bitget(a, bit)
+    * bitget(x, 1:8) gives the eight lowest bits of a scalar, lowest first.
+bitset: A bit set to 1, or to v.
+    c = bitset(a, bit)
+    c = bitset(a, bit, v)
 gcd: The greatest common divisor.
     g = gcd(a, b)
 lcm: The least common multiple.
@@ -1522,6 +1548,7 @@ strmatch: The rows of a char matrix (or elements of a cell array) that start wit
     k = strmatch(s, list)
     k = strmatch(s, list, 'exact')
     * The blanks that pad the rows of a char matrix never count.
+    * A cell array of any shape is taken down its columns: k are linear indices.
 count: How many times a pattern occurs in text.
     n = count(s, pattern)
 strtok: The first token of text, and the rest.
@@ -1853,14 +1880,31 @@ echo: Accepted, with no effect.
     echo on | off
 diary: Accepted, with no effect: copy the Command Window with its menu instead.
     diary filename
-beep: Accepted, with no effect.
+sound: Play samples through the page's sound.
+    sound(y)
+    sound(y, fs)
+    * y is a vector (one channel) or a matrix of two columns (left and right), between -1 and 1; fs is samples a second, 8192 unless given.
+    * The program goes on while it plays.
+soundsc: Play samples scaled to fill the loudness range.
+    soundsc(y)
+    soundsc(y, fs)
+    soundsc(y, fs, [low high])
+    * The data's own range, or [low high], becomes -1 to 1.
+beep: A short tone through the page's sound.
     beep
+    beep on | off
+    s = beep
+    * beep off silences it, and s = beep is 'on' or 'off'.
 profile: Accepted, with no effect: use tic and toc to time code.
     profile on | off
 exit: Stop the program; the page itself is closed with its browser tab.
     exit
 quit: Stop the program; the page itself is closed with its browser tab.
     quit
+help: The help of a function or a program file.
+    help name
+    text = help('name')
+    * A program file's help is its first block of comments; help(mfilename) is a program's own.
 version: The interpreter's version, as text.
     v = version
 ver: The interpreter and the Python, NumPy and SciPy that run it.
@@ -2505,8 +2549,17 @@ findobj: Graphics objects with given properties.
     h = findobj
     h = findobj('Type', 'line')
     h = findobj(parent, 'Name', value, ...)
+    h = findobj(parent, 'Tag', 'a', '-or', 'Tag', 'b')
+    h = findobj(parent, '-regexp', 'Tag', '^row', '-not', 'Type', 'text')
+    h = findobj(parent, '-depth', 1, ...)
+    * With no parent it looks from the root (0), which it finds too; the parents given are found if they pass.
+    * The tests: a property and its value; -regexp, a property and a pattern; -property and a name (objects that have it); -function and a function handle, given the object, or given a property's value when the property's name comes first.
+    * Tests next to each other must all pass (-and); -or and -xor join the tests on either side, from left to right; -not turns the next test round.
+    * flat looks at the parents only, -depth d that many levels down.
+    * It leaves out objects whose HandleVisibility is 'off', and 'callback' ones (dialogs) unless a callback is running; findall, or set(0, 'ShowHiddenHandles', 'on'), finds them all.
 findall: Graphics objects with given properties, hidden ones included.
     h = findall(parent, 'Name', value, ...)
+    * It takes what findobj takes.
 allchild: Every child of a graphics object.
     h = allchild(parent)
 ancestor: The ancestor of a graphics object of a given type.

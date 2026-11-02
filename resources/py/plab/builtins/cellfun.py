@@ -44,11 +44,8 @@ def num2cell(nargout, *args):
             r.flat[i] = Cell.of_list([v.a.flat[i]])
         return Cell(r)
     if t is Struct:
-        r = np.empty(v.shape, object)
-        for i in range(v.size):
-            from ..index import struct_take
-            r.reshape(-1, order='F')[i] = struct_take(v, (float(i + 1),))
-        return Cell(r)
+        from ..index import struct_take
+        return Cell.of_list([struct_take(v, (float(i + 1),)) for i in range(v.size)], v.shape)
     if t is Char:
         r = np.empty(v.a.shape, object)
         for i, c in enumerate(v.a.flat):
@@ -328,10 +325,10 @@ def _collect(results, shape, nout, uniform, fname):
                 outs.append(Str.from_list([v.a.flat[0] for v in vals], shape))
             elif isinstance(first, Obj):
                 from ..graphics_base import HArr
-                a = np.empty(shape, object)
+                a = np.empty(len(vals), object)
                 for i, v in enumerate(vals):
-                    a.reshape(-1, order='F')[i] = v
-                outs.append(HArr(a))
+                    a[i] = v
+                outs.append(HArr(a.reshape(shape, order='F')))
             else:
                 classes = set(class_of(v) for v in vals)
                 if classes == {'logical'}:
@@ -344,17 +341,16 @@ def _collect(results, shape, nout, uniform, fname):
                 a = a.reshape(shape, order='F')
                 outs.append(like_class(a, first) if c0 not in ('logical', 'double') else out(a))
         else:
-            c = np.empty(shape, object)
-            for i, v in enumerate(vals):
-                c.reshape(-1, order='F')[i] = share(v)
-            outs.append(Cell(c))
+            outs.append(Cell.of_list([share(v) for v in vals], shape))
     return outs
 
 
 async def _call_each(f, items, nargout, handler, fname):
-    nout = max(nargout, 1)
+    # asked for no output, the function is asked for none either, as a call
+    # at statement level is: disp or set give nothing, plot no handle, and
+    # what does give a value (x*2, a file's function) gives it as ans
+    want = nargout
     results = []
-    want = nargout if nargout > 0 else 1
     for i, a in enumerate(items):
         try:
             r = await f.acall(want, *a) if isinstance(f, FH) else None
@@ -366,7 +362,7 @@ async def _call_each(f, items, nargout, handler, fname):
         if nargout == 0 and r is None:
             results.append(None)
             continue
-        if want == 1:
+        if want <= 1:
             results.append((r,))
         else:
             results.append(tuple(r))

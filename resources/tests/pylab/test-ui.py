@@ -869,6 +869,36 @@ async def user_interfaces(page):
     await page.ev("[...document.querySelectorAll('.pl-figwin.is-dialog .pl-uibtn')].find(b => b.textContent === 'Done').click(); 1")
     await idle(page)
     check('gui: until a callback calls uiresume', (await tail(page, 100)).rstrip().endswith('waited'), True)
+
+    # a message box over a figure the program goes on drawing in, and text above the axes' box
+    await command(page, "close all force; under = figure('Name', 'Under'); axes('Position', [0.1 0.1 0.8 0.6]); plot(1:3); ylim([0 4])")
+    await command(page, "h = msgbox('Over it', 'Top'); plot(4:6); text(2, 5, 'XXXXXX', 'Color', 'r', 'FontSize', 20); ylim([0 4])")
+    await until(page, "document.querySelectorAll('.pl-figwin.is-dialog').length === 1", 10)
+    await asyncio.sleep(0.4)
+    above = await page.ev("(() => { const ws = [...PL.app.figures.wins.values()]; const z = (n) => Number(ws.find(w => w.fig.name === n).el.style.zIndex); "
+                          "return z('Top') > z('Under'); })()")
+    check('gui: a message box stays over the figure drawn in after it', above, True)
+    under = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Under")'
+    red = await page.ev(f"(() => {{ const w = {under}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const x = f.fx(2), y = f.fy(5); const d = c.getContext('2d').getImageData(Math.round(x * k), Math.round((y - 14) * k), Math.round(70 * k), Math.round(28 * k)).data; "
+                        "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; })()")
+    check('gui: text outside the axes\' box is drawn (its Clipping is off)', red > 20, True)
+
+    # sound through the page's audio, a size the program sets, text placed in pixels
+    await command(page, 'sound(sin(1:200), 8000)')
+    snd = await page.ev('PL.app.lastSound || null')
+    check('gui: sound plays through the page', bool(snd) and snd['rate'] == 8000 and snd['samples'] == 200, True)
+    await command(page, "close all force; fz = figure('Name', 'Sized', 'Position', [100 100 400 300]); set(fz, 'Position', [100 100 480 330])")
+    await asyncio.sleep(0.4)
+    sized = '[...PL.app.figures.wins.values()].find(w => w.fig.name === "Sized")'
+    sz = await page.ev(f"(() => {{ const c = {sized}.canvasSize(); return [c.w, c.h]; }})()")
+    check('gui: a window takes the size its program sets', abs(sz[0] - 480) <= 1 and abs(sz[1] - 330) <= 1, True)
+    await command(page, "ax = axes('Units', 'pixels', 'Position', [40 40 300 200]); axis off; text(ax, 20, 20, 'PX', 'Units', 'pixels', 'BackgroundColor', [1 0 0], 'Margin', 4)")
+    await asyncio.sleep(0.4)
+    red = await page.ev(f"(() => {{ const w = {sized}; const r = w.renderer.frames[0].fr.r; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const d = c.getContext('2d').getImageData(Math.round((r.x + 21) * k), Math.round((r.y + r.h - 24) * k), Math.round(12 * k), Math.round(8 * k)).data; "
+                        "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; })()")
+    check('gui: text in pixels stands that far from the axes\' corner', red > 20, True)
     await command(page, 'close all force')
     check('gui: no script errors', page.errors, [])
 

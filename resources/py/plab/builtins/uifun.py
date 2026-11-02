@@ -2,9 +2,11 @@
 and toolbars made in figures; the callbacks' gcbo and gcbf; waiting for
 people (uiwait, waitfor); data kept with objects (guidata, setappdata);
 the dialogs (msgbox and its kin, questdlg, inputdlg, listdlg, the file
-pickers, waitbar); and timers. The objects are in uiobjects, what people
-do with them in uievents."""
+pickers, waitbar); timers; and sound. The objects are in uiobjects, what
+people do with them in uievents."""
+import base64
 import itertools
+import math
 import os
 
 import numpy as np
@@ -351,7 +353,9 @@ def dialog_figure(title, w, h, modal=False):
     return f
 
 
-def _wrap(lines, width=64):
+def _wrap(lines, width=75):
+    """A message's lines broken at spaces to at most width letters, as a
+    message box wraps them (help text, 75 wide, keeps its lines)."""
     out = []
     for line in lines:
         while len(line) > width:
@@ -406,10 +410,18 @@ def _custom_icon(data, cmap):
     return m[idx]
 
 
+def _fit_icon(pic, n=32):
+    """A picture stretched over the icon's square, as an image fills its axes."""
+    h, w = pic.shape[:2]
+    if (h, w) == (n, n) or not h or not w:
+        return pic
+    return pic[np.arange(n) * h // n][:, np.arange(n) * w // n]
+
+
 def message_dialog(message, title, icon='none', icondata=None, cmap=None, modal=False):
     # a message made by sprintf holds its line breaks in one row
     lines = _wrap([part for ln in (lines_of(message) or ['']) for part in ln.split('\n')]) or ['']
-    pic = _icon(icon) if icon in ('error', 'warn', 'help') else (_custom_icon(icondata, cmap) if icon == 'custom' and icondata is not None else None)
+    pic = _icon(icon) if icon in ('error', 'warn', 'help') else (_fit_icon(_custom_icon(icondata, cmap)) if icon == 'custom' and icondata is not None else None)
     tw = max(len(ln) for ln in lines) * 6.2 + 8
     th = len(lines) * 14.0 + 4
     iw = 42.0 if pic is not None else 0.0
@@ -804,6 +816,78 @@ def timerfind(nargout, *args):
 @bi('timerfindall', arr=False)
 def timerfindall(nargout, *args):
     return _find_timers(args, True)
+
+
+# ---- sound ---------------------------------------------------------------------------------------------------
+
+BEEP = [True]
+
+
+def _audio(y, fn):
+    """Samples as a column per channel: a vector is one channel."""
+    a = darr(y)
+    if a.ndim == 2 and 1 in a.shape:
+        a = a.reshape(-1, 1)
+    if a.ndim != 2 or a.shape[1] > 2:
+        raise err(f'MATLAB:{fn}:invalidChannels', 'Audio data must be a vector, or a matrix of two columns (left and right).', fn)
+    return a
+
+
+def _rate(args, fn):
+    fs = float(num(args[0])) if args else 8192.0
+    if not (math.isfinite(fs) and fs > 0):
+        raise err(f'MATLAB:{fn}:invalidRate', 'The sample rate must be a positive number of samples a second.', fn)
+    return fs
+
+
+def _play(a, fs):
+    """The samples to the page, which plays them through its audio at once."""
+    hook = R.EVENT_HOOK[0]
+    if hook is None or not a.size:
+        return
+    data = np.ascontiguousarray(np.nan_to_num(a).T, '<f4').tobytes()
+    hook({'type': 'sound', 'rate': fs, 'channels': int(a.shape[1]), 'data': base64.b64encode(data).decode('ascii')})
+
+
+@bi('sound', arr=False)
+def sound(nargout, *args):
+    nargchk(args, 1, 3, 'sound')
+    a = _audio(args[0], 'sound')
+    _play(np.clip(a, -1.0, 1.0), _rate(args[1:2], 'sound'))
+    return None
+
+
+@bi('soundsc', arr=False)
+def soundsc(nargout, *args):
+    nargchk(args, 1, 4, 'soundsc')
+    a = _audio(args[0], 'soundsc')
+    rest = list(args[1:])
+    if rest and numel(rest[-1]) == 2:
+        lo, hi = (float(x) for x in darr(rest.pop()).reshape(-1))
+    else:
+        finite = a[np.isfinite(a)]
+        lo, hi = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 0.0)
+    # the range given (or the data's own) fills -1 to 1
+    y = (a - lo) / (hi - lo) * 2.0 - 1.0 if hi > lo else np.zeros_like(a)
+    _play(np.clip(y, -1.0, 1.0), _rate(rest[:1], 'soundsc'))
+    return None
+
+
+@bi('beep', arr=False)
+def beep(nargout, *args):
+    if args:
+        s = sval(args[0], 'option', 'beep').lower()
+        if s not in ('on', 'off'):
+            raise err('MATLAB:beep:badOption', 'Use beep on or beep off.', 'beep')
+        BEEP[0] = s == 'on'
+        return None
+    if nargout:
+        return Char.of('on' if BEEP[0] else 'off')
+    if BEEP[0]:
+        n = int(0.12 * 8192)
+        y = 0.4 * np.sin(2 * np.pi * 880.0 * np.arange(n) / 8192.0) * np.minimum(1.0, (n - np.arange(n)) / 200.0)
+        _play(y.reshape(-1, 1), 8192.0)
+    return None
 
 
 # ---- icons for programs that load MATLAB's ------------------------------------------------------------------

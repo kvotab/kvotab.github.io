@@ -8,7 +8,7 @@ M(end, end)        % the last element
 M(M > 10)'         % elements above 10, as a row
 
 %% Strings, cells and structs
-name = 'pylab';
+name = 'PyLAB';
 msg = sprintf('%s has %d letters', name, numel(name))
 words = strsplit('alpha beta gamma', ' ')
 s.title = 'Results';

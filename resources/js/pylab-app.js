@@ -243,7 +243,7 @@
       this.showStrip('home');
       this.renderCrumbs();
       this.renderEdTabs();
-      this.cmd.write('pylab: programs in the MATLAB language, compiled to Python and run in this tab.\nType help for an overview, or open the examples folder.\n\n', 'info');
+      this.cmd.write('PyLAB: programs in the MATLAB language, compiled to Python and run in this tab.\nType help for an overview, or open the examples folder.\n\n', 'info');
     }
 
     iconBtn(name, title, fn) {
@@ -507,6 +507,7 @@
       E.on('movegui', (m) => this.figures.move(m.figure, m.where));
       E.on('focus', (m) => this.figures.focusControl(m.id));
       E.on('help', (m) => this.openHelp(m.name || undefined));
+      E.on('sound', (m) => this.playSound(m));
 
       this.cmd.on('submit', (code) => this.submit(code));
       this.cmd.on('interrupt', () => this.interrupt());
@@ -713,6 +714,39 @@
     stopTimers() {
       for (const r of (this.timers || new Map()).values()) { clearTimeout(r.t); clearInterval(r.i); }
       if (this.timers) this.timers.clear();
+    }
+
+    /* sound, soundsc and beep: float32 samples, a channel after the other, played at
+       once through the page's audio. The samples are brought to the audio's own rate
+       here, so any rate plays (browsers refuse buffers of rates below 3000 or 8000). */
+    playSound(m) {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        const ctx = this.audio || (this.audio = new AC());
+        if (ctx.state === 'suspended') ctx.resume();
+        const bin = atob(m.data);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const all = new Float32Array(bytes.buffer);
+        const n = all.length / m.channels;
+        const len = Math.max(1, Math.round(n * ctx.sampleRate / m.rate));
+        const buf = ctx.createBuffer(m.channels, len, ctx.sampleRate);
+        for (let c = 0; c < m.channels; c++) {
+          const src = all.subarray(c * n, (c + 1) * n);
+          const dst = buf.getChannelData(c);
+          for (let i = 0; i < len; i++) {
+            const x = i * m.rate / ctx.sampleRate;
+            const k = Math.min(Math.floor(x), n - 1);
+            dst[i] = src[k] + (src[Math.min(k + 1, n - 1)] - src[k]) * (x - k);
+          }
+        }
+        const node = ctx.createBufferSource();
+        node.buffer = buf;
+        node.connect(ctx.destination);
+        node.start();
+        this.lastSound = { rate: m.rate, channels: m.channels, samples: n, seconds: len / ctx.sampleRate };
+      } catch (e) { /* a page with no audio plays nothing */ }
     }
 
     /* ---- the debugger --------------------------------------------------------------------- */

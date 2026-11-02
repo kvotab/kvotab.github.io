@@ -42,11 +42,13 @@ def date(nargout, *args):
 
 @bi('etime')
 def etime(nargout, *args):
+    """etime(t1, t0): the seconds from date vector t0 to t1 (etime(clock, t0)
+    is the time since t0)."""
     a = darr(args[0]).reshape(-1)
     b = darr(args[1]).reshape(-1)
     da = _dt.datetime(int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])) + _dt.timedelta(seconds=a[5])
     db = _dt.datetime(int(b[0]), int(b[1]), int(b[2]), int(b[3]), int(b[4])) + _dt.timedelta(seconds=b[5])
-    return (db - da).total_seconds()
+    return (da - db).total_seconds()
 
 
 def _datenum_vec(row):

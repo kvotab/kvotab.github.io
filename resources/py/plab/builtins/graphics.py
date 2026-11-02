@@ -12,7 +12,7 @@ from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128
                       _2d, EMPTY, py_str, share, text_list)
 from ..graphics_base import (STORE, ROOT, GObj, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar,
                              Light, Series, HArr, parse_linespec, to_color, COLOR_ORDER, MARKERS, MARKER_WORDS,
-                             serialize_figure, gerr)
+                             serialize_figure, gerr, handle_of_number)
 from ..colormaps import colormap_by_name, as_colormap, NAMES as CMAP_NAMES
 from .. import glayout as GL
 from .. import runtime as R
@@ -1753,8 +1753,19 @@ def imshow(nargout, *args):
     return h if nargout else None
 
 
-@bi('fill', 'fill3', 'patch', arr=False)
+@bi('fill', 'fill3', arr=False)
 def fill(nargout, *args):
+    return _fill(nargout, args, False)
+
+
+@bi('patch', arr=False)
+def patch(nargout, *args):
+    return _fill(nargout, args, True)
+
+
+def _fill(nargout, args, low):
+    """fill and fill3 draw as plot does (into axes cleared unless held);
+    patch, a low-level function, adds to the axes as they are."""
     ax, rest = split_axes_arg(args)
     hs = []
     pairs = []
@@ -1785,9 +1796,8 @@ def fill(nargout, *args):
         if rest and opt_str(rest[0]) is not None:
             pairs = name_value(rest, 0)
             break
-    is_patch_low = ax is not None
     if ax is None:
-        ax = newplot(None) if True else gca_()
+        ax = gca_() if low else newplot(None)
     for data, c in groups:
         X = darr(data[0])
         Y = darr(data[1])
@@ -2338,9 +2348,14 @@ def text(nargout, *args):
     zs = darr(data[2]).reshape(-1) if len(data) > 2 else np.zeros(xs.size)
     strs = text_list(s) if type(s) in (Cell, Str) and numel(s) == xs.size and xs.size > 1 else None
     pairs = name_value(rest, 0)
+    # x and y are in the Units the call names: text(0.05, 0.9, s, 'Units', 'normalized')
+    units = [v for k, v in pairs if k.lower() == 'units']
+    pairs = [(k, v) for k, v in pairs if k.lower() != 'units']
     hs = []
     for i in range(xs.size):
         t = Text(ax)
+        if units:
+            t.set_value('Units', units[-1])
         t.set_value('String', Char.of(strs[i]) if strs else s)
         t.props['Position'] = np.array([[float(xs[i]), float(ys[i]), float(zs[i])]])
         apply_props(t, pairs)
@@ -2489,14 +2504,10 @@ def _handles(v):
     if type(v) is float or (type(v) is np.ndarray and v.dtype.kind in 'fiu'):
         hs = []
         for x in np.asarray(v, float).reshape(-1):
-            if x == 0:
-                hs.append(ROOT)
-            else:
-                f = STORE.figures.get(int(x))
-                h = f if f is not None else STORE.objects.get(int(x))
-                if h is None:
-                    raise err('MATLAB:hg:InvalidHandle', 'Invalid or deleted object.', 'set')
-                hs.append(h)
+            h = handle_of_number(x)
+            if h is None:
+                raise err('MATLAB:hg:InvalidHandle', 'Invalid or deleted object.', 'set')
+            hs.append(h)
         return hs
     raise err('MATLAB:hg:InvalidHandle', 'Invalid or deleted object.')
 
@@ -2568,55 +2579,162 @@ def ishandle(nargout, *args):
         return bool(getattr(v, 'valid', True))
     if type(v) in (float, np.ndarray):
         a = np.asarray(v, float)
-        res = [(x == 0) or (int(x) in STORE.figures) or (int(x) in STORE.objects) for x in a.reshape(-1)]
+        res = [handle_of_number(x) is not None for x in a.reshape(-1)]
         return out(np.array(res, bool).reshape(a.shape)) if a.size != 1 else res[0]
     return False
 
 
-@bi('findobj', 'findall', arr=False)
+@bi('findobj', arr=False)
 def findobj(nargout, *args):
+    return _find(args, False)
+
+
+@bi('findall', arr=False)
+def findall(nargout, *args):
+    return _find(args, True)
+
+
+def shown_test(hidden=False):
+    """Whether findobj reaches an object: its HandleVisibility is 'on', or
+    'callback' while a callback runs; findall, or the root's
+    ShowHiddenHandles, reaches every object."""
+    if hidden or ROOT.props.get('ShowHiddenHandles'):
+        return lambda o: True
+    from ..uievents import STACK
+    in_callback = bool(STACK)
+
+    def shown(o):
+        hv = o.props.get('HandleVisibility', 'on')
+        return hv == 'on' or (hv == 'callback' and in_callback)
+    return shown
+
+
+def _find(args, hidden):
+    """The given objects (the root when none are) and those under them that
+    pass the tests: property-value pairs, -regexp, -property and -function,
+    joined by -and (between pairs too), -or and -xor from left to right, with
+    -not turning the next one; flat or -depth d looks d levels down."""
     rest = list(args)
-    roots = []
-    from ..uievents import gcbf as _gcbf
-    shown = lambda f: f.props['HandleVisibility'] == 'on' or (f.props['HandleVisibility'] == 'callback' and _gcbf() is f)
-    if rest and (isinstance(rest[0], (GObj, HArr)) or (type(rest[0]) is float)):
+    shown = shown_test(hidden)
+    if rest and (isinstance(rest[0], (GObj, HArr)) or type(rest[0]) in (float, np.ndarray)):
         roots = _handles(rest.pop(0))
     else:
-        roots = [f for f in STORE.figures.values() if shown(f)]
-
-    found = []
-
-    def walk(o):
-        found.append(o)
-        for c in o.children:
-            if c.valid:
-                walk(c)
-    for r in roots:
-        if r is ROOT:
-            for f in STORE.figures.values():
-                if shown(f):
-                    walk(f)
-        else:
-            walk(r)
-    conds = []
+        roots = [ROOT]
+    depth = None
+    terms = []
     i = 0
     while i < len(rest):
         s = opt_str(rest[i])
+        low = s.lower() if s is not None else None
         if s is None:
             i += 1
-            continue
-        if s.startswith('-'):
+        elif low == 'flat':
+            depth = 0
             i += 1
-            continue
-        if i + 1 < len(rest):
-            conds.append((s, rest[i + 1]))
-        i += 2
-    tests = [_find_test(k, v) for k, v in conds]
-    if len(tests) == 1:
+        elif low == '-depth' and i + 1 < len(rest):
+            d = num(rest[i + 1])
+            depth = None if d == math.inf else int(d)
+            i += 2
+        elif low in ('-and', '-or', '-xor', '-not'):
+            terms.append((low, None))
+            i += 1
+        elif low == '-regexp' and i + 2 < len(rest):
+            terms.append(('test', _regexp_test(sval(rest[i + 1], 'property name', 'findobj'), rest[i + 2])))
+            i += 3
+        elif low == '-property' and i + 1 < len(rest):
+            terms.append(('test', _has_test(sval(rest[i + 1], 'property name', 'findobj'))))
+            i += 2
+        elif low == '-function' and i + 1 < len(rest):
+            if i + 2 < len(rest) and opt_str(rest[i + 1]) is not None:
+                terms.append(('test', _function_test(rest[i + 2], py_str(rest[i + 1]))))
+                i += 3
+            else:
+                terms.append(('test', _function_test(rest[i + 1], None)))
+                i += 2
+        else:
+            if i + 1 < len(rest):
+                terms.append(('test', _find_test(s, rest[i + 1])))
+            i += 2
+
+    found = []
+
+    def walk(o, d):
+        found.append(o)
+        if depth is not None and d >= depth:
+            return
+        for c in (STORE.figures.values() if o is ROOT else o.children):
+            if c.valid and shown(c):
+                walk(c, d + 1)
+    for r in roots:
+        walk(r, 0)
+    tests = [t for kind, t in terms if kind == 'test']
+    if len(tests) < len(terms):
+        res = [h for h in found if _combine(terms, h)]
+    elif len(tests) == 1:
         res = list(filter(tests[0], found))
     else:
         res = [h for h in found if all(test(h) for test in tests)]
     return HArr.of(res, col=True)
+
+
+def _combine(terms, h):
+    res = None
+    op = '-and'
+    negate = False
+    for kind, test in terms:
+        if kind == '-not':
+            negate = not negate
+        elif kind != 'test':
+            op = kind
+        else:
+            v = bool(test(h)) != negate
+            negate = False
+            if res is None:
+                res = v
+            elif op == '-and':
+                res = res and v
+            elif op == '-or':
+                res = res or v
+            else:
+                res = res != v
+            op = '-and'
+    return True if res is None else res
+
+
+def _regexp_test(k, v):
+    import re
+    from .strfun import _py_pattern
+    try:
+        rx = re.compile(_py_pattern(py_str(v)))
+    except re.error as e:
+        raise err('MATLAB:regexp:badPattern', f'The regular expression is not valid: {e}.', 'findobj')
+
+    def test(h):
+        x = _safe_value(h, k)
+        return x is not None and is_str(x) and rx.search(py_str(x)) is not None
+    return test
+
+
+def _has_test(k):
+    return lambda h: _safe_value(h, k) is not None
+
+
+def _function_test(f, k):
+    from ..ops import truth
+    if not isinstance(f, FH):
+        raise err('MATLAB:findobj:InvalidFunction', 'The value after -function is a function handle.', 'findobj')
+
+    def test(h):
+        x = h if k is None else _safe_value(h, k)
+        return x is not None and truth(f.scall(1, x))
+    return test
+
+
+def _safe_value(h, k):
+    try:
+        return h.getprop(k)
+    except MError:
+        return None
 
 
 def _find_test(k, v):
