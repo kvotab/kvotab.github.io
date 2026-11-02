@@ -2,7 +2,7 @@
   "name": "hdf5-browser",
   "displayName": "Data Browser",
   "description": "Browse HDF5 (.h5) files and Ecolego assessments (.eas) in VS Code with kvotab.se's Data Browser: explore the tree, inspect datasets, chart them and export to Excel.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "kvotab",
   "icon": "icon.png",
   "license": "MIT",

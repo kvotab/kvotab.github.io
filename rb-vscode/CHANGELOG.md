@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.12
+
+* The extension is called Data Browser, as the page on kvotab.se now is: its
+  name in the Extensions view, its commands (*Data Browser: Check for
+  Updates*, *Data Browser: Show Log*, *Open Together in Data Browser*), the
+  heading of its settings and its log. It is the same extension under its
+  new name: it goes on updating itself, and its settings (`hdf5Browser.*`)
+  keep their values.
+* From the site: a dataset of numbers that is not a time series is drawn: a
+  vector as a histogram or a scatter, a matrix as a heatmap, an array of
+  three dimensions or more a slice at a time. Several selected are drawn
+  together, a scatter with any vector of their length as its x axis.
+* From the site: a MATLAB MAT-file or figure (`.mat`, `.fig`), a JSON or an
+  XML file added with *Add Files*, under *All files*, opens as on the site:
+  a MAT-file's variables, a figure's objects with the figure drawn, the
+  values of a JSON or XML file as a tree. From the Explorer, as before, HDF5
+  files and Ecolego assessments open here.
+
 ## 0.1.11
 
 * From the site: a result file that keeps the attributes its datasets share
