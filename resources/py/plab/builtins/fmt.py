@@ -11,7 +11,7 @@ import re
 
 import numpy as np
 
-from ..values import MError, Char, Str, Cell, Struct, FH, Obj, class_of
+from ..values import MError, Char, Str, Cell, Struct, FH, Obj, Sparse, class_of
 
 _CONV = re.compile(r'%(?P<flags>[-+ #0]*)(?P<width>\*|\d+)?(?:\.(?P<prec>\*|\d*))?(?P<len>[lhL]*)(?P<conv>[diouxXfFeEgGcsaA%])')
 _ESC = re.compile(r'\\(x[0-9a-fA-F]+|[0-7]{1,3}|.)', re.S)
@@ -37,6 +37,8 @@ class _Args:
     def __init__(self, args):
         self.items = []
         for a in args:
+            if type(a) is Sparse:
+                a = a.dense()
             t = type(a)
             if t is Char:
                 self.items.append(('c', a))

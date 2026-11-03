@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(HERE, '..', '..', 'py'))
 
 from plab import runtime as R  # noqa: E402
 from plab import worker_api  # noqa: E402
-from plab.values import Char, Cell, Struct, Str  # noqa: E402
+from plab.values import Char, Cell, Struct, Str, Sparse  # noqa: E402
 
 R.setup()
 TMP = tempfile.mkdtemp(prefix='pylab-parfor-')
@@ -123,6 +123,8 @@ def val(v):
         if v.size == 1 and v.ndim == 2:
             return v.reshape(-1)[0].item()
         return v.tolist()
+    if t is Sparse:
+        return ['sparse', val(v.dense())]
     if t is Char:
         return v.str() if v.a.shape[0] <= 1 else v.row_strs()
     if t is Str:
@@ -277,6 +279,11 @@ case('and in a script', 'pfload', want={'z': [[5, 6, 7]]}, hides=['Warning'])
 case('a graphics handle cannot go', 'h = figure; parfor k = 1:2, y(k) = h.Number + k; end; close all;',
      shows=['runs one pass at a time: a value cannot be sent to the workers'], parallel=False)
 case('an empty loop', 'y = 5; parfor k = 1:0, y = 7; end', want={'y': 5.0}, parallel=False)
+case('sparse matrices: broadcast, sliced in and out, and summed',
+     "S = sparse([1 2 3 4], [1 2 3 4], [1 2 3 4]); C = sparse([1 0 2 0; 0 3 0 4]); y = zeros(1, 4); X = sparse(2, 4); t = sparse(4, 1); "
+     "parfor k = 1:4, y(k) = full(S(k, k)) * 10; X(:, k) = C(:, k) * k; t = t + S(:, k); end; kx = issparse(X); kt = issparse(t);",
+     want={'y': [[10.0, 20.0, 30.0, 40.0]], 'X': ['sparse', [[1.0, 0.0, 6.0, 0.0], [0.0, 6.0, 0.0, 16.0]]], 'kx': True, 'kt': True,
+           't': ['sparse', [[1.0], [2.0], [3.0], [4.0]]]})
 
 shutil.rmtree(TMP, ignore_errors=True)
 print(f'\n{checks[0] - len(failed)} of {checks[0]} checks passed')

@@ -348,6 +348,20 @@ near('[B, d] = spdiags(S): the diagonals as columns', W['Bx'], [[1, 2, 0], [4, 5
 near('[B, d] = spdiags(S): their numbers', W['dx'], [[-1], [0], [1]])
 near('spdiags(B, d, A) replaces a diagonal', W['W2'], [[10, 6, 0], [1, 20, 9], [0, 4, 30]])
 
+# ---- sparse values where the language takes any array ---------------------------------------------------
+W, out = run("""S = sparse([3 0 1]); [v, i] = sort(S); t = sprintf('%g,', S); a = arrayfun(@(x) x*2, S); k = kron([1 2], S);
+st.m = S; c = {S}; f = figure('Visible', 'off'); xlim(sparse([0 2])); xl = xlim; close(f); m = mat2str(S); j = jsonencode(S);
+try, det(1, S); catch err, m1 = err.message; end
+try, kron(S); catch err, m2 = err.message; end""")
+sparse_of('sort keeps the values sparse', W['v'])
+full_of('the indices of sort are full', W['i'])
+C('sprintf reads a sparse matrix element by element', text(W['t']) == '3,0,1,', W['t'])
+near('arrayfun over a sparse matrix, one element at a time', W['a'], [[6, 0, 2]])
+sparse_of('kron with the sparse matrix second is sparse', W['k'])
+near('a graphics limit given as a sparse vector', W['xl'], [[0, 2]])
+C('mat2str and jsonencode of a sparse matrix', text(W['m']) == '[3 0 1]' and text(W['j']) == '[3,0,1]', (W.get('m'), W.get('j')))
+C('wrong inputs with a sparse matrix are language errors', 'MATLAB:internal' not in out and W.get('m1') is not None and W.get('m2') is not None, (W.get('m1'), W.get('m2')))
+
 # ---- validators and spy ------------------------------------------------------------------------------
 W, out = run("""S = speye(2);
 try, mustBeNonsparse(S); catch e, m1 = e.message; end

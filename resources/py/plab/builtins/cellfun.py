@@ -8,7 +8,7 @@ from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, dims_from, cellstr_list)
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, class_of, shape_of, numel,
-                      _2d, EMPTY, py_str, share, share_all, scalar_out)
+                      _2d, EMPTY, py_str, share, share_all, scalar_out, Sparse)
 from ..ops import cat as _cat
 from ..index import field_name
 from .. import runtime as R
@@ -469,6 +469,10 @@ def _elements(v):
         return [Str.of(s) for s in v.a.reshape(-1, order='F')]
     if isinstance(v, Obj) and hasattr(v, 'a'):
         return list(v.a.reshape(-1, order='F'))
+    if t is Sparse:
+        # each element a sparse 1-by-1 matrix
+        from ..sparsemat import idx
+        return [idx(v, (float(i + 1),)) for i in range(numel(v))]
     return [v]
 
 

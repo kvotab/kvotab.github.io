@@ -417,9 +417,25 @@ chol qr expm sqrtm logm funm pinv null orth tril triu'''.split():
     _rewrap(_n, _keep_sparse)
 
 
-def _native(name):
-    """Register fn as name's sparse path: it is called for sparse inputs and
-    returns NotImplemented to hand the call to the full-array function."""
+def _values_sparse(orig):
+    """sort: the sorted values sparse, the indices full."""
+    def f(nargout, *args):
+        if not args or type(args[0]) is not Sparse:
+            return orig(nargout, *args)
+        r = orig(nargout, *_dense_args(args))
+        if isinstance(r, tuple):
+            return (_sparse_result(r[0]),) + tuple(r[1:])
+        return _sparse_result(r)
+    return f
+
+
+_rewrap('sort', _values_sparse)
+
+
+def _native(name, any_arg=False):
+    """Register fn as name's sparse path: it is called when the first input
+    is sparse (any input with any_arg) and returns NotImplemented to hand the
+    call to the full-array function."""
     def deco(fn):
         old = REG.get(name)
         if old is None:
@@ -427,7 +443,7 @@ def _native(name):
         prev = old.fn
 
         def f(nargout, *args):
-            if _has_sparse(args):
+            if args and (type(args[0]) is Sparse or (any_arg and _has_sparse(args))):
                 r = fn(nargout, *args)
                 if r is not NotImplemented:
                     return r
@@ -623,14 +639,16 @@ def _triu(nargout, *args):
     return SPM.make(_sp().triu(s.m, k, format='csc'), logical=s.m.dtype == np.bool_)
 
 
-@_native('kron')
+@_native('kron', any_arg=True)
 def _kron(nargout, *args):
+    nargchk(args, 2, 2, 'kron')
     a, b = (SPM.to_sparse(x).m for x in args[:2])
     return SPM.make(_sp().kron(a.astype(F64) if a.dtype == np.bool_ else a, b.astype(F64) if b.dtype == np.bool_ else b, format='csc'))
 
 
 @_native('repmat')
 def _repmat(nargout, *args):
+    nargchk(args, 2, None, 'repmat')
     s = args[0]
     if type(s) is not Sparse:
         return NotImplemented
@@ -648,7 +666,7 @@ def _repmat(nargout, *args):
     return SPM.make(full_, logical=m.dtype == np.bool_)
 
 
-@_native('blkdiag')
+@_native('blkdiag', any_arg=True)
 def _blkdiag(nargout, *args):
     mats = [SPM.to_sparse(a).m for a in args]
     logical = all(m.dtype == np.bool_ for m in mats)
@@ -659,7 +677,7 @@ def _blkdiag(nargout, *args):
 _ISEQUAL_FULL = REG['isequal'].fn if 'isequal' in REG else None
 
 
-@_native('isequal')
+@_native('isequal', any_arg=True)
 def _isequal(nargout, *args):
     vals = list(args)
     first = vals[0]

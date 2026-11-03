@@ -311,6 +311,16 @@ class Sparse:
             raise MError('MATLAB:nomem', f'Out of memory: making the {m}\u00d7{n} sparse matrix full would need {m * n} elements. Work with it sparse.')
         return np.asarray(self.m.toarray(order='F'))
 
+    def __array__(self, dtype=None, copy=None):
+        # code written for full arrays (numpy.asarray of a value) reads it full
+        a = self.dense()
+        return a if dtype is None else a.astype(dtype)
+
+    def __float__(self):
+        if self.m.shape != (1, 1):
+            raise TypeError('only a 1-by-1 sparse matrix converts to a number')
+        return float(self.m[0, 0].real)
+
     def __repr__(self):
         return f'Sparse{self.m.shape}[{self.m.nnz}]'
 

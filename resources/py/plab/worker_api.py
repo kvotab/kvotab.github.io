@@ -15,7 +15,7 @@ import numpy as np
 
 from . import runtime as R
 from . import display as D
-from .values import (MError, Interrupt, Char, Cell, Struct, Str, FH, Obj, NOVAL, class_of, shape_of, numel, size_str)
+from .values import (MError, Interrupt, Char, Cell, Struct, Str, FH, Obj, NOVAL, Sparse, class_of, shape_of, numel, size_str)
 
 _post = None
 _futures = {}
@@ -159,7 +159,7 @@ def workspace(W=None):
             preview = '?'
         sh = shape_of(v)
         rows.append({'name': name, 'value': preview, 'size': size_str(sh), 'class': class_of(v),
-                     'complex': bool(type(v) is complex or (type(v) is np.ndarray and v.dtype.kind == 'c')),
+                     'complex': bool(type(v) is complex or (type(v) in (np.ndarray, Sparse) and v.dtype.kind == 'c')),
                      'numel': int(numel(v)), 'global': name in getattr(W, 'gnames', ()),
                      'minmax': _minmax(v)})
     for name in sorted(getattr(W, 'gnames', ())):
@@ -179,6 +179,13 @@ def _minmax(v):
                 return [float(a.min()), float(a.max())]
         if type(v) is float:
             return [v, v]
+        if type(v) is Sparse and v.dtype.kind in 'fb' and numel(v):
+            a = v.m.data.astype(float)
+            a = a[np.isfinite(a)]
+            if v.nnz < numel(v):
+                a = np.append(a, 0.0)          # the zeros not stored
+            if a.size:
+                return [float(a.min()), float(a.max())]
     except Exception:
         pass
     return None
@@ -343,6 +350,10 @@ def var_view(name, r0=0, c0=0, nr=200, nc=60):
         return json.dumps(res)
     elif t is Str:
         get = lambda i, j: Str.of(v.a[i, j])
+    elif t is Sparse:
+        # only the block shown is made full
+        blk = v.m[r0:r0 + nr, c0:c0 + nc].toarray()
+        get = lambda i, j: blk[i - r0, j - c0].item()
     else:
         get = lambda i, j: v
     for i in range(r0, min(rows, r0 + nr)):
