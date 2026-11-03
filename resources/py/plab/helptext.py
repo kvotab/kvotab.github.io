@@ -574,8 +574,10 @@ isequaln: Like isequal, with NaN equal to NaN.
     tf = isequaln(A, B, ...)
 isnan: True for NaN elements.
     tf = isnan(A)
-ismissing: True for missing elements: NaN, <missing> strings, blanks in a char array, empty text in a cell.
+ismissing: True for missing elements: NaN, <missing> strings, blanks in a char array, empty text in a cell, NaT, undefined categories.
     tf = ismissing(A)
+    tf = ismissing(T)
+    * For a table, each variable's elements side by side: a logical array of the table's rows and of its variables' columns.
 isinf: True for Inf and -Inf elements.
     tf = isinf(A)
 isfinite: True for elements that are neither Inf nor NaN.
@@ -3653,7 +3655,9 @@ histogram: A histogram of data.
     histogram(X, nbins)
     histogram(X, edges)
     histogram(..., 'Normalization', 'probability' | 'pdf' | 'count')
+    histogram(C)
     h = histogram(...)
+    * For a categorical array C, a bar for each category with its count (or 'probability' or 'percentage'), the axis named by the categories; h is the bars.
 hist: A histogram (older; histogram is preferred), or its counts.
     hist(y)
     hist(y, nbins)
@@ -4485,21 +4489,30 @@ nargchk: The message for a number of inputs outside a range (the older form of n
 namelengthmax: The longest a name may be: 63.
     n = namelengthmax
 # ---- data cleaning and grouping ---------------------------------------------------------------
-fillmissing: Fill the missing entries (NaN, or empty text) of data.
+fillmissing: Fill the missing entries (NaN, empty text, NaT, undefined) of data.
     F = fillmissing(A, 'constant', v)
     F = fillmissing(A, 'linear')
     F = fillmissing(A, 'movmean', window)
     F = fillmissing(..., dim, 'EndValues', 'nearest', 'MaxGap', g)
+    F = fillmissing(T, method, ..., 'DataVariables', vars)
     [F, TF] = fillmissing(...)
+    * Datetimes and durations fill by every method; categorical arrays by 'constant' (a category's name), 'previous', 'next' and 'nearest'. A table is filled variable by variable ('constant' may give a cell of values, one per variable).
     * Methods: 'constant', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima', 'movmean', 'movmedian'.
     * EndValues: 'extrap' (the default), 'previous', 'next', 'nearest', 'none' or a value.
 rmmissing: Remove missing entries, or the rows or columns that have them.
     R = rmmissing(A)
     R = rmmissing(A, dim)
     R = rmmissing(..., 'MinNumMissing', n)
+    R = rmmissing(T, 'DataVariables', vars)
     [R, TF] = rmmissing(...)
-standardizeMissing: Make given values the standard missing value (NaN, or empty text).
+    * A table loses the rows with a missing element in its variables (or in vars).
+standardizeMissing: Make given values the standard missing value (NaN, empty text, NaT, undefined).
     B = standardizeMissing(A, indicators)
+    B = standardizeMissing(T, indicators, 'DataVariables', vars)
+    * For a categorical array the indicators are category names; for a table each variable takes the indicators of its kind.
+missing: The missing value: it becomes NaN, <missing>, NaT or undefined where it is put.
+    m = missing
+    * [1 missing 3] is [1 NaN 3], ["a" missing] a string array with a missing string, d(2) = missing makes a datetime NaT and c(2) = missing a category undefined. string(missing), double(missing), datetime(missing) and categorical(missing) convert it; in arithmetic it is NaN.
 isoutlier: Find outliers in data.
     TF = isoutlier(A)
     TF = isoutlier(A, method)

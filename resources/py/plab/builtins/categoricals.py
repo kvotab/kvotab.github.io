@@ -35,6 +35,8 @@ def _names_of(v):
 
 def _num_text(x):
     """A number as a category name (as num2str would write it)."""
+    if not np.isfinite(x):
+        raise MError('MATLAB:categorical:NonFiniteValueset', 'A category cannot be NaN or Inf: such values are undefined.')
     if x == int(x) and abs(x) < 1e15:
         return str(int(x))
     return f'{x:.5g}'
@@ -149,7 +151,11 @@ class Categorical(VObj):
     def binop(self, op, a, b):
         if op in ('==', '~='):
             o = a if type(a) is Categorical else b
-            A, B = (a if type(a) is Categorical else _text_cat(a, o)), (b if type(b) is Categorical else _text_cat(b, o))
+            try:
+                A, B = (a if type(a) is Categorical else _text_cat(a, o)), (b if type(b) is Categorical else _text_cat(b, o))
+            except TypeError:
+                other = b if type(a) is Categorical else a
+                raise MError('MATLAB:categorical:InvalidComparisonTypes', f'A categorical array can be compared with text or with a categorical array, not with a value of class {class_of(other)}.')
             try:
                 na, nb = np.broadcast_arrays(np.asarray(A.names(), object), np.asarray(B.names(), object))
             except ValueError:

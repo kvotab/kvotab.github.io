@@ -667,6 +667,9 @@ def _conv_args(args):
 
 def asgn(A, args, V):
     """A(args...) = V. Returns the array that the name now holds."""
+    if getattr(V, 'is_missing', False) and not getattr(A, 'is_missing', False):
+        # missing becomes the missing value of the array it goes in
+        V = V.like(EMPTY() if A is NOVAL else A)
     t = type(A)
     # the fast path: one element of a double array, in place
     if t is np.ndarray and A.flags.writeable and A.ndim == 2 and A.dtype is _DF and type(V) is float:

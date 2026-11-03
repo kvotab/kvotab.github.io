@@ -6,6 +6,7 @@ expected values are worked out by hand or with Python's datetime module.
 """
 import asyncio
 import datetime as dt
+import json
 import os
 import sys
 import tempfile
@@ -458,5 +459,84 @@ _, o = run("""T = table([1; NaN; 3; 40], categorical({'u'; 'v'; 'u'; 'u'}), 'Var
 T.Properties.VariableUnits = {'m', ''}; summary(T)""")
 C('summary: each variable, its units, min, median, max and missing; categories counted',
   'n: 4×1 double' in o and 'Units:  m' in o and 'Median         3' in o and 'NumMissing     1' in o and 'u    3' in o, o)
+
+# ---- missing values ----------------------------------------------------------------------------------
+W, o = run("""x = [1 missing 3]; s = ["a" missing]; sm = ismissing(s);
+d = datetime(2026,1,1) + days(0:2); d(2) = missing; nd = isnat(d);
+c = categorical({'x','y'}); c(3) = missing; uc = isundefined(c);
+m = missing; mc = class(m); mi = ismissing(m); ms = string(missing); md = double(missing); ma = missing + 1;
+dt = [datetime(2026,1,1) missing]; dtn = isnat(dt);
+try, z = int8([1 2]); z(2) = missing; e = 'none'; catch err, e = err.message; end""")
+near('[1 missing 3] is [1 NaN 3]', W['x'], [1, np.nan, 3])
+near('in a string array, a missing string', W['sm'], [0, 1])
+near('in a datetime, NaT', W['nd'], [0, 1, 0])
+near('in a categorical, undefined', W['uc'], [0, 0, 1])
+C('missing: its class, ismissing, string, double, arithmetic', text(W['mc']) == 'missing' and W['mi'] is True and W['ms'].a.flat[0] is None and np.isnan(W['md']) and np.isnan(W['ma']),
+  (W['mc'], W['mi'], W['md'], W['ma']))
+near('[datetime missing] ends in NaT', W['dtn'], [0, 1])
+C('an integer array refuses missing', 'int8' in text(W['e']), W['e'])
+
+W, o = run("""d = datetime(2026,1,1) + days(0:3); d([2 3]) = NaT;
+f1 = fillmissing(d, 'previous'); f2 = fillmissing(d, 'linear'); f3 = fillmissing(d, 'constant', datetime(2000,1,1));
+r = rmmissing(d); [r2, tf] = rmmissing(d);
+c = categorical({'x','','y',''}); g1 = fillmissing(c, 'constant', 'z'); g2 = fillmissing(c, 'previous'); gc = categories(g1);
+try, fillmissing(c, 'linear'); e = 'none'; catch err, e = err.message; end
+du = hours([1 NaN 3]); h = hours(fillmissing(du, 'linear'));
+sc = standardizeMissing(categorical({'a','na','b'}), 'na'); su = isundefined(sc);
+sd = standardizeMissing(datetime(2026,1,1) + days(0:1), datetime(2026,1,2)); sn = isnat(sd);""")
+near('fillmissing of datetimes: previous', v(W['f1'].a) / 86400, (np.array([0, 0, 0, 3]) + 20454))
+near('... linear', v(W['f2'].a) / 86400, np.array([0, 1, 2, 3]) + 20454)
+near('... a constant datetime', v(W['f3'].a) / 86400, [20454, 10957, 10957, 20457])
+C('rmmissing of datetimes, and which were missing', W['r'].a.size == 2 and np.array_equal(np.asarray(W['tf']).reshape(-1), [0, 1, 1, 0]), (W['r'].a, W['tf']))
+C("categorical: 'constant' adds the category; 'previous' copies", [text(x) for x in W['gc'].a.reshape(-1)] == ['x', 'y', 'z']
+  and np.array_equal(np.asarray(W['g2'].a).reshape(-1), [1, 1, 2, 2]), (W['gc'], W['g2'].a))
+C("... 'linear' is refused for categories", 'categorical' in text(W['e']), W['e'])
+near('durations fill linearly', W['h'], [1, 2, 3])
+near('standardizeMissing: a category name made undefined', W['su'], [0, 1, 0])
+near('... a datetime made NaT', W['sn'], [0, 1])
+
+W, o = run("""T = table([1;NaN;3], {'a';'';'c'}, categorical({'x';'';'y'}), datetime(2026,1,1)+days([0;NaN;2]), 'VariableNames', {'n','s','c','d'});
+M = ismissing(T); R1 = rmmissing(T); h1 = height(R1);
+[F, tf] = fillmissing(T, 'previous'); fn = F.n; fs = F.s; ftf = tf;
+G = fillmissing(T, 'constant', {0, 'none', 'x', datetime(2000,1,1)}); gn = G.n; gs = G.s{2};
+L = fillmissing(T, 'linear', 'DataVariables', 'n'); ln = L.n; ls = L.s{2};
+R2 = rmmissing(T, 'DataVariables', 'n'); h2 = height(R2);
+S = standardizeMissing(table([1;-99;3], {'a';'-99';'b'}), -99); sn = S.Var1; ss = S.Var2{2};""")
+C('ismissing of a table: each variable side by side', np.array_equal(np.asarray(W['M']).astype(int), [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0]]), W['M'])
+C('rmmissing of a table drops the rows with a missing element', W['h1'] == 2 and W['h2'] == 2, (W['h1'], W['h2']))
+near("fillmissing of a table, 'previous', each variable", W['fn'], [1, 1, 3])
+C('... text too, and which were filled', text(W['fs']) == ['a', 'a', 'c'] and np.asarray(W['ftf']).astype(int).tolist()[1] == [1, 1, 1, 1], (W['fs'], W['ftf']))
+C("'constant' with one value per variable", np.allclose(v(W['gn']), [1, 0, 3]) and text(W['gs']) == 'none', (W['gn'], W['gs']))
+C("'DataVariables' fills only those", np.allclose(v(W['ln']), [1, 2, 3]) and text(W['ls']) == '', (W['ln'], W['ls']))
+C('standardizeMissing of a table: a number indicator in the number variable only', np.isnan(v(W['sn'])[1]) and text(W['ss']) == '-99', (W['sn'], W['ss']))
+
+# ---- categorical data in plots --------------------------------------------------------------------------
+W, o = run("""f = figure('Visible', 'off'); c = categorical({'apple','pear','apple','fig','apple','pear'});
+h = histogram(c); y = get(h, 'YData'); kx = gca; k = kx.XLim;
+h2 = histogram(c, 'Normalization', 'probability'); p = get(h2, 'YData');
+b = bar(categorical({'lo','mid','hi'}, {'lo','mid','hi'}), [3 5 2]); bx = get(b, 'XData'); bxl = xlim;
+pl = plot(categorical({'a','b','c'}), [1 4 2], '-o'); px = get(pl, 'XData');""")
+near('histogram of a categorical: the count of each category, in their order', W['y'], [3, 1, 2])
+near("... 'probability'", W['p'], [0.5, 1 / 6, 1 / 3])
+near('bar of categories: each at its place', (W['bx'], W['bxl']), [1, 2, 3, 0.5, 3.5])
+near('plot of categories', W['px'], [1, 2, 3])
+from plab.graphics_base import STORE as _STORE  # noqa: E402
+kinds = [getattr(a, 'kinds', None) for a in list(_STORE.objects.values()) if getattr(a, 'kinds', None)]
+C('the axis knows it holds categories, and their names', any(str(k.get('x', '')).startswith('categorical:["a", "b", "c"]') for k in kinds), kinds[-3:])
+run('close all')
+
+# ---- the Variable editor ------------------------------------------------------------------------------
+from plab import worker_api as WA  # noqa: E402
+_dbg = R.DEBUGGER
+R.DEBUGGER = WA.Debugger()
+try:
+    run("T = table([1;2], {'a';'b'}, [1 2; 3 4], 'RowNames', {'r1','r2'}); TT = timetable(seconds([0;1]), [5;6]); d = datetime(2026,1,1) + days([0 1; 2 3]); c = categorical({'x','y',''});")
+    vt, vtt, vd, vc = (json.loads(WA.var_view(n)) for n in ('T', 'TT', 'd', 'c'))
+    C('Variable editor: a table as its variables over its rows, the row names beside',
+      vt['kind'] == 'table' and vt['fields'] == ['Var1', 'Var2', 'Var3'] and vt['rowLabels'] == ['r1', 'r2'] and vt['cells'][1] == ['2', "{'b'}", '3    4'], vt)
+    C('... a timetable with its row times', vtt['kind'] == 'table' and vtt['rowHead'] == 'Time' and vtt['rowLabels'] == ['0 sec', '1 sec'] and vtt['cells'] == [['5'], ['6']], vtt)
+    C('... datetimes and categoricals as their elements display', vd['kind'] == 'grid' and vd['cells'][1] == ['03-Jan-2026', '04-Jan-2026'] and vc['cells'] == [['x', 'y', '<undefined>']], (vd, vc))
+finally:
+    R.DEBUGGER = _dbg
 
 sys.exit(C.done())

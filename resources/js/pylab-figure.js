@@ -237,6 +237,18 @@
     return { ticks, labels };
   }
 
+  /* A categorical axis: each category at its place (1, 2, ...), named. */
+  function categoryTicks(lo, hi, namesJson) {
+    let names = [];
+    try { names = JSON.parse(namesJson); } catch (e) { names = []; }
+    const ticks = [], labels = [];
+    for (let k = Math.max(1, Math.ceil(Math.min(lo, hi) - 1e-9)); k <= Math.min(names.length, Math.floor(Math.max(lo, hi) + 1e-9)); k++) {
+      ticks.push(k);
+      labels.push(String(names[k - 1]));
+    }
+    return { ticks, labels };
+  }
+
   function maxTicks(px, is3d) { return Math.max(3, Math.min(is3d ? 7 : 11, Math.floor(px / 30) + 1)); }
 
   /* Tick labels and the exponent written at the axis' end. */
@@ -822,6 +834,7 @@
       if (kind && !given && !ax[`${which}ticklabel`]) {
         // a datetime or duration axis: its own ticks and labels
         const n = Math.max(3, Math.min(maxTicks(px, is3d), which === 'x' ? Math.floor(px / 70) + 1 : 11));
+        if (kind.startsWith('categorical:')) return Object.assign(categoryTicks(lim[0], lim[1], kind.slice(12)), { exp: null });
         return Object.assign(kind === 'datetime' ? dateTicks(lim[0], lim[1], n) : durationTicks(lim[0], lim[1], n, kind.split(':')[1]), { exp: null });
       }
       let ticks = given || (log ? logTicks(lim[0], lim[1]) : niceTicks(lim[0], lim[1], maxTicks(px, is3d)));

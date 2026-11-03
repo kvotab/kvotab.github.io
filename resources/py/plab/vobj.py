@@ -29,6 +29,7 @@ def _2d(a):
 
 class VObj(Obj):
     is_handle = False
+    is_missing = False
     cls = 'object'
     ARRAYS = ('a',)
     FILLS = {'a': np.nan}
@@ -75,6 +76,8 @@ class VObj(Obj):
         from .index import _conv_args, _region, _grow, _put
         if is_empty_double(V) and not isinstance(V, VObj):
             return self.delete(args)
+        if getattr(V, 'is_missing', False) and not self.is_missing:
+            V = V.like(self)
         V = self.coerce(V)
         out = {}
         for k in self.ARRAYS:
@@ -208,6 +211,9 @@ class VOps:
     @staticmethod
     def binop(op, a, b):
         o = a if isinstance(a, VObj) else b
+        if getattr(a, 'is_missing', False) or getattr(b, 'is_missing', False):
+            # missing becomes the missing value of the other operand
+            o = a if getattr(a, 'is_missing', False) else b
         return o.binop(op, a, b)
 
     @staticmethod
@@ -216,7 +222,7 @@ class VOps:
 
     @staticmethod
     def cat(axis, vals):
-        o = first_vobj(vals)
+        o = next((v for v in vals if getattr(v, 'is_missing', False)), None) or first_vobj(vals)
         return type(o).concat(axis, vals)
 
     @staticmethod

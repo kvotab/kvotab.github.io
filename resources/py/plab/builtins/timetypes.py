@@ -809,6 +809,10 @@ class CalDuration(VObj):
             nv = np.asarray(darr(n), float)
             if np.any(nv != np.round(nv)):
                 raise MError('MATLAB:calendarDuration:NonIntegerMultiplier', 'A calendarDuration can only be multiplied by whole numbers.')
+            try:
+                np.broadcast_shapes(c.mo.shape, nv.shape)
+            except ValueError:
+                raise MError('MATLAB:sizeDimensionsMustMatch', 'Arrays have incompatible sizes for this operation.')
             return CalDuration(c.mo * nv, c.d * nv, c.t * nv, c.fmt)
         raise MError('MATLAB:UndefinedFunction', f"Operator '{op}' is not supported for operands of type 'calendarDuration'.")
 
@@ -1679,6 +1683,11 @@ def _plot_value(v):
         return v.wall() / DAY + _EPOCH, 'datetime'
     if type(v) is Duration:
         return v.a / DAY, 'duration:' + v.fmt
+    from .categoricals import Categorical
+    if type(v) is Categorical:
+        # each element at its category's place (1, 2, ...), undefined nowhere; the axis names the places
+        import json
+        return np.where(v.a > 0, v.a, np.nan).astype(float), 'categorical:' + json.dumps(list(v.cats))
     return None, None
 
 
@@ -1706,6 +1715,47 @@ def _axes_of(name, ndata):
     return axes
 
 
+def _categorical_histogram(reg, args):
+    """histogram(C) of a categorical array: a bar per category, its count (or 'Normalization',
+    'probability' or 'percentage'), the axis named by the categories. (handle, axis kinds), or None
+    when C is not categorical."""
+    from .categoricals import Categorical
+    from ..graphics_base import GObj
+    import json
+    lead = list(args[:1]) if args and isinstance(args[0], GObj) else []
+    rest = list(args[len(lead):])
+    if not rest or type(rest[0]) is not Categorical:
+        return None
+    c = rest.pop(0)
+    codes = np.asarray(c.a, float).reshape(-1)
+    k = len(c.cats)
+    counts = np.array([np.sum(codes == i + 1) for i in range(k)], float)
+    opts = []
+    i = 0
+    norm = 'count'
+    while i < len(rest):
+        o = opt_str(rest[i])
+        if o is not None and o.lower() == 'normalization' and i + 1 < len(rest):
+            norm = (opt_str(rest[i + 1]) or '').lower()
+            i += 2
+            continue
+        if o is not None and o.lower() in ('categories', 'displayorder', 'numdisplaybins', 'showothers') and i + 1 < len(rest):
+            i += 2
+            continue
+        opts.append(rest[i])
+        i += 1
+    total = counts.sum()
+    if norm == 'probability':
+        counts = counts / total if total else counts
+    elif norm == 'percentage':
+        counts = 100 * counts / total if total else counts
+    elif norm not in ('count', ''):
+        raise err('MATLAB:histogram:InvalidNormalization', "For categorical data, 'Normalization' is 'count', 'probability' or 'percentage'.", 'histogram')
+    pos = out(np.arange(1, k + 1, dtype=float).reshape(1, -1))
+    h = reg['bar'].fn(1, *lead, pos, out(counts.reshape(1, -1)), *opts)
+    return h, {'x': 'categorical:' + json.dumps(list(c.cats))}
+
+
 def wrap_plots(reg):
     """The plotting functions take datetimes and durations: as date numbers
     (or days) on an axis whose ticks the figure labels as dates (or as
@@ -1719,7 +1769,8 @@ def wrap_plots(reg):
         def make(name, orig, ws, aw):
             def convert(args):
                 kinds = {}
-                if not any(type(a) in (DateTime, Duration) for a in args):
+                from .categoricals import Categorical
+                if not any(type(a) in (DateTime, Duration, Categorical) for a in args):
                     return args, kinds
                 from ..graphics_base import GObj
                 lead = 1 if args and isinstance(args[0], GObj) else 0
@@ -1750,6 +1801,21 @@ def wrap_plots(reg):
                 cur.update(kinds)
                 ax.kinds = cur
                 ax.touch()
+            if name == 'histogram':
+                orig_hist = orig
+
+                def f(*a):
+                    pre = a[:2] if ws else a[:1]
+                    cat = _categorical_histogram(reg, a[len(pre):])
+                    if cat is not None:
+                        r, kinds = cat
+                        mark(kinds, r)
+                        return r
+                    args, kinds = convert(a[len(pre):])
+                    r = orig_hist(*pre, *args)
+                    mark(kinds, r)
+                    return r
+                return f
             if aw:
                 async def f(*a):
                     pre = a[:2] if ws else a[:1]

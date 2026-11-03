@@ -38,7 +38,7 @@ def bi(*names, ws=False, aw=False, nout=1, arr=True):
 
 MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'optim', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
            'statdesc', 'distributions', 'stattests', 'statplots', 'uifun', 'mapping', 'symmath', 'classfun', 'appfun',
-           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa']
+           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa', 'missingdata']
 
 
 def load(target):
@@ -52,9 +52,9 @@ def load(target):
                 continue
             failed.append((m, e))
     from .. import vobj
-    from . import timetypes, categoricals, tables, gsa
+    from . import timetypes, categoricals, tables, gsa, missingdata
     vobj.install()
-    vobj.wrap_builtins(REG, timetypes.classes() + categoricals.classes() + tables.classes() + gsa.classes())
+    vobj.wrap_builtins(REG, timetypes.classes() + categoricals.classes() + tables.classes() + gsa.classes() + missingdata.classes())
     timetypes.wrap_plots(REG)
     from . import arity
     arity.apply(REG)

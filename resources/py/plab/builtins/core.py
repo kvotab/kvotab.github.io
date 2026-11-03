@@ -441,6 +441,8 @@ def size(nargout, *args):
         for d in args[1:]:
             a = arr(d)
             for x in a.reshape(-1):
+                if not np.isfinite(x) or x != int(x):
+                    raise err('MATLAB:getdimarg:dimensionMustBePositiveInteger', 'Dimension argument must be a positive integer scalar or a vector of positive integers.', 'size')
                 k = int(x)
                 if k < 1:
                     raise err('MATLAB:getdimarg:dimensionMustBePositiveInteger', 'Dimension argument must be a positive integer scalar or a vector of positive integers.', 'size')
