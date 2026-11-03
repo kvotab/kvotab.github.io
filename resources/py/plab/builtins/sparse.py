@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, arr, darr, out, num, ival, opt_str
+from ._util import err, nargchk, arr, darr, out, num, ival, opt_str, opt_lower
 from ..values import F64, C128, numel, class_of, Sparse, shape_of, is_numeric
 from .. import sparsemat as SPM
 
@@ -150,6 +150,8 @@ def sprand(nargout, *args):
         m = s.m.astype(np.bool_).astype(F64)
         m.data = RNG.rs.random_sample(m.data.size)
         return SPM.make(m)
+    if len(args) < 3:
+        raise err('MATLAB:sprand:nargin', 'Give m, n and the density, or a matrix whose pattern to use.', 'sprand')
     m, n, d = ival(args[0]), ival(args[1]), float(num(args[2]))
     r, c = _rand_pattern(m, n, d, 'sprand')
     vals = RNG.rs.random_sample(r.size)
@@ -166,6 +168,8 @@ def sprandn(nargout, *args):
         m = s.m.astype(np.bool_).astype(F64)
         m.data = RNG.rs.standard_normal(m.data.size)
         return SPM.make(m)
+    if len(args) < 3:
+        raise err('MATLAB:sprandn:nargin', 'Give m, n and the density, or a matrix whose pattern to use.', 'sprandn')
     m, n, d = ival(args[0]), ival(args[1]), float(num(args[2]))
     r, c = _rand_pattern(m, n, d, 'sprandn')
     vals = RNG.rs.standard_normal(r.size)
@@ -182,6 +186,7 @@ def sprandsym(nargout, *args):
     sp = _sp()
     if len(args) == 1 and numel(args[0]) > 1:
         s = SPM.to_sparse(args[0])
+        _square(s, 'sprandsym')
         L = sp.tril(s.m.astype(np.bool_)).tocsc().astype(F64)
         L.data = RNG.rs.standard_normal(L.data.size)
     else:
@@ -296,6 +301,8 @@ def spconvert(nargout, *args):
     if D.ndim != 2 or D.shape[1] not in (3, 4):
         raise err('MATLAB:spconvert:WrongSize', 'The rows must be [i j v] or [i j re im].', 'spconvert')
     i, j = D[:, 0], D[:, 1]
+    if np.any(i < 1) or np.any(j < 1) or np.any(i != np.floor(i)) or np.any(j != np.floor(j)):
+        raise err('MATLAB:spconvert:InvalidIndex', 'The indices i and j must be positive integers.', 'spconvert')
     v = D[:, 2] if D.shape[1] == 3 else D[:, 2] + 1j * D[:, 3]
     m, n = int(i.max()) if i.size else 0, int(j.max()) if j.size else 0
     return SPM.make(_sp().coo_matrix((v, (i.astype(np.int64) - 1, j.astype(np.int64) - 1)), shape=(m, n)).tocsc())
@@ -810,7 +817,7 @@ def _lu(nargout, *args):
     singular or non-square matrix by a full LU, its factors made sparse.
     'vector' gives the permutations as vectors."""
     s = args[0]
-    vector = any(opt_str(a) is not None and opt_str(a).lower() == 'vector' for a in args[1:])
+    vector = any(opt_str(a) is not None and opt_lower(a) == 'vector' for a in args[1:])
     if nargout > 4:
         raise err('MATLAB:TooManyOutputs', 'Too many output arguments.', 'lu')
     r, c = s.shape
@@ -1062,6 +1069,8 @@ def _eigs_impl(nargout, args):
         raise err('MATLAB:eigs:NonSquareMatrix', 'Matrix must be square.', 'eigs')
     k = min(k, n)
     Bm = None if B is None else (_float_m(B) if type(B) is Sparse else np.asarray(darr(B)))
+    if Bm is not None and Bm.shape != M.shape:
+        raise err('MATLAB:eigs:BsizeMismatch', 'B must be a square matrix of the size of A.', 'eigs')
     if n <= 600 or k >= n - 1:
         Md = M.toarray() if hasattr(M, 'toarray') else M
         Bd = None if Bm is None else (Bm.toarray() if hasattr(Bm, 'toarray') else Bm)
@@ -1192,6 +1201,8 @@ def _pattern(v, symmetric=False):
     """The nonzero pattern as a CSC matrix of ones (made symmetric: S + S')."""
     m = SPM.to_sparse(v).m.astype(np.bool_).astype(F64)
     if symmetric:
+        if m.shape[0] != m.shape[1]:
+            raise err('MATLAB:sparse:NotSquare', 'The matrix must be square.')
         m = (m + m.T).tocsc()
         m.data[:] = 1.0
     return m

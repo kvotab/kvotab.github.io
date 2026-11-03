@@ -29,6 +29,9 @@ def num2cell(nargout, *args):
     if len(args) > 1:
         dims = [int(d) - 1 for d in arr(args[1]).reshape(-1)]
         a = arr(v)
+        if any(d < 0 for d in dims):
+            raise err('MATLAB:num2cell:InvalidDim', 'The dimensions must be positive integers.', 'num2cell')
+        a = a.reshape(a.shape + (1,) * max(0, max(dims, default=0) + 1 - a.ndim))
         shape = list(a.shape)
         for d in dims:
             shape[d] = 1
@@ -206,6 +209,7 @@ def isfield(nargout, *args):
 
 @bi('isprop')
 def isprop(nargout, *args):
+    nargchk(args, 2, 2, 'isprop')
     s, f = args
     if isinstance(s, Obj):
         return py_str(f) in s.propnames()
@@ -233,6 +237,8 @@ def rmfield(nargout, *args):
 def setfield(nargout, *args):
     s = args[0]
     names = [field_name(py_str(a), 'setfield') for a in args[1:-1] if is_str(a)]
+    if not names:
+        raise err('MATLAB:setfield:NoFieldName', 'Give the name of the field to set.', 'setfield')
     from ..index import fasgn, asgn_chain
     steps = tuple(('.', n) for n in names)
     v = args[-1]
@@ -255,6 +261,8 @@ def getfield(nargout, *args):
 @bi('orderfields', nout=2)
 def orderfields(nargout, *args):
     s = args[0]
+    if type(s) is not Struct:
+        raise err('MATLAB:orderfields:InvalidInput', 'The first input must be a struct.', 'orderfields')
     keys = list(s.f)
     if len(args) > 1:
         o = args[1]
@@ -651,10 +659,18 @@ def keys(nargout, *args):
     return Cell.of_list([m._keyval(k) for k in ks])
 
 
+def _map_arg(m, fn):
+    if not isinstance(m, MapObj):
+        raise err(f'MATLAB:{fn}:NotAMap', 'The first input must be a containers.Map.', fn)
+
+
 @bi('values')
 def values(nargout, *args):
     m = args[0]
+    _map_arg(m, 'values')
     if len(args) > 1:
+        if type(args[1]) is not Cell:
+            raise err('MATLAB:Containers:Map:KeysNotCell', 'The keys must be given in a cell array.', 'values')
         ks = [m._key(k) for k in args[1].a.reshape(-1, order='F')]
         for k in ks:
             if k not in m.d:
@@ -666,6 +682,7 @@ def values(nargout, *args):
 @bi('isKey')
 def iskey(nargout, *args):
     m, k = args[0], args[1]
+    _map_arg(m, 'isKey')
     if type(k) is Cell:
         return out(np.array([m._key(x) in m.d for x in k.a.reshape(-1, order='F')], bool).reshape(k.a.shape, order='F'))
     try:
@@ -677,6 +694,7 @@ def iskey(nargout, *args):
 @bi('remove')
 def remove(nargout, *args):
     m, k = args[0], args[1]
+    _map_arg(m, 'remove')
     ks = [m._key(x) for x in k.a.reshape(-1, order='F')] if type(k) is Cell else [m._key(k)]
     for kk in ks:
         if kk not in m.d:

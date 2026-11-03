@@ -17,7 +17,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import err, darr, out, opt_str, num, is_str
+from ._util import err, darr, out, opt_str, opt_lower, num, is_str
 from ..values import MError, Char, Cell, Struct, Str, FH, Obj, F64, numel, EMPTY, py_str
 from .. import runtime as R
 
@@ -287,7 +287,7 @@ def optimoptions(nargout, *args):
             items = src.vals.items() if isinstance(src, OptimOptions) else _struct_items(src)
             for k, v in items:
                 kk = _canon(solver, k)
-                if kk is not None and not (kk == 'Algorithm' and opt_str(v) is not None and opt_str(v).lower() not in _SOLVERS[solver][0]):
+                if kk is not None and not (kk == 'Algorithm' and opt_str(v) is not None and opt_lower(v) not in _SOLVERS[solver][0]):
                     o.vals[kk] = _check_value(solver, kk, v) if not isinstance(src, OptimOptions) else v
     if len(rest) % 2:
         raise err('optimlib:options:NameValuePairs', 'Options must come in name-value pairs.', 'optimoptions')
@@ -335,7 +335,7 @@ class _Opts:
                 for k, x in _struct_items(v):
                     kk = _canon(solver, k)
                     if kk is not None:
-                        if kk == 'Algorithm' and opt_str(x) is not None and opt_str(x).lower() not in _SOLVERS[solver][0]:
+                        if kk == 'Algorithm' and opt_str(x) is not None and opt_lower(x) not in _SOLVERS[solver][0]:
                             continue
                         o.vals[kk] = _check_value(solver, kk, x)
                     if k.lower() == 'tolfun' and 'FunctionTolerance' in _SOLVERS[solver][1] and kk != 'FunctionTolerance':

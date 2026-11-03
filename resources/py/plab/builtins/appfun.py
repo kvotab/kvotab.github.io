@@ -8,7 +8,7 @@ import itertools
 import numpy as np
 
 from . import bi, REG
-from ._util import err, opt_str, is_str, sval, num
+from ._util import err, opt_str, opt_lower, is_str, sval, num
 from ..values import MError, Char, Cell, Struct, FH, Obj, EMPTY, numel, py_str
 from ..graphics_base import Figure, Axes, ROOT, register, HArr
 from .. import uiapp as A
@@ -59,8 +59,8 @@ def _parent_and_style(args, styles, fn):
     if rest and not is_str(rest[0]) and type(rest[0]) is not Struct:
         parent = _one(rest.pop(0))
     style = None
-    if rest and len(rest) % 2 == 1 and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in styles:
-        style = opt_str(rest.pop(0)).lower()
+    if rest and len(rest) % 2 == 1 and opt_str(rest[0]) is not None and opt_lower(rest[0]) in styles:
+        style = opt_lower(rest.pop(0))
     if len(rest) % 2:
         raise err('MATLAB:ui:NameValuePairs', 'Properties must come in name-value pairs.', fn)
     pairs = [(sval(rest[i], 'property name', fn), rest[i + 1]) for i in range(0, len(rest), 2)]

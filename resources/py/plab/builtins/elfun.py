@@ -13,7 +13,7 @@ import itertools
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, check_real, dim_arg, first_dim, expand_dims)
 from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, INT_RANGE, DTYPE_CLASS, class_of, shape_of,
                       numel, _2d, scalar_out, EMPTY)
@@ -369,7 +369,7 @@ _round_like('round', _round_half)
 def _round_digits(args):
     x = darr(args[0])
     n = ival(args[1], 'number of digits', 'round')
-    kind = opt_str(args[2]).lower() if len(args) > 2 else 'decimals'
+    kind = opt_lower(args[2]) if len(args) > 2 else 'decimals'
     with np.errstate(all='ignore'):
         if kind == 'significant':
             mag = np.where(x == 0, 0, np.floor(np.log10(np.abs(x))))
@@ -466,7 +466,7 @@ def rem(nargout, *args):
 @bi('idivide')
 def idivide(nargout, *args):
     nargchk(args, 2, 3, 'idivide')
-    kind = opt_str(args[2]).lower() if len(args) > 2 else 'fix'
+    kind = opt_lower(args[2]) if len(args) > 2 else 'fix'
     a, b = args[0], args[1]
     klass = class_of(a) if class_of(a) in INT_CLASSES else class_of(b)
     if klass not in INT_CLASSES:
@@ -1248,7 +1248,7 @@ def gammainc(nargout, *args):
     nargchk(args, 2, 3, 'gammainc')
     sp = _sp()
     x, a = _bcast2(args[:2], 'gammainc')
-    tail = opt_str(args[2]).lower() if len(args) > 2 else 'lower'
+    tail = opt_lower(args[2]) if len(args) > 2 else 'lower'
     if tail not in ('lower', 'upper', 'scaledlower', 'scaledupper'):
         raise err('MATLAB:gammainc:InvalidTail', "The type is 'lower', 'upper', 'scaledlower' or 'scaledupper'.", 'gammainc')
     with np.errstate(all='ignore'):
@@ -1272,7 +1272,7 @@ def gammaincinv(nargout, *args):
     nargchk(args, 2, 3, 'gammaincinv')
     sp = _sp()
     y, a = _bcast2(args[:2], 'gammaincinv')
-    tail = opt_str(args[2]).lower() if len(args) > 2 else 'lower'
+    tail = opt_lower(args[2]) if len(args) > 2 else 'lower'
     if tail not in ('lower', 'upper'):
         raise err('MATLAB:gammaincinv:InvalidTail', "The tail is 'lower' or 'upper'.", 'gammaincinv')
     with np.errstate(all='ignore'):
@@ -1303,7 +1303,7 @@ def betainc(nargout, *args):
     x = darr(args[0])
     z = darr(args[1])
     w = darr(args[2])
-    tail = opt_str(args[3]).lower() if len(args) > 3 else 'lower'
+    tail = opt_lower(args[3]) if len(args) > 3 else 'lower'
     x, z, w = np.broadcast_arrays(x, z, w)
     with np.errstate(all='ignore'):
         r = sp.betainc(z, w, x) if tail == 'lower' else sp.betaincc(z, w, x)
@@ -1316,7 +1316,7 @@ def betaincinv(nargout, *args):
     directly (not 1 - y, which loses small values)."""
     nargchk(args, 3, 4, 'betaincinv')
     sp = _sp()
-    tail = opt_str(args[3]).lower() if len(args) > 3 else 'lower'
+    tail = opt_lower(args[3]) if len(args) > 3 else 'lower'
     if tail not in ('lower', 'upper'):
         raise err('MATLAB:betaincinv:InvalidTail', "The tail is 'lower' or 'upper'.", 'betaincinv')
     y, z, w = np.broadcast_arrays(darr(args[0]), darr(args[1]), darr(args[2]))
@@ -1435,7 +1435,7 @@ def legendre(nargout, *args):
     sp = _sp()
     n = ival(args[0], 'degree', 'legendre')
     x = darr(args[1])
-    norm = opt_str(args[2]).lower() if len(args) > 2 else 'unnorm'
+    norm = opt_lower(args[2]) if len(args) > 2 else 'unnorm'
     xs = x.reshape(-1)
     rows = []
     for m in range(n + 1):

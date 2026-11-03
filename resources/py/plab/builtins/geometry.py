@@ -127,6 +127,8 @@ def voronoin(nargout, *args):
     nargchk(args, 1, 2, 'voronoin')
     from scipy.spatial import Voronoi
     P = darr(args[0]).astype(F64)
+    if P.ndim != 2 or P.shape[1] < 2:
+        raise err('MATLAB:voronoin:points', 'X has a point per row, in two dimensions or more.', 'voronoin')
     vor = Voronoi(P)
     V = np.vstack([np.full((1, P.shape[1]), np.inf), vor.vertices])
     cells = []
@@ -190,6 +192,8 @@ def tsearchn(nargout, *args):
     T = darr(args[1]).astype(np.intp) - 1
     Q = darr(args[2]).astype(F64)
     d = X.shape[1]
+    if Q.ndim != 2 or Q.shape[1] != d or T.ndim != 2 or T.shape[1] != d + 1 or (T.size and (T.min() < 0 or T.max() >= X.shape[0])):
+        raise err('MATLAB:tsearchn:sizes', 'X has a point per row, T a simplex of d+1 indices per row, XI points of the same dimension as X.', 'tsearchn')
     t = np.full(Q.shape[0], np.nan)
     p = np.full((Q.shape[0], d + 1), np.nan)
     for s, tri in enumerate(T):
@@ -219,6 +223,8 @@ def dsearchn(nargout, *args):
     Q = darr(args[2] if len(args) > 2 else args[1]).astype(F64)
     if Q.ndim == 2 and Q.shape[1] != X.shape[1] and Q.size == X.shape[1]:
         Q = Q.reshape(1, -1)
+    if Q.ndim != 2 or Q.shape[1] != X.shape[1]:
+        raise err('MATLAB:dsearchn:sizes', 'The query points must have as many columns as the points X.', 'dsearchn')
     dist, idx = cKDTree(X).query(Q)
     k = idx.astype(F64) + 1
     if len(args) > 3:
@@ -553,11 +559,16 @@ def scattered_interpolant(nargout, *args):
         raise err('MATLAB:scatteredInterpolant:BadMethod', 'The method is linear, nearest or natural; the extrapolation linear, nearest or none.', 'scatteredInterpolant')
     if not rest:
         return ScatteredInterpolant(np.zeros((0, 2)), np.zeros(0), method, extrap)
+    if len(rest) < 2:
+        raise err('MATLAB:scatteredInterpolant:nargin', 'Give the points (P, or x, y and z) and their values.', 'scatteredInterpolant')
     if len(rest) == 2:
         P = darr(rest[0]).astype(F64)
         v = darr(rest[1]).reshape(-1).astype(F64)
     else:
-        P = np.column_stack([darr(a).reshape(-1, order='F').astype(F64) for a in rest[:-1]])
+        cols = [darr(a).reshape(-1, order='F').astype(F64) for a in rest[:-1]]
+        if any(c.size != cols[0].size for c in cols):
+            raise err('MATLAB:scatteredInterpolant:sizes', 'The coordinates must have one element per point.', 'scatteredInterpolant')
+        P = np.column_stack(cols)
         v = darr(rest[-1]).reshape(-1, order='F').astype(F64)
     if P.shape[0] != v.size:
         raise err('MATLAB:scatteredInterpolant:InputSizeMismatch', 'There must be one value per point.', 'scatteredInterpolant')
@@ -576,6 +587,10 @@ def _tri_args(args, fn, need_z):
     x = darr(rest[1]).reshape(-1).astype(F64)
     y = darr(rest[2]).reshape(-1).astype(F64)
     z = darr(rest[3]).reshape(-1).astype(F64) if need_z and len(rest) > 3 and not is_str(rest[3]) else None
+    if x.size != y.size or (z is not None and z.size != x.size):
+        raise err(f'MATLAB:{fn}:sizes', 'The coordinates must have one element per point.', fn)
+    if T.size and (T.ndim != 2 or T.shape[1] != 3 or T.min() < 0 or T.max() >= x.size):
+        raise err(f'MATLAB:{fn}:triangles', 'The triangles are rows of three indices into the points.', fn)
     tail = rest[(4 if z is not None else 3):]
     return ax, T, x, y, z, tail
 
@@ -629,3 +644,29 @@ def trimesh(nargout, *args):
     """trimesh(TRI, x, y, z, c): the triangles as a mesh, white faces, edges coloured by z (or c)."""
     nargchk(args, 4, None, 'trimesh')
     return _trisurface(nargout, args, 'trimesh', True)
+
+
+def _qhull_errors():
+    """Qhull refusing the points (too few, all on a line or a plane) reaches
+    the program as the language's error, for every function here."""
+    try:
+        from scipy.spatial import QhullError
+    except ImportError:
+        return
+    from . import REG, Info
+    for name, info in list(REG.items()):
+        if getattr(info.fn, '__module__', None) != __name__:
+            continue
+
+        def make(fn, name):
+            def f(*a):
+                try:
+                    return fn(*a)
+                except QhullError as e:
+                    first = str(e).strip().split('\n')[0]
+                    raise err(f'MATLAB:{name}:Qhull', f'The points cannot be triangulated: {first}', name) from None
+            return f
+        REG[name] = Info(info.name, make(info.fn, name), info.ws, info.aw, info.nout, info.arr)
+
+
+_qhull_errors()

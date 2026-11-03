@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, dims_arg, gather, along, reduce, strip_flags, expand_dims, cellstr_list,
                     to_cell_of_char)
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
@@ -202,7 +202,7 @@ def mean(nargout, *args):
     a = _num_input(x, 'mean')
     rest, wts = list(args[1:]), None
     for k in range(len(rest) - 1):
-        if opt_str(rest[k]) is not None and opt_str(rest[k]).lower() == 'weights':
+        if opt_str(rest[k]) is not None and opt_lower(rest[k]) == 'weights':
             wts = arr(rest[k + 1]).astype(F64)
             if np.any(wts < 0):
                 raise err('MATLAB:mean:invalidWeights', 'Weights must be nonnegative.', 'mean')
@@ -762,6 +762,8 @@ def sortrows(nargout, *args):
     desc = [False] * ncol
     if rest and numel(rest[0]):
         spec = [int(c) for c in arr(rest[0]).reshape(-1)]
+        if any(c == 0 or abs(c) > a.shape[1] for c in spec):
+            raise err('MATLAB:sortrows:COLmismatchX', 'The column numbers must be from 1 to the number of columns (minus for descending).', 'sortrows')
         cols = [abs(c) - 1 for c in spec]
         desc = [c < 0 for c in spec]
     if 'descend' in flags:
@@ -786,7 +788,7 @@ def issorted(nargout, *args):
     sort places it."""
     nargchk(args, 1, 3, 'issorted')
     v = args[0]
-    words = [opt_str(a).lower() for a in args[1:] if opt_str(a) is not None]
+    words = [opt_lower(a) for a in args[1:] if opt_str(a) is not None]
     nums = [a for a in args[1:] if opt_str(a) is None]
     modes = ('ascend', 'descend', 'monotonic', 'strictascend', 'strictdescend', 'strictmonotonic', 'either')
     mode = next((w for w in words if w in modes), 'ascend')
@@ -1233,7 +1235,7 @@ def histcounts(nargout, *args):
         rest = rest[1:]
     i = 0
     while i + 1 < len(rest):
-        key = opt_str(rest[i]).lower()
+        key = opt_lower(rest[i])
         val = rest[i + 1]
         if key == 'binwidth':
             binwidth = num(val)
@@ -1244,7 +1246,7 @@ def histcounts(nargout, *args):
         elif key == 'binedges':
             edges = darr(val).reshape(-1)
         elif key == 'normalization':
-            norm = opt_str(val).lower()
+            norm = opt_lower(val)
         i += 2
     if edges is None:
         xx = x if limits is None else x[(x >= limits[0]) & (x <= limits[1])]
@@ -1339,7 +1341,7 @@ def cov(nargout, *args):
     rest = list(args)
     nanflag = 'includenan'
     if rest and opt_str(rest[-1]) is not None:
-        nanflag = opt_str(rest.pop()).lower()
+        nanflag = opt_lower(rest.pop())
         if nanflag not in ('includenan', 'omitrows', 'partialrows'):
             raise err('MATLAB:cov:unknownFlag', f"Unknown option '{nanflag}'.", 'cov')
     data = [rest.pop(0)]
@@ -1389,6 +1391,8 @@ def corrcoef(nargout, *args):
     rest = list(args[1:])
     if rest and opt_str(rest[0]) is None:
         y = darr(rest[0])
+        if y.size != x.size:
+            raise err('MATLAB:corrcoef:XYmismatch', 'x and y must have the same number of elements.', 'corrcoef')
         X = np.column_stack([x.reshape(-1, order='F'), y.reshape(-1, order='F')])
         rest = rest[1:]
     else:
@@ -1680,7 +1684,7 @@ def normalize(nargout, *args):
             raise err('MATLAB:normalize:InvalidMethod', 'Expected a method name.', 'normalize')
         k = name.lower()
         nxt = rest[i + 1] if i + 1 < len(rest) else None
-        nxt_s = opt_str(nxt).lower() if nxt is not None and opt_str(nxt) is not None else None
+        nxt_s = opt_lower(nxt) if nxt is not None and opt_str(nxt) is not None else None
         i += 1
         if k == 'zscore':
             method = ('zscore', 'std')
@@ -1831,7 +1835,7 @@ def _movfun(name, args):
             omit = False
         elif o == 'endpoints' and i + 1 < len(rest):
             e = rest[i + 1]
-            ends = opt_str(e).lower() if opt_str(e) is not None else float(num(e))
+            ends = opt_lower(e) if opt_str(e) is not None else float(num(e))
             if isinstance(ends, str) and ends not in ('shrink', 'discard', 'fill'):
                 raise err(f'MATLAB:{name}:invalidEndpoints', "Endpoints is 'shrink', 'discard', 'fill' or a number.", name)
             i += 1

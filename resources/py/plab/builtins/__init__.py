@@ -51,6 +51,8 @@ def load(target):
             if f'{__name__}.{m}' in str(e) or f"'{m}'" in str(e):
                 continue
             failed.append((m, e))
+    from . import arity
+    arity.apply(REG)
     target.update(REG)
     if failed:
         raise failed[0][1]

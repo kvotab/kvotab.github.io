@@ -11,7 +11,7 @@ import struct as _struct
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, strip_flags, cellstr_list, NUMERIC_CLASSES, np_dtype, make)
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
@@ -911,9 +911,18 @@ def fileread(nargout, *args):
     return Char.of(text)
 
 
+def _existing(v, fn):
+    """The path of a file to read, or the error that it cannot be found."""
+    name = sval(v, 'file name', fn)
+    p = abspath(name)
+    if not os.path.isfile(p):
+        raise err(f'MATLAB:{fn}:FileNotFound', f"Unable to find or open '{name}'. Check the path and filename or file permissions.", fn)
+    return p
+
+
 @bi('readlines')
 def readlines(nargout, *args):
-    p = abspath(sval(args[0], 'file name', 'readlines'))
+    p = _existing(args[0], 'readlines')
     with open(p, encoding='utf-8', errors='replace') as f:
         lines = f.read().split('\n')
     if lines and lines[-1] == '':
@@ -1536,7 +1545,7 @@ def readmatrix(nargout, *args):
     delim = None
     r0 = c0 = 0
     rest = list(args[1:])
-    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() not in ('delimiter', 'numheaderlines', 'range'):
+    if rest and opt_str(rest[0]) is not None and opt_lower(rest[0]) not in ('delimiter', 'numheaderlines', 'range'):
         delim = unescape(opt_str(rest[0]))
         rest = rest[1:]
     if len(rest) >= 2 and opt_str(rest[0]) is None:
@@ -1544,7 +1553,7 @@ def readmatrix(nargout, *args):
         rest = rest[2:]
     i = 0
     while i + 1 < len(rest):
-        k = opt_str(rest[i]).lower()
+        k = opt_lower(rest[i])
         if k == 'delimiter':
             delim = unescape(py_str(rest[i + 1]))
         elif k == 'numheaderlines':
@@ -1610,7 +1619,7 @@ def _cell_text(x):
 
 @bi('readcell')
 def readcell(nargout, *args):
-    p = abspath(sval(args[0], 'file name', 'readcell'))
+    p = _existing(args[0], 'readcell')
     with open(p, encoding='utf-8', errors='replace') as f:
         lines = [l.rstrip('\n\r') for l in f if l.strip()]
     rows = [l.split(',') for l in lines]
@@ -1891,7 +1900,7 @@ async def matfile(nargout, *args):
 
 @bi('importdata', aw=True)
 async def importdata(nargout, *args):
-    p = abspath(sval(args[0], 'file name', 'importdata'))
+    p = _existing(args[0], 'importdata')
     if p.lower().endswith('.mat') or (os.path.isfile(p) and MF.kind(p) is not None):
         d = await read_mat(p, fn='importdata')
         if len(d) == 1:

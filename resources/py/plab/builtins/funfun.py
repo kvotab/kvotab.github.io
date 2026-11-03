@@ -10,7 +10,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, expand_dims, strip_flags)
 from ..ops import finish
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, class_of, shape_of, numel,
@@ -701,6 +701,8 @@ def deval(nargout, *args):
     else:
         x, sol = darr(args[0]).reshape(-1), args[1]
         idx = [int(i) - 1 for i in darr(args[2]).reshape(-1)] if len(args) > 2 else None
+    if type(sol) is not Struct or 'idata' not in sol.f:
+        raise err('MATLAB:deval:SolNotFromDiffEqSolver', 'sol must be a solution structure from an ODE solver (sol = ode45(...)).', 'deval')
     holder = sol.get1('idata')
     Y = holder.fn(x)
     if idx is not None:
@@ -916,6 +918,8 @@ def _interp_cols(x, V, xq, method, extrap):
 
 def _interp1_pp(x, V, method):
     """interp1(x, v, method, 'pp'): the interpolant as a piecewise polynomial."""
+    if np.asarray(x).size < 2:
+        raise err('MATLAB:interp1:NotEnoughPts', 'Interpolation needs at least two sample points.', 'interp1')
     from scipy import interpolate
     vec = V.ndim == 2 and 1 in V.shape
     Vc = V.reshape(-1, 1) if vec else V.reshape(V.shape[0], -1)
@@ -958,9 +962,9 @@ def interp1(nargout, *args):
     want_pp = False
     strs = [i for i, a in enumerate(args) if opt_str(a) is not None]
     # interp1(v, xq, method, ...): the method third means there is no x
-    no_x = bool(strs) and strs[0] == 2 and opt_str(args[2]).lower() not in ('extrap', 'pp')
+    no_x = bool(strs) and strs[0] == 2 and opt_lower(args[2]) not in ('extrap', 'pp')
     for i in reversed(strs):
-        s = opt_str(args[i]).lower()
+        s = opt_lower(args[i])
         if s == 'extrap':
             extrap = 'extrap'
         elif s in ('pp',):
@@ -991,7 +995,9 @@ def interp1(nargout, *args):
     else:
         Vc = V.reshape(V.shape[0], -1)
     if Vc.shape[0] != x.size:
-        raise err('MATLAB:interp1:YInvalidNumRows', 'The data sizes do not match.' if True else '', 'interp1')
+        raise err('MATLAB:interp1:YInvalidNumRows', 'The data sizes do not match.', 'interp1')
+    if x.size < 2:
+        raise err('MATLAB:interp1:NotEnoughPts', 'Interpolation needs at least two sample points.', 'interp1')
     if method in ('spline', 'pchip', 'cubic', 'makima') and extrap is None:
         extrap = 'extrap'
     q = xq.reshape(-1)
@@ -1152,7 +1158,7 @@ def _interp_opts(args, fn):
     if len(args) >= 2 and opt_str(args[-2]) is not None and opt_str(args[-1]) is None:
         extrapval = num(args.pop())
     if args and opt_str(args[-1]) is not None:
-        method = opt_str(args.pop()).lower().lstrip('*')
+        method = opt_lower(args.pop()).lstrip('*')
         if method == 'v5cubic':
             method = 'cubic'
         if method not in _GRID_METHODS:
@@ -1232,8 +1238,8 @@ def interpn(nargout, *args):
         n = len(args) - 1
         axes = [np.arange(1, s + 1, dtype=F64) for s in (V.shape + (1,) * n)[:n]]
         Q = [darr(a) for a in args[1:]]
-    if len(Q) != len(axes):
-        raise err('MATLAB:interpn:nargin', 'Wrong number of input arguments.', 'interpn')
+    if len(Q) != len(axes) or any(s > 1 for s in V.shape[len(axes):]):
+        raise err('MATLAB:interpn:nargin', 'Wrong number of input arguments: give one grid and one query array per dimension of V.', 'interpn')
     if _is_grid_query(Q):
         return out(_grid_interp(axes, V, [q.reshape(-1) for q in Q], method, extrapval, True))
     shape = Q[0].shape
@@ -1247,7 +1253,7 @@ def interpn(nargout, *args):
 def griddata(nargout, *args):
     from scipy import interpolate
     x, y, v, xq, yq = [darr(a) for a in args[:5]]
-    method = opt_str(args[5]).lower() if len(args) > 5 else 'linear'
+    method = opt_lower(args[5]) if len(args) > 5 else 'linear'
     m = {'linear': 'linear', 'nearest': 'nearest', 'cubic': 'cubic', 'natural': 'linear', 'v4': 'cubic'}.get(method, 'linear')
     if xq.ndim == 2 and yq.ndim == 2 and xq.shape[0] == 1 and yq.shape[1] == 1 and xq.shape != yq.shape:
         xq, yq = np.meshgrid(xq.reshape(-1), yq.reshape(-1))
@@ -1337,6 +1343,8 @@ def _interp_data(args, fn):
     dim = (1,) if isvec else y.shape[:-1]
     if Y.shape[-1] not in (x.size, x.size + 2):
         raise err(f'MATLAB:{fn}:XYLengthMismatch', 'The values must be as many as the points x along their last dimension (or two more, for a spline with end slopes).', fn)
+    if x.size < 2:
+        raise err(f'MATLAB:{fn}:NotEnoughPts', 'There must be at least two points.', fn)
     return x, Y, dim, isvec
 
 
@@ -1388,10 +1396,19 @@ def pchip(nargout, *args):
 @bi('makima')
 def makima(nargout, *args):
     from scipy import interpolate
+    nargchk(args, 2, 3, 'makima')
     x = darr(args[0]).reshape(-1)
     y = darr(args[1]).reshape(-1)
+    if x.size < 2 or y.size != x.size:
+        raise err('MATLAB:makima:XYLengthMismatch', 'x and y must be vectors of the same length, at least 2.', 'makima')
+    if np.any(np.diff(np.sort(x)) == 0):
+        raise err('MATLAB:makima:RepeatedX', 'The points x must be distinct.', 'makima')
+    order = np.argsort(x, kind='stable')
+    x, y = x[order], y[order]
     f = interpolate.Akima1DInterpolator(x, y, method='makima')
     f.extrapolate = True
+    if len(args) == 2:
+        return _pp_from_scipy(f, (1,))          # makima(x, y): the piecewise polynomial (Akima's is one of SciPy's)
     return out(f(darr(args[2])))
 
 
@@ -1420,6 +1437,8 @@ def mkpp(nargout, *args):
 @bi('unmkpp', nout=5)
 def unmkpp(nargout, *args):
     pp = args[0]
+    if not hasattr(pp, 'breaks'):
+        raise err('MATLAB:unmkpp:InvalidPP', 'The input must be a piecewise polynomial (from mkpp, spline or pchip).', 'unmkpp')
     return (out(pp.breaks.reshape(1, -1)), out(pp.coefs), float(pp.breaks.size - 1), float(pp.order), pp.dim_value())[:max(nargout, 1)]
 
 
@@ -1498,6 +1517,8 @@ def polyval(nargout, *args):
 def polyvalm(nargout, *args):
     p = darr(args[0]).reshape(-1)
     X = darr(args[1])
+    if X.ndim != 2 or X.shape[0] != X.shape[1]:
+        raise err('MATLAB:polyvalm:NonSquareMatrix', 'The matrix must be square.', 'polyvalm')
     n = X.shape[0]
     Y = np.zeros_like(X)
     for c in p:
@@ -1540,12 +1561,22 @@ def poly(nargout, *args):
     return out(c.reshape(1, -1))
 
 
+def _shape_arg(args, k, default, fn):
+    """The shape of a convolution's result: 'full', 'same' or 'valid'."""
+    if len(args) <= k:
+        return default
+    s = opt_str(args[k])
+    if s is None or s.lower() not in ('full', 'same', 'valid'):
+        raise err(f'MATLAB:{fn}:unknownShapeParameter', "The shape is 'full', 'same' or 'valid'.", fn)
+    return s.lower()
+
+
 @bi('conv')
 def conv(nargout, *args):
     nargchk(args, 2, 3, 'conv')
     u = darr(args[0])
     v = darr(args[1])
-    shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
+    shape = _shape_arg(args, 2, 'full', 'conv')
     if (u.ndim > 2 or min(u.shape) > 1) or (v.ndim > 2 or min(v.shape) > 1):
         raise err('MATLAB:conv:AorBNotVector', 'A and B must be vectors.', 'conv')
     uu, vv = u.reshape(-1), v.reshape(-1)
@@ -1684,9 +1715,12 @@ def filter_(nargout, *args):
 @bi('filter2')
 def filter2(nargout, *args):
     from scipy import signal
+    nargchk(args, 2, 3, 'filter2')
     h = darr(args[0])
     x = darr(args[1])
-    shape = opt_str(args[2]).lower() if len(args) > 2 else 'same'
+    shape = _shape_arg(args, 2, 'same', 'filter2')
+    if h.ndim != 2 or x.ndim != 2:
+        raise err('MATLAB:filter2:NotMatrix', 'The filter and the data must be matrices.', 'filter2')
     return out(signal.correlate2d(x, h, mode=shape))
 
 
@@ -1728,13 +1762,13 @@ def conv2(nargout, *args):
         u = darr(args[0]).reshape(-1, 1)
         v = darr(args[1]).reshape(1, -1)
         A = darr(args[2])
-        shape = opt_str(args[3]).lower() if len(args) > 3 else 'full'
+        shape = opt_lower(args[3]) if len(args) > 3 else 'full'
         full = _conv_full(_conv_full(A, u), v)
         return _conv_class(_conv_cut(full, A.shape, (u.size, v.size), shape, 'conv2'), *args[:3])
     A, B = darr(args[0]), darr(args[1])
     if A.ndim > 2 or B.ndim > 2:
         raise err('MATLAB:conv2:InputMustBe2D', 'conv2 takes 2-D arrays (convn takes more dimensions).', 'conv2')
-    shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
+    shape = opt_lower(args[2]) if len(args) > 2 else 'full'
     return _conv_class(_conv_cut(_conv_full(A, B), A.shape, B.shape, shape, 'conv2'), args[0], args[1])
 
 
@@ -1745,7 +1779,7 @@ def convn(nargout, *args):
     nd = max(A.ndim, B.ndim)
     A2 = A.reshape(A.shape + (1,) * (nd - A.ndim))
     B2 = B.reshape(B.shape + (1,) * (nd - B.ndim))
-    shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
+    shape = _shape_arg(args, 2, 'full', 'convn')
     return _conv_class(_conv_cut(_conv_full(A2, B2), A2.shape, B2.shape, shape, 'convn'), args[0], args[1])
 
 

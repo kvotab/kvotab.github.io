@@ -14,8 +14,8 @@ import os
 import numpy as np
 
 from . import bi, REG
-from ._util import err, darr, out, opt_str, num, is_str
-from ..values import MError, Char, Cell, Struct, Str, FH, Obj, EMPTY, F64, C128, numel, py_str
+from ._util import err, darr, out, opt_str, opt_lower, num, is_str
+from ..values import MError, Char, Cell, Struct, Str, FH, Obj, EMPTY, F64, C128, numel, py_str, class_of
 from .. import runtime as R
 from .. import symbolic as Y
 from ..symbolic import Sym, S, sp, arr_of, to_expr, text, fresh, symbol, NAMES, RELS, DIGITS
@@ -171,7 +171,7 @@ async def sym_(nargout, *args):
         if Y._NAME.match(name) and name not in ('pi', 'Inf', 'inf', 'NaN', 'nan', 'i', 'j'):
             return S(_make_symbol(name, [py_str(w) for w in rest]) if rest else symbol(name))
         return S(Y.parse_text(name))
-    flag = opt_str(rest[0]).lower() if rest and opt_str(rest[0]) is not None else 'r'
+    flag = opt_lower(rest[0]) if rest and opt_str(rest[0]) is not None else 'r'
     if flag not in ('r', 'f', 'd', 'e'):
         raise err('symbolic:sym:BadFlag', "The flag must be 'r', 'f', 'd' or 'e'.", 'sym')
     if type(v) is Cell:
@@ -271,6 +271,8 @@ async def symfun_(nargout, *args):
 async def vpa(nargout, *args):
     await Y.ensure()
     d = int(num(args[1])) if len(args) > 1 else DIGITS[0]
+    if class_of(args[0]) == 'logical':
+        args = (out(np.asarray(darr(args[0]), dtype=F64)),) + tuple(args[1:])
     A = ex(args[0]) if _is(args[0]) else arr_of(args[0]) if not isinstance(args[0], (float, complex)) else arr_of(args[0])
     # a number is first recognized as sym recognizes it (vpa(pi) is pi to d digits)
     return Sym(_each(lambda e: e.evalf(d), A))
@@ -356,6 +358,8 @@ def int_(nargout, *args):
         x = _default_var(A.reshape(-1), f.fargs if _is(f) else None)
         lims = rest
     hold = 'hold' in o and _flag(o['hold'])
+    if lims and len(lims) != 2:
+        raise err('MATLAB:int:Limits', 'Give the variable and both limits, or just the limits a and b.', 'int')
     if lims:
         a, b = to_expr(lims[0]), to_expr(lims[1])
         g = (lambda e: s.Integral(e, (x, a, b))) if hold else (lambda e: _clean(s.integrate(e, (x, a, b), conds='none')))
@@ -398,8 +402,8 @@ def limit(nargout, *args):
     s = sp()
     args = list(args)
     side = None
-    if args and opt_str(args[-1]) is not None and opt_str(args[-1]).lower() in ('left', 'right'):
-        side = opt_str(args.pop()).lower()
+    if args and opt_str(args[-1]) is not None and opt_lower(args[-1]) in ('left', 'right'):
+        side = opt_lower(args.pop())
     f = args[0]
     A = ex(f)
     if len(args) >= 3:
@@ -454,6 +458,8 @@ def _sum_prod(args, fn, name):
     else:
         k = _default_var(A.reshape(-1))
         lims = rest
+    if lims and len(lims) != 2:
+        raise err(f'MATLAB:{name}:Limits', 'Give the variable and both limits, or just the limits a and b.', name)
     if lims:
         a, b = to_expr(lims[0]), to_expr(lims[1])
     else:
@@ -510,6 +516,8 @@ def _field_parts(args, fn, n_in):
     (X, Y, [Z,] U, V, [W]) or (U, V, [W])."""
     from ._util import darr
     a = [darr(x).astype(float) for x in args]
+    if any(x.shape != a[0].shape for x in a) or a[0].ndim != n_in or min(a[0].shape) < 2:
+        raise err(f'MATLAB:{fn}:Size', f'The arrays of a field in {n_in} dimensions must be {n_in}-D, all of one size, at least 2 along each dimension.', fn)
     if len(a) == 2 * n_in:
         return a[:n_in], a[n_in:]
     if len(a) == n_in:
@@ -670,7 +678,7 @@ def collect(nargout, *args):
 def combine(nargout, *args):
     s = sp()
     args, o = _opts(args, ('ignoreanalyticconstraints',))
-    target = opt_str(args[1]).lower() if len(args) > 1 and opt_str(args[1]) is not None else 'powers'
+    target = opt_lower(args[1]) if len(args) > 1 and opt_str(args[1]) is not None else 'powers'
     force = 'ignoreanalyticconstraints' in o and _flag(o['ignoreanalyticconstraints'])
     g = {'sincos': lambda e: s.trigsimp(s.TR8(e)) if hasattr(s, 'TR8') else s.trigsimp(e), 'log': lambda e: s.logcombine(e, force=force),
          'exp': lambda e: s.powsimp(e, combine='exp'), 'powers': lambda e: s.powsimp(e, force=force),
@@ -699,7 +707,7 @@ _REWRITE = {'exp': 'exp', 'log': 'log', 'sin': 'sin', 'cos': 'cos', 'tan': 'tan'
 @bi('rewrite', arr=False)
 def rewrite(nargout, *args):
     s = sp()
-    target = opt_str(args[1]).lower() if len(args) > 1 and opt_str(args[1]) is not None else None
+    target = opt_lower(args[1]) if len(args) > 1 and opt_str(args[1]) is not None else None
     if target not in _REWRITE:
         raise err('symbolic:rewrite:Target', f"rewrite knows these targets: {', '.join(sorted(_REWRITE))}.", 'rewrite')
     fn = getattr(s, _REWRITE[target])
@@ -717,7 +725,7 @@ def partfrac(nargout, *args):
     args, o = _opts(args, ('factormode',))
     A = ex(args[0])
     x = _var(args[1]) if len(args) > 1 else _default_var(A.reshape(-1))
-    full = 'factormode' in o and opt_str(o['factormode']) and opt_str(o['factormode']).lower() in ('full', 'complex')
+    full = 'factormode' in o and opt_str(o['factormode']) and opt_lower(o['factormode']) in ('full', 'complex')
     return Sym(_each(lambda e: s.apart(e, x, full=bool(full)).doit() if full else s.apart(e, x), A))
 
 
@@ -738,7 +746,7 @@ def coeffs(nargout, *args):
     s = sp()
     args = list(args)
     all_ = False
-    if args and opt_str(args[-1]) is not None and opt_str(args[-1]).lower() == 'all':
+    if args and opt_str(args[-1]) is not None and opt_lower(args[-1]) == 'all':
         all_ = True
         args.pop()
     p = fresh(to_expr(args[0]))
@@ -1381,6 +1389,8 @@ def assumeAlso(nargout, *args):
 @bi('assumptions', arr=False)
 def assumptions(nargout, *args):
     s = sp()
+    if args and not (_is(args[0]) and all(isinstance(x, s.Symbol) for x in _flat(args[0]))):
+        raise err('MATLAB:assumptions:NotVariable', 'assumptions takes symbolic variables.', 'assumptions')
     names = [x.name for x in _flat(args[0])] if args else sorted(NAMES)
     conds = []
     for nm in names:
@@ -1410,7 +1420,7 @@ def assumptions(nargout, *args):
 @bi('isAlways', arr=False)
 def isAlways(nargout, *args):
     args, o = _opts(args, ('unknown',))
-    unknown = opt_str(o['unknown']).lower() if 'unknown' in o else 'falsewithwarning'
+    unknown = opt_lower(o['unknown']) if 'unknown' in o else 'falsewithwarning'
     A = ex(args[0])
     r = np.zeros(A.shape, bool)
     for i in np.ndindex(A.shape):
@@ -1523,6 +1533,8 @@ def isequal_(nargout, *args):
 def latex(nargout, *args):
     s = sp()
     v = args[0]
+    if not _is(v):
+        raise err('MATLAB:latex:NotSym', 'latex takes a symbolic expression.', 'latex')
     if v.a.size == 1:
         return Char.of(s.latex(fresh(v.a[0, 0])))
     return Char.of(s.latex(s.Matrix(ex(v).tolist())))
@@ -1532,6 +1544,8 @@ def latex(nargout, *args):
 def pretty(nargout, *args):
     s = sp()
     v = args[0]
+    if not _is(v):
+        raise err('MATLAB:pretty:NotSym', 'pretty takes a symbolic expression.', 'pretty')
     e = fresh(v.a[0, 0]) if v.a.size == 1 else s.Matrix(ex(v).tolist())
     R.write('\n' + s.pretty(e, use_unicode=True) + '\n\n')
     return None
@@ -1663,12 +1677,18 @@ def fimplicit(nargout, *args):
     """The curve f(x, y) = 0: the zero contour of f on a grid."""
     from .graphics import split_axes_arg
     ax, rest = split_axes_arg(args)
+    if not rest:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', 'fimplicit')
     f = rest[0]
     if _is(f):
         f = _with_fhs('fimplicit', 2, [f])[0]
     elif is_str(f):
         f = R.NamedFH(py_str(f))
+    if not isinstance(f, FH):
+        raise err('MATLAB:fimplicit:InvalidFunction', 'The first input must be a function of x and y.', 'fimplicit')
     lim = darr(rest[1]).reshape(-1) if len(rest) > 1 and not is_str(rest[1]) else np.array([-5.0, 5.0])
+    if lim.size not in (2, 4):
+        raise err('MATLAB:fimplicit:InvalidLimits', 'The limits are [min max] for both, or [xmin xmax ymin ymax].', 'fimplicit')
     if lim.size == 2:
         lim = np.concatenate([lim, lim])
     x = np.linspace(lim[0], lim[1], 201)
@@ -1696,9 +1716,15 @@ def fplot3(nargout, *args):
     from .graphics import split_axes_arg
     ax, rest = split_axes_arg(args)
     fs = []
+    if len(rest) < 3:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', 'fplot3')
     for a in rest[:3]:
         fs.append(_with_fhs('fplot3', 1, [a])[0] if _is(a) else (R.NamedFH(py_str(a)) if is_str(a) else a))
+    if not all(isinstance(f, FH) for f in fs):
+        raise err('MATLAB:fplot3:InvalidFunction', 'The first three inputs are functions of t.', 'fplot3')
     lim = darr(rest[3]).reshape(-1) if len(rest) > 3 and not is_str(rest[3]) else np.array([-5.0, 5.0])
+    if lim.size != 2:
+        raise err('MATLAB:fplot3:InvalidLimits', 'The limits are [tmin tmax].', 'fplot3')
     t = np.linspace(lim[0], lim[1], 400).reshape(1, -1)
     vals = []
     for f in fs:
@@ -1790,8 +1816,11 @@ def _maxmin(name, nargout, args):
 
 
 # the special functions numbers lack here, for numbers and symbols alike
-def _num_or_sym(name, numeric):
+def _num_or_sym(name, numeric, lo=1, hi=1):
     def f(nargout, *args):
+        if not lo <= len(args) <= hi:
+            raise err('MATLAB:minrhs' if len(args) < lo else 'MATLAB:TooManyInputs',
+                      'Not enough input arguments.' if len(args) < lo else 'Too many input arguments.', name)
         if any(_is(a) for a in args):
             return _make_unary(name)(nargout, *args) if len(args) == 1 else _binary_fn(name, args)
         return numeric(*args)
@@ -1835,10 +1864,10 @@ def _kron_delta_num(*args):
 
 
 bi('heaviside', arr=False)(_num_or_sym('heaviside', _heaviside_num))
-bi('dirac', arr=False)(_num_or_sym('dirac', _dirac_num))
+bi('dirac', arr=False)(_num_or_sym('dirac', _dirac_num, 1, 2))
 bi('sinc', arr=False)(_num_or_sym('sinc', _sinc_num))
-bi('lambertw', arr=False)(_num_or_sym('lambertw', _lambertw_num))
-bi('zeta', arr=False)(_num_or_sym('zeta', _zeta_num))
+bi('lambertw', arr=False)(_num_or_sym('lambertw', _lambertw_num, 1, 2))
+bi('zeta', arr=False)(_num_or_sym('zeta', _zeta_num, 1, 2))
 bi('kroneckerDelta', arr=False)(lambda nargout, *args: _binary_fn('kroneckerDelta', args) if any(_is(a) for a in args) else _kron_delta_num(*args))
 
 
@@ -2097,3 +2126,55 @@ def install():
 
 
 install()
+
+
+def _sympy_input_errors():
+    """An exception raised inside SymPy is its refusal of an input (a
+    logical value, a number where a variable belongs, a matrix where an
+    expression does): it reaches the program as the language's error. One
+    raised in this module's own code is left as it is, to be fixed here."""
+    import traceback
+
+    def convert(e, name, args):
+        tb = traceback.extract_tb(e.__traceback__)
+        in_sympy = bool(tb) and '/sympy/' in tb[-1].filename.replace('\\', '/')
+        no_sympy = isinstance(e, ModuleNotFoundError) and 'sympy' in str(e)
+        if not (in_sympy or no_sympy):
+            return None
+        if not any(isinstance(a, Sym) for a in args):
+            # (in the page SymPy is loaded when the first symbolic value is made)
+            return err('MATLAB:sym:NotSymbolic', f'{name} works on symbolic values: make one with sym or syms.', name)
+        return err('MATLAB:sym:InvalidInput', f'Invalid input: {e}', name)
+
+    def wrap(info):
+        fn, name = info.fn, info.name
+        if info.aw:
+            async def f(*a):
+                try:
+                    return await fn(*a)
+                except MError:
+                    raise
+                except Exception as e:
+                    c = convert(e, name, a)
+                    if c is None:
+                        raise
+                    raise c from None
+        else:
+            def f(*a):
+                try:
+                    return fn(*a)
+                except MError:
+                    raise
+                except Exception as e:
+                    c = convert(e, name, a)
+                    if c is None:
+                        raise
+                    raise c from None
+        f._sym = getattr(fn, '_sym', False)
+        return f
+    for name, info in list(REG.items()):
+        if getattr(info.fn, '__module__', None) == __name__ or getattr(info.fn, '_sym', False):
+            info.fn = wrap(info)
+
+
+_sympy_input_errors()

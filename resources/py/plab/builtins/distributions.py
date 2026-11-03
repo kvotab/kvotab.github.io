@@ -16,7 +16,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, darr, out, opt_str, sval, num, is_str, dims_from, cellstr_list
+from ._util import err, nargchk, darr, out, opt_str, opt_lower, sval, num, is_str, dims_from, cellstr_list
 from ..values import MError, Char, Cell, Struct, Str, FH, Obj, EMPTY, py_str
 from .. import runtime as R
 
@@ -242,7 +242,7 @@ def _value(d, method, x, params, fn):
 
 def _upper(args):
     """A trailing 'upper' (the probability above x)."""
-    if args and opt_str(args[-1]) is not None and opt_str(args[-1]).lower() == 'upper':
+    if args and opt_str(args[-1]) is not None and opt_lower(args[-1]) == 'upper':
         return list(args[:-1]), True
     return list(args), False
 
@@ -438,12 +438,15 @@ def fit_dist(d, x, alpha=0.05, fn='fitdist'):
     their intervals (2 x k) and covariance. Normal and lognormal estimate
     sigma without bias, as normfit does; the rest are maximum likelihood."""
     st = _st()
+    x = np.asarray(x, dtype=float).reshape(-1)
     n = x.size
     name = d.name
 
     def need(cond, what):
         if not cond:
             raise err('stats:fit:BadData', f'The data must be {what} to fit a {name} distribution.', fn)
+    if n < 2 or not np.all(np.isfinite(x)):
+        raise err('stats:fit:NotEnoughData', f'At least two finite values are needed to fit a {name} distribution.', fn)
     if name == 'Normal':
         return _normal_parts(x, alpha)
     if name == 'Lognormal':
@@ -1311,6 +1314,10 @@ def mvnrnd(nargout, *args):
     n = int(num(args[2])) if len(args) > 2 else (mu.shape[0] if mu.ndim == 2 else 1)
     if S.shape == (1, d) and d > 1:
         S = np.diag(S.reshape(-1))
+    if S.shape != (d, d):
+        raise err('stats:mvnrnd:BadCovariance', 'SIGMA must be d-by-d (or a row of d variances), d the length of mu.', 'mvnrnd')
+    if mu.ndim == 2 and mu.shape[0] not in (1, n):
+        raise err('stats:mvnrnd:InputSizeMismatch', 'mu must have one row, or n rows.', 'mvnrnd')
     mu2 = np.broadcast_to(mu.reshape(-1, d), (n, d))
     try:
         L = np.linalg.cholesky(S)
@@ -1323,6 +1330,15 @@ def mvnrnd(nargout, *args):
     return out(mu2 + z @ L.T)
 
 
+def _mvt_check(X, C, df, fn):
+    if C.ndim != 2 or C.shape[0] != C.shape[1] or not np.allclose(C, C.T):
+        raise err(f'stats:{fn}:BadCorrelation', 'C must be a square, symmetric matrix.', fn)
+    if X is not None and (X.ndim != 2 or X.shape[-1] != C.shape[0]):
+        raise err(f'stats:{fn}:InputSizeMismatch', 'X must have as many columns as C has rows.', fn)
+    if not df > 0:
+        raise err(f'stats:{fn}:BadDf', 'The degrees of freedom must be positive.', fn)
+
+
 @bi('mvtpdf')
 def mvtpdf(nargout, *args):
     nargchk(args, 3, 3, 'mvtpdf')
@@ -1330,6 +1346,7 @@ def mvtpdf(nargout, *args):
     X = darr(args[0]).real.astype(float)
     C = darr(args[1]).real.astype(float)
     df = float(num(args[2]))
+    _mvt_check(X, C, df, 'mvtpdf')
     v = st.multivariate_t(np.zeros(C.shape[0]), C, df=df).pdf(X)
     return out(np.atleast_1d(v).reshape(-1, 1))
 
@@ -1341,6 +1358,7 @@ def mvtcdf(nargout, *args):
     X = darr(args[0]).real.astype(float)
     C = darr(args[1]).real.astype(float)
     df = float(num(args[2]))
+    _mvt_check(X, C, df, 'mvtcdf')
     v = st.multivariate_t(np.zeros(C.shape[0]), C, df=df).cdf(X, random_state=_rs())
     return out(np.atleast_1d(v).reshape(-1, 1))
 
@@ -1351,8 +1369,12 @@ def mvtrnd(nargout, *args):
     C = darr(args[0]).real.astype(float)
     df = float(num(args[1]))
     n = int(num(args[2])) if len(args) > 2 else 1
+    _mvt_check(None, C, df, 'mvtrnd')
     d = C.shape[0]
-    L = np.linalg.cholesky(C)
+    try:
+        L = np.linalg.cholesky(C)
+    except np.linalg.LinAlgError:
+        raise err('stats:mvtrnd:BadCorrelation', 'C must be a symmetric, positive definite matrix.', 'mvtrnd') from None
     z = _rs().standard_normal((n, d)) @ L.T
     w = _rs().chisquare(df, n) / df
     return out(z / np.sqrt(w).reshape(-1, 1))

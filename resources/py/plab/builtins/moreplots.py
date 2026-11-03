@@ -190,6 +190,8 @@ def stem3(nargout, *args):
     while rest and not is_str(rest[0]) and len(data) < 3:
         data.append(darr(rest.pop(0)))
     spec = _spec(rest)
+    if len(data) not in (1, 3):
+        raise err('MATLAB:stem3:nargin', 'stem3 takes Z, or X, Y and Z.', 'stem3')
     if len(data) == 1:
         Z = data[0]
         if Z.ndim == 2 and 1 in Z.shape:
@@ -220,6 +222,8 @@ def _comet(nargout, args, is3d):
             raise err('MATLAB:comet3:nargin', 'comet3 takes x, y and z (or z alone).', 'comet3')
         x, y, z = data[:3]
     else:
+        if not data:
+            raise err('MATLAB:minrhs', 'Not enough input arguments.', 'comet')
         if len(data) == 1:
             y = data[0]
             x = np.arange(1, y.size + 1, dtype=F64)
@@ -276,10 +280,14 @@ def _bar3(nargout, args, horizontal):
             style = py_str(a).lower()
             rest.remove(a)
             break
+    if not data:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.')
     if len(data) >= 2 and numel(data[1]) > 1:
         yv = darr(data[0]).reshape(-1).astype(F64)
         Z = darr(data[1]).astype(F64)
         width = float(num(data[2])) if len(data) > 2 else 0.8
+        if yv.size != (Z.shape[0] if Z.ndim == 2 and 1 not in Z.shape else Z.size):
+            raise err('MATLAB:bar3:LengthMismatch', 'There must be one y for each row of Z.')
     else:
         Z = darr(data[0]).astype(F64)
         width = float(num(data[1])) if len(data) > 1 else 0.8
@@ -348,7 +356,8 @@ def histogram2(nargout, *args):
     nargchk(args, 2, None, 'histogram2')
     G, GB = _g(), _gb()
     N, xe, ye = R.BUILTINS['histcounts2'].fn(3, *args)[:3]
-    N, xe, ye = np.asarray(N, F64), np.asarray(xe, F64).reshape(-1), np.asarray(ye, F64).reshape(-1)
+    xe, ye = np.asarray(xe, F64).reshape(-1), np.asarray(ye, F64).reshape(-1)
+    N = np.asarray(N, F64).reshape(xe.size - 1, ye.size - 1)          # one bin comes back as a number
     boxes = [(xe[i], xe[i + 1], ye[j], ye[j + 1], 0.0, N[i, j]) for i in range(N.shape[0]) for j in range(N.shape[1]) if N[i, j] > 0]
     ax = G.newplot(None)
     F, V = _cuboids(boxes)
@@ -480,14 +489,18 @@ def _volume_args(args, fn):
     ny, nx, nz = V.shape
     # each grid as a full array in meshgrid's layout: given so, as a vector, or empty for 1:n
     vecs = []
-    for G, n, k in zip(grids, (nx, ny, nz), (1, 0, 2)):
+    for G, n, k, name in zip(grids, (nx, ny, nz), (1, 0, 2), 'XYZ'):
         if G.size == 0:
             vecs.append(np.arange(1, n + 1, dtype=F64))
         elif G.ndim == 3:
+            if G.shape != V.shape:
+                raise err(f'MATLAB:{fn}:SizeMismatch', f'{name} must match the size of V.', fn)
             idx = [0, 0, 0]
             idx[k] = slice(None)
             vecs.append(G[tuple(idx)])
         else:
+            if G.size != n:
+                raise err(f'MATLAB:{fn}:SizeMismatch', f'{name} must match the size of V (a vector of {n} values, or an array of its size).', fn)
             vecs.append(G.reshape(-1))
     X, Y, Z = np.meshgrid(*vecs)
     return X, Y, Z, V, rest
@@ -553,6 +566,10 @@ def isosurface(nargout, *args):
         fin = V[np.isfinite(V)]
         iso = float(np.mean(fin)) if fin.size else 0.0
     colors = darr(nums[0]).astype(F64) if nums and darr(nums[0]).shape == V.shape else None
+    if nums and colors is None:
+        raise err('MATLAB:isosurface:SizeMismatch', 'The colours must be an array of the size of V.', 'isosurface')
+    if nargout >= 3 and colors is None:
+        raise err('MATLAB:isosurface:NoColors', 'Give the colours to get the third output.', 'isosurface')
     F, P, Cv = _isosurface(X, Y, Z, V, iso, colors)
     if nargout >= 2:
         return (out(F), out(P), out(Cv))[:nargout]
@@ -767,6 +784,8 @@ def campos(nargout, *args):
     centre = np.array([l.mean() for l in lims])
     if rest:
         p = darr(rest[0]).reshape(-1).astype(F64)
+        if p.size != 3:
+            raise err('MATLAB:campos:InvalidPosition', 'The camera position is [x y z].', 'campos')
         d = p - centre
         az = math.degrees(math.atan2(d[0], -d[1]))
         el = math.degrees(math.atan2(d[2], math.hypot(d[0], d[1])))

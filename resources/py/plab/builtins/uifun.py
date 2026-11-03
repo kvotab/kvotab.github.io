@@ -12,7 +12,7 @@ import os
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, sval, opt_str, num, is_str, cellstr_list, darr
+from ._util import err, nargchk, sval, opt_str, opt_lower, num, is_str, cellstr_list, darr
 from ..values import MError, Char, Cell, Struct, Str, FH, Obj, EMPTY, py_str, numel
 from ..graphics_base import STORE, ROOT, GObj, Figure, Axes, Patch, HArr, gerr
 from ..uiobjects import (UIControl, UIPanel, UIButtonGroup, UITable, UITabGroup, UITab, UIMenu, UIContextMenu, UIToolbar,
@@ -316,7 +316,7 @@ def movegui(nargout, *args):
 def uistack(nargout, *args):
     nargchk(args, 1, 3, 'uistack')
     hs = [h for h in _handles(args[0]) if isinstance(h, GObj) and h.parent is not None]
-    how = opt_str(args[1]).lower() if len(args) > 1 else 'up'
+    how = opt_lower(args[1]) if len(args) > 1 else 'up'
     step = int(num(args[2])) if len(args) > 2 else 1
     for h in hs:
         kids = h.parent.children            # first is on top
@@ -457,7 +457,7 @@ def _createmode(args):
 def msgbox(nargout, *args):
     msg = args[0] if args else Char.of('')
     title = py_str(args[1]) if len(args) > 1 and is_str(args[1]) else ''
-    icon = opt_str(args[2]).lower() if len(args) > 2 and is_str(args[2]) and opt_str(args[2]).lower() in ('none', 'error', 'help', 'warn', 'custom') else 'none'
+    icon = opt_lower(args[2]) if len(args) > 2 and is_str(args[2]) and opt_lower(args[2]) in ('none', 'error', 'help', 'warn', 'custom') else 'none'
     data = args[3] if icon == 'custom' and len(args) > 3 else None
     cmap = args[4] if icon == 'custom' and len(args) > 4 and not is_str(args[4]) else None
     f = message_dialog(msg, title, icon, data, cmap, _createmode(args[2:]))

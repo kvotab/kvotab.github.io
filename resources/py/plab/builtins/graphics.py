@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, cellstr_list)
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, class_of, shape_of, numel,
                       _2d, EMPTY, py_str, share, text_list)
@@ -211,11 +211,11 @@ async def _close_one(f, force):
 
 @bi('close', aw=True, arr=False)
 async def close(nargout, *args):
-    words = [opt_str(a).lower() for a in args if opt_str(a) is not None]
+    words = [opt_lower(a) for a in args if opt_str(a) is not None]
     force = 'force' in words or 'all force' in words
     # 'force' closes the figures whose handles are hidden too
     hidden = force or 'hidden' in words or 'all hidden' in words
-    rest = [a for a in args if opt_str(a) is None or opt_str(a).lower() not in ('force', 'hidden')]
+    rest = [a for a in args if opt_str(a) is None or opt_lower(a) not in ('force', 'hidden')]
     if not rest:
         f = STORE.current
         if f is not None and f.valid:
@@ -299,21 +299,32 @@ def _overlaps(a, pos):
             ap[1] < pos[1] + pos[3] - 1e-6 and pos[1] < ap[1] + ap[3] - 1e-6)
 
 
+def _need(data, k, fn=None):
+    """An error when fewer than k data inputs came before the options."""
+    if len(data) < k:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', fn)
+
+
 @bi('subplot', arr=False)
 def subplot(nargout, *args):
     nargchk(args, 1, None, 'subplot')
     f = gcf_()
     rest = list(args)
     if len(rest) == 1 and numel(rest[0]) == 1 and not is_str(rest[0]) and not is_axes(rest[0]):
-        code = int(num(rest[0]))
+        x = float(num(rest[0]))
+        code = int(x) if x == int(x) else 0
         m, n, p = code // 100, (code // 10) % 10, code % 10
+        if not (100 <= code <= 999 and m >= 1 and n >= 1 and 1 <= p <= m * n):
+            raise err('MATLAB:subplot:InvalidSubplot', 'A single input is three digits mnp: m rows, n columns, and p from 1 to m*n.', 'subplot')
         pos = subplot_position(m, n, p)
     elif is_axes(rest[0]):
         set_current_axes(rest[0])
         return rest[0] if nargout else None
     elif opt_str(rest[0]) == 'Position':
+        _need(rest, 2, 'subplot')
         pos = list(darr(rest[1]).reshape(-1))
     else:
+        _need(rest, 3, 'subplot')
         m, n = int(num(rest[0])), int(num(rest[1]))
         pv = [int(x) for x in arr(rest[2]).reshape(-1)]
         if any(q < 1 or q > m * n for q in pv):
@@ -446,6 +457,8 @@ def nexttile(nargout, *args):
     L = f.layout
     idx = int(num(args[0])) if args and not is_str(args[0]) else L['next']
     span = [int(x) for x in darr(args[1]).reshape(-1)] if len(args) > 1 and not is_str(args[1]) else [1, 1]
+    if len(span) != 2 or min(span) < 1 or idx < 1:
+        raise err('MATLAB:nexttile:InvalidSpan', 'The tile number is a positive integer and the span [rows columns].', 'nexttile')
     if L['flow']:
         L['count'] = max(L['count'], idx)
     L['next'] = idx + 1
@@ -673,6 +686,8 @@ def line(nargout, *args):
         data.append(rest.pop(0))
     pairs = name_value(rest, 0)
     hs = []
+    if len(data) == 1:
+        raise err('MATLAB:line:InvalidData', 'line takes x and y data (and z), or name-value pairs.', 'line')
     if data:
         groups = [{'x': data[0], 'y': data[1], 'z': data[2] if len(data) > 2 else None, 'spec': None}]
         cols = _columns(groups[0]['x'], groups[0]['y'], groups[0]['z'])
@@ -697,10 +712,17 @@ def line(nargout, *args):
 @bi('fplot', 'ezplot', arr=False)
 def fplot(nargout, *args):
     ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'fplot')
     f = rest[0]
     if is_str(f):
-        f = R.call  # not used
         raise err('MATLAB:fplot:FunctionText', 'Give fplot a function handle, such as @(x) sin(x).', 'fplot')
+    if not isinstance(f, FH):
+        raise err('MATLAB:fplot:InvalidFunction', 'The first input must be a function handle.', 'fplot')
+    if len(rest) > 1 and isinstance(rest[1], FH) and (len(rest) < 3 or opt_str(rest[2]) is not None or numel(rest[2]) != 2):
+        if len(rest) > 2 and opt_str(rest[2]) is None:
+            raise err('MATLAB:fplot:InvalidLimits', 'The limits are [tmin tmax].', 'fplot')
+    elif len(rest) > 1 and opt_str(rest[1]) is None and not isinstance(rest[1], FH) and numel(rest[1]) != 2:
+        raise err('MATLAB:fplot:InvalidLimits', 'The limits are [xmin xmax].', 'fplot')
     lims = [-5.0, 5.0]
     spec_args = []
     if len(rest) > 1 and opt_str(rest[1]) is None and not isinstance(rest[1], FH):
@@ -882,6 +904,7 @@ def _bar(args, nargout, horizontal):
             continue
         i += 1
     width = 0.8
+    _need(data, 1)
     if len(data) == 1:
         Y = darr(data[0])
         X = None
@@ -963,6 +986,7 @@ def barh(nargout, *args):
 def histogram(nargout, *args):
     from .datafun import nice_edges, bin_counts
     ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'histogram')
     x = darr(rest.pop(0)).reshape(-1).real
     nbins = None
     edges = None
@@ -1066,6 +1090,7 @@ def area(nargout, *args):
     data = []
     while rest and opt_str(rest[0]) is None and len(data) < 3:
         data.append(rest.pop(0))
+    _need(data, 1)
     if len(data) == 1:
         Y = darr(data[0])
         X = None
@@ -1124,8 +1149,9 @@ def _simple_series(args, nargout, kind):
     if rest and opt_str(rest[0]) == 'filled':
         filled = True
         rest.pop(0)
-    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_str(rest[0]).lower() not in LINE_PROPS:
+    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_lower(rest[0]) not in LINE_PROPS:
         spec = parse_linespec(opt_str(rest.pop(0)))
+    _need(data, 1)
     if len(data) == 1:
         Y = darr(data[0])
         X = None
@@ -1222,6 +1248,7 @@ def errorbar(nargout, *args):
 @bi('pie', arr=False)
 def pie(nargout, *args):
     ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'pie')
     x = darr(rest.pop(0)).reshape(-1).real
     explode = None
     labels = None
@@ -1261,6 +1288,7 @@ def polarplot(nargout, *args):
     data = []
     while rest and opt_str(rest[0]) is None and len(data) < 2:
         data.append(rest.pop(0))
+    _need(data, 1)
     if len(data) == 1:
         rho = darr(data[0]).reshape(-1)
         theta = np.linspace(0, 2 * np.pi, rho.size)
@@ -1389,7 +1417,7 @@ def quiver(nargout, *args):
     while rest and opt_str(rest[0]) is None and len(data) < 5:
         data.append(rest.pop(0))
     spec = None
-    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_str(rest[0]).lower() not in LINE_PROPS:
+    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_lower(rest[0]) not in LINE_PROPS:
         spec = parse_linespec(opt_str(rest.pop(0)))
     scale = 0.9
     if len(data) in (2, 3):
@@ -1552,6 +1580,9 @@ def contour_matrix(lines_by_level):
 
 
 def _grid_xyz(data):
+    _need(data, 1)
+    if len(data) == 2:
+        raise err('MATLAB:contour:InvalidData', 'Give Z, or X, Y and Z.')
     if len(data) == 1:
         Z = darr(data[0]).real
         m, n = Z.shape
@@ -1580,7 +1611,7 @@ def _contour(args, nargout, fill=False, is3d=False):
             if len(levels) == 2 and levels[0] == levels[1]:
                 levels = [levels[0]]
     spec = None
-    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_str(rest[0]).lower() not in ('linewidth', 'linestyle', 'levellist', 'showtext', 'labelspacing', 'linecolor', 'fill', 'facealpha', 'edgecolor', 'levelstep'):
+    if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_lower(rest[0]) not in ('linewidth', 'linestyle', 'levellist', 'showtext', 'labelspacing', 'linecolor', 'fill', 'facealpha', 'edgecolor', 'levelstep'):
         spec = parse_linespec(opt_str(rest.pop(0)))
     pairs = name_value(rest, 0)
     show_text = False
@@ -1693,6 +1724,7 @@ def _surface_data(args):
     data = []
     while rest and opt_str(rest[0]) is None and len(data) < 4:
         data.append(rest.pop(0))
+    _need(data, 1)
     if len(data) in (1, 2):
         Z = darr(data[0]).real
         m, n = Z.shape
@@ -2049,8 +2081,8 @@ def legend(nargout, *args):
     if ax is None:
         f = gcf_()
         ax = gca_(f)
-    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in ('off', 'hide', 'show', 'toggle', 'boxoff', 'boxon'):
-        s = opt_str(rest[0]).lower()
+    if rest and opt_str(rest[0]) is not None and opt_lower(rest[0]) in ('off', 'hide', 'show', 'toggle', 'boxoff', 'boxon'):
+        s = opt_lower(rest[0])
         if s == 'off':
             if ax.legend is not None:
                 ax.legend.delete_handle()
@@ -2129,8 +2161,8 @@ def colorbar(nargout, *args):
         ax.touch()
         return None
     loc = 'eastoutside'
-    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in ('north', 'south', 'east', 'west', 'northoutside', 'southoutside', 'eastoutside', 'westoutside'):
-        loc = opt_str(rest.pop(0)).lower()
+    if rest and opt_str(rest[0]) is not None and opt_lower(rest[0]) in ('north', 'south', 'east', 'west', 'northoutside', 'southoutside', 'eastoutside', 'westoutside'):
+        loc = opt_lower(rest.pop(0))
     if ax.colorbar is None or not ax.colorbar.valid:
         ax.colorbar = Colorbar(ax)
     cb = ax.colorbar
@@ -2461,6 +2493,8 @@ def zticklabels(nargout, *args):
 def xtickangle(nargout, *args):
     ax, rest = split_axes_arg(args)
     ax = ax or gca_()
+    if not rest:
+        return float(ax.props.get('XTickLabelRotation', 0.0))
     ax.props['XTickLabelRotation'] = float(num(rest[0]))
     ax.touch()
     return None
@@ -2470,6 +2504,8 @@ def xtickangle(nargout, *args):
 def ytickangle(nargout, *args):
     ax, rest = split_axes_arg(args)
     ax = ax or gca_()
+    if not rest:
+        return float(ax.props.get('YTickLabelRotation', 0.0))
     ax.props['YTickLabelRotation'] = float(num(rest[0]))
     ax.touch()
     return None
@@ -2512,13 +2548,13 @@ def box(nargout, *args):
 @bi('text', arr=False)
 def text(nargout, *args):
     ax, rest = split_axes_arg(args)
-    given = next((rest[i + 1] for i in range(len(rest) - 1) if opt_str(rest[i]) is not None and opt_str(rest[i]).lower() == 'parent'), None)
+    given = next((rest[i + 1] for i in range(len(rest) - 1) if opt_str(rest[i]) is not None and opt_lower(rest[i]) == 'parent'), None)
     if isinstance(given, HArr) and given.a.size == 1:
         given = given.a.flat[0]
     if is_axes(given):
         ax = given
     ax = ax or gca_()
-    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in Text._lower and len(rest) % 2 == 0:
+    if rest and opt_str(rest[0]) is not None and opt_lower(rest[0]) in Text._lower and len(rest) % 2 == 0:
         # text('Name', value, ...): no position or string first
         t = Text(ax)
         apply_props(t, name_value(rest, 0))
@@ -2527,7 +2563,7 @@ def text(nargout, *args):
     data = []
     while rest and opt_str(rest[0]) is None and type(rest[0]) not in (Cell,) and len(data) < 3:
         data.append(rest.pop(0))
-    if not rest:
+    if not rest or len(data) < 2:
         raise err('MATLAB:text:invalidInput', 'Not enough input arguments.', 'text')
     s = rest.pop(0)
     xs = darr(data[0]).reshape(-1)
@@ -2625,6 +2661,18 @@ def daspect(nargout, *args):
     ax = ax or gca_()
     if not rest:
         return ax.props['DataAspectRatio']
+    k = opt_str(rest[0])
+    if k is not None:
+        k = k.lower()
+        if k == 'mode':
+            return Char.of(ax.props.get('DataAspectRatioMode', 'auto'))
+        if k in ('auto', 'manual'):
+            ax.props['DataAspectRatioMode'] = k
+            ax.touch()
+            return None
+        raise err('MATLAB:daspect:InvalidInput', "Give three positive numbers, 'auto', 'manual' or 'mode'.", 'daspect')
+    if numel(rest[0]) != 3:
+        raise err('MATLAB:daspect:InvalidInput', 'The ratio has three elements.', 'daspect')
     ax.setprop('DataAspectRatio', rest[0])
     return None
 
@@ -2635,6 +2683,18 @@ def pbaspect(nargout, *args):
     ax = ax or gca_()
     if not rest:
         return ax.props['PlotBoxAspectRatio']
+    k = opt_str(rest[0])
+    if k is not None:
+        k = k.lower()
+        if k == 'mode':
+            return Char.of(ax.props.get('PlotBoxAspectRatioMode', 'auto'))
+        if k in ('auto', 'manual'):
+            ax.props['PlotBoxAspectRatioMode'] = k
+            ax.touch()
+            return None
+        raise err('MATLAB:pbaspect:InvalidInput', "Give three positive numbers, 'auto', 'manual' or 'mode'.", 'pbaspect')
+    if numel(rest[0]) != 3:
+        raise err('MATLAB:pbaspect:InvalidInput', 'The ratio has three elements.', 'pbaspect')
     ax.setprop('PlotBoxAspectRatio', rest[0])
     return None
 
@@ -3162,7 +3222,11 @@ def ellipsoid(nargout, *args):
     return _shape_out(X, Y, Z, nargout)
 
 
-def _fsample(f, xr, yr, n=35):
+def _fsample(f, xr, yr, n=35, fn='fsurf'):
+    if not isinstance(f, FH):
+        raise err(f'MATLAB:{fn}:InvalidFunction', 'The first input must be a function handle of x and y.', fn)
+    if len(xr) != 2 or len(yr) != 2:
+        raise err(f'MATLAB:{fn}:InvalidLimits', 'The limits are [min max] for both, or [xmin xmax ymin ymax].', fn)
     x = np.linspace(xr[0], xr[1], n)
     y = np.linspace(yr[0], yr[1], n)
     X, Y = np.meshgrid(x, y)
@@ -3178,6 +3242,7 @@ def _fsample(f, xr, yr, n=35):
 @bi('fsurf', 'ezsurf', 'fmesh', 'ezmesh', arr=False)
 def fsurf(nargout, *args):
     ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'fsurf')
     f = rest[0]
     lim = darr(rest[1]).reshape(-1) if len(rest) > 1 and opt_str(rest[1]) is None else np.array([-5.0, 5.0])
     xr = lim[:2]
@@ -3189,9 +3254,10 @@ def fsurf(nargout, *args):
 @bi('fcontour', 'ezcontour', arr=False)
 def fcontour(nargout, *args):
     ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'fcontour')
     f = rest[0]
     lim = darr(rest[1]).reshape(-1) if len(rest) > 1 and opt_str(rest[1]) is None else np.array([-5.0, 5.0])
-    X, Y, Z = _fsample(f, lim[:2], lim[2:4] if lim.size >= 4 else lim[:2], 60)
+    X, Y, Z = _fsample(f, lim[:2], lim[2:4] if lim.size >= 4 else lim[:2], 60, 'fcontour')
     return _contour(([ax] if ax else []) + [out(X), out(Y), out(Z)], nargout)
 
 
@@ -3336,7 +3402,7 @@ async def _read_fig(p, fn, visible=None):
 async def openfig(nargout, *args):
     nargchk(args, 1, 3, 'openfig')
     p = _fig_file(sval(args[0], 'file name', 'openfig'), 'openfig')
-    opts = [opt_str(a).lower() for a in args[1:] if opt_str(a) is not None]
+    opts = [opt_lower(a) for a in args[1:] if opt_str(a) is not None]
     if 'reuse' in opts:
         # the figure opened from this file before, brought forward
         same = [f for f in STORE.figures.values() if f.valid and f.props.get('FileName') == p]
@@ -3367,7 +3433,7 @@ async def _write_fig(args, fn, nargout):
     import os
     from ..figfile import save
     from .iofun import files_changed
-    rest = [a for a in args if not (is_str(a) and opt_str(a) is not None and opt_str(a).lower() in ('compact', 'all') or
+    rest = [a for a in args if not (is_str(a) and opt_str(a) is not None and opt_lower(a) in ('compact', 'all') or
                                     is_str(a) and opt_str(a) is not None and opt_str(a).startswith('-'))]
     objs = _handles(rest.pop(0)) if rest and not is_str(rest[0]) else [gcf_()]
     name = sval(rest[0], 'file name', fn) if rest else 'Untitled.fig'

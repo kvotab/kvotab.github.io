@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, darr, out, opt_str, sval, num, is_str
+from ._util import err, nargchk, darr, out, opt_str, opt_lower, sval, num, is_str
 from ..values import Char, Cell, Struct, Str, text_list
 from ..graphics_base import Line, Patch, Series, Text, Legend, Axes, HArr, parse_linespec, to_color, COLOR_ORDER, MARKERS
 from .graphics import gcf_, gca_, newplot, new_figure, split_axes_arg, set_current_axes, is_axes, clf, bar
@@ -332,7 +332,7 @@ def boxplot(nargout, *args):
     nargchk(rest, 1, None, 'boxplot')
     X = darr(rest.pop(0)).real.astype(float)
     g = None
-    if rest and not (opt_str(rest[0]) is not None and opt_str(rest[0]).lower() in BOX_OPTS):
+    if rest and not (opt_str(rest[0]) is not None and opt_lower(rest[0]) in BOX_OPTS):
         g = rest.pop(0)
     opts = _nv(rest, 'boxplot', BOX_OPTS)
     data, labels = _box_data(X, g, 'boxplot')

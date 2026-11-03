@@ -692,6 +692,8 @@ def jbtest(nargout, *args):
     st = _st()
     x = _vec(args[0])
     alpha = float(num(args[1])) if len(args) > 1 and np.size(darr(args[1])) else 0.05
+    if len(args) > 1 and np.size(darr(args[1])) and (np.size(darr(args[1])) != 1 or not 0 < alpha < 1):
+        raise err('stats:jbtest:BadAlpha', 'alpha must be a number between 0 and 1.', 'jbtest')
     n = x.size
     if n < 2:
         raise err('stats:jbtest:NotEnoughData', 'The sample must have at least 2 values.', 'jbtest')
@@ -1079,10 +1081,13 @@ def kruskalwallis(nargout, *args):
     ssw = sst - ssb
     _, counts = np.unique(alld, return_counts=True)
     sumt = float(np.sum(counts ** 3 - counts))
-    H = ssb / (sst / (N - 1)) if sst > 0 else math.nan
-    p = float(st.chi2.sf(H, k - 1))
-    rows = [['Source', 'SS', 'df', 'MS', 'Chi-sq', 'Prob>Chi-sq'], ['Groups', ssb, k - 1, ssb / (k - 1), H, p],
-            ['Error', ssw, N - k, ssw / (N - k), None, None], ['Total', sst, N - 1, None, None, None]]
+    H = ssb / (sst / (N - 1)) if sst > 0 and N > 1 else math.nan
+    p = float(st.chi2.sf(H, k - 1)) if k > 1 else math.nan
+
+    def per(a, b):
+        return a / b if b else math.nan
+    rows = [['Source', 'SS', 'df', 'MS', 'Chi-sq', 'Prob>Chi-sq'], ['Groups', ssb, k - 1, per(ssb, k - 1), H, p],
+            ['Error', ssw, N - k, per(ssw, N - k), None, None], ['Total', sst, N - 1, None, None, None]]
     stats = Struct.scalar({'gnames': Cell.of_list([Char.of(s) for s in labels], (k, 1)),
                            'n': out(np.array([[c.size for c in cols]], float)), 'source': Char.of('kruskalwallis'),
                            'meanranks': out(np.array([[r.mean() for r in rc]])), 'sumt': sumt})
@@ -1097,9 +1102,15 @@ def friedman(nargout, *args):
     nargchk(args, 1, 3, 'friedman')
     st = _st()
     X = darr(args[0]).real.astype(float)
+    if len(args) > 1 and not is_str(args[1]) and np.size(darr(args[1])) > 1:
+        raise err('stats:friedman:BadReps', 'reps must be a positive whole number.', 'friedman')
     reps = int(num(args[1])) if len(args) > 1 and not is_str(args[1]) and np.size(darr(args[1])) else 1
     display = not (len(args) > 2 and sval(args[2]).lower() == 'off')
+    if X.ndim != 2:
+        raise err('stats:friedman:BadData', 'X must be a matrix.', 'friedman')
     r, c = X.shape
+    if reps < 1 or r % reps or r == 0 or c < 2:
+        raise err('stats:friedman:BadData', 'X needs at least two columns, and a number of rows that reps divides.', 'friedman')
     m = r // reps
     ranks = np.empty_like(X)
     for b in range(m):

@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, arr, darr, out, opt_str, num, is_str, first_dim, expand_dims, like_class
+from ._util import err, nargchk, arr, darr, out, opt_str, opt_lower, num, is_str, first_dim, expand_dims, like_class
 from ..values import Char, Cell, Struct, Str, F64, class_of, shape_of, numel, py_str, text_list
 from ..ops import cat as _cat, finish
 from .. import runtime as R
@@ -408,7 +408,7 @@ def _outliers(args, fn, first_method=1):
     rest = list(args[first_method:])
     method, window = 'median', None
     if rest and (opt_str(rest[0]) or '').lower() in _OUT_METHODS:
-        method = opt_str(rest.pop(0)).lower()
+        method = opt_lower(rest.pop(0))
         if method in ('movmedian', 'movmean'):
             if not rest:
                 raise err(f'MATLAB:{fn}:WindowMissing', f"'{method}' needs a window.", fn)
@@ -524,7 +524,7 @@ def filloutliers(nargout, *args):
     'spline', 'pchip', 'makima' or a number; NaN stays NaN."""
     nargchk(args, 2, 9, 'filloutliers')
     f = args[1]
-    fill = opt_str(f).lower() if opt_str(f) is not None else float(num(f))
+    fill = opt_lower(f) if opt_str(f) is not None else float(num(f))
     if isinstance(fill, str) and fill not in ('center', 'clip', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima'):
         raise err('MATLAB:filloutliers:InvalidFill', "The fill is 'center', 'clip', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima' or a number.", 'filloutliers')
     TF, L, U, C, x, dim, method = _outliers((args[0],) + tuple(args[2:]), 'filloutliers')
@@ -607,7 +607,7 @@ def smoothdata(nargout, *args):
         dim = int(num(rest.pop(0))) - 1
     method = 'movmean'
     if rest and (opt_str(rest[0]) or '').lower() in _SMOOTH:
-        method = opt_str(rest.pop(0)).lower()
+        method = opt_lower(rest.pop(0))
     window = None
     if rest and opt_str(rest[0]) is None:
         window = darr(rest.pop(0)).reshape(-1)
@@ -845,7 +845,7 @@ def histcounts2(nargout, *args):
         elif key == 'ybinedges':
             edges[1] = v
         elif key == 'normalization':
-            norm = opt_str(val).lower()
+            norm = opt_lower(val)
         else:
             raise err('MATLAB:histcounts2:InvalidOption', f"Unknown option '{opt_str(rest[i])}'.", 'histcounts2')
         i += 2

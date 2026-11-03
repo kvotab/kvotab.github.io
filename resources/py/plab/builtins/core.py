@@ -8,7 +8,7 @@ import time
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     NUMERIC_CLASSES)
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS,
@@ -215,7 +215,10 @@ def getreport(nargout, *args):
 
 @bi('addCause')
 def addcause(nargout, *args):
+    nargchk(args, 2, 2, 'addCause')
     e, c = args
+    if not (isinstance(e, R.MExc) and isinstance(c, R.MExc)):
+        raise err('MATLAB:addCause:NotMException', 'Both inputs must be MException objects.', 'addCause')
     e.err.cause.append(c.err)
     return e
 
@@ -525,7 +528,7 @@ def _caller_ws(depth=1):
 def exist(W, nargout, *args):
     nargchk(args, 1, 2, 'exist')
     name = sval(args[0], 'name', 'exist')
-    kind = opt_str(args[1]).lower() if len(args) > 1 else None
+    kind = opt_lower(args[1]) if len(args) > 1 else None
     import os
     if kind in (None, 'var'):
         if name in W or name in getattr(W, 'gnames', ()):
@@ -846,6 +849,8 @@ def str2func(W, nargout, *args):
 @bi('functions')
 def functions(nargout, *args):
     f = args[0]
+    if not isinstance(f, FH):
+        raise err('MATLAB:functions:NotFunctionHandle', 'The input must be a function handle.', 'functions')
     if isinstance(f, R.Anon):
         return Struct.scalar({'function': Char.of(f.text()), 'type': Char.of('anonymous'), 'file': Char.of(''),
                               'workspace': Cell.of_list([Struct.scalar(dict(f.cap))])})

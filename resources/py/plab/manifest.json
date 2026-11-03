@@ -50,6 +50,7 @@
     "builtins/iofun.py",
     "builtins/timefun.py",
     "builtins/sparse.py",
+    "builtins/arity.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

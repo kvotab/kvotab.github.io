@@ -124,6 +124,14 @@ def sval(v, what='argument', fn=None):
         raise
 
 
+def opt_lower(v, fn=None):
+    """An option that must be text, in lower case (an error when it is not)."""
+    s = opt_str(v)
+    if s is None:
+        raise err('MATLAB:invalidOption', 'The option must be text.', fn)
+    return s.lower()
+
+
 def opt_str(v):
     """The text of an option argument, or None if it is not text."""
     t = type(v)
@@ -159,7 +167,7 @@ def dims_from(args, fn, allow_class=True):
     cplx = False
     if allow_class and args:
         # 'like', p
-        if len(args) >= 2 and opt_str(args[-2]) is not None and opt_str(args[-2]).lower() == 'like':
+        if len(args) >= 2 and opt_str(args[-2]) is not None and opt_lower(args[-2]) == 'like':
             p = args[-1]
             klass = class_of(p)
             cplx = type(p) is complex or (type(p) is np.ndarray and p.dtype.kind == 'c')

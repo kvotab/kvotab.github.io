@@ -18,7 +18,7 @@ import datetime
 import numpy as np
 
 from . import bi, REG
-from ._util import err, darr, out, opt_str, num, is_str, sval
+from ._util import err, darr, out, opt_str, opt_lower, num, is_str, sval
 from ..values import MError, Char, Cell, Struct, Str, FH, Obj, EMPTY, F64, numel, py_str
 from .. import runtime as R
 from .. import mapproj as M
@@ -46,6 +46,8 @@ def _length_unit(u, fn):
 
 @bi('unitsratio')
 def unitsratio(nargout, *args):
+    if len(args) != 2:
+        raise err('MATLAB:minrhs' if len(args) < 2 else 'MATLAB:TooManyInputs', 'unitsratio takes two units.', 'unitsratio')
     to, frm = sval(args[0], 'unit', 'unitsratio').lower(), sval(args[1], 'unit', 'unitsratio').lower()
     if to in _ANGLE and frm in _ANGLE:
         return _ANGLE[frm] / _ANGLE[to]
@@ -100,6 +102,8 @@ def dms2degrees(nargout, *args):
 @bi('dm2degrees')
 def dm2degrees(nargout, *args):
     a = darr(args[0])
+    if a.ndim != 2 or a.shape[1] != 2:
+        raise err('map:dm2degrees:shape', 'The input must have two columns: degrees and minutes.', 'dm2degrees')
     sgn = np.where((a[:, 0] < 0) | ((a[:, 0] == 0) & (a[:, 1] < 0)), -1.0, 1.0)
     return out((sgn * (np.abs(a[:, 0]) + np.abs(a[:, 1]) / 60)).reshape(-1, 1))
 
@@ -298,16 +302,16 @@ def _units_last(args):
     """An 'degrees' or 'radians' at the end: (the rest, True for radians)."""
     args = list(args)
     rad = False
-    if args and opt_str(args[-1]) is not None and opt_str(args[-1]).lower() in ('degrees', 'radians', 'deg', 'rad'):
-        rad = opt_str(args.pop()).lower().startswith('rad')
+    if args and opt_str(args[-1]) is not None and opt_lower(args[-1]) in ('degrees', 'radians', 'deg', 'rad'):
+        rad = opt_lower(args.pop()).startswith('rad')
     return args, rad
 
 
 def _track_kind(args):
     args = list(args)
     kind = 'gc'
-    if args and opt_str(args[0]) is not None and opt_str(args[0]).lower() in ('gc', 'rh'):
-        kind = opt_str(args.pop(0)).lower()
+    if args and opt_str(args[0]) is not None and opt_lower(args[0]) in ('gc', 'rh'):
+        kind = opt_lower(args.pop(0))
     return args, kind
 
 
@@ -316,6 +320,8 @@ def _latlon_pairs(args, n):
     if len(args) >= 2 and np.ndim(darr(args[0])) == 2 and darr(args[0]).shape[-1] == 2 and (len(args) == 2 or not _is_num_like(args[2])):
         a, b = darr(args[0]), darr(args[1])
         return [a[:, 0], a[:, 1], b[:, 0], b[:, 1]], list(args[2:])
+    if len(args) < n:
+        raise err('map:validate:points', 'Give lat1, lon1, lat2 and lon2, or two points [lat lon] (one per row).')
     return [darr(a) for a in args[:n]], list(args[n:])
 
 
@@ -562,6 +568,8 @@ def areaquad(nargout, *args):
 @bi('interpm', nout=2)
 def interpm(nargout, *args):
     lat, lon = darr(args[0]).reshape(-1), darr(args[1]).reshape(-1)
+    if lat.size != lon.size:
+        raise err('map:interpm:sizes', 'lat and lon must have the same number of elements.', 'interpm')
     maxd = float(num(args[2]))
     method = py_str(args[3]).lower() if len(args) > 3 else 'lin'
     la_o, lo_o = [lat[:1]], [lon[:1]]
@@ -757,6 +765,8 @@ def ned2aer(nargout, *args):
 @bi('aer2ned', nout=3)
 def aer2ned(nargout, *args):
     args, rad = _units_last(args)
+    if len(args) < 3:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', 'aer2ned')
     E, N, U = _to_enu('aer', *(darr(v) for v in args[:3]), rad)
     return _three(nargout, (N, E, -U))
 
@@ -849,6 +859,8 @@ def polysplit(nargout, *args):
 
 @bi('polyjoin', nout=2)
 def polyjoin(nargout, *args):
+    if len(args) != 2 or type(args[0]) is not Cell or type(args[1]) is not Cell:
+        raise err('map:polyjoin:cells', 'polyjoin takes two cell arrays of vertex lists.', 'polyjoin')
     xs, ys = [], []
     for i, (a, b) in enumerate(zip(args[0].a.reshape(-1), args[1].a.reshape(-1))):
         if i:
@@ -968,7 +980,7 @@ async def projcrs(nargout, *args):
             raise err('map:crs:wkt', 'projcrs takes an EPSG code here, as projcrs(3006) or projcrs("EPSG:3006").', 'projcrs')
     else:
         code = int(num(v))
-    if len(args) > 2 and opt_str(args[1]) is not None and opt_str(args[1]).lower() == 'authority' and py_str(args[2]).upper() != 'EPSG':
+    if len(args) > 2 and opt_str(args[1]) is not None and opt_lower(args[1]) == 'authority' and py_str(args[2]).upper() != 'EPSG':
         raise err('map:crs:authority', 'Only EPSG codes are known here.', 'projcrs')
     d = M.epsg(code)
     if d is not None:
@@ -1533,6 +1545,8 @@ def worldmap(nargout, *args):
             raise err('map:worldmap:unknownRegion', f"'{py_str(args[0])}' is not a region known here: {', '.join(sorted(_REGIONS))}.", 'worldmap')
         latlim, lonlim = _REGIONS[key]
     else:
+        if len(args) != 2 or numel(args[0]) != 2 or numel(args[1]) != 2:
+            raise err('map:worldmap:limits', 'Give a region name, or latlim and lonlim of two elements each.', 'worldmap')
         latlim = [float(x) for x in darr(args[0]).reshape(-1)]
         lonlim = [float(x) for x in darr(args[1]).reshape(-1)]
     latlim, lonlim = list(map(float, latlim)), list(map(float, lonlim))
@@ -1632,6 +1646,8 @@ def _mstruct_to_state(s):
 @bi('gcm', arr=False)
 def gcm(nargout, *args):
     ax = args[0] if args else _cur_axes()
+    if getattr(ax, 'TYPE', None) != 'axes':
+        raise err('map:gcm:notAxes', 'gcm takes the handle of map axes.', 'gcm')
     return _state_struct(_map_of(ax, 'gcm'))
 
 
@@ -1650,7 +1666,10 @@ def defaultm(nargout, *args):
     v = args[0] if args else Char.of('eqdcylin')
     if type(v) is Struct:
         return v
-    st = MapState(py_str(v).lower())
+    name = py_str(v).lower()
+    if name not in M.PROJECTIONS:
+        raise err('map:defaultm:unknownProjection', f"'{py_str(v)}' is not a projection known here.", 'defaultm')
+    st = MapState(name)
     return _state_struct(st)
 
 
@@ -1664,8 +1683,8 @@ def _onoff_map(attr, fn):
     def f(nargout, *args):
         ax = _cur_axes()
         st = _map_of(ax, fn)
-        if args and opt_str(args[0]) is not None and opt_str(args[0]).lower() in ('on', 'off', 'toggle', 'reset'):
-            w = opt_str(args[0]).lower()
+        if args and opt_str(args[0]) is not None and opt_lower(args[0]) in ('on', 'off', 'toggle', 'reset'):
+            w = opt_lower(args[0])
             setattr(st, attr, (not getattr(st, attr)) if w == 'toggle' else w == 'on')
             rest = args[1:]
         elif args:
@@ -1699,7 +1718,7 @@ def tightmap(nargout, *args):
 @bi('showaxes', arr=False)
 def showaxes(nargout, *args):
     ax = _cur_axes()
-    w = opt_str(args[0]).lower() if args and opt_str(args[0]) is not None else 'on'
+    w = opt_lower(args[0]) if args and opt_str(args[0]) is not None else 'on'
     ax.props['Visible'] = w in ('on', 'show')
     ax.touch()
     return None
@@ -1858,6 +1877,8 @@ def contourm(nargout, *args):
         lat, lon = R_.grid_latlon(Z.shape)
         rest = args[2:]
     else:
+        if len(args) < 3:
+            raise err('MATLAB:minrhs', 'Give lat, lon and Z, or Z and its raster reference.', 'contourm')
         lat, lon, Z = darr(args[0]), darr(args[1]), darr(args[2])
         rest = args[3:]
     if lat.shape != Z.shape:
@@ -1984,7 +2005,11 @@ async def geoshow(nargout, *args):
         h.props['FaceColor'] = 'flat'
         ax.touch()
         return h if nargout else None
+    if len(args) < 2 or is_str(args[1]):
+        raise err('MATLAB:minrhs', 'Give lat and lon, a struct of shapes, a file name, or Z and its raster reference.', 'geoshow')
     lat, lon = darr(args[0]), darr(args[1])
+    if lat.size != lon.size:
+        raise err('map:geoshow:sizes', 'lat and lon must have the same number of elements.', 'geoshow')
     kind, pairs = _style(args[2:])
     if lat.ndim == 2 and min(lat.shape) > 1 and len(args) > 2 and not is_str(args[2]):
         Z = darr(args[2])
@@ -2045,7 +2070,11 @@ async def mapshow(nargout, *args):
         h.props['FaceColor'] = 'flat'
         ax.touch()
         return h if nargout else None
+    if len(args) < 2 or is_str(args[1]):
+        raise err('MATLAB:minrhs', 'Give x and y, a struct of shapes, a file name, or Z and its raster reference.', 'mapshow')
     x, y = darr(args[0]).reshape(-1), darr(args[1]).reshape(-1)
+    if x.size != y.size:
+        raise err('map:mapshow:sizes', 'x and y must have the same number of elements.', 'mapshow')
     kind, pairs = _style(args[2:])
     h = _show(kind or 'line', x, y, pairs)
     ax.touch()
@@ -2388,31 +2417,50 @@ def _ref_args(args, geo, fn):
     return RasterRef(geo, lim1, lim2, size, cells=fn.endswith('cells'), col_dir='south' if geo else 'south')
 
 
+def _three_inputs(args, fn):
+    """The limits and raster size of a reference object: none, or all three."""
+    if len(args) < 3:
+        raise err('MATLAB:minrhs', 'Give the two limits and the raster size (or nothing, for the default).', fn)
+    for k in (0, 1):
+        if is_str(args[k]) or numel(args[k]) != 2:
+            raise err(f'map:{fn}:limits', 'The limits have two elements each.', fn)
+    if is_str(args[2]) or numel(args[2]) < 2:
+        raise err(f'map:{fn}:rasterSize', 'The raster size is [rows columns].', fn)
+
+
 @bi('georefcells', arr=False)
 def georefcells(nargout, *args):
     if not args:
         return RasterRef(True, [0.5, 2.5], [0.5, 2.5], (2, 2))
+    _three_inputs(args, 'georefcells')
     latlim, lonlim, rsize = args[0], args[1], args[2]
     rs = darr(rsize).reshape(-1)
-    if rs.size == 2 and rs[0] < 1 and rs[0] > 0 and False:
-        pass
     return RasterRef(True, darr(latlim).reshape(-1), darr(lonlim).reshape(-1), rs[:2], cells=True, col_dir='north' if not args[3:] else 'north')
 
 
 @bi('georefpostings', arr=False)
 def georefpostings(nargout, *args):
+    if not args:
+        return RasterRef(True, [1.0, 2.0], [1.0, 2.0], (2, 2), cells=False)
+    _three_inputs(args, 'georefpostings')
     latlim, lonlim, rsize = args[0], args[1], args[2]
     return RasterRef(True, darr(latlim).reshape(-1), darr(lonlim).reshape(-1), darr(rsize).reshape(-1)[:2], cells=False)
 
 
 @bi('maprefcells', arr=False)
 def maprefcells(nargout, *args):
+    if not args:
+        return RasterRef(False, [0.5, 2.5], [0.5, 2.5], (2, 2), cells=True)
+    _three_inputs(args, 'maprefcells')
     xlim, ylim, rsize = args[0], args[1], args[2]
     return RasterRef(False, darr(xlim).reshape(-1), darr(ylim).reshape(-1), darr(rsize).reshape(-1)[:2], cells=True)
 
 
 @bi('maprefpostings', arr=False)
 def maprefpostings(nargout, *args):
+    if not args:
+        return RasterRef(False, [1.0, 2.0], [1.0, 2.0], (2, 2), cells=False)
+    _three_inputs(args, 'maprefpostings')
     xlim, ylim, rsize = args[0], args[1], args[2]
     return RasterRef(False, darr(xlim).reshape(-1), darr(ylim).reshape(-1), darr(rsize).reshape(-1)[:2], cells=False)
 
@@ -2434,6 +2482,8 @@ def georasterref(nargout, *args):
 
 @bi('geographicToIntrinsic', nout=2)
 def geographicToIntrinsic(nargout, *args):
+    if len(args) != 3 or not isinstance(args[0], RasterRef):
+        raise err('map:geographicToIntrinsic:inputs', 'geographicToIntrinsic takes a raster reference and two coordinate arrays.', 'geographicToIntrinsic')
     R_ = args[0]
     xi_r, xi_c = R_.intrinsic_of(darr(args[1]), darr(args[2]))
     return (out(xi_c), out(xi_r)) if nargout > 1 else out(xi_c)
@@ -2441,6 +2491,8 @@ def geographicToIntrinsic(nargout, *args):
 
 @bi('worldToIntrinsic', nout=2)
 def worldToIntrinsic(nargout, *args):
+    if len(args) != 3 or not isinstance(args[0], RasterRef):
+        raise err('map:worldToIntrinsic:inputs', 'worldToIntrinsic takes a raster reference and two coordinate arrays.', 'worldToIntrinsic')
     R_ = args[0]
     xi_r, xi_c = R_.intrinsic_of(darr(args[1]), darr(args[2]))
     return (out(xi_c), out(xi_r)) if nargout > 1 else out(xi_c)

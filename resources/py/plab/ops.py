@@ -776,6 +776,7 @@ def mldivide(a, b):
         raise MError('MATLAB:mldivide:integerNotSupported', 'Integer data types are not fully supported for this operation. At least one input must be scalar.')
     A = np.asarray(A)
     B = np.asarray(B)
+    A, B = (x.reshape(1, 1) if x.ndim == 0 else x for x in (A, B))      # a number is 1-by-1
     if A.ndim > 2 or B.ndim > 2:
         raise MError('MATLAB:mldivide:notSupportedForND', 'Arguments must be 2-D, or at least one argument must be scalar.')
     if A.shape[0] != B.shape[0]:
@@ -801,6 +802,7 @@ def mrdivide(a, b):
     cls = result_class(ca, cb, '/')
     A = np.asarray(A)
     B = np.asarray(B)
+    A, B = (x.reshape(1, 1) if x.ndim == 0 else x for x in (A, B))      # a number is 1-by-1
     if A.ndim > 2 or B.ndim > 2:
         raise MError('MATLAB:mrdivide:notSupportedForND', 'Arguments must be 2-D, or at least one argument must be scalar.')
     if A.shape[1] != B.shape[1]:

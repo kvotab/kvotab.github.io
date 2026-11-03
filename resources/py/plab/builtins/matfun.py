@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, reduce, expand_dims, strip_flags)
 from ..ops import finish, align
 from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY, py_str, Sparse)
@@ -173,6 +173,10 @@ def cond(nargout, *args):
     a = _mat(args[0], 'cond')
     p = args[1] if len(args) > 1 else 2.0
     ps = opt_str(p)
+    if (ps is None and numel(p) != 1) or (ps is not None and ps.lower() not in ('fro', 'inf')):
+        raise err('MATLAB:cond:InvalidP', "p is 1, 2, Inf or 'fro'.", 'cond')
+    if ps is None and num(p) != 2:
+        _sq(a, 'cond')
     if ps is None and num(p) == 2:
         s = np.linalg.svd(a, compute_uv=False)
         with np.errstate(all='ignore'):
@@ -193,6 +197,7 @@ def rcond(nargout, *args):
 @bi('condest')
 def condest(nargout, *args):
     a = _mat(args[0], 'condest')
+    _sq(a, 'condest')
     with np.errstate(all='ignore'):
         return float(np.linalg.cond(a, 1))
 
@@ -205,6 +210,8 @@ def eig(nargout, *args):
     _sq(a, 'eig')
     rest, flags = strip_flags(args[1:], ('vector', 'matrix', 'nobalance', 'balance', 'chol', 'qz'))
     b = _mat(rest[0], 'eig') if rest else None
+    if b is not None and b.shape != a.shape:
+        raise err('MATLAB:eig:SizeMismatch', 'A and B must be square matrices of the same size.', 'eig')
     if not np.all(np.isfinite(a)):
         raise err('MATLAB:eig:matrixWithNaNInf', 'Input to EIG must not contain NaN or Inf.', 'eig')
     herm = b is None and np.allclose(a, a.conj().T, rtol=0, atol=0)
@@ -302,7 +309,7 @@ def qr(nargout, *args):
         B = darr(rest.pop(0))           # [C, R] = qr(A, B): C = Q'*B
         if B.shape[0] != a.shape[0]:
             raise err('MATLAB:qr:BSize', 'A and B must have the same number of rows.', 'qr')
-    words = [opt_str(r).lower() if opt_str(r) is not None else 'zero' for r in rest]
+    words = [opt_lower(r) if opt_str(r) is not None else 'zero' for r in rest]
     econ = 'econ' in words or 'zero' in words
     vector = 'vector' in words or 'zero' in words          # qr(A, 0): the permutation as a vector
     mode = 'economic' if econ else 'full'
@@ -389,7 +396,10 @@ def chol(nargout, *args):
 def schur(nargout, *args):
     import scipy.linalg as sla
     a = _mat(args[0], 'schur')
+    _sq(a, 'schur')
     kind = opt_str(args[1]) if len(args) > 1 else ('complex' if np.iscomplexobj(a) else 'real')
+    if kind not in ('real', 'complex'):
+        raise err('MATLAB:schur:InvalidFlag', "The flag is 'real' or 'complex'.", 'schur')
     T, Z = sla.schur(a, output=kind)
     return (out(Z), out(T)) if nargout >= 2 else out(T)
 
@@ -398,6 +408,7 @@ def schur(nargout, *args):
 def hess(nargout, *args):
     import scipy.linalg as sla
     a = _mat(args[0], 'hess')
+    _sq(a, 'hess')
     H, Q = sla.hessenberg(a, calc_q=True)
     return (out(Q), out(H)) if nargout >= 2 else out(H)
 
@@ -502,7 +513,12 @@ _matfun('sqrtm', lambda sla, a: sla.sqrtm(a, disp=False))
 def funm(nargout, *args):
     import scipy.linalg as sla
     a = _mat(args[0], 'funm')
+    _sq(a, 'funm')
     f = args[1]
+    if is_str(f):
+        f = R.NamedFH(py_str(f))
+    if not hasattr(f, 'scall'):
+        raise err('MATLAB:funm:InvalidFunction', 'The second input is a function handle or name.', 'funm')
     name = f.name() if hasattr(f, 'name') else ''
     simple = {'exp': np.exp, 'log': np.log, 'sin': np.sin, 'cos': np.cos, 'sqrt': np.sqrt, 'sinh': np.sinh, 'cosh': np.cosh}
     fn = simple.get(name)
@@ -559,6 +575,7 @@ def linsolve(nargout, *args):
 def balance(nargout, *args):
     import scipy.linalg as sla
     a = _mat(args[0], 'balance')
+    _sq(a, 'balance')
     B, T = sla.matrix_balance(a)
     return (out(T), out(B)) if nargout >= 2 else out(B)
 
@@ -576,6 +593,8 @@ def givens(nargout, *args):
 @bi('planerot', nout=2)
 def planerot(nargout, *args):
     x = darr(args[0]).reshape(-1)
+    if x.size != 2:
+        raise err('MATLAB:planerot:InvalidInput', 'x must have two elements.', 'planerot')
     G = darr(givens(1, x[0], x[1]))
     return (out(G), out((G @ x).reshape(-1, 1))) if nargout >= 2 else out(G)
 
@@ -1027,6 +1046,8 @@ def qrdelete(nargout, *args):
     nargchk(args, 3, 4, 'qrdelete')
     from scipy.linalg import qr_delete
     Q, Rm = _mat(args[0], 'qrdelete'), _mat(args[1], 'qrdelete')
+    if Q.shape[0] != Q.shape[1] or Rm.shape[0] != Q.shape[1]:
+        raise err('MATLAB:qrdelete:SizeMismatch', 'Q must be square, with as many columns as R has rows.', 'qrdelete')
     j = ival(args[2]) - 1
     which = (opt_str(args[3]) or 'col').lower() if len(args) > 3 else 'col'
     if which not in ('col', 'row'):
@@ -1046,9 +1067,11 @@ def qz(nargout, *args):
     nargchk(args, 2, 3, 'qz')
     from scipy.linalg import qz as _qz, eig as _eig
     A, B = _mat(args[0], 'qz'), _mat(args[1], 'qz')
+    if A.shape != B.shape or A.shape[0] != A.shape[1]:
+        raise err('MATLAB:qz:SizeMismatch', 'A and B must be square matrices of the same size.', 'qz')
     if len(args) > 2 and opt_str(args[2]) is None:
         raise err('MATLAB:qz:InvalidFlag', "The flag must be text: 'complex' or 'real'.", 'qz')
-    flag = opt_str(args[2]).lower() if len(args) > 2 else 'complex'
+    flag = opt_lower(args[2]) if len(args) > 2 else 'complex'
     if flag not in ('complex', 'real'):
         raise err('MATLAB:qz:InvalidFlag', "The flag is 'complex' or 'real'.", 'qz')
     if flag == 'real' and (np.iscomplexobj(A) or np.iscomplexobj(B)):
@@ -1117,6 +1140,8 @@ def ordeig(nargout, *args):
     nargchk(args, 1, 2, 'ordeig')
     T = _mat(args[0], 'ordeig')
     B = _mat(args[1], 'ordeig') if len(args) > 1 else None
+    if T.shape[0] != T.shape[1] or (B is not None and B.shape != T.shape):
+        raise err('MATLAB:ordeig:SizeMismatch', 'The matrices must be square and of the same size.', 'ordeig')
     n = T.shape[0]
     ev, k = [], 0
     while k < n:

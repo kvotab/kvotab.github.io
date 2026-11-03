@@ -1871,15 +1871,19 @@ removeCustomBasemap: Remove a basemap added with addCustomBasemap.
     removeCustomBasemap(name)
 georefcells: A reference for a raster of cells in latitude and longitude.
     R = georefcells(latlim, lonlim, rasterSize)
+    R = georefcells()
 georefpostings: A reference for a raster of postings (samples) in latitude and longitude.
     R = georefpostings(latlim, lonlim, rasterSize)
+    R = georefpostings()
 georasterref: A geographic raster reference from properties.
     R = georasterref('RasterSize', [m n], 'LatitudeLimits', latlim, 'LongitudeLimits', lonlim)
     R = georasterref(..., 'RasterInterpretation', 'cells' | 'postings', 'ColumnsStartFrom', 'north' | 'south')
 maprefcells: A reference for a raster of cells in projected x and y.
     R = maprefcells(xlim, ylim, rasterSize)
+    R = maprefcells()
 maprefpostings: A reference for a raster of postings in projected x and y.
     R = maprefpostings(xlim, ylim, rasterSize)
+    R = maprefpostings()
 geographicToIntrinsic: Latitude and longitude as fractional column and row of a raster.
     [xi, yi] = geographicToIntrinsic(R, lat, lon)
 worldToIntrinsic: Projected x and y as fractional column and row of a raster.
@@ -3521,8 +3525,10 @@ zticklabels: The labels of the ticks on the z axis.
     zticklabels(labels)
 xtickangle: Turn the labels of the x ticks.
     xtickangle(angle)
+    angle = xtickangle
 ytickangle: Turn the labels of the y ticks.
     ytickangle(angle)
+    angle = ytickangle
 grid: Show or hide the grid lines.
     grid on | off | minor
     grid
@@ -3531,8 +3537,13 @@ box: Show or hide the box round the axes.
 daspect: The data aspect ratio: how long one unit is on each axis.
     daspect([1 1 1])
     r = daspect
+    daspect('auto')
+    m = daspect('mode')
 pbaspect: The plot box aspect ratio.
     pbaspect([1 1 1])
+    r = pbaspect
+    pbaspect('auto')
+    m = pbaspect('mode')
 yyaxis: Axes with a second y axis on the right; pick which side the next plot uses.
     yyaxis left
     yyaxis right

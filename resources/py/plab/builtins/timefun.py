@@ -218,6 +218,9 @@ def date(nargout, *args):
 def etime(nargout, *args):
     """etime(t1, t0): the seconds from date vector t0 to t1 (etime(clock, t0)
     is the time since t0)."""
+    nargchk(args, 2, 2, 'etime')
+    if any(darr(v).size == 0 or darr(v).size % 6 for v in args):
+        raise err('MATLAB:etime:InvalidInput', 'The inputs are date vectors [y m d h mi s] (or rows of them).', 'etime')
     a = darr(args[0]).reshape(-1, 6)
     b = darr(args[1]).reshape(-1, 6)
     # whole days apart, then the times of day: no rounding through date numbers

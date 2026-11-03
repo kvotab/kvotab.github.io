@@ -7,7 +7,7 @@ import re
 import numpy as np
 
 from . import bi
-from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
+from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lower, sval, ival, num, is_str, bool_out,
                     like_class, strip_flags, cellstr_list, to_cell_of_char)
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS,
@@ -169,11 +169,13 @@ def convert_strings_to_chars(nargout, *args):
                 res.append(cellstr(1, v))
         else:
             res.append(v)
-    return res[0] if nargout <= 1 else tuple(res)
+    return (res[0] if nargout <= 1 else tuple(res)) if res else None
 
 
 @bi('convertCharsToStrings')
 def convert_chars_to_strings(nargout, *args):
+    if not args:
+        return None
     res = [to_str_array(v) if type(v) in (Char, Cell) else v for v in args]
     return res[0] if nargout <= 1 else tuple(res)
 
@@ -740,7 +742,7 @@ def matches(nargout, *args):
     rest, flags = strip_flags(args[2:], ())
     ic = False
     for i in range(0, len(args) - 2, 2):
-        if opt_str(args[2 + i]).lower() == 'ignorecase':
+        if opt_lower(args[2 + i]) == 'ignorecase':
             ic = bool(arr(args[3 + i]).reshape(-1)[0])
     vals = [s is not None and any((s.lower() == p.lower()) if ic else s == p for p in pats) for s in tin.items]
     return _logical_result(tin, vals)
@@ -1139,7 +1141,7 @@ def strsplit(nargout, *args):
     delims = None
     collapse = True
     regex = False
-    if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() not in ('collapsedelimiters', 'delimitertype') or (rest and type(rest[0]) is Cell):
+    if rest and opt_str(rest[0]) is not None and opt_lower(rest[0]) not in ('collapsedelimiters', 'delimitertype') or (rest and type(rest[0]) is Cell):
         delims = text_list(rest[0])
         rest = rest[1:]
     if rest and opt_str(rest[0]) is None and type(rest[0]) is not Cell and numel(rest[0]) == 1:
@@ -1403,7 +1405,7 @@ def _regexp(args, nargout, ignorecase=False, fn='regexp'):
     nargchk(args, 2, None, fn)
     v = args[0]
     pats = args[1]
-    opts = [opt_str(a).lower() for a in args[2:] if opt_str(a) is not None]
+    opts = [opt_lower(a) for a in args[2:] if opt_str(a) is not None]
     once = 'once' in opts
     selected = [o for o in opts if o in _SELECTORS]
     flagopts = [o for o in opts if o not in _SELECTORS]
@@ -1522,7 +1524,7 @@ def regexprep(nargout, *args):
     v = args[0]
     pats = text_list(args[1])
     reps = text_list(args[2])
-    opts = [opt_str(a).lower() for a in args[3:] if opt_str(a) is not None]
+    opts = [opt_lower(a) for a in args[3:] if opt_str(a) is not None]
     once = 'once' in opts
     flags = _re_flags([o for o in opts if o != 'once'])
     if len(reps) == 1:
