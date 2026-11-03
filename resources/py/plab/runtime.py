@@ -38,7 +38,7 @@ PERSISTENT = {}
 class Workspace(dict):
     """A function's (or the base) variables. A name with no value raises the
     language's error; a parameter not passed says so."""
-    __slots__ = ('fname', 'params', 'gnames', 'nargs')
+    __slots__ = ('fname', 'params', 'gnames', 'nargs', 'imports')
 
     def __init__(self, fname='base', params=()):
         super().__init__()
@@ -46,6 +46,7 @@ class Workspace(dict):
         self.params = params
         self.gnames = set()
         self.nargs = (-1, -1)
+        self.imports = None          # import pkg.* and import pkg.name, in this workspace
 
     def __missing__(self, key):
         if key in self.params:
@@ -140,6 +141,89 @@ def too_many_inputs(name):
     e = MError('MATLAB:TooManyInputs', 'Too many input arguments.')
     e.fn = name
     return e
+
+
+# ---- arguments blocks ---------------------------------------------------------------------------------
+
+_CONVERTIBLE = {'double', 'single', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'logical',
+                'char', 'string', 'cellstr'}
+
+
+def _arg_where(pos, field):
+    return f"Invalid value for '{field}' argument." if field else f'Invalid argument at position {pos}.'
+
+
+def _builtin(name, *args):
+    info = BUILTINS[name]
+    r = info.fn(BASE, 1, *args) if info.ws else info.fn(1, *args)
+    return run_sync(r) if info.aw else r
+
+
+def check_arg(v, pos, field, dims, cls, where=None):
+    """An argument of an arguments block made its class (converted when it
+    can be: a number to another kind, text to char or string) and its size
+    (a scalar spread to a fixed size, a vector turned the way asked)."""
+    where = where or _arg_where(pos, field)
+    if cls:
+        c = class_of(v)
+        if c != cls:
+            if cls in _CONVERTIBLE and c not in ('cell', 'struct', 'function_handle') or cls == 'string' and c == 'cell':
+                try:
+                    v = _builtin(cls, v)
+                except MError:
+                    raise MError('MATLAB:validation:UnableToConvert', f'{where} Value must be of class {cls}, or convertible to it.')
+            elif not _builtin('isa', v, Char.of(cls)):
+                raise MError('MATLAB:validation:UnableToConvert', f'{where} Value must be of class {cls}.')
+    if dims:
+        shp = tuple(shape_of(v))
+        want = tuple(dims)
+
+        def fits(s):
+            s = s + (1,) * (len(want) - len(s))
+            return all(x == 1 for x in s[len(want):]) and all(w is None or w == x for w, x in zip(want, s))
+        if not fits(shp):
+            n = numel(v)
+            if n == 1 and all(w is not None for w in want):
+                v = _builtin('repmat', v, np.array([[float(w) for w in want]]))
+            elif len(want) == 2 and 1 in want and sum(1 for x in shp if x != 1) <= 1 and len(shp) == 2 and \
+                    (want[0] if want[1] == 1 else want[1]) in (None, n):
+                v = _builtin('reshape', v, float(n if want[0] != 1 else 1), float(1 if want[0] != 1 else n))
+            else:
+                raise MError('MATLAB:validation:IncompatibleSize',
+                             f"{where} Value must be of size {'x'.join(':' if w is None else str(w) for w in want)}.")
+    return v
+
+
+def arg_error(e, pos, field):
+    """A validator's error, told against the argument it was checking."""
+    return MError(e.identifier or 'MATLAB:validators:failed', f'{_arg_where(pos, field)} {e.message}')
+
+
+def nv_args(rest, fields, fname, k):
+    """Name-value pairs after the positional arguments as {field: value}:
+    names matched without regard to case (or by a unique start)."""
+    if len(rest) % 2:
+        raise MError('MATLAB:validators:missingValue', f'Name-value arguments of {fname} must come in pairs.')
+    low = {f.lower(): f for f in fields}
+    out = {}
+    for i in range(0, len(rest), 2):
+        n = rest[i]
+        if type(n) not in (Char, Str) or numel(n) == 0:
+            raise MError('MATLAB:TooManyInputs', f'Invalid argument at position {k + i + 1}: a name-value argument of {fname} must start with its name.')
+        s = py_str(n)
+        f = low.get(s.lower())
+        if f is None:
+            hits = [v for key, v in low.items() if key.startswith(s.lower())]
+            f = hits[0] if len(hits) == 1 else None
+        if f is None:
+            raise MError('MATLAB:validators:unknownName', f"'{s}' is not a name-value argument of {fname}. Its names: {', '.join(fields)}.")
+        out[f] = share(rest[i + 1])
+    return out
+
+
+def nv_struct(d, fields):
+    """The name-value arguments given or defaulted, as a struct in their declared order."""
+    return Struct.scalar({f: d[f] for f in fields if f in d})
 
 
 def too_many_outputs(name):
@@ -762,6 +846,10 @@ async def call(W, name, nargout, args):
         r = await CD.dispatch(name, nargout, args)
         if r is not NOVAL:
             return r
+    full = imported(W, name.split('.', 1)[0])
+    if full is not None:
+        # a name an import gave: pkg.name (and pkg.Cls.member)
+        name = full + name[len(name.split('.', 1)[0]):]
     if '.' in name and name.count('.') == 1:
         # ClassName.staticMethod(...) or ClassName.Constant
         from . import classdef as CD
@@ -769,6 +857,27 @@ async def call(W, name, nargout, args):
         r = await CD.static_or_const(base, rest, nargout, args, sys.modules[__name__])
         if r is not NOVAL:
             return r
+    if '.' in name and name.count('.') > 1 and resolve(name) is None:
+        # pkg.Cls.staticMethod(...), ClassName.Member.prop, ClassName.Member.method(...):
+        # the longest start that is a class, then its member, then fields
+        from . import classdef as CD
+        parts = name.split('.')
+        for k in range(len(parts) - 1, 0, -1):
+            base = '.'.join(parts[:k])
+            if find_file(base) is None:
+                continue
+            fields = parts[k + 1:]
+            r = await CD.static_or_const(base, parts[k], nargout if not fields else 1, args if not fields else (), sys.modules[__name__])
+            if r is NOVAL:
+                break
+            if not fields:
+                return r
+            for f in fields[:-1]:
+                r = fld1(r, f)
+            v = fld1(r, fields[-1])
+            if isinstance(v, FH):
+                return await v.acall(nargout, *args)
+            return idx(v, args) if args else v
     target = resolve(name)
     if target is None:
         raise MError('MATLAB:UndefinedFunction', f"Unrecognized function or variable '{name}'.")
@@ -1094,10 +1203,36 @@ def _user_file(name):
 
 
 def find_file(name):
+    if '.' in name:
+        # pkg.f and pkg.sub.Cls: +pkg/f.m, +pkg/+sub/Cls.m (or its @Cls folder)
+        *pkgs, last = name.split('.')
+        if not all(re.fullmatch(r'[A-Za-z]\w*', x) for x in pkgs + [last]):
+            return None
+        rel = os.path.join(*['+' + x for x in pkgs])
+        for d in search_dirs():
+            for p in (os.path.join(d, rel, last + '.m'), os.path.join(d, rel, '@' + last, last + '.m')):
+                if os.path.isfile(p):
+                    return p
+        return None
     for d in search_dirs():
         p = os.path.join(d, name + '.m')
         if os.path.isfile(p):
             return p
+    return None
+
+
+def imported(W, name):
+    """The full name an import in W gives a bare name (import pkg.* or import pkg.name), or None."""
+    imps = getattr(W, 'imports', None) if W is not None else None
+    if not imps or '.' in name:
+        return None
+    for imp in reversed(imps):
+        if imp.endswith('.*'):
+            full = imp[:-1] + name
+            if find_file(full) is not None:
+                return full
+        elif imp.rsplit('.', 1)[-1] == name:
+            return imp
     return None
 
 
@@ -1386,3 +1521,10 @@ def setup():
             BI[name] = info.fn
         else:
             setattr(B, pyname(name), info.fn)
+    # what enumeration members answer (char, string, the number classes ...) in
+    # front from the start: a class first loaded inside a call's arguments
+    # comes after that call's function was looked up
+    from . import classdef as CD
+    CD._OVERRIDDEN.clear()
+    for name in CD.ENUM_METHODS + CD.NUMERIC_METHODS:
+        CD.install_override(name, sys.modules[__name__])

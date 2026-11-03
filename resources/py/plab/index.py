@@ -709,6 +709,9 @@ def asgn(A, args, V):
         # h = []; h(1) = plot(...) makes a graphics array
         A = _empty_like_value(V)
         t = type(A)
+    if getattr(A, 'own_assign', False):
+        # an object that takes every assignment itself (a dictionary: [] takes a key out)
+        return A.index_assign(args, V)
     # deletion
     if is_empty_double(V) and t is not Cell or (t is Char and type(V) is Char and V.a.shape == (0, 0)) or (t is Cell and is_empty_double(V)):
         return delete(A, args)

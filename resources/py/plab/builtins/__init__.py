@@ -38,7 +38,7 @@ def bi(*names, ws=False, aw=False, nout=1, arr=True):
 
 MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'optim', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
            'statdesc', 'distributions', 'stattests', 'statplots', 'uifun', 'mapping', 'symmath', 'classfun', 'appfun',
-           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa', 'missingdata']
+           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa', 'missingdata', 'dictionaries']
 
 
 def load(target):

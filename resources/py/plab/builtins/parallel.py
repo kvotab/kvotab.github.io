@@ -410,3 +410,15 @@ def getCurrentTask(nargout, *args):
     nargchk(args, 0, 0, 'getCurrentTask')
     i = R.STATE.get('pool_index')
     return Struct.scalar({'ID': float(i)}) if i else EMPTY()
+
+
+@bi('labindex', 'spmdIndex')
+def spmd_index(nargout, *args):
+    """Which worker of an spmd block this is: an spmd block runs here once, as worker 1."""
+    return 1.0
+
+
+@bi('numlabs', 'spmdSize')
+def spmd_size(nargout, *args):
+    """How many workers run an spmd block: one here."""
+    return 1.0

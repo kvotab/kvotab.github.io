@@ -1405,3 +1405,118 @@ def polyeig(nargout, *args):
             s[j] = num_ / den if den else np.inf
         res.append(out(s.reshape(-1, 1)))
     return tuple(res[:nargout])
+
+
+# ---- pages and tensors ----------------------------------------------------------------------------------
+
+def _trim(shape):
+    """A shape without its trailing ones (kept at least 2-D)."""
+    s = list(shape)
+    while len(s) > 2 and s[-1] == 1:
+        s.pop()
+    return tuple(s)
+
+
+def _pages(a, tr):
+    """a with its pages first and each page (dims 1 and 2) last, turned as asked."""
+    a = np.asarray(a)
+    a = a.reshape(a.shape + (1,) * (2 - a.ndim)) if a.ndim < 2 else a
+    p = np.moveaxis(a, (0, 1), (-2, -1))
+    if tr in ('transpose', 'ctranspose'):
+        p = np.swapaxes(p, -1, -2)
+        if tr == 'ctranspose':
+            p = np.conj(p)
+    return p
+
+
+def _unpage(p):
+    return np.moveaxis(p, (-2, -1), (0, 1))
+
+
+@bi('pagemtimes')
+def pagemtimes(nargout, *args):
+    """pagemtimes(X, Y), pagemtimes(X, transpX, Y, transpY): each page (the
+    first two dimensions) of X times the matching page of Y; pages of size 1
+    are used against all of the other's."""
+    nargchk(args, 2, 4, 'pagemtimes')
+    if len(args) == 4:
+        X, tx, Y, ty = args[0], opt_lower(args[1], 'pagemtimes'), args[2], opt_lower(args[3], 'pagemtimes')
+    elif len(args) == 2:
+        X, tx, Y, ty = args[0], 'none', args[1], 'none'
+    else:
+        raise err('MATLAB:minrhs', 'pagemtimes takes X and Y, or X, transpX, Y and transpY.', 'pagemtimes')
+    for t in (tx, ty):
+        if t not in ('none', 'transpose', 'ctranspose'):
+            raise err('MATLAB:pagemtimes:transpose', "The transposition must be 'none', 'transpose' or 'ctranspose'.", 'pagemtimes')
+    A, B = _pages(darr(X, 'pagemtimes'), tx), _pages(darr(Y, 'pagemtimes'), ty)
+    if A.shape[-1] != B.shape[-2]:
+        raise err('MATLAB:innerdim', f'The pages do not fit: {A.shape[-2]}x{A.shape[-1]} times {B.shape[-2]}x{B.shape[-1]}.', 'pagemtimes')
+    n = max(A.ndim, B.ndim)
+    A = A.reshape((1,) * (n - A.ndim) + A.shape)
+    B = B.reshape((1,) * (n - B.ndim) + B.shape)
+    try:
+        r = np.matmul(A, B)
+    except ValueError:
+        raise err('MATLAB:sizeDimensionsMustMatch', 'The pages of X and Y must be as many in each dimension, or 1.', 'pagemtimes')
+    r = _unpage(r)
+    return out(r.reshape(_trim(r.shape)))
+
+
+def _page_turn(a):
+    nd = len(shape_of(a))
+    return R._builtin('permute', a, np.array([[2.0, 1.0] + [float(k) for k in range(3, nd + 1)]]))
+
+
+@bi('pagetranspose')
+def pagetranspose(nargout, *args):
+    """Each page (the first two dimensions) turned: permute(A, [2 1 3 ...])."""
+    nargchk(args, 1, 1, 'pagetranspose')
+    return _page_turn(args[0])
+
+
+@bi('pagectranspose')
+def pagectranspose(nargout, *args):
+    """Each page turned, its complex numbers conjugated."""
+    nargchk(args, 1, 1, 'pagectranspose')
+    return R._builtin('conj', _page_turn(args[0]))
+
+
+@bi('tensorprod')
+def tensorprod(nargout, *args):
+    """tensorprod(A, B) (outer product), tensorprod(A, B, dims), tensorprod(A,
+    B, dimA, dimB) (sums over those dimensions, numbered from 1) and
+    tensorprod(A, B, 'all') (over all of them). The result has A's other
+    dimensions, then B's."""
+    nargchk(args, 2, 4, 'tensorprod')
+    A, B = darr(args[0], 'tensorprod'), darr(args[1], 'tensorprod')
+    if len(args) == 3 and is_str(args[2]):
+        if opt_lower(args[2], 'tensorprod') != 'all':
+            raise err('MATLAB:tensorprod:option', "The third input is the dimensions to sum over, or 'all'.", 'tensorprod')
+        if _trim(A.shape) != _trim(B.shape):
+            raise err('MATLAB:tensorprod:sizeMismatch', "With 'all', A and B must be the same size.", 'tensorprod')
+        return out(np.sum(A * B))
+    if len(args) == 2:
+        da = db = ()
+    else:
+        da = tuple(int(x) for x in arr(args[2]).reshape(-1))
+        db = tuple(int(x) for x in arr(args[3]).reshape(-1)) if len(args) == 4 else da
+    if len(da) != len(db):
+        raise err('MATLAB:tensorprod:dims', 'As many dimensions of A as of B are summed over.', 'tensorprod')
+    na = max(A.ndim, max(da, default=0))
+    nb = max(B.ndim, max(db, default=0))
+    A = A.reshape(A.shape + (1,) * (na - A.ndim))
+    B = B.reshape(B.shape + (1,) * (nb - B.ndim))
+    for x, y in zip(da, db):
+        if A.shape[x - 1] != B.shape[y - 1]:
+            raise err('MATLAB:tensorprod:sizeMismatch', f'Dimension {x} of A ({A.shape[x - 1]}) and {y} of B ({B.shape[y - 1]}) must be as long.', 'tensorprod')
+    if not da:
+        # the outer product: A's dimensions without its trailing ones, then B's
+        A = A.reshape(_trim(A.shape))
+        r = np.tensordot(A, B, axes=0)
+    else:
+        r = np.tensordot(A, B, axes=([x - 1 for x in da], [y - 1 for y in db]))
+    if r.ndim == 0:
+        return out(r)
+    if r.ndim == 1:
+        r = r.reshape(-1, 1)
+    return out(r.reshape(_trim(r.shape)))

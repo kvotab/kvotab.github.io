@@ -584,6 +584,9 @@ def disp_text(v):
     if isinstance(v, VOBJ):
         lines = v.disp_lines()
         return '\n'.join(lines) + '\n' if lines else ''
+    if getattr(v, 'enum', None) is not None:
+        # an enumeration member: its name
+        return f'    {v.enum}\n'
     if t is Char:
         if v.a.size == 0:
             return ''

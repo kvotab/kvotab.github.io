@@ -464,6 +464,9 @@ def _compare(a, b, fn, sym):
         return _spm().binop(sym, a, b)
     if type(a) is Str or type(b) is Str:
         return str_compare(a, b, fn, sym)
+    if (type(a).__name__ == 'HArr' or type(b).__name__ == 'HArr') and UOPS is not None and (UOPS.wants(a) or UOPS.wants(b)):
+        # arrays of enumeration members: by name (or number)
+        return UOPS.binop(sym, a, b)
     if sym in ('==', '~=') and (_handles_of(a) is not None or _handles_of(b) is not None):
         return _handle_compare(a, b, sym)
     A = _cmp_operand(a, sym)

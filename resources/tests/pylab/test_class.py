@@ -6,7 +6,9 @@ overloading, events and listeners, delete and isvalid, display; the
 components of apps (their classes and Types, defaults, values checked,
 events from the page queueing callbacks with their data), grid layouts
 placing children, uifigure's hidden handle, and an app class written as
-App Designer writes them (and as PyLAB's designer writes them) running.
+App Designer writes them (and as PyLAB's designer writes them) running;
+a value class's set method, property validation, arguments blocks,
+enumerations, packages and import.
 
     python3 test_class.py          (from any folder)
 """
@@ -333,6 +335,116 @@ same('deleting the app closes its window', W['v'], False)
 W, _ = run("a = Account('q', 1); b = Account('q', 1);")
 W, out = run("Account('r', 2)")
 C('a constructor at the prompt gives ans', 'ans =' in out and 'Account with properties' in out, out)
+
+# ---- set methods of value classes, property validation ----------------------------------------------------------
+write('Doubler.m', """classdef Doubler
+    properties
+        s = 1
+    end
+    methods
+        function o = set.s(o, v)
+            o.s = v * 2;
+        end
+    end
+end
+""")
+W, out = run("d = Doubler; d.s = 5; v = d.s;")
+same("a value class's set method sets its own property (not itself again)", (val(W['v']), 'recursion' in out), (10.0, False))
+write('Checked.m', """classdef Checked
+    properties
+        a (1,1) double {mustBePositive} = 1
+        b (1,:) char = 'x'
+        c {mustBeMember(c, {'u', 'v'})} = 'u'
+        d (2,2) = zeros(2)
+    end
+end
+""")
+refused('a property validator is run when it is set', "k = Checked; k.a = -2", "Error setting property 'a' of class 'Checked'. Value must be positive.")
+refused("a property's size is checked", "k = Checked; k.a = [1 2]", 'Value must be of size 1x1.')
+refused('a validator written as a call is run as written', "k = Checked; k.c = 'w'", 'Value must be a member of this set')
+W, _ = run("k = Checked; k.b = \"str\"; cb = class(k.b); k.d = 5; d = k.d;")
+same('a value is converted to the class and a scalar spread to the size', (val(W['cb']), val(W['d'])), ('char', [[5.0, 5.0], [5.0, 5.0]]))
+
+# ---- arguments blocks ---------------------------------------------------------------------------------------------
+write('argsv.m', """function y = argsv(x, n, opts)
+  arguments
+    x (1,:) double {mustBePositive}
+    n (1,1) {mustBeInteger, mustBeLessThan(n, 10)} = 2
+    opts.Scale (1,1) double {mustBePositive} = 1  % a comment
+    opts.Label string = "none"
+  end
+  y = x * n * opts.Scale;
+  if opts.Label ~= "none", y = -y; end
+end
+""")
+W, _ = run("a = argsv([1 2]); b = argsv([1; 2], 3); c = argsv(5, 2, Scale=10); d = argsv(5, 2, 'scale', 3, 'Label', 'L'); e = argsv(1, 2, 'Sc', 2);")
+same('arguments: defaults, a column turned to the row asked for, name=value and name, value pairs (any case, a unique start)',
+     [val(W[k]) for k in 'abcde'], [[[2.0, 4.0]], [[3.0, 6.0]], 100.0, -30.0, 4.0])
+refused('arguments: a validator named alone takes the value', 'argsv([1 -2])', 'Invalid argument at position 1. Value must be positive.')
+refused('arguments: a validator written as a call', 'argsv(1, 20)', 'Invalid argument at position 2. Value must be less than 10.')
+refused("arguments: a name-value argument's validator", 'argsv(1, 2, Scale=-1)', "Invalid value for 'Scale' argument. Value must be positive.")
+refused('arguments: an unknown name is named, with the names there are', 'argsv(1, 2, Bogus=1)', "'Bogus' is not a name-value argument of argsv. Its names: Scale, Label.")
+refused('arguments: a name without its value', "argsv(1, 2, 'Scale')", 'must come in pairs')
+refused("arguments: a value of the wrong size", 'argsv(ones(2))', 'Invalid argument at position 1. Value must be of size 1x:.')
+
+# ---- enumerations ---------------------------------------------------------------------------------------------------
+write('Wk.m', """classdef Wk
+    enumeration
+        Mon, Tue, Wed
+    end
+    methods
+        function tf = isStart(o)
+            tf = o == Wk.Mon;
+        end
+    end
+end
+""")
+write('Lvl.m', """classdef Lvl < uint8
+    enumeration
+        Low (1), High (2)
+    end
+end
+""")
+write('Dy.m', """classdef Dy
+    properties
+        n
+    end
+    enumeration
+        Mon (1), Tue (2)
+    end
+    methods
+        function o = Dy(k), o.n = k; end
+    end
+end
+""")
+W, out = run("w = Wk.Tue")
+C('an enumeration member shows as its class and name', 'Wk enumeration' in out and out.rstrip().endswith('Tue'), out)
+W, out = run("a = Wk.Mon == Wk.Mon; b = Wk.Mon == Wk.Tue; c = Wk.Tue == 'Tue'; x = [Wk.Mon Wk.Tue Wk.Wed]; d = x == Wk.Tue; "
+             "e = isStart(Wk.Mon); f = Wk.Tue.isStart(); g = char(Wk.Wed); [tf, loc] = ismember([Wk.Wed Wk.Mon], [Wk.Mon Wk.Tue]); "
+             "switch Wk.Tue, case Wk.Mon, s = 1; case Wk.Tue, s = 2; end; cl = class(Wk.Mon);")
+same('enumeration members compare by member (and by name), in arrays too; methods, char, ismember and switch take them',
+     [val(W[k]) for k in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'tf', 'loc', 's', 'cl')],
+     [True, False, True, [[False, True, False]], True, False, 'Wed', [[False, True]], [[0.0, 1.0]], 2.0, 'Wk'])
+W, _ = run("a = uint8(Lvl.High); b = Lvl.High > Lvl.Low; c = Lvl.High + 1; cc = class(c); d = Dy.Tue.n; [m, nm] = enumeration('Wk'); k = numel(m);")
+same('an enumeration based on uint8 is those numbers; members made by the constructor; enumeration lists them',
+     [val(W[k]) for k in ('a', 'b', 'c', 'cc', 'd', 'k')] + [[x.str() for x in W['nm'].a.reshape(-1)]], [2, True, 3, 'uint8', 2.0, 3.0, ['Mon', 'Tue', 'Wed']])
+W, out = run("x = [Wk.Mon Wk.Wed]")
+C('an array of members shows their names', '1×2 Wk enumeration array' in out and 'Mon    Wed' in out, out)
+
+# ---- packages and import --------------------------------------------------------------------------------------------
+os.makedirs(os.path.join(TMP, '+pkg', '+sub'), exist_ok=True)
+os.makedirs(os.path.join(TMP, '+pkg', '@Box'), exist_ok=True)
+write('+pkg/f.m', "function y = f(x)\n y = x + 1;\nend\n")
+write('+pkg/+sub/g.m', "function y = g(x)\n y = 10 * pkg.f(x);\nend\n")
+write('+pkg/Pt.m', "classdef Pt\n  properties\n    x = 0\n  end\n  methods\n    function o = Pt(x), o.x = x; end\n  end\n  methods (Static)\n    function o = origin(), o = pkg.Pt(0); end\n  end\nend\n")
+write('+pkg/@Box/Box.m', "classdef Box\n  properties\n    w = 1\n  end\nend\n")
+write('usesimport.m', "function y = usesimport(x)\n  import pkg.*\n  y = f(x) + Pt(5).x;\nend\n")
+W, _ = run("a = pkg.f(1); b = pkg.sub.g(1); p = pkg.Pt(3); c = p.x; cl = class(p); o = pkg.Pt.origin(); d = o.x; q = pkg.Box; e = q.w; f2 = usesimport(1);")
+same('packages: functions in +pkg folders, nested packages, a class (and its static method) by its full name, an @-folder class, import in a function',
+     [val(W[k]) for k in ('a', 'b', 'c', 'cl', 'd', 'e', 'f2')], [2.0, 20.0, 3.0, 'pkg.Pt', 0.0, 1.0, 7.0])
+W, _ = run("import pkg.sub.g; a = g(2); il = import;")
+same('import of one name, and import listing what is imported', (val(W['a']), [x.str() for x in W['il'].a.reshape(-1)]), (30.0, ['pkg.sub.g']))
+refused('import refuses what is no package name', 'import bad', "'bad' is not a name to import")
 
 # ---- the Editor's check of a class file ---------------------------------------------------------------------------
 from plab import worker_api as API  # noqa: E402

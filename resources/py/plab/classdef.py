@@ -43,6 +43,9 @@ class ClassInfo:
         self.events = []
         self.ctor = None
         self.attrs = {}
+        self.enum = []               # an enumeration's members: (name, argument text)
+        self.members = {}            # name -> its one object, made when first asked for
+        self.int_base = None         # a numeric or logical class the enumeration is based on
 
     def all_names(self):
         out = [self.name]
@@ -65,7 +68,7 @@ class ClassInfo:
             m = s.find_method(name)
             if m is not None:
                 return m
-        return None
+        return enum_method(self, name) if self.enum else None
 
     def find_prop(self, name):
         p = self.props.get(name)
@@ -139,7 +142,7 @@ class BoundMethod(FH):
 
 class UObj(Obj):
     """An object of a class of the language's own."""
-    __slots__ = ('ci', 'p', 'alive', 'listeners', 'uid', 'deleting')
+    __slots__ = ('ci', 'p', 'alive', 'listeners', 'uid', 'deleting', 'enum', 'enum_value')
     _n = [0]
 
     def __init__(self, ci):
@@ -148,6 +151,8 @@ class UObj(Obj):
         self.alive = True
         self.deleting = False
         self.listeners = {}
+        self.enum = None             # an enumeration member's name
+        self.enum_value = None       # and its value, for one based on a numeric class
         UObj._n[0] += 1
         self.uid = UObj._n[0]
 
@@ -168,7 +173,7 @@ class UObj(Obj):
         return self.alive
 
     def value_copy(self):
-        if self.ci.handle:
+        if self.ci.handle or self.enum is not None:
             return self
         o = UObj(self.ci)
         o.p = {k: share(v) for k, v in self.p.items()}
@@ -207,14 +212,18 @@ class UObj(Obj):
             raise MError('MATLAB:noPublicFieldForClass', f"Unrecognized property '{name}' for class '{ci.name}'.")
         if p['attrs'].get('constant'):
             raise MError('MATLAB:class:SetProhibited', f"Unable to set the '{name}' property of class '{ci.name}' because it is a Constant property.")
+        value = _validated(ci, p, name, value)
         s = ci.setter(name)
-        if s is not None and not _IN_SETTER.get((id(self), name)):
+        # inside a property's own set method, setting it sets it (a value
+        # class's method works on a copy, so the class and name are the key)
+        key = (id(ci), name)
+        if s is not None and not _IN_SETTER.get(key):
             from .runtime import run_sync
-            _IN_SETTER[(id(self), name)] = True
+            _IN_SETTER[key] = True
             try:
                 r = run_sync(s(1 if not ci.handle else 0, self, value))
             finally:
-                _IN_SETTER.pop((id(self), name), None)
+                _IN_SETTER.pop(key, None)
             if not ci.handle and isinstance(r, UObj):
                 self.p = dict(r.p)
             return
@@ -226,6 +235,8 @@ class UObj(Obj):
         return self.ci.prop_names()
 
     def display_lines(self):
+        if self.enum is not None:
+            return [f'  {self.ci.name} enumeration', '', f'    {self.enum}']
         names = self.ci.prop_names()
         if not self.alive:
             return [f'  handle to deleted {self.ci.name}']
@@ -271,6 +282,28 @@ class UObj(Obj):
 
 
 _IN_SETTER = {}
+
+
+def _validated(ci, p, name, value):
+    """A value set to a property made its declared class and size and run
+    past its validators (an error names the property and class)."""
+    if not (p.get('cls') or p.get('dims') or p.get('validators')):
+        return value
+    from . import runtime as R
+    where = f"Error setting property '{name}' of class '{ci.name}'."
+    value = R.check_arg(value, 0, None, p.get('dims'), p.get('cls'), where)
+    for v in p.get('validators') or ():
+        try:
+            if re.fullmatch(r'[A-Za-z][\w.]*', v):
+                R.run_sync(R.call(None, v, 0, (value,)))
+            else:
+                W = R.Workspace(f'{ci.name} validation', ())
+                W[name] = value
+                fn, _ = R.compile_command(v + ';', W)
+                R.run_sync(fn(W))
+        except MError as e:
+            raise MError(e.identifier or 'MATLAB:validators:failed', f'{where} {e.message}')
+    return value
 
 
 def _inline(v, summary):
@@ -462,15 +495,18 @@ def parse(text, path=''):
                         if not d:
                             raise MError('MATLAB:class:BadProperty', f"The property line '{line}' of class {sp.name} is not one that is read here.")
                         cls_ = d.group(3)
-                        sp.props.append((d.group(1), d.group(5), attrs, cls_))
+                        sp.props.append((d.group(1), d.group(5), attrs, cls_, d.group(2), d.group(4)))
                 elif name == 'events':
                     for line in _prop_lines(body):
                         sp.events += [w for w in re.split(r'[\s,;]+', line) if w]
                 else:
+                    # members, several to a line: Mon (1), Tue (2)
+                    from .parser import _split_top
                     for line in _prop_lines(body):
-                        e = re.match(r'^([A-Za-z]\w*)\s*(\((.*)\))?', line)
-                        if e:
-                            sp.enum.append((e.group(1), e.group(3)))
+                        for part in _split_top(line.rstrip(';')):
+                            e = re.match(r'^([A-Za-z]\w*)\s*(\((.*)\))?\s*$', part)
+                            if e:
+                                sp.enum.append((e.group(1), e.group(3)))
                 k += 1
             continue
         k += 1
@@ -589,7 +625,11 @@ def build(path, text, R):
     """The class of a classdef file, its methods compiled."""
     import os
     sp = parse(text, path)
-    name = os.path.splitext(os.path.basename(path))[0]
+    short = name = os.path.splitext(os.path.basename(path))[0]
+    # a class in a package (+pkg/Cls.m, +pkg/@Cls/Cls.m) is pkg.Cls (its constructor is still Cls)
+    pk = [x[1:] for x in os.path.normpath(os.path.dirname(path)).split(os.sep) if x.startswith('+')]
+    if pk:
+        name = '.'.join(pk + [name])
     ci = ClassInfo(name, path)
     ci.attrs = sp.attrs
     for s in sp.supers:
@@ -597,21 +637,30 @@ def build(path, text, R):
             ci.base_names.append(s)
             ci.handle = True
             continue
+        if s in NUMERIC_BASES:
+            # an enumeration based on a number class: its members are those numbers too
+            ci.base_names.append(s)
+            ci.int_base = s
+            continue
         sci = load_class(s, R)
         if sci is None:
             raise MError('MATLAB:class:SuperClassNotFound', f"The superclass '{s}' of class '{name}' cannot be found.")
         ci.supers.append(sci)
         ci.handle = ci.handle or sci.handle
     ci.events = list(sp.events)
+    ci.enum = list(sp.enum)
     CLASSES[name] = ci
+    if ci.enum:
+        for m in ENUM_METHODS + (NUMERIC_METHODS if ci.int_base else ()):
+            install_override(m, R)
     # the methods, compiled as one module
-    src_text, meta = methods_text(sp, name)
+    src_text, meta = methods_text(sp, short)
     overridden = [m for m, a, c in meta if not c and not m.startswith(('get.', 'set.')) and m in R.BUILTINS]
     for m in overridden:
         install_override(m, R)
     if meta:
         from .compiler import compile_source
-        src, linemap, prog = compile_source(src_text, R.BUILTINS, kind='file', user_funcs=R._user_file, modname=name, path=path)
+        src, linemap, prog = compile_source(src_text, R.BUILTINS, kind='file', user_funcs=R._user_file, modname=short, path=path)
         code = compile(src, f'<plab:{path}>', 'exec')
         ns = R.make_ns(path)
         exec(code, ns)
@@ -639,11 +688,14 @@ def build(path, text, R):
             else:
                 ci.methods[mname] = {'fn': fn, 'static': bool(attrs.get('static')), 'attrs': attrs}
     # the properties' defaults, worked out once
-    for pname, default, attrs, cls_ in sp.props:
+    for pname, default, attrs, cls_, dims, vals in sp.props:
         val = NOVAL
         if default:
             val = _evaluate(default, R, name)
-        ci.props[pname] = {'default': val if val is not NOVAL else EMPTY(), 'attrs': attrs, 'cls': cls_, 'has_default': val is not NOVAL}
+        from .parser import _split_top
+        dims = tuple(None if x.strip() == ':' else int(float(x)) for x in dims.strip('()').split(',') if x.strip()) if dims else None
+        ci.props[pname] = {'default': val if val is not NOVAL else EMPTY(), 'attrs': attrs, 'cls': cls_, 'has_default': val is not NOVAL,
+                           'dims': dims, 'validators': _split_top(vals.strip()[1:-1]) if vals else []}
     return ci
 
 
@@ -669,6 +721,122 @@ def load_class(name, R):
 
 def _fresh(ci, R):
     return True
+
+
+# ---- enumerations ------------------------------------------------------------------------------------------------
+
+NUMERIC_BASES = {'double', 'single', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'logical'}
+ENUM_METHODS = ('char', 'string', 'cellstr', 'ismember')
+NUMERIC_METHODS = tuple(sorted(NUMERIC_BASES))
+
+
+def enum_member(ci, name):
+    """The member of that name of an enumeration (one object, made once):
+    its constructor run with the arguments written after its name, or for
+    an enumeration based on a number class, that number."""
+    m = ci.members.get(name)
+    if m is not None:
+        return m
+    args_text = dict(ci.enum).get(name)
+    from . import runtime as R
+    o = new_object(ci)
+    o.enum = name
+    args = ()
+    if args_text:
+        W = R.Workspace(f'{ci.name} enumeration', ())
+        try:
+            fn, _ = R.compile_command(f'plabargs = {{{args_text}}};', W)
+            R.run_sync(fn(W))
+        except MError as e:
+            raise MError('MATLAB:class:EnumerationValue', f"The value of {ci.name}.{name}, ({args_text}), cannot be worked out: {e.message}")
+        args = tuple(W['plabargs'].a.reshape(-1))
+    if ci.int_base is not None:
+        o.enum_value = R._builtin(ci.int_base, args[0] if args else 0.0)
+    elif ci.ctor is not None:
+        o = R.run_sync(construct(ci, 1, args, o)) or o
+        o.enum = name
+    ci.members[name] = o
+    return o
+
+
+def enum_members(ci):
+    return [enum_member(ci, n) for n, _ in ci.enum]
+
+
+def is_enum(x):
+    """x an enumeration member, or an array of them."""
+    if type(x) is UObj:
+        return x.enum is not None
+    a = getattr(x, 'a', None)
+    return type(x).__name__ == 'HArr' and a.size > 0 and all(type(m) is UObj and m.enum is not None for m in a.flat)
+
+
+def _enum_names(x):
+    """An enumeration operand's member names as an array (text names a member by its name), or None."""
+    from .values import Str, py_str
+    if type(x) is UObj and x.enum is not None:
+        return np.array([[x.enum]], object)
+    if type(x) is not UObj and is_enum(x):
+        return np.vectorize(lambda m: m.enum, otypes=[object])(x.a)
+    if type(x) in (Char, Str):
+        if type(x) is Str:
+            return np.vectorize(lambda v: v, otypes=[object])(x.a)
+        return np.array([[py_str(x)]], object)
+    if type(x) is Cell:
+        return np.vectorize(lambda v: py_str(v), otypes=[object])(x.a)
+    return None
+
+
+def _enum_values(x):
+    """An enumeration based on numbers: its members as those numbers (anything else as it is)."""
+    if type(x) is UObj and x.enum is not None and x.ci.int_base:
+        return x.enum_value
+    if type(x) is not UObj and is_enum(x) and x.a.flat[0].ci.int_base:
+        return np.vectorize(lambda m: m.enum_value, otypes=[object])(x.a).astype(type(np.asarray(x.a.flat[0].enum_value).reshape(-1)[0]))
+    return x
+
+
+def _enum_method(name):
+    """char, string, cellstr and the number classes for enumeration members."""
+    async def fn(nargout, x, *rest):
+        from . import runtime as R
+        from .values import Str
+        names = _enum_names(x)
+        if name == 'ismember':
+            # members by name (or text naming them): where each is in the second set
+            b = _enum_names(rest[0]) if rest else None
+            if names is None or b is None:
+                raise MError('MATLAB:ismember:InputClass', 'ismember compares enumeration members with members of the same enumeration (or their names).')
+            bl = list(b.reshape(-1, order='F'))
+            tf = np.vectorize(lambda v: v in bl, otypes=[bool])(names)
+            loc = np.vectorize(lambda v: float(bl.index(v) + 1) if v in bl else 0.0, otypes=[float])(names)
+            one = lambda a: bool(a.reshape(-1)[0]) if a.dtype == bool and a.size == 1 else (float(a.reshape(-1)[0]) if a.size == 1 else a)
+            return (one(tf), one(loc)) if nargout >= 2 else one(tf)
+        if name == 'char':
+            if names.size != 1:
+                raise MError('MATLAB:invalidConversion', 'Only one enumeration member can be converted to char; use string or cellstr.')
+            return Char.of(names.flat[0])
+        if name == 'string':
+            return Str(names.astype(object))
+        if name == 'cellstr':
+            return Cell(np.vectorize(lambda v: Char.of(v), otypes=[object])(names))
+        v = _enum_values(x)
+        if v is x:
+            raise MError('MATLAB:invalidConversion', f'Members of {x.cls} cannot be converted to {name}.')
+        return R._builtin(name, v)
+    return fn
+
+
+_ENUM_FNS = {}
+
+
+def enum_method(ci, name):
+    """The method an enumeration has without writing it: from ENUM_METHODS and, based on numbers, NUMERIC_METHODS."""
+    if not ci.enum or name not in ENUM_METHODS + (NUMERIC_METHODS if ci.int_base else ()):
+        return None
+    if name not in _ENUM_FNS:
+        _ENUM_FNS[name] = {'fn': _enum_method(name), 'static': False, 'attrs': {}}
+    return _ENUM_FNS[name]
 
 
 def new_object(ci):
@@ -722,8 +890,9 @@ def install_override(name, R):
 
     def method_of(args):
         for x in args:
-            if type(x) is UObj:
-                m = x.ci.find_method(name)
+            ci = x.ci if type(x) is UObj else (x.a.flat[0].ci if is_enum(x) else None)
+            if ci is not None:
+                m = ci.find_method(name)
                 if m is not None:
                     return m
         return None
@@ -751,8 +920,9 @@ def install_override(name, R):
 async def dispatch(name, nargout, args):
     """method(obj, ...): the method of the first object among the arguments that has one, or NOVAL."""
     for x in args:
-        if type(x) is UObj:
-            m = x.ci.find_method(name)
+        ci = x.ci if type(x) is UObj else (x.a.flat[0].ci if is_enum(x) else None)
+        if ci is not None:
+            m = ci.find_method(name)
             if m is not None:
                 return await m['fn'](nargout, *args)
             break
@@ -768,6 +938,10 @@ async def static_or_const(base, rest, nargout, args, R):
     ci = getattr(mod, 'classinfo', None)
     if ci is None:
         return NOVAL
+    if ci.enum and rest in dict(ci.enum):
+        o = enum_member(ci, rest)
+        from .index import idx
+        return idx(o, args) if args else o
     m = ci.find_method(rest)
     if m is not None:
         return await m['fn'](nargout, *args)
@@ -784,9 +958,16 @@ async def static_or_const(base, rest, nargout, args, R):
 _OPNAMES = {'+': 'plus', '-': 'minus', '.*': 'times', './': 'rdivide', '.\\': 'ldivide', '.^': 'power', '*': 'mtimes', '/': 'mrdivide',
             '\\': 'mldivide', '^': 'mpower', '==': 'eq', '~=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge', '&': 'and', '|': 'or'}
 _UNNAMES = {'-': 'uminus', '+': 'uplus', '~': 'not', ".'": 'transpose', "'": 'ctranspose'}
+_OPFUNCS = {'+': 'plus', '-': 'minus', '.*': 'times', './': 'rdivide', '.\\': 'ldivide', '.^': 'power', '*': 'mtimes', '/': 'mrdivide',
+            '\\': 'mldivide', '^': 'mpower', '==': 'eq', '~=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge', '&': 'and_', '|': 'or_'}
 
 
 class _UOps:
+    @staticmethod
+    def wants(x):
+        """An operand these operators take: an object, or an array of enumeration members."""
+        return type(x) is UObj or is_enum(x)
+
     @staticmethod
     def binop(op, a, b):
         from .runtime import run_sync
@@ -794,8 +975,23 @@ class _UOps:
         for x in (a, b):
             if type(x) is UObj:
                 m = x.ci.find_method(name)
-                if m is not None:
+                if m is not None and m not in _ENUM_FNS.values():
                     return run_sync(m['fn'](1, a, b))
+        if is_enum(a) or is_enum(b):
+            # members by number (an enumeration based on a number class), else by name
+            va, vb = _enum_values(a), _enum_values(b)
+            if (va is not a or not is_enum(a)) and (vb is not b or not is_enum(b)):
+                from . import ops
+                return getattr(ops, _OPFUNCS[op])(va, vb)
+            if op in ('==', '~='):
+                na, nb = _enum_names(a), _enum_names(b)
+                if na is not None and nb is not None:
+                    from .ops import check_bcast
+                    A, B = np.broadcast_arrays(na, nb) if na.size != 1 and nb.size != 1 else (na, nb)
+                    check_bcast(np.asarray(A), np.asarray(B))
+                    r = np.vectorize(lambda x, y: x == y, otypes=[bool])(A, B)
+                    r = ~r if op == '~=' else r
+                    return bool(r.reshape(-1)[0]) if r.size == 1 else r
         if op in ('==', '~=') and type(a) is UObj and type(b) is UObj and a.ci.handle:
             same = a is b
             return same if op == '==' else not same

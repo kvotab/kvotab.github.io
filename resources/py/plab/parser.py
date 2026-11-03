@@ -290,9 +290,9 @@ class Cmd(Stmt):
 
 
 class Func:
-    __slots__ = ('name', 'params', 'outs', 'body', 'line', 'endline', 'subs', 'defaults', 'parent')
+    __slots__ = ('name', 'params', 'outs', 'body', 'line', 'endline', 'subs', 'defaults', 'parent', 'argspec')
 
-    def __init__(self, name, params, outs, body, line, endline, subs, defaults=None):
+    def __init__(self, name, params, outs, body, line, endline, subs, defaults=None, argspec=None):
         self.name = name
         self.params = params
         self.outs = outs
@@ -302,6 +302,18 @@ class Func:
         self.subs = subs          # nested functions
         self.defaults = defaults or {}
         self.parent = None
+        self.argspec = argspec or []   # the arguments block's declarations (ArgDecl)
+
+
+class ArgDecl:
+    """One line of an arguments block: name (or name.Field, a name-value
+    argument), its size (a tuple of ints and None for ':'), class,
+    validators (expressions) and default (an expression)."""
+    __slots__ = ('name', 'field', 'dims', 'cls', 'validators', 'default', 'line')
+
+    def __init__(self, name, field, dims, cls, validators, default, line):
+        self.name, self.field, self.dims, self.cls = name, field, dims, cls
+        self.validators, self.default, self.line = validators, default, line
 
 
 class Program:
@@ -744,7 +756,9 @@ class Parser:
         return self._func_rest(name, params, outs, line)
 
     def _func_rest(self, name, params, outs, line):
+        self.argspec = []
         defaults = self.arguments_block()
+        argspec = self.argspec
         body = []
         subs = []
         while True:
@@ -766,14 +780,15 @@ class Parser:
                 break
             raise self.err(f'Illegal use of reserved keyword "{t.v}".', t)
         endline = self.peek().line
-        f = Func(name, params, outs, body, line, endline, subs, defaults)
+        f = Func(name, params, outs, body, line, endline, subs, defaults, argspec)
         for s in subs:
             s.parent = f
         return f
 
     def arguments_block(self):
-        """An `arguments ... end` block at the top of a function: the
-        declarations are skipped, their default values kept."""
+        """`arguments ... end` blocks at the top of a function: the
+        positional defaults (by name), and each declaration as an ArgDecl in
+        self.argspec. Output and Repeating blocks are read past."""
         defaults = {}
         while True:
             self.skip_seps()
@@ -784,8 +799,10 @@ class Parser:
             if t.k == 'id' and not (nt.k in ('nl',) or (nt.k == 'op' and nt.v == '(')):
                 return defaults
             self.next()
+            skip = t.k == 'cmd' and any(a.lower().strip('()') in ('output', 'repeating') for a in t.v[1])
             if self.at_op('('):
                 j = self.match_close(self.i)
+                skip = skip or bool(re.search(r'\b(output|repeating)\b', self.text[self.toks[self.i].pos:self.toks[j].end], re.I))
                 self.i = j + 1
             # declarations until `end`
             while True:
@@ -817,16 +834,43 @@ class Parser:
                     self.i += 1
                     if tk.k == 'cmd':
                         break
-                if eq is not None and name and '.' not in name:
-                    end = self.i
-                    save = self.i
-                    self.i = eq + 1
-                    try:
-                        e = self.expr()
-                        defaults[name] = e
-                    except ParseError:
-                        pass
-                    self.i = save
+                if skip:
+                    continue
+                stop = self.toks[self.i].pos if self.i < len(self.toks) else len(self.text)
+                d = self._arg_decl(self.text[self.toks[start].pos:stop], t.line)
+                if d is None:
+                    continue
+                self.argspec.append(d)
+                if d.default is not None and d.field is None:
+                    defaults[d.name] = d.default
+
+    def _arg_decl(self, src, line):
+        """name[.Field] [(dims)] [class] [{validators}] [= default] as an ArgDecl."""
+        src = _cut_comment(src).strip().rstrip(';,').strip()
+        m = re.match(r'([A-Za-z]\w*)(?:\.([A-Za-z]\w*))?\s*', src)
+        if not m or re.match(r'[A-Za-z]\w*\.\?', src):
+            return None
+        name, field = m.group(1), m.group(2)
+        rest = src[m.end():]
+        dims = cls = None
+        validators = []
+        default = None
+        if rest.startswith('('):
+            j = _close(rest, 0)
+            dims = tuple(None if d.strip() == ':' else int(float(d)) for d in rest[1:j].split(',') if d.strip())
+            rest = rest[j + 1:].lstrip()
+        c = re.match(r'([A-Za-z][\w.]*)\s*', rest)
+        if c:
+            cls = c.group(1)
+            rest = rest[c.end():]
+        if rest.startswith('{'):
+            j = _close(rest, 0)
+            for part in _split_top(rest[1:j]):
+                validators.append(Parser(part).expr())
+            rest = rest[j + 1:].lstrip()
+        if rest.startswith('='):
+            default = Parser(rest[1:].strip()).expr()
+        return ArgDecl(name, field, dims, cls, validators, default, line)
 
     # ---- expressions ---------------------------------------------------------
     def expr(self):
@@ -1230,6 +1274,66 @@ def unparse(n):
     if isinstance(n, Tilde):
         return '~'
     return '?'
+
+
+def _cut_comment(s):
+    """A line without its % comment (quotes kept whole)."""
+    q = None
+    for i, ch in enumerate(s):
+        if q:
+            if ch == q:
+                q = None
+        elif ch in '"' or (ch == "'" and (i == 0 or not (s[i - 1].isalnum() or s[i - 1] in ')]}.'))):
+            q = ch
+        elif ch == '%':
+            return s[:i]
+    return s
+
+
+def _close(s, i):
+    """Where the bracket opened at s[i] closes."""
+    depth = 0
+    q = None
+    for j in range(i, len(s)):
+        ch = s[j]
+        if q:
+            if ch == q:
+                q = None
+            continue
+        if ch in '"\'':
+            q = ch
+        elif ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth -= 1
+            if depth == 0:
+                return j
+    raise ParseError('Unbalanced brackets in an arguments block.', 0)
+
+
+def _split_top(s):
+    """s split at its commas outside brackets."""
+    parts, depth, cur, q = [], 0, '', None
+    for ch in s:
+        if q:
+            cur += ch
+            if ch == q:
+                q = None
+            continue
+        if ch in '"\'':
+            q = ch
+        elif ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(cur.strip())
+            cur = ''
+            continue
+        cur += ch
+    if cur.strip():
+        parts.append(cur.strip())
+    return parts
 
 
 def parse(text, is_var=None, kind='command'):

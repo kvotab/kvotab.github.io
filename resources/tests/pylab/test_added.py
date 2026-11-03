@@ -2,7 +2,8 @@
 with numpy and scipy): argument checking (the mustBe validators,
 inputParser), missing data, outliers and smoothing, groups, JSON, arrays
 and cells (bsxfun, repelem, mat2cell, celldisp), coordinates, text, and the
-linear algebra, geometry, files and plots added with them. The expected
+linear algebra, geometry, files and plots added with them; dictionary,
+pagemtimes and tensorprod, and spmd's numbers. The expected
 values are worked out here by hand, from identities, or with NumPy and
 SciPy.
 
@@ -552,5 +553,37 @@ C('rgb2ind(RGB, tol): the levels a channel, the colours not used left out', W['n
 C('rgb2ind(RGB, map): the nearest colour', np.array_equal(np.asarray(W['pm']), [[0, 1], [1, 2]]), W['pm'])
 C('dithering keeps areas their colour: closer on average than the nearest colours', W['ed'] < W['en'] and W['nd'] == 8, (W['ed'], W['en']))
 C('more than 256 colours: uint16', text(W['xmc']) == 'uint16', W['xmc'])
+
+# ---- dictionary ------------------------------------------------------------------------------------------------------
+W, out = run('d = dictionary(["a" "b"], [1 2])')
+C('a dictionary shows its types and entries', 'dictionary (string \u27fc double) with 2 entries:' in out and '"a" \u27fc 1' in out, out)
+W, _ = run('d = dictionary(["a" "b"], [1 2]); x = d("b"); y = d(["b" "a"]); d("c") = 3; n = numEntries(d); k = keys(d); vv = values(d); '
+           'e = d; e("a") = 10; da = d("a"); ea = e("a"); d("b") = []; n2 = numEntries(d); ik = isKey(d, ["a" "b"]); '
+           'f = lookup(d, "q", FallbackValue=-1); [kt, vt] = types(d); c0 = isConfigured(dictionary());')
+near('looking up one key and several; putting in; a copy changed apart (a value); [] taking a key out; lookup with a fallback',
+     (W['x'], W['y'], W['n'], W['vv'], W['da'], W['ea'], W['n2'], W['ik'], W['f']), [2, 2, 1, 3, 1, 2, 3, 1, 10, 2, 1, 0, -1])
+same("the keys in the order they were put in, and the types", ([s for s in W['k'].a.reshape(-1)], W['kt'].a.flat[0], W['vt'].a.flat[0], W['c0']),
+     (['a', 'b', 'c'], 'string', 'double', False))
+W, _ = run('x = dictionary(); x(5) = "five"; x(7) = "seven"; s = x(7); y = dictionary(1:3, {[1 2], "s", {3}}); c = y{1}; T = entries(x); h = height(T);')
+same('numbers as keys of an empty dictionary, cell values by braces, entries as a table',
+     (W['s'].a.flat[0], np.asarray(W['c']).tolist(), W['h']), ('seven', [[1.0, 2.0]], 2.0))
+raises('d = dictionary("k", 1); d("z")', 'The key "z" is not in the dictionary.')
+raises('d = dictionary("k", 1); d(2) = 3', 'This dictionary takes keys of class string, not double.')
+raises('d = dictionary("k", 1); d("m") = "x"', 'This dictionary takes values of class double, not string.')
+W, _ = run('m = containers.Map({"a"}, {1}); k = keys(m);')
+same('keys of a containers.Map as before', W['k'].a.flat[0].str(), 'a')
+
+# ---- pages and tensors ------------------------------------------------------------------------------------------------
+W, _ = run('A = rand(2,3,4); B = rand(3,2,4); P = pagemtimes(A, B); P2 = pagemtimes(A, ones(3,5)); P3 = pagemtimes(A, "transpose", ones(2,5,4), "none"); '
+           'T = pagetranspose(A); H = pagectranspose([1i 2]); o = tensorprod([1 2], [3 4]); t1 = tensorprod(ones(2,3), ones(3,4), 2, 1); '
+           'M = magic(3); ta = tensorprod(M, M, "all"); t3 = tensorprod(ones(2,3,4), ones(4,3), [2 3], [2 1]);')
+A, B, P = (np.asarray(W[k]) for k in ('A', 'B', 'P'))
+C('pagemtimes: each page times the matching page', all(np.allclose(P[:, :, i], A[:, :, i] @ B[:, :, i]) for i in range(4)), P.shape)
+same('pagemtimes against one page, and with transposes; pagetranspose', (np.shape(W['P2']), np.shape(W['P3']), np.shape(W['T'])), ((2, 5, 4), (3, 5, 4), (3, 2, 4)))
+C('pagectranspose conjugates', np.allclose(np.asarray(W['H']).reshape(-1), [-1j, 2]), W['H'])
+same('tensorprod: the outer product keeps both shapes; a contraction; all; several dimensions',
+     (np.shape(W['o']), np.asarray(W['t1']).tolist(), W['ta'], np.shape(W['t3'])), ((1, 2, 1, 2), [[3.0] * 4] * 2, 285.0, (2, 1)))
+W, _ = run('spmd, a = labindex; b = spmdSize; c = spmdIndex; d = numlabs; end')
+same('in spmd (run once here) the index and size are 1', [W[k] for k in 'abcd'], [1.0] * 4)
 
 sys.exit(C.done())

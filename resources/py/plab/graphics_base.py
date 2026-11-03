@@ -1299,6 +1299,12 @@ class HArr(Obj):
         n = self.a.size
         if n == 0:
             return [f'  {size_str(self.a.shape)} empty GraphicsPlaceholder array.']
+        if all(getattr(h, 'enum', None) is not None for h in self.a.flat):
+            # enumeration members, by name, row by row
+            lines = [f'  {size_str(self.a.shape)} {class_of(self.a.flat[0])} enumeration array', '']
+            for row in self.a.reshape(self.a.shape[0], -1):
+                lines.append('    ' + '    '.join(h.enum for h in row))
+            return lines
         names = [getattr(h, 'CLASSNAME', class_of(h)).split('.')[-1] for h in self.a.flat]
         lines = [f'  {size_str(self.a.shape)} {names[0]} array:', '']
         for h in self.a.flat:

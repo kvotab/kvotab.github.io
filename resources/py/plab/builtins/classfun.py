@@ -92,6 +92,48 @@ def methods_(nargout, *args):
     return None
 
 
+@bi('import', ws=True, arr=False)
+def import_(W, nargout, *args):
+    """import pkg.* and import pkg.name: bare names in this workspace then
+    reach the package's functions and classes; import alone lists them."""
+    imps = W.imports if W.imports is not None else []
+    if not args:
+        if nargout:
+            return Cell.of_list([Char.of(x) for x in imps], (len(imps), 1))
+        R.write(''.join(f'    {x}\n' for x in imps) if imps else '')
+        return None
+    for a in args:
+        s = sval(a, 'package name', 'import').strip()
+        import re
+        if not re.fullmatch(r'[A-Za-z]\w*(\.[A-Za-z]\w*)*(\.\*)?', s) or '.' not in s:
+            raise err('MATLAB:import:InvalidName', f"'{s}' is not a name to import: write pkg.* or pkg.name.", 'import')
+        if s not in imps:
+            imps.append(s)
+    W.imports = imps
+    return None
+
+
+@bi('enumeration', arr=False)
+def enumeration(nargout, *args):
+    if not args:
+        raise err('MATLAB:minrhs', 'enumeration takes a class name or an enumeration member.', 'enumeration')
+    v = args[0]
+    ci = v.ci if type(v) is CD.UObj else (v.a.flat[0].ci if CD.is_enum(v) else (CD.load_class(py_str(v), R) if is_str(v) else None))
+    if ci is None:
+        raise err('MATLAB:class:NotFound', 'enumeration takes a class name or an enumeration member.', 'enumeration')
+    members = CD.enum_members(ci) if ci.enum else []
+    names = [m.enum for m in members]
+    if not nargout:
+        R.write(f"\nEnumeration members for class '{ci.name}':\n\n" + ''.join(f'    {n}\n' for n in names) + '\n' if names
+                else f"\nNo enumeration members for class '{ci.name}'.\n\n")
+        return None
+    from ..graphics_base import HArr
+    m = HArr.of(members, col=True) if members else EMPTY()
+    if nargout >= 2:
+        return m, Cell.of_list([Char.of(n) for n in names], (len(names), 1))
+    return m
+
+
 @bi('ismethod')
 def ismethod(nargout, *args):
     v = args[0]

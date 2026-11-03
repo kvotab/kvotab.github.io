@@ -29,6 +29,7 @@ sprandn sqrtm stairs stem stem3 strip strjust strlength strtok struct2cell struc
 summary suptitle surf surface surfc surfl svds sym2poly symprod symsum table2array table2cell table2struct
 table2timetable tail taylor timetable2table toeplitz trace transpose tril triu type uminus unitsratio unmkpp uplus
 values vander vartype vecnorm vpa waterfall weekday which width wilkinson worldmap worldToIntrinsic wrapTo180
+numEntries isConfigured types entries enumeration
 wrapTo2Pi wrapTo360 wrapToPi writecell writematrix writetable yyaxis zeta ztrans
 """.split():
     MIN_INPUTS[_n] = 1
@@ -42,13 +43,13 @@ meridianarc mldivide morrisindices movevars mrdivide mutualinfo narginchk nargou
 pawn pcc polarscatter poly2ccw poly2cw polyarea polysplit polyvalm ppval prcc prctile quiver quiver3 radialdesign
 radialindices rbdfastdesign rbdfastindices realpow regexptranslate remove removevars renamecats retime rgb2ind
 rowfun rsa scatter setcats shapewrite shapleyindices soboldesign sobolindices src srrc startsWith synchronize
-timerange typecast validatestring varfun writelines
+timerange typecast validatestring varfun writelines lookup
 """.split():
     MIN_INPUTS[_n] = 2
 for _n in """
 aer2enu convertvars ecef2geodetic enu2aer extractBetween geodetic2ecef insertAfter insertBefore interpm lhsnorm
 ned2aer optimplotconstrviolation optimplotfirstorderopt optimplotfunccount optimplotfval optimplotresnorm
-optimplotstepsize optimplotx quadgk renamevars scatter3 setfield track1
+optimplotstepsize optimplotx quadgk renamevars scatter3 setfield track1 insert
 """.split():
     MIN_INPUTS[_n] = 3
 for _n in """

@@ -1601,12 +1601,34 @@ async def editor_draws(page):
     await command(page, 'close all')
 
 
+
+async def language_additions(page):
+    """Packages, enumerations, arguments blocks and dictionaries in the page's engine."""
+    files = {
+        '/home/user/langtest/+lt/twice.m': 'function y = twice(x)\ny = 2 * x;\nend\n',
+        '/home/user/langtest/Hue.m': 'classdef Hue\n  enumeration\n    Red, Blue\n  end\nend\n',
+        '/home/user/langtest/scaled.m': 'function y = scaled(x, opts)\n  arguments\n    x (1,:) double {mustBePositive}\n    opts.By (1,1) double = 2\n  end\n  y = x * opts.By;\nend\n',
+    }
+    await page.ev("PL.engine.fs('mkdir', { path: '/home/user/langtest/+lt' }).then(() => 1)")
+    for path, text in files.items():
+        await page.ev(f"PL.engine.fs('write', {{ path: {json.dumps(path)}, data: {json.dumps(text)} }}).then(() => 1)")
+    await command(page, "cd /home/user/langtest")
+    out = await command(page, 'a = lt.twice(4), import lt.*, b = twice(5), h = Hue.Blue, c = scaled([1 2], By=3), '
+                              'd = dictionary(["x" "y"], [1 2]), try, scaled(-1), catch e, disp(e.message), end')
+    tail_ = out[-700:]
+    check('in the page: a package function, import, an enumeration member, name=value arguments, a dictionary and a validator\'s error',
+          ['a =\n\n     8' in tail_, 'b =\n\n    10' in tail_, 'Hue enumeration' in tail_ and 'Blue' in tail_, 'c =\n\n     3     6' in tail_,
+           'dictionary (string ⟼ double) with 2 entries:' in tail_, 'Invalid argument at position 1. Value must be positive.' in tail_], [True] * 6)
+    await command(page, 'cd /home/user')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
         await desktop(page)
         await property_editor(page)
         await editor_draws(page)
+        await language_additions(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

@@ -28,6 +28,7 @@ function: Start a function: in a function file, or after the code of a script fi
     function [a, b] = name(x, y)
     function name(varargin)
     * Each function ends with end (or the next function line, when no function in the file has an end).
+    * An arguments block at its top checks the inputs: arguments, then a line for each (x (1,:) double {mustBePositive} = 1: a size, a class and validators, each optional, and a default), then end. A value is converted to the class when it can be (a number to another kind, text to char or string), a scalar spread to a fixed size and a vector turned the way asked; a validator named alone takes the value, one written as a call (mustBeLessThan(n, 10)) runs as written. Lines opts.Name (with defaults) declare name-value arguments: the last parameter, opts, gathers them as a struct, given as Name=value or 'Name', value, the names matched without regard to case.
 end: Close a block (if, for, while, switch, try, function); inside an index, the last index.
     A(end), A(end-1, :), x(end+1) = value
 elseif: Another condition of an if block, tried when the ones before it fail.
@@ -49,6 +50,15 @@ parfor: A for loop whose passes run in parallel, on the workers of a pool.
     * The workers get the files of the current folder and the program files of the path, and the files the passes write come back. Figures, input() and breakpoints stay here: the passes cannot use them.
 spmd: A block for parallel workers; here its body runs once.
     spmd, statements, end
+    * Inside it labindex (spmdIndex) is 1 and numlabs (spmdSize) is 1.
+labindex: In an spmd block, the worker's number: 1 here, where the block runs once (as spmdIndex).
+    k = labindex
+spmdIndex: In an spmd block, the worker's number: 1 here, where the block runs once.
+    k = spmdIndex
+numlabs: In an spmd block, the number of workers: 1 here (as spmdSize).
+    n = numlabs
+spmdSize: In an spmd block, the number of workers: 1 here.
+    n = spmdSize
 parpool: Start a pool of workers for parfor loops.
     parpool
     parpool(n)
@@ -60,6 +70,17 @@ gcp: The pool of workers, started if there is none.
     * p.NumWorkers is its number of workers; with 'nocreate', [] when there is no pool. delete(p) stops the pool.
 getCurrentTask: On a worker of the pool, its task (t.ID is the worker's number); [] elsewhere.
     t = getCurrentTask()
+enumeration: The members of an enumeration class (a class with an enumeration block).
+    enumeration ClassName
+    m = enumeration('ClassName')
+    [m, names] = enumeration(obj)
+    * classdef Color, enumeration, Red, Green, end, end makes Color.Red and Color.Green, each one object: == and ~= compare members (or a member and its name as text), switch and ismember take them, char, string and cellstr give their names. Members may be given values for the constructor (Mon (1)), and a class based on a number class (classdef Level < uint8) has members that are those numbers: uint8(Level.High), Level.High > Level.Low, Level.High + 1.
+import: Let a function or the Command Window call a package's functions and classes by their short names.
+    import pkg.*
+    import pkg.name
+    import pkg.sub.*
+    list = import
+    * A package is a folder whose name starts with + (+pkg/f.m is pkg.f; +pkg/+sub/g.m is pkg.sub.g; +pkg/Cls.m or +pkg/@Cls/Cls.m is the class pkg.Cls). An import in a function lasts for that call, one in the Command Window until it is restarted.
 classdef: A class of your own, in a file of its name: properties, methods and events.
     classdef Name
     classdef Name < handle
@@ -67,7 +88,7 @@ classdef: A class of your own, in a file of its name: properties, methods and ev
     properties (Access = private, Constant, Dependent) ... end
     methods (Static, Access = private) ... end
     events ... end
-    * Property lines are Name, or Name = default, with a size and class that may be given (Balance (1,1) double = 0). The constructor is the method named as the class (function obj = Name(args)); the object is its output, there already with its defaults. A subclass of handle is shared by every variable that holds it; any other class is a value, copied when a copy changes, so a method that changes it returns it (obj = scale(obj, 2)). Methods are called as obj.method(args) or method(obj, args); a Static method as Name.method(args), a Constant property as Name.Prop. get.Prop and set.Prop methods run when a property is read or set (a Dependent property has only them). A method named as an operator's function (plus, minus, times, mtimes, eq, lt, uminus, ...) or as a builtin (disp, norm, size, ...) takes its place for the class's objects. obj@Super(args) calls the superclass constructor, method@Super(obj, args) its method. Events are raised by notify and heard through addlistener. delete(obj) runs the class's delete method and leaves the object invalid (isvalid). Enumerations are not read here.
+    * Property lines are Name, or Name = default, with a size and class that may be given (Balance (1,1) double = 0). The constructor is the method named as the class (function obj = Name(args)); the object is its output, there already with its defaults. A subclass of handle is shared by every variable that holds it; any other class is a value, copied when a copy changes, so a method that changes it returns it (obj = scale(obj, 2)). Methods are called as obj.method(args) or method(obj, args); a Static method as Name.method(args), a Constant property as Name.Prop. get.Prop and set.Prop methods run when a property is read or set (a Dependent property has only them). A method named as an operator's function (plus, minus, times, mtimes, eq, lt, uminus, ...) or as a builtin (disp, norm, size, ...) takes its place for the class's objects. obj@Super(args) calls the superclass constructor, method@Super(obj, args) its method. Events are raised by notify and heard through addlistener. delete(obj) runs the class's delete method and leaves the object invalid (isvalid). A property's size, class and validators (s (1,1) double {mustBePositive}) are checked whenever it is set. An enumeration block makes the class an enumeration (see enumeration).
 break: Leave the innermost for or while loop.
     break
 continue: Go on with the next pass of the innermost for or while loop.
@@ -286,6 +307,20 @@ tril: The lower triangle of a matrix, the rest set to zero.
 triu: The upper triangle of a matrix, the rest set to zero.
     U = triu(A)
     U = triu(A, k)
+pagemtimes: Each page of X (its first two dimensions) times the matching page of Y.
+    Z = pagemtimes(X, Y)
+    Z = pagemtimes(X, transpX, Y, transpY)
+    * transpX and transpY are 'none', 'transpose' or 'ctranspose'. Pages of size 1 in a dimension are used against all of the other's.
+pagetranspose: Each page (the first two dimensions) turned.
+    B = pagetranspose(A)
+pagectranspose: Each page turned and its complex numbers conjugated.
+    B = pagectranspose(A)
+tensorprod: Products of A and B summed over dimensions of each.
+    C = tensorprod(A, B, dimA, dimB)
+    C = tensorprod(A, B, dims)
+    C = tensorprod(A, B)
+    C = tensorprod(A, B, 'all')
+    * The result has A's other dimensions, then B's. With no dimensions it is the outer product; with 'all', the sum of all of A.*B.
 kron: The Kronecker product: every element of A times the whole of B.
     K = kron(A, B)
 sub2ind: Linear indices from subscripts.
@@ -2732,20 +2767,41 @@ arrayfun: Call a function on every element of arrays.
 structfun: Call a function on every field of a scalar struct.
     A = structfun(fun, s)
     B = structfun(fun, s, 'UniformOutput', false)
+dictionary: Keys and the values they stand for, kept in the order they were put in.
+    d = dictionary(keys, values)
+    d = dictionary(k1, v1, k2, v2, ...)
+    d = dictionary()
+    * d(keys) looks keys up, d(keys) = values puts them in (a new dictionary: it is a value, not a handle), d(keys) = [] takes them out, d{keys} gives the contents of cell values. Keys are text (kept as strings), numbers or logicals; the values are all of one class. dictionary() has no types until something is put in.
+insert: A dictionary with keys and values put in.
+    d = insert(d, keys, values)
+lookup: Values of a dictionary, with one for keys it has not.
+    v = lookup(d, keys)
+    v = lookup(d, keys, FallbackValue=x)
+numEntries: How many keys a dictionary has.
+    n = numEntries(d)
+isConfigured: True when a dictionary has its key and value types (something was put in).
+    tf = isConfigured(d)
+types: The classes of a dictionary's keys and values, as strings.
+    [keyType, valueType] = types(d)
+entries: A dictionary's keys and values as a table (or a struct array or a cell).
+    T = entries(d)
+    S = entries(d, 'struct')
+    C = entries(d, 'cell')
 containers.Map: A map from keys (text or numbers) to values.
     M = containers.Map()
     M = containers.Map(keys, values)
     M = containers.Map('KeyType', 'char', 'ValueType', 'any')
     * M(key) reads and sets values; M.Count is the number of keys; M is a handle: copies share it.
-keys: The keys of a map, sorted, as a cell row.
+keys: The keys of a map, sorted, as a cell row (of a dictionary: in their order, as a column).
     k = keys(M)
-values: The values of a map, in the order of its keys, or those of some keys.
+values: The values of a map, in the order of its keys, or those of some keys (of a dictionary likewise, as a column).
     v = values(M)
     v = values(M, keySet)
-isKey: True when a map has a key (or which of several it has).
+isKey: True when a map (or a dictionary) has a key (or which of several it has).
     tf = isKey(M, key)
-remove: Remove keys from a map.
+remove: Remove keys from a map; for a dictionary, a dictionary without them.
     remove(M, key)
+    d = remove(d, keys)
 deal: Copy inputs to outputs, one by one or all from one.
     [a, b, c] = deal(x, y, z)
     [a, b, c] = deal(x)

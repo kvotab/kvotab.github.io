@@ -325,6 +325,12 @@ circshift:
     Python: elmat.py. numpy.roll by the shifts given, along the first dimension whose size is not 1 (or the dimension given, or dimension by dimension for a vector of shifts).
 tril, triu:
     Python: elmat.py. numpy.tril and numpy.triu with the diagonal offset k.
+pagemtimes:
+    Python: matfun.py. Both arrays' first two dimensions moved last (numpy.moveaxis), turned (and conjugated) as asked, and multiplied by numpy.matmul, which takes the pages of size 1 against all of the other's; the result's first two dimensions moved back.
+pagetranspose, pagectranspose:
+    Python: matfun.py. permute(A, [2 1 3 ...]), so any class keeps its class (and conj for pagectranspose).
+tensorprod:
+    Python: matfun.py. numpy.tensordot over the dimensions given (numbered from 1, missing trailing ones added as 1), or axes=0 for the outer product; 'all' sums A.*B. Trailing dimensions of size 1 are dropped from the result.
 kron:
     Python: elmat.py. numpy.kron, the Kronecker product.
 blkdiag:
@@ -1190,6 +1196,14 @@ cellfun, arrayfun:
     Python: cellfun.py. The function is called once for each element, in column order, with the elements of all the inputs at that position; each call is awaited, so a function that pauses or draws works, and the page checks for Ctrl+C between calls. With UniformOutput (the default) every result must be a scalar, and they are gathered into an array of their class (double and logical may mix); otherwise into a cell of the input's size. An ErrorHandler is called with a struct of message, identifier and index when a call fails. For cellfun, the names 'isempty', 'islogical', 'isreal', 'length', 'ndims', 'prodofsize', 'numel', 'size' and 'isclass' given as text are computed directly, without calls.
 structfun:
     Python: cellfun.py. The function called on each field's value of a scalar struct in turn; the results as a column, or with UniformOutput false as a struct with the same fields.
+dictionary, insert, lookup, numEntries, isConfigured, types, entries:
+    Python: dictionaries.py. A Python dictionary (in the order keys were put in) inside a value object: every assignment makes a new one, so copies never share. Text keys are kept as Python strings, number keys as floats (logical ones as bools); each value is one 1-by-1 element of the values' class, and several looked up together are joined by horzcat and shaped as the keys were. entries builds a table through table().
+enumeration:
+    Python: classfun.py and classdef.py. The enumeration block's lines are cut at their commas into members with the text of their arguments. Each member is made once, when first asked for, by the class's constructor with those arguments evaluated, or for a class based on a number class, as that number (by that class's conversion function). Being one object each, members compare by identity, and arrays of them (an object array) by their names; char, string, cellstr, ismember and the number classes are the class's methods unless it writes its own.
+import:
+    Python: classfun.py and runtime.py. The names are kept on the workspace of the function (or the Command Window) that ran the import; a call of a name that is no variable then looks for pkg.name (for pkg.*, the first package that has it, the latest import first) before the path and the builtins. pkg.name is the file +pkg/name.m (or +pkg/@name/name.m) in a folder of the path.
+labindex, spmdIndex, numlabs, spmdSize:
+    Python: parallel.py. 1: an spmd block's body runs once, here.
 containers.Map:
     Python: cellfun.py. A Python dictionary inside a handle object, so every copy of the map is the same map: keys are Python strings (KeyType 'char', the default) or floats (when the keys given are numbers or KeyType names a numeric class), each value any value.
 keys, values:

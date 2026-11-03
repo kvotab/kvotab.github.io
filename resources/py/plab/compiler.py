@@ -408,14 +408,17 @@ class Compiler:
         else:
             out.emit(f'W = R.Workspace({f.name!r}, {pnames!r})', f.line)
         out.emit('_na = len(args); _no = nargout; W.nargs = (_na, _no)', f.line)
-        if not (params and params[-1] == 'varargin'):
+        # name-value arguments (opts.Name in an arguments block): the last parameter gathers them
+        nv = [d for d in f.argspec if d.field is not None and d.name in params]
+        nvp = nv[0].name if nv else None
+        if not (params and params[-1] == 'varargin') and nvp is None:
             out.emit(f'if _na > {len(params)}: raise R.too_many_inputs({f.name!r})', f.line)
         if len(f.outs) and f.outs[-1] != 'varargout':
             out.emit(f'if nargout > {len(f.outs)}: raise R.too_many_outputs({f.name!r})', f.line)
         elif not f.outs:
             out.emit(f'if nargout > 0: raise R.too_many_outputs({f.name!r})', f.line)
         for i, pnm in enumerate(params[:nreq]):
-            if pnm == '~':
+            if pnm == '~' or pnm == nvp:
                 continue
             out.emit(f'if _na > {i}: W[{pnm!r}] = R.share(args[{i}])', f.line)
         if params and params[-1] == 'varargin':
@@ -429,6 +432,8 @@ class Compiler:
                 k = params.index(pnm)
                 code, fresh = self.expr(dexpr)
                 out.emit(f'if _na <= {k}: W[{pnm!r}] = {code}', f.line)
+        if f.argspec:
+            self.arguments_checks(f, params, nv, nvp)
         if f.subs:
             ws = f'_W{len(outer)}'
             out.emit(f'{ws} = W', f.line)
@@ -443,6 +448,46 @@ class Compiler:
         lines, mp = out.lines, out.map
         self.out, self.scope = save_out, save_scope
         return lines, mp
+
+    def arguments_checks(self, f, params, nv, nvp):
+        """An arguments block's checks: each argument given (or defaulted)
+        converted to its class and size and run past its validators; the
+        name-value arguments gathered into their struct, defaults filled in."""
+        out = self.out
+        if nvp is not None:
+            k = params.index(nvp)
+            fields = tuple(d.field for d in nv)
+            out.emit(f'_nv = R.nv_args(args[{k}:], {fields!r}, {f.name!r}, {k})', f.line)
+            for d in nv:
+                if d.default is not None:
+                    code, _ = self.expr(d.default)
+                    out.emit(f'if {d.field!r} not in _nv: _nv[{d.field!r}] = {code}', d.line)
+                if d.dims or d.cls:
+                    out.emit(f'if {d.field!r} in _nv: _nv[{d.field!r}] = R.check_arg(_nv[{d.field!r}], 0, {d.field!r}, {d.dims!r}, {d.cls!r})', d.line)
+            out.emit(f'W[{nvp!r}] = R.nv_struct(_nv, {fields!r})', f.line)
+        for d in f.argspec:
+            if d.name not in params:
+                continue
+            pos = params.index(d.name) + 1
+            if d.field is None and (d.dims or d.cls):
+                out.emit(f'if {d.name!r} in W: W[{d.name!r}] = R.check_arg(W[{d.name!r}], {pos}, None, {d.dims!r}, {d.cls!r})', d.line)
+            for v in d.validators:
+                have = f'{d.field!r} in _nv' if d.field is not None else f'{d.name!r} in W'
+                value = f'_nv[{d.field!r}]' if d.field is not None else f'W[{d.name!r}]'
+                out.emit(f'if {have}:', d.line)
+                out.ind += 1
+                out.emit('try:', d.line)
+                out.ind += 1
+                if type(v) is P.Id:
+                    # a validator named alone takes the value
+                    out.emit(f'await R.call(W, {v.name!r}, 0, ({value},))', d.line)
+                else:
+                    code, _ = self.expr(v)
+                    out.emit(f'_ = {code}', d.line)
+                out.ind -= 1
+                out.emit('except R.MError as _e:', d.line)
+                out.emit(f'    raise R.arg_error(_e, {pos}, {d.field!r})', d.line)
+                out.ind -= 1
 
     def _fh_vars(self, body, initial, variables, local):
         """The variables that may hold a function handle (so that x(...) may
