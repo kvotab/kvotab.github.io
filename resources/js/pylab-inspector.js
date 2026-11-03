@@ -289,7 +289,7 @@
         }
         case 'readonly': {
           const s = el('output', { class: 'pl-insp-ro', id });
-          f.set = (q) => { s.textContent = q.value; s.title = q.value; };
+          f.set = (q) => { s.textContent = q.note ? `${q.value} \u2014 ${q.note}` : q.value; s.title = s.textContent; };
           r.append(el('div', { class: 'v' }, s));
           break;
         }

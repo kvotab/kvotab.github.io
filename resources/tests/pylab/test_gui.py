@@ -811,6 +811,14 @@ check("limits in auto mode show the limits drawn; the mode is a choice", (prop(d
       ('[1 5]', ['auto', 'manual']))
 check('the colormap is a choice of named maps', (prop(d, 'Colormap')['kind'], 'jet' in prop(d, 'Colormap')['options']), ('colormap', True))
 check('a legend lists its strings', prop(insp('lg'), 'String')['value'], ['data'])
+check("a y label reads upwards (Rotation 90), a title not", (num("get(get(ax, 'YLabel'), 'Rotation')"), num("get(get(ax, 'Title'), 'Rotation')")),
+      (90.0, 0.0))
+d = insp(val('ax').title.id)
+check("a title's turn can be changed; where it stands is its axes' to say",
+      [(prop(d, n)['kind'], prop(d, n).get('note')) for n in ('Rotation', 'Position', 'HorizontalAlignment')],
+      [('number', None), ('readonly', 'placed by its axes'), ('readonly', 'placed by its axes')])
+check("a colorbar's label is turned by its colorbar", (prop(insp(val('cb').label.id), 'Rotation')['kind'], prop(insp(val('cb').label.id), 'Rotation')['note']),
+      ('readonly', 'placed by its colorbar'))
 check("a figure's callbacks are text", (prop(insp('f'), 'CloseRequestFcn')['kind'], prop(insp('f'), 'CloseRequestFcn')['value']),
       ('callback', 'closereq'))
 

@@ -648,7 +648,7 @@
         if (t.units === 'normalized') this.textOf(t, ctx, t.string, p[0] * W, H - p[1] * H, { size: t.fontSize * PT, color: rgb(t.color), halign: t.halign, valign: t.valign, rotation: t.rotation, background: rgb(t.background), edge: rgb(t.edge), interpreter: t.interpreter, bold: t.fontWeight === 'bold' });
       }
       if (fig.sgtitle && fig.sgtitle.string) {
-        this.textOf(fig.sgtitle, ctx, fig.sgtitle.string, W / 2, 8, { size: fig.sgtitle.fontSize * PT, valign: 'top', halign: 'center', bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
+        this.axesText(ctx, fig.sgtitle, W / 2, 8, 'below', 0, { size: fig.sgtitle.fontSize * PT, bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
       }
       ctx.restore();
     }
@@ -670,6 +670,36 @@
       }
       this.textBoxes.set(t.id, { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
       return m;
+    }
+
+    /* An axes' title or label t at the edge (x, y) of the space it has:
+       'below' and 'above' the axes (y the box's top or bottom edge), 'left'
+       and 'right' of them (x the box's right or left edge). Turned by its
+       Rotation, about its middle, and kept clear of the edge; at its usual
+       turn (def: 0, or 90 for a y label, drawn -90 on the right), where it
+       has always stood (a y label's middle off the edge by inset). Its font,
+       italics, background and edge are its own. The box it takes, {w, h}. */
+    axesText(ctx, t, x, y, side, inset, opts) {
+      const def = side === 'left' || side === 'right' ? 90 : 0;
+      const rot = Number.isFinite(t.rotation) ? t.rotation : def;
+      const o = Object.assign({ interpreter: t.interpreter, italic: t.fontAngle === 'italic', family: faceOf(t.fontName),
+        background: Array.isArray(t.background) ? rgb(t.background) : null, edge: Array.isArray(t.edge) ? rgb(t.edge) : null,
+        margin: t.margin, boxWidth: t.lineWidth ? lw(t.lineWidth) : null }, opts);
+      if (rot === def) {
+        if (side === 'left' || side === 'right') {
+          this.textOf(t, ctx, t.string, side === 'left' ? x - inset : x + inset, y, Object.assign(o, { halign: 'center', valign: 'middle', rotation: side === 'left' ? 90 : -90 }));
+        } else this.textOf(t, ctx, t.string, x, y, Object.assign(o, { halign: 'center', valign: side === 'below' ? 'top' : 'bottom', rotation: 0 }));
+        const m = textSize(ctx, t.string, o.size, o);
+        return side === 'left' || side === 'right' ? { w: m.height, h: m.width } : { w: m.width, h: m.height };
+      }
+      const m = textSize(ctx, t.string, o.size, o);
+      const a = rot * Math.PI / 180;
+      const w = Math.abs(m.width * Math.cos(a)) + Math.abs(m.height * Math.sin(a));
+      const h = Math.abs(m.width * Math.sin(a)) + Math.abs(m.height * Math.cos(a));
+      const cx = side === 'left' ? x - w / 2 : side === 'right' ? x + w / 2 : x;
+      const cy = side === 'below' ? y + h / 2 : side === 'above' ? y - h / 2 : y;
+      this.textOf(t, ctx, t.string, cx, cy, Object.assign(o, { halign: 'center', valign: 'middle', rotation: rot }));
+      return { w, h };
     }
 
     /* annotation(...): a line, arrow, double arrow, text arrow, rectangle,
@@ -990,7 +1020,7 @@
       ctx.restore();
       let mw = 0;
       yt.labels.forEach((s, i) => { const m = drawText(ctx, s, r.x + r.w + 5, fr.fy(yt.ticks[i]), { size: fs, color: ink, valign: 'middle' }); mw = Math.max(mw, m.width); });
-      if (ax.ylabel && ax.ylabel.string) this.textOf(ax.ylabel, ctx, ax.ylabel.string, r.x + r.w + mw + 10 + fs * 0.9, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: ink, halign: 'center', valign: 'middle', rotation: -90 });
+      if (ax.ylabel && ax.ylabel.string && ax.ylabel.visible !== false) this.axesText(ctx, ax.ylabel, r.x + r.w + mw + 10, r.y + r.h / 2, 'right', fs * 0.9, { size: ax.ylabel.fontSize * PT * 1.1, color: ink });
     }
 
     grid2(ctx, ax, fr, xt, yt) {
@@ -1039,21 +1069,21 @@
       if (!hiddenAxes) {
         if (ax.xlabel.string && ax.xlabel.visible !== false) {
           const y = xAtTop ? r.y - fs * 1.6 - 4 : r.y + r.h + fs * 1.4 + 6;
-          this.textOf(ax.xlabel, ctx, ax.xlabel.string, r.x + r.w / 2, y, { size: ax.xlabel.fontSize * PT * 1.1, color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), halign: 'center', valign: xAtTop ? 'bottom' : 'top', interpreter: ax.xlabel.interpreter, bold: ax.xlabel.fontWeight === 'bold' });
+          this.axesText(ctx, ax.xlabel, r.x + r.w / 2, y, xAtTop ? 'above' : 'below', 0, { size: ax.xlabel.fontSize * PT * 1.1, color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), bold: ax.xlabel.fontWeight === 'bold' });
         }
         if (ax.ylabel.string && ax.ylabel.visible !== false) {
           const right = ax.yaxisLocation === 'right';
-          const x = right ? r.x + r.w + (maxYLabel || 0) + 10 + lfs * 0.6 : r.x - (maxYLabel || 0) - 10 - lfs * 0.6;
-          this.textOf(ax.ylabel, ctx, ax.ylabel.string, x, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), halign: 'center', valign: 'middle', rotation: right ? -90 : 90, interpreter: ax.ylabel.interpreter, bold: ax.ylabel.fontWeight === 'bold' });
+          const x = right ? r.x + r.w + (maxYLabel || 0) + 10 : r.x - (maxYLabel || 0) - 10;
+          this.axesText(ctx, ax.ylabel, x, r.y + r.h / 2, right ? 'right' : 'left', lfs * 0.6, { size: ax.ylabel.fontSize * PT * 1.1, color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), bold: ax.ylabel.fontWeight === 'bold' });
         }
       }
       if (ax.title.string && ax.title.visible !== false) {
         let y = r.y - 6 - (xAtTop ? fs * 3 : 0) - (expPad && !xAtTop ? 0 : 0);
         if (ax.subtitle && ax.subtitle.string) {
-          this.textOf(ax.subtitle, ctx, ax.subtitle.string, r.x + r.w / 2, y, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), halign: 'center', valign: 'bottom', interpreter: ax.subtitle.interpreter });
-          y -= ax.subtitle.fontSize * PT * 1.3;
+          const m = this.axesText(ctx, ax.subtitle, r.x + r.w / 2, y, 'above', 0, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), bold: ax.subtitle.fontWeight === 'bold' });
+          y -= Math.max(ax.subtitle.fontSize * PT * 1.3, m.h);
         }
-        this.textOf(ax.title, ctx, ax.title.string, r.x + r.w / 2, y, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
+        this.axesText(ctx, ax.title, r.x + r.w / 2, y, 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
       }
     }
 
@@ -1610,7 +1640,7 @@
         if (c.marker !== 'none') drawMarkers(ctx, pts.filter(Boolean), c.marker, c.markerSize, rgb(c.color), c.mfc === 'none' ? null : rgb(c.color));
       }
       ctx.restore();
-      if (ax.title.string) this.textOf(ax.title, ctx, ax.title.string, cx, rect.y - 4, { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: true });
+      if (ax.title.string && ax.title.visible !== false) this.axesText(ctx, ax.title, cx, rect.y - 4, 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
       this.frames.push({ ax, fr: { r: rect, polar: true, cx, cy, R, top }, rect, is3d: false });
     }
 
@@ -1765,7 +1795,7 @@
       if (ax.title.string) {
         let minY = Infinity;
         for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) minY = Math.min(minY, corner(sx, sy, sz)[1]);
-        this.textOf(ax.title, ctx, ax.title.string, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
+        this.axesText(ctx, ax.title, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
       }
     }
 

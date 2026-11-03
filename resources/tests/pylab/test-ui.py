@@ -1483,6 +1483,27 @@ async def property_editor(page):
     await page.click(x - 14, y + h / 2)
     check('... by the tick labels, the axes', await until(page, f"{INSP}.data.type === 'axes' && {INSP}.data.label"), "Axes 'Squares'")
     check('what is picked is outlined', await page.ev(f"{WIN}.selection === {WIN}.fig.axes[0].id && !!{WIN}.selectionBox({WIN}.selection)"), True)
+    await page.ev(f"[...{INSP}.tree.children].find(b => b.textContent.startsWith('Title')).click(); 1")
+    await until(page, f"{INSP}.data.type === 'text' && {INSP}.fields.has('Rotation')")
+    await insp_type(page, 'Rotation', '90')
+    await until(page, f"{WIN}.fig.axes[0].title.rotation === 90", 5)
+    await asyncio.sleep(0.3)
+    box = 'w.renderer.textBoxes.get(w.fig.axes[0].{0})'
+    check('a title turned by 90 in the editor is drawn upright, above its axes',
+          await page.ev(f"(() => {{ const w = {WIN}; const b = {box.format('title.id')}; const r = w.renderer.frames[0].rect; return [b.h > 2 * b.w, b.y + b.h <= r.y]; }})()"),
+          [True, True])
+    await page.ev(f"[...{INSP}.tree.children].find(b => b.textContent.startsWith('Y label')).click(); 1")
+    await until(page, f"{INSP}.data.type === 'text' && {INSP}.fields.get('Rotation').input.value === '90'")
+    await command(page, 'ylabel("height")')
+    await insp_type(page, 'Rotation', '0')
+    await until(page, f"{WIN}.fig.axes[0].ylabel.rotation === 0", 5)
+    await asyncio.sleep(0.3)
+    check('a y label turned to 0 lies flat, left of the tick labels',
+          await page.ev(f"(() => {{ const w = {WIN}; const b = {box.format('ylabel.id')}; const r = w.renderer.frames[0].rect; return [b.w > 2 * b.h, b.x + b.w < r.x - 10]; }})()"),
+          [True, True])
+    check("where a title stands is shown, not offered", await insp_field(page, 'Position', "return f.r.querySelector('output').textContent.endsWith('placed by its axes');"), True)
+    await page.ev(f"[...{INSP}.tree.children].find(b => b.textContent.startsWith('Axes')).click(); 1")
+    await until(page, f"{INSP}.data.type === 'axes'")
     await insp_field(page, 'XGrid', 'f.input.click(); return 1;')
     await asyncio.sleep(0.6)
     check('a check box sets XGrid', "g =\n\n    'on'" in (await command(page, "g = get(gca, 'XGrid')"))[-30:], True)

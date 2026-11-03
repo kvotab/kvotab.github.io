@@ -301,6 +301,21 @@ def _lines(v):
     return None
 
 
+def _placed(o):
+    """Is o a text its owner places: an axes' title, subtitle or label, a colorbar's label, a super title?"""
+    p = getattr(o, 'parent', None)
+    if o.TYPE != 'text' or p is None:
+        return False
+    if p.TYPE == 'axes':
+        return any(o is getattr(p, a) for a in _ROLE_TEXTS.values())
+    if p.TYPE == 'colorbar':
+        return o is p.label
+    return p.TYPE == 'figure' and o is getattr(p, 'sgtitle', None)
+
+
+_PLACED = ('Position', 'HorizontalAlignment', 'VerticalAlignment', 'Units')
+
+
 def describe(o, k):
     """One property for the page: its name, the field that edits it, and the value in that field's terms."""
     d = {'name': k}
@@ -320,6 +335,9 @@ def describe(o, k):
         return d
     if k in _READONLY or hist or isinstance(v, G.HArr):
         d.update(kind='readonly', value=_summary(v))
+        return d
+    if _placed(o) and (k in _PLACED or (k == 'Rotation' and o.parent.TYPE == 'colorbar')):
+        d.update(kind='readonly', value=_summary(v), note=f'placed by its {o.parent.TYPE}')
         return d
     if k in G._COLOR_PROPS or (k.endswith('Color') and isinstance(raw, tuple) and len(raw) == 3):
         keys = list(G._COLOR_PROPS.get(k, ()))

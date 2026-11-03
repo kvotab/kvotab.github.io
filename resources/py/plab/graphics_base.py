@@ -576,6 +576,9 @@ class Axes(GObj):
         for t in (self.title, self.xlabel, self.ylabel, self.zlabel, self.subtitle):
             t.parent = self
             t.hidden = True
+        # the y and z labels read upwards
+        self.ylabel.props['Rotation'] = 90.0
+        self.zlabel.props['Rotation'] = 90.0
         self.legend = None
         self.colorbar = None
         self.kind = 'cartesian'        # or 'polar'
