@@ -157,7 +157,7 @@ realpow:
 pow2:
     Python: elfun.py. 2.^x by NumPy's power. pow2(f, e) is f.*2.^e, by numpy.ldexp (an exact change of the exponent) when every e is a whole number and f is real; single stays single.
 nextpow2:
-    Python: elfun.py. numpy.frexp of abs(x) gives x = f*2^e with f in [0.5, 1); the result is e, or e - 1 when f is exactly 0.5 (x is a power of two), 0 for 0 and Inf for Inf.
+    Python: elfun.py. numpy.frexp of abs(x) gives x = f*2^e with f in [0.5, 1); the result is e, or e - 1 when f is exactly 0.5 (x is a power of two), 0 for 0, Inf for Inf and NaN for NaN. For integers, the bit length of abs(x) - 1, exact for 64-bit values. The class is kept.
 nthroot:
     Python: elfun.py. sign(x).*abs(x).^(1./n) by NumPy, then one Newton step r - (r^n - x)/(n*r^(n-1)), which makes an exact root such as nthroot(27, 3) come out exactly. Complex inputs, and a negative x with an n that is not an odd integer, are refused.
 hypot:
@@ -207,7 +207,7 @@ real, imag, conj:
 angle:
     Python: elfun.py. numpy.angle: the phase atan2(imag(z), real(z)) in radians.
 complex:
-    Python: elfun.py. a + b*1i as a complex double array (NumPy complex128). The result stays complex even where b is 0, unlike a + 0i.
+    Python: elfun.py. A complex double array (NumPy complex128) with its real and imaginary parts set directly: a + b*1i would make an infinite b into NaN + Inf i. The result stays complex even where b is 0, unlike a + 0i; single parts give a single result.
 isnan, isinf, isfinite:
     Python: elfun.py. numpy.isnan, numpy.isinf and numpy.isfinite for double and single values; integers, char and logical are never NaN or Inf. isnan of a string array is true for its missing strings; cells and structs are refused.
 ismissing:
@@ -215,7 +215,7 @@ ismissing:
 cplxpair:
     Python: elfun.py. Along the first dimension that is not 1 (or the one given): values whose imaginary part is within tol (100*eps unless given) times max(abs(z), 1) count as real. The others are sorted by real part, each matched with its conjugate (within twice tol) and the pair given as the conjugate of their mean and the mean; the real ones come last, sorted. One left without a partner is an error.
 unwrap:
-    Python: elfun.py. numpy.unwrap along the rows of a row vector and down the columns otherwise: a jump larger than the tolerance (pi unless given) is taken back by a multiple of 2*pi.
+    Python: elfun.py. numpy.unwrap along the dimension (the first that is not 1 unless given): a jump larger than the tolerance (pi unless given, and never less than pi) is taken back by a multiple of 2*pi.
 gcd:
     Python: elfun.py. numpy.gcd on 64-bit integers (non-integers are refused). With three outputs, the Bezout coefficients u and v (g = u*a + v*b) come from the extended Euclidean algorithm, run for each element in Python's integers.
 lcm:
@@ -227,7 +227,7 @@ nchoosek:
 primes:
     Python: elfun.py. The sieve of Eratosthenes on a NumPy array of flags: the multiples of each prime up to sqrt(n) are struck out.
 isprime:
-    Python: elfun.py. Trial division by 2 and the odd numbers up to sqrt(x), in Python's integers, for each element.
+    Python: elfun.py. A sieve of Eratosthenes up to the largest element when it is at most 10^7; otherwise each element in Python's integers, trial division by the primes to 37 and then Miller-Rabin with the bases 2 to 37, which decide every number below 2^64, so 64-bit integers are tested exactly.
 factor:
     Python: elfun.py. Trial division by 2 and then the odd numbers, in Python's integers; what is left above 1 is the last prime factor.
 perms:
@@ -235,25 +235,25 @@ perms:
 rats:
     Python: elfun.py. Each value as text in the rational display format (the one format rat uses), padded to 13 characters.
 rat:
-    Python: elfun.py. A continued fraction: the whole part k is taken off and the rest inverted, the convergents n/d built up, until abs(x - n/d) is within the tolerance (1e-6*norm(x, 1) unless given), at most 64 terms. With one output, the text of the fractions.
+    Python: elfun.py. A continued fraction: the whole part k (rounded half away from zero) is taken off and the rest inverted, the convergents n/d built up, until abs(x - n/d) is below the tolerance (1e-6*norm of the finite elements, 1-norm, unless given), at most 64 terms; Inf gives 1/0 and NaN 0/0. With one output, the continued fraction as text, '3 + 1/(7 + 1/16)', a row per element.
 gamma, gammaln, erf, erfc, erfinv, erfcinv, erfcx:
     Python: elfun.py. The SciPy function of the same name: scipy.special.gamma, scipy.special.gammaln, scipy.special.erf, scipy.special.erfc, scipy.special.erfinv, scipy.special.erfcinv, scipy.special.erfcx, element by element. Single stays single; integers are refused.
 expint:
-    Python: elfun.py. scipy.special.exp1, the exponential integral E1(x), element by element.
+    Python: elfun.py. scipy.special.exp1, the exponential integral E1(x); for a negative real x it is -Ei(-x) - i*pi by scipy.special.expi (continued from above the cut), and -Inf - i*pi at -Inf, where SciPy's expi gives NaN.
 psi:
     Python: elfun.py. scipy.special.digamma; psi(k, x) is scipy.special.polygamma(k, x).
 gammainc, gammaincinv:
-    Python: elfun.py. scipy.special.gammainc and scipy.special.gammaincinv, or scipy.special.gammaincc and scipy.special.gammainccinv for 'upper'. SciPy takes the arguments the other way round: gammainc(x, a) here is gammainc(a, x) there.
+    Python: elfun.py. scipy.special.gammainc and scipy.special.gammaincinv, or scipy.special.gammaincc and scipy.special.gammainccinv for 'upper' (SciPy takes the arguments the other way round: gammainc(x, a) here is gammainc(a, x) there); a of 0 gives 1 and 0. The scaled forms, P or Q times gamma(a+1)*exp(x)/x^a, are computed directly: below x = a + 1 by the series sum of x^n/((a+1)...(a+n)), which is the scaled lower one, above it by the continued fraction for Gamma(a, x)*exp(x)/x^a (modified Lentz), times a for the scaled upper one; the other is their sum less the one found, the factor gamma(a+1)*exp(x)/x^a taken from Stirling's series and a*(t - log(1+t)) with x = a(1+t) for a of 30 or more, so that no large logarithms cancel. single in gives single out.
 beta, betaln:
     Python: elfun.py. scipy.special.beta and scipy.special.betaln (the logarithm, without overflow), with implicit expansion.
 betainc, betaincinv:
-    Python: elfun.py. scipy.special.betainc(z, w, x), or scipy.special.betaincc for 'upper', and scipy.special.betaincinv(z, w, y).
+    Python: elfun.py. scipy.special.betainc(z, w, x), or scipy.special.betaincc for 'upper', and scipy.special.betaincinv(z, w, y), or scipy.special.betainccinv for 'upper' (not 1 - y, which would lose small values). single in gives single out for betaincinv.
 besselj, bessely, besseli, besselk:
     Python: elfun.py. scipy.special.jv, scipy.special.yv, scipy.special.iv and scipy.special.kv, or the scaled scipy.special.jve, scipy.special.yve, scipy.special.ive and scipy.special.kve when the third input is 1. Complex arithmetic is used where the real function is undefined: a negative argument with an order that is not whole, and any negative argument for bessely.
 besselh:
     Python: elfun.py. scipy.special.hankel1, or scipy.special.hankel2 for k = 2.
 airy:
-    Python: elfun.py. scipy.special.airy gives Ai, Ai', Bi and Bi' together; k (0 to 3) picks one.
+    Python: elfun.py. scipy.special.airy gives Ai, Ai', Bi and Bi' together; k (0 to 3) picks one. With scale 1, scipy.special.airye of the argument as a complex number: Ai and Ai' times exp(2/3 z^(3/2)) (complex for z below 0), Bi and Bi' times exp(-abs(real(2/3 z^(3/2)))). The second output, an error flag, is 0.
 ellipke:
     Python: elfun.py. scipy.special.ellipk and scipy.special.ellipe of the parameter m.
 ellipj:
@@ -270,15 +270,15 @@ true, false:
 i, j:
     Python: elmat.py. Python's complex number 1j.
 eps:
-    Python: elmat.py. numpy.finfo(float).eps (2^-52), or that of single; eps(x) is numpy.spacing(abs(x)), the distance from abs(x) to the next larger number of its class, and NaN for Inf and NaN.
+    Python: elmat.py. numpy.finfo(float).eps (2^-52), or that of single (named, or by 'like' and a value); eps(x) is numpy.spacing(abs(x)), the distance from abs(x) to the next larger number of its class, and NaN for Inf and NaN.
 realmax, realmin, flintmax:
     Python: elmat.py. numpy.finfo's max and tiny (the largest and the smallest normalised double or single), and 2^53 or 2^24, the largest whole numbers that every smaller whole number is exact below.
 intmax, intmin:
-    Python: elmat.py. The largest and smallest value of the integer class (int32 unless named), in that class.
+    Python: elmat.py. The largest and smallest value of the integer class (int32 unless named, or the class of the value after 'like'), in that class.
 eye:
     Python: elmat.py. numpy.eye with the rows and columns asked for, in the class asked for.
 rand:
-    Python: elmat.py. One generator for the session: NumPy's Mersenne Twister, numpy.random.RandomState, seeded with 5489 by default and by rng. rand draws its random_sample (uniform on [0, 1)) and fills the array down the columns. rand('seed', s) and the other old forms reseed it.
+    Python: elmat.py. One generator for the session: NumPy's Mersenne Twister, numpy.random.RandomState, seeded with 5489 by default and by rng. rand draws its random_sample (uniform on [0, 1)) and fills the array down the columns. The old forms rand('state') and rand('seed') give the generator's whole state (its 624 words, position and kept normal, as a column of 627 numbers) without drawing, and rand('state', s) sets it from such a column or reseeds from a number.
 randn:
     Python: elmat.py. The standard_normal values of the same Mersenne Twister generator as rand, filling the array down the columns; 'complex' adds an imaginary part drawn the same way.
 randi:
@@ -286,7 +286,7 @@ randi:
 randperm:
     Python: elmat.py. n uniform values from rand's generator, and the order that sorts them (numpy.argsort, stable): the first k positions of that order.
 rng:
-    Python: elmat.py. Seeds the generator of rand, randn and randi: a whole number from 0 to 2^32 - 1 (0 is the default seed, 5489), 'default', or 'shuffle' (the clock in milliseconds). It returns the previous settings as a struct.
+    Python: elmat.py. Seeds the generator of rand, randn and randi: a whole number from 0 to 2^32 - 1 (0 is the default seed, 5489), 'default', or 'shuffle' (the clock in milliseconds). It returns the previous settings as a struct whose State is the generator's whole state, so rng(s) with that struct takes the generator back to where it was.
 linspace:
     Python: elmat.py. a + k*(b - a)/(n - 1) for k = 0..n-1 by NumPy, the last point set to b exactly; 100 points unless n is given.
 logspace:
@@ -314,7 +314,7 @@ meshgrid, ndgrid:
 sub2ind, ind2sub:
     Python: elmat.py. Linear indices in column order: the sum of (s_k - 1) times the product of the earlier sizes, plus 1; ind2sub takes the remainders and quotients back out. When fewer subscripts than dimensions are given, the last one spans the dimensions left.
 find:
-    Python: elmat.py. numpy.flatnonzero of the array taken down its columns; rows and columns from the remainder and quotient by the number of rows; find(x, k, 'last') keeps the last k.
+    Python: elmat.py. numpy.flatnonzero of the array taken down its columns; rows and columns from the remainder and quotient by the number of rows; find(x, k, 'last') keeps the last k. Nothing found in a scalar or a 0-by-0 array gives 0-by-0 results.
 nnz:
     Python: elmat.py. numpy.count_nonzero.
 nonzeros:
@@ -348,7 +348,7 @@ rosser:
 accumarray:
     Python: elmat.py. Subscripts (a matrix, a column of linear indices, or a cell of index vectors) are turned into linear indices (numpy.ravel_multi_index in column order) and the values summed into them with numpy.add.at; places nothing went to get the fill value. With a function, the values of each place are gathered in the order they come and the function called once for each place; logical or cell results make a logical or cell array (no place at all gives doubles).
 double, single, logical, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
-    Python: elmat.py. NumPy's astype to the class's type. To an integer class, a value is rounded to the nearest whole number with halves away from zero, NaN becomes 0, and values beyond the class's range saturate at its ends; an integer value converts exactly, without a round trip through doubles (int64 and uint64 hold more than a double can). logical refuses NaN and complex values. double of a string array reads each string as a number (NaN where it is not one).
+    Python: elmat.py. NumPy's astype to the class's type. To an integer class, a value is rounded to the nearest whole number with halves away from zero (by truncating and looking at the fraction, which is exact; adding 0.5 would itself round past 2^52), NaN becomes 0, and values beyond the class's range saturate at its ends; an integer value converts exactly, without a round trip through doubles (int64 and uint64 hold more than a double can). logical refuses NaN and complex values. double of a string array reads each string as a number (NaN where it is not one).
 cast:
     Python: elmat.py. The conversion of double, single, logical or the integer classes to the class named, or to the class of a 'like' value; 'char' goes through char.
 typecast:
@@ -371,11 +371,11 @@ mode:
 var, std:
     Python: datafun.py. The values along the dimension (or the dimensions of vecdim, or all) are gathered into rows; the mean is the weighted sum over the sum of the weights (1 each unless w is a vector along the dimension or an array the size of A), and the variance the weighted sum of squared distances from it, divided by n - 1 (w = 0), by n (w = 1) or by the sum of the weights. 'omitnan' drops NaN values and their weights. A single element gives 0 (NaN if it is not finite). std is the square root; the second output is the mean. A probability distribution object gives its own.
 range:
-    Python: datafun.py. numpy.nanmax minus numpy.nanmin along the dimension.
+    Python: datafun.py. max(A, [], ...) minus min(A, [], ...) by the code of min and max (NaN left out unless 'includenan'), along a dimension, a vector of them or 'all'; the class is kept.
 max, min:
     Python: datafun.py. Along a dimension, numpy.argmax or numpy.argmin pick the position: NaN is left out (taken as -Inf or Inf) unless 'includenan', and a column of NaN gives NaN; complex values compare by magnitude; the second output is the position from 1 (or the linear index with 'linear'). With two arrays, numpy.fmax and numpy.fmin element by element (numpy.maximum and numpy.minimum with 'includenan'), and for complex values by magnitude and then angle. Two scalars compare directly.
 bounds:
-    Python: datafun.py. min and max of the data, by the code of min and max.
+    Python: datafun.py. min(A, [], ...) and max(A, [], ...) by the code of min and max, with the dimension, a vector of them, 'all' and the NaN flag passed on.
 any, all:
     Python: datafun.py. numpy.any and numpy.all of x ~= 0 along the first dimension whose size is not 1 or the one given; NaN does not count as true for any. A vector gives one logical.
 xor, not, and, or:
@@ -399,7 +399,7 @@ histc:
 discretize:
     Python: datafun.py. numpy.searchsorted into the edges, the last bin closed on the right; values outside the edges and NaN give NaN.
 cov:
-    Python: datafun.py. numpy.cov with the observations in rows and the variables in columns, normalised by n - 1 (by n when w is 1); cov(x, y) puts x and y in two columns.
+    Python: datafun.py. Its own: the columns centred on their means and multiplied, (X - mean)'*(Y - mean), divided by n - 1 (by n when w is 1, or when there is one observation), or with weights about the weighted mean, divided by their sum. cov(A, B) puts A(:) and B(:) in two columns; a second input of 0 or 1 is the normalization unless there is a third. 'omitrows' drops rows with NaN; 'partialrows' takes each pair from the rows both have. single in gives single out.
 corrcoef:
     Python: datafun.py. numpy.corrcoef with the variables in columns. The p-values test each correlation with the t statistic r*sqrt((n - 2)/(1 - r^2)) and two tails of scipy.stats.t.
 trapz:
@@ -411,16 +411,16 @@ quantile, prctile:
 iqr:
     Python: datafun.py. The difference of the 0.75 and 0.25 quantiles, computed as quantile computes them. A probability distribution object gives its own.
 skewness, kurtosis:
-    Python: datafun.py. scipy.stats.skew and scipy.stats.kurtosis (with fisher False, so a normal sample gives about 3) along the first dimension whose size is not 1; flag 0 corrects the bias.
+    Python: datafun.py. For each vector along the dimension (a vector of them, or 'all'), with NaN left out: the central moments m2, m3 and m4 by NumPy, then m3/m2^1.5 or m4/m2^2 (a normal sample gives about 3); flag 0 corrects the bias, sqrt(n(n-1))/(n-2) for the skewness and the standard formula for the kurtosis (NaN for too few values). single is computed in single.
 rescale:
     Python: datafun.py. l + (x - inmin)./(inmax - inmin).*(u - l), x first clamped to [inmin, inmax] (its least and greatest unless 'InputMin' and 'InputMax' are given); l, u and the bounds broadcast against x as arrays; a constant x gives l. single stays single.
 normalize:
-    Python: datafun.py. The z-score (x - mean(x))./std(x) along the first dimension whose size is not 1, std with n - 1.
-movmean, movsum, movmax, movmin, movmedian, movstd:
-    Python: datafun.py. For each position, NumPy's mean, sum, max, min, median or std (n - 1) of the window around it, shortened at the ends of the vector: k elements centred (for an even k, one more before than after), or [kb kf] before and after.
+    Python: datafun.py. N = (A - C)./S along a dimension, C and S computed by NumPy with NaN left out of them (nanmean, nanmedian, sums over the values that are not NaN): 'zscore' with the mean and the standard deviation (n - 1), or 'robust' with the median and the median absolute deviation; 'norm' p dividing by the p-norm (the largest |x| for Inf); 'range' [a b] from the least and greatest; 'medianiqr' with the median and the interquartile range (quantiles at (i - 0.5)/n, linear between); 'center' and 'scale' given apart or together, as values or by name ('first' is the first element). C and S are the second and third outputs (0 and 1 when not used). single stays single.
+movmean, movsum, movprod, movmax, movmin, movmedian, movmad, movstd, movvar:
+    Python: datafun.py. For each position along the dimension, NumPy's mean, sum, prod, max, min or median of the window around it, the median of the absolute deviations from its median (movmad), or the standard deviation and variance normalized by n - 1 (by n for a weight of 1, or a window of one value). The window is k elements centred (for an even k, one more before than after) or [kb kf] before and after, worked over all the other dimensions at once. 'omitnan' uses NumPy's nan- versions; Endpoints 'shrink' shortens the windows at the ends, 'discard' drops those positions, 'fill' or a number sets them.
 # ---- matfun.py: linear algebra -----------------------------------------------------------------
 inv:
-    Python: matfun.py. numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN.
+    Python: matfun.py. A scalar's inverse is 1/x (so inv(-0) is -Inf and inv(Inf) is 0). Otherwise numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN. single stays single.
 det:
     Python: matfun.py. numpy.linalg.det: the product of the pivots of an LU factorisation with partial pivoting; det([]) is 1.
 trace:
@@ -480,7 +480,7 @@ givens:
 planerot:
     Python: matfun.py. The rotation from givens of the vector's two elements, and the rotated vector.
 plus, minus, times, rdivide, ldivide, power, eq, ne, lt, le, gt, ge:
-    Python: matfun.py and ops.py. The element-wise operator (+, -, .*, ./, .\, .^, ==, ~=, <, <=, >, >=) as the expressions run it: NumPy's add, subtract, multiply, true_divide, power and comparisons with implicit expansion, the class of the result by the language's rules (integers saturate, single wins over double), and .^ going to complex arithmetic where a negative number has a fractional power. plus and times take more than two arguments, left to right.
+    Python: matfun.py and ops.py. The element-wise operator (+, -, .*, ./, .\, .^, ==, ~=, <, <=, >, >=) as the expressions run it: NumPy's add, subtract, multiply, true_divide, power and comparisons with implicit expansion, the class of the result by the language's rules (integers saturate, single wins over double; int64 and uint64 past 2^26 are added, subtracted, multiplied and divided exactly as Python fractions, rounded half away from zero and saturated, since a double cannot hold them), and .^ going to complex arithmetic where a negative number has a fractional power. plus and times take more than two arguments, left to right.
 mtimes:
     Python: matfun.py and ops.py. The operator *: a scalar times an array element by element, two matrices by NumPy's matrix product (@), in single when either is single; integer matrices are refused.
 mldivide, mrdivide:
@@ -488,7 +488,7 @@ mldivide, mrdivide:
 mpower:
     Python: matfun.py and ops.py. The operator ^: a whole power by numpy.linalg.matrix_power (repeated squaring), a negative one of the inverse (A\eye); another power by scipy.linalg.fractional_matrix_power; a scalar to a matrix power by scipy.linalg.expm(log(s)*B).
 uminus, uplus, transpose, ctranspose:
-    Python: matfun.py and ops.py. The operators -a, +a, a.' and a': negation (integers through doubles and back, so -int8(-128) saturates), and NumPy's transpose, with the complex conjugate for '.
+    Python: matfun.py and ops.py. The operators -a, +a, a.' and a': negation (integers through doubles and back, so -int8(-128) saturates; int64 and uint64 in their own integers, -intmin('int64') saturating to intmax), and NumPy's transpose, with the complex conjugate for '.
 # ---- classdef.py, classfun.py, uiapp.py and appfun.py: classes and apps -----------------------------------------------------------
 properties, methods, ismethod:
     Python: classfun.py and classdef.py. The class's tables of properties (public ones, its superclasses' first) and methods, made when its classdef file was read.
@@ -682,9 +682,9 @@ ppval:
 mkpp, unmkpp:
     Python: funfun.py. A piecewise polynomial object holding the breaks, the coefficients (a row for each piece and value component, the components of a piece together, highest power first; a vector of them is reshaped in column order) and the size of a value, and back.
 polyfit:
-    Python: funfun.py. The Vandermonde matrix of x (numpy.vander) and the least-squares coefficients by numpy.linalg.lstsq, with a warning when the matrix's rank is below the degree plus one. S holds R from numpy.linalg.qr of that matrix, the degrees of freedom, the norm of the residuals and R^2. With three outputs x is first centred and scaled, by mu = [mean(x); std(x)].
+    Python: funfun.py. The Vandermonde matrix of x (numpy.vander), factored by numpy.linalg.qr, and the coefficients from R p = Q'y (scipy.linalg.solve_triangular); when the matrix's rank is below the degree plus one, numpy.linalg.lstsq and a warning. S holds R, the degrees of freedom, the norm of the residuals and R^2. With three outputs, x is first centred and scaled by its mean and standard deviation, returned as mu.
 polyval:
-    Python: funfun.py. Horner's rule, element by element by NumPy (y = y.*x + c for each coefficient); with mu, x is first centred and scaled.
+    Python: funfun.py. Horner's rule, element by element by NumPy (y = y.*x + c for each coefficient); with mu, x is first centred and scaled. The second output from polyfit's S: normr/sqrt(df)*sqrt(1 + sum((A/R).^2, 2)) with A the Vandermonde rows of x (scipy.linalg.solve_triangular for A/R), Inf when df is 0. single in gives single out.
 polyvalm:
     Python: funfun.py. Horner's rule with matrix products: Y = Y*X + c*I for each coefficient.
 roots:
@@ -700,7 +700,7 @@ polyder:
 polyint:
     Python: funfun.py. The coefficients divided by n, n - 1, ..., 1, with the constant k (0 unless given) appended.
 residue:
-    Python: funfun.py. scipy.signal.residue: the partial fraction expansion of b/a, residues, poles and the direct term.
+    Python: funfun.py. scipy.signal.residue: the partial fraction expansion of b/a, residues, poles and the direct term, a repeated pole's residues in increasing powers, the groups of equal poles (within 1e-3) put in order of decreasing magnitude. With three inputs, scipy.signal.invres puts r, p and k back together into b and a.
 filter:
     Python: funfun.py. scipy.signal.lfilter, the direct form II transposed structure, along the first dimension whose size is not 1 or the one given, with the initial conditions zi and the final ones returned.
 filter2:
@@ -741,19 +741,19 @@ nzmax:
 clock, now, date:
     Python: timefun.py. Python's datetime.now (the browser's local time): as [year month day hour minute seconds], as a date number, or as 'dd-mmm-yyyy'.
 datenum:
-    Python: timefun.py. Days from year 0: Python's date ordinal (days from 1 January of year 1) plus 366, and the time of day as a fraction; months past 12 roll into the years. Text is read with Python's datetime.strptime, trying the formats yyyy-mm-dd HH:MM:SS, yyyy-mm-dd, dd-mmm-yyyy (with or without the time), mm/dd/yyyy, mm/dd/yy, yyyy/mm/dd, HH:MM:SS and dd.mm.yyyy in turn.
+    Python: timefun.py. Days from 1 January of year 0 (day 1) in the proleptic Gregorian calendar, worked out from the year, month and day with Howard Hinnant's days-from-civil formulas in whole numbers (so year 0 and the years before it work), and the time of day as the fraction; months past 12 or below 1 roll into the years, a fraction of a year or month adds that part of its days, and days, hours, minutes and seconds may run past their ranges. Text is read with regular expressions built from the date format's tokens (yyyy, yy, mmmm, mmm, mm, dd, HH, MM, SS, FFF, AM/PM), either the format given or a list of standard ones tried in turn; two-digit years fall in the hundred years from 50 years ago, a missing year is this year and a missing month and day are 1 January.
 datevec:
-    Python: timefun.py. The date number taken apart with Python's datetime (whole days through the date ordinal, the fraction as seconds rounded to microseconds) into year, month, day, hour, minute and seconds; text goes through datenum first.
+    Python: timefun.py. The whole days turned back into year, month and day with the civil-from-days formulas, the fraction into hours, minutes and seconds; the seconds rounded to what the date number can hold (about 1e-5 s for dates of today), carrying into the next day when they round up. Text is read as datenum reads it, the seconds kept as written. With several outputs each has the shape of the input.
 datestr:
-    Python: timefun.py. Python's strftime: the numbered formats 0, 1, 2, 13, 23, 29, 30 and 31, or a pattern of yyyy, mmm, dd, HH, MM, SS, FFF and the like translated to strftime's codes; a whole date number is shown without its time.
+    Python: timefun.py. A formatter of its own for the date format's tokens (yyyy, yy, mmmm, mmm, mm, m, dddd, ddd, dd, d, HH, MM, SS, FFF, AM/PM and QQ) and the numbered formats 0 to 31, the day of the week from the days since 1970-01-01 (a Thursday); the date vector is first rounded to whole milliseconds, carrying in whole numbers. Without a format, 'dd-mmm-yyyy HH:MM:SS', or 'dd-mmm-yyyy' when every time is midnight.
 weekday:
-    Python: timefun.py. mod(floor(d) - 2, 7) + 1, so 1 is Sunday, and the day's short name.
+    Python: timefun.py. mod(floor(d) - 2, 7) + 1, so 1 is Sunday, in the shape of d, and the day's short name (or long name with 'long'); text is read as datenum reads it.
 eomday, leapyear:
-    Python: timefun.py. Python's calendar.monthrange and calendar.isleap.
+    Python: timefun.py. The days of each month from a table, plus one for February of a leap year; a leap year is divisible by 4, and not by 100 unless by 400 (the proleptic Gregorian calendar, year 0 and before included).
 etime:
-    Python: timefun.py. Both date vectors as Python datetimes; the seconds from the second to the first.
+    Python: timefun.py. The whole days between the two dates (their dates as date numbers) times 86400, plus the difference of the hours, minutes and seconds: no rounding through date numbers, so the seconds come out as exact as the vectors are.
 addtodate:
-    Python: timefun.py. Days, weeks, hours, minutes, seconds and milliseconds are added to the date number as fractions of a day; months and years are added to the date vector and turned back into a number.
+    Python: timefun.py. Days, weeks, hours, minutes, seconds and milliseconds are added to the date number as fractions of a day; months and years (whole numbers) are added to the date vector, a day past the end of the new month becoming its last day, and turned back into a number.
 
 # ---- parallel.py: the pool for parfor ---------------------------------------------------------
 parpool, gcp:
@@ -870,7 +870,7 @@ inputname:
 mfilename:
     Python: core.py. Walks up Python's call stack to the first frame of compiled code and gives the name of the file it was compiled from (with 'fullpath', its path without .m); '' for a line typed at the prompt.
 validateattributes:
-    Python: core.py. The class against the list of classes ('numeric' and 'float' name groups), then each attribute tested in turn by NumPy: positive, nonnegative, scalar, vector, integer, finite, nonempty and the comparisons >, >=, < and <=; others are accepted without a test.
+    Python: core.py. The class against the list of classes ('numeric', 'float' and 'integer' name groups), then each attribute tested in turn, by the size or by NumPy on the values: 2d, 3d, row, column, scalar, scalartext, vector, square, diag, nonempty, size (NaN for any), numel, ncols, nrows, ndims, binary, even, odd, integer, real, finite, nonnan, nonnegative, nonzero, positive, >, >=, <, <=, increasing, decreasing, nondecreasing and nonincreasing (NaN fails the ordering tests); nonsparse always holds, matrices being held full. The message names the input by the optional function name, variable name and argument number.
 onCleanup:
     Python: core.py and runtime.py. An object that calls the function when Python deletes it: when the variable holding it is cleared or the function's workspace goes at its return.
 # ---- strfun.py: text ----------------------------------------------------------------------
@@ -887,7 +887,7 @@ blanks:
 convertStringsToChars, convertCharsToStrings:
     Python: strfun.py. Each argument converted on its own: a string to a character vector (a string array to a cell of them), or a character vector or cell of them to a string array; the other arguments pass unchanged.
 num2str:
-    Python: strfun.py. A whole number is written in full. Any other number is written by Python's %g with max(floor(log10(abs(x))), 0) + 5 significant digits (so 4 decimals between 1 and 10), the exponent with a sign and at least two digits; a matrix gets the digits of its largest element, each column right-aligned and the columns two spaces apart. num2str(x, n) uses %.ng, and num2str(x, format) applies sprintf's code to each row.
+    Python: strfun.py. A whole number is written in full (an integer type exactly). Any other number is written by Python's %g with max(floor(log10(abs(x))), 0) + 5 significant digits, at most 16 (so 4 decimals between 1 and 10), the exponent with a sign and at least two digits; a matrix gets the digits of its largest element, each column right-aligned, two spaces apart. With a format, each row is written by sprintf and the leading blanks all rows share are removed; with a precision, %.ng.
 int2str:
     Python: strfun.py. The values rounded to whole numbers, halves away from zero (as round does), then written as num2str writes them.
 mat2str:
@@ -897,11 +897,11 @@ str2num:
 str2double:
     Python: strfun.py. Regular expressions read each text as a whole: an optional sign, digits (commas between them are ignored), a decimal point, an exponent with e or d, Inf or NaN; or a complex number a+bi or bi. Python's float converts the matched digits. Anything else, and any element of a cell that is not text, gives NaN.
 dec2bin, dec2hex, dec2base:
-    Python: strfun.py. Python's format(n, 'b') and format(n, 'X'), or repeated division by the base with the digits 0-9 and A-Z; the texts padded on the left with zeros to n characters or to the longest of them.
+    Python: strfun.py. Each value as a Python integer (exact for 64-bit integers; a fraction cut toward zero), written by format(n, 'b') or format(n, 'X'), or by repeated division by the base with the digits 0-9 and A-Z; padded on the left with zeros to n characters or to the longest of them. dec2bin and dec2hex write negative numbers in two's complement, in the smallest of 8, 16, 32 and 64 bits that holds them all, padded with the sign digit; dec2base refuses them.
 bin2dec, hex2dec, base2dec:
     Python: strfun.py. Python's int(s, base) of each text with its blanks taken out, as a double.
 num2hex, hex2num:
-    Python: strfun.py. Python's struct.pack('>d') and struct.unpack: the eight bytes of the IEEE double, most significant first, as 16 hexadecimal digits; hex2num pads shorter texts with zeros on the right.
+    Python: strfun.py. Python's struct.pack('>d') and struct.unpack: the eight bytes of the IEEE double, most significant first, as 16 hexadecimal digits (a single's four bytes as 8 digits); hex2num pads shorter texts with zeros on the right.
 upper, lower:
     Python: strfun.py. Python's str.upper and str.lower, which change letters of every alphabet, not only A-Z.
 strtrim:
@@ -925,7 +925,7 @@ matches:
 contains, startsWith, endsWith:
     Python: strfun.py. Python's in, str.startswith and str.endswith, true when any of the patterns is found; 'IgnoreCase' lower-cases text and patterns first.
 strfind:
-    Python: strfun.py. Python's str.find, started again one character after each hit so that overlapping occurrences are found; the positions from 1, a cell of them for a cell of texts.
+    Python: strfun.py. Python's str.find, started again one character after each hit so that overlapping occurrences are found; the positions from 1, a cell of them for a cell of texts or with 'ForceCellOutput'. An empty pattern gives [].
 count:
     Python: strfun.py. Python's str.count for each pattern, added up; occurrences that overlap are counted once.
 strtok:
@@ -1018,7 +1018,7 @@ run:
 web:
     Python: iofun.py. Tells the page to open the address in a new browser tab (window.open).
 fopen, fclose:
-    Python: iofun.py. Python's open in binary mode ('r', 'w', 'a' and their + forms; a t is ignored). The file objects are kept in a dictionary under identifiers from 3 up, with the encoding given (UTF-8 unless given) that the text functions use; fclose closes one or all of them.
+    Python: iofun.py. Python's open in binary mode ('r', 'w', 'a' and their + forms; a t is ignored). The file objects are kept in a dictionary under identifiers from 3 up, with the encoding given (UTF-8 unless given) that the text functions use; fclose closes one or all of them. fopen(fid) gives the name, mode, machine format and encoding of an open file ("stdin", "stdout" and "stderr" for 0, 1 and 2, empty texts for an identifier that is not open).
 fgetl, fgets:
     Python: iofun.py. Python's readline on the binary file, decoded by the file's encoding (bytes that do not decode become replacement characters); fgetl drops the line ending. -1 at the end of the file.
 feof:
@@ -1038,7 +1038,7 @@ readlines, writelines:
 fscanf:
     Python: iofun.py. The rest of the file decoded as text, then the format applied by regular expressions, conversion by conversion and again from its start while the text matches: %d, %i and %u whole numbers, %f, %e and %g numbers (Inf, NaN and a d exponent too), %x and %o, %s a word, %c characters and %[...] a set of them. White space in the format matches any white space, and %*... reads without keeping. The numbers fill a column (or the size given, down the columns); when only %s and %c were read the result is text.
 textscan:
-    Python: iofun.py. The text (or the rest of the file) split into lines after the header lines, each line split by the delimiters (white space unless given), and the fields given to the format's conversions in turn: numbers by Python's float (NaN where a field is not a number), text as character vectors. The result is a cell with one column for each conversion.
+    Python: iofun.py. A scanner of its own: the format is read into conversions (%f, %f32, %n, %d, %d8 to %d64, %u to %u64, %s, %q, %c, %[...] and %[^...], each with a width, a precision and * to skip) and literal text, and applied to the text (or the rest of the file) again and again, N times or to the end. White space before a field is skipped; with delimiters (characters, or strings in a cell) a field ends at one, two delimiters in a row make an empty field (EmptyValue, NaN unless given, converted to the column's class), and a line end ends a row, its missing fields empty. Numbers are matched by a regular expression (signs, decimals, exponents with ExpChars, Inf, NaN, and a + bi), integers converted exactly with rounding and saturation. A field that does not read stops the scan (ReturnOnError) and the columns read so far come back, of unequal length; the end of the text pads its last row. HeaderLines, TreatAsEmpty, CommentStyle (to the end of the line, or between two markers), MultipleDelimsAsOne, Whitespace, EndOfLine and CollectOutput (neighbouring columns of one class joined) are handled as they read. An empty format reads as many %f as the first line has numbers. The second output is the position where reading stopped; a file is left at that position.
 readmatrix, csvread, dlmread:
     Python: iofun.py. Each line split by the delimiter given, or else by the first of comma, tab and semicolon it holds (white space when none), and each field read by Python's float, NaN when it is empty or text. Leading lines that are all text are dropped, and short rows padded with NaN.
 writematrix, csvwrite, dlmwrite, writecell:
@@ -1061,7 +1061,7 @@ cell:
 num2cell:
     Python: cellfun.py. Each element in a cell of its own, keeping its class (a struct's elements, a string's strings, a character's characters); with dims, the slices along those dimensions instead.
 cell2mat:
-    Python: cellfun.py and ops.py. Each row of the cell concatenated as [a, b, ...] would be, then the rows stacked as [r1; r2; ...]; cells that hold cells or function handles are refused.
+    Python: cellfun.py and ops.py. Each row of the cell concatenated as [a, b, ...] would be, then the rows stacked as [r1; r2; ...]; a cell of more dimensions has its pages joined the same way along the third dimension and on. Cells that hold cells or function handles are refused.
 cell2struct:
     Python: cellfun.py. The cell's elements along the dimension given (the first unless given) become the named fields, and the other dimensions the struct array's size.
 struct2cell:
@@ -1096,11 +1096,11 @@ trimmean:
 geomean, harmmean:
     Python: statdesc.py. exp(mean(log(x))) and n./sum(1./x) along the first dimension whose size is not 1, by NumPy.
 mad:
-    Python: statdesc.py. The mean of abs(x - mean(x)), or with flag 1 the median of abs(x - median(x)), with NaN left out.
+    Python: statdesc.py. The mean of abs(x - mean(x)), or with flag 1 the median of abs(x - median(x)), with NaN left out as missing (NumPy's nanmean and nanmedian), along a dimension, a vector of them or 'all'; single stays single.
 moment:
-    Python: statdesc.py. mean((x - mean(x)).^k): the central moment, divided by n.
+    Python: statdesc.py. mean((x - mean(x)).^k): the central moment, divided by n, along a dimension, a vector of them or 'all'.
 zscore:
-    Python: statdesc.py. (x - mean(x))./std(x) by NumPy, std with n - 1 (n with flag 1); a vector with no spread gives zeros. The mean and std are the second and third outputs.
+    Python: statdesc.py. (x - mean(x))./std(x) by NumPy along a dimension, a vector of them or 'all', std with n - 1 (n with flag 1); where the std is 0 it divides by 1, so a vector with no spread gives zeros. The mean and std are the second and third outputs; integers give doubles.
 nanmean, nanmedian, nanstd, nanvar:
     Python: statdesc.py. numpy.mean, numpy.median, numpy.std and numpy.var (n - 1, or n with flag 1) of each vector with its NaN taken out; NaN when nothing is left.
 nansum:
@@ -1116,7 +1116,7 @@ ecdf:
 ksdensity:
     Python: statdesc.py and distributions.py. The mean of K((x - x_i)/h)/h over the data, the kernel (normal, box, triangle or Epanechnikov) scaled to unit variance so that the bandwidth h is its standard deviation. h is, unless given, the rule for normal data with a robust spread: median(abs(x - median(x)))/0.6745*(4/(3n))^(1/5). The 100 points span the data and 3h beyond. For 'positive' support the estimate is made on log(x), for [lo hi] on log((x - lo)./(hi - x)), and carried back by the derivative of the transformation. 'cdf', 'survivor' and 'cumulative hazard' use the kernel's distribution function, and 'icdf' finds each quantile by scipy.optimize.brentq.
 corr:
-    Python: statdesc.py. Pearson's r by numpy.corrcoef for each pair of columns, the p-value from t = r*sqrt((n - 2)/(1 - r^2)) and the survival function of scipy.stats.t. Spearman's is Pearson's on the ranks (scipy.stats.rankdata, ties averaged); Kendall's is scipy.stats.kendalltau (tau-b) with its own p-value. 'Rows', 'complete' drops the rows with any NaN and 'pairwise' those of each pair; a one-sided 'Tail' halves the two-sided p-value on the side of r.
+    Python: statdesc.py. Pearson's r by numpy.corrcoef for each pair of columns, the p-value from t = r*sqrt((n - 2)/(1 - r^2)) and the survival function of scipy.stats.t. Spearman's is Pearson's on the ranks (scipy.stats.rankdata, ties averaged); Kendall's is scipy.stats.kendalltau (tau-b) with its own p-value. 'Rows', 'complete' drops the rows with any NaN and 'pairwise' those of each pair; a one-sided 'Tail' halves the two-sided p-value on the side of r. Rows are observations and columns variables, a row vector too (so its correlations are NaN); single in gives single out.
 bootstrp:
     Python: statdesc.py. For each of the nboot samples, n row numbers drawn with replacement from rand's generator, the data's rows (or a vector's elements) taken with them, and the statistic called on them; each result is a row of the output, and the second output holds the row numbers.
 jackknife:
@@ -1304,7 +1304,7 @@ colorbar:
 colormap:
     Python: graphics.py and colormaps.py. Sets the figure's (or the axes') Colormap, an m-by-3 array of RGB values: a named map of 256 rows unless m is given, or the array given.
 parula, viridis, turbo, jet, gray, hot, cool, spring, summer, autumn, winter, bone, copper, pink, hsv, lines, colorcube, prism, flag, white:
-    Python: colormaps.py. m-by-3 arrays of RGB values, 256 rows unless m is given. gray, hot, cool, spring, summer, autumn, winter, bone, copper and pink are their usual formulas in r = linspace(0, 1, m) (hot ramps red, then green, then blue; bone and pink mix gray with hot); jet interpolates between dark blue, blue, cyan, yellow, red and dark red; hsv steps round the hue circle by Python's colorsys.hsv_to_rgb; lines, prism and flag repeat their colours; colorcube takes the points of an RGB grid. parula, viridis and turbo interpolate linearly between anchor colours (parula's are this page's own blue-to-yellow ramp).
+    Python: colormaps.py. m-by-3 arrays of RGB values, 256 rows unless m is given. gray, cool, spring, summer, autumn, winter and copper are their usual formulas in r = linspace(0, 1, m); hot ramps red, then green, then blue, each over fix(3m/8) rows, and the rest of blue over what is left; bone is (7*gray + hot reversed)/8 and pink sqrt((2*gray + hot)/3); jet places a ramp up, a plateau and a ramp down (a quarter of the map each) in blue, then green, then red, shifted by a quarter; hsv steps round the hue circle by Python's colorsys.hsv_to_rgb; lines, prism and flag repeat their colours; colorcube takes the points of an RGB grid. parula, viridis and turbo interpolate linearly between anchor colours (parula's are this page's own blue-to-yellow ramp).
 caxis, clim:
     Python: graphics.py. The axes' CLim, the values mapped to the colormap's ends; until it is set, the range of the colour data the page draws ('auto').
 shading:
@@ -1424,6 +1424,153 @@ sound, soundsc:
     Python: uifun.py. The samples (a column for each of one or two channels) sent to the page as 32-bit floats, which the browser's audio plays at once at the rate given (8192 Hz unless given); sound clips them to [-1, 1], soundsc first scales the data's range (or the range given) onto it.
 beep:
     Python: uifun.py. A tone of 880 Hz lasting 0.12 s, played as sound plays it, unless beep off was given.
+# ---- validators.py: arguments ------------------------------------------------------------------
+mustBePositive, mustBeNonnegative, mustBeNegative, mustBeNonpositive, mustBeNonzero, mustBeInteger, mustBeFinite, mustBeNonNan, mustBeReal:
+    Python: validators.py. The values as a NumPy array (numeric or logical, or the error saying it must be), then one test on all of them: > 0, >= 0, < 0, <= 0, != 0, whole and finite, numpy.isfinite, not numpy.isnan, no imaginary part. NaN fails the comparisons. The error's identifier is MATLAB:validators: and the function's name.
+mustBeGreaterThan, mustBeGreaterThanOrEqual, mustBeLessThan, mustBeLessThanOrEqual, mustBeInRange:
+    Python: validators.py. The values compared with the bound (or bounds) by NumPy, NaN failing; mustBeInRange includes both bounds unless 'exclusive', 'exclude-lower' or 'exclude-upper'.
+mustBeNumeric, mustBeNumericOrLogical, mustBeFloat, mustBeNonempty, mustBeNonsparse, mustBeScalarOrEmpty, mustBeVector:
+    Python: validators.py. The value's class or size: numeric, numeric or logical, single or double, at least one element, at most one, a row or a column (or any empty with 'allow-all-empties'); mustBeNonsparse always passes, matrices being held full.
+mustBeMember:
+    Python: validators.py. Numbers by numpy.isin; text compared as text, every element of A among those of S.
+mustBeText, mustBeTextScalar, mustBeNonzeroLengthText, mustBeValidVariableName:
+    Python: validators.py. The value's class and shape: a character row (or matrix), a string array, or a cell of character vectors; one text for the scalar form; no empty text; each text a valid name by isvarname.
+mustBeA, mustBeUnderlyingType:
+    Python: validators.py. The value's class (or, for an object, its superclasses) against the names given; mustBeA also takes 'numeric', 'float' and 'integer' for their groups.
+mustBeNonmissing:
+    Python: validators.py. No NaN in numbers and no missing string.
+mustBeFile, mustBeFolder:
+    Python: validators.py. Each name, from the current folder, tested by Python's os.path.isfile or os.path.isdir.
+nargchk:
+    Python: validators.py. 'Not enough input arguments.' when n < low, 'Too many input arguments.' when n > high, else ''; with 'struct', a struct of message and identifier (0-by-1 when n is within).
+namelengthmax:
+    Python: elmat.py. 63.
+inputParser, addRequired, addOptional, addParameter, addParamValue, parse:
+    Python: validators.py. A handle object holding the inputs in the order added: required, optional (with defaults) and name-value parameters (with defaults and a PartialMatchPriority). parse takes the required inputs in turn, then the optional ones, stopping at text that names a parameter (or that an optional input's check refuses), then name-value pairs, a struct standing for its fields' pairs when StructExpand is on. A name matches a parameter exactly or, with PartialMatching, by a prefix that picks one (case ignored unless CaseSensitive). Each value is given to its validation function, which passes by returning true (or nothing) and fails by returning false or giving an error; the message names the input and the function. Unknown names go to Unmatched when KeepUnmatched is on and are an error otherwise. Results and Parameters list the names in alphabetical order; UsingDefaults those not given. The methods are also called as p.addRequired(...) and p.parse(...).
+# ---- datatools.py: missing data, outliers, smoothing, groups ----------------------------------------
+fillmissing:
+    Python: datatools.py. Each vector along the dimension on its own: the missing entries (NaN; empty text in a cell; missing strings; blank characters) are filled from the others by their positions: 'previous', 'next' and 'nearest' (a tie to the earlier) copy a known value; 'linear', 'spline' (not-a-knot), 'pchip' and 'makima' interpolate through the known points with SciPy's interp1d, CubicSpline, PchipInterpolator and Akima1DInterpolator; 'movmean' and 'movmedian' take numpy.nanmean or numpy.nanmedian of the window around each missing entry; 'constant' puts a value (or one per vector). The entries before the first known value and after the last are filled by EndValues: extrapolated by the method ('extrap', the default), by 'previous', 'next' or 'nearest', by a value, or left ('none'). MaxGap leaves gaps wider than it (from the known value before to the one after). The second output marks what was filled.
+rmmissing:
+    Python: datatools.py. A vector without its missing entries; a matrix without the rows (or columns, dim 2) with at least MinNumMissing (1) missing entries; the second output marks what was removed.
+standardizeMissing:
+    Python: datatools.py. numpy.isin of the numbers against the indicators, those set to NaN (integers have no missing value and are refused); in text, matching elements made empty or missing.
+isoutlier:
+    Python: datatools.py. Each vector along the dimension, NaN left out: 'median' takes the median and the median absolute deviation times 1.4826 (so that for normal data it estimates the standard deviation), outliers being more than 3 of those from the median; 'mean' the mean and the standard deviation (n - 1); 'quartiles' the quartiles (the language's quantiles, values at (i - 0.5)/n) and 1.5 interquartile ranges beyond them; 'grubbs' removes the farthest value from the mean while Grubbs's statistic passes its critical value at alpha 0.05 (from scipy.stats.t); 'gesd' runs the generalized extreme studentized deviate test for up to MaxNumOutliers (a tenth of the values, rounded up) and keeps the largest number that passed; 'movmedian' and 'movmean' do the median or mean test in each window. ThresholdFactor replaces the 3 (the 1.5, or alpha). L, U and C are the bounds and the centre.
+filloutliers:
+    Python: datatools.py. The outliers isoutlier finds replaced: by the centre, clipped to the bounds, by a number, or by fillmissing's methods with the outliers as the gaps (NaN in the data is neither filled nor used).
+smoothdata:
+    Python: datatools.py. Each vector along the dimension: 'movmean' and 'movmedian' over the window (NaN left out by numpy.nanmean and numpy.nanmedian unless 'includenan'); 'gaussian' weights the window by a normal curve whose standard deviation is a fifth of the window; 'lowess' and 'loess' fit a line or a parabola to each window by least squares (numpy.linalg.lstsq) with tricube weights by distance, the r forms reweighting by bisquare weights of the residuals five times; 'sgolay' is scipy.signal.savgol_filter (Degree 2, its ends fitted). Without a window, 4 or a tenth of the length, whichever is larger (PyLAB's choice); the second output is the window.
+findgroups:
+    Python: datatools.py. The distinct values (or combinations of values across the inputs) sorted, numbered from 1, and each element given its number; NaN, empty text and missing strings get NaN. The further outputs are the values of each group.
+splitapply:
+    Python: datatools.py. For each group number 1..max(G), the rows (or elements of vectors) of each data input in that group given to the function together, its outputs (one row each) stacked by vertical concatenation; rows with group NaN are left out, and a group number with no rows is an error.
+histcounts2:
+    Python: datatools.py. Edges for each coordinate as histcounts chooses them (round widths, Scott's rule) unless given, each pair counted into its cell of the grid with numpy.add.at (bins [e(k), e(k+1)), the last closed); pairs with NaN or outside are in no bin (bin 0). Normalization as histcounts, with the cells' areas.
+rms:
+    Python: datafun.py. sqrt(mean(abs(x).^2)) by NumPy along the dimension (a vector of them, or 'all'), numpy.nanmean with 'omitnan'; single stays single.
+# ---- arrays, cells, coordinates, text, JSON --------------------------------------------------------
+bsxfun:
+    Python: elmat.py. Both arrays expanded along their dimensions of size 1 to the size of the other (numpy.broadcast_to), the function then called once with the two.
+repelem:
+    Python: elmat.py. numpy.repeat of the vector's elements, or along each dimension of an array in turn, by a count or one count per element of that dimension; characters, cells and strings too.
+mat2cell:
+    Python: cellfun.py. The array sliced into the blocks the sizes give (their sums must be the array's sizes; a dimension not given is one block), each block a cell.
+celldisp:
+    Python: cellfun.py. Each element shown as display would show it, named C{i} (C{i,j} for a matrix), cells inside cells taken apart in turn; the name is the variable in the caller holding that very cell, or 'ans'.
+swapbytes:
+    Python: elmat.py. NumPy's byteswap of the array, its class kept.
+spfun:
+    Python: sparse.py. The function called once on the column of nonzero elements (numpy.flatnonzero, down the columns), its results put back in their places among zeros.
+cart2pol, pol2cart, cart2sph, sph2cart:
+    Python: elfun.py. numpy.arctan2 and numpy.hypot (theta = atan2(y, x), rho = hypot(x, y); elevation = atan2(z, hypot(x, y)), r = hypot(hypot(x, y), z)), or cos and sin (x = rho cos(theta), y = rho sin(theta); x = r cos(elevation) cos(azimuth) and so on), the inputs broadcast to one size; single in gives single out.
+replaceBetween, eraseBetween:
+    Python: strfun.py. For text markers, each start marker found by str.find with the next end marker after it, the text between replaced (the markers too with 'Boundaries', 'inclusive'); for positions, the characters from the start to the end position, both included.
+matlab.lang.makeUniqueStrings:
+    Python: strfun.py. The names in order: one that repeats an earlier one, or is in the list to avoid, gets the smallest _k that makes it new (cut so that the whole stays within maxLength); the first of each is kept. A logical or index second input picks the elements that may change instead.
+jsondecode:
+    Python: iofun.py. Python's json.loads, then: an object becomes a struct (names made valid by matlab.lang.makeValidName); an array of numbers a column (null as NaN), of booleans a logical column, of arrays of numbers alike a matrix (each inner array a row), of objects with the same fields a struct array; any other array a cell column; null alone []; text a character vector.
+jsonencode:
+    Python: iofun.py. The value as Python data, then json.dumps: numbers (whole ones without a point, singles by their own shortest digits, Inf and NaN as null unless 'ConvertInfAndNaN' is false), logical as true and false, a character row as a string (a matrix as a list of its rows), vectors as lists and matrices as lists of rows, cells as lists, a struct as an object (an array of them as a list), a containers.Map as an object; 'PrettyPrint' indents by two spaces.
+# ---- matfun.py: structure, iterative solvers, updates -------------------------------------------------
+issymmetric, ishermitian:
+    Python: matfun.py. A compared with its transpose (conjugate transpose for ishermitian), or with minus it for 'skew', element by element; with a tolerance, the largest row sum of abs(A - A.') against tol times that of A (the infinity norms). A matrix that is not square gives false.
+istril, istriu, isbanded, bandwidth:
+    Python: matfun.py. numpy.nonzero gives the positions of the nonzeros; the lower bandwidth is the largest i - j among them, the upper the largest j - i (0 for none).
+pcg, bicg, bicgstab, cgs, gmres, minres, qmr, tfqmr:
+    Python: matfun.py. SciPy's scipy.sparse.linalg cg, bicg, bicgstab, cgs, gmres, minres, qmr and tfqmr with rtol the tolerance (1e-6 unless given) and no absolute tolerance, maxit min(n, 20) unless given (gmres: restart n, at most min(n/restart, 10) restarts), x0 zeros unless given. A function handle is wrapped as a LinearOperator (bicg and qmr call it with 'notransp' and 'transp'); the preconditioner M = M1*M2 becomes the operator that solves M*y = r (numpy.linalg.solve, or the handles). relres is norm(b - A*x)/norm(b) computed after the solve, flag 0 when it meets the tolerance, 1 when the iterations ran out, 4 when SciPy reports a breakdown; resvec holds norm(b - A*x) at the start and after each iteration (gmres: SciPy's residual estimate at each inner step).
+lsqr:
+    Python: matfun.py. scipy.sparse.linalg.lsqr with atol and btol the tolerance and iter_lim maxit (min(m, n, 20) unless given); a preconditioner P = M1*M2 by solving for P*x; flag 0 when LSQR stops on its tolerances, 1 on its iteration limit.
+cholupdate:
+    Python: matfun.py. scipy.linalg.cholesky of R'*R + x*x' (or - x*x'); a matrix that is no longer positive definite gives p = 1 and R back unchanged (an error with one output).
+qrupdate, qrinsert, qrdelete:
+    Python: matfun.py. scipy.linalg.qr_update (with the conjugate of v, so that Q*R + u*v' is factored), qr_insert and qr_delete (the column or row j counted from 1), which update the factors by Givens rotations rather than factoring again.
+qz:
+    Python: matfun.py. scipy.linalg.qz with output 'complex' (the default) or 'real'; SciPy's A = Q*AA*Z' is turned around so that Q*A*Z = AA (Q is SciPy's Q'). V and W are scipy.linalg.eig's right and left generalized eigenvectors, each column scaled to unit norm.
+ordschur:
+    Python: matfun.py. LAPACK's trsen (scipy.linalg.lapack.dtrsen or ztrsen, without condition numbers), which moves the selected eigenvalues to the top by exchanging diagonal blocks, both of a real 2-by-2 block together; keys are taken as clusters, moved to the top from the smallest key up so that larger keys end first.
+ordeig:
+    Python: matfun.py. The diagonal of T read in order, each real 2-by-2 block giving its pair of eigenvalues (numpy.linalg.eigvals, the one with positive imaginary part first); for AA and BB the ratios of their diagonals.
+polyeig:
+    Python: matfun.py. The companion pencil of size n*p, [0 I ...; -A0 -A1 ... -A(p-1)] against diag(I, ..., Ap), solved by scipy.linalg.eig; the eigenvectors are the first n rows of the pencil's, scaled to unit norm. s is (sum |e|^k norm(Ak)) norm(x) norm(y)/(|e| |y'*P'(e)*x|), y the left eigenvector.
+# ---- geometry.py: triangulations, searching, interpolation objects -------------------------------------
+delaunay:
+    Python: geometry.py. scipy.spatial.Delaunay (Qhull) of the points, its simplices counted from 1.
+convhull:
+    Python: geometry.py. scipy.spatial.ConvexHull (Qhull): in 2-D its vertices, counterclockwise, the first repeated at the end, points on straight edges dropped (kept and put in their places with 'Simplify', false), and its area; in 3-D its triangles and volume.
+voronoi, voronoin:
+    Python: geometry.py. scipy.spatial.Voronoi (Qhull). voronoin gives its vertices after a first row of Inf, and each point's region with Qhull's -1 (the point at infinity) as 1. voronoi gives the ridges as edges, an unbounded ridge drawn from its vertex outward along the perpendicular bisector of its two points to twice the spread of the points; with no outputs it plots the points and the edges.
+tsearchn:
+    Python: geometry.py. For each simplex, the barycentric coordinates of the points (by the inverse of the matrix of its vertices with a row of ones); the first simplex where all are 0 or more (within 1e-12) holds the point; NaN for none.
+dsearchn:
+    Python: geometry.py. scipy.spatial.cKDTree's query: the nearest point and the distance; with T and outval, points that no Delaunay triangle holds (scipy.spatial.Delaunay.find_simplex) get outval.
+rectint:
+    Python: geometry.py. For each pair of rectangles, the overlap of their x ranges times that of their y ranges, 0 where either is empty.
+interp3:
+    Python: geometry.py. interpn with the axes swapped: in meshgrid's layout y runs down the rows and x across, so interp3(X, Y, Z, V, xq, yq, zq) is interpn(y, x, z, V, yq, xq, zq); full grids are reduced to their vectors.
+griddedInterpolant:
+    Python: geometry.py. A handle object holding the grid vectors and the values; F(...) evaluates inside the grid by interp1 (one dimension) or interpn with the method, so the values are those of those functions, and outside it by the extrapolation method: interp1 with 'extrap', or scipy.interpolate.RegularGridInterpolator (linear, nearest, cubic for spline, cubic and makima, pchip) with no bounds; 'none' gives NaN. A cell of vectors evaluates on their grid (numpy.meshgrid with 'ij').
+scatteredInterpolant:
+    Python: geometry.py. A handle object holding the points and values. 'linear' (and 'natural', which SciPy does not have) is scipy.interpolate.LinearNDInterpolator over the Delaunay triangulation, 'nearest' NearestNDInterpolator. Outside the convex hull: 'nearest' takes the nearest point's value, 'linear' extends the plane through the hull triangle (simplex) whose centre is nearest, 'none' gives NaN. Changing Values keeps the triangulation.
+triplot:
+    Python: geometry.py. plot of all the triangles' edges as one line, a NaN between triangles.
+trisurf, trimesh:
+    Python: geometry.py. patch with Faces the triangles and Vertices [x y z], coloured by FaceVertexCData z (or c): flat faces with black edges for trisurf, white faces with coloured edges for trimesh; then view(3).
+# ---- media.py: images, sound and the web --------------------------------------------------------
+imread, imfinfo:
+    Python: media.py. Pillow (PIL.Image.open; in the page, Pyodide loads the package the first time) reads the file; its pixels become a NumPy array by the image's mode: gray as m-by-n uint8 (16-bit as uint16), colour as m-by-n-by-3, an alpha channel as the third output, a palette image as indices with the palette as a colormap of values 0 to 1. imfinfo takes the size, mode and format from the same image and the file's size and date from os.stat.
+imwrite:
+    Python: media.py. Pillow's Image.fromarray of the pixels (doubles scaled by 255 and rounded, logical as black and white, uint16 kept for PNG and TIFF) or of the indices with the colormap as a palette, saved in the format the name or the argument gives; 'Quality' goes to the JPEG encoder and 'Alpha' becomes the image's alpha channel.
+audioread, audioinfo:
+    Python: media.py. scipy.io.wavfile.read; 8-bit samples are scaled as (x - 128)/128, 16-bit by 1/32768, 32-bit integers by 1/2^31, floating point kept; 'native' keeps the file's class.
+audiowrite:
+    Python: media.py. scipy.io.wavfile.write: doubles clipped to [-1, 1] and written as 16-bit integers (8-bit, 32-bit integers for 24, or 32- and 64-bit floating point with BitsPerSample).
+webread, webwrite, websave, weboptions:
+    Python: media.py. In the page, Pyodide's pyfetch (the browser's fetch, so only servers that allow it by CORS answer); elsewhere Python's urllib.request with the timeout. The query is URL-encoded onto the address; webwrite sends name-value pairs as a form, other data as JSON (by jsonencode's rules) and text as it is. The answer is read by its content type (or the ContentType option): JSON by jsondecode's rules, text as characters, an image through Pillow, anything else as a column of uint8. Header fields, a key, and a user name and password (basic authentication) go into the request's headers. weboptions is a value object holding these settings.
+# ---- moreplots.py: more plots ----------------------------------------------------------------------
+compass, feather:
+    Python: moreplots.py. Each arrow drawn as one polyline, the shaft and a two-stroke head a quarter of its length long at 20 degrees, NaN between arrows: from the origin in polar axes (polarplot of their angles and lengths) for compass, from (k, 0) in plain axes for feather, with a dotted line along y = 0.
+rose:
+    Python: moreplots.py. numpy.histogram of the angles taken modulo 2*pi in nbins (20) equal bins, or in bins about the centres given; each bin's outline is four points (its edges at radius 0 and at its count), the outline plotted by polarplot.
+pareto:
+    Python: moreplots.py. The values sorted in descending order (stable); bars by bar, as many as it takes for the cumulative sum to reach the threshold (0.95) of the total; xticklabels from the names; then yyaxis right with the cumulative percentage by plot, limits 0 to 100.
+stem3:
+    Python: moreplots.py. One line holding every stem (from z = 0 to the value, NaN between them) and one line of markers at the values; view(3).
+comet, comet3:
+    Python: moreplots.py. The whole path as a line and its last point as a filled marker (no animation).
+bar3, bar3h, histogram2:
+    Python: moreplots.py. Each bar is a box of six quadrilaterals in a patch per series (Faces and Vertices), width 0.8 unless given: detached at x = the series number, grouped side by side, or stacked; bar3h puts the values along x. histogram2 counts with histcounts2 and draws a box over each bin with a count. view(3).
+pie3:
+    Python: moreplots.py. Each wedge, from 90 degrees clockwise, as patches: its top and bottom faces (the centre and points along the arc every 0.05 radians) and its curved and flat sides, 0.35 high; an exploded wedge is moved out by 0.1 along its middle; its percentage (or label) as text outside it. view(3), axis equal and off.
+ribbon:
+    Python: moreplots.py. Each column as a surface two points wide, at x = its number +- width/2, coloured by its number.
+isosurface:
+    Python: moreplots.py. Marching tetrahedra: each cube of the grid is cut into six tetrahedra; where the value crosses the isovalue within one, one triangle (one corner on its own side) or two (two and two) are made, their corners by linear interpolation along the edges, corners on a shared edge made once. Faces and vertices, or a patch drawn with view(3).
+slice:
+    Python: moreplots.py. A surface on each plane over the grid's other two vectors, coloured by interp3 of the volume at its points.
+stream2, stream3, streamline:
+    Python: moreplots.py. From each starting point, fourth-order Runge-Kutta steps along the velocity (scipy.interpolate.RegularGridInterpolator, linear, on the grid in meshgrid's layout) normalised so that a step is the step size (0.1) in cells; a line ends at the edge of the grid, where the speed is 0 or not a number, or at maxvert (10000) points. streamline plots the lines.
+camorbit, campos:
+    Python: moreplots.py. Through view: camorbit adds dtheta to the azimuth and dphi to the elevation (kept within -90 to 90). campos gives the point in the view's direction at ten times the axes' size from their centre, and campos(p) sets the view to look from p at that centre.
 """
 
 

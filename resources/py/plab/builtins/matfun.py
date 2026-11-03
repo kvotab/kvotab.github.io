@@ -8,8 +8,8 @@ import numpy as np
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, reduce, expand_dims, strip_flags)
-from ..ops import finish
-from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY)
+from ..ops import finish, align
+from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY, py_str)
 from .. import ops as O
 from .. import runtime as R
 
@@ -43,20 +43,34 @@ def inv(nargout, *args):
     nargchk(args, 1, 1, 'inv')
     a = _mat(args[0], 'inv')
     _sq(a, 'inv')
+
+    def back(r):
+        return like_class(r, args[0]) if class_of(args[0]) == 'single' else out(r)
     if a.size == 0:
-        return out(a.copy())
+        return back(a.copy())
+    if a.size == 1:
+        # a scalar's inverse is 1/x: inv(-0) is -Inf, inv(Inf) is 0
+        z = a.reshape(-1)[0]
+        if z == 0:
+            R.warn('MATLAB:singularMatrix', 'Matrix is singular to working precision.')
+        with np.errstate(all='ignore'):
+            if np.iscomplexobj(a):
+                r = 0j if np.isinf(z) else (np.nan + np.nan * 1j if np.isnan(z) else (np.inf if z == 0 else 1 / z))
+            else:
+                r = 1 / z
+        return back(np.array([[r]]))
     if not np.all(np.isfinite(a)):
         R.warn('MATLAB:illConditionedMatrix', 'Matrix is singular, close to singular or badly scaled. Results may be inaccurate. RCOND = NaN.')
-        return out(np.full(a.shape, np.nan))
+        return back(np.full(a.shape, np.nan))
     rc, lu, piv = _rcond(a)
     if lu is not None and np.any(np.diag(lu) == 0):
         R.warn('MATLAB:singularMatrix', 'Matrix is singular to working precision.')
-        return out(np.full(a.shape, np.inf))
+        return back(np.full(a.shape, np.inf))
     with np.errstate(all='ignore'):
         r = np.linalg.inv(a)
     if rc < np.finfo(float).eps:
         R.warn('MATLAB:nearlySingularMatrix', f'Matrix is close to singular or badly scaled. Results may be inaccurate. RCOND =  {rc:.6e}.')
-    return like_class(r, args[0]) if class_of(args[0]) == 'single' else out(r)
+    return back(r)
 
 
 @bi('det')
@@ -524,6 +538,10 @@ def dot(nargout, *args):
     if (a.ndim == 2 and 1 in a.shape) and (b.ndim == 2 and 1 in b.shape) and len(args) < 3:
         return out(np.array(np.sum(np.conj(a.reshape(-1)) * b.reshape(-1))))
     dim = dim_arg(args[2], 'dot') if len(args) > 2 else first_dim(a.shape)
+    a, b = align(a, b)
+    if dim != 'all' and dim >= a.ndim:
+        # a dimension past the arrays' own: each element with itself
+        return out(np.conj(a) * b)
     return out(np.sum(np.conj(a) * b, axis=dim, keepdims=True))
 
 
@@ -613,3 +631,498 @@ def transpose(nargout, *args):
 @bi('ctranspose')
 def ctranspose(nargout, *args):
     return O.ctranspose(args[0])
+
+
+# ---- structure tests ----------------------------------------------------------------------------------------
+
+def _struct_mat(v, fn):
+    if class_of(v) in ('cell', 'struct', 'string') or isinstance(v, (Cell, Struct)):
+        raise err(f'MATLAB:{fn}:invalidInput', 'The input must be a numeric or logical matrix.', fn)
+    a = np.asarray(darr(v, fn))
+    if a.ndim != 2:
+        raise err(f'MATLAB:{fn}:inputMustBe2D', 'Input must be 2-D.', fn)
+    return a
+
+
+def _sym_test(name, conj):
+    @bi(name)
+    def f(nargout, *args):
+        """True when A equals its transpose (A' for ishermitian), or minus it
+        with 'skew'; with a tolerance, when norm(A - A.', inf) is within tol
+        of norm(A, inf)."""
+        nargchk(args, 1, 3, name)
+        a = _struct_mat(args[0], name)
+        skew, tol = False, None
+        for x in args[1:]:
+            s = opt_str(x)
+            if s is not None:
+                if s.lower() not in ('skew', 'nonskew'):
+                    raise err(f'MATLAB:{name}:invalidOption', "The option is 'skew' or 'nonskew'.", name)
+                skew = s.lower() == 'skew'
+            else:
+                tol = float(num(x))
+        if a.shape[0] != a.shape[1]:
+            return False
+        t = a.conj().T if conj else a.T
+        d = a + t if skew else a - t
+        if tol is None:
+            return bool(np.all(d == 0))
+        with np.errstate(all='ignore'):
+            na = np.max(np.sum(np.abs(a), axis=1)) if a.size else 0.0
+            nd = np.max(np.sum(np.abs(d), axis=1)) if d.size else 0.0
+        return bool(nd <= tol * na)
+    return f
+
+
+_sym_test('issymmetric', False)
+_sym_test('ishermitian', True)
+
+
+def _band(a):
+    """The lower and upper bandwidths: how far the nonzeros reach below and above the diagonal."""
+    i, j = np.nonzero(a)
+    if i.size == 0:
+        return 0, 0
+    return int(max(0, np.max(i - j))), int(max(0, np.max(j - i)))
+
+
+@bi('istril')
+def istril(nargout, *args):
+    nargchk(args, 1, 1, 'istril')
+    return _band(_struct_mat(args[0], 'istril'))[1] == 0
+
+
+@bi('istriu')
+def istriu(nargout, *args):
+    nargchk(args, 1, 1, 'istriu')
+    return _band(_struct_mat(args[0], 'istriu'))[0] == 0
+
+
+@bi('isbanded')
+def isbanded(nargout, *args):
+    nargchk(args, 3, 3, 'isbanded')
+    lo, up = _band(_struct_mat(args[0], 'isbanded'))
+    return lo <= num(args[1]) and up <= num(args[2])
+
+
+@bi('bandwidth', nout=2)
+def bandwidth(nargout, *args):
+    """[lower, upper] = bandwidth(A), or bandwidth(A, 'lower') or 'upper'."""
+    nargchk(args, 1, 2, 'bandwidth')
+    lo, up = _band(_struct_mat(args[0], 'bandwidth'))
+    if len(args) > 1:
+        t = (opt_str(args[1]) or '').lower()
+        if t not in ('lower', 'upper'):
+            raise err('MATLAB:bandwidth:invalidType', "The type is 'lower' or 'upper'.", 'bandwidth')
+        return float(lo if t == 'lower' else up)
+    return (float(lo), float(up)) if nargout > 1 else float(lo)
+
+
+# ---- iterative solvers --------------------------------------------------------------------------------------------
+
+def _operator(v, n, fn, transposable=False):
+    """A matrix, or a function handle computing A*x (and A'*x when asked with
+    'transp'), as SciPy's LinearOperator."""
+    from scipy.sparse.linalg import LinearOperator
+    from ..values import FH
+    if isinstance(v, FH):
+        def mv(x):
+            args = (out(np.asarray(x).reshape(-1, 1)),) + (('notransp',) if transposable else ())
+            if transposable:
+                args = (args[0], Char.of('notransp'))
+            return np.asarray(arr(v.scall(1, *args))).reshape(-1)
+
+        def rmv(x):
+            return np.asarray(arr(v.scall(1, out(np.asarray(x).reshape(-1, 1)), Char.of('transp')))).reshape(-1)
+        return LinearOperator((n, n), matvec=mv, rmatvec=rmv if transposable else None, dtype=F64), None
+    a = _mat(v, fn)
+    if a.shape[0] != a.shape[1] and fn != 'lsqr':
+        raise err(f'MATLAB:{fn}:NonSquareMatrix', 'The matrix must be square.', fn)
+    return a, a
+
+
+def _precond(M1, M2, n, fn):
+    """MATLAB's preconditioner M = M1*M2 (whose system M y = r is solved) as
+    SciPy's M (which applies an approximation of inv(A))."""
+    from scipy.sparse.linalg import LinearOperator
+    from ..values import FH
+    if M1 is None:
+        return None
+    parts = [M for M in (M1, M2) if M is not None and numel(M)]
+
+    def apply(r):
+        y = np.asarray(r).reshape(-1)
+        for M in parts:
+            if isinstance(M, FH):
+                y = np.asarray(arr(M.scall(1, out(y.reshape(-1, 1))))).reshape(-1)
+            else:
+                y = np.linalg.solve(_mat(M, fn), y)
+        return y
+
+    def apply_t(r):
+        # the transpose, for qmr: the factors transposed, in the other order
+        y = np.asarray(r).reshape(-1)
+        for M in reversed(parts):
+            if isinstance(M, FH):
+                y = np.asarray(arr(M.scall(1, out(y.reshape(-1, 1)), Char.of('transp')))).reshape(-1)
+            else:
+                y = np.linalg.solve(_mat(M, fn).T, y)
+        return y
+    if not parts:
+        return None
+    return LinearOperator((n, n), matvec=apply, rmatvec=apply_t, dtype=F64)
+
+
+def _solver_args(args, fn, has_restart=False):
+    """A, b, (restart,) tol, maxit, M1, M2, x0 in the language's order, with
+    the defaults: tol 1e-6, maxit min(n, 20)."""
+    b = darr(args[1]).reshape(-1)
+    n = b.size
+    rest = list(args[2:]) + [None] * 8
+    restart = None
+    if has_restart:
+        r = rest.pop(0)
+        restart = int(num(r)) if r is not None and numel(r) else None
+    tol = rest[0]
+    tol = 1e-6 if tol is None or not numel(tol) else float(num(tol))
+    maxit = rest[1]
+    maxit = None if maxit is None or not numel(maxit) else int(num(maxit))
+    M1 = rest[2] if rest[2] is not None and numel(rest[2]) else None
+    M2 = rest[3] if rest[3] is not None and numel(rest[3]) else None
+    x0 = rest[4]
+    x0 = np.zeros(n) if x0 is None or not numel(x0) else darr(x0).reshape(-1).astype(F64)
+    return b, n, restart, tol, maxit, M1, M2, x0
+
+
+_SOLVERS = {'pcg': 'cg', 'bicg': 'bicg', 'bicgstab': 'bicgstab', 'cgs': 'cgs', 'minres': 'minres', 'qmr': 'qmr', 'tfqmr': 'tfqmr', 'gmres': 'gmres'}
+
+
+def _run_solver(name, solver, A, b, tol, restart, kw, cb, resvec, nb):
+    with np.errstate(all='ignore'):
+        if name == 'gmres':
+            def cbg(rk):
+                resvec.append(float(rk) * nb)
+            return solver(A, b, rtol=tol, atol=0.0, restart=restart, callback=cbg, callback_type='pr_norm', **kw)
+        if name == 'minres':
+            return solver(A, b, rtol=tol, callback=cb, **kw)
+        return solver(A, b, rtol=tol, atol=0.0, callback=cb, **kw)
+
+
+def _iterative(name):
+    @bi(name, nout=5)
+    def f(nargout, *args):
+        """[x, flag, relres, iter, resvec] by SciPy's scipy.sparse.linalg solver."""
+        nargchk(args, 2, 8, name)
+        import scipy.sparse.linalg as SL
+        b, n, restart, tol, maxit, M1, M2, x0 = _solver_args(args, name, name == 'gmres')
+        A, dense = _operator(args[0], n, name, transposable=name in ('bicg', 'qmr'))
+        if dense is not None and dense.shape[0] != n:
+            raise err(f'MATLAB:{name}:WrongSize', 'b must have one element per row of A.', name)
+
+        def Ax(x):
+            return A @ x if dense is not None else A.matvec(x)
+        if name == 'gmres':
+            restart = n if restart is None else min(restart, n)
+            outer = maxit if maxit is not None else min(max(n // restart, 1), 10)
+            maxiter = outer
+        else:
+            maxiter = maxit if maxit is not None else min(n, 20)
+        M = _precond(M1, M2, n, name)
+        nb = float(np.linalg.norm(b))
+        if nb == 0:
+            x = np.zeros(n)
+            res = (out(x.reshape(-1, 1)), 0.0, 0.0, 0.0, out(np.zeros((1, 1))))
+            return res[0] if nargout <= 1 else res[:nargout]
+        resvec = [float(np.linalg.norm(b - Ax(x0)))]
+        count = [0]
+
+        def cb(xk):
+            count[0] += 1
+            resvec.append(float(np.linalg.norm(b - Ax(np.asarray(xk).reshape(-1)))))
+        if name == 'qmr':
+            # SciPy's qmr takes a left and a right preconditioner together: the right one is I
+            from scipy.sparse.linalg import LinearOperator
+            ident = LinearOperator((n, n), matvec=lambda r: np.asarray(r).reshape(-1), rmatvec=lambda r: np.asarray(r).reshape(-1), dtype=F64)
+            kw = dict(x0=x0, maxiter=maxiter) if M is None else dict(x0=x0, maxiter=maxiter, M1=M, M2=ident)
+        else:
+            kw = dict(x0=x0, maxiter=maxiter, M=M)
+        solver = getattr(SL, _SOLVERS[name])
+        try:
+            x, info = _run_solver(name, solver, A, b, tol, restart, kw, cb, resvec, nb)
+        except (ValueError, np.linalg.LinAlgError, ZeroDivisionError, FloatingPointError):
+            # a singular or not finite preconditioner stops the method: flag 2
+            x, info = x0.copy(), -2
+        inner = [len(resvec) - 1]           # gmres: its inner steps, one residual each
+        x = np.asarray(x).reshape(-1)
+        if not np.all(np.isfinite(x)):
+            x, info = x0.copy(), -2
+        relres = float(np.linalg.norm(b - Ax(x)) / nb)
+        flag = 0.0 if info == 0 and relres <= tol * (1 + 1e-8) else (1.0 if info >= 0 else (2.0 if info == -2 else 4.0))
+        if name == 'gmres':
+            k = inner[0]
+            it = out(np.array([[float(max(1, math.ceil(k / restart)) if k else 0), float((k - 1) % restart + 1) if k else 0.0]]))
+        else:
+            it = float(count[0])
+        res = (out(x.reshape(-1, 1)), flag, relres, it, out(np.array(resvec).reshape(-1, 1)))
+        return res[0] if nargout <= 1 else res[:nargout]
+    return f
+
+
+for _n in _SOLVERS:
+    _iterative(_n)
+
+
+@bi('lsqr', nout=5)
+def lsqr(nargout, *args):
+    """[x, flag, relres, iter, resvec] = lsqr(A, b, tol, maxit, M1, M2, x0):
+    least squares by scipy.sparse.linalg.lsqr, its atol and btol the
+    tolerance."""
+    nargchk(args, 2, 7, 'lsqr')
+    import scipy.sparse.linalg as SL
+    b, n, _, tol, maxit, M1, M2, x0 = _solver_args(args, 'lsqr')
+    from ..values import FH
+    if isinstance(args[0], FH):
+        raise err('MATLAB:lsqr:FunctionHandle', 'lsqr takes a matrix here.', 'lsqr')
+    A = _mat(args[0], 'lsqr')
+    if A.shape[0] != b.size:
+        raise err('MATLAB:lsqr:WrongSize', 'b must have one element per row of A.', 'lsqr')
+    if len(args) < 7 or not numel(args[6]):
+        x0 = np.zeros(A.shape[1])          # x has one element per column of A
+    if M1 is not None:
+        P = _mat(M1, 'lsqr') @ (_mat(M2, 'lsqr') if M2 is not None else np.eye(A.shape[1]))
+        Ap = A @ np.linalg.inv(P)
+    else:
+        P, Ap = None, A
+    maxit = maxit if maxit is not None else min(min(A.shape), 20)
+    y0 = x0 if P is None else P @ x0
+    r = SL.lsqr(Ap, b, atol=tol, btol=tol, iter_lim=maxit, x0=y0)
+    y, istop, itn = r[0], r[1], r[2]
+    x = y if P is None else np.linalg.solve(P, y)
+    nb = float(np.linalg.norm(b))
+    relres = float(np.linalg.norm(b - A @ x) / nb) if nb else 0.0
+    flag = 0.0 if istop in (0, 1, 2, 4, 5) else (1.0 if istop == 7 else 4.0)
+    res = (out(x.reshape(-1, 1)), flag, relres, float(itn), out(np.array([[float(np.linalg.norm(b - A @ x0))], [float(np.linalg.norm(b - A @ x))]])))
+    return res[0] if nargout <= 1 else res[:nargout]
+
+
+# ---- updating factorizations -----------------------------------------------------------------------------------
+
+@bi('cholupdate', nout=2)
+def cholupdate(nargout, *args):
+    """[R1, p] = cholupdate(R, x, op): the Cholesky factor of R'*R + x*x'
+    ('+', the default) or R'*R - x*x' ('-'); p is 1 when the downdated
+    matrix is not positive definite (R1 is then R)."""
+    nargchk(args, 2, 3, 'cholupdate')
+    from scipy.linalg import cholesky, LinAlgError
+    R0 = _mat(args[0], 'cholupdate')
+    x = darr(args[1]).reshape(-1)
+    op = py_str(args[2]) if len(args) > 2 else '+'
+    if op not in ('+', '-'):
+        raise err('MATLAB:cholupdate:InvalidOp', "The operation is '+' or '-'.", 'cholupdate')
+    if R0.shape[0] != R0.shape[1] or x.size != R0.shape[0]:
+        raise err('MATLAB:cholupdate:SizeMismatch', 'R must be square and x have one element per row.', 'cholupdate')
+    G = R0.conj().T @ R0 + (1 if op == '+' else -1) * np.outer(x, x.conj())
+    try:
+        R1 = cholesky(G, lower=False)
+        p = 0.0
+    except LinAlgError:
+        if nargout < 2:
+            raise err('MATLAB:cholupdate:NotPositiveDefinite', 'The downdated matrix is not positive definite.', 'cholupdate')
+        R1, p = R0, 1.0
+    return (out(R1), p) if nargout > 1 else out(R1)
+
+
+@bi('qrupdate', nout=2)
+def qrupdate(nargout, *args):
+    """[Q1, R1] = qrupdate(Q, R, u, v): the QR factors of Q*R + u*v'
+    (scipy.linalg.qr_update)."""
+    nargchk(args, 4, 4, 'qrupdate')
+    from scipy.linalg import qr_update
+    Q, Rm = _mat(args[0], 'qrupdate'), _mat(args[1], 'qrupdate')
+    u, w = darr(args[2]).reshape(-1), darr(args[3]).reshape(-1)
+    cplx = any(np.iscomplexobj(a) for a in (Q, Rm, u, w))
+    t = C128 if cplx else F64
+    Q1, R1 = qr_update(Q.astype(t), Rm.astype(t), u.astype(t), w.conj().astype(t))
+    return (out(Q1), out(R1)) if nargout > 1 else out(Q1)
+
+
+@bi('qrinsert', nout=2)
+def qrinsert(nargout, *args):
+    """[Q1, R1] = qrinsert(Q, R, j, x, 'col' or 'row'): the QR factors with x
+    inserted before column (or row) j (scipy.linalg.qr_insert)."""
+    nargchk(args, 4, 5, 'qrinsert')
+    from scipy.linalg import qr_insert
+    Q, Rm = _mat(args[0], 'qrinsert'), _mat(args[1], 'qrinsert')
+    j = ival(args[2]) - 1
+    x = darr(args[3]).reshape(-1)
+    which = (opt_str(args[4]) or 'col').lower() if len(args) > 4 else 'col'
+    if which not in ('col', 'row'):
+        raise err('MATLAB:qrinsert:InvalidOrient', "The orientation is 'col' or 'row'.", 'qrinsert')
+    t = C128 if any(np.iscomplexobj(a) for a in (Q, Rm, x)) else F64
+    Q1, R1 = qr_insert(Q.astype(t), Rm.astype(t), x.astype(t), j, which=which)
+    return (out(Q1), out(R1)) if nargout > 1 else out(Q1)
+
+
+@bi('qrdelete', nout=2)
+def qrdelete(nargout, *args):
+    """[Q1, R1] = qrdelete(Q, R, j, 'col' or 'row'): the QR factors without
+    column (or row) j (scipy.linalg.qr_delete)."""
+    nargchk(args, 3, 4, 'qrdelete')
+    from scipy.linalg import qr_delete
+    Q, Rm = _mat(args[0], 'qrdelete'), _mat(args[1], 'qrdelete')
+    j = ival(args[2]) - 1
+    which = (opt_str(args[3]) or 'col').lower() if len(args) > 3 else 'col'
+    if which not in ('col', 'row'):
+        raise err('MATLAB:qrdelete:InvalidOrient', "The orientation is 'col' or 'row'.", 'qrdelete')
+    t = C128 if any(np.iscomplexobj(a) for a in (Q, Rm)) else F64
+    Q1, R1 = qr_delete(Q.astype(t), Rm.astype(t), j, 1, which=which)
+    return (out(Q1), out(R1)) if nargout > 1 else out(Q1)
+
+
+# ---- generalized and ordered Schur forms ----------------------------------------------------------------------
+
+@bi('qz', nout=6)
+def qz(nargout, *args):
+    """[AA, BB, Q, Z, V, W] = qz(A, B, flag): Q*A*Z = AA and Q*B*Z = BB, upper
+    triangular ('complex', the default) or quasi-triangular ('real'), by
+    scipy.linalg.qz; V and W the right and left generalized eigenvectors."""
+    nargchk(args, 2, 3, 'qz')
+    from scipy.linalg import qz as _qz, eig as _eig
+    A, B = _mat(args[0], 'qz'), _mat(args[1], 'qz')
+    if len(args) > 2 and opt_str(args[2]) is None:
+        raise err('MATLAB:qz:InvalidFlag', "The flag must be text: 'complex' or 'real'.", 'qz')
+    flag = opt_str(args[2]).lower() if len(args) > 2 else 'complex'
+    if flag not in ('complex', 'real'):
+        raise err('MATLAB:qz:InvalidFlag', "The flag is 'complex' or 'real'.", 'qz')
+    if flag == 'real' and (np.iscomplexobj(A) or np.iscomplexobj(B)):
+        flag = 'complex'
+    AA, BB, Qs, Zs = _qz(A, B, output=flag)
+    res = [out(AA), out(BB), out(Qs.conj().T), out(Zs)]
+    if nargout > 4:
+        w, vl, vr = _eig(A, B, left=True, right=True)
+        vr = vr / np.where(np.linalg.norm(vr, axis=0) == 0, 1, np.linalg.norm(vr, axis=0))
+        vl = vl / np.where(np.linalg.norm(vl, axis=0) == 0, 1, np.linalg.norm(vl, axis=0))
+        res += [out(vr), out(vl)]
+    return res[0] if nargout <= 1 else tuple(res[:nargout])
+
+
+def _schur_select(T, sel):
+    """A select vector for LAPACK: both eigenvalues of a real 2-by-2 block in or out together."""
+    n = T.shape[0]
+    s = np.asarray(sel, bool).copy()
+    if not np.iscomplexobj(T):
+        k = 0
+        while k < n - 1:
+            if T[k + 1, k] != 0:
+                s[k] = s[k + 1] = s[k] or s[k + 1]
+                k += 2
+            else:
+                k += 1
+    return s.astype(np.int32)
+
+
+@bi('ordschur', nout=2)
+def ordschur(nargout, *args):
+    """[US, TS] = ordschur(U, T, select): the Schur form reordered so that the
+    selected eigenvalues come first (LAPACK's trsen); select may instead be
+    keys, the clusters then in order of decreasing key."""
+    nargchk(args, 3, 3, 'ordschur')
+    import scipy.linalg.lapack as L
+    U, T = _mat(args[0], 'ordschur'), _mat(args[1], 'ordschur')
+    n = T.shape[0]
+    key = np.asarray(arr(args[2])).reshape(-1)
+    if key.size != n:
+        raise err('MATLAB:ordschur:SelectSize', 'select must have one element per eigenvalue.', 'ordschur')
+    cplx = np.iscomplexobj(T) or np.iscomplexobj(U)
+    t = C128 if cplx else F64
+    U, T = U.astype(t), T.astype(t)
+    fn = L.ztrsen if cplx else L.dtrsen
+    if key.dtype == bool:
+        levels = [None]
+    else:
+        levels = sorted(set(key.tolist()), reverse=True)[:-1][::-1]
+    key = key.copy()
+    for lev in levels:
+        sel = _schur_select(T, key if lev is None else key >= lev).astype(bool)
+        r = fn(sel.astype(np.int32), T, U, job='N')
+        T, U, info = r[0], r[1], r[-1]
+        if info != 0:
+            raise err('MATLAB:ordschur:Reorder', 'The eigenvalues could not be reordered (they are too close).', 'ordschur')
+        # the selected eigenvalues now come first, each part in its old order: the keys follow
+        key = np.concatenate([key[sel], key[~sel]])
+    return (out(U), out(T)) if nargout > 1 else out(U)
+
+
+@bi('ordeig')
+def ordeig(nargout, *args):
+    """The eigenvalues of a (quasi-)triangular T in the order they stand on its
+    diagonal (a real 2-by-2 block giving its pair), or of a pencil AA, BB."""
+    nargchk(args, 1, 2, 'ordeig')
+    T = _mat(args[0], 'ordeig')
+    B = _mat(args[1], 'ordeig') if len(args) > 1 else None
+    n = T.shape[0]
+    ev, k = [], 0
+    while k < n:
+        if k < n - 1 and not np.iscomplexobj(T) and T[k + 1, k] != 0:
+            blk = T[k:k + 2, k:k + 2]
+            if B is not None:
+                from scipy.linalg import eigvals
+                pair = eigvals(blk, B[k:k + 2, k:k + 2])
+            else:
+                pair = np.linalg.eigvals(blk)
+            pair = sorted(pair, key=lambda z: -z.imag)
+            ev += list(pair)
+            k += 2
+        else:
+            with np.errstate(all='ignore'):
+                ev.append(T[k, k] / B[k, k] if B is not None else T[k, k])
+            k += 1
+    return out(np.array(ev).reshape(-1, 1))
+
+
+@bi('polyeig', nout=3)
+def polyeig(nargout, *args):
+    """[X, e] = polyeig(A0, A1, ..., Ap): the eigenvalues of the matrix
+    polynomial (A0 + e*A1 + ... + e^p*Ap) x = 0 from the companion pencil
+    (scipy.linalg.eig), with the eigenvectors as unit columns; s, the third
+    output, the eigenvalues' condition numbers."""
+    nargchk(args, 1, None, 'polyeig')
+    from scipy.linalg import eig as _eig
+    As = [_mat(a, 'polyeig') for a in args]
+    n = As[0].shape[0]
+    if any(a.shape != (n, n) for a in As):
+        raise err('MATLAB:polyeig:SizeMismatch', 'The matrices must be square and of one size.', 'polyeig')
+    p = len(As) - 1
+    t = C128 if any(np.iscomplexobj(a) for a in As) else F64
+    if p == 0:
+        e = np.zeros((0, 1))
+        return out(e) if nargout <= 1 else (np.zeros((n, 0)), out(e), np.zeros((0, 1)))[:nargout]
+    N = n * p
+    Abig = np.zeros((N, N), t)
+    Bbig = np.eye(N, dtype=t)
+    Abig[:N - n, n:] = np.eye(N - n)
+    for k in range(p):
+        Abig[N - n:, k * n:(k + 1) * n] = -As[k]
+    Bbig[N - n:, N - n:] = As[p]
+    w, vl, vr = _eig(Abig, Bbig, left=True, right=True)
+    X = vr[:n, :]
+    X = X / np.where(np.linalg.norm(X, axis=0) == 0, 1, np.linalg.norm(X, axis=0))
+    if nargout <= 1:
+        return out(w.reshape(-1, 1))
+    res = [out(X), out(w.reshape(-1, 1))]
+    if nargout > 2:
+        # relative condition numbers: (sum |e|^k ||A_k||) ||x|| ||y|| / (|e| |y' P'(e) x|)
+        Y = vl[N - n:, :]
+        s = np.empty(w.size)
+        norms = [np.linalg.norm(a, 2) for a in As]
+        for j, lam in enumerate(w):
+            x, y = X[:, j], Y[:, j]
+            if not np.isfinite(lam):
+                s[j] = np.inf
+                continue
+            dP = sum(k * lam ** (k - 1) * As[k] for k in range(1, p + 1))
+            num_ = sum(abs(lam) ** k * norms[k] for k in range(p + 1)) * np.linalg.norm(x) * np.linalg.norm(y)
+            den = abs(lam) * abs(y.conj() @ dP @ x)
+            s[j] = num_ / den if den else np.inf
+        res.append(out(s.reshape(-1, 1)))
+    return tuple(res[:nargout])

@@ -305,4 +305,175 @@ W, _ = run("a = class(linspace(single(0), 1, 3)); b = linspace(-realmax, realmax
 same('linspace keeps single', text(W['a']), 'single')
 near('and does not overflow between -realmax and realmax', W['b'], [-np.finfo(float).max, 0, np.finfo(float).max])
 
+# ---- dates: year 0 and before, text, rounding ---------------------------------------------------------------------------------------
+W, _ = run("a = datenum(0, 1, 1); b = datenum(-1, 12, 31); c = datenum(2000, 1, 1); v = datevec(-400.25); d = datenum(2024, 14, 1) - datenum(2025, 2, 1);")
+same('day 1 is 1 January of year 0; the day before is 0; 2000-01-01 is 730486', (W['a'], W['b'], W['c']), (1.0, 0.0, 730486.0))
+near('a date before year 0 (proleptic Gregorian)', W['v'], [-2, 11, 25, 18, 0, 0])
+same('months past 12 roll into the next year', W['d'], 0.0)
+W, _ = run("a = datevec('2024-02-29 13:45:30'); b = datevec('Mar.05,2021 07:08:09'); c = datevec('20240229T134530'); y = clock; e = datevec('15:38:21.25', 'HH:MM:SS.FFF'); f = datevec('07/04/1999');")
+near('datevec of ISO text', W['a'], [2024, 2, 29, 13, 45, 30])
+near("datevec of 'mmm.dd,yyyy HH:MM:SS' and of 'yyyymmddTHHMMSS'", (W['b'], W['c']), [2021, 3, 5, 7, 8, 9, 2024, 2, 29, 13, 45, 30])
+near('a time alone is 1 January of this year; FFF reads the fraction as written', W['e'], [v(W['y'])[0], 1, 1, 15, 38, 21.25])
+near('mm/dd/yyyy', W['f'], [1999, 7, 4, 0, 0, 0])
+W, _ = run("a = datestr(datenum(2024,1,1,10,0,0) - datenum(2024,1,1,9,55,0), 'HH:MM:SS.FFF'); b = datestr(730486.5); c = datestr(730486); d = datestr(730486, 'dddd mmmm dd, yyyy'); e = datestr(730486.75, 'HH:MM PM');")
+same('a difference of date numbers shows as whole minutes (rounded to milliseconds)', text(W['a']), '00:05:00.000')
+same('datestr: time shown unless it is midnight', (text(W['b']), text(W['c'])), ('01-Jan-2000 12:00:00', '01-Jan-2000'))
+same('day and month names, and PM', (text(W['d']), text(W['e'])), ('Saturday January 01, 2000', ' 6:00 PM'))
+W, _ = run("a = weekday(730486); [n, s] = weekday(730487); b = addtodate(datenum(2024, 1, 31), 1, 'month'); c = eomday(1900, 2); d = eomday(2000, 2); [~, ~, dd] = datevec([730486 730487; 730488 730489]); sz = size(dd); e = etime([2024 1 1 0 0 0], [2023 12 31 23 59 0.5]);")
+same('weekday: 1 January 2000 was a Saturday (7); the next day Sun', (W['a'], W['n'], text(W['s'])), (7.0, 1.0, 'Sun'))
+same('a month after 31 January 2024 is its last day, 29 February', W['b'], 739311.0)
+same('1900 is not a leap year, 2000 is', (W['c'], W['d']), (28.0, 29.0))
+same('[~, ~, d] = datevec(A) keeps the shape of A', v(W['sz']).tolist(), [2.0, 2.0])
+same('etime counts seconds exactly across midnight', W['e'], 59.5)
+
+# ---- textscan --------------------------------------------------------------------------------------------------------------------
+W, _ = run(r"c = textscan(sprintf('a,1,2.5\nb,,4'), '%s %d %f', 'Delimiter', ','); a = c{1}; b = c{2}; k = class(b); f = c{3};")
+same('textscan: text, int32 (an empty field is 0) and double columns', ([text(x) for x in W['a'].a.reshape(-1)], v(W['b']).tolist(), text(W['k']), v(W['f']).tolist()),
+     (['a', 'b'], [1, 0], 'int32', [2.5, 4.0]))
+W, _ = run(r"c = textscan('123456', '%2f'); d = textscan('12.5e1x', '%4f %s'); e = textscan(sprintf('x y\n1 2\n3 4'), '%f %f', 'HeaderLines', 1, 'CollectOutput', true);")
+near('widths: %2f reads two characters at a time', W['c'].a[0, 0], [12, 34, 56])
+near('%4f reads 12.5 of 12.5e1 and leaves the rest', W['d'].a[0, 0], [12.5])
+near('HeaderLines and CollectOutput: one 2-by-2 matrix', W['e'].a[0, 0], [1, 3, 2, 4])
+W, _ = run(r"c = textscan(sprintf('1,NA,3\n4,5,-\n'), '%f %f %f', 'Delimiter', ',', 'TreatAsEmpty', {'NA', '-'}, 'EmptyValue', -1); a = [c{:}];")
+near('TreatAsEmpty fields take EmptyValue', W['a'], [1, 4, -1, 5, 3, -1])
+W, _ = run(r"""c = textscan(sprintf('1 2 3\n4 x 6'), '%f %f %f'); n = cellfun(@numel, c); d = textscan('"a b" c', '%q'); q = d{1}; e = textscan('2+3i -1.5e2 inf', '%f'); z = e{1};""")
+near('a field that does not read stops the scan: columns of unequal length', W['n'], [2, 1, 1])
+same('%q reads a quoted field whole and strips the quotes', [text(x) for x in W['q'].a.reshape(-1)], ['a b', 'c'])
+near('complex numbers, exponents and Inf', W['z'], [2 + 3j, -150, np.inf])
+W, _ = run(r"c = textscan(sprintf('1 %% one\n2 %% two'), '%f', 'CommentStyle', '%'); [d, p] = textscan('1 2 3 4 5', '%f %f', 1); e = textscan('7;8;9', '%d8', 'Delimiter', ';'); k = class(e{1});")
+near('CommentStyle skips to the end of the line', W['c'].a[0, 0], [1, 2])
+same('N applies the format N times; the second output is where reading stopped', (v(W['d'].a[0, 0]).tolist(), W['p']), ([1.0], 4.0))
+same('%d8 gives int8', text(W['k']), 'int8')
+
+# ---- cov, mad, normalize -------------------------------------------------------------------------------------------------------------
+W, _ = run("a = cov([1 2 3], [1 2 4]); b = cov([1 2 3 4], 1); c = cov(5, 3); d = cov([1 2; 3 5; 4 4], [1 1 2]'); e = cov([1 NaN; 2 3; 4 5], 'omitrows'); f = class(cov(single([1 2 3])));")
+near('cov(x, y) is 2 by 2', W['a'], np.cov([1, 2, 3], [1, 2, 4]).reshape(-1, order='F'))
+near('cov(x, 1) normalizes by N', W['b'], 1.25)
+near('cov of two scalars: zeros', W['c'], [0, 0, 0, 0])
+X = np.array([[1, 2], [3, 5], [4, 4.]])
+w = np.array([1, 1, 2.])
+mu = w @ X / w.sum()
+near('cov with weights, normalized by their sum', W['d'], (((X - mu).T * w) @ (X - mu) / w.sum()).reshape(-1, order='F'))
+near("'omitrows' drops rows with NaN", W['e'], np.cov(np.array([[2, 3], [4, 5.]]), rowvar=False).reshape(-1, order='F'))
+same('cov keeps single', text(W['f']), 'single')
+W, _ = run("a = mad([1 2 3 100]); b = mad([1 2 3 100], 1); c = mad([1 NaN 3]); d = mad(magic(4), 0, 'all'); e = class(mad(single([1 2]))); f = mad([2 Inf]);")
+near('mad: mean absolute deviation; flag 1, median absolute deviation', (W['a'], W['b']), [np.mean(np.abs(np.array([1, 2, 3, 100]) - 26.5)), 1.0])
+near("NaN is left out; 'all'", (W['c'], W['d']), [1.0, np.mean(np.abs(np.arange(1, 17) - 8.5))])
+same('mad keeps single; Inf stays Inf', (text(W['e']), W['f']), ('single', math.inf))
+W, _ = run("[n, c, s] = normalize([2 4 6]); r = normalize([2 4 6], 'range'); m = normalize([1 2 3; 4 6 8], 2, 'norm', 1); q = normalize([1 2 3 4 100], 'medianiqr'); z = normalize([1 NaN 3]); t = normalize([1 2 3], 3); [~, c2, s2] = normalize([1 2 3], 'center', 'median', 'scale', 2);")
+near('normalize: z-scores with C and S', (W['n'], W['c'], W['s']), [-1, 0, 1, 4, 2])
+near("'range' fills [0, 1]; 'norm' 1 along rows", (W['r'], W['m']), [0, 0.5, 1, 1 / 6, 4 / 18, 2 / 6, 6 / 18, 3 / 6, 8 / 18])
+Q = np.percentile([1, 2, 3, 4, 100], [25, 75], method='hazen')
+near("'medianiqr' centres on the median, scales by the interquartile range", W['q'], (np.array([1, 2, 3, 4, 100]) - 3) / (Q[1] - Q[0]))
+near('NaN stays NaN and is left out of the statistics', W['z'], [-1 / math.sqrt(2), math.nan, 1 / math.sqrt(2)])
+near("along a dimension of one element: 0/0; 'center' and 'scale' together", (W['t'], W['c2'], W['s2']), [math.nan, math.nan, math.nan, 2, 2])
+
+# ---- special functions -----------------------------------------------------------------------------------------------------------------
+from scipy import special as SP  # noqa: E402
+W, _ = run("a = gammainc([1 2], 1, 'scaledlower'); b = gammainc([1 2], 1, 'scaledupper'); c = gammainc(0, [0 1]); d = class(gammainc(single(1), 2)); e = gammainc(3, 2.5, 'scaledupper'); f = gammainc(2, Inf, 'scaledupper');")
+near('scaled lower for a = 1: (exp(x) - 1)/x; scaled upper: 1/x', (W['a'], W['b']), [math.e - 1, (math.e ** 2 - 1) / 2, 1, 0.5], 1e-14)
+near('P(0, 0) is 1, P(0, 1) is 0', W['c'], [1, 0])
+same('gammainc keeps single', text(W['d']), 'single')
+near('scaled upper = Q(a, x)*gamma(a+1)*exp(x)/x^a', W['e'], SP.gammaincc(2.5, 3) * SP.gamma(3.5) * math.exp(3) / 3 ** 2.5, 1e-12)
+same('scaled upper with an infinite a is Inf', W['f'], math.inf)
+W, _ = run("a = airy(0, 1, 1); b = airy(0, -1, true); c = expint(-1); d = expint(-Inf); e = complex(-Inf, Inf); f = class(complex(single(1), 2)); g = gammaincinv(0.25, 2, 'upper'); h = class(gammaincinv(single(0.5), 1)); k = betaincinv(0.9, 2, 3, 'upper');")
+near('airy(0, z, 1) scales Ai by exp(2/3 z^(3/2)), complex for z < 0', (W['a'], W['b']), [SP.airye(1.0)[0], SP.airye(-1.0 + 0j)[0]], 1e-14)
+near('expint of a negative number: -Ei(-x) - i*pi; at -Inf, -Inf - i*pi', (W['c'], W['d']), [-SP.expi(1.0) - 1j * math.pi, complex(-math.inf, -math.pi)])
+W2, _ = run("a = complex(1 + 2i); b = dot([1 2; 3 4], [5 6; 7 8], 3);")
+same('complex(z) of a complex z is z; dot along a dimension past the arrays\' own', (W2['a'], v(W2['b']).tolist()), (1 + 2j, [5.0, 21.0, 12.0, 32.0]))
+same('complex() keeps an infinite part as it is; single stays single', (W['e'], text(W['f'])), (complex(-math.inf, math.inf), 'single'))
+near('gammaincinv upper tail', W['g'], SP.gammainccinv(2, 0.25), 1e-12)
+same('gammaincinv keeps single', text(W['h']), 'single')
+near('betaincinv upper tail', W['k'], SP.betaincinv(2, 3, 0.1), 1e-12)
+W, _ = run("a = inv(-0); b = inv(Inf); c = inv(single(4)); k = class(c); [N, D] = rat([Inf 0 -Inf]); r = rat(pi); r2 = rat(1.5, 0.01); [n2, d2] = rat(0.75);")
+same('inv of a scalar is 1/x: -0 gives -Inf, Inf gives 0; single stays single', (W['a'], W['b'], text(W['k'])), (-math.inf, 0.0, 'single'))
+near('rat of Inf is 1/0', (W['N'], W['D']), [1, 0, -1, 0, 1, 0])
+same('rat as a continued fraction', (text(W['r']), text(W['r2'])), ('3 + 1/(7 + 1/16)', '2 + 1/(-2)'))
+same('[n, d] = rat(0.75)', (W['n2'], W['d2']), (3.0, 4.0))
+
+# ---- 64-bit integers, numbers as digits ---------------------------------------------------------------------------------------------
+W, _ = run("a = intmax('int64') - 1; b = -intmin('int64'); c = int64(2)^62 + int64(3); d = int64(7) ./ int64([2 -2 0]); e = intmax('uint64') - 5; f = int64(5) .* 2.5; g = uint64(2)^63 + 0.5;")
+same('int64 arithmetic is exact past 2^53', (int(W['a'].reshape(-1)[0]), int(W['b'].reshape(-1)[0]), int(W['c'].reshape(-1)[0])),
+     (2 ** 63 - 2, 2 ** 63 - 1, 2 ** 62 + 3))
+same('integer division rounds half away and saturates', [int(x) for x in v(W['d'])], [4, -4, 2 ** 63 - 1])
+W2, _ = run("a = int64(9007199254740881); b = int32(0.49999999999999994); c = int8([2.5 -2.5]);")
+same('conversion to an integer rounds exactly: no + 0.5 that itself rounds', (int(W2['a'].reshape(-1)[0]), int(W2['b'].reshape(-1)[0]), [int(x) for x in v(W2['c'])]),
+     (9007199254740881, 0, [3, -3]))
+same('uint64 and a double operand', (int(W['e'].reshape(-1)[0]), int(W['f'].reshape(-1)[0]), int(W['g'].reshape(-1)[0])), (2 ** 64 - 6, 13, 2 ** 63 + 1))
+W, _ = run("a = dec2bin(-3); b = dec2hex(-1); c = dec2bin(-3, 10); d = dec2base(intmax('uint64'), 16); e = dec2bin(-129); f = dec2hex(int64(-2)^63 + 1); g = num2hex(single(1)); h = num2str(intmin('int64') + 1);")
+same("two's complement in 8 bits (16 when needed), sign-extended to a width", (text(W['a']), text(W['b']), text(W['c']), text(W['e'])),
+     ('11111101', 'FF', '1111111101', '1111111101111111'))
+same('64-bit values exactly', (text(W['d']), text(W['f']), text(W['h'])), ('FFFFFFFFFFFFFFFF', '8000000000000001', '-9223372036854775807'))
+same('num2hex of a single: 8 digits', text(W['g']), '3f800000')
+raises('dec2base(-1, 10)', 'must not be negative')
+W, _ = run("a = nextpow2(int64(2)^62 + 1); b = nextpow2(single(5)); k = class(b); c = nextpow2(NaN); d = num2str([1, 1.34; 3, 3.56], '%6.2f'); e = num2str([1e23 pi]); f = intmax('like', int8(1)); g = class(eps('like', single(1)));")
+same('nextpow2 of a large int64 is exact; single stays single; NaN gives NaN', (int(W['a'].reshape(-1)[0]), text(W['k']), math.isnan(W['c'])), (63, 'single', True))
+same('num2str with a format trims the blanks the rows share', [r.rstrip() for r in W['d'].row_strs()], ['1.00  1.34', '3.00  3.56'])
+same('num2str: at most 16 significant digits', text(W['e']).split(), ['9.999999999999999e+22', '3.141592653589793'])
+same("intmax('like', p) and eps('like', p)", (int(W['f'].reshape(-1)[0]), text(W['g'])), (127, 'single'))
+
+# ---- statistics along dimensions -----------------------------------------------------------------------------------------------------
+from scipy import stats as ST  # noqa: E402
+W, _ = run("x = [1 2 3 10; 4 4 6 8]; a = moment(x, 3, 'all'); b = skewness(x, 0, 2); c = kurtosis(x, [], 'all'); d = class(skewness(single([1 2 5]))); [s, l] = bounds(x, 2); r = range(single([1 NaN 4])); k = class(r); z = zscore(x, 0, [1 2]);")
+X = np.array([[1, 2, 3, 10], [4, 4, 6, 8.]])
+near("moment over 'all'", W['a'], np.mean((X - X.mean()) ** 3))
+near('corrected skewness along rows', W['b'], ST.skew(X, axis=1, bias=False))
+near("kurtosis with flag [] over 'all'", W['c'], ST.kurtosis(X.reshape(-1), fisher=False))
+same('skewness keeps single', text(W['d']), 'single')
+near('bounds along rows', (W['s'], W['l']), [1, 4, 10, 8])
+same('range leaves NaN out and keeps single', (float(np.asarray(W['r']).reshape(-1)[0]), text(W['k'])), (3.0, 'single'))
+near('zscore over a vector of dimensions', W['z'], ((X - X.mean()) / X.std(ddof=1)).reshape(-1, order='F'))
+W, _ = run("a = corr([1 2 3]); b = corr([1 2; 2 4; 3 5], [1; 2; 4]); s = size(b); k = class(corr(single([1;2;3]), [1;2;4]));")
+same('corr of a row vector: three variables of one observation, NaN', bool(np.all(np.isnan(np.asarray(W['a'])))) and size(W['a']) == [3, 3], True)
+same('corr(X, Y): columns of X against columns of Y; single stays single', (v(W['s']).tolist(), text(W['k'])), ([2.0, 1.0], 'single'))
+
+# ---- moving windows ----------------------------------------------------------------------------------------------------------------
+W, _ = run("x = [4 8 6 -1 -2 -3]; a = movstd(x, 3, 1); b = movvar(x, [1 0]); c = movprod(x, 2); d = movmad(x, 3); e = movmean(x, 3, 'Endpoints', 'discard'); f = movsum(x, 3, 'Endpoints', 'fill'); g = movmean([1 NaN 3], 3, 'omitnan'); h = movmax(magic(3), 2, 2);")
+xx = np.array([4, 8, 6, -1, -2, -3.])
+win3 = [xx[max(0, i - 1):i + 2] for i in range(6)]
+near('movstd with weight 1 (by N)', W['a'], [np.std(w) for w in win3])
+near('movvar with [kb kf] = [1 0]', W['b'], [0] + [np.var(xx[i - 1:i + 1], ddof=1) for i in range(1, 6)])
+near('movprod of 2: the element and the one before', W['c'], [4, 32, 48, -6, 2, 6])
+near('movmad: the median absolute deviation of each window', W['d'], [np.median(np.abs(w - np.median(w))) for w in win3])
+near("Endpoints 'discard' and 'fill'", (W['e'], W['f']), [6, 13 / 3, 1, -2, math.nan, 18, 13, 3, -6, math.nan])
+near("'omitnan'", W['g'], [1, 2, 3])
+near('movmax along dimension 2', W['h'], [8, 3, 4, 8, 5, 9, 6, 7, 9])
+
+# ---- polynomials, primes, text search, unwrap ------------------------------------------------------------------------------------------
+W, _ = run("x = 0:5; y = [1 3 2 5 4 7]; [p, S] = polyfit(x, y, 1); [yy, dd] = polyval(p, [0 6], S); [b, a] = residue([-2; 7; 3], [2; 2; 1], []); [r, pp, k] = residue([1 1 1], [1 -5 8 -4]); c = class(polyval(single([1 2]), 3));")
+V = np.vander(np.arange(6.), 2)
+Y = np.array([1, 3, 2, 5, 4, 7.])
+P = np.linalg.lstsq(V, Y, rcond=None)[0]
+nr = np.linalg.norm(Y - V @ P)
+Vi = np.linalg.inv(V.T @ V)
+near("polyval delta from polyfit's S: normr/sqrt(df)*sqrt(1 + a inv(V'V) a')", W['dd'], [nr / 2 * math.sqrt(1 + np.array([x0, 1]) @ Vi @ np.array([x0, 1])) for x0 in (0, 6)])
+near('residue(r, p, k) puts the fractions together (a repeated pole: powers in order)', (W['b'], W['a']), [1, 1, 1, 1, -5, 8, -4], 1e-12)
+near('residue(b, a): repeated poles together, by decreasing size', (W['r'], W['pp']), [-2, 7, 3, 2, 2, 1], 1e-9)
+same('polyval keeps single', text(W['c']), 'single')
+W, _ = run("a = isprime(uint64(4294967291) * uint64(3)); c = isprime(int64(9007199254740881)); d = strfind('abc', ''); s = size(d); e = strfind('abab', 'ab', 'ForceCellOutput', true); f = unwrap([0; 3*pi], [], 2);")
+same('isprime: exact 64-bit tests', (W['a'], W['c']), (False, True))
+same('strfind with an empty pattern gives [] (0 by 0); ForceCellOutput gives a cell', (v(W['s']).tolist(), type(W['e']).__name__), ([0.0, 0.0], 'Cell'))
+near('unwrap along dimension 2 of a column leaves it as it is', W['f'], [0, 3 * math.pi])
+
+# ---- validateattributes, find, cellfun, cell2mat, colormaps, generators ------------------------------------------------------------------
+for code, words in (("validateattributes(ones(2,3), {'numeric'}, {'square'})", 'square'),
+                    ("validateattributes([1 2 4], {}, {'increasing', 'even'})", 'even'),
+                    ("validateattributes(int8(5), {'float'}, {})", 'one of these types'),
+                    ("validateattributes(ones(2,3), {}, {'size', [2 NaN 4]})", 'of size'),
+                    ("validateattributes(3, {'numeric'}, {'<=', 2}, 'myfun', 'n', 2)", 'input number 2, n,'),
+                    ("validateattributes([1 NaN], {}, {'nonnan'})", 'non-NaN')):
+    raises(code, words)
+W, _ = run("validateattributes(int8([2 4]), {'integer'}, {'even', 'positive', 'row', 'size', [1 NaN]}); ok = true;")
+same('validateattributes passes what has every attribute', W.get('ok'), True)
+W, _ = run("a = find(0); s = size(a); [r, c] = find(0); t = size(r); C = {ones(2, 3), 'ab'; 5, {}}; n = cellfun('size', C, 2); k = cellfun('isclass', C, 'char');")
+same('nothing found in a scalar: 0 by 0', (v(W['s']).tolist(), v(W['t']).tolist()), ([0.0, 0.0], [0.0, 0.0]))
+near("cellfun('size', C, 2) and cellfun('isclass', C, 'char')", (W['n'], W['k']), [3, 1, 2, 0, 0, 0, 1, 0])
+W, _ = run("C = {[1 2], 3; [4 5], 6}; D = C; D(:, :, 2) = {[7 8], 9; [10 11], 12}; M = cell2mat(D); s = size(M);")
+same('cell2mat of a 3-D cell', (v(W['s']).tolist(), v(np.asarray(W['M'])[:, :, 1]).tolist()), ([2.0, 3.0, 2.0], [7.0, 10.0, 8.0, 11.0, 9.0, 12.0]))
+W, _ = run("a = hot(3); b = jet(2); c = bone(1); d = pink(1);")
+near('hot(3), jet(2), bone(1), pink(1)', (W['a'], W['b'], W['c'], W['d']),
+     [1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1 / 8, 1 / 8, 1 / 8] + [math.sqrt(1 / 3)] * 3)
+W, _ = run("rng(3); rand(1, 5); s = rng; a = rand(1, 3); randn(2); rng(s); b = rand(1, 3); st = rand('state'); c = rand(1, 2); rand('state', st); d = rand(1, 2);")
+same("rng(s) brings back the state s was taken in; so does rand('state', st)", (np.array_equal(W['a'], W['b']), np.array_equal(W['c'], W['d'])), (True, True))
+
 sys.exit(C.done())

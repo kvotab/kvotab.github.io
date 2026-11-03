@@ -1083,43 +1083,170 @@ def mfilename(nargout, *args):
     return Char.of('')
 
 
+_VA_INT = ('int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')
+
+
+def _va_values(v):
+    """The values of an array as numbers (logical and char as numbers), or
+    None for a value that holds no numbers."""
+    if is_numeric(v) or type(v) in (bool, Char) or (isinstance(v, np.ndarray) and v.dtype == bool):
+        return np.asarray(arr(v))
+    return None
+
+
 @bi('validateattributes')
 def validateattributes(nargout, *args):
-    nargchk(args, 3, None, 'validateattributes')
+    """validateattributes(A, classes, attributes, funcName, varName, argIndex):
+    an error unless A has one of the classes ('numeric', 'float' and
+    'integer' stand for their groups) and every attribute."""
+    nargchk(args, 3, 6, 'validateattributes')
     v = args[0]
-    classes = [py_str(x) for x in args[1].a.flat] if type(args[1]) is Cell else []
+    if type(args[1]) is not Cell and not is_str(args[1]):
+        raise err('MATLAB:validateattributes:badClassList', 'The classes must be a cell array of class names.', 'validateattributes')
+    if type(args[2]) is not Cell:
+        raise err('MATLAB:validateattributes:badAttributeList', 'The attributes must be a cell array.', 'validateattributes')
+    classes = [py_str(x) for x in args[1].a.reshape(-1, order='F')] if type(args[1]) is Cell else [py_str(args[1])]
+    fname, vname, index = None, None, None
+    rest = list(args[3:])
+    if rest and not is_str(rest[0]):
+        index = int(num(rest.pop(0)))
+    else:
+        if rest:
+            fname = py_str(rest.pop(0)) or None
+        if rest:
+            vname = py_str(rest.pop(0)) or None
+        if rest:
+            index = int(num(rest.pop(0)))
+    who = vname or 'input'
+    if index is not None:
+        who = f'input number {index}, {vname},' if vname else f'input number {index}'
+
+    def fail(ident, what):
+        raise err('MATLAB:' + ident, f'Expected {who} to be {what}.', fname)
+
+    c = class_of(v)
     if classes:
-        c = class_of(v)
-        ok = any(c == k or (k == 'numeric' and is_numeric(v)) or (k == 'float' and c in ('double', 'single')) for k in classes)
-        if not ok:
-            raise err('MATLAB:invalidType', f"Expected input to be one of these types:\n\n{', '.join(classes)}\n\nInstead its type was {c}.")
-    attrs = [x for x in args[2].a.flat] if type(args[2]) is Cell else []
+        def has(k):
+            return (c == k or (k == 'numeric' and is_numeric(v)) or (k == 'float' and c in ('double', 'single'))
+                    or (k == 'integer' and c in _VA_INT) or (isinstance(v, Obj) and k in getattr(v, 'supers', ())))
+        if not any(has(k) for k in classes):
+            raise err('MATLAB:invalidType', f"Expected {who} to be one of these types:\n\n{', '.join(classes)}\n\nInstead its type was {c}.", fname)
+    attrs = list(args[2].a.reshape(-1, order='F'))
+    shp = shape_of(v)
+    A = _va_values(v)
+    flat = A.reshape(-1, order='F') if A is not None else None
     i = 0
     while i < len(attrs):
-        a = py_str(attrs[i]) if type(attrs[i]) in (Char, Str) else None
-        A = arr(v) if is_numeric(v) or type(v) in (bool, Char) else None
-        if a == 'positive' and A is not None and not np.all(A > 0):
-            raise err('MATLAB:expectedPositive', 'Expected input to be positive.')
-        if a == 'nonnegative' and A is not None and not np.all(A >= 0):
-            raise err('MATLAB:expectedNonnegative', 'Expected input to be nonnegative.')
-        if a == 'scalar' and numel(v) != 1:
-            raise err('MATLAB:expectedScalar', 'Expected input to be a scalar.')
-        if a == 'vector' and not (len(shape_of(v)) == 2 and 1 in shape_of(v)):
-            raise err('MATLAB:expectedVector', 'Expected input to be a vector.')
-        if a == 'integer' and A is not None and not np.all(A == np.round(A)):
-            raise err('MATLAB:expectedInteger', 'Expected input to be integer-valued.')
-        if a == 'finite' and A is not None and not np.all(np.isfinite(A)):
-            raise err('MATLAB:expectedFinite', 'Expected input to be finite.')
-        if a == 'nonempty' and numel(v) == 0:
-            raise err('MATLAB:expectedNonempty', 'Expected input to be nonempty.')
-        if a in ('size', '>', '>=', '<', '<=', 'numel', 'ncols', 'nrows', 'increasing', 'decreasing'):
-            if a in ('>', '>=', '<', '<='):
-                lim = num(attrs[i + 1])
-                ok = {'>': A > lim, '>=': A >= lim, '<': A < lim, '<=': A <= lim}[a]
-                if not np.all(ok):
-                    raise err('MATLAB:notGreater', f'Expected input to be {a} {lim:g}.')
-            i += 1 if a not in ('increasing', 'decreasing') else 0
+        a = py_str(attrs[i]).lower() if type(attrs[i]) in (Char, Str) else None
+        if a is None:
+            raise err('MATLAB:validateattributes:badAttribute', 'Each attribute must be a name.', 'validateattributes')
+        arg = None
+        if a in ('size', 'numel', 'ncols', 'nrows', 'ndims', '>', '>=', '<', '<='):
+            if i + 1 >= len(attrs):
+                raise err('MATLAB:validateattributes:missingValue', f"The attribute '{a}' needs a value.", 'validateattributes')
+            arg = attrs[i + 1]
+            i += 1
         i += 1
+        nd = len(shp)
+        if a == '2d':
+            if nd != 2:
+                fail('expected2D', 'two-dimensional')
+        elif a == '3d':
+            if nd > 3:
+                fail('expected3D', 'three-dimensional')
+        elif a == 'column':
+            if nd != 2 or shp[1] != 1:
+                fail('expectedColumn', 'a column vector')
+        elif a == 'row':
+            if nd != 2 or shp[0] != 1:
+                fail('expectedRow', 'a row vector')
+        elif a == 'scalar':
+            if numel(v) != 1:
+                fail('expectedScalar', 'a scalar')
+        elif a == 'scalartext':
+            if not ((type(v) is Char and shp[0] <= 1 and nd == 2) or (type(v) is Str and numel(v) == 1)):
+                fail('expectedScalartext', 'a character vector or a string scalar')
+        elif a == 'vector':
+            if nd != 2 or (shp[0] != 1 and shp[1] != 1):
+                fail('expectedVector', 'a vector')
+        elif a == 'square':
+            if nd != 2 or shp[0] != shp[1]:
+                fail('expectedSquare', 'a square matrix')
+        elif a == 'diag':
+            if nd != 2 or A is None or np.any(A[~np.eye(*shp, dtype=bool)] != 0):
+                fail('expectedDiag', 'a diagonal matrix')
+        elif a == 'nonempty':
+            if numel(v) == 0:
+                fail('expectedNonempty', 'nonempty')
+        elif a == 'nonsparse':
+            pass                                       # sparse matrices are held full here
+        elif a == 'size':
+            want = np.asarray(arr(arg)).reshape(-1)
+            have = list(shp) + [1] * max(0, len(want) - len(shp))
+            if len(want) < len(shp) or any(not math.isnan(w) and w != h for w, h in zip(want, have)):
+                fail('incorrectSize', 'of size ' + 'x'.join('N' if math.isnan(w) else str(int(w)) for w in want))
+        elif a == 'numel':
+            if numel(v) != num(arg):
+                fail('incorrectNumel', f'an array with {num(arg):g} elements')
+        elif a == 'ncols':
+            if (shp[1] if nd > 1 else 1) != num(arg):
+                fail('incorrectNumcols', f'an array with {num(arg):g} columns')
+        elif a == 'nrows':
+            if shp[0] != num(arg):
+                fail('incorrectNumrows', f'an array with {num(arg):g} rows')
+        elif a == 'ndims':
+            if nd != num(arg):
+                fail('incorrectNumdims', f'an array with {num(arg):g} dimensions')
+        elif a in ('binary', 'even', 'odd', 'integer', 'real', 'finite', 'nonnan', 'nonnegative', 'nonzero', 'positive',
+                   '>', '>=', '<', '<=', 'increasing', 'decreasing', 'nondecreasing', 'nonincreasing'):
+            if flat is None:
+                fail('expectedNumeric', 'numeric')
+            with np.errstate(all='ignore'):
+                re_ = flat.real if flat.dtype.kind == 'c' else flat.astype(F64)
+                cplx = flat.dtype.kind == 'c' and np.any(flat.imag != 0)
+                if a == 'binary':
+                    if type(v) is Char or cplx or not np.all((re_ == 0) | (re_ == 1)):
+                        fail('expectedBinary', 'binary')
+                elif a in ('even', 'odd'):
+                    whole = np.isfinite(re_) & (re_ == np.round(re_)) & ~cplx
+                    par = np.mod(np.where(whole, re_, 0), 2)
+                    if not np.all(whole & (par == (0 if a == 'even' else 1))):
+                        fail('expectedEven' if a == 'even' else 'expectedOdd', a)
+                elif a == 'integer':
+                    if cplx or not np.all(np.isfinite(re_) & (re_ == np.round(re_))):
+                        fail('expectedInteger', 'integer-valued')
+                elif a == 'real':
+                    if cplx:
+                        fail('expectedReal', 'real')
+                elif a == 'finite':
+                    if not np.all(np.isfinite(flat)):
+                        fail('expectedFinite', 'finite')
+                elif a == 'nonnan':
+                    if np.any(np.isnan(flat)):
+                        fail('expectedNonNaN', 'non-NaN')
+                elif a == 'nonnegative':
+                    if cplx or not np.all(re_ >= 0):
+                        fail('expectedNonnegative', 'nonnegative')
+                elif a == 'nonzero':
+                    if np.any(flat == 0):
+                        fail('expectedNonZero', 'nonzero')
+                elif a == 'positive':
+                    if cplx or not np.all(re_ > 0):
+                        fail('expectedPositive', 'positive')
+                elif a in ('>', '>=', '<', '<='):
+                    lim = num(arg)
+                    ok = {'>': re_ > lim, '>=': re_ >= lim, '<': re_ < lim, '<=': re_ <= lim}[a]
+                    ident = {'>': 'notGreater', '>=': 'notGreaterEqual', '<': 'notLess', '<=': 'notLessEqual'}[a]
+                    word = {'>': 'greater than', '>=': 'greater than or equal to', '<': 'less than', '<=': 'less than or equal to'}[a]
+                    if cplx or not np.all(ok):
+                        fail(ident, f'an array with all of the values {word} {lim:g}')
+                else:
+                    d = np.diff(re_)
+                    ok = {'increasing': d > 0, 'decreasing': d < 0, 'nondecreasing': d >= 0, 'nonincreasing': d <= 0}[a]
+                    if cplx or np.any(np.isnan(re_)) or not np.all(ok):
+                        fail('expected' + a[0].upper() + a[1:], a)
+        else:
+            raise err('MATLAB:validateattributes:badAttribute', f"Unknown attribute '{a}'.", 'validateattributes')
     return None
 
 

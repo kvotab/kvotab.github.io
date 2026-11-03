@@ -4,6 +4,8 @@ The ramps (jet, hot, gray and the rest) follow their usual definitions;
 the default map is a blue-to-yellow ramp through anchor colours chosen
 for this page.
 """
+import math
+
 import numpy as np
 
 from .values import MError, Char, Str, py_str
@@ -40,16 +42,26 @@ def colormap_by_name(name, m=256):
     if name in ('parula', 'viridis', 'turbo'):
         return _interp(_ANCHORS[name], m)
     if name == 'jet':
-        return _interp([(0, 0, 0.5), (0, 0, 1), (0, 1, 1), (1, 1, 0), (1, 0, 0), (0.5, 0, 0)], m,
-                       [0, 1 / 8, 3 / 8, 5 / 8, 7 / 8, 1])
+        # a ramp up, a plateau and a ramp down, placed in blue, then green,
+        # then red, each shifted by a quarter of the map
+        n = math.ceil(m / 4)
+        u = np.concatenate([np.arange(1, n + 1) / n, np.ones(n - 1), np.arange(n, 0, -1) / n])
+        g = math.ceil(n / 2) - (m % 4 == 1) + np.arange(1, u.size + 1)
+        rr, bb = g + n, g - n
+        g, rr, bb = g[g <= m], rr[rr <= m], bb[bb >= 1]
+        J = np.zeros((m, 3))
+        J[rr - 1, 0] = u[:rr.size]
+        J[g - 1, 1] = u[:g.size]
+        J[bb - 1, 2] = u[u.size - bb.size:]
+        return J
     if name == 'gray':
         return np.column_stack([r, r, r])
     if name == 'hot':
-        n1 = 3 / 8
-        n2 = 6 / 8
-        red = np.clip(r / n1, 0, 1)
-        green = np.clip((r - n1) / (n2 - n1), 0, 1)
-        blue = np.clip((r - n2) / (1 - n2), 0, 1)
+        # red, then green, then blue rise in turn, each over fix(3m/8) rows
+        n = (3 * m) // 8
+        red = np.concatenate([np.arange(1, n + 1) / max(n, 1), np.ones(m - n)])
+        green = np.concatenate([np.zeros(n), np.arange(1, n + 1) / max(n, 1), np.ones(m - 2 * n)])
+        blue = np.concatenate([np.zeros(2 * n), np.arange(1, m - 2 * n + 1) / (m - 2 * n)])
         return np.column_stack([red, green, blue])
     if name == 'cool':
         return np.column_stack([r, 1 - r, np.ones(m)])

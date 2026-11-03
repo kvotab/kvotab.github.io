@@ -288,6 +288,20 @@ def gather(a, dims):
     return m, [1 if d in dims else a.shape[d] for d in range(nd)]
 
 
+def along(a, dim, fn):
+    """fn(m) of the values along dim (0-based int, a tuple of them, 'all',
+    or None for the first dimension that is not 1), where the values are
+    m's last axis and fn removes it: a result shaped like a with those
+    dimensions made 1. A 0x0 array counts as a column."""
+    if dim is None:
+        if a.shape == (0, 0):
+            a = a.reshape(0, 1)
+        dim = first_dim(a.shape)
+    dims = tuple(range(max(a.ndim, 2))) if dim == 'all' else (dim if isinstance(dim, tuple) else (dim,))
+    m, shape = gather(a, dims)
+    return np.asarray(fn(m)).reshape(shape)
+
+
 def expand_dims(a, dim):
     """a with at least dim+1 dimensions."""
     if a.ndim <= dim:

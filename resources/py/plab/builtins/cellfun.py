@@ -76,9 +76,13 @@ def cell2mat(nargout, *args):
     for x in c.a.flat:
         if type(x) is Cell or isinstance(x, (FH,)):
             raise err('MATLAB:cell2mat:UnsupportedCellContent', 'CELL2MAT does not support cell arrays containing cell arrays or objects.', 'cell2mat')
-    a = c.a if c.a.ndim == 2 else c.a.reshape(c.a.shape[0], -1, order='F')
-    rows = [_cat(1, list(r)) for r in a]
-    return _cat(0, rows)
+    def build(a):
+        # rows of a page joined side by side, then stacked; pages joined along
+        # the higher dimensions, the last one last
+        if a.ndim <= 2:
+            return _cat(0, [_cat(1, list(r)) for r in a.reshape(a.shape[0], -1)])
+        return _cat(a.ndim - 1, [build(a[..., k]) for k in range(a.shape[-1])])
+    return build(c.a)
 
 
 @bi('cell2struct')
@@ -390,6 +394,20 @@ _SPECIAL = {
 async def cellfun(nargout, *args):
     nargchk(args, 2, None, 'cellfun')
     f = args[0]
+    if is_str(f) and py_str(f) in ('size', 'isclass'):
+        # the old forms cellfun('size', C, k) and cellfun('isclass', C, name)
+        name = py_str(f)
+        nargchk(args, 3, 3, 'cellfun')
+        c = args[1]
+        if type(c) is not Cell:
+            raise err('MATLAB:cellfun:NotACell', 'Input #2 expected to be a cell array, was ' + class_of(c) + ' instead.', 'cellfun')
+        items = c.a.reshape(-1, order='F')
+        if name == 'size':
+            k = int(num(args[2]))
+            vals = [float(shape_of(x)[k - 1]) if k <= len(shape_of(x)) else 1.0 for x in items]
+            return out(np.array(vals, F64).reshape(c.a.shape, order='F'))
+        cls = py_str(args[2])
+        return out(np.array([class_of(x) == cls for x in items], bool).reshape(c.a.shape, order='F'))
     data, uniform, handler = _opts(args[1:])
     if not data:
         raise err('MATLAB:minrhs', 'Not enough input arguments.', 'cellfun')
@@ -405,13 +423,6 @@ async def cellfun(nargout, *args):
     if is_str(f):
         name = py_str(f)
         sp = _SPECIAL.get(name)
-        if name == 'size' and len(data) == 2 or name == 'size':
-            k = int(num(args[2])) if len(args) > 2 else 1
-            vals = [float(shape_of(x)[k - 1]) if k <= len(shape_of(x)) else 1.0 for x in cols[0]]
-            return out(np.array(vals).reshape(shape, order='F'))
-        if name == 'isclass':
-            cls = py_str(args[2])
-            return out(np.array([class_of(x) == cls for x in cols[0]], bool).reshape(shape, order='F'))
         if sp is not None:
             vals = [sp(x) for x in cols[0]]
             return out(np.array(vals).reshape(shape, order='F'))
@@ -669,3 +680,72 @@ def remove(nargout, *args):
         del m.d[kk]
     return m
 
+
+
+# ---- mat2cell, celldisp -------------------------------------------------------------------------------
+
+@bi('mat2cell')
+def mat2cell(nargout, *args):
+    """C = mat2cell(A, d1, d2, ...): A cut into blocks, d1 the heights of the
+    rows of blocks, d2 the widths of the columns of them and so on (a
+    dimension not given is one block)."""
+    nargchk(args, 2, None, 'mat2cell')
+    v = args[0]
+    t = type(v)
+    if t is Struct or isinstance(v, (FH, Obj)):
+        raise err('MATLAB:mat2cell:invalidInput', 'mat2cell divides arrays, characters and cells here.', 'mat2cell')
+    a = v.a if t in (Char, Cell, Str) else np.asarray(arr(v))
+    sizes = [np.asarray(arr(d)).reshape(-1).astype(np.intp) for d in args[1:]]
+    nd = max(a.ndim, len(sizes))
+    a = a.reshape(a.shape + (1,) * (nd - a.ndim))
+    while len(sizes) < nd:
+        sizes.append(np.array([a.shape[len(sizes)]], np.intp))
+    if any(int(s.sum()) != a.shape[k] or np.any(s < 0) for k, s in enumerate(sizes)):
+        raise err('MATLAB:mat2cell:dimensionMismatch',
+                  f"Input arguments, D1 through D{len(args) - 1}, must sum to each dimension of the input matrix size, [{' '.join(str(x) for x in a.shape)}].", 'mat2cell')
+    starts = [np.concatenate([[0], np.cumsum(s)[:-1]]) for s in sizes]
+    cells = np.empty(tuple(len(s) for s in sizes), object)
+    for idx in np.ndindex(cells.shape):
+        sl = tuple(slice(starts[k][i], starts[k][i] + sizes[k][i]) for k, i in enumerate(idx))
+        part = _2d(a[sl])
+        if t is Char:
+            cells[idx] = Char(part)
+        elif t is Cell:
+            cells[idx] = Cell(part)
+        elif t is Str:
+            cells[idx] = Str(part)
+        else:
+            cells[idx] = like_class(part, v) if class_of(v) not in ('double', 'logical') else out(part)
+    share_all(cells)
+    return Cell(_2d(cells))
+
+
+@bi('celldisp', ws=True, arr=False)
+def celldisp(W, nargout, *args):
+    """celldisp(C, name): each element of C shown as name{i} = ..., cells
+    inside cells as name{i}{j}; the name is the variable holding C (or
+    'ans')."""
+    nargchk(args, 1, 2, 'celldisp')
+    noout(nargout, 'celldisp')
+    c = args[0]
+    if type(c) is not Cell:
+        raise err('MATLAB:celldisp:notCellArray', 'The input must be a cell array.', 'celldisp')
+    if len(args) > 1:
+        name = py_str(args[1])
+    else:
+        name = next((k for k in W.keys() if W.get(k) is c), 'ans') if hasattr(W, 'keys') else 'ans'
+    from .. import display as D
+
+    def show(cell, prefix):
+        a = cell.a
+        vec = a.ndim == 2 and (a.shape[0] == 1 or a.shape[1] == 1)
+        for k in range(a.size):
+            sub = np.unravel_index(k, a.shape, order='F')
+            label = f'{prefix}{{{k + 1}}}' if vec else f"{prefix}{{{','.join(str(i + 1) for i in sub)}}}"
+            x = a.reshape(-1, order='F')[k]
+            if type(x) is Cell and x.a.size:
+                show(x, label)
+            else:
+                R.write(D.display(label, x))
+    show(c, name)
+    return None

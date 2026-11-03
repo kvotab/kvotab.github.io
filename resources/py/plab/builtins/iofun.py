@@ -713,10 +713,16 @@ def fopen(nargout, *args):
     if opt_str(args[0]) == 'all':
         return out(np.array([sorted(FILES)], F64)) if FILES else np.zeros((1, 0))
     if type(args[0]) is float:
-        f = FILES.get(int(args[0]))
-        if f is None:
-            return Char.of('')
-        return (Char.of(f.path), Char.of(f.mode), Char.of('ieee-le'), Char.of(f.encoding.upper()))[:max(nargout, 1)] if nargout > 1 else Char.of(f.path)
+        k = int(args[0])
+        f = FILES.get(k)
+        if f is not None:
+            info = (f.path, f.mode, 'ieee-le', f.encoding.upper())
+        elif k in (0, 1, 2):
+            info = (('"stdin"', '"stdout"', '"stderr"')[k], 'r' if k == 0 else 'w', 'ieee-le', 'UTF-8')
+        else:
+            info = ('', '', '', '')
+        res = tuple(Char.of(x) for x in info)
+        return res[:nargout] if nargout > 1 else res[0]
     name = sval(args[0], 'file name', 'fopen')
     mode = opt_str(args[1]) if len(args) > 1 else 'r'
     enc = opt_str(args[3]) if len(args) > 3 else 'utf-8'
@@ -1045,56 +1051,447 @@ def fscanf(nargout, *args):
     return vals
 
 
+# ---- textscan: a format applied over text as a stream --------------------------------------------
+
+_TS_CONV = re.compile(r'%(\*?)(\d*)(?:\.(\d+))?(d8|d16|d32|d64|u8|u16|u32|u64|f32|f64|[dufnsqcDC]|\[\^?\]?[^\]]*\])')
+_TS_CLASS = {'d': 'int32', 'd8': 'int8', 'd16': 'int16', 'd32': 'int32', 'd64': 'int64', 'u': 'uint32', 'u8': 'uint8',
+             'u16': 'uint16', 'u32': 'uint32', 'u64': 'uint64', 'f': 'double', 'f64': 'double', 'f32': 'single', 'n': 'double'}
+_TS_KIND = {'s': 'String', 'q': 'String', 'c': 'Character'}
+
+
+def _ts_items(fmt):
+    """The format as items: ('lit', text) and ('conv', type, skipped, width, precision)."""
+    items, i, lit = [], 0, ''
+    while i < len(fmt):
+        c = fmt[i]
+        if c == '%' and fmt.startswith('%%', i):
+            lit += '%'
+            i += 2
+        elif c == '%':
+            m = _TS_CONV.match(fmt, i)
+            if not m:
+                raise err('MATLAB:textscan:BadFormatString', f"Badly formed format string: '{fmt[i:i + 3]}' is not a conversion.", 'textscan')
+            if m.group(4) in ('D', 'C'):
+                raise err('MATLAB:textscan:BadFormatString', 'Dates (%D) and categories (%C) are not read here: read them as text (%s).', 'textscan')
+            if lit:
+                items.append(('lit', lit))
+                lit = ''
+            skip, w, p, t = m.groups()
+            items.append(('conv', t, bool(skip), int(w) if w else 0, int(p) if p is not None else None))
+            i = m.end()
+        elif c.isspace():
+            if lit:
+                items.append(('lit', lit))
+                lit = ''
+            i += 1
+        else:
+            lit += c
+            i += 1
+    if lit:
+        items.append(('lit', lit))
+    return items
+
+
+def _ts_set(spec):
+    """The characters a %[...] conversion reads, and whether the set is negated."""
+    body = spec[1:-1]
+    neg = body.startswith('^')
+    if neg:
+        body = body[1:]
+    chars, i = set(), 0
+    while i < len(body):
+        if i + 2 < len(body) and body[i + 1] == '-':
+            chars.update(chr(c) for c in range(ord(body[i]), ord(body[i + 2]) + 1))
+            i += 3
+        else:
+            chars.add(body[i])
+            i += 1
+    return chars, neg
+
+
+def _ts_number_res(exp):
+    mant = r'(?:\d+\.?\d*|\.\d+)'
+    expo = rf'(?:[{re.escape(exp)}][+-]?\d+)?' if exp else ''
+    real = rf'(?:{mant}{expo}|inf|nan)'
+    return [re.compile(rf'([+-]?{real})([+-]{real}?)[ij](?!nity)', re.I),   # a + bi
+            re.compile(rf'()([+-]?{real})[ij](?!nity)', re.I),             # bi
+            re.compile(rf'([+-]?{real})()', re.I),                 # a
+            re.compile(r'()([+-]?)[ij]', re.I)]                    # i, -j
+
+
+def _ts_real(s, exp):
+    if not s or s in '+-':
+        return float(s + '1') if s else 1.0
+    if re.fullmatch(r'[+-]?\d+', s):
+        return int(s)
+    for c in exp:
+        if c not in 'eE':
+            s = s.replace(c, 'e')
+    return float(s)
+
+
+class _TsOpts:
+    def __init__(self):
+        self.delims = []
+        self.white = ' \b\t'
+        self.eol = ['\r\n', '\n', '\r']
+        self.header = 0
+        self.empty = math.nan
+        self.tae = []
+        self.mdao = False
+        self.collect = False
+        self.comment = None
+        self.roe = True
+        self.exp = 'eEdD'
+        self.strings = False
+
+
+def _ts_options(rest):
+    o = _TsOpts()
+    if len(rest) % 2:
+        raise err('MATLAB:textscan:ParamValuePairs', 'Options come in name-value pairs.', 'textscan')
+    for i in range(0, len(rest), 2):
+        name = opt_str(rest[i])
+        if name is None:
+            raise err('MATLAB:textscan:ParamName', 'Option names are text.', 'textscan')
+        k, v = name.lower(), rest[i + 1]
+        if k == 'delimiter':
+            if type(v) is Cell or isinstance(v, Str):
+                o.delims = [unescape(s) for s in text_list(v) if s]
+            else:
+                o.delims = list(unescape(py_str(v)))
+        elif k == 'whitespace':
+            o.white = unescape(py_str(v))
+        elif k == 'endofline':
+            e = unescape(py_str(v)) if is_str(v) else None
+            if e is None or (len(e) > 1 and e != '\r\n'):
+                raise err('MATLAB:textscan:EndOfLine', "EndOfLine must be at most one character or '\\r\\n'.", 'textscan')
+            o.eol = [e] if e else []
+        elif k == 'headerlines':
+            if is_str(v):
+                raise err('MATLAB:textscan:HeaderLines', 'HeaderLines must be a number.', 'textscan')
+            o.header = int(num(v))
+        elif k == 'emptyvalue':
+            o.empty = float(num(v))
+        elif k == 'treatasempty':
+            o.tae = sorted(text_list(v), key=len, reverse=True)
+        elif k == 'multipledelimsasone':
+            o.mdao = bool(num(v))
+        elif k == 'collectoutput':
+            o.collect = bool(num(v))
+        elif k == 'commentstyle':
+            c = text_list(v)
+            o.comment = (c[0], c[1] if len(c) > 1 else None) if c and c[0] else None
+        elif k == 'returnonerror':
+            o.roe = bool(num(v))
+        elif k == 'expchars':
+            o.exp = py_str(v)
+        elif k == 'texttype':
+            o.strings = sval(v, 'TextType', 'textscan').lower() == 'string'
+        elif k in ('bufsize', 'datelocale'):
+            pass
+        else:
+            raise err('MATLAB:textscan:UnknownOption', f"'{name}' is not an option of textscan.", 'textscan')
+    single = {d for d in o.delims if len(d) == 1}
+    o.white = ''.join(c for c in o.white if c not in single)
+    o.delims.sort(key=len, reverse=True)
+    return o
+
+
+def _ts_scan(text, items, nrep, o):
+    """Apply the format items to the text nrep times (all when nrep < 0).
+    Returns the columns (lists of values, None for an empty field) and the
+    position where reading stopped."""
+    n = len(text)
+    white = set(o.white)
+    nres = _ts_number_res(o.exp)
+    convs = [it for it in items if it[0] == 'conv']
+    cols = [[] for it in convs if not it[2]]
+    sets = {it[1]: _ts_set(it[1]) for it in convs if it[1].startswith('[')}
+
+    def eol_at(p):
+        for e in o.eol:
+            if text.startswith(e, p):
+                return len(e)
+        return 0
+
+    def delim_at(p):
+        for d in o.delims:
+            if text.startswith(d, p):
+                return len(d)
+        return 0
+
+    def skip(p, eol):
+        while p < n:
+            if text[p] in white:
+                p += 1
+            elif o.comment and text.startswith(o.comment[0], p):
+                if o.comment[1]:
+                    e = text.find(o.comment[1], p + len(o.comment[0]))
+                    p = n if e < 0 else e + len(o.comment[1])
+                else:
+                    while p < n and not eol_at(p):
+                        p += 1
+            elif eol and eol_at(p):
+                p += eol_at(p)
+            else:
+                break
+        return p
+
+    def boundary(p):
+        return p >= n or text[p] in white or eol_at(p) or delim_at(p)
+
+    def skip_delims(p):
+        while True:
+            d = delim_at(p)
+            if not d:
+                return p
+            p = skip(p + d, False)
+
+    stream_eol = not o.delims        # without delimiters a line end is only white space
+    pos, rows = 0, 0
+    if o.header:
+        for _ in range(o.header):
+            while pos < n and not eol_at(pos):
+                pos += 1
+            pos += eol_at(pos)
+    while nrep < 0 or rows < nrep:
+        p = skip(pos, True)
+        if o.mdao and o.delims:
+            p = skip(skip_delims(p), True)
+        if p >= n:
+            pos = p
+            break
+        pos = p
+        vals, ended, failed = [], False, None
+        for idx, it in enumerate(items):
+            nxt_lit = idx + 1 < len(items) and items[idx + 1][0] == 'lit'
+            if it[0] == 'lit':
+                if ended:
+                    continue
+                lit = it[1]
+                q = skip(pos, stream_eol)
+                if not text.startswith(lit, q) and o.delims and delim_at(q):
+                    q = skip(q + delim_at(q), stream_eol)
+                    if o.mdao:
+                        q = skip(skip_delims(q), stream_eol)
+                if text.startswith(lit, q):
+                    pos = q + len(lit)
+                elif q >= n or eol_at(q):
+                    ended = True
+                else:
+                    failed = (q, 'Literal')
+                    break
+                continue
+            _, t, skipped, w, prec = it
+            numeric = t in _TS_CLASS
+            val = None
+            if not ended:
+                q = pos if t == 'c' else skip(pos, stream_eol)
+                if t != 'c' and o.delims and o.mdao and delim_at(q):
+                    q = skip(skip_delims(q), stream_eol)
+                if q >= n or (t != 'c' and not stream_eol and eol_at(q)):
+                    ended = True
+                elif t != 'c' and not t.startswith('[') and delim_at(q):
+                    pos = q + delim_at(q)                       # an empty field
+                    if not skipped:
+                        vals.append(None)
+                    continue
+                else:
+                    hit = next((s for s in o.tae if text.startswith(s, q) and boundary(q + len(s))), None) if t != 'c' else None
+                    if hit is not None:
+                        pos = q + len(hit)
+                    elif numeric:
+                        seg = text[q:q + w] if w else text[q:]
+                        m = None
+                        for rx in nres:
+                            m = rx.match(seg)
+                            if m:
+                                break
+                        if not m:
+                            failed = (q, 'Numeric')
+                            break
+                        a, b = m.group(1), m.group(2)
+                        if rx is nres[2]:
+                            val = _ts_real(a, o.exp)
+                        else:
+                            val = complex(_ts_real(a, o.exp) if a else 0, _ts_real(b, o.exp))
+                        if prec is not None and not isinstance(val, int):
+                            val = complex(round(val.real, prec), round(val.imag, prec)) if isinstance(val, complex) else round(val, prec)
+                        pos = q + m.end()
+                    elif t == 'c':
+                        k = w or 1
+                        val, pos = text[q:q + k], min(n, q + k)
+                    elif t.startswith('['):
+                        chars, neg = sets[t]
+                        e = q
+                        while e < n and ((text[e] not in chars) if neg else (text[e] in chars)) and (not w or e - q < w):
+                            e += 1
+                        val, pos = text[q:e], e
+                    elif t == 'q' and text[q] == '"':
+                        e, buf = q + 1, []
+                        while e < n:
+                            if text[e] == '"':
+                                if text.startswith('""', e):
+                                    buf.append('"')
+                                    e += 2
+                                    continue
+                                e += 1
+                                break
+                            buf.append(text[e])
+                            e += 1
+                        val, pos = ''.join(buf), e
+                    else:
+                        e = q
+                        while e < n and not eol_at(e) and not delim_at(e) and (o.delims or text[e] not in white) and (not w or e - q < w) \
+                                and not (o.comment and text.startswith(o.comment[0], e)):
+                            e += 1
+                        val, pos = text[q:e], e
+                    # the delimiter after a field (kept for a literal that follows, which may start with it)
+                    if o.delims and not nxt_lit:
+                        r = skip(pos, False)
+                        d = delim_at(r)
+                        if d:
+                            pos = skip_delims(r) if o.mdao else r + d
+            if not skipped:
+                vals.append(val if val is not None or not (ended and not numeric) else '')
+        for k, v in enumerate(vals):
+            cols[k].append(v)
+        if failed:
+            if not o.roe:
+                q, kind = failed
+                field = sum(1 for it in items[:idx] if it[0] == 'conv') + 1
+                raise err('MATLAB:textscan:handleErrorAndShowInfo',
+                          f"Mismatch between file and format character vector.\nTrouble reading '{kind}' field from file (row number {rows + 1}, field number {field}) ==> {text[q:q + 30]}", 'textscan')
+            pos = failed[0]
+            break
+        rows += 1
+        r = skip(pos, False)
+        pos = r + eol_at(r)
+    return cols, pos
+
+
+def _ts_column(it, vals, o):
+    """One output column: numbers in the conversion's class, text as a cell
+    (or string) column, characters as a char matrix."""
+    t, w = it[1], it[3]
+    if t in _TS_CLASS:
+        cls = _TS_CLASS[t]
+        vs = [o.empty if v is None else v for v in vals]
+        if any(isinstance(v, complex) for v in vs) and cls in ('double', 'single'):
+            a = np.array([complex(v) for v in vs], C128).reshape(-1, 1)
+            return out(a.astype(np.complex64) if cls == 'single' else a)
+        if cls in ('int64', 'uint64') and all(isinstance(v, int) or (isinstance(v, float) and abs(v) < 2 ** 53) for v in vs):
+            lo, hi = (-2 ** 63, 2 ** 63 - 1) if cls == 'int64' else (0, 2 ** 64 - 1)
+            exact = [min(hi, max(lo, v)) if isinstance(v, int) else v for v in vs]
+            if all(isinstance(v, int) for v in exact):
+                return np.array(exact, INT_TYPES[cls]).reshape(-1, 1)
+        a = np.array([float(v.real) if isinstance(v, complex) else float(v) for v in vs], F64).reshape(-1, 1)
+        if cls == 'double':
+            return out(a) if a.size != 1 else a
+        if cls == 'single':
+            return a.astype(np.float32)
+        from ..ops import to_int_class
+        return to_int_class(a, cls)
+    if t == 'c':
+        k = w or 1
+        vs = ['' if v is None else v for v in vals]
+        return Char.rows([v.ljust(k) for v in vs]) if vs else Char(np.zeros((0, k), np.uint16))
+    vs = ['' if v is None else v for v in vals]
+    if o.strings:
+        return Str.from_list(vs, (len(vs), 1))
+    return Cell.of_list([Char.of(v) for v in vs], (len(vs), 1))
+
+
+def _ts_collect(cols):
+    """CollectOutput: neighbouring columns of one class joined."""
+    groups = []
+    for c in cols:
+        kind = class_of(c)
+        if groups and groups[-1][0] == kind and kind != 'char':
+            groups[-1][1].append(c)
+        else:
+            groups.append((kind, [c]))
+    res = []
+    for kind, cs in groups:
+        if len(cs) == 1:
+            res.append(cs[0])
+            continue
+        h = max(shape_of(c)[0] for c in cs)
+        if kind == 'cell':
+            items = []
+            for c in cs:
+                col = [c.a.reshape(-1, order='F')[i] if i < shape_of(c)[0] else Char.of('') for i in range(h)]
+                items.extend(col)
+            res.append(Cell.of_list(items, (h, len(cs))))
+        else:
+            parts = []
+            for c in cs:
+                a = np.asarray(c).reshape(-1, 1) if isinstance(c, np.ndarray) else np.array([[c]])
+                if a.shape[0] < h:
+                    fill = np.full((h - a.shape[0], 1), np.nan if a.dtype.kind in 'fc' else 0, a.dtype)
+                    a = np.vstack([a, fill])
+                parts.append(a)
+            res.append(out(np.hstack(parts)))
+    return res
+
+
+def _ts_auto_format(text, o):
+    """The format of an empty format: one %f per field of the first line that
+    holds data, the fields counted while they read as numbers."""
+    lines = re.split('|'.join(re.escape(e) for e in o.eol), text) if o.eol else [text]
+    sub = _TsOpts()
+    sub.__dict__.update(o.__dict__)
+    sub.eol, sub.header = [], 0
+    for line in lines[o.header:]:
+        k = len(_ts_scan(line, [('conv', 'f', False, 0, None)], -1, sub)[0][0])
+        if k:
+            return '%f' * k
+    return '%f'
+
+
 @bi('textscan', nout=2)
 def textscan(nargout, *args):
+    """C = textscan(text or fid, format, N, options): the format read over the
+    text again and again, a column per conversion."""
+    nargchk(args, 1, None, 'textscan')
     src = args[0]
-    if is_str(src):
-        text = py_str(src)
-    else:
+    is_fid = type(src) is float or (isinstance(src, np.ndarray) and src.size == 1 and src.dtype == F64)
+    if not is_str(src) and not is_fid:
+        raise err('MATLAB:textscan:InvalidFirstArg', 'The first input is a file identifier from fopen or text.', 'textscan')
+    if len(args) > 1 and not is_str(args[1]):
+        raise err('MATLAB:textscan:InvalidFormat', 'The format must be text.', 'textscan')
+    fmt = unescape(py_str(args[1])) if len(args) > 1 else '%f'
+    rest = list(args[2:])
+    nrep = -1
+    if rest and not is_str(rest[0]):
+        v = float(num(rest.pop(0)))
+        nrep = -1 if (math.isinf(v) or v < 0) else int(v)
+    o = _ts_options(rest)
+    f = None
+    if is_fid:
         f = _get(src, 'textscan')
+        start = f.f.tell()
         text = f.f.read().decode(f.encoding, errors='replace')
-    fmt = unescape(sval(args[1], 'format', 'textscan'))
-    i = 2
-    delim = None
-    header = 0
-    while i < len(args):
-        if opt_str(args[i]) is None:
-            i += 1
-            continue
-        k = opt_str(args[i]).lower()
-        v = args[i + 1] if i + 1 < len(args) else None
-        if k == 'delimiter':
-            delim = text_list(v)
-        elif k == 'headerlines':
-            header = int(num(v))
-        i += 2
-    lines = text.split('\n')[header:]
-    convs = [m.group(5) for m in _SCAN.finditer(fmt) if not m.group(1)]
-    cols = [[] for _ in convs]
-    for line in lines:
-        line = line.rstrip('\r')
-        if not line.strip():
-            continue
-        if delim:
-            fields = re.split('|'.join(re.escape(unescape(d)) for d in delim), line)
-        else:
-            fields = line.split()
-        for k, conv in enumerate(convs):
-            fld = fields[k].strip() if k < len(fields) else ''
-            if conv in 'dfeEgGiu':
-                try:
-                    cols[k].append(float(fld))
-                except ValueError:
-                    cols[k].append(math.nan)
-            else:
-                cols[k].append(fld)
-    outc = []
-    for conv, c in zip(convs, cols):
-        if conv in 'dfeEgGiu':
-            outc.append(out(np.array(c, F64).reshape(-1, 1)))
-        else:
-            outc.append(Cell.of_list([Char.of(x) for x in c], (len(c), 1)))
-    return Cell.of_list(outc)
+    else:
+        text = py_str(src)
+    if not fmt.strip():
+        fmt = _ts_auto_format(text, o)
+    items = _ts_items(fmt)
+    if not any(it[0] == 'conv' for it in items):
+        raise err('MATLAB:textscan:BadFormatString', 'The format has no conversions (such as %f or %s).', 'textscan')
+    cols, pos = _ts_scan(text, items, nrep, o)
+    convs = [it for it in items if it[0] == 'conv' and not it[2]]
+    res = [_ts_column(it, c, o) for it, c in zip(convs, cols)]
+    if o.collect:
+        res = _ts_collect(res)
+    if f is not None:
+        f.f.seek(start + len(text[:pos].encode(f.encoding, errors='replace')))
+        pos = f.f.tell()
+    C = Cell.of_list(res)
+    if nargout >= 2:
+        return C, float(pos)
+    return C
 
 
 # ---- delimited numbers ---------------------------------------------------------------------------
@@ -1625,3 +2022,149 @@ def textread(nargout, *args):
     if nargout > len(res):
         raise err('MATLAB:TooManyOutputs', 'Too many output arguments.', 'textread')
     return tuple(res[:nargout])
+
+
+# ---- JSON ---------------------------------------------------------------------------------------------------
+
+def _json_valid_name(k):
+    return py_str(R.BUILTINS['matlab.lang.makeValidName'].fn(1, Char.of(k)))
+
+
+def _json_value(x):
+    """A decoded JSON value as the language's value: objects as structs,
+    arrays of numbers (or of arrays of them, all alike) as numeric arrays,
+    arrays of booleans as logical, of objects with the same fields as struct
+    arrays, and other arrays as cells; null is [] (NaN in an array of
+    numbers)."""
+    if x is None:
+        return EMPTY()
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, str):
+        return Char.of(x)
+    if isinstance(x, dict):
+        return Struct.scalar({_json_valid_name(k): _json_value(v) for k, v in x.items()})
+    if not x:
+        return EMPTY()
+    if all(isinstance(e, bool) for e in x):
+        return np.array(x, bool).reshape(-1, 1)
+    if all(isinstance(e, (int, float)) and not isinstance(e, bool) or e is None for e in x) and any(e is not None for e in x):
+        return np.array([np.nan if e is None else float(e) for e in x]).reshape(-1, 1)
+    if all(isinstance(e, list) for e in x):
+        parts = [_json_value(e) for e in x]
+        if all(type(p) is np.ndarray and p.dtype == F64 for p in parts) and len({p.shape for p in parts}) == 1 and parts[0].size:
+            # rows of a matrix (each inner array a row), or pages of more
+            stacked = np.stack([p.reshape(-1) if p.shape[1] == 1 else p for p in parts])
+            return stacked if stacked.ndim == 2 else np.moveaxis(stacked, 0, 0)
+        if all(type(p) is np.ndarray and p.dtype == bool for p in parts) and len({p.shape for p in parts}) == 1:
+            return np.stack([p.reshape(-1) for p in parts])
+        return Cell.of_list(parts, (len(parts), 1))
+    if all(isinstance(e, dict) for e in x):
+        names = [list(e.keys()) for e in x]
+        if all(n == names[0] for n in names):
+            fields = {}
+            for k in names[0]:
+                col = np.empty((len(x), 1), object)
+                for i, e in enumerate(x):
+                    col[i, 0] = _json_value(e[k])
+                fields[_json_valid_name(k)] = col
+            return Struct((len(x), 1), fields)
+    return Cell.of_list([_json_value(e) for e in x], (len(x), 1))
+
+
+@bi('jsondecode')
+def jsondecode(nargout, *args):
+    """A JSON text as a value (see how objects, arrays and null map)."""
+    import json
+    nargchk(args, 1, 3, 'jsondecode')
+    text = py_str(args[0])
+    try:
+        x = json.loads(text, parse_constant=lambda c: {'NaN': math.nan, 'Infinity': math.inf, '-Infinity': -math.inf}[c])
+    except (ValueError, KeyError) as e:
+        raise err('MATLAB:json:ExpectedValue', f'Unable to parse the JSON text: {e}.', 'jsondecode')
+    return _json_value(x)
+
+
+def _json_num(v, single=False):
+    if v != v or v in (math.inf, -math.inf):
+        return None
+    if v == int(v) and abs(v) < 1e15:
+        return int(v)
+    # a single as its own shortest digits (0.1, not 0.10000000149011612)
+    return float(repr(np.float32(v))) if single else float(v)
+
+
+def _json_data(v, nan_null):
+    """A value as a Python object for json.dumps: numbers, booleans and text
+    as themselves, vectors as lists, matrices as lists of rows, structs as
+    objects (an array of them as a list), cells as lists."""
+    t = type(v)
+    if t is Char:
+        if v.a.ndim == 2 and v.a.shape[0] > 1:
+            return v.row_strs()
+        return v.str()
+    if t is Str:
+        items = list(v.a.reshape(-1, order='F'))
+        return items[0] if len(items) == 1 else items
+    if t is Cell:
+        return [_json_data(x, nan_null) for x in v.a.reshape(-1, order='F')]
+    if t is Struct:
+        def one(i):
+            return {k: _json_data(a.reshape(-1, order='F')[i], nan_null) for k, a in v.f.items()}
+        if v.size == 1:
+            return one(0)
+        return [one(i) for i in range(v.size)]
+    if isinstance(v, FH):
+        raise err('MATLAB:json:UnsupportedClass', 'Function handles cannot be written as JSON.', 'jsonencode')
+    if getattr(v, 'cls', None) == 'containers.Map':
+        return {(k if isinstance(k, str) else f'{k:g}'): _json_data(x, nan_null) for k, x in v.d.items()}
+    a = np.asarray(arr(v))
+    if a.dtype.kind == 'c':
+        raise err('MATLAB:json:ComplexNotSupported', 'Complex numbers cannot be written as JSON.', 'jsonencode')
+    single = a.dtype == np.float32
+
+    def elem(e):
+        if a.dtype == bool:
+            return bool(e)
+        if a.dtype.kind in 'iu':
+            return int(e)
+        f = float(e)
+        if not math.isfinite(f) and not nan_null:
+            return f
+        return _json_num(f, single)
+    if a.size == 1 and a.ndim == 2:
+        return elem(a.reshape(-1)[0])
+    if a.size == 0:
+        return []
+    if a.ndim == 2 and (a.shape[0] == 1 or a.shape[1] == 1):
+        return [elem(e) for e in a.reshape(-1, order='F')]
+
+    def nest(b):
+        if b.ndim == 1:
+            return [elem(e) for e in b]
+        return [nest(b[i]) for i in range(b.shape[0])]
+    return nest(a)
+
+
+@bi('jsonencode')
+def jsonencode(nargout, *args):
+    """A value as JSON text; 'ConvertInfAndNaN' (true: as null) and
+    'PrettyPrint' (false) are the options."""
+    import json
+    nargchk(args, 1, 5, 'jsonencode')
+    nan_null, pretty = True, False
+    rest = list(args[1:])
+    for i in range(0, len(rest) - 1, 2):
+        k = (opt_str(rest[i]) or '').lower()
+        if k == 'convertinfandnan':
+            nan_null = bool(num(rest[i + 1]))
+        elif k == 'prettyprint':
+            pretty = bool(num(rest[i + 1]))
+        else:
+            raise err('MATLAB:json:InvalidOption', f"Unknown option '{opt_str(rest[i])}'.", 'jsonencode')
+    data = _json_data(args[0], nan_null)
+    text = json.dumps(data, ensure_ascii=False, indent=2 if pretty else None,
+                      separators=(',', ': ') if pretty else (',', ':'), allow_nan=not nan_null)
+    return Char.of(text)

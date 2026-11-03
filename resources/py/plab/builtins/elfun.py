@@ -143,13 +143,24 @@ def pow2(nargout, *args):
 
 @bi('nextpow2')
 def nextpow2(nargout, *args):
-    a = np.abs(darr(args[0]))
+    """The smallest p with 2^p >= |x|, in x's class: from frexp, and for
+    integers from their bit length (exact past 2^53)."""
+    nargchk(args, 1, 1, 'nextpow2')
+    v = args[0]
+    cls = class_of(v)
+    if cls in INT_CLASSES:
+        a = np.asarray(arr(v, 'nextpow2'))
+        r = np.array([(abs(int(x)) - 1).bit_length() if x != 0 else 0 for x in a.reshape(-1)], F64).reshape(a.shape)
+        return like_class(r, v)
+    a = np.abs(darr(v))
+    if cls == 'single':
+        a = a.astype(np.float32)
     with np.errstate(all='ignore'):
         f, e = np.frexp(a)
         r = np.where(f == 0.5, e - 1, e).astype(F64)
         r = np.where(a == 0, 0.0, r)
-        r = np.where(np.isinf(a), np.inf, r)
-    return out(r)
+        r = np.where(np.isinf(a), np.inf, np.where(np.isnan(a), np.nan, r))
+    return like_class(r, v) if cls == 'single' else out(r)
 
 
 @bi('nthroot')
@@ -719,15 +730,21 @@ def angle(nargout, *args):
 @bi('complex')
 def complex_(nargout, *args):
     nargchk(args, 1, 2, 'complex')
+    single = any(class_of(v) == 'single' for v in args)
     a = darr(args[0])
-    b = darr(args[1]) if len(args) > 1 else np.zeros_like(a)
+    if len(args) == 1 and np.iscomplexobj(a):
+        # complex(z) of a complex z is z itself
+        return _2d(a.astype(np.complex64) if single else a.astype(C128))
+    b = darr(args[1]) if len(args) > 1 else np.zeros(a.shape)
+    if np.iscomplexobj(a) or np.iscomplexobj(b):
+        raise err('MATLAB:complex:invalidRealPartInput', 'The parts of a complex number must be real.', 'complex')
     a, b = align(a, b)
-    r = np.asarray(a, F64) + 1j * np.asarray(b, F64)
-    r = _2d(np.asarray(r, C128))
-    if r.size == 1:
-        # complex() keeps a zero imaginary part: the value stays complex
-        return r
-    return r
+    # built from its parts: a + 1j*b would turn an infinite b into NaN + Inf i
+    r = np.empty(np.broadcast(a, b).shape, C128)
+    r.real = a
+    r.imag = b
+    # complex() keeps a zero imaginary part: the value stays complex
+    return _2d(r.astype(np.complex64) if single else r)
 
 
 @bi('isnan')
@@ -820,11 +837,16 @@ def cplxpair(nargout, *args):
 
 @bi('unwrap')
 def unwrap(nargout, *args):
+    """unwrap(P, tol, dim): jumps of tol or more (pi at least) along dim
+    (the first that is not 1) taken back by multiples of 2*pi, numpy.unwrap."""
+    nargchk(args, 1, 3, 'unwrap')
     a = darr(args[0])
     tol = num(args[1]) if len(args) > 1 and numel(args[1]) else math.pi
-    if a.ndim == 2 and a.shape[0] == 1:
-        return out(np.unwrap(a, discont=tol, axis=1))
-    return out(np.unwrap(a, discont=tol, axis=0))
+    dim = int(num(args[2])) - 1 if len(args) > 2 else first_dim(a.shape)
+    if dim >= a.ndim:
+        return out(a)
+    r = np.unwrap(a, discont=tol, axis=dim) if a.shape[dim] > 1 else a
+    return like_class(r, args[0]) if class_of(args[0]) == 'single' else out(r)
 
 
 # ---- number theory -----------------------------------------------------------------------
@@ -943,31 +965,51 @@ def primes(nargout, *args):
     return out(p.astype(F64)) if klass == 'double' else finish(p, klass)
 
 
+def _is_prime_int(x):
+    """Primality of a nonnegative Python int: trial division by small primes,
+    then Miller-Rabin with the bases that decide every 64-bit number."""
+    if x < 2:
+        return False
+    for q in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if x % q == 0:
+            return x == q
+    d, r = x - 1, 0
+    while d % 2 == 0:
+        d //= 2
+        r += 1
+    for a in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        y = pow(a, d, x)
+        if y in (1, x - 1):
+            continue
+        for _ in range(r - 1):
+            y = y * y % x
+            if y == x - 1:
+                break
+        else:
+            return False
+    return True
+
+
 @bi('isprime')
 def isprime(nargout, *args):
-    a = arr(args[0])
-    if np.any(a < 0) or np.any(a != np.round(a)):
+    """True where an element is a prime: a sieve for small values, otherwise
+    an exact test on the integer (64-bit integers too)."""
+    nargchk(args, 1, 1, 'isprime')
+    a = np.asarray(arr(args[0]))
+    if a.dtype.kind == 'c' or (a.dtype.kind == 'f' and (np.any(a < 0) or np.any(a != np.round(a)))) or (a.dtype.kind == 'i' and np.any(a < 0)):
         raise err('MATLAB:isprime:InputNotPosInt', 'All entries must be real, nonnegative integers.', 'isprime')
-    flat = a.reshape(-1).astype(np.int64)
-    res = np.zeros(flat.size, bool)
-    for i, x in enumerate(flat):
-        x = int(x)
-        if x < 2:
-            continue
-        if x < 4:
-            res[i] = True
-            continue
-        if x % 2 == 0:
-            continue
-        ok = True
-        r = int(math.isqrt(x))
-        f = 3
-        while f <= r:
-            if x % f == 0:
-                ok = False
-                break
-            f += 2
-        res[i] = ok
+    flat = a.reshape(-1)
+    vals = [int(x) for x in flat]
+    top = max(vals, default=0)
+    if top <= 10 ** 7:
+        sieve = np.ones(top + 1, bool)
+        sieve[:2] = False
+        for q in range(2, math.isqrt(top) + 1):
+            if sieve[q]:
+                sieve[q * q::q] = False
+        res = sieve[np.array(vals, np.int64)] if vals else np.zeros(0, bool)
+    else:
+        res = np.array([_is_prime_int(x) for x in vals], bool)
     return out(res.reshape(a.shape))
 
 
@@ -1011,37 +1053,56 @@ def rats(nargout, *args):
 
 @bi('rat', nout=2)
 def rat(nargout, *args):
+    """[N, D] = rat(X, tol): fractions N./D within tol of X (1e-6*norm(X, 1)
+    of its finite values by default), from the continued fraction of each
+    element with terms rounded half away from zero; one output is the
+    continued fraction as text, '3 + 1/(7 + 1/16)', a row per element."""
     from ..values import Char
+    nargchk(args, 1, 2, 'rat')
     a = darr(args[0])
-    tol = num(args[1]) if len(args) > 1 else None
-    N = np.zeros(a.shape)
-    Dn = np.ones(a.shape)
-    for i, x in enumerate(a.reshape(-1).real):
+    if np.iscomplexobj(a):
+        raise err('MATLAB:rat:complexInput', 'The input must be real.', 'rat')
+    flat = a.reshape(-1, order='F')
+    fin = flat[np.isfinite(flat)]
+    tol = num(args[1]) if len(args) > 1 else 1e-6 * float(np.sum(np.abs(fin)))
+    N, Dn, texts = np.zeros(flat.shape), np.ones(flat.shape), []
+
+    def rnd(y):
+        return math.floor(abs(y) + 0.5) * (1 if y >= 0 else -1)
+    for i, x in enumerate(flat):
         if not math.isfinite(x):
-            N.flat[i] = x
-            Dn.flat[i] = 0 if x != x else 1
+            N[i], Dn[i] = (0.0, 0.0) if x != x else (math.copysign(1.0, x), 0.0)
+            texts.append('NaN' if x != x else ('Inf' if x > 0 else '-Inf'))
             continue
-        t = tol if tol is not None else 1e-6 * np.linalg.norm(a.reshape(-1), 1)
-        n0, d0, n1, d1 = 1, 0, 0, 1
         y = x
-        for _ in range(64):
-            k = round(y)
+        k = rnd(y)
+        terms = [k]
+        n0, n1, d0, d1 = k, 1, 1, 0
+        frac = y - k
+        while abs(x - n0 / d0) >= max(tol, 0) and frac != 0 and len(terms) < 64:
+            flip = 1 / frac
+            k = rnd(flip)
+            frac = flip - k
+            terms.append(k)
             n0, n1 = k * n0 + n1, n0
             d0, d1 = k * d0 + d1, d0
-            if abs(x - n0 / d0) <= max(t, 0):
-                break
-            f = y - k
-            if f == 0:
-                break
-            y = 1 / f
         if d0 < 0:
             n0, d0 = -n0, -d0
-        N.flat[i] = n0
-        Dn.flat[i] = d0
+        N[i], Dn[i] = n0, d0
+        t = str(int(terms[0]))
+        m = len(terms)
+        for j in range(1, m):
+            tj = int(terms[j])
+            if j < m - 1:
+                t += f' + 1/({tj}'
+            else:
+                t += f' + 1/{tj}' if tj >= 0 else f' + 1/({tj})'
+        texts.append(t + ')' * max(m - 2, 0))
     if nargout >= 2:
-        return out(N), out(Dn)
-    from ..display import rat_text
-    return Char.of(' '.join(rat_text(float(x)) for x in a.reshape(-1).real))
+        return out(N.reshape(a.shape, order='F')), out(Dn.reshape(a.shape, order='F'))
+    if not texts:
+        return Char.of('')
+    return Char.of(texts[0]) if len(texts) == 1 else Char.rows([t.ljust(max(map(len, texts))) for t in texts])
 
 
 # ---- special functions --------------------------------------------------------------------
@@ -1070,7 +1131,26 @@ _special1('erfc', 'erfc')
 _special1('erfinv', 'erfinv')
 _special1('erfcinv', 'erfcinv')
 _special1('erfcx', 'erfcx')
-_special1('expint', 'exp1')
+
+
+@bi('expint')
+def expint(nargout, *args):
+    """The exponential integral E1(x): for a negative real x it is
+    -Ei(-x) - i*pi (complex), as E1 continues from above the cut."""
+    nargchk(args, 1, 1, 'expint')
+    sp = _sp()
+    a, klass = _float_arg(args[0], 'expint')
+    a = np.asarray(a)
+    with np.errstate(all='ignore'):
+        if a.dtype.kind == 'c':
+            r = sp.exp1(a)
+        elif np.any(a < 0):
+            # SciPy's expi(Inf) is NaN: Ei grows without bound, so E1(-Inf) is -Inf - i*pi
+            ei = np.where(np.isinf(a), np.inf, sp.expi(-np.where(a < 0, a, 1.0)))
+            r = np.where(a < 0, -ei - 1j * np.pi, sp.exp1(np.where(a < 0, 1.0, a)) + 0j)
+        else:
+            r = sp.exp1(a)
+    return _finish(r, klass)
 
 
 @bi('psi')
@@ -1091,24 +1171,114 @@ def _bcast2(args, fn):
     return a, b
 
 
+def _log_gamma_scale(a, x):
+    """log(gamma(a+1)*exp(x)/x^a) from terms of moderate size: Stirling's
+    sqrt(2*pi*a) and its correction, and a*(t - log(1+t)) with x = a*(1+t),
+    instead of lgamma(a+1) and a*log(x), which are large and nearly cancel."""
+    if a < 30:
+        return math.lgamma(a + 1) + x - a * math.log(x)
+    ia = 1 / a
+    corr = ia * (1 / 12 - ia * ia * (1 / 360 - ia * ia * (1 / 1260 - ia * ia / 1680)))
+    t = x / a - 1
+    if abs(t) < 0.5:
+        # t - log(1+t) as its series, which starts at t^2/2
+        tk, d, k = t * t, 0.0, 2
+        while True:
+            term = tk / k
+            d += term if k % 2 == 0 else -term
+            if abs(term) < 1e-17 * abs(d) or k > 200:
+                break
+            tk *= t
+            k += 1
+    else:
+        d = t - math.log1p(t)
+    return 0.5 * math.log(2 * math.pi * a) + corr + a * d
+
+
+def _gamma_scaled(a, x, upper):
+    """gamma(a+1)*exp(x)/x^a times P(a, x) (upper False) or Q(a, x): the
+    series sum of x^n/((a+1)...(a+n)) below x = a+1, the continued fraction
+    for Gamma(a, x)*exp(x)/x^a above, the other from their sum
+    gamma(a+1)*exp(x)/x^a. (SciPy's hyp1f1 and hyperu, which are these,
+    do not return for some large arguments.)"""
+    if math.isnan(a) or math.isnan(x) or a < 0 or x < 0:
+        return math.nan
+    if a == 0:
+        return 0.0 if upper else math.exp(x) if x < 710 else math.inf
+    if x == 0:
+        return math.inf if upper else 1.0
+    if math.isinf(x):
+        return 0.0 if upper else math.inf
+    if math.isinf(a):
+        return math.inf if upper else 1.0
+    lg = _log_gamma_scale(a, x)
+    lead = math.exp(lg) if lg < 709.7 else math.inf
+    if x < a + 1:
+        total = term = 1.0
+        for n in range(1, 100000):
+            term *= x / (a + n)
+            total += term
+            if term < total * 1e-17:
+                break
+        return lead - total if upper else total
+    tiny = 1e-300
+    b = x + 1 - a
+    c, d = 1 / tiny, 1 / b
+    h = d
+    for i in range(1, 100000):
+        an = -i * (i - a)
+        b += 2
+        d = an * d + b
+        d = tiny if abs(d) < tiny else d
+        c = b + an / c
+        c = tiny if abs(c) < tiny else c
+        d = 1 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1) < 1e-16:
+            break
+    return a * h if upper else lead - a * h
+
+
 @bi('gammainc')
 def gammainc(nargout, *args):
+    """gammainc(x, a, type): the regularized incomplete gamma function, lower
+    P(a, x) or upper Q(a, x); the scaled forms multiply by
+    gamma(a+1)*exp(x)/x^a, which are 1F1(1; a+1; x) and a*U(1, a+1, x)."""
     nargchk(args, 2, 3, 'gammainc')
     sp = _sp()
-    x, a = _bcast2(args, 'gammainc')
+    x, a = _bcast2(args[:2], 'gammainc')
     tail = opt_str(args[2]).lower() if len(args) > 2 else 'lower'
+    if tail not in ('lower', 'upper', 'scaledlower', 'scaledupper'):
+        raise err('MATLAB:gammainc:InvalidTail', "The type is 'lower', 'upper', 'scaledlower' or 'scaledupper'.", 'gammainc')
     with np.errstate(all='ignore'):
-        r = sp.gammaincc(a, x) if tail == 'upper' else sp.gammainc(a, x)
+        if tail == 'lower':
+            r = np.where(a == 0, 1.0, sp.gammainc(a, x))
+        elif tail == 'upper':
+            r = np.where(a == 0, 0.0, sp.gammaincc(a, x))
+        else:
+            up = tail == 'scaledupper'
+            ab, xb = np.broadcast_arrays(a, x)
+            r = np.array([_gamma_scaled(float(av), float(xv), up) for av, xv in zip(ab.reshape(-1), xb.reshape(-1))]).reshape(ab.shape)
+        r = np.where(np.isnan(x) | np.isnan(a), np.nan, r)
+    if any(class_of(v) == 'single' for v in args[:2]):
+        return finish(np.asarray(r, np.float32), 'single')
     return out(r)
 
 
 @bi('gammaincinv')
 def gammaincinv(nargout, *args):
+    """x with gammainc(x, a, tail) = y."""
+    nargchk(args, 2, 3, 'gammaincinv')
     sp = _sp()
-    y, a = _bcast2(args, 'gammaincinv')
+    y, a = _bcast2(args[:2], 'gammaincinv')
     tail = opt_str(args[2]).lower() if len(args) > 2 else 'lower'
+    if tail not in ('lower', 'upper'):
+        raise err('MATLAB:gammaincinv:InvalidTail', "The tail is 'lower' or 'upper'.", 'gammaincinv')
     with np.errstate(all='ignore'):
         r = sp.gammainccinv(a, y) if tail == 'upper' else sp.gammaincinv(a, y)
+    if any(class_of(v) == 'single' for v in args[:2]):
+        return finish(np.asarray(r, np.float32), 'single')
     return out(r)
 
 
@@ -1142,12 +1312,24 @@ def betainc(nargout, *args):
 
 @bi('betaincinv')
 def betaincinv(nargout, *args):
+    """x with betainc(x, z, w, tail) = y; 'upper' inverts the upper tail
+    directly (not 1 - y, which loses small values)."""
+    nargchk(args, 3, 4, 'betaincinv')
     sp = _sp()
-    y = darr(args[0])
-    z = darr(args[1])
-    w = darr(args[2])
-    y, z, w = np.broadcast_arrays(y, z, w)
-    return out(sp.betaincinv(z, w, y))
+    tail = opt_str(args[3]).lower() if len(args) > 3 else 'lower'
+    if tail not in ('lower', 'upper'):
+        raise err('MATLAB:betaincinv:InvalidTail', "The tail is 'lower' or 'upper'.", 'betaincinv')
+    y, z, w = np.broadcast_arrays(darr(args[0]), darr(args[1]), darr(args[2]))
+    with np.errstate(all='ignore'):
+        if tail == 'lower':
+            r = sp.betaincinv(z, w, y)
+        elif hasattr(sp, 'betainccinv'):
+            r = sp.betainccinv(z, w, y)
+        else:
+            r = sp.betaincinv(z, w, 1 - y)
+    if any(class_of(v) == 'single' for v in args[:3]):
+        return finish(np.asarray(r, np.float32), 'single')
+    return out(r)
 
 
 def _bessel(name, fn):
@@ -1186,15 +1368,35 @@ def besselh(nargout, *args):
     return out(r)
 
 
-@bi('airy')
+@bi('airy', nout=2)
 def airy(nargout, *args):
+    """airy(k, z, scale): Ai (k 0), Ai' (1), Bi (2) or Bi' (3); scaled by
+    exp(2/3 z^(3/2)) for Ai and Ai', by exp(-|real(2/3 z^(3/2))|) for Bi
+    and Bi'. The second output (an error flag) is 0."""
+    nargchk(args, 1, 3, 'airy')
     sp = _sp()
     if len(args) == 1:
-        k, z = 0, darr(args[0])
+        k, zv = 0, args[0]
     else:
-        k, z = int(num(args[0])), darr(args[1])
-    ai, aip, bi_, bip = sp.airy(z)
-    return out([ai, aip, bi_, bip][k])
+        k, zv = num(args[0]), args[1]
+        if k not in (0, 1, 2, 3):
+            raise err('MATLAB:airy:InvalidK', 'K must be 0, 1, 2 or 3.', 'airy')
+        k = int(k)
+    scale = len(args) > 2 and bool(num(args[2]))
+    z = darr(zv)
+    with np.errstate(all='ignore'):
+        if scale:
+            zc = z.astype(C128)
+            r = sp.airye(zc)[k]
+            if not np.iscomplexobj(z) and k >= 2:
+                r = r.real
+        else:
+            r = sp.airy(z)[k]
+    if class_of(zv) == 'single':
+        r = finish(np.asarray(r, np.complex64 if np.iscomplexobj(r) and np.any(np.imag(r)) else np.float32), 'single')
+    else:
+        r = out(r)
+    return (r, 0.0) if nargout > 1 else r
 
 
 @bi('ellipke', nout=2)
@@ -1249,3 +1451,66 @@ def legendre(nargout, *args):
     if x.ndim == 2 and (x.shape[0] == 1 or x.shape[1] == 1):
         return out(r)
     return out(r.reshape((n + 1,) + x.shape, order='C'))
+
+
+# ---- coordinate systems -----------------------------------------------------------------------------------
+
+def _coord_args(args, fn, n):
+    """The coordinate arrays, expanded to one size; single if any is single."""
+    nargchk(args, n - 1 if n == 3 else n, n, fn)
+    vals = [darr(a) for a in args]
+    for v in vals:
+        if v.dtype.kind == 'c':
+            raise err(f'MATLAB:{fn}:complexInput', 'The coordinates must be real.', fn)
+    nd = max(v.ndim for v in vals)
+    vals = [v.reshape(v.shape + (1,) * (nd - v.ndim)) for v in vals]
+    try:
+        vals = list(np.broadcast_arrays(*vals))
+    except ValueError:
+        raise err(f'MATLAB:{fn}:sizeMismatch', 'The coordinates must be the same size, or compatible sizes.', fn)
+    single = any(class_of(a) == 'single' for a in args)
+    return vals, (lambda r: finish(np.asarray(r, np.float32), 'single')) if single else (lambda r: out(np.array(r)))
+
+
+@bi('cart2pol', nout=3)
+def cart2pol(nargout, *args):
+    """[theta, rho, z] = cart2pol(x, y, z): theta = atan2(y, x), rho = hypot(x, y)."""
+    (vals, back) = _coord_args(args, 'cart2pol', 3)
+    x, y = vals[0], vals[1]
+    res = [back(np.arctan2(y, x)), back(np.hypot(x, y))]
+    if len(vals) > 2:
+        res.append(back(vals[2]))
+    return res[0] if nargout <= 1 else tuple(res[:nargout])
+
+
+@bi('pol2cart', nout=3)
+def pol2cart(nargout, *args):
+    """[x, y, z] = pol2cart(theta, rho, z): x = rho cos(theta), y = rho sin(theta)."""
+    (vals, back) = _coord_args(args, 'pol2cart', 3)
+    t, r = vals[0], vals[1]
+    res = [back(r * np.cos(t)), back(r * np.sin(t))]
+    if len(vals) > 2:
+        res.append(back(vals[2]))
+    return res[0] if nargout <= 1 else tuple(res[:nargout])
+
+
+@bi('cart2sph', nout=3)
+def cart2sph(nargout, *args):
+    """[azimuth, elevation, r] = cart2sph(x, y, z)."""
+    nargchk(args, 3, 3, 'cart2sph')
+    (vals, back) = _coord_args(args, 'cart2sph', 3)
+    x, y, z = vals
+    h = np.hypot(x, y)
+    res = [back(np.arctan2(y, x)), back(np.arctan2(z, h)), back(np.hypot(h, z))]
+    return res[0] if nargout <= 1 else tuple(res[:nargout])
+
+
+@bi('sph2cart', nout=3)
+def sph2cart(nargout, *args):
+    """[x, y, z] = sph2cart(azimuth, elevation, r)."""
+    nargchk(args, 3, 3, 'sph2cart')
+    (vals, back) = _coord_args(args, 'sph2cart', 3)
+    az, el, r = vals
+    rc = r * np.cos(el)
+    res = [back(rc * np.cos(az)), back(rc * np.sin(az)), back(r * np.sin(el))]
+    return res[0] if nargout <= 1 else tuple(res[:nargout])

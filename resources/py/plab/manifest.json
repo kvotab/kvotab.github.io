@@ -55,7 +55,12 @@
     "builtins/statdesc.py",
     "builtins/distributions.py",
     "builtins/stattests.py",
-    "builtins/statplots.py"
+    "builtins/statplots.py",
+    "builtins/validators.py",
+    "builtins/datatools.py",
+    "builtins/geometry.py",
+    "builtins/media.py",
+    "builtins/moreplots.py"
   ],
   "examples": [
     "README.txt",

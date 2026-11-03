@@ -183,6 +183,8 @@ def convert_chars_to_strings(nargout, *args):
 def _num2str_scalar(x):
     if isinstance(x, (bool, np.bool_)):
         return '1' if x else '0'
+    if isinstance(x, (int, np.integer)):
+        return str(int(x))
     if isinstance(x, complex) or isinstance(x, np.complexfloating):
         z = complex(x)
         re_ = _num2str_scalar(z.real)
@@ -195,7 +197,7 @@ def _num2str_scalar(x):
         return 'Inf' if x > 0 else '-Inf'
     if x == int(x):
         return str(int(x))
-    d = max(int(math.floor(math.log10(abs(x)))), 0) + 5
+    d = min(max(int(math.floor(math.log10(abs(x)))), 0) + 5, 16)
     s = f'{x:.{d}g}'
     if 'e' in s:
         m, e = s.split('e')
@@ -222,6 +224,9 @@ def num2str(nargout, *args):
             A = a if a.ndim == 2 else a.reshape(a.shape[0], -1, order='F')
             for r in A:
                 rows.append(_sprintf(fmt, [np.array([r])]))
+            # the leading blanks all rows share are trimmed, even from a field width
+            lead = min((len(t) - len(t.lstrip(' ')) for t in rows if t.strip(' ')), default=0)
+            rows = [t[lead:] for t in rows]
             return Char.rows(rows) if len(rows) != 1 else Char.of(rows[0])
         prec = ival(f, 'precision', 'num2str')
         A = a if a.ndim == 2 else a.reshape(a.shape[0], -1, order='F')
@@ -229,7 +234,8 @@ def num2str(nargout, *args):
         texts = [[_fix_exp(t) for t in row] for row in texts]
         return _columns(texts)
     if a.size == 1:
-        return Char.of(_num2str_scalar(a.reshape(-1)[0] if a.dtype.kind != 'b' else bool(a.reshape(-1)[0])))
+        x0 = a.reshape(-1)[0]
+        return Char.of(_num2str_scalar(int(x0) if a.dtype.kind in 'iu' else (x0 if a.dtype.kind != 'b' else bool(x0))))
     if a.size == 0:
         return Char.of('')
     A = a if a.ndim == 2 else a.reshape(a.shape[0], -1, order='F')
@@ -241,7 +247,7 @@ def num2str(nargout, *args):
         return _columns(texts)
     fin = A[np.isfinite(A)]
     mx = float(np.max(np.abs(fin))) if fin.size else 1.0
-    d = max(int(math.floor(math.log10(mx))) if mx > 0 else 0, 0) + 5
+    d = min(max(int(math.floor(math.log10(mx))) if mx > 0 else 0, 0) + 5, 16)
     texts = [[_fix_exp(f'{float(x):.{d}g}') if math.isfinite(x) else ('NaN' if x != x else ('Inf' if x > 0 else '-Inf')) for x in row] for row in A]
     return _columns(texts, sep=2)
 
@@ -394,45 +400,87 @@ def str2double(nargout, *args):
     return out(a.reshape(v.a.shape, order='F'))
 
 
+def _whole_values(v, fn):
+    """The values as Python ints, exact for 64-bit integers; fractions cut
+    toward zero. NaN, Inf and complex values are errors."""
+    a = arr(v, fn).reshape(-1, order='F')
+    if a.dtype.kind == 'c':
+        raise err(f'MATLAB:{fn}:complexInput', 'The input must be real.', fn)
+    if a.dtype.kind in 'iub':
+        return [int(x) for x in a]
+    a = a.astype(F64)
+    if not np.all(np.isfinite(a)):
+        raise err(f'MATLAB:{fn}:FirstArg', 'The input must be finite.', fn)
+    return [int(x) for x in a]
+
+
+def _digits_rows(strs, n, fills=None):
+    """Digit strings as char rows, padded on the left to the longest or to
+    n (a negative number's two's complement with its sign digit)."""
+    w = max([len(t) for t in strs] + [n])
+    fills = fills or ['0'] * len(strs)
+    rows = [t.rjust(w, f) for t, f in zip(strs, fills)]
+    return Char.rows(rows) if len(rows) != 1 else Char.of(rows[0])
+
+
+def _twos(vals, base_bits):
+    """Negative values as two's complement in the smallest of 8, 16, 32 and
+    64 bits that holds them all; the digit that pads each."""
+    lo = min(vals) if vals else 0
+    fill = '1' if base_bits == 1 else 'F'
+    if lo >= 0:
+        return vals, 0, None
+    bits = next((b for b in (8, 16, 32, 64) if lo >= -2 ** (b - 1)), 64)
+    return [x + 2 ** bits if x < 0 else x for x in vals], bits // base_bits, [fill if x < 0 else '0' for x in vals]
+
+
 @bi('dec2bin')
 def dec2bin(nargout, *args):
-    a = arr(args[0]).reshape(-1, order='F')
+    """dec2bin(d, n): binary digits, at least n of them; negative numbers in
+    two's complement."""
+    nargchk(args, 1, 2, 'dec2bin')
+    vals, w, fills = _twos(_whole_values(args[0], 'dec2bin'), 1)
     n = ival(args[1]) if len(args) > 1 else 0
-    if np.any(a < 0):
-        a = np.where(a < 0, a + 2.0 ** 8 if False else a, a)
-    strs = [format(int(x), 'b') for x in a]
-    w = max([len(s) for s in strs] + [n])
-    return Char.rows([s.rjust(w, '0') for s in strs]) if len(strs) != 1 else Char.of(strs[0].rjust(w, '0'))
+    if not vals:
+        return Char.of('')
+    return _digits_rows([format(x, 'b').rjust(w, '0') for x in vals], n, fills)
 
 
 @bi('dec2hex')
 def dec2hex(nargout, *args):
-    a = arr(args[0]).reshape(-1, order='F')
+    """dec2hex(d, n): hexadecimal digits, at least n of them; negative
+    numbers in two's complement."""
+    nargchk(args, 1, 2, 'dec2hex')
+    vals, w, fills = _twos(_whole_values(args[0], 'dec2hex'), 4)
     n = ival(args[1]) if len(args) > 1 else 0
-    strs = [format(int(x), 'X') for x in a]
-    w = max([len(s) for s in strs] + [n])
-    return Char.rows([s.rjust(w, '0') for s in strs]) if len(strs) != 1 else Char.of(strs[0].rjust(w, '0'))
+    if not vals:
+        return Char.of('')
+    return _digits_rows([format(x, 'X').rjust(w, '0') for x in vals], n, fills)
 
 
 @bi('dec2base')
 def dec2base(nargout, *args):
-    a = arr(args[0]).reshape(-1, order='F')
+    """dec2base(d, base, n): digits in a base from 2 to 36, at least n of them."""
+    nargchk(args, 2, 3, 'dec2base')
+    vals = _whole_values(args[0], 'dec2base')
+    if any(x < 0 for x in vals):
+        raise err('MATLAB:dec2base:negativeInput', 'The numbers must not be negative.', 'dec2base')
     base = ival(args[1])
+    if not 2 <= base <= 36:
+        raise err('MATLAB:dec2base:BaseArg', 'The base must be an integer from 2 to 36.', 'dec2base')
     n = ival(args[2]) if len(args) > 2 else 0
     digits = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
     def conv(x):
-        x = int(x)
-        if x == 0:
-            return '0'
-        s = ''
-        while x:
-            s = digits[x % base] + s
-            x //= base
-        return s
-    strs = [conv(x) for x in a]
-    w = max([len(s) for s in strs] + [n])
-    return Char.rows([s.rjust(w, '0') for s in strs]) if len(strs) != 1 else Char.of(strs[0].rjust(w, '0'))
+        t = ''
+        while True:
+            x, r = divmod(x, base)
+            t = digits[r] + t
+            if not x:
+                return t
+    if not vals:
+        return Char.of('')
+    return _digits_rows([conv(x) for x in vals], n)
 
 
 def _from_base(args, base, fn):
@@ -467,7 +515,13 @@ def base2dec(nargout, *args):
 
 @bi('num2hex')
 def num2hex(nargout, *args):
+    """The IEEE bits of each number as hexadecimal digits: 16 for a double,
+    8 for a single."""
     import struct
+    nargchk(args, 1, 1, 'num2hex')
+    if class_of(args[0]) == 'single':
+        a = np.asarray(arr(args[0])).reshape(-1, order='F').real.astype(np.float32)
+        return Char.rows([struct.pack('>f', x).hex() for x in a])
     a = darr(args[0]).reshape(-1, order='F').real
     return Char.rows([struct.pack('>d', float(x)).hex() for x in a])
 
@@ -745,13 +799,15 @@ def strfind(nargout, *args):
     nargchk(args, 2, 4, 'strfind')
     v = args[0]
     pat = sval(args[1], 'pattern', 'strfind') if type(args[1]) is not Cell else None
-    overlaps = True
-    if len(args) > 3 and opt_str(args[2]).lower() == 'forcecelloutput':
-        pass
+    force = False
+    if len(args) > 2:
+        if len(args) != 4 or (opt_str(args[2]) or '').lower() != 'forcecelloutput':
+            raise err('MATLAB:strfind:InvalidOption', "The option is 'ForceCellOutput' and a logical value.", 'strfind')
+        force = bool(num(args[3]))
 
     def find_all(s):
         if not pat:
-            return np.zeros((1, 0)) if True else EMPTY()
+            return np.zeros((0, 0))
         res = []
         i = s.find(pat)
         while i >= 0:
@@ -762,9 +818,9 @@ def strfind(nargout, *args):
         return out(np.array([res], F64))
     if type(v) is Char:
         r = find_all(v.str())
-        if type(r) is np.ndarray and r.size == 0:
-            return np.zeros((1, 0))
-        return r
+        if type(r) is np.ndarray and r.size == 0 and pat:
+            r = np.zeros((1, 0))
+        return Cell.of_list([r]) if force else r
     tin = _TextIn(v, 'strfind')
     return Cell.of_list([find_all(s or '') for s in tin.items], tin.shape)
 
@@ -1553,3 +1609,112 @@ def strmatch(nargout, *args):
     # rows of a char matrix are padded: trailing blanks and nulls never count
     hits = [i + 1.0 for i, r in enumerate(rows) if (r.rstrip(' \0') == s if exact else r.startswith(s))]
     return np.array(hits, float).reshape(-1, 1)
+
+
+# ---- replaceBetween, eraseBetween, unique names ------------------------------------------------------------
+
+def _between_spans(s, a, b, inclusive):
+    """The spans [i, j) of s between start and end markers (text: each start
+    with the next end after it, the markers kept unless inclusive) or between
+    positions (numbers, both ends included)."""
+    if is_str(a):
+        p, q = py_str(a), py_str(b)
+        spans, k = [], 0
+        while True:
+            i = s.find(p, k)
+            if i < 0:
+                break
+            j = s.find(q, i + len(p))
+            if j < 0:
+                break
+            spans.append((i, j + len(q)) if inclusive else (i + len(p), j))
+            k = j + len(q)
+        return spans
+    i, j = ival(a), ival(b)
+    if i < 1 or j > len(s) or j < i - 1:
+        raise err('MATLAB:between:OutOfRange', 'The positions must be within the text, the end not before the start.')
+    return [(i - 1, j)]
+
+
+def _replace_between(fn, args, new_arg):
+    tin = _TextIn(args[0], fn)
+    rest = list(args[4 if new_arg else 3:])
+    inclusive = not is_str(args[1])
+    if len(rest) >= 2 and (opt_str(rest[0]) or '').lower() == 'boundaries':
+        inclusive = (opt_str(rest[1]) or '').lower() == 'inclusive'
+    elif rest:
+        raise err(f'MATLAB:{fn}:InvalidOption', "The only option is 'Boundaries'.", fn)
+    news = text_list(args[3]) if new_arg else ['']
+    res = []
+    for k, s in enumerate(tin.items):
+        if s is None:
+            res.append(None)
+            continue
+        new = news[k] if len(news) == len(tin.items) else news[0]
+        out_s, last = '', 0
+        for i, j in _between_spans(s, args[1], args[2], inclusive):
+            out_s += s[last:i] + new
+            last = j
+        res.append(out_s + s[last:])
+    return tin.back(res)
+
+
+@bi('replaceBetween')
+def replace_between(nargout, *args):
+    """replaceBetween(str, start, end, new): the text between each start and
+    end marker (not the markers, unless 'Boundaries' is 'inclusive'), or
+    between two positions (both included), replaced by new."""
+    nargchk(args, 4, 6, 'replaceBetween')
+    return _replace_between('replaceBetween', args, True)
+
+
+@bi('eraseBetween')
+def erase_between(nargout, *args):
+    """eraseBetween(str, start, end): the text between markers or positions removed."""
+    nargchk(args, 3, 5, 'eraseBetween')
+    return _replace_between('eraseBetween', args, False)
+
+
+@bi('matlab.lang.makeUniqueStrings')
+def make_unique_strings(nargout, *args):
+    """[U, modified] = matlab.lang.makeUniqueStrings(S, exclude, maxLength):
+    repeated names (and names in exclude) get _1, _2, ... so that all differ,
+    the first of each kept as it is; exclude may instead pick the elements to
+    change (logical or indices); names are cut to maxLength."""
+    nargchk(args, 1, 3, 'matlab.lang.makeUniqueStrings')
+    tin = _TextIn(args[0], 'matlab.lang.makeUniqueStrings')
+    items = [s or '' for s in tin.items]
+    n = len(items)
+    avoid, which = set(), list(range(n))
+    if len(args) > 1:
+        e = args[1]
+        if is_str(e) or type(e) in (Cell, Str):
+            avoid = set(text_list(e))
+        elif numel(e):
+            m = np.asarray(arr(e)).reshape(-1)
+            which = [int(i) - 1 for i in m] if m.dtype != bool else list(np.flatnonzero(m))
+    maxlen = ival(args[2]) if len(args) > 2 else 63
+    fixed = {i for i in range(n) if i not in which}
+    taken = set(avoid) | {items[i] for i in fixed}
+    res, modified = list(items), [False] * n
+    seen = set()
+    for i in which:
+        s = items[i][:maxlen]
+        if s in taken or s in seen:
+            k = 1
+            while True:
+                suffix = f'_{k}'
+                cand = s[:max(maxlen - len(suffix), 0)] + suffix
+                if cand not in taken and cand not in seen and cand not in items:
+                    break
+                k += 1
+            modified[i] = cand != items[i]
+            s = cand
+        else:
+            modified[i] = s != items[i]
+        seen.add(s)
+        res[i] = s
+    U = tin.back(res)
+    if nargout > 1:
+        return U, out(np.array(modified, bool).reshape(tin.shape, order='F') if tin.kind != 'char' else np.array([[modified[0]]]))
+    return U

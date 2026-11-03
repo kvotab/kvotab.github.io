@@ -6,12 +6,13 @@ is given ('all' takes every element). min and max leave NaN out unless
 'includenan' is given; sum, mean and the rest keep it unless 'omitnan'.
 """
 import math
+import warnings
 
 import numpy as np
 
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
-                    like_class, first_dim, dim_arg, dims_arg, gather, reduce, strip_flags, expand_dims, cellstr_list,
+                    like_class, first_dim, dim_arg, dims_arg, gather, along, reduce, strip_flags, expand_dims, cellstr_list,
                     to_cell_of_char)
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
                       shape_of, numel, _2d, scalar_out, EMPTY, share_all, py_str)
@@ -416,11 +417,14 @@ def std(nargout, *args):
 
 @bi('range')
 def range_(nargout, *args):
-    a = darr(args[0])
-    dim = dim_arg(args[1], 'range') if len(args) > 1 else None
-    with np.errstate(all='ignore'):
-        r = reduce(a, dim, lambda b, ax: np.nanmax(b, axis=ax) - np.nanmin(b, axis=ax))
-    return out(np.asarray(r))
+    """max(A) - min(A) along a dimension, a vector of them or 'all', NaN
+    left out unless 'includenan'; in A's class."""
+    nargchk(args, 1, 3, 'range')
+    margs = (args[0], np.zeros((0, 0))) + tuple(args[1:]) if len(args) > 1 else (args[0],)
+    lo = _minmax('min', margs, 1, False)
+    hi = _minmax('max', margs, 1, True)
+    from ..ops import minus
+    return minus(hi, lo)
 
 
 # ---- minima and maxima -----------------------------------------------------------------------
@@ -576,8 +580,12 @@ def min_(nargout, *args):
 
 @bi('bounds', nout=2)
 def bounds(nargout, *args):
-    lo = _minmax('min', args, 1, False)
-    hi = _minmax('max', args, 1, True)
+    """[S, L] = bounds(A, dim, nanflag): min(A, [], ...) and max(A, [], ...)
+    along a dimension, a vector of them or 'all'."""
+    nargchk(args, 1, 3, 'bounds')
+    margs = (args[0], np.zeros((0, 0))) + tuple(args[1:]) if len(args) > 1 else (args[0],)
+    lo = _minmax('min', margs, 1, False)
+    hi = _minmax('max', margs, 1, True)
     return (lo, hi) if nargout > 1 else lo
 
 
@@ -1130,7 +1138,12 @@ def setxor(nargout, *args):
 
 def nice_edges(x, nbins=None, binwidth=None, limits=None):
     """Bin edges as histogram and histcounts choose them: a round bin width
-    (Scott's rule when no number is given), edges on its multiples."""
+    (Scott's rule when no number is given), edges on its multiples; always
+    doubles (a whole-number width would otherwise make integer edges)."""
+    return np.asarray(_nice_edges(x, nbins, binwidth, limits), F64)
+
+
+def _nice_edges(x, nbins, binwidth, limits):
     x = x[np.isfinite(x)]
     if limits is not None:
         lo, hi = limits
@@ -1285,25 +1298,88 @@ def discretize(nargout, *args):
 
 # ---- statistics ---------------------------------------------------------------------------------
 
+def _cov_cols(X, w, wts, nanflag):
+    """The covariance matrix of X's columns: normalized by N - 1 (w 0, N 1
+    by N) or by N (w 1), or with observation weights wts (normalized by
+    their sum); NaN kept, rows with any NaN dropped, or pairs taken from the
+    rows both have (partialrows)."""
+    def one(a, b, ww):
+        n = a.shape[0]
+        if n == 0:
+            return np.full((a.shape[1], b.shape[1]), np.nan)
+        if ww is not None:
+            sw = ww.sum()
+            ma, mb = (ww @ a) / sw, (ww @ b) / sw
+            return ((a - ma).conj().T * ww) @ (b - mb) / sw
+        d = n - 1 if (w == 0 and n > 1) else n
+        return (a - a.mean(axis=0)).conj().T @ (b - b.mean(axis=0)) / d
+
+    k = X.shape[1]
+    with np.errstate(all='ignore'):
+        if nanflag == 'omitrows':
+            keep = ~np.any(np.isnan(X), axis=1)
+            return one(X[keep], X[keep], None if wts is None else wts[keep])
+        if nanflag == 'partialrows':
+            C = np.empty((k, k), X.dtype)
+            ok = ~np.isnan(X)
+            for i in range(k):
+                for j in range(i, k):
+                    rows = ok[:, i] & ok[:, j]
+                    c = one(X[rows][:, [i]], X[rows][:, [j]], None if wts is None else wts[rows])[0, 0]
+                    C[i, j], C[j, i] = c, np.conj(c)
+            return C
+        return one(X, X, wts)
+
+
 @bi('cov')
 def cov(nargout, *args):
-    nargchk(args, 1, 3, 'cov')
-    rest, flags = strip_flags(args[1:], ('omitrows', 'partialrows', 'includenan'))
-    x = darr(args[0])
-    w = 0
-    if rest and numel(rest[-1]) == 1 and (len(rest) == 2 or (len(rest) == 1 and numel(args[0]) != 1 and shape_of(rest[0]) == (1, 1))):
-        w = int(num(rest[-1]))
-        rest = rest[:-1]
+    """cov(A), cov(A, B), with a normalization (0, 1 or weights) and a NaN
+    flag ('includenan', 'omitrows', 'partialrows')."""
+    nargchk(args, 1, 4, 'cov')
+    rest = list(args)
+    nanflag = 'includenan'
+    if rest and opt_str(rest[-1]) is not None:
+        nanflag = opt_str(rest.pop()).lower()
+        if nanflag not in ('includenan', 'omitrows', 'partialrows'):
+            raise err('MATLAB:cov:unknownFlag', f"Unknown option '{nanflag}'.", 'cov')
+    data = [rest.pop(0)]
+    w, wts = 0, None
+    if len(rest) == 2:
+        data.append(rest.pop(0))
     if rest:
-        y = darr(rest[0])
-        X = np.column_stack([x.reshape(-1, order='F'), y.reshape(-1, order='F')])
+        # cov(A, B) when the second input is data: not a normalization (0 or
+        # 1) and as many elements as A (weights are one per row of A)
+        v = darr(rest[0]).reshape(-1)
+        a = darr(data[0])
+        norm_flag = v.size == 1 and v[0] in (0, 1)
+        if len(data) == 1 and not norm_flag and v.size == a.size:
+            data.append(rest[0])
+        elif v.size == 1:
+            if not norm_flag:
+                raise err('MATLAB:cov:invalidWgts', 'The normalization must be 0, 1 or a vector of weights.', 'cov')
+            w = int(v[0])
+        else:
+            wts = v.astype(F64)
+            if np.any(wts < 0):
+                raise err('MATLAB:cov:invalidWgts', 'Weights must not be negative.', 'cov')
+    single = any(class_of(v) == 'single' for v in data)
+    if len(data) == 2:
+        a, b = darr(data[0]), darr(data[1])
+        if a.size != b.size:
+            raise err('MATLAB:cov:XYlengthMismatch', 'The two inputs must have the same number of elements.', 'cov')
+        X = np.column_stack([a.reshape(-1, order='F'), b.reshape(-1, order='F')])
     else:
-        X = x.reshape(-1, 1) if (x.ndim == 2 and x.shape[0] == 1) else x
-    if X.shape[0] == 1:
-        return 0.0
-    with np.errstate(all='ignore'):
-        r = np.cov(X, rowvar=False, ddof=0 if w == 1 else 1)
-    return out(np.atleast_2d(r))
+        x = darr(data[0])
+        if x.ndim > 2:
+            raise err('MATLAB:cov:InputDim', 'The input must be a vector or a matrix.', 'cov')
+        X = x.reshape(-1, 1) if x.shape[0] == 1 or x.shape == (0, 0) else x
+    if wts is not None and wts.size != X.shape[0]:
+        raise err('MATLAB:cov:invalidWgts', 'The weights must have one value per observation.', 'cov')
+    if X.dtype.kind not in 'fc':
+        X = X.astype(F64)
+    C = _cov_cols(X, w, wts, nanflag)
+    C = np.atleast_2d(C)
+    return out(C.astype(np.complex64 if C.dtype.kind == 'c' else np.float32)) if single else out(C)
 
 
 @bi('corrcoef', nout=4)
@@ -1438,22 +1514,61 @@ def iqr(nargout, *args):
     return out(np.diff(q, axis=first))
 
 
+def _shape_stat(name, args, fn):
+    """skewness and kurtosis: (x, flag, dim) with flag 1 (biased, the
+    default, also for []) or 0 (corrected); dim a dimension, a vector of them
+    or 'all'; NaN left out as missing; single computed in single."""
+    nargchk(args, 1, 3, name)
+    x0 = args[0]
+    single = class_of(x0) == 'single'
+    x = np.asarray(arr(x0, name))
+    if x.dtype.kind == 'c':
+        raise err(f'stats:{name}:ComplexData', 'The data must be real.', name)
+    x = x.astype(np.float32 if single else F64)
+    flag = 1
+    if len(args) > 1 and numel(args[1]):
+        flag = num(args[1])
+        if flag not in (0, 1):
+            raise err(f'stats:{name}:BadFlag', 'The flag must be 0 or 1.', name)
+    dim = dims_arg(args[2], name) if len(args) > 2 else None
+
+    def f(m):
+        r = np.full(m.shape[:-1], np.nan, m.dtype)
+        for i in np.ndindex(m.shape[:-1]):
+            v = m[i][~np.isnan(m[i])]
+            if v.size:
+                with np.errstate(all='ignore'):
+                    r[i] = fn(v - v.mean(dtype=v.dtype), v.size, flag)
+        return r
+    r = along(x, dim, f)
+    return finish(r.astype(np.float32), 'single') if single else out(r)
+
+
+def _skew(c, n, flag):
+    m2, m3 = np.mean(c * c), np.mean(c * c * c)
+    g = m3 / m2 ** 1.5
+    if flag == 0:
+        return g * np.sqrt(n * (n - 1.0)) / (n - 2.0) if n > 2 else np.nan
+    return g
+
+
+def _kurt(c, n, flag):
+    c2 = c * c
+    m2, m4 = np.mean(c2), np.mean(c2 * c2)
+    k = m4 / (m2 * m2)
+    if flag == 0:
+        return 3 + (n - 1.0) / ((n - 2.0) * (n - 3.0)) * ((n + 1.0) * k - 3 * (n - 1.0)) if n > 3 else np.nan
+    return k
+
+
 @bi('skewness')
 def skewness(nargout, *args):
-    from scipy import stats
-    x = darr(args[0])
-    flag = num(args[1]) if len(args) > 1 else 1
-    dim = first_dim(x.shape)
-    return out(np.expand_dims(stats.skew(x, axis=dim, bias=flag == 1), dim))
+    return _shape_stat('skewness', args, _skew)
 
 
 @bi('kurtosis')
 def kurtosis(nargout, *args):
-    from scipy import stats
-    x = darr(args[0])
-    flag = num(args[1]) if len(args) > 1 else 1
-    dim = first_dim(x.shape)
-    return out(np.expand_dims(stats.kurtosis(x, axis=dim, bias=flag == 1, fisher=False), dim))
+    return _shape_stat('kurtosis', args, _kurt)
 
 
 @bi('rescale')
@@ -1483,42 +1598,293 @@ def rescale(nargout, *args):
     return like_class(r, x0) if class_of(x0) == 'single' else out(r)
 
 
-@bi('normalize')
+def _nanq(m, p):
+    """The language's quantile p of m's last axis, NaN left out (keepdims)."""
+    r = np.full(m.shape[:-1] + (1,), np.nan)
+    for i in np.ndindex(m.shape[:-1]):
+        v = np.sort(m[i][~np.isnan(m[i])])
+        n = v.size
+        if n:
+            t = min(max(p * n + 0.5, 1), n) - 1          # sorted values sit at (i - 0.5)/n
+            lo = int(np.floor(t))
+            hi = min(lo + 1, n - 1)
+            r[i + (0,)] = v[lo] + (t - lo) * (v[hi] - v[lo]) if hi != lo else v[lo]
+    return r
+
+
+def _norm_stat(m, what, arg=None):
+    """A statistic of m's last axis for normalize, NaN left out (keepdims)."""
+    with warnings.catch_warnings(), np.errstate(all='ignore'):
+        warnings.simplefilter('ignore', RuntimeWarning)
+        ok = ~np.isnan(m)
+        n = ok.sum(axis=-1, keepdims=True)
+        if m.shape[-1] == 0:
+            return np.full(m.shape[:-1] + (1,), np.nan)
+        if what == 'mean':
+            return np.nanmean(m, axis=-1, keepdims=True)
+        if what == 'median':
+            return np.nanmedian(m, axis=-1, keepdims=True)
+        if what == 'std':
+            mu = np.nanmean(m, axis=-1, keepdims=True)
+            # only NaN in the data is left out: Inf - Inf stays NaN
+            ss = np.sum(np.where(ok, np.abs(m - mu) ** 2, 0), axis=-1, keepdims=True)
+            return np.sqrt(ss / np.maximum(n - 1, 1))
+        if what == 'mad':
+            c = np.nanmedian(m, axis=-1, keepdims=True)
+            return np.nanmedian(np.abs(m - c), axis=-1, keepdims=True)
+        if what == 'iqr':
+            return _nanq(m, 0.75) - _nanq(m, 0.25)
+        if what == 'first':
+            return m[..., :1]
+        if what == 'norm':
+            a = np.abs(m)
+            if arg == math.inf:
+                return np.nanmax(a, axis=-1, keepdims=True)
+            return np.nansum(a ** arg, axis=-1, keepdims=True) ** (1 / arg)
+        if what == 'min':
+            return np.nanmin(m, axis=-1, keepdims=True)
+        if what == 'max':
+            return np.nanmax(m, axis=-1, keepdims=True)
+    raise ValueError(what)
+
+
+@bi('normalize', nout=3)
 def normalize(nargout, *args):
-    x = darr(args[0])
-    dim = first_dim(x.shape)
-    X = expand_dims(x, dim)
-    with np.errstate(all='ignore'):
-        r = (X - np.mean(X, axis=dim, keepdims=True)) / np.std(X, axis=dim, ddof=1, keepdims=True)
-    return out(r)
-
-
-def _mov(name, fn):
-    def f(nargout, *args):
-        x = darr(args[0])
-        k = darr(args[1]).reshape(-1)
-        if k.size == 1:
-            kk = int(k[0])
-            before = kk // 2 if kk % 2 else kk // 2
-            after = kk // 2 if kk % 2 else kk // 2 - 1
+    """[N, C, S] = normalize(A, dim, method, ...): N = (A - C) ./ S. Methods:
+    'zscore' ('std' or 'robust'), 'norm' p, 'scale' (a value, 'std', 'mad',
+    'first' or 'iqr'), 'range' [a b], 'center' (a value, 'mean' or
+    'median'), 'medianiqr'; 'center' and 'scale' together. NaN is left out
+    of the statistics."""
+    nargchk(args, 1, 6, 'normalize')
+    x0 = args[0]
+    cls = class_of(x0)
+    if cls not in ('double', 'single'):
+        raise err('MATLAB:normalize:InvalidFirstInput', 'The data must be numeric of class double or single.', 'normalize')
+    x = np.asarray(arr(x0, 'normalize'))
+    x = x.astype(C128 if x.dtype.kind == 'c' else F64)
+    shape = x.shape
+    rest = list(args[1:])
+    dim = None
+    if rest and opt_str(rest[0]) is None:
+        d = darr(rest.pop(0)).reshape(-1)
+        if d.size != 1 or d[0] != np.floor(d[0]) or d[0] < 1:
+            raise err('MATLAB:normalize:InvalidDim', 'The dimension must be a positive integer.', 'normalize')
+        dim = min(int(d[0]) - 1, 30)
+        x = expand_dims(x, dim)
+    method = None
+    center = scale = None
+    i = 0
+    while i < len(rest):
+        name = opt_str(rest[i])
+        if name is None:
+            raise err('MATLAB:normalize:InvalidMethod', 'Expected a method name.', 'normalize')
+        k = name.lower()
+        nxt = rest[i + 1] if i + 1 < len(rest) else None
+        nxt_s = opt_str(nxt).lower() if nxt is not None and opt_str(nxt) is not None else None
+        i += 1
+        if k == 'zscore':
+            method = ('zscore', 'std')
+            if nxt_s in ('std', 'robust'):
+                method = ('zscore', nxt_s)
+                i += 1
+        elif k == 'norm':
+            method = ('norm', 2.0)
+            if nxt is not None and nxt_s is None:
+                p = float(num(nxt))
+                if not (p > 0):
+                    raise err('MATLAB:normalize:InvalidNorm', 'The norm must be a positive number or Inf.', 'normalize')
+                method = ('norm', p)
+                i += 1
+        elif k == 'range':
+            method = ('range', (0.0, 1.0))
+            if nxt is not None and nxt_s is None:
+                r = darr(nxt).reshape(-1)
+                if r.size != 2 or not r[0] < r[1]:
+                    raise err('MATLAB:normalize:InvalidRange', 'The range is two increasing numbers.', 'normalize')
+                method = ('range', (float(r[0]), float(r[1])))
+                i += 1
+        elif k == 'medianiqr':
+            method = ('medianiqr', None)
+        elif k in ('center', 'scale'):
+            v = 'mean' if k == 'center' else 'std'
+            if nxt is not None and (nxt_s is None or nxt_s in (('mean', 'median') if k == 'center' else ('std', 'mad', 'first', 'iqr'))):
+                v = nxt_s if nxt_s is not None else np.asarray(arr(nxt, 'normalize'), F64)
+                i += 1
+            if k == 'center':
+                center = v
+            else:
+                scale = v
         else:
-            before, after = int(k[0]), int(k[1])
+            raise err('MATLAB:normalize:InvalidMethod', f"Unknown method '{name}'.", 'normalize')
+    if method is not None and (center is not None or scale is not None):
+        raise err('MATLAB:normalize:InvalidMethodCombination', "Only 'center' and 'scale' may be given together.", 'normalize')
+    if method is None and center is None and scale is None:
+        method = ('zscore', 'std')
+
+    def stat(what, a=None):
+        return along(x, dim, lambda m: _norm_stat(m, what, a)[..., 0])
+
+    C, S = 0.0, 1.0
+    if method is not None:
+        kind, opt_ = method
+        if kind == 'zscore':
+            C = stat('mean' if opt_ == 'std' else 'median')
+            S = stat('std' if opt_ == 'std' else 'mad')
+        elif kind == 'norm':
+            S = stat('norm', opt_)
+        elif kind == 'range':
+            lo, hi = stat('min'), stat('max')
+            a, b = opt_
+            S = (hi - lo) / (b - a)
+            C = lo - a * S
+        else:
+            C, S = stat('median'), stat('iqr')
+    if center is not None:
+        C = stat(center) if isinstance(center, str) else center
+    if scale is not None:
+        S = stat(scale) if isinstance(scale, str) else scale
+    with np.errstate(all='ignore'):
+        N = ((x - C) / S).reshape(shape)
+
+    def back(v):
+        v = np.asarray(v)
+        if cls == 'single':
+            return finish(v.astype(np.complex64 if v.dtype.kind == 'c' else np.float32), 'single')
+        return out(v.astype(F64) if v.dtype.kind != 'c' else v)
+    if nargout <= 1:
+        return back(N)
+    return (back(N), back(C), back(S))[:nargout]
+
+
+def _mov_spread(seg, omit, w, sq):
+    """The variance (sq) or standard deviation of each window, normalized by
+    N - 1 (w 0; by N for a single value) or by N (w 1)."""
+    if omit:
+        n = np.sum(~np.isnan(seg), axis=-1)
+        mu = np.nanmean(seg, axis=-1, keepdims=True)
+        ss = np.nansum(np.abs(seg - mu) ** 2, axis=-1)
+    else:
+        n = np.full(seg.shape[:-1], seg.shape[-1])
+        mu = np.mean(seg, axis=-1, keepdims=True)
+        ss = np.sum(np.abs(seg - mu) ** 2, axis=-1)
+    d = np.where((w == 1) | (n <= 1), n, n - 1)
+    v = np.where(n == 0, np.nan, ss / np.where(d == 0, 1, d))
+    return v if sq else np.sqrt(v)
+
+
+def _mov_mad(seg, omit):
+    med = (np.nanmedian if omit else np.median)(seg, axis=-1, keepdims=True)
+    return (np.nanmedian if omit else np.median)(np.abs(seg - med), axis=-1)
+
+
+_MOV_STATS = {
+    'movmean': lambda s, o, w: (np.nanmean if o else np.mean)(s, axis=-1),
+    'movsum': lambda s, o, w: (np.nansum if o else np.sum)(s, axis=-1),
+    'movprod': lambda s, o, w: (np.nanprod if o else np.prod)(s, axis=-1),
+    'movmax': lambda s, o, w: (np.nanmax if o else np.max)(s, axis=-1),
+    'movmin': lambda s, o, w: (np.nanmin if o else np.min)(s, axis=-1),
+    'movmedian': lambda s, o, w: (np.nanmedian if o else np.median)(s, axis=-1),
+    'movmad': lambda s, o, w: _mov_mad(s, o),
+    'movstd': lambda s, o, w: _mov_spread(s, o, w, False),
+    'movvar': lambda s, o, w: _mov_spread(s, o, w, True),
+}
+
+
+def _movfun(name, args):
+    """movXXX(A, k, [w,] dim, nanflag, 'Endpoints', e): a statistic of each
+    window of k values centred on an element (k/2 before and k/2 - 1 after
+    for an even k), or of [kb kf] values before and after; windows shrink at
+    the ends unless Endpoints is 'discard', 'fill' or a value."""
+    nargchk(args, 2, 9, name)
+    x0 = args[0]
+    cls = class_of(x0)
+    x = np.asarray(arr(x0, name))
+    x = x.astype(C128 if x.dtype.kind == 'c' else F64)
+    k = darr(args[1]).reshape(-1)
+    if k.size == 1:
+        if not (k[0] > 0) or k[0] != int(k[0]):
+            raise err(f'MATLAB:{name}:wrongWindowLength', 'The window length must be a positive integer (or [kb kf]).', name)
+        kk = int(k[0])
+        before, after = kk // 2, kk - kk // 2 - 1
+    elif k.size == 2 and np.all(k >= 0) and np.all(k == np.floor(k)):
+        before, after = int(k[0]), int(k[1])
+    else:
+        raise err(f'MATLAB:{name}:wrongWindowLength', 'The window is a positive integer or two nonnegative integers [kb kf].', name)
+    rest = list(args[2:])
+    w = 0
+    if name in ('movstd', 'movvar') and rest and opt_str(rest[0]) is None:
+        wv = rest.pop(0)
+        if numel(wv):
+            w = num(wv)
+            if w not in (0, 1):
+                raise err(f'MATLAB:{name}:wrongWeight', 'The normalization weight must be 0 or 1.', name)
+    dim = None
+    if rest and opt_str(rest[0]) is None:
+        dim = min(int(num(rest.pop(0))) - 1, 30)
+    omit, ends = False, 'shrink'
+    i = 0
+    while i < len(rest):
+        o = (opt_str(rest[i]) or '').lower()
+        if o in ('omitnan', 'omitmissing'):
+            omit = True
+        elif o in ('includenan', 'includemissing'):
+            omit = False
+        elif o == 'endpoints' and i + 1 < len(rest):
+            e = rest[i + 1]
+            ends = opt_str(e).lower() if opt_str(e) is not None else float(num(e))
+            if isinstance(ends, str) and ends not in ('shrink', 'discard', 'fill'):
+                raise err(f'MATLAB:{name}:invalidEndpoints', "Endpoints is 'shrink', 'discard', 'fill' or a number.", name)
+            i += 1
+        elif o == 'samplepoints':
+            raise err(f'MATLAB:{name}:samplePoints', 'SamplePoints is not supported here.', name)
+        else:
+            raise err(f'MATLAB:{name}:invalidOption', f"Unknown option '{opt_str(rest[i])}'.", name)
+        i += 1
+    if dim is None:
         dim = first_dim(x.shape)
-        X = np.moveaxis(expand_dims(x, dim), dim, -1)
-        R = np.empty(X.shape)
-        n = X.shape[-1]
-        for i in range(n):
-            lo, hi = max(0, i - before), min(n, i + after + 1)
-            with np.errstate(all='ignore'):
-                R[..., i] = fn(X[..., lo:hi], axis=-1)
-        return out(np.moveaxis(R, -1, dim))
-    f.__name__ = name
-    bi(name)(f)
+    X = np.moveaxis(expand_dims(x, dim), dim, -1)
+    n = X.shape[-1]
+    stat = _MOV_STATS[name]
+    R = np.empty(X.shape, X.dtype if name not in ('movstd', 'movvar', 'movmad') else F64)
+    with warnings.catch_warnings(), np.errstate(all='ignore'):
+        warnings.simplefilter('ignore', RuntimeWarning)
+        for j in range(n):
+            lo, hi = max(0, j - before), min(n, j + after + 1)
+            R[..., j] = stat(X[..., lo:hi], omit, w)
+    full = (np.arange(n) - before >= 0) & (np.arange(n) + after < n)
+    if ends == 'discard':
+        R = R[..., full]
+    elif ends != 'shrink':
+        R[..., ~full] = np.nan if ends == 'fill' else ends
+    R = np.moveaxis(R, -1, dim)
+    if cls == 'single':
+        return finish(R.astype(np.complex64 if R.dtype.kind == 'c' else np.float32), 'single')
+    if cls in INT_CLASSES and name in ('movmax', 'movmin', 'movsum', 'movprod', 'movmedian'):
+        return finish(R, cls)
+    return out(R)
 
 
-_mov('movmean', np.mean)
-_mov('movsum', np.sum)
-_mov('movmax', np.max)
-_mov('movmin', np.min)
-_mov('movmedian', np.median)
-_mov('movstd', lambda a, axis: np.std(a, axis=axis, ddof=1) if a.shape[-1] > 1 else np.zeros(a.shape[:-1]))
+for _name in _MOV_STATS:
+    bi(_name)((lambda nm: lambda nargout, *args: _movfun(nm, args))(_name))
+
+
+@bi('rms')
+def rms(nargout, *args):
+    """sqrt(mean(abs(x).^2)) along a dimension, a vector of them or 'all';
+    'omitnan' leaves NaN out."""
+    nargchk(args, 1, 3, 'rms')
+    rest, flags = strip_flags(args[1:], ('omitnan', 'includenan', 'omitmissing', 'includemissing'))
+    omit = any(f in ('omitnan', 'omitmissing') for f in flags)
+    x = np.asarray(arr(args[0], 'rms'))
+    single = x.dtype == np.float32 or x.dtype == np.complex64
+    x = np.abs(x.astype(C128 if x.dtype.kind == 'c' else F64)) ** 2
+    dim = dims_arg(rest[0], 'rms') if rest else None
+
+    def f(m):
+        with warnings.catch_warnings(), np.errstate(all='ignore'):
+            warnings.simplefilter('ignore', RuntimeWarning)
+            if m.shape[-1] == 0:
+                return np.full(m.shape[:-1], np.nan)
+            return np.sqrt((np.nanmean if omit else np.mean)(m, axis=-1))
+    r = along(x, dim, f)
+    return finish(r.astype(np.float32), 'single') if single else out(r)

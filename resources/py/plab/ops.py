@@ -114,7 +114,10 @@ def check_bcast(A, B):
 
 
 def round_half_away(r):
-    return np.where(r >= 0, np.floor(r + 0.5), np.ceil(r - 0.5))
+    """Round half away from zero, exactly: r + 0.5 would itself round for
+    values past 2^52 (9007199254740881 + 0.5 is ...882)."""
+    t = np.trunc(r)
+    return np.where(np.abs(r - t) >= 0.5, t + np.sign(r), t)
 
 
 def to_int_class(r, cls):
@@ -221,8 +224,67 @@ def _binary(a, b, fn, sym, int_fn=None):
         else:
             if (type(A) is np.ndarray and A.dtype.kind == 'c') or (type(B) is np.ndarray and B.dtype.kind == 'c') or type(A) is complex or type(B) is complex:
                 raise MError('MATLAB:complexInt', 'Complex integer arithmetic is not supported.')
+            if cls in ('int64', 'uint64') and sym in _EXACT_OPS and not _small_ints(A, B):
+                return _2d(_int64_exact(A, B, sym, cls))
             r = (int_fn or fn)(np.asarray(A, F64), np.asarray(B, F64))
     return finish(r, cls)
+
+
+# 64-bit integers: past 2^53 a double cannot hold them, so their arithmetic
+# is done exactly (as rationals), rounded half away from zero and saturated.
+_EXACT_OPS = ('+', '-', '.*', './', '.\\')
+
+
+def _small_ints(A, B):
+    """Both operands small enough (|x| <= 2^26) that arithmetic in doubles is
+    exact: sums, products and correctly rounded quotients."""
+    lim = 2.0 ** 26
+    for X in (A, B):
+        X = np.asarray(X)
+        if X.size and X.dtype.kind in 'iu':
+            if X.max() > lim or X.min() < -lim:
+                return False
+        elif X.size:
+            with _ERR_IGNORE:
+                Xf = np.abs(np.asarray(X, F64))
+            if np.any(Xf > lim) and np.any(np.isfinite(Xf) & (Xf > lim)):
+                return False
+    return True
+
+
+def _int64_exact(A, B, sym, cls):
+    from fractions import Fraction
+    lo, hi = INT_RANGE[cls]
+
+    def one(x, y):
+        if isinstance(x, float) and not math.isfinite(x) or isinstance(y, float) and not math.isfinite(y):
+            with _ERR_IGNORE:
+                f = float(x) + float(y) if sym == '+' else float(x) - float(y) if sym == '-' else \
+                    float(x) * float(y) if sym == '.*' else np.true_divide(float(x), float(y))
+            return 0 if math.isnan(f) else (hi if f > 0 else lo)
+        fx, fy = Fraction(x), Fraction(y)
+        if sym == '+':
+            r = fx + fy
+        elif sym == '-':
+            r = fx - fy
+        elif sym == '.*':
+            r = fx * fy
+        elif fy == 0:
+            return 0 if fx == 0 else (hi if fx > 0 else lo)
+        else:
+            r = fx / fy
+        n = math.floor(abs(r) + Fraction(1, 2))
+        n = n if r >= 0 else -n
+        return min(hi, max(lo, n))
+
+    def pyvals(X):
+        X = np.asarray(X)
+        if X.dtype.kind in 'iu':
+            return X.astype(object)
+        return np.vectorize(lambda v: int(v) if math.isfinite(v) and v == int(v) else float(v), otypes=[object])(np.asarray(X, F64)) if X.size else X.astype(object)
+    PA, PB = np.broadcast_arrays(pyvals(A), pyvals(B))
+    r = np.frompyfunc(one, 2, 1)(PA, PB) if PA.size else np.zeros(PA.shape, object)
+    return np.asarray(r, dtype=object).astype(INT_TYPES[cls]).reshape(PA.shape)
 
 
 def plus(a, b):
@@ -297,6 +359,12 @@ def uminus(a):
     if t is UOBJ:
         return UOPS.unop('-', a)
     A, c = operand(a, '-')
+    if c in ('int64', 'uint64'):
+        lo, hi = INT_RANGE[c]
+        A = np.asarray(A)
+        if c == 'uint64':
+            return _2d(np.zeros(A.shape, np.uint64))
+        return _2d(np.where(A == lo, np.int64(hi), -np.where(A == lo, 0, A)).astype(np.int64))
     if c in INT_CLASSES:
         return finish(-np.asarray(A, F64), c)
     return finish(-A, c)

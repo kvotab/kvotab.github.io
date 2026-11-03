@@ -111,3 +111,23 @@ def spalloc(nargout, *args):
 @bi('nzmax')
 def nzmax(nargout, *args):
     return float(np.count_nonzero(arr(args[0])))
+
+
+@bi('spfun', aw=True)
+async def spfun(nargout, *args):
+    """spfun(f, S): f applied to the nonzero elements of S, the zeros kept."""
+    nargchk(args, 2, 2, 'spfun')
+    from ..values import FH
+    f, S = args
+    if not isinstance(f, FH):
+        raise err('MATLAB:spfun:InvalidFunction', 'The first input must be a function handle.', 'spfun')
+    a = np.asarray(arr(S))
+    nz = np.flatnonzero(a.reshape(-1, order='F'))
+    vals = a.reshape(-1, order='F')[nz].reshape(-1, 1)
+    r = await f.acall(1, out(vals) if vals.size != 1 else float(vals.reshape(-1)[0].real) if vals.dtype.kind != 'c' else complex(vals.reshape(-1)[0]))
+    r = np.asarray(arr(r[0] if isinstance(r, tuple) else r)).reshape(-1)
+    if r.size != nz.size:
+        raise err('MATLAB:spfun:WrongSize', 'The function must give one value per nonzero element.', 'spfun')
+    res = np.zeros(a.size, np.result_type(r.dtype, F64))
+    res[nz] = r
+    return out(res.reshape(a.shape, order='F'))

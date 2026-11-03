@@ -3,12 +3,13 @@ the nan- functions, tabulate, grpstats, ecdf, ksdensity, corr, bootstrp and
 jackknife; and the grouping variables the statistics functions share
 (numbers, text in a char matrix, a cell or a string array)."""
 import math
+import warnings
 
 import numpy as np
 
 from . import bi
-from ._util import err, nargchk, darr, out, opt_str, sval, num, is_str, cellstr_list
-from ..values import MError, Char, Cell, Struct, Str, FH, EMPTY, py_str
+from ._util import err, nargchk, darr, out, opt_str, sval, num, is_str, cellstr_list, dims_arg, along, like_class, numel
+from ..values import MError, Char, Cell, Struct, Str, FH, EMPTY, py_str, class_of
 from .. import runtime as R
 from .datafun import first_dim
 
@@ -166,42 +167,83 @@ def harmmean(nargout, *args):
         return out(x.shape[dim] / np.sum(1 / x, axis=dim, keepdims=True))
 
 
+def _nan_stat(m, how):
+    """mean or median of m's last axis with NaN left out (NaN where nothing is left)."""
+    if m.shape[-1] == 0:
+        return np.full(m.shape[:-1] + (1,), np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        return (np.nanmedian if how == 'median' else np.nanmean)(m, axis=-1, keepdims=True)
+
+
 @bi('mad')
 def mad(nargout, *args):
+    """mad(x, flag, dim): the mean absolute deviation from the mean (flag 0)
+    or the median absolute deviation from the median (flag 1), NaN left out
+    as missing; dim may be a vector of dimensions or 'all'."""
     nargchk(args, 1, 3, 'mad')
+    if is_str(args[0]) or type(args[0]) is Cell:
+        raise err('stats:mad:BadData', 'The data must be numeric or logical.', 'mad')
     x = _arr(args[0])
-    flag = int(num(args[1])) if len(args) > 1 and np.size(darr(args[1])) else 0
-    dim = _dim(args, 2, x)
-    if flag:
-        return out(_along(x, dim, lambda v: float(np.median(np.abs(v - np.median(v))))))
-    return out(_along(x, dim, lambda v: float(np.mean(np.abs(v - np.mean(v))))))
+    flag = 0
+    if len(args) > 1 and numel(args[1]):
+        flag = num(args[1])
+        if flag not in (0, 1):
+            raise err('stats:mad:BadFlag', 'The flag must be 0 or 1.', 'mad')
+    dim = dims_arg(args[2], 'mad') if len(args) > 2 else None
+    how = 'median' if flag else 'mean'
+
+    def f(m):
+        with np.errstate(invalid='ignore'):
+            d = np.abs(m - _nan_stat(m, how))
+        return _nan_stat(d, how)[..., 0]
+    return like_class(along(x, dim, f), args[0])
 
 
 @bi('moment')
 def moment(nargout, *args):
+    """moment(x, order, dim): the central moment mean((x - mean(x)).^order)
+    along a dimension, a vector of them or 'all'."""
     nargchk(args, 2, 3, 'moment')
     x = _arr(args[0])
-    k = int(num(args[1]))
-    if k < 1:
+    k = num(args[1])
+    if k < 1 or k != int(k):
         raise err('stats:moment:BadOrder', 'ORDER must be a positive whole number.', 'moment')
-    dim = _dim(args, 2, x)
-    m = np.mean(x, axis=dim, keepdims=True)
-    return out(np.mean((x - m) ** k, axis=dim, keepdims=True))
+    dim = dims_arg(args[2], 'moment') if len(args) > 2 and numel(args[2]) else None
+
+    def f(m):
+        with np.errstate(all='ignore'):
+            c = m - (m.mean(axis=-1, keepdims=True) if m.shape[-1] else np.nan)
+            return np.mean(c ** int(k), axis=-1) if m.shape[-1] else np.full(m.shape[:-1], np.nan)
+    return like_class(along(x, dim, f), args[0])
 
 
 @bi('zscore', nout=3)
 def zscore(nargout, *args):
+    """[z, mu, sigma] = zscore(x, flag, dim): (x - mean)/std along a
+    dimension, a vector of them or 'all' (flag 1: std normalized by N); a
+    zero sigma divides by 1."""
     nargchk(args, 1, 3, 'zscore')
     x = _arr(args[0])
     flag = int(num(args[1])) if len(args) > 1 and np.size(darr(args[1])) else 0
-    dim = _dim(args, 2, x)
+    if flag not in (0, 1):
+        raise err('stats:zscore:BadFlag', 'The flag must be 0 or 1.', 'zscore')
+    dim = dims_arg(args[2], 'zscore') if len(args) > 2 else None
     if x.size == 0:
-        return (EMPTY(), EMPTY(), EMPTY())[:max(nargout, 1)] if nargout > 1 else EMPTY()
-    mu = np.mean(x, axis=dim, keepdims=True)
-    s = np.std(x, axis=dim, ddof=0 if flag else (1 if x.shape[dim] > 1 else 0), keepdims=True)
-    s0 = np.where(s == 0, 1.0, s)
-    z = out((x - mu) / s0)
-    return (z, out(mu), out(s))[:nargout] if nargout > 1 else z
+        e = like_class(x, args[0])
+        return (e, e, e)[:max(nargout, 1)] if nargout > 1 else e
+    with np.errstate(all='ignore'):
+        mu = along(x, dim, lambda m: m.mean(axis=-1))
+        sd = along(x, dim, lambda m: np.std(m, axis=-1, ddof=0 if flag or m.shape[-1] < 2 else 1))
+        xe = x.reshape(x.shape + (1,) * (mu.ndim - x.ndim))
+        z = (xe - mu) / np.where(sd == 0, 1.0, sd)
+    def back(r):
+        # integers give doubles (their std is not an integer)
+        return like_class(r, args[0]) if class_of(args[0]) == 'single' else out(r)
+    z = back(z.reshape(x.shape) if z.size == x.size else z)
+    if nargout > 1:
+        return (z, back(mu), back(sd))[:nargout]
+    return z
 
 
 def _nanfn(name, fn_vec):
@@ -505,15 +547,15 @@ def ksdensity(nargout, *args):
 def corr(nargout, *args):
     nargchk(args, 1, 8, 'corr')
     from scipy import stats as st
+    # rows are observations and columns variables, a row vector too
+    single = any(class_of(v) == 'single' for v in args[:2])
     X = _arr(args[0])
-    if X.ndim == 2 and X.shape[0] == 1:
-        X = X.reshape(-1, 1)
     rest = list(args[1:])
     Y = None
     if rest and not is_str(rest[0]):
         Y = _arr(rest.pop(0))
-        if Y.ndim == 2 and Y.shape[0] == 1:
-            Y = Y.reshape(-1, 1)
+    if X.ndim > 2 or (Y is not None and Y.ndim > 2):
+        raise err('stats:corr:InputDim', 'X and Y must be matrices.', 'corr')
     opts = {}
     i = 0
     while i + 1 < len(rest):
@@ -555,7 +597,7 @@ def corr(nargout, *args):
                     r = float(np.corrcoef(x, y)[0, 1])
                     t = r * math.sqrt((n - 2) / max(1e-300, 1 - r * r)) if n > 2 else math.nan
                     p2 = 2 * float(st.t.sf(abs(t), n - 2)) if n > 2 else math.nan
-            if same and a == b:
+            if same and a == b and math.isfinite(r):
                 r, p2 = 1.0, 1.0
             rho[a, b] = r
             if tail == 'both':
@@ -563,8 +605,12 @@ def corr(nargout, *args):
             else:
                 half = p2 / 2
                 pv[a, b] = half if (r > 0) == (tail == 'right') else 1 - half
-    ro = out(rho)
-    return (ro, out(pv)) if nargout > 1 else ro
+    if single:
+        from ..ops import finish
+        ro, po = finish(rho.astype(np.float32), 'single'), finish(pv.astype(np.float32), 'single')
+    else:
+        ro, po = out(rho), out(pv)
+    return (ro, po) if nargout > 1 else ro
 
 
 # ---- resampling ---------------------------------------------------------------------------------------

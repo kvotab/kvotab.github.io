@@ -727,6 +727,9 @@ discretize: The bin each value falls into.
 cov: The covariance of two vectors, or of the columns of a matrix.
     C = cov(A)
     C = cov(x, y)
+    C = cov(..., w)
+    C = cov(..., 'omitrows')
+    * w 0 (the default) normalizes by N - 1, 1 by N; a vector of weights, one per row, by their sum. 'partialrows' takes each pair of columns from the rows both have.
 corrcoef: Correlation coefficients.
     R = corrcoef(A)
     R = corrcoef(x, y)
@@ -772,6 +775,15 @@ movmedian: The median over a moving window.
     M = movmedian(A, k)
 movstd: The standard deviation over a moving window.
     M = movstd(A, k)
+    M = movstd(A, k, w, dim)
+movvar: The variance over a moving window.
+    M = movvar(A, k)
+    M = movvar(A, k, w, dim)
+movprod: The product over a moving window.
+    M = movprod(A, k)
+movmad: The median absolute deviation over a moving window.
+    M = movmad(A, k)
+    M = movmad(..., 'omitnan', 'Endpoints', 'discard')
 rescale: Scale values linearly to fill [0, 1], or another interval.
     R = rescale(A)
     R = rescale(A, l, u)
@@ -780,7 +792,12 @@ rescale: Scale values linearly to fill [0, 1], or another interval.
 normalize: Centre and scale data (z-scores by default).
     N = normalize(A)
     N = normalize(A, dim)
-    N = normalize(..., 'range')
+    N = normalize(..., 'zscore', 'robust')
+    N = normalize(..., 'norm', p)
+    N = normalize(..., 'range', [a b])
+    N = normalize(..., 'medianiqr')
+    N = normalize(..., 'center', c, 'scale', s)
+    [N, C, S] = normalize(...)
 
 # ---- descriptive statistics ------------------------------------------------------------------
 trimmean: The mean of the data left when a share of the smallest and the largest values is set aside.
@@ -799,6 +816,7 @@ mad: The mean absolute deviation from the mean, or the median absolute deviation
     d = mad(X)
     d = mad(X, flag)
     d = mad(X, flag, dim)
+    d = mad(X, flag, 'all')
     * flag 0 (the default) gives mean(abs(X - mean(X))), flag 1 median(abs(X - median(X))). NaN values are left out.
 moment: A central moment of a sample: the mean of (X - mean(X)).^order.
     m = moment(X, order)
@@ -1212,6 +1230,9 @@ gammaln: The logarithm of the gamma function, without overflow.
 gammainc: The regularized incomplete gamma function.
     y = gammainc(x, a)
     y = gammainc(x, a, 'upper')
+    y = gammainc(x, a, 'scaledlower')
+    y = gammainc(x, a, 'scaledupper')
+    * The scaled forms are multiplied by gamma(a+1)*exp(x)/x^a.
 gammaincinv: The inverse of the regularized incomplete gamma function.
     x = gammaincinv(y, a)
     x = gammaincinv(y, a, 'upper')
@@ -1256,6 +1277,8 @@ besselh: The Bessel function of the third kind (Hankel function).
 airy: The Airy functions Ai, Ai', Bi and Bi'.
     W = airy(z)
     W = airy(k, z)
+    W = airy(k, z, 1)
+    * k is 0 for Ai, 1 for Ai', 2 for Bi, 3 for Bi'. With 1 as the third input, Ai and Ai' are scaled by exp(2/3*z^(3/2)), Bi and Bi' by exp(-abs(real(2/3*z^(3/2)))).
 ellipke: Complete elliptic integrals of the first and second kind.
     K = ellipke(m)
     [K, E] = ellipke(m)
@@ -1273,6 +1296,9 @@ polyfit: Fit a polynomial by least squares; coefficients from the highest power 
 polyval: Evaluate a polynomial.
     y = polyval(p, x)
     y = polyval(p, x, [], mu)
+    [y, delta] = polyval(p, x, S)
+    [y, delta] = polyval(p, x, S, mu)
+    * delta, from the structure S of polyfit, is the standard error of each prediction.
 polyvalm: Evaluate a polynomial of a matrix.
     Y = polyvalm(p, X)
 roots: The roots of a polynomial.
@@ -1292,8 +1318,9 @@ polyder: The derivative of a polynomial (of a product or quotient, with two).
 polyint: The integral of a polynomial.
     q = polyint(p)
     q = polyint(p, k)
-residue: Partial fractions of a ratio of polynomials.
+residue: Partial fractions of a ratio of polynomials, and back.
     [r, p, k] = residue(b, a)
+    [b, a] = residue(r, p, k)
 filter: A rational transfer function (IIR or FIR filter) applied to data.
     y = filter(b, a, x)
     [y, zf] = filter(b, a, x, zi)
@@ -2414,6 +2441,7 @@ istext: True for a char array or a string array.
 dec2bin: Integers as binary digits.
     s = dec2bin(d)
     s = dec2bin(d, n)
+    * A negative number is written in two's complement, in 8, 16, 32 or 64 bits.
 bin2dec: Binary digits as an integer.
     d = bin2dec(s)
 dec2hex: Integers as hexadecimal digits.
@@ -2685,7 +2713,9 @@ nargoutchk: An error unless the number of outputs is between two bounds.
 validateattributes: An error unless a value has the given classes and attributes.
     validateattributes(x, classes, attributes)
     validateattributes(x, classes, attributes, funcName, varName)
-    * Attributes include 'scalar', 'vector', 'row', 'column', 'nonempty', 'real', 'finite', 'nonnan', 'integer', 'positive', 'nonnegative', 'increasing', {'size', [m n]}, {'>=', v}.
+    validateattributes(x, classes, attributes, funcName, varName, argIndex)
+    * Classes are class names, or 'numeric', 'float' and 'integer'.
+    * Attributes: '2d', '3d', 'row', 'column', 'scalar', 'scalartext', 'vector', 'square', 'diag', 'nonempty', 'nonsparse', 'binary', 'even', 'odd', 'integer', 'real', 'finite', 'nonnan', 'nonnegative', 'nonzero', 'positive', 'increasing', 'decreasing', 'nondecreasing', 'nonincreasing', and with a value 'size' (NaN for any), 'numel', 'ncols', 'nrows', 'ndims', '>', '>=', '<', '<='.
 isvarname: True for text that is a valid variable name.
     tf = isvarname(s)
 iskeyword: True for a keyword of the language, or the list of keywords.
@@ -2956,7 +2986,11 @@ writelines: Write text to a file, one line per string.
     writelines(lines, filename)
 textscan: Read columns of formatted data from a file or text.
     C = textscan(fid, format)
+    C = textscan(text, format, N)
     C = textscan(text, format, 'Delimiter', ',', 'HeaderLines', 1)
+    [C, position] = textscan(...)
+    * %f %n read doubles, %f32 singles, %d %u int32 and uint32 (%d8 to %d64, %u8 to %u64 the others); %s a word (to a delimiter when there are delimiters), %q a word that may be in double quotes, %c characters, %[...] characters of a set; a width such as %4f reads at most that many characters; %*f skips a field; other text in the format must match.
+    * Options: Delimiter, Whitespace, EndOfLine, HeaderLines, EmptyValue, TreatAsEmpty, CommentStyle, MultipleDelimsAsOne, CollectOutput, ReturnOnError, ExpChars, TextType.
 textread: Read a file by applying a format again and again, over line ends; one output per field.
     words = textread(filename, '%s')
     [names, ages] = textread(filename, '%s %d', 'headerlines', 1)
@@ -3805,6 +3839,421 @@ white: All white.
     c = white(n)
 colorcube: A colormap of evenly spaced colours of a colour cube, then grays and pure tones.
     c = colorcube(n)
+# ---- arguments: validators and inputParser ---------------------------------------------------
+mustBePositive: An error unless every element is greater than 0.
+    mustBePositive(A)
+mustBeNonnegative: An error unless every element is 0 or more.
+    mustBeNonnegative(A)
+mustBeNegative: An error unless every element is less than 0.
+    mustBeNegative(A)
+mustBeNonpositive: An error unless every element is 0 or less.
+    mustBeNonpositive(A)
+mustBeNonzero: An error if any element is 0.
+    mustBeNonzero(A)
+mustBeInteger: An error unless every element is a whole number (finite).
+    mustBeInteger(A)
+mustBeNumeric: An error unless the value is numeric.
+    mustBeNumeric(A)
+mustBeNumericOrLogical: An error unless the value is numeric or logical.
+    mustBeNumericOrLogical(A)
+mustBeFloat: An error unless the value is single or double.
+    mustBeFloat(A)
+mustBeReal: An error if any element has an imaginary part.
+    mustBeReal(A)
+mustBeFinite: An error if any element is Inf or NaN.
+    mustBeFinite(A)
+mustBeNonNan: An error if any element is NaN.
+    mustBeNonNan(A)
+mustBeNonempty: An error if the value is empty.
+    mustBeNonempty(A)
+mustBeNonsparse: An error if the value is sparse (never, here: matrices are held full).
+    mustBeNonsparse(A)
+mustBeGreaterThan: An error unless every element is greater than a number.
+    mustBeGreaterThan(A, c)
+mustBeGreaterThanOrEqual: An error unless every element is at least a number.
+    mustBeGreaterThanOrEqual(A, c)
+mustBeLessThan: An error unless every element is less than a number.
+    mustBeLessThan(A, c)
+mustBeLessThanOrEqual: An error unless every element is at most a number.
+    mustBeLessThanOrEqual(A, c)
+mustBeInRange: An error unless every element lies within two bounds.
+    mustBeInRange(A, lower, upper)
+    mustBeInRange(A, lower, upper, 'exclusive')
+    * The bounds are included unless 'exclusive', 'exclude-lower' or 'exclude-upper' says otherwise.
+mustBeMember: An error unless every element is one of a set of values (or texts).
+    mustBeMember(A, S)
+mustBeText: An error unless the value is a character vector, a string array or a cell of character vectors.
+    mustBeText(A)
+mustBeTextScalar: An error unless the value is a character vector or a string scalar.
+    mustBeTextScalar(A)
+mustBeNonzeroLengthText: An error unless the value is text with at least one character in each element.
+    mustBeNonzeroLengthText(A)
+mustBeVector: An error unless the value is a row or a column.
+    mustBeVector(A)
+    mustBeVector(A, 'allow-all-empties')
+mustBeScalarOrEmpty: An error unless the value has at most one element.
+    mustBeScalarOrEmpty(A)
+mustBeA: An error unless the value is of one of the classes named ('numeric', 'float' and 'integer' name groups).
+    mustBeA(A, classNames)
+mustBeUnderlyingType: An error unless the value's class is one of those named.
+    mustBeUnderlyingType(A, typeNames)
+mustBeNonmissing: An error if any element is missing (NaN, or a missing string).
+    mustBeNonmissing(A)
+mustBeValidVariableName: An error unless the text is a valid variable name.
+    mustBeValidVariableName(name)
+mustBeFile: An error unless each name is a file that exists.
+    mustBeFile(path)
+mustBeFolder: An error unless each name is a folder that exists.
+    mustBeFolder(path)
+inputParser: An object that checks a function's inputs and gives their values by name.
+    p = inputParser
+    addRequired(p, name, validationFcn)
+    addOptional(p, name, default, validationFcn)
+    addParameter(p, name, default, validationFcn)
+    parse(p, varargin{:})
+    p.Results
+    * Properties: FunctionName, CaseSensitive (false), KeepUnmatched (false), PartialMatching (true), StructExpand (true); after parse, Results, Unmatched, UsingDefaults and Parameters.
+    * A validation function returns true or false, or gives an error for a bad value.
+addRequired: Add a required input to an inputParser.
+    addRequired(p, name)
+    addRequired(p, name, validationFcn)
+    p.addRequired(name, validationFcn)
+addOptional: Add an optional positional input, with its default, to an inputParser.
+    addOptional(p, name, default)
+    addOptional(p, name, default, validationFcn)
+    * Text that names a parameter ends the optional inputs.
+addParameter: Add a name-value input, with its default, to an inputParser.
+    addParameter(p, name, default)
+    addParameter(p, name, default, validationFcn)
+    addParameter(..., 'PartialMatchPriority', n)
+addParamValue: The older name of addParameter.
+    addParamValue(p, name, default, validationFcn)
+parse: Parse a list of inputs with an inputParser, filling its Results.
+    parse(p, varargin{:})
+    p.parse(varargin{:})
+nargchk: The message for a number of inputs outside a range (the older form of narginchk).
+    msg = nargchk(low, high, n)
+    s = nargchk(low, high, n, 'struct')
+namelengthmax: The longest a name may be: 63.
+    n = namelengthmax
+# ---- data cleaning and grouping ---------------------------------------------------------------
+fillmissing: Fill the missing entries (NaN, or empty text) of data.
+    F = fillmissing(A, 'constant', v)
+    F = fillmissing(A, 'linear')
+    F = fillmissing(A, 'movmean', window)
+    F = fillmissing(..., dim, 'EndValues', 'nearest', 'MaxGap', g)
+    [F, TF] = fillmissing(...)
+    * Methods: 'constant', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima', 'movmean', 'movmedian'.
+    * EndValues: 'extrap' (the default), 'previous', 'next', 'nearest', 'none' or a value.
+rmmissing: Remove missing entries, or the rows or columns that have them.
+    R = rmmissing(A)
+    R = rmmissing(A, dim)
+    R = rmmissing(..., 'MinNumMissing', n)
+    [R, TF] = rmmissing(...)
+standardizeMissing: Make given values the standard missing value (NaN, or empty text).
+    B = standardizeMissing(A, indicators)
+isoutlier: Find outliers in data.
+    TF = isoutlier(A)
+    TF = isoutlier(A, method)
+    TF = isoutlier(A, 'movmedian', window)
+    TF = isoutlier(..., dim, 'ThresholdFactor', t)
+    [TF, L, U, C] = isoutlier(...)
+    * Methods: 'median' (the default: more than 3 scaled median absolute deviations away), 'mean' (3 standard deviations), 'quartiles' (1.5 interquartile ranges beyond the quartiles), 'grubbs', 'gesd', 'movmedian', 'movmean'.
+filloutliers: Replace outliers in data.
+    B = filloutliers(A, fillmethod)
+    B = filloutliers(A, fillmethod, findmethod)
+    [B, TF, L, U, C] = filloutliers(...)
+    * Fill methods: 'center', 'clip', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima', or a number.
+smoothdata: Smooth noisy data.
+    B = smoothdata(A)
+    B = smoothdata(A, method, window)
+    B = smoothdata(A, dim, method, window)
+    [B, window] = smoothdata(...)
+    * Methods: 'movmean' (the default), 'movmedian', 'gaussian', 'lowess', 'loess', 'rlowess', 'rloess', 'sgolay' ('Degree', 2).
+findgroups: Number the groups of a grouping variable (or of several together).
+    G = findgroups(A)
+    [G, ID] = findgroups(A)
+    [G, ID1, ID2] = findgroups(A1, A2)
+splitapply: Apply a function to each group of data.
+    Y = splitapply(func, X, G)
+    [Y1, Y2] = splitapply(func, X1, X2, G)
+    * Each call must give one row (a scalar, or a value in a cell).
+histcounts2: Counts of pairs in a grid of bins.
+    N = histcounts2(X, Y)
+    N = histcounts2(X, Y, nbins)
+    N = histcounts2(X, Y, Xedges, Yedges)
+    [N, Xedges, Yedges, binX, binY] = histcounts2(...)
+rms: The root mean square.
+    y = rms(x)
+    y = rms(x, dim)
+    y = rms(x, 'all')
+    y = rms(..., 'omitnan')
+# ---- arrays, cells and coordinates --------------------------------------------------------------
+bsxfun: Apply a two-input function with singleton dimensions expanded.
+    C = bsxfun(fun, A, B)
+repelem: Repeat each element of an array.
+    u = repelem(v, n)
+    B = repelem(A, r1, r2)
+mat2cell: Divide an array into a cell array of blocks.
+    C = mat2cell(A, rowSizes, colSizes)
+    C = mat2cell(A, rowSizes)
+celldisp: Show each element of a cell array, with its index.
+    celldisp(C)
+    celldisp(C, name)
+swapbytes: Reverse the bytes of each element.
+    Y = swapbytes(X)
+spfun: Apply a function to the nonzero elements of a matrix.
+    S = spfun(fun, A)
+cart2pol: Cartesian to polar (or cylindrical) coordinates.
+    [theta, rho] = cart2pol(x, y)
+    [theta, rho, z] = cart2pol(x, y, z)
+pol2cart: Polar (or cylindrical) to Cartesian coordinates.
+    [x, y] = pol2cart(theta, rho)
+    [x, y, z] = pol2cart(theta, rho, z)
+cart2sph: Cartesian to spherical coordinates.
+    [azimuth, elevation, r] = cart2sph(x, y, z)
+sph2cart: Spherical to Cartesian coordinates.
+    [x, y, z] = sph2cart(azimuth, elevation, r)
+# ---- text and JSON ----------------------------------------------------------------------------------
+replaceBetween: Replace the text between two markers or positions.
+    s = replaceBetween(str, startText, endText, newText)
+    s = replaceBetween(str, startPos, endPos, newText)
+    s = replaceBetween(..., 'Boundaries', 'inclusive')
+eraseBetween: Remove the text between two markers or positions.
+    s = eraseBetween(str, startText, endText)
+    s = eraseBetween(str, startPos, endPos)
+matlab.lang.makeUniqueStrings: Make names unique by adding _1, _2, ...
+    U = matlab.lang.makeUniqueStrings(S)
+    U = matlab.lang.makeUniqueStrings(S, exclude)
+    U = matlab.lang.makeUniqueStrings(S, exclude, maxLength)
+jsondecode: Read JSON text into structs, arrays and cells.
+    value = jsondecode(text)
+jsonencode: Write a value as JSON text.
+    text = jsonencode(value)
+    text = jsonencode(value, 'PrettyPrint', true)
+    text = jsonencode(value, 'ConvertInfAndNaN', false)
+# ---- linear algebra: structure, iterative solvers, updates ------------------------------------------
+issymmetric: True when a matrix equals its transpose (or minus it, with 'skew').
+    tf = issymmetric(A)
+    tf = issymmetric(A, 'skew')
+    tf = issymmetric(A, tol)
+ishermitian: True when a matrix equals its conjugate transpose (or minus it, with 'skew').
+    tf = ishermitian(A)
+    tf = ishermitian(A, 'skew')
+    tf = ishermitian(A, tol)
+istril: True for a lower triangular matrix.
+    tf = istril(A)
+istriu: True for an upper triangular matrix.
+    tf = istriu(A)
+isbanded: True when the nonzeros lie within given numbers of diagonals below and above the main one.
+    tf = isbanded(A, lower, upper)
+bandwidth: How far the nonzeros of a matrix reach below and above its diagonal.
+    [lower, upper] = bandwidth(A)
+    b = bandwidth(A, 'lower')
+pcg: Solve A*x = b by preconditioned conjugate gradients (A symmetric positive definite).
+    x = pcg(A, b)
+    x = pcg(A, b, tol, maxit, M1, M2, x0)
+    [x, flag, relres, iter, resvec] = pcg(...)
+    * A may be a function handle returning A*x; M1 and M2 too, returning M\x. flag 0 is converged, 1 the iterations ran out.
+bicg: Solve A*x = b by biconjugate gradients.
+    [x, flag, relres, iter, resvec] = bicg(A, b, tol, maxit, M1, M2, x0)
+    * A function handle is called as afun(x, 'notransp') and afun(x, 'transp').
+bicgstab: Solve A*x = b by biconjugate gradients, stabilized.
+    [x, flag, relres, iter, resvec] = bicgstab(A, b, tol, maxit, M1, M2, x0)
+cgs: Solve A*x = b by conjugate gradients squared.
+    [x, flag, relres, iter, resvec] = cgs(A, b, tol, maxit, M1, M2, x0)
+gmres: Solve A*x = b by the generalized minimum residual method, with restarts.
+    x = gmres(A, b)
+    [x, flag, relres, iter, resvec] = gmres(A, b, restart, tol, maxit, M1, M2, x0)
+    * iter is [outer inner].
+minres: Solve A*x = b for a symmetric A by the minimum residual method.
+    [x, flag, relres, iter, resvec] = minres(A, b, tol, maxit, M1, M2, x0)
+qmr: Solve A*x = b by the quasi-minimal residual method.
+    [x, flag, relres, iter, resvec] = qmr(A, b, tol, maxit, M1, M2, x0)
+tfqmr: Solve A*x = b by the transpose-free quasi-minimal residual method.
+    [x, flag, relres, iter, resvec] = tfqmr(A, b, tol, maxit, M1, M2, x0)
+lsqr: Least squares solution of A*x = b by LSQR.
+    x = lsqr(A, b)
+    [x, flag, relres, iter, resvec] = lsqr(A, b, tol, maxit, M1, M2, x0)
+cholupdate: Update the Cholesky factor after adding (or removing) x*x'.
+    R1 = cholupdate(R, x)
+    [R1, p] = cholupdate(R, x, '-')
+qrupdate: Update a QR factorization after adding u*v'.
+    [Q1, R1] = qrupdate(Q, R, u, v)
+qrinsert: Update a QR factorization after inserting a column or a row.
+    [Q1, R1] = qrinsert(Q, R, j, x)
+    [Q1, R1] = qrinsert(Q, R, j, x, 'row')
+qrdelete: Update a QR factorization after deleting a column or a row.
+    [Q1, R1] = qrdelete(Q, R, j)
+    [Q1, R1] = qrdelete(Q, R, j, 'row')
+qz: The generalized Schur (QZ) factorization of a pair of matrices.
+    [AA, BB, Q, Z] = qz(A, B)
+    [AA, BB, Q, Z, V, W] = qz(A, B, 'real')
+    * Q*A*Z = AA and Q*B*Z = BB.
+ordschur: Reorder a Schur factorization so that chosen eigenvalues come first.
+    [US, TS] = ordschur(U, T, select)
+    [US, TS] = ordschur(U, T, keys)
+ordeig: The eigenvalues of a (quasi-)triangular matrix in the order of its diagonal.
+    e = ordeig(T)
+    e = ordeig(AA, BB)
+polyeig: Eigenvalues of a matrix polynomial.
+    e = polyeig(A0, A1, ..., Ap)
+    [X, e] = polyeig(...)
+    [X, e, s] = polyeig(...)
+    * Solves (A0 + e*A1 + ... + e^p*Ap)*x = 0.
+# ---- geometry and interpolation objects -------------------------------------------------------------
+delaunay: The Delaunay triangulation of points (tetrahedra in 3-D).
+    T = delaunay(x, y)
+    T = delaunay(x, y, z)
+    T = delaunay(P)
+convhull: The convex hull of points, and its area or volume.
+    K = convhull(x, y)
+    [K, A] = convhull(x, y)
+    [K, V] = convhull(x, y, z)
+    K = convhull(..., 'Simplify', false)
+    * In 2-D, K is a closed loop of point indices, counterclockwise.
+voronoi: Draw the Voronoi diagram of points, or give its edges.
+    voronoi(x, y)
+    [vx, vy] = voronoi(x, y)
+voronoin: The Voronoi vertices and cells of points in any dimension.
+    [V, C] = voronoin(X)
+    * V(1, :) is Inf: a cell that holds index 1 is unbounded.
+tsearchn: The simplex enclosing each point, and its barycentric coordinates.
+    t = tsearchn(X, T, XI)
+    [t, p] = tsearchn(X, T, XI)
+dsearchn: The nearest point of a set to each query point.
+    k = dsearchn(X, XI)
+    [k, d] = dsearchn(X, XI)
+    k = dsearchn(X, T, XI, outval)
+rectint: The areas where rectangles [x y width height] overlap.
+    area = rectint(A, B)
+interp3: Interpolation of 3-D data in meshgrid's layout.
+    Vq = interp3(X, Y, Z, V, Xq, Yq, Zq)
+    Vq = interp3(V, Xq, Yq, Zq)
+    Vq = interp3(..., method, extrapval)
+griddedInterpolant: An interpolant of values on a grid, evaluated as F(xq).
+    F = griddedInterpolant(x, v)
+    F = griddedInterpolant({x1, x2}, V)
+    F = griddedInterpolant(X1, X2, V, method, extrapolation)
+    vq = F(xq1, xq2)
+    Vq = F({xg1, xg2})
+    * Methods: 'linear' (the default), 'nearest', 'next', 'previous', 'pchip', 'cubic', 'spline', 'makima'; extrapolation by the method unless given ('none' gives NaN).
+scatteredInterpolant: An interpolant of values at scattered points, evaluated as F(xq, yq).
+    F = scatteredInterpolant(x, y, v)
+    F = scatteredInterpolant(P, v, method, extrapolation)
+    vq = F(xq, yq)
+    * Methods: 'linear' (the default), 'nearest', 'natural' (computed as 'linear' here); extrapolation 'linear', 'nearest' or 'none'.
+triplot: Draw the edges of triangles.
+    triplot(TRI, x, y)
+    triplot(TRI, x, y, spec)
+trisurf: Draw triangles as a surface.
+    trisurf(TRI, x, y, z)
+    trisurf(TRI, x, y, z, c)
+trimesh: Draw triangles as a mesh.
+    trimesh(TRI, x, y, z)
+    trimesh(TRI, x, y, z, c)
+# ---- images, sound and the web ------------------------------------------------------------------
+imread: Read an image file.
+    A = imread(filename)
+    [X, map] = imread(filename)
+    [A, map, alpha] = imread(filename)
+    * PNG, JPEG, BMP, TIFF and GIF; uint8 (uint16 for 16-bit images), m-by-n for gray, m-by-n-by-3 for colour; an image with a palette gives indices from 0 and its colormap.
+imwrite: Write an image file.
+    imwrite(A, filename)
+    imwrite(X, map, filename)
+    imwrite(..., 'Quality', q)
+    imwrite(..., 'Alpha', alpha)
+    * The format comes from the name (or is given); doubles are taken as 0 to 1.
+imfinfo: Facts about an image file.
+    info = imfinfo(filename)
+audioread: Read a WAV file.
+    [y, Fs] = audioread(filename)
+    [y, Fs] = audioread(filename, [start stop])
+    [y, Fs] = audioread(filename, 'native')
+audiowrite: Write a WAV file.
+    audiowrite(filename, y, Fs)
+    audiowrite(filename, y, Fs, 'BitsPerSample', 24)
+audioinfo: Facts about a WAV file.
+    info = audioinfo(filename)
+webread: Read data from a web address (JSON, text, an image, or bytes).
+    data = webread(url)
+    data = webread(url, QueryName, QueryValue)
+    data = webread(..., options)
+    * In the page, only servers that allow it (CORS) can be read.
+webwrite: Send data to a web address and read the answer.
+    response = webwrite(url, PostName, PostValue)
+    response = webwrite(url, data)
+    response = webwrite(..., options)
+websave: Save what a web address gives to a file.
+    filename = websave(filename, url)
+weboptions: Options for webread, webwrite and websave.
+    options = weboptions('Timeout', 10)
+    options = weboptions('ContentType', 'json', 'HeaderFields', {'Accept', 'application/json'})
+# ---- more plots -------------------------------------------------------------------------------------
+compass: Arrows from the origin, in polar axes.
+    compass(U, V)
+    compass(Z)
+feather: Arrows from equally spaced points along the x-axis.
+    feather(U, V)
+    feather(Z)
+rose: An angle histogram in polar axes.
+    rose(theta)
+    rose(theta, nbins)
+    [tout, rout] = rose(...)
+pareto: Bars in descending order with their cumulative percentage.
+    pareto(y)
+    pareto(y, names)
+    pareto(y, names, threshold)
+    [H, ax] = pareto(...)
+stem3: Stems from z = 0 with markers, in 3-D.
+    stem3(Z)
+    stem3(X, Y, Z)
+    stem3(..., 'filled')
+comet: The path of a point with its head.
+    comet(y)
+    comet(x, y)
+    * Drawn whole: the figure shows the path as it ends.
+comet3: The path of a point in 3-D with its head.
+    comet3(x, y, z)
+bar3: Three-dimensional bars.
+    bar3(Z)
+    bar3(y, Z, width)
+    bar3(..., 'grouped')
+    bar3(..., 'stacked')
+bar3h: Three-dimensional bars along the x-axis.
+    bar3h(Z)
+histogram2: A bivariate histogram drawn as 3-D bars.
+    histogram2(X, Y)
+    histogram2(X, Y, nbins)
+    histogram2(X, Y, Xedges, Yedges)
+pie3: A three-dimensional pie chart.
+    pie3(x)
+    pie3(x, explode)
+    pie3(x, explode, labels)
+ribbon: Columns of data as ribbons in 3-D.
+    ribbon(Y)
+    ribbon(X, Y, width)
+isosurface: The surface where volume data has a given value.
+    fv = isosurface(X, Y, Z, V, isovalue)
+    [faces, verts] = isosurface(V, isovalue)
+    isosurface(...)
+slice: Volume data shown on planes through it.
+    slice(X, Y, Z, V, xslice, yslice, zslice)
+    slice(V, xslice, yslice, zslice)
+stream2: Streamlines of a 2-D vector field.
+    XY = stream2(X, Y, U, V, startx, starty)
+    XY = stream2(..., [step maxvert])
+stream3: Streamlines of a 3-D vector field.
+    XYZ = stream3(X, Y, Z, U, V, W, startx, starty, startz)
+streamline: Draw streamlines of a vector field.
+    streamline(X, Y, U, V, startx, starty)
+    streamline(X, Y, Z, U, V, W, startx, starty, startz)
+    streamline(XY)
+camorbit: Turn the view about the axes' centre.
+    camorbit(dtheta, dphi)
+campos: Where the camera is, or put it somewhere.
+    p = campos
+    campos([x y z])
 '''
 
 

@@ -904,7 +904,7 @@ def _interp_cols(x, V, xq, method, extrap):
         f = interpolate.Akima1DInterpolator(x, V, axis=0, method='makima')
         f.extrapolate = True
     elif m == 'spline':
-        f = interpolate.CubicSpline(x, V, axis=0, bc_type='not-a-knot' if x.size > 3 else 'natural', extrapolate=True)
+        f = interpolate.CubicSpline(x, V, axis=0, bc_type='not-a-knot', extrapolate=True)    # a parabola through 3 points, a line through 2
     else:
         raise err('MATLAB:interp1:InvalidMethod', f"Invalid interpolation method '{m}'.", 'interp1')
     res = f(xq)
@@ -941,7 +941,7 @@ def _interp1_pp(x, V, method):
     elif method == 'makima':
         f = interpolate.Akima1DInterpolator(x, Vc, axis=0, method='makima')
     elif method == 'spline':
-        f = interpolate.CubicSpline(x, Vc, axis=0, bc_type='not-a-knot' if n > 3 else 'natural')
+        f = interpolate.CubicSpline(x, Vc, axis=0, bc_type='not-a-knot')
     else:
         raise err('MATLAB:interp1:InvalidMethod', f"Invalid interpolation method '{method}'.", 'interp1')
     c = np.asarray(f.c)                    # (order, pieces, D)
@@ -1439,9 +1439,13 @@ def polyfit(nargout, *args):
         x = (x - mu[0]) / mu[1]
     V = np.vander(x, n + 1)
     Q, Rm = np.linalg.qr(V)
-    p = np.linalg.lstsq(V, y, rcond=None)[0]
     if np.linalg.matrix_rank(V) < n + 1:
+        p = np.linalg.lstsq(V, y, rcond=None)[0]
         R.warn('MATLAB:polyfit:RepeatedPointsOrRescale', 'Polynomial is badly conditioned. Add points with distinct X values, reduce the degree of the polynomial, or try centering and scaling as described in HELP POLYFIT.')
+    else:
+        # least squares through the QR factors of the Vandermonde matrix
+        from scipy.linalg import solve_triangular
+        p = solve_triangular(Rm, Q.conj().T @ y)
     res = out(p.reshape(1, -1))
     if nargout <= 1:
         return res
@@ -1455,10 +1459,13 @@ def polyfit(nargout, *args):
 
 @bi('polyval', nout=2)
 def polyval(nargout, *args):
+    """[y, delta] = polyval(p, x, S, mu): the polynomial by Horner's rule
+    at x (centred and scaled by mu), and from polyfit's S the standard error
+    estimate delta = normr/sqrt(df)*sqrt(1 + |A/R|^2) of each prediction."""
     nargchk(args, 2, 4, 'polyval')
     p = darr(args[0]).reshape(-1)
     x = darr(args[1])
-    if len(args) > 3:
+    if len(args) > 3 and numel(args[3]):
         mu = darr(args[3]).reshape(-1)
         x = (x - mu[0]) / mu[1]
     y = np.zeros(x.shape, dtype=np.result_type(p, x, F64))
@@ -1466,7 +1473,25 @@ def polyval(nargout, *args):
         y = y * x + c
     if p.size == 0:
         y = np.zeros(x.shape)
-    return out(y)
+    single = any(class_of(v) == 'single' for v in args[:2])
+
+    def back(v):
+        return finish(np.asarray(v).astype(np.complex64 if np.iscomplexobj(v) else np.float32), 'single') if single else out(v)
+    if nargout < 2:
+        return back(y)
+    if len(args) < 3 or type(args[2]) is not Struct:
+        raise err('MATLAB:polyval:RequiresS', 'The structure S from polyfit is needed for delta.', 'polyval')
+    S = args[2]
+    if not all(k in S.f for k in ('R', 'df', 'normr')):
+        raise err('MATLAB:polyval:RequiresS', 'S must be the structure from polyfit (fields R, df and normr).', 'polyval')
+    Rm = darr(S.get1('R'))
+    df, normr = num(S.get1('df')), num(S.get1('normr'))
+    A = np.vander(x.reshape(-1, order='F'), p.size)
+    from scipy.linalg import solve_triangular
+    E = solve_triangular(Rm, A.T, trans='T').T            # A / R
+    e = np.sqrt(1 + np.sum(np.abs(E) ** 2, axis=1))
+    delta = (np.full(e.shape, np.inf) if df == 0 else normr / math.sqrt(df) * e).reshape(x.shape, order='F')
+    return back(y), back(delta)
 
 
 @bi('polyvalm')
@@ -1585,11 +1610,37 @@ def polyint(nargout, *args):
 
 @bi('residue', nout=3)
 def residue(nargout, *args):
+    """[r, p, k] = residue(b, a): the partial fractions of b(s)/a(s), a
+    repeated pole's residues in increasing powers, the poles in groups by
+    decreasing magnitude (SciPy's signal.residue, regrouped); [b, a] =
+    residue(r, p, k) puts them back together (signal.invres)."""
+    nargchk(args, 2, 3, 'residue')
     from scipy import signal
+    if len(args) == 3:
+        r = darr(args[0]).reshape(-1)
+        p = darr(args[1]).reshape(-1)
+        k = darr(args[2]).reshape(-1)
+        if r.size != p.size:
+            raise err('MATLAB:residue:InputSizeMismatch', 'There must be one residue per pole.', 'residue')
+        b, a = signal.invres(r, p, k, tol=1e-3, rtype='avg')
+        b, a = (np.real_if_close(np.asarray(v), tol=1e6) for v in (b, a))
+        return (out(b.reshape(1, -1)), out(a.reshape(1, -1)))[:max(nargout, 1)] if nargout > 1 else out(b.reshape(1, -1))
     b = darr(args[0]).reshape(-1)
     a = darr(args[1]).reshape(-1)
-    r, p, k = signal.residue(b, a)
-    return (out(r.reshape(-1, 1)), out(p.reshape(-1, 1)), out(k.reshape(1, -1)) if k.size else np.zeros((0, 0)))[:max(nargout, 1)]
+    r, p, k = signal.residue(b, a, tol=1e-3, rtype='avg')
+    # groups of equal poles (adjacent in SciPy's result), by decreasing |p|
+    groups, i = [], 0
+    while i < p.size:
+        j = i + 1
+        while j < p.size and abs(p[j] - p[i]) <= 1e-3 * max(abs(p[i]), 1):
+            j += 1
+        groups.append((i, j))
+        i = j
+    groups.sort(key=lambda g: -abs(p[g[0]]))
+    order = [t for g0, g1 in groups for t in range(g0, g1)]
+    r, p = r[order], p[order]
+    kk = out(k.reshape(1, -1)) if k.size else np.zeros((0, 0))
+    return (out(r.reshape(-1, 1)), out(p.reshape(-1, 1)), kk)[:max(nargout, 1)] if nargout > 1 else out(r.reshape(-1, 1))
 
 
 # ---- filters and transforms ---------------------------------------------------------------------

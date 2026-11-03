@@ -72,11 +72,21 @@ def imag_unit(nargout, *args):
     return complex(0, 1)
 
 
+def _class_arg(args, fn):
+    """The class a limit is asked of: a class name, or 'like' and a value."""
+    s = opt_str(args[0])
+    if s is not None and s.lower() == 'like':
+        if len(args) < 2:
+            raise err(f'MATLAB:{fn}:likeArg', "'like' needs a value whose class to use.", fn)
+        return class_of(args[1])
+    return s
+
+
 @bi('eps')
 def eps(nargout, *args):
     if not args:
         return float(np.finfo(float).eps)
-    s = opt_str(args[0])
+    s = _class_arg(args, 'eps')
     if s is not None:
         return float(np.finfo(np.float32 if s == 'single' else float).eps) if s != 'single' else finish(np.array([[np.finfo(np.float32).eps]], np.float32), 'single')
     a = arr(args[0])
@@ -93,28 +103,28 @@ def eps(nargout, *args):
 
 @bi('realmax')
 def realmax(nargout, *args):
-    if args and opt_str(args[0]) == 'single':
+    if args and _class_arg(args, 'realmax') == 'single':
         return finish(np.array([[np.finfo(np.float32).max]], np.float32), 'single')
     return float(np.finfo(float).max)
 
 
 @bi('realmin')
 def realmin(nargout, *args):
-    if args and opt_str(args[0]) == 'single':
+    if args and _class_arg(args, 'realmin') == 'single':
         return finish(np.array([[np.finfo(np.float32).tiny]], np.float32), 'single')
     return float(np.finfo(float).tiny)
 
 
 @bi('flintmax')
 def flintmax(nargout, *args):
-    if args and opt_str(args[0]) == 'single':
+    if args and _class_arg(args, 'flintmax') == 'single':
         return finish(np.array([[2.0 ** 24]], np.float32), 'single')
     return 2.0 ** 53
 
 
 @bi('intmax')
 def intmax(nargout, *args):
-    c = opt_str(args[0]) if args else 'int32'
+    c = _class_arg(args, 'intmax') if args else 'int32'
     if c not in INT_TYPES:
         raise err('MATLAB:intmax:invalidClassName', 'Invalid class name.', 'intmax')
     return np.array([[INT_RANGE[c][1]]], INT_TYPES[c])
@@ -122,7 +132,7 @@ def intmax(nargout, *args):
 
 @bi('intmin')
 def intmin(nargout, *args):
-    c = opt_str(args[0]) if args else 'int32'
+    c = _class_arg(args, 'intmin') if args else 'int32'
     if c not in INT_TYPES:
         raise err('MATLAB:intmin:invalidClassName', 'Invalid class name.', 'intmin')
     return np.array([[INT_RANGE[c][0]]], INT_TYPES[c])
@@ -153,19 +163,34 @@ class _RNG:
         v = self.rs.random_sample(n)
         return v.reshape(shape, order='F')
 
+    def state(self):
+        """The generator's whole state as a column of doubles: the Mersenne
+        Twister's 624 words, its position, and the normal kept for the next
+        draw."""
+        _, key, pos, has_g, g = self.rs.get_state()
+        return np.concatenate([key.astype(F64), [pos, has_g, g]]).reshape(-1, 1)
+
+    def set_state(self, v):
+        v = np.asarray(v, F64).reshape(-1)
+        if v.size != 627 or np.any(v[:624] < 0) or np.any(v[:624] >= 2 ** 32):
+            raise err('MATLAB:rng:badState', 'The state must come from rng or rand(\'state\').', 'rng')
+        self.rs.set_state(('MT19937', v[:624].astype(np.uint32), int(v[624]), int(v[625]), float(v[626])))
+
 
 RNG = _RNG()
 
 
 def rng_impl(nargout, *args):
-    prev = Struct.scalar({'Type': Char.of('twister'), 'Seed': float(RNG.s), 'State': np.array([[0.0]])})
+    prev = Struct.scalar({'Type': Char.of('twister'), 'Seed': float(RNG.s), 'State': RNG.state()})
     if not args:
         return prev
     a = args[0]
     s = opt_str(a)
     if type(a) is Struct:
+        # the state the struct was taken in, so that the numbers after it repeat
         RNG.seed(int(num(a.get1('Seed'))))
-        RNG.rs.set_state(a.get1('_state')) if '_state' in a.f else None
+        if 'State' in a.f and numel(a.get1('State')) == 627:
+            RNG.set_state(arr(a.get1('State')))
         return prev if nargout else None
     if s is not None:
         if s == 'default':
@@ -186,7 +211,15 @@ def rng_impl(nargout, *args):
 def _rand_args(args, fn):
     args = list(args)
     if args and opt_str(args[0]) in ('twister', 'seed', 'state', 'v4', 'v5uniform', 'v5normal'):
-        RNG.seed(int(num(args[1])) if len(args) > 1 else 0)
+        # the old forms: rand('state') gives the state, rand('state', s) sets
+        # it from such a vector or from a seed
+        if len(args) == 1:
+            return ('state', RNG.state())
+        v = arr(args[1])
+        if v.size == 627:
+            RNG.set_state(v)
+        else:
+            RNG.seed(int(num(args[1])))
         return None
     return dims_from(args, fn)
 
@@ -196,6 +229,8 @@ def rand(nargout, *args):
     r = _rand_args(args, 'rand')
     if r is None:
         return None
+    if r[0] == 'state':
+        return out(r[1])
     shape, klass, _ = r
     a = RNG.uniform(shape)
     if klass == 'single':
@@ -208,6 +243,8 @@ def randn(nargout, *args):
     r = _rand_args(args, 'randn')
     if r is None:
         return None
+    if r[0] == 'state':
+        return out(r[1])
     shape, klass, cplx = r
     n = int(np.prod(shape))
     a = RNG.rs.standard_normal(n).reshape(shape, order='F')
@@ -644,14 +681,16 @@ def find(nargout, *args):
     if k is not None:
         nz = nz[:k] if direction == 'first' else nz[-k:] if k > 0 else nz[:0]
     rowvec = a.ndim == 2 and a.shape[0] == 1 and a.shape[1] != 1
+    if a.shape in ((0, 0), (1, 1)) and nz.size == 0:
+        # nothing found in a scalar or a 0x0 array: 0x0 results
+        e = np.zeros((0, 0))
+        return e if nargout <= 1 else tuple([e, e, like_class(e, v) if type(v) is not Char else e][:nargout])
     if nargout <= 1:
         r = (nz + 1).astype(F64)
         if rowvec:
             r = r.reshape(1, -1)
         else:
             r = r.reshape(-1, 1)
-        if a.shape == (0, 0) or (a.size == 0 and False):
-            return np.zeros((0, 0))
         return out(r)
     rows = a.shape[0] if a.ndim >= 1 else 1
     r = (nz % rows + 1).astype(F64)
@@ -1001,3 +1040,97 @@ def typecast(nargout, *args):
     shape = (1, -1) if a.shape[0] == 1 else (-1, 1)
     return make(r.reshape(shape).copy(), c)
 
+
+
+# ---- expansion, repetition, bytes ------------------------------------------------------------------------
+
+def _raw(v):
+    """The array under a value and a function that wraps an array the same way."""
+    t = type(v)
+    if t is Char:
+        return v.a, Char
+    if t is Cell:
+        return v.a, Cell
+    if t is Str:
+        return v.a, Str
+    a = np.asarray(arr(v))
+    return a, (lambda r: like_class(r, v) if class_of(v) not in ('double', 'logical') else out(r))
+
+
+@bi('bsxfun', aw=True)
+async def bsxfun(nargout, *args):
+    """bsxfun(f, A, B): f applied to A and B, each expanded along its
+    dimensions of size 1 to the size of the other."""
+    nargchk(args, 3, 3, 'bsxfun')
+    f, A, B = args
+    if not isinstance(f, FH):
+        raise err('MATLAB:bsxfun:InvalidFunctionHandle', 'The first input must be a function handle.', 'bsxfun')
+    a, wa = _raw(A)
+    b, wb = _raw(B)
+    nd = max(a.ndim, b.ndim)
+    sa = a.shape + (1,) * (nd - a.ndim)
+    sb = b.shape + (1,) * (nd - b.ndim)
+    shape = []
+    for x, y in zip(sa, sb):
+        if x != y and x != 1 and y != 1:
+            raise err('MATLAB:bsxfun:arrayDimensionsMustMatch', 'Non-singleton dimensions of the two input arrays must match each other.', 'bsxfun')
+        shape.append(y if x == 1 else x)
+    ea = wa(np.array(np.broadcast_to(a.reshape(sa), shape)))
+    eb = wb(np.array(np.broadcast_to(b.reshape(sb), shape)))
+    r = await f.acall(1, ea, eb)
+    return r[0] if isinstance(r, tuple) else r
+
+
+@bi('repelem')
+def repelem(nargout, *args):
+    """repelem(v, n): each element of a vector n times (n a scalar or one count
+    per element); repelem(A, r1, r2, ...): each element repeated r1 times down,
+    r2 across and so on (a count, or one per row, column, ...)."""
+    nargchk(args, 2, None, 'repelem')
+    v = args[0]
+    a, wrap = _raw(v)
+
+    def counts(c, n, fn='repelem'):
+        r = np.asarray(arr(c)).reshape(-1)
+        if r.size and (np.any(r < 0) or np.any(r != np.floor(r))):
+            raise err('MATLAB:repelem:invalidReplications', 'Replication factors must be nonnegative integers.', fn)
+        r = r.astype(np.intp)
+        if r.size == 1:
+            return int(r[0])
+        if r.size != n:
+            raise err('MATLAB:repelem:mismatchedReplications', 'A vector of replication factors must have one per element of its dimension.', fn)
+        return r
+    if len(args) == 2:
+        sh = a.shape
+        if not (a.ndim == 2 and (sh[0] == 1 or sh[1] == 1)):
+            raise err('MATLAB:repelem:invalidInputsTwoArgs', 'With two inputs, the first must be a vector.', 'repelem')
+        flat = a.reshape(-1, order='F')
+        r = np.repeat(flat, counts(args[1], flat.size))
+        return wrap(r.reshape((-1, 1) if sh[1] == 1 and sh[0] != 1 else (1, -1)))
+    fac = args[1:]
+    nd = max(a.ndim, len(fac))
+    a = a.reshape(a.shape + (1,) * (nd - a.ndim))
+    for d, c in enumerate(fac):
+        a = np.repeat(a, counts(c, a.shape[d]), axis=d)
+    return wrap(_2d(a))
+
+
+@bi('swapbytes')
+def swapbytes(nargout, *args):
+    """The bytes of each element in reverse order (little- and big-endian)."""
+    nargchk(args, 1, 1, 'swapbytes')
+    v = args[0]
+    if class_of(v) in ('char', 'logical', 'cell', 'struct', 'string'):
+        raise err('MATLAB:swapbytes:invalidInput', 'The input must be numeric.', 'swapbytes')
+    a = np.asarray(arr(v))
+    if a.dtype.kind == 'c':
+        r = a.real.byteswap() + 1j * a.imag.byteswap()
+    else:
+        r = a.byteswap()
+    return like_class(r, v) if class_of(v) != 'double' else out(r)
+
+
+@bi('namelengthmax')
+def namelengthmax(nargout, *args):
+    nargchk(args, 0, 0, 'namelengthmax')
+    return 63.0
