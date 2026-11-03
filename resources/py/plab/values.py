@@ -274,6 +274,47 @@ class Struct:
         return f"Struct{self.shape}{list(self.f)}"
 
 
+FULL_LIMIT = 1 << 25          # elements a sparse matrix may have to be made full (256 MB of doubles)
+
+
+class Sparse:
+    """A sparse matrix, of class double (real or complex) or logical, always
+    2-D: SciPy's CSC matrix (by columns, as the language stores them) of
+    float64, complex128 or bool, holding no explicit zeros. It is never
+    changed in place: operations and assignments make a new one, so it can
+    be held in many places without copies."""
+    __slots__ = ('m',)
+
+    def __init__(self, m):
+        self.m = m
+
+    @property
+    def shape(self):
+        return self.m.shape
+
+    @property
+    def dtype(self):
+        return self.m.dtype
+
+    @property
+    def cls(self):
+        return 'logical' if self.m.dtype == np.bool_ else 'double'
+
+    @property
+    def nnz(self):
+        return int(self.m.nnz)
+
+    def dense(self):
+        """The full matrix (an error past FULL_LIMIT elements)."""
+        m, n = self.m.shape
+        if m * n > FULL_LIMIT:
+            raise MError('MATLAB:nomem', f'Out of memory: making the {m}\u00d7{n} sparse matrix full would need {m * n} elements. Work with it sparse.')
+        return np.asarray(self.m.toarray(order='F'))
+
+    def __repr__(self):
+        return f'Sparse{self.m.shape}[{self.m.nnz}]'
+
+
 class FH:
     """A function handle. Subclasses say what it calls; acall is a
     coroutine, as every compiled function is."""
@@ -367,6 +408,8 @@ def class_of(v):
         return 'struct'
     if t is Str:
         return 'string'
+    if t is Sparse:
+        return v.cls
     if isinstance(v, FH):
         return 'function_handle'
     if isinstance(v, Obj):
@@ -383,6 +426,8 @@ def is_numeric(v):
         return True
     if t is np.ndarray:
         return v.dtype.kind in 'fciu'
+    if t is Sparse:
+        return v.m.dtype != np.bool_
     return False
 
 
@@ -392,6 +437,8 @@ def is_real(v):
         return False
     if t is np.ndarray:
         return v.dtype.kind != 'c'
+    if t is Sparse:
+        return v.m.dtype.kind != 'c'
     return True
 
 
@@ -494,6 +541,8 @@ def to_array(v):
         return v.a
     if t is int:
         return np.array([[float(v)]])
+    if t is Sparse:
+        return v.dense()
     raise MError('MATLAB:invalidType', f"Expected a numeric value, not a value of class {class_of(v)}.")
 
 
@@ -550,6 +599,9 @@ def to_float(v, what='value'):
         return v.real
     if t is Char and v.a.size >= 1:
         return float(v.a.reshape(-1)[0])
+    if t is Sparse and v.m.shape[0] * v.m.shape[1] >= 1:
+        x = v.m[0, 0]
+        return float(x.real) if v.m.dtype.kind == 'c' else float(x)
     raise MError('MATLAB:invalidType', f"Expected a numeric scalar for the {what}.")
 
 

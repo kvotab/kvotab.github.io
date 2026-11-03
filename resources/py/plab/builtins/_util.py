@@ -4,7 +4,7 @@ import numpy as np
 
 from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS,
                       class_of, scalar_out, _2d, EMPTY, shape_of, numel, py_str, is_text, NOVAL, share,
-                      share_all, to_float, to_int)
+                      share_all, to_float, to_int, Sparse)
 from ..ops import finish, to_int_class, INT_CLASSES
 
 NUMERIC_CLASSES = {'double', 'single', 'logical', 'char'} | INT_CLASSES
@@ -53,6 +53,9 @@ def arr(v, fn=None):
         return np.array([[float(v)]])
     if isinstance(v, (np.floating, np.integer, np.bool_, np.complexfloating)):
         return np.array([[v]])
+    if t is Sparse:
+        # a function that does not keep matrices sparse works on the full matrix
+        return v.dense()
     raise err('MATLAB:invalidType', f'Invalid data type. Input arguments must be numeric or logical, not {class_of(v)}.' if t is not Cell else
               'Invalid data type. First argument must be numeric or logical.', fn)
 

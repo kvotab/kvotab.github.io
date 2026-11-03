@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(HERE, '..', '..', 'py'))
 from plab import runtime as R  # noqa: E402
 from plab import matfile as MF  # noqa: E402
 from plab import worker_api  # noqa: E402
-from plab.values import Char, Cell, Struct, Str, FH, class_of  # noqa: E402
+from plab.values import Char, Cell, Struct, Str, FH, Sparse, class_of  # noqa: E402
 
 R.setup()
 TMP = tempfile.mkdtemp(prefix='pylab-matfile-')
@@ -66,6 +66,8 @@ def val(v):
         if v.size == 1 and v.ndim == 2:
             return v.reshape(-1)[0].item()
         return v.tolist()
+    if t is Sparse:
+        return v.dense().tolist()
     if t is Char:
         return v.str() if v.a.shape[0] <= 1 else v.row_strs()
     if t is Str:
@@ -174,8 +176,10 @@ write('hand.mat', hand)
 case('Level 5 text in every encoding', "load('hand.mat', 'u*', 'cm', 'smalld')",
      want={'u16': u16, 'u32': 'a' + EMOJI + 'b', 'u8': 'x' + EMOJI, 'cm': ['ab', 'cd'], 'smalld': 7.0},
      cls={'u16': 'char', 'smalld': 'double'}, shape={'u32': (1, 4), 'u8': (1, 3), 'cm': (2, 2)})
-case('a logical sparse matrix is held full', "load('hand.mat', 'lsp')", want={'lsp': [[True, False], [False, False], [False, True]]},
+case('a logical sparse matrix', "load('hand.mat', 'lsp'); k = issparse(lsp);", want={'lsp': [[True, False], [False, False], [False, True]], 'k': True},
      cls={'lsp': 'logical'})
+case('a sparse matrix too large to hold full stays sparse', "load('hand.mat', 'bigsp'); k = issparse(bigsp); n = nnz(bigsp); s = size(bigsp); v = bigsp(1, 1);",
+     want={'k': True, 'n': 1.0, 's': [[100000.0, 100000.0]]}, hides=['Warning'])
 case('an empty struct keeps its fields', "load('hand.mat', 'es'); f = fieldnames(es)'; n = numel(es);", want={'f': ['a', 'b'], 'n': 0.0},
      cls={'es': 'struct'})
 case('an old-style object loads as a struct, with a warning', "load('hand.mat', 'obj'); v = obj.v;", want={'v': 5.0},
@@ -187,9 +191,8 @@ case('a complex integer keeps its real part', "load('hand.mat', 'ci')", want={'c
 W = case('variables that cannot be read are left out, the rest load', "load('hand.mat')",
          want={'after': 42.0, 'u8': 'x' + EMOJI},
          shows=["Warning: Variable 'str' was not loaded: its text is kept in the file's object data, which the file does not have.",
-                "Warning: Variable 'deep' was not loaded: its cells and structs are nested too deeply.",
-                "Warning: Variable 'bigsp' was not loaded: it is a sparse 100000x100000 matrix, too large to hold here"])
-check('the unreadable variables are absent', W is not None and not ({'str', 'deep', 'bigsp'} & set(W.keys())))
+                "Warning: Variable 'deep' was not loaded: its cells and structs are nested too deeply."])
+check('the unreadable variables are absent', W is not None and not ({'str', 'deep'} & set(W.keys())))
 case('S = load(...) gives a struct of the variables', "S = load('hand.mat', 'after', 'cm'); f = fieldnames(S)'; a = S.after;",
      want={'f': ['cm', 'after'], 'a': 42.0}, hides=['Warning'])
 case('a name not in the file is warned about', "load('hand.mat', 'after', 'nosuch')", want={'after': 42.0},
@@ -297,8 +300,8 @@ for comp in (False, True):
     name = f'scipy{"7" if comp else "6"}.mat'
     sio.savemat(path(name), scipy_vars, do_compression=comp)
     case(f'Level 5 from SciPy ({"compressed" if comp else "not compressed"})',
-         f"load('{name}'); d = d3(2, 3, 4); n = st.c.n; c2 = cel{{2}}; x2 = sa(2).x; y3 = sa(3).y;",
-         want={'d': 23.0, 'z': [[1 + 2j, 3 - 4j]], 'i8': [[-128, 127]], 'u64': [[2**64 - 1, 2**53 + 1]], 'i64': [[-2**63, 2**63 - 1]],
+         f"load('{name}'); d = d3(2, 3, 4); n = st.c.n; c2 = cel{{2}}; x2 = sa(2).x; y3 = sa(3).y; k = [issparse(sp) issparse(spz)];",
+         want={'k': [[True, True]], 'd': 23.0, 'z': [[1 + 2j, 3 - 4j]], 'i8': [[-128, 127]], 'u64': [[2**64 - 1, 2**53 + 1]], 'i64': [[-2**63, 2**63 - 1]],
                's': [[1.5, 2.5]], 'lg': [[True, False], [False, True]], 'chm': ['abc', 'def'], 'emo': 'smile ' + EMOJI,
                'n': [[1, 0], [0, 1]], 'c2': 'two', 'sp': [[1, 0, 0], [0, 0, 2], [3, 0, 0]], 'spz': [[1 + 1j, 0], [0, 2]],
                'x2': [[1, 2]], 'y3': 'r'},
@@ -397,8 +400,8 @@ h5matfile('v73names.mat', build73names)
 case('version 7.3 names that are not names', "load('v73names.mat'); k = fieldnames(st)';", want={'good': 2.0, 'k': ['z']},
      shows=["Warning: Variable 'bad name' was not loaded: its name is not a valid variable name.",
             "Warning: Variable 'st' was loaded, but its field 'x y' was left out (not a valid field name)."])
-W = case('version 7.3 (HDF5)', "load('v73.mat'); c1 = cel{1}; c2 = cel{2}; sb = st.b; x2 = sa(2).x; x3 = sa(3).x; f = fieldnames(st)';",
-         want={'d': [[1, 2, 3], [4, 5, 6]], 'z': [[1 + 2j, 3 - 4j]], 'c': 'hé' + EMOJI, 'l': [[True, False], [False, True]],
+W = case('version 7.3 (HDF5)', "load('v73.mat'); c1 = cel{1}; c2 = cel{2}; sb = st.b; x2 = sa(2).x; x3 = sa(3).x; f = fieldnames(st)'; k = issparse(sp);",
+         want={'k': True, 'd': [[1, 2, 3], [4, 5, 6]], 'z': [[1 + 2j, 3 - 4j]], 'c': 'hé' + EMOJI, 'l': [[True, False], [False, True]],
                'i': [[1, -2]], 'u64': 2**64 - 1, 's1': 0.5, 'c1': 5.0, 'c2': 'x', 'sb': 'txt', 'x2': 'two', 'x3': [[3, 4]],
                'sp': [[1, 0, 0], [0, 0, 2], [3, 0, 0]], 'plain': [[1, 2, 3]], 'f': ['b', 'a']},
          cls={'c': 'char', 'l': 'logical', 'i': 'int8', 'u64': 'uint64', 's1': 'single', 'e': 'double', 'ec': 'char',
@@ -466,12 +469,14 @@ for name, want in (('v4.mat', {'m': ('2×3', 'double'), 'sp': ('2×2', 'double')
 # ---- back through save ------------------------------------------------------------------------------
 RT = ("a = int16([1 -2; 3 4]); b = single(pi); c = {1, 'two'; [3 4], {5}}; s(2).x = 'y'; s(1).x = [1 2 3]; "
       "t = struct('n', struct('m', magic(3))); u = 'Ångström'; m = ['ab'; 'cd']; l = [true false]; z = [1+2i 3]; "
-      "e = zeros(0, 3); n3 = reshape(1:24, 2, 3, 4); q = uint64(18446744073709551615); ")
+      "e = zeros(0, 3); n3 = reshape(1:24, 2, 3, 4); q = uint64(18446744073709551615); "
+      "sp = sparse([1 3], [1 2], [4 5], 3, 2); sl = sp > 4; ")
 for ver in ('-v7', '-v6'):
-    case(f'save {ver} and load', RT + f"save('rt.mat', '{ver}'); clear; load('rt.mat'); c22 = c{{2,2}}; s2 = s(2).x; tm = t.n.m(2, 3);",
-         want={'a': [[1, -2], [3, 4]], 'c22': [5.0], 's2': 'y', 'tm': 7.0, 'u': 'Ångström', 'm': ['ab', 'cd'], 'l': [[True, False]],
+    case(f'save {ver} and load', RT + f"save('rt.mat', '{ver}'); clear; load('rt.mat'); c22 = c{{2,2}}; s2 = s(2).x; tm = t.n.m(2, 3); "
+         "k = [issparse(sp) issparse(sl)];",
+         want={'k': [[True, True]], 'sp': [[4, 0], [0, 0], [0, 5]], 'sl': [[False, False], [False, False], [False, True]], 'a': [[1, -2], [3, 4]], 'c22': [5.0], 's2': 'y', 'tm': 7.0, 'u': 'Ångström', 'm': ['ab', 'cd'], 'l': [[True, False]],
                'z': [[1 + 2j, 3]], 'q': 2**64 - 1},
-         cls={'a': 'int16', 'b': 'single', 'c': 'cell', 's': 'struct', 'l': 'logical', 'q': 'uint64'},
+         cls={'a': 'int16', 'b': 'single', 'c': 'cell', 's': 'struct', 'l': 'logical', 'q': 'uint64', 'sl': 'logical'},
          shape={'e': (0, 3), 'n3': (2, 3, 4), 's': (1, 2)}, hides=['Warning'])
 case('save -append keeps what the file holds', "x = 1; save('ap.mat', 'x'); y = 2; save('ap.mat', 'y', '-append'); clear; load('ap.mat');",
      want={'x': 1.0, 'y': 2.0})

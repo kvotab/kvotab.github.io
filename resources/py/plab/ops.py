@@ -15,7 +15,7 @@ import math
 import numpy as np
 
 from .values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, INT_RANGE,
-                     DTYPE_CLASS, class_of, scalar_out, EMPTY, share, share_all, _2d, numel, shape_of)
+                     DTYPE_CLASS, class_of, scalar_out, EMPTY, share, share_all, _2d, numel, shape_of, Sparse)
 
 import contextlib
 _ERR_IGNORE = contextlib.nullcontext()   # errors are ignored globally (seterr below)
@@ -27,6 +27,11 @@ INT_CLASSES = set(INT_TYPES)
 
 class _NoSym:
     pass
+
+
+def _spm():
+    from . import sparsemat
+    return sparsemat
 
 
 # symbolic values: symbolic.Sym and its operators once symbolic.py is loaded
@@ -210,6 +215,9 @@ def _binary(a, b, fn, sym, int_fn=None):
         return SYMOPS.binop('./' if sym == '.\\' else sym, a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('./', b, a) if sym == '.\\' else UOPS.binop(sym, a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        # ldivide comes here with its operands swapped, as a./b
+        return _spm().binop('./' if sym == '.\\' else sym, a, b)
     A, ca = operand(a, sym)
     B, cb = operand(b, sym)
     cls = result_class(ca, cb, sym)
@@ -358,6 +366,8 @@ def uminus(a):
         return SYMOPS.unop('-', a)
     if t is UOBJ:
         return UOPS.unop('-', a)
+    if t is Sparse:
+        return _spm().unop('-', a)
     A, c = operand(a, '-')
     if c in ('int64', 'uint64'):
         lo, hi = INT_RANGE[c]
@@ -378,6 +388,8 @@ def uplus(a):
         return float(a)
     if t is SYM:
         return a
+    if t is Sparse:
+        return _spm().unop('+', a)
     A, c = operand(a, '+')
     if t is np.ndarray and A is a:
         return a
@@ -438,6 +450,8 @@ def _compare(a, b, fn, sym):
         return SYMOPS.binop(sym, a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop(sym, a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().binop(sym, a, b)
     if type(a) is Str or type(b) is Str:
         return str_compare(a, b, fn, sym)
     if sym in ('==', '~=') and (_handles_of(a) is not None or _handles_of(b) is not None):
@@ -536,6 +550,8 @@ def _logic(a, b, fn, sym):
         return SYMOPS.binop(sym, a, b)
     if (type(a) is UOBJ or type(b) is UOBJ) and sym in ('&', '|'):
         return UOPS.binop(sym, a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().binop(sym, a, b)
     A = to_logical(a, sym)
     B = to_logical(b, sym)
     A, B = align(A, B)
@@ -577,6 +593,8 @@ def not_(a):
         return SYMOPS.unop('~', a)
     if t is UOBJ:
         return UOPS.unop('~', a)
+    if t is Sparse:
+        return _spm().unop('~', a)
     L = to_logical(a, '~')
     if type(L) is np.ndarray:
         r = _2d(np.logical_not(L))
@@ -613,6 +631,8 @@ def truth(v):
         return v != 0
     if t is SYM:
         return SYMOPS.truth(v)
+    if t is Sparse:
+        return _spm().truth(v)
     raise MError('MATLAB:invalidConversion', f"Conversion to logical from {class_of(v)} is not possible.")
 
 
@@ -653,6 +673,8 @@ def mtimes(a, b):
         return SYMOPS.binop('*', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('*', a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().mtimes(a, b)
     if _is_scalar(a) or _is_scalar(b):
         return times(a, b)
     A, ca = operand(a, '*')
@@ -743,6 +765,8 @@ def mldivide(a, b):
         return SYMOPS.binop('\\', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('\\', a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().mldivide(a, b)
     if _is_scalar(a):
         return ldivide(a, b)
     A, ca = operand(a, '\\')
@@ -768,6 +792,8 @@ def mrdivide(a, b):
         return SYMOPS.binop('/', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('/', a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().mrdivide(a, b)
     if _is_scalar(b):
         return rdivide(a, b)
     A, ca = operand(a, '/')
@@ -791,6 +817,8 @@ def mpower(a, b):
         return SYMOPS.binop('^', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('^', a, b)
+    if type(a) is Sparse or type(b) is Sparse:
+        return _spm().mpower(a, b)
     sa, sb = _is_scalar(a), _is_scalar(b)
     if sa and sb:
         return power(a, b)
@@ -860,6 +888,8 @@ def transpose(a):
         return SYMOPS.unop(".'", a)
     if t is UOBJ:
         return UOPS.unop(".'", a)
+    if t is Sparse:
+        return _spm().unop(".'", a)
     if isinstance(a, Obj) and hasattr(a, 'transposed'):
         return a.transposed()
     if isinstance(a, (FH, Obj)):
@@ -875,6 +905,8 @@ def ctranspose(a):
         return SYMOPS.unop("'", a)
     if t is UOBJ:
         return UOPS.unop("'", a)
+    if t is Sparse:
+        return _spm().unop("'", a)
     if t is complex:
         z = a.conjugate()
         return z
@@ -1151,6 +1183,8 @@ def cat(axis, vals):
         return Struct(shape, f)
     if any(type(v) is SYM for v in vals):
         return SYMOPS.cat(axis, vals)
+    if any(type(v) is Sparse for v in vals):
+        return _spm().cat(axis, vals)
     if any(isinstance(v, (Obj, FH)) for v in vals):
         from .graphics_base import cat_handles
         return cat_handles(axis, vals)

@@ -558,7 +558,7 @@ case('decic: the free components moved until F(t0, y0, yp0) = 0', "[y0, yp0, r] 
      want={'y0': [[1], [-1]], 'yp0': [[-1], [0]], 'r': 0})
 case('odextend', 'sol = ode45(@(t, y) -y, [0 1], 1); sol = odextend(sol, [], 3); a = abs(deval(sol, 2.5) - exp(-2.5)) < 1e-6; '
      'b = abs(deval(sol, 0.5) - exp(-0.5)) < 1e-6; e = sol.x(end);', want={'a': True, 'b': True, 'e': 3})
-case('spdiags', '[B, d] = spdiags(magic(3)); A = full(spdiags(B, d, 3, 3)); D = spdiags(magic(4), [-1 1]); C = spdiags([10 20 30]\', 0, magic(3));',
+case('spdiags', '[B, d] = spdiags(magic(3)); A = full(spdiags(B, d, 3, 3)); D = spdiags(magic(4), [-1 1]); C = full(spdiags([10 20 30]\', 0, magic(3)));',
      want={'B': [[4, 3, 8, 0, 0], [0, 9, 5, 1, 0], [0, 0, 2, 7, 6]], 'd': [[-2], [-1], [0], [1], [2]], 'A': [[8, 1, 6], [3, 5, 7], [4, 9, 2]],
            'D': [[5, 0], [7, 2], [15, 10], [0, 12]], 'C': [[10, 1, 6], [3, 20, 7], [4, 9, 30]]})
 

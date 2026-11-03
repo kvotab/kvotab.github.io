@@ -63,7 +63,6 @@ class Unreadable(Exception):
 
 
 INFLATE_LIMIT = 1 << 30      # bytes one variable may take once inflated
-FULL_LIMIT = 1 << 26         # elements of a sparse matrix held as a full one
 DEPTH_LIMIT = 64             # cells and structs inside each other
 NODE_LIMIT = 1_000_000       # arrays in a -v7.3 file (its references may share them)
 HEAD = 4104                  # bytes enough to tell the kind of file
@@ -127,17 +126,19 @@ def _empty_of(cls, dims):
     return _numeric(np.zeros(shape), cls if cls in CLASSES else 'double')
 
 
-def _full(rows, cols, vals, m, n):
-    """A sparse matrix's entries (0-based) as the full matrix this language holds."""
-    if m * n > FULL_LIMIT:
-        raise Unreadable(f'it is a sparse {m}x{n} matrix, too large to hold here (sparse matrices are held as full ones)')
+def _sparse(rows, cols, vals, m, n, logical=False):
+    """A sparse matrix from its entries (0-based; those at one place summed)."""
+    import scipy.sparse as sp
+    from . import sparsemat
+    if m < 0 or n < 0 or m >= 1 << 48 or n >= 1 << 48:
+        raise Unreadable('its size is damaged')
     rows = np.asarray(rows, np.int64)
     cols = np.asarray(cols, np.int64)
     if rows.size and (rows.min() < 0 or rows.max() >= m or cols.min() < 0 or cols.max() >= n):
         raise Unreadable('its sparse indices are out of range')
-    a = np.zeros((m, n), C128 if np.iscomplexobj(vals) else F64)
-    np.add.at(a, (rows, cols), vals)
-    return a
+    vals = np.asarray(vals)
+    vals = (vals != 0) if logical else vals.astype(C128 if np.iscomplexobj(vals) else F64)
+    return sparsemat.make(sp.csc_matrix((vals, (rows, cols)), shape=(m, n)), logical=logical)
 
 
 def _keeper(names):
@@ -499,8 +500,7 @@ class _V5:
                 if pi.size < nnz:
                     raise Unreadable('its sparse layout is damaged')
                 vals = vals + 1j * pi[:nnz].astype(F64)
-            a = _full(ir[:nnz], np.repeat(np.arange(n_), np.diff(jc)), vals, m, n_)
-            return _numeric(a, 'logical' if word & F_LOGICAL else 'double')
+            return _sparse(ir[:nnz], np.repeat(np.arange(n_), np.diff(jc).astype(np.intp)), vals, m, n_, bool(word & F_LOGICAL))
         if klass == MX_FUNCTION:
             v, p = self.element(b, p, end, depth)
             return self.handle(v)
@@ -836,8 +836,7 @@ def _read_v4(b, keep):
                 if n not in (3, 4) or m < 1:
                     raise Unreadable('its sparse layout is damaged')
                 vals = re[:-1, 2] + (1j * re[:-1, 3] if n == 4 else 0) + (1j * im[:-1, 2] if im is not None else 0)
-                a = _full(re[:-1, 0] - 1, re[:-1, 1] - 1, vals, int(re[-1, 0]), int(re[-1, 1]))
-                values[name] = _numeric(a, 'double')
+                values[name] = _sparse(re[:-1, 0] - 1, re[:-1, 1] - 1, vals, int(re[-1, 0]), int(re[-1, 1]))
             else:
                 values[name] = _numeric(re + 1j * im if im is not None else re, 'double')
         except Unreadable as e:
@@ -1124,8 +1123,7 @@ class _H5:
         data = data.reshape(-1)
         if ir.size < nnz or data.size < nnz:
             raise Unreadable('its sparse layout is damaged')
-        a = _full(ir[:nnz], np.repeat(np.arange(n), np.diff(jc)), data[:nnz].astype(C128 if data.dtype.kind == 'c' else F64), m, n)
-        return _numeric(a, 'logical' if cls == 'logical' else 'double')
+        return _sparse(ir[:nnz], np.repeat(np.arange(n), np.diff(jc).astype(np.intp)), data[:nnz], m, n, cls == 'logical')
 
     def struct(self, node, depth):
         order = _field_names(node.attrs['MATLAB_fields']) if 'MATLAB_fields' in node.attrs else []

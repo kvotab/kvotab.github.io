@@ -10,7 +10,7 @@ import struct as _struct
 import numpy as np
 
 from .values import (Char, Cell, Struct, Str, FH, Obj, F64, C128, DTYPE_CLASS, INT_TYPES,
-                     class_of, size_str, NOVAL)
+                     class_of, size_str, NOVAL, Sparse)
 
 FMT = {'mode': 'short', 'spacing': 'loose', 'width': 80}
 
@@ -343,6 +343,9 @@ def summary(v, brackets='[]'):
         return f'{size_str(v.a.shape)} cell' if brackets == '{}' else '{' + f'{size_str(v.a.shape)} cell' + '}'
     if t is Struct:
         return f'{size_str(v.shape)} struct' if brackets == '{}' else f'[{size_str(v.shape)} struct]'
+    if t is Sparse:
+        text = f'{size_str(v.shape)} sparse {v.cls}'
+        return text if brackets == '{}' else f'[{text}]'
     if isinstance(v, FH):
         return v.text()
     if isinstance(v, Obj):
@@ -523,6 +526,9 @@ def display(name, v):
     """`name = value` as the Command Window shows it."""
     if type(v) is SYM:
         return SYMOPS.display(name, v)
+    if type(v) is Sparse:
+        from . import sparsemat
+        return sparsemat.display(name, v)
     if getattr(v, 'custom_display', None) is not None:
         r = v.custom_display(name)
         if r is not None:
@@ -569,6 +575,9 @@ def disp_text(v):
     t = type(v)
     if t is SYM:
         return SYMOPS.disp_text(v)
+    if t is Sparse:
+        from . import sparsemat
+        return sparsemat.disp_text(v)
     if t is Char:
         if v.a.size == 0:
             return ''
@@ -612,6 +621,8 @@ def value_preview(v, limit=60):
     if t is float or t is bool or t is complex:
         s = _num_inline(v)
         return s
+    if t is Sparse:
+        return f'{size_str(v.shape)} sparse {v.cls}'
     if t is np.ndarray:
         if v.size == 0:
             return '[]' if v.shape == (0, 0) else f'{size_str(v.shape)} {class_of(v)}'

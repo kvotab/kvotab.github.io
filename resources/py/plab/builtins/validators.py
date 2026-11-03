@@ -7,7 +7,7 @@ import numpy as np
 from . import bi
 from ._util import err, nargchk, arr, opt_str, num, is_str
 from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, class_of, shape_of, numel, py_str, share,
-                      is_numeric, text_list)
+                      is_numeric, text_list, Sparse)
 from .. import runtime as R
 
 
@@ -123,8 +123,9 @@ def must_be_nonempty(nargout, *args):
 
 @bi('mustBeNonsparse')
 def must_be_nonsparse(nargout, *args):
-    # sparse matrices are held full here, so every value passes
     nargchk(args, 1, 1, 'mustBeNonsparse')
+    if type(args[0]) is Sparse:
+        _fail('mustBeNonsparse', 'Value must not be sparse.')
     return None
 
 

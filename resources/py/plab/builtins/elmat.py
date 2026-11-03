@@ -706,14 +706,10 @@ def find(nargout, *args):
 @bi('nnz')
 def nnz(nargout, *args):
     nargchk(args, 1, 1, 'nnz')
+    from ..values import Sparse
+    if type(args[0]) is Sparse:
+        return float(args[0].nnz)
     return float(np.count_nonzero(arr(args[0])))
-
-
-@bi('nonzeros')
-def nonzeros(nargout, *args):
-    a = arr(args[0])
-    flat = a.reshape(-1, order='F')
-    return like_class(flat[flat != 0].reshape(-1, 1), args[0])
 
 
 @bi('fliplr')

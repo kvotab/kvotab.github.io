@@ -9,7 +9,7 @@ from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, reduce, expand_dims, strip_flags)
 from ..ops import finish, align
-from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY, py_str)
+from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY, py_str, Sparse)
 from .. import ops as O
 from .. import runtime as R
 
@@ -636,8 +636,12 @@ def ctranspose(nargout, *args):
 # ---- structure tests ----------------------------------------------------------------------------------------
 
 def _struct_mat(v, fn):
+    """The matrix a structure test reads: a sparse one as SciPy's CSC."""
     if class_of(v) in ('cell', 'struct', 'string') or isinstance(v, (Cell, Struct)):
         raise err(f'MATLAB:{fn}:invalidInput', 'The input must be a numeric or logical matrix.', fn)
+    if type(v) is Sparse:
+        m = v.m
+        return m.astype(F64) if m.dtype == np.bool_ else m
     a = np.asarray(darr(v, fn))
     if a.ndim != 2:
         raise err(f'MATLAB:{fn}:inputMustBe2D', 'Input must be 2-D.', fn)
@@ -665,6 +669,14 @@ def _sym_test(name, conj):
             return False
         t = a.conj().T if conj else a.T
         d = a + t if skew else a - t
+        if hasattr(d, 'nnz'):
+            d = d.tocsc()
+            d.eliminate_zeros()
+            if tol is None:
+                return d.nnz == 0 and not np.any(np.isnan(a.data))
+            na = float(abs(a).sum(axis=1).max()) if a.shape[0] else 0.0
+            nd = float(abs(d).sum(axis=1).max()) if d.shape[0] else 0.0
+            return bool(nd <= tol * na)
         if tol is None:
             return bool(np.all(d == 0))
         with np.errstate(all='ignore'):
@@ -680,7 +692,11 @@ _sym_test('ishermitian', True)
 
 def _band(a):
     """The lower and upper bandwidths: how far the nonzeros reach below and above the diagonal."""
-    i, j = np.nonzero(a)
+    if hasattr(a, 'nnz'):
+        c = a.tocoo()
+        i, j = c.row.astype(np.int64), c.col.astype(np.int64)
+    else:
+        i, j = np.nonzero(a)
     if i.size == 0:
         return 0, 0
     return int(max(0, np.max(i - j))), int(max(0, np.max(j - i)))
@@ -735,7 +751,7 @@ def _operator(v, n, fn, transposable=False):
         def rmv(x):
             return np.asarray(arr(v.scall(1, out(np.asarray(x).reshape(-1, 1)), Char.of('transp')))).reshape(-1)
         return LinearOperator((n, n), matvec=mv, rmatvec=rmv if transposable else None, dtype=F64), None
-    a = _mat(v, fn)
+    a = _sparse_or_mat(v, fn)
     if a.shape[0] != a.shape[1] and fn != 'lsqr':
         raise err(f'MATLAB:{fn}:NonSquareMatrix', 'The matrix must be square.', fn)
     return a, a
@@ -745,32 +761,55 @@ def _precond(M1, M2, n, fn):
     """MATLAB's preconditioner M = M1*M2 (whose system M y = r is solved) as
     SciPy's M (which applies an approximation of inv(A))."""
     from scipy.sparse.linalg import LinearOperator
-    from ..values import FH
     if M1 is None:
         return None
-    parts = [M for M in (M1, M2) if M is not None and numel(M)]
+    parts = [_factored(M, fn) for M in (M1, M2) if M is not None and numel(M)]
 
     def apply(r):
         y = np.asarray(r).reshape(-1)
-        for M in parts:
-            if isinstance(M, FH):
-                y = np.asarray(arr(M.scall(1, out(y.reshape(-1, 1))))).reshape(-1)
-            else:
-                y = np.linalg.solve(_mat(M, fn), y)
+        for solve, _ in parts:
+            y = solve(y)
         return y
 
     def apply_t(r):
         # the transpose, for qmr: the factors transposed, in the other order
         y = np.asarray(r).reshape(-1)
-        for M in reversed(parts):
-            if isinstance(M, FH):
-                y = np.asarray(arr(M.scall(1, out(y.reshape(-1, 1)), Char.of('transp')))).reshape(-1)
-            else:
-                y = np.linalg.solve(_mat(M, fn).T, y)
+        for _, solve_t in reversed(parts):
+            y = solve_t(y)
         return y
     if not parts:
         return None
     return LinearOperator((n, n), matvec=apply, rmatvec=apply_t, dtype=F64)
+
+
+def _sparse_or_mat(v, fn):
+    """A matrix as the solvers take it: a sparse one as SciPy's CSC."""
+    if type(v) is Sparse:
+        m = v.m
+        return m.astype(F64) if m.dtype == np.bool_ else m
+    return _mat(v, fn)
+
+
+def _factored(M, fn):
+    """y -> M \\ y and y -> M.' \\ y for a matrix M (factored once: SuperLU
+    for a sparse one, LAPACK's LU for a full one) or a function handle."""
+    from ..values import FH
+    if isinstance(M, FH):
+        return (lambda y: np.asarray(arr(M.scall(1, out(y.reshape(-1, 1))))).reshape(-1),
+                lambda y: np.asarray(arr(M.scall(1, out(y.reshape(-1, 1)), Char.of('transp')))).reshape(-1))
+    a = _sparse_or_mat(M, fn)
+    if hasattr(a, 'nnz'):
+        from scipy.sparse.linalg import splu
+        try:
+            f = splu(a.tocsc())
+        except RuntimeError:
+            raise err(f'MATLAB:{fn}:SingularPreconditioner', 'The preconditioner is singular.', fn)
+        return (lambda y: f.solve(np.asarray(y, dtype=np.result_type(y, a.dtype))),
+                lambda y: f.solve(np.asarray(y, dtype=np.result_type(y, a.dtype)), trans='T'))
+    from scipy.linalg import lu_factor, lu_solve
+    with np.errstate(all='ignore'):
+        f = lu_factor(a, check_finite=False)
+    return (lambda y: lu_solve(f, y, check_finite=False), lambda y: lu_solve(f, y, trans=1, check_finite=False))
 
 
 def _solver_args(args, fn, has_restart=False):
@@ -883,21 +922,39 @@ def lsqr(nargout, *args):
     from ..values import FH
     if isinstance(args[0], FH):
         raise err('MATLAB:lsqr:FunctionHandle', 'lsqr takes a matrix here.', 'lsqr')
-    A = _mat(args[0], 'lsqr')
+    A = _sparse_or_mat(args[0], 'lsqr')
     if A.shape[0] != b.size:
         raise err('MATLAB:lsqr:WrongSize', 'b must have one element per row of A.', 'lsqr')
     if len(args) < 7 or not numel(args[6]):
         x0 = np.zeros(A.shape[1])          # x has one element per column of A
     if M1 is not None:
-        P = _mat(M1, 'lsqr') @ (_mat(M2, 'lsqr') if M2 is not None else np.eye(A.shape[1]))
-        Ap = A @ np.linalg.inv(P)
+        # the right preconditioner P = M1*M2: lsqr on A*inv(P), x = P \ y
+        parts = [(M, _factored(M, 'lsqr')) for M in (M1, M2) if M is not None and numel(M)]
+
+        def P_solve(y):
+            for _, (solve, _t) in parts:
+                y = solve(y)
+            return y
+
+        def P_solve_t(y):
+            for _, (_s, solve_t) in reversed(parts):
+                y = solve_t(y)
+            return y
+
+        def P_mul(x):
+            for M, _ in reversed(parts):
+                m = _sparse_or_mat(M, 'lsqr')
+                x = m @ x
+            return np.asarray(x).reshape(-1)
+        Ap = SL.LinearOperator(A.shape, matvec=lambda y: A @ P_solve(np.asarray(y).reshape(-1)),
+                               rmatvec=lambda z: P_solve_t(np.asarray(A.T @ np.asarray(z).reshape(-1)).reshape(-1)), dtype=F64)
     else:
-        P, Ap = None, A
+        Ap, P_solve, P_mul = A, None, None
     maxit = maxit if maxit is not None else min(min(A.shape), 20)
-    y0 = x0 if P is None else P @ x0
+    y0 = x0 if P_mul is None else P_mul(x0)
     r = SL.lsqr(Ap, b, atol=tol, btol=tol, iter_lim=maxit, x0=y0)
     y, istop, itn = r[0], r[1], r[2]
-    x = y if P is None else np.linalg.solve(P, y)
+    x = y if P_solve is None else P_solve(y)
     nb = float(np.linalg.norm(b))
     relres = float(np.linalg.norm(b - A @ x) / nb) if nb else 0.0
     flag = 0.0 if istop in (0, 1, 2, 4, 5) else (1.0 if istop == 7 else 4.0)

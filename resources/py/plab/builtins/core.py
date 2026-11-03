@@ -13,7 +13,7 @@ from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, 
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS,
                       class_of, shape_of, numel, py_str, share, share_all, EMPTY, is_numeric, is_real, size_str,
-                      to_float, Interrupt)
+                      to_float, Interrupt, Sparse)
 from .. import display as D
 from .. import runtime as R
 
@@ -338,7 +338,6 @@ _pred('isrow', lambda v: len(shape_of(v)) == 2 and shape_of(v)[0] == 1)
 _pred('iscolumn', lambda v: len(shape_of(v)) == 2 and shape_of(v)[1] == 1)
 _pred('issquare', lambda v: len(shape_of(v)) == 2 and shape_of(v)[0] == shape_of(v)[1])
 _pred('iscellstr', lambda v: type(v) is Cell and all(type(x) is Char and (x.a.ndim == 2 and x.a.shape[0] <= 1) for x in v.a.flat))
-_pred('issparse', lambda v: getattr(v, 'is_sparse', False))
 _pred('isdiag', lambda v: bool(np.all(np.diag(np.diag(arr(v))) == arr(v))) if arr(v).ndim == 2 else False)
 
 
@@ -664,6 +663,9 @@ def _bytes(v):
         return int(sum(_bytes(x) + 104 for a in v.f.values() for x in a.flat) + 64 * len(v.f))
     if t is Str:
         return int(sum(len(s or '') * 2 + 104 for s in v.a.flat))
+    if t is Sparse:
+        # CSC storage: values and row indices for each nonzero (at least one), a pointer per column and one more
+        return int(max(v.nnz, 1) * (v.m.dtype.itemsize + 8) + (v.shape[1] + 1) * 8)
     return 8
 
 
@@ -681,7 +683,9 @@ def whos(W, nargout, *args):
         attrs = []
         if n in W.gnames:
             attrs.append('global')
-        if type(v) is complex or (type(v) is np.ndarray and v.dtype.kind == 'c'):
+        if type(v) is Sparse:
+            attrs.append('sparse')
+        if type(v) is complex or (type(v) in (np.ndarray, Sparse) and v.dtype.kind == 'c'):
             attrs.append('complex')
         rows.append((n, sz, _bytes(v), class_of(v), ', '.join(attrs)))
     if nargout:
@@ -692,7 +696,7 @@ def whos(W, nargout, *args):
             s.f['bytes'][i, 0] = float(b)
             s.f['class'][i, 0] = Char.of(c)
             s.f['global'][i, 0] = 'global' in at
-            s.f['sparse'][i, 0] = False
+            s.f['sparse'][i, 0] = 'sparse' in at
             s.f['complex'][i, 0] = 'complex' in at
             s.f['nesting'][i, 0] = Struct.scalar({'function': Char.of(''), 'level': 1.0})
             s.f['persistent'][i, 0] = False
@@ -1179,7 +1183,8 @@ def validateattributes(nargout, *args):
             if numel(v) == 0:
                 fail('expectedNonempty', 'nonempty')
         elif a == 'nonsparse':
-            pass                                       # sparse matrices are held full here
+            if type(v) is Sparse:
+                fail('expectedNonsparse', 'nonsparse')
         elif a == 'size':
             want = np.asarray(arr(arg)).reshape(-1)
             have = list(shp) + [1] * max(0, len(want) - len(shp))

@@ -15,7 +15,7 @@ from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, 
                     like_class, strip_flags, cellstr_list, NUMERIC_CLASSES, np_dtype, make)
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
-                      shape_of, numel, _2d, EMPTY, py_str, share, share_all, text_list)
+                      shape_of, numel, _2d, EMPTY, py_str, share, share_all, text_list, Sparse)
 from .. import runtime as R
 from .. import matfile as MF
 from .. import geodata as GD
@@ -1640,6 +1640,8 @@ def to_py_mat(v):
         return np.array([[v]])
     if t is np.ndarray:
         return v
+    if t is Sparse:
+        return v.m
     if t is Char:
         if v.a.size == 0:
             return np.array([''])
@@ -1782,6 +1784,8 @@ async def save(W, nargout, *args):
                     if n not in W:
                         raise err('MATLAB:save:couldNotWriteFile', f"Variable '{n}' not found.", 'save')
                     data[n] = W[n]
+    if not os.path.isdir(os.path.dirname(p) or '.'):
+        raise err('MATLAB:save:couldNotWriteFile', f'Unable to write file {fname}: No such file or directory.', 'save')
     if ascii_:
         with open(p, 'a' if append else 'w', encoding='utf-8') as f:
             for k, v in data.items():
@@ -1816,7 +1820,10 @@ async def save(W, nargout, *args):
             R.warn('MATLAB:save:cannotSaveObject', f"Variable '{k}' of class {class_of(v)} was not saved.")
             continue
         mdict[k] = to_py_mat(v)
-    sio.savemat(p, mdict, format='4' if version == '-v4' else '5', do_compression=version in ('-v7', '-v7.3', '-mat'), oned_as='row')
+    try:
+        sio.savemat(p, mdict, format='4' if version == '-v4' else '5', do_compression=version in ('-v7', '-v7.3', '-mat'), oned_as='row')
+    except OSError as e:
+        raise err('MATLAB:save:couldNotWriteFile', f'Unable to write file {fname}: {e.strerror or e}.', 'save')
     files_changed(os.path.dirname(p))
     return None
 

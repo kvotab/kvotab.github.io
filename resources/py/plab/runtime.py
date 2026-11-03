@@ -17,7 +17,7 @@ import numpy as np
 
 from .values import (MError, Interrupt, NOVAL, COLON, Char, Str, Cell, Struct, FH, Obj, F64, C128,
                      EMPTY, share, share_all, is_shared, writable, class_of, shape_of, numel,
-                     scalar_out, is_empty_double, py_str, to_float, size_str, Unset)
+                     scalar_out, is_empty_double, py_str, to_float, size_str, Unset, Sparse)
 from .ops import (plus, minus, times, rdivide, ldivide, power, mtimes, mrdivide, mldivide, mpower,
                   uminus, uplus, not_, and_, or_, xor, eq, ne, lt, le, gt, ge, transpose, ctranspose,
                   colon, truth, sc_truth, hcat, vcat, matrix, cat)
@@ -418,6 +418,9 @@ def forit(v):
     t = type(v)
     if t is float or t is bool or t is complex:
         return (v,)
+    if t is Sparse:
+        from . import sparsemat
+        return sparsemat.columns(v)
     if t is np.ndarray:
         if v.size == 0:
             return ()

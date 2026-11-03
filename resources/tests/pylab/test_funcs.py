@@ -208,8 +208,8 @@ same('primes(-Inf) is empty', size(W['c']), [1, 0])
 same('nchoosek: k = 0 gives 1 by 0, k > n gives 0 by k', (size(W['d']), size(W['e'])), ([1, 0], [0, 4]))
 same('the class of n', (float(np.asarray(W['f']).reshape(-1)[0]), text(W['g'])), (252.0, 'uint8'))
 same('of a cell: a cell of the combinations', size(W['h']), [3, 2])
-W, _ = run("a = wilkinson(0); b = compan(4); c = speye(); d = speye([3 2]); e = str2num('[1e999 -1e999]'); f = [1e999];")
-same('wilkinson(0), compan of a scalar: empty; speye() and speye([m n])', (size(W['a']), size(W['b']), W['c'], size(W['d'])), ([0, 0], [0, 0], 1.0, [3, 2]))
+W, _ = run("a = wilkinson(0); b = compan(4); c = full(speye()); d = speye([3 2]); e = str2num('[1e999 -1e999]'); f = [1e999];")
+same('wilkinson(0), compan of a scalar: empty; speye() and speye([m n])', (size(W['a']), size(W['b']), W['c'], list(W['d'].shape)), ([0, 0], [0, 0], 1.0, [3, 2]))
 near('a literal past realmax is Inf', (W['e'], W['f']), [math.inf, -math.inf, math.inf])
 
 # ---- interpolation ------------------------------------------------------------------------------------------------------------

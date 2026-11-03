@@ -15,7 +15,7 @@ import numpy as np
 
 from .values import (MError, NOVAL, COLON, Char, Cell, Struct, Str, FH, Obj, F64, C128,
                      INT_TYPES, DTYPE_CLASS, class_of, scalar_out, EMPTY, share, share_all, is_shared,
-                     writable, copy_container, _2d, numel, shape_of, is_empty_double)
+                     writable, copy_container, _2d, numel, shape_of, is_empty_double, Sparse)
 from .ops import to_int_class, INT_CLASSES
 
 _DF = np.dtype(np.float64)
@@ -84,6 +84,8 @@ def conv(v):
         return conv(float(v))
     if t is complex:
         raise _bad_index()
+    if t is Sparse:
+        return conv(v.dense())
     if t is Cell:
         raise MError('MATLAB:badsubscript', 'Unable to use a value of type cell as an index.')
     if t is Str:
@@ -232,6 +234,9 @@ def idx(A, args):
         return r
     if t is SYM:
         return SYMOPS.idx(A, args)
+    if t is Sparse:
+        from . import sparsemat
+        return sparsemat.idx(A, args)
     if t is float or t is bool or t is complex:
         r = take(np.array([[A]]), args)
         if r.size == 1:
@@ -684,6 +689,11 @@ def asgn(A, args, V):
         return V
     if t is SYM or type(V) is SYM:
         return SYMOPS.asgn(A, args, V)
+    if t is Sparse or type(V) is Sparse:
+        from . import sparsemat
+        if t is Sparse and is_empty_double(V):
+            return sparsemat.delete(A, args)
+        return sparsemat.asgn(A, args, V)
     if A is NOVAL:
         if is_empty_double(V):
             return EMPTY()
@@ -840,6 +850,9 @@ def _asgn_struct(A, args, V):
 def delete(A, args):
     """A(args) = []."""
     t = type(A)
+    if t is Sparse:
+        from . import sparsemat
+        return sparsemat.delete(A, args)
     if t is float or t is bool or t is complex:
         A = np.array([[A]])
         t = np.ndarray

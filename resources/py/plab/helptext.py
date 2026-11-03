@@ -1121,7 +1121,13 @@ eigs: Some eigenvalues (the largest in magnitude by default).
     d = eigs(A)
     d = eigs(A, k)
     d = eigs(A, k, sigma)
-    [V, D] = eigs(...)
+    d = eigs(A, B, k, sigma)
+    d = eigs(Afun, n, k, sigma)
+    d = eigs(..., opts)
+    [V, D, flag] = eigs(...)
+    * sigma: 'largestabs', 'smallestabs', 'largestreal', 'smallestreal', 'largestimag', 'smallestimag', or a number (the eigenvalues nearest it).
+    * Afun(x) gives A*x; with 'smallestabs' or a number it gives (A - sigma*I)\x.
+    * opts: a struct or name-value pairs: Tolerance, MaxIterations, SubspaceDimension, StartVector, IsFunctionSymmetric.
 svd: The singular value decomposition, A = U*S*V'.
     s = svd(A)
     [U, S, V] = svd(A)
@@ -1129,7 +1135,9 @@ svd: The singular value decomposition, A = U*S*V'.
 svds: Some singular values (the largest by default).
     s = svds(A)
     s = svds(A, k)
-    [U, S, V] = svds(...)
+    s = svds(A, k, sigma)
+    [U, S, V, flag] = svds(...)
+    * sigma: 'largest', 'smallest', 'smallestnz' (the smallest that are not zero) or a number (the values nearest it).
 qr: The QR decomposition, A = Q*R.
     [Q, R] = qr(A)
     [Q, R] = qr(A, 'econ')
@@ -1142,6 +1150,9 @@ qr: The QR decomposition, A = Q*R.
 lu: The LU decomposition with row pivoting.
     [L, U] = lu(A)
     [L, U, P] = lu(A)
+    [L, U, P] = lu(A, 'vector')
+    [L, U, P, Q] = lu(S)
+    * For a sparse S the factors are sparse; with four outputs the columns are also ordered to keep them sparse: P*S*Q = L*U.
 chol: The Cholesky factor of a symmetric positive definite matrix, A = R'*R.
     R = chol(A)
     L = chol(A, 'lower')
@@ -1195,13 +1206,17 @@ sparse: A sparse matrix from triplets, or a matrix made sparse.
     S = sparse(A)
     S = sparse(i, j, v)
     S = sparse(i, j, v, m, n)
+    S = sparse(i, j, v, m, n, nz)
     S = sparse(m, n)
-    * Sparse matrices are held as full ones here: the results are the same, the memory is not saved.
+    * Only the nonzero elements are stored, with their places. Values given for one place are added (logical ones combined by or).
+    * Sparse matrices are double or logical, and two-dimensional.
+    * Results stay sparse where the language keeps them sparse: S + S, S - S, S .* A, S * S, S \ S, S', comparisons and logical operators, indexing, concatenation with a sparse part, and functions that keep zeros zero (abs, sqrt, sin, round, sum, max, cumsum, diag, kron, ...). S + A, S * A and S \ b with A and b full are full, and so is S + 1.
+    * zeros, ones and eye with 'like' and a sparse value are sparse; so are true and false 'like' a sparse logical.
 full: A sparse matrix as a full one.
     A = full(S)
-issparse: True for a sparse matrix (never, here: they are held full).
+issparse: True for a sparse matrix.
     tf = issparse(S)
-nzmax: The room for nonzero elements (their number, here).
+nzmax: The room for nonzero elements: the number of them (at least 1).
     n = nzmax(S)
 spalloc: An all-zero matrix with room for nonzeros.
     S = spalloc(m, n, nz)
@@ -1221,6 +1236,61 @@ spdiags: A matrix built from diagonals, or the diagonals taken from one.
     A = spdiags(B, d, A)
     [B, d] = spdiags(A)
     B = spdiags(A, d)
+spconvert: A sparse matrix from rows [i j v] or [i j re im].
+    S = spconvert(D)
+    * A last row [m n 0] sets the size.
+sprandsym: A random symmetric sparse matrix of normal values.
+    R = sprandsym(n, density)
+    R = sprandsym(S)
+normest: An estimate of the 2-norm, by the power method.
+    n = normest(S)
+    n = normest(S, tol)
+    [n, count] = normest(...)
+symrcm: The reverse Cuthill-McKee ordering, which brings the nonzeros near the diagonal.
+    p = symrcm(S)
+amd: A fill-reducing ordering of a symmetric matrix (minimum degree).
+    p = amd(S)
+symamd: A fill-reducing ordering of a symmetric matrix (minimum degree).
+    p = symamd(S)
+colamd: A column ordering for a sparse LU or QR factorization (minimum degree on S'*S).
+    p = colamd(S)
+etree: The elimination tree of a symmetric matrix.
+    p = etree(A)
+    [p, q] = etree(A)
+    * p(j) is the parent of column j (0 for a root); q orders the tree so that each column comes after its children.
+dmperm: A maximum matching of the columns to the rows.
+    p = dmperm(A)
+    * p(j) is the row matched to column j, 0 for none. Only this first output is given.
+sprank: The structural rank: the size of a maximum matching.
+    r = sprank(A)
+ichol: The incomplete Cholesky factor, L*L' close to A.
+    L = ichol(A)
+    L = ichol(A, opts)
+    * A is read from its lower triangle (its upper one with opts.shape 'upper', which gives L'). A pivot that is not real and positive is an error.
+    * opts.type: 'nofill' (the default) keeps A's pattern; 'ict' drops entries smaller than opts.droptol times the 1-norm of the column of A below the diagonal.
+    * opts.michol 'on' adds what is dropped to the diagonal, so that L*L' has A's row sums; opts.diagcomp alpha factors A + alpha*diag(diag(A)).
+ilu: Incomplete LU factors of a sparse matrix, L*U close to A.
+    W = ilu(A)
+    [L, U] = ilu(A, opts)
+    [L, U, P] = ilu(A, opts)
+    * opts.type: 'nofill' (the default) keeps A's pattern; 'crout' drops entries smaller than opts.droptol times norm(A(:, j)); 'ilutp' drops them too and pivots, choosing another row when the diagonal one is smaller than opts.thresh (1) times the largest. P*A = L*U then; with two outputs L carries P's rows.
+    * opts.milu 'row' or 'col' adds what is dropped to the diagonal of U, so that L*U has A's row or column sums; opts.udiag 1 replaces a zero on U's diagonal by the drop tolerance.
+    * W = ilu(A) is L + U - I.
+spaugment: The augmented matrix [c*I A; A' 0] of a least-squares problem.
+    S = spaugment(A)
+    S = spaugment(A, c)
+spparms: The sparse solvers' settings.
+    spparms
+    v = spparms(key)
+    [keys, values] = spparms
+    spparms(key, value)
+    spparms(values)
+    spparms('default')
+    * The settings are kept and read back, but change nothing: the solvers keep their own. 'tight' is accepted and changes nothing.
+spy: A dot at each nonzero element.
+    spy(S)
+    spy(S, markersize)
+    spy(S, linespec, markersize)
 
 # ---- special functions -----------------------------------------------------------------------
 gamma: The gamma function; gamma(n+1) = n!.
@@ -3024,7 +3094,7 @@ load: Load variables from a MAT-file, or a matrix from a text file.
     load filename -mat
     S = load(filename)
     * MAT-files of versions 4, 6, 7 and 7.3 load, compressed or not. The names may hold * as a wildcard.
-    * String arrays load. A variable that cannot be read is left out with a warning and the others load: other objects, such as tables and datetimes, are not read. Sparse matrices load as full ones.
+    * String arrays load. A variable that cannot be read is left out with a warning and the others load: other objects, such as tables and datetimes, are not read. Sparse matrices load sparse.
     * A text file of numbers loads as a variable named after the file; -mat reads a MAT-file of any name.
     * load coastlines, when no coastlines.mat is found, gives coastlat and coastlon: Natural Earth's coastline (1:110m, public domain), the lines parted by NaN. It is fetched from jsDelivr the first time a program asks.
 save: Save variables to a MAT-file (or to a text file with -ascii).
@@ -3866,7 +3936,7 @@ mustBeNonNan: An error if any element is NaN.
     mustBeNonNan(A)
 mustBeNonempty: An error if the value is empty.
     mustBeNonempty(A)
-mustBeNonsparse: An error if the value is sparse (never, here: matrices are held full).
+mustBeNonsparse: An error if the value is sparse.
     mustBeNonsparse(A)
 mustBeGreaterThan: An error unless every element is greater than a number.
     mustBeGreaterThan(A, c)

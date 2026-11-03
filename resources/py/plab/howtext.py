@@ -316,9 +316,7 @@ sub2ind, ind2sub:
 find:
     Python: elmat.py. numpy.flatnonzero of the array taken down its columns; rows and columns from the remainder and quotient by the number of rows; find(x, k, 'last') keeps the last k. Nothing found in a scalar or a 0-by-0 array gives 0-by-0 results.
 nnz:
-    Python: elmat.py. numpy.count_nonzero.
-nonzeros:
-    Python: elmat.py. The nonzero elements in column order, as a column.
+    Python: elmat.py. numpy.count_nonzero; for a sparse matrix, SciPy's count of stored values.
 fliplr, flipud, flip:
     Python: elmat.py. NumPy's reversed slicing a[:, ::-1] and a[::-1], or numpy.flip along a dimension (the first one whose size is not 1 unless given).
 rot90:
@@ -420,15 +418,15 @@ movmean, movsum, movprod, movmax, movmin, movmedian, movmad, movstd, movvar:
     Python: datafun.py. For each position along the dimension, NumPy's mean, sum, prod, max, min or median of the window around it, the median of the absolute deviations from its median (movmad), or the standard deviation and variance normalized by n - 1 (by n for a weight of 1, or a window of one value). The window is k elements centred (for an even k, one more before than after) or [kb kf] before and after, worked over all the other dimensions at once. 'omitnan' uses NumPy's nan- versions; Endpoints 'shrink' shortens the windows at the ends, 'discard' drops those positions, 'fill' or a number sets them.
 # ---- matfun.py: linear algebra -----------------------------------------------------------------
 inv:
-    Python: matfun.py. A scalar's inverse is 1/x (so inv(-0) is -Inf and inv(Inf) is 0). Otherwise numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN. single stays single.
+    Python: matfun.py and sparse.py. A sparse matrix: SuperLU's factors (scipy.sparse.linalg.splu) solve for each column of the identity, the result stored sparse; a singular one gives Inf with the singular-matrix warning. A full one: a scalar's inverse is 1/x (so inv(-0) is -Inf and inv(Inf) is 0). Otherwise numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN. single stays single.
 det:
-    Python: matfun.py. numpy.linalg.det: the product of the pivots of an LU factorisation with partial pivoting; det([]) is 1.
+    Python: matfun.py and sparse.py. numpy.linalg.det: the product of the pivots of an LU factorisation with partial pivoting; det([]) is 1. A sparse matrix: the product of the diagonal of SuperLU's U (scipy.sparse.linalg.splu) times the signs of its row and column permutations, 0 when the factorisation finds it singular.
 trace:
     Python: matfun.py. numpy.trace, the sum of the diagonal of a square matrix.
 rank:
     Python: matfun.py. The number of singular values (numpy.linalg.svd, values only) above the tolerance max(size(A))*eps(max(s)), or the one given.
 norm:
-    Python: matfun.py. For a vector, numpy.linalg.norm with p (max(abs(v)) for Inf, the smallest for -Inf, the count of nonzeros for 0). For a matrix: the 2-norm is the largest singular value (numpy.linalg.svd), the 1-norm the largest column sum of abs(A), Inf the largest row sum, and 'fro' the 2-norm of all the elements.
+    Python: matfun.py and sparse.py. A sparse matrix: the 1-norm, Inf-norm and 'fro' from the stored values (column sums, row sums, the root of the sum of squares), the 2-norm by numpy.linalg.norm of the full matrix up to 200 rows or columns and by scipy.sparse.linalg.svds (the largest singular value) beyond; a sparse vector's p-norms from its stored values. A full one: for a vector, numpy.linalg.norm with p (max(abs(v)) for Inf, the smallest for -Inf, the count of nonzeros for 0). For a matrix: the 2-norm is the largest singular value (numpy.linalg.svd), the 1-norm the largest column sum of abs(A), Inf the largest row sum, and 'fro' the 2-norm of all the elements.
 vecnorm:
     Python: matfun.py. sum(abs(A).^p).^(1/p) along the first dimension whose size is not 1 or the one given, or max(abs(A)) for p = Inf.
 cond:
@@ -436,19 +434,19 @@ cond:
 rcond:
     Python: matfun.py. LAPACK's estimate of the reciprocal condition number in the 1-norm (its gecon routine, by scipy.linalg.lapack.get_lapack_funcs) from an LU factorisation by scipy.linalg.lu_factor; 0 when the factorisation fails.
 condest:
-    Python: matfun.py. numpy.linalg.cond in the 1-norm, computed exactly rather than estimated.
+    Python: matfun.py and sparse.py. For a full matrix, numpy.linalg.cond in the 1-norm, computed exactly rather than estimated. For a sparse one, norm(S, 1) times scipy.sparse.linalg.onenormest of the inverse, applied through SuperLU's factors (scipy.sparse.linalg.splu); Inf when they cannot be made.
 eig:
     Python: matfun.py. A matrix equal to its conjugate transpose goes to numpy.linalg.eigh (numpy.linalg.eigvalsh for the values alone), which gives real values in increasing order and orthonormal vectors; any other to numpy.linalg.eig, and eig(A, B) to scipy.linalg.eig. The third output, the left vectors, comes from scipy.linalg.eig with left=True. 'vector' returns the values as a column. NaN or Inf in A is refused.
 eigs:
-    Python: matfun.py. All eigenvalues by numpy.linalg.eig, of which the k (6 unless given) of largest magnitude are kept; a dense method, not an iterative one.
+    Python: sparse.py. Up to 600 rows (or when k is n - 1 or more) every eigenvalue by scipy.linalg.eig (with B, the generalized problem), of which the k (6 unless given) that sigma picks are kept, the vectors scaled to norm 1. Larger matrices go to ARPACK: scipy.sparse.linalg.eigsh when A is symmetric and real, scipy.sparse.linalg.eigs otherwise, with which 'LM', 'LR' (or 'LA'), 'SR' (or 'SA'), 'LI' or 'SI', and shift-invert about sigma for 'smallestabs' (sigma 0) or a number (a sigma that is an eigenvalue is moved by 1e-10 relative). A function handle is wrapped as a scipy.sparse.linalg.LinearOperator: A*x, or (A - sigma*I)\x as ARPACK's OPinv. flag is 1 when ARPACK stops before all k converge (its converged values are returned).
 svd:
     Python: matfun.py. numpy.linalg.svd: the singular values alone as a column, or U, S and V with S placed in a matrix of A's size; 'econ' (and svd(A, 0) for a tall A) keeps only min(m, n) of them. NaN or Inf is refused.
 svds:
-    Python: matfun.py. The full numpy.linalg.svd, of which the k (6 unless given) largest are kept.
+    Python: sparse.py. Up to 600 columns or rows (or when k is that number less 1 or more) the full numpy.linalg.svd, of which the k (6 unless given) that sigma picks are kept: the largest, the smallest, the smallest above max(m, n)*eps times the largest ('smallestnz'), or those nearest a number. Larger matrices go to ARPACK: scipy.sparse.linalg.svds with which 'LM' or 'SM', or for a number the eigenvalues of [0 A; A' 0] nearest it (scipy.sparse.linalg.eigsh, shift-invert), whose positive ones are the singular values.
 qr:
     Python: matfun.py. scipy.linalg.qr: R alone (upper triangular), Q and R, or with three outputs the factorisation with column pivoting (A(:, p) = Q*R), its permutation a matrix, or a vector with 'vector' or 0; 'econ' (or 0) gives the economy size. qr(A, B) gives Q'*B in place of Q. An empty A gives an identity Q and an empty R; single stays single.
 lu:
-    Python: matfun.py. scipy.linalg.lu (partial pivoting): with two outputs the permuted L and U, with three L, U and the permutation matrix P (or a vector with 'vector'); with one output the two factors in one matrix.
+    Python: matfun.py and sparse.py. scipy.linalg.lu (partial pivoting): with two outputs the permuted L and U, with three L, U and the permutation matrix P (or a vector with 'vector'); with one output the two factors in one matrix. A square sparse matrix goes to SuperLU (scipy.sparse.linalg.splu): with up to three outputs with no column ordering and diag_pivot_thresh 1 (partial pivoting), with four with its COLAMD column ordering, P*S*Q = L*U; the factors sparse. A singular or rectangular sparse matrix uses scipy.linalg.lu, its factors stored sparse.
 chol:
     Python: matfun.py. numpy.linalg.cholesky gives the lower factor L, returned as R = L' (or L for 'lower'). When A is not positive definite, the second output p is one more than the size of the largest leading block that is, and the factor of that block is returned; with one output it is an error.
 schur:
@@ -464,7 +462,7 @@ orth:
 rref:
     Python: matfun.py. Gauss-Jordan elimination in Python, column by column: the largest remaining element is brought up as the pivot (partial pivoting), its row divided by it, and the column cleared above and below; a column whose largest element is below the tolerance max(size(A))*eps*norm(A, Inf) is set to zero. The second output lists the pivot columns.
 expm, logm, sqrtm:
-    Python: matfun.py. scipy.linalg.expm (scaling and squaring with a Pade approximant), scipy.linalg.logm and scipy.linalg.sqrtm (both by the Schur form).
+    Python: matfun.py. scipy.linalg.expm (scaling and squaring with a Pade approximant), scipy.linalg.logm and scipy.linalg.sqrtm (both by the Schur form). A sparse matrix: scipy.sparse.linalg.expm, its result sparse; logm and sqrtm of the full matrix, stored sparse.
 funm:
     Python: matfun.py. scipy.linalg.funm (the Schur-Parlett method), with NumPy's function for the named ones (exp, log, sin, cos, sqrt, sinh, cosh) and otherwise the function given, called on the arrays SciPy passes.
 cross:
@@ -721,21 +719,57 @@ gradient:
     Python: funfun.py. Along each dimension (x the second, y the first, then the rest): one-sided differences at the ends and (f(i+1) - f(i-1))/(x(i+1) - x(i-1)) inside, with a scalar spacing or the coordinates given.
 del2:
     Python: funfun.py. Along each dimension the second differences 2*((f(i+1) - f(i))/h(i) - (f(i) - f(i-1))/h(i-1))/(h(i-1) + h(i)) inside, extended linearly to the ends (constantly when there is one inner point), added and divided by 2N (by 4 for a vector).
-# ---- sparse.py: sparse matrices, held dense ------------------------------------------------------
+# ---- sparse.py and sparsemat.py: sparse matrices --------------------------------------------------
 sparse:
-    Python: sparse.py. Sparse matrices are held as ordinary dense NumPy arrays: the functions take the same arguments and give the same numbers, without the saving of memory. sparse(i, j, v, m, n) adds each value into its place with numpy.add.at, so repeated subscripts are summed; sparse(m, n) is a matrix of zeros and sparse(A) is A.
+    Python: sparse.py and sparsemat.py. A sparse matrix is a SciPy matrix in compressed sparse column form (scipy.sparse.csc_matrix): for each column, the row indices of its nonzeros, in order, and their values, double (real or complex) or logical. Explicit zeros are removed after every operation. sparse(i, j, v, m, n) builds the matrix from the triplets with scipy.sparse.coo_matrix, which adds the values given for one place (logical values are combined by or); sparse(A) keeps A's nonzeros; sparse(m, n) has none.
+
+    The operators in sparsemat.py work on SciPy's matrices where the result is sparse: S + S, S - S and S .* S element by element on the stored values; S .* A and S ./ c, S .^ c (c > 0) and comparisons with a scalar that are false at zero, on the stored values alone; S * S by SciPy's sparse product; S \ S and S \ b with a square S by SuperLU (scipy.sparse.linalg.splu), with the singular-matrix warning and a full solve when it fails; a rectangular S by least squares on the full matrix, or when that is too large to make, by SuperLU on the augmented system [c*I S; S' 0] (c is max(max(abs(S)))/1000). Any other operator works on the full arrays and keeps the result sparse as the language does: + and - with a full operand or a scalar give full results, .* and & give sparse ones, ./ and .^ are sparse when the left operand is. Indexing slices SciPy's matrix; assignment goes through scipy.sparse.lil_matrix and back.
+
+    Functions that keep a zero zero (abs, sqrt, sin, round, isnan and so on) work on the stored values alone; others (cos, exp) compute on the full matrix and store the result sparse. sum, any, all, max, min, find, reshape, diag, tril, triu, kron, repmat, blkdiag, trace and isequal use SciPy's methods without making the matrix full; the rest of the functions that keep sparse results (cumsum, diff, flip, mean, chol, qr, ...) compute on the full matrix and store their first result sparse. zeros, ones, eye, true and false with 'like' and a sparse value make the full array and store it sparse. A function written for full arrays reads a sparse matrix as a full one, refusing one of more than 2^25 elements.
 full:
-    Python: sparse.py. The value as it is: sparse matrices are already full here.
+    Python: sparse.py. SciPy's toarray, in column order.
+issparse:
+    Python: sparse.py. True for the sparse type (values.Sparse), whatever its values.
 speye, spzeros, spalloc:
-    Python: sparse.py. numpy.eye and numpy.zeros of the size asked for (dense).
+    Python: sparse.py. scipy.sparse.eye of the size asked for, or a matrix with no nonzeros; spalloc reserves no room, as SciPy makes room as a matrix is filled.
 spones:
-    Python: sparse.py. 1 where A is nonzero, 0 elsewhere, in doubles.
+    Python: sparse.py. The matrix's pattern with every stored value set to 1.
 sprand, sprandn:
-    Python: sparse.py. Uniform values from rand's generator, kept where a second set of uniform values is below the density d and zero elsewhere (sprandn draws the same uniform values).
+    Python: sparse.py. round(density*m*n) distinct places drawn by numpy.random.RandomState.choice from rand's generator (for more than 2^24 elements, random integers with repeats dropped), with uniform values in (0, 1) or normal ones; sprand(S) and sprandn(S) put new values on S's pattern.
+sprandsym:
+    Python: sparse.py. Places drawn as for sprandn, the ones on and below the diagonal kept, normal values put there and the strict lower triangle mirrored above (scipy.sparse.tril); sprandsym(S) uses the lower triangle of S's pattern.
 spdiags:
-    Python: sparse.py. In Python loops: the diagonals of A as the columns of B, or B's columns put on the diagonals d of an m-by-n matrix, each diagonal aligned by the column of A when m >= n and by the row otherwise.
+    Python: sparse.py. The diagonals of A (scipy.sparse.csc_matrix.diagonal) as the columns of B, each aligned by the column of A when m >= n and by the row otherwise; or B's columns put on the diagonals d of an m-by-n matrix (or of A) through scipy.sparse.lil_matrix.
 nzmax:
-    Python: sparse.py. The number of nonzero elements (numpy.count_nonzero), as nothing is allocated beyond them.
+    Python: sparse.py. The number of stored nonzeros, at least 1, as SciPy keeps no room beyond them; numel for a full array.
+nonzeros:
+    Python: sparse.py. The stored values in column order (SciPy's COO form sorted by column, then row) as a full column; for a full array, the elements that are not zero, down the columns.
+spconvert:
+    Python: sparse.py. The rows [i j v] (or [i j re im]) as triplets to scipy.sparse.coo_matrix, the size from the largest i and j (a last row [m n 0] sets it).
+normest:
+    Python: sparse.py. The power method on S'*S from the column sums of abs(S): x = S'*(S*x), the estimate norm(x)/norm(S*x), until two estimates differ by less than tol (1e-6) times the latest; a warning after 100 iterations.
+symrcm:
+    Python: sparse.py. scipy.sparse.csgraph.reverse_cuthill_mckee on the pattern of S + S'.
+amd, symamd:
+    Python: sparse.py. Minimum degree on the pattern of S + S': the node with fewest neighbours (the lowest index first among equals) is eliminated, its neighbours joined to each other, and so on until none is left. The degrees are exact, not the approximate ones of AMD, so the order can differ from AMD's while reducing fill in the same way.
+colamd:
+    Python: sparse.py. The minimum degree ordering of amd on the pattern of S'*S.
+etree:
+    Python: sparse.py. Liu's algorithm with path compression over the upper triangle, column by column: each row index above the diagonal is followed up its ancestors to their root, which gets column j as its parent. The postorder q is a depth-first walk of the tree, children in increasing order.
+dmperm:
+    Python: sparse.py. scipy.sparse.csgraph.maximum_bipartite_matching (Hopcroft and Karp) of the columns to the rows of the pattern.
+sprank:
+    Python: sparse.py. The number of columns matched by scipy.sparse.csgraph.maximum_bipartite_matching.
+ichol:
+    Python: sparse.py. Column by column in Python (left-looking): column k of the lower triangle less L(k:n, j)*L(k, j)' for each earlier column j with an entry in row k; for 'nofill' only the places in A's pattern are updated (with michol the update of a place outside it goes to the two diagonals instead), for 'ict' entries below droptol*norm(A(k:n, k), 1) are dropped (with michol added to both diagonals). The pivot's square root is L(k, k) and the column is divided by it; on the diagonal |L(k, j)|^2 is taken as a real number, so a Hermitian matrix keeps real pivots. diagcomp adds alpha*diag(diag(A)) first; 'upper' factors the conjugate transpose of the upper triangle and returns L'.
+ilu:
+    Python: sparse.py. Column by column in Python (left-looking): column j of A is solved against the columns of L so far, taking them in order of their steps (a heap); an entry of U smaller than droptol*norm(A(:, j)) is dropped before it is used, as is an entry of the new column of L (before the division by the pivot); for 'nofill' the updates outside A's pattern are left out. 'crout' and 'nofill' take row j as the pivot; 'ilutp' takes the largest of the rows not yet used unless row j is at least thresh times it. milu 'col' adds what the column dropped to its pivot, keeping the column sums of L*U; 'row' runs the column version on A.' and turns its factors back (L = U2.'*inv(D), U = D*L2.' with D U2's diagonal), keeping the row sums. A zero pivot is an error unless udiag is set.
+spaugment:
+    Python: sparse.py. scipy.sparse.bmat of [c*I A; A' 0], c max(max(abs(A)))/1000 unless given.
+spparms:
+    Python: sparse.py. A list of the settings with their usual values, kept in the engine and read back; SciPy's SuperLU and ARPACK are called with their own settings, so none of them changes a result.
+spy:
+    Python: sparse.py. plot of the column against the row of each nonzero (SciPy's COO form), marker '.', with axis ij, the limits 0 to n+1 and 0 to m+1, and the count nz under the axes.
 
 # ---- timefun.py: dates and times as numbers -----------------------------------------------------
 clock, now, date:
@@ -803,8 +837,6 @@ isempty, isscalar, ismatrix, isvector, isrow, iscolumn, issquare:
     Python: core.py. Tests of the size: no elements; one element; two dimensions; two dimensions with one of them 1 (and at least one element); one row; one column; as many rows as columns.
 iscellstr:
     Python: core.py. A cell whose every element is a character row (or empty).
-issparse:
-    Python: core.py. Always false: sparse matrices are held dense (see sparse).
 isdiag:
     Python: core.py. diag(diag(A)) == A for every element (numpy.diag twice).
 isequal, isequaln:
@@ -870,7 +902,7 @@ inputname:
 mfilename:
     Python: core.py. Walks up Python's call stack to the first frame of compiled code and gives the name of the file it was compiled from (with 'fullpath', its path without .m); '' for a line typed at the prompt.
 validateattributes:
-    Python: core.py. The class against the list of classes ('numeric', 'float' and 'integer' name groups), then each attribute tested in turn, by the size or by NumPy on the values: 2d, 3d, row, column, scalar, scalartext, vector, square, diag, nonempty, size (NaN for any), numel, ncols, nrows, ndims, binary, even, odd, integer, real, finite, nonnan, nonnegative, nonzero, positive, >, >=, <, <=, increasing, decreasing, nondecreasing and nonincreasing (NaN fails the ordering tests); nonsparse always holds, matrices being held full. The message names the input by the optional function name, variable name and argument number.
+    Python: core.py. The class against the list of classes ('numeric', 'float' and 'integer' name groups), then each attribute tested in turn, by the size or by NumPy on the values: 2d, 3d, row, column, scalar, scalartext, vector, square, diag, nonempty, size (NaN for any), numel, ncols, nrows, ndims, binary, even, odd, integer, real, finite, nonnan, nonnegative, nonzero, positive, >, >=, <, <=, increasing, decreasing, nondecreasing and nonincreasing (NaN fails the ordering tests); nonsparse fails for a sparse matrix. The message names the input by the optional function name, variable name and argument number.
 onCleanup:
     Python: core.py and runtime.py. An object that calls the function when Python deletes it: when the variable holding it is cleared or the function's workspace goes at its return.
 # ---- strfun.py: text ----------------------------------------------------------------------
@@ -1430,7 +1462,7 @@ mustBePositive, mustBeNonnegative, mustBeNegative, mustBeNonpositive, mustBeNonz
 mustBeGreaterThan, mustBeGreaterThanOrEqual, mustBeLessThan, mustBeLessThanOrEqual, mustBeInRange:
     Python: validators.py. The values compared with the bound (or bounds) by NumPy, NaN failing; mustBeInRange includes both bounds unless 'exclusive', 'exclude-lower' or 'exclude-upper'.
 mustBeNumeric, mustBeNumericOrLogical, mustBeFloat, mustBeNonempty, mustBeNonsparse, mustBeScalarOrEmpty, mustBeVector:
-    Python: validators.py. The value's class or size: numeric, numeric or logical, single or double, at least one element, at most one, a row or a column (or any empty with 'allow-all-empties'); mustBeNonsparse always passes, matrices being held full.
+    Python: validators.py. The value's class or size: numeric, numeric or logical, single or double, at least one element, at most one, a row or a column (or any empty with 'allow-all-empties'); mustBeNonsparse fails for a sparse matrix.
 mustBeMember:
     Python: validators.py. Numbers by numpy.isin; text compared as text, every element of A among those of S.
 mustBeText, mustBeTextScalar, mustBeNonzeroLengthText, mustBeValidVariableName:
@@ -1480,7 +1512,7 @@ celldisp:
 swapbytes:
     Python: elmat.py. NumPy's byteswap of the array, its class kept.
 spfun:
-    Python: sparse.py. The function called once on the column of nonzero elements (numpy.flatnonzero, down the columns), its results put back in their places among zeros.
+    Python: sparse.py. The function called once on the column of stored values (in column order), its results put back in their places in a sparse matrix.
 cart2pol, pol2cart, cart2sph, sph2cart:
     Python: elfun.py. numpy.arctan2 and numpy.hypot (theta = atan2(y, x), rho = hypot(x, y); elevation = atan2(z, hypot(x, y)), r = hypot(hypot(x, y), z)), or cos and sin (x = rho cos(theta), y = rho sin(theta); x = r cos(elevation) cos(azimuth) and so on), the inputs broadcast to one size; single in gives single out.
 replaceBetween, eraseBetween:
@@ -1493,13 +1525,13 @@ jsonencode:
     Python: iofun.py. The value as Python data, then json.dumps: numbers (whole ones without a point, singles by their own shortest digits, Inf and NaN as null unless 'ConvertInfAndNaN' is false), logical as true and false, a character row as a string (a matrix as a list of its rows), vectors as lists and matrices as lists of rows, cells as lists, a struct as an object (an array of them as a list), a containers.Map as an object; 'PrettyPrint' indents by two spaces.
 # ---- matfun.py: structure, iterative solvers, updates -------------------------------------------------
 issymmetric, ishermitian:
-    Python: matfun.py. A compared with its transpose (conjugate transpose for ishermitian), or with minus it for 'skew', element by element; with a tolerance, the largest row sum of abs(A - A.') against tol times that of A (the infinity norms). A matrix that is not square gives false.
+    Python: matfun.py. A compared with its transpose (conjugate transpose for ishermitian), or with minus it for 'skew', element by element (for a sparse matrix, the difference of SciPy's matrices has no stored values); with a tolerance, the largest row sum of abs(A - A.') against tol times that of A (the infinity norms). A matrix that is not square gives false.
 istril, istriu, isbanded, bandwidth:
-    Python: matfun.py. numpy.nonzero gives the positions of the nonzeros; the lower bandwidth is the largest i - j among them, the upper the largest j - i (0 for none).
+    Python: matfun.py. numpy.nonzero gives the positions of the nonzeros (SciPy's COO form for a sparse matrix); the lower bandwidth is the largest i - j among them, the upper the largest j - i (0 for none).
 pcg, bicg, bicgstab, cgs, gmres, minres, qmr, tfqmr:
-    Python: matfun.py. SciPy's scipy.sparse.linalg cg, bicg, bicgstab, cgs, gmres, minres, qmr and tfqmr with rtol the tolerance (1e-6 unless given) and no absolute tolerance, maxit min(n, 20) unless given (gmres: restart n, at most min(n/restart, 10) restarts), x0 zeros unless given. A function handle is wrapped as a LinearOperator (bicg and qmr call it with 'notransp' and 'transp'); the preconditioner M = M1*M2 becomes the operator that solves M*y = r (numpy.linalg.solve, or the handles). relres is norm(b - A*x)/norm(b) computed after the solve, flag 0 when it meets the tolerance, 1 when the iterations ran out, 4 when SciPy reports a breakdown; resvec holds norm(b - A*x) at the start and after each iteration (gmres: SciPy's residual estimate at each inner step).
+    Python: matfun.py. SciPy's scipy.sparse.linalg cg, bicg, bicgstab, cgs, gmres, minres, qmr and tfqmr with rtol the tolerance (1e-6 unless given) and no absolute tolerance, maxit min(n, 20) unless given (gmres: restart n, at most min(n/restart, 10) restarts), x0 zeros unless given. A sparse matrix is passed to SciPy as it is; a function handle is wrapped as a LinearOperator (bicg and qmr call it with 'notransp' and 'transp'); the preconditioner M = M1*M2 becomes the operator that solves M*y = r, each factor factored once (scipy.sparse.linalg.splu for a sparse one, scipy.linalg.lu_factor for a full one) or called (a handle). relres is norm(b - A*x)/norm(b) computed after the solve, flag 0 when it meets the tolerance, 1 when the iterations ran out, 4 when SciPy reports a breakdown; resvec holds norm(b - A*x) at the start and after each iteration (gmres: SciPy's residual estimate at each inner step).
 lsqr:
-    Python: matfun.py. scipy.sparse.linalg.lsqr with atol and btol the tolerance and iter_lim maxit (min(m, n, 20) unless given); a preconditioner P = M1*M2 by solving for P*x; flag 0 when LSQR stops on its tolerances, 1 on its iteration limit.
+    Python: matfun.py. scipy.sparse.linalg.lsqr with atol and btol the tolerance and iter_lim maxit (min(m, n, 20) unless given), a sparse matrix passed as it is; a preconditioner P = M1*M2 by lsqr on the operator A*inv(P) (its factors factored once) and x = P\y; flag 0 when LSQR stops on its tolerances, 1 on its iteration limit.
 cholupdate:
     Python: matfun.py. scipy.linalg.cholesky of R'*R + x*x' (or - x*x'); a matrix that is no longer positive definite gives p = 1 and R back unchanged (an error with one output).
 qrupdate, qrinsert, qrdelete:

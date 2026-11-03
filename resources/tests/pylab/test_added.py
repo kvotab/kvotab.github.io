@@ -195,14 +195,14 @@ raises("splitapply(@sum, [1 2 3]', [1 3 3]')", 'no members')
 # ---- arrays, cells, coordinates ---------------------------------------------------------------------------------------------
 W, _ = run("""a = bsxfun(@minus, [1 2 3; 4 5 6], [1 2 3]); b = bsxfun(@(x, y) x .* y, [1; 2], [3 4]);
 c = repelem([1 2 3], [2 0 1]); d = repelem([1 2; 3 4], 2, 3); e = repelem('ab', 2); f = repelem({1, 'x'}, 1, 2); g = repelem(5, 3);
-q = mat2cell(magic(4), [1 3], [2 2]); q22 = q{2, 2}; sq = size(q); r = mat2cell('abcdef', 1, [2 4]); sw = swapbytes(uint16(1)); sp = spfun(@exp, [0 1; 2 0]);""")
+q = mat2cell(magic(4), [1 3], [2 2]); q22 = q{2, 2}; sq = size(q); r = mat2cell('abcdef', 1, [2 4]); sw = swapbytes(uint16(1)); sp = full(spfun(@exp, [0 1; 2 0])); spk = issparse(spfun(@exp, [0 1; 2 0]));""")
 near('bsxfun expands singleton dimensions; any function of two inputs', (W['a'], W['b']), [0, 3, 0, 3, 0, 3, 3, 6, 4, 8])
 near('repelem of a vector with counts; of a matrix down and across; a scalar gives a row', (W['c'], W['d'], W['g']), [1, 1, 3] + list(np.repeat(np.repeat([[1, 2], [3, 4]], 2, 0), 3, 1).reshape(-1, order='F')) + [5, 5, 5])
 same('repelem of characters and of a cell', (text(W['e']), size(W['f'])), ('aabb', [1, 4]))
 near('mat2cell: blocks of a matrix', (W['q22'], W['sq']), [10, 6, 15, 8, 12, 1, 2, 2])
 same('mat2cell of characters', [text(x) for x in W['r'].a.reshape(-1)], ['ab', 'cdef'])
 same('swapbytes: 1 as uint16 is 256 with its bytes swapped', int(np.asarray(W['sw']).reshape(-1)[0]), 256)
-near('spfun applies the function to the nonzeros only', W['sp'], [0, math.exp(2), math.e, 0])
+near('spfun applies the function to the nonzeros only, giving a sparse matrix', (W['sp'], W['spk']), [0, math.exp(2), math.e, 0, 1])
 raises('mat2cell(ones(3), [1 1], 3)', 'must sum to each dimension')
 raises('bsxfun(@plus, ones(2, 3), ones(3, 2))', 'Non-singleton dimensions')
 _, o = run("Z = {1, 'ab', {2, 3}}; celldisp(Z)")
