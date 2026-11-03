@@ -2892,10 +2892,16 @@ clearvars: Remove variables, optionally keeping some.
     clearvars -except name1 name2
 who: List the variables.
     who
-    names = who
+    who x y*
+    who -file filename
+    names = who(...)
+    * -file lists the variables of a MAT-file instead of the workspace's; names, with * as a wildcard, keep only those that match.
 whos: List the variables with their sizes, bytes and classes.
     whos
-    s = whos
+    whos x y*
+    whos -file filename
+    s = whos(...)
+    * -file lists the variables of a MAT-file; a variable that cannot be read is listed from its header.
 eval: Run text as code.
     eval(expression)
     eval(try_expression, catch_expression)

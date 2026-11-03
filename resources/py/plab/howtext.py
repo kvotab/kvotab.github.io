@@ -930,7 +930,7 @@ exist:
 clear, clearvars:
     Python: core.py. Deletes names from the workspace's dictionary, with Python's fnmatch for the wildcards * and ? and re.match for -regexp; -except keeps the names given. clear all also empties the globals and the persistent variables, and clear functions the persistent variables, and both make files compile again on their next call.
 who, whos:
-    Python: core.py. The workspace's names, sorted without regard to case and filtered by the wildcards given. whos adds size, class and bytes: 8 a double, 1 a logical, 2 a character, the NumPy array's own byte count, and for cells and structs their elements' bytes plus a fixed 104 for each.
+    Python: core.py. The workspace's names, sorted without regard to case and filtered by the wildcards given. whos adds size, class and bytes: 8 a double, 1 a logical, 2 a character, the NumPy array's own byte count, and for cells and structs their elements' bytes plus a fixed 104 for each; a table its variables', the other value classes their arrays' (and a categorical's names). With -file the variables are a MAT-file's, read as load reads them (matfile.py); one that cannot be read is listed from its header, its bytes its size times its class's element size.
 assignin:
     Python: core.py. Stores the value under the name in the base workspace, or in the calling function's, found by walking up Python's call stack to the compiled function that called this one.
 evalin:

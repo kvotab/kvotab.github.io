@@ -695,18 +695,69 @@ def clear(W, nargout, *args):
     return None
 
 
-@bi('who', ws=True)
-def who(W, nargout, *args):
-    names = sorted(W.keys(), key=lambda s: (s.lower(), s))
-    if args:
-        import fnmatch
-        pats = [sval(a, 'name', 'who') for a in args]
-        names = [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
+def _file_and_names(args, fn):
+    """(file or None, name patterns) from who's or whos's inputs: -file names a MAT-file."""
+    words = [sval(a, 'name', fn) for a in args]
+    path = None
+    if '-file' in words:
+        i = words.index('-file')
+        if i + 1 >= len(words):
+            raise err(f'MATLAB:{fn}:fileMissing', 'Give the name of a MAT-file after -file.', fn)
+        path = words[i + 1]
+        words = words[:i] + words[i + 2:]
+    return path, words
+
+
+async def _file_rows(path, pats, fn):
+    """The variables of a MAT-file: (name, value or None, size, class) for each one matching the
+    patterns; a variable that cannot be read is listed from its header."""
+    import fnmatch
+    import os
+    from .. import matfile as MF
+    from .iofun import abspath, _need_h5py, _fh_from_mat
+    p = abspath(path)
+    if not os.path.splitext(p)[1] and not os.path.isfile(p):
+        p += '.mat'
+    if not os.path.isfile(p):
+        raise err(f'MATLAB:{fn}:fileNotFound', f"Unable to read file '{path}'. No such file or directory.", fn)
+    try:
+        if MF.kind(p) == 'v73':
+            await _need_h5py(fn)
+        listed = MF.variables(p)
+        values, _ = MF.read(p, pats or None, make_fh=_fh_from_mat)
+    except MF.MatError as e:
+        raise err(f'MATLAB:{fn}:notMatFile', f"Unable to read MAT-file {path}: {e}.", fn)
+    except OSError as e:
+        raise err(f'MATLAB:{fn}:couldNotReadFile', f"Unable to read file '{path}': {e.strerror or e}.", fn)
+    rows = []
+    for name, size, cls in listed:
+        if pats and not any(fnmatch.fnmatch(name, q) for q in pats):
+            continue
+        v = values.get(name)
+        if v is not None:
+            rows.append((name, v, tuple(shape_of(v)), class_of(v)))
+        else:
+            rows.append((name, None, tuple(size) if size else None, cls or '?'))
+    return sorted(rows, key=lambda r: (r[0].lower(), r[0]))
+
+
+@bi('who', ws=True, aw=True)
+async def who(W, nargout, *args):
+    """who: the names of the variables in the workspace (matching the patterns given); who -file
+    name: those in a MAT-file."""
+    import fnmatch
+    path, pats = _file_and_names(args, 'who')
+    if path is not None:
+        names = [r[0] for r in await _file_rows(path, pats, 'who')]
+    else:
+        names = sorted(W.keys(), key=lambda s: (s.lower(), s))
+        if pats:
+            names = [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
     if nargout:
         return Cell.of_list([Char.of(n) for n in names], (len(names), 1))
     if not names:
         return None
-    lines = ['', 'Your variables are:', '']
+    lines = ['', f"Variables in the file {path}:" if path is not None else 'Your variables are:', '']
     row = ''
     for n in names:
         row += n + '  '
@@ -714,6 +765,66 @@ def who(W, nargout, *args):
     lines.append('')
     R.write('\n'.join(lines) + '\n')
     return None
+
+
+@bi('whos', ws=True, aw=True)
+async def whos(W, nargout, *args):
+    """whos: the variables of the workspace with their sizes, bytes, classes and attributes;
+    whos -file name: those of a MAT-file."""
+    import fnmatch
+    path, pats = _file_and_names(args, 'whos')
+    rows = []
+    if path is not None:
+        for n, v, size, cls in await _file_rows(path, pats, 'whos'):
+            if v is None:
+                item = {'double': 8, 'single': 4, 'logical': 1, 'char': 2, 'int8': 1, 'uint8': 1, 'int16': 2, 'uint16': 2,
+                        'int32': 4, 'uint32': 4, 'int64': 8, 'uint64': 8}.get(cls, 0)
+                sh = size or (0, 0)
+                rows.append((n, sh, item * int(np.prod(sh)) if size else 0, cls, ''))
+                continue
+            rows.append((n, size, _bytes(v), cls, ', '.join(_attributes(v, False))))
+    else:
+        names = sorted(W.keys(), key=lambda s: (s.lower(), s))
+        if pats:
+            names = [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
+        for n in names:
+            v = W[n]
+            rows.append((n, tuple(shape_of(v)), _bytes(v), class_of(v), ', '.join(_attributes(v, n in W.gnames))))
+    if nargout:
+        s = Struct((len(rows), 1), {k: np.empty((len(rows), 1), object) for k in ('name', 'size', 'bytes', 'class', 'global', 'sparse', 'complex', 'nesting', 'persistent')})
+        for i, (n, sh, b, c, at) in enumerate(rows):
+            s.f['name'][i, 0] = Char.of(n)
+            s.f['size'][i, 0] = np.array([[float(d) for d in sh]])
+            s.f['bytes'][i, 0] = float(b)
+            s.f['class'][i, 0] = Char.of(c)
+            s.f['global'][i, 0] = 'global' in at
+            s.f['sparse'][i, 0] = 'sparse' in at
+            s.f['complex'][i, 0] = 'complex' in at
+            s.f['nesting'][i, 0] = Struct.scalar({'function': Char.of(''), 'level': 1.0})
+            s.f['persistent'][i, 0] = False
+        return s
+    if not rows:
+        return None
+    wn = max(4, max(len(r[0]) for r in rows))
+    wb = max(5, max(len(str(r[2])) for r in rows))
+    wc = max(10, max(len(r[3]) + 2 for r in rows))
+    lines = [f"  {'Name'.ljust(wn)}      {'Size'.ljust(16)}{'Bytes'.rjust(wb)}  {'Class'.ljust(wc)}Attributes", '']
+    for n, sh, b, c, at in rows:
+        lines.append(f"  {n.ljust(wn)}      {'x'.join(str(d) for d in sh).ljust(16)}{str(b).rjust(wb)}  {c.ljust(wc)}{at}")
+    lines.append('')
+    R.write('\n'.join(lines) + '\n')
+    return None
+
+
+def _attributes(v, is_global):
+    attrs = []
+    if is_global:
+        attrs.append('global')
+    if type(v) is Sparse:
+        attrs.append('sparse')
+    if type(v) is complex or (type(v) in (np.ndarray, Sparse) and v.dtype.kind == 'c'):
+        attrs.append('complex')
+    return attrs
 
 
 def _bytes(v):
@@ -737,50 +848,14 @@ def _bytes(v):
     if t is Sparse:
         # CSC storage: values and row indices for each nonzero (at least one), a pointer per column and one more
         return int(max(v.nnz, 1) * (v.m.dtype.itemsize + 8) + (v.shape[1] + 1) * 8)
+    from ..vobj import VObj
+    if isinstance(v, VObj):
+        # a table: its variables; the other value classes: their elements' arrays (and a categorical's names)
+        if hasattr(v, 'vars'):
+            return int(sum(_bytes(x) for x in v.vars) + sum(2 * len(n) for n in v.names))
+        n = sum(int(np.asarray(getattr(v, k)).nbytes) for k in v.ARRAYS)
+        return int(n + sum(2 * len(c) for c in getattr(v, 'cats', [])))
     return 8
-
-
-@bi('whos', ws=True)
-def whos(W, nargout, *args):
-    names = sorted(W.keys(), key=lambda s: (s.lower(), s))
-    if args:
-        import fnmatch
-        pats = [sval(a, 'name', 'whos') for a in args]
-        names = [n for n in names if any(fnmatch.fnmatch(n, p) for p in pats)]
-    rows = []
-    for n in names:
-        v = W[n]
-        sz = 'x'.join(str(d) for d in shape_of(v))
-        attrs = []
-        if n in W.gnames:
-            attrs.append('global')
-        if type(v) is Sparse:
-            attrs.append('sparse')
-        if type(v) is complex or (type(v) in (np.ndarray, Sparse) and v.dtype.kind == 'c'):
-            attrs.append('complex')
-        rows.append((n, sz, _bytes(v), class_of(v), ', '.join(attrs)))
-    if nargout:
-        s = Struct((len(rows), 1), {k: np.empty((len(rows), 1), object) for k in ('name', 'size', 'bytes', 'class', 'global', 'sparse', 'complex', 'nesting', 'persistent')})
-        for i, (n, sz, b, c, at) in enumerate(rows):
-            s.f['name'][i, 0] = Char.of(n)
-            s.f['size'][i, 0] = np.array([[float(d) for d in shape_of(W[n])]])
-            s.f['bytes'][i, 0] = float(b)
-            s.f['class'][i, 0] = Char.of(c)
-            s.f['global'][i, 0] = 'global' in at
-            s.f['sparse'][i, 0] = 'sparse' in at
-            s.f['complex'][i, 0] = 'complex' in at
-            s.f['nesting'][i, 0] = Struct.scalar({'function': Char.of(''), 'level': 1.0})
-            s.f['persistent'][i, 0] = False
-        return s
-    if not rows:
-        return None
-    wn = max(4, max(len(r[0]) for r in rows))
-    lines = [f"  {'Name'.ljust(wn)}      {'Size'.ljust(16)}{'Bytes'.rjust(5)}  {'Class'.ljust(10)}Attributes", '']
-    for n, sz, b, c, at in rows:
-        lines.append(f"  {n.ljust(wn)}      {sz.ljust(16)}{str(b).rjust(5)}  {c.ljust(10)}{at}")
-    lines.append('')
-    R.write('\n'.join(lines) + '\n')
-    return None
 
 
 @bi('assignin', ws=True)

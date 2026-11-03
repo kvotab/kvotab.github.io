@@ -556,6 +556,30 @@ open(path('bad.mat'), 'wb').write(bytes(raw))
 W, out = run("L = load('bad.mat'); f = fieldnames(L)';")
 check('damaged object data: the table is left out with a warning saying why, x loads', val(W['f']) == ['x'] and "'T'" in out and 'version' in out, (val(W['f']), out[-300:]))
 
+# ---- who -file and whos -file --------------------------------------------------------------------------
+W, out = run(OBJS + """save('listed.mat', 'T', 't', 'x', 's'); clear('-regexp', '^(?!x$).*');
+whos -file listed.mat
+who -file listed
+s = whos('-file', 'listed.mat'); names = {s.name}; sizes = {s.size}; classes = {s.class}; bytes = [s.bytes];
+w = who('-file', 'listed.mat', 't*'); wx = whos('-file', 'listed.mat', 'x'); xb = wx.bytes;""")
+check("whos -file lists a MAT-file's variables, sorted, with sizes and classes",
+      val(W['names']) == ['s', 'T', 't', 'x'] and val(W['classes']) == ['string', 'table', 'datetime', 'double']
+      and [np.asarray(x).reshape(-1).tolist() for x in W['sizes'].a.reshape(-1)] == [[2, 2], [3, 7], [1, 3], [3, 3]], (val(W['names']), val(W['classes'])))
+check('... its printed table names them; who -file the names alone', 'Name' in out and 'datetime' in out and 'Variables in the file listed:' in out
+      and '  T  ' in out, out[-600:])
+check("... wildcards (as case-sensitive as names); a double's bytes", val(W['w']) == ['t'] and W['xb'] == 72, (val(W['w']), W['xb']))
+W, out = run("""whos -file bad.mat
+s = whos('-file', 'bad.mat'); names = {s.name}; classes = {s.class};""")
+check('whos -file lists a variable it cannot read from its header (the damaged table), the rest as read',
+      val(W['names']) == ['T', 'x'] and val(W['classes'])[0] == 'table', (val(W['names']), val(W['classes'])))
+for code, words in (("whos -file nosuch.mat", 'No such file'), ("whos -file", 'name of a MAT-file'), ("who -file notmat.txt", 'not a MAT-file')):
+    with open(path('notmat.txt'), 'w') as fh:
+        fh.write('plain text\n')
+    W, out = run(f"try\n{code}\nm = 'none';\ncatch e\nm = e.message;\nend")
+    check(f'{code}: an error saying why', words in val(W['m']), val(W['m']))
+W, out = run("x = 1; y = int8([1 2]); whos; s = whos; n = numel(s); c = who('y');")
+check('whos and who of the workspace as before', 'int8' in out and W['n'] == 2 and val(W['c']) == ['y'], out[-200:])
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f'\n{checks[0] - len(failed)} of {checks[0]} checks passed')
 sys.exit(1 if failed else 0)
