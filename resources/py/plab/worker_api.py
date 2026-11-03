@@ -177,7 +177,7 @@ def _minmax(v):
             a = a[np.isfinite(a)]
             if a.size:
                 return [float(a.min()), float(a.max())]
-        if type(v) is float:
+        if type(v) is float and math.isfinite(v):
             return [v, v]
         if type(v) is Sparse and v.dtype.kind in 'fb' and numel(v):
             a = v.m.data.astype(float)

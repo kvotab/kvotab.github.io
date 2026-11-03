@@ -349,6 +349,13 @@
       const c = text.indexOf('\x03', b);
       if (b < 0 || c < 0) { parent.append(text.slice(a)); break; }
       const target = text.slice(a + 1, b);
+      if (target.startsWith('help:')) {
+        // a function named in help text: a click shows its help
+        const name = target.slice(5);
+        parent.append(el('a', { href: '#', class: 'pl-helplink', 'data-help': name, 'data-run': `help ${name}` }, text.slice(b + 1, c)));
+        i = c + 1;
+        continue;
+      }
       const k = target.lastIndexOf(':');
       const path = target.slice(0, k), line = target.slice(k + 1);
       const link = el('a', { href: '#', 'data-path': path, 'data-line': line }, text.slice(b + 1, c));

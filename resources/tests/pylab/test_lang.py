@@ -585,6 +585,28 @@ h = help_for('ode113')
 C('help ode113: How it works after the call forms, wrapped for the Command Window; apart for the Help panel',
   '\n How it works\n' in h['text'] and 'Shampine and Gordon' in h['text'] and max(len(l) for l in h['text'].split('How it works')[1].split('\n')
   if not l.startswith('      ')) <= 76 and 'How it works' not in h['base'] and any('pre' in b for b in h['how']), h.get('how'))
+# links and See also
+from plab.help import see_also, strip_links  # noqa: E402
+h = help_for('mean')
+lk = h['linked']
+C('help mean: functions it names are links, ordinary words and its own name are not',
+  '\x01help:std\x02std\x03' in lk and '\x01help:fitdist\x02' in lk and '\x01help:mean\x02' not in lk and 'so too median' in strip_links(lk)
+  and '\x01help:median\x02median\x03,' not in lk.split('See also')[0], lk[:400])
+C('help mean: See also at the end, its names links, the same text plain in text',
+  h['text'].rstrip().split('\n')[-1].startswith(' See also: ') and lk.rstrip().split('\n')[-1].count('\x01help:') == len(h['see']) >= 3
+  and strip_links(lk) == h['text'], h['see'])
+C('help: every entry has a See also list of other functions that have help',
+  all(see_also(n) and all(m in HELP and m != n for m in see_also(n)) for n in HELP), [n for n in HELP if not see_also(n)][:5])
+C('help: See also lines wrap within the Command Window', all(len(l) <= 76 for n in ('plot', 'sum', 'sobolindices', 'datetime') for l in help_for(n)['text'].split(' See also')[1].split('\n')), True)
+C('help sin: its siblings', help_for('sin')['see'][:3] == ['cos', 'tan', 'sinh'], help_for('sin')['see'])
+import re as _re  # noqa: E402
+_src = open(os.path.join(HERE, '..', '..', 'js', 'pylab-help.js')).read()
+_listed = set()
+for _t, _names in _re.findall(r"\['([^']+)', '([^']+)'\]", _src[_src.index('const CATEGORIES'):_src.index('class HelpView')]):
+    _listed |= set(_names.split())
+C('the Help panel lists every function and keyword under a category, and nothing else', not (set(HELP) ^ _listed), sorted(set(HELP) ^ _listed))
+case('help in a program prints links; with an output, and in evalc, plain text', "t = help('sum'); a = any(t == char(1)); e = evalc('help sum'); b = any(e == char(1)); c = contains(e, 'See also: ');",
+     want={'a': False, 'b': False, 'c': True})
 C('help: every builtin says how PyLAB computes it, starting with the Python that does',
   set(HOW) == set(R.BUILTINS) and all(HOW[n][0][0] == 'p' and HOW[n][0][1].startswith('Python: ') for n in HOW),
   sorted(set(HOW) ^ set(R.BUILTINS)) or [n for n in HOW if not HOW[n][0][1].startswith('Python: ')])
@@ -681,5 +703,26 @@ case('subplots', 'close all; subplot(2,1,1); a1 = gca; subplot(2,1,2); a2 = gca;
 case('legend and labels', "close all; plot(1:3); hold on; plot(2:4); legend('a', 'b'); title('T'); t = get(get(gca, 'Title'), 'String');", want={'t': 'T'})
 case('contour matrix', 'close all; C = contourc(peaks(10), [0 0]); ok = C(1,1) == 0 && C(2,1) > 0;', want={'ok': True})
 case('surface data', "close all; h = surf(peaks(5)); z = size(get(h, 'ZData'));", want={'z': [[5, 5]]})
+
+# ---- what the page reads is JSON it can parse: no NaN or Infinity in it ----------------------------
+from plab import worker_api as WA  # noqa: E402
+import json as _json  # noqa: E402
+_dbg = R.DEBUGGER
+R.DEBUGGER = WA.Debugger()
+try:
+    run("a = nan; b = Inf; c = [1 NaN -Inf]; d = -Inf; e = single(NaN); g = {NaN}; h = datetime(2026,1,1) + [0 NaN]; k = sparse([NaN 0 1]); t = table([NaN; 1]);")
+
+    def _strict(txt):
+        def bad(c):
+            raise ValueError(c)
+        try:
+            _json.loads(txt, parse_constant=bad)
+            return True
+        except ValueError:
+            return False
+    C('the Workspace of NaN and Inf values is strict JSON (their range left out)', _strict(WA.workspace_json()), WA.workspace_json()[:200])
+    C('the Variable editor of NaN and Inf values is strict JSON', all(_strict(WA.var_view(n)) for n in 'abcdeghkt'), [n for n in 'abcdeghkt' if not _strict(WA.var_view(n))])
+finally:
+    R.DEBUGGER = _dbg
 
 sys.exit(C.done())

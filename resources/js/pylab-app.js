@@ -604,7 +604,7 @@
       if (/^help(\s|$)/.test(t)) {
         const name = t.split(/\s+/)[1] || '';
         const h = await PL.engine.call('help_text', name).catch(() => null);
-        if (h) this.cmd.write(`${h.text}\n`, 'out');
+        if (h) this.cmd.write(`${h.linked || h.text}\n`, 'out');
         return null;
       }
       let res = null;

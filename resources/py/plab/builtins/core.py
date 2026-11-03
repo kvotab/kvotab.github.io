@@ -845,7 +845,8 @@ async def evalc(W, nargout, *args):
         text = R.take_output()
     finally:
         R.OUT_HOOK[0] = hook
-    return Char.of(text)
+    # links (to a file's line, to a function's help) as their text
+    return Char.of(re.sub('\x01[^\x02]*\x02', '', text).replace('\x03', ''))
 
 
 @bi('feval', ws=True, aw=True, nout=99, arr=False)
@@ -1066,7 +1067,8 @@ def help_(nargout, *args):
     h = help_for(sval(args[0], 'name', 'help') if args else '')
     if nargout:
         return Char.of('' if h['kind'] == 'missing' else h['text'])
-    R.write(h['text'] if h['text'].endswith('\n') else h['text'] + '\n')
+    t = h.get('linked') or h['text']
+    R.write(t if t.endswith('\n') else t + '\n')
     return None
 
 

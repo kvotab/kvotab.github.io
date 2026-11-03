@@ -11,7 +11,7 @@
 
   const CATEGORIES = [
     ['The language', 'if elseif else for while switch case otherwise try catch function end break continue return global persistent classdef'],
-    ['Making arrays', 'zeros ones eye rand randn randi randperm rng linspace logspace colon magic diag repmat repelem bsxfun reshape cat horzcat vertcat meshgrid ndgrid true false pi eps Inf NaN i j intmax intmin realmax realmin flintmax blkdiag toeplitz hankel vander hilb invhilb pascal compan wilkinson rosser accumarray'],
+    ['Making arrays', 'zeros ones eye rand randn randi randperm rng linspace logspace colon magic diag repmat repelem bsxfun reshape cat horzcat vertcat meshgrid ndgrid true false pi eps Inf NaN i j intmax intmin realmax realmin flintmax blkdiag toeplitz hankel vander hilb invhilb pascal compan wilkinson rosser accumarray inf nan'],
     ['Size and shape', 'size numel length ndims isempty isscalar isvector isrow iscolumn ismatrix issquare squeeze permute ipermute shiftdim circshift flip fliplr flipud rot90 tril triu kron sub2ind ind2sub find nnz nonzeros'],
     ['Arithmetic', 'plus minus times rdivide ldivide mtimes mrdivide mldivide power mpower uminus uplus transpose ctranspose abs sign sqrt nthroot hypot exp expm1 log log1p log2 log10 pow2 nextpow2 reallog realpow realsqrt floor ceil round fix mod rem idivide bitand bitor bitxor bitshift bitcmp bitget bitset gcd lcm factorial nchoosek primes isprime factor perms rat rats'],
     ['Trigonometry', 'sin cos tan sec csc cot asin acos atan atan2 asec acsc acot sinh cosh tanh sech csch coth asinh acosh atanh asech acsch acoth sind cosd tand secd cscd cotd asind acosd atand asecd acscd acotd atan2d sinpi cospi deg2rad rad2deg'],
@@ -22,14 +22,14 @@
     ['Probability distributions', 'makedist fitdist mle pdf cdf icdf random truncate paramci negloglik normfit unifit binofit mvnpdf mvncdf mvnrnd mvtpdf mvtcdf mvtrnd randsample datasample normpdf normcdf norminv normrnd normstat normlike lognpdf logncdf logninv lognrnd lognstat lognfit lognlike exppdf expcdf expinv exprnd expstat expfit explike gampdf gamcdf gaminv gamrnd gamstat gamfit gamlike betapdf betacdf betainv betarnd betastat betafit betalike wblpdf wblcdf wblinv wblrnd wblstat wblfit wbllike unifpdf unifcdf unifinv unifrnd unifstat unidpdf unidcdf unidinv unidrnd unidstat binopdf binocdf binoinv binornd binostat poisspdf poisscdf poissinv poissrnd poissstat poissfit geopdf geocdf geoinv geornd geostat nbinpdf nbincdf nbininv nbinrnd nbinstat nbinfit nbinlike hygepdf hygecdf hygeinv hygernd hygestat chi2pdf chi2cdf chi2inv chi2rnd chi2stat ncx2pdf ncx2cdf ncx2inv ncx2rnd ncx2stat tpdf tcdf tinv trnd tstat nctpdf nctcdf nctinv nctrnd nctstat fpdf fcdf finv frnd fstat ncfpdf ncfcdf ncfinv ncfrnd ncfstat evpdf evcdf evinv evrnd evstat evfit evlike gevpdf gevcdf gevinv gevrnd gevstat gevfit gevlike gppdf gpcdf gpinv gprnd gpstat gpfit gplike raylpdf raylcdf raylinv raylrnd raylstat raylfit'],
     ['Sensitivity analysis and sampling', 'lhsdesign lhsnorm sobolset haltonset net scramble src srrc pcc prcc firstorderindex easi deltamoment mutualinfo pawn discrepancyshares rsa morrisdesign morrisindices soboldesign sobolindices efastdesign efastindices rbdfastdesign rbdfastindices ffdesign ffindices dgsmdesign dgsmindices radialdesign radialindices shapleydesign shapleyindices'],
     ['Hypothesis tests', 'ttest ttest2 ztest vartest vartest2 vartestn signtest signrank ranksum kstest kstest2 lillietest jbtest adtest chi2gof runstest anova1 anova2 kruskalwallis friedman multcompare crosstab fishertest'],
-    ['Linear algebra', 'inv det trace rank norm vecnorm cond rcond condest eig eigs svd svds qr lu chol schur hess pinv null orth rref expm logm sqrtm funm cross dot linsolve balance issymmetric ishermitian istril istriu isbanded bandwidth pcg bicg bicgstab cgs gmres minres qmr tfqmr lsqr cholupdate qrupdate qrinsert qrdelete qz ordschur ordeig polyeig givens planerot isdiag'],
-    ['Sparse matrices', 'sparse full issparse nzmax spalloc speye spones sprand sprandn spzeros spdiags spfun'],
+    ['Linear algebra', 'inv det trace rank norm vecnorm cond rcond condest eig eigs svd svds qr lu chol schur hess pinv null orth rref expm logm sqrtm funm cross dot linsolve balance issymmetric ishermitian istril istriu isbanded bandwidth pcg bicg bicgstab cgs gmres minres qmr tfqmr lsqr cholupdate qrupdate qrinsert qrdelete qz ordschur ordeig polyeig givens planerot isdiag normest gsvd ordqz rsf2csf gallery'],
+    ['Sparse matrices', 'sparse full issparse nzmax spalloc speye spones sprand sprandn spzeros spdiags spfun spconvert sprandsym spaugment spparms spy amd colamd symamd symrcm dmperm etree sprank ichol ilu'],
     ['Special functions', 'gamma gammaln gammainc gammaincinv beta betaln betainc betaincinv erf erfc erfinv erfcinv erfcx expint psi besselj bessely besseli besselk besselh airy ellipke ellipj legendre'],
     ['Polynomials, filters and transforms', 'polyfit polyval polyvalm roots poly conv deconv polyder polyint residue filter filter2 conv2 convn fft ifft fft2 ifft2 fftn ifftn fftshift ifftshift detrend gradient del2'],
     ['Interpolation', 'interp1 interp2 interp3 interpn griddata griddedInterpolant scatteredInterpolant spline pchip makima ppval mkpp unmkpp'],
     ['Optimization', 'fzero fminbnd fminsearch fminunc fmincon fsolve lsqnonlin lsqcurvefit lsqlin lsqnonneg linprog intlinprog quadprog fminimax fgoalattain optimoptions resetoptions optimset optimget optimplotfval optimplotx optimplotfirstorderopt optimplotfunccount optimplotconstrviolation optimplotstepsize optimplotresnorm'],
     ['Apps', 'appdesigner uifigure uibutton uilabel uieditfield uitextarea uidropdown uilistbox uicheckbox uiswitch uislider uispinner uiknob uigauge uilamp uiradiobutton uitogglebutton uiimage uihyperlink uigridlayout uiaxes uialert uiconfirm uiprogressdlg createCallbackFcn registerApp runStartupFcn'],
-    ['Classes', 'classdef properties methods ismethod isprop isobject isvalid addlistener listener notify'],
+    ['Classes', 'classdef properties methods ismethod isprop isobject isvalid addlistener listener notify plabSuperCall'],
     ['Mapping', 'deg2km km2deg deg2nm nm2deg deg2sm sm2deg km2nm nm2km km2sm sm2km nm2sm sm2nm km2rad rad2km unitsratio dms2degrees degrees2dms dm2degrees degrees2dm wrapTo180 wrapTo360 wrapToPi wrapTo2Pi referenceEllipsoid wgs84Ellipsoid referenceSphere earthRadius distance azimuth reckon track1 track2 gcwaypts meridianarc antipode areaint areaquad interpm geodetic2ecef ecef2geodetic geodetic2enu enu2geodetic geodetic2ned ned2geodetic geodetic2aer aer2geodetic ecef2enu enu2ecef ecef2ned ned2ecef ecef2aer aer2ecef enu2aer aer2enu ned2aer aer2ned inpolygon polyarea ispolycw poly2cw poly2ccw polysplit polyjoin polyxpoly projcrs geocrs projfwd projinv axesm worldmap setm getm gcm defaultm ismap framem gridm mlabel plabel tightmap showaxes mfwdtran minvtran plotm linem scatterm textm patchm fillm surfm pcolorm contourm geoshow mapshow geoaxes geoplot geoscatter geobubble geolimits geobasemap addCustomBasemap removeCustomBasemap georefcells georefpostings georasterref maprefcells maprefpostings geographicToIntrinsic worldToIntrinsic geointerp shaperead shapeinfo shapewrite readgeoraster geotiffread geotiffinfo'],
     ['Symbolic math', 'sym syms str2sym symfun argnames formula vpa digits subs simplify simplifyFraction expand factor collect combine horner rewrite partfrac numden coeffs poly2sym sym2poly children has lhs rhs isolate finverse compose diff int limit taylor series symsum symprod jacobian hessian gradient divergence curl laplacian solve vpasolve dsolve laplace ilaplace fourier ifourier ztrans iztrans assume assumeAlso assumptions isAlways piecewise heaviside dirac kroneckerDelta sinc lambertw zeta latex pretty char double matlabFunction fplot fimplicit fplot3 fsurf'],
     ['Integration', 'integral integral2 integral3 quadgk quad quadl quad2d dblquad triplequad'],
@@ -44,12 +44,15 @@
     ['Geometry', 'delaunay convhull voronoi voronoin tsearchn dsearchn inpolygon polyarea rectint triplot trisurf trimesh'],
     ['Images, sound and the web', 'imread imwrite imfinfo image imagesc audioread audiowrite audioinfo sound soundsc webread webwrite websave weboptions web'],
     ['Dates and time', 'tic toc pause cputime clock now date datenum datestr datevec etime weekday eomday addtodate leapyear'],
+    ['Dates and durations', 'datetime NaT isdatetime isnat year quarter month week day hour minute second ymd hms timeofday isweekend isbetween posixtime juliandate exceltime convertTo tzoffset dateshift between caldiff duration isduration years days hours minutes seconds milliseconds calendarDuration iscalendarduration calyears calquarters calmonths calweeks caldays'],
+    ['Categorical arrays', 'categorical categories iscategorical isordinal isprotected isundefined iscategory countcats addcats removecats mergecats renamecats reordercats setcats summary'],
+    ['Tables and timetables', 'table timetable istable istimetable istabular height width head tail vartype timerange table2array table2cell table2struct struct2table cell2table array2table table2timetable timetable2table addvars removevars movevars renamevars splitvars mergevars rows2vars convertvars varfun rowfun groupsummary innerjoin outerjoin join sortrows retime synchronize isregular readtable writetable summary'],
     ['Images and colours', 'imread imwrite imfinfo image imagesc imshow im2double im2single im2uint8 im2uint16 rgb2gray im2gray cmap2gray mat2gray rgb2hsv hsv2rgb rgb2lightness ind2rgb ind2gray gray2ind rgb2ind imsplit'],
     ['Files and folders', 'pwd cd dir ls what which type edit open run mkdir rmdir delete copyfile movefile zip unzip gzip gunzip tar untar fullfile fileparts filesep pathsep tempdir tempname isfile isfolder isdir addpath rmpath path genpath rehash fopen fclose fgetl fgets fread fwrite fprintf fscanf feof ferror frewind ftell fseek fileread readlines writelines textscan textread readmatrix jsondecode jsonencode writematrix csvread csvwrite dlmread dlmwrite readcell writecell load save matfile importdata'],
     ['Line and area plots', 'plot plot3 line semilogx semilogy loglog fplot ezplot scatter scatter3 bubblechart bubblechart3 bubblesize bubblelim bar barh histogram hist area fill fill3 patch stairs stem errorbar pie polarplot polarscatter polarbubblechart polaraxes polar quiver quiver3 compass feather rose pareto stem3 comet comet3 bar3 bar3h histogram2 pie3 ribbon'],
     ['Statistical plots', 'boxplot gscatter gplotmatrix plotmatrix scatterhist histfit normplot qqplot cdfplot lsline refline refcurve'],
-    ['Surfaces, contours and images', 'contour contourf contour3 contourc clabel fcontour ezcontour surf surfc surfl mesh meshc meshz waterfall pcolor surface fsurf fmesh ezsurf ezmesh image imagesc imshow peaks sphere cylinder ellipsoid shading view camzoom camva light camlight lighting material colorbar colormap clim caxis alpha hidden isosurface slice stream2 stream3 streamline'],
-    ['Figures and axes', 'figure clf close gcf gca gco groot axes polaraxes cla subplot tiledlayout nexttile hold ishold newplot axis xlim ylim zlim xticks yticks zticks xticklabels yticklabels zticklabels xtickangle ytickangle grid box daspect pbaspect yyaxis colororder title subtitle sgtitle suptitle xlabel ylabel zlabel legend text annotation set get findobj findall allchild ancestor copyobj gobjects ishandle ishghandle isgraphics isvalid isprop drawnow refresh shg getframe frame2im im2frame movie saveas exportgraphics print savefig openfig hgsave hgload ginput waitforbuttonpress zoom pan rotate3d datacursormode brush linkaxes linkprop whitebg camorbit campos'],
+    ['Surfaces, contours and images', 'contour contourf contour3 contourc clabel fcontour ezcontour surf surfc surfl mesh meshc meshz waterfall pcolor surface fsurf fmesh ezsurf ezmesh image imagesc imshow peaks sphere cylinder ellipsoid shading view camzoom camva light camlight lighting material colorbar colormap clim caxis alpha hidden isosurface slice stream2 stream3 streamline coneplot streamtube contourslice'],
+    ['Figures and axes', 'figure clf close gcf gca gco groot axes polaraxes cla subplot tiledlayout nexttile hold ishold newplot axis xlim ylim zlim xticks yticks zticks xticklabels yticklabels zticklabels xtickangle ytickangle grid box daspect pbaspect yyaxis colororder title subtitle sgtitle suptitle xlabel ylabel zlabel legend text annotation set get findobj findall allchild ancestor copyobj gobjects ishandle ishghandle isgraphics isvalid isprop drawnow refresh shg getframe frame2im im2frame movie saveas exportgraphics print savefig openfig hgsave hgload ginput waitforbuttonpress zoom pan rotate3d datacursormode brush linkaxes linkprop whitebg camorbit campos camtarget camup camroll'],
     ['User interfaces', 'uicontrol uipanel uibuttongroup uitable uitabgroup uitab uimenu uicontextmenu uitoolbar uipushtool uitoggletool gcbo gcbf closereq uiwait uiresume waitfor guidata setappdata getappdata isappdata rmappdata msgbox errordlg warndlg helpdlg questdlg inputdlg listdlg menu uigetfile uiputfile uigetdir uisetcolor waitbar dialog printdlg printpreview helpwin doc timer start stop wait timerfind timerfindall movegui uistack'],
     ['Colormaps', 'parula viridis turbo jet gray hot cool spring summer autumn winter bone copper pink hsv lines prism flag white colorcube'],
   ];
@@ -58,6 +61,11 @@
     constructor(app) {
       this.app = app;
       this.el = el('div', { class: 'pl-help' });
+      // a function named in a help text, or in its See also line: its help here
+      this.el.addEventListener('click', (ev) => {
+        const a = ev.target.closest('[data-help]');
+        if (a) { ev.preventDefault(); this.show(a.dataset.help); }
+      });
       this.home();
     }
 
@@ -114,13 +122,28 @@
       const back = el('button', { class: 'pl-btn', type: 'button' }, '← All functions');
       back.addEventListener('click', () => this.home());
       const pre = el('pre');
-      pre.textContent = h.base || h.text;
+      PL.appendLinked(pre, h.base_linked || h.linked || h.base || h.text);
       const parts = [back, el('h2', null, name), pre];
       // how PyLAB computes it, as paragraphs (the Command Window has them wrapped into its text)
-      if (h.how && h.how.length) {
-        const how = el('section', { class: 'pl-how' }, el('h3', null, 'How it works'));
-        for (const b of h.how) how.append(b.pre !== undefined ? el('pre', null, b.pre) : el('p', null, b.p));
-        parts.push(how);
+      const how = h.how_linked || h.how;
+      if (how && how.length) {
+        const sec = el('section', { class: 'pl-how' }, el('h3', null, 'How it works'));
+        for (const b of how) {
+          if (b.pre !== undefined) { sec.append(el('pre', null, b.pre)); continue; }
+          const p = el('p');
+          PL.appendLinked(p, b.p);
+          sec.append(p);
+        }
+        parts.push(sec);
+      }
+      // related functions, each a link
+      if (h.see && h.see.length) {
+        const see = el('p', { class: 'pl-see' }, el('strong', null, 'See also: '));
+        h.see.forEach((n, i) => {
+          if (i) see.append(', ');
+          see.append(el('a', { href: '#', class: 'pl-helplink', 'data-help': n }, n));
+        });
+        parts.push(see);
       }
       if (h.kind === 'file') {
         const open = el('button', { class: 'pl-btn', type: 'button' }, 'Open in the Editor');

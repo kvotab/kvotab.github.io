@@ -487,6 +487,13 @@ def cat(nargout, *args):
     nargchk(args, 1, None, 'cat')
     d = ival(args[0], 'dimension', 'cat')
     vals = list(args[1:])
+    if d < 1:
+        raise err('MATLAB:catenate:invalidDimension', 'Dimension argument must be a positive integer.', 'cat')
+    if d > 32:
+        # a dimension past the 32 an array has here: one value is itself, more cannot be put side by side
+        if len([v for v in vals if not (type(v) is np.ndarray and v.shape == (0, 0))]) <= 1:
+            return next((v for v in vals if not (type(v) is np.ndarray and v.shape == (0, 0))), EMPTY())
+        raise err('MATLAB:catenate:tooManyDims', 'Arrays have at most 32 dimensions here.', 'cat')
     if d <= 2:
         return _cat(d - 1, vals)
     # along a higher dimension
