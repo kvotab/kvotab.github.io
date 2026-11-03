@@ -929,10 +929,6 @@ def _bar(args, nargout, horizontal):
         X = np.arange(1, n + 1, dtype=float)
     ax = newplot(ax)
     hs = []
-    dx = float(np.min(np.diff(np.sort(X)))) if X.size > 1 else 1.0
-    bottoms_pos = np.zeros(n)
-    bottoms_neg = np.zeros(n)
-    group_w = width * dx
     for j in range(k):
         h = Series(ax, 'bar')
         y = Y[:, j]
@@ -940,25 +936,8 @@ def _bar(args, nargout, horizontal):
         h.props['YData'] = y.reshape(1, -1)
         h.props['BarWidth'] = width
         h.props['Horizontal'] = horizontal
-        if layout == 'stacked':
-            base = np.where(y >= 0, bottoms_pos, bottoms_neg)
-            top = base + y
-            bottoms_pos = np.where(y >= 0, top, bottoms_pos)
-            bottoms_neg = np.where(y < 0, top, bottoms_neg)
-            xs = X
-            w = group_w
-        else:
-            base = np.zeros(n)
-            top = y
-            if k > 1:
-                w = group_w / k * 0.9 if True else group_w / k
-                off = (j - (k - 1) / 2) * (group_w / k)
-                xs = X + off
-                w = group_w / k * 0.9
-            else:
-                xs = X
-                w = group_w
-        h.extra.update(xs=xs.astype(float), bottom=base.astype(float), top=top.astype(float), width=float(w))
+        h.group = hs
+        h.layout = layout
         c = color if color is not None else tuple(float(v) for v in COLOR_ORDER[(int(ax.props['ColorOrderIndex']) - 1) % 7])
         if color is None:
             ax.next_color()
@@ -966,10 +945,60 @@ def _bar(args, nargout, horizontal):
         h.extra['fc'] = c
         h.props['EdgeColor'] = (0.0, 0.0, 0.0)
         hs.append(h)
+    bar_layout(hs[0])
     for h in hs:
         apply_props(h, pairs)
     ax.touch()
     return handles_out(hs, col=False) if nargout else None
+
+
+def _xy_pairs(h):
+    """A series' XData and YData as vectors of one length (the shorter's)."""
+    y = np.asarray(h.props['YData'], float).reshape(-1)
+    x = np.asarray(h.props['XData'], float).reshape(-1)
+    if x.size != y.size:
+        x = x[:y.size] if x.size > y.size else np.arange(1, y.size + 1, dtype=float)
+    return x, y
+
+
+def bar_layout(h):
+    """Where the bars of h's group stand: side by side about their x (or
+    stacked), a group as wide as BarWidth of the spacing of x, from
+    BaseValue. Worked out when they are made and again when XData, YData,
+    BarWidth, BaseValue or Horizontal changes."""
+    hs = [g for g in getattr(h, 'group', None) or [h] if g.valid]
+    k = len(hs)
+    stacked = getattr(h, 'layout', 'grouped') == 'stacked'
+    pos = neg = None
+    for j, g in enumerate(hs):
+        X, y = _xy_pairs(g)
+        n = y.size
+        dx = float(np.min(np.diff(np.sort(X)))) if X.size > 1 else 1.0
+        dx = dx if dx > 0 else 1.0
+        group_w = float(g.props['BarWidth']) * dx
+        base_value = float(np.asarray(g.props['BaseValue'], float).reshape(-1)[0]) if numel(g.props['BaseValue']) else 0.0
+        if stacked:
+            if pos is None or pos.size != n:
+                pos = np.full(n, base_value)
+                neg = np.full(n, base_value)
+            base = np.where(y >= 0, pos, neg)
+            top = base + y
+            pos = np.where(y >= 0, top, pos)
+            neg = np.where(y < 0, top, neg)
+            xs, w = X, group_w
+        else:
+            base = np.full(n, base_value)
+            top = y
+            if k > 1:
+                xs = X + (j - (k - 1) / 2) * (group_w / k)
+                w = group_w / k * 0.9
+            else:
+                xs, w = X, group_w
+        g.extra.update(xs=np.asarray(xs, float), bottom=base.astype(float), top=top.astype(float), width=float(w))
+        g.touch()
+
+
+Series.RELAYOUT['bar'] = (('XData', 'YData', 'BarWidth', 'BaseValue', 'Horizontal'), bar_layout)
 
 
 @bi('bar', arr=False)
@@ -1104,24 +1133,40 @@ def area(nargout, *args):
         X = np.arange(1, Y.shape[0] + 1, dtype=float)
     ax = newplot(ax)
     hs = []
-    cum = np.full(Y.shape[0], base)
     for j in range(Y.shape[1]):
         h = Series(ax, 'area')
-        top = cum + Y[:, j] - (base if j == 0 else 0)
-        if j == 0:
-            top = Y[:, j]
         h.props['XData'] = X.reshape(1, -1)
         h.props['YData'] = Y[:, j].reshape(1, -1)
         h.props['BaseValue'] = base
-        h.extra.update(top=top.astype(float), bottom=cum.astype(float))
-        cum = top
+        h.group = hs
         c = ax.next_color()
         h.props['FaceColor'] = c
         h.extra['fc'] = c
         hs.append(h)
+    area_layout(hs[0])
     apply_props_all(hs, name_value(rest, 0))
     ax.touch()
     return handles_out(hs, col=False) if nargout else None
+
+
+def area_layout(h):
+    """The areas of h's group stacked: the first from BaseValue up to its
+    YData, each next one on the one before. Again when XData, YData or
+    BaseValue changes."""
+    hs = [g for g in getattr(h, 'group', None) or [h] if g.valid]
+    cum = None
+    for j, g in enumerate(hs):
+        _, y = _xy_pairs(g)
+        base = float(np.asarray(g.props['BaseValue'], float).reshape(-1)[0]) if numel(g.props['BaseValue']) else 0.0
+        if cum is None or cum.size != y.size:
+            cum = np.full(y.size, base)
+        top = y.astype(float) if j == 0 else cum + y
+        g.extra.update(top=np.asarray(top, float), bottom=cum.astype(float))
+        cum = np.asarray(top, float)
+        g.touch()
+
+
+Series.RELAYOUT['area'] = (('XData', 'YData', 'BaseValue'), area_layout)
 
 
 def apply_props_all(hs, pairs):
@@ -1272,6 +1317,7 @@ def pie(nargout, *args):
             pct_text.append(f'{round(p):d}%')
     h.extra.update(frac=frac.astype(float), explode=(explode if explode is not None else np.zeros(x.size)).astype(float),
                    labels=labels if labels else pct_text)
+    h.props['Labels'] = list(labels if labels else pct_text)
     cm = ax.get_value('Colormap')
     idx = np.round(np.linspace(0, cm.shape[0] - 1, max(x.size, 1))).astype(int)
     h.extra['colors'] = cm[idx].astype(float)
@@ -1410,6 +1456,34 @@ def bubblelim(nargout, *args):
     return _lim(args, 'Bubble', nargout)
 
 
+def quiver_scale(h):
+    """How long the arrows are drawn: the longest as long as the grid's
+    spacing times AutoScaleFactor (0: as given). Again when the data or
+    AutoScaleFactor changes."""
+    X, Y = np.asarray(h.props['XData'], float), np.asarray(h.props['YData'], float)
+    U, V = np.asarray(h.props['UData'], float), np.asarray(h.props['VData'], float)
+    scale = float(np.asarray(h.props['AutoScaleFactor'], float).reshape(-1)[0]) if numel(h.props['AutoScaleFactor']) else 0.9
+    s = 1.0
+    if scale != 0 and X.size and U.size == V.size:
+        xs = np.unique(X.reshape(-1))
+        ys = np.unique(Y.reshape(-1))
+        dx = np.min(np.diff(xs)) if xs.size > 1 else 1.0
+        dy = np.min(np.diff(ys)) if ys.size > 1 else 1.0
+        if xs.size > 1 and ys.size > 1:
+            d = math.sqrt(dx * dy) if dx > 0 and dy > 0 else max(dx, dy, 1.0)
+        else:
+            rng = max(X.max() - X.min(), Y.max() - Y.min() if Y.size else 1.0, 1e-9)
+            d = rng / math.sqrt(max(X.size, 1))
+        L = np.sqrt(U ** 2 + V ** 2)
+        mx = np.nanmax(L) if L.size else 0
+        s = scale * d / mx if mx > 0 else 1.0
+    h.extra['scale'] = float(s)
+    h.touch()
+
+
+Series.RELAYOUT['quiver'] = (('XData', 'YData', 'UData', 'VData', 'AutoScaleFactor'), quiver_scale)
+
+
 @bi('quiver', 'quiver3', arr=False)
 def quiver(nargout, *args):
     ax, rest = split_axes_arg(args)
@@ -1432,29 +1506,14 @@ def quiver(nargout, *args):
             scale = float(num(data[4]))
         if X.shape != U.shape and X.ndim == 2 and (X.shape[0] == 1 or X.shape[1] == 1):
             X, Y = np.meshgrid(X.reshape(-1), Y.reshape(-1))
-    # scale arrows so that the longest fits the grid spacing
-    s = 1.0
-    if scale != 0:
-        xs = np.unique(X.reshape(-1))
-        ys = np.unique(Y.reshape(-1))
-        dx = np.min(np.diff(xs)) if xs.size > 1 else 1.0
-        dy = np.min(np.diff(ys)) if ys.size > 1 else 1.0
-        n_ = max(X.size, 1)
-        if xs.size > 1 and ys.size > 1:
-            d = math.sqrt(dx * dy) if dx > 0 and dy > 0 else max(dx, dy, 1.0)
-        else:
-            rng = max((X.max() - X.min()) if X.size else 1.0, (Y.max() - Y.min()) if Y.size else 1.0, 1e-9)
-            d = rng / math.sqrt(n_)
-        L = np.sqrt(U ** 2 + V ** 2)
-        mx = np.nanmax(L) if L.size else 0
-        s = scale * d / mx if mx > 0 else 1.0
     ax = newplot(ax)
     h = Series(ax, 'quiver')
     h.props['XData'] = X.astype(float)
     h.props['YData'] = Y.astype(float)
     h.props['UData'] = U.astype(float)
     h.props['VData'] = V.astype(float)
-    h.extra['scale'] = float(s)
+    h.props['AutoScaleFactor'] = float(scale)
+    quiver_scale(h)
     h.props['Color'] = spec[0] if spec and spec[0] else ax.next_color()
     apply_props(h, name_value(rest, 0))
     ax.touch()
@@ -1630,6 +1689,7 @@ def _contour(args, nargout, fill=False, is3d=False):
         else:
             keep.append((k, v))
     X, Y, Z = _grid_xyz(data)
+    given = levels is not None
     if levels is None:
         levels = contour_levels(Z, nlev, fill)
     lines = [(lev, marching_squares(X, Y, Z, lev)) for lev in levels]
@@ -1641,6 +1701,7 @@ def _contour(args, nargout, fill=False, is3d=False):
     h.props['YData'] = Y
     h.props['ZData'] = Z
     h.props['LevelList'] = np.array([levels], float)
+    h.props['LevelListMode'] = 'manual' if given or nlev is not None else 'auto'
     h.props['Fill'] = fill
     h.props['ShowText'] = show_text
     flat = []
@@ -1673,6 +1734,49 @@ def _contour(args, nargout, fill=False, is3d=False):
     if nargout == 1:
         return C
     return None
+
+
+def contour_trace(h):
+    """A contour's lines traced again at its levels: LevelList when set
+    (LevelListMode manual), else levels chosen for ZData. When LevelList,
+    LevelListMode, XData, YData, ZData or Fill changes."""
+    Z = np.asarray(h.props['ZData'], float)
+    if Z.ndim != 2 or Z.size == 0 or h.extra.get('lines') is None:
+        return
+    X = np.asarray(h.props['XData'], float)
+    Y = np.asarray(h.props['YData'], float)
+    if X.shape != Z.shape or Y.shape != Z.shape:
+        X, Y = np.meshgrid(X.reshape(-1)[:Z.shape[1]] if X.size >= Z.shape[1] else np.arange(1, Z.shape[1] + 1.0),
+                           Y.reshape(-1)[:Z.shape[0]] if Y.size >= Z.shape[0] else np.arange(1, Z.shape[0] + 1.0))
+    if h.props.get('LevelListMode') == 'manual' and numel(h.props['LevelList']):
+        levels = [float(v) for v in np.asarray(h.props['LevelList'], float).reshape(-1)]
+    else:
+        levels = contour_levels(Z, None, bool(h.props['Fill']))
+        h.props['LevelList'] = np.array([levels], float)
+    lines = [(lev, marching_squares(X, Y, Z, lev)) for lev in levels]
+    flat, lev_of = [], []
+    for lev, polys in lines:
+        for xs, ys in polys:
+            flat.append(np.column_stack([xs, ys]))
+            flat.append(np.array([[np.nan, np.nan]]))
+            lev_of.append(lev)
+    h.extra.update(levels=np.array(levels, float), paths=[{'level': float(lev), 'xy': None} for lev, _ in lines],
+                   lines=np.vstack(flat) if flat else np.zeros((0, 2)), lineLevels=np.array(lev_of, float),
+                   matrix=contour_matrix(lines))
+    h.touch()
+
+
+Series.RELAYOUT['contour'] = (('LevelList', 'LevelListMode', 'XData', 'YData', 'ZData', 'Fill'), contour_trace)
+
+
+def _pie_labels(h):
+    labels = h.props.get('Labels')
+    if isinstance(labels, list) and labels:
+        h.extra['labels'] = list(labels)
+        h.touch()
+
+
+Series.RELAYOUT['pie'] = (('Labels',), _pie_labels)
 
 
 @bi('contour', nout=2, arr=False)

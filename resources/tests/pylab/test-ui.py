@@ -1556,11 +1556,57 @@ async def property_editor(page):
     check('closing the figure closes its editor', await page.ev(f"{INSP}.el.hidden"), True)
 
 
+
+async def editor_draws(page):
+    """Properties changed in the property editor are drawn: each change in
+    this list (each once ignored by the drawing) changes the figure's
+    pixels. The object is found in the editor's tree by its label."""
+    look = ("(() => { const w = [...PL.app.figures.wins.values()].pop(); const c = w.canvas; "
+            "const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 0; "
+            "for (let i = 0; i < d.length; i += 4) h = (h * 31 + d[i] * 65536 + d[i + 1] * 256 + d[i + 2]) | 0; return h; })()")
+    change = ("(async (who, name, payload) => { const w = [...PL.app.figures.wins.values()].pop(); const v0 = w.fig.version; "
+              "const t = (await PL.engine.call('inspect_object', w.fig.id)).tree.find((n) => n.label.startsWith(who)); "
+              "if (!t) return 'no ' + who; const r = await PL.engine.call('inspect_change', t.id, name, JSON.stringify(payload)); "
+              "for (let i = 0; i < 40 && w.fig.version === v0; i++) await new Promise((res) => setTimeout(res, 25)); "
+              "await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))); return r.error || null; })")
+    on, red = {'kind': 'onoff', 'value': True}, {'kind': 'color', 'value': [1, 0, 0]}
+    cases = [
+        ("plot(1:5); title('T'); legend('a'); colorbar;", [
+            ('Axes', 'YTickLabelRotation', {'kind': 'number', 'value': '45'}), ('Axes', 'TickLength', {'kind': 'array', 'value': '[0.04 0.1]'}),
+            ('Axes', 'XMinorTick', on), ('Axes', 'FontWeight', {'kind': 'enum', 'value': 'bold'}),
+            ('Axes', 'TitleFontSizeMultiplier', {'kind': 'number', 'value': '2'}), ('Axes', 'Subtitle', {'kind': 'lines', 'value': ['sub']}),
+            ('Legend', 'Title', {'kind': 'text', 'value': 'Key'}), ('Colorbar', 'Direction', {'kind': 'enum', 'value': 'reverse'}),
+            ('Colorbar', 'TickDirection', {'kind': 'enum', 'value': 'out'}), ('Colorbar', 'Box', {'kind': 'onoff', 'value': False})]),
+        ("plot(1:5); grid on; patch([1 3 3], [1 1 4], 'r');", [('Axes', 'Layer', {'kind': 'enum', 'value': 'top'})]),
+        ("bar([1 2 3]);", [('Bar', 'BarWidth', {'kind': 'number', 'value': '0.3'}), ('Bar', 'YData', {'kind': 'array', 'value': '[3 1 2]'})]),
+        ("scatter(1:5, 1:5, 100, 'filled');", [('Scatter', 'MarkerFaceAlpha', {'kind': 'number', 'value': '0.2'}), ('Scatter', 'MarkerEdgeColor', red),
+                                              ('Scatter', 'LineWidth', {'kind': 'number', 'value': '3'})]),
+        ("stem(1:5);", [('Stem', 'MarkerFaceColor', red)]),
+        ("pie([1 2 3]);", [('Patch', 'EdgeColor', red)]),
+        ("polarplot(1:5);", [('Line', 'Visible', {'kind': 'onoff', 'value': False}), ('PolarAxes', 'GridColor', red)]),
+        ("surf(peaks(10));", [('Axes', 'XDir', {'kind': 'enum', 'value': 'reverse'}), ('Axes', 'XColor', red)]),
+    ]
+    undrawn = []
+    for code, changes in cases:
+        await command(page, 'close all; figure; ' + code)
+        await until(page, 'PL.app.figures.wins.size === 1')
+        await asyncio.sleep(0.4)
+        for who, name, payload in changes:
+            before = await page.ev(look)
+            err = await page.ev(f"{change}({json.dumps(who)}, {json.dumps(name)}, {json.dumps(payload)})")
+            if err or await page.ev(look) == before:
+                undrawn.append(f'{who} {name}' + (f' ({err})' if err else ''))
+    check('properties changed in the editor are drawn (axes ticks and fonts, subtitle, legend title, colorbar, Layer, bars, '
+          'scatter, stem and pie marks, polar axes, 3-D axis direction and colour)', undrawn, [])
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
         await desktop(page)
         await property_editor(page)
+        await editor_draws(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

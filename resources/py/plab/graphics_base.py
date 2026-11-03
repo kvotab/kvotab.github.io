@@ -366,7 +366,8 @@ def import_value(obj, k, v):
     if k in _COLOR_PROPS:
         c = to_color(v, _COLOR_PROPS[k])
         return c if c != 'none' or k != 'Color' else 'none'
-    if k in _ONOFF:
+    if k in _ONOFF or isinstance(obj.props.get(k), bool):
+        # (and any other property kept as on or off: a bar's Horizontal, a contour's Fill)
         if type(v) in (Char, Str):
             s = py_str(v).lower()
             if s not in ('on', 'off'):
@@ -742,6 +743,18 @@ class Axes(GObj):
                 t.props.update(value.props)
             else:
                 t.set_value('String', value)
+            return
+        if k == 'TitleFontWeight':
+            super().set_value(k, value)
+            self.title.props['FontWeight'] = self.props[k]
+            return
+        if k == 'FontSize':
+            # the title and labels follow, unless given a size of their own
+            old = self.props.get('FontSize')
+            super().set_value(k, value)
+            for t in (self.title, self.subtitle, self.xlabel, self.ylabel, self.zlabel):
+                if t.props.get('FontSize') == old:
+                    t.props['FontSize'] = self.props[k]
             return
         if k in ('XScale', 'YScale', 'ZScale'):
             s = py_str(value).lower()
@@ -1213,7 +1226,19 @@ class Series(GObj):
             return self.extra.get('edges', EMPTY())
         return super().get_value(k)
 
+    # kind -> (the properties that shape it, fn(series)): what is drawn worked out again
+    # when one of them changes (bars and areas laid out, contour lines traced); set by graphics.py
+    RELAYOUT = {}
+
     def set_value(self, k, value):
+        self._store(k, value)
+        if k == 'LevelList':
+            self.props['LevelListMode'] = 'manual'
+        r = Series.RELAYOUT.get(self.kind)
+        if r is not None and k in r[0] and getattr(self, 'extra', None) is not None:
+            r[1](self)
+
+    def _store(self, k, value):
         if k == 'CData' and self.kind in ('scatter', 'bubblechart') and type(value) not in (Char, Str) and numel(value) == 3 \
                 and numel(self.props['XData']) != 3:
             # one colour for all the markers
@@ -1410,7 +1435,8 @@ def _text_json(t):
             'halign': p['HorizontalAlignment'], 'valign': p['VerticalAlignment'],
             'position': [float(x) for x in np.asarray(p['Position'], float).reshape(-1)],
             'units': p['Units'], 'background': _color(p['BackgroundColor']), 'edge': _color(p['EdgeColor']),
-            'fontName': p.get('FontName', 'Helvetica'), 'margin': float(p.get('Margin', 3.0)), 'lineWidth': float(p.get('LineWidth', 0.5))}
+            'fontName': p.get('FontName', 'Helvetica'), 'margin': float(p.get('Margin', 3.0)), 'lineWidth': float(p.get('LineWidth', 0.5)),
+            'lineStyle': p.get('LineStyle', '-')}
 
 
 def _num(v):
@@ -1559,6 +1585,11 @@ def serialize_axes(ax):
         'pbar': [float(x) for x in p['PlotBoxAspectRatio'].reshape(-1)], 'pbarMode': p['PlotBoxAspectRatioMode'],
         'camZoom': ax.camera_zoom(),
         'visible': bool(p['Visible']), 'layer': p['Layer'],
+        'fontName': p['FontName'], 'fontWeight': p['FontWeight'], 'tickLabelInterpreter': p['TickLabelInterpreter'],
+        'tickLength': [float(x) for x in np.asarray(p['TickLength'], float).reshape(-1)],
+        'xminortick': bool(p['XMinorTick']), 'yminortick': bool(p['YMinorTick']), 'zminortick': bool(p['ZMinorTick']),
+        'minorGridAlpha': float(p['MinorGridAlpha']), 'minorGridLineStyle': p['MinorGridLineStyle'],
+        'titleSize': float(p['TitleFontSizeMultiplier']), 'labelSize': float(p['LabelFontSizeMultiplier']),
         'title': _text_json(ax.title), 'subtitle': _text_json(ax.subtitle), 'xlabel': _text_json(ax.xlabel), 'ylabel': _text_json(ax.ylabel),
         'zlabel': _text_json(ax.zlabel), 'cmap': _b64(np.asarray(cmap, float)),
         'children': [serialize_child(c, ax) for c in reversed(ax.children) if c.valid and not getattr(c, 'hidden', False)],
@@ -1620,7 +1651,7 @@ def serialize_figure(f):
             d['colorbars'].append({'id': c.id, 'axes': c.axes.id, 'location': cp['Location'], 'fontSize': float(cp['FontSize']),
                                    'visible': bool(cp['Visible']), 'ticks': [float(x) for x in cp['Ticks'].reshape(-1)] if cp['Ticks'] is not None else None,
                                    'tickLabels': cp['TickLabels'], 'label': _text_json(c.label), 'color': _color(cp['Color']),
-                                   'direction': cp['Direction']})
+                                   'direction': cp['Direction'], 'box': bool(cp['Box']), 'tickDirection': cp['TickDirection']})
         elif isinstance(c, Shape):
             d['annotations'].append(c.serialize())
         elif c.TYPE == 'text':

@@ -799,8 +799,8 @@ check('each with the field that suits it',
       [(prop(d, n)['kind'], prop(d, n)['value']) for n in ('Color', 'LineStyle', 'LineWidth', 'XData', 'Visible', 'MarkerFaceColor')],
       [('color', [1.0, 0.0, 0.0]), ('enum', '--'), ('number', '0.5'), ('array', '[1 2 3 4 5]'), ('onoff', True), ('color', 'none')])
 check("a colour's words are offered", prop(d, 'MarkerFaceColor')['options'], ['none', 'auto', 'flat'])
-check('the other groups follow, by name', [g['name'] for g in d['groups']],
-      ['Common', 'Colors and lines', 'Markers', 'Data', 'Identity and interaction', 'Callbacks', 'Other'])
+check("the other groups follow, by name, and last what is kept but not drawn", [g['name'] for g in d['groups']],
+      ['Common', 'Markers', 'Data', 'Identity and interaction', 'Callbacks', 'Kept, not drawn'])
 check('Parent is a link to the axes; Type and UserData are only shown',
       (prop(d, 'Parent')['kind'], prop(d, 'Parent')['link'], prop(d, 'Type')['kind'], prop(d, 'UserData')['kind']),
       ('link', idof('ax'), 'readonly', 'readonly'))
@@ -882,6 +882,42 @@ check('the right y-axis of yyaxis is in the tree with its label and plot',
       [r['label'] for r in json.loads(W.inspect_object(val('f').id if False else STORE.current.id))['tree']][-3:],
       ['Axes (right y)', "Y label 'R'", 'Line'])
 
+# what is changed is drawn: charts laid out again, on/off kept as on/off, log axes with bars
+run("figure; hb = bar([1 2 3]); hold on; ha = area([1 2 3] + 5); hold off;")
+for pname, value, key, want in (('BarWidth', '0.3', 'width', 0.3), ('BaseValue', '1', 'bottom', [1.0, 1.0, 1.0]), ('YData', '[3 2 1]', 'top', [3.0, 2.0, 1.0])):
+    change('hb', pname, {'kind': 'number' if ' ' not in value else 'array', 'value': value})
+    v = val('hb').extra[key]
+    check(f"a bar's {pname} changed lays the bars out again", v if isinstance(v, float) else np.asarray(v).round(6).tolist(), want)
+change('ha', 'YData', {'kind': 'array', 'value': '[1 1 1]'})
+check("an area's YData changed draws it again", val('ha').extra['top'].tolist(), [1.0, 1.0, 1.0])
+change('hb', 'Horizontal', {'kind': 'onoff', 'value': True})
+run("set(hb, 'Horizontal', 'off');")
+check("on/off set as text: 'off' is off (a bar's Horizontal)", val('hb').props['Horizontal'], False)
+run("figure; bar([1 2 3]); set(gca, 'YScale', 'log'); yl = ylim;")
+check('bars on a log axis start a tenth below the smallest positive end', num('yl'), [0.1, 10.0])
+run("figure; [~, hc] = contour(peaks(10));")
+change('hc', 'LevelList', {'kind': 'array', 'value': '[0 2]'})
+check('a contour traced again at the levels given, which stay', (val('hc').extra['levels'].tolist(), val('hc').props['LevelListMode']), ([0.0, 2.0], 'manual'))
+run("figure; hp = pie([1 2 3]); figure; hq = quiver(1:3, 1:3, [1 0 1], [0 1 1]);")
+check("a pie's Labels are the labels drawn", prop(insp('hp'), 'Labels')['value'], ['17%', '33%', '50%'])
+change('hp', 'Labels', {'kind': 'lines', 'value': ['a', 'b', 'c']})
+check('... and new ones are drawn', val('hp').extra['labels'], ['a', 'b', 'c'])
+s0 = val('hq').extra['scale']
+change('hq', 'AutoScaleFactor', {'kind': 'number', 'value': '0.45'})
+check("a quiver's AutoScaleFactor scales its arrows again", round(val('hq').extra['scale'] / s0, 6), 0.5)
+check("a bar offers a bar's properties, not a histogram's or a quiver's", [n in [p['name'] for g in insp('hb')['groups'] for p in g['props']]
+                                                                           for n in ('BarWidth', 'NumBins', 'AutoScaleFactor', 'Marker')], [True, False, False, False])
+run("figure; polarplot(1:3); pax = gca;")
+names = [p['name'] for g in insp('pax')['groups'] for p in g['props']]
+check('polar axes offer no Cartesian x, y and z settings', ([n for n in names if n[0] in 'XYZ' and n[1].isupper()], 'GridColor' in names), ([], True))
+run("figure; tb = plot(1:3); ax2 = gca; t1 = title('T'); set(ax2, 'FontSize', 14); set(ax2, 'TitleFontWeight', 'normal');")
+check("the axes' FontSize carries to its title and labels; TitleFontWeight to its title",
+      (num("get(t1, 'FontSize')"), num("get(get(ax2, 'XLabel'), 'FontSize')"), text("get(t1, 'FontWeight')")), (14.0, 14.0, 'normal'))
+d = serialize_figure(STORE.current)['axes'][0]
+check('the page is sent the tick font, length and minor ticks, the minor grid and the size multipliers',
+      [k in d for k in ('fontName', 'fontWeight', 'tickLabelInterpreter', 'tickLength', 'xminortick', 'minorGridAlpha', 'minorGridLineStyle',
+                        'titleSize', 'labelSize')], [True] * 9)
+
 EVENTS.clear()
 run("inspect(h)")
 check('inspect(h) asks the page to show h in its figure', [e for e in EVENTS if e['type'] == 'inspect'],
@@ -890,9 +926,9 @@ EVENTS.clear()
 run("plotedit(f, 'on'); plotedit off; plotedit")
 check("plotedit turns a figure's edit mode on, off, or switches it", [(e['type'], e['on']) for e in EVENTS if e['type'] == 'plotedit'],
       [('plotedit', True), ('plotedit', False), ('plotedit', None)])
-check('inspect needs a graphics object', 'must be a graphics object' in run('inspect(5)'), True)
+check('inspect needs a graphics object', 'must be a graphics object' in run('inspect(1e9)'), True)
 check("plotedit takes on or off", "Use 'on' or 'off'." in run("plotedit maybe"), True)
-check('plotedit needs a figure', 'The input must be a figure.' in run("plotedit(7, 'on')"), True)
+check('plotedit needs a figure', 'The input must be a figure.' in run("plotedit(1e9, 'on')"), True)
 run("close all force")
 
 sys.exit(check.done())

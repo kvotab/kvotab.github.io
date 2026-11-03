@@ -413,7 +413,12 @@
       const m = opts.margin == null ? 3 : opts.margin;
       const by = y0 - size * 0.85;
       if (opts.background && opts.background !== 'transparent') { ctx.fillStyle = opts.background; ctx.fillRect(bx - m, by - m, maxw + 2 * m, total + 2 * m); }
-      if (opts.edge && opts.edge !== 'transparent') { ctx.strokeStyle = opts.edge; ctx.lineWidth = opts.boxWidth || 0.75; ctx.strokeRect(bx - m, by - m, maxw + 2 * m, total + 2 * m); }
+      if (opts.edge && opts.edge !== 'transparent' && opts.edgeStyle !== 'none') {
+        ctx.strokeStyle = opts.edge; ctx.lineWidth = opts.boxWidth || 0.75;
+        if (opts.edgeStyle && opts.edgeStyle !== '-') dash(ctx, opts.edgeStyle, ctx.lineWidth);
+        ctx.strokeRect(bx - m, by - m, maxw + 2 * m, total + 2 * m);
+        ctx.setLineDash([]);
+      }
       ctx.fillStyle = opts.color || AXIS_INK;
     }
     measured.forEach(({ runs, w }, k) => {
@@ -478,6 +483,29 @@
   }
 
   const OPEN_MARKERS = new Set(['+', 'x', '*', '_', '|']);
+
+  /* A marker's edge and face: MarkerEdgeColor and MarkerFaceColor, 'auto'
+     and 'flat' the line's own colour col, 'none' none. */
+  function markerInk(c, col) {
+    return { edge: c.mec === 'none' ? 'transparent' : Array.isArray(c.mec) ? rgb(c.mec) : col,
+      face: c.mfc === 'none' || c.mfc == null ? null : Array.isArray(c.mfc) ? rgb(c.mfc) : col };
+  }
+
+  /* One scatter point of colour col: MarkerFaceColor and MarkerEdgeColor
+     ('flat' and 'auto' the point's colour), each with its alpha, the edge
+     LineWidth wide. */
+  function scatterMark(ctx, c, px, py, size, col) {
+    const pick = (v) => (v === 'flat' || v === 'auto' ? col : Array.isArray(v) ? rgb(v) : null);
+    const open = OPEN_MARKERS.has(c.marker);
+    const face = open ? null : pick(c.mfc);
+    const edge = pick(c.mec) || (open ? col : null);
+    ctx.save();
+    ctx.beginPath();
+    markerPath(ctx, c.marker, px, py, size);
+    if (face) { ctx.globalAlpha = c.markerFaceAlpha ?? 1; ctx.fillStyle = face; ctx.fill(); }
+    if (edge) { ctx.globalAlpha = c.markerEdgeAlpha ?? 1; ctx.strokeStyle = edge; ctx.lineWidth = Math.max(0.75, lw(c.lineWidth)); ctx.stroke(); }
+    ctx.restore();
+  }
 
   function drawMarkers(ctx, pts, m, size, edge, face, lw = 0.5) {
     if (!m || m === 'none') return;
@@ -547,6 +575,7 @@
       this.el = el * Math.PI / 180;
       this.lims = [ax.xlim, ax.ylim, ax.zlim];
       this.logs = [ax.xscale === 'log', ax.yscale === 'log', ax.zscale === 'log'];
+      this.revs = [ax.xdir === 'reverse', ax.ydir === 'reverse', ax.zdir === 'reverse'];
       const ca = Math.cos(this.az), sa = Math.sin(this.az), ce = Math.cos(this.el), se = Math.sin(this.el);
       this.right = [ca, sa, 0];
       this.up = [-sa * se, ca * se, ce];
@@ -595,6 +624,7 @@
     norm(k, v) {
       const [a, b] = this.lims[k];
       let t = this.logs[k] ? (Math.log10(v) - Math.log10(a)) / (Math.log10(b) - Math.log10(a)) : (v - a) / (b - a);
+      if (this.revs && this.revs[k]) t = 1 - t;
       return (t - 0.5) * this.box[k];
     }
     proj0(p) {
@@ -610,6 +640,29 @@
       const q = this.proj0([nx, ny, nz]);
       return [this.cx + q[0] * this.scale, this.cy - q[1] * this.scale, q[2]];
     }
+  }
+
+  /* A tick's length in pixels: TickLength (its first, 2-D) of the axes' longer side. */
+  function tickLen(ax, r) {
+    const t = ax.tickLength && Number.isFinite(ax.tickLength[0]) ? ax.tickLength[0] : 0.01;
+    return t > 0 ? Math.max(t === 0.01 ? 3 : 1, t * Math.max(r.w, r.h)) : 0;
+  }
+
+  /* Where the minor ticks (and minor grid) of an axis are: 2..9 times each
+     power of ten on a log axis, else four between the ticks. */
+  function minorTicks(ticks, log, lim) {
+    const out = [];
+    const lo = Math.min(lim[0], lim[1]), hi = Math.max(lim[0], lim[1]);
+    if (log) {
+      const a = Math.floor(Math.log10(lo)), b = Math.ceil(Math.log10(hi));
+      if (!Number.isFinite(a) || !Number.isFinite(b) || b - a > 60) return out;
+      for (let e = a; e < b; e++) for (let k = 2; k < 10; k++) { const v = k * 10 ** e; if (v >= lo && v <= hi) out.push(v); }
+    } else if (ticks.length > 1) {
+      const step = (ticks[1] - ticks[0]) / 5;
+      if (!(Math.abs(step) > 0) || (hi - lo) / Math.abs(step) > 2000) return out;
+      for (let v = ticks[0] - 5 * step; v <= hi + 1e-12; v += Math.abs(step)) if (v >= lo - 1e-12) out.push(v);
+    }
+    return out;
   }
 
   /* ---- drawing a figure -------------------------------------------------------------------- */
@@ -647,7 +700,7 @@
         const p = t.position;
         if (t.units === 'normalized') this.textOf(t, ctx, t.string, p[0] * W, H - p[1] * H, { size: t.fontSize * PT, color: rgb(t.color), halign: t.halign, valign: t.valign, rotation: t.rotation, background: rgb(t.background), edge: rgb(t.edge), interpreter: t.interpreter, bold: t.fontWeight === 'bold' });
       }
-      if (fig.sgtitle && fig.sgtitle.string) {
+      if (fig.sgtitle && fig.sgtitle.string && fig.sgtitle.visible !== false) {
         this.axesText(ctx, fig.sgtitle, W / 2, 8, 'below', 0, { size: fig.sgtitle.fontSize * PT, bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
       }
       ctx.restore();
@@ -684,7 +737,7 @@
       const rot = Number.isFinite(t.rotation) ? t.rotation : def;
       const o = Object.assign({ interpreter: t.interpreter, italic: t.fontAngle === 'italic', family: faceOf(t.fontName),
         background: Array.isArray(t.background) ? rgb(t.background) : null, edge: Array.isArray(t.edge) ? rgb(t.edge) : null,
-        margin: t.margin, boxWidth: t.lineWidth ? lw(t.lineWidth) : null }, opts);
+        margin: t.margin, boxWidth: t.lineWidth ? lw(t.lineWidth) : null, edgeStyle: t.lineStyle }, opts);
       if (rot === def) {
         if (side === 'left' || side === 'right') {
           this.textOf(t, ctx, t.string, side === 'left' ? x - inset : x + inset, y, Object.assign(o, { halign: 'center', valign: 'middle', rotation: side === 'left' ? 90 : -90 }));
@@ -931,16 +984,17 @@
       const xt = this.ticksFor(ax, 'x', r, false);
       const yt = this.ticksFor(ax, 'y', r, false);
       ax._ticks = { xt, yt };
-      // grid under the data
-      if (ax.visible) this.grid2(ctx, ax, fr, xt, yt);
+      // grid under the data (over it with Layer top)
+      if (ax.visible && ax.layer !== 'top') this.grid2(ctx, ax, fr, xt, yt);
       this.children2(ctx, ax, fr, r);
+      if (ax.visible && ax.layer === 'top') this.grid2(ctx, ax, fr, xt, yt);
       if (mapNote) this.mapNote(ctx, r, mapNote);
       if (!ax.visible) { this.labels2(ctx, ax, fr, null, null, true); return; }
       // the axes' lines, ticks and labels on top
       ctx.save();
       ctx.lineWidth = lw(ax.lineWidth);
       ctx.setLineDash([]);
-      const tl = Math.max(3, 0.01 * Math.max(r.w, r.h));
+      const tl = tickLen(ax, r);
       const dirOut = ax.tickDir === 'out' ? -1 : 1;
       const xAtTop = ax.xaxisLocation === 'top';
       const yAtRight = ax.yaxisLocation === 'right';
@@ -959,36 +1013,45 @@
       // ticks
       ctx.strokeStyle = ink;
       ctx.beginPath();
+      const xTick = (x, len) => {
+        ctx.moveTo(x, yb); ctx.lineTo(x, yb - (xAtTop ? -1 : 1) * len * dirOut);
+        if (ax.box) { const yo = xAtTop ? r.y + r.h : r.y; ctx.moveTo(x, yo); ctx.lineTo(x, yo + (xAtTop ? -1 : 1) * len * dirOut); }
+      };
       for (const t of xt.ticks) {
         const x = fr.fx(t);
-        if (!Number.isFinite(x)) continue;
-        ctx.moveTo(x, yb); ctx.lineTo(x, yb - (xAtTop ? -1 : 1) * tl * dirOut);
-        if (ax.box) { const yo = xAtTop ? r.y + r.h : r.y; ctx.moveTo(x, yo); ctx.lineTo(x, yo + (xAtTop ? -1 : 1) * tl * dirOut); }
+        if (Number.isFinite(x)) xTick(x, tl);
       }
+      if (ax.xminortick) for (const v of minorTicks(xt.ticks, ax.xscale === 'log', ax.xlim)) xTick(fr.fx(v), tl / 2);
       ctx.stroke();
       ctx.strokeStyle = yink;
       ctx.beginPath();
+      const yTick = (y, len) => {
+        ctx.moveTo(xl, y); ctx.lineTo(xl + (yAtRight ? -1 : 1) * len * dirOut, y);
+        if (ax.box && !(ax.yy && ax.yy.right)) { const xo = yAtRight ? r.x : r.x + r.w; ctx.moveTo(xo, y); ctx.lineTo(xo - (yAtRight ? -1 : 1) * len * dirOut, y); }
+      };
       for (const t of yt.ticks) {
         const y = fr.fy(t);
-        if (!Number.isFinite(y)) continue;
-        ctx.moveTo(xl, y); ctx.lineTo(xl + (yAtRight ? -1 : 1) * tl * dirOut, y);
-        if (ax.box && !(ax.yy && ax.yy.right)) { const xo = yAtRight ? r.x : r.x + r.w; ctx.moveTo(xo, y); ctx.lineTo(xo - (yAtRight ? -1 : 1) * tl * dirOut, y); }
+        if (Number.isFinite(y)) yTick(y, tl);
       }
+      if (ax.yminortick) for (const v of minorTicks(yt.ticks, ax.yscale === 'log', ax.ylim)) yTick(fr.fy(v), tl / 2);
       ctx.stroke();
       ctx.restore();
-      // tick labels
+      // tick labels, in the axes' font
+      const tf = { size: fs, interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
       let maxYLabel = 0;
       xt.labels.forEach((s, i) => {
         const x = fr.fx(xt.ticks[i]);
         if (!Number.isFinite(x)) return;
-        if (ax.xtickrot) drawText(ctx, s, x, xAtTop ? yb - 4 : yb + 5, { size: fs, color: ink, halign: 'right', valign: 'middle', rotation: ax.xtickrot });
-        else drawText(ctx, s, x, xAtTop ? yb - 4 : yb + 4, { size: fs, color: ink, halign: 'center', valign: xAtTop ? 'bottom' : 'top' });
+        if (ax.xtickrot) drawText(ctx, s, x, xAtTop ? yb - 4 : yb + 5, Object.assign({}, tf, { color: ink, halign: 'right', valign: 'middle', rotation: ax.xtickrot }));
+        else drawText(ctx, s, x, xAtTop ? yb - 4 : yb + 4, Object.assign({}, tf, { color: ink, halign: 'center', valign: xAtTop ? 'bottom' : 'top' }));
       });
       yt.labels.forEach((s, i) => {
         const y = fr.fy(yt.ticks[i]);
         if (!Number.isFinite(y)) return;
-        const m = drawText(ctx, s, yAtRight ? xl + 5 : xl - 5, y, { size: fs, color: yink, halign: yAtRight ? 'left' : 'right', valign: 'middle' });
-        maxYLabel = Math.max(maxYLabel, m.width);
+        const rot = ax.ytickrot || 0;
+        const m = drawText(ctx, s, yAtRight ? xl + 5 : xl - 5, y, Object.assign({}, tf, { color: yink, halign: yAtRight ? 'left' : 'right', valign: 'middle', rotation: rot }));
+        const a = rot * Math.PI / 180;
+        maxYLabel = Math.max(maxYLabel, Math.abs(m.width * Math.cos(a)) + Math.abs(m.height * Math.sin(a)) * (rot ? 1 : 0));
       });
       if (xt.exp !== null) drawText(ctx, `\\times10^{${xt.exp}}`, r.x + r.w, xAtTop ? yb - fs * 1.6 : yb + fs * 1.6 + 2, { size: fs, color: ink, halign: 'right', valign: 'top' });
       if (yt.exp !== null) drawText(ctx, `\\times10^{${yt.exp}}`, yAtRight ? r.x + r.w : r.x, r.y - 4, { size: fs, color: yink, halign: yAtRight ? 'right' : 'left', valign: 'bottom' });
@@ -1009,7 +1072,7 @@
       const fs = ax.fontSize * PT;
       const ink = rgb(ax.ycolor);
       const yt = this.ticksFor(ax, 'y', r, false);
-      const tl = Math.max(3, 0.01 * Math.max(r.w, r.h));
+      const tl = tickLen(ax, r);
       ctx.save();
       ctx.strokeStyle = ink;
       ctx.lineWidth = lw(ax.lineWidth);
@@ -1033,26 +1096,16 @@
       if (ax.xgrid) for (const t of xt.ticks) { const x = fr.fx(t); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); }
       if (ax.ygrid) for (const t of yt.ticks) { const y = fr.fy(t); ctx.moveTo(r.x, y); ctx.lineTo(r.x + r.w, y); }
       ctx.stroke();
-      // minor grid on log axes, or when asked
-      ctx.strokeStyle = rgb(ax.gridColor, ax.gridAlpha * 0.6);
-      ctx.setLineDash([1, 2]);
+      // minor grid on log axes, or when asked (MinorGridAlpha against its usual 0.25)
+      ctx.strokeStyle = rgb(ax.gridColor, ax.gridAlpha * 0.6 * ((ax.minorGridAlpha ?? 0.25) / 0.25));
+      if (!ax.minorGridLineStyle || ax.minorGridLineStyle === ':') ctx.setLineDash([1, 2]);
+      else dash(ctx, ax.minorGridLineStyle, 0.5);
       ctx.beginPath();
       const minor = (ticks, log, lim, f, horiz) => {
-        if (log) {
-          const a = Math.floor(Math.log10(lim[0])), b = Math.ceil(Math.log10(lim[1]));
-          for (let e = a; e < b; e++) for (let k = 2; k < 10; k++) {
-            const v = k * 10 ** e;
-            if (v < lim[0] || v > lim[1]) continue;
-            const q = f(v);
-            if (horiz) { ctx.moveTo(r.x, q); ctx.lineTo(r.x + r.w, q); } else { ctx.moveTo(q, r.y); ctx.lineTo(q, r.y + r.h); }
-          }
-        } else if (ticks.length > 1) {
-          const step = (ticks[1] - ticks[0]) / 5;
-          for (let v = ticks[0] - 5 * step; v <= lim[1]; v += step) {
-            if (v < lim[0]) continue;
-            const q = f(v);
-            if (horiz) { ctx.moveTo(r.x, q); ctx.lineTo(r.x + r.w, q); } else { ctx.moveTo(q, r.y); ctx.lineTo(q, r.y + r.h); }
-          }
+        if (ax.minorGridLineStyle === 'none') return;
+        for (const v of minorTicks(ticks, log, lim)) {
+          const q = f(v);
+          if (horiz) { ctx.moveTo(r.x, q); ctx.lineTo(r.x + r.w, q); } else { ctx.moveTo(q, r.y); ctx.lineTo(q, r.y + r.h); }
         }
       };
       if (ax.xminorgrid || (ax.xgrid && ax.xscale === 'log')) minor(xt.ticks, ax.xscale === 'log', ax.xlim, (v) => fr.fx(v), false);
@@ -1069,22 +1122,24 @@
       if (!hiddenAxes) {
         if (ax.xlabel.string && ax.xlabel.visible !== false) {
           const y = xAtTop ? r.y - fs * 1.6 - 4 : r.y + r.h + fs * 1.4 + 6;
-          this.axesText(ctx, ax.xlabel, r.x + r.w / 2, y, xAtTop ? 'above' : 'below', 0, { size: ax.xlabel.fontSize * PT * 1.1, color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), bold: ax.xlabel.fontWeight === 'bold' });
+          this.axesText(ctx, ax.xlabel, r.x + r.w / 2, y, xAtTop ? 'above' : 'below', 0, { size: ax.xlabel.fontSize * PT * (ax.labelSize ?? 1.1), color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), bold: ax.xlabel.fontWeight === 'bold' });
         }
         if (ax.ylabel.string && ax.ylabel.visible !== false) {
           const right = ax.yaxisLocation === 'right';
           const x = right ? r.x + r.w + (maxYLabel || 0) + 10 : r.x - (maxYLabel || 0) - 10;
-          this.axesText(ctx, ax.ylabel, x, r.y + r.h / 2, right ? 'right' : 'left', lfs * 0.6, { size: ax.ylabel.fontSize * PT * 1.1, color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), bold: ax.ylabel.fontWeight === 'bold' });
+          this.axesText(ctx, ax.ylabel, x, r.y + r.h / 2, right ? 'right' : 'left', lfs * 0.6, { size: ax.ylabel.fontSize * PT * (ax.labelSize ?? 1.1), color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), bold: ax.ylabel.fontWeight === 'bold' });
         }
       }
-      if (ax.title.string && ax.title.visible !== false) {
-        let y = r.y - 6 - (xAtTop ? fs * 3 : 0) - (expPad && !xAtTop ? 0 : 0);
-        if (ax.subtitle && ax.subtitle.string) {
-          const m = this.axesText(ctx, ax.subtitle, r.x + r.w / 2, y, 'above', 0, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), bold: ax.subtitle.fontWeight === 'bold' });
-          y -= Math.max(ax.subtitle.fontSize * PT * 1.3, m.h);
-        }
-        this.axesText(ctx, ax.title, r.x + r.w / 2, y, 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
+      this.titles(ctx, ax, r.x + r.w / 2, r.y - 6 - (xAtTop ? fs * 3 : 0));
+    }
+
+    /* The axes' title above (x, y), its subtitle under it. */
+    titles(ctx, ax, x, y) {
+      if (ax.subtitle && ax.subtitle.string && ax.subtitle.visible !== false) {
+        const m = this.axesText(ctx, ax.subtitle, x, y, 'above', 0, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), bold: ax.subtitle.fontWeight === 'bold' });
+        y -= Math.max(ax.subtitle.fontSize * PT * 1.3, m.h);
       }
+      if (ax.title.string && ax.title.visible !== false) this.axesText(ctx, ax.title, x, y, 'above', 0, { size: ax.title.fontSize * PT * (ax.titleSize ?? 1.1), color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
     }
 
     child2(ctx, ax, fr, c) {
@@ -1243,10 +1298,12 @@
           if (c.faceColor === 'interp') v = (gc(i, j) + gc(i, j + 1) + gc(i + 1, j) + gc(i + 1, j + 1)) / 4;
           const fill = Array.isArray(c.faceColor) ? rgb(c.faceColor) : c.faceColor === 'none' ? null : cmapColor(cmap, ax.clim, v);
           if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-          if (c.edgeColor !== 'none') {
+          if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
             ctx.strokeStyle = Array.isArray(c.edgeColor) ? rgb(c.edgeColor) : (cmapColor(cmap, ax.clim, v) || AXIS_INK);
             ctx.lineWidth = lw(c.lineWidth);
+            dash(ctx, c.lineStyle || '-', c.lineWidth);
             ctx.stroke();
+            ctx.setLineDash([]);
           } else if (fill) { ctx.strokeStyle = fill; ctx.lineWidth = 0.6; ctx.stroke(); }
         }
       }
@@ -1263,7 +1320,7 @@
       const size = fontSizePx(c, fr.r.h);
       const boxed = Array.isArray(c.background) || Array.isArray(c.edge);
       const margin = c.margin == null ? 3 : c.margin;
-      const m = drawText(ctx, c.string, x, y, { size, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic', family: faceOf(c.fontName), margin, boxWidth: c.lineWidth ? lw(c.lineWidth) : null });
+      const m = drawText(ctx, c.string, x, y, { size, color: rgb(c.color), halign: c.halign, valign: c.valign, rotation: c.rotation, background: rgb(c.background), edge: rgb(c.edge), interpreter: c.interpreter, bold: c.fontWeight === 'bold', italic: c.fontAngle === 'italic', family: faceOf(c.fontName), margin, boxWidth: c.lineWidth ? lw(c.lineWidth) : null, edgeStyle: c.lineStyle });
       // where the letters are (and a box drawn round them), for a click on the text
       if (m && m.width > 0 && !c.rotation) {
         const x0 = c.halign === 'center' ? x - m.width / 2 : c.halign === 'right' ? x - m.width : x;
@@ -1306,9 +1363,11 @@
           if (v[i] === 0) continue;
           ctx.fillStyle = face;
           ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
-          ctx.strokeStyle = rgb(c.edgeColor);
-          ctx.lineWidth = lw(0.5);
-          ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+          if (c.edgeColor !== 'none') {
+            ctx.strokeStyle = rgb(c.edgeColor);
+            ctx.lineWidth = lw(c.lineWidth || 0.5);
+            ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
+          }
         }
         if (stairs) { ctx.strokeStyle = Array.isArray(c.faceColor) ? rgb(c.faceColor) : AXIS_INK; ctx.lineWidth = 1; ctx.stroke(); }
         return;
@@ -1340,7 +1399,7 @@
         }
         ctx.stroke();
         ctx.restore();
-        if (c.marker !== 'none') drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, rgb(c.color), c.mfc === 'none' ? null : rgb(c.color));
+        if (c.marker !== 'none') { const k = markerInk(c, rgb(c.color)); drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
         return;
       }
       if (k === 'stem') {
@@ -1360,7 +1419,8 @@
         ctx.moveTo(fr.r.x, b); ctx.lineTo(fr.r.x + fr.r.w, b);
         ctx.stroke();
         ctx.restore();
-        drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, col, c.mfc === 'flat' ? col : null);
+        const mk = markerInk(c, col);
+        drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, mk.edge, mk.face, c.lineWidth);
         return;
       }
       if (k === 'errorbar') {
@@ -1386,7 +1446,7 @@
           ctx.stroke();
         }
         ctx.restore();
-        if (c.marker !== 'none') drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, col, c.mfc === 'none' ? null : col);
+        if (c.marker !== 'none') { const k = markerInk(c, col); drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
         return;
       }
       if (k === 'scatter') return this.scatter(ctx, ax, (xx, yy) => [fr.fx(xx), fr.fy(yy)], c, null);
@@ -1404,6 +1464,8 @@
         ctx.save();
         ctx.strokeStyle = rgb(c.color);
         ctx.lineWidth = lw(c.lineWidth);
+        if (c.lineStyle === 'none') { ctx.restore(); return; }
+        dash(ctx, c.lineStyle, c.lineWidth);
         ctx.beginPath();
         for (let i = 0; i < X.length; i++) {
           if (!Number.isFinite(U[i]) || !Number.isFinite(V[i])) continue;
@@ -1412,7 +1474,9 @@
           ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
           const L = Math.hypot(x1 - x0, y1 - y0);
           if (L > 0.5) {
-            const hs = Math.min(L * (c.maxHeadSize || 0.2) * 1.4, 9);
+            // the head MaxHeadSize of the arrow's length (at most 9 px at the usual 0.2)
+            const mh = c.maxHeadSize ?? 0.2;
+            const hs = Math.min(L * mh * 1.4, 45 * mh);
             const a = Math.atan2(y1 - y0, x1 - x0);
             ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a - 0.4), y1 - hs * Math.sin(a - 0.4));
             ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a + 0.4), y1 - hs * Math.sin(a + 0.4));
@@ -1440,7 +1504,7 @@
       if (z) order.sort((a, b) => proj[a][2] - proj[b][2]);
       // bubbles: the largest first, so that none hides a smaller one
       else if (bub) order.sort((a, b) => diam(b) - diam(a));
-      const filled = c.mfc === 'flat';
+      if (!bub && (!c.marker || c.marker === 'none')) return;
       for (const i of order) {
         const [px, py] = proj[i];
         if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
@@ -1450,11 +1514,7 @@
         if (bub) { this.bubble(ctx, px, py, diam(i) * PT, col, c); continue; }
         const area = sd ? (sd.length === x.length ? sd[i] : sd[0]) : 36;
         const size = Math.sqrt(Math.max(area, 0.5)) * 1.0;
-        ctx.beginPath();
-        markerPath(ctx, c.marker === 'none' ? 'o' : c.marker, px, py, size);
-        ctx.lineWidth = 0.75;
-        if (filled && !OPEN_MARKERS.has(c.marker)) { ctx.fillStyle = col; ctx.fill(); }
-        else { ctx.strokeStyle = col; ctx.stroke(); }
+        scatterMark(ctx, c, px, py, size, col);
       }
     }
 
@@ -1586,9 +1646,11 @@
         ctx.closePath();
         ctx.fillStyle = cols ? rgb([cols.data[i * 3], cols.data[i * 3 + 1], cols.data[i * 3 + 2]]) : 'gray';
         ctx.fill();
-        ctx.strokeStyle = AXIS_INK;
-        ctx.lineWidth = lw(0.5);
-        ctx.stroke();
+        if (c.edgeColor !== 'none') {
+          ctx.strokeStyle = Array.isArray(c.edgeColor) ? rgb(c.edgeColor) : AXIS_INK;
+          ctx.lineWidth = lw(c.lineWidth || 0.5);
+          ctx.stroke();
+        }
         const lx = ox + R * 1.15 * Math.cos(mid), ly = oy - R * 1.15 * Math.sin(mid);
         drawText(ctx, labels[i] || '', lx, ly, { size: 10 * PT, halign: Math.cos(mid) >= 0 ? 'left' : 'right', valign: 'middle' });
         a -= da;
@@ -1607,23 +1669,35 @@
       const ticks = niceTicks(0, rmax, 6);
       const top = ticks[ticks.length - 1] < rmax ? ticks[ticks.length - 1] + (ticks[1] - ticks[0]) : ticks[ticks.length - 1];
       const fs = ax.fontSize * PT;
+      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
       ctx.save();
-      ctx.fillStyle = rgb(ax.color);
-      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.fill();
-      ctx.strokeStyle = 'rgba(38,38,38,0.25)';
-      ctx.lineWidth = lw(0.5);
-      for (const t of ticks) { if (t <= 0) continue; ctx.beginPath(); ctx.arc(cx, cy, R * t / top, 0, 2 * Math.PI); ctx.stroke(); }
-      for (let d = 0; d < 360; d += 30) {
-        const a = d * Math.PI / 180;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.cos(a), cy - R * Math.sin(a)); ctx.stroke();
-        drawText(ctx, `${d}°`, cx + (R + fs * 1.2) * Math.cos(a), cy - (R + fs * 1.2) * Math.sin(a), { size: fs, halign: 'center', valign: 'middle' });
+      if (ax.visible) {
+        if (ax.color !== 'none') { ctx.fillStyle = rgb(ax.color); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.fill(); }
+        // the grid: GridColor, its alpha as the Cartesian grid's (0.15 drawn 0.25), GridLineStyle
+        ctx.strokeStyle = rgb(ax.gridColor || [0.15, 0.15, 0.15], Math.min(1, (ax.gridAlpha ?? 0.15) * 5 / 3));
+        ctx.lineWidth = lw(0.5);
+        dash(ctx, ax.gridLineStyle || '-', 0.5);
+        if (ax.gridLineStyle !== 'none') {
+          for (const t of ticks) { if (t <= 0) continue; ctx.beginPath(); ctx.arc(cx, cy, R * t / top, 0, 2 * Math.PI); ctx.stroke(); }
+          for (let d = 0; d < 360; d += 30) {
+            const a = d * Math.PI / 180;
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.cos(a), cy - R * Math.sin(a)); ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        for (let d = 0; d < 360; d += 30) {
+          const a = d * Math.PI / 180;
+          drawText(ctx, `${d}°`, cx + (R + fs * 1.2) * Math.cos(a), cy - (R + fs * 1.2) * Math.sin(a), Object.assign({ size: fs, halign: 'center', valign: 'middle' }, tf));
+        }
+        ctx.strokeStyle = AXIS_INK;
+        ctx.lineWidth = lw(ax.lineWidth || 0.5);
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
+        for (const t of ticks) if (t > 0) drawText(ctx, String(+t.toPrecision(6)), cx + R * t / top * Math.cos(Math.PI / 12) + 2, cy - R * t / top * Math.sin(Math.PI / 12), Object.assign({ size: fs * 0.9, valign: 'bottom' }, tf));
       }
-      ctx.strokeStyle = AXIS_INK;
-      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
-      for (const t of ticks) if (t > 0) drawText(ctx, String(+t.toPrecision(6)), cx + R * t / top * Math.cos(Math.PI / 12) + 2, cy - R * t / top * Math.sin(Math.PI / 12), { size: fs * 0.9, valign: 'bottom' });
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.clip();
       const at = (th, r) => [cx + R * r / top * Math.cos(th), cy - R * r / top * Math.sin(th)];
       for (const c of ax.children) {
+        if (c.visible === false) continue;
         if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) { this.scatter(ctx, ax, at, c, null); continue; }
         if (c.type !== 'line') continue;
         const th = vec(decode(c.x)), rr = vec(decode(c.y));
@@ -1637,10 +1711,10 @@
           ctx.stroke();
           ctx.setLineDash([]);
         }
-        if (c.marker !== 'none') drawMarkers(ctx, pts.filter(Boolean), c.marker, c.markerSize, rgb(c.color), c.mfc === 'none' ? null : rgb(c.color));
+        if (c.marker !== 'none') { const k = markerInk(c, rgb(c.color)); drawMarkers(ctx, pts.filter(Boolean), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
       }
       ctx.restore();
-      if (ax.title.string && ax.title.visible !== false) this.axesText(ctx, ax.title, cx, rect.y - 4, 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
+      this.titles(ctx, ax, cx, rect.y - 4);
       this.frames.push({ ax, fr: { r: rect, polar: true, cx, cy, R, top }, rect, is3d: false });
     }
 
@@ -1759,11 +1833,14 @@
         return best.a;
       })();
       ctx.save();
-      ctx.strokeStyle = AXIS_INK;
       ctx.lineWidth = lw(ax.lineWidth);
+      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
       for (let k = 0; k < 3; k++) {
         const a = k === 2 ? zEdge : edgeFor(k);
         const t = ticks[k];
+        // each axis in its own colour (XColor, YColor, ZColor)
+        const inkK = rgb([ax.xcolor, ax.ycolor, ax.zcolor][k] || [0.15, 0.15, 0.15]);
+        ctx.strokeStyle = inkK;
         const isTop = Math.abs(ax.view[1]) === 90;
         if (isTop && k === 2) continue;
         const center = corner(0, 0, 0);
@@ -1778,25 +1855,24 @@
           const L = Math.hypot(dx, dy) || 1;
           dx /= L; dy /= L;
           ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0] + dx * 5, p[1] + dy * 5); ctx.stroke();
-          drawText(ctx, t.labels[i], p[0] + dx * 9, p[1] + dy * 9, { size: fs, halign: dx > 0.3 ? 'left' : dx < -0.3 ? 'right' : 'center', valign: dy > 0.3 ? 'top' : dy < -0.3 ? 'bottom' : 'middle' });
+          drawText(ctx, t.labels[i], p[0] + dx * 9, p[1] + dy * 9, Object.assign({ size: fs, color: inkK, halign: dx > 0.3 ? 'left' : dx < -0.3 ? 'right' : 'center', valign: dy > 0.3 ? 'top' : dy < -0.3 ? 'bottom' : 'middle' }, tf));
         });
         const lab = [ax.xlabel, ax.ylabel, ax.zlabel][k];
-        if (lab.string) {
+        if (lab.string && lab.visible !== false) {
           const pa = a.slice(); pa[k] = 0;
           const p = corner(...pa);
           let dx = p[0] - center[0], dy = p[1] - center[1];
           if (k === 2 && !turned) { dx = -1; dy = 0; }
           const L = Math.hypot(dx, dy) || 1;
           dx /= L; dy /= L;
-          this.textOf(lab, ctx, lab.string, p[0] + dx * (fs * 3.2), p[1] + dy * (fs * 2.4), { size: lab.fontSize * PT * 1.1, halign: 'center', valign: 'middle', rotation: k === 2 ? 90 : 0, interpreter: lab.interpreter });
+          this.textOf(lab, ctx, lab.string, p[0] + dx * (fs * 3.2), p[1] + dy * (fs * 2.4), { size: lab.fontSize * PT * (ax.labelSize ?? 1.1), halign: 'center', valign: 'middle', rotation: k === 2 ? 90 : 0, interpreter: lab.interpreter,
+            color: rgb(lab.color === 'none' ? [0, 0, 0] : lab.color), bold: lab.fontWeight === 'bold', italic: lab.fontAngle === 'italic', family: faceOf(lab.fontName) });
         }
       }
       ctx.restore();
-      if (ax.title.string) {
-        let minY = Infinity;
-        for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) minY = Math.min(minY, corner(sx, sy, sz)[1]);
-        this.axesText(ctx, ax.title, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), 'above', 0, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
-      }
+      let minY = Infinity;
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) minY = Math.min(minY, corner(sx, sy, sz)[1]);
+      this.titles(ctx, ax, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8));
     }
 
     scene3(ctx, ax, fr) {
@@ -1837,8 +1913,7 @@
             else if (cd && cd.length === x.length) col = cmapColor(cmap, ax.clim, cd[i]) || col;
             if (bub) { const d = (bub.length === x.length ? bub[i] : bub[0]) * PT; items.push({ d: p[2], f: () => this.bubble(ctx, p[0], p[1], d, col, c) }); continue; }
             const size = Math.sqrt(sd ? (sd.length === x.length ? sd[i] : sd[0]) : 36);
-            const filled = c.mfc === 'flat';
-            items.push({ d: p[2], f: () => { ctx.beginPath(); markerPath(ctx, c.marker === 'none' ? 'o' : c.marker, p[0], p[1], size); ctx.lineWidth = 0.75; if (filled) { ctx.fillStyle = col; ctx.fill(); } else { ctx.strokeStyle = col; ctx.stroke(); } } });
+            if (c.marker && c.marker !== 'none') items.push({ d: p[2], f: () => scatterMark(ctx, c, p[0], p[1], size, col) });
           }
         } else if (c.type === 'series' && c.kind === 'contour') {
           const lines = decode(c.lines);
@@ -1920,7 +1995,8 @@
       const P = new Array(m);
       for (let i = 0; i < m; i++) { P[i] = new Array(n); for (let j = 0; j < n; j++) P[i][j] = fr.p(gx(i, j), gy(i, j), at2(Z, i, j)); }
       const faceMode = c.faceColor;
-      const edgeMode = c.edgeColor;
+      // LineStyle none: no mesh lines, as EdgeColor none
+      const edgeMode = c.lineStyle === 'none' ? 'none' : c.edgeColor;
       const alpha = typeof c.faceAlpha === 'number' ? c.faceAlpha : 1;
       const clim = ax.clim;
       const lit = lightDir && c.lighting !== 'none';
@@ -1960,7 +2036,7 @@
               g.closePath();
               if (fill) { g.fillStyle = rgb(fill, alpha); g.fill(); }
               else if (grad) this.interpQuad(g, q, grad.vals, cmap, clim, alpha, (col) => shade(col, grad.i, grad.j));
-              if (edge) { g.strokeStyle = rgb(edge, c.edgeAlpha); g.lineWidth = c.lineWidth; g.stroke(); }
+              if (edge) { g.strokeStyle = rgb(edge, c.edgeAlpha); g.lineWidth = c.lineWidth; dash(g, c.lineStyle || '-', c.lineWidth); g.stroke(); g.setLineDash([]); }
               else if (fill && alpha === 1) { g.strokeStyle = rgb(fill); g.lineWidth = 0.5; g.stroke(); }
             },
           });
@@ -2013,8 +2089,12 @@
       const widths = entries.map((e) => textSize(ctx, e.name, fs, { interpreter: lg.interpreter }).width);
       const colW = Math.max(...widths) + sample + 10;
       const rows = Math.ceil(entries.length / cols);
-      const W = cols * colW + pad * 2 - 4;
-      const H = rows * rowH + pad * 2 - 2;
+      // its Title, bold and centred above the entries
+      const title = Array.isArray(lg.title) ? lg.title.join('\n') : (lg.title || '');
+      const tsz = title ? textSize(ctx, title, fs, { interpreter: lg.interpreter, bold: true }) : null;
+      const titleH = tsz ? tsz.height + 2 : 0;
+      const W = Math.max(cols * colW + pad * 2 - 4, tsz ? tsz.width + pad * 2 : 0);
+      const H = rows * rowH + pad * 2 - 2 + titleH;
       const loc = lg.location || 'northeast';
       let x, y;
       const m = 8;
@@ -2040,9 +2120,10 @@
         ctx.lineWidth = lw(0.5);
         ctx.strokeRect(x, y, W, H);
       }
+      if (title) drawText(ctx, title, x + W / 2, y + pad - 1, { size: fs, color: rgb(lg.textColor), halign: 'center', valign: 'top', bold: true, interpreter: lg.interpreter });
       entries.forEach((e, i) => {
         const col = i % cols, row = Math.floor(i / cols);
-        const ex = x + pad + col * colW, ey = y + pad + row * rowH + rowH / 2;
+        const ex = x + pad + col * colW, ey = y + pad + titleH + row * rowH + rowH / 2;
         const isPatch = e.type === 'patch' || e.type === 'surface' || (e.type === 'series' && ['bar', 'histogram', 'area', 'pie'].includes(e.kind));
         if (isPatch) {
           const fc = Array.isArray(e.faceColor) ? rgb(e.faceColor, e.faceAlpha ?? 1) : 'rgb(0,114,189)';
@@ -2100,31 +2181,41 @@
       else { w = 14; h = rect.h; x = rect.x + rect.w + 14; y = rect.y; }
       if (cb.location === 'east') { x = rect.x + rect.w - 30; y = rect.y + 10; h = rect.h - 20; }
       const n = cmap.shape[0];
+      // Direction reverse: the colours and the ticks run the other way
+      const rev = cb.direction === 'reverse';
       for (let k = 0; k < n; k++) {
-        ctx.fillStyle = rgb([cmap.data[k * 3], cmap.data[k * 3 + 1], cmap.data[k * 3 + 2]]);
+        const j = rev ? n - 1 - k : k;
+        ctx.fillStyle = rgb([cmap.data[j * 3], cmap.data[j * 3 + 1], cmap.data[j * 3 + 2]]);
         if (horiz) ctx.fillRect(x + w * k / n, y, w / n + 0.5, h);
         else ctx.fillRect(x, y + h - h * (k + 1) / n, w, h / n + 0.5);
       }
       ctx.strokeStyle = rgb(cb.color);
       ctx.lineWidth = lw(0.5);
-      ctx.strokeRect(x, y, w, h);
+      if (cb.box !== false) ctx.strokeRect(x, y, w, h);
       const lim = ax.clim;
       const ticks = cb.ticks || niceTicks(lim[0], lim[1], 9);
       const { labels, exp } = cb.tickLabels ? { labels: cb.tickLabels, exp: null } : tickLabels(ticks, false);
+      // TickDirection: in (into the bar), out, or both
+      const tin = cb.tickDirection !== 'out' ? 3 : 0, tout = cb.tickDirection === 'out' || cb.tickDirection === 'both' ? 3 : 0;
       ctx.beginPath();
       ticks.forEach((t, i) => {
-        const f = (t - lim[0]) / (lim[1] - lim[0]);
+        let f = (t - lim[0]) / (lim[1] - lim[0]);
         if (f < -1e-9 || f > 1 + 1e-9) return;
-        if (horiz) { const px = x + f * w; ctx.moveTo(px, y + h); ctx.lineTo(px, y + h - 3); drawText(ctx, labels[i] ?? '', px, y + h + 3, { size: fs, halign: 'center', valign: 'top', color: rgb(cb.color) }); }
-        else { const py = y + h - f * h; ctx.moveTo(x + w, py); ctx.lineTo(x + w - 3, py); drawText(ctx, labels[i] ?? '', x + w + 4, py, { size: fs, valign: 'middle', color: rgb(cb.color) }); }
+        if (rev) f = 1 - f;
+        if (horiz) { const px = x + f * w; ctx.moveTo(px, y + h + tout); ctx.lineTo(px, y + h - tin); drawText(ctx, labels[i] ?? '', px, y + h + 3 + tout, { size: fs, halign: 'center', valign: 'top', color: rgb(cb.color) }); }
+        else { const py = y + h - f * h; ctx.moveTo(x + w + tout, py); ctx.lineTo(x + w - tin, py); drawText(ctx, labels[i] ?? '', x + w + 4 + tout, py, { size: fs, valign: 'middle', color: rgb(cb.color) }); }
       });
       ctx.stroke();
       if (exp !== null) drawText(ctx, `\\times10^{${exp}}`, x, y - 4, { size: fs, valign: 'bottom', color: rgb(cb.color) });
       // where it is, for a click in the figure's edit mode (with its tick labels)
       this.frames.push({ colorbar: cb, rect: horiz ? { x, y, w, h: h + fs * 1.4 + 3 } : { x, y, w: w + fs * 2.6 + 4, h } });
-      if (cb.label && cb.label.string) {
-        if (horiz) this.textOf(cb.label, ctx, cb.label.string, x + w / 2, y + h + fs * 1.6 + 4, { size: cb.label.fontSize * PT, halign: 'center', valign: 'top' });
-        else this.textOf(cb.label, ctx, cb.label.string, x + w + fs * 3.4, y + h / 2, { size: cb.label.fontSize * PT, halign: 'center', valign: 'middle', rotation: -90 });
+      const L = cb.label;
+      if (L && L.string && L.visible !== false) {
+        const o = { size: L.fontSize * PT, color: rgb(L.color === 'none' ? [0, 0, 0] : L.color), bold: L.fontWeight === 'bold', italic: L.fontAngle === 'italic',
+          family: faceOf(L.fontName), interpreter: L.interpreter, background: Array.isArray(L.background) ? rgb(L.background) : null,
+          edge: Array.isArray(L.edge) ? rgb(L.edge) : null, margin: L.margin, boxWidth: L.lineWidth ? lw(L.lineWidth) : null };
+        if (horiz) this.textOf(L, ctx, L.string, x + w / 2, y + h + fs * 1.6 + 4, Object.assign(o, { halign: 'center', valign: 'top' }));
+        else this.textOf(L, ctx, L.string, x + w + fs * 3.4, y + h / 2, Object.assign(o, { halign: 'center', valign: 'middle', rotation: -90 }));
       }
     }
   }

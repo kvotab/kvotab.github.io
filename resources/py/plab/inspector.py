@@ -135,6 +135,7 @@ def _group(o, k):
     return 'Other'
 
 
+_KEPT = 'Kept, not drawn'
 _GROUPS = ['Labels', 'Limits', 'Scale and direction', 'Ticks', 'Grid', 'Colors and lines', 'Markers', 'Text', 'Font', 'Data',
            'View', 'Position', 'Identity and interaction', 'Callbacks', 'Other']
 
@@ -405,10 +406,71 @@ def describe(o, k):
     return d
 
 
+# a chart's own properties, by kind (Series keeps one set of properties for every kind)
+_CHART = {
+    'bar': 'FaceColor FaceAlpha EdgeColor LineWidth BarWidth BaseValue Horizontal',
+    'histogram': 'FaceColor FaceAlpha EdgeColor Horizontal Normalization NumBins BinWidth BinEdges Values',
+    'area': 'FaceColor FaceAlpha EdgeColor LineWidth BaseValue',
+    'stair': 'Color LineWidth LineStyle Marker MarkerSize MarkerFaceColor MarkerEdgeColor',
+    'stem': 'ZData Color LineWidth LineStyle Marker MarkerSize MarkerFaceColor MarkerEdgeColor BaseValue',
+    'errorbar': 'Color LineWidth LineStyle Marker MarkerSize MarkerFaceColor MarkerEdgeColor CapSize '
+                'YNegativeDelta YPositiveDelta XNegativeDelta XPositiveDelta',
+    'scatter': 'ZData CData SizeData Marker MarkerFaceColor MarkerEdgeColor MarkerFaceAlpha MarkerEdgeAlpha LineWidth',
+    'bubblechart': 'ZData CData SizeData MarkerFaceColor MarkerEdgeColor MarkerFaceAlpha MarkerEdgeAlpha LineWidth',
+    'quiver': 'ZData UData VData WData Color LineWidth LineStyle MaxHeadSize AutoScaleFactor',
+    'contour': 'ZData LevelList LevelListMode Fill ShowText EdgeColor LineWidth LineStyle',
+    'pie': 'Labels EdgeColor LineWidth',
+}
+_CHART_ALL = {'XData', 'YData', 'DisplayName', 'Visible', 'Tag', 'UserData', 'HitTest', 'PickableParts', 'Selected',
+              'SelectionHighlight', 'Clipping', 'Parent', 'Type', 'BusyAction', 'Interruptible', 'HandleVisibility',
+              'UIContextMenu', 'BeingDeleted', 'CreateFcn', 'DeleteFcn', 'ButtonDownFcn'}
+
+
+# what a polar axes does not have of the Cartesian ones
+_POLAR_NOT = re.compile(r'^([XYZ][A-Z]|Camera|DataAspect|PlotBox|View$|Projection$|Box$|Tick(Dir|Length)|Layer$|Minor|[CA]Lim|Bubble|'
+                        r'AmbientLight|SortMethod$|LabelFontSize)')
+
+# kept (programs set them, files keep them) but not drawn by this page, by object type
+_NOT_DRAWN = {
+    'figure': 'Alphamap BackingStore DockControls DoubleBuffer GraphicsSmoothing InvertHardcopy MinColormap PaperOrientation '
+              'PaperPositionMode PaperSize PaperType PaperUnits Renderer RendererMode ShareColors WindowState Selected SelectionHighlight',
+    'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty',
+    'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight',
+    'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength MeshStyle '
+               'Marker MarkerSize CDataMapping Selected SelectionHighlight',
+    'patch': 'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
+             'Selected SelectionHighlight',
+    'image': 'AlphaDataMapping EraseMode Selected SelectionHighlight',
+    'text': 'Editing EraseMode FontSmoothing Selected SelectionHighlight',
+    'legend': 'Position', 'colorbar': 'Position',
+    'uipanel': 'AutoResizeChildren HighlightColor ShadowColor Scrollable FontAngle BorderWidth',
+    'uitable': 'FontAngle FontName FontWeight RowStriping ColumnFormat',
+    'textarrowshape': 'HorizontalAlignment VerticalAlignment',
+    'series': 'Selected SelectionHighlight',
+}
+
+
+# a 3-D view draws its axes without these
+_NOT_DRAWN_3D = ('XAxisLocation YAxisLocation TickDir TickLength XMinorTick YMinorTick ZMinorTick XTickLabelRotation '
+                 'YTickLabelRotation XMinorGrid YMinorGrid ZMinorGrid MinorGridAlpha MinorGridLineStyle Layer')
+
+
+def _not_drawn(o):
+    kept = set(_NOT_DRAWN.get('series' if isinstance(o, G.Series) else o.TYPE, '').split()) | {'Selected', 'SelectionHighlight'}
+    if o.TYPE == 'axes' and getattr(o, 'kind', '') != 'polar' and o.is3d():
+        kept |= set(_NOT_DRAWN_3D.split())
+    return kept
+
+
 def _names(o):
     names = [n for n in o.propnames() if n not in ('Children',)]
+    if isinstance(o, G.Series) and o.kind in _CHART:
+        own = (_CHART_ALL - ({'XData', 'YData'} if o.kind in ('histogram', 'pie') else set())) | set(_CHART[o.kind].split())
+        names = [n for n in names if n in own]
     if o.TYPE == 'axes':
         names += ['Title', 'Subtitle', 'XLabel', 'YLabel', 'ZLabel', 'Legend']
+    if o.TYPE == 'axes' and getattr(o, 'kind', '') == 'polar':
+        names = [n for n in names if not _POLAR_NOT.match(n)]
     if o.TYPE == 'colorbar':
         names.append('Label')
     seen = set()
@@ -425,13 +487,14 @@ def inspect(o):
     fig = o.figure() if isinstance(o, G.GObj) else None
     names = _names(o)
     common = [n for n in COMMON.get(_kind_of(o), []) if n in names]
+    kept = _not_drawn(o)
     groups = {}
     for n in names:
         if n in common:
             continue
-        groups.setdefault(_group(o, n), []).append(n)
+        groups.setdefault(_KEPT if n in kept else _group(o, n), []).append(n)
     out = [{'name': 'Common', 'props': [describe(o, n) for n in common]}] if common else []
-    for g in _GROUPS:
+    for g in _GROUPS + [_KEPT]:
         if g in groups:
             out.append({'name': g, 'props': [describe(o, n) for n in sorted(groups[g], key=str.lower)]})
     return {'ok': True, 'id': o.id, 'type': o.TYPE, 'label': label(o), 'figure': fig.id if fig is not None else None,

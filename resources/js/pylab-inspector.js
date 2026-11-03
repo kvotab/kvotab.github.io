@@ -198,6 +198,7 @@
       const groups = d.groups.map((g) => {
         const open = this.open.includes(g.name);
         const head = el('button', { type: 'button', class: 'pl-insp-ghead', 'aria-expanded': String(open) }, g.name);
+        if (g.name === 'Kept, not drawn') head.title = 'Properties a program can set and a file keeps, which this page does not draw';
         const body = el('div', { class: 'pl-insp-gbody' }, ...g.props.map((p) => this.row(p)));
         body.hidden = !open;
         head.addEventListener('click', () => {

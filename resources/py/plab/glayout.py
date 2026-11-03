@@ -205,6 +205,12 @@ def data_bounds(ax):
                 tight['X'] = tight['Y'] = True
     out = {}
     for k in 'XYZ':
+        if logs[k] and b[k]:
+            # a log axis shows positive values only: ranges reaching 0 (a bar's
+            # base, an area's) start a tenth below the smallest positive end
+            ends = [v for r in b[k] for v in r if v > 0]
+            low = min(ends) / 10 if ends else None
+            b[k] = [(r[0] if r[0] > 0 else low, r[1]) for r in b[k] if r[1] > 0 and low is not None]
         if b[k]:
             out[k] = (min(r[0] for r in b[k]), max(r[1] for r in b[k]))
         else:
@@ -214,8 +220,10 @@ def data_bounds(ax):
 
 def _aligned(lo, hi, px, log, tight, is3d=False):
     if lo is None:
-        return [0.0, 1.0]
+        return [1.0, 10.0] if log else [0.0, 1.0]
     if log:
+        if not (lo > 0 and hi > 0):
+            return [0.1, 1.0] if not hi > 0 else [hi / 100, hi * 10]
         if lo == hi:
             return [lo / 10, hi * 10]
         if tight:
