@@ -472,6 +472,24 @@
         return;
       }
       if (v.kind === 'nd') { this.el.replaceChildren(head, el('div', { class: 'pl-varhead' }, v.note)); return; }
+      if (v.kind === 'table') {
+        // a table: its variables' names over its rows (a click on a name opens that variable), row names or times beside
+        const numeric = new Set(['double', 'single', 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64', 'logical', 'duration']);
+        const heads = v.fields.map((f) => {
+          const th = el('th', { class: 'open', title: `Open ${this.name}.${f}` }, f);
+          th.addEventListener('click', () => this.app.openVariable(`${this.name}.${f}`));
+          return th;
+        });
+        const t = el('table', null, el('thead', null, el('tr', null, el('th', { class: 'rh' }, v.rowHead || ''), heads)));
+        const b = el('tbody');
+        v.cells.forEach((row, i) => b.append(el('tr', null,
+          el('td', { class: v.rowLabels ? 'rh txt' : 'rh' }, v.rowLabels ? v.rowLabels[i] : String(v.r0 + i + 1)),
+          row.map((c, j) => el('td', { class: numeric.has(v.fieldClasses[j]) ? '' : 'txt' }, c)))));
+        t.append(b);
+        const more = v.shape && v.shape[0] > v.r0 + v.cells.length ? el('div', { class: 'pl-varhead' }, `The first ${v.cells.length} rows are shown.`) : null;
+        this.el.replaceChildren(...[head, t, more].filter(Boolean));
+        return;
+      }
       if (v.kind === 'structarray') {
         const t = el('table', null, el('thead', null, el('tr', null, el('th', { class: 'rh' }, ''), v.fields.map((f) => el('th', null, f)))));
         const b = el('tbody');
@@ -484,7 +502,7 @@
       const t = el('table');
       t.append(el('thead', null, el('tr', null, el('th', { class: 'rh' }, ''), Array.from({ length: cols }, (_, j) => el('th', null, String(v.c0 + j + 1))))));
       const b = el('tbody');
-      const isText = v.class === 'cell' || v.class === 'string' || v.class === 'char';
+      const isText = v.text || v.class === 'cell' || v.class === 'string' || v.class === 'char';
       v.cells.forEach((row, i) => {
         const tr = el('tr', null, el('td', { class: 'rh' }, String(v.r0 + i + 1)));
         row.forEach((c, j) => {

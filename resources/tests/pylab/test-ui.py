@@ -275,6 +275,18 @@ async def desktop(page):
     out = await command(page, 'm11 = M(1, 1)')
     check('a cell edited in the table is written back', 'm11 =\n\n    99' in out[-60:], True)
     await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.kind === 'var')); 1")
+    await command(page, "TV = table([1;2], {'a';'b'}, 'VariableNames', {'n', 'label'}, 'RowNames', {'r1', 'r2'});")
+    await page.ev("PL.app.openVariable('TV'); 1")
+    tv = await until(page, "(() => { const v = PL.app.docs.find(d => d.kind === 'var'); if (!v) return null; const t = v.view.querySelector('table'); "
+                           "return t && t.tBodies[0] && t.tBodies[0].rows.length ? { head: [...t.tHead.rows[0].cells].map(c => c.textContent), "
+                           "rows: [...t.tBodies[0].rows].map(r => [...r.cells].map(c => c.textContent)) } : null; })()")
+    check('a table in the Variable editor: its variables over its rows, the row names beside',
+          tv, {'head': ['Row', 'n', 'label'], 'rows': [['r1', '1', "{'a'}"], ['r2', '2', "{'b'}"]]})
+    await page.ev("[...PL.app.docs.find(d => d.kind === 'var').view.querySelectorAll('thead th')].find(t => t.textContent === 'label').click(); 1")
+    opened = await until(page, "(() => { const k = PL.app.docs.filter(d => d.kind === 'var').map(d => d.key).join(' '); return k.includes('TV.label') ? k : null; })()")
+    check('a click on a variable\'s name opens that variable', 'TV.label' in (opened or ''), True)
+    for _ in range(3):
+        await page.ev("(() => { const v = PL.app.docs.find(d => d.kind === 'var'); if (v) PL.app.closeDoc(v); return 1; })()")
 
     # the Current Folder
     await page.ev("PL.engine.fs('write', { path: '/home/user/examples/zzTestFile.m', data: 'disp(42)\\n' }).then(() => PL.app.folder.refresh()).then(() => 1)")

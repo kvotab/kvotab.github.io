@@ -190,3 +190,74 @@ def strings_v73(path, variables):
                 d.attrs['MATLAB_class'] = np.bytes_('double')
     with open(path, 'r+b') as fh:
         fh.write(b'MATLAB 7.3 MAT-file, written by the pylab tests'.ljust(116, b' ') + bytes(8) + struct.pack('<H', 0x0200) + b'IM')
+
+
+# ---- other objects (tables, datetimes, ...) in a -v7.3 file ---------------------------------------------
+
+def objects_v73(path, variables):
+    """A -v7.3 file of the variables (the language's values: tables, datetimes, categoricals and plain
+    arrays), the objects' saved properties in #subsystem# as references to arrays in #refs#: numbers
+    and text as datasets, cells as datasets of references, structs as groups, an object held in a
+    property as its uint32 reference. The objects are numbered and their metadata made by
+    plab/matwrite.py's Subsystem, which save uses for Level 5 files."""
+    import h5py
+    from plab import matwrite
+    from plab.values import Char as _Char, Cell as _Cell, Struct as _Struct
+    sub = matwrite.Subsystem()
+    prepared = {k: sub.prepare(v) for k, v in variables.items()}
+    with h5py.File(path, 'w', userblock_size=512) as f:
+        refs = f.create_group('#refs#')
+        count = [0]
+
+        def put(v, where=None, name=None):
+            """The array v written (in #refs# unless where and name are given): its node."""
+            if where is None:
+                count[0] += 1
+                where, name = refs, f'n{count[0]}'
+            if isinstance(v, matwrite._Ref):
+                d = where.create_dataset(name, data=np.asarray(v.meta, np.uint32).T)
+                d.attrs['MATLAB_class'] = np.bytes_(v.cname)
+                d.attrs['MATLAB_object_decode'] = np.int32(3)
+                return d
+            if isinstance(v, _Struct):
+                g = where.create_group(name)
+                g.attrs['MATLAB_class'] = np.bytes_('struct')
+                g.attrs['MATLAB_fields'] = np.array([np.frombuffer(k.encode(), 'S1') for k in v.f], dtype=h5py.vlen_dtype(np.dtype('S1')))
+                for k in v.f:
+                    put(v.f[k].reshape(-1)[0], g, k)
+                return g
+            if isinstance(v, _Cell):
+                kids = [put(x).ref for x in v.a.reshape(-1, order='F')]
+                arr = np.array(kids, dtype=h5py.ref_dtype).reshape(v.a.shape, order='F') if kids else np.zeros(2, np.uint64)
+                d = where.create_dataset(name, data=arr.T if kids else arr)
+                d.attrs['MATLAB_class'] = np.bytes_('cell')
+                if not kids:
+                    d.attrs['MATLAB_empty'] = np.uint8(1)
+                return d
+            if isinstance(v, _Char):
+                d = where.create_dataset(name, data=np.asarray(v.a, np.uint16).T if v.a.size else np.array(v.a.shape, np.uint64))
+                d.attrs['MATLAB_class'] = np.bytes_('char')
+                if not v.a.size:
+                    d.attrs['MATLAB_empty'] = np.uint8(1)
+                return d
+            a = np.atleast_2d(np.asarray(v))
+            cls = 'logical' if a.dtype == bool else 'double' if a.dtype.kind == 'f' else a.dtype.name
+            if a.size == 0:
+                d = where.create_dataset(name, data=np.array(a.shape, np.uint64))
+                d.attrs['MATLAB_empty'] = np.uint8(1)
+            else:
+                d = where.create_dataset(name, data=(a.astype(np.uint8) if a.dtype == bool else a).T)
+            d.attrs['MATLAB_class'] = np.bytes_(cls)
+            return d
+
+        meta = np.frombuffer(sub.metadata(), np.uint8).reshape(-1, 1)
+        items = [put(meta), put(np.zeros((0, 0)))] + [put(v) for v in sub.saved]
+        items += [put(np.zeros((0, 0))), put(np.array(sub.aliases, np.uint32).reshape(-1, 1)), put(np.zeros((0, 0)))]
+        g = f.create_group('#subsystem#')
+        ds = g.create_dataset('MCOS', data=np.array([[i.ref for i in items]], dtype=h5py.ref_dtype))
+        ds.attrs['MATLAB_class'] = np.bytes_('FileWrapper__')
+        ds.attrs['MATLAB_object_decode'] = np.int32(3)
+        for name, v in prepared.items():
+            put(v, f, name)
+    with open(path, 'r+b') as fh:
+        fh.write(b'MATLAB 7.3 MAT-file, written by the pylab tests'.ljust(116, b' ') + bytes(8) + struct.pack('<H', 0x0200) + b'IM')

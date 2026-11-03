@@ -491,6 +491,71 @@ case('load -mat reads a MAT-file of any name', "load('data.dat', '-mat')", want=
 case('load of a text file still reads numbers', "fid = fopen('nums.txt', 'w'); fprintf(fid, '1 2\\n3 4\\n'); fclose(fid); load('nums.txt')",
      want={'nums': [[1, 2], [3, 4]]})
 
+# ---- tables, timetables, datetimes, durations, calendarDurations and categoricals --------------------
+OBJS = """t = datetime(2026,1,1,10,30,0) + days(0:2); t(2) = NaT; t.Format = 'yyyy-MM-dd HH:mm';
+tz = datetime(2026,6,1,12,0,0,'TimeZone','Europe/Stockholm');
+d = hours([1.5 NaN 3]); cdur = calmonths(2) + caldays([1 5]);
+c = categorical({'lo','hi','lo',''}, {'lo','hi'}, 'Ordinal', true); cp = categorical({'a'}, {'a','b'}, 'Protected', true);
+s = ["one" "two"; "three" "four"];
+T = table([1;2;3], {'a';'b';'c'}, categorical({'x';'y';'x'}), datetime(2026,1,1)+days([0;1;2]), ["p";"q";"r"], int8([1;2;3]), [true;false;true], 'VariableNames', {'n','s','c','d','st','i','b'}, 'RowNames', {'r1','r2','r3'});
+T.Properties.Description = 'demo'; T.Properties.VariableUnits = {'m','','','','','',''}; T.Properties.DimensionNames = {'Obs', 'Vars'};
+TT = timetable(datetime(2026,1,1)+hours([0;1;2]), [1;2;3], {'x';'y';'z'}, 'VariableNames', {'v', 'w'});
+TD = timetable(seconds([0;1]), [4;5]);
+C = {t, 5, c}; S.when = t; S.names = s; S.n = 1;
+x = magic(3);"""
+for flag, label in (('', '-v7, compressed'), (", '-v6'", '-v6')):
+    W, out = run(OBJS + f"""
+save('objs.mat', 't', 'tz', 'd', 'cdur', 'c', 'cp', 's', 'T', 'TT', 'TD', 'C', 'S', 'x'{flag});
+keep = struct('t', t, 'tz', tz, 'd', d, 'cdur', cdur, 'c', c, 's', s, 'x', x); keep.T = T; keep.TT = TT; keep.TD = TD; keep.cp = cp; keep.C = C; keep.S = S;
+clear('-regexp', '^(?!keep$).*'); L = load('objs.mat');
+eqs = [isequaln(L.t, keep.t), isequal(L.tz, keep.tz), isequaln(L.d, keep.d), isequal(L.cdur, keep.cdur), isequaln(L.c, keep.c), isequal(L.s, keep.s), ...
+       isequal(L.T, keep.T), isequal(L.TT, keep.TT), isequal(L.TD, keep.TD), isequal(L.x, keep.x), isequaln(L.C{{1}}, keep.C{{1}}), isequaln(L.C{{3}}, keep.C{{3}}), ...
+       isequaln(L.S.when, keep.S.when), isequal(L.S.names, keep.S.names)];
+fmt = L.t.Format; zone = L.tz.TimeZone; dfmt = L.d.Format; ord = isordinal(L.c); prot = isprotected(L.cp); cats = categories(L.c);
+desc = L.T.Properties.Description; units = L.T.Properties.VariableUnits; rows = L.T.Properties.RowNames; dims = L.T.Properties.DimensionNames;
+classes = cellfun(@(v) class(L.T.(v)), L.T.Properties.VariableNames, 'UniformOutput', false); tclass = class(L.TT.Time); ddclass = class(L.TD.Time);
+sclass = class(L.s);""")
+    check(f'objects round trip through save and load ({label}): each value as it was', bool(np.all(np.asarray(W['eqs']))), (np.asarray(W['eqs']).tolist(), out[-300:]))
+    check(f'... ({label}) the datetime format and time zone, the duration format', val(W['fmt']) == 'yyyy-MM-dd HH:mm' and val(W['zone']) == 'Europe/Stockholm' and val(W['dfmt']) == 'h',
+          (val(W['fmt']), val(W['zone']), val(W['dfmt'])))
+    check(f'... ({label}) ordinal and protected categoricals, their categories', W['ord'] is True and W['prot'] is True and val(W['cats']) == ['lo', 'hi'], (W['ord'], W['prot'], val(W['cats'])))
+    check(f'... ({label}) the table\'s description, units, row and dimension names', val(W['desc']) == 'demo' and val(W['units'])[0] == 'm' and val(W['rows']) == ['r1', 'r2', 'r3']
+          and val(W['dims']) == ['Obs', 'Vars'], (val(W['desc']), val(W['units']), val(W['rows']), val(W['dims'])))
+    check(f'... ({label}) each variable\'s class; the row times\'', val(W['classes']) == ['double', 'cell', 'categorical', 'datetime', 'string', 'int8', 'logical']
+          and val(W['tclass']) == 'datetime' and val(W['ddclass']) == 'duration', (val(W['classes']), val(W['tclass'])))
+    check(f'... ({label}) a string array stays a string array', val(W['sclass']) == 'string', val(W['sclass']))
+
+W, out = run(OBJS + """save('app.mat', 'x'); save('app.mat', 'T', '-append'); save('app.mat', 'c', '-append'); L = load('app.mat'); f = fieldnames(L)';
+ok = isequal(L.T, T) && isequaln(L.c, c) && isequal(L.x, x);""")
+check('-append keeps the objects already in the file and adds more', W['ok'] is True and val(W['f']) == ['x', 'T', 'c'], (val(W['f']), out[-200:]))
+W, out = run(OBJS + "fh = @(x) x + 1; save('mixed.mat', 'T', 'fh', 'x'); L = load('mixed.mat'); f = fieldnames(L)';")
+check('with objects, a function handle is still left out with a warning, the rest saved', val(W['f']) == ['T', 'x'] and "'fh'" in out and 'not saved' in out, (val(W['f']), out[-200:]))
+W, out = run(OBJS + "save('old.mat', 'T', 'x', '-v4'); L = load('old.mat'); f = fieldnames(L)';")
+check('-v4 has no objects: a table is left out with a warning', val(W['f']) == ['x'] and "'T'" in out, (val(W['f']), out[-200:]))
+
+# a -v7.3 file of objects, laid out as MATLAB keeps them in HDF5
+from matfixtures import objects_v73  # noqa: E402
+W0 = dict(run(OBJS)[0])
+objects_v73(path('obj73.mat'), {'when': W0['t'], 'cat': W0['c'], 'T': W0['T'], 'TT': W0['TT'], 'num': np.array([[1.0, 2.0]])})
+W, out = run("L = load('obj73.mat'); f = fieldnames(L)'; c1 = class(L.when); c2 = class(L.cat); c3 = class(L.T); c4 = class(L.TT); "
+             "nat = isnat(L.when); cats = categories(L.cat); dv = class(L.T.d); h = height(L.TT); n = L.num;")
+check('-v7.3: datetime, categorical, table and timetable objects read from #subsystem#',
+      sorted(val(W['f'])) == sorted(['when', 'cat', 'T', 'TT', 'num']) and [val(W[k]) for k in ('c1', 'c2', 'c3', 'c4')] == ['datetime', 'categorical', 'table', 'timetable'], (val(W['f']), out[-300:]))
+check('... the NaT, the categories, the datetime variable inside the table, the timetable\'s rows',
+      np.array_equal(np.asarray(W['nat']), [[False, True, False]]) and val(W['cats']) == ['lo', 'hi'] and val(W['dv']) == 'datetime' and W['h'] == 3,
+      (W['nat'], val(W['cats']), val(W['dv']), W['h']))
+
+# damaged object data: the objects are left out with a warning, the rest loads
+from plab import matwrite  # noqa: E402
+matwrite.write(path('bad.mat'), {'T': W0['T'], 'x': np.array([[7.0]])}, compress=False)
+raw = bytearray(open(path('bad.mat'), 'rb').read())
+at = raw.index(b'FileWrapper__')
+ver = raw.index(struct.pack('<I', 4), at)
+raw[ver:ver + 4] = struct.pack('<I', 9)
+open(path('bad.mat'), 'wb').write(bytes(raw))
+W, out = run("L = load('bad.mat'); f = fieldnames(L)';")
+check('damaged object data: the table is left out with a warning saying why, x loads', val(W['f']) == ['x'] and "'T'" in out and 'version' in out, (val(W['f']), out[-300:]))
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f'\n{checks[0] - len(failed)} of {checks[0]} checks passed')
 sys.exit(1 if failed else 0)

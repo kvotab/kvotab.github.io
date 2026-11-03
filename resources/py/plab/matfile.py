@@ -38,14 +38,15 @@ import numpy as np
 
 from .values import Char, Cell, Struct, Str, F64, C128, INT_TYPES, EMPTY
 from .ops import finish
+from . import matobjects as MO
 
 
 # a variable's or a field's name: the desktop writes names into code, so
 # nothing else from a file becomes one
 NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
 BAD_NAME = 'its name is not a valid variable name'
-OBJECT = ("it is an object of class '{}', and objects other than string arrays (tables, datetimes and the like) "
-          "cannot be read from MAT-files here")
+OBJECT = ("it is an object of class '{}', and objects other than tables, timetables, datetimes, durations, "
+          "calendarDurations, categoricals and string arrays cannot be read from MAT-files here")
 
 
 def shown(name):
@@ -511,8 +512,8 @@ class _V5:
             meta, p = self.element(b, p, end, depth)
             if self.in_subsystem:
                 return _Raw(kind_, cname, meta)
-            if kind_ == 'MCOS' and cname == 'string':
-                return self.mcos().string(meta)
+            if kind_ == 'MCOS' and cname in MO.CLASSES:
+                return self.mcos().object(cname, meta)
             raise Unreadable(OBJECT.format(cname))
         raise Unreadable(f'its class is unknown ({klass})')
 
@@ -674,6 +675,52 @@ class _Mcos:
                     raise Unreadable('it is damaged (a property that is not there)')
                 props[self.name(name_i)] = self.saved[value]
         return props
+
+    def object(self, cname, meta, depth=0):
+        """An object (table, datetime, ...) from its reference into the subsystem: [magic, number of
+        dimensions, size, the objects, the class]. The objects its properties hold are read in turn."""
+        if cname == 'string':
+            return self.string(meta)
+        if depth > 16:
+            raise Unreadable('its objects are nested too deeply')
+        m = np.asarray(meta).reshape(-1).astype(np.int64) if type(meta) is np.ndarray else np.zeros(0, np.int64)
+        if m.size < 4 or m[0] != MCOS_MAGIC or not 0 <= m[1] <= 32:
+            raise Unreadable('its object data is damaged')
+        nd = int(m[1])
+        dims = [int(x) for x in m[2:2 + nd]]
+        n = _count(dims)
+        if min(dims, default=0) < 0 or m.size < 3 + nd + n:
+            raise Unreadable('its object data is damaged')
+        if self.classname(int(m[-1])) != cname:
+            raise Unreadable(f'its object data is damaged (it is not a {cname})')
+        if n != 1:
+            raise Unreadable(f'it is an array of {n} {cname} objects, which cannot be read here')
+        props = {k: self.resolve(v, depth) for k, v in self.properties(int(m[2 + nd])).items()}
+        try:
+            return MO.from_props(cname, props)
+        except MO.Unreadable as e:
+            raise Unreadable(str(e))
+
+    def resolve(self, v, depth):
+        """A saved property with the objects in it (in cells and structs too) read."""
+        if isinstance(v, _Raw):
+            if v.kind == 'MCOS' and v.cname in MO.CLASSES:
+                return self.object(v.cname, v.value, depth + 1)
+            raise Unreadable(v.why or OBJECT.format(v.cname))
+        if type(v) is Cell:
+            items = np.empty(v.a.shape, object)
+            for i in range(v.a.size):
+                items.flat[i] = self.resolve(v.a.flat[i], depth)
+            return Cell(items)
+        if type(v) is Struct:
+            fields = {}
+            for k, a in v.f.items():
+                b = np.empty(a.shape, object)
+                for i in range(a.size):
+                    b.flat[i] = self.resolve(a.flat[i], depth)
+                fields[k] = b
+            return Struct(v.shape, fields)
+        return v
 
     def string(self, meta, size_only=False):
         """A string array from its reference into the subsystem: [magic, number of dimensions, size,
@@ -999,13 +1046,18 @@ class _H5:
         self.o = order
         self.notes = []
         self.left = NODE_LIMIT
+        self.in_subsystem = False
         self._mcos = None
         self._mcos_why = None
 
     def is_string(self, node, cls):
         """A string array: an object of class string, its data a reference into #subsystem#."""
+        return cls == 'string' and self.is_object(node, cls)
+
+    def is_object(self, node, cls):
+        """An object of MATLAB's classes: a dataset whose data is a reference into #subsystem#."""
         dec = node.attrs.get('MATLAB_object_decode')
-        return (cls == 'string' and isinstance(node, self.h5py.Dataset) and dec is not None
+        return (cls is not None and isinstance(node, self.h5py.Dataset) and dec is not None
                 and np.asarray(dec).size == 1 and int(np.asarray(dec).reshape(-1)[0]) == 3)
 
     def mcos(self):
@@ -1022,14 +1074,16 @@ class _H5:
                         raise Unreadable('it is damaged')
                     _fits(ds)
                     items = []
-                    for ref in np.asarray(ds[()]).reshape(-1):
-                        node = self.f[ref]
-                        # the metadata and the saved properties are arrays; the rest is not needed
-                        if isinstance(node, self.h5py.Dataset) and node.dtype.kind in 'ui':
-                            _fits(node)
-                            items.append(np.transpose(np.asarray(node[()])))
-                        else:
-                            items.append(None)
+                    self.in_subsystem = True
+                    try:
+                        for ref in np.asarray(ds[()]).reshape(-1):
+                            # the metadata and the saved properties; a part that cannot be read is set aside
+                            try:
+                                items.append(self.value(self.f[ref], 1))
+                            except (Unreadable, ValueError, TypeError, KeyError, OSError, RuntimeError, AttributeError) as e:
+                                items.append(_Raw(None, None, None, str(e)))
+                    finally:
+                        self.in_subsystem = False
                     self._mcos = _Mcos(items, self.o)
             except Unreadable as e:
                 self._mcos_why = f'could not be read ({e})'
@@ -1065,9 +1119,14 @@ class _H5:
             if cls == 'function_handle':
                 raise Unreadable('it is a function handle, which cannot be read from MAT-files of version 7.3 here')
             raise Unreadable(OBJECT.format(cls))
-        if self.is_string(node, cls):
+        if self.is_object(node, cls):
             _fits(node)
-            return self.mcos().string(np.asarray(node[()]))
+            meta = np.transpose(np.asarray(node[()]))
+            if self.in_subsystem:
+                return _Raw('MCOS', cls, meta)
+            if cls in MO.CLASSES:
+                return self.mcos().object(cls, meta)
+            raise Unreadable(OBJECT.format(cls))
         if 'MATLAB_object_decode' in node.attrs or (cls is not None and cls not in CLASSES):
             raise Unreadable(OBJECT.format(cls))
         _fits(node)

@@ -1642,6 +1642,20 @@ def writecell(nargout, *args):
 
 # ---- load and save --------------------------------------------------------------------------------
 
+def _holds_object(v, MO=None):
+    """True when a value is, or holds in its cells and structs, an object that only the
+    file's object data can keep (a table, a datetime, a string array, ...)."""
+    if MO is None:
+        from .. import matobjects as MO
+    if MO.is_object(v):
+        return True
+    if type(v) is Cell:
+        return any(_holds_object(x, MO) for x in v.a.flat)
+    if type(v) is Struct:
+        return any(_holds_object(x, MO) for a in v.f.values() for x in a.flat)
+    return False
+
+
 def to_py_mat(v):
     """A value as scipy.io.savemat takes it."""
     t = type(v)
@@ -1823,7 +1837,21 @@ async def save(W, nargout, *args):
         if lost:
             raise err('MATLAB:save:couldNotWriteFile', f"Unable to append to {fname}: its variable '{lost[0] or '?'}' cannot be "
                       'read or written here, and would be lost. Nothing was saved.', 'save')
-        mdict = {k: to_py_mat(v) for k, v in old.items()}
+        mdict = {k: to_py_mat(v) for k, v in old.items() if not _holds_object(v, None)}
+    from .. import matobjects as MO
+    if version != '-v4' and any(_holds_object(v, MO) for v in list(data.values()) + (list(old.values()) if append and os.path.isfile(p) else [])):
+        # objects (tables, datetimes, string arrays, ...) go in the file's object data, which SciPy cannot write
+        from .. import matwrite
+        allv = dict(old) if append and os.path.isfile(p) else {}
+        allv.update(data)
+        try:
+            left = matwrite.write(p, allv, compress=version in ('-v7', '-v7.3', '-mat'))
+        except OSError as e:
+            raise err('MATLAB:save:couldNotWriteFile', f'Unable to write file {fname}: {e.strerror or e}.', 'save')
+        for k, _ in left:
+            R.warn('MATLAB:save:cannotSaveObject', f"Variable '{k}' of class {class_of(allv[k])} was not saved.")
+        files_changed(os.path.dirname(p))
+        return None
     for k, v in data.items():
         if isinstance(v, (FH,)) or (isinstance(v, Obj) and not hasattr(v, 'opts')):
             R.warn('MATLAB:save:cannotSaveObject', f"Variable '{k}' of class {class_of(v)} was not saved.")

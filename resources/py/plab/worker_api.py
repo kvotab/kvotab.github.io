@@ -313,6 +313,9 @@ def var_view(name, r0=0, c0=0, nr=200, nc=60):
         res['fields'] = [{'name': k, 'value': D.summary(v.get1(k)), 'size': size_str(shape_of(v.get1(k))), 'class': class_of(v.get1(k)),
                           'open': type(v.get1(k)) in (Struct, Cell, np.ndarray, Char) and numel(v.get1(k)) > 1} for k in v.f]
         return json.dumps(res)
+    view = _value_object_view(v, res, r0, nr, c0, nc)
+    if view is not None:
+        return json.dumps(view)
     if isinstance(v, Obj) and not hasattr(v, 'a'):
         res['kind'] = 'object'
         rows = []
@@ -372,6 +375,47 @@ def var_view(name, r0=0, c0=0, nr=200, nc=60):
     res['cells'] = cells
     res['editable'] = t in (float, bool, np.ndarray) and (t is not np.ndarray or v.dtype.kind in 'fbiu')
     return json.dumps(res)
+
+
+def _value_object_view(v, res, r0, nr, c0, nc):
+    """A table (or timetable) as rows under its variables' names, the row names or times beside
+    them; a datetime, duration, calendarDuration or categorical array as a grid of its elements as
+    they display. None for other values."""
+    from .vobj import VObj
+    from .builtins.tables import Table, TimeTable, _var_cells, _take_rows
+    if isinstance(v, Table):
+        res['kind'] = 'table'
+        rows = list(range(r0, min(v.n, r0 + nr)))
+        res['r0'] = r0
+        res['fields'] = list(v.names)
+        res['fieldClasses'] = [class_of(x) for x in v.vars]
+        res['rowHead'] = v.dims[0] if (isinstance(v, TimeTable) or v.rownames is not None) else ''
+        if isinstance(v, TimeTable):
+            strs = np.asarray(v.times.elem_strings(), object).reshape(-1)
+            res['rowLabels'] = [str(strs[i]) for i in rows]
+        elif v.rownames is not None:
+            res['rowLabels'] = [v.rownames[i] for i in rows]
+        cols = []
+        for x in v.vars:
+            part = _take_rows(x, rows) if rows else None
+            cells, _ = _var_cells(part, len(rows)) if rows else ([], 'left')
+            cols.append([c.strip() for c in cells])
+        res['cells'] = [[c[i] for c in cols] for i in range(len(rows))]
+        return res
+    if isinstance(v, VObj) and hasattr(v, 'elem_strings') and v.ARRAYS:
+        sh = shape_of(v)
+        if len(sh) > 2:
+            res['kind'] = 'nd'
+            res['note'] = 'Arrays of more than two dimensions are shown one page at a time: index a page, e.g. ' + res['name'] + '(:,:,1).'
+            return res
+        s = np.asarray(v.elem_strings(), object).reshape(sh)
+        res['kind'] = 'grid'
+        res['r0'], res['c0'] = r0, c0
+        res['cells'] = [[str(s[i, j]) for j in range(c0, min(sh[1], c0 + nc))] for i in range(r0, min(sh[0], r0 + nr))]
+        res['editable'] = False
+        res['text'] = True
+        return res
+    return None
 
 
 # ---- files -----------------------------------------------------------------------------------

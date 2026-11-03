@@ -466,6 +466,7 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-vargrid td input { width: 100%; border: none; outline: none; font: inherit; text-align: right; background: var(--input-bg); color: var(--input-text); }
 .pl-vargrid .pl-varhead { position: sticky; left: 0; padding: 6px 8px; color: var(--pl-muted); font-family: var(--font-sans); font-size: 12px; }
 .pl-vargrid .open { color: var(--pl-link); cursor: pointer; text-decoration: underline; }
+.pl-vargrid td.rh.txt { text-align: left; }
 
 /* ---- menus and dialogs ---------------------------------------------------------------- */
 .pl-menu {

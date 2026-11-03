@@ -19,6 +19,8 @@
     "glayout.py",
     "colormaps.py",
     "matfile.py",
+    "matobjects.py",
+    "matwrite.py",
     "figfile.py",
     "parfor.py",
     "odesolvers.py",

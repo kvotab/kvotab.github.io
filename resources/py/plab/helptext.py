@@ -3565,7 +3565,7 @@ load: Load variables from a MAT-file, or a matrix from a text file.
     load filename -mat
     S = load(filename)
     * MAT-files of versions 4, 6, 7 and 7.3 load, compressed or not. The names may hold * as a wildcard.
-    * String arrays load. A variable that cannot be read is left out with a warning and the others load: other objects, such as tables and datetimes, are not read. Sparse matrices load sparse.
+    * Tables, timetables, datetimes, durations, calendarDurations, categoricals and string arrays load as themselves, also inside cells and structs. A variable that cannot be read is left out with a warning and the others load: other objects are not read. Sparse matrices load sparse.
     * A text file of numbers loads as a variable named after the file; -mat reads a MAT-file of any name.
     * load coastlines, when no coastlines.mat is found, gives coastlat and coastlon: Natural Earth's coastline (1:110m, public domain), the lines parted by NaN. It is fetched from jsDelivr the first time a program asks.
 save: Save variables to a MAT-file (or to a text file with -ascii).
@@ -3575,7 +3575,7 @@ save: Save variables to a MAT-file (or to a text file with -ascii).
     save filename x -append
     save filename x -ascii
     * -append adds to what the file holds; it refuses, saving nothing, rather than lose a variable of the file it cannot read.
-    * The file is of version 7 (compressed), or 6 or 4 when asked; -v7.3 also writes version 7. Function handles and objects are not saved.
+    * The file is of version 7 (compressed), or 6 or 4 when asked; -v7.3 also writes version 7. Tables, timetables, datetimes, durations, calendarDurations, categoricals and string arrays are saved as objects in the file (not in version 4); function handles and other objects are not saved.
 matfile: The variables of a MAT-file, as a struct.
     m = matfile(filename)
 importdata: The data of a file: a MAT-file's variables, or the numbers of a text file.
