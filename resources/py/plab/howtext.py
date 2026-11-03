@@ -381,13 +381,13 @@ xor, not, and, or:
 sort:
     Python: datafun.py. A stable sort of each vector along the dimension (numpy.argsort with kind 'stable', so equal values keep their order): NaN goes last ascending and first descending, complex values sort by magnitude and then angle (numpy.lexsort), and the second output is the order from 1. Cells of text and string arrays sort in Python by the characters' codes.
 sortrows:
-    Python: datafun.py. One stable sort per column, from the last column named to the first, so the first column given decides first; a negative column number sorts that column descending. Cells are sorted in Python, text against text and numbers against numbers.
+    Python: datafun.py and tables.py. One stable sort per column, from the last column named to the first, so the first column given decides first; a negative column number sorts that column descending. Cells are sorted in Python, text against text and numbers against numbers. A table is sorted the same way by its variables, each row of a variable as a Python tuple, missing values last going up and first going down.
 issorted:
     Python: datafun.py. True when each element is no larger than the next (complex values by magnitude).
 unique:
     Python: datafun.py. numpy.unique with its first indices and the inverse map, giving C, ia and ic; every NaN counts as a distinct value and they come last; complex values are ordered by magnitude, then angle. 'stable' reorders C by first appearance; 'last' takes the last index; 'rows' compares rows as tuples in Python. Text in cells and string arrays is handled in Python, sorted by the characters' codes, and graphics objects by their handle numbers, coming back as objects.
 ismember:
-    Python: datafun.py. numpy.isin for the logical result; the locations come from a Python dictionary of each value's first position in s. Text and 'rows' compare in Python as strings and tuples, graphics objects by their handle numbers.
+    Python: datafun.py and tables.py. numpy.isin for the logical result; the locations come from a Python dictionary of each value's first position in s. Text and 'rows' compare in Python as strings and tuples, graphics objects by their handle numbers, tables by each row's values as a tuple.
 union, intersect, setdiff, setxor:
     Python: datafun.py. The elements become Python lists and their first positions a dictionary; the result is the union, intersection, difference or symmetric difference of their sets, sorted (complex values by magnitude and angle) or, with 'stable', in the order the values first appear. ia and ib point to the first occurrences. Text and 'rows' work the same way on strings and row tuples, and graphics objects by their handle numbers, coming back as objects.
 histcounts:
@@ -789,6 +789,82 @@ etime:
 addtodate:
     Python: timefun.py. Days, weeks, hours, minutes, seconds and milliseconds are added to the date number as fractions of a day; months and years (whole numbers) are added to the date vector, a day past the end of the new month becoming its last day, and turned back into a number.
 
+# ---- timetypes.py and vobj.py: datetime, duration, calendarDuration ----------------------------------
+datetime:
+    Python: timetypes.py and vobj.py. A datetime holds a float64 array of seconds since 1970-01-01 00:00:00: the wall clock when it has no time zone, UTC when it has one, its TimeZone giving the wall clock for display and the calendar (Python's zoneinfo; in the page, where Python has no zone database, the browser's own through Intl.DateTimeFormat, the wall clock it gives for each instant minus the instant; or a fixed offset such as '+01:00'). NaT is NaN. Year, month and day come from the days by Howard Hinnant's civil calendar (the proleptic Gregorian, as datenum's), and back the same way, months past 12 and days past the month's end carried. Text is read by a regular expression built from the format's letters, or by the first of a list of usual formats (ISO 8601 first) that reads every element; the display format is built from the same letters. Datetimes are value objects: indexing, assignment, deletion and concatenation make new ones, and the operators come to the class (comparisons, minus between datetimes giving a duration, plus or minus a duration, a calendarDuration or a number of days).
+NaT, isdatetime, isnat:
+    Python: timetypes.py. NaT is a datetime of NaN; isnat is numpy.isnan of the seconds.
+year, month, day, hour, minute, second, quarter, ymd, hms, timeofday:
+    Python: timetypes.py. The parts of the wall-clock seconds: the day by floor division by 86400 and the civil calendar, the time of day split into hours, minutes and seconds; the day of the week from 1970-01-01, a Thursday; names from English month and day names.
+week:
+    Python: timetypes.py. Weeks start on Sunday; the week of 1 January (or of the month's first day) is 1, counted from the weekday of that day.
+isweekend, isbetween:
+    Python: timetypes.py. The weekday is 0 or 6 (Sunday or Saturday); isbetween compares the seconds, its ends included unless 'open', 'openleft' or 'openright'.
+posixtime, juliandate, exceltime, convertTo:
+    Python: timetypes.py. From the seconds: posix time is them (UTC for a zoned datetime), the Julian date seconds/86400 + 2440587.5 (minus 2400000.5 for the modified one), Excel's day number the date number less 693960 (695422 for 1904 dates), yyyymmdd from the year, month and day.
+tzoffset:
+    Python: timetypes.py. The zone's offset from UTC at each instant (zoneinfo's utcoffset), as a duration; 0 for a datetime with no zone.
+dateshift:
+    Python: timetypes.py. The start of the unit holding each datetime (the first day of the year, quarter or month, the Sunday of the week, the whole day, hour, minute or second), moved by the rule's number of units (months by the calendar); 'end' is the start of the next unit. 'dayofweek' moves to the next (or previous, or nearest) day with that weekday, the time of day kept.
+between, caldiff:
+    Python: timetypes.py. Whole months first (the largest number that, added to the first datetime by the calendar, does not pass the second), then whole days, then the time left, as far as the components asked for; a later first datetime gives the negative.
+duration:
+    Python: timetypes.py. A float64 array of seconds. Displayed as hh:mm:ss (hours past 24 kept in the hours), dd:hh:mm:ss, hh:mm or mm:ss, the seconds truncated (or with as many fraction digits as S letters), or as a number of one unit with five significant digits. Text is read as [dd:]hh:mm:ss, hh:mm or a number with its unit.
+isduration:
+    Python: timetypes.py. True for the duration class.
+years, days, hours, minutes, seconds, milliseconds:
+    Python: timetypes.py. A number times the unit's seconds (a year of 365.2425 days), as a duration displayed in that unit; given a duration, its seconds divided by the unit's.
+calendarDuration:
+    Python: timetypes.py. Three float64 arrays: months, days and seconds. Added to a datetime, the months move the wall-clock date by the calendar (the day kept, or the last day of a shorter month), then the days, then the seconds. Displayed as years, months and days (1y 2mo 3d) and the time in hours, minutes and seconds.
+iscalendarduration:
+    Python: timetypes.py. True for the calendarDuration class.
+calyears, calquarters, calmonths, calweeks, caldays:
+    Python: timetypes.py. Whole numbers of 12, 3 or 1 months, or 7 or 1 days; given a calendarDuration, its months (or days) in that unit.
+
+# ---- categoricals.py and tables.py: categorical arrays, tables and timetables ---------------------
+categorical:
+    Python: categoricals.py and vobj.py. A float64 array of codes (1 for the first category, 0 for undefined) beside the list of category names, ordinal and protected. The categories are the distinct values sorted (numbers by value, text by the characters' codes), or valueset in its order; each element's code comes from a Python dictionary of the names. Assignment, concatenation and comparison turn text into codes, adding categories where the array is not protected; < and > compare codes and need ordinal.
+categories, iscategorical, isordinal, isprotected, isundefined, iscategory:
+    Python: categoricals.py. The names as a column cell array; the class, the two flags, codes of 0, and Python's in on the names.
+countcats:
+    Python: categoricals.py. For each category, the elements whose code is its number, summed along the dimension; the undefined (code 0) are not counted.
+addcats, removecats, mergecats, renamecats, reordercats, setcats:
+    Python: categoricals.py. A new list of names and the codes mapped to it through a table of old code to new code (0 where a category is gone).
+summary:
+    Python: categoricals.py and tables.py. For a categorical array, countcats beside the names. For a table, each variable in turn: numbers by numpy.min, numpy.median and numpy.max over the values that are not NaN, and the count of NaN; datetimes and durations the same on their seconds; categories and logical values counted.
+table:
+    Python: tables.py and vobj.py. A list of variables (any values of the same number of rows), a list of names, the row names (or None) and the properties. A table is a value object: indexing picks rows (numbers, a mask, names looked up in the row names) and variables (numbers, a mask, names, vartype), and builds a new table from each variable's rows; assignment, deletion and concatenation build new tables the same way, filling new rows with a missing value of each variable's class (NaN, empty text, <missing>, NaT, undefined). Each variable's values are marked shared, so a change through T.x(2) = v copies the variable first. The compiler passes the names of the variables given to table, so that they name its variables. The display puts each variable's values in a block, numbers to the right and text to the left, centred under its name, fractions with five significant digits.
+timetable:
+    Python: tables.py. A table whose row names are a datetime or duration column, the row times; rows are picked by times (compared by their seconds) or by a timerange. SampleRate and TimeStep give the row times start + (0:n-1)*step. TimeStep and SampleRate in the properties come from the differences of the row times when they are all equal.
+istable, istimetable, istabular:
+    Python: tables.py. The class.
+height, width:
+    Python: tables.py. The size along the first and second dimensions.
+head, tail:
+    Python: tables.py. The first or last k rows (8), by indexing.
+vartype, timerange:
+    Python: tables.py. Small objects that table indexing asks which variables (by class) or rows (by comparing the row times' seconds with the two ends) they pick.
+table2array, table2cell, table2struct, struct2table, cell2table, array2table:
+    Python: tables.py. The variables concatenated side by side (as [T.a, T.b] would be), split row by row into cells or struct elements, or built from the columns of a cell or numeric array (a cell column of numbers becomes a numeric variable, any other column stays a cell).
+table2timetable, timetable2table:
+    Python: tables.py. A datetime or duration variable moved into the row times, or the row times moved into the first variable.
+addvars, removevars, movevars, renamevars, splitvars, mergevars, rows2vars, convertvars:
+    Python: tables.py. New lists of variables and names; splitvars indexes each column out, mergevars concatenates the variables side by side, rows2vars makes a variable of each row (numbers when every value of the row is a number, else a cell), and convertvars calls the conversion function by name (or the function handle) on each variable.
+varfun, rowfun:
+    Python: tables.py. The function called on each variable (varfun) or on the values of each row (rowfun), or on each group's rows; the groups are the distinct rows of the grouping variables, sorted, found through a Python dictionary.
+groupsummary:
+    Python: tables.py. The groups as for varfun; each method on each group's values that are not NaN: numpy.nanmean, numpy.nansum, numpy.nanmin, numpy.nanmax, numpy.nanmedian, numpy.nanvar and numpy.nanstd with one degree of freedom less, the most frequent value by numpy.unique, or the function given.
+innerjoin, outerjoin:
+    Python: tables.py. Each row's keys as a tuple; a Python dictionary from B's keys to its rows gives the pairs of matching rows, then the rows of either table with no match (outerjoin), sorted by the keys; each variable is indexed by the pairs, a missing value where a row has none.
+retime, synchronize:
+    Python: tables.py. The row times sorted, and the new times built from the first to the last (calendar units from dateshift's start of the unit, or a fixed step); 'previous', 'next' and 'nearest' pick rows by numpy.searchsorted on the seconds; 'linear', 'spline', 'pchip' and 'makima' are scipy.interpolate.interp1d, scipy.interpolate.CubicSpline, scipy.interpolate.PchipInterpolator and scipy.interpolate.Akima1DInterpolator over the values that are not NaN, extrapolating; the methods that put rows together take the rows from each new time up to the next. synchronize retimes each timetable to the union (or the other basis) of the row times and puts them side by side.
+isregular:
+    Python: tables.py. numpy.diff of the row times' seconds, all equal; for a calendar unit, whether each time is the first plus a whole number of the unit times its position.
+readtable:
+    Python: tables.py. Text files read by Python's csv module (the delimiter the most common of comma, tab, semicolon and bar in the first lines, unless given), spreadsheets by reading the .xlsx file's XML with Python's zipfile and xml.etree. A column is numbers when every filled cell reads as one (NaN for the empty ones), datetimes when every filled cell reads as one of the usual date formats, else text. Names are made valid by matlab.lang.makeValidName.
+writetable:
+    Python: tables.py. Rows of text written with the delimiter, text with the delimiter or quotes in it quoted; a variable of several columns becomes Name_1, Name_2, ...; datetimes and categories as they display. An .xlsx file is written as the few XML parts of a workbook of one sheet, text in its shared strings.
+
 # ---- parallel.py: the pool for parfor ---------------------------------------------------------
 parpool, gcp:
     Python: parallel.py. The workers are Python engines of their own: in the page, Web Workers beside the one that runs the Command Window, each with Pyodide and the engine. The default pool has one worker for each processor core but one (at most 8). For a parfor loop each worker gets the loop's compiled code, its broadcast and sliced values and the files that changed, then blocks of passes as the workers come free; the slices and the reductions' parts come back and are put together in the order of the passes, so the result is the one a serial run gives. gcp starts the default pool unless 'nocreate' is given; delete(gcp) stops it.
@@ -848,7 +924,7 @@ numel, length, ndims:
 isvarname, iskeyword:
     Python: core.py. A regular expression: a letter, then up to 62 letters, digits or underscores, and not one of the keywords; iskeyword looks in the lexer's keyword list, or returns the list.
 matlab.lang.makeValidName, genvarname:
-    Python: core.py. Each character that is not a letter, digit or underscore becomes an underscore, and 'x' is put in front when the name does not start with a letter.
+    Python: core.py. A valid name is kept. Otherwise white space at the ends is dropped and white space inside is removed with the letter after it made a capital; each other character that is not a letter, digit or underscore becomes an underscore (or is deleted, or becomes 0x and its code in hexadecimal, by ReplacementStyle); the prefix ('x') goes in front of a keyword (whose first letter becomes a capital) or of a name that does not start with a letter; the name is cut to 63 characters. genvarname then adds 1, 2, ... to a name among the exclusions or made already.
 exist:
     Python: core.py. 1 for a variable of the calling workspace, 2 for a file found on the path or by name, 5 for a builtin, 7 for a folder, else 0; the second argument limits which kinds are looked for.
 clear, clearvars:
@@ -977,7 +1053,7 @@ strcat:
 strvcat:
     Python: strfun.py. The texts as the rows of a character matrix padded with blanks; empty texts are left out.
 strjoin, join:
-    Python: strfun.py. Python's str.join with the delimiter (a space unless given; escapes such as \n become characters in strjoin); a cell of delimiters puts each one in its place. join joins along the rows of a string matrix.
+    Python: strfun.py and tables.py. join of two tables: a Python dictionary from the keys of B (each row's key values as a tuple) to its row gives the row of B for each row of A. For text, Python's str.join with the delimiter (a space unless given; escapes such as \n become characters in strjoin); a cell of delimiters puts each one in its place. join joins along the rows of a string matrix.
 strsplit:
     Python: strfun.py. Python's re.split on one regular expression of the delimiters (escaped, the longest first; white space unless given), with a run of delimiters counted as one unless 'CollapseDelimiters' is false; 'DelimiterType', 'RegularExpression' takes them as patterns. The second output is the delimiters found, by re.findall.
 split:

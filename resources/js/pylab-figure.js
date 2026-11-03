@@ -131,6 +131,112 @@
     return out;
   }
 
+  /* ---- datetime and duration axes: the values are date numbers (days from year 0) or days ---- */
+  function civilOf(dn) {
+    const day = Math.floor(dn + 1e-9);
+    let sod = Math.round((dn - day) * 86400 * 1000) / 1000;
+    const z = day - 719529 + 719468;
+    const era = Math.floor(z / 146097), doe = z - era * 146097;
+    const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+    const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+    const mp = Math.floor((5 * doy + 2) / 153);
+    const d = doy - Math.floor((153 * mp + 2) / 5) + 1, m = mp < 10 ? mp + 3 : mp - 9;
+    const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+    const h = Math.floor(sod / 3600), mi = Math.floor((sod - h * 3600) / 60), s = sod - h * 3600 - mi * 60;
+    return { y, m, d, h, mi, s };
+  }
+  function datenumOf(y, m, d) {
+    const yy = m <= 2 ? y - 1 : y, era = Math.floor(yy / 400), yoe = yy - era * 400;
+    const mp = (m + 9) % 12, doy = Math.floor((153 * mp + 2) / 5) + d - 1;
+    const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+    return era * 146097 + doe - 719468 + 719529;
+  }
+  const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const two = (n) => String(n).padStart(2, '0');
+  /* Ticks at whole calendar units: a step of seconds to years that gives at most maxn ticks. */
+  function dateTicks(lo, hi, maxn) {
+    if (!(Number.isFinite(lo) && Number.isFinite(hi)) || hi <= lo) return { ticks: [], labels: [] };
+    const span = hi - lo, S = 1 / 86400;
+    const fixed = [[1, 's'], [2, 's'], [5, 's'], [10, 's'], [15, 's'], [30, 's'], [60, 'm'], [120, 'm'], [300, 'm'], [600, 'm'], [900, 'm'], [1800, 'm'],
+      [3600, 'h'], [7200, 'h'], [10800, 'h'], [21600, 'h'], [43200, 'h'], [86400, 'd'], [172800, 'd'], [604800, 'd'], [1209600, 'd']];
+    let ticks = [], unit = null;
+    for (const [secs, u] of fixed) {
+      const step = secs * S;
+      if (span / step <= maxn - 1 + 1e-9) {
+        const start = Math.ceil(lo / step - 1e-9) * step;
+        for (let k = 0; k < 1000; k++) { const v = start + k * step; if (v > hi + step * 1e-9) break; ticks.push(Math.round(v / S) * S); }
+        unit = u;
+        break;
+      }
+    }
+    if (!unit) {
+      const a = civilOf(lo), b = civilOf(hi);
+      const months = (b.y - a.y) * 12 + (b.m - a.m);
+      let stepM = [1, 2, 3, 6].find((k) => months / k <= maxn - 1);
+      if (stepM) unit = 'M';
+      else { stepM = 12 * ([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((k) => months / 12 / k <= maxn - 1) || 1000); unit = 'y'; }
+      let y = a.y, m = a.m;
+      // the first boundary of the step at or after lo
+      let idx = Math.ceil(((y * 12 + m - 1) + (datenumOf(y, m, 1) < lo - 1e-9 ? 1 : 0)) / stepM) * stepM;
+      for (let k = 0; k < 1000; k++, idx += stepM) {
+        const v = datenumOf(Math.floor(idx / 12), idx % 12 + 1, 1);
+        if (v > hi + 1e-9) break;
+        if (v >= lo - 1e-9) ticks.push(v);
+      }
+    }
+    const labels = ticks.map((t) => {
+      const c = civilOf(t);
+      switch (unit) {
+        case 's': return `${two(c.h)}:${two(c.mi)}:${two(Math.round(c.s))}`;
+        case 'm': case 'h': return `${two(c.h)}:${two(c.mi)}`;
+        case 'd': return `${MON3[c.m - 1]} ${two(c.d)}`;
+        case 'M': return `${MON3[c.m - 1]} ${c.y}`;
+        default: return `${c.y}`;
+      }
+    });
+    // the date under time ticks, and the year under day ticks (on the first one), as a second line
+    if ((unit === 's' || unit === 'm' || unit === 'h') && labels.length) {
+      const c = civilOf(ticks[0]);
+      labels[0] = `${labels[0]}\n${MON3[c.m - 1]} ${two(c.d)}, ${c.y}`;
+    } else if (unit === 'd' && labels.length) {
+      labels[0] = `${labels[0]}\n${civilOf(ticks[0]).y}`;
+    }
+    return { ticks, labels };
+  }
+  /* Durations (in days) in the data's format: a single unit ('y', 'd', 'h',
+     'm', 's') at round numbers of it, labelled '2 hr'; else whole seconds,
+     minutes, hours or days, labelled hh:mm:ss or in days. */
+  const DUR_UNITS = { y: [365.2425, 'yr', 'yrs'], d: [1, 'day', 'days'], h: [1 / 24, 'hr', 'hr'], m: [1 / 1440, 'min', 'min'], s: [1 / 86400, 'sec', 'sec'] };
+  function durationTicks(lo, hi, maxn, fmt) {
+    if (!(Number.isFinite(lo) && Number.isFinite(hi)) || hi <= lo) return { ticks: [], labels: [] };
+    const unit = DUR_UNITS[fmt];
+    if (unit) {
+      const [u, one, many] = unit;
+      const step = niceStep((hi - lo) / u, maxn);
+      const ticks = [];
+      const start = Math.ceil(lo / u / step - 1e-9) * step;
+      for (let k = 0; k < 1000; k++) { const v = start + k * step; if (v > hi / u + step * 1e-9) break; ticks.push(v * u); }
+      const labels = ticks.map((t) => {
+        const v = Math.round(t / u / step) * step, x = Number(v.toPrecision(12));
+        return `${x} ${Math.abs(x) === 1 ? one : many}`;
+      });
+      return { ticks, labels };
+    }
+    const S = 1 / 86400, span = hi - lo;
+    const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 432000, 864000];
+    const k0 = steps.find((k) => span / (k * S) <= maxn - 1);
+    const step = k0 ? k0 * S : niceStep(span, maxn);
+    const ticks = [];
+    const start = Math.ceil(lo / step - 1e-9) * step;
+    for (let k = 0; k < 1000; k++) { const v = start + k * step; if (v > hi + step * 1e-9) break; ticks.push(v); }
+    const labels = ticks.map((t) => {
+      if (step >= 1) return `${Math.round(t * 1e6) / 1e6} days`;
+      const sg = t < 0 ? '-' : '', x = Math.round(Math.abs(t) * 86400);
+      return `${sg}${two(Math.floor(x / 3600))}:${two(Math.floor(x % 3600 / 60))}:${two(x % 60)}`;
+    });
+    return { ticks, labels };
+  }
+
   function maxTicks(px, is3d) { return Math.max(3, Math.min(is3d ? 7 : 11, Math.floor(px / 30) + 1)); }
 
   /* Tick labels and the exponent written at the axis' end. */
@@ -712,6 +818,12 @@
       const given = ax[`${which}tick`];
       const log = ax[`${which}scale`] === 'log';
       const px = which === 'x' ? rect.w : rect.h;
+      const kind = ax[`${which}kind`];
+      if (kind && !given && !ax[`${which}ticklabel`]) {
+        // a datetime or duration axis: its own ticks and labels
+        const n = Math.max(3, Math.min(maxTicks(px, is3d), which === 'x' ? Math.floor(px / 70) + 1 : 11));
+        return Object.assign(kind === 'datetime' ? dateTicks(lim[0], lim[1], n) : durationTicks(lim[0], lim[1], n, kind.split(':')[1]), { exp: null });
+      }
       let ticks = given || (log ? logTicks(lim[0], lim[1]) : niceTicks(lim[0], lim[1], maxTicks(px, is3d)));
       ticks = ticks.filter((t) => t >= Math.min(lim[0], lim[1]) - 1e-12 * Math.abs(lim[1] - lim[0]) && t <= Math.max(lim[0], lim[1]) + 1e-12 * Math.abs(lim[1] - lim[0]));
       const manual = ax[`${which}ticklabel`];

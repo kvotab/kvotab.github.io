@@ -686,11 +686,14 @@ sort: Sort the elements, down the columns by default.
     B = sort(..., 'descend')
     [B, I] = sort(...)
     * Text sorts too: a cell array of char vectors, or a string array.
-sortrows: Sort the rows of a matrix by its columns.
+sortrows: Sort the rows of a matrix by its columns, or of a table by its variables.
     B = sortrows(A)
     B = sortrows(A, column)
     B = sortrows(A, -column)
+    T2 = sortrows(T, vars)
+    T2 = sortrows(T, vars, direction)
     [B, I] = sortrows(...)
+    * For a table, vars are names or positions (negative for descending), or the row names' or row times' dimension name; direction 'ascend' or 'descend', one for each variable or for all.
 issorted: True when the elements are in sorted order.
     tf = issorted(A)
 unique: The distinct values, sorted (or in the order first met).
@@ -698,10 +701,12 @@ unique: The distinct values, sorted (or in the order first met).
     C = unique(A, 'stable')
     C = unique(A, 'rows')
     [C, ia, ic] = unique(...)
+    * For a table, its distinct rows.
 ismember: Which elements of A are found in B, and where.
     tf = ismember(A, B)
     [tf, loc] = ismember(A, B)
     tf = ismember(A, B, 'rows')
+    * Two tables of the same variables are compared row by row.
 union: The values in either set.
     C = union(A, B)
     [C, ia, ib] = union(A, B)
@@ -2411,9 +2416,12 @@ strsplit: Split text at a separator (white space by default).
 split: Split strings at a separator (white space by default).
     parts = split(s)
     parts = split(s, delimiter)
-join: Join the strings of an array with a separator.
+join: Join the strings of an array with a separator; or two tables by their keys.
     s = join(parts)
     s = join(parts, delimiter)
+    T = join(A, B)
+    T = join(A, B, 'Keys', keys)
+    * For tables: A with B's other variables added, each row of A matched to the row of B with its keys (the variables of the same name unless given); every key of A must be in B.
 splitlines: Split text at line breaks.
     lines = splitlines(s)
 strtrim: Remove white space from both ends.
@@ -2800,6 +2808,8 @@ genvarname: A valid variable name made from text, unlike some names to avoid.
     name = genvarname(s, exclusions)
 matlab.lang.makeValidName: Valid variable names made from text.
     names = matlab.lang.makeValidName(s)
+    names = matlab.lang.makeValidName(s, 'ReplacementStyle', style, 'Prefix', p)
+    [names, modified] = matlab.lang.makeValidName(...)
 builtin: Call the built-in function of a name, even when a file of that name shadows it.
     [y1, ...] = builtin(name, x1, ...)
 functions: Information about a function handle.
@@ -2916,6 +2926,334 @@ addtodate: Add an amount of a field (year, month, week, day, hour ...) to a seri
     t = addtodate(t0, q, field)
 leapyear: True for leap years.
     tf = leapyear(year)
+
+# ---- datetime, duration and calendarDuration --------------------------------------------------------
+datetime: Points in time, as values that print, compare and add as dates.
+    t = datetime('now')
+    t = datetime('today')
+    t = datetime(y, mo, d)
+    t = datetime(y, mo, d, h, mi, s)
+    t = datetime(text)
+    t = datetime(text, 'InputFormat', fmt)
+    t = datetime(X, 'ConvertFrom', kind)
+    t = datetime(..., 'Format', fmt, 'TimeZone', tz)
+    * kind: 'datenum', 'posixtime', 'excel', 'excel1904', 'juliandate', 'modifiedjuliandate', 'yyyymmdd' or 'epochtime'.
+    * Formats use letters: uuuu or yyyy (year), MM, MMM, MMMM (month), dd (day), eee, eeee (weekday), HH (hour), hh and a (12-hour clock), mm (minute), ss (second), SSS (fractions), with text in quotes, 'T'.
+    * t.Year, t.Month, t.Day, t.Hour, t.Minute, t.Second read and set the parts; t.Format and t.TimeZone the display and the zone.
+    * t2 - t1 is a duration; t + d adds a duration, a calendarDuration or a number of days.
+NaT: Not-a-Time, a missing datetime.
+    t = NaT
+    t = NaT(m, n)
+isdatetime: True for a datetime.
+    tf = isdatetime(t)
+isnat: True where a datetime is NaT.
+    tf = isnat(t)
+year: The year of each datetime.
+    y = year(t)
+month: The month of each datetime.
+    m = month(t)
+    names = month(t, 'name')
+day: The day of each datetime.
+    d = day(t)
+    d = day(t, 'dayofweek')
+    d = day(t, 'dayofyear')
+    names = day(t, 'name')
+hour: The hour of each datetime.
+    h = hour(t)
+minute: The minute of each datetime.
+    m = minute(t)
+second: The second of each datetime, with its fraction.
+    s = second(t)
+quarter: The quarter of the year of each datetime.
+    q = quarter(t)
+week: The week of the year (or of the month) of each datetime.
+    w = week(t)
+    w = week(t, 'weekofmonth')
+ymd: The year, month and day of each datetime.
+    [y, m, d] = ymd(t)
+hms: The hour, minute and second of each datetime or duration.
+    [h, m, s] = hms(t)
+timeofday: The time since midnight of each datetime, as a duration.
+    d = timeofday(t)
+isweekend: True where a datetime falls on a Saturday or Sunday.
+    tf = isweekend(t)
+isbetween: True where datetimes lie between two others.
+    tf = isbetween(t, lower, upper)
+    tf = isbetween(t, lower, upper, 'open')
+posixtime: Seconds since 1 January 1970 (UTC for zoned datetimes).
+    p = posixtime(t)
+juliandate: The Julian date of each datetime.
+    jd = juliandate(t)
+    mjd = juliandate(t, 'modifiedjuliandate')
+exceltime: Excel's day number of each datetime.
+    e = exceltime(t)
+    e = exceltime(t, 1904)
+convertTo: Datetimes as numbers of a kind.
+    X = convertTo(t, kind)
+    X = convertTo(t, 'epochtime', 'Epoch', t0, 'TicksPerSecond', n)
+tzoffset: The offset of each datetime's time zone from UTC, as a duration.
+    d = tzoffset(t)
+dateshift: Move datetimes to the start or end of a unit, or to a day of the week.
+    t2 = dateshift(t, 'start', unit)
+    t2 = dateshift(t, 'end', unit)
+    t2 = dateshift(t, 'start', unit, rule)
+    t2 = dateshift(t, 'dayofweek', day)
+    * unit: 'year', 'quarter', 'month', 'week', 'day', 'hour', 'minute', 'second'. rule: 'current', 'next', 'previous', or a number of units.
+between: The calendar difference between datetimes, as a calendarDuration.
+    d = between(t1, t2)
+    d = between(t1, t2, components)
+    * components from 'years', 'quarters', 'months', 'weeks', 'days' and 'time'.
+caldiff: The calendar differences between consecutive datetimes.
+    d = caldiff(t)
+duration: Lengths of time.
+    d = duration(h, m, s)
+    d = duration(h, m, s, ms)
+    d = duration(text)
+    d = duration(..., 'Format', fmt)
+    * Formats: 'hh:mm:ss', 'dd:hh:mm:ss', 'hh:mm', 'mm:ss' (each may end in .SSS), and 'y', 'd', 'h', 'm', 's' for one unit.
+isduration: True for a duration.
+    tf = isduration(d)
+years: Durations of years (365.2425 days each), or a duration in years.
+    d = years(x)
+    x = years(d)
+days: Durations of days, or a duration in days.
+    d = days(x)
+    x = days(d)
+hours: Durations of hours, or a duration in hours.
+    d = hours(x)
+    x = hours(d)
+minutes: Durations of minutes, or a duration in minutes.
+    d = minutes(x)
+    x = minutes(d)
+seconds: Durations of seconds, or a duration in seconds.
+    d = seconds(x)
+    x = seconds(d)
+milliseconds: Durations of milliseconds, or a duration in milliseconds.
+    d = milliseconds(x)
+    x = milliseconds(d)
+calendarDuration: Lengths of time in calendar units: months and days, whose length depends on where they start.
+    c = calendarDuration(y, mo, d)
+    c = calendarDuration(y, mo, d, h, mi, s)
+    c = calendarDuration(y, mo, d, t)
+iscalendarduration: True for a calendarDuration.
+    tf = iscalendarduration(c)
+calyears: Calendar years, as a calendarDuration.
+    c = calyears(n)
+calquarters: Calendar quarters, as a calendarDuration.
+    c = calquarters(n)
+calmonths: Calendar months, as a calendarDuration.
+    c = calmonths(n)
+calweeks: Calendar weeks, as a calendarDuration.
+    c = calweeks(n)
+caldays: Calendar days, as a calendarDuration.
+    c = caldays(n)
+
+# ---- categorical arrays ----------------------------------------------------------------------------
+categorical: Arrays whose elements are each one of a set of named categories, or undefined.
+    c = categorical(data)
+    c = categorical(data, valueset)
+    c = categorical(data, valueset, catnames)
+    c = categorical(..., 'Ordinal', true, 'Protected', true)
+    * data is text (a cell array of character vectors, a string array) or numbers; the categories are its distinct values in sorted order, or valueset; missing values ('', <missing>, NaN) are undefined.
+    * c == 'name' and c ~= 'name' compare with a category; <, <=, >, >= compare by the categories' order and need 'Ordinal'.
+    * c(k) = 'name' adds the category unless the array is protected.
+categories: The categories of a categorical array, as a column cell array of names.
+    names = categories(c)
+iscategorical: True for a categorical array.
+    tf = iscategorical(c)
+isordinal: True for a categorical array whose categories are ordered.
+    tf = isordinal(c)
+isprotected: True for a categorical array that takes no new categories by assignment.
+    tf = isprotected(c)
+isundefined: True where an element of a categorical array is in no category.
+    tf = isundefined(c)
+iscategory: True for each name that is a category of a categorical array.
+    tf = iscategory(c, names)
+countcats: How many elements are in each category.
+    n = countcats(c)
+    n = countcats(c, dim)
+addcats: Categories added to a categorical array.
+    c2 = addcats(c, names)
+    c2 = addcats(c, names, 'Before', name)
+    c2 = addcats(c, names, 'After', name)
+removecats: Categories removed from a categorical array, their elements made undefined.
+    c2 = removecats(c)
+    c2 = removecats(c, names)
+    * With no names, the categories no element is in.
+mergecats: Categories made one.
+    c2 = mergecats(c, oldcats)
+    c2 = mergecats(c, oldcats, newcat)
+renamecats: Categories renamed.
+    c2 = renamecats(c, newnames)
+    c2 = renamecats(c, oldnames, newnames)
+reordercats: The categories put in another order.
+    c2 = reordercats(c)
+    c2 = reordercats(c, neworder)
+    * With no order, alphabetical; neworder gives the names, or the categories' positions.
+setcats: The categories set; elements of the others become undefined.
+    c2 = setcats(c, newcats)
+summary: The categories of a categorical array and their counts, or a table's variables in short.
+    summary(c)
+    summary(T)
+    * For a table: each variable's size and class, its units and description, and its values in short (min, median and max, the categories' counts, how many are missing).
+
+# ---- tables and timetables -------------------------------------------------------------------------
+table: Columns of data of any class (variables), one row per observation, with names.
+    T = table(var1, ..., varN)
+    T = table(..., 'VariableNames', names, 'RowNames', rownames)
+    T = table('Size', [n m], 'VariableTypes', types)
+    * Variables are named after the variables given, else Var1, Var2, ...
+    * T(rows, vars) is a table; T{rows, vars} the variables' data put together; T.Name a variable. rows and vars are numbers, logical masks, ':', or names (row names, variable names); vars may be vartype(type).
+    * T.Name = x adds a variable; T(rows, :) = [] and T(:, vars) = [] delete; T(end+1, :) = {v1, ..., vN} adds a row; [T1; T2] and [T1, T2] concatenate.
+    * T.Properties holds Description, UserData, DimensionNames, VariableNames, VariableDescriptions, VariableUnits and RowNames, each set by assignment (T.Properties.VariableNames{2} = 'x').
+timetable: A table whose rows are points in time (datetimes or durations).
+    TT = timetable(rowTimes, var1, ..., varN)
+    TT = timetable(var1, ..., varN, 'RowTimes', rowTimes)
+    TT = timetable(var1, ..., varN, 'SampleRate', fs)
+    TT = timetable(var1, ..., varN, 'TimeStep', dt, 'StartTime', t0)
+    * TT(t, :) picks rows by their times, TT(timerange(t1, t2), :) the rows from t1 up to t2; TT.Time (or the first dimension's name) are the row times.
+    * TT.Properties also has RowTimes, StartTime, SampleRate and TimeStep.
+istable: True for a table.
+    tf = istable(T)
+istimetable: True for a timetable.
+    tf = istimetable(T)
+istabular: True for a table or a timetable.
+    tf = istabular(T)
+height: The number of rows of a table, or of an array.
+    n = height(T)
+width: The number of variables of a table, or the number of columns of an array.
+    n = width(T)
+head: The first rows of a table or an array.
+    T2 = head(T)
+    T2 = head(T, k)
+    * 8 rows unless k is given.
+tail: The last rows of a table or an array.
+    T2 = tail(T)
+    T2 = tail(T, k)
+vartype: Picks a table's variables of a type, in T(:, vartype(type)).
+    s = vartype(type)
+    * type: 'numeric', 'cellstr', or a class name such as 'logical', 'string', 'datetime', 'categorical'.
+timerange: Picks the rows of a timetable between two times, in TT(timerange(t1, t2), :).
+    r = timerange(t1, t2)
+    r = timerange(t1, t2, intervalType)
+    * intervalType: 'openright' (from t1 up to but not including t2; the default), 'closed', 'open', 'openleft'.
+table2array: A table's variables put together as one array.
+    A = table2array(T)
+table2cell: A table's values as a cell array, one cell per row and variable.
+    C = table2cell(T)
+table2struct: A table as a struct array, one element per row.
+    S = table2struct(T)
+    S = table2struct(T, 'ToScalar', true)
+    * With 'ToScalar', true: one struct whose fields are the variables.
+struct2table: A struct array as a table, its fields the variables.
+    T = struct2table(S)
+    T = struct2table(S, 'RowNames', rownames)
+cell2table: A cell array as a table, each column a variable.
+    T = cell2table(C)
+    T = cell2table(C, 'VariableNames', names, 'RowNames', rownames)
+    * A column of numbers becomes a numeric variable; any other column stays a cell array.
+array2table: A matrix as a table, each column a variable.
+    T = array2table(A)
+    T = array2table(A, 'VariableNames', names, 'RowNames', rownames)
+table2timetable: A table as a timetable, a datetime or duration variable as its row times.
+    TT = table2timetable(T)
+    TT = table2timetable(T, 'RowTimes', times)
+    * Without 'RowTimes', the first datetime or duration variable; 'RowTimes' may name a variable or give the times.
+timetable2table: A timetable as a table, the row times its first variable.
+    T = timetable2table(TT)
+addvars: Variables added to a table.
+    T2 = addvars(T, var1, ..., varN)
+    T2 = addvars(..., 'Before', var)
+    T2 = addvars(..., 'After', var)
+    T2 = addvars(..., 'NewVariableNames', names)
+removevars: Variables removed from a table.
+    T2 = removevars(T, vars)
+movevars: Variables moved within a table.
+    T2 = movevars(T, vars, 'Before', var)
+    T2 = movevars(T, vars, 'After', var)
+    * With neither, to the end.
+renamevars: Variables renamed.
+    T2 = renamevars(T, vars, newnames)
+splitvars: Each variable of several columns (or a table in a table) made one variable per column.
+    T2 = splitvars(T)
+    T2 = splitvars(T, vars)
+mergevars: Variables put together as one, where the first of them stood.
+    T2 = mergevars(T, vars)
+    T2 = mergevars(T, vars, 'NewVariableName', name)
+rows2vars: A table turned so that its rows become variables.
+    T2 = rows2vars(T)
+    * The variables' names are in the first new variable, OriginalVariableNames; the new variables are named after the row names, or Var1, Var2, ...
+convertvars: Variables converted to another type.
+    T2 = convertvars(T, vars, type)
+    T2 = convertvars(T, vars, fh)
+    * type: 'double', 'single', 'logical', an integer class, 'string', 'cellstr', 'char', 'categorical', 'datetime' or 'duration'; or a function handle applied to each variable.
+varfun: A function applied to each variable of a table.
+    T2 = varfun(fh, T)
+    T2 = varfun(fh, T, 'InputVariables', vars)
+    T2 = varfun(fh, T, 'GroupingVariables', vars)
+    A = varfun(fh, T, 'OutputFormat', 'uniform')
+    C = varfun(fh, T, 'OutputFormat', 'cell')
+    * With grouping variables, once per group: a row per group, with its size in GroupCount. The results are named after the function and the variable (mean_x).
+rowfun: A function applied to each row of a table, the variables as its inputs.
+    T2 = rowfun(fh, T)
+    T2 = rowfun(fh, T, 'InputVariables', vars, 'OutputVariableNames', names)
+    T2 = rowfun(fh, T, 'GroupingVariables', vars)
+    T2 = rowfun(fh, T, 'NumOutputs', n)
+    A = rowfun(fh, T, 'OutputFormat', 'uniform')
+    * With grouping variables, once per group, the group's rows as the inputs.
+groupsummary: Statistics of a table's variables for each group of rows.
+    G = groupsummary(T, groupvars)
+    G = groupsummary(T, groupvars, method)
+    G = groupsummary(T, groupvars, method, datavars)
+    * method: 'mean', 'sum', 'min', 'max', 'range', 'median', 'mode', 'var', 'std', 'nnz', 'numel', 'nummissing', 'all', a function handle, or a list of them; missing values are left out.
+    * A row per group (in sorted order), its size in GroupCount; the results named method_variable. Without datavars, every numeric variable that does not group.
+innerjoin: The rows of two tables whose keys are in both, side by side.
+    T = innerjoin(A, B)
+    T = innerjoin(A, B, 'Keys', keys)
+    T = innerjoin(A, B, 'LeftKeys', lk, 'RightKeys', rk)
+    [T, ia, ib] = innerjoin(...)
+    * The keys are the variables of the same name unless given; the result is sorted by the keys. Variables of the same name that are no keys get the inputs' names after them (or _left and _right).
+outerjoin: The rows of two tables matched by their keys, with missing values where one has no match.
+    T = outerjoin(A, B)
+    T = outerjoin(A, B, 'Type', type)
+    T = outerjoin(A, B, 'MergeKeys', true)
+    [T, ia, ib] = outerjoin(...)
+    * type: 'full' (the default), 'left', 'right'. MergeKeys makes each pair of keys one variable.
+retime: A timetable at new row times, its values filled in or put together.
+    TT2 = retime(TT, newTimes)
+    TT2 = retime(TT, newTimes, method)
+    TT2 = retime(TT, timeStep, method)
+    TT2 = retime(TT, 'regular', method, 'TimeStep', dt)
+    TT2 = retime(TT, 'regular', method, 'SampleRate', fs)
+    TT2 = retime(..., 'Constant', c)
+    * timeStep: 'yearly', 'quarterly', 'monthly', 'weekly', 'daily', 'hourly', 'minutely', 'secondly'.
+    * Filling: 'fillwithmissing' (the default), 'fillwithconstant', 'previous', 'next', 'nearest', 'linear', 'spline', 'pchip', 'makima'.
+    * Putting together the rows from each new time up to the next: 'mean', 'median', 'mode', 'sum', 'prod', 'min', 'max', 'count', 'firstvalue', 'lastvalue', or a function handle.
+synchronize: Timetables side by side at common row times.
+    TT = synchronize(TT1, TT2, ...)
+    TT = synchronize(TT1, TT2, ..., newTimeBasis)
+    TT = synchronize(TT1, TT2, ..., newTimeBasis, method)
+    * newTimeBasis: 'union' (the default), 'intersection', 'commonrange', 'first', 'last', new times, or a time step as for retime; method as for retime.
+isregular: True when a timetable's row times step evenly.
+    tf = isregular(TT)
+    tf = isregular(TT, unit)
+    [tf, dt] = isregular(...)
+    * unit: 'time' (the default), or 'years', 'quarters', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds' for steps of whole calendar units.
+readtable: A table from a delimited text file or a spreadsheet.
+    T = readtable(filename)
+    T = readtable(filename, 'Delimiter', d, 'NumHeaderLines', n)
+    T = readtable(filename, 'ReadVariableNames', false)
+    T = readtable(filename, 'ReadRowNames', true)
+    T = readtable(filename, 'Sheet', sheet)
+    T = readtable(filename, 'TextType', 'string')
+    T = readtable(filename, 'VariableNamingRule', 'preserve')
+    * Text files (.csv, .txt, .dat) and .xlsx spreadsheets. The first row names the variables; each column becomes numbers, datetimes or text.
+writetable: A table written to a delimited text file or a spreadsheet.
+    writetable(T, filename)
+    writetable(T, filename, 'Delimiter', d)
+    writetable(T, filename, 'WriteVariableNames', false, 'WriteRowNames', true)
+    writetable(T, filename, 'QuoteStrings', true)
+    * .csv, .txt and .dat files are text, comma-separated unless 'Delimiter' says otherwise; .xlsx files are spreadsheets.
 
 # ---- files and folders -----------------------------------------------------------------------
 pwd: The current folder.

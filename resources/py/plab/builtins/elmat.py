@@ -984,7 +984,7 @@ def _to_class(v, klass, fn):
         h = getattr(v, 'number_value', None)
         if h is not None:
             return float(h()) if klass == 'double' else finish(np.array([[h()]]), klass)
-        if hasattr(v, 'a'):
+        if isinstance(getattr(v, 'a', None), np.ndarray) and v.a.dtype == object:
             return out(np.array([[float(x.number_value()) for x in row] for row in v.a]))
         raise err('MATLAB:invalidConversion', f'Conversion to {klass} from {v.cls} is not possible.', fn)
     a = arr(v, fn)

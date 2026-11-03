@@ -413,11 +413,30 @@ def parfor_collect(W, ks, sliced, reds):
     return {'slices': slices, 'reds': parts}
 
 
+class ArgNames:
+    """The names of a call's arguments that are plain variables (None for
+    the others): the compiler passes them last to table and timetable,
+    which name their variables after them."""
+    __slots__ = ('names',)
+
+    def __init__(self, names):
+        self.names = names
+
+
+class _NoVObj:
+    pass
+
+
+VOBJ = _NoVObj         # vobj.VObj (vobj.py sets it)
+
+
 def forit(v):
     """A for loop takes the columns of its value one at a time."""
     t = type(v)
     if t is float or t is bool or t is complex:
         return (v,)
+    if isinstance(v, VOBJ):
+        return v.columns()
     if t is Sparse:
         from . import sparsemat
         return sparsemat.columns(v)

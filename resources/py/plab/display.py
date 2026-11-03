@@ -348,6 +348,8 @@ def summary(v, brackets='[]'):
         return text if brackets == '{}' else f'[{text}]'
     if isinstance(v, FH):
         return v.text()
+    if isinstance(v, VOBJ):
+        return v.summary_text(brackets)
     if isinstance(v, Obj):
         return f'{size_str(getattr(v, "shape", (1, 1)))} {v.cls}' if brackets == '{}' else f'[{size_str(getattr(v, "shape", (1, 1)))} {v.cls}]'
     return f'[1×1 {class_of(v)}]'
@@ -518,6 +520,7 @@ class _NoSym:
     pass
 
 
+VOBJ = _NoSym         # vobj.VObj (vobj.py sets it)
 SYM = _NoSym          # symbolic.Sym (symbolic.py sets it)
 SYMOPS = None
 
@@ -578,6 +581,9 @@ def disp_text(v):
     if t is Sparse:
         from . import sparsemat
         return sparsemat.disp_text(v)
+    if isinstance(v, VOBJ):
+        lines = v.disp_lines()
+        return '\n'.join(lines) + '\n' if lines else ''
     if t is Char:
         if v.a.size == 0:
             return ''

@@ -13,7 +13,7 @@ from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, opt_lo
 from .fmt import sprintf as _sprintf, unescape
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, DTYPE_CLASS,
                       class_of, shape_of, numel, py_str, share, share_all, EMPTY, is_numeric, is_real, size_str,
-                      to_float, Interrupt, Sparse)
+                      to_float, Interrupt, Sparse, text_list)
 from .. import display as D
 from .. import runtime as R
 
@@ -497,13 +497,79 @@ def iskeyword(nargout, *args):
     return py_str(args[0]) in KEYWORDS
 
 
-@bi('matlab.lang.makeValidName', 'genvarname')
+def _valid_name(s, style='underscore', prefix='x'):
+    """Text made a valid variable name: white space dropped (the letter after
+    it capitalised), other characters not allowed replaced, a prefix when it
+    does not start with a letter or is a keyword, at most 63 characters."""
+    from ..lexer import KEYWORDS
+    if re.fullmatch(r'[A-Za-z]\w{0,62}', s) and s not in KEYWORDS:
+        return s
+    t = s.strip()
+    t = re.sub(r'\s+(\S)', lambda m: m.group(1).upper(), t)
+    if style == 'delete':
+        t = re.sub(r'[^A-Za-z0-9_]', '', t)
+    elif style == 'hex':
+        t = re.sub(r'[^A-Za-z0-9_]', lambda m: '0x%02X' % ord(m.group(0)), t)
+    else:
+        t = re.sub(r'[^A-Za-z0-9_]', '_', t)
+    if t in KEYWORDS:
+        t = prefix + t[0].upper() + t[1:]
+    elif not t or not t[0].isalpha():
+        t = prefix + t
+    return t[:63]
+
+
+@bi('matlab.lang.makeValidName', nout=2)
 def makevalidname(nargout, *args):
-    s = py_str(args[0])
-    s = re.sub(r'\W', '_', s)
-    if not s or not s[0].isalpha():
-        s = 'x' + s
-    return Char.of(s)
+    nargchk(args, 1, 5, 'matlab.lang.makeValidName')
+    style, prefix = 'underscore', 'x'
+    for k in range(1, len(args) - 1, 2):
+        o = opt_lower(args[k])
+        if o == 'replacementstyle':
+            style = sval(args[k + 1], 'ReplacementStyle', 'matlab.lang.makeValidName').lower()
+            if style not in ('underscore', 'delete', 'hex'):
+                raise err('MATLAB:makeValidName:InvalidReplacementStyle', "ReplacementStyle is 'underscore', 'delete' or 'hex'.", 'matlab.lang.makeValidName')
+        elif o == 'prefix':
+            prefix = sval(args[k + 1], 'Prefix', 'matlab.lang.makeValidName')
+            if not re.fullmatch(r'[A-Za-z]\w*', prefix):
+                raise err('MATLAB:makeValidName:InvalidPrefix', 'The prefix must be a valid variable name.', 'matlab.lang.makeValidName')
+        else:
+            raise err('MATLAB:makeValidName:InvalidOption', "The options are 'ReplacementStyle' and 'Prefix'.", 'matlab.lang.makeValidName')
+    v = args[0]
+    if type(v) is Char and v.a.shape[0] <= 1:
+        old = v.str()
+        new = _valid_name(old, style, prefix)
+        res, mod = Char.of(new), new != old
+    elif type(v) in (Cell, Str) and all(type(x) is Char or type(v) is Str for x in v.a.flat):
+        names = text_list(v)
+        new = [_valid_name(n, style, prefix) for n in names]
+        shape = v.a.shape
+        res = Cell.of_list([Char.of(n) for n in new], shape) if type(v) is Cell else Str.from_list(new, shape)
+        mod = np.array([a != b for a, b in zip(names, new)]).reshape(shape, order='F')
+    else:
+        raise err('MATLAB:makeValidName:InvalidCandidateNames', 'The names must be a character vector, a cell array of them or a string array.', 'matlab.lang.makeValidName')
+    return (res, mod) if nargout > 1 else res
+
+
+@bi('genvarname')
+def genvarname(nargout, *args):
+    nargchk(args, 1, 2, 'genvarname')
+    taken = set(text_list(args[1]) if type(args[1]) in (Cell, Str) else [py_str(args[1])]) if len(args) > 1 else set()
+
+    def one(n):
+        n = _valid_name(n)
+        if n in taken:
+            k = 1
+            while f'{n}{k}' in taken:
+                k += 1
+            n = f'{n}{k}'
+        taken.add(n)
+        return n
+    v = args[0]
+    if type(v) in (Cell, Str):
+        names = [one(n) for n in text_list(v)]
+        return Cell.of_list([Char.of(n) for n in names], v.a.shape)
+    return Char.of(one(sval(v, 'name', 'genvarname')))
 
 
 # ---- the workspace -------------------------------------------------------------------

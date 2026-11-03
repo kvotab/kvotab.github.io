@@ -1542,6 +1542,8 @@ def serialize_axes(ax):
         'tickDir': p['TickDir'], 'view': [float(x) for x in p['View'].reshape(-1)],
         'camTarget': [float(x) for x in p['CameraTarget'].reshape(-1)] if p['CameraTargetMode'] == 'manual' else None,
         'camUp': [float(x) for x in p['CameraUpVector'].reshape(-1)] if p['CameraUpVectorMode'] == 'manual' else None,
+        'xkind': (getattr(ax, 'kinds', None) or {}).get('x'), 'ykind': (getattr(ax, 'kinds', None) or {}).get('y'),
+        'zkind': (getattr(ax, 'kinds', None) or {}).get('z'),
         'xtick': [float(x) for x in np.asarray(p['XTick'], float).reshape(-1)] if p['XTickMode'] == 'manual' else None,
         'ytick': [float(x) for x in np.asarray(p['YTick'], float).reshape(-1)] if p['YTickMode'] == 'manual' else None,
         'ztick': [float(x) for x in np.asarray(p['ZTick'], float).reshape(-1)] if p['ZTickMode'] == 'manual' else None,

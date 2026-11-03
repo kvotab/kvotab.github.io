@@ -196,6 +196,7 @@ class _NoSym:
 # symbolic values (symbolic.py sets these)
 SYM = _NoSym
 SYMOPS = None
+VOBJ = _NoSym          # vobj.VObj (vobj.py sets it)
 
 
 def idx(A, args):
@@ -647,6 +648,8 @@ def _empty_like_value(V):
         return np.zeros((0, 0), bool)
     if t is complex:
         return np.zeros((0, 0), C128)
+    if isinstance(V, VOBJ):
+        return V.empty_like()
     if isinstance(V, Obj):
         from .graphics_base import HArr
         return HArr(np.empty((0, 0), object))
@@ -699,7 +702,7 @@ def asgn(A, args, V):
             return EMPTY()
         A = _empty_like_value(V)
         t = type(A)
-    elif t is np.ndarray and A.size == 0 and A.dtype is _DF and (type(V) in (Cell, Struct, Str) or getattr(V, 'is_graphics', False)):
+    elif t is np.ndarray and A.size == 0 and A.dtype is _DF and (type(V) in (Cell, Struct, Str) or getattr(V, 'is_graphics', False) or isinstance(V, VOBJ)):
         # h = []; h(1) = plot(...) makes a graphics array
         A = _empty_like_value(V)
         t = type(A)
@@ -850,6 +853,8 @@ def _asgn_struct(A, args, V):
 def delete(A, args):
     """A(args) = []."""
     t = type(A)
+    if isinstance(A, VOBJ):
+        return A.delete(args)
     if t is Sparse:
         from . import sparsemat
         return sparsemat.delete(A, args)
@@ -970,6 +975,8 @@ def casgn(A, args, V):
         if Vs.a.size != 1:
             raise MError('MATLAB:invalidAssignment', 'Unable to perform assignment: the right side must be one string.')
         return asgn(A, args, Vs)
+    if t is not Cell and hasattr(A, 'brace_assign'):
+        return A.brace_assign(args, V)
     if t is not Cell:
         raise MError('MATLAB:cellAssToNonCell', 'Unable to perform assignment because brace indexing is not supported for variables of this type. Use parentheses instead.')
     C = writable(A)

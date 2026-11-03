@@ -40,6 +40,8 @@ SYMOPS = None
 # objects of the language's own classes (classdef.py sets these)
 UOBJ = _NoSym
 UOPS = None
+VOBJ = _NoSym          # vobj.VObj: datetime, duration, categorical (vobj.py sets these)
+VOPS = None
 
 
 def _incompat():
@@ -215,6 +217,8 @@ def _binary(a, b, fn, sym, int_fn=None):
         return SYMOPS.binop('./' if sym == '.\\' else sym, a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('./', b, a) if sym == '.\\' else UOPS.binop(sym, a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop('./', b, a) if sym == '.\\' else VOPS.binop(sym, a, b)
     if type(a) is Sparse or type(b) is Sparse:
         # ldivide comes here with its operands swapped, as a./b
         return _spm().binop('./' if sym == '.\\' else sym, a, b)
@@ -366,6 +370,8 @@ def uminus(a):
         return SYMOPS.unop('-', a)
     if t is UOBJ:
         return UOPS.unop('-', a)
+    if isinstance(a, VOBJ):
+        return VOPS.unop('-', a)
     if t is Sparse:
         return _spm().unop('-', a)
     A, c = operand(a, '-')
@@ -388,6 +394,8 @@ def uplus(a):
         return float(a)
     if t is SYM:
         return a
+    if isinstance(a, VOBJ):
+        return VOPS.unop('+', a)
     if t is Sparse:
         return _spm().unop('+', a)
     A, c = operand(a, '+')
@@ -450,6 +458,8 @@ def _compare(a, b, fn, sym):
         return SYMOPS.binop(sym, a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop(sym, a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop(sym, a, b)
     if type(a) is Sparse or type(b) is Sparse:
         return _spm().binop(sym, a, b)
     if type(a) is Str or type(b) is Str:
@@ -673,6 +683,8 @@ def mtimes(a, b):
         return SYMOPS.binop('*', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('*', a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop('*', a, b)
     if type(a) is Sparse or type(b) is Sparse:
         return _spm().mtimes(a, b)
     if _is_scalar(a) or _is_scalar(b):
@@ -765,6 +777,8 @@ def mldivide(a, b):
         return SYMOPS.binop('\\', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('\\', a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop('\\', a, b)
     if type(a) is Sparse or type(b) is Sparse:
         return _spm().mldivide(a, b)
     if _is_scalar(a):
@@ -793,6 +807,8 @@ def mrdivide(a, b):
         return SYMOPS.binop('/', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('/', a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop('/', a, b)
     if type(a) is Sparse or type(b) is Sparse:
         return _spm().mrdivide(a, b)
     if _is_scalar(b):
@@ -819,6 +835,8 @@ def mpower(a, b):
         return SYMOPS.binop('^', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
         return UOPS.binop('^', a, b)
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ):
+        return VOPS.binop('^', a, b)
     if type(a) is Sparse or type(b) is Sparse:
         return _spm().mpower(a, b)
     sa, sb = _is_scalar(a), _is_scalar(b)
@@ -865,6 +883,8 @@ def transpose(a):
     t = type(a)
     if t is float or t is bool or t is complex:
         return a
+    if isinstance(a, VOBJ):
+        return a.transposed()
     if t is np.ndarray:
         if a.ndim > 2:
             raise MError('MATLAB:transpose:ndArray', 'Transpose on ND array is not defined. Use PERMUTE instead.')
@@ -903,6 +923,8 @@ def ctranspose(a):
     t = type(a)
     if t is float or t is bool:
         return a
+    if isinstance(a, VOBJ):
+        return a.transposed()
     if t is SYM:
         return SYMOPS.unop("'", a)
     if t is UOBJ:
@@ -949,6 +971,8 @@ def _colon_scalar(v, which):
 
 def colon(a, b, c=None):
     """a:b or a:s:b (colon(a, s, b))."""
+    if isinstance(a, VOBJ) or isinstance(b, VOBJ) or isinstance(c, VOBJ):
+        return VOPS.colon(a, None, b) if c is None else VOPS.colon(a, b, c)
     if c is None:
         if type(a) is float and type(b) is float:
             return _range(a, 1.0, b)
@@ -1124,6 +1148,8 @@ def cat(axis, vals):
     if len(vals) == 1:
         v = vals[0]
         return v
+    if any(isinstance(v, VOBJ) for v in vals):
+        return VOPS.cat(axis, vals)
     kinds = _cat_kind(vals)
     if Cell in kinds:
         parts = []

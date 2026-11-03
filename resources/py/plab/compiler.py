@@ -1053,6 +1053,10 @@ class Compiler:
                 return f'R.idx_n(({tv} := {v}), {args}, {nargout})'
             if n in ('nargin', 'nargout') and n not in self.scope.local_funcs and not self.user_funcs(n):
                 return self.call_code(n, self.call_args(x.args), nargout, x.line)
+            if n in ('table', 'timetable', 'innerjoin', 'outerjoin', 'synchronize') and not self.scope.local_funcs.get(n) and self.is_builtin(n) and not any(self.is_cslist(a) for a in x.args):
+                # the names of the variables given (as inputname would tell): the table's variable names
+                names = [a.name if type(a) is P.Id and self.is_var(a.name) else None for a in x.args]
+                return self.call_code(n, self.call_args(x.args) + [f'R.ArgNames({names!r})'], nargout, x.line)
             return self.call_code(n, self.call_args(x.args), nargout, x.line)
         if t is P.Index and not x.brace and self.dotted(x.base):
             return self.call_code(self.dotted(x.base), self.call_args(x.args), nargout, x.line)

@@ -38,7 +38,7 @@ def bi(*names, ws=False, aw=False, nout=1, arr=True):
 
 MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'optim', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
            'statdesc', 'distributions', 'stattests', 'statplots', 'uifun', 'mapping', 'symmath', 'classfun', 'appfun',
-           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat']
+           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables']
 
 
 def load(target):
@@ -51,6 +51,11 @@ def load(target):
             if f'{__name__}.{m}' in str(e) or f"'{m}'" in str(e):
                 continue
             failed.append((m, e))
+    from .. import vobj
+    from . import timetypes, categoricals, tables
+    vobj.install()
+    vobj.wrap_builtins(REG, timetypes.classes() + categoricals.classes() + tables.classes())
+    timetypes.wrap_plots(REG)
     from . import arity
     arity.apply(REG)
     target.update(REG)
