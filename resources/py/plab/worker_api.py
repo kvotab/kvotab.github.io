@@ -129,6 +129,8 @@ async def run(code, opts_json='{}'):
     if silent:
         R.OUT_HOOK[0] = lambda text, kind: (post({'type': 'out', 'text': text, 'kind': kind}) if kind in ('err', 'internal') else None)
     ok = False
+    if R.DIARY['on'] and not silent and not opts.get('callbacks'):
+        R.diary_add(code.rstrip('\n') + '\n')
     try:
         if opts.get('callbacks'):
             from . import uievents
@@ -653,7 +655,7 @@ class Debugger:
         return path in self.breakpoints or self.stepping is not None or self.pause_requested
 
     def refresh_modules(self):
-        on_all = self.stepping is not None or self.pause_requested
+        on_all = self.stepping is not None or self.pause_requested or R.PROFILER.on
         for mod in list(R.MODULES.values()):
             ns = getattr(mod, 'ns', None)
             if ns is not None:

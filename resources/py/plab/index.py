@@ -1133,6 +1133,16 @@ def asgn_chain(A, steps, V):
     new = asgn_chain(sub, steps[1:], V)
     if isinstance(A, Obj) and kind == '.' and getattr(A, 'is_handle', False) and new is sub:
         return A
+    if kind == '()' and type(A) is Struct and type(new) is Struct and steps[1][0] == '.':
+        # s(k).f = v with a field the struct array lacks: every element gets it (empty but there)
+        extra = [k for k in new.f if k not in A.f]
+        if extra:
+            A = writable(A)
+            for k in extra:
+                arr = np.empty(A.shape, object)
+                for i in range(arr.size):
+                    arr.flat[i] = EMPTY()
+                A.f[k] = arr
     return asgn1(A, kind, key, new)
 
 

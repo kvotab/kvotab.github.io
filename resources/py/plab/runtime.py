@@ -11,6 +11,7 @@ import re
 import sys
 import time
 import types
+import weakref
 import traceback
 
 import numpy as np
@@ -38,7 +39,7 @@ PERSISTENT = {}
 class Workspace(dict):
     """A function's (or the base) variables. A name with no value raises the
     language's error; a parameter not passed says so."""
-    __slots__ = ('fname', 'params', 'gnames', 'nargs', 'imports')
+    __slots__ = ('fname', 'params', 'gnames', 'nargs', 'imports', '__weakref__')
 
     def __init__(self, fname='base', params=()):
         super().__init__()
@@ -577,8 +578,10 @@ def tk():
 
 
 async def H(W, line, mod):
-    """The hook between statements: Ctrl+C, the debugger, and a moment for
-    the page."""
+    """The hook between statements: Ctrl+C, the profiler, the debugger,
+    and a moment for the page."""
+    if PROFILER.on:
+        PROFILER.tick(W, line, mod, sys._getframe(1))
     if INTERRUPT[0]:
         INTERRUPT[0] = False
         raise Interrupt()
@@ -609,6 +612,96 @@ def run_sync(coro):
         raise MError('MATLAB:callbackWait', 'This function cannot wait for input here (it runs inside a numerical routine).')
     finally:
         SYNC[0] -= 1
+
+
+class _Profiler:
+    """Time and counts of each statement of the program's functions, from
+    the hook before each statement: the time until the next statement is
+    the statement's, and every function on the stack has it in its total.
+    A call is a workspace not seen before."""
+
+    def __init__(self):
+        self.on = False
+        self.clear()
+
+    def clear(self):
+        self.lines = {}          # (path, name, line) -> [count, seconds]
+        self.funcs = {}          # (path, name) -> {'calls', 'total', 'kind'}
+        self.seen = {}           # id(workspace) -> a weak reference to it: the calls already counted
+        self.prev = None
+        self.prev_t = 0.0
+        self.prev_stack = ()
+        self.wall = 0.0
+
+    def _stack(self, f):
+        out = []
+        while f is not None:
+            fn = f.f_code.co_filename
+            if fn.startswith('<plab:'):
+                mod = MODULES.get(fn)
+                nm = f.f_code.co_name
+                if mod is not None and mod.path != 'command' and (nm.startswith('LF_') or nm == 'SCRIPT'):
+                    name = mod.name if nm == 'SCRIPT' else nm[3:]
+                    if nm != 'SCRIPT' and mod.kind == 'function' and name != mod.name:
+                        name = f'{mod.name}>{name}'
+                    key = (mod.path, name)
+                    if key not in out:
+                        out.append(key)
+            f = f.f_back
+        return tuple(out)
+
+    def settle(self, now=None):
+        now = time.perf_counter() if now is None else now
+        if self.prev is not None:
+            dt = now - self.prev_t
+            self.lines[self.prev][1] += dt
+            for k in self.prev_stack:
+                self.funcs[k]['total'] += dt
+            self.wall += dt
+        self.prev = None
+        self.prev_stack = ()
+
+    def tick(self, W, line, mod, frame):
+        now = time.perf_counter()
+        self.settle(now)
+        if mod == 'command':
+            return
+        stack = self._stack(frame)
+        if not stack:
+            return
+        key = stack[0]
+        rec = self.funcs.get(key)
+        if rec is None:
+            rec = self.funcs[key] = {'calls': 0, 'total': 0.0}
+        k = id(W)
+        r = self.seen.get(k)
+        if r is None or r() is not W:
+            seen = self.seen
+            try:
+                seen[k] = weakref.ref(W, lambda ref, k=k: seen.pop(k, None) if seen.get(k) is ref else None)
+            except TypeError:
+                pass
+            rec['calls'] += 1
+        lk = (key[0], key[1], line)
+        lr = self.lines.get(lk)
+        if lr is None:
+            lr = self.lines[lk] = [0, 0.0]
+        lr[0] += 1
+        self.prev, self.prev_t, self.prev_stack = lk, time.perf_counter(), stack
+
+
+PROFILER = _Profiler()
+
+
+def refresh_hooks():
+    """Whether each compiled module calls the statement hook: when profiling, or when the debugger wants the file."""
+    for mod in list(MODULES.values()):
+        want = PROFILER.on or (DEBUGGER.active and DEBUGGER.wants(mod.path) if hasattr(DEBUGGER, 'wants') else False)
+        ns = getattr(mod, 'ns', None)
+        if ns is not None:
+            ns['T_'] = want
+        for v in (getattr(mod, 'variants', None) or {}).values():
+            v[1].ns['T_'] = want
 
 
 class _Debugger:
@@ -908,9 +1001,31 @@ OUT_HOOK = [None]       # fn(text, kind) to send output somewhere
 _last_flush = [0.0]
 
 
+DIARY = {'on': False, 'path': None, 'buf': []}
+
+
+def diary_add(text):
+    """Text for the diary file (links as their plain text)."""
+    if DIARY['on'] and text:
+        DIARY['buf'].append(re.sub('\x01[^\x02]*\x02', '', text).replace('\x03', ''))
+
+
+def diary_flush():
+    if DIARY['buf'] and DIARY['path']:
+        text = ''.join(DIARY['buf'])
+        DIARY['buf'].clear()
+        try:
+            with open(DIARY['path'], 'a', encoding='utf-8') as f:
+                f.write(text)
+        except OSError:
+            pass
+
+
 def write(text, kind='out'):
     if not text:
         return
+    if DIARY['on'] and kind != 'internal':
+        diary_add(text)
     if OUT_HOOK[0] is not None:
         _out.append((kind, text))
         if len(_out) > 200:
@@ -920,6 +1035,8 @@ def write(text, kind='out'):
 
 
 def flush():
+    if DIARY['buf']:
+        diary_flush()
     if OUT_HOOK[0] is not None and _out:
         # join consecutive pieces of the same kind
         merged = []
@@ -1385,7 +1502,7 @@ def compile_file(path, text):
 def make_ns(path):
     from . import runtime as R_mod
     return {'R': R_mod, 'B': B, 'NOVAL': NOVAL, 'COLON': COLON, 'FH': FH, 'G': GLOBALS, '_PF_NOTED': set(),
-            'T_': DEBUGGER.active and DEBUGGER.wants(path) if hasattr(DEBUGGER, 'wants') else False,
+            'T_': PROFILER.on or (DEBUGGER.active and DEBUGGER.wants(path) if hasattr(DEBUGGER, 'wants') else False),
             'M_': path, '__name__': f'plab_{os.path.basename(path)}'}
 
 
@@ -1466,6 +1583,7 @@ async def execute(text, W=None):
         e.stack = e.stack or stack_of(e.__traceback__)
         LASTERR[0] = e
         write(format_error(e), 'err')
+        await stop_at_error(e)
         return False
     except RecursionError as e:
         m = MError('MATLAB:recursionLimit', 'Maximum recursion limit reached. Use set(0,\'RecursionLimit\',N) to change the limit. Be aware that exceeding your available stack space can crash the program and/or your computer.')
@@ -1480,7 +1598,29 @@ async def execute(text, W=None):
         write(format_error(m), 'err')
         if getattr(m, 'internal', None):
             write(''.join(m.internal[-3:]), 'internal')
+        await stop_at_error(e)
         return False
+
+
+async def stop_at_error(e):
+    """dbstop if error: a K>> prompt in the workspace of the function where the error was, at its line."""
+    if not getattr(DEBUGGER, 'stop_on_error', False) or getattr(DEBUGGER, 'paused', None) or SYNC[0]:
+        return
+    tb = e.__traceback__
+    found = None
+    while tb is not None:
+        fr = tb.tb_frame
+        mod = MODULES.get(fr.f_code.co_filename)
+        if mod is not None and mod.path != 'command' and 'W' in fr.f_locals:
+            ml = mod.linemap[tb.tb_lineno - 1] if 0 < tb.tb_lineno <= len(mod.linemap) else 0
+            found = (fr.f_locals['W'], ml, mod.path)
+        tb = tb.tb_next
+    if found is None:
+        return
+    try:
+        await DEBUGGER.pause(*found)
+    except Interrupt:
+        pass
 
 
 LASTERR = [None]

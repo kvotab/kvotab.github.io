@@ -1655,6 +1655,73 @@ async def regression_fitting(page):
     await command(page, 'close all')
 
 
+async def files_and_tools(page):
+    """In the page: HDF5 through h5py, a video of a figure through Pillow, an animated line, breakpoints from commands in the Editor,
+    stopping at an error, the clipboard, the profiler and the diary."""
+    await command(page, "close all; cd /home/user; for f = {'p.h5', 'f.avi', 'd.txt'}, if isfile(f{1}), delete(f{1}); end, end; fid = fopen('stopper.m', 'w'); fprintf(fid, 'function y = stopper(x)\\ny = 2*x;\\nz = y + 1;\\nend\\n'); fclose(fid); "
+                        "fid = fopen('errfun.m', 'w'); fprintf(fid, 'function errfun()\\nx = 5;\\nerror(''boom'');\\nend\\n'); fclose(fid);")
+    out = await command(page, "h5create('p.h5', '/x', [2 3]); h5write('p.h5', '/x', [1 2 3; 4 5 6]); y = h5read('p.h5', '/x')")
+    check('in the page: h5py loads, and h5read gives the matrix back', 'y =\n\n     1     2     3\n     4     5     6' in out[-200:], True)
+    out = await command(page, "figure; plot(1:3); v = VideoWriter('f.avi'); open(v); for k = 1:3, writeVideo(v, getframe(gcf)); end; close(v); r = VideoReader('f.avi'); n = r.NumFrames, close all")
+    check('a video of getframe frames written and read back', 'n =\n\n     3' in out[-120:], True)
+    await command(page, "an = animatedline('Color', 'r'); for k = 1:20, addpoints(an, k, sin(k)); drawnow; end")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(0.5)
+    kids = await page.ev("[...PL.app.figures.wins.values()].map(w => w.fig.axes.reduce((n, ax) => n + ax.children.length, 0))")
+    check('the animated line is drawn as a line', kids, [1])
+    await command(page, 'close all')
+
+    path = '/home/user/stopper.m'
+    await command(page, 'dbstop in stopper at 3')
+    check('dbstop: the page keeps the breakpoint', await page.ev(f"JSON.stringify(PL.app.breakpoints[{json.dumps(path)}])"), '[3]')
+    await page.ev(f"PL.app.openFile({json.dumps(path)}).then(() => 1)")
+    await asyncio.sleep(0.4)
+    check('and the Editor shows it in the margin', await page.ev("document.querySelectorAll('.ple-gl .bp').length"), 1)
+    await type_line(page, 'r = stopper(4)')
+    line = await until(page, 'PL.app.debug && PL.app.debug.line')
+    check('the run stops there', line, 3)
+    await page.ev('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
+    await page.ev("PL.app.dbg('continue'); 1")
+    await until(page, '!PL.engine.busy && !PL.app.debug', 30)
+    check('and goes on to the end', 'r =\n\n     8' in await tail(page, 200), True)
+    await command(page, 'dbclear all')
+    check('dbclear all: the Editor\'s margin is clear', (await page.ev(f"JSON.stringify(PL.app.breakpoints[{json.dumps(path)}] || [])"), await page.ev("document.querySelectorAll('.ple-gl .bp').length")), ('[]', 0))
+    await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.key === '/home/user/stopper.m')); 1")
+    await command(page, 'dbstop if error')
+    await type_line(page, 'errfun')
+    line = await until(page, 'PL.app.debug && PL.app.debug.line', 20)
+    check('dbstop if error: stopped at the error, the error shown', (line, 'boom' in await tail(page, 300)), (3, True))
+    await page.ev('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
+    await type_line(page, 'x')
+    seen = await until(page, f"{OUTPUT}.slice(-60).includes('x =\\n\\n     5')", 10)
+    check("in the function's workspace", seen, True)
+    await page.ev("PL.app.dbg('quit'); 1")
+    await until(page, '!PL.engine.busy && !PL.app.debug', 30)
+    await command(page, 'dbclear if error')
+
+    try:
+        await page.call('Browser.grantPermissions', {'permissions': ['clipboardReadWrite', 'clipboardSanitizedWrite'], 'origin': BASE})
+    except Exception:
+        pass
+    await page.ev('window.focus(); PL.app.cmd.ta.focus(); 1')
+    await command(page, "clipboard('copy', 'hello from pylab')")
+    got = await page.ev('navigator.clipboard.readText().catch((e) => "ERR " + e.message)')
+    check("clipboard('copy') reaches the browser's clipboard", got, 'hello from pylab')
+    await page.ev('navigator.clipboard.writeText("pasted text").then(() => 1)')
+    out = await command(page, "t = clipboard('paste')")
+    check("clipboard('paste') reads it", "t =\n\n    'pasted text'" in out[-80:], True)
+
+    out = await command(page, "profile on; r = stopper(3); profile off\nprofile viewer")
+    check('profile viewer lists the function', 'Profile summary' in out[-1500:] and 'stopper' in out[-1500:], True)
+    await command(page, "diary('d.txt')")
+    await command(page, "disp('hello diary')")
+    await command(page, 'diary off')
+    out = await command(page, 'type d.txt')
+    typed = out[out.rfind('>> type d.txt'):]
+    check('the diary file has the commands and their output', "disp('hello diary')\nhello diary\ndiary off" in typed, True)
+    await command(page, "delete stopper.m errfun.m p.h5 f.avi d.txt")
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1664,6 +1731,7 @@ async def main():
         await language_additions(page)
         await signal_processing(page)
         await regression_fitting(page)
+        await files_and_tools(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

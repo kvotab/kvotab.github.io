@@ -961,8 +961,12 @@ cputime:
     Python: core.py. Python's time.process_time, the processor time of the engine.
 clc:
     Python: core.py. Empties the output not yet shown and tells the page to clear the Command Window.
-more, echo, diary, profile:
+more, echo:
     Python: core.py. Accepted and ignored.
+diary:
+    Python: devtools.py and runtime.py. Each piece of output (and each command the Command Window runs) is kept while the diary is on, with links written as their text, and added to the file at the end of each command.
+profile:
+    Python: devtools.py and runtime.py. While profiling, every compiled statement calls the engine's hook: the time from one statement to the next goes to the first, and to the total of every program function on the stack; a call is counted the first time a function's workspace is seen.
 input:
     Python: core.py and runtime.py. Writes the prompt and waits for the page to send the line typed. With 's' the line is returned as text; otherwise it is compiled as an expression in a copy of the base workspace and evaluated, and an error is shown and the question asked again.
 keyboard:
@@ -1354,7 +1358,7 @@ gcf, gca, gco, groot:
 clf, cla:
     Python: graphics.py. Deletes the figure's children or the axes' children and starts the colour order again; cla reset also sets the axes' properties back to their defaults.
 close:
-    Python: graphics.py. Runs the figure's CloseRequestFcn, whose default, closereq, deletes the figure; 'force' deletes it without asking. 'all' closes each figure whose handle is visible ('all hidden' the others too), and a name closes the figures with that Name.
+    Python: graphics.py. Runs the figure's CloseRequestFcn, whose default, closereq, deletes the figure; 'force' deletes it without asking. 'all' closes each figure whose handle is visible ('all hidden' the others too), and a name closes the figures with that Name. close(v) of a VideoWriter (animation.py) finishes its file.
 hold, ishold:
     Python: graphics.py. The axes' NextPlot: 'add' keeps what the axes hold for the next plot, and 'replace' (hold off) lets the next plot clear them and their settings.
 newplot:
@@ -1934,6 +1938,78 @@ ischange:
     Python: datafeatures.py. PyLAB's own: the segmentation of least total cost, each change costing Threshold: optimal partitioning with PELT's pruning (Killick, Fearnhead and Eckley) for 'mean', where a segment's cost is its sum of squared residuals about its mean; for 'linear' the squared residuals about its least-squares line (segments of at least 2), and for 'variance' its length times the log of its variance about its mean (segments of at least 3, the variance kept above a millionth of the data's), searched without pruning. MaxNumChanges uses dynamic programming over the number of segments and keeps the cheapest with at most that many changes.
 trenddecomp:
     Python: datafeatures.py. PyLAB's own. 'ssa': the trajectory (Hankel) matrix of lag L (half the data unless given), numpy.linalg.svd, and each elementary component reconstructed by diagonal averaging. Components whose singular value is at or below the Gavish-Donoho hard threshold (omega(beta) times the median singular value) stay in the remainder; of the rest, those with less than one cycle in L samples (the largest frequency of their FFT) form the long-term trend, and the others are summed by period into seasonal trends, the largest first. 'stl': seasonal-trend decomposition by loess (Cleveland and others) with the inner loop run twice and no robustness passes: cycle-subseries smoothed by loess over 7 points, low-pass filtered by moving averages of the period, the period and 3 and a loess, and the trend by loess over the next odd number above 1.5*period/(1 - 1.5/7); several periods are taken off one after another.
+imresize:
+    Python: imageproc.py. Separable resampling: for each output row (then column) at x = u/scale + 0.5*(1 - 1/scale), the kernel's weights over the nearest input samples, normalized to add up to 1, the input mirrored at its ends; shrinking with antialiasing stretches the kernel by 1/scale. Kernels: Keys' cubic (a = -0.5) for bicubic, the triangle for bilinear, the box for nearest, and Lanczos. Integer images are rounded and saturated at the end.
+imrotate:
+    Python: imageproc.py. Quarter turns by numpy.rot90. Other angles: each output pixel mapped back through the rotation about the image centres and sampled from A, nearest, bilinear or Keys' cubic, with zeros outside; 'loose' sizes the output to the turned corners (ceil of the turned width and height).
+imcrop:
+    Python: imageproc.py. Columns round(xmin) to round(xmin + width) and rows round(ymin) to round(ymin + height), cut to the image.
+imtranslate:
+    Python: imageproc.py. Whole shifts move the pixels; others sample A at the shifted points (bilinear unless asked), FillValues outside.
+imfilter:
+    Python: imageproc.py. Each plane padded by the boundary rule (numpy.pad: 'symmetric', 'edge' for replicate, 'wrap' for circular, or a constant), then scipy.signal.correlate in 'valid' mode with the kernel (turned half round for 'conv'), its centre at floor((size + 1)/2).
+fspecial:
+    Python: imageproc.py. average: ones/n. gaussian: exp(-(x^2 + y^2)/(2 sigma^2)) normalized (values under eps of the peak set to 0). log: that Gaussian times (x^2 + y^2 - 2 sigma^2)/sigma^4, less its mean. laplacian and unsharp: the 3-by-3 forms of alpha. disk: PyLAB's own exact area of each pixel inside the circle, by scipy.integrate.quad, normalized. motion: PyLAB's own: the length of a centred segment of length len at theta inside each pixel (Liang-Barsky clipping), normalized.
+imgaussfilt:
+    Python: imageproc.py. Two one-dimensional Gaussians (each normalized) as one kernel, filtered as imfilter does with 'replicate' padding.
+medfilt2:
+    Python: imageproc.py. The image padded (zeros, mirrored, or ones), then numpy.median over each m-by-n window (numpy.lib.stride_tricks.sliding_window_view), the window's centre at floor((size + 1)/2).
+edge:
+    Python: imageproc.py. PyLAB's own versions of the methods. sobel, prewitt and roberts: the gradients by the kernels (divided by 8, 6 and 2) with replicated edges; the threshold, unless given, the square root of 4 times the mean squared gradient; edges are the pixels above it that are local maxima across the edge (along x where the x gradient is the larger), unless 'nothinning'. log and zerocross: the image filtered (fspecial log with sigma 2 and size 2*ceil(3 sigma) + 1, or h) and the sign changes to a right or lower neighbour by more than the threshold (0.75 times the mean absolute response unless given), marked on the side nearer zero. canny: derivative-of-Gaussian gradients (sigma sqrt(2)), the magnitude scaled to 1, non-maximum suppression along the gradient with interpolated neighbours, and hysteresis: the high threshold where 70 % of a 64-bin histogram of magnitudes lies below, the low 0.4 times it, weak edges kept when 8-connected to a strong one.
+stretchlim:
+    Python: imageproc.py. The cumulative histogram of each plane (256 bins, 65536 for 16-bit), the first bin above tol(1) and the first at tol(2), as fractions of the range ([0 1] when they meet).
+imadjust:
+    Python: imageproc.py. (clip(I, low_in, high_in) - low_in)/(high_in - low_in), raised to gamma, scaled to low_out .. high_out, on values from 0 to 1 and back to the class.
+imhist:
+    Python: imageproc.py. The values scaled to 0..1 and counted by numpy.bincount of round(value*(n - 1)); with no output, stem draws the counts.
+histeq:
+    Python: imageproc.py. PyLAB's own: the cumulative histogram (256 bins, 65536 for 16-bit) as the transform, rounded to n levels: T = round(cdf*(n - 1))/(n - 1).
+graythresh:
+    Python: imageproc.py. Otsu's method on a 256-bin histogram: the bin k that maximizes the between-class variance (the mean of the bins when several do), level = (k - 1)/255, EM that variance over the total variance.
+imbinarize:
+    Python: imageproc.py. The values from 0 to 1 compared with graythresh's level or the threshold given.
+imcomplement:
+    Python: imageproc.py. intmax + intmin - I for integers, 1 - I for floating point, ~I for logical.
+strel:
+    Python: imageproc.py. disk: x^2 + y^2 <= r^2; diamond |x| + |y| <= r; octagon |x| + |y| <= 2r - (2r/3) within the square; line: the rounded points of a centred segment; square and rectangle all ones.
+imdilate, imerode, imopen, imclose:
+    Python: imageproc.py. Flat morphology: the image padded with -Inf (dilation) or +Inf (erosion) and the maximum (or minimum) of its shifts by each element of the structuring element (reflected for dilation), the element's centre at floor((size + 1)/2); opening and closing in turn.
+imfill:
+    Python: imageproc.py. 'holes': scipy.ndimage.binary_fill_holes with 4-connectivity (8 with conn 8); locations: the background components (scipy.ndimage.label) holding them set.
+bwlabel, bwconncomp:
+    Python: imageproc.py. scipy.ndimage.label with 8- (or 4-) connectivity, renumbered in the order of each component's first pixel down the columns.
+regionprops:
+    Python: imageproc.py. From each region's pixel coordinates: the centroid; second moments with 1/12 added for the pixels' extent, giving MajorAxisLength and MinorAxisLength (2 sqrt(2) sqrt(uxx + uyy +- common)), Eccentricity and Orientation (degrees, from the x axis, y upwards); BoundingBox from the extremes; ConvexArea the pixels whose centres lie in the convex hull of the pixel squares (scipy.spatial.ConvexHull); FilledArea after binary_fill_holes. 'table' gives a table.
+imtile, montage:
+    Python: imageproc.py. Each image scaled to 0..1, resized to the first one's size (or ThumbnailSize) by imresize, and placed row by row in a grid of about sqrt(K*h/w) columns unless GridSize says; montage shows the result with imshow.
+h5create, h5write, h5read, h5readatt, h5writeatt, h5info, h5disp:
+    Python: hdf5.py. h5py (loaded the first time in the page): datasets are made with h5py's create_dataset (maxshape None where size is Inf, gzip for Deflate), arrays written and read with their dimensions reversed (numpy transpose) so that the language's column order matches HDF5's row order; start, count and stride become slices; variable-length strings come back as text.
+readstruct, writestruct:
+    Python: datafiles.py. XML through Python's xml.etree.ElementTree: children become fields (numbers where the text is one, else strings), attributes fields with the suffix, text beside them Text, and repeated elements arrays or struct arrays; writestruct writes the same layout with three spaces of indent. JSON through jsondecode and jsonencode.
+xlsread, xlswrite, xlsfinfo:
+    Python: datafiles.py and tables.py. The sheet's cells read from the .xlsx file's XML (shared strings, numbers, booleans); num is trimmed to the rows and columns holding numbers, txt to those holding text. xlswrite reads every sheet of an existing file, puts the values in place and writes the workbook again, values only.
+readtimetable:
+    Python: datafiles.py. readtable, then table2timetable with the row times from the first datetime or duration variable (or RowTimes).
+stack, unstack:
+    Python: tablestack.py. stack: each row repeated once for each stacked variable, an indicator categorical whose categories are their names, and their values interleaved. unstack: rows grouped by the grouping variables (sorted), a variable for each indicator value (categories in their order, text and numbers sorted), several values summed (or given to the AggregationFunction), none a missing value; names made valid unless VariableNamingRule is 'preserve'.
+animatedline, addpoints, clearpoints, getpoints:
+    Python: animation.py. A line object whose Type reads 'animatedline': addpoints appends to its data (dropping the oldest beyond MaximumNumPoints) and marks the figure to be drawn again, which the page does at drawnow or when the program ends.
+VideoWriter, writeVideo:
+    Python: animation.py. AVI files written by PyLAB itself (RIFF: hdrl with avih, strh and strf, a movi list, an idx1 index), each frame a JPEG from Pillow at Quality (Motion JPEG), BGR rows bottom-up padded to 4 bytes (uncompressed), or 8-bit gray with a gray palette. The header is written again at close with the frame count.
+VideoReader, hasFrame, readFrame, read:
+    Python: animation.py. The AVI file's chunks are read for the first video stream's size, rate and frames (00dc or 00db, inside rec lists too), each frame decoded when asked (Pillow for JPEG, the rows for uncompressed and 8-bit); animated GIFs through Pillow, the frame rate from the first frame's duration.
+dbstop, dbclear, dbstatus:
+    Python: devtools.py and worker_api.py. The breakpoints are the same the Editor's margin sets: the file found on the path, the line moved to the next line where a statement begins (from the parsed file), the page told so that the Editor shows them. 'if error': when an error ends a command, the run stops at the innermost function of the program where it was raised, with its workspace and the K>> prompt, after the error is shown.
+dbstack:
+    Python: devtools.py and runtime.py. The program's function frames on Python's stack, innermost first, with the line each is at.
+checkcode, mlint:
+    Python: devtools.py. PyLAB's own checks: the file parsed as the engine parses it (a syntax error is the only message then); in each function, a name assigned but never read anywhere in it (nor in its nested functions, nor where eval or the like might read it), a parameter never read, an output never assigned, an assignment or expression (not a call) without a semicolon; and a function file whose first function is named unlike the file. The ids are NASGU, INUSD, STOUT, NOPRT, FNDEF and SYNTAX.
+clipboard:
+    Python: devtools.py. The page's navigator.clipboard (writeText, readText); outside a page, a clipboard of the engine's own.
+lookfor:
+    Python: devtools.py. The first comment line of each program file on the path and the first line of each built-in's help, searched for the topic (case ignored); -all searches all of the help.
+datetick:
+    Python: devtools.py. PyLAB's own tick choice: years (1, 2, 5, 10 ...) over three years of range, months (1, 2, 3, 4, 6 or 12) over 45 days, else days or parts of a day (14 days down to a minute), about 4 to 8 ticks; labels from datestr, as 'yyyy', 'mmmyy', 'mmm', 'dd-mmm' or 'HH:MM' unless a format is given.
 """
 
 

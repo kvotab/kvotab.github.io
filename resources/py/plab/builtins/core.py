@@ -1081,7 +1081,7 @@ def clc(nargout, *args):
     return None
 
 
-@bi('more', 'echo', 'diary', 'profile')
+@bi('more', 'echo')
 def ignored(nargout, *args):
     return None
 

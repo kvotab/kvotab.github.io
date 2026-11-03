@@ -3025,8 +3025,12 @@ more: Accepted, with no effect: the Command Window does not page its output.
     more on | off
 echo: Accepted, with no effect.
     echo on | off
-diary: Accepted, with no effect: copy the Command Window with its menu instead.
+diary: The Command Window's commands and output copied to a file.
+    diary
+    diary on
+    diary off
     diary filename
+    * diary alone turns it on or off; the file is 'diary' in the current folder unless named, and is added to. Links are written as their text.
 sound: Play samples through the page's sound.
     sound(y)
     sound(y, fs)
@@ -3042,8 +3046,15 @@ beep: A short tone through the page's sound.
     beep on | off
     s = beep
     * beep off silences it, and s = beep is 'on' or 'off'.
-profile: Accepted, with no effect: use tic and toc to time code.
-    profile on | off
+profile: The time spent in each function and line of programs.
+    profile on
+    profile off
+    profile resume
+    profile clear
+    profile viewer
+    p = profile('info')
+    s = profile('status')
+    * profile on starts afresh, resume goes on adding. viewer (or report) shows each function's calls, total and self time and its slowest lines, as links. Built-in functions are counted in the lines that call them. Programs run slower while profiled.
 exit: Stop the program; the page itself is closed with its browser tab.
     exit
 quit: Stop the program; the page itself is closed with its browser tab.
@@ -3478,6 +3489,7 @@ edit: Open a file in the Editor (a new script if it does not exist).
     edit filename
 open: Open a file: program files in the Editor, MAT-files into the workspace, figure files as figures.
     open filename
+    open(v)
     s = open('data.mat')
     h = open('plot.fig')
 run: Run a script file.
@@ -3995,6 +4007,8 @@ close: Close figures.
     close
     close(n)
     close all
+    close(v)
+    * close(v) closes a VideoWriter's file (open(v) opens it).
 gcf: The current figure (one is made when there is none).
     f = gcf
 gca: The current axes (made when there are none).
@@ -5479,6 +5493,298 @@ trenddecomp: Trends of data: long-term, seasonal and the remainder.
     [LT, ST, R] = trenddecomp(A, 'ssa', lag)
     [LT, ST, R] = trenddecomp(A, 'stl', period)
     * LT + sum(ST, 2) + R is A. 'ssa' (singular spectrum analysis, the default, with a lag of half the data) finds seasonal trends of each period present, the largest first; 'stl' takes one or more periods and gives a seasonal trend for each.
+
+# ---- image processing --------------------------------------------------------------------------------------------------------------
+imresize: An image made larger or smaller.
+    B = imresize(A, scale)
+    B = imresize(A, [rows cols])
+    B = imresize(A, [rows NaN])
+    B = imresize(..., method)
+    B = imresize(..., 'Antialiasing', false)
+    * method is 'bicubic' (the default), 'bilinear', 'nearest', 'box', 'triangle', 'lanczos2' or 'lanczos3'. When shrinking, the kernel is widened so that fine detail is averaged rather than lost (antialiasing; not for 'nearest'). NaN for rows or columns keeps the aspect ratio. B has A's class.
+imrotate: An image turned counterclockwise.
+    B = imrotate(A, angle)
+    B = imrotate(A, angle, method)
+    B = imrotate(A, angle, method, bbox)
+    * method is 'nearest' (the default), 'bilinear' or 'bicubic'; bbox 'loose' (the default: B holds all of the turned image, with zeros around it) or 'crop' (B is A's size, about its centre). Whole quarter turns are exact.
+imcrop: The part of an image in a rectangle.
+    J = imcrop(A, rect)
+    [J, rect] = imcrop(A, rect)
+    * rect is [xmin ymin width height] in pixels: J holds the pixels whose centres lie in it (width + 1 columns for whole numbers). Choosing the rectangle with the mouse is not made here.
+imtranslate: An image moved.
+    B = imtranslate(A, [tx ty])
+    B = imtranslate(A, [tx ty], method, 'FillValues', v, 'OutputView', 'full')
+    * tx columns to the right and ty rows down; fractions are interpolated ('linear' unless 'nearest' or 'cubic'). Uncovered pixels are FillValues (0); 'full' makes B large enough for all of the moved image.
+imfilter: An image filtered by a kernel.
+    B = imfilter(A, h)
+    B = imfilter(A, h, boundary)
+    B = imfilter(A, h, 'conv', 'full', ...)
+    * Correlation with h unless 'conv', its centre at floor((size(h) + 1)/2). The edge is padded with zeros, a value, 'symmetric', 'replicate' or 'circular'; 'same' (the default) gives A's size, 'full' the whole result. Each colour plane is filtered alike; B has A's class (integers rounded and saturated).
+fspecial: A filter kernel of a common kind.
+    h = fspecial('average', hsize)
+    h = fspecial('disk', radius)
+    h = fspecial('gaussian', hsize, sigma)
+    h = fspecial('laplacian', alpha)
+    h = fspecial('log', hsize, sigma)
+    h = fspecial('motion', len, theta)
+    h = fspecial('prewitt')
+    h = fspecial('sobel')
+    h = fspecial('unsharp', alpha)
+    * hsize is a number or [rows cols] (3 for average and gaussian, 5 for log); sigma 0.5; alpha 0.2; the disk's radius 5; motion is len pixels long at theta degrees (9 and 0). prewitt and sobel find horizontal edges (their transposes vertical ones).
+imgaussfilt: An image smoothed by a Gaussian.
+    B = imgaussfilt(A)
+    B = imgaussfilt(A, sigma)
+    B = imgaussfilt(A, sigma, 'FilterSize', s, 'Padding', p)
+    * sigma is 0.5 unless given (two values for rows and columns); the filter 2*ceil(2*sigma) + 1 wide; the edge 'replicate' unless Padding says otherwise.
+medfilt2: Each pixel the median of its neighbourhood.
+    B = medfilt2(A)
+    B = medfilt2(A, [m n])
+    B = medfilt2(A, [m n], padopt)
+    * 3-by-3 unless asked; beyond the edge zeros, or 'symmetric' (mirrored), or 'indexed' (1 for double images, 0 otherwise).
+edge: The edges of a gray image, as a logical image.
+    BW = edge(I)
+    BW = edge(I, method)
+    BW = edge(I, method, threshold)
+    [BW, threshOut] = edge(...)
+    BW = edge(I, 'sobel', threshold, direction, 'nothinning')
+    BW = edge(I, 'log', threshold, sigma)
+    BW = edge(I, 'zerocross', threshold, h)
+    BW = edge(I, 'canny', [low high], sigma)
+    * method is 'sobel' (the default), 'prewitt', 'roberts', 'log', 'zerocross', 'canny' or 'approxcanny'. Without a threshold one is chosen from the image; threshOut gives it. direction is 'both', 'horizontal' or 'vertical'.
+stretchlim: The limits that leave out the darkest and brightest pixels.
+    lowhigh = stretchlim(I)
+    lowhigh = stretchlim(I, tol)
+    * tol is [low high] as fractions of the pixels (0.01 and 0.99 unless given; one number t means [t 1-t]); the limits are from 0 to 1, a column for each colour.
+imadjust: Intensities mapped from one range to another.
+    J = imadjust(I)
+    J = imadjust(I, [low_in high_in])
+    J = imadjust(I, [low_in high_in], [low_out high_out])
+    J = imadjust(I, [low_in high_in], [low_out high_out], gamma)
+    * Values below low_in become low_out, above high_in high_out, between them a curve of the given gamma (1, straight). The limits are from 0 to 1 whatever the class; without them, stretchlim(I) and [0 1].
+imhist: The histogram of an image.
+    imhist(I)
+    imhist(I, n)
+    [counts, binLocations] = imhist(I, n)
+    * n bins (256 unless given, 2 for logical) spread evenly over the class's range; with no output it is drawn.
+histeq: Contrast spread by histogram equalization.
+    J = histeq(I)
+    J = histeq(I, n)
+    [J, T] = histeq(I, n)
+    * The intensities mapped through their cumulative distribution to n levels (64 unless given); T is the mapping.
+graythresh: The threshold of Otsu's method.
+    level = graythresh(I)
+    [level, EM] = graythresh(I)
+    * level is from 0 to 1, the one that best separates the pixels into two classes; EM (from 0 to 1) tells how well they separate.
+imbinarize: A gray image made logical by a threshold.
+    BW = imbinarize(I)
+    BW = imbinarize(I, T)
+    BW = imbinarize(I, 'global')
+    * Pixels brighter than Otsu's level (graythresh), or than T: a number from 0 to 1, or an image of levels of I's size. Adaptive (local) thresholds are not made here.
+imcomplement: The negative of an image.
+    J = imcomplement(I)
+    * The class's largest value less I for integers, 1 - I for double and single, ~I for logical.
+strel: A flat structuring element for morphology.
+    SE = strel('disk', r)
+    SE = strel('square', w)
+    SE = strel('rectangle', [m n])
+    SE = strel('diamond', r)
+    SE = strel('line', len, deg)
+    SE = strel('octagon', r)
+    SE = strel(nhood)
+    * SE.Neighborhood is its logical matrix. The disk is the exact disk of radius r (not an approximation by lines).
+imdilate: An image dilated: each pixel the largest value under the structuring element.
+    J = imdilate(I, SE)
+    * SE is a strel or a logical matrix; logical images give logical images.
+imerode: An image eroded: each pixel the smallest value under the structuring element.
+    J = imerode(I, SE)
+imopen: Morphological opening: erosion, then dilation by the same element.
+    J = imopen(I, SE)
+    * Takes away bright details smaller than the element.
+imclose: Morphological closing: dilation, then erosion by the same element.
+    J = imclose(I, SE)
+    * Fills dark gaps smaller than the element.
+imfill: Holes in a binary image filled.
+    BW2 = imfill(BW, 'holes')
+    BW2 = imfill(BW, locations)
+    BW2 = imfill(BW, locations, conn)
+    * A hole is background that cannot be reached from the image's edge (4-connected). locations, linear indices or [row col] rows, are points of background flooded from.
+bwlabel: The connected components of a binary image, numbered.
+    L = bwlabel(BW)
+    [L, n] = bwlabel(BW, conn)
+    * 8-connected unless conn is 4; the components numbered in the order their first pixel comes down the columns.
+bwconncomp: The connected components of a binary image.
+    CC = bwconncomp(BW)
+    CC = bwconncomp(BW, conn)
+    * CC has Connectivity, ImageSize, NumObjects and PixelIdxList (a cell of each component's linear indices).
+regionprops: Measurements of the regions of an image.
+    stats = regionprops(BW)
+    stats = regionprops(L, properties...)
+    stats = regionprops(CC, properties...)
+    stats = regionprops(L, I, 'MeanIntensity', ...)
+    T = regionprops('table', ...)
+    * A logical image's regions are its 8-connected components; a numeric one is a label matrix. Properties: Area, Centroid, BoundingBox ('basic', the default), MajorAxisLength, MinorAxisLength, Eccentricity, Orientation, EquivDiameter, Extent, PixelIdxList, PixelList, FilledArea, ConvexArea, Solidity, and with an intensity image MeanIntensity, MaxIntensity, MinIntensity, WeightedCentroid and PixelValues; 'all' gives them all.
+imtile: Images side by side in one image.
+    out = imtile(images)
+    out = imtile(images, 'GridSize', [rows cols], 'BorderSize', b, 'BackgroundColor', c, 'ThumbnailSize', [h w])
+    * images is a cell array, an M-by-N-by-1-or-3-by-K array, or an M-by-N-by-K stack of gray images; they fill the grid row by row.
+montage: Images side by side, shown.
+    montage(images)
+    montage(images, 'GridSize', [rows cols], ...)
+    h = montage(...)
+    * As imtile, drawn with imshow.
+
+# ---- HDF5, structs in files, spreadsheets -------------------------------------------------------------------------------------------
+h5create: A new dataset in an HDF5 file (the file made when there is none).
+    h5create(filename, ds, size)
+    h5create(filename, ds, size, 'Datatype', class, 'ChunkSize', c, 'Deflate', level, 'FillValue', v)
+    * Sizes are in the language's order; Inf in size lets that dimension grow (and needs ChunkSize). Datatype is a numeric class or 'string'.
+h5write: Data written to an HDF5 dataset.
+    h5write(filename, ds, data)
+    h5write(filename, ds, data, start, count)
+    h5write(filename, ds, data, start, count, stride)
+    * The dataset is made first with h5create; start (from 1), count and stride write into a part of it, a dataset that can grow growing as needed.
+h5read: An HDF5 dataset, or part of it.
+    data = h5read(filename, ds)
+    data = h5read(filename, ds, start, count)
+    data = h5read(filename, ds, start, count, stride)
+    * Dimensions come in the language's order, the reverse of the file's; text comes as a cell of character vectors, compound types as a struct.
+h5readatt: An attribute of an HDF5 group or dataset.
+    value = h5readatt(filename, loc, attr)
+h5writeatt: An attribute written to an HDF5 group or dataset.
+    h5writeatt(filename, loc, attr, value)
+h5info: What an HDF5 file holds, as a struct.
+    info = h5info(filename)
+    info = h5info(filename, loc)
+    * Groups, Datasets (each with Datatype, Dataspace, ChunkSize, FillValue, Filters, Attributes) and Attributes, sizes in the language's order.
+h5disp: What an HDF5 file holds, shown as a tree.
+    h5disp(filename)
+    h5disp(filename, loc)
+readstruct: A struct from an XML or JSON file.
+    S = readstruct(filename)
+    S = readstruct(filename, 'FileType', 'json')
+    S = readstruct(filename, 'StructNodeName', name, 'AttributeSuffix', s, 'ReadAttributes', false)
+    * Each child element is a field: text alone becomes a number or a string, attributes are fields ending in Attribute, text beside them the field Text, and repeated elements an array or a struct array.
+writestruct: A struct written as XML or JSON.
+    writestruct(S, filename)
+    writestruct(S, filename, 'FileType', 'json', 'PrettyPrint', false)
+    writestruct(S, filename, 'StructNodeName', name, 'AttributeSuffix', s)
+    * The root element is 'struct' unless named; arrays become repeated elements and fields ending in Attribute attributes, as readstruct reads them.
+xlsread: Numbers, texts and cells of a spreadsheet.
+    num = xlsread(filename)
+    num = xlsread(filename, sheet)
+    num = xlsread(filename, range)
+    [num, txt, raw] = xlsread(filename, sheet, range)
+    * num is the block holding the numbers (NaN where other cells are), txt the block of texts, raw every cell from A1 to the last used one. sheet is a name or a number; range like 'B2:D10'. .xlsx and .csv files.
+xlswrite: A matrix or cell array written into a spreadsheet.
+    xlswrite(filename, A)
+    xlswrite(filename, A, sheet)
+    xlswrite(filename, A, sheet, range)
+    * From the range's top-left cell (A1 unless given) of the sheet (the first, or one made with that name). An existing .xlsx file keeps its other sheets and cells; their values are kept, not their formatting or formulas.
+xlsfinfo: Whether a file is a spreadsheet, and its sheets.
+    [status, sheets] = xlsfinfo(filename)
+readtimetable: A timetable from a text or spreadsheet file.
+    TT = readtimetable(filename)
+    TT = readtimetable(filename, 'RowTimes', var, ...)
+    * The first datetime (or duration) column becomes the row times unless RowTimes names one; readtable's options otherwise.
+stack: Variables of a table stacked into one.
+    S = stack(T, vars)
+    S = stack(T, vars, 'NewDataVariableName', name, 'IndexVariableName', name, 'ConstantVariables', cvars)
+    * Each row of T gives a row for each stacked variable: the other variables repeated, an indicator (categorical) of which variable, and its value.
+unstack: A variable of a table spread into several, one for each value of an indicator.
+    W = unstack(S, vars, ivar)
+    W = unstack(S, vars, ivar, 'GroupingVariables', gvars, 'AggregationFunction', f, 'NewDataVariableNames', names)
+    * A row for each group of the grouping variables (all the others unless given), a variable for each value of ivar; several values in one place are summed (or given to f), none gives a missing value.
+
+# ---- animation and video ---------------------------------------------------------------------------------------------------------------
+animatedline: A line to add points to as a program runs.
+    an = animatedline
+    an = animatedline(x, y)
+    an = animatedline(x, y, z)
+    an = animatedline(..., 'Color', c, 'MaximumNumPoints', n, ...)
+    an = animatedline(ax, ...)
+    * Points are added with addpoints and drawn at drawnow; beyond MaximumNumPoints the oldest go. Its Type is 'animatedline'; it takes a line's properties.
+addpoints: Points added to an animated line.
+    addpoints(an, x, y)
+    addpoints(an, x, y, z)
+clearpoints: All points taken off an animated line.
+    clearpoints(an)
+getpoints: The points of an animated line.
+    [x, y] = getpoints(an)
+    [x, y, z] = getpoints(an)
+VideoWriter: A video file to write frame by frame.
+    v = VideoWriter(filename)
+    v = VideoWriter(filename, profile)
+    open(v), writeVideo(v, frame), close(v)
+    * profile is 'Motion JPEG AVI' (the default), 'Uncompressed AVI' or 'Grayscale AVI'; set v.FrameRate (30) and v.Quality (75, for JPEG) before open. MPEG-4 and Motion JPEG 2000 files are not written here.
+writeVideo: Frames written to an open VideoWriter.
+    writeVideo(v, frame)
+    writeVideo(v, img)
+    writeVideo(v, frames)
+    * A frame from getframe, an image (gray or RGB, of any class), or images stacked in the fourth dimension. Every frame has the first one's size.
+VideoReader: A video file to read frame by frame.
+    v = VideoReader(filename)
+    v = VideoReader(filename, 'CurrentTime', t)
+    * AVI files (Motion JPEG, uncompressed or 8-bit) and animated GIFs. v.NumFrames, v.FrameRate, v.Duration, v.Width, v.Height; v.CurrentTime is where the next frame is read.
+hasFrame: Whether a VideoReader has a frame left.
+    tf = hasFrame(v)
+readFrame: The next frame of a VideoReader.
+    frame = readFrame(v)
+    * An m-by-n-by-3 uint8 image; CurrentTime moves on by a frame.
+read: Frames of a VideoReader.
+    frames = read(v)
+    frames = read(v, k)
+    frames = read(v, [first last])
+    frames = read(v, Inf)
+    * Several frames are stacked in the fourth dimension; Inf is the last frame.
+
+# ---- tools of the desktop --------------------------------------------------------------------------------------------------------------
+dbstop: A breakpoint set from a command.
+    dbstop in file at line
+    dbstop in file
+    dbstop at line in file
+    dbstop if error
+    dbstop(s)
+    * The program stops before the line (or the first statement of the file) with the K>> prompt; a line with no statement moves to the next one that has one. 'if error' stops where an error is raised (not inside try), in that function's workspace. The Editor shows the breakpoints as if set in its margin; s is what dbstatus gives.
+dbclear: Breakpoints taken away.
+    dbclear all
+    dbclear in file
+    dbclear in file at line
+    dbclear if error
+dbstatus: The breakpoints set.
+    dbstatus
+    dbstatus file
+    s = dbstatus
+dbstack: The functions running now, the innermost first.
+    dbstack
+    [ST, I] = dbstack
+    dbstack('-completenames')
+    * Each with its line, as links. ST has file, name and line.
+checkcode: What the code checker finds in program files.
+    checkcode(filename)
+    info = checkcode(filename)
+    info = checkcode(filename, '-id')
+    s = checkcode(filename, '-string')
+    checkcode({file1, file2})
+    * Syntax errors; in functions, values assigned but never used, inputs never used, outputs never set, and output not suppressed by a semicolon; and a function named unlike its file. Each message has its line and columns; info has message, line and column (and id).
+mlint: The code checker (checkcode).
+    mlint(filename)
+    info = mlint(filename)
+clipboard: Text to and from the system's clipboard.
+    clipboard('copy', data)
+    str = clipboard('paste')
+    * Data that is not text is copied as mat2str writes it. The browser may ask whether the page may read the clipboard.
+lookfor: Functions whose help has a word in it.
+    lookfor topic
+    lookfor topic -all
+    names = lookfor(topic)
+    * Searches the first line of each function's help (and of program files on the path); -all searches all of it.
+datetick: An axis's tick labels as dates.
+    datetick
+    datetick(axis)
+    datetick(axis, fmt)
+    datetick(..., 'keepticks', 'keeplimits')
+    datetick(ax, ...)
+    * The axis's values are taken as datenums. Ticks fall on whole years, months, days, hours or minutes as the range suits, the limits widened to them unless 'keeplimits'; 'keepticks' labels the ticks there are. fmt is a datestr format (text or a number).
 '''
 
 

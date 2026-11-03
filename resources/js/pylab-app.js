@@ -674,6 +674,17 @@
         let data = null;
         try { data = await this.figures.frame(req.figure, req.axes, req.rect); } catch (e) { console.error(e); }
         PL.engine.reply(req.id, data);
+      } else if (req.type === 'breakpoints') {
+        // dbstop and dbclear: the engine has them already; the Editor and the page's store follow
+        this.breakpointsFromEngine(req.path, req.lines || []);
+        PL.engine.reply(req.id, true);
+      } else if (req.type === 'clipboard') {
+        let answer;
+        try {
+          if (req.op === 'copy') { await navigator.clipboard.writeText(req.text); answer = true; }
+          else answer = { text: await navigator.clipboard.readText() };
+        } catch (e) { answer = { error: (e && e.message) || String(e) }; }
+        PL.engine.reply(req.id, answer);
       } else if (req.type === 'ginput') {
         this.statusText.textContent = 'Click points in the figure; Enter ends.';
         this.figures.startGinput(req.figure, req.n, (pts) => { this.statusText.textContent = ''; PL.engine.reply(req.id, pts); });
@@ -856,6 +867,13 @@
       U.store.set('breakpoints', this.breakpoints);
       doc.editor.setBreakpoints(lines);
       PL.engine.call('set_breakpoints', path, JSON.stringify(lines)).catch(() => {});
+    }
+
+    breakpointsFromEngine(path, lines) {
+      if (lines.length) this.breakpoints[path] = [...lines].sort((a, b) => a - b); else delete this.breakpoints[path];
+      U.store.set('breakpoints', this.breakpoints);
+      const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
+      if (doc && doc.editor) doc.editor.setBreakpoints(this.breakpoints[path] || []);
     }
 
     toggleBreakpointHere() {

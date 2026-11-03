@@ -2227,42 +2227,66 @@ def _col_name(k):
     return s
 
 
+def _xlsx_sheets(path):
+    """The names of the sheets of an .xlsx file, in order."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    with zipfile.ZipFile(path) as z:
+        wb = ET.fromstring(z.read('xl/workbook.xml'))
+    return [sh.get('name') for sh in wb.find('m:sheets', ns)]
+
+
 def _xlsx_write(path, rows, sheet='Sheet1'):
     """rows (lists of str, float, bool or None) as an .xlsx file of one sheet."""
+    _xlsx_write_book(path, [(sheet, rows)])
+
+
+def _xlsx_write_book(path, sheets):
+    """An .xlsx file of the sheets [(name, rows)], rows lists of str, float, bool or None."""
     import zipfile
-    from xml.sax.saxutils import escape
+    from xml.sax.saxutils import escape, quoteattr
     strings = []
     sidx = {}
-    body = []
-    for i, row in enumerate(rows):
-        cells = []
-        for j, v in enumerate(row):
-            ref = f'{_col_name(j)}{i + 1}'
-            if v is None:
-                continue
-            if isinstance(v, bool):
-                cells.append(f'<c r="{ref}" t="b"><v>{int(v)}</v></c>')
-            elif isinstance(v, (int, float)):
-                if math.isnan(v):
+    bodies = []
+    for _, rows in sheets:
+        body = []
+        for i, row in enumerate(rows):
+            cells = []
+            for j, v in enumerate(row):
+                ref = f'{_col_name(j)}{i + 1}'
+                if v is None:
                     continue
-                cells.append(f'<c r="{ref}"><v>{repr(float(v)) if not float(v).is_integer() else int(v)}</v></c>')
-            else:
-                s = str(v)
-                if s not in sidx:
-                    sidx[s] = len(strings)
-                    strings.append(s)
-                cells.append(f'<c r="{ref}" t="s"><v>{sidx[s]}</v></c>')
-        body.append(f'<row r="{i + 1}">{"".join(cells)}</row>')
+                if isinstance(v, bool):
+                    cells.append(f'<c r="{ref}" t="b"><v>{int(v)}</v></c>')
+                elif isinstance(v, (int, float)):
+                    if math.isnan(v):
+                        continue
+                    cells.append(f'<c r="{ref}"><v>{repr(float(v)) if not float(v).is_integer() else int(v)}</v></c>')
+                else:
+                    t = str(v)
+                    if t not in sidx:
+                        sidx[t] = len(strings)
+                        strings.append(t)
+                    cells.append(f'<c r="{ref}" t="s"><v>{sidx[t]}</v></c>')
+            body.append(f'<row r="{i + 1}">{"".join(cells)}</row>')
+        bodies.append(''.join(body))
     main = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
     rel = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    n = len(sheets)
+    overrides = ''.join(f'<Override PartName="/xl/worksheets/sheet{k + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for k in range(n))
     files = {
-        '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
+        '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + overrides + '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
         '_rels/.rels': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{rel}/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-        'xl/workbook.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="{main}" xmlns:r="{rel}"><sheets><sheet name="{escape(sheet)}" sheetId="1" r:id="rId1"/></sheets></workbook>',
-        'xl/_rels/workbook.xml.rels': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{rel}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="{rel}/sharedStrings" Target="sharedStrings.xml"/></Relationships>',
-        'xl/worksheets/sheet1.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{main}"><sheetData>{"".join(body)}</sheetData></worksheet>',
-        'xl/sharedStrings.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="{main}" count="{len(strings)}" uniqueCount="{len(strings)}">' + ''.join(f'<si><t xml:space="preserve">{escape(s)}</t></si>' for s in strings) + '</sst>',
+        'xl/workbook.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="{main}" xmlns:r="{rel}"><sheets>'
+                           + ''.join(f'<sheet name={quoteattr(name)} sheetId="{k + 1}" r:id="rId{k + 1}"/>' for k, (name, _) in enumerate(sheets)) + '</sheets></workbook>',
+        'xl/_rels/workbook.xml.rels': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                                      + ''.join(f'<Relationship Id="rId{k + 1}" Type="{rel}/worksheet" Target="worksheets/sheet{k + 1}.xml"/>' for k in range(n))
+                                      + f'<Relationship Id="rId{n + 1}" Type="{rel}/sharedStrings" Target="sharedStrings.xml"/></Relationships>',
+        'xl/sharedStrings.xml': f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="{main}" count="{len(strings)}" uniqueCount="{len(strings)}">' + ''.join(f'<si><t xml:space="preserve">{escape(t)}</t></si>' for t in strings) + '</sst>',
     }
+    for k, body in enumerate(bodies):
+        files[f'xl/worksheets/sheet{k + 1}.xml'] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="{main}"><sheetData>{body}</sheetData></worksheet>'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
         for name, text in files.items():
             z.writestr(name, text)
