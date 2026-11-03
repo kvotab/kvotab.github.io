@@ -5001,6 +5001,322 @@ contourslice: Contour lines of a volume on slice planes.
     contourslice(..., levels)
     h = contourslice(...)
     * levels is the number of levels or the levels themselves. Each line is a patch with no face, its edge coloured by its level.
+# ---- signal processing ---------------------------------------------------------------------------
+butter: A Butterworth filter (maximally flat passband).
+    [b, a] = butter(n, Wn)
+    [b, a] = butter(n, Wn, ftype)
+    [z, p, k] = butter(...)
+    [A, B, C, D] = butter(...)
+    [b, a] = butter(n, Wn, 's')
+    * Wn is the cutoff, 1 being half the sampling rate; two values make a bandpass filter (order 2n). ftype is 'low', 'high', 'bandpass' or 'stop'; 's' designs an analog filter (Wn in rad/s).
+cheby1: A Chebyshev type I filter: Rp dB of ripple in the passband.
+    [b, a] = cheby1(n, Rp, Wp)
+    [b, a] = cheby1(n, Rp, Wp, ftype)
+    [z, p, k] = cheby1(...)
+cheby2: A Chebyshev type II filter: the stopband Rs dB down.
+    [b, a] = cheby2(n, Rs, Ws)
+    [b, a] = cheby2(n, Rs, Ws, ftype)
+    [z, p, k] = cheby2(...)
+ellip: An elliptic filter: Rp dB of passband ripple, the stopband Rs dB down.
+    [b, a] = ellip(n, Rp, Rs, Wp)
+    [b, a] = ellip(n, Rp, Rs, Wp, ftype)
+    [z, p, k] = ellip(...)
+buttord: The lowest Butterworth order (and its cutoff) that meets a passband and stopband.
+    [n, Wn] = buttord(Wp, Ws, Rp, Rs)
+    [n, Wn] = buttord(Wp, Ws, Rp, Rs, 's')
+cheb1ord: The lowest Chebyshev type I order that meets a passband and stopband.
+    [n, Wp] = cheb1ord(Wp, Ws, Rp, Rs)
+cheb2ord: The lowest Chebyshev type II order that meets a passband and stopband.
+    [n, Ws] = cheb2ord(Wp, Ws, Rp, Rs)
+ellipord: The lowest elliptic order that meets a passband and stopband.
+    [n, Wp] = ellipord(Wp, Ws, Rp, Rs)
+fir1: A window-method FIR filter of order n (a Hamming window unless given one).
+    b = fir1(n, Wn)
+    b = fir1(n, Wn, ftype)
+    b = fir1(n, Wn, ftype, window)
+    b = fir1(..., 'noscale')
+    * ftype is 'low', 'high', 'bandpass', 'stop', 'DC-0' or 'DC-1'. A highpass or bandstop filter's odd order is made one higher. The filter is scaled to 1 in the middle of its first passband.
+fir2: An FIR filter of order n with magnitudes m at the frequencies f (from 0 to 1).
+    b = fir2(n, f, m)
+    b = fir2(n, f, m, npt)
+    b = fir2(n, f, m, window)
+firls: The least-squares FIR filter of order n for bands f with amplitudes a.
+    b = firls(n, f, a)
+    b = firls(n, f, a, w)
+    * The order must be even here.
+firpm: The equiripple (Parks-McClellan) FIR filter of order n for bands f with amplitudes a.
+    b = firpm(n, f, a)
+    b = firpm(n, f, a, w)
+    b = firpm(n, f, a, 'hilbert')
+    b = firpm(n, f, a, 'differentiator')
+    * Each band has one amplitude here (a(k) = a(k+1)).
+remez: The equiripple FIR filter (the name firpm had before; the same).
+    b = remez(n, f, a)
+kaiserord: The order, cutoff and Kaiser beta for a window-method design that meets band edges f, amplitudes a and deviations dev.
+    [n, Wn, beta, ftype] = kaiserord(f, a, dev)
+    [n, Wn, beta, ftype] = kaiserord(f, a, dev, fs)
+    * Then b = fir1(n, Wn, ftype, kaiser(n+1, beta), 'noscale').
+filtfilt: Zero-phase filtering: forward, then backward, so nothing is delayed.
+    y = filtfilt(b, a, x)
+    y = filtfilt(sos, g, x)
+    y = filtfilt(d, x)
+    * The ends are extended by odd reflection, 3 times the filter order, and the filter starts in its steady state. The magnitude response is the filter's squared.
+sosfilt: Filtering by second-order sections (each row b0 b1 b2 a0 a1 a2).
+    y = sosfilt(sos, x)
+fftfilt: FIR filtering by the FFT (overlap-add): what filter(b, 1, x) gives.
+    y = fftfilt(b, x)
+filtic: Initial conditions for filter from past outputs and inputs.
+    zi = filtic(b, a, y)
+    zi = filtic(b, a, y, x)
+    * y and x hold the latest past value first: y(1) is y(-1).
+upfirdn: Upsampling by p, FIR filtering by h and downsampling by q.
+    y = upfirdn(x, h)
+    y = upfirdn(x, h, p, q)
+medfilt1: A median filter: each sample the median of the n about it (n = 3).
+    y = medfilt1(x)
+    y = medfilt1(x, n)
+    y = medfilt1(x, n, [], dim)
+    y = medfilt1(..., 'truncate')
+    * Beyond the ends the signal is taken as zeros ('zeropad'), or the windows are cut short ('truncate'). For an even n the window is x(k-n/2 : k+n/2-1).
+sgolay: The Savitzky-Golay projection matrix B and differentiation filters G for a polynomial order and an odd frame length.
+    B = sgolay(order, framelen)
+    [B, G] = sgolay(order, framelen)
+sgolayfilt: Savitzky-Golay smoothing: each sample the value of a polynomial fitted about it.
+    y = sgolayfilt(x, order, framelen)
+hilbert: The analytic signal x + i*H(x), H the Hilbert transform.
+    y = hilbert(x)
+    y = hilbert(x, n)
+    * abs(y) is the envelope, angle(y) the instantaneous phase.
+envelope: Upper and lower envelopes of a signal.
+    [up, lo] = envelope(x)
+    [up, lo] = envelope(x, np, 'peak')
+    envelope(x)
+    * By default from the analytic signal of x less its mean; 'peak' joins local maxima (and minima) at least np samples apart by splines.
+xcorr: Cross-correlation: r(m) is the sum of x(n+m)*conj(y(n)), at lags -(N-1) to N-1.
+    r = xcorr(x, y)
+    r = xcorr(x)
+    [r, lags] = xcorr(..., maxlag)
+    r = xcorr(..., scaleopt)
+    * scaleopt is 'none', 'biased' (divided by N), 'unbiased' (by N-|m|) or 'normalized' (1 at lag 0 for xcorr(x)). The shorter signal is padded with zeros. For a matrix, every pair of columns.
+xcov: Cross-covariance: xcorr of the signals less their means.
+    c = xcov(x, y)
+    [c, lags] = xcov(x, maxlag, scaleopt)
+resample: A signal at p/q times its sampling rate, by polyphase filtering.
+    y = resample(x, p, q)
+decimate: A signal lowpass filtered (a Chebyshev type I filter of order 8, both ways) and every r-th sample kept.
+    y = decimate(x, r)
+    y = decimate(x, r, n)
+    y = decimate(x, r, 'fir')
+    * The samples kept are the first and every r-th after it.
+interp: A signal with r times as many samples, by lowpass interpolation; its own samples are kept.
+    y = interp(x, r)
+downsample: Every n-th sample, from sample phase+1.
+    y = downsample(x, n)
+    y = downsample(x, n, phase)
+upsample: n-1 zeros put after each sample.
+    y = upsample(x, n)
+    y = upsample(x, n, phase)
+buffer: A signal cut into frames (columns) of n samples, each overlapping the one before by p (or skipping -p between them).
+    y = buffer(x, n)
+    y = buffer(x, n, p)
+    [y, z] = buffer(...)
+    * With p > 0 the first frame starts with p zeros; the last is padded with zeros, or with two outputs left out and given as z.
+findpeaks: Local maxima of a signal: their values, where they are, their widths and prominences.
+    pks = findpeaks(y)
+    [pks, locs] = findpeaks(y, x)
+    [pks, locs, w, p] = findpeaks(y, fs)
+    [...] = findpeaks(..., 'MinPeakHeight', h, 'MinPeakProminence', p, 'MinPeakDistance', d, 'Threshold', t, 'NPeaks', n, 'SortStr', 'descend', 'MinPeakWidth', w, 'MaxPeakWidth', w, 'WidthReference', 'halfheight')
+    findpeaks(y)
+    * A peak is higher than both neighbours (a flat one is where it starts; the ends never are). Widths are measured at half the prominence (or half the height), between linear crossings. MinPeakDistance keeps the highest peaks first. With no output the signal is plotted with the peaks marked.
+hamming: A Hamming window (a column).
+    w = hamming(n)
+    w = hamming(n, 'periodic')
+hann: A Hann window, with its zero ends.
+    w = hann(n)
+    w = hann(n, 'periodic')
+hanning: A Hann window without its zero ends.
+    w = hanning(n)
+blackman: A Blackman window.
+    w = blackman(n)
+    w = blackman(n, 'periodic')
+flattopwin: A flat-top window (for measuring amplitudes).
+    w = flattopwin(n)
+blackmanharris: A minimum four-term Blackman-Harris window.
+    w = blackmanharris(n)
+nuttallwin: A Nuttall four-term Blackman-Harris window.
+    w = nuttallwin(n)
+kaiser: A Kaiser window with shape beta (0.5).
+    w = kaiser(n, beta)
+bartlett: A Bartlett (triangular, zero at its ends) window.
+    w = bartlett(n)
+triang: A triangular window not zero at its ends.
+    w = triang(n)
+rectwin: A rectangular window: ones.
+    w = rectwin(n)
+gausswin: A Gaussian window, alpha (2.5) the reciprocal of its standard deviation.
+    w = gausswin(n, alpha)
+tukeywin: A tapered-cosine window, r (0.5) the part of it tapered.
+    w = tukeywin(n, r)
+chebwin: A Chebyshev window, its sidelobes r dB (100) down.
+    w = chebwin(n, r)
+barthannwin: A modified Bartlett-Hann window.
+    w = barthannwin(n)
+bohmanwin: A Bohman window.
+    w = bohmanwin(n)
+parzenwin: A Parzen (de la Vallee Poussin) window.
+    w = parzenwin(n)
+window: A window by its function.
+    w = window(@hamming, n)
+    w = window(@kaiser, n, beta)
+freqz: A digital filter's frequency response.
+    [h, w] = freqz(b, a)
+    [h, w] = freqz(b, a, n)
+    [h, w] = freqz(b, a, n, 'whole')
+    [h, f] = freqz(b, a, n, fs)
+    h = freqz(b, a, w)
+    freqz(b, a)
+    * n points (512) from 0 up to half the sampling rate (pi rad/sample), or the whole circle. sos and digital filters too. With no output, magnitude (dB) and phase (degrees) are plotted.
+freqs: An analog filter's frequency response.
+    [h, w] = freqs(b, a, w)
+    [h, w] = freqs(b, a, n)
+    freqs(b, a)
+impz: A filter's impulse response.
+    [h, t] = impz(b, a)
+    [h, t] = impz(b, a, n)
+    [h, t] = impz(b, a, n, fs)
+    impz(b, a)
+    * Without n, an FIR filter's length, or an IIR filter's response until it has died away (below 5e-5 of its largest).
+stepz: A filter's step response.
+    [s, t] = stepz(b, a)
+    [s, t] = stepz(b, a, n)
+grpdelay: A filter's group delay, in samples.
+    [gd, w] = grpdelay(b, a)
+    [gd, w] = grpdelay(b, a, n)
+zplane: A filter's zeros (o) and poles (x) in the complex plane, with the unit circle.
+    zplane(b, a)
+    zplane(z, p)
+    * Rows are a transfer function's coefficients; columns are zeros and poles.
+tf2zp: A transfer function's zeros, poles and gain.
+    [z, p, k] = tf2zp(b, a)
+zp2tf: A transfer function from zeros, poles and gain.
+    [b, a] = zp2tf(z, p, k)
+tf2sos: Second-order sections of a transfer function.
+    sos = tf2sos(b, a)
+    [sos, g] = tf2sos(b, a)
+zp2sos: Second-order sections from zeros, poles and gain.
+    sos = zp2sos(z, p, k)
+    [sos, g] = zp2sos(z, p, k)
+sos2tf: The transfer function of second-order sections.
+    [b, a] = sos2tf(sos)
+    [b, a] = sos2tf(sos, g)
+sos2zp: The zeros, poles and gain of second-order sections.
+    [z, p, k] = sos2zp(sos)
+    [z, p, k] = sos2zp(sos, g)
+filtord: A filter's order.
+    n = filtord(b, a)
+    n = filtord(d)
+designfilt: A digital filter from a response and its specifications.
+    d = designfilt('lowpassfir', 'FilterOrder', n, 'CutoffFrequency', fc, 'SampleRate', fs)
+    d = designfilt('lowpassiir', 'FilterOrder', n, 'HalfPowerFrequency', f3db)
+    d = designfilt('bandpassiir', 'FilterOrder', n, 'HalfPowerFrequency1', f1, 'HalfPowerFrequency2', f2)
+    d = designfilt('highpassfir', 'PassbandFrequency', fp, 'StopbandFrequency', fst, 'StopbandAttenuation', a)
+    * Responses: lowpass, highpass, bandpass and bandstop, each fir or iir. FIR filters by the window method (FilterOrder and CutoffFrequency, Window), or from passband and stopband edges by a Kaiser window; IIR filters by butter (DesignMethod 'cheby1', 'cheby2' or 'ellip' instead), kept as second-order sections. filter(d, x), filtfilt(d, x), freqz(d), impz(d), zplane(d) and filtord(d) take them; d.Coefficients holds them.
+lowpass: A signal lowpass filtered, its delay taken back.
+    y = lowpass(x, wpass)
+    y = lowpass(x, fpass, fs)
+    [y, d] = lowpass(...)
+    y = lowpass(..., 'Steepness', s, 'StopbandAttenuation', a)
+    * A Kaiser-window FIR filter, the stopband 60 dB down and the transition band 15 % of the way from the passband edge to half the sampling rate (Steepness 0.85).
+highpass: A signal highpass filtered, its delay taken back.
+    y = highpass(x, wpass)
+    y = highpass(x, fpass, fs)
+bandpass: A signal bandpass filtered, its delay taken back.
+    y = bandpass(x, [w1 w2])
+    y = bandpass(x, [f1 f2], fs)
+bandstop: A signal with a band taken out, its delay taken back.
+    y = bandstop(x, [w1 w2])
+    y = bandstop(x, [f1 f2], fs)
+periodogram: The power spectral density by the periodogram.
+    [pxx, w] = periodogram(x)
+    [pxx, w] = periodogram(x, window, nfft)
+    [pxx, f] = periodogram(x, window, nfft, fs)
+    [...] = periodogram(..., 'twosided')
+    periodogram(x)
+    * A rectangular window unless given one, nfft = max(256, 2^nextpow2(N)), one-sided for real signals; w in rad/sample (or f in Hz with fs). With no output the estimate is plotted in dB.
+pwelch: The power spectral density by Welch's method: windowed segments' periodograms averaged.
+    [pxx, w] = pwelch(x)
+    [pxx, w] = pwelch(x, window, noverlap, nfft)
+    [pxx, f] = pwelch(x, window, noverlap, nfft, fs)
+    pwelch(x)
+    * By default 8 segments with half overlapping, each a Hamming window long.
+cpsd: The cross power spectral density by Welch's method.
+    [pxy, w] = cpsd(x, y)
+    [pxy, f] = cpsd(x, y, window, noverlap, nfft, fs)
+mscohere: The magnitude-squared coherence of two signals, from 0 to 1 at each frequency.
+    [cxy, w] = mscohere(x, y)
+    [cxy, f] = mscohere(x, y, window, noverlap, nfft, fs)
+tfestimate: The transfer function from x to y: their cross spectrum over the spectrum of x.
+    [txy, w] = tfestimate(x, y)
+    [txy, f] = tfestimate(x, y, window, noverlap, nfft, fs)
+spectrogram: The short-time Fourier transform: a spectrum for each windowed segment.
+    s = spectrogram(x)
+    [s, w, t] = spectrogram(x, window, noverlap, nfft)
+    [s, f, t, ps] = spectrogram(x, window, noverlap, nfft, fs)
+    spectrogram(x)
+    * By default 8 segments with half overlapping, Hamming windows. t gives each segment's middle; ps the power spectral density. With no output it is drawn as an image in dB.
+bandpower: Average power, of a signal or within a band.
+    p = bandpower(x)
+    p = bandpower(x, fs, freqrange)
+    p = bandpower(pxx, f, 'psd')
+    p = bandpower(pxx, f, freqrange, 'psd')
+chirp: A swept-frequency cosine, f0 at time 0 to f1 at time t1.
+    y = chirp(t, f0, t1, f1)
+    y = chirp(t, f0, t1, f1, method)
+    y = chirp(t, f0, t1, f1, method, phi)
+    * method is 'linear', 'quadratic' or 'logarithmic'; phi is the initial phase in degrees.
+sawtooth: A sawtooth wave of period 2*pi, from -1 to 1.
+    x = sawtooth(t)
+    x = sawtooth(t, xmax)
+    * xmax (1) is where in the period it peaks: 0.5 makes a triangle wave.
+square: A square wave of period 2*pi, 1 for duty percent (50) of the period and -1 after.
+    x = square(t)
+    x = square(t, duty)
+rectpuls: A rectangular pulse of width w (1) about t = 0.
+    y = rectpuls(t)
+    y = rectpuls(t, w)
+tripuls: A triangular pulse of width w (1), its peak at s*w/2.
+    y = tripuls(t)
+    y = tripuls(t, w, s)
+gauspuls: A Gaussian-modulated sinusoid of centre frequency fc (1000 Hz) and relative bandwidth bw (0.5).
+    yi = gauspuls(t, fc, bw)
+    [yi, yq, ye] = gauspuls(t, fc, bw, bwr)
+diric: The Dirichlet (periodic sinc) function sin(n*x/2)/(n*sin(x/2)).
+    y = diric(x, n)
+db2mag: Decibels as magnitudes: 10^(y/20).
+    y = db2mag(ydb)
+mag2db: Magnitudes in decibels: 20*log10(y).
+    ydb = mag2db(y)
+pow2db: Powers in decibels: 10*log10(y).
+    ydb = pow2db(y)
+db2pow: Decibels as powers: 10^(y/10).
+    y = db2pow(ydb)
+peak2peak: The largest value less the smallest.
+    y = peak2peak(x)
+    y = peak2peak(x, dim)
+peak2rms: The largest magnitude over the root mean square.
+    y = peak2rms(x)
+    y = peak2rms(x, dim)
+rceps: The real cepstrum, and the minimum-phase signal with the same magnitude spectrum.
+    y = rceps(x)
+    [y, ym] = rceps(x)
+dct: The orthonormal discrete cosine transform (type II).
+    y = dct(x)
+    y = dct(x, n)
+    y = dct(x, n, dim)
+    y = dct(..., 'Type', k)
+idct: The inverse discrete cosine transform.
+    x = idct(y)
+    x = idct(y, n, dim)
 '''
 
 

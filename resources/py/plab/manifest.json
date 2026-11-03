@@ -63,6 +63,7 @@
     "builtins/gsa.py",
     "builtins/missingdata.py",
     "builtins/dictionaries.py",
+    "builtins/signal.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

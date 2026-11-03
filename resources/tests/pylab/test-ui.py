@@ -1622,6 +1622,23 @@ async def language_additions(page):
     await command(page, 'cd /home/user')
 
 
+
+async def signal_processing(page):
+    """Signal processing on the page's SciPy: a filter and its numbers, and the forms that draw (freqz, findpeaks, pwelch, spectrogram)."""
+    out = await command(page, "close all; [b, a] = butter(4, 0.2); y = filtfilt(b, a, ones(1, 50)); v = round(y(25)*1e6), "
+                              "[pks, locs] = findpeaks([0 2 1 3 1 4 1])")
+    check('in the page: butter and filtfilt pass a constant unchanged; findpeaks finds the peaks',
+          ['v =\n\n     1000000' in out[-300:], 'locs =\n\n     2     4     6' in out[-300:]], [True, True])
+    await command(page, "figure; freqz(b, a); figure; findpeaks(sin(0:0.2:20)); figure; pwelch(randn(1000, 1)); figure; spectrogram(randn(1, 4000), [], [], [], 1000);")
+    await until(page, 'PL.app.figures.wins.size === 4')
+    await asyncio.sleep(0.8)
+    drawn = await page.ev("[...PL.app.figures.wins.values()].map(w => [w.fig.axes.length, w.fig.axes.reduce((n, ax) => n + ax.children.length, 0)])")
+    check('freqz draws magnitude and phase (two axes); findpeaks, pwelch and spectrogram draw theirs', [d[0] >= 1 and d[1] >= 1 for d in drawn] + [drawn[0][0]],
+          [True, True, True, True, 2])
+    await shot(page, 'signal.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1629,6 +1646,7 @@ async def main():
         await property_editor(page)
         await editor_draws(page)
         await language_additions(page)
+        await signal_processing(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

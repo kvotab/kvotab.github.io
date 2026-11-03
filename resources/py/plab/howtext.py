@@ -1777,6 +1777,106 @@ streamtube:
     Python: moreplots.py. The streamlines from stream3, and round each a tube: a frame carried along the line by parallel transport (so that it does not twist), with n points on a circle at each vertex, as a surface coloured by z. The divergence of the field (numpy.gradient along each axis, summed) is interpolated onto the line and sets the radius between 0.15 and 0.5 of a grid cell, times scale.
 contourslice:
     Python: moreplots.py. The volume interpolated onto each plane's grid (scipy.interpolate.RegularGridInterpolator), its contour lines by the same marching squares as contour, each placed back on its plane in 3-D as a patch with no face whose FaceVertexCData is its level.
+butter, cheby1, cheby2, ellip:
+    Python: signal.py. scipy.signal.iirfilter with ftype 'butter', 'cheby1', 'cheby2' or 'ellip', btype from ftype (two cutoffs: 'bandpass'), output 'ba', 'zpk' or 'ss' by the number of outputs. Coefficients as rows, zeros and poles as columns.
+buttord, cheb1ord, cheb2ord, ellipord:
+    Python: signal.py. scipy.signal.buttord, cheb1ord, cheb2ord and ellipord, which give the lowest order and the natural (or edge) frequency as SciPy chooses it.
+fir1:
+    Python: signal.py. The ideal response from scipy.signal.firwin with a rectangular window and no scaling, times the window (scipy.signal.get_window('hamming', n+1, fftbins=False) unless one is given), then divided by its response at the middle of the first passband (0 when it starts at 0, the Nyquist frequency when it ends there).
+fir2:
+    Python: signal.py. scipy.signal.firwin2 with a Hamming window (or none, the window given multiplied after) on a grid of npt (512) points.
+firls:
+    Python: signal.py. scipy.signal.firls with numtaps n+1, the bands and amplitudes as given and fs = 2.
+firpm, remez:
+    Python: signal.py. scipy.signal.remez (Parks-McClellan) with numtaps n+1, one amplitude per band and fs = 2; type 'hilbert' or 'differentiator' when asked.
+kaiserord:
+    Python: signal.py. Kaiser's formulas: A = -20*log10(min(dev)), n = ceil((A - 7.95)/(2.285*dw)) with dw the narrowest transition band in rad/sample, beta 0.1102*(A - 8.7) above 50 dB, 0.5842*(A - 21)^0.4 + 0.07886*(A - 21) from 21 dB, else 0; Wn the middles of the transition bands.
+filtfilt:
+    Python: signal.py. scipy.signal.filtfilt with padtype 'odd' and padlen 3*(max(length(a), length(b)) - 1), or scipy.signal.sosfiltfilt with padlen 3*(2*sections) and the gain applied twice; along the columns (a row vector as a row).
+sosfilt:
+    Python: signal.py. scipy.signal.sosfilt down the columns.
+fftfilt:
+    Python: signal.py. scipy.signal.oaconvolve (overlap-add) of the columns with b, cut to the signal's length.
+filtic:
+    Python: signal.py. scipy.signal.lfiltic, whose state is that of filter's transposed direct form II.
+upfirdn:
+    Python: signal.py. scipy.signal.upfirdn down the columns.
+medfilt1:
+    Python: signal.py. For each sample the window from k - floor(n/2) of n samples, zeros beyond the ends (or NaN and numpy.nanmedian for 'truncate'), its median by numpy.median.
+sgolay:
+    Python: signal.py. S the Vandermonde matrix of the positions -(f-1)/2 ... (f-1)/2 to the powers 0 ... order, G = S*inv(S'*S), B = G*S'.
+sgolayfilt:
+    Python: signal.py. scipy.signal.savgol_filter with mode 'interp': the first and last (f-1)/2 samples from the polynomial fitted to the first and last frame.
+hilbert:
+    Python: signal.py. scipy.signal.hilbert down the columns: the FFT, its negative frequencies set to zero and its positive ones doubled, transformed back.
+envelope:
+    Python: signal.py. The mean m of each column, then m +/- abs(scipy.signal.hilbert(x - m)); for 'peak', the local maxima (and minima) found by scipy.signal.find_peaks at least np apart, with the first and last samples, joined by scipy.interpolate.CubicSpline.
+xcorr, xcov:
+    Python: signal.py. The shorter signal padded with zeros to the longer's length N, then numpy.correlate in 'full' mode (r(m) = sum of x(n+m)*conj(y(n))) for lags -(N-1) to N-1, scaled as asked; xcov subtracts the means first. A matrix gives every pair of columns.
+resample:
+    Python: signal.py. p and q divided by their greatest common divisor, then scipy.signal.resample_poly with a Kaiser window of beta 5 (a filter of 20*max(p, q) + 1 taps designed by the window method).
+decimate:
+    Python: signal.py. scipy.signal.decimate with zero_phase: a Chebyshev type I filter of order 8 (0.05 dB ripple, cutoff 0.8/r) run both ways, or for 'fir' a window-method FIR filter, then every r-th sample from the first.
+interp:
+    Python: signal.py. The signal extended at each end by odd reflection (repeated for a short one) as far as the filter reaches, scipy.signal.resample_poly by r, the middle kept and its every r-th sample set back to the signal's own.
+downsample, upsample:
+    Python: signal.py. Slicing: x(phase+1:n:end), and zeros with the samples put at phase+1, n+phase+1, ... (columns for a matrix).
+buffer:
+    Python: signal.py. Frames taken step n-p apart from the signal with p zeros before it (or skipping -p samples between frames), the last padded with zeros.
+findpeaks:
+    Python: signal.py. scipy.signal.find_peaks with plateau_size 1 (a flat peak reported at its left edge), then Threshold against the neighbours, MinPeakHeight, scipy.signal.peak_prominences and MinPeakProminence, scipy.signal.peak_widths at half the prominence (or half the height) with the crossings interpolated into x's units, Min/MaxPeakWidth, MinPeakDistance (the highest kept first, each next one only when far enough from those kept), SortStr and NPeaks.
+hamming, hann, blackman, flattopwin, blackmanharris, nuttallwin, kaiser, bartlett, triang, rectwin, tukeywin, chebwin, barthannwin, bohmanwin, parzenwin:
+    Python: signal.py. scipy.signal.get_window of the matching name ('hamming', 'hann', 'blackman', 'flattop', 'blackmanharris', 'nuttall', ('kaiser', beta), 'bartlett', 'triang', 'boxcar', ('tukey', r), ('chebwin', r), 'barthann', 'bohman', 'parzen') with fftbins False (True for 'periodic'), as a column.
+gausswin:
+    Python: signal.py. exp(-(alpha*k/((n-1)/2))^2/2) for k from -(n-1)/2 to (n-1)/2.
+hanning:
+    Python: signal.py. scipy.signal.windows.hann of length n+2 without its two zero ends.
+window:
+    Python: signal.py. The window function named by the handle, called with the rest of the arguments.
+freqz:
+    Python: signal.py. scipy.signal.freqz (scipy.signal.sosfreqz for sections) at n points from 0 (whole: round the circle) or at the frequencies given; with fs, frequencies in Hz.
+freqs:
+    Python: signal.py. scipy.signal.freqs at the frequencies given (or 200 it chooses).
+impz, stepz:
+    Python: signal.py. scipy.signal.lfilter (or sosfilt) of a unit impulse; the step response its cumulative sum. Without n: an FIR filter's length, or the samples until the response stays below 5e-5 of its largest (of the first 5000).
+grpdelay:
+    Python: signal.py. scipy.signal.group_delay at n frequencies from 0 to pi.
+zplane:
+    Python: signal.py. scipy.signal.tf2zpk for coefficients; the unit circle, the zeros as o and the poles as x, axis equal.
+tf2zp, zp2tf, tf2sos, zp2sos, sos2tf, sos2zp:
+    Python: signal.py. scipy.signal.tf2zpk, zpk2tf, tf2sos, zpk2sos, sos2tf and sos2zpk. With a gain output, the gain g is the product of the sections' first coefficients, each section's numerator divided by its own. The order in which SciPy pairs poles and zeros into sections is SciPy's.
+filtord:
+    Python: signal.py. The longer of b and a (trailing zeros dropped) less 1, or a digital filter's order.
+designfilt:
+    Python: signal.py. A digitalFilter object. FIR with FilterOrder: scipy.signal.firwin with a rectangular window times the window, scaled as fir1 scales; from passband and stopband edges: scipy.signal.kaiserord with the stopband attenuation (60 dB) and the transition width, then firwin with that Kaiser window. IIR: scipy.signal.iirfilter (butter unless DesignMethod says cheby1, cheby2 or ellip) with output 'sos', or scipy.signal.iirdesign from the edges, ripple (1 dB) and attenuation (60 dB). filter(d, x) uses scipy.signal.sosfilt or lfilter.
+lowpass, highpass, bandpass, bandstop:
+    Python: signal.py. PyLAB's own design: a transition band (1 - Steepness) of the way from the passband edge to the nearest end (for a band, the narrowest side), scipy.signal.kaiserord for the stopband attenuation (60 dB) and that width, scipy.signal.firwin with the Kaiser window and the cutoff in the middle of the transition band; the signal, padded with zeros, filtered by scipy.signal.lfilter and shifted back by the filter's delay (numtaps - 1)/2. A second output is the digitalFilter.
+periodogram:
+    Python: signal.py. scipy.signal.periodogram with the window (rectangular unless given), nfft = max(256, 2^nextpow2(N)), no detrending and density scaling; fs = 2*pi when none is given, so frequencies are in rad/sample.
+pwelch, cpsd, mscohere, tfestimate:
+    Python: signal.py. scipy.signal.welch, csd (of y and x, so Pxy = X.*conj(Y)), coherence and csd(x, y)/welch(x) with segments of floor(N/4.5) samples (8 segments with half overlapping), a symmetric Hamming window, noverlap half a segment, nfft = max(256, 2^nextpow2(segment)), no detrending, mean averaging; fs = 2*pi when none is given.
+spectrogram:
+    Python: signal.py. scipy.signal.stft with the same segments as pwelch, no boundary padding, multiplied back to the windowed segments' plain FFT sums; ps from scipy.signal.spectrogram's density; t the segments' middles (in samples without fs).
+bandpower:
+    Python: signal.py. The mean of abs(x).^2; with fs, scipy.signal.periodogram with a Hamming window and nfft = N, then the densities in the range times their bin widths, summed.
+chirp:
+    Python: signal.py. scipy.signal.chirp with phi in degrees.
+sawtooth, square:
+    Python: signal.py. scipy.signal.sawtooth(t, xmax) and scipy.signal.square(t, duty/100).
+rectpuls, tripuls:
+    Python: signal.py. 1 for -w/2 <= t < w/2; the triangle rising linearly from -w/2 to s*w/2 and falling to w/2.
+gauspuls:
+    Python: signal.py. scipy.signal.gausspulse with retquad and retenv.
+diric:
+    Python: signal.py. sin(n*x/2)./(n*sin(x/2)), with (-1)^(k*(n-1)) at x = 2*pi*k.
+db2mag, mag2db, pow2db, db2pow:
+    Python: signal.py. 10^(y/20), 20*log10(y), 10*log10(y) and 10^(y/10); a negative magnitude or power gives NaN.
+peak2peak, peak2rms:
+    Python: signal.py. max - min (of the magnitudes for complex values) and max(abs(x))/sqrt(mean(abs(x).^2)) along the first dimension whose size is not 1.
+rceps:
+    Python: signal.py. real(numpy.fft.ifft(log(abs(numpy.fft.fft(x))))); the minimum-phase signal from the cepstrum folded onto its positive times and exponentiated back.
+dct, idct:
+    Python: signal.py. scipy.fft.dct and idct with norm 'ortho' (type 2 unless asked) along the first dimension whose size is not 1.
 """
 
 
