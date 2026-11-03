@@ -165,10 +165,10 @@ def data_bounds(ax):
                     else:
                         b['X'].append((e[0], e[-1]))
                         b['Y'].append((0.0, float(v.max()) if v.size else 1.0))
-            elif k in ('stem', 'stair', 'area', 'scatter', 'errorbar', 'quiver', 'contour'):
+            elif k in ('stem', 'stair', 'area', 'scatter', 'bubblechart', 'errorbar', 'quiver', 'contour'):
                 add('X', p['XData'])
                 add('Y', p['YData'])
-                if np.size(p['ZData']) and k in ('scatter', 'stem', 'quiver'):
+                if np.size(p['ZData']) and k in ('scatter', 'bubblechart', 'stem', 'quiver'):
                     add('Z', p['ZData'])
                 if k == 'stem':
                     b['Y'].append((p['BaseValue'], p['BaseValue']))
@@ -310,8 +310,8 @@ def auto_clim(ax):
             cd = p['CData']
         elif c.TYPE == 'patch':
             cd = p['FaceVertexCData'] if np.size(p['FaceVertexCData']) else p['CData']
-        elif isinstance(c, Series) and c.kind in ('scatter', 'contour'):
-            cd = p['CData'] if c.kind == 'scatter' else c.extra.get('levels')
+        elif isinstance(c, Series) and c.kind in ('scatter', 'bubblechart', 'contour'):
+            cd = p['CData'] if c.kind != 'contour' else c.extra.get('levels')
             if c.kind == 'contour':
                 z = np.asarray(p['ZData'], float)
                 cd = z

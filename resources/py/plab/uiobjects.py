@@ -15,7 +15,7 @@ UNITS = ('pixels', 'normalized', 'characters', 'points', 'inches', 'centimeters'
 UNIT_PX = {'pixels': (1.0, 1.0), 'points': (4 / 3, 4 / 3), 'inches': (96.0, 96.0), 'centimeters': (96 / 2.54, 96 / 2.54),
            'characters': (5.0, 13.0)}
 STYLES = ('pushbutton', 'togglebutton', 'checkbox', 'radiobutton', 'edit', 'text', 'slider', 'listbox', 'popupmenu', 'frame')
-CONTROLS = ('uicontrol', 'uipanel', 'uibuttongroup', 'uitable', 'uitabgroup')
+CONTROLS = ('uicontrol', 'uipanel', 'uibuttongroup', 'uitable', 'uitabgroup', 'uicomp', 'uigridlayout')
 CONTAINERS = ('figure', 'uipanel', 'uibuttongroup', 'uitabgroup', 'uitab')
 TAB_STRIP = 26.0           # the height of a tab group's tabs, in pixels
 
@@ -41,6 +41,9 @@ def inner_px(c):
     if t == 'uitab':
         w, h = inner_px(c.parent)
         return w, max(0.0, h - TAB_STRIP)
+    if t == 'uigridlayout':
+        g = getattr(c, 'px', None)
+        return (g[2], g[3]) if g else inner_px(c.parent)
     _, _, w, h = to_pixels(c)
     if t in ('uipanel', 'uibuttongroup'):
         b = 2 * float(c.props['BorderWidth']) if c.props['BorderType'] != 'none' else 0.0
@@ -634,8 +637,17 @@ def _names(v, n):
 
 def control_json(c):
     p = c.props
-    d = _placed(c)
     t = c.TYPE
+    if t == 'uigridlayout':
+        px = getattr(c, 'px', None) or [0.0, 0.0, *inner_px(c.parent)]
+        d = {'id': c.id, 'type': t, 'units': 'pixels', 'pos': [float(x) for x in px], 'visible': bool(p.get('Visible', True)),
+             'tag': p.get('Tag', ''), 'bg': [float(x) for x in p['BackgroundColor']]}
+        d['children'] = [control_json(k) for k in reversed(c.children) if k.valid and k.TYPE in CONTROLS]
+        return d
+    d = _placed(c)
+    if t == 'uicomp':
+        from .uiapp import comp_json
+        return comp_json(c, d)
     if t == 'uicontrol':
         d.update(style=p['Style'], string=c.lines(), value=[jnum(v) for v in c.selected()], min=jnum(p['Min']), max=jnum(p['Max']),
                  bg=_color(p['BackgroundColor']), fg=_color(p['ForegroundColor']), halign=p['HorizontalAlignment'],
@@ -717,9 +729,38 @@ def _axes_inside(c):
             continue
         if k.TYPE == 'axes' and k.yy_owner is None:
             out.append(k)
-        elif k.TYPE in ('uipanel', 'uibuttongroup', 'uitabgroup', 'uitab'):
+        elif k.TYPE in ('uipanel', 'uibuttongroup', 'uitabgroup', 'uitab', 'uigridlayout'):
             out += _axes_inside(k)
     return out
+
+
+def layout_grids(o):
+    """The grid layouts in o (a figure or container) place their children:
+    each child's Position set to its cell, in pixels from the grid's lower
+    left; axes keep a margin for their ticks and labels."""
+    for c in list(o.children):
+        if not c.valid:
+            continue
+        if c.TYPE == 'uigridlayout':
+            if o.TYPE != 'uigridlayout':
+                w, h = inner_px(o)
+                c.px = [0.0, 0.0, float(w), float(h)]
+            places = c.place(c.px[2], c.px[3])
+            for k in c.kids():
+                r = places.get(k.id)
+                if r is None:
+                    continue
+                if k.TYPE == 'uigridlayout':
+                    k.px = [float(x) for x in r]
+                elif k.TYPE == 'axes':
+                    k.props['Units'] = 'pixels'
+                    k.props['Position'] = np.array([[r[0] + 45.0, r[1] + 38.0, max(1.0, r[2] - 60.0), max(1.0, r[3] - 66.0)]])
+                else:
+                    k.props['Units'] = 'pixels'
+                    k.props['Position'] = np.array([r], float)
+            layout_grids(c)
+        elif c.TYPE in ('uipanel', 'uibuttongroup', 'uitab', 'uitabgroup'):
+            layout_grids(c)
 
 
 def serialize_ui(f, d):
@@ -732,6 +773,7 @@ def serialize_ui(f, d):
              closeDefault=isinstance(crf, str) and crf.strip().rstrip(';').replace('()', '') == 'closereq',
              flags={k: has_callback(p[v]) for k, v in FLAGS.items()},
              cmenu=p['UIContextMenu'].id if p['UIContextMenu'] is not None and p['UIContextMenu'].valid else None)
+    layout_grids(f)
     kids = [c for c in reversed(f.children) if c.valid]
     d['menus'] = [menu_json(m) for m in kids if m.TYPE == 'uimenu']
     d['toolbars'] = [{'id': tb.id, 'visible': bool(tb.props['Visible']),
@@ -742,7 +784,7 @@ def serialize_ui(f, d):
                     'items': [menu_json(c) for c in reversed(m.children) if c.valid and c.TYPE == 'uimenu']}
                    for m in kids if m.TYPE == 'uicontextmenu']
     for c in kids:
-        if c.TYPE in ('uipanel', 'uibuttongroup', 'uitabgroup'):
+        if c.TYPE in ('uipanel', 'uibuttongroup', 'uitabgroup', 'uigridlayout'):
             for ax in _axes_inside(c):
                 d['axes'].append(serialize_axes(ax))
     if p['Units'] == 'normalized' or p['Units'] not in ('pixels',):

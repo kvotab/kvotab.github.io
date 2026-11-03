@@ -67,6 +67,18 @@ its cross-reference table says, the EPS read through by pscheck.py), print
 figure and of an axes, frame2im and movie; a modal message box laying a
 veil over the page until its OK is clicked, and dialog's modal window.
 
+Series: stem in a loop over four subplots shows its stems in each, and
+stem, stairs, area and errorbar each draw their data; polaraxes in two
+subplots with polarplot and polarscatter; a line given Color=[...] in the
+second of four subplots kept in an array.
+
+Maps: worldmap with a route, geographic axes labelled in degrees, a
+shapefile written and read; Natural Earth's coastline and land fetched when
+a program asks; basemaps: nothing fetched until one is named, then only the
+tiles over the view (from a host this test answers itself), each where its
+longitude and latitude are, the figure saved with its map and attribution;
+grayland's water and land.
+
 Start a server on the repository root and headless Chrome (the recipe is in
 README.md) on PYLAB_HTTP_PORT and PYLAB_CDP_PORT (defaults 8811, 9311), then
 
@@ -1077,6 +1089,293 @@ async def figure_files(page):
     check('figure files: no script errors', page.errors, [])
 
 
+# pixels of the first colour of the color order, rgb(0, 114, 189), in each quarter of the newest figure's canvas
+FIRST_COLOUR = (f"(() => {{ const c = {WIN}.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; "
+                "const W = c.width, H = c.height, n = [0, 0, 0, 0]; for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { "
+                "const i = (y * W + x) * 4; if (Math.abs(d[i]) < 40 && Math.abs(d[i + 1] - 114) < 40 && Math.abs(d[i + 2] - 189) < 40) "
+                "n[(y < H / 2 ? 0 : 2) + (x < W / 2 ? 0 : 1)]++; } return n; })()")
+
+
+async def series_kinds(page):
+    await command(page, "close all force; for k = 1:4\n    data = rand(1,10);\n    subplot(2,2,k)\n    stem(data)\nend")
+    n = await page.ev(FIRST_COLOUR)
+    check('stem in a loop over four subplots: each axes shows its stems', [v > 40 for v in n], [True] * 4)
+    await shot(page, 'stems.png')
+    await command(page, "clf; subplot(2, 2, 1); stem(1:5, 'filled'); subplot(2, 2, 2); stairs(rand(1, 8)); "
+                        "subplot(2, 2, 3); area(rand(1, 8)); subplot(2, 2, 4); errorbar(1:5, rand(1, 5), 0.1 * ones(1, 5))")
+    n = await page.ev(FIRST_COLOUR)
+    check('stem, stairs, area and errorbar each draw their data', [v > 40 for v in n], [True] * 4)
+    await shot(page, 'series.png')
+    await command(page, "close all force; figure\n   ax1 = subplot(2,1,1,polaraxes);\n   theta = linspace(0,2*pi,50);\n"
+                        "   rho = sin(theta).*cos(theta);\n   polarplot(ax1,theta,rho)\n   \n   ax2 = subplot(2,1,2,polaraxes);\n"
+                        "   polarscatter(ax2,theta,rho)")
+    polar = await page.ev(f'{WIN}.renderer.frames.filter((f) => f.fr && f.fr.polar).length')
+    # bluish pixels (the thin circles of the markers are mostly blended) in the upper and lower half
+    n = await page.ev(f"(() => {{ const c = {WIN}.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const n = [0, 0]; "
+                      "for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; "
+                      "if (d[i + 2] > 150 && d[i + 2] - d[i] > 60 && d[i + 2] > d[i + 1]) n[y < c.height / 2 ? 0 : 1]++; } return n; })()")
+    check('polaraxes in two subplots: polarplot draws above, polarscatter below', (polar, n[0] > 40, n[1] > 40), (2, True, True))
+    await shot(page, 'polar.png')
+    await command(page, "close all force; for k = 1:4\n    ax(k) = subplot(2,2,k);\nend\nsubplot(ax(2))\nx = linspace(1,50);\n"
+                        "plot(x, sin(x), Color=[0.1, 0.5, 0.1])\ntitle(\"Second Subplot\")\naxis([0 50 -1 1])")
+    green = await page.ev(f"(() => {{ const c = {WIN}.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let a = 0, b = 0; "
+                          "for (let y = 0; y < c.height / 2; y++) for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; "
+                          "if (Math.abs(d[i] - 26) < 30 && Math.abs(d[i + 1] - 128) < 30 && Math.abs(d[i + 2] - 26) < 30) { if (x < c.width / 2) a++; else b++; } } return [a, b]; })()")
+    check('Name=Value: the green line in the second of four subplots', (green[0] < 5, green[1] > 40), (True, True))
+    await command(page, "close all force; x = linspace(0,10);\nfigure\nplot(x, sin(x))\ntitle(\"Line Plot 1\")\nax1 = gca;\nfigure\n"
+                        "plot(x, 2*sin(x))\ntitle(\"Line Plot 2\")\nlgd = legend(\"2*Sin(x)\");\nax2 = gca;\nfnew = figure;\n"
+                        "ax1_copy = copyobj(ax1,fnew);\nsubplot(2,1,1,ax1_copy)\ncopies = copyobj([ax2,lgd],fnew);\nax2_copy = copies(1);\nsubplot(2,1,2,ax2_copy)")
+    frames = await page.ev(f'[{WIN}.renderer.frames.filter((f) => f.ax).length, {WIN}.renderer.frames.filter((f) => f.legend).length]')
+    n = await page.ev(FIRST_COLOUR)
+    check('copyobj: both axes copied into the new figure, the legend with the lower', (frames, n[0] + n[1] > 40, n[2] + n[3] > 40), ([2, 1], True, True))
+    await shot(page, 'copyobj.png')
+    await command(page, "close all force; x = 1:20;\n   y = rand(1,20);\n   sz = rand(1,20);\n   bubblechart(x,y,sz,\"red\");")
+    # the faces are red at 0.6 over white: (255, 102, 102); the edges whole red
+    red = await page.ev(f"(() => {{ const c = {WIN}.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; const n = [0, 0]; "
+                        "for (let i = 0; i < d.length; i += 4) { if (d[i] > 230 && Math.abs(d[i + 1] - 102) < 25 && Math.abs(d[i + 2] - 102) < 25) n[0]++; "
+                        "else if (d[i] > 200 && d[i + 1] < 40 && d[i + 2] < 40) n[1]++; } return n; })()")
+    check('bubblechart: see-through red bubbles with red edges', (red[0] > 400, red[1] > 100), (True, True))
+    await shot(page, 'bubbles.png')
+    await command(page, "close all force; bubblechart([0 1 1.1], [0.5 0.5 0.5], [1 1 1], 'r'); xlim([0 1]); ylim([0 1])")
+    await asyncio.sleep(0.4)
+    # red to the right of the box: within the bubble's radius of the edge, none farther out
+    side = await page.ev(f"(() => {{ const w = {WIN}, c = w.canvas, s = c.width / c.getBoundingClientRect().width; "
+                         "const r = w.renderer.frames.find((f) => f.ax).rect, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; "
+                         "const e = (r.x + r.w) * s, n = [0, 0]; for (let y = Math.round(r.y * s); y < (r.y + r.h) * s; y++) for (let x = Math.ceil(e + 2 * s); x < Math.min(c.width, e + 60 * s); x++) { "
+                         "const i = (y * c.width + x) * 4; if (d[i] > 200 && d[i + 1] < 160 && d[i + 2] < 160 && d[i] - d[i + 1] > 80) n[x < e + 12 * s ? 0 : 1]++; } "
+                         "return [n[0], n[1], s, e, c.width, w.renderer.frames.length, PL.app.figures.wins.size]; })()")
+    if not (side[0] > 10 and side[1] == 0):
+        print('edge bubbles:', side)
+        await shot(page, 'edge-fail.png')
+    check('a bubble on the edge of the box is drawn whole, one outside it not at all', (side[0] > 10, side[1]), (True, 0))
+    await command(page, 'close all force; clear; clc')
+    check('series: no script errors', page.errors, [])
+
+
+async def optimization(page):
+    """The optimization functions on the page's SciPy: Display rows, a plot function's window, HiGHS."""
+    out = await command(page, "clear; clc; close all force; o = optimoptions('fmincon', 'Display', 'iter', 'Algorithm', 'sqp');\n"
+                              "[x, fval, flag] = fmincon(@(x) 100*(x(2)-x(1)^2)^2 + (1-x(1))^2, [0 0], [1 2], 1, [], [], [], [], [], o);\n"
+                              "disp(round(x*1e4)/1e4)")
+    check('optimization: fmincon in the page, with its iterations shown', (' Iter  F-count' in out, out.strip().endswith('0.5022    0.2489')), (True, True))
+    out = await command(page, "x = intlinprog([8 1], 2, [-1 -2; -4 -1; 2 1], [14; -33; 20]); disp(x')")
+    check('optimization: intlinprog on HiGHS in the page', out.strip().endswith('6.5000    7.0000'), True)
+    await command(page, "o = optimoptions('fminunc', 'PlotFcn', @optimplotfval, 'Display', 'off');\n"
+                        "x = fminunc(@(x) 100*(x(2)-x(1)^2)^2 + (1-x(1))^2, [-1.2 1], o);")
+    check('optimization: a plot function draws its window', (await page.ev(f"{WIN}.fig.name"), await drawn(page, 1) > 0.005),
+          ('Optimization Plot Functions', True))
+    await shot(page, 'optimplot.png')
+    await command(page, 'close all force; clear; clc')
+    check('optimization: no script errors', page.errors, [])
+
+
+async def symbolic(page):
+    """Symbolic math in the page: SymPy loaded by the first command that needs it, results shown in the language's syntax."""
+    out = await command(page, "clear; clc; close all force; syms x y\nf = x^2*sin(y)\ng = diff(f, x)")
+    check('symbolic: SymPy loads on first use; a derivative shown in the language', out.rstrip().endswith('2*x*sin(y)'), True)
+    out = await command(page, "s = solve(x^2 - 5*x + 6 == 0, x)")
+    check('symbolic: solve gives a column of solutions', ('[2]' in out[-40:] and '[3]' in out[-40:]), True)
+    out = await command(page, "syms u(t)\nsol = dsolve(diff(u, t) == -2*u, u(0) == 3)")
+    check('symbolic: dsolve with a condition', out.rstrip().endswith('3*exp(-2*t)'), True)
+    ws = await page.ev("PL.app.ws.rows.filter((r) => r.name === 'f').map((r) => r.cls || r.klass || r.class || r.value)")
+    check('symbolic: the Workspace lists a sym', bool(ws), True)
+    await command(page, "fplot(x^2 - 1, [-2 2])")
+    check('symbolic: fplot of an expression draws', await drawn(page, 1) > 0.003, True)
+    await shot(page, 'symbolic.png')
+    await command(page, 'close all force; clear; clc')
+    check('symbolic: no script errors', page.errors, [])
+
+
+async def mapping(page):
+    """Maps in the page: a world map with a route on it, geographic axes labelled in degrees, a shapefile written and read."""
+    await command(page, "clear; clc; close all force; worldmap('Europe');\nplotm([59.33 48.86 41.9], [18.07 2.35 12.5], 'r-o', 'LineWidth', 2)")
+    check('mapping: worldmap draws its frame, graticule, labels and the route', await drawn(page, 1) > 0.01, True)
+    await shot(page, 'worldmap.png')
+    await command(page, "close all force; geoplot([59.33 57.71 55.6], [18.07 11.97 13.0], 'b-o'); geolimits([54 61], [9 21])")
+    labels = await page.ev(f"(() => {{ const w = {WIN}, f = w.renderer.frames.find((q) => q.ax); return [w.renderer.ticksFor(f.ax, 'x', f.rect).labels, w.renderer.ticksFor(f.ax, 'y', f.rect).labels]; }})()")
+    check('mapping: geographic axes label their ticks in degrees east and north', (any(s.endswith('°E') for s in labels[0]), any(s.endswith('°N') for s in labels[1])), (True, True))
+    await shot(page, 'geoplot.png')
+    out = await command(page, "S = struct('Geometry', {'Point', 'Point'}, 'X', {18.07, 11.97}, 'Y', {59.33, 57.71}, 'Name', {'Stockholm', 'Goteborg'});\n"
+                              "shapewrite(S, 'cities.shp'); T = shaperead('cities'); disp(T(2).Name); delete('cities.*')")
+    check('mapping: a shapefile written and read in the page', out.rstrip().endswith('Goteborg'), True)
+    await world_data(page)
+    await basemaps(page)
+    await command(page, 'close all force; clear; clc')
+    check('mapping: no script errors', page.errors, [])
+
+
+async def world_data(page):
+    """Natural Earth's coastline and land, fetched from jsDelivr when a program asks for them."""
+    out = await command(page, "clear; clc; close all force; load coastlines; disp([numel(coastlat) == numel(coastlon), numel(coastlat) > 5000, nnz(isnan(coastlat)) > 100])")
+    check('mapping: load coastlines gives coastlat and coastlon, the lines parted by NaN', out.rstrip().endswith('1   1   1'), True)
+    out = await command(page, "worldmap world; h = geoshow('landareas.shp', 'FaceColor', [0.6 0.8 0.5]); disp([numel(h) > 100, strcmp(get(h(1), 'Type'), 'patch')])")
+    check('mapping: geoshow landareas.shp draws the land on a world map', out.rstrip().endswith('1   1'), True)
+    await shot(page, 'landareas.png')
+
+
+def tile_png(z, x, y):
+    """A 256 x 256 tile of one colour, which tells its column, row and zoom level."""
+    import struct as st
+    import zlib
+    rgb = bytes(((x * 37) % 256, (y * 53) % 256, 40 + 10 * z))
+    raw = b''.join(b'\x00' + rgb * 256 for _ in range(256))
+    chunk = lambda t, d: st.pack('>I', len(d)) + t + d + st.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', st.pack('>IIBBBBB', 256, 256, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
+
+async def basemaps(page):
+    """Basemaps: none fetched until a program names one; then the tiles over the view only, each where its
+    longitude and latitude are (Web Mercator rows drawn into the axes' latitude), with CORS so that the figure
+    can be saved; Natural Earth's land and water for grayland. The tiles come from a host this test answers."""
+    import base64
+    import math
+    asked = []
+
+    async def answer(p):
+        url = p['request']['url']
+        asked.append(url)
+        z, x, y = (int(v) for v in url.rsplit('/', 3)[1:3] + [url.rsplit('/', 1)[1].split('.')[0]])
+        await page.call('Fetch.fulfillRequest', {'requestId': p['requestId'], 'responseCode': 200, 'body': base64.b64encode(tile_png(z, x, y)).decode(),
+                                                 'responseHeaders': [{'name': 'Content-Type', 'value': 'image/png'}, {'name': 'Access-Control-Allow-Origin', 'value': '*'}]}, session=page.sid)
+    page.handlers['Fetch.requestPaused'] = answer
+    await page.call('Fetch.enable', {'patterns': [{'urlPattern': 'https://tiles.pylab-test.invalid/*'}]}, session=page.sid)
+    try:
+        await command(page, "clear; clc; close all force; addCustomBasemap('testtiles', 'https://tiles.pylab-test.invalid/${z}/${x}/${y}.png', 'Attribution', 'Test tiles by PyLAB');"
+                            "figure('Position', [100 100 560 420]); geoplot([59.33 57.71], [18.07 11.97], 'k'); geolimits([54 61], [9 21])")
+        await drawn(page, 1)
+        await asyncio.sleep(0.5)
+        check('basemaps: geographic axes fetch nothing until a basemap is named', asked, [])
+        await command(page, 'geobasemap testtiles')
+        await page.ev(f'{WIN}.ready(1).then(() => 1)', timeout=60)
+        await asyncio.sleep(0.5)
+        zs = {int(u.rsplit('/', 3)[1]) for u in asked}
+        check('basemaps: the tiles over the view, at one zoom level, at most 64', (len(zs), 0 < len(asked) <= 64), (1, True))
+        z = zs.pop() if zs else 0
+        n = 2 ** z
+        pts = [(55.5, 19.0), (60.5, 11.0), (57.5, 14.5)]       # away from the grid lines (every degree north, every 2 east)
+        px = await page.ev(f"""(() => {{ const w = {WIN}, f = w.renderer.frames.find((q) => q.ax && q.ax.geo), g = w.canvas.getContext('2d'), d = window.devicePixelRatio || 1;
+            return {json.dumps(pts)}.map(([la, lo]) => Array.from(g.getImageData(Math.round(f.fr.fx(lo) * d), Math.round(f.fr.fy(la) * d), 1, 1).data).slice(0, 3)); }})()""")
+        want = []
+        for la, lo in pts:
+            tx = math.floor((lo + 180) / 360 * n)
+            s_ = math.sin(math.radians(la))
+            ty = math.floor((0.5 - math.log((1 + s_) / (1 - s_)) / (4 * math.pi)) * n)
+            want.append([(tx * 37) % 256, (ty * 53) % 256, 40 + 10 * z])
+        check('basemaps: each tile drawn where its longitude and latitude are', px, want)
+        await shot(page, 'basemap-tiles.png')
+        out = await command(page, "cd('/home/user'); saveas(gcf, 'tiles.svg'); s = fileread('tiles.svg'); F = getframe(gcf); delete('tiles.svg');"
+                                  "disp([numel(strfind(s, '<image')) >= 1, ~isempty(strfind(s, 'Test tiles by PyLAB')), size(F.cdata, 1) > 100])")
+        check('basemaps: the figure saved with its map and attribution, and getframe reads it', out.rstrip().endswith('1   1   1'), True)
+        k = len(asked)
+        await command(page, 'geobasemap none')
+        await asyncio.sleep(0.5)
+        check('basemaps: none asks for nothing more', len(asked), k)
+    finally:
+        await page.call('Fetch.disable', session=page.sid)
+        page.handlers.pop('Fetch.requestPaused', None)
+    await command(page, 'geobasemap grayland')
+    await page.ev(f'{WIN}.ready(1).then(() => 1)', timeout=60)
+    await asyncio.sleep(0.5)
+    px = await page.ev(f"""(() => {{ const w = {WIN}, f = w.renderer.frames.find((q) => q.ax && q.ax.geo), g = w.canvas.getContext('2d'), d = window.devicePixelRatio || 1;
+        return [[55.5, 19.0], [57.5, 14.5]].map(([la, lo]) => Array.from(g.getImageData(Math.round(f.fr.fx(lo) * d), Math.round(f.fr.fy(la) * d), 1, 1).data).slice(0, 3)); }})()""")
+    check('basemaps: grayland draws Natural Earth\'s water white and its land grey', px, [[255, 255, 255], [194, 194, 194]])
+    await shot(page, 'basemap-grayland.png')
+
+
+APP_CLASS = """classdef CountApp < matlab.apps.AppBase
+    properties (Access = public)
+        UIFigure  matlab.ui.Figure
+        Grid      matlab.ui.container.GridLayout
+        Field     matlab.ui.control.NumericEditField
+        Button    matlab.ui.control.Button
+        Knob      matlab.ui.control.Knob
+        Gauge     matlab.ui.control.Gauge
+    end
+    methods (Access = private)
+        function ButtonPushed(app, event)
+            app.Field.Value = app.Field.Value + 1;
+            app.Gauge.Value = 10 * app.Field.Value;
+        end
+    end
+    methods (Access = private)
+        function createComponents(app)
+            app.UIFigure = uifigure('Visible', 'off', 'Position', [100 100 360 260], 'Name', 'Count');
+            app.Grid = uigridlayout(app.UIFigure, [2 2]);
+            app.Grid.RowHeight = {22, '1x'};
+            app.Field = uieditfield(app.Grid, 'numeric');
+            app.Button = uibutton(app.Grid, 'push', 'Text', 'Add');
+            app.Button.ButtonPushedFcn = createCallbackFcn(app, @ButtonPushed, true);
+            app.Knob = uiknob(app.Grid);
+            app.Gauge = uigauge(app.Grid);
+            app.UIFigure.Visible = 'on';
+        end
+    end
+    methods (Access = public)
+        function app = CountApp
+            createComponents(app)
+            registerApp(app, app.UIFigure)
+            if nargout == 0
+                clear app
+            end
+        end
+        function delete(app)
+            delete(app.UIFigure)
+        end
+    end
+end
+"""
+
+
+async def apps(page):
+    """Classes and apps in the page: an app class run and its button pushed; the app designer laying out an app, writing and running it, and opening it again."""
+    await page.ev(f"PL.engine.fs('write', {{ path: '/home/user/CountApp.m', data: {json.dumps(APP_CLASS)} }}).then(() => 1)")
+    await command(page, "clear; clc; close all force; cd('/home/user'); app = CountApp;")
+    ok = await until(page, "document.querySelectorAll('.pl-ua').length >= 4", 15)
+    check('apps: an app class makes its window and components in a grid', bool(ok), True)
+    for _ in range(3):
+        await page.ev("(() => { [...document.querySelectorAll('.pl-ua-button')].find((b) => b.textContent === 'Add').click(); return 1; })()")
+        await asyncio.sleep(0.5)
+    out = await command(page, 'disp([app.Field.Value app.Gauge.Value])')
+    check('apps: its button calls the app\'s method', out.rstrip().endswith('3    30'), True)
+    shown = await page.ev("(() => { const f = document.querySelector('.pl-ua-edit input'); const g = document.querySelector('.pl-ua-gauge svg line.needleline'); return [f && f.value, !!g, !!document.querySelector('.pl-ua-knob svg circle.dot')]; })()")
+    check('apps: the page shows the new value, the gauge and the knob', shown, ['3', True, True])
+    await shot(page, 'app-count.png')
+    await command(page, "delete(app); clc; if exist('HiApp.m', 'file'), delete('HiApp.m'), end")
+    await page.ev("PL.designer.open(null).then(() => 1)")
+    await page.ev("""(() => { const D = PL.designer; D.app.name = 'HiApp'; D.app.title = 'Hi'; D.app.w = 320; D.app.h = 160; D.add('label'); D.add('editfield'); D.add('button');
+        const [lab, ed, btn] = D.app.comps; lab.props.Text = 'Name:'; lab.x = 20; lab.y = 110; ed.x = 90; ed.y = 110; ed.w = 150; btn.x = 90; btn.y = 70; btn.props.Text = 'Greet';
+        btn.callback = 'GreetPushed'; D.bodies.GreetPushed = "app.Label.Text = ['Hi ' app.EditField.Value];"; D.select(btn); return 1; })()""")
+    check('apps: the designer shows the window with its three components and the inspector', await page.ev("[document.querySelectorAll('.pl-ad-comp').length, !!document.querySelector('.pl-ad-inspector textarea')]"), [3, True])
+    await shot(page, 'designer.png')
+    await page.ev("PL.designer.run().then(() => { PL.designer.close(); return 1; })")
+    ok = await until(page, "[...document.querySelectorAll('.pl-ua-button')].some((b) => b.textContent === 'Greet')", 15)
+    check('apps: Run writes the class and runs it', bool(ok), True)
+    await page.ev("(() => { const ed = document.querySelector('.pl-ua-edit input'); ed.focus(); ed.value = 'Ada'; ed.dispatchEvent(new Event('blur')); return 1; })()")
+    await asyncio.sleep(0.5)
+    await page.ev("(() => { [...document.querySelectorAll('.pl-ua-button')].find((b) => b.textContent === 'Greet').click(); return 1; })()")
+    ok = await until(page, "[...document.querySelectorAll('.pl-ua-label .txt')].some((e) => e.textContent === 'Hi Ada')", 10)
+    check('apps: the callback written in the designer runs', bool(ok), True)
+    await page.ev("PL.designer.open('/home/user/HiApp.m').then(() => 1)")
+    again = await page.ev("[PL.designer.app.comps.map((c) => c.name), PL.designer.bodies.GreetPushed, PL.designer.app.title]")
+    check('apps: the designer opens the app it wrote again, layout and callback code', again,
+          [['Label', 'EditField', 'Button'], "app.Label.Text = ['Hi ' app.EditField.Value];", 'Hi'])
+    # Code, a callback changed in the Editor (not saved), and back with Design App on the EDITOR tab
+    await page.ev('PL.designer.showCode().then(() => 1)')
+    shown = await page.ev("[!PL.designer.el, PL.app.current && PL.app.current.key, PL.app.designBtn.disabled]")
+    check('apps: Code shows the class in the Editor, and Design App there can take it back', shown, [True, '/home/user/HiApp.m', False])
+    lint = await page.ev("PL.engine.call('lint', PL.app.current.editor.value)")
+    check("apps: the Editor's check finds nothing wrong with the app's class", lint, [])
+    await page.ev("""(() => { const d = PL.app.current; d.editor.value = d.editor.value.replace("['Hi ' app", "['Hello ' app"); d.setDirty(true); PL.app.updateRunButtons(); PL.app.designBtn.click(); return 1; })()""")
+    ok = await until(page, "PL.designer.el && (PL.designer.bodies.GreetPushed || '').includes('Hello')", 10)
+    check('apps: Design App opens the layout again, with the callback as the Editor has it', bool(ok), True)
+    await page.ev('PL.designer.save().then(() => 1)')
+    synced = await page.ev("(() => { const d = PL.app.current; return [d.dirty, d.editor.value === d.saved, d.editor.value.includes(\"['Hello ' app\")]; })()")
+    check("apps: the designer's save puts the class into the Editor tab, which has nothing left to save", synced, [False, True, True])
+    await page.ev('PL.designer.close(); 1')
+    await command(page, "close all force; delete('HiApp.m'); delete('CountApp.m'); clear; clc")
+    check('apps: no script errors', page.errors, [])
+
+
 async def full_window(page):
     await page.ev('PL.app.toggleFull(); 1')
     await asyncio.sleep(0.3)
@@ -1103,6 +1402,11 @@ async def main():
         await statistics(page)
         await user_interfaces(page)
         await figure_files(page)
+        await series_kinds(page)
+        await optimization(page)
+        await symbolic(page)
+        await mapping(page)
+        await apps(page)
         await full_window(page)
         await shot(page, 'desktop.png')
         check('no script errors', page.errors, [])

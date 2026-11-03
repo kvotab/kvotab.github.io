@@ -60,7 +60,14 @@ gcp: The pool of workers, started if there is none.
     * p.NumWorkers is its number of workers; with 'nocreate', [] when there is no pool. delete(p) stops the pool.
 getCurrentTask: On a worker of the pool, its task (t.ID is the worker's number); [] elsewhere.
     t = getCurrentTask()
-classdef: Not available here: classes of your own cannot be defined. Use functions, structs and containers.Map.
+classdef: A class of your own, in a file of its name: properties, methods and events.
+    classdef Name
+    classdef Name < handle
+    classdef Name < Super1 & Super2
+    properties (Access = private, Constant, Dependent) ... end
+    methods (Static, Access = private) ... end
+    events ... end
+    * Property lines are Name, or Name = default, with a size and class that may be given (Balance (1,1) double = 0). The constructor is the method named as the class (function obj = Name(args)); the object is its output, there already with its defaults. A subclass of handle is shared by every variable that holds it; any other class is a value, copied when a copy changes, so a method that changes it returns it (obj = scale(obj, 2)). Methods are called as obj.method(args) or method(obj, args); a Static method as Name.method(args), a Constant property as Name.Prop. get.Prop and set.Prop methods run when a property is read or set (a Dependent property has only them). A method named as an operator's function (plus, minus, times, mtimes, eq, lt, uminus, ...) or as a builtin (disp, norm, size, ...) takes its place for the class's objects. obj@Super(args) calls the superclass constructor, method@Super(obj, args) its method. Events are raised by notify and heard through addlistener. delete(obj) runs the class's delete method and leaves the object invalid (isvalid). Enumerations are not read here.
 break: Leave the innermost for or while loop.
     break
 continue: Go on with the next pass of the innermost for or while loop.
@@ -1116,9 +1123,6 @@ dot: The dot product.
 linsolve: Solve A*x = b, optionally saying what kind of matrix A is.
     x = linsolve(A, b)
     x = linsolve(A, b, opts)
-lsqnonneg: Least squares with x >= 0.
-    x = lsqnonneg(C, d)
-    [x, resnorm] = lsqnonneg(C, d)
 balance: Balance a matrix to make its eigenvalues more accurate.
     B = balance(A)
     [T, B] = balance(A)
@@ -1335,6 +1339,658 @@ mkpp: Make a piecewise polynomial from its breaks and coefficients.
 unmkpp: The breaks and coefficients of a piecewise polynomial.
     [breaks, coefs, l, k, d] = unmkpp(pp)
 
+# ---- apps ----------------------------------------------------------------------------------------------------------------
+uifigure: A window for an app: no number, its handle hidden, no menus or tools.
+    fig = uifigure
+    fig = uifigure(Name, Value, ...)
+    * Its Position is in pixels ([100 100 640 480] unless given). Components, panels, grid layouts and uiaxes go in it; plotting needs the axes given (plot(ax, ...)), as a uifigure is never the current figure.
+uibutton: A push button, or a state button that stays pressed.
+    b = uibutton(parent)
+    b = uibutton(parent, 'state')
+    b = uibutton(..., Name, Value)
+    * Text, Icon and IconAlignment; ButtonPushedFcn runs when it is pushed, ValueChangedFcn when a state button changes (Value true or false).
+uilabel: Text in an app.
+    l = uilabel(parent, 'Text', 'Name:')
+    * HorizontalAlignment, VerticalAlignment, WordWrap, FontSize, FontWeight, FontColor and BackgroundColor.
+uieditfield: A field for text, or for a number.
+    e = uieditfield(parent)
+    e = uieditfield(parent, 'numeric')
+    e = uieditfield(..., Name, Value)
+    * A numeric field keeps its Value within Limits (a number typed outside them is not taken), shows it by ValueDisplayFormat, and RoundFractionalValues rounds it. ValueChangedFcn runs when the typing is done (Enter or leaving the field), ValueChangingFcn as a text field is typed in.
+uitextarea: A field of several lines.
+    t = uitextarea(parent, 'Value', {'line 1'; 'line 2'})
+    * Value is a column cell of the lines.
+uidropdown: A list that opens to choose one item (or, Editable, to type one).
+    d = uidropdown(parent, 'Items', {'a', 'b', 'c'})
+    d = uidropdown(..., 'ItemsData', [1 2 3])
+    * Value is the chosen item, or its element of ItemsData when that is set.
+uilistbox: A list to choose one item, or several with Multiselect.
+    l = uilistbox(parent, 'Items', {'a', 'b', 'c'})
+    l = uilistbox(..., 'Multiselect', 'on')
+uicheckbox: A check box.
+    c = uicheckbox(parent, 'Text', 'Show grid')
+    * Value is true or false.
+uiswitch: A switch between two items: slider, rocker or toggle.
+    s = uiswitch(parent)
+    s = uiswitch(parent, 'rocker')
+    s = uiswitch(parent, 'toggle')
+    * Items (Off and On unless given); Value is one of them.
+uislider: A slider with its ticks and their labels.
+    s = uislider(parent, 'Limits', [0 10])
+    * MajorTicks, MajorTickLabels, Orientation; ValueChangingFcn runs as it is dragged (event.Value), ValueChangedFcn when it is let go.
+uispinner: A number field with arrows that step it.
+    s = uispinner(parent, 'Step', 0.5, 'Limits', [0 10])
+uiknob: A knob turned with the mouse: continuous over Limits, or discrete among Items.
+    k = uiknob(parent)
+    k = uiknob(parent, 'discrete')
+uigauge: A gauge showing a value: circular, linear, ninety-degree or semicircular.
+    g = uigauge(parent)
+    g = uigauge(parent, 'linear')
+    * ScaleColors with ScaleColorLimits colour parts of its scale ({'green', 'red'} with [0 60; 60 100]).
+uilamp: A lamp of a colour.
+    l = uilamp(parent, 'Color', [1 0 0])
+uiradiobutton: A radio button in a button group; choosing it clears the group's others.
+    r = uiradiobutton(bg, 'Text', 'Fast')
+    * The group's SelectionChangedFcn runs when the choice changes, with OldValue and NewValue.
+uitogglebutton: A toggle button in a button group; pressing it releases the group's others.
+    t = uitogglebutton(bg, 'Text', 'A')
+uiimage: A picture in an app, from a file or an RGB array.
+    im = uiimage(parent, 'ImageSource', 'logo.png')
+    * ScaleMethod fit, fill, none, scaledown or stretch; ImageClickedFcn runs when it is clicked.
+uihyperlink: A link in an app; clicking it opens the URL.
+    h = uihyperlink(parent, 'Text', 'Help', 'URL', 'https://...')
+uigridlayout: Rows and columns that place the components put in them, filling the parent.
+    g = uigridlayout(parent)
+    g = uigridlayout(parent, [rows cols])
+    * RowHeight and ColumnWidth: pixels, 'fit', or weights such as '1x' and '2x' that share what is left; Padding [left bottom right top], RowSpacing and ColumnSpacing. A child's Layout.Row and Layout.Column (a number, or [first last] to span) say where it goes; without them, the next free cell in order.
+uiaxes: Axes in an app.
+    ax = uiaxes(parent)
+    * Plot into them by giving them: plot(ax, x, y), title(ax, '...').
+uialert: A message in an app's window.
+    uialert(fig, message, title)
+    uialert(fig, message, title, 'Icon', 'warning')
+uiconfirm: A question in an app's window; the chosen option is returned.
+    choice = uiconfirm(fig, message, title)
+    choice = uiconfirm(fig, message, title, 'Options', {'Save', 'Discard', 'Cancel'})
+uiprogressdlg: A progress bar for a long task.
+    d = uiprogressdlg(fig, 'Title', 'Working', 'Message', 'Reading files')
+    * d.Value (0 to 1) and d.Message move it on; close(d) removes it.
+createCallbackFcn: What an app's class gives its components as callbacks: its method, called with the app (and the event data).
+    comp.ButtonPushedFcn = createCallbackFcn(app, @MethodName, true)
+registerApp: Ties an app to its window, so that closing the window deletes the app.
+    registerApp(app, app.UIFigure)
+runStartupFcn: Runs an app's startup method with the app.
+    runStartupFcn(app, @startupFcn)
+appdesigner: The app designer: lay out an app's window with the mouse and write its class.
+    appdesigner
+    appdesigner('MyApp')
+    * Components are added from the palette (click, or drag onto the window), moved and resized with the mouse or the arrow keys, and set in the inspector, with a callback's name and code. Save writes MyApp.m in the current folder, a class as App Designer writes them (with the layout in a comment at its end, so the designer opens it again); Run saves and runs it; Code opens the file in the Editor, where the callbacks may be written as well.
+    * Back to the layout from the code: Design App on the EDITOR tab (with the app's file open there), Open in App Designer on the file in the Current Folder, or appdesigner('MyApp'). The designer takes the callbacks as the Editor has them, saved or not; the rest of the class it writes again, so changes made elsewhere in it are not kept.
+
+# ---- mapping ------------------------------------------------------------------------------------------------------
+deg2km: Degrees of arc on a sphere as kilometers (the Earth's mean radius 6371 km unless given).
+    km = deg2km(deg)
+    km = deg2km(deg, radius)
+    km = deg2km(deg, 'moon')
+km2deg: Kilometers as degrees of arc on a sphere.
+    deg = km2deg(km)
+    deg = km2deg(km, radius)
+deg2nm: Degrees of arc as nautical miles.
+    nm = deg2nm(deg)
+nm2deg: Nautical miles as degrees of arc.
+    deg = nm2deg(nm)
+deg2sm: Degrees of arc as statute miles.
+    sm = deg2sm(deg)
+sm2deg: Statute miles as degrees of arc.
+    deg = sm2deg(sm)
+km2nm: Kilometers as nautical miles (1852 m).
+    nm = km2nm(km)
+nm2km: Nautical miles as kilometers.
+    km = nm2km(nm)
+km2sm: Kilometers as statute miles (1609.344 m).
+    sm = km2sm(km)
+sm2km: Statute miles as kilometers.
+    km = sm2km(sm)
+nm2sm: Nautical miles as statute miles.
+    sm = nm2sm(nm)
+sm2nm: Statute miles as nautical miles.
+    nm = sm2nm(sm)
+km2rad: Kilometers as radians of arc on a sphere.
+    rad = km2rad(km)
+    rad = km2rad(km, radius)
+rad2km: Radians of arc as kilometers on a sphere.
+    km = rad2km(rad)
+    km = rad2km(rad, radius)
+unitsratio: The factor from one unit of length (or angle) to another.
+    r = unitsratio(to, from)
+    * Units: meter, kilometer, centimeter, millimeter, nauticalmile, foot, surveyfoot, mile, yard, inch; degree and radian.
+dms2degrees: Degrees, minutes and seconds (rows of three) as degrees.
+    deg = dms2degrees([d m s])
+degrees2dms: Degrees as rows of degrees, minutes and seconds; the sign on the first part that is not zero.
+    dms = degrees2dms(deg)
+dm2degrees: Degrees and minutes (rows of two) as degrees.
+    deg = dm2degrees([d m])
+degrees2dm: Degrees as rows of degrees and minutes.
+    dm = degrees2dm(deg)
+wrapTo180: Angles in degrees wrapped to [-180, 180].
+    lon = wrapTo180(lon)
+wrapTo360: Angles in degrees wrapped to [0, 360] (a positive multiple of 360 stays 360).
+    lon = wrapTo360(lon)
+wrapToPi: Angles in radians wrapped to [-pi, pi].
+    a = wrapToPi(a)
+wrapTo2Pi: Angles in radians wrapped to [0, 2*pi].
+    a = wrapTo2Pi(a)
+referenceEllipsoid: A reference ellipsoid by name or EPSG code, in a unit of length.
+    E = referenceEllipsoid('wgs84')
+    E = referenceEllipsoid('grs80', 'kilometer')
+    E = referenceEllipsoid(7030)
+    * Names: wgs84, grs80, wgs72, grs67, international (Hayford 1924), clarke66, clarke80, bessel, airy1830, krasovsky, everest. Its properties: SemimajorAxis, SemiminorAxis, InverseFlattening, Eccentricity, Flattening, ThirdFlattening, MeanRadius, SurfaceArea, Volume, LengthUnit (settable), Name and Code.
+wgs84Ellipsoid: The WGS 84 ellipsoid.
+    E = wgs84Ellipsoid
+    E = wgs84Ellipsoid('kilometer')
+referenceSphere: A sphere of a body's mean radius.
+    S = referenceSphere('earth')
+    S = referenceSphere('moon', 'kilometer')
+    * Bodies: earth (6371 km), sun, moon, mercury, venus, mars, jupiter, saturn, uranus, neptune, pluto, 'unit sphere'.
+earthRadius: The Earth's mean radius, 6371 km, in a unit of length.
+    r = earthRadius
+    r = earthRadius('kilometer')
+distance: The distance and azimuth between points along a great circle or a rhumb line.
+    d = distance(lat1, lon1, lat2, lon2)
+    d = distance(pt1, pt2)
+    [d, az] = distance(lat1, lon1, lat2, lon2, ellipsoid)
+    d = distance('rh', lat1, lon1, lat2, lon2)
+    d = distance(..., 'radians')
+    * Without an ellipsoid the distance is in degrees of arc on a sphere; with one, the geodesic length in its units. Azimuths are clockwise from north.
+azimuth: The azimuth from one point to another, clockwise from north.
+    az = azimuth(lat1, lon1, lat2, lon2)
+    az = azimuth(lat1, lon1, lat2, lon2, ellipsoid)
+    az = azimuth('rh', ...)
+reckon: The point at a distance and azimuth from another.
+    [lat2, lon2] = reckon(lat, lon, arclen, az)
+    [lat2, lon2] = reckon(lat, lon, arclen, az, ellipsoid)
+    [lat2, lon2] = reckon('rh', ...)
+    * arclen is in degrees of arc without an ellipsoid, in its units with one.
+track2: Points along the great circle (or geodesic, or rhumb line) between two points.
+    [lat, lon] = track2(lat1, lon1, lat2, lon2)
+    [lat, lon] = track2(lat1, lon1, lat2, lon2, ellipsoid, units, npts)
+    [lat, lon] = track2('rh', ...)
+track1: Points along a great circle (or rhumb line) from a point in a direction.
+    [lat, lon] = track1(lat, lon, az)
+    [lat, lon] = track1(lat, lon, az, arclen)
+    [lat, lon] = track1(lat, lon, az, arclen, ellipsoid, units, npts)
+gcwaypts: Waypoints along a great circle, for rhumb-line legs that follow it.
+    [lat, lon] = gcwaypts(lat1, lon1, lat2, lon2)
+    [lat, lon] = gcwaypts(lat1, lon1, lat2, lon2, nlegs)
+meridianarc: The distance along a meridian between two latitudes (in radians) on an ellipsoid.
+    s = meridianarc(phi1, phi2, ellipsoid)
+antipode: The point on the other side of the globe.
+    [lat2, lon2] = antipode(lat, lon)
+areaint: The area of polygons on the sphere, as a fraction of its surface, or with an ellipsoid in its units squared.
+    a = areaint(lat, lon)
+    a = areaint(lat, lon, ellipsoid)
+    * The edges are great circles; parts are separated by NaN.
+areaquad: The area of a quadrangle between two parallels and two meridians.
+    a = areaquad(lat1, lon1, lat2, lon2)
+    a = areaquad(lat1, lon1, lat2, lon2, ellipsoid)
+interpm: More points along a line in latitude and longitude, no two farther apart than a step.
+    [lat, lon] = interpm(lat, lon, maxdiff)
+    [lat, lon] = interpm(lat, lon, maxdiff, 'gc')
+geodetic2ecef: Geodetic coordinates as Earth-centred, Earth-fixed x, y and z.
+    [x, y, z] = geodetic2ecef(spheroid, lat, lon, h)
+    [x, y, z] = geodetic2ecef(spheroid, lat, lon, h, 'radians')
+    * WGS 84 in meters unless a spheroid is given.
+ecef2geodetic: Earth-centred, Earth-fixed coordinates as latitude, longitude and height.
+    [lat, lon, h] = ecef2geodetic(spheroid, x, y, z)
+geodetic2enu: A point as east, north and up from a local origin.
+    [xEast, yNorth, zUp] = geodetic2enu(lat, lon, h, lat0, lon0, h0, spheroid)
+enu2geodetic: East, north and up from a local origin as latitude, longitude and height.
+    [lat, lon, h] = enu2geodetic(xEast, yNorth, zUp, lat0, lon0, h0, spheroid)
+geodetic2ned: A point as north, east and down from a local origin.
+    [xNorth, yEast, zDown] = geodetic2ned(lat, lon, h, lat0, lon0, h0, spheroid)
+ned2geodetic: North, east and down from a local origin as latitude, longitude and height.
+    [lat, lon, h] = ned2geodetic(xNorth, yEast, zDown, lat0, lon0, h0, spheroid)
+geodetic2aer: A point as azimuth, elevation and slant range from a local origin.
+    [az, elev, slantRange] = geodetic2aer(lat, lon, h, lat0, lon0, h0, spheroid)
+aer2geodetic: Azimuth, elevation and slant range from a local origin as latitude, longitude and height.
+    [lat, lon, h] = aer2geodetic(az, elev, slantRange, lat0, lon0, h0, spheroid)
+ecef2enu: Earth-centred, Earth-fixed coordinates as east, north and up from a local origin.
+    [xEast, yNorth, zUp] = ecef2enu(x, y, z, lat0, lon0, h0, spheroid)
+enu2ecef: East, north and up from a local origin as Earth-centred, Earth-fixed coordinates.
+    [x, y, z] = enu2ecef(xEast, yNorth, zUp, lat0, lon0, h0, spheroid)
+ecef2ned: Earth-centred, Earth-fixed coordinates as north, east and down from a local origin.
+    [xNorth, yEast, zDown] = ecef2ned(x, y, z, lat0, lon0, h0, spheroid)
+ned2ecef: North, east and down from a local origin as Earth-centred, Earth-fixed coordinates.
+    [x, y, z] = ned2ecef(xNorth, yEast, zDown, lat0, lon0, h0, spheroid)
+ecef2aer: Earth-centred, Earth-fixed coordinates as azimuth, elevation and slant range from a local origin.
+    [az, elev, slantRange] = ecef2aer(x, y, z, lat0, lon0, h0, spheroid)
+aer2ecef: Azimuth, elevation and slant range from a local origin as Earth-centred, Earth-fixed coordinates.
+    [x, y, z] = aer2ecef(az, elev, slantRange, lat0, lon0, h0, spheroid)
+enu2aer: East, north and up as azimuth, elevation and slant range.
+    [az, elev, slantRange] = enu2aer(xEast, yNorth, zUp)
+aer2enu: Azimuth, elevation and slant range as east, north and up.
+    [xEast, yNorth, zUp] = aer2enu(az, elev, slantRange)
+ned2aer: North, east and down as azimuth, elevation and slant range.
+    [az, elev, slantRange] = ned2aer(xNorth, yEast, zDown)
+aer2ned: Azimuth, elevation and slant range as north, east and down.
+    [xNorth, yEast, zDown] = aer2ned(az, elev, slantRange)
+inpolygon: Which points lie inside a polygon (or on its edge).
+    in = inpolygon(xq, yq, xv, yv)
+    [in, on] = inpolygon(xq, yq, xv, yv)
+    * NaN separates the parts of the polygon; a part inside another is a hole.
+polyarea: The area of a polygon in the plane.
+    a = polyarea(x, y)
+ispolycw: Whether the parts of a polygon run clockwise.
+    tf = ispolycw(x, y)
+poly2cw: A polygon's parts made to run clockwise.
+    [x, y] = poly2cw(x, y)
+poly2ccw: A polygon's parts made to run counterclockwise.
+    [x, y] = poly2ccw(x, y)
+polysplit: The NaN-separated parts of a polygon or line as cells.
+    [xc, yc] = polysplit(x, y)
+polyjoin: Cells of parts joined into one NaN-separated polygon or line.
+    [x, y] = polyjoin(xc, yc)
+polyxpoly: Where two polylines cross.
+    [xi, yi] = polyxpoly(x1, y1, x2, y2)
+    [xi, yi, ii] = polyxpoly(x1, y1, x2, y2)
+projcrs: A projected coordinate reference system by its EPSG code.
+    p = projcrs(3006)
+    p = projcrs(32633)
+    * Known without PROJ: WGS 84 UTM zones (326xx north, 327xx south), ETRS89 UTM (258xx), SWEREF99 TM (3006) and its local zones (3007 to 3018), RT90 2.5 gon V (3021), Pseudo-Mercator (3857), World Mercator (3395), LAEA Europe (3035), LCC Europe (3034), Lambert-93 (2154), British National Grid (27700), Conus Albers (5070) and UPS (32661, 32761). Other codes are looked up with PROJ (pyproj) when it is there.
+geocrs: A geographic coordinate reference system by its EPSG code.
+    g = geocrs(4326)
+projfwd: Latitude and longitude as projected x and y.
+    [x, y] = projfwd(proj, lat, lon)
+    * proj is a projcrs object or a map projection structure (gcm, defaultm).
+projinv: Projected x and y as latitude and longitude.
+    [lat, lon] = projinv(proj, x, y)
+axesm: Make map axes with a projection.
+    axesm(projection)
+    axesm(projection, Name, Value, ...)
+    axesm('MapProjection', name, Name, Value, ...)
+    * Projections: eqdcylin, pcarree, miller, eqacylin, mercator, tranmerc, utm, lambert, lambertstd, eqaconic, eqaconicstd, eqdconic, eqdconicstd, ortho, stereo, gnomonic, eqdazim, eqaazim, ups, sinusoid, mollweid, hammer, robinson, equalearth. Properties: MapLatLimit, MapLonLimit, Origin, MapParallels, Zone, Geoid, FalseEasting, FalseNorthing, ScaleFactor, Frame, Grid, MeridianLabel, ParallelLabel, MLineLocation, PLineLocation, MLabelLocation, PLabelLocation, MLabelParallel, PLabelMeridian, GColor, GLineStyle, GLineWidth, FEdgeColor, FFaceColor, FLineWidth, FontSize. Positions are in units of the Geoid (a unit sphere unless given).
+worldmap: Map axes for a region of the world, the projection chosen to suit it.
+    worldmap('World')
+    worldmap(region)
+    worldmap(latlim, lonlim)
+    * Regions: World, Europe, Africa, Asia, North America, South America, Australia, Antarctica, Arctic, Sweden, Scandinavia, Nordic. The frame, graticule and labels are on.
+setm: Change the properties of map axes.
+    setm(ax, Name, Value, ...)
+getm: A property of map axes.
+    v = getm(ax, name)
+gcm: The current map axes' projection and look, as a structure.
+    mstruct = gcm
+    mstruct = gcm(ax)
+defaultm: A map projection structure with its defaults.
+    mstruct = defaultm(projection)
+ismap: Whether axes are map axes.
+    tf = ismap
+    tf = ismap(ax)
+framem: Show or hide the map frame.
+    framem
+    framem('on' | 'off')
+    framem(Name, Value, ...)
+gridm: Show or hide the map graticule.
+    gridm
+    gridm('on' | 'off')
+    gridm(Name, Value, ...)
+mlabel: Show or hide the meridian labels.
+    mlabel('on' | 'off')
+plabel: Show or hide the parallel labels.
+    plabel('on' | 'off')
+tightmap: Map axes' limits fitted tightly to the frame.
+    tightmap
+showaxes: Show or hide the axes of map axes (their box, ticks and labels).
+    showaxes('on' | 'off')
+mfwdtran: Latitude and longitude as x and y in the current map's projection.
+    [x, y] = mfwdtran(lat, lon)
+    [x, y] = mfwdtran(mstruct, lat, lon)
+minvtran: x and y in the current map's projection as latitude and longitude.
+    [lat, lon] = minvtran(x, y)
+    [lat, lon] = minvtran(mstruct, x, y)
+plotm: Lines and markers on map axes, from latitude and longitude.
+    plotm(lat, lon)
+    plotm(lat, lon, LineSpec)
+    plotm([lat lon], ...)
+    h = plotm(...)
+    * A line that crosses the edge of the map is broken there; what the map does not show is left out.
+linem: Lines on map axes, from latitude and longitude.
+    h = linem(lat, lon, Name, Value, ...)
+scatterm: Markers on map axes, with sizes and colours, from latitude and longitude.
+    h = scatterm(lat, lon, sz, c)
+textm: Text on map axes at latitude and longitude.
+    h = textm(lat, lon, txt)
+patchm: A filled polygon on map axes.
+    h = patchm(lat, lon, color)
+fillm: A filled polygon on map axes.
+    h = fillm(lat, lon, color)
+surfm: A grid of values on map axes, coloured through the colormap.
+    h = surfm(lat, lon, Z)
+pcolorm: A grid of values on map axes, coloured through the colormap.
+    h = pcolorm(lat, lon, Z)
+contourm: Contour lines of a grid on map axes.
+    contourm(lat, lon, Z)
+    contourm(lat, lon, Z, levels)
+    contourm(Z, R, ...)
+    [C, h] = contourm(...)
+geoshow: Show geographic data: lines, points, polygons, shapefile features or rasters.
+    geoshow(lat, lon)
+    geoshow(lat, lon, 'DisplayType', 'point' | 'line' | 'polygon')
+    geoshow(S)
+    geoshow(filename)
+    geoshow(Z, R)
+    geoshow(lat, lon, Z)
+    * On map axes the data are projected; on other axes longitude is x and latitude y. S is a struct array as shaperead gives (Lat and Lon, or X and Y), each feature drawn as its Geometry says; a polygon is one patch, its holes left open.
+    * geoshow('landareas.shp'), and worldlakes, worldrivers and worldcities: the world's land, lakes, rivers and cities from Natural Earth (see shaperead).
+mapshow: Show data in map (projected) coordinates.
+    mapshow(x, y)
+    mapshow(S)
+    mapshow(filename)
+    mapshow(A, R)
+geoaxes: Geographic axes: longitude across, latitude up, ticks in degrees with their hemispheres.
+    gx = geoaxes
+    gx = geoaxes('Basemap', name)
+    gx = geoaxes(Name, Value, ...)
+    * The aspect is the one of the middle latitude. There is no basemap until one is named (see geobasemap).
+geoplot: Lines in geographic axes, from latitude and longitude.
+    geoplot(lat, lon)
+    geoplot(lat, lon, LineSpec)
+    h = geoplot(gx, ...)
+geoscatter: Markers in geographic axes, from latitude and longitude.
+    geoscatter(lat, lon)
+    geoscatter(lat, lon, sz, c)
+    h = geoscatter(...)
+geobubble: Bubbles in geographic axes, their areas growing with sizes.
+    geobubble(lat, lon, sizedata)
+    geobubble(lat, lon, sizedata, colordata)
+    geobubble(..., 'Basemap', name)
+geolimits: The latitude and longitude limits of geographic axes.
+    geolimits(latlim, lonlim)
+    [latlim, lonlim] = geolimits
+    geolimits('auto')
+geobasemap: The basemap under geographic axes: a map from the web, or land and water.
+    geobasemap(name)
+    geobasemap(gx, name)
+    name = geobasemap
+    gx.Basemap = name
+    * Axes have none ('none') until a program names one. Only then is it fetched, only for what the axes show, and kept for the session.
+    * streets: OpenStreetMap's map; streets-light and streets-dark: the same in light or dark greys; topographic: OpenTopoMap; satellite: Sentinel-2 cloudless 2016 by EOX; colorterrain and grayterrain: shaded relief from ASTER GDEM, and landcover: MODIS land cover, both from NASA GIBS; darkwater, grayland and bluegreen: Natural Earth's land and lakes in two colours.
+    * Each is drawn with its attribution in the lower right corner of the axes, and saved with the figure. The maps from the web end at 85.05° north and south.
+addCustomBasemap: Add a basemap of map tiles from a web address of your choosing.
+    addCustomBasemap(name, url)
+    addCustomBasemap(name, url, 'Attribution', text, 'DisplayName', label, 'MaxZoomLevel', z)
+    * url has ${z}, ${x} and ${y} in it (or {z}, {x} and {y}) for the zoom level, column and row of a tile, as OpenStreetMap's tiles are numbered. The server must allow pages of other sites to use its tiles (CORS), or they are not drawn. MaxZoomLevel is 18 unless given.
+removeCustomBasemap: Remove a basemap added with addCustomBasemap.
+    removeCustomBasemap(name)
+georefcells: A reference for a raster of cells in latitude and longitude.
+    R = georefcells(latlim, lonlim, rasterSize)
+georefpostings: A reference for a raster of postings (samples) in latitude and longitude.
+    R = georefpostings(latlim, lonlim, rasterSize)
+georasterref: A geographic raster reference from properties.
+    R = georasterref('RasterSize', [m n], 'LatitudeLimits', latlim, 'LongitudeLimits', lonlim)
+    R = georasterref(..., 'RasterInterpretation', 'cells' | 'postings', 'ColumnsStartFrom', 'north' | 'south')
+maprefcells: A reference for a raster of cells in projected x and y.
+    R = maprefcells(xlim, ylim, rasterSize)
+maprefpostings: A reference for a raster of postings in projected x and y.
+    R = maprefpostings(xlim, ylim, rasterSize)
+geographicToIntrinsic: Latitude and longitude as fractional column and row of a raster.
+    [xi, yi] = geographicToIntrinsic(R, lat, lon)
+worldToIntrinsic: Projected x and y as fractional column and row of a raster.
+    [xi, yi] = worldToIntrinsic(R, x, y)
+geointerp: Values of a geographic raster at latitudes and longitudes.
+    v = geointerp(A, R, lat, lon)
+    v = geointerp(A, R, lat, lon, 'nearest' | 'linear' | 'cubic')
+    * NaN outside the raster.
+shaperead: The features of a shapefile as a struct array.
+    S = shaperead(filename)
+    S = shaperead(filename, 'UseGeoCoords', true)
+    [S, A] = shaperead(...)
+    S = shaperead(..., 'RecordNumbers', k, 'BoundingBox', [xmin ymin; xmax ymax], 'Selector', {@(v) ..., 'Field'}, 'Attributes', {'Field'})
+    * Each feature has Geometry, BoundingBox, X and Y (Lon and Lat with UseGeoCoords), NaN after each part, and its attributes from the .dbf file.
+    * landareas, worldlakes, worldrivers and worldcities (with or without .shp), when no file of that name is found, are Natural Earth's land, lakes, rivers and lake centre lines (all at 1:50m) and populated places (1:110m), public domain. They are fetched from jsDelivr the first time a program asks. Their one attribute is Name, for the lakes, rivers and cities.
+shapeinfo: What a shapefile holds: its shape type, bounding box, number of features and attributes.
+    info = shapeinfo(filename)
+    * landareas, worldlakes, worldrivers and worldcities are Natural Earth's, as for shaperead.
+shapewrite: Write a struct array of features to a shapefile (.shp, .shx and .dbf).
+    shapewrite(S, filename)
+    * One Geometry for all (Point, MultiPoint, Line or Polygon); fields of numbers or text become attributes.
+readgeoraster: Read a GeoTIFF file: its values and their raster reference.
+    [A, R] = readgeoraster(filename)
+    [A, R, cmap] = readgeoraster(filename)
+geotiffread: Read a GeoTIFF file (as readgeoraster).
+    [A, R] = geotiffread(filename)
+geotiffinfo: What a GeoTIFF file holds: its size, model type and spatial reference.
+    info = geotiffinfo(filename)
+
+# ---- symbolic math ------------------------------------------------------------------------------------------
+sym: A symbolic number, variable or matrix.
+    x = sym('x')
+    x = sym('x', 'real')
+    A = sym('a', [2 3])
+    v = sym(0.1)
+    v = sym(pi)
+    v = sym(M, flag)
+    * A double becomes the exact number it stands for: p/q, p*pi/q or sqrt(p)/q when it is one of those to the last bit ('r', the default), else the double's own binary fraction ('f'); 'd' gives a decimal of digits places. Symbols are complex unless assumed otherwise (real, positive, integer, rational). sym('a', [2 3]) names its elements a1_1, a1_2, ...; a vector's a1, a2, ....
+    * Symbolic values take the operators (+ - * / \ ^ and their element-wise forms, comparisons that make equations, & | ~), indexing and assignment, and these functions of numbers: sin, cos, tan and the other trigonometric and hyperbolic functions and their inverses, exp, log, log2, log10, sqrt, abs, sign, real, imag, conj, angle, floor, ceil, round, fix, mod, rem, gamma, factorial, nchoosek, erf, erfc, besselj and its kin, atan2, nthroot, gcd, lcm, max, min, sum, prod, cumsum, cumprod, det, inv, trace, rank, eig, null, rref, expm, kron, dot, cross, norm, reshape, repmat, fliplr, flipud, diag, triu, tril, diff, gradient, factor, compose, symvar, char, string, double, single, logical, isequal, isreal, isprime, disp, fplot, ezplot, fsurf, fmesh and fcontour.
+syms: Make symbolic variables and functions in the workspace.
+    syms x y z
+    syms x real
+    syms a b positive
+    syms f(x) g(x, y)
+    syms a [1 3]
+    syms x clear
+    syms
+    * syms f(x) makes x and the symbolic function f of x; f(x) = expression gives it a formula. syms alone lists the symbolic variables.
+str2sym: A symbolic expression or equation from text in the language's syntax.
+    e = str2sym('x^2 + sin(y)')
+    e = str2sym('x + y == 3')
+symfun: A symbolic function from a formula and its inputs.
+    f = symfun(x^2 + y, [x y])
+    * A symbolic function is also made by assigning: f(x, y) = x^2 + y. f(2, 3) gives its value; argnames(f) and formula(f) its parts.
+vpa: Numbers to many significant digits (variable-precision arithmetic).
+    v = vpa(x)
+    v = vpa(x, d)
+    * d is the number of significant digits (digits, 32 to begin with). A double is first recognized as sym recognizes it, so vpa(pi) is pi itself to d digits.
+digits: The significant digits vpa uses.
+    digits(d)
+    d = digits
+    old = digits(d)
+poly2sym: A symbolic polynomial from its coefficients, highest power first.
+    p = poly2sym([1 -2 3])
+    p = poly2sym(c, x)
+sym2poly: The coefficients of a polynomial in one variable, highest power first, as doubles.
+    c = sym2poly(p)
+piecewise: A symbolic expression with a value for each condition.
+    y = piecewise(x < 0, -x, x)
+    y = piecewise(cond1, val1, cond2, val2, ..., otherwise)
+    * The first condition that holds gives the value; without an otherwise value the rest is NaN.
+int: Integrals of symbolic expressions.
+    F = int(f)
+    F = int(f, x)
+    F = int(f, a, b)
+    F = int(f, x, a, b)
+    F = int(..., 'Hold', true)
+    * The variable is symvar(f, 1) unless given. An integral that has no closed form is shown unevaluated as int(...); 'Hold', true keeps it so.
+limit: The limit of a symbolic expression.
+    L = limit(f, x, a)
+    L = limit(f, a)
+    L = limit(f)
+    L = limit(f, x, a, 'left')
+    L = limit(f, x, a, 'right')
+    * Without a side, the limit from both sides, NaN when they differ; limit(f) is the limit at 0.
+taylor: The Taylor polynomial of a symbolic expression.
+    T = taylor(f)
+    T = taylor(f, x)
+    T = taylor(f, x, a)
+    T = taylor(..., 'Order', n)
+    T = taylor(..., 'ExpansionPoint', a)
+    * The terms up to the power n-1 (n is 6 unless given), about a (0 unless given).
+series: The series of a symbolic expression about a point, with negative and fractional powers when it has them.
+    S = series(f, x)
+    S = series(f, x, a)
+    S = series(..., 'Order', n)
+symsum: Symbolic sums.
+    F = symsum(f, k, a, b)
+    F = symsum(f, k)
+    * symsum(f, k) is the indefinite sum: F(k) with F(k+1) - F(k) = f(k), from 0. b may be Inf.
+symprod: Symbolic products.
+    F = symprod(f, k, a, b)
+jacobian: The Jacobian matrix of symbolic functions.
+    J = jacobian(f, v)
+    * Row i is the gradient of f(i) with respect to the variables in v.
+hessian: The Hessian matrix of a symbolic expression.
+    H = hessian(f, v)
+divergence: The divergence of a symbolic vector field.
+    d = divergence(V, X)
+curl: The curl of a symbolic vector field of three components.
+    c = curl(V, X)
+laplacian: The Laplacian of a symbolic expression: the sum of its second derivatives.
+    L = laplacian(f, x)
+simplify: A simpler form of a symbolic expression.
+    s = simplify(e)
+    s = simplify(e, 'IgnoreAnalyticConstraints', true)
+    * 'IgnoreAnalyticConstraints' allows rules that hold for positive reals, as log(a*b) = log(a) + log(b) and sqrt(x^2) = x.
+simplifyFraction: A symbolic fraction with its numerator and denominator cancelled.
+    s = simplifyFraction(e)
+expand: Multiply out products and powers, and expand functions of sums.
+    s = expand(e)
+    s = expand(e, 'ArithmeticOnly', true)
+collect: Collect the terms of a symbolic expression by powers of a variable.
+    s = collect(e)
+    s = collect(e, x)
+combine: Combine terms with the same function: powers, logs, sin and cos, ...
+    s = combine(e)
+    s = combine(e, target)
+    * target is 'powers' (the default), 'exp', 'log', 'sqrt', 'sincos', 'sinhcosh', 'gamma' or 'atan'.
+horner: A polynomial in Horner's nested form.
+    s = horner(p)
+    s = horner(p, x)
+rewrite: An expression rewritten in terms of other functions.
+    s = rewrite(e, 'exp')
+    * Targets: exp, log, sin, cos, tan, cot, sqrt, sincos, sinh, cosh, tanh, sinhcosh, asin, acos, atan, acot, asinh, acosh, atanh, heaviside, piecewise.
+partfrac: The partial fractions of a rational expression.
+    s = partfrac(e, x)
+    s = partfrac(e, x, 'FactorMode', 'full')
+numden: The numerator and denominator of a symbolic expression.
+    [n, d] = numden(e)
+coeffs: The coefficients of a polynomial.
+    c = coeffs(p)
+    c = coeffs(p, x)
+    [c, t] = coeffs(p, x)
+    c = coeffs(p, x, 'All')
+    * Without 'All', the nonzero coefficients from the lowest power up, and t their terms; with 'All', every coefficient from the highest power down.
+children: The operands of a symbolic expression, in a cell array.
+    c = children(e)
+has: Whether a symbolic expression contains a subexpression.
+    tf = has(e, sub)
+lhs: The left side of a symbolic equation or inequality.
+    L = lhs(eqn)
+rhs: The right side of a symbolic equation or inequality.
+    R = rhs(eqn)
+isolate: An equation rearranged to have a variable alone on its left.
+    e = isolate(eqn, x)
+argnames: The input variables of a symbolic function.
+    v = argnames(f)
+formula: The formula of a symbolic function, as a symbolic expression.
+    e = formula(f)
+finverse: The inverse of a symbolic function of one variable.
+    g = finverse(f)
+    g = finverse(f, x)
+subs: Substitute values or expressions for symbolic variables.
+    s = subs(e, old, new)
+    s = subs(e, new)
+    s = subs(e)
+    s = subs(e, {x, y}, {1, 2})
+    * old and new may be arrays or cells of the same size. A scalar expression with an array of values gives an array. subs(e) takes the values of the variables in the workspace; subs(e, new) replaces symvar(e, 1).
+solve: Solve equations and systems of equations symbolically.
+    S = solve(eqn, x)
+    S = solve(eqns, vars)
+    [x, y] = solve(eqns, [x y])
+    S = solve(..., 'Real', true)
+    S = solve(..., 'ReturnConditions', true)
+    * An expression counts as expression == 0. For one variable the solutions come as a column; for several, a struct with a field for each variable, or one output for each. Solutions must agree with the variables' assumptions. With 'ReturnConditions', families of solutions come with their parameters (k) and conditions. 'MaxDegree' (3 unless given) is the highest degree of polynomial solved by radicals; higher ones give root(...).
+vpasolve: Solve equations numerically, to digits significant digits.
+    S = vpasolve(eqn, x)
+    S = vpasolve(eqn, x, x0)
+    S = vpasolve(eqn, x, [a b])
+    S = vpasolve(eqns, vars, x0)
+    * A polynomial in one variable gives all its roots; anything else one root, from x0 (0 unless given) or within [a b].
+dsolve: Solve ordinary differential equations symbolically.
+    y = dsolve(eqn)
+    y = dsolve(eqn, cond)
+    S = dsolve(eqns, conds)
+    [y1, y2] = dsolve(eqns, conds)
+    * The unknowns are symbolic functions: syms y(t); dsolve(diff(y, t) == -y, y(0) == 1). A condition on a derivative uses the derivative as a function: Dy = diff(y); Dy(0) == 0. Free constants are C1, C2, ... For systems, a struct with a field for each unknown (in alphabetical order), or one output for each.
+laplace: The Laplace transform.
+    F = laplace(f)
+    F = laplace(f, transVar)
+    F = laplace(f, var, transVar)
+    * From t to s unless given (to z when the variable is s).
+ilaplace: The inverse Laplace transform.
+    f = ilaplace(F)
+    f = ilaplace(F, var, transVar)
+    * From s to t unless given; the result holds for t > 0 (no heaviside(t) factor).
+fourier: The Fourier transform: the integral of f(x)*exp(-1i*w*x) over x.
+    F = fourier(f)
+    F = fourier(f, var, transVar)
+ifourier: The inverse Fourier transform: the integral of F(w)*exp(1i*w*x) over w, divided by 2*pi.
+    f = ifourier(F)
+    f = ifourier(F, var, transVar)
+ztrans: The z-transform: the sum of f(n)*z^(-n) from n = 0.
+    F = ztrans(f)
+    F = ztrans(f, var, transVar)
+iztrans: The inverse z-transform of a rational function.
+    f = iztrans(F)
+    f = iztrans(F, var, transVar)
+assume: Set what is assumed about symbolic variables (replacing what was before).
+    assume(x > 0)
+    assume(x, 'real')
+    assume([x y], 'integer')
+    assume(x, 'clear')
+    * The assumptions are 'real', 'positive', 'integer', 'rational', 'clear', or conditions such as x > 0, x ~= 0, in(x, 'integer') and other inequalities; solve keeps only the solutions that agree.
+assumeAlso: Add to what is assumed about symbolic variables.
+    assumeAlso(x < 10)
+    assumeAlso(x, 'integer')
+assumptions: What is assumed about symbolic variables.
+    a = assumptions
+    a = assumptions(x)
+isAlways: Whether a symbolic condition holds for every value of its variables.
+    tf = isAlways(cond)
+    tf = isAlways(cond, 'Unknown', 'false' | 'true' | 'error')
+    * When it cannot be decided, the answer is false with a warning, unless 'Unknown' says otherwise.
+latex: The LaTeX form of a symbolic expression.
+    s = latex(e)
+pretty: Print a symbolic expression in two-dimensional form.
+    pretty(e)
+matlabFunction: A function handle (or a function file) computing a symbolic expression with numbers.
+    f = matlabFunction(e)
+    f = matlabFunction(e, 'Vars', [x y])
+    f = matlabFunction(e1, e2, 'File', 'name')
+    * The inputs are symvar(e) in order unless 'Vars' gives them; the operators are element-wise, so the handle takes arrays.
+fimplicit: The curve where f(x, y) = 0.
+    fimplicit(f)
+    fimplicit(f, [xmin xmax])
+    fimplicit(f, [xmin xmax ymin ymax])
+    h = fimplicit(...)
+    * f is a function handle of two inputs, or a symbolic expression or equation.
+fplot3: A curve in 3-D given by x(t), y(t) and z(t).
+    fplot3(xt, yt, zt)
+    fplot3(xt, yt, zt, [tmin tmax])
+heaviside: The step function: 0 below zero, 1 above, 1/2 at zero.
+    y = heaviside(x)
+dirac: The Dirac delta: Inf at zero, 0 elsewhere; symbolic for sym input.
+    y = dirac(x)
+    y = dirac(n, x)
+sinc: sin(pi*x)/(pi*x), 1 at zero.
+    y = sinc(x)
+lambertw: The Lambert W function: w with w*exp(w) = x.
+    w = lambertw(x)
+    w = lambertw(k, x)
+zeta: The Riemann zeta function.
+    z = zeta(s)
+kroneckerDelta: 1 where its arguments are equal, 0 elsewhere.
+    d = kroneckerDelta(m, n)
+
 # ---- optimization and integration ------------------------------------------------------------
 fzero: A root of a function of one variable.
     x = fzero(fun, x0)
@@ -1349,32 +2005,105 @@ fminsearch: The minimum of a function of several variables, by the Nelder-Mead s
     x = fminsearch(fun, x0)
     x = fminsearch(fun, x0, options)
     [x, fval, exitflag, output] = fminsearch(...)
-fminunc: The minimum of a smooth function of several variables, by a quasi-Newton method.
+fminunc: The minimum of a smooth function of several variables, without constraints.
     x = fminunc(fun, x0)
     x = fminunc(fun, x0, options)
-    [x, fval, exitflag, output] = fminunc(...)
+    x = fminunc(problem)
+    [x, fval, exitflag, output, grad, hessian] = fminunc(...)
+    * Algorithm 'quasi-newton' (BFGS) or 'trust-region' (needs SpecifyObjectiveGradient, fun then giving [f, g]). exitflag: 1 first-order optimality below OptimalityTolerance, 2 the steps too small to go on, 0 MaxIterations or MaxFunctionEvaluations reached, -1 stopped by an output function, -3 below ObjectiveLimit.
 fmincon: The minimum of a function under bounds and linear or nonlinear constraints.
     x = fmincon(fun, x0, A, b)
     x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub)
     x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon)
     x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
-    [x, fval, exitflag, output] = fmincon(...)
+    x = fmincon(problem)
+    [x, fval, exitflag, output, lambda, grad, hessian] = fmincon(...)
+    * A*x <= b, Aeq*x = beq, lb <= x <= ub; [c, ceq] = nonlcon(x) with c <= 0 and ceq = 0 (and their gradients as third and fourth outputs with SpecifyConstraintGradient). lambda holds the Lagrange multipliers: lower, upper, ineqlin, eqlin, ineqnonlin, eqnonlin. exitflag -2: no feasible point found.
 fsolve: Solve a system of nonlinear equations F(x) = 0.
     x = fsolve(fun, x0)
     x = fsolve(fun, x0, options)
-    [x, fval, exitflag, output] = fsolve(...)
-lsqcurvefit: Fit the parameters of a function to data by nonlinear least squares.
-    x = lsqcurvefit(fun, x0, xdata, ydata)
-    x = lsqcurvefit(fun, x0, xdata, ydata, lb, ub)
-    [x, resnorm, residual, exitflag] = lsqcurvefit(...)
+    x = fsolve(problem)
+    [x, fval, exitflag, output, jacobian] = fsolve(...)
+    * Algorithm 'trust-region-dogleg' (Powell's hybrid method), 'trust-region' or 'levenberg-marquardt'; with SpecifyObjectiveGradient fun gives [F, J]. exitflag 1: solved; -2: stopped where F is not zero.
 lsqnonlin: Nonlinear least squares: the x that minimizes sum(fun(x).^2).
     x = lsqnonlin(fun, x0)
     x = lsqnonlin(fun, x0, lb, ub)
-    [x, resnorm, residual, exitflag] = lsqnonlin(...)
+    x = lsqnonlin(fun, x0, lb, ub, options)
+    x = lsqnonlin(fun, x0, lb, ub, A, b, Aeq, beq, nonlcon, options)
+    [x, resnorm, residual, exitflag, output, lambda, jacobian] = lsqnonlin(...)
+lsqcurvefit: Fit the parameters of a function to data by nonlinear least squares.
+    x = lsqcurvefit(fun, x0, xdata, ydata)
+    x = lsqcurvefit(fun, x0, xdata, ydata, lb, ub)
+    x = lsqcurvefit(fun, x0, xdata, ydata, lb, ub, options)
+    x = lsqcurvefit(fun, x0, xdata, ydata, lb, ub, A, b, Aeq, beq, nonlcon, options)
+    [x, resnorm, residual, exitflag, output, lambda, jacobian] = lsqcurvefit(...)
+    * fun(x, xdata) is fitted to ydata; residual is fun(x, xdata) - ydata.
+lsqlin: Linear least squares under linear constraints and bounds: the x that minimizes norm(C*x - d).
+    x = lsqlin(C, d, A, b)
+    x = lsqlin(C, d, A, b, Aeq, beq, lb, ub)
+    x = lsqlin(C, d, A, b, Aeq, beq, lb, ub, x0, options)
+    [x, resnorm, residual, exitflag, output, lambda] = lsqlin(...)
+lsqnonneg: Linear least squares with x >= 0.
+    x = lsqnonneg(C, d)
+    x = lsqnonneg(C, d, options)
+    [x, resnorm, residual, exitflag, output, lambda] = lsqnonneg(...)
+    * lambda is C'*(d - C*x) where x is 0, and 0 where x is positive.
+quadprog: Quadratic programming: the x that minimizes 1/2*x'*H*x + f'*x under linear constraints and bounds.
+    x = quadprog(H, f)
+    x = quadprog(H, f, A, b)
+    x = quadprog(H, f, A, b, Aeq, beq, lb, ub)
+    x = quadprog(H, f, A, b, Aeq, beq, lb, ub, x0, options)
+    x = quadprog(problem)
+    [x, fval, exitflag, output, lambda] = quadprog(...)
+    * exitflag -6: H is not positive semidefinite (the problem is not convex) with the default 'interior-point-convex' algorithm.
 linprog: Linear programming: minimize f'*x under linear constraints and bounds.
     x = linprog(f, A, b)
     x = linprog(f, A, b, Aeq, beq, lb, ub)
-    [x, fval, exitflag] = linprog(...)
+    x = linprog(f, A, b, Aeq, beq, lb, ub, options)
+    x = linprog(problem)
+    [x, fval, exitflag, output, lambda] = linprog(...)
+    * exitflag 1 optimal, 0 a limit reached, -2 infeasible, -3 unbounded.
+intlinprog: Mixed-integer linear programming: linprog with some variables whole numbers.
+    x = intlinprog(f, intcon, A, b)
+    x = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub)
+    x = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub, x0, options)
+    x = intlinprog(problem)
+    [x, fval, exitflag, output] = intlinprog(...)
+    * intcon lists the variables (by index) that must be integers. exitflag 1 optimal, 2 stopped at a limit with a feasible point, 0 stopped with none, -2 infeasible, -3 unbounded.
+fminimax: Make the largest of several objectives as small as possible.
+    x = fminimax(fun, x0)
+    x = fminimax(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    [x, fval, maxfval, exitflag, output, lambda] = fminimax(...)
+    * fun returns a vector; with AbsoluteMaxObjectiveCount k the first k count by their absolute values.
+fgoalattain: Bring several objectives to their goals: the smallest gamma with fun(x) - weight*gamma <= goal.
+    x = fgoalattain(fun, x0, goal, weight)
+    x = fgoalattain(fun, x0, goal, weight, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    [x, fval, attainfactor, exitflag, output, lambda] = fgoalattain(...)
+    * A weight of 0 makes its goal a hard limit; with EqualityGoalCount k the first k objectives are to meet their goals exactly.
+optimoptions: Options for a solver, by name and value.
+    options = optimoptions('fmincon')
+    options = optimoptions(@fmincon, 'Name', value, ...)
+    options = optimoptions(oldoptions, 'Name', value, ...)
+    options = optimoptions('fminunc', oldoptions)
+    * Shown without a semicolon it lists the options set and the defaults. options.Name reads and sets one. Display: 'off', 'iter', 'final' or 'notify'. OutputFcn and PlotFcn take functions stop = f(x, optimValues, state), called at 'init', each 'iter' and 'done'; returning true stops the solver (exitflag -1).
+resetoptions: Options back to their defaults.
+    options = resetoptions(options, 'Name')
+    options = resetoptions(options, {'Name1', 'Name2'})
+optimplotfval: A plot function for the solvers: the objective's value at each iteration.
+    options = optimoptions(solver, 'PlotFcn', @optimplotfval)
+    * Its kin: optimplotx (the current point as bars), optimplotfirstorderopt, optimplotfunccount, optimplotconstrviolation, optimplotstepsize and optimplotresnorm. Several in a cell share the window, one plot each.
+optimplotx: A plot function for the solvers: the current point as bars.
+    options = optimoptions(solver, 'PlotFcn', @optimplotx)
+optimplotfirstorderopt: A plot function for the solvers: the first-order optimality at each iteration.
+    options = optimoptions(solver, 'PlotFcn', @optimplotfirstorderopt)
+optimplotfunccount: A plot function for the solvers: the function evaluations so far.
+    options = optimoptions(solver, 'PlotFcn', @optimplotfunccount)
+optimplotconstrviolation: A plot function for the constrained solvers: the largest constraint violation.
+    options = optimoptions(solver, 'PlotFcn', @optimplotconstrviolation)
+optimplotstepsize: A plot function for the solvers: the length of each step.
+    options = optimoptions(solver, 'PlotFcn', @optimplotstepsize)
+optimplotresnorm: A plot function for the least-squares solvers: the sum of squares at each iteration.
+    options = optimoptions(solver, 'PlotFcn', @optimplotresnorm)
 optimset: Make or change a structure of options for the solvers.
     options = optimset('Name', value, ...)
     options = optimset(oldopts, 'Name', value, ...)
@@ -1382,8 +2111,6 @@ optimset: Make or change a structure of options for the solvers.
 optimget: An option's value from an options structure.
     v = optimget(options, 'Name')
     v = optimget(options, 'Name', default)
-optimoptions: Options for a solver, by name and value.
-    options = optimoptions('fminunc', 'Name', value, ...)
 integral: A definite integral, by adaptive quadrature.
     q = integral(fun, a, b)
     q = integral(fun, a, b, 'RelTol', r, 'AbsTol', t)
@@ -1743,6 +2470,26 @@ ischar: True for a character array.
 isstring: True for a string array.
     tf = isstring(x)
 isobject: True for an object of a class (a map, an exception).
+properties: The public properties of an object or class.
+    properties(obj)
+    properties('ClassName')
+    p = properties(obj)
+methods: The methods of an object or class.
+    methods(obj)
+    methods('ClassName')
+    m = methods(obj)
+ismethod: Whether an object's class has a method of that name.
+    tf = ismethod(obj, 'name')
+addlistener: Hear an event of an object: the callback runs when notify raises it.
+    L = addlistener(obj, 'EventName', @(src, evt) ...)
+    * The callback is given the object and the event data (Source, EventName and any fields given to notify). L.Enabled turns it off and on; delete(L) removes it.
+listener: Hear an event of an object (as addlistener).
+    L = listener(obj, 'EventName', callback)
+notify: Raise an event of an object: its listeners' callbacks run.
+    notify(obj, 'EventName')
+    notify(obj, 'EventName', eventData)
+plabSuperCall: What a class's obj@Super(args) and method@Super(obj, args) become (PyLAB writes it; not called by hand).
+    obj = plabSuperCall('Super', obj, args)
     tf = isobject(x)
 double: Convert to double precision.
     y = double(x)
@@ -2181,6 +2928,7 @@ load: Load variables from a MAT-file, or a matrix from a text file.
     * MAT-files of versions 4, 6, 7 and 7.3 load, compressed or not. The names may hold * as a wildcard.
     * String arrays load. A variable that cannot be read is left out with a warning and the others load: other objects, such as tables and datetimes, are not read. Sparse matrices load as full ones.
     * A text file of numbers loads as a variable named after the file; -mat reads a MAT-file of any name.
+    * load coastlines, when no coastlines.mat is found, gives coastlat and coastlon: Natural Earth's coastline (1:110m, public domain), the lines parted by NaN. It is fetched from jsDelivr the first time a program asks.
 save: Save variables to a MAT-file (or to a text file with -ascii).
     save filename
     save filename x y
@@ -2231,6 +2979,28 @@ scatter: Markers at points, with sizes and colours of their own.
 scatter3: Markers at points in 3-D.
     scatter3(x, y, z)
     scatter3(x, y, z, sz, c)
+bubblechart: Bubbles at points, their areas growing with sizes.
+    bubblechart(x, y, sz)
+    bubblechart(x, y, sz, c)
+    bubblechart(ax, ...)
+    bubblechart(..., Name, Value)
+    h = bubblechart(...)
+    * The smallest size in the axes gets the smallest bubble and the largest the largest; bubblesize sets their diameters (1 and 20 points to begin with) and bubblelim the sizes they stand for. c is one colour (a name or an RGB triplet) for all, an RGB row for each bubble, or values mapped through the colormap. The bubbles' faces are see-through (MarkerFaceAlpha 0.6).
+bubblechart3: Bubbles at points in 3-D, their areas growing with sizes.
+    bubblechart3(x, y, z, sz)
+    bubblechart3(x, y, z, sz, c)
+    h = bubblechart3(...)
+bubblesize: The diameters in points of the smallest and the largest bubbles in axes.
+    r = bubblesize
+    bubblesize([dmin dmax])
+    bubblesize(ax, ...)
+bubblelim: The sizes that the smallest and the largest bubbles in axes stand for.
+    L = bubblelim
+    bubblelim([lo hi])
+    bubblelim('auto' | 'manual')
+    m = bubblelim('mode')
+    bubblelim(ax, ...)
+    * In auto mode they are the smallest and largest sizes of the axes' bubble charts. Sizes outside the limits get the end bubbles.
 bar: A bar chart; a matrix gives groups (or stacks) of bars.
     bar(y)
     bar(x, y)
@@ -2277,6 +3047,27 @@ pie: A pie chart.
 polarplot: Lines in polar coordinates.
     polarplot(theta, rho)
     polarplot(theta, rho, LineSpec)
+    polarplot(pax, theta, rho)
+    * theta is in radians.
+polarscatter: Markers at points in polar coordinates, with sizes and colours of their own.
+    polarscatter(theta, rho)
+    polarscatter(theta, rho, sz)
+    polarscatter(theta, rho, sz, c)
+    polarscatter(..., 'filled')
+    polarscatter(pax, ...)
+    h = polarscatter(...)
+    * theta is in radians; sz and c as for scatter.
+polarbubblechart: Bubbles at points in polar coordinates, their areas growing with sizes.
+    polarbubblechart(theta, rho, sz)
+    polarbubblechart(theta, rho, sz, c)
+    polarbubblechart(pax, ...)
+    h = polarbubblechart(...)
+    * theta is in radians; sz and c as for bubblechart.
+polaraxes: Polar axes: angles round a circle, radii out from its middle.
+    pax = polaraxes
+    pax = polaraxes(parent)
+    pax = polaraxes('Name', value, ...)
+    * subplot(m, n, p, polaraxes) puts them in a tile of a grid; polarplot and polarscatter draw in them. Their class is matlab.graphics.axis.PolarAxes and their Type 'polaraxes'.
 polar: Lines in polar coordinates (older; polarplot is preferred).
     polar(theta, rho)
 quiver: Arrows for a 2-D vector field.
@@ -2513,7 +3304,10 @@ cla: Clear the current axes.
 subplot: Axes in a grid of tiles within the figure.
     subplot(m, n, p)
     subplot(m, n, [p1 p2])
+    subplot(m, n, p, ax)
+    subplot(ax)
     ax = subplot(...)
+    * With ax after p, those axes (polaraxes, for one) take the tile; axes overlapping it are deleted. subplot(ax) makes ax the current axes.
 tiledlayout: A grid of tiles for axes.
     tiledlayout(m, n)
     tiledlayout('flow')
@@ -2642,6 +3436,10 @@ allchild: Every child of a graphics object.
     h = allchild(parent)
 ancestor: The ancestor of a graphics object of a given type.
     p = ancestor(h, 'figure' | 'axes')
+copyobj: Copies of graphics objects, each with everything under it, in a new parent.
+    c = copyobj(h, parent)
+    c = copyobj([ax lgd], fig)
+    * h may be several objects, with one parent or one for each. A legend or colorbar is copied together with its axes, and the copy then belongs to the axes' copy. A figure itself is not copied.
 gobjects: An array of empty graphics placeholders.
     h = gobjects(n)
 ishandle: True for valid graphics handles.

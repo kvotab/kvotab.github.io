@@ -187,6 +187,15 @@ def take(arr, args):
     return sub_take(arr, [conv(a)[0] for a in args])
 
 
+class _NoSym:
+    pass
+
+
+# symbolic values (symbolic.py sets these)
+SYM = _NoSym
+SYMOPS = None
+
+
 def idx(A, args):
     """A(args...): a part of an array, cell or struct."""
     t = type(A)
@@ -221,6 +230,8 @@ def idx(A, args):
         if r.size == 1:
             return scalar_out(r)
         return r
+    if t is SYM:
+        return SYMOPS.idx(A, args)
     if t is float or t is bool or t is complex:
         r = take(np.array([[A]]), args)
         if r.size == 1:
@@ -671,6 +682,8 @@ def asgn(A, args, V):
     if not args:
         # x() = v replaces x
         return V
+    if t is SYM or type(V) is SYM:
+        return SYMOPS.asgn(A, args, V)
     if A is NOVAL:
         if is_empty_double(V):
             return EMPTY()
@@ -994,6 +1007,9 @@ def fasgn(A, name, V):
         S = writable(A)
         return fasgn(S, name, V)
     if isinstance(A, Obj):
+        # a value object changes in a copy of its own
+        if not A.is_handle and hasattr(A, 'value_copy'):
+            A = A.value_copy()
         A.setprop(name, V)
         return A
     raise MError('MATLAB:structAssToNonStruct', 'Unable to perform assignment because dot indexing is not supported for variables of this type.')

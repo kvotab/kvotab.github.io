@@ -325,12 +325,14 @@ def _command_args(text, j):
             break
     if c == "'" and False:
         return None
-    # the words: separated by spaces, quotes group, ends at , ; newline or %
+    # the words: separated by spaces, quotes group, ends at , ; newline or %; inside
+    # parentheses a comma or space belongs to the word (syms f(x, y))
     args = []
     cur = []
     have = False
     i = k
     quote = False
+    depth = 0
     while i < n:
         ch = text[i]
         if quote:
@@ -352,11 +354,19 @@ def _command_args(text, j):
             have = True
             i += 1
             continue
+        if ch == '(':
+            depth += 1
+        elif ch == ')' and depth:
+            depth -= 1
         if ch in ' \t\r':
-            if have:
+            if have and not depth:
                 args.append(''.join(cur))
                 cur = []
                 have = False
+            i += 1
+            continue
+        if ch == ',' and depth:
+            cur.append(ch)
             i += 1
             continue
         if ch in '\n,;' or ch == '%':

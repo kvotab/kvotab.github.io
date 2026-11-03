@@ -356,6 +356,7 @@
           U().menu(ev.clientX, ev.clientY, [
             { label: it.dir ? 'Open folder' : 'Open', action: () => this.open(it) },
             it.kind === 'mfile' ? { label: 'Run', kbd: 'F5', action: () => this.app.runFile(p) } : null,
+            it.kind === 'mfile' && PL.designer ? { label: 'Open in App Designer', action: () => PL.designer.open(p) } : null,
             it.kind === 'mat' && U().mstr(p) ? { label: 'Load into the workspace', action: () => this.app.runCommand(`load(${U().mstr(p)})`) } : null,
             it.dir && U().mstr(p) ? { label: 'Add to path', action: () => this.app.runCommand(`addpath(${U().mstr(p)})`) } : null,
             '-',

@@ -25,6 +25,18 @@ FLOAT = float
 INT_CLASSES = set(INT_TYPES)
 
 
+class _NoSym:
+    pass
+
+
+# symbolic values: symbolic.Sym and its operators once symbolic.py is loaded
+SYM = _NoSym
+SYMOPS = None
+# objects of the language's own classes (classdef.py sets these)
+UOBJ = _NoSym
+UOPS = None
+
+
 def _incompat():
     return MError('MATLAB:sizeDimensionsMustMatch', 'Arrays have incompatible sizes for this operation.')
 
@@ -190,6 +202,11 @@ def _arr(x):
 
 def _binary(a, b, fn, sym, int_fn=None):
     """An element-wise arithmetic operator on any two numeric values."""
+    if type(a) is SYM or type(b) is SYM:
+        # ldivide comes here with its operands swapped, as a./b
+        return SYMOPS.binop('./' if sym == '.\\' else sym, a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop('./', b, a) if sym == '.\\' else UOPS.binop(sym, a, b)
     A, ca = operand(a, sym)
     B, cb = operand(b, sym)
     cls = result_class(ca, cb, sym)
@@ -275,6 +292,10 @@ def uminus(a):
         return -a
     if t is bool:
         return -float(a)
+    if t is SYM:
+        return SYMOPS.unop('-', a)
+    if t is UOBJ:
+        return UOPS.unop('-', a)
     A, c = operand(a, '-')
     if c in INT_CLASSES:
         return finish(-np.asarray(A, F64), c)
@@ -287,6 +308,8 @@ def uplus(a):
         return a
     if t is bool:
         return float(a)
+    if t is SYM:
+        return a
     A, c = operand(a, '+')
     if t is np.ndarray and A is a:
         return a
@@ -343,6 +366,10 @@ def _handle_compare(a, b, sym):
 
 
 def _compare(a, b, fn, sym):
+    if type(a) is SYM or type(b) is SYM:
+        return SYMOPS.binop(sym, a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop(sym, a, b)
     if type(a) is Str or type(b) is Str:
         return str_compare(a, b, fn, sym)
     if sym in ('==', '~=') and (_handles_of(a) is not None or _handles_of(b) is not None):
@@ -437,6 +464,10 @@ def to_logical(v, sym='&'):
 
 
 def _logic(a, b, fn, sym):
+    if (type(a) is SYM or type(b) is SYM) and sym in ('&', '|'):
+        return SYMOPS.binop(sym, a, b)
+    if (type(a) is UOBJ or type(b) is UOBJ) and sym in ('&', '|'):
+        return UOPS.binop(sym, a, b)
     A = to_logical(a, sym)
     B = to_logical(b, sym)
     A, B = align(A, B)
@@ -474,6 +505,10 @@ def not_(a):
         if a != a:
             raise _nan_err()
         return a == 0.0
+    if t is SYM:
+        return SYMOPS.unop('~', a)
+    if t is UOBJ:
+        return UOPS.unop('~', a)
     L = to_logical(a, '~')
     if type(L) is np.ndarray:
         r = _2d(np.logical_not(L))
@@ -508,6 +543,8 @@ def truth(v):
         raise MError('MATLAB:invalidConversion', 'Conversion to logical from string is not possible.')
     if t is int:
         return v != 0
+    if t is SYM:
+        return SYMOPS.truth(v)
     raise MError('MATLAB:invalidConversion', f"Conversion to logical from {class_of(v)} is not possible.")
 
 
@@ -544,6 +581,10 @@ def _is_scalar(v):
 def mtimes(a, b):
     if type(a) is float and type(b) is float:
         return a * b
+    if type(a) is SYM or type(b) is SYM:
+        return SYMOPS.binop('*', a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop('*', a, b)
     if _is_scalar(a) or _is_scalar(b):
         return times(a, b)
     A, ca = operand(a, '*')
@@ -630,6 +671,10 @@ def _solve(A, B):
 
 
 def mldivide(a, b):
+    if type(a) is SYM or type(b) is SYM:
+        return SYMOPS.binop('\\', a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop('\\', a, b)
     if _is_scalar(a):
         return ldivide(a, b)
     A, ca = operand(a, '\\')
@@ -651,6 +696,10 @@ def mldivide(a, b):
 def mrdivide(a, b):
     if type(a) is float and type(b) is float and b != 0.0:
         return a / b
+    if type(a) is SYM or type(b) is SYM:
+        return SYMOPS.binop('/', a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop('/', a, b)
     if _is_scalar(b):
         return rdivide(a, b)
     A, ca = operand(a, '/')
@@ -670,6 +719,10 @@ def mrdivide(a, b):
 def mpower(a, b):
     if type(a) is float and type(b) is float:
         return power(a, b)
+    if type(a) is SYM or type(b) is SYM:
+        return SYMOPS.binop('^', a, b)
+    if type(a) is UOBJ or type(b) is UOBJ:
+        return UOPS.binop('^', a, b)
     sa, sb = _is_scalar(a), _is_scalar(b)
     if sa and sb:
         return power(a, b)
@@ -735,6 +788,10 @@ def transpose(a):
             share_all(x2)
             f[k] = x2
         return Struct((a.shape[1], a.shape[0]), f)
+    if t is SYM:
+        return SYMOPS.unop(".'", a)
+    if t is UOBJ:
+        return UOPS.unop(".'", a)
     if isinstance(a, Obj) and hasattr(a, 'transposed'):
         return a.transposed()
     if isinstance(a, (FH, Obj)):
@@ -746,6 +803,10 @@ def ctranspose(a):
     t = type(a)
     if t is float or t is bool:
         return a
+    if t is SYM:
+        return SYMOPS.unop("'", a)
+    if t is UOBJ:
+        return UOPS.unop("'", a)
     if t is complex:
         z = a.conjugate()
         return z
@@ -1020,6 +1081,8 @@ def cat(axis, vals):
             shs = [np.empty(p.shape, object) for p in parts]
             shape = _2d(_concat_arrays(shs, axis)).shape
         return Struct(shape, f)
+    if any(type(v) is SYM for v in vals):
+        return SYMOPS.cat(axis, vals)
     if any(isinstance(v, (Obj, FH)) for v in vals):
         from .graphics_base import cat_handles
         return cat_handles(axis, vals)

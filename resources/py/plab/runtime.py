@@ -643,7 +643,8 @@ class NamedFH(FH):
 
     def scall(self, nargout, *args):
         info = BUILTINS.get(self.fname)
-        if info is not None and not info.aw and not info.ws and self.target is None and not _user_file(self.fname):
+        if info is not None and not info.aw and not info.ws and self.target is None and not _user_file(self.fname) \
+                and not any(getattr(a, 'ci', None) is not None for a in args):
             return info.fn(nargout, *args)
         return run_sync(self.acall(nargout, *args))
 
@@ -733,6 +734,19 @@ async def call(W, name, nargout, args):
             if nargout > 1:
                 raise MError('MATLAB:TooManyOutputs', 'Too many output arguments.')
             return idx(v, args) if args else v
+    if args:
+        # a method of an object among the arguments comes first
+        from . import classdef as CD
+        r = await CD.dispatch(name, nargout, args)
+        if r is not NOVAL:
+            return r
+    if '.' in name and name.count('.') == 1:
+        # ClassName.staticMethod(...) or ClassName.Constant
+        from . import classdef as CD
+        base, rest = name.split('.')
+        r = await CD.static_or_const(base, rest, nargout, args, sys.modules[__name__])
+        if r is not NOVAL:
+            return r
     target = resolve(name)
     if target is None:
         raise MError('MATLAB:UndefinedFunction', f"Unrecognized function or variable '{name}'.")
@@ -1179,7 +1193,17 @@ def load_file(path):
 
 def compile_file(path, text):
     from .compiler import compile_source
+    from . import classdef as CD
     name = os.path.splitext(os.path.basename(path))[0]
+    if CD.is_classdef(text):
+        import sys as _sys
+        ci = CD.build(path, text, _sys.modules[__name__])
+
+        async def construct(nargout, *args):
+            return await CD.construct(ci, nargout, args)
+        mod = CompiledModule(path, name, text, '', {}, 'class', {'MAIN': construct})
+        mod.classinfo = ci
+        return mod
     kind_hint = 'file'
     src, linemap, prog = compile_source(text, BUILTINS, kind='file', user_funcs=_user_file, modname=name, path=path)
     if prog.kind == 'function':

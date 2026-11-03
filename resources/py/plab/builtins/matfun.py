@@ -504,18 +504,6 @@ def linsolve(nargout, *args):
     return x
 
 
-@bi('lsqnonneg', nout=2)
-def lsqnonneg(nargout, *args):
-    from scipy.optimize import nnls
-    C = _mat(args[0], 'lsqnonneg')
-    d = darr(args[1]).reshape(-1)
-    x, rnorm = nnls(C, d)
-    res = out(x.reshape(-1, 1))
-    if nargout >= 2:
-        return res, rnorm ** 2
-    return res
-
-
 @bi('balance', nout=2)
 def balance(nargout, *args):
     import scipy.linalg as sla

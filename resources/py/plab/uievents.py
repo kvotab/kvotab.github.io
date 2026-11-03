@@ -212,6 +212,10 @@ def _control(obj, fig, ev):
     if obj.TYPE == 'uitable':
         _table(obj, ev)
         return
+    if obj.TYPE == 'uicomp':
+        from .uiapp import component_event
+        component_event(obj, fig, ev)
+        return
     if obj.TYPE == 'uitabgroup':
         new = STORE.objects.get(ev.get('tab'))
         old = obj.selection()

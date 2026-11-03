@@ -36,8 +36,8 @@ def bi(*names, ws=False, aw=False, nout=1, arr=True):
     return deco
 
 
-MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
-           'statdesc', 'distributions', 'stattests', 'statplots', 'uifun']
+MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'optim', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
+           'statdesc', 'distributions', 'stattests', 'statplots', 'uifun', 'mapping', 'symmath', 'classfun', 'appfun']
 
 
 def load(target):

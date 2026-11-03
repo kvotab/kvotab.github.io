@@ -462,9 +462,13 @@ def set_cwd(path):
 
 def lint(text):
     from .parser import parse, assigned_names
-    from .lexer import LexError
-    names = assigned_names(text)
+    from . import classdef as CD
     try:
+        if CD.is_classdef(text):
+            # a class: its sections read as the engine reads them, its methods parsed at their own lines
+            sp = CD.parse(text)
+            text, _ = CD.methods_text(sp, sp.name)
+        names = assigned_names(text)
         parse(text, lambda n: n in names, 'file')
         return json.dumps([])
     except MError as e:

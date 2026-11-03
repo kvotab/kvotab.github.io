@@ -743,5 +743,23 @@ run("m = msgbox('hi', 'T', 'modal'); n = msgbox('hi'); dd = dialog;")
 check("msgbox 'modal' and dialog are modal windows; a plain msgbox is not",
       [serialize_figure(val(x))['windowStyle'] for x in ('m', 'n', 'dd')], ['modal', 'normal', 'modal'])
 run("close all force")
+run("d = dialog('Name', 'Mine'); f = figure; close(f); h = plot(1:3); p = ancestor(h, 'figure');")
+check("a dialog's window never becomes the current figure when another closes", (num('p == d'), num("strcmp(get(p, 'Name'), 'Mine')")), (False, False))
+run("close all force; n = numel(findall(0, 'Type', 'figure'));")
+check("close all force closes the dialog's window too", num('n'), 0)
+
+# ---- bubble charts ---------------------------------------------------------------------------------------------------
+run("f = figure; b = bubblechart([1 2 3 4], [4 3 2 1], [10 20 30 40]); bubblesize([4 20]); hold on; "
+    "b2 = bubblechart([1 2], [2 2], [5 100], [0.2 0.6 0.2]); hold off;")
+kids = {c['id']: c for c in serialize_figure(val('f'))['axes'][0]['children']}
+d1, d2 = (np.round(np.frombuffer(base64.b64decode(kids[val(x).id]['bubbleSize']['$']), float), 3).tolist() for x in ('b', 'b2'))
+check('bubble diameters in points: areas even between the axes-wide smallest and largest sizes', (d2, d1[0] < d1[1] < d1[2] < d1[3]),
+      ([4.0, 20.0], True))
+check('their faces 0.6 opaque, edges whole', (kids[val('b').id]['markerFaceAlpha'], kids[val('b').id]['markerEdgeAlpha']), (0.6, 1.0))
+run("bubblelim([0 10]);")
+kids = {c['id']: c for c in serialize_figure(val('f'))['axes'][0]['children']}
+d1 = np.round(np.frombuffer(base64.b64decode(kids[val('b').id]['bubbleSize']['$']), float), 3).tolist()
+check('sizes past bubblelim get the end bubbles', d1, [20.0] * 4)
+run("close all force")
 
 sys.exit(check.done())

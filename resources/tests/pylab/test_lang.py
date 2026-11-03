@@ -597,8 +597,8 @@ def _how_texts():
 
 
 def _how_missing():
-    """The engine's files and the NumPy, SciPy and standard-library names
-    that How it works quotes but that do not exist."""
+    """The engine's files and the NumPy, SciPy, SymPy and standard-library
+    names that How it works quotes but that do not exist."""
     import importlib
     import re
     plab_dir = os.path.dirname(R.__file__)
@@ -607,7 +607,7 @@ def _how_missing():
         for f in re.findall(r'\b(\w+\.py)\b', text):
             if not (os.path.isfile(os.path.join(plab_dir, f)) or os.path.isfile(os.path.join(plab_dir, 'builtins', f))):
                 missing.add((name, f))
-        for ref in re.findall(r'\b((?:numpy|scipy|math|cmath|itertools|statistics|random)(?:\.[A-Za-z_]\w*)+)', text):
+        for ref in re.findall(r'\b((?:numpy|scipy|sympy|math|cmath|itertools|statistics|random)(?:\.[A-Za-z_]\w*)+)', text):
             parts = ref.split('.')
             for i in range(len(parts), 0, -1):
                 try:
@@ -630,6 +630,46 @@ case('set functions on graphics objects, by their handle numbers', "close all; f
      "b = findobj(a, 'tag', 'legend'); g = axes; c = setdiff(a, b); k = class(c); s = isequal(c, a); u = numel(unique([a; g; a])); "
      "[tf, loc] = ismember(g, [a g]); i = isequal(intersect([a g], g), g); v = isequal(union(g, a), [a g]); x = isequal(setxor([a g], a), g); close all;",
      want={'k': 'matlab.graphics.axis.Axes', 's': True, 'u': 2, 'tf': True, 'loc': 2, 'i': True, 'v': True, 'x': True})
+case('Name=Value in a call is the same as ''Name'', Value', "s = struct(a=1, b='x'); sa = s.a; sb = s.b; e = (1 == 1); close all; "
+     "h = plot(1:3, Color=[0.1 0.5 0.1], LineWidth=2); w = get(h, 'LineWidth'); col = get(h, 'Color'); close all;",
+     want={'sa': 1, 'sb': 'x', 'e': True, 'w': 2, 'col': [[0.1, 0.5, 0.1]]})
+case('subplots kept in an array, one made current again', "close all; for k = 1:4\n ax(k) = subplot(2,2,k);\nend\nsubplot(ax(2))\n"
+     "x = linspace(1,50); plot(x, sin(x), Color=[0.1, 0.5, 0.1]); title(\"Second Subplot\"); axis([0 50 -1 1]); "
+     "n = numel(ax); c = isequal(gca, ax(2)); m = numel(get(ax(2), 'Children')); o = numel(get(ax(1), 'Children')); xl = xlim; close all;",
+     want={'n': 4, 'c': True, 'm': 1, 'o': 0, 'xl': [[0, 50]]})
+case('polar axes in subplots, with polarplot and polarscatter', "close all; f = figure; ax1 = subplot(2,1,1,polaraxes); theta = linspace(0,2*pi,50); "
+     "rho = sin(theta).*cos(theta); polarplot(ax1,theta,rho); ax2 = subplot(2,1,2,polaraxes); s = polarscatter(ax2,theta,rho); "
+     "c = class(ax1); ty = get(ax2, 'Type'); n = numel(get(f, 'Children')); p1 = get(ax1, 'Position'); p2 = get(ax2, 'Position'); "
+     "k = class(s); top = p1(2) > p2(2); close all;",
+     want={'c': 'matlab.graphics.axis.PolarAxes', 'ty': 'polaraxes', 'n': 2, 'k': 'matlab.graphics.chart.primitive.Scatter', 'top': True})
+case('copyobj: axes, and axes with their legend, copied into a new figure and put in subplots',
+     "close all; figure; x = linspace(0,10); plot(x, sin(x)); title(\"Line Plot 1\"); ax1 = gca; figure; plot(x, 2*sin(x)); title(\"Line Plot 2\"); "
+     "lgd = legend(\"2*Sin(x)\"); ax2 = gca; fnew = figure; ax1_copy = copyobj(ax1, fnew); subplot(2,1,1,ax1_copy); copies = copyobj([ax2, lgd], fnew); "
+     "ax2_copy = copies(1); subplot(2,1,2,ax2_copy); n = numel(get(fnew, 'Children')); t1 = get(get(ax1_copy, 'Title'), 'String'); "
+     "t2 = get(get(ax2_copy, 'Title'), 'String'); k = class(copies(2)); fresh = ~isequal(get(ax1_copy, 'Children'), get(ax1, 'Children')); "
+     "kept = numel(get(ax1, 'Children')); y = get(get(ax2_copy, 'Children'), 'YData'); same = isequal(y, 2*sin(x)); close all;",
+     want={'n': 2, 't1': 'Line Plot 1', 't2': 'Line Plot 2', 'k': 'matlab.graphics.illustration.Legend', 'fresh': True, 'kept': 1, 'same': True})
+case('bubblechart: a BubbleChart in the colour named, see-through, its sizes setting the bubble limits',
+     "close all; x = 1:20; y = rand(1,20); sz = rand(1,20); bubblechart(x,y,sz,\"red\"); h = gca().Children; k = class(h); t = h.Type; "
+     "c = h.CData; a = h.MarkerFaceAlpha; L = isequal(bubblelim, [min(sz) max(sz)]); r = bubblesize; m = bubblelim('mode'); close all;",
+     want={'k': 'matlab.graphics.chart.primitive.BubbleChart', 't': 'bubblechart', 'c': [[1.0, 0.0, 0.0]], 'a': 0.6, 'L': True,
+           'r': [[1.0, 20.0]], 'm': 'auto'})
+case('bubblesize and bubblelim set the axes; held charts share the limits; colours by triplet or the colour order',
+     "close all; b = bubblechart(1:3, 1:3, [10 20 30]); hold on; b2 = bubblechart([1 2], [3 1], [5 100], [0.2 0.6 0.2]); hold off; "
+     "L = bubblelim; c1 = b.CData; c2 = b2.CData; bubblesize([5 30]); r = get(gca, 'BubbleSizeRange'); bubblelim([0 40]); m = bubblelim('mode'); "
+     "L2 = get(gca, 'BubbleLim'); bubblelim('auto'); L3 = bubblelim; close all;",
+     want={'L': [[5.0, 100.0]], 'c1': [[0.0, 0.447, 0.741]], 'c2': [[0.2, 0.6, 0.2]], 'r': [[5.0, 30.0]], 'm': 'manual', 'L2': [[0.0, 40.0]], 'L3': [[5.0, 100.0]]})
+case('bubblechart3 makes 3-D axes, polarbubblechart polar ones',
+     "close all; bubblechart3(rand(1,5), rand(1,5), rand(1,5), 1:5); v = get(gca, 'View'); close all; "
+     "polarbubblechart(linspace(0, 2*pi, 10), 1:10, 1:10); k = class(gca); close all;",
+     want={'v': [[-37.5, 30.0]], 'k': 'matlab.graphics.axis.PolarAxes'})
+case('bubblechart refuses sizes of another length', "close all; bubblechart(1:3, 1:3, 1:4)", error='same number of elements')
+case("scatter(x, y, sz, 'red') takes the colour; CData set to a triplet colours all the markers",
+     "close all; s = scatter(1:5, 1:5, 36, 'red'); c = s.CData; s.CData = [0 0 1]; c2 = s.CData; close all;",
+     want={'c': [[1.0, 0.0, 0.0]], 'c2': [[0.0, 0.0, 1.0]]})
+case('copyobj refuses a legend without its axes', "close all; plot(1:3); l = legend('a'); f = figure; copyobj(l, f)", error='copied together with its axes')
+case('scatter with sizes and colours for each point stays 2-D', "close all; s = scatter(1:5, 1:5, 10:10:50, 1:5); z = isempty(get(s, 'ZData')); close all;",
+     want={'z': True})
 case('isequal on handles compares the objects', "close all; a = axes; b = axes; r = [isequal(gca, b), isequal(a, b), isequal([a b], [a b]), isequal([a b], [b a])]; close all;",
      want={'r': [[True, False, True, False]]})
 case('figure handles', "close all; h = plot(1:10); c = get(h, 'Color'); h.LineWidth = 2; w = h.LineWidth; f = gcf; n = f.Number;",

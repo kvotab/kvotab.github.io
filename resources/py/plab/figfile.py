@@ -37,7 +37,7 @@ _PLAIN = {'axes': Axes, 'line': Line, 'text': Text, 'surface': Surface, 'patch':
           'uitoolbar': U.UIToolbar, 'uipushtool': U.UIPushTool, 'uitoggletool': U.UIToggleTool}
 # what older releases kept as objects of their own, made as what they draw
 _OLD = {'graph2d.lineseries': Line, 'graph3d.surfaceplot': Surface}
-_SERIES = ('bar', 'stem', 'stair', 'area', 'errorbar', 'scatter', 'histogram', 'contour', 'quiver')
+_SERIES = ('bar', 'stem', 'stair', 'area', 'errorbar', 'scatter', 'bubblechart', 'histogram', 'contour', 'quiver')
 _LABELS = ('Title', 'XLabel', 'YLabel', 'ZLabel')
 # set before the rest: what the other values are in
 _FIRST = ('style', 'units', 'fontunits')

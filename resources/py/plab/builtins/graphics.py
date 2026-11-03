@@ -12,7 +12,7 @@ from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128
                       _2d, EMPTY, py_str, share, text_list)
 from ..graphics_base import (STORE, ROOT, GObj, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar,
                              Light, Series, HArr, parse_linespec, to_color, COLOR_ORDER, MARKERS, MARKER_WORDS,
-                             serialize_figure, gerr, handle_of_number)
+                             serialize_figure, gerr, handle_of_number, NAMED)
 from ..colormaps import colormap_by_name, as_colormap, NAMES as CMAP_NAMES
 from .. import glayout as GL
 from .. import runtime as R
@@ -32,8 +32,12 @@ def new_figure(number=None):
 
 def gcf_():
     f = STORE.current
-    if f is None or not f.valid:
-        f = new_figure()
+    if f is None or not f.valid or (f.props['HandleVisibility'] != 'on' and not shown_test()(f)):
+        # a figure whose handle is hidden is never current outside its callbacks
+        shown = shown_test()
+        rest = sorted((g for g in STORE.figures.values() if g.valid and shown(g)), key=lambda g: -g.order)
+        f = rest[0] if rest else new_figure()
+        STORE.current = f
     return f
 
 
@@ -209,7 +213,8 @@ async def _close_one(f, force):
 async def close(nargout, *args):
     words = [opt_str(a).lower() for a in args if opt_str(a) is not None]
     force = 'force' in words or 'all force' in words
-    hidden = 'hidden' in words or 'all hidden' in words or 'all force' in words
+    # 'force' closes the figures whose handles are hidden too
+    hidden = force or 'hidden' in words or 'all hidden' in words
     rest = [a for a in args if opt_str(a) is None or opt_str(a).lower() not in ('force', 'hidden')]
     if not rest:
         f = STORE.current
@@ -288,6 +293,12 @@ def subplot_position(m, n, p, cols=None):
     return [x0, y0, x1 - x0, y1 - y0]
 
 
+def _overlaps(a, pos):
+    ap = np.asarray(a.props['Position'], float).reshape(-1)
+    return (ap[0] < pos[0] + pos[2] - 1e-6 and pos[0] < ap[0] + ap[2] - 1e-6 and
+            ap[1] < pos[1] + pos[3] - 1e-6 and pos[1] < ap[1] + ap[3] - 1e-6)
+
+
 @bi('subplot', arr=False)
 def subplot(nargout, *args):
     nargchk(args, 1, None, 'subplot')
@@ -309,6 +320,16 @@ def subplot(nargout, *args):
             raise err('MATLAB:subplot:SubplotIndexTooLarge', f'Index exceeds number of subplots.', 'subplot')
         pos = subplot_position(m, n, pv if len(pv) > 1 else pv[0])
         rest = rest[3:]
+        if rest and is_axes(rest[0]):
+            # subplot(m, n, p, ax): the axes given (polaraxes, say) take the place
+            target = rest[0]
+            for a in target.figure().axes_list():
+                if a is not target and _overlaps(a, pos):
+                    a.delete_handle()
+            target.props['Position'] = np.array([pos])
+            set_current_axes(target)
+            target.touch()
+            return target if nargout else None
     # reuse axes already in that place
     for a in f.axes_list():
         ap = np.asarray(a.props['Position'], float).reshape(-1)
@@ -317,9 +338,7 @@ def subplot(nargout, *args):
             return a if nargout else None
     # axes that overlap the new one are removed
     for a in f.axes_list():
-        ap = np.asarray(a.props['Position'], float).reshape(-1)
-        if (ap[0] < pos[0] + pos[2] - 1e-6 and pos[0] < ap[0] + ap[2] - 1e-6 and
-                ap[1] < pos[1] + pos[3] - 1e-6 and pos[1] < ap[1] + ap[3] - 1e-6):
+        if _overlaps(a, pos):
             a.delete_handle()
     a = Axes(f)
     a.props['Position'] = np.array([pos])
@@ -345,6 +364,22 @@ def axes(nargout, *args):
     a = Axes(f)
     apply_props(a, pairs)
     set_current_axes(a)
+    a.touch()
+    return a
+
+
+def _make_polar(ax):
+    ax.kind = 'polar'
+    ax.props['DataAspectRatio'] = np.array([[1.0, 1.0, 1.0]])
+    ax.props['DataAspectRatioMode'] = 'manual'
+
+
+@bi('polaraxes', arr=False)
+def polaraxes(nargout, *args):
+    """Polar axes in the current figure (or the figure or panel given first),
+    with the properties given; they are made current."""
+    a = axes(1, *args)
+    _make_polar(a)
     a.touch()
     return a
 
@@ -700,11 +735,20 @@ def _series_color(ax, given=None):
     return given if given is not None else ax.next_color()
 
 
+def _color_word(v):
+    """A colour given by name or hex code, as scatter(x, y, sz, 'red')."""
+    s = opt_str(v)
+    s = s.strip().lower() if s is not None else ''
+    return s in NAMED or (s.startswith('#') and len(s) in (4, 7))
+
+
 @bi('scatter', 'scatter3', arr=False)
 def scatter(nargout, *args):
     ax, rest = split_axes_arg(args)
     data = []
     while rest and opt_str(rest[0]) is None and len(data) < 5:
+        data.append(rest.pop(0))
+    if len(data) == 3 and rest and _color_word(rest[0]):
         data.append(rest.pop(0))
     filled = False
     marker = 'o'
@@ -725,7 +769,7 @@ def scatter(nargout, *args):
             i += 2
             continue
         i += 1
-    three = len(data) >= 3 and numel(data[2]) == numel(data[0]) and numel(data[0]) > 1 and (len(data) >= 4 or False) or (len(data) >= 3 and _caller_is3(args))
+    three = False          # scatter(x, y, sz, c): scatter3 has a function of its own
     x = darr(data[0]).reshape(-1)
     y = darr(data[1]).reshape(-1)
     z = None
@@ -769,15 +813,13 @@ def scatter(nargout, *args):
     return h if nargout else None
 
 
-def _caller_is3(args):
-    return False
-
-
 @bi('scatter3', arr=False)
 def scatter3(nargout, *args):
     ax, rest = split_axes_arg(args)
     data = []
     while rest and opt_str(rest[0]) is None and len(data) < 5:
+        data.append(rest.pop(0))
+    if len(data) == 4 and rest and _color_word(rest[0]):
         data.append(rest.pop(0))
     x, y, z = (darr(d).reshape(-1) for d in data[:3])
     sz = data[3] if len(data) > 3 else None
@@ -1225,9 +1267,7 @@ def polarplot(nargout, *args):
     else:
         theta, rho = darr(data[0]), darr(data[1])
     ax = newplot(ax, box=False)
-    ax.kind = 'polar'
-    ax.props['DataAspectRatio'] = np.array([[1.0, 1.0, 1.0]])
-    ax.props['DataAspectRatioMode'] = 'manual'
+    _make_polar(ax)
     groups = [{'x': out(theta), 'y': out(rho), 'z': None, 'spec': None}]
     pairs = []
     if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None:
@@ -1236,6 +1276,110 @@ def polarplot(nargout, *args):
     hs = _make_lines(ax, groups, pairs)
     ax.touch()
     return handles_out(hs) if nargout else None
+
+
+@bi('polarscatter', arr=False)
+def polarscatter(nargout, *args):
+    """scatter in polar axes: the angles (in radians) and radii as scatter's
+    x and y, with its sizes, colours, markers and 'filled'."""
+    h = scatter(1, *args)
+    ax = h.parent
+    _make_polar(ax)
+    ax.touch()
+    return h if nargout else None
+
+
+def _bubbles(nargout, args, name, three=False):
+    """bubblechart, bubblechart3 and polarbubblechart: a BubbleChart whose
+    bubbles' areas grow with the sizes, between the axes' BubbleSizeRange."""
+    ax, rest = split_axes_arg(args)
+    k = 4 if three else 3
+    data = []
+    while rest and opt_str(rest[0]) is None and len(data) < k + 1:
+        data.append(rest.pop(0))
+    if len(data) == k and rest and _color_word(rest[0]):
+        data.append(rest.pop(0))
+    if len(data) < k:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', name)
+    if len(rest) % 2:
+        raise err('MATLAB:InputParser:ParamMissingValue', 'Name-value arguments must come in pairs.', name)
+    xyz = [darr(d).reshape(-1) for d in data[:k - 1]]
+    sz = np.asarray(darr(data[k - 1]), float).reshape(-1)
+    n = xyz[0].size
+    if any(v.size != n for v in xyz) or sz.size not in (1, n):
+        what = 'X, Y, Z' if three else 'X, Y'
+        raise err(f'MATLAB:{name}:DataLengthMismatch',
+                  f'{what} and the sizes must have the same number of elements, or the size be one number for all.', name)
+    ax = newplot(ax, box=not three)
+    if three and (ax.props['NextPlot'] != 'add' or not ax.is3d()):
+        set3d(ax)
+    h = Series(ax, 'bubblechart')
+    h.props['XData'] = xyz[0].reshape(1, -1)
+    h.props['YData'] = xyz[1].reshape(1, -1)
+    if three:
+        h.props['ZData'] = xyz[2].reshape(1, -1)
+    h.props['SizeData'] = sz.reshape(1, -1)
+    c = data[k] if len(data) > k else None
+    color = None
+    if c is not None and numel(c):
+        if is_str(c):
+            color = to_color(c)
+        else:
+            ca = darr(c)
+            if ca.size == 3 and n != 3:
+                color = to_color(ca)
+            elif ca.ndim == 2 and ca.shape[1] == 3 and ca.shape[0] == n:
+                h.extra['rgb'] = ca
+            else:
+                h.props['CData'] = ca.reshape(1, -1)
+    if color is None and not np.size(h.props['CData']) and 'rgb' not in h.extra:
+        color = ax.next_color()
+    if color is not None:
+        h.props['Color'] = color
+    h.props['MarkerFaceColor'] = 'flat'
+    h.props['MarkerEdgeColor'] = 'flat'
+    h.props['MarkerFaceAlpha'] = 0.6
+    apply_props(h, [(opt_str(rest[i]), rest[i + 1]) for i in range(0, len(rest), 2)])
+    ax.touch()
+    return h
+
+
+@bi('bubblechart', arr=False)
+def bubblechart(nargout, *args):
+    h = _bubbles(nargout, args, 'bubblechart')
+    return h if nargout else None
+
+
+@bi('bubblechart3', arr=False)
+def bubblechart3(nargout, *args):
+    h = _bubbles(nargout, args, 'bubblechart3', three=True)
+    return h if nargout else None
+
+
+@bi('polarbubblechart', arr=False)
+def polarbubblechart(nargout, *args):
+    """bubblechart in polar axes: angles in radians and radii as x and y."""
+    h = _bubbles(nargout, args, 'polarbubblechart')
+    _make_polar(h.parent)
+    h.parent.touch()
+    return h if nargout else None
+
+
+@bi('bubblesize', arr=False)
+def bubblesize(nargout, *args):
+    ax, rest = split_axes_arg(args)
+    nargchk(rest, 0, 1, 'bubblesize')
+    ax = ax or gca_()
+    if not rest:
+        return ax.get_value('BubbleSizeRange')
+    ax.set_value('BubbleSizeRange', darr(rest[0]))
+    ax.touch()
+    return None
+
+
+@bi('bubblelim', arr=False)
+def bubblelim(nargout, *args):
+    return _lim(args, 'Bubble', nargout)
 
 
 @bi('quiver', 'quiver3', arr=False)
@@ -1947,7 +2091,7 @@ def legend(nargout, *args):
         else:
             names.append(py_str(v))
     pairs = name_value(rest, 0)
-    plotted = [c for c in reversed(ax.plot_children()) if c.TYPE in ('line', 'surface', 'patch', 'bar', 'histogram', 'area', 'stair', 'stem', 'errorbar', 'scatter', 'contour', 'quiver')]
+    plotted = [c for c in reversed(ax.plot_children()) if c.TYPE in ('line', 'surface', 'patch', 'bar', 'histogram', 'area', 'stair', 'stem', 'errorbar', 'scatter', 'bubblechart', 'contour', 'quiver')]
     if ax.yy is not None and ax.yy.get('right') is not None:
         plotted += [c for c in reversed(ax.yy['right'].plot_children())]
     if objs is None:
@@ -2845,6 +2989,88 @@ def ancestor(nargout, *args):
     while o is not None and getattr(o, 'TYPE', None) != kind:
         o = getattr(o, 'parent', None)
     return o if o is not None else EMPTY()
+
+
+def _copy_tree(o, parent, made, attach=True):
+    """A copy of a graphics object and everything under it, in parent (made
+    maps id(original) to (original, copy) for the references fixed after)."""
+    import copy
+    from .. import graphics_base as GB
+    c = copy.copy(o)
+    c.id = next(GB._ids)
+    STORE.objects[c.id] = c
+    c.props = {k: (v.copy() if isinstance(v, np.ndarray) else list(v) if isinstance(v, list) else share(v)) for k, v in o.props.items()}
+    c.parent = parent
+    c.children = []
+    c.valid = True
+    if isinstance(getattr(o, 'extra', None), dict):
+        c.extra = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in o.extra.items()}
+    made[id(o)] = (o, c)
+    if attach and parent is not None:
+        parent.children.insert(0, c)
+    for ch in reversed(o.children):
+        if ch.valid:
+            _copy_tree(ch, c, made)
+    # the texts an axes or a colorbar holds outside its children
+    for name in ('title', 'xlabel', 'ylabel', 'zlabel', 'subtitle', 'label'):
+        tx = o.__dict__.get(name)
+        if isinstance(tx, GObj) and tx not in o.children:
+            setattr(c, name, _copy_tree(tx, c, made, attach=False))
+    return c
+
+
+def _repoint(made):
+    """References among the copies point at the copies; one to an object not
+    copied is dropped where it would tie the copy to the original's figure."""
+    def to(v):
+        return made[id(v)][1] if id(v) in made else v
+    for o, c in made.values():
+        for k, v in list(c.__dict__.items()):
+            if k in ('parent', 'children', 'props', 'extra'):
+                continue
+            if isinstance(v, GObj):
+                setattr(c, k, to(v) if id(v) in made else (None if k in ('legend', 'colorbar', 'yy_owner') else v))
+            elif isinstance(v, list) and v and all(isinstance(x, GObj) for x in v):
+                setattr(c, k, [to(x) for x in v if id(x) in made])
+            elif k == 'yy' and isinstance(v, dict):
+                c.yy = {**v, 'right': to(v['right'])} if v.get('right') is not None and id(v['right']) in made else None
+        for k, v in c.props.items():
+            if isinstance(v, GObj) and id(v) in made:
+                c.props[k] = to(v)
+
+
+@bi('copyobj', arr=False)
+def copyobj(nargout, *args):
+    """Copies of graphics objects, each with everything under it, in the new
+    parent(s): an axes, a figure, a panel or a tab."""
+    nargchk(args, 2, 3, 'copyobj')
+    hs = _handles(args[0])
+    parents = _handles(args[1])
+    if len(parents) not in (1, len(hs)):
+        raise err('MATLAB:copyobj:ParentSize', 'There must be one parent, or one for each object copied.', 'copyobj')
+    made = {}
+    copies = []
+    for i, h in enumerate(hs):
+        par = parents[0] if len(parents) == 1 else parents[i]
+        if not isinstance(h, GObj) or not h.valid or h.TYPE in ('figure', 'root'):
+            raise err('MATLAB:copyobj:InvalidObject', 'copyobj copies the objects in a figure (axes, lines, text, controls ...), '
+                      'not a figure itself.', 'copyobj')
+        if not isinstance(par, GObj) or not par.valid or par.TYPE not in ('figure', 'axes', 'uipanel', 'uibuttongroup', 'uitab', 'hggroup'):
+            raise err('MATLAB:copyobj:InvalidParent', 'The new parent must be an axes, a figure, a panel or a tab.', 'copyobj')
+        if h.TYPE in ('legend', 'colorbar') and not any(x is h.axes for x in hs):
+            raise err('MATLAB:copyobj:LegendWithoutAxes', f'A {h.TYPE} is copied together with its axes: copyobj([ax, {h.TYPE[:3]}], parent).', 'copyobj')
+        target = par.figure() if h.TYPE in ('legend', 'colorbar') else par
+        copies.append(_copy_tree(h, target, made))
+    _repoint(made)
+    for c in copies:
+        c.touch()
+    if len(copies) == 1 and not isinstance(args[0], HArr):
+        return copies[0]
+    shape = args[0].a.shape if isinstance(args[0], HArr) else (1, len(copies))
+    a = np.empty(len(copies), object)
+    for i, c in enumerate(copies):
+        a[i] = c
+    return HArr(a.reshape(shape))
 
 
 @bi('drawnow', aw=True, arr=False)

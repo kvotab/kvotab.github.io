@@ -671,3 +671,122 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
   html:has(.pl) { overflow: visible; }
   .pl-tabs, .pl-strip, .pl-address, .pl-status, .pl-left, .pl-right { display: none !important; }
 }
+
+/* ---- the components of apps (uifigure and its kin) ---------------------------------------------- */
+.pl-uagrid { pointer-events: none; }
+.pl-uagrid > .pl-uibody { position: absolute; inset: 0; }
+.pl-ua { display: flex; align-items: center; overflow: visible; font-size: 12px; }
+.pl-ua.is-off { opacity: 0.5; pointer-events: none; }
+.pl-ua-button { justify-content: center; gap: 4px; padding: 0 6px; border: 1px solid #a9a9a9; border-radius: 4px; background: var(--ua-bg, #f5f5f5);
+  color: inherit; font: inherit; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.pl-ua-button:hover:not(:disabled) { border-color: #4a7ab8; }
+.pl-ua-button:active:not(:disabled), .pl-ua-button[aria-pressed="true"] { background: color-mix(in srgb, var(--ua-bg, #f5f5f5) 78%, #4a7ab8); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2); }
+.pl-ua-button:focus-visible { outline: 2px solid #4a7ab8; outline-offset: 1px; }
+.pl-ua-button.icon-right { flex-direction: row-reverse; }
+.pl-ua-button.icon-top { flex-direction: column; }
+.pl-ua-button img { max-height: 100%; max-width: 60%; object-fit: contain; }
+.pl-ua-label, .pl-ua-link { background: var(--ua-bg, transparent); padding: 0 2px; }
+.pl-ua-label .txt, .pl-ua-link .txt { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.pl-ua-label.wrap .txt { white-space: pre-wrap; }
+.pl-ua-link a { color: inherit; text-decoration: underline; cursor: pointer; }
+.pl-ua-edit input, .pl-ua-spin input, .pl-ua-drop select, .pl-ua-drop input, .pl-ua-area textarea, .pl-ua-list select {
+  width: 100%; height: 100%; box-sizing: border-box; border: 1px solid #a9a9a9; border-radius: 3px; background: var(--ua-bg, #fff);
+  color: inherit; font: inherit; padding: 1px 5px; margin: 0; }
+.pl-ua-edit input:focus, .pl-ua-spin input:focus, .pl-ua-drop select:focus, .pl-ua-drop input:focus, .pl-ua-area textarea:focus, .pl-ua-list select:focus {
+  outline: none; border-color: #4a7ab8; box-shadow: 0 0 0 1px #4a7ab8; }
+.pl-ua-area textarea { resize: none; padding: 3px 5px; }
+.pl-ua-list select { padding: 0; }
+.pl-ua-list option { padding: 2px 5px; }
+.pl-ua-spin input { padding-right: 18px; }
+.pl-ua-spin .arrows { position: absolute; right: 1px; top: 1px; bottom: 1px; width: 16px; display: flex; flex-direction: column; }
+.pl-ua-spin .arrows button { flex: 1; border: 0; border-left: 1px solid #ccc; background: #f2f2f2; font-size: 8px; line-height: 1; padding: 0; cursor: pointer; color: #333; }
+.pl-ua-spin .arrows button:hover { background: #e0e8f4; }
+.pl-ua-check { gap: 5px; cursor: pointer; white-space: nowrap; }
+.pl-ua-check input { margin: 0; }
+.pl-ua-switch { gap: 6px; justify-content: center; }
+.pl-ua-switch .track { position: relative; width: 45px; height: 20px; flex: none; border: 1px solid #8a8a8a; border-radius: 10px; background: #d8d8d8; cursor: pointer; padding: 0; }
+.pl-ua-switch .thumb { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); transition: left 0.12s; }
+.pl-ua-switch .track[aria-checked="true"] { background: #4a7ab8; border-color: #3a6aa8; }
+.pl-ua-switch .track[aria-checked="true"] .thumb { left: 27px; }
+.pl-ua-switch.is-vertical { flex-direction: column-reverse; }
+.pl-ua-switch.is-vertical .track { width: 20px; height: 45px; }
+.pl-ua-switch.is-vertical .thumb { top: auto; bottom: 2px; transition: bottom 0.12s; }
+.pl-ua-switch.is-vertical .track[aria-checked="true"] .thumb { left: 2px; bottom: 27px; }
+.pl-ua-switch .lab { white-space: nowrap; }
+.pl-ua-slider { flex-direction: column; align-items: stretch; justify-content: center; }
+.pl-ua-slider input { width: 100%; margin: 0; height: 14px; }
+.pl-ua-slider .ticks { position: relative; height: 18px; margin: 0 7px; }
+.pl-ua-slider .tick { position: absolute; left: calc(var(--f) * 100%); top: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
+.pl-ua-slider .tick i { width: 1px; height: 4px; background: #555; }
+.pl-ua-slider .tick b { font-weight: 400; font-size: 0.85em; white-space: nowrap; }
+.pl-ua-slider.is-vertical input { writing-mode: vertical-lr; direction: rtl; width: 14px; height: 100%; }
+.pl-ua-knob svg, .pl-ua-gauge svg { width: 100%; height: 100%; overflow: visible; }
+.pl-ua-knob svg { cursor: grab; touch-action: none; }
+.pl-ua-knob .dial { fill: #f4f4f4; stroke: #8a8a8a; stroke-width: 1; }
+.pl-ua-knob .dot { fill: #4a7ab8; }
+.pl-ua-knob .tk, .pl-ua-gauge .tk { stroke: #555; stroke-width: 1; }
+.pl-ua-knob .lb, .pl-ua-gauge .lb { font-size: 10px; fill: currentColor; }
+.pl-ua-gauge { background: transparent; }
+.pl-ua-gauge .trackline { fill: none; stroke: #c8c8c8; stroke-width: 6; }
+.pl-ua-gauge .band { fill: none; stroke-width: 6; }
+.pl-ua-gauge .track { fill: #e3e3e3; stroke: #aaa; }
+.pl-ua-gauge .needleline { stroke: #333; stroke-width: 2; stroke-linecap: round; }
+.pl-ua-gauge .needle, .pl-ua-gauge .hub { fill: #333; }
+.pl-ua-lamp { justify-content: center; }
+.pl-ua-lamp .dot { flex: none; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.45); box-sizing: border-box; }
+.pl-ua-image img { width: 100%; height: 100%; }
+
+/* ---- the app designer (pylab-designer.js) ------------------------------------------------------- */
+.pl-ad { position: fixed; inset: 3vh 3vw; z-index: 900; display: flex; flex-direction: column; background: var(--pl-chrome); color: var(--pl-text);
+  border: 1px solid var(--pl-border); border-radius: 6px; box-shadow: var(--pl-shadow); font: 13px "IBM Plex Sans", system-ui, sans-serif; }
+.pl-ad-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--pl-border); }
+.pl-ad-bar button { padding: 4px 12px; border: 1px solid var(--pl-border); border-radius: 4px; background: var(--pl-panel); color: inherit; font: inherit; cursor: pointer; }
+.pl-ad-bar button:hover { border-color: #4a7ab8; }
+.pl-ad-name { width: 14em; padding: 3px 6px; border: 1px solid var(--pl-border); border-radius: 4px; font: 13px "IBM Plex Mono", monospace; background: var(--pl-panel); color: inherit; }
+.pl-ad-grow { flex: 1; }
+.pl-ad-body { flex: 1; display: flex; min-height: 0; }
+.pl-ad-palette { width: 150px; flex: none; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 3px; border-right: 1px solid var(--pl-border); }
+.pl-ad-palette button { text-align: left; padding: 4px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: inherit; font: inherit; cursor: grab; }
+.pl-ad-palette button:hover { background: var(--pl-panel); border-color: var(--pl-border); }
+.pl-ad-stage { flex: 1; overflow: auto; padding: 24px; background: repeating-conic-gradient(rgba(0, 0, 0, 0.03) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.pl-ad-canvas { position: relative; background: #f0f0f0; border: 1px solid #9aa0a8; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); outline: none; color: #000; color-scheme: light; }
+.pl-ad-canvas:focus-visible { box-shadow: 0 0 0 2px #4a7ab8, 0 4px 14px rgba(0, 0, 0, 0.18); }
+.pl-ad-comp { position: absolute; box-sizing: border-box; cursor: move; font: 12px Helvetica, Arial, sans-serif; user-select: none; }
+.pl-ad-comp.is-sel { outline: 1px dashed #2f6db5; outline-offset: 2px; z-index: 2; }
+.pl-ad-comp .pv { width: 100%; height: 100%; box-sizing: border-box; display: flex; align-items: center; overflow: hidden; white-space: nowrap; pointer-events: none; }
+.pv-btn { justify-content: center; border: 1px solid #a9a9a9; border-radius: 4px; background: #f5f5f5; }
+.pv-label { padding: 0 2px; }
+.pv-link { color: #0054cc; text-decoration: underline; }
+.pv-edit { border: 1px solid #a9a9a9; border-radius: 3px; background: #fff; padding: 0 5px; }
+.pv-area, .pv-list { align-items: flex-start; flex-direction: column; padding: 3px 5px; }
+.pv-drop::after { content: '▾'; margin-left: auto; }
+.pv-check { gap: 5px; }
+.pv-check .box { width: 12px; height: 12px; border: 1px solid #777; border-radius: 2px; background: #fff; }
+.pv-switch .track { width: 100%; height: 100%; border-radius: 10px; background: #d8d8d8; border: 1px solid #8a8a8a; }
+.pv-slider { border-top: 3px solid #b8b8b8; height: 3px !important; margin-top: 6px; }
+.pv-round { border-radius: 50%; border: 1px solid #8a8a8a; background: #f4f4f4; }
+.pv-lamp { background: radial-gradient(circle at 35% 30%, #b8ffb8, #19c219 60%, #0b6d0b); }
+.pv-axes, .pv-panel { align-items: flex-start; justify-content: center; border: 1px solid #b4b4b4; background: #fff; padding-top: 4px; font-weight: 600; }
+.pv-panel { justify-content: flex-start; padding-left: 6px; background: transparent; font-weight: 400; }
+.pl-ad-comp .hd { position: absolute; width: 7px; height: 7px; background: #fff; border: 1px solid #2f6db5; box-sizing: border-box; }
+.hd-n, .hd-s { left: calc(50% - 3px); cursor: ns-resize; }
+.hd-e, .hd-w { top: calc(50% - 3px); cursor: ew-resize; }
+.hd-n, .hd-ne, .hd-nw { top: -6px; }
+.hd-s, .hd-se, .hd-sw { bottom: -6px; }
+.hd-e, .hd-ne, .hd-se { right: -6px; }
+.hd-w, .hd-nw, .hd-sw { left: -6px; }
+.hd-ne, .hd-sw { cursor: nesw-resize; }
+.hd-nw, .hd-se { cursor: nwse-resize; }
+.pl-ad-inspector { width: 280px; flex: none; overflow: auto; padding: 10px 12px; border-left: 1px solid var(--pl-border); }
+.pl-ad-inspector h3 { margin: 0 0 8px; font-size: 13px; }
+.pl-ad-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.pl-ad-row > span { font-size: 11px; opacity: 0.8; }
+.pl-ad-row input[type="text"], .pl-ad-row textarea { padding: 3px 6px; border: 1px solid var(--pl-border); border-radius: 3px; background: var(--pl-panel); color: inherit; font: 12px "IBM Plex Mono", monospace; }
+.pl-ad-row textarea { resize: vertical; tab-size: 4; }
+.pl-ad-inspector > button { margin: 2px 0 8px; padding: 4px 8px; border: 1px solid var(--pl-border); border-radius: 4px; background: var(--pl-panel); color: inherit; font: inherit; cursor: pointer; }
+.pl-ad-hint { font-size: 12px; opacity: 0.8; line-height: 1.4; }
+@media (max-width: 760px) {
+  .pl-ad { inset: 0; border-radius: 0; }
+  .pl-ad-palette { width: 110px; }
+  .pl-ad-inspector { width: 180px; }
+}

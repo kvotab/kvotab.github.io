@@ -1018,6 +1018,12 @@ class Parser:
                     out.append(Colon(t.line))
                 else:
                     out.append(self.expr())
+            elif t.k == 'id' and close == ')' and self.peek(1).k == 'op' and self.peek(1).v == '=':
+                # Name=Value in a call: the same as 'Name', Value
+                self.next()
+                self.next()
+                out.append(Chr(t.v, t.line))
+                out.append(self.expr())
             else:
                 out.append(self.expr())
             t = self.peek()

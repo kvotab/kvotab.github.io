@@ -511,8 +511,22 @@ def body_lines(v):
     return ['  ' + repr(v)]
 
 
+class _NoSym:
+    pass
+
+
+SYM = _NoSym          # symbolic.Sym (symbolic.py sets it)
+SYMOPS = None
+
+
 def display(name, v):
     """`name = value` as the Command Window shows it."""
+    if type(v) is SYM:
+        return SYMOPS.display(name, v)
+    if getattr(v, 'custom_display', None) is not None:
+        r = v.custom_display(name)
+        if r is not None:
+            return r
     loose = FMT['spacing'] == 'loose'
     t = type(v)
     if t is np.ndarray and v.ndim > 2 and v.size > 0:
@@ -553,6 +567,8 @@ def _display_nd(name, v):
 def disp_text(v):
     """What disp(v) prints."""
     t = type(v)
+    if t is SYM:
+        return SYMOPS.disp_text(v)
     if t is Char:
         if v.a.size == 0:
             return ''

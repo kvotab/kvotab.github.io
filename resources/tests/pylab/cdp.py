@@ -35,6 +35,7 @@ class Page:
         self.errors = []
         self.console = []
         self.drags = []       # the drags Chrome intercepts (Input.dragIntercepted), for drag_to()
+        self.handlers = {}    # a method's name -> async handler(params), for other events (Fetch.requestPaused)
 
     async def call(self, method, params=None, session=None, timeout=120):
         self.n += 1
@@ -59,6 +60,8 @@ class Page:
                     self.errors.append(str(d.get('exception', {}).get('description') or d.get('text', ''))[:600])
                 elif m == 'Runtime.consoleAPICalled' and r['params'].get('type') in ('error', 'warning'):
                     self.console.append(' '.join(str(a.get('value', a.get('description', ''))) for a in r['params'].get('args', []))[:400])
+                elif m in self.handlers:
+                    asyncio.create_task(self.handlers[m](r['params']))
                 if 'id' in r and r['id'] in self.pending and not self.pending[r['id']].done():
                     self.pending[r['id']].set_result(r)
         except websockets.ConnectionClosed:

@@ -52,6 +52,7 @@
   /* Icons: 24-unit boxes, drawn in the current colour. */
   const P = {
     newscript: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M12 11v6M9 14h6"/>',
+    newapp: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8h18M6 12h6v3H6zM14 13.5h4M6 17.5h12"/>',
     newfunc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M13.5 10.5c-1.6-.4-2.3.6-2.5 2l-.8 5.5c-.2 1.3-1 1.8-2.2 1.5M9 13.5h4"/>',
     open: '<path d="M3 6h6l2 2h10v11H3z"/><path d="M3 10h18"/>',
     save: '<path d="M5 3h12l3 3v15H5z"/><path d="M8 3v5h8V3M8 21v-7h9v7"/>',

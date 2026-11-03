@@ -514,7 +514,8 @@ class Figure(GObj):
         STORE.closed.append(self.id)
         STORE.dirty.discard(self)
         if STORE.current is self:
-            rest = sorted(STORE.figures.values(), key=lambda f: -f.order)
+            # the newest figure left whose handle is shown (never a dialog's window)
+            rest = sorted((f for f in STORE.figures.values() if f.props['HandleVisibility'] == 'on'), key=lambda f: -f.order)
             STORE.current = rest[0] if rest else None
 
     def axes_list(self):
@@ -558,6 +559,7 @@ class Axes(GObj):
         'TickLabelInterpreter': 'tex', 'Colormap': None, 'ActivePositionProperty': 'outerposition', 'SortMethod': 'depth',
         'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None,
         'CameraViewAngle': 6.6086, 'CameraViewAngleMode': 'auto',
+        'BubbleSizeRange': lambda: np.array([[1.0, 20.0]]), 'BubbleLim': lambda: np.array([[0.0, 1.0]]), 'BubbleLimMode': 'auto',
     }
     SHOWN = ['XLim', 'YLim', 'XScale', 'YScale', 'GridLineStyle', 'Position', 'Units']
 
@@ -580,6 +582,30 @@ class Axes(GObj):
         self.layout_cell = None
         self.is3d_hint = False
 
+    @property
+    def cls(self):
+        if self.kind == 'geo':
+            return 'matlab.graphics.axis.GeographicAxes'
+        return 'matlab.graphics.axis.PolarAxes' if self.kind == 'polar' else self.CLASSNAME
+
+    def getprop(self, name):
+        if name.lower() == 'type' and self.kind in ('polar', 'geo'):
+            return Char.of('polaraxes' if self.kind == 'polar' else 'geoaxes')
+        if name.lower() == 'basemap' and self.kind == 'geo':
+            return Char.of(getattr(self, 'extra_geo', {}).get('basemap', 'none'))
+        return super().getprop(name)
+
+    def setprop(self, name, value):
+        if name.lower() == 'basemap' and self.kind == 'geo':
+            from .builtins.mapping import set_basemap
+            set_basemap(self, value)
+            return
+        super().setprop(name, value)
+
+    def propnames(self):
+        names = super().propnames()
+        return sorted(names + ['Basemap']) if self.kind == 'geo' else names
+
     def get_value(self, k):
         if k in ('XLim', 'YLim', 'ZLim') and self.props[k + 'Mode'] == 'auto':
             from .glayout import auto_limits
@@ -596,6 +622,8 @@ class Axes(GObj):
         if k == 'CLim' and self.props['CLimMode'] == 'auto':
             from .glayout import auto_clim
             return np.array([auto_clim(self)])
+        if k == 'BubbleLim':
+            return np.array([bubble_lim(self)])
         if k == 'CameraViewAngle' and self.props['CameraViewAngleMode'] == 'auto':
             return self.auto_view_angle()
         if k == 'Title':
@@ -620,6 +648,16 @@ class Axes(GObj):
         return super().get_value(k)
 
     def set_value(self, k, value):
+        if k in ('BubbleLim', 'BubbleSizeRange'):
+            a = np.asarray(value if type(value) is not float else [value], float).reshape(-1)
+            if a.size != 2 or not np.all(np.isfinite(a)) or not (a[0] < a[1] or (k == 'BubbleSizeRange' and a[0] == a[1])) \
+                    or (k == 'BubbleSizeRange' and a[0] <= 0):
+                what = 'positive and increasing' if k == 'BubbleSizeRange' else 'increasing'
+                raise gerr(f'Value must be a 1x2 vector of finite numbers, {what}.', 'MATLAB:hg:shaped_arrays:LimitsPredicate')
+            self.props[k] = np.array([[float(a[0]), float(a[1])]])
+            if k == 'BubbleLim':
+                self.props['BubbleLimMode'] = 'manual'
+            return
         if k in ('XLim', 'YLim', 'ZLim', 'CLim'):
             a = np.asarray(value if type(value) is not float else [value], float).reshape(-1)
             if a.size != 2:
@@ -1121,7 +1159,7 @@ class Series(GObj):
                 'UData': lambda: EMPTY(), 'VData': lambda: EMPTY(), 'WData': lambda: EMPTY(),
                 'FaceColor': (0.0, 0.447, 0.741), 'EdgeColor': (0.0, 0.0, 0.0), 'Color': (0.0, 0.447, 0.741),
                 'LineStyle': '-', 'LineWidth': 0.5, 'Marker': 'none', 'MarkerSize': 6.0, 'MarkerFaceColor': 'none',
-                'MarkerEdgeColor': 'flat', 'FaceAlpha': 1.0, 'EdgeAlpha': 1.0, 'MarkerFaceAlpha': 1.0, 'BarWidth': 0.8,
+                'MarkerEdgeColor': 'flat', 'FaceAlpha': 1.0, 'EdgeAlpha': 1.0, 'MarkerFaceAlpha': 1.0, 'MarkerEdgeAlpha': 1.0, 'BarWidth': 0.8,
                 'BaseValue': 0.0, 'DisplayName': '', 'Visible': True, 'Tag': '', 'UserData': lambda: EMPTY(),
                 'SizeData': 36.0, 'LevelList': lambda: EMPTY(), 'LevelListMode': 'auto', 'ShowText': False, 'Fill': False,
                 'BinEdges': lambda: EMPTY(), 'Values': lambda: EMPTY(), 'Normalization': 'count', 'NumBins': 0.0,
@@ -1132,6 +1170,7 @@ class Series(GObj):
     CLASSNAMES = {'bar': 'matlab.graphics.chart.primitive.Bar', 'stem': 'matlab.graphics.chart.primitive.Stem',
                   'stair': 'matlab.graphics.chart.primitive.Stair', 'area': 'matlab.graphics.chart.primitive.Area',
                   'errorbar': 'matlab.graphics.chart.primitive.ErrorBar', 'scatter': 'matlab.graphics.chart.primitive.Scatter',
+                  'bubblechart': 'matlab.graphics.chart.primitive.BubbleChart',
                   'histogram': 'matlab.graphics.chart.primitive.Histogram', 'contour': 'matlab.graphics.chart.primitive.Contour',
                   'quiver': 'matlab.graphics.chart.primitive.Quiver', 'pie': 'matlab.graphics.primitive.Patch'}
 
@@ -1149,6 +1188,9 @@ class Series(GObj):
         return self.kind
 
     def get_value(self, k):
+        if k == 'CData' and self.kind in ('scatter', 'bubblechart') and not numel(self.props['CData']) \
+                and isinstance(self.props['Color'], tuple):
+            return np.array([self.props['Color']], float)
         if k == 'Values' and self.kind == 'histogram':
             return self.extra.get('values', EMPTY())
         if k == 'BinEdges' and self.kind == 'histogram':
@@ -1156,6 +1198,13 @@ class Series(GObj):
         return super().get_value(k)
 
     def set_value(self, k, value):
+        if k == 'CData' and self.kind in ('scatter', 'bubblechart') and type(value) not in (Char, Str) and numel(value) == 3 \
+                and numel(self.props['XData']) != 3:
+            # one colour for all the markers
+            self.props['Color'] = to_color(value)
+            self.props['CData'] = EMPTY()
+            self.extra.pop('rgb', None)
+            return
         if k in ('XData', 'YData', 'ZData', 'UData', 'VData', 'CData', 'SizeData'):
             self.props[k] = np.asarray(value, float) if numel(value) and type(value) is not Char else value
             if self.kind == 'histogram' and k == 'Data':
@@ -1387,7 +1436,7 @@ def serialize_child(c, ax):
                  faceAlpha=float(_num(p['FaceAlpha'])) if not isinstance(p['FaceAlpha'], str) else 1.0,
                  edgeAlpha=float(_num(p['EdgeAlpha'])) if not isinstance(p['EdgeAlpha'], str) else 1.0,
                  lineStyle=p['LineStyle'], lineWidth=float(p['LineWidth']), marker=p['Marker'], markerSize=float(p['MarkerSize']),
-                 mfc=_color(p['MarkerFaceColor']))
+                 mfc=_color(p['MarkerFaceColor']), rings=bool(getattr(c, 'rings', False)))
     elif t == 'image':
         cd = p['CData']
         a = np.asarray(cd.a if type(cd) is Char else cd)
@@ -1414,12 +1463,45 @@ def serialize_child(c, ax):
                  barWidth=float(p['BarWidth']), baseValue=float(p['BaseValue']), showText=bool(p['ShowText']),
                  fill=bool(p['Fill']), horizontal=bool(p['Horizontal']), capSize=float(p['CapSize']),
                  maxHeadSize=float(p['MaxHeadSize']), labels=p.get('Labels') or [])
+        for k in ('MarkerFaceAlpha', 'MarkerEdgeAlpha'):
+            v = p[k]
+            d[k[0].lower() + k[1:]] = 1.0 if isinstance(v, str) else float(_num(v))
+        if c.kind == 'bubblechart':
+            d['bubbleSize'] = _arr(bubble_diameters(ax, c).reshape(1, -1))
         for k, v in c.extra.items():
             if isinstance(v, np.ndarray):
                 d[k] = _arr(v)
             elif isinstance(v, (list, str, float, int, bool)) or v is None:
                 d[k] = v
     return d
+
+
+def bubble_lim(ax):
+    """The sizes that the smallest and the largest bubbles stand for: BubbleLim,
+    or in auto mode the range of the sizes of the axes' bubble charts."""
+    if ax.props['BubbleLimMode'] == 'manual':
+        return [float(v) for v in np.asarray(ax.props['BubbleLim'], float).reshape(-1)]
+    lo, hi = math.inf, -math.inf
+    for c in ax.children:
+        if c.valid and isinstance(c, Series) and c.kind == 'bubblechart':
+            a = np.asarray(c.props['SizeData'], float).reshape(-1)
+            a = a[np.isfinite(a)]
+            if a.size:
+                lo, hi = min(lo, float(a.min())), max(hi, float(a.max()))
+    return [0.0, 1.0] if lo > hi else [lo, hi]
+
+
+def bubble_diameters(ax, c):
+    """Each bubble's diameter in points. A size is clipped to BubbleLim, and
+    its place between the two ends is its bubble's place between the areas of
+    the smallest and the largest bubble of BubbleSizeRange. When all the
+    sizes are the same, the bubbles are the size halfway."""
+    lo, hi = bubble_lim(ax)
+    dmin, dmax = (float(v) for v in np.asarray(ax.props['BubbleSizeRange'], float).reshape(-1))
+    s = np.asarray(c.props['SizeData'], float).reshape(-1)
+    with np.errstate(invalid='ignore'):
+        f = np.clip((s - lo) / (hi - lo), 0.0, 1.0) if hi > lo else np.where(np.isfinite(s), 0.5, np.nan)
+    return np.sqrt(dmin ** 2 + f * (dmax ** 2 - dmin ** 2))
 
 
 def serialize_axes(ax):
@@ -1432,7 +1514,7 @@ def serialize_axes(ax):
     cl = list(p['CLim'].reshape(-1)) if p['CLimMode'] == 'manual' else auto_clim(ax)
     cmap = ax.get_value('Colormap')
     d = {
-        'id': ax.id, 'type': 'axes', 'kind': ax.kind,
+        'id': ax.id, 'type': 'axes', 'kind': ax.kind, 'geo': ax.kind == 'geo',
         'position': [float(x) for x in np.asarray(p['Position'], float).reshape(-1)],
         'xlim': [float(x) for x in xl], 'ylim': [float(x) for x in yl], 'zlim': [float(x) for x in zl],
         'xlimMode': p['XLimMode'], 'ylimMode': p['YLimMode'], 'zlimMode': p['ZLimMode'],
@@ -1466,6 +1548,11 @@ def serialize_axes(ax):
         'parent': ax.parent.id if ax.parent is not None and ax.parent.TYPE not in ('figure', 'axes') else None,
     }
     d.update(_interact_json(ax))
+    if ax.kind == 'geo':
+        # the basemap's name, and for one of addCustomBasemap its tiles (pylab-basemap.js)
+        eg = getattr(ax, 'extra_geo', {})
+        d['basemap'] = eg.get('basemap', 'none')
+        d['basemapCustom'] = eg.get('custom')
     if ax.yy is not None:
         d['yy'] = {'side': ax.yy['side'], 'right': serialize_axes(ax.yy['right']) if ax.yy.get('right') is not None else None}
     return d
@@ -1494,10 +1581,10 @@ def serialize_figure(f):
                 if isinstance(e, Series):
                     ed['kind'] = e.kind
                 ep = e.props
-                for k in ('Color', 'LineStyle', 'LineWidth', 'Marker', 'MarkerSize', 'MarkerFaceColor', 'MarkerEdgeColor', 'FaceColor', 'EdgeColor', 'FaceAlpha'):
+                for k in ('Color', 'LineStyle', 'LineWidth', 'Marker', 'MarkerSize', 'MarkerFaceColor', 'MarkerEdgeColor', 'FaceColor', 'EdgeColor', 'FaceAlpha', 'MarkerFaceAlpha'):
                     if k in ep:
                         v = ep[k]
-                        ed[k[0].lower() + k[1:]] = _color(v) if 'Color' in k else (float(_num(v)) if k in ('LineWidth', 'MarkerSize', 'FaceAlpha') and not isinstance(v, str) else v)
+                        ed[k[0].lower() + k[1:]] = _color(v) if 'Color' in k else (float(_num(v)) if k in ('LineWidth', 'MarkerSize', 'FaceAlpha', 'MarkerFaceAlpha') and not isinstance(v, str) else v)
                 if isinstance(e, Series) and e.kind in ('bar', 'histogram', 'area', 'pie'):
                     fc = e.props['FaceColor']
                     if isinstance(fc, str) and fc in ('flat', 'auto'):

@@ -18,6 +18,7 @@ from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128
                       shape_of, numel, _2d, EMPTY, py_str, share, share_all, text_list)
 from .. import runtime as R
 from .. import matfile as MF
+from .. import geodata as GD
 
 
 def abspath(p):
@@ -611,6 +612,19 @@ def type_(nargout, *args):
     if nargout:
         return Char.of(text)
     R.write('\n' + text + ('\n' if not text.endswith('\n') else '') + '\n')
+    return None
+
+
+@bi('appdesigner', arr=False)
+def appdesigner(nargout, *args):
+    """The page's app designer, on a new app or an app file made in it."""
+    path = ''
+    if args:
+        name = sval(args[0], 'file name', 'appdesigner')
+        if not name.endswith('.m'):
+            name += '.m'
+        path = abspath(name)
+    _event('appdesigner', path=path)
     return None
 
 
@@ -1433,6 +1447,15 @@ async def load(W, nargout, *args):
     p = abspath(fname)
     if not os.path.isfile(p) and os.path.isfile(p + '.mat'):
         p += '.mat'
+    if not os.path.isfile(p) and GD.dataset(fname, 'mat'):
+        # coastlines: Natural Earth's, fetched now (geodata.py)
+        lat, lon = await GD.coastlines()
+        data = {k: v for k, v in (('coastlat', out(lat)), ('coastlon', out(lon))) if not names or k in names}
+        if nargout:
+            return Struct.scalar(data)
+        for k, v in data.items():
+            W[k] = v
+        return None
     if not os.path.isfile(p):
         raise err('MATLAB:load:couldNotReadFile', f"Unable to find file or directory '{fname}'.", 'load')
     is_mat = not ascii_ and (mat_ or p.lower().endswith('.mat') or MF.kind(p) is not None)

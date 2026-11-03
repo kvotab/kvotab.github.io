@@ -478,11 +478,17 @@
 
   /* ---- drawing a figure -------------------------------------------------------------------- */
   class Renderer {
-    constructor() { this.frames = []; this.textBoxes = new Map(); }
+    constructor() {
+      this.frames = [];
+      this.textBoxes = new Map();
+      this.waits = [];          // basemap tiles and land still loading (pylab-basemap.js)
+      this.onTile = null;       // called as each arrives
+    }
 
     draw(ctx, fig, W, H) {
       this.frames = [];
       this.textBoxes = new Map();
+      this.waits = [];
       MIN_LW = 1 / (ctx.getTransform().a || 1);
       ctx.save();
       ctx.fillStyle = rgb(fig.color);
@@ -693,17 +699,22 @@
       const manual = ax[`${which}ticklabel`];
       let labels, exp = null;
       if (manual) { labels = ticks.map((_, i) => manual.length ? manual[i % manual.length] : ''); }
-      else ({ labels, exp } = tickLabels(ticks, log));
+      else if (ax.geo && (which === 'x' || which === 'y')) {
+        // geographic axes: degrees with their hemisphere, 10°W and 30°N
+        ({ labels } = tickLabels(ticks.map(Math.abs), false));
+        labels = labels.map((s, i) => `${s}°${ticks[i] === 0 ? '' : which === 'x' ? (ticks[i] > 0 ? 'E' : 'W') : (ticks[i] > 0 ? 'N' : 'S')}`);
+      } else ({ labels, exp } = tickLabels(ticks, log));
       return { ticks, labels, exp };
     }
 
     /* The axes' children in their order, each kept inside the axes' box
-       unless its Clipping is off (text's is, unless set). */
+       unless its Clipping is off (text's is, unless set). Bubbles are kept
+       by their middles instead (series2). */
     children2(ctx, ax, fr, r) {
       let clipped = false;
       for (const c of ax.children) {
         if (c.visible === false) continue;
-        const want = c.clip !== false;
+        const want = c.clip !== false && c.kind !== 'bubblechart';
         if (want !== clipped) {
           if (clipped) ctx.restore();
           else { ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip(); }
@@ -723,12 +734,15 @@
         ctx.fillStyle = rgb(ax.color);
         ctx.fillRect(r.x, r.y, r.w, r.h);
       }
+      // geographic axes: their basemap, under the grid and the data
+      const mapNote = ax.visible && ax.geo && ax.basemap && ax.basemap !== 'none' && PL.basemap ? PL.basemap.draw(ctx, ax, fr, this) : null;
       const xt = this.ticksFor(ax, 'x', r, false);
       const yt = this.ticksFor(ax, 'y', r, false);
       ax._ticks = { xt, yt };
       // grid under the data
       if (ax.visible) this.grid2(ctx, ax, fr, xt, yt);
       this.children2(ctx, ax, fr, r);
+      if (mapNote) this.mapNote(ctx, r, mapNote);
       if (!ax.visible) { this.labels2(ctx, ax, fr, null, null, true); return; }
       // the axes' lines, ticks and labels on top
       ctx.save();
@@ -787,6 +801,16 @@
       if (xt.exp !== null) drawText(ctx, `\\times10^{${xt.exp}}`, r.x + r.w, xAtTop ? yb - fs * 1.6 : yb + fs * 1.6 + 2, { size: fs, color: ink, halign: 'right', valign: 'top' });
       if (yt.exp !== null) drawText(ctx, `\\times10^{${yt.exp}}`, yAtRight ? r.x + r.w : r.x, r.y - 4, { size: fs, color: yink, halign: yAtRight ? 'right' : 'left', valign: 'bottom' });
       this.labels2(ctx, ax, fr, maxYLabel, yt.exp !== null ? fs : 0, false);
+    }
+
+    /* A basemap's attribution, small in the lower right corner of the axes,
+       made smaller to fit narrow axes. */
+    mapNote(ctx, r, text) {
+      let size = 9;
+      const w = textSize(ctx, text, size, { interpreter: 'none' }).width;
+      if (w > r.w - 8) size = Math.max(5, size * (r.w - 8) / w);
+      drawText(ctx, text, r.x + r.w - 3, r.y + r.h - 2, { size, color: '#333333', halign: 'right', valign: 'bottom',
+        interpreter: 'none', background: 'rgba(255,255,255,0.72)', margin: 2 });
     }
 
     yAxisRight(ctx, ax, fr, r) {
@@ -920,12 +944,23 @@
       for (const poly of polys) {
         if (poly.pts.length < 2) continue;
         ctx.beginPath();
-        poly.pts.forEach(([x, y], i) => { const px = fr.fx(x), py = fr.fy(y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
-        ctx.closePath();
+        if (c.rings) {
+          // a map's polygon (geoshow): rings parted by NaN, filled even-odd so that holes stay open
+          let start = true;
+          for (const [x, y] of poly.pts) {
+            if (!Number.isFinite(x) || !Number.isFinite(y)) { if (!start) ctx.closePath(); start = true; continue; }
+            if (start) ctx.moveTo(fr.fx(x), fr.fy(y)); else ctx.lineTo(fr.fx(x), fr.fy(y));
+            start = false;
+          }
+          if (!start) ctx.closePath();
+        } else {
+          poly.pts.forEach(([x, y], i) => { const px = fr.fx(x), py = fr.fy(y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
+          ctx.closePath();
+        }
         let fill = null;
         if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
         else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, c.faceAlpha);
-        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (fill) { ctx.fillStyle = fill; ctx.fill(c.rings ? 'evenodd' : 'nonzero'); }
         if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
           ctx.strokeStyle = Array.isArray(c.edgeColor) ? rgb(c.edgeColor, c.edgeAlpha) : (poly.c != null ? cmapColor(cmap, ax.clim, poly.c) : AXIS_INK);
           ctx.lineWidth = lw(c.lineWidth);
@@ -1079,7 +1114,7 @@
         return;
       }
       if (k === 'area') {
-        const x = vec(decode(c.x)), top = vec(decode(c.top)), bot = vec(decode(c.bottom));
+        const x = vec(decode(c.xData)), top = vec(decode(c.top)), bot = vec(decode(c.bottom));
         ctx.beginPath();
         for (let i = 0; i < x.length; i++) { const px = fr.fx(x[i]), py = fr.fy(top[i]); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); }
         for (let i = x.length - 1; i >= 0; i--) ctx.lineTo(fr.fx(x[i]), fr.fy(bot[i]));
@@ -1092,7 +1127,7 @@
         return;
       }
       if (k === 'stair') {
-        const x = vec(decode(c.x)), y = vec(decode(c.y));
+        const x = vec(decode(c.xData)), y = vec(decode(c.yData));
         ctx.save();
         ctx.strokeStyle = rgb(c.color);
         ctx.lineWidth = lw(c.lineWidth);
@@ -1109,7 +1144,7 @@
         return;
       }
       if (k === 'stem') {
-        const x = vec(decode(c.x)), y = vec(decode(c.y));
+        const x = vec(decode(c.xData)), y = vec(decode(c.yData));
         const col = rgb(c.color);
         ctx.save();
         ctx.strokeStyle = col;
@@ -1129,7 +1164,7 @@
         return;
       }
       if (k === 'errorbar') {
-        const x = vec(decode(c.x)), y = vec(decode(c.y));
+        const x = vec(decode(c.xData)), y = vec(decode(c.yData));
         const yn = c.yNegativeDelta ? vec(decode(c.yNegativeDelta)) : null, yp = c.yPositiveDelta ? vec(decode(c.yPositiveDelta)) : null;
         const xn = c.xNegativeDelta ? vec(decode(c.xNegativeDelta)) : null, xp = c.xPositiveDelta ? vec(decode(c.xPositiveDelta)) : null;
         const col = rgb(c.color);
@@ -1155,6 +1190,14 @@
         return;
       }
       if (k === 'scatter') return this.scatter(ctx, ax, (xx, yy) => [fr.fx(xx), fr.fy(yy)], c, null);
+      if (k === 'bubblechart') {
+        // a bubble whose middle is in the box is drawn whole, the others not at all
+        const r = fr.r, keep = c.clip === false;
+        return this.scatter(ctx, ax, (xx, yy) => {
+          const px = fr.fx(xx), py = fr.fy(yy);
+          return keep || (px >= r.x - 0.5 && px <= r.x + r.w + 0.5 && py >= r.y - 0.5 && py <= r.y + r.h + 0.5) ? [px, py] : [NaN, NaN];
+        }, c, null);
+      }
       if (k === 'quiver') {
         const X = vec(decode(c.xData)), Y = vec(decode(c.yData)), U = vec(decode(c.uData)), V = vec(decode(c.vData));
         const s = c.scale || 1;
@@ -1188,11 +1231,15 @@
       const cd = c.cData ? vec(decode(c.cData)) : null;
       const rgbc = c.rgb ? decode(c.rgb) : null;
       const sd = c.sizeData ? vec(decode(c.sizeData)) : null;
+      const bub = c.bubbleSize ? vec(decode(c.bubbleSize)) : null;
       const cmap = ax._cmap;
       const base = rgb(c.color);
       const order = [...Array(x.length).keys()];
       const proj = order.map((i) => (z ? map(x[i], y[i], z[i]) : map(x[i], y[i])));
+      const diam = (i) => (bub.length === x.length ? bub[i] : bub[0]);
       if (z) order.sort((a, b) => proj[a][2] - proj[b][2]);
+      // bubbles: the largest first, so that none hides a smaller one
+      else if (bub) order.sort((a, b) => diam(b) - diam(a));
       const filled = c.mfc === 'flat';
       for (const i of order) {
         const [px, py] = proj[i];
@@ -1200,6 +1247,7 @@
         let col = base;
         if (rgbc) col = rgb([rgbc.data[i * 3], rgbc.data[i * 3 + 1], rgbc.data[i * 3 + 2]]);
         else if (cd && cd.length === x.length) col = cmapColor(cmap, ax.clim, cd[i]) || base;
+        if (bub) { this.bubble(ctx, px, py, diam(i) * PT, col, c); continue; }
         const area = sd ? (sd.length === x.length ? sd[i] : sd[0]) : 36;
         const size = Math.sqrt(Math.max(area, 0.5)) * 1.0;
         ctx.beginPath();
@@ -1208,6 +1256,20 @@
         if (filled && !OPEN_MARKERS.has(c.marker)) { ctx.fillStyle = col; ctx.fill(); }
         else { ctx.strokeStyle = col; ctx.stroke(); }
       }
+    }
+
+    /* A bubble of diameter d (CSS px): its face see-through by MarkerFaceAlpha,
+       its edge by MarkerEdgeAlpha; 'flat' takes the bubble's colour. */
+    bubble(ctx, x, y, d, col, c) {
+      if (!(d > 0)) return;
+      const pick = (v) => (v === 'flat' || v === 'auto' ? col : Array.isArray(v) ? rgb(v) : null);
+      const face = pick(c.mfc), edge = pick(c.mec);
+      ctx.save();
+      ctx.beginPath();
+      markerPath(ctx, 'o', x, y, d);
+      if (face) { ctx.globalAlpha = c.markerFaceAlpha ?? 1; ctx.fillStyle = face; ctx.fill(); }
+      if (edge) { ctx.globalAlpha = c.markerEdgeAlpha ?? 1; ctx.strokeStyle = edge; ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); }
+      ctx.restore();
     }
 
     contour2(ctx, ax, fr, c) {
@@ -1338,7 +1400,9 @@
       const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
       const R = Math.min(rect.w, rect.h) / 2 * 0.86;
       let rmax = 0;
-      for (const c of ax.children) if (c.type === 'line') for (const v of vec(decode(c.y))) if (Number.isFinite(v)) rmax = Math.max(rmax, Math.abs(v));
+      // lines' radii in y, scatter series' in yData
+      const radii = (c) => (c.type === 'line' ? c.y : c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart') ? c.yData : null);
+      for (const c of ax.children) if (radii(c)) for (const v of vec(decode(radii(c)))) if (Number.isFinite(v)) rmax = Math.max(rmax, Math.abs(v));
       if (!(rmax > 0)) rmax = 1;
       const ticks = niceTicks(0, rmax, 6);
       const top = ticks[ticks.length - 1] < rmax ? ticks[ticks.length - 1] + (ticks[1] - ticks[0]) : ticks[ticks.length - 1];
@@ -1358,7 +1422,9 @@
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
       for (const t of ticks) if (t > 0) drawText(ctx, String(+t.toPrecision(6)), cx + R * t / top * Math.cos(Math.PI / 12) + 2, cy - R * t / top * Math.sin(Math.PI / 12), { size: fs * 0.9, valign: 'bottom' });
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.clip();
+      const at = (th, r) => [cx + R * r / top * Math.cos(th), cy - R * r / top * Math.sin(th)];
       for (const c of ax.children) {
+        if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) { this.scatter(ctx, ax, at, c, null); continue; }
         if (c.type !== 'line') continue;
         const th = vec(decode(c.x)), rr = vec(decode(c.y));
         const pts = [];
@@ -1539,17 +1605,19 @@
           if (c.marker && c.marker !== 'none') {
             for (const p of P) if (Number.isFinite(p[0] + p[1])) items.push({ d: p[2] + 2e-6, f: () => drawMarkers(ctx, [[p[0], p[1]]], c.marker, c.markerSize, c.mec === 'auto' ? col : rgb(c.mec), c.mfc === 'none' ? null : c.mfc === 'auto' ? col : rgb(c.mfc), c.lineWidth) });
           }
-        } else if (c.type === 'series' && c.kind === 'scatter') {
+        } else if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) {
           const x = vec(decode(c.xData)), y = vec(decode(c.yData)), z = c.zData ? vec(decode(c.zData)) : null;
           const cd = c.cData ? vec(decode(c.cData)) : null;
           const rgbc = c.rgb ? decode(c.rgb) : null;
           const sd = c.sizeData ? vec(decode(c.sizeData)) : null;
+          const bub = c.bubbleSize ? vec(decode(c.bubbleSize)) : null;
           for (let i = 0; i < x.length; i++) {
             const p = fr.p(x[i], y[i], z ? z[i] : fr.lims[2][0]);
             if (!Number.isFinite(p[0] + p[1])) continue;
             let col = rgb(c.color);
             if (rgbc) col = rgb([rgbc.data[i * 3], rgbc.data[i * 3 + 1], rgbc.data[i * 3 + 2]]);
             else if (cd && cd.length === x.length) col = cmapColor(cmap, ax.clim, cd[i]) || col;
+            if (bub) { const d = (bub.length === x.length ? bub[i] : bub[0]) * PT; items.push({ d: p[2], f: () => this.bubble(ctx, p[0], p[1], d, col, c) }); continue; }
             const size = Math.sqrt(sd ? (sd.length === x.length ? sd[i] : sd[0]) : 36);
             const filled = c.mfc === 'flat';
             items.push({ d: p[2], f: () => { ctx.beginPath(); markerPath(ctx, c.marker === 'none' ? 'o' : c.marker, p[0], p[1], size); ctx.lineWidth = 0.75; if (filled) { ctx.fillStyle = col; ctx.fill(); } else { ctx.strokeStyle = col; ctx.stroke(); } } });
@@ -1748,14 +1816,16 @@
           ctx.strokeRect(ex + 2, ey - fs * 0.4, sample - 6, fs * 0.8);
         } else {
           const col = rgb(e.color || [0, 0.447, 0.741]);
-          if (e.lineStyle !== 'none' && !(e.type === 'series' && e.kind === 'scatter')) {
+          if (e.type === 'series' && e.kind === 'bubblechart') {
+            this.bubble(ctx, ex + (sample - 4) / 2, ey, fs * 0.8, col, { mfc: e.markerFaceColor, mec: e.markerEdgeColor, markerFaceAlpha: e.markerFaceAlpha, lineWidth: e.lineWidth });
+          } else if (e.lineStyle !== 'none' && !(e.type === 'series' && e.kind === 'scatter')) {
             ctx.strokeStyle = col;
             ctx.lineWidth = e.lineWidth || 0.5;
             dash(ctx, e.lineStyle, e.lineWidth || 0.5);
             ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex + sample - 4, ey); ctx.stroke();
             ctx.setLineDash([]);
           }
-          const mk = e.type === 'series' && e.kind === 'scatter' ? (e.marker === 'none' ? 'o' : e.marker) : e.marker;
+          const mk = e.type === 'series' && e.kind === 'scatter' ? (e.marker === 'none' ? 'o' : e.marker) : e.type === 'series' && e.kind === 'bubblechart' ? 'none' : e.marker;
           if (mk && mk !== 'none') drawMarkers(ctx, [[ex + (sample - 4) / 2, ey]], mk, e.markerSize || 6, e.markerEdgeColor === 'auto' || e.markerEdgeColor === 'flat' || !e.markerEdgeColor ? col : rgb(e.markerEdgeColor), e.markerFaceColor === 'none' || !e.markerFaceColor ? null : (e.markerFaceColor === 'auto' || e.markerFaceColor === 'flat' ? col : rgb(e.markerFaceColor)));
         }
         drawText(ctx, e.name, ex + sample + 2, ey, { size: fs, color: rgb(lg.textColor), valign: 'middle', interpreter: lg.interpreter });
@@ -1862,6 +1932,7 @@
       this.fig = fig;
       this.id = fig.id;
       this.renderer = new Renderer();
+      this.renderer.onTile = () => this.redrawSoon();
       this.tool = null;                 // null (drag pans/turns), 'zoomin', 'zoomout', 'pan', 'rotate', 'datatip'
       this.tips = [];
       this.title = el('span', { class: 't' });
@@ -1996,6 +2067,18 @@
       return { canvas: c, renderer: r, w, h };
     }
 
+    /* Before a picture or file of the figure: draw it once to learn which
+       basemap tiles it needs, and wait for those still loading (at most 20 s). */
+    async ready(scale = 2) {
+      if (!(this.fig.axes || []).some((a) => a.geo && a.basemap && a.basemap !== 'none')) return;
+      const { w, h } = this.exportSize();
+      const ctx = document.createElement('canvas').getContext('2d');
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      const r = new Renderer();
+      r.draw(ctx, this.fig, w, h);
+      if (r.waits.length) await Promise.race([Promise.allSettled(r.waits), new Promise((res) => setTimeout(res, 20000))]);
+    }
+
     renderTo(scale = 2, type = 'image/png') {
       return this.rasterize(scale).canvas.toDataURL(type, 0.92);
     }
@@ -2005,6 +2088,7 @@
        from the drawing itself (pylab-export.js). */
     async fileData(format, scale = 2) {
       const X = PL.figureExport;
+      await this.ready(format === 'svg' || format === 'pdf' || format === 'eps' ? 2 : scale);
       if (format === 'svg' || format === 'pdf' || format === 'eps') {
         const { w, h } = this.exportSize();
         const title = this.title.textContent || `Figure ${this.fig.number}`;
@@ -2019,7 +2103,8 @@
     /* getframe: the figure's pixels at its size on screen, or those of an axes'
        box; rect [left bottom width height] in pixels from the lower-left corner
        of the figure (or of the axes). RGB rows from the top, as base64. */
-    frame(axesId, rect) {
+    async frame(axesId, rect) {
+      await this.ready(1);
       const { canvas, renderer, w, h } = this.rasterize(1);
       let x = 0, y = 0, cw = w, ch = h;
       if (axesId != null) {
@@ -2042,7 +2127,8 @@
       return { width: x1 - x0, height: y1 - y0, data: PL.figureExport.base64(rgb) };
     }
 
-    savePicture() {
+    async savePicture() {
+      await this.ready(2);
       const url = this.renderTo(2);
       const a = el('a', { href: url, download: `figure${this.fig.number}.png` });
       document.body.append(a);
@@ -2345,7 +2431,7 @@
       const fr = f.fr;
       let best = null;
       for (const c of f.ax.children) {
-        if (c.type === 'line' || (c.type === 'series' && ['scatter', 'stem', 'stair', 'errorbar'].includes(c.kind))) {
+        if (c.type === 'line' || (c.type === 'series' && ['scatter', 'bubblechart', 'stem', 'stair', 'errorbar'].includes(c.kind))) {
           const x = vec(decode(c.x || c.xData)), y = vec(decode(c.y || c.yData));
           for (let i = 0; i < Math.min(x.length, y.length); i++) {
             if (!fr.ok(x[i], y[i])) continue;

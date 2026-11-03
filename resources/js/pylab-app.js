@@ -275,6 +275,7 @@
           this.big('newscript', 'New Script', `A new script (${k}N)`, () => this.newFile('script')),
           el('div', { class: 'pl-col' },
             this.small('newfunc', 'New Function', 'A new function file', () => this.newFile('function')),
+            this.small('newapp', 'Design App', 'Lay out an app and write its class file (appdesigner)', () => PL.designer && PL.designer.open(null)),
             this.small('open', 'Open…', `Open a file (${k}O)`, () => this.openDialog()),
             this.small('upload', 'Upload Files…', 'Copy files from your computer into the current folder', () => this.pickUpload(this.cwd)))),
         this.group('Variable',
@@ -338,6 +339,8 @@
         this.debugGroup,
         this.group('Python',
           this.big('python', 'View Python', 'The Python this file compiles to', () => this.viewPython())),
+        this.group('App',
+          this.designBtn = this.big('newapp', 'Design App', 'Open this app in the app designer (for an app made there)', () => this.current && PL.designer.open(this.current.key))),
       ];
     }
 
@@ -496,6 +499,7 @@
       E.on('cwd', (m) => this.setCwd(m.path, true));
       E.on('files', (m) => { if (!m.path || m.path === this.cwd || m.path.startsWith(this.cwd)) this.folder.refresh(); });
       E.on('edit', (m) => (m.path ? this.openFile(m.path) : this.newFile('script')));
+      E.on('appdesigner', (m) => PL.designer && PL.designer.open(m.path || null));
       E.on('web', (m) => window.open(m.url, '_blank', 'noopener'));
       E.on('input', (m) => this.askInput(m));
       E.on('request', (m) => this.pageRequest(m.request));
@@ -666,7 +670,7 @@
       } else if (req.type === 'frame') {
         await new Promise((r) => requestAnimationFrame(r));
         let data = null;
-        try { data = this.figures.frame(req.figure, req.axes, req.rect); } catch (e) { console.error(e); }
+        try { data = await this.figures.frame(req.figure, req.axes, req.rect); } catch (e) { console.error(e); }
         PL.engine.reply(req.id, data);
       } else if (req.type === 'ginput') {
         this.statusText.textContent = 'Click points in the figure; Enter ends.';
@@ -837,6 +841,7 @@
       this.runAdvBtn.disabled = !file || paused;
       this.runSelBtn.disabled = !file;
       this.pauseBtn.disabled = !busy || paused;
+      this.designBtn.disabled = !(file && PL.designer && PL.designer.isApp(this.current.editor.value));
     }
 
     /* Breakpoints: kept per file, in the page and in the engine. */
@@ -1009,7 +1014,7 @@
         doc.editor = ed;
         doc.saved = text;
         ed.setBreakpoints(this.breakpoints[path] || []);
-        ed.on('change', (v) => { doc.setDirty(v !== doc.saved); this.scheduleLint(doc); this.saveDocs(); });
+        ed.on('change', (v) => { doc.setDirty(v !== doc.saved); this.scheduleLint(doc); this.saveDocs(); if (doc === this.current) this.updateRunButtons(); });
         ed.on('gutter', (ln) => this.toggleBreakpoint(doc, ln));
         ed.on('cursor', (ln, col) => { this.caretEl.textContent = `Ln ${ln}, Col ${col}`; });
         ed.on('key', (ev) => this.editorKey(ev, doc));
@@ -1342,16 +1347,22 @@
     /* A file written over while it is open in the Editor: the Editor shows
        the new text, unless it holds changes not saved (they stay, as changes
        to the new file). */
-    async reloadDoc(path) {
+    async reloadDoc(path, force = false) {
       const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
       if (!doc) return;
       let text;
       try { text = await PL.engine.fs('read', { path }); } catch (e) { return; }
-      if (doc.dirty) { doc.saved = text; doc.setDirty(doc.editor.value !== text); return; }
+      if (doc.dirty && !force) { doc.saved = text; doc.setDirty(doc.editor.value !== text); return; }
       doc.saved = text;
       doc.editor.value = text;
       doc.setDirty(false);
       this.scheduleLint(doc);
+    }
+
+    /* The text of a file open in the Editor (saved or not), or null. */
+    docText(path) {
+      const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
+      return doc && doc.editor ? doc.editor.value : null;
     }
 
     async previewImage(path) {

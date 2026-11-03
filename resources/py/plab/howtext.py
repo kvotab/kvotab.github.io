@@ -471,8 +471,6 @@ dot:
     Python: matfun.py. sum(conj(a).*b): of the whole vectors for two vectors, else along the first dimension whose size is not 1 or the one given.
 linsolve:
     Python: matfun.py and ops.py. The code of A\B (see mldivide); the second output is the reciprocal condition estimate for a square A and the rank for another.
-lsqnonneg:
-    Python: matfun.py. scipy.optimize.nnls, the Lawson-Hanson active-set method for the least-squares x >= 0; the second output is the squared norm of the residual.
 balance:
     Python: matfun.py. scipy.linalg.matrix_balance: a diagonal similarity with powers of 2 that makes rows and columns of comparable norm; T is the transformation.
 givens:
@@ -489,9 +487,164 @@ mpower:
     Python: matfun.py and ops.py. The operator ^: a whole power by numpy.linalg.matrix_power (repeated squaring), a negative one of the inverse (A\eye); another power by scipy.linalg.fractional_matrix_power; a scalar to a matrix power by scipy.linalg.expm(log(s)*B).
 uminus, uplus, transpose, ctranspose:
     Python: matfun.py and ops.py. The operators -a, +a, a.' and a': negation (integers through doubles and back, so -int8(-128) saturates), and NumPy's transpose, with the complex conjugate for '.
+# ---- classdef.py, classfun.py, uiapp.py and appfun.py: classes and apps -----------------------------------------------------------
+properties, methods, ismethod:
+    Python: classfun.py and classdef.py. The class's tables of properties (public ones, its superclasses' first) and methods, made when its classdef file was read.
+addlistener, listener, notify:
+    Python: classfun.py. A listener kept with the object under the event's name; notify calls each enabled one's callback with the object and the event data (a struct with Source and EventName and the fields given).
+plabSuperCall:
+    Python: classfun.py and classdef.py. The superclass's constructor run on the same object (handle and the built-in bases have none), or its method found by name and called.
+uifigure:
+    Python: appfun.py. A figure of a class of its own with the uifigure properties, a number below zero (as a dialog's window has: no number title, never the current figure) and HandleVisibility 'off'.
+uibutton, uilabel, uieditfield, uitextarea, uidropdown, uilistbox, uicheckbox, uiswitch, uislider, uispinner, uiknob, uigauge, uilamp, uiradiobutton, uitogglebutton, uiimage, uihyperlink:
+    Python: appfun.py and uiapp.py. A component object of the kind's class (uiapp.py makes one for each kind, with its properties and defaults), its Value checked as it is set (numbers within Limits, items among Items or ItemsData). The page draws it from its description (pylab-ui.js: HTML controls; knobs and gauges as SVG) and reports pushes and values; a value taken sets Value and queues the callback with the event data (Value and PreviousValue; ValueChanging while dragging or typing).
+uigridlayout:
+    Python: uiapp.py and uiobjects.py. Before the figure is described to the page, each grid lays out its children: fixed rows and columns in pixels, 'fit' ones at their content's height (22 pixels), the rest sharing what is left by their weights, less Padding and the spacings; a child's Position becomes its cell (an axes' less a margin for its labels).
+uiaxes:
+    Python: appfun.py. Axes in pixels inside the app's window or container, drawn on the window's canvas at their container's place.
+uialert, uiconfirm, uiprogressdlg:
+    Python: appfun.py. msgbox's window, questdlg's question, and waitbar's bar with the Value and Message set.
+createCallbackFcn, registerApp, runStartupFcn:
+    Python: classfun.py. A callback that calls the app's method with the app (and the event data); a DeleteFcn on the window that deletes the app; the startup method called with the app.
+appdesigner:
+    Python: iofun.py (it tells the page) and pylab-designer.js. The layout is kept as JSON in a comment at the end of the class file; writing the class takes the callbacks' code from the file as it is (from its Editor tab when it is open there, saved or not), so what was written in the Editor stays; a save puts the new class into that Editor tab too.
+
+# ---- mapping.py and mapproj.py: mapping -----------------------------------------------------------------------------------
+deg2km, km2deg, deg2nm, nm2deg, deg2sm, sm2deg, km2nm, nm2km, km2sm, sm2km, nm2sm, sm2nm, km2rad, rad2km, unitsratio, earthRadius:
+    Python: mapping.py. Arc length = radius times the angle in radians, the radius 6371 km unless given (a body's mean radius by name); a nautical mile is 1852 m, a statute mile 1609.344 m, a foot 0.3048 m and a survey foot 1200/3937 m.
+dms2degrees, degrees2dms, dm2degrees, degrees2dm:
+    Python: mapping.py. Sums of the parts over 60 and 3600, the sign taken from the first part that is not zero; the split back takes the whole degrees and minutes of the absolute value.
+wrapTo180, wrapTo360, wrapToPi, wrapTo2Pi:
+    Python: mapping.py. NumPy's mod of the angle shifted by half a turn; values already within the range are left as they are, and a positive multiple of a full turn stays a full turn.
+referenceEllipsoid, wgs84Ellipsoid, referenceSphere:
+    Python: mapping.py and mapproj.py. A table of semimajor axes and inverse flattenings (WGS 84 6378137 m and 298.257223563, ...) and of bodies' mean radii; the semiminor axis a*sqrt(1 - e^2), the third flattening f/(2 - f), the mean radius (2a + b)/3, the surface 2*pi*a^2*(1 + (1 - e^2)/e*atanh(e)).
+distance, azimuth, reckon:
+    Python: mapping.py and mapproj.py. On a sphere the haversine formula and the spherical direct problem; on an ellipsoid Vincenty's iterations for the inverse and direct problems (to 1e-12 radians; where the inverse does not converge, nearly antipodal points, the great circle on the authalic sphere). Rhumb lines from the isometric latitude and the meridian arc (a series in e^2 to e^6).
+track2, track1, gcwaypts, interpm:
+    Python: mapping.py. Points at equal fractions of the distance along the path, by the direct problem from the start with its azimuth.
+meridianarc:
+    Python: mapproj.py. The meridian arc by its series in e^2 to e^6.
+antipode:
+    Python: mapping.py. The latitude negated and the longitude half a turn on, wrapped.
+areaint:
+    Python: mapping.py. Each part's spherical excess, 2*pi less the sum of the turning angles at its vertices (great-circle edges, the angles from the cross products of the tangent vectors), the smaller of it and the rest of the sphere; with an ellipsoid times the area of its authalic sphere.
+areaquad:
+    Python: mapping.py. (sin(lat2) - sin(lat1))*(lon2 - lon1) over 4*pi; on an ellipsoid with Snyder's q in place of 2*sin(lat).
+geodetic2ecef, ecef2geodetic, geodetic2enu, enu2geodetic, geodetic2ned, ned2geodetic, geodetic2aer, aer2geodetic, ecef2enu, enu2ecef, ecef2ned, ned2ecef, ecef2aer, aer2ecef, enu2aer, aer2enu, ned2aer, aer2ned:
+    Python: mapping.py and mapproj.py. ECEF from the prime vertical radius N = a/sqrt(1 - e^2*sin(lat)^2); back by Bowring's iteration from his first guess. The local frames rotate the ECEF difference from the origin by its latitude and longitude; AER from ENU by atan2 and hypot.
+inpolygon, polyarea, ispolycw, poly2cw, poly2ccw, polysplit, polyjoin, polyxpoly:
+    Python: mapping.py. The crossing count of a ray from each point (even-odd, so holes count) and a collinearity test for the edge; the shoelace formula for the area and its sign for the direction; each segment of one line against each of the other for the crossings.
+projcrs, geocrs, projfwd, projinv:
+    Python: mapping.py and mapproj.py. A table of EPSG codes with their projections, ellipsoids and parameters (UTM, SWEREF99, RT90, LAEA and LCC Europe, Lambert-93, British National Grid, Conus Albers, Mercator, UPS); the projections in NumPy: the transverse Mercator by Krüger's series to the fourth power of the third flattening, the others from Snyder's formulas on the ellipsoid (Mercator, Lambert conformal conic, Albers, Lambert azimuthal equal-area, polar stereographic) or the sphere. Other codes go to pyproj (PROJ) when Pyodide can load it.
+axesm, worldmap, setm, getm, gcm, defaultm, ismap, framem, gridm, mlabel, plabel, tightmap, showaxes, mfwdtran, minvtran:
+    Python: mapping.py and mapproj.py. Map axes are ordinary axes, hidden and of equal aspect, with their projection kept beside them. The frame is the boundary of the latitude and longitude limits (a circle about the origin for the azimuthal projections) projected; the graticule meridians and parallels at the line locations; the labels text at the frame's edges. worldmap chooses Robinson for the world, a polar stereographic for a polar cap, an equidistant conic or transverse Mercator for a region, by its extent.
+plotm, linem, scatterm, textm, patchm, fillm, surfm, pcolorm, contourm:
+    Python: mapping.py. The points projected; outside the map limits (or beyond the frame's circle, or on the far side of an orthographic globe) left out as NaN, and lines broken where the longitude jumps across the map's edge; then plot, line, scatter, text, patch or surface. contourm projects contourc's lines of the latitude and longitude grid.
+geoshow, mapshow:
+    Python: mapping.py. Each feature by its Geometry (point markers, lines, a polygon as one patch whose rings the page fills even-odd, so that holes stay open), projected on map axes; a raster as a surface at the cell centres its reference gives.
+geoaxes, geoplot, geoscatter, geobubble, geolimits:
+    Python: mapping.py. Axes with longitude as x and latitude as y, marked geographic so that the page labels their ticks in degrees with E, W, N or S, the aspect 1 : cos(middle latitude); plot, scatter and bubblechart draw in them.
+geobasemap, addCustomBasemap, removeCustomBasemap:
+    Python: mapping.py keeps the basemap's name (and a custom one's tile address, attribution and deepest zoom level) with the axes; the page draws it (pylab-basemap.js). For map tiles: the zoom level whose tiles have about as many pixels a degree as the screen, fewer if the view would need more than 64 tiles; the tiles over the view fetched as images with CORS (so that the figure can still be saved) and kept for the session, up to 600; each drawn into the axes' longitude and latitude in strips of rows, since Web Mercator's rows are not evenly spaced in latitude (y = 1/2 - ln((1 + sin(lat))/(1 - sin(lat)))/(4*pi)), all into one picture of the axes' box. streets-light and streets-dark are OpenStreetMap's tiles turned to greys, the water told by its blue. darkwater, grayland and bluegreen fill Natural Earth's land and then its lakes (1:110m for views wider than 90 degrees, else 1:50m) on the water's colour, with copies 360 degrees apart past the antimeridian. A saved picture or file first waits (up to 20 s) for what is still loading.
+georefcells, georefpostings, georasterref, maprefcells, maprefpostings, geographicToIntrinsic, worldToIntrinsic, geointerp:
+    Python: mapping.py. The limits, size and interpretation (cells or postings) of a raster; intrinsic coordinates are the fraction of the limits times the size (from 0.5 for cells, 1 for postings); geointerp is scipy.ndimage.map_coordinates at them.
+shaperead, shapeinfo, shapewrite:
+    Python: mapping.py. PyLAB's own reader and writer of the shapefile layout: the 100-byte header (file code 9994, big-endian lengths, little-endian shape type and bounding box), records of points, multipoints, polylines and polygons (with their part indices), the .shx index, and the dBASE III table of attributes (numbers, text and logicals). Record lengths are checked against the file.
+    landareas, worldlakes, worldrivers and worldcities, when no such file is found: geodata.py fetches Natural Earth's GeoJSON (pyfetch, once a session) and turns its features into the same records, polygons' outer rings clockwise and holes anticlockwise (by the sign of the shoelace area), the name attribute as Name.
+readgeoraster, geotiffread, geotiffinfo:
+    Python: mapping.py. The TIFF read by Pillow (loaded by Pyodide the first time); the GeoTIFF tags ModelPixelScale (33550), ModelTiepoint (33922) and the GeoKeyDirectory (34735: geographic or projected, pixel is area or point, the projected system's EPSG code) give the raster reference.
+
+# ---- symmath.py and symbolic.py: symbolic math on SymPy --------------------------------------------------------
+sym, syms:
+    Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py.
+str2sym:
+    Python: symbolic.py. The text's operators and function names translated to SymPy's (^ to **, ~= to !=, 2i to 2*I, ...) and read by sympy.parsing.sympy_parser.parse_expr, every other name a symbol; a single ==, ~=, <, <=, > or >= makes an equation or inequality.
+symfun, argnames, formula:
+    Python: symmath.py. A symbolic function is its formula and its argument symbols; a call substitutes the arguments (element by element for arrays) with SymPy's subs.
+vpa, digits:
+    Python: symmath.py. SymPy's evalf to digits significant digits (32 unless set), of the number as sym recognizes it.
+poly2sym, sym2poly:
+    Python: symmath.py. The sum of c(i)*x^(n-i); sympy.Poly's all_coeffs, converted to doubles.
+piecewise:
+    Python: symmath.py. sympy.Piecewise of the values and conditions in order, NaN when none holds.
+int:
+    Python: symmath.py. sympy.integrate, for each element; a definite integral with conds='none' (no conditions on the parameters). 'Hold' keeps an unevaluated sympy.Integral.
+limit:
+    Python: symmath.py. sympy.limit with dir '+-' (both sides, NaN when they differ), '-' for 'left' and '+' for 'right'.
+taylor, series:
+    Python: symmath.py. sympy.series about the point to the order given (6 unless given), without its O(...) term.
+symsum, symprod:
+    Python: symmath.py. sympy.summation and sympy.product over k from a to b (from 0 to k-1 for the indefinite sum).
+jacobian, hessian, divergence, curl, laplacian:
+    Python: symmath.py. sympy.Matrix's jacobian and sympy.hessian; the others from sympy.diff of each component.
+simplify, simplifyFraction:
+    Python: symmath.py. sympy.simplify, after expand_log, powdenest and logcombine with force=True for 'IgnoreAnalyticConstraints'; simplifyFraction is sympy.cancel of sympy.together.
+expand, collect, combine, horner:
+    Python: symmath.py. sympy.expand with trig=True (multinomial and mul alone for 'ArithmeticOnly'); sympy.collect of the expanded expression; combine by sympy.powsimp, sympy.logcombine, sympy.gammasimp or the product-to-sum rule TR8 of sympy.simplify.fu for 'sincos'; sympy.horner.
+rewrite:
+    Python: symmath.py. SymPy's rewrite in terms of the target function.
+partfrac, numden, coeffs:
+    Python: symmath.py. sympy.apart; sympy.fraction of sympy.together; the terms of sympy.Poly in the variables, sorted by power.
+children, has, lhs, rhs, isolate, finverse:
+    Python: symmath.py. The expression's args; SymPy's has; an equation's two sides; sympy.solve for the variable (finverse solves y = f(x) for x and calls y x).
+subs:
+    Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace.
+solve:
+    Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are.
+vpasolve:
+    Python: symmath.py. A polynomial in one variable: all its roots by SymPy's nroots to digits places; otherwise sympy.nsolve (mpmath's findroot) from the start given (0, or the middle of a range; bisection within a range), trying other starts when the first fails.
+dsolve:
+    Python: symmath.py. sympy.dsolve on the equations with the unknown functions they hold; conditions y(a) == b and Dy(a) == b go to it as ics. The answers are the right sides.
+laplace, ilaplace:
+    Python: symmath.py. sympy.laplace_transform with noconds=True, the time variable taken positive; sympy.inverse_laplace_transform into a positive t, so that no heaviside(t) is left.
+fourier, ifourier:
+    Python: symmath.py. sympy.fourier_transform, which uses exp(-2*pi*1i*k*x), at k = w/(2*pi); the integral itself (sympy.integrate) when it gives none. The inverse likewise from sympy.inverse_fourier_transform.
+ztrans, iztrans:
+    Python: symmath.py. The sum of f(n)*z^(-n) by sympy.summation (its first case when it is piecewise). The inverse of a rational F: for n >= 1 the sum of the residues of F(z)*z^(n-1) at the roots of the denominator (sympy.roots), each as the (m-1)-th derivative of (z-p)^m*F(z)*z^(n-1) at p over (m-1)!, and at n = 0 the limit of F at infinity (a kroneckerDelta term when they differ).
+assume, assumeAlso, assumptions:
+    Python: symmath.py. A new sympy.Symbol of the name with SymPy's assumptions (real, positive, negative, nonnegative, integer, rational, nonzero); an inequality with another bound is kept beside it and used to filter solve's solutions.
+isAlways:
+    Python: symmath.py and symbolic.py. sympy.simplify of the condition, and for an equation of the difference of its sides, to SymPy's true or false; otherwise unknown.
+latex, pretty:
+    Python: symmath.py. sympy.latex, and sympy.pretty with Unicode.
+matlabFunction:
+    Python: symmath.py. The expression printed in the language's syntax (symbolic.py's printer) with element-wise operators, made into an anonymous function of the variables as str2func makes one; with 'File' written into a function file of the current folder.
+fimplicit:
+    Python: symmath.py. f on a 201-by-201 grid of the range ([-5 5] unless given) and its zero contour drawn by contour.
+fplot3:
+    Python: symmath.py. x(t), y(t) and z(t) at 400 points of the range ([-5 5] unless given), drawn by plot3.
+heaviside, dirac, sinc, lambertw, zeta, kroneckerDelta:
+    Python: symmath.py. For numbers: NumPy for heaviside (1/2 at 0), dirac (Inf at 0), sinc and kroneckerDelta; scipy.special.lambertw and scipy.special.zeta. For symbolic values SymPy's Heaviside, DiracDelta, LambertW, zeta and KroneckerDelta.
+
 # ---- funfun.py: functions of functions --------------------------------------------------------
-optimset, optimoptions:
-    Python: funfun.py. A struct of options: Display, MaxFunEvals, MaxIter, TolFun, TolX, FunValCheck, OutputFcn and PlotFcns start empty, a struct given first is taken over, and each name-value pair sets one, the name matched without regard to case. optimoptions takes the same pairs after the solver's name.
+optimset:
+    Python: funfun.py. A struct of options: Display, MaxFunEvals, MaxIter, TolFun, TolX, FunValCheck, OutputFcn and PlotFcns start empty, a struct given first is taken over, and each name-value pair sets one, the name matched without regard to case. The solvers read these older names too.
+optimoptions, resetoptions:
+    Python: optim.py. An options object for one solver: the names it knows with their defaults, the ones set kept apart (so the display can list them), the older optimset names (TolFun, TolX, MaxIter, ...) read as the newer ones. A value object: changing a copy leaves the original as it was. Options of another solver are carried over where they apply.
+fminunc:
+    Python: optim.py. 'quasi-newton': scipy.optimize.minimize with method 'BFGS', gtol OptimalityTolerance and xrtol StepTolerance; 'trust-region': method 'trust-constr' with the Hessian from HessianFcn 'objective' or a BFGS update. Gradients not given are forward differences (central with FiniteDifferenceType 'central') with steps sqrt(eps)*max(abs(x), TypicalX), counted in funcCount; the answer is judged by central differences. The sixth output is the Hessian by differences of the gradient at x. Each iterate goes through SciPy's callback to the Display row and the output and plot functions.
+fmincon:
+    Python: optim.py. 'interior-point' and 'trust-region-reflective': scipy.optimize.minimize with method 'trust-constr' (an interior point method for the inequalities) with a BFGS Hessian, then SLSQP started from its answer so that x lands on the active constraints; 'sqp', 'sqp-legacy' and 'active-set': SLSQP alone (sequential least squares programming). Linear constraints go to SciPy as LinearConstraint, c and ceq as NonlinearConstraint, with their Jacobians by forward differences unless given. The Lagrange multipliers are the nonnegative least-squares solution of grad f + J'*lambda = 0 over the constraints active at x (scipy.optimize.lsq_linear), and the first-order optimality the largest part of what is left.
+fsolve:
+    Python: optim.py. 'trust-region-dogleg' on a square system: scipy.optimize.root with method 'hybr', MINPACK's modification of Powell's hybrid method; otherwise, and for systems with more equations than unknowns, scipy.optimize.least_squares ('lm' for 'levenberg-marquardt', else its trust-region reflective method). Solved when sum(F.^2) is below FunctionTolerance squared.
+lsqcurvefit, lsqnonlin:
+    Python: optim.py. scipy.optimize.least_squares on the residuals fun(x, xdata) - ydata, or fun(x): the trust-region reflective method with the bounds, 'lm' for 'levenberg-marquardt' without them; ftol, xtol and gtol a hundredth of FunctionTolerance, StepTolerance and OptimalityTolerance. With linear or nonlinear constraints the sum of squares is minimized as fmincon minimizes. resnorm is the sum of the squared residuals; the Jacobian is the seventh output.
+lsqlin:
+    Python: optim.py. With bounds alone, scipy.optimize.lsq_linear (bounded-variable least squares); with linear constraints, quadprog's method on H = C'*C and f = -C'*d.
+lsqnonneg:
+    Python: optim.py. scipy.optimize.nnls, the Lawson-Hanson active-set method for the least-squares x >= 0. lambda is the dual vector C'*(d - C*x), zero where x is positive.
+quadprog:
+    Python: optim.py. With equalities alone, the KKT system [H Aeq'; Aeq 0] solved directly. Otherwise scipy.optimize.minimize with method 'trust-constr' (an interior point method) and the exact Hessian H; then the constraints active at its answer (within 1e-6, 1e-4 or 1e-3 of their limits) are held as equalities and the KKT system solved exactly, the result kept when it is feasible, no worse and its multipliers have the right signs. H's smallest eigenvalue (numpy.linalg.eigvalsh) says whether the problem is convex.
+linprog:
+    Python: optim.py. scipy.optimize.linprog with HiGHS: method 'highs-ds' (dual simplex) for 'dual-simplex', 'highs-ipm' for the interior point algorithms; ConstraintTolerance and OptimalityTolerance as HiGHS' primal and dual feasibility tolerances. The multipliers are HiGHS' marginals (the change of the objective per unit of each right side) with the sign that makes them nonnegative.
+intlinprog:
+    Python: optim.py. scipy.optimize.milp, HiGHS' branch and bound, with the integrality of the variables in intcon, time_limit MaxTime, mip_rel_gap RelativeGapTolerance and node_limit MaxNodes; the integer variables of the answer are rounded to whole numbers.
+fminimax:
+    Python: optim.py. SLSQP on the variables and one more, t: minimize t with fun(x) <= t (and -fun(x) <= t for the first AbsoluteMaxObjectiveCount), the problem's own constraints kept.
+fgoalattain:
+    Python: optim.py. SLSQP on the variables and the attainment factor gamma: minimize gamma with fun(x) - weight*gamma <= goal (both ways for the first EqualityGoalCount), the problem's own constraints kept.
+optimplotfval, optimplotx, optimplotfirstorderopt, optimplotfunccount, optimplotconstrviolation, optimplotstepsize, optimplotresnorm:
+    Python: optim.py. At 'init' the solver opens a window with one axes for each plot function; at each call the function adds the iteration's point to its line (a new line at 'init'; optimplotx redraws its bars) and puts the value in the title. The window is drawn when the solver is done, not while it runs.
 optimget, odeget:
     Python: funfun.py. The option's value from the struct, the name matched without regard to case, or the default given when it is empty or missing.
 odeplot:
@@ -502,16 +655,6 @@ fminbnd:
     Python: funfun.py. scipy.optimize.minimize_scalar with method 'bounded': Brent's method of golden-section search and parabolic interpolation, within [a b], with xatol TolX (1e-4 unless given).
 fminsearch:
     Python: funfun.py. scipy.optimize.minimize with method 'Nelder-Mead'. The first simplex has the start point and, for each component, the point with that component 5% larger (0.00025 where it is 0); xatol and fatol are TolX and TolFun (1e-4 unless given), and MaxIter and MaxFunEvals default to 200 times the number of unknowns.
-fminunc:
-    Python: funfun.py. scipy.optimize.minimize with method 'BFGS', a quasi-Newton method with the gradient from finite differences; the gradient and the inverse-Hessian estimate are the fifth and sixth outputs. Options are not read.
-fmincon:
-    Python: funfun.py. scipy.optimize.minimize with method 'SLSQP' (sequential least squares programming): A*x <= b and Aeq*x == beq as linear constraints, lb and ub as bounds, and nonlcon's c <= 0 and ceq == 0 as nonlinear ones (c is negated for SciPy, which wants >= 0). Options are not read.
-fsolve:
-    Python: funfun.py. scipy.optimize.root with method 'hybr', MINPACK's modification of Powell's hybrid method with a Jacobian from finite differences.
-lsqcurvefit, lsqnonlin:
-    Python: funfun.py. scipy.optimize.least_squares (its trust-region reflective method) on the residuals F(x, xdata) - ydata, or F(x), with the bounds lb and ub; resnorm is the sum of the squared residuals.
-linprog:
-    Python: funfun.py. scipy.optimize.linprog with method 'highs' (the HiGHS solvers), A*x <= b, Aeq*x == beq and the bounds lb, ub.
 integral:
     Python: funfun.py. scipy.integrate.quad, QUADPACK's adaptive Gauss-Kronrod quadrature (21 points on a finite interval; an infinite one is mapped onto a finite one), with RelTol 1e-6 and AbsTol 1e-10 unless given, at most 650 subintervals, and the Waypoints as break points. The function is called one point at a time. For complex values the real and imaginary parts are integrated separately; 'ArrayValued' uses scipy.integrate.quad_vec.
 quad, quadl, quadgk:
@@ -903,7 +1046,7 @@ readcell:
 save:
     Python: iofun.py. SciPy's scipy.io.savemat writes a Level 5 MAT-file, compressed for -v7 (the default, and for -v7.3, as SciPy does not write HDF5), uncompressed for -v6, or a Level 4 file for -v4; text, cells and structs go to it as NumPy arrays of strings and objects and as dictionaries. -append reads the file first and writes all of it again, refusing when a variable it holds could not be read back. -ascii writes the numbers as text by %.7e (%.16e with -double). Function handles and objects are not saved.
 load:
-    Python: iofun.py and matfile.py. MAT-files are read by PyLAB's own reader: Level 4 and Level 5 files, compressed or not, in either byte order, with string arrays from the file's object data; -v7.3 files are HDF5 and are read through h5py, which Pyodide loads the first time. Nothing in a file is trusted: sizes are checked against the data, inflated data is capped and nesting is limited, and a variable that cannot be read is reported while the others are read. Any other file is read as readmatrix reads it, into a variable named after the file.
+    Python: iofun.py and matfile.py. MAT-files are read by PyLAB's own reader: Level 4 and Level 5 files, compressed or not, in either byte order, with string arrays from the file's object data; -v7.3 files are HDF5 and are read through h5py, which Pyodide loads the first time. Nothing in a file is trusted: sizes are checked against the data, inflated data is capped and nesting is limited, and a variable that cannot be read is reported while the others are read. Any other file is read as readmatrix reads it, into a variable named after the file. coastlines, when no such file is found, is Natural Earth's coastline GeoJSON (geodata.py, fetched by pyfetch once a session), its lines joined into coastlat and coastlon with NaN between them.
 matfile:
     Python: iofun.py. All the variables of the MAT-file read at once, as load reads them, into a struct.
 importdata:
@@ -1093,7 +1236,7 @@ hold, ishold:
 newplot:
     Python: graphics.py. The axes a plot goes into: the current axes (made when there are none), cleared and reset unless held.
 subplot:
-    Python: graphics.py. The axes' Position comes from the grid: the area 0.775 by 0.815 of the figure from (0.13, 0.11), divided into m rows and n columns with gaps of 0.3886 and 0.3155 of a cell (a span of cells joins them). Axes already at that place are made current, and axes that overlap it are deleted.
+    Python: graphics.py. The axes' Position comes from the grid: the area 0.775 by 0.815 of the figure from (0.13, 0.11), divided into m rows and n columns with gaps of 0.3886 and 0.3155 of a cell (a span of cells joins them). Axes already at that place are made current, and axes that overlap it are deleted. Given axes after p, those axes are moved into the tile instead of new ones being made.
 axes:
     Python: graphics.py. New axes in the current figure (or in the panel or figure given) with the properties given, made current; axes(h) makes h current.
 tiledlayout, nexttile:
@@ -1106,6 +1249,10 @@ fplot, ezplot:
     Python: graphics.py. The function evaluated at 400 evenly spaced points of the interval ([-5 5] unless given): once with the whole vector, or point by point when that does not give one value for each; then plotted, with the x-limits set to the interval. Two functions give a parametric curve.
 scatter, scatter3:
     Python: graphics.py. A scatter series of the points with their sizes (SizeData, in points squared) and colours (one colour, an RGB row for each point, or values mapped through the colormap); the page draws a marker at each point.
+bubblechart, bubblechart3:
+    Python: graphics.py. A BubbleChart series of the points with their sizes (SizeData) and colours, its faces 0.6 opaque. When the figure is drawn, each size is clipped to the axes' BubbleLim (by default the smallest and largest sizes of all their bubble charts) and its place f between the two ends gives the bubble's diameter sqrt(dmin^2 + f*(dmax^2 - dmin^2)) in points, dmin and dmax being BubbleSizeRange; so the areas grow evenly. The page draws the largest bubbles first, so that none hides a smaller one (in 3-D the farthest first).
+bubblesize, bubblelim:
+    Python: graphics.py. They read and set the axes' BubbleSizeRange and BubbleLim (BubbleLimMode becomes manual), as xlim does XLim.
 bar, barh:
     Python: graphics.py. A bar series for each column of Y. The bars take 0.8 (or the width given) of the smallest distance between the x values; grouped bars share that width, and stacked bars pile positive and negative values separately.
 histogram:
@@ -1122,6 +1269,12 @@ pie:
     Python: graphics.py. The fractions x/sum(x) (x itself when its sum is at most 1), each slice labelled with its percentage rounded to a whole number ('< 1%' below that) unless labels are given, the colours spread evenly over the colormap; the axes are hidden and given equal scales.
 polarplot, polar:
     Python: graphics.py. A line of the angles and radii in polar axes, which the page draws with rings and spokes, each point at r*cos(theta), r*sin(theta).
+polaraxes:
+    Python: graphics.py. Axes made as axes makes them and marked polar: the page draws them as a circle with rings at round radii and spokes every 30 degrees. Their class is PolarAxes and their Type 'polaraxes'.
+polarscatter:
+    Python: graphics.py. scatter's series in axes marked polar; the page puts each marker at r*cos(theta), r*sin(theta), scaled so that the outer ring is the round radius just past the largest.
+polarbubblechart:
+    Python: graphics.py. bubblechart's series in axes marked polar, placed as polarscatter places its markers.
 quiver, quiver3:
     Python: graphics.py. A quiver series of the arrows, scaled so that the longest is 0.9 (or the scale given) of the grid spacing, sqrt(dx*dy) on a grid; a scale of 0 draws them as they are.
 contour, contourf, contour3, contourc:
@@ -1196,6 +1349,8 @@ findobj, findall:
     Python: graphics.py. The given objects (the root unless given) and those under them, tested against property-value pairs, -regexp (Python's re.search), -property and -function, joined left to right by -and, -or and -xor with -not turning the next; -depth or flat limits how far down. findobj passes over objects whose HandleVisibility is off (callback, except while a callback runs); findall does not.
 allchild, ancestor:
     Python: graphics.py. The object's children, hidden handles too; the first object of the type named, going up through the parents.
+copyobj:
+    Python: graphics.py. Each object is copied by Python's copy.copy and given an id (and handle number) of its own, its properties' arrays copied; its children, and the title and labels an axes keeps, are copied the same way into the copy. Then the references among the copies, such as a legend's axes and lines or an axes' legend, are pointed at the copies.
 gobjects:
     Python: graphics.py. An array of graphics placeholders of the size given, to be filled with handles.
 drawnow:
