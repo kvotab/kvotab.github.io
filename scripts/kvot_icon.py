@@ -205,30 +205,36 @@ def arrange(shapes):
     return seq
 
 
-def place(faces, fit=FIT):
+def place(faces, fit=FIT, stretch=1.0):
     """The faces on screen, scaled so the drawing is `fit` units across or down
-    and centred in the square: (tone, on screen, in the world)."""
-    pts = [proj(*p) for _, poly in faces for p in poly]
+    and centred in the square: (tone, on screen, in the world). `stretch`
+    draws it that many times taller for its width (1: true isometric)."""
+    def at(p):
+        x, y = proj(*p)
+        return x, y * stretch
+    pts = [at(p) for _, poly in faces for p in poly]
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
     k = min(fit / (max(xs) - min(xs)), fit / (max(ys) - min(ys)))
     ox = (SIZE - k * (max(xs) - min(xs))) / 2 - k * min(xs)
     oy = (SIZE - k * (max(ys) - min(ys))) / 2 - k * min(ys)
-    return [(t, [(round(k * proj(*p)[0] + ox, 2), round(k * proj(*p)[1] + oy, 2)) for p in poly], poly)
+    return [(t, [(round(k * at(p)[0] + ox, 2), round(k * at(p)[1] + oy, 2)) for p in poly], poly)
             for t, poly in faces], k
 
 
-def problems(placed):
+def problems(placed, stretch=1.0):
     """The promises every icon's comment makes: the edges at the four
-    isometric angles, the drawing inside the square, and every face drawn
-    after the faces it hides."""
+    isometric angles (steeper by `stretch`, for a drawing placed with it),
+    the drawing inside the square, and every face drawn after the faces it
+    hides."""
     errors = []
+    slant = math.degrees(math.atan(stretch * math.tan(math.pi / 6)))
     for _, poly, _ in placed:
         for i in range(len(poly)):
             (x1, y1), (x2, y2) = poly[i - 1], poly[i]
             if (x1, y1) == (x2, y2):
                 continue
             a = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
-            if min(abs(a - t) for t in (0, 30, 90, 150, 180)) > 0.5:
+            if min(abs(a - t) for t in (0, slant, 90, 180 - slant, 180)) > 0.5:
                 errors.append(f'an edge at {a:.1f} degrees: {poly[i - 1]} to {poly[i]}')
     pts = [p for _, poly, _ in placed for p in poly]
     if min(min(p) for p in pts) < 0 or max(max(p) for p in pts) > SIZE:

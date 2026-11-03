@@ -10,9 +10,11 @@ The drawing is the Command Window's prompt, >>, in the kvot mark's isometric
 language (scripts/kvot_icon.py); the SVG's own comment says why. Edit the
 inputs below, never the numbers in the SVG.
 
-Nothing is written unless every edge is horizontal, vertical or at 30 degrees;
-the drawing fits the square; and every face is drawn after the faces it hides.
+Nothing is written unless every edge is horizontal, vertical or at the
+chevrons' slant (30 degrees, made steeper by STRETCH); the drawing fits the
+square; and every face is drawn after the faces it hides.
 """
+import math
 import sys
 
 import kvot_icon as K
@@ -25,14 +27,22 @@ PNG180 = K.ROOT / 'resources/images/pylab-icon-180.png'
 ARM = 11            # an arm of a chevron, from the point to its end
 STEM = 4            # an arm's width
 HEIGHT = 2.5        # the slab's thickness
-STEP = 10           # the second chevron's point beyond the first, along x and u alike:
-                    # a gap of two pixels at sixteen (at 8 the two merge); a thicker
-                    # slab fills the notch with its shaded face and reads as a play sign
+STEP = 9            # the second chevron's point beyond the first, along x and u alike:
+                    # a gap of two pixels at sixteen (unstretched, at 8 the two merge); a
+                    # thicker slab fills the notch with its shaded face and reads as a play sign
+STRETCH = 1.5       # the drawing this many times taller for its width than true
+                    # isometric: arms rising at 41 degrees, not 30, as the prompt's do
+SLANT = math.degrees(math.atan(STRETCH * math.tan(math.pi / 6)))
 
 COMMENT = f'''\t<!--
 \t\tThe prompt the Command Window waits at, two chevrons.
 
 {K.RULES}
+
+\t\tOne rule is bent here: the drawing is stretched upright, {STRETCH:g} times
+\t\ttaller for its width than true isometric, so that the arms rise at
+\t\t{SLANT:.0f} degrees rather than 30 and the chevrons stand like the prompt's.
+\t\tEach face keeps its tone.
 
 \t\tA chevron cannot be drawn upright: its arms would leave the three
 \t\taxes. Lying flat it can. An L-shaped slab whose arms run back along
@@ -58,8 +68,8 @@ def main():
     first = K.flat(chevron(0, 0), 0, HEIGHT)
     second = K.flat(chevron(STEP, STEP), 0, HEIGHT)
     faces, _ = K.order([first, second])
-    placed, _ = K.place(faces)
-    errors = K.problems(placed)
+    placed, _ = K.place(faces, stretch=STRETCH)
+    errors = K.problems(placed, STRETCH)
     if errors:
         sys.exit('not written:\n  ' + '\n  '.join(errors))
     half = len(placed) // 2
