@@ -1189,6 +1189,13 @@
       const e = target && target.closest && target.closest('.pl-uictl');
       return e ? this.ctl.get(Number(e.dataset.id))?.c || null : null;
     }
+
+    /* The control the figure's property editor shows, outlined (null: none). */
+    mark(id) {
+      for (const e of this.layer.querySelectorAll('.is-inspected')) if (Number(e.dataset.id) !== id) e.classList.remove('is-inspected');
+      const rec = id == null ? null : this.ctl.get(id);
+      if (rec) rec.el.classList.add('is-inspected');
+    }
   }
 
   /* ---- the dialogs a program asks the page for -------------------------------------------------- */

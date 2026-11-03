@@ -11,7 +11,14 @@ Continue finishes the run; input() waits for an answer; Ctrl+C stops a loop
 that never ends; the Variable editor shows a matrix as a table and writes a
 cell back; a new file in the Current Folder is listed and removed; in a
 figure window, zooming by a box, panning, the data tip, the grid button,
-turning a 3-D view and Restore reach Python's limits and view; the page
+turning a 3-D view and Restore reach Python's limits and view; the
+property editor opened by the toolbar's arrow, a click on the line, the
+title, the legend, the colorbar and by the tick labels picking each, its
+fields setting XGrid, limits typed with Enter (one refused, with set's
+message), a colour and a line style, Escape putting a field back, a
+change the program makes showing there, the program hearing no click and a
+control picked, not pressed, inspect and plotedit, and the editor closed
+with its figure; the page
 draws in the dark theme; the full window hides the site around the desktop
 and is remembered; at phone width the page does not scroll sideways, the
 Command Window is there and the Workspace opens from its menu.
@@ -1414,10 +1421,114 @@ def luminance(css):
     return (0.2126 * nums[0] + 0.7152 * nums[1] + 0.0722 * nums[2]) / 255
 
 
+INSP = 'PL.app.figures.inspector'
+
+
+async def insp_pick(page, expr):
+    """Click the canvas at the middle of what expr (run with w, the window, and c, its canvas box) gives as [x, y, w, h]."""
+    b = await page.ev(f"(() => {{ const w = {WIN}; const c = w.canvas.getBoundingClientRect(); const r = {expr}; "
+                      "return r && [c.left + r.x + r.w / 2, c.top + r.y + r.h / 2]; })()")
+    if b:
+        await page.click(*b)
+    return b
+
+
+async def insp_type(page, name, text):
+    """Type text into the editor's field for property name, as a person does (all of it replaced), and press Enter."""
+    await page.ev(f"(() => {{ const i = {INSP}.fields.get({json.dumps(name)}).input; i.focus(); i.select(); return 1; }})()")
+    await page.call('Input.insertText', {'text': text}, session=page.sid)
+    await page.key('Enter')
+
+
+async def insp_field(page, name, js):
+    """Run js with f, the editor's field for property name."""
+    return await page.ev(f"(() => {{ const f = {INSP}.fields.get({json.dumps(name)}); {js} }})()")
+
+
+async def property_editor(page):
+    """The figure's property editor: the toolbar's edit tool, a click picking
+    a part of the figure, its fields setting properties, the program kept
+    from the clicks, inspect and plotedit."""
+    await command(page, 'close all; clicks = 0; x = 0:10; h = plot(x, x.^2, "o-", "DisplayName", "sq"); title("Squares"); '
+                        'xlabel("x"); legend; colorbar; set(gcf, "WindowButtonDownFcn", "clicks = clicks + 1;");')
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(0.6)
+    await page.ev(f"{WIN}.toolBtns.edit.click(); 1")
+    label = await until(page, f"{INSP} && !{INSP}.el.hidden && {INSP}.data && {INSP}.data.label")
+    check("the toolbar's arrow opens the property editor on the figure", (label, await page.ev(f"{WIN}.tool")), ('Figure 1', 'edit'))
+    check("the editor lists the figure's objects", await page.ev(f"[...{INSP}.tree.children].map(b => b.textContent)"),
+          ['Figure 1', "Axes 'Squares'", "Title 'Squares'", "X label 'x'", 'Y label', "Line 'sq'", 'Legend', 'Colorbar', 'Label'])
+    px, py = await in_axes(page, WIN, 5, 25)
+    await page.click(px, py)
+    check('a click on the line shows the line', await until(page, f"{INSP}.data.type === 'line' && {INSP}.data.label"), "Line 'sq'")
+    check('the program heard no click', 'clicks =\n\n     0' in (await command(page, 'clicks'))[-30:], True)
+    await insp_pick(page, 'w.renderer.textBoxes.get(w.fig.axes[0].title.id)')
+    check('a click on the title shows its text object', await until(page, f"{INSP}.data.type === 'text' && {INSP}.data.label"), "Text 'Squares'")
+    await insp_pick(page, 'w.renderer.frames.find(f => f.legend).rect')
+    check('... on the legend, the legend', await until(page, f"{INSP}.data.type === 'legend' && {INSP}.data.label"), 'Legend')
+    await insp_pick(page, 'w.renderer.frames.find(f => f.colorbar).rect')
+    check('... on the colorbar, the colorbar', await until(page, f"{INSP}.data.type === 'colorbar' && {INSP}.data.label"), 'Colorbar')
+    x, y, w, h = await frame_box(page)
+    await page.click(x - 14, y + h / 2)
+    check('... by the tick labels, the axes', await until(page, f"{INSP}.data.type === 'axes' && {INSP}.data.label"), "Axes 'Squares'")
+    check('what is picked is outlined', await page.ev(f"{WIN}.selection === {WIN}.fig.axes[0].id && !!{WIN}.selectionBox({WIN}.selection)"), True)
+    await insp_field(page, 'XGrid', 'f.input.click(); return 1;')
+    await asyncio.sleep(0.6)
+    check('a check box sets XGrid', "g =\n\n    'on'" in (await command(page, "g = get(gca, 'XGrid')"))[-30:], True)
+    await insp_type(page, 'XLim', '[0 20]')
+    await asyncio.sleep(0.6)
+    check('a limit typed and Enter sets it', 'xl =\n\n     0    20' in (await command(page, 'xl = xlim'))[-30:], True)
+    await insp_type(page, 'XLim', '[5 1]')
+    await until(page, f"!{INSP}.msg.hidden", 5)
+    check("a value refused says why, beside set's message, and the field shows the value kept",
+          await page.ev(f"[{INSP}.msg.textContent.startsWith('XLim: Value must be'), {INSP}.fields.get('XLim').input.value]"), [True, '[0 20]'])
+    await page.ev(f"(() => {{ const i = {INSP}.fields.get('XLabel').input; i.focus(); i.select(); return 1; }})()")
+    await page.call('Input.insertText', {'text': 'Time'}, session=page.sid)
+    await page.key('Escape')
+    check('Escape in a field puts back its value', await insp_field(page, 'XLabel', 'return f.input.value;'), 'x')
+    await page.ev(f"[...{INSP}.tree.children].find(b => b.textContent.startsWith('Line')).click(); 1")
+    await until(page, f"{INSP}.data.type === 'line'")
+    await insp_field(page, 'Color', "const s = f.r.querySelector('input[type=color]'); s.value = '#ff0000'; s.dispatchEvent(new Event('change')); return 1;")
+    await insp_field(page, 'LineStyle', "f.input.value = '--'; f.input.dispatchEvent(new Event('change')); return 1;")
+    await asyncio.sleep(0.8)
+    check("the tree picks the line; a colour and a line style are set and drawn",
+          ('c =\n\n     1     0     0' in (await command(page, "c = get(h, 'Color')"))[-30:], await page.ev(f"{WIN}.fig.axes[0].children[0].lineStyle")),
+          (True, '--'))
+    await shot(page, 'property-editor.png')
+    await command(page, "set(h, 'LineWidth', 3)")
+    check("a change the program makes shows in the editor", await until(page, f"{INSP}.fields.get('LineWidth').input.value === '3'", 5), True)
+    await page.ev(f"{WIN}.toolBtns.edit.click(); 1")
+    check('the arrow again leaves edit mode and closes the editor', await page.ev(f"[{INSP}.el.hidden, {WIN}.tool, {WIN}.el.classList.contains('is-editing')]"),
+          [True, None, False])
+    await command(page, 'inspect(gca)')
+    check('inspect(h) opens it on h', await until(page, f"!{INSP}.el.hidden && {INSP}.data && {INSP}.data.type"), 'axes')
+    await command(page, 'plotedit on')
+    check('plotedit on and off', [await page.ev(f"{WIN}.tool")] + [(await command(page, 'plotedit off')) and await page.ev(f"[{WIN}.tool, {INSP}.el.hidden]")],
+          ['edit', [None, True]])
+    await command(page, "close all; f = figure('MenuBar', 'none', 'ToolBar', 'none'); presses = 0; "
+                        "b = uicontrol('String', 'Go', 'Position', [20 20 80 30], 'Callback', 'presses = presses + 1;');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(0.5)
+    await command(page, 'plotedit(f, "on")')
+    await page.ev(f"{WIN}.ui.layer.querySelector('.pl-uictl').dispatchEvent(new PointerEvent('pointerdown', {{ bubbles: true }})); "
+                  f"{WIN}.ui.layer.querySelector('.pl-uictl').click(); 1")
+    check("in edit mode a click on a control picks it and does not press it (in a window without the toolbar too)",
+          [await until(page, f"{INSP}.data && {INSP}.data.type === 'uicontrol' && {INSP}.data.label"),
+           'presses =\n\n     0' in (await command(page, 'presses'))[-30:], await page.ev(f"{WIN}.ui.layer.querySelector('.pl-uictl').classList.contains('is-inspected')")],
+          ["UIControl 'Go'", True, True])
+    await insp_type(page, 'String', 'Stop')
+    await until(page, f"{WIN}.ui.layer.querySelector('.pl-uictl').textContent === 'Stop'", 5)
+    check("its String changed there is drawn, and the editor stays open in a window without the toolbar",
+          await page.ev(f"[{WIN}.ui.layer.querySelector('.pl-uictl').textContent, {INSP}.el.hidden, {WIN}.tool]"), ['Stop', False, 'edit'])
+    await command(page, 'close all')
+    check('closing the figure closes its editor', await page.ev(f"{INSP}.el.hidden"), True)
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
         await desktop(page)
+        await property_editor(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

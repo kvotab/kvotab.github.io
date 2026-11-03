@@ -509,6 +509,8 @@
       E.on('pool', (m) => this.poolProgress(m));
       E.on('timer', (m) => this.timer(m));
       E.on('movegui', (m) => this.figures.move(m.figure, m.where));
+      E.on('inspect', (m) => this.figures.inspectObject(m.figure, m.id));
+      E.on('plotedit', (m) => this.figures.plotEdit(m.figure, m.on));
       E.on('focus', (m) => this.figures.focusControl(m.id));
       E.on('help', (m) => this.openHelp(m.name || undefined));
       E.on('sound', (m) => this.playSound(m));

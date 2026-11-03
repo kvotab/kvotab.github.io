@@ -1504,6 +1504,10 @@ setappdata, getappdata, isappdata, rmappdata:
     Python: uifun.py. A Python dictionary kept with the object, from names to values.
 guidata:
     Python: uifun.py. The value kept in the figure's application data under the name UsedByGUIData_m, for the figure of the object given.
+inspect:
+    Python: uifun.py and inspector.py. Asks the page to open its property editor (pylab-inspector.js) beside the object's figure. The page then asks inspector.py for the object's properties: each property's value as getprop gives it, sorted into groups (the common ones for the object's kind first) and given a kind of field: colour, on/off, a list of choices, number, numbers, lines of text, colormap, callback, a link to another object, or read-only. A change typed there is read as a literal (numbers, a matrix in brackets, text, a colour name, hex code or [r g b]; a callback starting with @ is made by the code str2func uses), set with setprop as set does, and the figure is redrawn.
+plotedit:
+    Python: uifun.py. Asks the page to switch the figure's edit mode, the toolbar's arrow tool: a click then picks the topmost part under it (a legend or colorbar, a text, an annotation, a plotted object, its axes or the figure) for the property editor, and outlines it, without telling the program.
 movegui:
     Python: uifun.py. Asks the page to move the figure's window to the place named (onscreen unless given) on the desktop.
 uistack:

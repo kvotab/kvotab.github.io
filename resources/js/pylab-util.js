@@ -99,6 +99,8 @@
     pan: '<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/>',
     rotate: '<path d="M4 12a8 4 0 1 0 8-4"/><path d="M12 4v8M9 6l3-2 3 2"/>',
     datatip: '<path d="M4 4h12v9H9l-3 3v-3H4z"/><circle cx="19" cy="19" r="2" fill="currentColor"/>',
+    editplot: '<path d="M5 3l12.5 8.2-5.6 1.1 3.3 6.4-2.4 1.2-3.3-6.4L5 17.6z"/>',
+    inspector: '<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9h18M7 13h3M7 16.5h3M12.5 13H17M12.5 16.5H17"/>',
     home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
     image: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><circle cx="9" cy="10" r="1.8"/><path d="M3 17l6-5 4 3 3-2 5 4"/>',
     dock: '<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9h18"/><rect x="6" y="12" width="8" height="5" fill="currentColor" stroke="none"/>',

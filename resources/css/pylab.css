@@ -551,6 +551,47 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-figwin.is-docked { position: relative; inset: auto; box-shadow: none; border-radius: 0; height: 100%; width: 100% !important; left: 0 !important; top: 0 !important; }
 .pl-figwin.is-docked .pl-figtitle { cursor: default; }
 
+/* ---- the figure's property editor (pylab-inspector.js) ---------------------------------------------- */
+.pl-figwin.is-editing .pl-figcanvas canvas { cursor: default; }
+.pl-figwin.is-editing .pl-uictl { cursor: default; }
+.pl-uictl.is-inspected { outline: 1px dashed #2f6db5; outline-offset: 2px; }
+.pl-inspector { min-width: 220px; min-height: 200px; background: var(--pl-panel); font-size: 12px; }
+.pl-inspector .pl-figtitle { flex: none; }
+.pl-insp-tree { flex: 0 1 auto; max-height: 30%; min-height: 48px; overflow: auto; padding: 2px 0; border-bottom: 1px solid var(--pl-border); outline: none; }
+.pl-insp-node { padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; border-left: 2px solid transparent; }
+.pl-insp-node:hover { background: var(--pl-hover); }
+.pl-insp-node[aria-selected="true"] { background: var(--pl-sel-strong); border-left-color: var(--accent-line); }
+.pl-insp-node:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.pl-insp-head { flex: none; padding: 6px 8px 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-insp-find { flex: none; margin: 5px 8px; padding: 3px 7px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--input-text); }
+.pl-insp-msg { flex: none; margin: 0 8px 4px; padding: 4px 7px; border-left: 3px solid var(--pl-err); color: var(--pl-err); background: color-mix(in oklab, var(--pl-err) 8%, transparent); }
+.pl-insp-props { flex: 1 1 0; min-height: 0; overflow: auto; padding-bottom: 14px; }
+.pl-insp-ghead {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 8px; border: 0; border-top: 1px solid var(--pl-border);
+  background: var(--pl-chrome); color: var(--pl-text); font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.pl-insp-ghead::before { content: '\25B8'; font-size: 10px; width: 10px; color: var(--pl-muted); }
+.pl-insp-ghead[aria-expanded="true"]::before { content: '\25BE'; }
+.pl-insp-ghead:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.pl-insp-gbody { padding: 3px 0; }
+.pl-insp-row { display: grid; grid-template-columns: minmax(80px, 40%) minmax(0, 1fr); gap: 6px; align-items: center; padding: 1px 8px; min-height: 24px; }
+.pl-insp-row > label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--pl-text); }
+.pl-insp-row .v { min-width: 0; display: flex; align-items: center; }
+.pl-insp-row input[type="text"], .pl-insp-row textarea, .pl-insp-row select {
+  width: 100%; min-width: 0; box-sizing: border-box; padding: 2px 5px; border: 1px solid var(--input-border); border-radius: var(--radius-sm);
+  background: var(--input-bg); color: var(--input-text); font-family: var(--font-mono); font-size: 12px;
+}
+.pl-insp-row textarea { resize: none; line-height: 1.35; }
+.pl-insp-row.is-error input[type="text"], .pl-insp-row.is-error textarea { border-color: var(--pl-err); }
+.pl-insp-row input[type="checkbox"] { margin: 0; width: 15px; height: 15px; accent-color: var(--accent-line); }
+.pl-insp-color { gap: 4px; }
+.pl-insp-color input[type="color"] { flex: none; width: 26px; height: 22px; padding: 0 1px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; }
+.pl-insp-color input[type="color"].is-word { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 8px 8px; }
+.pl-insp-color input[type="color"].is-word::-webkit-color-swatch { opacity: 0; }
+.pl-insp-ro { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pl-muted); font-family: var(--font-mono); font-size: 11.5px; }
+.pl-insp-link { padding: 0; border: 0; background: none; color: var(--pl-link); font: inherit; font-family: var(--font-mono); font-size: 11.5px; text-decoration: underline; cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-insp-link:disabled { color: var(--pl-muted); text-decoration: none; cursor: default; }
+
 /* ---- a program's user interface in its figure (pylab-ui.js) --------------------------------------- */
 .pl-figmenubar { display: flex; align-items: center; height: 25px; box-sizing: border-box; padding: 0 4px; background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border); font-size: 12.5px; flex: none; }
 .pl-figmenu-top { background: none; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 1px 9px; color: var(--pl-text); font: inherit; cursor: default; }
@@ -668,7 +709,7 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
   .pl-big { min-width: 44px; }
   .pl-big span { display: none; }
   .pl-group-label { display: none; }
-  .pl-cmd-ta, .pl-crumbs input, .pl-dialog input[type="text"], .pl-findbar input { font-size: 16px; }
+  .pl-cmd-ta, .pl-crumbs input, .pl-dialog input[type="text"], .pl-findbar input, .pl-insp-find, .pl-insp-row input[type="text"], .pl-insp-row textarea, .pl-insp-row select { font-size: 16px; }
   .pl-figwin:not(.is-docked) { left: 4px !important; right: 4px; width: auto !important; }
 }
 @media print {

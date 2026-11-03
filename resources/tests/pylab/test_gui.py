@@ -762,4 +762,129 @@ d1 = np.round(np.frombuffer(base64.b64decode(kids[val('b').id]['bubbleSize']['$'
 check('sizes past bubblelim get the end bubbles', d1, [20.0] * 4)
 run("close all force")
 
+# ---- the figure's property editor (worker_api.inspect_object / inspect_change) ------------------------------
+run("close all force; f = figure('Name', 'Ed'); h = plot(1:5, [3 1 4 1 5], 'r--o', 'DisplayName', 'data'); ax = gca; "
+    "title('Hello'); xlabel('x'); lg = legend; cb = colorbar; t = text(2, 3, 'note'); an = annotation('arrow'); "
+    "sgtitle('Big'); b = uicontrol('String', 'Go');")
+
+
+def insp(name_or_id):
+    i = name_or_id if isinstance(name_or_id, int) else idof(name_or_id)
+    return json.loads(W.inspect_object(i))
+
+
+def prop(d, name):
+    return next(p for g in d['groups'] for p in g['props'] if p['name'] == name)
+
+
+def change(name, prop_name, payload):
+    EVENTS.clear()
+    d = json.loads(W.inspect_change(idof(name), prop_name, json.dumps(payload)))
+    return d.get('error'), any(e.get('type') == 'figures' for e in EVENTS)
+
+
+d = insp('f')
+check("the editor's tree: the figure, its super title, axes with title and labels, what is plotted, legend, colorbar "
+      "and its label, the annotation and the control",
+      [(r['depth'], r['label']) for r in d['tree']],
+      [(0, 'Figure 1: Ed'), (1, "Super title 'Big'"), (1, "Axes 'Hello'"), (2, "Title 'Hello'"), (2, "X label 'x'"),
+       (2, 'Y label'), (2, "Line 'data'"), (2, "Text 'note'"), (2, 'Legend'), (2, 'Colorbar'), (3, 'Label'), (1, 'Arrow'),
+       (1, "UIControl 'Go'")])
+check('the tree names its objects by id, as the page draws them', [r['id'] for r in d['tree']][:3],
+      [idof('f'), val('f').sgtitle.id, idof('ax')])
+d = insp('h')
+check("a line's common properties come first, in their order", [p['name'] for p in d['groups'][0]['props']],
+      ['Color', 'LineStyle', 'LineWidth', 'Marker', 'MarkerSize', 'MarkerFaceColor', 'DisplayName'])
+check('each with the field that suits it',
+      [(prop(d, n)['kind'], prop(d, n)['value']) for n in ('Color', 'LineStyle', 'LineWidth', 'XData', 'Visible', 'MarkerFaceColor')],
+      [('color', [1.0, 0.0, 0.0]), ('enum', '--'), ('number', '0.5'), ('array', '[1 2 3 4 5]'), ('onoff', True), ('color', 'none')])
+check("a colour's words are offered", prop(d, 'MarkerFaceColor')['options'], ['none', 'auto', 'flat'])
+check('the other groups follow, by name', [g['name'] for g in d['groups']],
+      ['Common', 'Colors and lines', 'Markers', 'Data', 'Identity and interaction', 'Callbacks', 'Other'])
+check('Parent is a link to the axes; Type and UserData are only shown',
+      (prop(d, 'Parent')['kind'], prop(d, 'Parent')['link'], prop(d, 'Type')['kind'], prop(d, 'UserData')['kind']),
+      ('link', idof('ax'), 'readonly', 'readonly'))
+d = insp('ax')
+check("the axes' title and labels are their text, as lines", [prop(d, n)['value'] for n in ('Title', 'XLabel', 'YLabel')],
+      [['Hello'], ['x'], ['']])
+check("limits in auto mode show the limits drawn; the mode is a choice", (prop(d, 'XLim')['value'], prop(d, 'XLimMode')['options']),
+      ('[1 5]', ['auto', 'manual']))
+check('the colormap is a choice of named maps', (prop(d, 'Colormap')['kind'], 'jet' in prop(d, 'Colormap')['options']), ('colormap', True))
+check('a legend lists its strings', prop(insp('lg'), 'String')['value'], ['data'])
+check("a figure's callbacks are text", (prop(insp('f'), 'CloseRequestFcn')['kind'], prop(insp('f'), 'CloseRequestFcn')['value']),
+      ('callback', 'closereq'))
+
+check('a colour as [r g b] is set, and the figure drawn again', change('h', 'Color', {'kind': 'color', 'value': [0, 0.5, 1]}), (None, True))
+check('... as the language has it', num("get(h, 'Color')"), [0.0, 0.5, 1.0])
+change('h', 'Color', {'kind': 'color', 'value': 'green'})
+check('a colour by name', num("get(h, 'Color')"), [0.0, 1.0, 0.0])
+change('h', 'Color', {'kind': 'color', 'value': '#ff8000'})
+check('a colour by hex code', num("round(get(h, 'Color') * 255)"), [255.0, 128.0, 0.0])
+change('h', 'Color', {'kind': 'color', 'value': '0 0 1'})
+check('a colour typed as numbers', num("get(h, 'Color')"), [0.0, 0.0, 1.0])
+check('a colour that is none is refused with the message set gives, and nothing is drawn',
+      change('h', 'Color', {'kind': 'color', 'value': 'blurple'}), ("Invalid color name or hex code 'blurple'.", False))
+change('h', 'LineStyle', {'kind': 'enum', 'value': ':'})
+change('h', 'LineWidth', {'kind': 'number', 'value': '2.5'})
+change('h', 'Visible', {'kind': 'onoff', 'value': False})
+change('h', 'YData', {'kind': 'array', 'value': '[5, 4 3 2 1]'})
+check('a choice, a number, on/off and numbers', (text("get(h, 'LineStyle')"), num("get(h, 'LineWidth')"), text("get(h, 'Visible')"),
+                                                 num("get(h, 'YData')")), (':', 2.5, 'off', [5.0, 4.0, 3.0, 2.0, 1.0]))
+check('a number is read, never run', change('h', 'LineWidth', {'kind': 'number', 'value': '1+1'})[0], "'1+1' is not a number.")
+check('nor is a call', change('h', 'YData', {'kind': 'array', 'value': 'disp(7)'})[0], "'disp(7)' is not a number.")
+check('rows of numbers must be as long', change('h', 'YData', {'kind': 'array', 'value': '[1 2; 3]'})[0],
+      'Each row needs the same number of values.')
+change('ax', 'XLim', {'kind': 'array', 'value': '[-pi pi]'})
+check('pi and Inf are numbers; limits set are manual', (num("round(get(ax, 'XLim') * 1e4)"), text("get(ax, 'XLimMode')")),
+      ([-31416.0, 31416.0], 'manual'))
+check("limits the wrong way round get set's message", change('ax', 'YLim', {'kind': 'array', 'value': '[1 0]'})[0],
+      'Value must be a 1x2 vector of numeric type in which the second element is larger than the first and may be Inf.')
+change('ax', 'Title', {'kind': 'lines', 'value': ['Top', 'second']})
+check('a title of two lines', text("strjoin(get(get(ax, 'Title'), 'String'), '|')"), 'Top|second')
+change('ax', 'XTickLabel', {'kind': 'lines', 'value': ['a', 'b']})
+check('tick labels typed one a line are set, and manual', (text("strjoin(get(ax, 'XTickLabel'), '|')"), text("get(ax, 'XTickLabelMode')")),
+      ('a|b', 'manual'))
+change('lg', 'String', {'kind': 'lines', 'value': ['first']})
+change('cb', 'Label', {'kind': 'lines', 'value': ['Temp']})
+check("legend strings name the lines; a colorbar's label is its Label's text", (text("get(h, 'DisplayName')"), text('cb.Label.String')),
+      ('first', 'Temp'))
+change('f', 'Colormap', {'kind': 'colormap', 'value': 'gray', 'rows': 64})
+check('a named colormap, as many rows as before', num("size(colormap(f))"), [64.0, 3.0])
+check('one not named is refused', change('f', 'Colormap', {'kind': 'colormap', 'value': 'magma2'})[0], "'magma2' is not a colormap.")
+change('f', 'Name', {'kind': 'text', 'value': "it's; disp(1)"})
+check('text is kept as typed', text("get(f, 'Name')"), "it's; disp(1)")
+change('f', 'WindowButtonDownFcn', {'kind': 'callback', 'value': "@(s, e) disp('hi')"})
+check('a callback starting with @ is a function handle', text("class(get(f, 'WindowButtonDownFcn'))"), 'function_handle')
+change('f', 'WindowButtonDownFcn', {'kind': 'callback', 'value': '@disp'})
+check('... also by name', text("func2str(get(f, 'WindowButtonDownFcn'))"), 'disp')
+check('but only a handle', change('f', 'WindowButtonDownFcn', {'kind': 'callback', 'value': '@disp; clear all'})[0],
+      "'@disp; clear all' is not a function handle.")
+change('f', 'WindowButtonDownFcn', {'kind': 'callback', 'value': ''})
+check('a property only shown is not changed', change('f', 'Number', {'kind': 'number', 'value': '5'})[0], 'Number cannot be changed here.')
+change('b', 'Enable', {'kind': 'enum', 'value': 'inactive'})
+check("a control's Enable takes inactive", text("get(b, 'Enable')"), 'inactive')
+check("a control's style is a choice", prop(insp('b'), 'Style')['options'][:3], ['pushbutton', 'togglebutton', 'radiobutton'])
+run("delete(t)")
+check('a deleted object is said to be gone', json.loads(W.inspect_object(idof('t'))), {'ok': False, 'error': 'That object has been deleted.'})
+run("figure; hh = histogram(randn(100, 1), 10);")
+check("a histogram's bins are shown, not changed (set would not count again)", (prop(insp('hh'), 'NumBins')['kind'],
+                                                                                 prop(insp('hh'), 'BinEdges')['kind']), ('readonly', 'readonly'))
+run("figure; yyaxis left; plot(1:3); yyaxis right; plot(3:-1:1); ylabel('R');")
+check('the right y-axis of yyaxis is in the tree with its label and plot',
+      [r['label'] for r in json.loads(W.inspect_object(val('f').id if False else STORE.current.id))['tree']][-3:],
+      ['Axes (right y)', "Y label 'R'", 'Line'])
+
+EVENTS.clear()
+run("inspect(h)")
+check('inspect(h) asks the page to show h in its figure', [e for e in EVENTS if e['type'] == 'inspect'],
+      [{'type': 'inspect', 'figure': idof('f'), 'id': idof('h')}])
+EVENTS.clear()
+run("plotedit(f, 'on'); plotedit off; plotedit")
+check("plotedit turns a figure's edit mode on, off, or switches it", [(e['type'], e['on']) for e in EVENTS if e['type'] == 'plotedit'],
+      [('plotedit', True), ('plotedit', False), ('plotedit', None)])
+check('inspect needs a graphics object', 'must be a graphics object' in run('inspect(5)'), True)
+check("plotedit takes on or off", "Use 'on' or 'off'." in run("plotedit maybe"), True)
+check('plotedit needs a figure', 'The input must be a figure.' in run("plotedit(7, 'on')"), True)
+run("close all force")
+
 sys.exit(check.done())

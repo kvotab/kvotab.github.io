@@ -604,6 +604,23 @@ def ui_event(ev_json):
     return json.dumps({'queued': n})
 
 
+def inspect_object(obj_id):
+    """The figure's property editor: an object's properties and its figure's tree."""
+    from . import inspector
+    return inspector.inspect_json(obj_id)
+
+
+def inspect_change(obj_id, name, payload):
+    """A property changed in the figure's property editor; the figure is redrawn."""
+    from . import inspector
+    res = inspector.change_json(obj_id, name, payload)
+    try:
+        R.flush_figures()
+    except Exception:
+        pass
+    return res
+
+
 def all_figures():
     """Every open figure, for a page that (re)starts."""
     from .graphics_base import STORE, serialize_figure

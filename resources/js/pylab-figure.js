@@ -645,12 +645,31 @@
       for (const t of fig.annotations || []) {
         if (t.shape) { this.drawShape(ctx, t, W, H); continue; }
         const p = t.position;
-        if (t.units === 'normalized') drawText(ctx, t.string, p[0] * W, H - p[1] * H, { size: t.fontSize * PT, color: rgb(t.color), halign: t.halign, valign: t.valign, rotation: t.rotation, background: rgb(t.background), edge: rgb(t.edge), interpreter: t.interpreter, bold: t.fontWeight === 'bold' });
+        if (t.units === 'normalized') this.textOf(t, ctx, t.string, p[0] * W, H - p[1] * H, { size: t.fontSize * PT, color: rgb(t.color), halign: t.halign, valign: t.valign, rotation: t.rotation, background: rgb(t.background), edge: rgb(t.edge), interpreter: t.interpreter, bold: t.fontWeight === 'bold' });
       }
       if (fig.sgtitle && fig.sgtitle.string) {
-        drawText(ctx, fig.sgtitle.string, W / 2, 8, { size: fig.sgtitle.fontSize * PT, valign: 'top', halign: 'center', bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
+        this.textOf(fig.sgtitle, ctx, fig.sgtitle.string, W / 2, 8, { size: fig.sgtitle.fontSize * PT, valign: 'top', halign: 'center', bold: fig.sgtitle.fontWeight === 'bold', color: rgb(fig.sgtitle.color) });
       }
       ctx.restore();
+    }
+
+    /* Text drawn for an object (a title, a label, a text): where its letters
+       are, for a click on it, as drawText leaves them (turned with the text). */
+    textOf(t, ctx, str, x, y, opts) {
+      const m = drawText(ctx, str, x, y, opts);
+      if (!t || t.id == null || !m || !(m.width > 0)) return m;
+      const size = opts.size || 12;
+      const x0 = opts.halign === 'center' ? -m.width / 2 : opts.halign === 'right' ? -m.width : 0;
+      const va = opts.valign || 'middle';
+      const y0 = va === 'top' || va === 'cap' ? 0 : va === 'bottom' ? -m.height : va === 'baseline' ? -size * 0.85 : -m.height / 2;
+      const a = -(opts.rotation || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+      const xs = [], ys = [];
+      for (const [px, py] of [[x0, y0], [x0 + m.width, y0], [x0, y0 + m.height], [x0 + m.width, y0 + m.height]]) {
+        xs.push(x + px * c - py * s);
+        ys.push(y + px * s + py * c);
+      }
+      this.textBoxes.set(t.id, { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
+      return m;
     }
 
     /* annotation(...): a line, arrow, double arrow, text arrow, rectangle,
@@ -971,7 +990,7 @@
       ctx.restore();
       let mw = 0;
       yt.labels.forEach((s, i) => { const m = drawText(ctx, s, r.x + r.w + 5, fr.fy(yt.ticks[i]), { size: fs, color: ink, valign: 'middle' }); mw = Math.max(mw, m.width); });
-      if (ax.ylabel && ax.ylabel.string) drawText(ctx, ax.ylabel.string, r.x + r.w + mw + 10 + fs * 0.9, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: ink, halign: 'center', valign: 'middle', rotation: -90 });
+      if (ax.ylabel && ax.ylabel.string) this.textOf(ax.ylabel, ctx, ax.ylabel.string, r.x + r.w + mw + 10 + fs * 0.9, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: ink, halign: 'center', valign: 'middle', rotation: -90 });
     }
 
     grid2(ctx, ax, fr, xt, yt) {
@@ -1020,21 +1039,21 @@
       if (!hiddenAxes) {
         if (ax.xlabel.string && ax.xlabel.visible !== false) {
           const y = xAtTop ? r.y - fs * 1.6 - 4 : r.y + r.h + fs * 1.4 + 6;
-          drawText(ctx, ax.xlabel.string, r.x + r.w / 2, y, { size: ax.xlabel.fontSize * PT * 1.1, color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), halign: 'center', valign: xAtTop ? 'bottom' : 'top', interpreter: ax.xlabel.interpreter, bold: ax.xlabel.fontWeight === 'bold' });
+          this.textOf(ax.xlabel, ctx, ax.xlabel.string, r.x + r.w / 2, y, { size: ax.xlabel.fontSize * PT * 1.1, color: rgb(ax.xlabel.color === 'none' ? [0, 0, 0] : ax.xlabel.color), halign: 'center', valign: xAtTop ? 'bottom' : 'top', interpreter: ax.xlabel.interpreter, bold: ax.xlabel.fontWeight === 'bold' });
         }
         if (ax.ylabel.string && ax.ylabel.visible !== false) {
           const right = ax.yaxisLocation === 'right';
           const x = right ? r.x + r.w + (maxYLabel || 0) + 10 + lfs * 0.6 : r.x - (maxYLabel || 0) - 10 - lfs * 0.6;
-          drawText(ctx, ax.ylabel.string, x, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), halign: 'center', valign: 'middle', rotation: right ? -90 : 90, interpreter: ax.ylabel.interpreter, bold: ax.ylabel.fontWeight === 'bold' });
+          this.textOf(ax.ylabel, ctx, ax.ylabel.string, x, r.y + r.h / 2, { size: ax.ylabel.fontSize * PT * 1.1, color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), halign: 'center', valign: 'middle', rotation: right ? -90 : 90, interpreter: ax.ylabel.interpreter, bold: ax.ylabel.fontWeight === 'bold' });
         }
       }
       if (ax.title.string && ax.title.visible !== false) {
         let y = r.y - 6 - (xAtTop ? fs * 3 : 0) - (expPad && !xAtTop ? 0 : 0);
         if (ax.subtitle && ax.subtitle.string) {
-          drawText(ctx, ax.subtitle.string, r.x + r.w / 2, y, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), halign: 'center', valign: 'bottom', interpreter: ax.subtitle.interpreter });
+          this.textOf(ax.subtitle, ctx, ax.subtitle.string, r.x + r.w / 2, y, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), halign: 'center', valign: 'bottom', interpreter: ax.subtitle.interpreter });
           y -= ax.subtitle.fontSize * PT * 1.3;
         }
-        drawText(ctx, ax.title.string, r.x + r.w / 2, y, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
+        this.textOf(ax.title, ctx, ax.title.string, r.x + r.w / 2, y, { size: ax.title.fontSize * PT * 1.1, color: rgb(ax.title.color), halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
       }
     }
 
@@ -1591,7 +1610,7 @@
         if (c.marker !== 'none') drawMarkers(ctx, pts.filter(Boolean), c.marker, c.markerSize, rgb(c.color), c.mfc === 'none' ? null : rgb(c.color));
       }
       ctx.restore();
-      if (ax.title.string) drawText(ctx, ax.title.string, cx, rect.y - 4, { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: true });
+      if (ax.title.string) this.textOf(ax.title, ctx, ax.title.string, cx, rect.y - 4, { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: true });
       this.frames.push({ ax, fr: { r: rect, polar: true, cx, cy, R, top }, rect, is3d: false });
     }
 
@@ -1739,14 +1758,14 @@
           if (k === 2 && !turned) { dx = -1; dy = 0; }
           const L = Math.hypot(dx, dy) || 1;
           dx /= L; dy /= L;
-          drawText(ctx, lab.string, p[0] + dx * (fs * 3.2), p[1] + dy * (fs * 2.4), { size: lab.fontSize * PT * 1.1, halign: 'center', valign: 'middle', rotation: k === 2 ? 90 : 0, interpreter: lab.interpreter });
+          this.textOf(lab, ctx, lab.string, p[0] + dx * (fs * 3.2), p[1] + dy * (fs * 2.4), { size: lab.fontSize * PT * 1.1, halign: 'center', valign: 'middle', rotation: k === 2 ? 90 : 0, interpreter: lab.interpreter });
         }
       }
       ctx.restore();
       if (ax.title.string) {
         let minY = Infinity;
         for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) minY = Math.min(minY, corner(sx, sy, sz)[1]);
-        drawText(ctx, ax.title.string, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
+        this.textOf(ax.title, ctx, ax.title.string, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), { size: ax.title.fontSize * PT * 1.1, halign: 'center', valign: 'bottom', bold: ax.title.fontWeight !== 'normal', interpreter: ax.title.interpreter });
       }
     }
 
@@ -2071,14 +2090,27 @@
       });
       ctx.stroke();
       if (exp !== null) drawText(ctx, `\\times10^{${exp}}`, x, y - 4, { size: fs, valign: 'bottom', color: rgb(cb.color) });
+      // where it is, for a click in the figure's edit mode (with its tick labels)
+      this.frames.push({ colorbar: cb, rect: horiz ? { x, y, w, h: h + fs * 1.4 + 3 } : { x, y, w: w + fs * 2.6 + 4, h } });
       if (cb.label && cb.label.string) {
-        if (horiz) drawText(ctx, cb.label.string, x + w / 2, y + h + fs * 1.6 + 4, { size: cb.label.fontSize * PT, halign: 'center', valign: 'top' });
-        else drawText(ctx, cb.label.string, x + w + fs * 3.4, y + h / 2, { size: cb.label.fontSize * PT, halign: 'center', valign: 'middle', rotation: -90 });
+        if (horiz) this.textOf(cb.label, ctx, cb.label.string, x + w / 2, y + h + fs * 1.6 + 4, { size: cb.label.fontSize * PT, halign: 'center', valign: 'top' });
+        else this.textOf(cb.label, ctx, cb.label.string, x + w + fs * 3.4, y + h / 2, { size: cb.label.fontSize * PT, halign: 'center', valign: 'middle', rotation: -90 });
       }
     }
   }
 
   /* The polygons of a patch: [{pts: [[x, y, z]], c}] */
+  /* Where an annotation is on a canvas W by H: a box, or a line's two ends for the line kinds. */
+  function shapeBox(a, W, H) {
+    if (!a.shape) return null;
+    const u = a.units && a.units !== 'normalized' ? (PL.uiUnits && PL.uiUnits[a.units]) || [1, 1] : null;
+    const px = (x) => (u ? x * u[0] : x * W), py = (y) => H - (u ? y * u[1] : y * H);
+    if (a.x && a.y) return { line: [px(a.x[0]), py(a.y[0]), px(a.x[1]), py(a.y[1])] };
+    const p = a.position;
+    const x = px(p[0]), y = py(p[1] + p[3]), w = px(p[0] + p[2]) - x, h = py(p[1]) - y;
+    return { x: Math.min(x, x + w), y: Math.min(y, y + h), w: Math.abs(w), h: Math.abs(h) };
+  }
+
   function patchPolys(c) {
     const out = [];
     if (c.faces && c.vertices) {
@@ -2123,8 +2155,9 @@
       this.id = fig.id;
       this.renderer = new Renderer();
       this.renderer.onTile = () => this.redrawSoon();
-      this.tool = null;                 // null (drag pans/turns), 'zoomin', 'zoomout', 'pan', 'rotate', 'datatip'
+      this.tool = null;                 // null (drag pans/turns), 'edit', 'zoomin', 'zoomout', 'pan', 'rotate', 'datatip'
       this.tips = [];
+      this.selection = null;            // the object the property editor shows (outlined while it is open)
       this.title = el('span', { class: 't' });
       const tb = (name, title, fn, toggle) => {
         const b = el('button', { class: 'pl-iconbtn', type: 'button', title, 'aria-label': title }, icon(name));
@@ -2136,6 +2169,7 @@
       this.btnSave = tb('image', 'Save as a picture', () => this.savePicture());
       this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnSave, this.btnClose);
       this.toolBtns = {
+        edit: tb('editplot', 'Edit the plot: click a part of it to see and change its properties', () => this.setTool('edit'), true),
         zoomin: tb('zoomin', 'Zoom in (drag a box, or click)', (b) => this.setTool('zoomin'), true),
         zoomout: tb('zoomout', 'Zoom out (click)', (b) => this.setTool('zoomout'), true),
         pan: tb('pan', 'Pan (drag)', (b) => this.setTool('pan'), true),
@@ -2143,7 +2177,7 @@
         datatip: tb('datatip', 'Data tips (click a point)', (b) => this.setTool('datatip'), true),
       };
       this.tools = el('div', { class: 'pl-figtools', role: 'toolbar', 'aria-label': 'Figure tools' },
-        this.toolBtns.zoomin, this.toolBtns.zoomout, this.toolBtns.pan, this.toolBtns.rotate, this.toolBtns.datatip,
+        this.toolBtns.edit, this.toolBtns.zoomin, this.toolBtns.zoomout, this.toolBtns.pan, this.toolBtns.rotate, this.toolBtns.datatip,
         tb('home', 'Restore the view', () => this.restoreView()), el('span', { class: 'gap' }),
         tb('grid', 'Grid on or off', () => this.mgr.run(`figure(${fig.number}); grid`)),
         tb('legend', 'Legend on or off', () => this.mgr.run(`figure(${fig.number}); if isempty(get(gca,'Legend')), legend show, else, legend off, end`)),
@@ -2151,6 +2185,16 @@
       this.canvas = el('canvas');
       // what the program made with uicontrol, uimenu, uitoolbar ... (pylab-ui.js)
       this.ui = new PL.FigureUI(this);
+      // in edit mode a click on a control picks it, and does not press it
+      const pick = (ev) => {
+        if (this.tool !== 'edit') return;
+        const c = ev.target.closest && ev.target.closest('.pl-uictl');
+        if (!c) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.type === 'pointerdown') this.mgr.inspect(this, Number(c.dataset.id));
+      };
+      for (const t of ['pointerdown', 'mousedown', 'click', 'dblclick']) this.ui.layer.addEventListener(t, pick, true);
       this.stage = el('div', { class: 'pl-figcanvas' }, this.canvas, this.ui.layer);
       this.grip = el('div', { class: 'pl-figgrip', title: 'Drag to resize' });
       this.el = el('div', { class: 'pl-figwin', role: 'dialog', 'aria-label': 'Figure', tabindex: '-1' }, this.titlebar, this.ui.menubar, this.ui.toolbars, this.tools, this.stage, this.grip);
@@ -2171,7 +2215,8 @@
       // a program's own window: no plot tools unless it asks (MenuBar none hides them, as ToolBar none does)
       this.plotTools = fig.toolBar === 'figure' || (fig.toolBar !== 'none' && fig.menuBar !== 'none');
       this.tools.hidden = !this.plotTools;
-      if (!this.plotTools && this.tool) this.setTool(this.tool);
+      // (edit mode stays: plotedit turns it on in a program's own window too)
+      if (!this.plotTools && this.tool && this.tool !== 'edit') this.setTool(this.tool);
       this.btnSave.hidden = !!fig.dialog;
       this.grip.hidden = fig.resize === false;
       this.el.classList.toggle('is-dialog', !!fig.dialog);
@@ -2234,6 +2279,7 @@
       this.renderer.draw(ctx, this.fig, w, h);
       this.drawTips(ctx);
       this.lastSize = { w, h };
+      this.drawSelection(ctx);
     }
 
     /* The size the figure is drawn at: as on screen, or its own for a window not shown. */
@@ -2327,11 +2373,126 @@
     }
 
     setTool(t) {
+      const was = this.tool;
       this.tool = this.tool === t ? null : t;
       for (const [k, b] of Object.entries(this.toolBtns)) b.setAttribute('aria-pressed', String(k === this.tool));
       this.stage.style.cursor = this.tool === 'zoomin' ? 'zoom-in' : this.tool === 'zoomout' ? 'zoom-out' : this.tool === 'pan' ? 'grab' : this.tool === 'rotate' ? 'move' : this.tool === 'datatip' ? 'crosshair' : 'default';
+      this.el.classList.toggle('is-editing', this.tool === 'edit');
       if (!this.tool) this.setPointer();
       if (this.tool !== 'datatip') { this.tips = []; this.redraw(); }
+      // edit mode opens the property editor on what was picked last (or the figure); leaving it closes the editor
+      if (this.tool === 'edit' && was !== 'edit') this.mgr.inspect(this, this.selection || this.fig.id);
+      else if (was === 'edit' && !this.tool) this.mgr.closeInspector(this);
+    }
+
+    /* What a click in edit mode picks: a legend or colorbar, a text (a title,
+       a label), an annotation, a plotted object (also one that takes no
+       clicks), its axes (with their tick labels round them), else the figure. */
+    editHit(px, py) {
+      const fs = this.renderer.frames;
+      for (let i = fs.length - 1; i >= 0; i--) {
+        const f = fs[i], r = f.rect;
+        if ((f.legend || f.colorbar) && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return (f.legend || f.colorbar).id;
+      }
+      let best = null;
+      for (const [id, b] of this.renderer.textBoxes) {
+        if (px >= b.x - 2 && px <= b.x + b.w + 2 && py >= b.y - 2 && py <= b.y + b.h + 2 && (!best || b.w * b.h < best.a)) best = { id, a: b.w * b.h };
+      }
+      if (best) return best.id;
+      const W = this.lastSize ? this.lastSize.w : 0, H = this.lastSize ? this.lastSize.h : 0;
+      for (let i = (this.fig.annotations || []).length - 1; i >= 0; i--) {
+        const a = this.fig.annotations[i];
+        const b = shapeBox(a, W, H);
+        if (!b || a.visible === false) continue;
+        if (b.line) {
+          const [x1, y1, x2, y2] = b.line;
+          const dx = x2 - x1, dy = y2 - y1, L = dx * dx + dy * dy;
+          const t = L ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / L)) : 0;
+          if (Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy)) <= 5) return a.id;
+        } else if (px >= b.x - 3 && px <= b.x + b.w + 3 && py >= b.y - 3 && py <= b.y + b.h + 3) return a.id;
+      }
+      const axes = fs.filter((f) => f.ax && !f.yyRight);
+      for (let i = axes.length - 1; i >= 0; i--) {
+        const f = axes[i], r = f.rect;
+        if (px < r.x || px > r.x + r.w || py < r.y || py > r.y + r.h) continue;
+        if (!f.is3d && !f.fr.polar) {
+          for (const fr of fs.filter((g) => g.ax && g.rect === r && g.yyRight).concat([f])) {
+            for (let k = fr.ax.children.length - 1; k >= 0; k--) if (this.hits(fr, fr.ax.children[k], px, py)) return fr.ax.children[k].id;
+          }
+        }
+        return f.ax.id;
+      }
+      // a click by the axes (on their tick labels): the nearest axes
+      let near = null;
+      for (const f of axes) {
+        const r = f.rect;
+        const d = Math.hypot(Math.max(r.x - px, 0, px - r.x - r.w), Math.max(r.y - py, 0, py - r.y - r.h));
+        if (d <= 40 && (!near || d < near.d)) near = { d, id: f.ax.id };
+      }
+      return near ? near.id : this.fig.id;
+    }
+
+    /* Where the selected object is on the canvas, for its outline. */
+    selectionBox(id) {
+      const R = this.renderer;
+      const W = this.lastSize ? this.lastSize.w : 0, H = this.lastSize ? this.lastSize.h : 0;
+      if (id === this.fig.id) return { x: 7, y: 7, w: W - 14, h: H - 14 };
+      for (const f of R.frames) {
+        if ((f.ax && f.ax.id === id) || (f.legend && f.legend.id === id) || (f.colorbar && f.colorbar.id === id)) return f.rect;
+      }
+      if (R.textBoxes.has(id)) return R.textBoxes.get(id);
+      const a = (this.fig.annotations || []).find((x) => x.id === id);
+      if (a) {
+        const b = shapeBox(a, W, H);
+        if (b && b.line) return { x: Math.min(b.line[0], b.line[2]), y: Math.min(b.line[1], b.line[3]), w: Math.abs(b.line[2] - b.line[0]), h: Math.abs(b.line[3] - b.line[1]) };
+        return b;
+      }
+      for (const f of R.frames) {
+        if (!f.ax) continue;
+        const c = f.ax.children.find((x) => x.id === id);
+        if (!c) continue;
+        if (f.is3d || f.fr.polar) return f.rect;
+        const fr = f.fr;
+        let xs = [], ys = [];
+        if (c.type === 'patch' && !c.x && c.vertices) {
+          const V = decode(c.vertices);
+          const n = V.shape[0], m = V.shape[1] || 1;
+          for (let i = 0; i < n; i++) { xs.push(V.data[i * m]); ys.push(V.data[i * m + 1]); }
+        } else {
+          xs = vec(decode(c.x || c.xData));
+          ys = vec(decode(c.y || c.yData));
+          if (c.type === 'series' && c.kind === 'bar' && xs.length && ys.length) ys = ys.concat([c.baseValue || 0]);
+        }
+        const X = xs.filter((v) => Number.isFinite(v)).map((v) => fr.fx(v)).filter(Number.isFinite);
+        const Y = ys.filter((v) => Number.isFinite(v)).map((v) => fr.fy(v)).filter(Number.isFinite);
+        if (!X.length || !Y.length) return f.rect;
+        const r = f.rect;
+        const x0 = Math.max(r.x, Math.min(...X)), x1 = Math.min(r.x + r.w, Math.max(...X));
+        const y0 = Math.max(r.y, Math.min(...Y)), y1 = Math.min(r.y + r.h, Math.max(...Y));
+        return x1 >= x0 && y1 >= y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+      }
+      return null;
+    }
+
+    drawSelection(ctx) {
+      const id = this.selection;
+      this.ui.mark(this.mgr.inspecting(this) ? id : null);
+      if (id == null || !this.mgr.inspecting(this)) return;
+      const b = this.selectionBox(id);
+      if (!b) return;
+      const x = b.x - 3, y = b.y - 3, w = b.w + 6, h = b.h + 6;
+      ctx.save();
+      ctx.strokeStyle = '#2f6db5';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fff';
+      for (const [hx, hy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h], [x + w / 2, y], [x + w / 2, y + h], [x, y + h / 2], [x + w, y + h / 2]]) {
+        ctx.fillRect(hx - 3, hy - 3, 6, 6);
+        ctx.strokeRect(hx - 3, hy - 3, 6, 6);
+      }
+      ctx.restore();
     }
 
     /* What a click at (px, py) on the canvas hits: the topmost object that
@@ -2507,6 +2668,8 @@
         const f = this.frameAt(px, py);
         if (this.mgr.ginput) { if (ev.button === 0) this.mgr.ginputClick(this, f, px, py, ev.button); return; }
         this.el.focus({ preventScroll: true });
+        // edit mode: a click picks what is under it for the property editor; the program hears nothing
+        if (this.tool === 'edit') { if (ev.button === 0) this.mgr.inspect(this, this.editHit(px, py)); return; }
         const fl = this.fig.flags || {};
         const hit = this.hitTest(px, py);
         // the program hears every press (CurrentPoint, SelectionType, gco; and its callbacks)
@@ -2606,7 +2769,7 @@
         ev.preventDefault();
         this.zoomAt(f, px, py, ev.deltaY > 0 ? 1.15 : 1 / 1.15);
       }, { passive: false });
-      this.canvas.addEventListener('dblclick', () => { if (this.plotTools && !(this.fig.flags && this.fig.flags.wbdf)) this.restoreView(); });
+      this.canvas.addEventListener('dblclick', () => { if (this.plotTools && this.tool !== 'edit' && !(this.fig.flags && this.fig.flags.wbdf)) this.restoreView(); });
       this.canvas.addEventListener('contextmenu', (ev) => {
         const [px, py] = pos(ev);
         const hit = this.hitTest(px, py);
@@ -2735,6 +2898,32 @@
     run(code) { this.emit('run', code); }
     ui(ev) { this.emit('ui', ev); }
 
+    /* The property editor (pylab-inspector.js): one, beside the figure it edits. */
+    inspect(w, id) {
+      if (!PL.FigureInspector) return;
+      if (!this.inspector) this.inspector = new PL.FigureInspector(this);
+      this.inspector.show(w, id);
+    }
+
+    closeInspector(w) { if (this.inspector && this.inspector.isOpen(w)) this.inspector.close(); }
+
+    inspecting(w) { return !!this.inspector && this.inspector.isOpen(w); }
+
+    /* inspect(h) and plotedit in a program. */
+    inspectObject(figId, id) {
+      const w = this.wins.get(figId);
+      if (!w) return;
+      w.el.hidden = false;
+      this.focus(w, false);
+      this.inspect(w, id);
+    }
+
+    plotEdit(figId, on) {
+      const w = this.wins.get(figId);
+      if (!w) return;
+      if (on === null || on === undefined || on !== (w.tool === 'edit')) w.setTool('edit');
+    }
+
     /* movegui: a window to the middle (or an edge) of the desktop. */
     move(id, where) {
       const w = this.wins.get(id);
@@ -2780,6 +2969,7 @@
       if (msg.current && msg.current !== this.engineCurrent && !opened.has(msg.current)) this.setCurrent(msg.current, false);
       this.engineCurrent = msg.current;
       this.updateModal();
+      if (this.inspector) for (const fig of msg.figures || []) this.inspector.figureChanged(fig.id);
     }
 
     /* A figure whose WindowStyle is 'modal' keeps the rest of the page from
@@ -2874,6 +3064,7 @@
       for (const x of this.wins.values()) x.el.classList.toggle('is-current', x === w);
       if (this.current !== w.id && tell) this.send({ type: 'current', id: w.id });
       this.current = w.id;
+      if (this.inspector && this.inspector.isOpen(w)) this.inspector.raise();
       if (this.veil) this.restackModal();
     }
 
@@ -2899,6 +3090,7 @@
       w.el.remove();
       this.wins.delete(id);
       if (this.current === id) this.current = null;
+      if (this.inspector) this.inspector.figureClosed(id);
       this.emit('closed', id);
       this.updateModal();
     }

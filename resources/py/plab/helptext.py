@@ -4201,6 +4201,17 @@ uistack: Bring an object to the front of its siblings, or send it back.
     uistack(h, 'top')
     uistack(h, 'up' | 'down', steps)
     uistack(h, 'bottom')
+inspect: Open the property editor beside a figure, showing a graphics object's properties.
+    inspect(h)
+    inspect
+    * With no input it shows the current figure. Each property has a field that suits it (a colour, on or off, a list of choices, numbers, text); a change is set as set(h, name, value) sets it.
+    * The editor lists the figure's objects as a tree (axes with their title and labels, what is plotted, legend, colorbar, annotations, controls): click one to show its properties.
+plotedit: Turn a figure's edit mode on or off: a click in the figure then picks a part of it for the property editor.
+    plotedit on | off
+    plotedit
+    plotedit(fig, 'on' | 'off')
+    * With no option it switches the mode. In edit mode a click reaches neither the program's callbacks nor its controls.
+    * The figure toolbar's arrow button does the same.
 movegui: Move a figure window: to the middle of the desktop, or to an edge.
     movegui(fig, 'center')
     movegui(fig, 'north' | 'south' | 'east' | 'west' | 'northeast' | ...)

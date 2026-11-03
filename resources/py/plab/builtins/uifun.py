@@ -312,6 +312,44 @@ def movegui(nargout, *args):
     return None
 
 
+@bi('inspect', arr=False)
+def inspect_(nargout, *args):
+    nargchk(args, 0, 1, 'inspect')
+    try:
+        h = _one(args[0]) if args else gcf_()
+    except MError:
+        h = None
+    if not isinstance(h, GObj) or not h.valid or h.figure() is None:
+        raise err('MATLAB:inspect:invalidInput', 'The input must be a graphics object in a figure.', 'inspect')
+    R.flush_figures()
+    R.EVENT_HOOK[0] and R.EVENT_HOOK[0]({'type': 'inspect', 'figure': h.figure().id, 'id': h.id})
+    return None
+
+
+@bi('plotedit', arr=False)
+def plotedit(nargout, *args):
+    nargchk(args, 0, 2, 'plotedit')
+    rest = list(args)
+    f = gcf_()
+    if rest and not is_str(rest[0]):
+        try:
+            h = _one(rest.pop(0))
+        except MError:
+            h = None
+        if not isinstance(h, GObj) or not h.valid or h.figure() is None:
+            raise err('MATLAB:plotedit:invalidInput', 'The input must be a figure.', 'plotedit')
+        f = h.figure()
+    on = None
+    if rest:
+        s = opt_lower(rest[0], 'plotedit')
+        if s not in ('on', 'off'):
+            raise err('MATLAB:plotedit:invalidInput', "Use 'on' or 'off'.", 'plotedit')
+        on = s == 'on'
+    R.flush_figures()
+    R.EVENT_HOOK[0] and R.EVENT_HOOK[0]({'type': 'plotedit', 'figure': f.id, 'on': on})
+    return None
+
+
 @bi('uistack', arr=False)
 def uistack(nargout, *args):
     nargchk(args, 1, 3, 'uistack')
