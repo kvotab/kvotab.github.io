@@ -339,6 +339,17 @@ async def desktop(page):
     check('the grid button sets XGrid', "g =\n\n    'on'" in out[-40:], True)
     png = await page.ev(f'{WIN}.renderTo(1)')
     check('Save as a picture makes a PNG', (png or '').startswith('data:image/png') and len(png) > 5000, True)
+    await page.ev(f"{WIN}.btnSave.click(); 1")
+    items = await page.ev("[...document.querySelectorAll('.pl-menu [role=menuitem]')].map(b => b.textContent)")
+    check('the save button offers the kinds of file', items,
+          ['PNG picture (.png)', 'SVG drawing (.svg)', 'PDF document (.pdf)', 'EPS drawing (.eps)', 'JPEG picture (.jpg)'])
+    saved = await page.ev("(async () => { const was = HTMLAnchorElement.prototype.click; let got = null; "
+                          "HTMLAnchorElement.prototype.click = function () { got = [this.download, this.href]; }; "
+                          "[...document.querySelectorAll('.pl-menu [role=menuitem]')].find(b => b.textContent.startsWith('SVG')).click(); "
+                          "for (let i = 0; i < 100 && !got; i++) await new Promise(r => setTimeout(r, 100)); "
+                          "HTMLAnchorElement.prototype.click = was; if (!got) return null; "
+                          "const t = await (await fetch(got[1])).text(); return [got[0], t.includes('<svg'), t.includes('Squares')]; })()")
+    check('its SVG item saves the figure as an SVG drawing, its text as text', saved, ['figure1.svg', True, True])
     await command(page, 'figure; surf(peaks(25)); [az0, el0] = view;')
     await until(page, 'PL.app.figures.wins.size === 2')
     await asyncio.sleep(0.6)

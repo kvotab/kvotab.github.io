@@ -2147,6 +2147,15 @@
   }
 
   /* ---- figure windows -------------------------------------------------------------------- */
+  // what the save button offers: format, menu label, extension, media type
+  const SAVE_KINDS = [
+    ['png', 'PNG picture (.png)', 'png', 'image/png'],
+    ['svg', 'SVG drawing (.svg)', 'svg', 'image/svg+xml'],
+    ['pdf', 'PDF document (.pdf)', 'pdf', 'application/pdf'],
+    ['eps', 'EPS drawing (.eps)', 'eps', 'application/postscript'],
+    ['jpg', 'JPEG picture (.jpg)', 'jpg', 'image/jpeg'],
+  ];
+
   class FigureWindow extends Emitter {
     constructor(mgr, fig) {
       super();
@@ -2166,7 +2175,7 @@
         return b;
       };
       this.btnClose = tb('close', 'Close the figure', () => this.mgr.requestClose(this));
-      this.btnSave = tb('image', 'Save as a picture', () => this.savePicture());
+      this.btnSave = tb('image', 'Save as a picture or a drawing (PNG, SVG, PDF, EPS, JPEG)', () => this.saveMenu());
       this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnSave, this.btnClose);
       this.toolBtns = {
         edit: tb('editplot', 'Edit the plot: click a part of it to see and change its properties', () => this.setTool('edit'), true),
@@ -2363,13 +2372,35 @@
       return { width: x1 - x0, height: y1 - y0, data: PL.figureExport.base64(rgb) };
     }
 
-    async savePicture() {
-      await this.ready(2);
-      const url = this.renderTo(2);
-      const a = el('a', { href: url, download: `figure${this.fig.number}.png` });
+    /* The save button's choice of file: a picture, or a drawing whose lines and text stay sharp at any size. */
+    saveMenu() {
+      const r = this.btnSave.getBoundingClientRect();
+      PL.util.menu(r.left, r.bottom + 2, [
+        { heading: 'Save the figure as' },
+        ...SAVE_KINDS.map(([f, label]) => ({ label, action: () => this.savePicture(f) })),
+      ]);
+    }
+
+    /* The figure as a file to download: PNG by default, or SVG, PDF, EPS or
+       JPEG, written as saveas writes them (pylab-export.js for the drawings). */
+    async savePicture(format = 'png') {
+      const [, , ext, type] = SAVE_KINDS.find((k) => k[0] === format) || SAVE_KINDS[0];
+      let url;
+      if (format === 'png') {
+        await this.ready(2);
+        url = this.renderTo(2);
+      } else {
+        const b64 = await this.fileData(format, 2);
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], { type }));
+      }
+      const a = el('a', { href: url, download: `figure${this.fig.number}.${ext}` });
       document.body.append(a);
       a.click();
       a.remove();
+      if (url.startsWith('blob:')) setTimeout(() => URL.revokeObjectURL(url), 10000);
     }
 
     setTool(t) {
