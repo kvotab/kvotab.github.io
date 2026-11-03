@@ -433,4 +433,54 @@ C('qmr with left and right preconditioners', W['fq'] == 0 and W['eq'] < 1e-8, W[
 C('isosurface with grid vectors (and [] for 1:n); colours carried to the vertices', W['nv'] == 3 and W['ec'] < 1e-12, W['ec'])
 C("qz refuses a flag that is not text", 'must be text' in text(W['mq']), text(W['mq']))
 
+# ---- gsvd, ordqz, rsf2csf, gallery -------------------------------------------------------------------
+W, _ = run("""A = [1 2 3; 4 5 6; 7 8 10; 1 0 1]; B = [2 1 0; 1 3 1];
+[U, V, X, C, S] = gsvd(A, B); e1 = [norm(A - U*C*X') norm(B - V*S*X') norm(C'*C + S'*S - eye(3)) norm(U'*U - eye(4)) norm(V'*V - eye(2))];
+sg = gsvd(A, B); sz = [size(U) size(V) size(X) size(C) size(S)];
+[U2, V2, X2, C2, S2] = gsvd(B, A); e2 = [norm(B - U2*C2*X2') norm(A - V2*S2*X2')]; c2 = C2; s2 = S2;
+[Ue, Ve, Xe, Ce, Se] = gsvd(A, B, 0); se = [size(Ue) size(Ce)];
+M = magic(4); H = hilb(4); [AA, BB, Q, Z] = qz(M, H);
+[AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, 'udi'); eq = [norm(QS*M*ZS - AAS) norm(QS*H*ZS - BBS)]; ev = ordeig(AAS, BBS);
+k = [1 2 3 4]; ev0 = ordeig(AA, BB); [A4, B4] = ordqz(AA, BB, Q, Z, k); ev4 = ordeig(A4, B4);
+[Ur, Tr] = schur([1 2 0; -3 1 0; 0 0 5]); [Uc, Tc] = rsf2csf(Ur, Tr); er = norm(Uc*Tc*Uc' - [1 2 0; -3 1 0; 0 0 5]); tu = istriu(Tc);""")
+C('gsvd: A = U*C*X\', B = V*S*X\', C\'*C + S\'*S = I, U and V unitary', np.all(np.asarray(W['e1']) < 1e-12), W['e1'])
+near('gsvd: the sizes of U, V, X, C and S', W['sz'], [[4, 4, 2, 2, 3, 3, 4, 3, 2, 3]])
+sg = np.asarray(W['sg']).reshape(-1)
+C('gsvd: the generalized singular values increase, the last infinite (B has fewer rows than columns)', np.all(np.diff(sg[:2]) > 0) and np.isinf(sg[2]), sg)
+c2, s2 = np.asarray(W['c2']), np.asarray(W['s2'])
+C("gsvd with fewer rows in A than columns: C's nonzeros one diagonal to the right, S's on the main diagonal",
+  np.all(np.asarray(W['e2']) < 1e-12) and c2[0, 0] == 0 and c2[0, 1] > 0 and c2[1, 2] > 0 and np.all(np.diag(s2) > 0) and np.diag(s2)[0] == 1, (c2.tolist(), s2.tolist()))
+near('gsvd(A, B, 0): the economy size', W['se'], [[4, 3, 3, 3]])
+ev = np.asarray(W['ev']).reshape(-1)
+C("ordqz 'udi': the eigenvalue inside the unit disk first; the factorization holds", np.all(np.asarray(W['eq']) < 1e-9) and abs(ev[0]) < 1, ev)
+ev0, ev4 = np.asarray(W['ev0']).reshape(-1), np.asarray(W['ev4']).reshape(-1)
+C('ordqz with keys: the clusters in order of decreasing key', np.allclose(ev4, ev0[::-1], rtol=1e-8), (ev0, ev4))
+C('rsf2csf: a complex triangular Schur form of the same matrix', W['er'] < 1e-12 and W['tu'] is True, W['er'])
+
+W, _ = run("""a = gallery('minij', 3); b = gallery('frank', 3); c = gallery('clement', 3); d = gallery('binomial', 4); e = gallery('invol', 5);
+f = gallery('poisson', 3); g = gallery('tridiag', 3); h = gallery('lehmer', 3); o = gallery('orthog', 4, 2); p = gallery('kms', 3, 0.5);
+r = gallery('redheff', 4); m = gallery('moler', 3); w = gallery('wilk', 21); x1 = gallery('integerdata', 9, [2 2], 4); x2 = gallery('integerdata', 9, [2 2], 4);
+[v, beta, s] = gallery('house', [3; 4]); hx = (eye(2) - beta*(v*v'))*[3; 4]; iv = gallery('invhess', 2); em = size(gallery('minij', -1));
+try, gallery('nosuch', 3), catch err, mg = err.message; end""")
+near("gallery('minij')", W['a'], [[1, 1, 1], [1, 2, 2], [1, 2, 3]])
+near("gallery('frank')", W['b'], np.array([[3, 2, 1], [2, 2, 1], [0, 1, 1]]).T)
+near("gallery('clement')", W['c'], np.array([[0, 1, 0], [2, 0, 2], [0, 1, 0]]).T)
+dd = np.asarray(W['d'])
+C("gallery('binomial', n): its square is 2^(n-1) times I", np.allclose(dd @ dd, 8 * np.eye(4)), dd.tolist())
+ee = np.asarray(W['e'])
+C("gallery('invol'): an involution, A*A = I", np.allclose(ee @ ee, np.eye(5), atol=1e-6 * np.abs(ee).max() ** 2), None)
+C("gallery('poisson') and 'tridiag' are sparse", type(W['f']).__name__ == 'Sparse' and type(W['g']).__name__ == 'Sparse' and W['f'].shape == (9, 9), None)
+near("gallery('lehmer')", W['h'], [[1, 1 / 2, 1 / 3], [1 / 2, 1, 2 / 3], [1 / 3, 2 / 3, 1]])
+oo = np.asarray(W['o'])
+C("gallery('orthog', n, 2) is orthogonal", np.allclose(oo.T @ oo, np.eye(4)), None)
+near("gallery('kms')", W['p'], [[1, .5, .25], [.5, 1, .5], [.25, .5, 1]])
+near("gallery('redheff')", W['r'], np.array([[1, 1, 1, 1], [1, 1, 0, 1], [1, 0, 1, 0], [1, 0, 0, 1]]).T)
+near("gallery('moler')", W['m'], [[1, -1, -1], [-1, 2, 0], [-1, 0, 3]])
+near("gallery('wilk', 21): the top-left corner", np.asarray(W['w'])[:2, :2], [[10, 1], [1, 9]])
+C('the data sets: the same seed gives the same numbers', np.array_equal(np.asarray(W['x1']), np.asarray(W['x2'])) and np.all((np.asarray(W['x1']) >= 1) & (np.asarray(W['x1']) <= 9)), None)
+near("gallery('house'): H*x = s*e1, s against the sign of x(1)", (W['hx'], W['s']), [-5, 0, -5])
+near("gallery('invhess', 2)", W['iv'], np.array([[1, -1], [1, 2]]).T)
+near("gallery('minij', -1) is empty", W['em'], [[0, 0]])
+C('an unknown name lists the ones there are', 'lehmer' in str(text(W.get('mg', ''))), W.get('mg'))
+
 sys.exit(C.done())

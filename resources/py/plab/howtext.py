@@ -1540,6 +1540,14 @@ qz:
     Python: matfun.py. scipy.linalg.qz with output 'complex' (the default) or 'real'; SciPy's A = Q*AA*Z' is turned around so that Q*A*Z = AA (Q is SciPy's Q'). V and W are scipy.linalg.eig's right and left generalized eigenvectors, each column scaled to unit norm.
 ordschur:
     Python: matfun.py. LAPACK's trsen (scipy.linalg.lapack.dtrsen or ztrsen, without condition numbers), which moves the selected eigenvalues to the top by exchanging diagonal blocks, both of a real 2-by-2 block together; keys are taken as clusters, moved to the top from the smallest key up so that larger keys end first.
+ordqz:
+    Python: matfun.py. LAPACK's tgsen (scipy.linalg.lapack.dtgsen or ztgsen, ijob 0, without condition numbers), which moves the selected eigenvalues of the pencil to the top by exchanging diagonal blocks, both of a real 2-by-2 block together. LAPACK's Q is the transpose of the language's (A = Q*AA*Z'), so Q goes in transposed and comes out transposed back. Keywords pick the eigenvalues AA(i,i)/BB(i,i) (a 2-by-2 block's pair by scipy.linalg.eigvals); keys are taken as clusters, moved to the top from the smallest key up.
+rsf2csf:
+    Python: matfun.py. scipy.linalg.rsf2csf: each real 2-by-2 block of T is made triangular by a complex Givens rotation, applied to U as well.
+gsvd:
+    Python: matfun.py. The QR factorization of [A; B] (numpy.linalg.qr, the economy size), Q's columns completed to a square unitary matrix, and its CS decomposition (scipy.linalg.cossin) split after A's rows: Q's top part is U*C*Z' and its bottom part V*S*Z', so A = U*C*(Z'*R) and B = V*S*(Z'*R), X = R'*Z. The pairs (c, s) are put in order of c/s increasing, C's nonzeros on its diagonal max(0, q - m) to the right and S's on its main diagonal, U's and V's columns following; any sign goes into U's or V's column so that C and S are not negative.
+gallery:
+    Python: gallerymat.py. Each matrix from its defining formula in NumPy (Higham's definitions): Cauchy 1./(x + y'), Chebyshev-Vandermonde by the three-term recurrence, Fiedler abs(c - c'), Lehmer min(i,j)/max(i,j), the Pascal-based binomial matrix L*diag((-2).^(0:n-1))*L(end:-1:1, end:-1:1), the involutory matrix from the Hilbert matrix with its rows scaled, Poisson and Neumann by scipy.sparse.kron of tridiagonal matrices, and so on. randsvd multiplies the chosen singular values by random orthogonal matrices (QR of normal matrices, signs fixed); randhess multiplies plane rotations; the data sets use a numpy.random.RandomState of their own, seeded by j.
 ordeig:
     Python: matfun.py. The diagonal of T read in order, each real 2-by-2 block giving its pair of eigenvalues (numpy.linalg.eigvals, the one with positive imaginary part first); for AA and BB the ratios of their diagonals.
 polyeig:

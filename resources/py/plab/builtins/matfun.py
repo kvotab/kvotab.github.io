@@ -1133,6 +1133,203 @@ def ordschur(nargout, *args):
     return (out(U), out(T)) if nargout > 1 else out(U)
 
 
+def _pencil_eigs(AA, BB):
+    """The eigenvalues of a (quasi-)triangular pencil, one per diagonal place
+    (a real 2-by-2 block giving its pair to both of its places)."""
+    from scipy.linalg import eigvals
+    n = AA.shape[0]
+    ev = np.zeros(n, complex)
+    k = 0
+    while k < n:
+        if k < n - 1 and not np.iscomplexobj(AA) and AA[k + 1, k] != 0:
+            ev[k:k + 2] = sorted(eigvals(AA[k:k + 2, k:k + 2], BB[k:k + 2, k:k + 2]), key=lambda z: -z.imag)
+            k += 2
+        else:
+            with np.errstate(all='ignore'):
+                ev[k] = AA[k, k] / BB[k, k] if BB[k, k] != 0 else (math.inf if AA[k, k] != 0 else math.nan)
+            k += 1
+    return ev
+
+
+@bi('ordqz', nout=4)
+def ordqz(nargout, *args):
+    """[AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, select): the QZ form of qz
+    reordered so that the selected eigenvalues come first (LAPACK's tgsen),
+    QS*A*ZS = AAS and QS*B*ZS = BBS. select is logical, a keyword ('lhp',
+    'rhp', 'udi', 'udo': real part below or above zero, inside or outside
+    the unit disk), or keys, the clusters then in order of decreasing key."""
+    nargchk(args, 5, 5, 'ordqz')
+    import scipy.linalg.lapack as L
+    AA, BB, Q, Z = (_mat(a, 'ordqz') for a in args[:4])
+    n = AA.shape[0]
+    if any(m.shape != (n, n) for m in (AA, BB, Q, Z)):
+        raise err('MATLAB:ordqz:SizeMismatch', 'AA, BB, Q and Z must be square matrices of one size.', 'ordqz')
+    cplx = any(np.iscomplexobj(m) for m in (AA, BB, Q, Z))
+    t = C128 if cplx else F64
+    AA, BB, Q, Z = (m.astype(t) for m in (AA, BB, Q, Z))
+    word = opt_str(args[4])
+    if word is not None:
+        ev = _pencil_eigs(AA, BB)
+        tests = {'lhp': lambda e: e.real < 0, 'rhp': lambda e: e.real > 0, 'udi': lambda e: np.abs(e) < 1, 'udo': lambda e: np.abs(e) > 1}
+        if word.lower() not in tests:
+            raise err('MATLAB:ordqz:InvalidKeyword', "The keyword is 'lhp', 'rhp', 'udi' or 'udo'.", 'ordqz')
+        key = tests[word.lower()](ev)
+    else:
+        key = np.asarray(arr(args[4])).reshape(-1)
+    if key.size != n:
+        raise err('MATLAB:ordqz:SelectSize', 'select must have one element per eigenvalue.', 'ordqz')
+    fn = L.ztgsen if cplx else L.dtgsen
+    levels = [None] if key.dtype == bool else sorted(set(key.tolist()), reverse=True)[:-1][::-1]
+    key = key.copy()
+    # LAPACK's Q is the transpose of the language's: A = Ql*AA*Z'
+    Ql = Q.conj().T
+    for lev in levels:
+        sel = _schur_select(AA, key if lev is None else key >= lev).astype(bool)
+        r = fn(sel.astype(np.int32), AA, BB, Ql, Z, ijob=0)
+        AA, BB, Ql, Z, info = r[0], r[1], r[-7], r[-6], r[-1]
+        if info != 0:
+            raise err('MATLAB:ordqz:Reorder', 'The eigenvalues could not be reordered (they are too close).', 'ordqz')
+        key = np.concatenate([key[sel], key[~sel]])
+    res = (out(AA), out(BB), out(Ql.conj().T), out(Z))
+    return res[0] if nargout <= 1 else res[:nargout]
+
+
+@bi('rsf2csf', nout=2)
+def rsf2csf(nargout, *args):
+    """[U, T] = rsf2csf(U, T): a real Schur form (quasi-triangular T, U*T*U' the
+    matrix) turned complex, T upper triangular (scipy.linalg.rsf2csf)."""
+    nargchk(args, 2, 2, 'rsf2csf')
+    import scipy.linalg as sla
+    U, T = _mat(args[0], 'rsf2csf'), _mat(args[1], 'rsf2csf')
+    n = T.shape[0]
+    if T.shape != (n, n) or U.shape != (n, n):
+        raise err('MATLAB:rsf2csf:SizeMismatch', 'U and T must be square matrices of one size.', 'rsf2csf')
+    if np.iscomplexobj(U) or np.iscomplexobj(T):
+        raise err('MATLAB:rsf2csf:NotReal', 'U and T must be real.', 'rsf2csf')
+    T2, Z2 = sla.rsf2csf(T, U)
+    return (out(Z2), out(T2)) if nargout > 1 else out(Z2)
+
+
+def _completed(Q):
+    """Q (orthonormal columns) with columns added to make it square and unitary."""
+    m, k = Q.shape
+    if k >= m:
+        return Q
+    full, _ = np.linalg.qr(np.hstack([Q, np.eye(m, dtype=Q.dtype)]))
+    # the added columns: orthogonal to Q's
+    rest = full[:, k:m]
+    rest = rest - Q @ (Q.conj().T @ rest)
+    rest, _ = np.linalg.qr(rest)
+    return np.hstack([Q, rest[:, :m - k]])
+
+
+@bi('gsvd', nout=5)
+def gsvd(nargout, *args):
+    """[U, V, X, C, S] = gsvd(A, B): A = U*C*X', B = V*S*X', C'*C + S'*S = I,
+    U and V unitary; sigma = gsvd(A, B) the generalized singular values
+    sqrt(diag(C'*C)./diag(S'*S)), in increasing order. From the QR
+    factorization of [A; B] and the CS decomposition of its Q
+    (scipy.linalg.cossin); gsvd(A, B, 0) or 'econ' the economy size."""
+    nargchk(args, 2, 3, 'gsvd')
+    import scipy.linalg as sla
+    single = 'single' in (class_of(args[0]), class_of(args[1]))
+    A, B = _mat(args[0], 'gsvd'), _mat(args[1], 'gsvd')
+    if A.shape[1] != B.shape[1]:
+        raise err('MATLAB:gsvd:ColumnMismatch', 'A and B must have the same number of columns.', 'gsvd')
+    econ = len(args) > 2
+    if econ and not (opt_str(args[2]) == 'econ' or (opt_str(args[2]) is None and numel(args[2]) == 1 and num(args[2]) == 0)):
+        raise err('MATLAB:gsvd:InvalidFlag', "The third input is 0 or 'econ'.", 'gsvd')
+    m, n = A.shape
+    p = B.shape[0]
+    t = C128 if (np.iscomplexobj(A) or np.iscomplexobj(B)) else F64
+    A, B = A.astype(t), B.astype(t)
+    q = min(m + p, n)
+    Q, Rm = np.linalg.qr(np.vstack([A, B]), mode='reduced')       # (m+p)-by-q, q-by-n
+    if m == 0 or p == 0:
+        # one of them empty: the other's part of Q has orthonormal columns, all cosine (or all sine)
+        M = Q[:m] if m else Q[m:]
+        Uq, sv, Zh = np.linalg.svd(M, full_matrices=True)
+        Z = Zh.conj().T
+        vals = np.pad(np.round(sv, 15), (0, q - sv.size))
+        rows = list(range(sv.size)) + [-1] * (q - sv.size)
+        none = np.zeros(q)
+        if m:
+            U, V, cvals, svals, rows_c, rows_s = Uq, np.zeros((0, 0), t), vals, none, rows, [-1] * q
+        else:
+            U, V, cvals, svals, rows_c, rows_s = np.zeros((0, 0), t), Uq, none, vals, [-1] * q, rows
+    elif q == m + p:
+        # Q square: its rows are orthonormal, so Z = [Q2' Q1'] makes Q1*Z = [0 I] and Q2*Z = [I 0]
+        Z = np.hstack([Q[m:].conj().T, Q[:m].conj().T])
+        U, V = np.eye(m, dtype=t), np.eye(p, dtype=t)
+        cvals = np.concatenate([np.zeros(p), np.ones(m)])
+        svals = np.concatenate([np.ones(p), np.zeros(m)])
+        rows_c = [-1] * p + list(range(m))
+        rows_s = list(range(p)) + [-1] * m
+    else:
+        W = _completed(Q)
+        u, cs, vdh = sla.cossin(W, p=m, q=q)
+        U, V = u[:m, :m], u[m:, m:]
+        Z = vdh[:q, :q].conj().T
+        Cp, Sp = cs[:m, :q], cs[m:, :q]
+        cvals, svals, rows_c, rows_s = np.zeros(q), np.zeros(q), [], []
+        for j in range(q):
+            ic = np.flatnonzero(np.abs(Cp[:, j]) > 1e-15)
+            js = np.flatnonzero(np.abs(Sp[:, j]) > 1e-15)
+            rows_c.append(int(ic[0]) if ic.size else -1)
+            rows_s.append(int(js[0]) if js.size else -1)
+            cvals[j] = Cp[ic[0], j].real if ic.size else 0.0
+            svals[j] = Sp[js[0], j].real if js.size else 0.0
+            # each nonzero positive: its sign goes into U's or V's column
+            if cvals[j] < 0:
+                U[:, rows_c[j]] = -U[:, rows_c[j]]
+                cvals[j] = -cvals[j]
+            if svals[j] < 0:
+                V[:, rows_s[j]] = -V[:, rows_s[j]]
+                svals[j] = -svals[j]
+    # the order: generalized singular values c/s increasing (all-sine first, all-cosine last)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sig = np.where(svals > 0, cvals / np.where(svals > 0, svals, 1), np.inf)
+    order = np.argsort(sig, kind='stable')
+    k = max(0, q - m)
+    Unew = np.zeros((m, m), t)
+    Vnew = np.zeros((p, p), t)
+    usedU, usedV = set(), set()
+    for newj, j in enumerate(order):
+        if rows_c[j] >= 0 and cvals[j] > 0:
+            Unew[:, newj - k] = U[:, rows_c[j]]
+            usedU.add(rows_c[j])
+        if rows_s[j] >= 0 and svals[j] > 0:
+            Vnew[:, newj] = V[:, rows_s[j]]
+            usedV.add(rows_s[j])
+    # the columns of U and V that meet only zeros fill the rest, in their order
+    fill = [i for i in range(m) if i not in usedU]
+    empty = [i for i in range(m) if not np.any(Unew[:, i])]
+    for i, src in zip(empty, fill):
+        Unew[:, i] = U[:, src]
+    fill = [i for i in range(p) if i not in usedV]
+    empty = [i for i in range(p) if not np.any(Vnew[:, i])]
+    for i, src in zip(empty, fill):
+        Vnew[:, i] = V[:, src]
+    C = np.zeros((m, q))
+    S = np.zeros((p, q))
+    for newj, j in enumerate(order):
+        if cvals[j] > 0:
+            C[newj - k, newj] = cvals[j]
+        if svals[j] > 0:
+            S[newj, newj] = svals[j]
+    Z = Z[:, order]
+    X = Rm.conj().T @ Z                                              # A = U*C*X', X' = Z'*R
+    if nargout <= 1:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            sigma = np.sort(np.where(svals > 0, cvals / np.where(svals > 0, svals, 1), np.inf))
+        return finish(sigma.reshape(-1, 1), 'single') if single else out(sigma.reshape(-1, 1))
+    if econ:
+        Unew, C = Unew[:, :min(m, q)], C[:min(m, q), :]
+        Vnew, S = Vnew[:, :min(p, q)], S[:min(p, q), :]
+    fin = (lambda r: finish(np.asarray(r), 'single')) if single else out
+    return tuple(fin(r) for r in (Unew, Vnew, X, C, S))[:nargout]
+
+
 @bi('ordeig')
 def ordeig(nargout, *args):
     """The eigenvalues of a (quasi-)triangular T in the order they stand on its

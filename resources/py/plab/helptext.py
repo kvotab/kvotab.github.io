@@ -4177,6 +4177,26 @@ ordschur: Reorder a Schur factorization so that chosen eigenvalues come first.
 ordeig: The eigenvalues of a (quasi-)triangular matrix in the order of its diagonal.
     e = ordeig(T)
     e = ordeig(AA, BB)
+ordqz: Reorder a QZ factorization so that chosen eigenvalues come first.
+    [AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, select)
+    [AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, keyword)
+    [AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, keys)
+    * keyword: 'lhp' (real part below 0), 'rhp' (above 0), 'udi' (inside the unit disk), 'udo' (outside).
+    * QS*A*ZS = AAS and QS*B*ZS = BBS.
+rsf2csf: A real Schur form turned into the complex one.
+    [U, T] = rsf2csf(Ur, Tr)
+    * T is upper triangular and U*T*U' is Ur*Tr*Ur'.
+gsvd: The generalized singular value decomposition of a pair of matrices.
+    sigma = gsvd(A, B)
+    [U, V, X, C, S] = gsvd(A, B)
+    [U, V, X, C, S] = gsvd(A, B, 0)
+    * A = U*C*X', B = V*S*X' and C'*C + S'*S = I, with U and V unitary.
+    * sigma, sqrt(diag(C'*C)./diag(S'*S)), is in increasing order; gsvd(A, B, 0) or 'econ' gives the economy size.
+gallery: Test matrices, by name.
+    A = gallery(name, n)
+    A = gallery(name, n, ...)
+    * Names: binomial, cauchy, chebvand, chow, circul, clement, compar, cycol, fiedler, forsythe, frank, gcdmat, gearmat, grcar, hanowa, house, invhess, invol, ipjfact, jordbloc, kahan, kms, krylov, lauchli, lehmer, leslie, lesp, lotkin, minij, moler, neumann, orthog, parter, pei, poisson, prolate, randhess, rando, randsvd, redheff, riemann, ris, smoke, toeppd, toeppen, tridiag, triw, wilk (21), and the data sets integerdata, uniformdata and normaldata.
+    * neumann, poisson, toeppen and tridiag are sparse. The random ones come from rand's generator; the data sets from one of their own, seeded by their last input.
 polyeig: Eigenvalues of a matrix polynomial.
     e = polyeig(A0, A1, ..., Ap)
     [X, e] = polyeig(...)
