@@ -483,4 +483,28 @@ near("gallery('invhess', 2)", W['iv'], np.array([[1, -1], [1, 2]]).T)
 near("gallery('minij', -1) is empty", W['em'], [[0, 0]])
 C('an unknown name lists the ones there are', 'lehmer' in str(text(W.get('mg', ''))), W.get('mg'))
 
+# ---- coneplot, streamtube, contourslice, the camera --------------------------------------------------
+W, _ = run("""[x, y, z] = meshgrid(-2:0.5:2, -2:0.5:2, -1:0.5:1); u = -y; v = x; w = 0.2*ones(size(x));
+f = figure('Visible', 'off');
+h = coneplot(x, y, z, u, v, w, [1 0 -1], [0 1 0], [0 0 0]); nv = size(get(h, 'Vertices'), 1); cdat = get(h, 'FaceVertexCData');
+P = get(h, 'Vertices'); tipdir = P(13, :) - P(14, :);
+t = streamtube(x, y, z, u, v, w, [1 0.5], [0 0], [0 0]); nt = numel(t); tc = size(get(t(1), 'XData'), 2);
+V = x.^2 + y.^2 + z.^2; c = contourslice(x, y, z, V, [], [], 0, [1 2]); nc = numel(c);
+Pc = get(c(1), 'Vertices'); lev = get(c(1), 'FaceVertexCData'); rr = sqrt(Pc(:,1).^2 + Pc(:,2).^2); zc = Pc(:, 3);
+t0 = camtarget; camtarget([1 1 0]); t1 = camtarget; m1 = camtarget('mode'); camtarget('auto'); m2 = camtarget('mode');
+u0 = camup; camup([1 0 0]); u1 = camup; camup([0 0 1]); view(0, 90); camroll(90); u2 = camup; close(f);""")
+same('coneplot: one cone (12 + 2 points) at each of three points', W['nv'], 42.0)
+td = np.asarray(W['tipdir']).reshape(-1)
+C("coneplot: the first cone (at (1,0,0), where the field is (0,1,0.2)) points along the field", td[1] > 0 and abs(td[0]) < 1e-9 and td[2] > 0, td)
+cdv = np.asarray(W['cdat']).reshape(-1)
+C('coneplot: coloured by the speed at each point', np.allclose(cdv[:14], math.sqrt(1 + 0.04)) and np.allclose(cdv[14:28], math.sqrt(1 + 0.04)), cdv[:3])
+C('streamtube: a tube (21 points round) for each starting point', W['nt'] == 2 and W['tc'] == 21, (W['nt'], W['tc']))
+rr, zc = np.asarray(W['rr']).reshape(-1), np.asarray(W['zc']).reshape(-1)
+lev = float(np.asarray(W['lev']).reshape(-1)[0])
+C('contourslice: lines of each level on the plane z = 0 (circles of the radius sqrt(level))', W['nc'] >= 2 and np.allclose(zc, 0) and np.allclose(rr, math.sqrt(lev), atol=0.05), (W['nc'], lev, rr[:3]))
+near('camtarget: the middle of the limits, then the point set', (W['t0'], W['t1']), [0, 0, 0, 1, 1, 0])
+C("camtarget's mode", text(W['m1']) == 'manual' and text(W['m2']) == 'auto', (W['m1'], W['m2']))
+near('camup: [0 0 1], then the vector set', (W['u0'], W['u1']), [0, 0, 1, 1, 0, 0])
+near('camroll(90) looking down z: the up vector turned a quarter turn about z', W['u2'], [0, 0, 1], 1e-9)
+
 sys.exit(C.done())

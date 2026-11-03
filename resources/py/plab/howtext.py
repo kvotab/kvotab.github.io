@@ -1610,7 +1610,17 @@ slice:
 stream2, stream3, streamline:
     Python: moreplots.py. From each starting point, fourth-order Runge-Kutta steps along the velocity (scipy.interpolate.RegularGridInterpolator, linear, on the grid in meshgrid's layout) normalised so that a step is the step size (0.1) in cells; a line ends at the edge of the grid, where the speed is 0 or not a number, or at maxvert (10000) points. streamline plots the lines.
 camorbit, campos:
-    Python: moreplots.py. Through view: camorbit adds dtheta to the azimuth and dphi to the elevation (kept within -90 to 90). campos gives the point in the view's direction at ten times the axes' size from their centre, and campos(p) sets the view to look from p at that centre.
+    Python: moreplots.py. Through view: camorbit adds dtheta to the azimuth and dphi to the elevation (kept within -90 to 90). campos gives the point in the view's direction at ten times the axes' size from the camera target (the middle of the limits unless set), and campos(p) sets the view to look from p at that target.
+camtarget, camup:
+    Python: moreplots.py. The axes' CameraTarget and CameraUpVector properties (their modes 'auto' until set). The figure drawing in the page projects the 3-D box orthographically from the view's azimuth and elevation; a CameraUpVector set by hand, converted to the plot box's units, is projected onto the screen plane and the view turned about its axis so that it points up; a CameraTarget set by hand is projected and the drawing moved so that it lands in the middle of the axes.
+camroll:
+    Python: moreplots.py. CameraUpVector turned about the viewing direction (from the target toward the camera, from the view's azimuth and elevation) by Rodrigues' rotation formula, clockwise as seen from the camera so that the picture turns counterclockwise.
+coneplot:
+    Python: moreplots.py. The field at the points by scipy.interpolate.RegularGridInterpolator over the grid's vectors (linear, nearest or cubic); the typical spacing of the points, the median distance to the nearest neighbour (scipy.spatial.cKDTree), is the length of the fastest cone times s. Each cone is a circle of 12 points round the axis (a quarter of the length in radius) joined to its tip, centred on its point; the triangles of all cones make one patch, its FaceVertexCData the speed. 'quiver' draws a shaft and two barbs instead, as edges only.
+streamtube:
+    Python: moreplots.py. The streamlines from stream3, and round each a tube: a frame carried along the line by parallel transport (so that it does not twist), with n points on a circle at each vertex, as a surface coloured by z. The divergence of the field (numpy.gradient along each axis, summed) is interpolated onto the line and sets the radius between 0.15 and 0.5 of a grid cell, times scale.
+contourslice:
+    Python: moreplots.py. The volume interpolated onto each plane's grid (scipy.interpolate.RegularGridInterpolator), its contour lines by the same marching squares as contour, each placed back on its plane in 3-D as a patch with no face whose FaceVertexCData is its level.
 """
 
 

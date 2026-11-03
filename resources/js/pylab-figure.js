@@ -447,6 +447,18 @@
         box = [1, 1, 0.75];
       }
       this.box = box;
+      // CameraUpVector: the view turned about its axis so that the vector (in data units) points up
+      if (ax.camUp) {
+        const u = [0, 1, 2].map((k) => ax.camUp[k] / ((this.lims[k][1] - this.lims[k][0]) || 1) * box[k]);
+        const t = this.toward, d = u[0] * t[0] + u[1] * t[1] + u[2] * t[2];
+        const v = [u[0] - d * t[0], u[1] - d * t[1], u[2] - d * t[2]];
+        const len = Math.hypot(v[0], v[1], v[2]);
+        if (len > 1e-9) {
+          this.up = v.map((c) => c / len);
+          const w = this.up;
+          this.right = [w[1] * t[2] - w[2] * t[1], w[2] * t[0] - w[0] * t[2], w[0] * t[1] - w[1] * t[0]];
+        }
+      }
       // fit the projected box into the rectangle
       const corners = [];
       for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) corners.push(this.proj0([x * box[0] / 2, y * box[1] / 2, z * box[2] / 2]));
@@ -455,6 +467,12 @@
       this.scale = Math.min(rect.w / w, rect.h / h) * (ax.zoom3 || 1) * (ax.camZoom || 1);
       this.cx = rect.x + rect.w / 2 - (Math.max(...xs) + Math.min(...xs)) / 2 * this.scale;
       this.cy = rect.y + rect.h / 2 + (Math.max(...ys) + Math.min(...ys)) / 2 * this.scale;
+      // CameraTarget: that point in the middle of the axes
+      if (ax.camTarget) {
+        const q = this.proj0([0, 1, 2].map((k) => this.norm(k, ax.camTarget[k])));
+        this.cx = rect.x + rect.w / 2 - q[0] * this.scale;
+        this.cy = rect.y + rect.h / 2 + q[1] * this.scale;
+      }
     }
     norm(k, v) {
       const [a, b] = this.lims[k];
@@ -953,12 +971,20 @@
             start = false;
           }
           if (!start) ctx.closePath();
+        } else if (poly.open) {
+          let start = true;
+          for (const [x, y] of poly.pts) {
+            if (!Number.isFinite(x) || !Number.isFinite(y)) { start = true; continue; }
+            if (start) ctx.moveTo(fr.fx(x), fr.fy(y)); else ctx.lineTo(fr.fx(x), fr.fy(y));
+            start = false;
+          }
         } else {
           poly.pts.forEach(([x, y], i) => { const px = fr.fx(x), py = fr.fy(y); if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py); });
           ctx.closePath();
         }
         let fill = null;
-        if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
+        if (poly.open) fill = null;
+        else if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
         else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, c.faceAlpha);
         if (fill) { ctx.fillStyle = fill; ctx.fill(c.rings ? 'evenodd' : 'nonzero'); }
         if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
@@ -1517,7 +1543,25 @@
       }
       if (!ax.visible) return;
       // ticks and labels on the front-bottom edges
+      const turned = !!ax.camUp;
+      const outerEdge = (k) => {
+        // with the view turned by CameraUpVector: an axis running across the screen on its lowest edge, one running up it on its left-most
+        const u = [0, 0, 0]; u[k] = 1;
+        const p0 = corner(0, 0, 0), p1 = corner(...u);
+        const across = Math.abs(p1[0] - p0[0]) >= Math.abs(p1[1] - p0[1]);
+        let best = null;
+        for (const s1 of [-1, 1]) for (const s2 of [-1, 1]) {
+          const a = [0, 0, 0];
+          const o = [0, 1, 2].filter((i) => i !== k);
+          a[o[0]] = s1; a[o[1]] = s2;
+          const p = corner(...a);
+          const score = across ? p[1] : -p[0];
+          if (!best || score > best.score) best = { a, score };
+        }
+        return best.a;
+      };
       const edgeFor = (k) => {
+        if (turned) return outerEdge(k);
         // the edge parallel to axis k that lies lowest on screen at the front
         let best = null;
         for (const s1 of [-1, 1]) for (const s2 of [-1, 1]) {
@@ -1531,7 +1575,7 @@
         }
         return best.a;
       };
-      const zEdge = (() => {
+      const zEdge = turned ? outerEdge(2) : (() => {
         // the z axis on the left-most vertical edge
         let best = null;
         for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
@@ -1556,7 +1600,7 @@
           const p = corner(...pa);
           // the label sits outward from the box's centre
           let dx = p[0] - center[0], dy = p[1] - center[1];
-          if (k === 2) { dx = -1; dy = 0; }
+          if (k === 2 && !turned) { dx = -1; dy = 0; }
           const L = Math.hypot(dx, dy) || 1;
           dx /= L; dy /= L;
           ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(p[0] + dx * 5, p[1] + dy * 5); ctx.stroke();
@@ -1567,7 +1611,7 @@
           const pa = a.slice(); pa[k] = 0;
           const p = corner(...pa);
           let dx = p[0] - center[0], dy = p[1] - center[1];
-          if (k === 2) { dx = -1; dy = 0; }
+          if (k === 2 && !turned) { dx = -1; dy = 0; }
           const L = Math.hypot(dx, dy) || 1;
           dx /= L; dy /= L;
           drawText(ctx, lab.string, p[0] + dx * (fs * 3.2), p[1] + dy * (fs * 2.4), { size: lab.fontSize * PT * 1.1, halign: 'center', valign: 'middle', rotation: k === 2 ? 90 : 0, interpreter: lab.interpreter });
@@ -1649,9 +1693,28 @@
             const P = poly.pts.map(([x, y, z]) => fr.p(x, y, z == null ? fr.lims[2][0] : z));
             if (P.length < 2) continue;
             const d = P.reduce((s, p) => s + p[2], 0) / P.length;
-            const fill = Array.isArray(c.faceColor) ? rgb(c.faceColor, c.faceAlpha) : (poly.c != null && c.faceColor !== 'none' ? cmapColor(cmap, ax.clim, poly.c, c.faceAlpha) : null);
-            const edge = c.edgeColor === 'none' ? null : Array.isArray(c.edgeColor) ? rgb(c.edgeColor) : AXIS_INK;
-            items.push({ d, f: () => { ctx.beginPath(); P.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); } } });
+            const fill = poly.open ? null : Array.isArray(c.faceColor) ? rgb(c.faceColor, c.faceAlpha) : (poly.c != null && c.faceColor !== 'none' ? cmapColor(cmap, ax.clim, poly.c, c.faceAlpha) : null);
+            const edge = c.edgeColor === 'none' ? null : Array.isArray(c.edgeColor) ? rgb(c.edgeColor)
+              : ((c.edgeColor === 'flat' || c.edgeColor === 'interp') && poly.c != null) ? cmapColor(cmap, ax.clim, poly.c) : AXIS_INK;
+            const fin = P.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+            if (fin.length < 2) continue;
+            const dd = fin.reduce((s, p) => s + p[2], 0) / fin.length;
+            items.push({ d: poly.open ? dd : d, f: () => {
+              ctx.beginPath();
+              if (poly.open) {
+                let start = true;
+                for (const p of P) {
+                  if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) { start = true; continue; }
+                  if (start) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+                  start = false;
+                }
+              } else {
+                P.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+                ctx.closePath();
+              }
+              if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+              if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); }
+            } });
           }
         } else if (c.type === 'text') {
           const p = fr.p(c.position[0], c.position[1], c.position[2] || 0);
@@ -1906,7 +1969,9 @@
           const b = (vi - 1) * nv;
           pts.push([V.data[b], V.data[b + 1], nv > 2 ? V.data[b + 2] : null]);
         }
-        out.push({ pts, c: fvc ? fvc.data[Math.min(i, fvc.data.length - 1)] : null });
+        // a NaN vertex leaves the face open: no fill, its edge broken there and not closed
+        const open = pts.some(([x, y, z]) => !Number.isFinite(x) || !Number.isFinite(y) || (z != null && !Number.isFinite(z)));
+        out.push({ pts, c: fvc ? fvc.data[Math.min(i, fvc.data.length - 1)] : null, open });
       }
       return out;
     }

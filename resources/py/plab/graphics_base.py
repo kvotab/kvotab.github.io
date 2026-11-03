@@ -559,6 +559,8 @@ class Axes(GObj):
         'TickLabelInterpreter': 'tex', 'Colormap': None, 'ActivePositionProperty': 'outerposition', 'SortMethod': 'depth',
         'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None,
         'CameraViewAngle': 6.6086, 'CameraViewAngleMode': 'auto',
+        'CameraTarget': lambda: np.array([[0.5, 0.5, 0.5]]), 'CameraTargetMode': 'auto',
+        'CameraUpVector': lambda: np.array([[0.0, 0.0, 1.0]]), 'CameraUpVectorMode': 'auto',
         'BubbleSizeRange': lambda: np.array([[1.0, 20.0]]), 'BubbleLim': lambda: np.array([[0.0, 1.0]]), 'BubbleLimMode': 'auto',
     }
     SHOWN = ['XLim', 'YLim', 'XScale', 'YScale', 'GridLineStyle', 'Position', 'Units']
@@ -626,6 +628,9 @@ class Axes(GObj):
             return np.array([bubble_lim(self)])
         if k == 'CameraViewAngle' and self.props['CameraViewAngleMode'] == 'auto':
             return self.auto_view_angle()
+        if k == 'CameraTarget' and self.props['CameraTargetMode'] == 'auto':
+            # the middle of the limits
+            return np.array([[float(np.mean(np.asarray(self.get_value(a), float))) for a in ('XLim', 'YLim', 'ZLim')]])
         if k == 'Title':
             return self.title
         if k == 'XLabel':
@@ -697,9 +702,17 @@ class Axes(GObj):
             self.props[k] = float(a[0])
             self.props[k + 'Mode'] = 'manual'
             return
+        if k in ('CameraTarget', 'CameraUpVector'):
+            a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.size != 3 or not np.all(np.isfinite(a)) or (k == 'CameraUpVector' and not np.any(a)):
+                raise gerr('Value must be a vector of three finite numbers' + (', not all zero.' if k == 'CameraUpVector' else '.'))
+            self.props[k] = a.reshape(1, 3)
+            self.props[k + 'Mode'] = 'manual'
+            self.touch()
+            return
         if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode',
                  'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode',
-                 'CameraViewAngleMode'):
+                 'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode'):
             s = py_str(value).lower()
             if s not in ('auto', 'manual'):
                 raise gerr(f"Invalid value for {k}: use 'auto' or 'manual'.")
@@ -1527,6 +1540,8 @@ def serialize_axes(ax):
         'zcolor': _color(p['ZColor']), 'gridColor': _color(p['GridColor']), 'gridAlpha': float(p['GridAlpha']),
         'gridLineStyle': p['GridLineStyle'], 'fontSize': float(p['FontSize']), 'lineWidth': float(p['LineWidth']),
         'tickDir': p['TickDir'], 'view': [float(x) for x in p['View'].reshape(-1)],
+        'camTarget': [float(x) for x in p['CameraTarget'].reshape(-1)] if p['CameraTargetMode'] == 'manual' else None,
+        'camUp': [float(x) for x in p['CameraUpVector'].reshape(-1)] if p['CameraUpVectorMode'] == 'manual' else None,
         'xtick': [float(x) for x in np.asarray(p['XTick'], float).reshape(-1)] if p['XTickMode'] == 'manual' else None,
         'ytick': [float(x) for x in np.asarray(p['YTick'], float).reshape(-1)] if p['YTickMode'] == 'manual' else None,
         'ztick': [float(x) for x in np.asarray(p['ZTick'], float).reshape(-1)] if p['ZTickMode'] == 'manual' else None,

@@ -755,6 +755,301 @@ def streamline(nargout, *args):
     return G.handles_out(hs) if nargout else None
 
 
+def _grid_vectors(X, Y, Z, V):
+    """x, y and z as vectors of a meshgrid-layout volume (X along the second
+    dimension, Y the first, Z the third)."""
+    return X[0, :, 0], Y[:, 0, 0], Z[0, 0, :]
+
+
+def _field_at(X, Y, Z, F, px, py, pz, method='linear'):
+    from scipy.interpolate import RegularGridInterpolator
+    xv, yv, zv = _grid_vectors(X, Y, Z, F)
+    f = RegularGridInterpolator((yv, xv, zv), F, method=method if method in ('linear', 'nearest', 'cubic') else 'linear',
+                                bounds_error=False, fill_value=np.nan)
+    return f(np.column_stack([py, px, pz]))
+
+
+def _volume_field(args, fn, want_starts=True):
+    """X, Y, Z, U, V, W (meshgrid layout, made from 1:n when not given), the
+    starting points and what follows them."""
+    rest = list(args)
+    nums = 0
+    while nums < len(rest) and not is_str(rest[nums]):
+        nums += 1
+    starts = 3 if want_starts else 0
+    if nums >= 6 + starts and darr(rest[3]).ndim == 3:
+        X, Y, Z, U, V, W = (darr(rest[k]).astype(F64) for k in range(6))
+        k = 6
+    elif nums >= 3 + starts:
+        U, V, W = (darr(rest[k]).astype(F64) for k in range(3))
+        if U.ndim != 3:
+            raise err(f'MATLAB:{fn}:NotVolume', 'U, V and W must be 3-D arrays.', fn)
+        ny, nx, nz = U.shape
+        X, Y, Z = np.meshgrid(np.arange(1, nx + 1, dtype=F64), np.arange(1, ny + 1, dtype=F64), np.arange(1, nz + 1, dtype=F64))
+        k = 3
+    else:
+        raise err('MATLAB:minrhs', 'Not enough input arguments.', fn)
+    for A, nm in ((U, 'U'), (V, 'V'), (W, 'W')):
+        if A.shape != U.shape or A.ndim != 3:
+            raise err(f'MATLAB:{fn}:SizeMismatch', 'U, V and W must be 3-D arrays of one size.', fn)
+    if X.shape != U.shape:
+        X, Y, Z = (np.broadcast_to(A, U.shape) if A.shape != U.shape and A.size == U.size else A for A in (X, Y, Z))
+        if X.shape != U.shape:
+            vx, vy, vz = (np.asarray(A).reshape(-1) for A in (X, Y, Z))
+            X, Y, Z = np.meshgrid(vx, vy, vz)
+    return X, Y, Z, U, V, W, rest[k:]
+
+
+@bi('coneplot', arr=False)
+def coneplot(nargout, *args):
+    """coneplot(X, Y, Z, U, V, W, Cx, Cy, Cz, s): cones pointing along the
+    vector field at the points (Cx, Cy, Cz), their size in proportion to the
+    speed there (interpolated in the field, linear unless 'nearest' or
+    'cubic' is given; 'nointerp' takes U, V, W as the values at the points),
+    scaled by s (1: the largest about as long as the points are apart); one
+    patch, coloured by speed. 'quiver' draws arrows instead."""
+    nargchk(args, 6, 14, 'coneplot')
+    G, GB = _g(), _gb()
+    rest = list(args)
+    words = [py_str(a).lower() for a in rest if is_str(a)]
+    rest = [a for a in rest if not is_str(a)]
+    method = next((w for w in words if w in ('linear', 'nearest', 'cubic')), 'linear')
+    nointerp = 'nointerp' in words
+    if nointerp:
+        if len(rest) < 6:
+            raise err('MATLAB:minrhs', 'Not enough input arguments.', 'coneplot')
+        if len(rest) >= 6 and all(np.asarray(darr(a)).size == np.asarray(darr(rest[0])).size for a in rest[:6]) and len(rest) in (6, 7):
+            px, py, pz, u, v, w = (darr(a).reshape(-1).astype(F64) for a in rest[:6])
+            extra = rest[6:]
+        else:
+            px, py, pz, u, v, w = (darr(rest[k]).reshape(-1).astype(F64) for k in range(6))
+            extra = rest[6:]
+    else:
+        X, Y, Z, U, V, W, extra = _volume_field(rest, 'coneplot')
+        if len(extra) < 3:
+            raise err('MATLAB:minrhs', 'Give the points Cx, Cy and Cz.', 'coneplot')
+        px, py, pz = (darr(a).reshape(-1).astype(F64) for a in extra[:3])
+        if not px.size == py.size == pz.size:
+            raise err('MATLAB:coneplot:SizeMismatch', 'Cx, Cy and Cz must have one element per point.', 'coneplot')
+        extra = extra[3:]
+        u, v, w = (_field_at(X, Y, Z, F, px, py, pz, method) for F in (U, V, W))
+    scale = float(num(extra[0])) if extra and numel(extra[0]) == 1 else 1.0
+    pts = np.column_stack([px, py, pz])
+    vec = np.column_stack([u, v, w])
+    keep = np.all(np.isfinite(vec), axis=1) & np.all(np.isfinite(pts), axis=1)
+    pts, vec = pts[keep], vec[keep]
+    speed = np.linalg.norm(vec, axis=1)
+    # the spacing of the points: the smallest distance to a neighbour, at most a tenth of their spread
+    if len(pts) > 1:
+        from scipy.spatial import cKDTree
+        dist, _ = cKDTree(pts).query(pts, k=2)
+        gap = float(np.median(dist[:, 1])) or float(np.ptp(pts)) / 10 or 1.0
+    else:
+        gap = 1.0
+    top = float(speed.max()) if speed.size and speed.max() > 0 else 1.0
+    lengths = speed / top * gap * scale
+    ax = G.newplot(None)
+    verts, faces, cdata = [], [], []
+    quiver = 'quiver' in words
+    nside = 12
+    for p0, d, L, sp in zip(pts, vec, lengths, speed):
+        if L == 0:
+            continue
+        e = d / np.linalg.norm(d)
+        # two directions across the cone
+        a = np.cross(e, [1.0, 0, 0] if abs(e[0]) < 0.9 else [0, 1.0, 0])
+        a /= np.linalg.norm(a)
+        b = np.cross(e, a)
+        base, tip = p0 - 0.5 * L * e, p0 + 0.5 * L * e
+        r = 0.25 * L if not quiver else 0.0
+        k0 = len(verts)
+        if quiver:
+            # an arrow: the shaft and two barbs, as degenerate triangles drawn by their edges
+            h = 0.3 * L
+            verts += [base, tip, tip - h * e + 0.5 * h * a, tip - h * e - 0.5 * h * a]
+            faces += [[k0, k0 + 1, k0 + 1], [k0 + 1, k0 + 2, k0 + 2], [k0 + 1, k0 + 3, k0 + 3]]
+            cdata += [sp] * 4
+            continue
+        ring = [base + r * (math.cos(t) * a + math.sin(t) * b) for t in np.linspace(0, 2 * math.pi, nside, endpoint=False)]
+        verts += ring + [tip, base]
+        for i in range(nside):
+            j = (i + 1) % nside
+            faces.append([k0 + i, k0 + j, k0 + nside])          # the side
+            faces.append([k0 + j, k0 + i, k0 + nside + 1])      # the base
+        cdata += [sp] * (nside + 2)
+    h = GB.Patch(ax)
+    h.props['Vertices'] = np.asarray(verts, F64).reshape(-1, 3)
+    h.props['Faces'] = (np.asarray(faces, F64) + 1).reshape(-1, 3)
+    h.props['FaceVertexCData'] = np.asarray(cdata, F64).reshape(-1, 1)
+    if quiver:
+        h.props['FaceColor'] = 'none'
+        h.props['EdgeColor'] = 'flat'
+    else:
+        h.props['FaceColor'] = 'flat'
+        h.props['EdgeColor'] = 'none'
+    R.BUILTINS['view'].fn(0, ax, 3.0)
+    ax.touch()
+    return h if nargout else None
+
+
+def _tube(L, radius, nside=12):
+    """X, Y, Z of a tube of the given radius round the polyline L (n-by-3)."""
+    n = len(L)
+    if n < 2:
+        return None
+    T = np.gradient(L, axis=0)
+    T /= np.where(np.linalg.norm(T, axis=1, keepdims=True) == 0, 1, np.linalg.norm(T, axis=1, keepdims=True))
+    # a frame carried along the line (parallel transport), so that the tube does not twist
+    a = np.cross(T[0], [1.0, 0, 0] if abs(T[0][0]) < 0.9 else [0, 1.0, 0])
+    a /= np.linalg.norm(a)
+    A = np.zeros_like(L)
+    A[0] = a
+    for i in range(1, n):
+        a = a - T[i] * float(a @ T[i])
+        na = np.linalg.norm(a)
+        if na < 1e-12:
+            a = np.cross(T[i], [1.0, 0, 0] if abs(T[i][0]) < 0.9 else [0, 1.0, 0])
+            na = np.linalg.norm(a)
+        a = a / na
+        A[i] = a
+    B = np.cross(T, A)
+    t = np.linspace(0, 2 * math.pi, nside + 1)
+    r = np.broadcast_to(np.asarray(radius, F64).reshape(-1, 1), (n, 1))
+    pts = L[:, None, :] + r[:, :, None] * (np.cos(t)[None, :, None] * A[:, None, :] + np.sin(t)[None, :, None] * B[:, None, :])
+    return pts[..., 0], pts[..., 1], pts[..., 2]
+
+
+@bi('streamtube', arr=False)
+def streamtube(nargout, *args):
+    """streamtube(X, Y, Z, U, V, W, startx, starty, startz) or streamtube(XYZ)
+    of stream3's vertices (a cell): tubes round the streamlines, their width
+    the field's divergence along each line (scaled to the grid; a constant
+    width for a list of vertices), as surfaces; [scale n] sets the width's
+    scale (1) and the number of points round the tube (20)."""
+    nargchk(args, 1, 11, 'streamtube')
+    G, GB = _g(), _gb()
+    rest = list(args)
+    opts = None
+    if type(rest[0]) is Cell:
+        lines = [np.asarray(darr(c), F64) for c in rest[0].a.reshape(-1, order='F')]
+        if len(rest) > 1:
+            opts = darr(rest[1]).reshape(-1)
+        div = None
+        size = max(float(np.ptp(np.vstack([L for L in lines if L.size]))) if any(L.size for L in lines) else 1.0, 1e-12)
+        cell = size / 20
+    else:
+        if len(rest) in (7, 10):
+            opts = darr(rest.pop()).reshape(-1)
+        X, Y, Z, U, V, W, extra = _volume_field(rest, 'streamtube')
+        if len(extra) != 3:
+            raise err('MATLAB:minrhs', 'Give the starting points startx, starty and startz.', 'streamtube')
+        lines = [np.asarray(darr(c), F64) for c in R.BUILTINS['stream3'].fn(1, *(out(A) for A in (X, Y, Z, U, V, W)), *extra).a.reshape(-1, order='F')]
+        xv, yv, zv = _grid_vectors(X, Y, Z, U)
+        hx = np.gradient(U, xv, axis=1) if xv.size > 1 else 0
+        hy = np.gradient(V, yv, axis=0) if yv.size > 1 else 0
+        hz = np.gradient(W, zv, axis=2) if zv.size > 1 else 0
+        div = hx + hy + hz
+        cell = float(np.mean([np.mean(np.abs(np.diff(g))) if g.size > 1 else 1.0 for g in (xv, yv, zv)]))
+    scale = float(opts[0]) if opts is not None and opts.size else 1.0
+    nside = int(opts[1]) if opts is not None and opts.size > 1 else 20
+    ax = G.newplot(None)
+    hs = []
+    for L in lines:
+        L = L[np.all(np.isfinite(L), axis=1)] if L.size else L
+        if len(L) < 2:
+            continue
+        if div is not None:
+            d = _field_at(X, Y, Z, div, L[:, 0], L[:, 1], L[:, 2])
+            d = np.nan_to_num(d)
+            top = float(np.max(np.abs(d))) or 1.0
+            radius = cell * scale * (0.15 + 0.35 * np.abs(d) / top)
+        else:
+            radius = cell * scale * 0.25
+        tube = _tube(L, radius, nside)
+        if tube is None:
+            continue
+        s = GB.Surface(ax)
+        s.props['XData'], s.props['YData'], s.props['ZData'] = tube
+        s.props['CData'] = tube[2]
+        hs.append(s)
+    R.BUILTINS['view'].fn(0, ax, 3.0)
+    ax.touch()
+    return G.handles_out(hs) if nargout else None
+
+
+@bi('contourslice', arr=False)
+def contourslice(nargout, *args):
+    """contourslice(X, Y, Z, V, Sx, Sy, Sz, levels) or contourslice(V, Sx, Sy,
+    Sz, levels): contour lines of the volume's values on the planes x = Sx,
+    y = Sy and z = Sz (interpolated onto each plane by interp3), drawn in 3-D;
+    levels a number of them or the levels themselves (automatic unless
+    given)."""
+    nargchk(args, 4, 9, 'contourslice')
+    from .graphics import marching_squares, contour_levels
+    G, GB = _g(), _gb()
+    rest = [a for a in args if not is_str(a)]
+    if len(rest) >= 7 and darr(rest[3]).ndim == 3:
+        X, Y, Z, V = (darr(rest[k]).astype(F64) for k in range(4))
+        planes, more = rest[4:7], rest[7:]
+    elif darr(rest[0]).ndim == 3 and len(rest) >= 4:
+        V = darr(rest[0]).astype(F64)
+        ny, nx, nz = V.shape
+        X, Y, Z = np.meshgrid(np.arange(1, nx + 1, dtype=F64), np.arange(1, ny + 1, dtype=F64), np.arange(1, nz + 1, dtype=F64))
+        planes, more = rest[1:4], rest[4:]
+    else:
+        raise err('MATLAB:contourslice:nargin', 'Give X, Y, Z (or not), the volume V and the planes Sx, Sy, Sz.', 'contourslice')
+    xs, ys, zs = (darr(p).reshape(-1).astype(F64) if numel(p) else np.zeros(0) for p in planes)
+    xv, yv, zv = _grid_vectors(X, Y, Z, V)
+    fin = V[np.isfinite(V)]
+    if more and numel(more[0]) > 1:
+        levels = list(darr(more[0]).reshape(-1))
+    elif more and numel(more[0]) == 1:
+        levels = contour_levels(fin, int(num(more[0])))
+    else:
+        levels = contour_levels(fin)
+    ax = G.newplot(None)
+    hs = []
+
+    def plane(PX, PY, PZ, a, b):
+        """The contours of V on the plane: a and b its two in-plane axes' grids."""
+        C = _field_at(X, Y, Z, V, PX.reshape(-1), PY.reshape(-1), PZ.reshape(-1)).reshape(PX.shape)
+        for lev in levels:
+            for la, lb in marching_squares(a, b, C, lev):
+                la, lb = np.asarray(la, F64), np.asarray(lb, F64)
+                yield lev, la, lb
+    for x0 in xs:
+        PY, PZ = np.meshgrid(yv, zv, indexing='xy')
+        for lev, la, lb in plane(np.full(PY.shape, x0), PY, PZ, PY, PZ):
+            hs.append((lev, np.full(la.shape, x0), la, lb))
+    for y0 in ys:
+        PX, PZ = np.meshgrid(xv, zv, indexing='xy')
+        for lev, la, lb in plane(PX, np.full(PX.shape, y0), PZ, PX, PZ):
+            hs.append((lev, la, np.full(la.shape, y0), lb))
+    for z0 in zs:
+        PX, PY = np.meshgrid(xv, yv, indexing='xy')
+        for lev, la, lb in plane(PX, PY, np.full(PX.shape, z0), PX, PY):
+            hs.append((lev, la, lb, np.full(la.shape, z0)))
+    handles = []
+    lo, hi = (min(levels), max(levels)) if levels else (0.0, 1.0)
+    for lev, x, y, z in hs:
+        # each line a patch with no face, its edge coloured by its level, as the language draws contours in 3-D;
+        # a line that does not close ends in a NaN vertex, which leaves the face open
+        if x.size > 1 and not (x[0] == x[-1] and y[0] == y[-1] and z[0] == z[-1]):
+            x, y, z = np.append(x, np.nan), np.append(y, np.nan), np.append(z, np.nan)
+        n = x.size
+        p = GB.Patch(ax)
+        p.props['Vertices'] = np.column_stack([x, y, z])
+        p.props['Faces'] = np.arange(1, n + 1, dtype=F64).reshape(1, -1)
+        p.props['FaceVertexCData'] = np.full((n, 1), float(lev))
+        p.props['FaceColor'] = 'none'
+        p.props['EdgeColor'] = 'flat'
+        p.props['UserData'] = float(lev)
+        handles.append(p)
+    R.BUILTINS['view'].fn(0, ax, 3.0)
+    ax.touch()
+    return G.handles_out(handles) if nargout else None
+
+
 # ---- camera ---------------------------------------------------------------------------------------------
 
 @bi('camorbit', nout=0, arr=False)
@@ -774,14 +1069,15 @@ def camorbit(nargout, *args):
 @bi('campos', arr=False)
 def campos(nargout, *args):
     """campos: where the camera is, from the view's azimuth and elevation, at
-    a distance of ten times the axes' size from their centre; campos([x y z])
-    turns the view to look from there."""
+    a distance of ten times the axes' size from the target (CameraTarget, the
+    axes' middle unless set); campos([x y z]) turns the view to look from
+    there toward the target."""
     nargchk(args, 0, 2, 'campos')
     G = _g()
     rest = list(args)
     ax = rest.pop(0) if rest and hasattr(rest[0], 'props') and 'View' in getattr(rest[0], 'props', {}) else G.gca_()
     lims = [np.asarray(arr(ax.get_value(k)), F64).reshape(-1) for k in ('XLim', 'YLim', 'ZLim')]
-    centre = np.array([l.mean() for l in lims])
+    centre = np.asarray(ax.get_value('CameraTarget'), F64).reshape(-1)
     if rest:
         p = darr(rest[0]).reshape(-1).astype(F64)
         if p.size != 3:
@@ -796,3 +1092,67 @@ def campos(nargout, *args):
     size = max(float(np.ptp(np.concatenate(lims))), 1.0)
     dirn = np.array([math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e)])
     return out((centre + 10 * size * dirn).reshape(1, -1))
+
+
+def _cam_axes(args):
+    G = _g()
+    rest = list(args)
+    ax = rest.pop(0) if rest and hasattr(rest[0], 'props') and 'View' in getattr(rest[0], 'props', {}) else G.gca_()
+    return ax, rest
+
+
+def _cam_prop(args, prop, fn):
+    """camtarget and camup: the property's value, set it (a vector, or 'auto'
+    or 'manual'), or its mode ('mode')."""
+    nargchk(args, 0, 2, fn)
+    ax, rest = _cam_axes(args)
+    if not rest:
+        return out(np.asarray(ax.get_value(prop), F64).reshape(1, 3))
+    w = opt_str(rest[0])
+    if w is not None:
+        w = w.lower()
+        if w == 'mode':
+            return Char.of(ax.props[prop + 'Mode'])
+        if w not in ('auto', 'manual'):
+            raise err(f'MATLAB:{fn}:InvalidOption', "Give [x y z], 'auto', 'manual' or 'mode'.", fn)
+        if w == 'manual':
+            ax.props[prop] = np.asarray(ax.get_value(prop), F64).reshape(1, 3)
+        ax.props[prop + 'Mode'] = w
+        ax.touch()
+        return None
+    ax.setprop(prop, rest[0])
+    return None
+
+
+@bi('camtarget', arr=False)
+def camtarget(nargout, *args):
+    """camtarget: the point the camera looks at (the middle of the axes'
+    limits unless set); camtarget([x y z]) puts that point in the middle."""
+    return _cam_prop(args, 'CameraTarget', 'camtarget')
+
+
+@bi('camup', arr=False)
+def camup(nargout, *args):
+    """camup: the direction that points up on the screen ([0 0 1] unless set);
+    camup([x y z]) turns the view about its axis so that it does."""
+    return _cam_prop(args, 'CameraUpVector', 'camup')
+
+
+@bi('camroll', nout=0, arr=False)
+def camroll(nargout, *args):
+    """camroll(dtheta): turn the view about its axis by dtheta degrees (the
+    picture turns counterclockwise for a positive angle), by turning
+    CameraUpVector about the line from the target to the camera."""
+    nargchk(args, 1, 2, 'camroll')
+    ax, rest = _cam_axes(args)
+    t = math.radians(float(num(rest[0])))
+    az, el = (math.radians(float(x)) for x in np.asarray(ax.props['View'], F64).reshape(-1)[:2])
+    k = np.array([math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)])
+    u = np.asarray(ax.get_value('CameraUpVector'), F64).reshape(-1)
+    # Rodrigues' rotation of the up vector about the viewing axis k (toward the camera): clockwise as seen
+    # from the camera, so that the picture turns counterclockwise
+    t = -t
+    r = u * math.cos(t) + np.cross(k, u) * math.sin(t) + k * float(k @ u) * (1 - math.cos(t))
+    ax.setprop('CameraUpVector', out(r.reshape(1, 3)))
+    return None
+

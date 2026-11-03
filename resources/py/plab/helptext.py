@@ -4355,6 +4355,40 @@ camorbit: Turn the view about the axes' centre.
 campos: Where the camera is, or put it somewhere.
     p = campos
     campos([x y z])
+    * The camera looks at camtarget, the middle of the axes unless set.
+camtarget: The point the camera looks at, which stands in the middle of the axes.
+    t = camtarget
+    camtarget([x y z])
+    camtarget('auto')
+    m = camtarget('mode')
+camup: The direction that points up on the screen.
+    u = camup
+    camup([x y z])
+    camup('auto')
+    * [0 0 1] unless set: the z axis up.
+camroll: Turn the view about its axis.
+    camroll(dtheta)
+    * A positive angle turns the picture counterclockwise.
+coneplot: Cones that show a 3-D vector field at given points.
+    coneplot(X, Y, Z, U, V, W, Cx, Cy, Cz)
+    coneplot(U, V, W, Cx, Cy, Cz)
+    coneplot(..., s)
+    coneplot(..., 'nointerp')
+    coneplot(..., 'quiver')
+    h = coneplot(...)
+    * Each cone points along the field at its point (interpolated, linear unless 'nearest' or 'cubic' is given) and is as long as the speed there; s scales them, 1 making the fastest about as long as the points are apart. The cones are one patch, coloured by speed.
+streamtube: Tubes round the streamlines of a 3-D vector field.
+    streamtube(X, Y, Z, U, V, W, startx, starty, startz)
+    streamtube(XYZ)
+    streamtube(..., [scale n])
+    h = streamtube(...)
+    * The tube's width follows the field's divergence along the line (constant for a cell of vertices from stream3); scale sets it (1), n the number of points round the tube (20).
+contourslice: Contour lines of a volume on slice planes.
+    contourslice(X, Y, Z, V, Sx, Sy, Sz)
+    contourslice(V, Sx, Sy, Sz)
+    contourslice(..., levels)
+    h = contourslice(...)
+    * levels is the number of levels or the levels themselves. Each line is a patch with no face, its edge coloured by its level.
 '''
 
 
