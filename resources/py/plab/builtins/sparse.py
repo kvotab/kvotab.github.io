@@ -4,7 +4,7 @@ import numpy as np
 
 from . import bi
 from ._util import err, nargchk, arr, darr, out, num, ival
-from ..values import F64
+from ..values import F64, numel
 
 
 @bi('sparse')
@@ -33,8 +33,11 @@ def full(nargout, *args):
 
 @bi('speye')
 def speye(nargout, *args):
-    m = ival(args[0])
-    n = ival(args[1]) if len(args) > 1 else m
+    if not args:
+        return 1.0
+    sz = [int(v) for v in np.asarray(args[0], F64).reshape(-1)] if len(args) == 1 and numel(args[0]) == 2 else \
+        [ival(args[0]), ival(args[1]) if len(args) > 1 else ival(args[0])]
+    m, n = (max(0, d) for d in sz)
     return out(np.eye(m, n))
 
 

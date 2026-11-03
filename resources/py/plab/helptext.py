@@ -227,6 +227,8 @@ accumarray: Gather values by index and combine those that share one (a sum by de
     A = accumarray(subs, vals, sz)
     A = accumarray(subs, vals, sz, fun)
     A = accumarray(subs, vals, sz, fun, fillval)
+    A = accumarray({i, j, k}, vals, ...)
+    * subs is a matrix with a column for each dimension, a column of linear indices, or a cell of index vectors. A fun that returns logical values or cells makes a logical or cell array.
 
 # ---- size and shape --------------------------------------------------------------------------
 size: The length of each dimension.
@@ -258,6 +260,10 @@ squeeze: Remove the dimensions of length 1 (beyond the first two).
     B = squeeze(A)
 permute: Rearrange the dimensions of an array.
     B = permute(A, order)
+shiftdim: Shift the dimensions of an array.
+    B = shiftdim(A, n)
+    [B, n] = shiftdim(A)
+    * n > 0 moves the first n dimensions to the end; n < 0 puts -n singleton dimensions in front. With no n, the leading singleton dimensions are taken away and their number is the second output (a row vector becomes a column).
 ipermute: Undo a permute.
     A = ipermute(B, order)
 circshift: Shift elements around in a circle.
@@ -411,6 +417,7 @@ nchoosek: The binomial coefficient, or every combination of k elements of a vect
     C = nchoosek(v, k)
 primes: The prime numbers up to n.
     p = primes(n)
+    * In the class of n.
 isprime: True for the prime numbers.
     tf = isprime(n)
 factor: The prime factors of an integer.
@@ -532,6 +539,9 @@ isreal: True when an array is stored without imaginary parts.
     tf = isreal(A)
 cplxpair: Sort complex numbers into conjugate pairs, the real ones last.
     B = cplxpair(A)
+    B = cplxpair(A, tol)
+    B = cplxpair(A, tol, dim)
+    * Pairs by increasing real part, the one with negative imaginary part first; each column of a matrix (or along dim). Numbers that cannot be paired are an error.
 unwrap: Remove the jumps of 2*pi from a sequence of phase angles.
     q = unwrap(p)
     q = unwrap(p, tol)
@@ -608,29 +618,47 @@ diff: Differences between neighbours, or the nth differences.
 mean: The average.
     M = mean(A)
     M = mean(A, dim)
+    M = mean(A, vecdim)
     M = mean(A, 'all')
     M = mean(..., 'omitnan')
+    M = mean(..., 'Weights', w)
+    M = mean(..., outtype)
+    * outtype is 'default', 'double' or 'native'. w is a vector along the dimension or an array the size of A. The sum is taken in double, so a long single array keeps its precision.
     m = mean(pd)
     * mean(pd) is the mean of a distribution object (makedist, fitdist); so too median, std, var and iqr.
 median: The middle value.
     M = median(A)
     M = median(A, dim)
+    M = median(A, vecdim)
+    M = median(A, 'all')
     M = median(..., 'omitnan')
+    M = median(..., outtype)
+    * Integers and logicals keep their class (two middle integers averaged and rounded) unless outtype is 'default' or 'double'; single stays single. Complex values are ordered by size, then angle.
     m = median(pd)
 mode: The most frequent value (the smallest of those tied).
     M = mode(A)
     M = mode(A, dim)
+    M = mode(A, vecdim)
+    M = mode(A, 'all')
     [M, F] = mode(...)
+    [M, F, C] = mode(...)
 std: The standard deviation (normalized by N-1, or N with w = 1).
     s = std(A)
     s = std(A, w)
     s = std(A, w, dim)
+    s = std(A, w, vecdim)
+    [s, M] = std(...)
     s = std(..., 'omitnan')
     s = std(pd)
 var: The variance (normalized by N-1, or N with w = 1).
     v = var(A)
     v = var(A, w)
     v = var(A, w, dim)
+    v = var(A, w, vecdim)
+    v = var(A, 'all')
+    v = var(..., 'omitnan')
+    [v, M] = var(...)
+    * w is 0 (N-1), 1 (N), or weights: a vector along the dimension or an array the size of A. M is the mean the variance is about (weighted with the weights). vecdim works over several dimensions at once.
     v = var(pd)
 min: The smallest elements, or the smaller of two arrays element by element.
     m = min(A)
@@ -707,12 +735,17 @@ trapz: An integral by the trapezoidal rule.
     Q = trapz(y)
     Q = trapz(x, y)
     Q = trapz(..., dim)
+    * x is a scalar spacing, the points along the dimension, or an array the size of y. Of two arguments, a scalar second one is the dimension.
 cumtrapz: The running integral by the trapezoidal rule.
     Q = cumtrapz(y)
     Q = cumtrapz(x, y)
+    Q = cumtrapz(..., dim)
 quantile: Quantiles of a sample.
     Q = quantile(X, p)
     Q = quantile(X, p, dim)
+    Q = quantile(X, p, vecdim)
+    Q = quantile(X, p, 'all')
+    * Of a vector, the quantiles are laid out as p is. Along dimensions, they take the place of the first one; 'all' gives a column.
 prctile: Percentiles of a sample.
     P = prctile(X, p)
     P = prctile(X, p, dim)
@@ -742,6 +775,8 @@ movstd: The standard deviation over a moving window.
 rescale: Scale values linearly to fill [0, 1], or another interval.
     R = rescale(A)
     R = rescale(A, l, u)
+    R = rescale(..., 'InputMin', inmin, 'InputMax', inmax)
+    * l, u, inmin and inmax may be arrays that fit A (as row or column of bounds); values outside [inmin, inmax] are clamped first.
 normalize: Centre and scale data (z-scores by default).
     N = normalize(A)
     N = normalize(A, dim)
@@ -1079,9 +1114,13 @@ svds: Some singular values (the largest by default).
     [U, S, V] = svds(...)
 qr: The QR decomposition, A = Q*R.
     [Q, R] = qr(A)
-    [Q, R] = qr(A, 0)
+    [Q, R] = qr(A, 'econ')
     [Q, R, P] = qr(A)
+    [Q, R, p] = qr(A, 'vector')
+    [Q, R, p] = qr(A, 0)
+    [C, R] = qr(A, B)
     R = qr(A)
+    * With three outputs A*P = Q*R; P is a matrix, or a vector of the columns with 'vector' or 0. qr(A, B) gives C = Q'*B, for least squares.
 lu: The LU decomposition with row pivoting.
     [L, U] = lu(A)
     [L, U, P] = lu(A)
@@ -1300,9 +1339,13 @@ gradient: Numerical gradient by central differences.
     g = gradient(f, h)
     [gx, gy] = gradient(F)
     [gx, gy] = gradient(F, hx, hy)
-del2: The discrete Laplacian, divided by 4 in two dimensions.
+    [gx, gy, gz, ...] = gradient(F, hx, hy, hz, ...)
+    * x is the second dimension, y the first, then the third and on. A spacing is a scalar or the coordinates; inside the differences are (f(i+1) - f(i-1))/(x(i+1) - x(i-1)), at the ends one-sided.
+del2: The discrete Laplacian, divided by 2N in N dimensions (by 4 for a vector).
     L = del2(U)
     L = del2(U, h)
+    L = del2(U, hx, hy, ...)
+    * At the edges the second differences are extended linearly from the inner points. Spacings as for gradient.
 
 # ---- interpolation ---------------------------------------------------------------------------
 interp1: Interpolation in one dimension.
@@ -1311,15 +1354,22 @@ interp1: Interpolation in one dimension.
     vq = interp1(x, v, xq, method, 'extrap')
     vq = interp1(x, v, xq, method, extrapval)
     pp = interp1(x, v, method, 'pp')
+    vq = interp1(v, xq, method, extrapval)
     * method is 'linear' (the default), 'nearest', 'next', 'previous', 'pchip', 'cubic', 'makima' or 'spline'.
 interp2: Interpolation on a 2-D grid.
     Vq = interp2(X, Y, V, Xq, Yq)
     Vq = interp2(V, Xq, Yq)
+    Vq = interp2(V)
+    Vq = interp2(V, k)
     Vq = interp2(..., method)
     Vq = interp2(..., method, extrapval)
+    * method is 'linear', 'nearest' (a half rounds up), 'cubic' (cubic convolution on even grids), 'spline', 'makima' or 'pchip'. A row Xq and a column Yq make a grid. interp2(V, k) refines the grid k times (once unless given). Outside the grid the values are NaN unless extrapval is given.
 interpn: Interpolation on a grid in any number of dimensions.
     Vq = interpn(X1, X2, ..., V, Xq1, Xq2, ...)
-    Vq = interpn(..., method)
+    Vq = interpn(V, Xq1, Xq2, ...)
+    Vq = interpn(V, k)
+    Vq = interpn(..., method, extrapval)
+    * Query vectors of different sizes make a grid, as ndgrid does.
 griddata: Interpolate scattered points onto a grid.
     vq = griddata(x, y, v, xq, yq)
     vq = griddata(x, y, v, xq, yq, method)
@@ -1840,10 +1890,18 @@ jacobian: The Jacobian matrix of symbolic functions.
     * Row i is the gradient of f(i) with respect to the variables in v.
 hessian: The Hessian matrix of a symbolic expression.
     H = hessian(f, v)
-divergence: The divergence of a symbolic vector field.
+divergence: The divergence of a vector field: of arrays on a grid, or symbolic.
+    div = divergence(X, Y, U, V)
+    div = divergence(U, V)
+    div = divergence(X, Y, Z, U, V, W)
     d = divergence(V, X)
-curl: The curl of a symbolic vector field of three components.
+    * Of arrays: dU/dx + dV/dy (+ dW/dz) by the differences gradient takes, x along the columns and y down the rows (unit spacing without X, Y, Z).
+curl: The curl of a vector field: of arrays on a grid, or symbolic of three components.
+    [curlz, cav] = curl(X, Y, U, V)
+    [curlx, curly, curlz, cav] = curl(X, Y, Z, U, V, W)
+    cav = curl(U, V)
     c = curl(V, X)
+    * cav is the angular velocity: half the curl along the flow; with one output it is all curl gives of arrays.
 laplacian: The Laplacian of a symbolic expression: the sum of its second derivatives.
     L = laplacian(f, x)
 simplify: A simpler form of a symbolic expression.
@@ -2115,6 +2173,8 @@ integral: A definite integral, by adaptive quadrature.
     q = integral(fun, a, b)
     q = integral(fun, a, b, 'RelTol', r, 'AbsTol', t)
     q = integral(fun, a, b, 'ArrayValued', true)
+    q = integral(fun, a, b, 'Waypoints', w)
+    * Complex limits or waypoints make a path of straight segments in the complex plane (a contour integral). The result is single when a limit or a waypoint is.
     * fun takes a vector and returns a vector of the same size; Inf is a limit too.
 integral2: A double integral; the inner limits may be functions.
     q = integral2(fun, xmin, xmax, ymin, ymax)
@@ -2123,11 +2183,15 @@ integral3: A triple integral.
 quad: A definite integral by adaptive Simpson quadrature (older; integral is preferred).
     q = quad(fun, a, b)
     q = quad(fun, a, b, tol)
+    q = quad(fun, a, b, tol, trace, p1, p2, ...)
+    [q, fcnt] = quad(...)
+    * p1, p2, ... are passed to fun after x; fcnt is the number of evaluations of fun.
 quadl: A definite integral by adaptive Lobatto quadrature (older; integral is preferred).
     q = quadl(fun, a, b)
 quadgk: A definite integral by adaptive Gauss-Kronrod quadrature.
     q = quadgk(fun, a, b)
     [q, errbnd] = quadgk(fun, a, b)
+    q = quadgk(fun, a, b, 'RelTol', r, 'AbsTol', t, 'Waypoints', w, 'ArrayValued', true)
 quad2d: A double integral over a region with curved limits.
     q = quad2d(fun, a, b, c, d)
 dblquad: A double integral over a rectangle (older; integral2 is preferred).

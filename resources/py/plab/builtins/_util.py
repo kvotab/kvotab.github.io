@@ -255,7 +255,37 @@ def dim_arg(v, fn):
     d = ival(v, 'dimension', fn)
     if d < 1:
         raise err('MATLAB:getdimarg:dimensionMustBePositiveInteger', 'Dimension argument must be a positive integer scalar within indexing range.', fn)
-    return d - 1
+    # every dimension past an array's own is a singleton one; NumPy stops at 32 dimensions
+    return min(d - 1, 30)
+
+
+def dims_arg(v, fn):
+    """A dimension argument that may also be a vector of dimensions
+    (vecdim): an int (0-based), 'all', or a tuple of distinct dimensions."""
+    if opt_str(v) is None and not isinstance(v, (float, int, bool)) and numel(v) > 1:
+        a = arr(v, fn).reshape(-1)
+        if a.dtype.kind not in 'biuf' or np.any(a != np.floor(a)) or np.any(a < 1):
+            raise err('MATLAB:getdimarg:invalidDim', 'Dimensions must be positive integers.', fn)
+        ds = [min(int(d) - 1, 30) for d in a]
+        if len(set(int(d) for d in a)) != len(ds):
+            raise err('MATLAB:getdimarg:vecDimsMustBeUniquePositiveIntegers', 'Dimensions in the vector must be unique.', fn)
+        return tuple(sorted(set(ds)))
+    return dim_arg(v, fn)
+
+
+def gather(a, dims):
+    """a with the dimensions dims (a tuple, 0-based) moved to the end and
+    joined into one, in the language's column-major order: (that array,
+    the shape of a result with those dimensions made 1)."""
+    nd = max(a.ndim, max(dims) + 1)
+    a = a.reshape(a.shape + (1,) * (nd - a.ndim))
+    keep = [d for d in range(nd) if d not in dims]
+    m = np.transpose(a, keep + list(dims)[::-1])
+    n = 1
+    for d in dims:
+        n *= a.shape[d]
+    m = m.reshape([a.shape[d] for d in keep] + [n])
+    return m, [1 if d in dims else a.shape[d] for d in range(nd)]
 
 
 def expand_dims(a, dim):
@@ -271,6 +301,9 @@ def reduce(a, dim, fn, empty_value=0.0, keepdims=True):
     to one value."""
     if dim == 'all':
         return fn(a.reshape(-1), 0)
+    if isinstance(dim, tuple):
+        m, shape = gather(a, dim)
+        return np.asarray(fn(m, m.ndim - 1)).reshape(shape)
     if dim is None:
         if a.ndim == 2 and a.shape == (0, 0):
             r = fn(np.zeros((0, 1), a.dtype), 0)

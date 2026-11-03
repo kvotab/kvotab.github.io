@@ -1093,8 +1093,9 @@ def cat(axis, vals):
     if len(vals) == 1 and (type(vals[0]) is Char or not had_char):
         return vals[0]
     cls = _num_cat_class(vals)
-    if had_char and cls == 'double':
-        # an empty '' still makes the numbers characters: ['' 65] is 'A'
+    if had_char and cls != 'logical':
+        # with characters, numbers become characters (integers and single too);
+        # an empty '' still makes them so: ['' 65] is 'A'
         cls = 'char'
     arrs = [_as_np(v) for v in vals]
     if cls == 'char':

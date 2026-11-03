@@ -12,6 +12,7 @@ import numpy as np
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, expand_dims, strip_flags)
+from ..ops import finish
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, FH, Obj, F64, C128, class_of, shape_of, numel,
                       _2d, EMPTY, py_str, share, share_all)
 from .. import runtime as R
@@ -176,7 +177,7 @@ def fzero(nargout, *args):
         if not found:
             R.write('Exiting fzero: aborting search for an interval containing a sign change\n    because NaN or Inf function value encountered during search.\n' if False else '')
             raise err('MATLAB:fzero:NoSignChange', 'FZERO could not find an interval containing a sign change around the starting point.' if True else '', 'fzero')
-    r = optimize.brentq(gg, min(a, b), max(a, b), xtol=max(tolx, 4 * np.finfo(float).eps * 0), rtol=4 * np.finfo(float).eps, maxiter=500, full_output=False)
+    r = optimize.brentq(gg, min(a, b), max(a, b), xtol=max(tolx, 1e-300), rtol=4 * np.finfo(float).eps, maxiter=500, full_output=False)
     return _fz_out(nargout, float(r), g(r), 1.0, nf[0])
 
 
@@ -196,7 +197,7 @@ def fminbnd(nargout, *args):
     a, b = num(args[1]), num(args[2])
     opts = _struct_opts(args[3]) if len(args) > 3 else {}
     tolx = _opt(opts, 'TolX')
-    xatol = num(tolx) if tolx is not None else 1e-4
+    xatol = max(num(tolx), 1e-12) if tolx is not None else 1e-4
     res = optimize.minimize_scalar(lambda x: _scalar(_call1(f, float(x))), bounds=(a, b), method='bounded', options={'xatol': xatol})
     x = float(res.x)
     if nargout <= 1:
@@ -252,66 +253,137 @@ def _vec_or_scalar_call(f, x):
     return np.array([_scalar(_call1(f, float(t))) for t in np.asarray(x).reshape(-1)])
 
 
+def _quad1(g, a, b, atol, rtol, pts=None):
+    """The integral of g (which may give complex values) from a to b, both
+    real: (value, error bound)."""
+    from scipy import integrate
+    imag = [False]
+
+    def re_(t):
+        v = g(float(t))
+        if isinstance(v, complex):
+            imag[0] = imag[0] or v.imag != 0
+            return v.real
+        return v
+    kw = dict(epsabs=atol, epsrel=rtol, limit=650)
+    if pts and math.isfinite(a) and math.isfinite(b):
+        inner = [p for p in pts if min(a, b) < p < max(a, b)]
+        if inner:
+            kw['points'] = inner
+    r, e = integrate.quad(re_, a, b, **kw)
+    if imag[0]:
+        ri, ei = integrate.quad(lambda t: complex(g(float(t))).imag, a, b, **kw)
+        return complex(r, ri), e + ei
+    return r, e
+
+
+def _path_integral(f, a, b, waypoints, atol, rtol):
+    """The integral of f from a to b through the waypoints: on the real line,
+    or along the straight segments between them in the complex plane."""
+    nodes = [a] + list(waypoints) + [b]
+    if all(not isinstance(z, complex) or z.imag == 0 for z in nodes):
+        nodes = [z.real if isinstance(z, complex) else z for z in nodes]
+        return _quad1(lambda t: _scalar(_call1(f, t)), nodes[0], nodes[-1], atol, rtol, nodes[1:-1])
+    total, err_ = 0j, 0.0
+    for z0, z1 in zip(nodes[:-1], nodes[1:]):
+        z0, z1 = complex(z0), complex(z1)
+        dz = z1 - z0
+        v, e = _quad1(lambda t, z0=z0, dz=dz: complex(_scalar(_call1(f, z0 + t * dz))) * dz, 0.0, 1.0, atol, rtol)
+        total += v
+        err_ += e
+    return total, err_
+
+
+def _num_or_complex(v):
+    a = arr(v).reshape(-1)
+    x = a[0]
+    return complex(x) if np.iscomplexobj(a) and complex(x).imag != 0 else float(np.real(x))
+
+
+def _integral_opts(args, first):
+    opts = {}
+    for i in range(first, len(args) - 1, 2):
+        opts[py_str(args[i]).lower()] = args[i + 1]
+    return opts
+
+
+def _single_out(v, *limits):
+    """The result as single when a limit is single."""
+    if any(class_of(x) == 'single' for x in limits):
+        return finish(np.array([[v]]), 'single')
+    return v.real if isinstance(v, complex) and v.imag == 0 else v
+
+
+def _waypoints(opts):
+    if 'waypoints' not in opts:
+        return []
+    w = arr(opts['waypoints']).reshape(-1)
+    return [complex(z) if np.iscomplexobj(w) else float(z) for z in w]
+
+
 @bi('integral')
 def integral(nargout, *args):
     nargchk(args, 3, None, 'integral')
     from scipy import integrate
     f = _fn(args[0])
-    a, b = num(args[1]), num(args[2])
-    opts = {}
-    i = 3
-    arrayvalued = False
-    while i + 1 < len(args):
-        k = py_str(args[i]).lower()
-        opts[k] = args[i + 1]
-        i += 2
+    a, b = _num_or_complex(args[1]), _num_or_complex(args[2])
+    opts = _integral_opts(args, 3)
     rtol = num(opts['reltol']) if 'reltol' in opts else 1e-6
     atol = num(opts['abstol']) if 'abstol' in opts else 1e-10
-    if 'arrayvalued' in opts:
-        arrayvalued = bool(arr(opts['arrayvalued']).reshape(-1)[0])
-    if arrayvalued:
+    if 'arrayvalued' in opts and bool(arr(opts['arrayvalued']).reshape(-1)[0]):
         v0 = darr(_call1(f, a))
         shape = v0.shape
         r, e = integrate.quad_vec(lambda t: darr(_call1(f, float(t))).reshape(-1), a, b, epsabs=atol, epsrel=rtol)
         return out(np.asarray(r).reshape(shape))
-    cplx = [False]
-
-    def g(t):
-        v = _call1(f, float(t))
-        x = _scalar(v)
-        if isinstance(x, complex):
-            cplx[0] = True
-            return x
-        return x
-    waypoints = opts.get('waypoints')
-    pts = list(darr(waypoints).reshape(-1)) if waypoints is not None else None
     try:
-        if math.isinf(a) or math.isinf(b):
-            r, e = integrate.quad(lambda t: _realpart(g(t)), a, b, epsabs=atol, epsrel=rtol, limit=650)
-        else:
-            r, e = integrate.quad(lambda t: _realpart(g(t)), a, b, epsabs=atol, epsrel=rtol, limit=650, points=pts)
-        if cplx[0]:
-            ri, ei = integrate.quad(lambda t: complex(g(t)).imag, a, b, epsabs=atol, epsrel=rtol, limit=650)
-            return complex(r, ri) if ri != 0 else r
+        r, e = _path_integral(f, a, b, _waypoints(opts), atol, rtol)
     except integrate.IntegrationWarning as w:
         R.warn('MATLAB:integral:MaxIntervalCountReached', str(w))
-    return float(r)
+        r = float('nan')
+    return _single_out(r, args[1], args[2], opts.get('waypoints', 0.0))
 
 
 def _realpart(x):
     return x.real if isinstance(x, complex) else x
 
 
-@bi('quad', 'quadl', 'quadgk', nout=2)
-def quad(nargout, *args):
+@bi('quadgk', nout=2)
+def quadgk(nargout, *args):
+    """quadgk(f, a, b, Name, Value): RelTol, AbsTol, Waypoints (complex ones
+    make a path), ArrayValued; the error bound as the second output."""
     from scipy import integrate
     f = _fn(args[0])
+    a, b = _num_or_complex(args[1]), _num_or_complex(args[2])
+    opts = _integral_opts(args, 3)
+    rtol = num(opts['reltol']) if 'reltol' in opts else 1e-6
+    atol = num(opts['abstol']) if 'abstol' in opts else 1e-10
+    if 'arrayvalued' in opts and bool(arr(opts['arrayvalued']).reshape(-1)[0]):
+        shape = darr(_call1(f, float(np.real(a)))).shape
+        r, e = integrate.quad_vec(lambda t: darr(_call1(f, float(t))).reshape(-1), a, b, epsabs=atol, epsrel=rtol)
+        res = out(np.asarray(r).reshape(shape))
+        return (res, float(e)) if nargout >= 2 else res
+    r, e = _path_integral(f, a, b, _waypoints(opts), atol, rtol)
+    r = _single_out(r, args[1], args[2], opts.get('waypoints', 0.0))
+    return (r, float(e)) if nargout >= 2 else r
+
+
+@bi('quad', 'quadl', nout=2)
+def quad(nargout, *args):
+    """quad(f, a, b, tol, trace, p1, p2, ...): the parameters after trace go
+    to f after x; the number of evaluations of f as the second output."""
+    nargchk(args, 3, None, 'quad')
+    f = _fn(args[0])
     a, b = num(args[1]), num(args[2])
-    tol = num(args[3]) if len(args) > 3 and numel(args[3]) and not is_str(args[3]) else 1e-6
-    r, e = integrate.quad(lambda t: _realpart(_scalar(_call1(f, float(t)))), a, b, epsabs=tol, epsrel=1e-6 if tol >= 1e-6 else tol, limit=650)
-    if nargout >= 2:
-        return float(r), float(e)
-    return float(r)
+    tol = num(args[3]) if len(args) > 3 and numel(args[3]) else 1e-6
+    extra = list(args[5:])
+    count = [0]
+
+    def g(t):
+        count[0] += 1
+        return _scalar(_call1(f, t, *extra))
+    r, e = _quad1(g, a, b, tol, 1e-6 if tol >= 1e-6 else tol)
+    r = _single_out(r, args[1], args[2])
+    return (r, float(count[0])) if nargout >= 2 else r
 
 
 @bi('integral2', 'quad2d', 'dblquad')
@@ -330,11 +402,12 @@ def integral2(nargout, *args):
 def integral3(nargout, *args):
     from scipy import integrate
     f = _fn(args[0])
-    lims = [num(a) if not isinstance(a, FH) else a for a in args[1:7]]
-    def lim(v):
-        return v if not isinstance(v, FH) else v
+    xa, xb = num(args[1]), num(args[2])
+    # limits of y may be functions of x, those of z functions of x and y
+    ylo, yhi = [(lambda x, h=h: _scalar(_call1(h, float(x)))) if isinstance(h, FH) else num(h) for h in args[3:5]]
+    zlo, zhi = [(lambda x, y, h=h: _scalar(_call1(h, float(x), float(y)))) if isinstance(h, FH) else num(h) for h in args[5:7]]
     r, e = integrate.tplquad(lambda z, y, x: _realpart(_scalar(_call1(f, float(x), float(y), float(z)))),
-                             lims[0], lims[1], lims[2], lims[3], lims[4], lims[5])
+                             xa, xb, ylo, yhi, zlo, zhi, epsabs=1e-10, epsrel=1e-6)
     return float(r)
 
 
@@ -808,9 +881,23 @@ def _interp_cols(x, V, xq, method, extrap):
             res = np.where(np.isnan(res) & ((xq < x[0]) | (xq > x[-1]))[:, None], extrap, res)
         return res
     if m in ('nearest', 'next', 'previous'):
+        if extrap == 'extrap':
+            xq = np.clip(xq, x[0], x[-1])       # past the ends: the value at the end
+        if m == 'nearest':
+            # a half rounds up, as in the language
+            pos = np.interp(xq, x, np.arange(x.size, dtype=F64))
+            k = np.clip(np.floor(pos + 0.5).astype(np.intp), 0, x.size - 1)
+            res = V[k].astype(np.result_type(V.dtype, F64))
+            outside = (xq < x[0]) | (xq > x[-1])
+            if outside.any():
+                res[outside] = np.nan if extrap is None or isinstance(extrap, str) else extrap
+            return res
         f = interpolate.interp1d(x, V, axis=0, kind=m, bounds_error=False,
-                                 fill_value=('extrapolate' if extrap == 'extrap' else (np.nan if extrap is None else extrap)), assume_sorted=True)
+                                 fill_value=(np.nan if extrap is None or isinstance(extrap, str) else extrap), assume_sorted=True)
         return f(xq)
+    if m in ('pchip', 'cubic', 'makima') and np.iscomplexobj(V):
+        # not linear in the values: the real and imaginary parts apart
+        return _interp_cols(x, V.real, xq, method, extrap) + 1j * _interp_cols(x, V.imag, xq, method, extrap)
     if m in ('pchip', 'cubic'):
         f = interpolate.PchipInterpolator(x, V, axis=0, extrapolate=True)
     elif m == 'makima':
@@ -827,22 +914,66 @@ def _interp_cols(x, V, xq, method, extrap):
     return res
 
 
+def _interp1_pp(x, V, method):
+    """interp1(x, v, method, 'pp'): the interpolant as a piecewise polynomial."""
+    from scipy import interpolate
+    vec = V.ndim == 2 and 1 in V.shape
+    Vc = V.reshape(-1, 1) if vec else V.reshape(V.shape[0], -1)
+    order = np.argsort(x, kind='stable')
+    x, Vc = x[order].astype(F64), Vc[order]
+    dim = (1,) if vec else V.shape[1:]
+    D = Vc.shape[1]
+    n = x.size
+    if method == 'linear':
+        slope = np.diff(Vc, axis=0) / np.diff(x)[:, None]
+        coefs = np.stack([slope, Vc[:-1]], axis=-1).reshape((n - 1) * D, 2)
+        return PP(x, coefs, dim)
+    if method in ('nearest', 'previous', 'next'):
+        if method == 'nearest':
+            br = np.concatenate([[x[0]], (x[:-1] + x[1:]) / 2, [x[-1]]])
+            vals = Vc
+        else:
+            br = x
+            vals = Vc[:-1] if method == 'previous' else Vc[1:]
+        return PP(br, vals.reshape(-1, 1), dim)
+    if method in ('pchip', 'cubic'):
+        f = interpolate.PchipInterpolator(x, Vc, axis=0)
+    elif method == 'makima':
+        f = interpolate.Akima1DInterpolator(x, Vc, axis=0, method='makima')
+    elif method == 'spline':
+        f = interpolate.CubicSpline(x, Vc, axis=0, bc_type='not-a-knot' if n > 3 else 'natural')
+    else:
+        raise err('MATLAB:interp1:InvalidMethod', f"Invalid interpolation method '{method}'.", 'interp1')
+    c = np.asarray(f.c)                    # (order, pieces, D)
+    k = c.shape[0]
+    return PP(np.asarray(f.x), c.transpose(1, 2, 0).reshape(-1, k), dim)
+
+
 @bi('interp1')
 def interp1(nargout, *args):
     nargchk(args, 2, 5, 'interp1')
     args = list(args)
     method = 'linear'
     extrap = None
+    want_pp = False
     strs = [i for i, a in enumerate(args) if opt_str(a) is not None]
+    # interp1(v, xq, method, ...): the method third means there is no x
+    no_x = bool(strs) and strs[0] == 2 and opt_str(args[2]).lower() not in ('extrap', 'pp')
     for i in reversed(strs):
         s = opt_str(args[i]).lower()
         if s == 'extrap':
             extrap = 'extrap'
         elif s in ('pp',):
-            pass
+            want_pp = True
         else:
-            method = s if s != '*linear' else 'linear'
+            method = s.lstrip('*')          # '*linear' and the like: equally spaced points, the same result
+            if method == 'v5cubic':
+                method = 'cubic'
         args.pop(i)
+    if want_pp:
+        return _interp1_pp(darr(args[0]).reshape(-1), darr(args[1]), method)
+    if no_x and len(args) == 3:
+        extrap = num(args.pop(2)) if extrap is None else extrap
     if len(args) >= 4:
         extrap = num(args.pop(3)) if extrap is None else extrap
     if len(args) == 2:
@@ -872,54 +1003,244 @@ def interp1(nargout, *args):
     return out(np.asarray(res).reshape(xq.shape + V.shape[1:]))
 
 
+# ---- interpolation on grids (interp2, interpn) ------------------------------------------------------
+
+_GRID_METHODS = ('linear', 'nearest', 'cubic', 'spline', 'pchip', 'makima')
+
+
+def _axis_weights(x, q, method):
+    """The weights that give method's interpolant at the points q from the
+    values at the grid points x (increasing): a len(q)-by-len(x) matrix, for
+    the methods whose interpolant is linear in the values. Rows of points
+    outside the grid are NaN."""
+    n = x.size
+    W = np.zeros((q.size, n))
+    inside = (q >= x[0]) & (q <= x[-1])
+    if n == 1:
+        W[:, 0] = np.where(q == x[0], 1.0, np.nan)
+        return W
+    pos = np.interp(q, x, np.arange(n, dtype=F64))
+    if method == 'nearest':
+        k = np.clip(np.floor(pos + 0.5).astype(np.intp), 0, n - 1)        # a half rounds up
+        W[np.arange(q.size), k] = 1.0
+    elif method == 'linear' or n == 2:
+        k = np.clip(np.floor(pos).astype(np.intp), 0, n - 2)
+        t = pos - k
+        W[np.arange(q.size), k] = 1 - t
+        W[np.arange(q.size), k + 1] += t
+    elif method == 'cubic' and np.allclose(np.diff(x), x[1] - x[0], rtol=1e-9, atol=0) and n >= 3:
+        # Keys' cubic convolution (a = -1/2), the values past the ends extended by
+        # f(-1) = 3 f(0) - 3 f(1) + f(2) (and alike at the other end)
+        k = np.clip(np.floor(pos).astype(np.intp), 0, n - 2)
+        t = pos - k
+
+        def kern(s):
+            s = np.abs(s)
+            return np.where(s <= 1, 1.5 * s ** 3 - 2.5 * s ** 2 + 1, np.where(s < 2, -0.5 * s ** 3 + 2.5 * s ** 2 - 4 * s + 2, 0.0))
+        rows = np.arange(q.size)
+        for off in (-1, 0, 1, 2):
+            w = kern(t - off)
+            j = k + off
+            for jj, ww in ((j, w),):
+                lo, hi = jj < 0, jj > n - 1
+                mid = ~(lo | hi)
+                np.add.at(W, (rows[mid], jj[mid]), ww[mid])
+                for c, idx in ((3, 0), (-3, 1), (1, 2)):
+                    np.add.at(W, (rows[lo], np.full(lo.sum(), idx)), c * ww[lo])
+                    np.add.at(W, (rows[hi], np.full(hi.sum(), n - 1 - idx)), c * ww[hi])
+    else:
+        # the cubic spline (not-a-knot), as the language's spline makes it
+        from scipy import interpolate
+        W = interpolate.CubicSpline(x, np.eye(n), axis=0, bc_type='not-a-knot')(q).reshape(q.size, n)
+    W[~inside] = np.nan
+    return W
+
+
+def _grid_interp(axes, V, Q, method, extrapval, grid):
+    """Values of V (on the grid of the vectors axes) at Q: a list of the query
+    coordinates, one array per dimension; grid says Q is a list of grid
+    vectors (the result is their grid) rather than points (all one size)."""
+    from scipy import interpolate
+    axes = [np.asarray(a, F64).reshape(-1) for a in axes]
+    V = np.asarray(V)
+    V = V.reshape(V.shape + (1,) * (len(axes) - V.ndim))
+    for d, a in enumerate(axes):
+        if a.size != V.shape[d]:
+            raise err('MATLAB:interpn:gridMismatch', 'The grid vectors do not match the size of the values.', 'interp2')
+        if a.size > 1 and a[0] > a[-1]:
+            axes[d] = a[::-1]
+            V = np.flip(V, d)
+        if a.size > 1 and np.any(np.diff(axes[d]) <= 0):
+            raise err('MATLAB:griddedInterpolant:NonMonotonicCompVecsErrId', 'The grid vectors must be strictly monotonic.', 'interp2')
+    Q = [np.asarray(q, F64).reshape(-1) for q in Q]
+    cplx = V.dtype.kind == 'c'
+    Vf = V.astype(C128 if cplx else F64)
+    if method in ('linear', 'nearest', 'cubic', 'spline'):
+        Ws = [_axis_weights(a, q, method) for a, q in zip(axes, Q)]
+
+        def apply(data, mats):
+            """The weights applied dimension by dimension (to a grid, or to points)."""
+            if grid:
+                r_ = data
+                for d, W in enumerate(mats):
+                    r_ = np.moveaxis(np.tensordot(W, np.moveaxis(r_, d, 0), axes=(1, 0)), 0, d)
+                return r_
+            r_ = np.tensordot(mats[0], data, axes=(1, 0))            # (points, the rest)
+            for W in mats[1:]:
+                r_ = np.einsum('kj,kj...->k...', W, r_)
+            return r_
+        nan_v = np.isnan(Vf)
+        r = apply(np.where(nan_v, 0, Vf), [np.nan_to_num(W, nan=0.0) for W in Ws])
+        # NaN where a value used is NaN, or a point is outside the grid
+        if nan_v.any():
+            r = np.where(apply(nan_v.astype(F64), [np.abs(np.nan_to_num(W, nan=0.0)) for W in Ws]) > 0, np.nan, r)
+        if grid:
+            for d, W in enumerate(Ws):
+                bad = np.isnan(W).any(axis=1)
+                if bad.any():
+                    idx = [slice(None)] * r.ndim
+                    idx[d] = bad
+                    r[tuple(idx)] = np.nan
+        else:
+            bad = np.zeros(Q[0].size, bool)
+            for W in Ws:
+                bad |= np.isnan(W).any(axis=1)
+            r = np.where(bad.reshape((-1,) + (1,) * (r.ndim - 1)), np.nan, r)
+        if cplx:
+            r = np.where(np.isnan(r), complex(np.nan, np.nan), r)
+    elif cplx:
+        # pchip and makima: not linear in the values, so the real and imaginary parts apart
+        r = (_grid_interp(axes, Vf.real, Q, method, np.nan, grid)
+             + 1j * _grid_interp(axes, Vf.imag, Q, method, np.nan, grid))
+        r = np.where(np.isnan(r), complex(np.nan, np.nan), r)
+    else:
+        # pchip and makima: not linear in the values; dimension by dimension on a grid
+        def along(vals, a, q, d):
+            vals = np.moveaxis(vals, d, 0)
+            # a line with a NaN in it gives NaN (the interpolants take no NaN)
+            nanline = np.isnan(vals).any(axis=0)
+            vals = np.where(np.isnan(vals), 0.0, vals)
+            if a.size < 2:
+                res = np.repeat(vals[:1], q.size, axis=0)
+            elif method == 'makima' and a.size >= 3:
+                f = interpolate.Akima1DInterpolator(a, vals, axis=0, method='makima')
+                res = f(q)
+            else:
+                res = interpolate.PchipInterpolator(a, vals, axis=0, extrapolate=False)(q)
+            res = np.where(((q < a[0]) | (q > a[-1])).reshape((-1,) + (1,) * (res.ndim - 1)), np.nan, res)
+            res = np.where(nanline[None, ...], np.nan, res)
+            return np.moveaxis(res, 0, d)
+        if grid:
+            r = Vf
+            for d, (a, q) in enumerate(zip(axes, Q)):
+                r = along(r, a, q, d)
+        else:
+            if all(a.size >= 4 for a in axes):
+                f = interpolate.RegularGridInterpolator(axes, Vf, method='pchip', bounds_error=False, fill_value=np.nan)
+            else:
+                f = interpolate.RegularGridInterpolator(axes, Vf, method='linear', bounds_error=False, fill_value=np.nan)
+            r = f(np.column_stack(Q))
+    if not (isinstance(extrapval, float) and math.isnan(extrapval)):
+        r = np.where(np.isnan(r), extrapval, r) if not np.iscomplexobj(r) else r
+    return r
+
+
+def _interp_opts(args, fn):
+    """args without the method and extrapolation value at their end; the method and that value."""
+    args = list(args)
+    method, extrapval = 'linear', np.nan
+    if len(args) >= 2 and opt_str(args[-2]) is not None and opt_str(args[-1]) is None:
+        extrapval = num(args.pop())
+    if args and opt_str(args[-1]) is not None:
+        method = opt_str(args.pop()).lower().lstrip('*')
+        if method == 'v5cubic':
+            method = 'cubic'
+        if method not in _GRID_METHODS:
+            raise err(f'MATLAB:{fn}:InvalidMethod', f"Invalid interpolation method '{method}'.", fn)
+    return args, method, extrapval
+
+
+def _grid_vector(G, d):
+    """A grid vector from a vector, or from an ndgrid/meshgrid array along dimension d."""
+    G = np.asarray(G, F64)
+    if G.ndim == 2 and 1 in G.shape:
+        return G.reshape(-1)
+    idx = [0] * G.ndim
+    idx[d] = slice(None)
+    return G[tuple(idx)].reshape(-1)
+
+
+def _is_grid_query(Q):
+    """Query arrays as grid vectors: all vectors, not all of one size and orientation."""
+    if not all(q.ndim == 2 and 1 in q.shape for q in Q):
+        return False
+    return len(set(q.shape for q in Q)) > 1
+
+
 @bi('interp2')
 def interp2(nargout, *args):
-    from scipy import interpolate
-    args = list(args)
-    method = 'linear'
-    extrapval = np.nan
-    if args and opt_str(args[-1]) is not None:
-        method = opt_str(args.pop()).lower()
-    elif len(args) >= 2 and opt_str(args[-2]) is not None:
-        extrapval = num(args.pop())
-        method = opt_str(args.pop()).lower()
-    if len(args) == 5:
+    nargchk(args, 1, 7, 'interp2')
+    args, method, extrapval = _interp_opts(args, 'interp2')
+    if len(args) in (1, 2):
+        # interp2(Z) and interp2(Z, k): the grid refined k times (once unless given)
+        Z = darr(args[0])
+        k = ival(args[1], 'k', 'interp2') if len(args) == 2 else 1
+        m, n = Z.shape[:2]
+        xq = np.linspace(1, n, (n - 1) * 2 ** k + 1)
+        yq = np.linspace(1, m, (m - 1) * 2 ** k + 1)
+        r = _grid_interp([np.arange(1, m + 1), np.arange(1, n + 1)], Z, [yq, xq], method, extrapval, True)
+        return out(r)
+    if len(args) == 3:
+        Z, Xq, Yq = darr(args[0]), darr(args[1]), darr(args[2])
+        x, y = np.arange(1, Z.shape[1] + 1, dtype=F64), np.arange(1, Z.shape[0] + 1, dtype=F64)
+    elif len(args) == 5:
         X, Y, Z, Xq, Yq = [darr(a) for a in args]
-        x = X[0, :] if X.ndim == 2 and X.shape[0] > 1 else X.reshape(-1)
-        y = Y[:, 0] if Y.ndim == 2 and Y.shape[1] > 1 else Y.reshape(-1)
-    elif len(args) == 3:
-        Z, Xq, Yq = [darr(a) for a in args]
-        x = np.arange(1, Z.shape[1] + 1, dtype=F64)
-        y = np.arange(1, Z.shape[0] + 1, dtype=F64)
+        x, y = _grid_vector(X, 1), _grid_vector(Y, 0)
     else:
         raise err('MATLAB:interp2:nargin', 'Wrong number of input arguments.', 'interp2')
-    if Xq.ndim == 2 and Yq.ndim == 2 and (Xq.shape[0] == 1 and Yq.shape[1] == 1) and Xq.shape != Yq.shape:
-        Xq, Yq = np.meshgrid(Xq.reshape(-1), Yq.reshape(-1))
-    m = {'linear': 'linear', 'nearest': 'nearest', 'cubic': 'cubic', 'spline': 'cubic', 'makima': 'cubic'}.get(method, 'linear')
-    f = interpolate.RegularGridInterpolator((y, x), Z, method=m, bounds_error=False, fill_value=extrapval)
-    pts = np.column_stack([Yq.reshape(-1), Xq.reshape(-1)])
-    return out(f(pts).reshape(Xq.shape))
+    # a row of x and a column of y (or vectors of different sizes) make a grid
+    if Xq.ndim == 2 and Yq.ndim == 2 and 1 in Xq.shape and 1 in Yq.shape and (Xq.shape != Yq.shape or (Xq.shape[0] == 1 and Yq.shape[1] == 1 and Xq.size > 1 and Yq.size > 1 and Xq.shape != Yq.shape)):
+        r = _grid_interp([y, x], Z, [Yq.reshape(-1), Xq.reshape(-1)], method, extrapval, True)
+        return out(r)
+    if Xq.shape != Yq.shape:
+        if Xq.size == 1 or Yq.size == 1:
+            Xq, Yq = np.broadcast_arrays(Xq, Yq)
+        else:
+            raise err('MATLAB:interp2:XqYqMismatch', 'Xq and Yq must be the same size or vectors.', 'interp2')
+    r = _grid_interp([y, x], Z, [Yq, Xq], method, extrapval, False)
+    return out(np.asarray(r).reshape(Xq.shape))
 
 
 @bi('interpn')
 def interpn(nargout, *args):
-    from scipy import interpolate
-    args = list(args)
-    method = 'linear'
-    if args and opt_str(args[-1]) is not None:
-        method = opt_str(args.pop()).lower()
-    n = (len(args) - 1) // 2
-    grids = [darr(a) for a in args[:n]]
-    V = darr(args[n])
-    q = [darr(a) for a in args[n + 1:]]
-    axes = []
-    for k, g in enumerate(grids):
-        idx = [0] * g.ndim
-        idx[k] = slice(None)
-        axes.append(g[tuple(idx)].reshape(-1) if g.ndim > 1 else g.reshape(-1))
-    f = interpolate.RegularGridInterpolator(axes, V, method='linear' if method == 'linear' else 'nearest' if method == 'nearest' else 'cubic', bounds_error=False, fill_value=np.nan)
-    pts = np.column_stack([a.reshape(-1) for a in q])
-    return out(f(pts).reshape(q[0].shape))
+    nargchk(args, 1, None, 'interpn')
+    args, method, extrapval = _interp_opts(args, 'interpn')
+    if len(args) in (1, 2) and not (len(args) == 2 and numel(args[1]) > 1):
+        V = darr(args[0])
+        k = ival(args[1], 'k', 'interpn') if len(args) == 2 else 1
+        axes = [np.arange(1, s + 1, dtype=F64) for s in V.shape]
+        Q = [np.linspace(1, s, (s - 1) * 2 ** k + 1) for s in V.shape]
+        return out(_grid_interp(axes, V, Q, method, extrapval, True))
+    first = darr(args[0])
+    if len(args) % 2 == 1 and not (first.ndim >= 2 and min(first.shape) > 1 and first.ndim == len(args) - 1):
+        n = len(args) // 2
+        V = darr(args[n])
+        axes = [_grid_vector(darr(a), d) for d, a in enumerate(args[:n])]
+        Q = [darr(a) for a in args[n + 1:]]
+    else:
+        V = darr(args[0])
+        n = len(args) - 1
+        axes = [np.arange(1, s + 1, dtype=F64) for s in (V.shape + (1,) * n)[:n]]
+        Q = [darr(a) for a in args[1:]]
+    if len(Q) != len(axes):
+        raise err('MATLAB:interpn:nargin', 'Wrong number of input arguments.', 'interpn')
+    if _is_grid_query(Q):
+        return out(_grid_interp(axes, V, [q.reshape(-1) for q in Q], method, extrapval, True))
+    shape = Q[0].shape
+    if any(q.shape != shape for q in Q):
+        Q = np.broadcast_arrays(*Q)
+        shape = Q[0].shape
+    return out(np.asarray(_grid_interp(axes, V, Q, method, extrapval, False)).reshape(shape))
 
 
 @bi('griddata')
@@ -935,15 +1256,23 @@ def griddata(nargout, *args):
 
 
 class PP(Obj):
-    """A piecewise polynomial (spline, pchip, mkpp)."""
+    """A piecewise polynomial (spline, pchip, mkpp), as the language's pp
+    form: breaks; coefs with a row for each piece and value component (the
+    components of a piece together); its order; dim, the size of a value."""
     __slots__ = ('breaks', 'coefs', 'order', 'dim')
     cls = 'struct'
 
-    def __init__(self, breaks, coefs, dim=1):
-        self.breaks = breaks
-        self.coefs = coefs
-        self.order = coefs.shape[1]
-        self.dim = dim
+    def __init__(self, breaks, coefs, dim=(1,)):
+        self.breaks = np.asarray(breaks, F64).reshape(-1)
+        self.coefs = np.asarray(coefs)
+        self.order = self.coefs.shape[1]
+        self.dim = tuple(int(d) for d in dim)
+
+    def ncomp(self):
+        return int(np.prod(self.dim))
+
+    def dim_value(self):
+        return float(self.dim[0]) if len(self.dim) == 1 else np.array([[float(d) for d in self.dim]])
 
     def getprop(self, name):
         if name == 'form':
@@ -957,57 +1286,103 @@ class PP(Obj):
         if name == 'order':
             return float(self.order)
         if name == 'dim':
-            return float(self.dim)
+            return self.dim_value()
         return super().getprop(name)
 
     def propnames(self):
         return ['form', 'breaks', 'coefs', 'pieces', 'order', 'dim']
 
     def display_lines(self):
+        d = str(self.dim[0]) if len(self.dim) == 1 else '[' + ' '.join(str(x) for x in self.dim) + ']'
         return ['  struct with fields:', '', "     form: 'pp'", f'   breaks: [1×{self.breaks.size} double]',
                 f'    coefs: [{self.coefs.shape[0]}×{self.coefs.shape[1]} double]', f'   pieces: {self.breaks.size - 1}',
-                f'    order: {self.order}', f'      dim: {self.dim}']
+                f'    order: {self.order}', f'      dim: {d}']
 
     def eval(self, xq):
+        """The values at xq: xq's shape for scalar values, else dim by xq
+        (dim by length(xq) for a vector xq)."""
         b = self.breaks
-        k = np.clip(np.searchsorted(b, xq, side='right') - 1, 0, b.size - 2)
-        dx = xq - b[k]
-        r = np.zeros(xq.shape)
+        D = self.ncomp()
+        xv = np.asarray(xq).reshape(-1, order='F')
+        k = np.clip(np.searchsorted(b, xv, side='right') - 1, 0, max(b.size - 2, 0))
+        dx = xv - b[k]
+        rows = k[None, :] * D + np.arange(D)[:, None]
+        r = np.zeros((D, xv.size), self.coefs.dtype)
         for j in range(self.order):
-            r = r * dx + self.coefs[k, j]
-        return r
+            r = r * dx[None, :] + self.coefs[rows, j]
+        r = np.where(np.isnan(xv)[None, :], np.nan, r)
+        xq = np.asarray(xq)
+        if self.dim == (1,):
+            return r.reshape(xq.shape, order='F')
+        isvec = xq.ndim == 2 and 1 in xq.shape
+        return r.reshape(self.dim + ((xv.size,) if isvec else xq.shape), order='F')
 
 
-def _pp_from_scipy(f):
-    c = f.c          # (order, pieces)
-    return PP(np.asarray(f.x), np.asarray(c).T.copy())
+def _pp_from_scipy(f, dim=(1,)):
+    """A pp of scipy's piecewise polynomial (its c: order, pieces, components)."""
+    c = np.asarray(f.c)
+    k, n = c.shape[:2]
+    D = int(np.prod(dim))
+    coefs = c.reshape(k, n, D).transpose(1, 2, 0).reshape(n * D, k)
+    return PP(np.asarray(f.x), coefs, dim)
+
+
+def _interp_data(args, fn):
+    """x (sorted, increasing) and the values y with x along their last dimension
+    (as the rows of a D-by-n matrix), y's leading size, and whether y was a vector."""
+    x = darr(args[0]).reshape(-1).astype(F64)
+    y = darr(args[1])
+    isvec = y.ndim == 2 and 1 in y.shape
+    Y = y.reshape(1, -1) if isvec else y.reshape(-1, y.shape[-1], order='F')
+    dim = (1,) if isvec else y.shape[:-1]
+    if Y.shape[-1] not in (x.size, x.size + 2):
+        raise err(f'MATLAB:{fn}:XYLengthMismatch', 'The values must be as many as the points x along their last dimension (or two more, for a spline with end slopes).', fn)
+    return x, Y, dim, isvec
+
+
+def _sorted(x, Y, ends=False):
+    order = np.argsort(x, kind='stable')
+    if ends:
+        return x[order], np.concatenate([Y[:, :1], Y[:, 1:-1][:, order], Y[:, -1:]], axis=1)
+    return x[order], Y[:, order]
 
 
 @bi('spline')
 def spline(nargout, *args):
     from scipy import interpolate
-    x = darr(args[0]).reshape(-1)
-    y = darr(args[1])
-    yv = y.reshape(-1)
-    if yv.size == x.size + 2:
-        f = interpolate.CubicSpline(x, yv[1:-1], bc_type=((1, yv[0]), (1, yv[-1])))
+    nargchk(args, 2, 3, 'spline')
+    x, Y, dim, isvec = _interp_data(args, 'spline')
+    ends = Y.shape[-1] == x.size + 2
+    x, Y = _sorted(x, Y, ends)
+    if isvec and not ends and np.any(np.isnan(Y)):
+        keep = ~np.isnan(Y[0])            # points with no value are left out
+        x, Y = x[keep], Y[:, keep]
+    if ends:
+        f = interpolate.CubicSpline(x, Y[:, 1:-1], axis=1, bc_type=((1, Y[:, 0]), (1, Y[:, -1])))
+    elif x.size == 2:
+        f = interpolate.CubicSpline(x, Y, axis=1, bc_type='natural')
+    elif x.size == 3:
+        # not-a-knot through three points: the parabola through them
+        f = interpolate.CubicSpline(x, Y, axis=1, bc_type='not-a-knot')
     else:
-        f = interpolate.CubicSpline(x, yv, bc_type='not-a-knot' if x.size > 3 else 'natural')
+        f = interpolate.CubicSpline(x, Y, axis=1, bc_type='not-a-knot' if x.size > 3 else 'natural')
+    pp = _pp_from_scipy(f, dim)
     if len(args) == 2:
-        return _pp_from_scipy(f)
-    xq = darr(args[2])
-    return out(f(xq))
+        return pp
+    return out(pp.eval(darr(args[2])))
 
 
 @bi('pchip')
 def pchip(nargout, *args):
     from scipy import interpolate
-    x = darr(args[0]).reshape(-1)
-    y = darr(args[1]).reshape(-1)
-    f = interpolate.PchipInterpolator(x, y)
+    nargchk(args, 2, 3, 'pchip')
+    x, Y, dim, isvec = _interp_data(args, 'pchip')
+    x, Y = _sorted(x, Y)
+    f = interpolate.PchipInterpolator(x, Y, axis=1)
+    pp = _pp_from_scipy(f, dim)
     if len(args) == 2:
-        return _pp_from_scipy(f)
-    return out(f(darr(args[2])))
+        return pp
+    return out(pp.eval(darr(args[2])))
 
 
 @bi('makima')
@@ -1031,17 +1406,21 @@ def ppval(nargout, *args):
 
 @bi('mkpp')
 def mkpp(nargout, *args):
+    nargchk(args, 2, 3, 'mkpp')
     b = darr(args[0]).reshape(-1)
     c = darr(args[1])
+    dim = tuple(int(d) for d in darr(args[2]).reshape(-1)) if len(args) > 2 else (1,)
     n = b.size - 1
-    c = c.reshape(n, -1)
-    return PP(b, c)
+    D = int(np.prod(dim))
+    if n < 1 or c.size % (n * D):
+        raise err('MATLAB:mkpp:PPNumberMismatchCoeffs', 'The coefficients must fit the pieces and the size of a value.', 'mkpp')
+    return PP(b, c.reshape(n * D, -1, order='F'), dim)
 
 
 @bi('unmkpp', nout=5)
 def unmkpp(nargout, *args):
     pp = args[0]
-    return (out(pp.breaks.reshape(1, -1)), out(pp.coefs), float(pp.breaks.size - 1), float(pp.order), float(pp.dim))[:max(nargout, 1)]
+    return (out(pp.breaks.reshape(1, -1)), out(pp.coefs), float(pp.breaks.size - 1), float(pp.order), pp.dim_value())[:max(nargout, 1)]
 
 
 # ---- polynomials --------------------------------------------------------------------------------
@@ -1142,7 +1521,11 @@ def conv(nargout, *args):
     u = darr(args[0])
     v = darr(args[1])
     shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
+    if (u.ndim > 2 or min(u.shape) > 1) or (v.ndim > 2 or min(v.shape) > 1):
+        raise err('MATLAB:conv:AorBNotVector', 'A and B must be vectors.', 'conv')
     uu, vv = u.reshape(-1), v.reshape(-1)
+    if uu.size == 0 or vv.size == 0:
+        return np.zeros((1, 0)) if shape != 'same' else out(np.zeros(u.shape))
     full = np.convolve(uu, vv)
     if shape == 'same':
         start = (vv.size - 1) // 2 if True else 0
@@ -1153,21 +1536,29 @@ def conv(nargout, *args):
         r = full[vv.size - 1:vv.size - 1 + n] if n else np.zeros(0)
     else:
         r = full
-    col = (u.ndim == 2 and u.shape[1] == 1 and u.shape[0] > 1) or (u.size == 1 and v.ndim == 2 and v.shape[1] == 1 and v.shape[0] > 1)
+    # the orientation of the longer vector ('same': of the first), the second's when they are as long
+    lead = u if shape == 'same' or uu.size > vv.size else v
+    col = lead.ndim == 2 and lead.shape[1] == 1 and lead.shape[0] > 1
     return out(r.reshape(-1, 1) if col else r.reshape(1, -1))
 
 
 @bi('deconv', nout=2)
 def deconv(nargout, *args):
     from scipy import signal
-    b = darr(args[0]).reshape(-1)
+    y = darr(args[0])
+    b = y.reshape(-1)
     a = darr(args[1]).reshape(-1)
-    if a[0] == 0:
+    if a.size == 0 or a[0] == 0:
         raise err('MATLAB:deconv:ZeroCoef1', 'First coefficient of A must be non-zero.', 'deconv')
-    q, r = signal.deconvolve(b, a)
-    qq = out(q.reshape(1, -1)) if q.size else np.zeros((1, 0))
+    col = y.ndim == 2 and y.shape[1] == 1 and y.shape[0] > 1
+    shape = (lambda v: v.reshape(-1, 1)) if col else (lambda v: v.reshape(1, -1))
+    if b.size < a.size:
+        q, r = np.zeros(1), b.astype(F64)          # nothing divides: the quotient is 0, the rest is all of y
+    else:
+        q, r = signal.deconvolve(b, a)
+    qq = out(shape(np.asarray(q, F64)))
     if nargout >= 2:
-        return qq, out(r.reshape(1, -1))
+        return qq, out(shape(np.asarray(r)))
     return qq
 
 
@@ -1214,7 +1605,15 @@ def filter_(nargout, *args):
     dim = dim_arg(args[4], 'filter') if len(args) > 4 else first_dim(x.shape)
     if a[0] == 0:
         raise err('MATLAB:filter:firstElementOfDenominatorFilterCoefficientsMustBeNonzero', 'First denominator filter coefficient must be non-zero.', 'filter')
+    single = any(class_of(v) == 'single' for v in args[:3])
+    if single:
+        r = filter_(nargout, *[darr(v) for v in args[:3]], *args[3:])
+        return tuple(finish(np.asarray(v), 'single') for v in r) if isinstance(r, tuple) else finish(np.asarray(r), 'single')
     X = expand_dims(x, dim)
+    if X.size == 0:
+        n = max(a.size, b.size) - 1
+        y = out(np.zeros(X.shape, np.result_type(X.dtype, b.dtype, a.dtype, F64)))
+        return (y, out(np.zeros((n, 0)))) if nargout >= 2 else y
     if zi is not None:
         n = max(a.size, b.size) - 1
         ziv = zi.reshape(n, -1) if zi.size else None
@@ -1240,32 +1639,63 @@ def filter2(nargout, *args):
     return out(signal.correlate2d(x, h, mode=shape))
 
 
+def _conv_cut(full, sa, sb, shape, fn):
+    """The part of a full convolution that 'same' (the size of A, from
+    floor(size(B)/2)) or 'valid' (the size of A less that of B, plus 1,
+    perhaps empty) keeps."""
+    if shape == 'full':
+        return full
+    idx = []
+    for d in range(full.ndim):
+        a_, b_ = sa[d] if d < len(sa) else 1, sb[d] if d < len(sb) else 1
+        if shape == 'same':
+            idx.append(slice(b_ // 2, b_ // 2 + a_))
+        elif shape == 'valid':
+            n = max(a_ - b_ + 1, 0) if b_ > 0 else 0
+            idx.append(slice(b_ - 1, b_ - 1 + n))
+        else:
+            raise err(f'MATLAB:{fn}:unknownShapeParameter', "The shape is 'full', 'same' or 'valid'.", fn)
+    return full[tuple(idx)]
+
+
+def _conv_full(A, B):
+    from scipy import signal
+    if A.size == 0 or B.size == 0:
+        return np.zeros(tuple(max(a + b - 1, 0) for a, b in zip(A.shape, B.shape)), np.result_type(A.dtype, B.dtype, F64))
+    return signal.convolve(A, B, mode='full', method='direct')
+
+
+def _conv_class(r, *vals):
+    return finish(r, 'single') if any(class_of(v) == 'single' for v in vals) else out(r)
+
+
 @bi('conv2')
 def conv2(nargout, *args):
-    from scipy import signal
+    nargchk(args, 2, 4, 'conv2')
     if len(args) >= 3 and opt_str(args[2]) is None:
-        u = darr(args[0]).reshape(-1)
-        v = darr(args[1]).reshape(-1)
+        # conv2(u, v, A): down the columns with u, then along the rows with v
+        u = darr(args[0]).reshape(-1, 1)
+        v = darr(args[1]).reshape(1, -1)
         A = darr(args[2])
         shape = opt_str(args[3]).lower() if len(args) > 3 else 'full'
-        r = signal.convolve2d(signal.convolve2d(A, u.reshape(-1, 1), mode='full'), v.reshape(1, -1), mode='full')
-        if shape == 'full':
-            return out(r)
-        ker = np.outer(u, v)
-        return out(signal.convolve2d(A, ker, mode=shape))
-    A = darr(args[0])
-    B = darr(args[1])
+        full = _conv_full(_conv_full(A, u), v)
+        return _conv_class(_conv_cut(full, A.shape, (u.size, v.size), shape, 'conv2'), *args[:3])
+    A, B = darr(args[0]), darr(args[1])
+    if A.ndim > 2 or B.ndim > 2:
+        raise err('MATLAB:conv2:InputMustBe2D', 'conv2 takes 2-D arrays (convn takes more dimensions).', 'conv2')
     shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
-    return out(signal.convolve2d(A, B, mode=shape))
+    return _conv_class(_conv_cut(_conv_full(A, B), A.shape, B.shape, shape, 'conv2'), args[0], args[1])
 
 
 @bi('convn')
 def convn(nargout, *args):
-    from scipy import signal
-    A = darr(args[0])
-    B = darr(args[1])
+    nargchk(args, 2, 3, 'convn')
+    A, B = darr(args[0]), darr(args[1])
+    nd = max(A.ndim, B.ndim)
+    A2 = A.reshape(A.shape + (1,) * (nd - A.ndim))
+    B2 = B.reshape(B.shape + (1,) * (nd - B.ndim))
     shape = opt_str(args[2]).lower() if len(args) > 2 else 'full'
-    return out(signal.convolve(A, B, mode=shape, method='direct'))
+    return _conv_class(_conv_cut(_conv_full(A2, B2), A2.shape, B2.shape, shape, 'convn'), args[0], args[1])
 
 
 def _fft_like(name, fn):
@@ -1344,33 +1774,92 @@ def detrend(nargout, *args):
     return out(signal.detrend(x, axis=dim, type=kind))
 
 
-@bi('gradient', nout=3)
+def _grad_along(f, h, axis):
+    """The differences of f along axis: one-sided at the ends, central inside,
+    (f(i+1) - f(i-1))/(x(i+1) - x(i-1)), with h a spacing or the coordinates."""
+    f = np.moveaxis(f, axis, 0)
+    n = f.shape[0]
+    g = np.zeros(f.shape, np.result_type(f.dtype, F64))
+    if n > 1:
+        x = h * np.arange(n, dtype=F64) if np.ndim(h) == 0 else np.asarray(h, F64).reshape(-1)
+        if x.size != n:
+            raise err('MATLAB:gradient:InvalidGridSpacing', 'The coordinates must be as many as the points along their dimension.', 'gradient')
+        sh = (-1,) + (1,) * (f.ndim - 1)
+        g[0] = (f[1] - f[0]) / (x[1] - x[0])
+        g[-1] = (f[-1] - f[-2]) / (x[-1] - x[-2])
+        if n > 2:
+            g[1:-1] = (f[2:] - f[:-2]) / (x[2:] - x[:-2]).reshape(sh)
+    return np.moveaxis(g, 0, axis)
+
+
+@bi('gradient', nout=99)
 def gradient(nargout, *args):
+    """[FX, FY, FZ, ...] = gradient(F, h) or gradient(F, hx, hy, ...): x is
+    the second dimension, y the first, then the third and on; a vector has
+    one gradient, along itself."""
+    nargchk(args, 1, None, 'gradient')
     f = darr(args[0])
-    spacing = [darr(a).reshape(-1) for a in args[1:]]
+    f = f.astype(F64) if f.dtype.kind not in 'fc' else f
+    hs = [num(a) if numel(a) == 1 else darr(a).reshape(-1) for a in args[1:]]
     if f.ndim == 2 and (f.shape[0] == 1 or f.shape[1] == 1):
-        h = spacing[0] if spacing else np.array([1.0])
-        h = h[0] if h.size == 1 else h
-        g = np.gradient(f.reshape(-1), h)
-        return out(g.reshape(f.shape))
-    hx = spacing[0] if spacing else np.array([1.0])
-    hy = spacing[1] if len(spacing) > 1 else hx
-    hx = hx[0] if hx.size == 1 else hx
-    hy = hy[0] if hy.size == 1 else hy
-    gy, gx = np.gradient(f, hy, hx)
-    if nargout <= 1:
-        return out(gx)
-    return out(gx), out(gy)
+        h = hs[0] if hs else 1.0
+        axis = 1 if f.shape[0] == 1 else 0
+        return out(_grad_along(f, h, axis))
+    nd = f.ndim
+    order = [1, 0] + list(range(2, nd))          # x, y, then the rest
+    if len(hs) == 1:
+        hs = hs * nd
+    elif not hs:
+        hs = [1.0] * nd
+    elif len(hs) != nd:
+        raise err('MATLAB:gradient:InvalidInputs', 'Give one spacing, or one for each dimension.', 'gradient')
+    k = max(1, nargout)
+    if k > nd:
+        raise err('MATLAB:maxlhs', 'Too many output arguments.', 'gradient')
+    res = [out(_grad_along(f, hs[i], order[i])) for i in range(k)]
+    return res[0] if k == 1 else tuple(res)
+
+
+def _second_diff(f, h, axis):
+    """Second differences of f along axis, extended past the inner points
+    linearly (constantly when there is only one inner point)."""
+    f = np.moveaxis(f, axis, 0)
+    n = f.shape[0]
+    D = np.zeros(f.shape, np.result_type(f.dtype, F64))
+    if n >= 3:
+        x = h * np.arange(n, dtype=F64) if np.ndim(h) == 0 else np.asarray(h, F64).reshape(-1)
+        if x.size != n:
+            raise err('MATLAB:del2:InvalidGridSpacing', 'The coordinates must be as many as the points along their dimension.', 'del2')
+        sh = (-1,) + (1,) * (f.ndim - 1)
+        dl, dr = (x[1:-1] - x[:-2]).reshape(sh), (x[2:] - x[1:-1]).reshape(sh)
+        D[1:-1] = 2 * ((f[2:] - f[1:-1]) / dr - (f[1:-1] - f[:-2]) / dl) / (dl + dr)
+        if n == 3:
+            D[0], D[-1] = D[1], D[1]
+        else:
+            D[0] = 2 * D[1] - D[2]
+            D[-1] = 2 * D[-2] - D[-3]
+    return np.moveaxis(D, 0, axis)
 
 
 @bi('del2')
 def del2(nargout, *args):
+    """The discrete Laplacian over 2N in N dimensions (over 4 for a vector):
+    the second differences along each dimension, summed; spacings as for
+    gradient (x the second dimension, y the first)."""
+    nargchk(args, 1, None, 'del2')
     f = darr(args[0])
-    h = num(args[1]) if len(args) > 1 else 1.0
+    f = f.astype(F64) if f.dtype.kind not in 'fc' else f
+    hs = [num(a) if numel(a) == 1 else darr(a).reshape(-1) for a in args[1:]]
     if f.ndim == 2 and (f.shape[0] == 1 or f.shape[1] == 1):
-        v = f.reshape(-1)
-        g = np.gradient(np.gradient(v, h), h) / 4
-        return out(g.reshape(f.shape))
-    gy = np.gradient(np.gradient(f, h, axis=0), h, axis=0)
-    gx = np.gradient(np.gradient(f, h, axis=1), h, axis=1)
-    return out((gx + gy) / 4)
+        h = hs[0] if hs else 1.0
+        return out(_second_diff(f, h, 1 if f.shape[0] == 1 else 0) / 4)
+    nd = f.ndim
+    order = [1, 0] + list(range(2, nd))
+    if not hs:
+        hs = [1.0] * nd
+    elif len(hs) == 1:
+        hs = hs * nd
+    elif len(hs) != nd:
+        raise err('MATLAB:del2:InvalidInputs', 'Give one spacing, or one for each dimension.', 'del2')
+    L = sum(_second_diff(f, hs[k], order[k]) for k in range(nd))
+    return out(L / (2 * nd))

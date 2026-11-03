@@ -86,11 +86,15 @@ def datenum(nargout, *args):
             vals.append(_dn_from_dt(d))
         return vals[0] if len(vals) == 1 else out(np.array(vals).reshape(-1, 1))
     if len(args) >= 3:
-        cols = [darr(a).reshape(-1) for a in args]
-        n = max(c.size for c in cols)
-        cols = [np.resize(c, n) for c in cols]
+        arrs = [darr(a) for a in args]
+        big = [a for a in arrs if a.size != 1]
+        shape = big[0].shape if big else (1, 1)
+        if any(a.shape != shape for a in big):
+            raise err('MATLAB:datenum:InputDims', 'The date parts must be scalars or arrays of the same size.', 'datenum')
+        cols = [np.broadcast_to(a.reshape(-1, order='F') if a.size != 1 else a.reshape(-1), (int(np.prod(shape)),)) for a in arrs]
+        n = int(np.prod(shape))
         vals = [_datenum_vec([c[i] for c in cols]) for i in range(n)]
-        return vals[0] if n == 1 else out(np.array(vals).reshape(darr(args[0]).shape))
+        return vals[0] if n == 1 else out(np.array(vals).reshape(shape, order='F'))
     a = darr(args[0])
     if a.ndim == 2 and a.shape[1] in (3, 6):
         vals = [_datenum_vec(r) for r in a]

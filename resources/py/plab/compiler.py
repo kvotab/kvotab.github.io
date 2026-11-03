@@ -41,6 +41,12 @@ def pytuple(parts):
     return '(' + ', '.join(parts) + (',)' if len(parts) == 1 else ')')
 
 
+
+def _flit(v):
+    """A float as Python source: inf, -inf and NaN by their names in runtime.py."""
+    r = repr(float(v))
+    return {'inf': 'R.INF', '-inf': 'R.NINF', 'nan': 'R.NAN'}.get(r, r)
+
 class CompileError(MError):
     def __init__(self, msg, line):
         super().__init__('MATLAB:compile', msg)
@@ -296,7 +302,8 @@ class Compiler:
             elif kind == 'str':
                 head.append(f"{name} = R.share(R.Str.of({value!r}))")
             elif kind == 'row':
-                head.append(f"{name} = R.share(R.np.array({value!r}, dtype=float))")
+                rows_ = '[' + ', '.join('[' + ', '.join(_flit(v) for v in row) + ']' for row in value) + ']'
+                head.append(f"{name} = R.share(R.np.array({rows_}, dtype=float))")
             elif kind == 'int':
                 cls, v = value
                 head.append(f"{name} = R.share(R.np.array([[{v!r}]], dtype=R.np.{cls}))")
@@ -1093,11 +1100,8 @@ class Compiler:
                     cls = 'uint8' if iv < 2 ** 8 else 'uint16' if iv < 2 ** 16 else 'uint32' if iv < 2 ** 32 else 'uint64'
                 return self.const('int', (cls, int(v.real if isinstance(v, complex) else v))), False
             if isinstance(v, complex):
-                return f'complex({v.real!r}, {v.imag!r})', True
-            r = repr(float(v))
-            if r in ('inf', '-inf', 'nan'):
-                return f'R.{r.replace("-", "N").upper()}', True
-            return r, True
+                return f'complex({_flit(v.real)}, {_flit(v.imag)})', True
+            return _flit(v), True
         if t is P.Chr:
             return self.const('char', x.v), False
         if t is P.DStr:
@@ -1206,7 +1210,7 @@ class Compiler:
             vals = [[float(el.v) for el in r] for r in rows]
             if len(set(len(r) for r in vals)) == 1:
                 if len(vals) == 1 and len(vals[0]) == 1:
-                    return repr(vals[0][0]), True
+                    return _flit(vals[0][0]), True
                 return self.const('row', vals), False
         if not rows:
             return 'R.EMPTY()', True

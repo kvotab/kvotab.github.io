@@ -12,7 +12,7 @@
   const CATEGORIES = [
     ['The language', 'if elseif else for while switch case otherwise try catch function end break continue return global persistent classdef'],
     ['Making arrays', 'zeros ones eye rand randn randi randperm rng linspace logspace colon magic diag repmat reshape cat horzcat vertcat meshgrid ndgrid true false pi eps Inf NaN i j intmax intmin realmax realmin flintmax blkdiag toeplitz hankel vander hilb invhilb pascal compan wilkinson rosser accumarray'],
-    ['Size and shape', 'size numel length ndims isempty isscalar isvector isrow iscolumn ismatrix issquare squeeze permute ipermute circshift flip fliplr flipud rot90 tril triu kron sub2ind ind2sub find nnz nonzeros'],
+    ['Size and shape', 'size numel length ndims isempty isscalar isvector isrow iscolumn ismatrix issquare squeeze permute ipermute shiftdim circshift flip fliplr flipud rot90 tril triu kron sub2ind ind2sub find nnz nonzeros'],
     ['Arithmetic', 'plus minus times rdivide ldivide mtimes mrdivide mldivide power mpower uminus uplus transpose ctranspose abs sign sqrt nthroot hypot exp expm1 log log1p log2 log10 pow2 nextpow2 reallog realpow realsqrt floor ceil round fix mod rem idivide bitand bitor bitxor bitshift bitcmp bitget bitset gcd lcm factorial nchoosek primes isprime factor perms rat rats'],
     ['Trigonometry', 'sin cos tan sec csc cot asin acos atan atan2 asec acsc acot sinh cosh tanh sech csch coth asinh acosh atanh asech acsch acoth sind cosd tand secd cscd cotd asind acosd atand asecd acscd acotd atan2d sinpi cospi deg2rad rad2deg'],
     ['Complex numbers', 'real imag conj angle complex isreal cplxpair unwrap'],

@@ -505,8 +505,43 @@ def gradient_(nargout, *args):
     return Sym(a)
 
 
+def _field_parts(args, fn, n_in):
+    """A numeric vector field's coordinates (or None) and components: from
+    (X, Y, [Z,] U, V, [W]) or (U, V, [W])."""
+    from ._util import darr
+    a = [darr(x).astype(float) for x in args]
+    if len(a) == 2 * n_in:
+        return a[:n_in], a[n_in:]
+    if len(a) == n_in:
+        return None, a
+    raise err(f'MATLAB:{fn}:nargin', f'{fn} takes U, V (and W), with their X, Y (and Z) first if given.', fn)
+
+
+def _partial(F, coords, d):
+    """dF along dimension d of the field (x the second, y the first, z the third)."""
+    from .funfun import _grad_along
+    axis = {0: 1, 1: 0, 2: 2}[d]
+    if coords is None:
+        h = 1.0
+    else:
+        C = coords[d]
+        idx = [0] * C.ndim
+        idx[axis] = slice(None)
+        h = C[tuple(idx)].reshape(-1)
+    return _grad_along(F, h, axis)
+
+
+def _numeric_field(args):
+    return args and not any(isinstance(a, Sym) for a in args) and all(not is_str(a) for a in args)
+
+
 @bi('divergence', arr=False)
 def divergence(nargout, *args):
+    if _numeric_field(args) and len(args) in (2, 3, 4, 6):
+        from ._util import out
+        n = 2 if len(args) in (2, 4) else 3
+        coords, comps = _field_parts(args, 'divergence', n)
+        return out(sum(_partial(F, coords, d) for d, F in enumerate(comps)))
     s = sp()
     V = _flat(args[0])
     xs = _vars_arg(args[1]) if len(args) > 1 else symvars(V)
@@ -515,8 +550,26 @@ def divergence(nargout, *args):
     return S(sum((s.diff(v, x) for v, x in zip(V, xs)), s.Integer(0)))
 
 
-@bi('curl', arr=False)
+@bi('curl', nout=4, arr=False)
 def curl(nargout, *args):
+    if _numeric_field(args) and len(args) in (2, 3, 4, 6):
+        from ._util import out
+        n = 2 if len(args) in (2, 4) else 3
+        coords, comps = _field_parts(args, 'curl', n)
+        if n == 2:
+            U, V = comps
+            cz = _partial(V, coords, 0) - _partial(U, coords, 1)
+            # one output: the angular velocity
+            return (out(cz), out(cz / 2)) if nargout > 1 else out(cz / 2)
+        U, V, W = comps
+        cx = _partial(W, coords, 1) - _partial(V, coords, 2)
+        cy = _partial(U, coords, 2) - _partial(W, coords, 0)
+        cz = _partial(V, coords, 0) - _partial(U, coords, 1)
+        with np.errstate(all='ignore'):
+            speed = np.sqrt(U ** 2 + V ** 2 + W ** 2)
+            cav = 0.5 * (cx * U + cy * V + cz * W) / speed
+        res = (out(cx), out(cy), out(cz), out(cav))
+        return res[3] if nargout <= 1 else res[:nargout]
     s = sp()
     V = _flat(args[0])
     xs = _vars_arg(args[1]) if len(args) > 1 else symvars(V)

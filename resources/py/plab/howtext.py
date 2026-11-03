@@ -155,7 +155,7 @@ reallog:
 realpow:
     Python: elfun.py. The power operator .^ of the language (the same code as x.^y), then an error if the result is complex.
 pow2:
-    Python: elfun.py. 2.^x by NumPy's power. pow2(f, e) is f.*2.^e, by numpy.ldexp (an exact change of the exponent) when every e is a whole number.
+    Python: elfun.py. 2.^x by NumPy's power. pow2(f, e) is f.*2.^e, by numpy.ldexp (an exact change of the exponent) when every e is a whole number and f is real; single stays single.
 nextpow2:
     Python: elfun.py. numpy.frexp of abs(x) gives x = f*2^e with f in [0.5, 1); the result is e, or e - 1 when f is exactly 0.5 (x is a power of two), 0 for 0 and Inf for Inf.
 nthroot:
@@ -171,7 +171,7 @@ asin, acos, acosh, atanh:
 asec, acsc, acot, asech, acsch, acoth:
     Python: elfun.py. Through the reciprocal: numpy.arccos(1./x), numpy.arcsin(1./x), numpy.arctan(1./x), numpy.arccosh(1./x), numpy.arcsinh(1./x), numpy.arctanh(1./x), complex where the real function is undefined (as for asin and acos).
 sind, cosd, tand, secd, cscd, cotd:
-    Python: elfun.py. The argument is first reduced with mod(x, 360), then turned to radians (numpy.deg2rad) for numpy.sin, numpy.cos or numpy.tan. The values at whole multiples are set exactly: sind is 0 at multiples of 180, cosd at odd multiples of 90, and tand is 0, +-Inf and +-1 at multiples of 180, odd multiples of 90 and of 45. secd, cscd and cotd are the reciprocals.
+    Python: elfun.py. sind and cosd take abs(x) mod 360 as a quarter turn and the rest in [-45, 45] degrees, so that numpy.sin and numpy.cos only see small angles, exact at multiples of 90; sind is odd and cosd even. For complex x, sin(a + ib) = sin(a) cosh(b) + i cos(a) sinh(b) (and so for cos) with the exact real parts. tand is 0, +-Inf and +-1 at multiples of 180, odd multiples of 90 and of 45; secd, cscd and cotd are the reciprocals.
 asind, acosd, atand, asecd, acscd, acotd:
     Python: elfun.py. numpy.rad2deg of the inverse function in radians (numpy.arcsin(x), numpy.arccos(x), numpy.arctan(x), and of 1./x for asecd, acscd and acotd), complex outside the real domain.
 sinpi, cospi:
@@ -213,7 +213,7 @@ isnan, isinf, isfinite:
 ismissing:
     Python: elfun.py. The standard missing value of each kind: NaN for numbers, a missing string in a string array, a space in char, and an empty char vector in a cell of text.
 cplxpair:
-    Python: elfun.py. Values whose imaginary part is below 100*eps*abs(z) count as real. The others with a negative imaginary part are sorted by real part (then imaginary part), each followed by its conjugate, and the real ones come last, sorted.
+    Python: elfun.py. Along the first dimension that is not 1 (or the one given): values whose imaginary part is within tol (100*eps unless given) times max(abs(z), 1) count as real. The others are sorted by real part, each matched with its conjugate (within twice tol) and the pair given as the conjugate of their mean and the mean; the real ones come last, sorted. One left without a partner is an error.
 unwrap:
     Python: elfun.py. numpy.unwrap along the rows of a row vector and down the columns otherwise: a jump larger than the tolerance (pi unless given) is taken back by a multiple of 2*pi.
 gcd:
@@ -257,7 +257,7 @@ airy:
 ellipke:
     Python: elfun.py. scipy.special.ellipk and scipy.special.ellipe of the parameter m.
 ellipj:
-    Python: elfun.py. scipy.special.ellipj(u, m), whose sn, cn and dn are returned.
+    Python: elfun.py. scipy.special.ellipj(u, m), whose sn, cn and dn are returned. For complex u = x + iy, Jacobi's addition formulas from the functions of x with m and of y with 1 - m (Abramowitz and Stegun 16.21).
 legendre:
     Python: elfun.py. scipy.special.lpmv(m, n, x) for each order m = 0..n. That function includes the factor (-1)^m; the 'sch' and 'norm' forms multiply by (-1)^m and by their normalising square roots of factorial ratios.
 # ---- elmat.py: making and reshaping arrays ---------------------------------------------------
@@ -299,6 +299,8 @@ squeeze:
     Python: elmat.py. The same column-order reshape with the dimensions of size 1 left out (a 2-D array is returned as it is).
 permute, ipermute:
     Python: elmat.py. numpy.transpose with the order given (from 1), after trailing dimensions of size 1 are added; ipermute uses the inverse order, from numpy.argsort.
+shiftdim:
+    Python: elmat.py. permute with the order n+1, ..., N, 1, ..., n (n taken modulo the number of dimensions); for n < 0 a reshape with -n leading dimensions of size 1; with no n, n is the number of leading dimensions of size 1.
 repmat:
     Python: elmat.py. numpy.tile of the array, the array first given trailing dimensions of size 1 to match the repetitions.
 cat, horzcat, vertcat:
@@ -344,7 +346,7 @@ wilkinson:
 rosser:
     Python: elmat.py. Rosser's 8-by-8 test matrix, written out.
 accumarray:
-    Python: elmat.py. The subscripts are turned into linear indices (numpy.ravel_multi_index in column order) and the values summed into them with numpy.add.at, which adds repeated indices once each; places nothing went to get the fill value. With a function, the values of each place are gathered in a Python list in the order they come and the function called once for each place.
+    Python: elmat.py. Subscripts (a matrix, a column of linear indices, or a cell of index vectors) are turned into linear indices (numpy.ravel_multi_index in column order) and the values summed into them with numpy.add.at; places nothing went to get the fill value. With a function, the values of each place are gathered in the order they come and the function called once for each place; logical or cell results make a logical or cell array (no place at all gives doubles).
 double, single, logical, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
     Python: elmat.py. NumPy's astype to the class's type. To an integer class, a value is rounded to the nearest whole number with halves away from zero, NaN becomes 0, and values beyond the class's range saturate at its ends; an integer value converts exactly, without a round trip through doubles (int64 and uint64 hold more than a double can). logical refuses NaN and complex values. double of a string array reads each string as a number (NaN where it is not one).
 cast:
@@ -361,13 +363,13 @@ cummax, cummin:
 diff:
     Python: datafun.py. numpy.diff along the first dimension whose size is not 1 or the one given, n times for diff(x, n); a dimension that runs out gives an empty array.
 mean:
-    Python: datafun.py. numpy.mean, or numpy.nanmean with 'omitnan', along the first dimension whose size is not 1 or the one given; an empty dimension gives NaN. Integers, logical and char are averaged in doubles and give double ('native' returns an integer class); single stays single. A probability distribution object gives its own mean.
+    Python: datafun.py. The values along the dimension (or vecdim, or all) gathered into rows and summed in double with their weights ('Weights', else 1), divided by the sum of the weights; 'omitnan' drops NaN values and their weights, and an empty slice gives NaN. Integers, logical and char give double unless 'native'; single stays single unless 'double'. A probability distribution object gives its own mean.
 median:
-    Python: datafun.py. numpy.median, or numpy.nanmedian with 'omitnan' (an empty dimension gives NaN); single stays single. A probability distribution object gives its own median.
+    Python: datafun.py. numpy.median of each row of the gathered values (NaN left out with 'omitnan', else a NaN gives NaN; an empty slice gives NaN); complex values are ordered by abs, then angle (numpy.lexsort). Integers are rounded back to their class and logicals stay logical unless 'default' or 'double' is given; single stays single. A probability distribution object gives its own median.
 mode:
-    Python: datafun.py. numpy.unique with counts for each vector along the dimension, NaN left out: the most frequent value, the smallest of those tied. The second output is the frequency and the third a cell with all the tied values.
+    Python: datafun.py. numpy.unique with counts for each row of the values gathered along the dimension (or vecdim, or all), NaN left out: the most frequent value, the smallest of those tied, in the class of A. The second output is the frequency and the third a cell with all the tied values; an empty slice gives NaN, 0 and an empty cell.
 var, std:
-    Python: datafun.py. numpy.var (numpy.nanvar with 'omitnan') with ddof 1, dividing by n - 1, or ddof 0 (by n) when w is 1; a vector of weights w gives the weighted variance about the weighted mean. A single element gives 0; std is the square root. A probability distribution object gives its own.
+    Python: datafun.py. The values along the dimension (or the dimensions of vecdim, or all) are gathered into rows; the mean is the weighted sum over the sum of the weights (1 each unless w is a vector along the dimension or an array the size of A), and the variance the weighted sum of squared distances from it, divided by n - 1 (w = 0), by n (w = 1) or by the sum of the weights. 'omitnan' drops NaN values and their weights. A single element gives 0 (NaN if it is not finite). std is the square root; the second output is the mean. A probability distribution object gives its own.
 range:
     Python: datafun.py. numpy.nanmax minus numpy.nanmin along the dimension.
 max, min:
@@ -401,17 +403,17 @@ cov:
 corrcoef:
     Python: datafun.py. numpy.corrcoef with the variables in columns. The p-values test each correlation with the t statistic r*sqrt((n - 2)/(1 - r^2)) and two tails of scipy.stats.t.
 trapz:
-    Python: datafun.py. numpy.trapezoid (trapz on a NumPy older than 2.0) along the first dimension whose size is not 1 or the one given, with unit spacing, a scalar spacing, or the points x.
+    Python: datafun.py. The trapezoidal rule along the first dimension whose size is not 1 or the one given: the sum of each step's width times the mean of the values at its ends. The widths are 1, a scalar spacing, the differences of the points x, or those of an array x the size of y.
 cumtrapz:
-    Python: datafun.py. scipy.integrate.cumulative_trapezoid with initial 0, along the first dimension whose size is not 1, with unit spacing, a scalar spacing or the points x.
+    Python: datafun.py. The trapezoidal rule's running sum, from 0, along the first dimension whose size is not 1 or the one given; the widths as for trapz.
 quantile, prctile:
-    Python: datafun.py. For each vector the values are sorted (NaN left out) and placed at the probabilities (i - 0.5)/n; numpy.interp interpolates linearly between them, and p below the first or above the last gives the smallest or largest value. quantile(x, n) asks for the probabilities (1:n)/(n + 1); prctile divides p by 100.
+    Python: datafun.py. For each row of the values gathered along the dimension (or vecdim, or all) the values are sorted (NaN left out) and placed at the probabilities (i - 0.5)/n; numpy.interp interpolates linearly between them, and p below the first or above the last gives the smallest or largest value. The quantiles take the place of the first dimension; a vector's are laid out as p is. quantile(x, n) asks for the probabilities (1:n)/(n + 1); prctile divides p by 100, and iqr is the difference of the 75th and 25th.
 iqr:
     Python: datafun.py. The difference of the 0.75 and 0.25 quantiles, computed as quantile computes them. A probability distribution object gives its own.
 skewness, kurtosis:
     Python: datafun.py. scipy.stats.skew and scipy.stats.kurtosis (with fisher False, so a normal sample gives about 3) along the first dimension whose size is not 1; flag 0 corrects the bias.
 rescale:
-    Python: datafun.py. lo + (x - min(x))/(max(x) - min(x))*(hi - lo), the minimum and maximum by numpy.nanmin and numpy.nanmax; a constant x gives lo.
+    Python: datafun.py. l + (x - inmin)./(inmax - inmin).*(u - l), x first clamped to [inmin, inmax] (its least and greatest unless 'InputMin' and 'InputMax' are given); l, u and the bounds broadcast against x as arrays; a constant x gives l. single stays single.
 normalize:
     Python: datafun.py. The z-score (x - mean(x))./std(x) along the first dimension whose size is not 1, std with n - 1.
 movmean, movsum, movmax, movmin, movmedian, movstd:
@@ -444,7 +446,7 @@ svd:
 svds:
     Python: matfun.py. The full numpy.linalg.svd, of which the k (6 unless given) largest are kept.
 qr:
-    Python: matfun.py. scipy.linalg.qr: R alone, Q and R, or with three outputs the factorisation with column pivoting (A(:, p) = Q*R) and its permutation as a matrix, or as a vector with 'vector'; 'econ' (or 0) gives the economy size.
+    Python: matfun.py. scipy.linalg.qr: R alone (upper triangular), Q and R, or with three outputs the factorisation with column pivoting (A(:, p) = Q*R), its permutation a matrix, or a vector with 'vector' or 0; 'econ' (or 0) gives the economy size. qr(A, B) gives Q'*B in place of Q. An empty A gives an identity Q and an empty R; single stays single.
 lu:
     Python: matfun.py. scipy.linalg.lu (partial pivoting): with two outputs the permuted L and U, with three L, U and the permutation matrix P (or a vector with 'vector'); with one output the two factors in one matrix.
 chol:
@@ -576,7 +578,7 @@ taylor, series:
 symsum, symprod:
     Python: symmath.py. sympy.summation and sympy.product over k from a to b (from 0 to k-1 for the indefinite sum).
 jacobian, hessian, divergence, curl, laplacian:
-    Python: symmath.py. sympy.Matrix's jacobian and sympy.hessian; the others from sympy.diff of each component.
+    Python: symmath.py. sympy.Matrix's jacobian and sympy.hessian; the others from sympy.diff of each component. divergence and curl of arrays on a grid take the differences gradient takes along x (the columns), y (the rows) and z; curl's angular velocity is half the curl along the flow (in 2-D, half of curlz).
 simplify, simplifyFraction:
     Python: symmath.py. sympy.simplify, after expand_log, powdenest and logcombine with force=True for 'IgnoreAnalyticConstraints'; simplifyFraction is sympy.cancel of sympy.together.
 expand, collect, combine, horner:
@@ -656,9 +658,9 @@ fminbnd:
 fminsearch:
     Python: funfun.py. scipy.optimize.minimize with method 'Nelder-Mead'. The first simplex has the start point and, for each component, the point with that component 5% larger (0.00025 where it is 0); xatol and fatol are TolX and TolFun (1e-4 unless given), and MaxIter and MaxFunEvals default to 200 times the number of unknowns.
 integral:
-    Python: funfun.py. scipy.integrate.quad, QUADPACK's adaptive Gauss-Kronrod quadrature (21 points on a finite interval; an infinite one is mapped onto a finite one), with RelTol 1e-6 and AbsTol 1e-10 unless given, at most 650 subintervals, and the Waypoints as break points. The function is called one point at a time. For complex values the real and imaginary parts are integrated separately; 'ArrayValued' uses scipy.integrate.quad_vec.
+    Python: funfun.py. scipy.integrate.quad, QUADPACK's adaptive Gauss-Kronrod quadrature (21 points on a finite interval; an infinite one is mapped onto a finite one), with RelTol 1e-6 and AbsTol 1e-10 unless given, at most 650 subintervals, and real Waypoints as break points. Complex limits or waypoints make a path: each straight segment z0 + t*(z1 - z0), t from 0 to 1, with the integrand times z1 - z0. Complex values are integrated as their real and imaginary parts. The function is called one point at a time; 'ArrayValued' uses scipy.integrate.quad_vec.
 quad, quadl, quadgk:
-    Python: funfun.py. scipy.integrate.quad (QUADPACK's adaptive Gauss-Kronrod rule) with the tolerance given (1e-6 unless given); the second output is its error estimate.
+    Python: funfun.py. scipy.integrate.quad (QUADPACK's adaptive Gauss-Kronrod rule), complex values as their real and imaginary parts. quad and quadl take the tolerance (1e-6 unless given) and pass the parameters after trace to the function; their second output is the number of evaluations. quadgk takes RelTol, AbsTol, Waypoints (a path when complex) and ArrayValued (scipy.integrate.quad_vec), and its second output is the error estimate.
 integral2, quad2d, dblquad:
     Python: funfun.py. scipy.integrate.dblquad, QUADPACK's quadrature in y inside quadrature in x, with the y limits numbers or functions of x; AbsTol 1e-10 and RelTol 1e-6.
 integral3, triplequad:
@@ -666,19 +668,19 @@ integral3, triplequad:
 interp1:
     Python: funfun.py. The points x are sorted first (repeated x is refused) and each column of V interpolated. 'linear' (the default) is numpy.interp, NaN outside x unless 'extrap' (scipy.interpolate.interp1d then extends the end pieces) or an extrapolation value. 'nearest', 'next' and 'previous' are scipy.interpolate.interp1d of that kind; 'pchip' and 'cubic' are scipy.interpolate.PchipInterpolator; 'makima' is scipy.interpolate.Akima1DInterpolator with method 'makima'; 'spline' is scipy.interpolate.CubicSpline with not-a-knot ends (natural ends for three points). These last four extrapolate unless a value is given.
 interp2, interpn:
-    Python: funfun.py. scipy.interpolate.RegularGridInterpolator on the grid's axes, with method 'linear', 'nearest' or 'cubic' ('spline' and 'makima' are taken as 'cubic'); points outside the grid get NaN or the extrapolation value given.
+    Python: funfun.py. Along each dimension a matrix of weights takes the values at the grid points to the query points: 'linear', 'nearest' (a half rounds up), 'spline' (scipy.interpolate.CubicSpline of the identity, not-a-knot) and 'cubic' (Keys' cubic convolution with a = -1/2 on an even grid, its ends extended by f(-1) = 3f(0) - 3f(1) + f(2); the spline otherwise). The weights are applied one dimension after the other, to a grid of query vectors or to query points; a NaN value spreads only where its weight is not zero. 'pchip' and 'makima' are not linear in the values: on a grid scipy.interpolate.PchipInterpolator or Akima1DInterpolator one dimension at a time, at points scipy.interpolate.RegularGridInterpolator. Complex values are interpolated as real and imaginary parts. Grids that decrease are turned around; outside the grid the values are NaN or the extrapolation value.
 griddata:
     Python: funfun.py. scipy.interpolate.griddata on scattered points, by a Delaunay triangulation: linear in each triangle, nearest, or cubic (Clough-Tocher); 'natural' is taken as linear and 'v4' as cubic.
 spline:
-    Python: funfun.py. scipy.interpolate.CubicSpline with not-a-knot ends (natural ends for three points); with two more values than points, the first and last are the end slopes (clamped ends). With two inputs it returns the piecewise polynomial, its coefficients taken from SciPy's.
+    Python: funfun.py. scipy.interpolate.CubicSpline with not-a-knot ends (natural ends for two points), along the last dimension of the values (each row of a matrix is a curve); with two more values than points, the first and last are the end slopes (clamped ends). The points are sorted first, and points of a vector whose value is NaN are left out. With two inputs it returns the piecewise polynomial, its coefficients taken from SciPy's.
 pchip:
-    Python: funfun.py. scipy.interpolate.PchipInterpolator: piecewise cubic Hermite interpolation with slopes chosen to keep the data's monotonicity (Fritsch and Carlson); with two inputs, the piecewise polynomial.
+    Python: funfun.py. scipy.interpolate.PchipInterpolator along the last dimension of the values (points sorted first): piecewise cubic Hermite interpolation with slopes chosen to keep the data's monotonicity (Fritsch and Carlson); with two inputs, the piecewise polynomial.
 makima:
     Python: funfun.py. scipy.interpolate.Akima1DInterpolator with method 'makima', extrapolating at the ends.
 ppval:
-    Python: funfun.py. Each point's piece is found by numpy.searchsorted on the breaks (the end pieces extend outside them), and its polynomial evaluated by Horner's rule in x - breaks(k).
+    Python: funfun.py. Each point's piece is found by numpy.searchsorted on the breaks (the end pieces extend outside them) and the polynomial of each value component evaluated by Horner's rule in x - breaks(k); the points are taken in column order, and a value of size d gives an array of size [d, size(xx)] ([d, length(xx)] for a vector xx).
 mkpp, unmkpp:
-    Python: funfun.py. A piecewise polynomial object holding the breaks and the coefficients (one row per piece, highest power first), and back.
+    Python: funfun.py. A piecewise polynomial object holding the breaks, the coefficients (a row for each piece and value component, the components of a piece together, highest power first; a vector of them is reshaped in column order) and the size of a value, and back.
 polyfit:
     Python: funfun.py. The Vandermonde matrix of x (numpy.vander) and the least-squares coefficients by numpy.linalg.lstsq, with a warning when the matrix's rank is below the degree plus one. S holds R from numpy.linalg.qr of that matrix, the degrees of freedom, the norm of the residuals and R^2. With three outputs x is first centred and scaled, by mu = [mean(x); std(x)].
 polyval:
@@ -704,7 +706,7 @@ filter:
 filter2:
     Python: funfun.py. scipy.signal.correlate2d, the kernel slid over the data without being rotated, 'same' size unless asked otherwise.
 conv2:
-    Python: funfun.py. scipy.signal.convolve2d with 'full', 'same' or 'valid'; conv2(u, v, A) convolves A with the column u and the row v.
+    Python: funfun.py. scipy.signal.convolve gives the full convolution, and 'same' keeps its part from floor(size(B)/2) the size of A, 'valid' its part from size(B) the size of A less that of B plus 1 (empty when B is larger); conv2(u, v, A) convolves A down its columns with u and along its rows with v. convn does the same in any number of dimensions. single stays single.
 convn:
     Python: funfun.py. scipy.signal.convolve with method 'direct'.
 fft, ifft:
@@ -716,9 +718,9 @@ fftshift, ifftshift:
 detrend:
     Python: funfun.py. scipy.signal.detrend along the first dimension whose size is not 1: the least-squares line taken off ('linear', the default), or the mean (0 or 'constant').
 gradient:
-    Python: funfun.py. numpy.gradient: central differences inside, one-sided ones at the ends, with the spacing given; for a matrix the derivative along the rows (x) comes first and along the columns (y) second.
+    Python: funfun.py. Along each dimension (x the second, y the first, then the rest): one-sided differences at the ends and (f(i+1) - f(i-1))/(x(i+1) - x(i-1)) inside, with a scalar spacing or the coordinates given.
 del2:
-    Python: funfun.py. numpy.gradient applied twice along each dimension, the results added and divided by 4.
+    Python: funfun.py. Along each dimension the second differences 2*((f(i+1) - f(i))/h(i) - (f(i) - f(i-1))/h(i-1))/(h(i-1) + h(i)) inside, extended linearly to the ends (constantly when there is one inner point), added and divided by 2N (by 4 for a vector).
 # ---- sparse.py: sparse matrices, held dense ------------------------------------------------------
 sparse:
     Python: sparse.py. Sparse matrices are held as ordinary dense NumPy arrays: the functions take the same arguments and give the same numbers, without the saving of memory. sparse(i, j, v, m, n) adds each value into its place with numpy.add.at, so repeated subscripts are summed; sparse(m, n) is a matrix of zeros and sparse(A) is A.

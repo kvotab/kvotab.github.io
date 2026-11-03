@@ -8,6 +8,7 @@ import numpy as np
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
                     like_class, first_dim, dim_arg, reduce, expand_dims, strip_flags)
+from ..ops import finish
 from ..values import (MError, Char, Cell, Struct, F64, C128, class_of, shape_of, numel, _2d, EMPTY)
 from .. import ops as O
 from .. import runtime as R
@@ -89,39 +90,54 @@ def rank(nargout, *args):
 @bi('norm')
 def norm(nargout, *args):
     nargchk(args, 1, 2, 'norm')
-    a = _mat(args[0], 'norm')
+    v0 = args[0]
+    a = _mat(v0, 'norm')
     p = args[1] if len(args) > 1 else 2.0
     ps = opt_str(p)
     vec = a.shape[0] == 1 or a.shape[1] == 1
+    fin = (lambda x: finish(np.array([[x]], np.float32), 'single')) if class_of(v0) == 'single' else float
     if a.size == 0:
-        return 0.0
+        return fin(0.0)
     if ps is not None:
         ps = ps.lower()
-        if ps == 'fro':
-            return float(np.linalg.norm(a.reshape(-1)))
-        if ps == 'inf':
-            p = math.inf
-        else:
-            raise err('MATLAB:norm:unknownNorm', f"The only matrix norms available are 1, 2, inf, and 'fro'.", 'norm')
+        p = {'fro': 'fro', 'inf': math.inf, '+inf': math.inf, '-inf': -math.inf}.get(ps)
+        if p is None:
+            raise err('MATLAB:norm:unknownNorm', "The norm is a number, Inf, -Inf or 'fro'.", 'norm')
     else:
         p = num(p)
     with np.errstate(all='ignore'):
+        x = np.abs(a.astype(C128 if a.dtype.kind == 'c' else F64))
+        if np.any(np.isnan(x)):
+            return fin(math.nan)
+
+        def scaled(v, q):
+            # the p-norm of v, scaled by its largest element so that it neither overflows nor underflows
+            m = np.max(v)
+            if m == 0 or not np.isfinite(m):
+                return float(m)
+            return float(m * np.sum((v / m) ** q) ** (1.0 / q))
+        if p == 'fro':
+            return fin(scaled(x.reshape(-1), 2.0))
         if vec:
-            v = a.reshape(-1)
+            v = x.reshape(-1)
             if p == math.inf:
-                return float(np.max(np.abs(v)))
+                return fin(float(np.max(v)))
             if p == -math.inf:
-                return float(np.min(np.abs(v)))
+                return fin(float(np.min(v)))
             if p == 0:
-                return float(np.count_nonzero(v))
-            return float(np.linalg.norm(v, p))
+                return fin(float(np.count_nonzero(v)))
+            if p < 0:
+                return fin(float(np.sum(v ** p) ** (1.0 / p)))
+            return fin(scaled(v, float(p)))
         if p == 2:
-            return float(np.linalg.svd(a, compute_uv=False)[0])
+            if np.any(np.isinf(x)):
+                return fin(math.inf)
+            return fin(float(np.linalg.svd(a, compute_uv=False)[0]))
         if p == 1:
-            return float(np.max(np.sum(np.abs(a), axis=0)))
+            return fin(float(np.max(np.sum(x, axis=0))))
         if p == math.inf:
-            return float(np.max(np.sum(np.abs(a), axis=1)))
-    raise err('MATLAB:norm:unknownNorm', "The only matrix norms available are 1, 2, inf, and 'fro'.", 'norm')
+            return fin(float(np.max(np.sum(x, axis=1))))
+    raise err('MATLAB:norm:unknownNorm', "The norms of a matrix are 1, 2, Inf and 'fro'.", 'norm')
 
 
 @bi('vecnorm')
@@ -264,25 +280,42 @@ def svds(nargout, *args):
 def qr(nargout, *args):
     nargchk(args, 1, 3, 'qr')
     import scipy.linalg as sla
-    a = _mat(args[0], 'qr')
-    econ = len(args) > 1 and (opt_str(args[1]) == 'econ' or (opt_str(args[1]) is None and num(args[1]) == 0))
-    vector = len(args) > 1 and (opt_str(args[-1]) == 'vector' or econ)
+    v0 = args[0]
+    a = _mat(v0, 'qr')
+    rest = list(args[1:])
+    B = None
+    if rest and opt_str(rest[0]) is None and not (numel(rest[0]) == 1 and num(rest[0]) == 0):
+        B = darr(rest.pop(0))           # [C, R] = qr(A, B): C = Q'*B
+        if B.shape[0] != a.shape[0]:
+            raise err('MATLAB:qr:BSize', 'A and B must have the same number of rows.', 'qr')
+    words = [opt_str(r).lower() if opt_str(r) is not None else 'zero' for r in rest]
+    econ = 'econ' in words or 'zero' in words
+    vector = 'vector' in words or 'zero' in words          # qr(A, 0): the permutation as a vector
     mode = 'economic' if econ else 'full'
-    if nargout <= 1:
-        Rm = sla.qr(a, mode='r' if not econ else 'r')[0]
-        if econ:
-            Rm = Rm[:min(a.shape)]
-        return out(Rm)
-    if nargout == 2:
+    m, n = a.shape
+    fin = (lambda r: finish(np.asarray(r), 'single')) if class_of(v0) == 'single' else (lambda r: out(np.asarray(r)))
+    if a.size == 0:
+        k = min(m, n) if econ else m
+        Q, Rm = np.eye(m)[:, :k], np.zeros((k, n))
+        P = np.arange(n)
+    elif nargout >= 3:
+        Q, Rm, P = sla.qr(a, mode=mode, pivoting=True)
+    else:
         Q, Rm = sla.qr(a, mode=mode)
-        return out(Q), out(Rm)
-    Q, Rm, P = sla.qr(a, mode=mode, pivoting=True)
+        P = None
+    if B is not None:
+        C = Q.conj().T @ B
+        res = (fin(C), fin(Rm)) + ((fin(np.eye(n)[:, P]) if not vector else out((P + 1.0).reshape(1, -1))),) if nargout >= 3 else (fin(C), fin(Rm))
+        return res[:max(nargout, 1)] if nargout > 1 else fin(Rm)
+    if nargout <= 1:
+        return fin(np.triu(Rm))
+    if nargout == 2:
+        return fin(Q), fin(Rm)
     if vector:
-        return out(Q), out(Rm), out((P + 1).astype(F64).reshape(1, -1))
-    n = a.shape[1]
+        return fin(Q), fin(Rm), out((np.asarray(P) + 1.0).reshape(1, -1))
     Pm = np.zeros((n, n))
     Pm[P, np.arange(n)] = 1
-    return out(Q), out(Rm), out(Pm)
+    return fin(Q), fin(Rm), out(Pm)
 
 
 @bi('lu', nout=4)

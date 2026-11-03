@@ -23,6 +23,16 @@ from .. import runtime as R
 
 EPS = np.finfo(float).eps
 
+
+def _lsq_takes_callback():
+    """Whether scipy.optimize.least_squares takes a callback (SciPy 1.16 and on)."""
+    import inspect
+    from scipy import optimize
+    return 'callback' in inspect.signature(optimize.least_squares).parameters
+
+
+_LSQ_CALLBACK = _lsq_takes_callback()
+
 # ---- options -----------------------------------------------------------------------------------------
 
 # name: (default, kind); a text default naming numberOfVariables is worked out per problem
@@ -1082,7 +1092,7 @@ def fsolve(nargout, *args):
                 method = 'lm' if alg == 'levenberg-marquardt' and v0.size >= n else 'trf'
                 res = O.least_squares(F.value, x, jac=F.grad, method=method, ftol=max(ftol * 1e-6, EPS), xtol=max(xtol * 1e-3, EPS),
                                       gtol=max(opts.num('OptimalityTolerance', 1e-6) * 1e-6, EPS), max_nfev=maxfev,
-                                      **({'callback': cb} if method != 'lm' else {}))
+                                      **({'callback': cb} if method != 'lm' and _LSQ_CALLBACK else {}))
                 x = np.asarray(res.x, F64)
     except (_Stop, StopIteration):
         x = run.prev if run.prev is not None else x
@@ -1163,7 +1173,7 @@ def _lsq(nargout, f, x0, extra, lb, ub, A, b, Aeq, beq, nonlcon, optarg, fn, res
                 method = 'lm' if alg == 'levenberg-marquardt' and not cons.has_bounds() and v0.size >= n else 'trf'
                 res = O.least_squares(F.value, x, jac=F.grad, bounds=(cons.lb, cons.ub), method=method, ftol=max(ftol * 1e-2, EPS),
                                       xtol=max(xtol * 1e-2, EPS), gtol=max(gtol * 1e-2, EPS), max_nfev=maxfev,
-                                      **({'callback': cb} if method != 'lm' else {}))
+                                      **({'callback': cb} if method != 'lm' and _LSQ_CALLBACK else {}))
                 x = np.asarray(res.x, F64)
     except (_Stop, StopIteration):
         x = run.prev if run.prev is not None else x

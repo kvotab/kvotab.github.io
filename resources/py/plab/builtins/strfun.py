@@ -481,6 +481,33 @@ def hex2num(nargout, *args):
 
 # ---- case, blanks, trimming --------------------------------------------------------------
 
+def _case_map(v, fn):
+    """upper and lower of char arrays of any shape (a character code at a
+    time: one whose case changes into more letters stays), of strings, and of
+    each element of a cell."""
+    t = type(v)
+    if t is Char:
+        codes = np.asarray(v.a)
+        out_ = codes.copy()
+        for u in np.unique(codes):
+            c = fn(chr(int(u)))
+            if len(c) == 1 and ord(c) < 65536:
+                out_[codes == u] = ord(c)
+        return Char(out_)
+    if t is Cell:
+        a = np.empty(v.a.shape, object)
+        for idx in np.ndindex(v.a.shape):
+            a[idx] = _case_map(v.a[idx], fn)
+        return Cell(a)
+    if t is Str:
+        a = np.empty(v.a.shape, object)
+        for idx in np.ndindex(v.a.shape):
+            x = v.a[idx]
+            a[idx] = None if x is None else fn(x)
+        return Str(a)
+    return v
+
+
 def _map_text(name, fn):
     def f(nargout, *args):
         nargchk(args, 1, None, name)
@@ -489,8 +516,8 @@ def _map_text(name, fn):
             if name in ('upper', 'lower'):
                 return v
             raise err('MATLAB:invalidType', f'Input must be text.', name)
-        if type(v) is Char and v.a.ndim == 2 and v.a.shape[0] > 1 and name in ('upper', 'lower'):
-            return Char.rows([fn(r) for r in v.row_strs()])
+        if name in ('upper', 'lower'):
+            return _case_map(v, fn)
         tin = _TextIn(v, name)
         return tin.back([None if s is None else fn(s, *args[1:]) if name in ('strip',) else (None if s is None else fn(s)) for s in tin.items])
     f.__name__ = name
@@ -606,6 +633,8 @@ def _cmp_fn(name, fn):
                 if ta is Char and tb is Char:
                     return bool(a.a.shape == b.a.shape and np.array_equal(a.a, b.a) and fn(a.str(), b.str(), n))
                 return False
+            if ta is Char and tb is Char and n is None and a.a.shape != b.a.shape:
+                return False                    # two char arrays are the same only at the same size
             return bool(fn(xa, xb, n))
         # element-wise with cells or string arrays
         if ta in (Cell, Str) or tb in (Cell, Str):
@@ -613,10 +642,12 @@ def _cmp_fn(name, fn):
             lb = _cmp_list(b)
             if la is None or lb is None:
                 return False if not (ta in (Cell, Str) or tb in (Cell, Str)) else out(np.zeros(shape_of(a) if ta in (Cell, Str) else shape_of(b), bool))
-            if len(la) == 1:
+            ca, cb = ta in (Cell, Str), tb in (Cell, Str)
+            # a text, or a cell of one, against each element of the other
+            if not ca or (cb and len(la) == 1 and len(lb) != 1):
                 shape = shape_of(b)
                 vals = [x is not None and la[0] is not None and fn(la[0], x, n) for x in lb]
-            elif len(lb) == 1:
+            elif not cb or len(lb) == 1:
                 shape = shape_of(a)
                 vals = [x is not None and lb[0] is not None and fn(x, lb[0], n) for x in la]
             else:
@@ -643,8 +674,9 @@ def _cmp_list(v):
 
 _cmp_fn('strcmp', lambda a, b, n: a == b)
 _cmp_fn('strcmpi', lambda a, b, n: a.lower() == b.lower())
-_cmp_fn('strncmp', lambda a, b, n: len(a) >= n and len(b) >= n and a[:n] == b[:n] if n > 0 else False)
-_cmp_fn('strncmpi', lambda a, b, n: len(a) >= n and len(b) >= n and a[:n].lower() == b[:n].lower() if n > 0 else False)
+# the first n characters as they are: a text shorter than n is compared whole
+_cmp_fn('strncmp', lambda a, b, n: a[:n] == b[:n])
+_cmp_fn('strncmpi', lambda a, b, n: a[:n].lower() == b[:n].lower())
 
 
 @bi('matches')
@@ -1002,8 +1034,11 @@ def strvcat(nargout, *args):
             rows += cellstr_list(a)
         elif type(a) is Char:
             rows += [r for r in (a.row_strs() if a.a.shape[0] > 1 else [a.str()]) if r]
+        elif type(a) is Str:
+            rows += cellstr_list(a)
         else:
-            rows.append(py_str(a))
+            c = char(1, a)                  # numbers are character codes
+            rows += c.row_strs() if c.a.shape[0] > 1 else [c.str()]
     rows = [r for r in rows if r]
     return Char.rows(rows)
 
@@ -1051,13 +1086,21 @@ def strsplit(nargout, *args):
     if rest and opt_str(rest[0]) is not None and opt_str(rest[0]).lower() not in ('collapsedelimiters', 'delimitertype') or (rest and type(rest[0]) is Cell):
         delims = text_list(rest[0])
         rest = rest[1:]
+    if rest and opt_str(rest[0]) is None and type(rest[0]) is not Cell and numel(rest[0]) == 1:
+        collapse = bool(arr(rest[0]).reshape(-1)[0])       # a collapse flag in its place (as Octave takes it)
+        rest = rest[1:]
     i = 0
-    while i + 1 < len(rest):
-        k = opt_str(rest[i]).lower()
-        if k == 'collapsedelimiters':
+    while i < len(rest):
+        k = opt_str(rest[i])
+        if k is None or i + 1 >= len(rest) or k.lower() not in ('collapsedelimiters', 'delimitertype'):
+            raise err('MATLAB:strsplit:InvalidParameter', 'strsplit takes the text, the delimiters, and CollapseDelimiters or DelimiterType with their values.', 'strsplit')
+        if k.lower() == 'collapsedelimiters':
             collapse = bool(arr(rest[i + 1]).reshape(-1)[0])
-        elif k == 'delimitertype':
-            regex = opt_str(rest[i + 1]).lower() == 'regularexpression'
+        else:
+            v = (opt_str(rest[i + 1]) or '').lower()
+            if not v or not ('regularexpression'.startswith(v) or 'simple'.startswith(v)):
+                raise err('MATLAB:strsplit:InvalidDelimiterType', "DelimiterType is 'Simple' or 'RegularExpression'.", 'strsplit')
+            regex = 'regularexpression'.startswith(v)
         i += 2
     if delims is None:
         pat = r'\s'
@@ -1181,17 +1224,102 @@ def validatestring(nargout, *args):
 # ---- regular expressions --------------------------------------------------------------------
 
 def _py_pattern(p):
-    """The language's regular expressions in Python's dialect: named groups,
-    word boundaries, and the escapes Python reads differently."""
+    """The language's regular expressions in Python's dialect: named groups
+    (?<name>...), word boundaries \\< and \\> (start and end of a word),
+    and flag groups such as (?i) or (?-s) anywhere, which Python takes only as
+    scoped groups: they run to the end of the group they stand in."""
     p = re.sub(r'\(\?<([A-Za-z]\w*)>', r'(?P<\1>', p)
-    p = p.replace(r'\<', r'\b').replace(r'\>', r'\b')
-    return p
+    out_, i, n = [], 0, len(p)
+    stack = [[]]                # the scoped flag groups open at each group depth
+    in_class = False
+    while i < n:
+        c = p[i]
+        if c == '\\' and i + 1 < n:
+            nxt = p[i + 1]
+            if nxt == '<' and not in_class:
+                out_.append(r'(?<!\w)(?=\w)')
+            elif nxt == '>' and not in_class:
+                out_.append(r'(?<=\w)(?!\w)')
+            else:
+                out_.append(p[i:i + 2])
+            i += 2
+            continue
+        if in_class:
+            if c == ']':
+                in_class = False
+            out_.append(c)
+            i += 1
+            continue
+        if c == '[':
+            in_class = True
+            out_.append(c)
+            if i + 1 < n and p[i + 1] == '^':
+                out_.append('^')
+                i += 1
+            if i + 1 < n and p[i + 1] == ']':
+                out_.append(']')
+                i += 1
+            i += 1
+            continue
+        m = re.match(r'\(\?([imsx]*)(?:-([imsx]+))?\)', p[i:]) if c == '(' else None
+        if m and (m.group(1) or m.group(2)):
+            on, off = m.group(1), m.group(2) or ''
+            g = f'(?{on}' + (f'-{off}' if off else '') + ':'
+            out_.append(g)
+            stack[-1].append(g)
+            i += m.end()
+            continue
+        if c == '(':
+            stack.append([])
+        elif c == ')' and len(stack) > 1:
+            out_.append(')' * len(stack.pop()))
+        elif c == '|' and stack[-1]:
+            # the flags hold for the alternatives after this one too: close, then open again
+            out_.append(')' * len(stack[-1]) + '|' + ''.join(stack[-1]))
+            i += 1
+            continue
+        out_.append(c)
+        i += 1
+    out_.append(')' * sum(len(x) for x in stack))
+    return ''.join(out_)
 
 
 def _py_replacement(r):
-    r = re.sub(r'\$(\d+)', r'\\g<\1>', r)
-    r = re.sub(r'\$<([A-Za-z]\w*)>', r'\\g<\1>', r)
-    return r
+    """The language's replacement text as a function of a match: $N and
+    $<name> are tokens ($0 the whole match), \\$ and \\\\ a dollar and a
+    backslash, \\n, \\t and the like their characters, and a backslash before
+    any other character that character."""
+    esc = {'n': '\n', 't': '\t', 'r': '\r', 'a': '\a', 'f': '\f', 'v': '\v', 'b': '\b'}
+    parts, i, lit = [], 0, []
+    while i < len(r):
+        c = r[i]
+        if c == '\\' and i + 1 < len(r):
+            lit.append(esc.get(r[i + 1], r[i + 1]))
+            i += 2
+            continue
+        if c == '$':
+            m = re.match(r'\$(\d+)|\$<([A-Za-z]\w*)>|\$\{(\d+)\}', r[i:])
+            if m:
+                parts.append(''.join(lit))
+                lit = []
+                parts.append(int(m.group(1) or m.group(3)) if (m.group(1) or m.group(3)) else ('name', m.group(2)))
+                i += m.end()
+                continue
+        lit.append(c)
+        i += 1
+    parts.append(''.join(lit))
+
+    def f(m):
+        res = []
+        for part in parts:
+            if isinstance(part, tuple):
+                res.append((m.group(part[1]) or '') if part[1] in m.re.groupindex else '')
+            elif isinstance(part, int):
+                res.append((m.group(part) or '') if part <= m.re.groups else '')
+            else:
+                res.append(part)
+        return ''.join(res)
+    return f
 
 
 def _re_flags(opts):
@@ -1199,6 +1327,8 @@ def _re_flags(opts):
     for o in opts:
         if o == 'ignorecase':
             flags |= re.I
+        elif o == 'matchcase':
+            flags &= ~re.I
         elif o == 'lineanchors':
             flags |= re.M
         elif o == 'dotexceptnewline':
@@ -1222,23 +1352,38 @@ def _regexp(args, nargout, ignorecase=False, fn='regexp'):
     selected = [o for o in opts if o in _SELECTORS]
     flagopts = [o for o in opts if o not in _SELECTORS]
     if ignorecase:
-        flagopts.append('ignorecase')
+        flagopts.insert(0, 'ignorecase')        # regexpi: unless 'matchcase' follows
     if type(v) in (Cell, Str) and not (type(v) is Str and v.a.size == 1):
         # one result per text
         items = text_list(v)
         shape = shape_of(v)
         n = max(nargout, 1)
-        per = [_regexp([Char.of(s)] + list(args[1:]), n, ignorecase, fn) for s in items]
+        if type(pats) in (Cell, Str) and len(text_list(pats)) == len(items) and len(items) > 1:
+            plist = text_list(pats)            # a pattern for each text
+            per = [_regexp([Char.of(s), Char.of(p)] + list(args[2:]), n, ignorecase, fn) for s, p in zip(items, plist)]
+        else:
+            per = [_regexp([Char.of(s)] + list(args[1:]), n, ignorecase, fn) for s in items]
         if n == 1:
             return Cell.of_list([p for p in per], shape)
         return tuple(Cell.of_list([p[k] for p in per], shape) for k in range(n))
+    if type(pats) in (Cell, Str) and not (type(pats) is Str and pats.a.size == 1):
+        # a pattern for each result
+        plist = text_list(pats)
+        n = max(nargout, 1)
+        per = [_regexp([v, Char.of(p)] + list(args[2:]), n, ignorecase, fn) for p in plist]
+        shape = shape_of(pats)
+        if n == 1:
+            return Cell.of_list(per, shape)
+        return tuple(Cell.of_list([p[k] for p in per], shape) for k in range(n))
     s = py_str(v)
-    pat = _py_pattern(py_str(pats) if type(pats) is not Cell else '|'.join(text_list(pats)))
+    pat = _py_pattern(py_str(pats))
     try:
         rx = re.compile(pat, _re_flags(flagopts))
     except re.error as e:
         raise err('MATLAB:regexp:badPattern', f'The regular expression is not valid: {e}.', fn)
     ms = list(rx.finditer(s))
+    if 'emptymatch' not in flagopts:
+        ms = [m for m in ms if m.end() > m.start()]      # empty matches only when asked for
     if once:
         ms = ms[:1]
 
@@ -1332,8 +1477,16 @@ def regexprep(nargout, *args):
             return None
         for p, r in zip(pats, reps):
             rx = re.compile(_py_pattern(p), flags)
-            rr = _py_replacement(unescape(r) if '\\' in r and not re.search(r'\\\d', r) else r)
-            s = rx.sub(rr, s, count=1 if once else 0)
+            fr = _py_replacement(r)
+            done = [0]
+
+            def sub(m, fr=fr):
+                # an empty match is left as it is unless 'emptymatch'; 'once' counts real replacements
+                if (m.end() == m.start() and 'emptymatch' not in opts) or (once and done[0]):
+                    return m.group(0)
+                done[0] += 1
+                return fr(m)
+            s = rx.sub(sub, s)
         return s
     if type(v) is Char:
         return Char.of(f(v.str()))

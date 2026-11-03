@@ -80,12 +80,15 @@ def eps(nargout, *args):
     if s is not None:
         return float(np.finfo(np.float32 if s == 'single' else float).eps) if s != 'single' else finish(np.array([[np.finfo(np.float32).eps]], np.float32), 'single')
     a = arr(args[0])
-    if a.dtype == np.float32:
-        return finish(np.spacing(np.abs(a)).astype(np.float32), 'single')
+    single = a.dtype == np.float32
+    x = np.abs(a.astype(np.float32 if single else F64))
+    fi = np.finfo(np.float32 if single else F64)
     with np.errstate(all='ignore'):
-        r = np.spacing(np.abs(a.astype(F64)))
-        r = np.where(np.isfinite(a), r, np.nan)
-    return out(r)
+        # 2^(floor(log2|x|) - 52) (23 for single), which spacing gives too except at realmax
+        _, e = np.frexp(x)
+        r = np.where(x >= fi.tiny, np.ldexp(np.ones_like(x), e - 1 - (fi.nmant)), np.spacing(x))
+        r = np.where(np.isfinite(x), r, np.nan)
+    return finish(r.astype(np.float32), 'single') if single else out(r)
 
 
 @bi('realmax')
@@ -254,12 +257,18 @@ def linspace(nargout, *args):
     n = int(math.floor(n)) if n == n else 0
     if n < 1:
         return np.zeros((1, 0))
+    single = any(class_of(v) == 'single' for v in args[:2])
+    fin = (lambda r: finish(np.asarray(r).reshape(1, -1), 'single')) if single else (lambda r: out(np.asarray(r).reshape(1, -1)))
     if n == 1:
-        return b if type(b) is float else out(np.array([[b]]))
+        return fin(np.array([b]))
     k = np.arange(n, dtype=F64)
-    r = a + k * (b - a) / (n - 1)
+    with np.errstate(all='ignore'):
+        d = (b - a) / (n - 1)
+        if not np.isfinite(d) and np.isfinite(a) and np.isfinite(b):
+            d = b / (n - 1) - a / (n - 1)            # the span overflows: its parts do not
+        r = a + k * d
     r[-1] = b
-    return out(r.reshape(1, -1))
+    return fin(r)
 
 
 @bi('logspace')
@@ -389,6 +398,32 @@ def ipermute(nargout, *args):
     order = [int(x) - 1 for x in arr(args[1]).reshape(-1)]
     inv = np.argsort(order) + 1
     return permute(nargout, args[0], np.array([inv], F64))
+
+
+@bi('shiftdim', nout=2)
+def shiftdim(nargout, *args):
+    """The dimensions moved n to the left (the first n to the end); n < 0
+    puts -n singleton dimensions in front. With no n, the leading singleton
+    dimensions are taken away, and their number is the second output."""
+    nargchk(args, 1, 2, 'shiftdim')
+    v = args[0]
+    sh = tuple(shape_of(v))
+    if len(args) > 1:
+        n = ival(args[1], 'n', 'shiftdim')
+    else:
+        n = 0
+        if any(d != 1 for d in sh):
+            while sh[n] == 1:
+                n += 1
+    if n > 0:
+        n %= len(sh)
+        order = list(range(n, len(sh))) + list(range(n))
+        res = permute(1, v, np.array([[o + 1.0 for o in order]])) if n else v
+    elif n < 0:
+        res = _apply_obj(v, lambda a: a.reshape((1,) * (-n) + a.shape))
+    else:
+        res = v
+    return (res, float(n)) if nargout > 1 else res
 
 
 @bi('repmat')
@@ -772,12 +807,24 @@ def pascal(nargout, *args):
 @bi('compan')
 def compan(nargout, *args):
     import scipy.linalg as sla
-    return out(sla.companion(darr(args[0]).reshape(-1)))
+    c = darr(args[0])
+    if c.ndim > 2 or min(c.shape) > 1:
+        raise err('MATLAB:compan:NeedVectorInput', 'Input argument must be a vector.', 'compan')
+    c = c.reshape(-1)
+    if c.size < 2:
+        return EMPTY()
+    if c[0] == 0:
+        raise err('MATLAB:compan:FirstCoefZero', 'The first coefficient must not be zero.', 'compan')
+    return out(sla.companion(c))
 
 
 @bi('wilkinson')
 def wilkinson(nargout, *args):
     n = ival(args[0], 'n', 'wilkinson')
+    if n < 0:
+        raise err('MATLAB:wilkinson:NonNegative', 'The order must be a nonnegative integer.', 'wilkinson')
+    if n == 0:
+        return EMPTY()
     m = (n - 1) / 2
     e = np.ones(n - 1)
     return out(np.diag(np.abs(np.arange(-m, m + 1))) + np.diag(e, 1) + np.diag(e, -1))
@@ -793,45 +840,90 @@ def rosser(nargout, *args):
 
 @bi('accumarray')
 def accumarray(nargout, *args):
+    """Values gathered by their subscripts (a matrix with a column for each
+    dimension, a column of linear subscripts, or a cell of subscript vectors)
+    and each group reduced by func (sum unless given); fill where no value
+    falls. A func that returns logical or cell values makes a logical or cell
+    result."""
     nargchk(args, 2, 6, 'accumarray')
-    subs = arr(args[0]).astype(np.int64)
+    sv = args[0]
+    if type(sv) is Cell:
+        cols = [arr(c).reshape(-1) for c in sv.a.reshape(-1, order='F')]
+        subs = np.column_stack(cols) if cols else np.zeros((0, 0))
+    else:
+        subs = arr(sv)
+        if subs.ndim == 2 and subs.shape[0] == 1 and subs.shape[1] > 1:
+            subs = subs.reshape(-1, 1)
+    if subs.size and (np.any(subs != np.floor(subs)) or np.any(subs < 1)):
+        raise err('MATLAB:accumarray:InvalidSubs', 'Subscripts must be positive integers.', 'accumarray')
+    subs = subs.astype(np.int64).reshape(subs.shape[0], -1) if subs.size else np.zeros((0, max(1, subs.shape[1] if subs.ndim == 2 else 1)), np.int64)
     vals = arr(args[1])
-    if subs.ndim == 2 and subs.shape[1] == 1 or subs.shape[0] == 1 and subs.ndim == 2 and subs.shape[1] != 1 and False:
-        subs = subs.reshape(-1, 1)
-    if subs.ndim == 2 and subs.shape[0] == 1 and subs.shape[1] > 1 and vals.size == subs.shape[1]:
-        subs = subs.reshape(-1, 1)
     n = subs.shape[0]
-    v = vals.reshape(-1, order='F').astype(F64) if vals.dtype.kind != 'c' else vals.reshape(-1, order='F')
+    v = vals.reshape(-1, order='F')
+    v = v.astype(F64) if v.dtype.kind not in 'cf' else v
     if v.size == 1:
         v = np.full(n, v[0])
-    sz = None
-    if len(args) > 2 and not (type(args[2]) is np.ndarray and args[2].size == 0):
-        sz = [int(x) for x in arr(args[2]).reshape(-1)]
-    func = args[3] if len(args) > 3 and not (type(args[3]) is np.ndarray and args[3].size == 0) else None
-    fill = num(args[4]) if len(args) > 4 and not (type(args[4]) is np.ndarray and args[4].size == 0) else 0.0
+    elif v.size != n:
+        raise err('MATLAB:accumarray:InvalidValsSize', 'The values must be a scalar or as many as the subscripts.', 'accumarray')
+    empty = lambda a: type(a) is np.ndarray and a.size == 0
+    sz = [int(x) for x in arr(args[2]).reshape(-1)] if len(args) > 2 and not empty(args[2]) else None
+    func = args[3] if len(args) > 3 and not empty(args[3]) else None
+    fillv = args[4] if len(args) > 4 and not empty(args[4]) else None
     ncol = subs.shape[1]
     if sz is None:
-        sz = [int(subs[:, k].max()) for k in range(ncol)] if n else [0] * ncol
+        sz = [int(subs[:, k].max()) if n else 0 for k in range(ncol)]
         if ncol == 1:
             sz = [sz[0], 1]
     shape = tuple(sz)
-    lin = np.ravel_multi_index(tuple(subs[:, k] - 1 for k in range(ncol)), shape[:ncol] if ncol > 1 else (shape[0],), order='F') if n else np.zeros(0, int)
     total = int(np.prod(shape))
+    if n == 0:
+        lin = np.zeros(0, np.int64)
+    elif ncol == 1:
+        lin = subs[:, 0] - 1                       # linear subscripts into the given size
+    else:
+        if ncol != len(shape) and not (ncol < len(shape) and all(d == 1 for d in shape[ncol:])):
+            raise err('MATLAB:accumarray:InvalidSize', 'The size must have an element for each column of the subscripts.', 'accumarray')
+        if np.any(subs > np.array(shape[:ncol])[None, :]):
+            raise err('MATLAB:accumarray:SubsTooBig', 'A subscript exceeds the size given.', 'accumarray')
+        lin = np.ravel_multi_index(tuple(subs[:, k] - 1 for k in range(ncol)), shape[:ncol], order='F')
+    if lin.size and lin.max() >= total:
+        raise err('MATLAB:accumarray:SubsTooBig', 'A subscript exceeds the size given.', 'accumarray')
     if func is None:
         res = np.zeros(total, v.dtype)
         np.add.at(res, lin, v)
-        if fill != 0:
+        if fillv is not None and num(fillv) != 0:
             seen = np.zeros(total, bool)
             seen[lin] = True
-            res[~seen] = fill
+            res[~seen] = num(fillv)
+        return out(res.reshape(shape, order='F'))
+    groups = {}
+    for i, L in enumerate(lin):
+        groups.setdefault(int(L), []).append(i)
+    outs = {}
+    for L, idx in groups.items():
+        outs[L] = func.scall(1, out(v[idx].reshape(-1, 1)))
+    if outs:
+        cell_out = any(type(r) is Cell for r in outs.values())
+        logical_out = all(isinstance(r, (bool, np.bool_)) or (type(r) is np.ndarray and r.dtype == bool) for r in outs.values())
     else:
-        res = np.full(total, fill, dtype=F64)
-        groups = {}
-        for i, L in enumerate(lin):
-            groups.setdefault(int(L), []).append(v[i])
-        for L, g in groups.items():
-            r = func.scall(1, out(np.array(g).reshape(-1, 1)))
-            res[L] = float(arr(r).reshape(-1)[0])
+        cell_out = logical_out = False        # no group: doubles, whatever func returns
+    if cell_out:
+        res = np.empty(total, object)
+        for k in range(total):
+            res[k] = EMPTY()
+        for L, r in outs.items():
+            res[L] = r.a.reshape(-1)[0] if type(r) is Cell else r
+        return Cell(res.reshape(shape, order='F'))
+    fill = num(fillv) if fillv is not None else 0.0
+    vals_out = {L: arr(r).reshape(-1) for L, r in outs.items()}
+    if any(a.size != 1 for a in vals_out.values()):
+        raise err('MATLAB:accumarray:nonscalarFunOutput', 'The function must return a single value for each group.', 'accumarray')
+    cplx = any(a.dtype.kind == 'c' for a in vals_out.values())
+    res = np.full(total, fill, dtype=C128 if cplx else F64)
+    for L, a in vals_out.items():
+        res[L] = a[0]
+    if logical_out and fill in (0.0, 1.0):
+        return out(res.reshape(shape, order='F') != 0)
     return out(res.reshape(shape, order='F'))
 
 

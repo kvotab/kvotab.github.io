@@ -11,7 +11,8 @@ import numpy as np
 
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
-                    like_class, first_dim, dim_arg, reduce, strip_flags, expand_dims, cellstr_list, to_cell_of_char)
+                    like_class, first_dim, dim_arg, dims_arg, gather, reduce, strip_flags, expand_dims, cellstr_list,
+                    to_cell_of_char)
 from ..values import (MError, NOVAL, Char, Cell, Struct, Str, F64, C128, INT_TYPES, DTYPE_CLASS, class_of,
                       shape_of, numel, _2d, scalar_out, EMPTY, share_all, py_str)
 from ..ops import finish, INT_CLASSES, align, check_bcast
@@ -25,7 +26,7 @@ def _dim_and_flags(args, flags, fn):
     if rest:
         d = rest[0]
         if not (type(d) is np.ndarray and d.size == 0):
-            dim = dim_arg(d, fn)
+            dim = dims_arg(d, fn)
     return dim, found, rest
 
 
@@ -52,13 +53,15 @@ def _sum_like(name, fn, ident):
                 return x
         a = _num_input(x, name)
         dim, flags, rest = _dim_and_flags(args[1:], ('omitnan', 'includenan', 'double', 'native', 'default'), name)
+        # the class: double, but single stays single; 'native' keeps any class
+        # ('double' makes even single double)
         klass = class_of(x)
-        if klass in INT_CLASSES and 'double' not in flags:
+        if 'native' in flags and klass in INT_CLASSES:
             outcls = klass
+        elif 'native' in flags and klass == 'logical':
+            outcls = 'logical'
         elif klass == 'single' and 'double' not in flags:
             outcls = 'single'
-        elif 'native' in flags and klass in ('logical',):
-            outcls = 'logical' if name == 'sum' and False else 'double'
         else:
             outcls = 'double'
         if a.dtype.kind in 'iu':
@@ -72,6 +75,8 @@ def _sum_like(name, fn, ident):
             A = np.where(np.isnan(A), ident, A)
         with np.errstate(all='ignore'):
             r = reduce(A, dim, lambda b, ax: fn(b, axis=ax))
+        if outcls == 'logical':
+            return out(np.asarray(r) != 0)
         return finish(np.asarray(r), outcls)
     f.__name__ = name
     bi(name)(f)
@@ -87,6 +92,8 @@ def _cum(name, fn):
         x = args[0]
         a = _num_input(x, name)
         dim, flags, rest = _dim_and_flags(args[1:], ('reverse', 'forward', 'omitnan', 'includenan'), name)
+        if isinstance(dim, tuple) or dim == 'all':
+            raise err('MATLAB:getdimarg:dimensionMustBePositiveInteger', 'Dimension argument must be a positive integer scalar within indexing range.', name)
         if dim is None:
             dim = first_dim(a.shape)
         A = expand_dims(a, dim)
@@ -113,9 +120,27 @@ def _cumext(name, ufunc):
         x = args[0]
         a = _num_input(x, name)
         dim, flags, rest = _dim_and_flags(args[1:], ('reverse', 'forward', 'omitnan', 'includenan'), name)
+        if isinstance(dim, tuple) or dim == 'all':
+            raise err('MATLAB:getdimarg:dimensionMustBePositiveInteger', 'Dimension argument must be a positive integer scalar within indexing range.', name)
         if dim is None:
             dim = first_dim(a.shape)
-        A = expand_dims(a, dim).astype(F64) if a.dtype.kind not in 'f' else expand_dims(a, dim)
+        A = expand_dims(a, dim)
+        if A.dtype.kind == 'c':
+            # complex values by abs, then angle: a running pick along the dimension
+            A2 = np.moveaxis(np.flip(A, dim) if 'reverse' in flags else A, dim, 0)
+            r = A2.copy()
+            for k in range(1, A2.shape[0]):
+                prev, cur = r[k - 1], A2[k]
+                kp, kc = np.abs(prev), np.abs(cur)
+                ap, ac = np.angle(prev), np.angle(cur)
+                if name == 'cummax':
+                    take = (kc > kp) | ((kc == kp) & (ac > ap)) | (np.isnan(kp) & ~np.isnan(kc))
+                else:
+                    take = (kc < kp) | ((kc == kp) & (ac < ap)) | (np.isnan(kp) & ~np.isnan(kc))
+                r[k] = np.where(take, cur, prev)
+            r = np.moveaxis(r, 0, dim)
+            return like_class(np.flip(r, dim) if 'reverse' in flags else r, x)
+        A = A.astype(F64) if a.dtype.kind not in 'f' else A
         if 'reverse' in flags:
             A = np.flip(A, dim)
         with np.errstate(all='ignore'):
@@ -167,21 +192,46 @@ def diff(nargout, *args):
 
 @bi('mean')
 def mean(nargout, *args):
-    nargchk(args, 1, 4, 'mean')
+    nargchk(args, 1, 6, 'mean')
     x = args[0]
     if getattr(x, 'is_probdist', False):
         return x.moment('mean')
     if type(x) is float and len(args) == 1:
         return x
     a = _num_input(x, 'mean')
-    dim, flags, rest = _dim_and_flags(args[1:], ('omitnan', 'includenan', 'double', 'native', 'default'), 'mean')
+    rest, wts = list(args[1:]), None
+    for k in range(len(rest) - 1):
+        if opt_str(rest[k]) is not None and opt_str(rest[k]).lower() == 'weights':
+            wts = arr(rest[k + 1]).astype(F64)
+            if np.any(wts < 0):
+                raise err('MATLAB:mean:invalidWeights', 'Weights must be nonnegative.', 'mean')
+            del rest[k:k + 2]
+            break
+    dim, flags, rest = _dim_and_flags(rest, ('omitnan', 'includenan', 'double', 'native', 'default'), 'mean')
     A = a.astype(F64) if a.dtype.kind in 'biu' or a.dtype == np.uint16 else a
+    if dim is None:
+        if A.shape == (0, 0):
+            A = np.zeros((0, 1), A.dtype)
+        dim = first_dim(A.shape)
+    dims = tuple(range(A.ndim)) if dim == 'all' else (dim if isinstance(dim, tuple) else (dim,))
+    m, shape = gather(A, dims)
+    if wts is None:
+        mw = np.ones(m.shape)
+    elif wts.shape == A.shape and A.size > 1:
+        mw = gather(wts, dims)[0]
+    elif wts.size == m.shape[-1]:
+        mw = np.broadcast_to(wts.reshape(-1), m.shape)
+    else:
+        raise err('MATLAB:mean:invalidSizeWeights', 'The weights must have as many elements as the dimension they weight, or be the size of the data.', 'mean')
     with np.errstate(all='ignore'):
         if 'omitnan' in flags:
-            r = reduce(A, dim, lambda b, ax: np.nanmean(b, axis=ax) if b.shape[ax] else np.full(np.delete(np.array(b.shape), ax), np.nan))
-        else:
-            r = reduce(A, dim, lambda b, ax: np.mean(b, axis=ax) if b.shape[ax] else np.full([s for i, s in enumerate(b.shape) if i != ax], np.nan))
+            gone = np.isnan(m) | np.isnan(mw)
+            mw = np.where(gone, 0.0, mw)
+            m = np.where(gone, 0.0, m)
+        r = (np.sum(mw * m, axis=-1) / np.sum(mw, axis=-1)).reshape(shape)
     klass = class_of(x)
+    if 'double' in flags:
+        return out(r)
     if klass == 'single':
         return finish(r, 'single')
     if klass in INT_CLASSES and 'native' in flags:
@@ -189,25 +239,54 @@ def mean(nargout, *args):
     return out(np.asarray(r))
 
 
+def _cplx_median(row):
+    """The middle of complex values ordered by size, then angle."""
+    order = np.lexsort((np.angle(row), np.abs(row)))
+    v = row[order]
+    k = v.size
+    return v[k // 2] if k % 2 else (v[k // 2 - 1] + v[k // 2]) / 2
+
+
 @bi('median')
 def median(nargout, *args):
-    nargchk(args, 1, 3, 'median')
+    nargchk(args, 1, 4, 'median')
     x = args[0]
     if getattr(x, 'is_probdist', False):
         return x.moment('median')
     a = _num_input(x, 'median')
-    dim, flags, rest = _dim_and_flags(args[1:], ('omitnan', 'includenan'), 'median')
+    dim, flags, rest = _dim_and_flags(args[1:], ('omitnan', 'includenan', 'default', 'double', 'native'), 'median')
+    klass = class_of(x)
     A = a.astype(F64) if a.dtype.kind in 'biu' or a.dtype == np.uint16 else a
+    if dim is None:
+        if A.shape == (0, 0):
+            A = np.zeros((0, 1), A.dtype)
+        dim = first_dim(A.shape)
+    dims = tuple(range(A.ndim)) if dim == 'all' else (dim if isinstance(dim, tuple) else (dim,))
+    m, shape = gather(A, dims)
+    rows = m.reshape(int(np.prod(m.shape[:-1])), m.shape[-1])
+    res = np.empty(rows.shape[0], dtype=C128 if A.dtype.kind == 'c' else F64)
     with np.errstate(all='ignore'):
-        def med(b, ax):
-            if b.shape[ax] == 0:
-                return np.full([s for i, s in enumerate(b.shape) if i != ax], np.nan)
+        for i, row in enumerate(rows):
             if 'omitnan' in flags:
-                return np.nanmedian(b, axis=ax)
-            r = np.median(b, axis=ax)
-            return r
-        r = reduce(A, dim, med)
-    return like_class(np.asarray(r), x) if class_of(x) in ('single',) else out(np.asarray(r))
+                row = row[~np.isnan(row)]
+            if row.size == 0 or np.any(np.isnan(row)):
+                res[i] = np.nan
+            elif row.dtype.kind == 'c':
+                res[i] = _cplx_median(row)
+            else:
+                res[i] = np.median(row)
+    r = res.reshape(shape)
+    # the class: single stays single and integers and logicals stay what they are,
+    # unless 'double' (or 'default', for integers and logicals) is asked for
+    if 'double' in flags:
+        return out(r)
+    if klass == 'single':
+        return finish(r, 'single')
+    if klass in INT_CLASSES and 'default' not in flags:
+        return finish(np.where(np.isnan(r), 0, np.round(r)), klass)
+    if klass == 'logical' and not ({'default', 'native'} & set(flags)):
+        return out(np.where(np.isnan(r), False, r != 0))
+    return out(r)
 
 
 @bi('mode', nout=3)
@@ -215,100 +294,124 @@ def mode(nargout, *args):
     nargchk(args, 1, 2, 'mode')
     x = args[0]
     a = _num_input(x, 'mode')
-    dim = dim_arg(args[1], 'mode') if len(args) > 1 else None
+    dim = dims_arg(args[1], 'mode') if len(args) > 1 else None
+    empty00 = a.shape == (0, 0) and dim is None
     if dim is None:
+        dim = 0 if a.shape == (0, 0) else first_dim(a.shape)
         if a.shape == (0, 0):
-            return math.nan if nargout <= 1 else (math.nan, 0.0, Cell.of_list([np.zeros((0, 0))]))
-        dim = first_dim(a.shape)
-    A = expand_dims(a, dim)
-    A2 = np.moveaxis(A, dim, -1)
-    flat = A2.reshape(-1, A2.shape[-1])
-    M = np.empty(flat.shape[0], dtype=A.dtype if A.dtype.kind != 'b' else F64)
+            a = np.zeros((0, 1), a.dtype)
+    if dim == 'all':
+        dim = tuple(range(a.ndim))
+    m2, shape = gather(a, dim if isinstance(dim, tuple) else (dim,))
+    flat = m2.reshape(int(np.prod(m2.shape[:-1])), m2.shape[-1])
+    M = np.empty(flat.shape[0], dtype=a.dtype if a.dtype.kind not in 'b' and a.dtype != np.uint16 else F64)
     Fq = np.zeros(flat.shape[0])
     Cs = []
     for i, row in enumerate(flat):
-        row = row[~np.isnan(row)] if row.dtype.kind == 'f' else row
+        row = row[~np.isnan(row)] if row.dtype.kind in 'fc' else row
         if row.size == 0:
-            M[i] = np.nan if M.dtype.kind == 'f' else 0
+            M[i] = np.nan if M.dtype.kind in 'fc' else 0
             Fq[i] = 0
-            Cs.append(np.zeros((0, 1)))
+            Cs.append(np.zeros((0, 1) if empty00 else (1, 0), M.dtype))
             continue
         vals, counts = np.unique(row, return_counts=True)
         mx = counts.max()
         ties = vals[counts == mx]
         M[i] = ties[0]
         Fq[i] = mx
-        Cs.append(ties.reshape(-1, 1).astype(F64))
-    shape = list(A2.shape[:-1]) + [1]
-    Mr = np.moveaxis(M.reshape(shape), -1, dim)
-    Fr = np.moveaxis(Fq.reshape(shape), -1, dim)
+        Cs.append(ties.reshape(-1, 1).astype(M.dtype))
+    Mr, Fr = M.reshape(shape), Fq.reshape(shape)
     m = like_class(Mr, x) if class_of(x) not in ('logical', 'char') else out(Mr.astype(F64))
     if nargout <= 1:
         return m
-    c = Cell(np.empty(Mr.shape, object))
+    c = Cell(np.empty(_2d(Mr).shape, object))
     for i, v in enumerate(Cs):
-        c.a.reshape(-1)[i] = out(v)
+        c.a.reshape(-1)[i] = like_class(v, x) if class_of(x) not in ('logical', 'char') else out(v.astype(F64))
     return (m, out(Fr), c)[:nargout]
 
 
-def _var_std(name, args, sq):
+def _var_std(name, args, sq, nargout=1):
+    """var and std (and their means): over a dimension, a vector of them or
+    'all'; normalized by N-1 (w = 0), by N (w = 1), or by weights (a vector
+    along the dimension, or an array the size of the data); NaN left out
+    with 'omitnan' (and so are the weights of the values left out)."""
     nargchk(args, 1, 4, name)
     x = args[0]
     a = _num_input(x, name)
     rest, flags = strip_flags(args[1:], ('omitnan', 'includenan'))
-    w = 0.0
-    dim = None
-    if rest:
+    omit = 'omitnan' in flags
+    w, dim = 0.0, None
+    if rest and opt_str(rest[0]) is not None:
+        dim = dims_arg(rest[0], name)          # var(A, 'all')
+        rest = rest[1:]
+    elif rest:
         wv = rest[0]
         if not (type(wv) is np.ndarray and wv.size == 0):
-            wa = arr(wv)
-            if wa.size == 1:
+            wa = arr(wv).astype(F64)
+            if wa.size == 1 and float(wa.reshape(-1)[0]) in (0.0, 1.0):
                 w = float(wa.reshape(-1)[0])
             else:
-                w = wa.astype(F64).reshape(-1)
-    if len(rest) > 1:
-        dim = dim_arg(rest[1], name)
+                if np.any(wa < 0):
+                    raise err('MATLAB:var:invalidWgts', 'Weights must be nonnegative.', name)
+                w = wa
+        if len(rest) > 1:
+            dim = dims_arg(rest[1], name)
     A = a.astype(F64) if a.dtype.kind in 'biu' or a.dtype == np.uint16 else a
+    if dim is None:
+        if A.shape == (0, 0):
+            A = np.zeros((0, 1), A.dtype)
+        dim = first_dim(A.shape)
+    dims = tuple(range(A.ndim)) if dim == 'all' else (dim if isinstance(dim, tuple) else (dim,))
+    ma, shape = gather(A, dims)
+    n = ma.shape[-1]
     if isinstance(w, np.ndarray):
-        wts = w
-
-        def f(b, ax):
-            bb = np.moveaxis(b, ax, -1)
-            mu = np.sum(bb * wts, axis=-1, keepdims=True) / wts.sum()
-            return np.sum(wts * np.abs(bb - mu) ** 2, axis=-1) / wts.sum()
+        if w.shape == A.shape and A.size > 1:
+            mw = gather(w, dims)[0]
+        elif w.size == n:
+            mw = np.broadcast_to(w.reshape(-1), ma.shape)
+        else:
+            raise err('MATLAB:var:invalidSizeWgts', 'The weights must have as many elements as the dimension they weight, or be the size of the data.', name)
+        weighted = True
     else:
-        ddof = 0 if w == 1 else 1
-        omit = 'omitnan' in flags
-
-        def f(b, ax):
-            n = b.shape[ax]
-            if n == 0:
-                return np.full([s for i, s in enumerate(b.shape) if i != ax], np.nan)
-            if n == 1:
-                r = np.zeros([s for i, s in enumerate(b.shape) if i != ax])
-                return np.where(np.isfinite(np.take(b, 0, axis=ax)), r, np.nan)
-            if omit:
-                return np.nanvar(b, axis=ax, ddof=ddof)
-            return np.var(b, axis=ax, ddof=ddof)
+        mw = np.ones(ma.shape)
+        weighted = False
     with np.errstate(all='ignore'):
-        r = reduce(A, dim, f)
+        if omit:
+            gone = np.isnan(ma) | np.isnan(mw)
+            mw = np.where(gone, 0.0, mw)
+            ma = np.where(gone, 0.0, ma)
+        sw = np.sum(mw, axis=-1)
+        mu = np.sum(mw * ma, axis=-1) / sw
+        dev = np.sum(mw * np.abs(ma - mu[..., None]) ** 2, axis=-1)
+        if weighted or w == 1:
+            v = dev / sw
+        else:
+            cnt = np.sum(mw != 0, axis=-1) if omit else np.full(sw.shape, n)
+            v = np.where(cnt > 1, dev / (cnt - 1), np.where(np.isfinite(mu), 0.0, np.nan))
+            v = np.where(cnt == 0, np.nan, v)
         if sq:
-            r = np.sqrt(r)
-    return like_class(np.asarray(r), x) if class_of(x) == 'single' else out(np.asarray(r))
+            v = np.sqrt(v)
+    single = class_of(x) == 'single'
+    v = v.reshape(shape)
+    res = like_class(v, x) if single else out(v)
+    if nargout < 2:
+        return res
+    mu = mu.reshape(shape)
+    return res, (like_class(mu, x) if single else out(mu))
 
 
-@bi('var')
+@bi('var', nout=2)
 def var(nargout, *args):
     if args and getattr(args[0], 'is_probdist', False):
         return args[0].moment('var')
-    return _var_std('var', args, False)
+    return _var_std('var', args, False, nargout)
 
 
-@bi('std')
+@bi('std', nout=2)
 def std(nargout, *args):
     if args and getattr(args[0], 'is_probdist', False):
         return args[0].moment('std')
-    return _var_std('std', args, True)
+    return _var_std('std', args, True, nargout)
 
 
 @bi('range')
@@ -322,104 +425,127 @@ def range_(nargout, *args):
 
 # ---- minima and maxima -----------------------------------------------------------------------
 
-def _cmp_key(a):
-    """Values to compare: complex numbers by magnitude, then angle."""
+def _order_keys(a, method):
+    """The keys min and max order values by: the values; complex ones by
+    abs, then angle ('auto' and 'abs'), or by real part, then imaginary
+    part ('real')."""
     if a.dtype.kind == 'c':
-        return np.abs(a)
-    return a
+        if method == 'real':
+            return a.real, a.imag
+        return np.abs(a), np.angle(a)
+    if method == 'abs':
+        return np.abs(a.astype(F64)), None
+    return a.astype(F64) if a.dtype.kind != 'f' else a, None
+
+
+def _pick(key1, key2, is_max, include_nan):
+    """For each row the index of its greatest (least) element by key1, then
+    key2, the first of those tied; NaN left out unless include_nan (then the
+    first NaN), a row of NaN giving its first."""
+    big = -np.inf if is_max else np.inf
+    nan = np.isnan(key1)
+    k1 = np.where(nan, big, key1)
+    best = k1.max(axis=1) if is_max else k1.min(axis=1)
+    cand = (k1 == best[:, None]) & ~nan
+    if key2 is not None:
+        k2 = np.where(cand, key2, big)
+        best2 = k2.max(axis=1) if is_max else k2.min(axis=1)
+        cand &= key2 == best2[:, None]
+    idx = np.argmax(cand, axis=1)
+    anynan, allnan = nan.any(axis=1), nan.all(axis=1)
+    first_nan = np.argmax(nan, axis=1)
+    if include_nan:
+        idx = np.where(anynan, first_nan, idx)
+    else:
+        idx = np.where(allnan, 0, idx)
+    return idx
+
+
+def _minmax_class(r, *vals):
+    """The class of min and max: logical when all are, else arithmetic's."""
+    from ..ops import result_class
+    classes = [class_of(v) for v in vals]
+    if all(c == 'logical' for c in classes):
+        return out(np.asarray(r) != 0)
+    k = 'double'
+    for c in classes:
+        k = result_class(k, 'double' if c in ('logical', 'char') else c, 'max')
+    return finish(np.asarray(r), k)
 
 
 def _minmax(name, args, nargout, is_max):
-    nargchk(args, 1, 5, name)
+    nargchk(args, 1, 7, name)
     x = args[0]
+    args = list(args)
+    method = 'auto'
+    for k in range(1, len(args) - 1):
+        s_ = opt_str(args[k])
+        if s_ is not None and s_.lower() == 'comparisonmethod':
+            method = (opt_str(args[k + 1]) or '').lower()
+            if method not in ('auto', 'abs', 'real'):
+                raise err(f'MATLAB:{name}:invalidComparisonMethod', "ComparisonMethod is 'auto', 'abs' or 'real'.", name)
+            del args[k:k + 2]
+            break
     rest, flags = strip_flags(args[1:], ('omitnan', 'includenan', 'linear', 'omitmissing', 'includemissing'))
     include_nan = 'includenan' in flags or 'includemissing' in flags
-    if len(rest) >= 1 and not (type(rest[0]) is np.ndarray and rest[0].size == 0 and rest[0].shape == (0, 0) and len(rest) > 1):
+    empty_b = bool(rest) and type(rest[0]) is np.ndarray and rest[0].size == 0 and rest[0].shape == (0, 0)
+    if len(rest) >= 1 and not (empty_b and (len(rest) > 1 or flags)):
         if len(rest) == 1 or not (type(rest[0]) is np.ndarray and rest[0].size == 0):
             # max(a, b): element-wise
             if nargout > 1:
                 raise err('MATLAB:TooManyOutputs', f'{name.upper()} with two matrices to compare and two output arguments is not supported.', name)
             y = rest[0]
-            A = arr(x, name)
-            B = arr(y, name)
-            from ..ops import result_class
-            ca = class_of(x)
-            cb = class_of(y)
-            klass = result_class('double' if ca in ('logical', 'char') else ca, 'double' if cb in ('logical', 'char') else cb, name)
-            A, B = align(A, B)
+            A, B = align(arr(x, name), arr(y, name))
             check_bcast(A, B)
+            A, B = np.broadcast_arrays(A, B)
+            cplx = A.dtype.kind == 'c' or B.dtype.kind == 'c'
+            Ac = A.astype(C128) if cplx else A.astype(F64)
+            Bc = B.astype(C128) if cplx else B.astype(F64)
             with np.errstate(all='ignore'):
-                if A.dtype.kind == 'c' or B.dtype.kind == 'c':
-                    Ac, Bc = A.astype(C128), B.astype(C128)
-                    ka, kb = np.abs(Ac), np.abs(Bc)
-                    pick_a = (ka > kb) | ((ka == kb) & (np.angle(Ac) >= np.angle(Bc))) if is_max else (ka < kb) | ((ka == kb) & (np.angle(Ac) <= np.angle(Bc)))
-                    r = np.where(pick_a, Ac, Bc)
-                else:
-                    Af = A.astype(F64) if A.dtype.kind != 'f' else A
-                    Bf = B.astype(F64) if B.dtype.kind != 'f' else B
-                    if include_nan:
-                        r = np.maximum(Af, Bf) if is_max else np.minimum(Af, Bf)
-                    else:
-                        r = np.fmax(Af, Bf) if is_max else np.fmin(Af, Bf)
-            return finish(r, klass)
-    dim = None
-    if len(rest) >= 2:
-        dim = dim_arg(rest[1], name)
+                a1, a2 = _order_keys(Ac, method)
+                b1, b2 = _order_keys(Bc, method)
+                k1 = np.stack([a1.reshape(-1), b1.reshape(-1)], axis=1)
+                k2 = np.stack([a2.reshape(-1), b2.reshape(-1)], axis=1) if a2 is not None else None
+                pick = _pick(k1, k2, is_max, include_nan).reshape(Ac.shape)
+                r = np.where(pick == 0, Ac, Bc)
+            return _minmax_class(r, x, y)
+    dim = dims_arg(rest[1], name) if len(rest) >= 2 else None
     a = arr(x, name)
     if a.size == 0 and dim is None and a.shape == (0, 0):
-        e = np.zeros((0, 0), a.dtype if a.dtype.kind != 'b' else F64)
-        return like_class(e, x) if nargout <= 1 else (like_class(e, x), np.zeros((0, 0)))
-    if dim == 'all':
-        a = a.reshape(-1, 1, order='F')
-        dim = 0
+        e = np.zeros((0, 0), a.dtype)
+        return _minmax_class(e, x) if nargout <= 1 else (_minmax_class(e, x), np.zeros((0, 0)))
     if dim is None:
         dim = first_dim(a.shape)
-    A = expand_dims(a, dim)
-    if A.shape[dim] == 0:
-        sh = list(A.shape)
-        sh[dim] = 0 if False else 1
-        sh[dim] = 0
-        e = np.zeros(sh, A.dtype)
-        return like_class(e, x) if nargout <= 1 else (like_class(e, x), out(np.zeros(sh)))
-    key = _cmp_key(A)
-    if key.dtype.kind == 'b':
-        key = key.astype(np.int8)
-    if key.dtype.kind == 'f':
-        nan = np.isnan(key)
-        if np.any(nan):
-            if include_nan:
-                fill = np.inf if is_max else -np.inf
-                k2 = np.where(nan, fill, key)
-                i = np.argmax(k2, axis=dim) if is_max else np.argmin(k2, axis=dim)
-                firstnan = np.argmax(nan, axis=dim)
-                anynan = np.any(nan, axis=dim)
-                i = np.where(anynan, firstnan, i)
-            else:
-                fill = -np.inf if is_max else np.inf
-                k2 = np.where(nan, fill, key)
-                i = np.argmax(k2, axis=dim) if is_max else np.argmin(k2, axis=dim)
-                # where all are NaN the result is NaN at the first
-                allnan = np.all(nan, axis=dim)
-                i = np.where(allnan, 0, i)
-        else:
-            i = np.argmax(key, axis=dim) if is_max else np.argmin(key, axis=dim)
-    else:
-        i = np.argmax(key, axis=dim) if is_max else np.argmin(key, axis=dim)
-    if A.dtype.kind == 'c':
-        # ties in magnitude go to the larger (smaller) angle
-        pass
-    iexp = np.expand_dims(i, dim)
-    m = np.take_along_axis(A, iexp, axis=dim)
-    mv = like_class(m, x) if class_of(x) not in ('logical', 'char') else out(m.astype(F64))
+    dims = tuple(range(a.ndim)) if dim == 'all' else (dim if isinstance(dim, tuple) else (dim,))
+    m2, shape = gather(a, dims)
+    n = m2.shape[-1]
+    if n == 0:
+        sh = list(shape)
+        for d in dims:
+            sh[d] = 0
+        e = np.zeros(sh, a.dtype)
+        return _minmax_class(e, x) if nargout <= 1 else (_minmax_class(e, x), out(np.zeros(sh)))
+    rows = m2.reshape(int(np.prod(m2.shape[:-1])), n)
+    with np.errstate(all='ignore'):
+        k1, k2 = _order_keys(rows, method)
+        idx = _pick(k1, k2, is_max, include_nan)
+    m = rows[np.arange(rows.shape[0]), idx].reshape(shape)
+    mv = _minmax_class(m, x) if class_of(x) not in ('char',) else out(m.astype(F64))
     if nargout <= 1:
         return mv
     if 'linear' in flags:
-        shape = A.shape
-        grids = list(np.indices(iexp.shape))
-        grids[dim] = iexp
-        lin = np.ravel_multi_index(tuple(grids), shape, order='F') + 1
-        return mv, out(lin.astype(F64))
-    return mv, out((iexp + 1).astype(F64))
+        full = a.shape + (1,) * (len(shape) - a.ndim)
+        keep = [d for d in range(len(full)) if d not in dims]
+        kidx = np.unravel_index(np.arange(rows.shape[0]), [full[d] for d in keep]) if keep else ()
+        ridx = np.unravel_index(idx, [full[d] for d in dims], order='F')
+        multi = [None] * len(full)
+        for d, v in zip(keep, kidx):
+            multi[d] = v
+        for d, v in zip(dims, ridx):
+            multi[d] = v
+        lin = np.ravel_multi_index(tuple(multi), full, order='F') + 1
+        return mv, out(lin.astype(F64).reshape(shape))
+    return mv, out((idx + 1).astype(F64).reshape(shape))
 
 
 @bi('max', nout=2)
@@ -468,7 +594,7 @@ def _anyall(name, fn, empty):
                 return name == 'any' and False or (name == 'all')
             return x != 0
         a = _num_input(x, name)
-        dim = dim_arg(args[1], name) if len(args) > 1 else None
+        dim = dims_arg(args[1], name) if len(args) > 1 else None
         if a.dtype.kind in 'fc':
             b = (a != 0) & ~np.isnan(a) if name == 'any' else (a != 0)
         else:
@@ -526,13 +652,12 @@ def _argsort_matlab(v, descend):
     """A stable sort order of a 1-D array: NaN last ascending, first
     descending; complex by magnitude then angle."""
     if v.dtype.kind == 'c':
-        key1 = np.abs(v)
-        key2 = np.angle(v)
+        nan = np.isnan(v)
+        key1 = np.where(nan, 0.0, np.abs(v))
+        key2 = np.where(nan, 0.0, np.angle(v))
         if descend:
-            order = np.lexsort((-key2, -key1))
-        else:
-            order = np.lexsort((key2, key1))
-        return order
+            return np.lexsort((-key2, -key1, ~nan))     # NaN first
+        return np.lexsort((key2, key1, nan))            # NaN last
     if v.dtype.kind == 'f':
         nan = np.isnan(v)
         if descend:
@@ -647,10 +772,57 @@ def sortrows(nargout, *args):
 
 @bi('issorted')
 def issorted(nargout, *args):
-    a = arr(args[0]).reshape(-1)
-    if a.dtype.kind == 'c':
-        a = np.abs(a)
-    return bool(np.all(a[:-1] <= a[1:])) if a.size > 1 else True
+    """Whether sort would leave the values (or rows) as they are: 'ascend'
+    (the default), 'descend', 'monotonic' (either), and their strict forms
+    (no two equal); each column of a matrix (or along dim); NaN placed as
+    sort places it."""
+    nargchk(args, 1, 3, 'issorted')
+    v = args[0]
+    words = [opt_str(a).lower() for a in args[1:] if opt_str(a) is not None]
+    nums = [a for a in args[1:] if opt_str(a) is None]
+    modes = ('ascend', 'descend', 'monotonic', 'strictascend', 'strictdescend', 'strictmonotonic', 'either')
+    mode = next((w for w in words if w in modes), 'ascend')
+    if mode == 'either':
+        mode = 'monotonic'
+    strict = mode.startswith('strict')
+    dirs = {'ascend': [False], 'descend': [True], 'monotonic': [False, True]}[mode.replace('strict', '')]
+    if type(v) in (Cell, Str):
+        items = cellstr_list(v)
+        vecs = [items]
+
+        def ok(vals, desc):
+            pairs = list(zip(vals[:-1], vals[1:]))
+            return all((b > a if not desc else b < a) if strict else (b >= a if not desc else b <= a) for a, b in pairs)
+        return any(ok(vecs[0], d) for d in dirs)
+    a = arr(v)
+    if a.size == 0:
+        return True                 # nothing is out of order
+    if 'rows' in words:
+        rows = a.reshape(a.shape[0], -1) if a.ndim >= 2 else a.reshape(-1, 1)
+        keys = [tuple(r) for r in rows]
+
+        def ok(desc):
+            for x, y in zip(keys[:-1], keys[1:]):
+                if (x > y if not desc else x < y) or (strict and x == y):
+                    return False
+            return True
+        return any(ok(d) for d in dirs)
+    if a.ndim == 2 and 1 in a.shape and not nums:
+        vecs = [a.reshape(-1)]
+    else:
+        dim = dim_arg(nums[0], 'issorted') if nums else first_dim(a.shape)
+        A = np.moveaxis(expand_dims(a, dim), dim, -1)
+        vecs = list(A.reshape(-1, A.shape[-1]))
+
+    def sorted_as(vv, desc):
+        if vv.size < 2:
+            return True
+        if not np.array_equal(_argsort_matlab(vv, desc), np.arange(vv.size)):
+            return False
+        if strict:
+            return not np.any(vv[1:] == vv[:-1])
+        return True
+    return any(all(sorted_as(vv, d) for vv in vecs) for d in dirs)
 
 
 # ---- sets -------------------------------------------------------------------------------
@@ -736,8 +908,8 @@ def unique(nargout, *args):
         ia = [seen[s] + 1 for s in vals]
         pos = {s: k + 1 for k, s in enumerate(vals)}
         ic = [pos[s] for s in data]
-        row = _isrow(x) and False
-        C = _set_out_str(vals, sk, row)
+        row = _isrow(x)                 # a row of text gives a row
+        C = _set_out_str(vals, sk, row) if (vals or shape_of(x) != (0, 0)) else (Cell.empty((0, 0)) if sk == 'cell' else Str.from_list([], (0, 0)))
         if nargout <= 1:
             return C
         return (C, out(np.array(ia, F64).reshape(-1, 1)), out(np.array(ic, F64).reshape(-1, 1)))[:nargout]
@@ -858,8 +1030,9 @@ def _setop(name, args, nargout, op):
     ka, da, sa = _set_input(a, name)
     kb, db, sb = _set_input(b, name)
     if ka == 'str' or kb == 'str':
-        la = da if ka == 'str' else [py_str(a)]
-        lb = db if kb == 'str' else [py_str(b)]
+        # [] is no text at all
+        la = da if ka == 'str' else ([] if numel(a) == 0 else [py_str(a)])
+        lb = db if kb == 'str' else ([] if numel(b) == 0 else [py_str(b)])
         res, ia, ib = op(la, lb, stable)
         C = _set_out_str(res, sa or sb, False)
         outs = (C, out(np.array(ia, F64).reshape(-1, 1)), out(np.array(ib, F64).reshape(-1, 1)))
@@ -1157,97 +1330,93 @@ def corrcoef(nargout, *args):
     return out(R), out(P)
 
 
-@bi('trapz')
-def trapz(nargout, *args):
-    nargchk(args, 1, 3, 'trapz')
+def _trapz_parts(args, fn):
+    """trapz's and cumtrapz's arguments: (Y moved so that the dimension is
+    last, the spacing between its points along it, the dimension, Y's shape).
+    trapz(Y, dim) when the second of two arguments is a scalar; X a scalar
+    spacing, a vector of points, or an array the size of Y."""
+    nargchk(args, 1, 3, fn)
+    x = dim = None
     if len(args) == 1:
         y = darr(args[0])
-        x = None
-        dim = None
-    elif len(args) == 2:
-        if numel(args[1]) == 1 and numel(args[0]) > 1 and shape_of(args[0]) != (1, 1) and numel(args[1]) == 1 and not (numel(args[0]) == 1):
-            # trapz(Y, dim) or trapz(X, Y) with scalar spacing: decide by sizes
-            y = darr(args[0])
-            dim = dim_arg(args[1], 'trapz')
-            x = None
-        else:
-            x = darr(args[0])
-            y = darr(args[1])
-            dim = None
+    elif len(args) == 2 and numel(args[1]) == 1 and numel(args[0]) != 1:
+        y, dim = darr(args[0]), dim_arg(args[1], fn)
     else:
-        x = darr(args[0])
-        y = darr(args[1])
-        dim = dim_arg(args[2], 'trapz')
+        x, y = darr(args[0]), darr(args[1])
+        if len(args) > 2:
+            dim = dim_arg(args[2], fn)
     if dim is None:
         dim = first_dim(y.shape)
-    Y = expand_dims(y, dim)
-    if x is None:
-        r = np.trapezoid(Y, axis=dim) if hasattr(np, 'trapezoid') else np.trapz(Y, axis=dim)
+    Y = np.moveaxis(expand_dims(y, dim), dim, -1).astype(C128 if y.dtype.kind == 'c' else F64)
+    n = Y.shape[-1]
+    if x is None or x.size == 1:
+        dx = np.full(max(n - 1, 0), 1.0 if x is None else float(x.reshape(-1)[0]))
+    elif x.size == n and (x.ndim <= 2 and 1 in x.shape):
+        dx = np.diff(x.reshape(-1).astype(F64))
+    elif x.shape == y.shape:
+        dx = np.diff(np.moveaxis(expand_dims(x, dim), dim, -1).astype(F64), axis=-1)
     else:
-        xv = x.reshape(-1)
-        if xv.size == 1:
-            r = (np.trapezoid(Y, axis=dim) if hasattr(np, 'trapezoid') else np.trapz(Y, axis=dim)) * xv[0]
-        else:
-            r = np.trapezoid(Y, x=xv, axis=dim) if hasattr(np, 'trapezoid') else np.trapz(Y, x=xv, axis=dim)
-    r = np.expand_dims(r, dim)
-    return out(r)
+        raise err(f'MATLAB:{fn}:LengthXMismatchY', f'The points X must be as many as the values of Y along the dimension (or a scalar spacing, or an array the size of Y).', fn)
+    return Y, dx, dim, y.shape
+
+
+@bi('trapz')
+def trapz(nargout, *args):
+    Y, dx, dim, shape = _trapz_parts(args, 'trapz')
+    r = np.sum(dx * (Y[..., 1:] + Y[..., :-1]) / 2, axis=-1) if Y.shape[-1] > 1 else np.zeros(Y.shape[:-1], Y.dtype)
+    return out(np.moveaxis(r[..., None], -1, dim))
 
 
 @bi('cumtrapz')
 def cumtrapz(nargout, *args):
-    from scipy.integrate import cumulative_trapezoid
-    if len(args) == 1:
-        y = darr(args[0])
-        x = None
-    else:
-        x = darr(args[0]).reshape(-1)
-        y = darr(args[1])
-    dim = first_dim(y.shape)
-    if x is not None and x.size == 1:
-        r = cumulative_trapezoid(y, dx=x[0], axis=dim, initial=0)
-    elif x is not None:
-        r = cumulative_trapezoid(y, x=x, axis=dim, initial=0)
-    else:
-        r = cumulative_trapezoid(y, axis=dim, initial=0)
-    return out(r)
+    Y, dx, dim, shape = _trapz_parts(args, 'cumtrapz')
+    steps = dx * (Y[..., 1:] + Y[..., :-1]) / 2
+    r = np.concatenate([np.zeros(Y.shape[:-1] + (min(1, Y.shape[-1]),), Y.dtype), np.cumsum(steps, axis=-1)], axis=-1)
+    return out(np.moveaxis(r, -1, dim))
 
 
 def _quantiles(x, p, dim):
     """The language's quantiles: the sorted values sit at (i - 0.5)/n,
-    linear in between, clamped at the ends."""
-    def q(b, ax):
-        b = np.moveaxis(b, ax, -1)
-        out_ = np.empty(b.shape[:-1] + (len(p),))
-        for idx in np.ndindex(b.shape[:-1]):
-            v = b[idx]
-            v = np.sort(v[~np.isnan(v)])
-            n = v.size
-            if n == 0:
-                out_[idx] = np.nan
-                continue
-            pos = np.array(p) * n + 0.5
-            res = np.interp(pos, np.arange(1, n + 1), v)
-            out_[idx] = res
-        return np.moveaxis(out_, -1, ax)
-    if dim is None:
+    linear in between, clamped at the ends; NaN left out. Along a dimension,
+    a vector of them or 'all' (a column); the quantiles take the place of
+    the first dimension worked along, the others become 1."""
+    p = np.asarray(p, F64).reshape(-1)
+    if dim == 'all':
+        x, dim = x.reshape(-1, 1), 0
+    elif dim is None:
         dim = first_dim(x.shape)
-    X = expand_dims(x, dim)
-    return q(X, dim)
+    dims = dim if isinstance(dim, tuple) else (dim,)
+    m, shape = gather(x.astype(F64), dims)
+    rows = m.reshape(int(np.prod(m.shape[:-1])), m.shape[-1])
+    res = np.empty((rows.shape[0], p.size))
+    for i, v in enumerate(rows):
+        v = np.sort(v[~np.isnan(v)])
+        n = v.size
+        res[i] = np.nan if n == 0 else np.interp(p * n + 0.5, np.arange(1, n + 1), v)
+    keep = [s_ for d, s_ in enumerate(shape) if d not in dims]
+    r = np.moveaxis(res.reshape(keep + [p.size]), -1, dims[0])
+    shape[dims[0]] = p.size
+    return r.reshape(shape)
 
 
 @bi('quantile')
 def quantile(nargout, *args):
+    nargchk(args, 2, 3, 'quantile')
     x = darr(args[0])
-    pv = darr(args[1]).reshape(-1)
+    pa = darr(args[1])
+    pv = pa.reshape(-1)
     if pv.size == 1 and pv[0] >= 1 and pv[0] == int(pv[0]):
         n = int(pv[0])
         pv = np.arange(1, n + 1) / (n + 1)
-    dim = dim_arg(args[2], 'quantile') if len(args) > 2 else None
-    vec = x.ndim == 2 and (x.shape[0] == 1 or x.shape[1] == 1) and dim is None
-    if vec:
-        r = _quantiles(x.reshape(-1, 1), list(pv), 0).reshape(-1)
-        return out(r.reshape(1, -1) if (x.shape[0] == 1 and pv.size > 1) else r.reshape(-1, 1) if pv.size > 1 else r)
-    return out(_quantiles(x, list(pv), dim))
+        pa = pv.reshape(1, -1)
+    if np.any((pv < 0) | (pv > 1)):
+        raise err('stats:quantile:BadProbs', 'P must be between 0 and 1, or a number of quantiles.', 'quantile')
+    dim = dims_arg(args[2], 'quantile') if len(args) > 2 else None
+    if dim is None and x.ndim == 2 and (x.shape[0] == 1 or x.shape[1] == 1 or x.shape == (0, 0)):
+        # a vector (or []): its quantiles as p is laid out
+        r = _quantiles(x.reshape(-1, 1), pv, 0).reshape(-1)
+        return out(r.reshape(-1, 1) if (pa.ndim == 2 and pa.shape[1] == 1 and pa.shape[0] > 1) else r.reshape(1, -1))
+    return out(_quantiles(x, pv, dim))
 
 
 @bi('prctile')
@@ -1261,8 +1430,12 @@ def iqr(nargout, *args):
     if args and getattr(args[0], 'is_probdist', False):
         return args[0].moment('iqr')
     x = darr(args[0])
-    q = _quantiles(x.reshape(-1, 1) if (x.ndim == 2 and 1 in x.shape) else x, [0.25, 0.75], 0)
-    return out(np.diff(q, axis=0))
+    dim = dims_arg(args[1], 'iqr') if len(args) > 1 else None
+    if dim is None and x.ndim == 2 and (x.shape[0] <= 1 or x.shape[1] <= 1):
+        x, dim = x.reshape(-1, 1), 0
+    q = _quantiles(x, [0.25, 0.75], dim)
+    first = dim if isinstance(dim, int) else (dim[0] if isinstance(dim, tuple) else (0 if dim == 'all' else first_dim(x.shape)))
+    return out(np.diff(q, axis=first))
 
 
 @bi('skewness')
@@ -1285,13 +1458,29 @@ def kurtosis(nargout, *args):
 
 @bi('rescale')
 def rescale(nargout, *args):
-    x = darr(args[0])
-    lo = num(args[1]) if len(args) > 1 else 0.0
-    hi = num(args[2]) if len(args) > 2 else 1.0
-    mn, mx = np.nanmin(x), np.nanmax(x)
+    """(A - inmin)/(inmax - inmin) scaled to [l, u], the data clamped to
+    [inmin, inmax] (A's least and greatest unless given); l, u, inmin and
+    inmax may be arrays that broadcast against A."""
+    x0 = args[0]
+    x = darr(x0).astype(F64)
+    rest = list(args[1:])
+    opts = {}
+    for k in range(len(rest) - 1, 0, -1):
+        s_ = opt_str(rest[k - 1])
+        if s_ is not None and s_.lower() in ('inputmin', 'inputmax'):
+            opts[s_.lower()] = darr(rest[k]).astype(F64)
+            del rest[k - 1:k + 1]
+    lo = darr(rest[0]).astype(F64) if len(rest) > 0 else np.float64(0.0)
+    hi = darr(rest[1]).astype(F64) if len(rest) > 1 else np.float64(1.0)
+    if x.size == 0:
+        return like_class(x, x0) if class_of(x0) == 'single' else out(x)
+    mn = opts.get('inputmin', np.float64(np.nanmin(x)) if np.any(~np.isnan(x)) else np.float64(np.nan))
+    mx = opts.get('inputmax', np.float64(np.nanmax(x)) if np.any(~np.isnan(x)) else np.float64(np.nan))
     with np.errstate(all='ignore'):
-        r = lo + (x - mn) / (mx - mn) * (hi - lo) if mx > mn else np.full(x.shape, lo)
-    return out(r)
+        xc = np.clip(x, mn, mx)
+        span = mx - mn
+        r = np.where(span > 0, lo + (xc - mn) / np.where(span > 0, span, 1) * (hi - lo), lo + 0 * xc)
+    return like_class(r, x0) if class_of(x0) == 'single' else out(r)
 
 
 @bi('normalize')

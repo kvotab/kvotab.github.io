@@ -14,7 +14,7 @@ import numpy as np
 
 from . import bi
 from ._util import (err, nargchk, noout, maxout, arr, darr, out, opt_str, sval, ival, num, is_str, bool_out,
-                    like_class, check_real)
+                    like_class, check_real, dim_arg, first_dim, expand_dims)
 from ..values import (MError, Char, Cell, Struct, Str, FH, Obj, F64, C128, INT_TYPES, INT_RANGE, DTYPE_CLASS, class_of, shape_of,
                       numel, _2d, scalar_out, EMPTY)
 from ..ops import finish, to_int_class, INT_CLASSES, align, check_bcast, round_half_away
@@ -126,9 +126,16 @@ def log2(nargout, *args):
 @bi('pow2')
 def pow2(nargout, *args):
     if len(args) == 2:
-        f = darr(args[0])
+        fv = args[0]
+        f, klass = _float_arg(fv, 'pow2')
         e = darr(args[1])
-        return out(np.ldexp(f, e.astype(int)) if np.all(e == np.round(e)) else f * 2.0 ** e)
+        f, e = align(np.asarray(f), e)
+        with np.errstate(all='ignore'):
+            if np.iscomplexobj(f) or not np.all(e == np.round(e)):
+                r = f * 2.0 ** e
+            else:
+                r = np.ldexp(f, e.astype(int))
+        return _finish(r, klass)
     a, klass = _float_arg(args[0], 'pow2')
     with np.errstate(all='ignore'):
         return _finish(2.0 ** np.asarray(a), klass)
@@ -168,11 +175,11 @@ def nthroot(nargout, *args):
 @bi('hypot')
 def hypot(nargout, *args):
     nargchk(args, 2, 2, 'hypot')
-    a = darr(args[0])
-    b = darr(args[1])
-    a, b = align(a, b)
+    a, ka = _float_arg(args[0], 'hypot')
+    b, kb = _float_arg(args[1], 'hypot')
+    a, b = align(np.asarray(a), np.asarray(b))
     check_bcast(a, b)
-    return out(np.hypot(np.abs(a), np.abs(b)))
+    return _finish(np.hypot(np.abs(a), np.abs(b)), 'single' if 'single' in (ka, kb) else 'double')
 
 
 # trigonometry
@@ -182,8 +189,17 @@ _elem('tan', np.tan, None, None, math.tan)
 _elem('sec', lambda x: 1 / np.cos(x), None, None, None)
 _elem('csc', lambda x: 1 / np.sin(x), None, None, None)
 _elem('cot', lambda x: 1 / np.tan(x), None, None, None)
-_elem('asin', np.arcsin, np.arcsin, lambda x: np.abs(x) <= 1, None)
-_elem('acos', np.arccos, np.arccos, lambda x: np.abs(x) <= 1, None)
+def _off_axis(z):
+    """Real values past 1 taken from below the real axis, past -1 from above
+    (the language's branches for asin and acos: acos(2) = 1.3170i)."""
+    z = np.array(z, dtype=np.result_type(z, np.complex64))
+    real = z.imag == 0
+    z.imag = np.where(real & (z.real > 1), -0.0, np.where(real & (z.real < -1), 0.0, z.imag))
+    return z
+
+
+_elem('asin', np.arcsin, lambda z: np.arcsin(_off_axis(z)), lambda x: np.abs(x) <= 1, None)
+_elem('acos', np.arccos, lambda z: np.arccos(_off_axis(z)), lambda x: np.abs(x) <= 1, None)
 _elem('atan', np.arctan, None, None, math.atan)
 _elem('asec', lambda x: np.arccos(1 / x), lambda z: np.arccos(1 / z), lambda x: np.abs(x) >= 1, None)
 _elem('acsc', lambda x: np.arcsin(1 / x), lambda z: np.arcsin(1 / z), lambda x: np.abs(x) >= 1, None)
@@ -202,15 +218,43 @@ _elem('acsch', lambda x: np.arcsinh(1 / x), None, None, None)
 _elem('acoth', lambda x: np.arctanh(1 / x), lambda z: np.arctanh(1 / z), lambda x: np.abs(x) >= 1, None)
 
 
+def _quadrant(x):
+    """x degrees as a quarter turn q (0 to 3) and the rest r in [-45, 45]
+    degrees, so that sin and cos are taken of small angles only."""
+    a = np.mod(x, 360.0)
+    q = np.round(a / 90.0)
+    r = a - 90.0 * q
+    return np.mod(q, 4).astype(np.intp), np.deg2rad(r)
+
+
 def _sind(x):
-    # exact zeros at whole multiples of 180
-    r = np.sin(np.deg2rad(np.mod(x, 360)))
-    return np.where(np.mod(x, 180) == 0, 0.0, r)
+    """sin of degrees: odd, exact at multiples of 90, accurate for any angle."""
+    a = np.abs(np.asarray(x, F64))
+    q, r = _quadrant(a)
+    s, c = np.sin(r), np.cos(r)
+    v = np.choose(q, [s, c, -s, -c])
+    v = np.where(r == 0, np.choose(q, [0.0, 1.0, 0.0, -1.0]), v)
+    return np.where(np.isfinite(a), np.sign(x) * v + 0.0, np.nan)
 
 
 def _cosd(x):
-    r = np.cos(np.deg2rad(np.mod(x, 360)))
-    return np.where(np.mod(x - 90, 180) == 0, 0.0, r)
+    """cos of degrees: even, exact at multiples of 90, accurate for any angle."""
+    a = np.abs(np.asarray(x, F64))
+    q, r = _quadrant(a)
+    s, c = np.sin(r), np.cos(r)
+    v = np.choose(q, [c, -s, -c, s])
+    v = np.where(r == 0, np.choose(q, [1.0, 0.0, -1.0, 0.0]), v)
+    return np.where(np.isfinite(a), v + 0.0, np.nan)
+
+
+def _sind_c(z):
+    a, b = z.real, np.deg2rad(z.imag)
+    return _sind(a) * np.cosh(b) + 1j * _cosd(a) * np.sinh(b)
+
+
+def _cosd_c(z):
+    a, b = z.real, np.deg2rad(z.imag)
+    return _cosd(a) * np.cosh(b) - 1j * _sind(a) * np.sinh(b)
 
 
 def _tand(x):
@@ -223,18 +267,19 @@ def _tand(x):
     return r
 
 
-_elem('sind', _sind, None, None, None)
-_elem('cosd', _cosd, None, None, None)
-_elem('tand', _tand, None, None, None)
-_elem('secd', lambda x: 1 / _cosd(x), None, None, None)
-_elem('cscd', lambda x: 1 / _sind(x), None, None, None)
-_elem('cotd', lambda x: 1 / _tand(x), None, None, None)
-_elem('asind', lambda x: np.rad2deg(np.arcsin(x)), lambda z: np.rad2deg(np.arcsin(z)), lambda x: np.abs(x) <= 1, None)
-_elem('acosd', lambda x: np.rad2deg(np.arccos(x)), lambda z: np.rad2deg(np.arccos(z)), lambda x: np.abs(x) <= 1, None)
-_elem('atand', lambda x: np.rad2deg(np.arctan(x)), None, None, None)
-_elem('asecd', lambda x: np.rad2deg(np.arccos(1 / x)), lambda z: np.rad2deg(np.arccos(1 / z)), lambda x: np.abs(x) >= 1, None)
-_elem('acscd', lambda x: np.rad2deg(np.arcsin(1 / x)), lambda z: np.rad2deg(np.arcsin(1 / z)), lambda x: np.abs(x) >= 1, None)
-_elem('acotd', lambda x: np.rad2deg(np.arctan(1 / x)), None, None, None)
+_R2D = 180 / np.pi
+_elem('sind', _sind, _sind_c, None, None)
+_elem('cosd', _cosd, _cosd_c, None, None)
+_elem('tand', _tand, lambda z: _sind_c(z) / _cosd_c(z), None, None)
+_elem('secd', lambda x: 1 / _cosd(x), lambda z: 1 / _cosd_c(z), None, None)
+_elem('cscd', lambda x: 1 / _sind(x), lambda z: 1 / _sind_c(z), None, None)
+_elem('cotd', lambda x: 1 / _tand(x), lambda z: _cosd_c(z) / _sind_c(z), None, None)
+_elem('asind', lambda x: np.arcsin(x) * _R2D, lambda z: np.arcsin(z) * _R2D, lambda x: np.abs(x) <= 1, None)
+_elem('acosd', lambda x: np.arccos(x) * _R2D, lambda z: np.arccos(z) * _R2D, lambda x: np.abs(x) <= 1, None)
+_elem('atand', lambda x: np.arctan(x) * _R2D, lambda z: np.arctan(z) * _R2D, None, None)
+_elem('asecd', lambda x: np.arccos(1 / x) * _R2D, lambda z: np.arccos(1 / z) * _R2D, lambda x: np.abs(x) >= 1, None)
+_elem('acscd', lambda x: np.arcsin(1 / x) * _R2D, lambda z: np.arcsin(1 / z) * _R2D, lambda x: np.abs(x) >= 1, None)
+_elem('acotd', lambda x: np.arctan(1 / x) * _R2D, lambda z: np.arctan(1 / z) * _R2D, None, None)
 _elem('sinpi', lambda x: np.where(np.mod(x, 1) == 0, 0.0, np.sin(np.pi * np.mod(x, 2))), None, None, None)
 _elem('cospi', lambda x: np.where(np.mod(x - 0.5, 1) == 0, 0.0, np.cos(np.pi * np.mod(x, 2))), None, None, None)
 _elem('deg2rad', lambda x: x * (np.pi / 180), None, None, lambda x: x * (math.pi / 180))
@@ -350,7 +395,7 @@ def _modrem(args, name):
         q = x / y
         rq = round(q)
         if abs(q - rq) <= 2.220446049250313e-16 * abs(q):
-            n = rq
+            return 0.0                  # a whole multiple, within rounding
         else:
             n = math.floor(q) if name == 'mod' else math.trunc(q)
         r = x - n * y
@@ -392,6 +437,7 @@ def _modrem(args, name):
             r = np.where(B == 0, np.nan, r)
             r = np.where(np.isinf(B) & np.isfinite(A), A, r)
         r = np.where(np.isinf(A), np.nan, r)
+        r = np.where(near & np.isfinite(q) & (B != 0), 0.0, r)      # a whole multiple, within rounding
         r = np.where(r == 0, 0.0, r)
     return finish(r, klass)
 
@@ -735,18 +781,41 @@ def isfinite(nargout, *args):
     return out(np.isfinite(a) if a.dtype.kind in 'fc' else np.ones(a.shape, bool))
 
 
+def _cplxpair_vec(a, tol):
+    """One vector's complex conjugate pairs (the one with negative imaginary
+    part first, by increasing real part), then its real values, increasing."""
+    lim = tol * np.maximum(np.abs(a), 1.0)
+    real = np.abs(a.imag) <= lim
+    re_ = np.sort(a[real].real)
+    cx = list(a[~real])
+    cx.sort(key=lambda z: (z.real, z.imag))
+    out_l = []
+    while cx:
+        z = cx.pop(0)
+        k = next((i for i, w in enumerate(cx) if abs(w - z.conjugate()) <= 2 * tol * max(abs(z), 1.0)), None)
+        if k is None:
+            raise err('MATLAB:cplxpair:ComplexValuesPaired', 'Complex numbers can not be paired.', 'cplxpair')
+        w = cx.pop(k)
+        lo, hi = (z, w) if z.imag < 0 else (w, z)
+        # a pair takes the mean of its two, conjugated
+        m = complex((lo.real + hi.real) / 2, (abs(lo.imag) + abs(hi.imag)) / 2)
+        out_l += [m.conjugate(), m]
+    return np.concatenate([np.array(out_l, C128), re_.astype(C128)])
+
+
 @bi('cplxpair')
 def cplxpair(nargout, *args):
-    a = darr(args[0]).reshape(-1)
-    re = a[np.abs(a.imag) <= 100 * np.finfo(float).eps * np.abs(a)]
-    cx = a[np.abs(a.imag) > 100 * np.finfo(float).eps * np.abs(a)]
-    neg = sorted([z for z in cx if z.imag < 0], key=lambda z: (z.real, z.imag))
-    out_l = []
-    for z in neg:
-        out_l += [z, z.conjugate()]
-    out_l += sorted(re.real)
-    r = np.array(out_l, dtype=C128)
-    return out(r.reshape(-1, 1) if args[0].shape[0] != 1 else r.reshape(1, -1))
+    nargchk(args, 1, 3, 'cplxpair')
+    a = arr(args[0]).astype(C128)
+    tol = num(args[1]) if len(args) > 1 and numel(args[1]) else 100 * np.finfo(float).eps
+    if a.size == 0:
+        return out(a.real)
+    dim = dim_arg(args[2], 'cplxpair') if len(args) > 2 else first_dim(a.shape)
+    A = np.moveaxis(expand_dims(a, dim), dim, -1)
+    r = np.empty(A.shape, C128)
+    for idx in np.ndindex(A.shape[:-1]):
+        r[idx] = _cplxpair_vec(A[idx], tol)
+    return out(np.moveaxis(r, -1, dim))
 
 
 @bi('unwrap')
@@ -832,15 +901,20 @@ def nchoosek(nargout, *args):
         if r > 2 ** 53:
             from .. import runtime as R
             R.warn('MATLAB:nchoosek:LargeCoefficient', f'Result may not be exact. Coefficient is greater than 9.007199e+15 and is only accurate to 15 digits')
-        return float(r)
-    a = arr(v).reshape(-1)
+        # the class as arithmetic on n and k would give it: an integer class, else single, else double
+        classes = [class_of(v), class_of(args[1])]
+        ints = [c for c in classes if c in INT_TYPES]
+        if ints:
+            return finish(np.array([[r]], dtype=F64), ints[0])
+        return finish(np.array([[r]], dtype=F64), 'single') if 'single' in classes else float(r)
+    if k < 0:
+        raise err('MATLAB:nchoosek:KOutOfRange', 'K must be an integer between 0 and N.', 'nchoosek')
+    a = v.a.reshape(-1, order='F') if type(v) is Cell else arr(v).reshape(-1, order='F')
     combos = list(itertools.combinations(range(a.size), k))
-    if not combos:
-        return out(np.zeros((0, k), a.dtype))
-    idx = np.array(combos)
+    idx = np.array(combos, dtype=np.intp).reshape(len(combos), k)
     r = a[idx]
     if type(v) is Cell:
-        return v
+        return Cell(r)
     return like_class(r, v) if type(v) is not Char else _char_out(r)
 
 
@@ -851,15 +925,22 @@ def _char_out(r):
 
 @bi('primes')
 def primes(nargout, *args):
-    n = int(math.floor(num(args[0])))
-    if n < 2:
-        return np.zeros((1, 0))
+    nargchk(args, 1, 1, 'primes')
+    v = args[0]
+    x = num(v)
+    klass = class_of(v) if class_of(v) not in ('logical', 'char') else 'double'
+    if not x >= 2:          # also -Inf and NaN
+        return like_class(np.zeros((1, 0)), v) if klass != 'double' else np.zeros((1, 0))
+    if x == math.inf:
+        raise err('MATLAB:primes:InputMustBeFinite', 'The input must be finite.', 'primes')
+    n = int(math.floor(x))
     sieve = np.ones(n + 1, bool)
     sieve[:2] = False
     for i in range(2, int(n ** 0.5) + 1):
         if sieve[i]:
             sieve[i * i::i] = False
-    return out(np.flatnonzero(sieve).astype(F64).reshape(1, -1))
+    p = np.flatnonzero(sieve).reshape(1, -1)
+    return out(p.astype(F64)) if klass == 'double' else finish(p, klass)
 
 
 @bi('isprime')
@@ -1132,7 +1213,17 @@ def ellipj(nargout, *args):
     u = darr(args[0])
     m = darr(args[1])
     u, m = align(u, m)
-    sn, cn, dn, ph = sp.ellipj(u, m)
+    if np.iscomplexobj(u):
+        # u = x + iy (Abramowitz and Stegun 16.21): from the functions of x with m and of y with 1 - m
+        x, y = u.real, u.imag
+        s_, c, d, _ = sp.ellipj(x, m)
+        s1, c1, d1, _ = sp.ellipj(y, 1 - m)
+        den = c1 ** 2 + m * s_ ** 2 * s1 ** 2
+        sn = (s_ * d1 + 1j * c * d * s1 * c1) / den
+        cn = (c * c1 - 1j * s_ * d * s1 * d1) / den
+        dn = (d * c1 * d1 - 1j * m * s_ * c * s1) / den
+    else:
+        sn, cn, dn, ph = sp.ellipj(u, m)
     res = (out(sn), out(cn), out(dn))
     return res[0] if nargout <= 1 else res[:nargout]
 
