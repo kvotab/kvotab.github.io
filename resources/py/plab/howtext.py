@@ -946,7 +946,7 @@ eval:
 evalc:
     Python: core.py. eval with the Command Window's output kept aside: what the text prints is returned as text instead of shown.
 feval:
-    Python: core.py and runtime.py. Calls the function handle, or looks the name up as a call does (a local function, a file on the path, then a builtin) and calls it with the arguments.
+    Python: core.py and runtime.py. Calls the function handle, or looks the name up as a call does (a local function, a file on the path, then a builtin) and calls it with the arguments. A fit or fittype (curvefit.py) is evaluated instead.
 builtin:
     Python: core.py. Calls the builtin of that name from the table of builtins, passing over any file of the same name on the path.
 func2str, str2func:
@@ -1877,6 +1877,63 @@ rceps:
     Python: signal.py. real(numpy.fft.ifft(log(abs(numpy.fft.fft(x))))); the minimum-phase signal from the cepstrum folded onto its positive times and exponentiated back.
 dct, idct:
     Python: signal.py. scipy.fft.dct and idct with norm 'ortho' (type 2 unless asked) along the first dimension whose size is not 1.
+fitlm:
+    Python: regression.py. The formula (or model spec) is expanded into terms: a*b gives every product of the factors' subsets, a:b one product, a^k the powers up to k with their products, and - removes terms; a categorical variable gives a dummy column for each level but the first, named var_level. The design matrix is solved by numpy.linalg.lstsq on the rows weighted by the square roots of the weights, the covariance is the residual variance times pinv(X'WX), and t, p, R-squared, the log-likelihood and the criteria follow from the residuals. Terms keep the order of the variables in the table. 'RobustOpts' runs robustfit's iteratively reweighted least squares and takes the final weights into the covariance.
+fitglm, glmfit:
+    Python: regression.py. Iteratively reweighted least squares from mu started at (N*y + 0.5)/(N + 1) for the binomial, y + 0.25 for the Poisson, or y: the working response eta + (y - mu)*g'(mu) solved with weights w/(g'(mu)^2 V(mu)) by numpy.linalg.lstsq, until the deviance changes by less than 1e-10 of itself (at most 100 times). V is mu(1 - mu)/N, mu, mu^2 or mu^3. The dispersion is 1 for the binomial and Poisson (unless DispersionFlag or estdisp asks), else the Pearson chi-square over the error degrees of freedom; the covariance is it times the inverse of X'WX, with normal p-values when the dispersion is fixed and t otherwise.
+fitnlm, nlinfit:
+    Python: regression.py. scipy.optimize.least_squares with the Levenberg-Marquardt method (trust region reflective when there are fewer observations than coefficients) on the weighted residuals, tolerances 1e-8; the Jacobian at the answer by forward differences; MSE is the weighted residual sum of squares over n - p and the covariance MSE*pinv(J'WJ).
+predict:
+    Python: regression.py. For a linear model the design matrix of the new rows times the coefficients; the bounds are t(1 - alpha/2, DFE) (or, simultaneous, the square root of p*F(1 - alpha, p, DFE)) times the square root of x*Cov*x' (plus MSE for 'observation'). For a generalized linear model the inverse link of the linear predictor, the bounds taken through the inverse link; for a nonlinear model the model function and its Jacobian by forward differences.
+coefCI:
+    Python: regression.py. Each coefficient plus and minus t(1 - alpha/2, DFE) times its standard error (the normal quantile for a generalized linear model of fixed dispersion).
+coefTest:
+    Python: regression.py. F = (Hb - c)'(H Cov H')^-1 (Hb - c)/r, with r the rank of H, against the F distribution with r and DFE degrees of freedom.
+anova:
+    Python: regression.py. Each term's sum of squares is how much the residual sum of squares grows when that term's columns are taken out (the others kept); F is its mean square over the error mean square. 'summary' splits the total sum of squares about the mean into model and residual.
+plotResiduals:
+    Python: regression.py. histogram, plot or normplot of the raw residuals, as asked.
+regress:
+    Python: regression.py. numpy.linalg.lstsq; bint from the covariance s^2 pinv(X'X) and t(1 - alpha/2, n - p); rint each residual plus and minus t(1 - alpha/2, n - p - 1) times the standard deviation with that row left out times sqrt(1 - h); stats [R^2, F, p, s^2] with R^2 from the sum of squares about the mean.
+robustfit:
+    Python: regression.py. Least squares to start, then repeatedly: the residuals divided by sqrt(1 - h) (h the leverages of the weighted design), the scale s = median of their absolute values (the p - 1 smallest left out)/0.6745, the weights wfun(r/(tune*s)), and weighted least squares again, until no coefficient moves by more than 1e-6 of the largest (at most 50 times). The tuning constants are bisquare 4.685, andrews 1.339, cauchy 2.385, fair 1.400, huber 1.345, logistic 1.205, talwar 2.795 and welsch 2.985.
+ridge:
+    Python: regression.py. The predictors centred and divided by their standard deviations (n - 1), the response centred, and (Z'Z + k I) b = Z'y solved for each k; scaled 0 divides b by the standard deviations and puts mean(y) - mean(X)*b first.
+glmval:
+    Python: regression.py. The inverse link of [1 X]*b (X*b with 'constant' 'off') plus the offset, times size; the bounds from the covariance in stats through the inverse link, with t(1 - (1 - confidence)/2, dfe) when the dispersion was estimated and the normal quantile when not.
+nlparci:
+    Python: regression.py. beta plus and minus t(1 - alpha/2, n - p) times the square roots of the diagonal of the covariance, given or made from the Jacobian as (R'R/(n - p))*pinv(J'J).
+nlpredci:
+    Python: regression.py. The model at X, its Jacobian in the coefficients by forward differences, and delta = t(1 - alpha/2, n - p) (or with SimOpt the square root of p*F) times the square root of J*Cov*J' (plus the MSE for 'observation').
+partialcorr:
+    Python: regression.py. For X alone the inverse of its correlation matrix P, rho = -P_ij/sqrt(P_ii P_jj); with z, the correlation of the residuals of x and y after least squares on [1 z]. The p-values from t = rho sqrt(df/(1 - rho^2)) with df = n - 2 - the number of variables held fixed. 'Spearman' ranks each column first (scipy.stats.rankdata).
+randg:
+    Python: regression.py. gamrnd(a, 1), drawn from the language's random number generator.
+fit:
+    Python: curvefit.py. A model linear in its coefficients (poly, a cell of terms) is solved by numpy.linalg.lstsq on the weighted rows; others by scipy.optimize.least_squares with the trust region reflective method (bounds from Lower and Upper, scaled by the Jacobian, tolerances 1e-8 or TolFun, MaxFunEvals 600), starting from StartPoint or a start worked out from the data: exp1 from a line through log|y|, power from a line in log-log, gauss from the largest peaks and the widths above half their heights (each taken off before the next), sin and fourier from the strongest frequencies in the FFT of the data resampled evenly, rat from least squares of y times the denominator, weibull from a = 1, b = 2. Without a start, every coefficient starts at 1, with a warning. Robust 'Bisquare' and 'LAR' reweight the fit as robustfit does (bisquare weights of the leverage-adjusted residuals over the median absolute deviation, or 1/|r|) until the coefficients stop moving. confint and predint use the covariance from the residual variance and the Jacobian. Interpolants are numpy.interp, scipy.interpolate.interp1d ('nearest'), PchipInterpolator and CubicSpline (not-a-knot).
+    smoothingspline: PyLAB's own: the Reinsch form (Green and Silverman) of the spline minimizing p*sum(w r^2) + (1 - p)*integral(f''^2), solved with a banded Cholesky factor (scipy.linalg.cholesky_banded), then the natural cubic spline through the fitted values. Without SmoothingParam, p is chosen by generalized cross-validation: n*sum(w r^2)/trace(I - A)^2, with the trace from the band of the inverse (Hutchinson and de Hoog), over a grid of 31 values of lambda = (1 - p)/p and refined around the best; fits with less than one residual degree of freedom are left out. With unit weights this is SciPy's make_smoothing_spline choice.
+fittype:
+    Python: curvefit.py. A library name gives the model's formula, coefficients and start; an expression is made elementwise (* / ^ as .* ./ .^) and compiled as an anonymous function of its coefficients and x; a cell of terms becomes a basis of columns for a linear model.
+fitoptions:
+    Python: curvefit.py. A struct of Method, Robust, StartPoint, Lower and Upper (Method from the model's kind), with the options given; fit reads its fields as it reads options given by name.
+confint:
+    Python: curvefit.py. Each coefficient plus and minus t((1 + level)/2, dfe) times its standard error.
+predint:
+    Python: curvefit.py. The Jacobian of the model in the coefficients at x (the basis for a linear model, forward differences otherwise), the variance J*Cov*J' (plus the residual variance for 'observation'), and t((1 + level)/2, dfe), or for simopt 'on' the square root of k*F(level, k, dfe) with k the number of coefficients (one more for 'observation').
+coeffvalues, coeffnames, numcoeffs:
+    Python: curvefit.py. The fit's coefficients and their names as the model has them.
+differentiate:
+    Python: curvefit.py. numpy.polyder for a polynomial, the spline's own derivatives for an interpolant or smoothing spline, and otherwise central differences extrapolated from steps of 1e-3*max(|x|, 1) and half that.
+integrate:
+    Python: curvefit.py. numpy.polyint for a polynomial, the spline's own integral for an interpolant or smoothing spline, and otherwise scipy.integrate.quad.
+smooth:
+    Python: curvefit.py. 'moving': the mean over the span (made odd), the window narrowing symmetrically at the ends. 'lowess' and 'loess': at each point a line (or a quadratic) fitted by weighted least squares to the span nearest points with tricube weights (1 - (d/dmax)^3)^3; 'rlowess' and 'rloess' then five more passes with bisquare weights of the residuals over 6 times their median absolute value. 'sgolay': scipy.signal.savgol_filter with mode 'interp'.
+islocalmax, islocalmin:
+    Python: datafeatures.py. Runs of equal values higher than both neighbours (never touching an end); the prominence from scipy.signal.peak_prominences at the run's first sample; then MinProminence, MinSeparation (in the sample points, the most prominent first), MaxNumExtrema, and FlatSelection for where in the run to mark. islocalmin is islocalmax of -A.
+ischange:
+    Python: datafeatures.py. PyLAB's own: the segmentation of least total cost, each change costing Threshold: optimal partitioning with PELT's pruning (Killick, Fearnhead and Eckley) for 'mean', where a segment's cost is its sum of squared residuals about its mean; for 'linear' the squared residuals about its least-squares line (segments of at least 2), and for 'variance' its length times the log of its variance about its mean (segments of at least 3, the variance kept above a millionth of the data's), searched without pruning. MaxNumChanges uses dynamic programming over the number of segments and keeps the cheapest with at most that many changes.
+trenddecomp:
+    Python: datafeatures.py. PyLAB's own. 'ssa': the trajectory (Hankel) matrix of lag L (half the data unless given), numpy.linalg.svd, and each elementary component reconstructed by diagonal averaging. Components whose singular value is at or below the Gavish-Donoho hard threshold (omega(beta) times the median singular value) stay in the remainder; of the rest, those with less than one cycle in L samples (the largest frequency of their FFT) form the long-term trend, and the others are summed by period into seasonal trends, the largest first. 'stl': seasonal-trend decomposition by loess (Cleveland and others) with the inner loop run twice and no robustness passes: cycle-subseries smoothed by loess over 7 points, low-pass filtered by moving averages of the period, the period and 3 and a loess, and the trend by loess over the next odd number above 1.5*period/(1 - 1.5/7); several periods are taken off one after another.
 """
 
 

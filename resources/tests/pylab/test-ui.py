@@ -1639,6 +1639,22 @@ async def signal_processing(page):
     await command(page, 'close all')
 
 
+async def regression_fitting(page):
+    """Regression and curve fitting on the page's NumPy and SciPy: a linear model shown, a curve fit and its plot, and the residuals."""
+    out = await command(page, "close all; x = (1:20)'; y = 1 + 2*x + 0.3*cos(3*x); mdl = fitlm(x, y)")
+    check('in the page: fitlm shows the model, its estimates and R-squared',
+          ['Linear regression model:' in out, 'y ~ 1 + x1' in out, 'Estimate' in out, 'R-squared' in out], [True] * 4)
+    out = await command(page, "f = fit(x, y, 'poly1'); c = round(coeffvalues(f)*100), [tf, p] = islocalmax([1 3 2 5 4]); w = find(tf)")
+    check('fit gives the line; islocalmax finds the peaks', ['c =\n\n   200    98' in out[-400:], 'w =\n\n     2     4' in out[-400:]], [True, True])
+    await command(page, "figure; plot(f, x, y); figure; plotResiduals(mdl, 'fitted'); figure; plot(fit(x, y, 'smoothingspline'), x, y);")
+    await until(page, 'PL.app.figures.wins.size === 3')
+    await asyncio.sleep(0.8)
+    drawn = await page.ev("[...PL.app.figures.wins.values()].map(w => w.fig.axes.reduce((n, ax) => n + ax.children.length, 0))")
+    check('plot(f, x, y) draws the data and the fit; plotResiduals its points', [d >= 1 for d in drawn] + [drawn[0] >= 2], [True, True, True, True])
+    await shot(page, 'regression.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1647,6 +1663,7 @@ async def main():
         await editor_draws(page)
         await language_additions(page)
         await signal_processing(page)
+        await regression_fitting(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

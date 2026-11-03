@@ -2221,7 +2221,7 @@ isolate: An equation rearranged to have a variable alone on its left.
     e = isolate(eqn, x)
 argnames: The input variables of a symbolic function.
     v = argnames(f)
-formula: The formula of a symbolic function, as a symbolic expression.
+formula: The formula of a symbolic function, as a symbolic expression; of a fit or fittype, as text.
     e = formula(f)
 finverse: The inverse of a symbolic function of one variable.
     g = finverse(f)
@@ -2889,6 +2889,8 @@ str2func: A function handle from its text.
     fh = str2func('@(x) x.^2')
 feval: Call a function by handle or by name.
     [y1, y2, ...] = feval(fun, x1, x2, ...)
+    y = feval(f, x)
+    * f may be a fit (from fit), evaluated at x.
 
 # ---- programs and the workspace --------------------------------------------------------------
 disp: Show a value without its name.
@@ -3653,7 +3655,9 @@ plot: Lines and markers in 2-D.
     plot(x1, y1, x2, y2, ...)
     plot(..., 'Name', value)
     h = plot(...)
-    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'.
+    plot(f, x, y)
+    plot(f, x, y, 'residuals')
+    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'. plot(f, x, y) draws a fit (from fit) over its data; 'residuals' plots the residuals.
 plot3: Lines and markers in 3-D.
     plot3(x, y, z)
     plot3(x, y, z, LineSpec)
@@ -5317,6 +5321,164 @@ dct: The orthonormal discrete cosine transform (type II).
 idct: The inverse discrete cosine transform.
     x = idct(y)
     x = idct(y, n, dim)
+
+# ---- regression and curve fitting ------------------------------------------------------------------------------------------
+fitlm: A linear regression model: least squares of a response on its predictors.
+    mdl = fitlm(X, y)
+    mdl = fitlm(X, y, modelspec)
+    mdl = fitlm(tbl)
+    mdl = fitlm(tbl, 'y ~ x1 + x2*x3')
+    mdl = fitlm(..., 'Intercept', false, 'Weights', w, 'RobustOpts', 'on', 'CategoricalVars', vars, 'VarNames', names, 'Exclude', rows)
+    * modelspec is 'constant', 'linear' (the default), 'interactions', 'purequadratic', 'quadratic' or 'polyN', or a formula: + adds a term, - takes one away, * gives the terms and their products, : a product alone, ^ a power, and -1 leaves the intercept out. A categorical predictor becomes a dummy for each level but the first. With a table the last variable is the response unless ResponseVar says which.
+    * mdl.Coefficients is a table of Estimate, SE, tStat and pValue; mdl.Rsquared, mdl.RMSE, mdl.Residuals, mdl.Fitted, mdl.ModelCriterion, mdl.CoefficientCovariance and the rest are read as properties. Showing the model shows its formula, the table, R-squared and the F-statistic against the constant model.
+fitglm: A generalized linear model: a response from the normal, binomial, Poisson, gamma or inverse Gaussian distribution, its mean a function of the linear predictor.
+    mdl = fitglm(X, y)
+    mdl = fitglm(X, y, modelspec, 'Distribution', 'poisson')
+    mdl = fitglm(X, [k n], 'linear', 'Distribution', 'binomial')
+    mdl = fitglm(tbl, 'y ~ x1 + x2', 'Distribution', 'binomial', 'Link', 'probit')
+    mdl = fitglm(..., 'BinomialSize', n, 'Weights', w, 'Offset', o, 'DispersionFlag', true)
+    * The link is the distribution's canonical one unless Link names another ('identity', 'log', 'logit', 'probit', 'comploglog', 'loglog', 'reciprocal' or a power). A binomial response is a proportion with BinomialSize, or two columns of successes and trials. mdl.Deviance, mdl.Dispersion and the coefficients' table are read as properties; predict gives the mean.
+fitnlm: A nonlinear regression model: least squares of a model function's coefficients.
+    mdl = fitnlm(X, y, modelfun, beta0)
+    mdl = fitnlm(tbl, modelfun, beta0)
+    mdl = fitnlm(..., 'Weights', w, 'CoefficientNames', names)
+    * modelfun(b, X) gives the fitted values for coefficients b (a column for each predictor in X).
+predict: Predictions of a fitted model, with confidence bounds.
+    ypred = predict(mdl, Xnew)
+    [ypred, yci] = predict(mdl, Xnew)
+    [ypred, yci] = predict(mdl, Xnew, 'Alpha', 0.05, 'Prediction', 'observation', 'Simultaneous', true)
+    * The bounds are for the curve (the mean) unless Prediction is 'observation', which adds the residual variance. Xnew is a matrix of predictors or a table with the model's variables.
+coefCI: Confidence intervals of a model's coefficients.
+    ci = coefCI(mdl)
+    ci = coefCI(mdl, alpha)
+coefTest: A linear hypothesis test on a model's coefficients.
+    p = coefTest(mdl)
+    [p, F, r] = coefTest(mdl, H)
+    [p, F, r] = coefTest(mdl, H, c)
+    * Tests H*b = c (c is 0 unless given); with no H, that every coefficient but the intercept is 0.
+anova: The analysis of variance of a linear model.
+    tbl = anova(mdl)
+    tbl = anova(mdl, 'summary')
+    * For each term its sum of squares, degrees of freedom, mean square, F and p-value, then the error; 'summary' gives the total, the model and the residual.
+plotResiduals: The residuals of a fitted model, plotted.
+    plotResiduals(mdl)
+    plotResiduals(mdl, 'fitted')
+    plotResiduals(mdl, plottype)
+    * plottype is 'histogram' (the default), 'fitted' (against the fitted values), 'caseorder', 'lagged', or 'probability' (a normal probability plot).
+regress: Multiple linear regression: least squares of y on the columns of X.
+    b = regress(y, X)
+    [b, bint, r, rint, stats] = regress(y, X)
+    [...] = regress(y, X, alpha)
+    * Add a column of ones to X for an intercept. stats is [R-squared, F, its p-value, the error variance]; rint are intervals of the residuals, one that leaves out 0 marking an outlier.
+robustfit: Robust linear regression: iteratively reweighted least squares.
+    b = robustfit(X, y)
+    [b, stats] = robustfit(X, y, wfun, tune, const)
+    * wfun is 'bisquare' (the default), 'andrews', 'cauchy', 'fair', 'huber', 'logistic', 'talwar', 'welsch' or 'ols'; tune scales it. The intercept comes first unless const is 'off'. stats holds the standard errors, the weights w, the robust scale s and more.
+ridge: Ridge regression.
+    b = ridge(y, X, k)
+    b = ridge(y, X, k, scaled)
+    * A column of coefficients for each value in k. scaled 1 (the default) gives them for the predictors centred and scaled to unit standard deviation, without an intercept; scaled 0 on the data's scale, with the intercept first.
+glmfit: A generalized linear model's coefficients.
+    b = glmfit(X, y, distr)
+    [b, dev, stats] = glmfit(X, y, distr, 'link', link, 'constant', 'off', 'weights', w, 'offset', o, 'estdisp', 'on')
+    * distr is 'normal', 'binomial', 'poisson', 'gamma' or 'inverse gaussian'; a binomial y may be two columns, successes and trials. The intercept comes first.
+glmval: Predictions of a generalized linear model.
+    yhat = glmval(b, X, link)
+    [yhat, dylo, dyhi] = glmval(b, X, link, stats)
+    [...] = glmval(..., 'confidence', 0.95, 'size', n, 'offset', o, 'constant', 'off')
+    * With stats from glmfit the bounds yhat - dylo and yhat + dyhi.
+nlinfit: Nonlinear least squares.
+    beta = nlinfit(X, y, modelfun, beta0)
+    [beta, R, J, CovB, MSE] = nlinfit(X, y, modelfun, beta0)
+    [...] = nlinfit(..., 'Weights', w)
+    * modelfun(b, X) gives the fitted values; R are the residuals, J the Jacobian at beta, CovB the coefficients' covariance and MSE the residual variance.
+nlparci: Confidence intervals of nonlinear least-squares coefficients.
+    ci = nlparci(beta, R, 'Jacobian', J)
+    ci = nlparci(beta, R, 'Covar', CovB)
+    ci = nlparci(..., 'Alpha', alpha)
+nlpredci: Predictions of a nonlinear least-squares model, with half widths of their intervals.
+    [ypred, delta] = nlpredci(modelfun, X, beta, R, 'Jacobian', J)
+    [ypred, delta] = nlpredci(modelfun, X, beta, R, 'Covar', CovB, 'PredOpt', 'observation', 'Alpha', alpha, 'SimOpt', 'on')
+partialcorr: Partial correlations: each pair of variables with the others (or z) held fixed.
+    rho = partialcorr(X)
+    rho = partialcorr(x, z)
+    rho = partialcorr(x, y, z)
+    [rho, pval] = partialcorr(..., 'Type', 'Spearman')
+randg: Gamma random numbers of shape a and scale 1.
+    r = randg
+    r = randg(a)
+    r = randg(a, n)
+    r = randg(a, m, n, ...)
+    r = randg(a, [m n ...])
+fit: A curve fitted to data.
+    f = fit(x, y, fitType)
+    [f, gof, output] = fit(x, y, fitType)
+    f = fit(x, y, 'a*exp(-b*x) + c', 'StartPoint', [1 1 0])
+    f = fit(x, y, fitType, 'Lower', lb, 'Upper', ub, 'Weights', w, 'Exclude', out, 'Robust', 'Bisquare')
+    f = fit(x, y, 'smoothingspline', 'SmoothingParam', p)
+    f = fit(x, y, fitType, opts)
+    * fitType is a library model (poly1 to poly9, exp1, exp2, power1, power2, gauss1 to gauss8, sin1 to sin8, fourier1 to fourier8, rat01 to rat55, weibull), an interpolant (linearinterp, nearestinterp, pchipinterp, cubicinterp), smoothingspline, an expression in x, or a fittype. A model linear in its coefficients is solved directly; others start from the model's own guess (or StartPoint) and are fitted by nonlinear least squares within Lower and Upper. Robust is 'Off', 'Bisquare' (or 'On') or 'LAR'.
+    * f(x) and feval(f, x) evaluate the fit, plot(f, x, y) draws it with its data, and f.a reads a coefficient. gof holds sse, rsquare, dfe, adjrsquare and rmse; output the residuals, the Jacobian and how the fit went. Surfaces (fit([x, y], z, ...)) are not fitted here.
+fittype: A model to fit, from the library, an expression, terms or a function.
+    ft = fittype(libraryName)
+    ft = fittype('a*exp(-b*x) + c')
+    ft = fittype('a*u + b', 'independent', 'u', 'coefficients', {'a', 'b'})
+    ft = fittype({'x', 'sin(x)', '1'})
+    ft = fittype(@(a, b, x) a*exp(b*x))
+    * The coefficients of an expression are its names other than the independent variable and the functions it calls. A cell of terms makes a linear model with a coefficient for each (a, b, c ...). ft(a, b, ..., x) evaluates the model.
+fitoptions: Options for fit, as a struct.
+    opts = fitoptions('Method', 'NonlinearLeastSquares', 'StartPoint', s, 'Lower', lb, 'Upper', ub)
+    opts = fitoptions(fitType)
+    opts = fitoptions(fitType, 'Name', value, ...)
+confint: Confidence bounds of a fit's coefficients.
+    ci = confint(f)
+    ci = confint(f, level)
+    * A column for each coefficient: the lower bound above the upper. level is 0.95 unless given.
+predint: Prediction bounds of a fit.
+    ci = predint(f, x)
+    [ci, y] = predint(f, x, level, intopt, simopt)
+    * intopt is 'observation' (a new observation, the default) or 'functional' (the curve); simopt 'off' (each x alone, the default) or 'on' (all at once).
+coeffvalues: A fit's coefficients, as a row.
+    c = coeffvalues(f)
+coeffnames: The names of the coefficients of a fit or fittype, as a column.
+    names = coeffnames(f)
+numcoeffs: How many coefficients a fit or fittype has.
+    n = numcoeffs(f)
+differentiate: The derivatives of a fit.
+    fx = differentiate(f, x)
+    [fx, fxx] = differentiate(f, x)
+integrate: The integral of a fit.
+    y = integrate(f, x, x0)
+    * From x0 to each x.
+smooth: Smoothed data, as a column.
+    yy = smooth(y)
+    yy = smooth(y, span)
+    yy = smooth(y, method)
+    yy = smooth(y, span, method)
+    yy = smooth(y, span, 'sgolay', degree)
+    yy = smooth(x, y, ...)
+    * method is 'moving' (the default), 'lowess', 'loess', 'sgolay', 'rlowess' or 'rloess'; span is 5 points unless given, or a fraction of the data under 1. The moving average narrows its window at the ends.
+
+# ---- features of data ---------------------------------------------------------------------------------------------------------
+islocalmax: Where the local maxima of data are.
+    TF = islocalmax(A)
+    TF = islocalmax(A, dim)
+    [TF, P] = islocalmax(..., 'MinProminence', p, 'FlatSelection', 'center', 'MinSeparation', d, 'MaxNumExtrema', n, 'SamplePoints', t)
+    * A maximum is higher than the values on both sides; the ends never are. A flat top is marked at its centre, first, last or all of it. P are the prominences: how far each maximum stands above the higher of the lowest points between it and a higher one on either side. MinSeparation and MaxNumExtrema keep the most prominent first.
+islocalmin: Where the local minima of data are.
+    TF = islocalmin(A)
+    [TF, P] = islocalmin(A, dim, 'Name', value, ...)
+    * As islocalmax, of -A.
+ischange: Where abrupt changes in data begin.
+    TF = ischange(A)
+    TF = ischange(A, method)
+    [TF, S1, S2] = ischange(A, method, dim, 'Threshold', t, 'MaxNumChanges', k, 'SamplePoints', x)
+    * method is 'mean' (the default), 'variance' or 'linear'. The data are split where the sum of each segment's squared residuals (about its mean or line; for 'variance', its length times the log of its variance) plus Threshold for each change is least; MaxNumChanges asks instead for the best split with at most k changes. S1 and S2 are each segment's mean and variance, or slope and intercept for 'linear'.
+trenddecomp: Trends of data: long-term, seasonal and the remainder.
+    [LT, ST, R] = trenddecomp(A)
+    [LT, ST, R] = trenddecomp(A, 'ssa', lag)
+    [LT, ST, R] = trenddecomp(A, 'stl', period)
+    * LT + sum(ST, 2) + R is A. 'ssa' (singular spectrum analysis, the default, with a lag of half the data) finds seasonal trends of each period present, the largest first; 'stl' takes one or more periods and gives a seasonal trend for each.
 '''
 
 
