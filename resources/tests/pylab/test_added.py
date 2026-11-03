@@ -507,4 +507,50 @@ C("camtarget's mode", text(W['m1']) == 'manual' and text(W['m2']) == 'auto', (W[
 near('camup: [0 0 1], then the vector set', (W['u0'], W['u1']), [0, 0, 1, 1, 0, 0])
 near('camroll(90) looking down z: the up vector turned a quarter turn about z', W['u2'], [0, 0, 1], 1e-9)
 
+# ---- images and colours ------------------------------------------------------------------------------
+W, _ = run("""RGB = uint8(cat(3, [255 0; 0 128], [0 255; 0 128], [0 0; 255 128]));
+I = rgb2gray(RGB); ic = class(I); G = im2gray(RGB); same = isequal(G, I); I2 = im2gray(I);
+gm = rgb2gray([1 0 0; 0 1 0]); cg = cmap2gray([1 0 0; 0 1 0]);
+hsv = rgb2hsv([1 0 0; 0 1 0; 0 0 1; 1 1 0; 0.5 0.5 0.5]); back = hsv2rgb(hsv); h8 = rgb2hsv(RGB); hc = class(rgb2hsv(single([1 0 0])));
+M = rand(5, 7, 3); rt = max(abs(hsv2rgb(rgb2hsv(M)) - M), [], 'all');
+L = rgb2lightness([1 1 1; 0 0 0; 1 0 0; 0.5 0.5 0.5]); Li = rgb2lightness(ones(2, 3, 3)); lsz = size(Li);
+[X, map] = gray2ind([0 0.5 1; 0.25 0.75 1], 5); xc = class(X); [Xb, mb] = gray2ind(logical([1 0]));
+R = ind2rgb(double(X) + 1, map); R8 = ind2rgb(X, map); rs = isequal(R, R8); rsz = size(R);
+G8 = ind2gray(uint8([0 1 2]), [0 0 0; 0.5 0.5 0.5; 1 1 1]); gc = class(G8); Gd = ind2gray([1 3; 9 0], [0 0 0; 1 0 0; 1 1 1]);
+m1 = mat2gray([2 4; 6 10]); m2 = mat2gray([2 4; 6 10], [4 6]);
+[r, g, b] = imsplit(RGB); rsp = isequal(r, RGB(:,:,1)) && isequal(b, RGB(:,:,3));
+d8 = im2double(uint8([0 128 255])); u8 = im2uint8([0 0.5 1 NaN 2 -1]); u16 = im2uint16(uint8(255)); s1 = class(im2single(uint8(1)));
+ix = im2double(uint8([0 4]), 'indexed'); iu = im2uint8([1 5], 'indexed');
+[q, qm] = rgb2ind(RGB, 4, 'nodither'); nq = size(qm, 1); qc = class(q); rec = ind2rgb(q, qm); err = max(abs(rec - im2double(RGB)), [], 'all');
+[t, tm] = rgb2ind(RGB, 0.5, 'nodither'); nt = size(tm, 1);
+pm = rgb2ind(RGB, [1 0 0; 0 0 0; 1 1 1], 'nodither');
+[x, y] = meshgrid(linspace(0, 1, 64)); IM = cat(3, x, y, 1 - x.*y);
+[Xd, md] = rgb2ind(IM, 8); [Xn, mn] = rgb2ind(IM, 8, 'nodither');
+blk = @(A) squeeze(mean(mean(reshape(A, 8, 8, 8, 8, 3), 1), 3));
+ed = mean(abs(blk(ind2rgb(Xd, md)) - blk(IM)), 'all'); en = mean(abs(blk(ind2rgb(Xn, mn)) - blk(IM)), 'all'); nd = size(md, 1);
+[Xm, mm] = rgb2ind(IM, 300, 'nodither'); xmc = class(Xm);""")
+C('rgb2gray: 0.2989 R + 0.5870 G + 0.1140 B, rounded, of the class', np.array_equal(np.asarray(W['I']), [[76, 150], [29, 128]]) and text(W['ic']) == 'uint8', W['I'])
+C('im2gray: an RGB image as rgb2gray makes it, a gray one as it is', W['same'] is True and np.array_equal(np.asarray(W['I2']), np.asarray(W['I'])), W['same'])
+near('rgb2gray of a colormap, cmap2gray', (W['gm'], W['cg']), np.tile([0.298936021293775, 0.587043074451121], 6))
+near('rgb2hsv: red, green, blue, yellow and gray', W['hsv'], np.array([[0, 1, 1], [1 / 3, 1, 1], [2 / 3, 1, 1], [1 / 6, 1, 1], [0, 0, 0.5]]).reshape(-1, order='F').tolist())
+near('hsv2rgb back', W['back'], np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0], [0.5, 0.5, 0.5]]).reshape(-1, order='F').tolist())
+C('a round trip through HSV, an image; uint8 scaled; single stays single', W['rt'] < 1e-12 and abs(np.asarray(W['h8'])[1, 1, 2] - 128 / 255) < 1e-12 and text(W['hc']) == 'single', (W['rt'], W['hc']))
+near('rgb2lightness: white 100, black 0, red 53.24, gray 53.39', W['L'], [100, 0, 53.2408, 53.3889], 1e-3)
+near('... an image gives an M-by-N array', W['lsz'], [2, 3])
+C('gray2ind: n levels as uint8, map = gray(n)', np.array_equal(np.asarray(W['X']), [[0, 2, 4], [1, 3, 4]]) and text(W['xc']) == 'uint8' and np.allclose(np.asarray(W['map'])[:, 0], [0, 0.25, 0.5, 0.75, 1]), W['X'])
+C('... a binary image two', np.asarray(W['mb']).shape == (2, 3) and np.array_equal(np.asarray(W['Xb']), [[1, 0]]), W['Xb'])
+C('ind2rgb: double indices from 1, uint8 from 0, the same image', W['rs'] is True and list(np.asarray(W['rsz']).reshape(-1)) == [2, 3, 3], W['rsz'])
+C('ind2gray: of the class of X', np.array_equal(np.asarray(W['G8']), [[0, 127, 255]]) and text(W['gc']) == 'uint8', W['G8'])
+near('... indices past the ends take the first or last colour', W['Gd'], [0, 1, 1, 0])
+near('mat2gray: from the least to the largest; limits given, clipped', (W['m1'], W['m2']), [0, 0.5, 0.25, 1, 0, 1, 0, 1])
+C('imsplit: the channels', W['rsp'] is True, W['rsp'])
+near('im2double of uint8', W['d8'], [0, 128 / 255, 1])
+C('im2uint8: clipped and rounded, NaN 0; im2uint16 of uint8; im2single', np.array_equal(np.asarray(W['u8']), [[0, 128, 255, 0, 255, 0]]) and int(np.asarray(W['u16']).reshape(-1)[0]) == 65535 and text(W['s1']) == 'single', W['u8'])
+C("'indexed': 1 added for double, taken away for uint8", np.allclose(np.asarray(W['ix']), [[1, 5]]) and np.array_equal(np.asarray(W['iu']), [[0, 4]]), (W['ix'], W['iu']))
+C('rgb2ind(RGB, n): an image of four colours exactly, uint8 from 0', W['nq'] == 4 and text(W['qc']) == 'uint8' and W['err'] < 1e-12, (W['nq'], W['err']))
+C('rgb2ind(RGB, tol): the levels a channel, the colours not used left out', W['nt'] == 4, W['nt'])
+C('rgb2ind(RGB, map): the nearest colour', np.array_equal(np.asarray(W['pm']), [[0, 1], [1, 2]]), W['pm'])
+C('dithering keeps areas their colour: closer on average than the nearest colours', W['ed'] < W['en'] and W['nd'] == 8, (W['ed'], W['en']))
+C('more than 256 colours: uint16', text(W['xmc']) == 'uint16', W['xmc'])
+
 sys.exit(C.done())

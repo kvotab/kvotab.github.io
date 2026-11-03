@@ -4591,6 +4591,65 @@ trisurf: Draw triangles as a surface.
 trimesh: Draw triangles as a mesh.
     trimesh(TRI, x, y, z)
     trimesh(TRI, x, y, z, c)
+# ---- images and colours ---------------------------------------------------------------------------
+im2double: An image as double, its values from 0 to 1.
+    D = im2double(I)
+    D = im2double(X, 'indexed')
+    * uint8 values are divided by 255, uint16 by 65535, int16 shifted by 32768 first; logical and single become 0 and 1, double stays. An indexed image ('indexed') of class uint8 or uint16 counts its colours from 0, so 1 is added.
+im2single: An image as single, its values from 0 to 1.
+    S = im2single(I)
+    S = im2single(X, 'indexed')
+im2uint8: An image as uint8, its values from 0 to 255.
+    U = im2uint8(I)
+    U = im2uint8(X, 'indexed')
+    * double and single values are clipped to 0 to 1, times 255 and rounded (NaN becomes 0). An indexed image of class double counts its colours from 1, so 1 is taken away.
+im2uint16: An image as uint16, its values from 0 to 65535.
+    U = im2uint16(I)
+    U = im2uint16(X, 'indexed')
+rgb2gray: An RGB image or colormap made gray.
+    I = rgb2gray(RGB)
+    newmap = rgb2gray(map)
+    * Each pixel's gray level is 0.2989 R + 0.5870 G + 0.1140 B (the luma of NTSC's YIQ), of the class of RGB. A colormap gives a colormap of the gray levels.
+im2gray: An image made gray: an RGB image as rgb2gray makes it, a gray image as it is.
+    I = im2gray(A)
+cmap2gray: A colormap made gray: each colour's gray level (as rgb2gray gives it) in all three columns.
+    newmap = cmap2gray(map)
+mat2gray: A matrix scaled to a gray image from 0 to 1.
+    I = mat2gray(A)
+    I = mat2gray(A, [amin amax])
+    * amin becomes 0 and amax 1 (the least and largest values of A unless given); values beyond are clipped. A matrix with no range keeps its values, clipped to 0 to 1.
+rgb2hsv: RGB colours as hue, saturation and value.
+    HSV = rgb2hsv(RGB)
+    hsvmap = rgb2hsv(map)
+    * Each is from 0 to 1: the hue goes round red (0), yellow (1/6), green (1/3), cyan (1/2), blue (2/3) and magenta (5/6); a gray has hue and saturation 0. uint8 and uint16 colours are scaled to 0 to 1 first; single stays single.
+hsv2rgb: Hue, saturation and value as RGB colours.
+    RGB = hsv2rgb(HSV)
+    rgbmap = hsv2rgb(hsvmap)
+rgb2lightness: The lightness L* of RGB colours, from 0 (black) to 100 (white).
+    L = rgb2lightness(RGB)
+    L = rgb2lightness(map)
+    * The colours are sRGB, the white D65; L* is CIE 1976 L*a*b*'s. An M-by-N-by-3 image gives an M-by-N array, a c-by-3 colormap a column.
+ind2rgb: An indexed image as an RGB image.
+    RGB = ind2rgb(X, map)
+    * X of class double counts the colours of map from 1, uint8 and uint16 from 0; indices past the ends take the first or last colour. RGB is double.
+ind2gray: An indexed image as a gray image, each colour's gray level as rgb2gray gives it.
+    I = ind2gray(X, map)
+    * I has the class of X.
+gray2ind: A gray or binary image as an indexed image of gray levels.
+    [X, map] = gray2ind(I)
+    [X, map] = gray2ind(I, n)
+    * n levels (64 for a gray image, 2 for a binary one); map is gray(n). X is uint8, or uint16 for more than 256 levels, counting from 0.
+rgb2ind: An RGB image as an indexed image.
+    [X, map] = rgb2ind(RGB, n)
+    [X, map] = rgb2ind(RGB, tol)
+    X = rgb2ind(RGB, map)
+    [...] = rgb2ind(..., 'nodither')
+    * n: at most n colours, chosen by minimum variance quantization. tol, from 0 to 1: floor(1/tol)+1 levels a channel, the colours no pixel takes left out. map: the colours of a colormap given.
+    * Unless 'nodither', the colours are dithered (Floyd-Steinberg), so that areas keep their average colour. X is uint8 (uint16 for more than 256 colours), counting from 0.
+imsplit: The channels of a multichannel image, each as an array of its own.
+    [c1, c2, c3] = imsplit(RGB)
+    [c1, ..., ck] = imsplit(I)
+
 # ---- images, sound and the web ------------------------------------------------------------------
 imread: Read an image file.
     A = imread(filename)

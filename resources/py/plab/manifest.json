@@ -56,6 +56,7 @@
     "builtins/timetypes.py",
     "builtins/categoricals.py",
     "builtins/tables.py",
+    "builtins/imagecolor.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

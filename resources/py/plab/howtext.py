@@ -1651,6 +1651,26 @@ triplot:
     Python: geometry.py. plot of all the triangles' edges as one line, a NaN between triangles.
 trisurf, trimesh:
     Python: geometry.py. patch with Faces the triangles and Vertices [x y z], coloured by FaceVertexCData z (or c): flat faces with black edges for trisurf, white faces with coloured edges for trimesh; then view(3).
+# ---- imagecolor.py: images and colours ----------------------------------------------------------
+im2double, im2single, im2uint8, im2uint16:
+    Python: imagecolor.py. Each integer class mapped linearly from its range onto 0 to 1 (int16 from -32768 to 32767), then, for an integer result, onto that class's range with numpy.round after numpy.clip; NaN becomes 0. 'indexed' adds or takes away 1 instead, and refuses indices the class cannot hold.
+rgb2gray, im2gray, cmap2gray:
+    Python: imagecolor.py. A matrix product of the last dimension with the weights 0.298936021293775, 0.587043074451121 and 0.114020904255103, in double on the image's own values, then rounded and clipped for the integer classes.
+mat2gray:
+    Python: imagecolor.py. (A - amin)/(amax - amin) with numpy.clip to 0 to 1, the limits from the finite values unless given.
+rgb2hsv, hsv2rgb:
+    Python: imagecolor.py. The value is the largest of R, G and B and the saturation the spread over it; the hue the sector of the largest (red, then green, then blue taking ties) plus the difference of the other two over the spread, in sixths of a turn. Back, the sector numpy.floor(6h) picks which of v, v(1-s), v(1-sf) and v(1-s(1-f)) each of R, G and B is.
+rgb2lightness:
+    Python: imagecolor.py. sRGB's companding undone (c/12.92 up to 0.04045, ((c+0.055)/1.055)^2.4 above), the luminance Y = 0.2126729 R + 0.7151522 G + 0.0721750 B, and L* = 116 f(Y) - 16 with f the cube root above (6/29)^3 and the straight line below.
+ind2rgb, ind2gray:
+    Python: imagecolor.py. The indices (from 1 for double, from 0 for the integer classes) clipped to the colormap and used to index its rows (or the rows' gray levels).
+gray2ind:
+    Python: imagecolor.py. numpy.round of the image's values (0 to 1, clipped) times n - 1.
+rgb2ind:
+    Python: imagecolor.py. Minimum variance quantization is Wu's (Graphics Gems II, 1991): the colour cube in 32 slices a side, a histogram with each cell's count, sums and sum of squares accumulated so that any box's moments come from eight corners; the box of largest summed variance is cut next, on the axis and at the place where the two halves' variance falls most, until there are n boxes, whose mean colours are the colormap. Without dithering each pixel takes the nearest colour (scipy.spatial.cKDTree). Dithering is Floyd and Steinberg's error diffusion in raster order (7/16 to the right, 3/16, 5/16 and 1/16 below), the nearest colour of each corrected value read from a table of the nearest colour to the middle of each of 32 slices a side.
+imsplit:
+    Python: imagecolor.py. Each slice I(:,:,k), copied.
+
 # ---- media.py: images, sound and the web --------------------------------------------------------
 imread, imfinfo:
     Python: media.py. Pillow (PIL.Image.open; in the page, Pyodide loads the package the first time) reads the file; its pixels become a NumPy array by the image's mode: gray as m-by-n uint8 (16-bit as uint16), colour as m-by-n-by-3, an alpha channel as the third output, a palette image as indices with the palette as a colormap of values 0 to 1. imfinfo takes the size, mode and format from the same image and the file's size and date from os.stat.
