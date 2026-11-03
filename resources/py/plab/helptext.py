@@ -1090,6 +1090,135 @@ fishertest: Fisher's exact test of independence in a 2-by-2 table of counts.
     [h, p, stats] = fishertest(x, 'Alpha', alpha, 'Tail', tail)
     * stats has the odds ratio and its confidence interval (Woolf's, on the log scale).
 
+# ---- sensitivity analysis and sampling ------------------------------------------------------------
+lhsdesign: A Latin hypercube sample in the unit hypercube.
+    X = lhsdesign(n, p)
+    X = lhsdesign(n, p, 'criterion', c, 'iterations', k)
+    X = lhsdesign(n, p, 'smooth', 'off')
+    * Each column has one point in each of n equal slices of 0 to 1, the slices in random order. c: 'maximin' (the default: of k samples, 5 unless given, the one whose closest two points are farthest apart), 'correlation' (the one whose columns are least correlated) or 'none'. 'smooth', 'off' puts each point in the middle of its slice.
+    * To sample a distribution, map a column through its inverse cdf: norminv(X(:, 1), mu, sigma), icdf(pd, X(:, 2)).
+lhsnorm: A Latin hypercube sample of a multivariate normal distribution.
+    X = lhsnorm(mu, Sigma, n)
+    X = lhsnorm(mu, Sigma, n, 'off')
+    [X, Z] = lhsnorm(...)
+    * A normal sample Z of mean mu and covariance Sigma whose columns are given one value from each of n slices of equal probability, in the order of their ranks, so that the correlations stay. 'off' takes the middle of each slice.
+sobolset: Sobol's low-discrepancy sequence, as a point set.
+    p = sobolset(d)
+    p = sobolset(d, 'Skip', k, 'Leap', l)
+    * Read its points with net(p, n) or p(rows, cols); scramble(p) randomizes it. 'Skip' leaves out the first k points, 'Leap' takes every (l+1)th.
+haltonset: Halton's low-discrepancy sequence, as a point set.
+    p = haltonset(d)
+    p = haltonset(d, 'Skip', k, 'Leap', l)
+net: The first points of a point set.
+    X = net(p, n)
+scramble: A point set scrambled, its points still spread evenly.
+    p2 = scramble(p)
+    p2 = scramble(p, 'MatousekAffineOwen')
+    p2 = scramble(p, 'RR2')
+    p2 = scramble(p, 'clear')
+src: Standardized regression coefficients: how much the output moves with each input, the others held, in standard deviations.
+    S = src(X, Y)
+    [S, R2] = src(X, Y)
+    * X has a row per run and a column per input, Y the outputs (a column per output for several). S has a row per input. R2 is the regression's R²: below about 0.7 the model is too far from linear for the coefficients to tell much.
+srrc: Standardized rank regression coefficients: src of the ranks, for a monotone model that is not linear.
+    S = srrc(X, Y)
+    [S, R2] = srrc(X, Y)
+pcc: Partial correlation coefficients: the correlation of the output with each input, the other inputs' effects removed from both.
+    P = pcc(X, Y)
+prcc: Partial rank correlation coefficients: pcc of the ranks.
+    P = prcc(X, Y)
+firstorderindex: A first-order Sobol index of each input, read off any sample by binning.
+    S1 = firstorderindex(X, Y)
+    S1 = firstorderindex(X, Y, 'Bins', b)
+    * The runs sorted by the input and cut into b bins of equal count (the square root of the runs, 4 to 50): the variance of the bins' means over the output's, less what chance gives.
+easi: EASI's first-order index of each input, read off any sample.
+    S1c = easi(X, Y)
+    [S1c, S1] = easi(X, Y, 'Harmonics', h)
+    * S1c has the bias a random sample leaves taken off; S1 not.
+deltamoment: Borgonovo's moment-independent δ: how far knowing an input moves the output's whole distribution.
+    T = deltamoment(X, Y)
+    T = deltamoment(X, Y, 'Resamples', r, 'Confidence', c, 'Names', names)
+    * A table of δ, the δ adjusted for the bias a bootstrap measures, and the interval around it. Read on the output's normal scores, so a monotone transformation of the output does not change it.
+mutualinfo: The mutual information between each input and the output, and how much of it chance would give.
+    T = mutualinfo(X, Y)
+    T = mutualinfo(X, Y, 'Shuffles', s, 'Confidence', c)
+    * A table of MI (in bits, on ranks), Chance (the level Y shuffled gives) and Above (what is above that).
+pawn: PAWN: how much the output's distribution changes when an input is held to a slice of its range.
+    T = pawn(X, Y)
+    T = pawn(X, Y, 'Slides', s)
+    * Each input cut into s slices of equal count (10); the Kolmogorov-Smirnov distance between the output's distribution in each slice and overall. A table of the distances' minimum, mean, median (the index usually reported), maximum, spread and coefficient of variation.
+discrepancyshares: Each input's share of the discrepancy of the points (input, output).
+    S = discrepancyshares(X, Y)
+    S = discrepancyshares(X, Y, 'Method', m)
+    * m: 'WD' (wrap-around, the default), 'CD', 'MD' or 'L2-star'. An input the output does not depend on spreads the points evenly and has a small share. The cost grows with the square of the runs.
+rsa: Regional sensitivity analysis: which inputs separate the runs whose output is high from the rest.
+    T = rsa(X, Y)
+    T = rsa(X, Y, threshold)
+    [T, chance] = rsa(X, Y, threshold, 'Dummies', d)
+    * The runs above the threshold (the mean of Y unless given) against the rest; T has each input's Kolmogorov-Smirnov distance between its two distributions and the test's p-value. chance is the distance's mean and standard deviation for d (10) random inputs the output never saw.
+morrisdesign: The runs for Morris's elementary effects.
+    [X, D] = morrisdesign(K)
+    [X, D] = morrisdesign(names)
+    [X, D] = morrisdesign(K, 'Trajectories', r, 'Points', m, 'Levels', p)
+    [X, D] = morrisdesign(K, 'Design', 'trajectories', 'Candidates', c)
+    * X is in the unit hypercube, a row per run: map each column to its input's distribution, run the model, and give the outputs to morrisindices with D. K inputs (or their names).
+    * 'Design', 'walks' (the default): r random walks (10) of m runs (10), each step one input one level up or down on a grid of p levels (100). 'trajectories': Morris's own, K + 1 runs each, every input moved once by half the levels; c candidates drawn and the r most spread out kept.
+morrisindices: Morris's elementary effects, from the runs of morrisdesign.
+    T = morrisindices(D, Y)
+    T = morrisindices(D, Y, 'Relative', true, 'Resamples', r)
+    * A table of MuStar (the mean of the effects' magnitudes: how much the input matters), MuStarConf (its bootstrap half-width), Mu (the mean effect: which way), Sigma (their spread: a curve or an interaction) and Count. 'Relative' divides each effect by the output.
+soboldesign: Saltelli's design for Sobol's indices.
+    [X, D] = soboldesign(N, K)
+    [X, D] = soboldesign(N, K, 'Second', true, 'Blocks', b, 'Sampling', s)
+    * Two samples A and B of N runs and, for each input, A with that input's column from B: (K + 2)N runs; 'Second' adds B with each column from A, (2K + 2)N, for every pair's index. 'Blocks' repeats it for an interval from the spread between blocks. s: 'lhs' (the default), 'random' or 'sobol'.
+sobolindices: Sobol's first-order and total indices, from the runs of soboldesign.
+    T = sobolindices(D, Y)
+    [T, S2, S2conf] = sobolindices(D, Y, 'Estimator', e, 'Resamples', r)
+    * S1 is the share of the output's variance an input explains alone, ST the share it has a hand in, interactions included; S1Conf and STConf their half-widths (from blocks, or a bootstrap of one block). S2 is every pair's index, when the design has pairs. e: 'jansen1999' (the default), 'sobol2007', 'homma1996' or 'janon2014'.
+efastdesign: The runs of the extended Fourier amplitude sensitivity test.
+    [X, D] = efastdesign(N, K)
+    [X, D] = efastdesign(N, K, 'Harmonics', m)
+    * A curve of N runs per input (raised to the next N at which the harmonics fit), along which that input oscillates fast and the others slowly: KN runs.
+efastindices: eFAST's first-order and total indices, from the runs of efastdesign.
+    T = efastindices(D, Y)
+rbdfastdesign: The runs of the random balance design (RBD-FAST).
+    [X, D] = rbdfastdesign(N, K)
+    [X, D] = rbdfastdesign(N, K, 'Harmonics', m)
+    * N runs along one periodic curve, each input in its own random order: first-order indices for N runs whatever the number of inputs.
+rbdfastindices: RBD-FAST's first-order indices, from the runs of rbdfastdesign.
+    T = rbdfastindices(D, Y)
+    * S1, and S1Corrected with the bias of a random design taken off.
+ffdesign: A two-level fractional factorial design of resolution IV.
+    [X, D] = ffdesign(K)
+    [X, D] = ffdesign(K, 'Low', lo, 'High', hi)
+    * Each input at probability lo (0.05) or hi (0.95), as the columns of a Hadamard matrix and its negative say: twice the power of two at or above K runs.
+ffindices: Main effects (and interactions) from the runs of ffdesign.
+    T = ffindices(D, Y)
+    [T, I] = ffindices(D, Y)
+    * Main is half the difference between the output's mean with the input high and with it low, Squared its square. I has every pair's interaction effect; in this design each is the sum over the pairs aliased with it.
+dgsmdesign: The runs for derivative-based sensitivity measures.
+    [X, D] = dgsmdesign(N, K)
+    [X, D] = dgsmdesign(N, K, 'Step', h, 'Crossed', true)
+    * N points (a Latin hypercube), each moved by h (0.001, in probability) along every input: N(K + 1) runs; 'Crossed' adds every pair.
+dgsmindices: Derivative-based measures, from the runs of dgsmdesign.
+    T = dgsmindices(D, Y)
+    [T, C] = dgsmindices(D, Y, 'Resamples', r)
+    * The derivatives are per unit probability. Nu, the mean squared derivative, with NuConf and NuSd; Bound = Nu/(pi^2 Var y), an upper bound on the total Sobol index; Mean and AbsMean; Sigma and Tau. C is every pair's mean squared second derivative.
+radialdesign: The radial one-at-a-time design.
+    [X, D] = radialdesign(N, K)
+    * N base points, each moved one input at a time to a second point's value: N(K + 1) runs.
+radialindices: Elementary effects and total indices from the runs of radialdesign.
+    T = radialindices(D, Y)
+    T = radialindices(D, Y, 'Resamples', r)
+    * ST (Jansen's total index) and MuStar, Mu and Sigma of the elementary effects, with bootstrap half-widths STConf and MuStarConf.
+shapleydesign: The runs for Shapley effects.
+    [X, D] = shapleydesign(K)
+    [X, D] = shapleydesign(K, 'Orders', m, 'NVar', nv, 'NOuter', no, 'NInner', ni, 'Correlation', C)
+    * nv runs (1000) for the variance, then over m random orders of the inputs (0 for all K!, the default up to 4 inputs; else 100) no points a step (10, or 1 past 4 inputs) with ni draws given each (3). C, a K-by-K correlation matrix, draws the inputs from a Gaussian copula.
+shapleyindices: Shapley effects from the runs of shapleydesign.
+    T = shapleyindices(D, Y)
+    * Each input's fair share of the variance (they add up to one, correlated inputs or not), its standard error and the 95% half-width.
+
 # ---- linear algebra --------------------------------------------------------------------------
 inv: The inverse of a square matrix.
     Y = inv(A)

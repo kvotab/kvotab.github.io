@@ -1651,6 +1651,46 @@ triplot:
     Python: geometry.py. plot of all the triangles' edges as one line, a NaN between triangles.
 trisurf, trimesh:
     Python: geometry.py. patch with Faces the triangles and Vertices [x y z], coloured by FaceVertexCData z (or c): flat faces with black edges for trisurf, white faces with coloured edges for trimesh; then view(3).
+# ---- gsa.py: sensitivity analysis and sampling ---------------------------------------------------
+lhsdesign:
+    Python: gsa.py. Each column the ranks of uniform numbers (numpy's argsort), less a uniform jitter (or a half), over n. 'maximin' keeps the candidate with the largest least distance between points (scipy.spatial.distance.pdist), 'correlation' the one with the smallest sum of squared correlations between columns.
+lhsnorm:
+    Python: gsa.py. A normal sample from the Cholesky factor of Sigma (or its eigenvectors when it is only semi-definite); each column's values replaced, in the order of their ranks, by mu + sigma times the normal quantile (scipy.stats.norm.ppf) of (rank - u)/n, u uniform or a half.
+sobolset, haltonset, net, scramble:
+    Python: gsa.py. scipy.stats.qmc.Sobol (Joe and Kuo's direction numbers) and scipy.stats.qmc.Halton, the points from the start up to the last one asked for, then those after Skip, every Leap+1 th. Scrambling is SciPy's: a random linear matrix scramble with a digital shift for Sobol, random permutations of the digits for Halton, seeded from the generator rng sets.
+src, srrc, pcc, prcc:
+    Python: gsa.py. Kompartment's regression measures: the inputs and the output standardized, the inputs' correlation matrix factorized by Cholesky (scipy.linalg.cho_solve gives its inverse), SRC the solution of the normal equations and R² its product with the correlations; PCC_k = SRC_k / sqrt(SRC_k² + (1 - R²) (R⁻¹)_kk). A constant input gets NaN; all do when the inputs are collinear. The rank forms on scipy.stats.rankdata.
+firstorderindex:
+    Python: gsa.py. The runs sorted by the input and cut into bins of equal count; the bins' means' variance over the output's, less bins/n for the noise in the means, within 0 to 1.
+easi:
+    Python: gsa.py. Plischke's EASI: the outputs sorted by the input and folded into a triangle (the even places going up, the odd coming down), the power spectrum (numpy.fft.rfft) of that, and the share of its power in the first harmonics; S1c less Tissot and Prieur's bias lambda/(1 - lambda)(1 - S1), lambda = 2h/n.
+deltamoment:
+    Python: gsa.py. Plischke, Borgonovo and Smith's estimator, as GlobalSensitivity.jl: the input's ranks cut into classes (n^(2/(7 + tanh((1500 - n)/500))), at most 48), the output's density and its density in each class by KernelDensity.jl's kernel estimate (linear binning on 2048 points, the Gaussian in Fourier space, a quadratic B-spline, scipy.linalg.solve_banded), half the mean area between them; the bias of a bootstrap taken off. Read on the output's normal scores.
+mutualinfo:
+    Python: gsa.py. Histograms of equal-width bins (the square root of n a side) of the ranks, the entropies in bits and the mutual information as Hx + Hy - Hxy; the chance level the conf quantile of the same over shuffles of Y (numpy permutations).
+pawn:
+    Python: gsa.py. The input's quantiles at i/s cut it into s slices; in each, scipy.stats.ks_2samp between the output there and overall, as SALib.
+discrepancyshares:
+    Python: gsa.py. As SALib: each input's points ((rank - 1/2)/n, the output's ranks scaled onto 0 to 1), their discrepancy by scipy.stats.qmc.discrepancy, over the sum.
+rsa:
+    Python: gsa.py. scipy.stats.ks_2samp between each input above and at or below the threshold; the dummies uniform numbers from the generator rng sets.
+morrisdesign, morrisindices:
+    Python: gsa.py. Kompartment's ports of GlobalSensitivity.jl and SALib, giving the same numbers from the same draws. Walks: each starts at a random level and each step moves a random input one level, bouncing off the ends. Trajectories: a random order and direction for the inputs and a start in the lower half of the levels, each input moved by half the levels in turn; with candidates, Ruano, Ewald and Kolar's local search for the most spread-out set by SALib's distances (summed point to point, in single precision). An effect is the change in the output over the change in the moved input; MuStarConf is the normal quantile times the spread of the mean magnitude over bootstrap resamples of the input's effects.
+soboldesign, sobolindices:
+    Python: gsa.py. Saltelli's (2010) first-order estimator, mean(f_B (f_AB - f_A)) over the variance of A and B together, and the total estimators of Jansen (mean((f_A - f_AB)^2)/2), Sobol (2007), Homma and Saltelli (1996) and Janon (2014); pairs from B with each column of A. With blocks, the means over blocks and the normal quantile times their standard error; with one block, SALib's bootstrap: the rows of every sample resampled together, the output standardized.
+efastdesign, efastindices:
+    Python: gsa.py. As GlobalSensitivity.jl: the input's frequency (N - 1)/(2M) and the others' below it, each curve 1/2 + asin(sin(pi(omega s + phi)))/pi with a random phase; S1 is the power (numpy.fft.rfft) at the input's frequency and its M harmonics over the power at every frequency, ST one less the power at frequencies up to half the input's.
+rbdfastdesign, rbdfastindices:
+    Python: gsa.py. One path from -pi to pi taken by every input in its own random order (Fisher-Yates), mapped through asin(sin); the outputs sorted by an input's path, S1 twice the power of the first harmonics over the whole; the correction is SALib's unskew.
+ffdesign, ffindices:
+    Python: gsa.py. A Sylvester-Hadamard matrix of order the power of two at or above K and its negative; a main effect is the output's contrast with the input's signs over the runs, an interaction the contrast with the product of two inputs' signs.
+dgsmdesign, dgsmindices:
+    Python: gsa.py. Forward differences (back where a step forward would leave 0 to 1) at Latin hypercube points, mixed second differences for the pairs; the means of the derivative, its magnitude and its square, GlobalSensitivity.jl's sigma and tao, the bound nu/(pi^2 Var y), and SALib's bootstrap on nu.
+radialdesign, radialindices:
+    Python: gsa.py. As SALib: each base point and the point after each move; the effects the differences over the moves, numpy.nan_to_num for a move of nothing, ST the mean squared difference over twice the base points' variance, the intervals from bootstrap resamples of the base points.
+shapleydesign, shapleyindices:
+    Python: gsa.py. Song, Nelson and Staum's algorithm, as GlobalSensitivity.jl: for each order and step the inputs not yet learnt fixed at outer points and the others drawn given them; with a correlation matrix the draws are normal scores (Box-Muller) through scipy.stats.norm.cdf, the conditional mean and covariance from the Cholesky factor of the conditioning block. Each input's effect the mean, over the orders, of the rise in the expected conditional variance it brings, over the variance.
+
 # ---- imagecolor.py: images and colours ----------------------------------------------------------
 im2double, im2single, im2uint8, im2uint16:
     Python: imagecolor.py. Each integer class mapped linearly from its range onto 0 to 1 (int16 from -32768 to 32767), then, for an integer result, onto that class's range with numpy.round after numpy.clip; NaN becomes 0. 'indexed' adds or takes away 1 instead, and refuses indices the class cannot hold.
