@@ -2245,8 +2245,9 @@ lhs: The left side of a symbolic equation or inequality.
     L = lhs(eqn)
 rhs: The right side of a symbolic equation or inequality.
     R = rhs(eqn)
-isolate: An equation rearranged to have a variable alone on its left.
+isolate: An equation rearranged to have a variable, or an expression such as diff(y, 2), alone on its left.
     e = isolate(eqn, x)
+    e = isolate(eqn, expr)
 argnames: The input variables of a symbolic function.
     v = argnames(f)
 formula: The formula of a symbolic function, as a symbolic expression; of a fit or fittype, as text.

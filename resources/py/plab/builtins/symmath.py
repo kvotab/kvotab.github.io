@@ -633,10 +633,7 @@ def simplify(nargout, *args):
         if ign:
             e = s.powdenest(s.expand_log(e, force=True), force=True)
             e = s.logcombine(e, force=True)
-        r = s.simplify(e)
-        if isinstance(r, s.core.relational.Relational) or isinstance(r, s.logic.boolalg.Boolean):
-            return r
-        return r
+        return s.simplify(Y.settle(e))
     return Sym(_each(simp, ex(f)), f.fargs if _is(f) else None)
 
 
@@ -839,7 +836,10 @@ def rhs(nargout, *args):
 def isolate(nargout, *args):
     s = sp()
     eq = fresh(to_expr(args[0]))
-    x = _var(args[1])
+    # a variable or an expression (diff(y(t), t, 2), sin(x), ...)
+    x = fresh(to_expr(args[1], 'expression'))
+    if getattr(x, 'is_number', True) or isinstance(x, (s.core.relational.Relational, s.logic.boolalg.BooleanFunction)):
+        raise err('symbolic:isolate:Input', f"isolate takes a variable or an expression to isolate, not '{text(x)}'.", 'isolate')
     e = eq.lhs - eq.rhs if isinstance(eq, s.Eq) else eq
     sols = s.solve(e, x)
     if not sols:
@@ -939,8 +939,8 @@ def subs(W, nargout, *args):
     out_ = np.empty(A.shape, object)
     for i in np.ndindex(A.shape):
         rep = {o: (n[i] if n.size != 1 else n[0, 0]) for o, n in pairs}
-        out_[i] = A[i].subs(rep, simultaneous=True)
-    return Sym(out_)
+        out_[i] = Y.settle(A[i].subs(rep, simultaneous=True))
+    return Sym(out_, f.fargs if _is(f) else None)
 
 
 # ---- equations -------------------------------------------------------------------------------------------------------------

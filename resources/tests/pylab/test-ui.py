@@ -1235,6 +1235,14 @@ async def symbolic(page):
           out.rstrip().endswith('piecewise(u < u_c, 0, u_c <= u & u <= u_r, C_1 + C_2*u^k, u_r < u & u <= u_f, P_er, u_f < u, 0)'), True)
     await command(page, "close all force; fplot(subs(Pe, [u_c u_r u_f C_1 C_2 k P_er], [1 2 3 0 1 2 5]), [0 4])")
     check('symbolic: fplot of a piecewise expression draws', await drawn(page, 1) > 0.003, True)
+    out = await command(page, "sol = solve([Pe(u_c) == 0; Pe(u_r) == P_er],[C_1 C_2]);\nsol.C_2")
+    check('symbolic: solve through piecewise calls settled by the relations assumed',
+          ('Unable' not in out[-300:], out.rstrip().endswith('-P_er/(u_c^k - u_r^k)')), (True, True))
+    out = await command(page, "syms x(t) m c k F(t)\neq = m*diff(x,t,t) + c*diff(x,t) + k*x == F;\nsyms gamma omega_0\n"
+                              "eq = subs(eq,[c k],[m*gamma m*omega_0^2])")
+    check('symbolic: syms gamma makes a variable in the same command', out.rstrip().endswith('gamma*m*diff(x(t), t) + m*omega_0^2*x(t) + m*diff(x(t), t, 2) == F(t)'), True)
+    out = await command(page, "syms m a g theta(t) r\neqn = subs(m*a == -m*g*sin(theta), a, r*diff(theta,2));\neqn = isolate(eqn,diff(theta,2))")
+    check('symbolic: isolate a derivative', out.rstrip().endswith('diff(theta(t), t, 2) == -g*sin(theta(t))/r'), True)
     await command(page, 'close all force; clear; clc')
     check('symbolic: no script errors', page.errors, [])
 

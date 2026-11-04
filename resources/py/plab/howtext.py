@@ -562,7 +562,7 @@ readgeoraster, geotiffread, geotiffinfo:
 
 # ---- symmath.py and symbolic.py: symbolic math on SymPy --------------------------------------------------------
 sym, syms:
-    Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py.
+    Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py. The names syms makes are variables of the code from that line on, even a name that is also a function's (syms gamma).
 str2sym:
     Python: symbolic.py. The text's operators and function names translated to SymPy's (^ to **, ~= to !=, 2i to 2*I, ...) and read by sympy.parsing.sympy_parser.parse_expr, every other name a symbol; a single ==, ~=, <, <=, > or >= makes an equation or inequality, and a chain of them (0 < x < 1) the conjunction of each neighbouring pair.
 symfun, argnames, formula:
@@ -594,7 +594,7 @@ rewrite:
 partfrac, numden, coeffs:
     Python: symmath.py. sympy.apart; sympy.fraction of sympy.together; the terms of sympy.Poly in the variables, sorted by power.
 children, has, lhs, rhs, isolate, finverse:
-    Python: symmath.py. The expression's args; SymPy's has; an equation's two sides; sympy.solve for the variable (finverse solves y = f(x) for x and calls y x).
+    Python: symmath.py. The expression's args; SymPy's has; an equation's two sides; sympy.solve for the variable or the expression to isolate (a derivative, sin(x), ...) (finverse solves y = f(x) for x and calls y x).
 subs:
     Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace.
 solve:
@@ -610,7 +610,7 @@ fourier, ifourier:
 ztrans, iztrans:
     Python: symmath.py. The sum of f(n)*z^(-n) by sympy.summation (its first case when it is piecewise). The inverse of a rational F: for n >= 1 the sum of the residues of F(z)*z^(n-1) at the roots of the denominator (sympy.roots), each as the (m-1)-th derivative of (z-p)^m*F(z)*z^(n-1) at p over (m-1)!, and at n = 0 the limit of F at infinity (a kroneckerDelta term when they differ).
 assume, assumeAlso, assumptions:
-    Python: symmath.py. A new sympy.Symbol of the name with SymPy's assumptions (real, positive, negative, nonnegative, integer, rational, nonzero); an inequality with another bound, or between variables, is kept beside it (once, however many variables it names) and used to filter solve's solutions. A conjunction, such as the chain 0 < a < b (0 < a & a < b), is taken part by part; assume first clears what was assumed of every variable in the condition.
+    Python: symmath.py. A new sympy.Symbol of the name with SymPy's assumptions (real, positive, negative, nonnegative, integer, rational, nonzero); an inequality with another bound, or between variables, is kept beside it (once, however many variables it names) and used to filter solve's solutions. A conjunction, such as the chain 0 < a < b (0 < a & a < b), is taken part by part; assume first clears what was assumed of every variable in the condition. The relations between variables also settle conditions: in isAlways and if, and in the piecewise parts of what a call of a symbolic function, subs or simplify gives. Each relation a < b becomes the substitution b = a + t with t > 0 (t >= 0 for <=), one variable a relation, and a condition true or false after the substitutions is so for every value the relations allow.
 isAlways:
     Python: symmath.py and symbolic.py. sympy.simplify of the condition, and for an equation of the difference of its sides, to SymPy's true or false; otherwise unknown.
 latex, pretty:

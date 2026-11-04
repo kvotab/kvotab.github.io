@@ -1358,6 +1358,18 @@ _FOR_RE = re.compile(r'\b(?:for|parfor)\s*\(?\s*([A-Za-z]\w*)\s*=')
 _FUNC_RE = re.compile(r'(?m)^[ \t]*function\b([^\n%]*)')
 _GLOBAL_RE = re.compile(r'(?m)^[ \t]*(?:global|persistent)\b([^\n;%]*)')
 _CATCH_RE = re.compile(r'(?m)\bcatch[ \t]+([A-Za-z]\w*)[ \t]*(?:$|[,;%])')
+_SYMS_RE = re.compile(r'(?m)(?:^|[;,])[ \t]*syms[ \t]+([^\n;%,]*)')
+_SYMS_WORDS = {'real', 'positive', 'negative', 'nonnegative', 'integer', 'rational', 'clear', 'matrix'}
+
+
+def syms_names(args):
+    """The variables `syms a b f(t) positive` makes (a, b, f and t): they are variables of the code
+    from there on, even when a function has the name (syms gamma)."""
+    names = []
+    for a in args:
+        if a.lower() not in _SYMS_WORDS:
+            names += [w for w in re.findall(r'[A-Za-z]\w*', a) if w.lower() not in _SYMS_WORDS]
+    return names
 
 
 def assigned_names(text):
@@ -1378,4 +1390,6 @@ def assigned_names(text):
             names.update(re.findall(r'[A-Za-z]\w*', sig.split('=', 1)[0]))
     for m in _GLOBAL_RE.finditer(text):
         names.update(re.findall(r'[A-Za-z]\w*', m.group(1)))
+    for m in _SYMS_RE.finditer(text):
+        names.update(syms_names(m.group(1).split()))
     return names

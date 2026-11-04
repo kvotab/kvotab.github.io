@@ -655,13 +655,79 @@ def unop(op, a):
     raise MError('symbolic:op', f'The operator {op} is not defined for sym.')
 
 
+_ELIM = [None, {}]
+
+
+def _elimination():
+    """The relations assumed between variables (RELS) as substitutions that make them hold: a < b becomes
+    b = a + t with t > 0 (t >= 0 for <=), one variable a relation. A condition that is true or false after the
+    substitution is so for every value the relations allow (the substituted values cover them all)."""
+    s = sp()
+    facts = []
+    for k in sorted(RELS):
+        facts += [r for r in RELS[k] if r not in facts]
+    key = tuple(facts)
+    if _ELIM[0] == key:
+        return _ELIM[1]
+    elim = {}
+    for r in facts:
+        if isinstance(r, (s.StrictLessThan, s.LessThan)):
+            a, b = r.lhs, r.rhs
+        elif isinstance(r, (s.StrictGreaterThan, s.GreaterThan)):
+            a, b = r.rhs, r.lhs
+        else:
+            continue
+        a, b = a.xreplace(elim), b.xreplace(elim)
+        t = s.Dummy('t', positive=True) if isinstance(r, (s.StrictLessThan, s.StrictGreaterThan)) else s.Dummy('t', nonnegative=True)
+        if isinstance(b, s.Symbol) and not isinstance(b, s.Dummy) and b not in a.free_symbols:
+            x, v = b, a + t
+        elif isinstance(a, s.Symbol) and not isinstance(a, s.Dummy) and a not in b.free_symbols:
+            x, v = a, b - t
+        else:
+            continue
+        elim = {k: w.xreplace({x: v}) for k, w in elim.items()}
+        elim[x] = v
+    _ELIM[:] = [key, elim]
+    return elim
+
+
+def _by_rels(c, elim):
+    """A condition's truth under the relations assumed: SymPy's true or false, or None."""
+    s = sp()
+    try:
+        r = c.subs(elim)
+    except (TypeError, ValueError):
+        return None
+    return r if r is s.true or r is s.false else None
+
+
+def settle(e):
+    """e (brought up to date with the assumptions) with each piecewise condition that the relations assumed
+    decide made true or false, so that the piecewise keeps only what can hold."""
+    s = sp()
+    e = fresh(e)
+    if not RELS or not hasattr(e, 'has') or not e.has(s.Piecewise):
+        return e
+    elim = _elimination()
+    if not elim:
+        return e
+
+    def fix(p):
+        # (SymPy's false is falsy: no `or` here)
+        return s.Piecewise(*[(v, c if r is None else r) for v, c in p.args for r in [_by_rels(c, elim)]])
+    return e.replace(lambda q: isinstance(q, s.Piecewise), fix)
+
+
 def decide(e):
     """True or False for a condition that SymPy can settle; None otherwise."""
     s = sp()
-    e = fresh(e)
+    e = settle(e)
     if isinstance(e, (s.logic.boolalg.Boolean, s.core.relational.Relational)):
         if e is s.true or e is s.false:
             return e is s.true
+        r = _by_rels(e, _elimination()) if RELS and not isinstance(e, s.Symbol) else None
+        if r is not None:
+            return r is s.true
         try:
             r = s.simplify(e)
         except Exception:
@@ -735,14 +801,14 @@ def call(f, args):
     F = f.a
     if not sizes:
         rep = dict(zip(f.fargs, (a[0, 0] for a in arrs)))
-        return Sym(_each(lambda e: e.subs(rep, simultaneous=True), F))
+        return Sym(_each(lambda e: settle(e.subs(rep, simultaneous=True)), F))
     if F.size != 1:
         raise MError('symbolic:symfun:subsref:Size', 'A function whose formula is an array takes scalar arguments.')
     shape = sizes.pop()
     out = np.empty(shape, object)
     for idx in np.ndindex(shape):
         rep = {x: (a[idx] if a.size != 1 else a[0, 0]) for x, a in zip(f.fargs, arrs)}
-        out[idx] = F[0, 0].subs(rep, simultaneous=True)
+        out[idx] = settle(F[0, 0].subs(rep, simultaneous=True))
     return Sym(out)
 
 

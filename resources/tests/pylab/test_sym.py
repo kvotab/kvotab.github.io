@@ -306,4 +306,24 @@ W, _ = run("close all force; syms x; fplot(piecewise(x < -1, -1, -1 <= x <= 1, x
            "r = [min(h.YData) max(h.YData)]; close all force;")
 near('fplot of a piecewise expression', W['r'], [[-1, 1]], 1e-12)
 
+# the relations assumed settle piecewise conditions: a call, subs, simplify, isAlways; then solve
+same('a call settles piecewise conditions by the relations assumed',
+     [shows(PW + " r = Pe(u_c)", 'r'), shows(PW + " r = Pe(u_r)", 'r'), shows(PW + " r = subs(Pe, u, u_f)", 'r'), shows(PW + " r = simplify(Pe(u_f))", 'r')],
+     ['C_1 + C_2*u_c^k', 'C_1 + C_2*u_r^k', 'P_er', 'P_er'])
+W, _ = run(PW + " sol = solve([Pe(u_c) == 0; Pe(u_r) == P_er], [C_1 C_2]); "
+                "k1 = isAlways(simplify(subs(C_1 + C_2*u_c^k, [C_1 C_2], [sol.C_1 sol.C_2])) == 0); "
+                "k2 = isAlways(simplify(subs(C_1 + C_2*u_r^k, [C_1 C_2], [sol.C_1 sol.C_2]) - P_er) == 0); "
+                "a1 = isAlways(u_c < u_f); a2 = isAlways(u_f <= u_c);")
+same('solve through the settled calls, and isAlways by the relations', (W['k1'], W['k2'], W['a1'], W['a2']), (True, True, True, False))
+
+# syms makes variables even of function names; subs keeps a symbolic function; isolate an expression
+W, out = run("syms x(t) m c k F(t)\neq = m*diff(x,t,t) + c*diff(x,t) + k*x == F;\nsyms gamma omega_0\n"
+             "eq = subs(eq,[c k],[m*gamma m*omega_0^2])\nz = char(2*gamma);")
+same('syms gamma is a variable in the same code', W['z'].str(), '2*gamma')
+C('subs keeps a symbolic function', 'eq(t) =' in out and 'gamma*m*diff(x(t), t) + m*omega_0^2*x(t) + m*diff(x(t), t, 2) == F(t)' in out, out)
+same('isolate a derivative, an expression', [shows("syms m a g theta(t) r; eqn = subs(m*a == -m*g*sin(theta), a, r*diff(theta,2)); r = isolate(eqn, diff(theta,2))", 'r'),
+                                             shows("syms x y; r = isolate(x^2 + sin(y) == 3, sin(y))", 'r')],
+     ['diff(theta(t), t, 2) == -g*sin(theta(t))/r', 'sin(y) == 3 - x^2'])
+raises('isolate refuses a number', "syms x; isolate(x == 1, 2)", 'isolate takes a variable or an expression')
+
 sys.exit(C.done())

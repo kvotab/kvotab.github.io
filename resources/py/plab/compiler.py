@@ -133,6 +133,8 @@ def assigned(body):
             names.add(s.var)
         elif t is P.Global:
             names.update(s.names)
+        elif t is P.Cmd and s.name == 'syms':
+            names.update(P.syms_names(s.args))
     return names
 
 
