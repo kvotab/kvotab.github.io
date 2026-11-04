@@ -321,7 +321,7 @@ def _collect(results, shape, nout, uniform, fname):
                 if numel(v) != 1 or type(v) in (Cell, Struct, Str) and False:
                     raise err('MATLAB:' + fname + ':NotAScalarOutput',
                               f"Non-scalar in Uniform output, at index {i + 1}, output {k + 1}.\nSet 'UniformOutput' to false.", fname)
-                if type(v) in (Cell, Struct) or isinstance(v, FH):
+                if type(v) is Cell or isinstance(v, FH):
                     raise err('MATLAB:' + fname + ':NotAScalarOutput',
                               f"Non-scalar in Uniform output, at index {i + 1}, output {k + 1}.\nSet 'UniformOutput' to false.", fname)
             first = vals[0]
@@ -330,7 +330,17 @@ def _collect(results, shape, nout, uniform, fname):
                 if class_of(v) != c0:
                     if not (class_of(v) in ('double', 'logical') and c0 in ('double', 'logical')):
                         raise err('MATLAB:' + fname + ':MismatchInOutputTypes', f"Mismatch in type of outputs, at index {i + 1}, output {k + 1} ({class_of(v)} versus {c0}).\nSet 'UniformOutput' to false.", fname)
-            if c0 == 'char':
+            if c0 == 'struct':
+                keys = list(first.f)
+                for i, v in enumerate(vals):
+                    if list(v.f) != keys and set(v.f) != set(keys):
+                        raise err('MATLAB:' + fname + ':MismatchInOutputTypes', f"Mismatch in the fields of the structs, at index {i + 1}, output {k + 1}.\nSet 'UniformOutput' to false.", fname)
+                S = Struct(tuple(shape), {kk: np.empty(tuple(shape), object) for kk in keys})
+                for i, v in enumerate(vals):
+                    for kk in keys:
+                        S.f[kk].reshape(-1, order='F')[i] = v.f[kk].reshape(-1)[0]
+                outs.append(S)
+            elif c0 == 'char':
                 a = np.array([int(v.a.reshape(-1)[0]) for v in vals], np.uint16).reshape(shape, order='F')
                 outs.append(Char(_2d(a)))
             elif c0 == 'string':

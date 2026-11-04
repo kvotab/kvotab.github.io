@@ -22,7 +22,7 @@ from .values import (MError, Interrupt, NOVAL, COLON, Char, Str, Cell, Struct, F
 from .ops import (plus, minus, times, rdivide, ldivide, power, mtimes, mrdivide, mldivide, mpower,
                   uminus, uplus, not_, and_, or_, xor, eq, ne, lt, le, gt, ge, transpose, ctranspose,
                   colon, truth, sc_truth, hcat, vcat, matrix, cat)
-from .index import (idx, cidx, cidx1, fld, fld1, dyn_name, asgn, casgn, fasgn, asgn_chain, endv, one)
+from .index import (idx, cidx, cidx1, fld, fld1, dyn_name, asgn, casgn, fasgn, asgn_chain, endv, one, cs_count, cs_assign)
 from . import display as D
 from . import ops as _ops
 
@@ -905,6 +905,9 @@ async def vget(W, name):
     return await call(W, name, 1, ())
 
 
+PY_CALL = [None]         # fn(name, nargout, args) for the names that start py.
+
+
 async def call(W, name, nargout, args):
     """A call to a function by name: a variable of that name first (made at
     run time, by load or eval), then a file on the path, then a builtin."""
@@ -943,6 +946,9 @@ async def call(W, name, nargout, args):
     if full is not None:
         # a name an import gave: pkg.name (and pkg.Cls.member)
         name = full + name[len(name.split('.', 1)[0]):]
+    if name.startswith('py.') and PY_CALL[0] is not None:
+        # py.module.function(...), py.list(...): Python's (builtins/pycall.py)
+        return PY_CALL[0](name, nargout, args)
     if '.' in name and name.count('.') == 1:
         # ClassName.staticMethod(...) or ClassName.Constant
         from . import classdef as CD
@@ -1075,10 +1081,15 @@ def warn(ident, msg):
     if WARN_STATE.get(ident, WARN_STATE.get('all', 'on')) == 'off':
         return
     LASTWARN[0] = (msg, ident)
+    if WARN_CAPTURE:
+        # verifyWarning and kin: the warnings of the call they make, kept for them and not shown
+        WARN_CAPTURE[-1].append((ident, msg))
+        return
     write(f'Warning: {msg}\n', 'warn')
 
 
 WARN_STATE = {}
+WARN_CAPTURE = []
 LASTWARN = [('', '')]
 _ops._warn_hook[0] = warn
 

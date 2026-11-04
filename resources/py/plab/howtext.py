@@ -132,18 +132,18 @@ ode15i:
 decic:
     Python: funfun.py. Gauss-Newton on F(t0, y, yp) = 0. Each iteration evaluates F and its derivatives in y and yp (from the Jacobian option or by forward differences) and takes the least-squares step of least norm in the components that are free, numpy.linalg.lstsq; the held ones do not move. It stops when the step is below 1e-13 of the values, or after 100 iterations. resnrm is the 2-norm of F at the result.
 deval:
-    Python: funfun.py. sol keeps the interpolant of each step (SciPy's OdeSolution over the solver's dense outputs, the same polynomials the solver's own help describes), and deval evaluates the one whose step holds each time. The interpolants were built during the solution, so deval evaluates odefun no more.
+    Python: funfun.py. sol keeps the interpolant of each step (SciPy's OdeSolution over the solver's dense outputs, the same polynomials the solver's own help describes), and deval evaluates the one whose step holds each time. The interpolants were built during the solution, so deval evaluates odefun no more. The solutions of bvp4c, bvp5c, dde23 and ddesd: their own interpolants (odemore.py), and their derivatives.
 odextend:
     Python: funfun.py. The solver that made sol runs again from its last point (or the y0 given) to the new end, with sol's options unless others are given, and its steps and interpolants are joined to sol's.
 # ---- elfun.py: element-wise mathematics -------------------------------------------------------
 sqrt:
     Python: elfun.py. numpy.sqrt element by element, or math.sqrt for a scalar double. When a real argument has a negative element, the whole array is taken as complex and numpy.sqrt gives the complex roots, so sqrt(-4) is 0 + 2i. Char and logical count as double, single stays single, and integers are refused.
 exp:
-    Python: elfun.py. numpy.exp element by element, or math.exp for a scalar double (Inf above 709). Single stays single; integers are refused.
+    Python: elfun.py. numpy.exp element by element, or math.exp for a scalar double (Inf above 709). Single stays single; integers are refused. Of -tau*s: control.py, a delay.
 expm1:
     Python: elfun.py. numpy.expm1, which computes exp(x) - 1 without the cancellation near x = 0 (math.expm1 for a scalar double).
 log, log10:
-    Python: elfun.py. numpy.log and numpy.log10 element by element (math.log and math.log10 for a scalar double). When a real argument has a negative element the whole array is taken as complex, which gives log(-x) + pi*1i (pi/log(10) for log10); log(0) is -Inf.
+    Python: elfun.py. numpy.log and numpy.log10 element by element (math.log and math.log10 for a scalar double). When a real argument has a negative element the whole array is taken as complex, which gives log(-x) + pi*1i (pi/log(10) for log10); log(0) is -Inf. With a test case first: unittests.py, the message written when the run reports at that level.
 log1p:
     Python: elfun.py. numpy.log1p, which computes log(1 + x) without the rounding of 1 + x near 0. Below -1 the array is taken as complex and log(1 + z) is computed.
 log2:
@@ -352,7 +352,7 @@ rosser:
 accumarray:
     Python: elmat.py. Subscripts (a matrix, a column of linear indices, or a cell of index vectors) are turned into linear indices (numpy.ravel_multi_index in column order) and the values summed into them with numpy.add.at; places nothing went to get the fill value. With a function, the values of each place are gathered in the order they come and the function called once for each place; logical or cell results make a logical or cell array (no place at all gives doubles).
 double, single, logical, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
-    Python: elmat.py. NumPy's astype to the class's type. To an integer class, a value is rounded to the nearest whole number with halves away from zero (by truncating and looking at the fraction, which is exact; adding 0.5 would itself round past 2^52), NaN becomes 0, and values beyond the class's range saturate at its ends; an integer value converts exactly, without a round trip through doubles (int64 and uint64 hold more than a double can). logical refuses NaN and complex values. double of a string array reads each string as a number (NaN where it is not one).
+    Python: elmat.py. NumPy's astype to the class's type. To an integer class, a value is rounded to the nearest whole number with halves away from zero (by truncating and looking at the fraction, which is exact; adding 0.5 would itself round past 2^52), NaN becomes 0, and values beyond the class's range saturate at its ends; an integer value converts exactly, without a round trip through doubles (int64 and uint64 hold more than a double can). logical refuses NaN and complex values. double of a string array reads each string as a number (NaN where it is not one). Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 cast:
     Python: elmat.py. The conversion of double, single, logical or the integer classes to the class named, or to the class of a 'like' value; 'char' goes through char.
 typecast:
@@ -424,7 +424,7 @@ movmean, movsum, movprod, movmax, movmin, movmedian, movmad, movstd, movvar:
     Python: datafun.py. For each position along the dimension, NumPy's mean, sum, prod, max, min or median of the window around it, the median of the absolute deviations from its median (movmad), or the standard deviation and variance normalized by n - 1 (by n for a weight of 1, or a window of one value). The window is k elements centred (for an even k, one more before than after) or [kb kf] before and after, worked over all the other dimensions at once. 'omitnan' uses NumPy's nan- versions; Endpoints 'shrink' shortens the windows at the ends, 'discard' drops those positions, 'fill' or a number sets them.
 # ---- matfun.py: linear algebra -----------------------------------------------------------------
 inv:
-    Python: matfun.py and sparse.py. A sparse matrix: SuperLU's factors (scipy.sparse.linalg.splu) solve for each column of the identity, the result stored sparse; a singular one gives Inf with the singular-matrix warning. A full one: a scalar's inverse is 1/x (so inv(-0) is -Inf and inv(Inf) is 0). Otherwise numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN. single stays single.
+    Python: matfun.py and sparse.py. A sparse matrix: SuperLU's factors (scipy.sparse.linalg.splu) solve for each column of the identity, the result stored sparse; a singular one gives Inf with the singular-matrix warning. A full one: a scalar's inverse is 1/x (so inv(-0) is -Inf and inv(Inf) is 0). Otherwise numpy.linalg.inv, after an LU factorisation (scipy.linalg.lu_factor) gives LAPACK's estimate of the reciprocal condition number (its gecon routine, in the 1-norm): a zero pivot gives Inf and the singular-matrix warning, an estimate below eps the close-to-singular warning, and NaN or Inf in the matrix a matrix of NaN. single stays single. Of a model: control.py, the inverse realization.
 det:
     Python: matfun.py and sparse.py. numpy.linalg.det: the product of the pivots of an LU factorisation with partial pivoting; det([]) is 1. A sparse matrix: the product of the diagonal of SuperLU's U (scipy.sparse.linalg.splu) times the signs of its row and column permutations, 0 when the factorisation finds it singular.
 trace:
@@ -432,7 +432,7 @@ trace:
 rank:
     Python: matfun.py. The number of singular values (numpy.linalg.svd, values only) above the tolerance max(size(A))*eps(max(s)), or the one given.
 norm:
-    Python: matfun.py and sparse.py. A sparse matrix: the 1-norm, Inf-norm and 'fro' from the stored values (column sums, row sums, the root of the sum of squares), the 2-norm by numpy.linalg.norm of the full matrix up to 200 rows or columns and by scipy.sparse.linalg.svds (the largest singular value) beyond; a sparse vector's p-norms from its stored values. A full one: for a vector, numpy.linalg.norm with p (max(abs(v)) for Inf, the smallest for -Inf, the count of nonzeros for 0). For a matrix: the 2-norm is the largest singular value (numpy.linalg.svd), the 1-norm the largest column sum of abs(A), Inf the largest row sum, and 'fro' the 2-norm of all the elements.
+    Python: matfun.py and sparse.py. A sparse matrix: the 1-norm, Inf-norm and 'fro' from the stored values (column sums, row sums, the root of the sum of squares), the 2-norm by numpy.linalg.norm of the full matrix up to 200 rows or columns and by scipy.sparse.linalg.svds (the largest singular value) beyond; a sparse vector's p-norms from its stored values. A full one: for a vector, numpy.linalg.norm with p (max(abs(v)) for Inf, the smallest for -Inf, the count of nonzeros for 0). For a matrix: the 2-norm is the largest singular value (numpy.linalg.svd), the 1-norm the largest column sum of abs(A), Inf the largest row sum, and 'fro' the 2-norm of all the elements. Of a model: control.py, the H2 norm from the controllability Gramian, the H-infinity norm as getPeakGain finds it.
 vecnorm:
     Python: matfun.py. sum(abs(A).^p).^(1/p) along the first dimension whose size is not 1 or the one given, or max(abs(A)) for p = Inf.
 cond:
@@ -578,13 +578,13 @@ int:
 limit:
     Python: symmath.py. sympy.limit with dir '+-' (both sides, NaN when they differ), '-' for 'left' and '+' for 'right'.
 taylor, series:
-    Python: symmath.py. sympy.series about the point to the order given (6 unless given), without its O(...) term.
+    Python: symmath.py. sympy.series about the point to the order given (6 unless given), without its O(...) term. Of models: control.py, their product.
 symsum, symprod:
     Python: symmath.py. sympy.summation and sympy.product over k from a to b (from 0 to k-1 for the indefinite sum).
 jacobian, hessian, divergence, curl, laplacian:
-    Python: symmath.py. sympy.Matrix's jacobian and sympy.hessian; the others from sympy.diff of each component. divergence and curl of arrays on a grid take the differences gradient takes along x (the columns), y (the rows) and z; curl's angular velocity is half the curl along the flow (in 2-D, half of curlz).
+    Python: symmath.py. sympy.Matrix's jacobian and sympy.hessian; the others from sympy.diff of each component. divergence and curl of arrays on a grid take the differences gradient takes along x (the columns), y (the rows) and z; curl's angular velocity is half the curl along the flow (in 2-D, half of curlz). laplacian of a graph: graphs.py, the degree matrix less the adjacency matrix (ones, the diagonal cleared).
 simplify, simplifyFraction:
-    Python: symmath.py. sympy.simplify, after expand_log, powdenest and logcombine with force=True for 'IgnoreAnalyticConstraints'; simplifyFraction is sympy.cancel of sympy.together.
+    Python: symmath.py. sympy.simplify, after expand_log, powdenest and logcombine with force=True for 'IgnoreAnalyticConstraints'; simplifyFraction is sympy.cancel of sympy.together. simplify of a graph: graphs.py, the first edge of each pair kept with the weights combined.
 expand, collect, combine, horner:
     Python: symmath.py. sympy.expand with trig=True (multinomial and mul alone for 'ArithmeticOnly'); sympy.collect of the expanded expression; combine by sympy.powsimp, sympy.logcombine, sympy.gammasimp or the product-to-sum rule TR8 of sympy.simplify.fu for 'sincos'; sympy.horner.
 rewrite:
@@ -596,7 +596,7 @@ children, has, lhs, rhs, isolate, finverse:
 subs:
     Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace.
 solve:
-    Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are.
+    Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are. solve of an ode object: odemore.py, the solver its Solver selects.
 vpasolve:
     Python: symmath.py. A polynomial in one variable: all its roots by SymPy's nroots to digits places; otherwise sympy.nsolve (mpmath's findroot) from the start given (0, or the middle of a range; bisection within a range), trying other starts when the first fails.
 dsolve:
@@ -839,7 +839,7 @@ addcats, removecats, mergecats, renamecats, reordercats, setcats:
 summary:
     Python: categoricals.py and tables.py. For a categorical array, countcats beside the names. For a table, each variable in turn: numbers by numpy.min, numpy.median and numpy.max over the values that are not NaN, and the count of NaN; datetimes and durations the same on their seconds; categories and logical values counted.
 table:
-    Python: tables.py and vobj.py. A list of variables (any values of the same number of rows), a list of names, the row names (or None) and the properties. A table is a value object: indexing picks rows (numbers, a mask, names looked up in the row names) and variables (numbers, a mask, names, vartype), and builds a new table from each variable's rows; assignment, deletion and concatenation build new tables the same way, filling new rows with a missing value of each variable's class (NaN, empty text, <missing>, NaT, undefined). Each variable's values are marked shared, so a change through T.x(2) = v copies the variable first. The compiler passes the names of the variables given to table, so that they name its variables. The display puts each variable's values in a block, numbers to the right and text to the left, centred under its name, fractions with five significant digits.
+    Python: tables.py and vobj.py. A list of variables (any values of the same number of rows), a list of names, the row names (or None) and the properties. A table is a value object: indexing picks rows (numbers, a mask, names looked up in the row names) and variables (numbers, a mask, names, vartype), and builds a new table from each variable's rows; assignment, deletion and concatenation build new tables the same way, filling new rows with a missing value of each variable's class (NaN, empty text, <missing>, NaT, undefined). Each variable's values are marked shared, so a change through T.x(2) = v copies the variable first. The compiler passes the names of the variables given to table, so that they name its variables. The display puts each variable's values in a block, numbers to the right and text to the left, centred under its name, fractions with five significant digits. table(results): unittests.py, a column for each property of the results.
 timetable:
     Python: tables.py. A table whose row names are a datetime or duration column, the row times; rows are picked by times (compared by their seconds) or by a timerange. SampleRate and TimeStep give the row times start + (0:n-1)*step. TimeStep and SampleRate in the properties come from the differences of the row times when they are all equal.
 istable, istimetable, istabular:
@@ -993,9 +993,9 @@ onCleanup:
     Python: core.py and runtime.py. An object that calls the function when Python deletes it: when the variable holding it is cleared or the function's workspace goes at its return.
 # ---- strfun.py: text ----------------------------------------------------------------------
 char:
-    Python: strfun.py and values.py. Character arrays hold the characters' codes in a NumPy array of uint16. Numbers become codes: rounded down, negative ones and NaN to 0, and kept within 0 to 65535. Several arguments, a cell or a string array become the rows of a character matrix, the shorter rows padded with blanks.
+    Python: strfun.py and values.py. Character arrays hold the characters' codes in a NumPy array of uint16. Numbers become codes: rounded down, negative ones and NaN to 0, and kept within 0 to 65535. Several arguments, a cell or a string array become the rows of a character matrix, the shorter rows padded with blanks. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 string:
-    Python: strfun.py and strings.py. String arrays are NumPy arrays of Python str objects (None for a missing string). Text converts as it is, each row of a character matrix to one string; a whole number is written in full, any other with 5 significant digits (Python's %.5g), a logical as true or false, and NaN becomes a missing string.
+    Python: strfun.py and strings.py. String arrays are NumPy arrays of Python str objects (None for a missing string). Text converts as it is, each row of a character matrix to one string; a whole number is written in full, any other with 5 significant digits (Python's %.5g), a logical as true or false, and NaN becomes a missing string. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 strings:
     Python: strfun.py. A string array of the size given, every element ''.
 cellstr:
@@ -1132,7 +1132,7 @@ type:
 edit:
     Python: iofun.py. Tells the page to open the file in the Editor; a .m file that does not exist is made empty first.
 run:
-    Python: iofun.py. Changes to the script's folder, compiles and runs the file (a script in the calling workspace, a function with no arguments), and changes back even when it fails.
+    Python: iofun.py. Changes to the script's folder, compiles and runs the file (a script in the calling workspace, a function with no arguments), and changes back even when it fails. A test suite, test object or runner: unittests.py, as runtests. A MultiStart or GlobalSearch object: globalopt.py.
 web:
     Python: iofun.py. Tells the page to open the address in a new browser tab (window.open).
 fopen, fclose:
@@ -1175,7 +1175,7 @@ textread:
     Python: iofun.py. The whole file, after the header lines and comments are taken out, read with the format again and again: %d, %f, %n and %u numbers (an empty field gets the empty value), %s words, %q quoted text, %c characters and %[...] sets, with the literal text matched. One output for each conversion that is not skipped with *.
 # ---- cellfun.py: cells, structs and maps ---------------------------------------------------------
 cell:
-    Python: cellfun.py and values.py. A cell array is a NumPy array of Python objects, each element any value; cell(n) fills one of the size given with [].
+    Python: cellfun.py and values.py. A cell array is a NumPy array of Python objects, each element any value; cell(n) fills one of the size given with []. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 num2cell:
     Python: cellfun.py. Each element in a cell of its own, keeping its class (a struct's elements, a string's strings, a character's characters); with dims, the slices along those dimensions instead.
 cell2mat:
@@ -1185,7 +1185,7 @@ cell2struct:
 struct2cell:
     Python: cellfun.py. The fields' values as a cell with one row for each field (and the struct array's dimensions after it).
 struct:
-    Python: cellfun.py and values.py. A struct array is a Python dictionary from field names, in their order, to NumPy object arrays of the struct's size. A cell value spreads over a struct array of the cell's size, a 1-by-1 cell gives its content to every element, and any other value goes to every element.
+    Python: cellfun.py and values.py. A struct array is a Python dictionary from field names, in their order, to NumPy object arrays of the struct's size. A cell value spreads over a struct array of the cell's size, a 1-by-1 cell gives its content to every element, and any other value goes to every element. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 fieldnames:
     Python: cellfun.py. The dictionary's keys in their order, as a column cell (an object's property names).
 isfield, isprop:
@@ -1325,9 +1325,9 @@ unifit:
 binofit:
     Python: distributions.py. p = x/n, with the Clopper-Pearson interval from the quantiles of scipy.stats.beta: beta.ppf(alpha/2, x, n - x + 1) to beta.ppf(1 - alpha/2, x + 1, n - x), and 0 or 1 at the ends.
 pdf, cdf, icdf:
-    Python: distributions.py. With a name, the distribution is looked up by its whole name, its prefix (norm) or its makedist name, in any case, and the value is the one normpdf, normcdf and norminv and the others give. With a distribution object, its own SciPy distribution's pdf (pmf when discrete), cdf (sf with 'upper') or ppf. A truncated object's values are taken between its limits: pdf/(F(hi) - F(lo)), (F(x) - F(lo))/(F(hi) - F(lo)), and the ppf of F(lo) + p*(F(hi) - F(lo)).
+    Python: distributions.py. With a name, the distribution is looked up by its whole name, its prefix (norm) or its makedist name, in any case, and the value is the one normpdf, normcdf and norminv and the others give. With a distribution object, its own SciPy distribution's pdf (pmf when discrete), cdf (sf with 'upper') or ppf. A truncated object's values are taken between its limits: pdf/(F(hi) - F(lo)), (F(x) - F(lo))/(F(hi) - F(lo)), and the ppf of F(lo) + p*(F(hi) - F(lo)). Of a Gaussian mixture: mlunsup.py, the weighted sum of the densities of its components.
 random:
-    Python: distributions.py. With a name, as normrnd and the others draw; with an object, its SciPy distribution's rvs from rand's generator, or for a truncated object the ppf of uniform numbers between F(lo) and F(hi).
+    Python: distributions.py. With a name, as normrnd and the others draw; with an object, its SciPy distribution's rvs from rand's generator, or for a truncated object the ppf of uniform numbers between F(lo) and F(hi). Of a Gaussian mixture: mlunsup.py, a component drawn by its proportion, then a normal by its Cholesky factor.
 makedist:
     Python: distributions.py. An object holding the distribution and the values of its parameters (the defaults for those not given). The families are the scipy.stats distributions the functions of each family use, and for the ones with objects only: Logistic (scipy.stats.logistic), Loglogistic (scipy.stats.fisk), InverseGaussian (scipy.stats.invgauss), Nakagami (scipy.stats.nakagami), Rician (scipy.stats.rice), BirnbaumSaunders (scipy.stats.fatiguelife), Burr (scipy.stats.burr12), HalfNormal (scipy.stats.halfnorm), tLocationScale (scipy.stats.t with a location and scale), Triangular (scipy.stats.triang) and Loguniform (scipy.stats.loguniform). Its mean, median, std, var and iqr come from SciPy's stats and ppf.
 fitdist:
@@ -1370,7 +1370,7 @@ axes:
 tiledlayout, nexttile:
     Python: graphics.py. tiledlayout clears the figure and keeps the grid; nexttile puts axes in the next tile (or the one given, spanning rows and columns), the tiles filling 0.86 by 0.84 of the figure with gaps set by 'TileSpacing'. A 'flow' layout grows its grid towards a square as tiles are added and moves the axes already placed.
 plot, plot3, semilogx, semilogy, loglog:
-    Python: graphics.py. The arguments are split into groups of x, y (and z) and a line specification; each column of the data (or row, to match the other's length) becomes a line object holding XData, YData and ZData, coloured from the axes' ColorOrder in turn. semilogx, semilogy and loglog set XScale or YScale to 'log'. The page draws each line through its points, a NaN breaking it.
+    Python: graphics.py. The arguments are split into groups of x, y (and z) and a line specification; each column of the data (or row, to match the other's length) becomes a line object holding XData, YData and ZData, coloured from the axes' ColorOrder in turn. semilogx, semilogy and loglog set XScale or YScale to 'log'. The page draws each line through its points, a NaN breaking it. plot of a graph or digraph: graphs.py (see layout).
 line:
     Python: graphics.py. Line objects made in the current axes as they are, not cleared whatever hold says, from the data and properties given.
 fplot, ezplot:
@@ -1627,7 +1627,7 @@ jsonencode:
 issymmetric, ishermitian:
     Python: matfun.py. A compared with its transpose (conjugate transpose for ishermitian), or with minus it for 'skew', element by element (for a sparse matrix, the difference of SciPy's matrices has no stored values); with a tolerance, the largest row sum of abs(A - A.') against tol times that of A (the infinity norms). A matrix that is not square gives false.
 istril, istriu, isbanded, bandwidth:
-    Python: matfun.py. numpy.nonzero gives the positions of the nonzeros (SciPy's COO form for a sparse matrix); the lower bandwidth is the largest i - j among them, the upper the largest j - i (0 for none).
+    Python: matfun.py. numpy.nonzero gives the positions of the nonzeros (SciPy's COO form for a sparse matrix); the lower bandwidth is the largest i - j among them, the upper the largest j - i (0 for none). Of a model: control.py, the -3 dB crossing refined by scipy.optimize.brentq.
 pcg, bicg, bicgstab, cgs, gmres, minres, qmr, tfqmr:
     Python: matfun.py. SciPy's scipy.sparse.linalg cg, bicg, bicgstab, cgs, gmres, minres, qmr and tfqmr with rtol the tolerance (1e-6 unless given) and no absolute tolerance, maxit min(n, 20) unless given (gmres: restart n, at most min(n/restart, 10) restarts), x0 zeros unless given. A sparse matrix is passed to SciPy as it is; a function handle is wrapped as a LinearOperator (bicg and qmr call it with 'notransp' and 'transp'); the preconditioner M = M1*M2 becomes the operator that solves M*y = r, each factor factored once (scipy.sparse.linalg.splu for a sparse one, scipy.linalg.lu_factor for a full one) or called (a handle). relres is norm(b - A*x)/norm(b) computed after the solve, flag 0 when it meets the tolerance, 1 when the iterations ran out, 4 when SciPy reports a breakdown; resvec holds norm(b - A*x) at the start and after each iteration (gmres: SciPy's residual estimate at each inner step).
 lsqr:
@@ -1888,7 +1888,7 @@ fitglm, glmfit:
 fitnlm, nlinfit:
     Python: regression.py. scipy.optimize.least_squares with the Levenberg-Marquardt method (trust region reflective when there are fewer observations than coefficients) on the weighted residuals, tolerances 1e-8; the Jacobian at the answer by forward differences; MSE is the weighted residual sum of squares over n - p and the covariance MSE*pinv(J'WJ).
 predict:
-    Python: regression.py. For a linear model the design matrix of the new rows times the coefficients; the bounds are t(1 - alpha/2, DFE) (or, simultaneous, the square root of p*F(1 - alpha, p, DFE)) times the square root of x*Cov*x' (plus MSE for 'observation'). For a generalized linear model the inverse link of the linear predictor, the bounds taken through the inverse link; for a nonlinear model the model function and its Jacobian by forward differences.
+    Python: regression.py. For a linear model the design matrix of the new rows times the coefficients; the bounds are t(1 - alpha/2, DFE) (or, simultaneous, the square root of p*F(1 - alpha, p, DFE)) times the square root of x*Cov*x' (plus MSE for 'observation'). For a generalized linear model the inverse link of the linear predictor, the bounds taken through the inverse link; for a nonlinear model the model function and its Jacobian by forward differences. Of a classification or regression model from fitc.../fitr...: mlmodels.py, its scores.
 coefCI:
     Python: regression.py. Each coefficient plus and minus t(1 - alpha/2, DFE) times its standard error (the normal quantile for a generalized linear model of fixed dispersion).
 coefTest:
@@ -1938,6 +1938,104 @@ ischange:
     Python: datafeatures.py. PyLAB's own: the segmentation of least total cost, each change costing Threshold: optimal partitioning with PELT's pruning (Killick, Fearnhead and Eckley) for 'mean', where a segment's cost is its sum of squared residuals about its mean; for 'linear' the squared residuals about its least-squares line (segments of at least 2), and for 'variance' its length times the log of its variance about its mean (segments of at least 3, the variance kept above a millionth of the data's), searched without pruning. MaxNumChanges uses dynamic programming over the number of segments and keeps the cheapest with at most that many changes.
 trenddecomp:
     Python: datafeatures.py. PyLAB's own. 'ssa': the trajectory (Hankel) matrix of lag L (half the data unless given), numpy.linalg.svd, and each elementary component reconstructed by diagonal averaging. Components whose singular value is at or below the Gavish-Donoho hard threshold (omega(beta) times the median singular value) stay in the remainder; of the rest, those with less than one cycle in L samples (the largest frequency of their FFT) form the long-term trend, and the others are summed by period into seasonal trends, the largest first. 'stl': seasonal-trend decomposition by loess (Cleveland and others) with the inner loop run twice and no robustness passes: cycle-subseries smoothed by loess over 7 points, low-pass filtered by moving averages of the period, the period and 3 and a loess, and the trend by loess over the next odd number above 1.5*period/(1 - 1.5/7); several periods are taken off one after another.
+xline, yline, xregion, yregion:
+    Python: charts.py. A line (or patch) object marked to span: the page draws it from one edge of the axes to the other at the limits it has when drawing, so it follows zoom and pan, and the limits are worked out without it. The label is drawn beside the line at its top (or as asked), turned along a vertical line.
+heatmap:
+    Python: charts.py. An image of the colour data (scaled to ColorLimits through the colormap, parula unless given) with a text for each cell in white or black by the cell's brightness, ticks and labels for the rows and columns, and a colorbar. From a table, the rows are grouped by the two variables (categories in their order, other values sorted) and counted or summarized.
+boxchart:
+    Python: charts.py. For each group: the quartiles by quantile, whiskers to the farthest values within 1.5 times the box's height, the others as markers; a notch of 1.57 times the box's height over the square root of the count. Groups by colour sit side by side.
+swarmchart, swarmchart3:
+    Python: charts.py. PyLAB's own spreading: for each x, offsets drawn uniformly from the language's random numbers, scaled by the points' Gaussian kernel density in y (Silverman's bandwidth) relative to its largest, to half of XJitterWidth; then scatter.
+piechart, donutchart:
+    Python: charts.py. Each wedge a patch from the start angle (90 degrees, clockwise unless asked), its share of the total; labels beyond the rim; a donut leaves InnerRadius of the radius empty.
+stackedplot:
+    Python: charts.py. An axes for each numeric variable (or column), stacked from the top of the figure down, plotted against the row times, XVariable or the row numbers; only the bottom axes shows its x tick labels.
+plotyy:
+    Python: charts.py. yyaxis left with the first plot, yyaxis right with the second, the two axes given back.
+polarhistogram:
+    Python: charts.py. numpy.histogram of the angles taken modulo 2*pi over the edges (nbins evenly over 0 to 2*pi; without them about 2*n^(1/3) bins, at most 50), each bin a wedge patch drawn by the page in polar axes.
+binscatter:
+    Python: charts.py. numpy.histogram2d over the data's limits (about sqrt(n)/2 bins each way, 10 to 300, unless given), the bins that hold points as faces of one patch coloured from the colormap by count.
+parallelplot:
+    Python: charts.py. Each coordinate scaled to its range (or as DataNormalization asks), a line for each row through the coordinates, one per group in the colour order.
+scatterhistogram:
+    Python: charts.py. scatterhist with the groups, labels and title.
+wordcloud:
+    Python: charts.py. PyLAB's own layout: font sizes from 10 to 40 points by size, the words placed largest first along a spiral at the first spot where their box (0.6 of the size per character wide) overlaps no other.
+fimplicit3:
+    Python: volumes.py. The function evaluated on a 35 by 35 by 35 grid of the box and the zero isosurface taken by isosurface's marching tetrahedra, coloured by z.
+tetramesh:
+    Python: volumes.py. Each tetrahedron as a patch of its four triangles, its colour index the colormap's.
+isocaps:
+    Python: volumes.py. On each face of the volume, each grid cell clipped to where V is above (or below) the value, the cut points interpolated along the cell's edges, and the polygons fanned into triangles coloured by V.
+isonormals:
+    Python: volumes.py. numpy.gradient of V on its grid, interpolated at the vertices (scipy.interpolate.RegularGridInterpolator), negated.
+smooth3:
+    Python: volumes.py. scipy.ndimage.correlate with the box (or Gaussian, normalized) kernel, mode 'nearest'.
+reducevolume, subvolume, volumebounds:
+    Python: volumes.py. Every R-th sample; the samples within the limits; the extremes of the grid and the finite values.
+reducepatch:
+    Python: volumes.py. PyLAB's own vertex clustering: the vertices merged on a grid over the patch's box (each cell's to their mean), faces whose corners merged dropped and repeated faces kept once, the grid's size chosen by bisection so that the faces left come to the number asked or just above it.
+streamslice:
+    Python: volumes.py. PyLAB's own evenly spaced lines: from seeds on a grid (12 by 12 times the density), lines traced both ways by fourth-order Runge-Kutta on the normalized field (RegularGridInterpolator), stopping at the edge, at a still point, or in a cell of a 25-by-25 (times density) grid another line has passed; an arrowhead at each line's middle.
+streamparticles:
+    Python: volumes.py. Markers at every k-th vertex of the lines (k so that there are about n), moved one vertex along at each frame (drawnow and pause at FrameRate) when animated.
+mink, maxk:
+    Python: datamore.py. A stable sort along the dimension with NaN last (by absolute value for 'abs'), the first k kept with their places.
+clip:
+    Python: datamore.py. min(max(A, lower), upper), NaN kept; integers rounded and saturated.
+allfinite, anynan:
+    Python: datamore.py. all(isfinite) and any(isnan) over all elements.
+isuniform:
+    Python: datamore.py. The step (last - first)/(n - 1); uniform when every difference is within 4*eps(the largest magnitude) times n of it.
+rmoutliers:
+    Python: datamore.py. isoutlier with the same method and options; the elements (or rows with at least MinNumOutliers outliers, or columns for dim 2) left out.
+cbrt:
+    Python: datamore.py. numpy.cbrt.
+interpft:
+    Python: datamore.py. The FFT along the dimension, zeros inserted in the middle (the Nyquist term of an even length split between both halves), the inverse FFT times n/m; for n below m, interpolated to a multiple of n and every k-th taken.
+resize, paddata, trimdata:
+    Python: datamore.py. numpy.pad ('constant', 'edge', 'wrap', 'symmetric', 'reflect') or slicing along each dimension, at the trailing, leading or both sides; tables by rows of missing values or taken rows.
+groupcounts:
+    Python: datamore.py. The rows grouped by the variables' values (sorted as sort sorts them) and counted, percentages of all rows.
+grouptransform:
+    Python: datamore.py. The method applied to each group's rows of each data variable: zscore (mean and std, n - 1), norm (2-norm), meancenter, rescale (to 0..1), meanfill, linearfill (interpolation by row order), or the function.
+groupfilter:
+    Python: datamore.py. The function called with each group's column; a false scalar drops the group, a logical vector its rows.
+pivot:
+    Python: datamore.py. Rows grouped by Rows and Columns; the method over the DataVariable's values in each pair (0 for count and sum where none fall, NaN otherwise); the column groups' names made valid as variable names.
+topkrows:
+    Python: datamore.py. A stable lexicographic sort by the columns asked (descending unless 'ascend'), the first k rows.
+lag:
+    Python: datamore.py. Each variable's rows moved by n, missing values (NaN, NaT, <undefined>, "" or empty) put where nothing comes.
+pattern, digitsPattern, lettersPattern, alphanumericsPattern, whitespacePattern, wildcardPattern, characterListPattern, optionalPattern, asManyOfPattern, asFewOfPattern, letterBoundary, digitBoundary, alphanumericBoundary, whitespaceBoundary, lineBoundary, textBoundary, lookAheadBoundary, lookBehindBoundary, regexpPattern, caseInsensitivePattern, caseSensitivePattern, namedPattern:
+    Python: patterns.py. Each pattern is held as a Python regular expression: digits [0-9]+, letters [^\W\d_]+, wildcard [\s\S]+? (lazy), counts as {n} or {min,max}, boundaries as lookarounds, regexpPattern through regexp's own translation, caseInsensitivePattern as (?i:...); + joins them, | and arrays give alternatives, and text is matched literally (re.escape).
+extract:
+    Python: patterns.py. re.finditer's matches of the pattern.
+symmlq:
+    Python: krylov.py. PyLAB's own implementation of Paige and Saunders' SYMMLQ: the preconditioned Lanczos process (M-inner products), the LQ factorization of its tridiagonal matrix by Givens rotations, x updated along the rotated Lanczos vectors; it stops when the residual of the iterate, or of the CG point beside it, meets the tolerance. Through the same wrapper as pcg: flag, relres, iter and resvec as there.
+bicgstabl:
+    Python: krylov.py. PyLAB's own implementation of BiCGStab(l) of Sleijpen and Fokkema with l = 2: two BiCG steps, then the minimal-residual polynomial of degree 2 by modified Gram-Schmidt; right preconditioning (x = M\y).
+parfeval, parfevalOnAll, backgroundPool, fetchOutputs, fetchNext, afterEach, afterAll, cancel:
+    Python: futures.py. PyLAB runs the function when parfeval is called, in the engine (programs here run one computation at a time), so the future is finished at once with its outputs or its error. fetchOutputs puts each output of several futures together with vertical concatenation (or in cells); afterEach and afterAll run their function at once on those outputs.
+memoize, clearCache, clearAllMemoizedCaches, stats:
+    Python: futures.py. Results kept in a dictionary keyed by the number of outputs and the inputs' serialized bytes, the least recently used dropped beyond CacheSize; handles to named functions give the same memoized function.
+timeit:
+    Python: futures.py. One warm-up call, then up to 11 timed batches (enough calls for about 0.2 s in all), the median time per call (time.perf_counter).
+setpref, addpref, getpref, ispref, rmpref:
+    Python: futures.py. A JSON file .pylab-prefs.json in the home folder (the page's /home/user, kept in the browser), each value serialized as the parallel pool serializes values.
+audioplayer, play, playblocking, isplaying, resume:
+    Python: audioobjs.py. The samples go to the page, which plays them through its Web Audio context (resampled to the context's rate); pause and stop end the sound there, and where a player is is worked out from the time since play.
+audiorecorder, record, recordblocking, getaudiodata, isrecording:
+    Python: audioobjs.py and pylab-app.js. The page asks the browser for the microphone (getUserMedia, without echo cancellation, noise suppression or gain control) and records it through an AudioContext at the rate asked for; the samples come to the engine when the recording is stopped or asked for.
+detectImportOptions, setvartype, setvaropts, getvaropts, readvars:
+    Python: importopts.py. The file is read as readtable reads it, and the options hold its variables' names and types (double, logical, char, string, categorical, datetime, duration), the delimiter (the most frequent of , tab ; | in the first line), and where the names and the data are. Read with options, the table is read again from those lines, renamed, each variable converted to its type (FillValue for missing numbers), and the selected variables kept in their order.
+xmlread, xmlwrite, com.mathworks.xml.XMLUtils.createDocument:
+    Python: importopts.py. xml.dom.minidom parses the file (no external entities are fetched); the document's nodes answer the DOM methods by name, a method with arguments waiting to be called (node.getAttribute('id')); xmlwrite is minidom's toprettyxml with three spaces of indent, blank lines left out.
+bwmorph:
+    Python: imageproc.py. PyLAB's own versions: thin and skel by Zhang and Suen's thinning, shrink by thinning and then taking off end points; the others from the eight neighbours of each pixel (clean, fill, majority, remove, spur, endpoints, branchpoints, bridge, diag, hbreak) or by dilation and erosion with a 3-by-3 square.
+bwboundaries:
+    Python: imageproc.py. Moore-neighbour tracing, clockwise, from each object's first pixel down the columns, stopping by Jacob's criterion; holes are the background components (4-connected for 8-connected objects) that do not touch the edge, traced the same way.
 imresize:
     Python: imageproc.py. Separable resampling: for each output row (then column) at x = u/scale + 0.5*(1 - 1/scale), the kernel's weights over the nearest input samples, normalized to add up to 1, the input mirrored at its ends; shrinking with antialiasing stretches the kernel by 1/scale. Kernels: Keys' cubic (a = -0.5) for bicubic, the triangle for bilinear, the box for nearest, and Lanczos. Integer images are rounded and saturated at the end.
 imrotate:
@@ -2010,6 +2108,178 @@ lookfor:
     Python: devtools.py. The first comment line of each program file on the path and the first line of each built-in's help, searched for the topic (case ignored); -all searches all of the help.
 datetick:
     Python: devtools.py. PyLAB's own tick choice: years (1, 2, 5, 10 ...) over three years of range, months (1, 2, 3, 4, 6 or 12) over 45 days, else days or parts of a day (14 days down to a minute), about 4 to 8 ticks; labels from datestr, as 'yyyy', 'mmmyy', 'mmm', 'dd-mmm' or 'HH:MM' unless a format is given.
+# ---- graphs.py: graphs and networks ----------------------------------------------------------------------------------------------
+graph, digraph:
+    Python: graphs.py. A value object of PyLAB's own holding the node count, names (or none), the end nodes of each edge as NumPy integer arrays, the weights (or none) and the other node and edge variables; the edges sorted by end nodes with numpy.lexsort (a graph's ends ordered first). Nodes and Edges are tables made when asked.
+numnodes, numedges, findnode, findedge, degree, indegree, outdegree, neighbors, successors, predecessors, outedges, inedges, edgecount, ismultigraph:
+    Python: graphs.py. Counts and searches over the edge arrays, edges in their stored order.
+adjacency, incidence:
+    Python: graphs.py. scipy.sparse.coo_matrix from the end nodes (a graph's edges both ways, parallel edges summed), made into the language's sparse matrix.
+addedge, rmedge, addnode, rmnode, subgraph, reordernodes, flipedge:
+    Python: graphs.py. New edge and node arrays, the edges sorted again; subgraph and rmnode keep the edges whose ends both stay, renumbered.
+shortestpath, distances, nearest, shortestpathtree:
+    Python: graphs.py. PyLAB's own searches: breadth first without weights, Dijkstra's method with a binary heap (Python's heapq) for weights of one sign, Bellman and Ford's for negative weights (an error if a pass still improves after n - 1). Of equal paths, the first found keeps its predecessor.
+bfsearch, dfsearch, allpaths:
+    Python: graphs.py. Breadth-first (a deque) and depth-first (an explicit stack) searches, neighbours in the order of their numbers; allpaths a depth-first walk that does not revisit a node on its path.
+conncomp, biconncomp, condensation:
+    Python: graphs.py. Weak components by union-find over the edges; strong components by Tarjan's method, without recursion; biconnected components by Hopcroft and Tarjan's depth-first search with a stack of edges. Components renumbered by their first node (or edge).
+toposort, isdag, hascycles:
+    Python: graphs.py. Kahn's method with a heap, so the smallest free node comes next; a graph (undirected) has a cycle when it has a self-loop or more edges than nodes less components.
+transclosure, transreduction:
+    Python: graphs.py. Breadth-first reach from each node; the reduction through the condensation, an edge kept when no other component lies on a path between its ends.
+minspantree:
+    Python: graphs.py. Prim's method with a heap of edges from the root (from each component's first node too with 'forest'); ties go to the edge listed first.
+maxflow:
+    Python: graphs.py. Edmonds and Karp's method: shortest augmenting paths found breadth first in the residual graph (neighbours by number) until none is left; the minimum cut's side cs is what s still reaches.
+centrality:
+    Python: graphs.py. Degrees summed over edges; closeness from the distances of each node; betweenness by Brandes' method (breadth first, or Dijkstra with weights), halved for a graph; pagerank by power iteration with dangling nodes spread evenly, until the change's sum is below n times the tolerance; eigenvector, hubs and authorities from numpy.linalg.eigh of A, A*A' and A'*A, the leading vector's magnitudes made to sum to 1.
+isisomorphic:
+    Python: graphs.py. A backtracking search matching nodes of equal in- and out-degrees, each match checked against those made before.
+highlight, labelnode, labeledge, layout:
+    Python: graphs.py. The GraphPlot keeps its own colours, sizes and labels for nodes and edges and draws again as line, scatter, patch (arrowheads) and text objects in the axes. Layouts: 'circle' from the top going clockwise; 'layered' by the longest path into each node (cycles broken depth first), each layer's nodes ordered by where the nodes above them are; 'force' Fruchterman and Reingold's spring model from the circle, 100 steps with cooling; 'subspace' the Laplacian's eigenvectors 2 and 3 (numpy.linalg.eigh).
+# ---- unittests.py and pycall.py: unit tests, calling Python --------------------------------------------------------------------------
+runtests, testsuite, matlab.unittest.TestSuite.fromFile, matlab.unittest.TestSuite.fromFolder, matlab.unittest.TestSuite.fromName, matlab.unittest.TestSuite.fromClass:
+    Python: unittests.py. PyLAB's own runner. A test class's Test methods are found by their methods block attributes (its superclasses' too), TestParameter properties expanded with itertools.product; a function file is run for its functiontests; a script is cut at its %% lines. Each test of a class gets a copy of the object the TestClassSetup methods worked on; each is timed with time.perf_counter. Names and patterns are matched with fnmatch.
+functiontests, localfunctions:
+    Python: unittests.py. localfunctions walks Python's stack to the compiled file it is called from and makes a handle for each of its functions after the first; functiontests sorts them into tests and fixtures by name.
+matlab.unittest.TestCase.forInteractiveUse, matlab.unittest.TestRunner.withTextOutput, matlab.unittest.TestRunner.withNoPlugins, assertSuccess, addTeardown:
+    Python: unittests.py. A test case of PyLAB's own for the prompt; a runner that keeps how much it reports; the teardowns kept with the running test and called last first.
+pyrun, pyrunfile, pyenv, pyargs:
+    Python: pycall.py. Python's exec in a dict kept as __main__ (pyrun) or a new one (pyrunfile, with sys.argv set), sys.stdout and sys.stderr sent to the Command Window while it runs, a Python exception made an error that names it. py.a.b names are found by importlib.import_module and getattr (Python's builtins module first), values converted both ways by PyLAB's own rules.
+# ---- odemore.py: boundary value problems, delays, PDEs, the ode object -------------------------------------------------------------------
+bvp4c:
+    Python: odemore.py. SciPy's scipy.integrate.solve_bvp: cubic pieces, continuous with their first derivatives, collocated at each interval's ends and midpoint (the three-stage Lobatto IIIA formula, fourth order), Newton's method on the collocation equations, the mesh refined where the rms residual, relative to 1 + |f|, exceeds RelTol. A FJacobian is passed to it; SingularTerm is its S.
+bvp5c:
+    Python: odemore.py. PyLAB's own: the four-stage Lobatto IIIA collocation (c = 0, (5 -+ sqrt(5))/10, 1; its coefficients the integrals of the Lagrange polynomials), the node and stage values solved together by damped Newton steps on a SciPy sparse Jacobian (by differences, block by block), then the rms residual of the quartic on each interval, by three-point Gauss quadrature relative to 1 + |f|, against RelTol; an interval over it is split in two (in three when it is over 100 times), until all pass or NMax.
+bvpinit, bvpxtend, bvpset, bvpget:
+    Python: odemore.py. Structs as the solvers read them.
+dde23, ddesd:
+    Python: odemore.py. PyLAB's own method of steps: the Bogacki-Shampine 3(2) pair with the error per step against AbsTol + RelTol |y|, the delayed values from cubic Hermite interpolation of the steps taken (the history before the start); when a delay is shorter than the step, the step is done again with the delayed values from its own interpolant until it settles. dde23 also steps to t0 plus sums of up to three lags. Events are found by Brent's method (scipy.optimize.brentq) on the step's interpolant.
+ddeset, ddeget:
+    Python: odemore.py. Structs as the solvers read them.
+pdepe:
+    Python: odemore.py. PyLAB's own method of lines: each node's equation integrated over its cell (from the midpoints on each side, weighted by x^m, exactly), c, f and s at the midpoints of the mesh's intervals with u their mean and du/dx their slope; at an end, the flux from the boundary condition, or u held there when q is 0. The equations M(t, u) u' = F(t, u), M diagonal (zero for elliptic rows), are solved by ode15s (odesolvers.NDF) with a Jacobian by differences, columns three nodes apart at once.
+pdeval:
+    Python: odemore.py. Linear interpolation between the mesh points.
+ode, solutionFcn:
+    Python: odemore.py. An object of PyLAB's own whose properties become the arguments and odeset options of the solver it selects; solutionFcn keeps that solver's dense output (sol.idata) behind a function handle.
+# ---- mlunsup.py, mlmodels.py, learners.py: statistics and machine learning ---------------------------------------------------
+pdist, pdist2, squareform, knnsearch, rangesearch:
+    Python: mlunsup.py. SciPy's scipy.spatial.distance (pdist, cdist, squareform) with the language's names for the metrics ('spearman' the correlation of the rows' ranks by scipy.stats.rankdata); neighbours by sorting the distances (numpy.argsort, stable).
+kmeans, kmedoids:
+    Python: mlunsup.py. PyLAB's own: k-means++ seeding from rng's generator, then Lloyd's batch iterations (kmeans); for kmedoids the Voronoi iteration and then single swaps while they lower the total distance.
+linkage, cluster, clusterdata, cophenet, inconsistent, optimalleaforder, dendrogram:
+    Python: mlunsup.py. SciPy's scipy.cluster.hierarchy (linkage, fcluster, cophenet, inconsistent, optimal_leaf_ordering, dendrogram's coordinates), the leaves numbered from 1 and the clusters renumbered by their first observation; the dendrogram drawn as line objects.
+dbscan, spectralcluster, silhouette, evalclusters:
+    Python: mlunsup.py. PyLAB's own: DBSCAN by a depth-first expansion from each core point; spectral clustering by scipy.linalg.eigh of the graph Laplacian (generalized with the degrees for 'randomwalk') and kmeans of the eigenvectors; silhouettes and the Calinski-Harabasz, Davies-Bouldin and gap criteria from their definitions.
+gmdistribution, fitgmdist, posterior, mahal:
+    Python: mlunsup.py. EM written here (responsibilities by scipy.stats.multivariate_normal.logpdf, log-sum-exp), from k-means++ starts; mahal by a QR factorization of the centred sample.
+pca, pcacov, ppca:
+    Python: mlunsup.py. numpy.linalg.svd of the centred (weighted) data; ppca by EM (Tipping and Bishop), each row's posterior from its observed entries.
+factoran, rotatefactors:
+    Python: mlunsup.py. The likelihood as a function of the specific variances (the loadings from the eigenvectors of the scaled correlations, Joreskog's method), minimized by scipy.optimize.minimize (L-BFGS-B, psi in [Delta, 1]); orthomax rotations by the SVD iteration, promax by a least-squares fit to the powered varimax loadings.
+cmdscale, mdscale, tsne, procrustes, canoncorr, barttest, nnmf, corrcov:
+    Python: mlunsup.py. cmdscale by numpy.linalg.eigh of the doubly centred squared distances; mdscale by L-BFGS on each criterion with its gradient (nonmetric: alternating with isotonic regression by pool-adjacent-violators); exact t-SNE (van der Maaten's gradient descent with momentum and gains); procrustes and canoncorr by the SVD (canoncorr of the QR factors); barttest from the covariance's eigenvalues; nnmf by alternating nonnegative least squares or Lee and Seung's multiplicative updates.
+fitctree, fitrtree, view:
+    Python: learners.py and mlmodels.py. PyLAB's own CART: each candidate split of each variable scored at once from cumulative class counts (or sums and sums of squares), the nodes split breadth first.
+fitcknn, fitcdiscr, fitcnb:
+    Python: learners.py. Distances by scipy.spatial.distance.cdist; discriminant and naive Bayes posteriors from their log densities (numpy.linalg.pinv and slogdet, scipy.stats.norm), normalized by log-sum-exp.
+fitcsvm, fitrsvm:
+    Python: learners.py. PyLAB's own SMO with LIBSVM's second-order choice of the pair (Fan, Chen and Lin), on the precomputed kernel matrix; regression as LIBSVM poses it, with 2n variables.
+fitcecoc, templateTree, templateSVM, templateKNN, templateDiscriminant, templateNaiveBayes, templateLinear, templateKernel, templateGP:
+    Python: mlmodels.py. A binary learner for each column of the coding matrix on the classes it names, decoded by the mean binary loss.
+fitcensemble, fitrensemble, TreeBagger, oobLoss, oobPredict:
+    Python: mlmodels.py. Bagging (bootstrap samples from rng's generator, random variables at each split), AdaBoost.M1, SAMME, GentleBoost, LogitBoost and least-squares boosting, written here over learners.py's trees.
+fitclinear, fitrlinear, fitckernel, fitrkernel:
+    Python: learners.py. Logistic and least squares by scipy.optimize.minimize (L-BFGS-B; lasso by splitting the coefficients into positive parts); linear SVMs by dual coordinate descent (Hsieh and others; Ho and Lin for regression), the bias as a constant column; random Fourier features (Rahimi and Recht) from rng's generator.
+fitcnet, fitrnet:
+    Python: learners.py. A multilayer perceptron in NumPy, its gradient by backpropagation, minimized by scipy.optimize.minimize (L-BFGS-B).
+fitrgp:
+    Python: learners.py. The exact marginal likelihood by a Cholesky factorization (numpy.linalg.cholesky), its gradient analytic, minimized by L-BFGS-B over the logarithms of the parameters from the given (or default) start and from noise a tenth and a hundredth of it; the best is kept.
+loss, resubLoss, resubPredict, compact, crossval, kfoldLoss, kfoldPredict, cvpartition, training, test, repartition:
+    Python: mlmodels.py. Losses from the scores as the help gives them; cross-validation by fitting again with the same options on each training set; partitions by permutations from rng's generator (stratified within each group).
+confusionmat, confusionchart, perfcurve:
+    Python: mlmodels.py. Counts by class; the chart drawn as patches and text; perfcurve's criteria counted at each distinct score, its area by the trapezoid rule.
+# ---- statsmore.py: more statistics ---------------------------------------------------------------------------------------------------
+lasso:
+    Python: statsmore.py. PyLAB's own cyclic coordinate descent with soft thresholding (as Friedman, Hastie and Tibshirani's glmnet), warm started from each lambda to the next; cross-validation by refitting on each training set.
+stepwiselm:
+    Python: statsmore.py. Each candidate model fitted by numpy.linalg.lstsq, the partial F statistics compared with scipy.stats.f; the final model is fitlm's.
+anovan:
+    Python: statsmore.py. Effect-coded design matrices; each sum of squares the difference of residual sums of squares of nested least-squares fits (numpy.linalg.lstsq), the degrees of freedom the difference of their ranks.
+manova1:
+    Python: statsmore.py. The generalized eigenproblem of B and W (scipy.linalg.eigh); Bartlett's chi-square on the product of 1/(1 + eigenvalue).
+bootci:
+    Python: statsmore.py. Resamples drawn by rng's generator; percentiles by numpy.percentile; BCa's acceleration from the jackknife (Efron and Tibshirani).
+ansaribradley:
+    Python: statsmore.py. SciPy's scipy.stats.ansari for the p-value; W and its normal score from the rank scores.
+copularnd, copulapdf, copulacdf, copulastat, copulaparam, copulafit:
+    Python: statsmore.py. Gaussian and t by their multivariate distributions (scipy.stats); Clayton by the gamma frailty (Marshall and Olkin), Gumbel by a positive stable frailty (Chambers, Mallows and Stuck), Frank by inverting its conditional distribution; Frank's tau by quadrature of Debye's function; fits by scipy.optimize.minimize_scalar.
+fullfact, ff2n, fracfact, bbdesign, ccdesign, candgen:
+    Python: statsmore.py. The designs built from itertools.product of the levels.
+candexch, rowexch:
+    Python: statsmore.py. Fedorov's exchange: the swap that most increases det(X'X), by the variance function from its inverse, until none does; the best of the random starts kept.
+hmmgenerate, hmmviterbi, hmmdecode, hmmestimate, hmmtrain:
+    Python: statsmore.py. Scaled forward-backward recursions, Viterbi in logarithms, Baum-Welch expected counts; the process in state 1 before the first step; draws from rng's generator.
+coxphfit:
+    Python: statsmore.py. Newton's method with step halving on the log partial likelihood, its gradient and Hessian summed over the failure times (Breslow's or Efron's handling of ties).
+relieff, fscchi2, fscmrmr, sequentialfs:
+    Python: statsmore.py. ReliefF (Kononenko; Robnik-Sikonja and Kononenko for regression) on range-scaled Manhattan distances; chi-square tests by scipy.stats.chi2_contingency; mutual information from contingency tables; sequential selection with cvpartition's folds.
+andrewsplot, parallelcoords, probplot:
+    Python: statsmore.py. Line objects; probplot's quantiles by scipy.stats.
+# ---- control.py: control systems -----------------------------------------------------------------------------------------------------------
+tf, zpk, ss, pid, feedback, parallel, tfdata, zpkdata, ssdata:
+    Python: control.py. A model object of PyLAB's own keeping the form it was made in (numpy polynomial rows, roots and gains, or matrices). Products and sums of single-input single-output transfer functions by numpy.polymul; otherwise state-space interconnection formulas (block-diagonal, series and feedback realizations). Conversions: scipy.signal.tf2ss and ss2tf (after removing the states an input cannot reach or an output cannot see), numpy.roots and poly.
+ss2tf, tf2ss:
+    Python: control.py. SciPy's scipy.signal.ss2tf and tf2ss.
+pole, zero, tzero, dcgain, evalfr, freqresp, damp, isstable:
+    Python: control.py. numpy.linalg.eigvals of A (of a minimal realization), numpy.roots, scipy.linalg.eigvals of the system pencil; responses by solving (sI - A) x = B at each frequency, or by evaluating the polynomials.
+ctrb, obsv, gram, covar, lyap, dlyap, care, dare:
+    Python: control.py. SciPy's scipy.linalg solve_continuous_lyapunov, solve_discrete_lyapunov, solve_sylvester, solve_continuous_are and solve_discrete_are.
+lqr, dlqr, lqry, lqe, kalman, estim, reg, place, acker:
+    Python: control.py. Gains from the Riccati solutions; place by scipy.signal.place_poles; acker by Ackermann's formula with the controllability matrix.
+getPeakGain, hinfnorm:
+    Python: control.py. The largest singular value on 2000 frequencies about the poles and zeros, each local peak refined by scipy.optimize.minimize_scalar (bounded).
+c2d, d2c, pade:
+    Python: control.py. scipy.signal.cont2discrete ('zoh', 'foh', 'bilinear', 'impulse'); 'matched' by mapping roots; d2c by scipy.linalg.logm or the inverse bilinear formulas; Pade coefficients (2N - k)! N!/((2N)! k! (N - k)!).
+minreal, ss2ss, xperm, canon, hsvd, balreal, balred, modred:
+    Python: control.py. Minimal realizations by SVDs of the controllability and observability matrices; balancing by the square-root method (Cholesky factors of the Gramians, an SVD); reduction by truncation or singular perturbation.
+step, impulse, initial, stepplot, impulseplot, lsim, stepinfo:
+    Python: control.py. Each step exact for a piecewise-linear (or constant) input by scipy.linalg.expm of the augmented matrix; discrete models by their recurrence.
+bode, bodeplot, nyquist, nichols, sigma:
+    Python: control.py. The response on 400 logarithmically spaced frequencies two decades beyond the poles and zeros (to the Nyquist frequency in discrete time); phases by numpy.unwrap.
+margin, allmargin:
+    Python: control.py. The crossings of the negative real axis (sign changes of Im H with Re H < 0) and of |H| = 1 on 6000 frequencies, each refined by scipy.optimize.brentq.
+rlocus, pzmap:
+    Python: control.py. numpy.roots of den + k num on 600 gains spaced logarithmically, each root joined to the nearest one at the gain before.
+# ---- globalopt.py: global optimization -----------------------------------------------------------------------------------------------------
+ga, gamultiobj:
+    Python: globalopt.py. PyLAB's own genetic algorithms in NumPy (rank scaling, stochastic uniform selection, scattered crossover, Gaussian mutation; gamultiobj with nondominated sorting and crowding distances), drawing from rng's generator.
+particleswarm:
+    Python: globalopt.py. PyLAB's own particle swarm with random neighbourhoods and adaptive inertia.
+simulannealbnd:
+    Python: globalopt.py. PyLAB's own annealing: exponential cooling, steps of the temperature's length, the logistic acceptance rule.
+patternsearch:
+    Python: globalopt.py. PyLAB's own generalized pattern search on the positive basis of 2n coordinate directions; constraints by the augmented Lagrangian.
+surrogateopt:
+    Python: globalopt.py. Cubic radial basis interpolation with a linear tail by numpy.linalg.lstsq; candidates scored by a weighted sum of the surrogate and the distance to the points evaluated.
+createOptimProblem, MultiStart, GlobalSearch:
+    Python: globalopt.py. The local solver (fmincon, fminunc, lsqnonlin, lsqcurvefit or fminsearch) called from each start point; solutions merged when within the tolerances.
+# ---- wavelets.py ---------------------------------------------------------------------------------------------------------------------------------
+wfilters, dbwavf, symwavf, coifwavf, orthfilt, biorfilt, qmf:
+    Python: wavelets.py. Filters computed in decimal arithmetic (the standard library's decimal, 60 digits): Weierstrass' iteration for the roots of the Daubechies polynomial, Newton's method for the coiflets, fractions for the spline biorthogonal ones.
+dwt, idwt, wavedec, waverec, appcoef, detcoef, wrcoef, upcoef, wenergy, dwt2, idwt2, wavedec2, waverec2, appcoef2, detcoef2, wrcoef2, dwtmode, wmaxlev:
+    Python: wavelets.py. NumPy: the extended signal sliced by twos, tap by tap; two dimensions as rows then columns.
+swt, iswt, swt2, iswt2:
+    Python: wavelets.py. NumPy: circular filtering with the upsampled filters.
+modwt, imodwt, modwtmra:
+    Python: wavelets.py. numpy.fft: the filters' transforms at 2^(j-1) times each frequency.
+wavefun, centfrq, scal2frq:
+    Python: wavelets.py. The cascade algorithm in NumPy; numpy.fft for the centre frequency.
+cwt, icwt, cwtfreqbounds:
+    Python: wavelets.py. numpy.fft with the wavelets' spectra; scipy.optimize.brentq for the cutoff, scipy.integrate.quad for the admissibility constant.
+wthresh, wnoisest, thselect, wden, ddencmp, wdenoise, wcodemat:
+    Python: wavelets.py. NumPy; scipy.special (ndtr, ndtri, erfcx) for the empirical Bayes rule, written to avoid overflow.
 """
 
 
@@ -2127,3 +2397,25 @@ def _distribution_how():
 
 
 HOW.update(_distribution_how())
+
+
+def _qualification_how():
+    from .helptext import _QUALS, _QUAL_KINDS
+    table = {}
+    for check, *_ in _QUALS:
+        text = ('Python: unittests.py. ' + {
+            'Equal': "PyLAB's own comparison: class_of and the sizes first, then NumPy's == with NaN equal to NaN (and |a - e| against the tolerances), cells and structs element by element, other values by isequaln.",
+            'NotEqual': 'The comparison verifyEqual makes, the outcome turned round.',
+            'Error': 'The function handle called, its error caught and its identifier compared.',
+            'Warning': "The function handle called while the runtime keeps the warnings it issues (runtime.warn's WARN_CAPTURE), their identifiers compared.",
+            'WarningFree': "The function handle called while the runtime keeps the warnings it issues (runtime.warn's WARN_CAPTURE).",
+            'InstanceOf': 'isa of the value.',
+            'Matches': "Python's re.search.",
+        }.get(check, 'A check of the value in Python.') + ' The outcome is recorded with the running test (or shown, for interactive use); a failed assertion, fatal assertion or assumption raises an exception the runner catches.')
+        shared = [('p', text)]
+        for kind, *_ in _QUAL_KINDS:
+            table[kind + check] = shared
+    return table
+
+
+HOW.update(_qualification_how())

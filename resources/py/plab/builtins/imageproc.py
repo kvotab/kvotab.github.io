@@ -1311,3 +1311,251 @@ def montage(nargout, *args):
     tiled = imtile(1, args[0], *rest)
     h = R._builtin('imshow', tiled)
     return h if nargout else None
+
+
+# ---- bwmorph and bwboundaries -------------------------------------------------------------------------------------------------------
+
+def _nbrs(bw):
+    """The eight neighbours of each pixel (zeros beyond the edge), in the order P2..P9 of Zhang and Suen: N, NE, E, SE, S, SW, W, NW."""
+    p = np.pad(bw.astype(np.uint8), 1)
+    m, n = bw.shape
+    s = lambda di, dj: p[1 + di:1 + di + m, 1 + dj:1 + dj + n]  # noqa: E731
+    return [s(-1, 0), s(-1, 1), s(0, 1), s(1, 1), s(1, 0), s(1, -1), s(0, -1), s(-1, -1)]
+
+
+def _zhang_suen_pass(bw):
+    """One iteration of Zhang and Suen's thinning (its two sub-steps); the pixels it took off."""
+    changed = False
+    for step in (0, 1):
+        P = _nbrs(bw)
+        B = sum(P)
+        seq = P + [P[0]]
+        A = sum(((seq[k] == 0) & (seq[k + 1] == 1)).astype(int) for k in range(8))
+        if step == 0:
+            c1 = (P[0] * P[2] * P[4]) == 0
+            c2 = (P[2] * P[4] * P[6]) == 0
+        else:
+            c1 = (P[0] * P[2] * P[6]) == 0
+            c2 = (P[0] * P[4] * P[6]) == 0
+        rm = bw & (B >= 2) & (B <= 6) & (A == 1) & c1 & c2
+        if rm.any():
+            bw = bw & ~rm
+            changed = True
+    return bw, changed
+
+
+def _morph_op(bw, op):
+    from scipy import ndimage
+    sq = np.ones((3, 3), bool)
+    P = _nbrs(bw)
+    nsum = sum(P)
+    if op == 'clean':
+        return bw & (nsum > 0)
+    if op == 'dilate':
+        return ndimage.binary_dilation(bw, sq)
+    if op == 'erode':
+        return ndimage.binary_erosion(bw, sq, border_value=1)
+    if op == 'open':
+        return ndimage.binary_dilation(ndimage.binary_erosion(bw, sq, border_value=1), sq)
+    if op == 'close':
+        return ndimage.binary_erosion(ndimage.binary_dilation(bw, sq), sq, border_value=1)
+    if op == 'fill':
+        return bw | (nsum == 8)
+    if op == 'majority':
+        return (nsum + bw) >= 5
+    if op == 'remove':
+        return bw & ~((P[0] & P[2] & P[4] & P[6]).astype(bool))
+    if op == 'spur':
+        return bw & ~(nsum == 1)
+    if op == 'endpoints':
+        return bw & (nsum == 1)
+    if op == 'branchpoints':
+        seq = P + [P[0]]
+        A = sum(((seq[k] == 0) & (seq[k + 1] == 1)).astype(int) for k in range(8))
+        return bw & ((A >= 3) | (nsum >= 4))
+    if op == 'tophat':
+        return bw & ~_morph_op(bw, 'open')
+    if op == 'bothat':
+        return _morph_op(bw, 'close') & ~bw
+    if op == 'diag':
+        # a background pixel between two diagonal neighbours set: filled so the background is not 8-connected across
+        N, NE, E, SE, S, SW, W, NW = P
+        fill = ~bw & (((N == 1) & (E == 1) & (NE == 0)) | ((E == 1) & (S == 1) & (SE == 0)) | ((S == 1) & (W == 1) & (SW == 0)) | ((W == 1) & (N == 1) & (NW == 0)))
+        return bw | fill
+    if op == 'bridge':
+        seq = P + [P[0]]
+        trans = sum(((seq[k] == 1) & (seq[k + 1] == 0)).astype(int) for k in range(8))
+        return bw | (~bw & (trans >= 2))
+    if op == 'hbreak':
+        N, NE, E, SE, S, SW, W, NW = P
+        # the middle of an H: a pixel joining two vertical (or horizontal) strokes through its sides
+        h = bw & (W == 1) & (E == 1) & (N == 0) & (S == 0) & (NW == 1) & (SW == 1) & (NE == 1) & (SE == 1)
+        h |= bw & (N == 1) & (S == 1) & (W == 0) & (E == 0) & (NW == 1) & (NE == 1) & (SW == 1) & (SE == 1)
+        return bw & ~h
+    raise err('MATLAB:bwmorph:op', f"'{op}' is not an operation here.", 'bwmorph')
+
+
+@bi('bwmorph')
+def bwmorph(nargout, *args):
+    """BW2 = bwmorph(BW, operation, n): a binary morphological operation done n times (Inf: until nothing changes): 'clean', 'close', 'dilate', 'erode', 'open', 'fill', 'majority', 'remove', 'skel', 'thin', 'shrink', 'spur', 'endpoints', 'branchpoints', 'bridge', 'diag', 'tophat', 'bothat'."""
+    nargchk(args, 2, 3, 'bwmorph')
+    a = _image(args[0], 'bwmorph')
+    if a.ndim > 2:
+        raise err('MATLAB:bwmorph:dims', 'bwmorph takes a 2-D binary image.', 'bwmorph')
+    bw = a != 0
+    op = py_str(args[1]).lower()
+    nrep = float(num(args[2])) if len(args) > 2 else (np.inf if op in ('skel', 'shrink') else 1.0)
+    limit = 10 ** 6 if np.isinf(nrep) else int(nrep)
+    for _ in range(limit):
+        if op in ('thin', 'skel'):
+            new, changed = _zhang_suen_pass(bw)
+        elif op == 'shrink':
+            new, changed = _zhang_suen_pass(bw)
+            if not changed:
+                # lines shrink from their ends to a point; rings stay
+                P = _nbrs(new)
+                ends = new & (sum(P) == 1)
+                lone = new & (sum(P) == 0)
+                if ends.any():
+                    # keep one end of a two-pixel piece
+                    from scipy import ndimage
+                    lab, k = ndimage.label(new, np.ones((3, 3)))
+                    keep = np.zeros_like(new)
+                    for comp in range(1, k + 1):
+                        cm = lab == comp
+                        if cm.sum() <= 2 and (ends & cm).any():
+                            r_, c_ = np.argwhere(cm & ends)[0]
+                            keep[r_, c_] = True
+                    rm = ends & ~keep
+                    if rm.any():
+                        new = new & ~rm
+                        changed = True
+        else:
+            new = _morph_op(bw, op)
+            changed = not np.array_equal(new, bw)
+        bw = new
+        if not changed:
+            break
+    return bw
+
+
+_DIRS8 = [(0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1)]      # W, NW, N, NE, E, SE, S, SW: clockwise on the screen
+_DIRS4 = [(0, -1), (-1, 0), (0, 1), (1, 0)]
+
+
+def _trace(mask, start, conn):
+    """The boundary of the region holding start, clockwise (Moore neighbours), as [row col] from 1, closed (the start again at the end)."""
+    m, n = mask.shape
+    dirs = _DIRS8 if conn == 8 else _DIRS4
+    nd = len(dirs)
+
+    def inside(r, c):
+        return 0 <= r < m and 0 <= c < n and mask[r, c]
+    r0, c0 = start
+    # the neighbour we came from: west of the start (outside, since start is the column-first first pixel)
+    back = 0
+    path = [(r0, c0)]
+    r, c = r0, c0
+    second = None
+    for _ in range(4 * mask.size + 8):
+        found = False
+        for k in range(1, nd + 1):
+            d = (back + k) % nd
+            rr, cc = r + dirs[d][0], c + dirs[d][1]
+            if inside(rr, cc):
+                # the next search starts just after the last outside neighbour, seen from the new pixel
+                back = (d + 5) % 8 if conn == 8 else (d + 2) % 4
+                r, c = rr, cc
+                found = True
+                break
+        if not found:
+            break
+        if (r, c) == (r0, c0) and second is not None and len(path) > 1:
+            path.append((r, c))
+            nxt = None
+            # Jacob's criterion: stop when the start is entered as at the beginning
+            for k in range(1, nd + 1):
+                d = (back + k) % nd
+                rr, cc = r + dirs[d][0], c + dirs[d][1]
+                if inside(rr, cc):
+                    nxt = (rr, cc)
+                    break
+            if nxt == second:
+                break
+            path.pop()
+        if second is None:
+            second = (r, c)
+        path.append((r, c))
+    if len(path) == 1:
+        path.append((r0, c0))
+    return np.array(path, float) + 1
+
+
+@bi('bwboundaries', nout=4)
+def bwboundaries(nargout, *args):
+    """[B, L, N, A] = bwboundaries(BW, conn, 'noholes'): the boundaries of the objects (and of the holes in them) as [row col] points, clockwise and closed; L labels them, N counts the objects, A says which lies in which."""
+    nargchk(args, 1, 4, 'bwboundaries')
+    from scipy import ndimage
+    a = _image(args[0], 'bwboundaries')
+    bw = a != 0
+    conn = 8
+    holes = True
+    for x in args[1:]:
+        if is_str(x):
+            w = py_str(x).lower()
+            if w == 'noholes':
+                holes = False
+            elif w != 'holes':
+                raise err('MATLAB:bwboundaries:option', "The option is 'holes' or 'noholes'.", 'bwboundaries')
+        else:
+            conn = int(num(x))
+    L, n = _label(bw, conn)
+    bounds = []
+    for k in range(1, n + 1):
+        cols = np.nonzero((L == k).any(axis=0))[0]
+        c = cols[0]
+        r = np.nonzero(L[:, c] == k)[0][0]
+        bounds.append(_trace(L == k, (r, c), conn))
+    hole_lab = np.zeros(bw.shape)
+    nh = 0
+    if holes:
+        st = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool) if conn == 8 else np.ones((3, 3), bool)
+        bl, nb = ndimage.label(~bw, structure=st)
+        border = set(np.unique(np.concatenate([bl[0], bl[-1], bl[:, 0], bl[:, -1]]))) - {0}
+        hid = [h for h in range(1, nb + 1) if h not in border]
+        flat = bl.reshape(-1, order='F')
+        hid.sort(key=lambda h: np.flatnonzero(flat == h)[0])
+        for h in hid:
+            nh += 1
+            hm = bl == h
+            hole_lab[hm] = n + nh
+            cols = np.nonzero(hm.any(axis=0))[0]
+            c = cols[0]
+            r = np.nonzero(hm[:, c])[0][0]
+            bounds.append(_trace(hm, (r, c), 12 - conn))
+    B = Cell.empty((len(bounds), 1))
+    for i, b in enumerate(bounds):
+        B.a[i, 0] = b
+    if nargout <= 1:
+        return B
+    Lout = L + hole_lab
+    res = [B, Lout, float(n)]
+    if nargout > 3:
+        A = np.zeros((n + nh, n + nh))
+        for h in range(n + 1, n + nh + 1):
+            hm = hole_lab == h
+            ring = ndimage.binary_dilation(hm, np.ones((3, 3), bool)) & ~hm
+            parents = np.unique(L[ring & (L > 0)])
+            if parents.size:
+                A[h - 1, int(parents[0]) - 1] = 1
+        for k in range(1, n + 1):
+            # an object lies in a hole when the pixel just west of its first pixel (outside it) is in that hole
+            cols = np.nonzero((L == k).any(axis=0))[0]
+            c = cols[0]
+            r = np.nonzero(L[:, c] == k)[0][0]
+            if c > 0 and hole_lab[r, c - 1] > 0:
+                A[k - 1, int(hole_lab[r, c - 1]) - 1] = 1
+        from ..sparsemat import make
+        import scipy.sparse as sps
+        res.append(make(sps.csc_matrix(A)))
+    return tuple(res[:nargout])

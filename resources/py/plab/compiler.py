@@ -252,6 +252,7 @@ class Compiler:
         self.debug = True
         self.local = {}               # the file's local functions: name -> Python name
         self.extra = []               # parfor chunk functions: (lines, line map), at the module's end
+        self.vanishing = set()        # workspace variables a command's clear may remove before their use: looked up as it runs
         self.parfor_n = 0
 
     # ---- helpers ---------------------------------------------------------------
@@ -836,6 +837,12 @@ class Compiler:
             e(f'R.ans_list(W, {code}, {s.show})', line)
             return
         code, fresh = self.expr(x)
+        if 'R.fcall(' in code:
+            # obj.method(...) of a method that gives nothing leaves ans alone
+            r = self.tmp()
+            e(f'{r} = {code}', line)
+            e(f'if {r} is not None: W["ans"] = {r if fresh else f"R.share({r})"}' + ('; R.show(W, "ans")' if s.show else ''), line)
+            return
         e(f'W["ans"] = {code if fresh else f"R.share({code})"}', line)
         if s.show:
             e('R.show(W, "ans")', line)
@@ -957,23 +964,72 @@ class Compiler:
                     parts.append(f"('{kind}', {args})")
         e(f'{target} = R.asgn_chain({cur}, ({", ".join(parts)},), {code if fresh else f"R.share({code})"})', line)
 
+    def _cs_field(self, x):
+        """A target s.f or s(k).f whose struct may be an array (so the target takes several values)."""
+        if x is None or type(x) is not P.Field or not isinstance(x.name, str):
+            return None
+        b = x.base
+        if type(b) is P.Id:
+            return b.name, None
+        if type(b) is P.Index and not b.brace and type(b.base) is P.Id:
+            return b.base.name, b
+        return None
+
     def multi_assign(self, s):
         e = self.out.emit
         line = s.line
         n = len(s.lhs)
         rhs = s.rhs
         r = self.tmp()
+        fields = [self._cs_field(x) for x in s.lhs]
+        cv = None
+        if any(fields):
+            # [s.f] = ...: a struct array's field takes a value for each element
+            counts = []
+            for f in fields:
+                if f is None:
+                    counts.append('1')
+                    continue
+                root, ix = f
+                if root not in self.scope.vars:
+                    counts.append('1')
+                    continue
+                cur = self.var_get(root)
+                if ix is None:
+                    counts.append(f'R.cs_count({cur}, None)')
+                else:
+                    tv = self.tmp()
+                    counts.append(f'R.cs_count(({tv} := {cur}), {self.index_args(ix.args, tv)})')
+            cv = self.tmp()
+            e(f'{cv} = [{", ".join(counts)}]', line)
+            nexpr = f'sum({cv})'
+        else:
+            nexpr = str(n)
         if self.is_cslist(rhs):
-            e(f'{r} = R.need({self.list_expr(rhs)}, {n})', line)
+            e(f'{r} = R.need({self.list_expr(rhs)}, {nexpr})', line)
         elif self.is_call(rhs) or type(rhs) is P.Index:
-            code = self.call_expr(rhs, str(n), multi=True)
-            e(f'{r} = R.outs({code}, {n})', line)
+            code = self.call_expr(rhs, nexpr, multi=True)
+            e(f'{r} = R.outs({code}, {nexpr})', line)
         else:
             raise CompileError('Too many output arguments.' if True else '', line)
         for i, x in enumerate(s.lhs):
             if x is None:
                 continue
-            self.store(x, f'{r}[{i}]', line, fresh=False)
+            if cv is None:
+                self.store(x, f'{r}[{i}]', line, fresh=False)
+                continue
+            off = f'sum({cv}[:{i}])'
+            f = fields[i]
+            if f is None or f[0] not in self.scope.vars:
+                self.store(x, f'{r}[{off}]', line, fresh=False)
+                continue
+            root, ix = f
+            cur = self.var_get(root)
+            if ix is None:
+                e(f'{self.var(root)} = R.cs_assign({cur}, None, {x.name!r}, {r}[{off}:{off} + {cv}[{i}]])', line)
+            else:
+                tv = self.tmp()
+                e(f'{self.var(root)} = R.cs_assign(({tv} := {cur}), {self.index_args(ix.args, tv)}, {x.name!r}, {r}[{off}:{off} + {cv}[{i}]])', line)
         if s.show:
             for x in s.lhs:
                 if x is None:
@@ -1095,6 +1151,8 @@ class Compiler:
                 if n in self.scope.fh_vars:
                     cargs = pytuple(self.call_args(x.args, tv))
                     return f'((await R.fcall({tv}, {nargout}, {cargs})) if isinstance({tv} := {v}, FH) else R.idx_n({tv}, {args}, {nargout}))'
+                if n in self.vanishing and self.scope.kind == 'script' and not any(self.has_end(a) for a in x.args):
+                    return f'(R.idx_n(({tv} := {v}), {args}, {nargout}) if {n!r} in W else {self.call_code(n, self.call_args(x.args), nargout, x.line)})'
                 return f'R.idx_n(({tv} := {v}), {args}, {nargout})'
             if n in ('nargin', 'nargout') and n not in self.scope.local_funcs and not self.user_funcs(n):
                 return self.call_code(n, self.call_args(x.args), nargout, x.line)
@@ -1215,6 +1273,8 @@ class Compiler:
                 if n in self.scope.fh_vars:
                     cargs = pytuple(self.call_args(x.args, tv))
                     return f'((await R.fcall({tv}, 1, {cargs})) if isinstance({tv} := {v}, FH) else R.idx({tv}, {args}))', False
+                if n in self.vanishing and self.scope.kind == 'script' and n not in self.scope.fh_vars and not any(self.has_end(a) for a in x.args):
+                    return f'(R.idx(({tv} := {v}), {args}) if {n!r} in W else {self.call_code(n, self.call_args(x.args), "1", x.line)})', False
                 if any(self.has_end(a) for a in x.args):
                     return f'R.idx(({tv} := {v}), {args})', True
                 return f'R.idx({v}, {args})', True
@@ -1290,6 +1350,8 @@ class Compiler:
         if name in sc.pnames:
             return f"PV[{name!r}]", False
         if name in sc.vars:
+            if name in self.vanishing and sc.kind == 'script':
+                return f"(W[{name!r}] if {name!r} in W else {self.call_code(name, [], '1', x.line)})", False
             return f"W[{name!r}]", False
         if name == 'nargin' and sc.kind == 'function':
             return 'float(_na)', True
@@ -1372,6 +1434,8 @@ def compile_source(text, builtins, kind='command', user_funcs=None, ws_names=(),
         raise CompileError(f'Functions are defined in program files: save {f.name} as {f.name}.m, then call it by that name.', f.line)
     c = Compiler(builtins, user_funcs, modname, path)
     c.debug = debug
+    if kind == 'command' and ws_names and re.search(r'\bclear(vars)?\b', text):
+        c.vanishing = set(ws_names) - P.assigned_names(text) - set(ws_globals)
     if prog.kind == 'function':
         src, mp = c.compile_file_functions(prog)
     else:

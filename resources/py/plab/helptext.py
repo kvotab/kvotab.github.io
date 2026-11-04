@@ -382,10 +382,15 @@ hypot: sqrt(a.^2 + b.^2), without overflow or underflow on the way.
     c = hypot(a, b)
 exp: The exponential, e^x.
     y = exp(x)
+    d = exp(-tau*s)
+    * Of tf('s') times -tau: a pure delay of tau.
 expm1: exp(x) - 1, accurate for small x.
     y = expm1(x)
-log: The natural logarithm (complex for negative numbers).
+log: The natural logarithm (complex for negative numbers); or, with a test case, a message logged by a test.
     y = log(x)
+    log(testCase, diagnostic)
+    log(testCase, level, diagnostic)
+    * With a test case first: a message shown as the test runs, as [Logged] text, when the run's OutputDetail is at least level (1 to 4, 2 when not given).
 log1p: log(1 + x), accurate for small x.
     y = log1p(x)
 log2: The base 2 logarithm, or a number split into mantissa and exponent.
@@ -955,7 +960,9 @@ pdf: The density of a distribution at x (the probabilities, for a discrete one).
     y = pdf(pd, x)
     y = pdf(name, x, A)
     y = pdf(name, x, A, B, C)
+    y = pdf(gm, X)
     * pd is a distribution object (makedist, fitdist); name is a distribution's name ('Normal', 'Poisson', 't', ...) with its parameters in the order its own function takes them (normpdf(x, mu, sigma)).
+    * pdf(gm, X) of a Gaussian mixture (gmdistribution): the mixture density at each row.
 cdf: The cumulative distribution function of a distribution at x.
     p = cdf(pd, x)
     p = cdf(name, x, A, B, C)
@@ -968,7 +975,10 @@ random: Random numbers from a distribution.
     r = random(pd)
     r = random(pd, m, n)
     r = random(name, A, B, C, m, n)
+    Y = random(gm, n)
+    [Y, compIdx] = random(gm, n)
     * The numbers come from the generator that rng sets.
+    * random(gm, n) draws n rows from a Gaussian mixture; compIdx says which component each came from.
 truncate: A distribution object limited to an interval, its probability there scaled up to 1.
     t = truncate(pd, lower, upper)
 paramci: The confidence intervals of a fitted distribution object's parameters.
@@ -1259,7 +1269,9 @@ shapleyindices: Shapley effects from the runs of shapleydesign.
 # ---- linear algebra --------------------------------------------------------------------------
 inv: The inverse of a square matrix.
     Y = inv(A)
+    isys = inv(sys)
     * A \ b is faster and more accurate than inv(A)*b.
+    * Of a model: its inverse (square, without delays).
 det: The determinant.
     d = det(A)
 trace: The sum of the diagonal.
@@ -1272,6 +1284,10 @@ norm: The norm of a vector or a matrix.
     n = norm(v, p)
     n = norm(A)
     n = norm(A, 1 | 2 | Inf | 'fro')
+    n = norm(sys)
+    n = norm(sys, Inf)
+    [n, fpeak] = norm(sys, Inf)
+    * Of a model: the H2 norm (Inf with a direct feedthrough in continuous time, or when unstable), or with Inf the H-infinity norm, the peak gain over frequency.
 vecnorm: The norm of each column (or along a dimension).
     n = vecnorm(A)
     n = vecnorm(A, p)
@@ -2151,6 +2167,8 @@ series: The series of a symbolic expression about a point, with negative and fra
     S = series(f, x)
     S = series(f, x, a)
     S = series(..., 'Order', n)
+    sys = series(sys1, sys2)
+    * Of models: sys1 then sys2, as sys2*sys1.
 symsum: Symbolic sums.
     F = symsum(f, k, a, b)
     F = symsum(f, k)
@@ -2174,12 +2192,18 @@ curl: The curl of a vector field: of arrays on a grid, or symbolic of three comp
     cav = curl(U, V)
     c = curl(V, X)
     * cav is the angular velocity: half the curl along the flow; with one output it is all curl gives of arrays.
-laplacian: The Laplacian of a symbolic expression: the sum of its second derivatives.
+laplacian: The Laplacian of a symbolic expression (the sum of its second derivatives), or the Laplacian matrix of a graph.
     L = laplacian(f, x)
-simplify: A simpler form of a symbolic expression.
+    L = laplacian(G)
+    * For a graph, a sparse matrix: the degrees on the diagonal, -1 where two nodes are joined (weights, parallel edges and self-loops are not counted).
+simplify: A simpler form of a symbolic expression, or a graph without parallel edges and self-loops.
     s = simplify(e)
     s = simplify(e, 'IgnoreAnalyticConstraints', true)
     * 'IgnoreAnalyticConstraints' allows rules that hold for positive reals, as log(a*b) = log(a) + log(b) and sqrt(x^2) = x.
+    H = simplify(G)
+    H = simplify(G, method)
+    H = simplify(G, 'keepselfloops')
+    * For a graph: one edge for each pair of nodes joined, its weight the sum of theirs ('min', 'max', 'mean' or 'first' instead), and no self-loops.
 simplifyFraction: A symbolic fraction with its numerator and denominator cancelled.
     s = simplifyFraction(e)
 expand: Multiply out products and powers, and expand functions of sums.
@@ -2232,13 +2256,18 @@ subs: Substitute values or expressions for symbolic variables.
     s = subs(e)
     s = subs(e, {x, y}, {1, 2})
     * old and new may be arrays or cells of the same size. A scalar expression with an array of values gives an array. subs(e) takes the values of the variables in the workspace; subs(e, new) replaces symvar(e, 1).
-solve: Solve equations and systems of equations symbolically.
+solve: Solve equations symbolically; or solve an ode object.
     S = solve(eqn, x)
     S = solve(eqns, vars)
     [x, y] = solve(eqns, [x y])
     S = solve(..., 'Real', true)
     S = solve(..., 'ReturnConditions', true)
+    S = solve(F, tf)
+    S = solve(F, t0, tf)
+    S = solve(F, tspan)
+    S = solve(F, ..., 'Refine', k)
     * An expression counts as expression == 0. For one variable the solutions come as a column; for several, a struct with a field for each variable, or one output for each. Solutions must agree with the variables' assumptions. With 'ReturnConditions', families of solutions come with their parameters (k) and conditions. 'MaxDegree' (3 unless given) is the highest degree of polynomial solved by radicals; higher ones give root(...).
+    * solve(F, ...) of an ode object: its solution from InitialTime, at the solver's steps (or at the times of tspan when it has more than two); S.Time is a row, S.Solution a column for each time.
 vpasolve: Solve equations numerically, to digits significant digits.
     S = vpasolve(eqn, x)
     S = vpasolve(eqn, x, x0)
@@ -2416,6 +2445,7 @@ optimoptions: Options for a solver, by name and value.
     options = optimoptions(oldoptions, 'Name', value, ...)
     options = optimoptions('fminunc', oldoptions)
     * Shown without a semicolon it lists the options set and the defaults. options.Name reads and sets one. Display: 'off', 'iter', 'final' or 'notify'. OutputFcn and PlotFcn take functions stop = f(x, optimValues, state), called at 'init', each 'iter' and 'done'; returning true stops the solver (exitflag -1).
+    * The global solvers ga, particleswarm, simulannealbnd, patternsearch, surrogateopt and gamultiobj take their options this way too (PopulationSize, SwarmSize, InitialTemperature, MeshTolerance, MaxFunctionEvaluations, ...).
 resetoptions: Options back to their defaults.
     options = resetoptions(options, 'Name')
     options = resetoptions(options, {'Name1', 'Name2'})
@@ -2533,9 +2563,11 @@ odeget: An option's value from an ODE options structure.
 odeplot: The output function that plots each solution component against time as the solver goes.
     options = odeset('OutputFcn', @odeplot)
     * The solvers use it when no output is asked for: ode45(@f, [0 10], y0) plots the solution.
-deval: Evaluate the solution structure of an ODE solver at new times.
+deval: Evaluate the solution structure of an ODE, BVP or DDE solver at new points.
     y = deval(sol, t)
     y = deval(sol, t, idx)
+    [y, yp] = deval(sol, t)
+    * sol comes from an ODE solver, bvp4c, bvp5c, dde23 or ddesd; yp, the derivative, from those but the ODE solvers.
 odextend: Carry the solution structure of an ODE solver on to a later time.
     sol = odextend(sol, odefun, tfinal)
     sol = odextend(sol, [], tfinal)
@@ -2546,8 +2578,10 @@ odextend: Carry the solution structure of an ODE solver on to a later time.
 char: A character array, from numbers (character codes), strings or cells of text.
     c = char(x)
     c = char(s1, s2, ...)
+    * char(p) of a Python object (see pyrun): its str().
 string: A string array, from text, numbers or cells.
     s = string(x)
+    * string(p) of a Python object (see pyrun): its str(); a list of str a string array.
 strings: A string array of empty strings.
     s = strings(m, n)
 cellstr: A cell array of character vectors.
@@ -2625,6 +2659,7 @@ strncmpi: True when the first n characters match, ignoring case.
     tf = strncmpi(s1, s2, n)
 contains: True when text contains a pattern.
     tf = contains(s, pattern)
+    tf = contains(s, pat)
     tf = contains(s, pattern, 'IgnoreCase', true)
 startsWith: True when text starts with a pattern.
     tf = startsWith(s, pattern)
@@ -2725,6 +2760,7 @@ convertStringsToChars: Strings as character vectors; anything else as it is.
 cell: A cell array of empty matrices.
     C = cell(n)
     C = cell(m, n)
+    * cell(p) of a Python object (see pyrun): the items of a list, tuple or other sequence (a dict its values), each converted as Python values coming back are.
 cellfun: Call a function on the contents of every cell.
     A = cellfun(fun, C)
     A = cellfun(fun, C1, C2, ...)
@@ -2745,6 +2781,7 @@ struct: A struct, from field names and values; a cell value makes a struct array
     s = struct()
     s = struct([])
     * struct('f', {1, 2}) is a 1-by-2 struct array; struct('f', {{1, 2}}) holds the cell itself.
+    * struct(p) of a Python object (see pyrun): a dict as a struct, its keys the field names.
 fieldnames: The names of a struct's fields, as a cell column.
     names = fieldnames(s)
 isfield: True when a struct has a field (or which of several it has).
@@ -2854,6 +2891,7 @@ plabSuperCall: What a class's obj@Super(args) and method@Super(obj, args) become
     tf = isobject(x)
 double: Convert to double precision.
     y = double(x)
+    * double(p) of a Python object (see pyrun): its numbers (a list, tuple, range or NumPy array; a 1-D one a row).
 single: Convert to single precision.
     y = single(x)
 int8: Convert to 8-bit signed integers, rounding and saturating.
@@ -3101,6 +3139,8 @@ toc: The seconds since tic.
 pause: Wait for a number of seconds, or for a key press in the Command Window.
     pause(seconds)
     pause
+    pause(player)
+    * pause(player) stops an audioplayer (or audiorecorder) where it is; resume goes on.
 cputime: The processor time used, in seconds.
     t = cputime
 clock: The date and time as [year month day hour minute seconds].
@@ -3308,10 +3348,12 @@ table: Columns of data of any class (variables), one row per observation, with n
     T = table(var1, ..., varN)
     T = table(..., 'VariableNames', names, 'RowNames', rownames)
     T = table('Size', [n m], 'VariableTypes', types)
+    T = table(results)
     * Variables are named after the variables given, else Var1, Var2, ...
     * T(rows, vars) is a table; T{rows, vars} the variables' data put together; T.Name a variable. rows and vars are numbers, logical masks, ':', or names (row names, variable names); vars may be vartype(type).
     * T.Name = x adds a variable; T(rows, :) = [] and T(:, vars) = [] delete; T(end+1, :) = {v1, ..., vN} adds a row; [T1; T2] and [T1, T2] concatenate.
     * T.Properties holds Description, UserData, DimensionNames, VariableNames, VariableDescriptions, VariableUnits and RowNames, each set by assignment (T.Properties.VariableNames{2} = 'x').
+    * table(results) of test results (runtests): a row for each test, its Name, Passed, Failed, Incomplete, Duration and Details.
 timetable: A table whose rows are points in time (datetimes or durations).
     TT = timetable(rowTimes, var1, ..., varN)
     TT = timetable(var1, ..., varN, 'RowTimes', rowTimes)
@@ -3447,6 +3489,7 @@ isregular: True when a timetable's row times step evenly.
     * unit: 'time' (the default), or 'years', 'quarters', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds' for steps of whole calendar units.
 readtable: A table from a delimited text file or a spreadsheet.
     T = readtable(filename)
+    T = readtable(filename, opts)
     T = readtable(filename, 'Delimiter', d, 'NumHeaderLines', n)
     T = readtable(filename, 'ReadVariableNames', false)
     T = readtable(filename, 'ReadRowNames', true)
@@ -3492,8 +3535,16 @@ open: Open a file: program files in the Editor, MAT-files into the workspace, fi
     open(v)
     s = open('data.mat')
     h = open('plot.fig')
-run: Run a script file.
+run: Run a script file, tests, or a global search.
     run filename
+    results = run(suite)
+    results = run(testCase)
+    results = run(testCase, 'testName')
+    results = run(runner, suite)
+    [x, fval, exitflag, output, solutions] = run(ms, problem, k)
+    [x, fval, exitflag, output, solutions] = run(gs, problem)
+    * A test suite (testsuite), an object of a test class or a test runner first: the tests run, as runtests runs them.
+    * A MultiStart or GlobalSearch object first: the local solver runs (see MultiStart and GlobalSearch).
 mkdir: Make a folder.
     mkdir folder
     [status, msg] = mkdir(parent, folder)
@@ -3669,7 +3720,9 @@ plot: Lines and markers in 2-D.
     h = plot(...)
     plot(f, x, y)
     plot(f, x, y, 'residuals')
-    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'. plot(f, x, y) draws a fit (from fit) over its data; 'residuals' plots the residuals.
+    h = plot(G)
+    h = plot(G, LineSpec, 'Layout', method, 'Name', value)
+    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'. plot(f, x, y) draws a fit (from fit) over its data; 'residuals' plots the residuals. plot(G) draws a graph or digraph (see layout for the methods), giving a GraphPlot whose NodeColor, EdgeColor, MarkerSize, LineWidth, NodeLabel, EdgeLabel, NodeCData, ArrowSize, XData and YData can be set.
 plot3: Lines and markers in 3-D.
     plot3(x, y, z)
     plot3(x, y, z, LineSpec)
@@ -3750,6 +3803,8 @@ fill3: Filled polygons in 3-D.
 patch: Filled polygons from vertices, as a graphics object.
     patch(x, y, c)
     patch('Faces', F, 'Vertices', V, 'FaceColor', c)
+    patch(fv)
+    * fv is a struct of faces and vertices (as isosurface gives), with other properties as fields.
 stairs: A stairstep plot.
     stairs(y)
     stairs(x, y)
@@ -3952,6 +4007,8 @@ view: The viewpoint: azimuth and elevation in degrees.
     view(3)
     view(az, el)
     [az, el] = view
+    view(tree)
+    * view(tree) of a classification or regression tree prints its rules, node by node.
 camzoom: Zoom the camera: the axes drawn larger by a factor above 1, smaller by one below.
     camzoom(f)
     camzoom(ax, f)
@@ -4430,10 +4487,12 @@ timer: A timer that runs a callback after a delay, and again as often as asked.
     * The callbacks run when the engine is idle, or at a running program's drawnow and pause.
 start: Start a timer.
     start(t)
-stop: Stop a timer.
+stop: Stop a timer (or an audioplayer or audiorecorder).
     stop(t)
-wait: Wait (letting callbacks run) until a timer stops.
+    stop(player)
+wait: Wait (letting callbacks run) until a timer stops; for futures, until they finish.
     wait(t)
+    wait(F)
 timerfind: The timers there are, or those with given properties.
     t = timerfind
     t = timerfind('Name', value, ...)
@@ -4702,6 +4761,9 @@ isbanded: True when the nonzeros lie within given numbers of diagonals below and
 bandwidth: How far the nonzeros of a matrix reach below and above its diagonal.
     [lower, upper] = bandwidth(A)
     b = bandwidth(A, 'lower')
+    fb = bandwidth(sys)
+    fb = bandwidth(sys, dbdrop)
+    * Of a model: the first frequency where the gain falls 3 dB (or dbdrop) below its DC gain.
 pcg: Solve A*x = b by preconditioned conjugate gradients (A symmetric positive definite).
     x = pcg(A, b)
     x = pcg(A, b, tol, maxit, M1, M2, x0)
@@ -5361,7 +5423,10 @@ predict: Predictions of a fitted model, with confidence bounds.
     ypred = predict(mdl, Xnew)
     [ypred, yci] = predict(mdl, Xnew)
     [ypred, yci] = predict(mdl, Xnew, 'Alpha', 0.05, 'Prediction', 'observation', 'Simultaneous', true)
+    [label, score] = predict(Mdl, X)
+    [ypred, ysd, yint] = predict(gprMdl, Xnew)
     * The bounds are for the curve (the mean) unless Prediction is 'observation', which adds the residual variance. Xnew is a matrix of predictors or a table with the model's variables.
+    * Of a classification model: the most probable class and each class's score; of a regression model (fitrtree, fitrsvm, ...): the predictions.
 coefCI: Confidence intervals of a model's coefficients.
     ci = coefCI(mdl)
     ci = coefCI(mdl, alpha)
@@ -5493,6 +5558,411 @@ trenddecomp: Trends of data: long-term, seasonal and the remainder.
     [LT, ST, R] = trenddecomp(A, 'ssa', lag)
     [LT, ST, R] = trenddecomp(A, 'stl', period)
     * LT + sum(ST, 2) + R is A. 'ssa' (singular spectrum analysis, the default, with a lag of half the data) finds seasonal trends of each period present, the largest first; 'stl' takes one or more periods and gives a seasonal trend for each.
+
+# ---- more charts --------------------------------------------------------------------------------------------------------------------
+xline: Vertical lines across the whole axes.
+    xl = xline(x)
+    xl = xline(x, LineSpec)
+    xl = xline(x, LineSpec, label)
+    xl = xline(..., 'LabelVerticalAlignment', 'middle', 'LabelOrientation', 'horizontal', Name, Value)
+    xl = xline(ax, ...)
+    * x may be several values. The lines reach from the bottom of the axes to the top whatever the limits become, and do not change the limits; xl.Value moves one.
+yline: Horizontal lines across the whole axes.
+    yl = yline(y)
+    yl = yline(y, LineSpec, label, Name, Value)
+xregion: Shaded bands across the whole axes, from x1 to x2.
+    xr = xregion(x1, x2)
+    xr = xregion([x1 x2 x3 x4 ...])
+    xr = xregion(..., 'FaceColor', c, 'FaceAlpha', a)
+yregion: Shaded bands across the whole axes, from y1 to y2.
+    yr = yregion(y1, y2)
+    yr = yregion(..., Name, Value)
+heatmap: Values as coloured cells, each with its number.
+    h = heatmap(cdata)
+    h = heatmap(xvalues, yvalues, cdata)
+    h = heatmap(tbl, xvar, yvar)
+    h = heatmap(tbl, xvar, yvar, 'ColorVariable', cvar, 'ColorMethod', 'mean')
+    h = heatmap(..., 'Title', t, 'XLabel', x, 'Colormap', cm, 'ColorLimits', [lo hi], 'CellLabelFormat', '%.2f')
+    * From a table: how many rows fall in each pair of groups (or ColorMethod 'mean', 'sum', 'median', 'max', 'min' of ColorVariable). Missing cells are dark grey. Setting a property (h.Title = 'x') draws the chart again.
+boxchart: Box charts: the quartiles, whiskers to the farthest values within 1.5 times the box, outliers as markers.
+    b = boxchart(ydata)
+    b = boxchart(xgroupdata, ydata)
+    b = boxchart(..., 'GroupByColor', g, 'Notch', 'on', 'Orientation', 'horizontal', 'BoxFaceColor', c, 'BoxWidth', w, 'MarkerStyle', m)
+    * A box for each column of ydata, or for each group of xgroupdata (numbers, or categorical or text for labelled boxes).
+swarmchart: A scatter plot with the points of each x spread sideways.
+    s = swarmchart(x, y)
+    s = swarmchart(x, y, sz, c, 'filled', 'XJitter', 'density', 'XJitterWidth', w)
+    * XJitter is 'density' (wider where the points are dense; the default), 'rand' or 'none'.
+swarmchart3: A 3-D scatter plot with the points spread in x and y.
+    s = swarmchart3(x, y, z, sz, c, 'XJitter', ..., 'YJitter', ...)
+piechart: A pie chart, its wedges labelled.
+    p = piechart(data)
+    p = piechart(data, names)
+    p = piechart(tbl, var)
+    p = piechart(..., 'LabelStyle', 'namepercent', 'StartAngle', 90, 'Direction', 'clockwise')
+    * LabelStyle is 'percent', 'name', 'namepercent', 'data', 'namedata', 'datapercent' or 'none'. A categorical (or a table variable) is counted.
+donutchart: A pie chart with a hole.
+    d = donutchart(data, names)
+    d = donutchart(..., 'InnerRadius', 0.6, 'CenterLabel', s)
+stackedplot: Each variable in an axes of its own, stacked, sharing x.
+    s = stackedplot(tbl)
+    s = stackedplot(tbl, vars)
+    s = stackedplot(Y)
+    s = stackedplot(X, Y)
+    s = stackedplot(..., 'Title', t, 'DisplayLabels', labels, 'XVariable', v)
+    * A timetable's row times are x.
+plotyy: Two plots with a y axis each.
+    [ax, h1, h2] = plotyy(x1, y1, x2, y2)
+    [ax, h1, h2] = plotyy(x1, y1, x2, y2, fun)
+    [ax, h1, h2] = plotyy(x1, y1, x2, y2, fun1, fun2)
+    * fun is 'plot' (the default), 'semilogy' or another plotting function, by name or handle. yyaxis does the same in steps.
+polarhistogram: A histogram of angles in polar axes.
+    h = polarhistogram(theta)
+    h = polarhistogram(theta, nbins)
+    h = polarhistogram(theta, edges)
+    h = polarhistogram(..., 'BinWidth', w, 'Normalization', 'probability', 'DisplayStyle', 'stairs', 'FaceColor', c)
+    * Angles in radians, binned over 0 to 2*pi. h.Values and h.BinCounts give the counts.
+binscatter: A scatter plot of many points as bins coloured by how many fall in each.
+    h = binscatter(x, y)
+    h = binscatter(x, y, N)
+    h = binscatter(..., 'XLimits', xl, 'YLimits', yl, 'ShowEmptyBins', 'on')
+parallelplot: Parallel coordinates: each row a line across the columns.
+    p = parallelplot(data)
+    p = parallelplot(tbl)
+    p = parallelplot(..., 'GroupData', g, 'CoordinateVariables', vars, 'DataNormalization', 'range')
+    * Each coordinate is scaled to its range unless DataNormalization is 'none', 'zscore', 'scale' or 'center'; its lowest and highest values are written at its ends.
+scatterhistogram: A scatter plot with the histograms of x and y beside it.
+    s = scatterhistogram(x, y)
+    s = scatterhistogram(x, y, 'GroupData', g)
+    s = scatterhistogram(tbl, xvar, yvar, 'GroupVariable', gvar)
+wordcloud: Words drawn at sizes by how often they come (or by sizes given).
+    wc = wordcloud(words, sizeData)
+    wc = wordcloud(tbl, wordVar, sizeVar)
+    wc = wordcloud(str)
+    wc = wordcloud(C)
+    wc = wordcloud(..., 'MaxDisplayWords', n, 'Color', c, 'HighlightColor', c)
+    * Text is split into words and counted (short common words left out); a categorical is counted. The largest tenth are highlighted.
+fimplicit3: The surface where f(x, y, z) = 0.
+    fs = fimplicit3(f)
+    fs = fimplicit3(f, [min max])
+    fs = fimplicit3(f, [xmin xmax ymin ymax zmin zmax], 'MeshDensity', n)
+    * f takes arrays (use .* and .^); the box is [-5 5] in each direction unless given, sampled 35 times.
+tetramesh: Tetrahedra drawn as their faces.
+    h = tetramesh(T, X)
+    h = tetramesh(T, X, c)
+    * T is m-by-4, indices into the points X (n-by-3); each tetrahedron is coloured from the colormap by c (1 to m unless given).
+isocaps: The faces that close an isosurface where it meets the volume's edges.
+    fvc = isocaps(X, Y, Z, V, isovalue)
+    fvc = isocaps(V, isovalue)
+    fvc = isocaps(..., 'enclose', 'below', 'whichplane', 'xmin')
+    [f, v, c] = isocaps(...)
+    isocaps(...)
+    * The caps cover the boundary where V is above the value ('above', the default) or below it, coloured by V; with no output they are drawn.
+isonormals: The normals of an isosurface at its vertices.
+    n = isonormals(X, Y, Z, V, vertices)
+    n = isonormals(V, vertices)
+    isonormals(..., p)
+    isonormals(..., 'negate')
+    * From the volume's gradient, pointing to lower values; with a patch p its VertexNormals are set.
+smooth3: A volume smoothed.
+    W = smooth3(V)
+    W = smooth3(V, 'box', size)
+    W = smooth3(V, 'gaussian', size, sd)
+    * size is odd (3 unless given, or [nx ny nz]); sd 0.65; the edges are replicated.
+reducepatch: A patch with fewer faces.
+    nfv = reducepatch(p, r)
+    nfv = reducepatch(fv, r)
+    [nf, nv] = reducepatch(faces, vertices, r)
+    reducepatch(p, r)
+    * r is the fraction of the faces kept (0.5 unless given) or, above 1, how many. With a patch and no output, the patch itself is reduced.
+reducevolume: Every R-th element of a volume.
+    [nx, ny, nz, nv] = reducevolume(X, Y, Z, V, [Rx Ry Rz])
+    nv = reducevolume(V, R)
+subvolume: The part of a volume within limits.
+    [Nx, Ny, Nz, Nv] = subvolume(X, Y, Z, V, limits)
+    Nv = subvolume(V, limits)
+    * limits is [xmin xmax ymin ymax zmin zmax]; NaN leaves a side open.
+volumebounds: The extent of a volume's coordinates and values.
+    lims = volumebounds(X, Y, Z, V)
+    lims = volumebounds(V)
+    lims = volumebounds(X, Y, Z, U, V, W)
+streamslice: Streamlines spread evenly over a 2-D vector field, with arrows.
+    h = streamslice(X, Y, U, V)
+    h = streamslice(U, V)
+    h = streamslice(..., density)
+    h = streamslice(..., 'noarrows')
+    [verts, averts] = streamslice(...)
+    * density 1 unless given (2: twice as many lines). Slices of 3-D fields are not drawn here.
+streamparticles: Markers along streamlines, moved along them.
+    h = streamparticles(verts, n)
+    h = streamparticles(verts, n, 'Animate', k, 'FrameRate', fps, Name, Value)
+    * verts from stream2 or stream3; n markers in all; Animate moves them along k times.
+
+# ---- more functions of data -----------------------------------------------------------------------------------------------------------
+mink: The k smallest elements.
+    B = mink(A, k)
+    B = mink(A, k, dim)
+    [B, I] = mink(..., 'ComparisonMethod', 'abs')
+    * Smallest first, along the first dimension that is not 1 (or dim); NaN last. I gives where they were.
+maxk: The k largest elements.
+    B = maxk(A, k)
+    [B, I] = maxk(A, k, dim, 'ComparisonMethod', 'abs')
+    * Largest first; NaN last.
+clip: Values held between a lower and an upper bound.
+    C = clip(A, lower, upper)
+    * NaN stays NaN; the bounds may be arrays that fit A's size.
+allfinite: Whether every element is finite.
+    tf = allfinite(A)
+anynan: Whether any element is NaN.
+    tf = anynan(A)
+isuniform: Whether a vector's values are evenly spaced.
+    tf = isuniform(v)
+    [tf, step] = isuniform(v)
+    * To round-off; step is NaN when they are not.
+rmoutliers: Data without its outliers.
+    B = rmoutliers(A)
+    B = rmoutliers(A, method)
+    B = rmoutliers(A, movmethod, window)
+    [B, TFrm] = rmoutliers(..., dim, 'MinNumOutliers', n, Name, Value)
+    * The outliers are isoutlier's (its methods and options); a row of a matrix goes when it has an outlier (or MinNumOutliers of them); dim 2 takes columns away instead.
+cbrt: The real cube root.
+    y = cbrt(x)
+interpft: Resampling by the Fourier transform.
+    y = interpft(x, n)
+    y = interpft(x, n, dim)
+    * x is taken as one period of a periodic signal; n points over the same period.
+resize: An array padded or cut to a size.
+    B = resize(A, m)
+    B = resize(A, m, 'Dimension', dim, 'Pattern', p, 'FillValue', v, 'Side', s)
+    * m is a length (along the first dimension that is not 1, or Dimension) or a size. Pattern is 'constant' (FillValue, 0 unless given), 'edge', 'circular', 'flip' or 'reflect'; Side 'trailing' (the default), 'leading' or 'both'. Tables gain missing rows.
+paddata: An array padded to a size (never cut).
+    B = paddata(A, m, Name, Value)
+trimdata: An array cut to a size (never padded).
+    B = trimdata(A, m, 'Side', s)
+groupcounts: How many rows fall in each group.
+    G = groupcounts(T, groupvars)
+    [B, BG, BP] = groupcounts(A)
+    * A table of the groups (sorted) with GroupCount and Percent; for an array, the counts, the groups and the percentages.
+grouptransform: Each group's data transformed.
+    G = grouptransform(T, groupvars, method)
+    G = grouptransform(T, groupvars, method, datavars, 'ReplaceValues', false)
+    * method is 'zscore', 'norm', 'meancenter', 'rescale', 'meanfill', 'linearfill' or a function of a column; ReplaceValues false adds the results as new variables.
+groupfilter: The rows of the groups that pass a test.
+    G = groupfilter(T, groupvars, method)
+    G = groupfilter(T, groupvars, method, datavars)
+    * method is a function of a group's column giving true or false for the group (or for each row).
+pivot: A table of a statistic for each row and column group.
+    P = pivot(T, 'Columns', cvar)
+    P = pivot(T, 'Columns', cvar, 'Rows', rvar)
+    P = pivot(T, 'Columns', cvar, 'Rows', rvar, 'DataVariable', dvar, 'Method', m)
+    * Method is 'count' (without DataVariable, the default), 'sum' (with one), 'mean', 'median', 'max', 'min', 'mode', 'std', 'var', 'none' or a function. A variable for each column group.
+topkrows: The k rows that sort first.
+    B = topkrows(X, k)
+    B = topkrows(X, k, col, direction)
+    [B, I] = topkrows(T, k, vars, direction)
+    * Largest first ('descend') unless 'ascend'; ties broken by the next columns.
+lag: A timetable's data moved later.
+    TT2 = lag(TT)
+    TT2 = lag(TT, n)
+    * By n rows (1 unless given; negative moves earlier); the row times stay, missing values where there is nothing.
+
+# ---- patterns -----------------------------------------------------------------------------------------------------------------------
+pattern: Text as a pattern that matches it.
+    pat = pattern(text)
+    * Patterns join with + and give alternatives with | (or in an array); "a" | "b" is a pattern too. contains, startsWith, endsWith, matches, count, strfind, replace, erase, split, extract, extractBefore, extractAfter, extractBetween, insertBefore and insertAfter take patterns.
+digitsPattern: Digits 0 to 9.
+    pat = digitsPattern
+    pat = digitsPattern(n)
+    pat = digitsPattern(min, max)
+    * One or more, as many as there are, unless counted.
+lettersPattern: Letters.
+    pat = lettersPattern
+    pat = lettersPattern(n)
+    pat = lettersPattern(min, max)
+alphanumericsPattern: Letters and digits.
+    pat = alphanumericsPattern
+    pat = alphanumericsPattern(n)
+    pat = alphanumericsPattern(min, max)
+whitespacePattern: White space.
+    pat = whitespacePattern
+    pat = whitespacePattern(n)
+    pat = whitespacePattern(min, max)
+wildcardPattern: Any characters.
+    pat = wildcardPattern
+    pat = wildcardPattern(n)
+    pat = wildcardPattern(min, max)
+    pat = wildcardPattern(..., 'Except', chars)
+    * As few as will do unless counted: "a" + wildcardPattern + "z" takes the shortest stretch.
+characterListPattern: One of a list (or range) of characters.
+    pat = characterListPattern(chars)
+    pat = characterListPattern(startChar, endChar)
+optionalPattern: A pattern, or nothing.
+    pat = optionalPattern(p)
+asManyOfPattern: A pattern repeated as many times as it can be.
+    pat = asManyOfPattern(p)
+    pat = asManyOfPattern(p, min, max)
+asFewOfPattern: A pattern repeated as few times as will do.
+    pat = asFewOfPattern(p, min, max)
+letterBoundary: Where letters start, end, or either.
+    pat = letterBoundary
+    pat = letterBoundary(type)
+digitBoundary: Where digits start, end, or either.
+    pat = digitBoundary(type)
+alphanumericBoundary: Where letters and digits start, end, or either.
+    pat = alphanumericBoundary(type)
+whitespaceBoundary: Where white space starts, ends, or either.
+    pat = whitespaceBoundary(type)
+lineBoundary: The start or end of a line.
+    pat = lineBoundary(type)
+textBoundary: The start or end of the text.
+    pat = textBoundary(type)
+lookAheadBoundary: Where a pattern comes next (nothing taken).
+    pat = lookAheadBoundary(p)
+lookBehindBoundary: Where a pattern comes just before (nothing taken).
+    pat = lookBehindBoundary(p)
+    * p has a fixed length here.
+regexpPattern: A regular expression as a pattern.
+    pat = regexpPattern(expr)
+caseInsensitivePattern: A pattern matched whatever the case.
+    pat = caseInsensitivePattern(p)
+caseSensitivePattern: A pattern matched in its own case.
+    pat = caseSensitivePattern(p)
+namedPattern: A pattern with a name to show it by.
+    pat = namedPattern(p, name)
+extract: The parts of text that match a pattern.
+    newStr = extract(str, pat)
+    newStr = extract(str, pos)
+    * For one text, a column of the matches; for several, an array when each has one match, else a cell. pos takes characters by position.
+
+# ---- odds and ends --------------------------------------------------------------------------------------------------------------------
+symmlq: A symmetric system A*x = b solved by SYMMLQ.
+    x = symmlq(A, b)
+    [x, flag, relres, iter, resvec] = symmlq(A, b, tol, maxit, M1, M2, x0)
+    * A symmetric (positive definite or not), a matrix or a function handle; M1*M2 a symmetric positive definite preconditioner. Outputs as pcg's.
+bicgstabl: A system A*x = b solved by BiCGStab(l).
+    x = bicgstabl(A, b)
+    [x, flag, relres, iter, resvec] = bicgstabl(A, b, tol, maxit, M1, M2, x0)
+    * l = 2; any square A; M1*M2 a right preconditioner. Outputs as bicgstab's (iter counts whole steps).
+parfeval: A function run for its outputs, kept in a future.
+    F = parfeval(fcn, nout, X1, ..., Xm)
+    F = parfeval(pool, fcn, nout, ...)
+    * fcn runs when parfeval is called; fetchOutputs(F) gives its outputs, F.State and F.Error tell how it went.
+parfevalOnAll: A function run once for each worker of the pool.
+    F = parfevalOnAll(fcn, nout, X1, ..., Xm)
+backgroundPool: The pool parfeval runs in.
+    pool = backgroundPool
+fetchOutputs: The outputs of futures.
+    [B1, ..., Bn] = fetchOutputs(F)
+    [B1, ..., Bn] = fetchOutputs(F, 'UniformOutput', false)
+    * For several futures each output is put together down them (or in a cell). An error in a future is raised.
+fetchNext: The next future not yet read.
+    [idx, B1, ..., Bn] = fetchNext(F)
+afterEach: A function run on the outputs of each future.
+    F2 = afterEach(F, fcn, nout)
+afterAll: A function run once on the outputs of all the futures.
+    F2 = afterAll(F, fcn, nout)
+cancel: Futures stopped.
+    cancel(F)
+memoize: A function that keeps its results for inputs it has had.
+    mf = memoize(fh)
+    y = mf(x)
+    mf.CacheSize = n
+    mf.Enabled = false
+    * The last 10 results (CacheSize) are kept; a handle to a named function gives the same memoized function each time.
+clearCache: A memoized function's kept results forgotten.
+    clearCache(mf)
+clearAllMemoizedCaches: Every memoized function's kept results forgotten.
+    clearAllMemoizedCaches
+stats: How a memoized function has used its kept results.
+    s = stats(mf)
+timeit: The typical time a function takes.
+    t = timeit(f)
+    t = timeit(f, numOutputs)
+    * f takes no inputs, as @() myfun(x); the median of several runs after one to warm up, in seconds.
+setpref: A preference kept from one session to the next.
+    setpref(group, pref, value)
+    setpref(group, {pref1, pref2}, {value1, value2})
+    * Kept in the home folder.
+addpref: A preference added (an error if it is there).
+    addpref(group, pref, value)
+getpref: Preferences kept.
+    value = getpref(group, pref)
+    value = getpref(group, pref, default)
+    s = getpref(group)
+    s = getpref
+    * With a default, a preference not there yet is set to it.
+ispref: Whether a preference (or group) is there.
+    tf = ispref(group)
+    tf = ispref(group, pref)
+rmpref: Preferences taken away.
+    rmpref(group)
+    rmpref(group, pref)
+audioplayer: A player of sound samples.
+    player = audioplayer(y, Fs)
+    player = audioplayer(y, Fs, nBits)
+    player = audioplayer(recorder)
+    * y is a column (or a column for each channel), -1 to 1 for floating point. play, playblocking, pause, resume, stop and isplaying control it; player.CurrentSample says where it is.
+play: Sound played from a player (or recorder); the program goes on.
+    play(player)
+    play(player, start)
+    play(player, [start stop])
+playblocking: Sound played, the program waiting until it ends.
+    playblocking(player)
+    playblocking(player, [start stop])
+isplaying: Whether a player is playing now.
+    tf = isplaying(player)
+resume: Playing (or recording) again from where pause stopped.
+    resume(player)
+    resume(recorder)
+audiorecorder: A recorder of the microphone.
+    recorder = audiorecorder
+    recorder = audiorecorder(Fs, nBits, nChannels)
+    * 8000 Hz, 8 bits, 1 channel unless given; the browser asks before the page may use the microphone.
+record: Recording started; the program goes on.
+    record(recorder)
+    record(recorder, length)
+    * For length seconds, or until stop(recorder).
+recordblocking: Recording for a time, the program waiting.
+    recordblocking(recorder, length)
+getaudiodata: What a recorder has recorded.
+    y = getaudiodata(recorder)
+    y = getaudiodata(recorder, dataType)
+    * A column for each channel; 'double' from -1 to 1 unless 'single', 'int16', 'int8' or 'uint8'.
+isrecording: Whether a recorder is recording now.
+    tf = isrecording(recorder)
+detectImportOptions: How readtable would read a file.
+    opts = detectImportOptions(filename)
+    opts = detectImportOptions(filename, Name, Value)
+    * The variables' names and types, the delimiter (or sheet), where the names and the data are. Change opts (opts.SelectedVariableNames, opts.DataLines, setvartype, setvaropts) and give it to readtable, readmatrix, readcell or readvars.
+setvartype: The types variables are read as.
+    opts = setvartype(opts, type)
+    opts = setvartype(opts, vars, type)
+    * double, single, the integer types, logical, char, string, categorical, datetime or duration.
+setvaropts: Options of variables to read.
+    opts = setvaropts(opts, vars, Name, Value)
+    * FillValue (for missing numbers), InputFormat (for datetime) and the like.
+getvaropts: A variable's import options.
+    vopts = getvaropts(opts, var)
+readvars: The columns of a file, a variable each.
+    [Var1, ..., VarN] = readvars(filename)
+    [Var1, ..., VarN] = readvars(filename, opts)
+    [Var1, ..., VarN] = readvars(filename, Name, Value)
+xmlread: An XML file as a document object.
+    DOMnode = xmlread(filename)
+    * Its methods read it: getDocumentElement, getElementsByTagName(name) (a list: getLength, item(k) from 0), getAttribute(name), getTextContent, getNodeName, getChildNodes, getFirstChild, getParentNode, getAttributes, and to change it createElement, createTextNode, setAttribute, appendChild, removeChild, setTextContent.
+xmlwrite: A document (or node) written as XML.
+    xmlwrite(filename, DOMnode)
+    str = xmlwrite(DOMnode)
+com.mathworks.xml.XMLUtils.createDocument: A new XML document with its root element.
+    docNode = com.mathworks.xml.XMLUtils.createDocument(rootName)
+bwmorph: A binary morphological operation.
+    BW2 = bwmorph(BW, operation)
+    BW2 = bwmorph(BW, operation, n)
+    * n times (Inf: until nothing changes): 'clean', 'close', 'dilate', 'erode', 'open', 'fill', 'majority', 'remove', 'skel', 'thin', 'shrink', 'spur', 'endpoints', 'branchpoints', 'bridge', 'diag', 'hbreak', 'tophat' or 'bothat'.
+bwboundaries: The boundaries of the objects in a binary image (and of their holes).
+    B = bwboundaries(BW)
+    [B, L, N, A] = bwboundaries(BW, conn, 'noholes')
+    * B{k} is [row col] points, clockwise, the first point again at the end; the objects first (N of them), then the holes. L labels objects and holes, A(i, j) is 1 when boundary i lies in j.
 
 # ---- image processing --------------------------------------------------------------------------------------------------------------
 imresize: An image made larger or smaller.
@@ -5785,6 +6255,1269 @@ datetick: An axis's tick labels as dates.
     datetick(..., 'keepticks', 'keeplimits')
     datetick(ax, ...)
     * The axis's values are taken as datenums. Ticks fall on whole years, months, days, hours or minutes as the range suits, the limits widened to them unless 'keeplimits'; 'keepticks' labels the ticks there are. fmt is a datestr format (text or a number).
+# ---- graphs and networks ----------------------------------------------------------------------------------------------------------------
+graph: An undirected graph: nodes joined by edges, which may have weights.
+    G = graph
+    G = graph(A)
+    G = graph(A, nodenames)
+    G = graph(s, t)
+    G = graph(s, t, weights)
+    G = graph(s, t, weights, numnodes)
+    G = graph(s, t, weights, nodenames)
+    G = graph(EdgeTable, NodeTable)
+    G = graph(..., 'omitselfloops')
+    G = graph(A, 'upper')
+    * A is a symmetric adjacency matrix (full or sparse): each nonzero A(i, j) above the diagonal (and on it) is an edge, its value the weight; a logical matrix gives edges without weights. 'upper' or 'lower' reads only that triangle.
+    * s and t are node numbers or names, an edge from each s(k) to t(k); nodes named for the first time are added. weights is a value for each edge (or one for all).
+    * G.Edges is a table of EndNodes (and Weight, and any other variables of the edge table); G.Nodes a table of Name (when the nodes have names) and any other variables. Edges are kept sorted by their end nodes, the smaller first.
+digraph: A directed graph: edges that go from one node to another.
+    G = digraph(A)
+    G = digraph(A, nodenames)
+    G = digraph(s, t)
+    G = digraph(s, t, weights)
+    G = digraph(s, t, weights, numnodes)
+    G = digraph(s, t, weights, nodenames)
+    G = digraph(EdgeTable, NodeTable)
+    G = digraph(..., 'omitselfloops')
+    * A(i, j) nonzero is an edge from i to j. Otherwise as graph; edges are kept sorted by their source, then their target.
+numnodes: How many nodes a graph has.
+    n = numnodes(G)
+numedges: How many edges a graph has.
+    m = numedges(G)
+findnode: The numbers of nodes given by name.
+    ids = findnode(G, name)
+    ids = findnode(G, names)
+    * 0 for a name that is not a node.
+findedge: The numbers of the edges between nodes, or the end nodes of edges.
+    idx = findedge(G, s, t)
+    [s, t] = findedge(G, idx)
+    * 0 where s and t are not joined; for a graph, either way round.
+degree: How many edges meet each node of a graph.
+    d = degree(G)
+    d = degree(G, nodes)
+    * A self-loop counts twice. For a digraph, indegree plus outdegree.
+indegree: How many edges come into each node of a digraph.
+    d = indegree(G)
+    d = indegree(G, nodes)
+outdegree: How many edges leave each node of a digraph.
+    d = outdegree(G)
+    d = outdegree(G, nodes)
+neighbors: The nodes joined to a node.
+    N = neighbors(G, node)
+    * For a digraph, edges either way; sorted, each once.
+successors: The nodes a node of a digraph points to.
+    s = successors(G, node)
+    [s, eid] = successors(G, node)
+predecessors: The nodes of a digraph that point to a node.
+    p = predecessors(G, node)
+    [p, eid] = predecessors(G, node)
+outedges: The edges leaving a node.
+    eid = outedges(G, node)
+    [eid, nid] = outedges(G, node)
+    * For a graph, every edge at the node. nid are the nodes at the other ends.
+inedges: The edges coming into a node.
+    eid = inedges(G, node)
+    [eid, nid] = inedges(G, node)
+edgecount: How many edges join two nodes.
+    c = edgecount(G, s, t)
+adjacency: A graph's adjacency matrix, sparse.
+    A = adjacency(G)
+    A = adjacency(G, 'weighted')
+    A = adjacency(G, weights)
+    * A(i, j) is 1 where an edge joins i to j (both ways for a graph); 'weighted' puts the weights there instead (summed over parallel edges), or a weight given for each edge.
+incidence: A graph's incidence matrix, sparse: a row for each node, a column for each edge.
+    I = incidence(G)
+    * -1 at an edge's source (its first end node) and 1 at its target; self-loops give a column of zeros.
+ismultigraph: Whether two nodes are joined by more than one edge.
+    tf = ismultigraph(G)
+addedge: A graph with edges added.
+    H = addedge(G, s, t)
+    H = addedge(G, s, t, weights)
+    H = addedge(G, EdgeTable)
+    * Nodes named or numbered past the last are added. Other edge variables are missing for the new edges.
+rmedge: A graph with edges taken away.
+    H = rmedge(G, s, t)
+    H = rmedge(G, idx)
+    * rmedge(G, s, t) takes every edge between s and t.
+addnode: A graph with nodes added, joined to nothing.
+    H = addnode(G, k)
+    H = addnode(G, names)
+    H = addnode(G, NodeTable)
+rmnode: A graph with nodes taken away, and the edges that meet them.
+    H = rmnode(G, nodes)
+    * The nodes after them are numbered down.
+subgraph: The graph of some nodes and the edges among them.
+    H = subgraph(G, nodes)
+    * nodes are numbers, names or a logical mask; H numbers them in the order given.
+reordernodes: A graph with its nodes numbered in another order.
+    H = reordernodes(G, order)
+    [H, idx] = reordernodes(G, order)
+    * order names every node once; idx says where each edge of H was in G.
+flipedge: A digraph with edges turned round.
+    H = flipedge(G)
+    H = flipedge(G, idx)
+    H = flipedge(G, s, t)
+shortestpath: A shortest path between two nodes.
+    P = shortestpath(G, s, t)
+    [P, d] = shortestpath(G, s, t)
+    [P, d, edgepath] = shortestpath(G, s, t)
+    [...] = shortestpath(..., 'Method', m)
+    * The path's length is the sum of its weights (the number of its edges without weights, or with 'unweighted'). 'mixed' allows negative weights (on a digraph without a cycle of negative length); 'auto' picks it when some weight is negative. P is empty and d Inf when t cannot be reached.
+distances: The lengths of the shortest paths between nodes.
+    d = distances(G)
+    d = distances(G, s)
+    d = distances(G, s, t)
+    d = distances(..., 'Method', m)
+    * d(i, j) is the length from s(i) to t(j) (all the nodes when not given); Inf where there is no path.
+nearest: The nodes within a distance of a node.
+    nodeIDs = nearest(G, s, d)
+    [nodeIDs, dist] = nearest(G, s, d)
+    [...] = nearest(..., 'Direction', 'incoming', 'Method', m)
+    * Nearest first; s itself is not among them. A digraph's paths go out of s unless 'incoming'.
+shortestpathtree: The tree of shortest paths from a node.
+    TR = shortestpathtree(G, s)
+    [TR, D] = shortestpathtree(G, s)
+    [TR, D, E] = shortestpathtree(G, s)
+    * TR is a digraph with an edge into each node that s reaches, from the node before it on a shortest path. D are the distances; E marks the edges of G in the tree.
+bfsearch: The nodes in breadth-first order from a node.
+    v = bfsearch(G, s)
+    v = bfsearch(G, s, 'Restart', true)
+    * Neighbours are visited in the order of their numbers. With 'Restart', the search starts again from the first node not reached, until every node is visited.
+dfsearch: The nodes in depth-first order from a node.
+    v = dfsearch(G, s)
+    v = dfsearch(G, s, 'Restart', true)
+allpaths: Every path between two nodes that visits no node twice.
+    paths = allpaths(G, s, t)
+    [paths, edgepaths] = allpaths(G, s, t)
+    [...] = allpaths(..., 'MaxNumPaths', n, 'MaxPathLength', L)
+    * A cell of node lists (and edge lists); L counts edges.
+conncomp: The connected components of a graph.
+    bins = conncomp(G)
+    [bins, binsizes] = conncomp(G)
+    bins = conncomp(G, 'Type', 'weak')
+    C = conncomp(G, 'OutputForm', 'cell')
+    * bins(i) is the component of node i, components numbered in the order of their first nodes. A digraph's components are strongly connected (each node reaches each other) unless 'weak' (joined when the edges' directions are ignored).
+biconncomp: The biconnected components of a graph: the parts no single node's removal splits.
+    bins = biconncomp(G)
+    [bins, iC] = biconncomp(G)
+    * bins(k) is the component of edge k; iC are the cut vertices, nodes whose removal splits a component.
+condensation: A digraph's strongly connected components as nodes of a digraph.
+    C = condensation(G)
+    * Node k of C is the component conncomp numbers k; C has an edge where an edge of G joins two components, and no cycle.
+toposort: The nodes of a digraph without cycles in an order that every edge goes forward in.
+    order = toposort(G)
+    [order, H] = toposort(G)
+    * Of the nodes free to come next, the smallest. H is G with its nodes in that order.
+isdag: Whether a digraph has no cycle.
+    tf = isdag(G)
+hascycles: Whether a graph has a cycle.
+    tf = hascycles(G)
+    * A self-loop is a cycle.
+transclosure: The transitive closure of a digraph: an edge from each node to every node it reaches.
+    H = transclosure(G)
+    * A node on a cycle reaches itself, a self-loop.
+transreduction: The transitive reduction of a digraph: the fewest edges that reach as G does.
+    H = transreduction(G)
+    * Without cycles, H keeps the edges no longer path replaces. Each strongly connected component becomes one cycle through its nodes in order, and between components one edge of G for each edge of the reduced condensation.
+minspantree: A minimum spanning tree of a graph.
+    T = minspantree(G)
+    [T, pred] = minspantree(G)
+    [...] = minspantree(G, 'Root', r, 'Type', 'forest')
+    * The tree of least total weight joining the nodes that the root reaches; with 'forest', a tree for each component. pred(i) is the node before i in the tree (0 for a root, NaN for a node not reached).
+maxflow: The largest flow between two nodes, edge weights being capacities.
+    mf = maxflow(G, s, t)
+    [mf, GF] = maxflow(G, s, t)
+    [mf, GF, cs, ct] = maxflow(G, s, t)
+    * GF is a digraph of the flow on each edge; cs and ct are the two sides of a minimum cut, cs holding s. An edge of a graph carries flow either way. Edges without weights have capacity 1.
+centrality: How central each node of a graph is.
+    C = centrality(G, type)
+    C = centrality(G, type, 'Cost', c, 'Importance', w, ...)
+    * type is 'degree', 'closeness', 'betweenness', 'pagerank' or 'eigenvector' (a graph); for a digraph also 'indegree', 'outdegree', 'incloseness', 'outcloseness', 'hubs' and 'authorities'.
+    * 'Cost' are the edges' lengths for closeness and betweenness (weights are not used for them otherwise); 'Importance' their weights for the others. 'pagerank' also takes 'FollowProbability' (0.85), 'MaxIterations' (100) and 'Tolerance' (1e-4).
+    * Closeness of a node that reaches r of the n - 1 others in a total distance D is (r/(n-1))^2/D: 1/D when the graph is connected. PageRank, eigenvector, hubs and authorities sum to 1.
+isisomorphic: Whether two graphs are the same but for how their nodes are numbered.
+    tf = isisomorphic(G1, G2)
+highlight: Nodes or edges of a graph plot drawn apart.
+    highlight(h, nodes)
+    highlight(h, s, t)
+    highlight(h, 'Edges', idx)
+    highlight(h, H)
+    highlight(..., 'NodeColor', c, 'EdgeColor', c, 'MarkerSize', m, 'LineWidth', w)
+    * h is the plot plot(G) gives. Unless colours and sizes are given: red, the markers half as big again, the edges three times as wide. highlight(h, H) marks the nodes and edges of the graph H (a path tree or spanning tree of G).
+    * Nodes given with 'EdgeColor' or 'LineWidth' mark the edges joining each node to the next too, so a path from shortestpath is drawn as a path.
+labelnode: Labels of nodes in a graph plot.
+    labelnode(h, nodes, labels)
+labeledge: Labels of edges in a graph plot.
+    labeledge(h, s, t, labels)
+    labeledge(h, idx, labels)
+    * Each label is drawn at the middle of its edge.
+layout: A graph plot's nodes placed again.
+    layout(h)
+    layout(h, method)
+    layout(h, 'layered', 'Direction', d, 'Sources', nodes)
+    layout(h, 'force', 'Iterations', n)
+    * method is 'auto', 'force', 'layered', 'circle' or 'subspace'; 'auto' is 'layered' for a digraph without cycles and 'force' for others.
+# ---- unit tests ---------------------------------------------------------------------------------------------------------------------------
+runtests: Run tests and give their results.
+    results = runtests
+    results = runtests(name)
+    results = runtests({name1, name2})
+    results = runtests(..., 'IncludeSubfolders', true)
+    results = runtests(..., 'Name', pattern, 'ProcedureName', pattern)
+    results = runtests(..., 'OutputDetail', level)
+    * A name is a test file, a folder, or a test class or function on the path, perhaps followed by /test to run one test of it (SampleTest/testSum). Without a name, the tests of the current folder: its test classes, and the function and script files whose names start or end with test.
+    * A test class is classdef Name < matlab.unittest.TestCase with methods (Test) blocks; TestMethodSetup and TestMethodTeardown methods run around each test, TestClassSetup and TestClassTeardown once; a test method whose inputs (after testCase) are TestParameter properties (a cell or a struct of values) runs once for each combination of their values.
+    * A function-based test file's first function gives tests = functiontests(localfunctions); a script-based one is a script whose %% sections are its tests, the code before the first section run before each.
+    * Each test shows a dot as it ends; failures are shown as they happen, and a summary at the end. pattern may hold * and ?; level is 'None', 'Terse', 'Concise' (when not given), 'Detailed' or 'Verbose' (or 0 to 4).
+testsuite: The tests runtests would run, as a suite to run later.
+    suite = testsuite
+    suite = testsuite(name)
+    suite = testsuite(..., 'Name', pattern)
+    * suite(k) is one test; suite.Name their names; results = run(suite) runs them.
+matlab.unittest.TestSuite.fromFile: A test suite from a test file.
+    suite = matlab.unittest.TestSuite.fromFile(file)
+    * As testsuite(file).
+matlab.unittest.TestSuite.fromFolder: A test suite from the test files of a folder.
+    suite = matlab.unittest.TestSuite.fromFolder(folder)
+    suite = matlab.unittest.TestSuite.fromFolder(folder, 'IncludeSubfolders', true)
+matlab.unittest.TestSuite.fromName: A test suite from the names of tests.
+    suite = matlab.unittest.TestSuite.fromName('SampleTest/testSum')
+matlab.unittest.TestSuite.fromClass: A test suite from a test class.
+    suite = matlab.unittest.TestSuite.fromClass('SampleTest')
+    * The class is named as text.
+functiontests: The tests of a function-based test file.
+    tests = functiontests(localfunctions)
+    * Its tests are the local functions whose names start or end with test (case ignored), each taking the test case. setupOnce and teardownOnce run once around them all, setup and teardown around each; testCase.TestData is a struct they share, set in setupOnce or setup.
+localfunctions: Handles to the local functions of the file it is called in.
+    fhs = localfunctions
+    * A column cell array; the file's first function is left out.
+matlab.unittest.TestCase.forInteractiveUse: A test case for trying its qualifications at the prompt.
+    testCase = matlab.unittest.TestCase.forInteractiveUse
+    * Each qualification says whether it passed; an assertion or assumption that fails is an error.
+matlab.unittest.TestRunner.withTextOutput: A test runner that reports as runtests does.
+    runner = matlab.unittest.TestRunner.withTextOutput
+    runner = matlab.unittest.TestRunner.withTextOutput('OutputDetail', level)
+    * results = runner.run(suite) (or run(runner, suite)).
+matlab.unittest.TestRunner.withNoPlugins: A test runner that runs tests silently.
+    runner = matlab.unittest.TestRunner.withNoPlugins
+    * results = runner.run(suite); the results say what passed.
+assertSuccess: An error unless every test passed.
+    results = assertSuccess(results)
+    * The error names the tests that failed or did not run to the end (an assumption that failed).
+addTeardown: Something to do when the test ends.
+    addTeardown(testCase, fh)
+    addTeardown(testCase, fh, arg1, arg2, ...)
+    testCase.addTeardown(fh, ...)
+    * fh(args) runs when the test ends, whether it passed or not, the last added first, before the TestMethodTeardown methods (or teardown).
+# ---- calling Python -----------------------------------------------------------------------------------------------------------------------
+pyrun: Run Python code, and take its variables.
+    pyrun(code)
+    x = pyrun(code, "x")
+    [a, b] = pyrun(code, ["a" "b"])
+    x = pyrun(code, "x", "name", value, ...)
+    * code is text: a line, or a string array or cell of lines. It runs in Python's __main__, whose variables stay from one pyrun to the next; the name-value pairs are set there first. What Python prints shows in the Command Window.
+    * The functions of Python's modules are called as py.module.function(args) (py.math.sqrt(2), py.numpy.linspace(0, 1, pyargs('num', int32(5)))), its builtins as py.name (py.list({1, 2}), py.len(x)); an object's methods and attributes are read with a dot, p.method(args), and p(k) is an item of a list (from 1) or of a dict (by key). The Python is the one PyLAB runs on: in the page, the browser's (Pyodide), with NumPy, SciPy and the modules the page has loaded.
+    * Values going to Python: a scalar becomes a float (an int for an integer class, a bool for logical), a vector a 1-D NumPy array and a matrix a 2-D one, [] None, text str (a string array or char matrix a list of them), a cell a tuple, a struct a dict, a function handle a Python function that calls it. Coming back: None is [], bool logical, int int64, float double, str char; anything else stays a Python object, which double, single, the integer classes, logical, cell, char, string, struct and length convert.
+pyrunfile: Run a Python file, and take its variables.
+    pyrunfile("file.py")
+    pyrunfile("file.py arg1 arg2")
+    x = pyrunfile(file, "x", "name", value, ...)
+    * The file runs in a namespace of its own, as __main__, with sys.argv its name and the words after it. Values cross as for pyrun.
+pyenv: The Python that PyLAB runs on.
+    pe = pyenv
+    * Its Version, Executable, Home, Status and ExecutionMode ('InProcess'). It cannot be changed: PyLAB is a Python program, and the page's Python is the browser's.
+pyargs: Keyword arguments for a Python call.
+    kw = pyargs('name1', value1, 'name2', value2, ...)
+    * Given last: py.numpy.round(x, pyargs('decimals', int32(2))).
+# ---- boundary value problems, delays, PDEs, the ode object --------------------------------------------------------------------------------
+bvp4c: Solve a boundary value problem y' = f(x, y) on [a, b] with conditions on y(a) and y(b), by a fourth-order collocation.
+    sol = bvp4c(odefun, bcfun, solinit)
+    sol = bvp4c(odefun, bcfun, solinit, options)
+    * odefun(x, y) gives y' as a column; bcfun(ya, yb) gives the residuals of the boundary conditions, zero when they hold. With unknown parameters p (solinit.parameters gives their guess) they are odefun(x, y, p) and bcfun(ya, yb, p), and the conditions are as many as the equations plus the parameters.
+    * solinit (from bvpinit) gives the first mesh and a guess of y on it; the mesh is refined until the residual of the solution, relative to 1 + |f|, is within RelTol on each interval (or NMax points are reached: a warning, and the last solution).
+    * sol has x, y and yp on the final mesh (and parameters); deval(sol, x) gives y between, [y, yp] = deval(...) y' too. options (bvpset): RelTol (1e-3), AbsTol, NMax, SingularTerm (S, for y' = S*y/x + f with a = 0), FJacobian, Stats ('on'), Vectorized.
+bvp5c: Solve a boundary value problem as bvp4c does, by a fifth-order collocation.
+    sol = bvp5c(odefun, bcfun, solinit)
+    sol = bvp5c(odefun, bcfun, solinit, options)
+    * The four-stage Lobatto IIIA collocation: more accurate than bvp4c's on a mesh, for tighter tolerances. Its inputs and its solution are bvp4c's; it takes no SingularTerm.
+bvpinit: A first guess for bvp4c and bvp5c.
+    solinit = bvpinit(xmesh, yinit)
+    solinit = bvpinit(xmesh, yinit, parameters)
+    solinit = bvpinit(sol, [anew bnew])
+    * xmesh runs from a to b; yinit is a constant column for every point, or a function yinit(x) giving one. bvpinit(sol, [anew bnew]) takes a solution to a longer interval, its end values carried out to the new ends.
+bvpxtend: A guess for a longer interval, from a solution.
+    solinit = bvpxtend(sol, xnew)
+    solinit = bvpxtend(sol, xnew, ynew)
+    * xnew lies beyond a or b; y there is the solution's end value carried on by its slope, or ynew.
+bvpset: Make or change the options of bvp4c and bvp5c.
+    options = bvpset('RelTol', 1e-6, ...)
+    options = bvpset(oldopts, 'Name', value, ...)
+    * Names: RelTol, AbsTol, SingularTerm, FJacobian, BCJacobian, Stats, NMax, Vectorized.
+bvpget: An option of bvp4c and bvp5c.
+    v = bvpget(options, 'Name')
+    v = bvpget(options, 'Name', default)
+dde23: Solve delay differential equations with constant delays.
+    sol = dde23(ddefun, lags, history, tspan)
+    sol = dde23(ddefun, lags, history, tspan, options)
+    * y'(t) = ddefun(t, y, Z), Z(:, j) being y(t - lags(j)); the lags are positive. history is y before tspan(1): a constant column, a function history(t), or the solution of an earlier dde23 run (to carry it on).
+    * The steps land on the points where a lag carries the jump at the start forward (sol.discont), as far as three lags on. sol has x, y, yp, stats and, with an Events function ([value, isterminal, direction] = events(t, y, Z)), xe, ye and ie; deval(sol, t) gives y between.
+    * options (ddeset): RelTol (1e-3), AbsTol (1e-6), MaxStep, InitialStep, InitialY (y at the start, when it differs from the history), Jumps, Events, Stats.
+ddesd: Solve delay differential equations whose delays may depend on t and y.
+    sol = ddesd(ddefun, delays, history, tspan)
+    sol = ddesd(ddefun, delays, history, tspan, options)
+    * delays(t, y) gives the times at which y is taken (each at most t): Z(:, j) is y(d(j)). A vector of constants is taken as lags, as dde23 takes them. Otherwise as dde23, without discontinuity tracking for delays that depend on y.
+ddeset: Make or change the options of dde23 and ddesd.
+    options = ddeset('RelTol', 1e-6, ...)
+    options = ddeset(oldopts, 'Name', value, ...)
+    * Names: RelTol, AbsTol, NormControl, Events, InitialStep, MaxStep, OutputFcn, OutputSel, Stats, InitialY, Jumps.
+ddeget: An option of dde23 and ddesd.
+    v = ddeget(options, 'Name')
+    v = ddeget(options, 'Name', default)
+pdepe: Solve parabolic and elliptic partial differential equations in one space variable and time.
+    sol = pdepe(m, pdefun, icfun, bcfun, xmesh, tspan)
+    sol = pdepe(m, pdefun, icfun, bcfun, xmesh, tspan, options)
+    [sol, t] = pdepe(...)
+    * The equations c(x, t, u, du/dx) .* du/dt = x^-m d/dx(x^m f(x, t, u, du/dx)) + s(x, t, u, du/dx), m 0 (slab), 1 (cylinder) or 2 (sphere); [c, f, s] = pdefun(x, t, u, dudx), each a column with a value for each equation (a zero in c makes that equation elliptic).
+    * u0 = icfun(x); [pl, ql, pr, qr] = bcfun(xl, ul, xr, ur, t) gives the boundary conditions p + q .* f = 0 at each end (q = 0: u is held, p = 0). With m > 0 and the mesh starting at 0, the condition there is the symmetry, f = 0.
+    * sol(i, j, k) is u(k) at tspan(i) and xmesh(j) (a matrix for one equation); xmesh and tspan have three values or more. options (odeset): RelTol, AbsTol, MaxStep, InitialStep.
+pdeval: A pdepe solution between the mesh points.
+    uout = pdeval(m, xmesh, ui, xout)
+    [uout, duoutdx] = pdeval(m, xmesh, ui, xout)
+    * ui = sol(j, :, k): one equation at one time; between mesh points linearly, duoutdx the slope there.
+ode: An initial value problem as an object: its function, its start, its solver.
+    F = ode
+    F = ode(ODEFcn=@(t, y) ..., InitialValue=y0)
+    F = ode(..., InitialTime=t0, Parameters=p, Solver=name)
+    F.Name = value
+    * Properties: ODEFcn (f(t, y), or f(t, y, p) with Parameters), InitialTime (0), InitialValue, Parameters, Jacobian, MassMatrix, NonNegativeVariables, AbsoluteTolerance (1e-6), RelativeTolerance (1e-3), Solver and SolverOptions (an odeset struct); SelectedSolver says which solver Solver means.
+    * Solver is 'auto' (ode45, or ode15s with a mass matrix), 'nonstiff' (ode45), 'stiff' (ode15s) or a solver's name. S = solve(F, ...) solves it; solutionFcn(F, t0, tf) gives a function of t.
+solutionFcn: The solution of an ode object as a function of time.
+    f = solutionFcn(F, t0, tf)
+    * y = f(t) gives a column for each time in t, between t0 (the InitialTime) and tf, from the solver's interpolant.
+# ---- distances, clustering, reducing dimensions ---------------------------------------------------------------------------------------------
+pdist: The distance between each pair of rows of a matrix.
+    D = pdist(X)
+    D = pdist(X, distance)
+    D = pdist(X, 'minkowski', p)
+    D = pdist(X, @distfun)
+    * D is a row, the pairs in the order (1,2), (1,3), ..., (1,m), (2,3), ...; squareform makes it a matrix. distance is 'euclidean' (unless given), 'squaredeuclidean', 'seuclidean' (each column scaled by its standard deviation, or by the scales given), 'cityblock', 'minkowski' (p 2 unless given), 'chebychev', 'mahalanobis' (by the covariance of X, or the one given), 'cosine', 'correlation', 'spearman', 'hamming' or 'jaccard'.
+    * distfun(XI, XJ) takes a row and a matrix and gives a column of distances.
+pdist2: The distance from each row of X to each row of Y.
+    D = pdist2(X, Y)
+    D = pdist2(X, Y, distance, param)
+    [D, I] = pdist2(..., 'Smallest', K)
+    [D, I] = pdist2(..., 'Largest', K)
+    * D(i, j) is the distance from X(i, :) to Y(j, :); the distances as pdist names them. With 'Smallest' (or 'Largest'), the K smallest in each column, smallest first, and I the rows of X they belong to.
+squareform: A distance row (from pdist) as a square matrix, or the other way round.
+    Z = squareform(y)
+    y = squareform(Z)
+    Z = squareform(y, 'tomatrix')
+    y = squareform(Z, 'tovector')
+knnsearch: The nearest neighbours of points.
+    Idx = knnsearch(X, Y)
+    [Idx, D] = knnsearch(X, Y, 'K', k, 'Distance', distance)
+    * For each row of Y, the k rows of X nearest it (1 unless given), nearest first; D their distances. 'P', 'Scale' and 'Cov' give the parameter of 'minkowski', 'seuclidean' and 'mahalanobis'.
+rangesearch: The points within a distance of others.
+    Idx = rangesearch(X, Y, r)
+    [Idx, D] = rangesearch(X, Y, r, 'Distance', distance)
+    * Cells, one for each row of Y: the rows of X within r of it, nearest first, and their distances.
+kmeans: k clusters of observations, each about its centroid.
+    idx = kmeans(X, k)
+    [idx, C, sumd, D] = kmeans(X, k)
+    [...] = kmeans(..., 'Distance', d, 'Replicates', r, 'MaxIter', m, 'Start', s, 'EmptyAction', a)
+    * Lloyd's iterations: each row to its nearest centroid, each centroid to the middle of its rows (the mean for 'sqeuclidean' (unless given) and the cosine and correlation distances, the median for 'cityblock', the majority for 'hamming'). The start is k-means++ ('plus', unless given), 'sample', 'uniform', 'cluster' or a matrix of centroids; with 'Replicates', the run with the least total distance is kept.
+    * C has a row for each centroid, sumd each cluster's total distance, D each row's distance to each centroid. Rows with NaN are left out (idx NaN). A cluster that empties takes the row farthest from its centroid ('singleton'), or is dropped ('drop'), or is an error ('error').
+kmedoids: k clusters, each about one of its own observations (the medoid).
+    idx = kmedoids(X, k)
+    [idx, C, sumd, D, midx] = kmedoids(X, k, 'Distance', d, 'Replicates', r)
+    * Seeded as k-means++ seeds, each medoid moved to the member nearest the rest, then swaps of a medoid for another row while they lower the total distance. midx are the medoids' rows. The distance is 'sqeuclidean' unless given (any that pdist takes).
+linkage: An agglomerative hierarchical cluster tree.
+    Z = linkage(X)
+    Z = linkage(X, method)
+    Z = linkage(X, method, distance)
+    Z = linkage(y, method)
+    * Each row of Z joins two clusters (Z(i, 1:2), the observations numbered 1 to m and the clusters made m+1, m+2, ...) at the height Z(i, 3). method is 'single' (unless given), 'complete', 'average', 'weighted', 'centroid', 'median' or 'ward' (the last three on Euclidean distances). y is a row of distances, as pdist gives.
+cluster: Clusters cut from a linkage tree; or the clusters of a Gaussian mixture.
+    T = cluster(Z, 'MaxClust', n)
+    T = cluster(Z, 'Cutoff', c)
+    T = cluster(Z, 'Cutoff', c, 'Criterion', 'distance')
+    T = cluster(Z, ..., 'Depth', d)
+    [idx, nlogL, P] = cluster(gm, X)
+    * Clusters are numbered in the order of their first observation. 'Cutoff' cuts where the inconsistency coefficient (or the height, with 'distance') exceeds c; 'MaxClust' gives at most n clusters (a column for each n given).
+    * cluster(gm, X) puts each row with the component most probable for it; P are the posterior probabilities, nlogL the negative log-likelihood.
+clusterdata: Clusters of observations by linkage and cluster in one step.
+    T = clusterdata(X, cutoff)
+    T = clusterdata(X, 'MaxClust', n, 'Linkage', method, 'Distance', d)
+    * clusterdata(X, c): at most c clusters when c is 2 or more, else cut at inconsistency c; single linkage unless named.
+cophenet: How well a linkage tree keeps the distances.
+    c = cophenet(Z, Y)
+    [c, d] = cophenet(Z, Y)
+    * c is the correlation of the distances Y (from pdist) with the heights at which the tree joins each pair (d).
+inconsistent: The inconsistency of each link of a tree.
+    Y = inconsistent(Z)
+    Y = inconsistent(Z, d)
+    * A row for each link: the mean and standard deviation of the heights of the links within d levels below it (2 unless given), their number, and (its height - the mean)/the standard deviation.
+optimalleaforder: The order of a tree's leaves that keeps the nearest together.
+    order = optimalleaforder(Z, D)
+    * Of the orders the tree allows, the one with the least sum of distances between neighbouring leaves.
+dendrogram: A linkage tree drawn.
+    dendrogram(Z)
+    [H, T, outperm] = dendrogram(Z, P)
+    dendrogram(..., 'Orientation', o, 'ColorThreshold', t, 'Labels', names)
+    * At most P leaves are drawn (30 unless given; 0 draws all), the lower links folded into them; T says which leaf holds each observation, outperm the leaves from left to right. Orientation is 'top', 'bottom', 'left' or 'right'; with 'ColorThreshold' (or 'default', 0.7 of the greatest height) each cluster below it takes a colour of its own.
+dbscan: Clusters of points that have many neighbours (density-based), the rest noise.
+    idx = dbscan(X, epsilon, minpts)
+    [idx, corepts] = dbscan(X, epsilon, minpts, 'Distance', d)
+    idx = dbscan(D, epsilon, minpts, 'Distance', 'precomputed')
+    * A core point has minpts points within epsilon (itself among them); a cluster is the core points joined through such neighbours and the points near them. Noise is -1; clusters are numbered as found from the first point on.
+spectralcluster: Clusters from the eigenvectors of a similarity graph.
+    idx = spectralcluster(X, k)
+    [idx, V, D] = spectralcluster(X, k, 'SimilarityGraph', 'knn'|'epsilon', 'NumNeighbors', n, 'Radius', r, 'KernelScale', s, 'LaplacianNormalization', 'randomwalk'|'symmetric'|'none', 'Distance', d)
+    * Points joined to their nearest neighbours (ceil(log(n)) unless given), weighted exp(-(d/s)^2); the k eigenvectors of the graph's Laplacian with the smallest eigenvalues (V, D) clustered by kmeans.
+gmdistribution: A Gaussian mixture distribution.
+    gm = gmdistribution(mu, sigma)
+    gm = gmdistribution(mu, sigma, p)
+    * mu has a row for each component; sigma is d-by-d-by-k, or d-by-d shared by all, or 1-by-d-by-k or 1-by-d diagonal; p the proportions (equal unless given). pdf(gm, X), random(gm, n), cluster(gm, X), posterior(gm, X) and mahal(gm, X) work on it.
+fitgmdist: A Gaussian mixture fitted to data.
+    gm = fitgmdist(X, k)
+    gm = fitgmdist(X, k, 'CovarianceType', 'full'|'diagonal', 'SharedCovariance', tf, 'RegularizationValue', r, 'Replicates', n, 'Start', s, 'Options', statset('MaxIter', m, 'TolFun', t))
+    * The expectation-maximization algorithm from k-means++ starts (or 'randSample', or a column of starting components), until the log-likelihood changes by less than TolFun (1e-6) relatively or MaxIter (100) iterations; the best of the replicates is kept. r is added to each covariance's diagonal. gm keeps NegativeLogLikelihood, AIC, BIC, Converged and NumIterations.
+posterior: The probability of each component of a Gaussian mixture, given each observation.
+    P = posterior(gm, X)
+    [P, nlogL] = posterior(gm, X)
+silhouette: How well each point sits in its cluster.
+    s = silhouette(X, clust)
+    s = silhouette(X, clust, distance)
+    silhouette(X, clust)
+    * s = (b - a)/max(a, b), a the mean distance to the rest of its cluster, b to the nearest other cluster ('sqEuclidean' unless given); 0 for a point alone in its cluster. Without an output, drawn as bars, cluster by cluster.
+evalclusters: The number of clusters a criterion prefers.
+    eva = evalclusters(X, clust, criterion)
+    eva = evalclusters(X, clust, criterion, 'KList', ks)
+    * criterion is 'CalinskiHarabasz' (between- over within-cluster dispersion, largest best), 'DaviesBouldin' (smallest best), 'silhouette' (the mean silhouette, largest best) or 'gap' (against B reference sets uniform over the data's box, largest best). clust is 'kmeans', 'linkage' (Ward), 'gmdistribution' or a matrix with a column of cluster numbers for each solution. eva.OptimalK, eva.CriterionValues, eva.InspectedK, eva.OptimalY.
+pca: The principal components of data.
+    coeff = pca(X)
+    [coeff, score, latent, tsquared, explained, mu] = pca(X)
+    [...] = pca(X, 'NumComponents', k, 'Centered', tf, 'Economy', tf, 'Rows', 'complete'|'all', 'Weights', w, 'VariableWeights', vw)
+    * By the SVD of the centred data: coeff's columns are the components (each column's largest element made positive), score the data in their terms, latent their variances, explained the percentage each carries, tsquared Hotelling's T^2 of each row, mu the column means. Rows with NaN are left out ('complete'). 'VariableWeights', 'variance' works on standardized variables. Weights are scaled to sum to the number of rows.
+pcacov: Principal components of a covariance matrix.
+    coeff = pcacov(V)
+    [coeff, latent, explained] = pcacov(V)
+ppca: Probabilistic principal components, missing values allowed.
+    coeff = ppca(Y, k)
+    [coeff, score, pcvar, mu, v, S] = ppca(Y, k, 'Options', statset)
+    * The model Y = mu + X W' + noise of variance v, fitted by EM, each row using the values it has (NaN is missing). coeff spans W's columns, orthonormal; pcvar are their variances; S holds W, the expected latent values (Xexp), the reconstruction (Recon), NumIter and the negative log-likelihood.
+factoran: A factor analysis model by maximum likelihood.
+    lambda = factoran(X, m)
+    [lambda, psi, T, stats, F] = factoran(X, m)
+    [...] = factoran(..., 'Xtype', 'data'|'covariance', 'Nobs', n, 'Rotate', method, 'Scores', 'wls'|'regression')
+    * The correlations are modelled as lambda*lambda' + diag(psi): m common factors and each variable's specific variance psi (at least 'Delta', 0.005). The loadings are rotated ('varimax' unless given; 'none') by T. stats has loglike, dfe and, with the number of observations, chisq and p (the test that m factors suffice). F are the factor scores.
+rotatefactors: Factor loadings rotated to be simpler.
+    B = rotatefactors(A)
+    [B, T] = rotatefactors(A, 'Method', m, 'Normalize', tf, 'Reltol', t, 'Maxit', n, 'Coeff', gamma, 'Power', k)
+    * 'varimax' (unless given), 'quartimax', 'equamax', 'parsimax' and 'orthomax' (with 'Coeff') turn the axes, keeping them orthogonal (B = A*T); 'promax' then lets them lean (oblique), towards the varimax loadings raised to 'Power' (4). 'Normalize' (on unless given) works on the rows scaled to unit length.
+cmdscale: Classical multidimensional scaling.
+    Y = cmdscale(D)
+    [Y, e] = cmdscale(D, p)
+    * Points (rows of Y) whose Euclidean distances are D's when D is Euclidean, and near them otherwise; e are the eigenvalues of the doubly centred -D.^2/2, the columns of Y ordered by them. D is a square matrix or a row from pdist.
+mdscale: Points whose distances match dissimilarities as well as can be.
+    Y = mdscale(D, p)
+    [Y, stress, disparities] = mdscale(D, p, 'Criterion', c, 'Start', s, 'Replicates', r, 'Options', statset)
+    * Nonmetric ('stress', unless given, and 'sstress'): the distances fitted to the best monotone transformation of D (the disparities, by isotonic regression); metric ('metricstress', 'metricsstress', 'sammon', 'strain'): to D itself. Kruskal's stress is the square root of the normalized residual sum of squares. Starts from cmdscale (or 'random', or a matrix).
+tsne: A t-distributed stochastic neighbour embedding.
+    Y = tsne(X)
+    [Y, loss] = tsne(X, 'NumDimensions', d, 'Perplexity', p, 'Exaggeration', e, 'LearnRate', r, 'NumPCAComponents', k, 'Distance', dist, 'Standardize', tf, 'Options', statset)
+    * Points in d dimensions (2) whose neighbourhoods are as X's: Gaussian affinities with perplexity p (30) against a Student t's, gradient descent with momentum and gains, the affinities exaggerated (4) for the first 99 iterations. Computed exactly (O(n^2)), whatever 'Algorithm' says; loss is the Kullback-Leibler divergence.
+procrustes: The turn, scale and shift that fit one set of points to another.
+    d = procrustes(X, Y)
+    [d, Z, transform] = procrustes(X, Y, 'Scaling', tf, 'Reflection', tf|'best')
+    * Z = b*Y*T + c fits X best by least squares; d is the residual sum of squares over X's (centred). transform has T, b and c. 'Reflection' 'best' (unless given) allows a reflection when it fits better.
+canoncorr: Canonical correlation analysis.
+    [A, B, r] = canoncorr(X, Y)
+    [A, B, r, U, V, stats] = canoncorr(X, Y)
+    * The combinations U = (X - mean)*A and V = (Y - mean)*B most correlated, each pair r(k), uncorrelated with the others, unit variance. stats has Wilks' lambda and Bartlett's chi-square test (chisq, df1, pChisq) that the correlations from k on are all zero.
+barttest: Bartlett's test of how many principal components differ.
+    ndim = barttest(X, alpha)
+    [ndim, prob, chisquare] = barttest(X, alpha)
+    * For k = 0, 1, ..., whether the p - k smallest eigenvalues of the covariance may be equal: chi-square -(n - 1 - (2p + 5)/6 - 2k/3)*(sum(log(l)) - (p - k)*log(mean(l))) with (p - k - 1)(p - k + 2)/2 degrees of freedom; ndim is the first k not rejected at alpha (0.05).
+nnmf: Nonnegative matrix factorization.
+    [W, H] = nnmf(A, k)
+    [W, H, D] = nnmf(A, k, 'Algorithm', 'als'|'mult', 'Replicates', r, 'W0', W0, 'H0', H0, 'Options', statset)
+    * A ~ W*H with no negative entries, by alternating least squares (each solution's negatives set to zero) or multiplicative updates, from random starts (or W0, H0). H's rows have unit length; D is the root mean square residual.
+mahal: The squared Mahalanobis distance of points from a sample.
+    d = mahal(Y, X)
+    D = mahal(gm, X)
+    * d(i) = (Y(i, :) - mu)*inv(C)*(Y(i, :) - mu)', mu and C the mean and covariance of X's rows. mahal(gm, X) of a Gaussian mixture: a column for each component.
+corrcov: The correlation matrix of a covariance matrix.
+    R = corrcov(C)
+    [R, sigma] = corrcov(C)
+# ---- classification and regression ---------------------------------------------------------------------------------------------------------
+fitctree: A classification tree.
+    Mdl = fitctree(X, Y)
+    Mdl = fitctree(Tbl, ResponseVarName)
+    Mdl = fitctree(Tbl, formula)
+    Mdl = fitctree(..., 'MaxNumSplits', n, 'MinLeafSize', m, 'MinParentSize', p, 'SplitCriterion', 'gdi'|'deviance', 'NumVariablesToSample', k)
+    * CART grown level by level: each node with at least MinParentSize observations (10) split where the Gini index (or the deviance) falls most, each child keeping MinLeafSize (1), until MaxNumSplits (n - 1) splits. Y is numbers, logical, text or categorical (ClassNames sorted); X numbers (a table's categorical variables taken by their codes); rows with NaN are left out.
+    * Each model keeps its data and takes predict, loss, resubLoss, resubPredict and crossval; view(Mdl) prints a tree's rules. The fit functions also take 'ClassNames', 'Prior', 'Weights', 'PredictorNames', 'ResponseName', and 'CrossVal', 'on', 'KFold', k, 'Holdout', p, 'Leaveout', 'on' or 'CVPartition', c, which give a cross-validated model.
+fitrtree: A regression tree.
+    Mdl = fitrtree(X, Y)
+    Mdl = fitrtree(Tbl, ResponseVarName)
+    Mdl = fitrtree(..., 'MaxNumSplits', n, 'MinLeafSize', m, 'MinParentSize', p)
+    * CART by the squared error; otherwise as fitctree. Each leaf predicts its mean.
+fitcknn: A k-nearest-neighbour classifier.
+    Mdl = fitcknn(X, Y)
+    Mdl = fitcknn(..., 'NumNeighbors', k, 'Distance', d, 'DistanceWeight', 'equal'|'inverse'|'squaredinverse', 'Exponent', p, 'Standardize', tf)
+    * The score of each class is its share of the k nearest training points' votes (1 unless given), weighted as asked; ties go to the first class.
+fitcdiscr: Discriminant analysis: classes as multivariate normal distributions.
+    Mdl = fitcdiscr(X, Y)
+    Mdl = fitcdiscr(..., 'DiscrimType', 'linear'|'quadratic'|'diagLinear'|'diagQuadratic'|'pseudoLinear'|'pseudoQuadratic', 'Gamma', g, 'Prior', p)
+    * Linear: one covariance pooled over the classes (n - K degrees of freedom); quadratic: each class its own; diag: their diagonals only; pseudo: a pseudo-inverse when singular. Scores are the posterior probabilities; Mu and Sigma hold the estimates. Gamma shrinks the pooled covariance towards its diagonal.
+fitcnb: A naive Bayes classifier.
+    Mdl = fitcnb(X, Y)
+    Mdl = fitcnb(..., 'DistributionNames', names, 'Width', w, 'Prior', p)
+    * Each variable independent within each class: 'normal' (unless given; the mean and the unbiased standard deviation), 'kernel' (a normal kernel density, its width (4/(3n))^(1/5) times the MAD over 0.6745 unless given), 'mvmn' (each value's frequency, plus one) or 'mn' (counts, multinomial). One name for all, or one for each variable.
+fitcsvm: A support vector machine for two classes.
+    Mdl = fitcsvm(X, Y)
+    Mdl = fitcsvm(..., 'KernelFunction', 'linear'|'gaussian'|'polynomial', 'BoxConstraint', C, 'KernelScale', s|'auto', 'PolynomialOrder', q, 'Standardize', tf, 'DeltaGradientTolerance', tol)
+    * The dual problem solved by SMO with second-order working-set choice, until the gradient gap is below tol (1e-3). The kernels are x*z', exp(-|x - z|^2) and (1 + x*z')^q on x/s and z/s (s 1 unless given; 'auto' the median distance of 200 sampled points). The score of the second class is the decision value f(x) = sum(alpha*y*K) + Bias, of the first -f(x).
+fitrsvm: Support vector regression.
+    Mdl = fitrsvm(X, Y)
+    Mdl = fitrsvm(..., 'KernelFunction', k, 'BoxConstraint', C, 'Epsilon', e, 'KernelScale', s, 'Standardize', tf)
+    * Epsilon-insensitive regression by the same solver; BoxConstraint is iqr(Y)/1.349 and Epsilon iqr(Y)/13.49 unless given.
+fitcecoc: Many classes by binary learners and an error-correcting output code.
+    Mdl = fitcecoc(X, Y)
+    Mdl = fitcecoc(..., 'Learners', t, 'Coding', 'onevsone'|'onevsall'|'binarycomplete'|'ordinal')
+    * A binary learner for each column of the coding matrix (CodingMatrix: 1 a positive class, -1 a negative one, 0 left out); learners are 'svm' (unless given), 'linear', 'tree', 'knn', 'discriminant', 'naivebayes' or a template. A class's score is minus the mean binary loss over its columns: the hinge loss on SVM and linear margins, the quadratic loss on the others' probabilities scaled to [-1, 1].
+fitcensemble: An ensemble of classification trees.
+    Mdl = fitcensemble(X, Y)
+    Mdl = fitcensemble(..., 'Method', m, 'NumLearningCycles', n, 'Learners', templateTree(...), 'LearnRate', r)
+    * Method 'AdaBoostM1' (two classes; unless given then), 'AdaBoostM2' (more classes; unless given then; boosted here by SAMME, the multiclass AdaBoost of Zhu and others), 'GentleBoost', 'LogitBoost' (two classes) or 'Bag' (random forest: bootstrap samples, sqrt(p) variables tried at each split, full trees). Boosting grows trees of 10 splits unless the template says; n is 100 and r 1 unless given. oobLoss and oobPredict use the bagged trees that did not see each observation.
+fitrensemble: An ensemble of regression trees.
+    Mdl = fitrensemble(X, Y)
+    Mdl = fitrensemble(..., 'Method', 'LSBoost'|'Bag', 'NumLearningCycles', n, 'Learners', templateTree(...), 'LearnRate', r)
+    * LSBoost (unless given): each tree fitted to the residuals of those before it; Bag: bootstrap samples, a third of the variables tried at each split, leaves of 5.
+fitclinear: A linear classifier for two classes, regularized.
+    Mdl = fitclinear(X, Y)
+    Mdl = fitclinear(..., 'Learner', 'svm'|'logistic', 'Lambda', l, 'Regularization', 'ridge'|'lasso')
+    * Minimizes the mean loss (hinge, or logistic) plus Lambda/2*|Beta|^2 (ridge) or Lambda*|Beta|_1 (lasso; logistic learner only), Lambda 1/n unless given, the Bias free. The SVM by dual coordinate descent, the rest by L-BFGS.
+fitrlinear: A linear regression model, regularized.
+    Mdl = fitrlinear(X, Y)
+    Mdl = fitrlinear(..., 'Learner', 'svm'|'leastsquares', 'Lambda', l, 'Regularization', 'ridge'|'lasso', 'Epsilon', e)
+    * 'svm' (unless given) is epsilon-insensitive (Epsilon iqr(Y)/13.49 unless given), by dual coordinate descent; 'leastsquares' half the mean squared error, by L-BFGS.
+fitcnet: A feedforward neural network classifier.
+    Mdl = fitcnet(X, Y)
+    Mdl = fitcnet(..., 'LayerSizes', sizes, 'Activations', 'relu'|'tanh'|'sigmoid'|'none', 'Lambda', l, 'IterationLimit', n, 'Standardize', tf)
+    * Fully connected layers (one of 10 unless given), softmax output, cross-entropy plus Lambda/2 times the squared weights, minimized by L-BFGS (1000 iterations at most) from Glorot-uniform weights (drawn from rng's generator) and zero biases.
+fitrnet: A feedforward neural network for regression.
+    Mdl = fitrnet(X, Y)
+    Mdl = fitrnet(..., 'LayerSizes', sizes, 'Activations', a, 'Lambda', l, 'IterationLimit', n, 'Standardize', tf)
+    * As fitcnet, a linear output and half the mean squared error.
+fitrgp: Gaussian process regression.
+    Mdl = fitrgp(X, Y)
+    Mdl = fitrgp(..., 'KernelFunction', k, 'BasisFunction', 'constant'|'none'|'linear', 'Sigma', s, 'KernelParameters', theta, 'FitMethod', 'exact'|'none', 'Standardize', tf)
+    * Kernels 'squaredexponential' (unless given), 'exponential', 'matern32', 'matern52', 'rationalquadratic', 'ardsquaredexponential'; their length scale(s) and signal sd, and the noise sd Sigma, maximize the marginal likelihood (the basis coefficients Beta by generalized least squares). [ypred, ysd, yint] = predict(Mdl, Xnew, 'Alpha', a): ysd and yint are for new observations, noise included.
+fitckernel: A Gaussian-kernel classifier by random features.
+    Mdl = fitckernel(X, Y)
+    Mdl = fitckernel(..., 'Learner', 'svm'|'logistic', 'NumExpansionDimensions', m, 'KernelScale', s, 'Lambda', l)
+    * X mapped to m random Fourier features of the Gaussian kernel (2^ceil(min(log2(p) + 5, 15)) unless given), then a linear classifier as fitclinear fits.
+fitrkernel: Gaussian-kernel regression by random features.
+    Mdl = fitrkernel(X, Y)
+    Mdl = fitrkernel(..., 'Learner', 'svm'|'leastsquares', 'NumExpansionDimensions', m, 'KernelScale', s, 'Lambda', l)
+TreeBagger: Bagged decision trees (a random forest).
+    B = TreeBagger(n, X, Y)
+    B = TreeBagger(n, X, Y, 'Method', 'classification'|'regression', 'NumPredictorsToSample', k, 'MinLeafSize', m)
+    * n trees on bootstrap samples, as fitcensemble's 'Bag'; predict gives classes as text (a cell), and scores.
+templateTree: A tree's options for ensembles and fitcecoc.
+    t = templateTree('MaxNumSplits', n, 'MinLeafSize', m, ...)
+templateSVM: An SVM's options for fitcecoc.
+    t = templateSVM('KernelFunction', k, 'BoxConstraint', C, ...)
+templateKNN: A k-nearest-neighbour learner's options for fitcecoc.
+    t = templateKNN('NumNeighbors', k, ...)
+templateDiscriminant: A discriminant learner's options for fitcecoc.
+    t = templateDiscriminant('DiscrimType', type)
+templateNaiveBayes: A naive Bayes learner's options for fitcecoc.
+    t = templateNaiveBayes(...)
+templateLinear: A linear learner's options for fitcecoc.
+    t = templateLinear('Learner', l, 'Lambda', lambda, ...)
+templateKernel: A kernel learner's options.
+    t = templateKernel('KernelScale', s, ...)
+templateGP: A Gaussian process's options.
+    t = templateGP('KernelFunction', k, ...)
+loss: The loss of a model on data.
+    L = loss(Mdl, X, Y)
+    L = loss(Mdl, Tbl, ResponseVarName)
+    L = loss(..., 'LossFun', f, 'Weights', w)
+    * For classification the weighted share misclassified ('classiferror', unless given), or 'hinge', 'logit', 'exponential', 'binodeviance', 'quadratic' (of the margin: the true class's score less the best other's), 'mincost' or 'crossentropy' (of the posterior); for regression the mean squared error ('mse'), or 'epsiloninsensitive'.
+resubLoss: The loss of a model on the data it was fitted to.
+    L = resubLoss(Mdl)
+    L = resubLoss(Mdl, 'LossFun', f)
+resubPredict: A model's predictions for the data it was fitted to.
+    [label, score] = resubPredict(Mdl)
+crossval: Cross-validation of a model, or of a function.
+    CVMdl = crossval(Mdl)
+    CVMdl = crossval(Mdl, 'KFold', k)
+    CVMdl = crossval(Mdl, 'Holdout', p)
+    CVMdl = crossval(Mdl, 'Leaveout', 'on')
+    CVMdl = crossval(Mdl, 'CVPartition', c)
+    vals = crossval(fun, X, Y, 'KFold', k)
+    mse = crossval('mse', X, y, 'Predfun', predfun)
+    mcr = crossval('mcr', X, y, 'Predfun', predfun)
+    * A model is fitted again with its options on each training set (10 folds unless given); kfoldLoss and kfoldPredict use each on the rest. fun(XTRAIN, YTRAIN, XTEST, YTEST) gives a row of values for each fold; predfun(XTRAIN, ytrain, XTEST) gives predictions, and 'mse' (squared error) or 'mcr' (misclassification) is summed over the folds and divided by n. 'Partition', 'Stratify' (a grouping) and 'MCReps' (repetitions) are taken too.
+kfoldLoss: The loss of a cross-validated model on the observations each fold left out.
+    L = kfoldLoss(CVMdl)
+    L = kfoldLoss(CVMdl, 'Mode', 'average'|'individual', 'LossFun', f)
+kfoldPredict: Each observation predicted by the fold's model not fitted to it.
+    label = kfoldPredict(CVMdl)
+    [label, score] = kfoldPredict(CVMdl)
+oobLoss: A bagged ensemble's loss on each observation by the trees that did not see it.
+    L = oobLoss(Mdl)
+oobPredict: A bagged ensemble's out-of-bag predictions.
+    [label, score] = oobPredict(Mdl)
+compact: A model for predicting only.
+    CMdl = compact(Mdl)
+    * Here the model itself, which keeps its data.
+cvpartition: A partition of observations into training and test sets.
+    c = cvpartition(n, 'KFold', k)
+    c = cvpartition(group, 'KFold', k)
+    c = cvpartition(n, 'HoldOut', p)
+    c = cvpartition(n, 'Leaveout')
+    c = cvpartition(n, 'Resubstitution')
+    c = cvpartition(group, ..., 'Stratify', tf)
+    * Random (from rng's generator); with a grouping, each set keeps the groups' proportions (stratified). training(c, i) and test(c, i) give logical columns; c.NumTestSets, c.TrainSize, c.TestSize.
+training: The training set of a partition.
+    idx = training(c)
+    idx = training(c, i)
+test: The test set of a partition.
+    idx = test(c)
+    idx = test(c, i)
+repartition: A new random partition like another.
+    cnew = repartition(c)
+confusionmat: The confusion matrix of known and predicted classes.
+    C = confusionmat(group, grouphat)
+    [C, order] = confusionmat(group, grouphat, 'Order', order)
+    * C(i, j) counts the observations of class i predicted as class j, the classes sorted (or in the order given).
+confusionchart: A confusion matrix drawn.
+    cm = confusionchart(trueLabels, predictedLabels)
+    cm = confusionchart(C)
+    cm = confusionchart(C, classLabels)
+    cm = confusionchart(..., 'Normalization', n, 'RowSummary', r, 'ColumnSummary', c, 'Title', t)
+    * The diagonal blue and the rest red, each cell shaded by its count. Normalization is 'absolute', 'row-normalized', 'column-normalized' or 'total-normalized'; the summaries add the share right in each row or column. cm.NormalizedValues are the values shown.
+perfcurve: A classifier's performance as its threshold moves (the ROC curve unless other criteria are named).
+    [X, Y] = perfcurve(labels, scores, posclass)
+    [X, Y, T, AUC, OPTROCPT] = perfcurve(labels, scores, posclass, 'XCrit', c, 'YCrit', c)
+    * For each threshold T (the distinct scores, highest first, from no positive at all), the criteria of the observations scored at least T: 'fpr' and 'tpr' (unless given), 'tnr', 'fnr', 'ppv'/'prec', 'npv', 'reca', 'sens', 'spec', 'fall', 'miss', 'accu', 'tp', 'fn', 'fp', 'tn', 'rpp', 'rnp'. AUC is the area under Y against X (trapezoids); OPTROCPT the ROC point where the slope is N/P.
+# ---- more statistics ------------------------------------------------------------------------------------------------------------------------
+lasso: Lasso and elastic net regression along a path of penalties.
+    B = lasso(X, y)
+    [B, FitInfo] = lasso(X, y, 'Alpha', a, 'Lambda', l, 'NumLambda', n, 'LambdaRatio', r, 'CV', k, 'Standardize', tf, 'Weights', w, 'MaxIter', m, 'RelTol', t, 'DFmax', d)
+    * For each lambda, the coefficients minimizing 1/(2N) sum (y - b0 - X b)^2 + lambda (Alpha |b|_1 + (1 - Alpha)/2 |b|^2): Alpha 1 (unless given) is the lasso, less is the elastic net. By coordinate descent along the path, each from the last.
+    * Without 'Lambda', NumLambda (100) values from the smallest that gives no predictors down by LambdaRatio (1e-4), geometrically. B has a column for each lambda, ascending; FitInfo has Intercept, Lambda, Alpha, DF and MSE, and with 'CV' (folds, or a cvpartition) the cross-validated MSE with SE, LambdaMinMSE, Lambda1SE, IndexMinMSE and Index1SE. X is standardized for the fit unless 'Standardize' is false; the coefficients are given in X's own units.
+stepwiselm: A linear model built by adding and removing terms one at a time.
+    mdl = stepwiselm(X, y)
+    mdl = stepwiselm(X, y, modelspec, 'Upper', spec, 'Lower', spec, 'PEnter', pe, 'PRemove', pr, 'Verbose', v, 'NSteps', n)
+    * From modelspec ('constant' unless given, or 'linear' or 'interactions'), the term not in the model with the smallest F-test p-value enters while it is below PEnter (0.05); when none can, the term in it with the largest p-value leaves if above PRemove (0.10); until neither. Terms come from Upper ('interactions' unless given), and an interaction only when its main effects are in; those of Lower always stay. Each step is shown unless 'Verbose' is 0; the result is the fitlm model.
+anovan: N-way analysis of variance.
+    p = anovan(y, group)
+    [p, tbl, stats, terms] = anovan(y, group, 'model', m, 'sstype', s, 'varnames', names, 'display', 'on'|'off')
+    * group is a cell of grouping variables (or a matrix, a column for each). model is 'linear' (main effects, unless given), 'interaction' (and the two-way ones), 'full', the highest order, or a matrix of terms (a row each, 1 for each factor in it). sstype 3 (unless given) compares the full model with it less each term, 2 with each term and the terms that do not contain it, 1 adds the terms in turn; the factors are coded to sum to zero. The table is shown unless 'display' is 'off'.
+manova1: One-way multivariate analysis of variance.
+    d = manova1(X, group)
+    [d, p, stats] = manova1(X, group, alpha)
+    * d is the dimension of the space the group means span, as far as the data show: the number of Bartlett's chi-square tests of Wilks' lambda rejected in turn at alpha (0.05); p are those tests' p-values. stats has W, B and T (the within-group, between-group and total sums of squares and products), their degrees of freedom, lambda, chisq, chisqdf, the eigenvalues and eigenvectors of W^-1 B, the canonical variables (canon), the Mahalanobis distances of the points (mdist) and of the group means (gmdist).
+bootci: A bootstrap confidence interval.
+    ci = bootci(nboot, bootfun, d1, d2, ...)
+    ci = bootci(nboot, {bootfun, d1, ...}, 'Type', t, 'Alpha', a, 'NBootStd', m)
+    [ci, bootstat] = bootci(...)
+    * nboot resamples of the data's rows (from rng's generator). Type 'bca' (unless given: the bias-corrected and accelerated percentiles, the acceleration from the jackknife), 'per' (percentiles), 'cper' (bias-corrected), 'norm' (the bootstrap's bias and standard error) or 'stud' (studentized, each resample's standard error from NBootStd (100) more). ci has the lower bounds in its first row.
+ansaribradley: The Ansari-Bradley test that two samples have the same dispersion.
+    h = ansaribradley(x, y)
+    [h, p, stats] = ansaribradley(x, y, 'Alpha', a, 'Tail', 'both'|'right'|'left')
+    * Exact for small samples without ties, by the normal approximation otherwise (SciPy's); stats has W, the rank-score statistic of x, and Wstar, its normal score.
+copularnd: Random vectors from a copula: uniform marginals, a chosen dependence.
+    U = copularnd('Gaussian', rho, n)
+    U = copularnd('t', rho, nu, n)
+    U = copularnd(family, alpha, n)
+    * family is 'Gaussian', 't' (rho a correlation matrix, or a number for two dimensions), or 'Clayton', 'Frank' or 'Gumbel' (two dimensions, parameter alpha).
+copulapdf: A copula's density.
+    y = copulapdf(family, U, rho)
+    y = copulapdf('t', U, rho, nu)
+    y = copulapdf(family, U, alpha)
+copulacdf: A copula's distribution function.
+    y = copulacdf(family, U, rho)
+    y = copulacdf('t', U, rho, nu)
+    y = copulacdf(family, U, alpha)
+copulastat: The rank correlation a copula's parameter gives.
+    r = copulastat(family, param)
+    r = copulastat(family, param, 'Type', 'kendall'|'spearman')
+    * Kendall's tau unless 'spearman': 2/pi*asin(rho) (Gaussian, t), alpha/(alpha + 2) (Clayton), 1 - 1/alpha (Gumbel), and Debye's function for Frank.
+copulaparam: The parameter of a copula that gives a Kendall rank correlation.
+    param = copulaparam(family, r)
+copulafit: A copula fitted to data in the unit square (or cube).
+    rho = copulafit('Gaussian', U)
+    [rho, nu] = copulafit('t', U)
+    alpha = copulafit(family, U)
+    * Gaussian: the correlation of the normal scores; t: nu by the profile likelihood; Clayton, Frank and Gumbel: alpha by maximum likelihood.
+fullfact: A full factorial design.
+    dFF = fullfact(levels)
+    * Every combination of the factors' levels, numbered from 1, the first factor changing fastest.
+    * At most 2^20 runs are made.
+ff2n: A two-level full factorial design.
+    dFF2 = ff2n(n)
+    * The 2^n rows of 0 and 1, counting in binary.
+    * At most 2^20 runs are made.
+fracfact: A two-level fractional factorial design.
+    dfF = fracfact(gen)
+    * gen names the factors as words of letters: single letters are base factors (their full factorial in -1 and 1), longer words their products, as 'a b c abc'; a word starting with - is negated.
+    * At most 2^20 runs are made.
+bbdesign: A Box-Behnken design.
+    dBB = bbdesign(n)
+    dBB = bbdesign(n, 'center', nc)
+    * For each pair of the n factors, their four corners at -1 and 1 with the rest at 0; then nc centre points (one unless given).
+    * At most 2^20 runs are made.
+ccdesign: A central composite design.
+    dCC = ccdesign(n)
+    [dCC, blocks] = ccdesign(n, 'type', 'circumscribed'|'inscribed'|'faced', 'center', nc)
+    * The factorial corners at -1 and 1, the axial points at +-alpha with alpha the fourth root of the corners' number (rotatable), and nc centre points (n unless given); 'inscribed' scales all to fit in [-1, 1], 'faced' puts the axial points on the faces.
+    * At most 2^20 runs are made.
+candgen: A candidate set for a D-optimal design.
+    dC = candgen(nfactors, model)
+    * The grid of -1 and 1, with 0 too for 'quadratic' and 'purequadratic' models.
+    * At most 2^20 runs are made.
+candexch: A D-optimal design chosen from candidate rows.
+    rlist = candexch(C, nruns)
+    rlist = candexch(C, nruns, 'tries', k, 'maxiter', m)
+    * C has a row of model terms for each candidate; the rows (repeats allowed) of the most determinant X'X found by exchanging rows one at a time (Fedorov's method) from k random starts.
+rowexch: A D-optimal design by row exchanges.
+    dRE = rowexch(nfactors, nruns)
+    [dRE, X] = rowexch(nfactors, nruns, model, 'tries', k, 'maxiter', m)
+    * Rows of candgen's grid exchanged as candexch does, for model 'linear' (unless given), 'interaction', 'quadratic' or 'purequadratic'; X is the design's model matrix.
+hmmgenerate: A sequence from a hidden Markov model.
+    [seq, states] = hmmgenerate(len, TRANS, EMIS)
+    * TRANS(i, j) is the probability of going from state i to j, EMIS(i, k) of emitting symbol k in state i. The model is in state 1 before the first step.
+hmmviterbi: The most likely states of a hidden Markov model for a sequence.
+    states = hmmviterbi(seq, TRANS, EMIS)
+hmmdecode: The posterior state probabilities of a hidden Markov model.
+    PSTATES = hmmdecode(seq, TRANS, EMIS)
+    [PSTATES, logpseq, FORWARD, BACKWARD, S] = hmmdecode(seq, TRANS, EMIS)
+    * PSTATES(i, t) is the probability of state i at step t given the whole sequence; logpseq the log-probability of the sequence; FORWARD and BACKWARD the scaled forward and backward probabilities (a column more than steps, for the start) and S the scales.
+hmmestimate: A hidden Markov model's probabilities from a sequence with known states.
+    [TRANS, EMIS] = hmmestimate(seq, states)
+    [TRANS, EMIS] = hmmestimate(..., 'Pseudoemissions', P, 'Pseudotransitions', T)
+hmmtrain: A hidden Markov model's probabilities estimated from sequences.
+    [ESTTR, ESTEMIT] = hmmtrain(seq, TRGUESS, EMITGUESS)
+    [ESTTR, ESTEMIT, logliks] = hmmtrain(..., 'Algorithm', 'BaumWelch'|'Viterbi', 'Tolerance', t, 'Maxiterations', n, 'Pseudoemissions', P, 'Pseudotransitions', T)
+    * Baum-Welch (unless given) or Viterbi training from the guesses, until the probabilities and the log-likelihood change by less than the tolerance (1e-6) or 500 iterations; seq may be a cell of sequences.
+coxphfit: Cox proportional hazards regression.
+    b = coxphfit(X, T)
+    [b, logl, H, stats] = coxphfit(X, T, 'Censoring', c, 'Ties', 'breslow'|'efron', 'Frequency', f, 'Baseline', x0)
+    * The coefficients maximize the partial likelihood (Newton's method), ties by Breslow's approximation unless 'efron'. logl is the log partial likelihood; H the cumulative baseline hazard (Breslow's) at x0 (the means of X unless given), a row for each failure time; stats has beta, se, z, p and covb.
+relieff: Predictors ranked by ReliefF.
+    [idx, weights] = relieff(X, y, k)
+    [idx, weights] = relieff(X, y, k, 'method', 'classification'|'regression', 'sigma', s)
+    * Each predictor's weight grows by how it differs between a point and its k nearest neighbours of other classes, and falls by how it differs from its own class's (scaled by its range; Manhattan distances); for regression, by how its differences go with the response's. idx ranks the predictors, largest weight first.
+fscchi2: Predictors ranked by chi-square tests of independence.
+    [idx, scores] = fscchi2(X, Y)
+    * Each predictor (numeric ones in up to 10 groups of equal counts) against the response; scores are -log(p).
+fscmrmr: Predictors ranked by minimum redundancy, maximum relevance.
+    [idx, scores] = fscmrmr(X, Y)
+    * First the predictor sharing the most mutual information with the response, then each time the one whose relevance less its mean mutual information with those chosen is largest (numeric predictors in up to 10 groups).
+sequentialfs: Predictors chosen one at a time by a cross-validated criterion.
+    inmodel = sequentialfs(fun, X, y)
+    [inmodel, history] = sequentialfs(fun, X, y, 'cv', k, 'direction', 'forward'|'backward', 'nfeatures', n, 'keepin', idx, 'keepout', idx)
+    * fun(XTRAIN, ytrain, XTEST, ytest) gives a loss summed over the test rows; the criterion is its sum over the folds (10 unless 'cv' says, or 'none') over the number of test rows. Forward (unless given) adds the predictor that lowers it most while it falls (or until nfeatures); backward removes. history has In (a row for each step) and Crit.
+andrewsplot: Andrews plot: each observation as a curve.
+    andrewsplot(X)
+    h = andrewsplot(X, 'Group', g, 'Standardize', 'on'|'PCA'|'PCAStd')
+    * f(t) = x1/sqrt(2) + x2 sin(2 pi t) + x3 cos(2 pi t) + x4 sin(4 pi t) + ... for t from 0 to 1; a colour (and a line object) for each group.
+parallelcoords: Parallel coordinates: each observation as a line across its variables.
+    parallelcoords(X)
+    h = parallelcoords(X, 'Group', g, 'Labels', names, 'Standardize', 'on'|'PCA'|'PCAStd')
+probplot: A probability plot of data against a distribution.
+    probplot(y)
+    probplot(dist, y)
+    h = probplot(...)
+    * The sorted data against the distribution's quantiles at (i - 0.5)/n, with the line through their quartiles: 'normal' (unless given), 'exponential', 'extreme value', 'lognormal' and 'weibull' (on log data), 'rayleigh', 'half normal'.
+# ---- control systems ----------------------------------------------------------------------------------------------------------------------------
+tf: A transfer function model.
+    sys = tf(num, den)
+    sys = tf(num, den, Ts)
+    s = tf('s')
+    z = tf('z', Ts)
+    sys = tf(M)
+    sys = tf(sys)
+    sys = tf(..., Name, Value)
+    * num and den are coefficients in descending powers; cells of them (a row for each output, a column for each input) make a model with many inputs and outputs. Ts is the sample time (0, continuous, unless given; -1 unspecified). s = tf('s') lets a model be written by arithmetic: (s + 1)/(s^2 + 2*s + 4); exp(-tau*s) is a delay.
+    * Models add, subtract, multiply (in series: sys1*sys2 feeds sys2 into sys1), divide, invert (inv), raise to whole powers, transpose, concatenate ([sys1, sys2] side by side, [sys1; sys2] one above another) and index (sys(i, j), outputs then inputs). A result is a state-space model if an operand is, else zero-pole-gain if one is, else a transfer function.
+    * Properties: Numerator, Denominator (cells, padded to one length), Variable, Ts, InputDelay, OutputDelay, IODelay, InputName, OutputName, Name, Notes.
+zpk: A model as its zeros, poles and gain.
+    sys = zpk(z, p, k)
+    sys = zpk(z, p, k, Ts)
+    s = zpk('s')
+    sys = zpk(sys)
+    * Shown as products of first-order factors (and second-order ones for complex pairs). Properties Z, P (cells) and K.
+ss: A state-space model.
+    sys = ss(A, B, C, D)
+    sys = ss(A, B, C, D, Ts)
+    sys = ss(D)
+    sys = ss(sys)
+    sys = ss(sys, 'minimal')
+    * x' = Ax + Bu, y = Cx + Du (x(k+1) = Ax(k) + Bu(k) in discrete time). A transfer function becomes the controller canonical form of each entry. Properties A, B, C, D, StateName.
+pid: A PID controller in parallel form.
+    C = pid(Kp, Ki, Kd, Tf)
+    C = pid(Kp, Ki, Kd, Tf, Ts)
+    * Kp + Ki/s + Kd*s/(Tf*s + 1) (missing gains 0; Tf 0 an ideal derivative); in discrete time Ki*Ts/(z - 1) and Kd/(Tf + Ts/(z - 1)). C.Kp, C.Ki, C.Kd and C.Tf can be read and set; it works as its transfer function everywhere.
+feedback: A closed loop.
+    sys = feedback(sys1, sys2)
+    sys = feedback(sys1, sys2, sign)
+    * sys1 in the forward path, sys2 in the feedback path: sys1/(1 + sys2*sys1) for negative feedback (unless sign is +1). For one input and output the polynomials are combined directly, and common factors cancelled.
+parallel: Two models side by side, their outputs added.
+    sys = parallel(sys1, sys2)
+tfdata: The numerators and denominators of a model.
+    [num, den] = tfdata(sys)
+    [num, den, Ts] = tfdata(sys, 'v')
+    * Cells, or rows for a model with one input and output with 'v'; padded with leading zeros to one length.
+zpkdata: The zeros, poles and gains of a model.
+    [z, p, k] = zpkdata(sys)
+    [z, p, k, Ts] = zpkdata(sys, 'v')
+ssdata: The state-space matrices of a model.
+    [A, B, C, D, Ts] = ssdata(sys)
+ss2tf: The transfer function of state-space matrices.
+    [b, a] = ss2tf(A, B, C, D)
+    [b, a] = ss2tf(A, B, C, D, iu)
+tf2ss: State-space matrices of a transfer function.
+    [A, B, C, D] = tf2ss(b, a)
+    * The controller canonical form.
+pole: The poles of a model.
+    p = pole(sys)
+    * The eigenvalues of A (of a minimal realization, for a transfer function with many inputs and outputs); the denominator's roots for a single-input single-output transfer function.
+zero: The zeros of a model.
+    z = zero(sys)
+    [z, gain] = zero(sys)
+    * The numerator's roots of a single-input single-output model (and its gain); the transmission zeros of one with many inputs and outputs.
+tzero: The transmission zeros of a model.
+    z = tzero(sys)
+    * Where the system matrix [A - sI, B; C, D] loses rank: the finite generalized eigenvalues of the pencil (square models).
+dcgain: The steady-state gain of a model.
+    k = dcgain(sys)
+    * H(0) (H(1) in discrete time); Inf where a pole sits there.
+evalfr: A model's response at one complex frequency.
+    frsp = evalfr(sys, x)
+freqresp: A model's frequency response.
+    H = freqresp(sys, w)
+    [H, wout] = freqresp(sys)
+    * H(i, j, k) at the frequency w(k) in rad/s (e^(jw*Ts) in discrete time).
+damp: The natural frequencies and damping ratios of a model's poles.
+    damp(sys)
+    [wn, zeta, p] = damp(sys)
+    * zeta = -cos(angle(p)) (of log(p)/Ts in discrete time), in order of frequency; shown with the time constants when nothing is asked for.
+isstable: Whether a model is stable.
+    tf = isstable(sys)
+    * Every pole with a negative real part (inside the unit circle in discrete time).
+ctrb: The controllability matrix.
+    Co = ctrb(A, B)
+    Co = ctrb(sys)
+obsv: The observability matrix.
+    Ob = obsv(A, C)
+    Ob = obsv(sys)
+gram: The controllability or observability Gramian.
+    Wc = gram(sys, 'c')
+    Wo = gram(sys, 'o')
+lyap: The continuous Lyapunov or Sylvester equation.
+    X = lyap(A, Q)
+    X = lyap(A, B, C)
+    * A X + X A' + Q = 0; with three matrices A X + X B + C = 0.
+dlyap: The discrete Lyapunov equation.
+    X = dlyap(A, Q)
+    * A X A' - X + Q = 0.
+care: The continuous algebraic Riccati equation.
+    X = care(A, B, Q)
+    [X, L, G] = care(A, B, Q, R, S)
+    * The stabilizing X of A'X + XA - (XB + S) R^-1 (B'X + S') + Q = 0; L the closed-loop eigenvalues, G the gain R^-1 (B'X + S').
+dare: The discrete algebraic Riccati equation.
+    X = dare(A, B, Q)
+    [X, L, G] = dare(A, B, Q, R, S)
+    * The stabilizing X of A'XA - X - (A'XB + S)(B'XB + R)^-1 (B'XA + S') + Q = 0.
+lqr: The linear-quadratic regulator.
+    [K, S, P] = lqr(sys, Q, R)
+    [K, S, P] = lqr(A, B, Q, R, N)
+    * The state feedback u = -Kx minimizing the integral of x'Qx + u'Ru + 2x'Nu; S the Riccati solution, P the closed-loop poles. A discrete model gives the discrete regulator.
+dlqr: The discrete linear-quadratic regulator.
+    [K, S, e] = dlqr(A, B, Q, R, N)
+lqry: The linear-quadratic regulator with output weighting.
+    [K, S, e] = lqry(sys, Q, R, N)
+lqe: The Kalman estimator gain.
+    [L, P, E] = lqe(A, G, C, Q, R, N)
+    * For x' = Ax + Bu + Gw, y = Cx + Du + v with noise covariances Q and R (and cross covariance N); P the error covariance, E the estimator's poles.
+kalman: The steady-state Kalman filter of a model.
+    [kest, L, P] = kalman(sys, Qn, Rn)
+    [kest, L, P] = kalman(sys, Qn, Rn, Nn)
+    * sys has inputs [u; w], the last size(Qn, 1) of them process noise, and outputs y = Cx + Du + v. kest takes [u; y] and gives [yhat; xhat].
+estim: A state estimator from a gain.
+    est = estim(sys, L)
+    * Input y, outputs [yhat; xhat].
+reg: A regulator from a state feedback gain and an estimator gain.
+    rsys = reg(sys, K, L)
+    * Input y, output u = -K xhat.
+place: Pole placement by state feedback.
+    K = place(A, B, p)
+    * u = -Kx puts the closed-loop poles at p (robust placement, Kautsky, Nichols and Van Dooren; SciPy's place_poles).
+acker: Pole placement for a single input by Ackermann's formula.
+    k = acker(A, b, p)
+covar: The output and state covariances of a model driven by white noise.
+    P = covar(sys, W)
+    [P, Q] = covar(sys, W)
+getPeakGain: The largest gain of a model over frequency.
+    gpeak = getPeakGain(sys)
+    [gpeak, fpeak] = getPeakGain(sys)
+    * The largest singular value of the frequency response: a fine grid around the poles and zeros, each local peak refined.
+hinfnorm: The H-infinity norm of a model.
+    [ninf, fpeak] = hinfnorm(sys)
+    * Inf for an unstable model; as norm(sys, Inf).
+c2d: A continuous-time model made discrete.
+    sysd = c2d(sysc, Ts)
+    sysd = c2d(sysc, Ts, method)
+    * method is 'zoh' (unless given: exact for inputs held between samples), 'foh', 'tustin', 'matched' (poles and zeros mapped by exp(s*Ts), the DC gain kept) or 'impulse'. A delay becomes a whole number of samples.
+d2c: A discrete-time model made continuous.
+    sysc = d2c(sysd)
+    sysc = d2c(sysd, 'zoh'|'tustin')
+    * 'zoh' by the matrix logarithm; 'tustin' by the inverse of the bilinear map.
+pade: The Pade approximation of a delay.
+    [num, den] = pade(T, N)
+    sys = pade(T, N)
+    sysx = pade(sys, N)
+    * exp(-sT) as a ratio of polynomials of degree N whose numerator is the denominator at -s; pade(sys, N) replaces a model's delays.
+minreal: A minimal realization: what cancels taken out.
+    sysr = minreal(sys)
+    sysr = minreal(sys, tol)
+    * For a transfer function, zeros and poles that coincide (to round-off, or tol) cancel; for a state-space model the states that cannot be controlled or observed are dropped.
+ss2ss: A state transformation.
+    sysT = ss2ss(sys, T)
+    * The model in the states z = Tx.
+xperm: The states of a model reordered.
+    sysp = xperm(sys, p)
+canon: A canonical state-space realization.
+    [csys, T] = canon(sys, 'modal')
+    [csys, T] = canon(sys, 'companion')
+    * 'modal' (unless given): A block diagonal, real 2-by-2 blocks for complex pairs; 'companion': the controllability companion form (one input).
+hsvd: The Hankel singular values of a stable model.
+    hsv = hsvd(sys)
+balreal: The balanced realization of a stable model.
+    [sysb, g, T, Ti] = balreal(sys)
+    * The realization whose controllability and observability Gramians are both diag(g), g the Hankel singular values.
+balred: Model reduction by balanced truncation.
+    rsys = balred(sys, r)
+    rsys = balred(sys, r, 'Truncate')
+    * The states of the smallest Hankel singular values left out, keeping the DC gain (their derivatives set to zero) unless 'Truncate'.
+modred: A model with states left out.
+    rsys = modred(sys, elim)
+    rsys = modred(sys, elim, 'MatchDC'|'Truncate')
+step: The step response.
+    step(sys)
+    step(sys, Tfinal)
+    step(sys, t)
+    step(sys1, 'r', sys2, 'b--', ...)
+    [y, t] = step(sys, ...)
+    * Drawn when nothing is asked for (each input's response, each output in turn), a staircase in discrete time. The final time is long enough for the slowest pole to settle (7 time constants, and 6 periods of an oscillation). Delays shift the response.
+impulse: The impulse response.
+    impulse(sys)
+    [y, t] = impulse(sys, Tfinal)
+initial: The response to initial conditions.
+    initial(sys, x0)
+    [y, t, x] = initial(sys, x0, Tfinal)
+stepplot: The step response drawn.
+    stepplot(sys, ...)
+impulseplot: The impulse response drawn.
+    impulseplot(sys, ...)
+lsim: The response to any input.
+    lsim(sys, u, t)
+    [y, t, x] = lsim(sys, u, t, x0, method)
+    * u has a column for each input and a row for each time; between samples it is linear ('foh', unless 'zoh'); the solution is exact for that (the matrix exponential).
+stepinfo: The characteristics of a step response.
+    S = stepinfo(sys)
+    S = stepinfo(y, t)
+    S = stepinfo(y, t, yfinal, 'SettlingTimeThreshold', s, 'RiseTimeLimits', [lo hi])
+    * RiseTime (from 10% to 90% of the change, unless given), SettlingTime (when the response stays within 2% of the change of its final value), SettlingMin, SettlingMax, Overshoot and Undershoot (percent), Peak and PeakTime (between samples by a parabola).
+bode: The frequency response as gain and phase.
+    bode(sys)
+    bode(sys, w)
+    bode(sys, {wmin, wmax})
+    bode(sys1, sys2, ...)
+    [mag, phase, wout] = bode(sys, ...)
+    * mag absolute and phase in degrees (unwrapped); drawn as gain in dB and phase over a logarithmic frequency axis (rad/s) when nothing is asked for. The frequencies span two decades beyond the poles and zeros unless given.
+bodeplot: The Bode diagram drawn.
+    bodeplot(sys, ...)
+nyquist: The Nyquist diagram.
+    nyquist(sys)
+    [re, im, wout] = nyquist(sys, w)
+    * The frequency response in the complex plane, with its mirror image for negative frequencies (dashed) and the critical point -1 when drawn.
+nichols: The Nichols chart.
+    nichols(sys)
+    [mag, phase, wout] = nichols(sys, w)
+sigma: The singular values of the frequency response.
+    sigma(sys)
+    [sv, wout] = sigma(sys, w)
+margin: The gain and phase margins of a loop.
+    margin(sys)
+    [Gm, Pm, Wcg, Wcp] = margin(sys)
+    * Gm (absolute) at the frequency Wcg where the phase crosses -180 degrees, Pm (degrees) at Wcp where the gain crosses 1; of several crossings the smallest margins; Inf when there is none. Drawn on the Bode diagram, the margins in its title, when nothing is asked for.
+allmargin: Every stability margin of a loop.
+    S = allmargin(sys)
+    * GainMargin and GMFrequency, PhaseMargin and PMFrequency, DelayMargin (phase margin over crossover frequency, in samples in discrete time) and DMFrequency, and whether the closed loop is Stable.
+rlocus: The root locus.
+    rlocus(sys)
+    [r, k] = rlocus(sys)
+    r = rlocus(sys, k)
+    * The poles of the closed loop with gain k in negative feedback, as k grows (a column for each gain), branches followed from one gain to the next; drawn with the open-loop poles (x) and zeros (o).
+pzmap: The poles and zeros drawn.
+    pzmap(sys)
+    [p, z] = pzmap(sys)
+# ---- global optimization --------------------------------------------------------------------------------------------------------------------
+ga: A minimum by a genetic algorithm.
+    x = ga(fun, nvars)
+    x = ga(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, intcon, options)
+    [x, fval, exitflag, output, population, scores] = ga(...)
+    * fun takes a row of nvars values. Each generation keeps EliteCount of the best, makes CrossoverFraction (0.8) of the rest by scattered crossover of parents chosen by stochastic uniform selection on rank-scaled fitness, and the remainder by Gaussian mutation whose scale shrinks to nothing by the last generation; children are kept within the bounds and integer variables (intcon) rounded. Constraints rank infeasible points after all feasible ones, by their violation (Deb's rule), rather than by MATLAB-style penalties or augmented Lagrangians.
+    * Stops after MaxGenerations (100*nvars), when the best value changes relatively by no more than FunctionTolerance over MaxStallGenerations (50), at FitnessLimit, or after MaxTime. PopulationSize is 50 (more than five variables: 200). HybridFcn ('fminsearch', 'fminunc', 'fmincon', 'patternsearch') polishes the answer. Draws from rng's generator.
+    * exitflag: 1 stalled within FunctionTolerance, 0 MaxGenerations, 5 FitnessLimit, -2 no feasible point, -5 MaxTime.
+particleswarm: A minimum within bounds by a particle swarm.
+    x = particleswarm(fun, nvars)
+    [x, fval, exitflag, output] = particleswarm(fun, nvars, lb, ub, options)
+    * SwarmSize (min(100, 10*nvars)) particles start uniformly within the bounds (or InitialSwarmSpan about 0); each moves by W*v + SelfAdjustmentWeight*u1.*(own best - x) + SocialAdjustmentWeight*u2.*(best of a random neighbourhood - x). A stall counter falls with each improvement of the best and grows otherwise; the inertia W doubles while it is below 2 and halves once it passes 5 (within InertiaRange, [0.1 1.1]), and the neighbourhood grows while the best stalls.
+    * Stops when the best changes relatively by no more than FunctionTolerance over MaxStallIterations (20), at ObjectiveLimit, or after MaxIterations (200*nvars). exitflag 1, 0, or -3 (ObjectiveLimit).
+simulannealbnd: A minimum within bounds by simulated annealing.
+    x = simulannealbnd(fun, x0)
+    [x, fval, exitflag, output] = simulannealbnd(fun, x0, lb, ub, options)
+    * Each step goes a distance equal to the temperature (InitialTemperature 100, times 0.95 each step) in a random direction (a coordinate leaving the bounds is drawn again within them); a worse point is taken with probability 1/(1 + exp(delta/T)). The temperature starts again every ReannealInterval accepted points. Stops when the best changes by no more than FunctionTolerance over MaxStallIterations (500*nvars), at MaxFunctionEvaluations (3000*nvars), or at ObjectiveLimit (exitflag 5).
+patternsearch: A minimum by a generalized pattern search.
+    x = patternsearch(fun, x0)
+    x = patternsearch(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    [x, fval, exitflag, output] = patternsearch(...)
+    * Polls x +- mesh size along each coordinate (opportunistically, unless UseCompletePoll): a better point is taken and the mesh multiplied by MeshExpansionFactor (2), else it is multiplied by MeshContractionFactor (0.5); the bounds are never left. Linear and nonlinear constraints by an augmented Lagrangian (Powell, Hestenes, Rockafellar), its subproblems searched to ever finer meshes. Stops when the mesh is below MeshTolerance (1e-6) with the constraints met (exitflag 1), or at MaxIterations or MaxFunctionEvaluations (0).
+surrogateopt: A minimum of an expensive function within bounds, by a surrogate.
+    x = surrogateopt(fun, lb, ub)
+    [x, fval, exitflag, output] = surrogateopt(fun, lb, ub, intcon, options)
+    * MinSurrogatePoints (max(20, 2*nvars)) random points first; then each new point is the candidate (about the best point, or every fourth time anywhere in the box) that best weighs a cubic radial basis interpolant's value against the distance to the points so far, the weight cycling; the search radius halves after three failures in a row. MaxFunctionEvaluations is 200. The bounds are finite.
+gamultiobj: Points on the Pareto front of several objectives.
+    x = gamultiobj(fun, nvars)
+    [x, fval, exitflag, output, population, scores] = gamultiobj(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    * fun gives a row of objectives. A genetic algorithm in the manner of NSGA-II: tournaments by nondominated rank and crowding distance, intermediate crossover and Gaussian mutation, the next population the best fronts (the first held to ParetoFraction, 0.35, of it when it is larger), until MaxGenerations (200*nvars). x and fval are the final nondominated points.
+createOptimProblem: An optimization problem for MultiStart and GlobalSearch.
+    problem = createOptimProblem(solverName, 'objective', fun, 'x0', x0, Name, Value, ...)
+    * solverName is 'fmincon', 'fminunc', 'lsqnonlin', 'lsqcurvefit' or 'fminsearch'; the fields are objective, x0, Aineq, bineq, Aeq, beq, lb, ub, nonlcon, options, xdata and ydata. The solver itself takes it too (fmincon(problem)).
+MultiStart: A local solver run from many start points.
+    ms = MultiStart
+    ms = MultiStart('Name', value, ...)
+    [x, fval, exitflag, output, solutions] = run(ms, problem, k)
+    * k start points: x0 and k - 1 drawn uniformly within the bounds (1000 either side of x0 where there are none), or the rows of a matrix. solutions are the distinct local minima (within FunctionTolerance and XTolerance), best first, each with X, Fval, Exitflag, Output and the start points X0 that led to it.
+GlobalSearch: A local solver run from the best of many trial points.
+    gs = GlobalSearch
+    gs = GlobalSearch('Name', value, ...)
+    [x, fval, exitflag, output, solutions] = run(gs, problem)
+    * NumTrialPoints (1000) points are drawn within the bounds and scored by the objective; the local solver runs from x0 and then from the best NumStageOnePoints (200) of them, skipping a point inside the basin of a solution already found (BasinRadiusFactor times the distance the solver moved to reach it). PyLAB's own scheme, simpler than scatter search.
+# ---- wavelets ----------------------------------------------------------------------------------------------------------------------------------
+wfilters: The four filters of a wavelet.
+    [LoD, HiD, LoR, HiR] = wfilters(wname)
+    [F1, F2] = wfilters(wname, type)
+    * The decomposition and reconstruction lowpass and highpass filters, rows. type 'd' gives LoD and HiD, 'r' LoR and HiR, 'l' the two lowpass ones, 'h' the two highpass ones.
+    * Wavelets: haar, db1 to db45 (Daubechies, minimum phase), sym2 to sym20 (symlets), coif1 to coif5 (coiflets), bior1.1, 1.3, 1.5, 2.2, 2.4, 2.6, 2.8, 3.1, 3.3, 3.5, 3.7, 3.9, 4.4, 5.5, 6.8 and rbio with the same numbers (the biorthogonal ones reversed). They are computed: the roots of the Daubechies polynomial to 60 digits for db and sym (which root of each pair a symlet takes follows the standard table), Newton's method on the moment and orthogonality equations for the coiflets, exact fractions for the spline biorthogonal ones.
+    * LoR sums to sqrt(2); LoD is LoR reversed for an orthogonal wavelet; HiR(k) = (-1)^k LoD(k) and HiD(k) = (-1)^(k+1) LoR(k), k from 0. The shorter biorthogonal filter is padded with zeros to the even length of the longer.
+dbwavf: The scaling filter of a Daubechies wavelet.
+    F = dbwavf(wname)
+    * LoR/sqrt(2), summing to 1. wname is 'db1' to 'db45' (or 'haar').
+symwavf: The scaling filter of a symlet.
+    F = symwavf(wname)
+    * LoR/sqrt(2), summing to 1. wname is 'sym2' to 'sym20'.
+coifwavf: The scaling filter of a coiflet.
+    F = coifwavf(wname)
+    * LoR/sqrt(2), summing to 1. wname is 'coif1' to 'coif5'.
+qmf: The quadrature mirror filter.
+    Y = qmf(X)
+    Y = qmf(X, P)
+    * X reversed, with the signs of its second, fourth, ... elements changed (P even, the default), or of the first, third, ... (P odd).
+orthfilt: The four filters of an orthogonal scaling filter.
+    [LoD, HiD, LoR, HiR] = orthfilt(W)
+    * LoR = W/norm(W), LoD its reverse, the highpass ones as wfilters makes them.
+biorfilt: The four filters of a biorthogonal pair.
+    [LoD, HiD, LoR, HiR] = biorfilt(DF, RF)
+    * DF and RF, the decomposition and reconstruction scaling filters, are scaled to sum sqrt(2) and padded to one even length (an odd-length RF placed one sample before DF's middle), as wfilters gives the bior wavelets.
+dwtmode: The extension mode of the discrete transforms.
+    dwtmode(mode)
+    dwtmode(mode, 'nodisp')
+    m = dwtmode('status')
+    * How a signal is extended past its ends: 'sym' (symmetric, half-point: the default), 'symw' (whole-point), 'asym' and 'asymw' (antisymmetric), 'zpd' (zeros), 'sp0' (the end values), 'sp1' (straight lines through the last two values), 'ppd' (periodic) and 'per' (periodization: half as many coefficients, rounded up, an odd signal first extended by its last value).
+    * The mode holds for dwt, idwt, wavedec, waverec, appcoef, wrcoef, dwt2 and the rest until changed; each also takes 'mode', m for one call.
+wmaxlev: The largest useful decomposition level.
+    L = wmaxlev(sz, wname)
+    * floor(log2(n/(lf - 1))), n the smallest of the sizes sz and lf the length of the filters (0 when the signal is shorter than lf - 1): beyond it every coefficient feels the extension.
+dwt: One level of the discrete wavelet transform.
+    [cA, cD] = dwt(x, wname)
+    [cA, cD] = dwt(x, LoD, HiD)
+    [cA, cD] = dwt(..., 'mode', m)
+    * x extended past its ends by the mode (dwtmode), filtered by LoD and HiD and every second sample kept: floor((n + lf - 1)/2) coefficients each, ceil(n/2) in mode 'per'. Rows from a row, columns from a column.
+idwt: One level of the inverse discrete wavelet transform.
+    x = idwt(cA, cD, wname)
+    x = idwt(cA, cD, LoR, HiR)
+    x = idwt(cA, cD, wname, L)
+    x = idwt(..., 'mode', m)
+    * cA and cD upsampled, filtered by LoR and HiR and added: 2*n - lf + 2 samples (2*n in mode 'per'), or the middle L of them. Either of cA and cD may be [] for zeros.
+wavedec: A multilevel wavelet decomposition.
+    [c, l] = wavedec(x, n, wname)
+    [c, l] = wavedec(x, n, LoD, HiD)
+    * dwt n times on the approximations: c = [cA_n, cD_n, ..., cD_1] and l = [length(cA_n), length(cD_n), ..., length(cD_1), length(x)]. Rows, or columns when x is a column; 'mode', m as in dwt.
+waverec: The signal from a wavelet decomposition.
+    x = waverec(c, l, wname)
+    x = waverec(c, l, LoR, HiR)
+    * idwt level by level, each result cut to the length l holds for it. waverec(wavedec(x, n, w), w) is x again, to rounding.
+appcoef: The approximation coefficients of a decomposition at a level.
+    A = appcoef(c, l, wname)
+    A = appcoef(c, l, wname, n)
+    A = appcoef(c, l, LoR, HiR, n)
+    * cA_n, reconstructed from the deepest approximation and the details below level n; n is the deepest level by default, 0 gives the signal.
+detcoef: The detail coefficients of a decomposition.
+    D = detcoef(c, l)
+    D = detcoef(c, l, n)
+    [D1, ..., Dp] = detcoef(c, l, [n1, ..., np])
+    D = detcoef(c, l, 'cells')
+    * cD_n (level 1 by default). Several levels give a cell, or an output each; 'cells' gives every level, level 1 first.
+wrcoef: The part of a signal from one level of its decomposition.
+    X = wrcoef('a', c, l, wname, n)
+    X = wrcoef('d', c, l, wname, n)
+    X = wrcoef(type, c, l, LoR, HiR, n)
+    * waverec with every other coefficient set to zero: 'a' keeps the approximation at level n, 'd' the details of level n. wrcoef('a', c, l, w, n) plus wrcoef('d', c, l, w, k) for k = 1..n is the signal. n is the deepest level by default.
+upcoef: Coefficients reconstructed straight up.
+    Y = upcoef(type, x, wname, n)
+    Y = upcoef(type, x, wname, n, lx)
+    Y = upcoef(type, x, LoR, HiR, n, lx)
+    * x upsampled and filtered by LoR ('a') or HiR ('d') once and by LoR n - 1 more times (n is 1 by default), each step in full (2*m + lf - 2 samples); lx keeps the middle lx samples.
+wenergy: The share of energy in each part of a decomposition.
+    [Ea, Ed] = wenergy(c, l)
+    * Percentages of sum(c.^2): Ea in the approximation, Ed(k) in the details of level k.
+dwt2: One level of the discrete wavelet transform of an image.
+    [cA, cH, cV, cD] = dwt2(X, wname)
+    [cA, cH, cV, cD] = dwt2(X, LoD, HiD)
+    [cA, cH, cV, cD] = dwt2(..., 'mode', m)
+    * dwt along the rows and then down the columns: cA lowpass both ways, cH (horizontal details) highpass down the columns, cV (vertical) highpass along the rows, cD (diagonal) highpass both ways.
+idwt2: One level of the inverse transform of an image.
+    X = idwt2(cA, cH, cV, cD, wname)
+    X = idwt2(cA, cH, cV, cD, LoR, HiR)
+    X = idwt2(..., S)
+    * S keeps the middle S(1)-by-S(2) part. Any of the four may be [] for zeros.
+wavedec2: A multilevel wavelet decomposition of an image.
+    [C, S] = wavedec2(X, n, wname)
+    [C, S] = wavedec2(X, n, LoD, HiD)
+    * C = [A_n(:)' H_n(:)' V_n(:)' D_n(:)' H_(n-1)(:)' ... D_1(:)'], a row; S has the sizes of A_n, of the details of level n, ..., of level 1, and of X, one row each.
+waverec2: The image from a wavelet decomposition.
+    X = waverec2(C, S, wname)
+    X = waverec2(C, S, LoR, HiR)
+appcoef2: The approximation of an image's decomposition at a level.
+    A = appcoef2(C, S, wname)
+    A = appcoef2(C, S, wname, n)
+    A = appcoef2(C, S, LoR, HiR, n)
+detcoef2: The details of an image's decomposition at a level.
+    D = detcoef2(type, C, S, n)
+    [H, V, D] = detcoef2('all', C, S, n)
+    * type 'h', 'v' or 'd' for one kind; 'c' (compact) gives all three as one row [H(:)' V(:)' D(:)'].
+wrcoef2: The part of an image from one kind of coefficient at a level.
+    X = wrcoef2(type, C, S, wname, n)
+    X = wrcoef2(type, C, S, LoR, HiR, n)
+    * type 'a', 'h', 'v' or 'd'; waverec2 with every other coefficient set to zero.
+swt: The stationary (undecimated) wavelet transform.
+    [swa, swd] = swt(x, n, wname)
+    [swa, swd] = swt(x, n, LoD, HiD)
+    swc = swt(x, n, wname)
+    * Row k of swa and swd holds the approximations and details of level k, as long as x: the filters, with 2^(k-1) - 1 zeros between their taps, applied periodically and nothing dropped. The length of x must be a multiple of 2^n. swc is [swd; swa(n, :)].
+iswt: The inverse stationary wavelet transform.
+    x = iswt(swa, swd, wname)
+    x = iswt(swc, wname)
+    x = iswt(..., LoR, HiR)
+    * Each level the average of the two inverses its coefficients allow; only the last row of swa is needed.
+swt2: The stationary wavelet transform of an image.
+    [A, H, V, D] = swt2(X, n, wname)
+    swc = swt2(X, n, wname)
+    * Page k of each holds level k. Both sizes of X must be multiples of 2^n. swc = cat(3, H, V, D, A(:, :, n)).
+iswt2: The inverse stationary wavelet transform of an image.
+    X = iswt2(A, H, V, D, wname)
+    X = iswt2(swc, wname)
+modwt: The maximal overlap discrete wavelet transform.
+    w = modwt(x)
+    w = modwt(x, wname, J)
+    w = modwt(x, LoR, HiR, J)
+    w = modwt(..., 'reflection')
+    * Rows W_1, ..., W_J and V_J, each as long as x: circular filtering by the reconstruction filters divided by sqrt(2), with 2^(j-1) - 1 zeros between the taps at level j (Percival and Walden's definition), computed by FFT. sum(w(:).^2) is sum(x.^2).
+    * The wavelet is 'sym4' and J is floor(log2(length(x))) by default. 'reflection' transforms [x, fliplr(x)], twice as long.
+imodwt: The inverse maximal overlap transform.
+    x = imodwt(w)
+    x = imodwt(w, wname)
+    x = imodwt(w, LoR, HiR)
+    x = imodwt(..., 'reflection')
+    * The wavelet is 'sym4' by default; 'reflection' returns the first half, as modwt's 'reflection' doubled the signal.
+modwtmra: The multiresolution analysis of a maximal overlap transform.
+    mra = modwtmra(w)
+    mra = modwtmra(w, wname)
+    mra = modwtmra(..., 'reflection')
+    * Rows D_1, ..., D_J and S_J: the inverse of each row of w alone. They sum to the signal, and each is as long.
+wavefun: The scaling function and wavelet of a discrete wavelet.
+    [phi, psi, x] = wavefun(wname)
+    [phi, psi, x] = wavefun(wname, iter)
+    [phi1, psi1, phi2, psi2, x] = wavefun(wname, iter)
+    wavefun(wname, iter)
+    * By the cascade algorithm, iter (8) times: x = (0:m-1)/2^iter over the support. A biorthogonal wavelet gives the decomposition pair (1) and the reconstruction pair (2). With no outputs it draws them.
+centfrq: The centre frequency of a wavelet.
+    f = centfrq(wname)
+    f = centfrq(wname, iter)
+    * Where the spectrum of psi (from wavefun, 8 iterations) is largest, in cycles per unit of x.
+scal2frq: The frequencies of the scales of a wavelet.
+    f = scal2frq(a, wname)
+    f = scal2frq(a, wname, delta)
+    * centfrq(wname)./(a*delta), delta the sampling period (1).
+cwt: The continuous wavelet transform.
+    [wt, f, coi] = cwt(x)
+    [wt, f, coi] = cwt(x, fs)
+    [wt, f, coi] = cwt(x, wname, fs)
+    [wt, f, coi] = cwt(..., Name, Value)
+    cwt(...)
+    * wname is 'morse' (the default: symmetry gamma 3, time-bandwidth product P^2 60), 'amor' (analytic Morlet, peak at 6 rad/sample at scale 1) or 'bump' (5 and width 0.6). Each is defined by its spectrum, zero at negative frequencies, with peak 2: a cosine of amplitude A gives abs(wt) = A at its frequency. Computed by FFT, x first extended at both ends by half its length, mirrored (ExtendSignal false to not).
+    * Scales, smallest first, VoicesPerOctave (10) to an octave: from the one at which the wavelet's spectrum falls to half its peak at the Nyquist frequency, up to the one at which two of its time standard deviations make half the signal's length; FrequencyLimits [f1 f2] narrows them. f are the scales' peak frequencies (Hz with fs, else cycles per sample); WaveletParameters [gamma P^2] shape the Morse wavelet.
+    * coi is the cone of influence: at each time, the frequency below which the wavelet (sqrt(2) standard deviations wide) reaches past an end. With no outputs, the magnitude scalogram is drawn with the cone dashed.
+icwt: The signal from its continuous wavelet transform.
+    xrec = icwt(wt)
+    xrec = icwt(wt, wname)
+    xrec = icwt(wt, wname, f, freqrange)
+    xrec = icwt(..., 'SignalMean', m, 'VoicesPerOctave', nv)
+    * 2/C times log(2)/nv times the sum of the real parts of the rows, C the wavelet's admissibility constant (the integral of its spectrum divided by frequency): exact in the limit of many voices and all scales, close otherwise; the mean, which cwt does not see, is added from SignalMean. f and freqrange keep only the rows within the range.
+cwtfreqbounds: The frequency range of cwt's scales.
+    [minf, maxf] = cwtfreqbounds(N)
+    [minf, maxf] = cwtfreqbounds(N, fs, Name, Value)
+    * For N samples, as cwt chooses its scales; 'Wavelet', 'VoicesPerOctave' and 'WaveletParameters' as in cwt.
+wthresh: Soft or hard thresholding.
+    Y = wthresh(X, 's', T)
+    Y = wthresh(X, 'h', T)
+    * Soft: sign(X).*max(abs(X) - T, 0). Hard: X where abs(X) > T, else 0.
+wnoisest: The noise level of a decomposition's details.
+    stdc = wnoisest(c, l)
+    stdc = wnoisest(c, l, s)
+    * median(abs(cD))/0.6745 at each level in s (1 by default): the standard deviation of Gaussian noise, robust to the signal's few large coefficients.
+thselect: A threshold for denoising.
+    thr = thselect(x, tptr)
+    * For noise of unit variance: 'sqtwolog' sqrt(2 log(n)); 'minimaxi' 0.3936 + 0.1829 log2(n) (0 for n up to 32); 'rigrsure' the threshold minimizing Stein's unbiased estimate of the risk of soft thresholding; 'heursure' sqtwolog when the signal looks like noise (sum(x.^2) - n under n^(1/2) log2(n)^1.5), else the smaller of the two.
+wden: Denoising by level-dependent thresholds.
+    [xd, cxd, lxd] = wden(x, tptr, sorh, scal, n, wname)
+    [xd, cxd, lxd] = wden(c, l, tptr, sorh, scal, n, wname)
+    * x decomposed to level n (or c, l given); at each level the details get the threshold thselect(cD/s, tptr)*s, s 1 ('one'), the noise of level 1 ('sln') or of that level ('mln'), soft ('s') or hard ('h'); the approximation is kept.
+ddencmp: The default denoising values.
+    [thr, sorh, keepapp] = ddencmp('den', 'wv', x)
+    * thr = sqrt(2 log(n)) times the noise of x (median of the absolute level-1 db1 details over 0.6745), soft thresholding, approximation kept.
+wdenoise: Wavelet denoising.
+    xden = wdenoise(x)
+    xden = wdenoise(x, level)
+    [xden, denoisedcfs, origcfs] = wdenoise(..., Name, Value)
+    wdenoise(...)
+    * x (or each column of a matrix) decomposed to level (the smaller of floor(log2(n)) and wmaxlev) by 'Wavelet' ('sym4'); each level's details thresholded with the noise estimated from level 1 ('NoiseEstimate' 'LevelIndependent') or each level ('LevelDependent'); the approximation kept. The coefficients come back as cells, level 1 first and the approximation last.
+    * DenoisingMethod: 'Bayes' (the default; empirical Bayes after Johnstone and Silverman: a prior mixing zero with a Laplace density of scale 0.5, its weight per level by marginal maximum likelihood, no lower than the weight whose threshold is the universal one; ThresholdRule 'Median' (posterior median), 'Mean', 'Soft' or 'Hard'), 'SURE', 'UniversalThreshold' (sqrt(2 log(n))), 'Minimax' (soft by default, or 'Hard'), 'BlockJS' (block James-Stein: blocks of floor(log(n)), lambda 4.50524) and 'FDR' or {'FDR', q} (false discovery rate q, 0.05, hard).
+    * With no outputs it draws the signal and the denoised one.
+wcodemat: A matrix coded for display.
+    Y = wcodemat(X)
+    Y = wcodemat(X, nb, opt, absol)
+    * Whole numbers 1..nb (16) in proportion to abs(X) (to X when absol is 0), scaled over the whole matrix ('mat'), each row ('row') or each column ('col'): for image(Y) with a colormap of nb colours.
 '''
 
 
@@ -5888,6 +7621,66 @@ def _distribution_help():
 
 
 HELP.update(_distribution_help())
+
+
+# ---- the qualifications of a test case (verifyEqual, assertEqual, fatalAssertEqual, assumeEqual, ...) ------------
+_QUALS = (
+    ('Equal', 'the actual value equals the expected one', ['actual, expected', "actual, expected, 'AbsTol', t", "actual, expected, 'RelTol', t"],
+     'Equal means of the same class and size, and the same values: NaN equals NaN; numbers within the tolerance when one is given '
+     '(each element |a - e| <= AbsTol or <= RelTol*|e|); cells and structs compared element by element, field by field (in any order).'),
+    ('NotEqual', 'the values are not equal', ['actual, notExpected'], 'Equal as for verifyEqual.'),
+    ('True', 'the value is true', ['actual'], 'It must be a logical scalar: 1 is not true here.'),
+    ('False', 'the value is false', ['actual'], 'It must be a logical scalar.'),
+    ('Error', 'a function throws an error', ['fh, identifier'], 'fh is called with no inputs; the error must have that identifier.'),
+    ('Warning', 'a function issues a warning', ['fh, identifier', '[out1, ...] = ...(fh, identifier)'],
+     "fh is called with no inputs; one of its warnings must have that identifier. Its warnings are kept, not shown; its outputs are given back."),
+    ('WarningFree', 'a function issues no warning', ['fh', '[out1, ...] = ...(fh)'], "fh is called with no inputs; its outputs are given back."),
+    ('Empty', 'the value is empty', ['actual'], 'Empty: a size of 0 in some dimension.'),
+    ('NotEmpty', 'the value is not empty', ['actual'], ''),
+    ('Size', 'the value has a size', ['actual, expectedSize'], 'expectedSize is a row of the sizes, as size gives.'),
+    ('Length', 'the value has a length', ['actual, n'], 'The length is that of its longest dimension (0 when empty).'),
+    ('NumElements', 'the value has a number of elements', ['actual, n'], ''),
+    ('Class', 'the value is of a class', ['actual, className'], 'Exactly that class: a subclass does not pass (see ...InstanceOf).'),
+    ('InstanceOf', 'the value is of a class or one of its subclasses', ['actual, className'], 'As isa.'),
+    ('GreaterThan', 'every value is greater than a floor', ['actual, floor'], 'Element by element; an empty value fails.'),
+    ('GreaterThanOrEqual', 'every value is at least a floor', ['actual, floor'], 'Element by element; an empty value fails.'),
+    ('LessThan', 'every value is less than a ceiling', ['actual, ceiling'], 'Element by element; an empty value fails.'),
+    ('LessThanOrEqual', 'every value is at most a ceiling', ['actual, ceiling'], 'Element by element; an empty value fails.'),
+    ('ReturnsTrue', 'a function gives true', ['fh'], 'fh is called with no inputs and must give a logical scalar true.'),
+    ('Substring', 'text holds a piece of text', ['actual, substring'], 'Both are char vectors or string scalars; case counts.'),
+    ('Matches', 'text matches a regular expression', ['actual, expression'], 'Somewhere in the text, as regexp finds it.'),
+    ('Fail', 'nothing: it always fails', [''], 'For a branch a test must not reach.'),
+    ('SameHandle', 'two values are the same handle object', ['actual, expected'], ''),
+    ('NotSameHandle', 'two values are not the same handle object', ['actual, notExpected'], ''),
+)
+_QUAL_KINDS = (
+    ('verify', 'A verification', 'A failure is recorded and the test goes on.'),
+    ('assert', 'An assertion', 'A failure is recorded and ends the test.'),
+    ('fatalAssert', 'A fatal assertion', 'A failure is recorded and ends the test, and the tests after it in the run are not run.'),
+    ('assume', 'An assumption', 'A failure ends the test, as incomplete (filtered), not failed.'),
+)
+
+
+def _qualification_help():
+    table = {}
+    for kind, what, effect in _QUAL_KINDS:
+        for check, says, forms, note in _QUALS:
+            name = kind + check
+            calls = []
+            for f in forms:
+                if f.startswith('['):
+                    outs, args = f.split(' = ...(')
+                    calls.append(f'{outs} = {name}(testCase, {args}')
+                else:
+                    calls.append(f'{name}(testCase' + (f', {f})' if f else ')'))
+            calls.append(f'{name}(testCase, ..., diagnostic)')
+            calls.append(f'testCase.{name}(...)')
+            notes = [f'{effect} {note}'.strip(), 'diagnostic is text shown with a failure. With matlab.unittest.TestCase.forInteractiveUse, it says whether it passed.']
+            table[name] = (f'{what} that {says}.', calls, '\n'.join(notes))
+    return table
+
+
+HELP.update(_qualification_help())
 
 
 from .howtext import HOW  # noqa: E402,F401  (how PyLAB computes each function)

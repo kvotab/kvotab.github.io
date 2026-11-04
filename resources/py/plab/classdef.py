@@ -26,6 +26,7 @@ from .lexer import tokenize
 HANDLE_BASES = {'handle', 'matlab.apps.AppBase', 'dynamicprops', 'matlab.mixin.Copyable', 'matlab.mixin.SetGet',
                 'matlab.mixin.SetGetExactNames', 'hgsetget', 'matlab.mixin.Heterogeneous', 'matlab.mixin.CustomDisplay'}
 CLASSES = {}         # name -> ClassInfo (the loaded ones)
+BASE_METHODS = {}    # a built-in base class -> the builtins its subclasses have as methods (obj.name(...) calls name(obj, ...))
 _OVERRIDDEN = set()  # builtins a class's method has a dispatcher in front of
 
 
@@ -140,6 +141,29 @@ class BoundMethod(FH):
         return run_sync(self.acall(nargout, *args))
 
 
+class BoundBuiltin(FH):
+    """obj.name of a method a built-in base class lends (BASE_METHODS): the builtin with the object first."""
+    __slots__ = ('obj', 'mname')
+
+    def __init__(self, obj, mname):
+        self.obj = obj
+        self.mname = mname
+
+    def text(self):
+        return f'@(varargin) {self.mname}(obj, varargin{{:}})'
+
+    def name(self):
+        return self.mname
+
+    async def acall(self, nargout, *args):
+        from . import runtime as R
+        return await R.call(None, self.mname, nargout, (self.obj,) + args)
+
+    def scall(self, nargout, *args):
+        from .runtime import run_sync
+        return run_sync(self.acall(nargout, *args))
+
+
 class UObj(Obj):
     """An object of a class of the language's own."""
     __slots__ = ('ci', 'p', 'alive', 'listeners', 'uid', 'deleting', 'enum', 'enum_value')
@@ -202,6 +226,9 @@ class UObj(Obj):
             if m['static']:
                 return BoundStatic(name, m['fn'])
             return BoundMethod(self, name, m['fn'])
+        for b in ci.all_names():
+            if name in BASE_METHODS.get(b, ()):
+                return BoundBuiltin(self, name)
         raise MError('MATLAB:noSuchMethodOrField', f"Unrecognized method, property, or field '{name}' for class '{ci.name}'.")
 
     def setprop(self, name, value):
@@ -668,7 +695,10 @@ def build(path, text, R):
         mod.prog = prog
         R.MODULES[f'<plab:{path}>'] = mod
         nouts = {}
+        params = {}
         for mname, ftext, attrs, fline in sp.methods:
+            pm = re.match(r'function\s+(?:(?:\[[^\]]*\]|[A-Za-z]\w*)\s*=\s*)?[A-Za-z][\w.]*\s*(?:\(([^)]*)\))?', ftext)
+            params[mname] = [x.strip() for x in (pm.group(1) or '').split(',') if x.strip()] if pm else []
             hm = re.match(r'function\s+(?:(\[[^\]]*\]|[A-Za-z]\w*)\s*=\s*)?', ftext)
             outs = hm.group(1) if hm else None
             names = [o for o in re.split(r'[\s,]+', outs.strip('[] ')) if o] if outs else []
@@ -686,7 +716,7 @@ def build(path, text, R):
             elif mname.startswith('set.'):
                 ci.setters[mname[4:]] = fn
             else:
-                ci.methods[mname] = {'fn': fn, 'static': bool(attrs.get('static')), 'attrs': attrs}
+                ci.methods[mname] = {'fn': fn, 'static': bool(attrs.get('static')), 'attrs': attrs, 'params': params.get(mname, [])}
     # the properties' defaults, worked out once
     for pname, default, attrs, cls_, dims, vals in sp.props:
         val = NOVAL

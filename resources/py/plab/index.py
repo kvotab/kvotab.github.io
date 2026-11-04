@@ -334,6 +334,10 @@ def fld(A, name):
             raise MError('MATLAB:nonExistentField', f'Unrecognized field name "{name}".')
         return list(a.reshape(-1, order='F'))
     if isinstance(A, Obj):
+        each = getattr(A, 'fld_list', None)
+        if each is not None:
+            # an object array of its own (test results, suites): a value for each element
+            return each(name)
         arr_ = getattr(A, 'a', None)
         if isinstance(arr_, np.ndarray) and arr_.dtype == object and getattr(A, 'is_handle', False):
             return [h.getprop(name) for h in arr_.reshape(-1, order='F')]
@@ -1144,6 +1148,33 @@ def asgn_chain(A, steps, V):
                     arr.flat[i] = EMPTY()
                 A.f[k] = arr
     return asgn1(A, kind, key, new)
+
+
+def cs_count(A, key):
+    """How many values a field target s.f (or s(key).f) of a multiple assignment takes: one for each element of a struct array."""
+    if type(A) is not Struct:
+        return 1
+    if key is None:
+        return max(A.size, 1) if A.size else 1
+    pos = np.arange(A.size).reshape(A.shape, order='F')
+    try:
+        return max(int(take(pos, key).size), 1)
+    except MError:
+        return 1
+
+
+def cs_assign(A, key, name, vals):
+    """[s.f] = ... or [s(key).f] = ...: each element's field set to its value in turn (the field added when it is new)."""
+    vals = list(vals)
+    if type(A) is not Struct or (A.size <= 1 and key is None):
+        return asgn_chain(A, (('.', name),), vals[0]) if key is None else asgn_chain(A, (('()', key), ('.', name)), vals[0])
+    pos = np.arange(A.size).reshape(A.shape, order='F')
+    sel = pos.reshape(-1, order='F') if key is None else take(pos, key).reshape(-1, order='F')
+    if len(vals) != sel.size:
+        raise MError('MATLAB:deal:narginchk', 'The number of outputs should match the number of elements on the left.')
+    for p, v in zip(sel, vals):
+        A = asgn_chain(A, (('()', (float(p + 1),)), ('.', name)), v)
+    return A
 
 
 def get_chain(A, steps):

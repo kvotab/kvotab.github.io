@@ -725,4 +725,14 @@ try:
 finally:
     R.DEBUGGER = _dbg
 
+
+# a command line that clears: a workspace variable it removes is a function again later on the line
+R.BASE.clear()
+R.take_output()
+asyncio.run(R.execute("[tf, p] = islocalmax([1 3 2 5 4]); max = [5 6 7]; x = 1:3;"))
+asyncio.run(R.execute("a = max(2); clear tf max; G = tf(4, [1 1]); c = class(G); b = max([1 9 3]); e = x(end);"))
+asyncio.run(R.execute("clear x; try, x(end), m = ''; catch ex, m = ex.message; end"))
+C('clear on a command line: a cleared variable\'s name calls the function after it (tf, max), indexes before it; x(end) after clear x is an error',
+  (R.BASE.get('a'), R.BASE.get('b'), R.BASE.get('e'), R.BASE['c'].str(), R.BASE['m'].str()) == (6.0, 9.0, 3.0, 'tf', "Unrecognized function or variable 'x'."),
+  (R.BASE.get('a'), R.BASE.get('b'), R.BASE.get('e'), R.BASE.get('c'), R.BASE.get('m')))
 sys.exit(C.done())

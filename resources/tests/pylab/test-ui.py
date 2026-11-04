@@ -721,6 +721,12 @@ INK = (f'(() => {{ const c = {WIN}.canvas; const d = c.getContext("2d").getImage
        'for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++; return n / (d.length / 4); })()')
 
 
+
+async def ink(page):
+    """The share of the newest figure's canvas inked (0 while it has none yet)."""
+    v = await page.ev(INK)
+    return v if isinstance(v, (int, float)) else 0
+
 async def drawn(page, frames):
     """Wait for the newest figure window to draw its axes (a legend draws a frame of its own too): the share of
     its canvas inked."""
@@ -1722,6 +1728,203 @@ async def files_and_tools(page):
     await command(page, "delete stopper.m errfun.m p.h5 f.avi d.txt")
 
 
+async def canvas_shot(page, name):
+    """The newest figure window's canvas as a PNG of its own (for looking at a chart)."""
+    if not SHOTS:
+        return
+    import base64
+    data = await page.ev(f"{WIN}.canvas.toDataURL('image/png')")
+    if data and data.startswith('data:image/png;base64,'):
+        os.makedirs(SHOTS, exist_ok=True)
+        with open(os.path.join(SHOTS, name), 'wb') as f:
+            f.write(base64.b64decode(data.split(',', 1)[1]))
+
+
+async def charts_and_more(page):
+    """The charts drawn (saved as pictures to look at), xline across the axes after a zoom, sound through an audioplayer, the
+    microphone through an audiorecorder (Chrome's fake device), patterns and memoize in the page."""
+    await command(page, "close all; plot(0:10, 0:10); xlim([0 10]); xline(5, 'r', 'LineWidth', 3); xlim([4 6]); ylim([0 10]);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(0.6)
+    col = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const x = Math.round(f.fx(5) * k); const y0 = Math.round((f.r.y + 2) * k), y1 = Math.round((f.r.y + f.r.h - 2) * k); "
+                        "const d = c.getContext('2d').getImageData(x - 1, y0, 3, y1 - y0).data; let n = 0, rows = y1 - y0; "
+                        "for (let r = 0; r < rows; r++) { let red = false; for (let j = 0; j < 3; j++) { const i = (r * 3 + j) * 4; if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) red = true; } if (red) n++; } "
+                        "return n / rows; })()")
+    check('xline: drawn from the bottom of the axes to the top after the limits changed', (col or 0) > 0.95, True)
+    await command(page, "close all; rng(1); f = figure('Position', [50 50 900 560]); "
+                        "subplot(2, 3, 1); heatmap(magic(4)); subplot(2, 3, 2); boxchart(randn(40, 3) + [0 1 2]); "
+                        "subplot(2, 3, 3); swarmchart([ones(1,40) 2*ones(1,40)], [randn(1,40) 2+randn(1,40)], 'filled'); "
+                        "subplot(2, 3, 4); piechart([3 2 1], {'one', 'two', 'three'}); subplot(2, 3, 5); donutchart([5 3 2], 'CenterLabel', 'Ten'); "
+                        "subplot(2, 3, 6); binscatter(randn(2000, 1), randn(2000, 1), 20);")
+    await asyncio.sleep(1.0)
+    ink = await page.ev(INK)
+    check('heatmap, boxchart, swarmchart, piechart, donutchart and binscatter draw', (ink or 0) > 0.08, True)
+    await canvas_shot(page, 'charts-1.png')
+    await command(page, "figure('Position', [60 60 900 560]); subplot(2, 2, 1); polarhistogram(rand(200, 1)*2*pi, 12); "
+                        "subplot(2, 2, 2); parallelplot(rand(15, 4), 'GroupData', [ones(8,1); 2*ones(7,1)]); "
+                        "subplot(2, 2, 3); wordcloud({'alpha','beta','gamma','delta','epsilon','zeta','eta'}, [9 7 5 4 3 2 1]); "
+                        "subplot(2, 2, 4); plot(1:10, (1:10).^2); xline(4, '--', 'four'); yline(60, ':', 'sixty'); xregion(6, 8); yregion(10, 25);")
+    await asyncio.sleep(1.0)
+    check('polarhistogram, parallelplot, wordcloud and constant lines and regions draw', (await page.ev(INK) or 0) > 0.05, True)
+    await canvas_shot(page, 'charts-2.png')
+    await command(page, "figure('Position', [70 70 900 560]); subplot(2, 2, 1); fimplicit3(@(x,y,z) x.^2 + y.^2/2 + z.^2 - 4, [-3 3]); "
+                        "subplot(2, 2, 2); [x, y, z] = meshgrid(-2:0.25:2); V = x.^2 + y.^2 + z.^2; p = patch(isosurface(x, y, z, V, 5), 'FaceColor', 'r', 'EdgeColor', 'none'); "
+                        "isonormals(x, y, z, V, p); patch(isocaps(x, y, z, V, 5, 'enclose', 'below'), 'FaceColor', 'interp', 'EdgeColor', 'none'); view(3); "
+                        "subplot(2, 2, 3); tetramesh([1 2 3 4; 2 3 4 5], [0 0 0; 1 0 0; 0 1 0; 0 0 1; 1 1 1]); view(3); "
+                        "subplot(2, 2, 4); [X, Y] = meshgrid(-2:0.1:2); streamslice(X, Y, -Y, X);")
+    await asyncio.sleep(1.2)
+    check('fimplicit3, isosurface with isocaps, tetramesh and streamslice draw', (await page.ev(INK) or 0) > 0.05, True)
+    await canvas_shot(page, 'charts-3.png')
+    await command(page, "figure('Position', [80 80 700 500]); TT = timetable(datetime(2024,1,1) + days(0:29)', cumsum(randn(30,1)), rand(30,1), 'VariableNames', {'Walk', 'Noise'}); stackedplot(TT);")
+    await asyncio.sleep(0.8)
+    check('stackedplot draws an axes for each variable', await page.ev(f'{WIN}.fig.axes.length'), 2)
+    await canvas_shot(page, 'charts-4.png')
+    await command(page, 'close all')
+
+    await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
+    snd = await page.ev('PL.app.lastSound || null')
+    check('audioplayer: play sends its samples to the page, marked as its own', bool(snd) and snd['rate'] == 8000 and bool(snd.get('id')), True)
+    out = await command(page, "a = isplaying(p), stop(p); b = isplaying(p)")
+    check('isplaying while it plays; stop ends it', 'a =\n\n  logical\n\n   1' in out and 'b =\n\n  logical\n\n   0' in out, True)
+    check('and the page stopped the sound', await page.ev('!PL.app.sounds || Object.keys(PL.app.sounds).length === 0'), True)
+    try:
+        await page.call('Browser.grantPermissions', {'permissions': ['audioCapture'], 'origin': BASE})
+    except Exception:
+        pass
+    out = await command(page, "r = audiorecorder(8000, 16, 1); recordblocking(r, 1); y = getaudiodata(r); n = numel(y), m = max(abs(y)) > 0, fs = r.SampleRate")
+    check("audiorecorder: a second of the microphone (Chrome's fake one) at 8000 Hz", 'm =\n\n  logical\n\n   1' in out and ('n =\n\n        8000' in out or 'n =\n\n        8192' in out or 'n =' in out and 'fs =\n\n        8000' in out), True)
+    out = await command(page, 'p = digitsPattern(3) + "-" + digitsPattern(4); e = extract("ring 555-1234 now", p), mf = memoize(@(x) x^2); v = mf(3)')
+    check('patterns and memoize in the page', '"555-1234"' in out and 'v =\n\n     9' in out, True)
+
+
+async def graphs_and_networks(page):
+    """Graphs drawn with plot (saved as a picture to look at): a force layout, a layered digraph with a shortest path
+    highlighted, nodes coloured by NodeCData with a colorbar, edge labels; a highlighted edge red on the canvas."""
+    await command(page, "close all; f = figure('Position', [50 50 900 620]); "
+                        "subplot(2, 2, 1); G = graph([1 1 2 3 3 4 5 6 7 8 9 9], [2 3 4 4 5 6 7 8 8 9 10 1]); plot(G); title('force'); "
+                        "subplot(2, 2, 2); D = digraph([1 1 2 2 3 4 5], [2 3 4 5 5 6 6], [1 4 2 7 1 3 1]); h = plot(D, 'EdgeLabel', D.Edges.Weight); "
+                        "[p, d] = shortestpath(D, 1, 6); highlight(h, p, 'EdgeColor', 'r', 'NodeColor', 'r'); title(sprintf('path %g', d)); "
+                        "subplot(2, 2, 3); W = graph([1 2 3 4 5 6 1 2], [2 3 4 5 6 1 4 5]); hc = plot(W, 'Layout', 'circle', 'MarkerSize', 8); hc.NodeCData = centrality(W, 'closeness'); colorbar; title('closeness'); "
+                        "subplot(2, 2, 4); T = minspantree(W); hs = plot(W, 'Layout', 'subspace'); highlight(hs, T, 'EdgeColor', [0 0.6 0], 'LineWidth', 3); title('spanning tree');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(1.0)
+    check('graph plots draw in four axes', (await page.ev(INK) or 0) > 0.03, True)
+    await canvas_shot(page, 'graphs-1.png')
+    await command(page, "close all; G = graph(1, 2); h = plot(G, 'Layout', 'circle', 'NodeLabel', {}); highlight(h, 1, 2, 'EdgeColor', 'r', 'LineWidth', 6);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(0.6)
+    red = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const x = Math.round(f.fx(0) * k), y = Math.round(f.fy(0) * k); const d = c.getContext('2d').getImageData(x - 2, y - 2, 5, 5).data; "
+                        "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 150 && d[i + 2] < 150) n++; return n; })()")
+    check('a highlighted edge is drawn red between its nodes (its alpha a lighter red)', (red or 0) >= 10, True)
+    await command(page, 'close all')
+
+
+async def tests_and_python(page):
+    """runtests on a test class and a script test written in the page's files; Python called from the page (Pyodide's NumPy,
+    its printing, pyenv)."""
+    await command(page, "close all; cd /home/user; fid = fopen('WebTest.m', 'w'); "
+                        "fprintf(fid, 'classdef WebTest < matlab.unittest.TestCase\\n methods (Test)\\n function testOk(tc)\\n tc.verifyEqual(1 + 1, 2);\\n end\\n "
+                        "function testBad(tc)\\n tc.verifyEqual(sqrt(4), 3);\\n end\\n end\\nend\\n'); fclose(fid); "
+                        "fid = fopen('webScriptTest.m', 'w'); fprintf(fid, 'x = 3;\\n%%%% Three\\nassert(x == 3)\\n'); fclose(fid);")
+    out = await command(page, "r = runtests({'WebTest', 'webScriptTest'})")
+    check('runtests in the page: a class and a script, the failure shown and counted',
+          all(t in out for t in ('Running WebTest', 'Verification failed in WebTest/testBad.', 'Running webScriptTest', '2 Passed, 1 Failed, 0 Incomplete.')), True)
+    out = await command(page, "v = double(py.numpy.linalg.eigvalsh([2 1; 1 2])), pyrun(\"print('hello from Pyodide')\"), e = pyenv; n = e.ProcessName")
+    check("py.numpy in the page, Python's printing in the Command Window, pyenv naming the browser's Python",
+          all(t in out for t in ('1     3', 'hello from Pyodide', 'Pyodide (the browser)')), True)
+    await command(page, "delete WebTest.m webScriptTest.m")
+
+
+async def boundary_delay_pde(page):
+    """bvp4c, dde23 and pdepe in the page, drawn (saved as a picture to look at); the ode object."""
+    await command(page, "close all; f = figure('Position', [50 50 900 600]); "
+                        "subplot(2, 2, 1); s = bvp4c(@(x, y) [y(2); -abs(y(1))], @(ya, yb) [ya(1); yb(1) + 2], bvpinit(linspace(0, 4, 5), [1 0])); "
+                        "s5 = bvp5c(@(x, y) [y(2); -abs(y(1))], @(ya, yb) [ya(1); yb(1) + 2], bvpinit(linspace(0, 4, 5), [-1 0])); "
+                        "xs = linspace(0, 4); plot(xs, deval(s, xs, 1), xs, deval(s5, xs, 1), '--'); title('bvp4c, bvp5c'); "
+                        "subplot(2, 2, 2); d = dde23(@(t, y, Z) -Z, 1, 1, [0 6]); plot(d.x, d.y, '.-'); title('dde23'); "
+                        "subplot(2, 2, [3 4]); x = linspace(0, 1, 30); t = linspace(0, 0.3, 20); "
+                        "u = pdepe(0, @(x, t, u, dudx) deal(1, dudx, 0), @(x) sin(pi*x) + 0.5*sin(3*pi*x), @(xl, ul, xr, ur, t) deal(ul, 0, ur, 0), x, t); "
+                        "surf(x, t, u); title('pdepe'); xlabel('x'); ylabel('t');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await asyncio.sleep(1.0)
+    check('bvp4c and bvp5c, dde23 and pdepe draw', (await page.ev(INK) or 0) > 0.015, True)
+    await canvas_shot(page, 'odemore-1.png')
+    out = await command(page, "close all; F = ode(ODEFcn=@(t, y) -2*y, InitialValue=1); S = solve(F, 1); e = abs(S.Solution(end) - exp(-2)) < 1e-4")
+    check('the ode object solves in the page', 'e =\n\n  logical\n\n   1' in out, True)
+
+
+async def statistics_learning(page):
+    """Clustering, a dendrogram, PCA, a fitted classifier's confusion chart and an ROC curve in the page (saved as a picture to look at)."""
+    await command(page, "close all; rng(3); X = [randn(30,2); randn(30,2) + [4 0]; randn(30,2) + [2 4]]; y = [ones(30,1); 2*ones(30,1); 3*ones(30,1)]; "
+                        "f = figure('Position', [50 50 900 640]); subplot(2, 2, 1); idx = kmeans(X, 3); gscatter(X(:,1), X(:,2), idx); title('kmeans'); "
+                        "subplot(2, 2, 2); dendrogram(linkage(X, 'ward'), 20, 'ColorThreshold', 'default'); title('dendrogram'); "
+                        "subplot(2, 2, 3); m = fitcecoc(X, y); confusionchart(y, predict(m, X)); "
+                        "subplot(2, 2, 4); s = fitcsvm(X(1:60, :), y(1:60), 'KernelFunction', 'gaussian'); [~, sc] = predict(s, X(1:60, :)); "
+                        "[fx, fy, ~, auc] = perfcurve(y(1:60), sc(:, 2), 2); plot(fx, fy); title(sprintf('ROC, AUC %.3f', auc));")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(1.0)
+    check('kmeans, a dendrogram, a confusion chart and an ROC curve draw', await ink(page) > 0.02, True)
+    await canvas_shot(page, 'ml-1.png')
+    out = await command(page, "close all; g = fitrgp(X(:, 1), X(:, 2)); [p, sd] = predict(g, 0); ok = isfinite(p) && sd > 0, t = fitctree(X, y); l = resubLoss(t) < 0.2")
+    check('fitrgp and fitctree in the page', 'ok =\n\n  logical\n\n   1' in out and 'l =\n\n  logical\n\n   1' in out, True)
+
+
+async def control_systems(page):
+    """Step, impulse, root locus and pole-zero responses, a Bode diagram and the margins of a loop in the page (saved as pictures to look at)."""
+    await command(page, "close all; clear; G = tf(4, [1 3 3 1]); f = figure('Position', [50 50 900 640]); subplot(2, 2, 1); step(feedback(G, 1)); "
+                        "subplot(2, 2, 2); impulse(G); subplot(2, 2, 3); rlocus(G); subplot(2, 2, 4); pzmap(feedback(G, 1));")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(1.0)
+    check('step, impulse, rlocus and pzmap draw', await ink(page) > 0.015, True)
+    await canvas_shot(page, 'control-1.png')
+    out = await command(page, "close all; bode(G); [Gm, Pm] = margin(G); ok = abs(20*log10(Gm) - 6.0206) < 1e-3 && abs(Pm - 27.1) < 0.1, s = stepinfo(feedback(G, 1)); o = s.Overshoot > 0")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.8)
+    check('a Bode diagram draws', await ink(page) > 0.01, True)
+    await canvas_shot(page, 'control-2.png')
+    check('margin and stepinfo in the page', 'ok =\n\n  logical\n\n   1' in out and 'o =\n\n  logical\n\n   1' in out, True)
+    await command(page, 'close all')          # the Editor's checks look at the page under where figures stand
+
+
+async def global_optimization(page):
+    """ga, particleswarm and patternsearch on known minima, and a Pareto front from gamultiobj drawn, in the page."""
+    out = await command(page, "close all; rng(1); r = @(x) 10*numel(x) + sum(x.^2 - 10*cos(2*pi*x)); "
+                              "x1 = ga(r, 2, [], [], [], [], [-5 -5], [5 5], [], optimoptions('ga', 'Display', 'off', 'MaxGenerations', 120)); "
+                              "x2 = particleswarm(r, 2, [-5 -5], [5 5], optimoptions('particleswarm', 'Display', 'off')); "
+                              "x3 = patternsearch(@(x) (x(1) - 1)^2 + (x(2) + 2)^2, [0 0], [], [], [], [], [], [], [], optimoptions('patternsearch', 'Display', 'off')); "
+                              "ok = norm(x1) < 0.1 && norm(x2) < 1e-3 && norm(x3 - [1 -2]) < 1e-5, "
+                              "[xp, fp] = gamultiobj(@(x) [x(1)^2, (x(1) - 2)^2], 1, [], [], [], [], -5, 5, optimoptions('gamultiobj', 'Display', 'off')); "
+                              "plot(fp(:, 1), fp(:, 2), 'o'); title('Pareto front'); n = size(fp, 1) > 10")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.8)
+    check('ga, particleswarm and patternsearch find their minima in the page', 'ok =\n\n  logical\n\n   1' in out, True)
+    check('a gamultiobj front draws', 'n =\n\n  logical\n\n   1' in out and await ink(page) > 0.002, True)
+    await canvas_shot(page, 'globalopt-1.png')
+    await command(page, 'close all')          # the Editor's checks look at the page under where figures stand
+
+
+async def wavelets_and_denoising(page):
+    """A decomposition and its reconstruction, a wavelet, a scalogram and a denoised signal in the page (saved as a picture to look at)."""
+    out = await command(page, "close all; fs = 1000; t = (0:1999)/fs; x = sin(2*pi*30*t) + 0.5*sin(2*pi*120*t).*(t > 1); "
+                              "f = figure('Position', [50 50 900 640]); subplot(2, 2, 1); [c, l] = wavedec(x, 4, 'db4'); plot(t, wrcoef('a', c, l, 'db4', 4)); title('approximation, level 4'); "
+                              "subplot(2, 2, 2); [phi, psi, xv] = wavefun('sym8'); plot(xv, psi); title('sym8'); "
+                              "subplot(2, 2, 3); cwt(x, fs); subplot(2, 2, 4); rng(2); wdenoise(x(1:512) + 0.3*randn(1, 512)); "
+                              "ok = max(abs(waverec(c, l, 'db4') - x)) < 1e-10, tic; h = wfilters('db45'); slow = toc > 10")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(1.0)
+    check('wavedec and waverec in the page; db45 computed in time', 'ok =\n\n  logical\n\n   1' in out and 'slow =\n\n  logical\n\n   0' in out, True)
+    check('a reconstruction, a wavelet, a scalogram and a denoised signal draw', await ink(page) > 0.03, True)
+    await canvas_shot(page, 'wavelets-1.png')
+    await command(page, 'close all')          # the Editor's checks look at the page under where figures stand
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1732,6 +1935,14 @@ async def main():
         await signal_processing(page)
         await regression_fitting(page)
         await files_and_tools(page)
+        await charts_and_more(page)
+        await graphs_and_networks(page)
+        await tests_and_python(page)
+        await boundary_delay_pde(page)
+        await statistics_learning(page)
+        await control_systems(page)
+        await global_optimization(page)
+        await wavelets_and_denoising(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

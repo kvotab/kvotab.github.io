@@ -861,7 +861,7 @@ def _run_solver(name, solver, A, b, tol, restart, kw, cb, resvec, nb):
             def cbg(rk):
                 resvec.append(float(rk) * nb)
             return solver(A, b, rtol=tol, atol=0.0, restart=restart, callback=cbg, callback_type='pr_norm', **kw)
-        if name == 'minres':
+        if name in ('minres', 'symmlq'):
             return solver(A, b, rtol=tol, callback=cb, **kw)
         return solver(A, b, rtol=tol, atol=0.0, callback=cb, **kw)
 
@@ -904,7 +904,7 @@ def _iterative(name):
             kw = dict(x0=x0, maxiter=maxiter) if M is None else dict(x0=x0, maxiter=maxiter, M1=M, M2=ident)
         else:
             kw = dict(x0=x0, maxiter=maxiter, M=M)
-        solver = getattr(SL, _SOLVERS[name])
+        solver = _SOLVERS[name] if callable(_SOLVERS[name]) else getattr(SL, _SOLVERS[name])
         try:
             x, info = _run_solver(name, solver, A, b, tol, restart, kw, cb, resvec, nb)
         except (ValueError, np.linalg.LinAlgError, ZeroDivisionError, FloatingPointError):

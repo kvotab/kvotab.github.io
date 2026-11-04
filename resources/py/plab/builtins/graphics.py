@@ -2054,6 +2054,17 @@ def _fill(nargout, args, low):
     ax, rest = split_axes_arg(args)
     hs = []
     pairs = []
+    if low and rest and type(rest[0]) is Struct:
+        # patch(fv): a struct of faces, vertices (and facevertexcdata or other properties), then name-value pairs
+        fv = rest.pop(0)
+        if ax is None:
+            ax = gca_()
+        h = Patch(ax)
+        for k in fv.f:
+            h.setprop(k, fv.get1(k))
+        apply_props(h, name_value(rest, 0))
+        ax.touch()
+        return h if nargout else None
     # patch('Faces', F, 'Vertices', V, ...)
     if rest and opt_str(rest[0]) is not None:
         if ax is None:

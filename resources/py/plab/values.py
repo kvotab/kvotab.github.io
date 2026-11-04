@@ -421,7 +421,8 @@ def class_of(v):
     if t is Sparse:
         return v.cls
     if isinstance(v, FH):
-        return 'function_handle'
+        # a handle that is also an object (a memoized function) has a class of its own
+        return v.cls if isinstance(v, Obj) else 'function_handle'
     if isinstance(v, Obj):
         return v.cls
     if t is int:

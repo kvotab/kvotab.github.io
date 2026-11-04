@@ -210,6 +210,17 @@ def _arr(x):
     return np.asarray(x)
 
 
+OBJ_OPS = {}     # type -> fn(op, *operands): objects that bring their own operators (patterns, LTI models, optimization expressions)
+
+
+def _obj_op(op, *xs):
+    for x in xs:
+        f = OBJ_OPS.get(type(x))
+        if f is not None:
+            return f(op, *xs)
+    raise MError('MATLAB:UndefinedFunction', f"Operator '{op}' is not supported for these operands.")
+
+
 def _binary(a, b, fn, sym, int_fn=None):
     """An element-wise arithmetic operator on any two numeric values."""
     if type(a) is SYM or type(b) is SYM:
@@ -302,6 +313,8 @@ def _int64_exact(A, B, sym, cls):
 def plus(a, b):
     if type(a) is float and type(b) is float:
         return a + b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('plus', a, b)
     if type(a) is Str or type(b) is Str:
         return str_plus(a, b)
     return _binary(a, b, np.add, '+')
@@ -310,12 +323,16 @@ def plus(a, b):
 def minus(a, b):
     if type(a) is float and type(b) is float:
         return a - b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('minus', a, b)
     return _binary(a, b, np.subtract, '-')
 
 
 def times(a, b):
     if type(a) is float and type(b) is float:
         return a * b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('times', a, b)
     return _binary(a, b, np.multiply, '.*')
 
 
@@ -326,12 +343,16 @@ def _div(A, B):
 def rdivide(a, b):
     if type(a) is float and type(b) is float and b != 0.0:
         return a / b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('rdivide', a, b)
     return _binary(a, b, _div, './')
 
 
 def ldivide(a, b):
     if type(a) is float and type(b) is float and a != 0.0:
         return b / a
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('ldivide', a, b)
     return _binary(b, a, _div, '.\\')
 
 
@@ -348,6 +369,8 @@ def _pow(A, B):
 
 
 def power(a, b):
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('power', a, b)
     if type(a) is float and type(b) is float:
         try:
             r = a ** b
@@ -361,6 +384,8 @@ def power(a, b):
 
 
 def uminus(a):
+    if OBJ_OPS and (type(a) in OBJ_OPS):
+        return _obj_op('uminus', a)
     t = type(a)
     if t is float or t is complex:
         return -a
@@ -387,6 +412,8 @@ def uminus(a):
 
 
 def uplus(a):
+    if OBJ_OPS and (type(a) in OBJ_OPS):
+        return _obj_op('uplus', a)
     t = type(a)
     if t is float or t is complex:
         return a
@@ -491,36 +518,48 @@ def _compare(a, b, fn, sym):
 def eq(a, b):
     if type(a) is float and type(b) is float:
         return a == b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('eq', a, b)
     return _compare(a, b, np.equal, '==')
 
 
 def ne(a, b):
     if type(a) is float and type(b) is float:
         return a != b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('ne', a, b)
     return _compare(a, b, np.not_equal, '~=')
 
 
 def lt(a, b):
     if type(a) is float and type(b) is float:
         return a < b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('lt', a, b)
     return _compare(a, b, np.less, '<')
 
 
 def le(a, b):
     if type(a) is float and type(b) is float:
         return a <= b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('le', a, b)
     return _compare(a, b, np.less_equal, '<=')
 
 
 def gt(a, b):
     if type(a) is float and type(b) is float:
         return a > b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('gt', a, b)
     return _compare(a, b, np.greater, '>')
 
 
 def ge(a, b):
     if type(a) is float and type(b) is float:
         return a >= b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('ge', a, b)
     return _compare(a, b, np.greater_equal, '>=')
 
 
@@ -581,12 +620,16 @@ def _logic(a, b, fn, sym):
 def and_(a, b):
     if type(a) is bool and type(b) is bool:
         return a and b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('and_', a, b)
     return _logic(a, b, np.logical_and, '&')
 
 
 def or_(a, b):
     if type(a) is bool and type(b) is bool:
         return a or b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('or_', a, b)
     return _logic(a, b, np.logical_or, '|')
 
 
@@ -595,6 +638,8 @@ def xor(a, b):
 
 
 def not_(a):
+    if OBJ_OPS and (type(a) in OBJ_OPS):
+        return _obj_op('not_', a)
     t = type(a)
     if t is bool:
         return not a
@@ -682,6 +727,8 @@ def _is_scalar(v):
 def mtimes(a, b):
     if type(a) is float and type(b) is float:
         return a * b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('mtimes', a, b)
     if type(a) is SYM or type(b) is SYM:
         return SYMOPS.binop('*', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
@@ -776,6 +823,8 @@ def _solve(A, B):
 
 
 def mldivide(a, b):
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('mldivide', a, b)
     if type(a) is SYM or type(b) is SYM:
         return SYMOPS.binop('\\', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
@@ -806,6 +855,8 @@ def mldivide(a, b):
 def mrdivide(a, b):
     if type(a) is float and type(b) is float and b != 0.0:
         return a / b
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('mrdivide', a, b)
     if type(a) is SYM or type(b) is SYM:
         return SYMOPS.binop('/', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
@@ -834,6 +885,8 @@ def mrdivide(a, b):
 def mpower(a, b):
     if type(a) is float and type(b) is float:
         return power(a, b)
+    if OBJ_OPS and (type(a) in OBJ_OPS or type(b) in OBJ_OPS):
+        return _obj_op('mpower', a, b)
     if type(a) is SYM or type(b) is SYM:
         return SYMOPS.binop('^', a, b)
     if type(a) is UOBJ or type(b) is UOBJ:
@@ -883,6 +936,8 @@ def mpower(a, b):
 # ---- transposes ---------------------------------------------------------------
 
 def transpose(a):
+    if OBJ_OPS and (type(a) in OBJ_OPS):
+        return _obj_op('transpose', a)
     t = type(a)
     if t is float or t is bool or t is complex:
         return a
@@ -923,6 +978,8 @@ def transpose(a):
 
 
 def ctranspose(a):
+    if OBJ_OPS and (type(a) in OBJ_OPS):
+        return _obj_op('ctranspose', a)
     t = type(a)
     if t is float or t is bool:
         return a
@@ -1265,6 +1322,8 @@ def cat(axis, vals):
 
 
 def hcat(vals):
+    if OBJ_OPS and any(type(v) in OBJ_OPS for v in vals):
+        return _obj_op('hcat', *vals)
     if all(type(v) is float for v in vals):
         if not vals:
             return EMPTY()
@@ -1275,6 +1334,8 @@ def hcat(vals):
 
 
 def vcat(vals):
+    if OBJ_OPS and any(type(v) in OBJ_OPS for v in vals):
+        return _obj_op('vcat', *vals)
     if all(type(v) is float for v in vals):
         if not vals:
             return EMPTY()

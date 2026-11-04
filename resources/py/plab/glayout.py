@@ -97,7 +97,7 @@ def data_bounds(ax):
         if r is not None:
             b[k].append(r)
     for c in ax.children:
-        if not c.valid or getattr(c, 'hidden', False):
+        if not c.valid or getattr(c, 'hidden', False) or getattr(c, 'NO_LIMITS', False):
             continue
         p = c.props
         t = c.TYPE

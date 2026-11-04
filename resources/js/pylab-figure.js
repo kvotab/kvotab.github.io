@@ -74,6 +74,7 @@
   }
 
   function cmapColor(cmap, clim, v, alpha = 1) {
+    if (Array.isArray(v)) return rgb(v, alpha);        // a true colour (FaceVertexCData given as RGB rows)
     const n = cmap.shape[0];
     if (!Number.isFinite(v)) return null;
     let t = clim[1] > clim[0] ? (v - clim[0]) / (clim[1] - clim[0]) : 0.5;
@@ -1155,9 +1156,13 @@
     }
 
     line2(ctx, ax, fr, c) {
-      const x = vec(decode(c.x)), y = vec(decode(c.y));
+      let x = vec(decode(c.x)), y = vec(decode(c.y));
+      // xline and yline: a constant value across all of the other axis, whatever its limits are now
+      if (c.span === 'vertical') { x = [x[0], x[0]]; y = [fr.yl[0], fr.yl[1]]; }
+      else if (c.span === 'horizontal') { y = [y[0], y[0]]; x = [fr.xl[0], fr.xl[1]]; }
       const n = Math.min(x.length, y.length);
       const col = rgb(c.color);
+      if (c.span && c.label) this.spanLabel(ctx, fr, c, x, y, col);
       if (c.lineStyle !== 'none' && n > 1) {
         ctx.save();
         ctx.strokeStyle = col;
@@ -1185,10 +1190,74 @@
       }
     }
 
+    /* The label of an xline or yline: at the top (or bottom, or middle) of a vertical line, turned along it unless
+       'horizontal'; at the right (or left, or centre) of a horizontal one, above (or below) it. */
+    spanLabel(ctx, fr, c, x, y, col) {
+      const lines = Array.isArray(c.label) ? c.label : String(c.label).split('\n');
+      const size = (c.fontSize || 9) * PT;
+      ctx.save();
+      ctx.font = `${c.fontWeight === 'bold' ? 'bold ' : ''}${size}px Helvetica, Arial, sans-serif`;
+      ctx.fillStyle = col;
+      const pad = 3;
+      const lh = size * 1.15;
+      if (c.span === 'vertical') {
+        const px = fr.fx(x[0]);
+        if (!Number.isFinite(px) || px < fr.r.x - 1 || px > fr.r.x + fr.r.w + 1) { ctx.restore(); return; }
+        const va = c.labelVertical || 'top', ha = c.labelHorizontal || 'right';
+        const aligned = c.labelOrientation !== 'horizontal';
+        if (aligned) {
+          const yy = va === 'top' ? fr.r.y + pad : va === 'bottom' ? fr.r.y + fr.r.h - pad : fr.r.y + fr.r.h / 2;
+          ctx.translate(px, yy);
+          ctx.rotate(-Math.PI / 2);
+          ctx.textAlign = va === 'top' ? 'right' : va === 'bottom' ? 'left' : 'center';
+          ctx.textBaseline = ha === 'right' ? 'top' : ha === 'left' ? 'bottom' : 'middle';
+          lines.forEach((t, i) => ctx.fillText(t, 0, (ha === 'left' ? -1 : 1) * (pad + i * lh)));
+        } else {
+          ctx.textAlign = ha === 'right' ? 'left' : ha === 'left' ? 'right' : 'center';
+          ctx.textBaseline = 'top';
+          const y0 = va === 'top' ? fr.r.y + pad : va === 'bottom' ? fr.r.y + fr.r.h - pad - lines.length * lh : fr.r.y + fr.r.h / 2 - lines.length * lh / 2;
+          lines.forEach((t, i) => ctx.fillText(t, px + (ha === 'right' ? pad : ha === 'left' ? -pad : 0), y0 + i * lh));
+        }
+      } else {
+        const py = fr.fy(y[0]);
+        if (!Number.isFinite(py) || py < fr.r.y - 1 || py > fr.r.y + fr.r.h + 1) { ctx.restore(); return; }
+        const ha = c.labelHorizontal || 'right', va = c.labelVertical || 'top';
+        ctx.textAlign = ha === 'right' ? 'right' : ha === 'left' ? 'left' : 'center';
+        const xx = ha === 'right' ? fr.r.x + fr.r.w - pad : ha === 'left' ? fr.r.x + pad : fr.r.x + fr.r.w / 2;
+        ctx.textBaseline = va === 'top' ? 'bottom' : va === 'bottom' ? 'top' : 'middle';
+        const n = lines.length;
+        lines.forEach((t, i) => ctx.fillText(t, xx, va === 'top' ? py - pad - (n - 1 - i) * lh : va === 'bottom' ? py + pad + i * lh : py + (i - (n - 1) / 2) * lh));
+      }
+      ctx.restore();
+    }
+
     patch2(ctx, ax, fr, c) {
+      if (c.span) {
+        // xregion and yregion: a band across all of the other axis
+        const a = vec(decode(c.x)), b = vec(decode(c.y));
+        let x0, x1, y0, y1;
+        if (c.span === 'vertical') { x0 = fr.fx(a[0]); x1 = fr.fx(a[1]); y0 = fr.r.y; y1 = fr.r.y + fr.r.h; }
+        else { y0 = fr.fy(b[0]); y1 = fr.fy(b[1]); x0 = fr.r.x; x1 = fr.r.x + fr.r.w; }
+        if (![x0, x1, y0, y1].every(Number.isFinite)) return;
+        const rx = Math.min(x0, x1), ry = Math.min(y0, y1), rw = Math.abs(x1 - x0), rh = Math.abs(y1 - y0);
+        ctx.save();
+        if (c.faceColor !== 'none') { ctx.globalAlpha = c.faceAlpha ?? 1; ctx.fillStyle = rgb(c.faceColor); ctx.fillRect(rx, ry, rw, rh); }
+        if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
+          ctx.globalAlpha = c.edgeAlpha ?? 1;
+          ctx.strokeStyle = rgb(c.edgeColor);
+          ctx.lineWidth = lw(c.lineWidth);
+          dash(ctx, c.lineStyle, c.lineWidth);
+          ctx.beginPath();
+          if (c.span === 'vertical') { ctx.moveTo(x0, ry); ctx.lineTo(x0, ry + rh); ctx.moveTo(x1, ry); ctx.lineTo(x1, ry + rh); }
+          else { ctx.moveTo(rx, y0); ctx.lineTo(rx + rw, y0); ctx.moveTo(rx, y1); ctx.lineTo(rx + rw, y1); }
+          ctx.stroke();
+        }
+        ctx.restore();
+        return;
+      }
       const polys = patchPolys(c);
       const cmap = ax._cmap;
-      for (const poly of polys) {
+      for (const [pi, poly] of polys.entries()) {
         if (poly.pts.length < 2) continue;
         ctx.beginPath();
         if (c.rings) {
@@ -1222,6 +1291,7 @@
           dash(ctx, c.lineStyle, c.lineWidth);
           ctx.stroke();
           ctx.setLineDash([]);
+          if (c.arrowSize && poly.pts.length === 2) arrowHead(ctx, fr, poly.pts, c.arrowSize, (c.arrowBack || [])[pi] || 0, ctx.strokeStyle);
         }
       }
     }
@@ -1663,7 +1733,7 @@
       const R = Math.min(rect.w, rect.h) / 2 * 0.86;
       let rmax = 0;
       // lines' radii in y, scatter series' in yData
-      const radii = (c) => (c.type === 'line' ? c.y : c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart') ? c.yData : null);
+      const radii = (c) => (c.type === 'line' || (c.type === 'patch' && c.y) ? c.y : c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart') ? c.yData : null);
       for (const c of ax.children) if (radii(c)) for (const v of vec(decode(radii(c)))) if (Number.isFinite(v)) rmax = Math.max(rmax, Math.abs(v));
       if (!(rmax > 0)) rmax = 1;
       const ticks = niceTicks(0, rmax, 6);
@@ -1699,6 +1769,21 @@
       for (const c of ax.children) {
         if (c.visible === false) continue;
         if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) { this.scatter(ctx, ax, at, c, null); continue; }
+        if (c.type === 'patch' && c.x && c.y) {
+          // a polygon of angles and radii (polarhistogram's wedges)
+          const th = vec(decode(c.x)), rr = vec(decode(c.y));
+          ctx.beginPath();
+          let first = true;
+          for (let i = 0; i < th.length; i++) {
+            if (!Number.isFinite(th[i]) || !Number.isFinite(rr[i])) continue;
+            const q = at(th[i], rr[i]);
+            if (first) { ctx.moveTo(q[0], q[1]); first = false; } else ctx.lineTo(q[0], q[1]);
+          }
+          ctx.closePath();
+          if (Array.isArray(c.faceColor)) { ctx.save(); ctx.globalAlpha = c.faceAlpha ?? 1; ctx.fillStyle = rgb(c.faceColor); ctx.fill(); ctx.restore(); }
+          if (Array.isArray(c.edgeColor) && c.lineStyle !== 'none') { ctx.save(); ctx.globalAlpha = c.edgeAlpha ?? 1; ctx.strokeStyle = rgb(c.edgeColor); ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); ctx.restore(); }
+          continue;
+        }
         if (c.type !== 'line') continue;
         const th = vec(decode(c.x)), rr = vec(decode(c.y));
         const pts = [];
@@ -2232,6 +2317,26 @@
     return { x: Math.min(x, x + w), y: Math.min(y, y + h), w: Math.abs(w), h: Math.abs(h) };
   }
 
+  /* An arrowhead (a graph plot's digraph edge) at the end of the segment a -> b, drawn in screen space so that the
+     axes' aspect does not bend it: size points long, its tip back from b by back points (the node's marker). */
+  function arrowHead(ctx, fr, [a, b], size, back, style) {
+    const x0 = fr.fx(a[0]), y0 = fr.fy(a[1]), x1 = fr.fx(b[0]), y1 = fr.fy(b[1]);
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    if (![x0, y0, x1, y1].every(Number.isFinite) || len < 1) return;
+    const ux = (x1 - x0) / len, uy = (y1 - y0) / len;
+    const L = Math.min(size * PT, len * 0.45), t = Math.min(back * PT, len * 0.3);
+    const tx = x1 - ux * t, ty = y1 - uy * t, bx = tx - ux * L, by = ty - uy * L, w = L * 0.38;
+    ctx.save();
+    ctx.fillStyle = style;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(bx - uy * w, by + ux * w);
+    ctx.lineTo(bx + uy * w, by - ux * w);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   function patchPolys(c) {
     const out = [];
     if (c.faces && c.vertices) {
@@ -2239,17 +2344,28 @@
       const fvc = c.fvc ? decode(c.fvc) : null;
       const nv = V.shape[1] || 2;
       const nf = F.shape[0], k = F.shape[1] || F.shape[0];
+      // FaceVertexCData: a value (or an RGB row) for each face, or for each vertex (a face then gets its vertices' mean)
+      const rows = fvc ? fvc.shape[0] : 0, width = fvc && fvc.shape.length > 1 ? fvc.shape[1] : 1;
+      const perVertex = fvc && rows === V.shape[0] && rows !== nf;
+      const colorOf = (r) => (width === 3 ? [fvc.data[r * 3], fvc.data[r * 3 + 1], fvc.data[r * 3 + 2]] : fvc.data[r * width]);
       for (let i = 0; i < nf; i++) {
         const pts = [];
+        const idx = [];
         for (let j = 0; j < k; j++) {
           const vi = F.data[i * k + j];
           if (!Number.isFinite(vi)) break;
           const b = (vi - 1) * nv;
           pts.push([V.data[b], V.data[b + 1], nv > 2 ? V.data[b + 2] : null]);
+          idx.push(vi - 1);
         }
         // a NaN vertex leaves the face open: no fill, its edge broken there and not closed
         const open = pts.some(([x, y, z]) => !Number.isFinite(x) || !Number.isFinite(y) || (z != null && !Number.isFinite(z)));
-        out.push({ pts, c: fvc ? fvc.data[Math.min(i, fvc.data.length - 1)] : null, open });
+        let col = null;
+        if (fvc && perVertex && idx.length) {
+          const cs = idx.map(colorOf);
+          col = width === 3 ? [0, 1, 2].map((q) => cs.reduce((t, v) => t + v[q], 0) / cs.length) : cs.reduce((t, v) => t + v, 0) / cs.length;
+        } else if (fvc) col = colorOf(Math.min(i, rows - 1));
+        out.push({ pts, c: col, open });
       }
       return out;
     }

@@ -514,6 +514,7 @@
       E.on('focus', (m) => this.figures.focusControl(m.id));
       E.on('help', (m) => this.openHelp(m.name || undefined));
       E.on('sound', (m) => this.playSound(m));
+      E.on('soundctl', (m) => this.soundControl(m));
 
       this.cmd.on('submit', (code) => this.submit(code));
       this.cmd.on('interrupt', () => this.interrupt());
@@ -685,6 +686,10 @@
           else answer = { text: await navigator.clipboard.readText() };
         } catch (e) { answer = { error: (e && e.message) || String(e) }; }
         PL.engine.reply(req.id, answer);
+      } else if (req.type === 'recordstart') {
+        PL.engine.reply(req.id, await this.recordStart(req));
+      } else if (req.type === 'recordstop' || req.type === 'recorddata') {
+        PL.engine.reply(req.id, this.recordData(req.rec, req.type === 'recordstop'));
       } else if (req.type === 'ginput') {
         this.statusText.textContent = 'Click points in the figure; Enter ends.';
         this.figures.startGinput(req.figure, req.n, (pts) => { this.statusText.textContent = ''; PL.engine.reply(req.id, pts); });
@@ -770,8 +775,75 @@
         node.buffer = buf;
         node.connect(ctx.destination);
         node.start();
-        this.lastSound = { rate: m.rate, channels: m.channels, samples: n, seconds: len / ctx.sampleRate };
+        if (m.id) {
+          // an audioplayer's sound: kept so that pause and stop can end it
+          this.sounds = this.sounds || {};
+          if (this.sounds[m.id]) { try { this.sounds[m.id].stop(); } catch (e) { /* ended */ } }
+          this.sounds[m.id] = node;
+          node.onended = () => { if (this.sounds[m.id] === node) delete this.sounds[m.id]; };
+        }
+        this.lastSound = { rate: m.rate, channels: m.channels, samples: n, seconds: len / ctx.sampleRate, id: m.id || null };
       } catch (e) { /* a page with no audio plays nothing */ }
+    }
+
+    soundControl(m) {
+      const node = this.sounds && this.sounds[m.id];
+      if (node && m.op === 'stop') { try { node.stop(); } catch (e) { /* ended */ } delete this.sounds[m.id]; }
+    }
+
+    /* An audiorecorder's microphone: the samples at the rate asked for, kept until fetched. */
+    async recordStart(req) {
+      try {
+        this.recorders = this.recorders || {};
+        const old = this.recorders[req.rec];
+        if (old) this.recordEnd(old);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: req.channels, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        const AC = window.AudioContext || window.webkitAudioContext;
+        let ctx;
+        try { ctx = new AC({ sampleRate: req.rate }); } catch (e) { ctx = new AC(); }
+        if (ctx.state === 'suspended') await ctx.resume();
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(4096, req.channels, req.channels);
+        const rec = { stream, ctx, src, proc, chunks: Array.from({ length: req.channels }, () => []), channels: req.channels, rate: ctx.sampleRate,
+          samples: 0, max: req.seconds ? Math.round(req.seconds * ctx.sampleRate) : Infinity, done: false };
+        proc.onaudioprocess = (e) => {
+          if (rec.done) return;
+          const take = Math.min(e.inputBuffer.length, rec.max - rec.samples);
+          if (take <= 0) { this.recordEnd(rec); return; }
+          for (let c = 0; c < rec.channels; c++) {
+            const d = e.inputBuffer.getChannelData(Math.min(c, e.inputBuffer.numberOfChannels - 1));
+            rec.chunks[c].push(new Float32Array(d.subarray(0, take)));
+          }
+          rec.samples += take;
+          if (rec.samples >= rec.max) this.recordEnd(rec);
+        };
+        src.connect(proc);
+        proc.connect(ctx.destination);
+        this.recorders[req.rec] = rec;
+        return { ok: true, rate: ctx.sampleRate };
+      } catch (e) { return { error: (e && e.message) || String(e) }; }
+    }
+
+    recordEnd(rec) {
+      if (rec.done) return;
+      rec.done = true;
+      try { rec.proc.disconnect(); rec.src.disconnect(); } catch (e) { /* gone */ }
+      for (const t of rec.stream.getTracks()) t.stop();
+      rec.ctx.close().catch(() => {});
+    }
+
+    recordData(id, stop) {
+      const rec = this.recorders && this.recorders[id];
+      if (!rec) return { data: '', channels: 1, rate: 8000 };
+      if (stop) { this.recordEnd(rec); delete this.recorders[id]; }
+      const n = rec.chunks[0].reduce((k, a) => k + a.length, 0);
+      const all = new Float32Array(n * rec.channels);
+      for (let c = 0; c < rec.channels; c++) { let k = c * n; for (const a of rec.chunks[c]) { all.set(a, k); k += a.length; } }
+      if (!stop) { rec.chunks = Array.from({ length: rec.channels }, () => []); }
+      const bytes = new Uint8Array(all.buffer);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return { data: btoa(bin), channels: rec.channels, rate: rec.rate };
     }
 
     /* ---- the debugger --------------------------------------------------------------------- */

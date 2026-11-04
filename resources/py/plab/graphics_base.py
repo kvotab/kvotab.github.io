@@ -1521,6 +1521,9 @@ def serialize_child(c, ax):
                 d[k] = _arr(v)
             elif isinstance(v, (list, str, float, int, bool)) or v is None:
                 d[k] = v
+    ext = getattr(c, 'serial_extra', None)
+    if ext is not None:
+        d.update(ext())
     return d
 
 
