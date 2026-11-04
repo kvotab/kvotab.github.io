@@ -2648,6 +2648,27 @@ garch, egarch, gjr:
     Python: econmodels.py. The variance recursion over the innovations: garch and gjr by scipy.signal.lfilter (the presample through scipy.signal.lfiltic), egarch step by step; the presample variances and squared innovations are the innovations' mean square (in gjr half of them count as negative). The likelihood is maximized as for arima, with positive, stationary coefficients required (for egarch the GARCH coefficients summing below 1). Forecasts use E[e^2] = v (and E[I(e<0)e^2] = v/2) after the first step; egarch's later steps leave the shock terms at 0.
 varm, irf, fevd:
     Python: econmodels.py. estimate solves the least squares of each equation on the constant, trend, lags and predictors together (numpy.linalg.lstsq), which is the Gaussian likelihood's maximum; the covariance is E'E/T and the coefficients' standard errors come from kron(Sigma, inv(Z'Z)). irf multiplies the MA matrices Psi by the Cholesky factor of the covariance (numpy.linalg.cholesky) or by Sigma*e_j/sqrt(sigma_jj); fevd sums their squares over the horizons and divides by each variable's total.
+# ---- finance.py, portfolio.py: finance -------------------------------------------------------------------------------------------
+blsprice, blsdelta, blsgamma, blsvega, blstheta, blsrho, blslambda, blkprice:
+    Python: finance.py. The Black-Scholes formulas with d1 = (ln(S/K) + (r - q + sigma^2/2)T)/(sigma*sqrt(T)) and d2 = d1 - sigma*sqrt(T), with scipy.stats.norm's cdf and pdf; at expiry or with no volatility the discounted payoff of the forward. blkprice is Black's formula: the forward is the futures price, discounted at r.
+blsimpv:
+    Python: finance.py. The volatility at which blsprice gives the value, by scipy.optimize.brentq between 1e-12 and Limit; NaN when the value is not between the prices there.
+binprice:
+    Python: finance.py. Cox, Ross and Rubinstein's tree: u = exp(sigma*sqrt(dt)), d = 1/u, the up probability (exp((r - q)dt) - d)/(u - d); the option valued backwards, each node the larger of exercising and holding.
+irr, mirr, xirr, pvvar, fvvar:
+    Python: finance.py. irr's rates are the real roots (numpy.roots) above -1 of the flows' polynomial in 1 + r; mirr compounds the inflows at Reinvest to the end and discounts the outflows at FinRate; xirr solves sum(CF/(1+r)^(days/365)) = 0 by scipy.optimize.newton from Guess, else by scipy.optimize.brentq in the first sign change on a grid.
+pvfix, fvfix, payper, amortize, annurate, annuterm, effrr, nomrr:
+    Python: finance.py. The annuity formulas ((1 - (1+r)^-n)/r, times 1 + r for payments due at the starts); amortize runs the loan period by period; annurate by scipy.optimize.brentq; annuterm in closed form with logarithms.
+price2ret, ret2price, tick2ret, ret2tick, ewstats:
+    Python: finance.py. Differences of the logarithms (continuous) or of the prices over the earlier price (simple), and back by numpy.exp of cumulative sums or numpy.cumprod; ewstats weighs the rows by powers of the decay factor, normalized, for the mean and the covariance.
+movavg, bollinger, rsindex, macd:
+    Python: finance.py. Trailing weighted means over windows shortened at the start; exponential averages y(t) = alpha*x(t) + (1 - alpha)*y(t-1) from the first value (alpha = 2/(n+1), or 1/n for 'modified'); the triangular average a simple average of a simple average over (n+1)/2; Bollinger bands from each full window's mean and standard deviation (divided by the window's length); RSI with Wilder's smoothing after a first simple mean of the gains and losses.
+daysact, days360, yearfrac, holidays, isbusday, busdate, fbusdate, lbusdate:
+    Python: finance.py. Python's calendar dates (datetime.date) from the day numbers. The 30/360 rules (SIA: February's last day and the 31st count as the 30th; PSA, ISDA and European variants); actual/actual ISDA splits the days by calendar year. holidays applies the exchange's rules year by year: New Year's Day, Martin Luther King Jr. Day (from 1998), Washington's Birthday, Good Friday (Easter by the Gregorian computus), Memorial Day, Juneteenth (from 2022), Independence Day, Labor Day, Thanksgiving and Christmas, moved to Friday or Monday when they fall on a weekend (New Year's Day is not moved back into December).
+Portfolio, setAssetMoments, estimateAssetMoments, setDefaultConstraints, setBounds, setBudget, setInequality, setEquality, estimateFrontier, estimateFrontierLimits, estimateFrontierByReturn, estimateFrontierByRisk, estimateMaxSharpeRatio, estimatePortReturn, estimatePortRisk, estimatePortMoments, plotFrontier, portopt:
+    Python: portfolio.py. The least-variance portfolio for each return by scipy.optimize.minimize (SLSQP, with the gradient 2*C*w, the budget, bounds and linear constraints); the largest return by scipy.optimize.linprog (HiGHS), then the least variance among the portfolios that reach it. By risk: the return whose least-variance portfolio has that risk, by scipy.optimize.brentq. The largest Sharpe ratio: along the frontier's returns, on a grid and then scipy.optimize.minimize_scalar.
+portstats, portvrisk, corr2cov, cov2corr:
+    Python: portfolio.py. sqrt(w'*C*w) and w'*mu; the normal quantile from scipy.stats.norm; the outer product of the standard deviations.
 """
 
 

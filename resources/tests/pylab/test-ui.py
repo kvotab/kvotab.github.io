@@ -2123,6 +2123,28 @@ async def econometrics(page):
     await command(page, 'close all; clear')
 
 
+async def finance(page):
+    """Step 18 in the page: option prices and an implied volatility, cash flows, dates, indicators, and a portfolio's
+    efficient frontier drawn."""
+    out = await command(page, "clc; close all; [c, p] = blsprice(100, 95, 0.05, 0.5, 0.25); v = blsimpv(100, 95, 0.05, 0.5, c); bv = abs(v - 0.25) < 1e-8, "
+                              "r = irr([-1000; 300; 400; 500; 200]); ir = abs(pvvar([-1000; 300; 400; 500; 200], r)) < 1e-8, "
+                              "pm = payper(0.06/12, 360, 250000); py = abs(pvfix(0.06/12, 360, pm) - 250000) < 1e-6, "
+                              "hd = numel(holidays(datenum(2024,1,1), datenum(2024,12,31))) == 10 && ~isbusday(datenum(2024,7,4)), "
+                              "z = 100 + cumsum(randn(60, 1)); [m, u, l] = bollinger(z); bb = all(isnan(m(1:19))) && all(u(20:end) >= l(20:end)), "
+                              "mu = [0.06; 0.08; 0.11; 0.15]; sd = [0.1 0.14 0.2 0.28]; Cv = corr2cov(sd, [1 .3 .2 .1; .3 1 .4 .25; .2 .4 1 .35; .1 .25 .35 1]); "
+                              "P = setBounds(setDefaultConstraints(Portfolio('AssetMean', mu, 'AssetCovar', Cv, 'RiskFreeRate', 0.02)), 0, 0.5); "
+                              "W = estimateFrontier(P, 8); ws = estimateMaxSharpeRatio(P); pf = all(abs(sum(W) - 1) < 1e-8) && abs(sum(ws) - 1) < 1e-8, "
+                              "f1 = figure('Position', [50 50 600 400]); plotFrontier(P);")
+    check('finance in the page: blsimpv back, irr, payper, holidays, bollinger, a portfolio frontier',
+          [f'{k} =\n\n  logical\n\n   1' in out for k in ('bv', 'ir', 'py', 'hd', 'bb', 'pf')], [True] * 6)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.8)
+    check('the efficient frontier drawn', (await ink(page)) > 0.005, True)
+    await canvas_shot(page, 'finance18-1.png')
+    await command(page, 'close all; clear')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2149,6 +2171,7 @@ async def main():
         await pde_toolbox(page)
         await core_fillins(page)
         await econometrics(page)
+        await finance(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

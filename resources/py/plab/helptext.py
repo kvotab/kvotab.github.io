@@ -9470,6 +9470,174 @@ irf: A vector autoregression's impulse responses.
 fevd: A vector autoregression's forecast error variance decomposition.
     Decomposition = fevd(Mdl, 'NumObs', 20, 'Method', 'orthogonalized')
     * Decomposition(t, j, k) is the share of variable k's forecast error variance at horizon t due to shocks to variable j.
+# ---- finance ------------------------------------------------------------------------------------------------------------------
+blsprice: European option prices by Black and Scholes.
+    [Call, Put] = blsprice(Price, Strike, Rate, Time, Volatility)
+    [Call, Put] = blsprice(Price, Strike, Rate, Time, Volatility, Yield)
+    * Rate and Yield (a continuous dividend yield, 0 unless given) are continuously compounded per year, Time in years, Volatility per year. Inputs are scalars or arrays of one size.
+blsdelta: The Black-Scholes deltas.
+    [CallDelta, PutDelta] = blsdelta(Price, Strike, Rate, Time, Volatility, Yield)
+blsgamma: The Black-Scholes gamma.
+    Gamma = blsgamma(Price, Strike, Rate, Time, Volatility, Yield)
+blsvega: The Black-Scholes vega.
+    Vega = blsvega(Price, Strike, Rate, Time, Volatility, Yield)
+    * The change of the price for a change of 1 in the volatility.
+blstheta: The Black-Scholes thetas.
+    [CallTheta, PutTheta] = blstheta(Price, Strike, Rate, Time, Volatility, Yield)
+    * The change of the prices per year as time passes.
+blsrho: The Black-Scholes rhos.
+    [CallRho, PutRho] = blsrho(Price, Strike, Rate, Time, Volatility, Yield)
+blslambda: The Black-Scholes elasticities.
+    [CallEl, PutEl] = blslambda(Price, Strike, Rate, Time, Volatility, Yield)
+blsimpv: The implied volatility of option prices.
+    Volatility = blsimpv(Price, Strike, Rate, Time, Value)
+    Volatility = blsimpv(Price, Strike, Rate, Time, Value, 'Yield', q, 'Class', {'Put'}, 'Limit', 10, 'Tolerance', 1e-6)
+    * The volatility at which blsprice gives Value (calls unless Class says put or is false), searched up to Limit; NaN where none does.
+blkprice: Black's prices of options on futures.
+    [Call, Put] = blkprice(Price, Strike, Rate, Time, Volatility)
+binprice: An American option's binomial tree.
+    [AssetPrice, OptionValue] = binprice(Price, Strike, Rate, Time, Increment, Volatility, Flag)
+    [AssetPrice, OptionValue] = binprice(Price, Strike, Rate, Time, Increment, Volatility, Flag, DividendRate)
+    * Cox, Ross and Rubinstein's tree with steps of Increment years; Flag 1 a call, 0 a put. Column j holds the prices after j-1 steps, the most up moves first; OptionValue(1, 1) is the option's value.
+irr: The internal rate of return.
+    Return = irr(CashFlow)
+    * Per period, the first flow at time 0; a column of flows for each investment. With several rates the one nearest 0 is given, with a warning listing them.
+mirr: The modified internal rate of return.
+    Return = mirr(CashFlow, FinRate, Reinvest)
+xirr: The internal rate of return of cash flows on dates.
+    Return = xirr(CashFlow, CashFlowDates)
+    Return = xirr(CashFlow, CashFlowDates, Guess)
+    * An annual rate, the years counted as days over 365.
+pvvar: The present value of varying cash flows.
+    PresentVal = pvvar(CashFlow, Rate)
+    PresentVal = pvvar(CashFlow, Rate, CFDates)
+fvvar: The future value of varying cash flows.
+    FutureVal = fvvar(CashFlow, Rate)
+    FutureVal = fvvar(CashFlow, Rate, CFDates)
+pvfix: The present value of equal payments.
+    PresentVal = pvfix(Rate, NumPeriods, Payment, ExtraPayment, Due)
+    * Due 0 (the default) pays at the ends of the periods, 1 at their starts.
+fvfix: The future value of equal payments.
+    FutureVal = fvfix(Rate, NumPeriods, Payment, PresentValue, Due)
+payper: The payment each period of a loan.
+    Payment = payper(Rate, NumPeriods, PresentValue, FutureValue, Due)
+amortize: A loan's amortization schedule.
+    [Principal, Interest, Balance, Payment] = amortize(Rate, NumPeriods, PresentValue, FutureValue, Due)
+    * Each period's principal and interest paid and the balance after it, as rows.
+annurate: The periodic rate of an annuity.
+    Rate = annurate(NumPeriods, Payment, PresentValue, FutureValue, Due)
+annuterm: The number of periods of an annuity.
+    NumPeriods = annuterm(Rate, Payment, PresentValue, FutureValue, Due)
+effrr: The effective annual rate of return.
+    Return = effrr(Rate, NumPeriods)
+    * A nominal rate compounded NumPeriods times a year (Inf: continuously).
+nomrr: The nominal annual rate of an effective rate.
+    Return = nomrr(Rate, NumPeriods)
+price2ret: Returns from prices.
+    [Returns, Intervals] = price2ret(Prices)
+    [Returns, Intervals] = price2ret(Prices, 'Ticks', t, 'Method', 'periodic')
+    * Continuous (log) returns unless Method is 'periodic' (simple); divided by the time between prices when Ticks are given.
+ret2price: Prices from returns.
+    [Prices, Ticks] = ret2price(Returns, 'StartPrice', p0, 'Method', 'periodic')
+    * Continuous returns unless 'periodic'; the start price (1) first.
+tick2ret: Returns from prices.
+    [Returns, Intervals] = tick2ret(Data, 'Method', 'continuous', 'TickTimes', t)
+    * Simple returns unless Method is 'continuous'.
+ret2tick: Prices from returns.
+    [Prices, Times] = ret2tick(Returns, 'StartPrice', p0, 'StartTime', t0, 'Method', 'simple')
+ewstats: The exponentially weighted mean and covariance of returns.
+    [ExpReturn, ExpCovariance, NumEffObs] = ewstats(RetSeries, DecayFactor, WindowLength)
+    * The last row weighs 1, the one before DecayFactor, the one before that DecayFactor^2 ..., over the last WindowLength rows.
+movavg: A moving average.
+    ma = movavg(Data, type, windowSize)
+    ma = movavg(Data, 'custom', weights)
+    [Short, Long] = movavg(Data, Lead, Lag, Alpha)
+    * type is 'simple', 'square-root', 'linear', 'exponential', 'triangular' or 'modified' (Wilder's); trailing windows, shorter at the start; each column of Data.
+bollinger: Bollinger bands.
+    [middle, upper, lower] = bollinger(Data, 'WindowSize', 20, 'NumStd', 2)
+    * NaN until a window is full.
+rsindex: Wilder's relative strength index.
+    index = rsindex(Data, 'WindowSize', 14)
+macd: The moving average convergence/divergence.
+    [MACDLine, SignalLine] = macd(Data)
+    * The 12- less the 26-period exponential moving average, and its 9-period average.
+daysact: The actual days between dates.
+    NumDays = daysact(StartDate, EndDate)
+days360: The days between dates counted 30/360.
+    NumDays = days360(StartDate, EndDate)
+yearfrac: The fraction of a year between dates.
+    YearFraction = yearfrac(StartDate, EndDate, Basis)
+    * Basis 0 actual/actual (ISDA, the default), 1 30/360 SIA, 2 actual/360, 3 actual/365, 4 30/360 PSA, 5 30/360 ISDA, 6 30/360 European, 7 actual/365 Japanese, 12 actual/actual ISDA, 13 business days/252.
+holidays: The New York Stock Exchange's holidays.
+    H = holidays
+    H = holidays(StartDate, EndDate)
+    * The regular holidays as the exchange observes them (closings for special events are not included), as day numbers.
+isbusday: Whether dates are business days.
+    tf = isbusday(Date)
+    tf = isbusday(Date, Holiday, Weekend)
+    * Not a weekend day (Saturday and Sunday unless Weekend, 7 flags from Sunday) and not a holiday (the NYSE's unless a list is given).
+busdate: The next or previous business day.
+    Busday = busdate(Date, Direction, Holiday, Weekend)
+    * Direction 1 (the default) or -1.
+fbusdate: The first business day of a month.
+    Date = fbusdate(Year, Month, Holiday, Weekend)
+lbusdate: The last business day of a month.
+    Date = lbusdate(Year, Month, Holiday, Weekend)
+Portfolio: A mean-variance portfolio problem.
+    p = Portfolio
+    p = Portfolio('AssetMean', m, 'AssetCovar', C, 'LowerBound', 0, 'Budget', 1, 'RiskFreeRate', 0.03)
+    p = Portfolio(p, 'Name', value, ...)
+    * Functions: setAssetMoments, estimateAssetMoments, setDefaultConstraints, setBounds, setBudget, setInequality, setEquality, estimateFrontier, estimateFrontierLimits, estimateFrontierByReturn, estimateFrontierByRisk, estimateMaxSharpeRatio, estimatePortReturn, estimatePortRisk, estimatePortMoments, plotFrontier. Each gives a new Portfolio (p = setBounds(p, ...)).
+setAssetMoments: A portfolio's asset means and covariance.
+    p = setAssetMoments(p, AssetMean, AssetCovar)
+estimateAssetMoments: A portfolio's asset moments from returns.
+    p = estimateAssetMoments(p, AssetReturns)
+setDefaultConstraints: A portfolio long only and fully invested.
+    p = setDefaultConstraints(p)
+setBounds: Bounds on a portfolio's weights.
+    p = setBounds(p, LowerBound, UpperBound)
+setBudget: Bounds on the sum of a portfolio's weights.
+    p = setBudget(p, LowerBudget, UpperBudget)
+setInequality: Linear inequality constraints on a portfolio's weights.
+    p = setInequality(p, AInequality, bInequality)
+setEquality: Linear equality constraints on a portfolio's weights.
+    p = setEquality(p, AEquality, bEquality)
+estimateFrontier: Portfolios on the efficient frontier.
+    PortWts = estimateFrontier(p)
+    PortWts = estimateFrontier(p, NumPorts)
+    * NumPorts (10) portfolios equally spaced in return from the least-risk one to the largest-return one, a column each.
+estimateFrontierLimits: The ends of the efficient frontier.
+    PortWts = estimateFrontierLimits(p)
+    PortWts = estimateFrontierLimits(p, 'min')
+estimateFrontierByReturn: The least-risk portfolio of a return.
+    PortWts = estimateFrontierByReturn(p, TargetReturn)
+estimateFrontierByRisk: The largest-return portfolio of a risk.
+    PortWts = estimateFrontierByRisk(p, TargetRisk)
+estimateMaxSharpeRatio: The portfolio with the largest Sharpe ratio.
+    PortWts = estimateMaxSharpeRatio(p)
+estimatePortReturn: Portfolios' expected returns.
+    pret = estimatePortReturn(p, PortWts)
+estimatePortRisk: Portfolios' standard deviations.
+    prsk = estimatePortRisk(p, PortWts)
+estimatePortMoments: Portfolios' risks and returns.
+    [prsk, pret] = estimatePortMoments(p, PortWts)
+plotFrontier: The efficient frontier drawn.
+    plotFrontier(p)
+    [prsk, pret] = plotFrontier(p, NumPorts)
+portopt: Portfolios on the efficient frontier (the older function).
+    [PortRisk, PortReturn, PortWts] = portopt(ExpReturn, ExpCovariance, NumPorts)
+    [PortRisk, PortReturn, PortWts] = portopt(ExpReturn, ExpCovariance, [], PortReturn)
+    [PortRisk, PortReturn, PortWts] = portopt(ExpReturn, ExpCovariance, NumPorts, [], ConSet)
+    * Long only and fully invested; ConSet adds rows [A b] of A*w <= b. Weights a row each. Without outputs, the frontier drawn.
+portstats: Portfolios' risks and returns.
+    [PortRisk, PortReturn] = portstats(ExpReturn, ExpCovariance, PortWts)
+portvrisk: The value at risk of a portfolio with normal returns.
+    ValueAtRisk = portvrisk(PortReturn, PortRisk, RiskThreshold, PortValue)
+    * -(PortReturn + norminv(RiskThreshold)*PortRisk)*PortValue, RiskThreshold 0.05 and PortValue 1 unless given.
+corr2cov: A covariance from standard deviations and correlations.
+    ExpCovariance = corr2cov(ExpSigma, ExpCorrC)
+cov2corr: Standard deviations and correlations from a covariance.
+    [ExpSigma, ExpCorrC] = cov2corr(ExpCovariance)
 '''
 
 

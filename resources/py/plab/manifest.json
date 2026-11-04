@@ -117,6 +117,8 @@
     "builtins/surfacefit.py",
     "builtins/econtests.py",
     "builtins/econmodels.py",
+    "builtins/finance.py",
+    "builtins/portfolio.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",
