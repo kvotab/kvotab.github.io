@@ -1328,7 +1328,18 @@
         if (poly.open) fill = null;
         else if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
         else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, c.faceAlpha);
-        if (fill) { ctx.fillStyle = fill; ctx.fill(c.rings ? 'evenodd' : 'nonzero'); }
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fill(c.rings ? 'evenodd' : 'nonzero');
+          if (c.edgeColor === 'none' && !c.rings && polys.length > 1 && (c.faceAlpha == null || c.faceAlpha >= 1)) {
+            // faces meeting edge to edge (a mesh): each traced in its own colour, so no seam of background shows between them
+            ctx.strokeStyle = fill;
+            ctx.lineWidth = 0.6;
+            ctx.lineJoin = 'round';
+            ctx.stroke();
+            ctx.lineJoin = 'miter';
+          }
+        }
         if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
           ctx.strokeStyle = Array.isArray(c.edgeColor) ? rgb(c.edgeColor, c.edgeAlpha) : (poly.c != null ? cmapColor(cmap, ax.clim, poly.c) : AXIS_INK);
           ctx.lineWidth = lw(c.lineWidth);

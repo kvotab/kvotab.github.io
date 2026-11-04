@@ -3804,6 +3804,9 @@ hist: A histogram (older; histogram is preferred), or its counts.
 area: Filled areas under lines; a matrix gives stacked areas.
     area(y)
     area(x, y)
+    [A, Ae] = area(mesh)
+    [A, Ae] = area(mesh, elemIDs)
+    * area(mesh) of a PDE mesh (or model): its area and its elements' (quadratic ones by their curved sides).
 fill: Filled polygons.
     fill(x, y, c)
 fill3: Filled polygons in 3-D.
@@ -8988,6 +8991,92 @@ fnbrk: The parts of a spline.
     part = fnbrk(f, name)
     [breaks, coefs, pieces, order, dim] = fnbrk(pp)
     * 'breaks', 'coefs', 'pieces', 'order', 'dim', 'interval', and for a B-form 'knots' and 'number'.
+# ---- partial differential equations ---------------------------------------------------------------------------------------------------
+createpde: A model for partial differential equations in 2-D.
+    model = createpde
+    model = createpde(N)
+    * N (1) equations m*u'' + d*u' - div(c*grad(u)) + a*u = f in u's N components. Then geometryFromEdges, generateMesh, specifyCoefficients, applyBoundaryCondition (and setInitialConditions), solvepde or solvepdeeig. Its SolverOptions hold AbsoluteTolerance (1e-6), RelativeTolerance (1e-3), ResidualTolerance (1e-4) and MaxIterations (30). Only general models (no 'structural' or 'thermal' ones).
+decsg: Shapes combined into a geometry.
+    dl = decsg(gd)
+    [dl, bt] = decsg(gd, sf, ns)
+    * gd has a column for each shape: a circle [1; xc; yc; r], a polygon [2; n; x1..xn; y1..yn], a rectangle [3; 4; x1..x4; y1..y4], an ellipse [4; xc; yc; a; b; angle] (zeros below). sf combines the names in the columns of ns (char('R1', 'C1')'): + union, * intersection, - difference, * before + and -; without it, all the shapes. dl has a column for each edge of the minimal regions kept: [type; x start; x end; y start; y end; face on the left; face on the right] then a circle's centre and radius or an ellipse's centre, semi-axes and angle; type 2 a segment, 1 a circular arc and 4 an elliptic arc, arcs counterclockwise; faces 0 outside. Circles and ellipses are four quarter arcs each, split where curves cross; edges between two kept regions stay. bt says which shapes each region is in. PyLAB's own numbering of edges and faces: see them with pdegplot.
+geometryFromEdges: The geometry of a model.
+    gm = geometryFromEdges(model, dl)
+    gm = geometryFromEdges(model, geomfun)
+    * From decsg's matrix, or a geometry function (a handle or a name): geomfun() the number of edges, geomfun(bs) a column for each edge bs [start parameter; end parameter; face left; face right], [x, y] = geomfun(bs, s) its points.
+generateMesh: A triangular mesh of a model's geometry.
+    mesh = generateMesh(model)
+    mesh = generateMesh(model, 'Hmax', h, 'Hmin', h, 'GeometricOrder', 'linear')
+    * Nodes along every edge about Hmax apart (a tenth of the geometry's size unless given; arcs in steps of at most 30 degrees), an equilateral lattice of nodes inside, a Delaunay triangulation that keeps each edge (a piece is halved while another node lies in its diametral circle), then smoothing. Quadratic elements (default) have a node at the middle of each side, on the curve along an edge, and curved sides there. One size for the whole mesh: Hedge, Hvertex and Hface are not taken. PyLAB's own mesher.
+specifyCoefficients: The coefficients of the equations.
+    CA = specifyCoefficients(model, 'm', m, 'd', d, 'c', c, 'a', a, 'f', f)
+    CA = specifyCoefficients(..., 'Face', ids)
+    * All five, 0 for a term that is not there; on the given faces (all unless given), a later assignment replacing an earlier one where they meet. For one equation c is a number, [c11 c22], [c11 c12 c22] or [c11 c21 c12 c22] (anisotropic); for several, a number or a value for each equation (each isotropic). a, d and m are a number, a value for each equation or an N-by-N matrix; f a value for each equation. Any of them may be a function handle of (location, state) - location.x, .y and .subdomain, state.u, .ux, .uy and .time - giving a column for each point.
+applyBoundaryCondition: A condition on edges of the boundary.
+    bc = applyBoundaryCondition(model, 'dirichlet', 'Edge', ids, 'u', u)
+    bc = applyBoundaryCondition(model, 'dirichlet', 'Edge', ids, 'u', u, 'EquationIndex', i)
+    bc = applyBoundaryCondition(model, 'dirichlet', 'Edge', ids, 'r', r, 'h', h)
+    bc = applyBoundaryCondition(model, 'neumann', 'Edge', ids, 'g', g, 'q', q)
+    bc = applyBoundaryCondition(model, 'mixed', 'Edge', ids, 'u', u, 'EquationIndex', i, 'g', g, 'q', q)
+    * Dirichlet: u given (for the components EquationIndex), or h*u = r with h diagonal. Generalized Neumann: n.(c*grad(u)) + q*u = g, n the outward normal; mixed: Dirichlet for EquationIndex, Neumann for the rest. Values are numbers or function handles of (location, state): location.x, .y, .nx, .ny, state.u, .time. An edge with no condition has g = q = 0; the last condition given on an edge holds; edges between two faces take none.
+setInitialConditions: Initial values of a time-dependent or nonlinear problem.
+    IC = setInitialConditions(model, u0)
+    IC = setInitialConditions(model, u0, ut0)
+    IC = setInitialConditions(..., 'Face', ids)
+    IC = setInitialConditions(model, results)
+    * u0 a number (a value for each equation), a vector of nodal values, a function handle of location (location.x, .y, .subdomain), or the last solution of results; ut0 the initial rate when m is not zero (0 unless given).
+solvepde: The solution of a model's equations.
+    results = solvepde(model)
+    results = solvepde(model, tlist)
+    * Stationary when m and d are zero: a sparse direct solve, or, when a coefficient or condition is a function, a fixed-point iteration from the initial conditions until the change is below SolverOptions.ResidualTolerance (MaxIterations). Otherwise at the times tlist: variable-step BDF2 (backward Euler for the first step) with steps kept within RelativeTolerance and AbsoluteTolerance (PyLAB's own integrator: the error at the default tolerances is of the order of 1e-3 of the solution), a second-order problem as a first-order one in u and u'. A system with no unique solution (a component with only Neumann conditions and no a term) is refused. StationaryResults or TimeDependentResults: NodalSolution, XGradients and YGradients (the nodes' averages over their elements), SolutionTimes, Mesh.
+solvepdeeig: Eigenvalues and eigenvectors of a model.
+    results = solvepdeeig(model, [lo hi])
+    * The lambda in [lo, hi] (hi may be Inf) with -div(c*grad(u)) + a*u = lambda*d*u (m = 0, f = 0) and the model's boundary conditions (Dirichlet ones zero). Eigenvalues and Eigenvectors (a column for each).
+assembleFEMatrices: The finite-element matrices of a model.
+    FEM = assembleFEMatrices(model)
+    * K (from c), A (a), F (f), Q (q), G (g), M (m, or d when m is zero), and H and R with the Dirichlet conditions as H*u = R; sparse, a system's components one after another.
+interpolateSolution: A PDE solution at points.
+    uintrp = interpolateSolution(results, xq, yq)
+    uintrp = interpolateSolution(results, querypoints)
+    uintrp = interpolateSolution(..., iU)
+    uintrp = interpolateSolution(..., iT)
+    uintrp = interpolateSolution(..., iU, iT)
+    * By the elements' basis functions, NaN outside the mesh; a column for each time (or mode); iU the components of a system, iT the times or modes.
+evaluateGradient: A PDE solution's gradient at points.
+    [gradx, grady] = evaluateGradient(results, xq, yq, ...)
+    * The same points and indices as interpolateSolution.
+pdeplot: A PDE solution or a mesh drawn.
+    pdeplot(model)
+    pdeplot(model, 'XYData', u)
+    pdeplot(model, 'XYData', u, 'ZData', u, 'Contour', 'on', 'Levels', n, 'Mesh', 'on', 'ColorMap', cm, 'FlowData', [ux uy], 'ColorBar', 'off')
+    h = pdeplot(...)
+    * The nodal values in interpolated colour over the elements (a quadratic one as four triangles), as a surface with ZData; contour lines at n (10) levels, the mesh, arrows at the corner nodes. A mesh (results.Mesh) may stand for the model.
+pdegplot: A PDE geometry drawn.
+    pdegplot(model)
+    pdegplot(dl)
+    pdegplot(model, 'EdgeLabels', 'on', 'FaceLabels', 'on', 'VertexLabels', 'on')
+    * Its edges, with their labels E1 ..., the faces' F1 ... and the vertices' V1 ...
+pdemesh: A PDE mesh drawn.
+    pdemesh(model)
+    pdemesh(mesh)
+    pdemesh(p, e, t)
+    pdemesh(..., 'NodeLabels', 'on', 'ElementLabels', 'on')
+findNodes: The nodes of a mesh in a region.
+    nodes = findNodes(mesh, 'region', 'Edge', ids)
+    nodes = findNodes(mesh, 'region', 'Face', ids)
+    nodes = findNodes(mesh, 'box', xlim, ylim)
+    nodes = findNodes(mesh, 'radius', center, r)
+    nodes = findNodes(mesh, 'nearest', points)
+    * A row of node numbers; 'nearest' the node nearest each point (points a column each).
+findElements: The elements of a mesh in a region.
+    elems = findElements(mesh, 'region', 'Face', ids)
+    elems = findElements(mesh, 'box', xlim, ylim)
+    elems = findElements(mesh, 'radius', center, r)
+    elems = findElements(mesh, 'attached', nodes)
+    * A row of element numbers; 'box' and 'radius' take the elements with all their nodes inside.
+meshToPet: A mesh in the point, edge and triangle form.
+    [p, e, t] = meshToPet(mesh)
+    * p the nodes (2-by-n), e the boundary pieces (start and end node, parameters, edge, faces), t the elements' nodes and then their face.
 '''
 
 

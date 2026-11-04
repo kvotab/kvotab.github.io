@@ -2535,6 +2535,19 @@ spapi, spmak:
     Python: splinefit.py. scipy.interpolate.make_interp_spline and BSpline.
 fnval, fnder, fnint, fnplt, fnbrk:
     Python: splinefit.py. A pp-form through funfun.py's evaluation; a B-form by scipy.interpolate.BSpline and its derivative and antiderivative.
+# ---- pdegeom.py, pdefem.py: partial differential equations ---------------------------------------------------------------------------
+decsg:
+    Python: pdegeom.py. Each pair of curves intersected exactly (segments and circles in closed form; ellipses by Newton's method from the crossings of their polygons, numpy.linalg.solve), the curves split there; the planar graph's faces traced by the angles of the half-edges at each vertex; each face's point classified by the shapes and the set formula.
+geometryFromEdges, pdegplot:
+    Python: pdegeom.py. The edges as curves (segments, arcs, elliptic arcs, or the geometry function called through the runtime); faces as polygons for point-in-face tests (even-odd ray casting in NumPy).
+generateMesh, findNodes, findElements, meshToPet, pdemesh:
+    Python: pdegeom.py. scipy.spatial.Delaunay of the edge nodes and a lattice, the encroached pieces found by scipy.spatial.cKDTree; Laplacian smoothing that keeps every element positive.
+createpde, specifyCoefficients, applyBoundaryCondition, setInitialConditions, assembleFEMatrices:
+    Python: pdefem.py. Element integrals on the reference triangle (a 6-point rule of degree 4, 3-point Gauss on the edges) with the isoparametric map, vectorized by numpy.einsum; scipy.sparse matrices; coefficient functions called once for all the points of a face.
+solvepde, solvepdeeig:
+    Python: pdefem.py. scipy.sparse.linalg.splu on the free unknowns (the Dirichlet ones moved to the right side); in time variable-step BDF2 with an error estimate from the polynomial through the last steps; eigenvalues by scipy.linalg.eigh, or scipy.sparse.linalg.eigsh shifted for many unknowns.
+interpolateSolution, evaluateGradient, pdeplot:
+    Python: pdefem.py. The element holding each point found among the nearest centroids (scipy.spatial.cKDTree) by barycentric coordinates, the basis functions evaluated there; pdeplot draws a patch with interpolated colours, contour lines by marching triangles.
 """
 
 

@@ -107,6 +107,8 @@
     "builtins/statsfill.py",
     "builtins/wavemore.py",
     "builtins/splinefit.py",
+    "builtins/pdegeom.py",
+    "builtins/pdefem.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

@@ -2032,6 +2032,30 @@ async def toolbox_fillins(page):
     await command(page, 'close all')
 
 
+async def pde_toolbox(page):
+    """Step 15 in the page: a square less a circle meshed, Poisson's equation solved and drawn with contours, the unit square's eigenvalues, a heat decay."""
+    out = await command(page, "close all; model = createpde; gd = [3 4 -1 1 1 -1 -1 -1 1 1; 1 0 0 0.5 0 0 0 0 0 0]'; "
+                              "geometryFromEdges(model, decsg(gd, 'R1-C1', char('R1', 'C1')')); generateMesh(model, 'Hmax', 0.1); ar = abs(area(model.Mesh) - (4 - pi/4)) < 1e-5, "
+                              "applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0); applyBoundaryCondition(model, 'dirichlet', 'Edge', 5:8, 'u', 1); "
+                              "specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 0); R = solvepde(model); "
+                              "mm = max(R.NodalSolution) <= 1 + 1e-9 && min(R.NodalSolution) >= -1e-9, "
+                              "f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); pdegplot(model, 'EdgeLabels', 'on'); subplot(1, 2, 2); "
+                              "pdeplot(model, 'XYData', R.NodalSolution, 'Contour', 'on'); "
+                              "sq = createpde; geometryFromEdges(sq, decsg([3; 4; 0; 1; 1; 0; 0; 0; 1; 1])); applyBoundaryCondition(sq, 'dirichlet', 'Edge', 1:4, 'u', 0); "
+                              "specifyCoefficients(sq, 'm', 0, 'd', 1, 'c', 1, 'a', 0, 'f', 0); generateMesh(sq, 'Hmax', 0.1); E = solvepdeeig(sq, [0 60]); "
+                              "ev = max(abs(E.Eigenvalues'/pi^2 - [2 5 5])) < 2e-3, setInitialConditions(sq, @(l) sin(pi*l.x).*sin(pi*l.y)); "
+                              "T = solvepde(sq, [0 0.05]); u = T.NodalSolution; p = sq.Mesh.Nodes; "
+                              "ht = max(abs(u(:, 2) - exp(-2*pi^2*0.05)*(sin(pi*p(1,:)).*sin(pi*p(2,:)))')) < 5e-3,")
+    check('the PDE toolbox in the page: the mesh\'s area, Laplace between the square and the circle, eigenvalues, heat decay',
+          all(f'{k} =\n\n  logical\n\n   1' in out for k in ('ar', 'mm', 'ev', 'ht')), True)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('the geometry with its edge labels and the solution with contours drawn', (await ink(page)) > 0.05, True)
+    await canvas_shot(page, 'pde15-1.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2055,6 +2079,7 @@ async def main():
         await image_additions(page)
         await problem_based(page)
         await toolbox_fillins(page)
+        await pde_toolbox(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

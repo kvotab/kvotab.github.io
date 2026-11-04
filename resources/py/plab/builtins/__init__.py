@@ -38,7 +38,7 @@ def bi(*names, ws=False, aw=False, nout=1, arr=True):
 
 MODULES = ['core', 'elmat', 'elfun', 'datafun', 'matfun', 'strfun', 'cellfun', 'funfun', 'optim', 'iofun', 'timefun', 'sparse', 'graphics', 'parallel',
            'statdesc', 'distributions', 'stattests', 'statplots', 'uifun', 'mapping', 'symmath', 'classfun', 'appfun',
-           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa', 'missingdata', 'dictionaries', 'signal', 'regression', 'curvefit', 'datafeatures', 'imageproc', 'hdf5', 'datafiles', 'tablestack', 'animation', 'devtools', 'charts', 'volumes', 'datamore', 'patterns', 'krylov', 'futures', 'audioobjs', 'importopts', 'graphs', 'pycall', 'unittests', 'odemore', 'mlunsup', 'mlmodels', 'statsmore', 'control', 'globalopt', 'wavelets', 'langmore', 'numerics', 'plotmore', 'geomclasses', 'polyshapes', 'netcdf', 'imagemore', 'imgeom', 'optimprob', 'signalmore', 'fillins', 'controlmore', 'statsfill', 'wavemore', 'splinefit']
+           'validators', 'datatools', 'geometry', 'media', 'moreplots', 'gallerymat', 'timetypes', 'categoricals', 'tables', 'imagecolor', 'gsa', 'missingdata', 'dictionaries', 'signal', 'regression', 'curvefit', 'datafeatures', 'imageproc', 'hdf5', 'datafiles', 'tablestack', 'animation', 'devtools', 'charts', 'volumes', 'datamore', 'patterns', 'krylov', 'futures', 'audioobjs', 'importopts', 'graphs', 'pycall', 'unittests', 'odemore', 'mlunsup', 'mlmodels', 'statsmore', 'control', 'globalopt', 'wavelets', 'langmore', 'numerics', 'plotmore', 'geomclasses', 'polyshapes', 'netcdf', 'imagemore', 'imgeom', 'optimprob', 'signalmore', 'fillins', 'controlmore', 'statsfill', 'wavemore', 'splinefit', 'pdegeom', 'pdefem']
 
 
 def load(target):
