@@ -2212,10 +2212,13 @@ expand: Multiply out products and powers, and expand functions of sums.
 collect: Collect the terms of a symbolic expression by powers of a variable.
     s = collect(e)
     s = collect(e, x)
-combine: Combine terms with the same function: powers, logs, sin and cos, ...
+combine: Combine terms with the same function: powers, logs, sin and cos, ...; or datastores read together.
     s = combine(e)
     s = combine(e, target)
+    dsnew = combine(ds1, ds2, ...)
+    dsnew = combine(ds1, ds2, ..., 'ReadOrder', 'sequential')
     * target is 'powers' (the default), 'exp', 'log', 'sqrt', 'sincos', 'sinhcosh', 'gamma' or 'atan'.
+    * Datastores combined read one block from each and join them side by side (tables as one table, other data each in a cell); 'sequential' reads them one after another.
 horner: A polynomial in Horner's nested form.
     s = horner(p)
     s = horner(p, x)
@@ -3966,6 +3969,12 @@ fcontour: Contours of a function of two variables.
     fcontour(f, [xmin xmax ymin ymax])
 ezcontour: Contours of a function of two variables (older; fcontour is preferred).
     ezcontour(f)
+    ezcontour(f, [xmin xmax ymin ymax])
+    ezcontour(f, [xmin xmax ymin ymax], n)
+    * f is text such as 'x*exp(-x^2 - y^2)' (its variables in alphabetical order) or a function handle; over -2*pi to 2*pi on a 60-by-60 grid unless given, titled with the function.
+ezcontourf: Filled contours of a function of two variables (older; fcontour is preferred).
+    ezcontourf(f)
+    ezcontourf(f, [xmin xmax ymin ymax], n)
 surf: A surface of coloured faces.
     surf(Z)
     surf(X, Y, Z)
@@ -3997,8 +4006,19 @@ fmesh: A mesh of a function of two variables.
     fmesh(f)
 ezsurf: A surface of a function of two variables (older; fsurf is preferred).
     ezsurf(f)
+    ezsurf(f, [xmin xmax ymin ymax])
+    ezsurf(f, [xmin xmax ymin ymax], n)
+    h = ezsurf(...)
+    * f is text such as 'sin(x)*cos(y)' (its variables in alphabetical order) or a function handle; over -2*pi to 2*pi on a 60-by-60 grid unless given, titled with the function.
+ezsurfc: A surface of a function of two variables with contours under it (older; fsurf is preferred).
+    ezsurfc(f)
+    ezsurfc(f, [xmin xmax ymin ymax], n)
 ezmesh: A mesh of a function of two variables (older; fmesh is preferred).
     ezmesh(f)
+    ezmesh(f, [xmin xmax ymin ymax], n)
+ezmeshc: A mesh of a function of two variables with contours under it (older; fmesh is preferred).
+    ezmeshc(f)
+    ezmeshc(f, [xmin xmax ymin ymax], n)
 image: Show an image: a matrix of colour indices, or an m-by-n-by-3 array of colours.
     image(C)
     image(x, y, C)
@@ -5530,14 +5550,21 @@ fit: A curve fitted to data.
     f = fit(x, y, 'smoothingspline', 'SmoothingParam', p)
     f = fit(x, y, fitType, opts)
     * fitType is a library model (poly1 to poly9, exp1, exp2, power1, power2, gauss1 to gauss8, sin1 to sin8, fourier1 to fourier8, rat01 to rat55, weibull), an interpolant (linearinterp, nearestinterp, pchipinterp, cubicinterp), smoothingspline, an expression in x, or a fittype. A model linear in its coefficients is solved directly; others start from the model's own guess (or StartPoint) and are fitted by nonlinear least squares within Lower and Upper. Robust is 'Off', 'Bisquare' (or 'On') or 'LAR'.
-    * f(x) and feval(f, x) evaluate the fit, plot(f, x, y) draws it with its data, and f.a reads a coefficient. gof holds sse, rsquare, dfe, adjrsquare and rmse; output the residuals, the Jacobian and how the fit went. Surfaces (fit([x, y], z, ...)) are not fitted here.
+    sf = fit([x y], z, fitType)
+    sf = fit(x, y, z, fitType)
+    sf = fit([x y], z, 'lowess', 'Span', 0.3)
+    * f(x) and feval(f, x) evaluate the fit, plot(f, x, y) draws it with its data, and f.a reads a coefficient. gof holds sse, rsquare, dfe, adjrsquare and rmse; output the residuals, the Jacobian and how the fit went.
+    * Points [x y] (two columns) and z fit a surface, an sfit: poly00 to poly55, lowess, loess, linearinterp, nearestinterp, cubicinterp, biharmonicinterp, thinplateinterp, or an expression in x and y. 'Normalize', 'on' centres and scales x and y first; 'Span' is the fraction of the points lowess and loess use (0.25).
 fittype: A model to fit, from the library, an expression, terms or a function.
     ft = fittype(libraryName)
     ft = fittype('a*exp(-b*x) + c')
     ft = fittype('a*u + b', 'independent', 'u', 'coefficients', {'a', 'b'})
     ft = fittype({'x', 'sin(x)', '1'})
     ft = fittype(@(a, b, x) a*exp(b*x))
+    ft = fittype('a*x^2 + b*y', 'independent', {'x', 'y'}, 'dependent', 'z')
+    ft = fittype(@(a, b, x, y) a*x + b*y)
     * The coefficients of an expression are its names other than the independent variable and the functions it calls. A cell of terms makes a linear model with a coefficient for each (a, b, c ...). ft(a, b, ..., x) evaluates the model.
+    * Two independent variables, a surface library name (poly23, lowess ...) or an anonymous function ending in x and y make a model of a surface; ft(a, b, ..., x, y) evaluates it.
 fitoptions: Options for fit, as a struct.
     opts = fitoptions('Method', 'NonlinearLeastSquares', 'StartPoint', s, 'Lower', lb, 'Upper', ub)
     opts = fitoptions(fitType)
@@ -5549,6 +5576,7 @@ confint: Confidence bounds of a fit's coefficients.
 predint: Prediction bounds of a fit.
     ci = predint(f, x)
     [ci, y] = predint(f, x, level, intopt, simopt)
+    ci = predint(sf, [x y])
     * intopt is 'observation' (a new observation, the default) or 'functional' (the curve); simopt 'off' (each x alone, the default) or 'on' (all at once).
 coeffvalues: A fit's coefficients, as a row.
     c = coeffvalues(f)
@@ -5559,6 +5587,8 @@ numcoeffs: How many coefficients a fit or fittype has.
 differentiate: The derivatives of a fit.
     fx = differentiate(f, x)
     [fx, fxx] = differentiate(f, x)
+    [fx, fy] = differentiate(sf, x, y)
+    [fx, fy, fxx, fxy, fyy] = differentiate(sf, [x y])
 integrate: The integral of a fit.
     y = integrate(f, x, x0)
     * From x0 to each x.
@@ -6233,12 +6263,14 @@ hasFrame: Whether a VideoReader has a frame left.
 readFrame: The next frame of a VideoReader.
     frame = readFrame(v)
     * An m-by-n-by-3 uint8 image; CurrentTime moves on by a frame.
-read: Frames of a VideoReader.
+read: Frames of a VideoReader; the next block of a datastore.
     frames = read(v)
     frames = read(v, k)
     frames = read(v, [first last])
     frames = read(v, Inf)
+    [data, info] = read(ds)
     * Several frames are stacked in the fourth dimension; Inf is the last frame.
+    * A datastore gives its next ReadSize rows (or a file, an image, a slice of an array) and info, a struct of where they came from.
 
 # ---- tools of the desktop --------------------------------------------------------------------------------------------------------------
 dbstop: A breakpoint set from a command.
@@ -8901,8 +8933,9 @@ qrandstream: A stream of quasi-random points.
 qrand: The next points of a quasi-random stream.
     x = qrand(q)
     x = qrand(q, n)
-reset: A quasi-random stream started over.
+reset: A quasi-random stream or a datastore started over.
     reset(q)
+    reset(ds)
 # ---- fill-ins: wavelets ------------------------------------------------------------------------------------------------------------
 cwtfilterbank: The continuous wavelet transform's filters as an object.
     fb = cwtfilterbank
@@ -9077,6 +9110,247 @@ findElements: The elements of a mesh in a region.
 meshToPet: A mesh in the point, edge and triangle form.
     [p, e, t] = meshToPet(mesh)
     * p the nodes (2-by-n), e the boundary pieces (start and end node, parameters, edge, faces), t the elements' nodes and then their face.
+# ---- datastores, mapreduce and tall arrays --------------------------------------------------------------------------------
+datastore: A datastore of files of the kind their extensions call for.
+    ds = datastore(location)
+    ds = datastore(location, 'Type', type)
+    ds = datastore(location, 'IncludeSubfolders', true, 'FileExtensions', {'.csv', '.txt'})
+    * location is a file, a folder, wildcards ('data/*.csv') or a list of them. type is 'tabulartext', 'spreadsheet', 'image', 'file', 'parquet' or 'keyvalue' (MAT-files of Key and Value, as mapreduce writes them).
+    * A datastore is a handle: read(ds) moves it on. read, readall, hasdata, reset, preview, progress, partition, shuffle, subset, transform, combine and writeall work on every kind.
+tabularTextDatastore: A datastore of delimited text files, read as tables.
+    ds = tabularTextDatastore(location)
+    ds = tabularTextDatastore(location, 'Delimiter', ';', 'NumHeaderLines', 2, 'ReadVariableNames', false, 'TextType', 'string')
+    ds = tabularTextDatastore(location, 'SelectedVariableNames', {'a', 'c'}, 'ReadSize', 1000, 'OutputType', 'timetable')
+    * The variable names come from the first file; each file is read as readtable reads it, ReadSize rows at a time (20000) or 'file'.
+spreadsheetDatastore: A datastore of spreadsheets (.xlsx), read as tables.
+    ds = spreadsheetDatastore(location)
+    ds = spreadsheetDatastore(location, 'Sheets', {'Data', 'More'}, 'ReadSize', 'sheet')
+    * ReadSize is 'file' (every sheet named, one under the other; the default), 'sheet' or a number of rows.
+imageDatastore: A datastore of images, read one at a time.
+    imds = imageDatastore(location)
+    imds = imageDatastore(location, 'IncludeSubfolders', true, 'LabelSource', 'foldernames')
+    imds = imageDatastore(location, 'Labels', labels, 'ReadSize', 4, 'ReadFcn', @myread)
+    * 'foldernames' labels each image (a categorical) by its folder. A ReadSize above 1 reads a cell of images; readall gives a cell of all of them.
+fileDatastore: A datastore of any files, each read by a function.
+    fds = fileDatastore(location, 'ReadFcn', @load)
+    fds = fileDatastore(location, 'ReadFcn', @f, 'UniformRead', true)
+    fds = fileDatastore(location, 'ReadFcn', @f, 'ReadMode', 'partialfile')
+    fds = fileDatastore(location, 'ReadMode', 'bytes', 'BlockSize', 1024, 'ReadFcn', @f)
+    * ReadFcn takes a file name and gives its data; 'partialfile' calls [data, state, done] = f(filename, state) until done; 'bytes' reads BlockSize bytes at a time. readall gives a cell, or the data joined when UniformRead is true.
+parquetDatastore: A datastore of Parquet files, read as tables.
+    pds = parquetDatastore(location)
+    pds = parquetDatastore(location, 'SelectedVariableNames', names, 'ReadSize', 10000)
+arrayDatastore: A datastore of an array in memory, read a slice at a time.
+    ads = arrayDatastore(A)
+    ads = arrayDatastore(A, 'ReadSize', n, 'IterationDimension', d, 'OutputType', 'same')
+    * Each read gives ReadSize slices along dimension d (1): in a cell, one slice a cell, or with 'same' as an array.
+readall: Everything a datastore holds, from the start.
+    data = readall(ds)
+    * Tables joined one under another; images and files of a fileDatastore in a cell.
+hasdata: Whether a datastore has more to read.
+    tf = hasdata(ds)
+preview: The first block of a datastore, without moving it.
+    data = preview(ds)
+    * Eight rows for a table.
+progress: How much of a datastore has been read.
+    p = progress(ds)
+    * From 0 to 1.
+numpartitions: How many parts a datastore splits into.
+    n = numpartitions(ds)
+    n = numpartitions(ds, pool)
+    * One for each file (each row for an arrayDatastore); no more than the pool's workers.
+partition: One part of a datastore.
+    subds = partition(ds, n, k)
+    subds = partition(ds, 'Files', k)
+    subds = partition(ds, 'Files', filename)
+    * The k-th of n parts, by files (or rows of an arrayDatastore).
+shuffle: A datastore with its files (or slices) in random order.
+    dsnew = shuffle(ds)
+subset: A datastore of some of the files (or slices).
+    dsnew = subset(ds, indices)
+transform: A datastore whose reads go through a function.
+    dsnew = transform(ds, @fcn)
+    dsnew = transform(ds1, ds2, @fcn)
+    dsnew = transform(ds, @fcn, 'IncludeInfo', true)
+    * fcn takes what read gives (one input for each datastore); with IncludeInfo it takes and gives the info too: [data, info] = fcn(data, info).
+isPartitionable: Whether a datastore can be partitioned.
+    tf = isPartitionable(ds)
+isShuffleable: Whether a datastore can be shuffled.
+    tf = isShuffleable(ds)
+countEachLabel: How many images each label has.
+    tbl = countEachLabel(imds)
+    * A table of Label and Count.
+splitEachLabel: An image datastore split label by label.
+    [ds1, ds2] = splitEachLabel(imds, p)
+    [ds1, ds2, ds3] = splitEachLabel(imds, p1, p2, 'randomized')
+    * A proportion below 1 of each label's images (rounded), or a number of them, for each output; the last output takes the rest. In order unless 'randomized'.
+writeall: A datastore's files written to a folder.
+    writeall(ds, folder)
+    writeall(ds, folder, 'OutputFormat', 'csv', 'FilenamePrefix', 'new_', 'FilenameSuffix', '_v2', 'FolderLayout', 'flatten')
+    * Each file read and written again (tables by writetable, images by imwrite, other data to a MAT-file); the folders under the files' common folder are kept unless 'flatten'.
+mapreduce: Map and reduce functions run over a datastore.
+    outds = mapreduce(ds, @mapfun, @reducefun)
+    outds = mapreduce(ds, @mapfun, @reducefun, 'OutputFolder', folder, 'Display', 'off')
+    * mapfun(data, info, intermKVStore) is called for each block read and adds keys and values with add and addmulti; reducefun(key, valueIterator, outKVStore) is called for each key, reading the values with hasnext and getnext.
+    * outds is a KeyValueDatastore; readall(outds) gives a table of Key and Value. With 'OutputFolder' the results are also saved there as results_1.mat.
+add: A key and a value added to mapreduce's key-value store.
+    add(store, key, value)
+    * A key is text or one real number.
+addmulti: Keys and values added to mapreduce's key-value store.
+    addmulti(store, keys, values)
+    * keys a cell (or numbers), values a cell, one for each key.
+hasnext: Whether a reduce function's value iterator has more values.
+    tf = hasnext(valueIterator)
+getnext: The next value of a reduce function's value iterator.
+    value = getnext(valueIterator)
+tall: A tall array: computations on it wait until gather.
+    t = tall(A)
+    t = tall(ds)
+    * Operators, indexing (t(k), t.Var, t{:, 'x'}) and the common functions of numbers, tables, text, dates and categories give tall arrays that remember what to compute; gather computes it. Plots of tall arrays gather them first.
+gather: The values of tall arrays, computed.
+    A = gather(t)
+    [A, B] = gather(t1, t2)
+    * Each step is computed once; a value that is not tall is given back as it is.
+istall: Whether a value is a tall array.
+    tf = istall(A)
+classUnderlying: The class of the values in a tall array.
+    c = classUnderlying(t)
+isaUnderlying: Whether a tall array holds values of a class.
+    tf = isaUnderlying(t, classname)
+    * classname may also be 'numeric', 'float' or 'integer'.
+
+# ---- Parquet and FITS files ------------------------------------------------------------------------------------------------
+writetimetable: Write a timetable to a text file or spreadsheet.
+    writetimetable(TT)
+    writetimetable(TT, filename)
+    writetimetable(TT, filename, 'Name', value)
+    * As writetable writes a table, the row times the first column; 'timetable.txt' unless named.
+parquetread: A Parquet file as a table.
+    T = parquetread(filename)
+    T = parquetread(filename, 'SelectedVariableNames', {'a', 'b'})
+    TT = parquetread(filename, 'OutputType', 'timetable', 'RowTimes', 'Time')
+    * Numbers keep their class (columns with missing integers become double with NaN), text becomes a string array, times datetime and duration, dictionaries categorical, lists and binary data cells.
+parquetwrite: A table or timetable written as a Parquet file.
+    parquetwrite(filename, T)
+    parquetwrite(filename, T, 'VariableCompression', 'gzip', 'RowGroupHeights', 10000)
+    * Each variable is one column; compression 'snappy' unless given ('gzip', 'brotli', 'lz4', 'zstd', 'uncompressed').
+parquetinfo: What a Parquet file holds.
+    info = parquetinfo(filename)
+    * The file's size, row groups, variable names and classes, compression and encodings.
+fitsread: The data of a FITS file.
+    data = fitsread(filename)
+    data = fitsread(filename, 'image', k)
+    data = fitsread(filename, 'binarytable', k)
+    data = fitsread(filename, 'asciitable')
+    data = fitsread(filename, 'raw')
+    data = fitsread(filename, 'binarytable', 'TableColumns', [1 3], 'TableRows', 1:10)
+    data = fitsread(filename, 'PixelRegion', {rows, cols})
+    * Images are NAXIS2 rows by NAXIS1 columns (then the other axes), scaled by BSCALE and BZERO to double with BLANK as NaN, unless 'raw'. A table is a cell array of its columns.
+fitsinfo: The parts of a FITS file and their headers.
+    info = fitsinfo(filename)
+    * Contents lists the parts; PrimaryData, Image, BinaryTable and AsciiTable describe them, each with its Keywords (keyword, value, comment).
+fitsdisp: The headers of a FITS file.
+    fitsdisp(filename)
+    fitsdisp(filename, 'Index', k, 'Mode', 'min')
+    * Mode 'standard' (the default), 'min' (the axes only) or 'full'.
+fitswrite: An array written as a FITS image.
+    fitswrite(A, filename)
+    fitswrite(A, filename, 'WriteMode', 'append')
+    * The class is kept: int8, uint16, uint32 and uint64 are stored with BZERO, logical as uint8. 'append' adds an image extension to a file.
+
+# ---- the desktop and the engine --------------------------------------------------------------------------------------------
+commandwindow: Show the Command Window and give it the keyboard.
+    commandwindow
+commandhistory: Show the Command History.
+    commandhistory
+workspace: Show the Workspace.
+    workspace
+filebrowser: Show the Current Folder.
+    filebrowser
+openvar: Open a variable in the Variables view.
+    openvar(name)
+    * name is a variable's name, or a part of one such as 's.data' or 'c{2}'.
+matlabRelease: Which release this is.
+    r = matlabRelease
+    * PyLAB is no release of MATLAB: Release is "PyLAB", Stage "release", Update 0, Date not known. isMATLABReleaseOlderThan compares releases.
+maxNumCompThreads: How many threads computations use.
+    n = maxNumCompThreads
+    old = maxNumCompThreads(n)
+    old = maxNumCompThreads('automatic')
+    * In the page Python runs in one thread, so 1.
+memory: The memory the engine uses and can have.
+    memory
+    [userview, systemview] = memory
+    * In the page this is the WebAssembly memory of its Python, which grows as it needs up to 4 GB.
+license: Whether the engine has a toolbox's functions.
+    tf = license('test', feature)
+    [tf, msg] = license('checkout', feature)
+    license('inuse')
+    s = license
+    * feature is a toolbox's feature name, such as 'Statistics_Toolbox', 'Optimization_Toolbox' or 'Signal_Toolbox' (any case). PyLAB has no licence number.
+
+# ---- plot fill-ins ---------------------------------------------------------------------------------------------------------
+ezplot3: A curve in 3-D from three functions of t (older; fplot3 is preferred).
+    ezplot3(x, y, z)
+    ezplot3(x, y, z, [tmin tmax])
+    ezplot3(..., 'animate')
+    * x, y and z are text such as 'cos(t)' or function handles; t from 0 to 2*pi unless given. 'animate' marks the curve's end.
+ezpolar: A curve r = f(theta) in polar axes (older; polarplot is preferred).
+    ezpolar(f)
+    ezpolar(f, [a b])
+    * theta from 0 to 2*pi unless given; f is text such as '1 + cos(t)' or a function handle.
+camlookat: Point the camera at objects.
+    camlookat(h)
+    camlookat(ax)
+    camlookat
+    * The objects' middle becomes CameraTarget and the view angle closes in until they fill the view (up to 20 times nearer); axes put the camera back as it was.
+streamribbon: Ribbons along streamlines, turning as the flow spins.
+    streamribbon(X, Y, Z, U, V, W, startx, starty, startz)
+    streamribbon(U, V, W, startx, starty, startz)
+    streamribbon(verts, X, Y, Z, cav, speed)
+    streamribbon(verts, cav, speed)
+    streamribbon(verts, twistangle)
+    streamribbon(..., width)
+    h = streamribbon(...)
+    * The twist is the spin about the flow (half the curl along it) over the speed, summed along the line; width is a grid cell unless given.
+specular: The specular reflectance of a surface.
+    R = specular(Nx, Ny, Nz, S, V)
+    R = specular(Nx, Ny, Nz, S, V, spread)
+    * S is the direction to the light and V to the viewer, as [x y z] or [azimuth elevation]; the mirrored light's cosine with V, to the power spread (10).
+diffuse: The diffuse reflectance of a surface.
+    R = diffuse(Nx, Ny, Nz, S)
+    * The cosine of the angle between each normal and the direction S to the light, 0 behind it.
+orient: The paper orientation for printing.
+    orient landscape
+    orient(fig, 'portrait')
+    orient tall
+    o = orient(fig)
+    * 'landscape' turns PaperSize; 'tall' is portrait with the figure filling the page within 0.25 inch.
+copygraphics: Copy a figure to the clipboard as a picture.
+    copygraphics(fig)
+    copygraphics(ax, 'Resolution', 300)
+    * The whole figure of the axes or chart given is copied.
+
+# ---- classes, copies, surface fits -----------------------------------------------------------------------------------------
+events: The events of a class.
+    events(obj)
+    events('ClassName')
+    names = events(obj)
+    * A handle class also has ObjectBeingDestroyed, which delete notifies before the class's delete method runs.
+copy: A copy of a handle object that is copyable, or of a datastore.
+    b = copy(a)
+    * The class must derive from matlab.mixin.Copyable. copy calls the class's copyElement, which unless overridden makes a shallow copy: the same property values, handles in them shared, and NonCopyable properties at their defaults. An override starts from copyElement@matlab.mixin.Copyable(obj).
+sfit: A surface fit from a fittype and its coefficients.
+    sf = sfit(fittype, coef1, coef2, ...)
+    * fit([x y], z, ...) makes the fits from data; sf(x, y), feval(sf, x, y) and sf([x y]) evaluate one, plot(sf, [x y], z) draws it with the data (Style 'Surface', 'Contour', 'Residuals', 'PredFunc' or 'PredObs').
+cfit: A curve fit from a fittype and its coefficients.
+    cf = cfit(fittype, coef1, coef2, ...)
+excludedata: The points to leave out of a fit.
+    tf = excludedata(x, y, 'box', [xmin xmax ymin ymax])
+    tf = excludedata(x, y, 'domain', [xmin xmax])
+    tf = excludedata(x, y, 'range', [ymin ymax])
+    tf = excludedata(x, y, 'indices', idx)
+    * True outside the box, domain or range, or at the indices: fit(x, y, type, 'Exclude', tf).
 '''
 
 

@@ -587,6 +587,8 @@ simplify, simplifyFraction:
     Python: symmath.py. sympy.simplify, after expand_log, powdenest and logcombine with force=True for 'IgnoreAnalyticConstraints'; simplifyFraction is sympy.cancel of sympy.together. simplify of a graph: graphs.py, the first edge of each pair kept with the weights combined.
 expand, collect, combine, horner:
     Python: symmath.py. sympy.expand with trig=True (multinomial and mul alone for 'ArithmeticOnly'); sympy.collect of the expanded expression; combine by sympy.powsimp, sympy.logcombine, sympy.gammasimp or the product-to-sum rule TR8 of sympy.simplify.fu for 'sincos'; sympy.horner.
+
+    combine of datastores: datastores.py. A CombinedDatastore of copies of the datastores, each started over; a read reads each and joins the results (tables as one table by the table concatenation, anything else in cells).
 rewrite:
     Python: symmath.py. SymPy's rewrite in terms of the target function.
 partfrac, numden, coeffs:
@@ -1487,7 +1489,7 @@ peaks:
     Python: graphics.py. 3*(1 - x).^2.*exp(-x.^2 - (y + 1).^2) - 10*(x/5 - x.^3 - y.^5).*exp(-x.^2 - y.^2) - 1/3*exp(-(x + 1).^2 - y.^2) on a 49-by-49 grid over [-3, 3] (or the size or points given); without outputs, its surface.
 sphere, ellipsoid, cylinder:
     Python: graphics.py. Coordinates by NumPy over n + 1 angles (n = 20 unless given): the sphere's cos(phi).*cos(theta), cos(phi).*sin(theta), sin(phi), stretched and moved for an ellipsoid; the cylinder's circles of the radii given at heights evenly spaced from 0 to 1. Without outputs, the surface with equal axes.
-fsurf, ezsurf, fmesh, ezmesh, fcontour, ezcontour:
+fsurf, fmesh, fcontour:
     Python: graphics.py. The function evaluated on a grid of 35 by 35 points (60 by 60 for contours) over the interval ([-5 5] in each direction unless given), with whole arrays, or point by point when that fails; then drawn as surf or contour draws it.
 saveas, print, exportgraphics:
     Python: graphics.py, with the page's pylab-figure.js and pylab-export.js. The kind comes from the file's extension, or else from print's -d device or saveas's format. The page draws the figure on a canvas, at twice its size on screen unless a resolution is given, for .png and .jpg (the canvas's own encoders) and for .bmp and .tif (its pixels written uncompressed). For .svg, .pdf and .eps the figure is drawn by the same code into a recorder instead: an object with the canvas's drawing calls that keeps the paths, text, pictures and gradients drawn instead of painting pixels. They are written as SVG, as a PDF page (text in the standard Helvetica, Courier and Symbol fonts, images with their transparency, gradients as axial shadings) or as Encapsulated PostScript of LanguageLevel 3 (translucent colours mixed with white). A .fig name writes a figure file; print -dmeta with no file copies the picture to the clipboard.
@@ -1916,18 +1918,26 @@ randg:
 fit:
     Python: curvefit.py. A model linear in its coefficients (poly, a cell of terms) is solved by numpy.linalg.lstsq on the weighted rows; others by scipy.optimize.least_squares with the trust region reflective method (bounds from Lower and Upper, scaled by the Jacobian, tolerances 1e-8 or TolFun, MaxFunEvals 600), starting from StartPoint or a start worked out from the data: exp1 from a line through log|y|, power from a line in log-log, gauss from the largest peaks and the widths above half their heights (each taken off before the next), sin and fourier from the strongest frequencies in the FFT of the data resampled evenly, rat from least squares of y times the denominator, weibull from a = 1, b = 2. Without a start, every coefficient starts at 1, with a warning. Robust 'Bisquare' and 'LAR' reweight the fit as robustfit does (bisquare weights of the leverage-adjusted residuals over the median absolute deviation, or 1/|r|) until the coefficients stop moving. confint and predint use the covariance from the residual variance and the Jacobian. Interpolants are numpy.interp, scipy.interpolate.interp1d ('nearest'), PchipInterpolator and CubicSpline (not-a-knot).
     smoothingspline: PyLAB's own: the Reinsch form (Green and Silverman) of the spline minimizing p*sum(w r^2) + (1 - p)*integral(f''^2), solved with a banded Cholesky factor (scipy.linalg.cholesky_banded), then the natural cubic spline through the fitted values. Without SmoothingParam, p is chosen by generalized cross-validation: n*sum(w r^2)/trace(I - A)^2, with the trace from the band of the inverse (Hutchinson and de Hoog), over a grid of 31 values of lambda = (1 - p)/p and refined around the best; fits with less than one residual degree of freedom are left out. With unit weights this is SciPy's make_smoothing_spline choice.
+
+    Surfaces (fit([x y], z, ...)): surfacefit.py. polyij is linear least squares on the columns x^a*y^b (a <= i, b <= j, a + b <= max(i, j)), and a model written in x and y is fitted by the same scipy.optimize.least_squares as a curve, through a model of the points' numbers. lowess and loess are PyLAB's own local regression: at each point a plane (or a quadratic) fitted by weighted least squares to the Span nearest points (a fraction of them, 0.25 unless given), distances measured in each variable's range, tricube weights; robust fits add five passes of bisquare weights. Interpolants: scipy.interpolate.LinearNDInterpolator, NearestNDInterpolator (NaN outside the points' convex hull) and CloughTocher2DInterpolator (cubicinterp); biharmonicinterp is Sandwell's biharmonic spline, the sum of w_k |r - r_k|^2 (ln|r - r_k| - 1) through the points solved by numpy.linalg.solve; thinplateinterp is scipy.interpolate.RBFInterpolator with the thin-plate kernel and a linear part.
 fittype:
     Python: curvefit.py. A library name gives the model's formula, coefficients and start; an expression is made elementwise (* / ^ as .* ./ .^) and compiled as an anonymous function of its coefficients and x; a cell of terms becomes a basis of columns for a linear model.
+
+    A model of two variables (two independent variables, a surface library name, or an anonymous function ending in x and y) is a fittype of surfacefit.py.
 fitoptions:
     Python: curvefit.py. A struct of Method, Robust, StartPoint, Lower and Upper (Method from the model's kind), with the options given; fit reads its fields as it reads options given by name.
 confint:
     Python: curvefit.py. Each coefficient plus and minus t((1 + level)/2, dfe) times its standard error.
 predint:
     Python: curvefit.py. The Jacobian of the model in the coefficients at x (the basis for a linear model, forward differences otherwise), the variance J*Cov*J' (plus the residual variance for 'observation'), and t((1 + level)/2, dfe), or for simopt 'on' the square root of k*F(level, k, dfe) with k the number of coefficients (one more for 'observation').
+
+    For a surface: surfacefit.py, the same with the Jacobian at the points [x y].
 coeffvalues, coeffnames, numcoeffs:
     Python: curvefit.py. The fit's coefficients and their names as the model has them.
 differentiate:
     Python: curvefit.py. numpy.polyder for a polynomial, the spline's own derivatives for an interpolant or smoothing spline, and otherwise central differences extrapolated from steps of 1e-3*max(|x|, 1) and half that.
+
+    For a surface: surfacefit.py. A polynomial surface differentiated term by term (by the chain rule through Normalize); others by central differences in x, in y and across both.
 integrate:
     Python: curvefit.py. numpy.polyint for a polynomial, the spline's own integral for an interpolant or smoothing spline, and otherwise scipy.integrate.quad.
 smooth:
@@ -2096,6 +2106,8 @@ VideoWriter, writeVideo:
     Python: animation.py. AVI files written by PyLAB itself (RIFF: hdrl with avih, strh and strf, a movi list, an idx1 index), each frame a JPEG from Pillow at Quality (Motion JPEG), BGR rows bottom-up padded to 4 bytes (uncompressed), or 8-bit gray with a gray palette. The header is written again at close with the frame count.
 VideoReader, hasFrame, readFrame, read:
     Python: animation.py. The AVI file's chunks are read for the first video stream's size, rate and frames (00dc or 00db, inside rec lists too), each frame decoded when asked (Pillow for JPEG, the rows for uncompressed and 8-bit); animated GIFs through Pillow, the frame rate from the first frame's duration.
+
+    read of a datastore: datastores.py, which gives the datastore the call (each kind of datastore has its own read).
 dbstop, dbclear, dbstatus:
     Python: devtools.py and worker_api.py. The breakpoints are the same the Editor's margin sets: the file found on the path, the line moved to the next line where a statement begins (from the parsed file), the page told so that the Editor shows them. 'if error': when an error ends a command, the run stops at the innermost function of the program where it was raised, with its workspace and the K>> prompt, after the error is shown.
 dbstack:
@@ -2179,7 +2191,7 @@ pca, pcacov, ppca:
 factoran, rotatefactors:
     Python: mlunsup.py. The likelihood as a function of the specific variances (the loadings from the eigenvectors of the scaled correlations, Joreskog's method), minimized by scipy.optimize.minimize (L-BFGS-B, psi in [Delta, 1]); orthomax rotations by the SVD iteration, promax by a least-squares fit to the powered varimax loadings.
 cmdscale, mdscale, tsne, procrustes, canoncorr, barttest, nnmf, corrcov:
-    Python: mlunsup.py. cmdscale by numpy.linalg.eigh of the doubly centred squared distances; mdscale by L-BFGS on each criterion with its gradient (nonmetric: alternating with isotonic regression by pool-adjacent-violators); exact t-SNE (van der Maaten's gradient descent with momentum and gains); procrustes and canoncorr by the SVD (canoncorr of the QR factors); barttest from the covariance's eigenvalues; corrcov divides by sigma*sigma', cuts round-off past 1 back to 1 and puts sign(diag) on the diagonal; nnmf by alternating nonnegative least squares or Lee and Seung's multiplicative updates.
+    Python: mlunsup.py. cmdscale by numpy.linalg.eigh of the doubly centred squared distances; mdscale by L-BFGS on each criterion with its gradient (nonmetric: alternating with isotonic regression by pool-adjacent-violators); exact t-SNE (van der Maaten's gradient descent with momentum and gains); procrustes and canoncorr by the SVD (canoncorr of the QR factors); barttest from the covariance's eigenvalues; corrcov refuses a matrix that is not symmetric (NaN never is: numpy.allclose) or has an eigenvalue below -10*eps*n*max|eigenvalue| (numpy.linalg.eigvalsh), then divides by sigma*sigma', cuts round-off past 1 back to 1 and puts sign(diag) on the diagonal; nnmf by alternating nonnegative least squares or Lee and Seung's multiplicative updates.
 fitctree, fitrtree, view:
     Python: learners.py and mlmodels.py. PyLAB's own CART: each candidate split of each variable scored at once from cumulative class counts (or sums and sums of squares), the nodes split breadth first.
 fitcknn, fitcdiscr, fitcnb:
@@ -2517,6 +2529,8 @@ cordexch, daugment, dcovary:
     Python: statsfill.py. Coordinate exchange in Python, each candidate design scored by numpy.linalg.slogdet of X'X (statsmore.py's model matrix).
 qrandstream, qrand, reset:
     Python: statsfill.py. The points of gsa.py's sobolset or haltonset (scipy.stats.qmc) read in order.
+
+    reset of a datastore: datastores.py, which sets the datastore back to its first file (or row).
 # ---- wavemore.py: wavelet fill-ins --------------------------------------------------------------------------------------------------------
 cwtfilterbank, wt, scales, centerFrequencies, centerPeriods, timeSpreads:
     Python: wavemore.py. wavelets.py's analytic wavelets and scales; wt is cwt's transform (numpy.fft); freqz and wavelets the filters in frequency and by numpy.fft.ifft.
@@ -2548,6 +2562,63 @@ solvepde, solvepdeeig:
     Python: pdefem.py. scipy.sparse.linalg.splu on the free unknowns (the Dirichlet ones moved to the right side); in time variable-step BDF2 with an error estimate from the polynomial through the last steps; eigenvalues by scipy.linalg.eigh, or scipy.sparse.linalg.eigsh shifted for many unknowns.
 interpolateSolution, evaluateGradient, pdeplot:
     Python: pdefem.py. The element holding each point found among the nearest centroids (scipy.spatial.cKDTree) by barycentric coordinates, the basis functions evaluated there; pdeplot draws a patch with interpolated colours, contour lines by marching triangles.
+# ---- datastores.py, tallarrays.py: datastores, mapreduce and tall arrays ----------------------------------------------------------
+datastore, tabularTextDatastore, spreadsheetDatastore, imageDatastore, fileDatastore, parquetDatastore, arrayDatastore:
+    Python: datastores.py. A datastore is a handle object holding its files (folders listed by os.walk, wildcards by glob, sorted by name) and its place in them. The kind comes from the files' extensions unless Type is given. A file is read whole by the reader the engine has for it (readtable for text and spreadsheets, imread for images, pyarrow for Parquet, ReadFcn for a fileDatastore), and served ReadSize rows at a time; the variable names and the delimiter come from the first file (the delimiter as readtable chooses it: the most frequent of , tab ; | in its first lines). An arrayDatastore indexes its array along IterationDimension.
+readall, hasdata, preview, progress, numpartitions, partition, shuffle, subset, isPartitionable, isShuffleable:
+    Python: datastores.py. readall reads a copy of the datastore from its start to its end and joins the blocks (tables by the table concatenation, arrays by vertcat); preview reads a copy's first block (eight rows of a table); progress is the files read, with the part of the current one, over the files. partition, shuffle and subset make a copy holding some of the files (or slices), shuffle in an order from the language's random number generator.
+transform:
+    Python: datastores.py. A TransformedDatastore of copies of the datastores, each started over; each read reads them and calls the function (with the info too when IncludeInfo is true). A transform of a transformed datastore adds the function after the others.
+countEachLabel, splitEachLabel:
+    Python: datastores.py. The labels counted per category; splitEachLabel takes each label's files in order (or in an order from the random number generator), a proportion rounded to the nearest whole number or a count for each output, the rest for the last.
+writeall:
+    Python: datastores.py. Each file read alone (a datastore of that file) and written again: tables by writetable, images by imwrite, other data by save as the variable data; the file's folder relative to the files' common folder (os.path.commonpath) is kept unless FolderLayout is 'flatten'.
+mapreduce, add, addmulti, hasnext, getnext:
+    Python: datastores.py. The datastore is read block by block and the map function called on each with a key-value store that keeps every key's values in the order added; then the reduce function is called for each key, in the order the keys were first added, with an iterator over its values. The keys and values the reduce function adds are the result, held in memory as a KeyValueDatastore; with OutputFolder they are also saved as Key and Value cells in results_1.mat, which datastore reads back as a keyvalue datastore. All of it runs in the engine's one Python, in turn.
+tall, gather, istall, classUnderlying, isaUnderlying:
+    Python: tallarrays.py. A tall array is a step not yet computed: a function, its inputs (tall arrays among them) and which of its outputs it is. Operators (ops.py's OBJ_OPS), indexing and the functions of numbers, tables, text, dates and categories given a tall input make such a step instead of computing; gather computes the steps it needs, each once, its inputs first, keeping each result for the steps that share it (marked shared, so a later change copies it). A tall array over a datastore reads it whole when gathered. Plots gather their tall inputs, then draw. The values are all held in memory: this is the language of tall arrays, not a way to compute with more data than fits.
+# ---- fileformats.py: Parquet and FITS files --------------------------------------------------------------------------------------------
+writetimetable:
+    Python: fileformats.py. writetable, which writes a timetable's row times as its first column.
+parquetread, parquetwrite, parquetinfo:
+    Python: fileformats.py, with pyarrow, which the page loads (with pandas, about 14 MB) the first time a Parquet file is read or written. pyarrow.parquet reads the file into an Arrow table, and each column becomes a variable: integers keep their class unless a value is missing (then double with NaN), floats double or single, booleans logical, text a string array (missing as <missing>), timestamps and dates datetime (with the time zone the column has), times and durations duration, dictionaries categorical (the dictionary's order kept), lists and binary data cells. parquetwrite turns each variable back into an Arrow column (datetime and duration in microseconds) and writes the file with pyarrow.parquet.write_table.
+fitsread, fitsinfo, fitsdisp, fitswrite:
+    Python: fileformats.py, PyLAB's own reader and writer of the FITS standard: 2880-byte blocks, headers of 80-character cards up to END, big-endian data (numpy.frombuffer with the BITPIX type). An image's axes are reversed into the language's order with NAXIS2 as rows and NAXIS1 as columns, then scaled by BSCALE and BZERO to double with BLANK as NaN unless 'raw'. Binary tables are read field by field from each row's bytes after TFORM (L, X, B, I, J, K, A, E, D, C, M, and the P and Q arrays in the heap), scaled by TSCAL and TZERO with TNULL as NaN; ASCII tables from TBCOL and TFORM. fitswrite writes the array's class as BITPIX (int8, uint16, uint32 and uint64 as the next signed type with BZERO) with NAXIS1 the columns.
+# ---- desktop.py: the desktop and the engine --------------------------------------------------------------------------------------------
+commandwindow, commandhistory, workspace, filebrowser, openvar:
+    Python: desktop.py. A message to the page (the runtime's event hook), which shows the panel, opening its side of the desktop if it is hidden; openvar opens the Variables view of the name, which must be a name or a part of one (s.data, c{2}).
+matlabRelease:
+    Python: desktop.py. A small object whose Release is "PyLAB": the engine is no release of MATLAB.
+maxNumCompThreads:
+    Python: desktop.py. The page's Python runs in one thread of the browser (WebAssembly), so 1 there; natively os.cpu_count. The number set is only remembered.
+memory:
+    Python: desktop.py. In the page, the size of Pyodide's WebAssembly memory (its HEAPU8) against 4 GB, the most a 32-bit WebAssembly memory can grow to; natively the process's largest resident size (resource.getrusage) against the physical memory.
+license:
+    Python: desktop.py. A table of toolbox feature names and whether PyLAB has their functions.
+# ---- plotfill.py: plot fill-ins ----------------------------------------------------------------------------------------------------------
+ezsurf, ezsurfc, ezmesh, ezmeshc, ezcontour, ezcontourf:
+    Python: plotfill.py. Text is made element-wise (* / ^ as .* ./ .^) and compiled as an anonymous function of its variables in alphabetical order (x and y when it names fewer). It is evaluated on an n-by-n grid (60) over -2*pi to 2*pi, with whole arrays or point by point when that fails, and drawn by surf, surfc, mesh, meshc, contour or contourf, titled with the function's text.
+ezplot3, ezpolar:
+    Python: plotfill.py. The functions of t compiled as ezsurf compiles them and evaluated at 300 points (400 for ezpolar) over the interval, then drawn by plot3 or polarplot.
+camlookat:
+    Python: plotfill.py. The objects' bounding box from their data (XData, YData, ZData or Vertices); CameraTarget its middle and CameraViewAngle 2*atan(tan(auto/2)/k), where k is the axes' diagonal over the box's, each measured in units of the axes' limits (at most 20).
+streamribbon:
+    Python: plotfill.py. The streamlines from stream3; the curl from numpy.gradient of the field, and the angular velocity along the flow cav = (curl . v)/(2|v|) interpolated along each line (scipy.interpolate.RegularGridInterpolator). The twist is the sum of cav/speed over the arc length (the trapezoid rule), turning a frame carried along the line by parallel transport; each ribbon is a surface of two rows, width/2 either side.
+specular, diffuse:
+    Python: plotfill.py. The normals and directions made unit length ([azimuth elevation] turned into a vector as view does); diffuse is max(0, N . S), specular max(0, R . V)^spread with R = 2(N . S)N - S the light mirrored in the surface, 0 where N . S <= 0. The formulas are PyLAB's own (Lambert and Phong).
+orient:
+    Python: plotfill.py. PaperOrientation set, PaperSize turned so that its longer side runs across for 'landscape'; 'tall' also sets PaperPosition to the page less 0.25 inch each side.
+copygraphics:
+    Python: plotfill.py and the page. The figure drawn as print -dmeta draws it, the picture copied to the clipboard by the page.
+# ---- classfun.py, surfacefit.py: events, copies and surface fits -----------------------------------------------------------------------
+events:
+    Python: classfun.py. The class's events, then its superclasses', and ObjectBeingDestroyed for a handle class (classdef.py notifies it when the object is deleted, before the class's delete method).
+copy:
+    Python: classfun.py. A new object of the class with the same property values (handles shared, values shared copy-on-write), NonCopyable properties at their defaults; the class's own copyElement when it has one, whose copyElement@matlab.mixin.Copyable(obj) makes that shallow copy. A datastore copies itself (datastores.py).
+sfit, cfit:
+    Python: surfacefit.py. A fit object of the fittype's model with the coefficients given and no data: no confidence bounds.
+excludedata:
+    Python: surfacefit.py. NumPy comparisons of x and y with the limits (or the indices set).
 """
 
 

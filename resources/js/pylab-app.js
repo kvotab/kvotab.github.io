@@ -500,6 +500,7 @@
       E.on('files', (m) => { if (!m.path || m.path === this.cwd || m.path.startsWith(this.cwd)) this.folder.refresh(); });
       E.on('edit', (m) => (m.path ? this.openFile(m.path) : this.newFile('script')));
       E.on('appdesigner', (m) => PL.designer && PL.designer.open(m.path || null));
+      E.on('desktop', (m) => this.desktopAsk(m));
       E.on('web', (m) => window.open(m.url, '_blank', 'noopener'));
       E.on('input', (m) => this.askInput(m));
       E.on('request', (m) => this.pageRequest(m.request));
@@ -1583,6 +1584,21 @@
       if (mod && (ev.key === 's' || ev.key === 'S')) { ev.preventDefault(); this.save(); return; }
       if (ev.key === 'F5' && this.debug) { ev.preventDefault(); this.dbg('continue'); return; }
       if (ev.key === 'F10' && this.debug) { ev.preventDefault(); this.dbg('step'); }
+    }
+
+    /* commandwindow, commandhistory, workspace, filebrowser and openvar: a
+       program shows a part of the desktop (a hidden side opened first). */
+    desktopAsk(m) {
+      const showSide = (which) => {
+        const hidden = this.isPhone() ? !this.main.classList.contains(which === 'left' ? 'show-files' : 'show-vars')
+          : this.main.classList.contains(which === 'left' ? 'no-left' : 'no-right');
+        if (hidden) this.togglePanel(which);
+      };
+      if (m.what === 'commandwindow') { this.activePanel(this.pCmd); this.cmd.focus(); }
+      else if (m.what === 'history') { showSide('right'); this.activePanel(this.pHist); }
+      else if (m.what === 'workspace') { showSide('right'); this.activePanel(this.pWs); }
+      else if (m.what === 'files') { showSide('left'); this.activePanel(this.pFolder); }
+      else if (m.what === 'openvar' && m.name) this.openVariable(m.name);
     }
 
     /* ---- variables ---------------------------------------------------------------------- */

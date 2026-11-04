@@ -1744,8 +1744,13 @@ def corrcov(nargout, *args):
     nargchk(args, 1, 1, 'corrcov')
     single = arr(args[0], 'corrcov').dtype == np.float32
     C = _mat(args[0], 'corrcov', 'C')
-    if C.shape[0] != C.shape[1] or not np.allclose(C, C.T, equal_nan=True):
-        raise err('stats:corrcov:BadCovariance', 'C is a symmetric covariance matrix.', 'corrcov')
+    # NaN is equal to nothing, so a matrix holding one is not symmetric
+    if C.shape[0] != C.shape[1] or not np.allclose(C, C.T):
+        raise err('stats:corrcov:BadCovariance', 'C is a square, symmetric covariance matrix.', 'corrcov')
+    if C.size:
+        ev = np.linalg.eigvalsh((C + C.T) / 2)
+        if ev[0] < -10 * np.finfo(float).eps * max(1.0, float(np.abs(ev).max())) * C.shape[0]:
+            raise err('stats:corrcov:BadCovariance', 'C is a positive semi-definite covariance matrix.', 'corrcov')
     s = np.sqrt(np.diag(C))
     with np.errstate(invalid='ignore', divide='ignore'):
         Rm = C / np.outer(s, s)

@@ -377,7 +377,7 @@ W, _ = run("y = [1 5 2 8 3 9 4 7 6 2]'; s3 = smooth(y, 7, 'sgolay', 3); sd = smo
 near("smooth(y, span, 'sgolay', degree), and the default span 5 and degree 2", (W['s3'], W['sd']), (col(savgol_filter(yv, 7, 3, mode='interp')), col(savgol_filter(yv, 5, 2, mode='interp'))), 1e-10)
 
 raises("fit((1:3)', (1:3)', 'poly3')", 'fewer data points')
-raises("fit([1 2; 3 4; 5 6], [1;2;3], 'poly1')", 'Surface fits')
+raises("fit([1 2; 3 4; 5 6], [1;2;3], 'poly1')", 'is a curve model')
 raises("fit((1:5)', (1:5)', 'nonsense')", 'is no model')
 raises("fittype('a*t + b')", 'an expression in x')
 raises("fit((1:5)', (1:5)', 'poly1', 'Robust', 'sometimes')", 'Robust is')

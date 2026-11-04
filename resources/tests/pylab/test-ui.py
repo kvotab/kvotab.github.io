@@ -2056,6 +2056,52 @@ async def pde_toolbox(page):
     await command(page, 'close all')
 
 
+async def core_fillins(page):
+    """Step 16 in the page: the desktop functions showing panels, Parquet through the page's pyarrow, FITS,
+    datastores with tall arrays and mapreduce, a surface fit drawn, the ez plots."""
+    await page.ev('PL.app.setPanels(false, false); 1')
+    await command(page, 'workspace')
+    shown = await page.ev("!PL.app.right.hidden && PL.app.pWs.classList.contains('is-active')")
+    await command(page, 'commandhistory')
+    hist = await page.ev("PL.app.pHist.classList.contains('is-active')")
+    await command(page, 'filebrowser')
+    files = await page.ev("!PL.app.left.hidden && PL.app.pFolder.classList.contains('is-active')")
+    check('workspace, commandhistory and filebrowser open their hidden sides and show their panels', [shown, hist, files], [True, True, True])
+    await command(page, 'cfv = magic(3); openvar(\'cfv\')')
+    opened = await until(page, "PL.app.docs.some(d => d.key === 'var:cfv') && PL.app.current && PL.app.current.key === 'var:cfv'", 10)
+    await command(page, 'commandwindow')
+    focused = await page.ev('document.activeElement === PL.app.cmd.ta')
+    check('openvar opens the Variables view; commandwindow gives the Command Window the keyboard', [bool(opened), focused], [True, True])
+    out = await command(page, "clc; r = matlabRelease; disp(r.Release); n = maxNumCompThreads, memory")
+    check('matlabRelease, maxNumCompThreads (one thread in the page) and memory (WebAssembly memory)',
+          ['PyLAB' in out, 'n =\n\n     1' in out, 'Memory used by PyLAB' in out, 'grows as it needs up to 4 GB' in out], [True] * 4)
+    out = await command(page, "clc; cd /home/user; T = table([1.5;2;3], int32([4;5;6]), [\"a\";\"b\";missing], datetime(2024,1,[1;2;3]), categorical({'r';'g';'r'}), "
+                              "'VariableNames', {'d','i','s','t','c'}); parquetwrite('cf16.parquet', T); T2 = parquetread('cf16.parquet'); "
+                              "pq = isequal(T2.d, T.d) && isequal(T2.i, T.i) && isequal(T2.t, T.t) && ismissing(T2.s(3)) && isequal(categories(T2.c), {'g';'r'}), "
+                              "info = parquetinfo('cf16.parquet'); rg = info.NumRowGroups")
+    check('Parquet in the page: pyarrow loaded, a table written and read back with its classes', ['pq =\n\n  logical\n\n   1' in out, 'rg =\n\n     1' in out], [True, True])
+    out = await command(page, "clc; fitswrite(uint16([1 2 3; 4 5 65535]), 'cf16.fits'); fitswrite(single(reshape(1:24, 2, 3, 4)), 'cf16.fits', 'WriteMode', 'append'); "
+                              "a = fitsread('cf16.fits'); b = fitsread('cf16.fits', 'image'); ft = isequal(a, [1 2 3; 4 5 65535]) && isequal(size(b), [2 3 4]), "
+                              "inf = fitsinfo('cf16.fits'); nc = numel(inf.Contents)")
+    check('FITS in the page: written and read back', ['ft =\n\n  logical\n\n   1' in out, 'nc =\n\n     2' in out], [True, True])
+    out = await command(page, "clc; mkdir cf16; writetable(table((1:5)', (6:10)', 'VariableNames', {'x','y'}), 'cf16/a.csv'); "
+                              "writetable(table((11:13)', (14:16)', 'VariableNames', {'x','y'}), 'cf16/b.csv'); ds = datastore('cf16'); ds.ReadSize = 2; "
+                              "nb = 0; while hasdata(ds), read(ds); nb = nb + 1; end, nb, t = tall(ds); mt = gather(mean(t.x + t.y)), "
+                              "outds = mapreduce(ds, @(d, i, s) add(s, 'n', height(d)), @(k, it, s) add(s, k, nb), 'Display', 'off'); kv = readall(outds); kn = kv.Value{1}")
+    check('datastores in the page: blocks read, a tall mean gathered, mapreduce run', ['nb =\n\n     5' in out, 'mt =\n\n    17' in out, 'kn =\n\n     5' in out], [True] * 3)
+    out = await command(page, "clc; close all; rng(3); x = rand(40, 1)*4 - 2; y = rand(40, 1)*4 - 2; z = x.^2 - y + 0.01*randn(40, 1); "
+                              "f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); sf = fit([x y], z, 'poly21'); plot(sf, [x y], z); "
+                              "subplot(1, 2, 2); ezsurfc('sin(x)*cos(y)', [-pi pi -pi pi], 30); sfv = abs(sf(1, 1)) < 1.2")
+    check('a surface fit drawn with its data, and ezsurfc', 'sfv =\n\n  logical\n\n   1' in out, True)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('the fitted surface and the ez surface with contours drawn', (await ink(page)) > 0.05, True)
+    await canvas_shot(page, 'corefill16-1.png')
+    await command(page, "close all; delete('cf16.parquet'); delete('cf16.fits'); rmdir('cf16', 's'); clear cfv")
+    await page.ev('PL.app.setPanels(true, true); 1')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2080,6 +2126,7 @@ async def main():
         await problem_based(page)
         await toolbox_fillins(page)
         await pde_toolbox(page)
+        await core_fillins(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

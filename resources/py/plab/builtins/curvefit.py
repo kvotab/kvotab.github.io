@@ -368,7 +368,7 @@ class CFit(Obj):
 
 _FIT_OPTS = ('StartPoint', 'Lower', 'Upper', 'Weights', 'Exclude', 'Robust', 'SmoothingParam', 'Normalize', 'Method',
              'MaxIter', 'MaxFunEvals', 'TolFun', 'TolX', 'Display', 'Algorithm', 'DiffMinChange', 'DiffMaxChange', 'Independent',
-             'Dependent', 'Coefficients', 'Problem')
+             'Dependent', 'Coefficients', 'Problem', 'Span')
 
 
 def _opts(args):
@@ -662,11 +662,9 @@ def fit(nargout, *args):
     """[f, gof, output] = fit(x, y, fitType, Name, Value): a curve fitted to data."""
     nargchk(args, 3, 60, 'fit')
     opts, rest = _opts(list(args))
-    if len(rest) >= 4 and not is_str(rest[2]) and not isinstance(rest[2], (FitType, FH, Cell)):
-        raise err('curvefit:fit:surface', 'Surface fits (fit([x, y], z, ...)) are not made here: fit curves of one variable.', 'fit')
     xa = darr(rest[0], 'fit')
     if xa.ndim == 2 and min(xa.shape) > 1:
-        raise err('curvefit:fit:surface', 'Surface fits (fit([x, y], z, ...)) are not made here: fit curves of one variable.', 'fit')
+        raise err('curvefit:fit:xShape', 'x is a vector (a curve) or two columns [x y] (a surface).', 'fit')
     x, y = xa.reshape(-1).astype(float), _vec(rest[1])
     if x.size != y.size:
         raise err('curvefit:fit:xyLength', 'x and y must have the same number of values.', 'fit')

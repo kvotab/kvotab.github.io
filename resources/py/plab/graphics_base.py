@@ -1902,7 +1902,8 @@ Axes.DEFAULTS['CurrentPoint'] = lambda: np.zeros((2, 3))
 # drawing nothing different: DoubleBuffer, EraseMode, DrawMode and the like.
 Figure.DEFAULTS.update({'DoubleBuffer': True, 'BackingStore': True, 'MinColormap': 64.0, 'ShareColors': True,
                         'RendererMode': 'auto', 'PaperUnits': 'inches', 'PaperSize': lambda: np.array([[8.5, 11.0]]),
-                        'PaperType': 'usletter', 'PaperOrientation': 'portrait', 'Selected': False, 'SelectionHighlight': True,
+                        'PaperType': 'usletter', 'PaperOrientation': 'portrait', 'PaperPosition': lambda: np.array([[0.25, 2.5, 8.0, 6.0]]),
+                        'Selected': False, 'SelectionHighlight': True,
                         'GraphicsSmoothing': True, 'Alphamap': lambda: np.linspace(0.0, 1.0, 64).reshape(1, -1)})
 Axes.DEFAULTS.update({'DrawMode': 'normal', 'ALim': lambda: np.array([[0.0, 1.0]]), 'ALimMode': 'auto', 'MinorGridLineStyle': ':'})
 for _C in (Line, Patch, Surface, Image, Text):

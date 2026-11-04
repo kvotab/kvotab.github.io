@@ -299,6 +299,14 @@ class UObj(Obj):
             return
         self.deleting = True
         try:
+            if self.listeners.get('ObjectBeingDestroyed'):
+                from .runtime import run_sync
+                from .uievents import call as uicall
+                from .values import Struct, Char
+                data = Struct.scalar({'Source': self, 'EventName': Char.of('ObjectBeingDestroyed')})
+                for L in list(self.listeners['ObjectBeingDestroyed']):
+                    if L.enabled:
+                        run_sync(uicall(L.cb, self, data))
             m = self.ci.find_method('delete')
             if m is not None:
                 from .runtime import run_sync

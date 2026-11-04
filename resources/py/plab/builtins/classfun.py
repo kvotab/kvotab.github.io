@@ -1,5 +1,5 @@
 """Functions of objects of the language's own classes (classdef.py): super
-calls, properties, methods, events and listeners, isvalid; and what
+calls, properties, methods, events and listeners, isvalid, copy; and what
 matlab.apps.AppBase gives an app: createCallbackFcn, registerApp and
 runStartupFcn.
 """
@@ -7,7 +7,7 @@ import numpy as np
 
 from . import bi, REG
 from ._util import err, opt_str, is_str, sval
-from ..values import MError, Char, Cell, Struct, FH, Obj, NOVAL, EMPTY, py_str
+from ..values import MError, Char, Cell, Struct, FH, Obj, NOVAL, EMPTY, py_str, share
 from .. import runtime as R
 from .. import classdef as CD
 
@@ -31,6 +31,9 @@ async def plabSuperCall(nargout, *args):
             if m is None:
                 raise err('MATLAB:class:MethodNotFound', f"The class {sup} has no method {mname}.", mname)
             return await m['fn'](nargout, *rest)
+    if what == 'matlab.mixin.Copyable.copyElement':
+        # copyElement@matlab.mixin.Copyable(obj): the shallow copy a subclass's copyElement starts from
+        return shallow_copy(_obj(rest[0], 'copyElement'))
     sup = what
     obj = rest[0]
     if sup in CD.HANDLE_BASES or sup.startswith('matlab.'):
@@ -193,6 +196,83 @@ class Listener(Obj):
             lst.remove(self)
 
 
+def event_names(ci):
+    """A class's events, its superclasses' after its own; a handle class has ObjectBeingDestroyed."""
+    names = []
+    for c in [ci] + list(ci.supers):
+        for e in (c.events if c is ci else event_names(c)):
+            if e not in names:
+                names.append(e)
+    if ci.handle and 'ObjectBeingDestroyed' not in names:
+        names.append('ObjectBeingDestroyed')
+    return names
+
+
+@bi('events', arr=False)
+def events(nargout, *args):
+    """events(obj), events('ClassName'): the events the class has; with an
+    output, their names as a column cell array."""
+    if len(args) != 1:
+        raise err('MATLAB:minrhs' if not args else 'MATLAB:TooManyInputs', 'events takes one object or class name.', 'events')
+    v = args[0]
+    if type(v) is CD.UObj:
+        ci = v.ci
+    elif is_str(v):
+        ci = CD.load_class(py_str(v), R)
+        if ci is None:
+            raise err('MATLAB:class:NotFound', f"No class named '{py_str(v)}'.", 'events')
+    else:
+        raise err('MATLAB:class:NotAnObject', 'events takes an object or a class name.', 'events')
+    names = event_names(ci)
+    if nargout:
+        return Cell.of_list([Char.of(n) for n in names], (len(names), 1))
+    if not names:
+        R.write(f'\nNo events for class {ci.name}.\n\n')
+    else:
+        R.write(f'\nEvents for class {ci.name}:\n\n' + ''.join(f'    {n}\n' for n in names) + '\n')
+    return None
+
+
+def shallow_copy(obj):
+    """A new object of the class holding the same property values (handles in
+    them shared), its NonCopyable properties at their defaults."""
+    o = CD.UObj(obj.ci)
+    for name, v in obj.p.items():
+        p = obj.ci.find_prop(name)
+        if p is not None and p['attrs'].get('noncopyable'):
+            v = p['default']
+        o.p[name] = share(v)
+    return o
+
+
+def _copyable(ci):
+    return 'matlab.mixin.Copyable' in ci.all_names()
+
+
+@bi('copy', aw=True, arr=False)
+async def copy(nargout, *args):
+    """b = copy(a): a copy of a handle object whose class derives from
+    matlab.mixin.Copyable, made by its copyElement (a shallow copy unless the
+    class overrides it); a datastore's copy, at the same place."""
+    if len(args) != 1:
+        raise err('MATLAB:minrhs' if not args else 'MATLAB:TooManyInputs', 'copy takes one object.', 'copy')
+    v = args[0]
+    from . import datastores as DS
+    for test, handler in DS.COPY_HANDLERS:
+        if test(v):
+            return handler(1, v)
+    if type(v) is CD.UObj:
+        if not _copyable(v.ci):
+            raise err('MATLAB:UndefinedFunction', f"Undefined function 'copy' for input arguments of type '{v.ci.name}': its class does not derive from matlab.mixin.Copyable.", 'copy')
+        if not v.alive:
+            raise err('MATLAB:class:InvalidHandle', 'Invalid or deleted object.', 'copy')
+        m = v.ci.find_method('copyElement')
+        if m is not None:
+            return await m['fn'](1, v)
+        return shallow_copy(v)
+    raise err('MATLAB:UndefinedFunction', f"Undefined function 'copy' for input arguments of type '{getattr(v, 'cls', type(v).__name__)}'.", 'copy')
+
+
 @bi('addlistener', 'listener', arr=False)
 def addlistener(nargout, *args):
     src = args[0]
@@ -200,7 +280,7 @@ def addlistener(nargout, *args):
     cb = args[-1]
     if type(src) is not CD.UObj:
         raise err('MATLAB:class:NotAnObject', 'addlistener takes an object of a class with the event.', 'addlistener')
-    names = [e for c in [src.ci] + src.ci.supers for e in c.events]
+    names = event_names(src.ci)
     if ev not in names:
         raise err('MATLAB:class:InvalidEvent', f"The class {src.ci.name} has no event named '{ev}'.", 'addlistener')
     L = Listener(src, ev, cb)
