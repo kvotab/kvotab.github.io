@@ -1891,6 +1891,8 @@ fitnlm, nlinfit:
     Python: regression.py. scipy.optimize.least_squares with the Levenberg-Marquardt method (trust region reflective when there are fewer observations than coefficients) on the weighted residuals, tolerances 1e-8; the Jacobian at the answer by forward differences; MSE is the weighted residual sum of squares over n - p and the covariance MSE*pinv(J'WJ).
 predict:
     Python: regression.py. For a linear model the design matrix of the new rows times the coefficients; the bounds are t(1 - alpha/2, DFE) (or, simultaneous, the square root of p*F(1 - alpha, p, DFE)) times the square root of x*Cov*x' (plus MSE for 'observation'). For a generalized linear model the inverse link of the linear predictor, the bounds taken through the inverse link; for a nonlinear model the model function and its Jacobian by forward differences. Of a classification or regression model from fitc.../fitr...: mlmodels.py, its scores.
+
+    predict of an identified model and iddata: sysid.py, the K-step-ahead predictor (see compare).
 coefCI:
     Python: regression.py. Each coefficient plus and minus t(1 - alpha/2, DFE) times its standard error (the normal quantile for a generalized linear model of fixed dispersion).
 coefTest:
@@ -2690,6 +2692,19 @@ pitch:
     Python: audiofeatures.py. NCF: the normalized correlation of each window with itself at each lag in the range, the shortest lag whose peak is within 10% of the best (a multiple of the period correlates as well), refined by a parabola. CEP: the peak of the real cepstrum (numpy.fft of the log magnitude spectrum) in the range, refined by the normalized correlation within two samples of it (the cepstral peak can sit a sample or two off the period in a short window) and a parabola. LHS: the candidate whose first five harmonics have the largest summed log magnitude, the log held at most 5 nats below the window's peak. scipy.signal.medfilt smooths the track when asked.
 spectralCentroid, spectralSpread, spectralRolloffPoint, spectralFlatness, spectralEntropy, zerocrossrate:
     Python: audiofeatures.py. Each window's power spectrum as weights over its frequencies: the mean and standard deviation, the frequency where the cumulative sum reaches the threshold, the geometric over the arithmetic mean, and -sum(p log p)/log(N); zero crossings counted from the signs.
+# ---- sysid.py: system identification -----------------------------------------------------------------------------------------------
+iddata, idinput:
+    Python: sysid.py. iddata holds the signals as columns. idinput: Gaussian or binary noise, band-limited by zeroing its FFT outside the band (numpy.fft.rfft); 'prbs' from a maximum-length linear feedback shift register (taps of a primitive polynomial); 'sine' ten sines at random phases.
+arx, ar:
+    Python: sysid.py. Least squares (numpy.linalg.lstsq) of y(t) on its past values and the delayed inputs, the first max(na, nk + nb - 1) samples left as the start; ar's Yule-Walker form solves the autocorrelations' Toeplitz system (scipy.linalg.solve_toeplitz).
+armax, oe, bj:
+    Python: sysid.py. The prediction errors e = (D/C)(y - (B/F)u) (or (A y - B u)/C), filtered with scipy.signal.lfilter from rest, minimized by scipy.optimize.least_squares (Levenberg-Marquardt), a C, D or F with a root on or outside the unit circle refused inside the search. The start: armax by Hannan and Rissanen's two stages (a long ARX model's residuals as the noise), oe from an ARX model with its denominator's roots reflected inside the circle, bj from oe and an ARMA model of its residuals. The covariance of the coefficients is s^2 (J'J)^-1 from the final Jacobian.
+n4sid, ssest:
+    Python: sysid.py. N4SID: block Hankel matrices of the past and future inputs and outputs, the oblique projection of the future outputs on the past along the future inputs, its SVD (scipy.linalg.svd) for the extended observability matrix and the states, then [A B; C D] by least squares from the states one step apart; K from the residuals' covariances through the Kalman filter's Riccati equation (scipy.linalg.solve_discrete_are). Without feedthrough B is fitted again by least squares with D = 0. ssest takes n4sid's model to observer canonical form and minimizes the one-step prediction errors by scipy.optimize.least_squares.
+tfest:
+    Python: sysid.py. A discrete output-error model's poles carried to continuous time (s = log(z)/Ts) and its gain matched as the start; the continuous coefficients then fitted by scipy.optimize.least_squares to the output simulated through scipy.signal.cont2discrete (zero-order hold).
+compare, sim, pe, resid, polydata, present, aic, fpe:
+    Python: sysid.py. K-step-ahead predictions of a polynomial model by the predictor W_K = Hbar_K * A D / C (Hbar_K the first K terms of the noise model's impulse response), of a state-space model by its Kalman predictor run forward; compare fits the initial state by least squares (the response is linear in it). The fit, FPE = MSE(1 + d/N)/(1 - d/N) and AIC = N log(MSE) + 2d + N(log(2 pi) + 1) are computed on the estimation data.
 """
 
 

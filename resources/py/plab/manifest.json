@@ -121,6 +121,7 @@
     "builtins/portfolio.py",
     "builtins/comms.py",
     "builtins/audiofeatures.py",
+    "builtins/sysid.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

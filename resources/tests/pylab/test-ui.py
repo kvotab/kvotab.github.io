@@ -2164,6 +2164,25 @@ async def comms_audio(page):
     await command(page, 'close all; clear')
 
 
+async def system_identification(page):
+    """Step 20 in the page: ARX, ARMAX, N4SID and TFEST fitted to simulated data, a step response of a model, and compare drawn."""
+    out = await command(page, "clc; close all; rng(1); N = 800; u = idinput(N, 'prbs'); e = 0.05*randn(N, 1); "
+                              "y = filter([0 0.5 0.3], [1 -1.5 0.7], u) + filter([1 0.4], [1 -1.5 0.7], e); d = iddata(y, u, 0.1); "
+                              "m1 = arx(d, [2 2 1]); m2 = armax(d, [2 2 1 1]); s = n4sid(d, 2); t = tfest(d, 2, 1); "
+                              "ok1 = max(abs(m2.A - [1 -1.5 0.7])) < 0.05 && max(abs(m2.C - [1 0.4])) < 0.15, "
+                              "ok2 = max(abs(sort(abs(eig(s.A))) - sqrt(0.7))) < 0.02, [yc, fit] = compare(d, m2); ok3 = fit > 80, "
+                              "ys = step(m1, 2); ok4 = numel(ys) > 2 && all(isfinite(ys)), "
+                              "f1 = figure('Position', [50 50 800 400]); compare(d(1:300), m1, m2);")
+    check('system identification in the page: ARMAX near the truth, n4sid poles, compare\'s fit, a step response',
+          [f'{k} =\n\n  logical\n\n   1' in out for k in ('ok1', 'ok2', 'ok3', 'ok4')], [True] * 4)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.8)
+    check('compare drawn: the measured output and two models', (await ink(page)) > 0.01, True)
+    await canvas_shot(page, 'sysid20-1.png')
+    await command(page, 'close all; clear')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2192,6 +2211,7 @@ async def main():
         await econometrics(page)
         await finance(page)
         await comms_audio(page)
+        await system_identification(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

@@ -1618,6 +1618,7 @@ detrend: Remove a linear trend (or a constant, or a polynomial).
     y = detrend(x)
     y = detrend(x, n)
     y = detrend(x, 'constant')
+    * For iddata: each signal less its mean (or a polynomial of degree n: detrend(data, n)).
 gradient: Numerical gradient by central differences.
     g = gradient(f)
     g = gradient(f, h)
@@ -5477,7 +5478,9 @@ predict: Predictions of a fitted model, with confidence bounds.
     [ypred, yci] = predict(mdl, Xnew, 'Alpha', 0.05, 'Prediction', 'observation', 'Simultaneous', true)
     [label, score] = predict(Mdl, X)
     [ypred, ysd, yint] = predict(gprMdl, Xnew)
+    yp = predict(sys, data, K)
     * The bounds are for the curve (the mean) unless Prediction is 'observation', which adds the residual variance. Xnew is a matrix of predictors or a table with the model's variables.
+    * For an identified model (arx, armax, oe, bj, n4sid, ssest, tfest) and iddata: the K-step-ahead predictions (K = 1 unless given, Inf: the simulation).
     * Of a classification model: the most probable class and each class's score; of a regression model (fitrtree, fitrsvm, ...): the predictions.
     * predict(lme, tbl, 'Conditional', false) of a mixed-effects model: with the predicted random effects of the levels it knows (conditional, the default), or the fixed effects alone.
 coefCI: Confidence intervals of a model's coefficients.
@@ -9747,6 +9750,70 @@ zerocrossrate: The zero-crossing rate.
     zcr = zerocrossrate(x)
     [zcr, countTotal] = zerocrossrate(x, 'WindowLength', n, 'OverlapLength', k)
     * The share of samples whose sign differs from the one before (zero counts as positive), for the whole signal or each window.
+# ---- system identification ------------------------------------------------------------------------------------------------------
+iddata: A time-domain data set for system identification.
+    data = iddata(y, u, Ts)
+    data = iddata(y, [], Ts)
+    data = iddata(y, u, Ts, 'OutputName', 'temp', 'InputName', 'power')
+    * y the output and u the input (a column each), Ts the sample time (1). data(k) picks samples; data.y and data.u are the signals; detrend, size and plot take it.
+idinput: An input signal for an identification experiment.
+    u = idinput(N)
+    u = idinput(N, type, band, levels)
+    * type 'rgs' (random Gaussian, the default), 'rbs' (random binary), 'prbs' (pseudorandom binary of maximum length) or 'sine'; band [lo hi] in fractions of the Nyquist frequency ([0 1]); levels [-1 1].
+arx: An ARX model by least squares.
+    sys = arx(data, [na nb nk])
+    sys = arx(y, na)
+    * A(q)y(t) = B(q)u(t-nk) + e(t). The model is also a discrete transfer function B/A for step, bode, lsim and the rest.
+ar: An autoregressive model of a time series.
+    sys = ar(y, n)
+    sys = ar(y, n, 'yw')
+    * Least squares ('ls', the default) or Yule-Walker ('yw').
+armax: An ARMAX model by prediction error minimization.
+    sys = armax(data, [na nb nc nk])
+    sys = armax(y, [na nc])
+    * A(q)y(t) = B(q)u(t-nk) + C(q)e(t); C is kept stable.
+oe: An output-error model.
+    sys = oe(data, [nb nf nk])
+    * y(t) = B(q)/F(q) u(t-nk) + e(t), fitted to the simulated output.
+bj: A Box-Jenkins model.
+    sys = bj(data, [nb nc nd nf nk])
+    * y(t) = B(q)/F(q) u(t-nk) + C(q)/D(q) e(t).
+n4sid: A state-space model by subspace identification.
+    sys = n4sid(data, nx)
+    sys = n4sid(data, nx, 'Feedthrough', true)
+    * Innovations form x(t+1) = A x + B u + K e, y = C x + D u + e; D is 0 unless Feedthrough is true.
+ssest: A state-space model by prediction error minimization.
+    sys = ssest(data, nx)
+    * n4sid's model refined in observer canonical form.
+tfest: A continuous-time transfer function fitted to sampled data.
+    sys = tfest(data, np)
+    sys = tfest(data, np, nz)
+    * np poles and nz zeros (np - 1 unless given); the input held between samples.
+compare: Models' outputs against measured data.
+    compare(data, sys1, sys2, ...)
+    compare(data, sys, K)
+    [y, fit] = compare(data, sys1, ...)
+    * Simulated outputs (or K-step-ahead predictions) with the fit 100*(1 - norm(y - yhat)/norm(y - mean(y))); the initial state is estimated for simulations.
+sim: A model's simulated response.
+    y = sim(sys, u)
+    y = sim(sys, data)
+pe: Prediction errors of a model.
+    e = pe(sys, data)
+    e = pe(sys, data, K)
+resid: Residual analysis of a model.
+    resid(data, sys)
+    [E, R] = resid(data, sys)
+    * The one-step prediction errors' autocorrelation and their cross-correlation with the input, with 99% bounds.
+polydata: A polynomial model's polynomials and their uncertainties.
+    [A, B, C, D, F, dA, dB, dC, dD, dF] = polydata(sys)
+present: A model shown with the standard deviations of its coefficients.
+    present(sys)
+aic: The Akaike information criteria of models.
+    value = aic(sys1, sys2, ...)
+    value = aic(sys, 'BIC')
+    * 'aic' (the default), 'AICc', 'nAIC' or 'BIC'.
+fpe: The final prediction errors of models.
+    value = fpe(sys1, sys2, ...)
 '''
 
 
