@@ -2280,6 +2280,104 @@ cwt, icwt, cwtfreqbounds:
     Python: wavelets.py. numpy.fft with the wavelets' spectra; scipy.optimize.brentq for the cutoff, scipy.integrate.quad for the admissibility constant.
 wthresh, wnoisest, thselect, wden, ddencmp, wdenoise, wcodemat:
     Python: wavelets.py. NumPy; scipy.special (ndtr, ndtri, erfcx) for the empirical Bayes rule, written to avoid overflow.
+metaclass, meta.class.fromName:
+    Python: langmore.py. The class's description read from the compiled class (classdef.py's ClassInfo: its properties with their attributes and defaults, methods, events, enumeration members and superclasses), the lists made when first read; one meta.class object for each class, so == compares them; < and <= ask whether one class is among the other's superclasses. ?Name is parsed as meta.class.fromName('Name').
+subsref, subsasgn, substruct:
+    Python: langmore.py. The steps of the struct array run through the engine's own indexing (index.py's idx, cidx and fld for subsref; asgn_chain, which a chained assignment uses, for subsasgn); substruct checks the types and makes the struct.
+namedargs2cell, isStringScalar:
+    Python: langmore.py. The struct's fields walked in order into a cell row; a string array of one element.
+matlab.net.base64encode, matlab.net.base64decode:
+    Python: langmore.py. Python's base64.b64encode and base64.b64decode (strict, padding added), text as UTF-8 bytes.
+unicode2native, native2unicode:
+    Python: langmore.py. Python's str.encode and bytes.decode with the codec named (codecs.lookup), unknown characters replaced.
+textwrap:
+    Python: langmore.py. Words (split at white space) added to a line while it stays within the width, a longer word cut into pieces of the width.
+isMATLABReleaseOlderThan, verLessThan:
+    Python: langmore.py. The release or version checked for its form, then false.
+calendar:
+    Python: langmore.py. Python's calendar.monthrange for the first weekday and the number of days, laid out from Sunday.
+array2timetable:
+    Python: langmore.py. Each column taken by indexing and passed with the options to timetable (tables.py).
+fileattrib, recycle:
+    Python: langmore.py. os.stat's mode bits for the permissions and os.chmod to change them (glob for a *); recycle keeps 'on' or 'off' only.
+gtext:
+    Python: langmore.py. ginput(1) for the click, then text at that point.
+uniquetol, ismembertol:
+    Python: numerics.py. The values sorted (numpy.argsort, stable); uniquetol walks them, starting a group whenever a value is more than tol*DataScale from the group's first; ismembertol finds the values of B within reach of each value of A by numpy.searchsorted on B sorted. By rows, every pair of rows is compared column by column.
+lsqminnorm:
+    Python: numerics.py. scipy.linalg.qr with pivoting gives A*P = Q*R; the rank is the number of |R(k,k)| above tol; the leading rows of R are factored again by numpy.linalg.qr of their transpose (R1' = Z*T), and X = P*Z*inv(T')*Q1'*B by triangular solves (scipy.linalg.solve_triangular): a complete orthogonal decomposition. A regularization factor appends lambda*I to A and zeros to B.
+decomposition, isIllConditioned:
+    Python: numerics.py. The factorization made once by SciPy: scipy.linalg.lu_factor (lu, banded), scipy.linalg.cho_factor (chol), scipy.linalg.ldl (ldl: L*D*L' solved by two triangular solves about D), scipy.linalg.qr or the complete orthogonal decomposition of lsqminnorm (qr, cod); triangular and diagonal matrices are solved directly. \ and / come through the operators (ops.py's OBJ_OPS); b/dA is (dA'\b')'. rcond is 1/(norm(A,1)*norm(inv(A),1)).
+sylvester:
+    Python: numerics.py. scipy.linalg.solve_sylvester (Bartels-Stewart through the Schur forms).
+lscov:
+    Python: numerics.py. The rows scaled by sqrt(w), or both sides multiplied by the inverse Cholesky factor of V (numpy.linalg.cholesky, scipy.linalg.solve_triangular), then least squares by scipy.linalg.qr with pivoting; S from the inverse of R on the pivot columns.
+normest1:
+    Python: numerics.py. scipy.sparse.linalg.onenormest (Higham and Tisseur's block algorithm), or the exact largest column sum for small matrices.
+subspace:
+    Python: numerics.py. Orthonormal bases by scipy.linalg.orth; the part of the smaller one outside the larger, its 2-norm s, and asin(min(1, s)).
+condeig:
+    Python: numerics.py. eig's V and D; the rows of numpy.linalg.inv(V) are the left eigenvectors scaled so that w'*v = 1, so each condition number is the product of the norms.
+cdf2rdf:
+    Python: numerics.py. The diagonal walked; a complex eigenvalue and its conjugate next to it become a 2-by-2 block of the real and imaginary parts, their vectors the real and imaginary parts of the first.
+hadamard:
+    Python: numerics.py. The 12-by-12 one from a Toeplitz matrix (scipy.linalg.toeplitz) and the 20-by-20 one from a Hankel matrix (scipy.linalg.hankel) of 1 and -1, each bordered by ones, then Sylvester's doubling [H H; H -H].
+delaunayn, convhulln, griddatan:
+    Python: numerics.py. scipy.spatial.Delaunay and scipy.spatial.ConvexHull (Qhull); griddatan finds each query's simplex (Delaunay.find_simplex), its barycentric coordinates from Delaunay.transform weighting the values at the corners, or the nearest point by scipy.spatial.cKDTree.
+nufft, nufftn:
+    Python: numerics.py. The sums written as products with matrices of numpy.exp(-2j*pi*f*t), a block of frequencies at a time to bound the memory.
+colperm, symbfact:
+    Python: numerics.py. colperm sorts the column counts (numpy.argsort, stable). symbfact builds the factor's structure column by column: column j holds the rows of A's pattern below the diagonal and those of its children in the elimination tree; its parent is its first row below the diagonal; the counts, a postorder and the height follow.
+rmse, mape:
+    Python: numerics.py. abs(F - A).^2 (or abs((A - F)./A)) passed to mean with the same dimensions, flags and weights, then the square root (or times 100).
+triangulation, delaunayTriangulation:
+    Python: geomclasses.py. The points and simplices kept as arrays; a Delaunay triangulation by scipy.spatial.Delaunay (Qhull with 'Qt Qbb Qc Qz'), its triangles turned counterclockwise and put in a fixed order; duplicates found by numpy.unique.
+pointLocation, cartesianToBarycentric, barycentricToCartesian:
+    Python: geomclasses.py. For every simplex the inverse of its edge matrix (numpy.linalg.inv), the barycentric coordinates of each point in each simplex at once (numpy.einsum), the first simplex where none is negative; cartesianToBarycentric by numpy.linalg.lstsq with the coordinates summing to one.
+nearestNeighbor:
+    Python: geomclasses.py. scipy.spatial.cKDTree of the vertices.
+edges, neighbors, vertexAttachments, edgeAttachments, isConnected, freeBoundary, featureEdges:
+    Python: geomclasses.py. The simplices' facets sorted and matched (a dictionary of facets) for the neighbours and for the facets used once; in 2-D those boundary edges chained head to tail. Attachments are the rows holding the vertices; featureEdges compares the normals of the two triangles at each edge.
+circumcenter, incenter:
+    Python: geomclasses.py. The circumcentre solves the Gram system of the edge vectors (numpy.linalg.solve); the incentre weights the vertices by the opposite sides' lengths (faces' areas), the radius 2A/perimeter (3V/surface).
+faceNormal, vertexNormal:
+    Python: geomclasses.py. numpy.cross of two edges, made unit; at a vertex the sum of its triangles' unit normals (numpy.add.at), made unit.
+convexHull, voronoiDiagram, isInterior:
+    Python: geomclasses.py. scipy.spatial.ConvexHull and scipy.spatial.Voronoi (its point at infinity moved to the first row); isInterior reports that constrained edges are not supported.
+alphaShape, alphaSpectrum, criticalAlpha, alphaTriangulation, boundaryFacets, inShape, numRegions, surfaceArea, volume:
+    Python: geomclasses.py. The Delaunay simplices (scipy.spatial.Delaunay) with their circumradii; those up to Alpha kept, joined into regions through shared facets (a walk over neighbours), regions under RegionThreshold dropped and enclosed groups of left-out simplices under HoleThreshold filled. The critical alphas: for 'all-points' the largest over points of the smallest radius at each point, for 'one-region' the first radius from there that leaves one region. Areas and volumes sum the simplices'; the boundary is the facets used once.
+boundary:
+    Python: geomclasses.py. An alpha shape with every hole filled; alpha taken from its spectrum between criticalAlpha 'one-region' (s = 1) and the largest radius (s = 0); in 2-D the boundary edges chained into one loop. For a polyshape (polyshapes.py), its rings closed and parted by NaN.
+polyshape, nsidedpoly, centroid, perimeter, boundingbox, numboundaries, numsides, ishole, issimplified, isinterior, nearestvertex, overlaps, regions, holes, addboundary, rmboundary, rmholes, rmslivers, scale, translate, sortboundaries, sortregions, subtract, polybuffer:
+    Python: polyshapes.py. The boundaries kept as rings; the geometry built in Shapely (GEOS): rings combined even-odd for nesting (symmetric_difference) or solids less holes, mended by make_valid, oriented with shapely.geometry.polygon.orient (solids clockwise) and simplified (collinear vertices dropped) by simplify(g, 0). Booleans are Shapely's union, intersection, difference and symmetric_difference; polybuffer its buffer (round, mitre with a limit, or mitre at 1 for square corners); rmslivers a buffer in and out; isinterior contains and the distance to the rings; measures from the rings (the shoelace area) or Shapely's centroid.
+nccreate, ncwrite, ncread, ncinfo, ncdisp, ncreadatt, ncwriteatt:
+    Python: netcdf.py. The kind read from the file's first bytes: classic (CDF-1) and 64-bit (CDF-2) files through scipy.io.netcdf_file, netCDF-4 files through h5py by the netCDF-4 conventions (each dimension a dimension scale, a placeholder dataset named for a dimension without a variable, _Netcdf4Dimid, _nc3_strict for the classic model, variables attached to their dimensions, creation order kept). Arrays are transposed between the language's order and the file's; scale_factor, add_offset, _FillValue and missing_value applied on reading and reversed on writing; unlimited dimensions resized as data arrive.
+rectangle:
+    Python: graphics_base.py. A patch (Rectangle) whose outline is worked out from Position and Curvature: quarter ellipses of radii cx*w/2 and cy*h/2 at the corners, 17 points each.
+hggroup, hgtransform, makehgtform:
+    Python: graphics_base.py. Groups hold children; when the axes are drawn (and their limits worked out) the groups are opened in place and their children's data multiplied by the matrices of the transforms above them, on copies. makehgtform (plotmore.py) multiplies translation, scaling and rotation matrices (Rodrigues' formula) in order.
+rotate:
+    Python: plotmore.py. A rotation matrix about the unit direction (Rodrigues' formula) applied to the data less the origin; for a polyshape (polyshapes.py) a 2-D rotation of its rings.
+refreshdata:
+    Python: plotmore.py. Each data source compiled as an assignment in the workspace (runtime.py's compile_command) and run, its value set as the data.
+xtickformat, ytickformat, ztickformat, ztickangle:
+    Python: plotmore.py. The format kept with the axes and sent to the page, which writes each tick with a printf-like formatter of its own (pylab-figure.js), commas grouping thousands; glayout.py's format_tick does the same for get.
+rticks, thetaticks, rticklabels, thetaticklabels, rlim:
+    Python: plotmore.py. The polar axes' RTick, ThetaTick, RTickLabel, ThetaTickLabel and RLim set (manual) or given back (auto, as glayout.py's polar_ticks works them out); the page draws the rings and spokes from them, turned by ThetaDir and ThetaZeroLocation.
+gplot, treelayout, treeplot, etreeplot:
+    Python: plotmore.py. gplot joins the rows of xy for each nonzero pair, NaN between edges. treelayout walks each tree depth first, numbering the leaves across and centring each parent over its children; treeplot draws that with plot; etreeplot takes etree of A + A'.
+validatecolor, rgb2hex, hex2rgb:
+    Python: plotmore.py. Colour names and codes read as the graphics read them (graphics_base.py's to_color); integers scaled by their range; hex digits written and read two to a channel.
+brighten, rgbplot, spinmap:
+    Python: plotmore.py. The colormap's values raised to the power 1 - beta or 1/(1 + beta) (numpy.clip first); three plot lines; numpy.roll of the colormap's rows, set again between pauses.
+surfnorm:
+    Python: plotmore.py. Tangents by numpy.gradient along the columns and rows, numpy.cross of them made unit.
+shrinkfaces:
+    Python: plotmore.py. Each face's vertices moved towards its centroid by sqrt(sf), on vertices of its own.
+isocolors:
+    Python: plotmore.py. scipy.interpolate.RegularGridInterpolator (linear) over the volume's grid at the vertices.
+lightangle:
+    Python: plotmore.py. The light's Position [sin(az)cos(el), -cos(az)cos(el), sin(el)], and back by atan2 and asin.
 """
 
 

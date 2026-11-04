@@ -341,15 +341,27 @@ def reduce(a, dim, fn, empty_value=0.0, keepdims=True):
     return r
 
 
+# the language's newer names for the NaN flags
+_FLAG_ALIASES = {'omitmissing': 'omitnan', 'includemissing': 'includenan'}
+
+
 def strip_flags(args, flags):
-    """Pull known text options out of an argument list: (rest, found)."""
+    """Pull known text options out of an argument list: (rest, found).
+    'omitmissing' and 'includemissing' count as 'omitnan' and 'includenan'
+    wherever those are taken."""
     rest = []
     found = {}
     for a in args:
         s = opt_str(a)
-        if s is not None and s.lower() in flags:
-            found[s.lower()] = True
-            continue
+        if s is not None:
+            low = s.lower()
+            if low in flags:
+                found[low] = True
+                continue
+            alias = _FLAG_ALIASES.get(low)
+            if alias is not None and alias in flags:
+                found[alias] = True
+                continue
         rest.append(a)
     return rest, found
 

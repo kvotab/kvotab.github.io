@@ -7541,6 +7541,567 @@ wcodemat: A matrix coded for display.
     Y = wcodemat(X)
     Y = wcodemat(X, nb, opt, absol)
     * Whole numbers 1..nb (16) in proportion to abs(X) (to X when absol is 0), scaled over the whole matrix ('mat'), each row ('row') or each column ('col'): for image(Y) with a colormap of nb colours.
+# ---- the language: meta-classes, subscripts, small conversions ----------------------------------------------------------------------
+metaclass: The meta.class object of a value's class.
+    mc = metaclass(obj)
+    mc = ?ClassName
+    * mc describes the class: Name, Description, Hidden, Sealed, Abstract, Enumeration, HandleCompatible and the rest, and the lists PropertyList (meta.property: Name, GetAccess, SetAccess, Dependent, Constant, Hidden, HasDefault, DefaultValue, DefiningClass, ...), MethodList (meta.method: Name, Access, Static, Abstract, InputNames, DefiningClass, ...), EventList, EnumerationMemberList and SuperclassList.
+    * The lists include what the class inherits; a handle class's include handle's methods. Built-in classes (double, char, ...) have a meta.class with empty lists.
+    * ?A < ?B is true when A derives from B; == is the same class.
+meta.class.fromName: The meta.class object of a class named by text.
+    mc = meta.class.fromName(name)
+    * As ?name; an empty meta.class array when there is no such class.
+subsref: Indexing written out as a list of steps.
+    B = subsref(A, S)
+    [B1, B2, ...] = subsref(A, S)
+    * S is a struct array of steps (substruct makes one): type '()' with subs a cell of indices, '{}' the same for braces, '.' with subs a field or property name. subsref(A, substruct('()', {2}, '.', 'f')) is A(2).f. ':' in subs stands for a colon.
+subsasgn: Assignment through indexing written out as a list of steps.
+    A = subsasgn(A, S, B)
+    * As A(...) = B, A{...} = B or A.name = B, step by step through S (substruct makes it); the changed A comes back.
+substruct: The steps of an indexing expression, for subsref and subsasgn.
+    S = substruct(type1, subs1, type2, subs2, ...)
+    * Each type is '()', '{}' or '.'; the subs of '()' and '{}' are a cell array of indices, of '.' a name. S is a 1-by-n struct array with the fields type and subs.
+namedargs2cell: A struct's fields as name-value pairs.
+    C = namedargs2cell(s)
+    * {name1, value1, name2, value2, ...} from a scalar struct, for passing options on: f(x, C{:}).
+isStringScalar: Whether a value is a single string.
+    tf = isStringScalar(s)
+    * True for a 1-by-1 string array; a character vector is not one.
+matlab.net.base64encode: Bytes as Base64 text.
+    b64 = matlab.net.base64encode(V)
+    * V is a vector of bytes (uint8, or whole numbers 0 to 255) or text (encoded as UTF-8). A string comes back as a string, anything else as a character vector.
+matlab.net.base64decode: Base64 text back to bytes.
+    V = matlab.net.base64decode(b64)
+    * A uint8 row; white space in the text is ignored and missing padding added.
+unicode2native: Text as the bytes of an encoding.
+    bytes = unicode2native(str)
+    bytes = unicode2native(str, encoding)
+    * A uint8 row; the encoding is UTF-8 unless named ('ISO-8859-1', 'windows-1252', 'Shift_JIS', 'UTF-16', ... as Python knows them). Characters the encoding lacks become '?'.
+native2unicode: Bytes of an encoding as text.
+    str = native2unicode(bytes)
+    str = native2unicode(bytes, encoding)
+    * bytes is a uint8 vector; UTF-8 unless an encoding is named. Bytes that do not decode become U+FFFD.
+textwrap: Text wrapped to a width.
+    outstring = textwrap(instring, columns)
+    outstring = textwrap(h, instring)
+    [outstring, position] = textwrap(h, instring)
+    * Each paragraph (a cell element, a string or a line) broken at spaces into lines of at most columns characters (a longer word on its own lines), as a column cell array. With a uicontrol h, columns comes from its width (about 7 pixels a character) and position is its Position tall enough for the lines.
+isMATLABReleaseOlderThan: Whether the running release is older than a given one.
+    tf = isMATLABReleaseOlderThan(release)
+    tf = isMATLABReleaseOlderThan(release, stage, update)
+    * Always false here: PyLAB follows the language as it is now, so programs take their paths for current releases. release is like "R2024b"; stage 'release' or 'prerelease'.
+verLessThan: Whether a toolbox is older than a version.
+    tf = verLessThan(toolbox, version)
+    * Always false here, for the language ('matlab') and its toolboxes: PyLAB counts as no older than any version. version is like '9.14'.
+calendar: A month's days in a matrix.
+    c = calendar
+    c = calendar(d)
+    c = calendar(y, m)
+    calendar(...)
+    * A 6-by-7 matrix, weeks from Sunday to Saturday, 0 outside the month: of this month, of date d (a datenum, datetime or date text), or of month m of year y. With no output the month is printed.
+array2timetable: A matrix as a timetable.
+    TT = array2timetable(X, 'RowTimes', rowTimes)
+    TT = array2timetable(X, 'SampleRate', fs)
+    TT = array2timetable(X, 'TimeStep', dt)
+    TT = array2timetable(..., 'StartTime', t0, 'VariableNames', names)
+    * Each column of X a variable, named Var1, Var2, ... unless named; the row times given, or regular from StartTime (0 seconds).
+fileattrib: A file's or folder's attributes, or changes to them.
+    fileattrib(name)
+    [status, values, msgid] = fileattrib(name)
+    fileattrib(name, mode)
+    fileattrib(name, mode, users, 's')
+    * values is a struct of Name, archive, system, hidden (NaN here), directory, UserRead, UserWrite, UserExecute, GroupRead, GroupWrite, GroupExecute, OtherRead, OtherWrite and OtherExecute; a * in name matches several (a struct array). status is false and values a message when nothing matches.
+    * mode is like '+w', '-x' or '+rw'; users 'u' (the default), 'g', 'o' or 'a'; 's' reaches into folders.
+recycle: Whether deleted files go to a recycle bin.
+    state = recycle
+    previous = recycle('on')
+    recycle('off')
+    * Kept only: there is no recycle bin here, so delete removes files for good.
+gtext: Text placed with a click.
+    gtext(str)
+    gtext(str, Name, Value)
+    h = gtext(...)
+    * Waits for a click in the current figure and puts the text there, in the clicked axes' data units; a cell array (or the rows of a character matrix) places one line a click.
+# ---- numerics ---------------------------------------------------------------------------------------------------------------------------
+uniquetol: The values of an array, those within a tolerance taken as one.
+    C = uniquetol(A)
+    C = uniquetol(A, tol)
+    [C, IA, IC] = uniquetol(...)
+    C = uniquetol(..., 'ByRows', true, 'OutputAllIndices', true, 'DataScale', DS)
+    * Two values are one when abs(u - v) <= tol*DS, DS = max(abs(A(:))) (each column's for 'ByRows'); tol is 1e-6 (1e-4 for single). C is sorted, each group represented by its smallest value: C = A(IA) and A is about C(IC). A row gives a row; anything else a column.
+    * With 'OutputAllIndices' IA is a cell array of every index in each group.
+ismembertol: Members of a set within a tolerance.
+    LIA = ismembertol(A, B)
+    LIA = ismembertol(A, B, tol)
+    [LIA, LocB] = ismembertol(...)
+    [...] = ismembertol(..., 'ByRows', true, 'OutputAllIndices', true, 'DataScale', DS)
+    * A value of A is a member when some value of B is within tol*DS of it, DS = max(abs([A(:); B(:)])); tol is 1e-12 (1e-6 for single). LocB is the lowest index of such a value of B (0 when none), or with 'OutputAllIndices' a cell of all of them.
+lsqminnorm: The least-squares solution of smallest norm.
+    X = lsqminnorm(A, B)
+    X = lsqminnorm(A, B, tol)
+    X = lsqminnorm(..., 'warn' or 'nowarn')
+    X = lsqminnorm(..., 'RegularizationFactor', lambda)
+    * Through a complete orthogonal decomposition: QR with column pivoting, the rank the number of |R(k,k)| above tol (max(size(A))*eps(|R(1,1)|)), then the minimum-norm solution of that rank. 'warn' (the default) warns when A is rank deficient. With lambda, the problem with lambda^2*norm(X)^2 added is solved.
+decomposition: A matrix factored once, to solve with many times.
+    dA = decomposition(A)
+    dA = decomposition(A, type)
+    dA = decomposition(..., 'CheckCondition', tf, 'RankTolerance', tol)
+    x = dA \ b
+    x = b / dA
+    * type: 'auto' (diagonal, triangular, chol, ldl or lu for a square A, qr otherwise), 'lu', 'qr', 'chol', 'ldl', 'cod', 'triangular' (with 'upper' or 'lower'), 'permutedTriangular', 'banded', 'diagonal' or 'hermitian' (chol, or ldl if that fails).
+    * dA' solves with A'; rcond(dA), rank(dA) (cod) and isIllConditioned(dA) ask about A. CheckCondition (true) warns when solving with an ill-conditioned A. Properties: MatrixSize, Type, IsConjugateTransposed, IsSparse, CheckCondition.
+isIllConditioned: Whether a factored matrix is ill conditioned.
+    tf = isIllConditioned(dA)
+    * For a decomposition: rcond below eps, or a rank below full for qr and cod.
+sylvester: The solution of the Sylvester equation A*X + X*B = C.
+    X = sylvester(A, B, C)
+    * A is m-by-m, B n-by-n and C m-by-n. Unique when A and -B share no eigenvalue.
+lscov: Weighted or generalized least squares.
+    x = lscov(A, b)
+    x = lscov(A, b, w)
+    x = lscov(A, b, V)
+    x = lscov(A, b, V, alg)
+    [x, stdx, mse, S] = lscov(...)
+    * x minimizes (b - A*x)'*W*(b - A*x) with W = diag(w), or inv(V) for a covariance matrix V. mse is the weighted residual sum of squares over m - n, S = mse*inv(A'*W*A) the covariance of x and stdx the square roots of its diagonal. A rank-deficient A gives a basic solution (zeros where the rank runs out) and a warning. alg 'chol' or 'orth' is accepted; the solution is through QR either way.
+normest1: An estimate of a matrix's 1-norm.
+    c = normest1(A)
+    c = normest1(A, t)
+    [c, v, w] = normest1(A, t)
+    * Higham and Tisseur's block method with t columns (2), through SciPy's onenormest; w = A*v with norm(w,1) = c*norm(v,1). Exact for n <= 4 or t >= n. A is a matrix (a function handle for A is not taken here).
+subspace: The angle between two subspaces.
+    theta = subspace(A, B)
+    * The largest principal angle between the column spaces of A and B, in radians: asin of the norm of the part of one orthonormal basis outside the other.
+condeig: The condition numbers of eigenvalues.
+    c = condeig(A)
+    [V, D, s] = condeig(A)
+    * For each eigenvalue, norm(w)*norm(v)/abs(w'*v) with v its right and w its left eigenvector; V and D are eig's.
+cdf2rdf: Eigenvalues from complex diagonal form to real block diagonal form.
+    [V, D] = cdf2rdf(V, D)
+    * Each conjugate pair a +- bi becomes the block [a b; -b a] (b of the first of the pair) and its vectors the real and imaginary parts of the first's, so A*V = V*D still holds with real V and D.
+hadamard: A Hadamard matrix.
+    H = hadamard(n)
+    H = hadamard(n, classname)
+    * Entries 1 and -1 with H'*H = n*I, for n, n/12 or n/20 a power of 2: Sylvester's doubling [H H; H -H] from 1, a 12-by-12 or a 20-by-20 one. classname 'double' or 'single'.
+delaunayn: The Delaunay triangulation of points in n dimensions.
+    T = delaunayn(X)
+    T = delaunayn(X, options)
+    * A row of n+1 point indices for each simplex; Qhull options as a cell of text ({'Qt', 'Qbb', 'Qc', 'Qz'} by default, 'Qx' added from 4 dimensions).
+convhulln: The convex hull of points in n dimensions.
+    K = convhulln(X)
+    [K, V] = convhulln(X, options)
+    * A row of point indices for each facet of the hull, and the volume it holds (the area in 2-D).
+griddatan: Scattered data in n dimensions, interpolated.
+    vq = griddatan(X, v, xq)
+    vq = griddatan(X, v, xq, method)
+    * v at the points X (rows) interpolated at the rows of xq: 'linear' (default), within the Delaunay simplex holding the point, or 'nearest'; NaN outside the convex hull.
+nufft: The nonuniform discrete Fourier transform.
+    Y = nufft(X)
+    Y = nufft(X, t)
+    Y = nufft(X, t, f)
+    Y = nufft(X, t, f, dim)
+    * Y(k) = sum over j of X(j)*exp(-2*pi*1i*t(j)*f(k)) along dim (the first that is not 1): sample points t (0:n-1 by default) and frequencies f ((0:n-1)/n). [] keeps a default. Summed directly. With the defaults it is fft(X).
+nufftn: The nonuniform discrete Fourier transform in n dimensions.
+    Y = nufftn(X)
+    Y = nufftn(X, t)
+    Y = nufftn(X, t, f)
+    * Y(k) = sum over j of X(j)*exp(-2*pi*1i*f(k)·t(j)). t and f are matrices of points (a row each) or cell arrays of vectors spanning a grid; by default X's grid 0:n-1 and frequencies (0:n-1)/n in each dimension, which give fftn(X). Frequencies on a grid give an array, as points a column.
+colperm: A column ordering by the number of nonzeros.
+    j = colperm(S)
+    * The columns from fewest nonzeros to most (ties in order): S(:, j) often factors with less fill.
+symbfact: The structure of a Cholesky factor, without the factorization.
+    count = symbfact(A)
+    count = symbfact(A, type)
+    [count, h, parent, post, R] = symbfact(...)
+    * count: the nonzeros in each row of R = chol(A); h the elimination tree's height (levels), parent its parent of each node (0 for a root), post a postorder, R the structure of the factor (ones). type 'sym' (the upper triangle of A, default), 'col' (A'*A), 'row' (A*A') or 'lo' (the lower triangle).
+rmse: The root-mean-square error.
+    E = rmse(F, A)
+    E = rmse(F, A, 'all')
+    E = rmse(F, A, dim)
+    E = rmse(F, A, vecdim)
+    E = rmse(..., nanflag, 'Weights', w)
+    * sqrt(mean(abs(F - A).^2)) along a dimension, as mean takes them; nanflag 'includemissing' (default) or 'omitmissing'.
+mape: The mean absolute percentage error.
+    E = mape(F, A)
+    E = mape(F, A, 'all')
+    E = mape(F, A, dim)
+    E = mape(..., nanflag, 'Weights', w)
+    * 100*mean(abs((A - F)./A)): F the forecast and A the actual values, along a dimension as mean takes them.
+# ---- triangulations, polygons and alpha shapes ---------------------------------------------------------------------------------------------
+triangulation: A triangulation as an object to query.
+    TR = triangulation(T, P)
+    TR = triangulation(T, x, y)
+    TR = triangulation(T, x, y, z)
+    TR = triangulation(pgon)
+    * T has a row of point indices for each triangle (or tetrahedron); P the points (or x, y, z). Properties Points and ConnectivityList. Queries: pointLocation, nearestNeighbor, edges, neighbors, vertexAttachments, edgeAttachments, isConnected, freeBoundary, circumcenter, incenter, barycentricToCartesian, cartesianToBarycentric, faceNormal, vertexNormal, featureEdges, size; triplot, trimesh, trisurf and tetramesh draw it.
+    * triangulation(pgon) triangulates a polyshape (constrained by its edges).
+delaunayTriangulation: The Delaunay triangulation of points, as an object.
+    DT = delaunayTriangulation(P)
+    DT = delaunayTriangulation(x, y)
+    DT = delaunayTriangulation(x, y, z)
+    * triangulation's queries, and convexHull and voronoiDiagram. Duplicate points are removed (with a warning); 2-D triangles run counterclockwise. Setting DT.Points (DT.Points(end+1,:) = p) triangulates again. Constrained edges are not supported here.
+pointLocation: The simplex holding each query point.
+    ID = pointLocation(TR, P)
+    [ID, B] = pointLocation(TR, x, y)
+    * ID of the triangle (or tetrahedron) holding each point, NaN outside; B its barycentric coordinates there.
+nearestNeighbor: The vertex nearest each query point.
+    vi = nearestNeighbor(TR, P)
+    [vi, d] = nearestNeighbor(TR, x, y)
+    * Among the vertices the triangulation uses (every point, for a Delaunay triangulation or an alpha shape's points), with the distances d.
+edges: The edges of a triangulation.
+    E = edges(TR)
+    * A row [i j], i < j, for each edge, the rows sorted.
+vertexAttachments: The simplices at each vertex.
+    ti = vertexAttachments(TR)
+    ti = vertexAttachments(TR, vi)
+    * A column cell array, a row of simplex IDs for each vertex; in 2-D counterclockwise round the vertex.
+edgeAttachments: The simplices sharing each edge.
+    ti = edgeAttachments(TR, v1, v2)
+    ti = edgeAttachments(TR, E)
+    * A column cell array, a row of simplex IDs for each edge (v1, v2 or the rows of E).
+isConnected: Whether vertices are joined by an edge.
+    tf = isConnected(TR, v1, v2)
+    tf = isConnected(TR, E)
+freeBoundary: The facets on the boundary of a triangulation.
+    F = freeBoundary(TR)
+    [F, P] = freeBoundary(TR)
+    * The facets (edges in 2-D, triangles for tetrahedra) used by one simplex only; in 2-D chained into loops, counterclockwise round the triangulated region. With P, F indexes those points only.
+circumcenter: The centres and radii of the simplices' circumscribed circles or spheres.
+    C = circumcenter(TR)
+    [C, r] = circumcenter(TR, ID)
+incenter: The centres and radii of the simplices' inscribed circles or spheres.
+    C = incenter(TR)
+    [C, r] = incenter(TR, ID)
+barycentricToCartesian: Points from barycentric coordinates.
+    P = barycentricToCartesian(TR, ID, B)
+    * Row k of P is B(k,:) weighting the vertices of simplex ID(k).
+cartesianToBarycentric: The barycentric coordinates of points in simplices.
+    B = cartesianToBarycentric(TR, ID, P)
+    * Row k of B weights the vertices of simplex ID(k) to give P(k,:) (by least squares for triangles in 3-D).
+faceNormal: The unit normals of triangles in 3-D.
+    N = faceNormal(TR)
+    N = faceNormal(TR, ID)
+    * cross(P2 - P1, P3 - P1) made unit: by the right-hand rule round each triangle.
+vertexNormal: The unit normals at the vertices of a triangulated surface.
+    N = vertexNormal(TR)
+    N = vertexNormal(TR, vi)
+    * The sum of the unit normals of the triangles at each vertex, made unit.
+featureEdges: The sharp edges of a triangulated surface.
+    E = featureEdges(TR, filterangle)
+    * Edges where the two triangles' normals differ by more than filterangle radians (pi/6), and boundary edges.
+convexHull: The convex hull of a Delaunay triangulation's points.
+    C = convexHull(DT)
+    [C, v] = convexHull(DT)
+    * In 2-D a closed loop of point indices, counterclockwise (first = last), and the area; in 3-D a row of indices per triangle, and the volume.
+voronoiDiagram: The Voronoi diagram of a Delaunay triangulation's points.
+    [V, R] = voronoiDiagram(DT)
+    * V the Voronoi vertices (the first row Inf, the point at infinity), R a cell array with the vertex indices of each point's region.
+isInterior: Which triangles lie inside constrained edges.
+    tf = isInterior(DT)
+    * Needs constrained edges, which are not supported here: it reports that.
+polyshape: A 2-D polygon, with holes and several regions.
+    pgon = polyshape(x, y)
+    pgon = polyshape(P)
+    pgon = polyshape({x1, x2}, {y1, y2})
+    pgon = polyshape(..., 'Simplify', tf, 'SolidBoundaryOrientation', dir, 'KeepCollinearPoints', tf)
+    * Boundaries are parted by NaN (or given in cells); a boundary inside another is a hole. Simplify (true) mends crossings and repeated vertices (with a warning) and turns solid boundaries clockwise and holes counterclockwise; SolidBoundaryOrientation 'cw' or 'ccw' says which are solid instead of the nesting; collinear vertices go unless kept.
+    * Properties: Vertices (the boundaries, a NaN row between), NumRegions, NumHoles. Queries: area, perimeter, centroid, boundingbox, boundary, numboundaries, numsides, ishole, issimplified, isinterior, nearestvertex, overlaps, regions, holes. Changes: addboundary, rmboundary, rmholes, rmslivers, simplify, rotate, scale, translate, sortboundaries, sortregions, polybuffer, convhull, union, intersect, subtract, xor, triangulation, plot.
+    * The geometry is Shapely's (GEOS); in the page Shapely is loaded by the first polyshape or nsidedpoly.
+nsidedpoly: A regular polygon.
+    pgon = nsidedpoly(n)
+    pgon = nsidedpoly(n, 'Center', c, 'Radius', r)
+    pgon = nsidedpoly(n, 'SideLength', s)
+    * n equal sides about c ([0 0]) with the vertices on a circle of radius r (1), the lowest side level.
+centroid: The centroid of a polyshape.
+    [x, y] = centroid(pgon)
+    [x, y] = centroid(pgon, I)
+    * Of the whole shape, or of boundary I taken as solid.
+perimeter: The perimeter of a polyshape or alpha shape.
+    P = perimeter(pgon)
+    P = perimeter(pgon, I)
+    P = perimeter(shp)
+    P = perimeter(shp, regionID)
+    * The length of all boundaries (holes included), or of boundary I; of a 2-D alpha shape's boundary.
+boundingbox: The limits of a polyshape.
+    [xlim, ylim] = boundingbox(pgon)
+    [xlim, ylim] = boundingbox(pgon, I)
+boundary: A boundary around points, or a polyshape's boundary.
+    k = boundary(x, y)
+    k = boundary(x, y, z)
+    k = boundary(P, s)
+    [k, v] = boundary(...)
+    [x, y] = boundary(pgon)
+    [x, y] = boundary(pgon, I)
+    * Around points: from the convex hull (s = 0) to the tightest single region (s = 1; 0.5 by default), an alpha shape with its holes filled: in 2-D a closed loop of point indices (counterclockwise, first = last), in 3-D the boundary's triangles, and v the area or volume. Between the ends alpha steps through the alpha spectrum in proportion to 1 - s, PyLAB's rule.
+    * Of a polyshape: its boundaries closed (the first vertex repeated), NaN between them, or boundary I.
+numboundaries: The number of boundaries of a polyshape.
+    n = numboundaries(pgon)
+numsides: The number of sides of a polyshape.
+    n = numsides(pgon)
+    n = numsides(pgon, I)
+ishole: Which boundaries of a polyshape are holes.
+    tf = ishole(pgon)
+    tf = ishole(pgon, I)
+issimplified: Whether a polyshape is well defined.
+    tf = issimplified(pgon)
+    * False for one made with 'Simplify' false, until simplify mends it.
+isinterior: Whether points are in a polyshape.
+    [in, on] = isinterior(pgon, x, y)
+    [in, on] = isinterior(pgon, P)
+    [in, on, id] = isinterior(...)
+    * in is true inside or on the boundary, on only on it; id the region holding each point.
+nearestvertex: The vertex of a polyshape nearest each point.
+    [vertexid, boundaryid, vertexindex] = nearestvertex(pgon, x, y)
+    * vertexid indexes Vertices, boundaryid the boundary and vertexindex the vertex within it.
+overlaps: Whether polyshapes overlap.
+    tf = overlaps(pgon1, pgon2)
+    TF = overlaps(pgonArray)
+    * True when they meet, touching edges included; for an array the matrix of every pair.
+regions: The regions of a polyshape, each a polyshape.
+    R = regions(pgon)
+    * A column of polyshapes, each one region with its holes.
+holes: The holes of a polyshape, each a polyshape.
+    H = holes(pgon)
+    * A column of polyshapes, each hole as a solid.
+addboundary: A polyshape with boundaries added.
+    pgon2 = addboundary(pgon, x, y)
+    pgon2 = addboundary(pgon, P)
+    pgon2 = addboundary(..., 'Simplify', tf)
+    * A boundary inside the shape becomes a hole.
+rmboundary: A polyshape with boundaries removed.
+    pgon2 = rmboundary(pgon, I)
+rmholes: A polyshape without its holes.
+    pgon2 = rmholes(pgon)
+rmslivers: A polyshape without thin parts.
+    pgon2 = rmslivers(pgon, tol)
+    * Spikes and slivers narrower than tol taken off (moved in by tol/2 and out again), then slits narrower than tol closed (out and in), corners mitred: PyLAB's approach.
+scale: A polyshape scaled.
+    pgon2 = scale(pgon, s)
+    pgon2 = scale(pgon, s, refpoint)
+    * s a factor or [sx sy] about refpoint ([0 0]).
+translate: A polyshape moved.
+    pgon2 = translate(pgon, v)
+    pgon2 = translate(pgon, dx, dy)
+sortboundaries: A polyshape's boundaries in order.
+    pgon2 = sortboundaries(pgon, criterion, direction)
+    * criterion 'area' (default), 'perimeter', 'numsides' or 'centroid' (the distance of its centroid from the origin); direction 'ascend' (default) or 'descend'.
+sortregions: A polyshape's regions in order.
+    pgon2 = sortregions(pgon, criterion, direction)
+    * As sortboundaries, each region kept with its holes and judged by its outer boundary.
+subtract: One polyshape less another.
+    pgon = subtract(pgon1, pgon2)
+    * Element by element for arrays of the same size, or one polyshape against each of an array.
+polybuffer: The region within a distance of a polyshape, points or a line.
+    polyB = polybuffer(pgon, d)
+    polyB = polybuffer(P, 'points', d)
+    polyB = polybuffer(P, 'lines', d)
+    polyB = polybuffer(..., 'JointType', type, 'MiterLimit', m)
+    * Outward by d (inward for d < 0); JointType 'round' (default), 'square' (corners cut square at distance d) or 'miter' (sharp until MiterLimit times d, 3).
+alphaShape: An alpha shape of points.
+    shp = alphaShape(x, y)
+    shp = alphaShape(x, y, z)
+    shp = alphaShape(P, a)
+    shp = alphaShape(..., 'HoleThreshold', h, 'RegionThreshold', r)
+    * The Delaunay triangles (tetrahedra) whose circumradius is at most Alpha (a); by default the smallest alpha that takes in every point (criticalAlpha 'all-points'). Regions (joined through shared edges or faces) smaller than RegionThreshold are left out, enclosed holes smaller than HoleThreshold filled; setting Alpha or the thresholds works the shape out again.
+    * Queries: area, perimeter (2-D), volume, surfaceArea (3-D), numRegions, inShape, boundaryFacets, alphaTriangulation, alphaSpectrum, criticalAlpha, nearestNeighbor, plot.
+alphaSpectrum: The alpha values at which an alpha shape changes.
+    a = alphaSpectrum(shp)
+    * The circumradii of the Delaunay simplices, largest first.
+criticalAlpha: The smallest alpha that takes in every point, or makes one region.
+    a = criticalAlpha(shp, type)
+    * type 'all-points' (default): every point a vertex of the shape; 'one-region': from that alpha on, the smallest that also joins the shape into a single region.
+alphaTriangulation: The triangles of an alpha shape.
+    tri = alphaTriangulation(shp)
+    [tri, P] = alphaTriangulation(shp, regionID)
+boundaryFacets: The boundary of an alpha shape.
+    bf = boundaryFacets(shp)
+    [bf, P] = boundaryFacets(shp, regionID)
+    * Edges (2-D, in loops) or triangles (3-D) of point indices; with P they index P.
+inShape: Whether points are inside an alpha shape.
+    tf = inShape(shp, qx, qy)
+    tf = inShape(shp, qx, qy, qz)
+    [tf, ID] = inShape(shp, QP)
+    * ID is the region holding each point (NaN outside).
+numRegions: The number of regions of an alpha shape.
+    n = numRegions(shp)
+surfaceArea: The surface area of a 3-D alpha shape.
+    A = surfaceArea(shp)
+    A = surfaceArea(shp, regionID)
+volume: The volume of a 3-D alpha shape.
+    V = volume(shp)
+    V = volume(shp, regionID)
+# ---- NetCDF files -----------------------------------------------------------------------------------------------------------------------------
+nccreate: A variable made in a NetCDF file.
+    nccreate(filename, varname)
+    nccreate(filename, varname, 'Dimensions', {dname1, length1, dname2, length2, ...})
+    nccreate(..., 'Datatype', type, 'Format', format, 'FillValue', v, 'ChunkSize', c, 'DeflateLevel', k, 'Shuffle', tf)
+    * The file and dimensions not there yet are made; Inf as a length makes a dimension unlimited; a dimension already there needs no length. Sizes are in the language's order, the first dimension varying fastest, the reverse of the file's.
+    * Format: 'netcdf4_classic' (the default), 'netcdf4', 'classic' or '64bit'. Datatype: 'double' (default), 'single', 'int8', 'int16', 'int32', 'char', and in netcdf4 files also 'uint8', 'uint16', 'uint32', 'int64', 'uint64' and 'string'. ChunkSize, DeflateLevel (0 to 9) and Shuffle are for netCDF-4 files.
+ncwrite: Values written to a NetCDF variable.
+    ncwrite(filename, varname, vardata)
+    ncwrite(filename, varname, vardata, start)
+    ncwrite(filename, varname, vardata, start, stride)
+    * The variable is one nccreate made. start (1-based) and stride are in the language's order; an unlimited dimension grows to take what is written past its end. With scale_factor and add_offset the values are stored as (value - add_offset)/scale_factor, and NaN as _FillValue.
+ncread: Values read from a NetCDF variable.
+    vardata = ncread(source, varname)
+    vardata = ncread(source, varname, start, count)
+    vardata = ncread(source, varname, start, count, stride)
+    * In the language's order (a variable of one dimension as a column). count Inf reads to the end. scale_factor and add_offset are applied, and _FillValue and missing_value become NaN, when the values are floating or scaled; char variables give characters, string variables strings.
+ncinfo: What a NetCDF file holds.
+    finfo = ncinfo(source)
+    vinfo = ncinfo(source, varname)
+    * The file's Filename, Name, Dimensions (Name, Length, Unlimited), Variables, Attributes, Groups and Format; a variable's Filename, Name, Dimensions, Size, Datatype, Attributes, ChunkSize, FillValue, DeflateLevel, Shuffle and Format.
+ncdisp: A NetCDF file's contents printed.
+    ncdisp(source)
+    ncdisp(source, varname)
+    * The format, the global attributes, the dimensions and each variable's size, dimensions, type and attributes.
+ncreadatt: An attribute of a NetCDF file or variable.
+    attvalue = ncreadatt(source, location, attname)
+    * location is a variable's name, or '/' for the file's own attributes. Text comes back as characters.
+ncwriteatt: An attribute written to a NetCDF file or variable.
+    ncwriteatt(filename, location, attname, attvalue)
+    * location is a variable's name, or '/' for the file's own attributes.
+# ---- more graphics -----------------------------------------------------------------------------------------------------------------------------
+rectangle: A rectangle, or an ellipse, in the axes.
+    rectangle('Position', [x y w h])
+    rectangle(..., 'Curvature', [cx cy])
+    rectangle(ax, ...)
+    r = rectangle(..., Name, Value)
+    * Curvature rounds the corners, cx of the half width and cy of the half height (a number for both); [1 1] makes an ellipse. FaceColor is 'none' and EdgeColor black unless set; LineWidth and LineStyle as for lines. The current axes keep what they hold.
+hggroup: A group of graphics objects.
+    g = hggroup
+    g = hggroup(ax, Name, Value)
+    * Objects made with 'Parent', g (or given it) belong to the group: shown and hidden with its Visible, deleted with it.
+hgtransform: A group drawn through a transform.
+    t = hgtransform
+    t = hgtransform(ax, Name, Value)
+    * Its children are drawn with their data multiplied by Matrix, a 4-by-4 transform of [x; y; z; 1] (makehgtform makes them); their own data stay as they are. Setting Matrix moves them all, as for an animation.
+makehgtform: A 4-by-4 transform for hgtransform.
+    M = makehgtform
+    M = makehgtform('translate', [tx ty tz], 'scale', s, 'xrotate', t, 'yrotate', t, 'zrotate', t, 'axisrotate', [ax ay az], t)
+    * The steps multiplied in the order given (so the last acts first); angles in radians; scale takes s or [sx sy sz]. With no steps, the identity.
+rotate: Graphics objects' data turned about an axis, or a polyshape turned.
+    rotate(h, direction, alpha)
+    rotate(h, direction, alpha, origin)
+    pgon2 = rotate(pgon, theta)
+    pgon2 = rotate(pgon, theta, refpoint)
+    * The XData, YData and ZData (Vertices, Position) of lines, surfaces, patches and text turned by alpha degrees about the line through origin (the middle of the axes' limits) along direction ([theta phi] in degrees, or [x y z]), by the right-hand rule.
+    * A polyshape turns counterclockwise by theta degrees about refpoint ([0 0]).
+refreshdata: Plots fetching their data again.
+    refreshdata
+    refreshdata(h)
+    refreshdata(h, workspace)
+    * The XDataSource, YDataSource and ZDataSource of h's objects (the current figure's) evaluated again, in the caller's workspace or 'base', their values made the data.
+xtickformat: The format of the x tick labels.
+    xtickformat(fmt)
+    xtickformat(ax, fmt)
+    fmt = xtickformat
+    * fmt is a pattern with %d, %f, %e or %g and the flags - + space 0 and , (thousands parted by commas), with text about it ('%.2f', '%,d', '$%,.2f', '%g°'); or 'usd', 'eur', 'gbp', 'jpy', 'degrees' and 'percentage'; 'auto' the usual labels.
+ytickformat: The format of the y tick labels.
+    ytickformat(fmt)
+    ytickformat(ax, fmt)
+    fmt = ytickformat
+    * As xtickformat.
+ztickformat: The format of the z tick labels.
+    ztickformat(fmt)
+    ztickformat(ax, fmt)
+    fmt = ztickformat
+    * As xtickformat.
+ztickangle: The rotation of the z tick labels.
+    ztickangle(angle)
+    ztickangle(ax, angle)
+    angle = ztickangle
+    * In degrees; kept as ZTickLabelRotation (the 3-D axes draw their z labels upright).
+rticks: The radius ticks of polar axes.
+    rticks(ticks)
+    rticks(pax, ticks)
+    rticks('auto')
+    rt = rticks
+    * Sets RTick (RTickMode 'manual'); 'auto' gives the choice back to the axes.
+thetaticks: The angle ticks of polar axes.
+    thetaticks(ticks)
+    thetaticks(pax, ticks)
+    tt = thetaticks
+    * Angles in degrees (ThetaTick, every 30 by default).
+rticklabels: The radius tick labels of polar axes.
+    rticklabels(labels)
+    rticklabels(pax, labels)
+    rl = rticklabels
+thetaticklabels: The angle tick labels of polar axes.
+    thetaticklabels(labels)
+    thetaticklabels(pax, labels)
+    tl = thetaticklabels
+    * By default the angles with a degree sign.
+rlim: The radius limits of polar axes.
+    rlim([rmin rmax])
+    rlim(pax, [rmin rmax])
+    rlim('auto')
+    rl = rlim
+    * Polar axes also take ThetaDir ('counterclockwise' or 'clockwise') and ThetaZeroLocation ('right', 'top', 'left' or 'bottom').
+gplot: A graph drawn from its adjacency matrix.
+    gplot(A, xy)
+    gplot(A, xy, LineSpec)
+    [X, Y] = gplot(A, xy)
+    * An edge for each nonzero A(i,j), between rows i and j of xy; X and Y have each edge's ends and a NaN.
+treelayout: Positions for drawing trees.
+    [x, y] = treelayout(parent)
+    [x, y, h, s] = treelayout(parent)
+    * parent(k) is node k's parent (0 for a root). The leaves evenly across in the order a depth-first walk meets them, each parent over the middle of its children; y by depth, the roots at the top; both inside (0, 1). h is the height (levels) and s the number of nodes on the chain from the root down to the first node with other than one child. PyLAB's layout.
+treeplot: Trees drawn from their parents.
+    treeplot(parent)
+    treeplot(parent, nodeSpec, edgeSpec)
+    * By treelayout: nodes as circles ('o'), edges as lines ('-'), the height below.
+etreeplot: The elimination tree of a matrix drawn.
+    etreeplot(A)
+    etreeplot(A, nodeSpec, edgeSpec)
+    * treeplot of etree(A + A').
+validatecolor: Colours checked and given as RGB.
+    RGB = validatecolor(colors)
+    RGB = validatecolor(colors, 'multiple')
+    * Colour names ('red', 'r'), hex codes ('#FF8800', '#F80') or RGB rows (doubles 0 to 1, or integers scaled by their range), as rows of doubles; 'one' (the default) wants exactly one colour.
+rgb2hex: RGB colours as hex codes.
+    hex = rgb2hex(RGB)
+    hex = rgb2hex(RGB, 'Shorthand', tf)
+    * A string '#RRGGBB' for each row (or pixel of an m-by-n-by-3 image); with Shorthand true '#RGB' where each pair repeats a digit.
+hex2rgb: Hex colour codes as RGB.
+    RGB = hex2rgb(hex)
+    * Rows of doubles 0 to 1 from '#RRGGBB' or '#RGB' (the # may be left out); a 2-D string array gives an m-by-n-by-3 array.
+brighten: A colormap brightened or darkened.
+    brighten(beta)
+    brighten(f, beta)
+    newmap = brighten(map, beta)
+    newmap = brighten(beta)
+    * Each value raised to the power 1 - beta (beta > 0, brighter) or 1/(1 + beta) (beta < 0, darker); -1 < beta < 1. Without a map, the current figure's colormap is changed (or, with an output, given brightened).
+rgbplot: A colormap's columns drawn.
+    rgbplot(map)
+    * The red, green and blue columns against their row, as lines in those colours.
+spinmap: A colormap turned round.
+    spinmap
+    spinmap(t)
+    spinmap(t, inc)
+    spinmap('inf')
+    * The current figure's colormap moved on by inc rows (2) every 0.05 seconds for t seconds (3); 'inf' until Ctrl+C.
+surfnorm: The normals of a surface.
+    surfnorm(X, Y, Z)
+    surfnorm(Z)
+    [Nx, Ny, Nz] = surfnorm(...)
+    * Unit normals at the vertices: the cross product of the tangents along the columns and along the rows (upward for z = f(x, y) on an increasing grid). With no outputs the surface is drawn with its normals.
+shrinkfaces: The faces of a patch drawn smaller.
+    shrinkfaces(p, sf)
+    nfv = shrinkfaces(fv, sf)
+    nfv = shrinkfaces(p, sf)
+    [f, v] = shrinkfaces(f, v, sf)
+    * Each face scaled about its centroid so its area is sf times as large (0.3), on vertices of its own; a patch given with no output is changed.
+isocolors: Colours of a volume at vertices.
+    nc = isocolors(X, Y, Z, C, vertices)
+    nc = isocolors(X, Y, Z, R, G, B, vertices)
+    nc = isocolors(C, vertices)
+    isocolors(..., p)
+    * Interpolated linearly in the volume (X, Y, Z as meshgrid makes them, or 1:n); with a patch p in place of the vertices they become its FaceVertexCData (FaceColor 'interp').
+lightangle: A light placed by azimuth and elevation.
+    h = lightangle(az, el)
+    lightangle(h, az, el)
+    [az, el] = lightangle(h)
+    * In degrees, as view counts them: from az = 0 the light shines from the -y side.
 '''
 
 

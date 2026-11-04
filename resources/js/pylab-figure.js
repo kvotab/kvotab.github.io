@@ -253,6 +253,35 @@
   function maxTicks(px, is3d) { return Math.max(3, Math.min(is3d ? 7 : 11, Math.floor(px / 30) + 1)); }
 
   /* Tick labels and the exponent written at the axis' end. */
+  // a tick label from a printf-like pattern (xtickformat): %d %i %f %e %g, the flags - + space 0 # and , (thousands)
+  function formatTick(fmt, v) {
+    return fmt.replace(/%%|%([-+ 0#,]*)(\d*)(?:\.(\d+))?([dieEfgG])/g, (m, flags, width, prec, conv) => {
+      if (m === '%%') return '%';
+      flags = flags || '';
+      const comma = flags.includes(',');
+      let s;
+      if (!Number.isFinite(v)) s = Number.isNaN(v) ? 'NaN' : (v > 0 ? 'Inf' : '-Inf');
+      else if (conv === 'd' || conv === 'i') s = String(Math.round(v));
+      else if (conv === 'f') s = v.toFixed(prec === undefined ? 6 : +prec);
+      else if (conv === 'e' || conv === 'E') {
+        s = v.toExponential(prec === undefined ? 6 : +prec).replace(/e([+-])(\d)$/, 'e$10$2');
+        if (conv === 'E') s = s.toUpperCase();
+      } else {
+        const p = prec === undefined ? 6 : Math.max(1, +prec);
+        const e = v === 0 ? 0 : Math.floor(Math.log10(Math.abs(v)));
+        if (e < -4 || e >= p) s = v.toExponential(p - 1).replace(/\.?0+e/, 'e').replace(/e([+-])(\d)$/, 'e$10$2');
+        else s = (+v.toPrecision(p)).toString();
+        if (conv === 'G') s = s.toUpperCase();
+      }
+      if (comma && Number.isFinite(v)) s = s.replace(/^(-?)(\d+)/, (_, sg, d) => sg + d.replace(/\B(?=(\d{3})+(?!\d))/g, ','));
+      if (flags.includes('+') && v >= 0) s = '+' + s;
+      else if (flags.includes(' ') && v >= 0) s = ' ' + s;
+      const w = +(width || 0);
+      if (s.length < w) s = flags.includes('-') ? s.padEnd(w) : (flags.includes('0') ? s.replace(/^([-+ ]?)/, (sg) => sg + '0'.repeat(w - s.length)) : s.padStart(w));
+      return s;
+    });
+  }
+
   function tickLabels(ticks, log) {
     if (!ticks.length) return { labels: [], exp: null };
     if (log) return { labels: ticks.map((t) => `10^{${Math.round(Math.log10(t))}}`), exp: null };
@@ -956,8 +985,10 @@
       let ticks = given || (log ? logTicks(lim[0], lim[1]) : niceTicks(lim[0], lim[1], maxTicks(px, is3d)));
       ticks = ticks.filter((t) => t >= Math.min(lim[0], lim[1]) - 1e-12 * Math.abs(lim[1] - lim[0]) && t <= Math.max(lim[0], lim[1]) + 1e-12 * Math.abs(lim[1] - lim[0]));
       const manual = ax[`${which}ticklabel`];
+      const fmt = ax[`${which}tickformat`];
       let labels, exp = null;
       if (manual) { labels = ticks.map((_, i) => manual.length ? manual[i % manual.length] : ''); }
+      else if (fmt && !log) labels = ticks.map((t) => formatTick(fmt, t));
       else if (ax.geo && (which === 'x' || which === 'y')) {
         // geographic axes: degrees with their hemisphere, 10°W and 30°N
         ({ labels } = tickLabels(ticks.map(Math.abs), false));
@@ -1740,8 +1771,24 @@
       const radii = (c) => (c.type === 'line' || (c.type === 'patch' && c.y) ? c.y : c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart') ? c.yData : null);
       for (const c of ax.children) if (radii(c)) for (const v of vec(decode(radii(c)))) if (Number.isFinite(v)) rmax = Math.max(rmax, Math.abs(v));
       if (!(rmax > 0)) rmax = 1;
-      const ticks = niceTicks(0, rmax, 6);
-      const top = ticks[ticks.length - 1] < rmax ? ticks[ticks.length - 1] + (ticks[1] - ticks[0]) : ticks[ticks.length - 1];
+      const pol = ax.polar || {};
+      let rlo = 0, top;
+      if (pol.rlim) [rlo, top] = pol.rlim;
+      else {
+        const t0 = niceTicks(0, rmax, 6);
+        top = t0[t0.length - 1] < rmax && t0.length > 1 ? t0[t0.length - 1] + (t0[1] - t0[0]) : t0[t0.length - 1];
+      }
+      const ticks = pol.rtick || niceTicks(rlo, top, 6).filter((t) => t >= rlo - 1e-12 && t <= top + 1e-12);
+      const rlabels = pol.rticklabel ? ticks.map((_, i) => pol.rticklabel.length ? pol.rticklabel[i % pol.rticklabel.length] : '')
+        : tickLabels(ticks, false).labels;
+      const thetas = pol.thetatick || [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+      const tlabels = pol.thetaticklabel ? thetas.map((_, i) => pol.thetaticklabel.length ? pol.thetaticklabel[i % pol.thetaticklabel.length] : '')
+        : thetas.map((d) => `${+d.toPrecision(6)}°`);
+      const zero = { right: 0, top: Math.PI / 2, left: Math.PI, bottom: -Math.PI / 2 }[pol.thetazero || 'right'] ?? 0;
+      const sgn = pol.thetadir === 'clockwise' ? -1 : 1;
+      const ang = (th) => zero + sgn * th;              // a data angle (radians) as drawn
+      const span = top - rlo || 1;
+      const rad = (r) => R * Math.max(0, (r - rlo)) / span;
       const fs = ax.fontSize * PT;
       const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
       ctx.save();
@@ -1752,24 +1799,25 @@
         ctx.lineWidth = lw(0.5);
         dash(ctx, ax.gridLineStyle || '-', 0.5);
         if (ax.gridLineStyle !== 'none') {
-          for (const t of ticks) { if (t <= 0) continue; ctx.beginPath(); ctx.arc(cx, cy, R * t / top, 0, 2 * Math.PI); ctx.stroke(); }
-          for (let d = 0; d < 360; d += 30) {
-            const a = d * Math.PI / 180;
+          for (const t of ticks) { if (rad(t) <= 0) continue; ctx.beginPath(); ctx.arc(cx, cy, rad(t), 0, 2 * Math.PI); ctx.stroke(); }
+          for (const d of thetas) {
+            const a = ang(d * Math.PI / 180);
             ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + R * Math.cos(a), cy - R * Math.sin(a)); ctx.stroke();
           }
         }
         ctx.setLineDash([]);
-        for (let d = 0; d < 360; d += 30) {
-          const a = d * Math.PI / 180;
-          drawText(ctx, `${d}°`, cx + (R + fs * 1.2) * Math.cos(a), cy - (R + fs * 1.2) * Math.sin(a), Object.assign({ size: fs, halign: 'center', valign: 'middle' }, tf));
-        }
+        thetas.forEach((d, i) => {
+          const a = ang(d * Math.PI / 180);
+          drawText(ctx, tlabels[i], cx + (R + fs * 1.2) * Math.cos(a), cy - (R + fs * 1.2) * Math.sin(a), Object.assign({ size: fs, halign: 'center', valign: 'middle' }, tf));
+        });
         ctx.strokeStyle = AXIS_INK;
         ctx.lineWidth = lw(ax.lineWidth || 0.5);
         ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.stroke();
-        for (const t of ticks) if (t > 0) drawText(ctx, String(+t.toPrecision(6)), cx + R * t / top * Math.cos(Math.PI / 12) + 2, cy - R * t / top * Math.sin(Math.PI / 12), Object.assign({ size: fs * 0.9, valign: 'bottom' }, tf));
+        const la = ang(Math.PI / 12);
+        ticks.forEach((t, i) => { if (rad(t) > 0) drawText(ctx, rlabels[i], cx + rad(t) * Math.cos(la) + 2, cy - rad(t) * Math.sin(la), Object.assign({ size: fs * 0.9, valign: 'bottom' }, tf)); });
       }
       ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.clip();
-      const at = (th, r) => [cx + R * r / top * Math.cos(th), cy - R * r / top * Math.sin(th)];
+      const at = (th, r) => [cx + rad(r) * Math.cos(ang(th)), cy - rad(r) * Math.sin(ang(th))];
       for (const c of ax.children) {
         if (c.visible === false) continue;
         if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) { this.scatter(ctx, ax, at, c, null); continue; }
@@ -1791,7 +1839,7 @@
         if (c.type !== 'line') continue;
         const th = vec(decode(c.x)), rr = vec(decode(c.y));
         const pts = [];
-        for (let i = 0; i < th.length; i++) pts.push(Number.isFinite(th[i]) && Number.isFinite(rr[i]) ? [cx + R * rr[i] / top * Math.cos(th[i]), cy - R * rr[i] / top * Math.sin(th[i])] : null);
+        for (let i = 0; i < th.length; i++) pts.push(Number.isFinite(th[i]) && Number.isFinite(rr[i]) ? at(th[i], rr[i]) : null);
         if (c.lineStyle !== 'none') {
           ctx.strokeStyle = rgb(c.color); ctx.lineWidth = lw(c.lineWidth); dash(ctx, c.lineStyle, c.lineWidth);
           ctx.beginPath();

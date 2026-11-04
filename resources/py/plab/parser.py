@@ -336,7 +336,7 @@ _STOP_KW = {'end', 'else', 'elseif', 'case', 'otherwise', 'catch', 'function'}
 def _value_start(t, in_index):
     if t.k in ('num', 'str', 'dstr', 'id'):
         return True
-    if t.k == 'op' and t.v in ('(', '[', '{', '@', '-', '+', '~'):
+    if t.k == 'op' and t.v in ('(', '[', '{', '@', '?', '-', '+', '~'):
         return True
     if t.k == 'kw' and t.v == 'end' and in_index:
         return True
@@ -1121,6 +1121,17 @@ class Parser:
                 return CellLit(self.rows('}'), t.line)
             if v == '@':
                 return self.handle()
+            if v == '?':
+                # ?ClassName: the class's meta.class object, as meta.class.fromName('ClassName')
+                self.next()
+                if self.peek().k != 'id':
+                    raise self.err('Invalid use of operator. ? takes the name of a class.', self.peek())
+                parts = [self.next().v]
+                while self.at_op('.') and self.peek(1).k == 'id' and not self.peek(1).sb:
+                    self.next()
+                    parts.append(self.next().v)
+                fn = Field(Field(Id('meta', t.line), 'class', t.line), 'fromName', t.line)
+                return Index(fn, [Chr('.'.join(parts), t.line)], False, t.line)
             if v == ':' and self.in_index:
                 self.next()
                 return Colon(t.line)

@@ -434,19 +434,20 @@ _POLAR_NOT = re.compile(r'^([XYZ][A-Z]|Camera|DataAspect|PlotBox|View$|Projectio
 _NOT_DRAWN = {
     'figure': 'Alphamap BackingStore DockControls DoubleBuffer GraphicsSmoothing InvertHardcopy MinColormap PaperOrientation '
               'PaperPositionMode PaperSize PaperType PaperUnits Renderer RendererMode ShareColors WindowState Selected SelectionHighlight',
-    'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty',
-    'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight',
+    'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty ZTickLabelRotation '
+            'ThetaAxisUnits',
+    'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight XDataSource YDataSource ZDataSource',
     'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength MeshStyle '
-               'Marker MarkerSize CDataMapping Selected SelectionHighlight',
+               'Marker MarkerSize CDataMapping Selected SelectionHighlight XDataSource YDataSource ZDataSource',
     'patch': 'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
-             'Selected SelectionHighlight',
+             'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha',
     'image': 'AlphaDataMapping EraseMode Selected SelectionHighlight',
     'text': 'Editing EraseMode FontSmoothing Selected SelectionHighlight',
     'legend': 'Position', 'colorbar': 'Position',
     'uipanel': 'AutoResizeChildren HighlightColor ShadowColor Scrollable FontAngle BorderWidth',
     'uitable': 'FontAngle FontName FontWeight RowStriping ColumnFormat',
     'textarrowshape': 'HorizontalAlignment VerticalAlignment',
-    'series': 'Selected SelectionHighlight',
+    'series': 'Selected SelectionHighlight XDataSource YDataSource ZDataSource',
 }
 
 

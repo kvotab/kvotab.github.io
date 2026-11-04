@@ -121,8 +121,18 @@ def name_value(args, start, valid=None):
 def apply_props(h, pairs):
     for k, v in pairs:
         if k.lower() == 'parent':
+            # a drawn object given other axes, or a group, goes there (axes, figures and controls see to their own parents)
+            target = v.a.flat[0] if isinstance(v, HArr) and v.a.size == 1 else v
+            from ..graphics_base import Group
+            if isinstance(target, (Axes, Group)) and target is not h.parent and h.TYPE in _DRAWN_TYPES:
+                if h.parent is not None:
+                    h.parent.touch()
+                h.reparent(target)
             continue
         h.setprop(k, v)
+
+
+_DRAWN_TYPES = ('line', 'surface', 'patch', 'image', 'text', 'light', 'hggroup', 'hgtransform', 'series')
 
 
 def handles_out(hs, col=True):
@@ -3084,7 +3094,8 @@ def _find(args, hidden):
         found.append(o)
         if depth is not None and d >= depth:
             return
-        for c in (STORE.figures.values() if o is ROOT else o.children):
+        # other handle objects (meta.property lists, ...) have no children
+        for c in (STORE.figures.values() if o is ROOT else getattr(o, 'children', ())):
             if c.valid and shown(c):
                 walk(c, d + 1)
     for r in roots:

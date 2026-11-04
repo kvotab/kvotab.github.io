@@ -182,7 +182,7 @@ class GObj(Obj):
         if name == 'Children':
             return HArr.of([c for c in self.children if c.valid and not getattr(c, 'hidden', False)], col=True)
         if name == 'Type':
-            return Char.of(self.TYPE)
+            return Char.of(getattr(self, 'TYPE_NAME', self.TYPE))
         k = self.canon(name)
         if k is None:
             if name.lower() == 'parent':
@@ -190,7 +190,7 @@ class GObj(Obj):
             if name.lower() == 'children':
                 return self.getprop('Children')
             if name.lower() == 'type':
-                return Char.of(self.TYPE)
+                return Char.of(getattr(self, 'TYPE_NAME', self.TYPE))
             d = split_default(name)
             if d is not None:
                 return self.default_value(*d)
@@ -563,8 +563,16 @@ class Axes(GObj):
         'CameraTarget': lambda: np.array([[0.5, 0.5, 0.5]]), 'CameraTargetMode': 'auto',
         'CameraUpVector': lambda: np.array([[0.0, 0.0, 1.0]]), 'CameraUpVectorMode': 'auto',
         'BubbleSizeRange': lambda: np.array([[1.0, 20.0]]), 'BubbleLim': lambda: np.array([[0.0, 1.0]]), 'BubbleLimMode': 'auto',
+        'ZTickLabelRotation': 0.0,
+        # polar axes' own
+        'RLim': lambda: np.array([[0.0, 1.0]]), 'RLimMode': 'auto', 'RTick': lambda: EMPTY(), 'RTickMode': 'auto',
+        'RTickLabel': None, 'RTickLabelMode': 'auto', 'ThetaTick': lambda: np.arange(0.0, 360.0, 30.0).reshape(1, -1),
+        'ThetaTickMode': 'auto', 'ThetaTickLabel': None, 'ThetaTickLabelMode': 'auto', 'ThetaDir': 'counterclockwise',
+        'ThetaZeroLocation': 'right', 'ThetaAxisUnits': 'degrees',
     }
     SHOWN = ['XLim', 'YLim', 'XScale', 'YScale', 'GridLineStyle', 'Position', 'Units']
+    POLAR_ONLY = ('RLim', 'RLimMode', 'RTick', 'RTickMode', 'RTickLabel', 'RTickLabelMode', 'ThetaTick', 'ThetaTickMode',
+                  'ThetaTickLabel', 'ThetaTickLabelMode', 'ThetaDir', 'ThetaZeroLocation', 'ThetaAxisUnits')
 
     def __init__(self, parent, **props):
         super().__init__(parent, **props)
@@ -608,8 +616,23 @@ class Axes(GObj):
             return
         super().setprop(name, value)
 
+    def _set_labels(self, k, value):
+        """A tick-label property: its labels as text, and its mode manual."""
+        if type(value) is Cell:
+            labels = [py_str(x) if type(x) in (Char, Str) else _num_label(x) for x in value.a.reshape(-1, order='F')]
+        elif type(value) is Char:
+            labels = value.row_strs() if value.a.shape[0] > 1 else ([value.str()] if value.a.size else [])
+        elif type(value) is Str:
+            labels = [s or '' for s in value.a.reshape(-1, order='F')]
+        else:
+            labels = [_num_label(x) for x in np.asarray(value, float).reshape(-1)]
+        self.props[k] = labels
+        self.props[k + 'Mode'] = 'manual'
+
     def propnames(self):
         names = super().propnames()
+        if self.kind != 'polar':
+            names = [n for n in names if n not in self.POLAR_ONLY]
         return sorted(names + ['Basemap']) if self.kind == 'geo' else names
 
     def get_value(self, k):
@@ -621,9 +644,23 @@ class Axes(GObj):
             from .glayout import auto_ticks
             return np.array([auto_ticks(self, k[0])]) if True else EMPTY()
         if k in ('XTickLabel', 'YTickLabel', 'ZTickLabel') and self.props[k + 'Mode'] == 'auto':
-            from .glayout import auto_ticks, tick_labels
+            from .glayout import auto_ticks, tick_labels, format_tick
             t = auto_ticks(self, k[0])
-            labels, _ = tick_labels(t, self.props[k[0] + 'Scale'])
+            fmt = (getattr(self, 'tickfmt', None) or {}).get(k[0])
+            labels = [format_tick(fmt, v) for v in t] if fmt else tick_labels(t, self.props[k[0] + 'Scale'])[0]
+            return Cell.of_list([Char.of(s) for s in labels], (len(labels), 1))
+        if k in ('RLim', 'RTick', 'RTickLabel') and self.props[k + 'Mode'] == 'auto':
+            from .glayout import polar_ticks, tick_labels
+            ticks, top = polar_ticks(self)
+            if k == 'RLim':
+                return np.array([[0.0, top]])
+            if k == 'RTick':
+                return np.array([ticks])
+            labels = tick_labels(ticks)[0]
+            return Cell.of_list([Char.of(s) for s in labels], (len(labels), 1))
+        if k == 'ThetaTickLabel' and self.props[k + 'Mode'] == 'auto':
+            t = np.asarray(self.props['ThetaTick'], float).reshape(-1)
+            labels = [f'{x:g}°' for x in t]
             return Cell.of_list([Char.of(s) for s in labels], (len(labels), 1))
         if k == 'CLim' and self.props['CLimMode'] == 'auto':
             from .glayout import auto_clim
@@ -667,6 +704,20 @@ class Axes(GObj):
             if k == 'BubbleLim':
                 self.props['BubbleLimMode'] = 'manual'
             return
+        if k == 'RLim':
+            a = np.asarray(value if type(value) is not float else [value], float).reshape(-1)
+            if a.size != 2 or not a[0] < a[1]:
+                raise gerr('Value must be a 1x2 vector of numeric type in which the second element is larger than the first.', 'MATLAB:hg:shaped_arrays:LimitsPredicate')
+            self.props['RLim'] = a.reshape(1, 2)
+            self.props['RLimMode'] = 'manual'
+            return
+        if k in ('RTick', 'ThetaTick'):
+            a = np.asarray(value, float).reshape(1, -1) if numel(value) else np.zeros((1, 0))
+            self.props[k] = a
+            self.props[k + 'Mode'] = 'manual'
+            return
+        if k in ('RTickLabel', 'ThetaTickLabel'):
+            return self._set_labels(k, value)
         if k in ('XLim', 'YLim', 'ZLim', 'CLim'):
             a = np.asarray(value if type(value) is not float else [value], float).reshape(-1)
             if a.size != 2:
@@ -688,17 +739,7 @@ class Axes(GObj):
             self.props[k + 'Mode'] = 'manual'
             return
         if k in ('XTickLabel', 'YTickLabel', 'ZTickLabel'):
-            if type(value) is Cell:
-                labels = [py_str(x) if type(x) in (Char, Str) else _num_label(x) for x in value.a.reshape(-1, order='F')]
-            elif type(value) is Char:
-                labels = value.row_strs() if value.a.shape[0] > 1 else ([value.str()] if value.a.size else [])
-            elif type(value) is Str:
-                labels = [s or '' for s in value.a.reshape(-1, order='F')]
-            else:
-                labels = [_num_label(x) for x in np.asarray(value, float).reshape(-1)]
-            self.props[k] = labels
-            self.props[k + 'Mode'] = 'manual'
-            return
+            return self._set_labels(k, value)
         if k == 'CameraViewAngle':
             a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
             if a.size != 1 or not 0 <= a[0] < 180:
@@ -716,7 +757,8 @@ class Axes(GObj):
             return
         if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode',
                  'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode',
-                 'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode'):
+                 'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode', 'RLimMode', 'RTickMode', 'ThetaTickMode',
+                 'RTickLabelMode', 'ThetaTickLabelMode'):
             s = py_str(value).lower()
             if s not in ('auto', 'manual'):
                 raise gerr(f"Invalid value for {k}: use 'auto' or 'manual'.")
@@ -775,7 +817,7 @@ class Axes(GObj):
         super().set_value(k, value)
 
     def plot_children(self):
-        return [c for c in self.children if c.valid and c.TYPE not in ('text', 'light') and not getattr(c, 'hidden', False)]
+        return [c for c in drawn_children(self) if c.valid and c.TYPE not in ('text', 'light') and not getattr(c, 'hidden', False)]
 
     def is3d(self):
         v = self.props['View'].reshape(-1)
@@ -894,6 +936,171 @@ class Patch(GObj):
                 'Marker': 'none', 'MarkerSize': 6.0, 'MarkerFaceColor': 'none', 'DisplayName': '', 'Visible': True, 'Tag': '',
                 'UserData': lambda: EMPTY(), 'FaceLighting': 'flat', 'CDataMapping': 'scaled'}
     SHOWN = ['FaceColor', 'FaceAlpha', 'EdgeColor', 'LineStyle', 'Faces', 'Vertices']
+
+
+class Polygon(Patch):
+    """A polyshape's plot: its boundaries as rings parted by NaN in XData and
+    YData, filled even-odd so that holes stay open. Drawn as a patch (TYPE),
+    its Type is 'polygon'; setting Shape draws the new polyshape."""
+    TYPE_NAME = 'polygon'
+    CLASSNAME = 'matlab.graphics.primitive.Polygon'
+    OWN_DEFAULTS = {'Shape': lambda: EMPTY(), 'FaceAlpha': 0.35, 'HoleEdgeColor': (0.0, 0.0, 0.0), 'HoleEdgeAlpha': 1.0}
+    DEFAULTS = dict(Patch.DEFAULTS, **OWN_DEFAULTS)          # made again from the patch's once those are complete
+    SHOWN = ['FaceColor', 'FaceAlpha', 'EdgeColor', 'LineWidth', 'LineStyle', 'Shape']
+    rings = True
+
+    def set_value(self, k, value):
+        if k == 'Shape':
+            if type(value).__name__ != 'PolyShape':
+                raise gerr('Shape is a polyshape.', 'MATLAB:hg:polygon:Shape')
+            self.props['Shape'] = value
+            V = value.vertices()
+            self.props['XData'] = V[:, :1].copy() if V.size else EMPTY()
+            self.props['YData'] = V[:, 1:].copy() if V.size else EMPTY()
+            return
+        super().set_value(k, value)
+
+    def get_value(self, k):
+        if k == 'Shape':
+            return self.props.get('Shape')
+        return super().get_value(k)
+
+
+class Rectangle(Patch):
+    """rectangle: a box at Position [x y w h] with its corners rounded by
+    Curvature [cx cy] (fractions of the half width and half height; 1 makes
+    an ellipse), drawn as a patch of its outline (TYPE), its Type 'rectangle'."""
+    TYPE_NAME = 'rectangle'
+    CLASSNAME = 'matlab.graphics.primitive.Rectangle'
+    OWN_DEFAULTS = {'Position': lambda: np.array([[0.0, 0.0, 1.0, 1.0]]), 'Curvature': lambda: np.array([[0.0, 0.0]]),
+                    'FaceColor': 'none', 'EdgeColor': (0.0, 0.0, 0.0)}
+    DEFAULTS = dict(Patch.DEFAULTS, **OWN_DEFAULTS)
+    SHOWN = ['FaceColor', 'EdgeColor', 'LineWidth', 'LineStyle', 'Curvature', 'Position']
+
+    def set_value(self, k, value):
+        if k == 'Position':
+            a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.size != 4 or a[2] < 0 or a[3] < 0 or not np.all(np.isfinite(a)):
+                raise gerr('Position is [x y width height], the width and height not negative.', 'MATLAB:hg:rectangle:Position')
+            self.props['Position'] = a.reshape(1, 4)
+            self.outline()
+            return
+        if k == 'Curvature':
+            a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.size == 1:
+                a = np.array([a[0], a[0]])
+            if a.size != 2 or np.any(a < 0) or np.any(a > 1):
+                raise gerr('Curvature is a number or [horizontal vertical], each from 0 to 1.', 'MATLAB:hg:rectangle:Curvature')
+            self.props['Curvature'] = a.reshape(1, 2)
+            self.outline()
+            return
+        super().set_value(k, value)
+
+    def outline(self):
+        x, y, w, h = (float(v) for v in np.asarray(self.props['Position'], float).reshape(-1))
+        cx, cy = (float(v) for v in np.asarray(self.props['Curvature'], float).reshape(-1))
+        rx, ry = cx * w / 2, cy * h / 2
+        if rx <= 0 or ry <= 0:
+            px = [x, x + w, x + w, x]
+            py = [y, y, y + h, y + h]
+        else:
+            t = np.linspace(0, np.pi / 2, 17)
+            px, py = [], []
+            for (ox, oy, a0) in ((x + w - rx, y + ry, -np.pi / 2), (x + w - rx, y + h - ry, 0.0),
+                                 (x + rx, y + h - ry, np.pi / 2), (x + rx, y + ry, np.pi)):
+                px += list(ox + rx * np.cos(a0 + t))
+                py += list(oy + ry * np.sin(a0 + t))
+        self.props['XData'] = np.asarray(px, float).reshape(-1, 1)
+        self.props['YData'] = np.asarray(py, float).reshape(-1, 1)
+
+
+class Group(GObj):
+    """hggroup: objects gathered to be set, shown and hidden together."""
+    TYPE = 'hggroup'
+    CLASSNAME = 'matlab.graphics.primitive.Group'
+    DEFAULTS = {'Visible': True, 'Tag': '', 'UserData': lambda: EMPTY(), 'DisplayName': '', 'Clipping': True}
+    SHOWN = ['Children', 'Visible']
+
+
+class Transform(Group):
+    """hgtransform: a group whose children are drawn through Matrix, a 4-by-4
+    transform of [x; y; z; 1] (makehgtform makes them)."""
+    TYPE = 'hgtransform'
+    CLASSNAME = 'matlab.graphics.primitive.Transform'
+    DEFAULTS = dict(Group.DEFAULTS, Matrix=lambda: np.eye(4))
+    SHOWN = ['Children', 'Visible', 'Matrix']
+
+    def set_value(self, k, value):
+        if k == 'Matrix':
+            a = np.asarray(value, float) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.shape != (4, 4) or not np.all(np.isfinite(a)):
+                raise gerr('Matrix is a 4-by-4 transform of finite numbers.', 'MATLAB:hg:hgtransform:Matrix')
+            self.props['Matrix'] = a.copy()
+            return
+        super().set_value(k, value)
+
+
+def drawn_children(parent, M=None):
+    """The children of axes (or of a group) as they are drawn, in order:
+    groups opened in place, and under an hgtransform copies of the objects
+    with its matrix applied to their data."""
+    res = []
+    for c in parent.children:
+        if not c.valid:
+            continue
+        if isinstance(c, Group):
+            if not c.props.get('Visible', True):
+                continue
+            Mc = M
+            if isinstance(c, Transform):
+                T = np.asarray(c.props['Matrix'], float)
+                Mc = T if M is None else M @ T
+            res += drawn_children(c, Mc)
+        else:
+            res.append(c if M is None else _transformed(c, M))
+    return res
+
+
+def _apply(M, x, y, z):
+    P = np.vstack([x.reshape(-1), y.reshape(-1), z.reshape(-1), np.ones(x.size)])
+    Q = M @ P
+    w = np.where(Q[3] != 0, Q[3], 1.0)
+    return (Q[0] / w).reshape(x.shape), (Q[1] / w).reshape(x.shape), (Q[2] / w).reshape(x.shape)
+
+
+def _transformed(c, M):
+    """A copy of a line, surface, patch or text with M applied (the object itself for anything else)."""
+    import copy
+    t = c.TYPE
+    if t not in ('line', 'surface', 'patch', 'text'):
+        return c
+    o = copy.copy(c)
+    o.props = dict(c.props)
+    p = o.props
+    if t == 'text':
+        pos = np.asarray(p['Position'], float).reshape(-1)
+        pos = np.concatenate([pos, np.zeros(3 - pos.size)]) if pos.size < 3 else pos[:3]
+        x, y, z = _apply(M, pos[:1], pos[1:2], pos[2:3])
+        p['Position'] = np.array([[x[0], y[0], z[0]]])
+        return o
+    if t == 'patch' and numel(p.get('Vertices')):
+        V = np.asarray(p['Vertices'], float)
+        z = V[:, 2] if V.shape[1] > 2 else np.zeros(V.shape[0])
+        x, y, z = _apply(M, V[:, 0], V[:, 1], z)
+        p['Vertices'] = np.column_stack([x, y, z])
+        return o
+    X = np.asarray(p['XData'], float)
+    Y = np.asarray(p['YData'], float)
+    Z = np.asarray(p['ZData'], float) if numel(p['ZData']) else None
+    if t == 'surface' and Z is not None:
+        if X.size != Z.size:
+            X, Y = np.meshgrid(X.reshape(-1), Y.reshape(-1))
+    z0 = Z if Z is not None else np.zeros(X.shape)
+    x, y, z = _apply(M, X, Y, z0)
+    p['XData'], p['YData'] = x, y
+    if Z is not None or np.any(np.abs(z) > 0):
+        p['ZData'] = z
+    return o
 
 
 class Image(GObj):
@@ -1601,7 +1808,16 @@ def serialize_axes(ax):
         'titleSize': float(p['TitleFontSizeMultiplier']), 'labelSize': float(p['LabelFontSizeMultiplier']),
         'title': _text_json(ax.title), 'subtitle': _text_json(ax.subtitle), 'xlabel': _text_json(ax.xlabel), 'ylabel': _text_json(ax.ylabel),
         'zlabel': _text_json(ax.zlabel), 'cmap': _b64(np.asarray(cmap, float)),
-        'children': [serialize_child(c, ax) for c in reversed(ax.children) if c.valid and not getattr(c, 'hidden', False)],
+        'children': [serialize_child(c, ax) for c in reversed(drawn_children(ax)) if c.valid and not getattr(c, 'hidden', False)],
+        'xtickformat': (getattr(ax, 'tickfmt', None) or {}).get('X'), 'ytickformat': (getattr(ax, 'tickfmt', None) or {}).get('Y'),
+        'ztickformat': (getattr(ax, 'tickfmt', None) or {}).get('Z'), 'ztickrot': float(p['ZTickLabelRotation']),
+        'polar': None if ax.kind != 'polar' else {
+            'rlim': [float(x) for x in p['RLim'].reshape(-1)] if p['RLimMode'] == 'manual' else None,
+            'rtick': [float(x) for x in np.asarray(p['RTick'], float).reshape(-1)] if p['RTickMode'] == 'manual' else None,
+            'rticklabel': p['RTickLabel'] if p['RTickLabelMode'] == 'manual' else None,
+            'thetatick': [float(x) for x in np.asarray(p['ThetaTick'], float).reshape(-1)],
+            'thetaticklabel': p['ThetaTickLabel'] if p['ThetaTickLabelMode'] == 'manual' else None,
+            'thetadir': p['ThetaDir'], 'thetazero': p['ThetaZeroLocation']},
         'texts': [],
         'yy': None,
         'units': p['Units'], 'fontUnits': p['FontUnits'],
@@ -1697,6 +1913,15 @@ Line.DEFAULTS['LineSmoothing'] = False
 Patch.DEFAULTS.update({'LineSmoothing': False, 'EdgeLighting': 'none'})
 Image.DEFAULTS['AlphaDataMapping'] = 'none'
 Text.DEFAULTS.update({'LineStyle': '-', 'Editing': False, 'FontSmoothing': True})
+Polygon.DEFAULTS = {**Patch.DEFAULTS, **Polygon.OWN_DEFAULTS}
+Polygon.ALIASES = Patch.ALIASES
+Rectangle.DEFAULTS = {**Patch.DEFAULTS, **Rectangle.OWN_DEFAULTS}
+Rectangle.ALIASES = Patch.ALIASES
+for _C in (Group, Transform):
+    _C.DEFAULTS = {**_C.DEFAULTS, **INTERACT}
+# where a plot's data come from, for refreshdata
+for _C in (Line, Surface, Series):
+    _C.DEFAULTS.update({'XDataSource': '', 'YDataSource': '', 'ZDataSource': ''})
 
 
 def register(*classes):
@@ -1709,6 +1934,7 @@ def register(*classes):
 
 
 _EXTRA = {Axes: ('Title', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Text: ('Extent',), Root: ('CallbackObject',)}
-register(Root, Figure, Axes, Line, Surface, Patch, Image, Text, Legend, Colorbar, Light, Series, *SHAPES.values())
+register(Root, Figure, Axes, Line, Surface, Patch, Polygon, Rectangle, Group, Transform, Image, Text, Legend, Colorbar, Light, Series,
+         *SHAPES.values())
 GObj._lower = {}
 GObj._alias = {}

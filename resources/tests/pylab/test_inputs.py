@@ -37,7 +37,7 @@ SKIP = set('''input keyboard pause uiwait waitfor ginput inputdlg questdlg listd
 beep sound soundsc exit quit dbstop dbcont dbquit drawnow parpool delete rmdir mkdir movefile copyfile cd diary system unix
 dos web webread webwrite websave sendmail ftp clc clear clearvars close shg print exportgraphics saveas savefig edit open
 run load save tic toc timer start stop wait uiconfirm uialert rng perms nchoosek primes magic factorial appdesigner doc
-help helpwin return'''.split())
+help helpwin return gtext spinmap'''.split())
 
 M = np.array([[2.0, 0, 1], [0, 0, 3], [4, 0, 0]])
 V = np.array([[1.0, 0, 2]])

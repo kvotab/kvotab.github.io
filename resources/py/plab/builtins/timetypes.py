@@ -1494,7 +1494,7 @@ def _dim(args, v, k=1):
 def _reduce(v, fn, args, keep_nan=True):
     """fn over a dimension of the key array (seconds)."""
     d = _dim(args, v)
-    omit = any((opt_str(a) or '').lower() == 'omitnan' or (opt_str(a) or '').lower() == 'omitnat' for a in args[1:])
+    omit = any((opt_str(a) or '').lower() in ('omitnan', 'omitnat', 'omitmissing') for a in args[1:])
     a = v.a
     if d == 'all':
         a, d = a.reshape(-1, 1, order='F'), 0

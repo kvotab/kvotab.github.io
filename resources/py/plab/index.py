@@ -340,11 +340,19 @@ def fld(A, name):
             return each(name)
         arr_ = getattr(A, 'a', None)
         if isinstance(arr_, np.ndarray) and arr_.dtype == object and getattr(A, 'is_handle', False):
-            return [h.getprop(name) for h in arr_.reshape(-1, order='F')]
-        return [A.getprop(name)]
+            return [_called(h.getprop(name)) for h in arr_.reshape(-1, order='F')]
+        return [_called(A.getprop(name))]
     if A is NOVAL:
         raise MError('MATLAB:UndefinedFunction', 'Unrecognized variable.')
     raise MError('MATLAB:structRefFromNonStruct', 'Dot indexing is not supported for variables of this type.')
+
+
+def _called(v):
+    """obj.name without parentheses calls a method (a bound one; a function
+    handle kept in a property, a callback, stays a value)."""
+    if isinstance(v, FH) and type(v).__name__ in ('BoundMethod', 'BoundBuiltin', 'BoundStatic'):
+        return v.scall(1)
+    return v
 
 
 def fld1(A, name):

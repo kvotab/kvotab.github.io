@@ -1939,6 +1939,37 @@ async def quiver_arrows(page):
     await command(page, 'close all')
 
 
+async def core_additions(page):
+    """Step 11 in the page: polyshape on Shapely (loaded on first use) drawn with its hole open, a rounded rectangle, polar axes'
+    ticks and zero direction, a transform group, NetCDF through h5py and SciPy, ?double (saved as a picture to look at)."""
+    out = await command(page, "close all; sq = polyshape([0 4 4 0], [0 0 4 4]); pg = subtract(sq, polyshape([1 3 3 1], [1 1 3 3])); "
+                              "pa = area(pg), nh = pg.NumHoles, mc = ?double; mn = mc.Name")
+    check('polyshape in the page: Shapely loaded, a square less a hole', 'pa =\n\n    12' in out and 'nh =\n\n     1' in out and "mn =\n\n    'double'" in out, True)
+    await command(page, "figure('Position', [50 50 520 480]); plot(pg, 'FaceColor', 'r', 'FaceAlpha', 1); axis equal; xlim([0 4]); ylim([0 4]);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    px = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                       "const at = (x, y) => {{ const d = c.getContext('2d').getImageData(Math.round(f.fx(x) * k), Math.round(f.fy(y) * k), 1, 1).data; return [d[0], d[1], d[2]]; }}; "
+                       "return [at(0.5, 0.5), at(2, 2)]; })()")
+    red = lambda p: p and p[0] > 180 and p[1] < 90 and p[2] < 90
+    check("a polyshape's plot: its face filled, its hole left open (even-odd)", bool(px) and bool(red(px[0])) and not red(px[1]), True)
+    await canvas_shot(page, 'core11-1.png')
+    await command(page, "close all; figure('Position', [60 60 900 450]); subplot(1, 3, 1); rectangle('Position', [0 0 2 1], 'Curvature', [1 1], 'FaceColor', [0 0.6 0]); axis equal; "
+                        "subplot(1, 3, 2); polarplot(linspace(0, 2*pi, 100), 1 + cos(linspace(0, 2*pi, 100))); rticks([0 1 2]); thetaticks(0:45:315); "
+                        "pax = gca; pax.ThetaZeroLocation = 'top'; pax.ThetaDir = 'clockwise'; subplot(1, 3, 3); t = hgtransform; "
+                        "line([0 1], [0 0], 'Parent', t, 'LineWidth', 3, 'Color', 'b'); t.Matrix = makehgtform('zrotate', pi/4); axis([-1 1 -1 1]); ytickformat('%.1f');")
+    await asyncio.sleep(1.0)
+    check('a rounded rectangle, polar axes with their ticks turned, a transformed line draw', (await ink(page)) > 0.03, True)
+    await canvas_shot(page, 'core11-2.png')
+    out = await command(page, "close all; nccreate('t4.nc', 'v', 'Dimensions', {'x', 3, 't', Inf}); ncwrite('t4.nc', 'v', magic(3)); r4 = isequal(ncread('t4.nc', 'v'), magic(3)), "
+                              "nccreate('t3.nc', 'v', 'Dimensions', {'x', 2}, 'Format', 'classic'); ncwrite('t3.nc', 'v', [7 8]); r3 = ncread('t3.nc', 'v')', "
+                              "fi = ncinfo('t4.nc'); fmt = fi.Format")
+    check('NetCDF in the page: netCDF-4 through h5py and classic through SciPy', 'r4 =\n\n  logical\n\n   1' in out and 'r3 =\n\n     7     8' in out
+          and "fmt =\n\n    'netcdf4_classic'" in out, True)
+    await command(page, "delete('t4.nc'); delete('t3.nc')")
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1958,6 +1989,7 @@ async def main():
         await global_optimization(page)
         await wavelets_and_denoising(page)
         await quiver_arrows(page)
+        await core_additions(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

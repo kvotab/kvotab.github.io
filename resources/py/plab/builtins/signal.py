@@ -419,6 +419,7 @@ def medfilt1(nargout, *args):
     """y = medfilt1(x, n, blksz, dim, nanflag, padding): the median of n samples about each one (n = 3)."""
     nargchk(args, 1, 7, 'medfilt1')
     words, rest = _words(args[1:])
+    words = ['omitnan' if w == 'omitmissing' else 'includenan' if w == 'includemissing' else w for w in words]
     n = int(darr(rest[0]).flat[0]) if rest and numel(rest[0]) else 3
     dim = int(darr(rest[2]).flat[0]) if len(rest) > 2 and numel(rest[2]) else None
     a = darr(args[0], 'medfilt1')

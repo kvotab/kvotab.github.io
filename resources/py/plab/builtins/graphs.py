@@ -43,6 +43,14 @@ def bi(*names, **kw):
 
 # ---- the objects -------------------------------------------------------------------------------------------------------------------
 
+# the functions a graph has as methods: G.name(...) calls name(G, ...)
+GRAPH_METHODS = set('''addedge addnode adjacency allcycles allpaths bctree bfsearch centrality condensation conncomp cyclebasis
+degree dfsearch distances edgecount findedge findnode flipedge hascycles incidence indegree inedges isdag isisomorphic
+ismultigraph isomorphism laplacian maxflow minspantree nearest neighbors numedges numnodes outdegree outedges plot
+predecessors reordernodes rmedge rmnode shortestpath shortestpathtree simplify subgraph successors toposort
+transclosure transreduction'''.split())
+
+
 class Graph(Obj):
     """A graph (undirected) or digraph: n nodes (names or none, other node variables) and edges s -> t (0-based) with weights or none."""
     is_handle = False
@@ -130,6 +138,9 @@ class Graph(Obj):
             return self.edge_table()
         if k == 'nodes':
             return self.node_table()
+        if name in GRAPH_METHODS:
+            from ..classdef import BoundBuiltin
+            return BoundBuiltin(self, name)              # G.numnodes, G.shortestpath(1, 3)
         raise MError('MATLAB:noSuchMethodOrField', f"Unrecognized method, property, or field '{name}' for class '{self.cls}'.")
 
     def setprop(self, name, value):

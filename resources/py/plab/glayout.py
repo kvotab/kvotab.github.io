@@ -3,6 +3,7 @@ limits round out to the ticks around the data (images and surfaces in
 image mode stay tight); ticks are 1, 2 or 5 times a power of ten, at most
 about one per 30 pixels and eleven in all."""
 import math
+import re
 
 import numpy as np
 
@@ -96,7 +97,8 @@ def data_bounds(ax):
         r = _pos_range(a) if logs[k] else _finite_range(a)
         if r is not None:
             b[k].append(r)
-    for c in ax.children:
+    from .graphics_base import drawn_children
+    for c in drawn_children(ax):
         if not c.valid or getattr(c, 'hidden', False) or getattr(c, 'NO_LIMITS', False):
             continue
         p = c.props
@@ -305,11 +307,82 @@ def tick_labels(ticks, scale='linear'):
     return labels, exp
 
 
+def polar_ticks(ax):
+    """Polar axes' radius ticks and their outer radius, as the page works
+    them out: nice ticks from 0 to the largest radius drawn, the circle one
+    step past the last tick below it (RLim and RTick when set)."""
+    from .graphics_base import drawn_children, Series
+    p = ax.props
+    if p['RLimMode'] == 'manual':
+        lo, top = (float(v) for v in np.asarray(p['RLim'], float).reshape(-1))
+    else:
+        lo = 0.0
+        rmax = 0.0
+        for c in drawn_children(ax):
+            if not c.valid:
+                continue
+            r = None
+            if c.TYPE in ('line', 'patch'):
+                r = c.props.get('YData')
+            elif isinstance(c, Series) and c.kind in ('scatter', 'bubblechart'):
+                r = c.props.get('YData')
+            if r is not None and np.size(r):
+                a = np.abs(np.asarray(r, float))
+                a = a[np.isfinite(a)]
+                if a.size:
+                    rmax = max(rmax, float(a.max()))
+        if not rmax > 0:
+            rmax = 1.0
+        t = nice_ticks(0.0, rmax, 6)
+        top = t[-1] + (t[1] - t[0]) if t[-1] < rmax and len(t) > 1 else t[-1]
+    if p['RTickMode'] == 'manual':
+        ticks = [float(v) for v in np.asarray(p['RTick'], float).reshape(-1)]
+    else:
+        ticks = [v for v in nice_ticks(lo, top, 6) if lo - 1e-12 <= v <= top + 1e-12]
+    return ticks, top
+
+
+_NAMED_FORMATS = {'usd': '$%,.2f', 'eur': '€%,.2f', 'gbp': '£%,.2f', 'jpy': '¥%,d', 'degrees': '%g°', 'percentage': '%g%%'}
+
+
+def tick_format(fmt):
+    """A tick-label format as given to xtickformat: a printf-like pattern, or
+    usd, eur, gbp, jpy, degrees or percentage; None for 'auto'."""
+    f = fmt.strip()
+    if f.lower() == 'auto' or not f:
+        return None
+    return _NAMED_FORMATS.get(f.lower(), f)
+
+
+def format_tick(fmt, v):
+    """One tick label from a printf-like pattern: %d %i %f %e %g (and E, G)
+    with the flags - + space 0 # and , (thousands parted by commas), %%."""
+    def one(m):
+        if m.group(0) == '%%':
+            return '%'
+        flags, width, prec, conv = m.group(1) or '', m.group(2) or '', m.group(3), m.group(4)
+        comma = ',' in flags
+        flags = flags.replace(',', '')
+        x = float(v)
+        if conv in 'di':
+            spec = f'{flags}{width}d'
+            s = ('%' + spec) % int(round(x)) if math.isfinite(x) else ('Inf' if x > 0 else '-Inf' if x < 0 else 'NaN')
+        else:
+            spec = f'{flags}{width}' + (f'.{prec}' if prec is not None else '') + conv
+            s = ('%' + spec) % x
+        if comma:
+            mm = re.match(r'^(\s*[-+ ]?)(\d+)(.*)$', s)
+            if mm:
+                s = mm.group(1) + f'{int(mm.group(2)):,}' + mm.group(3)
+        return s
+    return re.sub(r'%%|%([-+ 0#,]*)(\d*)(?:\.(\d+))?([dieEfgG])', one, fmt)
+
+
 def auto_clim(ax):
     """The color limits from the data colored through the colormap."""
-    from .graphics_base import Series
+    from .graphics_base import Series, drawn_children
     lo, hi = math.inf, -math.inf
-    for c in ax.children:
+    for c in drawn_children(ax):
         if not c.valid:
             continue
         p = c.props
