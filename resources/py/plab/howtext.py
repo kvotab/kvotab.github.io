@@ -2453,6 +2453,88 @@ fcn2optimexpr:
     Python: optimprob.py. The function called with the expressions themselves first; when that fails or gives something else, a node that calls it (through the runtime, synchronously) at each point.
 paretosearch:
     Python: optimprob.py. PyLAB's own scalarization: globalopt.py's patternsearch on each objective alone, then on a log-sum-exp smooth maximum of the weighted, scaled objectives for evenly spread weights (a simplex lattice for three or more objectives); nondominated points kept, thinned by globalopt.py's crowding distance.
+# ---- signalmore.py: more signal processing --------------------------------------------------------------------------------------------
+besself, residuez:
+    Python: signalmore.py. scipy.signal.bessel (analog, the 'phase' normalization) and scipy.signal.residuez and invresz, the poles regrouped as residue does.
+stft, istft:
+    Python: signalmore.py. The segments windowed and transformed by numpy.fft.fft, the rows reordered for the frequency range; istft by numpy.fft.ifft and weighted overlap-add.
+pulstran:
+    Python: signalmore.py. The pulse function called through the runtime at each delay, or a sampled pulse interpolated by scipy.interpolate.interp1d (PchipInterpolator for 'pchip').
+cceps, icceps:
+    Python: signalmore.py. numpy.fft.fft, numpy.unwrap and the linear phase taken out at the middle sample, numpy.fft.ifft.
+pspectrum, instfreq:
+    Python: signalmore.py. Periodograms through numpy.kaiser windows by numpy.fft.rfft; instfreq's 'hilbert' by scipy.signal.hilbert and numpy.gradient of the unwrapped phase.
+snr, thd, sinad, sfdr:
+    Python: signalmore.py. One periodogram through a numpy.kaiser window of beta 38 (numpy.fft.rfft), scaled so that the bins of a main lobe add to the tone's power; lobes walked down from their peaks.
+statelevels, midcross, risetime, falltime, slewrate, pulsewidth, pulsesep, pulseperiod, dutycycle, overshoot, undershoot, settlingtime:
+    Python: signalmore.py. The state levels from a histogram (numpy.searchsorted into numpy.linspace edges); transitions between the states' tolerance bands; crossings by linear interpolation between samples.
+finddelay, alignsignals:
+    Python: signalmore.py. numpy.correlate over all lags, normalized by the signals' energies.
+dtw, edr:
+    Python: signalmore.py. The local distances by NumPy broadcasting, then the cumulative distances (or edit costs) by dynamic programming in Python, and the path back from the last pair.
+emd:
+    Python: signalmore.py. The extrema by numpy.diff; envelopes by scipy.interpolate.CubicSpline (PchipInterpolator for 'pchip') through them, mirrored about the ends.
+vmd:
+    Python: signalmore.py. The alternating direction method on numpy.fft.fft of the mirrored signal: each mode a Wiener filter about its central frequency, the frequency the mode's spectral centroid, the multiplier updated after each sweep.
+wvd:
+    Python: signalmore.py. The analytic signal by scipy.signal.hilbert; at each time the lag products by NumPy indexing and their numpy.fft.fft.
+# ---- fillins.py: special functions, matrices, quadv --------------------------------------------------------------------------------
+sinint, cosint, fresnels, fresnelc:
+    Python: fillins.py. scipy.special.sici and scipy.special.fresnel (sici of complex input for a negative x's cosine integral); symbolic input through SymPy's Si, Ci, fresnels and fresnelc.
+dawson:
+    Python: fillins.py. scipy.special.dawsn; symbolic input as sqrt(pi)/2*exp(-x^2)*erfi(x).
+charpoly, minpoly, jordan:
+    Python: fillins.py. SymPy's Matrix.charpoly and Matrix.jordan_form on the exact matrix; minpoly from the Jordan blocks.
+quadv:
+    Python: fillins.py. Adaptive Simpson's rule in Python on the values numpy returns, each panel halved until its two halves agree within its share of tol (with Richardson's correction).
+# ---- controlmore.py: more control systems -----------------------------------------------------------------------------------------
+frd, frdata, bodemag:
+    Python: controlmore.py. The response held as a NumPy array; models evaluated at its frequencies by control.py's own response; products and inverses at each frequency by numpy.linalg.
+lsiminfo:
+    Python: controlmore.py. The last sample outside the band, the crossing interpolated linearly; numpy.argmin and numpy.argmax.
+append, sumblk, connect:
+    Python: controlmore.py. scipy.linalg.block_diag of the models' state-space matrices; connect closes u = M*y + N*r by numpy.linalg.inv of I - M*D.
+d2d:
+    Python: controlmore.py. control.py's d2c then c2d.
+ctrbf, obsvf:
+    Python: controlmore.py. The staircase by numpy.linalg.svd of the coupling block at each step, the transformations accumulated.
+lqi:
+    Python: controlmore.py. The plant augmented with the integrators, then control.py's lqr (scipy.linalg.solve_continuous_are or solve_discrete_are).
+pidtune, pidtuneOptions:
+    Python: controlmore.py. The plant's response at the crossover from control.py; the gains solved in closed form for the target C(jw); the loop's poles by control.py's pole.
+# ---- statsfill.py: statistics fill-ins ------------------------------------------------------------------------------------------------
+tiedrank, ecdfhist:
+    Python: statsfill.py. numpy.argsort with the ties' ranks averaged; ecdfhist from the step function at the bins' edges (numpy.searchsorted).
+createns, KDTreeSearcher, ExhaustiveSearcher:
+    Python: statsfill.py. The searcher keeps X and its distance; knnsearch and rangesearch measure every distance (mlunsup.py, scipy.spatial.distance.cdist).
+rocmetrics:
+    Python: statsfill.py. For each class, the true and false positive rates at each distinct score (numpy.unique), the area by the trapezoid rule.
+mnrfit, mnrval:
+    Python: statsfill.py. The negative log-likelihood minimized by scipy.optimize.minimize (BFGS, then polished); the covariance from the Hessian by central differences (numpy.linalg.pinv).
+fitlme, fixedEffects, randomEffects, covarianceParameters, fitted, residuals, response:
+    Python: statsfill.py. The profiled deviance (Bates and others): for given relative covariance factors, the penalized least-squares system solved by numpy.linalg.cholesky and scipy.linalg.solve_triangular; the factors by scipy.optimize.minimize (L-BFGS-B, then Nelder-Mead) from two starts.
+cordexch, daugment, dcovary:
+    Python: statsfill.py. Coordinate exchange in Python, each candidate design scored by numpy.linalg.slogdet of X'X (statsmore.py's model matrix).
+qrandstream, qrand, reset:
+    Python: statsfill.py. The points of gsa.py's sobolset or haltonset (scipy.stats.qmc) read in order.
+# ---- wavemore.py: wavelet fill-ins --------------------------------------------------------------------------------------------------------
+cwtfilterbank, wt, scales, centerFrequencies, centerPeriods, timeSpreads:
+    Python: wavemore.py. wavelets.py's analytic wavelets and scales; wt is cwt's transform (numpy.fft); freqz and wavelets the filters in frequency and by numpy.fft.ifft.
+dwtfilterbank, scalingfunctions, wavelets, framebounds, dwtpassbands:
+    Python: wavemore.py. The filters' numpy.fft.fft at the bank's length, the cascade's products of upsampled responses; wavelets by numpy.fft.ifft.
+wsst, iwsst:
+    Python: wavemore.py. cwt's coefficients and their time derivative (the wavelet times i*w) by numpy.fft; each coefficient added (numpy.add.at) to the frequency nearest its instantaneous one.
+wcoherence:
+    Python: wavemore.py. Two cwt transforms (amor); the Gaussian smoothing in time by numpy.fft, across scales by a moving average.
+ewt:
+    Python: wavemore.py. The spectrum by numpy.fft.fft, smoothed by numpy.convolve; peaks and boundaries; the filters built on the frequency grid; components by numpy.fft.ifft.
+# ---- splinefit.py: splines ------------------------------------------------------------------------------------------------------------
+csaps, spaps:
+    Python: splinefit.py. Reinsch's method: (R + lambda*Q'*inv(W)*Q)*gamma = Q'*y, a banded system by scipy.sparse.linalg.spsolve; spaps finds lambda by scipy.optimize.brentq on its logarithm.
+spapi, spmak:
+    Python: splinefit.py. scipy.interpolate.make_interp_spline and BSpline.
+fnval, fnder, fnint, fnplt, fnbrk:
+    Python: splinefit.py. A pp-form through funfun.py's evaluation; a B-form by scipy.interpolate.BSpline and its derivative and antiderivative.
 """
 
 

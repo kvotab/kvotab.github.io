@@ -3730,7 +3730,7 @@ plot: Lines and markers in 2-D.
     plot(f, x, y, 'residuals')
     h = plot(G)
     h = plot(G, LineSpec, 'Layout', method, 'Name', value)
-    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'. plot(f, x, y) draws a fit (from fit) over its data; 'residuals' plots the residuals. plot(G) draws a graph or digraph (see layout for the methods), giving a GraphPlot whose NodeColor, EdgeColor, MarkerSize, LineWidth, NodeLabel, EdgeLabel, NodeCData, ArrowSize, XData and YData can be set.
+    * LineSpec joins a line style (- -- : -.), a marker (o + * . x s d ^ v > < p h) and a colour (r g b c m y k w), e.g. 'r--o'. plot(f, x, y) draws a fit (from fit) over its data; 'residuals' plots the residuals. plot(G) draws a graph or digraph (see layout for the methods), giving a GraphPlot whose NodeColor, EdgeColor, MarkerSize, LineWidth, NodeLabel, EdgeLabel, NodeCData, ArrowSize, XData and YData can be set. plot(rocObj) draws rocmetrics' curves.
 plot3: Lines and markers in 3-D.
     plot3(x, y, z)
     plot3(x, y, z, LineSpec)
@@ -4202,6 +4202,7 @@ legend: A legend of the plotted objects.
     legend(..., 'Location', 'northeast' | 'best' | ...)
     legend off
     legend show
+    * Without handles, the axes' plotted objects whose HandleVisibility is 'on', the last plotted first.
 text: Text at a point of the axes.
     text(x, y, s)
     text(x, y, z, s)
@@ -5283,6 +5284,7 @@ freqz: A digital filter's frequency response.
     h = freqz(b, a, w)
     freqz(b, a)
     * n points (512) from 0 up to half the sampling rate (pi rad/sample), or the whole circle. sos and digital filters too. With no output, magnitude (dB) and phase (degrees) are plotted.
+    * [psidft, f] = freqz(fb) of a wavelet filter bank (cwtfilterbank, dwtfilterbank): its filters' responses at the DFT frequencies of the length it was made for (a dwtfilterbank's scaling filter third).
 freqs: An analog filter's frequency response.
     [h, w] = freqs(b, a, w)
     [h, w] = freqs(b, a, n)
@@ -5454,6 +5456,7 @@ predict: Predictions of a fitted model, with confidence bounds.
     [ypred, ysd, yint] = predict(gprMdl, Xnew)
     * The bounds are for the curve (the mean) unless Prediction is 'observation', which adds the residual variance. Xnew is a matrix of predictors or a table with the model's variables.
     * Of a classification model: the most probable class and each class's score; of a regression model (fitrtree, fitrsvm, ...): the predictions.
+    * predict(lme, tbl, 'Conditional', false) of a mixed-effects model: with the predicted random effects of the levels it knows (conditional, the default), or the fixed effects alone.
 coefCI: Confidence intervals of a model's coefficients.
     ci = coefCI(mdl)
     ci = coefCI(mdl, alpha)
@@ -6644,10 +6647,12 @@ knnsearch: The nearest neighbours of points.
     Idx = knnsearch(X, Y)
     [Idx, D] = knnsearch(X, Y, 'K', k, 'Distance', distance)
     * For each row of Y, the k rows of X nearest it (1 unless given), nearest first; D their distances. 'P', 'Scale' and 'Cov' give the parameter of 'minkowski', 'seuclidean' and 'mahalanobis'.
+    * knnsearch(ns, Y, ...) searches a searcher's X with its distance (createns).
 rangesearch: The points within a distance of others.
     Idx = rangesearch(X, Y, r)
     [Idx, D] = rangesearch(X, Y, r, 'Distance', distance)
     * Cells, one for each row of Y: the rows of X within r of it, nearest first, and their distances.
+    * rangesearch(ns, Y, r) searches a searcher's X with its distance (createns).
 kmeans: k clusters of observations, each about its centroid.
     idx = kmeans(X, k)
     [idx, C, sumd, D] = kmeans(X, k)
@@ -7097,6 +7102,7 @@ feedback: A closed loop.
     sys = feedback(sys1, sys2)
     sys = feedback(sys1, sys2, sign)
     * sys1 in the forward path, sys2 in the feedback path: sys1/(1 + sys2*sys1) for negative feedback (unless sign is +1). For one input and output the polynomials are combined directly, and common factors cancelled.
+    * With an frd model, the loop is closed at each of its frequencies.
 parallel: Two models side by side, their outputs added.
     sys = parallel(sys1, sys2)
 tfdata: The numerators and denominators of a model.
@@ -7132,7 +7138,7 @@ evalfr: A model's response at one complex frequency.
 freqresp: A model's frequency response.
     H = freqresp(sys, w)
     [H, wout] = freqresp(sys)
-    * H(i, j, k) at the frequency w(k) in rad/s (e^(jw*Ts) in discrete time).
+    * H(i, j, k) at the frequency w(k) in rad/s (e^(jw*Ts) in discrete time). An frd model has a response only at its own frequencies.
 damp: The natural frequencies and damping ratios of a model's poles.
     damp(sys)
     [wn, zeta, p] = damp(sys)
@@ -7271,6 +7277,7 @@ bode: The frequency response as gain and phase.
     bode(sys1, sys2, ...)
     [mag, phase, wout] = bode(sys, ...)
     * mag absolute and phase in degrees (unwrapped); drawn as gain in dB and phase over a logarithmic frequency axis (rad/s) when nothing is asked for. The frequencies span two decades beyond the poles and zeros unless given.
+    * An frd model is drawn at its own frequencies.
 bodeplot: The Bode diagram drawn.
     bodeplot(sys, ...)
 nyquist: The Nyquist diagram.
@@ -8595,6 +8602,392 @@ paretosearch: Points on the Pareto front of several objectives, by pattern searc
     x = paretosearch(fun, nvars)
     [x, fval, exitflag, output, residuals] = paretosearch(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, options)
     * fun gives a row of objectives. PyLAB's own method: each objective minimized alone by patternsearch; then, for weights w spread evenly, a smooth maximum of the weighted objectives v (each scaled to its range above its minimum), 0.02*log(sum(exp(w.*v/0.02))), minimized by patternsearch from the last answer. That function grows with every objective, so its minima are on the front, concave parts too. The points no other dominates are kept, at most ParetoSetSize (60) of them, the most crowded dropped first, sorted by the first objective. MeshTolerance (1e-6) and the constraints are passed to the searches.
+# ---- more signal processing -----------------------------------------------------------------------------------------------------------
+besself: An analog Bessel filter.
+    [b, a] = besself(n, Wo)
+    [b, a] = besself(n, Wo, ftype)
+    [z, p, k] = besself(...)
+    [A, B, C, D] = besself(...)
+    * Wo in rad/s; ftype 'low' (default), 'high', 'bandpass' or 'stop' (Wo two frequencies for the last two). The response's phase reaches its midpoint at Wo, its magnitude's asymptotes those of a Butterworth filter with that cutoff (SciPy's 'phase' normalization).
+residuez: The partial fractions of a z-transform.
+    [r, p, k] = residuez(b, a)
+    [b, a] = residuez(r, p, k)
+    * b(z)/a(z) in powers of 1/z as the sum of r(i)/(1 - p(i)/z) and the direct terms k; repeated poles in groups, the poles by decreasing magnitude.
+stft: The short-time Fourier transform.
+    s = stft(x)
+    [s, f, t] = stft(x, fs)
+    [s, f, t] = stft(x, fs, 'Window', win, 'OverlapLength', n, 'FFTLength', nfft, 'FrequencyRange', range)
+    stft(...)
+    * The window periodic Hann of 128 unless given, the overlap 75% of it, nfft the window's length. FrequencyRange 'centered' (default: from -fs/2 to fs/2, the Nyquist frequency at the end for even nfft), 'twosided' (0 to fs) or 'onesided'. A column of s for each segment; t the centres of the segments (seconds with fs, samples without); a matrix x's columns are channels, the third dimension of s. Drawn when no output is asked for.
+istft: The inverse short-time Fourier transform.
+    x = istft(s)
+    [x, t] = istft(s, fs, 'Window', win, 'OverlapLength', n, 'FFTLength', nfft, 'FrequencyRange', range, 'Method', 'wola', 'ConjugateSymmetric', tf)
+    * The segments' inverse FFTs overlapped and added: 'wola' (default) windows them again and divides by the sum of the squared windows, 'ola' divides by the sum of the windows. The options must be those stft used. The result is real for 'onesided' or 'ConjugateSymmetric' true.
+pulstran: A train of pulses.
+    y = pulstran(t, d, func)
+    y = pulstran(t, d, func, p1, p2, ...)
+    y = pulstran(t, d, p, fs)
+    y = pulstran(t, d, p, fs, method)
+    * func (a name such as 'rectpuls' or 'gauspuls', or a handle) is called at t - d(k) for each delay, with p1, p2, ... after; d may be two columns, delays and amplitudes. p is a pulse sampled at fs (1), interpolated by method ('linear'), zero outside.
+cceps: The complex cepstrum.
+    xhat = cceps(x)
+    [xhat, nd] = cceps(x)
+    [xhat, nd, xhat1] = cceps(x, n)
+    * real(ifft(log(abs(X)) + i*phase)), the phase unwrapped and its linear part, nd samples of delay, taken out (Oppenheim and Schafer's method); n pads or cuts x first. A spectrum with a zero is refused.
+icceps: The inverse complex cepstrum.
+    x = icceps(xhat, nd)
+pspectrum: The power spectrum, or a spectrogram.
+    [p, f] = pspectrum(x)
+    [p, f] = pspectrum(x, fs)
+    [p, f, t] = pspectrum(x, fs, 'spectrogram')
+    pspectrum(..., 'FrequencyLimits', [f1 f2], 'Leakage', l, 'TimeResolution', tr, 'OverlapPercent', op, 'MinThreshold', th)
+    * A Kaiser window of beta 40*(1 - Leakage) (Leakage 0.5) over the signal, scaled so that a sinusoid of amplitude A peaks at A^2/2. PyLAB's own choices: the 'power' spectrum at at least 4096 frequencies from 0 to fs/2; the 'spectrogram' in windows of about an eighth of the signal (a power of 2, or TimeResolution seconds), half overlapping unless OverlapPercent says. Drawn when no output is asked for.
+instfreq: The instantaneous frequency.
+    [ifq, t] = instfreq(x, fs)
+    [ifq, t] = instfreq(x, fs, 'Method', 'hilbert')
+    * 'tfmoments' (default): the first moment in frequency of pspectrum's spectrogram at each time. 'hilbert': the derivative of the analytic signal's unwrapped phase (central differences) at each sample.
+snr: The signal-to-noise ratio of a tone.
+    r = snr(x)
+    [r, noisepow] = snr(x, fs, n)
+    r = snr(x, y)
+    * In dBc: the power of the largest tone against the noise, with DC and the first n harmonics (6) left out. The spectrum is taken through a Kaiser window of beta 38; a tone's power is its main lobe's, the bins down to where the spectrum stops falling; the bins left out count at the average of the noise's. snr(x, y) is 10*log10(sum(x.^2)/sum(y.^2)).
+thd: The total harmonic distortion.
+    r = thd(x)
+    [r, harmpow, harmfreq] = thd(x, fs, n)
+    * In dBc: the power of harmonics 2 to n (6) against the fundamental's, each the lobe within two bins of its frequency (folded into 0 .. fs/2). harmpow in dB and harmfreq from the fundamental on.
+sinad: The signal to noise and distortion ratio.
+    [r, totdistpow] = sinad(x, fs)
+    * In dBc: the tone's power against everything else but DC, harmonics included.
+sfdr: The spurious-free dynamic range.
+    [r, spurpow, spurfreq] = sfdr(x, fs)
+    * In dB: the tone's power against the largest other lobe's (DC left out).
+statelevels: The two levels of a two-state signal.
+    levels = statelevels(x)
+    [levels, histogram, bins] = statelevels(x, nbins)
+    * PyLAB's own rule: a histogram of nbins (100) bins over the signal's range; in each half, the average of the samples in its fullest bin.
+midcross: The mid-reference crossings of a two-state signal.
+    c = midcross(x)
+    [c, midlev] = midcross(x, fs or t, 'MidPercentReferenceLevel', 50, 'StateLevels', lv, 'Tolerance', 2)
+    * A transition runs from one state's band (Tolerance percent of the levels' difference around it) to the other's; each crosses the mid level once, at a time found by linear interpolation. Times from fs (the first sample at 0) or the samples' times t. Drawn when no output is asked for.
+risetime: The rise times of a two-state signal.
+    r = risetime(x)
+    [r, lowercross, uppercross, lowerref, upperref] = risetime(x, fs or t, 'PercentReferenceLevels', [10 90], 'StateLevels', lv, 'Tolerance', 2)
+    * The time of each rising transition from the lower reference level to the upper.
+falltime: The fall times of a two-state signal.
+    f = falltime(x)
+    [f, uppercross, lowercross, upperref, lowerref] = falltime(x, fs or t, ...)
+slewrate: The slew rates of a two-state signal's transitions.
+    s = slewrate(x)
+    [s, lowercross, uppercross, lowerref, upperref] = slewrate(x, fs or t, ...)
+    * The difference of the reference levels over each transition's duration, negative when falling.
+pulsewidth: The widths of a two-state signal's pulses.
+    w = pulsewidth(x)
+    [w, initcross, finalcross, midlev] = pulsewidth(x, fs or t, 'Polarity', 'positive', ...)
+    * A positive pulse rises then falls; its width runs between its mid-reference crossings.
+pulsesep: The separations of a two-state signal's pulses.
+    s = pulsesep(x)
+    [s, initcross, finalcross, midlev] = pulsesep(x, fs or t, 'Polarity', 'positive', ...)
+    * From each pulse's end to the next one's start.
+pulseperiod: The periods of a two-state signal's pulses.
+    p = pulseperiod(x)
+    [p, initcross, finalcross, nextcross] = pulseperiod(x, fs or t, ...)
+dutycycle: The duty cycles of a two-state signal's pulses.
+    d = dutycycle(x)
+    [d, initcross, finalcross, nextcross] = dutycycle(x, fs or t, ...)
+    * Each pulse's width over its period.
+overshoot: The overshoots of a two-state signal's transitions.
+    os = overshoot(x)
+    [os, oslev, osinst] = overshoot(x, fs or t, 'Region', 'postshoot', 'SeekFactor', 3, ...)
+    * In percent of the levels' difference: the largest excursion beyond the final state within SeekFactor times the transition's duration (between its reference crossings) after the signal reaches the state's tolerance band ('preshoot': before it leaves the first state's band, beyond that state).
+undershoot: The undershoots of a two-state signal's transitions.
+    us = undershoot(x)
+    [us, uslev, usinst] = undershoot(x, fs or t, ...)
+    * As overshoot, the excursion back towards the other state.
+settlingtime: The settling times of a two-state signal's transitions.
+    s = settlingtime(x, fs or t, D)
+    [s, slev, sinst, tolerance] = settlingtime(x, fs or t, D, 'Tolerance', 2, ...)
+    * From each mid-reference crossing until the signal stays within the tolerance of its final state, looked for over D after the crossing; NaN when it has not settled by then or the signal ends first.
+finddelay: The delay between two signals.
+    D = finddelay(x, y)
+    D = finddelay(x, y, maxlag)
+    * In samples, positive when y is behind x: where the normalized cross-correlation is largest in absolute value (the smallest delay on a tie). Matrices column by column.
+alignsignals: Two signals aligned.
+    [xa, ya] = alignsignals(x, y)
+    [xa, ya, D] = alignsignals(x, y, maxlag, 'truncate')
+    * The earlier signal is delayed by leading zeros, D = finddelay(x, y); 'truncate' keeps it at its length.
+dtw: The distance by dynamic time warping.
+    dist = dtw(x, y)
+    [dist, ix, iy] = dtw(x, y, maxsamp, metric)
+    dtw(...)
+    * The smallest sum of distances between samples along a path of steps (1, 0), (0, 1) and (1, 1) from the first pair to the last; x(ix) and y(iy) are aligned. maxsamp keeps the path within that many samples of the straight line between the ends; metric 'euclidean' (default), 'absolute', 'squared' or 'symmkl'. A matrix's columns are samples. Drawn when no output is asked for.
+edr: The edit distance on real signals.
+    dist = edr(x, y, tol)
+    [dist, ix, iy] = edr(x, y, tol, maxsamp, metric)
+    * The fewest insertions, deletions and substitutions, two samples matching when their distance is at most tol.
+emd: Empirical mode decomposition.
+    [imf, residual] = emd(x)
+    [imf, residual, info] = emd(x, 'MaxNumIMF', 10, 'SiftRelativeTolerance', 0.2, 'SiftMaxIterations', 100, 'MaxNumExtrema', 1, 'MaxEnergyRatio', 20, 'Interpolation', 'spline')
+    emd(x)
+    * Intrinsic mode functions sifted out one by one, the fastest first (the columns of imf), x = sum(imf, 2) + residual. Each sifting subtracts the mean of the spline envelopes through the maxima and minima (the extrema mirrored about the ends, PyLAB's choice) until the relative change is below SiftRelativeTolerance. It stops when the residual has at most MaxNumExtrema extrema or its energy is MaxEnergyRatio dB below the signal's. Drawn when no output is asked for.
+vmd: Variational mode decomposition.
+    [imf, residual] = vmd(x)
+    [imf, residual, info] = vmd(x, 'NumIMF', 5, 'PenaltyFactor', 1000, 'LMUpdateRate', 0.01, 'InitializeMethod', 'peaks', 'MaxIterations', 500, 'AbsoluteTolerance', 5e-6, 'RelativeTolerance', 1e-3)
+    * Dragomiretskiy and Zosso's method: modes narrow around central frequencies, by the alternating direction method in the frequency domain on the signal mirrored at both ends; the modes from the highest central frequency down. InitializeMethod 'peaks' (the spectrum's largest peaks), 'grid' or 'random', or CentralFrequencies given (cycles per sample).
+wvd: The Wigner-Ville distribution.
+    [d, f, t] = wvd(x)
+    [d, f, t] = wvd(x, fs)
+    [d, f, t] = wvd(x, fs, 'smoothedPseudo', twin, fwin)
+    * Of the analytic signal of x (x itself when complex): at each time n, the FFT over lags m of z(n+m)*conj(z(n-m)); the frequencies k*fs/(2*nf), nf the number of points (the signal's length, even). 'smoothedPseudo' smooths in time and frequency with Kaiser windows (or twin and fwin). PyLAB's own grid of frequencies.
+# ---- fill-ins: special functions, matrices -----------------------------------------------------------------------------------------
+sinint: The sine integral.
+    Y = sinint(X)
+    * The integral from 0 to x of sin(t)/t. Symbolic input gives the symbolic function.
+cosint: The cosine integral.
+    Y = cosint(X)
+    * Euler's constant + log(x) + the integral from 0 to x of (cos(t) - 1)/t; complex for negative x (the value at -x plus i*pi).
+dawson: Dawson's integral.
+    Y = dawson(X)
+    * exp(-x^2) times the integral from 0 to x of exp(t^2).
+fresnels: The Fresnel sine integral.
+    Y = fresnels(X)
+    * The integral from 0 to x of sin(pi*t^2/2).
+fresnelc: The Fresnel cosine integral.
+    Y = fresnelc(X)
+    * The integral from 0 to x of cos(pi*t^2/2).
+charpoly: The characteristic polynomial of a matrix.
+    p = charpoly(A)
+    p = charpoly(A, x)
+    * The coefficients of det(x*I - A), highest power first, computed exactly (numbers as sym makes them); with a symbolic x, the polynomial in it.
+minpoly: The minimal polynomial of a matrix.
+    p = minpoly(A)
+    p = minpoly(A, x)
+    * The lowest-degree monic polynomial with p(A) = 0: the product over the eigenvalues of (x - lambda)^k, k the size of the largest Jordan block of each; exact.
+jordan: The Jordan form of a matrix.
+    J = jordan(A)
+    [V, J] = jordan(A)
+    * A*V = V*J, computed exactly by SymPy; numbers in, numbers out.
+quadv: Adaptive Simpson quadrature of an array-valued function.
+    Q = quadv(fun, a, b)
+    [Q, fcnt] = quadv(fun, a, b, tol)
+    * Every element of the integral to within tol (1e-6) in the largest error; fcnt the number of calls.
+# ---- fill-ins: control systems ---------------------------------------------------------------------------------------------------
+frd: A model given by its frequency response.
+    sys = frd(response, freq)
+    sys = frd(response, freq, Ts)
+    sys = frd(sys, freq)
+    sys = frd(..., 'FrequencyUnit', 'Hz')
+    * response is ny-by-nu-by-numel(freq) (a vector for one input and one output), freq in rad/s unless FrequencyUnit is 'Hz'. frd models add, subtract, multiply and divide with each other, with numbers and with models (evaluated at the same frequencies); feedback, bode, bodemag and freqresp take them.
+frdata: The data of a frequency-response model.
+    [response, freq, Ts] = frdata(sys)
+    [response, freq] = frdata(sys, 'v')
+bodemag: The gain alone over frequency, drawn.
+    bodemag(sys)
+    bodemag(sys1, sys2, ..., w)
+    * In dB on a logarithmic frequency axis (rad/s); models and frd models.
+lsiminfo: Measures of a response.
+    S = lsiminfo(y, t)
+    S = lsiminfo(y, t, yfinal, 'SettlingTimeThreshold', 0.02)
+    * SettlingTime (after which |y - yfinal| stays within the threshold times its largest value), Min, MinTime, Max and MaxTime; yfinal the last value unless given; a struct array for the columns of a matrix.
+append: Models side by side, unconnected.
+    sys = append(sys1, sys2, ...)
+    * Their inputs and outputs one after another: a block-diagonal model, with their names.
+sumblk: A summing junction.
+    S = sumblk('e = r - y')
+    S = sumblk('e = r - y', n)
+    * A static model whose input and output names are the formula's signal names (each name1 .. namen for vector signals of n), for connect.
+connect: Models joined by their signal names.
+    sys = connect(sys1, sys2, ..., inputs, outputs)
+    sys = connect(blksys, Q, inputs, outputs)
+    * By name: each input of a model is driven by the output of the same name, or is one of inputs (names, text or a cell); outputs are named outputs. By index: blksys is an appended model, each row of Q an input followed by the outputs that feed it (negative for negative feedback), inputs and outputs by number. An algebraic loop with no solution is refused.
+d2d: A discrete model resampled.
+    sys2 = d2d(sys1, Ts)
+    sys2 = d2d(sys1, Ts, method)
+    * Through the continuous model d2c gives, by 'zoh' (default) or 'tustin', and back by c2d.
+ctrbf: The controllability staircase form.
+    [Abar, Bbar, Cbar, T, k] = ctrbf(A, B, C)
+    [Abar, Bbar, Cbar, T, k] = ctrbf(A, B, C, tol)
+    * Abar = T*A*T', Bbar = T*B, Cbar = C*T' with T orthogonal: the uncontrollable states first ([Auc 0; A21 Ac], Bbar = [0; Bc]); k the controllable states found at each step of the staircase (sum(k) of them). The steps split the input matrix's range by SVDs.
+obsvf: The observability staircase form.
+    [Abar, Bbar, Cbar, T, k] = obsvf(A, B, C)
+    [Abar, Bbar, Cbar, T, k] = obsvf(A, B, C, tol)
+    * The unobservable states first ([Ano A12; 0 Ao], Cbar = [0 Co]); the dual of ctrbf.
+lqi: The LQ regulator with integral action.
+    [K, S, e] = lqi(sys, Q, R)
+    [K, S, e] = lqi(sys, Q, R, N)
+    * u = -K*[x; xi] for the plant with integrators of the error appended: xi' = r - y, or xi[k+1] = xi[k] + Ts*(r[k] - y[k]) in discrete time; by lqr on that model.
+pidtune: A PID controller tuned for a plant.
+    C = pidtune(sys, type)
+    [C, info] = pidtune(sys, type, wc, opts)
+    * type 'P', 'I', 'PI' (default), 'PD', 'PID', 'PDF' or 'PIDF', for a plant with one input and one output. PyLAB's own design: the loop C*sys crosses over at wc with the phase margin opts.PhaseMargin (60 degrees). Without wc, the controller's own phase at crossover is fixed (PI: Ki/Kp = wc/3; PD: Kd*wc = Kp; PID: Ti = 4*Td, wc*Td = 1) and wc is where the plant's phase leaves the margin with it; when that fails, the largest crossover on a grid giving a stable loop. The filter's time constant is Td/10. info has Stable, CrossoverFrequency and PhaseMargin.
+pidtuneOptions: Options for pidtune.
+    opts = pidtuneOptions('PhaseMargin', 60)
+    * PhaseMargin is used; DesignFocus and NumUnstablePoles are kept but not used.
+# ---- fill-ins: statistics ----------------------------------------------------------------------------------------------------------
+tiedrank: Ranks with ties averaged.
+    r = tiedrank(x)
+    [r, tieadj] = tiedrank(x, 0, bidir)
+    * Ties get the average of their ranks, NaN stays NaN; tieadj = sum(t.^3 - t)/2 over the groups of t ties (as signrank uses it). bidir 1 ranks from both ends, the smallest and the largest 1. Each column of a matrix. tieflag 1 is refused.
+ecdfhist: A histogram of the density from an empirical cdf.
+    [n, c] = ecdfhist(f, x)
+    [n, c] = ecdfhist(f, x, m)
+    ecdfhist(...)
+    * f and x as ecdf gives them; the probability in each of m (10) equal bins (or bins centred at the values of a vector m) over the bin width. Drawn as bars when no output is asked for.
+createns: A nearest-neighbour searcher.
+    ns = createns(X)
+    ns = createns(X, 'NSMethod', m, 'Distance', d, 'BucketSize', b)
+    * A KDTreeSearcher (the default for up to 10 columns and the Euclidean, city block, Minkowski or Chebychev distance) or an ExhaustiveSearcher, over the rows of X; knnsearch(ns, Y, ...) and rangesearch(ns, Y, r) search it with its distance.
+KDTreeSearcher: A Kd-tree nearest-neighbour searcher.
+    ns = KDTreeSearcher(X)
+    ns = KDTreeSearcher(X, 'Distance', d, 'P', p, 'BucketSize', b)
+    * The answers are knnsearch's and rangesearch's on X; the search itself measures every distance.
+ExhaustiveSearcher: A nearest-neighbour searcher that measures every distance.
+    ns = ExhaustiveSearcher(X)
+    ns = ExhaustiveSearcher(X, 'Distance', d, ...)
+rocmetrics: ROC curves of a classifier, one class against the rest.
+    rocObj = rocmetrics(labels, scores, classNames)
+    plot(rocObj)
+    * scores has a column for each of classNames. Metrics is a table of ClassName, Threshold, FalsePositiveRate and TruePositiveRate, from the highest threshold down; AUC the area under each curve.
+mnrfit: Multinomial regression.
+    B = mnrfit(X, Y)
+    [B, dev, stats] = mnrfit(X, Y, 'model', model, 'interactions', 'on', 'link', link)
+    * By maximum likelihood. Y holds the categories 1..k or counts, a column each. 'nominal' (default): the log odds of each category against the last, a column of B each. 'ordinal': log(P(y <= j)/P(y > j)) = alpha_j + x*beta, B the k-1 intercepts then the slopes (a column of intercept and slopes for each with 'interactions' 'on'); links 'logit', 'probit', 'comploglog', 'loglog'. 'hierarchical': P(y = j | y >= j). stats has beta, dfe, se, covb, coeffcorr, t and p (normal).
+mnrval: Probabilities from a multinomial regression.
+    pihat = mnrval(B, X)
+    pihat = mnrval(B, X, 'model', model, 'interactions', on, 'link', link)
+    yhat = mnrval(B, X, ssize, 'type', 'count')
+    * The same model and options as mnrfit.
+fitlme: A linear mixed-effects model.
+    lme = fitlme(tbl, formula)
+    lme = fitlme(tbl, formula, 'FitMethod', 'REML')
+    * formula: fixed effects as fitlm reads them and random terms '(1 | g)', '(1 + x | g)' (correlated intercept and slope), '(x - 1 | g)', '(1 | g1:g2)' (nested groups); each term's covariance full. By maximum likelihood ('ML', the default) or restricted maximum likelihood ('REML'): the likelihood profiled over the fixed effects and the residual variance, maximized over each term's relative covariance factor. DF is n - p. The covariance parameters are shown without intervals.
+fixedEffects: The fixed effects of a mixed-effects model.
+    beta = fixedEffects(lme)
+    [beta, betanames, stats] = fixedEffects(lme)
+randomEffects: The predicted random effects of a mixed-effects model.
+    B = randomEffects(lme)
+    [B, Bnames, stats] = randomEffects(lme)
+    * The conditional modes, each grouping term's levels in turn and each level's effects in turn; Bnames a table of Group, Level and Name; stats with their prediction errors (the fixed effects taken as known).
+covarianceParameters: The covariance parameters of a mixed-effects model.
+    psi = covarianceParameters(lme)
+    [psi, mse, stats] = covarianceParameters(lme)
+    * psi a cell of each random term's covariance matrix; mse the residual variance; stats for each term its standard deviations and correlations.
+fitted: The fitted values of a mixed-effects model.
+    yfit = fitted(lme)
+    yfit = fitted(lme, 'Conditional', false)
+    * With the predicted random effects (conditional, the default) or without them (marginal).
+residuals: The residuals of a mixed-effects model.
+    r = residuals(lme)
+    r = residuals(lme, 'Conditional', false, 'ResidualType', 'Pearson')
+response: The response a mixed-effects model was fitted to.
+    y = response(lme)
+cordexch: A D-optimal design by coordinate exchange.
+    dCE = cordexch(nfactors, nruns)
+    [dCE, X] = cordexch(nfactors, nruns, model, 'tries', k, 'maxiter', m)
+    * From distinct points of the grid of levels (-1 and 1, and 0 for a quadratic model; random levels when the grid is too big to list), each coordinate in turn set to the level making det(X'X) largest, until a pass changes nothing; the best of tries starts. X is the model matrix.
+daugment: A design augmented D-optimally.
+    [dCE2, X] = daugment(startdes, nruns, model, ...)
+    * startdes with nruns more runs chosen by coordinate exchange for the whole design.
+dcovary: A D-optimal design with fixed covariates.
+    [dCV, X] = dcovary(nfactors, covariates, model, ...)
+    * A run for each row of covariates; dCV holds the factors then the covariates.
+qrandstream: A stream of quasi-random points.
+    q = qrandstream(type, d)
+    q = qrandstream(type, d, prop, val, ...)
+    q = qrandstream(p)
+    * From a Sobol or Halton set ('sobol', 'halton', or a point set p); qrand(q, n) reads the next points, reset(q) starts over.
+qrand: The next points of a quasi-random stream.
+    x = qrand(q)
+    x = qrand(q, n)
+reset: A quasi-random stream started over.
+    reset(q)
+# ---- fill-ins: wavelets ------------------------------------------------------------------------------------------------------------
+cwtfilterbank: The continuous wavelet transform's filters as an object.
+    fb = cwtfilterbank
+    fb = cwtfilterbank('SignalLength', N, 'SamplingFrequency', fs, 'Wavelet', w, 'VoicesPerOctave', nv, 'FrequencyLimits', [f1 f2], 'WaveletParameters', [g p2], 'Boundary', 'reflection')
+    * The same filters as cwt: wt(fb, x), freqz(fb), wavelets(fb), scales(fb), centerFrequencies(fb), centerPeriods(fb), timeSpreads(fb). SignalLength 1024 unless given; 'reflection' doubles the length the filters are made for.
+wt: The continuous wavelet transform by a filter bank.
+    [cfs, f, coi] = wt(fb, x)
+    wt(fb, x)
+    * x must have the bank's SignalLength samples; drawn when no output is asked for.
+scales: The scales of a CWT filter bank.
+    s = scales(fb)
+centerFrequencies: The centre frequencies of a CWT filter bank's wavelets.
+    f = centerFrequencies(fb)
+centerPeriods: The centre periods of a CWT filter bank's wavelets.
+    p = centerPeriods(fb)
+timeSpreads: The time spreads of a CWT filter bank's wavelets.
+    s = timeSpreads(fb)
+    * Each wavelet's standard deviation in time.
+dwtfilterbank: The discrete wavelet transform's iterated filters as an object.
+    fb = dwtfilterbank
+    fb = dwtfilterbank('Wavelet', 'sym4', 'SignalLength', N, 'Level', L, 'SamplingFrequency', fs, 'FilterType', 'Analysis', 'Boundary', 'reflection')
+    * freqz(fb), wavelets(fb), scalingfunctions(fb), framebounds(fb), dwtpassbands(fb). The equivalent filter at level j is the lowpass filter upsampled j-1 times in a cascade then the highpass one; Level floor(log2) of the length unless given.
+scalingfunctions: The scaling functions of a DWT filter bank, at each level.
+    [phi, t] = scalingfunctions(fb)
+wavelets: The wavelets of a filter bank.
+    [psi, t] = wavelets(fb)
+    * A row for each filter, centred in time.
+framebounds: The frame bounds of a DWT filter bank.
+    [lower, upper] = framebounds(fb)
+    * The least and greatest over frequency of the sum of the squared responses, each level's divided by 2^level; 1 and 1 for an orthogonal wavelet.
+dwtpassbands: The passbands of a DWT filter bank.
+    bands = dwtpassbands(fb)
+    * [fs/2^(j+1), fs/2^j] for each level j, then the final scaling band.
+wsst: The wavelet synchrosqueezed transform.
+    [sst, f] = wsst(x)
+    [sst, f] = wsst(x, fs, wname, 'VoicesPerOctave', 32, 'ExtendSignal', true)
+    wsst(...)
+    * cwt's coefficients with the analytic Morlet ('amor', or 'bump') moved along frequency to the instantaneous frequency of each (the phase's derivative in time), onto the transform's own frequencies. Drawn when no output is asked for.
+iwsst: The inverse wavelet synchrosqueezed transform.
+    xrec = iwsst(sst)
+    xrec = iwsst(sst, wname, f, freqrange)
+    * 2/C times the real part of the sum over frequency, C the wavelet's admissibility constant (as icwt); freqrange keeps those frequencies.
+wcoherence: Wavelet coherence.
+    [wcoh, wcs, f, coi] = wcoherence(x, y, fs)
+    wcoherence(x, y, fs, 'VoicesPerOctave', 12, 'NumScalesToSmooth', 12)
+    * |S(Wx.*conj(Wy)./s)|^2 ./ (S(|Wx|.^2./s) .* S(|Wy|.^2./s)) with the analytic Morlet: S smooths in time by a Gaussian as wide as the scale and across NumScalesToSmooth scales by a moving average (PyLAB's own smoothing); wcs the smoothed cross spectrum.
+ewt: The empirical wavelet transform.
+    [mra, mfb] = ewt(x)
+    [mra, mfb, info] = ewt(x, 'MaxNumPeaks', 5, 'PeakThresholdPercent', 70, 'SegmentMethod', 'geomean', 'LogSpectrum', false)
+    * Gilles' method: the spectrum's largest peaks (at most MaxNumPeaks, at least PeakThresholdPercent of the largest), boundaries between neighbours ('geomean' of their frequencies, or 'localmin', the lowest point between), Meyer-type filters with the widest smooth transitions that keep them a tight frame. mra the components (sum(mra, 2) = x), mfb the filters' responses from 0 to the Nyquist frequency.
+# ---- fill-ins: splines ---------------------------------------------------------------------------------------------------------------
+csaps: The cubic smoothing spline.
+    pp = csaps(x, y)
+    pp = csaps(x, y, p)
+    values = csaps(x, y, p, xx)
+    [pp, p] = csaps(x, y, p, [], w)
+    * Minimizes p*sum(w.*(y - f(x)).^2) + (1 - p)*integral(f''^2): p 1 interpolates (the natural spline), p 0 is the least-squares line; p is 1/(1 + h^3/6) unless given, h the average spacing of x. Equal sites are merged. Reinsch's method; pp-form.
+spaps: The smoothing spline within a tolerance.
+    sp = spaps(x, y, tol)
+    [sp, values, rho] = spaps(x, y, tol, w)
+    * The cubic spline (pp-form here) least rough with sum(w.*(y - f(x)).^2) <= tol: the smoothing spline whose error is tol, the least-squares line when even that is within tol, the interpolant when tol is 0; rho the error's weight (1/lambda).
+spapi: An interpolating spline of any order.
+    sp = spapi(k, x, y)
+    values = spapi(k, x, y, xx)
+    * Order k (degree k - 1), B-form, its knots SciPy's make_interp_spline chooses; or k the knot sequence (as many knots as points plus the order).
+spmak: A spline in B-form.
+    sp = spmak(knots, coefs)
+    * A column of coefs for each B-spline (rows for vector values); the order is the number of knots less the number of coefficients.
+fnval: A spline's values.
+    v = fnval(f, x)
+    * f in pp-form (spline, csaps, mkpp) or B-form (spmak, spapi).
+fnder: A spline's derivative.
+    fprime = fnder(f)
+    fprime = fnder(f, dorder)
+    * In the same form; a negative order integrates.
+fnint: A spline's indefinite integral.
+    intgrf = fnint(f)
+    intgrf = fnint(f, value)
+    * value (0) at the left end of the basic interval; in the same form.
+fnplt: A spline drawn.
+    fnplt(f)
+    fnplt(f, symbol, interval, linewidth)
+    points = fnplt(f, ...)
+    * Over its basic interval (or interval); points a row of x and a row for each component.
+fnbrk: The parts of a spline.
+    part = fnbrk(f, name)
+    [breaks, coefs, pieces, order, dim] = fnbrk(pp)
+    * 'breaks', 'coefs', 'pieces', 'order', 'dim', 'interval', and for a B-form 'knots' and 'number'.
 '''
 
 

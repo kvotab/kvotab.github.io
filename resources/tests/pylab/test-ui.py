@@ -2011,6 +2011,27 @@ async def problem_based(page):
     await command(page, 'close all')
 
 
+async def toolbox_fillins(page):
+    """Step 14 in the page: a mixed-effects model shown, mnrfit, charpoly of numbers (SymPy loaded for it), stft and istft, csaps, and bodemag of an frd model and a rocmetrics plot drawn."""
+    out = await command(page, "close all; rng(1); g = repelem((1:6)', 10); x = randn(60, 1); u = 0.8*randn(6, 1); y = 1 + u(g) + 2*x + 0.3*randn(60, 1); "
+                              "tbl = table(x, y, categorical(g), 'VariableNames', {'x', 'y', 'g'}); lme = fitlme(tbl, 'y ~ x + (1 | g)')\n"
+                              "b = fixedEffects(lme); fe = abs(b(2) - 2) < 0.2, [B, dev] = mnrfit([1; 2; 3; 4; 5; 6], [1; 1; 2; 1; 2; 2]); mn = isfinite(dev), "
+                              "cp = isequal(charpoly([1 2; 3 4]), [1 -5 -2]), xs = randn(400, 1); [s, f] = stft(xs, 'Window', hann(64, 'periodic'), 'OverlapLength', 48); "
+                              "xr = istft(s, 'Window', hann(64, 'periodic'), 'OverlapLength', 48); st = max(abs(real(xr(2:end)) - xs(2:numel(xr)))) < 1e-10, "
+                              "cs = max(abs(csaps(0:5, [0 1 0 1 0 1], 1, 0:5) - [0 1 0 1 0 1])) < 1e-12, "
+                              "f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); bodemag(frd(tf(1, [1 0.4 1]), logspace(-1, 1, 60))); subplot(1, 2, 2); "
+                              "lab = [ones(30, 1); zeros(30, 1)]; sc = [rand(30, 1) + 0.4; rand(30, 1)]; plot(rocmetrics(lab, [1 - sc, sc], [0 1]));")
+    check('fitlme shown in the page', 'Linear mixed-effects model fit by ML' in out and 'Random effects covariance parameters' in out, True)
+    check('fitlme, mnrfit, charpoly (SymPy loaded for numbers), stft and istft, csaps in the page',
+          all(f'{k} =\n\n  logical\n\n   1' in out for k in ('fe', 'mn', 'cp', 'st', 'cs')), True)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check("bodemag of an frd model and rocmetrics' curves drawn", (await ink(page)) > 0.02, True)
+    await canvas_shot(page, 'toolfill14-1.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2033,6 +2054,7 @@ async def main():
         await core_additions(page)
         await image_additions(page)
         await problem_based(page)
+        await toolbox_fillins(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

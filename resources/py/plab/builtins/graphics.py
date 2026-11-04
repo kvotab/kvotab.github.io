@@ -2304,6 +2304,8 @@ def legend(nargout, *args):
     plotted = [c for c in reversed(ax.plot_children()) if c.TYPE in ('line', 'surface', 'patch', 'bar', 'histogram', 'area', 'stair', 'stem', 'errorbar', 'scatter', 'bubblechart', 'contour', 'quiver')]
     if ax.yy is not None and ax.yy.get('right') is not None:
         plotted += [c for c in reversed(ax.yy['right'].plot_children())]
+    # an object whose handle is hidden is left out of the legend made from the axes
+    plotted = [c for c in plotted if c.props.get('HandleVisibility', 'on') == 'on']
     if objs is None:
         if names:
             objs = plotted[:len(names)]
