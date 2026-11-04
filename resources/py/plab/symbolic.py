@@ -238,11 +238,12 @@ def from_language(text):
     src = src.replace('&&', '&').replace('||', '|')
     rel = re.split(r'(==|!=|<=|>=|<|>)', src)
     try:
-        if len(rel) == 3:
-            l, op, r = rel
-            L = parse_expr(l, local_dict=names, transformations=standard_transformations, evaluate=True)
-            Rr = parse_expr(r, local_dict=names, transformations=standard_transformations, evaluate=True)
-            return {'==': s.Eq, '!=': s.Ne, '<=': s.Le, '>=': s.Ge, '<': s.Lt, '>': s.Gt}[op](L, Rr, evaluate=False)
+        if len(rel) == 3 or len(rel) > 3 and not re.search(r'[&|]', src):
+            # 0 < x < 1 is 0 < x & x < 1
+            sides = [parse_expr(t, local_dict=names, transformations=standard_transformations, evaluate=True) for t in rel[0::2]]
+            ops = {'==': s.Eq, '!=': s.Ne, '<=': s.Le, '>=': s.Ge, '<': s.Lt, '>': s.Gt}
+            parts = [ops[o](L, Rr, evaluate=False) for L, o, Rr in zip(sides, rel[1::2], sides[1:])]
+            return parts[0] if len(parts) == 1 else s.And(*parts)
         return parse_expr(src, local_dict=names, transformations=standard_transformations, evaluate=True)
     except (SyntaxError, TypeError, ValueError, AttributeError) as e:
         raise MError('symbolic:str2sym:Invalid', f"Unable to read '{text}' as a symbolic expression.")
@@ -330,7 +331,7 @@ def _printer():
             return f'{self._print(e.lhs)} ~= {self._print(e.rhs)}'
 
         def _print_And(self, e):
-            return ' & '.join(self._paren(a, precedence(e)) for a in e.args)
+            return ' & '.join(self._paren(a, precedence(e)) for a in _chain_order(e.args))
 
         def _print_Or(self, e):
             return ' | '.join(self._paren(a, precedence(e)) for a in e.args)
@@ -370,7 +371,11 @@ def _printer():
 
         def _print_Piecewise(self, e):
             parts = []
-            for val, cond in e.args:
+            args = e.args
+            if len(args) > 1 and args[-1].cond is s.true and args[-1].expr is s.nan:
+                # no otherwise given
+                args = args[:-1]
+            for val, cond in args:
                 if cond is s.true:
                     parts.append(self._print(val))
                 else:
@@ -504,6 +509,51 @@ def _rel(op):
             '>': lambda x, y: s.Gt(x, y, evaluate=False), '>=': lambda x, y: s.Ge(x, y, evaluate=False)}[op]
 
 
+def _chain_end(e):
+    """The right end of a chain of comparisons on the left of another (0 < x < 1 is 0 < x & x < 1), or None."""
+    s = sp()
+    order = (s.StrictLessThan, s.LessThan, s.StrictGreaterThan, s.GreaterThan)
+    if isinstance(e, order):
+        return e.rhs
+    if isinstance(e, s.And) and all(isinstance(r, order) for r in e.args):
+        ends = {r.rhs for r in e.args} - {r.lhs for r in e.args}
+        if len(ends) == 1:
+            return ends.pop()
+    return None
+
+
+def _chain_order(args):
+    """The parts of a conjunction in the order of their chain (0 < x, x < y, y < 1), else as they are."""
+    s = sp()
+    order = (s.StrictLessThan, s.LessThan, s.StrictGreaterThan, s.GreaterThan)
+    if not all(isinstance(r, order) for r in args):
+        return args
+    by_lhs = {r.lhs: r for r in args}
+    starts = set(by_lhs) - {r.rhs for r in args}
+    if len(by_lhs) != len(args) or len(starts) != 1:
+        return args
+    out, at = [], starts.pop()
+    while at in by_lhs and len(out) < len(args):
+        out.append(by_lhs[at])
+        at = out[-1].rhs
+    return out if len(out) == len(args) else args
+
+
+def _chain(op):
+    s = sp()
+    rel = _rel(op)
+    if op in ('==', '~='):
+        return rel
+
+    def f(x, y):
+        end = _chain_end(x)
+        # (a Symbol is a Boolean in SymPy)
+        if end is None or isinstance(y, (s.core.relational.Relational, s.logic.boolalg.BooleanFunction, s.logic.boolalg.BooleanAtom)):
+            return rel(x, y)
+        return s.And(x, rel(end, y))
+    return f
+
+
 def _boolean(e):
     s = sp()
     if isinstance(e, (s.logic.boolalg.Boolean, s.core.relational.Relational)):
@@ -537,7 +587,7 @@ def binop(op, a, b):
             f = s.And if op == '&' else s.Or
             r = _each(lambda x, y: f(_boolean(x), _boolean(y)), X, Y)
         else:
-            r = _each(_rel(op), X, Y)
+            r = _each(_chain(op), X, Y)
         return Sym(r, fa)
     if op == '*':
         if A.size == 1 or B.size == 1:

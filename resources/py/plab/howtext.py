@@ -564,7 +564,7 @@ readgeoraster, geotiffread, geotiffinfo:
 sym, syms:
     Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py.
 str2sym:
-    Python: symbolic.py. The text's operators and function names translated to SymPy's (^ to **, ~= to !=, 2i to 2*I, ...) and read by sympy.parsing.sympy_parser.parse_expr, every other name a symbol; a single ==, ~=, <, <=, > or >= makes an equation or inequality.
+    Python: symbolic.py. The text's operators and function names translated to SymPy's (^ to **, ~= to !=, 2i to 2*I, ...) and read by sympy.parsing.sympy_parser.parse_expr, every other name a symbol; a single ==, ~=, <, <=, > or >= makes an equation or inequality, and a chain of them (0 < x < 1) the conjunction of each neighbouring pair.
 symfun, argnames, formula:
     Python: symmath.py. A symbolic function is its formula and its argument symbols; a call substitutes the arguments (element by element for arrays) with SymPy's subs.
 vpa, digits:
@@ -572,7 +572,7 @@ vpa, digits:
 poly2sym, sym2poly:
     Python: symmath.py. The sum of c(i)*x^(n-i); sympy.Poly's all_coeffs, converted to doubles.
 piecewise:
-    Python: symmath.py. sympy.Piecewise of the values and conditions in order, NaN when none holds.
+    Python: symmath.py. sympy.Piecewise of the values and conditions in order (built unevaluated, so that each condition stays as written), NaN when none holds. A chained comparison such as -1 <= x <= 1 is the conjunction -1 <= x & x <= 1. Given only numbers (a plot of a piecewise expression calls it so), it picks element by element the value of the first condition that holds.
 int:
     Python: symmath.py. sympy.integrate, for each element; a definite integral with conds='none' (no conditions on the parameters). 'Hold' keeps an unevaluated sympy.Integral.
 limit:
@@ -610,7 +610,7 @@ fourier, ifourier:
 ztrans, iztrans:
     Python: symmath.py. The sum of f(n)*z^(-n) by sympy.summation (its first case when it is piecewise). The inverse of a rational F: for n >= 1 the sum of the residues of F(z)*z^(n-1) at the roots of the denominator (sympy.roots), each as the (m-1)-th derivative of (z-p)^m*F(z)*z^(n-1) at p over (m-1)!, and at n = 0 the limit of F at infinity (a kroneckerDelta term when they differ).
 assume, assumeAlso, assumptions:
-    Python: symmath.py. A new sympy.Symbol of the name with SymPy's assumptions (real, positive, negative, nonnegative, integer, rational, nonzero); an inequality with another bound is kept beside it and used to filter solve's solutions.
+    Python: symmath.py. A new sympy.Symbol of the name with SymPy's assumptions (real, positive, negative, nonnegative, integer, rational, nonzero); an inequality with another bound, or between variables, is kept beside it (once, however many variables it names) and used to filter solve's solutions. A conjunction, such as the chain 0 < a < b (0 < a & a < b), is taken part by part; assume first clears what was assumed of every variable in the condition.
 isAlways:
     Python: symmath.py and symbolic.py. sympy.simplify of the condition, and for an equation of the difference of its sides, to SymPy's true or false; otherwise unknown.
 latex, pretty:

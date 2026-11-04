@@ -133,15 +133,14 @@ def _make_symbol(name, words=()):
         w = w.lower()
         if w == 'clear':
             kw = {}
-            RELS.pop(name, None)
+            _forget(name)
             continue
         if w not in _ASSUME_WORDS:
             raise MError('symbolic:sym:BadAssumption', f"'{w}' is not an assumption: use real, positive, integer, rational or clear.")
         kw.update(_ASSUME_WORDS[w])
     x = s.Symbol(name, **kw)
     NAMES[name] = x
-    if not kw:
-        RELS.pop(name, None)
+    _forget(name)
     return x
 
 
@@ -302,8 +301,29 @@ async def poly2sym(nargout, *args):
     return S(sum((ci * x ** (n - 1 - i) for i, ci in enumerate(c)), sp().Integer(0)))
 
 
+def _piecewise_numbers(args):
+    """piecewise on numbers (a plot of a piecewise expression calls it so): element by element, the first condition that holds."""
+    conds = [darr(c, 'piecewise') != 0 for c in args[0:len(args) - 1:2]]
+    vals = [darr(v, 'piecewise') for v in args[1::2]]
+    other = darr(args[-1], 'piecewise') if len(args) % 2 else np.array([[np.nan]])
+    try:
+        shape = np.broadcast_shapes(*(a.shape for a in conds + vals + [other]))
+    except ValueError:
+        raise err('MATLAB:sizeDimensionsMustMatch', 'The conditions and values of piecewise must be the same size (or scalars).', 'piecewise')
+    r = np.broadcast_to(other, shape).copy() if other.dtype.kind != 'c' and not any(v.dtype.kind == 'c' for v in vals) \
+        else np.broadcast_to(other, shape).astype(complex)
+    done = np.zeros(shape, bool)
+    for c, v in zip(conds, vals):
+        pick = np.broadcast_to(c, shape) & ~done
+        r[pick] = np.broadcast_to(v, shape)[pick]
+        done |= pick
+    return out(r)
+
+
 @bi('piecewise', aw=True, arr=False)
 async def piecewise(nargout, *args):
+    if args and not any(_is(a) for a in args):
+        return _piecewise_numbers(args)
     s = await Y.ensure()
     pairs = []
     i = 0
@@ -314,7 +334,8 @@ async def piecewise(nargout, *args):
         pairs.append((to_expr(args[i]), s.true))
     else:
         pairs.append((s.nan, s.true))
-    return S(s.Piecewise(*pairs))
+    # the conditions as written (SymPy would shorten each by the ones before it)
+    return S(s.Piecewise(*pairs, evaluate=False))
 
 
 # ---- calculus ------------------------------------------------------------------------------------------------------
@@ -1308,9 +1329,28 @@ def iztrans(nargout, *args):
 
 # ---- assumptions and truth ----------------------------------------------------------------------------------------------
 
+def _forget(name):
+    """Drops the relations that mention a variable from those kept for the others."""
+    for k in list(RELS):
+        keep = [r for r in RELS[k] if all(f.name != name for f in r.free_symbols)]
+        if keep:
+            RELS[k] = keep
+        else:
+            RELS.pop(k)
+
+
+def _refresh_rels():
+    """The relations kept, on the variables as now assumed (built unevaluated, so that none settles itself)."""
+    Rel = sp().core.relational.Relational
+    for k in RELS:
+        RELS[k] = [type(r)(fresh(r.lhs), fresh(r.rhs), evaluate=False) if isinstance(r, Rel) else fresh(r) for r in RELS[k]]
+
+
 def _apply_assumption(x, words_or_rel, also):
     s = sp()
     name = x.name
+    if not also or 'clear' in [w.lower() for w in words_or_rel if isinstance(w, str)]:
+        _forget(name)
     cur = NAMES.get(name, x)
     kw = dict(cur._assumptions0) if also else {}
     rels = list(RELS.get(name, [])) if also else []
@@ -1352,26 +1392,35 @@ def _assume(args, also):
         c = fresh(to_expr(args[0])) if _is(args[0]) else None
         if c is None:
             raise err('symbolic:assume:Input', 'assume takes a condition, or variables and an assumption.', 'assume')
-        if isinstance(c, s.And):
-            for part in c.args:
-                _assume([S(part)], True)
-            return
-        if isinstance(c, s.Contains):
-            x, st = c.args
-            word = {s.Integers: 'integer', s.Reals: 'real', s.Rationals: 'rational'}.get(st, None)
-            _apply_assumption(x, [word], also)
-            return
-        xs = [x for x in c.free_symbols]
-        if len(xs) != 1:
-            for x in xs:
-                RELS.setdefault(x.name, []).append(c)
-            return
-        _apply_assumption(xs[0], [c], also)
+        Rel = s.core.relational.Relational
+        parts = c.args if isinstance(c, s.And) else (c,)
+        # (a Symbol is a Boolean in SymPy)
+        if not all(isinstance(p, (Rel, s.logic.boolalg.BooleanFunction, s.logic.boolalg.BooleanAtom)) for p in parts):
+            raise err('symbolic:assume:Input', 'assume takes a condition, or variables and an assumption.', 'assume')
+        if not also:
+            # assume replaces what was assumed of the variables in the condition
+            for x in c.free_symbols:
+                _apply_assumption(x, ['clear'], False)
+        for part in parts:
+            if isinstance(part, s.Contains):
+                x, st = part.args
+                word = {s.Integers: 'integer', s.Reals: 'real', s.Rationals: 'rational'}.get(st, None)
+                _apply_assumption(x, [word], True)
+                continue
+            xs = sorted(part.free_symbols, key=lambda x: x.name)
+            if len(xs) != 1 or not isinstance(part, Rel):
+                for x in xs:
+                    if part not in RELS.get(x.name, []):
+                        RELS.setdefault(x.name, []).append(part)
+                continue
+            _apply_assumption(xs[0], [part], True)
+        _refresh_rels()
         return
     xs = _flat(args[0])
     words = [py_str(a).lower() for a in args[1:]]
     for x in xs:
         _apply_assumption(x, words, also)
+    _refresh_rels()
 
 
 @bi('assume', arr=False)
@@ -1397,7 +1446,10 @@ def assumptions(nargout, *args):
         x = NAMES.get(nm)
         if x is None:
             continue
-        a = x._assumptions0
+        a = dict(x._assumptions0)
+        if any(isinstance(r, s.core.relational.Relational) and not isinstance(r, (s.Eq, s.Ne)) for r in RELS.get(nm, [])):
+            # an inequality says real already
+            a.pop('real', None)
         # shown on a plain symbol of the name, so that they do not settle themselves
         p = s.Symbol(nm)
         for k, rel in (('positive', s.Gt(p, 0, evaluate=False)), ('negative', s.Lt(p, 0, evaluate=False)),
@@ -1413,7 +1465,7 @@ def assumptions(nargout, *args):
                     break
         if a.get('integer') and any(a.get(k) for k in ('positive', 'negative', 'nonnegative', 'nonpositive')):
             conds.append(s.Contains(p, s.Integers, evaluate=False))
-        conds += RELS.get(nm, [])
+        conds += [r for r in RELS.get(nm, []) if r not in conds]
     return Y.of_array(conds) if conds else Sym(np.empty((1, 0), object))
 
 

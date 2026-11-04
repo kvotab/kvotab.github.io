@@ -1228,6 +1228,13 @@ async def symbolic(page):
     await command(page, "fplot(x^2 - 1, [-2 2])")
     check('symbolic: fplot of an expression draws', await drawn(page, 1) > 0.003, True)
     await shot(page, 'symbolic.png')
+    out = await command(page, "syms C_1 C_2\nsyms u u_c u_r u_f k P_er positive real\nassume(0 < u_c < u_r < u_f)\n"
+                              "Pe(u) = piecewise(u < u_c, 0, ...\n                  u_c <= u <= u_r, C_1 + C_2*u^k, ...\n"
+                              "                  u_r < u <= u_f, P_er, ...\n                  u_f < u, 0)")
+    check('symbolic: chained comparisons in assume and piecewise, conditions shown as written',
+          out.rstrip().endswith('piecewise(u < u_c, 0, u_c <= u & u <= u_r, C_1 + C_2*u^k, u_r < u & u <= u_f, P_er, u_f < u, 0)'), True)
+    await command(page, "close all force; fplot(subs(Pe, [u_c u_r u_f C_1 C_2 k P_er], [1 2 3 0 1 2 5]), [0 4])")
+    check('symbolic: fplot of a piecewise expression draws', await drawn(page, 1) > 0.003, True)
     await command(page, 'close all force; clear; clc')
     check('symbolic: no script errors', page.errors, [])
 

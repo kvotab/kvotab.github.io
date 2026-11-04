@@ -278,4 +278,32 @@ same('[V, D] = eig(A): A*V = V*D', W['k'], True)
 W, _ = run("A = sym(magic(3)); k = isequal(inv(A)*A, sym(eye(3))); d = char(det(A)); r = rank(A);")
 same('inv, det, rank', (W['k'], W['d'].str(), W['r']), (True, '-360', 3.0))
 
+# chained comparisons: 0 < x < 1 is 0 < x & x < 1, in assume, piecewise and str2sym
+same('a chained comparison is a conjunction', [shows("syms x y; r = 0 < x < 1", 'r'), shows("syms x y; r = 1 > x >= y", 'r'),
+                                               shows("r = str2sym('0 < y < 1')", 'r')],
+     ['0 < x & x < 1', '1 > x & x >= y', '0 < y & y < 1'])
+same('assume of a chain replaces, splits it, and lists each relation once',
+     shows("syms u u_c u_r u_f k P_er positive real; assume(0 < u_c < u_r < u_f); r = assumptions([u u_c u_r u_f k P_er])", 'r'),
+     '[u > 0, u_c > 0, u_c < u_r, u_r < u_f, k > 0, P_er > 0]')
+same('a relation goes with a variable assumed anew', [shows("syms a b; assume(a < b); assume(a > 0); r = assumptions([a b])", 'r'),
+                                                     shows("syms a b; assume(0 < a < b); syms a positive; r = assumptions(b)", 'r')],
+     ['a > 0', '[]'])
+same('assume of an or, of one variable and of two', [shows("syms x y; assume(x < -1 | x > 1); r = assumptions(x)", 'r'),
+                                                    shows("syms x y; assume(x > 0 | y > 0); r = assumptions([x y])", 'r')],
+     ['x > 1 | x < -1', 'x > 0 | y > 0'])
+raises('assume refuses what is no condition, keeping what was assumed', "syms x positive; assume(x)", 'takes a condition')
+same('... and keeps what was assumed', shows("syms x positive; try, assume(x), end; r = assumptions(x)", 'r'), 'x > 0')
+same('solve filters by a relation kept beside the symbol', shows("syms x; assume(x > 2); r = solve(x^2 == 9, x)", 'r'), '3')
+PW = ("syms C_1 C_2; syms u u_c u_r u_f k P_er positive real; assume(0 < u_c < u_r < u_f); "
+      "Pe(u) = piecewise(u < u_c, 0, u_c <= u <= u_r, C_1 + C_2*u^k, u_r < u <= u_f, P_er, u_f < u, 0);")
+same('piecewise keeps chained conditions as written', shows(PW + " r = Pe", 'r'),
+     'piecewise(u < u_c, 0, u_c <= u & u <= u_r, C_1 + C_2*u^k, u_r < u & u <= u_f, P_er, u_f < u, 0)')
+W, _ = run(PW + " g = subs(Pe, [u_c u_r u_f C_1 C_2 k P_er], [1 2 3 0 1 2 5]); r = double(subs(g, u, [0.5 1 1.5 2 2.5 3 3.5]));")
+near('piecewise with chained conditions, at numbers', W['r'], [[0, 1, 2.25, 4, 5, 5, 0]], 0)
+same('piecewise without otherwise shows no NaN', shows("syms x; r = piecewise(x < 0, -1, x > 0, 1)", 'r'), 'piecewise(x < 0, -1, x > 0, 1)')
+near('piecewise on numbers picks element by element', run("r = piecewise([1 0 0] == 1, 5, [0 1 0] == 1, [7 8 9]); r(isnan(r)) = -1;")[0]['r'], [[5, 8, -1]], 0)
+W, _ = run("close all force; syms x; fplot(piecewise(x < -1, -1, -1 <= x <= 1, x, 1 < x, 1), [-2 2]); h = get(gca, 'Children'); "
+           "r = [min(h.YData) max(h.YData)]; close all force;")
+near('fplot of a piecewise expression', W['r'], [[-1, 1]], 1e-12)
+
 sys.exit(C.done())
