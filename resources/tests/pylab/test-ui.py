@@ -2183,6 +2183,29 @@ async def system_identification(page):
     await command(page, 'close all; clear')
 
 
+async def fuzzy_logic(page):
+    """Step 21 in the page: a Mamdani system built, evaluated and written to a .fis file and read back, a Sugeno system,
+    and the output surface and membership functions drawn."""
+    out = await command(page, "clc; close all; cd /home/user; fis = mamfis('Name', 'fan'); fis = addInput(fis, [0 40], 'Name', 'temp'); "
+                              "fis = addMF(fis, 'temp', 'trapmf', [-1 0 15 20], 'Name', 'cool'); fis = addMF(fis, 'temp', 'trapmf', [15 25 40 41], 'Name', 'hot'); "
+                              "fis = addInput(fis, [0 100], 'Name', 'hum'); fis = addMF(fis, 'hum', 'gaussmf', [20 0], 'Name', 'dry'); fis = addMF(fis, 'hum', 'gaussmf', [20 100], 'Name', 'damp'); "
+                              "fis = addOutput(fis, [0 100], 'Name', 'speed'); fis = addMF(fis, 'speed', 'trimf', [0 0 50], 'Name', 'slow'); fis = addMF(fis, 'speed', 'trimf', [50 100 100], 'Name', 'fast'); "
+                              "fis = addRule(fis, [\"If temp is cool and hum is dry then speed is slow\"; \"If temp is hot or hum is damp then speed is fast\"]); "
+                              "v = evalfis(fis, [30 80; 5 10]); ok1 = v(1) > 50 && v(2) < 50, writefis(fis, 'fan21'); f2 = readfis('fan21.fis'); ok2 = isequal(evalfis(f2, [30 80; 5 10]), v), "
+                              "s = sugfis; s = addInput(s, [0 1], 'Name', 'x'); s = addMF(s, 'x', 'trimf', [-1 0 1], 'Name', 'lo'); s = addMF(s, 'x', 'trimf', [0 1 2], 'Name', 'hi'); "
+                              "s = addOutput(s, [0 3], 'Name', 'y'); s = addMF(s, 'y', 'constant', 0, 'Name', 'z'); s = addMF(s, 'y', 'linear', [2 1], 'Name', 'l'); "
+                              "s = addRule(s, [1 1 1 1; 2 2 1 1]); ok3 = abs(evalfis(s, 0.25) - 0.375) < 1e-12, "
+                              "f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); gensurf(fis); subplot(1, 2, 2); plotmf(fis, 'input', 1); delete('fan21.fis');")
+    check('fuzzy logic in the page: a Mamdani system evaluated and read back from a .fis file, a Sugeno system',
+          [f'{k} =\n\n  logical\n\n   1' in out for k in ('ok1', 'ok2', 'ok3')], [True] * 3)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('the output surface and the membership functions drawn', (await ink(page)) > 0.03, True)
+    await canvas_shot(page, 'fuzzy21-1.png')
+    await command(page, 'close all; clear')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2212,6 +2235,7 @@ async def main():
         await finance(page)
         await comms_audio(page)
         await system_identification(page)
+        await fuzzy_logic(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

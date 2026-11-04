@@ -9814,6 +9814,114 @@ aic: The Akaike information criteria of models.
     * 'aic' (the default), 'AICc', 'nAIC' or 'BIC'.
 fpe: The final prediction errors of models.
     value = fpe(sys1, sys2, ...)
+# ---- fuzzy logic -------------------------------------------------------------------------------------------------------------------
+mamfis: A Mamdani fuzzy inference system.
+    fis = mamfis
+    fis = mamfis('Name', 'tipper')
+    fis = mamfis('NumInputs', 2, 'NumInputMFs', 3, 'NumOutputs', 1, 'NumOutputMFs', 3, 'AddRules', 'allcombinations')
+    * Properties: Name, AndMethod ('min' or 'prod'), OrMethod ('max' or 'probor'), ImplicationMethod ('min' or 'prod'), AggregationMethod ('max', 'sum' or 'probor'), DefuzzificationMethod ('centroid', 'bisector', 'mom', 'lom' or 'som'), Inputs, Outputs, Rules. A value object: fis = addMF(fis, ...) gives a new system, and fis.Inputs(1).MembershipFunctions(2).Parameters = p changes it.
+sugfis: A Sugeno fuzzy inference system.
+    fis = sugfis
+    fis = sugfis('Name', name, 'NumInputs', n, ...)
+    * Outputs have 'constant' or 'linear' membership functions; DefuzzificationMethod 'wtaver' (the default) or 'wtsum'.
+newfis: An empty fuzzy inference system (older; mamfis and sugfis are preferred).
+    fis = newfis(name)
+    fis = newfis(name, 'sugeno')
+addInput: Add an input variable to a fuzzy system.
+    fis = addInput(fis, [min max], 'Name', name)
+    fis = addInput(fis, [min max], 'Name', name, 'NumMFs', 3, 'MFType', 'gaussmf')
+addOutput: Add an output variable to a fuzzy system.
+    fis = addOutput(fis, [min max], 'Name', name)
+addvar: Add a variable to a fuzzy system (older; addInput and addOutput are preferred).
+    fis = addvar(fis, 'input', name, [min max])
+addMF: Add a membership function to a variable of a fuzzy system.
+    fis = addMF(fis, varName, type, params, 'Name', mfName)
+    fis = addMF(fis, varName, type, params, 'Name', mfName, 'VariableType', 'output')
+    * type is a membership function's name (trimf, gaussmf ...); a Sugeno output's are 'constant' (one parameter) or 'linear' (one for each input, then a constant).
+addmf: Add a membership function (older; addMF is preferred).
+    fis = addmf(fis, 'input', varIndex, mfName, type, params)
+removeMF: Remove a membership function from a variable.
+    fis = removeMF(fis, varName, mfName)
+removeInput: Remove an input variable.
+    fis = removeInput(fis, name)
+removeOutput: Remove an output variable.
+    fis = removeOutput(fis, name)
+addRule: Add rules to a fuzzy system.
+    fis = addRule(fis, "If service is poor or food is rancid then tip is cheap")
+    fis = addRule(fis, ["If x is low then y is high (0.5)"; "If x is not low then y is low"])
+    fis = addRule(fis, "service==poor | food==rancid => tip=cheap (1)")
+    fis = addRule(fis, ruleMatrix)
+    * A matrix row holds each input's membership function index (0 none, negative not), each output's, the weight and the connection (1 and, 2 or).
+addrule: Add rules given as a matrix (older; addRule is preferred).
+    fis = addrule(fis, ruleMatrix)
+evalfis: Evaluate a fuzzy inference system.
+    output = evalfis(fis, input)
+    [output, fuzzifiedIn, ruleOut, aggregatedOut, ruleFiring] = evalfis(fis, input, options)
+    * A row of input for each evaluation; inputs outside their ranges are held at the ends, with a warning. A Mamdani output that no rule fires is the middle of its range.
+evalfisOptions: Options for evalfis.
+    opt = evalfisOptions('NumSamplePoints', 101)
+evalmf: Evaluate a membership function.
+    y = evalmf(mf, x)
+    y = evalmf(x, params, type)
+fismf: A membership function object.
+    mf = fismf(type, params, 'Name', name)
+defuzz: Defuzzify a fuzzy set.
+    out = defuzz(x, mf, type)
+    * 'centroid', 'bisector', 'mom' (mean of the maxima), 'lom' and 'som' (the largest and smallest of them, by magnitude).
+showrule: The rules of a fuzzy system as text.
+    showrule(fis)
+    rules = showrule(fis, indices, 'symbolic')
+    * 'verbose' (the default), 'symbolic' or 'indexed'.
+plotmf: Draw the membership functions of a variable.
+    plotmf(fis, 'input', k)
+    [x, y] = plotmf(fis, 'input', k, n)
+gensurf: A fuzzy system's output surface.
+    gensurf(fis)
+    [X, Y, Z] = gensurf(fis, [i j], k, n)
+    * Over a grid of two inputs (15 points a side unless n), the others at the middles of their ranges; a curve for one input.
+readfis: Read a fuzzy system from a .fis file.
+    fis = readfis(filename)
+writefis: Write a fuzzy system to a .fis file.
+    writefis(fis, filename)
+trimf: Triangular membership function.
+    y = trimf(x, [a b c])
+    * Rises from a to 1 at b, falls to 0 at c.
+trapmf: Trapezoidal membership function.
+    y = trapmf(x, [a b c d])
+    * 1 from b to c, straight lines to 0 at a and d.
+gaussmf: Gaussian membership function.
+    y = gaussmf(x, [sigma c])
+    * exp(-(x - c)^2/(2 sigma^2)).
+gauss2mf: Two-sided Gaussian membership function.
+    y = gauss2mf(x, [sig1 c1 sig2 c2])
+    * gaussmf(sig1, c1) below c1, 1 between, gaussmf(sig2, c2) above c2.
+gbellmf: Generalized bell-shaped membership function.
+    y = gbellmf(x, [a b c])
+    * 1/(1 + |(x - c)/a|^(2b)).
+sigmf: Sigmoidal membership function.
+    y = sigmf(x, [a c])
+    * 1/(1 + exp(-a(x - c))).
+dsigmf: Difference of two sigmoidal membership function.
+    y = dsigmf(x, [a1 c1 a2 c2])
+    * |sigmf(a1, c1) - sigmf(a2, c2)|.
+psigmf: Product of two sigmoidal membership function.
+    y = psigmf(x, [a1 c1 a2 c2])
+    * sigmf(a1, c1) times sigmf(a2, c2).
+pimf: Pi-shaped membership function.
+    y = pimf(x, [a b c d])
+    * smf(a, b) times zmf(c, d).
+smf: S-shaped membership function.
+    y = smf(x, [a b])
+    * 0 below a, 1 above b, two parabolic pieces between.
+zmf: Z-shaped membership function.
+    y = zmf(x, [a b])
+    * 1 - smf(x, [a b]).
+linsmf: Linear S-shaped membership function.
+    y = linsmf(x, [a b])
+    * 0 below a, 1 above b, a straight line between.
+linzmf: Linear Z-shaped membership function.
+    y = linzmf(x, [a b])
+    * 1 - linsmf(x, [a b]).
 '''
 
 

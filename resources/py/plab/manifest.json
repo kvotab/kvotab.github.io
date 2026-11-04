@@ -122,6 +122,7 @@
     "builtins/comms.py",
     "builtins/audiofeatures.py",
     "builtins/sysid.py",
+    "builtins/fuzzy.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

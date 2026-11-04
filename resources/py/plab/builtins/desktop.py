@@ -205,7 +205,7 @@ FEATURES = {
     'image_toolbox': True, 'curve_fitting_toolbox': True, 'control_toolbox': True, 'map_toolbox': True, 'wavelet_toolbox': True,
     'pde_toolbox': True, 'distrib_computing_toolbox': True, 'gads_toolbox': True, 'matlab_report_gen': False,
     'identification_toolbox': True, 'econometrics_toolbox': True, 'financial_toolbox': True, 'communication_toolbox': True,
-    'fuzzy_toolbox': False, 'neural_network_toolbox': False, 'video_and_image_blockset': False, 'text_analytics_toolbox': False,
+    'fuzzy_toolbox': True, 'neural_network_toolbox': False, 'video_and_image_blockset': False, 'text_analytics_toolbox': False,
     'audio_system_toolbox': True, 'simulink': False, 'matlab_compiler': False, 'matlab_coder': False,
 }
 

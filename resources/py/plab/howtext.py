@@ -2705,6 +2705,39 @@ tfest:
     Python: sysid.py. A discrete output-error model's poles carried to continuous time (s = log(z)/Ts) and its gain matched as the start; the continuous coefficients then fitted by scipy.optimize.least_squares to the output simulated through scipy.signal.cont2discrete (zero-order hold).
 compare, sim, pe, resid, polydata, present, aic, fpe:
     Python: sysid.py. K-step-ahead predictions of a polynomial model by the predictor W_K = Hbar_K * A D / C (Hbar_K the first K terms of the noise model's impulse response), of a state-space model by its Kalman predictor run forward; compare fits the initial state by least squares (the response is linear in it). The fit, FPE = MSE(1 + d/N)/(1 - d/N) and AIC = N log(MSE) + 2d + N(log(2 pi) + 1) are computed on the estimation data.
+# ---- fuzzy.py: fuzzy logic ---------------------------------------------------------------------------------------------------------------
+mamfis, sugfis, newfis, addInput, addOutput, addvar, addMF, addmf, removeMF, removeInput, removeOutput, addRule, addrule, fismf, showrule, readfis, writefis:
+    Python: fuzzy.py. Value objects of Python lists (systems, variables, membership functions, rules); every change makes a new system. Rules written as text are read by regular expressions ('If ... is [not] ... and/or ... then ... (weight)', or the symbolic == & | => form). .fis files are the text format of sections [System], [Input1] ..., [Output1] ..., [Rules], written and read line by line.
+evalfis, evalfisOptions, defuzz, gensurf, plotmf:
+    Python: fuzzy.py. Each rule's firing strength is its clauses' memberships joined by AndMethod (min or product) or OrMethod (max or probabilistic or), times its weight. Mamdani: each consequent clipped (min) or scaled (prod) by its rule's strength on NumSamplePoints points of the output's range, the results aggregated (max, sum or probabilistic or) and defuzzified (centroid: sum(x mu)/sum(mu); bisector: where the cumulative sum reaches half; the mean, largest or smallest maximizer). Sugeno: the outputs' constants or linear functions of the inputs averaged with the firing strengths as weights (or summed). gensurf evaluates the system on a numpy.meshgrid.
+trimf:
+    Python: fuzzy.py. Rises from a to 1 at b, falls to 0 at c.
+trapmf:
+    Python: fuzzy.py. 1 from b to c, straight lines to 0 at a and d.
+gaussmf:
+    Python: fuzzy.py. exp(-(x - c)^2/(2 sigma^2)).
+gauss2mf:
+    Python: fuzzy.py. gaussmf(sig1, c1) below c1, 1 between, gaussmf(sig2, c2) above c2.
+gbellmf:
+    Python: fuzzy.py. 1/(1 + |(x - c)/a|^(2b)).
+sigmf:
+    Python: fuzzy.py. 1/(1 + exp(-a(x - c))).
+dsigmf:
+    Python: fuzzy.py. |sigmf(a1, c1) - sigmf(a2, c2)|.
+psigmf:
+    Python: fuzzy.py. sigmf(a1, c1) times sigmf(a2, c2).
+pimf:
+    Python: fuzzy.py. smf(a, b) times zmf(c, d).
+smf:
+    Python: fuzzy.py. 0 below a, 1 above b, two parabolic pieces between.
+zmf:
+    Python: fuzzy.py. 1 - smf(x, [a b]).
+linsmf:
+    Python: fuzzy.py. 0 below a, 1 above b, a straight line between.
+linzmf:
+    Python: fuzzy.py. 1 - linsmf(x, [a b]).
+evalmf:
+    Python: fuzzy.py. The membership function's formula (see its own help) by NumPy.
 """
 
 
