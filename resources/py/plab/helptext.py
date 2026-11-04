@@ -8102,6 +8102,432 @@ lightangle: A light placed by azimuth and elevation.
     lightangle(h, az, el)
     [az, el] = lightangle(h)
     * In degrees, as view counts them: from az = 0 the light shines from the -y side.
+# ---- more image processing --------------------------------------------------------------------------------------------------------
+adapthisteq: Contrast-limited adaptive histogram equalization.
+    J = adapthisteq(I)
+    J = adapthisteq(I, 'NumTiles', [8 8], 'ClipLimit', 0.01, 'NBins', 256, 'Range', 'full', 'Distribution', 'uniform', 'Alpha', 0.4)
+    * Zuiderveld's CLAHE: each tile's histogram clipped (from ceil(pixels/bins) at ClipLimit 0 to the whole tile at 1, the excess spread over the bins) and equalized ('uniform', or 'rayleigh' and 'exponential' with Alpha), the tiles' mappings blended bilinearly between their centres. 'Range' 'original' keeps the image's own range.
+imhistmatch: An image's histogram matched to another's.
+    J = imhistmatch(A, ref)
+    J = imhistmatch(A, ref, nbins)
+    [J, hgram] = imhistmatch(...)
+    * Each value of A goes to the value of ref at the same place in the cumulative histogram (nbins 64); hgram is J's histogram.
+otsuthresh: Otsu's threshold of a histogram.
+    T = otsuthresh(counts)
+    [T, EM] = otsuthresh(counts)
+    * T from 0 to 1 over the bins (graythresh is otsuthresh(imhist(I))); EM the between-class variance over the total.
+multithresh: Several thresholds by Otsu's method.
+    thresh = multithresh(A)
+    thresh = multithresh(A, N)
+    [thresh, metric] = multithresh(...)
+    * N thresholds (1 to 20) in A's values splitting a 256-bin histogram of its range so the between-class variance is largest, found exactly by dynamic programming; metric is that variance over the total. imquantize applies them.
+imquantize: Values put in classes by thresholds.
+    quantA = imquantize(A, levels)
+    quantA = imquantize(A, levels, values)
+    [quantA, index] = imquantize(...)
+    * 1 up to levels(1), k up to levels(k), N + 1 above the last; with values, values(k) for class k.
+im2bw: An image as black and white by a threshold.
+    BW = im2bw(I, level)
+    BW = im2bw(X, map, level)
+    * True where the image (RGB as gray, indexed through its map) lies above level (0.5) on a scale from 0 to 1. imbinarize is the newer form.
+imgradientxy: The directional gradients of an image.
+    [Gx, Gy] = imgradientxy(I)
+    [Gx, Gy] = imgradientxy(I, method)
+    * x to the right and y down: 'sobel' (default) or 'prewitt' kernels with the border replicated, 'central' or 'intermediate' differences.
+imgradient: The gradient's magnitude and direction.
+    [Gmag, Gdir] = imgradient(I)
+    [Gmag, Gdir] = imgradient(I, method)
+    [Gmag, Gdir] = imgradient(Gx, Gy)
+    * Gdir in degrees counterclockwise from the x axis with y up (-180 to 180).
+bwlabeln: Connected components in any number of dimensions.
+    L = bwlabeln(BW)
+    [L, n] = bwlabeln(BW, conn)
+    * 26-connected in 3-D (8 in 2-D) unless conn is 6, 18, 4 or a 3-by-3-by-3 array; numbered by their first pixel down the columns.
+bwareaopen: Small objects removed from a binary image.
+    BW2 = bwareaopen(BW, P)
+    BW2 = bwareaopen(BW, P, conn)
+    * Objects of fewer than P pixels go (8-connected unless conn).
+bwareafilt: Objects kept by their area.
+    BW2 = bwareafilt(BW, range)
+    BW2 = bwareafilt(BW, n)
+    BW2 = bwareafilt(BW, n, keep, conn)
+    * Those with an area within range, or the n largest ('largest') or smallest ('smallest').
+bwpropfilt: Objects kept by a property.
+    BW2 = bwpropfilt(BW, attrib, range)
+    BW2 = bwpropfilt(BW, attrib, n, keep, conn)
+    BW2 = bwpropfilt(BW, I, attrib, ...)
+    * attrib is a regionprops property with one value per object (an intensity one given I); range, or the n largest or smallest.
+bwperim: The perimeter pixels of objects.
+    BW2 = bwperim(BW)
+    BW2 = bwperim(BW, conn)
+    * On pixels with an off neighbour (4-connected neighbours unless conn is 8); outside the image counts as off.
+bwdist: The distance transform of a binary image.
+    D = bwdist(BW)
+    [D, idx] = bwdist(BW, method)
+    * For each pixel the distance to the nearest on pixel ('euclidean', 'cityblock', 'chessboard' or 'quasi-euclidean'), as single, and that pixel's linear index.
+bwskel: The skeleton of objects.
+    B = bwskel(BW)
+    B = bwskel(BW, 'MinBranchLength', len)
+    * Objects thinned to lines one pixel wide (Zhang and Suen's thinning until nothing changes), branches shorter than len pruned from their ends.
+bwconvhull: The convex hull of the on pixels.
+    CH = bwconvhull(BW)
+    CH = bwconvhull(BW, 'objects', conn)
+    * The pixels whose centres lie in the hull of all the on pixels (as squares), or of each object.
+bweuler: The Euler number of a binary image.
+    eul = bweuler(BW)
+    eul = bweuler(BW, n)
+    * Objects less holes: objects n-connected (8), holes the other way.
+bwarea: The area of a binary image's objects.
+    total = bwarea(BW)
+    * Each 2-by-2 neighbourhood weighted by its pattern (Pratt): one on 1/4, two side by side 1/2, two diagonal 3/4, three 7/8, four 1.
+bwselect: Objects picked by a pixel.
+    BW2 = bwselect(BW, c, r)
+    [BW2, idx] = bwselect(BW, c, r, n)
+    * The objects holding the pixels (c, r), n-connected (8); idx the linear indices of BW2's pixels.
+bwtraceboundary: The boundary of an object traced from a pixel.
+    B = bwtraceboundary(BW, P, fstep)
+    B = bwtraceboundary(BW, P, fstep, conn, N, dir)
+    * From the boundary pixel P = [row col] round the object (8-connected, clockwise unless 'counterclockwise'), at most N points; rows of [row col], closed.
+imreconstruct: Morphological reconstruction.
+    IM = imreconstruct(marker, mask)
+    IM = imreconstruct(marker, mask, conn)
+    * The marker dilated and kept under the mask until it stops changing; for binary images the mask's objects the marker touches.
+imregionalmax: The regional maxima of an image.
+    BW = imregionalmax(I)
+    BW = imregionalmax(I, conn)
+    * Plateaus whose neighbours all lie lower (8-connected).
+imregionalmin: The regional minima of an image.
+    BW = imregionalmin(I)
+    BW = imregionalmin(I, conn)
+imhmax: Maxima lower than a height taken down.
+    I2 = imhmax(I, H)
+    I2 = imhmax(I, H, conn)
+    * The reconstruction of I - H under I.
+imhmin: Minima shallower than a height filled.
+    I2 = imhmin(I, H)
+    I2 = imhmin(I, H, conn)
+imextendedmax: The extended maxima of an image.
+    BW = imextendedmax(I, H)
+    BW = imextendedmax(I, H, conn)
+    * The regional maxima of imhmax(I, H).
+imextendedmin: The extended minima of an image.
+    BW = imextendedmin(I, H)
+    BW = imextendedmin(I, H, conn)
+imimposemin: An image changed so its minima are where a mask says.
+    J = imimposemin(I, BW)
+    J = imimposemin(I, BW, conn)
+    * A reconstruction by erosion: the only regional minima are where BW is on (-Inf there for floating images, the class's least value for integers). Used before watershed.
+watershed: The watershed transform.
+    L = watershed(A)
+    L = watershed(A, conn)
+    * The catchment basins of A labelled 1, 2, ... (by their minima's first pixels down the columns) and the ridges between them 0: Meyer's flooding from the regional minima.
+imclearborder: Objects touching the border removed.
+    I2 = imclearborder(I)
+    I2 = imclearborder(I, conn)
+    * I less the reconstruction of its border pixels; for grayscale images the light structures connected to the border.
+imtophat: The white top-hat of an image.
+    J = imtophat(I, SE)
+    * I less its opening by SE: bright details smaller than the element.
+imbothat: The black top-hat of an image.
+    J = imbothat(I, SE)
+    * The closing by SE less I: dark details smaller than the element.
+label2rgb: Labels shown as colours.
+    RGB = label2rgb(L)
+    RGB = label2rgb(L, map, zerocolor, order)
+    * An RGB image (uint8): label k in colour k of the colormap (jet with as many colours as labels; a name, a matrix or a function), 0 in zerocolor (white); 'shuffle' mixes the colours by rng's generator.
+labeloverlay: Labels laid over an image.
+    B = labeloverlay(A, L)
+    B = labeloverlay(A, L, 'Colormap', map, 'Transparency', t, 'IncludedLabels', ids)
+    * The labels' colours over the image (uint8), t (0.5) of the image showing through; label 0 untouched.
+imoverlay: A mask painted onto an image.
+    B = imoverlay(A, BW)
+    B = imoverlay(A, BW, color)
+    * The image made RGB with the pixels where BW is on in color (yellow), in A's class.
+rgb2lab: RGB as CIE L*a*b*.
+    lab = rgb2lab(RGB)
+    lab = rgb2lab(RGB, 'ColorSpace', cs, 'WhitePoint', w)
+    * Through XYZ: sRGB by default ('adobe-rgb-1998', 'linear-rgb'), white D65 unless named ('d50', 'a', 'c', 'e', 'icc', 'd55') or given as [X Y Z]. L runs from 0 to 100.
+lab2rgb: CIE L*a*b* as RGB.
+    RGB = lab2rgb(lab)
+    RGB = lab2rgb(lab, 'ColorSpace', cs, 'WhitePoint', w, 'OutputType', type)
+    * Doubles with out-of-gamut values kept; 'single', 'uint8' or 'uint16' clip.
+rgb2xyz: RGB as CIE 1931 XYZ.
+    XYZ = rgb2xyz(RGB)
+    XYZ = rgb2xyz(RGB, 'ColorSpace', cs)
+    * Y from 0 to 1 for white.
+xyz2rgb: CIE XYZ as RGB.
+    RGB = xyz2rgb(XYZ)
+    RGB = xyz2rgb(XYZ, 'ColorSpace', cs, 'OutputType', type)
+rgb2ycbcr: RGB as Y'CbCr.
+    YCBCR = rgb2ycbcr(RGB)
+    * ITU-R BT.601: Y from 16 to 235 and Cb, Cr from 16 to 240 (over 255 for doubles), in the input's class.
+ycbcr2rgb: Y'CbCr as RGB.
+    RGB = ycbcr2rgb(YCBCR)
+im2int16: An image as int16.
+    J = im2int16(I)
+    * Its range mapped onto -32768 to 32767 (doubles from 0 to 1, rounded).
+imadd: Two images added.
+    Z = imadd(X, Y)
+    Z = imadd(X, Y, outputClass)
+    * In double, then in X's class (rounded and saturated) unless outputClass; Y may be a number.
+imsubtract: One image less another.
+    Z = imsubtract(X, Y)
+    Z = imsubtract(X, Y, outputClass)
+immultiply: Two images multiplied element by element.
+    Z = immultiply(X, Y)
+    Z = immultiply(X, Y, outputClass)
+imdivide: One image divided by another element by element.
+    Z = imdivide(X, Y)
+imabsdiff: The absolute difference of two images.
+    Z = imabsdiff(X, Y)
+    * abs(X - Y) in double, in X's class.
+imlincomb: A linear combination of images.
+    Z = imlincomb(K1, A1, K2, A2, ..., K)
+    Z = imlincomb(..., outputClass)
+    * K1*A1 + K2*A2 + ... + K in double, in A1's class unless outputClass.
+imnoise: Noise added to an image.
+    J = imnoise(I, 'gaussian', m, var)
+    J = imnoise(I, 'localvar', V)
+    J = imnoise(I, 'localvar', intensities, var)
+    J = imnoise(I, 'poisson')
+    J = imnoise(I, 'salt & pepper', d)
+    J = imnoise(I, 'speckle', var)
+    * On the 0-to-1 scale, the result clipped and in I's class: gaussian (mean 0, variance 0.01), salt & pepper (density 0.05), speckle (I + n.*I, n uniform with variance 0.05), poisson (integers as counts, doubles scaled by 1e12). The numbers come from rng's generator.
+imsharpen: An image sharpened by unsharp masking.
+    B = imsharpen(A)
+    B = imsharpen(A, 'Radius', 1, 'Amount', 0.8, 'Threshold', 0)
+    * A + Amount*(A - its Gaussian blur of standard deviation Radius), where that difference is above Threshold (of the range); an RGB image in its L*a*b* lightness.
+imfuse: Two images fused for comparing.
+    C = imfuse(A, B)
+    C = imfuse(A, B, method, 'Scaling', s, 'ColorChannels', c)
+    * An RGB uint8 image: 'falsecolor' (default; A green, B magenta, ColorChannels [2 1 2] or 'red-cyan'), 'blend', 'diff', 'checkerboard' (8 by 8 squares) or 'montage'; Scaling 'independent' (each to its full range, default), 'joint' or 'none'. Images of different sizes are aligned at their top left corners.
+imshowpair: Two images shown for comparing.
+    imshowpair(A, B)
+    h = imshowpair(A, B, method, ...)
+    * imshow of imfuse's image.
+corr2: The correlation coefficient of two matrices.
+    r = corr2(A, B)
+immse: The mean squared error between two images.
+    err = immse(X, Y)
+psnr: The peak signal-to-noise ratio.
+    peaksnr = psnr(A, ref)
+    [peaksnr, snr] = psnr(A, ref, peakval)
+    * 10*log10(peakval^2/mse) in dB, peakval 1 for floating images and the class's largest value for integers; snr is 10*log10(mean(ref.^2)/mse).
+ssim: The structural similarity index.
+    ssimval = ssim(A, ref)
+    [ssimval, ssimmap] = ssim(A, ref, 'Radius', 1.5, 'DynamicRange', L, 'Exponents', [1 1 1], 'RegularizationConstants', [C1 C2 C3])
+    * Local means, variances and covariance by a Gaussian of standard deviation Radius (2*ceil(3*Radius)+1 wide, the border replicated), C1 = (0.01*L)^2, C2 = (0.03*L)^2, C3 = C2/2; ssimval the mean of the map.
+entropy: The entropy of an image.
+    e = entropy(I)
+    * -sum(p.*log2(p)) over its 256-bin histogram (the image as uint8; 2 bins for logical).
+entropyfilt: The local entropy of an image.
+    J = entropyfilt(I)
+    J = entropyfilt(I, nhood)
+    * Over each pixel's 9-by-9 neighbourhood (or nhood), the image as uint8, the border mirrored.
+stdfilt: The local standard deviation of an image.
+    J = stdfilt(I)
+    J = stdfilt(I, nhood)
+    * Normalized by n - 1, over each 3-by-3 neighbourhood (or nhood), the border mirrored.
+rangefilt: The local range of an image.
+    J = rangefilt(I)
+    J = rangefilt(I, nhood)
+    * The largest less the smallest value over each 3-by-3 neighbourhood (or nhood), outside the image ignored.
+imboxfilt: A box (mean) filter.
+    B = imboxfilt(A)
+    B = imboxfilt(A, filterSize, 'Padding', p, 'NormalizationFactor', f)
+    * Odd sizes (3); the border replicated unless 'circular', 'symmetric' or a number; f is 1/prod(filterSize) unless given.
+integralImage: The integral image.
+    J = integralImage(I)
+    * The sums over rectangles from the corner, a row and a column of zeros first: sum(I(r1:r2, c1:c2)) = J(r2+1,c2+1) - J(r1,c2+1) - J(r2+1,c1) + J(r1,c1).
+imguidedfilter: The guided filter.
+    B = imguidedfilter(A)
+    B = imguidedfilter(A, G, 'NeighborhoodSize', [5 5], 'DegreeOfSmoothing', d)
+    * He's edge-preserving filter: A smoothed while following the edges of G (A itself by default), with box means; d is 0.01*diff(range of G's class)^2 unless given.
+imbilatfilt: The bilateral filter.
+    J = imbilatfilt(I)
+    J = imbilatfilt(I, degreeOfSmoothing, spatialSigma, 'NeighborhoodSize', s)
+    * Each pixel the mean of its neighbours weighted by a Gaussian of distance (spatialSigma, 1) and of intensity difference (variance degreeOfSmoothing, 0.01*diff(range)^2); the neighbourhood 2*ceil(2*spatialSigma)+1 wide, the border replicated.
+imdiffusefilt: Anisotropic diffusion.
+    J = imdiffusefilt(I)
+    J = imdiffusefilt(I, 'GradientThreshold', K, 'NumberOfIterations', 5, 'Connectivity', 'maximal', 'ConductionMethod', 'exponential')
+    * Perona and Malik: each step adds the differences to the neighbours (8, diagonals at half weight, or 4 for 'minimal') times exp(-(d/K)^2) ('quadratic': 1/(1 + (d/K)^2)); K is a tenth of the range unless given.
+imgaussfilt3: A 3-D Gaussian filter.
+    B = imgaussfilt3(A)
+    B = imgaussfilt3(A, sigma, 'FilterSize', s, 'Padding', p)
+    * sigma 0.5 (or one for each dimension), 2*ceil(2*sigma)+1 wide, the border replicated.
+ordfilt2: An order-statistic filter.
+    B = ordfilt2(A, order, domain)
+    B = ordfilt2(A, order, domain, padopt)
+    * Each pixel the order-th smallest of the neighbours where domain is true (its centre at floor((size+1)/2)), zeros outside or 'symmetric'.
+wiener2: Adaptive Wiener filtering.
+    J = wiener2(I)
+    [J, noise] = wiener2(I, [m n], noise)
+    * The local mean plus (local variance less the noise power)/(local variance) of the difference, over m-by-n (3-by-3) neighbourhoods with zeros outside; the noise power the mean local variance unless given.
+psf2otf: A point-spread function as an optical transfer function.
+    OTF = psf2otf(PSF)
+    OTF = psf2otf(PSF, outSize)
+    * The PSF padded to outSize, its centre moved to the first element, fftn of that.
+otf2psf: An optical transfer function as a point-spread function.
+    PSF = otf2psf(OTF)
+    PSF = otf2psf(OTF, outSize)
+deconvwnr: Wiener deconvolution.
+    J = deconvwnr(I, PSF)
+    J = deconvwnr(I, PSF, NSR)
+    * I's spectrum times conj(H)./(abs(H).^2 + NSR) (NSR 0: the plain inverse where H is not 0), the blur taken as circular.
+deconvlucy: Richardson-Lucy deconvolution.
+    J = deconvlucy(I, PSF)
+    J = deconvlucy(I, PSF, numit)
+    * numit (10) multiplicative steps J = J.*(H'*(I./(H*J))) with the blur circular: the plain method, without acceleration or damping.
+padarray: An array padded.
+    B = padarray(A, padsize)
+    B = padarray(A, padsize, padval, direction)
+    * By padsize along each dimension: with padval (0), or 'circular', 'replicate' or 'symmetric'; 'both' (default), 'pre' or 'post'.
+im2col: Blocks of an image as columns.
+    B = im2col(A, [m n])
+    B = im2col(A, [m n], 'distinct')
+    * Each m-by-n block a column, in column order (the blocks too): every position ('sliding', default), or tiles padded with zeros ('distinct').
+col2im: Columns back into an image.
+    A = col2im(B, [m n], [mm nn])
+    A = col2im(B, [m n], [mm nn], 'distinct')
+    * Each column a block ('distinct'), or B a row of one value for each sliding position ('sliding', default).
+blockproc: A function applied to each block of an image.
+    B = blockproc(A, [m n], fun)
+    B = blockproc(A, [m n], fun, 'BorderSize', [v h], 'TrimBorder', tf, 'PadPartialBlocks', tf, 'PadMethod', p)
+    * fun gets a struct of data, location, blockSize, border and imageSize for each m-by-n block; its results are put together in the blocks' places. A border of neighbours (or padding by PadMethod: 0, 'replicate' or 'symmetric') comes with each block and is trimmed from the result unless TrimBorder is false.
+nlfilter: A function applied to every neighbourhood.
+    B = nlfilter(A, [m n], fun)
+    B = nlfilter(A, 'indexed', ...)
+    * fun gets each pixel's m-by-n neighbourhood (zeros outside; 'indexed' pads a double image with 1) and gives the pixel's value.
+colfilt: A function applied to blocks as columns.
+    B = colfilt(A, [m n], 'sliding', fun)
+    B = colfilt(A, [m n], 'distinct', fun)
+    * fun gets all the blocks at once as im2col's columns: 'sliding' gives back a row of one value per column, 'distinct' a matrix the size of its input.
+impyramid: One level of an image pyramid.
+    B = impyramid(A, 'reduce')
+    B = impyramid(A, 'expand')
+    * Burt and Adelson's 5-tap kernel (a = 0.375), the border replicated: half the size (ceil(M/2)) or twice less one (2M - 1).
+improfile: Values along a path through an image.
+    c = improfile(I, xi, yi)
+    c = improfile(I, xi, yi, n, method)
+    [cx, cy, c, xi, yi] = improfile(...)
+    * Sampled at n evenly spaced points along the path through (xi, yi) (about one per pixel of its length), 'nearest' (default), 'bilinear' or 'bicubic'; NaN off the image. With no output the profile is plotted.
+imcontour: Contour lines of an image.
+    imcontour(I)
+    imcontour(I, n)
+    [C, h] = imcontour(I, v, LineSpec)
+    * In the image's orientation: rows down, square pixels.
+affine2d: A 2-D affine transformation (row vectors).
+    tform = affine2d(T)
+    * [u v 1] = [x y 1]*T, T's last column [0; 0; 1]. Properties T and Dimensionality; transformPointsForward, transformPointsInverse, invert, outputLimits.
+projective2d: A 2-D projective transformation (row vectors).
+    tform = projective2d(T)
+    * [up vp w] = [x y 1]*T, u = up/w, v = vp/w.
+affinetform2d: A 2-D affine transformation (column vectors).
+    tform = affinetform2d(A)
+    tform = affinetform2d(tform)
+    * [u; v; 1] = A*[x; y; 1], A's last row [0 0 1]. Properties A and Dimensionality.
+projtform2d: A 2-D projective transformation (column vectors).
+    tform = projtform2d(A)
+rigidtform2d: A rotation and a translation.
+    tform = rigidtform2d(theta, t)
+    tform = rigidtform2d(R, t)
+    tform = rigidtform2d(A)
+    * theta in degrees (counterclockwise as the axes go: x right, y down), t = [tx ty]. Properties RotationAngle, Translation, R, A.
+simtform2d: A similarity: scaling, rotation and translation.
+    tform = simtform2d(scale, theta, t)
+    tform = simtform2d(A)
+    * Properties Scale, RotationAngle, Translation, R, A.
+transltform2d: A translation.
+    tform = transltform2d(t)
+    tform = transltform2d(tx, ty)
+transformPointsForward: Points taken through a transformation.
+    [u, v] = transformPointsForward(tform, x, y)
+    U = transformPointsForward(tform, X)
+transformPointsInverse: Points taken back through a transformation.
+    [x, y] = transformPointsInverse(tform, u, v)
+    X = transformPointsInverse(tform, U)
+invert: The inverse of a transformation.
+    tinv = invert(tform)
+outputLimits: Where a transformation takes a rectangle.
+    [xLimitsOut, yLimitsOut] = outputLimits(tform, xLimitsIn, yLimitsIn)
+    * The bounding box of the transformed rectangle (its edges sampled for a projective transformation).
+isTranslation: Whether a transformation is a pure translation.
+    tf = isTranslation(tform)
+isRigid: Whether a transformation is rigid (a rotation and a translation).
+    tf = isRigid(tform)
+isSimilarity: Whether a transformation is a similarity.
+    tf = isSimilarity(tform)
+imref2d: Where an image lies in world coordinates.
+    R = imref2d(imageSize)
+    R = imref2d(imageSize, xWorldLimits, yWorldLimits)
+    R = imref2d(imageSize, pixelExtentInWorldX, pixelExtentInWorldY)
+    * By default pixel (r, c) is at x = c, y = r, the limits [0.5 n+0.5] and [0.5 m+0.5]. Properties XWorldLimits, YWorldLimits, ImageSize, PixelExtentInWorldX/Y, ImageExtentInWorldX/Y, XIntrinsicLimits, YIntrinsicLimits; worldToIntrinsic, intrinsicToWorld, worldToSubscript, contains, sizesMatch.
+worldToIntrinsic: World coordinates as an image's intrinsic ones.
+    [xi, yi] = worldToIntrinsic(R, xw, yw)
+intrinsicToWorld: An image's intrinsic coordinates as world ones.
+    [xw, yw] = intrinsicToWorld(R, xi, yi)
+worldToSubscript: World coordinates as row and column subscripts.
+    [r, c] = worldToSubscript(R, xw, yw)
+    * NaN outside the image.
+sizesMatch: Whether an image's size is a reference's.
+    tf = sizesMatch(R, A)
+imwarp: An image transformed geometrically.
+    [B, RB] = imwarp(A, tform)
+    [B, RB] = imwarp(A, RA, tform)
+    B = imwarp(A, tform, interp, 'OutputView', Rout, 'FillValues', v)
+    B = imwarp(A, D)
+    * Each output pixel takes the value at the inverse image of its centre ('linear' by default, 'nearest' or 'cubic'), FillValues (0) outside. The output covers the transformed image (outputLimits, at the input's pixel extent) unless OutputView says where. A displacement field D (m-by-n-by-2) moves pixel (x, y) to take A at (x + D(:,:,1), y + D(:,:,2)).
+fitgeotrans: A transformation fitted to pairs of points.
+    tform = fitgeotrans(movingPoints, fixedPoints, type)
+    * Least squares from the moving points to the fixed ones: 'nonreflectivesimilarity', 'similarity' (a reflection allowed), 'affine' (an affine2d) or 'projective' (a projective2d, by the normalized direct linear transform).
+fitgeotform2d: A transformation fitted to pairs of points.
+    tform = fitgeotform2d(movingPoints, fixedPoints, type)
+    * 'rigid' (rigidtform2d), 'similarity' (simtform2d), 'affine' (affinetform2d) or 'projective' (projtform2d), by least squares.
+imregcorr: Images registered by phase correlation.
+    tform = imregcorr(moving, fixed)
+    [tform, peakcorr] = imregcorr(moving, fixed, transformType, 'Window', tf)
+    * The transformation taking moving onto fixed: 'translation' (subpixel, a parabola through the peak), 'rigid' or 'similarity' (the default; rotation and scale first from the log-polar magnitude spectra, Fourier-Mellin), as a transltform2d, rigidtform2d or simtform2d. 'Window' (true) tapers the images.
+hough: The Hough transform of a binary image.
+    [H, theta, rho] = hough(BW)
+    [H, theta, rho] = hough(BW, 'RhoResolution', 1, 'Theta', -90:89)
+    * For each on pixel (x, y from 0) and angle, a vote at rho = x*cosd(theta) + y*sind(theta), rho from -D to D in steps of RhoResolution, D the image's diagonal rounded up to a step.
+houghpeaks: The peaks of a Hough transform.
+    peaks = houghpeaks(H, numpeaks)
+    peaks = houghpeaks(H, numpeaks, 'Threshold', t, 'NHoodSize', s)
+    * Up to numpeaks [row col] of the largest values at least t (half the largest), each found then its neighbourhood (the smallest odd size at least size(H)/50) cleared, wrapping in theta with rho reversed.
+houghlines: Line segments along Hough peaks.
+    lines = houghlines(BW, theta, rho, peaks)
+    lines = houghlines(..., 'FillGap', 20, 'MinLength', 40)
+    * The on pixels near each peak's line, ordered along it, joined across gaps up to FillGap pixels and kept when at least MinLength long: a struct array of point1 and point2 ([x y]), theta and rho.
+imfindcircles: Circles found by a circular Hough transform.
+    [centers, radii] = imfindcircles(A, radius)
+    [centers, radii, metric] = imfindcircles(A, [rmin rmax], 'ObjectPolarity', 'bright', 'Sensitivity', 0.85, 'EdgeThreshold', t)
+    * Each strong edge pixel (Sobel gradient above t, Otsu's threshold of the gradient by default) votes along its gradient for centres at each radius (towards the brighter side, or the darker for 'dark'); at each peak the radius is the commonest distance of the voting pixels, and the metric the share of points round that circle lying on an edge. Circles with a metric of at least 1 - Sensitivity, sorted by it. PyLAB's own two-stage method.
+radon: The Radon transform.
+    R = radon(I)
+    [R, xp] = radon(I, theta)
+    * Line integrals along lines at the angles theta (degrees, 0:179) counterclockwise from the x axis: each pixel split into four subpixels binned linearly by their distance xp from the centre floor((size+1)/2).
+iradon: The inverse Radon transform.
+    I = iradon(R, theta)
+    [I, H] = iradon(R, theta, interp, filter, frequency_scaling, output_size)
+    * Filtered back projection: each projection filtered ('Ram-Lak' by default, 'Shepp-Logan', 'Cosine', 'Hamming', 'Hann' or 'None'; frequencies above frequency_scaling cut), spread back ('linear' or 'nearest') and scaled by pi/(2*number of angles); the size 2*floor(size(R,1)/(2*sqrt(2))) unless given. theta may be the angles' step. H is the filter.
+phantom: The Shepp-Logan head phantom.
+    P = phantom
+    P = phantom(n)
+    [P, E] = phantom(type, n)
+    P = phantom(E, n)
+    * n-by-n (256): 'Modified Shepp-Logan' (default, more contrast) or 'Shepp-Logan', or ellipses E with rows [A a b x0 y0 phi] on [-1, 1], their intensities A added.
+dct2: The two-dimensional discrete cosine transform.
+    B = dct2(A)
+    B = dct2(A, m, n)
+    B = dct2(A, [m n])
+    * DCT-II, orthonormal; A padded with zeros or cut to m-by-n first.
+idct2: The inverse two-dimensional discrete cosine transform.
+    A = idct2(B)
+    A = idct2(B, m, n)
+dctmtx: The discrete cosine transform matrix.
+    D = dctmtx(n)
+    * Orthonormal: D*A*D' is dct2(A) for an n-by-n A.
 '''
 
 

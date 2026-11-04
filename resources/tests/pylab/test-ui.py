@@ -1970,6 +1970,22 @@ async def core_additions(page):
     await command(page, "delete('t4.nc'); delete('t3.nc')")
 
 
+async def image_additions(page):
+    """Step 12 in the page: the Radon transform and back, watershed, imwarp, label2rgb and imshowpair drawn (saved as a picture to look at)."""
+    out = await command(page, "close all; I = phantom(96); Rd = radon(I, 0:2:178); J = iradon(Rd, 0:2:178); rc = corr2(J(2:97, 2:97), I) > 0.8, "
+                              "L = watershed(imgaussfilt(peaks(60), 2)); ws = max(L(:)) > 1 && any(L(:) == 0), t = rigidtform2d(15, [3 2]); "
+                              "B = imwarp(I, t, 'OutputView', imref2d(size(I))); wp = isequal(size(B), size(I)), "
+                              "f = figure('Position', [50 50 800 400]); subplot(1, 2, 1); imshow(label2rgb(L)); subplot(1, 2, 2); imshowpair(I, B);")
+    check('radon and iradon, watershed and imwarp in the page', 'rc =\n\n  logical\n\n   1' in out and 'ws =\n\n  logical\n\n   1' in out
+          and 'wp =\n\n  logical\n\n   1' in out, True)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('label2rgb and imshowpair draw', (await ink(page)) > 0.2, True)
+    await canvas_shot(page, 'image12-1.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1990,6 +2006,7 @@ async def main():
         await wavelets_and_denoising(page)
         await quiver_arrows(page)
         await core_additions(page)
+        await image_additions(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

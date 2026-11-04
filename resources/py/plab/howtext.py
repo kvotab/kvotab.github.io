@@ -2378,6 +2378,70 @@ isocolors:
     Python: plotmore.py. scipy.interpolate.RegularGridInterpolator (linear) over the volume's grid at the vertices.
 lightangle:
     Python: plotmore.py. The light's Position [sin(az)cos(el), -cos(az)cos(el), sin(el)], and back by atan2 and asin.
+adapthisteq:
+    Python: imagemore.py. The image padded (mirrored) to whole tiles; each tile's histogram (numpy.bincount) clipped with the excess spread evenly, its cumulative sum the tile's mapping; every pixel's value from the four nearest tiles' mappings, weighted bilinearly by the distance to their centres.
+imhistmatch, otsuthresh, multithresh, imquantize, im2bw:
+    Python: imagemore.py. imhistmatch maps each pixel's rank to the reference's cumulative histogram (numpy.searchsorted). otsuthresh and multithresh maximize the between-class variance; multithresh by dynamic programming over the 256 bins with cumulative sums, exactly. imquantize counts the levels below each value (numpy.searchsorted).
+imgradientxy, imgradient:
+    Python: imagemore.py. The Sobel or Prewitt kernels correlated with the image (imageproc.py's _correlate, the border replicated), or numpy.gradient and numpy.diff; the magnitude numpy.hypot and the direction numpy.arctan2 of -Gy and Gx.
+bwlabeln, bwareaopen, bwareafilt, bwpropfilt, bwselect:
+    Python: imagemore.py. Components by scipy.ndimage.label (renumbered by their first pixel down the columns), their sizes by numpy.bincount; bwpropfilt asks regionprops for the property.
+bwperim, bweuler, bwarea:
+    Python: imagemore.py. bwperim keeps on pixels with a neighbour off (the image moved one pixel each way); bweuler counts objects and the background's enclosed parts with scipy.ndimage.label; bwarea weights each 2-by-2 pattern.
+bwdist:
+    Python: imagemore.py. scipy.ndimage.distance_transform_edt and scipy.ndimage.distance_transform_cdt with the nearest pixels' indices; 'quasi-euclidean' by two raster passes with steps of 1 and sqrt(2).
+bwskel, bwconvhull, bwtraceboundary:
+    Python: imagemore.py. bwskel is bwmorph's thinning (Zhang and Suen) repeated until nothing changes, branches pruned by walking from their end points; bwconvhull takes scipy.spatial.ConvexHull of the pixels' corners and keeps the pixels whose centres lie inside; bwtraceboundary is bwboundaries' Moore tracer, turned to start at the pixel given.
+imreconstruct, imregionalmax, imregionalmin, imhmax, imhmin, imextendedmax, imextendedmin, imimposemin, imclearborder:
+    Python: imagemore.py. Reconstruction by dilation repeated (the image moved one pixel each way, the larger kept, then the smaller with the mask) until it stops changing; for binary images the mask's components touching the marker (scipy.ndimage.label). Regional maxima are where I less the reconstruction of I - h (h smaller than any difference of values) stays above h/2; the minima, the extended and h-extrema, imposed minima (a reconstruction by erosion) and clearing the border all follow from it.
+watershed:
+    Python: imagemore.py. Meyer's flooding: the regional minima labelled, then a priority queue (heapq) of pixels by value; each pixel taken gets the label of its labelled neighbours if they share one, else 0 (a ridge).
+imtophat, imbothat:
+    Python: imagemore.py. imopen and imclose (imageproc.py) less or from the image.
+label2rgb, labeloverlay, imoverlay:
+    Python: imagemore.py. A table of colours (colormaps.py, the zero colour first) indexed by the labels; labeloverlay blends with the image by Transparency.
+rgb2lab, lab2rgb, rgb2xyz, xyz2rgb, rgb2ycbcr, ycbcr2rgb, im2int16:
+    Python: imagemore.py. sRGB's companding undone and the matrix of its primaries and D65 white (Adobe RGB's, or none for linear RGB), then CIE L*a*b*'s cube-root function with the white point; Y'CbCr by the BT.601 matrix and offsets; back by numpy.linalg.inv of the matrices.
+imadd, imsubtract, immultiply, imdivide, imabsdiff, imlincomb:
+    Python: imagemore.py. Computed in double with NumPy, then rounded and saturated into the class.
+imnoise:
+    Python: imagemore.py. rng's generator (elmat.py's RNG): normal and uniform numbers, numpy.random.RandomState.poisson for 'poisson'.
+imsharpen:
+    Python: imagemore.py. scipy.ndimage.gaussian_filter for the blur; RGB through rgb2lab and lab2rgb.
+imfuse, imshowpair:
+    Python: imagemore.py. The images made gray (rgb2gray's weights), set on one canvas, scaled, and put in the colour channels, blended, differenced or interleaved.
+corr2, immse, psnr, ssim, entropy:
+    Python: imagemore.py. NumPy sums; ssim's local statistics by scipy.ndimage.gaussian_filter (mode 'nearest'); entropy from numpy.bincount of the uint8 image.
+entropyfilt, stdfilt, rangefilt, imboxfilt, integralImage:
+    Python: imagemore.py. Local sums by scipy.ndimage.correlate (of each grey level's indicator for entropyfilt) and scipy.ndimage.uniform_filter; rangefilt from imageproc.py's flat dilation and erosion; numpy.cumsum for the integral image.
+imguidedfilter, imbilatfilt, imdiffusefilt, imgaussfilt3, ordfilt2, wiener2:
+    Python: imagemore.py. The guided filter from box means (scipy.ndimage.uniform_filter); the bilateral filter summed over the neighbourhood's offsets; diffusion stepped explicitly; scipy.ndimage.gaussian_filter in 3-D; scipy.ndimage.rank_filter with the domain as footprint; wiener2 from local means by scipy.ndimage.correlate.
+psf2otf, otf2psf, deconvwnr, deconvlucy:
+    Python: imagemore.py. numpy.fft.fftn of the PSF padded and rolled to its centre; the deconvolutions by products of spectra (numpy.fft.fft2, numpy.fft.ifft2).
+padarray, im2col, col2im:
+    Python: imagemore.py. numpy.pad ('wrap', 'edge', 'symmetric' or a constant); blocks sliced and reshaped in column order.
+blockproc, nlfilter, colfilt:
+    Python: imagemore.py. The blocks sliced from the padded image and passed to the function (its own call, awaited); colfilt passes them all at once as im2col's columns.
+impyramid, improfile, imcontour:
+    Python: imagemore.py. scipy.ndimage.correlate1d with the 5-tap kernel; improfile samples the path through imageproc.py's interpolation; imcontour is contour with axis ij and image.
+affine2d, projective2d, affinetform2d, projtform2d, rigidtform2d, simtform2d, transltform2d, transformPointsForward, transformPointsInverse, invert, outputLimits, isTranslation, isRigid, isSimilarity:
+    Python: imgeom.py. Each kept as a 3-by-3 matrix for column vectors (a legacy object's T is its transpose); points through it in homogeneous coordinates, back through numpy.linalg.inv; outputLimits transforms the rectangle's edges.
+imref2d, worldToIntrinsic, intrinsicToWorld, worldToSubscript, sizesMatch:
+    Python: imgeom.py. The world limits and size, the pixel extents their quotient; conversions are linear.
+imwarp:
+    Python: imgeom.py. The output grid's pixel centres taken to world coordinates, back through the inverse transformation, to the input's intrinsic coordinates, and sampled there (imageproc.py's interpolation).
+fitgeotrans, fitgeotform2d:
+    Python: imgeom.py. Affine by numpy.linalg.lstsq; similarity and rigid in closed form from the SVD of the cross-covariance (Umeyama); projective by the direct linear transform on normalized points (numpy.linalg.svd).
+imregcorr:
+    Python: imgeom.py. Phase correlation: the normalized cross-power spectrum (numpy.fft.fft2), its inverse's peak refined by parabolas. For rotation and scale the magnitude spectra are high-passed and resampled to log-polar coordinates, whose phase correlation gives the angle and the log of the scale; then the translation, trying the angle and the angle + 180 degrees.
+hough, houghpeaks, houghlines:
+    Python: imgeom.py. Votes added by numpy.add.at for each angle; peaks found and their neighbourhoods cleared in turn; lines from the pixels within half a rho step of each peak's line, sorted along it and split at gaps.
+imfindcircles:
+    Python: imgeom.py. Sobel gradients (scipy.ndimage.correlate), votes along the gradient by numpy.add.at at each radius, smoothed by scipy.ndimage.gaussian_filter; local maxima (scipy.ndimage.maximum_filter) checked by a histogram of the voting pixels' distances and by the edge pixels round the circle.
+radon, iradon, phantom:
+    Python: imgeom.py. radon bins four subpixels per pixel by numpy.add.at; iradon filters each projection (numpy.fft.fft; the ramp built in space and transformed, after Kak and Slaney) and accumulates the back projections by linear interpolation; phantom adds the ellipses on a grid.
+dct2, idct2, dctmtx:
+    Python: imgeom.py. scipy.fft.dctn and scipy.fft.idctn (type 2, orthonormal); dctmtx from the cosine formula.
 """
 
 

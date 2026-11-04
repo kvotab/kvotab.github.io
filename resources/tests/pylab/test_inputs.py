@@ -10,12 +10,15 @@ Functions that wait for a person, touch the file system outside a scratch
 folder, or start the pool are left out.
 """
 import asyncio
+import faulthandler
 import inspect
 import os
 import signal
 import sys
 import tempfile
 import traceback
+
+faulthandler.enable()          # a crash in a native library says where (it happened once, under heavy load)
 
 import numpy as np
 import scipy.sparse as sps
