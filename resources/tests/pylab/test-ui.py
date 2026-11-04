@@ -2145,6 +2145,25 @@ async def finance(page):
     await command(page, 'close all; clear')
 
 
+async def comms_audio(page):
+    """Step 19 in the page: QAM through noise and back, error rates against berawgn, a raised-cosine eye, MFCCs and pitch,
+    and a constellation and a mel spectrogram drawn."""
+    out = await command(page, "clc; close all; rng(3); x = randi([0 15], 20000, 1); y = awgn(qammod(x, 16, 'UnitAveragePower', true), 12 + 10*log10(4), 'measured'); "
+                              "[nb, rb] = biterr(x, qamdemod(y, 16, 'UnitAveragePower', true)); bt = berawgn(12, 'qam', 16); qa = abs(rb - bt) < 4*sqrt(bt/80000) + 1e-4, "
+                              "h = rcosdesign(0.35, 6, 8); rc = abs(sum(h.^2) - 1) < 1e-12, fs = 16000; t = (0:fs-1)'/fs; s = sin(2*pi*220*t) + 0.5*sin(2*pi*440*t); "
+                              "f0 = median(pitch(s, fs)); pt = abs(f0 - 220) < 1, c = mfcc(s, fs); mc = isequal(size(c, 2), 14), "
+                              "f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); plot(real(y(1:2000)), imag(y(1:2000)), '.'); axis equal; title('16-QAM at 12 dB'); "
+                              "subplot(1, 2, 2); [S, F, T] = melSpectrogram(s + 0.05*randn(fs, 1), fs); imagesc(T, F, 10*log10(S)); axis xy; title('Mel spectrogram');")
+    check('communications and audio in the page: 16-QAM bit errors against berawgn, rcosdesign, pitch and mfcc',
+          [f'{k} =\n\n  logical\n\n   1' in out for k in ('qa', 'rc', 'pt', 'mc')], [True] * 4)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('a constellation and a mel spectrogram drawn', (await ink(page)) > 0.05, True)
+    await canvas_shot(page, 'comms19-1.png')
+    await command(page, 'close all; clear')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2172,6 +2191,7 @@ async def main():
         await core_fillins(page)
         await econometrics(page)
         await finance(page)
+        await comms_audio(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

@@ -2669,6 +2669,27 @@ Portfolio, setAssetMoments, estimateAssetMoments, setDefaultConstraints, setBoun
     Python: portfolio.py. The least-variance portfolio for each return by scipy.optimize.minimize (SLSQP, with the gradient 2*C*w, the budget, bounds and linear constraints); the largest return by scipy.optimize.linprog (HiGHS), then the least variance among the portfolios that reach it. By risk: the return whose least-variance portfolio has that risk, by scipy.optimize.brentq. The largest Sharpe ratio: along the frontier's returns, on a grid and then scipy.optimize.minimize_scalar.
 portstats, portvrisk, corr2cov, cov2corr:
     Python: portfolio.py. sqrt(w'*C*w) and w'*mu; the normal quantile from scipy.stats.norm; the outer product of the standard deviations.
+# ---- comms.py, audiofeatures.py: communications and audio features ------------------------------------------------------------------
+awgn:
+    Python: comms.py. Normal noise of power sigpower/snr from the language's random number generator (or numpy.random.RandomState(seed)); the measured power is the mean of |x|^2.
+qammod, qamdemod, pskmod, pskdemod, pammod, pamdemod:
+    Python: comms.py. The constellation is a table of points by integer (PyLAB's own layout, set out in the help); demodulation takes the nearest point. The exact log-likelihood ratio is scipy.special.logsumexp of -|y - s|^2/v over the points with the bit 0, less that over those with 1; the approximate one uses only the nearest point of each.
+int2bit, bit2int, de2bi, bi2de, bin2gray, gray2bin:
+    Python: comms.py. Shifts and masks of whole numbers; the Gray code g = k XOR (k >> 1) and back by XORing the shifts.
+biterr, symerr:
+    Python: comms.py. XOR of the integers and a count of the set bits; element-wise comparison.
+berawgn:
+    Python: comms.py. M-PAM exactly: each point's chances of falling in each decision region (normal tails by scipy.special.erfc) weighted by the bits that differ between the Gray labels. Square M-QAM as two independent sqrt(M)-PAMs with half the symbol energy each. M-PSK from the density of the received phase, integrated over each decision sector by scipy.integrate.quad (BPSK and QPSK in closed form). DPSK 0.5*exp(-Eb/N0), noncoherent BFSK 0.5*exp(-Eb/(2N0)), coherent BFSK Q(sqrt(Eb/N0)), MSK as BPSK.
+rcosdesign:
+    Python: comms.py. The raised-cosine and root-raised-cosine impulse responses in closed form (their limits where the formulas divide by zero), scaled to unit energy.
+eyediagram, scatterplot:
+    Python: comms.py. Traces of the signal (real and imaginary parts) drawn by plot over one another; the constellation by plot of the imaginary part against the real part.
+hz2mel, mel2hz, melSpectrogram, mfcc:
+    Python: audiofeatures.py. Windows cut from the signal (full ones only), each spectrum by numpy.fft.rfft; triangular filters equally spaced on the mel scale; mfcc takes the natural log of the band energies and their orthonormal DCT-II (scipy.fft.dct), keeping the first NumCoeffs, with deltas as regression slopes (the end windows repeated).
+pitch:
+    Python: audiofeatures.py. NCF: the normalized correlation of each window with itself at each lag in the range, the shortest lag whose peak is within 10% of the best (a multiple of the period correlates as well), refined by a parabola. CEP: the peak of the real cepstrum (numpy.fft of the log magnitude spectrum) in the range, refined by the normalized correlation within two samples of it (the cepstral peak can sit a sample or two off the period in a short window) and a parabola. LHS: the candidate whose first five harmonics have the largest summed log magnitude, the log held at most 5 nats below the window's peak. scipy.signal.medfilt smooths the track when asked.
+spectralCentroid, spectralSpread, spectralRolloffPoint, spectralFlatness, spectralEntropy, zerocrossrate:
+    Python: audiofeatures.py. Each window's power spectrum as weights over its frequencies: the mean and standard deviation, the frequency where the cumulative sum reaches the threshold, the geometric over the arithmetic mean, and -sum(p log p)/log(N); zero crossings counted from the signs.
 """
 
 

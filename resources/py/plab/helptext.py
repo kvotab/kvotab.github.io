@@ -9638,6 +9638,115 @@ corr2cov: A covariance from standard deviations and correlations.
     ExpCovariance = corr2cov(ExpSigma, ExpCorrC)
 cov2corr: Standard deviations and correlations from a covariance.
     [ExpSigma, ExpCorrC] = cov2corr(ExpCovariance)
+# ---- communications ------------------------------------------------------------------------------------------------------------
+awgn: A signal with white Gaussian noise added.
+    y = awgn(x, snr)
+    y = awgn(x, snr, sigpower)
+    y = awgn(x, snr, 'measured')
+    y = awgn(x, snr, sigpower, seed)
+    y = awgn(x, snr, sigpower, 'linear')
+    * snr in dB (or linear); the signal's power sigpower in dBW (0 unless given), or measured from x. A complex signal gets complex noise, half its power in each part. A seed draws the noise from a generator of its own.
+qammod: Quadrature amplitude modulation.
+    y = qammod(x, M)
+    y = qammod(x, M, symOrder, 'InputType', 'bit', 'UnitAveragePower', true, 'PlotConstellation', true)
+    * Square M-QAM (M = 2 or a power of 4) of the integers 0 to M-1, or of groups of log2(M) bits (the first the most significant). The high half of each integer's bits picks the in-phase level and the low half the quadrature level, each Gray coded unless symOrder is 'bin' or a mapping vector; the integer 0 is at the top left.
+qamdemod: QAM demodulation.
+    z = qamdemod(y, M)
+    z = qamdemod(y, M, symOrder, 'OutputType', 'bit', 'UnitAveragePower', true)
+    z = qamdemod(y, M, 'OutputType', 'llr', 'NoiseVariance', v)
+    * The nearest points' integers, their bits, or each bit's log-likelihood ratio log(P(0)/P(1)) ('llr' exact, 'approxllr' from the nearest points).
+pskmod: Phase shift keying.
+    y = pskmod(x, M)
+    y = pskmod(x, M, phaseoffset, symOrder, 'InputType', 'bit')
+    * exp(1i*(2*pi*p/M + phaseoffset)), the position p Gray coded from the integer unless symOrder is 'bin'.
+pskdemod: PSK demodulation.
+    z = pskdemod(y, M, phaseoffset, symOrder, 'OutputType', 'bit')
+pammod: Pulse amplitude modulation.
+    y = pammod(x, M, phaseoffset, symOrder, 'InputType', 'bit')
+    * Levels -(M-1), -(M-3), ..., M-1, Gray coded unless 'bin'.
+pamdemod: PAM demodulation.
+    z = pamdemod(y, M, phaseoffset, symOrder, 'OutputType', 'bit')
+int2bit: Integers as bits.
+    Y = int2bit(X, n)
+    Y = int2bit(X, n, msbfirst)
+    * Each integer as n bits stacked down its column, the most significant first unless msbfirst is false.
+bit2int: Bits as integers.
+    Y = bit2int(X, n)
+    Y = bit2int(X, n, msbfirst)
+de2bi: Numbers as rows of digits (older; int2bit is preferred).
+    B = de2bi(D)
+    B = de2bi(D, n, p, 'left-msb')
+    * Base p (2); 'right-msb' (the first column the least significant digit, the default) or 'left-msb'.
+bi2de: Rows of digits as numbers (older; bit2int is preferred).
+    D = bi2de(B)
+    D = bi2de(B, p, 'left-msb')
+bin2gray: Integers as Gray-coded labels of a modulation.
+    [y, map] = bin2gray(x, modulation, M)
+    * modulation 'qam' (each axis's half of the bits coded apart), 'psk', 'pam' or 'fsk'.
+gray2bin: Gray-coded labels as integers.
+    [y, map] = gray2bin(x, modulation, M)
+biterr: Bit errors between integers.
+    [number, ratio, individual] = biterr(x, y)
+    [number, ratio, individual] = biterr(x, y, k)
+    * k bits to each value (as many as the largest needs unless given); individual counts each element's differing bits.
+symerr: Symbol errors.
+    [number, ratio, loc] = symerr(x, y)
+berawgn: Bit and symbol error rates in white Gaussian noise.
+    [ber, ser] = berawgn(EbNo, 'psk', M, 'nondiff')
+    [ber, ser] = berawgn(EbNo, 'qam', M)
+    [ber, ser] = berawgn(EbNo, 'pam', M)
+    ber = berawgn(EbNo, 'dpsk', 2)
+    ber = berawgn(EbNo, 'fsk', 2, 'coherent')
+    ber = berawgn(EbNo, 'msk')
+    * EbNo in dB; Gray coding. PSK, PAM and square QAM are exact (QAM as two PAMs; PSK from the received phase's density).
+rcosdesign: A raised-cosine filter.
+    b = rcosdesign(beta, span, sps)
+    b = rcosdesign(beta, span, sps, shape)
+    * span symbols at sps samples each (span*sps + 1 taps), roll-off beta; shape 'sqrt' (root raised cosine, the default) or 'normal'; unit energy.
+eyediagram: An eye diagram.
+    eyediagram(x, n)
+    h = eyediagram(x, n, period, offset)
+    * Traces of n + 1 samples from offset, over -period/2 to period/2; a complex signal draws its in-phase and quadrature parts apart.
+scatterplot: A constellation diagram.
+    scatterplot(x)
+    h = scatterplot(x, n, offset, plotstring)
+    * Every n-th sample (1) from offset (0), quadrature against in-phase.
+
+# ---- audio features ------------------------------------------------------------------------------------------------------------
+hz2mel: Frequencies on the mel scale.
+    mel = hz2mel(hz)
+    * 2595*log10(1 + hz/700).
+mel2hz: Mel back to hertz.
+    hz = mel2hz(mel)
+melSpectrogram: A mel spectrogram.
+    S = melSpectrogram(audioIn, fs)
+    [S, F, T] = melSpectrogram(audioIn, fs, 'Window', hann(512, 'periodic'), 'OverlapLength', 256, 'NumBands', 64, 'FrequencyRange', [62.5 8000])
+    melSpectrogram(audioIn, fs)
+    * 30 ms periodic Hann windows every 10 ms, 32 bands, power unless 'SpectrumType' is 'magnitude'; triangular filters equally spaced in mel, each divided by half its width ('FilterBankNormalization' 'bandwidth'; 'area' or 'none'). A row for each band (F its centre), a column for each window (T the time of its last sample). Without outputs, drawn in dB.
+mfcc: Mel-frequency cepstral coefficients.
+    coeffs = mfcc(audioIn, fs)
+    [coeffs, delta, deltaDelta, loc] = mfcc(audioIn, fs, 'NumCoeffs', 13, 'LogEnergy', 'append', 'DeltaWindowLength', 9)
+    * 30 ms periodic Hamming windows every 10 ms, 40 mel bands, the DCT of the natural log of the band energies, a row for each window. LogEnergy 'append' (the default) puts the window's log energy first, 'replace' in place of the first coefficient, 'ignore' leaves it out. The deltas are regression slopes over DeltaWindowLength windows.
+pitch: The fundamental frequency of speech or music.
+    f0 = pitch(audioIn, fs)
+    [f0, loc] = pitch(audioIn, fs, 'Method', 'NCF', 'Range', [50 400], 'WindowLength', n, 'OverlapLength', k, 'MedianFilterLength', 3)
+    * Method 'NCF' (normalized correlation, the default), 'CEP' (the cepstrum's peak, refined by the correlation) or 'LHS' (log-harmonic summation); 52 ms windows every 10 ms unless given.
+spectralCentroid: The spectral centroid of each window.
+    centroid = spectralCentroid(audioIn, fs)
+    [centroid, loc] = spectralCentroid(audioIn, fs, 'Window', w, 'OverlapLength', n, 'FrequencyRange', [lo hi])
+    * 30 ms periodic Hamming windows every 10 ms, the power spectrum, unless given.
+spectralSpread: The spectral spread of each window.
+    spread = spectralSpread(audioIn, fs, ...)
+spectralRolloffPoint: The spectral rolloff point of each window.
+    rolloff = spectralRolloffPoint(audioIn, fs, 'Threshold', 0.95, ...)
+spectralFlatness: The spectral flatness of each window.
+    flatness = spectralFlatness(audioIn, fs, ...)
+spectralEntropy: The spectral entropy of each window.
+    entropy = spectralEntropy(audioIn, fs, ...)
+zerocrossrate: The zero-crossing rate.
+    zcr = zerocrossrate(x)
+    [zcr, countTotal] = zerocrossrate(x, 'WindowLength', n, 'OverlapLength', k)
+    * The share of samples whose sign differs from the one before (zero counts as positive), for the whole signal or each window.
 '''
 
 
