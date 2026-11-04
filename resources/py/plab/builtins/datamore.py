@@ -117,17 +117,24 @@ def anynan(nargout, *args):
 
 @bi('isuniform', nout=2)
 def isuniform(nargout, *args):
-    """[tf, step] = isuniform(v): whether a vector's values are evenly spaced (to round-off), and the spacing (NaN when not)."""
+    """[tf, step] = isuniform(v): whether a vector's values are evenly spaced (to round-off), and the spacing (NaN when not).
+    A scalar or an empty array is not uniform; a single vector's step is single."""
     nargchk(args, 1, 1, 'isuniform')
+    raw = arr(args[0], 'isuniform')
+    single = raw.dtype == np.float32
     v = darr(args[0], 'isuniform').reshape(-1)
+
+    def res(tf, step):
+        step = out(np.full((1, 1), step, np.float32)) if single else float(step)
+        return (bool(tf), step) if nargout > 1 else bool(tf)
     if v.size < 2 or not np.all(np.isfinite(v)):
-        tf = v.size < 2 and np.all(np.isfinite(v))
-        return (bool(tf), np.nan) if nargout > 1 else bool(tf)
+        return res(False, np.nan)
     d = np.diff(v)
     step = (v[-1] - v[0]) / (v.size - 1)
-    tol = 4 * np.spacing(max(np.max(np.abs(v)), np.abs(step)))
+    eps_of = np.spacing(np.float32(1)) / np.spacing(1.0) if single else 1.0
+    tol = 4 * np.spacing(max(np.max(np.abs(v)), np.abs(step))) * eps_of
     tf = bool(np.all(np.abs(d - step) <= tol * max(v.size, 1)))
-    return (tf, float(step) if tf else np.nan) if nargout > 1 else tf
+    return res(tf, step if tf else np.nan)
 
 
 @bi('rmoutliers', nout=2)

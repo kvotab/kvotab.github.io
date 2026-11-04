@@ -1501,7 +1501,7 @@ def serialize_child(c, ax):
         # a series
         d['type'] = 'series'
         d['kind'] = c.kind
-        for k in ('XData', 'YData', 'ZData', 'CData', 'UData', 'VData', 'SizeData', 'YNegativeDelta', 'YPositiveDelta', 'XNegativeDelta', 'XPositiveDelta'):
+        for k in ('XData', 'YData', 'ZData', 'CData', 'UData', 'VData', 'WData', 'SizeData', 'YNegativeDelta', 'YPositiveDelta', 'XNegativeDelta', 'XPositiveDelta'):
             v = p.get(k)
             if v is not None and type(v) is not Char and not isinstance(v, str) and numel(v):
                 d[k[0].lower() + k[1:]] = _arr(v)

@@ -3105,6 +3105,9 @@ version: The interpreter's version, as text.
     v = version
 ver: The interpreter and the Python, NumPy and SciPy that run it.
     ver
+    v = ver
+    v = ver(name)
+    * With an output nothing is printed: v is a struct array with the fields Name, Version, Release and Date, one element for PyLAB, Python, NumPy and SciPy (when it is loaded). ver(name) keeps the element of that name (empty when there is none).
 computer: The kind of computer: 'PYODIDE' here (Python in the browser).
     c = computer
 ispc: False here.
@@ -3850,8 +3853,20 @@ quiver: Arrows for a 2-D vector field.
     quiver(x, y, u, v)
     quiver(u, v)
     quiver(..., scale)
+    quiver(..., 'off')
+    quiver(..., LineSpec, 'Name', value, ...)
+    h = quiver(...)
+    * x, y, u and v are the same size, or x and y are vectors along the columns and rows of u. quiver(u, v) puts the arrows at the grid 1:n, 1:m.
+    * The arrows are scaled so that the longest is about as long as the grid's spacing, times scale (0.9); a scale of 0 or 'off' draws them as given.
 quiver3: Arrows for a 3-D vector field.
     quiver3(x, y, z, u, v, w)
+    quiver3(z, u, v, w)
+    quiver3(..., scale)
+    quiver3(..., 'off')
+    quiver3(..., LineSpec, 'Name', value, ...)
+    h = quiver3(...)
+    * Each arrow starts at (x, y, z) and points along (u, v, w). z, u, v and w are the same size; x and y are too, or vectors along their columns and rows. quiver3(z, u, v, w) puts the arrows at the grid 1:n, 1:m.
+    * Scaled as quiver's arrows. Fresh axes get a 3-D view.
 
 # ---- statistical plots -------------------------------------------------------------------------
 boxplot: Box plots: each group's quartiles as a box with its median, whiskers out to the most extreme values within reach, and the outliers beyond.
@@ -4828,8 +4843,11 @@ gsvd: The generalized singular value decomposition of a pair of matrices.
 gallery: Test matrices, by name.
     A = gallery(name, n)
     A = gallery(name, n, ...)
-    * Names: binomial, cauchy, chebvand, chow, circul, clement, compar, cycol, fiedler, forsythe, frank, gcdmat, gearmat, grcar, hanowa, house, invhess, invol, ipjfact, jordbloc, kahan, kms, krylov, lauchli, lehmer, leslie, lesp, lotkin, minij, moler, neumann, orthog, parter, pei, poisson, prolate, randhess, rando, randsvd, redheff, riemann, ris, smoke, toeppd, toeppen, tridiag, triw, wilk (21), and the data sets integerdata, uniformdata and normaldata.
-    * neumann, poisson, toeppen and tridiag are sparse. The random ones come from rand's generator; the data sets from one of their own, seeded by their last input.
+    [c, d, e] = gallery('dorr', n, theta)
+    [A, b] = gallery('wilk', n)
+    * Names: binomial, cauchy, chebspec, chebvand, chow, circul, clement, compar, cycol, dorr, fiedler, forsythe, frank, gcdmat, gearmat, grcar, hanowa, house, invhess, invol, ipjfact, jordbloc, kahan, kms, krylov, lauchli, lehmer, leslie, lesp, lotkin, minij, moler, neumann, orthog, parter, pei, poisson, prolate, randhess, rando, randsvd, redheff, riemann, ris, smoke, toeppd, toeppen, tridiag, triw, wathen, wilk, and the data sets integerdata, uniformdata and normaldata.
+    * chebspec(n, k): the Chebyshev spectral differentiation matrix (k = 1 with u = 0 at x = 1). dorr(n, theta): a tridiagonal M-matrix, ill conditioned for small theta (0.01); three outputs give its diagonals. wathen(nx, ny, k): a finite-element mass matrix with random densities, scaled by its diagonal when k = 1. wilk(n) for n = 3, 4 (with a right-hand side b), 5 and 21.
+    * neumann, poisson, toeppen, tridiag and wathen are sparse. The random ones come from rand's generator; the data sets from one of their own, seeded by their last input.
 polyeig: Eigenvalues of a matrix polynomial.
     e = polyeig(A0, A1, ..., Ap)
     [X, e] = polyeig(...)
@@ -4920,6 +4938,8 @@ rgb2hsv: RGB colours as hue, saturation and value.
 hsv2rgb: Hue, saturation and value as RGB colours.
     RGB = hsv2rgb(HSV)
     rgbmap = hsv2rgb(hsvmap)
+    [R, G, B] = hsv2rgb(H, S, V)
+    * Each is from 0 to 1. uint8 and uint16 values are scaled to 0 to 1 first; single stays single.
 rgb2lightness: The lightness L* of RGB colours, from 0 (black) to 100 (white).
     L = rgb2lightness(RGB)
     L = rgb2lightness(map)
@@ -5216,6 +5236,8 @@ hann: A Hann window, with its zero ends.
     w = hann(n, 'periodic')
 hanning: A Hann window without its zero ends.
     w = hanning(n)
+    w = hanning(n, 'periodic')
+    * The periodic window is 0 followed by hanning(n - 1), the same as hann(n, 'periodic').
 blackman: A Blackman window.
     w = blackman(n)
     w = blackman(n, 'periodic')
@@ -5718,7 +5740,7 @@ anynan: Whether any element is NaN.
 isuniform: Whether a vector's values are evenly spaced.
     tf = isuniform(v)
     [tf, step] = isuniform(v)
-    * To round-off; step is NaN when they are not.
+    * To round-off; step is NaN when they are not. A scalar or an empty array is not uniform. The step of a single vector is single.
 rmoutliers: Data without its outliers.
     B = rmoutliers(A)
     B = rmoutliers(A, method)
@@ -6750,6 +6772,7 @@ mahal: The squared Mahalanobis distance of points from a sample.
 corrcov: The correlation matrix of a covariance matrix.
     R = corrcov(C)
     [R, sigma] = corrcov(C)
+    * R = C ./ (sigma*sigma') with sigma = sqrt(diag(C)): a variable with zero variance gives NaN in its row and column, its diagonal element too. single stays single.
 # ---- classification and regression ---------------------------------------------------------------------------------------------------------
 fitctree: A classification tree.
     Mdl = fitctree(X, Y)

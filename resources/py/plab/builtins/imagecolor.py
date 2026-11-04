@@ -206,15 +206,22 @@ def _float_class(a):
     return np.float32 if a.dtype == np.float32 else float
 
 
+def _three(args, fn):
+    """The three planes of rgb2hsv(R, G, B) or hsv2rgb(H, S, V) as one array, of their class when they share one."""
+    parts = [np.asarray(arr(x, fn)) for x in args]
+    if any(p.shape != parts[0].shape for p in parts):
+        raise err(f'MATLAB:{fn}:sizeMismatch', 'The three inputs must be the same size.', fn)
+    if any(p.dtype != parts[0].dtype for p in parts):
+        parts = [_unit(p) for p in parts]
+    return np.stack(parts, axis=-1)
+
+
 @bi('rgb2hsv')
 def rgb2hsv(nargout, *args):
     """rgb2hsv(RGB) or rgb2hsv(map): hue, saturation and value, each from 0 to 1."""
     nargchk(args, 1, 3, 'rgb2hsv')
     if len(args) == 3:
-        parts = [np.asarray(arr(x, 'rgb2hsv'), float) for x in args]
-        if any(p.shape != parts[0].shape for p in parts):
-            raise err('MATLAB:rgb2hsv:sizeMismatch', 'The three inputs must be the same size.', 'rgb2hsv')
-        a = np.stack(parts, axis=-1)
+        a = _three(args, 'rgb2hsv')
         kind = 'split'
     else:
         kind, a = _rgb_or_map(args[0], 'rgb2hsv')
@@ -242,15 +249,12 @@ def hsv2rgb(nargout, *args):
     """hsv2rgb(HSV) or hsv2rgb(map): red, green and blue from hue, saturation and value (each from 0 to 1)."""
     nargchk(args, 1, 3, 'hsv2rgb')
     if len(args) == 3:
-        parts = [np.asarray(arr(x, 'hsv2rgb'), float) for x in args]
-        if any(p.shape != parts[0].shape for p in parts):
-            raise err('MATLAB:hsv2rgb:sizeMismatch', 'The three inputs must be the same size.', 'hsv2rgb')
-        a = np.stack(parts, axis=-1)
+        a = _three(args, 'hsv2rgb')
         kind = 'split'
     else:
         kind, a = _rgb_or_map(args[0], 'hsv2rgb')
     cls = _float_class(a)
-    c = a.astype(float)
+    c = _unit(a)                           # an integer image's values scaled to 0 to 1
     h, s, v = c[..., 0], c[..., 1], c[..., 2]
     h6 = (h % 1.0) * 6
     i = np.floor(h6).astype(int) % 6

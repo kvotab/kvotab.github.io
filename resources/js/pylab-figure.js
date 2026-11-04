@@ -452,6 +452,19 @@
     else ctx.setLineDash([]);
   }
 
+  // a quiver arrow from (x0, y0) to (x1, y1) in pixels: its head MaxHeadSize
+  // of the arrow's length (at most 9 px at the usual 0.2)
+  function arrowPath(ctx, x0, y0, x1, y1, maxHeadSize) {
+    ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+    const L = Math.hypot(x1 - x0, y1 - y0);
+    if (L <= 0.5) return;
+    const mh = maxHeadSize ?? 0.2;
+    const hs = Math.min(L * mh * 1.4, 45 * mh);
+    const a = Math.atan2(y1 - y0, x1 - x0);
+    ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a - 0.4), y1 - hs * Math.sin(a - 0.4));
+    ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a + 0.4), y1 - hs * Math.sin(a + 0.4));
+  }
+
   function markerPath(ctx, m, x, y, s) {
     const r = s / 2;
     switch (m) {
@@ -1541,16 +1554,7 @@
           if (!Number.isFinite(U[i]) || !Number.isFinite(V[i])) continue;
           const x0 = fr.fx(X[i]), y0 = fr.fy(Y[i]);
           const x1 = fr.fx(X[i] + U[i] * s), y1 = fr.fy(Y[i] + V[i] * s);
-          ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
-          const L = Math.hypot(x1 - x0, y1 - y0);
-          if (L > 0.5) {
-            // the head MaxHeadSize of the arrow's length (at most 9 px at the usual 0.2)
-            const mh = c.maxHeadSize ?? 0.2;
-            const hs = Math.min(L * mh * 1.4, 45 * mh);
-            const a = Math.atan2(y1 - y0, x1 - x0);
-            ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a - 0.4), y1 - hs * Math.sin(a - 0.4));
-            ctx.moveTo(x1, y1); ctx.lineTo(x1 - hs * Math.cos(a + 0.4), y1 - hs * Math.sin(a + 0.4));
-          }
+          arrowPath(ctx, x0, y0, x1, y1, c.maxHeadSize);
         }
         ctx.stroke();
         ctx.restore();
@@ -2053,12 +2057,19 @@
         } else if (c.type === 'text') {
           const p = fr.p(c.position[0], c.position[1], c.position[2] || 0);
           items.push({ d: p[2] + 1, f: () => drawText(ctx, c.string, p[0], p[1], { size: c.fontSize * PT, color: rgb(c.color), halign: c.halign, valign: c.valign, interpreter: c.interpreter }) });
-        } else if (c.type === 'series' && c.kind === 'quiver') {
+        } else if (c.type === 'series' && c.kind === 'quiver' && c.lineStyle !== 'none') {
+          // quiver3's arrows from (X, Y, Z) along (U, V, W); a 2-D quiver's on the floor
           const X = vec(decode(c.xData)), Y = vec(decode(c.yData)), U = vec(decode(c.uData)), V = vec(decode(c.vData));
+          const Z = c.zData ? vec(decode(c.zData)) : null, W = c.wData ? vec(decode(c.wData)) : null;
           const s = c.scale || 1;
           for (let i = 0; i < X.length; i++) {
-            const a = fr.p(X[i], Y[i], fr.lims[2][0]), b = fr.p(X[i] + U[i] * s, Y[i] + V[i] * s, fr.lims[2][0]);
-            items.push({ d: a[2], f: () => { ctx.strokeStyle = rgb(c.color); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); } });
+            const z0 = Z ? Z[i] : fr.lims[2][0], dz = Z && W ? W[i] * s : 0;
+            const a = fr.p(X[i], Y[i], z0), b = fr.p(X[i] + U[i] * s, Y[i] + V[i] * s, z0 + dz);
+            if (!Number.isFinite(a[0] + a[1] + b[0] + b[1])) continue;
+            items.push({ d: (a[2] + b[2]) / 2, f: () => {
+              ctx.strokeStyle = rgb(c.color); ctx.lineWidth = lw(c.lineWidth); dash(ctx, c.lineStyle, c.lineWidth);
+              ctx.beginPath(); arrowPath(ctx, a[0], a[1], b[0], b[1], c.maxHeadSize); ctx.stroke(); ctx.setLineDash([]);
+            } });
           }
         }
       }

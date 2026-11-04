@@ -931,4 +931,31 @@ check("plotedit takes on or off", "Use 'on' or 'off'." in run("plotedit maybe"),
 check('plotedit needs a figure', 'The input must be a figure.' in run("plotedit(1e9, 'on')"), True)
 run("close all force")
 
+# quiver and quiver3: their sizes checked; quiver3 holds Z and W and draws in 3-D
+check('quiver refuses U and V of different sizes', 'U and V must be the same size.' in run("figure; quiver(eye(2), eye(2), eye(3), eye(2))"), True)
+check("quiver refuses X and Y that fit U's grid neither way", 'must be the same size' in run("quiver(1:4, 1:2, ones(2, 3), ones(2, 3))"), True)
+check('quiver3 refuses Z, U, V and W of different sizes', ['Z, U, V and W must be the same size.' in run(c) for c in
+      ("quiver3(eye(2), eye(2), eye(3), eye(2), eye(2), eye(2))", "quiver3(eye(2), eye(2), eye(2), eye(3))")], [True, True])
+run("""close all force; [X, Y] = meshgrid(1:3, 1:2); Z = X + Y; q = quiver3(X, Y, Z, ones(2, 3), 2*ones(2, 3), 3*ones(2, 3));
+qv = get(gca, 'View'); qz = zlim; figure; q2 = quiver3(Z, ones(2, 3), ones(2, 3), ones(2, 3), 'off');
+figure; q3 = quiver(1:3, 1:2, ones(2, 3), ones(2, 3), 0.5, 'r');""")
+q = val('q')
+check('quiver3 keeps Z and W, and gives fresh axes a 3-D view without the box', (np.shape(q.props['ZData']), float(np.asarray(q.props['WData']).flat[0]), num('qv'), q.parent.props['Box']),
+      ((2, 3), 3.0, [-37.5, 30.0], False))
+check("quiver3's z-limits take in the arrows' tips", num('qz(2)') >= 5 + 3 * q.extra['scale'] - 1e-9, True)
+check("quiver3(Z, U, V, W, 'off'): the grid 1:n, 1:m and the arrows as given", (np.asarray(val('q2').props['XData']).tolist(), val('q2').extra['scale']),
+      ([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]], 1.0))
+check("quiver's vectors X and Y spread over U's grid; a scale and a LineSpec", (np.shape(val('q3').props['XData']), num('q3.AutoScaleFactor'), num('q3.Color')),
+      ((2, 3), 0.5, [1.0, 0.0, 0.0]))
+from plab.graphics_base import serialize_child
+sc = serialize_child(q, q.parent)
+check('the page is sent quiver3\'s Z and W', ('zData' in sc, 'wData' in sc), (True, True))
+run("close all force")
+
+# ver with an output: a struct array, nothing printed
+out = run("v = ver; vn = ver('NumPy'); ve = ver('nothing');")
+check('v = ver prints nothing and gives a struct array of Name, Version, Release and Date', (out.strip(), val('v').shape, val('v').keys, text('v(1).Name')),
+      ('', (1, 4) if 'scipy' in sys.modules else (1, 3), ['Name', 'Version', 'Release', 'Date'], 'PyLAB'))
+check("ver(name) keeps that element; an unknown name gives an empty struct", (val('vn').shape, text('vn.Name'), val('ve').shape), ((1, 1), 'NumPy', (0, 0)))
+
 sys.exit(check.done())

@@ -1156,12 +1156,29 @@ def version(nargout, *args):
 
 @bi('ver')
 def ver(nargout, *args):
-    import numpy, platform
-    try:
-        import scipy
-        sv = scipy.__version__
-    except Exception:
-        sv = 'not loaded'
+    nargchk(args, 0, 1, 'ver')
+    import numpy, platform, sys
+    sp = sys.modules.get('scipy')
+    if sp is None:
+        try:
+            import scipy as sp
+        except Exception:
+            sp = None
+    sv = sp.__version__ if sp is not None else 'not loaded'
+    if nargout:
+        parts = [('PyLAB', ''), ('Python', platform.python_version()), ('NumPy', numpy.__version__)]
+        if sp is not None:
+            parts.append(('SciPy', sv))
+        if args:
+            want = opt_str(args[0])
+            if want is None:
+                raise err('MATLAB:ver:InvalidInput', 'The name is text.', 'ver')
+            parts = [p for p in parts if p[0].lower() == want.lower()]
+        res = Struct.empty((1, len(parts)) if parts else (0, 0), ('Name', 'Version', 'Release', 'Date'))
+        for i, (n, v) in enumerate(parts):
+            for k, t in (('Name', n), ('Version', v), ('Release', ''), ('Date', '')):
+                res.f[k][0, i] = Char.of(t)
+        return res
     R.write('-' * 74 + '\n')
     R.write(f'PyLAB, a MATLAB-language interpreter running on Python {platform.python_version()}\n')
     R.write(f'NumPy {numpy.__version__}, SciPy {sv}\n')

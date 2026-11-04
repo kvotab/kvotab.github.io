@@ -832,8 +832,8 @@ def _gausswin(n, sym, alpha):
 
 
 def _hanning(n, sym):
-    # the Hann window without its zero end points
-    w = _S().windows.hann(n + 2, sym=True)[1:-1] if sym else _S().windows.hann(n + 1, sym=True)[1:]
+    # the Hann window without its zero end points; the periodic one is 0 followed by the symmetric one of n - 1
+    w = _S().windows.hann(n + 2, sym=True)[1:-1] if sym else _S().windows.hann(n + 1, sym=True)[:-1]
     return w
 
 

@@ -13,7 +13,7 @@ import math
 import numpy as np
 
 from . import bi as _register, REG
-from ._util import err, nargchk, num, is_str, darr, out
+from ._util import err, nargchk, num, is_str, darr, out, arr
 from ..values import MError, Obj, FH, Char, Cell, Struct, EMPTY, numel, py_str, text_list
 from .. import runtime as R
 
@@ -1742,13 +1742,19 @@ def nnmf(nargout, *args):
 def corrcov(nargout, *args):
     """[R, sigma] = corrcov(C): the correlation matrix of a covariance matrix, and the standard deviations."""
     nargchk(args, 1, 1, 'corrcov')
+    single = arr(args[0], 'corrcov').dtype == np.float32
     C = _mat(args[0], 'corrcov', 'C')
-    if C.shape[0] != C.shape[1] or not np.allclose(C, C.T):
+    if C.shape[0] != C.shape[1] or not np.allclose(C, C.T, equal_nan=True):
         raise err('stats:corrcov:BadCovariance', 'C is a symmetric covariance matrix.', 'corrcov')
     s = np.sqrt(np.diag(C))
-    Rm = C / np.outer(s, s)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        Rm = C / np.outer(s, s)
     Rm = (Rm + Rm.T) / 2
-    np.fill_diagonal(Rm, 1)
+    big = np.abs(Rm) > 1                   # round-off past 1 is cut back; a zero variance leaves NaN, its diagonal too
+    Rm[big] = np.sign(Rm[big])
+    np.fill_diagonal(Rm, np.sign(np.diag(Rm)))
+    if single:
+        Rm, s = Rm.astype(np.float32), s.astype(np.float32)
     return (out(Rm), out(s.reshape(-1, 1))) if nargout > 1 else out(Rm)
 
 

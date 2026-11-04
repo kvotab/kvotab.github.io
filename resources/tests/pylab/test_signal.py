@@ -278,4 +278,9 @@ C('designfilt highpassfir from edges: 60 dB down below the stopband edge', np.ma
 raises("designfilt('lowpassfir', 'FilterOrder', 10)", 'a FIR filter needs CutoffFrequency')
 raises("designfilt('notchiir')", 'The response is one of')
 
+# hanning's periodic window: 0, then the symmetric one of n - 1 (the same as hann's periodic one)
+W, _ = run("p4 = hanning(4, 'periodic'); p16 = hanning(16, 'periodic'); h15 = hanning(15); hp = hann(16, 'periodic');")
+near("hanning(n, 'periodic') is 0 followed by hanning(n - 1), as hann(n, 'periodic')",
+     (W['p4'], W['p16'][1:], W['p16'], W['p16'][8]), ([0, 0.5, 1, 0.5], W['h15'], W['hp'], 1.0), 1e-15)
+
 sys.exit(C.done())

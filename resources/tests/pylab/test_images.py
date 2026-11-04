@@ -303,4 +303,14 @@ raises("imbinarize(rand(4), 'adaptive')", 'thresholds the whole image')
 raises('imcrop(ones(4))', 'Give the rectangle')
 raises("regionprops(true(3), 'Perimeterish')", 'not a property')
 
+# hsv2rgb reads integer values scaled by their class's range (it read them as they were)
+W, _ = run("""h = uint8(cat(3, [0 85; 170 255], [255 255; 255 0], [255 128; 64 0]));
+d1 = hsv2rgb(h); d2 = hsv2rgb(im2double(h)); u16 = hsv2rgb(im2uint16(h));
+[r, g, b] = hsv2rgb(uint8([0 85]), uint8([255 255]), uint8([255 128]));
+[hh, ss, vv] = rgb2hsv(uint8([255 0]), uint8([0 255]), uint8([0 0]));""")
+near('hsv2rgb of a uint8 or uint16 image: as of the same image in double', (W['d1'], W['u16']), (W['d2'], W['d2']), 1e-12)
+same('hsv2rgb of an integer image gives double', (W['d1'].dtype.name, W['u16'].dtype.name), ('float64', 'float64'))
+near('hsv2rgb(H, S, V) and rgb2hsv(R, G, B) of uint8 planes: scaled', (W['r'], W['g'], W['b'], W['hh'], W['ss'], W['vv']),
+     ([1, 0], [0, 128 / 255], [0, 0], [0, 1 / 3], [1, 1], [1, 1]), 1e-12)
+
 sys.exit(C.done())

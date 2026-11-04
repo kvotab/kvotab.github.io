@@ -586,4 +586,24 @@ same('tensorprod: the outer product keeps both shapes; a contraction; all; sever
 W, _ = run('spmd, a = labindex; b = spmdSize; c = spmdIndex; d = numlabs; end')
 same('in spmd (run once here) the index and size are 1', [W[k] for k in 'abcd'], [1.0] * 4)
 
+# gallery: chebspec, dorr, wathen and Wilkinson's small examples
+W, _ = run("""n = 7; Cs = gallery('chebspec', n); x = cos(pi*(0:n-1)'/(n-1)); cs = norm(Cs*(x.^6 - 2*x.^3 + x) - (6*x.^5 - 6*x.^2 + 1));
+C1 = gallery('chebspec', n, 1); x1 = cos(pi*(1:n)'/n); c1 = norm(C1*((1 - x1).*x1.^3) - (3*x1.^2 - 4*x1.^3)); c1s = size(C1);
+A = gallery('dorr', 6); [dc, dd, de] = gallery('dorr', 6); dr = norm(A - (diag(dd) + diag(dc, -1) + diag(de, 1)));
+dm = all(diag(A) > 0) && all(A(~eye(6)) <= 0); ds = max(abs(sum(A(2:5, :), 2))); dk = cond(gallery('dorr', 10, 0.1)) < cond(gallery('dorr', 10, 0.001));
+rng(3); Wt = gallery('wathen', 3, 2); ws = size(Wt); wsp = issparse(Wt); wsym = full(norm(Wt - Wt', 1)); wpd = min(eig(full(Wt))) > 0;
+ev = eig(full(gallery('wathen', 3, 2, 1))); wlo = min(ev); whi = max(ev);
+[A3, b3] = gallery('wilk', 3); x3 = A3 \ b3; [A4, b4] = gallery('wilk', 4); A5 = gallery('wilk', 5); h6 = hilb(6); w5 = norm(A5 - 1.8144*h6(1:5, 2:6));""")
+near("gallery('chebspec'): exact on polynomials of degree n - 1, and with u(1) = 0 for k = 1", (W['cs'], W['c1'], W['c1s']), [0, 0, 7, 7], 1e-12)
+near("gallery('dorr'): its three diagonals; an M-matrix, interior rows summing to 0; worse conditioned for smaller theta",
+     (W['dr'], W['dm'], W['ds'], W['dk']), [0, 1, 0, 1], 1e-12)
+same("gallery('wathen', 3, 2): sparse, symmetric, positive definite, of order 3*nx*ny + 2*nx + 2*ny + 1",
+     (np.asarray(W['ws']).reshape(-1).tolist(), bool(W['wsp']), float(W['wsym']), bool(W['wpd'])), ([29.0, 29.0], True, 0.0, True))
+near("gallery('wathen', nx, ny, 1): its eigenvalues span Wathen's bounds 1/4 to 9/2", (W['wlo'], W['whi']), [0.25, 4.5], 1e-9)
+near("gallery('wilk', 3) and 4 with their right-hand sides; 5 is 1.8144 times a block of hilb(6)",
+     (W['A3'], W['b3'], np.asarray(W['x3']).reshape(-1)[1:] / 1e10, np.asarray(W['A4'])[3, 3], W['b4'], W['w5']),
+     np.concatenate([np.ravel(x) for x in ([[1e-10, 0, 0], [0.9, 0.9, 0], [-0.4, -0.4, 1e-10]], [0, 0, 1], [0.4 / 0.9, 1], 0.7123e-4,
+                                            [0.6524, 0.3127, 0.4186, 0.7853], 0)]), 1e-12)
+raises("gallery('wilk', 6)", 'n = 3, 4, 5 and 21')
+
 sys.exit(C.done())

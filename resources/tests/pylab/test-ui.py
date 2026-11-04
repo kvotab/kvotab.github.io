@@ -1925,6 +1925,20 @@ async def wavelets_and_denoising(page):
     await command(page, 'close all')          # the Editor's checks look at the page under where figures stand
 
 
+async def quiver_arrows(page):
+    """quiver3's arrows drawn in 3-D, red ones counted (saved as a picture to look at)."""
+    await command(page, "close all; figure('Position', [50 50 600 480]); [X, Y] = meshgrid(1:4); "
+                        "quiver3(X, Y, zeros(4), 0.3*ones(4), zeros(4), ones(4), 'r', 'LineWidth', 2); hold on; quiver3(1, 1, 3, 1, 1, 0, 0, 'b')")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.8)
+    red = await page.ev(f"(() => {{ const c = {WIN}.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; "
+                        "for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; })()")
+    check("quiver3 draws its arrows in 3-D (red pixels)", (red or 0) > 300, True)
+    await canvas_shot(page, 'quiver3-1.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -1943,6 +1957,7 @@ async def main():
         await control_systems(page)
         await global_optimization(page)
         await wavelets_and_denoising(page)
+        await quiver_arrows(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

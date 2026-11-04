@@ -355,4 +355,10 @@ raises("fitcknn(rand(4, 2), [1 2 1]')", 'as many rows')
 raises("fitctree(rand(4, 2), [1 2 1 2]', 'Depth', 3)", "is not an option of fitctree")
 raises("kfoldLoss(fitctree(rand(4, 2), [1 2 1 2]'))", 'cross-validated model')
 
+# corrcov: a zero variance leaves NaN, its diagonal too; single stays single
+W, _ = run("z = corrcov(zeros(2)); z1 = corrcov([4 0; 0 0]); sg = corrcov(single([4 2; 2 9]));")
+near('corrcov of zero variances: NaN in their rows and columns, the diagonal too', (W['z'], W['z1']), (np.full((2, 2), np.nan), [[1, np.nan], [np.nan, np.nan]]))
+same('corrcov of single is single', np.asarray(W['sg']).dtype.name, 'float32')
+near('corrcov of single: the correlation', W['sg'], [[1, 1 / 3], [1 / 3, 1]], 1e-6)
+
 sys.exit(C.done())

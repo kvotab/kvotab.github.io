@@ -269,4 +269,10 @@ C("the object's boundary: closed, clockwise, the outer boundary pixels and only 
   and np.abs(np.diff(B1, axis=0)).max() == 1 and 0.5 * np.sum(B1[:-1, 1] * -B1[1:, 0] - B1[1:, 1] * -B1[:-1, 0]) < 0, B1[:5].tolist())
 near('the hole traced as its own pixel; noholes leaves it out', (a(W['B2'])[0], W['nh']), ([6, 6], 1))
 
+# isuniform: a scalar or an empty array is not uniform; a single vector's step is single
+W, _ = run("[t1, s1] = isuniform(5); [t2, s2] = isuniform([]); [t3, s3] = isuniform(single(10:-1.5:1)); [t4, s4] = isuniform(single([1 2 4]));")
+near('isuniform of a scalar and of an empty array: false, step NaN', (W['t1'], W['s1'], W['t2'], W['s2']), (0, np.nan, 0, np.nan))
+same('isuniform of single: uniform, its step single', (bool(W['t3']), np.asarray(W['s3']).dtype.name, float(np.asarray(W['s3']).reshape(-1)[0]), np.asarray(W['s4']).dtype.name),
+     (True, 'float32', -1.5, 'float32'))
+
 sys.exit(C.done())

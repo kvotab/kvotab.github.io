@@ -1462,9 +1462,10 @@ def quiver_scale(h):
     AutoScaleFactor changes."""
     X, Y = np.asarray(h.props['XData'], float), np.asarray(h.props['YData'], float)
     U, V = np.asarray(h.props['UData'], float), np.asarray(h.props['VData'], float)
+    W = np.asarray(h.props['WData'], float) if numel(h.props['WData']) else None
     scale = float(np.asarray(h.props['AutoScaleFactor'], float).reshape(-1)[0]) if numel(h.props['AutoScaleFactor']) else 0.9
     s = 1.0
-    if scale != 0 and X.size and U.size == V.size:
+    if scale != 0 and X.size and U.size == V.size and (W is None or W.size == U.size):
         xs = np.unique(X.reshape(-1))
         ys = np.unique(Y.reshape(-1))
         dx = np.min(np.diff(xs)) if xs.size > 1 else 1.0
@@ -1474,44 +1475,96 @@ def quiver_scale(h):
         else:
             rng = max(X.max() - X.min(), Y.max() - Y.min() if Y.size else 1.0, 1e-9)
             d = rng / math.sqrt(max(X.size, 1))
-        L = np.sqrt(U ** 2 + V ** 2)
+        L = np.sqrt(U ** 2 + V ** 2 + (W ** 2 if W is not None else 0))
         mx = np.nanmax(L) if L.size else 0
         s = scale * d / mx if mx > 0 else 1.0
     h.extra['scale'] = float(s)
     h.touch()
 
 
-Series.RELAYOUT['quiver'] = (('XData', 'YData', 'UData', 'VData', 'AutoScaleFactor'), quiver_scale)
+Series.RELAYOUT['quiver'] = (('XData', 'YData', 'ZData', 'UData', 'VData', 'WData', 'AutoScaleFactor'), quiver_scale)
 
 
-@bi('quiver', 'quiver3', arr=False)
+def _quiver_data(data, fn):
+    """quiver's X, Y, U, V or quiver3's X, Y, Z, U, V, W, each the size of
+    U (X and Y given as vectors along U's columns and rows are spread over
+    the grid), and the scale."""
+    three = fn == 'quiver3'
+    short, full = (4, 6) if three else (2, 4)
+    if len(data) in (full, full + 1):
+        grid = False
+    elif len(data) in (short, short + 1):
+        grid = True
+    else:
+        raise err(f'MATLAB:{fn}:nargin',
+                  'quiver3 takes Z, U, V and W, or X, Y, Z, U, V and W, and then a scale.' if three
+                  else 'quiver takes U and V, or X, Y, U and V, and then a scale.', fn)
+    scale = 0.9
+    if len(data) in (short + 1, full + 1):
+        sc = data.pop()
+        if isinstance(sc, (Char, Str, str)) and opt_lower(sc) == 'off':
+            scale = 0.0
+        elif numel(sc) != 1 or isinstance(sc, (Char, Str, str)):
+            raise err(f'MATLAB:{fn}:BadScale', "The scale is a number, or 'off'.", fn)
+        else:
+            scale = float(num(sc))
+    A = [darr(d) for d in data]
+    names = ('X', 'Y', 'Z', 'U', 'V', 'W') if three else ('X', 'Y', 'U', 'V')
+    if grid:
+        ref = A[0]
+        m, n = (ref.shape[0], int(np.prod(ref.shape[1:]))) if ref.ndim else (1, 1)
+        X, Y = np.meshgrid(np.arange(1, n + 1, dtype=float), np.arange(1, m + 1, dtype=float))
+        A = [X.reshape(ref.shape), Y.reshape(ref.shape)] + A
+    U = A[3] if three else A[2]
+    same = names[2:]                       # Z, U, V, W or U, V: all the size of U
+    for nm, a in zip(same, A[2:]):
+        if a.shape != U.shape:
+            raise err(f'MATLAB:{fn}:SizeMismatch', f"{', '.join(same[:-1])} and {same[-1]} must be the same size.", fn)
+    X, Y = A[0], A[1]
+    if X.shape != U.shape or Y.shape != U.shape:
+        vec = lambda a: a.ndim <= 2 and 1 in a.shape
+        if vec(X) and vec(Y) and U.ndim == 2 and X.size == U.shape[1] and Y.size == U.shape[0]:
+            X, Y = np.meshgrid(X.reshape(-1), Y.reshape(-1))
+        elif X.size == U.size and Y.size == U.size and vec(X) and vec(Y) and vec(U):
+            X, Y = X.reshape(U.shape), Y.reshape(U.shape)
+        else:
+            raise err(f'MATLAB:{fn}:SizeMismatch',
+                      f"{', '.join(names[:-1])} and {names[-1]} must be the same size (X and Y may be vectors along U's columns and rows).", fn)
+    return [X, Y] + A[2:], scale
+
+
+@bi('quiver', arr=False)
 def quiver(nargout, *args):
+    return _quiver(nargout, 'quiver', args)
+
+
+@bi('quiver3', arr=False)
+def quiver3(nargout, *args):
+    return _quiver(nargout, 'quiver3', args)
+
+
+def _quiver(nargout, fn, args):
+    """quiver(X, Y, U, V) and quiver3(X, Y, Z, U, V, W): arrows from each
+    point, scaled so that they don't overlap (a scale, or 'off'); a LineSpec
+    and name-value pairs follow, and 'filled' is taken."""
     ax, rest = split_axes_arg(args)
+    rest = [r for r in rest if not (isinstance(r, (Char, Str)) and opt_lower(r) == 'filled')]
+    most = 7 if fn == 'quiver3' else 5
     data = []
-    while rest and opt_str(rest[0]) is None and len(data) < 5:
+    while rest and len(data) < most and (opt_str(rest[0]) is None or (opt_lower(rest[0]) == 'off' and len(data) in ((4, 6) if fn == 'quiver3' else (2, 4)))):
         data.append(rest.pop(0))
     spec = None
     if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_lower(rest[0]) not in LINE_PROPS:
         spec = parse_linespec(opt_str(rest.pop(0)))
-    scale = 0.9
-    if len(data) in (2, 3):
-        U, V = darr(data[0]), darr(data[1])
-        m, n = U.shape
-        X, Y = np.meshgrid(np.arange(1, n + 1, dtype=float), np.arange(1, m + 1, dtype=float))
-        if len(data) == 3:
-            scale = float(num(data[2]))
-    else:
-        X, Y, U, V = (darr(d) for d in data[:4])
-        if len(data) == 5:
-            scale = float(num(data[4]))
-        if X.shape != U.shape and X.ndim == 2 and (X.shape[0] == 1 or X.shape[1] == 1):
-            X, Y = np.meshgrid(X.reshape(-1), Y.reshape(-1))
-    ax = newplot(ax)
+    arrays, scale = _quiver_data(data, fn)
+    three = fn == 'quiver3'
+    ax = newplot(ax, box=not three)
+    if three and (ax.props['NextPlot'] != 'add' or not ax.is3d()):
+        set3d(ax)
     h = Series(ax, 'quiver')
-    h.props['XData'] = X.astype(float)
-    h.props['YData'] = Y.astype(float)
-    h.props['UData'] = U.astype(float)
-    h.props['VData'] = V.astype(float)
+    keys = ('XData', 'YData', 'ZData', 'UData', 'VData', 'WData') if three else ('XData', 'YData', 'UData', 'VData')
+    for k, a in zip(keys, arrays):
+        h.props[k] = a.astype(float)
     h.props['AutoScaleFactor'] = float(scale)
     quiver_scale(h)
     h.props['Color'] = spec[0] if spec and spec[0] else ax.next_color()

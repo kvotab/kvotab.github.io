@@ -380,10 +380,101 @@ def triw(n, alpha=-1.0, k=None):
 
 
 def wilk(n):
+    """Wilkinson's examples: [A, b] for n = 3 (upper triangular) and 4 (lower
+    triangular), A for 5 (1.8144 times a block of hilb(6)) and 21 (W21+)."""
     n = _int(n, 'wilk')
-    if n != 21:
-        raise err('MATLAB:gallery:wilk', 'Only wilk(21) is given here.', 'gallery')
-    return np.diag(np.abs(np.arange(-10, 11, dtype=F64))) + np.diag(np.ones(20), 1) + np.diag(np.ones(20), -1)
+    if n == 3:
+        return (np.array([[1e-10, 0.9, -0.4], [0, 0.9, -0.4], [0, 0, 1e-10]]), np.array([[0.0], [0.0], [1.0]]))
+    if n == 4:
+        A = np.array([[0.9143e-4, 0, 0, 0], [0.8762, 0.7156e-4, 0, 0],
+                      [0.7943, 0.8143, 0.9504e-4, 0], [0.8017, 0.6123, 0.7165, 0.7123e-4]])
+        return (A, np.array([[0.6524], [0.3127], [0.4186], [0.7853]]))
+    if n == 5:
+        i = np.arange(1, 6, dtype=F64)
+        return 1.8144 / (i[:, None] + i[None, :])         # hilb(6)(1:5, 2:6) * 1.8144
+    if n == 21:
+        return np.diag(np.abs(np.arange(-10, 11, dtype=F64))) + np.diag(np.ones(20), 1) + np.diag(np.ones(20), -1)
+    raise err('MATLAB:gallery:wilk', 'wilk is made for n = 3, 4, 5 and 21.', 'gallery')
+
+
+def chebspec(n, k=0):
+    """The Chebyshev spectral differentiation matrix on the points
+    cos(pi*(0:N)/N): applied to a polynomial's values there, of degree N at
+    most, it gives the derivative's. k = 1 imposes u = 0 at x = 1 (the first
+    row and column of the matrix of order n + 1 go)."""
+    n = _int(n, 'chebspec')
+    if k not in (0, 1):
+        raise err('MATLAB:gallery:chebspec', 'k is 0 or 1.', 'gallery')
+    N = n if k == 1 else n - 1
+    if N < 1:
+        return np.zeros((n, n))
+    j = np.arange(N + 1)
+    x = np.cos(np.pi * j / N)
+    c = np.ones(N + 1)
+    c[0] = c[-1] = 2.0
+    sign = np.where((j[:, None] + j[None, :]) % 2 == 0, 1.0, -1.0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        C = (c[:, None] / c[None, :]) * sign / (x[:, None] - x[None, :])
+    inner = j[1:-1]
+    C[inner, inner] = -x[inner] / (2 * (1 - x[inner] ** 2))
+    C[0, 0] = (2 * N * N + 1) / 6
+    C[N, N] = -C[0, 0]
+    return C[1:, 1:] if k == 1 else C
+
+
+def dorr(n, theta=0.01):
+    """Dorr's tridiagonal M-matrix, row diagonally dominant and ill
+    conditioned for small theta >= 0: [c, d, e] gives its sub-, main and
+    super-diagonals."""
+    n = _int(n, 'dorr')
+    h = 1.0 / (n + 1)
+    m = (n + 1) // 2
+    t = theta / h ** 2
+    i = np.arange(1, n + 1, dtype=F64)
+    c, e = np.empty(n), np.empty(n)
+    lo = i <= m
+    c[lo] = -t
+    e[lo] = c[lo] - (0.5 - i[lo] * h) / h
+    e[~lo] = -t
+    c[~lo] = e[~lo] + (0.5 - i[~lo] * h) / h
+    d = -(c + e)
+    c, e = c[1:], e[:-1]
+    A = np.diag(d) + np.diag(c, -1) + np.diag(e, 1)
+    return (A, c.reshape(-1, 1), d.reshape(-1, 1), e.reshape(-1, 1))
+
+
+def wathen(nx, ny=None, k=0):
+    """Wathen's finite-element matrix: the consistent mass matrix of an nx-by-ny
+    grid of 8-node serendipity elements, each weighted by a random density
+    (100*rand); sparse, symmetric and positive definite, of order
+    3*nx*ny + 2*nx + 2*ny + 1. k = 1 scales it by its diagonal."""
+    from .elmat import RNG
+    nx = _int(nx, 'wathen', 'nx')
+    ny = nx if ny is None else _int(ny, 'wathen', 'ny')
+    e1 = np.array([[6, -6, 2, -8], [-6, 32, -6, 20], [2, -6, 6, -6], [-8, 20, -6, 32]], F64)
+    e2 = np.array([[3, -8, 2, -6], [-8, 16, -8, 20], [2, -8, 3, -8], [-6, 20, -8, 16]], F64)
+    em = np.block([[e1, e2], [e2.T, e1]]) / 45
+    rho = 100 * RNG.uniform((nx, ny))     # rand(nx, ny), from the session's generator
+    n = 3 * nx * ny + 2 * nx + 2 * ny + 1
+    rows, cols, vals = [], [], []
+    for jj in range(1, ny + 1):
+        for ii in range(1, nx + 1):
+            # the element's nodes counter-clockwise from its top right corner (1-based)
+            n1 = 3 * jj * nx + 2 * ii + 2 * jj + 1
+            n4 = (3 * jj - 1) * nx + 2 * jj + ii - 1
+            n5 = 3 * (jj - 1) * nx + 2 * ii + 2 * jj - 3
+            nn = np.array([n1, n1 - 1, n1 - 2, n4, n5, n5 + 1, n5 + 2, n4 + 1]) - 1
+            rows.append(np.repeat(nn, 8))
+            cols.append(np.tile(nn, 8))
+            vals.append((em * rho[ii - 1, jj - 1]).reshape(-1))
+    import scipy.sparse as sp
+    if rows:
+        A = sp.csc_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
+    else:
+        A = sp.csc_matrix((n, n))
+    if k == 1:
+        A = sp.diags(1.0 / A.diagonal()) @ A if A.nnz else A
+    return SPM.make(sp.csc_matrix(A))
 
 
 def binomial(n):
@@ -571,6 +662,7 @@ _PLAIN = {
     'leslie': leslie, 'lotkin': lotkin, 'minij': minij, 'moler': moler, 'neumann': neumann, 'orthog': orthog,
     'parter': parter, 'pei': pei, 'poisson': poisson, 'prolate': prolate, 'redheff': redheff, 'riemann': riemann,
     'ris': ris, 'smoke': smoke, 'toeppen': toeppen, 'tridiag': tridiag, 'triw': triw, 'wilk': wilk,
+    'chebspec': chebspec, 'dorr': dorr, 'wathen': wathen,
     'binomial': binomial, 'rando': rando, 'randsvd': randsvd, 'invhess': invhess, 'gcdmat': gcdmat, 'cycol': cycol,
     'randhess': randhess, 'toeppd': toeppd, 'house': house, 'kahan': kahan, 'lesp': lesp, 'invol': invol,
 }
@@ -586,7 +678,8 @@ def gallery(nargout, *args):
     hanowa, ipjfact, jordbloc, kms, krylov, lauchli, lehmer, leslie, lotkin,
     minij, moler, neumann, orthog, parter, pei, poisson, prolate, redheff,
     riemann, ris, smoke, toeppen, tridiag, triw, wilk, binomial, rando,
-    randsvd, and the data sets integerdata, uniformdata, normaldata)."""
+    randsvd, chebspec, dorr, wathen, and the data sets integerdata,
+    uniformdata, normaldata)."""
     if not args:
         raise err('MATLAB:minrhs', 'Not enough input arguments.', 'gallery')
     name = opt_str(args[0])
@@ -609,6 +702,8 @@ def gallery(nargout, *args):
         r = fn(*vals)
     except TypeError:
         raise err('MATLAB:gallery:nargin', f"Wrong number of inputs for gallery('{name}').", 'gallery') from None
+    if name == 'dorr':
+        r = r[0] if nargout <= 1 else r[1:]         # A, or its diagonals c, d, e
     if isinstance(r, tuple):
         r = tuple(out(x) if isinstance(x, np.ndarray) else x for x in r)
         return r[0] if nargout <= 1 else r[:nargout]

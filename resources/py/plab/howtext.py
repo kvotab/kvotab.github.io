@@ -978,7 +978,7 @@ exit, quit:
 help:
     Python: core.py and help.py. The same help the Help browser shows, as text; with an output, returned rather than printed.
 version, ver, computer:
-    Python: core.py. Fixed text naming PyLAB, with Python's, NumPy's and SciPy's version numbers read from the running engine; computer is 'PYODIDE'.
+    Python: core.py. Fixed text naming PyLAB, with Python's, NumPy's and SciPy's version numbers read from the running engine (with an output, ver gives them as a struct array instead); computer is 'PYODIDE'.
 ispc, isunix, ismac, isdeployed, usejava:
     Python: core.py. Fixed answers for the engine in the page: isunix is true (Pyodide's file system is Unix-like), the others false.
 getenv, setenv:
@@ -1404,7 +1404,7 @@ polarscatter:
 polarbubblechart:
     Python: graphics.py. bubblechart's series in axes marked polar, placed as polarscatter places its markers.
 quiver, quiver3:
-    Python: graphics.py. A quiver series of the arrows, scaled so that the longest is 0.9 (or the scale given) of the grid spacing, sqrt(dx*dy) on a grid; a scale of 0 draws them as they are.
+    Python: graphics.py. A quiver series of the arrows (quiver3's with ZData and WData), scaled so that the longest, sqrt(u^2+v^2+w^2), is 0.9 (or the scale given) of the grid spacing, sqrt(dx*dy) on a grid; a scale of 0 draws them as they are. The page projects each arrow's ends and draws its two barbs in screen space, MaxHeadSize of its drawn length.
 contour, contourf, contour3, contourc:
     Python: graphics.py. Each level's lines by marching squares in Python: each grid cell is classed by which of its corners are at or above the level, the crossings on its edges are placed by linear interpolation, saddle cells are split by the mean of their corners, and the segments are joined into lines. Unless given, the levels are the round tick values inside the data's range (1, 2 or 5 times a power of ten, at most 11), or n evenly spaced ones. The contour matrix holds each line as a column [level; number of points] followed by its points. contourf's bands are filled by the page, each pixel coloured by the band of the value interpolated from the grid.
 clabel:
@@ -1647,7 +1647,7 @@ rsf2csf:
 gsvd:
     Python: matfun.py. The QR factorization of [A; B] (numpy.linalg.qr, the economy size), Q's columns completed to a square unitary matrix, and its CS decomposition (scipy.linalg.cossin) split after A's rows: Q's top part is U*C*Z' and its bottom part V*S*Z', so A = U*C*(Z'*R) and B = V*S*(Z'*R), X = R'*Z. The pairs (c, s) are put in order of c/s increasing, C's nonzeros on its diagonal max(0, q - m) to the right and S's on its main diagonal, U's and V's columns following; any sign goes into U's or V's column so that C and S are not negative.
 gallery:
-    Python: gallerymat.py. Each matrix from its defining formula in NumPy (Higham's definitions): Cauchy 1./(x + y'), Chebyshev-Vandermonde by the three-term recurrence, Fiedler abs(c - c'), Lehmer min(i,j)/max(i,j), the Pascal-based binomial matrix L*diag((-2).^(0:n-1))*L(end:-1:1, end:-1:1), the involutory matrix from the Hilbert matrix with its rows scaled, Poisson and Neumann by scipy.sparse.kron of tridiagonal matrices, and so on. randsvd multiplies the chosen singular values by random orthogonal matrices (QR of normal matrices, signs fixed); randhess multiplies plane rotations; the data sets use a numpy.random.RandomState of their own, seeded by j.
+    Python: gallerymat.py. Each matrix from its defining formula in NumPy (Higham's definitions): Cauchy 1./(x + y'), Chebyshev-Vandermonde by the three-term recurrence, Fiedler abs(c - c'), Lehmer min(i,j)/max(i,j), the Pascal-based binomial matrix L*diag((-2).^(0:n-1))*L(end:-1:1, end:-1:1), the involutory matrix from the Hilbert matrix with its rows scaled, Poisson and Neumann by scipy.sparse.kron of tridiagonal matrices, and so on. randsvd multiplies the chosen singular values by random orthogonal matrices (QR of normal matrices, signs fixed); randhess multiplies plane rotations; the data sets use a numpy.random.RandomState of their own, seeded by j. chebspec from the Chebyshev points' formula, c_i/c_j (-1)^(i+j)/(x_i - x_j) off the diagonal; wathen assembles the 8-node serendipity element's mass matrix (an 8-by-8 integer matrix over 45) times each element's density with scipy.sparse.
 ordeig:
     Python: matfun.py. The diagonal of T read in order, each real 2-by-2 block giving its pair of eigenvalues (numpy.linalg.eigvals, the one with positive imaginary part first); for AA and BB the ratios of their diagonals.
 polyeig:
@@ -1723,7 +1723,7 @@ rgb2gray, im2gray, cmap2gray:
 mat2gray:
     Python: imagecolor.py. (A - amin)/(amax - amin) with numpy.clip to 0 to 1, the limits from the finite values unless given.
 rgb2hsv, hsv2rgb:
-    Python: imagecolor.py. The value is the largest of R, G and B and the saturation the spread over it; the hue the sector of the largest (red, then green, then blue taking ties) plus the difference of the other two over the spread, in sixths of a turn. Back, the sector numpy.floor(6h) picks which of v, v(1-s), v(1-sf) and v(1-s(1-f)) each of R, G and B is.
+    Python: imagecolor.py. The value is the largest of R, G and B and the saturation the spread over it; the hue the sector of the largest (red, then green, then blue taking ties) plus the difference of the other two over the spread, in sixths of a turn. Back, the sector numpy.floor(6h) picks which of v, v(1-s), v(1-sf) and v(1-s(1-f)) each of R, G and B is. Integer values are scaled by their class's range first, both ways.
 rgb2lightness:
     Python: imagecolor.py. sRGB's companding undone (c/12.92 up to 0.04045, ((c+0.055)/1.055)^2.4 above), the luminance Y = 0.2126729 R + 0.7151522 G + 0.0721750 B, and L* = 116 f(Y) - 16 with f the cube root above (6/29)^3 and the straight line below.
 ind2rgb, ind2gray:
@@ -1834,7 +1834,7 @@ hamming, hann, blackman, flattopwin, blackmanharris, nuttallwin, kaiser, bartlet
 gausswin:
     Python: signal.py. exp(-(alpha*k/((n-1)/2))^2/2) for k from -(n-1)/2 to (n-1)/2.
 hanning:
-    Python: signal.py. scipy.signal.windows.hann of length n+2 without its two zero ends.
+    Python: signal.py. scipy.signal.windows.hann of length n+2 without its two zero ends; the periodic one is hann of length n+1 without its last point.
 window:
     Python: signal.py. The window function named by the handle, called with the rest of the arguments.
 freqz:
@@ -1987,7 +1987,7 @@ clip:
 allfinite, anynan:
     Python: datamore.py. all(isfinite) and any(isnan) over all elements.
 isuniform:
-    Python: datamore.py. The step (last - first)/(n - 1); uniform when every difference is within 4*eps(the largest magnitude) times n of it.
+    Python: datamore.py. The step (last - first)/(n - 1); uniform when every difference is within 4*eps(the largest magnitude) times n of it (single's eps for single).
 rmoutliers:
     Python: datamore.py. isoutlier with the same method and options; the elements (or rows with at least MinNumOutliers outliers, or columns for dim 2) left out.
 cbrt:
@@ -2179,7 +2179,7 @@ pca, pcacov, ppca:
 factoran, rotatefactors:
     Python: mlunsup.py. The likelihood as a function of the specific variances (the loadings from the eigenvectors of the scaled correlations, Joreskog's method), minimized by scipy.optimize.minimize (L-BFGS-B, psi in [Delta, 1]); orthomax rotations by the SVD iteration, promax by a least-squares fit to the powered varimax loadings.
 cmdscale, mdscale, tsne, procrustes, canoncorr, barttest, nnmf, corrcov:
-    Python: mlunsup.py. cmdscale by numpy.linalg.eigh of the doubly centred squared distances; mdscale by L-BFGS on each criterion with its gradient (nonmetric: alternating with isotonic regression by pool-adjacent-violators); exact t-SNE (van der Maaten's gradient descent with momentum and gains); procrustes and canoncorr by the SVD (canoncorr of the QR factors); barttest from the covariance's eigenvalues; nnmf by alternating nonnegative least squares or Lee and Seung's multiplicative updates.
+    Python: mlunsup.py. cmdscale by numpy.linalg.eigh of the doubly centred squared distances; mdscale by L-BFGS on each criterion with its gradient (nonmetric: alternating with isotonic regression by pool-adjacent-violators); exact t-SNE (van der Maaten's gradient descent with momentum and gains); procrustes and canoncorr by the SVD (canoncorr of the QR factors); barttest from the covariance's eigenvalues; corrcov divides by sigma*sigma', cuts round-off past 1 back to 1 and puts sign(diag) on the diagonal; nnmf by alternating nonnegative least squares or Lee and Seung's multiplicative updates.
 fitctree, fitrtree, view:
     Python: learners.py and mlmodels.py. PyLAB's own CART: each candidate split of each variable scored at once from cumulative class counts (or sums and sums of squares), the nodes split breadth first.
 fitcknn, fitcdiscr, fitcnb:

@@ -195,6 +195,8 @@ def data_bounds(ax):
                     v = np.asarray(p['VData'], float) * c.extra.get('scale', 1.0)
                     add('X', x + u)
                     add('Y', y + v)
+                    if np.size(p['ZData']) and np.size(p['WData']):
+                        add('Z', np.asarray(p['ZData'], float) + np.asarray(p['WData'], float) * c.extra.get('scale', 1.0))
                 if k == 'contour':
                     tight['X'] = tight['Y'] = True
                     if c.extra.get('is3d'):
