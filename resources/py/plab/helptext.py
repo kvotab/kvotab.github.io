@@ -2266,8 +2266,13 @@ solve: Solve equations symbolically; or solve an ode object.
     S = solve(F, t0, tf)
     S = solve(F, tspan)
     S = solve(F, ..., 'Refine', k)
+    sol = solve(prob)
+    sol = solve(prob, x0)
+    [sol, fval, exitflag, output, lambda] = solve(prob, x0, 'Solver', solver, 'Options', options)
     * An expression counts as expression == 0. For one variable the solutions come as a column; for several, a struct with a field for each variable, or one output for each. Solutions must agree with the variables' assumptions. With 'ReturnConditions', families of solutions come with their parameters (k) and conditions. 'MaxDegree' (3 unless given) is the highest degree of polynomial solved by radicals; higher ones give root(...).
     * solve(F, ...) of an ode object: its solution from InitialTime, at the solver's steps (or at the times of tspan when it has more than two); S.Time is a row, S.Solution a column for each time.
+    * solve(prob) of an optimization problem (optimproblem): the solver follows the problem unless 'Solver' names one: intlinprog when the objective and constraints are linear and a variable is an integer, linprog when they are linear, quadprog for a quadratic objective with linear constraints, ga for anything else with integers, fminunc with no constraints or bounds, else fmincon. Nonlinear problems need x0, a struct with a field for each variable. sol is a struct of the variables' values, fval the objective, output.solver the solver used; 'Solving problem using ...' is written unless the options' Display is 'off'. lambda holds the Lagrange multipliers by name: lambda.Constraints.name, each the size of its constraint (an array when Constraints is one array), and lambda.Variables.name.Lower and .Upper; zeros where the solver gives none (intlinprog, fminunc, the global solvers). For a maximization they are those of the minimization of the objective's negative.
+    * solve(prob) of an equation problem (eqnproblem): linear equations by least squares (lsqlin when a variable has bounds), others by fsolve (lsqnonlin with bounds) from x0; fval is a struct of each equation's residual.
 vpasolve: Solve equations numerically, to digits significant digits.
     S = vpasolve(eqn, x)
     S = vpasolve(eqn, x, x0)
@@ -8528,6 +8533,68 @@ idct2: The inverse two-dimensional discrete cosine transform.
 dctmtx: The discrete cosine transform matrix.
     D = dctmtx(n)
     * Orthonormal: D*A*D' is dct2(A) for an n-by-n A.
+# ---- problem-based optimization -------------------------------------------------------------------------------------------------------
+optimvar: An optimization variable.
+    x = optimvar(name)
+    x = optimvar(name, n)
+    x = optimvar(name, n, m, ...)
+    x = optimvar(name, {'a', 'b', 'c'}, ...)
+    x = optimvar(..., 'Type', 'integer', 'LowerBound', lb, 'UpperBound', ub)
+    * A scalar, or an array n-by-m-by-...; a dimension given as names is indexed by them too: x('a', 2). Type is 'continuous' (default) or 'integer'; the bounds are a number or an array the variable's size, -Inf and Inf unless given, and can be set later: x.LowerBound = 0.
+    * Arithmetic on variables gives optimization expressions; comparisons with <=, >= and == give constraints. A variable is a handle: its bounds are the same wherever it is used. Two different variables may not share a name in one problem.
+optimexpr: An array of optimization expressions to fill.
+    e = optimexpr(n)
+    e = optimexpr(n, m, ...)
+    e = optimexpr({'a', 'b'}, ...)
+    * Zeros, to be filled element by element: e(k) = k*x(k)^2. Expressions support + - .* ./ .^ (and * and / with a number), * of matrices, ' and .', indexing, concatenation, sum, prod, cumsum, dot, norm (of a vector), reshape, and exp, log, sqrt, sin, cos, tan, abs and the other elementwise functions. Displaying one writes it out, linear and quadratic ones term by term.
+optimconstr: An array of constraints to fill.
+    c = optimconstr(n)
+    c = optimconstr(n, m, ...)
+    * Empty, filled element by element: c(k) = x(k) + x(k+1) <= k. Any relation, <=, >= or ==.
+optimineq: An array of inequalities to fill.
+    c = optimineq(n)
+    c = optimineq(n, m, ...)
+    * As optimconstr, holding <= and >= only.
+optimeq: An array of equalities to fill.
+    c = optimeq(n)
+    c = optimeq(n, m, ...)
+    * As optimconstr, holding == only.
+optimproblem: An optimization problem.
+    prob = optimproblem
+    prob = optimproblem('Objective', expr, 'ObjectiveSense', sense, 'Constraints', constr, 'Description', text)
+    * ObjectiveSense is 'minimize' (default) or 'maximize' ('min', 'max'). Constraints are a constraint array or a struct of them; fields can be added one at a time: prob.Constraints.supply = sum(x, 2) <= s. prob.Variables lists the variables of the objective and constraints. Solve it with solve; see it with show.
+eqnproblem: A system of equations to solve.
+    prob = eqnproblem
+    prob = eqnproblem('Equations', eqn, 'Description', text)
+    * Equations are equalities, or a struct of them: prob.Equations.e1 = x^2 + y^2 == 1. Solve it with solve.
+evaluate: The value of an optimization expression at a point.
+    v = evaluate(expr, pt)
+    * pt is a struct with a field for each variable of expr, such as solve's solution.
+infeasibility: How far constraints are from holding at a point.
+    v = infeasibility(constr, pt)
+    * For each element: max(0, lhs - rhs) for <=, max(0, rhs - lhs) for >=, abs(lhs - rhs) for ==; 0 where it holds. pt is a struct of the variables' values.
+varindex: Where each variable sits in the solver's vector.
+    idx = varindex(prob)
+    idx = varindex(prob, name)
+    * A struct of index vectors, or one. The variables are in alphabetical order of their names, each by columns, as prob2struct and the solvers solve calls see them.
+show: An optimization variable, expression, constraint or problem written out.
+    show(obj)
+    * For a problem: the variables (and which are integers), the objective, each constraint and the finite bounds.
+showbounds: The finite bounds of an optimization variable.
+    showbounds(x)
+fcn2optimexpr: A function as an optimization expression.
+    e = fcn2optimexpr(fun, x1, x2, ...)
+    [e1, e2] = fcn2optimexpr(fun, x1, ...)
+    e = fcn2optimexpr(..., 'OutputSize', sz, 'Analysis', 'off')
+    * fun is called with the expressions first: when it uses only what expressions support, its result is that expression (linear or quadratic ones stay so). Otherwise, or with 'Analysis' 'off', fun is called with the variables' values each time the solver needs the expression; its outputs' sizes come from OutputSize (a size, or a cell of sizes) or from one call with zeros.
+prob2struct: A problem as a solver's problem structure.
+    problem = prob2struct(prob)
+    problem = prob2struct(prob, x0, 'Solver', solver, 'Options', options)
+    * The struct for linprog(problem), intlinprog(problem), quadprog(problem), fmincon(problem) and the others, with the solver solve would choose: f, f0 (the constant left out of the objective) or H, Aineq, bineq, Aeq, beq, lb, ub, intcon, x0, or objective and nonlcon as function handles of the solver's vector (see varindex), solver and options. A maximization is the minimization of the objective's negative; an equation problem gives lsqlin's C and d, or fsolve's objective.
+paretosearch: Points on the Pareto front of several objectives, by pattern search.
+    x = paretosearch(fun, nvars)
+    [x, fval, exitflag, output, residuals] = paretosearch(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    * fun gives a row of objectives. PyLAB's own method: each objective minimized alone by patternsearch; then, for weights w spread evenly, a smooth maximum of the weighted objectives v (each scaled to its range above its minimum), 0.02*log(sum(exp(w.*v/0.02))), minimized by patternsearch from the last answer. That function grows with every objective, so its minima are on the front, concave parts too. The points no other dominates are kept, at most ParetoSetSize (60) of them, the most crowded dropped first, sorted by the first objective. MeshTolerance (1e-6) and the constraints are passed to the searches.
 '''
 
 

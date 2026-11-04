@@ -596,7 +596,7 @@ children, has, lhs, rhs, isolate, finverse:
 subs:
     Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace.
 solve:
-    Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are. solve of an ode object: odemore.py, the solver its Solver selects.
+    Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are. solve of an ode object: odemore.py, the solver its Solver selects. solve of an optimization or equation problem: optimprob.py (see optimproblem).
 vpasolve:
     Python: symmath.py. A polynomial in one variable: all its roots by SymPy's nroots to digits places; otherwise sympy.nsolve (mpmath's findroot) from the start given (0, or the middle of a range; bisection within a range), trying other starts when the first fails.
 dsolve:
@@ -2442,6 +2442,17 @@ radon, iradon, phantom:
     Python: imgeom.py. radon bins four subpixels per pixel by numpy.add.at; iradon filters each projection (numpy.fft.fft; the ramp built in space and transformed, after Kak and Slaney) and accumulates the back projections by linear interpolation; phantom adds the ellipses on a grid.
 dct2, idct2, dctmtx:
     Python: imgeom.py. scipy.fft.dctn and scipy.fft.idctn (type 2, orthonormal); dctmtx from the cosine formula.
+# ---- optimprob.py: problem-based optimization ------------------------------------------------------------------------------------------
+optimvar, optimexpr, optimconstr, optimineq, optimeq, optimproblem, eqnproblem, show, showbounds:
+    Python: optimprob.py. An expression is a tree of array operations, each node knowing its size and degree (0 constant, 1 linear, 2 quadratic, otherwise nonlinear). Its coefficients are carried up the tree as sparse forms (scipy.sparse): A*v + b plus products of two linear forms summed by a sparse matrix; a node the forms do not follow is evaluated instead, at zero and at the unit vectors (and their pairwise sums for a quadratic). Values are computed with NumPy at many points at once (a last dimension for the points). The solver's vector holds the variables in alphabetical order of their names, each by columns. Constraints keep lhs - rhs and the relation, element by element.
+solve, prob2struct, varindex:
+    Python: optimprob.py. Linear constraints become the rows of A and Aeq from the forms, nonlinear ones a nonlcon function; then optim.py's linprog or intlinprog (scipy.optimize.linprog and milp, HiGHS), quadprog with H from the forms, fminunc or fmincon, or globalopt.py's ga, particleswarm, patternsearch or surrogateopt, each called as a function of the vector. Linear equations: numpy.linalg.lstsq (lsqlin with bounds); others fsolve or lsqnonlin.
+evaluate, infeasibility:
+    Python: optimprob.py. The expression's tree evaluated with NumPy at the point's values.
+fcn2optimexpr:
+    Python: optimprob.py. The function called with the expressions themselves first; when that fails or gives something else, a node that calls it (through the runtime, synchronously) at each point.
+paretosearch:
+    Python: optimprob.py. PyLAB's own scalarization: globalopt.py's patternsearch on each objective alone, then on a log-sum-exp smooth maximum of the weighted, scaled objectives for evenly spread weights (a simplex lattice for three or more objectives); nondominated points kept, thinned by globalopt.py's crowding distance.
 """
 
 

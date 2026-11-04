@@ -100,6 +100,7 @@
     "builtins/netcdf.py",
     "builtins/imagemore.py",
     "builtins/imgeom.py",
+    "builtins/optimprob.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

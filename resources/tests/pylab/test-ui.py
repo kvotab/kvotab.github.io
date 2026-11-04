@@ -1986,6 +1986,31 @@ async def image_additions(page):
     await command(page, 'close all')
 
 
+async def problem_based(page):
+    """Step 13 in the page: a mixed-integer problem and a quadratic one solved through solve, show, an equation problem, and paretosearch's front drawn."""
+    out = await command(page, "close all; x = optimvar('x', 2, 'LowerBound', 0); y = optimvar('y', 'Type', 'integer', 'LowerBound', 0, 'UpperBound', 10); "
+                              "p = optimproblem('ObjectiveSense', 'maximize', 'Objective', x(1) + 2*x(2) + 3*y + 7); "
+                              "p.Constraints.c1 = x(1) + x(2) + y <= 4.5; p.Constraints.c2 = x(1) - x(2) >= -1; show(p)\n"
+                              "[sol, f, flag, o] = solve(p); mi = isequal(sol.y, 4) && abs(f - 20) < 1e-9 && strcmp(o.solver, 'intlinprog'), "
+                              "w = optimvar('w', 3, 'LowerBound', 0); q = optimproblem('Objective', w'*[2 1 0; 1 3 1; 0 1 4]*w - [1 2 3]*w); "
+                              "q.Constraints.b = sum(w) == 1; [sw, fq] = solve(q, 'Options', optimoptions('quadprog', 'Display', 'off')); "
+                              "[ww, fq2] = quadprog(2*[2 1 0; 1 3 1; 0 1 4], -[1; 2; 3], [], [], [1 1 1], 1, zeros(3, 1), [], [], optimoptions('quadprog', 'Display', 'off')); "
+                              "qp = abs(fq - fq2) < 1e-10, u = optimvar('u', 2); eq = eqnproblem('Equations', [u(1)^2 + u(2)^2 == 1; u(1) == u(2)]); "
+                              "su = solve(eq, struct('u', [1; 0.5])); en = norm(su.u - [1; 1]/sqrt(2)) < 1e-6, "
+                              "fun = @(x) [x(1)^2 + x(2)^2, (x(1) - 2)^2 + x(2)^2]; "
+                              "[X, F] = paretosearch(fun, 2, [], [], [], [], [-5 -5], [5 5], [], optimoptions('paretosearch', 'Display', 'off', 'ParetoSetSize', 30)); "
+                              "pf = max(abs(sqrt(F(:, 1)) + sqrt(F(:, 2)) - 2)) < 1e-6, f = figure('Position', [50 50 520 400]); plot(F(:, 1), F(:, 2), 'o'); xlabel('f_1'); ylabel('f_2');")
+    check('show writes the problem out', all(t in out for t in ('Solving problem using intlinprog.', 'where: y integer', 'x(1) + x(2) + y <= 4.5', 'x(1) - x(2) >= -1')), True)
+    check('solve in the page: intlinprog, quadprog and an equation problem; paretosearch on the front',
+          all(f'{k} =\n\n  logical\n\n   1' in out for k in ('mi', 'qp', 'en', 'pf')), True)
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    check("paretosearch's front drawn", (await ink(page)) > 0.02, True)
+    await canvas_shot(page, 'optimprob13-1.png')
+    await command(page, 'close all')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2007,6 +2032,7 @@ async def main():
         await quiver_arrows(page)
         await core_additions(page)
         await image_additions(page)
+        await problem_based(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)
