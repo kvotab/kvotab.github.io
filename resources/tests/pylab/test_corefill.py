@@ -306,7 +306,7 @@ raises("writetimetable(table(1), 'x.csv')", 'takes a timetable')
 EVENTS.clear()
 W, out = run("commandwindow; commandhistory; workspace; filebrowser; x = struct('d', 1); openvar('x.d'); r = matlabRelease; rel = r.Release;"
              "n = maxNumCompThreads; old = maxNumCompThreads(1); m = maxNumCompThreads; maxNumCompThreads('automatic');"
-             "[u, s] = memory; ts = license('test', 'statistics_toolbox'); te = license('test', 'Econometrics_Toolbox'); [tc, msg] = license('checkout', 'Econometrics_Toolbox'); memory")
+             "[u, s] = memory; ts = license('test', 'statistics_toolbox'); te = license('test', 'Simulink'); [tc, msg] = license('checkout', 'Simulink'); memory")
 desk = [(e.get('what'), e.get('name')) for e in EVENTS if e.get('type') == 'desktop']
 C('commandwindow, commandhistory, workspace, filebrowser and openvar: what the page is asked to show',
   desk == [('commandwindow', None), ('history', None), ('workspace', None), ('files', None), ('openvar', 'x.d')], str(desk))

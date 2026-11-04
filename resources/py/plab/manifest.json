@@ -115,6 +115,8 @@
     "builtins/desktop.py",
     "builtins/plotfill.py",
     "builtins/surfacefit.py",
+    "builtins/econtests.py",
+    "builtins/econmodels.py",
     "builtins/graphics.py",
     "builtins/uifun.py",
     "builtins/parallel.py",

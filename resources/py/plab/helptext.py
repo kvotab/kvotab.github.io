@@ -7286,9 +7286,11 @@ step: The step response.
     step(sys1, 'r', sys2, 'b--', ...)
     [y, t] = step(sys, ...)
     * Drawn when nothing is asked for (each input's response, each output in turn), a staircase in discrete time. The final time is long enough for the slowest pole to settle (7 time constants, and 6 periods of an oscillation). Delays shift the response.
-impulse: The impulse response.
+impulse: The impulse response of a dynamic system or of an ARIMA model.
     impulse(sys)
     [y, t] = impulse(sys, Tfinal)
+    y = impulse(Mdl, numObs)
+    * For an arima model: the weights of its infinite moving-average form, 1 first (a stem plot without outputs).
 initial: The response to initial conditions.
     initial(sys, x0)
     [y, t, x] = initial(sys, x0, Tfinal)
@@ -9351,6 +9353,123 @@ excludedata: The points to leave out of a fit.
     tf = excludedata(x, y, 'range', [ymin ymax])
     tf = excludedata(x, y, 'indices', idx)
     * True outside the box, domain or range, or at the indices: fit(x, y, type, 'Exclude', tf).
+# ---- econometrics -----------------------------------------------------------------------------------------------------------
+autocorr: The sample autocorrelation of a series, with bounds.
+    autocorr(y)
+    [acf, lags, bounds] = autocorr(y, 'NumLags', k, 'NumMA', q, 'NumSTD', s)
+    * Lags 0 to k (min(20, n-1)); bounds +-s standard errors (2) under an MA(q) process (q = 0: white noise), by Bartlett's formula. Without outputs, a stem plot with the bounds.
+parcorr: The sample partial autocorrelation of a series, with bounds.
+    parcorr(y)
+    [pacf, lags, bounds] = parcorr(y, 'NumLags', k, 'NumAR', p, 'NumSTD', s, 'Method', 'ols')
+    * Method 'ols' (the last coefficient of y on a constant and its first m lags) or 'yule-walker'; bounds +-s/sqrt(n) past lag p.
+crosscorr: The sample cross-correlation of two series, with bounds.
+    crosscorr(y1, y2)
+    [xcf, lags, bounds] = crosscorr(y1, y2, 'NumLags', k, 'NumSTD', s)
+    * xcf at lag k is the correlation of y1(t+k) with y2(t), for lags -k to k.
+adftest: The augmented Dickey-Fuller test of a unit root.
+    h = adftest(y)
+    [h, pValue, stat, cValue, reg] = adftest(y, 'model', 'ARD', 'lags', 2, 'test', 't1', 'alpha', 0.05)
+    * model 'AR' (no constant, the default), 'ARD' (with a drift, a constant) or 'TS' (a trend stationary alternative: constant and trend); test 't1' (the t statistic), 't2' (the normalized bias, corrected for the lags) or 'F' (the unit root and no drift, or no trend). h = true rejects the unit root.
+    * Options given as vectors (or cells) run a test for each: the outputs are rows. reg holds the regression.
+pptest: The Phillips-Perron test of a unit root.
+    [h, pValue, stat, cValue, reg] = pptest(y, 'model', 'ARD', 'lags', 4, 'test', 't1', 'alpha', 0.05)
+    * The Dickey-Fuller regression without lagged differences, its statistics corrected by the Newey-West variance of its residuals over lags.
+kpsstest: The KPSS test of stationarity.
+    [h, pValue, stat, cValue] = kpsstest(y, 'lags', 4, 'trend', true, 'alpha', 0.05)
+    * Stationary about a trend (trend true, the default) or a level, against a unit root; h = true rejects stationarity. The p-values come from the table of critical values (from 0.01 to 0.1).
+lbqtest: The Ljung-Box Q test of autocorrelation.
+    [h, pValue, stat, cValue] = lbqtest(res, 'Lags', 10, 'DOF', 8, 'Alpha', 0.05)
+    * Q = n(n+2)*sum(r_k^2/(n-k)) up to Lags (min(20, n-1)), chi-square with DOF (Lags unless given: take off the model's parameters for residuals).
+archtest: Engle's test of conditional heteroscedasticity.
+    [h, pValue, stat, cValue] = archtest(res, 'Lags', 2, 'Alpha', 0.05)
+    * The squared residuals regressed on their Lags lags (1): T*R^2, chi-square with Lags degrees of freedom.
+vratiotest: The variance ratio test of a random walk.
+    [h, pValue, stat, cValue, ratio] = vratiotest(y, 'period', 4, 'IID', false, 'alpha', 0.05)
+    * y holds log prices. The variance of period-q returns over q times that of one-period returns (Lo and MacKinlay), robust to heteroscedasticity unless IID is true; h = true rejects the random walk.
+egcitest: The Engle-Granger test of cointegration.
+    [h, pValue, stat, cValue, reg] = egcitest(Y, 'creg', 'c', 'lags', 1, 'alpha', 0.05)
+    * The first column regressed on the others (with a constant 'c', 'nc', a trend 'ct' or 'ctt'), then a Dickey-Fuller tau test of the residuals; h = true rejects no cointegration. Up to 6 series.
+aicbic: Information criteria of fitted models.
+    aic = aicbic(logL, numParam)
+    [aic, bic] = aicbic(logL, numParam, numObs)
+    [aic, bic, ic] = aicbic(logL, numParam, numObs, 'Normalize', true)
+    * aic = -2*logL + 2*k, bic = -2*logL + k*log(n); ic also holds aicc, caic and hqc. Normalize divides by n.
+lratiotest: The likelihood ratio test of restricted models.
+    [h, pValue, stat, cValue] = lratiotest(uLogL, rLogL, dof, alpha)
+    * 2*(uLogL - rLogL), chi-square with dof (the restrictions) degrees of freedom.
+waldtest: The Wald test of restrictions.
+    [h, pValue, stat, cValue] = waldtest(r, R, EstCov, alpha)
+    * r the restrictions' values (0 under the null), R their Jacobian, EstCov the estimates' covariance; cells of each make several tests.
+lmtest: The Lagrange multiplier (score) test of restrictions.
+    [h, pValue, stat, cValue] = lmtest(score, ParamCov, dof, alpha)
+hpfilter: The Hodrick-Prescott trend of a series.
+    [trend, cyclical] = hpfilter(Y)
+    [trend, cyclical] = hpfilter(Y, smoothing)
+    * Each column; smoothing 1600 (quarterly data) unless given. Without outputs, the series and their trends plotted.
+lagmatrix: A series shifted by lags.
+    YLag = lagmatrix(Y, lags)
+    * A negative lag is a lead; NaN where there is no value. The columns are every series at the first lag, then at the next.
+arima: An ARIMA model of a series.
+    Mdl = arima
+    Mdl = arima(p, D, q)
+    Mdl = arima('AR', {0.5 -0.2}, 'MA', {0.3}, 'Constant', 0.1, 'Variance', 1)
+    Mdl = arima('ARLags', [1 4], 'D', 1, 'Seasonality', 12, 'SMALags', 12)
+    Mdl = arima('ARLags', 1, 'Beta', NaN, 'Distribution', 't')
+    Mdl = arima('ARLags', 1, 'Variance', garch(1,1))
+    * NaN parameters are estimated by estimate, numbers held. AR, MA, SAR and SMA are cells of coefficients (a 0 leaves a lag out); SAR and SMA lags are the actual lags (12, not 1). Beta makes an ARIMAX model (the predictors in the equation). Variance may be a garch, egarch or gjr model.
+    * Properties: Description, SeriesName, Distribution, P (the whole AR degree, differences included), D, Q, Constant, AR, SAR, MA, SMA, Seasonality, Beta, Variance.
+garch: A GARCH conditional variance model.
+    Mdl = garch(P, Q)
+    Mdl = garch('Constant', 0.1, 'GARCH', {0.8}, 'ARCH', {0.1}, 'Offset', 0)
+    * v(t) = Constant + sum GARCH(i)*v(t-i) + sum ARCH(j)*e(t-j)^2, e(t) = y(t) - Offset.
+egarch: An EGARCH conditional variance model (of the log variance).
+    Mdl = egarch(P, Q)
+    Mdl = egarch('Constant', -0.1, 'GARCH', {0.9}, 'ARCH', {0.2}, 'Leverage', {-0.1})
+    * log v(t) = Constant + sum GARCH(i)*log v(t-i) + sum ARCH(j)*(|z(t-j)| - E|z|) + sum Leverage(j)*z(t-j), z = e/sqrt(v).
+gjr: A GJR conditional variance model (negative innovations weigh more).
+    Mdl = gjr(P, Q)
+    Mdl = gjr('Constant', 0.05, 'GARCH', {0.8}, 'ARCH', {0.05}, 'Leverage', {0.1})
+    * v(t) = Constant + sum GARCH(i)*v(t-i) + sum (ARCH(j) + Leverage(j)*(e(t-j) < 0))*e(t-j)^2.
+varm: A vector autoregression.
+    Mdl = varm(numSeries, numLags)
+    Mdl = varm('Constant', c, 'AR', {A1 A2}, 'Covariance', S)
+    Mdl = varm('AR', {A1}, 'Lags', 4, 'Trend', t, 'Beta', B, 'SeriesNames', names)
+    * y(t) = Constant + Trend*t + AR{1}*y(t-1) + ... + Beta*x(t) + e(t), e with covariance Covariance. NaN values are estimated.
+estimate: A model's NaN parameters by maximum likelihood.
+    EstMdl = estimate(Mdl, y)
+    [EstMdl, EstParamCov, logL, info] = estimate(Mdl, y, 'Y0', y0, 'E0', e0, 'X', X, 'Display', 'off')
+    [EstMdl, EstSE, logL, E] = estimate(VarMdl, Y)
+    * For arima the first P observations are the presample unless Y0 is given, the presample innovations 0 (or E0). For garch, egarch and gjr y holds the innovations; their presample is their mean square unless V0 and E0 are given. varm is fitted by least squares (the likelihood's maximum), its covariance the residuals' (divided by T).
+    * Display 'params' (the default; 'off' for varm) shows the estimates with their standard errors, t statistics and p-values.
+forecast: Forecasts of a model.
+    [Y, YMSE] = forecast(Mdl, numperiods, Y0)
+    [Y, YMSE] = forecast(Mdl, numperiods, Y0, 'XF', XF, 'E0', e0)
+    V = forecast(VarianceMdl, numperiods, Y0)
+    [Y, YMSE] = forecast(VarMdl, numperiods, Y0)
+    * Minimum mean square error forecasts from the presample Y0 (at least P values; a column for each path); YMSE grows with the model's moving-average weights (a cell of covariance matrices for varm). A variance model forecasts the conditional variances.
+simulate: Sample paths of a model.
+    [Y, E, V] = simulate(Mdl, numobs)
+    [Y, E, V] = simulate(Mdl, numobs, 'NumPaths', m, 'Y0', y0, 'E0', e0, 'X', X)
+    [V, Y] = simulate(VarianceMdl, numobs, 'NumPaths', m)
+    Y = simulate(VarMdl, numobs, 'NumPaths', m)
+    * From the language's random number generator (rng); the presample at the model's mean unless given.
+infer: The innovations (residuals) of a model, their variances and the log-likelihood.
+    [E, V, logL] = infer(Mdl, y)
+    [V, logL] = infer(VarianceMdl, y)
+    [E, logL] = infer(VarMdl, Y)
+    * For arima without Y0 the first P values are the presample: E and V are NaN there.
+summarize: An estimated model's parameters and fit.
+    summarize(EstMdl)
+    results = summarize(EstMdl)
+    * The parameters with their standard errors, t statistics and p-values, the sample size, log-likelihood, AIC and BIC; results holds them, the estimates as a table.
+irf: A vector autoregression's impulse responses.
+    Response = irf(Mdl)
+    Response = irf(Mdl, 'NumObs', 20, 'Method', 'generalized')
+    irf(Mdl)
+    * Response(t, j, k) is variable k's response at time t-1 to a shock of one standard deviation to variable j, orthogonalized by the Cholesky factor of the covariance (the default) or generalized.
+fevd: A vector autoregression's forecast error variance decomposition.
+    Decomposition = fevd(Mdl, 'NumObs', 20, 'Method', 'orthogonalized')
+    * Decomposition(t, j, k) is the share of variable k's forecast error variance at horizon t due to shocks to variable j.
 '''
 
 

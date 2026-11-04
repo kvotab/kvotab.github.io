@@ -2258,6 +2258,8 @@ minreal, ss2ss, xperm, canon, hsvd, balreal, balred, modred:
     Python: control.py. Minimal realizations by SVDs of the controllability and observability matrices; balancing by the square-root method (Cholesky factors of the Gramians, an SVD); reduction by truncation or singular perturbation.
 step, impulse, initial, stepplot, impulseplot, lsim, stepinfo:
     Python: control.py. Each step exact for a piecewise-linear (or constant) input by scipy.linalg.expm of the augmented matrix; discrete models by their recurrence.
+
+    impulse of an arima model: econmodels.py, the weights of its infinite moving-average form, scipy.signal.lfilter of a unit impulse through the MA and AR polynomials.
 bode, bodeplot, nyquist, nichols, sigma:
     Python: control.py. The response on 400 logarithmically spaced frequencies two decades beyond the poles and zeros (to the Nyquist frequency in discrete time); phases by numpy.unwrap.
 margin, allmargin:
@@ -2619,6 +2621,33 @@ sfit, cfit:
     Python: surfacefit.py. A fit object of the fittype's model with the coefficients given and no data: no confidence bounds.
 excludedata:
     Python: surfacefit.py. NumPy comparisons of x and y with the limits (or the indices set).
+# ---- econtests.py, econmodels.py: econometrics ---------------------------------------------------------------------------------------
+autocorr, parcorr, crosscorr:
+    Python: econtests.py. The sample autocorrelation sum((y(t) - m)(y(t+k) - m))/sum((y(t) - m)^2); the partial autocorrelation by numpy.linalg.lstsq of y on a constant and its lags (the last coefficient), or for 'yule-walker' from the autocorrelations by scipy.linalg.solve_toeplitz; the cross-correlation of y1(t+k) with y2(t) over the product of the norms. autocorr's bounds are s*sqrt((1 + 2*sum(r_k^2, k = 1..q))/n).
+adftest, pptest:
+    Python: econtests.py. The Dickey-Fuller regression by numpy.linalg.lstsq. The t1 statistics' p-values and critical values are MacKinnon's (1994) response surfaces for the tau distribution, the normal cdf of a polynomial in the statistic (scipy.stats.norm), the critical value found where the p-value is alpha (scipy.optimize.brentq). The normalized bias (t2) and F statistics are compared with 20000 draws of their distributions under a unit root, simulated for the sample size with a fixed seed: p = (k + 1)/(M + 1). pptest corrects the statistics by the Newey-West variance of the residuals (Bartlett weights 1 - j/(lags + 1)).
+kpsstest:
+    Python: econtests.py. The residuals from a level (or a line), the partial sums S(t), and sum(S^2)/(T^2 * the Newey-West variance); p-values interpolated (numpy.interp) in the critical values of Kwiatkowski, Phillips, Schmidt and Shin (1992) at 0.10, 0.05, 0.025 and 0.01, held at those ends.
+lbqtest, archtest:
+    Python: econtests.py. The Ljung-Box statistic n(n+2)*sum(r_k^2/(n-k)); Engle's test T*R^2 from numpy.linalg.lstsq of the squared demeaned residuals on their lags; both against scipy.stats.chi2.
+vratiotest:
+    Python: econtests.py. Lo and MacKinlay's (1988) statistic from overlapping q-period returns with their unbiased variances, its variance 2(2q-1)(q-1)/(3qT) for IID returns or the heteroscedasticity-robust sum of (2(q-j)/q)^2 * delta(j); two-sided against the normal.
+egcitest:
+    Python: econtests.py. The cointegrating regression by numpy.linalg.lstsq, then adftest's regression of its residuals (no constant), with MacKinnon's tau surfaces for that number of series.
+aicbic, lratiotest, waldtest, lmtest:
+    Python: econtests.py. The criteria's formulas; the tests' statistics against scipy.stats.chi2, waldtest's by numpy.linalg.solve.
+hpfilter:
+    Python: econtests.py. The trend solves (I + lambda*D'D) tau = y with D the second differences, a sparse system (scipy.sparse.linalg.spsolve).
+lagmatrix:
+    Python: econtests.py. Each series shifted, NaN where nothing comes in.
+arima, estimate, infer, summarize:
+    Python: econmodels.py. The whole AR operator is the product of the AR and seasonal AR polynomials and the differences (numpy.convolve); the innovations follow from it and the MA operator by scipy.signal.lfilter. The log-likelihood is conditional on the presample: the first P observations (or Y0), presample innovations 0 (or E0), Gaussian or t scaled to the variance. It is maximized by scipy.optimize.minimize (BFGS, then Nelder-Mead from its answer and BFGS again when that helped), the Gaussian variance concentrated out; a model that is not stationary or not invertible is refused inside the search. Standard errors are the square roots of the diagonal of the inverse of the log-likelihood's Hessian, by central differences. With a conditional variance model as Variance, the variances come from that model's recursion over the innovations.
+forecast, simulate:
+    Python: econmodels.py. Forecasts run the model's recursion with future innovations 0 (presample innovations inferred from Y0 when it is longer than P); the mean square error is the sum of the squared weights of the infinite MA form (scipy.signal.lfilter of an impulse) times the variance, or times the forecast conditional variances. simulate draws innovations from the language's random number generator (numpy's standard_normal or standard_t scaled to variance 1).
+garch, egarch, gjr:
+    Python: econmodels.py. The variance recursion over the innovations: garch and gjr by scipy.signal.lfilter (the presample through scipy.signal.lfiltic), egarch step by step; the presample variances and squared innovations are the innovations' mean square (in gjr half of them count as negative). The likelihood is maximized as for arima, with positive, stationary coefficients required (for egarch the GARCH coefficients summing below 1). Forecasts use E[e^2] = v (and E[I(e<0)e^2] = v/2) after the first step; egarch's later steps leave the shock terms at 0.
+varm, irf, fevd:
+    Python: econmodels.py. estimate solves the least squares of each equation on the constant, trend, lags and predictors together (numpy.linalg.lstsq), which is the Gaussian likelihood's maximum; the covariance is E'E/T and the coefficients' standard errors come from kron(Sigma, inv(Z'Z)). irf multiplies the MA matrices Psi by the Cholesky factor of the covariance (numpy.linalg.cholesky) or by Sigma*e_j/sqrt(sigma_jj); fevd sums their squares over the horizons and divides by each variable's total.
 """
 
 

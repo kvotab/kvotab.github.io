@@ -2102,6 +2102,27 @@ async def core_fillins(page):
     await page.ev('PL.app.setPanels(true, true); 1')
 
 
+async def econometrics(page):
+    """Step 17 in the page: an ARMA model estimated with its table, a forecast, a GARCH fit, a VAR, the unit-root tests,
+    and the correlation plots drawn."""
+    out = await command(page, "clc; close all; rng(5); M = arima('Constant', 0.5, 'AR', {0.6 -0.2}, 'MA', {0.3}, 'Variance', 0.4); y = simulate(M, 400); "
+                              "E = estimate(arima(2, 0, 1), y); [f, mse] = forecast(E, 3, y); fm = mse(1) > 0.3 && mse(3) > mse(1), "
+                              "rng(2); [V, r] = simulate(garch('Constant', 0.1, 'GARCH', {0.8}, 'ARCH', {0.1}), 1500); G = estimate(garch(1, 1), r, 'Display', 'off'); "
+                              "gg = abs(G.GARCH{1} - 0.8) < 0.15, Y = simulate(varm('Constant', [0; 0], 'AR', {[0.5 0.1; 0.2 0.3]}, 'Covariance', eye(2)), 300); "
+                              "Ev = estimate(varm(2, 1), Y); rr = irf(Ev, 'NumObs', 4); vr = isequal(size(rr), [4 2 2]), "
+                              "[h1, p1] = adftest(cumsum(randn(200, 1))); [h2, p2] = adftest(randn(200, 1), 'model', 'ARD'); ur = ~h1 && h2, "
+                              "[hk, pk] = kpsstest(randn(200, 1)); [hq, pq] = lbqtest(randn(200, 1)); ok = pk >= 0.01 && pq > 0")
+    check('econometrics in the page: an ARMA estimate shown with its table, forecasts, GARCH, a VAR and the tests',
+          ['StandardError' in out, 'AR{2}' in out] + [f'{k} =\n\n  logical\n\n   1' in out for k in ('fm', 'gg', 'vr', 'ur', 'ok')], [True] * 7)
+    out = await command(page, "clc; f1 = figure('Position', [50 50 900 380]); subplot(1, 2, 1); autocorr(y); subplot(1, 2, 2); parcorr(y); drawnow")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 2)
+    await asyncio.sleep(0.8)
+    check('autocorr and parcorr drawn with their bounds', (await ink(page)) > 0.01, True)
+    await canvas_shot(page, 'econ17-1.png')
+    await command(page, 'close all; clear')
+
+
 async def main():
     page = await open_page(f'{BASE}/pylab.html')
     try:
@@ -2127,6 +2148,7 @@ async def main():
         await toolbox_fillins(page)
         await pde_toolbox(page)
         await core_fillins(page)
+        await econometrics(page)
         await editor_view(page)
         await drops(page)
         await parallel(page)

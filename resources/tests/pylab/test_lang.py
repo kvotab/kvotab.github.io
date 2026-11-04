@@ -735,4 +735,34 @@ asyncio.run(R.execute("clear x; try, x(end), m = ''; catch ex, m = ex.message; e
 C('clear on a command line: a cleared variable\'s name calls the function after it (tf, max), indexes before it; x(end) after clear x is an error',
   (R.BASE.get('a'), R.BASE.get('b'), R.BASE.get('e'), R.BASE['c'].str(), R.BASE['m'].str()) == (6.0, 9.0, 3.0, 'tf', "Unrecognized function or variable 'x'."),
   (R.BASE.get('a'), R.BASE.get('b'), R.BASE.get('e'), R.BASE.get('c'), R.BASE.get('m')))
+
+# ---- no module takes over another's builtin by accident ----------------------------------------------------------------------
+# A name registered again replaces the earlier function for every caller (step 17's impulse hid control's for a while).
+# The builtins are loaded in a process of their own with the registrar watched; the names registered more than once must
+# be these, each on purpose (a later module that hands the other cases back, or a replacement).
+_WATCH = r"""
+import sys, inspect, collections, json
+sys.path.insert(0, sys.argv[1])
+import plab.builtins as B
+seen = collections.defaultdict(list)
+orig = B.bi
+def bi(*names, **kw):
+    deco = orig(*names, **kw)
+    def d(fn):
+        mod = inspect.getmodule(inspect.stack()[1][0])
+        for n in (names or (fn.__name__.rstrip('_'),)):
+            seen[n].append(mod.__name__.rsplit('.', 1)[-1] if mod else '?')
+        return deco(fn)
+    return d
+B.bi = bi
+from plab import runtime as R
+R.setup()
+print(json.dumps({n: m for n, m in seen.items() if len(m) > 1}))
+"""
+import json as _json, subprocess as _sp  # noqa: E401,E402
+_r = _sp.run([sys.executable, '-c', _WATCH, os.path.join(HERE, '..', '..', 'py')], capture_output=True, text=True, timeout=600)
+_twice = _json.loads(_r.stdout.strip().splitlines()[-1]) if _r.returncode == 0 and _r.stdout.strip() else {'(failed)': [_r.stderr[-300:]]}
+_ALLOWED = {'ezcontour', 'ezmesh', 'ezsurf', 'impulse', 'isequaln', 'isobject', 'isreal', 'isvalid', 'movegui', 'scatter3', 'uistack'}
+C('no builtin registered twice by accident', set(_twice) <= _ALLOWED, str({k: v for k, v in _twice.items() if k not in _ALLOWED}))
+
 sys.exit(C.done())
