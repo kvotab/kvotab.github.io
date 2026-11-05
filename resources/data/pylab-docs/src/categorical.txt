@@ -1,0 +1,131 @@
+@ categorical
+Arrays whose elements are each one of a set of named categories, or undefined.
+
+A categorical array stores each element as one of its categories: compact for text that repeats, and understood as groups by `countcats`, `histogram`, `groupsummary` and the like. The categories are the data's distinct values in sorted order, or `valueset` in its order; `catnames` names them. Missing values (`''`, `<missing>`, NaN) become undefined. Elements compare with a category's name by `==` and `~=`; an ordinal array also by `<`, `<=`, `>` and `>=` in the categories' order. Assigning a name that is not a category adds it, unless the array is protected.
+
+# Syntax
+c = categorical(data)
+    The categories from the data.
+c = categorical(data, valueset)
+    The categories given, in that order.
+c = categorical(data, valueset, catnames)
+    Named.
+c = categorical(..., 'Ordinal', true)
+    Ordered, so that they compare by order.
+c = categorical(..., 'Protected', true)
+    Taking no new categories by assignment.
+# Examples
+## Colours as categories
+c = categorical({'red'; 'green'; 'red'; 'blue'; 'red'})
+categories(c)
+c == 'red'
+## Codes named, and sizes in order
+codes = [1 3 2 3 1];
+s = categorical(codes, 1:3, {'small', 'medium', 'large'}, 'Ordinal', true)
+s(s >= 'medium')
+max(s)
+# See also
+categories countcats iscategorical discretize
+
+@ categories, iscategorical, isordinal, isprotected
+A categorical array's categories, and what kind of array it is.
+
+`categories` gives the names as a column cell array, in the array's order; `iscategorical` is true for a categorical array, `isordinal` for one whose categories compare by order, and `isprotected` for one that takes no new categories by assignment (an ordinal array is always protected).
+
+# Syntax
+names = categories(c)
+    The categories.
+tf = iscategorical(c)
+    True for a categorical array.
+tf = isordinal(c)
+    True when ordered.
+tf = isprotected(c)
+    True when protected.
+# Examples
+## Asking an array what it is
+c = categorical({'low', 'high', 'low'}, {'low', 'high'}, 'Ordinal', true);
+categories(c)
+[iscategorical(c), isordinal(c), isprotected(c)]
+iscategorical({'low', 'high'})
+# See also
+categorical addcats
+
+@ isundefined, iscategory, countcats
+Undefined elements, names that are categories, and how many elements are in each.
+
+`isundefined` is true where an element is in no category (missing data, or a value outside the categories given); `iscategory` for each name that is one of the array's categories; `countcats` counts each category's elements, down the columns (or along `dim`), every category counted even when empty.
+
+# Syntax
+tf = isundefined(c)
+    True where undefined.
+tf = iscategory(c, names)
+    True for each name that is a category.
+n = countcats(c)
+    The elements in each category.
+n = countcats(c, dim)
+    Along a dimension.
+# Examples
+## A survey with blanks
+a = categorical({'yes', 'no', '', 'yes', 'maybe', 'yes'}, {'yes', 'no', 'maybe'})
+isundefined(a)
+countcats(a)
+iscategory(a, {'no', 'perhaps'})
+# See also
+categorical summary histcounts
+
+@ addcats, removecats, mergecats, renamecats, reordercats, setcats
+Categories added, removed, merged, renamed, put in order, or set.
+
+Each gives a new array. `addcats` adds categories no element is in yet (at the end, or before or after one); `removecats` removes categories, their elements becoming undefined (with no names, the ones no element is in); `mergecats` makes several categories one (named after the first unless named); `renamecats` renames them; `reordercats` puts them in another order (alphabetical unless given), which counts and plots follow; `setcats` sets the categories, the elements of any others becoming undefined.
+
+# Syntax
+c2 = addcats(c, names)
+    Categories added.
+c2 = addcats(c, names, 'Before', name)
+    Added before one.
+c2 = removecats(c, names)
+    Removed.
+c2 = mergecats(c, oldcats, newcat)
+    Made one.
+c2 = renamecats(c, oldnames, newnames)
+    Renamed.
+c2 = reordercats(c, neworder)
+    Put in order.
+c2 = setcats(c, newcats)
+    Set.
+# Examples
+## Tidying the categories of a survey
+a = categorical({'cat', 'dog', 'kitten', 'dog', 'puppy', 'cat'});
+categories(a)'
+b = mergecats(a, {'cat', 'kitten'}, 'feline');
+b = mergecats(b, {'dog', 'puppy'}, 'canine')
+b = addcats(b, 'bird');
+b = reordercats(b, {'canine', 'feline', 'bird'});
+countcats(b)
+## Renaming, removing and setting
+w = categorical({'mon', 'tue', 'mon', 'sun'});
+renamecats(w, {'mon', 'sun'}, {'Monday', 'Sunday'})
+removecats(w, 'tue')
+setcats(w, {'mon', 'tue', 'wed'})
+# See also
+categorical categories countcats
+
+@ summary
+The categories of a categorical array and their counts; or a table's variables in short.
+
+For a categorical array, each category and how many elements are in it (with the undefined ones, if any). For a table or timetable, each variable: its size and class, its units and description, and its values in short: the smallest, median and largest of numbers, the counts of categories, how many are missing.
+
+# Syntax
+summary(c)
+    Categories and counts.
+summary(T)
+    A table's variables in short.
+# Examples
+## A categorical array and a table in short
+c = categorical({'a'; 'b'; 'a'; ''; 'c'; 'a'});
+summary(c)
+T = table([3.1; 2.4; NaN; 5.0], categorical({'x'; 'y'; 'x'; 'x'}), 'VariableNames', {'Depth', 'Site'});
+T.Properties.VariableUnits = {'m', ''};
+summary(T)
+# See also
+countcats table groupsummary

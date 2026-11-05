@@ -1,0 +1,341 @@
+@ mamfis, sugfis
+Fuzzy inference systems: Mamdani's, whose outputs are fuzzy sets, and Sugeno's, whose outputs are constants or linear functions.
+
+A fuzzy system maps inputs to outputs through rules such as "if service is good then tip is generous": each input's membership functions say how far a value is good, poor or excellent, the rules combine them, and the outputs are put together and made crisp again. A Mamdani system's outputs have membership functions like the inputs', aggregated and defuzzified (`'centroid'` unless `DefuzzificationMethod` says); a Sugeno system's are constants or linear functions of the inputs, averaged by the rules' weights (`'wtaver'`, or `'wtsum'`). The methods for and, or, implication and aggregation are properties. A system is a value: `addInput`, `addMF` and `addRule` give a new one, and `fis.Inputs(1).MembershipFunctions(2).Parameters = p` changes it. `'NumInputs'` and the like make a system with variables and evenly spread membership functions at once, and a rule for each combination of the inputs' membership functions unless `'AddRules'` is `'none'`.
+
+# Syntax
+fis = mamfis('Name', name)
+    A Mamdani system.
+fis = mamfis('NumInputs', n, 'NumInputMFs', m, 'NumOutputs', k, 'NumOutputMFs', p, 'AddRules', 'allcombinations')
+    With variables, membership functions and rules made.
+fis = sugfis('Name', name)
+    A Sugeno system.
+# Examples
+## The tipping problem
+> Service and food, each rated 0 to 10, decide a tip of 0 to 30 per cent.
+fis = mamfis('Name', 'tipper');
+fis = addInput(fis, [0 10], 'Name', 'service');
+fis = addMF(fis, 'service', 'gaussmf', [1.5 0], 'Name', 'poor');
+fis = addMF(fis, 'service', 'gaussmf', [1.5 5], 'Name', 'good');
+fis = addMF(fis, 'service', 'gaussmf', [1.5 10], 'Name', 'excellent');
+fis = addInput(fis, [0 10], 'Name', 'food');
+fis = addMF(fis, 'food', 'trapmf', [-2 0 1 3], 'Name', 'rancid');
+fis = addMF(fis, 'food', 'trapmf', [7 9 10 12], 'Name', 'delicious');
+fis = addOutput(fis, [0 30], 'Name', 'tip');
+fis = addMF(fis, 'tip', 'trimf', [0 5 10], 'Name', 'cheap');
+fis = addMF(fis, 'tip', 'trimf', [10 15 20], 'Name', 'average');
+fis = addMF(fis, 'tip', 'trimf', [20 25 30], 'Name', 'generous');
+fis = addRule(fis, ["If service is poor or food is rancid then tip is cheap"
+                    "If service is good then tip is average"
+                    "If service is excellent or food is delicious then tip is generous"]);
+evalfis(fis, [3 8; 5 5; 9 9])
+gensurf(fis)
+## A Sugeno system of two straight lines
+> Below 5 the output follows 2x, above it 20 - 2x; between, the rules blend them.
+s = sugfis;
+s = addInput(s, [0 10], 'Name', 'x');
+s = addMF(s, 'x', 'zmf', [3 7], 'Name', 'low');
+s = addMF(s, 'x', 'smf', [3 7], 'Name', 'high');
+s = addOutput(s, [0 20], 'Name', 'y');
+s = addMF(s, 'y', 'linear', [2 0], 'Name', 'rising');
+s = addMF(s, 'y', 'linear', [-2 20], 'Name', 'falling');
+s = addRule(s, ["If x is low then y is rising"; "If x is high then y is falling"]);
+x = (0:0.25:10)';
+plot(x, evalfis(s, x)), xlabel('x'), ylabel('y')
+# See also
+addInput addMF addRule evalfis gensurf
+
+@ newfis, addvar, addmf, addrule
+The older way of building a fuzzy system: by positions and matrices.
+
+`newfis` makes an empty Mamdani (or `'sugeno'`) system, `addvar` adds an input or output variable, `addmf` a membership function to the variable at an index, and `addrule` rules as a matrix: a row per rule holding each input's membership function index (0 for none, negative for not), each output's, the weight, and 1 for and or 2 for or. The systems are the same as `mamfis` and `sugfis` make.
+
+# Syntax
+fis = newfis(name)
+    An empty Mamdani system.
+fis = newfis(name, 'sugeno')
+    An empty Sugeno system.
+fis = addvar(fis, 'input', name, [min max])
+    A variable.
+fis = addmf(fis, 'input', varIndex, mfName, type, params)
+    A membership function.
+fis = addrule(fis, ruleMatrix)
+    Rules as a matrix.
+# Examples
+## A heater by indices
+fis = newfis('heater');
+fis = addvar(fis, 'input', 'temp', [0 30]);
+fis = addmf(fis, 'input', 1, 'cold', 'trapmf', [0 0 10 18]);
+fis = addmf(fis, 'input', 1, 'warm', 'trapmf', [14 22 30 30]);
+fis = addvar(fis, 'output', 'power', [0 100]);
+fis = addmf(fis, 'output', 1, 'low', 'trimf', [0 0 50]);
+fis = addmf(fis, 'output', 1, 'high', 'trimf', [50 100 100]);
+fis = addrule(fis, [1 2 1 1; 2 1 1 1]);
+showrule(fis)
+evalfis(fis, [5; 16; 25])
+# See also
+mamfis addInput addRule
+
+@ addInput, addOutput, removeInput, removeOutput
+Input and output variables added to a fuzzy system, or removed.
+
+A variable has a name and a range; `'NumMFs'` and `'MFType'` give it evenly spread membership functions at once (named mf1, mf2, ...). Removing a variable removes the rules' parts that name it.
+
+# Syntax
+fis = addInput(fis, [min max], 'Name', name)
+    An input.
+fis = addInput(fis, [min max], 'Name', name, 'NumMFs', n, 'MFType', type)
+    With membership functions.
+fis = addOutput(fis, [min max], 'Name', name)
+    An output.
+fis = removeInput(fis, name)
+    An input removed.
+fis = removeOutput(fis, name)
+    An output removed.
+# Examples
+## Variables with membership functions made for them
+fis = mamfis;
+fis = addInput(fis, [0 1], 'Name', 'level', 'NumMFs', 3, 'MFType', 'trimf');
+fis = addInput(fis, [0 5], 'Name', 'rate');
+fis = addOutput(fis, [0 100], 'Name', 'valve');
+{fis.Inputs.Name}
+{fis.Inputs(1).MembershipFunctions.Name}
+fis.Inputs(1).MembershipFunctions(2).Parameters
+fis = removeInput(fis, 'rate');
+numel(fis.Inputs)
+# See also
+addMF mamfis plotmf
+
+@ addMF, removeMF, fismf
+Membership functions added to a variable, removed, and made on their own.
+
+`addMF` adds a membership function of a type (`trimf`, `gaussmf`, `trapmf` ...) and parameters to the variable named, an input unless `'VariableType'` says `'output'`. A Sugeno output's are `'constant'` (one parameter) or `'linear'` (a coefficient for each input, then a constant). `removeMF` removes one by name. `fismf` makes a membership function object, which `evalmf` evaluates.
+
+# Syntax
+fis = addMF(fis, varName, type, params, 'Name', mfName)
+    Added to an input (or an output of that name).
+fis = addMF(..., 'VariableType', 'output')
+    Added to an output.
+fis = removeMF(fis, varName, mfName)
+    Removed.
+mf = fismf(type, params, 'Name', name)
+    One on its own.
+# Examples
+## Shapes on a variable
+fis = mamfis;
+fis = addInput(fis, [0 10], 'Name', 'x');
+fis = addMF(fis, 'x', 'trapmf', [-1 0 2 4], 'Name', 'low');
+fis = addMF(fis, 'x', 'gbellmf', [2 3 5], 'Name', 'mid');
+fis = addMF(fis, 'x', 'sigmf', [2 7], 'Name', 'high');
+plotmf(fis, 'input', 1)
+mf = fismf('gaussmf', [1 5], 'Name', 'around5');
+evalmf(mf, [4 5 6])
+# See also
+addInput evalmf plotmf trimf
+
+@ addRule, showrule
+Rules added to a fuzzy system, and shown as text.
+
+Rules are text, `"If service is poor or food is rancid then tip is cheap"` (with `not` before a name, and a weight in brackets at the end), or `"service==poor | food==rancid => tip=cheap (1)"`, or rows of a matrix as `addrule` takes them. `showrule` gives them back as sentences (`'verbose'`), as symbols (`'symbolic'`) or as indices (`'indexed'`).
+
+# Syntax
+fis = addRule(fis, rules)
+    Rules as text, or a matrix.
+showrule(fis)
+    The rules, as sentences.
+rules = showrule(fis, indices, format)
+    Some of them, in a format.
+# Examples
+## Rules three ways
+fis = mamfis('NumInputs', 1, 'NumInputMFs', 2, 'NumOutputs', 1, 'NumOutputMFs', 2, 'AddRules', 'none');
+fis = addRule(fis, ["If input1 is mf1 then output1 is mf2 (0.5)"
+                    "If input1 is not mf1 then output1 is mf1"]);
+showrule(fis)
+showrule(fis, 1:2, 'symbolic')
+showrule(fis, 1:2, 'indexed')
+# See also
+mamfis evalfis addrule
+
+@ evalfis, evalfisOptions
+A fuzzy system evaluated, with what happens on the way.
+
+A row of inputs for each evaluation gives a row of outputs. Inputs outside their ranges are held at the ends, with a warning, and a Mamdani output no rule fires takes the middle of its range. The further outputs give each input's membership values in each rule, each rule's output, the aggregated output fuzzy sets, and how strongly each rule fires. `evalfisOptions` sets the number of points the output ranges are sampled at (101), and the values used when no rule fires.
+
+# Syntax
+output = evalfis(fis, input)
+    The outputs.
+[output, fuzzifiedIn, ruleOut, aggregatedOut, ruleFiring] = evalfis(fis, input, options)
+    And the steps.
+opt = evalfisOptions('NumSamplePoints', n)
+    Options.
+# Examples
+## How strongly each rule fires
+fis = mamfis;
+fis = addInput(fis, [0 10], 'Name', 'x');
+fis = addMF(fis, 'x', 'trimf', [0 0 10], 'Name', 'low');
+fis = addMF(fis, 'x', 'trimf', [0 10 10], 'Name', 'high');
+fis = addOutput(fis, [0 1], 'Name', 'y');
+fis = addMF(fis, 'y', 'trimf', [0 0 1], 'Name', 'small');
+fis = addMF(fis, 'y', 'trimf', [0 1 1], 'Name', 'large');
+fis = addRule(fis, ["If x is low then y is small"; "If x is high then y is large"]);
+[y, ~, ~, agg, fire] = evalfis(fis, 3, evalfisOptions('NumSamplePoints', 201));
+y
+fire'
+plot(linspace(0, 1, 201), agg), ylim([0 1]), xlabel('y'), ylabel('aggregated membership')
+# See also
+mamfis defuzz gensurf
+
+@ evalmf, defuzz
+A membership function's values, and a fuzzy set made crisp.
+
+`evalmf` evaluates a membership function object (from `fismf`, or a system's), or a type with its parameters, at x. `defuzz` makes a fuzzy set (x and its membership values) one number: `'centroid'` (the centre of its area), `'bisector'` (the x halving its area), `'mom'` (the mean of the x where it is largest), and `'lom'` and `'som'` (the largest and smallest of those, by magnitude).
+
+# Syntax
+y = evalmf(mf, x)
+    An object's values.
+y = evalmf(x, params, type)
+    A type's.
+out = defuzz(x, mf, type)
+    Made crisp.
+# Examples
+## One fuzzy set, five crisp values
+x = 0:0.1:10;
+m = max(0.5*trimf(x, [0 3 6]), trapmf(x, [4 6 8 10]));
+methods = {'centroid', 'bisector', 'mom', 'som', 'lom'};
+v = cellfun(@(t) defuzz(x, m, t), methods)
+plot(x, m), ylim([0 1.1]), xline(v(1), '--', 'centroid')
+evalmf(0:2:10, [2 5], 'gaussmf')
+# See also
+evalfis trimf fismf
+
+@ plotmf, gensurf
+A variable's membership functions drawn, and a system's output surface.
+
+`plotmf` draws the membership functions of an input or output, each labelled with its name (with outputs, x and y instead). `gensurf` draws the output over a grid of two inputs (15 points a side unless given), the others at the middles of their ranges, or a curve for one input; with outputs, it gives the grid and the values.
+
+# Syntax
+plotmf(fis, 'input', k)
+    An input's membership functions.
+[x, y] = plotmf(fis, 'input', k, n)
+    Their values at n points.
+gensurf(fis)
+    The output over the first two inputs.
+[X, Y, Z] = gensurf(fis, [i j], k, n)
+    Over inputs i and j, output k, n points a side.
+# Examples
+## Membership functions made for an input, and a one-input curve
+> Low gives high, middle gives middle, high gives low: the output falls as the input rises.
+fis = mamfis('NumInputs', 1, 'NumInputMFs', 3, 'NumOutputs', 1, 'NumOutputMFs', 3, 'AddRules', 'none');
+fis = addRule(fis, [1 3 1 1; 2 2 1 1; 3 1 1 1]);
+subplot(1, 2, 1), plotmf(fis, 'input', 1)
+subplot(1, 2, 2), gensurf(fis)
+[x, y] = plotmf(fis, 'input', 1, 5);
+y
+# See also
+evalfis mamfis
+
+@ readfis, writefis
+Fuzzy systems read from .fis files and written to them.
+
+The .fis format is text: a `[System]` part with the methods, an `[Input]` and `[Output]` part for each variable with its range and membership functions, and `[Rules]` as rows of indices.
+
+# Syntax
+fis = readfis(filename)
+    Read.
+writefis(fis, filename)
+    Written.
+# Examples
+## A system to a file and back
+fis = mamfis('Name', 'fan', 'NumInputs', 1, 'NumInputMFs', 2, 'NumOutputs', 1, 'NumOutputMFs', 2, 'AddRules', 'allcombinations');
+writefis(fis, 'fan.fis');
+type fan.fis
+g = readfis('fan.fis');
+[evalfis(fis, 0.3) evalfis(g, 0.3)]
+# See also
+mamfis
+
+@ trimf, trapmf
+Triangular and trapezoidal membership functions.
+
+`trimf` rises from 0 at a to 1 at b and falls to 0 at c; `trapmf` is 1 from b to c, with straight lines to 0 at a and d. Shoulders at a range's end come from a = b or c = d, or points beyond the range.
+
+# Syntax
+y = trimf(x, [a b c])
+    A triangle.
+y = trapmf(x, [a b c d])
+    A trapezoid.
+# Examples
+## A triangle and a trapezoid
+x = linspace(0, 10, 201);
+plot(x, trimf(x, [2 4 6]), x, trapmf(x, [5 7 8 10])), ylim([0 1.1])
+legend('trimf [2 4 6]', 'trapmf [5 7 8 10]')
+trimf([2 3 4 5], [2 4 6])
+# See also
+gaussmf pimf evalmf
+
+@ gaussmf, gauss2mf, gbellmf
+Gaussian, two-sided Gaussian and generalized bell membership functions.
+
+`gaussmf` is exp(-(x - c)^2/(2 sigma^2)); `gauss2mf` is one Gaussian's left side below c1, 1 from c1 to c2, and another's right side above c2; `gbellmf` is 1/(1 + |(x - c)/a|^(2b)), a bell whose half-width is a and whose sides grow steeper with b.
+
+# Syntax
+y = gaussmf(x, [sigma c])
+    A Gaussian.
+y = gauss2mf(x, [sig1 c1 sig2 c2])
+    Two Gaussian sides.
+y = gbellmf(x, [a b c])
+    A bell.
+# Examples
+## Three smooth shapes
+x = linspace(0, 10, 201);
+plot(x, gaussmf(x, [1 2]), x, gauss2mf(x, [0.5 4 1.5 6]), x, gbellmf(x, [1 3 8])), ylim([0 1.1])
+legend('gaussmf', 'gauss2mf', 'gbellmf')
+gbellmf([7 8 9], [1 3 8])
+# See also
+trimf sigmf evalmf
+
+@ sigmf, dsigmf, psigmf
+Sigmoidal membership functions, and their difference and product.
+
+`sigmf` is 1/(1 + exp(-a(x - c))): rising through 1/2 at c when a > 0, falling when a < 0. `dsigmf` is the absolute difference of two, `psigmf` their product: both make a smooth hump between c1 and c2.
+
+# Syntax
+y = sigmf(x, [a c])
+    A sigmoid.
+y = dsigmf(x, [a1 c1 a2 c2])
+    The difference of two.
+y = psigmf(x, [a1 c1 a2 c2])
+    The product of two.
+# Examples
+## A step and two humps
+x = linspace(0, 10, 201);
+plot(x, sigmf(x, [2 3]), x, dsigmf(x, [5 4 5 7]), x, psigmf(x, [3 6 -3 9])), ylim([0 1.1])
+legend('sigmf', 'dsigmf', 'psigmf')
+sigmf(3, [2 3])
+# See also
+smf gaussmf
+
+@ smf, zmf, pimf, linsmf, linzmf
+S-, Z- and pi-shaped membership functions, curved or straight.
+
+`smf` is 0 below a and 1 above b, two parabolas between; `zmf` is 1 - smf; `pimf` is smf(a, b) times zmf(c, d), a flat-topped hump. `linsmf` and `linzmf` are the same with a straight line between a and b.
+
+# Syntax
+y = smf(x, [a b])
+    S-shaped.
+y = zmf(x, [a b])
+    Z-shaped.
+y = pimf(x, [a b c d])
+    Pi-shaped.
+y = linsmf(x, [a b])
+    S-shaped, straight.
+y = linzmf(x, [a b])
+    Z-shaped, straight.
+# Examples
+## Curved and straight
+x = linspace(0, 10, 201);
+plot(x, smf(x, [1 4]), x, linsmf(x, [1 4]), '--', x, pimf(x, [4 6 7 9]), x, zmf(x, [6 9])), ylim([0 1.1])
+legend('smf', 'linsmf', 'pimf', 'zmf')
+[smf(2.5, [1 4]) linsmf(2.5, [1 4]) zmf(2.5, [1 4])]
+# See also
+sigmf trapmf

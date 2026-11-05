@@ -213,6 +213,11 @@ W, _ = run(BUILD + "f2 = fis; f2.Inputs(1).MembershipFunctions(2).Parameters = [
            "f2.Inputs(2).Name = 'meal'; nm = f2.Inputs(2).Name; f2.Rules(2).Weight = 0.3; w = f2.Rules(2).Weight; t = evalfis(f2, [3 8]);")
 near('nested assignment changes the copy only', (W['p1'], W['p2'], W['w']), ([[1.5, 5]], [[2, 5]], 0.3))
 C('nested assignment: a variable renamed', text(W['nm']) == 'meal')
+W, _ = run(BUILD + "names = {fis.Inputs.Name}; r = [fis.Inputs.Range]; mfs = {fis.Inputs(1).MembershipFunctions.Name}; n1 = numel(names);")
+C('a row of variables or membership functions gives a value for each: {fis.Inputs.Name}, [fis.Inputs.Range]',
+  [text(v) for v in W['names'].items()] == ['service', 'food'] and [text(v) for v in W['mfs'].items()] == ['poor', 'good', 'excellent'],
+  (W['names'], W['mfs']))
+near('... ranges side by side', W['r'], [[0, 10, 0, 10]])
 W, _ = run(BUILD + "f = removeMF(fis, 'food', 'rancid'); a1 = f.Rules(1).Antecedent; a3 = f.Rules(3).Antecedent; f = removeInput(fis, 'food'); n = numel(f.Inputs); a = f.Rules(1).Antecedent;")
 near('removeMF: the rules that used it lose the clause; removeInput: its column', (W['a1'], W['a3'], W['n'], W['a']), ([[1, 0]], [[3, 0]], 1, [[1]]))
 W, _ = run(BUILD + "writefis(fis, 'tipper'); f = readfis('tipper.fis'); t = evalfis(fis, [3 8; 6 4]); t2 = evalfis(f, [3 8; 6 4]); s = fileread('tipper.fis');")
@@ -231,6 +236,9 @@ W, _ = run(BUILD + "[X, Y, Z] = gensurf(fis, [1 2], 1, 5); z = evalfis(fis, [X(2
 near('gensurf: evalfis over the grid', a(W['Z'])[1, 2], W['z'], 1e-12)
 near('plotmf: the membership values', a(W['ym'])[:, 1], np.exp(-(np.linspace(0, 10, 11) - 5) ** 2 / (2 * 1.5 ** 2)), 1e-12)
 near("defuzz: centroid; 'som' the smallest maximizer by magnitude", (W['dz'], W['dm']), (3.0, -3.0))
+W, _ = run("close all; f = mamfis; f = addInput(f, [0 10], 'Name', 'x'); f = addMF(f, 'x', 'trapmf', [-1 0 2 4], 'Name', 'low'); "
+           "f = addMF(f, 'x', 'trimf', [3 6 9], 'Name', 'mid'); plotmf(f, 'input', 1); t = findobj(gca, 'Type', 'text'); xs = sort(arrayfun(@(h) h.Position(1), t))';")
+near("plotmf: each name over the middle of its function's top (a trapezoid's flat top)", W['xs'], [[1, 6]], 1e-9)
 
 # ---- refusals -------------------------------------------------------------------------------------------------------------------
 

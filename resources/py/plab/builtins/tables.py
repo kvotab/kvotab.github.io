@@ -700,12 +700,14 @@ class TimeTable(Table):
         k = t.key().reshape(-1)
         d['StartTime'] = _take_rows(t, [0]) if self.n else t
         steps = np.diff(k)
+        # the step shown as the row times are, when they are durations (0.1 sec, not 00:00:00)
+        fmt = t.fmt if isinstance(t, Duration) else 'hh:mm:ss'
         if steps.size and np.allclose(steps, steps[0]):
             d['SampleRate'] = 1.0 / float(steps[0]) if steps[0] else math.nan
-            d['TimeStep'] = Duration(np.array([[float(steps[0])]]))
+            d['TimeStep'] = Duration(np.array([[float(steps[0])]]), fmt)
         else:
             d['SampleRate'] = math.nan
-            d['TimeStep'] = Duration(np.array([[np.nan]]))
+            d['TimeStep'] = Duration(np.array([[np.nan]]), fmt)
         return d
 
     def row_values(self):

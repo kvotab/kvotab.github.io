@@ -1,0 +1,180 @@
+@ table
+Columns of data of any class (variables), one row per observation, each variable with a name.
+
+A table holds variables of the same height side by side: numbers, text, datetimes, categoricals, even matrices or other tables. Variables are named after the variables given (else `Var1`, `Var2`, ...). `T.Name` is a variable; `T(rows, vars)` is a smaller table and `T{rows, vars}` the data put together, where rows and vars are numbers, masks, `:` or names. `T.Name = x` adds a variable, `T(rows, :) = []` deletes rows, `T(end+1, :) = {v1, ..., vN}` adds one, and `[T1; T2]` and `[T1, T2]` put tables together. `T.Properties` holds the variable names, row names, units, descriptions and the table's description, each set by assignment.
+
+# Syntax
+T = table(var1, ..., varN)
+    Variables named after the inputs.
+T = table(..., 'VariableNames', names, 'RowNames', rownames)
+    Named.
+T = table('Size', [n m], 'VariableTypes', types)
+    Of a size, its variables of these types.
+# Examples
+## A table made, read and grown
+Name = ["Ada"; "Alan"; "Grace"];
+Born = [1815; 1912; 1906];
+Field = categorical({'maths'; 'maths'; 'computing'});
+T = table(Name, Born, Field)
+T.Born'
+T(T.Born > 1900, :)
+T.Age = 2026 - T.Born;
+T{2, 'Age'}
+T(end + 1, :) = {"Edsger", 1930, categorical({'computing'}), 96}
+## Row names, units and an empty table to fill
+S = table([2.1; 3.4], [12; 15], 'VariableNames', {'Depth', 'Temp'}, 'RowNames', {'north', 'south'});
+S.Properties.VariableUnits = {'m', 'degC'};
+S('south', :)
+S.Properties.RowNames'
+E = table('Size', [2 2], 'VariableTypes', {'double', 'string'}, 'VariableNames', {'x', 'label'})
+# See also
+timetable readtable array2table summary
+
+@ istable, istimetable, istabular
+Tests for tables and timetables.
+
+`istable` is true for a table, `istimetable` for a timetable, `istabular` for either.
+
+# Syntax
+tf = istable(T)
+    True for a table.
+tf = istimetable(T)
+    True for a timetable.
+tf = istabular(T)
+    True for either.
+# Examples
+## A table, a timetable, a matrix
+T = table([1; 2]);
+TT = timetable(seconds([0; 1]), [1; 2]);
+[istable(T), istable(TT), istimetable(TT), istabular(TT), istabular(magic(2))]
+# See also
+table timetable
+
+@ height, width, head, tail
+A table's numbers of rows and variables; its first and last rows.
+
+`height` is the number of rows (of an array, `size(A, 1)`), `width` the number of variables (of an array, `size(A, 2)`); a variable of several columns counts once. `head` and `tail` give the first or last k rows (8 unless given), to look at a long table.
+
+# Syntax
+n = height(T)
+    Rows.
+n = width(T)
+    Variables.
+T2 = head(T, k)
+    The first k rows.
+T2 = tail(T, k)
+    The last k rows.
+# Examples
+## A long table looked at
+T = table((1:100)', sqrt((1:100)'), 'VariableNames', {'n', 'root'});
+[height(T) width(T)]
+head(T, 3)
+tail(T, 2)
+# See also
+size numel table
+
+@ vartype
+Picks a table's variables of a type.
+
+Used as the variable index, `T(:, vartype(type))` keeps the variables of that type: `'numeric'` (numbers of any class), `'cellstr'`, or a class name such as `'logical'`, `'string'`, `'datetime'` or `'categorical'`.
+
+# Syntax
+s = vartype(type)
+    The selector.
+# Examples
+## Only the numbers
+T = table(["a"; "b"], [1; 2], int8([3; 4]), [true; false], 'VariableNames', {'id', 'x', 'k', 'ok'});
+T(:, vartype('numeric'))
+T(:, vartype('logical'))
+# See also
+table removevars convertvars
+
+@ table2array, table2cell, table2struct, struct2table, cell2table, array2table
+Tables made from arrays, cells and structs, and turned back into them.
+
+`table2array` puts the variables together as one array (they must go together: numbers with numbers, text with text); `table2cell` gives a cell for each row and variable; `table2struct` a struct for each row, or one struct of variables (`'ToScalar'`). `array2table` makes each column of a matrix a variable, `cell2table` each column of a cell array (numbers becoming numeric variables), and `struct2table` each field of a struct array.
+
+# Syntax
+A = table2array(T)
+    One array.
+C = table2cell(T)
+    A cell array.
+S = table2struct(T)
+    A struct array, one element per row.
+S = table2struct(T, 'ToScalar', true)
+    One struct of variables.
+T = struct2table(S)
+    From a struct array.
+T = cell2table(C, 'VariableNames', names)
+    From a cell array.
+T = array2table(A, 'VariableNames', names, 'RowNames', rownames)
+    From a matrix.
+# Examples
+## There and back
+T = array2table([1 2; 3 4; 5 6], 'VariableNames', {'x', 'y'})
+table2array(T)'
+S = table2struct(T);
+S(2)
+C = {'pump', 4.5; 'valve', 0.8};
+U = cell2table(C, 'VariableNames', {'Part', 'Mass'})
+table2cell(U)
+s = struct('a', {1, 2}, 'b', {'p', 'q'});
+struct2table(s)
+# See also
+table splitvars
+
+@ addvars, removevars, movevars, renamevars
+Variables added, removed, moved and renamed.
+
+Each gives a new table. `addvars` adds variables at the end, or before or after one (named after the inputs, or `'NewVariableNames'`); `removevars` removes them; `movevars` moves them before or after one (to the end with neither); `renamevars` renames them. Variables are named, given by position, or picked by a mask or `vartype`.
+
+# Syntax
+T2 = addvars(T, var1, ..., varN)
+    Added at the end.
+T2 = addvars(..., 'Before', var)
+    Added before one.
+T2 = addvars(..., 'NewVariableNames', names)
+    Named.
+T2 = removevars(T, vars)
+    Removed.
+T2 = movevars(T, vars, 'Before', var)
+    Moved.
+T2 = renamevars(T, vars, newnames)
+    Renamed.
+# Examples
+## Rearranging a table
+T = table([1; 2], [3; 4], 'VariableNames', {'a', 'b'});
+T = addvars(T, [10; 20], 'Before', 'a', 'NewVariableNames', 'id')
+T = movevars(T, 'b', 'After', 'id');
+T = renamevars(T, {'a', 'b'}, {'first', 'second'});
+T = removevars(T, 'id')
+# See also
+table splitvars convertvars
+
+@ splitvars, mergevars, rows2vars, convertvars
+Variables split and merged, a table turned, and variables converted.
+
+`splitvars` makes each variable of several columns (or a table inside a table) one variable per column, named after it; `mergevars` puts variables together as one, where the first stood; `rows2vars` turns the table so that its rows become variables (the old names in `OriginalVariableNames`); `convertvars` converts variables to a type (`'double'`, `'string'`, `'categorical'`, `'datetime'` and the like) or through a function.
+
+# Syntax
+T2 = splitvars(T, vars)
+    Split into columns.
+T2 = mergevars(T, vars, 'NewVariableName', name)
+    Merged into one.
+T2 = rows2vars(T)
+    Turned.
+T2 = convertvars(T, vars, type)
+    Converted.
+# Examples
+## Coordinates merged and split
+T = table([1; 2], [10; 20], [5; 6], 'VariableNames', {'id', 'x', 'y'});
+M = mergevars(T, {'x', 'y'}, 'NewVariableName', 'pos')
+splitvars(M)
+## Turned, and text made categorical
+R = table([1; 2], [3; 4], 'VariableNames', {'a', 'b'}, 'RowNames', {'r1', 'r2'});
+rows2vars(R)
+C = table({'on'; 'off'; 'on'}, [1; 2; 3], 'VariableNames', {'state', 'v'});
+C = convertvars(C, 'state', 'categorical');
+class(C.state)
+# See also
+table addvars stack

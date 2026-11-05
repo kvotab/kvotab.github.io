@@ -194,6 +194,12 @@ near('resid: the autocorrelation of the one-step errors and the 99% bound', (a(W
      (np.array([ec[:N - k] @ ec[k:] for k in range(4)]) / (ec @ ec), 2.576 / math.sqrt(N)), 1e-10)
 C('resid: white residuals of the right model stay inside the bounds', np.mean(np.abs(a(W['ac']).reshape(-1)[1:]) < W['b']) > 0.9 and np.mean(np.abs(a(W['xc'])) < W['b']) > 0.9)
 C('compare without outputs: measured and simulated drawn', W['nh'] == 2.0, str(W['nh']))
+W, _ = run(f"d = {DATA(y_arx)}; m1 = arx(d, [1 1 1]); m2 = arx(d, [2 2 1]); figure; compare(d, m1, m2); L1 = findobj(gcf, 'Type', 'legend'); s1 = L1.String;\n"
+           "figure; compare(d, arx(d, [2 2 1]), m1); L2 = findobj(gcf, 'Type', 'legend'); s2 = L2.String; tx = evalc('m3 = tfest(d, 2)');")
+C("compare's legend: each model by its variable's name, 'Model k' for an expression",
+  [text(v).split(':')[0] for v in W['s1'].items()] == ['Measured', 'm1', 'm2'] and [text(v).split(':')[0] for v in W['s2'].items()] == ['Measured', 'Model 1', 'm1'],
+  (W['s1'], W['s2']))
+C('an identified transfer function shows one closing line, its own', 'Continuous-time identified transfer function.' in text(W['tx']) and 'Continuous-time transfer function.' not in text(W['tx']), text(W['tx']))
 W, _ = run(f"d = {DATA(y_arx)}; m = arx(d, [2 2 1]); m2 = arx(d, [4 4 1]); v = aic(m, m2); f = fpe(m); r = m.Report.Fit; [n, dd] = tfdata(m, 'v'); y = step(m, 1); [mag] = bode(m, 1);")
 rf = W['r']
 near('aic and fpe: from the fit report', (a(W['v'])[0, 0], W['f']), (rf.get1('AIC'), rf.get1('FPE')), 1e-12)

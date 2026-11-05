@@ -1,0 +1,303 @@
+@ timetable
+A table whose rows are points in time.
+
+Each row has a time, a datetime or a duration: given as a vector, or made regular from a sample rate or a time step (from a start time, 0 seconds unless given). `TT.Time` (or the first dimension's name) holds the times; `TT(t, :)` picks rows by their times and `TT(timerange(t1, t2), :)` the rows between two. `retime`, `synchronize` and `lag` work on the times; anything a table does, a timetable does too. `TT.Properties` also has `RowTimes`, `StartTime`, `SampleRate` and `TimeStep`.
+
+# Syntax
+TT = timetable(rowTimes, var1, ..., varN)
+    Rows at the times given.
+TT = timetable(var1, ..., varN, 'RowTimes', rowTimes)
+    The same.
+TT = timetable(var1, ..., varN, 'SampleRate', fs)
+    Regular, fs rows a second.
+TT = timetable(var1, ..., varN, 'TimeStep', dt, 'StartTime', t0)
+    Regular, a step apart.
+# Examples
+## Readings at their times
+Time = datetime(2026, 11, 5, [8; 9; 10; 12], 0, 0);
+Temp = [4.1; 5.3; 6.0; 7.2];
+TT = timetable(Time, Temp)
+TT(datetime(2026, 11, 5, 9, 0, 0), :)
+TT.Time(end) - TT.Time(1)
+## A regular signal
+S = timetable(sin((0:4)'), 'SampleRate', 10)
+S.Properties.TimeStep
+# See also
+table retime timerange synchronize
+
+@ timerange
+The rows of a timetable between two times.
+
+Used as the row index, `TT(timerange(t1, t2), :)` keeps the rows from t1 up to but not including t2; `'closed'`, `'open'` and `'openleft'` include or leave out the ends otherwise. The times are datetimes or durations, as the row times are.
+
+# Syntax
+r = timerange(t1, t2)
+    From t1 up to t2.
+r = timerange(t1, t2, intervalType)
+    With the ends included or left out.
+# Examples
+## A morning's readings
+TT = timetable(datetime(2026, 11, 5, 6:2:14, 0, 0)', (1:5)', 'VariableNames', {'Count'});
+TT(timerange(datetime(2026, 11, 5, 8, 0, 0), datetime(2026, 11, 5, 12, 0, 0)), :)
+TT(timerange(datetime(2026, 11, 5, 8, 0, 0), datetime(2026, 11, 5, 12, 0, 0), 'closed'), :)
+# See also
+timetable isbetween
+
+@ table2timetable, timetable2table, array2timetable
+Timetables from tables and matrices, and back to tables.
+
+`table2timetable` takes the first datetime or duration variable as the row times (or the variable or times named by `'RowTimes'`); `timetable2table` makes the row times the first variable again; `array2timetable` makes each column of a matrix a variable, at the times given or regular ones.
+
+# Syntax
+TT = table2timetable(T)
+    The first time variable as row times.
+TT = table2timetable(T, 'RowTimes', times)
+    The times given.
+T = timetable2table(TT)
+    The row times a variable.
+TT = array2timetable(X, 'RowTimes', rowTimes)
+    From a matrix.
+TT = array2timetable(X, 'TimeStep', dt, 'StartTime', t0)
+    Regular.
+# Examples
+## A log becoming a timetable
+T = table(datetime(2026, 11, [3; 4; 5]), [12; 15; 11], 'VariableNames', {'Day', 'Visits'});
+TT = table2timetable(T)
+timetable2table(TT)
+A = array2timetable([1 2; 3 4; 5 6], 'TimeStep', minutes(15), 'VariableNames', {'In', 'Out'})
+# See also
+timetable table
+
+@ retime, synchronize
+Timetables at new row times: filled in, or put together over intervals; and several side by side at common times.
+
+`retime` takes a timetable to new times: a vector, a regular step (`'hourly'`, `'daily'` and the like, or `'regular'` with `'TimeStep'` or `'SampleRate'`). Each new time either takes a value filled in (`'fillwithmissing'`, `'previous'`, `'nearest'`, `'linear'`, `'spline'` ...) or puts together the rows from it up to the next (`'mean'`, `'sum'`, `'max'`, `'count'`, a function ...). `synchronize` puts timetables side by side at the union of their times (or `'intersection'`, `'first'`, a step), each filled or put together the same way.
+
+# Syntax
+TT2 = retime(TT, newTimes, method)
+    At the times given.
+TT2 = retime(TT, timeStep, method)
+    At a regular step.
+TT2 = retime(TT, 'regular', method, 'TimeStep', dt)
+    At a step of a duration.
+TT = synchronize(TT1, TT2, newTimeBasis, method)
+    Side by side.
+# Examples
+## Hourly means of uneven readings, and gaps filled in
+t = datetime(2026, 11, 5, 0, [0 20 50 70 130 150], 0)';
+TT = timetable(t, [1; 3; 2; 6; 4; 8], 'VariableNames', {'x'});
+retime(TT, 'hourly', 'mean')
+retime(TT, 'regular', 'linear', 'TimeStep', minutes(30))
+## Two sensors on one clock
+A = timetable(seconds([0; 2; 4]), [1; 2; 3], 'VariableNames', {'a'});
+B = timetable(seconds([1; 2; 3]), [10; 20; 30], 'VariableNames', {'b'});
+synchronize(A, B)
+synchronize(A, B, 'intersection')
+synchronize(A, B, 'first', 'previous')
+# See also
+timetable isregular fillmissing
+
+@ isregular, lag
+Whether a timetable's times step evenly, and its data moved by rows.
+
+`isregular` is true when the row times step evenly, giving the step; with a calendar unit (`'months'`, `'days'` ...), when they step by whole units of it. `lag` moves the data n rows later (1 unless given; negative moves earlier), the times staying where they are and missing values where there is nothing.
+
+# Syntax
+[tf, dt] = isregular(TT)
+    Even steps, and the step.
+tf = isregular(TT, unit)
+    Steps of whole calendar units.
+TT2 = lag(TT, n)
+    The data moved n rows later.
+# Examples
+## Monthly values, and last month's beside them
+TT = timetable(datetime(2026, 1:4, 1)', [10; 12; 11; 15], 'VariableNames', {'Sales'});
+isregular(TT)
+isregular(TT, 'months')
+TT.Previous = lag(TT).Sales;
+TT
+# See also
+timetable retime
+
+@ varfun, rowfun
+A function applied to each variable of a table, or to each row.
+
+`varfun` calls the function on each variable (or `'InputVariables'`), giving a table of results named after the function and the variable (`mean_x`); with `'GroupingVariables'`, once per group, with each group's size in `GroupCount`. `rowfun` calls it on each row, the row's variables as its inputs; with grouping variables, once per group with the group's rows. `'OutputFormat'` gives an array (`'uniform'`) or a cell array instead of a table.
+
+# Syntax
+T2 = varfun(fh, T)
+    On each variable.
+T2 = varfun(fh, T, 'InputVariables', vars, 'GroupingVariables', g)
+    On some variables, per group.
+A = varfun(fh, T, 'OutputFormat', 'uniform')
+    As an array.
+T2 = rowfun(fh, T)
+    On each row.
+T2 = rowfun(fh, T, 'InputVariables', vars, 'OutputVariableNames', names)
+    On some variables, the results named.
+# Examples
+## Means of each variable, overall and by site
+T = table(categorical({'A'; 'B'; 'A'; 'B'}), [1; 2; 3; 4], [10; 20; 30; 50], 'VariableNames', {'Site', 'x', 'y'});
+varfun(@mean, T, 'InputVariables', {'x', 'y'})
+varfun(@mean, T, 'GroupingVariables', 'Site')
+## A function of each row
+T = table([1; 2; 4], [10; 30; 60], 'VariableNames', {'x', 'y'});
+rowfun(@(x, y) y/x, T, 'InputVariables', {'x', 'y'}, 'OutputVariableNames', 'ratio')
+# See also
+groupsummary splitapply cellfun
+
+@ groupsummary, groupcounts
+Statistics of a table's variables for each group of rows, and how many rows each group has.
+
+`groupsummary` gives a row per group (sorted), its size in `GroupCount`, and each method of each data variable named `method_variable`: `'mean'`, `'sum'`, `'min'`, `'max'`, `'range'`, `'median'`, `'mode'`, `'var'`, `'std'`, `'nnz'`, `'numel'`, `'nummissing'`, `'all'` or a function; missing values are left out. Without data variables, every numeric variable that does not group. `groupcounts` gives the groups with `GroupCount` and `Percent`; for an array, the counts, the groups and the percentages.
+
+# Syntax
+G = groupsummary(T, groupvars, method, datavars)
+    Statistics per group.
+G = groupcounts(T, groupvars)
+    Counts per group.
+[B, BG, BP] = groupcounts(A)
+    Of an array.
+# Examples
+## Catches by lake and year
+T = table(categorical({'Vättern'; 'Vänern'; 'Vättern'; 'Vänern'; 'Vättern'}), [2025; 2025; 2026; 2026; 2026], [12; 30; 9; 25; 14], ...
+    'VariableNames', {'Lake', 'Year', 'Catch'});
+groupsummary(T, 'Lake', {'mean', 'max'}, 'Catch')
+groupsummary(T, {'Lake', 'Year'}, 'sum', 'Catch')
+groupcounts(T, 'Lake')
+# See also
+varfun pivot grouptransform
+
+@ grouptransform, groupfilter
+Each group's data transformed, and the rows of groups that pass a test.
+
+`grouptransform` replaces each data variable by its transform within each group (`'zscore'`, `'norm'`, `'meancenter'`, `'rescale'`, `'meanfill'`, `'linearfill'`, or a function of a column), or with `'ReplaceValues', false` adds the results as new variables. `groupfilter` keeps the rows of the groups for which a function of the group's column is true (a single value for the whole group, or one for each row).
+
+# Syntax
+G = grouptransform(T, groupvars, method)
+    Transformed in place.
+G = grouptransform(T, groupvars, method, datavars, 'ReplaceValues', false)
+    Added beside.
+G = groupfilter(T, groupvars, method, datavars)
+    The rows of the groups that pass.
+# Examples
+## Centred within each group, and groups big enough
+T = table([1; 1; 1; 2; 2], [3; 5; 7; 10; 20], 'VariableNames', {'g', 'v'});
+grouptransform(T, 'g', 'meancenter', 'v', 'ReplaceValues', false)
+groupfilter(T, 'g', @(v) numel(v) >= 3, 'v')
+# See also
+groupsummary normalize
+
+@ pivot
+A table of a statistic for each row group and column group.
+
+The values of one variable become columns (`'Columns'`), another's the rows (`'Rows'`), and each cell holds a statistic of the rows that fall there: the count (without `'DataVariable'`), or the `'Method'` of the data variable (`'sum'` unless given; `'mean'`, `'max'`, a function ...).
+
+# Syntax
+P = pivot(T, 'Columns', cvar)
+    Counts by column group.
+P = pivot(T, 'Columns', cvar, 'Rows', rvar)
+    By row and column groups.
+P = pivot(T, 'Columns', cvar, 'Rows', rvar, 'DataVariable', dvar, 'Method', m)
+    A statistic of a variable.
+# Examples
+## Sales by region and quarter
+T = table(categorical({'north'; 'south'; 'north'; 'south'; 'north'}), categorical({'Q1'; 'Q1'; 'Q2'; 'Q2'; 'Q2'}), [5; 3; 4; 6; 2], ...
+    'VariableNames', {'Region', 'Quarter', 'Sales'});
+pivot(T, 'Columns', 'Quarter', 'Rows', 'Region', 'DataVariable', 'Sales')
+pivot(T, 'Columns', 'Region')
+# See also
+groupsummary unstack
+
+@ topkrows
+The k rows that sort first.
+
+The k largest rows by the columns (or variables) given, ties broken by the next ones; `'ascend'` for the smallest. The second output gives the rows' places.
+
+# Syntax
+B = topkrows(X, k)
+    The k largest rows of a matrix.
+B = topkrows(X, k, col, direction)
+    By a column, either way.
+[B, I] = topkrows(T, k, vars, direction)
+    Of a table, and where they were.
+# Examples
+## The three highest
+T = table(["Kebnekaise"; "Sarektjåkkå"; "Kaskasatjåkka"; "Akka"], [2097; 2089; 2076; 2015], 'VariableNames', {'Peak', 'Height'});
+[B, I] = topkrows(T, 3, 'Height')
+topkrows([3 1; 2 9; 3 4], 2)
+# See also
+sortrows maxk
+
+@ stack, unstack
+Variables of a table stacked into one, and a variable spread into several.
+
+`stack` makes a row for each row and stacked variable: the other variables repeated, an indicator of which variable (categorical), and its value. `unstack` goes the other way: a row for each group (of the other variables, or `'GroupingVariables'`) and a variable for each value of the indicator; several values in one place are summed (or given to `'AggregationFunction'`), none gives a missing value.
+
+# Syntax
+S = stack(T, vars)
+    Stacked.
+S = stack(T, vars, 'NewDataVariableName', name, 'IndexVariableName', name)
+    The new variables named.
+W = unstack(S, vars, ivar)
+    Spread.
+# Examples
+## Wide to long and back
+W = table(["A"; "B"], [1; 2], [3; 4], 'VariableNames', {'Site', 'y2025', 'y2026'})
+S = stack(W, {'y2025', 'y2026'}, 'NewDataVariableName', 'Value', 'IndexVariableName', 'Year')
+unstack(S, 'Value', 'Year')
+# See also
+pivot rows2vars
+
+@ innerjoin, outerjoin
+Two tables joined by their keys: the matching rows only, or every row with missing values where there is no match.
+
+The keys are the variables of the same name unless given (`'Keys'`, or `'LeftKeys'` and `'RightKeys'`). `innerjoin` keeps the rows whose keys are in both; `outerjoin` keeps all of them (`'Type'` `'full'`, or `'left'` or `'right'` for one side's), the other side's variables missing where nothing matches; `'MergeKeys'` makes each pair of keys one variable. The result is sorted by the keys; the outputs ia and ib say which rows of each input made each row.
+
+# Syntax
+T = innerjoin(A, B, 'Keys', keys)
+    Rows in both.
+T = outerjoin(A, B, 'Type', type, 'MergeKeys', true)
+    Rows in either.
+[T, ia, ib] = innerjoin(...)
+    And where they came from.
+# Examples
+## Orders and customers
+orders = table([1; 2; 3; 4], [10; 11; 10; 12], [250; 90; 40; 75], 'VariableNames', {'Order', 'Customer', 'Amount'});
+customers = table([10; 11; 13], ["Ada"; "Alan"; "Grace"], 'VariableNames', {'Customer', 'Name'});
+innerjoin(orders, customers)
+outerjoin(orders, customers, 'MergeKeys', true)
+# See also
+join synchronize
+
+@ readtable, writetable, writetimetable
+Tables read from text files and spreadsheets, and written to them.
+
+`readtable` reads .csv, .txt and .dat files (and .xlsx spreadsheets): the first row names the variables, and each column becomes numbers, datetimes or text. Options set the delimiter, header lines, row names, sheet and text type. `writetable` writes a table the same way (comma-separated unless `'Delimiter'` says, a spreadsheet for .xlsx), and `writetimetable` a timetable, its row times the first column.
+
+# Syntax
+T = readtable(filename)
+    Read.
+T = readtable(filename, 'Delimiter', d, 'NumHeaderLines', n)
+    With the delimiter and header lines given.
+T = readtable(filename, 'TextType', 'string')
+    Text as strings.
+writetable(T, filename)
+    Written.
+writetable(T, filename, 'Delimiter', d, 'WriteRowNames', true)
+    With options.
+writetimetable(TT, filename)
+    A timetable written.
+# Examples
+## A table to a file and back
+T = table(["pump"; "valve"], [4.5; 0.8], datetime(2026, 11, [3; 5]), 'VariableNames', {'Part', 'Mass', 'Checked'});
+writetable(T, 'parts.csv');
+type parts.csv
+R = readtable('parts.csv', 'TextType', 'string')
+class(R.Checked)
+## A timetable written
+TT = timetable(seconds([0; 1]), [1.5; 2.5], 'VariableNames', {'Level'});
+writetimetable(TT, 'levels.csv');
+type levels.csv
+# See also
+readmatrix writematrix detectImportOptions table

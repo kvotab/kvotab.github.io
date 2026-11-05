@@ -10,6 +10,7 @@ step, bode, lsim and the rest take it. Polynomials are in the delay
 operator q^-1: A(q)y(t) = B(q)/F(q) u(t) + C(q)/D(q) e(t).
 """
 import math
+import sys
 
 import numpy as np
 
@@ -379,7 +380,9 @@ class IdPoly(CT.LTI):
         """A state-space realization of G (for initial states)."""
         num, den = self.data[0][0][0], self.data[1][0][0]
         from scipy.signal import tf2ss
-        A, B, C, D = tf2ss(num, den)
+        # leading zeros off first (a delay's), as SciPy warns of a badly conditioned numerator over any it strips
+        num = np.trim_zeros(np.asarray(num, float), 'f')
+        A, B, C, D = tf2ss(num if num.size else np.zeros(1), den)
         return A, B, C, D
 
 
@@ -913,7 +916,11 @@ class IdTf(CT.LTI):
     def display_lines(self):
         lines = CT._display(self)
         if self.rep:
-            lines += ['', '  Continuous-time identified transfer function.', '  Status:', f'  Estimated using {self.method}.',
+            # an identified model's closing line in place of a transfer function's, then how it was found
+            k = max((i for i, ln in enumerate(lines) if ln.strip() == 'Continuous-time transfer function.'), default=None)
+            if k is not None:
+                lines[k] = 'Continuous-time identified transfer function.'
+            lines += ['', '  Status:', f'  Estimated using {self.method}.',
                       f'  Fit to estimation data: {self.rep["FitPercent"]:.4g}% (simulation focus)',
                       f'  FPE: {self.rep["FPE"]:.4g}, MSE: {self.rep["MSE"]:.4g}']
         return lines
@@ -1008,6 +1015,17 @@ def _ss_sim(A, B, C, D, u, x0):
     return y
 
 
+def _arg_names(fname, positions):
+    """The names of the variables given as these inputs (1 for the first) of fname on the calling line, as inputname
+    reads them: '' for an expression, or where the call cannot be told from the line."""
+    from .core import _plab_frames, _call_arg
+    frames = _plab_frames(sys._getframe(1))
+    if not frames:
+        return [''] * len(positions)
+    mod, _, ln = frames[0]
+    return [_call_arg(mod, ln, fname, k) or '' for k in positions]
+
+
 def _fit_percent(y, yh):
     den = np.linalg.norm(y - y.mean())
     return float(100 * (1 - np.linalg.norm(y - yh) / den)) if den > 0 else np.nan
@@ -1028,6 +1046,7 @@ def compare(nargout, *args):
     models = [a for a in args[1:] if _is_model(a)]
     rest = [a for a in args[1:] if not _is_model(a) and not is_str(a)]
     K = float(num(rest[0])) if rest else math.inf
+    names = _arg_names('compare', [k + 1 for k, a in enumerate(args) if _is_model(a)]) if nargout == 0 else []
     if not models:
         raise err('Ident:compare:NoModels', 'Give one or more identified models.', 'compare')
     ys, fits = [], []
@@ -1043,7 +1062,7 @@ def compare(nargout, *args):
         for yh in ys:
             b('plot', out(t.reshape(-1, 1)), out(yh.reshape(-1, 1)))
         b('hold', Char.of('off'))
-        labels = [Char.of('Measured')] + [Char.of(f'Model {k + 1}: {f:.2f}%') for k, f in enumerate(fits)]
+        labels = [Char.of('Measured')] + [Char.of(f'{names[k] or f"Model {k + 1}"}: {f:.2f}%') for k, f in enumerate(fits)]
         b('legend', *labels)
         b('title', Char.of('Simulated Response Comparison' if math.isinf(K) else f'{int(K)}-Step Predicted Response Comparison'))
         b('xlabel', Char.of(f'Time ({data.unit})'))

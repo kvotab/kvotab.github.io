@@ -396,7 +396,7 @@ B = timetable(datetime(2026,1,1) + days([1; 3]), [10; 30], 'VariableNames', {'v'
 sy = synchronize(A, B); syn = sy.Properties.VariableNames; sya = sy.v_A; syb = sy.v_B;
 si = synchronize(A, B, 'intersection'); nsi = height(si);
 [g1, st1] = isregular(A); st1h = hours(st1); g2 = isregular(TT);
-S = timetable([1; 2; 3], 'SampleRate', 10); ss = seconds(S.Time);
+S = timetable([1; 2; 3], 'SampleRate', 10); ss = seconds(S.Time); sstep = char(S.Properties.TimeStep);
 P = timetable([4; 5], 'TimeStep', minutes(15), 'StartTime', datetime(2026,5,1,8,0,0)); pl = char(P.Time(2));
 pr = P.Properties.TimeStep; prm = minutes(pr); srate = P.Properties.SampleRate;
 T2 = timetable2table(P); t2n = T2.Properties.VariableNames;
@@ -421,6 +421,7 @@ near("synchronize 'intersection'", W['nsi'], 1)
 C('isregular: a daily timetable', W['g1'] is True and abs(float(W['st1h']) - 24) < 1e-12, (W['g1'], W['st1h']))
 C('isregular: an irregular one', W['g2'] is False, W['g2'])
 near("'SampleRate' 10: times 0, 0.1, 0.2 s", W['ss'], [0, 0.1, 0.2], 1e-12)
+same('... its TimeStep shown as the row times are', W['sstep'], '0.1 sec')
 same("'TimeStep' and 'StartTime'", W['pl'], '01-May-2026 08:15:00')
 near('Properties.TimeStep and SampleRate', (W['prm'], W['srate']), [15, 1 / 900], 1e-12)
 same('timetable2table: the times become the first variable', W['t2n'], ['Time', 'Var1'])

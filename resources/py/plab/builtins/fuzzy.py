@@ -334,6 +334,10 @@ class FisArray(Obj):
             return self.items[0].getprop(name)
         raise MError('MATLAB:index:expected_one_output', f'Pick one {self.kind} first, as x(k).{name}.')
 
+    def fld_list(self, name):
+        # x.Name of the row: a value for each, a comma-separated list ({fis.Inputs.Name})
+        return [it.getprop(name) for it in self.items]
+
     def setprop(self, name, value):
         if len(self.items) == 1:
             it = self.items[0].value_copy()
@@ -1074,8 +1078,9 @@ def plotmf(nargout, *args):
     b = lambda name, *a: R._builtin(name, *a)
     b('plot', out(xs.reshape(-1, 1)), out(Y))
     for j, m in enumerate(v.mfs):
-        top = int(np.argmax(Y[:, j]))
-        b('text', float(xs[top]), 1.03, Char.of(m.name), Char.of('HorizontalAlignment'), Char.of('center'))
+        # over the middle of its top (a trapezoid's flat top, not its first point)
+        tops = np.flatnonzero(Y[:, j] >= Y[:, j].max() - 1e-9)
+        b('text', float((xs[tops[0]] + xs[tops[-1]]) / 2), 1.03, Char.of(m.name), Char.of('HorizontalAlignment'), Char.of('center'))
     b('ylim', out(np.array([[0.0, 1.1]])))
     b('xlabel', Char.of(v.name))
     b('ylabel', Char.of('Degree of membership'))
