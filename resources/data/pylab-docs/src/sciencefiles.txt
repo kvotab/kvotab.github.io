@@ -1,0 +1,111 @@
+@ nccreate, ncwrite, ncread
+NetCDF files: variables made, written and read.
+
+NetCDF holds arrays with named dimensions and attributes, the usual format of climate and ocean data. `nccreate` makes a variable (and the file and dimensions when they are not there yet; a length of Inf makes a dimension unlimited), with a data type, format, fill value and compression. `ncwrite` writes values, from a start and with a stride if given; `ncread` reads a variable, or a part of it by start, count and stride. Sizes are in the language's order (the first dimension varying fastest), the reverse of the file's; `scale_factor`, `add_offset` and `_FillValue` are applied on reading and writing.
+
+# Syntax
+nccreate(filename, varname, 'Dimensions', {dname1, length1, ...})
+    A variable.
+nccreate(..., 'Datatype', type, 'Format', format, 'FillValue', v, 'DeflateLevel', k)
+    With its type, format, fill value and compression.
+ncwrite(filename, varname, vardata, start, stride)
+    Values written.
+vardata = ncread(source, varname, start, count, stride)
+    Values read.
+# Examples
+## A grid of temperatures written and read back
+lat = (55:2:69)';
+lon = 10:5:25;
+T = 15 - 0.6*(lat - 55) + 0*lon;
+nccreate('temps.nc', 'T', 'Dimensions', {'lat', numel(lat), 'lon', numel(lon)}, 'Datatype', 'single');
+ncwrite('temps.nc', 'T', T);
+R = ncread('temps.nc', 'T');
+class(R), size(R)
+ncread('temps.nc', 'T', [1 1], [3 2])
+# See also
+ncinfo ncreadatt h5write
+
+@ ncinfo, ncdisp, ncreadatt, ncwriteatt
+What a NetCDF file holds, printed or as a struct; and its attributes read and written.
+
+`ncinfo` gives the file's dimensions, variables, attributes, groups and format (or a variable's), `ncdisp` prints them. Attributes belong to a variable, or to the file itself (location `'/'`): units, long names, history.
+
+# Syntax
+finfo = ncinfo(source)
+    The file.
+vinfo = ncinfo(source, varname)
+    A variable.
+ncdisp(source)
+    Printed.
+attvalue = ncreadatt(source, location, attname)
+    An attribute.
+ncwriteatt(filename, location, attname, attvalue)
+    One written.
+# Examples
+## A variable with units, described
+nccreate('flow.nc', 'Q', 'Dimensions', {'time', 4});
+ncwrite('flow.nc', 'Q', [1.2 1.5 2.1 1.8]);
+ncwriteatt('flow.nc', 'Q', 'units', 'm3/s');
+ncwriteatt('flow.nc', '/', 'title', 'Daily flow');
+ncreadatt('flow.nc', 'Q', 'units')
+info = ncinfo('flow.nc');
+{info.Variables.Name}
+ncdisp('flow.nc')
+# See also
+nccreate ncread
+
+@ parquetwrite, parquetread, parquetinfo
+Tables as Parquet files, and back.
+
+Parquet stores a table by columns, compressed, keeping each column's type: the usual format for large data sets passed between programs. Numbers keep their class, text becomes strings, times datetimes and durations, categories categorical. `parquetread` can read some variables only, or give a timetable; `parquetinfo` describes the file.
+
+# Syntax
+parquetwrite(filename, T)
+    Written.
+parquetwrite(filename, T, 'VariableCompression', c)
+    With another compression.
+T = parquetread(filename)
+    Read.
+T = parquetread(filename, 'SelectedVariableNames', names)
+    Some variables.
+info = parquetinfo(filename)
+    The file described.
+# Examples
+## A table there and back, with its types
+T = table([1; 2; 3], ["Ada"; "Alan"; "Grace"], datetime(2026, 11, 3:5)', 'VariableNames', {'Id', 'Name', 'Date'});
+parquetwrite('people.parquet', T);
+R = parquetread('people.parquet')
+parquetread('people.parquet', 'SelectedVariableNames', {'Name'})
+info = parquetinfo('people.parquet');
+info.VariableNames
+# See also
+writetable readtable
+
+@ fitswrite, fitsread, fitsinfo, fitsdisp
+FITS files, the astronomers' format for images and tables: written, read and described.
+
+`fitswrite` writes an array as an image (its class kept; `'append'` adds an image extension). `fitsread` reads the primary image, or an extension, table, region or raw values; images are scaled by `BSCALE` and `BZERO` to double. `fitsinfo` lists the parts and their header keywords, and `fitsdisp` prints the headers.
+
+# Syntax
+fitswrite(A, filename)
+    An image written.
+fitswrite(A, filename, 'WriteMode', 'append')
+    An extension added.
+data = fitsread(filename)
+    The primary image.
+data = fitsread(filename, 'image', k)
+    An extension.
+info = fitsinfo(filename)
+    The parts.
+fitsdisp(filename)
+    The headers printed.
+# Examples
+## An image and an extension
+fitswrite(uint16(magic(4)), 'sky.fits');
+fitswrite(single(rand(2, 3)), 'sky.fits', 'WriteMode', 'append');
+fitsread('sky.fits')
+size(fitsread('sky.fits', 'image', 1))
+info = fitsinfo('sky.fits');
+info.Contents
+# See also
+imwrite h5write

@@ -202,6 +202,9 @@ def run_example(code, where='?'):
         except Exception as e:  # noqa: BLE001 (any failure is the example's)
             raise DocError(f'{where}: the example failed: {type(e).__name__}: {e}\n{R.take_output()}') from None
         text = R.take_output()
+        # the example's folder as the page's own home folder: no path of the machine the pages were built on
+        for w in sorted({work, os.path.realpath(work)}, key=len, reverse=True):
+            text = text.replace(w, '/home/user')
         if not ok:
             raise DocError(f'{where}: the example stopped at an error:\n{text}')
         figs = [GB.serialize_figure(f) for f in sorted(GB.STORE.figures.values(), key=lambda f: f.order) if f.valid]

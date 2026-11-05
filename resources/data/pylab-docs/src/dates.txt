@@ -1,0 +1,169 @@
+@ tic, toc, cputime
+A stopwatch, and the processor time used.
+
+`tic` starts the stopwatch and `toc` gives the seconds since. A stopwatch of one's own (`t0 = tic`, then `toc(t0)`) lets several run at once without disturbing each other. `cputime` gives the processor time used so far, which differs from the time on the clock when the program waits, or works on several cores.
+
+# Syntax
+tic
+    The stopwatch started.
+t0 = tic
+    A stopwatch of one's own.
+toc
+    The seconds since tic, printed.
+t = toc
+    The seconds since tic.
+t = toc(t0)
+    The seconds on a stopwatch of one's own.
+t = cputime
+    The processor time used, in seconds.
+# Examples
+## A computation timed
+> The times differ from run to run, so the example shows what they are, not their values.
+t0 = tic;
+c0 = cputime;
+A = rand(400);
+B = A*A';
+elapsed = toc(t0);
+used = cputime - c0;
+class(t0)
+[elapsed > 0, used >= 0]
+# See also
+pause clock profile timeit
+
+@ pause
+Waiting: for a number of seconds, or for a key.
+
+`pause(s)` waits s seconds (fractions too) and lets the page draw what it has to; `pause` with no input waits until a key is pressed in the Command Window. For a player or recorder of sound, `pause(player)` stops it where it is, and `resume` goes on.
+
+# Syntax
+pause(seconds)
+    Waiting so long.
+pause
+    Waiting for a key.
+pause(player)
+    A player or recorder stopped where it is.
+# Examples
+## A quarter of a second
+t0 = tic;
+pause(0.25)
+toc(t0) >= 0.25
+## An animation drawn step by step
+> Each pause gives the page time to draw the new frame.
+x = linspace(0, 2*pi, 100);
+h = plot(x, sin(x));
+for k = 1:20
+    h.YData = sin(x + k/5);
+    pause(0.01)
+end
+# See also
+tic drawnow resume
+
+@ clock, now, date
+The date and time now: as a vector, a serial date number, and text.
+
+`clock` gives [year month day hour minute seconds] (the seconds with their fraction), `now` the serial date number (days from the year 0, the time as a fraction) and `date` today's date as 'dd-mmm-yyyy'. All three are the computer's local time. `datetime('now')` gives the same moment as a datetime.
+
+# Syntax
+c = clock
+    Year, month, day, hour, minute, seconds.
+t = now
+    A serial date number.
+s = date
+    Today's date as text.
+# Examples
+## The same moment three ways
+> The values change with the time the example is run; the checks show how they agree.
+c = clock;
+t = now;
+s = date;
+numel(c)
+abs(datenum(c) - t) < 1/24/3600
+strcmp(s, datestr(floor(t), 'dd-mmm-yyyy'))
+# See also
+datetime datenum datestr
+
+@ datenum, datevec, datestr
+Dates and times as serial numbers, as vectors, and as text.
+
+A serial date number counts days from the year 0 (1 January of year 0 is day 1), with the time of day as a fraction: differences are days, and adding 1 is the next day. `datenum` makes them from years, months, days (and hours, minutes, seconds; months and days past their ends roll over), from date vectors or from text; `datevec` gives [year month day hour minute seconds]; `datestr` gives text, in a numbered format (0 to 31) or a pattern of `yyyy`, `yy`, `mmmm`, `mmm`, `mm`, `dd`, `ddd`, `HH`, `MM`, `SS`, `FFF` and `PM`. Datetimes do the same work with time zones and formats of their own.
+
+# Syntax
+n = datenum(Y, M, D)
+    A date.
+n = datenum(Y, M, D, h, m, s)
+    A date and time.
+n = datenum(datevector)
+    From [year month day hour minute seconds].
+n = datenum(text, format)
+    From text.
+v = datevec(t)
+    The date vector.
+[Y, M, D, h, m, s] = datevec(t)
+    Its parts.
+s = datestr(t)
+    Text.
+s = datestr(t, format)
+    Text in a format.
+# Examples
+## Days between two dates, and a time as a fraction of a day
+a = datenum(2026, 11, 5);
+b = datenum(2027, 1, 1);
+b - a
+t = datenum(2026, 11, 5, 18, 0, 0);
+t - a
+datestr(t)
+datestr(t, 'yyyy-mm-dd HH:MM')
+datestr(t, 29)
+## Text to vectors, and months past their end
+v = datevec('2026-11-05 14:30', 'yyyy-mm-dd HH:MM')
+datestr(datenum(2026, 14, 1))
+datestr(datenum(2026, 3, 0))
+# See also
+datetime weekday clock
+
+@ weekday, eomday, leapyear, calendar
+Days of the week, the ends of months, leap years and a month's calendar.
+
+`weekday` gives 1 for Sunday to 7 for Saturday, and the day's short name; `eomday` the last day of a month (29 for February in a leap year); `leapyear` whether a year is one (divisible by 4, except centuries not divisible by 400). `calendar` gives a month as a 6-by-7 matrix, weeks from Sunday to Saturday with 0 outside the month, and prints it when there is no output.
+
+# Syntax
+[n, name] = weekday(t)
+    The day of the week, and its name.
+d = eomday(year, month)
+    The last day of a month.
+tf = leapyear(year)
+    True for leap years.
+c = calendar(y, m)
+    A month's days in a matrix.
+calendar(y, m)
+    The month printed.
+# Examples
+## A week's days, February's lengths
+[n, name] = weekday(datenum(2026, 11, 5:7))
+eomday([2024 2025 2026], 2)
+leapyear([1900 2000 2024 2026])
+## A month printed
+calendar(2026, 11)
+# See also
+datenum day isweekend
+
+@ addtodate, etime
+Serial date numbers moved by calendar amounts; the seconds between two date vectors.
+
+`addtodate` adds whole years, months, weeks or days, or hours, minutes, seconds or milliseconds, to serial date numbers (a month later is the same day of the next month). `etime` gives the seconds from one date vector (as `clock` gives) to another.
+
+# Syntax
+t = addtodate(t0, q, field)
+    Moved by q of field.
+e = etime(t1, t0)
+    Seconds from t0 to t1.
+# Examples
+## Next month and the coming weeks
+t0 = datenum(2026, 11, 5);
+datestr(addtodate(t0, 1, 'month'))
+datestr(addtodate(t0, 1:3, 'week'))
+datestr(addtodate(t0, 90, 'minute'))
+## Seconds between two times
+etime([2026 11 5 14 30 0], [2026 11 5 12 0 0])
+# See also
+datenum between caldays

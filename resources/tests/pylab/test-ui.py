@@ -2187,6 +2187,10 @@ async def core_additions(page):
     check('NetCDF in the page: netCDF-4 through h5py and classic through SciPy', 'r4 =\n\n  logical\n\n   1' in out and 'r3 =\n\n     7     8' in out
           and "fmt =\n\n    'netcdf4_classic'" in out, True)
     await command(page, "delete('t4.nc'); delete('t3.nc')")
+    out = await command(page, "clc; [tzd, tzs] = tzoffset(datetime(2026, [1 7], 1, 12, 0, 0, 'TimeZone', 'Europe/Stockholm')); "
+                              "tzh = [hours(tzd) hours(tzs)], de = char(dateshift(datetime(2026, 2, 14), 'end', 'month'))")
+    check("time zones in the page (the browser's): Stockholm's offsets and summer time; the end of a month is its last day",
+          'tzh =\n\n     1     2     0     1' in out and "de =\n\n    '28-Feb-2026'" in out, True)
 
 
 async def image_additions(page):

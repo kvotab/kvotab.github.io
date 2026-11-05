@@ -1163,8 +1163,17 @@ def tzoffset(nargout, *args):
     t = _need(args[0], DateTime, 'tzoffset')
     z = _zone(t.tz)
     off = np.zeros(t.shape) if z is None else z(t.a)
-    r = Duration(np.where(np.isfinite(t.a), off, np.nan))
-    return (r, Duration(np.zeros(t.shape))) if nargout > 1 else r
+    ok = np.isfinite(t.a)
+    r = Duration(np.where(ok, off, np.nan))
+    if nargout < 2:
+        return r
+    dst = np.zeros(t.shape)
+    if z is not None:
+        # summer time: the offset beyond the year's standard one, the smaller of January's and July's
+        # (the same in the page, where the browser gives offsets but not which part is summer time)
+        y = _parts(t.wall())[0]
+        dst = off - np.minimum(z(_compose(y, 1, 1)), z(_compose(y, 7, 1)))
+    return r, Duration(np.where(ok, dst, np.nan))
 
 
 _UNITS = {'year': 'years', 'years': 'years', 'quarter': 'quarters', 'quarters': 'quarters', 'month': 'months', 'months': 'months',
@@ -1221,7 +1230,10 @@ def dateshift(nargout, *args):
         for idx in np.ndindex(base.shape):
             kk = float(np.broadcast_to(kv, base.shape)[idx])
             b = _next_unit(np.array([base[idx]]), unit, int(kk))[0]
-            res[idx] = _next_unit(np.array([b]), unit, 1)[0] if which == 'end' else b
+            if which == 'end':
+                # the end of a week, month, quarter or year is its last day; of a day or less, the next one's start
+                b = _next_unit(np.array([b]), unit, 1)[0] - (DAY if unit in ('weeks', 'months', 'quarters', 'years') else 0)
+            res[idx] = b
         res = np.where(np.isfinite(w), res, np.nan)
         return DateTime(_from_wall(res, t.tz), t.fmt, t.tz)
     if which == 'dayofweek':

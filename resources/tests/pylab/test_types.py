@@ -116,8 +116,12 @@ t.Format = 'yyyy-MM-dd'; sfmt = char(t);
 x2 = datetime(2026,3,15,10,30,0); x2.Format = 'eeee, MMMM d, uuuu h:mm a'; long = char(x2);
 ds1 = char(dateshift(datetime(2026,3,15,10,30,0), 'start', 'month'));
 ds2 = char(dateshift(datetime(2026,3,15,10,30,0), 'dayofweek', 'Monday'));
+ds3 = char(dateshift(datetime(2026,2,14,9,5,30), 'end', 'month')); ds4 = char(dateshift(datetime(2026,2,14,9,5,30), 'end', 'quarter'));
+ds5 = char(dateshift(datetime(2026,2,14,9,5,30), 'end', 'week')); ds6 = char(dateshift(datetime(2026,2,14,9,5,30), 'end', 'day'));
 wk = isweekend(datetime(2026,11,7)); q = quarter(datetime(2026,8,1));
 z = datetime(2026, 6, 1, 12, 0, 0, 'TimeZone', 'UTC'); z.TimeZone = 'Europe/Stockholm'; sz = char(z); zp = posixtime(z);
+[tzd, tzs] = tzoffset(datetime(2026, [1 7], 1, 12, 0, 0, 'TimeZone', 'Europe/Stockholm')); tzh = [hours(tzd) hours(tzs)];
+[tzd, tzs] = tzoffset(datetime(2026, [1 7], 1, 12, 0, 0, 'TimeZone', 'Australia/Sydney')); tzsyd = [hours(tzd) hours(tzs)];
 m2 = datetime(2026, 13, 1); sm2 = char(m2);
 eq = datetime(2026,1,3) == '2026-01-03';
 """)
@@ -147,10 +151,16 @@ same('Format set', W['sfmt'], '2026-11-03')
 same('long names, 12-hour clock', W['long'], 'Sunday, March 15, 2026 10:30 AM')
 same("dateshift 'start' of the month", W['ds1'], '01-Mar-2026 00:00:00')
 same("dateshift to the next Monday", W['ds2'], '16-Mar-2026 10:30:00')
+same("dateshift 'end' of a month is its last day", W['ds3'], '28-Feb-2026 00:00:00')
+same("dateshift 'end' of a quarter is its last day", W['ds4'], '31-Mar-2026 00:00:00')
+same("dateshift 'end' of a week is its Saturday", W['ds5'], '14-Feb-2026 00:00:00')
+same("dateshift 'end' of a day is the next day's start", W['ds6'], '15-Feb-2026 00:00:00')
 C('7 November 2026 is a Saturday', W['wk'] is True or bool(np.all(v(W['wk']))), W['wk'])
 near('quarter of August', W['q'], 3)
 same('a UTC time shown in Stockholm (summer time)', W['sz'], '01-Jun-2026 14:00:00')
 near('... the same instant', W['zp'], posix(2026, 6, 1, 12, 0, 0))
+near("tzoffset in Stockholm: 1 and 2 hours, the second's summer time 1 hour", W['tzh'], [1, 2, 0, 1])
+near('... and in Sydney, whose summer is in January', W['tzsyd'], [11, 10, 1, 0])
 same('month 13 carries into the next year', W['sm2'], '01-Jan-2027')
 C('a datetime compares with text', bool(np.all(v(W['eq']))), W['eq'])
 

@@ -128,6 +128,10 @@ for slug in slugs:
     C(f'{slug}.json is what its examples give now', same, detail)
     size = os.path.getsize(path) if have is not None else 0
     C(f'{slug}.json stays small (under 1.5 MB)', size < 1.5e6, size)
+# no folder of the machine the pages are built on, in any stored output or figure
+_local = re.compile(r'/var/folders/|/private/var/|/private/tmp/|/Users/|/home/(?!user\b)|[A-Z]:\\\\Users')
+leaks = [s_ for s_, d_ in built.items() if _local.search(D.dumps(d_))]
+C('no stored output or figure names a folder of the machine that built it', not leaks, leaks)
 if len(built) == len(slugs):
     idx = D.index(built)
     C('index.json names each function once, with the shared arrays', D.dumps(idx) == open(os.path.join(D.DOCS, 'index.json'), encoding='utf-8').read())

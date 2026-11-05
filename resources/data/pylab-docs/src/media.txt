@@ -1,0 +1,233 @@
+@ imread, imwrite, imfinfo
+Image files read and written, and what they hold.
+
+PNG, JPEG, BMP, TIFF and GIF. `imread` gives uint8 values (uint16 for 16-bit images): m-by-n for grey, m-by-n-by-3 for colour, and for an image with a palette its indices (from 0) and colormap. `imwrite` takes the format from the file name; doubles are taken as 0 to 1, and `'Quality'` sets JPEG's compression. `imfinfo` gives the size, bit depth, colour type and format.
+
+# Syntax
+A = imread(filename)
+    The image.
+[X, map, alpha] = imread(filename)
+    With its colormap and transparency.
+imwrite(A, filename)
+    Written.
+imwrite(X, map, filename)
+    With a colormap.
+imwrite(..., 'Quality', q)
+    JPEG quality.
+info = imfinfo(filename)
+    What it holds.
+# Examples
+## A gradient written and read back
+[x, y] = meshgrid(linspace(0, 1, 64), linspace(0, 1, 48));
+rgb = cat(3, x, y, 0.5*ones(48, 64));
+imwrite(rgb, 'gradient.png');
+A = imread('gradient.png');
+class(A), size(A)
+info = imfinfo('gradient.png');
+[info.Width info.Height info.BitDepth]
+image(A), axis image
+# See also
+image imshow imagesc
+
+@ image
+An image shown: a matrix of colour indices, or an m-by-n-by-3 array of colours.
+
+A matrix is drawn through the figure's colormap, each value an index into it (doubles from 1, integers from 0); an m-by-n-by-3 array as colours (doubles 0 to 1, or uint8 0 to 255). Rows run down from the top. `x` and `y` place the image's corners; `imagesc` scales a matrix to the whole colormap instead.
+
+# Syntax
+image(C)
+    The image.
+image(x, y, C)
+    Placed.
+# Examples
+## Each value a row of the colormap
+> Nine values, nine colours: 1 is the colormap's first row, 9 its last.
+C = magic(3)
+image(C), colormap(parula(9)), axis image
+# See also
+imagesc imshow imread
+
+@ audiowrite, audioread, audioinfo
+WAV files written, read, and described.
+
+`audiowrite` writes samples (a column per channel, -1 to 1 for doubles) at a sample rate, in 16 bits unless `'BitsPerSample'` says; `audioread` gives the samples as doubles (or `'native'`) and the rate, or a range of samples; `audioinfo` the channels, rate, samples, duration and bits.
+
+# Syntax
+audiowrite(filename, y, Fs)
+    Written.
+audiowrite(filename, y, Fs, 'BitsPerSample', b)
+    In b bits.
+[y, Fs] = audioread(filename)
+    Read.
+[y, Fs] = audioread(filename, [start stop])
+    A range of samples.
+info = audioinfo(filename)
+    Described.
+# Examples
+## A second of a tone in stereo
+Fs = 8000;
+t = (0:Fs - 1)'/Fs;
+y = [sin(2*pi*440*t), 0.5*sin(2*pi*660*t)];
+audiowrite('tone.wav', y, Fs);
+info = audioinfo('tone.wav');
+[info.NumChannels info.SampleRate info.TotalSamples info.BitsPerSample]
+[z, Fz] = audioread('tone.wav', [1 4]);
+z
+# See also
+sound audioplayer
+
+@ webread, webwrite, websave, weboptions
+Data read from a web address, sent to one, and saved to a file; and the options for doing so.
+
+`webread` reads JSON (as structs and arrays), text, an image or bytes, with query names and values added to the address; `webwrite` sends data (a form's name-value pairs, or a body) and reads the answer; `websave` saves what an address gives to a file. `weboptions` sets the timeout, content type, header fields, method, user name and password. In the page, only servers that allow other sites to read them (CORS) can be read. A `data:` address holds its data in itself, which the examples use.
+
+# Syntax
+data = webread(url, QueryName, QueryValue, ..., options)
+    Read.
+response = webwrite(url, PostName, PostValue, ..., options)
+    Sent, with the answer.
+filename = websave(filename, url)
+    Saved.
+options = weboptions(Name, Value, ...)
+    Options.
+# Examples
+## JSON and text from data addresses
+d = webread('data:application/json,{"site":"N","depths":[12,14,13]}')
+d.depths'
+f = websave('note.txt', 'data:text/plain,hello from the web');
+type note.txt
+o = weboptions('Timeout', 10, 'ContentType', 'json');
+o.Timeout
+# See also
+jsondecode jsonencode
+
+@ VideoWriter, writeVideo, VideoReader, hasFrame, readFrame
+Video files written frame by frame, and read back.
+
+`VideoWriter` writes AVI files (Motion JPEG unless `'Uncompressed AVI'` or `'Grayscale AVI'`): set `FrameRate` and `Quality`, `open` it, `writeVideo` frames (from `getframe`, or images), and `close` it. `VideoReader` reads AVI files and animated GIFs: `NumFrames`, `FrameRate`, `Duration`, `Width` and `Height` describe them, `hasFrame` and `readFrame` go through the frames, and `CurrentTime` says where the next is read.
+
+# Syntax
+v = VideoWriter(filename, profile)
+    A writer.
+writeVideo(v, frame)
+    A frame (or images) written.
+r = VideoReader(filename)
+    A reader.
+tf = hasFrame(r)
+    A frame left.
+frame = readFrame(r)
+    The next frame.
+# Examples
+## Ten frames of a moving square, written and counted back
+v = VideoWriter('square.avi');
+v.FrameRate = 5;
+open(v);
+for k = 1:10
+    img = zeros(40, 60, 3, 'uint8');
+    img(10:30, 4*k + (1:12), :) = 255;
+    writeVideo(v, img);
+end
+close(v);
+r = VideoReader('square.avi');
+[r.NumFrames r.Width r.Height r.Duration]
+n = 0;
+while hasFrame(r)
+    f = readFrame(r);
+    n = n + 1;
+end
+n
+# See also
+getframe movie read
+
+@ read
+Frames of a video; the next block of a datastore.
+
+For a `VideoReader`: all the frames, frame k, a range, or the last (`Inf`), stacked in the fourth dimension. For a datastore: its next `ReadSize` rows (or file, image, slice), with information about where they came from.
+
+# Syntax
+frames = read(v)
+    All frames.
+frames = read(v, [first last])
+    A range.
+frame = read(v, Inf)
+    The last.
+[data, info] = read(ds)
+    A datastore's next block.
+# Examples
+## Frames from a short video
+v = VideoWriter('dots.avi');
+open(v);
+for k = 1:4
+    writeVideo(v, uint8(60*k*ones(16, 16, 3)));
+end
+close(v);
+r = VideoReader('dots.avi');
+F = read(r, [2 3]);
+size(F)
+last = read(r, Inf);
+last(1, 1, 1)
+# See also
+VideoReader datastore
+
+@ audioplayer, play, playblocking, isplaying, resume
+A player of sound samples, and its controls.
+
+`audioplayer(y, Fs)` holds the samples (a column per channel, -1 to 1 for floating point) and plays them through the page's sound: `play` starts and the program goes on, `playblocking` waits until the end, `pause` stops where it is and `resume` goes on, `stop` stops; `isplaying` says whether it plays now, and `CurrentSample` where it is.
+
+# Syntax
+player = audioplayer(y, Fs)
+    A player.
+play(player, [start stop])
+    Played, the program going on.
+playblocking(player)
+    Played, the program waiting.
+tf = isplaying(player)
+    Playing now.
+resume(player)
+    Going on after pause.
+# Examples
+## A player made and started
+> Run it in the page to hear it.
+Fs = 8000;
+y = 0.5*sin(2*pi*440*(0:Fs - 1)'/Fs);
+p = audioplayer(y, Fs);
+[p.SampleRate p.TotalSamples]
+play(p);
+isplaying(p)
+stop(p);
+# See also
+sound audiorecorder
+
+@ audiorecorder, record, recordblocking, getaudiodata, isrecording
+A recorder of the microphone, and its controls.
+
+`audiorecorder(Fs, nBits, nChannels)` (8000 Hz, 8 bits, 1 channel unless given) records through the page, which the browser asks permission for: `record` starts and the program goes on (for a length, or until `stop`), `recordblocking` waits until it has recorded the length, `isrecording` says whether it records now, and `getaudiodata` gives what was recorded, a column per channel. Recording needs the page and a microphone, so the example writes a program to run there.
+
+# Syntax
+recorder = audiorecorder(Fs, nBits, nChannels)
+    A recorder.
+record(recorder, length)
+    Recording, the program going on.
+recordblocking(recorder, length)
+    Recording, the program waiting.
+y = getaudiodata(recorder)
+    What was recorded.
+tf = isrecording(recorder)
+    Recording now.
+# Examples
+## A recorder, and a program that records two seconds
+r = audiorecorder(16000, 16, 1);
+[r.SampleRate r.BitsPerSample r.NumberOfChannels]
+lines = {
+    'function y = listen()'
+    'r = audiorecorder(16000, 16, 1);'
+    'recordblocking(r, 2);'
+    'y = getaudiodata(r);'
+    'plot((0:numel(y) - 1)/16000, y), xlabel(''seconds'')'
+    'end'};
+fid = fopen('listen.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type listen
+# See also
+audioplayer audiowrite

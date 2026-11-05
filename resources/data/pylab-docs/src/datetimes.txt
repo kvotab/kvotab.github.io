@@ -1,0 +1,343 @@
+@ datetime
+Points in time, as values that print, compare and add as dates.
+
+A datetime holds a date and time of day, with a display format and, if given, a time zone. It is made from years, months, days (and hours, minutes, seconds), from text, or from numbers of another kind (`'ConvertFrom'`): serial date numbers, POSIX seconds, Excel day numbers, Julian dates or yyyymmdd numbers. Datetimes compare and sort as times; subtracting two gives a duration, adding a duration or a calendarDuration gives another datetime, and a number adds days. The parts read and set as properties (`t.Year`, `t.Month`, `t.Day`, `t.Hour`, `t.Minute`, `t.Second`), and `t.Format` and `t.TimeZone` change the display and the zone. A zoned datetime follows the zone's summer time.
+
+# Syntax
+t = datetime(y, mo, d)
+    A date.
+t = datetime(y, mo, d, h, mi, s)
+    A date and time.
+t = datetime(text, 'InputFormat', fmt)
+    From text.
+t = datetime(X, 'ConvertFrom', kind)
+    From numbers of a kind.
+t = datetime(..., 'Format', fmt, 'TimeZone', tz)
+    With a display format and a time zone.
+t = datetime('now')
+    Now; 'today' gives today at midnight.
+# Notes
+Formats are letters: `uuuu` or `yyyy` for the year, `MM`, `MMM` and `MMMM` for the month as a number, a short and a full name, `dd` for the day, `eee` and `eeee` for the weekday's name, `HH` for the hour (`hh` with `a` for a 12-hour clock), `mm` for minutes, `ss` for seconds and `SSS` for their fraction. Text in single quotes is kept as it is, as in `'yyyy-MM-dd''T''HH:mm'`.
+# Examples
+## Made, formatted, compared and subtracted
+t = datetime(2026, 11, 5, 14, 30, 0)
+t.Format = 'eeee d MMMM yyyy, HH:mm'
+u = datetime('2026-12-24 18:00', 'InputFormat', 'yyyy-MM-dd HH:mm');
+u > t
+u - t
+t + 1.5
+## A day of the month a few months on, and a part set
+d = datetime(2026, 1, 31) + calmonths(0:3)
+d.Day = 15
+## The clocks put forward in spring
+> In Stockholm the clocks went from 02:00 to 03:00 on 29 March 2026, so an hour after half past one is half past three.
+s = datetime(2026, 3, 29, 1, 30, 0, 'TimeZone', 'Europe/Stockholm');
+s + hours(1)
+s.TimeZone = 'UTC'
+# See also
+duration calendarDuration datenum NaT
+
+@ NaT, isdatetime, isnat
+Not-a-Time, the missing datetime; and tests for datetimes and missing ones.
+
+`NaT` is a missing datetime, as NaN is a missing number: comparisons with it are false, and it sorts last. Text that reads as no date becomes NaT. `isnat` is true where a datetime is NaT, `isdatetime` for a datetime at all.
+
+# Syntax
+t = NaT
+    A missing datetime.
+t = NaT(m, n)
+    An m-by-n array of them.
+tf = isnat(t)
+    True where NaT.
+tf = isdatetime(t)
+    True for a datetime.
+# Examples
+## A missing date among others
+t = [datetime(2026, 1, 1) NaT datetime(2026, 3, 1)]
+isnat(t)
+t(2) == t(2)
+sort(t, 'descend')
+[isdatetime(t), isdatetime(738000)]
+# See also
+datetime ismissing rmmissing
+
+@ year, quarter, month, week, day, hour, minute, second
+The parts of datetimes, as numbers or names.
+
+Each gives an array of the size of the datetimes: the year, the quarter (1 to 4), the month (or its `'name'` or `'shortname'`), the week of the year (from the week holding 1 January, weeks starting on Sunday) or of the month, the day of the month (or of the week, 1 for Sunday, or of the year, or its name), the hour, the minute, and the second with its fraction. For a NaT each is NaN.
+
+# Syntax
+y = year(t)
+    The year.
+q = quarter(t)
+    The quarter.
+m = month(t)
+    The month; month(t, 'name') its name.
+w = week(t)
+    The week of the year; week(t, 'weekofmonth') of the month.
+d = day(t)
+    The day; day(t, 'dayofweek'), day(t, 'dayofyear'), day(t, 'name').
+h = hour(t)
+    The hour.
+m = minute(t)
+    The minute.
+s = second(t)
+    The second, with its fraction.
+# Examples
+## A Saturday in February taken apart
+t = datetime(2026, 2, 14, 9, 5, 30.25);
+[year(t) quarter(t) month(t) day(t)]
+[week(t) week(t, 'weekofmonth') day(t, 'dayofweek') day(t, 'dayofyear')]
+[hour(t) minute(t)]
+second(t)
+month(t, 'name')
+day(t, 'name')
+## Readings counted by month
+t = datetime(2026, 1, 1) + days(0:9:360);
+counts = accumarray(month(t)', 1)'
+# See also
+ymd hms datetime
+
+@ ymd, hms, timeofday
+The year, month and day, and the hour, minute and second, of datetimes; the time since midnight.
+
+`ymd` gives the date's three parts, `hms` the time's (for durations too, as hours, minutes and seconds), and `timeofday` the time since midnight as a duration, so that `t - timeofday(t)` is the day's start.
+
+# Syntax
+[y, m, d] = ymd(t)
+    The date's parts.
+[h, m, s] = hms(t)
+    The time's parts, of a datetime or a duration.
+d = timeofday(t)
+    The time since midnight.
+# Examples
+## A date and a time of day
+t = datetime(2026, 11, 5, 14, 30, 15);
+[y, m, d] = ymd(t)
+[h, mi, s] = hms(t)
+timeofday(t)
+[h, mi, s] = hms(duration(26, 5, 0))
+# See also
+year hour duration
+
+@ isweekend, isbetween
+Datetimes on a weekend, and between two others.
+
+`isweekend` is true on Saturdays and Sundays; `isbetween` where a datetime lies between a lower and an upper one, the ends included, or (with `'open'`, `'openleft'` or `'openright'`) left out.
+
+# Syntax
+tf = isweekend(t)
+    True on Saturdays and Sundays.
+tf = isbetween(t, lower, upper)
+    True between them, the ends included.
+tf = isbetween(t, lower, upper, intervalType)
+    With the ends included or left out.
+# Examples
+## A week, its weekend and its middle
+t = datetime(2026, 11, 1:7);
+isweekend(t)
+isbetween(t, datetime(2026, 11, 3), datetime(2026, 11, 5))
+isbetween(t, datetime(2026, 11, 3), datetime(2026, 11, 5), 'open')
+# See also
+weekday day datetime
+
+@ posixtime, juliandate, exceltime, convertTo
+Datetimes as numbers of other kinds.
+
+`posixtime` gives seconds since 1 January 1970 (UTC for zoned datetimes); `juliandate` days since noon on 1 January 4713 BC (or, `'modifiedjuliandate'`, since midnight on 17 November 1858); `exceltime` Excel's day number (from 1900, or 1904). `convertTo` gives any of these, and `'datenum'`, `'yyyymmdd'`, or ticks from an epoch of one's own. `datetime(X, 'ConvertFrom', kind)` goes back.
+
+# Syntax
+p = posixtime(t)
+    Seconds since 1970.
+jd = juliandate(t)
+    The Julian date.
+mjd = juliandate(t, 'modifiedjuliandate')
+    The modified Julian date.
+e = exceltime(t)
+    Excel's day number.
+X = convertTo(t, kind)
+    Numbers of a kind.
+X = convertTo(t, 'epochtime', 'Epoch', t0, 'TicksPerSecond', n)
+    Ticks from an epoch.
+# Examples
+## The first of January 2026 as numbers
+t = datetime(2026, 1, 1);
+format long g
+posixtime(t)
+juliandate(t)
+juliandate(t, 'modifiedjuliandate')
+exceltime(t)
+convertTo(t, 'yyyymmdd')
+convertTo(t, 'epochtime', 'Epoch', datetime(2026, 1, 1), 'TicksPerSecond', 1000)
+datetime(46023, 'ConvertFrom', 'excel')
+# See also
+datetime datenum
+
+@ tzoffset
+The offset of a datetime's time zone from UTC.
+
+A duration for each datetime: the zone's offset at that moment, summer time included (and 0 for a datetime without a zone). The second output is the summer-time part alone.
+
+# Syntax
+d = tzoffset(t)
+    The offset from UTC.
+[d, dst] = tzoffset(t)
+    With the summer-time part.
+# Examples
+## Winter and summer in Stockholm
+t = datetime(2026, [1 7], 1, 12, 0, 0, 'TimeZone', 'Europe/Stockholm');
+[d, dst] = tzoffset(t)
+# See also
+datetime
+
+@ dateshift
+Datetimes moved to the start or end of a unit of time, or to a day of the week.
+
+`'start'` moves to the start of the year, quarter, month, week (Sunday), day, hour, minute or second that holds the datetime; `'end'` to its end: the last day of a week, month, quarter or year, and the next start of a day, hour, minute or second. A rule moves to that unit `'next'`, `'previous'`, or a number of units away first. `'dayofweek'` moves to a day of the week (a name, or 1 for Sunday to 7), the next one unless the rule says `'previous'`, `'nearest'` or `'current'`.
+
+# Syntax
+t2 = dateshift(t, 'start', unit)
+    The start of the unit.
+t2 = dateshift(t, 'end', unit)
+    Its end.
+t2 = dateshift(t, 'start', unit, rule)
+    Of a unit before or after.
+t2 = dateshift(t, 'dayofweek', day)
+    To a day of the week.
+# Examples
+## Around a Saturday in February
+t = datetime(2026, 2, 14, 9, 5, 30)
+dateshift(t, 'start', 'month')
+dateshift(t, 'end', 'month')
+dateshift(t, 'start', 'month', 'next')
+dateshift(t, 'start', 'week')
+dateshift(t, 'dayofweek', 'Friday')
+## The last day of each month of a year
+m = dateshift(datetime(2026, 1:12, 1), 'end', 'month');
+day(m)
+# See also
+datetime between eomday
+
+@ between, caldiff
+The calendar differences between datetimes.
+
+`between` gives the difference from t1 to t2 as a calendarDuration of years, months, days and time (or the components asked for); added to t1 it gives t2. `caldiff` gives the differences between consecutive datetimes. Subtracting datetimes gives a duration instead, an exact length of time.
+
+# Syntax
+d = between(t1, t2)
+    In years, months, days and time.
+d = between(t1, t2, components)
+    In the components asked for.
+d = caldiff(t)
+    Between consecutive datetimes.
+# Examples
+## A stay measured three ways
+a = datetime(2026, 1, 15);
+b = datetime(2027, 3, 20);
+d = between(a, b)
+a + d == b
+between(a, b, 'days')
+b - a
+caldiff(datetime(2026, [1 3 4], 15))
+# See also
+calendarDuration datetime split
+
+@ duration, isduration
+Lengths of time: exact amounts of hours, minutes and seconds.
+
+A duration is made from hours, minutes and seconds (and milliseconds), or from text. Durations add, subtract, scale and compare; subtracting datetimes gives one. The format sets the display: a clock form (`'hh:mm:ss'`, `'dd:hh:mm:ss'`, `'hh:mm'`, `'mm:ss'`, each with `.SSS` for fractions), or one unit (`'y'`, `'d'`, `'h'`, `'m'`, `'s'`). `hours`, `minutes` and the like give a duration as a number.
+
+# Syntax
+d = duration(h, m, s)
+    A length of time.
+d = duration(h, m, s, ms)
+    With milliseconds.
+d = duration(text)
+    From text, as 'hh:mm:ss'.
+d = duration(..., 'Format', fmt)
+    With a display format.
+tf = isduration(d)
+    True for a duration.
+# Examples
+## Laps added up
+laps = duration(0, [4 4 3], [52 38.5 59.5], 'Format', 'mm:ss.SSS')
+total = sum(laps)
+mean(laps)
+total.Format = 's'
+isduration(total)
+## Durations from text, compared
+a = duration('02:15:30');
+b = duration(2, 20, 0);
+a < b
+b - a
+# See also
+hours seconds calendarDuration datetime
+
+@ years, days, hours, minutes, seconds, milliseconds
+Durations of a unit, and durations as numbers of that unit.
+
+Given numbers, each makes durations of that unit (a year is 365.2425 days, the mean of the calendar); given durations, it gives their length in that unit. For calendar lengths that depend on where they start, use `calyears`, `calmonths`, `caldays` and the like.
+
+# Syntax
+d = years(x)
+    Durations of years.
+x = years(d)
+    A duration in years.
+d = days(x)
+    Durations of days.
+d = hours(x)
+    Durations of hours.
+d = minutes(x)
+    Durations of minutes.
+d = seconds(x)
+    Durations of seconds.
+d = milliseconds(x)
+    Durations of milliseconds.
+# Examples
+## Units made and converted
+d = hours([1 2.5 30])
+minutes(d)
+days(hours(36))
+days(years(1))
+seconds(milliseconds(1500))
+## Durations as the axis of a plot
+t = minutes(0:5:120);
+plot(t, exp(-minutes(t)/40)), xlabel('time')
+# See also
+duration calyears
+
+@ calendarDuration, iscalendarduration, calyears, calquarters, calmonths, calweeks, caldays
+Lengths of time in calendar units, whose length depends on where they start.
+
+A calendarDuration holds months (a year is 12, a quarter 3), days (a week is 7) and a time. Added to a datetime, a month is the same day of the next month (the last day if the month is shorter) and a day is the same time of the next day, however long it is. `between` gives one from two datetimes; `split` takes one apart.
+
+# Syntax
+c = calendarDuration(y, mo, d)
+    Years, months and days.
+c = calendarDuration(y, mo, d, h, mi, s)
+    With a time.
+tf = iscalendarduration(c)
+    True for a calendarDuration.
+c = calyears(n)
+    Calendar years.
+c = calquarters(n)
+    Calendar quarters.
+c = calmonths(n)
+    Calendar months.
+c = calweeks(n)
+    Calendar weeks.
+c = caldays(n)
+    Calendar days.
+# Examples
+## Months that are not all the same length
+c = calendarDuration(1, 2, 3)
+t = datetime(2026, 1, 31);
+t + calmonths(1)
+t + days(31)
+datetime(2024, 2, 29) + calyears(1)
+## Every other week, and quarters
+datetime(2026, 1, 1) + calweeks(0:2:6)
+datetime(2026, 1, 1) + calquarters(0:3)
+iscalendarduration(calquarters(1))
+# See also
+between duration datetime
