@@ -776,7 +776,8 @@ class Mesh:
         self.p, self.t, self.tface, self.bsegs, self.hmax, self.hmin, self.order = p, t, tface, bsegs, hmax, hmin, order
 
     def edge_nodes(self, ids):
-        ids = set(int(i) for i in ids)
+        # the segments hold their edge from 0, the ids count from 1 (Edge 1 found the second edge's nodes, the last none)
+        ids = set(int(i) - 1 for i in ids)
         nodes = set()
         for seg in self.bsegs:
             if seg[-1] in ids:

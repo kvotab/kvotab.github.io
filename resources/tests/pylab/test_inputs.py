@@ -76,6 +76,9 @@ def call(info, args):
             r = asyncio.run(r)
         if isinstance(r, tuple):
             return TypeError(f'one output asked for, {len(r)} values given')
+        if isinstance(r, (np.number, np.bool_)):
+            # a NumPy scalar is no value of the language: size took it for 1-by-0 and the display showed every digit
+            return TypeError(f'a NumPy {type(r).__name__} given back, not a value')
         return None
     except (MError, Timeout):
         return None

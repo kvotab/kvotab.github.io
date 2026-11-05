@@ -315,7 +315,8 @@ def isa(nargout, *args):
         return True
     v = args[0]
     if isinstance(v, Obj):
-        return name in getattr(v, 'superclasses', ())
+        # the built-in handle objects (graphics, containers.Map, ...) derive from handle too, as handle classes do
+        return name in getattr(v, 'superclasses', ()) or (name == 'handle' and bool(getattr(v, 'is_handle', False)))
     return False
 
 

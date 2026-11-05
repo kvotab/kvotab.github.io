@@ -1,0 +1,354 @@
+@ tf
+A transfer function model: a ratio of polynomials in s (or z).
+
+The numerator and denominator are coefficients in descending powers, continuous unless a sample time is given; cells of them make a model with several inputs and outputs. `s = tf('s')` lets a model be written as an expression. Models add, subtract, multiply (`sys1*sys2` feeds sys2 into sys1), divide, invert, raise to powers, concatenate and index; the result keeps the most general kind. Every analysis and response function takes them.
+
+# Syntax
+sys = tf(num, den)
+    Continuous.
+sys = tf(num, den, Ts)
+    Discrete, sample time Ts.
+s = tf('s')
+    The Laplace variable, to write models with.
+sys = tf(sys)
+    Another model as a transfer function.
+# Examples
+## A second-order system three ways
+G = tf(4, [1 2 4])
+s = tf('s');
+H = 4/(s^2 + 2*s + 4);
+[n, d] = tfdata(H, 'v')
+L = G*tf(1, [1 0])
+Gd = tf([0.5 0], [1 -0.5], 0.1)
+# See also
+zpk ss step bode
+
+@ zpk
+A model as its zeros, poles and gain.
+
+Shown as products of first-order factors (second-order for complex pairs), which reads off where the poles and zeros are. Any model can be turned into this form; `Z`, `P` and `K` hold them.
+
+# Syntax
+sys = zpk(z, p, k)
+    From zeros, poles and gain.
+sys = zpk(z, p, k, Ts)
+    Discrete.
+s = zpk('s')
+    The variable, to write models with.
+sys = zpk(sys)
+    Another model in this form.
+# Examples
+## Factors shown
+Z = zpk(-1, [-2 -3+4i -3-4i], 10)
+zpk(tf([1 3], [1 3 2]))
+# See also
+tf pole zero
+
+@ ss
+A state-space model: x' = Ax + Bu, y = Cx + Du.
+
+Matrices A, B, C and D (in discrete time x(k+1) = Ax(k) + Bu(k)); a static gain from D alone. A transfer function becomes a realization of it (the controller canonical form); `'minimal'` drops states that cannot be controlled or observed. Properties A, B, C, D and the states' names.
+
+# Syntax
+sys = ss(A, B, C, D)
+    Continuous.
+sys = ss(A, B, C, D, Ts)
+    Discrete.
+sys = ss(sys)
+    Another model as state space.
+sys = ss(sys, 'minimal')
+    Minimal.
+# Examples
+## A mass on a spring and damper
+m = 1; k = 4; b = 0.8;
+A = [0 1; -k/m -b/m]; B = [0; 1/m]; C = [1 0]; D = 0;
+sys = ss(A, B, C, D);
+pole(sys)
+tf(sys)
+size(ss(tf(1, [1 3 3 1])).A)
+# See also
+tf ssdata lsim
+
+@ pid, pidtune, pidtuneOptions
+PID controllers, made and tuned for a plant.
+
+`pid` makes Kp + Ki/s + Kd s/(Tf s + 1) (missing gains 0); its gains read and set as properties, and it works as its transfer function everywhere. `pidtune` designs a controller of a type (P, I, PI by default, PD, PID, PDF, PIDF) for a plant: the loop crosses over at a frequency (chosen, or given) with the phase margin `pidtuneOptions` sets (60 degrees). PyLAB's own design rules.
+
+# Syntax
+C = pid(Kp, Ki, Kd, Tf)
+    A controller.
+C = pidtune(sys, type)
+    Tuned.
+[C, info] = pidtune(sys, type, wc, opts)
+    At a crossover, with options; and what it achieved.
+opts = pidtuneOptions('PhaseMargin', pm)
+    Options.
+# Examples
+## A slow plant, a PI controller tuned for it
+G = tf(1, [10 1])*tf(1, [1 1]);
+[C, info] = pidtune(G, 'PI');
+[C.Kp C.Ki]
+round(info.PhaseMargin)
+T = feedback(C*G, 1);
+step(G, T), legend('plant', 'closed loop')
+# See also
+feedback margin step
+
+@ feedback, parallel, append
+Models joined: in a loop, side by side with their outputs added, and side by side apart.
+
+`feedback(sys1, sys2)` closes a loop with sys1 forward and sys2 back: sys1/(1 + sys2 sys1) for negative feedback, or positive with sign +1. `parallel` adds two models' outputs; `series` (on its own page) chains them. `append` puts models side by side, unconnected: a block-diagonal model.
+
+# Syntax
+sys = feedback(sys1, sys2, sign)
+    A closed loop.
+sys = parallel(sys1, sys2)
+    Outputs added.
+sys = append(sys1, sys2, ...)
+    Side by side.
+# Examples
+## A loop closed around an integrator
+G = tf(2, [1 3 0]);
+T = feedback(G, 1)
+P = parallel(tf(1, [1 1]), tf(1, [1 2]))
+size(append(G, P, 5))
+# See also
+series connect
+
+@ sumblk, connect
+Models joined by the names of their signals.
+
+`sumblk` makes a summing junction from a formula such as `'e = r - y'`, its input and output names those of the formula. `connect` joins models by name: each input is driven by the output of the same name, or is one of the inputs named; the outputs named are the result's. A loop of several blocks is written as it is drawn.
+
+# Syntax
+S = sumblk(formula)
+    A summing junction.
+sys = connect(sys1, sys2, ..., inputs, outputs)
+    Joined by names.
+# Examples
+## A loop by names
+G = tf(1, [1 1]); G.InputName = 'u'; G.OutputName = 'y';
+C = pid(2, 1); C.InputName = 'e'; C.OutputName = 'u';
+S = sumblk('e = r - y');
+T = connect(G, C, S, 'r', 'y');
+T2 = feedback(C*G, 1);
+max(abs(step(T, 0:0.5:5) - step(T2, 0:0.5:5))) < 1e-12
+# See also
+feedback append
+
+@ tfdata, zpkdata, ssdata, ss2tf, tf2ss
+A model's data in each form, and conversions of the matrices.
+
+`tfdata`, `zpkdata` and `ssdata` give a model's numerators and denominators, zeros, poles and gains, or state matrices (as cells, or rows with `'v'` for one input and output). `ss2tf` and `tf2ss` convert between state matrices and transfer function coefficients directly.
+
+# Syntax
+[num, den] = tfdata(sys, 'v')
+    Coefficients.
+[z, p, k] = zpkdata(sys, 'v')
+    Zeros, poles, gain.
+[A, B, C, D, Ts] = ssdata(sys)
+    State matrices.
+[b, a] = ss2tf(A, B, C, D, iu)
+    Matrices to coefficients.
+[A, B, C, D] = tf2ss(b, a)
+    Coefficients to matrices.
+# Examples
+## One model, its data three ways
+G = tf([1 2], [1 4 3]);
+[num, den] = tfdata(G, 'v')
+[z, p, k] = zpkdata(G, 'v')
+[A, B, C, D] = tf2ss(num, den);
+[b, a] = ss2tf(A, B, C, D)
+# See also
+tf zpk ss
+
+@ pole, zero, tzero, pzmap
+A model's poles and zeros, and their map.
+
+The poles are where the response grows or decays (the eigenvalues of A, the denominator's roots); the zeros where the response vanishes. `tzero` gives the transmission zeros of a model with several inputs and outputs, where its system matrix loses rank. `pzmap` draws poles (x) and zeros (o) in the complex plane.
+
+# Syntax
+p = pole(sys)
+    The poles.
+[z, gain] = zero(sys)
+    The zeros and the gain.
+z = tzero(sys)
+    The transmission zeros.
+pzmap(sys)
+    Drawn.
+# Examples
+## A lightly damped system with a zero
+G = tf([1 0.5], conv([1 0.4 4], [1 2]));
+pole(G).'
+zero(G)
+pzmap(G), grid on
+# See also
+damp zpk rlocus
+
+@ dcgain, evalfr, freqresp
+A model's gain: at rest, at one frequency, and over many.
+
+`dcgain` gives the steady-state gain, H(0) (H(1) in discrete time). `evalfr` gives the response at one complex frequency; `freqresp` at frequencies in rad/s (on the unit circle, e^(jwTs), in discrete time), as an ny-by-nu-by-n array.
+
+# Syntax
+k = dcgain(sys)
+    The steady-state gain.
+frsp = evalfr(sys, x)
+    At a complex frequency.
+H = freqresp(sys, w)
+    At frequencies.
+# Examples
+## A first-order lag
+G = tf(5, [2 1]);
+dcgain(G)
+H = squeeze(freqresp(G, [0.1 0.5 1]))';
+round(abs(H), 3)
+evalfr(G, 1i*0.5)
+# See also
+bode step
+
+@ damp, isstable
+The natural frequencies and damping of a model's poles, and whether it is stable.
+
+For each pole, its natural frequency |p| and damping ratio -cos(angle(p)) (from log(p)/Ts in discrete time), in order of frequency; with no output a table with the time constants. A model is stable when every pole has a negative real part (lies inside the unit circle in discrete time).
+
+# Syntax
+damp(sys)
+    Shown.
+[wn, zeta, p] = damp(sys)
+    The frequencies, damping ratios and poles.
+tf = isstable(sys)
+    Stable.
+# Examples
+## Two oscillations and a decay
+G = tf(1, conv(conv([1 0.2 1], [1 4 25]), [1 3]));
+damp(G)
+[isstable(G), isstable(tf(1, [1 -1]))]
+# See also
+pole step
+
+@ c2d, d2c, d2d
+Continuous models made discrete, discrete made continuous, and resampled.
+
+`c2d` discretizes at a sample time: `'zoh'` (exact for inputs held between samples, the default), `'foh'`, `'tustin'`, `'matched'` or `'impulse'`. `d2c` goes back (by the matrix logarithm, or the inverse bilinear map); `d2d` resamples a discrete model through the continuous one.
+
+# Syntax
+sysd = c2d(sysc, Ts, method)
+    Discretized.
+sysc = d2c(sysd, method)
+    Made continuous.
+sys2 = d2d(sys1, Ts, method)
+    Resampled.
+# Examples
+## A lag sampled, and back
+G = tf(1, [1 1]);
+Gd = c2d(G, 0.5)
+Gt = c2d(G, 0.5, 'tustin');
+d2c(Gd)
+step(G, Gd, Gt, 4), legend('continuous', 'zoh', 'tustin')
+# See also
+tf step
+
+@ pade
+A delay approximated by a ratio of polynomials.
+
+exp(-sT) as a ratio of polynomials of degree N whose numerator is the denominator at -s: its gain is exactly 1 at every frequency, its phase right at low frequencies. `pade(sys, N)` replaces a model's delays by their approximations, so that analyses needing polynomials can take it.
+
+# Syntax
+[num, den] = pade(T, N)
+    The coefficients.
+sys = pade(T, N)
+    As a model.
+sysx = pade(sys, N)
+    A model's delays replaced.
+# Examples
+## One second of delay
+P1 = pade(1, 1)
+P3 = pade(1, 3);
+t = linspace(0, 3, 300);
+step(P1, P3, t), hold on, plot([0 1 1 3], [0 0 1 1], 'k:'), hold off, legend('order 1', 'order 3', 'delay')
+# See also
+c2d
+
+@ minreal, ss2ss, xperm, canon
+Realizations: minimal, transformed, reordered, canonical.
+
+`minreal` takes out what cancels: coinciding poles and zeros of a transfer function, or states that cannot be controlled or observed. `ss2ss` transforms the states (z = Tx), `xperm` reorders them, and `canon` gives the modal form (A block diagonal, real 2-by-2 blocks for complex pairs) or the companion form. The input-output behaviour stays the same.
+
+# Syntax
+sysr = minreal(sys, tol)
+    Minimal.
+sysT = ss2ss(sys, T)
+    Transformed.
+sysp = xperm(sys, p)
+    Reordered.
+[csys, T] = canon(sys, type)
+    Canonical.
+# Examples
+## A cancelling pair, and the modal form
+G = tf([1 1], [1 3 2]);
+minreal(G)
+sys = ss(tf(1, [1 2 5 4]));
+m = canon(sys, 'modal');
+round(m.A, 3)
+max(abs(step(sys, 0:1:5) - step(m, 0:1:5))) < 1e-9
+# See also
+ss balreal
+
+@ step, initial, lsim, stepplot, impulseplot
+Responses in time: to a step, from initial conditions, and to any input.
+
+`step` gives (or draws) the response to a unit step, long enough for the slowest pole to settle unless a time is given, as a staircase in discrete time; several models are drawn together. `initial` gives the response of a state-space model from an initial state with no input; `lsim` the response to an input sampled at times (linear between samples, unless `'zoh'`). `stepplot` and `impulseplot` draw them.
+
+# Syntax
+step(sys1, sys2, ..., Tfinal)
+    Drawn.
+[y, t] = step(sys, t)
+    The response.
+[y, t, x] = initial(sys, x0, Tfinal)
+    From an initial state.
+[y, t, x] = lsim(sys, u, t, x0)
+    To an input.
+stepplot(sys)
+    Drawn.
+impulseplot(sys)
+    The impulse response drawn.
+# Examples
+## Three dampings
+s = tf('s');
+step(1/(s^2 + 0.4*s + 1), 1/(s^2 + 1.4*s + 1), 1/(s^2 + 3*s + 1), 15)
+legend('\zeta = 0.2', '\zeta = 0.7', '\zeta = 1.5')
+## A square wave through a lag, and a release from rest
+G = ss(tf(1, [0.5 1]));
+t = (0:0.01:6)';
+u = double(mod(t, 2) < 1);
+y = lsim(G, u, t);
+subplot(1, 2, 1), plot(t, u, t, y), legend('input', 'output')
+subplot(1, 2, 2), initial(ss([0 1; -4 -0.5], [0; 1], [1 0], 0), [1; 0], 8)
+# See also
+impulse stepinfo
+
+@ stepinfo, lsiminfo
+Characteristics of a response: rise and settling times, overshoot, peak.
+
+`stepinfo` gives a step response's rise time (10% to 90% of the change), settling time (within 2% of the final value), overshoot and undershoot in percent, and the peak and its time, from a model or from samples. `lsiminfo` gives a response's settling time and its minimum and maximum with their times.
+
+# Syntax
+S = stepinfo(sys)
+    Of a model's step.
+S = stepinfo(y, t, yfinal, 'SettlingTimeThreshold', s, 'RiseTimeLimits', [lo hi])
+    Of samples.
+S = lsiminfo(y, t, yfinal)
+    Of any response.
+# Examples
+## A second-order step against the formulas
+zeta = 0.3; wn = 2;
+S = stepinfo(tf(wn^2, [1 2*zeta*wn wn^2]));
+round([S.Overshoot, S.PeakTime, S.SettlingTime], 2)
+round([100*exp(-pi*zeta/sqrt(1 - zeta^2)), pi/(wn*sqrt(1 - zeta^2))], 2)
+t = linspace(0, 10, 500);
+y = exp(-t).*cos(3*t);
+L = lsiminfo(y, t, 0);
+round([L.Min, L.MinTime], 3)
+# See also
+step overshoot settlingtime

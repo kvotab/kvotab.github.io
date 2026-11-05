@@ -387,7 +387,8 @@ def _make(kind, check):
             ok = same == (check == 'SameHandle')
             reason = '' if ok else ('they are different objects' if check == 'SameHandle' else 'they are the same object')
         _qualified(kind, tc, ok, check, reason, lines, diag)
-        return result if check in ('Warning', 'WarningFree') else None
+        # the function's outputs only when asked for (an anonymous function's value showed as ans after the qualification)
+        return result if check in ('Warning', 'WarningFree') and nargout else None
     q.__name__ = name
     q.__doc__ = f'{name}(testCase, ...): see the help.'
     return q
@@ -1021,6 +1022,8 @@ async def testsuite(nargout, *args):
 
 
 async def _from(nargout, *args):
+    # a class given by its meta.class object (fromClass(?SampleTest)) is taken by its name
+    args = tuple(x.getprop('Name') if getattr(x, 'cls', None) == 'meta.class' else x for x in args)
     entries, _ = await _gather(args, 'TestSuite')
     return Suite(entries)
 

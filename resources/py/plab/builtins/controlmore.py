@@ -286,14 +286,18 @@ def _frd_feedback(nargout, *args):
     return _frd_like(_each([g, h], lambda p, q: np.linalg.solve(np.eye(ny) - sign * p @ q, p)), like)
 
 
+def _frd_at(sw, H, w, fn):
+    """The response H (ny x nu x n, at the frequencies sw) at the frequencies w, each one of sw."""
+    idx = [int(np.argmin(np.abs(sw - v))) for v in w]
+    if any(abs(sw[i] - v) > 1e-9 * max(1.0, abs(v)) for i, v in zip(idx, w)):
+        raise err(f'Control:{fn}:frd', 'An frd model has a response only at its own frequencies.', fn)
+    return sw[idx], H[:, :, idx]
+
+
 def _frd_freqresp(nargout, *args):
     s = args[0]
     if len(args) > 1:
-        w = np.asarray(darr(args[1]), float).reshape(-1)
-        idx = [int(np.argmin(np.abs(s.w - v))) for v in w]
-        if any(abs(s.w[i] - v) > 1e-9 * max(1.0, abs(v)) for i, v in zip(idx, w)):
-            raise err('Control:freqresp:frd', 'An frd model has a response only at its own frequencies.', 'freqresp')
-        H, w = s.H[:, :, idx], s.w[idx]
+        w, H = _frd_at(s.w, s.H, np.asarray(darr(args[1]), float).reshape(-1), 'freqresp')
     else:
         H, w = s.H, s.w
     return _outs(nargout, out(H if H.shape[2] > 1 else H[:, :, 0]), out(w.reshape(-1, 1)))
@@ -336,12 +340,14 @@ def _models_w(args, fn):
             rest.pop(0)
     if not syss:
         raise err(f'Control:{fn}:model', f'{fn} takes a model.', fn)
-    w = None
+    w = band = None
     if rest and isinstance(rest[0], Cell):
         lo, hi = (float(num(x)) for x in rest[0].a.reshape(-1))
+        band = (lo, hi)
         w = np.logspace(math.log10(lo), math.log10(hi), 400)
     elif rest and numel(rest[0]):
         w = np.asarray(darr(rest[0]), float).reshape(-1)
+    given = w is not None and band is None
     lti = [s for s in syss if isinstance(s, K.LTI)]
     if w is None:
         frds = [s for s in syss if isinstance(s, FRD)]
@@ -349,7 +355,14 @@ def _models_w(args, fn):
     entries = []
     for s in syss:
         if isinstance(s, FRD):
-            entries.append((s.rad(), np.moveaxis(s.H, 2, 0)))
+            # an frd model at the frequencies given (each one of its own), or at those of its own within the range
+            sw, H = s.rad(), s.H
+            if given:
+                sw, H = _frd_at(sw, H, w, fn)
+            elif band is not None:
+                keep = (sw >= band[0] * (1 - 1e-12)) & (sw <= band[1] * (1 + 1e-12))
+                sw, H = sw[keep], H[:, :, keep]
+            entries.append((sw, np.moveaxis(H, 2, 0)))
         else:
             entries.append((w, s.resp(K._jw(s, w))))
     return syss, entries

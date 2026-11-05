@@ -210,32 +210,36 @@ async def desktop(page):
     await page.ev("(() => { const a = [...PL.app.cmd.out.querySelectorAll('a.pl-helplink')].find((e) => e.dataset.help === 'prod'); a.click(); return 1; })()")
     out2 = await until(page, "(() => { const t = PL.app.cmd.out.textContent; return t.includes(' prod - ') ? t : null; })()")
     check('a click on a link in help shows that function\'s help', bool(out2) and '>> help prod' in out2, True)
-    # a function without a page of its own shows its summary, forms and how it is computed (the docs section has the
-    # pages): the last in the Help lists whose How it works has two paragraphs or more and whose See also names another
-    # without a page, so that the rounds of pages never take it away
+    # a function shows its page (or, without one, its summary and forms), how it is computed and its See also: the last
+    # in the Help lists whose How it works has two paragraphs or more and whose See also names another, those without a
+    # page first (the rounds of pages leave none at the end)
     await page.ev("PL.app.openHelp(); 1")
     await until(page, "document.querySelector('.pl-help .pl-fnlist a[data-fn]')")
-    bare = await page.ev("[...document.querySelectorAll('.pl-help .pl-fnlist a[data-fn]')].filter((a) => !a.classList.contains('has-doc')).map((a) => a.dataset.fn)") or []
+    await until(page, "document.querySelector('.pl-help .pl-fnlist a.has-doc')", 20)
+    lists = await page.ev("(() => { const a = [...document.querySelectorAll('.pl-help .pl-fnlist a[data-fn]')]; "
+                          "return [a.filter((e) => !e.classList.contains('has-doc')).map((e) => e.dataset.fn), a.filter((e) => e.classList.contains('has-doc')).map((e) => e.dataset.fn)]; })()") or [[], []]
+    bare = lists[0]
+    shows = ("(() => { const h = document.querySelector('.pl-help h2'); return !!h && h.textContent.split(', ').includes(%s); })()")
     pick, help_text, see = None, None, []
-    for name in reversed(bare):
+    for name in list(reversed(bare)) + list(reversed(lists[1])):
         await page.ev(f"PL.app.openHelp({json.dumps(name)}); 1")
-        info = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); if (!p || !p.textContent.includes(" + json.dumps(name + ' - ') + ")) return null; "
-                                 "const s = document.querySelector('.pl-help .pl-how'); return { text: p.textContent, how: s ? s.querySelectorAll('p').length : 0, "
+        info = await until(page, "(() => { if (!" + shows % json.dumps(name) + ") return null; const p = document.querySelector('.pl-help pre'); "
+                                 "const s = document.querySelector('.pl-help .pl-how'); return { text: p ? p.textContent : '', how: s ? s.querySelectorAll('p').length : 0, "
                                  "see: [...document.querySelectorAll('.pl-help .pl-see a[data-help]')].map((a) => a.dataset.help) }; })()", 5)
-        other = [x for x in (info or {}).get('see', []) if x in bare and x != name]
+        other = [x for x in (info or {}).get('see', []) if x != name]
         if info and info['how'] >= 2 and other:
             pick, help_text, see = (name, other[0]), info['text'], info['see']
             break
-    check('the Help panel shows a function', bool(pick) and f'{pick[0]} - ' in (help_text or ''), True)
-    how = await page.ev("(() => { const s = document.querySelector('.pl-help .pl-how'); "
+    check('the Help panel shows a function', bool(pick) and (pick[0] not in bare or f'{pick[0]} - ' in (help_text or '')), True)
+    how = await page.ev("(() => { const s = document.querySelector('.pl-help .pl-how'); const p = document.querySelector('.pl-help pre'); "
                         "return !!s && s.querySelector('h3').textContent === 'How it works' && s.querySelectorAll('p').length >= 2 "
-                        "&& !document.querySelector('.pl-help pre').textContent.includes('How it works'); })()")
+                        "&& (!p || !p.textContent.includes('How it works')); })()")
     check('and how PyLAB computes it, as paragraphs after the call forms', how, True)
     check('the Help panel ends with See also, each a link', bool(pick) and pick[1] in see, True)
     shown = None
     if pick:
         await page.ev(f"document.querySelector('.pl-help .pl-see a[data-help=' + {json.dumps(json.dumps(pick[1]))} + ']').click(); 1")
-        shown = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); return p && p.textContent.includes(" + json.dumps(pick[1] + ' - ') + ") ? p.textContent : null; })()")
+        shown = await until(page, shows % json.dumps(pick[1]))
     check('a click there shows that function in the Help panel', bool(shown), True)
     await page.ev("PL.app.openHelp(); 1")
     n_links = await page.ev("document.querySelectorAll('.pl-help [data-fn]').length")
@@ -1325,11 +1329,15 @@ async def docs(page):
         paged = set(json.load(fh)['names'])
     marked, unmarked = marks
     check('docs: the function lists mark the names that have pages',
-          ('plot' in marked, all(n in paged for n in marked), bool(unmarked) and not any(n in paged for n in unmarked)), (True, True, True))
-    bare = unmarked[-1] if unmarked else 'plot'
-    await command(page, f"doc {bare}")
+          ('plot' in marked, all(n in paged for n in marked), not any(n in paged for n in unmarked)), (True, True, True))
+    # a listed function without a page, or (once every one has a page) a function of the user's, from its folder
+    bare = unmarked[-1] if unmarked else 'collatz'
+    await command(page, f"{'' if unmarked else 'cd /home/user/examples; '}doc {bare}")
     await until(page, f"document.querySelector('.pl-help h2')?.textContent === '{bare}'", 20)
-    old = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [!!h.querySelector('pre'), h.querySelectorAll('.pl-doc-ex').length]; })()")
+    old = await page.ev("(() => { const h = document.querySelector('.pl-help'); const p = h.querySelector('pre'); "
+                        "return [!!p && !p.textContent.includes('not found'), h.querySelectorAll('.pl-doc-ex').length]; })()")
+    if not unmarked:
+        await command(page, "cd /home/user")
     check('docs: a function without a page keeps its summary page', old, [True, 0])
     # an app's components are HTML over its stored figure, only to be looked at
     await command(page, "doc uibutton")

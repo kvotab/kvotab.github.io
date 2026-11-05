@@ -1091,8 +1091,12 @@ def ss2tf_(nargout, *args):
 def tf2ss_(nargout, *args):
     """[A, B, C, D] = tf2ss(b, a): a state-space realization (controller canonical form) of a transfer function."""
     nargchk(args, 2, 2, 'tf2ss')
-    from scipy.signal import tf2ss
-    A, B, C, D = tf2ss(np.asarray(darr(args[0]), float), np.asarray(darr(args[1]), float).reshape(-1))
+    import warnings
+    from scipy.signal import tf2ss, BadCoefficients
+    with warnings.catch_warnings():
+        # a numerator padded with leading zeros to the denominator's length (as tfdata gives it) is the usual form, not a badly conditioned one
+        warnings.simplefilter('ignore', BadCoefficients)
+        A, B, C, D = tf2ss(np.asarray(darr(args[0]), float), np.asarray(darr(args[1]), float).reshape(-1))
     res = (out(A), out(B), out(C), out(D))
     return res[:nargout] if nargout > 1 else res[0]
 
@@ -2227,6 +2231,9 @@ def nyquist(nargout, *args):
     M.props['Marker'] = '+'
     M.props['LineStyle'] = 'none'
     M.props['Color'] = (0.85, 0.0, 0.0)
+    # limits a tenth beyond the curves and the critical point, which rounded-out limits often put on the box's edge
+    from .graphics import _tight
+    _tight(ax, pad=0.1)
     R._builtin('title', ax, Char.of('Nyquist Diagram'))
     R._builtin('xlabel', ax, Char.of('Real Axis'))
     R._builtin('ylabel', ax, Char.of('Imaginary Axis'))
@@ -2321,6 +2328,36 @@ def _margins(s):
     return gm, wg, pm, wp
 
 
+def _margin_marks(axm, axp, Gm, Wcg, Pm, Wcp):
+    """The margins marked on a Bode diagram: dotted lines at 0 dB and at -180 degrees (the turn of it the phase is near), and
+    vertical lines from them to the gain at Wcg and to the phase at Wcp."""
+    from ..graphics_base import Line
+    curves = [c for c in axp.children if getattr(c, 'TYPE', '') == 'line']
+    if not curves:
+        return
+    w = np.asarray(curves[0].props['XData'], float).reshape(-1)
+    ph = np.asarray(curves[0].props['YData'], float).reshape(-1)
+
+    def at(x):
+        return float(np.interp(math.log10(x), np.log10(w), ph))
+
+    def turn(p):
+        return round((p + 180) / 360) * 360 - 180
+
+    ref = turn(at(Wcp)) if np.isfinite(Wcp) else turn(at(Wcg)) if np.isfinite(Wcg) else -180.0
+    marks = [(axm, w[[0, -1]], [0.0, 0.0], ':'), (axp, w[[0, -1]], [ref, ref], ':')]
+    if np.isfinite(Gm) and np.isfinite(Wcg) and Gm > 0:
+        marks.append((axm, [Wcg, Wcg], [-20 * math.log10(Gm), 0.0], '-'))
+    if np.isfinite(Pm) and np.isfinite(Wcp):
+        marks.append((axp, [Wcp, Wcp], [ref, ref + Pm], '-'))
+    for ax, xs, ys, style in marks:
+        L = Line(ax)
+        L.props['XData'], L.props['YData'] = np.asarray(xs, float).reshape(1, -1), np.asarray(ys, float).reshape(1, -1)
+        L.props['Color'] = (0.0, 0.0, 0.0)
+        L.props['LineStyle'] = style
+        ax.touch()
+
+
 @bi('margin', nout=4)
 def margin(nargout, *args):
     """[Gm, Pm, Wcg, Wcp] = margin(sys): the gain margin (absolute) and phase margin (degrees) of a loop, and the frequencies where the phase crosses -180 and the gain crosses 1; Inf when there is no crossing. Drawn on its Bode diagram when nothing is asked for."""
@@ -2340,10 +2377,12 @@ def margin(nargout, *args):
     if nargout == 0:
         bode(0, s)
         fig = R._builtin('gcf')
-        ax1 = [c for c in fig.children if getattr(c, 'TYPE', '') == 'axes']
+        axs = sorted((c for c in fig.children if getattr(c, 'TYPE', '') == 'axes'), key=lambda a: -np.asarray(a.get_value('Position')).reshape(-1)[1])
         title = f'Bode Diagram   Gm = {20 * math.log10(Gm):.3g} dB (at {Wcg:.3g} rad/s), Pm = {Pm:.3g} deg (at {Wcp:.3g} rad/s)'
-        if ax1:
-            R._builtin('title', ax1[-1] if len(ax1) == 1 else sorted(ax1, key=lambda a: -np.asarray(a.get_value('Position')).reshape(-1)[1])[0], Char.of(title))
+        if len(axs) >= 2:
+            _margin_marks(axs[0], axs[1], Gm, Wcg, Pm, Wcp)
+        if axs:
+            R._builtin('title', axs[0], Char.of(title))
         return None
     res = (float(Gm), float(Pm), float(Wcg), float(Wcp))
     return res[:nargout] if nargout > 1 else res[0]
@@ -2419,12 +2458,39 @@ def rlocus(nargout, *args):
         L.props['XData'], L.props['YData'] = rows[:, b].real.reshape(1, -1), rows[:, b].imag.reshape(1, -1)
         L.props['Color'] = col
     _pz_marks(ax, s)
+    _locus_view(ax, s, rows)
     R._builtin('title', ax, Char.of('Root Locus'))
     R._builtin('xlabel', ax, Char.of('Real Axis'))
     R._builtin('ylabel', ax, Char.of('Imaginary Axis'))
     R._builtin('grid', ax, Char.of('on'))
     ax.touch()
     return None
+
+
+def _locus_view(ax, s, rows):
+    """Limits about the open-loop poles and zeros: the branches within 2.5 times their spread of them, a tenth beyond, so that
+    the branches that go off along asymptotes at the largest gains do not shrink the rest to a line."""
+    z = np.asarray(s.zpk_data()[0][0][0], complex)
+    pz = np.concatenate([_poles(s), z])
+    pz = pz[np.isfinite(pz)]
+    if not pz.size:
+        return
+    lo, hi = np.array([pz.real.min(), pz.imag.min()]), np.array([pz.real.max(), pz.imag.max()])
+    size = max(float(np.max(hi - lo)), 0.1 * float(np.max(np.abs(pz))), 1e-9)
+    if size <= 1e-9:
+        size = 1.0
+    mid = (lo + hi) / 2
+    r = rows.reshape(-1)
+    r = r[np.isfinite(r)]
+    r = r[np.abs(r - complex(mid[0], mid[1])) <= 2.5 * size]
+    keep = np.concatenate([pz, r])
+    for k, v in (('XLim', keep.real), ('YLim', keep.imag)):
+        a, b = float(v.min()), float(v.max())
+        if b - a < 1e-9 * size:
+            a, b = a - size / 2, b + size / 2
+        d = (b - a) * 0.1
+        ax.props[k] = np.array([[a - d, b + d]])
+        ax.props[k + 'Mode'] = 'manual'
 
 
 def _pz_marks(ax, s):
@@ -2450,10 +2516,12 @@ def pzmap(nargout, *args):
     if nargout:
         z = np.asarray(s.zpk_data()[0][0][0], complex) if s.shape == (1, 1) else _tzero(s)
         return (out(np.real_if_close(_poles(s)).reshape(-1, 1)), out(np.real_if_close(z).reshape(-1, 1))) if nargout > 1 else out(np.real_if_close(_poles(s)).reshape(-1, 1))
-    from .graphics import newplot
+    from .graphics import newplot, _tight
     ax = newplot(None)
     for s in syss:
         _pz_marks(ax, s)
+    # limits a tenth beyond the poles and zeros, so that none sits on the box's edge (rounded-out limits often fall on one)
+    _tight(ax, pad=0.1)
     R._builtin('title', ax, Char.of('Pole-Zero Map'))
     R._builtin('xlabel', ax, Char.of('Real Axis'))
     R._builtin('ylabel', ax, Char.of('Imaginary Axis'))

@@ -132,7 +132,7 @@ near('idwt: L keeps the middle; [] is zeros', (W['y'], W['y0']), ([x], pywt.idwt
 x = rng.normal(size=100)
 W, _ = run("[c, l] = wavedec(x, 4, 'sym4'); y = waverec(c, l, 'sym4'); a2 = appcoef(c, l, 'sym4', 2); a4 = appcoef(c, l, 'sym4'); d3 = detcoef(c, l, 3); "
            "[e1, e3] = detcoef(c, l, [1 3]); dc = detcoef(c, l, 'cells'); n = numel(dc); s = wrcoef('a', c, l, 'sym4', 4); for k = 1:4, s = s + wrcoef('d', c, l, 'sym4', k); end; "
-           "r2 = wrcoef('d', c, l, 'sym4', 2); [Ea, Ed] = wenergy(c, l); ml = wmaxlev(100, 'sym4');", x=x)
+           "r2 = wrcoef('d', c, l, 'sym4', 2); [Ea, Ed] = wenergy(c, l); sa = size(Ea); ml = wmaxlev(100, 'sym4');", x=x)
 cs = pywt.wavedec(x, 'sym4', 'symmetric', level=4)
 near('wavedec: c = [cA4 cD4 ... cD1] and l the lengths, as pywt', (W['c'], W['l']), (np.concatenate(cs), [len(v) for v in cs] + [100]))
 near('waverec gives the signal back; appcoef at level 4 is cA4', (W['y'], W['a4']), ([x], [cs[0]]))
@@ -141,6 +141,7 @@ near('detcoef: one level, several outputs, every level in a cell', (W['d3'], W['
 near('wrcoef: the approximation and the details add up to the signal', W['s'], [x])
 ref = pywt.waverec([np.zeros_like(cs[0]), np.zeros_like(cs[1]), np.zeros_like(cs[2]), cs[3], np.zeros_like(cs[4])], 'sym4')
 near('wrcoef of level-2 details: waverec with the rest zero', W['r2'], [ref])
+C('wenergy: Ea a number (a NumPy scalar was 1-by-0 to size)', type(W['Ea']) is float and a(W['sa']).tolist() == [[1, 1]], (type(W['Ea']), W['sa']))
 near('wenergy: shares adding to 100, Ed(k) level k', (W['Ea'] + a(W['Ed']).sum(), W['Ed']), (100, [100 * np.array([np.sum(cs[5 - k] ** 2) for k in range(1, 5)]) / np.sum(np.concatenate(cs) ** 2)]))
 near('wmaxlev: floor(log2(100/7))', W['ml'], 3)
 xs = rng.normal(size=7)

@@ -256,6 +256,10 @@ W, out = run("s = testsuite('scriptTest'); n = numel(s); nm = s(2).Name; r = run
 near('testsuite, indexing it, running one; fromFile; concatenating suites and results', (W['n'], W['p'], W['nb'], W['n3'], W['nrr'], W['ok']), (3, 1, 6, 6, 4, 0))
 same('a suite element has its name; assertSuccess names what failed', (text(W['nm']), 'scriptTest/Cube_fails' in text(W['msg'])), ('scriptTest/Cube_fails', True))
 same('withNoPlugins runs silently, withTextOutput reports', out.count('Running scriptTest') == 1 and out.count('Running fnTest') == 1, True)
+W, out = run("tc = matlab.unittest.TestCase.forInteractiveUse; verifyWarningFree(tc, @() 1 + 1)\nv = verifyWarningFree(tc, @() 1 + 1);")
+same("verifyWarningFree gives the function's value only when asked for (it showed ans = 2)", ('ans' in out, float(a(W['v']))), (False, 2.0))
+W, out = run("s1 = matlab.unittest.TestSuite.fromClass(?SampleTest); s2 = matlab.unittest.TestSuite.fromClass('SampleTest'); same = isequal({s1.Name}, {s2.Name}); n = numel(s1);")
+same('TestSuite.fromClass of a meta.class object (?SampleTest), as of its name (it was refused)', (bool(W['same']), int(a(W['n'])) > 1), (True, True))
 W, out = run("r = runtests('fnTest')")
 same('results shown with their totals', all(s in out for s in ('1×3 TestResult array with properties:', 'Totals:', '3 Passed, 0 Failed, 0 Incomplete.', 'seconds testing time.')), True)
 

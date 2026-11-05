@@ -208,6 +208,11 @@ def run_example(code, where='?'):
             text = text.replace(w, '/home/user')
         if not ok:
             raise DocError(f'{where}: the example stopped at an error:\n{text}')
+        # a NumPy scalar a builtin gave back is no value of the language (size takes it for 1-by-0, the display shows every digit)
+        import numpy as np
+        leaks = sorted(k for k, v in dict.items(R.BASE) if isinstance(v, (np.number, np.bool_)))
+        if leaks:
+            raise DocError(f'{where}: a builtin gave a NumPy scalar, held in {", ".join(leaks)}')
         figs = [GB.serialize_figure(f) for f in sorted(GB.STORE.figures.values(), key=lambda f: f.order) if f.valid]
         asyncio.run(R.execute('close all force'))
         R.take_output()

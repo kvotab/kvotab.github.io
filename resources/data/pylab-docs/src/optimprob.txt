@@ -1,0 +1,197 @@
+@ optimvar, showbounds
+Optimization variables: named unknowns to write a problem with.
+
+`optimvar` makes a variable, a scalar or an array, continuous or integer, with lower and upper bounds (which can be set later: `x.LowerBound = 0`, or one element's: `x.UpperBound(2) = 4`). A dimension can be given as names, and the variable is then indexed by them too. Arithmetic on variables gives optimization expressions, and comparisons give constraints, from which `optimproblem` builds a problem for `solve`. A variable is a handle: its bounds are the same wherever it is used. `showbounds` writes out its finite bounds.
+
+# Syntax
+x = optimvar(name)
+    A scalar.
+x = optimvar(name, n, m)
+    An array.
+x = optimvar(name, {'a', 'b'})
+    Indexed by names.
+x = optimvar(..., 'Type', 'integer', 'LowerBound', lb, 'UpperBound', ub)
+    Integer, bounded.
+showbounds(x)
+    The finite bounds.
+# Examples
+## Variables by number and by name
+x = optimvar('x', 2, 'LowerBound', 0);
+showbounds(x)
+y = optimvar('y', 'Type', 'integer', 'LowerBound', 0, 'UpperBound', 5);
+showbounds(y)
+flow = optimvar('flow', {'north', 'south'}, 'UpperBound', 10);
+flow.UpperBound(2) = 4;
+showbounds(flow)
+2*flow('north') + x(1)
+# See also
+optimproblem optimexpr solve
+
+@ optimexpr, optimconstr, optimineq, optimeq
+Arrays of expressions and constraints, filled one element at a time.
+
+When an expression or a constraint is easiest written element by element, in a loop, these make an array to fill: `optimexpr` of zeros, `optimconstr` of empty constraints taking any relation, `optimineq` of inequalities (<= and >=) only, and `optimeq` of equalities only. Expressions support the usual arithmetic, matrix products, indexing, concatenation, sums and elementwise functions; displayed, a linear or quadratic one is written out term by term.
+
+# Syntax
+e = optimexpr(n, m)
+    Expressions to fill.
+c = optimconstr(n, m)
+    Constraints to fill.
+c = optimineq(n)
+    Inequalities.
+c = optimeq(n)
+    Equalities.
+# Examples
+## A cost and a chain of constraints, written in loops
+x = optimvar('x', 4, 'LowerBound', 0);
+e = optimexpr(4);
+for k = 1:4
+    e(k) = k*x(k);
+end
+e
+c = optimconstr(3);
+for k = 1:3
+    c(k) = x(k) + x(k+1) >= k;
+end
+c
+ineq = optimineq(2);
+ineq(1) = sum(x) <= 10;
+ineq(2) = x(1) - x(4) <= 1;
+eq = optimeq(1);
+eq(1) = x(2) == x(3);
+prob = optimproblem('Objective', sum(e), 'Constraints', struct('c', c, 'ineq', ineq, 'eq', eq));
+sol = solve(prob);
+sol.x'
+# See also
+optimvar optimproblem
+
+@ optimproblem, show
+An optimization problem: an objective and constraints in variables, to be solved.
+
+`optimproblem` holds an objective to minimize (or maximize, with `'ObjectiveSense'`) and constraints, a constraint array or named fields added one at a time. `solve` chooses the solver from the problem's form: `intlinprog` when everything is linear and some variable is an integer, `linprog` when it is linear, `quadprog` for a quadratic objective, and `fmincon` (with a start point) for the rest. `show` writes out a problem, an expression, a constraint or a variable.
+
+# Syntax
+prob = optimproblem
+    Empty.
+prob = optimproblem('Objective', expr, 'ObjectiveSense', sense, 'Constraints', constr)
+    All at once.
+show(prob)
+    Written out.
+# Examples
+## A small production plan
+x = optimvar('x', 2, 'LowerBound', 0);
+y = optimvar('y', 'Type', 'integer', 'LowerBound', 0, 'UpperBound', 5);
+prob = optimproblem('ObjectiveSense', 'maximize');
+prob.Objective = 3*x(1) + 2*x(2) + y;
+prob.Constraints.c1 = x(1) + x(2) + y <= 4;
+prob.Constraints.c2 = x(1) + 3*x(2) <= 6;
+prob.Constraints.c3 = x(1) <= 3;
+show(prob)
+[sol, fval, exitflag, output] = solve(prob);
+sol.x', sol.y, fval
+output.solver
+# See also
+optimvar solve prob2struct
+
+@ eqnproblem
+A system of equations in optimization variables, to be solved.
+
+Equations are equalities between expressions, given at once or as named fields. `solve` takes linear ones by least squares and the others by `fsolve` from a start point x0, a struct with a field for each variable; different start points can lead to different roots. fval gives each equation's residual.
+
+# Syntax
+prob = eqnproblem
+    Empty, equations added as fields.
+prob = eqnproblem('Equations', eqns)
+    All at once.
+# Examples
+## Where a line crosses the unit circle
+x = optimvar('x');
+y = optimvar('y');
+prob = eqnproblem('Equations', struct('circle', x^2 + y^2 == 1, 'line', y == 2*x - 1));
+opts = optimoptions('fsolve', 'Display', 'off');
+x0.x = 1; x0.y = 1;
+sol = solve(prob, x0, 'Options', opts);
+[sol.x, sol.y]
+x0.x = -1; x0.y = -1;
+[sol2, fval] = solve(prob, x0, 'Options', opts);
+round([sol2.x, sol2.y], 6)
+fval
+# See also
+optimproblem fsolve
+
+@ evaluate, infeasibility
+An expression's value, and how far constraints are from holding, at a point.
+
+The point is a struct with a field for each variable, such as `solve` gives. `evaluate` gives the expression's value there; `infeasibility` gives, for each constraint, how much it is violated: 0 where it holds, else the amount by which the left side exceeds (or falls short of) the right.
+
+# Syntax
+v = evaluate(expr, pt)
+    The value.
+v = infeasibility(constr, pt)
+    The violations.
+# Examples
+## A cost at the solution, and constraints at a guess
+x = optimvar('x', 3, 'LowerBound', 0);
+cost = 2*x(1) + 3*x(2) + x(3);
+c = [x(1) + x(2) >= 2; x(2) + x(3) >= 3];
+prob = optimproblem('Objective', cost, 'Constraints', c);
+sol = solve(prob);
+evaluate(cost, sol)
+guess.x = [1; 0.5; 1];
+infeasibility(c, guess)
+# See also
+solve optimproblem
+
+@ fcn2optimexpr
+A function as an optimization expression.
+
+`fcn2optimexpr` calls the function with the variables: when it uses only what expressions support, the result is that expression (linear and quadratic ones stay so, and the solver can use their form). Otherwise, or with `'Analysis', 'off'`, the function is called with the variables' values each time the solver needs it, and the problem becomes a general nonlinear one solved from a start point.
+
+# Syntax
+e = fcn2optimexpr(fun, x1, x2)
+    The expression.
+[e1, e2] = fcn2optimexpr(fun, x1)
+    Several outputs.
+e = fcn2optimexpr(..., 'OutputSize', sz, 'Analysis', 'off')
+    A black box.
+# Examples
+## The point of a half-plane nearest to (1, 2)
+x = optimvar('x', 2);
+r = fcn2optimexpr(@(v) norm(v - [1; 2]), x);
+prob = optimproblem('Objective', r);
+prob.Constraints.half = x(1) + x(2) <= 1;
+x0.x = [0; 0];
+sol = solve(prob, x0, 'Options', optimoptions('fmincon', 'Display', 'off'));
+round(sol.x', 4)
+# See also
+optimproblem fmincon
+
+@ prob2struct, varindex
+A problem as the structure a solver takes, and where each variable sits in it.
+
+`prob2struct` turns a problem into the structure of the solver `solve` would choose (`linprog`, `intlinprog`, `quadprog`, `fmincon` and the others): the vectors and matrices of a linear or quadratic problem, or the objective and constraints as functions of one vector. A maximization becomes the minimization of the objective's negative. `varindex` gives where each variable's elements are in that vector: the variables in alphabetical order of their names, each by columns.
+
+# Syntax
+problem = prob2struct(prob)
+    The solver's problem.
+problem = prob2struct(prob, x0, 'Solver', solver)
+    For another solver.
+idx = varindex(prob)
+    Each variable's indices.
+idx = varindex(prob, name)
+    One variable's.
+# Examples
+## A linear problem as linprog sees it
+w = optimvar('w', 2, 'LowerBound', 0);
+z = optimvar('z', 'LowerBound', 0);
+lp = optimproblem('Objective', w(1) + 2*w(2) + 3*z);
+lp.Constraints.c = w(1) + w(2) + z >= 2;
+idx = varindex(lp)
+problem = prob2struct(lp);
+problem.f'
+problem.Aineq
+problem.solver
+x = linprog(problem);
+x(idx.w)'
+# See also
+optimproblem linprog

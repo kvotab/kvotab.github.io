@@ -197,6 +197,9 @@ W, _ = run(f"m = createpde; geometryFromEdges(m, {DISK}); specifyCoefficients(m,
            "isp = issparse(F.K);")
 near('assembleFEMatrices: K symmetric, its rows summing to 0 (constants have no gradient)', (W['sym'], W['rows']), [0, 0], 1e-12)
 near('assembleFEMatrices: F and A integrate f = 1 and a = 2 over the disk, G g = 0.5 round the three arcs the Dirichlet edge leaves', (W['fs'], W['as'], W['gs']), [math.pi, 2 * math.pi, 0.75 * math.pi], 1e-4)
+W2, _ = run("m = createpde; geometryFromEdges(m, decsg([3; 4; 0; 2; 2; 0; 0; 0; 1; 1])); mesh = generateMesh(m, 'Hmax', 0.25, 'GeometricOrder', 'linear'); [p, e, t] = meshToPet(mesh); "
+            "ok = true; cnt = zeros(1, 4); for k = 1:4, n = findNodes(mesh, 'region', 'Edge', k); cnt(k) = numel(n); ok = ok && isequal(n, unique(reshape(e(1:2, e(5, :) == k), 1, []))); end")
+C('findNodes by edge: the nodes of that edge, counted from 1 as meshToPet gives them (Edge 1 gave the second edge, the last none)', bool(W2['ok']) and sorted(a(W2['cnt']).reshape(-1).tolist()) == [5, 5, 9, 9], W2['cnt'])
 C('assembleFEMatrices: H a row for each node fixed by the Dirichlet edge; sparse', a(W['nh']) == a(W['nb']) and bool(W['isp']), (W['nh'], W['nb']))
 
 # ---- eigenvalues, time ----------------------------------------------------------------------------------------------------------------

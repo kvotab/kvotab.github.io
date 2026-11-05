@@ -904,7 +904,7 @@ def wenergy(nargout, *args):
     tot = np.sum(c ** 2)
     if tot == 0:
         raise err('Wavelet:wenergy:zero', 'The coefficients are all zero.', 'wenergy')
-    return _outs(nargout, 100 * float(np.sum(a ** 2)) / tot, _row([100 * np.sum(d ** 2) / tot for d in ds[::-1]]))
+    return _outs(nargout, float(100 * np.sum(a ** 2) / tot), _row([100 * np.sum(d ** 2) / tot for d in ds[::-1]]))
 
 
 # ---- two dimensions --------------------------------------------------------------------------------------------------
@@ -1420,7 +1420,13 @@ class _CWave:
         from scipy.integrate import quad
         lo = 0.0 if self.kind != 'bump' else self.mu - self.sig
         hi = self.cutoff(1e-14)
-        return quad(lambda w: self(w) / w if w > 0 else 0.0, lo, hi, limit=200)[0]
+        import warnings
+        from scipy.integrate import IntegrationWarning
+        with warnings.catch_warnings():
+            # the analytic Morlet's spectrum is not quite zero at 0 (2 exp(-18)): Psi(w)/w has a weak logarithmic singularity
+            # there, which quad reports while what it adds stays below 1e-5 of C
+            warnings.simplefilter('ignore', IntegrationWarning)
+            return quad(lambda w: self(w) / w if w > 0 else 0.0, lo, hi, limit=200)[0]
 
 
 def _cwt_opts(args, fn):
@@ -1551,6 +1557,16 @@ def cwt(nargout, *args):
     return _outs(nargout, out(W), out(f.reshape(-1, 1)), out(coi.reshape(-1, 1)))
 
 
+def _freq_ticks(ax, y):
+    """An axis of log2 frequencies (log-spaced scales drawn evenly) ticked at the powers of 2, labelled with the frequencies."""
+    lo, hi = math.floor(y.min()), math.ceil(y.max())
+    ticks = np.arange(lo, hi + 1, dtype=float)
+    ticks = ticks[(ticks >= y.min() - 1e-9) & (ticks <= y.max() + 1e-9)]
+    if ticks.size:
+        ax.set_value('YTick', _row(ticks))
+        ax.set_value('YTickLabel', Cell.of_list([Char.of(f'{2.0 ** t:.4g}') for t in ticks]))
+
+
 def _draw_scalogram(W, f, coi, N, fs):
     tt = np.arange(N) / (fs if fs else 1.0)
     y = np.log2(f)
@@ -1560,12 +1576,7 @@ def _draw_scalogram(W, f, coi, N, fs):
     _b('hold', Char.of('on'))
     _b('plot', _row(tt), _row(np.log2(np.maximum(coi, f[-1]))), Char.of('w--'), Char.of('LineWidth'), 1.5)
     _b('hold', Char.of('off'))
-    lo, hi = math.floor(y.min()), math.ceil(y.max())
-    ticks = np.arange(lo, hi + 1, dtype=float)
-    ticks = ticks[(ticks >= y.min() - 1e-9) & (ticks <= y.max() + 1e-9)]
-    if ticks.size:
-        ax.set_value('YTick', _row(ticks))
-        ax.set_value('YTickLabel', Cell.of_list([Char.of(f'{2.0 ** t:.4g}') for t in ticks]))
+    _freq_ticks(ax, y)
     _b('colorbar')
     _b('title', Char.of('Magnitude scalogram'))
     _b('xlabel', Char.of('Time (s)' if fs else 'Samples'))

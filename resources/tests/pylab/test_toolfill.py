@@ -214,6 +214,11 @@ W, _ = run("G = tf(1, [1 2 1]); w = logspace(-1, 1, 7); F = frd(G, w); H = frdat
 near("frd: a model's response at the frequencies", W['H'], W['Hg'], 1e-14)
 near('frd: arithmetic and feedback at each frequency', (W['H2'], W['Hc'], W['Hm']), (2 * a(W['Hg']) + 1, W['Gc'], a(W['Hg']) ** 2), 1e-13)
 near('bode of an frd model: its gains', W['mg'], np.abs(a(W['Hg'])), 1e-14)
+W, _ = run("w = logspace(-1, 1, 7); F = frd(tf(1, [1 2 1]), w); [m, ph, wo] = bode(F, w([2 5])); m = squeeze(m); wo = wo'; [m2, ph2, w2] = bode(F, {0.2, 2}); w2 = w2';"
+           "g = squeeze(freqresp(tf(1, [1 2 1]), w([2 5]))).';")
+near('bode of an frd model at frequencies given: those alone (it gave them all)', (W['m'], W['wo']), (np.abs(a(W['g'])).reshape(-1, 1), [[10 ** (-2 / 3), 10 ** (1 / 3)]]), 1e-12)
+near('  and with a range, its frequencies within it', W['w2'], [10 ** np.array([-2 / 3, -1 / 3, 0])], 1e-12)
+raises("bode(frd([1 2 3], [1 2 3]), 1.5)", 'its own frequencies')
 W, _ = run("w = logspace(-1, 1, 7); g = tf(1, [1 1]); g.InputName = 'u'; g.OutputName = 'y'; Cn = pid(2, 1); Cn.InputName = 'e'; Cn.OutputName = 'u';"
            "T = connect(g, Cn, sumblk('e = r - y'), 'r', 'y'); a1 = squeeze(freqresp(T, w)); a2 = squeeze(freqresp(feedback(g*Cn, 1), w));"
            "Tq = connect(append(tf(2, [1 3]), tf(1, [1 0])), [2 1; 1 -2], 1, 2); b1 = squeeze(freqresp(Tq, w)); b2 = squeeze(freqresp(feedback(tf(1, [1 0])*tf(2, [1 3]), 1), w));"
@@ -331,6 +336,13 @@ W, _ = run("x = cos(2*pi*10*(0:511)/100)'; [sst, f] = wsst(x, 100); [~, k] = max
 C('wsst: a tone at its frequency', abs(a(W['fk']) - 10) < 0.1, W['fk'])
 C('iwsst: the signal back as icwt gives it from the same transform (both within 2% here)', a(W['ei']) < 1e-3 and a(W['er']) < 0.02 and a(W['e0']) < 0.02, (W['ei'], W['er']))
 C('wcoherence: high where the signals share a tone, low in the noise', a(W['c5']) > 0.95 and a(W['c20']) < 0.6, (W['c5'], W['c20']))
+W2, _ = run("t = (0:1023)/1000; x = cos(2*pi*(50*t + 100*t.^2)); [~, f] = wsst(x, 1000); wsst(x, 1000); im = findobj(gca, 'Type', 'image'); yd = get(im, 'YData'); "
+           "lab = get(gca, 'YTickLabel'); tk = get(gca, 'YTick'); close all; rng default; u = randn(1, 400); wcoherence(u, u + randn(1, 400), 50); nl = numel(findobj(gca, 'Type', 'line')); "
+           "yl = get(gca, 'YLabel'); ylt = get(yl, 'String'); close all")
+near('wsst drawn: its rows at log2 of their frequencies (they are spaced so; drawn as if linear in Hz, a chirp sat 200 Hz high)', a(W2['yd']).reshape(-1)[[0, -1]], np.log2(a(W2['f']).reshape(-1)[[0, -1]]), 1e-9)
+labs = [x.str() for x in W2['lab'].a.reshape(-1)]
+C('  ticked at powers of 2, labelled in Hz', labs == [f'{2.0 ** k:.4g}' for k in a(W2['tk']).reshape(-1)] and '64' in labs, labs)
+C('wcoherence drawn: the cone of influence dashed, the frequencies in Hz', W2['nl'] == 1 and W2['ylt'].str() == 'Frequency (Hz)', (W2['nl'], W2['ylt']))
 C('ewt: the components add up to the signal, a tone each', a(W['er2']) < 1e-12 and a(W['e1']) < 1e-3, (W['er2'], W['e1']))
 near('ewt: the peaks found', W['pf'], [[0.05], [0.2]], 1e-12)
 

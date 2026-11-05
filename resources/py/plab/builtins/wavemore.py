@@ -430,9 +430,11 @@ def wsst(nargout, *args):
     T *= math.log(2) / nv
     f = fk * (fs if fs else 1.0)
     if nargout == 0:
+        # the frequencies are spaced evenly in log2 (voices to an octave): drawn so, ticked in Hz, as cwt's scalogram
         tt = np.arange(N) / (fs if fs else 1.0)
-        R._builtin('imagesc', out(tt.reshape(1, -1)), _col(f), out(np.abs(T)))
+        R._builtin('imagesc', out(tt.reshape(1, -1)), _col(np.log2(f)), out(np.abs(T)))
         R._builtin('axis', Char.of('xy'))
+        WV._freq_ticks(R._builtin('gca'), np.log2(f))
         R._builtin('colorbar')
         R._builtin('title', Char.of('Wavelet Synchrosqueezed Transform'))
         R._builtin('xlabel', Char.of('Time (s)' if fs else 'Samples'))
@@ -507,12 +509,18 @@ def wcoherence(nargout, *args):
     coi = np.minimum(wav.wp / (2 * np.pi * edge / (math.sqrt(2) * wav.sigma_t())) * (fs if fs else 1.0), f[0])
     if nargout == 0:
         tt = t / (fs if fs else 1.0)
-        R._builtin('imagesc', out(tt.reshape(1, -1)), _col(np.log2(f)), out(coh))
+        y = np.log2(f)
+        R._builtin('imagesc', out(tt.reshape(1, -1)), _col(y), out(coh))
+        ax = R._builtin('gca')
         R._builtin('axis', Char.of('xy'))
+        R._builtin('hold', Char.of('on'))
+        R._builtin('plot', out(tt.reshape(1, -1)), out(np.log2(np.maximum(coi, f[-1])).reshape(1, -1)), Char.of('w--'), Char.of('LineWidth'), 1.5)
+        R._builtin('hold', Char.of('off'))
+        WV._freq_ticks(ax, y)
         R._builtin('colorbar')
         R._builtin('title', Char.of('Wavelet Coherence'))
         R._builtin('xlabel', Char.of('Time (s)' if fs else 'Samples'))
-        R._builtin('ylabel', Char.of('log2(Frequency)'))
+        R._builtin('ylabel', Char.of('Frequency (Hz)' if fs else 'Frequency (cycles/sample)'))
         return None
     return _outs(nargout, out(coh), out(Sxy), _col(f), _col(coi))
 

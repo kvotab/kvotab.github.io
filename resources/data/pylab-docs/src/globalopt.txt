@@ -1,0 +1,169 @@
+@ ga
+A minimum by a genetic algorithm: a population of points bred toward better values.
+
+`ga` keeps a population of points, and each generation keeps the best few, makes most of the rest by crossing pairs of parents chosen for their fitness, and the remainder by random mutation, shrinking as the generations pass. It needs no derivatives and no starting point, only the number of variables, and it takes bounds, linear and nonlinear constraints, and integer variables (intcon). Its answer is good but rarely exact: `'HybridFcn'` polishes it with a local solver. It draws from `rng`'s generator, so `rng` makes a run repeatable.
+
+# Syntax
+x = ga(fun, nvars)
+    Unconstrained.
+x = ga(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, intcon, options)
+    With constraints, integers and options.
+[x, fval, exitflag, output, population, scores] = ga(...)
+    With the last population and its values.
+# Examples
+## Rastrigin's function, alone and polished
+rastrigin = @(x) 20 + sum(x.^2 - 10*cos(2*pi*x), 2);
+rng default
+[x, fval, exitflag] = ga(rastrigin, 2, [], [], [], [], [-5 -5], [5 5]);
+round(x, 3), fval, exitflag
+rng default
+opts = optimoptions('ga', 'HybridFcn', 'fminsearch', 'Display', 'off');
+x2 = ga(rastrigin, 2, [], [], [], [], [-5 -5], [5 5], [], opts);
+abs(x2) < 1e-4
+## Whole numbers
+rng default
+xi = ga(@(x) (x(1) - 2.6)^2 + (x(2) + 1.3)^2, 2, [], [], [], [], [-5 -5], [5 5], [], [1 2])
+# See also
+particleswarm patternsearch gamultiobj optimoptions
+
+@ particleswarm
+A minimum within bounds by a swarm of particles.
+
+Particles start spread through the bounds; each moves with a velocity drawn toward the best point it has found itself and the best its neighbours have found, with an inertia that adapts as the search stalls or improves. It needs no derivatives, only the number of variables and, preferably, bounds. It stops when the best value has hardly changed for a while.
+
+# Syntax
+x = particleswarm(fun, nvars)
+    Unbounded.
+[x, fval, exitflag, output] = particleswarm(fun, nvars, lb, ub, options)
+    Within bounds.
+# Examples
+## Rastrigin's function
+rastrigin = @(x) 20 + sum(x.^2 - 10*cos(2*pi*x), 2);
+rng default
+[x, fval, exitflag, output] = particleswarm(rastrigin, 2, [-5 -5], [5 5]);
+round(x, 4), round(fval, 6), exitflag
+# See also
+ga simulannealbnd
+
+@ simulannealbnd
+A minimum within bounds by simulated annealing.
+
+Each step tries a random point at a distance set by the temperature, takes it when it is better and sometimes when it is worse (more often while the temperature is high), so that the search can climb out of a local minimum early on and settles as the temperature falls. The temperature starts again now and then. It needs a starting point and no derivatives.
+
+# Syntax
+x = simulannealbnd(fun, x0)
+    From x0.
+[x, fval, exitflag, output] = simulannealbnd(fun, x0, lb, ub, options)
+    Within bounds.
+# Examples
+## Two valleys, from a start between neither
+rng default
+opts = optimoptions('simulannealbnd', 'Display', 'off');
+[x, fval] = simulannealbnd(@(x) (x(1)^2 - 4)^2 + (x(2) - 1)^2, [3 3], [-5 -5], [5 5], opts);
+round(x, 1)
+# See also
+particleswarm ga
+
+@ patternsearch
+A minimum by a pattern search: polls around the point, no derivatives needed.
+
+Each iteration tries the points a mesh size away along each coordinate: a better one is taken and the mesh grows, else the mesh shrinks, until it is finer than MeshTolerance. It never leaves the bounds; linear and nonlinear constraints are met by an augmented Lagrangian. It suits functions that are not smooth, or noisy, or given by a simulation, where gradients are unknown or unreliable.
+
+# Syntax
+x = patternsearch(fun, x0)
+    From x0.
+x = patternsearch(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    With constraints.
+[x, fval, exitflag, output] = patternsearch(...)
+    With the value and how it ended.
+# Examples
+## A point held by a line, and by bounds
+fun = @(x) (x(1) - 1)^2 + (x(2) - 2)^2;
+[x, fval, exitflag] = patternsearch(fun, [0 0], [1 1], 2)
+x2 = patternsearch(fun, [0 0], [], [], [], [], [0 0], [0.5 1])
+# See also
+fminsearch fmincon ga
+
+@ surrogateopt
+A minimum of an expensive function within bounds, by a surrogate.
+
+When each value costs a long computation, `surrogateopt` spends its evaluations carefully: it starts with random points in the box, fits a smooth interpolant (a cubic radial basis function) through every value so far, and takes as the next point one that balances a low interpolated value against distance from the points already tried. MaxFunctionEvaluations (200 unless given) bounds the cost; the bounds must be finite.
+
+# Syntax
+x = surrogateopt(fun, lb, ub)
+    Within bounds.
+[x, fval, exitflag, output] = surrogateopt(fun, lb, ub, intcon, options)
+    With integer variables and options.
+# Examples
+## Sixty evaluations
+rng default
+fun = @(x) (x(1) - 0.3)^2 + (x(2) + 0.6)^2 + 0.2*sin(5*x(1));
+opts = optimoptions('surrogateopt', 'MaxFunctionEvaluations', 60, 'Display', 'off');
+[x, fval, exitflag, output] = surrogateopt(fun, [-2 -2], [2 2], opts);
+round(x, 2), output.funccount
+round(fminsearch(fun, [0 0]), 2)
+# See also
+patternsearch ga
+
+@ gamultiobj, paretosearch
+Points on the Pareto front of several objectives: those no other point beats in every objective at once.
+
+When objectives conflict, no point is best in all of them; the Pareto front is the set where one can only improve by worsening another. `gamultiobj` finds points on it by a genetic algorithm that ranks a population by domination and keeps it spread along the front. `paretosearch` minimizes a smooth maximum of the weighted objectives by pattern search for weights spread evenly, which reaches concave parts of the front too. Both take bounds and constraints; fun gives a row of objectives.
+
+# Syntax
+x = gamultiobj(fun, nvars)
+    By a genetic algorithm.
+[x, fval, exitflag, output] = gamultiobj(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    With constraints.
+x = paretosearch(fun, nvars)
+    By pattern searches.
+[x, fval, exitflag, output] = paretosearch(fun, nvars, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    With constraints.
+# Examples
+## Two distances: from (0, 0) and from (2, 0)
+fun = @(x) [x(1)^2 + x(2)^2, (x(1) - 2)^2 + x(2)^2];
+rng default
+opts = optimoptions('gamultiobj', 'Display', 'off');
+[x, fval] = gamultiobj(fun, 2, [], [], [], [], [-1 -1], [3 3], [], opts);
+max(abs(x(:, 2))) < 0.05
+[min(x(:, 1)), max(x(:, 1))]
+rng default
+opts2 = optimoptions('paretosearch', 'Display', 'off');
+[x2, f2] = paretosearch(fun, 2, [], [], [], [], [-1 -1], [3 3], [], opts2);
+plot(fval(:, 1), fval(:, 2), 'o', f2(:, 1), f2(:, 2), '.')
+xlabel('f_1'), ylabel('f_2'), legend('gamultiobj', 'paretosearch')
+# See also
+ga patternsearch fgoalattain
+
+@ createOptimProblem, MultiStart, GlobalSearch
+A local solver run from many starting points, to find the global minimum among the local ones.
+
+`createOptimProblem` packs a problem for a local solver (`'fmincon'`, `'fminunc'`, `'lsqnonlin'`, `'lsqcurvefit'` or `'fminsearch'`): its objective, start, bounds, constraints and options. `run` with a `MultiStart` object solves it from k start points (the problem's own and the rest drawn within the bounds) and gives the best answer and every distinct local minimum found. `GlobalSearch` instead scores many trial points by the objective and starts the solver from the most promising, skipping those inside the basin of a minimum already found.
+
+# Syntax
+problem = createOptimProblem(solver, 'objective', fun, 'x0', x0, Name, Value)
+    The problem.
+ms = MultiStart('Name', value)
+    Many starts.
+[x, fval, exitflag, output, solutions] = run(MultiStart, problem, k)
+    Run from k points.
+gs = GlobalSearch('Name', value)
+    Starts chosen by trial points.
+[x, fval] = run(GlobalSearch, problem)
+    Run from the best trial points.
+# Examples
+## A bowl of ripples
+f = @(x) x(1)^2/20 + x(2)^2/20 - cos(x(1))*cos(x(2));
+opts = optimoptions('fmincon', 'Display', 'off');
+problem = createOptimProblem('fmincon', 'objective', f, 'x0', [4 4], 'lb', [-8 -8], 'ub', [8 8], 'options', opts);
+round(fmincon(problem), 3)
+rng default
+ms = MultiStart('Display', 'off');
+[x, fval, exitflag, output, solutions] = run(ms, problem, 30);
+round(x, 4), round(fval, 4)
+numel(solutions)
+rng default
+gs = GlobalSearch('Display', 'off');
+round(run(gs, problem), 4)
+# See also
+fmincon optimoptions ga

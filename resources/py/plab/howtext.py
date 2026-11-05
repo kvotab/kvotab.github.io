@@ -2269,7 +2269,7 @@ bode, bodeplot, nyquist, nichols, sigma:
 margin, allmargin:
     Python: control.py. The crossings of the negative real axis (sign changes of Im H with Re H < 0) and of |H| = 1 on 6000 frequencies, each refined by scipy.optimize.brentq.
 rlocus, pzmap:
-    Python: control.py. numpy.roots of den + k num on 600 gains spaced logarithmically, each root joined to the nearest one at the gain before.
+    Python: control.py. numpy.roots of den + k num on 600 gains spaced logarithmically, each root joined to the nearest one at the gain before. pzmap's limits reach a tenth beyond the poles and zeros, rlocus's take in the branches within 2.5 times the poles' and zeros' spread of them.
 # ---- globalopt.py: global optimization -----------------------------------------------------------------------------------------------------
 ga, gamultiobj:
     Python: globalopt.py. PyLAB's own genetic algorithms in NumPy (rank scaling, stochastic uniform selection, scattered crossover, Gaussian mutation; gamultiobj with nondominated sorting and crowding distances), drawing from rng's generator.

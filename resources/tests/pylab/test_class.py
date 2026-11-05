@@ -194,6 +194,8 @@ W, _ = run("a = Account('ann', 100); deposit(a, 50); a.deposit(25); b = a; b.wit
            "k = class(a); h = isa(a, 'handle'); n = a.count(); m = count(a); ob = isobject(a);")
 same('a handle class: methods called both ways, a copy is the same object', (W['x'], val(W['o']), round(W['i'], 12), W['r'], val(W['k']), W['h'], W['n'], W['m'], W['ob']),
      (165.0, 'ANN', 3.3, 0.02, 'Account', True, 3.0, 3.0, True))
+W, _ = run("m = containers.Map; f = figure('Visible', 'off'); h = [isa(m, 'handle'), isa(f, 'handle'), isa(groot, 'handle'), isa(1, 'handle'), isa(table, 'handle')]; close(f)")
+same('the built-in handle objects are handles to isa too (containers.Map and figures were not)', W['h'].tolist(), [[True, True, True, False, False]])
 W, _ = run("a = Account; o = a.Owner; b = a.Balance; c = Account.joint('bo', 'cy'); co = c.Owner;")
 same('defaults (set without the set method), a static method, the set method on an assignment', (val(W['o']), W['b'], val(W['co'])), ('nobody', 0.0, 'BO & CY'))
 W, out = run("a = Account('x', 5); L = addlistener(a, 'Overdrawn', @(src, evt) fprintf('overdrawn %s %g\\n', evt.EventName, src.Balance)); a.withdraw(20);")

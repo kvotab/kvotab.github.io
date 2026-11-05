@@ -6568,8 +6568,9 @@ matlab.unittest.TestSuite.fromFolder: A test suite from the test files of a fold
 matlab.unittest.TestSuite.fromName: A test suite from the names of tests.
     suite = matlab.unittest.TestSuite.fromName('SampleTest/testSum')
 matlab.unittest.TestSuite.fromClass: A test suite from a test class.
+    suite = matlab.unittest.TestSuite.fromClass(?SampleTest)
     suite = matlab.unittest.TestSuite.fromClass('SampleTest')
-    * The class is named as text.
+    * The class by its meta.class object, or named as text.
 functiontests: The tests of a function-based test file.
     tests = functiontests(localfunctions)
     * Its tests are the local functions whose names start or end with test (case ignored), each taking the test case. setupOnce and teardownOnce run once around them all, setup and teardown around each; testCase.TestData is a struct they share, set in setupOnce or setup.
@@ -7350,7 +7351,7 @@ sigma: The singular values of the frequency response.
 margin: The gain and phase margins of a loop.
     margin(sys)
     [Gm, Pm, Wcg, Wcp] = margin(sys)
-    * Gm (absolute) at the frequency Wcg where the phase crosses -180 degrees, Pm (degrees) at Wcp where the gain crosses 1; of several crossings the smallest margins; Inf when there is none. Drawn on the Bode diagram, the margins in its title, when nothing is asked for.
+    * Gm (absolute) at the frequency Wcg where the phase crosses -180 degrees, Pm (degrees) at Wcp where the gain crosses 1; of several crossings the smallest margins; Inf when there is none. Drawn on the Bode diagram, the margins marked and named in its title, when nothing is asked for.
 allmargin: Every stability margin of a loop.
     S = allmargin(sys)
     * GainMargin and GMFrequency, PhaseMargin and PMFrequency, DelayMargin (phase margin over crossover frequency, in samples in discrete time) and DMFrequency, and whether the closed loop is Stable.
@@ -9003,7 +9004,7 @@ iwsst: The inverse wavelet synchrosqueezed transform.
 wcoherence: Wavelet coherence.
     [wcoh, wcs, f, coi] = wcoherence(x, y, fs)
     wcoherence(x, y, fs, 'VoicesPerOctave', 12, 'NumScalesToSmooth', 12)
-    * |S(Wx.*conj(Wy)./s)|^2 ./ (S(|Wx|.^2./s) .* S(|Wy|.^2./s)) with the analytic Morlet: S smooths in time by a Gaussian as wide as the scale and across NumScalesToSmooth scales by a moving average (PyLAB's own smoothing); wcs the smoothed cross spectrum.
+    * |S(Wx.*conj(Wy)./s)|^2 ./ (S(|Wx|.^2./s) .* S(|Wy|.^2./s)) with the analytic Morlet: S smooths in time by a Gaussian as wide as the scale and across NumScalesToSmooth scales by a moving average (PyLAB's own smoothing); wcs the smoothed cross spectrum. Drawn, the cone of influence dashed, when no output is asked for.
 ewt: The empirical wavelet transform.
     [mra, mfb] = ewt(x)
     [mra, mfb, info] = ewt(x, 'MaxNumPeaks', 5, 'PeakThresholdPercent', 70, 'SegmentMethod', 'geomean', 'LogSpectrum', false)

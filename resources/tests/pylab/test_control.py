@@ -204,6 +204,18 @@ near('impulse of a triple pole: to (7 + 3*2) time constants, not out to where ro
 C('  at t = 2, to the time step', abs(W['tp'] - 2) < 13 / 399, W['tp'])
 near('a lightly damped pair: seven time constants', W['T2'], 70, 1e-9)
 
+W, _ = run("pzmap(tf([1 0.5], conv([1 0.4 4], [1 2]))); xl = xlim; yl = ylim; close all")
+near('pzmap: limits a tenth beyond the poles and zeros (rounded-out ones put the poles on the edge)', (W['xl'], W['yl']),
+     ([[-2 - 0.18, -0.2 + 0.18]], [[-1.99 * 1.2, 1.99 * 1.2]]), 1e-2)
+W, _ = run("rlocus(tf([1 3], [1 3 2 0])); xl = xlim; yl = ylim; close all; nyquist(tf(4, conv([1 1], [1 2 2]))); nx = xlim; close all")
+near('rlocus: limits about the poles and zeros (gains to 1e4 made them reach 125), a tenth beyond', W['xl'], [[-3.3, 0.3]], 1e-12)
+C('  the branches along the asymptotes shown to 2.5 spreads from the middle', 7 < W['yl'][0, 1] < 9.5, W['yl'])
+C('nyquist: the critical point -1 inside the box, not on its edge', W['nx'][0, 0] < -1.05, W['nx'])
+W, _ = run("margin(tf(4, conv([1 1], [1 2 2]))); h = findobj(gcf, 'Type', 'line'); n = numel(h); "
+           "x = {}; y = {}; for i = 1:n, x{i} = get(h(i), 'XData'); y{i} = get(h(i), 'YData'); end; close all")
+segs = sorted((tuple(np.round(a(x).reshape(-1), 4)), tuple(np.round(a(y).reshape(-1), 4))) for x, y in zip(W['x'].a.reshape(-1), W['y'].a.reshape(-1)) if a(x).size == 2)
+near('margin draws the margins: a gain line at Wcg from -Gm dB to 0, a phase line at Wcp from -180 by Pm, and the 0 dB and -180 lines',
+     (W['n'], [s_ for s_ in segs if s_[0][0] == s_[0][1]]), (6, [((1.2357, 1.2357), (-180, -130.1833)), ((2.0, 2.0), (-7.9588, 0.0))]), 1e-3)
 W, _ = run("g = dcgain(feedback(2, 3)); p = dcgain(parallel(2, 3));")
 near('feedback and parallel of two numbers: static gains, 2/(1 + 6) and 5', (W['g'], W['p']), (2 / 7, 5))
 sys.exit(C.done())
