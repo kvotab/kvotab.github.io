@@ -1,0 +1,248 @@
+@ strel, imdilate, imerode, imopen, imclose, imtophat, imbothat
+Morphology: images grown, shrunk, opened and closed by a structuring element.
+
+A structuring element is a flat neighbourhood: a disk, square, rectangle, diamond, line or octagon, or any logical matrix (`SE.Neighborhood`). Dilation takes the largest value under it at each pixel, erosion the smallest; opening (erosion then dilation) takes away bright details smaller than the element, closing (dilation then erosion) fills dark gaps smaller than it. The top-hats give what opening took away (`imtophat`) and what closing filled (`imbothat`), which picks out small bright or dark details on an uneven background. Logical images give logical images.
+
+# Syntax
+SE = strel(shape, size)
+    A structuring element.
+J = imdilate(I, SE)
+    Dilated.
+J = imerode(I, SE)
+    Eroded.
+J = imopen(I, SE)
+    Opened.
+J = imclose(I, SE)
+    Closed.
+J = imtophat(I, SE)
+    The white top-hat.
+J = imbothat(I, SE)
+    The black top-hat.
+# Examples
+## Specks and gaps
+[x, y] = meshgrid(1:80);
+BW = (x - 40).^2 + (y - 40).^2 < 600;
+BW(:, 39:41) = false;
+BW(randi(6400, 40, 1)) = true;
+subplot(1, 3, 1), imshow(BW), title('image')
+subplot(1, 3, 2), imshow(imopen(BW, strel('disk', 2))), title('opened')
+subplot(1, 3, 3), imshow(imclose(imopen(BW, strel('disk', 2)), strel('disk', 3))), title('opened, closed')
+strel('diamond', 2).Neighborhood
+## Small spots on a slope
+[x, y] = meshgrid(1:60);
+I = x/60 + 0.5*((x - 15).^2 + (y - 20).^2 < 9) + 0.5*((x - 45).^2 + (y - 40).^2 < 9);
+T = imtophat(I, strel('disk', 6));
+round([max(I(:)) - min(I(:)), max(T(:)), nnz(T > 0.25)], 2)
+# See also
+bwmorph imfill imreconstruct
+
+@ imfill, imreconstruct, imclearborder
+Holes filled, reconstruction from markers, and objects at the border taken away.
+
+`imfill(BW, 'holes')` fills the background that cannot be reached from the image's edge; with locations, it floods the background from those points. `imreconstruct` dilates a marker repeatedly while keeping it under a mask, until it stops changing: for binary images, the objects of the mask that the marker touches. `imclearborder` takes away the objects (or for gray images the light structures) connected to the border.
+
+# Syntax
+BW2 = imfill(BW, 'holes')
+    Holes filled.
+BW2 = imfill(BW, locations, conn)
+    Flooded from points.
+IM = imreconstruct(marker, mask, conn)
+    Reconstruction.
+I2 = imclearborder(I, conn)
+    The border's objects removed.
+# Examples
+## Rings filled, an object picked, the border cleared
+[x, y] = meshgrid(1:80);
+r1 = sqrt((x - 25).^2 + (y - 25).^2);
+r2 = sqrt((x - 55).^2 + (y - 50).^2);
+BW = (r1 > 8 & r1 < 12) | (r2 > 10 & r2 < 14) | (x < 6 & y > 60);
+F = imfill(BW, 'holes');
+M = false(80); M(25, 15) = true;
+P = imreconstruct(M, F);
+C = imclearborder(F);
+[nnz(BW), nnz(F), nnz(P), nnz(C)]
+subplot(1, 4, 1), imshow(BW), subplot(1, 4, 2), imshow(F), subplot(1, 4, 3), imshow(P), subplot(1, 4, 4), imshow(C)
+# See also
+bwlabel imerode
+
+@ imregionalmax, imregionalmin, imhmax, imhmin, imextendedmax, imextendedmin, imimposemin
+Regional extremes of an image, the shallow ones suppressed, and minima imposed.
+
+A regional maximum is a plateau whose neighbours all lie lower (8-connected); `imregionalmax` and `imregionalmin` mark them. `imhmax` takes down every maximum by h (the reconstruction of I - h under I), so that maxima less than h high vanish; `imhmin` fills minima less than h deep. `imextendedmax` and `imextendedmin` are the regional extremes that survive that. `imimposemin` changes an image so that its only regional minima are where a mask says, the usual step before `watershed`.
+
+# Syntax
+BW = imregionalmax(I, conn)
+    Regional maxima.
+BW = imregionalmin(I, conn)
+    Regional minima.
+I2 = imhmax(I, H)
+    Maxima lower than H taken down.
+I2 = imhmin(I, H)
+    Minima shallower than H filled.
+BW = imextendedmax(I, H)
+    Maxima at least H high.
+BW = imextendedmin(I, H)
+    Minima at least H deep.
+J = imimposemin(I, BW)
+    Minima imposed.
+# Examples
+## Two peaks and a ripple
+x = 1:40;
+I = repmat(exp(-(x - 10).^2/20) + 0.8*exp(-(x - 30).^2/20) + 0.03*sin(x), 5, 1);
+nnz(imregionalmax(I(3, :)))
+find(imextendedmax(I(3, :), 0.1))
+J = imhmax(I(3, :), 0.1);
+round([max(I(3, :)) max(J)], 3)
+plot(x, I(3, :), x, J), legend('image row', 'imhmax 0.1')
+# See also
+watershed imreconstruct
+
+@ watershed
+The watershed transform: an image's catchment basins, with ridges between them.
+
+The image is seen as a landscape flooded from its regional minima (Meyer's method): each pixel joins the basin it fills from, labelled 1, 2, ... (by their minima's first pixels down the columns), and where basins meet a ridge of 0 is left. To split touching objects, flood the negative of their distance transform; to avoid one basin per noise dip, impose the minima first.
+
+# Syntax
+L = watershed(A)
+    Basins and ridges.
+L = watershed(A, conn)
+    With a connectivity.
+# Examples
+## Two touching discs split
+[x, y] = meshgrid(1:80);
+BW = (x - 28).^2 + (y - 40).^2 < 300 | (x - 52).^2 + (y - 40).^2 < 300;
+D = -bwdist(~BW);
+D(~BW) = -Inf;
+L = watershed(D);
+L(~BW) = 0;
+max(L(:))
+imshow(label2rgb(L, 'jet', 'w'))
+# See also
+bwdist imimposemin label2rgb
+
+@ bwlabel, bwlabeln, bwconncomp, regionprops
+The objects of a binary image: found, numbered and measured.
+
+`bwlabel` numbers the 8-connected components (4 if asked) in the order their first pixel comes down the columns; `bwlabeln` does it in any number of dimensions. `bwconncomp` gives them as a struct of linear indices. `regionprops` measures each region (of a binary image, a label matrix or `bwconncomp`'s struct): Area, Centroid and BoundingBox by default, and many more by name, also with an intensity image; `'table'` gives a table.
+
+# Syntax
+[L, n] = bwlabel(BW, conn)
+    The objects numbered.
+[L, n] = bwlabeln(BW, conn)
+    In any number of dimensions.
+CC = bwconncomp(BW, conn)
+    As index lists.
+stats = regionprops(BW, properties...)
+    Measurements.
+T = regionprops('table', L, I, properties...)
+    As a table, with an intensity image.
+# Examples
+## Three objects measured
+[x, y] = meshgrid(1:80);
+u = (x - 40)*cosd(30) - (y - 60)*sind(30);
+v = (x - 40)*sind(30) + (y - 60)*cosd(30);
+BW = (x - 20).^2 + (y - 20).^2 < 100 | (abs(x - 55) < 15 & abs(y - 25) < 5) | (u.^2/400 + v.^2/64 < 1);
+[L, n] = bwlabel(BW);
+n
+T = regionprops('table', L, 'Area', 'Centroid', 'Eccentricity', 'Orientation');
+T.Area', round(T.Eccentricity', 2), round(T.Orientation', 1)
+CC = bwconncomp(BW);
+CC.NumObjects
+imshow(label2rgb(L))
+# See also
+bwboundaries label2rgb
+
+@ bwmorph, bwskel, bwperim, bwboundaries, bwtraceboundary
+Binary shapes thinned, outlined and traced.
+
+`bwmorph` applies an operation n times (Inf: until nothing changes): 'skel', 'thin', 'shrink', 'remove', 'spur', 'endpoints', 'branchpoints', 'clean', 'fill', 'majority' and more. `bwskel` thins objects to lines one pixel wide, pruning branches shorter than `'MinBranchLength'`. `bwperim` keeps the pixels with an off neighbour. `bwboundaries` gives each object's boundary (and each hole's) as rows of [row col], clockwise and closed; `bwtraceboundary` traces one from a pixel on it.
+
+# Syntax
+BW2 = bwmorph(BW, operation, n)
+    An operation.
+B = bwskel(BW, 'MinBranchLength', len)
+    The skeleton.
+BW2 = bwperim(BW, conn)
+    The perimeter.
+[B, L, N] = bwboundaries(BW, conn, 'noholes')
+    Every boundary.
+B = bwtraceboundary(BW, P, fstep)
+    One boundary from a pixel.
+# Examples
+## A plus sign's skeleton and outline
+BW = false(40);
+BW(8:32, 17:23) = true;
+BW(17:23, 8:32) = true;
+S = bwskel(BW);
+E = bwmorph(S, 'endpoints');
+nnz(E)
+B = bwboundaries(BW);
+size(B{1})
+imshow(BW + S, []), hold on, plot(B{1}(:, 2), B{1}(:, 1), 'r'), hold off
+nnz(bwperim(BW))
+# See also
+bwlabel bwdist
+
+@ bwareaopen, bwareafilt, bwpropfilt, bwselect
+Objects kept or removed by their area, a property, or a pixel.
+
+`bwareaopen` removes objects of fewer than P pixels; `bwareafilt` keeps those with an area within a range, or the n largest or smallest; `bwpropfilt` does the same by any regionprops property with one value per object; `bwselect` keeps the objects that hold given pixels (column, row).
+
+# Syntax
+BW2 = bwareaopen(BW, P, conn)
+    Small objects removed.
+BW2 = bwareafilt(BW, range)
+    Objects by area.
+BW2 = bwareafilt(BW, n, keep)
+    The n largest or smallest.
+BW2 = bwpropfilt(BW, attrib, range)
+    By a property.
+BW2 = bwselect(BW, c, r, n)
+    The objects holding pixels.
+# Examples
+## Objects of several sizes
+[x, y] = meshgrid(1:60);
+BW = false(60);
+c = [10 10 2; 30 12 4; 50 15 6; 15 45 3; 40 45 8];
+for k = 1:5
+    BW = BW | (x - c(k, 1)).^2 + (y - c(k, 2)).^2 <= c(k, 3)^2;
+end
+a = regionprops(BW, 'Area');
+[a.Area]
+[numel(regionprops(bwareaopen(BW, 30))), numel(regionprops(bwareafilt(BW, 2)))]
+E = bwpropfilt(BW, 'EquivDiameter', [6 13]);
+e = regionprops(E, 'Area');
+[e.Area]
+nnz(bwselect(BW, 40, 45))
+# See also
+bwlabel regionprops
+
+@ bwdist, bwconvhull, bweuler, bwarea
+Distances to objects, convex hulls, Euler numbers and areas.
+
+`bwdist` gives each pixel's distance to the nearest on pixel (Euclidean, city-block, chessboard or quasi-Euclidean), as single, and that pixel's index. `bwconvhull` gives the convex hull of all the on pixels, or of each object. `bweuler` counts objects less holes. `bwarea` estimates the area by weighting each 2-by-2 pattern, closer to a continuous shape's area than counting pixels.
+
+# Syntax
+[D, idx] = bwdist(BW, method)
+    The distance transform.
+CH = bwconvhull(BW, 'objects', conn)
+    The convex hull.
+eul = bweuler(BW, n)
+    The Euler number.
+total = bwarea(BW)
+    The area.
+# Examples
+## A ring, a dot and an L
+BW = false(50);
+[x, y] = meshgrid(1:50);
+r = sqrt((x - 15).^2 + (y - 15).^2);
+BW(r > 6 & r < 10) = true;
+BW(40, 40) = true;
+BW(30:45, 5:7) = true; BW(43:45, 5:20) = true;
+bweuler(BW)
+D = bwdist(BW);
+D(15, 15)
+[bwarea(BW) nnz(BW)]
+subplot(1, 2, 1), imshow(D, []), subplot(1, 2, 2), imshow(bwconvhull(BW, 'objects'))
+# See also
+watershed regionprops

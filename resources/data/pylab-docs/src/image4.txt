@@ -1,0 +1,214 @@
+@ padarray
+An array padded on its sides.
+
+By padsize along each dimension: with a value (0), or by repeating the array (`'circular'`), its border (`'replicate'`) or its mirror image (`'symmetric'`); on both sides (the default), or only before or after.
+
+# Syntax
+B = padarray(A, padsize)
+    Zeros on both sides.
+B = padarray(A, padsize, padval, direction)
+    A value or a method, on a side.
+# Examples
+## Four ways to pad
+A = [1 2; 3 4];
+padarray(A, [1 1])
+padarray(A, [1 2], 'replicate')
+padarray(A, [0 2], 'symmetric', 'post')
+padarray(A, [1 0], 'circular', 'pre')
+# See also
+imfilter cat
+
+@ im2col, col2im, blockproc, nlfilter, colfilt
+An image worked on block by block, or neighbourhood by neighbourhood.
+
+`im2col` makes each m-by-n block a column (every position, `'sliding'`, or tiles, `'distinct'`), and `col2im` puts columns back. `blockproc` calls a function on each m-by-n block (with a struct of its data, location and size) and puts the results together in the blocks' places, with a border of neighbours if asked. `nlfilter` calls a function on every pixel's neighbourhood, giving the pixel's value; `colfilt` gives the function all the blocks at once as columns, which is much faster for functions that work on columns.
+
+# Syntax
+B = im2col(A, [m n], 'distinct')
+    Blocks as columns.
+A = col2im(B, [m n], [mm nn], 'distinct')
+    Back.
+B = blockproc(A, [m n], fun, 'BorderSize', [v h])
+    A function of each block.
+B = nlfilter(A, [m n], fun)
+    A function of each neighbourhood.
+B = colfilt(A, [m n], 'sliding', fun)
+    The same, by columns.
+# Examples
+## Block means two ways
+A = magic(6);
+blockproc(A, [3 3], @(b) mean(b.data(:)))
+C = im2col(A, [3 3], 'distinct');
+reshape(mean(C), 2, 2)
+## A local maximum two ways
+A = magic(5);
+isequal(nlfilter(A, [3 3], @(x) max(x(:))), colfilt(A, [3 3], 'sliding', @max))
+col2im(1:9, [1 1], [3 3])
+# See also
+ordfilt2 imfilter
+
+@ impyramid
+One level of an image pyramid: half the size, or twice.
+
+`'reduce'` smooths by Burt and Adelson's 5-tap kernel and keeps every other pixel (ceil(M/2) rows); `'expand'` makes it twice as large less one, interpolating. A pyramid of reductions looks at an image at several scales.
+
+# Syntax
+B = impyramid(A, 'reduce')
+    Half the size.
+B = impyramid(A, 'expand')
+    Twice the size.
+# Examples
+## Three levels down and one back up
+P = phantom(64);
+P1 = impyramid(P, 'reduce');
+P2 = impyramid(P1, 'reduce');
+P3 = impyramid(P2, 'reduce');
+[size(P1, 1), size(P2, 1), size(P3, 1), size(impyramid(P3, 'expand'), 1)]
+subplot(1, 4, 1), imshow(P), subplot(1, 4, 2), imshow(P1), subplot(1, 4, 3), imshow(P2), subplot(1, 4, 4), imshow(P3)
+# See also
+imresize
+
+@ improfile, imcontour
+Values along a path through an image, and an image's contour lines.
+
+`improfile` samples the image along the path through the points (xi, yi), at n evenly spaced points (about one per pixel of the path's length unless given), `'nearest'` unless `'bilinear'` or `'bicubic'`; NaN off the image. Without outputs it plots the profile. `imcontour` draws contour lines in the image's orientation (rows down, square pixels).
+
+# Syntax
+c = improfile(I, xi, yi, n, method)
+    Values along a path.
+[cx, cy, c] = improfile(...)
+    With the points.
+imcontour(I, n)
+    Contour lines.
+# Examples
+## Across the phantom, and its contours
+P = phantom(100);
+c = improfile(P, [1 100], [50 50], 100);
+subplot(1, 2, 1), plot(c), xlabel('pixel along the row'), ylim([-0.05 1.05])
+subplot(1, 2, 2), imcontour(P, 3)
+unique(round(c(~isnan(c)), 2))'
+# See also
+interp2 contour
+
+@ hough, houghpeaks, houghlines
+Straight lines found by the Hough transform.
+
+`hough` lets each on pixel of a binary image vote for every line through it: at each angle theta (-90 to 89 degrees), the distance rho = x cos(theta) + y sin(theta) from the origin (x and y from 0). `houghpeaks` finds the largest votes, clearing each one's neighbourhood before looking for the next; `houghlines` follows the pixels along each peak's line and gives the segments, joining gaps up to `'FillGap'` and keeping those at least `'MinLength'` long.
+
+# Syntax
+[H, theta, rho] = hough(BW, 'RhoResolution', r, 'Theta', angles)
+    The transform.
+peaks = houghpeaks(H, numpeaks, 'Threshold', t, 'NHoodSize', s)
+    Its peaks.
+lines = houghlines(BW, theta, rho, peaks, 'FillGap', g, 'MinLength', m)
+    The segments.
+# Examples
+## Two lines in a field of specks
+BW = false(80);
+for k = 10:70
+    BW(k, 20) = true;
+    BW(75 - round(0.6*k), k) = true;
+end
+BW(randi(6400, 30, 1)) = true;
+[H, theta, rho] = hough(BW);
+P = houghpeaks(H, 2);
+theta(P(:, 2))
+lines = houghlines(BW, theta, rho, P, 'MinLength', 30);
+numel(lines)
+imshow(BW), hold on
+for k = 1:numel(lines)
+    xy = [lines(k).point1; lines(k).point2];
+    plot(xy(:, 1), xy(:, 2), 'r', 'LineWidth', 2)
+end
+hold off
+# See also
+imfindcircles edge radon
+
+@ imfindcircles
+Circles found by a circular Hough transform.
+
+Each strong edge pixel (its Sobel gradient above a threshold, Otsu's by default) votes along its gradient for centres at the radii in a range, towards the brighter side (`'ObjectPolarity'` `'bright'`) or the darker; at each peak the radius is the commonest distance of the pixels that voted, and the metric the share of the circle lying on an edge. Circles with a metric of at least 1 - `'Sensitivity'` (0.85) are kept, the strongest first.
+
+# Syntax
+[centers, radii] = imfindcircles(A, radius)
+    Circles of a radius.
+[centers, radii, metric] = imfindcircles(A, [rmin rmax], 'ObjectPolarity', p, 'Sensitivity', s)
+    In a range of radii.
+# Examples
+## Three coins
+[x, y] = meshgrid(1:120);
+I = 0.2*ones(120);
+c = [30 35 12; 80 40 16; 55 90 20];
+for k = 1:3
+    I((x - c(k, 1)).^2 + (y - c(k, 2)).^2 <= c(k, 3)^2) = 0.9;
+end
+I = imgaussfilt(I, 1) + 0.02*randn(120);
+[centers, radii] = imfindcircles(I, [10 25]);
+round([centers radii])
+imshow(I), hold on
+th = linspace(0, 2*pi, 100);
+for k = 1:numel(radii)
+    plot(centers(k, 1) + radii(k)*cos(th), centers(k, 2) + radii(k)*sin(th), 'r', 'LineWidth', 1.5)
+end
+hold off
+# See also
+hough edge
+
+@ radon, iradon, phantom
+The Radon transform, its inverse by filtered back projection, and the phantom to test them on.
+
+`radon` integrates the image along lines at each angle (counterclockwise from the x axis, 0:179), giving one projection per column, at distances xp from the centre; this is what a CT scanner measures. `iradon` reconstructs the image by filtering each projection (`'Ram-Lak'` by default, or smoother filters) and spreading it back. `phantom` gives the Shepp-Logan head phantom, ellipses of known intensities (the modified one, with more contrast, by default), or ellipses of one's own.
+
+# Syntax
+[R, xp] = radon(I, theta)
+    Projections.
+I = iradon(R, theta, interp, filter, frequency_scaling, output_size)
+    The image back.
+P = phantom(n)
+    The modified Shepp-Logan phantom.
+[P, E] = phantom(type, n)
+    Of a type, with its ellipses.
+P = phantom(E, n)
+    Of ellipses of one's own.
+# Examples
+## Projected and reconstructed
+P = phantom(96);
+theta = 0:2:178;
+[R, xp] = radon(P, theta);
+size(R)
+I = iradon(R, theta, 'linear', 'Ram-Lak', 1, 96);
+subplot(1, 3, 1), imshow(P), title('phantom')
+subplot(1, 3, 2), imshow(R, []), title('projections')
+subplot(1, 3, 3), imshow(I, [0 1]), title('back projected')
+round(corr2(I, P), 3)
+[~, E] = phantom('Shepp-Logan', 8);
+size(E)
+# See also
+imrotate dct2
+
+@ dct2, idct2, dctmtx
+The two-dimensional discrete cosine transform, its inverse, and its matrix.
+
+`dct2` gives the orthonormal 2-D DCT of type II (the image padded or cut to m-by-n first): a smooth image's energy gathers in the coefficients near the top left corner, the basis of JPEG compression. `idct2` inverts it; `dctmtx` gives the n-by-n matrix D with `D*A*D'` equal to `dct2(A)`.
+
+# Syntax
+B = dct2(A, m, n)
+    The transform.
+A = idct2(B, m, n)
+    The inverse.
+D = dctmtx(n)
+    The matrix.
+# Examples
+## An image compressed by keeping a tenth of its coefficients
+P = phantom(64);
+B = dct2(P);
+t = sort(abs(B(:)), 'descend');
+B(abs(B) < t(round(numel(t)/10))) = 0;
+J = idct2(B);
+round(psnr(J, P), 1)
+subplot(1, 2, 1), imshow(P), subplot(1, 2, 2), imshow(J, [0 1])
+D = dctmtx(8);
+A = magic(8);
+max(abs(D*A*D' - dct2(A)), [], 'all') < 1e-10
+# See also
+dct fft2 blockproc

@@ -522,7 +522,8 @@ class(B), RB.ColumnsStartFrom
 max(abs(double(B(:)) - reshape(flipud(A), [], 1)))
 ## A projected grid with its system
 R = maprefcells([650000 660000], [6578000 6584000], [6 10]);
-geotiffwrite('grid.tif', uint8(magic(10)(1:6, :)), R, 'CoordRefSysCode', 3006)
+M = magic(10);
+geotiffwrite('grid.tif', uint8(M(1:6, :)), R, 'CoordRefSysCode', 3006)
 info = geotiffinfo('grid.tif');
 info.ModelType, info.PCS, [info.Height info.Width]
 # See also

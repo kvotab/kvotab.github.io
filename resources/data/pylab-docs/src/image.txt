@@ -1,0 +1,180 @@
+@ imresize, imrotate, imcrop, imtranslate
+Images made larger or smaller, turned, cropped and moved.
+
+`imresize` scales by a factor or to a size (NaN for one side keeps the aspect ratio), by `'bicubic'` interpolation unless another method is named; when shrinking, the kernel widens so that fine detail is averaged rather than lost. `imrotate` turns counterclockwise (by `'nearest'` unless `'bilinear'` or `'bicubic'`), the result large enough for all of it unless `'crop'`; quarter turns are exact. `imcrop` keeps the pixels whose centres lie in [xmin ymin width height]; `imtranslate` moves the image tx columns right and ty rows down, filling what is uncovered. Each keeps the image's class.
+
+# Syntax
+B = imresize(A, scale, method)
+    Scaled.
+B = imresize(A, [rows cols])
+    To a size.
+B = imrotate(A, angle, method, bbox)
+    Turned.
+J = imcrop(A, rect)
+    Cropped.
+B = imtranslate(A, [tx ty], 'FillValues', v, 'OutputView', 'full')
+    Moved.
+# Examples
+## A small image transformed
+P = phantom(64);
+B = imresize(P, 0.5);
+R = imrotate(P, 30, 'bilinear');
+C = imcrop(P, [16 8 31 47]);
+T = imtranslate(P, [10 -5]);
+[size(B); size(R); size(C); size(T)]
+subplot(1, 4, 1), imshow(B), title('resized')
+subplot(1, 4, 2), imshow(R), title('rotated')
+subplot(1, 4, 3), imshow(C), title('cropped')
+subplot(1, 4, 4), imshow(T), title('moved')
+## Nearest neighbours keep the values
+A = uint8([10 20; 30 40]);
+imresize(A, 2, 'nearest')
+imrotate(A, 90)
+# See also
+imwarp padarray phantom
+
+@ imfilter, fspecial, imgaussfilt, imboxfilt, integralImage
+Images filtered by kernels: any kernel, the common ones, Gaussian and box filters, and integral images.
+
+`imfilter` correlates an image with a kernel (or convolves with `'conv'`), its centre at floor((size(h) + 1)/2), the edge padded with zeros, a value, `'symmetric'`, `'replicate'` or `'circular'`; colour planes alike, the result in the image's class. `fspecial` makes kernels: average, disk, Gaussian, Laplacian, Laplacian of Gaussian, motion blur, Prewitt, Sobel and unsharp. `imgaussfilt` smooths by a Gaussian of standard deviation sigma (0.5), the edge replicated; `imboxfilt` by a box. `integralImage` gives the running sums from the corner, so that any rectangle's sum takes four lookups.
+
+# Syntax
+B = imfilter(A, h, boundary, 'conv')
+    Filtered.
+h = fspecial(type, ...)
+    A kernel.
+B = imgaussfilt(A, sigma)
+    Gaussian smoothing.
+B = imboxfilt(A, filterSize)
+    Box smoothing.
+J = integralImage(I)
+    The integral image.
+# Examples
+## Blurring and edges from kernels
+[x, y] = meshgrid(1:64);
+I = double((x - 32).^2 + (y - 32).^2 < 300);
+subplot(1, 3, 1), imshow(imgaussfilt(I, 3)), title('gaussian')
+subplot(1, 3, 2), imshow(imfilter(I, fspecial('motion', 15, 45), 'replicate')), title('motion')
+subplot(1, 3, 3), imshow(abs(imfilter(I, fspecial('sobel'))), []), title('sobel')
+fspecial('sobel')
+## Rectangle sums in four lookups
+I = magic(5);
+J = integralImage(I);
+J(4, 5) - J(1, 5) - J(4, 2) + J(1, 2)
+sum(I(1:3, 2:4), 'all')
+# See also
+conv2 edge medfilt2
+
+@ medfilt2, ordfilt2
+Each pixel the median, or another order statistic, of its neighbourhood.
+
+`medfilt2` takes the median of each m-by-n neighbourhood (3-by-3), which removes salt-and-pepper noise and keeps edges; beyond the edge the image is zeros unless `'symmetric'`. `ordfilt2` takes the order-th smallest of the neighbours where a domain is true: the smallest is a minimum filter, the largest a maximum filter.
+
+# Syntax
+B = medfilt2(A, [m n], padopt)
+    The median filter.
+B = ordfilt2(A, order, domain, padopt)
+    An order-statistic filter.
+# Examples
+## Salt and pepper removed
+[x, y] = meshgrid(1:64);
+I = double(abs(x - 32) < 14 & abs(y - 32) < 14);
+J = imnoise(I, 'salt & pepper', 0.1);
+K = medfilt2(J, [3 3], 'symmetric');
+subplot(1, 2, 1), imshow(J), subplot(1, 2, 2), imshow(K)
+[nnz(J ~= I), nnz(K ~= I)]
+ordfilt2(magic(4), 9, true(3))
+# See also
+medfilt1 imfilter
+
+@ edge, imgradientxy, imgradient
+Edges of a gray image, and its gradients.
+
+`edge` gives a logical image of edges: by the Sobel (default), Prewitt or Roberts gradient above a threshold, the zero crossings of the Laplacian of Gaussian, or Canny's method (thin edges linked by two thresholds); without a threshold one is chosen, and the second output gives it. `imgradientxy` gives the gradients to the right and down (Sobel, Prewitt, central or intermediate differences); `imgradient` their magnitude and direction (degrees counterclockwise from the x axis, y up).
+
+# Syntax
+BW = edge(I, method, threshold)
+    The edges.
+[BW, threshOut] = edge(I, 'canny', [low high], sigma)
+    Canny's edges.
+[Gx, Gy] = imgradientxy(I, method)
+    The gradients.
+[Gmag, Gdir] = imgradient(I, method)
+    Magnitude and direction.
+# Examples
+## Four methods on one shape
+[x, y] = meshgrid(1:96);
+I = double((x - 40).^2/900 + (y - 50).^2/400 < 1) + 0.5*double(abs(x - 75) < 10 & abs(y - 30) < 15);
+I = imgaussfilt(I, 1);
+m = {'sobel', 'prewitt', 'log', 'canny'};
+for k = 1:4
+    subplot(1, 4, k), imshow(edge(I, m{k})), title(m{k})
+end
+[Gmag, Gdir] = imgradient(I);
+[Gx, Gy] = imgradientxy([0 0 1 1; 0 0 1 1; 0 0 1 1]);
+Gx
+# See also
+imfilter hough
+
+@ stretchlim, imadjust, imhist, histeq, adapthisteq, imhistmatch
+Contrast: the histogram, and intensities mapped to spread or match it.
+
+`imhist` counts the pixels in n bins (256) over the class's range, and draws the histogram without outputs. `stretchlim` gives limits that leave out the darkest and brightest 1%; `imadjust` maps a range of intensities onto another (by default those limits onto [0 1]), with a gamma curve between. `histeq` maps the intensities through their cumulative distribution so that the histogram is spread flat; `adapthisteq` does it tile by tile, the histograms clipped so that noise is not amplified (CLAHE), blending the tiles' mappings. `imhistmatch` maps an image so that its histogram is like another's.
+
+# Syntax
+[counts, binLocations] = imhist(I, n)
+    The histogram.
+lowhigh = stretchlim(I, tol)
+    Limits for stretching.
+J = imadjust(I, [low_in high_in], [low_out high_out], gamma)
+    Intensities mapped.
+[J, T] = histeq(I, n)
+    Equalized, with the mapping.
+J = adapthisteq(I, 'NumTiles', [8 8], 'ClipLimit', 0.01)
+    Equalized tile by tile.
+J = imhistmatch(A, ref, nbins)
+    Matched to another histogram.
+# Examples
+## A dull image stretched and equalized
+[x, y] = meshgrid(linspace(0, 1, 96));
+I = uint8(100 + 40*x.*y + 10*sin(8*x));
+J = imadjust(I);
+K = histeq(I);
+double([min(I(:)) max(I(:)); min(J(:)) max(J(:))])
+subplot(2, 3, 1), imshow(I), subplot(2, 3, 2), imshow(J), subplot(2, 3, 3), imshow(K)
+subplot(2, 3, 4), imhist(I), subplot(2, 3, 5), imhist(J), subplot(2, 3, 6), imhist(K)
+# See also
+imcomplement graythresh
+
+@ graythresh, otsuthresh, multithresh, imquantize, imbinarize, im2bw, imcomplement
+Thresholds by Otsu's method, images split by them, and the negative.
+
+`graythresh` gives the level (0 to 1) that best separates the pixels into two classes, the variance between them largest; `otsuthresh` does the same for a histogram; `multithresh` finds several thresholds at once (exactly, by dynamic programming), and `imquantize` splits values into classes by them. `imbinarize` makes a gray image logical at Otsu's level (or one given); `im2bw` is the older form, at 0.5 unless given. `imcomplement` gives the negative.
+
+# Syntax
+level = graythresh(I)
+    Otsu's level.
+[T, EM] = otsuthresh(counts)
+    Of a histogram, and how well it separates.
+thresh = multithresh(A, N)
+    N thresholds.
+quantA = imquantize(A, levels, values)
+    Values put in classes.
+BW = imbinarize(I, T)
+    A logical image.
+BW = im2bw(I, level)
+    The older form.
+J = imcomplement(I)
+    The negative.
+# Examples
+## Three gray levels in noise
+[x, ~] = meshgrid(1:90, 1:40);
+I = 0.2 + 0.3*(x > 30) + 0.3*(x > 60) + 0.03*randn(40, 90);
+t = multithresh(I, 2)
+L = imquantize(I, t);
+accumarray(L(:), 1)'
+level = graythresh(I)
+BW = imbinarize(I, level);
+subplot(1, 3, 1), imshow(I), subplot(1, 3, 2), imshow(label2rgb(L)), subplot(1, 3, 3), imshow(imcomplement(BW))
+# See also
+imhist label2rgb

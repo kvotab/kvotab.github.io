@@ -1,0 +1,234 @@
+@ imtile, montage
+Several images side by side, as one image or shown.
+
+The images (a cell array, or a stack along the third or fourth dimension) fill a grid row by row (`'GridSize'`, nearly square unless given), with a border and background colour if asked, each scaled to `'ThumbnailSize'`. `imtile` gives the image; `montage` shows it.
+
+# Syntax
+out = imtile(images, 'GridSize', [rows cols], 'BorderSize', b, 'BackgroundColor', c)
+    One image of them.
+montage(images, ...)
+    Shown.
+# Examples
+## A phantom at four sizes of blur
+P = phantom(64);
+stack = cat(3, P, imgaussfilt(P, 1), imgaussfilt(P, 2), imgaussfilt(P, 4));
+T = imtile(stack, 'GridSize', [1 4], 'BorderSize', 2);
+size(T)
+montage(stack, 'GridSize', [1 4], 'BorderSize', 2)
+# See also
+imshow imshowpair
+
+@ label2rgb, labeloverlay, imoverlay
+Labels and masks shown in colour.
+
+`label2rgb` turns a label matrix into an RGB image (uint8): label k in colour k of a colormap (jet with as many colours as labels unless named), 0 in white (or zerocolor); `'shuffle'` mixes the colours. `labeloverlay` lays the labels' colours over an image, part of the image showing through (`'Transparency'`, 0.5); `imoverlay` paints a mask onto an image in one colour (yellow).
+
+# Syntax
+RGB = label2rgb(L, map, zerocolor, order)
+    Labels in colour.
+B = labeloverlay(A, L, 'Colormap', map, 'Transparency', t)
+    Labels over an image.
+B = imoverlay(A, BW, color)
+    A mask over an image.
+# Examples
+## Regions and an outline over a phantom
+P = phantom(64);
+L = imquantize(P, [0.1 0.25 0.5]);
+subplot(1, 3, 1), imshow(label2rgb(L, 'parula', 'k'))
+subplot(1, 3, 2), imshow(labeloverlay(P, L, 'Transparency', 0.6))
+subplot(1, 3, 3), imshow(imoverlay(P, bwperim(P > 0.5), 'red'))
+class(label2rgb(L))
+# See also
+bwlabel watershed
+
+@ imfuse, imshowpair
+Two images fused into one for comparing, and shown.
+
+`imfuse` gives an RGB image: `'falsecolor'` (the default: the first green, the second magenta, so that where they agree it is gray), `'blend'`, `'diff'`, `'checkerboard'` or `'montage'`; each scaled to its full range unless `'Scaling'` says `'joint'` or `'none'`. `imshowpair` shows it.
+
+# Syntax
+C = imfuse(A, B, method, 'Scaling', s)
+    Fused.
+imshowpair(A, B, method)
+    Shown.
+# Examples
+## An image and a shifted copy
+P = phantom(64);
+Q = imtranslate(P, [4 2]);
+subplot(1, 3, 1), imshowpair(P, Q)
+subplot(1, 3, 2), imshowpair(P, Q, 'diff')
+subplot(1, 3, 3), imshowpair(P, Q, 'checkerboard')
+size(imfuse(P, Q))
+# See also
+imtranslate montage
+
+@ imadd, imsubtract, immultiply, imdivide, imabsdiff, imlincomb
+Arithmetic on images, in their class.
+
+Each computes in double and gives the result in the first image's class (rounded and saturated for integers) unless an output class is named, so that uint8 images neither wrap nor turn into doubles. `imabsdiff` gives |X - Y|; `imlincomb` a weighted sum K1 A1 + K2 A2 + ... + K, computed once (without saturating between steps).
+
+# Syntax
+Z = imadd(X, Y, outputClass)
+    Added.
+Z = imsubtract(X, Y, outputClass)
+    Subtracted.
+Z = immultiply(X, Y, outputClass)
+    Multiplied.
+Z = imdivide(X, Y)
+    Divided.
+Z = imabsdiff(X, Y)
+    The absolute difference.
+Z = imlincomb(K1, A1, K2, A2, ..., K, outputClass)
+    A weighted sum.
+# Examples
+## Saturation instead of wrapping
+a = uint8([100 200 250]);
+b = uint8([50 100 10]);
+imadd(a, b)
+imsubtract(b, a)
+imabsdiff(a, b)
+imadd(a, b, 'uint16')
+imlincomb(0.5, a, 0.5, b, 10)
+immultiply(a, 1.5)
+# See also
+imcomplement uint8
+
+@ imnoise, imsharpen
+Noise added to an image, and an image sharpened.
+
+`imnoise` adds noise on the 0-to-1 scale, the result clipped and in the image's class: Gaussian (mean 0, variance 0.01), with a variance per pixel or per intensity (`'localvar'`), Poisson (the intensities taken as counts), salt and pepper (a density, 0.05) or speckle (multiplicative). `imsharpen` adds back the difference between the image and its Gaussian blur (unsharp masking): `'Radius'` (1) the blur's standard deviation, `'Amount'` (0.8) how much, `'Threshold'` the smallest difference sharpened.
+
+# Syntax
+J = imnoise(I, type, ...)
+    Noise added.
+B = imsharpen(A, 'Radius', r, 'Amount', a, 'Threshold', t)
+    Sharpened.
+# Examples
+## Kinds of noise, and sharpening
+P = phantom(64);
+subplot(1, 4, 1), imshow(imnoise(P, 'gaussian', 0, 0.005)), title('gaussian')
+subplot(1, 4, 2), imshow(imnoise(P, 'salt & pepper', 0.05)), title('salt & pepper')
+subplot(1, 4, 3), imshow(imnoise(P, 'speckle', 0.1)), title('speckle')
+subplot(1, 4, 4), imshow(imsharpen(imgaussfilt(P, 1.5), 'Radius', 2, 'Amount', 1.5)), title('sharpened')
+G = 0.5*ones(100);
+J = imnoise(G, 'salt & pepper', 0.1);
+round([mean(J(:) == 0), mean(J(:) == 1)], 3)
+# See also
+medfilt2 wiener2 psnr
+
+@ corr2, immse, psnr, ssim, entropy
+Measures of images: correlation, error, peak signal to noise, structural similarity and entropy.
+
+`corr2` gives the correlation coefficient of two images; `immse` the mean squared error; `psnr` 10 log10(peak²/MSE) in dB, the peak 1 for floating images and the class's largest value for integers; `ssim` the structural similarity, comparing local means, variances and covariance (1 for identical images) and its map. `entropy` gives -Σ p log2 p over the 256-bin histogram, the bits a pixel carries.
+
+# Syntax
+r = corr2(A, B)
+    The correlation.
+err = immse(X, Y)
+    The mean squared error.
+[peaksnr, snr] = psnr(A, ref, peakval)
+    The peak signal-to-noise ratio.
+[ssimval, ssimmap] = ssim(A, ref)
+    The structural similarity.
+e = entropy(I)
+    The entropy.
+# Examples
+## Noise and blur judged against the original
+P = phantom(128);
+N = imnoise(P, 'gaussian', 0, 0.002);
+B = imgaussfilt(P, 2);
+round([immse(N, P), immse(B, P)], 4)
+round([psnr(N, P), psnr(B, P)], 1)
+round([ssim(N, P), ssim(B, P)], 3)
+round([corr2(N, P), corr2(B, P)], 3)
+round([entropy(P), entropy(N)], 2)
+# See also
+imnoise imabsdiff
+
+@ entropyfilt, stdfilt, rangefilt
+Local texture: entropy, standard deviation and range over each neighbourhood.
+
+Each pixel gets a statistic of its neighbourhood: `entropyfilt` the entropy (9-by-9 unless given, the image as uint8), `stdfilt` the standard deviation (3-by-3), `rangefilt` the largest less the smallest (3-by-3); the border mirrored (`rangefilt` ignores what is outside). Textured regions stand out from smooth ones.
+
+# Syntax
+J = entropyfilt(I, nhood)
+    Local entropy.
+J = stdfilt(I, nhood)
+    Local standard deviation.
+J = rangefilt(I, nhood)
+    Local range.
+# Examples
+## A rough half and a smooth half
+I = [0.5 + 0.2*randn(60, 30), 0.5*ones(60, 30)];
+I = min(max(I, 0), 1);
+S = stdfilt(I);
+round([mean(S(:, 5:25), 'all'), mean(S(:, 35:55), 'all')], 3)
+subplot(1, 3, 1), imshow(entropyfilt(I), [])
+subplot(1, 3, 2), imshow(S, [])
+subplot(1, 3, 3), imshow(rangefilt(I), [])
+# See also
+imfilter nlfilter
+
+@ imguidedfilter, imbilatfilt, imdiffusefilt, imgaussfilt3, wiener2
+Smoothing that keeps edges, smoothing in 3-D, and adaptive noise removal.
+
+`imguidedfilter` smooths an image while following the edges of a guide (the image itself by default); `imbilatfilt` averages each pixel's neighbours weighted both by distance and by how close their intensities are, so that edges are not blurred; `imdiffusefilt` lets intensities diffuse, less across strong gradients (Perona and Malik). `imgaussfilt3` is a Gaussian filter in three dimensions. `wiener2` adapts to the local variance: it smooths where the image is flat, at the noise's level, and keeps detail where it varies.
+
+# Syntax
+B = imguidedfilter(A, G, 'NeighborhoodSize', s, 'DegreeOfSmoothing', d)
+    The guided filter.
+J = imbilatfilt(I, degreeOfSmoothing, spatialSigma)
+    The bilateral filter.
+J = imdiffusefilt(I, 'NumberOfIterations', n)
+    Anisotropic diffusion.
+B = imgaussfilt3(A, sigma)
+    A 3-D Gaussian.
+[J, noise] = wiener2(I, [m n], noise)
+    Adaptive Wiener filtering.
+# Examples
+## Edges kept, noise smoothed
+[x, y] = meshgrid(1:80);
+I = 0.3 + 0.4*(x > 40) + 0.3*((x - 20).^2 + (y - 40).^2 < 150);
+N = imnoise(I, 'gaussian', 0, 0.005);
+F = {imgaussfilt(N, 2), imbilatfilt(N), imguidedfilter(N), imdiffusefilt(N), wiener2(N, [5 5])};
+names = {'gaussian', 'bilateral', 'guided', 'diffusion', 'wiener2'};
+for k = 1:5
+    subplot(1, 5, k), imshow(F{k}), title(names{k})
+end
+round(cellfun(@(J) psnr(J, I), F), 1)
+size(imgaussfilt3(rand(10, 10, 10), 1))
+# See also
+imgaussfilt medfilt2
+
+@ psf2otf, otf2psf, deconvwnr, deconvlucy
+Blur undone: point-spread and optical transfer functions, and Wiener and Richardson-Lucy deconvolution.
+
+A blur is a point-spread function (PSF), the image of a point; its FFT, centred on the first element, is the optical transfer function (`psf2otf`, and back by `otf2psf`). `deconvwnr` divides the blurred image's spectrum by the OTF, regularized by the noise-to-signal ratio NSR (0: the plain inverse, which amplifies noise wherever the OTF is small). `deconvlucy` iterates Richardson and Lucy's multiplicative steps (10), which keep the image positive. Both take the blur as circular.
+
+# Syntax
+OTF = psf2otf(PSF, outSize)
+    The transfer function.
+PSF = otf2psf(OTF, outSize)
+    The point-spread function.
+J = deconvwnr(I, PSF, NSR)
+    Wiener deconvolution.
+J = deconvlucy(I, PSF, numit)
+    Richardson-Lucy.
+# Examples
+## A blurred, noisy phantom restored
+P = phantom(96);
+PSF = fspecial('gaussian', 9, 2);
+B = imfilter(P, PSF, 'circular', 'conv');
+N = B + 0.005*randn(size(B));
+W0 = deconvwnr(N, PSF);
+W = deconvwnr(N, PSF, 0.01);
+L = deconvlucy(max(N, 0), PSF, 20);
+subplot(1, 4, 1), imshow(N), title('blurred')
+subplot(1, 4, 2), imshow(W0, [0 1]), title('NSR 0')
+subplot(1, 4, 3), imshow(W, [0 1]), title('NSR 0.01')
+subplot(1, 4, 4), imshow(L, [0 1]), title('Lucy')
+round([psnr(N, P), psnr(W, P), psnr(L, P)], 1)
+H = psf2otf(PSF, [96 96]);
+round(max(abs(otf2psf(H, [9 9]) - PSF), [], 'all'), 12)
+# See also
+imfilter fspecial
